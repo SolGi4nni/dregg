@@ -447,7 +447,7 @@ def RomEff (F : RomFamily) (Q : ℕ → ℕ) : Adversary (romCollisionGame F) �
 
 /-- **EVERY ORACLE OF A COMPRESSING FAMILY HAS A COLLISION.** Pigeonhole, on the tree's own
 counting: strictly more inputs than digests means no oracle is injective. This is the defining
-property of a hash, and it is why `FloorGames.collisionResistant_false_of_compressing` refutes the
+property of a hash, and it is why `FloorGames.hashCRHardQuant_top_false_of_compressing` refutes the
 unrestricted floor. -/
 theorem romCollision_always_solvable (F : RomFamily)
     (hc : ∀ l, letI := F.dFin l; letI := F.rFin l; Fintype.card (F.R l) < Fintype.card (F.D l))
@@ -498,7 +498,7 @@ bounded query budget, EVERY query-bounded adversary's collision advantage is neg
 
 ⚑ Compare what this replaces. `HashFloorHonesty.CollisionResistant F` is `HashCRHardQuant F ⊤`
 (`FloorGames.collisionResistant_iff_hashCRHardQuant_top`) and is FALSE at a compressing family
-(`FloorGames.collisionResistant_false_of_compressing`). `MSISHardQuant F Eff` is a floor whose `Eff`
+(`FloorGames.hashCRHardQuant_top_false_of_compressing`). `MSISHardQuant F Eff` is a floor whose `Eff`
 has no content. THIS statement has a hypothesis-free adversary class, a proved bound
 (`birthday_bound`), and no cryptographic assumption anywhere under it. The `Negl` comes from
 `negl_two_pow` — the digest space outruns the budget.

@@ -1266,18 +1266,27 @@ theorem no_free_decode_gap (fold : AuthorityFold) :
 /-! ## 5. The honest floor.
 
 `AuthorityDigestCollision fold` and the three Poseidon collision disjuncts are *findable-collision*
-events, not impossibility premises.  `HashFloorHonesty.CollisionResistant` is the proper advantage
-carrier.  The legacy scalar fold is only lane zero and is concretely weak; the deployed rotated path
-must use the eight-lane authority group and `wireCommitR8`. -/
+events, not impossibility premises.  The legacy scalar fold is only lane zero and is concretely weak;
+the deployed rotated path must use the eight-lane authority group and `wireCommitR8`.
 
-abbrev CollisionResistant := Dregg2.Circuit.HashFloorHonesty.CollisionResistant
+⚑ **THE ROUTING PIN THAT POINTED AT A REFUTED FLOOR IS DELETED (2026-07-28).** This section carried
+`abbrev CollisionResistant := HashFloorHonesty.CollisionResistant`, a re-export naming that def "the
+proper advantage carrier". That def is now DELETED — it was `HashCRHardQuant F ⊤` under a name that
+hid the `⊤`, and `FloorGames.hashCRHardQuant_top_false_of_compressing` refutes it for every
+compressing family, i.e. for the eight-lane authority digest this file is about. The alias had NO
+Lean consumer anywhere in the tree; it existed to point a reader somewhere, and where it pointed was
+wrong. The honest carrier for adaptive/birthday collision finding is
+`Crypto.FloorGames.HashCRHardQuant F Eff` with `Eff` named, or better
+`Crypto.RomQueryFloor.birthday_bound`, which is PROVED and carries no assumption at all. -/
+
 abbrev CollisionFinder := Dregg2.Circuit.HashFloorHonesty.CollisionFinder
 noncomputable abbrev collisionAdv := Dregg2.Circuit.HashFloorHonesty.collisionAdv
 
 /-- What the existing `OodRomBound.RomUniform` floor honestly supplies for hashing: a fresh uniform
 squeeze hits any fixed target with probability exactly `1 / |F|`.  This is the fixed-target leg used
-inside collision reductions; adaptive/birthday collision finding still belongs to
-`HashFloorHonesty.CollisionResistant`, not to a false injectivity statement. -/
+inside collision reductions; adaptive/birthday collision finding belongs to the query-counted
+`Crypto.RomQueryFloor.birthday_bound`, not to a false injectivity statement and not to the refuted
+unrestricted-class collision floor. -/
 theorem romUniform_fixed_target_hit {Ω F : Type*} [Fintype Ω] [Fintype F] [DecidableEq F]
     (draw : Ω → F) (hrom : Dregg2.Circuit.OodRomBound.RomUniform draw) (target : F) :
     winProb (fun ω => decide (draw ω = target)) = 1 / (Fintype.card F : ℝ) := by

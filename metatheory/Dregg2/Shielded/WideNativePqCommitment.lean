@@ -15,8 +15,12 @@ The serialization facts below are theorems.  Collision resistance is not.
 `babyBearD4W16` Poseidon2 parameter descriptor; equal commitments for distinct
 openings are reduced to an explicit `HashCollision`.  A production theorem must
 bound the probability of finding that collision through
-`HashFloorHonesty.CollisionResistant` (or a stronger construction-specific
-QROM analysis).  In particular, this module does NOT assume the false statement
+`Crypto.FloorGames.HashCRHardQuant F Eff` with `Eff` named, or
+`Crypto.RomQueryFloor.birthday_bound` (PROVED, query-counted), or a stronger
+construction-specific QROM analysis.  ⚑ NOT through
+`HashFloorHonesty.CollisionResistant`, which this line used to name: that was
+the same floor at `⊤`, refuted for exactly the compressing realizations this
+module is about, and DELETED 2026-07-28.  In particular, this module does NOT assume the false statement
 that a compressing Poseidon sponge is injective.
 
 The four 16-bit words are the canonical little-endian bignum representation of
@@ -347,11 +351,20 @@ structure NativePqWideHashSurface where
   params : Poseidon2RealParams
   params_are_real : params = babyBearD4W16
 
-/-- The only appropriate cryptographic floor for a compressing realization is the repository's
-proper adversarial advantage definition.  This alias is a routing pin, not an inhabitant or proof. -/
-abbrev ComputationalBindingFloor
-    (F : Dregg2.Circuit.HashFloorHonesty.KeyedHashFamily) : Prop :=
-  Dregg2.Circuit.HashFloorHonesty.CollisionResistant F
+/-! ⚑ **`ComputationalBindingFloor` DELETED 2026-07-28 — the routing pin pointed at a REFUTED floor.**
+
+It was `abbrev ComputationalBindingFloor (F : KeyedHashFamily) : Prop :=
+HashFloorHonesty.CollisionResistant F`, introduced as "the only appropriate cryptographic floor for a
+compressing realization … a routing pin, not an inhabitant or proof". Its own words name the defect:
+that floor is `HashCRHardQuant F ⊤`, and `FloorGames.hashCRHardQuant_top_false_of_compressing` proves
+it FALSE for exactly the COMPRESSING realizations the pin was pointing at. It had no Lean consumer in
+the tree — pin and alias both, so deleting it costs no proof.
+
+The appropriate floor for this file's wide Poseidon2 digest is `Crypto.RomQueryFloor.birthday_bound`
+(PROVED, query-counted, no assumption) or `Crypto.FloorGames.HashCRHardQuant F Eff` with `Eff`
+written down. `equivocation_reduces_to_hash_collision` below is unchanged and is the half this file
+actually proves: it reduces equivocation to a genuine transcript collision and stops there, which was
+always the honest boundary. -/
 
 /-- Domain-separated wide commitment. -/
 noncomputable def commit (S : NativePqWideHashSurface) (purpose : Purpose) (o : Opening) : WideDigest :=

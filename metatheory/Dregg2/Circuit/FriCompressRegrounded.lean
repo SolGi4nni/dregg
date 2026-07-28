@@ -83,12 +83,12 @@ namespace Dregg2.Circuit.FriCompressRegrounded
 
 open Dregg2.Circuit.FriVerifier (CompressInjective merkleRecompute merkleVerify merkleRecompute_binds)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
@@ -190,8 +190,9 @@ structure CompressDeployment (F : Type) where
   deployedTag : Tag
 
 /-- **`compressFamily D`** — the deployed compression lifted to a `KeyedHashFamily`, keyed by its
-domain-separation tag, on its REAL 2-to-1 domain `List F × List F`. This is the object
-`HashFloorHonesty.CollisionResistant` is realized at for the real Merkle node hash. -/
+domain-separation tag, on its REAL 2-to-1 domain `List F × List F`. This is the object the collision
+floor `FloorGames.HashCRHardQuant` is realized at for the real Merkle node hash — at whatever adversary
+class `Eff` the reader is willing to price. -/
 def compressFamily {F : Type} (D : CompressDeployment F) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := List F × List F
@@ -209,17 +210,20 @@ theorem deployed_compress_is_family_instance {F : Type} (D : CompressDeployment 
     (fun p : List F × List F => D.compress D.deployedTag p.1 p.2)
       = (compressFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `CompressInjective` held at every tag it
-would discharge `CollisionResistant (compressFamily D)` (no collisions ⟹ every finder's advantage `0`).
-So the OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at the
-deployed compression (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis
-is replaced by one a real hash can satisfy. -/
-theorem compressFamily_CR_of_compressInjective {F : Type} (D : CompressDeployment F)
-    (hinj : ∀ t : D.Tag, CompressInjective (D.compress t)) :
-    CollisionResistant (compressFamily D) := by
-  refine injective_family_CR (compressFamily D) (fun _ t p q h => ?_)
-  obtain ⟨h1, h2⟩ := hinj t p.1 p.2 q.1 q.2 h
-  exact Prod.ext h1 h2
+/-! ⚑ **THERE IS NO RUNG-1 BRIDGE HERE ANY MORE, AND THAT IS THE HONEST STATE (deleted 2026-07-28).**
+
+A `compressFamily_CR_of_compressInjective` stood at this point: `CompressInjective` at every tag ⟹ the
+family's now-deleted `HashFloorHonesty.CollisionResistant` floor, argued as "the OLD floor was STRICTLY
+STRONGER, so nothing is lost re-grounding — a false hypothesis is replaced by one a real hash can
+satisfy". **Both ends of that bridge are refuted, so it bought nothing.** Its source is refuted by §1 at
+any fixed-width digest; its target was `HashCRHardQuant (compressFamily D) (fun _ => True)` spelled
+without the `⊤`, and §7's first tooth refutes THAT at the same compression. A bridge from an empty
+hypothesis to a false conclusion is not a re-grounding argument.
+
+What stands in its place is what this file already carries and does not need a bridge to state: the
+collision GAME below (§3) with its adversary class `Eff` written out at every use site, both poles of
+that class PRICED as theorems (§7), and the §8 successor on the keyed-ROM floor, where the bound is
+PROVED by the birthday argument instead of assumed. -/
 
 /-! ## §3 — the COMPRESSION-COLLISION GAME and the MERKLE-FORGERY GAME, as first-class objects. -/
 
@@ -547,15 +551,16 @@ theorem brokenCompress_forgery_solvable (n : ℕ) (t : brokenCompress.Tag) :
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose per-tag
-compression is injective discharges `CollisionResistant (compressFamily D)` — the honest floor is
-REALIZABLE, unlike the injective `CompressInjective` at deployed parameters. ⚑ Recorded with its price:
-this is the `⊤`-class object, which §7's first tooth proves FALSE at a fixed-width (i.e. real)
-compression. An injective compression is exactly the toy-hash shape; the satisfiability is honest only as
-a non-emptiness check, never as evidence the deployed Poseidon2 satisfies it. -/
+compression is injective discharges `HashCRHardQuant (compressFamily D) (fun _ => True)` — the honest
+floor is REALIZABLE, unlike the injective `CompressInjective` at deployed parameters. ⚑ Recorded with
+its price: this is the `⊤`-class object, which §7's first tooth proves FALSE at a fixed-width (i.e.
+real) compression — and the `⊤` is now written into the statement instead of hidden behind a name. An
+injective compression is exactly the toy-hash shape; the satisfiability is honest only as a
+non-emptiness check, never as evidence the deployed Poseidon2 satisfies it. -/
 theorem compressFamily_CR_of_injective {F : Type} (D : CompressDeployment F)
     (hinj : ∀ t : D.Tag, Function.Injective (fun p : List F × List F => D.compress t p.1 p.2)) :
-    CollisionResistant (compressFamily D) :=
-  injective_family_CR (compressFamily D) (fun _ t => hinj t)
+    HashCRHardQuant (compressFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (compressFamily D) (fun _ t => hinj t)
 
 /-! ## §8 — `hEff` DISCHARGED: the path peel's efficiency is a THEOREM.
 
@@ -695,7 +700,6 @@ theorem compressFloor_isPolyTime_inhabited {F : Type} (D : CompressDeployment F)
   compressInjective_false_poseidon2_digest,
   exists_collision_of_finite_range,
   deployed_compress_is_family_instance,
-  compressFamily_CR_of_compressInjective,
   collisionGame_wins_iff,
   forgeryGame_wins_iff,
   forgery_win_fools_merkleVerify,

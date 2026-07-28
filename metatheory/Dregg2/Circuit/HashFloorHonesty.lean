@@ -31,16 +31,20 @@ Poseidon2 refutes it. Toy witness satisfiable; real instantiation false.
     This is ember's "prove load-bearing specs true AND FALSE" discipline; nobody had tried to prove
     the floor FALSE, which is why the bug survived.
 
-  * **§2 — PROPER COMPUTATIONAL COLLISION-RESISTANCE.** `CollisionResistant F` for a **keyed** hash
-    family `F` (indexed by the security parameter): every collision-finding adversary's advantage —
-    the `winProb` that it outputs a genuine collision, over a uniformly random key — is `Negl`. This
-    is a REAL assumption (the tree's `ProbCrypto.winProb` / `ConcreteSecurity.Negl` machinery):
-    satisfiable at real params, NOT provable, and genuinely computational — the advantage measures
-    the adversary *finding* a collision, not the mere *existence* of one (`mod2_dumb_negligible`
-    exhibits collisions that exist while a specific finder's advantage is `0`). Keying is what makes
-    the game meaningful: an unkeyed fixed hash lets an adversary hardcode a known collision (advantage
-    `1`) — exactly the degeneracy that makes the OLD injective floor, and `FloorBridge`'s canonical
-    collision family, collapse.
+  * **§2 — THE KEYED COLLISION GAME** (`KeyedHashFamily`, `CollisionFinder`, `collisionAdv`): a
+    **keyed** hash family indexed by the security parameter, and the advantage of a collision-finding
+    adversary — the `winProb` that it outputs a genuine collision, over a uniformly random key.
+    Keying is what makes the game meaningful: an unkeyed fixed hash lets an adversary hardcode a
+    known collision (advantage `1`) — exactly the degeneracy that makes the OLD injective floor, and
+    `FloorBridge`'s canonical collision family, collapse.
+
+    ⚑ The FLOOR this section used to carry — `CollisionResistant F`, "every collision finder's
+    advantage is `Negl`" — was DELETED on 2026-07-28, because §1's own argument applies to it: it
+    quantifies over ALL finders, `Classical.choice` is one, and a compressing family therefore
+    refutes it. The paragraph at the deletion site names every replacement. What is left in §2 is the
+    GAME, which was never the problem, and the evaluated teeth (`mod2_dumb_negligible` exhibits
+    collisions that exist while a specific finder's advantage is `0`) that keep the replacements in
+    `FloorGames` §6 non-vacuous. The floor lives there now, with its adversary class written down.
 
   * **§3 — THE ADVANTAGE-BOUNDED RESTATEMENT.** Under proper CR the binding keystones survive as
     advantage bounds: an equivocating opener IS a collision finder, so "two openings ⟹ equal" becomes
@@ -197,14 +201,38 @@ exact instance the ensemble is stated against.) -/
 noncomputable def collisionAdv (F : KeyedHashFamily) (A : CollisionFinder F) : Ensemble :=
   fun n => @winProb (F.Key n) (F.keyFintype n) (fun k : F.Key n => A.wins n k)
 
-/-- **PROPER COLLISION-RESISTANCE.** Every collision finder's advantage is negligible. This is a REAL
-assumption — satisfiable (an injective family, §2 teeth), refutable (a broken family), and genuinely
-computational (advantage = *finding*, not *existence*). It is the honest floor the injective
-`Poseidon2SpongeCR`/`HashCR` should have been. -/
-def CollisionResistant (F : KeyedHashFamily) : Prop :=
-  ∀ A : CollisionFinder F, Negl (collisionAdv F A)
+/-! ⚑ **DELETED 2026-07-28 — `def CollisionResistant`, and with it `brokenFamily_not_CR`,
+`idFamily_CR` and `injective_family_CR`.**
 
-/-! ### Teeth: the floor is REFUTABLE, SATISFIABLE, and genuinely computational. -/
+`CollisionResistant F := ∀ A : CollisionFinder F, Negl (collisionAdv F A)` was this file's
+"proper computational floor", the honest replacement §1 refutes the injective floors in favour of.
+It was itself REFUTED: `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proved it IS the
+collision game's floor at the UNRESTRICTED adversary class, and
+`FloorGames.collisionResistant_false_of_compressing` proved that class's floor FALSE for EVERY
+compressing family — `Classical.choice` is a perfectly good `CollisionFinder`. Three costumes in,
+the same pigeonhole. So the floor is gone and the `⊤` it silently was is now spelled out at every
+site that used to hide it.
+
+WHAT REPLACES IT, all in `Crypto/FloorGames` §6 with the adversary class IN THE STATEMENT:
+
+  * `hashCRHardQuant_top_of_injective`      ← `injective_family_CR`
+  * `idFamily_hashCRHardQuant_top`          ← `idFamily_CR`             (SATISFIABLE pole)
+  * `brokenFamily_not_hashCRHardQuant_top`  ← `brokenFamily_not_CR`     (REFUTABLE pole)
+  * `hashCRHardQuant_top_false_of_compressing` ← `collisionResistant_false_of_compressing`
+    — ⚑ the TOOTH SURVIVES. Its subject moved from `CollisionResistant F` to the propositionally
+    equal `HashCRHardQuant F (fun _ => True)`, which is strictly more honest: the refuted `⊤` is
+    now written down instead of being folded into a name.
+
+The GAME OBJECTS below (`KeyedHashFamily`, `CollisionFinder`, `collisionAdv`, `brokenFamily`,
+`idFamily`, `mod2Family` and their evaluated lemmas) are KEPT: `FloorGames.hashGame` is built on
+them and they were never the problem. The adversary CLASS was.
+
+⚑ THE GATE THIS COST — see `Verify/FloorCensus.sentinelFloors`. -/
+
+/-! ### Teeth: the families are REFUTABLE, SATISFIABLE, and genuinely computational.
+
+The floor-typed halves of these teeth now live in `FloorGames` §6 (above); what remains here is the
+EVALUATED half — which finder wins on which family — which is what makes those ports non-vacuous. -/
 
 /-- The **broken** (constant-`0`) family — every input hashes to `0`, so ANY two distinct inputs
 collide. -/
@@ -225,20 +253,17 @@ def brokenFinder : CollisionFinder brokenFamily where
 theorem brokenFinder_wins (n : ℕ) (k : brokenFamily.Key n) : brokenFinder.wins n k = true := by
   simp [CollisionFinder.wins, brokenFinder, brokenFamily]
 
-/-- **(TOOTH — the proper floor is REFUTABLE.)** The broken family is NOT collision-resistant: the
-constant finder wins on every key, so its advantage is the constant `1`, not negligible. So
-`CollisionResistant` is load-bearing, not vacuously-true. -/
-theorem brokenFamily_not_CR : ¬ CollisionResistant brokenFamily := by
-  intro hCR
-  have hadv : collisionAdv brokenFamily brokenFinder = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : brokenFamily.Key n => brokenFinder.wins n k) = (fun _ => true) := by
-      funext k; exact brokenFinder_wins n k
-    show @winProb (brokenFamily.Key n) (brokenFamily.keyFintype n)
-        (fun k : brokenFamily.Key n => brokenFinder.wins n k) = 1
-    rw [hall]
-    exact @winProb_top (brokenFamily.Key n) (brokenFamily.keyFintype n) (brokenFamily.keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR brokenFinder)
+/-- **(THE EVALUATED HALF OF THE REFUTABILITY TOOTH.)** The constant finder's advantage on the broken
+family is the constant `1`. `FloorGames.brokenFamily_not_hashCRHardQuant_top` is the floor-typed half
+that reads `not_negl_one` off this. -/
+theorem brokenFinder_adv_one : collisionAdv brokenFamily brokenFinder = fun _ => (1 : ℝ) := by
+  funext n
+  have hall : (fun k : brokenFamily.Key n => brokenFinder.wins n k) = (fun _ => true) := by
+    funext k; exact brokenFinder_wins n k
+  show @winProb (brokenFamily.Key n) (brokenFamily.keyFintype n)
+      (fun k : brokenFamily.Key n => brokenFinder.wins n k) = 1
+  rw [hall]
+  exact @winProb_top (brokenFamily.Key n) (brokenFamily.keyFintype n) (brokenFamily.keyNonempty n)
 
 /-- The **injective identity** family — `H n k x = x`, no collisions exist at all. -/
 def idFamily : KeyedHashFamily where
@@ -255,21 +280,6 @@ theorem idFamily_wins_false (A : CollisionFinder idFamily) (n : ℕ) (k : idFami
     A.wins n k = false := by
   simp only [CollisionFinder.wins, idFamily]
   by_cases hp : (A.find n k).1 = (A.find n k).2 <;> simp [hp]
-
-/-- **(TOOTH — the proper floor is SATISFIABLE.)** The injective family IS collision-resistant: no
-finder ever wins, so every advantage is `0`, negligible. A (hypothetical) injective real hash would
-discharge the floor — the floor is realizable, not empty. -/
-theorem idFamily_CR : CollisionResistant idFamily := by
-  intro A
-  have hadv : collisionAdv idFamily A = fun _ => (0 : ℝ) := by
-    funext n
-    have hall : (fun k : idFamily.Key n => A.wins n k) = (fun _ => false) := by
-      funext k; exact idFamily_wins_false A n k
-    show @winProb (idFamily.Key n) (idFamily.keyFintype n)
-        (fun k : idFamily.Key n => A.wins n k) = 0
-    rw [hall]
-    exact @winProb_bot (idFamily.Key n) (idFamily.keyFintype n)
-  rw [hadv]; exact negl_zero
 
 /-- The **mod-2** family — `H n k x = x % 2`, a genuine COMPRESSING hash: collisions EXIST (e.g. `0`
 and `2` both hash to `0`) for every key. -/
@@ -312,31 +322,15 @@ theorem mod2_dumb_negligible : Negl (collisionAdv mod2Family dumbFinder) := by
 
 /-! ### The bridge to the old floor: injectivity is STRICTLY STRONGER — and FALSE.
 
-The old injective floor implies the proper floor (an injective per-key hash has no collisions, hence
-advantage `0` — `injective_family_CR`). But injectivity is FALSE for the real hash (§1). So the tower
-rested on a hypothesis strictly stronger than needed AND unsatisfiable; the proper floor is the
-satisfiable object the same reductions actually need. -/
-
-/-- A per-key-injective family is collision-resistant (advantage `0`). This is the `old floor ⟹ new
-floor` direction: injectivity of `H n k` (the shape the OLD floor asserted) trivially discharges the
-proper computational floor. -/
-theorem injective_family_CR (F : KeyedHashFamily)
-    (hinj : ∀ n (k : F.Key n), Function.Injective (F.H n k)) : CollisionResistant F := by
-  intro A
-  have hadv : collisionAdv F A = fun _ => (0 : ℝ) := by
-    funext n
-    have hall : (fun k : F.Key n => A.wins n k) = (fun _ => false) := by
-      funext k
-      simp only [CollisionFinder.wins]
-      by_cases hp : (A.find n k).1 = (A.find n k).2
-      · simp [hp]
-      · have hne : F.H n k (A.find n k).1 ≠ F.H n k (A.find n k).2 := fun h => hp (hinj n k h)
-        simp [hp, hne]
-    show @winProb (F.Key n) (F.keyFintype n)
-        (fun k : F.Key n => A.wins n k) = 0
-    rw [hall]
-    exact @winProb_bot (F.Key n) (F.keyFintype n)
-  rw [hadv]; exact negl_zero
+A per-key-injective family has no collisions at all, so every finder's advantage is `0`. That was
+`injective_family_CR : … → CollisionResistant F`; with the floor deleted it is
+`FloorGames.hashCRHardQuant_top_of_injective : … → HashCRHardQuant F (fun _ => True)`, same content,
+`⊤` spelled out. The point it was making SURVIVES the deletion and is worth restating, because it is
+what dooms both floors together: injectivity is FALSE for the real hash (§1), and the `⊤`-class
+collision floor is satisfied by essentially nothing else (`FloorGames`
+`hashCRHardQuant_top_false_of_compressing`: any family with a collision at every key refutes it). A
+floor whose only witnesses are injective families is not a weaker assumption than injectivity, it is
+the same false comfort with an advantage in front of it. -/
 
 /-! ## §3 — the ADVANTAGE-BOUNDED restatement of the binding keystones.
 
@@ -370,9 +364,8 @@ undischarged and its poles are priced beside the replacements; the one class wit
 #assert_axioms poseidon2SpongeCR_false_babyBear
 #assert_axioms compressInjective_false_of_finite_range
 #assert_axioms hashCR_false_of_compressing
-#assert_axioms brokenFamily_not_CR
-#assert_axioms idFamily_CR
+#assert_axioms brokenFinder_adv_one
+#assert_axioms idFamily_wins_false
 #assert_axioms mod2_dumb_negligible
-#assert_axioms injective_family_CR
 
 end Dregg2.Circuit.HashFloorHonesty

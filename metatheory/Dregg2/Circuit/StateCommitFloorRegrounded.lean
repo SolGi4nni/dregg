@@ -34,13 +34,15 @@ discharge routed through them (`cellLeafInjective_of_realization`, `logHashInjec
 (`Reference.refLogRealization`, `Encodable.encode`) — verbatim the **FALSE COMFORT**
 `HashFloorHonesty`'s own header named: *"toy witness satisfiable; real instantiation false."*
 
-## ⚑ The re-grounding does NOT go through `CollisionResistant` — that floor is false too
+## ⚑ The re-grounding does NOT go through the `⊤`-class floor — that floor is false too
 
-`FloorGames.collisionResistant_false_of_compressing` proves `HashFloorHonesty.CollisionResistant F` is
-ITSELF FALSE at deployed parameters (`CollisionResistant F ↔ HashCRHardQuant F ⊤`, and the
-`Classical.choice` finder wins with probability `1` on a compressing family). At the **unrestricted**
-adversary class every floor is false-at-deployed or vacuous — `hard_top_iff_solvableFrac_negl` is an `↔`,
-so no restatement of the win relation escapes. **The only honest escape is the `Eff` parameter**
+`FloorGames.hashCRHardQuant_top_false_of_compressing` proves `HashCRHardQuant F (fun _ => True)` is
+ITSELF FALSE at deployed parameters (the `Classical.choice` finder wins with probability `1` on a
+compressing family). That floor used to be spelled `HashFloorHonesty.CollisionResistant F`, which hid
+the `⊤` the reader has to see to price the assumption; the `def` is DELETED (2026-07-28) and the tooth
+is carried through under the name above, with the `⊤` written out. At the **unrestricted** adversary
+class every floor is false-at-deployed or vacuous — `hard_top_iff_solvableFrac_negl` is an `↔`, so no
+restatement of the win relation escapes. **The only honest escape is the `Eff` parameter**
 (`FloorGames` §8), and this file takes it, exactly as `HermineHashCRRegrounded` does.
 
 So the re-grounded consumers below condition on `HashCRHardQuant F Eff` — the collision floor at a
@@ -107,8 +109,7 @@ namespace Dregg2.Circuit.StateCommitFloorRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_add negl_zero)
 open Dregg2.Crypto.ProbCrypto (winProb negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv
-   not_injective_of_finite_range injective_family_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous hashGame HashCRHardQuant
    not_hard_top_of_always_solvable)
@@ -560,9 +561,9 @@ probability. The Boolean "equal digests ⇒ equal cell maps", which needed the F
 finders are in the classes the floors quantify over — the standard "the reduction is efficient". They are
 PARAMETERS here, in the open, at the use site, because this tree has no cost model (`FloorGames` §8). The
 floors are priced exactly by §7: `Eff := ⊤` makes them FALSE at compressing parameters (which is why this
-file does NOT route through `HashFloorHonesty.CollisionResistant`, itself
-`HashCRHardQuant _ ⊤` and itself false — `FloorGames.collisionResistant_false_of_compressing`),
-`Eff := ⊥` vacuous. -/
+file does NOT route through `HashCRHardQuant _ (fun _ => True)` — refuted by
+`FloorGames.hashCRHardQuant_top_false_of_compressing`, and the floor the DELETED
+`HashFloorHonesty.CollisionResistant` was a name for), `Eff := ⊥` vacuous. -/
 theorem stateCommit_equivocation_advantage_bound (F : StateCommitFamily)
     (EffNode : Adversary (hashGame (scNodeFamily F)) → Prop)
     (EffSponge : Adversary (hashGame (scSpongeFamily F)) → Prop)
@@ -596,9 +597,19 @@ theatre.
 What the re-grounding buys here is therefore precise and it is not nothing: the consumer moves off a
 hypothesis that is FALSE at deployed parameters (`logHashInjective_false_babyBear`, and
 `logRealization_uninhabitable_babyBear` for the bundle that discharges it) onto a floor about an
-adversary FINDING a collision, at a NAMED `Eff` class. Existence → advantage. That is the entire content,
-and `scLogFamily_CR_of_logHashInjective` + `logHashInjective_false_babyBear` together are the finding:
-the old carrier was STRICTLY STRONGER than needed AND unsatisfiable. -/
+adversary FINDING a collision, at a NAMED `Eff` class. Existence → advantage. That is the entire content.
+
+⚑ **A `scLogFamily_CR_of_logHashInjective` bridge used to stand below, and it is DELETED (2026-07-28).**
+It read `logHashInjective` at every instance ⟹ the log family's floor at the UNRESTRICTED class, and the
+finding it was half of was stated as "the old carrier was STRICTLY STRONGER than needed AND
+unsatisfiable". The first half does not survive contact with its own target: that target is
+`HashCRHardQuant (scLogFamily F) (fun _ => True)`, which `sc_log_floor_top_false_of_compressing` — right
+below, in this same file — proves FALSE for a compressing log hash, and §1's counting core forces the
+collision it asks for at exactly the BabyBear parameters that refute the source. Both ends refuted; the
+implication is true and empty. What carries the finding now is
+`logHashInjective_false_babyBear` alone (the old carrier is unsatisfiable, so its consumers were
+vacuous), with the honest floor stated at a named `Eff` here and PROVED at §10's keyed-ROM successor
+`log_equivocation_rom`. -/
 
 /-- **THE LOG-HASH FAMILY.** Inputs are receipt chains, outputs field elements, the keyed hash the deployed
 `LH`. A `logHashInjective` break IS a collision of this family. -/
@@ -645,17 +656,6 @@ theorem log_equivocation_advantage_bound (F : LogCommitFamily)
     Negl (gameAdv (hashGame (scLogFamily F)) A) :=
   hLog A hEff
 
-/-- **`logHashInjective` ⟹ the log collision floor at the UNRESTRICTED class.** Unlike the leaf carrier
-(§8 — per-cell injectivity does not cover its family's cross-cell collisions), this bridge is VALID:
-`logHashInjective` is full injectivity of `LH`, so it forbids every collision and every finder's advantage
-is `0`. Together with `logHashInjective_false_babyBear` that is the whole finding: the old carrier was
-STRICTLY STRONGER than the honest floor needs AND unsatisfiable at deployed parameters — an empty
-hypothesis, which is why its consumers were vacuously true. -/
-theorem scLogFamily_CR_of_logHashInjective (F : LogCommitFamily)
-    (hinj : ∀ l (i : F.Inst l), logHashInjective (F.LH l i)) :
-    CollisionResistant (scLogFamily F) :=
-  injective_family_CR (scLogFamily F) (fun l i xs ys h => hinj l i xs ys h)
-
 /-- **(TOOTH — the log floor is SATISFIABLE, vacuously.)** At the empty class it holds for any log hash,
 including a constant one. Recorded honestly; worth nothing without the refutation beside it. -/
 theorem sc_log_floor_satisfiable_vacuously (F : LogCommitFamily) :
@@ -665,7 +665,8 @@ theorem sc_log_floor_satisfiable_vacuously (F : LogCommitFamily) :
 /-- **(TOOTH — the log floor is FALSE at the unrestricted class, when the log hash is compressing.)** The
 price of `hEff`, as a theorem: §1 proves pigeonhole forces such a collision at BabyBear, so at `Eff := ⊤`
 the floor is FALSE and `log_equivocation_advantage_bound` is vacuous there. This is why the consumer must
-NOT be re-grounded onto `HashFloorHonesty.CollisionResistant` (= this floor at `⊤`). -/
+NOT be re-grounded onto this floor at `⊤` — the floor the DELETED `HashFloorHonesty.CollisionResistant`
+was a name for, and the reason the `logHashInjective` bridge onto it was deleted with it (§5b). -/
 theorem sc_log_floor_top_false_of_compressing (F : LogCommitFamily)
     (hcol : ∀ l (i : F.Inst l), ∃ xs ys : List Turn, xs ≠ ys ∧ F.LH l i xs = F.LH l i ys) :
     ¬ HashCRHardQuant (scLogFamily F) (fun _ => True) := by
@@ -784,11 +785,13 @@ theorem sc_sponge_floor_top_false_of_compressing (F : StateCommitFamily)
 /-! ## §8 — ⚑ the OLD floor is WEAKER than its family, and the reduction stays on the DIAGONAL.
 
 The usual re-grounding note is "the old injective floor implies the new one, so it was strictly stronger
-and, being false, empty" (`HashFloorHonesty.commitRevealFamily_CR_of_hashcr` for the flagged siblings).
-**That note is FALSE here, and saying so is the point.** `cellLeafInjective CH` is injectivity in the
+and, being false, empty" (`Crypto.HermineHashCRRegrounded.commitRevealFamily_CR_of_hashcr` for the
+flagged siblings — and §5b records why that note buys less than it reads: the floor such a bridge lands
+on is the `⊤`-class one, refuted at a real hash by §7's teeth).
+**Here it is FALSE outright, and saying so is the point.** `cellLeafInjective CH` is injectivity in the
 `Value` at a FIXED cell — it says NOTHING about `CH c v = CH c' w` for `c ≠ c'`. So it does NOT discharge
-`CollisionResistant (scLeafFamily F)`, whose game admits cross-cell collisions: the old carrier is not
-merely false, it is not even the right shape for its own family.
+`HashCRHardQuant (scLeafFamily F) (fun _ => True)`, whose game admits cross-cell collisions: the old
+carrier is not merely false, it is not even the right shape for its own family.
 
 What saves the reduction is that it never needs the cross-cell case: `scToLeafAdv` outputs a DIAGONAL
 pair by construction (`scToLeafAdv_diagonal`), because the cell where two maps differ is ONE cell. So the
@@ -1512,7 +1515,6 @@ end RomSuccessor
   scToLeafAdv_diagonal,
   scLogGame_wins_iff,
   log_equivocation_advantage_bound,
-  scLogFamily_CR_of_logHashInjective,
   sc_log_floor_satisfiable_vacuously,
   sc_log_floor_top_false_of_compressing
 ]

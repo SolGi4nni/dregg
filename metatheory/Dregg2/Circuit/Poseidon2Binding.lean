@@ -162,7 +162,10 @@ def babyBearD4W16 : Poseidon2RealParams :=
 INJECTIVITY, which is FALSE for any real (range-bounded) sponge — collisions EXIST by cardinality, they
 are merely hard to FIND. `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES this floor false at
 the deployed BabyBear parameters, so every theorem conditioned on it is vacuously true. KEPT for the
-record; the honest computational replacement is `HashFloorHonesty.CollisionResistant`.
+record; the honest computational replacement is `Crypto.FloorGames.HashCRHardQuant F Eff` at a NAMED
+adversary class, or better `Crypto.RomQueryFloor.birthday_bound`, which is PROVED. ⚑ NOT
+`HashFloorHonesty.CollisionResistant`, which this line used to name: that was the same floor at `⊤`,
+refuted for every compressing family, and DELETED 2026-07-28.
 
 The SOLE crypto assumption (as originally intended): the Poseidon2 sponge
 `sponge : List ℤ → ℤ` is collision-resistant, i.e. injective on the idealized hash domain. This is

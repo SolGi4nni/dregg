@@ -57,14 +57,19 @@ how this model treats tags, `MacKernel.mac` mapping unbounded `Bytes` into `Tag`
 — `bindingHashCR_false_of_infinite_tag` makes it FALSE. So it is re-grounded on the same terms as the
 others (§4), with its verdict stated precisely instead of rounded up.
 
-## The re-grounding does NOT go through `CollisionResistant`
+## The re-grounding does NOT go through the `⊤`-class floor
 
-`FloorGames.collisionResistant_false_of_compressing`: `HashFloorHonesty.CollisionResistant F` is ITSELF
-false at deployed parameters (it IS `HashCRHardQuant F ⊤`, and the `Classical.choice` finder wins with
-probability `1`). At the unrestricted class every floor is false-at-deployed or vacuous, and
+`FloorGames.hashCRHardQuant_top_false_of_compressing`: `HashCRHardQuant F (fun _ => True)` is ITSELF false
+at deployed parameters — the `Classical.choice` finder is in the unrestricted class and wins with
+probability `1`. At the unrestricted class every floor is false-at-deployed or vacuous, and
 `hard_top_iff_solvableFrac_negl` is an `↔` — no restatement of the win relation escapes. **The only honest
 escape is the `Eff` parameter** (`FloorGames` §8). Every keystone below takes it, and carries the
 `Eff`-membership obligation for the finder its reduction builds, in the open, at the use site.
+
+⚑ This used to be phrased against `HashFloorHonesty.CollisionResistant F`, a `def` that spelled the same
+floor at `⊤` under a name that HID the class. It is DELETED (2026-07-28) and the class is written out
+wherever it appears below — §4's `bindingHashFamily_CR_of_bindingHashCR` is the one statement in this
+file that carries it, and it now says so on its face.
 
 ## The reductions (each with a canary that REDS if the reduction is deleted)
 
@@ -96,10 +101,10 @@ namespace Dregg2.Crypto.FactoryBindingFloorRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl)
 open Dregg2.Crypto.ProbCrypto (winProb negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionResistant not_injective_of_finite_range injective_family_CR)
+  (KeyedHashFamily not_injective_of_finite_range)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous hashGame HashCRHardQuant
-   not_hard_top_of_always_solvable)
+   not_hard_top_of_always_solvable hashCRHardQuant_top_of_injective)
 open Dregg2.Crypto.CommitmentBinding (Compress1CR Compress2)
 open Dregg2.Authority.MacaroonDischarge (BindingHashCR Discharge bindTo foldBytes)
 open Dregg2.Authority.CaveatChain (MacKernel Key)
@@ -641,14 +646,22 @@ example (F : BindingFamily) (Eff : Adversary (hashGame (bindingHashFamily F)) �
 
 /-- **`BindingHashCR` ⟹ the binding collision floor at the UNRESTRICTED class.** A valid bridge (unlike
 the leaf carrier's — see `Circuit.StateCommitFloorRegrounded` §8): `BindingHashCR` is full injectivity, so
-it forbids every collision and every finder's advantage is `0`. ⚑ But — and this is §1c's whole point —
+it forbids every collision and every adversary's advantage is `0`. ⚑ But — and this is §1c's whole point —
 the companion refutation that would make this "strictly stronger AND empty" is NOT available at deployed
 parameters here. So this bridge says only that the old carrier was strictly stronger than needed; whether
-it was EMPTY depends on an instantiation the model never pins. -/
+it was EMPTY depends on an instantiation the model never pins.
+
+⚑ **`fun _ => True` is WRITTEN OUT in the conclusion.** It used to read
+`CollisionResistant (bindingHashFamily F)`; that `def` was a spelling of exactly this and is DELETED,
+because the adversary class is what prices a floor and it does not belong hidden inside a name. Here the
+price is the unusual one recorded in §1c: the `⊤` class is refuted at every COMPRESSING family
+(`binding_floor_top_false_of_compressing`), and the deployed 32-byte-tail → 32-byte-body SHA-256 is not
+known to compress — so unlike its siblings this conclusion is not known to be false, and is not claimed
+to be true either. -/
 theorem bindingHashFamily_CR_of_bindingHashCR (F : BindingFamily)
     (hinj : ∀ l (i : F.Inst l), BindingHashCR (F.bindingHash l i)) :
-    CollisionResistant (bindingHashFamily F) :=
-  injective_family_CR (bindingHashFamily F) (fun l i a b h => hinj l i a b h)
+    HashCRHardQuant (bindingHashFamily F) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (bindingHashFamily F) (fun l i a b h => hinj l i a b h)
 
 /-! ## §5 — the derived floors, priced honestly (both poles PROVED for each).
 
@@ -664,8 +677,9 @@ theorem c1_floor_satisfiable_vacuously (F : Compress2Family) :
 
 /-- **(TOOTH — the `compress1` floor is FALSE at the unrestricted class, when the compression is
 compressing.)** The price of `hEff`, as a theorem: §1a proves pigeonhole FORCES such a collision at
-BabyBear, so at `Eff := ⊤` the floor is FALSE — which is why this file does NOT route through
-`HashFloorHonesty.CollisionResistant` (= this floor at `⊤`). -/
+BabyBear, so at `Eff := fun _ => True` the floor is FALSE — which is why this file's keystones take an
+explicit `Eff` and do NOT route through the unrestricted class. (That class used to be reachable under
+the name `HashFloorHonesty.CollisionResistant`; the `def` is deleted and the class is written out.) -/
 theorem c1_floor_top_false_of_compressing (F : Compress2Family)
     (hcol : ∀ l (i : F.Inst l), ∃ xs ys : List ℤ, xs ≠ ys ∧ F.compress1 l i xs = F.compress1 l i ys) :
     ¬ HashCRHardQuant (c2Compress1Family F) (fun _ => True) := by

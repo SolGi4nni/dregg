@@ -32,7 +32,11 @@ consumer is axiom-clean and every consumer is conditioned on a hypothesis that a
 refutes.
 
 The honest replacement already exists and is unused by these carriers:
-`HashFloorHonesty.CollisionResistant` (keyed family, negligible finding advantage).
+`FloorGames.HashCRHardQuant F Eff` (keyed family, negligible finding advantage, adversary class named).
+⚑ This paragraph used to point at `HashFloorHonesty.CollisionResistant`, which was that same floor at
+`Eff := ⊤` — refuted for every compressing family and DELETED on 2026-07-28. A replacement that is
+itself refuted is not a replacement, which is the point this file exists to make and is now made about
+the successor too.
 
 ## §2 — `MembersAt` / `MembersAt8`: the DEPTH is in the docstring, not in the `Prop`.
 

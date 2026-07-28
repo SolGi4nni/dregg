@@ -77,11 +77,11 @@ namespace Dregg2.Circuit.FloorRegroundedConsumers
 
 open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded negl_add negl_const_mul negl_finset_sum negl_zero)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR
-   brokenFamily brokenFamily_not_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv idFamily brokenFamily)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant collisionAdv_eq_gameAdv
-   collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing hard_bot_vacuous)
+   hashCRHardQuant_top_false_of_compressing idFamily_hashCRHardQuant_top
+   brokenFamily_not_hashCRHardQuant_top hard_bot_vacuous)
 open Dregg2.Crypto.SpongeCarrierReduction
   (SpongeKeyed SpongeCarrier IsSpongeColl spongeFamily carrierBreakGame carrierBreakToFinder
    carrier_binds_advantage_bound
@@ -106,7 +106,7 @@ defects, either one fatal:
      collision finder") lived ONLY in the docstring. A theorem whose security content is in its prose
      is not a theorem about that content.
   2. **`CollisionResistant F` is FALSE for every compressing family** — `FloorGames`
-     `collisionResistant_iff_hashCRHardQuant_top` + `collisionResistant_false_of_compressing`, which §10
+     `collisionResistant_iff_hashCRHardQuant_top` + `FloorGames.hashCRHardQuant_top_false_of_compressing`, which §10
      below already re-proves as `effFloor_top_false_of_compressing`. So the implication was true and
      vacuous at the deployed Poseidon2, exactly the fate of the injective floors this file was written
      to retire. The file's own §9 header says so in as many words; §1–§7 were never brought onto it.
@@ -564,7 +564,7 @@ theorem the_rebuilt_opening_bound_fires (D : SpongeKeyed) (tagDec : DecidableEq 
 
 ⚑ **THE `CollisionResistant F` HYPOTHESIS EVERY §1-§7 SIBLING TAKES IS ITSELF FALSE AT DEPLOYED
 PARAMETERS.** `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves `CollisionResistant F ↔
-HashCRHardQuant F ⊤`, and `collisionResistant_false_of_compressing` proves that floor FALSE for ANY
+HashCRHardQuant F ⊤`, and `FloorGames.hashCRHardQuant_top_false_of_compressing` proves that floor FALSE for ANY
 compressing family — every real Poseidon2 node hash. So the §1-§7 bounds (kept above, untouched, and
 consumed by `Poseidon2KeyedBridge`'s deployed re-groundings) are true implications off a hypothesis that
 transports NO security. This section re-grounds each onto `HashCRHardQuant F Eff` — the SAME collision
@@ -665,13 +665,12 @@ theorem algoStarkSound_tower_advantage_bound_eff {F : KeyedHashFamily}
 
 /-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing family.)** At the unrestricted class the `Eff`-floor IS
 `CollisionResistant F` (`collisionResistant_iff_hashCRHardQuant_top`), FALSE for any compressing node hash
-(`collisionResistant_false_of_compressing`). The price of every `hEff` above, stated as a theorem: the
+(`FloorGames.hashCRHardQuant_top_false_of_compressing`). The price of every `hEff` above, stated as a theorem: the
 class cannot be left implicit, because the implicit `⊤` is the empty hypothesis §1-§7 rested on. -/
 theorem effFloor_top_false_of_compressing {F : KeyedHashFamily} (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
     ¬ HashCRHardQuant F (fun _ => True) :=
-  fun h => collisionResistant_false_of_compressing F hin hcol
-    ((collisionResistant_iff_hashCRHardQuant_top F).mpr h)
+  hashCRHardQuant_top_false_of_compressing F hin hcol
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the floor holds for ANY family. -/
 theorem effFloor_bot_vacuous {F : KeyedHashFamily} : HashCRHardQuant F (fun _ => False) :=

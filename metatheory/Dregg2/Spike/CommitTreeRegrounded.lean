@@ -76,12 +76,12 @@ namespace Dregg2.Spike.CommitTreeRegrounded
 
 open Dregg2.Spike.EffectVmConstraints2 (Hash commitTree StateCommitSat CommitTreeInjective)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 
 set_option autoImplicit false
 
@@ -174,9 +174,9 @@ structure CommitDeployment where
   deployedTag : Tag
 
 /-- **`commitFamily D`** — the deployed four-leaf commitment TREE (not the bare compression) lifted to a
-`KeyedHashFamily`, keyed by its domain-separation tag. This is the object
-`HashFloorHonesty.CollisionResistant` is realized at for the real state commitment: the AIR's group-4
-constraint pins `STATE_COMMIT` to `commitTree`, so `commitTree` is what must bind. -/
+`KeyedHashFamily`, keyed by its domain-separation tag. This is the object the collision floor
+`FloorGames.HashCRHardQuant (commitFamily D) Eff` is stated at for the real state commitment: the AIR's
+group-4 constraint pins `STATE_COMMIT` to `commitTree`, so `commitTree` is what must bind. -/
 def commitFamily (D : CommitDeployment) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := List Int
@@ -193,14 +193,23 @@ group-4 transition constraint computes. -/
 theorem deployed_hash_is_family_instance (D : CommitDeployment) (n : ℕ) :
     commitTree (D.hash D.deployedTag) = (commitFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `CommitTreeInjective` held at every tag it
-would discharge `CollisionResistant (commitFamily D)` (no collisions ⟹ every finder's advantage `0`). So
-the OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at the
-deployed tree (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis is
-replaced by one a real hash can satisfy. -/
-theorem commitFamily_CR_of_commitTreeInjective (D : CommitDeployment)
-    (hCR : ∀ t : D.Tag, CommitTreeInjective (D.hash t)) : CollisionResistant (commitFamily D) :=
-  injective_family_CR (commitFamily D) (fun _ t a b h => hCR t a b h)
+/-! ⚑ **DELETED 2026-07-28 — `commitFamily_CR_of_commitTreeInjective`.** It bridged the injective
+`CommitTreeInjective` floor to `HashFloorHonesty.CollisionResistant (commitFamily D)`, and the argument
+in its docstring was "the OLD floor was STRICTLY STRONGER than the honest computational floor, so
+nothing is lost re-grounding". That argument is FALSE, and both ends of the bridge are refuted.
+
+`CollisionResistant F` was never a computational floor — it was a SPELLING of
+`HashCRHardQuant F (fun _ => True)` that hid the `⊤`, and it is deleted in favour of writing the `⊤`
+out. THIS FILE refutes that destination: §7's `commit_floor_top_false_babyBear` proves the `⊤`-class
+floor on the very same collision event is FALSE at a BabyBear-valued `hash_4_to_1` — i.e. at the
+deployment the carrier's own docstring names. And §1 proves the SOURCE empty at those same parameters.
+A bridge from an empty hypothesis to a refuted conclusion carries nothing, so it is gone rather than
+restated.
+
+The honest floor is the one §5's `_advantage_bound` siblings actually consume:
+`Hard (commitCollisionGame D) Eff`, with `Eff` a parameter in the open and both its poles priced in §7.
+Satisfiability of the `⊤` pole survives below as `commitFamily_CR_of_injective`, recorded with its
+price. -/
 
 /-! ## §3 — the COMMITMENT-COLLISION GAME and the STATE-EQUIVOCATION GAME, as first-class objects. -/
 
@@ -427,15 +436,17 @@ theorem brokenCommit_floor_top_false :
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose per-tag
-tree is injective discharges `CollisionResistant (commitFamily D)` — the honest floor is REALIZABLE,
-unlike the injective `CommitTreeInjective` at deployed parameters. ⚑ Recorded with its price: this is
-the `⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e. real) tree. An
-injective tree is exactly the toy-hash shape; the satisfiability is honest only as a non-emptiness
-check, never as evidence the deployed Poseidon2 satisfies it. -/
+tree is injective discharges `HashCRHardQuant (commitFamily D) (fun _ => True)` — the floor is
+REALIZABLE, unlike the injective `CommitTreeInjective` at deployed parameters. ⚑ The `⊤` is now WRITTEN
+OUT in the statement instead of hidden behind the deleted `CollisionResistant`, which makes the price
+legible without a lemma: this is the UNRESTRICTED adversary class, which §7's first tooth proves FALSE
+at a range-bounded (i.e. real) tree. So this witness says only that the family is NOT COMPRESSING — an
+injective tree is exactly the toy-hash shape. Honest as a non-emptiness check, never as evidence the
+deployed Poseidon2 satisfies anything. -/
 theorem commitFamily_CR_of_injective (D : CommitDeployment)
     (hinj : ∀ t : D.Tag, Function.Injective (commitTree (D.hash t))) :
-    CollisionResistant (commitFamily D) :=
-  injective_family_CR (commitFamily D) (fun _ t => hinj t)
+    HashCRHardQuant (commitFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (commitFamily D) (fun _ t => hinj t)
 
 /-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the equivocation bound DISCHARGED on the PROVED floor.
 
@@ -602,7 +613,6 @@ theorem stateCommitRom_nonNegl_forger_excluded (D : CommitDeployment) (tagDec : 
   commitTreeInjective_false_blake3,
   exists_collision_of_finite_range,
   deployed_hash_is_family_instance,
-  commitFamily_CR_of_commitTreeInjective,
   collisionGame_wins_iff,
   equivocationGame_wins_iff,
   equivocation_wins_imp,

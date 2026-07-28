@@ -99,8 +99,7 @@ open Dregg2.Apps.QueueRoot
   (ZeroFree RootCR LeafCR LeafNonzero PairCR LenBindCR DequeueProof verifyDequeue
    verifyDequeue_factors leafImage_zero_free)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero negl_add not_negl_one)
 open Dregg2.Crypto.FloorGames
@@ -293,12 +292,22 @@ theorem deployed_root_is_family_instance {Entry : Type} (D : QueueDeployment Ent
 theorem deployed_leaf_is_family_instance {Entry : Type} (D : QueueDeployment Entry) (n : ℕ) :
     D.leafHash D.deployedTag = (leafFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE (leaf).** If the injective `LeafCR` held at every tag it would
-discharge `CollisionResistant (leafFamily D)`. So the OLD floor was STRICTLY STRONGER than the honest
-computational floor — and, being FALSE at the deployed hash (§1b), it was an EMPTY hypothesis. -/
-theorem leafFamily_CR_of_leafCR {Entry : Type} (D : QueueDeployment Entry)
-    (hCR : ∀ t : D.Tag, LeafCR (D.leafHash t)) : CollisionResistant (leafFamily D) :=
-  injective_family_CR (leafFamily D) (fun _ t a b h => hCR t a b h)
+/-! ### ⚑ THERE IS NO OLD-FLOOR ⟹ NEW-FLOOR BRIDGE HERE, AND THAT IS THE POINT.
+
+A theorem `leafFamily_CR_of_leafCR` sat here: `LeafCR` at every tag ⟹ the `⊤`-class collision floor on
+`leafFamily D`, argued as "the OLD floor was STRICTLY STRONGER, so re-grounding loses nothing".
+**BOTH ENDS ARE REFUTED.** §1b kills the injective `LeafCR` at a compressing entry hash; §7's
+`leaf_floor_top_false_of_compressing` kills the `⊤`-class floor at the SAME hash. An implication
+between two propositions that are both FALSE at deployed parameters transports nothing, and "loses
+nothing" was FALSE as written — the floor it re-grounded ONTO is refuted at a real BLAKE3 too. So the
+bridge is DELETED rather than restated at the unrestricted class.
+
+What stands in its place is not another rung-1 bridge but this module's OWN poles at its OWN games,
+which is why the bridge could be dropped rather than replaced: §7 prices `EffR` and `EffL` exactly
+(`root_floor_top_false_of_compressing` / `leaf_floor_top_false_of_compressing` against
+`root_floor_bot_vacuous` / `leaf_floor_bot_vacuous`) and refutes the root floor on a broken deployment
+(`brokenQueue_root_floor_top_false`); §7b then lands both layers where the floor is a THEOREM
+(`dequeue_proof_pins_binds_rom`, the keyed ROM, dichotomy intact). -/
 
 /-! ## §3 — the COLLISION GAMES and the DEQUEUE-FORGERY GAME, as first-class objects. -/
 
@@ -949,7 +958,6 @@ theorem tagged_carriers_false_at_bounded_root {tagLeaf : Int → Int} {combine :
   exists_leaf_collision_of_compressing,
   deployed_root_is_family_instance,
   deployed_leaf_is_family_instance,
-  leafFamily_CR_of_leafCR,
   rootCollisionGame_wins_iff,
   leafCollisionGame_wins_iff,
   dequeueForgeryGame_wins_iff,

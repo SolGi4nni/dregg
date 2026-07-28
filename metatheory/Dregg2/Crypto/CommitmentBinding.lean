@@ -73,7 +73,7 @@ collision finder reduces (by the injective packing) to a `compress1` collision f
 `FloorGames.HashCRHardQuant _ Eff` at an EXPLICIT adversary class. NO new crypto: the sole content is
 still the ONE permutation call (primitive #4), now stated as something an adversary must FIND. NOT
 `HashFloorHonesty.CollisionResistant`, which is that floor at `⊤` and itself false
-(`FloorGames.collisionResistant_false_of_compressing`).
+(`FloorGames.hashCRHardQuant_top_false_of_compressing`).
 
 As originally intended: a single-permutation-call compression `compress1 : List ℤ → ℤ`
 (`squeeze ∘ perm ∘ absorb s0`) is collision-resistant: equal outputs force equal input blocks. The

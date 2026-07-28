@@ -1,6 +1,13 @@
 /-
 # `Dregg2.Crypto.IdentityCommitmentRegrounded` — the DEPLOYED hybrid-identity-commitment binding
-RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the PROPER keyed `CollisionResistant` floor.
+RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the KEYED COLLISION GAME
+(`FloorGames.HashCRHardQuant F Eff`, with the adversary class IN THE STATEMENT).
+
+⚑ The intermediate spelling `HashFloorHonesty.CollisionResistant` is DELETED (2026-07-28): it WAS
+`HashCRHardQuant F (fun _ => True)` with the `⊤` folded into a name, and that `⊤` floor is itself
+FALSE for every compressing hash (`FloorGames.hashCRHardQuant_top_false_of_compressing`). So this
+file's `⊤`-class results are stated with the `⊤` written out, and the DISCHARGED binding is §2R's
+keyed-ROM successor, not anything at `⊤`.
 
 ## The gap this closes (the id-re-basing leg of the 07-13 floor sweep)
 
@@ -24,16 +31,23 @@ the deployed gate onto the proper floor, so the id re-basing no longer rides an 
 * **`id_commitment_binds_advantage_bound`** — the advantage-bounded sibling of `id_commitment_binds`: an
   enrollment-equivocation adversary (two DISTINCT key pairs — hence two distinct length-framed preimages,
   by `IdentityCommitment.commit_collision_is_hash_collision` — colliding to one id) IS a `CollisionFinder`,
-  so under the proper `CollisionResistant (idCommitFamily cr)` floor its advantage is `Negl`. "one id ⟹ one
-  key pair" becomes "one id ⟹ one key pair EXCEPT with negligible probability" — a self-carried PQ key
-  cannot impersonate the enrolled one except with negligible advantage. Discharged by
-  `thread_advantage_bound` (the single `CollisionResistant` leaf), reusing the generic keystone.
+  so under the collision floor `HashCRHardQuant (idCommitFamily cr) Eff` its advantage is `Negl`. "one id ⟹
+  one key pair" becomes "one id ⟹ one key pair EXCEPT with negligible probability" — a self-carried PQ key
+  cannot impersonate the enrolled one except with negligible advantage. `Eff` stays a PARAMETER: the
+  discharge is §2R's keyed-ROM floor, because the `⊤` class is refuted at the deployed hash.
 
 ## Non-fake
 
-The floor is SATISFIABLE (`idCommit_exCR_CR`: the injective `IdentityCommitment.exCR` discharges it) and
-LOAD-BEARING (`idCommit_badCR_not_CR`: the COLLIDING `IdentityCommitment.badCR` has an equivocator winning
-on every key, advantage `1`, so its family is NOT CR — mirrors `IdentityCommitment.binding_needs_hashcr`).
+The `⊤`-class floor is SATISFIABLE (`idCommit_exCR_CR`: the injective `IdentityCommitment.exCR` discharges
+it) and REFUTABLE (`idCommit_badCR_not_CR`: the COLLIDING `IdentityCommitment.badCR` has a collision at
+every key, so `hashCRHardQuant_top_false_of_compressing` refutes the floor on it — mirrors
+`IdentityCommitment.binding_needs_hashcr`).
+
+⚑ Read those two together and the `⊤` pole prices itself: it holds exactly for the injective families and
+fails exactly for the compressing ones, so `idCommit_exCR_CR` says `exCR` is NOT a hash, and the deployed
+compressing `BLAKE3(tag, ed ‖ len(ml) ‖ ml)` sits on the refuted side with `badCR`. The re-grounding does
+NOT buy a satisfiable floor at deployed parameters; §2R's keyed-ROM successor is what does.
+
 The old injective-floor consumers are KEPT untouched; this file only ADDS the sibling. `#assert_all_clean`
 (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`, no fresh `axiom`.
 
@@ -53,7 +67,7 @@ namespace Dregg2.Crypto.IdentityCommitmentRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv idFamily)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
@@ -66,7 +80,7 @@ open Dregg2.Crypto.RomCarrierSites
    romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame finderToAdv HashCRHardQuant
-   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+   hashCRHardQuant_top_false_of_compressing idFamily_hashCRHardQuant_top hard_bot_vacuous)
 open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 open Dregg2.Crypto.IdentityCommitment (commit verify_committed)
@@ -85,12 +99,12 @@ def idCommitFamily {Pre Id : Type} [DecidableEq Pre] [DecidableEq Id]
 /-! ## §2 — the ENROLLMENT EQUIVOCATION, as a SECURITY REDUCTION on the DEPLOYED gate.
 
 ⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** `id_commitment_binds_advantage_bound` took
-`hCR : CollisionResistant (idCommitFamily cr)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top`
-proves that IS the collision floor at the UNRESTRICTED class, and `collisionResistant_false_of_compressing`
-proves THAT false for any compressing hash — including the deployed
-`BLAKE3(tag, ed ‖ len(ml) ‖ ml)`. So the exported binding rested on a hypothesis REFUTED at deployed
-parameters. Its `_eff` sibling took a `CollisionFinder` and applied the floor TO IT, so the ENROLLMENT
-never appeared in a `Prop` at all. BOTH ARE DELETED.
+the collision floor at the UNRESTRICTED class — `HashCRHardQuant (idCommitFamily cr) (fun _ => True)`,
+then written `CollisionResistant (idCommitFamily cr)`, a spelling since DELETED — and
+`FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for any compressing hash,
+including the deployed `BLAKE3(tag, ed ‖ len(ml) ‖ ml)`. So the exported binding rested on a hypothesis
+REFUTED at deployed parameters. Its `_eff` sibling took a `CollisionFinder` and applied the floor TO IT,
+so the ENROLLMENT never appeared in a `Prop` at all. BOTH ARE DELETED.
 
 What stands here is stronger than a generic instantiation: the break game is stated on the DEPLOYED
 enrollment gate `IdentityCommitment.verify_committed` — the Rust `==` check — so the adversary's win is
@@ -306,57 +320,53 @@ end RomSuccessor
 
 /-! ## §3 — non-vacuity: the floor is satisfiable AND load-bearing on the id-commitment. -/
 
-/-- **(TOOTH — the floor is SATISFIABLE on the id-commitment.)** The binding instance
-`IdentityCommitment.exCR` (`H () p = p`, injective) satisfies the proper keyed floor — the sibling
-hypothesis is inhabited, unlike the vacuous injective floor. -/
-theorem idCommit_exCR_CR : CollisionResistant (idCommitFamily Dregg2.Crypto.IdentityCommitment.exCR) :=
+/-- **(TOOTH — the `⊤`-class floor is SATISFIABLE on the id-commitment.)** The binding instance
+`IdentityCommitment.exCR` (`H () p = p`, injective) satisfies the keyed collision floor at the
+UNRESTRICTED class — the sibling hypothesis is inhabited, unlike the vacuous injective floor.
+
+⚑ And injectivity is the ONLY way to satisfy it: read against `idCommit_badCR_not_CR` below, a `⊤`
+witness is a statement that the family is not compressing, i.e. NOT a hash. The deployed
+`BLAKE3(tag, ed ‖ len(ml) ‖ ml)` is compressing and so cannot be on this side. -/
+theorem idCommit_exCR_CR :
+    HashCRHardQuant (idCommitFamily Dregg2.Crypto.IdentityCommitment.exCR) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.IdentityCommitment.exCR ()
     Dregg2.Crypto.IdentityCommitment.exCR_hashcr
 
-/-- **(TOOTH — the floor is LOAD-BEARING on the id-commitment.)** The COLLIDING commit
-`IdentityCommitment.badCR` (`H () _ = []`, every framed preimage opens every id) has the equivocator
-`crEquivocator badCR () [1] [2]` winning on EVERY key (`[1] ≠ [2]` yet both hash to `[]`), so its advantage
-is the constant `1` and the family is NOT collision-resistant. So the sibling cannot be discharged on a
-broken commit — the proper floor is a genuine constraint, exactly as `IdentityCommitment.binding_needs_hashcr`
-shows the id stops binding once collision-resistance fails. -/
+/-- **(TOOTH — the `⊤`-class floor is REFUTABLE on the id-commitment.)** The COLLIDING commit
+`IdentityCommitment.badCR` (`H () _ = []`, every framed preimage opens every id) has a collision at EVERY
+key (`[1] ≠ [2]` yet both hash to `[]`), so `hashCRHardQuant_top_false_of_compressing` refutes the floor at
+the UNRESTRICTED class outright. The sibling cannot be discharged on a broken commit, exactly as
+`IdentityCommitment.binding_needs_hashcr` shows the id stops binding once collision-resistance fails —
+and the same argument runs at ANY compressing hash, the deployed one included. -/
 theorem idCommit_badCR_not_CR :
-    ¬ CollisionResistant (idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR) := by
-  intro hCR
-  have hadv : collisionAdv (idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR)
-      (crEquivocator Dregg2.Crypto.IdentityCommitment.badCR () ([1] : List ℕ) [2]) = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR).Key n =>
-        (crEquivocator Dregg2.Crypto.IdentityCommitment.badCR () ([1] : List ℕ) [2]).wins n k)
-        = fun _ => true := by
-      funext k
-      simp [CollisionFinder.wins, crEquivocator, commitRevealFamily,
-        Dregg2.Crypto.IdentityCommitment.badCR]
-    show @winProb ((idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR).Key n)
-        ((idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR).keyFintype n)
-        (fun k => (crEquivocator Dregg2.Crypto.IdentityCommitment.badCR () ([1] : List ℕ) [2]).wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR).Key n)
-      ((idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR).keyFintype n)
-      ((idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR (crEquivocator Dregg2.Crypto.IdentityCommitment.badCR () [1] [2]))
+    ¬ HashCRHardQuant (idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR) (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨([] : List ℕ)⟩
+    (fun _ _ => ⟨([1] : List ℕ), ([2] : List ℕ), ?_, rfl⟩)
+  show ([1] : List ℕ) ≠ [2]
+  decide
 
 /-- **THE RE-GROUNDED GATE FIRES AT A REAL FLOOR WITNESS.** On the injective identity family
-(`HashFloorHonesty.idFamily_CR`), the enrollment-equivocation advantage is negligible — the deployed
-id-re-basing binding runs end-to-end to a genuine `Negl` conclusion at an inhabited floor hypothesis. -/
+(`FloorGames.idFamily_hashCRHardQuant_top`), the enrollment-equivocation advantage is negligible — the
+deployed id-re-basing binding runs end-to-end to a genuine `Negl` conclusion at an inhabited floor
+hypothesis. (Inhabited BECAUSE the family is injective; no compressing family reaches this witness.) -/
 theorem id_commitment_binds_fires (A : Adversary (commitOpenGame idFamily)) :
     Negl (gameAdv (commitOpenGame idFamily) A) :=
   hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
+    idFamily_hashCRHardQuant_top
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
-/-- **(TOOTH — `Eff := ⊤` is FALSE at the deployed compressing id-commit.)** The bare-CR floor at the
-colliding `IdentityCommitment.badCR` is refuted (`idCommit_badCR_not_CR`), and it IS `HashCRHardQuant _ ⊤`
-(`collisionResistant_iff_hashCRHardQuant_top`) — so the `⊤` class is FALSE. The price of `hEff`, stated as
-a theorem: the class cannot be left implicit. -/
+/-- **(TOOTH — `Eff := ⊤` is FALSE at the deployed compressing id-commit.)** The price of `hEff`, stated
+as a theorem: the class cannot be left implicit, because the implicit `⊤` is refuted at the colliding
+`IdentityCommitment.badCR`.
+
+⚑ This IS `idCommit_badCR_not_CR` — nothing is added. It used to bridge a `CollisionResistant` refutation
+across `collisionResistant_iff_hashCRHardQuant_top`; with the `⊤` now written into the tooth's own
+statement, the bridge is the identity and the two names denote one theorem. Both are kept because
+`Verify/FloorRatchetBaseline` grandfathers refuted-floor carriers BY NAME. -/
 theorem idCommit_eff_top_false :
     ¬ HashCRHardQuant (idCommitFamily Dregg2.Crypto.IdentityCommitment.badCR) (fun _ => True) :=
-  fun h => idCommit_badCR_not_CR ((collisionResistant_iff_hashCRHardQuant_top _).mpr h)
+  idCommit_badCR_not_CR
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the floor holds for ANY
 id-commit hash. -/
@@ -378,9 +388,10 @@ example {Ed MlDsa Pre Id : Type} [DecidableEq Pre] [DecidableEq Id] (cr : Commit
     (have : Negl (gameAdv (enrollGame cr frame) A) := hD B hB)
   trivial
 
-/-- **THE `Eff` GATE FIRES AT A REAL FLOOR WITNESS.** On the injective deployed `IdentityCommitment.exCR`
-the `Eff`-floor at `⊤` holds (`idCommit_exCR_CR`, an INHABITED hypothesis, unlike the vacuous injective
-floor), so the `Eff` gate runs end-to-end to a genuine `Negl`. -/
+/-- **THE `Eff` GATE FIRES AT A REAL FLOOR WITNESS.** On the injective `IdentityCommitment.exCR` the
+`Eff`-floor at `⊤` holds (`idCommit_exCR_CR`, an INHABITED hypothesis, unlike the vacuous injective
+floor), so the `Eff` gate runs end-to-end to a genuine `Negl`. Read with `idCommit_eff_top_false`: the
+gate fires HERE and cannot fire at a compressing hash, which is why the deployed discharge is §2R. -/
 theorem id_commitment_binds_eff_fires
     (A : Adversary (enrollGame Dregg2.Crypto.IdentityCommitment.exCR
       Dregg2.Crypto.IdentityCommitment.exFrame)) :
@@ -388,8 +399,7 @@ theorem id_commitment_binds_eff_fires
       Dregg2.Crypto.IdentityCommitment.exFrame) A) :=
   id_commitment_binds_advantage_bound Dregg2.Crypto.IdentityCommitment.exCR
     Dregg2.Crypto.IdentityCommitment.exFrame Dregg2.Crypto.IdentityCommitment.exFrame_inj
-    (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp idCommit_exCR_CR)
+    (fun _ => True) A trivial idCommit_exCR_CR
 
 #assert_all_clean [
   enrollGame_wins_iff,

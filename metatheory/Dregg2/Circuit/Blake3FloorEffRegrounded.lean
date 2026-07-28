@@ -91,7 +91,7 @@ open Dregg2.Circuit.Blake3FloorReduce
    blake3_noCollision_false_of_finite_digest blake3NoCollision_iff_no_break)
 open Dregg2.Circuit.CollisionReduce (OrBreak)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble)
 open Dregg2.Crypto.FloorGames
@@ -193,12 +193,24 @@ definitional equality, no idealization. -/
 theorem deployed_hash_is_family_instance (D : Blake3Deployment) (n : ℕ) :
     D.hash D.deployedTag = (blake3Family D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `Blake3NoCollision` held at every tag it
-would discharge `CollisionResistant (blake3Family D)`. So the old floor was STRICTLY STRONGER than the
-honest computational floor — and, being FALSE at a finite digest, it was an EMPTY hypothesis. -/
-theorem blake3Family_CR_of_noCollision (D : Blake3Deployment)
-    (hCR : ∀ t : D.Tag, Blake3NoCollision (D.hash t)) : CollisionResistant (blake3Family D) :=
-  injective_family_CR (blake3Family D) (fun _ t a b h => hCR t a b h)
+/-! ### ⚑ THERE IS NO OLD-FLOOR ⟹ NEW-FLOOR BRIDGE HERE, AND THAT IS THE POINT.
+
+A theorem `blake3Family_CR_of_noCollision` sat here: `Blake3NoCollision` at every tag ⟹ the `⊤`-class
+collision floor on `blake3Family D`, argued as "the old floor was STRICTLY STRONGER, so nothing is
+lost re-grounding". **BOTH ENDS ARE REFUTED.** §1's `blake3NoCollision_false` kills the injective
+carrier at a finite digest; §7's `blake3_floor_top_false_at_finite_digest` kills the `⊤`-class floor
+at the SAME digest, from the SAME `digestFinite` field. An implication between two propositions that
+are both FALSE at deployed parameters transports nothing, and "nothing is lost" was FALSE as written
+— the floor it re-grounded ONTO is refuted at the real 32-byte BLAKE3 too. That is this file's own
+finding turned on this file: a bridge whose conclusion is refuted is the `OrBreak` costume in the
+other direction. So it is DELETED rather than restated at the unrestricted class.
+
+What stands in its place is not another rung-1 bridge but this module's OWN poles at its OWN game,
+which is why the bridge could be dropped rather than replaced: §7 prices `Eff` exactly
+(`blake3_floor_top_false_at_finite_digest` against `blake3_floor_bot_vacuous`) and refutes both the
+collision floor and the OPENING floor on a broken deployment (`brokenBlake3_floor_top_false`,
+`brokenBlake3_opening_top_false`); §8 then lands the floor where it is a THEOREM
+(`blake3_commit_opens_rom`, the keyed ROM birthday bound). -/
 
 /-! ## §3 — the COLLISION GAME and the COMMIT-OPENING GAME. -/
 
@@ -498,7 +510,6 @@ theorem blake3Rom_nonNegl_opener_excluded (D : Blake3Deployment) (tagDec : Decid
   no_collision_hypothesis_false_at_finite_digest,
   blake3NoCollision_false,
   deployed_hash_is_family_instance,
-  blake3Family_CR_of_noCollision,
   blake3CollisionGame_wins_iff,
   commitOpeningGame_wins_iff,
   opening_wins_imp,

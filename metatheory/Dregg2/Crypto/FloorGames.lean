@@ -41,9 +41,9 @@ shape**: it is a theorem about EVERY unrestricted-adversary formulation, this on
 compressing MSIS instance solutions exist at every coin, so `MSISHardQuant F ⊤` is FALSE
 (`msisHardQuant_top_false_of_compressing`), exactly as `Lattice.MSISHard` is.
 
-⚑ **This refutes the repair the sweep itself named.** `HashFloorHonesty.CollisionResistant F` is
-definitionally `HashCRHardQuant F ⊤` (`collisionResistant_iff_hashCRHardQuant_top`), so
-`collisionResistant_false_of_compressing` proves the "proper keyed computational floor" — the pattern
+⚑ **This refutes the repair the sweep itself named.** `HashFloorHonesty.CollisionResistant F` WAS
+`HashCRHardQuant F ⊤` under another name, and `hashCRHardQuant_top_false_of_compressing` proves the
+"proper keyed computational floor" — the pattern
 `VACUITY-SWEEP.md` §Finding-1 prescribes as *"the correct pattern already in the tree"* — is itself FALSE
 at deployed parameters, for the same pigeonhole reason, laundered through `Classical.choice`. A keyed
 family does not fix it. Copying that pattern to the lattice floors would have been the FOURTH costume.
@@ -275,6 +275,31 @@ theorem not_hard_top_of_always_solvable (G : Game) (hne : ∀ l, Nonempty (G.Ans
     exact @winProb_top _ (G.instFin l) (G.instNe l)
   rw [hone] at h
   exact not_negl_one h
+
+/-- **THE POSITIVE TWIN — a game whose instances are NEVER solvable HAS the unrestricted floor.** If no
+answer wins at any instance the solvable fraction is `0`, so even the choice adversary gets nothing.
+
+⚑ Read it with its twin above and the range is the whole story: the `⊤` floor holds exactly when
+nothing can be found, and fails as soon as something can. That is why a `⊤`-class floor is never a
+security assumption — it is a restatement of "no solution exists" — and why every SATISFIABILITY
+witness for a `⊤` floor in this tree is an injective (i.e. non-compressing, i.e. not-a-hash) family.
+Added 2026-07-28 to carry the satisfiability poles that `HashFloorHonesty.injective_family_CR` and
+`.idFamily_CR` used to carry against the deleted `CollisionResistant`. No `hne` is needed here — the
+twin needs it only to build the choice adversary, and an unsolvable game needs no adversary built. -/
+theorem hard_top_of_never_solvable (G : Game)
+    (hns : ∀ l (i : G.Inst l) (a : G.Ans l), ¬ G.wins l i a) : Hard G (fun _ => True) := by
+  intro A _
+  have hzero : gameAdv G A = fun _ => (0 : ℝ) := by
+    funext l
+    show @winProb (G.Inst l) (G.instFin l) (A.hit l) = 0
+    have hall : A.hit l = (fun _ => false) := by
+      funext i
+      rw [Bool.eq_false_iff, ne_eq, Adversary.hit_eq_true]
+      exact hns l i (A.run l i)
+    rw [hall]
+    exact @winProb_bot _ (G.instFin l)
+  rw [hzero]
+  exact negl_zero
 
 /-! ## §3 — MSIS: the search floor, with `IsMSISSolution` IN the statement. -/
 
@@ -535,13 +560,18 @@ of the real function, so the advantage cannot be satisfied by an unrelated `adv`
 the `CollisionResistant` treatment."*
 
 Half of that is right: it carries its problem, and this file gives the lattice floors exactly that. The
-other half is FALSE, and §2 proves it. `CollisionResistant F` quantifies over ALL `CollisionFinder`s, and
+other half is FALSE, and §2 proves it. `CollisionResistant F` quantified over ALL `CollisionFinder`s, and
 a compressing family has a collision at every key, so the choice-finder wins with probability `1`. The
 "proper computational floor" is FALSE at deployed parameters — the identical fate its own file proved for
-the injective floors it replaced, reached by the identical pigeonhole, one `Classical.choice` later. -/
+the injective floors it replaced, reached by the identical pigeonhole, one `Classical.choice` later.
+
+⚑ 2026-07-28: that `def` is DELETED (`HashFloorHonesty` §2 records what replaced it). It was the `⊤`
+instance of THIS section's floor wearing a name, and the refutation, the satisfiability pole and the
+injectivity bridge it carried are all restated below with `(fun _ => True)` written out. The past tense
+above is deliberate: the object is gone, the finding stands. -/
 
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv)
+  (KeyedHashFamily CollisionFinder collisionAdv)
 
 /-- **THE COLLISION GAME.** Instances are keys; answers are input pairs; the adversary WINS iff its pair is
 a genuine collision — distinct inputs, equal hashes. This is `HashFloorHonesty.CollisionFinder.wins`
@@ -589,51 +619,78 @@ the keyed family under a uniformly sampled key only with negligible probability.
 def HashCRHardQuant (F : KeyedHashFamily) (Eff : Adversary (hashGame F) → Prop) : Prop :=
   Hard (hashGame F) Eff
 
-/-- **`CollisionResistant` IS this floor at the unrestricted class.** The sweep's prescribed repair, named
-in the schema: `CollisionResistant F ↔ HashCRHardQuant F ⊤`. Which is why the next theorem is fatal to it
-and not to the repaired floor. -/
-theorem collisionResistant_iff_hashCRHardQuant_top (F : KeyedHashFamily) :
-    CollisionResistant F ↔ HashCRHardQuant F (fun _ => True) := by
-  constructor
-  · intro hCR A _
-    have h := hCR ⟨A.run⟩
-    rw [collisionAdv_eq_gameAdv] at h
-    exact h
-  · intro hHard A
-    rw [collisionAdv_eq_gameAdv]
-    exact hHard (finderToAdv A) trivial
+/-! ### ⚑ `HashFloorHonesty.CollisionResistant` WAS `HashCRHardQuant F ⊤`, AND IS DELETED (2026-07-28).
 
-/-- **⚑ THE SWEEP'S PRESCRIBED REPAIR IS ITSELF FALSE AT DEPLOYED PARAMETERS.** If the keyed family is
-COMPRESSING — at every parameter and key some two distinct inputs collide, which is the defining property
-of a hash and is forced by pigeonhole whenever `|Input| > |Out|` — then `CollisionResistant F` is FALSE.
+`collisionResistant_iff_hashCRHardQuant_top` proved the sweep's prescribed repair IS this floor at the
+unrestricted class. That `↔` was the whole indictment, and once it is believed the `def` is a SPELLING
+of `HashCRHardQuant F (fun _ => True)` that hides the `⊤` — which is precisely the field a reader has
+to see to price the assumption. So the `def` is gone, the `↔` with it (an iff needs two sides), and
+the four declarations that stood on it are restated below AT `⊤`, written out.
 
-The `Classical.choice` finder that outputs a collision at every key is a `CollisionFinder`: that structure
-bounds nothing. Its advantage is the constant `1`.
+Nothing about the refutation is softened by the move; it is strengthened, because `⊤` no longer needs
+a lemma to become visible. What IS lost is a census gate — see `Verify/FloorCensus.sentinelFloors`. -/
+
+/-- **⚑ THE SWEEP'S PRESCRIBED REPAIR IS FALSE AT DEPLOYED PARAMETERS — THE TOOTH.** If the keyed family
+is COMPRESSING — at every parameter and key some two distinct inputs collide, which is the defining
+property of a hash and is forced by pigeonhole whenever `|Input| > |Out|` — then the collision floor at
+the UNRESTRICTED class is FALSE.
+
+The `Classical.choice` adversary that outputs a collision at every key is an `Adversary (hashGame F)`:
+that structure bounds nothing. Its advantage is the constant `1`.
 
 `HashFloorHonesty`'s own header says of its predecessor: *"the pre-existing non-vacuity witnesses give
 FALSE COMFORT — they satisfy the floor with a toy injective sponge, while the REAL compressing Poseidon2
-refutes it."* `idFamily_CR` (its satisfiability tooth) is the identity hash. `mod2Family` — its own
-example of a genuinely compressing family — is NOT collision-resistant under this theorem, though
-`mod2_dumb_negligible` shows only that ONE dumb finder fails on it. The sentence applies to the successor,
-for the third time in a row. This is the reason §3–§7 do not simply copy the pattern. -/
-theorem collisionResistant_false_of_compressing (F : KeyedHashFamily) (hin : Nonempty F.Input)
+refutes it."* Its satisfiability tooth was the identity hash. `mod2Family` — its own example of a
+genuinely compressing family — refutes this floor (below), though `mod2_dumb_negligible` shows only that
+ONE dumb finder fails on it. The sentence applied to the successor, for the third time in a row, and is
+why §3–§7 do not simply copy the pattern.
+
+⚑ This is `collisionResistant_false_of_compressing` — the TOOTH — CARRIED THROUGH the deletion of its
+old subject, not lost with it. Same proof, same content, `⊤` in the statement instead of behind a name. -/
+theorem hashCRHardQuant_top_false_of_compressing (F : KeyedHashFamily) (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
-    ¬ CollisionResistant F := by
-  rw [collisionResistant_iff_hashCRHardQuant_top]
+    ¬ HashCRHardQuant F (fun _ => True) := by
   refine not_hard_top_of_always_solvable (hashGame F) (fun _ => ⟨(hin.some, hin.some)⟩) ?_
   intro l k
   obtain ⟨x, y, hne, heq⟩ := hcol l k
   exact ⟨(x, y), hne, heq⟩
 
+/-- **THE SATISFIABLE POLE, AND ITS PRICE.** A per-key-INJECTIVE family has the `⊤`-class floor: no
+adversary ever wins, so every advantage is `0`. Read with the tooth above this is the whole shape of the
+`⊤` floor — it holds for injective families and fails for compressing ones, with nothing in between —
+so a satisfiability witness at `⊤` is a statement that the family is not a hash.
+
+⚑ Carries `HashFloorHonesty.injective_family_CR` through the deletion of `CollisionResistant`. -/
+theorem hashCRHardQuant_top_of_injective (F : KeyedHashFamily)
+    (hinj : ∀ l (k : F.Key l), Function.Injective (F.H l k)) :
+    HashCRHardQuant F (fun _ => True) :=
+  hard_top_of_never_solvable (hashGame F) (fun l k _p hp => hp.1 (hinj l k hp.2))
+
+/-- **(TOOTH — SATISFIABLE, evaluated.)** The identity family has the `⊤`-class floor.
+⚑ Carries `HashFloorHonesty.idFamily_CR`. -/
+theorem idFamily_hashCRHardQuant_top :
+    HashCRHardQuant Dregg2.Circuit.HashFloorHonesty.idFamily (fun _ => True) :=
+  hashCRHardQuant_top_of_injective _ (fun _ _ _ _ h => h)
+
+/-- **(TOOTH — REFUTABLE, evaluated.)** The broken (constant-`0`) family does NOT have the `⊤`-class
+floor: `(0, 1)` collides at every key. So the floor is load-bearing, not vacuously true.
+⚑ Carries `HashFloorHonesty.brokenFamily_not_CR`. -/
+theorem brokenFamily_not_hashCRHardQuant_top :
+    ¬ HashCRHardQuant Dregg2.Circuit.HashFloorHonesty.brokenFamily (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨(0 : ℤ)⟩
+    (fun _ _ => ⟨(0 : ℤ), (1 : ℤ), ?_, rfl⟩)
+  show (0 : ℤ) ≠ (1 : ℤ)
+  norm_num
+
 /-- **THE REFUTATION FIRES ON A COMPRESSING FAMILY.** `HashFloorHonesty.mod2Family` (`H x = x % 2`) is the
 tree's own example of a genuinely compressing hash — `mod2_collision_exists` exhibits the collision. So its
-`CollisionResistant` floor is FALSE: `mod2_dumb_negligible` proved a DUMB finder has advantage `0`, which
-is true and says nothing about the floor, because the floor quantifies over ALL finders including the one
-that outputs `(0, 2)`. Satisfiable-by-a-toy, false-at-a-real-hash — the sweep's own diagnosis, applied to
-the sweep's own repair. -/
-theorem mod2Family_not_CR :
-    ¬ CollisionResistant Dregg2.Circuit.HashFloorHonesty.mod2Family := by
-  refine collisionResistant_false_of_compressing _ ⟨(0 : ℤ)⟩ (fun l k => ⟨(0 : ℤ), (2 : ℤ), ?_, ?_⟩)
+`⊤`-class floor is FALSE: `mod2_dumb_negligible` proved a DUMB finder has advantage `0`, which is true and
+says nothing about the floor, because the floor quantifies over ALL adversaries including the one that
+outputs `(0, 2)`. Satisfiable-by-a-toy, false-at-a-real-hash — the sweep's own diagnosis, applied to the
+sweep's own repair. ⚑ Carries `mod2Family_not_CR`. -/
+theorem mod2Family_not_hashCRHardQuant_top :
+    ¬ HashCRHardQuant Dregg2.Circuit.HashFloorHonesty.mod2Family (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨(0 : ℤ)⟩ (fun l k => ⟨(0 : ℤ), (2 : ℤ), ?_, ?_⟩)
   · show (0 : ℤ) ≠ (2 : ℤ)
     norm_num
   · simp [Dregg2.Circuit.HashFloorHonesty.mod2Family]
@@ -643,13 +700,13 @@ theorem mod2Family_not_CR :
 `HashFloorHonesty.equivocation_advantage_negligible` and `.friFold_advantage_negligible` were the
 only two declarations in the tree that CONSUMED `CollisionResistant` as a security hypothesis rather
 than talking about it. Both are DELETED there and restated here at an EXPLICIT adversary class, which
-is the whole difference between rung 1 and rung 2: `CollisionResistant F` is `HashCRHardQuant F ⊤`
-(`collisionResistant_iff_hashCRHardQuant_top`) and `⊤` is refuted for every compressing family by the
+is the whole difference between rung 1 and rung 2: `CollisionResistant F` WAS `HashCRHardQuant F ⊤`
+(and is now DELETED in favour of writing that out) and `⊤` is refuted for every compressing family by the
 theorem immediately above, so the two templates the FRI/STARK consumers were told to re-derive
 through were conditioned on a hypothesis no deployed hash satisfies.
 
 ⚑ `Eff` IS THE RESIDUAL AND IT IS NOT DISCHARGED HERE. Its poles are priced in this file — `⊤` is
-FALSE for a compressing family (`collisionResistant_false_of_compressing`), `⊥` is vacuous
+FALSE for a compressing family (`hashCRHardQuant_top_false_of_compressing`), `⊥` is vacuous
 (`hard_bot_vacuous`), and `solvableIsAFiniteSearch` (§8) proves `Eff := Computable` cannot help
 because what disqualifies brute force is COST, which this tree has no model of. The one class with a
 PROVED bound is `RomQueryFloor.RomEff F Q` — query-bounded ROM adversaries, where
@@ -823,9 +880,12 @@ def solvableIsAFiniteSearch (G : Game) (hfin : ∀ l, Fintype (G.Ans l)) (l : �
   dlHardQuant_top_false,
   hashGame_wins_iff,
   collisionAdv_eq_gameAdv,
-  collisionResistant_iff_hashCRHardQuant_top,
-  collisionResistant_false_of_compressing,
-  mod2Family_not_CR,
+  hard_top_of_never_solvable,
+  hashCRHardQuant_top_false_of_compressing,
+  hashCRHardQuant_top_of_injective,
+  idFamily_hashCRHardQuant_top,
+  brokenFamily_not_hashCRHardQuant_top,
+  mod2Family_not_hashCRHardQuant_top,
   equivocation_advantage_negligible_eff,
   friFold_advantage_negligible_eff,
   hashCRHardQuant_bot_vacuous,

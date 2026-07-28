@@ -1,6 +1,7 @@
 /-
 # `Dregg2.Crypto.HermineHashCRRegrounded` — the Hermine commit-reveal `HashCR` consumers RE-GROUNDED
-off the VACUOUS injective floor onto the PROPER keyed `CollisionResistant` floor.
+off the VACUOUS injective floor onto the keyed collision floor `HashCRHardQuant`, whose ADVERSARY CLASS
+is written out at every use.
 
 ## The bug this closes (the commit-reveal half of the 07-13 floor sweep)
 
@@ -10,9 +11,16 @@ commit-reveal (`|C| < |W|` — pigeonhole forces two reveals to one commitment).
 binding consumer conditioned on it — `commitment_binding`, `equivocation_breaks_hashcr`,
 `concurrent_forgery_breaks_hashcr_or_msis`, `concurrent_unforgeable_reduces`, and the DEPLOYED-reachable
 `RevocationSoundness` / `IdentityCommitment` reuses of the SAME `CommitReveal`/`HashCR` — is VACUOUSLY
-TRUE at real parameters. `HashFloorHonesty` landed the honest floor (`CollisionResistant`) and the
-advantage template; `FloorRegroundedConsumers` moved the STARK/FRI side. This file moves the Hermine
-COMMIT-REVEAL side.
+TRUE at real parameters. `HashFloorHonesty` landed the honest keyed collision GAME and the advantage
+template; `FloorRegroundedConsumers` moved the STARK/FRI side. This file moves the Hermine COMMIT-REVEAL
+side.
+
+⚑ **THE FLOOR IS `FloorGames.HashCRHardQuant F Eff`, AND `Eff` IS SPELLED AT EVERY USE SITE.** The
+sweep's first repair shipped a `def CollisionResistant F` that was this floor at the unrestricted class
+under a name that HID the class; it is DELETED (2026-07-28), so every `⊤` below is written out as
+`fun _ => True` in the statement. That matters rather than being cosmetic:
+`FloorGames.hashCRHardQuant_top_false_of_compressing` refutes that class at every compressing — i.e.
+real — commit hash, so a statement carrying it is priced the moment it is read.
 
 ## The re-grounding
 
@@ -20,13 +28,15 @@ COMMIT-REVEAL side.
   becomes a `KeyedHashFamily` (`Input = W`, `Out = C`, `H _ _ w = cr.H i w`). This is the keyed hash the
   honest collision game lives over.
 * **`commitRevealFamily_CR_of_hashcr`** — the OLD-floor ⟹ NEW-floor bridge: if the injective `HashCR cr`
-  held it would discharge `CollisionResistant (commitRevealFamily cr i)` (via `injective_family_CR`), so
-  the old floor was STRICTLY STRONGER than needed — and, being false for a compressing commitment, empty.
+  held it would discharge `HashCRHardQuant (commitRevealFamily cr i) (fun _ => True)` (via
+  `hashCRHardQuant_top_of_injective`), so the old floor was STRICTLY STRONGER than even that. It does NOT
+  follow that re-grounding onto the `⊤` class loses nothing: that class is refuted at a compressing
+  commitment too. The load-bearing statements are the `_advantage_bound` forms at an explicit `Eff`.
 * **`commitOpenGame` / `openToFinder` / `hermine_commitment_binding_advantage_bound`** — the
   commitment-opening break, as a SECURITY REDUCTION. ⚑ THIS REPLACES two earlier exports that are now
-  DELETED, not kept beside it: the bare-CR form took `CollisionResistant F`, which
-  `collisionResistant_iff_hashCRHardQuant_top` proves IS the floor at the UNRESTRICTED class and
-  `collisionResistant_false_of_compressing` proves FALSE for every compressing (i.e. real) commit hash —
+  DELETED, not kept beside it: the bare-CR form took the floor at the UNRESTRICTED class — then spelled
+  `CollisionResistant F`, a `def` since deleted for hiding its `⊤` — which
+  `hashCRHardQuant_top_false_of_compressing` proves FALSE for every compressing (i.e. real) commit hash —
   a refuted hypothesis, exactly the disease the sweep exists to name; and its `_eff` sibling took a
   `CollisionFinder` and applied the floor TO IT, so hypothesis and conclusion were the same object and the
   OPENING never appeared in a `Prop`. The replacement makes the opening a `Game` (an adversary that
@@ -85,12 +95,16 @@ reduction is efficient" side conditions, a PARAMETER because this tree has no co
 
 ## Non-fake
 
-The floor is SATISFIABLE (`commitRevealFamily_CR_of_hashcr` on the binding `HermineHintMLWE.exCR`
-discharges it) and LOAD-BEARING (`badCR_family_not_CR`: the COLLIDING commit-reveal `HermineHintMLWE.badCR`
-has an equivocator winning on every key, advantage `1`, so its family is NOT CR — the siblings cannot be
-discharged there). The concrete `crEquivocator` is a genuine collision finder, not a relabel. Old
-injective-floor consumers KEPT untouched; siblings ADDED. `#assert_all_clean`
-(⊆ {propext, Classical.choice, Quot.sound}); no `sorry`, no fresh `axiom`.
+The `⊤`-class floor is SATISFIABLE (`commitRevealFamily_CR_of_hashcr` on the binding
+`HermineHintMLWE.exCR` discharges it) and REFUTABLE (`badCR_family_not_CR`: the COLLIDING commit-reveal
+`HermineHintMLWE.badCR` collides at every key — `7 ≠ 8`, both commit to `0` — so its `⊤` floor is FALSE
+and the siblings cannot be discharged there). ⚑ Both poles are stated with the class written out, and
+read together they say what the `⊤` floor IS: it holds for injective families and fails for compressing
+ones, nothing between — so the satisfiability witness is a statement that `exCR` is not a hash, never
+evidence about a deployed commitment. The concrete `crEquivocator` is a genuine collision finder, not a
+relabel, and is the finder four downstream lanes instantiate. Old injective-floor consumers KEPT
+untouched; siblings ADDED. `#assert_all_clean` (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`,
+no fresh `axiom`.
 
 ## Coordination
 
@@ -110,13 +124,13 @@ namespace Dregg2.Crypto.HermineHashCRRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero negl_add not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR badCR exCR exCR_hashcr)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit msisGame MSISFamily MSISHardQuant Hard
    hard_bot_vacuous msisHardQuant_top_false_of_compressing
    hashGame finderToAdv HashCRHardQuant collisionAdv_eq_gameAdv
-   collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing)
+   hashCRHardQuant_top_of_injective hashCRHardQuant_top_false_of_compressing)
 open Dregg2.Crypto.HermineSelfTargetMSIS
   (IsSelfTargetMSISSolution augmented augmented_apply selftarget_extract_nonzero instShortNormProd)
 open scoped Dregg2.Crypto.HermineSelfTargetMSIS
@@ -144,26 +158,35 @@ def commitRevealFamily {Idx W C : Type} [DecidableEq W] [DecidableEq C]
   outDecEq := inferInstance
 
 /-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `HashCR cr` held (per-index injectivity of the
-commit map), it would discharge the proper `CollisionResistant (commitRevealFamily cr i)` (no collisions ⟹
-every finder's advantage `0`, via `injective_family_CR`). So the OLD injective floor is STRICTLY STRONGER
-than the honest computational floor — and, being FALSE for a compressing commitment
-(`HashFloorHonesty.hashCR_false_of_compressing`), it was an empty hypothesis; the proper floor is the
-satisfiable object the same binding reductions actually need. -/
+commit map), it would discharge the collision floor at the UNRESTRICTED class,
+`HashCRHardQuant (commitRevealFamily cr i) (fun _ => True)` (no collisions ⟹ every adversary's advantage
+`0`, via `hashCRHardQuant_top_of_injective`). So the OLD injective floor is STRICTLY STRONGER than that —
+and, being FALSE for a compressing commitment (`HashFloorHonesty.hashCR_false_of_compressing`), it was an
+empty hypothesis.
+
+⚑ **The `⊤` is now WRITTEN OUT in the conclusion rather than hidden behind a name.** It used to read
+`CollisionResistant (commitRevealFamily cr i)`; that `def` was a SPELLING of this exact statement and is
+DELETED, because a reader has to see the adversary class to price the assumption. Seeing it prices this
+bridge honestly: `hashCRHardQuant_top_false_of_compressing` refutes the `⊤` floor at every compressing
+commit hash too, so the conclusion here is NOT a floor a real commitment satisfies — it is the honest
+record that the old hypothesis implied even this, and the load-bearing statements are §2's
+`_advantage_bound` forms at an explicit `Eff`. -/
 theorem commitRevealFamily_CR_of_hashcr {Idx W C : Type} [DecidableEq W] [DecidableEq C]
     (cr : CommitReveal Idx W C) (i : Idx) (hcr : HashCR cr) :
-    CollisionResistant (commitRevealFamily cr i) :=
-  injective_family_CR (commitRevealFamily cr i) (fun _ _ w w' h => hcr i w w' h)
+    HashCRHardQuant (commitRevealFamily cr i) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (commitRevealFamily cr i) (fun _ _ w w' h => hcr i w w' h)
 
 /-! ## §2 — the commitment OPENING, as a SECURITY REDUCTION.
 
 ⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** Two theorems stood here:
 
   * `hermine_commitment_binding_advantage_bound (hCR : CollisionResistant F) (equivocator :
-    CollisionFinder F)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves
-    `CollisionResistant F` IS the collision floor at the UNRESTRICTED adversary class, and
-    `collisionResistant_false_of_compressing` proves THAT false for any compressing family — every real
-    commit hash. So the hypothesis was REFUTED at deployed parameters and the theorem transported no
-    security, which is the same defect it was written to repair, one costume along.
+    CollisionFinder F)`. That hypothesis was the collision floor at the UNRESTRICTED adversary class —
+    `HashCRHardQuant F (fun _ => True)` — behind a `def` that hid the class (itself since DELETED for
+    that reason), and `FloorGames.hashCRHardQuant_top_false_of_compressing` proves that class false for
+    any compressing family — every real commit hash. So the hypothesis was REFUTED at deployed
+    parameters and the theorem transported no security, which is the same defect it was written to
+    repair, one costume along.
   * its `_eff` sibling, which took a `CollisionFinder F` and applied the floor to it. Hypothesis and
     conclusion were the SAME object: there was no game about the OPENING at all, so the deployed break —
     "two reveals both open the published commitment" — never appeared in a `Prop`.
@@ -242,15 +265,16 @@ theorem hermine_commitment_binding_advantage_bound (F : KeyedHashFamily)
   negl_of_le (fun l => (gameAdv_mem_unit (commitOpenGame F) A l).1)
     (open_adv_le F A) (hD _ hEff)
 
-/-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing family.)** At the unrestricted class the honest floor
-IS `CollisionResistant F` (`collisionResistant_iff_hashCRHardQuant_top`), which is FALSE for any
-compressing commit hash (`collisionResistant_false_of_compressing`). This is the price of restricting the
-class, stated as a theorem — and it is precisely why the DELETED bare-CR export bought nothing. -/
+/-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing family.)** The floor at the unrestricted class is
+FALSE for any compressing commit hash (`hashCRHardQuant_top_false_of_compressing`: the `Classical.choice`
+adversary that outputs a collision at every key is in the class and wins with probability `1`). This is
+the price of restricting the class, stated as a theorem — and it is precisely why the DELETED bare-CR
+export bought nothing. ⚑ The class is `fun _ => True` in the statement now; it used to hide inside the
+name `CollisionResistant F`, which is why that `def` is gone. -/
 theorem hermine_binding_eff_top_false_of_compressing {F : KeyedHashFamily} (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
     ¬ HashCRHardQuant F (fun _ => True) :=
-  fun h => collisionResistant_false_of_compressing F hin hcol
-    ((collisionResistant_iff_hashCRHardQuant_top F).mpr h)
+  hashCRHardQuant_top_false_of_compressing F hin hcol
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the floor holds for ANY family,
 including a broken one. Recorded HONESTLY: a satisfiability witness is worth nothing without the refutation
@@ -621,32 +645,34 @@ def crEquivocator {Idx W C : Type} [DecidableEq W] [DecidableEq C]
     CollisionFinder (commitRevealFamily cr i) where
   find := fun _ _ => (w, w')
 
-/-- **(TOOTH — the floor is SATISFIABLE on a Hermine commit-reveal.)** The binding instance
-`HermineHintMLWE.exCR` (`H i w = (i, w)`, injective) satisfies the proper keyed floor — the sibling
-hypotheses are inhabited, unlike the vacuous injective floor. -/
-theorem exCR_family_CR : CollisionResistant (commitRevealFamily exCR 3) :=
+/-- **(TOOTH — the `⊤`-class floor is SATISFIABLE on a Hermine commit-reveal.)** The binding instance
+`HermineHintMLWE.exCR` (`H i w = (i, w)`, injective) satisfies the keyed collision floor at the
+UNRESTRICTED class — the sibling hypotheses are inhabited, unlike the vacuous injective floor.
+
+⚑ **Priced, now that the `⊤` is written out instead of spelled `CollisionResistant`.** By
+`hashCRHardQuant_top_false_of_compressing` the `⊤` floor holds for injective families and FAILS for
+compressing ones with nothing in between, so this satisfiability witness says exactly that `exCR` is
+NOT A HASH — it pairs the family into `ℕ × ℤ` and compresses nothing. It is a non-emptiness check and
+never evidence about a deployed commitment. -/
+theorem exCR_family_CR : HashCRHardQuant (commitRevealFamily exCR 3) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr exCR 3 exCR_hashcr
 
 /-- **(TOOTH — the floor is LOAD-BEARING on a Hermine commit-reveal.)** The COLLIDING commit-reveal
-`HermineHintMLWE.badCR` (`H _ _ = 0`, every reveal opens every commitment) has the `crEquivocator 5 7 8`
-winning on EVERY key (`7 ≠ 8` yet both hash to `0`), so its advantage is the constant `1` and the family
-is NOT collision-resistant. So the siblings cannot be discharged on a broken commit-reveal — the proper
-floor is a genuine constraint, and the re-grounded binding is non-vacuous. -/
-theorem badCR_family_not_CR : ¬ CollisionResistant (commitRevealFamily badCR 5) := by
-  intro hCR
-  have hadv : collisionAdv (commitRevealFamily badCR 5) (crEquivocator badCR 5 (7 : ℤ) 8)
-      = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (commitRevealFamily badCR 5).Key n =>
-        (crEquivocator badCR 5 (7 : ℤ) 8).wins n k) = fun _ => true := by
-      funext k
-      simp [CollisionFinder.wins, crEquivocator, commitRevealFamily, badCR]
-    show @winProb ((commitRevealFamily badCR 5).Key n) ((commitRevealFamily badCR 5).keyFintype n)
-        (fun k => (crEquivocator badCR 5 (7 : ℤ) 8).wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((commitRevealFamily badCR 5).Key n) ((commitRevealFamily badCR 5).keyFintype n)
-      ((commitRevealFamily badCR 5).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR (crEquivocator badCR 5 7 8))
+`HermineHintMLWE.badCR` (`H _ _ = 0`, every reveal opens every commitment) collides at EVERY key —
+`7 ≠ 8` yet both commit to `0`, the very pair `crEquivocator badCR 5 7 8` hands back — so the
+`⊤`-class floor is FALSE there and the siblings cannot be discharged on a broken commit-reveal. The
+floor is a genuine constraint, and the re-grounded binding is non-vacuous.
+
+⚑ The `⊤` is in the statement now (it used to read `¬ CollisionResistant (commitRevealFamily badCR 5)`),
+so this tooth reads as what it is: a refutation of the UNRESTRICTED-class floor, which
+`hashCRHardQuant_top_false_of_compressing` refutes at every compressing commit hash — deployed ones
+included, not just this deliberately broken one. -/
+theorem badCR_family_not_CR : ¬ HashCRHardQuant (commitRevealFamily badCR 5) (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨(0 : ℤ)⟩
+    (fun _ _ => ⟨(7 : ℤ), (8 : ℤ), ?_, ?_⟩)
+  · show (7 : ℤ) ≠ (8 : ℤ)
+    norm_num
+  · rfl
 
 #assert_all_clean [
   commitRevealFamily_CR_of_hashcr,

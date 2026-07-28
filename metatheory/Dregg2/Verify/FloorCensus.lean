@@ -110,7 +110,38 @@ def ourModule (m : Name) : Bool :=
   s.startsWith "Dregg2" || s.startsWith "Market" || s.startsWith "Bfv"
     || s.startsWith "Metatheory" || s.startsWith "Polis"
 
-/-- SENTINELS: floors the census must SEE for its report to mean anything.
+/-- ⚑ **A GATE WAS REMOVED HERE ON 2026-07-28, KNOWINGLY, AND THIS IS THE RECORD.**
+
+`Dregg2.Circuit.HashFloorHonesty.CollisionResistant` was a named sentinel with `needRefut = true`.
+The `def` is now DELETED (it was `HashCRHardQuant F ⊤` under a name that hid the `⊤`, and that floor
+is refuted for every compressing family), so the entry had to go with it: BOTH instruments — this
+census and `FloorRatchet` — FAIL CLOSED with a hard error on a sentinel name that does not resolve,
+so leaving the entry would red the root for every lane rather than gate anything.
+
+**WHAT IS NO LONGER CAUGHT.** Nothing rediscovers this floor's SHAPE. Pass 0 finds injectivity-shaped
+`Prop` defs; `CollisionResistant`'s body was `∀ A : CollisionFinder F, Negl (collisionAdv F A)`,
+which is not injectivity-shaped, so the derived half of the census never saw it — the sentinel was
+the ONLY thing gating it. So a future author can reintroduce a floor of exactly this shape, under any
+name, and neither instrument will say a word. That is a real weakening and it is the cost.
+
+**WHY NOTHING COULD STAND IN.** `Crypto.FloorGames.HashCRHardQuant` cannot take the slot: at a
+restricted `Eff` it IS the honest rung 2, and this list is keyed by head constant, so a
+`needRefut` entry for it would record `¬ HashCRHardQuant F ⊤` as a refutation of the floor AT EVERY
+`Eff` — the instrument would then report every honest rung-2 carrier as sitting on a refuted floor,
+which is false. A gate that lies is worse than an absent one.
+
+**WHO DECIDED.** ember, asked directly on 2026-07-27, answering that the `def` goes now — a
+check-weakening is on `CLAUDE.md`'s short list reserved for the operator, it was put to them as one,
+and this is the authorized outcome, not an accident and not a drift.
+
+**WHAT WOULD RESTORE IT.** A DERIVED detector for the shape `∀ A : <finder-like structure> F,
+Negl (<advantage> F A)` — i.e. teaching Pass 0 to recognise "universally quantified over an
+unrestricted adversary structure with a negligible advantage" the way it already recognises
+injectivity. That is strictly better than a name-keyed sentinel, because it would also catch the
+next author who writes the same floor with a fresh structure and a fresh name; a replacement
+sentinel entry would only catch the one who reuses this one.
+
+SENTINELS: floors the census must SEE for its report to mean anything.
 The `Bool` is `true` iff the tree holds a refutation Pass 0b must rediscover
 (BindingHashCR is refuted only at a chosen bad instance — presence-required only). -/
 def sentinelFloors : List (Name × Bool) :=
@@ -120,7 +151,6 @@ def sentinelFloors : List (Name × Bool) :=
   , (`Dregg2.Circuit.StateCommit.logHashInjective, true)
   , (`Dregg2.Circuit.StateCommit.cellLeafInjective, true)
   , (`Dregg2.Crypto.Lattice.MSISHard, true)
-  , (`Dregg2.Circuit.HashFloorHonesty.CollisionResistant, true)
   , (`Dregg2.Exec.Factory.HashInjective, true)
   , (`Dregg2.Crypto.CommitmentBinding.Compress1CR, true)
   , (`Dregg2.Circuit.DeployedCapTree.Compress8CR, true)

@@ -79,10 +79,10 @@ namespace Dregg2.Crypto.EncodedBindingReduction
 open Dregg2.Crypto.ConcreteSecurity (Negl)
 open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionResistant not_injective_of_finite_range)
+  (KeyedHashFamily not_injective_of_finite_range)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant hard_bot_vacuous
-   collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing)
+   hashCRHardQuant_top_false_of_compressing)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 open Dregg2.Crypto.CostTactics (isPolyTime_postMap')
 
@@ -228,12 +228,16 @@ The honest price of `hEff`, as a theorem rather than a promise: the `Classical.c
 outputs a collision at every key wins with probability `1`, and pigeonhole supplies one at deployed
 BabyBear parameters.  What the reduction buys is NOT a floor the deployed hash satisfies at ⊤ — no such
 floor exists — it is that the residual is ONE named parameter with both poles proved, in place of a
-disjunction whose right branch is unconditionally available. -/
+disjunction whose right branch is unconditionally available.
+
+⚑ The `⊤` is WRITTEN OUT in the statement. It used to be reachable through
+`HashFloorHonesty.CollisionResistant`, which was a spelling of this very proposition; that name is
+DELETED (2026-07-28) and this now applies `FloorGames.hashCRHardQuant_top_false_of_compressing`
+directly, with no intermediate rewrite hiding which adversary class is in play. -/
 theorem floor_top_false_of_compressing (F : KeyedHashFamily) (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
-    ¬ HashCRHardQuant F (fun _ => True) := by
-  rw [← collisionResistant_iff_hashCRHardQuant_top]
-  exact collisionResistant_false_of_compressing F hin hcol
+    ¬ HashCRHardQuant F (fun _ => True) :=
+  hashCRHardQuant_top_false_of_compressing F hin hcol
 
 /-- **THE ⊥ POLE — vacuous.** Recorded so the floor's satisfiability cannot be mistaken for evidence:
 at the empty class it holds for a completely broken primitive too. -/

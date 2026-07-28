@@ -24,8 +24,9 @@ has the both-moves-at-once version worked end to end in exactly one place —
 encoding domain at 8 lanes, which is INHABITED (`wideBindingCR_satisfiable`) precisely because
 the domain is ~2^159 against a ~2^248 range.
 
-⚑ DO NOT "repair" a consumer by swapping in `HashFloorHonesty.CollisionResistant`. It is
-refuted too (`collisionResistant_false_of_compressing`, 57 carriers), for the same reason at one
+⚑ DO NOT "repair" a consumer by swapping in the unrestricted-class collision floor —
+`HashFloorHonesty.CollisionResistant`, DELETED 2026-07-28 precisely because it was
+refuted too (`FloorGames.hashCRHardQuant_top_false_of_compressing`, 57 carriers), for the same reason at one
 level up: it is the floor at the UNRESTRICTED adversary class, where `Classical.choice` is a
 perfectly good collision finder. Rung 2 is `HashCRHardQuant F Eff`; rung 3 is
 `RomQueryFloor.birthday_bound`.

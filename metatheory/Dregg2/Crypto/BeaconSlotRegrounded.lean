@@ -109,12 +109,12 @@ open Dregg2.Crypto.RandomnessBeacon
   (Beacon HonestSlotCR honest_makes_unbiasable bias_breaks_honest_slot_cr beaconOfHash)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 
 set_option autoImplicit false
 
@@ -234,8 +234,8 @@ def BeaconDeployment.beacon {Ct O : Type} (D : BeaconDeployment Ct O) (t : D.Tag
   ⟨D.hash t⟩
 
 /-- **`multisetHashFamily D`** — the deployed combine lifted to a `KeyedHashFamily`, keyed by its
-domain-separation tag. This is the object `HashFloorHonesty.CollisionResistant` is realized at for the
-real combine, and the game §4's reduction lands in. -/
+domain-separation tag. This is the object the keyed collision floor `FloorGames.HashCRHardQuant` is
+realized at for the real combine, and the game §4's reduction lands in. -/
 def multisetHashFamily {Ct O : Type} (D : BeaconDeployment Ct O) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := Multiset Ct
@@ -254,14 +254,22 @@ theorem deployed_combine_is_family_instance {Ct O : Type} (D : BeaconDeployment 
 
 /-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the deployed combine were injective at every tag — the
 `HashCR` shape `honestSlotCR_of_hashcr` consumes, the floor `HonestSlotCR` bottoms out at — it would
-discharge `CollisionResistant (multisetHashFamily D)` (no collisions ⟹ every finder's advantage `0`).
-So the OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at any
-bounded output (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis is
-replaced by one a real combine can satisfy. -/
+discharge `HashCRHardQuant (multisetHashFamily D) (fun _ => True)`, the collision floor at the
+UNRESTRICTED adversary class (no collisions ⟹ every adversary's advantage `0`). So the OLD floor was
+STRICTLY STRONGER than that — and, being FALSE at any bounded output (§1), it was an EMPTY hypothesis.
+
+⚑ **`fun _ => True` is WRITTEN OUT in the conclusion, and it CORRECTS what this docstring used to
+claim.** The conclusion was spelled `CollisionResistant (multisetHashFamily D)` by a `def` that hid the
+adversary class; that `def` is DELETED, and with the class visible the old closing sentence — "nothing
+is lost re-grounding; a false hypothesis is replaced by one a real combine can satisfy" — is FALSE of
+THIS statement. §7's `beaconSlot_floor_top_false_of_finite_range` refutes the `⊤` class at a
+range-bounded (i.e. real) combine, exactly as §1 refutes `HonestSlotCR`. The hypothesis a real combine
+CAN satisfy is the floor at a restricted `Eff`, which is what §5's `_advantage_bound` keystones take;
+this bridge only records that the old carrier implied even the `⊤` one. -/
 theorem multisetHashFamily_CR_of_injective {Ct O : Type} (D : BeaconDeployment Ct O)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) :
-    CollisionResistant (multisetHashFamily D) :=
-  injective_family_CR (multisetHashFamily D) (fun _ t => hinj t)
+    HashCRHardQuant (multisetHashFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (multisetHashFamily D) (fun _ t => hinj t)
 
 /-- **THE OLD CARRIER FROM THE OLD FLOOR (`honestSlotCR_of_hashcr`, at this deployment).** The same
 injectivity also gives `HonestSlotCR` at every tag, by `Multiset.cons_inj_left` — this is
@@ -516,15 +524,17 @@ theorem brokenBeacon_not_honestSlotCR : ¬ HonestSlotCR (brokenBeacon.beacon ())
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose
-per-tag combine is injective discharges `CollisionResistant (multisetHashFamily D)` — the honest floor
-is REALIZABLE, unlike the injective `HonestSlotCR`/`HashCR` at deployed parameters. ⚑ Recorded with its
-price: this is the `⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e. real)
-combine. An injective combine is exactly the `sumBeacon`/`idMultisetHash` shape — a non-compressing
-"hash" into all of `ℤ`, or the identity — and the satisfiability is honest only as a non-emptiness
-check, never as evidence the deployed combine satisfies it. -/
+per-tag combine is injective discharges `HashCRHardQuant (multisetHashFamily D) (fun _ => True)` — the
+floor is REALIZABLE, unlike the injective `HonestSlotCR`/`HashCR` at deployed parameters. ⚑ Recorded
+with its price, which the statement now carries instead of a docstring: the class is `fun _ => True`,
+and §7's first tooth proves THAT FALSE at a range-bounded (i.e. real) combine. An injective combine is
+exactly the `sumBeacon`/`idMultisetHash` shape — a non-compressing "hash" into all of `ℤ`, or the
+identity — and the satisfiability is honest only as a non-emptiness check, never as evidence the
+deployed combine satisfies it. (The conclusion used to be spelled `CollisionResistant …`; that `def`
+hid precisely the `⊤` this tooth has to be read against, and is deleted.) -/
 theorem multisetHashFamily_CR_of_injective_deployment {Ct O : Type} (D : BeaconDeployment Ct O)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) :
-    CollisionResistant (multisetHashFamily D) :=
+    HashCRHardQuant (multisetHashFamily D) (fun _ => True) :=
   multisetHashFamily_CR_of_injective D hinj
 
 /-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the bias bound DISCHARGED on the PROVED floor.

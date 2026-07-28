@@ -24,11 +24,15 @@ hypothesis-free). This file repairs the three highest-value carriers:
 
 The obvious repair — re-seat the consumers on `HashFloorHonesty.CollisionResistant`, as
 `FloorRegroundedConsumers` / `Poseidon2KeyedBridge` did for the four FLAGGED carriers — **reproduces the
-disease**. `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves `CollisionResistant F` is
-definitionally the collision floor at the UNRESTRICTED adversary class, and
-`collisionResistant_false_of_compressing` proves THAT false for any compressing family: the
-`Classical.choice` finder that outputs a collision at every key IS a `CollisionFinder`. Toy witness
-satisfiable, real hash false — for the third time in a row.
+disease**. `CollisionResistant F` was the collision floor at the UNRESTRICTED adversary class wearing a
+name that hid the `⊤`, and `FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for
+any compressing family: the `Classical.choice` finder that outputs a collision at every key IS a
+`CollisionFinder`. Toy witness satisfiable, real hash false — for the third time in a row.
+
+⚑ That diagnosis was accepted and acted on: `CollisionResistant` was DELETED outright on 2026-07-28,
+along with the `↔` that used to be needed to see the `⊤`. Nothing below changed shape — this file never
+stood on it — but the `⊤` is now written out in every statement that means it, which is the whole point
+the section was making.
 
 `FloorGames.hard_top_iff_solvableFrac_negl` settles it for good: at the unrestricted class EVERY game
 floor IS the probabilistic existence floor, so **no restatement of the win relation escapes** (the `↔`
@@ -37,7 +41,7 @@ which this tree cannot give content to (`FloorGames` §8: no cost model). So thi
 `HermineHashCRRegrounded` does, and nothing cleverer:
 
   * the floor is `FloorGames.HashCRHardQuant F Eff` — a REAL collision game at an EXPLICIT adversary
-    class, never `CollisionResistant`, never a free `FooCR`;
+    class, never a `⊤`-class floor under an alias (what `CollisionResistant` was), never a free `FooCR`;
   * the consumer's break is a first-class `Game`, so the forgery is IN the win relation;
   * the reduction is an EXTRACTOR — a map of adversaries, a Lean function — plus a win-preservation
     theorem and an advantage inequality. Hypothesis and conclusion are about DIFFERENT games, so the
@@ -103,10 +107,9 @@ namespace Dregg2.Circuit.InjectiveFloorRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl negl_zero not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous hashGame HashCRHardQuant
-   collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous hashGame HashCRHardQuant)
 open Dregg2.Circuit.DeployedCapTree (Digest8 Compress8CR CapLeaf leafFields leafFields_inj)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (pack8 pack8_inj)
 open Dregg2.Circuit.CommitDifferential (effectVmCommit h4q)
@@ -128,14 +131,17 @@ carrier can price its own instantiation by citing them. -/
 /-- **THE ⊤ POLE, ONCE.** The collision floor at the UNRESTRICTED adversary class is FALSE for any
 COMPRESSING family — a collision at every key (which pigeonhole forces at deployed parameters, and which
 is the defining property of a hash) makes the `Classical.choice` finder win with probability `1`. This is
-`FloorGames.collisionResistant_false_of_compressing` transported across
-`collisionResistant_iff_hashCRHardQuant_top`; every carrier's "false at deployed BabyBear params" tooth
-routes through it. It is the price of `hEff`, stated as a theorem instead of a promise. -/
+`FloorGames.hashCRHardQuant_top_false_of_compressing`, re-exported at this file's spine; every carrier's
+"false at deployed BabyBear params" tooth routes through it. It is the price of `hEff`, stated as a
+theorem instead of a promise.
+
+⚑ It used to reach the upstream tooth by rewriting across `collisionResistant_iff_hashCRHardQuant_top`,
+because upstream stated the tooth about `CollisionResistant`. That name is DELETED (2026-07-28) and the
+tooth is stated at `⊤` directly, so the transport is gone and the `⊤` is written out on both sides. -/
 theorem hashCRHardQuant_top_false_of_compressing (F : KeyedHashFamily) (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
-    ¬ HashCRHardQuant F (fun _ => True) := by
-  rw [← collisionResistant_iff_hashCRHardQuant_top]
-  exact collisionResistant_false_of_compressing F hin hcol
+    ¬ HashCRHardQuant F (fun _ => True) :=
+  Dregg2.Crypto.FloorGames.hashCRHardQuant_top_false_of_compressing F hin hcol
 
 /-- **THE ⊥ POLE, ONCE.** At the empty adversary class the floor holds for ANY family, including a
 completely broken one — so a satisfiability witness is worth nothing without the refutation beside it.

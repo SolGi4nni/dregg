@@ -19,16 +19,21 @@ The previous export was
     theorem merkle_ots_binds_advantage_bound (hCR : CollisionResistant F) (leafSwap : CollisionFinder F)
       : Negl (collisionAdv F leafSwap)
 
-which is the SAME DISEASE one costume along. `FloorGames.collisionResistant_iff_hashCRHardQuant_top`
-proves `CollisionResistant F` is definitionally the collision floor at the UNRESTRICTED adversary
-class, and `collisionResistant_false_of_compressing` proves THAT false for any compressing family —
-the deployed sponge included. So the replacement hypothesis was refuted at deployed parameters exactly
-like the one it replaced, and the theorem transported no security. It is DELETED, not kept beside the
-repair.
+which is the SAME DISEASE one costume along. `CollisionResistant F` was a `def` spelling the collision
+floor at the UNRESTRICTED adversary class — `HashCRHardQuant F (fun _ => True)` — and
+`FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for any compressing family, the
+deployed sponge included. So the replacement hypothesis was refuted at deployed parameters exactly like
+the one it replaced, and the theorem transported no security. It is DELETED, not kept beside the repair.
 
 Its `_eff` sibling was better (a floor at an explicit class) but still not a reduction: it took a
 `CollisionFinder F` and applied the floor to it. Hypothesis and conclusion were the same object, so
 there was no game about the KEY SWAP at all — the forgery never appeared in a `Prop`.
+
+⚑ **AND THE `def` THAT HID THE `⊤` IS DELETED TOO (2026-07-28).** Every statement below that used to
+name `CollisionResistant X` now writes `HashCRHardQuant X (fun _ => True)`, so the adversary class — the
+field that decides whether a floor is refuted, vacuous, or content-bearing — is in the `Prop` a reader
+sees rather than behind a name. The visible consequence is in §5: two teeth that looked distinct behind
+the old name turn out to be the SAME statement, and are now labelled as such instead of counted twice.
 
 ## What replaces them (§2–§4)
 
@@ -78,12 +83,11 @@ namespace Dregg2.Crypto.HashSigMerkleRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl)
 open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR
-   brokenFamily brokenFamily_not_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv idFamily brokenFamily)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame finderToAdv HashCRHardQuant Hard
-   collisionAdv_eq_gameAdv collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous
-   not_hard_top_of_always_solvable)
+   collisionAdv_eq_gameAdv hard_bot_vacuous not_hard_top_of_always_solvable
+   hashCRHardQuant_top_of_injective brokenFamily_not_hashCRHardQuant_top)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 open Dregg2.Crypto.HashSig (SecretKey publicKey verify)
 open Dregg2.Crypto.HashSigMerkle
@@ -132,13 +136,20 @@ theorem deployedSponge_is_family_instance (D : SpongeDeployment) (n : ℕ) :
     D.hashAt D.deployedTag = (spongeFamily D).H n D.deployedTag := rfl
 
 /-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective sponge floor held at every tag it would
-discharge `CollisionResistant (spongeFamily D)` — the collision floor at the UNRESTRICTED class. So the
-deleted carrier was STRICTLY STRONGER than even the ⊤-class floor, and being false at deployed
-parameters it was an EMPTY hypothesis. Recorded so the deletion is auditable, not asserted. -/
+discharge `HashCRHardQuant (spongeFamily D) (fun _ => True)` — the collision floor at the UNRESTRICTED
+class. So the deleted carrier was STRICTLY STRONGER than even the `⊤`-class floor, and being false at
+deployed parameters it was an EMPTY hypothesis. Recorded so the deletion is auditable, not asserted.
+
+⚑ **The `⊤` is written out in the conclusion.** It used to read `CollisionResistant (spongeFamily D)`;
+that `def` was a SPELLING of this statement and is DELETED, because the class is the field a reader
+needs to price the claim. Priced: `FloorGames.hashCRHardQuant_top_false_of_compressing` refutes this
+class at any compressing sponge — the deployed one included — so what this bridge records is that the
+old carrier implied even a floor that is itself false at deployed parameters, NOT that the ⊤ class is
+somewhere to stand. §4/§6 are where the load-bearing statements live. -/
 theorem spongeFamily_CR_of_injective (D : SpongeDeployment)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hashAt t)) :
-    CollisionResistant (spongeFamily D) :=
-  Dregg2.Circuit.HashFloorHonesty.injective_family_CR (spongeFamily D) (fun _ t => hinj t)
+    HashCRHardQuant (spongeFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (spongeFamily D) (fun _ t => hinj t)
 
 /-! ## §2 — the KEY SWAP, as a first-class game. -/
 
@@ -290,13 +301,18 @@ theorem spongeFloor_isPolyTime_inhabited (D : SpongeDeployment) :
 
 /-! ## §5 — the poles, the canary, and the positive pole. -/
 
-/-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing sponge family.)** The bare-CR floor at the
-constant-`0` `brokenFamily` is refuted (`brokenFamily_not_CR`), and it IS `HashCRHardQuant brokenFamily
-⊤` (`collisionResistant_iff_hashCRHardQuant_top`) — so the `⊤` class is FALSE. This is the price of
-restricting the class, stated as a theorem, and it is precisely why the DELETED
-`merkle_ots_binds_advantage_bound` (which took `CollisionResistant F`) bought nothing. -/
+/-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing sponge family.)** The floor at the constant-`0`
+`brokenFamily` is refuted at the unrestricted class (`FloorGames.brokenFamily_not_hashCRHardQuant_top`:
+`(0, 1)` collides at every key). This is the price of restricting the class, stated as a theorem, and it
+is precisely why the DELETED `merkle_ots_binds_advantage_bound` bought nothing — its hypothesis was this
+same `⊤` floor, spelled `CollisionResistant F` by a `def` that hid the class and is itself now deleted.
+
+⚑ With the `⊤` written out, this tooth and `merkle_ots_binds_floor_load_bearing` below are the SAME
+statement — the second used to say `¬ CollisionResistant brokenFamily`, which the deleted `def` made
+look like a different proposition. Both names are kept because the ratchet baseline grandfathers
+carriers by name; the duplication is real and is stated rather than hidden. -/
 theorem merkle_ots_eff_top_false : ¬ HashCRHardQuant brokenFamily (fun _ => True) :=
-  fun h => brokenFamily_not_CR ((collisionResistant_iff_hashCRHardQuant_top _).mpr h)
+  brokenFamily_not_hashCRHardQuant_top
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the floor holds for ANY
 sponge family, including a completely broken one. Both poles together are what make `Eff` a dial. -/
@@ -329,12 +345,18 @@ theorem the_reduced_keySwap_bound_fires (D : SpongeDeployment) (H : ℤ → ℤ)
     Negl (gameAdv (keySwapGame D H ℓ N) A) :=
   keySwap_binds_advantage_bound D H ℓ N Eff A hEff hCR
 
-/-- **(TOOTH — the FLOOR IS LOAD-BEARING.)** On the constant-`0` sponge family collision-resistance
-FAILS, so no bound is derivable there — a broken sponge admits a key swap. The floor is a genuine
-constraint, exactly as `merkle_ots_binds_index` needs the sponge collision-resistant to forbid the
-swap. -/
-theorem merkle_ots_binds_floor_load_bearing : ¬ CollisionResistant brokenFamily :=
-  brokenFamily_not_CR
+/-- **(TOOTH — the FLOOR IS LOAD-BEARING.)** On the constant-`0` sponge family the collision floor FAILS
+at the unrestricted class, so no bound is derivable there — a broken sponge admits a key swap. The floor
+is a genuine constraint, exactly as `merkle_ots_binds_index` needs the sponge collision-resistant to
+forbid the swap.
+
+⚑ **This is now literally `merkle_ots_eff_top_false` again.** It used to read
+`¬ CollisionResistant brokenFamily` and looked like a second, independent tooth; deleting that `def`
+exposes that `CollisionResistant X` was `HashCRHardQuant X (fun _ => True)` all along, so the two teeth
+differ only in name. Kept — never renamed, never dropped, since the ratchet baseline tracks carriers by
+name — but counted once. -/
+theorem merkle_ots_binds_floor_load_bearing : ¬ HashCRHardQuant brokenFamily (fun _ => True) :=
+  brokenFamily_not_hashCRHardQuant_top
 
 /-- **(TOOTH — the ACCEPTANCE side is satisfiable, so the game is not bounding an empty event by
 accident.)** The honest signature at any index verifies against the master root — `merkle_ots_correct`,

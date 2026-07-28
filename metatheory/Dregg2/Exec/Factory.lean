@@ -80,7 +80,7 @@ do not EXIST. Honest replacement:
 (two WELL-FORMED descriptors, one `vk`, different contracts) reduces to a genuine `factoryHash` collision,
 negligible under `FloorGames.HashCRHardQuant _ Eff` at an EXPLICIT adversary class. NOT
 `HashFloorHonesty.CollisionResistant`, which is that floor at `⊤` and itself false
-(`FloorGames.collisionResistant_false_of_compressing`).
+(`FloorGames.hashCRHardQuant_top_false_of_compressing`).
 
 As originally intended: content-addressing means the hash binds its preimage — two factories with the same
 `vk` published the same `(schema, program)`. A crypto-interface obligation (the hash *circuit's*

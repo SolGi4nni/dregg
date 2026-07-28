@@ -99,7 +99,7 @@ open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily not_injective_of_finite_range finite_range_of_field_bound)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant hard_bot_vacuous
-   collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing)
+   hashCRHardQuant_top_false_of_compressing)
 open Dregg2.Crypto.ConcreteSecurity (Negl)
 open Dregg2.Crypto.ProbCrypto (winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited)
@@ -341,12 +341,16 @@ so a collision exists at every tag and the floor at the UNRESTRICTED class is FA
 
 This is the honest price of `hEff`, stated as a theorem rather than a promise. What the reduction buys
 is NOT a floor the deployed sponge satisfies at ⊤ — no such floor exists — it is that the residual is
-ONE named class with both poles proved, in place of a hypothesis that is simply false. -/
+ONE named class with both poles proved, in place of a hypothesis that is simply false.
+
+⚑ The `⊤` is WRITTEN OUT in the statement. It used to be reachable through
+`HashFloorHonesty.CollisionResistant`, which was a spelling of this very proposition; that name is
+DELETED (2026-07-28) and the proof now applies `FloorGames.hashCRHardQuant_top_false_of_compressing`
+directly, with no intermediate rewrite hiding which adversary class is in play. -/
 theorem carrierFloor_top_false_babyBear (D : SpongeKeyed)
     (hb : ∀ xs, 0 ≤ D.sponge xs ∧ D.sponge xs < (2013265921 : ℤ)) :
     ¬ HashCRHardQuant (spongeFamily D) (fun _ => True) := by
-  rw [← collisionResistant_iff_hashCRHardQuant_top]
-  refine collisionResistant_false_of_compressing (spongeFamily D) ⟨([] : List ℤ)⟩ (fun l t => ?_)
+  refine hashCRHardQuant_top_false_of_compressing (spongeFamily D) ⟨([] : List ℤ)⟩ (fun l t => ?_)
   have hfin : (Set.range (fun xs : List ℤ => D.sponge (D.tagCode t ++ xs))).Finite := by
     refine (finite_range_of_field_bound D.sponge _ hb).subset ?_
     rintro _ ⟨xs, rfl⟩

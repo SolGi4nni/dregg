@@ -56,7 +56,7 @@ namespace Dregg2.Circuit.LightClientFusion
 open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.DescriptorIR2 (VmTrace Satisfied2)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.HashFloorHonesty (CollisionFinder CollisionResistant collisionAdv)
+open Dregg2.Circuit.HashFloorHonesty (CollisionFinder collisionAdv)
 open Dregg2.Circuit.Poseidon2KeyedBridge
   (DomainSeparatedSponge DomainSeparatedCR poseidon2KeyedFamily)
 open Dregg2.Exec (RecChainedState)

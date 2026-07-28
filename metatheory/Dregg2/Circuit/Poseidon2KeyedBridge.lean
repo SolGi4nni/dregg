@@ -1,20 +1,29 @@
 /-
 # `Dregg2.Circuit.Poseidon2KeyedBridge` — bridging the DEPLOYED UNKEYED Poseidon2 sponge to the
-KEYED `CollisionResistant` game (the honest keyed-from-unkeyed-via-domain-separation model).
+KEYED collision game (the honest keyed-from-unkeyed-via-domain-separation model).
 
 ## The obligation this closes
 
 `HashFloorHonesty.lean` replaced the VACUOUS injective hash floor (`Poseidon2Binding.Poseidon2SpongeCR`,
-false at real BabyBear params by pigeonhole) with a PROPER computational floor: `CollisionResistant F`
-over a **KEYED** hash family `F`, and `FloorRegroundedConsumers.lean` re-seated every STARK/FRI/binding
+false at real BabyBear params by pigeonhole) with what it called a PROPER computational floor —
+`CollisionResistant F` over a **KEYED** hash family `F` — and `FloorRegroundedConsumers.lean` re-seated
+every STARK/FRI/binding
 consumer (`OodCommitmentBinding`, `FriSoundness.oracle_binding`, `AirSoundness.committed_trace_pinned`,
 `FinBindsKernel`) onto that keyed floor as advantage bounds.
 
 Keying is LOAD-BEARING: an UNKEYED fixed hash lets an adversary hardcode a known collision (advantage
 `1`), collapsing the floor. BUT the DEPLOYED Poseidon2 (`p3-poseidon2-circuit-air` BabyBear width-16,
 `Poseidon2Binding.babyBearD4W16`) is a FIXED, UNKEYED sponge `List ℤ → ℤ`. So there is a genuine
-"bridge to the real object" gap: the consumers rest on `CollisionResistant F` for an ABSTRACT keyed
+"bridge to the real object" gap: the consumers rested on a collision floor for an ABSTRACT keyed
 family `F`, while the prover computes a fixed unkeyed function. This file connects the two.
+
+⚑ **AND THE FLOOR IT BRIDGED TO IS ITSELF DELETED (2026-07-28).** `HashFloorHonesty.CollisionResistant`
+was `FloorGames.HashCRHardQuant F (fun _ => True)` under a name that hid the adversary class, and that
+class is exactly what makes it FALSE for a compressing hash. The BRIDGE below is untouched and still
+correct — the keyed family, the domain-separation model and the faithfulness lemmas were never the
+problem. What changed is that `DomainSeparatedCR`'s body now spells out the `⊤`, so the ⚠⚠ warning at
+§3 no longer needs a lemma to be visible. The honest successor with a real class is
+`Circuit.DomainSeparatedCREffRegrounded.DomainSeparatedCREff D Eff`.
 
 ## The standard bridge: domain separation IS the key
 
@@ -33,8 +42,9 @@ DEFINITIONALLY a collision of the deployed unkeyed function `xs ↦ sponge (tag 
     `wins_iff_deployed_collision`): the deployed fixed hash IS the family instance at the deployed tag,
     and a keyed-game win at any tag is exactly a deployed-hash collision — the game models the real
     object, no idealization.
-  * **§3** — the NAMED domain-separation floor `DomainSeparatedCR D := CollisionResistant
-    (poseidon2KeyedFamily D)`. GENUINE, per [[feedback-prove-the-floor-false]]: SATISFIABLE (a
+  * **§3** — the NAMED domain-separation floor `DomainSeparatedCR D := HashCRHardQuant
+    (poseidon2KeyedFamily D) ⊤`. Read the ⚠⚠ at §3 BEFORE reading the rest of this bullet, which is
+    the 07-22 claim and is WRONG at the `⊤` this floor is fixed at: SATISFIABLE (a
     domain-separated family over an injective sponge is CR — `domainSeparatedCR_of_injective_sponge`,
     witnessed concretely by `Reference.refSponge` at the REAL `babyBearD4W16` params) and REFUTABLE (a
     broken domain separation — the tag-ignoring constant sponge — has advantage `1`,
@@ -48,10 +58,11 @@ DEFINITIONALLY a collision of the deployed unkeyed function `xs ↦ sponge (tag 
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; NO `sorryAx`/`sorry`, NO fresh `axiom`. The
-named floor `DomainSeparatedCR` is a HYPOTHESIS (never an `axiom`), satisfiable AND refutable, so the
-bridge theorems are genuine implications, not vacuous. The keyed family reuses
-`HashFloorHonesty.KeyedHashFamily`/`CollisionResistant` and the deployed sponge is the
-`Poseidon2Binding` `List ℤ → ℤ` object.
+named floor `DomainSeparatedCR` is a HYPOTHESIS (never an `axiom`) and is refutable — but it is NOT
+satisfiable at the deployed sponge (§3's ⚠⚠), so the bridge theorems below are genuine implications
+with a FALSE antecedent, which is what `DomainSeparatedCREffRegrounded` exists to repair. The keyed
+family reuses `HashFloorHonesty.KeyedHashFamily` and the deployed sponge is the `Poseidon2Binding`
+`List ℤ → ℤ` object.
 -/
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Circuit.FloorRegroundedConsumers
@@ -61,8 +72,7 @@ import Dregg2.Crypto.SpongeCarrierReduction
 namespace Dregg2.Circuit.Poseidon2KeyedBridge
 
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   brokenFamily_not_CR idFamily_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot)
 open Dregg2.Crypto.ConcreteSecurity (Ensemble Negl PolyBounded negl_zero not_negl_one)
 open Dregg2.Crypto
@@ -109,7 +119,7 @@ def DomainSeparatedSponge.deployedHash (D : DomainSeparatedSponge) (xs : List �
 /-- **`poseidon2KeyedFamily D`** — the deployed unkeyed Poseidon2 sponge lifted to a
 `HashFloorHonesty.KeyedHashFamily`, keyed by its domain-separation tag: `H n t xs = sponge (tagCode t ++
 xs)`. Input domain `List ℤ` (the sponge domain), output `ℤ` (the BabyBear field element). This is the
-object `FloorRegroundedConsumers`'s `CollisionResistant F` floor is realized at for the real hash. -/
+object `FloorRegroundedConsumers`'s keyed collision floor is realized at for the real hash. -/
 def poseidon2KeyedFamily (D : DomainSeparatedSponge) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := List ℤ
@@ -141,18 +151,19 @@ theorem wins_iff_deployed_collision (D : DomainSeparatedSponge) (A : CollisionFi
 /-! ## §3 — the NAMED domain-separation floor: SATISFIABLE + REFUTABLE (a genuine floor). -/
 
 /-- **`DomainSeparatedCR D`** — the deployed Poseidon2's domain-separation collision-resistance: the
-keyed family (keyed by the domain-separation tag) is `CollisionResistant`. This is the honest deployed-hash
-assumption — the keyed-from-unkeyed-via-domain-separation model. It is a HYPOTHESIS (never an `axiom`),
-and a GENUINE floor: satisfiable (§ `domainSeparatedCR_of_injective_sponge`) and refutable (§
-`brokenDomainSep_not_CR`).
+keyed family (keyed by the domain-separation tag) has the collision floor AT THE UNRESTRICTED
+ADVERSARY CLASS. This was presented as the honest deployed-hash assumption — the
+keyed-from-unkeyed-via-domain-separation model. It is a HYPOTHESIS (never an `axiom`), and it is
+refutable (§ `brokenDomainSep_not_CR`) and satisfiable only by a non-compressing sponge
+(§ `domainSeparatedCR_of_injective_sponge`), which is the whole trouble — read the ⚠⚠ next.
 
 ⚠⚠ **BROKEN AS NAMED — THIS FLOOR IS FALSE AT THE DEPLOYED SPONGE, so every §4 consumer below
 (including the APEX `deployed_lightclientUnfoolable_advantage_bound`) is VACUOUSLY TRUE at deployed
 parameters.** `Circuit.DomainSeparatedCREffRegrounded.domainSeparatedCR_false_babyBear` proves it;
 `docs/deos/VACUITY-SWEEP.md` FINDING 2. The paragraph above claiming this is "a GENUINE floor …
 SATISFIABLE and REFUTABLE … NOT an injectivity/existence-refutation" is WRONG, and `FloorGames` (07-16)
-is why: `CollisionResistant F ↔ HashCRHardQuant F ⊤` and `Hard G ⊤ ↔ Negl (solvableFrac G)`, so
-`CollisionResistant` IS a floor at the UNRESTRICTED class, hence IS the existence floor, hence FALSE
+is why: this floor IS `HashCRHardQuant F ⊤` (as of 2026-07-28 its body says so literally) and
+`Hard G ⊤ ↔ Negl (solvableFrac G)`, so it IS the existence floor, hence FALSE
 wherever collisions merely EXIST — which at a BabyBear-bounded sponge is every tag. Same pigeonhole
 that killed `Poseidon2SpongeCR`, one `Classical.choice` later. Domain separation does not help: the
 prefix is injective, but the prefixed map still lands in one bounded field.
@@ -174,9 +185,17 @@ deployed function. The game was never the problem. The adversary CLASS was.
 `DomainSeparatedCREff D Eff := HashCRHardQuant (poseidon2KeyedFamily D) Eff`: the SAME game over the
 SAME family (so every faithfulness lemma applies verbatim) at an EXPLICIT class, with every §4 consumer
 re-grounded and `domainSeparatedCREff_top_iff_old` proving this def IS that one at `⊤`. This def is
-KEPT so the record and the teeth keep compiling. -/
+KEPT so the record and the teeth keep compiling.
+
+⚑ **2026-07-28 — THE BODY NOW SAYS `⊤` OUT LOUD.** It used to read
+`CollisionResistant (poseidon2KeyedFamily D)`, and that `def` is DELETED: it WAS
+`HashCRHardQuant F (fun _ => True)` wearing a name that hid the adversary class. So this floor's body
+is now written the way it always meant, which changes nothing about what it says and everything about
+what a reader sees — the field that makes it refuted is on the page instead of one lemma away. It
+cannot be defined as `DomainSeparatedCREff D ⊤` because THAT module imports THIS one; the agreement
+is `domainSeparatedCREff_top_iff_old`, now true by `Iff.rfl`. -/
 def DomainSeparatedCR (D : DomainSeparatedSponge) : Prop :=
-  CollisionResistant (poseidon2KeyedFamily D)
+  FloorGames.HashCRHardQuant (poseidon2KeyedFamily D) (fun _ => True)
 
 /-- Each keyed instance `xs ↦ sponge (tagCode t ++ xs)` is injective when the underlying sponge is
 (domain-separation prefixing is injective — `List.append_right_injective`). -/
@@ -193,7 +212,8 @@ BabyBear params — `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — whic
 must be the computational `DomainSeparatedCR`, satisfied here by a stand-in to prove non-vacuity.) -/
 theorem domainSeparatedCR_of_injective_sponge {D : DomainSeparatedSponge}
     (hs : Function.Injective D.sponge) : DomainSeparatedCR D :=
-  injective_family_CR (poseidon2KeyedFamily D) (family_H_injective_of_injective_sponge hs)
+  FloorGames.hashCRHardQuant_top_of_injective (poseidon2KeyedFamily D)
+    (family_H_injective_of_injective_sponge hs)
 
 /-- **The link to the `Poseidon2Binding.Poseidon2SpongeCR` object.** The old (idealized, false-at-real-
 params) injective floor `Poseidon2SpongeCR sponge` on the deployed sponge DISCHARGES the honest
@@ -227,20 +247,11 @@ theorem brokenFinder_wins (n : ℕ) (k : (poseidon2KeyedFamily brokenDomainSep).
 wins on every tag, so its advantage is the constant `1`, not negligible. So `DomainSeparatedCR` is
 LOAD-BEARING — a broken domain separation refutes it — not vacuously true. -/
 theorem brokenDomainSep_not_CR : ¬ DomainSeparatedCR brokenDomainSep := by
-  intro hCR
-  have hadv : collisionAdv (poseidon2KeyedFamily brokenDomainSep) brokenFinder = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (poseidon2KeyedFamily brokenDomainSep).Key n => brokenFinder.wins n k)
-        = (fun _ => true) := by
-      funext k; exact brokenFinder_wins n k
-    show @winProb ((poseidon2KeyedFamily brokenDomainSep).Key n)
-        ((poseidon2KeyedFamily brokenDomainSep).keyFintype n)
-        (fun k => brokenFinder.wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((poseidon2KeyedFamily brokenDomainSep).Key n)
-      ((poseidon2KeyedFamily brokenDomainSep).keyFintype n)
-      ((poseidon2KeyedFamily brokenDomainSep).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR brokenFinder)
+  refine FloorGames.hashCRHardQuant_top_false_of_compressing _ ⟨([] : List ℤ)⟩
+    (fun _ _ => ⟨[0], [1], ?_, ?_⟩)
+  · show ([0] : List ℤ) ≠ [1]
+    decide
+  · simp [poseidon2KeyedFamily, brokenDomainSep]
 
 /-! ### A SATISFYING witness at the REAL params (non-vacuity of the whole bridge). -/
 

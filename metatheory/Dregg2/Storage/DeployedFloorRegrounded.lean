@@ -36,14 +36,18 @@ collision resistance is invented here. What this file does is the CUTOVER: extra
 the poles, and the repaired storage keystone.
 
 `Crypto.CommitmentBinding:75` already recorded the trap on the way: `HashFloorHonesty.CollisionResistant`
-is NOT the replacement — `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves it is this floor
-at `Eff := ⊤`, and `collisionResistant_false_of_compressing` proves THAT false for every compressing
-family. Copying it would have been the same disease one costume along.
+was NOT the replacement — it was a SPELLING of this floor at `Eff := ⊤` with the `⊤` hidden behind a
+name, and `FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for every compressing
+family. Copying it would have been the same disease one costume along. It was DELETED outright on
+2026-07-28; the `⊤` is now written out wherever the class is unrestricted, which is the field a reader
+needs in order to price an assumption.
 
 ## Why the chosen floor obeys the law
 
   * **SATISFIABLE** — `hashCRHardQuant_of_injective` (§2): a family injective at every key satisfies it
-    at EVERY class, `HashFloorHonesty.idFamily_CR` exhibits one. Not empty.
+    at EVERY class, and `FloorGames.idFamily_hashCRHardQuant_top` exhibits one. Not empty — but note
+    what such a witness IS: at `⊤` the floor holds exactly for the families that are not compressing,
+    i.e. not hashes.
   * **REFUTABLE** — and, at the deployed encoder, ACTUALLY REFUTED (§4):
     `deployedFloor_refuted_by_modp_alias` proves the floor FALSE for any class containing the CONSTANT
     finder `fun _ _ => ([0], [p])`, whose advantage is the constant `1` because the alias collision holds
@@ -93,11 +97,10 @@ namespace Dregg2.Storage.DeployedFloorRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl negl_zero not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_le_of_imp negl_of_le)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionResistant idFamily idFamily_CR injective_family_CR)
+  (KeyedHashFamily idFamily)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv gameAdv_mem_unit hashGame HashCRHardQuant Hard hard_bot_vacuous
-   collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing
-   not_hard_top_of_always_solvable)
+   idFamily_hashCRHardQuant_top not_hard_top_of_always_solvable)
 open Dregg2.Crypto.HashSigMerkleRegrounded
   (SpongeDeployment spongeFamily deployedSponge_is_family_instance spongeFamily_CR_of_injective)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
@@ -119,9 +122,8 @@ defining property of a hash) makes the `Classical.choice` finder win with probab
 price of the `hEff` obligation, as a theorem instead of a promise. -/
 theorem hashCRHardQuant_top_false_of_compressing (F : KeyedHashFamily) (hin : Nonempty F.Input)
     (hcol : ∀ l (k : F.Key l), ∃ x y : F.Input, x ≠ y ∧ F.H l k x = F.H l k y) :
-    ¬ HashCRHardQuant F (fun _ => True) := by
-  rw [← collisionResistant_iff_hashCRHardQuant_top]
-  exact collisionResistant_false_of_compressing F hin hcol
+    ¬ HashCRHardQuant F (fun _ => True) :=
+  Dregg2.Crypto.FloorGames.hashCRHardQuant_top_false_of_compressing F hin hcol
 
 /-- **THE ⊥ POLE.** At the empty adversary class the floor holds for ANY family, including a completely
 broken one — so a satisfiability witness is worth nothing without the refutation beside it. Recorded so
@@ -147,8 +149,7 @@ theorem hashCRHardQuant_of_injective (D : SpongeDeployment)
     (hinj : ∀ t : D.Tag, Function.Injective (D.hashAt t))
     (Eff : Adversary (hashGame (spongeFamily D)) → Prop) :
     HashCRHardQuant (spongeFamily D) Eff := fun A _ =>
-  (collisionResistant_iff_hashCRHardQuant_top (spongeFamily D)).mp
-    (spongeFamily_CR_of_injective D hinj) A trivial
+  spongeFamily_CR_of_injective D hinj A trivial
 
 /-- The same weakening at the OLD carrier's own name, so the audit reads directly (contradiction-style,
 which is also its sharpest form): if the deleted `Poseidon2SpongeCR` hypothesis held at every tag, then
@@ -168,7 +169,7 @@ refutation — a satisfiability witness alone is the FALSE COMFORT this campaign
 times (a toy injective hash satisfies anything). -/
 theorem floor_satisfiable_witness (Eff : Adversary (hashGame idFamily) → Prop) :
     HashCRHardQuant idFamily Eff := fun A _ =>
-  (collisionResistant_iff_hashCRHardQuant_top idFamily).mp idFamily_CR A trivial
+  idFamily_hashCRHardQuant_top A trivial
 
 /-! ## §3 — the CONTENT-ROOT BREAK, as a first-class game, and the reduction.
 

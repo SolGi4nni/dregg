@@ -74,12 +74,12 @@ namespace Dregg2.Apps.PreRotationKeySetRegrounded
 open Dregg2.Apps.PreRotation (KeySetCR KeyState RotationEvent rotateStep rotate_exhibits_preimage
   rotate_factors)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 
 set_option autoImplicit false
 
@@ -162,8 +162,8 @@ structure KeySetDeployment (Key : Type) where
   deployedTag : Tag
 
 /-- **`keySetFamily D`** — the deployed key-set digest lifted to a `KeyedHashFamily`, keyed by its
-domain-separation tag. This is the object `HashFloorHonesty.CollisionResistant` is realized at for the
-real digest. -/
+domain-separation tag. This is the object `FloorGames.HashCRHardQuant` is realized at for the real
+digest — always at a NAMED `Eff`, since the `⊤` instance is refuted at that very digest (§7). -/
 def keySetFamily {Key : Type} (D : KeySetDeployment Key) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := List Key
@@ -180,14 +180,22 @@ identity cell computes. -/
 theorem deployed_hash_is_family_instance {Key : Type} (D : KeySetDeployment Key) (n : ℕ) :
     D.hash D.deployedTag = (keySetFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `KeySetCR` held at every tag it would
-discharge `CollisionResistant (keySetFamily D)` (no collisions ⟹ every finder's advantage `0`). So the
-OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at the deployed
-digest (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis is replaced
-by one a real digest can satisfy. -/
-theorem keySetFamily_CR_of_keySetCR {Key : Type} (D : KeySetDeployment Key)
-    (hCR : ∀ t : D.Tag, KeySetCR (D.hash t)) : CollisionResistant (keySetFamily D) :=
-  injective_family_CR (keySetFamily D) (fun _ t a b h => hCR t a b h)
+/-! ### ⚑ THERE IS NO OLD-FLOOR ⟹ NEW-FLOOR BRIDGE HERE, AND THAT IS THE POINT.
+
+A theorem `keySetFamily_CR_of_keySetCR` sat here: `KeySetCR` at every tag ⟹ the `⊤`-class collision
+floor on `keySetFamily D`, argued as "the OLD floor was STRICTLY STRONGER, so nothing is lost
+re-grounding". **BOTH ENDS ARE REFUTED.** §1 kills the injective `KeySetCR` at any range-bounded
+digest; §7's `keySet_floor_top_false_of_compressing` kills the `⊤`-class floor at the SAME digest. An
+implication between two propositions that are both FALSE at deployed parameters transports nothing,
+and "nothing is lost" was FALSE as written — the floor it re-grounded ONTO is refuted at a real hash
+too. So the bridge is DELETED rather than restated at `HashCRHardQuant … ⊤`.
+
+What stands in its place is not another rung-1 bridge but this module's OWN poles at its OWN game,
+which is why the bridge could be dropped rather than replaced: §7 prices `Eff` exactly
+(`keySet_floor_top_false_of_compressing` / `keySet_floor_bot_vacuous`), refutes the floor on a broken
+deployment (`brokenKeySet_floor_top_false`) and satisfies it on an injective one
+(`keySetFamily_CR_of_injective`, `⊤` written out in the statement); §8 then lands the floor where it
+is a THEOREM (`rotate_compromise_resistant_binds_rom`, the keyed ROM). -/
 
 /-! ## §3 — the key-set COLLISION GAME and the ROTATION-FORGERY GAME, as first-class objects. -/
 
@@ -404,9 +412,9 @@ def brokenKeySet : KeySetDeployment Int where
   deployedTag := ()
 
 /-- **(TOOTH — the floor is REFUTABLE.)** The broken deployment's collision game is solvable at every
-tag (`[0] ≠ [1]`, both digest to `0`), so it has no unrestricted-class floor. `CollisionResistant` on
-its keyed family fails for the same reason. So the floor is a GENUINE constraint — a broken digest
-refutes it — not vacuously true. -/
+tag (`[0] ≠ [1]`, both digest to `0`), so it has no unrestricted-class floor.
+`HashCRHardQuant (keySetFamily brokenKeySet) (fun _ => True)` fails for the same reason. So the floor
+is a GENUINE constraint — a broken digest refutes it — not vacuously true. -/
 theorem brokenKeySet_floor_top_false : ¬ Hard (keySetCollisionGame brokenKeySet) (fun _ => True) :=
   not_hard_top_of_always_solvable (keySetCollisionGame brokenKeySet)
     (fun _ => ⟨([], [])⟩)
@@ -415,14 +423,17 @@ theorem brokenKeySet_floor_top_false : ¬ Hard (keySetCollisionGame brokenKeySet
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose
-per-tag digest is injective discharges `CollisionResistant (keySetFamily D)` — the honest floor is
-REALIZABLE, unlike the injective `KeySetCR` at deployed parameters. ⚑ Recorded with its price: this is
-the `⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e. real) digest. An
+per-tag digest is injective discharges the collision floor at the UNRESTRICTED class,
+`HashCRHardQuant (keySetFamily D) (fun _ => True)` — the honest floor is REALIZABLE, unlike the
+injective `KeySetCR` at deployed parameters. ⚑ The `⊤` is now WRITTEN OUT in the statement rather than
+hidden behind a name, and it is the whole price: §7's first tooth proves that same `⊤` floor FALSE at
+a range-bounded (i.e. real) digest, so this witness says only that `keySetFamily D` is NOT a hash. An
 injective digest is exactly the toy `demoHash_CR` shape; the satisfiability is honest only as a
 non-emptiness check, never as evidence the deployed hash satisfies it. -/
 theorem keySetFamily_CR_of_injective {Key : Type} (D : KeySetDeployment Key)
-    (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (keySetFamily D) :=
-  injective_family_CR (keySetFamily D) (fun _ t => hinj t)
+    (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) :
+    HashCRHardQuant (keySetFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (keySetFamily D) (fun _ t => hinj t)
 
 /-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the rotation-forgery bound DISCHARGED on the PROVED floor.
 
@@ -562,7 +573,6 @@ theorem rotationRom_nonNegl_forger_excluded {Key : Type} (D : KeySetDeployment K
   keySetCR_false_babyBear,
   exists_collision_of_finite_range,
   deployed_hash_is_family_instance,
-  keySetFamily_CR_of_keySetCR,
   collisionGame_wins_iff,
   forgeryGame_wins_iff,
   forgery_wins_imp,

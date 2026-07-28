@@ -92,12 +92,12 @@ open Dregg2.Crypto.SpongeReduction
   (SpongeMachine CompressionCR SqueezeBindsReachable InitStepSeparated foldl_step_eq finalState_inj
    spongeCR_of_reduction)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 
 set_option autoImplicit false
 
@@ -184,7 +184,8 @@ structure SpongeDeployment (State : Type) where
 
 /-- **`compressionFamily D`** — the deployed per-block compression lifted to a `KeyedHashFamily`,
 keyed by its domain-separation tag, with the uncurried `(state, block) ↦ next state` as the hash. This
-is the object `HashFloorHonesty.CollisionResistant` is realized at for the real permutation. -/
+is the object the collision floor `FloorGames.HashCRHardQuant (compressionFamily D) Eff` is stated at
+for the real permutation. -/
 def compressionFamily {State : Type} (D : SpongeDeployment State) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := State × List ℤ
@@ -202,17 +203,22 @@ theorem deployed_step_is_family_instance {State : Type} (D : SpongeDeployment St
     (fun p : State × List ℤ => (D.machine D.deployedTag).step p.1 p.2)
       = (compressionFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `CompressionCR` held at every tag it would
-discharge `CollisionResistant (compressionFamily D)` (no collisions ⟹ every finder's advantage `0`).
-So the OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at any
-fixed-width state (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis
-is replaced by one a real permutation can satisfy. -/
-theorem compressionFamily_CR_of_compressionCR {State : Type} (D : SpongeDeployment State)
-    (hCR : ∀ t : D.Tag, CompressionCR (D.machine t)) : CollisionResistant (compressionFamily D) :=
-  injective_family_CR (compressionFamily D) (fun _ t => by
-    rintro ⟨s, a⟩ ⟨u, b⟩ heq
-    obtain ⟨h1, h2⟩ := hCR t s u a b heq
-    simp [h1, h2])
+/-! ⚑ **DELETED 2026-07-28 — `compressionFamily_CR_of_compressionCR`.** It bridged the injective
+`CompressionCR` floor to `HashFloorHonesty.CollisionResistant (compressionFamily D)`, and the argument
+in its docstring was "the OLD floor was STRICTLY STRONGER than the honest computational floor, so
+nothing is lost re-grounding". That argument is FALSE, and both ends of the bridge are refuted.
+
+`CollisionResistant F` was never a computational floor — it was a SPELLING of
+`HashCRHardQuant F (fun _ => True)` that hid the `⊤`, and it is deleted in favour of writing the `⊤`
+out. THIS FILE refutes that destination: §7's `compression_floor_top_false_of_finite_range` proves the
+`⊤`-class floor on the very same collision event is FALSE at any range-bounded compression, i.e. at any
+real fixed-width sponge. And §1 proves the SOURCE empty at those same parameters. A bridge from an
+empty hypothesis to a refuted conclusion carries nothing, so it is gone rather than restated.
+
+The honest floor is the one §5's `_advantage_bound` keystones actually consume:
+`Hard (compressionCollisionGame D) Eff`, with `Eff` a parameter in the open and both its poles priced
+in §7. Satisfiability of the `⊤` pole survives below as `compressionFamily_CR_of_injective`, recorded
+with its price. -/
 
 /-! ## §3 — the compression COLLISION GAME and the three ATTACK GAMES, as first-class objects.
 
@@ -709,16 +715,18 @@ theorem brokenMachine_not_compressionCR : ¬ CompressionCR brokenMachine := by
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose
-per-tag compression is injective discharges `CollisionResistant (compressionFamily D)` — the honest
-floor is REALIZABLE, unlike the injective `CompressionCR` at a fixed-width state. ⚑ Recorded with its
-price: this is the `⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e.
-real) compression. An injective compression is exactly the `Reference.refMachine` shape — a state that
-GROWS with the input — and the satisfiability is honest only as a non-emptiness check, never as
-evidence the deployed permutation satisfies it. -/
+per-tag compression is injective discharges `HashCRHardQuant (compressionFamily D) (fun _ => True)` —
+the floor is REALIZABLE, unlike the injective `CompressionCR` at a fixed-width state. ⚑ The `⊤` is now
+WRITTEN OUT in the statement instead of hidden behind the deleted `CollisionResistant`, which makes
+the price legible without a lemma: this is the UNRESTRICTED adversary class, which §7's first tooth
+proves FALSE at a range-bounded (i.e. real) compression. So this witness says only that the family is
+NOT COMPRESSING — an injective compression is exactly the `Reference.refMachine` shape, a state that
+GROWS with the input. Honest as a non-emptiness check, never as evidence the deployed permutation
+satisfies anything. -/
 theorem compressionFamily_CR_of_injective {State : Type} (D : SpongeDeployment State)
     (hinj : ∀ t : D.Tag, Function.Injective (fun p : State × List ℤ => (D.machine t).step p.1 p.2)) :
-    CollisionResistant (compressionFamily D) :=
-  injective_family_CR (compressionFamily D) (fun _ t => hinj t)
+    HashCRHardQuant (compressionFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (compressionFamily D) (fun _ t => hinj t)
 
 /-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the sponge chain DISCHARGED on the PROVED floor.
 
@@ -924,7 +932,6 @@ theorem spongeRom_nonNegl_forger_excluded {State : Type} (D : SpongeDeployment S
   exists_step_collision_of_finite_range,
   exists_step_collision_of_finite_state,
   deployed_step_is_family_instance,
-  compressionFamily_CR_of_compressionCR,
   compressionCollisionGame_wins_iff,
   mdPeelGame_wins_iff,
   finalStateCollisionGame_wins_iff,

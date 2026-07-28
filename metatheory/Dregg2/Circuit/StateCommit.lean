@@ -208,7 +208,8 @@ per-digest binding facts the soundness `funext` consumes are PROVED from it, not
 /-- **CR carrier `compressInjective h`** — ⚠ **BROKEN / VACUOUS FOR A RANGE-BOUNDED COMPRESSION.**
 Stated as injectivity of a 2-to-1 map into one field element, which is FALSE by cardinality
 (`HashFloorHonesty.compressInjective_false_of_finite_range`) — two field elements do not fit in one.
-KEPT for the record; honest replacement `HashFloorHonesty.CollisionResistant`.
+KEPT for the record; honest replacement `FloorGames.HashCRHardQuant F Eff` at a NAMED class (NOT
+`HashFloorHonesty.CollisionResistant`, which was that floor at `⊤`, refuted, and deleted 2026-07-28).
 
 As originally intended: the 2-to-1 hash `h` is injective: `h a b = h c d ⇒ a=c ∧
 b=d`. The standard collision-resistance of a Poseidon 4-to-1/node compress (REALIZABLE — unlike the
@@ -218,7 +219,8 @@ def compressInjective (h : ℤ → ℤ → ℤ) : Prop := ∀ a b c d : ℤ, h a
 /-- **CR carrier `compressNInjective h`** — ⚠ **BROKEN / VACUOUS AT REAL PARAMS** (same predicate as
 `Poseidon2SpongeCR`): injectivity of a `List ℤ → ℤ` sponge is FALSE for any bounded-range sponge
 (`HashFloorHonesty.compressNInjective_false_of_finite_range`). KEPT for the record; honest replacement
-`HashFloorHonesty.CollisionResistant`.
+`FloorGames.HashCRHardQuant F Eff` at a NAMED class (NOT `HashFloorHonesty.CollisionResistant`, which
+was that floor at `⊤`, refuted, and deleted 2026-07-28).
 
 As originally intended: the sponge `h` over a list of leaves is injective:
 `h xs = h ys ⇒ xs = ys`. The standard collision-resistance of a Poseidon sponge (REALIZABLE). -/
@@ -233,9 +235,10 @@ to one leaf. The discharge route is worse than the hypothesis: `Poseidon2Binding
 (`StateCommitFloorRegrounded.leafRealization_uninhabitable_babyBear`) — only the toy
 `Encodable.encode` sponge satisfies it. KEPT for the record (`VACUITY-SWEEP.md` FINDING 2).
 
-⚑ Honest replacement: **NOT** `HashFloorHonesty.CollisionResistant` — that is
-`FloorGames.HashCRHardQuant _ ⊤` and is ITSELF false at deployed parameters
-(`FloorGames.collisionResistant_false_of_compressing`). The re-grounded consumer is
+⚑ Honest replacement: **NOT** the unrestricted-class collision floor — `HashCRHardQuant _ ⊤` is
+ITSELF false at deployed parameters (`FloorGames.hashCRHardQuant_top_false_of_compressing`), which is
+why `HashFloorHonesty.CollisionResistant`, its old spelling, was deleted 2026-07-28. The re-grounded
+consumer is
 `StateCommitFloorRegrounded.stateCommit_equivocation_advantage_bound`: the equivocation game reduces to
 collision games at the leaf/node/sponge families under `HashCRHardQuant _ Eff`, with the `Eff` obligation
 explicit (`FloorGames` §8 — the tree has no cost model).
@@ -255,10 +258,12 @@ carries `Poseidon2SpongeCR` as a FIELD, so a deployed realization VALUE cannot e
 (`VACUITY-SWEEP.md` FINDING 2).
 
 ⚑ Honest replacement: `FloorGames.HashCRHardQuant (StateCommitFloorRegrounded.scLogFamily F) Eff` at an
-EXPLICIT adversary class — see `StateCommitFloorRegrounded.log_equivocation_advantage_bound` (existence →
-finding) and `scLogFamily_CR_of_logHashInjective` (this carrier was STRICTLY STRONGER than needed, AND
-unsatisfiable). NOT `HashFloorHonesty.CollisionResistant`, which is that floor at `⊤` and itself false
-(`FloorGames.collisionResistant_false_of_compressing`).
+EXPLICIT adversary class — see `StateCommitFloorRegrounded.log_equivocation_advantage_bound`
+(existence → finding). ⚑ The bridge that used to be cited here, `scLogFamily_CR_of_logHashInjective`
+("this carrier was STRICTLY STRONGER than needed, AND unsatisfiable"), is DELETED 2026-07-28: it
+implied a refuted floor from a refuted floor, so it was true and empty. NOT the unrestricted-class
+collision floor, which is false at deployed parameters
+(`FloorGames.hashCRHardQuant_top_false_of_compressing`).
 
 As originally intended: the receipt-chain hash is injective (`LH xs = LH ys ⇒ xs = ys`) — the standard
 collision-resistance of a Poseidon log/Merkle accumulator. The portal a log-GROWING effect

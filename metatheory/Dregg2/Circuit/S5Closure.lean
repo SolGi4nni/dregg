@@ -24,7 +24,13 @@ STANDALONE reduction:
     `DomainSeparatedCR D` (`not_negl_const_pos`). The finder is a real term of the fooling data, not a
     re-assumed input.
   * `deployed_unfoolable_of_domainSepCR` — the §5 headline at the deployed surface:
-    `DomainSeparatedCR D ⟹ ¬ Foolable (dVerify R) (dProduced S kstep)`, resting on the keyed-CR floor.
+    `HashCRHardQuant (poseidon2KeyedFamily D) Eff ⟹ ¬ Foolable (dVerify R) (dProduced S kstep)`,
+    resting on the keyed-CR floor AT AN EXPLICIT ADVERSARY CLASS. ⚑ It used to rest on
+    `DomainSeparatedCR D`, i.e. that floor at `⊤`, which is FALSE at the deployed BabyBear sponge —
+    so the headline was true and vacuous. Ported 2026-07-28 with the class carried in the open and
+    ONE new obligation stated rather than hidden: `hEff`, that the class contains the CONSTRUCTED
+    fixed-pair equivocator `foolingRootEquivocator D xs xs'`. That is the honest price of a
+    categorical `¬ Foolable` from a hash floor, and it is undischarged.
     The ONLY carried hypothesis is `hextract` — the fooling→collision EXTRACTION — which is the §5
     residual reduced to its crispest typed form (a fooling yields a colliding pair). The finder,
     advantage, and floor-refutation are all built inside, not assumed.
@@ -41,8 +47,9 @@ file proves or pins:
   * **R2 — the floor object is vacuous at real params.** `poseidon2KeyedFamily D` keys by
     `Key n := fun _ => D.Tag` — a FIXED finite tag space INDEPENDENT of the security parameter `n`. So a
     hardcoded-collision finder has an `n`-independent (constant) advantage; a real Poseidon2 into BabyBear
-    has collisions by pigeonhole. Hence `DomainSeparatedCR D` FORCES `D.hashAt t` injective for every `t`
-    (`domainSepCR_forces_injective`) and is outright FALSE at the BabyBear field bound
+    has collisions by pigeonhole. Hence `DomainSeparatedCR D` — the `⊤` instance, which §5's teeth are
+    still stated at, because they are teeth ABOUT that pole — FORCES `D.hashAt t` injective for every
+    `t` (`domainSepCR_forces_injective`) and is outright FALSE at the BabyBear field bound
     (`domainSepCR_false_babyBear`). Its only satisfying witnesses are injective sponges — the same "false
     comfort" `HashFloorHonesty` flags for the old injective floor. A real-params floor needs a key space
     that GROWS with `n`; the domain-separation tag is a label, not a growing key.
@@ -63,7 +70,9 @@ fresh `axiom`.
 
 namespace Dregg2.Circuit.S5Closure
 
-open Dregg2.Circuit.HashFloorHonesty (CollisionFinder CollisionResistant collisionAdv)
+open Dregg2.Circuit.HashFloorHonesty (CollisionFinder collisionAdv)
+open Dregg2.Crypto.FloorGames
+  (Adversary hashGame finderToAdv HashCRHardQuant equivocation_advantage_negligible_eff)
 open Dregg2.Circuit.Poseidon2KeyedBridge
   (DomainSeparatedSponge DomainSeparatedCR poseidon2KeyedFamily brokenDomainSep)
 open Dregg2.Circuit.LightClientFusion (foolingRootEquivocator foolingRootEquivocator_wins_iff)
@@ -114,32 +123,53 @@ theorem collisionAdv_pos (D : DomainSeparatedSponge) (xs xs' : List ℤ) (t : D.
 /-! ## §2 — THE STANDALONE REDUCTION: a constructed finder refutes the keyed floor. -/
 
 /-- **THE CONSTRUCTED REFUTATION.** A genuine collision of `D.hashAt` at ANY tag gives the CONSTRUCTED
-fixed-pair finder a non-negligible (positive-constant) advantage — refuting `DomainSeparatedCR D`. The
-finder is `foolingRootEquivocator D xs xs'`, a real term of `(xs, xs')`; nothing is re-assumed. -/
+fixed-pair finder a non-negligible (positive-constant) advantage — refuting the floor AT ANY CLASS
+`Eff` THAT CONTAINS THAT FINDER. The finder is `foolingRootEquivocator D xs xs'`, a real term of
+`(xs, xs')`; nothing is re-assumed. ⚑ `hEff` is the whole residual: at `Eff := ⊤` it is `trivial` and
+the refutation is unconditional (that is how §5's teeth use it), and at an honest restricted class it
+is the real, undischarged question of whether outputting a KNOWN collision pair is efficient — which
+it plainly is, but this tree has no cost model in which to say so. -/
 theorem deployed_collision_refutes_domainSepCR (D : DomainSeparatedSponge)
-    (hD : DomainSeparatedCR D) (xs xs' : List ℤ) (t : D.Tag)
-    (hne : xs ≠ xs') (hcol : D.hashAt t xs = D.hashAt t xs') : False := by
+    {Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop}
+    (hD : HashCRHardQuant (poseidon2KeyedFamily D) Eff) (xs xs' : List ℤ) (t : D.Tag)
+    (hne : xs ≠ xs') (hcol : D.hashAt t xs = D.hashAt t xs')
+    (hEff : Eff (finderToAdv (foolingRootEquivocator D xs xs'))) : False := by
   have hnegl : Negl (collisionAdv (poseidon2KeyedFamily D) (foolingRootEquivocator D xs xs')) :=
-    hD (foolingRootEquivocator D xs xs')
+    equivocation_advantage_negligible_eff hD (foolingRootEquivocator D xs xs') hEff
   rw [collisionAdv_const D xs xs'] at hnegl
   exact not_negl_const_pos (collisionAdv_pos D xs xs' t hne hcol) hnegl
 
 /-! ## §3 — THE §5 HEADLINE at the deployed surface (the map DISCHARGED modulo the named extraction).
 
-`deployed_unfoolable_of_domainSepCR : DomainSeparatedCR D ⟹ ¬ Foolable (dVerify R) (dProduced S kstep)`.
-The deployed unfoolability now RESTS on the keyed-CR floor `DomainSeparatedCR D`. The only carried
-hypothesis is `hextract` — the fooling→colliding-pair extraction (R1, §6). Compare
+`deployed_unfoolable_of_domainSepCR : HashCRHardQuant (poseidon2KeyedFamily D) Eff ⟹
+¬ Foolable (dVerify R) (dProduced S kstep)`. The deployed unfoolability RESTS on the keyed-CR floor at
+an EXPLICIT class. Two carried hypotheses, both named: `hextract` — the fooling→colliding-pair
+extraction (R1, §6) — and `hEff`, that `Eff` contains the constructed equivocator. Compare
 `LightClientFusion.deployed_fooling_advantage_negl`, which carried a whole `CollisionFinder`: here the
 finder, its advantage, and the floor-refutation are all CONSTRUCTED inside; only the raw collision
 witness is carried. -/
 
-/-- **THE §5 CLOSURE.** Under the deployed keyed collision-resistance floor `DomainSeparatedCR D`, and the
-named fooling→collision extraction `hextract`, the deployed light client is UNFOOLABLE — no environment
-fools `dVerify R` into accepting a non-`dProduced` state. The discharge routes any fooling through
-`hextract` to a concrete colliding pair, CONSTRUCTS `foolingRootEquivocator` from it, and refutes the
-floor via `deployed_collision_refutes_domainSepCR`. -/
+/-- **THE §5 CLOSURE.** Under the deployed keyed collision-resistance floor at an explicit adversary
+class, the named fooling→collision extraction `hextract`, and `hEff` (the class contains the
+constructed equivocator), the deployed light client is UNFOOLABLE — no environment fools `dVerify R`
+into accepting a non-`dProduced` state. The discharge routes any fooling through `hextract` to a
+concrete colliding pair, CONSTRUCTS `foolingRootEquivocator` from it, and refutes the floor via
+`deployed_collision_refutes_domainSepCR`.
+
+⚑ **WHAT THIS COSTS AND WHY IT IS STILL THE RIGHT SHAPE (2026-07-28).** A CATEGORICAL `¬ Foolable`
+from a hash floor is only available from a floor strong enough to forbid collisions outright — §5
+proves exactly that (`domainSepCR_forces_injective`), and injectivity is FALSE at BabyBear. So at
+`Eff := ⊤` this theorem is true with a false antecedent, which is what it was before this port. At a
+restricted `Eff` the antecedent can hold, and the price moves into `hEff`, where a reader can see it.
+The theorem did not get weaker; the hypothesis got HONEST. The concrete-security sibling that needs
+no `hEff` at all is `DomainSeparatedCREffRegrounded.deployed_lightclientUnfoolable_advantage_bound_eff`
+— it bounds the forgery ADVANTAGE rather than claiming unfoolability outright, and that is the form a
+real hash can actually support. -/
 theorem deployed_unfoolable_of_domainSepCR
-    (D : DomainSeparatedSponge) (hD : DomainSeparatedCR D)
+    (D : DomainSeparatedSponge)
+    {Eff : Adversary (hashGame (poseidon2KeyedFamily D)) → Prop}
+    (hD : HashCRHardQuant (poseidon2KeyedFamily D) Eff)
+    (hEff : ∀ xs xs' : List ℤ, Eff (finderToAdv (foolingRootEquivocator D xs xs')))
     (R : Registry) (S : CommitSurface)
     (kstep : EffectIdx → RecChainedState → RecChainedState → Prop)
     (hextract : Foolable (Dregg2.Circuit.LightClientFusion.dVerify R)
@@ -149,7 +179,7 @@ theorem deployed_unfoolable_of_domainSepCR
         (Dregg2.Circuit.LightClientFusion.dProduced S kstep) := by
   intro hFool
   obtain ⟨t, xs, xs', hne, hcol⟩ := hextract hFool
-  exact deployed_collision_refutes_domainSepCR D hD xs xs' t hne hcol
+  exact deployed_collision_refutes_domainSepCR D hD xs xs' t hne hcol (hEff xs xs')
 
 /-! ## §4 — NON-VACUITY, EVALUATED: a concrete fooling → a concrete winning constructed finder.
 
@@ -180,7 +210,7 @@ theorem domainSepCR_forces_injective (D : DomainSeparatedSponge) (hD : DomainSep
     (t : D.Tag) : Function.Injective (D.hashAt t) := by
   intro xs xs' hcol
   by_contra hne
-  exact deployed_collision_refutes_domainSepCR D hD xs xs' t hne hcol
+  exact deployed_collision_refutes_domainSepCR D hD xs xs' t hne hcol trivial
 
 /-- **R2, part 2.** If the deployed sponge lands in a finite set of field elements (every real Poseidon2
 into BabyBear), `D.hashAt t` is non-injective (pigeonhole), so `DomainSeparatedCR D` is FALSE — the same

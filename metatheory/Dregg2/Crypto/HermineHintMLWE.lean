@@ -352,8 +352,11 @@ def CommitReveal.opens {Idx W C : Type*} (cr : CommitReveal Idx W C) (cm : C) (i
 FALSE whenever `|C| < |W|` (the defining property of a commitment): pigeonhole forces two reveals to one
 commitment. `HashFloorHonesty.hashCR_false_of_compressing` PROVES this floor false for a compressing
 commit-reveal, so consumers conditioned on it are vacuously true. KEPT for the record; the honest
-computational replacement is `HashFloorHonesty.CollisionResistant` (advantage-bounded binding via
-`HashFloorHonesty.equivocation_advantage_negligible`).
+computational replacement is `Crypto.FloorGames.HashCRHardQuant F Eff` at a NAMED adversary class
+(advantage-bounded binding via `FloorGames.equivocation_advantage_negligible_eff`), or better
+`Crypto.RomQueryFloor.birthday_bound`, which is PROVED. ⚑ NOT
+`HashFloorHonesty.CollisionResistant`, which this line used to name: that was the same floor at `⊤`,
+refuted for every compressing family, and DELETED 2026-07-28.
 
 The named collision-resistance carrier (as originally intended): `H` is injective on the committed
 domain (for each fixed index, distinct `w` hash to distinct commitments). Modeled as the abstract

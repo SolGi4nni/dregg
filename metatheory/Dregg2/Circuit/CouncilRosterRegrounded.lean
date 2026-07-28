@@ -103,12 +103,12 @@ open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.CouncilCommit
   (RosterCR councilCommitOf councilCommitField recStateCommit_recovers_council)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
-   not_injective_of_finite_range)
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime isPolyTime_inhabited idAdv)
 
 set_option autoImplicit false
@@ -207,8 +207,8 @@ structure RosterDeployment (Guardian : Type) where
   idCell : CellId
 
 /-- **`rosterFamily D`** — the deployed roster digest lifted to a `KeyedHashFamily`, keyed by its
-domain-separation tag. This is the object `HashFloorHonesty.CollisionResistant` is realized at for the
-real digest. -/
+domain-separation tag. This is the object the collision floor `FloorGames.HashCRHardQuant` is realized
+at for the real digest — at whatever adversary class `Eff` the reader is willing to price. -/
 def rosterFamily {Guardian : Type} (D : RosterDeployment Guardian) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := List Guardian
@@ -225,14 +225,20 @@ identity cell computes into its `council_commit` register. -/
 theorem deployed_hash_is_family_instance {Guardian : Type} (D : RosterDeployment Guardian) (n : ℕ) :
     D.hash D.deployedTag = (rosterFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `RosterCR` held at every tag it would
-discharge `CollisionResistant (rosterFamily D)` (no collisions ⟹ every finder's advantage `0`). So the
-OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at the deployed
-digest (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis is replaced
-by one a real digest can satisfy. -/
-theorem rosterFamily_CR_of_rosterCR {Guardian : Type} (D : RosterDeployment Guardian)
-    (hCR : ∀ t : D.Tag, RosterCR (D.hash t)) : CollisionResistant (rosterFamily D) :=
-  injective_family_CR (rosterFamily D) (fun _ t a b h => hCR t a b h)
+/-! ⚑ **THERE IS NO RUNG-1 BRIDGE HERE ANY MORE, AND THAT IS THE HONEST STATE (deleted 2026-07-28).**
+
+A `rosterFamily_CR_of_rosterCR` stood at this point: `RosterCR` at every tag ⟹ the family's now-deleted
+`HashFloorHonesty.CollisionResistant` floor, argued as "the OLD floor was STRICTLY STRONGER, so nothing
+is lost re-grounding — a false hypothesis is replaced by one a real digest can satisfy". **Both ends of
+that bridge are refuted, so it bought nothing.** Its source is refuted by §1 at the deployed digest; its
+target was `HashCRHardQuant (rosterFamily D) (fun _ => True)` spelled without the `⊤`, and §7's first
+tooth refutes THAT at the same range-bounded digest. A bridge from an empty hypothesis to a false
+conclusion is not a re-grounding argument.
+
+What stands in its place is what this file already carries and does not need a bridge to state: the
+collision GAME below (§3) with its adversary class `Eff` written out at every use site, both poles of
+that class PRICED as theorems (§7), and the §8 successor on the keyed-ROM floor, where the bound is
+PROVED by the birthday argument instead of assumed. -/
 
 /-! ## §3 — the roster COLLISION GAME and the COUNCIL-SUBSTITUTION GAME, as first-class objects. -/
 
@@ -536,14 +542,15 @@ theorem brokenRoster_substitution_floor_top_false :
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose per-tag
-digest is injective discharges `CollisionResistant (rosterFamily D)` — the honest floor is REALIZABLE,
-unlike the injective `RosterCR` at deployed parameters. ⚑ Recorded with its price: this is the
-`⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e. real) digest. The
-satisfiability is honest only as a non-emptiness check, never as evidence the deployed hash satisfies
-it. -/
+digest is injective discharges `HashCRHardQuant (rosterFamily D) (fun _ => True)` — the honest floor is
+REALIZABLE, unlike the injective `RosterCR` at deployed parameters. ⚑ Recorded with its price: this is
+the `⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e. real) digest — and
+the `⊤` is now written into the statement instead of hidden behind a name. The satisfiability is honest
+only as a non-emptiness check, never as evidence the deployed hash satisfies it. -/
 theorem rosterFamily_CR_of_injective {Guardian : Type} (D : RosterDeployment Guardian)
-    (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (rosterFamily D) :=
-  injective_family_CR (rosterFamily D) (fun _ t => hinj t)
+    (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) :
+    HashCRHardQuant (rosterFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (rosterFamily D) (fun _ t => hinj t)
 
 /-! ## §8 — ⚑ THE DISCHARGED HEADLINE, ON THE PROVED KEYED-ROM FLOOR.
 
@@ -673,7 +680,6 @@ end RomSuccessor
   rosterCR_false_babyBear,
   exists_collision_of_finite_range,
   deployed_hash_is_family_instance,
-  rosterFamily_CR_of_rosterCR,
   collisionGame_wins_iff,
   substitutionGame_wins_iff,
   substitution_win_of_root_attack,

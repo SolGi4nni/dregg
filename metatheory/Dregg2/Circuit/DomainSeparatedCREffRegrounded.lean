@@ -17,7 +17,14 @@ squarely on it:
     CollisionResistant F  ↔  HashCRHardQuant F ⊤        (collisionResistant_iff_hashCRHardQuant_top)
     Hard G ⊤              ↔  Negl (solvableFrac G)      (hard_top_iff_solvableFrac_negl)
 
-`CollisionResistant` **is** a floor at the UNRESTRICTED adversary class, so it **is** the probabilistic
+⚑ 2026-07-28 — BOTH NAMES ON THE LEFT ARE NOW GONE, and the display above is history, kept because it
+is the argument. `CollisionResistant` was DELETED (it was the right-hand side under a name that hid
+the `⊤`) and the `↔` went with its subject; `DomainSeparatedCR D` now reads
+`HashCRHardQuant (poseidon2KeyedFamily D) (fun _ => True)` directly, so
+`domainSeparatedCREff_top_iff_old` below is `Iff.rfl`. Nothing in this file's finding changed — what
+changed is that a reader no longer needs a lemma to see the adversary class that makes it true.
+
+The old `CollisionResistant` **was** a floor at the UNRESTRICTED adversary class, so it **is** the probabilistic
 EXISTENCE floor, so it is FALSE wherever collisions merely EXIST — and at a BabyBear-bounded sponge
 they exist at every tag, by the same pigeonhole that killed `Poseidon2SpongeCR`. §1 proves it:
 `domainSeparatedCR_false_babyBear`. `Classical.choice` is the adversary; the domain-separation tag
@@ -78,14 +85,13 @@ namespace Dregg2.Circuit.DomainSeparatedCREffRegrounded
 open Dregg2.Circuit.Poseidon2KeyedBridge
   (DomainSeparatedSponge poseidon2KeyedFamily DomainSeparatedCR)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv not_injective_of_finite_range
+  (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range
    finite_range_of_field_bound)
 open Dregg2.Crypto.ProbCrypto (negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_add negl_finset_sum)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv Hard hashGame hashGame_wins_iff finderToAdv collisionAdv_eq_gameAdv
-   HashCRHardQuant collisionResistant_iff_hashCRHardQuant_top collisionResistant_false_of_compressing
-   hard_bot_vacuous)
+   HashCRHardQuant hashCRHardQuant_top_false_of_compressing hard_bot_vacuous)
 
 set_option autoImplicit false
 
@@ -93,7 +99,7 @@ set_option autoImplicit false
 
 The counting core, one level up from where `HashFloorHonesty` left it. The old injective floor
 `Poseidon2SpongeCR` was refuted because injectivity fails; the "proper computational" floor that
-replaced it is refuted because `CollisionResistant` quantifies over an adversary class that CONTAINS
+replaced it is refuted because that floor quantifies over an adversary class that CONTAINS
 `Classical.choice` — and at the unrestricted class, `FloorGames` proves, a game floor IS the existence
 floor. Same pigeonhole, one `Classical.choice` later. -/
 
@@ -115,14 +121,15 @@ theorem exists_collision_at_tag (D : DomainSeparatedSponge)
   exact ⟨x, y, hne, heq⟩
 
 /-- **⚑ TOOTH — `DomainSeparatedCR` is FALSE for any range-bounded deployed sponge.** The floor is
-`CollisionResistant`, which `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves IS the floor
-at the UNRESTRICTED adversary class, which `hard_top_iff_solvableFrac_negl` proves IS the existence
-floor. Collisions exist at every tag (`exists_collision_at_tag`), so the floor is FALSE. The file that
-was written to bridge the consumers to the REAL deployed hash rests on a hypothesis the real deployed
-hash refutes. -/
+the collision floor at the UNRESTRICTED adversary class — since 2026-07-28 its body says so literally
+(`HashCRHardQuant (poseidon2KeyedFamily D) (fun _ => True)`; the `CollisionResistant` def that used to
+spell it, and the `↔` that used to be needed to see through the name, are both DELETED) — and
+`hard_top_iff_solvableFrac_negl` proves that class's floor IS the existence floor. Collisions exist at
+every tag (`exists_collision_at_tag`), so the floor is FALSE. The file that was written to bridge the
+consumers to the REAL deployed hash rests on a hypothesis the real deployed hash refutes. -/
 theorem domainSeparatedCR_false_of_finite_range (D : DomainSeparatedSponge)
     (hfin : (Set.range D.sponge).Finite) : ¬ DomainSeparatedCR D :=
-  collisionResistant_false_of_compressing (poseidon2KeyedFamily D) ⟨([] : List ℤ)⟩
+  hashCRHardQuant_top_false_of_compressing (poseidon2KeyedFamily D) ⟨([] : List ℤ)⟩
     (fun l k => exists_collision_at_tag D hfin l k)
 
 /-- **⚑ TOOTH (deployed form) — `DomainSeparatedCR` is FALSE at the REAL BabyBear parameters.** A
@@ -161,10 +168,17 @@ def DomainSeparatedCREff (D : DomainSeparatedSponge)
 
 /-- **THE BRIDGE TO THE OLD FLOOR — this is what makes §1 a statement about the DEPLOYED floor.** The
 old `DomainSeparatedCR` IS the new floor at the unrestricted class. So §1 refutes exactly the object
-`Poseidon2KeyedBridge` ships, and the `Eff` parameter is the ONLY thing that changes. -/
+`Poseidon2KeyedBridge` ships, and the `Eff` parameter is the ONLY thing that changes.
+
+⚑ As of 2026-07-28 this is `Iff.rfl`, and that is the finding, not a simplification: it used to route
+through `collisionResistant_iff_hashCRHardQuant_top`, a real lemma whose only job was to see through a
+NAME. With `CollisionResistant` deleted and `DomainSeparatedCR`'s body written as `HashCRHardQuant …
+(fun _ => True)`, the two sides are the same statement and the bridge is definitional. Kept — deleting
+it would take the sentence "the old floor IS this one at `⊤`" out of the tree, and that sentence is
+the reason §1's teeth are about the DEPLOYED object. -/
 theorem domainSeparatedCREff_top_iff_old (D : DomainSeparatedSponge) :
     DomainSeparatedCREff D (fun _ => True) ↔ DomainSeparatedCR D :=
-  (collisionResistant_iff_hashCRHardQuant_top (poseidon2KeyedFamily D)).symm
+  Iff.rfl
 
 /-- **THE PROBLEM IS IN THE STATEMENT** — an `Eff`-floor win is a genuine collision of the DEPLOYED
 domain-separated sponge, by `Iff.rfl`, at the family whose instance at `deployedTag` IS the function

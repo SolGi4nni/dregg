@@ -1,6 +1,13 @@
 /-
 # `Dregg2.Crypto.XmVrfRefinementRegrounded` — the DEPLOYED XM-VRF UNIQUENESS
-RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the PROPER keyed `CollisionResistant` floor.
+RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the KEYED COLLISION GAME
+(`FloorGames.HashCRHardQuant F Eff`, adversary class IN THE STATEMENT).
+
+⚑ The intermediate spelling `HashFloorHonesty.CollisionResistant` is DELETED (2026-07-28): it WAS
+`HashCRHardQuant F (fun _ => True)` with the `⊤` folded into a name, and that `⊤` floor is itself FALSE
+for every compressing hash (`FloorGames.hashCRHardQuant_top_false_of_compressing`) — the deployed BLAKE3
+leaf/node hashes included. The `⊤`-class results below are stated with the `⊤` written out; the
+DISCHARGED bindings are §2R's keyed-ROM successors.
 
 ## The gap this closes (the PQ sortition-VRF leg of the forward-scaffolding floor sweep)
 
@@ -23,16 +30,24 @@ hypothesis. Mirror of `IdentityCommitmentRegrounded`.
 * **`xm_leaf_uniqueness_advantage_bound` / `xm_node_binding_advantage_bound`** — the advantage-bounded siblings
   of `leaf_unique` / `merkle_leaf_binding`: a uniqueness-breaking adversary (per key, two distinct verifying
   outputs colliding at one leaf, or two distinct child pairs colliding at one node — a hash collision, exactly
-  `distinct_outputs_break_hashcr` witnesses) IS a `CollisionFinder`, so under the proper floor its advantage is
-  `Negl`. "two verifying outputs ⟹ equal" becomes "⟹ equal EXCEPT with negligible probability": a validator
-  double-claims a seat only with negligible advantage. Discharged by `thread_advantage_bound`.
+  `distinct_outputs_break_hashcr` witnesses) IS a `CollisionFinder`, so under the collision floor
+  `HashCRHardQuant (…Family X) Eff` its advantage is `Negl`. "two verifying outputs ⟹ equal" becomes "⟹
+  equal EXCEPT with negligible probability": a validator double-claims a seat only with negligible
+  advantage. `Eff` stays a PARAMETER; the discharge is §2R's keyed-ROM floor.
 
 ## Non-fake
 
-Each floor is SATISFIABLE (`xmVrf_goodCR_leaf_CR` / `_node_CR` on the injective deployed `goodX.cr`) and
-LOAD-BEARING (`xmVrf_badCR_node_not_CR` on a colliding node hash). Old injective-floor consumers KEPT
-untouched; siblings ADDED. `#assert_all_clean` (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`, no
-fresh `axiom`, no `native_decide`.
+Each `⊤`-class floor is SATISFIABLE (`xmVrf_goodCR_leaf_CR` / `_node_CR` on the injective `goodX.cr`) and
+REFUTABLE (`xmVrf_badCR_node_not_CR` on a colliding node hash, via
+`hashCRHardQuant_top_false_of_compressing`).
+
+⚑ Those two poles are the whole shape of the `⊤` class: it holds exactly for the injective families and
+fails exactly for the compressing ones. So the satisfiability witnesses say `goodX.cr` is NOT compressing,
+and the deployed BLAKE3 leaf/node hashes sit with `badXmVrf` on the refuted side. §2R's keyed-ROM
+successors are what carry the deployed uniqueness claim.
+
+Old injective-floor consumers KEPT untouched; siblings ADDED. `#assert_all_clean` (⊆ {propext,
+Classical.choice, Quot.sound}); no `sorry`, no fresh `axiom`, no `native_decide`.
 
 ## Coordination
 
@@ -50,7 +65,7 @@ namespace Dregg2.Crypto.XmVrfRefinementRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv idFamily)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
@@ -63,7 +78,7 @@ open Dregg2.Crypto.RomCarrierSites
    romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
-   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+   hashCRHardQuant_top_false_of_compressing idFamily_hashCRHardQuant_top hard_bot_vacuous)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 open Dregg2.Crypto.XmVrfRefinement (XmVrf Role)
 
@@ -86,12 +101,13 @@ def xmVrfNodeFamily {Epoch Output Rand Pre Digest : Type}
 /-! ## §2 — the leaf and node breaks, as SECURITY REDUCTIONS.
 
 ⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** `xm_leaf_uniqueness_advantage_bound` and
-`xm_node_binding_advantage_bound` took `hCR : CollisionResistant (…Family X)`.
-`FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves that IS the collision floor at the
-UNRESTRICTED class, and `collisionResistant_false_of_compressing` proves THAT false for any compressing
-hash — the deployed BLAKE3 leaf and node hashes included. So both exports rested on a hypothesis REFUTED
-at deployed parameters. Their `_eff` siblings took a `CollisionFinder` and applied the floor TO IT, so
-neither the seat double-claim nor the node equivocation ever appeared in a `Prop`. ALL FOUR ARE DELETED.
+`xm_node_binding_advantage_bound` took the collision floor at the UNRESTRICTED class —
+`HashCRHardQuant (…Family X) (fun _ => True)`, then written `CollisionResistant (…Family X)`, a spelling
+since DELETED — and `FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for any
+compressing hash — the deployed BLAKE3 leaf and node hashes included. So both exports rested on a
+hypothesis REFUTED at deployed parameters. Their `_eff` siblings took a `CollisionFinder` and applied the
+floor TO IT, so neither the seat double-claim nor the node equivocation ever appeared in a `Prop`.
+ALL FOUR ARE DELETED.
 
 What stands here is the commit-opening REDUCTION (`HermineHashCRRegrounded` §2) at each deployed family:
 the break is a `Game` whose win says an adversary published a leaf digest (resp. an internal node) with
@@ -273,17 +289,19 @@ end RomSuccessor
 
 /-! ## §3 — non-vacuity: satisfiable AND load-bearing, on the deployed XM-VRF hashes. -/
 
-/-- **(TOOTH — the leaf floor is SATISFIABLE.)** The injective deployed hash `goodX.cr` satisfies the proper
-keyed floor at `Role.leaf`. -/
+/-- **(TOOTH — the leaf `⊤`-class floor is SATISFIABLE.)** The injective `goodX.cr`
+(`H role p = roleTag role :: p`) satisfies the keyed collision floor at the UNRESTRICTED class, at
+`Role.leaf`. ⚑ Injectivity is the only way to satisfy it (see `xmVrf_badCR_node_not_CR`), so this witness
+says `goodX.cr` is not compressing; the deployed BLAKE3 leaf hash is, and cannot be on this side. -/
 theorem xmVrf_goodCR_leaf_CR :
-    CollisionResistant (xmVrfLeafFamily Dregg2.Crypto.XmVrfRefinement.goodX) :=
+    HashCRHardQuant (xmVrfLeafFamily Dregg2.Crypto.XmVrfRefinement.goodX) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.XmVrfRefinement.goodX.cr Role.leaf
     Dregg2.Crypto.XmVrfRefinement.goodX_hashcr
 
-/-- **(TOOTH — the node floor is SATISFIABLE.)** The injective deployed hash `goodX.cr` satisfies the proper
-keyed floor at `Role.node`. -/
+/-- **(TOOTH — the node `⊤`-class floor is SATISFIABLE.)** The injective `goodX.cr` satisfies the keyed
+collision floor at the UNRESTRICTED class, at `Role.node`. Same caveat as the leaf tooth above. -/
 theorem xmVrf_goodCR_node_CR :
-    CollisionResistant (xmVrfNodeFamily Dregg2.Crypto.XmVrfRefinement.goodX) :=
+    HashCRHardQuant (xmVrfNodeFamily Dregg2.Crypto.XmVrfRefinement.goodX) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.XmVrfRefinement.goodX.cr Role.node
     Dregg2.Crypto.XmVrfRefinement.goodX_hashcr
 
@@ -294,25 +312,17 @@ def badXmVrf : XmVrf Unit ℕ ℕ (List ℕ) ℕ where
   frameLeaf := fun _ y r => [y, r]
   frameNode := fun a b => a :: [b]
 
-/-- **(TOOTH — the node floor is LOAD-BEARING.)** The colliding node hash has the node-equivocator
-`crEquivocator badXmVrf.cr Role.node [1] [2]` winning on every key (`[1] ≠ [2]` yet both hash to `0`),
-advantage `1`, so its family is NOT CR — the deployed uniqueness's floor is a genuine constraint, exactly as
-`XmVrfRefinement.naive_not_merkle_backed` shows the Merkle CR commitment is what buys uniqueness. -/
-theorem xmVrf_badCR_node_not_CR : ¬ CollisionResistant (xmVrfNodeFamily badXmVrf) := by
-  intro hCR
-  have hadv : collisionAdv (xmVrfNodeFamily badXmVrf)
-      (crEquivocator badXmVrf.cr Role.node ([1] : List ℕ) [2]) = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (xmVrfNodeFamily badXmVrf).Key n =>
-        (crEquivocator badXmVrf.cr Role.node ([1] : List ℕ) [2]).wins n k) = fun _ => true := by
-      funext k
-      simp [CollisionFinder.wins, crEquivocator, commitRevealFamily, badXmVrf]
-    show @winProb ((xmVrfNodeFamily badXmVrf).Key n) ((xmVrfNodeFamily badXmVrf).keyFintype n)
-        (fun k => (crEquivocator badXmVrf.cr Role.node ([1] : List ℕ) [2]).wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((xmVrfNodeFamily badXmVrf).Key n) ((xmVrfNodeFamily badXmVrf).keyFintype n)
-      ((xmVrfNodeFamily badXmVrf).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR (crEquivocator badXmVrf.cr Role.node [1] [2]))
+/-- **(TOOTH — the node `⊤`-class floor is REFUTABLE.)** The colliding node hash has a collision at EVERY
+key (`[1] ≠ [2]` yet both hash to `0`), so `hashCRHardQuant_top_false_of_compressing` refutes the floor at
+the UNRESTRICTED class — exactly as `XmVrfRefinement.naive_not_merkle_backed` shows the Merkle CR
+commitment is what buys uniqueness. The argument needs only compression, so it runs at the deployed BLAKE3
+node hash too. -/
+theorem xmVrf_badCR_node_not_CR :
+    ¬ HashCRHardQuant (xmVrfNodeFamily badXmVrf) (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨([] : List ℕ)⟩
+    (fun _ _ => ⟨([1] : List ℕ), ([2] : List ℕ), ?_, rfl⟩)
+  show ([1] : List ℕ) ≠ [2]
+  decide
 
 /-- **THE RE-GROUNDED UNIQUENESS FIRES AT A REAL FLOOR WITNESS.** On the injective identity family, the
 leaf-equivocation advantage is negligible — the deployed sortition uniqueness runs end-to-end to a genuine
@@ -320,16 +330,20 @@ leaf-equivocation advantage is negligible — the deployed sortition uniqueness 
 theorem xm_uniqueness_fires (A : Adversary (commitOpenGame idFamily)) :
     Negl (gameAdv (commitOpenGame idFamily) A) :=
   hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
+    idFamily_hashCRHardQuant_top
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
-/-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing XM-VRF node hash.)** The bare-CR floor at the colliding
-`badXmVrf` node hash is refuted (`xmVrf_badCR_node_not_CR`), and it IS `HashCRHardQuant _ ⊤` — so the `⊤`
-class is FALSE. The price of `hEff`, as a theorem. -/
+/-- **(TOOTH — `Eff := ⊤` is FALSE at a compressing XM-VRF node hash.)** The price of `hEff`, as a
+theorem: the `⊤` class is refuted at the colliding `badXmVrf` node hash.
+
+⚑ This IS `xmVrf_badCR_node_not_CR` — nothing is added. It used to bridge a `CollisionResistant`
+refutation across `collisionResistant_iff_hashCRHardQuant_top`; with the `⊤` now written into the tooth's
+own statement, the bridge is the identity. Both names are kept because `Verify/FloorRatchetBaseline`
+grandfathers refuted-floor carriers BY NAME. -/
 theorem xmVrf_node_eff_top_false :
     ¬ HashCRHardQuant (xmVrfNodeFamily badXmVrf) (fun _ => True) :=
-  fun h => xmVrf_badCR_node_not_CR ((collisionResistant_iff_hashCRHardQuant_top _).mpr h)
+  xmVrf_badCR_node_not_CR
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the node floor holds for ANY
 XM-VRF. -/
@@ -351,14 +365,15 @@ example {Epoch Output Rand Pre Digest : Type} [DecidableEq Pre] [DecidableEq Dig
     (have : Negl (gameAdv (xmLeafGame X) A) := hD B hB)
   trivial
 
-/-- **THE `Eff` UNIQUENESS FIRES AT A REAL FLOOR WITNESS.** On the injective deployed `goodX.cr` the leaf
+/-- **THE `Eff` UNIQUENESS FIRES AT A REAL FLOOR WITNESS.** On the injective `goodX.cr` the leaf
 `Eff`-floor at `⊤` holds (`xmVrf_goodCR_leaf_CR`), so the `Eff` uniqueness runs end-to-end to a genuine
-`Negl` at an inhabited hypothesis. -/
+`Negl` at an inhabited hypothesis. Read with `xmVrf_node_eff_top_false`: it fires HERE and cannot fire at
+a compressing leaf hash, which is why the deployed discharge is §2R. -/
 theorem xm_uniqueness_eff_fires
     (A : Adversary (xmLeafGame Dregg2.Crypto.XmVrfRefinement.goodX)) :
     Negl (gameAdv (xmLeafGame Dregg2.Crypto.XmVrfRefinement.goodX) A) :=
   xm_leaf_uniqueness_advantage_bound Dregg2.Crypto.XmVrfRefinement.goodX (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp xmVrf_goodCR_leaf_CR)
+    xmVrf_goodCR_leaf_CR
 
 #assert_all_clean [
   xmLeafGame_wins_iff,

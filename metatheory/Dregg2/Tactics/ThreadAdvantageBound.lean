@@ -7,8 +7,11 @@ the MECHANICAL SWEEP that re-threads an old-floor-conditioned lemma onto the PRO
 The 07-13 floor-fix (`Dregg2/Circuit/HashFloorHonesty.lean` + `Dregg2/Crypto/CryptoFloorTeeth.lean`)
 proved the OLD floors — `HashCR` / `Poseidon2SpongeCR` / `compressNInjective` / `MSISHard` — stated as
 INJECTIVITY / existence-refutation, VACUOUS at real parameters, and defined the PROPER computational
-replacements: `CollisionResistant` (a keyed hash family: every collision-finder's advantage `Negl`) and
-the adversary-indexed `MSISHardQuantShape`/`HashCRHardQuantShape` (`∀ s, Negl (adv s)`). That left ~180 downstream
+replacements: a keyed-hash-family collision floor (every collision-finder's advantage `Negl`) and
+the adversary-indexed `MSISHardQuantShape`/`HashCRHardQuantShape` (`∀ s, Negl (adv s)`).
+⚑ That collision floor — `HashFloorHonesty.CollisionResistant` — was itself refuted and is DELETED
+(2026-07-28); its honest successor is `FloorGames.HashCRHardQuant F Eff`, and the leaf that read it
+out of context went with it. That left ~180 downstream
 consumers to re-thread. The threading is UNIFORM: each old-floor use — a Boolean "two openings ⟹ equal"
 — becomes an ADDITIVE negligible advantage term, and the resulting `Negl` obligation is discharged by the
 negligibility-closure algebra of `Dregg2/Crypto/ConcreteSecurity.lean`
@@ -17,13 +20,19 @@ negligibility-closure algebra of `Dregg2/Crypto/ConcreteSecurity.lean`
 ## ⚑ THE FLOOR THE DEMOS TEACH IS THE PROVED KEYED-ROM FLOOR (2026-07-24 re-point)
 
 The original §1-§3 prototypes took `hCR : CollisionResistant F` — a floor
-`Crypto.FloorGames.collisionResistant_false_of_compressing` PROVES FALSE for every compressing family,
-i.e. for every deployed hash. A demo that teaches a refuted assumption is worse than no demo, so those
-three are DELETED and their successors below thread the SAME closure algebra with the floor a THEOREM:
-`Crypto.KeyedRomFloor.keyedRom_hard` (the birthday bound — nothing refutable carried), derived
-IN-PROOF at the extracted finder family and entering the leaves as an already-discharged `Negl` /
-`NeglFam` fact. The `CollisionResistant` leaf remains IN the tactic for legacy call sites; what
-changed is what the prototypes TEACH.
+`Crypto.FloorGames.hashCRHardQuant_top_false_of_compressing` PROVES FALSE for every compressing
+family, i.e. for every deployed hash. A demo that teaches a refuted assumption is worse than no demo,
+so those three are DELETED and their successors below thread the SAME closure algebra with the floor
+a THEOREM: `Crypto.KeyedRomFloor.keyedRom_hard` (the birthday bound — nothing refutable carried),
+derived IN-PROOF at the extracted finder family and entering the leaves as an already-discharged
+`Negl` / `NeglFam` fact.
+
+⚑ 2026-07-28: the `CollisionResistant` leaf that survived here "for legacy call sites" is GONE with
+its floor. It cost nothing — a floor hypothesis of that shape is a `∀`-statement, so the generic
+`apply_assumption; done` leaf already closed the same goals, and the `HashCRHardQuant` successor
+enters the way the PROVED floor does: derived in-proof at the extracted finder and handed to the
+leaves as an already-discharged `Negl`/`NeglFam`. A context-`Hard` leaf is deliberately NOT added —
+see the transparency note below, it deterministically times out.
 
 ## The tactic
 
@@ -36,9 +45,10 @@ pulling the proper floor from the local context at the leaves:
                                                 at the index (`apply_assumption`) — ⚑ the PROVED
                                                 instantiation the demos put there is `keyedRom_hard`
                                                 at the extracted finder family
-  * `Negl (collisionAdv F A)`                ↦ the floor `hCR : CollisionResistant F` applied to `A`
-                                                (LEGACY leaf — that floor is REFUTED at every compressing
-                                                 family; kept for old call sites, taught by nothing here)
+  * `Negl (collisionAdv F A)`                ↦ NO leaf of its own any more: the refuted
+                                                `CollisionResistant` floor it read is deleted, and the
+                                                honest `HashCRHardQuant F Eff` enters as a derived
+                                                `Negl`/`NeglFam` through the two leaves above
   * `Negl (adv s)`                           ↦ the floor `hfloor : MSISHardQuantShape adv` (etc.) applied to `s`
   * `Negl (fun n => f n + g n)`              ↦ `negl_add`, recurse on both      (two independent hash legs)
   * `Negl (fun n => a * f n)`                ↦ `negl_const_mul`, recurse         (a query-count / RLC factor)
@@ -66,7 +76,7 @@ from the specific equivocating opener, and the ensemble the specific protocol's 
 Nor does it discharge a `negl_of_eventually_le` DOMINATION step (which needs a concrete bounding witness),
 or a `PolyBounded` side-goal (`negl_mul_poly`) — those carry real content and are left for the caller.
 It covers the closure-algebra spine (sum / scale / monomial / finite-sum / decay / zero) and the two floor
-leaves (`CollisionResistant`, the `*HardQuant` family); that is the mechanical majority of the ~180.
+leaves (the discharged `NeglFam`, the `*HardQuant` family); that is the mechanical majority of the ~180.
 
 ## Axiom hygiene
 
@@ -89,7 +99,7 @@ open Dregg2.Crypto.ConcreteSecurity
 open Dregg2.Crypto.ProbCrypto
   (MSISHardQuantShape MLWEHardQuantShape DLHardQuantShape HashCRHardQuantShape DecisionMLWEHardQuantShape)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv)
+  (KeyedHashFamily CollisionFinder collisionAdv)
 open Dregg2.Crypto.FloorGames (Game Adversary Hard gameAdv)
 open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily keyedRomGame KeyedRomEff keyedRom_hard)
 
@@ -98,8 +108,8 @@ set_option autoImplicit false
 /-! ## The floor LEAF — close `Negl (collisionAdv F A)` / `Negl (adv s)` from the proper floor in
 context.
 
-The floors are `∀`-statements (`CollisionResistant F := ∀ A, Negl (collisionAdv F A)`,
-`MSISHardQuantShape adv := ∀ s, Negl (adv s)`, `NeglFam adv := ∀ s, Negl (adv s)`), so a floor leaf is
+The floors are `∀`-statements (`MSISHardQuantShape adv := ∀ s, Negl (adv s)`,
+`NeglFam adv := ∀ s, Negl (adv s)`), so a floor leaf is
 the floor hypothesis APPLIED to the adversary/index the goal names. `assumption` catches a bare
 `Negl _` hypothesis.
 
@@ -123,7 +133,6 @@ macro_rules
     `(tactic| first
         | assumption
         | (apply_assumption; done)
-        | exact ‹CollisionResistant _› _
         | exact ‹HashCRHardQuantShape _› _
         | exact ‹MSISHardQuantShape _› _
         | exact ‹MLWEHardQuantShape _› _
@@ -157,7 +166,7 @@ macro_rules
 
 ⚑ The predecessor (`commitment_binding_advantage_bound`, DELETED 07-24) took
 `hCR : CollisionResistant F` — refuted for every compressing family
-(`FloorGames.collisionResistant_false_of_compressing`), so it taught every future user a FALSE
+(`FloorGames.hashCRHardQuant_top_false_of_compressing`), so it taught every future user a FALSE
 assumption. The successor threads the SAME single-leaf shape with the floor a THEOREM: the adversary
 is a query-bounded oracle program against the SAMPLED keyed oracle, and `keyedRom_hard` (the birthday
 bound) closes the leaf. What the caller supplies is a polynomial query budget and the class
@@ -309,8 +318,9 @@ example : True := by
   trivial
 
 -- **(TOOTH — the tactic REFUSES a floor leaf with NO floor in context.)** Even a genuine `collisionAdv`
--- advantage is not closable without the `CollisionResistant` floor hypothesis — the tactic does not invent
--- the assumption.
+-- advantage is not closable without a collision floor in context — the tactic does not invent the
+-- assumption. ⚑ Since 2026-07-28 there is no floor that would close it either: the leaf that read
+-- `CollisionResistant` out of context died with that def, so this now refuses unconditionally.
 set_option linter.unusedVariables false in
 example (F : KeyedHashFamily) (A : CollisionFinder F) : True := by
   fail_if_success

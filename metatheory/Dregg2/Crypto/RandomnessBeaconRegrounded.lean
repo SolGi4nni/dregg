@@ -1,7 +1,12 @@
 /-
 # `Dregg2.Crypto.RandomnessBeaconRegrounded` — the POST-QUANTUM randomness beacon (abstract model AND the
 deployed `crypto-hashrand` refinement) RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the
-PROPER keyed `CollisionResistant` floor.
+KEYED COLLISION GAME (`FloorGames.HashCRHardQuant F Eff`, adversary class IN THE STATEMENT).
+
+⚑ The intermediate spelling `HashFloorHonesty.CollisionResistant` is DELETED (2026-07-28): it WAS
+`HashCRHardQuant F (fun _ => True)` with the `⊤` folded into a name, and that `⊤` floor is itself FALSE
+for every compressing hash (`FloorGames.hashCRHardQuant_top_false_of_compressing`). The `⊤`-class results
+below are stated with the `⊤` written out; the DISCHARGED bindings are §2R's keyed-ROM successors.
 
 ## The gap this closes (the beacon leg of the forward-scaffolding floor sweep)
 
@@ -33,10 +38,17 @@ unpredictability no longer ride an empty hypothesis. Mirror of `IdentityCommitme
 
 ## Non-fake
 
-Each floor is SATISFIABLE (`beacon_exBeaconHash_CR` on the injective `exBeaconHash`;
-`hashRand_goodCR_commit_CR` / `_output_CR` on the injective deployed `goodCR`) and LOAD-BEARING
-(`beacon_badBeaconOut_not_CR` on the colliding `badBeaconOut`; `hashRand_badCR_output_not_CR` on the deployed
-colliding `badCR`). Old injective-floor consumers KEPT untouched; siblings ADDED. `#assert_all_clean`
+Each `⊤`-class floor is SATISFIABLE (`beacon_exBeaconHash_CR` on the injective `exBeaconHash`;
+`hashRand_goodCR_commit_CR` / `_output_CR` on the injective deployed `goodCR`) and REFUTABLE
+(`beacon_badBeaconOut_not_CR` on the colliding `badBeaconOut`; `hashRand_badCR_output_not_CR` on the
+deployed colliding `badCR`, both via `hashCRHardQuant_top_false_of_compressing`).
+
+⚑ Those two poles are the WHOLE shape of the `⊤` class: it holds exactly for the injective families and
+fails exactly for the compressing ones. So a satisfiability witness here says the hash is NOT compressing,
+and the deployed `crypto-hashrand` combine/commit hashes — which ARE compressing — sit with `badCR` on the
+refuted side. The keyed-ROM successors in §2R are what carry the deployed claim.
+
+Old injective-floor consumers KEPT untouched; siblings ADDED. `#assert_all_clean`
 (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`, no fresh `axiom`, no `native_decide`.
 
 ## Coordination
@@ -53,7 +65,7 @@ namespace Dregg2.Crypto.RandomnessBeaconRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv idFamily)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
@@ -66,7 +78,7 @@ open Dregg2.Crypto.RomCarrierSites
    romOpenAdv constOpenComp constOpen_in_eff constOpen_gameAdv_pos constOpen_binds)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
-   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+   hashCRHardQuant_top_false_of_compressing idFamily_hashCRHardQuant_top hard_bot_vacuous)
 open Dregg2.Crypto.CostAdversary (AnsSize IsPolyTime)
 open Dregg2.Crypto.HashRandRefinement (HashRand Role)
 
@@ -93,11 +105,12 @@ def hashRandOutputFamily {Party Ct Pre Digest : Type} [DecidableEq Pre] [Decidab
 
 /-! ## §2 — the three beacon breaks, as SECURITY REDUCTIONS.
 
-⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** The three keystones took
-`hCR : CollisionResistant (…Family …)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves
-that IS the collision floor at the UNRESTRICTED class, and `collisionResistant_false_of_compressing`
-proves THAT false for any compressing hash — the deployed `crypto-hashrand` commit and combine hashes
-included. So all three exported bounds rested on a hypothesis REFUTED at deployed parameters: leader
+⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** The three keystones took the collision
+floor at the UNRESTRICTED class — `HashCRHardQuant (…Family …) (fun _ => True)`, then written
+`CollisionResistant (…Family …)`, a spelling since DELETED — and
+`FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for any compressing hash — the
+deployed `crypto-hashrand` commit and combine hashes included. So all three exported bounds rested on a
+hypothesis REFUTED at deployed parameters: leader
 election was resting on nothing. Their three `_eff` siblings took a `CollisionFinder` and applied the
 floor TO IT, so the BIAS and the COMMIT EQUIVOCATION never appeared in a `Prop`. ALL SIX ARE DELETED.
 
@@ -335,98 +348,82 @@ end RomSuccessor
 
 /-! ## §3 — non-vacuity: satisfiable AND load-bearing, on the abstract beacon and the deployed surface. -/
 
-/-- **(TOOTH — the beacon floor is SATISFIABLE.)** The injective combine hash `exBeaconHash` satisfies the
-proper keyed floor. -/
+/-- **(TOOTH — the beacon `⊤`-class floor is SATISFIABLE.)** The injective combine hash `exBeaconHash`
+satisfies the keyed collision floor at the UNRESTRICTED class. ⚑ Injectivity is the only way to satisfy
+it (see `beacon_badBeaconOut_not_CR`), so this witness says `exBeaconHash` is not compressing. -/
 theorem beacon_exBeaconHash_CR :
-    CollisionResistant (beaconHashFamily Dregg2.Crypto.RandomnessBeacon.exBeaconHash 0) :=
+    HashCRHardQuant (beaconHashFamily Dregg2.Crypto.RandomnessBeacon.exBeaconHash 0) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.RandomnessBeacon.exBeaconHash 0
     Dregg2.Crypto.RandomnessBeacon.exBeaconHash_hashcr
 
-/-- **(TOOTH — the beacon floor is LOAD-BEARING.)** The colliding combine hash `badBeaconOut` (`H _ _ = 0`,
-every reveal absorbed to one output) has the bias equivocator `crEquivocator badBeaconOut 0 (5,1) (6,1)`
-winning on every key (advantage `1`), so its family is NOT CR — the proper floor is a genuine constraint. -/
+/-- **(TOOTH — the beacon `⊤`-class floor is REFUTABLE.)** The colliding combine hash `badBeaconOut`
+(`H _ _ = 0`, every reveal absorbed to one output) has a collision at EVERY key (`(5,1) ≠ (6,1)` yet both
+hash to `0`), so `hashCRHardQuant_top_false_of_compressing` refutes the floor at the UNRESTRICTED class —
+and the same argument runs at any compressing combine hash, the deployed one included. -/
 theorem beacon_badBeaconOut_not_CR :
-    ¬ CollisionResistant (beaconHashFamily Dregg2.Crypto.RandomnessBeacon.badBeaconOut 0) := by
-  intro hCR
-  set bad := Dregg2.Crypto.RandomnessBeacon.badBeaconOut with hbad
-  have hadv : collisionAdv (beaconHashFamily bad 0)
-      (crEquivocator bad 0 ((5, 1) : ℤ × ℤ) (6, 1)) = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (beaconHashFamily bad 0).Key n =>
-        (crEquivocator bad 0 ((5, 1) : ℤ × ℤ) (6, 1)).wins n k) = fun _ => true := by
-      funext k
-      simp [CollisionFinder.wins, crEquivocator, commitRevealFamily, hbad,
-        Dregg2.Crypto.RandomnessBeacon.badBeaconOut]
-    show @winProb ((beaconHashFamily bad 0).Key n) ((beaconHashFamily bad 0).keyFintype n)
-        (fun k => (crEquivocator bad 0 ((5, 1) : ℤ × ℤ) (6, 1)).wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((beaconHashFamily bad 0).Key n) ((beaconHashFamily bad 0).keyFintype n)
-      ((beaconHashFamily bad 0).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR (crEquivocator bad 0 (5, 1) (6, 1)))
+    ¬ HashCRHardQuant (beaconHashFamily Dregg2.Crypto.RandomnessBeacon.badBeaconOut 0)
+      (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨((0, 0) : ℤ × ℤ)⟩
+    (fun _ _ => ⟨((5, 1) : ℤ × ℤ), ((6, 1) : ℤ × ℤ), ?_, rfl⟩)
+  show ((5, 1) : ℤ × ℤ) ≠ (6, 1)
+  norm_num
 
-/-- **(TOOTH — the deployed commit floor is SATISFIABLE.)** The injective deployed hash `goodCR` satisfies
-the proper keyed floor at `Role.commit`. -/
+/-- **(TOOTH — the deployed commit `⊤`-class floor is SATISFIABLE.)** The injective deployed hash `goodCR`
+satisfies the keyed collision floor at the UNRESTRICTED class, at `Role.commit`. -/
 theorem hashRand_goodCR_commit_CR :
-    CollisionResistant (hashRandCommitFamily Dregg2.Crypto.HashRandRefinement.goodX) :=
+    HashCRHardQuant (hashRandCommitFamily Dregg2.Crypto.HashRandRefinement.goodX) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.HashRandRefinement.goodX.cr Role.commit
     Dregg2.Crypto.HashRandRefinement.goodCR_hashcr
 
-/-- **(TOOTH — the deployed output floor is SATISFIABLE.)** The injective deployed hash `goodCR` satisfies
-the proper keyed floor at `Role.output`. -/
+/-- **(TOOTH — the deployed output `⊤`-class floor is SATISFIABLE.)** The injective deployed hash `goodCR`
+satisfies the keyed collision floor at the UNRESTRICTED class, at `Role.output`. ⚑ `goodCR` is the
+INJECTIVE toy (`H role p = p`); the deployed compressing combine hash is refuted by
+`hashRand_badCR_output_not_CR`'s argument, not covered by this. -/
 theorem hashRand_goodCR_output_CR :
-    CollisionResistant (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.goodX) :=
+    HashCRHardQuant (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.goodX) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.HashRandRefinement.goodX.cr Role.output
     Dregg2.Crypto.HashRandRefinement.goodCR_hashcr
 
-/-- **(TOOTH — the deployed output floor is LOAD-BEARING.)** The deployed colliding combine `badCR`
-(`H _ _ = 0`) has a bias equivocator winning on every key (advantage `1`), so its output family is NOT CR —
-the deployed unbiasability's floor is a genuine constraint. -/
+/-- **(TOOTH — the deployed output `⊤`-class floor is REFUTABLE.)** The deployed colliding combine `badCR`
+(`H _ _ = 0`) has a collision at EVERY key (`inl (1,1) ≠ inl (2,2)`, both absorbed to `0`), so
+`hashCRHardQuant_top_false_of_compressing` refutes the floor at the UNRESTRICTED class. ⚑ The argument
+needs only compression, so it applies verbatim to the DEPLOYED `H("output", sorted[(i,cᵢ)])`. -/
 theorem hashRand_badCR_output_not_CR :
-    ¬ CollisionResistant (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX) := by
-  intro hCR
-  set bad := Dregg2.Crypto.HashRandRefinement.badX.cr with hbad
-  have hadv : collisionAdv (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX)
-      (crEquivocator bad Role.output (Sum.inl (1, 1) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ)) (Sum.inl (2, 2)))
-      = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX).Key n =>
-        (crEquivocator bad Role.output (Sum.inl (1, 1) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ))
-          (Sum.inl (2, 2))).wins n k) = fun _ => true := by
-      funext k
-      simp [CollisionFinder.wins, crEquivocator, commitRevealFamily, hbad,
-        Dregg2.Crypto.HashRandRefinement.badX, Dregg2.Crypto.HashRandRefinement.badCR]
-    show @winProb ((hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX).Key n)
-        ((hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX).keyFintype n)
-        (fun k => (crEquivocator bad Role.output (Sum.inl (1, 1) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ))
-          (Sum.inl (2, 2))).wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX).Key n)
-      ((hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX).keyFintype n)
-      ((hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR
-    (crEquivocator bad Role.output (Sum.inl (1, 1)) (Sum.inl (2, 2))))
+    ¬ HashCRHardQuant (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX)
+      (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _
+    ⟨(Sum.inl (0, 0) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ))⟩
+    (fun _ _ => ⟨(Sum.inl (1, 1) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ)),
+      (Sum.inl (2, 2) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ)), ?_, rfl⟩)
+  show (Sum.inl (1, 1) : (ℕ × ℕ) ⊕ Multiset (ℕ × ℕ)) ≠ Sum.inl (2, 2)
+  simp
 
 /-- **THE RE-GROUNDED BEACON BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective identity family, the
 bias-equivocation advantage is negligible — the beacon safety runs end-to-end to a genuine `Negl`. -/
 theorem beacon_binding_fires (A : Adversary (commitOpenGame idFamily)) :
     Negl (gameAdv (commitOpenGame idFamily) A) :=
   hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
+    idFamily_hashCRHardQuant_top
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
-/-- **(TOOTH — `Eff := ⊤` is FALSE at the compressing beacon combine hash.)** The bare-CR floor at the
-colliding `badBeaconOut` is refuted (`beacon_badBeaconOut_not_CR`), and it IS `HashCRHardQuant _ ⊤` — so
-the `⊤` class is FALSE. The price of `hEff`, as a theorem. -/
+/-- **(TOOTH — `Eff := ⊤` is FALSE at the compressing beacon combine hash.)** The price of `hEff`, as a
+theorem: the `⊤` class is refuted at the colliding `badBeaconOut`.
+
+⚑ This IS `beacon_badBeaconOut_not_CR` — nothing is added. It used to bridge a `CollisionResistant`
+refutation across `collisionResistant_iff_hashCRHardQuant_top`; with the `⊤` now written into the tooth's
+own statement, the bridge is the identity. Both names are kept because `Verify/FloorRatchetBaseline`
+grandfathers refuted-floor carriers BY NAME. -/
 theorem beacon_eff_top_false :
     ¬ HashCRHardQuant (beaconHashFamily Dregg2.Crypto.RandomnessBeacon.badBeaconOut 0) (fun _ => True) :=
-  fun h => beacon_badBeaconOut_not_CR ((collisionResistant_iff_hashCRHardQuant_top _).mpr h)
+  beacon_badBeaconOut_not_CR
 
 /-- **(TOOTH — `Eff := ⊤` is FALSE at the compressing deployed combine hash.)** Same, on the deployed
-`crypto-hashrand` colliding `badX` output hash (`hashRand_badCR_output_not_CR`). -/
+`crypto-hashrand` colliding `badX` output hash — and, like its beacon sibling above, this now IS
+`hashRand_badCR_output_not_CR`, the `⊤` having moved into that tooth's own statement. -/
 theorem hashRand_output_eff_top_false :
     ¬ HashCRHardQuant (hashRandOutputFamily Dregg2.Crypto.HashRandRefinement.badX) (fun _ => True) :=
-  fun h => hashRand_badCR_output_not_CR ((collisionResistant_iff_hashCRHardQuant_top _).mpr h)
+  hashRand_badCR_output_not_CR
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the beacon floor holds for ANY
 combine/commit hash. -/
@@ -447,14 +444,15 @@ example {Idx W C : Type} [DecidableEq W] [DecidableEq C] (cr : CommitReveal Idx 
     (have : Negl (gameAdv (beaconGame cr i) A) := hD B hB)
   trivial
 
-/-- **THE `Eff` BEACON BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective deployed `goodX.cr` the
-output `Eff`-floor at `⊤` holds (`hashRand_goodCR_output_CR`), so the deployed unbiasability runs
-end-to-end to a genuine `Negl` at an inhabited hypothesis. -/
+/-- **THE `Eff` BEACON BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective `goodX.cr` the output
+`Eff`-floor at `⊤` holds (`hashRand_goodCR_output_CR`), so the unbiasability reduction runs end-to-end to
+a genuine `Negl` at an inhabited hypothesis. Read with `hashRand_output_eff_top_false`: it fires HERE and
+cannot fire at a compressing combine hash, which is why the deployed discharge is §2R's keyed ROM. -/
 theorem hashrand_output_eff_fires
     (A : Adversary (hashRandOutputGame Dregg2.Crypto.HashRandRefinement.goodX)) :
     Negl (gameAdv (hashRandOutputGame Dregg2.Crypto.HashRandRefinement.goodX) A) :=
   hashrand_output_binding_advantage_bound Dregg2.Crypto.HashRandRefinement.goodX (fun _ => True) A
-    trivial ((collisionResistant_iff_hashCRHardQuant_top _).mp hashRand_goodCR_output_CR)
+    trivial hashRand_goodCR_output_CR
 
 #assert_all_clean [
   beacon_binding_advantage_bound,

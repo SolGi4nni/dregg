@@ -125,12 +125,13 @@ open Dregg2.Deos.InAirAuthorityDigestGadget
   (FloorDigestBinds FLOOR0_COL FLOOR1_COL gentianGadgetDescriptor gentianGate_mem_gadget
    gadget_gate_holds recompute_discharged)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv injective_family_CR
+  (KeyedHashFamily CollisionFinder collisionAdv
    not_injective_of_finite_range finite_range_of_field_bound)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp negl_of_le)
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.FloorGames
-  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable)
+  (Game Adversary gameAdv gameAdv_mem_unit Hard hard_bot_vacuous not_hard_top_of_always_solvable
+   HashCRHardQuant hashCRHardQuant_top_of_injective)
 
 set_option autoImplicit false
 
@@ -226,7 +227,8 @@ def FloorDigestDeployment.digestLimb (D : FloorDigestDeployment) (t : D.Tag) : �
 
 /-- **`floorDigestFamily D`** — the deployed felt-domain floor digest lifted to a `KeyedHashFamily`,
 keyed by its domain-separation tag, with `Input := List ℤ` and `Out := ℤ` — exactly the carrier's own
-types. This is the object `HashFloorHonesty.CollisionResistant` is realized at for the real digest. -/
+types. This is the object the collision floor `FloorGames.HashCRHardQuant (floorDigestFamily D) Eff` is
+stated at for the real digest. -/
 def floorDigestFamily (D : FloorDigestDeployment) : KeyedHashFamily where
   Key := fun _ => D.Tag
   Input := List ℤ
@@ -243,14 +245,24 @@ the gadget's poseidon2 chip lookup computes. -/
 theorem deployed_hash_is_family_instance (D : FloorDigestDeployment) (n : ℕ) :
     D.hash D.deployedTag = (floorDigestFamily D).H n D.deployedTag := rfl
 
-/-- **THE OLD-FLOOR ⟹ NEW-FLOOR BRIDGE.** If the injective `FloorDigestBinds` held at every tag it
-would discharge `CollisionResistant (floorDigestFamily D)` (no collisions ⟹ every finder's advantage
-`0`). So the OLD floor was STRICTLY STRONGER than the honest computational floor — and, being FALSE at
-the deployed digest (§1), it was an EMPTY hypothesis. Nothing is lost re-grounding; a false hypothesis
-is replaced by one a real felt hash can satisfy. -/
-theorem floorDigestFamily_CR_of_floorDigestBinds (D : FloorDigestDeployment)
-    (hCR : ∀ t : D.Tag, FloorDigestBinds (D.hash t)) : CollisionResistant (floorDigestFamily D) :=
-  injective_family_CR (floorDigestFamily D) (fun _ t l l' h => hCR t l l' h)
+/-! ⚑ **DELETED 2026-07-28 — `floorDigestFamily_CR_of_floorDigestBinds`.** It bridged the injective
+`FloorDigestBinds` floor to `HashFloorHonesty.CollisionResistant (floorDigestFamily D)`, and the
+argument in its docstring was "the OLD floor was STRICTLY STRONGER than the honest computational
+floor, so nothing is lost re-grounding". That argument is FALSE, and both ends of the bridge are
+refuted.
+
+`CollisionResistant F` was never a computational floor — it was a SPELLING of
+`HashCRHardQuant F (fun _ => True)` that hid the `⊤`, and it is deleted in favour of writing the `⊤`
+out. THIS FILE refutes that destination: §7's `floorDigest_floor_top_false_babyBear` proves the
+`⊤`-class floor on the very same collision event is FALSE at a BabyBear-bounded digest — i.e. at the
+deployed `hash_many` — using nothing but the felt bound the consumers' own `hcanon` already asserts.
+And §1 proves the SOURCE empty at those same parameters. A bridge from an empty hypothesis to a
+refuted conclusion carries nothing, so it is gone rather than restated.
+
+The honest floor is the one §5's `_advantage_bound` siblings actually consume:
+`Hard (floorCollisionGame D) Eff`, with `Eff` a parameter in the open and both its poles priced in §7.
+Satisfiability of the `⊤` pole survives below as `floorDigestFamily_CR_of_injective`, recorded with
+its price. -/
 
 /-! ## §3 — the floor COLLISION GAME and the ALTERNATE-FLOOR ATTACK GAME, as first-class objects. -/
 
@@ -541,14 +553,17 @@ theorem brokenFloorDigest_alternate_top_false :
 /-! ### The floor is SATISFIABLE (the connection to the keyed-family treatment). -/
 
 /-- **(TOOTH — the keyed family is SATISFIABLE on an injective deployment.)** A deployment whose per-tag
-digest is injective discharges `CollisionResistant (floorDigestFamily D)` — the honest floor is
-REALIZABLE, unlike the injective `FloorDigestBinds` at deployed parameters. ⚑ Recorded with its price:
-this is the `⊤`-class object, which §7's first tooth proves FALSE at a range-bounded (i.e. real) felt
-digest. The satisfiability is honest only as a non-emptiness check, never as evidence the deployed
-`hash_many` satisfies it. -/
+digest is injective discharges `HashCRHardQuant (floorDigestFamily D) (fun _ => True)` — the floor is
+REALIZABLE, unlike the injective `FloorDigestBinds` at deployed parameters. ⚑ The `⊤` is now WRITTEN
+OUT in the statement instead of hidden behind the deleted `CollisionResistant`, which makes the price
+legible without a lemma: this is the UNRESTRICTED adversary class, which §7's first tooth proves FALSE
+at a range-bounded (i.e. real) felt digest. So this witness says only that the family is NOT
+COMPRESSING — an injective `List ℤ → ℤ` is not a felt digest. Honest as a non-emptiness check, never
+as evidence the deployed `hash_many` satisfies anything. -/
 theorem floorDigestFamily_CR_of_injective (D : FloorDigestDeployment)
-    (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) : CollisionResistant (floorDigestFamily D) :=
-  injective_family_CR (floorDigestFamily D) (fun _ t => hinj t)
+    (hinj : ∀ t : D.Tag, Function.Injective (D.hash t)) :
+    HashCRHardQuant (floorDigestFamily D) (fun _ => True) :=
+  hashCRHardQuant_top_of_injective (floorDigestFamily D) (fun _ t => hinj t)
 
 /-! ## §8 — ⚑ THE KEYED-ROM SUCCESSOR: the alternate-floor bound DISCHARGED on the PROVED floor.
 
@@ -716,7 +731,6 @@ theorem alternateFloorRom_nonNegl_forger_excluded (D : FloorDigestDeployment)
   floorDigestBinds_false_babyBear,
   exists_collision_of_finite_range,
   deployed_hash_is_family_instance,
-  floorDigestFamily_CR_of_floorDigestBinds,
   floorCollisionGame_wins_iff,
   alternateFloorGame_wins_iff,
   limb_eq_witnessed_digest_of_sat,

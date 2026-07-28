@@ -1,6 +1,13 @@
 /-
 # `Dregg2.Crypto.WireAkeRegrounded` — the DEPLOYED wire-handshake CHANNEL BINDING
-RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the PROPER keyed `CollisionResistant` floor.
+RE-GROUNDED off the VACUOUS injective `HashCR` floor onto the KEYED COLLISION GAME
+(`FloorGames.HashCRHardQuant F Eff`, adversary class IN THE STATEMENT).
+
+⚑ The intermediate spelling `HashFloorHonesty.CollisionResistant` is DELETED (2026-07-28): it WAS
+`HashCRHardQuant F (fun _ => True)` with the `⊤` folded into a name, and that `⊤` floor is itself FALSE
+for every compressing hash (`FloorGames.hashCRHardQuant_top_false_of_compressing`) — the deployed
+concat-KDF included. The `⊤`-class results below are stated with the `⊤` written out; the DISCHARGED
+binding is §5's keyed-ROM successor.
 
 ## The gap this closes (the closest-to-deployed leg of the forward-scaffolding floor sweep)
 
@@ -27,10 +34,10 @@ own `cr`, so the deployed no-UKS guarantee no longer rides an empty hypothesis. 
 * **`channel_binding_advantage_bound`** — the advantage-bounded sibling of `channel_binding`: a UKS /
   key-reuse adversary (two DISTINCT framed inputs — hence, by `WireAke.uks_breaks_hashcr`, two distinct
   `(ss_x, ss_pq, transcript)` triples colliding to one session key, a hash collision) IS a `CollisionFinder`,
-  so under the proper `CollisionResistant (channelKeyFamily cr)` floor its advantage is `Negl`. "equal key ⟹
-  equal transcript" becomes "⟹ equal transcript EXCEPT with negligible probability" — a key-reuse / UKS
-  attack succeeds only with negligible advantage. Discharged by `thread_advantage_bound` (the single
-  `CollisionResistant` leaf), reusing the generic commit-reveal keystone.
+  so under the collision floor `HashCRHardQuant (channelKeyFamily cr) Eff` its advantage is `Negl`. "equal
+  key ⟹ equal transcript" becomes "⟹ equal transcript EXCEPT with negligible probability" — a key-reuse /
+  UKS attack succeeds only with negligible advantage. `Eff` stays a PARAMETER: the discharge is §5's
+  keyed-ROM floor, because the `⊤` class is refuted at the deployed compressing KDF.
 
 ## ⚑ The `IsPolyTime` discharge is DELETED; the DISCHARGED successor is §5's keyed-ROM binding (07-24)
 
@@ -46,12 +53,18 @@ fixed-hash statement with `hEff` in the open.
 
 ## Non-fake
 
-The floor is SATISFIABLE (`channelKey_crK_CR`: the injective identity carrier `WireAke.crK` discharges it)
-and LOAD-BEARING (`channelKey_badCR_not_CR`: the COLLIDING session-key hash `badChannelKey` has a
-key-reuse equivocator winning on every key, advantage `1`, so its family is NOT CR). The old injective-floor
-theorems (`channel_binding`, `channel_binding_transcript`, `uks_breaks_hashcr`) are KEPT untouched; this file
-only ADDS the sibling. `#assert_all_clean` (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`, no fresh
-`axiom`, no `native_decide`.
+The `⊤`-class floor is SATISFIABLE (`channelKey_crK_CR`: the injective identity carrier `WireAke.crK`
+discharges it) and REFUTABLE (`channelKey_badCR_not_CR`: the COLLIDING session-key hash `badChannelKey` has
+a collision at every key, so `hashCRHardQuant_top_false_of_compressing` refutes the floor on it).
+
+⚑ Those two poles are the whole shape of the `⊤` class: it holds exactly for the injective families and
+fails exactly for the compressing ones. So `channelKey_crK_CR` says `crK` is NOT compressing — and the
+deployed concat-KDF, which is, sits with `badChannelKey` on the refuted side. §5's keyed-ROM successor is
+what carries the deployed claim.
+
+The old injective-floor theorems (`channel_binding`, `channel_binding_transcript`, `uks_breaks_hashcr`) are
+KEPT untouched; this file only ADDS the sibling. `#assert_all_clean` (⊆ {propext, Classical.choice,
+Quot.sound}); no `sorry`, no fresh `axiom`, no `native_decide`.
 
 ## Coordination
 
@@ -70,14 +83,14 @@ namespace Dregg2.Crypto.WireAkeRegrounded
 open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble negl_zero not_negl_one)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top)
 open Dregg2.Circuit.HashFloorHonesty
-  (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv idFamily idFamily_CR)
+  (KeyedHashFamily CollisionFinder collisionAdv idFamily)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Crypto.HermineHashCRRegrounded
   (commitRevealFamily commitRevealFamily_CR_of_hashcr commitOpenGame openToFinder
    hermine_commitment_binding_advantage_bound crEquivocator)
 open Dregg2.Crypto.FloorGames
   (Game Adversary gameAdv hashGame finderToAdv HashCRHardQuant
-   collisionResistant_iff_hashCRHardQuant_top hard_bot_vacuous)
+   hashCRHardQuant_top_false_of_compressing idFamily_hashCRHardQuant_top hard_bot_vacuous)
 open Dregg2.Crypto.ConcreteSecurity (PolyBounded)
 open Dregg2.Crypto.KeyedRomFloor (KeyedRomFamily)
 open Dregg2.Crypto.RomBindingReduction (RomCarrier)
@@ -106,10 +119,11 @@ theorem sessionKey_eq_family {SS Tr Pre K : Type} [DecidableEq Pre] [DecidableEq
 
 /-! ## §2 — the UKS break, as a SECURITY REDUCTION.
 
-⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** `channel_binding_advantage_bound` took
-`hCR : CollisionResistant (channelKeyFamily cr)`. `FloorGames.collisionResistant_iff_hashCRHardQuant_top`
-proves that IS the collision floor at the UNRESTRICTED class, and `collisionResistant_false_of_compressing`
-proves THAT false for any compressing hash — including the deployed concat-KDF, which maps a long framed
+⚑ **WHAT THIS SECTION USED TO EXPORT, AND WHY IT IS GONE.** `channel_binding_advantage_bound` took the
+collision floor at the UNRESTRICTED class — `HashCRHardQuant (channelKeyFamily cr) (fun _ => True)`, then
+written `CollisionResistant (channelKeyFamily cr)`, a spelling since DELETED — and
+`FloorGames.hashCRHardQuant_top_false_of_compressing` proves THAT false for any compressing hash,
+including the deployed concat-KDF, which maps a long framed
 `(ss_x, ss_pq, transcript)` pre-image to a fixed-width session key. So the exported binding rested on a
 hypothesis REFUTED at deployed parameters: vacuous, and vacuous in exactly the way the sweep exists to
 name. Its `_eff` sibling took a `CollisionFinder` and applied the floor TO IT — hypothesis and conclusion
@@ -152,57 +166,56 @@ theorem channel_binding_advantage_bound {Pre K : Type} [DecidableEq Pre] [Decida
 
 /-! ## §3 — non-vacuity: the floor is satisfiable AND load-bearing on the channel-binding hash. -/
 
-/-- **(TOOTH — the floor is SATISFIABLE on the channel-binding hash.)** The honest transcript-including
-carrier `WireAke.crK` (`H () p = p`, injective — the identity framing binds the transcript) satisfies the
-proper keyed floor: the sibling hypothesis is inhabited, unlike the vacuous injective floor. -/
-theorem channelKey_crK_CR : CollisionResistant (channelKeyFamily Dregg2.Crypto.WireAke.crK) :=
+/-- **(TOOTH — the `⊤`-class floor is SATISFIABLE on the channel-binding hash.)** The honest
+transcript-including carrier `WireAke.crK` (`H () p = p`, injective — the identity framing binds the
+transcript) satisfies the keyed collision floor at the UNRESTRICTED class: the sibling hypothesis is
+inhabited, unlike the vacuous injective floor.
+
+⚑ And injectivity is the ONLY way to satisfy it (see `channelKey_badCR_not_CR`), so this witness says
+`crK` is not compressing. The deployed concat-KDF is, and so cannot be on this side. -/
+theorem channelKey_crK_CR :
+    HashCRHardQuant (channelKeyFamily Dregg2.Crypto.WireAke.crK) (fun _ => True) :=
   commitRevealFamily_CR_of_hashcr Dregg2.Crypto.WireAke.crK () Dregg2.Crypto.WireAke.crK_hashcr
 
 /-- A COLLIDING session-key hash `H () _ = 0` — every framed `(ss_x, ss_pq, tr)` maps to one key, so any two
 distinct channels share it (the transcript-blind concat-KDF `WireAke` warns of, as a hash). -/
 def badChannelKey : CommitReveal Unit ℤ ℕ := ⟨fun _ _ => 0⟩
 
-/-- **(TOOTH — the floor is LOAD-BEARING on the channel-binding hash.)** The colliding `badChannelKey` has
-the key-reuse equivocator `crEquivocator badChannelKey () 7 8` winning on EVERY key (`7 ≠ 8` yet both hash to
-`0`), so its advantage is the constant `1` and the family is NOT collision-resistant. So the sibling cannot
-be discharged on a transcript-blind session-key hash — the proper floor is a genuine constraint, exactly as
-`WireAke.uks_breaks_hashcr` shows the channel stops binding once collision-resistance fails. -/
-theorem channelKey_badCR_not_CR : ¬ CollisionResistant (channelKeyFamily badChannelKey) := by
-  intro hCR
-  have hadv : collisionAdv (channelKeyFamily badChannelKey) (crEquivocator badChannelKey () (7 : ℤ) 8)
-      = fun _ => (1 : ℝ) := by
-    funext n
-    have hall : (fun k : (channelKeyFamily badChannelKey).Key n =>
-        (crEquivocator badChannelKey () (7 : ℤ) 8).wins n k) = fun _ => true := by
-      funext k
-      simp [CollisionFinder.wins, crEquivocator, commitRevealFamily, badChannelKey]
-    show @winProb ((channelKeyFamily badChannelKey).Key n)
-        ((channelKeyFamily badChannelKey).keyFintype n)
-        (fun k => (crEquivocator badChannelKey () (7 : ℤ) 8).wins n k) = 1
-    rw [hall]
-    exact @winProb_top ((channelKeyFamily badChannelKey).Key n)
-      ((channelKeyFamily badChannelKey).keyFintype n)
-      ((channelKeyFamily badChannelKey).keyNonempty n)
-  exact not_negl_one (hadv ▸ hCR (crEquivocator badChannelKey () 7 8))
+/-- **(TOOTH — the `⊤`-class floor is REFUTABLE on the channel-binding hash.)** The colliding
+`badChannelKey` has a collision at EVERY key (`7 ≠ 8` yet both hash to `0`), so
+`hashCRHardQuant_top_false_of_compressing` refutes the floor at the UNRESTRICTED class. The sibling cannot
+be discharged on a transcript-blind session-key hash, exactly as `WireAke.uks_breaks_hashcr` shows the
+channel stops binding once collision-resistance fails — and the argument needs only compression, so it
+runs at the deployed concat-KDF too. -/
+theorem channelKey_badCR_not_CR :
+    ¬ HashCRHardQuant (channelKeyFamily badChannelKey) (fun _ => True) := by
+  refine hashCRHardQuant_top_false_of_compressing _ ⟨(0 : ℤ)⟩
+    (fun _ _ => ⟨(7 : ℤ), (8 : ℤ), ?_, rfl⟩)
+  show (7 : ℤ) ≠ (8 : ℤ)
+  norm_num
 
 /-- **THE RE-GROUNDED CHANNEL BINDING FIRES AT A REAL FLOOR WITNESS.** On the injective identity family
-(`HashFloorHonesty.idFamily_CR`), the UKS-equivocation advantage is negligible — the deployed channel
-binding runs end-to-end to a genuine `Negl` conclusion at an inhabited floor hypothesis. -/
+(`FloorGames.idFamily_hashCRHardQuant_top`), the UKS-equivocation advantage is negligible — the channel
+binding runs end-to-end to a genuine `Negl` conclusion at an inhabited floor hypothesis. (Inhabited
+BECAUSE the family is injective; no compressing family reaches this witness.) -/
 theorem channel_binding_fires (A : Adversary (commitOpenGame idFamily)) :
     Negl (gameAdv (commitOpenGame idFamily) A) :=
   hermine_commitment_binding_advantage_bound idFamily (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp idFamily_CR)
+    idFamily_hashCRHardQuant_top
 
 /-! ## §4 — the `Eff` parameter, PRICED at both poles, and the CANARY. -/
 
-/-- **(TOOTH — `Eff := ⊤` is FALSE at the compressing session-key hash.)** The bare-CR floor at the colliding
-`badChannelKey` is refuted (`channelKey_badCR_not_CR`), and it IS `HashCRHardQuant _ ⊤`
-(`collisionResistant_iff_hashCRHardQuant_top`) — so the `⊤` class is FALSE. The price of `hEff`, stated as a
-theorem: the class cannot be left implicit, because the implicit `⊤` is the empty hypothesis the sweep
-exists to name. -/
+/-- **(TOOTH — `Eff := ⊤` is FALSE at the compressing session-key hash.)** The price of `hEff`, stated as
+a theorem: the class cannot be left implicit, because the implicit `⊤` is the empty hypothesis the sweep
+exists to name — refuted at the colliding `badChannelKey`.
+
+⚑ This IS `channelKey_badCR_not_CR` — nothing is added. It used to bridge a `CollisionResistant`
+refutation across `collisionResistant_iff_hashCRHardQuant_top`; with the `⊤` now written into the tooth's
+own statement, the bridge is the identity. Both names are kept because `Verify/FloorRatchetBaseline`
+grandfathers refuted-floor carriers BY NAME. -/
 theorem channelKey_eff_top_false :
     ¬ HashCRHardQuant (channelKeyFamily badChannelKey) (fun _ => True) :=
-  fun h => channelKey_badCR_not_CR ((collisionResistant_iff_hashCRHardQuant_top _).mpr h)
+  channelKey_badCR_not_CR
 
 /-- **(TOOTH — the OTHER pole: `Eff := ⊥` is vacuous.)** At the empty class the floor holds for ANY
 session-key hash, including a transcript-blind one. Recorded HONESTLY — the two poles together make `Eff` a
@@ -227,11 +240,13 @@ example {Pre K : Type} [DecidableEq Pre] [DecidableEq K] (cr : CommitReveal Unit
 
 /-- **THE `Eff` GATE FIRES AT A REAL FLOOR WITNESS.** On the injective transcript-including carrier
 `WireAke.crK` the `Eff`-floor at `⊤` holds (`channelKey_crK_CR`, an INHABITED hypothesis, unlike the vacuous
-injective floor), so the `Eff` gate runs end-to-end to a genuine `Negl`. -/
+injective floor), so the `Eff` gate runs end-to-end to a genuine `Negl`. Read with
+`channelKey_eff_top_false`: it fires HERE and cannot fire at a compressing KDF, which is why the deployed
+discharge is §5. -/
 theorem channel_binding_eff_fires (A : Adversary (uksGame Dregg2.Crypto.WireAke.crK)) :
     Negl (gameAdv (uksGame Dregg2.Crypto.WireAke.crK) A) :=
   channel_binding_advantage_bound Dregg2.Crypto.WireAke.crK (fun _ => True) A trivial
-    ((collisionResistant_iff_hashCRHardQuant_top _).mp channelKey_crK_CR)
+    channelKey_crK_CR
 
 /-! ## §5 — ⚑⚑ THE DISCHARGED SUCCESSOR: the UKS binding on the PROVED keyed-ROM floor.
 

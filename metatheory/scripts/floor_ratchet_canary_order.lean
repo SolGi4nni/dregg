@@ -83,7 +83,7 @@ theorem adv_reorder_via_let {sponge : List ℤ → ℤ}
   absurd (hCR [1] [2] hLive) (by simp)
 
 /-- ⚑ THE CONTROL, and it is load-bearing: a GENUINE refutation, with several non-floor
-hypotheses, in the shape of `collisionResistant_false_of_compressing` and every
+hypotheses, in the shape of `FloorGames.hashCRHardQuant_top_false_of_compressing` and every
 `*_false_of_finite_range` in the tree. It must NOT appear in the gate's violation list. A rule that
 gated this would make the campaign's own anti-floor work a build error, and a noisy gate gets
 switched off — which is the same outcome as a blind one, reached more slowly. -/
