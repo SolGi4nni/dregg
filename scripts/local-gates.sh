@@ -335,7 +335,7 @@ want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -q
 printf '%-28s %-6s %-8s %s\n' GATE RESULT TIME NOTE
 printf '%.0s─' {1..96}; echo
 
-pass=0; fail=0; skip=0; failed=()
+pass=0; fail=0; skip=0; timedout=0; failed=()
 run_one() {
   IFS='|' read -r name to cmd <<< "$1"
   want "$name" || return 0
@@ -351,7 +351,19 @@ run_one() {
   if [ "$rc" -eq 0 ]; then
     printf '%-28s \033[32m%-6s\033[0m %-8s %s\n' "$name" PASS "$((e-s))s" "$note"; pass=$((pass+1))
   elif [ "$rc" -eq 124 ]; then
-    printf '%-28s \033[33m%-6s\033[0m %-8s %s\n' "$name" TIMEOUT "$((e-s))s" "exceeded ${to}s — not a verdict"; skip=$((skip+1))
+    # ⚑ A TIMEOUT IS A FAILURE, AND ITS OWN MESSAGE SAYS WHY: "not a verdict".
+    #
+    # This used to increment `skip`, so a gate that could NEVER finish contributed nothing and
+    # the table still ended clean. Measured: `gates-executed` timed out for an entire session
+    # (528s in the morning, past its 600s budget by evening) while sitting in the cheap set
+    # looking like coverage — and the summary read "1 failing" with it invisible.
+    #
+    # That is this repo's signature disease pointed at its own instrument: a gate that cannot go
+    # red is not a gate, and a gate that cannot FINISH cannot go red. Counted as a failure now,
+    # and named separately in the summary so a reader can tell "produced no verdict" from "found
+    # a defect" — those want different fixes (a budget or a phase split, vs an actual repair).
+    printf '%-28s \033[31m%-6s\033[0m %-8s %s\n' "$name" TIMEOUT "$((e-s))s" "exceeded ${to}s — NOT A VERDICT, counted as a failure"
+    fail=$((fail+1)); failed+=("$name (timeout)"); timedout=$((timedout+1))
   else
     printf '%-28s \033[31m%-6s\033[0m %-8s %s\n' "$name" "FAIL" "$((e-s))s" "$note"
     fail=$((fail+1)); failed+=("$name")
@@ -369,7 +381,8 @@ else
 fi
 
 echo
-echo "passed $pass · failed $fail · skipped/timeout $skip"
+echo "passed $pass · failed $fail · skipped $skip"
+[ "$timedout" -gt 0 ] && echo "  ⚠ $timedout failure(s) produced NO VERDICT (timeout) — that wants a budget or a phase split, not a repair"
 [ ${#failed[@]} -gt 0 ] && printf 'failing: %s\n' "${failed[*]}"
 
 # ── WHAT THIS DELIBERATELY DOES NOT RUN, and why ───────────────────────────────
