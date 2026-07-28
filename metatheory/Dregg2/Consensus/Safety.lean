@@ -56,13 +56,21 @@ the generalization of `bft_safety` from one pool to two independent pools), §2 
   `Distributed.LaceMerge.CrossCanonical` read on the two nodes' laces — the same assumption the
   CRDT-convergence lane named on 2026-07-27, consumed here at the consensus layer.
 
-NAMED RESIDUAL (a closure lane, not faked): bridging `BlocklaceFinality.isSuperRatified` (the
-`Bool` the node computes) to the `CordialMiners.Committed`/`superRatifiedFromLace` evidence this
-module consumes is the `OPEN-CM-SUPERRATIFY-BRIDGE` — the two parallel finalization models
-(`Proof.CordialMiners` = the BFT algebra, `Distributed.BlocklaceFinality` = the executable rule)
-share the `n − f` ratifier-count shape; this module proves safety on the algebra side, where the
-quorum is read off the lace via `SuperRatification.ofLace`. The bridge lands the same conclusion
-on the executable rule; it is the next rung, not an assumed step.
+**`OPEN-CM-SUPERRATIFY-BRIDGE` — BUILT 2026-07-28, at a named price.**
+`Consensus.SuperRatifyBridge` carries the deployed finalizer into this module's `Committed`:
+
+    committed_of_finalLeaderAt :
+      B.Canonical → participants.Nodup → ThresholdAgrees cfg participants →
+      LeaderNotGlobalEquivocator B l → finalLeaderAt B participants wave wavelength = some l →
+      Committed (deployedState B participants wavelength) cfg l
+
+`finalizedBy_deployedHistory` then DISCHARGES `FinalizedBy` below from the node's own wave loop
+(it had no supplier before), and `deployed_nodes_no_conflicting_history` reaches this file's apex
+from two nodes each running `finalLeaderAt` / `findAllFinalLeaders` — the rule behind
+`@[export] dregg_tau_order`. What that bridge established, and what it cost, is item 1 of the
+honest-scope list below. **It is `finalLeaderAt`, not `isSuperRatified`, that bridges**:
+`isSuperRatified` carries NO unique-leader guard and is INCOMPARABLE with `Committed`
+(`SuperRatifyBridge.superRatified_alone_is_not_committed`).
 
 ## THE VACUITY THIS FILE CARRIED UNTIL 2026-07-28, AND WHAT REPLACED IT.
 
@@ -91,23 +99,51 @@ What is here now:
 
 ## WHAT CHAIN SAFETY THIS DOES *NOT* ESTABLISH — read before citing.
 
-1. **Not on the rule the node runs.** Safety is proved on the BFT algebra
-   (`CordialMiners.Committed` / `superRatifiedFromLace`). Bridging to
-   `Distributed.BlocklaceFinality.isSuperRatified`, the `Bool` a node actually computes, is the
-   still-open `OPEN-CM-SUPERRATIFY-BRIDGE` below. Nothing here says the deployed finalizer obeys
-   the theorem.
+1. **The deployed finalizer IS covered now — CONDITIONALLY, and one of the conditions is a
+   coverage hole.** `Consensus.SuperRatifyBridge.committed_of_finalLeaderAt` proves the block the
+   node's wave loop pushes onto `final_leaders` is `Committed`, so safety transfers — but it costs
+   two hypotheses beyond `Lace.Canonical` and `participants.Nodup`, both NAMED and MODELLED there:
+   * `ThresholdAgrees cfg participants` (`cfg.n − cfg.f ≤ superMajority participants.length`).
+     Benign at every parameter anyone runs: the two thresholds are EQUAL on `3f+1 ≤ n ≤ 3f+3`
+     (`thresholdAgrees_of_canonical_bft`) and the band is TIGHT
+     (`thresholdAgrees_fails_at_3f_plus_4` — at `n = 7, f = 1` the node finalizes on 5 ratifiers
+     where `Committed` demands 6).
+   * `LeaderNotGlobalEquivocator B l` (`¬ Equivocator B l.creator`) — **NOT benign.** The node's
+     guard (`hasEquivInPast`) is OBSERVER-LOCAL and keyed on a same-ROUND pair; `Equivocator` is
+     GLOBAL and keyed on an INCOMPARABLE pair. `SuperRatifyBridge.Model.forked` is a lace where
+     the node's observers ratify the leader at full supermajority AND the node finalizes it
+     (`#guard finalLeaderAt forked parts 0 3 == some leader`) while `Committed` is FALSE
+     (`forked_is_not_committed`). So: **a node that finalizes a leader whose author forked
+     outside every observer's causal past is finalizing OUTSIDE this theorem's domain.** That is
+     a coverage hole, not an attack — the deployed rule is the more faithful of the two, and the
+     repair is to teach `CordialState.approves` the observer-local guard
+     (`OPEN-CM-LOCAL-EQUIVOCATION`, open).
+   ⚑ Also note `CordialState.approves` was repaired on 2026-07-28 from strict `≺` to the
+   INCLUSIVE past `ordering.rs` actually uses. That changed what `Committed` means (it is now
+   easier to satisfy, so this apex is STRONGER, not weaker); without it the bridge is unprovable
+   at every canonical BFT parameter, because the missing voter is exactly `l.creator`.
 2. **The BFT model over the UNION remains an assumption in the case that matters.**
    `crossNodeBftOfCommitted` inhabits it only when both nodes committed the SAME anchor id; at
    DIFFERENT ids with both quorums met it is uninhabitable, which is the whole force of
    `quorum_pair_agreement` but also means the carrier is *never discharged from the runtime*.
    Whether two honest nodes' actual ratifier pools meet `n > 3f` / `≤ f` corrupt over their union
-   is the post-GST dissemination residual — unchanged by this repair.
+   is the post-GST dissemination residual — **unchanged by the bridge**, which passes it straight
+   through as a hypothesis of `deployed_nodes_no_conflicting_history`.
 3. **`CrossNodeCanonical` is backed by nothing in-tree.** It is collision resistance over the
    block encoding at the point consensus consumes it; this tree does not prove that. It is
    decidable, so a node can check it against a peer's blocks — that is what naming it buys, and
-   it is all it buys.
+   it is all it buys. **Unchanged by the bridge**, which also passes it through. Its within-one-
+   lace weakening `Lace.Canonical` gained a sixth consumer there (`past_block`), where it is what
+   turns an id the deployed BFS reached into a block the `≺` order can talk about.
 4. **The model is a toy.** `n = 4, f = 1`, one wave, one leader, six blocks. It settles
-   satisfiability and refutability; it is not a scale claim.
+   satisfiability and refutability; it is not a scale claim. (The BRIDGE theorem itself is fully
+   general in `n`, `f`, `B` and `participants`; only its models are at those parameters.)
+5. **No Lean THEOREM in this tree can evaluate the deployed finalizer on a concrete lace.**
+   `roundOf` → `computeRounds` → `Array.qsort`, whose worker is well-founded-recursive and
+   private to `Init`, so the kernel cannot reduce it and `unseal` cannot reach it (measured
+   2026-07-28). Every `#guard` about `tauOrder` / `isSuperRatified` / `finalLeaderAt` — including
+   the two in `SuperRatifyBridge.Model` — runs in the COMPILER, outside the kernel. They are
+   tests, not proofs. The bridge's own models are built round-FREE for exactly this reason.
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
 Verified with `lake build Dregg2.Consensus.Safety`.
@@ -677,11 +713,11 @@ theorem lace2_author7_no_equiv : ¬ Equivocator lace2 7 :=
   honest_no_equivocation lace2_author7_honest
 
 theorem ra0_approves2 : node2.approves ra0 rg1 :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, lace2_author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), lace2_author7_no_equiv⟩
 theorem ra1_approves2 : node2.approves ra1 rg1 :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, lace2_author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), lace2_author7_no_equiv⟩
 theorem ra2_approves2 : node2.approves ra2 rg1 :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, lace2_author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), lace2_author7_no_equiv⟩
 
 theorem ra0_pre_ro2 : precedes node2.lace ra0 ro2 := .base ⟨by decide, by decide, by decide⟩
 theorem ra1_pre_ro2 : precedes node2.lace ra1 ro2 := .base ⟨by decide, by decide, by decide⟩
@@ -884,11 +920,11 @@ theorem forkLace_author7_no_equiv : ¬ Equivocator forkLace 7 :=
   honest_no_equivocation forkLace_author7_honest
 
 theorem ra0_approvesF : forkNode.approves ra0 rg1Forged :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, forkLace_author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), forkLace_author7_no_equiv⟩
 theorem ra1_approvesF : forkNode.approves ra1 rg1Forged :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, forkLace_author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), forkLace_author7_no_equiv⟩
 theorem ra2_approvesF : forkNode.approves ra2 rg1Forged :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, forkLace_author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), forkLace_author7_no_equiv⟩
 
 theorem ra0_pre_roF : precedes forkNode.lace ra0 ro2 := .base ⟨by decide, by decide, by decide⟩
 theorem ra1_pre_roF : precedes forkNode.lace ra1 ro2 := .base ⟨by decide, by decide, by decide⟩

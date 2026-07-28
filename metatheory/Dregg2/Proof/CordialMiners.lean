@@ -141,13 +141,30 @@ in `o`'s causal past", and `Authority.Blocklace` already proves that read is sou
 honest chain never trips it). -/
 
 /-- **`approves S o l`** (`ordering.rs::approves`): observer block `o` approves leader block
-`l` iff (1) `l` is in `o`'s causal past (`l ≺ o`, i.e. `observes S.lace o l`) and (2) no
-equivocation by `l.creator` is visible from `o`. We render (2) faithfully as
-"`l.creator` is not an `Equivocator` of the lace" — the `Authority.Blocklace` predicate that
-`has_equivocation_in_past` computes (the observer-restricted form refines this; the sound core
-is the blocklace `Equivocator`, and `honest_no_equivocation` discharges it for honest chains). -/
+`l` iff (1) `l` is in `o`'s **INCLUSIVE** causal past (`l = o ∨ l ≺ o`) and (2) no
+equivocation by `l.creator` is visible from `o`. We render (2) as "`l.creator` is not an
+`Equivocator` of the lace" — the `Authority.Blocklace` predicate; see the ⚑ below, this is
+STRONGER than what the node checks.
+
+⚑ **Clause (1) was `precedes S.lace l o` — STRICT — until 2026-07-28, and that is not what the
+node computes.** `ordering.rs::approves` opens with `let past = causal_past_inclusive(cache,
+blocklace, observer); if !past.contains(leader_id) { return false }`, and the Lean executable
+twin `Distributed.BlocklaceFinality.approves` is `(causalPastIncl B o.id).contains l.id` — both
+INCLUSIVE. The strict rendering silently dropped exactly one voter, `l.creator` ratifying via
+`l` itself, and that one voter is the whole margin: at every canonical BFT parameter
+(`3f+1 ≤ n ≤ 3f+3`) the deployed threshold `superMajority n` EQUALS `n − f`, so a bridge that
+loses a vote needs `n − f ≤ superMajority n − 1`, which is false for every such `n`. The strict
+form made `Consensus.SuperRatifyBridge` unprovable at every parameter anyone would run. The
+`HasApprovingBlock` binder below already carried the inclusive form (`b = o ∨ precedes`) at the
+OBSERVER level; this is the same correction at the LEADER level.
+
+⚑ **Clause (2) is still STRONGER than the deployed guard, and that is a named residual.**
+`ordering.rs` tests `equiv.equivocates_in_past(leader_creator, &past)` — OBSERVER-LOCAL, and
+keyed on a same-ROUND pair. `Equivocator S.lace l.creator` is GLOBAL and keyed on an
+INCOMPARABLE pair. Neither implies the other, so the bridge carries
+`SuperRatifyBridge.LeaderNotGlobalEquivocator` as an explicit hypothesis, refuted there. -/
 def CordialState.approves (S : CordialState) (o l : Block) : Prop :=
-  precedes S.lace l o ∧ ¬ Equivocator S.lace l.creator
+  (l = o ∨ precedes S.lace l o) ∧ ¬ Equivocator S.lace l.creator
 
 /-- **`HasApprovingBlock S o l p`** — participant `p` has *some* block in `o`'s causal-past-
 inclusive that approves `l` (the inner `past.iter().any(...)` of `ordering.rs::ratifies`): a
@@ -429,8 +446,12 @@ theorem committed_mem_lace {S : CordialState} {cfg : Finality.Config} {l : Block
     lt_of_lt_of_le hpos sr.quorum_from_lace
   obtain ⟨p, hp⟩ := List.exists_mem_of_ne_nil _ (List.ne_nil_of_length_pos hlen)
   simp only [CordialState.ratifyingVoters, List.mem_dedup, List.mem_filter] at hp
-  obtain ⟨b, _, _, _, happ⟩ := of_decide_eq_true hp.2
-  exact List.mem_of_find?_eq_some (precedes_lookup_left happ.1)
+  obtain ⟨b, hbmem, _, _, happ⟩ := of_decide_eq_true hp.2
+  -- `approves` is INCLUSIVE: the approving block may BE the leader, in which case membership is
+  -- immediate; otherwise `l ≺ b` resolves `l` in the lace.
+  rcases happ.1 with rfl | hpre
+  · exact hbmem
+  · exact List.mem_of_find?_eq_some (precedes_lookup_left hpre)
 
 /-! ## 4. THE SAFETY THEOREM — `cordial_agreement` (reusing the BFT + Blocklace feeders).
 
@@ -714,11 +735,11 @@ theorem author7_no_equiv : ¬ Equivocator ratLace 7 := honest_no_equivocation au
 /-- Each approver `ra_i` **approves** `rg1` ON THE LACE: `rg1 ≺ ra_i` (direct ack) and author 7
 is no equivocator. This is `ordering.rs::approves` evaluated on `ratLace`. -/
 theorem ra0_approves : state.approves ra0 rg1 :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), author7_no_equiv⟩
 theorem ra1_approves : state.approves ra1 rg1 :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), author7_no_equiv⟩
 theorem ra2_approves : state.approves ra2 rg1 :=
-  ⟨.base ⟨by decide, by decide, by decide⟩, author7_no_equiv⟩
+  ⟨Or.inr (.base ⟨by decide, by decide, by decide⟩), author7_no_equiv⟩
 
 /-- Each approver precedes the observer `ro` (`ro` acks it directly), so each approving block is
 in `ro`'s causal past — the inner test of `ordering.rs::ratifies`. -/
