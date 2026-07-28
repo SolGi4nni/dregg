@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# check-mina-attestation.sh — RUN the Mina<->dregg Poseidon attestation zkApp.
+#
+# `bridge/mina-zkapp/` was a complete orphan: measured 2026-07-27,
+# `grep -rn 'mina-zkapp|attestation-poc|poseidon-kat' .github/ scripts/` returned
+# ZERO hits across all 26 workflows and `scripts/local-gates.sh`
+# (docs/AUDIT-IMPORTER-AND-DOCS.md §3.6, F-B10). Worse, what was committed did not
+# run: `tsc` failed on `src/DreggPoseidonAttestation.ts`, and the PoC that was
+# reported working had run in a SCRATCH DIRECTORY at a different o1js than the one
+# the tree pinned. The good cryptographic result could not go red because nothing
+# ever asked it to. This row is the thing that asks.
+#
+# What it runs (`bridge/mina-zkapp/scripts/attestation-gate.ts`, compiled from the
+# committed TypeScript by `tsc` and executed from `dist/`):
+#   [0] the toolchain pin is the one the tree declares (o1js 2.15.0, node >= 20)
+#   [1] o1js `Poseidon.hash` reproduces every Mina-Poseidon vector the Rust probe
+#       `circuit-prove/sketches/mina-pasta-hash-probe` asserts — 9 digests, the
+#       depth-2 Merkle root, and the field modulus — bit-for-bit
+#   [2] a `ZkProgram` verifies a Poseidon-Merkle path IN-CIRCUIT whose public
+#       input is that Rust-emitted root
+#   [3] a real Pickles compile + prove + verify, with the opened leaf carried out
+#   [4] a tampered sibling and a tampered public root each FAIL to prove
+#   [5] the `DreggAttestedGate` zkApp deploys on a local chain, CONSUMES the
+#       attestation proof recursively, and REFUSES one bound to another root
+#
+# ⚑ NO SKIPS. A missing `node`, a missing `npm`, an absent or unpinned o1js, a
+# type error, or a diverging vector are all FAILURES — the same discipline as
+# `embedded-js` and `opentheory-importer`. ~60s including `npm ci` when cold,
+# ~45s warm. No cargo, no Lean.
+#
+#   bash scripts/check-mina-attestation.sh
+#   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP="$ROOT/bridge/mina-zkapp"
+PINNED_O1JS="2.15.0"
+
+die() { echo "FAIL: $*" >&2; exit 1; }
+
+require_toolchain() {
+  command -v node >/dev/null 2>&1 || die "node is not on PATH (this gate does not skip)"
+  command -v npm  >/dev/null 2>&1 || die "npm is not on PATH (this gate does not skip)"
+  local major
+  major="$(node -p 'process.versions.node.split(".")[0]')"
+  [ "$major" -ge 20 ] || die "node v$major is below the supported floor v20"
+}
+
+# Ensure the pinned o1js is installed in $1 (a mina-zkapp dir). Installs if not.
+ensure_o1js() {
+  local dir="$1" have=""
+  if [ -f "$dir/node_modules/o1js/package.json" ]; then
+    have="$(node -p "require('$dir/node_modules/o1js/package.json').version" 2>/dev/null)"
+  fi
+  if [ "$have" != "$PINNED_O1JS" ]; then
+    echo "installing o1js@$PINNED_O1JS in $dir (found: ${have:-none})"
+    ( cd "$dir" && npm install --no-audit --no-fund --silent ) \
+      || die "npm install failed in $dir"
+    have="$(node -p "require('$dir/node_modules/o1js/package.json').version" 2>/dev/null)"
+    [ "$have" = "$PINNED_O1JS" ] || die "o1js resolved to '${have:-none}', not the pin $PINNED_O1JS"
+  fi
+}
+
+run_gate() { # run_gate <dir> -> exit status of the gate
+  ( cd "$1" && npm run --silent gate )
+}
+
+# ── the headline run ──────────────────────────────────────────────────────────
+if [ "${1:-}" != "--self-test" ]; then
+  [ -d "$APP" ] || die "$APP does not exist"
+  require_toolchain
+  ensure_o1js "$APP"
+  out="$(run_gate "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || die "the attestation gate exited $rc"
+  # Floors: a gate that ran but demonstrated nothing must not read as clean.
+  n_ok="$(printf '%s' "$out" | grep -c '✓')"
+  [ "$n_ok" -ge 18 ] || die "only $n_ok checks passed; expected >= 18 (a narrowed run is not a pass)"
+  grep -q 'the zkApp CONSUMED the attestation proof' <<<"$out" \
+    || die "the zkApp composition did not run"
+  grep -q '=== PASS ===' <<<"$out" || die "the gate did not print its PASS line"
+  echo "mina-attestation: $n_ok checks green (compile+prove+verify, tamper rejected, zkApp consumed)"
+  exit 0
+fi
+
+# ── --self-test: prove each leg can go red ────────────────────────────────────
+# Faults are injected into a SCRATCH COPY, never the shared tree: a swarm runs in
+# this working directory and a disarmed guard left behind is worse than no guard.
+require_toolchain
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/mina-attest-selftest.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+COPY="$WORK/mina-zkapp"
+mkdir -p "$COPY"
+# Copy sources; symlink node_modules so we do not re-download o1js per fault.
+( cd "$APP" && tar -cf - --exclude node_modules --exclude dist . ) | ( cd "$COPY" && tar -xf - )
+ensure_o1js "$APP"
+ln -s "$APP/node_modules" "$COPY/node_modules"
+
+red=0; green=0
+expect_red() { # expect_red <label> <sed-program> <file>
+  local label="$1" prog="$2" file="$3"
+  cp "$COPY/$file" "$WORK/.orig"
+  perl -0pi -e "$prog" "$COPY/$file"
+  if cmp -s "$WORK/.orig" "$COPY/$file"; then
+    echo "  ✗ $label: the fault injection MATCHED NOTHING in $file"
+    cp "$WORK/.orig" "$COPY/$file"; red=$((red+1)); return
+  fi
+  rm -rf "$COPY/dist"
+  if run_gate "$COPY" >"$WORK/.out" 2>&1; then
+    echo "  ✗ $label: the gate stayed GREEN with the fault injected"
+    red=$((red+1))
+  else
+    echo "  ✓ $label: gate went red — $(tail -3 "$WORK/.out" | grep -m1 . | cut -c1-72)"
+    green=$((green+1))
+  fi
+  cp "$WORK/.orig" "$COPY/$file"
+}
+
+echo "self-test: injecting faults into $COPY"
+expect_red "corrupted gold digest" \
+  "s/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6d/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6e/" \
+  src/rust-gold-vectors.ts
+expect_red "corrupted Rust Merkle root" \
+  "s/0x0f82b06f11a6dea422082c77668f6ac9fd97a5f21b81525cb61a46c335bbb777n/0x0f82b06f11a6dea422082c77668f6ac9fd97a5f21b81525cb61a46c335bbb778n/" \
+  src/rust-gold-vectors.ts
+expect_red "broken in-circuit Merkle fold" \
+  "s/current = Poseidon\.hash\(\[left, right\]\)/current = Poseidon.hash([right, left])/" \
+  src/DreggPoseidonAttestation.ts
+expect_red "unpinned o1js" \
+  "s/const PINNED_O1JS = '2\.15\.0'/const PINNED_O1JS = '9.9.9'/" \
+  scripts/attestation-gate.ts
+expect_red "type error in the committed source" \
+  "s/export const ATTEST_DEPTH = 32;/export const ATTEST_DEPTH: string = 32;/" \
+  src/DreggPoseidonAttestation.ts
+
+echo
+if [ "$red" -gt 0 ]; then
+  echo "self-test FAILED: $red of $((red+green)) fault(s) did not turn the gate red"
+  exit 1
+fi
+echo "self-test PASS: all $green injected faults turned the gate red"

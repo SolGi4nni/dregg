@@ -13,7 +13,7 @@ const DEPTH = 18; // real tree height: degree_bits max 15 + log_blowup 3
 // Micro-measurements: rows per primitive
 // ---------------------------------------------------------------------------
 
-async function rowsOf(name, f) {
+async function rowsOf(name: string, f: () => void) {
   const cs = await Provable.constraintSystem(f);
   console.log(`${name}: ${cs.rows} rows`);
   return cs.rows;
@@ -45,7 +45,7 @@ const rowsSwapHash = await rowsOf('cond-swap + Poseidon.hash (1 Merkle level)', 
 // The ZkProgram: N depth-18 Merkle openings (the FRI query walk shape)
 // ---------------------------------------------------------------------------
 
-function verifyOpening(root, leaf, siblings, bits) {
+function verifyOpening(root: Field, leaf: Field, siblings: Field[], bits: Bool[]) {
   let cur = leaf;
   for (let i = 0; i < DEPTH; i++) {
     const l = Provable.if(bits[i], siblings[i], cur);

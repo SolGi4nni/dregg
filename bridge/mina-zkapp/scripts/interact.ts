@@ -23,8 +23,8 @@ import {
   fetchAccount,
   Poseidon,
 } from 'o1js';
-import { DreggFederation } from '../src/DreggFederation';
-import { BridgeRelay } from '../src/bridge-ops';
+import { DreggFederation } from '../src/DreggFederation.js';
+import { BridgeRelay } from '../src/bridge-ops.js';
 
 // ---------------------------------------------------------------------------
 // Configuration

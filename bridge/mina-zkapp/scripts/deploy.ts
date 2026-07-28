@@ -23,7 +23,7 @@ import {
   Poseidon,
   fetchAccount,
 } from 'o1js';
-import { DreggFederation } from '../src/DreggFederation';
+import { DreggFederation } from '../src/DreggFederation.js';
 
 // ---------------------------------------------------------------------------
 // Configuration from environment

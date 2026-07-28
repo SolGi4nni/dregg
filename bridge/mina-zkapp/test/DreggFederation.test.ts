@@ -7,7 +7,7 @@ import {
   UInt64,
   Poseidon,
 } from 'o1js';
-import { DreggFederation } from '../src/DreggFederation';
+import { DreggFederation } from '../src/DreggFederation.js';
 
 describe('DreggFederation', () => {
   let deployerKey: PrivateKey;

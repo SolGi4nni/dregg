@@ -1,4 +1,4 @@
-import { DreggFederation } from './DreggFederation';
+import { DreggFederation } from './DreggFederation.js';
 import { Field, Mina, PrivateKey, PublicKey, UInt64, fetchAccount } from 'o1js';
 
 // ---------------------------------------------------------------------------

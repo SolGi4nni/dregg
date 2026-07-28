@@ -1,8 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    // NodeNext (not `bundler`) so `tsc` EMITS runnable ESM: the gate runs the
+    // compiled `dist/` output, which is what makes a type error in the
+    // committed sources a gate failure rather than a scratch-dir surprise.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "lib": ["ES2022", "DOM"],
     "outDir": "./dist",
     "rootDir": ".",
@@ -16,6 +19,13 @@
     "sourceMap": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
+    // REQUIRED by o1js's `@state`/`@method` decorators. With `target: ES2022`
+    // TypeScript defaults this to `true`, which emits `Object.defineProperty`
+    // for class fields; that runs BEFORE the decorator has bound the field to
+    // its contract, and `State.set` then throws "set can only be called when
+    // the State is assigned to a SmartContract @state". Matches the o1js
+    // zkapp-cli template.
+    "useDefineForClassFields": false,
     "strictPropertyInitialization": false
   },
   "include": ["src/**/*", "test/**/*", "scripts/**/*"],

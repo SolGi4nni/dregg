@@ -257,6 +257,30 @@ GATES=(
   # loudly instead of disarming it. ~42s.
   "opentheory-importer|600|bash scripts/check-opentheory-importer.sh"
   "opentheory-importer-red|900|bash scripts/check-opentheory-importer.sh --self-test"
+  # The Mina<->dregg attestation zkApp, RUN. Same shape as the row above and found the
+  # same way: `bridge/mina-zkapp/` was in ZERO targets — no workflow, no gate script, no
+  # npm workspace (docs/AUDIT-IMPORTER-AND-DOCS.md §3.6, F-B10) — and what was committed
+  # did not run: `tsc` failed on `src/DreggPoseidonAttestation.ts` and the PoC that was
+  # reported working had run in a SCRATCH DIR at an o1js the tree did not pin. So the one
+  # cryptographic result in that directory (Mina's Poseidon and dregg's agree bit-for-bit,
+  # and a Kimchi circuit can verify a Merkle path into a root the Rust side produced)
+  # could not go red. This row runs it from the committed TypeScript, compiled by `tsc`
+  # and executed out of `dist/`: 9 gold digests + the depth-2 root + the field modulus
+  # against the Rust probe's pinned table, a real Pickles compile/prove/verify of the
+  # in-circuit path, two tamper rejections, and the `DreggAttestedGate` zkApp deploying on
+  # a local chain and CONSUMING the proof recursively (that last one is what makes "a Mina
+  # zkApp verified…" name something that ran — before this, only a bare ZkProgram had).
+  # ⚠ It needs `node` >= 20 and o1js pinned at 2.15.0, and it FAILS rather than skips
+  # without either — like `embedded-js`. The 1.9.1 the tree used to pin is not a choice:
+  # its prover bindings abort inside Poseidon absorb during `compile()` on node >= 26.
+  # ~45s warm, no cargo, no Lean. The -red row is not optional — three of the six legs are
+  # NEGATIVE assertions (two tamper refusals and a zkApp refusal), which pass just as
+  # happily on a broken driver. It injects five faults into a SCRATCH COPY (never the
+  # shared tree): a corrupted gold digest, a corrupted Merkle root, a transposed
+  # `Poseidon.hash([left,right])`, an off-pin o1js, and a type error in the committed
+  # source — and a fault that matches NOTHING is itself a failure. ~11s.
+  "mina-attestation|600|bash scripts/check-mina-attestation.sh"
+  "mina-attestation-red|600|bash scripts/check-mina-attestation.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

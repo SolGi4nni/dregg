@@ -1,0 +1,4 @@
+# `tsc` output. The gate RUNS `dist/`, but it is rebuilt by `npm run build` on
+# every invocation — a committed copy would be a second source of truth for the
+# same code, and the stale one always wins an argument.
+dist/

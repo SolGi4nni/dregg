@@ -8,8 +8,11 @@
 //! an o1js/Kimchi verifier evaluates natively (~11 Kimchi rows/permutation).
 //!
 //! Gold vectors below were produced by
-//! `bridge/mina-zkapp/scripts/poseidon-kat.mjs` (o1js 1.9.1, node 26):
-//! run it and compare — the values are pasted verbatim.
+//! `bridge/mina-zkapp/scripts/poseidon-kat.ts` (`npm run kat`, o1js 2.15.0):
+//! run it and compare — the values are pasted verbatim. The same table is
+//! mirrored on the o1js side at `bridge/mina-zkapp/src/rust-gold-vectors.ts`,
+//! and `scripts/check-mina-attestation.sh` (a `local-gates.sh` row and a `ci.yml`
+//! job) fails if the two ever disagree.
 //!
 //! Rust side: `mina-poseidon` (o1-labs/proof-systems rev 36a8b510) —
 //! `ArithmeticSponge<Fp, PlonkSpongeConstantsKimchi, 55>` with
@@ -101,9 +104,10 @@ fn main() {
 mod tests {
     use super::*;
 
-    /// Gold KATs from o1js 1.9.1 `Poseidon.hash` (bridge/mina-zkapp/scripts/
-    /// poseidon-kat.mjs) — the o1js side of the pin, pasted verbatim from its
-    /// output. `P` = Pasta Fp modulus (o1js `Field.ORDER`).
+    /// Gold KATs from o1js `Poseidon.hash` (bridge/mina-zkapp/scripts/
+    /// poseidon-kat.ts) — the o1js side of the pin, pasted verbatim from its
+    /// output; re-checked against o1js 2.15.0 on 2026-07-28, unchanged.
+    /// `P` = Pasta Fp modulus (o1js `Field.ORDER`).
     const P_HEX: &str = "0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001";
 
     const GOLD: &[(&str, &[u64], &str)] = &[
@@ -206,7 +210,7 @@ mod tests {
     /// 2->1 node compression and arbitrary-width leaf sponging — and a
     /// depth-2 root built from `compress` matches o1js `MerkleTree` (which
     /// hashes nodes as `Poseidon.hash([left, right])`). Gold value from
-    /// poseidon-kat.mjs's MerkleTree case.
+    /// poseidon-kat.ts's MerkleTree case.
     #[test]
     fn merkle_compress_matches_o1js_merkletree() {
         let leaves = [1u64, 2, 3, 4].map(Fp::from);

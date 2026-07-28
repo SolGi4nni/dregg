@@ -11,7 +11,7 @@ import {
   DeployArgs,
   AccountUpdate,
 } from 'o1js';
-import { DepositEvent, WithdrawalEvent, StateAdvanceEvent } from './types';
+import { DepositEvent, WithdrawalEvent, StateAdvanceEvent } from './types.js';
 
 // ---------------------------------------------------------------------------
 // DreggFederation zkApp

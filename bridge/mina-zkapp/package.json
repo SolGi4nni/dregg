@@ -2,19 +2,25 @@
   "name": "dregg-mina-zkapp",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest",
-    "deploy": "ts-node scripts/deploy.ts"
+    "typecheck": "tsc --noEmit",
+    "gate": "npm run build && node dist/scripts/attestation-gate.js",
+    "kat": "npm run build && node dist/scripts/poseidon-kat.js",
+    "poseidon2-rows": "npm run build && node dist/scripts/poseidon2-babybear-rows.js",
+    "merkle-constraints": "npm run build && node dist/scripts/merkle-constraints.js",
+    "test": "npm run gate",
+    "deploy": "npm run build && node dist/scripts/deploy.js"
   },
   "dependencies": {
-    "o1js": "^1.0.0"
+    "o1js": "2.15.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
     "@types/jest": "^29.0.0",
-    "jest": "^29.0.0",
-    "ts-jest": "^29.0.0",
-    "ts-node": "^10.0.0"
+    "typescript": "^5.5.0"
   }
 }

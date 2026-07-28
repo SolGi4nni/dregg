@@ -1235,6 +1235,27 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - run: bash scripts/check-opentheory-importer.sh --self-test
 
+  mina-attestation:
+    name: Mina↔dregg Poseidon attestation zkApp (runs it, and proves the gate can go red)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # `bridge/mina-zkapp/` was in ZERO targets — no workflow, no gate script, no npm
+    # workspace — and what was committed did not run (`tsc` failed; the PoC that was
+    # reported working had run in a scratch dir at an unpinned o1js). This job runs it
+    # from the committed TypeScript: 9 Mina-Poseidon gold digests + the depth-2 Merkle
+    # root + the field modulus against the Rust probe's pinned table, a real Pickles
+    # compile/prove/verify of an in-circuit Merkle path into that root, two tamper
+    # rejections, and the `DreggAttestedGate` zkApp deploying on a local chain and
+    # consuming the attestation proof recursively. Then the self-test injects five faults
+    # into a scratch copy and requires each to turn it red. ~2 min; no cargo, no Lean.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bash scripts/check-mina-attestation.sh
+      - run: bash scripts/check-mina-attestation.sh --self-test
+
   ratchet-darkness:
     name: Refuted-floor DARKNESS gate (nothing carrying a refuted floor is invisible to the ratchet)
     runs-on: ubuntu-latest
