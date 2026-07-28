@@ -25,6 +25,7 @@ use kimchi::{
     circuits::{
         argument::ArgumentType,
         berkeley_columns::BerkeleyChallenges,
+        constraints::ConstraintSystem,
         expr::{Constants, PolishToken},
         polynomials::{
             generic::testing::{create_circuit, fill_in_witness},
@@ -408,6 +409,30 @@ fn main() {
         .map(|x| x.inner())
         .collect();
 
+    // ---- P3: derive_plonk's three scalar derivations (mina-rust plonk_checks.rs:238-290) ----
+    // `perm` is o1-labs' OWN `ConstraintSystem::perm_scalars` (permutation.rs:392-430), which is
+    // the same expression `derive_plonk` inlines (plonk_checks.rs:259-266) and the same one K5
+    // transcribed as `permScalar`. One identity, three call sites — dumped from the Rust so the
+    // Lean side is a differential, not a self-consistency check.
+    let mut aa2 = oracles_res.all_alphas.clone();
+    aa2.instantiate(alpha);
+    let ap2 = aa2.get_alphas(ArgumentType::Permutation, permutation::CONSTRAINTS);
+    let perm_scalar = ConstraintSystem::<Fp>::perm_scalars(&combined, beta, gamma, ap2, pvp_zeta);
+    let zeta_to_domain_size = zeta.pow([n]);
+    let zeta_to_srs_length = zeta.pow([max_poly_size as u64]);
+    // `b_correct`'s value: challenge_poly(zeta) + evalscale * challenge_poly(zeta*omega) over the
+    // proof's OWN IPA round challenges (wrap_verifier.ml:1015-1026; step.rs:854-862).
+    let ipa_chals: Vec<Fp> = {
+        let mut sp = oracles_res.fq_sponge.clone();
+        sp.absorb_fr(&[shift_scalar::<Vesta>(cip)]);
+        proof.proof.challenges(&verifier_index.endo, &mut sp).chal
+    };
+    let b_deferred = {
+        let bz = poly_commitment::commitment::b_poly(&ipa_chals, zeta);
+        let bzw = poly_commitment::commitment::b_poly(&ipa_chals, zetaw);
+        bz + u * bzw
+    };
+
     let prev_len = proof.prev_challenges.len();
     let w_comm_len = proof.commitments.w_comm.len();
     let t_comm_len = proof.commitments.t_comm.len();
@@ -592,8 +617,18 @@ fn main() {
     println!("    \"ev_zeta\": {},", arr(&ev_zeta));
     println!("    \"ev_zetaomega\": {} }},", arr(&ev_zomega));
     println!(
-        "  \"ipa\": {{ \"k\": {k}, \"prechallenges\": {} }}",
-        arr(&prechallenges)
+        "  \"ipa\": {{ \"k\": {k}, \"prechallenges\": {}, \"chals\": {}, \"b_deferred\": \"{}\" }},",
+        arr(&prechallenges),
+        arr(&ipa_chals),
+        d(&b_deferred)
+    );
+    println!(
+        "  \"derive_plonk\": {{ \"perm\": \"{}\", \"zeta_to_domain_size\": \"{}\", \"zeta_to_srs_length\": \"{}\", \"zkp_zeta\": \"{}\", \"perm_alpha0\": \"{}\" }}",
+        d(&perm_scalar),
+        d(&zeta_to_domain_size),
+        d(&zeta_to_srs_length),
+        d(&pvp_zeta),
+        d(&alpha0)
     );
     println!("}}");
 }

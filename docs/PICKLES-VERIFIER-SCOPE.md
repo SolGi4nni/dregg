@@ -1,8 +1,9 @@
 # PICKLES-VERIFIER-SCOPE.md — from a single Kimchi verify to Mina's Pickles recursion
 
-**Status:** scoping doc + **P0/P1/P2 BUILT** (2026-07-27) + **P6 BUILT, and the Fq-state sponge
-with it** (2026-07-28). P3/P4/P5/P7/P8/P9 remain unbuilt scoping; P10 is the inherited terminal
-floor.
+**Status:** scoping doc + **P0/P1/P2 BUILT** (2026-07-27) + **P6 BUILT, the Fq-state sponge with
+it, and P3 (`finalize_other_proof`) BUILT** (2026-07-28). P4/P5/P7/P8/P9 remain unbuilt scoping;
+P10 is the inherited terminal floor. **P4 is the security crux and is NOT started** — read the P3
+block's caveat before treating `finalize_other_proof` as meaning anything about soundness.
 Audience: ember + the K7 (Pickles) build.
 This is the follow-on named in `docs/MINA-KIMCHI-VERIFIER-PLAN.md` item 6 ("Pickles/recursion tip …
 recursion is the follow-on") and the frontier `KimchiVerify.lean` freezes at `prevLen = 0`.
@@ -82,6 +83,44 @@ accumulator commitments are checked only as transcript inputs — that `comm = �
 is `accumulator_check`, bottoming out at P10. `Wrap_hack` padding to 2 is modelled only as the
 count, not as the dummy-challenge construction (that is P7's dummy proof).
 
+### BUILD STATUS — P3 `finalize_other_proof` (2026-07-28)
+
+**`metatheory/Dregg2/Circuit/Emit/PicklesFinalizeOtherProof.lean`** (15 theorems pinned).
+
+The reuse prediction in §B held, and better than stated: `derive_plonk`'s `perm`
+(`plonk_checks.rs:259-266`) is **character-for-character** o1-labs' own
+`ConstraintSystem::perm_scalars` (`permutation.rs:392-430`) **and** K5's `permScalar` — one
+expression, three call sites, proven identical for every input
+(`derive_plonk_perm_is_permScalar`). So the "genuinely new scalar derivations" reduce to two
+exponentiations: `zeta_to_domain_size = ζ^n` and `zeta_to_srs_length = ζ^max_poly_size`, the
+latter checked at the REAL `max_poly_size = 65536` through the `sqIter` ladder rather than at a
+kernel-cheap surrogate.
+
+`derive_plonk_matches_rust` is a DIFFERENTIAL against o1-labs' code (the `perm` value is dumped
+from their `perm_scalars`, `zkp(ζ)` from the index's `permutation_vanishing_polynomial_m`), on the
+same `prev_challenges = 2` proof as P6. `finalizeOtherProofOk` composes the four checks —
+`xi_correct`, `combined_inner_product_correct` (K5 `cipR` + `ftEval0R` + the witnessed inverse),
+`b_correct` (K4c `bEval` via `bEvalSq`), `plonk_checks_passed` (`derivePlonk`) — and eight tampers
+flip it, one per sub-check.
+
+⚑ **THE CAVEAT, and it is the whole of P3's honest scope.** `finalize_other_proof` compares
+recomputed values against the ones the OTHER proof EXPOSED in its public input. **There is no
+Pickles proof in this tree** — no Step or Wrap statement, no `Deferred_values` record from a real
+prover — so the exposed side is instantiated with the derived values, i.e. with what an honest
+prover would expose. `finalize_accepts` is therefore a statement about the ASSEMBLY and about the
+three reused cores accepting this proof's real scalars. It is **not** evidence that a real Pickles
+statement passes.
+
+⚑ **And P4 is untouched.** Without the transcript-equality binding, `finalize_other_proof`
+discharges a `Deferred_values` an attacker CHOSE, as long as it is internally consistent. That is
+precisely why P4 is the crux. `shifted_comparison_is_field_comparison` (P2's Type1 bridge applied
+to the derived record) is the ALGEBRAIC half only — comparing shifted representatives is comparing
+field values — and the file says so where it is proved.
+
+Also landed with P3: `permScalarR`, the `CommRing` mirror of K5's `permScalar`, tied by
+`permScalarR_eq` at every field — the same device `cipR`/`ftEval0R` use, and the reason the real
+proof (`ZMod pN`, no `Field` instance in this tree) can be checked at all.
+
 **Not claimed:** this is not a Pickles verifier. P3 (`finalize_other_proof`) and P4 (the
 transcript-equality binding — the soundness of P3) are unbuilt; see §Z of the Lean file for the
 per-item handoff.
@@ -158,7 +197,7 @@ instantiation (real Step/Wrap VKs, the tx-snark merge tree, the block step rule,
 - **P0** — Instantiate K5 at the **Wrap** shape (Pallas-committed, Fq scalars, `k=15`). *Medium.* **BUILT.**
 - **P1** — Close `accumulator_check` (the sg discharge) on top of `sVec_eq_bPoly`. *Small–medium.* **BUILT** (batching wrapper + reduction; terminal MSM still P10).
 - **P2** — The `Deferred_values` data model + Type1/Type2 shifted-value bridge. *Small–medium.* **BUILT.**
-- **P3** — `finalize_other_proof`: the four re-checks (`xi`/`cip`/`b`/`plonk`) on ONE side. *Medium.*
+- **P3** — `finalize_other_proof`: the four re-checks (`xi`/`cip`/`b`/`plonk`) on ONE side. *Medium.* **BUILT 2026-07-28.**
 - **P4** — **The transcript-equality binding** (`assert_eq_plonk` + digest/bp-challenge equality) —
   the soundness of P3. *Hard — the single hardest buildable piece.*
 - **P5** — Mirror P3+P4 to the other side (field swap Fp↔Fq). *Small (mirror).*
