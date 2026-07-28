@@ -181,8 +181,7 @@ def padTo {α : Type} (d : α) (n : Nat) (l : List α) : List α :=
 
 theorem padTo_length {α : Type} (d : α) (n : Nat) (l : List α) (h : l.length ≤ n) :
     (padTo d n l).length = n := by
-  simp [padTo, List.length_append, List.length_take, List.length_replicate,
-    Nat.min_eq_left h]
+  simp only [padTo, List.length_append, List.length_take, List.length_replicate]
   omega
 
 /-- Normalise a row to well-formed shape: 15 wires (padding with column 0) and 15 coefficients
@@ -434,8 +433,7 @@ theorem mkGeneric1_holds_iff (a : Nat → R) (l r o : Nat) (cl cr co cm cc : ℤ
   unfold KRow.holds
   simp [mkGeneric1_gate]
 
-theorem mkZero_holds (a : Nat → R) : mkZero.holds a := by
-  unfold KRow.holds; simp [mkZero]
+theorem mkZero_holds (a : Nat → R) : mkZero.holds a := trivial
 
 end CtorSemantics
 
@@ -454,16 +452,19 @@ def gateHistogram (rs : List KRow) : List (KGateType × Nat) :=
 /-- Total rows. This is the number the differential compares. -/
 def rowCount (rs : List KRow) : Nat := rs.length
 
+/-- One row moves exactly one bucket, because `KGateType.all` is complete and duplicate-free. -/
+theorem histogram_step (r : KRow) (rs : List KRow) :
+    ((gateHistogram (r :: rs)).map Prod.snd).sum
+      = ((gateHistogram rs).map Prod.snd).sum + 1 := by
+  simp only [gateHistogram, List.map_map, Function.comp_def, KGateType.all, List.map_cons,
+    List.map_nil, List.sum_cons, List.sum_nil, List.filter_cons]
+  cases r.gate <;> simp <;> omega
+
 theorem histogram_sums_to_rowCount (rs : List KRow) :
     ((gateHistogram rs).map Prod.snd).sum = rowCount rs := by
   induction rs with
   | nil => rfl
-  | cons r rs ih =>
-    have hmem : r.gate ∈ KGateType.all := KGateType.all_complete r.gate
-    simp only [gateHistogram, rowCount, List.map_map, Function.comp_def] at ih ⊢
-    -- Each gate bucket either grows by one (the row's own gate) or is unchanged.
-    cases r.gate <;>
-      simp_all [KGateType.all, List.filter_cons, rowCount, gateHistogram] <;> omega
+  | cons r rs ih => rw [histogram_step, ih]; rfl
 
 /-- **The Pickles domain ceiling.** `2^16 = 65,536` rows
 (`mina/src/lib/crypto/kimchi_backend/pasta/basic/kimchi_pasta_basic.ml:16-17`), and Pickles
