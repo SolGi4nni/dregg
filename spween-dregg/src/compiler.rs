@@ -129,9 +129,12 @@ pub const PASSAGE_SLOT: usize = 0;
 /// a choice with no navigation target). Distinct from any real passage index.
 pub const PASSAGE_ENDED: u64 = 0xFFFF_FFFF;
 
-/// The number of cell state slots available (mirrors `dregg_cell::state::STATE_SLOTS`).
-/// A heap-keyed write ([`WorldCell::apply_raw`]) targets an index `>= STATE_SLOTS`.
-pub const STATE_SLOTS: usize = 16;
+/// The number of cell state slots available. This **IS** `dregg_cell::state::STATE_SLOTS`
+/// — the same item, re-exported, not a mirrored literal: two constants that agree today
+/// are two constants that disagree later, and this one is the bound the executor's own
+/// register/heap routing uses. A heap-keyed write ([`WorldCell::apply_raw`]) targets an
+/// index `>= STATE_SLOTS`.
+pub use dregg_cell::state::STATE_SLOTS;
 
 /// **The base ext key the compiler SPILLS a scene's 16th-and-beyond atom to.** Once
 /// the 16 fixed registers are full, [`compile_scene`] allocates `SPILL_EXT_BASE`,
