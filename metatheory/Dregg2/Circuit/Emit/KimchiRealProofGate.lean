@@ -52,7 +52,9 @@ namespace Dregg2.Circuit.Emit.KimchiRealProofGate
 open Dregg2.Circuit.Emit.KimchiVerify
   (kimchiVerifyDecision kimchiVerifyDecisionField combinedInnerProduct ftEval0 zkPoly
    cipR cipR_eq zkPolyR ftEval0R ftEval0R_eq ipaDeferralOk PERMUTS
-   genericGateConstraint gateLinConst kimchiVerifyDecisionGates frEvalPointOrder frSpongeDigest)
+   genericGateConstraint gateLinConst kimchiVerifyDecisionGates frEvalPointOrder frSpongeDigest
+   GateEvals poseidonBody alphaCombine completeAddConstraints varBaseMulConstraints
+   endoMulConstraints endomulScalarConstraints)
 open Dregg2.Circuit.Emit.PastaIPA (IpaDeferred absorbChallenges)
 open Dregg2.Circuit.Emit.PastaField (pN)
 open Dregg2.Circuit.Emit.PastaPoseidon
@@ -275,34 +277,62 @@ are load-bearing). -/
 theorem generic_gate_discriminates_on_witness :
     genericGateConstraint GENSEL ALPHA COEFFZ (WZ.set 0 (0 : Fp)) ≠ LCT := by decide
 
+/-- The `EndomulScalar` quotient constants `11/6, −5/2, 2/3` in `Fp` (`endomul_scalar.rs:188-193`),
+witnessed rather than divided. -/
+def CA : Fp := (4824670384888174809315457708695329493893842746990260119325779460724994605058 : Fp)
+def CB : Fp := (14474011154664524427946373126085988481681528240970780357977338382174983815166 : Fp)
+def CC : Fp := (9649340769776349618630915417390658987787685493980520238651558921449989210113 : Fp)
+
+/-- The `endo_r` of Vesta (`Vesta::endos().1`, the SCALAR-field endomorphism coefficient). -/
+def ENDO_R : Fp := (8503465768106391777493614032514048814691664078728891710322960303815233784505 : Fp)
+
+/-- This proof's gate environment. Every custom selector is ZERO (those gates are absent from the
+circuit), so the five custom bodies contribute nothing here whatever they read — the MDS is passed
+as the zero matrix for that reason, and the LIVE Poseidon body over K3's real `mdsN` runs in
+`KimchiPoseidonGate` on a proof that actually fires the gate. `wNext` is the ζω witness block of the
+es-order eval list (slots 9..23). -/
+def GEV : GateEvals Fp :=
+  { alpha := ALPHA, endo := ENDO_R
+  , mds := [[(0 : Fp), 0, 0], [(0 : Fp), 0, 0], [(0 : Fp), 0, 0]]
+  , coeff := COEFFZ, w := WZ, wNext := (EVZW.drop 9).take 15
+  , cA := CA, cB := CB, cC := CC
+  , genSel := GENSEL, posSel := 0, caddSel := 0, mulSel := 0, emulSel := 0, emulScalarSel := 0 }
+
 /-- **The gate-derived decision ACCEPTS the real proof** — `kimchiVerifyDecisionGates` with the real
-generic selector + coefficient evals, custom selectors = 0 (custom bodies irrelevant, shown here as
-0): C1 ∧ C8 ∧ witnessed-inverse ∧ C5-with-`ft_eval0`-from-the-generic-gate, all over `ZMod pN`. The
-`linConstTerm` is no longer a carrier — it is the transcribed generic gate constraint. -/
+generic selector + coefficient evals and every custom selector zero: C1 ∧ C8 ∧ witnessed-inverse ∧
+C5-with-`ft_eval0`-from-the-gate-bodies ∧ the `EndomulScalar` quotient check, all over `ZMod pN`.
+The `linConstTerm` is no longer a carrier — it is the transcribed generic gate constraint. -/
 theorem real_gate_decision_accepts :
     kimchiVerifyDecisionGates (R := Fp)
         0 5 15 6 15 7 1 N
         VV UU EVZ EVZW CIP
-        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA
-        WZ SZ SHIFT COEFFZ
-        GENSEL 0 0 0 0 0
-        0 0 0 0 0
+        OMEGA ZETA BETA GAMMA A0 A1 A2
+        SZ SHIFT GEV
         ZZ ZZW PZ DINV FT0
         true true true = true := by decide
 
 /-- Non-vacuity of the gate composition: tampering a coefficient eval (feeding the generic gate)
-changes the derived `linConstTerm`, so `ft_eval0` no longer matches and the decision REJECTS. -/
+changes the derived `linConstTerm`, so `ft_eval0` no longer matches and the decision REJECTS; so
+does the generic selector, and so does a bogus `EndomulScalar` quotient constant. -/
 theorem real_gate_decision_discriminates :
     kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
-        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA WZ SZ SHIFT COEFFZ
-        GENSEL 0 0 0 0 0 0 0 0 0 0 ZZ ZZW PZ DINV FT0 true true true = true
+        OMEGA ZETA BETA GAMMA A0 A1 A2 SZ SHIFT GEV ZZ ZZW PZ DINV FT0 true true true = true
     ∧ kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
-        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA WZ SZ SHIFT (COEFFZ.set 0 (0 : Fp))
-        GENSEL 0 0 0 0 0 0 0 0 0 0 ZZ ZZW PZ DINV FT0 true true true = false   -- tampered coeff → linConstTerm → ft_eval0
+        OMEGA ZETA BETA GAMMA A0 A1 A2 SZ SHIFT { GEV with coeff := COEFFZ.set 0 (0 : Fp) }
+        ZZ ZZW PZ DINV FT0 true true true = false   -- tampered coeff → linConstTerm → ft_eval0
     ∧ kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
-        OMEGA ZETA BETA GAMMA A0 A1 A2 ALPHA WZ SZ SHIFT COEFFZ
-        (GENSEL + 1) 0 0 0 0 0 0 0 0 0 0 ZZ ZZW PZ DINV FT0 true true true = false   -- tampered generic selector
-    := by refine ⟨?_, ?_, ?_⟩ <;> decide
+        OMEGA ZETA BETA GAMMA A0 A1 A2 SZ SHIFT { GEV with genSel := GENSEL + 1 }
+        ZZ ZZW PZ DINV FT0 true true true = false   -- tampered generic selector
+    ∧ kimchiVerifyDecisionGates (R := Fp) 0 5 15 6 15 7 1 N VV UU EVZ EVZW CIP
+        OMEGA ZETA BETA GAMMA A0 A1 A2 SZ SHIFT { GEV with cA := CA + 1 }
+        ZZ ZZW PZ DINV FT0 true true true = false   -- bogus EndomulScalar quotient
+    := by refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- The custom-gate bodies are INERT here: `gateLinConst` equals the generic gate constraint alone,
+because every custom selector is zero — this is the shape of `linearize`'s `index(gate)·combined`
+with `index_terms = []`. The bodies are exercised in `KimchiPoseidonGate`. -/
+theorem custom_bodies_inert : gateLinConst GEV = genericGateConstraint GENSEL ALPHA COEFFZ WZ := by
+  decide
 
 /-! ## §6d — C3: the Fr-sponge INSTANTIATED over `Fp = pN` (K3's permutation), run on real evals.
 
@@ -359,6 +389,7 @@ theorem c3_raw_vs_endo_shape_real :
 #assert_axioms generic_gate_discriminates_on_witness
 #assert_axioms real_gate_decision_accepts
 #assert_axioms real_gate_decision_discriminates
+#assert_axioms custom_bodies_inert
 #assert_axioms fr_eval_point_order_len
 #assert_axioms c9_real_deferral
 #assert_axioms c9_deferral_discriminates

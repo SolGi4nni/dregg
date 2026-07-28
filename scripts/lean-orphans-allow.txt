@@ -162,3 +162,17 @@ Dregg2.Circuit.Emit.AutomataflNGenGolden  # A 2.98 MB byte-pinned WIRE GOLDEN (1
 # and the entry stops being enough. The landing lane should DELETE its entry here when it roots.
 Dregg2.Circuit.Emit.LightClientMidnightAir  # co-tenant lane; the AIR half of LightClientMidnight; zero floor mentions
 Dregg2.Circuit.Emit.LightClientSolanaAir  # co-tenant lane; the AIR half of LightClientSolana; zero floor mentions
+
+# ── KimchiPoseidonGate (2026-07-27) ───────────────────────────────────────────
+# The SECOND Kimchi reality gate: a real proof that FIRES the Poseidon custom gate, which is what
+# makes the six transcribed gate bodies and the C3 challenge re-derivation non-vacuous. Its sibling
+# `Dregg2.Circuit.Emit.KimchiRealProofGate` IS rooted (Dregg2.lean:1536) and pulls the whole
+# KimchiVerify DAG in, so the DEFINITIONS this file exercises DO build in CI — what does not run is
+# this file's own `#assert_axioms` + `#guard` + `by decide` differentials against the real proof.
+# ⚑ RECORDED, NOT ENDORSED: this lane was instructed not to edit the truncated `metatheory/Dregg2.lean`
+# (the shared root that concurrent lanes clobber), so it could not root the module itself. The fix is
+# ONE line — `import Dregg2.Circuit.Emit.KimchiPoseidonGate` next to line 1536 — and this entry
+# should be DELETED the moment that lands. Verified before recording: the module builds green on hbox
+# (`lake build Dregg2.Circuit.Emit.KimchiPoseidonGate`, exit 0), is `#assert_axioms`-clean, has no
+# `sorry`/`native_decide`, and every headline check was TAMPERED and confirmed RED before revert.
+Dregg2.Circuit.Emit.KimchiPoseidonGate  # awaiting ONE import line in Dregg2.lean; see block above

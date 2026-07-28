@@ -133,24 +133,37 @@ in-kernel over `ZMod pN`, demonstrably non-vacuous (a tampered value rejects).
    `kimchiVerifyDecisionField` (§9b, `refines`-tied to `kimchiVerifyDecision`) composes C1 + the C8
    `cip` check + the witnessed-inverse + the C5 `ft_eval0` check into one accept, evaluated in-kernel
    on the real proof (`real_field_decision_accepts`, non-vacuous via `real_field_decision_discriminates`).
-3. **C6 `linConstTerm` — GENERIC gate now COMPOSED (2026-07-27).** The double-generic gate constraint
-   is transcribed (`genericGateConstraint`, algebraic + the `PolishToken` stream
-   `genericConstraint_evaluates`) and threaded INTO the accept (`gateLinConst` +
-   `kimchiVerifyDecisionGates`, `KimchiVerify` §9c): `ftEval0`'s constant term is DERIVED from the real
-   generic-gate constraint, not the carrier. On the real proof `genericGateConstraint(real) = LCT`
-   exactly and all 5 custom-gate selectors are zero (`generic_gate_matches_lct`,
-   `custom_selectors_zero`), so THIS proof's whole `linConstTerm` is the generic gate — carrier
-   retired. STILL CARRIED: the CUSTOM-gate bodies — Poseidon is transcribed as a def-generator
-   (`poseidonLaneConstraint`) but NOT exercised (`poseidon_selector = 0`); complete_add/varbasemul/
-   endomul/endomul_scalar bodies live behind their (here-zero) selectors.
-4. **C3 phase-2 sponge — INSTANTIATED over `Fp = pN` (2026-07-27).** The Fr-sponge IS K3's
-   Poseidon-over-Fp sponge (`Vesta::sponge_params() = fp_kimchi`, `curve.rs:63` — the earlier "over
-   `Fq`/`qN`" label was the same Fp/Fq mislabel this gate corrected): `frSpongeDigest = Ref.hash` of the
-   phase-2 absorb stream, whose `absorb_evaluations` point order is proven (`frEvalPointOrder`,
-   `KimchiVerify` §9d). It consumes the real `ft_eval1` + public evals non-vacuously (`#guard`). STILL
-   CARRIED: the fq-sponge `digest` value (phase-1 `Fq`-sponge over `qN`, not extracted) and the
-   `challenge()` endo map (low-128-bit truncation + `to_field(endo_r)`) — so the actual β,γ,α,ζ,v,u are
-   still not re-derived end-to-end.
+3. **C6 `linConstTerm` — ALL SIX GATE BODIES COMPOSED, carrier RETIRED (2026-07-27, second pass).**
+   Every v1 gate body is now transcribed from the source into `KimchiVerify` §9c.1: generic 2
+   (`genericGateConstraint`), Poseidon 15 (`poseidonConstraints`), complete_add 7
+   (`completeAddConstraints`), varbasemul 21 (`varBaseMulConstraints`), endomul/`EndosclMul`
+   **12 — not 11** (`endoMulConstraints`; the twelfth is the distinct-point witness
+   `(xp−xr)(xr−xs)·inv − 1`, `endosclmul.rs:549`), endomul_scalar 11 (`endomulScalarConstraints`,
+   with `11/6, −5/2, 2/3` supplied as WITNESSED ring quotients, `endomulScalarConstsOk`).
+   `alphaCombine` is `Expr::combine_constraints`; the shared gate alpha block starts at `alpha^0` for
+   every gate (`alphas.rs:64-71` collapses `Gate(_)` to one registration). `gateLinConst` sums them
+   behind their selectors. **A SECOND real proof that FIRES the Poseidon gate**
+   (`KimchiPoseidonGate.lean`, circuit = `create_circuit(0,5)` + `create_poseidon_gadget`,
+   `poseidon_selector(ζ) ≠ 0`) shows `gateLinConst = lin_const_term` EXACTLY
+   (`gate_lin_const_matches_lct`), and dropping the Poseidon term, bumping a round constant, a ζω
+   witness eval, `alpha`, or an MDS entry each REJECT. The `fp_kimchi` MDS the linearization carries
+   is proven to be K3's baked `PastaPoseidon.mdsN` (`mds_is_k3`). STILL NOT EXERCISED: complete_add /
+   varbasemul / endomul / endomul_scalar — transcribed and composed, but zero-selector in both
+   fixtures, so their bodies rest on the source reading, not a differential.
+4. **C3 — v and u RE-DERIVED END-TO-END (2026-07-27, second pass).** On top of the phase-2 Fr-sponge
+   instantiation (`frSpongeDigest = Ref.hash` of the absorb stream, order proven via
+   `frEvalPointOrder`; the Fr-sponge IS K3's Poseidon-over-Fp sponge, `curve.rs:63` — the earlier
+   "over `Fq`/`qN`" label was the same Fp/Fq mislabel this gate corrected), §9e builds the two
+   remaining steps: `low128` (`challenge()`'s two-least-significant-limb truncation,
+   `sponge.rs:265-277`) and `endoMap` (`ScalarChallenge::to_field(endo_r)`, `sponge.rs:190-226`),
+   plus the rate-2 squeeze semantics (v' = lane 0 of the permuted state, u' = lane 1 of the SAME
+   state — no second permutation). `deriveVU` therefore computes v and u from the transcript alone,
+   and `challengesOk` / `kimchiVerifyDecisionChallenges` CHECK them inside the accept. On the real
+   proof: `frSqueezePair FRSTREAM = (v', u')` and `endoMap endo_r c = c_field` for α, ζ, v, u
+   (`endo_map_reproduces_challenges`). **STILL CARRIED: the PHASE-1 Fq-sponge** — over `qN` with the
+   `fq_kimchi` params (a different constant set from K3's `fp_kimchi`), absorbing the verifier-index
+   digest and the commitment curve points. It yields β, γ, the raw prechallenges α', ζ', and the
+   `digest` that seeds phase 2; those five values are inputs here.
 5. **C9 `ipaOk` (`msm == 0`)** — the terminal IPA/FRI opening-soundness floor, **not discharged**
    (a STARK/light client proves the trace, not the opening). This is the Pickles-recursion frontier.
 6. **C4 `publicEval`** — not run standalone (its value `p(ζ)` enters `ftEval0` as an input; running it
@@ -166,22 +179,28 @@ in-kernel over `ZMod pN`, demonstrably non-vacuous (a tampered value rejects).
    (2026-07-27) via the `CommRing` + witnessed-inverse route — no Pratt certificate.** (C4
    `publicEval` recomputation still needs the un-extracted Lagrange denominators — see §5.6.)
 4. ~~**[medium]** Emit C6's custom-gate constraint streams from Lean; instantiate the phase-2 sponge~~
-   **PARTLY DONE (2026-07-27):** C6 GENERIC gate emitted + composed (`kimchiVerifyDecisionGates`;
-   carrier retired for this proof, which fires no custom gate); C3 Fr-sponge INSTANTIATED over `Fp`
-   (K3, `frSpongeDigest`), phase-2 order proven, non-vacuous on the real evals. REMAINING: the custom
-   gate BODIES (Poseidon transcribed but selector-0; complete_add/varbasemul/endomul/endomul_scalar
-   carried) and the C3 fq-sponge digest value + `challenge()` endo map (so v/u are not re-derived).
-5. **[terminal]** The IPA/FRI opening-soundness floor (`ipaOk`) is inherited, not discharged — the same
+   **DONE (2026-07-27, second pass):** all six gate bodies emitted and composed, the Poseidon body
+   exercised non-vacuously by a second real proof that fires the gate; the phase-2 Fr-sponge +
+   `challenge()` truncation + endo map built, so **v and u are re-derived end-to-end** and α, ζ from
+   their prechallenges. Residual named precisely in §5.3/§5.4.
+5. **[medium]** The **PHASE-1 Fq-sponge**: a Poseidon sponge over `Fq = ZMod qN` with the
+   `fq_kimchi` params (3×3 MDS + 55×3 round constants — a constant set NOT in the tree; K3 baked
+   `fp_kimchi` only), absorbing `index.digest()` and every commitment as an `(x, y)` base-field pair,
+   with `challenge()` = the same `low128` truncation. That closes β, γ, α', ζ' and the `digest`, the
+   last non-IPA inputs. Everything downstream of it is already derived.
+6. **[terminal]** The IPA/FRI opening-soundness floor (`ipaOk`) is inherited, not discharged — the same
    floor every STARK-backed light client carries. "Verifies a real proof" end-to-end still rests on it.
 
 **Bottom line:** the transcription is real and faithful where a real proof can test it (C8 full
-aggregation + C5 `ft(ζ)` reproduce the reference verifier exactly, non-vacuously), and **that
-arithmetic now flows THROUGH one in-kernel accept over the real field** (`kimchiVerifyDecisionField`,
+aggregation + C5 `ft(ζ)` reproduce the reference verifier exactly; C6's whole linearization constant
+term is now DERIVED from six transcribed gate bodies and reproduces `PolishToken::evaluate` on a
+proof that fires the Poseidon gate; C3's v and u are RE-DERIVED from the transcript), and **that
+arithmetic flows THROUGH one in-kernel accept over the real field** (`kimchiVerifyDecisionChallenges`,
 composed + evaluated, no Field/Pratt instance). What remains between here and "verifies a real Kimchi
-proof": the three named crypto carriers (C6 custom-gate token streams, C3 phase-2 Fr-sponge values,
-C9 IPA `msm==0`), C4's `p(ζ)` fed as an input, and C7's commitment-side MSM (K2). Precisely: **the
-decision now checks a real proof's arithmetic over the real field, modulo those crypto carriers** —
-it does **not** verify Mina.
+proof": the **phase-1 Fq-sponge** (β, γ, α', ζ', `digest`), the four custom-gate bodies that no
+fixture fires, C4's `p(ζ)` fed as an input, C7's commitment-side MSM (K2), and the terminal C9 IPA
+`msm==0` soundness floor. Precisely: **the decision checks a real proof's arithmetic and its
+downstream challenges over the real field, modulo those carriers** — it does **not** verify Mina.
 
 ## 7. Reproduce
 
@@ -191,10 +210,31 @@ cargo run --release --example reality_gate_export -p kimchi \
   --manifest-path ~/dev/proof-systems/kimchi/Cargo.toml > metatheory/kimchi_real_proof.json
 # (prints to stderr: "real verifier ACCEPTED the real proof" + the ω/zkpoly cross-checks)
 
-# The Lean reality gate (hbox; Mathlib cached):
-swarm-build lake build Dregg2.Circuit.Emit.KimchiRealProofGate
+# The SECOND fixture — a proof that FIRES the Poseidon custom gate (same repo):
+cargo run --release --example reality_gate_poseidon_export -p kimchi \
+  --manifest-path ~/dev/proof-systems/kimchi/Cargo.toml > metatheory/kimchi_poseidon_proof.json
+# stderr must report, before Lean is involved:
+#   [gate firing] gen=true pos=true cadd=false mul=false emul=false emulsc=false
+#   [cross-check] gen*generic + pos*poseidon == lin_const_term : true
+#   [cross-check] endo(alpha_chal|zeta_chal|v_chal|u_chal) == alpha|zeta|v|u : true
+#   [cross-check] frSponge(stream) squeeze#1/#2 low128 == v_chal/u_chal : true
+# (each proof uses OsRng, so a re-run yields DIFFERENT values — regenerate the Lean fixture with
+#  the generator, do not hand-edit half of it.)
+
+# The Lean reality gates (hbox; Mathlib cached):
+scripts/hbuild <lane> 'cd metatheory && lake build \
+  Dregg2.Circuit.Emit.KimchiRealProofGate Dregg2.Circuit.Emit.KimchiPoseidonGate'
 ```
 
-Artifacts: `metatheory/Dregg2/Circuit/Emit/KimchiRealProofGate.lean` (the gate),
-`metatheory/kimchi_real_proof.json` (the real-proof fixture),
-`proof-systems/kimchi/examples/reality_gate_export.rs` (the extractor).
+Artifacts: `metatheory/Dregg2/Circuit/Emit/KimchiRealProofGate.lean` (the generic-circuit gate),
+`metatheory/Dregg2/Circuit/Emit/KimchiPoseidonGate.lean` (the Poseidon-firing gate + the C3
+challenge re-derivation), `metatheory/kimchi_real_proof.json` and
+`metatheory/kimchi_poseidon_proof.json` (the two real-proof fixtures),
+`proof-systems/kimchi/examples/reality_gate_export.rs` and `…/reality_gate_poseidon_export.rs`
+(the extractors).
+
+**The falsification check (run it, do not assume it):** each headline check was tampered and the
+build confirmed RED before being reverted — a bumped Poseidon round constant made
+`gate_lin_const_matches_lct`'s `decide` prove the negation, a bumped absorbed evaluation made the
+`frSqueezePair` `#guard` evaluate false, a bumped prechallenge broke
+`endo_map_reproduces_challenges`, and an out-of-range γ broke `challengesOk`.

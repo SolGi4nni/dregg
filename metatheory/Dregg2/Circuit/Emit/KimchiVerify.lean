@@ -37,16 +37,20 @@ directly, above the felt encoding.
   * **C1** shape/length checks (`shapeOk`) — REAL, pure `Nat`/`Bool`, decidable + forced + KAT'd.
   * **C3** the Fiat–Shamir transcript ORDER (`transcriptSchedule`, `squeeze_order`) — the exact
     absorb/squeeze order of `verifier.rs:126-405`, with β/γ RAW and α/ζ/v/u through the endo map,
-    PROVEN as an enumerated-order theorem; phase-1 realized by K3's sponge (KAT). The sponge
-    PERMUTATION values are the K3 carrier; the Fr-sponge-over-Fq is a NAMED residual (K3 baked Fp).
+    PROVEN as an enumerated-order theorem. §9d instantiates the PHASE-2 Fr-sponge as K3's
+    Poseidon-over-Fp sponge and §9e builds the `challenge()` truncation + the endo map, so **v and u
+    are RE-DERIVED end-to-end** from the transcript and α, ζ from their prechallenges. The PHASE-1
+    Fq-sponge (over `qN`, `fq_kimchi` params, absorbing curve points) is the NAMED residual: it
+    yields β, γ, α', ζ' and the `digest` that seeds phase 2.
   * **C4** public eval at ζ, ζω (`publicEval`) — the exact batch-inverted Lagrange formula
     (`verifier.rs:336-379`), field-generic, KAT'd (collapse + discrimination).
   * **C5** the permutation term of ft(ζ) + `permScalar` (`verifier.rs:411-462`,
     `permutation.rs:392-430`) — the copy-constraint z-poly identity, folded into `ftEval0`, REAL.
   * **C6** the linearization at ζ: a real `PolishToken` mini-evaluator (`evalToks`) + the GENERIC
     GATE constraint transcribed as a token stream (`genericGateToks`, `genericGate_evaluates`), the
-    arithmetic core of `PolishToken::evaluate`. The custom-gate constraint streams (Poseidon/
-    VarBaseMul/CompleteAdd/… — verifier-index-baked data) are the NAMED `linConstTerm` carrier.
+    arithmetic core of `PolishToken::evaluate`. §9c.1 then transcribes ALL SIX v1 gate bodies
+    (generic 2, Poseidon 15, complete_add 7, varbasemul 21, endomul 12, endomul_scalar 11) and
+    `gateLinConst` sums them behind their selectors — `linConstTerm` is DERIVED, not carried.
   * **C7** `f_comm`/`ft_comm` + Maller (`ftComm`, `verifier.rs:958-965`) — the Maller relation
     `ft_comm = f_comm − (ζⁿ−1)·t_comm`, field/module-generic, KAT'd. The MSM producing `f_comm`
     is the K2 carrier.
@@ -542,82 +546,269 @@ theorem genericConstraint_evaluates (genSel alpha c0 c1 c2 c3 c4 c5 c6 c7 c8 c9 
           + alpha * (c5 * w3 + c6 * w4 + c7 * w5 + c8 * (w3 * w4) + c9)) := by
   simp only [evalToks, genericConstraintToks, List.foldl_cons, List.foldl_nil, stepTok]; ring
 
+/-! ### §9c.1 — the alpha fold, and the FIVE custom-gate constraint bodies.
+
+`Expr::combine_constraints` (`expr.rs:1633`) is `Σᵢ alpha^{αᵢ}·cᵢ`, and `linearization.rs:57-60`
+registers ONE shared alpha block for ALL gates (`ArgumentType::Gate(_)` collapses to
+`Gate(Zero)` in `Alphas::register`, `alphas.rs:64-71`, because gates are mutually exclusive), sized
+`VarbaseMul::CONSTRAINTS = 21`. So EVERY gate's constraint `i` carries `alpha^i` starting at `i = 0`,
+and the permutation's A0/A1/A2 start at `alpha^21`. -/
+
+/-- **`alphaCombine`** — `Expr::combine_constraints` (`expr.rs:1633-1639`): `Σᵢ alpha^i·cᵢ` over the
+gate's constraint list, `i` from 0 (the shared gate alpha block). -/
+def alphaCombine {R : Type} [CommRing R] (alpha : R) (cs : List R) : R :=
+  (List.range cs.length).foldl (fun acc i => acc + alpha ^ i * cs.getD i 0) 0
+
 /-- Kimchi Poseidon S-box `x⁷` (`PlonkSpongeConstantsKimchi::PERM_SBOX = 7`, `poseidon.rs:375`). -/
 def posSbox {R : Type} [CommRing R] (x : R) : R := x ^ (7 : Nat)
 
 /-- **`poseidonLaneConstraint`** — one lane of one Poseidon round-equation constraint
-(`poseidon.rs:364-420`): `target − (rc + Σ_c mds[j][c]·sbox(source_c))`, zero iff the round output
-matches. `mdsRow` = the 3 MDS entries of row `j` (K3's `PastaPoseidon.mdsN[j]`), `rc` the round
-constant, `source`/`target` the input/output lane evals. Def-generator; the full 15 constraints
-(5 rounds × 3 lanes, alpha⁰..alpha¹⁴ in the shared gate block, × `poseidon_selector`) are the
-mechanical repeat over `ROUND_EQUATIONS`. Poseidon is the highest-value custom gate (Mina uses it
-heavily), but a proof with `poseidon_selector = 0` does not exercise it (see §12). -/
+(`poseidon.rs:428-433`): `witness(target_row, col) − fold(rc, (x,c) ↦ acc + c·x)` over
+`zip(sboxed, mds[j])`, i.e. `target − (rc + Σ_c mds[j][c]·sbox(source_c))`. `mdsRow` = the 3 MDS
+entries of row `j` (K3's `PastaPoseidon.mdsN[j]` — the linearization's `Constants::mds` IS
+`Vesta::sponge_params().mds = fp_kimchi`, `curve.rs:63`), `rc` = `env.coeff(idx)`. -/
 def poseidonLaneConstraint {R : Type} [CommRing R]
     (mdsRow : List R) (rc : R) (source : List R) (target : R) : R :=
   target - (rc + (mdsRow.getD 0 0 * posSbox (source.getD 0 0)
                 + mdsRow.getD 1 0 * posSbox (source.getD 1 0)
                 + mdsRow.getD 2 0 * posSbox (source.getD 2 0)))
 
-/-- **`gateLinConst`** — the gate contribution to `linConstTerm`, per-gate = selector · body. The
-GENERIC gate body is the fully-transcribed `genericGateConstraint`; the CUSTOM gates
-(poseidon/complete_add/varbasemul/endomul/endomul_scalar) enter as `selector · body` with the body a
-NAMED carrier (`*Body`) — but multiplied by the gate's selector, exactly the shape of `linearize`'s
-`index(gate)·combined` with `index_terms = []`. So a proof whose custom selectors are all zero has
-`gateLinConst = genericGateConstraint` for ANY custom bodies: its `linConstTerm` is DERIVED from the
-generic gate constraint, not carried. -/
-def gateLinConst {R : Type} [CommRing R] (genSel alpha : R) (coeff w : List R)
-    (posSel posBody caddSel caddBody mulSel mulBody emulSel emulBody emulScalarSel emulScalarBody : R) :
-    R :=
-  genericGateConstraint genSel alpha coeff w
-  + posSel * posBody + caddSel * caddBody + mulSel * mulBody
-  + emulSel * emulBody + emulScalarSel * emulScalarBody
+/-- **`poseidonConstraints`** — the FULL 15 Poseidon constraints in emission order
+(`poseidon.rs:364-435`), `ROUND_EQUATIONS` × `round_to_cols(target)`, with `idx` counting the
+coefficient (round-constant) column 0..14. `STATE_ORDER = [0,2,3,4,1]` gives
+`round_to_cols = [0..3, 6..9, 9..12, 12..15, 3..6]`, and the five equations are
+`0→Curr 1, 1→Curr 2, 2→Curr 3, 3→Curr 4, 4→Next 0` — so the LAST three constraints read
+`w₀,w₁,w₂` on the NEXT row, i.e. the ζω evaluations (`wNext`). `w`/`wNext` are the 15 witness
+evals at ζ and ζω; `coeff` the 15 coefficient evals at ζ. -/
+def poseidonConstraints {R : Type} [CommRing R]
+    (mds : List (List R)) (coeff w wNext : List R) : List R :=
+  let c := fun i => coeff.getD i (0 : R)
+  let ww := fun i => w.getD i (0 : R)
+  let wn := fun i => wNext.getD i (0 : R)
+  let m := fun j => mds.getD j ([] : List R)
+  let s0 := [ww 0, ww 1, ww 2]
+  let s1 := [ww 6, ww 7, ww 8]
+  let s2 := [ww 9, ww 10, ww 11]
+  let s3 := [ww 12, ww 13, ww 14]
+  let s4 := [ww 3, ww 4, ww 5]
+  [ poseidonLaneConstraint (m 0) (c 0) s0 (ww 6)
+  , poseidonLaneConstraint (m 1) (c 1) s0 (ww 7)
+  , poseidonLaneConstraint (m 2) (c 2) s0 (ww 8)
+  , poseidonLaneConstraint (m 0) (c 3) s1 (ww 9)
+  , poseidonLaneConstraint (m 1) (c 4) s1 (ww 10)
+  , poseidonLaneConstraint (m 2) (c 5) s1 (ww 11)
+  , poseidonLaneConstraint (m 0) (c 6) s2 (ww 12)
+  , poseidonLaneConstraint (m 1) (c 7) s2 (ww 13)
+  , poseidonLaneConstraint (m 2) (c 8) s2 (ww 14)
+  , poseidonLaneConstraint (m 0) (c 9) s3 (ww 3)
+  , poseidonLaneConstraint (m 1) (c 10) s3 (ww 4)
+  , poseidonLaneConstraint (m 2) (c 11) s3 (ww 5)
+  , poseidonLaneConstraint (m 0) (c 12) s4 (wn 0)
+  , poseidonLaneConstraint (m 1) (c 13) s4 (wn 1)
+  , poseidonLaneConstraint (m 2) (c 14) s4 (wn 2) ]
+
+/-- **`poseidonBody`** — the Poseidon gate's alpha-combined constraint (the factor the
+`poseidon_selector` multiplies in `linConstTerm`). `Poseidon::CONSTRAINTS = 15`. -/
+def poseidonBody {R : Type} [CommRing R]
+    (alpha : R) (mds : List (List R)) (coeff w wNext : List R) : R :=
+  alphaCombine alpha (poseidonConstraints mds coeff w wNext)
+
+/-- **`completeAddConstraints`** — the 7 `CompleteAdd` constraints (`complete_add.rs:103-223`),
+single-row, no coefficients. Columns: `x1 y1 x2 y2 x3 y3 inf same_x s inf_z x21_inv` = `w₀..w₁₀`.
+The `zero_check(z, z_inv, r) = [z_inv·z − (1−r), r·z]` pair (`complete_add.rs:35-37`) is the
+first two; then the doubling/adding slope disjunction, `s² = x₁+x₂+x₃`, `y₃ = −y₁+s(x₁−x₃)`, and the
+two `inf` constraints. `3·x₁²` is emitted as `x1_squared.double() − x1_squared`. -/
+def completeAddConstraints {R : Type} [CommRing R] (w : List R) : List R :=
+  let ww := fun i => w.getD i (0 : R)
+  let x1 := ww 0; let y1 := ww 1; let x2 := ww 2; let y2 := ww 3
+  let x3 := ww 4; let y3 := ww 5; let inf := ww 6; let sameX := ww 7
+  let s := ww 8; let infZ := ww 9; let x21Inv := ww 10
+  let x21 := x2 - x1
+  let y21 := y2 - y1
+  let x1sq := x1 * x1
+  [ x21Inv * x21 - (1 - sameX)
+  , sameX * x21
+  , sameX * ((s + s) * y1 - (x1sq + x1sq) - x1sq) + (1 - sameX) * (x21 * s - y21)
+  , x1 + x2 + x3 - s * s
+  , s * (x1 - x3) - y1 - y3
+  , y21 * (sameX - inf)
+  , y21 * infZ - inf ]
+
+/-- **`varBaseMulConstraints`** — the 21 `VarbaseMul` constraints (`varbasemul.rs:419-450` +
+`single_bit`, `varbasemul.rs:228-274`): the 5-bit binary decomposition, then 4 constraints per bit
+(booleanity, the `s1` slope, `output.x`, `output.y`). Layout (`varbasemul.rs:310-331`): base
+`(w₀,w₁)`, accs `(w₂,w₃) (w₇,w₈) (w₉,w₁₀) (w₁₁,w₁₂) (w₁₃,w₁₄)` on CURR and `(w'₀,w'₁)` on NEXT;
+bits `w'₂..w'₆`; slopes `w'₇..w'₁₁`; `n = w₄`, `n' = w₅`. No coefficients, no constants.
+(NB the per-bit slope parameter is *named* `s1` in the Rust but is `ss[i] = w'₍₇₊ᵢ₎` — unrelated to
+`endosclmul`'s `s1 = w₉`.) -/
+def varBaseMulConstraints {R : Type} [CommRing R] (w wNext : List R) : List R :=
+  let ww := fun i => w.getD i (0 : R)
+  let wn := fun i => wNext.getD i (0 : R)
+  let xT := ww 0; let yT := ww 1
+  let accX := fun i => [ww 2, ww 7, ww 9, ww 11, ww 13, wn 0].getD i (0 : R)
+  let accY := fun i => [ww 3, ww 8, ww 10, ww 12, ww 14, wn 1].getD i (0 : R)
+  let bit := fun i => [wn 2, wn 3, wn 4, wn 5, wn 6].getD i (0 : R)
+  let sl := fun i => [wn 7, wn 8, wn 9, wn 10, wn 11].getD i (0 : R)
+  let nPrev := ww 4; let nNext := ww 5
+  let dec := nNext
+    - (List.range 5).foldl (fun acc i => bit i + (acc + acc)) nPrev
+  dec :: (List.range 5).flatMap (fun i =>
+    let b := bit i
+    let s := sl i
+    let ix := accX i; let iy := accY i
+    let ox := accX (i + 1); let oy := accY (i + 1)
+    let bSign := (b + b) - 1
+    let ssq := s * s
+    let rx := ssq - ix - xT
+    let t := ix - rx
+    let u := (iy + iy) - t * s
+    [ b * b - b
+    , (ix - xT) * s - (iy - bSign * yT)
+    , u * u - (t * t) * (ox - xT + ssq)
+    , (oy + iy) * t - (ix - ox) * u ])
+
+/-- **`endoMulConstraints`** — the 12 `EndosclMul` (`GateType::EndoMul`) constraints
+(`endosclmul.rs:479-551`). **12, not 11** — the twelfth is the distinct-point witness
+`(xp−xr)(xr−xs)·inv − 1`. Columns CURR: `xt=w₀ yt=w₁ inv=w₂ xp=w₄ yp=w₅ n=w₆ xr=w₇ yr=w₈ s1=w₉
+s3=w₁₀ b1..b4=w₁₁..w₁₄`; NEXT: `xs=w'₄ ys=w'₅ n'=w'₆`. `endo` = `env.endo_coefficient()` — the
+verifier-index constant `cs.endo` (NOT a column). Note the decomposition sign here is
+`(…) − n'`, the OPPOSITE of `varbasemul`'s `n' − (…)`. -/
+def endoMulConstraints {R : Type} [CommRing R] (endo : R) (w wNext : List R) : List R :=
+  let ww := fun i => w.getD i (0 : R)
+  let wn := fun i => wNext.getD i (0 : R)
+  let xt := ww 0; let yt := ww 1; let inv := ww 2
+  let xp := ww 4; let yp := ww 5; let n := ww 6
+  let xr := ww 7; let yr := ww 8; let s1 := ww 9; let s3 := ww 10
+  let b1 := ww 11; let b2 := ww 12; let b3 := ww 13; let b4 := ww 14
+  let xs := wn 4; let ys := wn 5; let nNext := wn 6
+  let em1 := endo - 1
+  let xq1 := (1 + b1 * em1) * xt
+  let xq2 := (1 + b3 * em1) * xt
+  let yq1 := ((b2 + b2) - 1) * yt
+  let yq2 := ((b4 + b4) - 1) * yt
+  let s1sq := s1 * s1
+  let s3sq := s3 * s3
+  let d1 := (n + n) + b1
+  let d2 := (d1 + d1) + b2
+  let d3 := (d2 + d2) + b3
+  let nConstraint := (d3 + d3) + b4 - nNext
+  let xpxr := xp - xr
+  let xrxs := xr - xs
+  let ysyr := ys + yr
+  let yryp := yr + yp
+  [ b1 * b1 - b1
+  , b2 * b2 - b2
+  , b3 * b3 - b3
+  , b4 * b4 - b4
+  , (xq1 - xp) * s1 - (yq1 - yp)
+  , (((xp + xp) - s1sq) + xq1) * (xpxr * s1 + yryp) - ((yp + yp) * xpxr)
+  , yryp * yryp - (xpxr * xpxr * ((s1sq - xq1) + xr))
+  , (xq2 - xr) * s3 - (yq2 - yr)
+  , (((xr + xr) - s3sq) + xq2) * (xrxs * s3 + ysyr) - ((yr + yr) * xrxs)
+  , ysyr * ysyr - (xrxs * xrxs * ((s3sq - xq2) + xs))
+  , nConstraint
+  , xpxr * xrxs * inv - 1 ]
+
+/-- **`endomulScalarConstraints`** — the 11 `EndomulScalar` (`GateType::EndoMulScalar`) constraints
+(`endomul_scalar.rs:174-220`): the three folds `n₈ = Σ 4·acc + xᵢ`, `a₈ = Σ 2·acc + c(xᵢ)`,
+`b₈ = Σ 2·acc + d(xᵢ)`, then the 8 crumb constraints `crumb(xᵢ) = (((xᵢ−6)xᵢ+11)xᵢ−6)xᵢ`
+(the EXPANDED Horner form of `x(x−1)(x−2)(x−3)`, `endomul_scalar.rs:196` — NOT `expr.rs`'s factored
+`constraints::crumb`). Columns: `n0=w₀ n8=w₁ a0=w₂ b0=w₃ a8=w₄ b8=w₅ x₀..x₇=w₆..w₁₃` (`w₁₄` unused).
+`c(x) = ((cC·x + cB)·x + cA)·x` with `cA = 11/6, cB = −5/2, cC = 2/3` (field DIVISION constants —
+supplied here as WITNESSED ring elements, see `endomulScalarConstsOk`); `d(x) = c(x) + (−x²+3x−1)`.
+No coefficients; the `endo_scalar` appears only in witness generation, never in the gate. -/
+def endomulScalarConstraints {R : Type} [CommRing R] (cA cB cC : R) (w : List R) : List R :=
+  let ww := fun i => w.getD i (0 : R)
+  let n0 := ww 0; let n8 := ww 1; let a0 := ww 2; let b0 := ww 3
+  let a8 := ww 4; let b8 := ww 5
+  let x := fun i => ww (6 + i)
+  let cf := fun (t : R) => ((cC * t + cB) * t + cA) * t
+  let df := fun (t : R) => cf t + (((-1 : R) * t + 3) * t + (-1 : R))
+  let n8e := (List.range 8).foldl (fun acc i => let a2 := acc + acc; (a2 + a2) + x i) n0
+  let a8e := (List.range 8).foldl (fun acc i => (acc + acc) + cf (x i)) a0
+  let b8e := (List.range 8).foldl (fun acc i => (acc + acc) + df (x i)) b0
+  let crumb := fun (t : R) => (((t - 6) * t + 11) * t - 6) * t
+  [n8e - n8, a8e - a8, b8e - b8] ++ (List.range 8).map (fun i => crumb (x i))
+
+/-- **`endomulScalarConstsOk`** — the three `EndomulScalar` polynomial constants are the genuine
+field quotients `11/6, −5/2, 2/3` (`endomul_scalar.rs:188-193`), CHECKED in the ring
+(`6·cA = 11`, `2·cB = −5`, `3·cC = 2`) rather than divided — the same witnessed-quotient device §9b
+uses for `denomInv`, so no `Field` instance is needed. -/
+def endomulScalarConstsOk {R : Type} [CommRing R] [DecidableEq R] (cA cB cC : R) : Bool :=
+  decide (6 * cA = 11) && decide (2 * cB = -5) && decide (3 * cC = 2)
+
+/-- **`GateEvals`** — everything the gate constraint bodies read at ζ / ζω: the challenge `alpha`,
+the verifier-index constants (`endo`, the `fp_kimchi` `mds`), the 15 coefficient evals, the 15
+witness evals at ζ and at ζω, the three `EndomulScalar` field constants, and the six gate selectors
+at ζ. This is exactly the `ArgumentEnv` a `PolishToken` constant-term evaluation resolves against. -/
+structure GateEvals (R : Type) where
+  alpha : R
+  endo : R
+  mds : List (List R)
+  coeff : List R
+  w : List R
+  wNext : List R
+  cA : R
+  cB : R
+  cC : R
+  genSel : R
+  posSel : R
+  caddSel : R
+  mulSel : R
+  emulSel : R
+  emulScalarSel : R
+
+/-- **`gateLinConst`** — the WHOLE linearization constant term, DERIVED: `Σ_gate index(gate)·
+(Σᵢ alpha^i·constraintᵢ)` (`argument.rs:201-213`, `linearization.rs:64-68,166-168`), with
+`index_terms = []` (`linearization.rs:364`) so this IS `linConstTerm`. Every one of the six v1 gate
+bodies is now TRANSCRIBED — generic (2), Poseidon (15), complete_add (7), varbasemul (21),
+endomul/`EndosclMul` (12), endomul_scalar (11) — none is a carrier. -/
+def gateLinConst {R : Type} [CommRing R] (g : GateEvals R) : R :=
+  genericGateConstraint g.genSel g.alpha g.coeff g.w
+  + g.posSel * poseidonBody g.alpha g.mds g.coeff g.w g.wNext
+  + g.caddSel * alphaCombine g.alpha (completeAddConstraints g.w)
+  + g.mulSel * alphaCombine g.alpha (varBaseMulConstraints g.w g.wNext)
+  + g.emulSel * alphaCombine g.alpha (endoMulConstraints g.endo g.w g.wNext)
+  + g.emulScalarSel * alphaCombine g.alpha (endomulScalarConstraints g.cA g.cB g.cC g.w)
 
 /-- **`kimchiVerifyDecisionGates`** — `kimchiVerifyDecisionField` (§9b) with the C5 linearization
-constant term DERIVED from the transcribed gate constraints (`gateLinConst`) instead of fed as the
-`linConstTerm` carrier. Now `ftEval0` is checked from the REAL generic-gate constraint over the real
-coefficient/witness evals + the selector-gated custom contributions. -/
+constant term DERIVED from the six transcribed gate constraint bodies (`gateLinConst`) instead of
+fed as the `linConstTerm` carrier, AND the `EndomulScalar` quotient constants checked. Now
+`ftEval0` is checked from the REAL gate constraints over the real coefficient/witness evals. -/
 def kimchiVerifyDecisionGates {R : Type} [CommRing R] [DecidableEq R]
     (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
     (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
-    (omega zeta beta gamma alpha0 alpha1 alpha2 alpha : R)
-    (w s shift coeff : List R)
-    (genSel posSel caddSel mulSel emulSel emulScalarSel : R)
-    (posBody caddBody mulBody emulBody emulScalarBody : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (s shift : List R) (g : GateEvals R)
     (zZeta zZetaOmega pZeta denomInv ftEval0Claimed : R)
     (transcriptOk ipaOk deferralOk : Bool) : Bool :=
   kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
     polyscale evalscale evZeta evZetaOmega cipClaimed
-    omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
-    zZeta zZetaOmega pZeta
-    (gateLinConst genSel alpha coeff w posSel posBody caddSel caddBody mulSel mulBody
-      emulSel emulBody emulScalarSel emulScalarBody)
+    omega zeta beta gamma alpha0 alpha1 alpha2 g.w s shift
+    zZeta zZetaOmega pZeta (gateLinConst g)
     denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
+  && endomulScalarConstsOk g.cA g.cB g.cC
 
 /-- **`kimchiVerifyDecisionGates_refines`** — the gate-derived decision IS `kimchiVerifyDecisionField`
-with `linConstTerm := gateLinConst …` (`rfl`): the gate transcription is threaded INTO the accept, it
-does not replace the field decision. -/
+with `linConstTerm := gateLinConst g`, conjoined with the quotient-constant check (`rfl`): the gate
+transcription is threaded INTO the accept, it does not replace the field decision. -/
 theorem kimchiVerifyDecisionGates_refines {R : Type} [CommRing R] [DecidableEq R]
     (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
     (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
-    (omega zeta beta gamma alpha0 alpha1 alpha2 alpha : R)
-    (w s shift coeff : List R)
-    (genSel posSel caddSel mulSel emulSel emulScalarSel : R)
-    (posBody caddBody mulBody emulBody emulScalarBody : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (s shift : List R) (g : GateEvals R)
     (zZeta zZetaOmega pZeta denomInv ftEval0Claimed : R)
     (transcriptOk ipaOk deferralOk : Bool) :
     kimchiVerifyDecisionGates prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
         polyscale evalscale evZeta evZetaOmega cipClaimed
-        omega zeta beta gamma alpha0 alpha1 alpha2 alpha w s shift coeff
-        genSel posSel caddSel mulSel emulSel emulScalarSel
-        posBody caddBody mulBody emulBody emulScalarBody
+        omega zeta beta gamma alpha0 alpha1 alpha2 s shift g
         zZeta zZetaOmega pZeta denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
-      = kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+      = (kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
           polyscale evalscale evZeta evZetaOmega cipClaimed
-          omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
-          zZeta zZetaOmega pZeta
-          (gateLinConst genSel alpha coeff w posSel posBody caddSel caddBody mulSel mulBody
-            emulSel emulBody emulScalarSel emulScalarBody)
-          denomInv ftEval0Claimed transcriptOk ipaOk deferralOk := rfl
+          omega zeta beta gamma alpha0 alpha1 alpha2 g.w s shift
+          zZeta zZetaOmega pZeta (gateLinConst g)
+          denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
+        && endomulScalarConstsOk g.cA g.cB g.cC) := rfl
 
 /-! ## §9d — C3 (phase 2): the Fr-sponge INSTANTIATED over `Fp = pN` (K3's permutation).
 
@@ -681,6 +872,119 @@ The `challenge()` derivation (low-128-bit truncation + `to_field(endo_r)`) sits 
 residual. -/
 def frSpongeDigest (digest ftEval1 pZeta pZetaOmega : Nat) (evZeta evZetaOmega : List Nat) : Nat :=
   Ref.hash (frPhase2Inputs digest ftEval1 pZeta pZetaOmega evZeta evZetaOmega)
+
+/-! ## §9e — C3 (the CHALLENGE MAP): `challenge()` truncation + the endo `to_field(endo_r)`.
+
+The two steps that turn a sponge squeeze into a usable challenge, both now BUILT:
+
+  1. **`challenge()`** (`plonk_sponge.rs:47-49` → `sponge.rs:265-277`) = `squeeze(2 limbs)`:
+     `sponge.squeeze()` is taken `into_bigint()`, its `HIGH_ENTROPY_LIMBS = 2` LEAST-significant
+     64-bit limbs are cached, and `pack` re-assembles them — i.e. the raw squeeze mod `2^128`.
+     A challenge consumes exactly the 2 cached limbs, so the NEXT `challenge()` finds the cache
+     empty and squeezes again.
+  2. **`ScalarChallenge::to_field(endo_r)`** (`sponge.rs:190-226`) = `to_field_with_length 128`:
+     `a = b = 2`; for `i = 63 … 0`, double both, then `s = ±1` by bit `2i`, added to `b` if bit
+     `2i+1` is 0 else to `a`; the value is `a·endo_r + b`.
+
+The SPONGE side: `ArithmeticSponge::squeeze` (`poseidon.rs:128-146`) from `Absorbed(_)` PERMUTES and
+returns `state[0]`, leaving `Squeezed(1)`; the immediately following squeeze has `n = 1 ≠ rate = 2`
+so it returns `state[1]` of the SAME state with NO further permutation. So v' and u' are lanes 0 and
+1 of one permuted state — `frSqueezePair` below. -/
+
+/-- Bit `i` of a `Nat` (the `get_bit` of `sponge.rs:116-120` on the canonical little-endian limbs;
+for a `< 2^128` challenge this is just the binary digit). -/
+def bitAt (x i : Nat) : Nat := (x >>> i) &&& 1
+
+/-- One step of `to_field_with_length`'s reversed loop (`sponge.rs:200-212`): double `a` and `b`,
+then add `s = ±1` (`+1` iff bit `2i` is set) to `b` if bit `2i+1` is clear, else to `a`. -/
+def endoStep {R : Type} [CommRing R] (chal i : Nat) (ab : R × R) : R × R :=
+  let a := ab.1 + ab.1
+  let b := ab.2 + ab.2
+  let s : R := if bitAt chal (2 * i) = 0 then -1 else 1
+  if bitAt chal (2 * i + 1) = 0 then (a, b + s) else (a + s, b)
+
+/-- **`endoMapWithLength`** — `ScalarChallenge::to_field_with_length` (`sponge.rs:190-215`) over any
+`CommRing`: fold `endoStep` for `i = lenBits/2 − 1 … 0` from `(2, 2)`, then `a·endo + b`. -/
+def endoMapWithLength {R : Type} [CommRing R] (lenBits : Nat) (endo : R) (chal : Nat) : R :=
+  let ab := (List.range (lenBits / 2)).reverse.foldl
+    (fun ab i => endoStep chal i ab) ((2 : R), (2 : R))
+  ab.1 * endo + ab.2
+
+/-- **`endoMap`** — `ScalarChallenge::to_field(endo_r)` (`sponge.rs:223-226`), the default
+`64 · CHALLENGE_LENGTH_IN_LIMBS = 128` bits. This is the map α' ↦ α, ζ' ↦ ζ, v' ↦ v, u' ↦ u. -/
+def endoMap {R : Type} [CommRing R] (endo : R) (chal : Nat) : R := endoMapWithLength 128 endo chal
+
+/-- **`low128`** — `DefaultFrSponge::squeeze(CHALLENGE_LENGTH_IN_LIMBS = 2)` (`sponge.rs:265-277`):
+the raw squeeze truncated to its two least-significant 64-bit limbs. -/
+def low128 (x : Nat) : Nat := x % 2 ^ 128
+
+/-- **`frSqueezePair`** — the two successive `challenge()` squeezes of the Fr-sponge after the
+phase-2 absorb stream: lane 0 and lane 1 of the SAME permuted state (`poseidon.rs:128-146`, rate 2),
+each truncated to 128 bits. `Ref.absorbAll` performs the absorb schedule and the squeeze
+permutation; `Ref.hash` is its lane-0 projection. -/
+def frSqueezePair (stream : List Nat) : Nat × Nat :=
+  let st := Ref.absorbAll [0, 0, 0] stream
+  (low128 (st.getD 0 0), low128 (st.getD 1 0))
+
+/-- **`deriveVU`** — v and u RE-DERIVED end-to-end from the phase-2 transcript: absorb the stream
+into K3's Poseidon-over-Fp sponge, squeeze twice, truncate to 128 bits, map through the endomorphism
+(`verifier.rs:395-405`). No challenge value is consumed as given. -/
+def deriveVU {R : Type} [CommRing R] (endo : R) (stream : List Nat) : R × R :=
+  let c := frSqueezePair stream
+  (endoMap endo c.1, endoMap endo c.2)
+
+/-- **`challengesOk`** — the C3 challenge check: α and ζ are the endo images of their raw
+prechallenges, and v and u are RE-DERIVED from the Fr-sponge transcript (sponge + truncation + endo)
+rather than taken from the prover. β and γ are the RAW phase-1 squeezes (`squeeze_order`'s `false`
+flags) and are checked only for the 128-bit shape their derivation forces; the phase-1 Fq-sponge
+that produces β, γ and the α'/ζ' prechallenges is the remaining carrier (§12). -/
+def challengesOk {R : Type} [CommRing R] [DecidableEq R]
+    (endo : R) (stream : List Nat) (alphaChal zetaChal : Nat)
+    (alpha zeta v u : R) (beta gamma : Nat) : Bool :=
+  let vu := deriveVU endo stream
+  decide (alpha = endoMap endo alphaChal)
+  && decide (zeta = endoMap endo zetaChal)
+  && decide (v = vu.1) && decide (u = vu.2)
+  && decide (beta < 2 ^ 128) && decide (gamma < 2 ^ 128)
+
+/-- **`kimchiVerifyDecisionChallenges`** — `kimchiVerifyDecisionGates` (§9c) with C3's challenge
+derivation THREADED IN: the accept now also requires that α, ζ, v, u are the values the transcript
+DERIVES. `transcriptOk` survives as the phase-1 (Fq-sponge) carrier only. -/
+def kimchiVerifyDecisionChallenges {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (s shift : List R) (g : GateEvals R)
+    (zZeta zZetaOmega pZeta denomInv ftEval0Claimed : R)
+    (endo : R) (stream : List Nat) (alphaChal zetaChal betaN gammaN : Nat)
+    (transcriptOk ipaOk deferralOk : Bool) : Bool :=
+  kimchiVerifyDecisionGates prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+    polyscale evalscale evZeta evZetaOmega cipClaimed
+    omega zeta beta gamma alpha0 alpha1 alpha2 s shift g
+    zZeta zZetaOmega pZeta denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
+  && challengesOk endo stream alphaChal zetaChal g.alpha zeta polyscale evalscale betaN gammaN
+
+/-- **`kimchiVerifyDecisionChallenges_refines`** — the challenge-derived decision IS the gate decision
+conjoined with `challengesOk` (`rfl`): C3's derivation is ADDED, it replaces nothing. -/
+theorem kimchiVerifyDecisionChallenges_refines {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta beta gamma alpha0 alpha1 alpha2 : R)
+    (s shift : List R) (g : GateEvals R)
+    (zZeta zZetaOmega pZeta denomInv ftEval0Claimed : R)
+    (endo : R) (stream : List Nat) (alphaChal zetaChal betaN gammaN : Nat)
+    (transcriptOk ipaOk deferralOk : Bool) :
+    kimchiVerifyDecisionChallenges prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+        polyscale evalscale evZeta evZetaOmega cipClaimed
+        omega zeta beta gamma alpha0 alpha1 alpha2 s shift g
+        zZeta zZetaOmega pZeta denomInv ftEval0Claimed endo stream alphaChal zetaChal betaN gammaN
+        transcriptOk ipaOk deferralOk
+      = (kimchiVerifyDecisionGates prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+            polyscale evalscale evZeta evZetaOmega cipClaimed
+            omega zeta beta gamma alpha0 alpha1 alpha2 s shift g
+            zZeta zZetaOmega pZeta denomInv ftEval0Claimed transcriptOk ipaOk deferralOk
+          && challengesOk endo stream alphaChal zetaChal g.alpha zeta polyscale evalscale
+              betaN gammaN) := rfl
 
 /-! ## §10 — NON-VACUITY: every check DISCRIMINATES (kernel-clean).
 
@@ -749,16 +1053,72 @@ theorem genericConstraint_kat :
   ≠ genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [99,43,47,53,59,61])  -- bump w₀
 #guard decide (genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61]
   ≠ genericGateConstraint (2:ℚ) 3 [99,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61])  -- bump c₀
--- gateLinConst: with all custom selectors zero it collapses to the generic gate (any bodies).
-#guard decide (gateLinConst (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61]
-    0 100 0 200 0 300 0 400 0 500
-  = genericGateConstraint (2:ℚ) 3 [5,7,11,13,17,19,23,29,31,37] [41,43,47,53,59,61])
+-- C6 (§9c.1): the alpha fold is `Σ alpha^i·cᵢ` (`expr.rs:1633`).
+#guard decide (alphaCombine (3 : ℚ) [5, 7, 11] = 5 + 3 * 7 + 9 * 11)
+#guard decide (alphaCombine (3 : ℚ) [] = 0)
 
 -- C6 Poseidon (§9c): the round-equation lane constraint is zero on an honest round, nonzero on a bump.
 #guard decide (poseidonLaneConstraint ([2,3,5] : List ℚ) 7 [11,13,17]
   (7 + (2*(11^7) + 3*(13^7) + 5*(17^7))) = 0)
 #guard decide (poseidonLaneConstraint ([2,3,5] : List ℚ) 7 [11,13,17]
   (7 + (2*(11^7) + 3*(13^7) + 5*(17^7)) + 1) ≠ 0)
+
+/-! ### The CONSTRAINT COUNTS are the Rust `Argument::CONSTRAINTS` (`combined_constraints` asserts
+`constraints.len() == CONSTRAINTS`, `argument.rs:203` — a wrong count is a wrong alpha block for
+every LATER constraint, so these are load-bearing, not cosmetic). Poseidon 15, complete_add 7,
+varbasemul 21, endomul/`EndosclMul` **12 (not 11)**, endomul_scalar 11. -/
+private def zs (k : Nat) : List ℚ := List.replicate k 0
+#guard (poseidonConstraints (R := ℚ) [zs 3, zs 3, zs 3] (zs 15) (zs 15) (zs 15)).length == 15
+#guard (completeAddConstraints (R := ℚ) (zs 15)).length == 7
+#guard (varBaseMulConstraints (R := ℚ) (zs 15) (zs 15)).length == 21
+#guard (endoMulConstraints (R := ℚ) 0 (zs 15) (zs 15)).length == 12
+#guard (endomulScalarConstraints (R := ℚ) 0 0 0 (zs 15)).length == 11
+
+-- The `EndomulScalar` quotient constants: `11/6, −5/2, 2/3` pass, a bump fails.
+#guard endomulScalarConstsOk (11/6 : ℚ) (-5/2) (2/3) == true
+#guard endomulScalarConstsOk (11/6 : ℚ) (-5/2) (2/3 + 1) == false
+-- `crumb` vanishes exactly on {0,1,2,3} (`endomul_scalar.rs:128-133`): the last 8 constraints.
+#guard decide ((endomulScalarConstraints (11/6 : ℚ) (-5/2) (2/3)
+  [0,0,0,0,0,0, 0,1,2,3,0,1,2,3, 0]).drop 3 = List.replicate 8 0)
+#guard decide ((endomulScalarConstraints (11/6 : ℚ) (-5/2) (2/3)
+  [0,0,0,0,0,0, 4,1,2,3,0,1,2,3, 0]).drop 3 ≠ List.replicate 8 0)
+-- `boolean` and the distinct-point witness inside `EndosclMul`: bits must be 0/1, `inv` a real inverse.
+#guard decide ((endoMulConstraints (7 : ℚ) [0,0,0,0,0,0,0,0,0,0,0, 2,0,0,0] [0,0,0,0,0,0,0]).getD 0 1 ≠ 0)
+#guard decide ((endoMulConstraints (7 : ℚ) [0,0,0,0,0,0,0,0,0,0,0, 1,0,0,0] [0,0,0,0,0,0,0]).getD 0 1 = 0)
+
+/-! ### `gateLinConst` collapses to the generic gate when the custom selectors vanish, and the
+Poseidon term is live when `posSel ≠ 0` — the selector gating is real, not decorative. -/
+private def gEvQ (posSel : ℚ) : GateEvals ℚ :=
+  { alpha := 3, endo := 7, mds := [[2,3,5],[7,11,13],[17,19,23]]
+  , coeff := [5,7,11,13,17,19,23,29,31,37,41,43,47,53,59]
+  , w := [41,43,47,53,59,61,67,71,73,79,83,89,97,101,103]
+  , wNext := [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47]
+  , cA := 11/6, cB := -5/2, cC := 2/3
+  , genSel := 2, posSel := posSel, caddSel := 0, mulSel := 0, emulSel := 0, emulScalarSel := 0 }
+#guard decide (gateLinConst (gEvQ 0)
+  = genericGateConstraint (2 : ℚ) 3 [5,7,11,13,17,19,23,29,31,37,41,43,47,53,59]
+      [41,43,47,53,59,61,67,71,73,79,83,89,97,101,103])
+#guard decide (gateLinConst (gEvQ 1) ≠ gateLinConst (gEvQ 0))   -- the Poseidon body is LIVE
+
+/-! ### C3 (§9e): the endo map and the 128-bit truncation. -/
+-- Zero-length: no bits processed, so the value is the seed `2·endo + 2`.
+#guard decide (endoMapWithLength 0 (7 : ℚ) 12345 = 2 * 7 + 2)
+-- 2 bits: one step. chal = 0 ⇒ bits (0,1) = (0,0) ⇒ b += −1 ⇒ (a,b) = (4,3).
+#guard decide (endoMapWithLength 2 (7 : ℚ) 0 = 4 * 7 + 3)
+-- chal = 1 ⇒ bit0 = 1, bit1 = 0 ⇒ b += +1 ⇒ (4,5).
+#guard decide (endoMapWithLength 2 (7 : ℚ) 1 = 4 * 7 + 5)
+-- chal = 2 ⇒ bit0 = 0, bit1 = 1 ⇒ a += −1 ⇒ (3,4).
+#guard decide (endoMapWithLength 2 (7 : ℚ) 2 = 3 * 7 + 4)
+-- chal = 3 ⇒ bit0 = 1, bit1 = 1 ⇒ a += +1 ⇒ (5,4).
+#guard decide (endoMapWithLength 2 (7 : ℚ) 3 = 5 * 7 + 4)
+-- The full 128-bit map is injective enough to discriminate a single flipped bit.
+#guard decide (endoMap (7 : ℚ) 12345 ≠ endoMap (7 : ℚ) 12346)
+#guard low128 (2 ^ 200 + 5) == 5
+#guard low128 (2 ^ 128 - 1) == 2 ^ 128 - 1
+-- The two `challenge()`s read lanes 0 and 1 of ONE permuted state (rate 2, no second permutation).
+#guard (frSqueezePair [1, 2, 3]).1 == low128 (Ref.hash [1, 2, 3])
+#guard (frSqueezePair [1, 2, 3]).2 != (frSqueezePair [1, 2, 3]).1
+#guard (frSqueezePair [1, 2, 3]) != (frSqueezePair [1, 2, 4])
 
 -- C3 (§9d): the Fr-sponge phase-2 point order has the right length (1 z + 6 selectors + 15 w +
 -- 15 coeff + 6 σ = 43) and the K3 Fr-sponge digest discriminates on absorbed real-shaped values.
@@ -799,6 +1159,7 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
 #assert_axioms kimchiVerifyDecisionField_refines
 #assert_axioms genericConstraint_evaluates
 #assert_axioms kimchiVerifyDecisionGates_refines
+#assert_axioms kimchiVerifyDecisionChallenges_refines
 #assert_axioms frEvalPointOrder_head
 
 /-! ## §12 — The PRECISE named residuals (what does NOT compose end-to-end).
@@ -807,26 +1168,34 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
      `ipa.rs:501`) is a CARRIER: `accept ⟹ the proof is valid` inherits the undischarged IPA
      opening soundness (a STARK proves the trace, not the opening). No `no_forgery`-style payoff
      is claimed (contrast `ethVerifyDecision_no_forgery`, which had the hash-CR carriers only).
-  2. **C6 GENERIC gate: TRANSCRIBED + COMPOSED (2026-07-27).** The generic gate constraint is now
-     fully emitted (`genericGateConstraint`, both algebraically and as the token stream
-     `genericConstraintToks`/`genericConstraint_evaluates`) and threaded INTO the accept via
-     `gateLinConst` + `kimchiVerifyDecisionGates` (§9c): `ftEval0`'s linearization constant term is
-     DERIVED from the real generic-gate constraint over the real coefficient/witness evals, not fed
-     as the `linConstTerm` carrier. `KimchiRealProofGate` shows `genericGateConstraint(real) = LCT`
-     and the custom selectors are all zero, so the whole `linConstTerm` of THIS proof is the generic
-     gate. STILL CARRIED: the CUSTOM-gate constraint BODIES — Poseidon is transcribed as a
-     def-generator (`poseidonLaneConstraint`, the round-equation lane) but is NOT exercised
-     (`poseidon_selector = 0` in this proof); complete_add/varbasemul/endomul/endomul_scalar bodies
-     are the `gateLinConst` `*Body` carriers, live only behind their (here-zero) selectors. A proof
-     that fires a custom gate needs those bodies emitted.
-  3. **C3 Fr-sponge (phase 2): INSTANTIATED over `Fp = pN` (2026-07-27).** The Fr-sponge IS K3's
-     Poseidon-over-Fp sponge (`Vesta::sponge_params() = fp_kimchi`, `curve.rs:63`), NOT a mirror at
-     another field — `frSpongeDigest = Ref.hash` of the phase-2 absorb stream (§9d), whose point
-     order (`frEvalPointOrder`) matches `plonk_sponge.rs:88-99`. STILL CARRIED: the fq-sponge
-     `digest` VALUE (phase-1 `Fq`-sponge over `qN`, absorbing curve points — not extracted) fed as
-     the first absorb, and the `challenge()` derivation (low-128-bit truncation of the raw squeeze +
-     `to_field(endo_r)`, `sponge.rs:190-226`) that maps the sponge digest to v/u. The ORDER
-     (`squeeze_order` + `frEvalPointOrder`) is proven; the digest value + endo map are named.
+  2. **C6: ALL SIX v1 GATE BODIES TRANSCRIBED + COMPOSED — the `linConstTerm` carrier is RETIRED
+     (2026-07-27).** `linConstTerm = Σ_gate index(gate)·Σᵢ alpha^i·constraintᵢ` with
+     `index_terms = []` (`linearization.rs:364`), and every body is now emitted from the source:
+     generic 2 (`genericGateConstraint`), Poseidon 15 (`poseidonConstraints`), complete_add 7
+     (`completeAddConstraints`), varbasemul 21 (`varBaseMulConstraints`), endomul/`EndosclMul` **12**
+     (`endoMulConstraints` — the twelfth is the distinct-point witness `(xp−xr)(xr−xs)·inv − 1`),
+     endomul_scalar 11 (`endomulScalarConstraints`, with `11/6, −5/2, 2/3` supplied as WITNESSED
+     ring quotients, `endomulScalarConstsOk`). `gateLinConst` sums them behind their selectors and
+     `kimchiVerifyDecisionGates` threads the result into `ftEval0`. `KimchiPoseidonGate` runs this
+     on a REAL proof that FIRES the Poseidon gate (`poseidon_selector(ζ) ≠ 0`): the derived
+     `genSel·generic + posSel·poseidon` reproduces Rust's `PolishToken::evaluate` value exactly, and
+     bumping a Poseidon-only input rejects. STILL CARRIED for complete_add/varbasemul/endomul/
+     endomul_scalar: those bodies are transcribed and composed but NOT yet exercised by a proof that
+     fires them (no fixture with a curve-op circuit) — they are behind a zero selector in both
+     fixtures, so their transcription rests on the source reading, not a differential.
+  3. **C3 Fr-sponge (phase 2) + the CHALLENGE MAP: v and u RE-DERIVED end-to-end (2026-07-27).**
+     The Fr-sponge IS K3's Poseidon-over-Fp sponge (`Vesta::sponge_params() = fp_kimchi`,
+     `curve.rs:63`), `frSpongeDigest = Ref.hash` of the phase-2 absorb stream (§9d) in
+     `plonk_sponge.rs:88-99` order. §9e adds the two remaining steps: `challenge()`'s low-128-bit
+     truncation (`low128`, `sponge.rs:265-277`) and `ScalarChallenge::to_field(endo_r)` (`endoMap`,
+     `sponge.rs:190-226`), plus the rate-2 squeeze semantics (v' = lane 0 of the permuted state,
+     u' = lane 1 of the SAME state). So `deriveVU` computes v and u from the transcript alone, and
+     `challengesOk`/`kimchiVerifyDecisionChallenges` CHECK them inside the accept; α and ζ are
+     checked as the endo images of their raw prechallenges. STILL CARRIED: the PHASE-1 Fq-sponge
+     (over `qN` with the `fq_kimchi` params — a different constant set than K3's `fp_kimchi`,
+     absorbing the index digest and the commitment curve points). It produces β, γ and the raw
+     prechallenges α', ζ', and it produces the `digest` that seeds phase 2. So β, γ, α', ζ' and
+     `digest` are inputs; everything downstream of them is derived.
   4. **The field-arithmetic checks are over `F`, above the felt encoding.** The `ℤ ↔ p_felt`
      field-width gap (K1 §6) and the `z < p` canonical compare are the shared residuals. The real
      field is `Fp = ZMod pN` (Vesta::ScalarField); there is no `Field (ZMod pN)` instance in the
