@@ -136,6 +136,18 @@ first.
   "passed" by being refused for the wrong reason. RP1 also showed the old substring pole would have
   passed where the by-variant pole fails.
 
+- **C7 CLOSED as a DETECTION** — the published Lean seed was 11 days behind the tree and nothing
+  compared them, so the ~43 verified-gate tests it arms were reporting `ok` while asserting nothing.
+  ⚠ Deliberately NOT re-adding `lean-seed.yml`'s push trigger: ember removed it 2026-07-25 with a
+  measured reason (19-25 min full saturation of a triple-booked hbox, on the most-edited path in the
+  repo). The gate REPORTS drift always and FAILS past 14 days, so staleness stops being invisible
+  without overturning a cost decision.
+- **B2 dispatched** — `Effect::linearity()` has 0 non-test Rust callers (verified; ⚠ a naive sweep
+  reads 30 because `.claude/worktrees/` scratch pollutes it). But the residual's framing is
+  incomplete: the LEAN theory is alive and PROVED (`Spec/Conservation.lean`, three theorems,
+  `#assert_axioms`-pinned) with NO `@[export]`. So it is a proved spec, a dead Rust twin, and an
+  executor using neither.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
