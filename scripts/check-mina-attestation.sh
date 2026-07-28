@@ -221,7 +221,7 @@ if [ "${1:-}" != "--self-test" ]; then
   [ "$n_fri" -ge 10 ] || die "only $n_fri FRI checks passed; expected >= 10"
   grep -q 'fold_row (arity 2, two-point Lagrange) agrees with p3' <<<"$fri_out" \
     || die "the fold_row cross-check against p3 did not run"
-  grep -q 'the coset descent (-1)\^b x\^2 matches p3 at the next layer, sign included' <<<"$fri_out" \
+  grep -q 'BOTH polarities' <<<"$fri_out" \
     || die "the coset-descent sign check did not run (it is wrong on half of all indices)"
   grep -q 'a commit-phase round PROVES and VERIFIES' <<<"$fri_out" \
     || die "no FRI commit-phase round was actually proved"

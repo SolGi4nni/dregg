@@ -160,22 +160,44 @@ console.log('[1] the fold arithmetic == p3, on values the emitter cannot have pr
   ok('the CIRCUIT reproduces p3 fold_row and p3 extension multiplication');
 
   // The `(-1)^b x^2` descent, against p3's own next coset point.
-  const nextIdx = index >> 1;
-  const emNext = runP2Fold(dir, nextIdx, logHeight - 1, vals);
-  await Provable.runAndCheck(() => {
-    const xf = Provable.witness(Field, () => Field(x));
-    const bit = Provable.witness(Bool, () => Bool((index & 1) === 1));
-    const got = nextCosetPoint(xf, bit);
-    Provable.asProver(() => {
-      if (got.toBigInt() % P !== BigInt(emNext.x))
-        fail(`the coset descent gave ${got.toBigInt() % P}, p3 says ${emNext.x}`);
-      // and the naive squaring is wrong exactly when the bit is set
-      const naive = (x * x) % P;
-      if ((naive === BigInt(emNext.x)) !== ((index & 1) === 0))
-        fail('the sign correction in the coset descent is not load-bearing');
+  //
+  // ⚑ BOTH POLARITIES, DELIBERATELY, AND NOT AT A RANDOM INDEX. `x^2` is the
+  // right answer on even indices and the WRONG one on odd, so a check that took
+  // whatever index the run happened to draw is green half the time with the
+  // sign correction deleted — measured: it was, and this comment is the repair.
+  // The two indices below differ only in their low bit.
+  let sawSignBite = false;
+  for (const idx of [index & ~1, index | 1]) {
+    const emHere = runP2Fold(dir, idx, logHeight, vals);
+    const emNext = runP2Fold(dir, idx >> 1, logHeight - 1, vals);
+    const xHere = BigInt(emHere.x);
+    const bitSet = (idx & 1) === 1;
+    await Provable.runAndCheck(() => {
+      const xf = Provable.witness(Field, () => Field(xHere));
+      const bit = Provable.witness(Bool, () => Bool(bitSet));
+      const got = nextCosetPoint(xf, bit);
+      Provable.asProver(() => {
+        if (got.toBigInt() % P !== BigInt(emNext.x))
+          fail(
+            `the coset descent at index ${idx} (bit ${bitSet ? 1 : 0}) gave ` +
+              `${got.toBigInt() % P}, p3 says ${emNext.x}`,
+          );
+      });
     });
-  });
-  ok('the coset descent (-1)^b x^2 matches p3 at the next layer, sign included');
+    // The naive squaring must be RIGHT on the even index and WRONG on the odd
+    // one. If it were right on both, the sign correction would be dead code and
+    // the check above would prove nothing.
+    const naive = (xHere * xHere) % P;
+    const naiveOk = naive === BigInt(emNext.x);
+    if (naiveOk === bitSet)
+      fail(
+        `at index ${idx} the naive x^2 was ${naiveOk ? 'right' : 'wrong'} with bit ` +
+          `${bitSet ? 1 : 0}: the sign correction is not doing what it claims`,
+      );
+    if (bitSet) sawSignBite = true;
+  }
+  if (!sawSignBite) fail('the odd-index polarity never ran');
+  ok('the coset descent (-1)^b x^2 matches p3 at the next layer, sign included — BOTH polarities');
 
   // REJECT polarity.
   const badFold = foldRowArity2BigInt((x + 1n) % P, beta, eEven, eOdd);

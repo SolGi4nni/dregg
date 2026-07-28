@@ -15,7 +15,6 @@ import {
 } from 'o1js';
 import {
   BbDigest,
-  canonicalDigest,
   foldOpening,
   sparsePathBigInt,
 } from './Poseidon2Merkle.js';

@@ -568,8 +568,15 @@ witnessed query-index bits**, not witnessed alongside them.
 
 ⚑ **The coset descent is `x_{r+1} = (−1)^{b_r} · x_r²`, not `x_r²`.** `rbl(i, L) = b·2^{L−1} +
 rbl(i≫1, L−1)` and `g_L^{2^{L−1}} = −1`, so the naive squaring is wrong on exactly half the
-indices — invisible to any test whose index happens to be even. Both the Rust test and the o1js
-check exercise both polarities.
+indices — invisible to any test whose index happens to be even.
+
+**And the first version of this check WAS that test.** It drew a random query index, so with the
+sign correction deleted from the circuit it went **green** — measured, by injecting exactly that
+fault. The repair is deterministic: the check now runs the descent at `index & ~1` *and*
+`index | 1`, requires the naive `x²` to be **right on the even one and wrong on the odd one**, and
+fails if the odd polarity never ran. The Rust side's
+`coset_points_descend_by_squaring_and_a_sign` walks the deployed 16-layer schedule and asserts it
+saw both. A gate that can only go red on half its inputs is half a gate.
 
 ⚑ **The 22 query-index bits are ONE object.** Bit `r` selects which slot round `r`'s folded value
 occupies; bits `r+1…22` are the path directions for round `r`'s depth-`21−r` opening. A circuit
