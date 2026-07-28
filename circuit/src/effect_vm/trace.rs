@@ -398,29 +398,28 @@ pub fn generate_effect_vm_trace_ext(
     assert!(!effects.is_empty(), "Need at least one effect");
 
     // ====================================================================
-    // EXECUTOR-SIDE RANGE VALIDATION (o1vm audit mitigations)
+    // THE WITNESS-GENERATION PRECONDITION on the initial state.
     // ====================================================================
-    // These checks run at proof generation time. They do NOT add constraints
-    // to the STARK, but they prevent the executor from producing a trace with
-    // out-of-range values that could exploit modular arithmetic.
+    // Runs at proof-generation time. It adds NO constraint to the STARK (the AIR is
+    // Lean-authored and unchanged by this call); it stops the prover from building a
+    // trace over a malformed state in the first place. Two things are decided:
     //
-    // A verifier receiving a proof from an untrusted prover must additionally
-    // verify that the final state (decoded from new_commitment PI) has valid
-    // limb ranges. See `verify_balance_limb_ranges` below.
+    //   * balance limbs inside their declared widths — out-of-width limbs satisfy the
+    //     Group 6 `NET_DELTA = FINAL - INIT` algebra just as happily by modular wrap;
+    //   * the carried `state_commitment` equals the commitment its own fields hash to —
+    //     `to_trace_cols` copies that carried felt verbatim into row 0's
+    //     `state_before.state_commit`, while `PI[OLD_COMMIT_BASE..]` is recomputed FRESH
+    //     from the fields below, so a stale carry silently splits the trace from the
+    //     public input the descriptor recomputes.
+    //
+    // Both halves are `verify_state_integrity`. Until this call it had ZERO call sites
+    // anywhere in the tree — the range half was hand-inlined HERE as two `assert!`s (that
+    // is what this replaced) and the commitment half was checked by nobody, while every
+    // direct-mutation site in the tree repaired it by hand with `refresh_commitment()`.
     // ====================================================================
-
-    // Validate initial balance limbs are in range.
-    let (init_lo, init_hi) = split_u64(initial_state.balance);
-    assert!(
-        init_lo.0 < (1 << 30),
-        "Initial balance_lo out of range: {} >= 2^30",
-        init_lo.0
-    );
-    assert!(
-        init_hi.0 < (1 << 31),
-        "Initial balance_hi out of range: {} >= 2^31 (exceeds BabyBear)",
-        init_hi.0
-    );
+    if let Err(reason) = super::verify::verify_state_integrity(initial_state) {
+        panic!("EffectVM trace generation refused a malformed initial CellState: {reason}");
+    }
 
     // Validate field_idx bounds and balance underflow for all effects.
     // We track a running balance to catch underflow across multi-effect turns.

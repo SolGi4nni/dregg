@@ -51,12 +51,37 @@ pub fn verify_balance_limb_ranges(state: &CellState) -> Result<(), String> {
     Ok(())
 }
 
-/// Verify that a final CellState (after proof verification) has a valid
-/// state commitment matching its declared fields.
+/// **THE WITNESS-GENERATION PRECONDITION on a [`CellState`]**: its balance limbs are
+/// in their declared widths AND its carried `state_commitment` is the commitment its
+/// own fields hash to. Called by [`super::generate_effect_vm_trace_ext`] — the single
+/// funnel every prover path (v1 and rotated) enters trace generation through — so no
+/// trace is built over a state whose carried commitment has drifted from its fields.
 ///
-/// This is the executor-side defense against interior-row limb manipulation:
-/// even if a malicious prover used out-of-range limbs on interior rows, the
-/// final commitment must match the declared final state.
+/// # Why the commitment half is not free
+///
+/// `CellState`'s fields are all `pub` and `state_commitment` is a CARRIED value, not a
+/// derived one: `CellState::new` computes it once, and any later mutation of
+/// `balance` / `nonce` / `fields` / `capability_root` / `record_digest` leaves it stale
+/// until [`CellState::refresh_commitment`] is called by hand. The two halves then go to
+/// DIFFERENT places: `to_trace_cols` copies the carried `state_commitment` verbatim into
+/// row 0's `state_before.state_commit` column, while `PI[OLD_COMMIT_BASE..]` is recomputed
+/// FRESH from the fields (`generate_effect_vm_trace_ext`'s `compute_commitment_8`). A stale
+/// carried value therefore produces a trace whose committed-state column disagrees with the
+/// public input the descriptor recomputes — the failure `braid-hook`'s
+/// `mint_entity_custom_leg` documents having hit and repairs by hand with a
+/// `refresh_commitment()` call. Every direct-mutation site in the tree carries the same
+/// hand-written repair; this makes it CHECKED rather than remembered.
+///
+/// # Scope — say it at the right resolution
+///
+/// This decides one struct's self-consistency at witness-generation time. It is NOT a
+/// verifier-side defense and cannot be one: a verifier never receives a `CellState`, it
+/// receives a proof and a public-input vector. The executor-side range precondition on the
+/// leg that actually ships is [`verify_balance_limb_pis`], which reads PI offsets and is
+/// called from `turn::conditional` and `sdk::full_turn_proof`. The doc this replaced claimed
+/// to be "the executor-side defense against interior-row limb manipulation" that verifiers
+/// run "after proof verification"; nothing called it, and nothing on a verify path could —
+/// the argument type is a prover's struct.
 pub fn verify_state_integrity(state: &CellState) -> Result<(), String> {
     // Check balance limb ranges.
     verify_balance_limb_ranges(state)?;

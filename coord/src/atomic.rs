@@ -785,6 +785,24 @@ impl Coordinator {
     }
 
     /// Verify an abort message signature against the coordinator's public key.
+    ///
+    /// ⚑ **NOTHING CALLS THIS, AND THERE IS NOTHING FOR IT TO CALL FROM.** Measured
+    /// 2026-07-27: zero call sites tree-wide, tests included. The reason is structural, not an
+    /// oversight of one call — the abort leg is WRITE-ONLY. [`Coordinator::abort`] mints a
+    /// signed [`AbortMessage`], `sign_abort` signs it, this verifies it, and
+    /// [`Participant`] has **no handler that consumes one**: it has `apply_commit` for a
+    /// `CommitMessage` and `timeout_abort` for its own unilateral, message-free release, and
+    /// nothing in between. A participant that voted Yes and is sent an abort cannot act on it;
+    /// it waits out `vote_timeout`.
+    ///
+    /// Do not "fix" this by adding a handler that calls this function. `atomic::Coordinator`
+    /// and `atomic::Participant` are constructed ONLY by test code across the entire tree
+    /// (`coord/src/tests.rs`, `coord_diff.rs`, `entangled_diff.rs`, `private_leg.rs` — which is
+    /// `#![cfg(test)]` — and `coord/tests/twin_fail_closed.rs`); no node, sdk, or wasm path
+    /// builds either. A handler here would have no production caller of its own, so wiring it
+    /// would quiet the census (`baseline/production-callers.tsv`) without one more line running
+    /// on any deployed path. The real disposition is a subsystem call: delete this 2PC pair or
+    /// deploy it.
     pub fn verify_abort(abort_msg: &AbortMessage, coordinator_pubkey: &[u8; 32]) -> bool {
         let Ok(verifying_key) = VerifyingKey::from_bytes(coordinator_pubkey) else {
             return false;
@@ -803,6 +821,14 @@ impl Coordinator {
     /// Returns `None` if not in `Proposing` state or the timeout has not elapsed.
     ///
     /// The caller is responsible for calling this periodically (event-loop style).
+    ///
+    /// ⚑ **THERE IS NO SUCH EVENT LOOP.** Measured 2026-07-27: zero call sites tree-wide, tests
+    /// included. Read the classification honestly — this is NOT a decider despite the `check_`
+    /// prefix that puts it in `baseline/production-callers.tsv`'s guard class: it refuses
+    /// nothing and validates nothing, it POLLS a clock and emits an abort. Its absence is a
+    /// LIVENESS gap (a proposal stays `Proposing` forever, and every participant that voted Yes
+    /// holds its lock until its own `vote_timeout`), not a soundness one. Same subsystem verdict
+    /// as [`Self::verify_abort`]: `atomic::Coordinator` has no production constructor anywhere.
     pub fn check_timeout(&mut self, now: Instant) -> Option<AbortMessage> {
         let (proposed_at, proposal_id) = match &self.state {
             CoordinatorState::Proposing {

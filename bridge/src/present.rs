@@ -1082,6 +1082,20 @@ impl BridgePresentationBuilder {
         // Compute the presentation tag (same formula as the circuit uses).
         // The verifier_nonce is included to cryptographically bind the proof to a
         // specific verifier challenge, preventing replay attacks.
+        // ⚑ THE CHALLENGE-RESPONSE MODE IS UNBUILT ON BOTH SIDES. This is hard ZERO, so no
+        // proof this crate can produce carries a real challenge. There WAS a
+        // `verify_presentation_nonce` on the other side; it had zero call sites, and it was
+        // deleted rather than wired because BOTH its poles were degenerate against this line:
+        // with `expected_nonce == ZERO` it returned `true` unconditionally, and with any real
+        // challenge it refused every producible proof.
+        //
+        // It would also have been the WRONG check. It compared
+        // `proof.circuit_proof.public_inputs.verifier_nonce` — a PROVER-SET wire field bound to
+        // nothing — while the descriptor genuinely binds the challenge at
+        // `bound_presentation_witness::PI_NONCE` (trace col `VERIFIER_NONCE`, absorbed into the
+        // presentation tag below). Whoever builds this mode must read the BOUND PI out of
+        // `verify_wire_typed`'s returned `bound_pis` inside `verify_proof_complete`, not
+        // resurrect a comparison against the wire field.
         let verifier_nonce = BabyBear::ZERO; // TODO: accept from verifier challenge
         let final_root = if let Some(last_fold) = fold_chain.last() {
             last_fold.new_root
@@ -1843,9 +1857,9 @@ pub fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
 
 /// Default maximum proof age in seconds (5 minutes).
 ///
-/// Proofs older than this are rejected by `verify_presentation` and
-/// `verify_presentation_full`. Callers who need a different window should use
-/// `verify_presentation_full` with an explicit `max_proof_age`.
+/// The default `max_age_secs` a caller should hand [`verify_proof_complete`], which is
+/// where freshness is decided. Callers needing a different window pass their own value;
+/// `0` disables the freshness check entirely.
 pub const DEFAULT_MAX_PROOF_AGE_SECS: i64 = 300;
 
 /// Verify BOTH committed presentation descriptors — the flip off the legacy hand-StarkProof.
@@ -1880,166 +1894,6 @@ fn verify_wire_typed(wire: &DescriptorProofWire) -> Result<Vec<BabyBear>, Verify
             wire.predicate
         ))
     })
-}
-
-/// Verify a presentation proof cryptographically with full authorization checks.
-///
-/// This is the primary verification entry point. It checks:
-/// 1. **Issuer membership**: The STARK proof for federation membership is valid.
-/// 2. **Federation binding**: The proof's federation root matches `federation_root`.
-/// 3. **Timestamp freshness**: The proof's timestamp is within `max_proof_age` seconds of `now`.
-/// 4. **Request predicate**: The proof's committed `request_predicate` matches `expected_action`.
-///
-/// # Arguments
-///
-/// * `proof` - The presentation proof to verify.
-/// * `federation_root` - The federation root of trust from an **external, trusted source**.
-///   **SECURITY WARNING**: This MUST NOT come from the proof itself (e.g., `proof.federation_root`).
-///   Using the proof's own federation root is circular and provides no security — an attacker
-///   can forge a proof for any federation root they choose.
-/// * `expected_action` - The action string the verifier expects the proof to authorize.
-///   If `None`, the request predicate check is skipped (only safe when the action is
-///   already authenticated by other means, e.g., TLS channel binding).
-/// * `now` - Current Unix timestamp in seconds for freshness checking.
-/// * `max_proof_age` - Maximum age of the proof in seconds. Use `DEFAULT_MAX_PROOF_AGE_SECS`
-///   (300s / 5min) for typical interactive authorization.
-///
-/// # Returns
-///
-/// `true` if all checks pass, `false` otherwise.
-pub fn verify_presentation_full(
-    proof: &BridgePresentationProof,
-    federation_root: &[u8; 32],
-    expected_action: Option<&str>,
-    now: i64,
-    max_proof_age: i64,
-) -> bool {
-    // A real STARK proof is required for cryptographic verification.
-    let real = match proof.real_stark_proof.as_ref() {
-        Some(r) => r,
-        None => return false,
-    };
-
-    // 0. Verify BOTH committed descriptors (the flip off the legacy hand-StarkProof).
-    let (bound_pis, blinded_pis) = match verify_presentation_descriptor_wires(real) {
-        Some(v) => v,
-        None => return false,
-    };
-
-    // 1. Federation-root binding (EXTERNAL trust anchor): the blinded ring-membership root AND the
-    //    bound-presentation summary federation_root must both equal the expected root.
-    use dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY;
-    use dregg_circuit::bound_presentation_witness::{
-        FEDERATION_ROOT as BOUND_FED_ROOT, REQUEST_PREDICATE_BASE,
-    };
-    let expected_root = bb_from_bytes(federation_root);
-    if blinded_pis.get(PI_ROOT_4ARY).copied() != Some(expected_root)
-        || bound_pis.get(BOUND_FED_ROOT).copied() != Some(expected_root)
-    {
-        return false;
-    }
-
-    // 2. Timestamp freshness: reject stale proofs.
-    let proof_timestamp = proof.circuit_proof.public_inputs.timestamp;
-    let proof_ts_val = proof_timestamp.0 as i64;
-    if proof_ts_val == 0 {
-        // A zero timestamp means no timestamp was set — reject as stale.
-        return false;
-    }
-    let age = now.saturating_sub(proof_ts_val);
-    if age > max_proof_age || age < -max_proof_age {
-        // Proof is too old OR has a future timestamp beyond tolerance.
-        return false;
-    }
-
-    // 3. Request predicate authorization: verify the proof actually authorizes
-    //    the action being requested, not just any action.
-    //    The action binding is a 4-element commitment with 124-bit security.
-    if let Some(action) = expected_action {
-        let expected_binding = dregg_circuit::compute_action_binding(action, "");
-        if proof.circuit_proof.public_inputs.request_predicate != expected_binding {
-            return false;
-        }
-        // Bind the bound-presentation descriptor's committed action to the requested action.
-        for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
-            if bound_pis.get(REQUEST_PREDICATE_BASE + i).copied() != Some(expected_binding[i]) {
-                return false;
-            }
-        }
-    }
-
-    // 4. Verify composition commitment (sub-proof binding).
-    //    If the STARK proof contains a composition_commitment (at
-    //    pi[2 + ACTION_BINDING_WIDTH ..]), verify it matches the locally recomputed value
-    //    from the fold chain and derivation sub-proofs. This prevents an attacker
-    //    from attaching a valid membership STARK from one token to a forged fold
-    //    chain from another.
-    if !proof.composition_commitment.is_zero() {
-        // Recompute the composition commitment from the sub-proof data.
-        let fold_chain_commitment = if real.fold_step_roots.is_empty() {
-            BabyBear::ZERO
-        } else {
-            let fold_roots: Vec<BabyBear> = real
-                .fold_step_roots
-                .iter()
-                .flat_map(|r| [r[0], r[1]])
-                .collect();
-            poseidon2::hash_many(&fold_roots)
-        };
-        let derivation_state_root = real.derivation_state_root;
-        let presentation_tag = proof.circuit_proof.public_inputs.presentation_tag;
-        // The circuit PI already stores the narrow (single-element) presentation tag,
-        // which is compute_presentation_tag_narrow(). Use it directly — no re-hashing.
-        let recomputed = WideHash::from_poseidon2(
-            "dregg-composition-v1",
-            &[
-                fold_chain_commitment,
-                derivation_state_root,
-                presentation_tag,
-            ],
-        );
-
-        if recomputed != proof.composition_commitment {
-            return false;
-        }
-        // (The composition value formerly rode the hand-STARK public inputs; with the descriptor
-        //  flip the sub-proof binding is the recomputed-vs-stored check above.)
-    }
-
-    // Both committed descriptors verified in step 0, and root/action/composition are bound.
-    true
-}
-
-/// Verify that a proof's verifier nonce matches the expected challenge.
-///
-/// In a challenge-response protocol, the verifier issues a random nonce BEFORE
-/// the prover generates the proof. This function checks that the proof was generated
-/// for the specific challenge the verifier issued, preventing replay attacks.
-///
-/// Returns `true` if:
-/// - The proof's `verifier_nonce` matches `expected_nonce`, OR
-/// - `expected_nonce` is `BabyBear::ZERO` (nonce check disabled, non-interactive mode)
-///
-/// Returns `false` if the nonces do not match (potential replay).
-///
-/// # Security
-///
-/// Verifiers operating in challenge-response mode SHOULD:
-/// 1. Generate a fresh random nonce per session (at least 31 bits of entropy).
-/// 2. Send the nonce to the prover.
-/// 3. Call this function with the same nonce after receiving the proof.
-/// 4. Reject proofs where this returns `false`.
-pub fn verify_presentation_nonce(
-    proof: &BridgePresentationProof,
-    expected_nonce: BabyBear,
-) -> bool {
-    // Non-interactive mode: skip nonce check when expected_nonce is zero.
-    if expected_nonce == BabyBear::ZERO {
-        return true;
-    }
-
-    // The nonce is stored in the circuit proof's public inputs.
-    proof.circuit_proof.public_inputs.verifier_nonce == expected_nonce
 }
 
 // =============================================================================
@@ -2331,9 +2185,8 @@ pub fn verify_proof_complete(
 
 /// Verify a presentation proof cryptographically (convenience wrapper).
 ///
-/// Equivalent to `verify_presentation_full` with:
-/// - No action predicate check (`expected_action = None`)
-/// - No timestamp freshness check (uses timestamp 0 and max_age of i64::MAX)
+/// Checks issuer membership and federation-root binding ONLY: no action predicate, no
+/// timestamp freshness, no composition commitment.
 ///
 /// **DEPRECATED**: This function skips action binding and freshness checks.
 /// Use [`verify_proof_complete`] instead, which checks EVERYTHING.
@@ -2376,40 +2229,6 @@ pub fn verify_presentation_bb(proof: &BridgePresentationProof, expected_root: Ba
     } else {
         false
     }
-}
-
-/// Verify a presentation proof (legacy API, checks only structural validity).
-///
-/// **DEPRECATED**: This only checks the prover-set `verification` field and provides
-/// no cryptographic guarantee. Use `verify_presentation()` with a federation root instead.
-#[deprecated(
-    note = "Use verify_presentation(proof, federation_root) for cryptographic verification"
-)]
-pub fn verify_presentation_structural(proof: &BridgePresentationProof) -> bool {
-    proof.is_valid()
-}
-
-/// Verify a presentation's fold chain.
-///
-/// Validated-IVC fold-chain proofs (chain STARK + per-step Merkle membership STARKs) were retired
-/// with the descriptor-wire flip; the fold chain is now bound via the composition commitment
-/// checked in [`verify_proof_complete`] / [`verify_presentation_complete`]. There is no separate
-/// validated-IVC proof to check here, so this returns `false` (fail-closed).
-pub fn verify_fold_chain(_proof: &BridgePresentationProof) -> bool {
-    // Validated-IVC fold-chain proofs were retired with the descriptor-wire flip. The fold chain
-    // is now bound via the composition commitment (recomputed and checked in
-    // `verify_proof_complete` / `verify_presentation_complete`), not a separate validated-IVC
-    // proof. With no such proof to check, this reports unverified (fail-closed).
-    false
-}
-
-/// Verify a wire presentation proof's fold chain.
-///
-/// Validated-IVC fold-chain proofs were retired; there is no separate fold-chain proof on the
-/// wire form to check, so this returns `false` (fail-closed). The fold chain is bound via the
-/// composition commitment checked by [`verify_proof_complete`].
-pub fn verify_wire_fold_chain(_proof: &WirePresentationProof) -> bool {
-    false
 }
 
 /// Full cryptographic verification of a presentation proof: issuer + fold chain.
@@ -3089,6 +2908,25 @@ pub struct BridgeCommittedThresholdProof {
 /// - `fact_commitment = Poseidon2(fact_hash, state_root)` — hides the value.
 ///
 /// They learn ONLY that "the committed value satisfies the committed threshold."
+///
+/// # FAIL-CLOSED TODAY — and there is no verifier
+///
+/// The committed-threshold predicate has no emitted IR-v2 descriptor (the hand-AIR gadget
+/// was retired), so this yields nothing:
+///
+/// ```
+/// use dregg_bridge::prove_committed_threshold;
+/// use dregg_circuit::BabyBear;
+///
+/// assert!(prove_committed_threshold(
+///     5_000, 1_000, 42, BabyBear::new(7), BabyBear::new(9),
+/// ).is_none());
+/// ```
+///
+/// A `verify_committed_threshold_proof` used to sit beside this returning `false` for every
+/// input, with zero call sites anywhere. A verifier that decides nothing reads in review like
+/// a check that happens, so it was deleted rather than kept; a prover that honestly reports
+/// "unsupported" does not. When the descriptor lands, the verifier comes back with it.
 pub fn prove_committed_threshold(
     private_value: u32,
     threshold: u32,
@@ -3101,58 +2939,6 @@ pub fn prove_committed_threshold(
     // gadget is gone). Fail-closed: no proof.
     let _ = (private_value, threshold, blinding, fact_hash, state_root);
     None
-}
-
-/// Verify a committed-threshold proof.
-///
-/// # For the verifier (who knows their threshold):
-///
-/// ```
-/// use dregg_bridge::{
-///     BridgeCommittedThresholdProof, prove_committed_threshold,
-///     verify_committed_threshold_proof,
-/// };
-/// use dregg_circuit::{BabyBear, compute_threshold_commitment};
-///
-/// let (my_threshold, my_blinding) = (1_000u32, 42u32);
-/// let expected_commitment = compute_threshold_commitment(
-///     BabyBear::new(my_threshold), BabyBear::new(my_blinding)
-/// );
-/// let fact_commitment = BabyBear::new(7);
-///
-/// // FAIL-CLOSED TODAY. The committed-threshold predicate has no emitted IR-v2
-/// // descriptor (the hand-AIR gadget was retired), so the prover yields nothing…
-/// assert!(prove_committed_threshold(
-///     5_000, my_threshold, my_blinding, fact_commitment, BabyBear::new(9),
-/// ).is_none());
-///
-/// // …and the verifier accepts nothing, not even a well-formed-looking proof.
-/// let proof = BridgeCommittedThresholdProof {
-///     proof: Vec::new(),
-///     threshold_commitment: expected_commitment,
-///     fact_commitment,
-/// };
-/// let valid = verify_committed_threshold_proof(&proof, expected_commitment, fact_commitment);
-/// assert!(!valid);
-/// ```
-///
-/// # For third-party auditors (who know neither value nor threshold):
-///
-/// They verify against the commitments they received from the protocol participants.
-/// They learn only: "this proof is valid for these commitments" (1 bit).
-pub fn verify_committed_threshold_proof(
-    proof: &BridgeCommittedThresholdProof,
-    expected_threshold_commitment: BabyBear,
-    expected_fact_commitment: BabyBear,
-) -> bool {
-    // No emitted IR-v2 committed-threshold descriptor — fail closed rather than
-    // accept an unverified claim.
-    let _ = (
-        proof,
-        expected_threshold_commitment,
-        expected_fact_commitment,
-    );
-    false
 }
 
 // =============================================================================
@@ -3282,27 +3068,6 @@ pub fn prove_predicate_program_full(
     Err(ProgramProveError::Unsupported(
         "programmable predicate programs have no emitted IR-v2 descriptor yet".to_string(),
     ))
-}
-
-/// Verify a predicate program proof.
-///
-/// The verifier provides:
-/// - The program (they know what was proven).
-/// - The proof to verify.
-/// - Expected fact commitments for each attribute.
-/// - The state root the proofs are bound to.
-///
-/// Returns `true` if the proof is valid.
-pub fn verify_predicate_program(
-    program: &dregg_circuit::predicate_program::PredicateProgram,
-    proof: &ProgramProof,
-    expected_commitments: &std::collections::HashMap<String, BabyBear>,
-    state_root: BabyBear,
-) -> bool {
-    // No emitted IR-v2 descriptor for the programmable-predicate compiler — fail
-    // closed rather than accept an unverified program proof.
-    let _ = (program, proof, expected_commitments, state_root);
-    false
 }
 
 #[cfg(test)]

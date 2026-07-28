@@ -40,9 +40,51 @@ the DELTA: a symbol that JOINS either population is a symbol that was just writt
 without a caller, or just lost its last production caller, and that is the moment
 someone can still remember why.
 
-So `baseline/production-callers.tsv` records the known population and this check
-goes red on additions. Removing a row (wiring a symbol up, or deleting it) is always
-allowed and the baseline is rewritten by `--bless`.
+So `baseline/production-callers.tsv` records the known population and this check goes
+red BOTH WAYS — on an addition AND on a stale row. `--bless` rewrites the baseline.
+
+  FRESH   a guard in the population with no baseline row. Just written without a
+          caller, or just lost its last production caller.
+  STALE   a baseline row whose finding is GONE — the function acquired a production
+          caller, was deleted, was renamed, or moved to another file. The row now
+          asserts a hole that is closed, and every later reader of this file trusts it.
+
+⚠ The stale arm is not decoration, and its absence was measured on 2026-07-27: this
+check was ADDITIONS-ONLY, so a row could be wired up or deleted and the baseline would
+keep carrying it forever, indistinguishable from a live finding. The `verify_balance_
+limb_pis` row that this script was WRITTEN for would have sat here permanently after
+`687e70504` wired it. A ratchet that only turns one way is a ledger, not a ratchet.
+
+═══ THE KEY ═══════════════════════════════════════════════════════════════════════
+A row is keyed on `(kind, name, definition_file)` — the file WITHOUT its line number,
+because line numbers drift on every unrelated edit above the definition and a key that
+churns is a key nobody keeps honest.
+
+The key USED to be `(kind, name)`, name-only, and one row per NAME (`sites[0]`, the
+first definition found in path order). Two consequences, both silent:
+  * a second, freshly-written uncalled `verify_thing` in ANOTHER crate was absorbed by
+    the existing row and reported nothing;
+  * a row could not say WHICH crate it was about, so a mover looked like a no-op.
+Rows are now per DEFINITION SITE, so a same-named guard in a new crate is a new row and
+therefore red.
+
+⚠ RESIDUAL, stated, WITH A FOUND INSTANCE: the CALLER COUNT is still name-keyed (see
+"WHAT THIS CANNOT SEE" — this is textual, it does not resolve imports). So if `foo` in
+crate A has a production caller, an uncalled `foo` in crate B is still invisible: the
+merged count is `prod > 0` and neither site is reported. Per-site rows fix same-name
+ABSORPTION of a REPORTED row, not same-name MASKING of an UNREPORTED one.
+
+The instance, found 2026-07-27 while fixing this: `verify_fold_chain` was defined TWICE —
+`dregg_commit::fold` (real, many callers) and `dregg_bridge::present` (returned `false`
+for every input, zero callers anywhere). `dregg_commit`'s callers absorbed both, so the
+bridge one never appeared in any population and was never baselined. It has been deleted.
+
+Measured, so the size of the blind spot is on record rather than guessed: 50 GUARD names
+have more than one definition site AND a merged `prod > 0`; expanded per site that is 186
+rows. Baselining all 186 was considered and rejected — this file's own thesis is that a
+gate nobody reads is not a gate, and ~180 rows of `is_valid` / `is_verified` /
+`is_well_formed` across unrelated crates is that wall. Closing it properly needs real
+path resolution, not more rows.
 
 ═══ WHAT THIS CANNOT SEE — stated, not hidden ═════════════════════════════════════
   * DYNAMIC calls. A symbol reached only as a function pointer, through a trait
@@ -291,28 +333,68 @@ def is_guard(name: str) -> bool:
     return name.startswith(GUARD_PREFIXES) or name.endswith(GUARD_SUFFIXES)
 
 
-def classify(defs, counts) -> list[tuple[str, str, str, int]]:
+def classify(defs, counts) -> list[tuple[str, str, str, int, int]]:
+    """One row PER DEFINITION SITE: `(kind, name, file, line, test_call_sites)`.
+
+    Per-site, not per-name: a second same-named uncalled guard in another crate must be a
+    NEW row (and therefore red), not absorbed by the existing one. Sites in the same file
+    collapse to the earliest line — one `pub fn` per (name, file) is the norm, and a
+    `cfg`-duplicated pair is one finding, not two.
+    """
     rows = []
     for name, sites in sorted(defs.items()):
         prod, test = counts.get(name, (0, 0))
         if prod > 0:
             continue
         kind = "THEATRE" if test > 0 else "UNCALLED"
-        where = f"{sites[0][0]}:{sites[0][1]}"
-        rows.append((kind, name, where, test))
+        earliest: dict[str, int] = {}
+        for path, line in sites:
+            key = str(path)
+            earliest[key] = min(line, earliest.get(key, line))
+        for path in sorted(earliest):
+            rows.append((kind, name, path, earliest[path], test))
     return rows
 
 
-def read_baseline() -> set[tuple[str, str]]:
+def row_key(row) -> tuple[str, str, str]:
+    """`(kind, name, definition_file)` — see THE KEY in the header. The LINE is
+    deliberately not part of it: it drifts on every edit above the definition."""
+    return (row[0], row[1], row[2])
+
+
+class BaselineFormatError(Exception):
+    pass
+
+
+def read_baseline() -> set[tuple[str, str, str]]:
     if not BASELINE.exists():
         return set()
+    return parse_baseline(BASELINE.read_text())
+
+
+def parse_baseline(text: str) -> set[tuple[str, str, str]]:
     out = set()
-    for line in BASELINE.read_text().splitlines():
+    for lineno, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.startswith("#"):
             continue
         parts = line.split("\t")
-        if len(parts) >= 2:
-            out.add((parts[0], parts[1]))
+        if len(parts) < 3:
+            raise BaselineFormatError(
+                f"{BASELINE.name}:{lineno}: expected at least 3 tab-separated fields "
+                f"(kind, name, definition_file), got {len(parts)}"
+            )
+        if ":" in parts[2]:
+            # The retired name-only-key format wrote `path:line` in field 3. REFUSE it
+            # rather than reinterpret: silently treating `a.rs:60` as a file name would
+            # make every row stale AND every finding fresh, which reads as a catastrophe
+            # instead of as a format change.
+            raise BaselineFormatError(
+                f"{BASELINE.name}:{lineno}: field 3 is `{parts[2]}` — a `path:line` from the "
+                "RETIRED name-only-key baseline format. The key is now "
+                "(kind, name, definition_file) with the line in its own column. "
+                "Re-emit with: scripts/check-production-callers.py --bless"
+            )
+        out.add((parts[0], parts[1], parts[2]))
     return out
 
 
@@ -321,12 +403,16 @@ def write_baseline(rows) -> None:
     lines = [
         "# production-callers.tsv — the KNOWN population of `pub fn`s with no production caller.",
         "# Written by scripts/check-production-callers.py --bless. See that file's header for what",
-        "# UNCALLED and THEATRE mean and for what this census cannot see.",
+        "# UNCALLED and THEATRE mean, for what this census cannot see, and for the row KEY.",
         "#",
-        "# kind\tname\tdefinition\ttest_call_sites",
+        "# A row is keyed on (kind, name, definition_file) — the LINE column is informational and",
+        "# is not part of the key. The check goes red BOTH ways: a guard with no row is FRESH, a",
+        "# row with no guard is STALE (it acquired a caller, or was deleted/renamed/moved).",
+        "#",
+        "# kind\tname\tdefinition_file\tdefinition_line\ttest_call_sites",
     ]
-    for kind, name, where, test in rows:
-        lines.append(f"{kind}\t{name}\t{where}\t{test}")
+    for kind, name, path, line, test in rows:
+        lines.append(f"{kind}\t{name}\t{path}\t{line}\t{test}")
     BASELINE.write_text("\n".join(lines) + "\n")
 
 
@@ -380,10 +466,66 @@ def self_test() -> int:
     if not is_guard("verify_the_thing") or is_guard("caller"):
         failures.append("the guard-class predicate does not separate deciders from ordinary fns")
 
-    # And the ratchet itself: an unbaselined guard row must FAIL.
-    rows = [("UNCALLED", "verify_a_thing_nobody_baselined", "x/src/lib.rs:1", 0)]
-    if not [r for r in rows if is_guard(r[1]) and (r[0], r[1]) not in read_baseline()]:
-        failures.append("an unbaselined uncalled guard did not register as a fresh finding")
+    # ── THE RATCHET, BOTH DIRECTIONS. Each arm is driven red on purpose; a negative
+    #    assertion ("nothing new, nothing stale") passes just as happily on a broken reader.
+    baseline = {("UNCALLED", "verify_baselined", "kept/src/lib.rs")}
+
+    # ARM 1 — FRESH: an unbaselined uncalled guard must register.
+    guards = [
+        ("UNCALLED", "verify_baselined", "kept/src/lib.rs", 1, 0),
+        ("UNCALLED", "verify_a_thing_nobody_baselined", "x/src/lib.rs", 1, 0),
+    ]
+    fresh = [r for r in guards if is_guard(r[1]) and row_key(r) not in baseline]
+    if [r[1] for r in fresh] != ["verify_a_thing_nobody_baselined"]:
+        failures.append(
+            "the FRESH arm did not isolate the unbaselined guard "
+            f"(got {[r[1] for r in fresh]})"
+        )
+
+    # ARM 2 — STALE: a baseline row whose guard is no longer in the population must
+    # register. This arm did not exist until 2026-07-27; the check was additions-only, so a
+    # row survived being wired up or deleted and kept asserting a hole that was closed.
+    wired_up = [("UNCALLED", "verify_a_thing_nobody_baselined", "x/src/lib.rs", 1, 0)]
+    stale = baseline - {row_key(r) for r in wired_up}
+    if {k[1] for k in stale} != {"verify_baselined"}:
+        failures.append(
+            "the STALE arm did not register a baseline row whose function left the "
+            f"population (got {sorted(k[1] for k in stale)}) — the ratchet only turns one way"
+        )
+    if not (baseline - {row_key(r) for r in guards}) == set():
+        failures.append("a row still in the population was wrongly reported STALE")
+
+    # ARM 3 — THE KEY MUST NOT COLLIDE. Two same-named uncalled guards in different crates
+    # are TWO findings. Under the retired name-only key the second was absorbed silently.
+    dup_defs = {
+        "verify_same_name": [
+            (Path("crate_a/src/lib.rs"), 10),
+            (Path("crate_b/src/lib.rs"), 20),
+        ]
+    }
+    dup_rows = classify(dup_defs, {"verify_same_name": (0, 0)})
+    if len({row_key(r) for r in dup_rows}) != 2:
+        failures.append(
+            "two same-named guards in different crates collapsed to one key — a freshly "
+            "written uncalled decider in a new crate would be absorbed by the existing row"
+        )
+    if [r for r in dup_rows if row_key(r) not in {row_key(dup_rows[0])}] == []:
+        failures.append("the per-site expansion produced no second row at all")
+
+    # ARM 4 — the RETIRED name-only-key baseline must REFUSE to load, not be reinterpreted.
+    try:
+        parse_baseline("UNCALLED\tverify_x\tcrate/src/lib.rs:60\t0\n")
+    except BaselineFormatError:
+        pass
+    else:
+        failures.append(
+            "a retired-format baseline row (`path:line` in field 3) loaded silently — every "
+            "row would read STALE and every finding FRESH, a format change disguised as a fire"
+        )
+    if parse_baseline(
+        "# comment\nUNCALLED\tverify_x\tcrate/src/lib.rs\t60\t0\n"
+    ) != {("UNCALLED", "verify_x", "crate/src/lib.rs")}:
+        failures.append("the current baseline format does not round-trip through the parser")
 
     if failures:
         print("check-production-callers --self-test: FAIL")
@@ -391,8 +533,10 @@ def self_test() -> int:
             print(f"  * {f}")
         return 1
     print("check-production-callers --self-test: OK — the scanner sees calls through the "
-          "comment trap, separates test from production call sites, and an unbaselined "
-          "guard registers as red.")
+          "comment trap, separates test from production call sites, an unbaselined guard "
+          "registers FRESH, a baseline row that left the population registers STALE, two "
+          "same-named guards in different crates key apart, and a retired-format baseline "
+          "refuses to load.")
     return 0
 
 
@@ -419,9 +563,9 @@ def main() -> int:
     theatre = [r for r in rows if r[0] == "THEATRE"]
 
     if args.report:
-        for kind, name, where, test in rows:
+        for kind, name, path, line, test in rows:
             suffix = f"  ({test} test call sites)" if test else ""
-            print(f"{kind:9} {name:52} {where}{suffix}")
+            print(f"{kind:9} {name:52} {path}:{line}{suffix}")
         print(f"\n{len(uncalled)} UNCALLED, {len(theatre)} THEATRE, {len(defs)} pub fns scanned")
         return 0
 
@@ -432,26 +576,57 @@ def main() -> int:
         return 0
 
     guards = [r for r in rows if is_guard(r[1])]
-    known = read_baseline()
-    fresh = [r for r in guards if (r[0], r[1]) not in known]
-    if not fresh:
+    try:
+        known = read_baseline()
+    except BaselineFormatError as e:
+        print(f"check-production-callers: FAIL — {e}", file=sys.stderr)
+        return 1
+
+    by_key = {row_key(r): r for r in guards}
+    fresh = [r for r in guards if row_key(r) not in known]
+    stale = sorted(known - set(by_key))
+
+    if not fresh and not stale:
         print(f"check-production-callers: OK — {len(guards)} uncalled GUARDS, all in the "
-              f"baseline. ({len(uncalled)} UNCALLED + {len(theatre)} THEATRE overall across "
-              f"{len(defs)} pub fns; see --report.)")
+              f"baseline, and every baseline row still a live finding. ({len(uncalled)} "
+              f"UNCALLED + {len(theatre)} THEATRE overall across {len(defs)} pub fns; "
+              f"see --report.)")
         return 0
 
-    print("check-production-callers: FAIL — a function that DECIDES something, with no "
-          "production caller and no baseline row:\n")
-    for kind, name, where, test in fresh:
-        if kind == "THEATRE":
-            print(f"  THEATRE   {name}\n            {where}\n"
-                  f"            {test} call site(s), every one of them test code. It goes green "
-                  f"daily and does not run in production.\n")
-        else:
-            print(f"  UNCALLED  {name}\n            {where}\n"
-                  f"            no call sites anywhere, tests included.\n")
-    print("Wire it up, delete it, or — if its callers are genuinely outside this tree — record it:")
-    print("    scripts/check-production-callers.py --bless")
+    print("check-production-callers: FAIL\n")
+
+    if fresh:
+        print("FRESH — a function that DECIDES something, with no production caller and no "
+              "baseline row:\n")
+        for kind, name, path, line, test in fresh:
+            if kind == "THEATRE":
+                print(f"  THEATRE   {name}\n            {path}:{line}\n"
+                      f"            {test} call site(s), every one of them test code. It goes "
+                      f"green daily and does not run in production.\n")
+            else:
+                print(f"  UNCALLED  {name}\n            {path}:{line}\n"
+                      f"            no call sites anywhere, tests included.\n")
+        print("Wire it up, delete it, or — if its callers are genuinely outside this tree — "
+              "record it:")
+        print("    scripts/check-production-callers.py --bless\n")
+
+    if stale:
+        print("STALE — a baseline row whose finding is GONE. The row asserts a hole that is no "
+              "longer there, and the next reader of the baseline believes it:\n")
+        for kind, name, path in stale:
+            live = [r for r in rows if r[1] == name and r[2] == path]
+            if live:
+                became = live[0][0]
+                why = (f"still uncalled, but now {became}, not {kind} — the call-site population "
+                       f"changed shape")
+            elif name in defs:
+                why = ("the function now HAS a production caller, or moved to another file "
+                       "(it is still defined in this tree)")
+            else:
+                why = "the function is gone from this tree entirely (deleted or renamed)"
+            print(f"  {kind:9} {name}\n            {path}\n            {why}\n")
+        print("Drop the row — removing one is always allowed:")
+        print("    scripts/check-production-callers.py --bless")
     return 1
 
 

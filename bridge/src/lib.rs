@@ -178,10 +178,9 @@ pub use present::{
     WirePresentationProof, bb_from_bytes, bb_to_bytes, compute_revealed_facts_commitment,
     fresh_predicate_blinding, prove_committed_threshold, prove_fact_attestation,
     prove_predicate_for_fact, prove_predicate_for_fact_attested, prove_predicate_program,
-    prove_predicate_program_full, verify_committed_threshold_proof, verify_fact_attestation,
-    verify_fold_chain, verify_predicate_program, verify_predicate_proof,
-    verify_predicate_proof_third_party, verify_presentation_complete, verify_presentation_full,
-    verify_proof_complete, verify_revealed_facts_commitment, verify_wire_fold_chain,
+    prove_predicate_program_full, verify_fact_attestation, verify_predicate_proof,
+    verify_predicate_proof_third_party, verify_presentation_complete, verify_proof_complete,
+    verify_revealed_facts_commitment,
 };
 pub use solana_consensus::{
     BankHashComponents, EpochStakeTable, PohAnchorPolicy, PohError, PohSegment, ValidatorVote,
