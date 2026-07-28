@@ -451,13 +451,11 @@ private def c2 : Array String := #[
   "Dregg2.Circuit.DeployedHeapTree.Heap8Scheme.heapOpenColl_refutable_of_injective",
   "Dregg2.Circuit.DeployedHeapTree.Heap8Scheme.membersAt8_functional_on_path_of_injective",
   "Dregg2.Circuit.DeployedHeapTree.Heap8Scheme.recomposeUp8_inj_of_path_of_injective",
-  "Dregg2.Circuit.DescriptorIR2.opensTo_functional",
   "Dregg2.Circuit.DescriptorIR2.satisfied2U_init_whole_image",
   "Dregg2.Circuit.DescriptorIR2.satisfied2_init_root_bound",
   "Dregg2.Circuit.DescriptorIR2.satisfied2_init_whole_image"]
 
 private def c3 : Array String := #[
-  "Dregg2.Circuit.DescriptorIR2.writesTo_functional",
   "Dregg2.Circuit.DescriptorRefinesComplete.DescriptorRefinesComplete",
   "Dregg2.Circuit.DescriptorRefinesComplete.descriptorRefines_census",
   "Dregg2.Circuit.DescriptorRefinesComplete.descriptorRefines_complete",
@@ -861,16 +859,10 @@ private def c5 : Array String := #[
   "Dregg2.Circuit.MapAbsentImtGateWide.adjacentBracketW_unsat_above_max",
   "Dregg2.Circuit.MapAbsentImtGateWide.imtGates_force_holdsKindW_absent",
   "Dregg2.Circuit.MapAbsentImtGateWide.imtLeafHash8Of_ne_leafOfW",
-  "Dregg2.Circuit.MapMerkleRoot.foldLevel_injective",
-  "Dregg2.Circuit.MapMerkleRoot.mapNode_injective",
   "Dregg2.Circuit.MapMerkleRoot.mapRoot8_injective_of_injective",
   "Dregg2.Circuit.MapMerkleRoot.mapRootColl_refutable_of_injective",
-  "Dregg2.Circuit.MapMerkleRoot.mapRoot_injective",
   "Dregg2.Circuit.MapMerkleRoot.opensToMerkle8_functional_of_injective",
-  "Dregg2.Circuit.MapMerkleRoot.opensToMerkle_functional",
-  "Dregg2.Circuit.MapMerkleRoot.perfectRoot_injective",
   "Dregg2.Circuit.MapMerkleRoot.writesToMerkle8_functional_of_injective",
-  "Dregg2.Circuit.MapMerkleRoot.writesToMerkle_functional",
   "Dregg2.Circuit.MapOpWideKeyGate.aafiGatesW_force_imtAbsentW",
   "Dregg2.Circuit.MapOpWideKeyGate.aafiInsertW_forces_imtInsertW",
   "Dregg2.Circuit.MapOpWideKeyGate.mapOpW_gates_force_holds",
@@ -1511,6 +1503,29 @@ to be built on a hypothesis this tree PROVES FALSE at deployed BabyBear paramete
 that it is knowingly VACUOUS. Say why in the commit message. The next shrink-emit folds
 surviving entries into the chunks above and drops the ones that got ported. -/
 def manual : Array String := #[
+  -- ⚑⚑⚑ RAISE OF 2026-07-28, +3 — THE MODULE THAT PROVES THIS FILE'S APEXES VACUOUS.
+  --
+  -- `Verify/ApexPremiseVacuity.lean` shows `deployed_system_secure` and `unfoolability_guarantee`
+  -- (lines 47-48 BELOW) are vacuous at EVERY parameter, not only deployed ones — the fifth binder
+  -- `RestHashIffFrame` is refuted with NO hypotheses at all, by Cantor. To land that refutation the
+  -- module must NAME the conjunction it refutes, and must exhibit a portal where the floors are
+  -- genuinely TRUE so the refutation is not itself vacuous. Both shapes trip the carrier detector.
+  --
+  -- ⚠ THE IRONY IS THE POINT AND IS RECORDED DELIBERATELY: a module written to expose that this
+  -- baseline grandfathers vacuous apexes needs three rows in this baseline to land. That is the
+  -- honest direction (b) the preflight offers — a reviewable decision rather than a silent escape —
+  -- but a future reader should not mistake these rows for the class they were added to expose.
+  --
+  --   ApexCommitFloor / ApexCommitFloorSansRest — DEFINITIONS, not theorems. They bundle the five
+  --     binders so `apexCommitFloor_unsatisfiable` can refute the bundle. A def that names a floor
+  --     carries no proof obligation and cannot be vacuous; it is the SUBJECT of the refutation.
+  --   pairCompress_injective — the POSITIVE POLE. It proves `compressInjective` genuinely HOLDS for
+  --     an unbounded pairing portal, which is what establishes that the width bound is load-bearing
+  --     and that the deployed refutation is not a statement about an empty class. Deleting this row
+  --     by deleting the theorem would make the whole module's anti-vacuity claim unfalsifiable.
+  "Dregg2.Verify.ApexPremiseVacuity.ApexCommitFloor",
+  "Dregg2.Verify.ApexPremiseVacuity.ApexCommitFloorSansRest",
+  "Dregg2.Verify.ApexPremiseVacuity.pairCompress_injective",
 -- ⚑⚑ RAISE OF 2026-07-25 (second), +2 — THE TWO SECURITY CLAIMS THE B4 HOLE WAS HIDING.
 --
 -- These are not new theorems and nothing about them changed. What changed is the RULER: the
@@ -1879,7 +1894,6 @@ def manual : Array String := #[
   "Dregg2.Circuit.CrossTurnFreshness.witnessChain",
   "Dregg2.Circuit.CrossTurnFreshness.witnessChain_nonce",
   "Dregg2.Circuit.CrossTurnFreshness.witnessChain_replay_rejected",
-  "Dregg2.Circuit.DescriptorIR2.opensTo_some_excludes_none",
   "Dregg2.Circuit.DescriptorRefinesReduce.descriptorRefinesR",
   "Dregg2.Circuit.DescriptorRefinesReduce.descriptorRefinesR_constHash",
   "Dregg2.Circuit.DescriptorRefinesReduce.lightclient_unfoolableR",
@@ -1938,7 +1952,6 @@ def manual : Array String := #[
   "Dregg2.Circuit.LightClientFusion.dProduced_not_vacuous",
   "Dregg2.Circuit.MapAbsentImtGateWide.aafiInsertW_then_absentImtW_unsat",
   "Dregg2.Circuit.MapMerkleRoot.opensToMerkle8_some_excludes_none_of_injective",
-  "Dregg2.Circuit.MapMerkleRoot.opensToMerkle_some_excludes_none",
   "Dregg2.Circuit.MapOpWideKeyRowBoundary.gates_aafiInsertW_absentW_jointly_unsat_row",
   "Dregg2.Circuit.MapOpWideKeyRowBoundary.gates_insertW_absentW_jointly_unsat_row",
   "Dregg2.Circuit.MapOpWideKeyRowBoundary.gates_jointly_unsat_via_abstract_row",
