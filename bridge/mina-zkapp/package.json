@@ -14,7 +14,11 @@
     "poseidon2-rows": "npm run build && node dist/scripts/poseidon2-babybear-rows.js",
     "merkle-constraints": "npm run build && node dist/scripts/merkle-constraints.js",
     "test": "npm run gate",
-    "deploy": "npm run build && node dist/scripts/deploy.js"
+    "deploy": "npm run build && node dist/scripts/deploy.js",
+    "devnet:fund": "npm run build && node dist/scripts/devnet-fund.js",
+    "devnet:deploy": "npm run build && node dist/scripts/devnet-deploy.js",
+    "devnet:attest": "npm run build && node dist/scripts/devnet-attest.js",
+    "devnet:emit-root": "npm run build && node dist/scripts/devnet-emit-root.js"
   },
   "dependencies": {
     "o1js": "2.15.0"
