@@ -323,6 +323,19 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
   code**: two consecutive nightlies died in ~57s at checkout — *"This repository exceeded its LFS
   budget"*. Still live: `test-gauntlet.sh` is invoked by nothing.
 
+- ⚑ **`declared_supply` was not unwired — it was an authority bypass.** A `DeclaredSupplyChange` row
+  added `+magnitude` to the conserved sum **with no authority check of any kind**, while
+  `Effect::Mint` requires a control-grade cap carrying `EFFECT_MINT`. Any caller that populated it
+  would have minted straight past that gate. I dispatched this asking for it to be WIRED; the lane
+  established it cannot be, because supply is disclosed as a paired ledger delta and the producer
+  cannot exist by design. Deleted. Wire byte-identical, Lean rule untouched.
+  ⚠ Both prior counts were wrong (mine 2+4, the index 4+2; real 4+5), and the struct was constructed
+  exactly ONCE in the tree — inside its own test.
+- ⚠ **A B2 follow-up, worse than recorded**: `CatalogInstances.lean`'s `EffectKind` has **no `.mint`
+  at all** and colors `.burn` as disclosed non-conservation, while deployed `apply_burn` is a
+  conserving holder→well move — and its docstring says it is transcribed verbatim from a Rust
+  function **deleted today**. The Lean spec catalog mirrors something that no longer exists.
+
 ## Open for ember
 0. ⚑ **THE GITHUB LFS BUDGET IS EXCEEDED**, so the adversarial suite has not run for at least two
    nights — `actions/checkout` with `lfs: true` fails in 57s. The staged registries are LFS-tracked,
