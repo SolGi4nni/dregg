@@ -19,6 +19,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PBUILD_HOST="${HBUILD_HOST:-hbox}"
+# The lease must live on the box the build runs on, or it warns nobody.
+# `lane-lease.sh` defaults to `HOST="${LANE_LEASE_HOST:-persvati}"`, and the lease FILE lives ON THE
+# BOX — so a lane that claimed `eth-lc-air` while building here filed its claim on persvati, where no
+# hbox reader ever looks. Measured consequence on 2026-07-28: lanes were repeatedly taken mid-build by
+# other agents, each theft surfacing as a wave of missing-`.olean` cascades (one root build logged ~190)
+# that reads exactly like a code failure and is not one. The lane that finally diagnosed it put it
+# plainly: "my lease was never visible to hbox readers; that is a real gap worth fixing."
+export LANE_LEASE_HOST="${LANE_LEASE_HOST:-$PBUILD_HOST}"
 export PBUILD_REMOTE_WRAPPER="${HBUILD_REMOTE_WRAPPER:-swarm-build}"
 export PBUILD_MIN_FREE_GIB="${HBUILD_MIN_FREE_GIB:-20}"
 if [ -n "${HBUILD_WARM_DEPS:-}" ] && [ -z "${PBUILD_WARM_DEPS:-}" ]; then
