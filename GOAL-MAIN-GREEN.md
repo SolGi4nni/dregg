@@ -251,6 +251,22 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
   waste was a shipped feature with no way in. And its E2E test had been standing in for the missing
   caller, which is exactly why `submit` could have 0 callers and a green suite.
 
+- ⚑ **`dregg-circuit` is 1222/1222** — the 24 committed reds are two families, both closed.
+  **Family A (23 of 24) is my own `460727e9f`'s SEVENTH site**: its commit message enumerates the six
+  hand-repaired drift sites and `settle_carrier_trace` was the one it missed. One line.
+  Family B was hiding two VACUOUS teeth — with the selector gate stripped, both "negative" arms are
+  still UNSAT, so the module header's claim was false at HEAD. A new tooth isolates the gate by using
+  a zero-amount Transfer, so one constraint is the whole difference between accept and refuse.
+  ⚠ Neither my `413fc0bde` suspicion nor my compaction hypothesis was right; both were checked and
+  refuted rather than inherited.
+- **D3's sibling `compute-exchange` CLOSED** — and its executor blocker was MEASURED here rather than
+  assumed from bounty-board: compute-exchange's `post` DOES advance STATE, so "fund inside the posting
+  action" looked open, and it is not, because the executor snapshots per ACTION. Its `AffineEq` is
+  not vacuous but constrains the wrong thing — a turn recording `PAID = 800` while transferring **1**
+  is ACCEPTED, now measured by a test rather than described in a comment.
+- ⚠ `starbridge-v2` is red right now on a live lane's uncommitted `TurnError::AssetClassCollision`
+  with no arm in `debug.rs:235` — the same miss I made at 10:43. Theirs to finish; not touched.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
