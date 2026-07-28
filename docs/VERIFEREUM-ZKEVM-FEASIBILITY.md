@@ -1,6 +1,21 @@
 # Verifereum → zkEVM feasibility: can dregg's arithmetizer compile a verified EVM into a state-validity AIR?
 
 Status: RESEARCH / FEASIBILITY READ (no build). Author pass 2026-07-26.
+
+> **[ADDED 2026-07-27 — a provenance fact this document did not disclose.]** Everywhere below this
+> calls the source *"Verifereum"* without noting that **the local checkout is a locally-modified
+> fork**: `~/dev/verifereum` carries **2 dregg commits atop upstream `8107a32`** (`513beea` "track
+> the bytecode-proof corpus", `bf8294d` "DreggVault no-double-withdraw bytecode proof"), plus an
+> uncommitted working change. The cited `spec/` and `util/` files are **untouched by the fork, so
+> every pin in this document holds** — but a reader auditing against upstream Verifereum should know
+> the tree they would be handed is not upstream. (audit F-D7.)
+>
+> Two positives from the same audit, recorded because they were checked and held: this document's
+> **in-repo inventory holds** — `Sha256Gadget`, `Bls12381Tower*`, `EffectVmEmitIvcStateTransition`
+> and `LightClientMpt` were independently confirmed to exist, `Keccak` appears only in ML-DSA sponge
+> contexts (consistent with *"only a carrier, NOT built"*), and the **"~29.7k gates/block" figure is
+> genuinely sourced** to `Sha256Gadget.lean:57`.
+
 Scope: a grounded read of the dregg arithmetizer + a sourced read of Verifereum, against the
 thesis that dregg's `def`-generator arithmetizer can turn a *verified* EVM step function into an
 AIR proving ETH **state validity** — a proof-native guarantee to sit beside (not replace) the

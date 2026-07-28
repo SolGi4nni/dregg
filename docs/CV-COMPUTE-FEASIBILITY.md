@@ -115,6 +115,14 @@ node routed to `raise` instead of to any of these**.
 
 ### HOL issue #1118, in its own words
 
+> **[MARKED 2026-07-27 — the one unchecked leg of an otherwise airtight document.]** The
+> 2026-07-27 audit found this document's citation hygiene **flawless** — every pin exact, including
+> three verbatim HOL4 code quotes — with exactly one exception: **issue #1118 was not fetched by the
+> auditor.** It is reported real and correctly characterized (open since 2023-06-28, the
+> compute/OpenTheory-exporter conflict) **per the authoring agent's log**, not per an independent
+> read. Treat the quotation below as **[UNVERIFIED]** until someone opens the issue. Nothing else in
+> this document carries that caveat.
+
 > "once `simp` (and friends) use the new compute under the hood it will [be] part
 > of every development, but **the OpenTheory exporter won't know how to record its
 > computation as OpenTheory primitive inferences**."

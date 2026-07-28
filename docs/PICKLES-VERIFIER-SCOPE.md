@@ -56,6 +56,17 @@ source pins, and turns "meaningfully further than the Kimchi verifier" into an o
   different recursion approach, not Pickles.
 - **o1-labs `mina`** (`/Users/ember/dev/mina/src/lib/pickles`, vendored source, no local git rev) —
   the **canonical** Pickles (Step/Wrap, tick/tock, `Deferred_values`, `inductive_rule`, the VK).
+  > **[ADDED 2026-07-27 — a staleness fact this document did not disclose.]** "No local git rev" was
+  > honest and is the right handling; what was not said is **how old the snapshot is**. `~/dev/mina`
+  > is **not a git repository at all** (`.git` absent) and its files date to **March 2024** — e.g.
+  > `src/lib/pickles/common.ml` is `Mar 25 2024`. **Every OCaml Pickles pin in this document is
+  > against a ~2-year-old snapshot, and the whole document describes it in the present tense.**
+  > Consequence, stated as the audit stated it (§6.6): the 12 OCaml pins can be **path- and
+  > line-checked but not pinned to a revision** — they are **[UNVERIFIED]** against today's upstream.
+  > By contrast `~/dev/mina-rust` matches its cited rev exactly, and the `proof-systems` pin
+  > `36a8b510cd` was confirmed an ancestor of the checkout's HEAD `f6d958dc05` with an **empty**
+  > `git diff` over all six cited files — so the "pins un-drifted" claim for *those* is if anything
+  > stronger than this document states.
 - **openmina `mina-rust`** (`/Users/ember/dev/mina-rust`, HEAD `82480cd468`, v0.19.0) —
   `crates/ledger/src/proofs/` — a clean **Rust** Pickles verifier (the easiest cross-check; it is
   what actually verifies a real mainnet block/tx today).
@@ -273,8 +284,20 @@ into one field [`branch_data.ml:45-84,135-136`].
 
 **The real VKs + the tx-snark** [S — mina-rust]: the mainnet/devnet **blockchain** and **transaction**
 verifier indices are embedded JSON [`verifiers.rs:176-279`, files `crates/ledger/src/proofs/data/
-{mainnet,devnet}_{blockchain,transaction}_verifier_index.json`]; SRS via
-`SRS::<Vesta>::create(2^15)` [`verifier/mod.rs:38-45`]. The transaction snark is a **merge tree**: a
+{mainnet,devnet}_{blockchain,transaction}_verifier_index.json`]; SRS via the **generic**
+`SRS::<F::OtherCurve>::create(<F as FieldWitness>::Scalar::SRS_DEPTH)`
+[`crates/ledger/src/verifier/mod.rs:42`, also `:55`].
+**[CORRECTED 2026-07-27 — this read `SRS::<Vesta>::create(2^15)`, an instantiation the code does not
+produce.]** The call is generic, and with `Fp::SRS_DEPTH = 32768` / `Fq::SRS_DEPTH = 65536`
+(`field.rs:106,127`) and `Fp::OtherCurve = Vesta` / `Fq::OtherCurve = Pallas` (`field.rs:93,113`) it
+yields **`SRS::<Vesta>::create(65536)`** (from `Fp`, whose `Scalar = Fq`) or
+**`SRS::<Pallas>::create(32768)`** (from `Fq`, whose `Scalar = Fp`). The old rendering **paired the
+wrong curve with the wrong depth**. The one concrete instantiation in the tree is
+`SRS::<Pallas>::create(degree)` at `verifiers.rs:407`. Consistent with §A and with
+`kimchi_pasta_basic.ml:16-17` (`Wrap = Nat.N15`, `Step = Nat.N16`) and
+`mod.rs:33-34` (`BACKEND_TICK_ROUNDS_N = 16`, `BACKEND_TOCK_ROUNDS_N = 15`): **Step is Fp-native,
+committed on Vesta, k = 16, SRS 2^16; Wrap is Fq-native, committed on Pallas, k = 15, SRS 2^15.**
+The transaction snark is a **merge tree**: a
 base leaf is `InductiveRule::empty` (zero previous proofs) [`transaction.rs:4289`], and `merge_main`
 recursively combines two child statements/proofs 2-to-1 [`merge.rs:36`]. The **block** step rule wires
 **two** previous proofs — the previous blockchain-state proof and the txn-snark proof —
