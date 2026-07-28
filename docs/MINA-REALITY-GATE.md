@@ -133,11 +133,24 @@ in-kernel over `ZMod pN`, demonstrably non-vacuous (a tampered value rejects).
    `kimchiVerifyDecisionField` (§9b, `refines`-tied to `kimchiVerifyDecision`) composes C1 + the C8
    `cip` check + the witnessed-inverse + the C5 `ft_eval0` check into one accept, evaluated in-kernel
    on the real proof (`real_field_decision_accepts`, non-vacuous via `real_field_decision_discriminates`).
-3. **C6 `linConstTerm` (custom gates)** — the Poseidon / VarBaseMul / CompleteAdd / EndomulScalar
-   constraint streams are a **carrier** (the real `PolishToken::evaluate` value was fed in). Only the
-   generic gate is emitted from Lean (`genericGate_evaluates`).
-4. **C3 phase-2 sponge** — not instantiated; the real β,γ,α,ζ,v,u **cannot be re-derived** in Lean
-   (the ORDER is proven; the sponge VALUES are the K3 + un-instantiated-sponge carrier).
+3. **C6 `linConstTerm` — GENERIC gate now COMPOSED (2026-07-27).** The double-generic gate constraint
+   is transcribed (`genericGateConstraint`, algebraic + the `PolishToken` stream
+   `genericConstraint_evaluates`) and threaded INTO the accept (`gateLinConst` +
+   `kimchiVerifyDecisionGates`, `KimchiVerify` §9c): `ftEval0`'s constant term is DERIVED from the real
+   generic-gate constraint, not the carrier. On the real proof `genericGateConstraint(real) = LCT`
+   exactly and all 5 custom-gate selectors are zero (`generic_gate_matches_lct`,
+   `custom_selectors_zero`), so THIS proof's whole `linConstTerm` is the generic gate — carrier
+   retired. STILL CARRIED: the CUSTOM-gate bodies — Poseidon is transcribed as a def-generator
+   (`poseidonLaneConstraint`) but NOT exercised (`poseidon_selector = 0`); complete_add/varbasemul/
+   endomul/endomul_scalar bodies live behind their (here-zero) selectors.
+4. **C3 phase-2 sponge — INSTANTIATED over `Fp = pN` (2026-07-27).** The Fr-sponge IS K3's
+   Poseidon-over-Fp sponge (`Vesta::sponge_params() = fp_kimchi`, `curve.rs:63` — the earlier "over
+   `Fq`/`qN`" label was the same Fp/Fq mislabel this gate corrected): `frSpongeDigest = Ref.hash` of the
+   phase-2 absorb stream, whose `absorb_evaluations` point order is proven (`frEvalPointOrder`,
+   `KimchiVerify` §9d). It consumes the real `ft_eval1` + public evals non-vacuously (`#guard`). STILL
+   CARRIED: the fq-sponge `digest` value (phase-1 `Fq`-sponge over `qN`, not extracted) and the
+   `challenge()` endo map (low-128-bit truncation + `to_field(endo_r)`) — so the actual β,γ,α,ζ,v,u are
+   still not re-derived end-to-end.
 5. **C9 `ipaOk` (`msm == 0`)** — the terminal IPA/FRI opening-soundness floor, **not discharged**
    (a STARK/light client proves the trace, not the opening). This is the Pickles-recursion frontier.
 6. **C4 `publicEval`** — not run standalone (its value `p(ζ)` enters `ftEval0` as an input; running it
@@ -152,8 +165,12 @@ in-kernel over `ZMod pN`, demonstrably non-vacuous (a tampered value rejects).
 3. ~~**[medium]** Make the shipped formulas runnable at the real field~~ **DONE for C5/C8
    (2026-07-27) via the `CommRing` + witnessed-inverse route — no Pratt certificate.** (C4
    `publicEval` recomputation still needs the un-extracted Lagrange denominators — see §5.6.)
-4. **[medium]** Emit C6's custom-gate constraint streams from Lean (retire the `linConstTerm` carrier);
-   instantiate the phase-2 sponge (retire the C3 value carrier).
+4. ~~**[medium]** Emit C6's custom-gate constraint streams from Lean; instantiate the phase-2 sponge~~
+   **PARTLY DONE (2026-07-27):** C6 GENERIC gate emitted + composed (`kimchiVerifyDecisionGates`;
+   carrier retired for this proof, which fires no custom gate); C3 Fr-sponge INSTANTIATED over `Fp`
+   (K3, `frSpongeDigest`), phase-2 order proven, non-vacuous on the real evals. REMAINING: the custom
+   gate BODIES (Poseidon transcribed but selector-0; complete_add/varbasemul/endomul/endomul_scalar
+   carried) and the C3 fq-sponge digest value + `challenge()` endo map (so v/u are not re-derived).
 5. **[terminal]** The IPA/FRI opening-soundness floor (`ipaOk`) is inherited, not discharged — the same
    floor every STARK-backed light client carries. "Verifies a real proof" end-to-end still rests on it.
 
