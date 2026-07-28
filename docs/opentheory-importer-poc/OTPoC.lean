@@ -32,6 +32,10 @@
 import Lean
 open Lean Meta Elab Command
 
+-- Real OpenTheory articles replay tens of thousands of primitive steps in a single
+-- elaboration; the default heartbeat ceiling is for interactive proofs, not this.
+set_option maxHeartbeats 0
+
 namespace OTImport
 
 /- ======================================================================
@@ -113,10 +117,72 @@ theorem d_forall_triv {A : Type} [Nonempty A] : ∀ (t : Prop), (∀ _ : A, t) =
   · intro h; exact h (Classical.choice inferInstance)
   · intro h _; exact h
 
+/-- OpenTheory base axiom `axiom-extensionality`: `⊦ !(t:A→B). (\x. t x) = t`.
+    Function extensionality in eta form; Lean has definitional eta, so `rfl`.
+    (Type-variable domains/codomains are `Type` fvars; `Prop` is also an element
+    of `Type`, so instantiating either at `bool` stays well-typed.) -/
+theorem d_eta {A B : Type} : ∀ (t : A → B), (fun x => t x) = t := fun _ => rfl
+
+/-- OpenTheory base axiom `axiom-choice` (Hilbert select):
+    `⊦ !(p:A→bool)(x:A). p x ⇒ p ((select) p)`.
+    `select` is `Classical.epsilon`; needs `A` nonempty (HOL's every-type-nonempty,
+    which the encoding threads onto every type variable). -/
+theorem d_select_ax {A : Type} [Nonempty A] :
+    ∀ (p : A → Prop) (x : A), p x → p (Classical.epsilon p) :=
+  fun _ x hpx => Classical.epsilon_spec ⟨x, hpx⟩
+
+/-- Extensionality in the form a bool-INLINING article produces it: the composed
+    `pair`/`sum`/`option` articles define `!` and `T` themselves (bool-def), so the
+    axiom is `!(\d. (\e. d e) = d)` with `!` = `\P. P = \x.T` and `T` = `(\x.x)=(\x.x)`
+    inlined. After the outer beta step (which `isDefEq` performs) this is the
+    equation below. `d_eta` (native `∀`) covers the bool-ASSUMING article style. -/
+theorem d_eta_bd {A B : Type} :
+    (fun d : A → B => (fun e => d e) = d)
+      = (fun _ : A → B => (fun c : Prop => c) = (fun c : Prop => c)) := by
+  funext d; exact propext ⟨fun _ => rfl, fun _ => rfl⟩
+
+/-- The choice axiom in the SAME fully-bool-inlined form: `!(\d. !(\g. d g ⇒ d (ε d)))`
+    with `!` = `\P.P=\x.T`, `⇒` = `\p q. (p∧q)=p`, `∧` = `\p q. (\f.f p q)=\f.f T T`, and
+    `T` = `(\x.x)=(\x.x)` all inlined (`select` = `Classical.epsilon`). The proof
+    re-establishes that this inlined encoding is the Hilbert choice property. -/
+theorem d_select_bd {A : Type} [Nonempty A] :
+    (fun d : A → Prop =>
+        (fun g : A =>
+            ((fun l : Prop → Prop → Prop => l (d g) (d (Classical.epsilon d)))
+                = (fun m : Prop → Prop → Prop =>
+                    m ((fun c : Prop => c) = (fun c : Prop => c))
+                      ((fun c : Prop => c) = (fun c : Prop => c))))
+              = d g)
+          = (fun _ : A => (fun c : Prop => c) = (fun c : Prop => c)))
+      = (fun _ : A → Prop => (fun c : Prop => c) = (fun c : Prop => c)) := by
+  funext d
+  apply propext; constructor
+  · intro _; rfl
+  · intro _
+    funext g
+    apply propext; constructor
+    · intro _; rfl
+    · intro _
+      -- goal: the inlined `d g ⇒ d (ε d)`, i.e. `(AND (d g) (d (ε d))) = d g`
+      apply propext; constructor
+      · -- (AND …) = d g  ⟹  d g   (apply both sides to `fun a _ => a`)
+        intro hX
+        exact cast (congrFun hX (fun a _ : Prop => a)).symm rfl
+      · -- d g ⟹ (AND …) = d g
+        intro hdg
+        have hde : d (Classical.epsilon d) := Classical.epsilon_spec ⟨g, hdg⟩
+        funext l
+        have e1 : d g = ((fun c : Prop => c) = (fun c : Prop => c)) :=
+          propext ⟨fun _ => rfl, fun _ => hdg⟩
+        have e2 : d (Classical.epsilon d) = ((fun c : Prop => c) = (fun c : Prop => c)) :=
+          propext ⟨fun _ => rfl, fun _ => hde⟩
+        rw [e1, e2]
+
 /-- Names of the discharge theorems. `axiom` may resolve to exactly these. -/
 def dischargeNames : List Name :=
   [``d_true, ``d_and_def, ``d_imp_def, ``d_forall_def, ``d_exists_def,
-   ``d_exists_select, ``d_t_eq, ``d_forall_triv]
+   ``d_exists_select, ``d_t_eq, ``d_forall_triv, ``d_eta, ``d_select_ax,
+   ``d_eta_bd, ``d_select_bd]
 
 /- ======================================================================
    Generic realization of HOL `defineTypeOp` (carve a non-empty subset).
@@ -192,9 +258,17 @@ structure St where
   tyvars  : Array (String × Expr × Expr) := #[]   -- name × (A : Type) × (hA : Nonempty A) fvar
   tmvars  : Array (String × Expr × Expr) := #[]   -- name × encoded-type × fvar
   hyps    : Array (Expr × Expr) := #[]            -- statement × hyp fvar
-  defined : Array (String × Expr) := #[]          -- OT const name -> its meaning Expr
-  definedTyops : Array (String × Expr) := #[]     -- OT tyop name -> carrier Expr (arity 0)
-  tyNonempty : Array (Expr × Expr) := #[]         -- carrier type × Nonempty proof
+  defined : Array (String × Expr) := #[]          -- MONOMORPHIC const -> its meaning Expr
+  -- POLYMORPHIC const: name × tyVar-fvars × their Nonempty-witness fvars × generic
+  -- type × meaning (all with the tyVar/Nonempty fvars free). Instantiated per use
+  -- site by matching the generic type against the `constTerm` type (INST_TYPE).
+  polyDefined : Array (String × Array Expr × Array Expr × Expr × Expr) := #[]
+  -- OT tyop name -> tyVar-fvars × carrier template (arity = tyVars.size; empty = arity 0)
+  definedTyops : Array (String × Array Expr × Expr) := #[]
+  tyNonempty : Array (Expr × Expr) := #[]         -- arity-0 carrier type × Nonempty proof
+  -- parameterized carrier Nonempty: tyVars × their Nonempty fvars × carrier template
+  -- × Nonempty(carrier) template (all with tyVar/Nonempty fvars free)
+  polyTyNonempty : Array (Array Expr × Array Expr × Expr × Expr) := #[]
   count   : Nat := 0
 
 /- ---- small helpers on St ---- -/
@@ -234,16 +308,38 @@ def Obj.asVar : Obj → MetaM (String × Expr × Expr)
    The encoding.
    ====================================================================== -/
 
+/-- Match a template type `gen` (with the given `tyVars` free) against a concrete
+    `target`, returning each tyVar's instantiation (aligned to `tyVars`), or `none`.
+    Uses fresh metavars + the kernel unifier (`isDefEq`). Type-variable fvars live in
+    `Type` (= `Sort 1`); so do the metavars, and every encoded HOL type (`Prop`,
+    `Nat`, fvars, `→`, `Subtype _`) is an element of `Type`, so all match. -/
+def matchTyVars (tyVars : Array Expr) (gen target : Expr) : MetaM (Option (Array Expr)) := do
+  let mvars ← tyVars.mapM (fun _ => mkFreshExprMVar (mkSort (Level.succ Level.zero)))
+  let gen' := gen.replaceFVars tyVars mvars
+  if ← isDefEq gen' target then
+    (some ·) <$> mvars.mapM instantiateMVars
+  else
+    return none
+
 /-- Build a `Nonempty τ` proof for an encoded type `τ`, threading HOL's
     every-type-is-nonempty invariant. Bare type variables carry their own
     `Nonempty` witness in `st.tyvars`; defined types (subtypes) carry theirs in
-    `st.tyNonempty`; `Prop`/`Nat`/`→` are structural. -/
+    `st.tyNonempty` (arity 0) or `st.polyTyNonempty` (parameterized, matched +
+    instantiated); `Prop`/`Nat`/`→` are structural. -/
 partial def mkNonempty (st : St) (τ : Expr) : MetaM Expr := do
   if τ.isFVar then
     if let some (_, _, hA) := st.tyvars.find? (fun (_, a, _) => a == τ) then
       return hA
   for (carrier, wit) in st.tyNonempty do
     if ← isDefEq τ carrier then return wit
+  -- parameterized defined carriers: match `Subtype p[tyVars]` against τ, then
+  -- instantiate its `Nonempty` witness (tyVars ↦ args, Nonempty-fvars ↦ Nonempty args).
+  for (tyVars, hAs, carrierT, neT) in st.polyTyNonempty do
+    match ← matchTyVars tyVars carrierT τ with
+    | some args =>
+        let nes ← args.mapM (fun a => mkNonempty st a)
+        return neT.replaceFVars (tyVars ++ hAs) (args ++ nes)
+    | none => pure ()
   if τ == mkSort Level.zero then
     return ← mkAppM ``Nonempty.intro #[mkConst ``True]
   if τ == mkConst ``Nat then
@@ -260,11 +356,22 @@ partial def mkNonempty (st : St) (τ : Expr) : MetaM Expr := do
       | some e => return e
       | none => throwError "mkNonempty: cannot construct Nonempty for {τ}"
 
+/-- Instantiate a polymorphic body at `args` for `tyVars` (their `hAs` Nonempty
+    witnesses traveling as `Nonempty args_i`). This IS HOL's INST_TYPE, and it must
+    carry the `Nonempty` witnesses or a `select`/`epsilon` inside `body` keeps a
+    `Nonempty tyVar` argument at the substituted type and the kernel rejects it. -/
+def instPoly (st : St) (tyVars hAs : Array Expr) (args : Array Expr) (body : Expr) : MetaM Expr := do
+  let nes ← args.mapM (fun a => mkNonempty st a)
+  return body.replaceFVars (tyVars ++ hAs) (args ++ nes)
+
 /-- Interpret an applied HOL type operator as a native Lean type `Expr`. -/
 def interpTyop (st : St) (op : String) (args : Array Expr) : MetaM Expr := do
-  if let some (_, carrier) := st.definedTyops.find? (·.1 == op) then
-    if args.isEmpty then return carrier
-    else throwError "interpTyop: parameterized defined type operator {op} not supported"
+  if let some (_, tyVars, carrier) := st.definedTyops.find? (·.1 == op) then
+    if args.size == tyVars.size then
+      -- direct type-arg substitution (carrier is a type expr; no Nonempty needed here)
+      return carrier.replaceFVars tyVars args
+    else
+      throwError "interpTyop: arity mismatch for defined type operator {op}: expected {tyVars.size}, got {args.size}"
   match op, args with
   | "bool", #[]    => pure (mkSort Level.zero)      -- Prop
   | "ind",  #[]    => pure (mkConst ``Nat)          -- fixed infinite carrier
@@ -276,6 +383,13 @@ def interpTyop (st : St) (op : String) (args : Array Expr) : MetaM Expr := do
 def interpConst (st : St) (nm : String) (ty : Expr) : MetaM Expr := do
   if let some (_, e) := st.defined.find? (·.1 == nm) then
     return e
+  -- polymorphic const (from a polymorphic defineConst / an abs|rep of a
+  -- parameterized type): match its generic type against the requested use type to
+  -- recover the type instantiation, then INST_TYPE its meaning.
+  if let some (_, tyVars, hAs, genTy, meaning) := st.polyDefined.find? (·.1 == nm) then
+    match ← matchTyVars tyVars genTy ty with
+    | some args => return ← instPoly st tyVars hAs args meaning
+    | none => throwError "interpConst: cannot instantiate polymorphic const {nm}:\n  generic {genTy}\n  at use  {ty}"
   match nm with
   | "=" =>
       let α := ty.bindingDomain!
@@ -708,30 +822,66 @@ partial def go (st : St) : List String → TermElabM Unit
           let repNm ← repO.asName
           let absNm ← absO.asName
           let opNm ← nO.asName
-          unless ls.isEmpty do
-            throwError "defineTypeOp: parameterized (arity>0) type definitions not supported yet (args {ls.size})"
           unless ax.hyps.isEmpty do
             throwError "defineTypeOp: the existence theorem must have empty hypotheses"
-          let (φ, wit) ← (match ax.concl with
+          -- The type-variable args `A₁..Aₙ` (parameters of the new type operator).
+          -- Resolve each to its in-scope `Type` fvar and its `Nonempty` witness; a
+          -- parameterized type's abs/rep/carrier are polymorphic in exactly these.
+          let mut tyVars : Array Expr := #[]
+          let mut hAs : Array Expr := #[]
+          for a in ls do
+            let anm ← a.asName
+            match st.tyvars.find? (·.1 == anm) with
+            | some (_, fv, hA) => tyVars := tyVars.push fv; hAs := hAs.push hA
+            | none => throwError "defineTypeOp: type-variable arg {anm} not in scope"
+          let (φ, wit0) ← (match ax.concl with
             | .app f a => pure (f, a)
             | _ => throwError "defineTypeOp: existence theorem is not an application (φ t)")
-          -- carrier {x // φ x}; rep = .val; abs total (junk = witness off φ).
+          -- The existence WITNESS may be SCHEMATIC (free term variables): `⊢ φ t`
+          -- allows them (the predicate φ must be closed, but not `t`). HOL's abs is an
+          -- OPAQUE constant, so a `\x y. abs (…)` definition stays closed; but we
+          -- INLINE abs as `holAbs φ wit proof`, which would leak the witness's free
+          -- vars into every constant defined via abs (the pair constructor), breaking
+          -- `defineConst`'s closedness. Close the witness: every HOL type is nonempty,
+          -- so substitute each free term var by `Classical.choice` of its type. This
+          -- only changes the junk-off-φ value (arbitrary), not the round-trip theorems.
+          let freeTm := st.tmvars.filter
+            (fun (_, _, w) => wit0.containsFVar w.fvarId! || ax.proof.containsFVar w.fvarId!)
+          let mut fvs : Array Expr := #[]
+          let mut cvs : Array Expr := #[]
+          for (_, vty, w) in freeTm do
+            fvs := fvs.push w
+            cvs := cvs.push (← mkAppM ``Classical.choice #[← mkNonempty st vty])
+          let wit := wit0.replaceFVars fvs cvs
+          let witPf := ax.proof.replaceFVars fvs cvs
+          -- carrier {x // φ x} (with the tyVars free); rep = .val; abs total
+          -- (junk = the closed existence witness off-predicate). For arity 0 these are
+          -- closed; for arity>0 they carry the tyVars/Nonempty fvars free and are
+          -- instantiated per use site (INST_TYPE) by `interpConst`/`interpTyop`.
           let σ ← inferType wit
           let carrier ← mkAppM ``Subtype #[φ]
-          let absE ← mkAppM ``holAbs #[φ, wit, ax.proof]      -- : σ → carrier
+          let absE ← mkAppM ``holAbs #[φ, wit, witPf]         -- : σ → carrier
           let repE ← mkAppM ``holRep #[φ]                     -- : carrier → σ
-          -- ⟨wit, ax.proof⟩ : Subtype φ — give the predicate explicitly (HO infer
-          -- of `p` from `ax.proof : p wit` is ambiguous).
-          let witElem ← mkAppOptM ``Subtype.mk #[some σ, some φ, some wit, some ax.proof]
+          -- ⟨wit, witPf⟩ : Subtype φ — give the predicate explicitly (HO infer
+          -- of `p` from `witPf : p wit` is ambiguous).
+          let witElem ← mkAppOptM ``Subtype.mk #[some σ, some φ, some wit, some witPf]
           let neCarrier ← mkAppM ``Nonempty.intro #[witElem]
-          let absRepPf ← mkAppM ``hol_abs_rep #[φ, wit, ax.proof]
+          let absRepPf ← mkAppM ``hol_abs_rep #[φ, wit, witPf]
           let absRepConcl ← inferType absRepPf
-          let repAbsPf ← mkAppM ``hol_rep_abs #[φ, wit, ax.proof]
+          let repAbsPf ← mkAppM ``hol_rep_abs #[φ, wit, witPf]
           let repAbsConcl ← inferType repAbsPf
-          let st := { st with
-              defined := (st.defined.push (absNm, absE)).push (repNm, repE),
-              definedTyops := st.definedTyops.push (opNm, carrier),
-              tyNonempty := st.tyNonempty.push (carrier, neCarrier) }
+          let absTy ← inferType absE
+          let repTy ← inferType repE
+          let st := { st with definedTyops := st.definedTyops.push (opNm, tyVars, carrier) }
+          let st :=
+            if tyVars.isEmpty then
+              { st with defined := (st.defined.push (absNm, absE)).push (repNm, repE),
+                        tyNonempty := st.tyNonempty.push (carrier, neCarrier) }
+            else
+              { st with
+                polyDefined := (st.polyDefined.push (absNm, tyVars, hAs, absTy, absE)).push
+                                 (repNm, tyVars, hAs, repTy, repE),
+                polyTyNonempty := st.polyTyNonempty.push (tyVars, hAs, carrier, neCarrier) }
           let stk := (((( st.stk.push (.tyop opNm)).push (.const absNm)).push (.const repNm)).push
               (.thm { hyps := #[], concl := absRepConcl, proof := absRepPf })).push
               (.thm { hyps := #[], concl := repAbsConcl, proof := repAbsPf })
@@ -744,16 +894,78 @@ partial def go (st : St) : List String → TermElabM Unit
           -- The spec forbids free TERM variables. Free TYPE variables (a
           -- polymorphic constant) are a labeled residual — this build inlines
           -- the meaning, which is faithful only for a monomorphic definition.
-          let tmFv := st.tmvars.any (fun (_, _, w) => t.containsFVar w.fvarId!)
-          if tmFv then throwError "defineConst: defining term has a free term variable (spec-forbidden)"
-          let tyFv := st.tyvars.any (fun (_, a, _) => t.containsFVar a.fvarId!)
-          if tyFv then throwError "defineConst: polymorphic constant (free type variable) not supported yet"
+          let offenders := st.tmvars.filter (fun (_, _, w) => t.containsFVar w.fvarId!)
+          unless offenders.isEmpty do
+            throwError m!"defineConst {nm}: defining term has free term variable(s) {offenders.map (·.1)}\n  term: {← ppExpr t}"
+          -- Free TYPE variables ⇒ a POLYMORPHIC constant. We inline the meaning `t`
+          -- and record it as polymorphic in exactly its free type-variable fvars, so
+          -- each use site (`constTerm` at a monomorphic type) is instantiated by
+          -- `interpConst`. Monomorphic (no free tyvars) stays in `defined`.
+          let mut tyVars : Array Expr := #[]
+          let mut hAs : Array Expr := #[]
+          for (_, a, hA) in st.tyvars do
+            if t.containsFVar a.fvarId! then tyVars := tyVars.push a; hAs := hAs.push hA
           -- inline: the new constant IS `t`; the defining theorem `⊦ c = t` is `⊦ t = t`.
           let concl ← mkEq t t
           let proof ← mkExpectedTypeHint (← mkEqRefl t) concl
-          let st := { st with defined := st.defined.push (nm, t) }
+          let genTy ← inferType t
+          let st :=
+            if tyVars.isEmpty then { st with defined := st.defined.push (nm, t) }
+            else { st with polyDefined := st.polyDefined.push (nm, tyVars, hAs, genTy, t) }
           -- push order per the reader/spec: Const c (below), then Thm (⊦ c = t) on top.
           go { st with stk := (st.stk.push (.const nm)).push (.thm { hyps := #[], concl, proof }) } rest
+      | "hdTl" =>
+          -- split a list: push head (below) then tail (on top), per the reader.
+          let (lO, st) ← pop1 st
+          let l ← lO.asList
+          unless l.size > 0 do throwError "hdTl: empty list"
+          cont { st with stk := (st.stk.push l[0]!).push (.list (l.extract 1 l.size)) }
+      | "defineConstList" =>
+          -- Simultaneously define constants from a theorem whose hypotheses are the
+          -- defining equations `v_i = tm_i`; output = the conclusion with each `v_i`
+          -- replaced by its (inlined) constant and those hyps discharged by refl.
+          -- This IS Rule.defineConstList (subst {v_i↦c_i} then proveHyp each def).
+          let (thO, st) ← pop1 st          -- theorem (top)
+          let (lO, st) ← pop1 st           -- list of [Name, Var] pairs (below)
+          let th ← thO.asThm
+          let nvs ← lO.asList
+          -- collect (varFvar, hypFvar, defining-term) from the theorem's hyps
+          let mut hypInfo : Array (Expr × Expr × Expr) := #[]
+          for h in th.hyps do
+            let (_, lhs, rhs) ← destEq (← inferType h)
+            hypInfo := hypInfo.push (lhs, h, rhs)
+          let mut consts : Array Obj := #[]
+          let mut oldVars : Array Expr := #[]     -- the var fvars v_i
+          let mut newTms : Array Expr := #[]      -- their defining terms tm_i
+          let mut oldHyps : Array Expr := #[]     -- the hyp fvars (v_i = tm_i)
+          let mut newHypPfs : Array Expr := #[]   -- refl proofs (tm_i = tm_i)
+          let mut st := st
+          for nv in nvs do
+            let elem ← nv.asList              -- [Name, Var]
+            unless elem.size == 2 do throwError "defineConstList: expected a [name, var] pair"
+            let nm ← elem[0]!.asName
+            let (_, _, vfv) ← elem[1]!.asVar
+            let some (_, hfv, tm) := hypInfo.find? (fun (v, _, _) => v == vfv)
+              | throwError "defineConstList: no defining hypothesis for constant {nm}"
+            -- define const nm := tm (polymorphic if tm has free type variables)
+            let mut tyVars : Array Expr := #[]
+            let mut hAsv : Array Expr := #[]
+            for (_, a, hA) in st.tyvars do
+              if tm.containsFVar a.fvarId! then tyVars := tyVars.push a; hAsv := hAsv.push hA
+            let genTm ← inferType tm
+            st := if tyVars.isEmpty then { st with defined := st.defined.push (nm, tm) }
+                  else { st with polyDefined := st.polyDefined.push (nm, tyVars, hAsv, genTm, tm) }
+            consts := consts.push (.const nm)
+            oldVars := oldVars.push vfv
+            newTms := newTms.push tm
+            oldHyps := oldHyps.push hfv
+            newHypPfs := newHypPfs.push (← mkEqRefl tm)
+          let concl' := th.concl.replaceFVars (oldVars ++ oldHyps) (newTms ++ newHypPfs)
+          let proof' := th.proof.replaceFVars (oldVars ++ oldHyps) (newTms ++ newHypPfs)
+          -- push: List of constants (below), then the specification Thm (on top).
+          let stk := (st.stk.push (.list consts)).push
+              (.thm { hyps := #[], concl := concl', proof := proof' })
+          go { st with stk } rest
       | "axiom" =>
           let (tO, st) ← pop1 st           -- concl term on top
           let (tsO, st) ← pop1 st          -- hyp list
@@ -774,8 +986,11 @@ partial def go (st : St) : List String → TermElabM Unit
           let c ← cO.asTerm
           let ls ← lsO.asList
           let th ← thObj.asThm
-          unless ls.isEmpty do
-            throwError "thm: exporting a theorem with non-empty hypotheses is not supported here (Γ has {ls.size})"
+          -- Non-empty declared Γ is supported: the proof's remaining hypothesis fvars
+          -- (`th.hyps`, = Γ for a well-formed article) are closed as implications
+          -- below, so the export is `⊢ ⋀Γ → c`.
+          unless th.hyps.size == ls.size do
+            throwError "thm: declared Γ ({ls.size}) disagrees with the proof's open hypotheses ({th.hyps.size})"
           -- ascribe the proof to the desired (alpha/defeq) conclusion
           let proof0 ← mkExpectedTypeHint th.proof c
           -- close over remaining hypotheses (as implications) and free vars.
@@ -892,6 +1107,18 @@ run_cmd do
     let s ← IO.FS.readFile p
     OTImport.importArticle "unit-def (bundled OpenTheory stdlib)" s
   else logInfo "unit-def.art not found relative to cwd; import via OT_ARTICLE instead"
+
+-- Real PARAMETERIZED-type article: the OpenTheory standard library `pair` theory
+-- (product types), composed self-contained (via the `opentheory` tool) so its only
+-- assumptions are the two base axioms (extensionality, choice). Exercises
+-- PARAMETERIZED (arity-2) defineTypeOp, POLYMORPHIC defineConst, and 30 `thm`
+-- exports end-to-end, kernel-checked + axiom-clean.
+run_cmd do
+  let p : System.FilePath := "docs/opentheory-importer-poc/pair-closed.art"
+  if ← p.pathExists then
+    let s ← IO.FS.readFile p
+    OTImport.importArticle "pair-closed (OpenTheory stdlib product types)" s
+  else logInfo "pair-closed.art not found relative to cwd"
 
 -- Import a real article from the path in `$OT_ARTICLE` (e.g. prodWitness.art).
 run_cmd do
