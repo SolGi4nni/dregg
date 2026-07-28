@@ -255,32 +255,83 @@ fn evaluate_constraint(
 }
 
 /// Is `constraint` in the LEAN-EVALUATED subset (classes a/b + the `AnyOf`/`AllOf` combinators of
-/// `Dregg2.Exec.DeployedConstraint`)? Returns `false` ONLY for the eleven class-c
+/// `Dregg2.Exec.DeployedConstraint`)? Returns `false` for the eleven class-c
 /// witness/crypto/executor-state variants — the named trusted-Rust slot enumerated (no wildcard) in
 /// `dregg-exec-lean::constraint_oracle::encode_constraint` — which are Rust-evaluated on EVERY target,
-/// even with the oracle installed (`admits` returns `None` for them).
+/// even with the oracle installed (`admits` returns `None` for them), AND for an `AnyOf`/`AllOf`
+/// carrying a class-c BRANCH, which is the same slot for the same reason (see below).
 ///
 /// Used to FAIL CLOSED whenever the subset was NOT decided by Lean: the subset's admission MUST be
 /// computed by the verified `dregg_constraint_admits`, so a subset constraint that Lean did not answer
-/// is refused rather than silently Rust-decided. Deliberately OVER-INCLUSIVE — a new/unknown variant
-/// counts as subset ⇒ fail-closed — so any drift from `encode_constraint` biases toward REFUSAL, never
-/// toward a silent unverified admit. (This mirror of the class-c list must track `encode_constraint`;
-/// the safe direction of any mismatch is that the subset over-covers.)
-fn constraint_in_lean_subset(constraint: &StateConstraint) -> bool {
-    !matches!(
-        constraint,
+/// is refused rather than silently Rust-decided. Deliberately OVER-INCLUSIVE *within* each class — a
+/// new/unknown variant, and a new/unknown branch atom, count as subset ⇒ fail-closed — so any drift
+/// from `encode_constraint` biases toward REFUSAL, never toward a silent unverified admit. (This
+/// mirror of the class-c list must track `encode_constraint`; the safe direction of any mismatch is
+/// that the subset over-covers.)
+///
+/// ⚑ THE BRANCH RECURSION, AND THE LIVE OUTAGE IT CLOSES. This used to answer `true` for EVERY
+/// `AnyOf`/`AllOf`, because the mirror read only the OUTER variant. But `encode_branches` declines
+/// the WHOLE combinator when a branch atom is one `lift_simple` names as trusted-Rust — and
+/// `SimpleStateConstraint::CountGe` is exactly that: a set-exhibit witness plus a BLAKE3 commitment,
+/// which the deployed wire deliberately does not carry (`DCtx` marshals four typed context fields
+/// and no witness blob, so `Dregg2.Exec.DeployedConstraint` has no `countGe` branch atom AT ALL —
+/// it is one of the eleven, by name, in that module's own class list). So the marshaller answered
+/// `None` for a "subset" constraint, and line ~364 refused it as undecided.
+///
+/// That is not a hypothetical. `collective-choice`'s poll program carries the SOUND QUORUM GATE
+/// `AnyOf[Immutable{RESOLVED}, CountGe{min_distinct, VOTER_SET_COMMITMENT}]` — the `CountGe` mint
+/// that retires the `AffineLe`-over-`Monotonic` quorum forgery — so on a node with the oracle
+/// installed EVERY ballot cast against a poll cell was refused `ConstraintOracleUnavailable`. The
+/// DreggNet Council opened proposals (the council cell's own program is `Monotonic` + `WriteOnce`,
+/// all Lean-routed) and could not vote on them.
+///
+/// A disjunction carrying a witnessed branch is precisely the shape the trusted-Rust slot already
+/// names as `StateConstraint::AnyOfBound`; classifying the `AnyOf`/`AllOf` form the same way puts it
+/// in the slot it belongs to instead of refusing it forever. It is NOT a relaxation: the alternative
+/// was not "Lean decides it" (Lean structurally cannot — no wire, no theorem) but "nothing may ever
+/// satisfy it".
+///
+/// ⚠ ENVELOPE declines are NOT class declines and stay fail-closed. `encode_branches` also declines a
+/// `HeapField` branch (the wire header carries ONE heap key pair, so a per-branch key cannot be
+/// resolved) and a `variants.len() > MAX_LIST` run. Those are Lean-subset constraints the WIRE cannot
+/// carry, exactly like an out-of-envelope `AffineLe`, and handing them to the Rust twin is the
+/// fail-OPEN this gate exists to stop — so [`simple_in_lean_subset`] keeps answering `true` for them.
+pub fn constraint_in_lean_subset(constraint: &StateConstraint) -> bool {
+    match constraint {
+        // The ELEVEN class-c top-level arms: the named trusted-Rust slot.
         StateConstraint::PreimageGate { .. }
-            | StateConstraint::KeyRotationGate { .. }
-            | StateConstraint::ClearanceDominates { .. }
-            | StateConstraint::SenderAuthorized { .. }
-            | StateConstraint::Renounced { .. }
-            | StateConstraint::Witnessed { .. }
-            | StateConstraint::TemporalPredicate { .. }
-            | StateConstraint::ObservedFieldEquals { .. }
-            | StateConstraint::AnyOfBound { .. }
-            | StateConstraint::CountGe { .. }
-            | StateConstraint::Custom { .. }
-    )
+        | StateConstraint::KeyRotationGate { .. }
+        | StateConstraint::ClearanceDominates { .. }
+        | StateConstraint::SenderAuthorized { .. }
+        | StateConstraint::Renounced { .. }
+        | StateConstraint::Witnessed { .. }
+        | StateConstraint::TemporalPredicate { .. }
+        | StateConstraint::ObservedFieldEquals { .. }
+        | StateConstraint::AnyOfBound { .. }
+        | StateConstraint::CountGe { .. }
+        | StateConstraint::Custom { .. } => false,
+        // A combinator is Lean-decided only if EVERY branch atom is. One class-c branch makes the
+        // whole disjunction/conjunction class-c — `encode_branches` declines it wholesale rather
+        // than half-routing, so nothing on the Lean side ever sees it.
+        StateConstraint::AnyOf { variants } | StateConstraint::AllOf { variants } => {
+            variants.iter().all(simple_in_lean_subset)
+        }
+        _ => true,
+    }
+}
+
+/// The [`SimpleStateConstraint`] half of [`constraint_in_lean_subset`] — the branch-atom mirror of
+/// `dregg-exec-lean::constraint_oracle::lift_simple`'s two by-name trusted-Rust declines.
+///
+/// `Not` is PEELED (as `encode_branches` peels it before lifting), so parity never changes the
+/// class. Everything else — including `HeapField`, whose decline is an ENVELOPE decline — answers
+/// `true`, so the bias of any future drift stays toward the fail-closed refusal.
+fn simple_in_lean_subset(branch: &SimpleStateConstraint) -> bool {
+    match branch {
+        SimpleStateConstraint::PreimageGate { .. } | SimpleStateConstraint::CountGe { .. } => false,
+        SimpleStateConstraint::Not(inner) => simple_in_lean_subset(inner),
+        _ => true,
+    }
 }
 
 /// The disposition for a Lean-subset constraint the VERIFIED evaluator did not decide:
@@ -3135,6 +3186,82 @@ mod constraint_oracle_fail_closed_tests {
         assert!(
             undecided_subset_disposition(&class_c).is_none(),
             "a class-c (witness/crypto/executor-state) constraint must defer to the Rust trusted slot"
+        );
+    }
+
+    /// THE COUNCIL-VOTE SHAPE. `collective-choice`'s poll program carries
+    /// `AnyOf[Immutable{RESOLVED}, CountGe{..}]` — the sound quorum gate. `CountGe` is class-c on
+    /// BOTH sides (`lift_simple` declines it by name; `Dregg2.Exec.DeployedConstraint` has no
+    /// `countGe` branch atom, because `DCtx` carries no witness blob), so `encode_branches` declines
+    /// the WHOLE combinator. The mirror used to answer "subset" for every `AnyOf`, which turned that
+    /// decline into `ConstraintOracleUnavailable` on every ballot ever cast against a poll cell.
+    #[test]
+    fn undecided_disposition_defers_a_combinator_over_a_class_c_branch() {
+        let poll_quorum_gate = StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable { index: 5 },
+                SimpleStateConstraint::CountGe {
+                    threshold: 2,
+                    set_commitment_slot: 6,
+                },
+            ],
+        };
+        assert!(
+            undecided_subset_disposition(&poll_quorum_gate).is_none(),
+            "an AnyOf carrying a class-c branch is the trusted-Rust slot (the AnyOfBound shape), \
+             not a subset constraint Lean declined to answer"
+        );
+        // The same, negated and under AllOf: parity is peeled, so the class does not change.
+        let negated_under_all = StateConstraint::AllOf {
+            variants: vec![SimpleStateConstraint::Not(Box::new(
+                SimpleStateConstraint::PreimageGate {
+                    commitment_index: 0,
+                    hash_kind: HashKind::Blake3,
+                },
+            ))],
+        };
+        assert!(
+            undecided_subset_disposition(&negated_under_all).is_none(),
+            "peeling Not must not change a branch atom's class"
+        );
+    }
+
+    /// THE OTHER POLE, AND THE ONE THAT MUST NOT MOVE. `encode_branches` ALSO declines a `HeapField`
+    /// branch — but that is an ENVELOPE decline (the wire header carries one heap key pair), not a
+    /// class decline: the atom IS in the Lean-evaluated subset, so handing it to the Rust twin is
+    /// exactly the fail-OPEN this gate exists to stop. It must keep failing closed.
+    #[test]
+    fn undecided_disposition_still_fails_closed_for_an_envelope_declined_branch() {
+        let heap_branch = StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::HeapField {
+                    key: 4096,
+                    atom: HeapAtom::Immutable,
+                },
+                SimpleStateConstraint::SenderIs { pk: [7u8; 32] },
+            ],
+        };
+        assert!(
+            matches!(
+                undecided_subset_disposition(&heap_branch),
+                Some(Err(ProgramError::ConstraintOracleUnavailable { .. }))
+            ),
+            "a HeapField branch is a WIRE-envelope decline over a Lean-subset atom and must still \
+             fail closed, never fall through to the unverified twin"
+        );
+        // And an all-routable combinator is plain subset: fail-closed when Lean did not answer.
+        let routable = StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable { index: 0 },
+                SimpleStateConstraint::SenderIs { pk: [1u8; 32] },
+            ],
+        };
+        assert!(
+            matches!(
+                undecided_subset_disposition(&routable),
+                Some(Err(ProgramError::ConstraintOracleUnavailable { .. }))
+            ),
+            "a combinator whose every branch is Lean-routable is still subset ⇒ fail closed"
         );
     }
 }
