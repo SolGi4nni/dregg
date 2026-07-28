@@ -350,14 +350,25 @@ theorem pairSepOn_mono {P Q : List Nat → List Nat → Prop}
 /-! ### The three legs. -/
 
 /-- **UPPER POLE — the class is LOAD-BEARING.** At the UNRESTRICTED class the floor IS the
-idealized injectivity floor. -/
-theorem pairSepOn_top_iff : pairSepOn (fun _ _ => True) ↔ pairHashInjective :=
-  ⟨fun h a b c d e => h a b c d trivial trivial e, fun h a b c d _ _ e => h a b c d e⟩
+idealized injectivity floor.
+
+⚑ STATED AS AN IMPLICATION, NOT AN `↔`, AND THAT IS THE WHOLE POINT (2026-07-28). As
+`pairSepOn ⊤ ↔ pairHashInjective` this was a genuine `#floor_ratchet` carrier — an `↔` unfolds
+to `(A → B) ∧ (B → A)`, so the refuted `pairHashInjective` sat in BINDER position on the
+converse leg. The full-tree adjudication charged it correctly, and charged it to
+`pairHashInjective` rather than to `pairSepOn` — which is the evidence that declaring
+`pairSepOn` honest did NOT launder the refuted floor four lines below it in its own file.
+Only `.mp` was ever used (by `pairSepOn_top_false`, immediately below), so the converse was
+carrying a refuted floor to serve nobody. Now the floor appears only in the CONCLUSION, where
+it belongs: this says "the unrestricted class would BE the idealized floor", which is exactly
+the load-bearing claim, and says it without assuming it. -/
+theorem pairSepOn_top_imp : pairSepOn (fun _ _ => True) → pairHashInjective :=
+  fun h a b c d e => h a b c d trivial trivial e
 
 /-- **UPPER POLE, fired: `pairSepOn ⊤` is FALSE.** So the restriction to an exhibited class is
 not decoration — it is the whole difference between a floor and an empty premise. -/
 theorem pairSepOn_top_false : ¬ pairSepOn (fun _ _ => True) :=
-  fun h => pairHashInjective_false (pairSepOn_top_iff.mp h)
+  fun h => pairHashInjective_false (pairSepOn_top_imp h)
 
 /-- **LOWER POLE — at the EMPTY class the floor is vacuous** (`hard_bot_vacuous`'s analogue).
 Stated so the dial's other end is priced too: a class must be inhabited to mean anything. -/
@@ -464,7 +475,7 @@ theorem foldReconstruct_binding_on_fires :
 #assert_axioms pairHash_ignores_bits_above_64
 #assert_axioms pairHashInjective_false
 #assert_axioms pairSepOn_mono
-#assert_axioms pairSepOn_top_iff
+#assert_axioms pairSepOn_top_imp
 #assert_axioms pairSepOn_top_false
 #assert_axioms pairSepOn_bot
 #assert_axioms pairSepOn_truncSep_false
