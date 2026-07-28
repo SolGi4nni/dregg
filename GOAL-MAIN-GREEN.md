@@ -25,6 +25,16 @@ first.
 | `ci-invariants-structural` | 1 FAILURE |
 
 ## Next 3 moves
+1. **B3** dispatched — the sovereign carrier arm is dead TWO levels: neither the attach nor the drain
+   has a production caller, while three production sites fill the stash.
+2. **B5** dispatched — the solo finalization arm still finalizes any creator, the half `c6f00c228`
+   deliberately left. ⚠ Its comment is right that a naive filter bricks solo cold start, so the lane
+   is briefed to solve that tension rather than trade it away.
+3. **The `declared_supply` seam** — `check_per_asset_conservation_by_asset` takes it for reconciling
+   disclosed mint/burn against balance deltas; all four production callers pass `&[]`, both test
+   callers too, and the verified Lean decider already implements the reconciliation with a `#guard`.
+
+## Superseded moves
 1. ~~A6~~ dispatched — briefed with the correction that its sibling forced: do NOT inherit my
    framing of the mechanism, since I named the wrong one for A7 and a wider key would have been a no-op.
 2. **B3/B5** — the sovereign carrier-witness arm is dead two levels deep; the solo finalization arm
