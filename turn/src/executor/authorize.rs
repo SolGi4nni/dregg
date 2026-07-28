@@ -138,6 +138,7 @@ impl TurnExecutor {
                 sender_signature,
                 turn_nonce,
                 path,
+                ledger,
             )?;
             // Studio trace: authorization verified (CapTpDelivered).
             info!(kind = "authorization", auth_kind = "captp_delivered", target = %action.target, cert_nonce = hex::encode(handoff_cert.nonce));
@@ -316,6 +317,10 @@ impl TurnExecutor {
         sender_signature: &[u8; 64],
         turn_nonce: u64,
         path: &[usize],
+        // The ledger is the executor's `held` record — see step 5c. `validate_handoff`
+        // reads the introducer's held authority from the target federation's swiss entry;
+        // this side has no swiss table, and the c-list is the faithful analogue.
+        ledger: &Ledger,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         // 1. Sender pk must match the certificate's recipient pk.
         if sender_pk != &handoff_cert.recipient_pk {
@@ -358,6 +363,38 @@ impl TurnExecutor {
                 TurnError::InvalidAuthorization {
                     reason: "captp-delivered: introducer signature on handoff cert is invalid"
                         .to_string(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        // 3b. ⚑ BIND the wire-supplied `introducer_pk` to the certificate's CLAIMED
+        //     `introducer` — the executor-side twin of the captp F-1 fix
+        //     (`captp/src/handoff.rs:1005`, commit `560af5d40`, 2026-07-25).
+        //
+        //     Step 3 proves the certificate was signed by whoever owns `introducer_pk`.
+        //     NOTHING proved that key IS `cert.introducer`, and `introducer_pk` arrives
+        //     inside the attacker-controlled `Authorization::CapTpDelivered`. So a
+        //     presenter named any federation F as `introducer`, signed the certificate
+        //     with their OWN key, supplied their own pk — and the delivery was ATTRIBUTED
+        //     to F (the action hash commits `introducer_pk`; the receipt records it) while
+        //     F never signed anything. `dregg_captp::validate_handoff` has bound this
+        //     since 2026-07-25; the executor's parallel check never did, and the two are
+        //     reached by DISJOINT paths (`validate_handoff` only from
+        //     `wire/src/server.rs`'s PresentHandoff, which returns a routing token and
+        //     builds no Turn; this function from `POST /turns/submit` and the
+        //     finalized-block replay, neither of which inspects `call_forest`).
+        //
+        //     The classical path admits only the canonical convention the rest of the tree
+        //     already uses — `FederationId == raw ed25519 pk bytes`
+        //     (`node/src/mcp/handlers_delegate.rs:1096`). A hashed/hybrid introducer id
+        //     commits to ML-DSA material absent from this wire and so fails CLOSED here,
+        //     exactly as it does in `validate_handoff`.
+        if handoff_cert.introducer.0 != *introducer_pk {
+            return Err((
+                TurnError::CapTpIntroducerKeyMismatch {
+                    claimed_introducer: handoff_cert.introducer.0,
+                    signing_pk: *introducer_pk,
                 },
                 path.to_vec(),
             ));
@@ -465,6 +502,106 @@ impl TurnExecutor {
                     },
                     path.to_vec(),
                 ));
+            }
+        }
+
+        // 5c. ⚑ GROUND `held` IN THE LEDGER — the leg that was missing entirely.
+        //
+        //     §5b above compares the cert's granted tier against the TARGET CELL's own
+        //     declared floor. That is a bound on the SHAPE of the grant, not evidence that
+        //     anyone ever held it: a certificate signed by a key with no cell and no
+        //     capability anywhere passed every check in this function. And because
+        //     `verify_authorization` returns `Ok(())` for CapTpDelivered without ever
+        //     calling `check_single_auth_requirement`, that certificate DISCHARGED the
+        //     cell's `AuthRequired` lattice — a cert merely SAYING `Signature`, signed by a
+        //     stranger, satisfied a cell that requires ITS OWNER's signature
+        //     (`verify_ed25519_signature` verifies against `target_cell.public_key()`).
+        //
+        //     `Authorization::Bearer` short-circuits the same lattice and pays for it:
+        //     `verify_bearer_cap` locates the delegator's cell, requires it to actually
+        //     hold the capability (`BearerCapDelegatorLacksCapability`), and checks
+        //     `granted ≤ held` against that REAL c-list entry. CapTpDelivered owes exactly
+        //     the same proof. `dregg_captp::validate_handoff` reads `held` from the target
+        //     federation's swiss entry; the executor has no swiss table, and its faithful
+        //     analogue is the ledger — the introducer must OWN the target cell, or hold a
+        //     (non-expired) capability over it.
+        //
+        //     Same lattice as everywhere else: `is_narrower_or_equal` + `is_facet_attenuation`,
+        //     pinned Rust↔Lean by `captp/tests/handoff_lattice_differential.rs`. Nothing
+        //     here relaxes §5b — this is an ADDITIONAL refusal, never a new admission.
+        let held_cap = if *target_cell.public_key() == *introducer_pk {
+            // The cell's own owner. Self-authority over one's own cell is inherent (the
+            // same rule `has_access_including_delegation_at` encodes), so there is no
+            // c-list entry to attenuate against; §5b's floor check still applies.
+            None
+        } else {
+            let introducer_cell = ledger.cell_by_pubkey(introducer_pk).ok_or_else(|| {
+                (
+                    TurnError::CapTpIntroducerLacksCapability {
+                        introducer: CellId::from_bytes(*introducer_pk),
+                        target: action.target,
+                    },
+                    path.to_vec(),
+                )
+            })?;
+            if !Self::has_access_including_delegation_at(
+                introducer_cell,
+                &action.target,
+                self.block_height,
+            ) {
+                return Err((
+                    TurnError::CapTpIntroducerLacksCapability {
+                        introducer: introducer_cell.id(),
+                        target: action.target,
+                    },
+                    path.to_vec(),
+                ));
+            }
+            introducer_cell
+                .capabilities
+                .capabilities_for(&action.target)
+                .into_iter()
+                .find(|cap| cap.permissions != AuthRequired::Impossible)
+                .cloned()
+        };
+
+        if let Some(cap) = held_cap {
+            // granted ⊆ held on the RIGHTS lattice.
+            if !handoff_cert
+                .permissions
+                .is_narrower_or_equal(&cap.permissions)
+            {
+                return Err((
+                    TurnError::CapTpHandoffAmplification {
+                        target: action.target,
+                        introducer_permissions: cap.permissions.clone(),
+                        granted_permissions: handoff_cert.permissions.clone(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            // granted ⊆ held on the EFFECT FACET. A restricted held facet cannot be
+            // widened: an unrestricted (`None`) grant over a restricted hold amplifies,
+            // and a concrete grant must attenuate.
+            if let Some(held_mask) = cap.allowed_effects
+                && held_mask != 0
+            {
+                let widens = match handoff_cert.allowed_effects {
+                    None => true,
+                    Some(granted_mask) => {
+                        !dregg_cell::is_facet_attenuation(held_mask, granted_mask)
+                    }
+                };
+                if widens {
+                    return Err((
+                        TurnError::CapTpHandoffAmplification {
+                            target: action.target,
+                            introducer_permissions: cap.permissions.clone(),
+                            granted_permissions: handoff_cert.permissions.clone(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
             }
         }
 

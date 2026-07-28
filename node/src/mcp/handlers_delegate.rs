@@ -1070,8 +1070,16 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
 
     // Allow caller to override the introducer_pk that ends up on the Action
     // (distinct from the cert's introducer field). Used only in adversarial
-    // tests — the executor will reject when the override does not match the
-    // cert's introducer.0. When absent, use the sk-derived pk (honest path).
+    // tests — the executor rejects when the override does not match the cert's
+    // `introducer.0`, with `TurnError::CapTpIntroducerKeyMismatch`.
+    //
+    // ⚠ This sentence was FALSE until 2026-07-28. It named a comparison
+    // `verify_captp_delivered` did not perform: the executor verified the cert's
+    // signature under whatever pk the Action carried and never asked whether that key
+    // WAS `cert.introducer`. An override therefore failed only when the SIGNATURE
+    // failed — so a presenter holding the introducer sk could name any federation at all
+    // and be attributed to it. The binding now exists (`authorize.rs` step 3b).
+    // When absent, use the sk-derived pk (honest path).
     let action_introducer_pk_bytes: [u8; 32] =
         match params.get("introducer_pk").and_then(|v| v.as_str()) {
             Some(h) => match hex_decode(h) {
@@ -1084,8 +1092,9 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
     // ── Introducer federation ────────────────────────────────────────────────
     // The canonical convention (captp/src/handoff.rs `setup_introducer`) is
     // `FederationId(pk.0)` — the federation id IS the introducer's raw Ed25519
-    // public key bytes. The executor's `verify_captp_delivered` step 2 enforces
-    // `action.introducer_pk == cert.introducer.0`, so we must pass the raw pk
+    // public key bytes. The executor's `verify_captp_delivered` step 3b enforces
+    // `action.introducer_pk == cert.introducer.0` (and `dregg_captp::validate_handoff`
+    // step 1b enforces the same on the cross-vat path), so we must pass the raw pk
     // as the default federation, not its hash.
     let introducer_federation_bytes: [u8; 32] =
         match params.get("introducer_federation").and_then(|v| v.as_str()) {

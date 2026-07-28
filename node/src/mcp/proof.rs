@@ -374,6 +374,25 @@ pub(super) fn require_effect_cells_for_commit(
 /// to async would break the synchronous proof return the demos depend on, so the
 /// proof stays inline — but it is NOT on a remote request path. The DoS fix lives
 /// where the DoS lives: the HTTP submit/commit handlers.
+/// ⚑ THIS CANNOT SUCCEED, AND THE CALLER IS NOW TOLD SO. [`try_generate_effect_vm_proof`]
+/// returns `Err` UNCONDITIONALLY — the v1 hand-AIR (`EffectVmAir`) standalone attestation
+/// is RETIRED — so every call of this function is a guaranteed refusal and the five tools
+/// that consult it (`dregg_bilateral_action` from- and to-side, `grant capability`,
+/// `bearer cap exercise`, `handoff cert exercise`) cannot commit.
+///
+/// It reported that refusal as `proof_status: "proof_generation_failed"`, which reads as a
+/// prover that tried and fell over — a transient, retryable, environmental fault. It is
+/// nothing of the kind: there is no prover behind it to fail. A caller cannot tell a
+/// retired lane from a broken one when both arrive as the same string, and this one has
+/// been retired since `384d0cd5a`. The status is now `v1_attestation_retired` and the
+/// message names the retirement and where the live attestation went.
+///
+/// This is NOT a security gate and must not be read as one. `node/src/prove_pool.rs`
+/// settles the question for the whole node: "Proofs are *additive attestation*, not a
+/// per-step soundness gate … the authoritative executor already validated the turn and
+/// committed the new state BEFORE this pool ever runs." Refusing to commit because an
+/// attestation cannot be produced is a dead tool, not fail-closed safety — the same
+/// F-DOS-1 confusion the HTTP submit path already unwound.
 pub(super) fn require_effect_vm_proof(
     initial_balance: u64,
     initial_nonce: u64,
@@ -383,10 +402,15 @@ pub(super) fn require_effect_vm_proof(
     try_generate_effect_vm_proof(initial_balance, initial_nonce, vm_effects).map_err(|e| {
         McpToolResult::json(&serde_json::json!({
             "activity_status": "rejected",
-            "proof_status": "proof_generation_failed",
+            "proof_status": "v1_attestation_retired",
             "committed": false,
             "exercised": false,
-            "error": format!("{label}: Effect VM proof generation failed: {e}"),
+            "error": format!(
+                "{label}: refused — {e}. This is a RETIRED lane, not a prover failure: \
+                 retrying cannot help. The live per-turn attestation is the rotated \
+                 finalized-turn proof the node's async prove pool produces through the \
+                 commit pipeline (node/src/prove_pool.rs); this MCP tool does not enqueue one."
+            ),
         }))
     })
 }
@@ -429,10 +453,15 @@ pub(super) fn try_generate_effect_vm_proof(
         return Err("empty Effect VM projection".to_string());
     }
 
-    let initial_state =
-        dregg_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
-    let (trace, mut public_inputs) =
-        dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
+    // ⚑ DELETED 2026-07-28: this used to build the full effect-VM trace and PI vector,
+    // write `PI[IS_AGENT_CELL] = 1` into it, and then discard all of it with
+    // `let _ = (&trace, &public_inputs);` one line before the unconditional `Err` below.
+    // Work whose only consumer is a discard is not a producer that happens to be off — it
+    // is a shape that makes a retired lane look live to the next reader (and it carried a
+    // long Issue-#72 comment justifying a PI write that bound nothing: the slot is PI 81
+    // and a real rotated leg publishes 46-68 felts, so no shipped proof reaches the
+    // offset). The retirement is the whole behaviour; nothing precedes it.
+    let _ = (initial_balance, initial_nonce);
 
     // Issue #72: the verifier's `check_receipt_pi_binding` requires
     // `PI[IS_AGENT_CELL] == 1` for the v1 single-proof-per-WR shape (see
@@ -449,21 +478,9 @@ pub(super) fn try_generate_effect_vm_proof(
     // executor-driven path and what `silver_helper.rs::cmd_make_recursive_witness`
     // does for the demo's witness fabrication path.
     //
-    // ⚠ STATUS CORRECTION (2026-07-27): the sentence that stood here — "without this,
-    // the standalone `dregg-verifier replay-chain` rejects the chain with
-    // 'PI[IS_AGENT_CELL] = 0 but single-proof replay requires 1'" — is FALSE at HEAD.
-    // `check_receipt_pi_binding` no longer compares `IS_AGENT_CELL` at all: the slot is
-    // at PI 81 and a real rotated leg publishes 46-68 felts, so the offset is past the
-    // end of every proof that ships. The write below is harmless (the whole helper is
-    // retired below), but it pins nothing.
-    public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
-    // The v1 hand-AIR (`EffectVmAir`) standalone effect-VM proof material is RETIRED.
-    // Finalized turns prove rotated through the node's commit pipeline; this standalone
-    // v1 material is no longer produced.
-    let _ = (&trace, &public_inputs);
     Err(
-        "standalone v1 effect-vm proof material is retired (finalized turns prove rotated \
-         through the node commit pipeline)"
+        "the standalone v1 effect-vm attestation (the `EffectVmAir` hand-AIR) is RETIRED \
+         and has no producer; finalized turns prove ROTATED through the node commit pipeline"
             .to_string(),
     )
 }

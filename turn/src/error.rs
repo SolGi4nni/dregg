@@ -436,6 +436,50 @@ pub enum TurnError {
     /// A bearer capability references a delegator who does not hold the required capability.
     BearerCapDelegatorLacksCapability { delegator: CellId, target: CellId },
 
+    /// A CapTP-delivered handoff certificate names an `introducer` whose id does NOT
+    /// correspond to the wire-supplied `introducer_pk` that actually signed it.
+    ///
+    /// The executor-side twin of `dregg_captp::HandoffError::IntroducerKeyMismatch`.
+    /// `verify_captp_delivered` verifies the certificate under a pk carried in the
+    /// attacker-controlled `Authorization::CapTpDelivered`; without this binding a
+    /// presenter names any federation as `introducer`, signs with their OWN key, supplies
+    /// their own pk — and the delivery is ATTRIBUTED (in the action hash, which commits
+    /// `introducer_pk`, and in the receipt) to a federation that never signed it.
+    ///
+    /// The classical path admits only the canonical convention the rest of the tree
+    /// already uses — `FederationId == raw ed25519 pk bytes`
+    /// (`node/src/mcp/handlers_delegate.rs:1096`). A hashed/hybrid introducer id commits
+    /// to key material absent from this wire and fails CLOSED here.
+    CapTpIntroducerKeyMismatch {
+        claimed_introducer: [u8; 32],
+        signing_pk: [u8; 32],
+    },
+
+    /// A CapTP-delivered handoff certificate's introducer holds NO authority over the
+    /// target cell in this ledger — so there is no `held` for the certificate's `granted`
+    /// to attenuate, and the certificate delegates authority that was never possessed.
+    ///
+    /// `dregg_captp::validate_handoff` reads `held` from the target federation's
+    /// swiss-entry record; the executor has no swiss table, and its faithful analogue is
+    /// the ledger itself — the introducer must own the target cell, or hold a c-list
+    /// capability over it. This is the same grounding `verify_bearer_cap` performs via
+    /// [`TurnError::BearerCapDelegatorLacksCapability`]; CapTpDelivered short-circuits the
+    /// target cell's `AuthRequired` lattice exactly as `Bearer` does, so it owes exactly
+    /// the same proof that the delegating party held something.
+    CapTpIntroducerLacksCapability { introducer: CellId, target: CellId },
+
+    /// A CapTP-delivered handoff certificate grants MORE authority than the introducer's
+    /// held capability over the target cell (`granted ⊄ held` on the rights lattice or on
+    /// the effect facet). The sibling of [`TurnError::BearerCapAmplification`], decided by
+    /// the same `is_narrower_or_equal` / `is_facet_attenuation` lattice that
+    /// `captp/tests/handoff_lattice_differential.rs` pins to the verified Lean
+    /// `CapTPConcrete.authNarrowerOrEqual`.
+    CapTpHandoffAmplification {
+        target: CellId,
+        introducer_permissions: AuthRequired,
+        granted_permissions: AuthRequired,
+    },
+
     /// A custom proof commitment in the Effect VM's public inputs does not match
     /// the hash of the provided custom proof bytes.
     CustomProofCommitmentMismatch {
@@ -634,7 +678,10 @@ impl TurnError {
             | BearerCapRevoked { .. }
             | BearerCapInvalidProof { .. }
             | BearerCapAmplification { .. }
-            | BearerCapDelegatorLacksCapability { .. } => RefusalClass::Capability,
+            | BearerCapDelegatorLacksCapability { .. }
+            | CapTpIntroducerKeyMismatch { .. }
+            | CapTpIntroducerLacksCapability { .. }
+            | CapTpHandoffAmplification { .. } => RefusalClass::Capability,
             _ => RefusalClass::Other,
         }
     }
@@ -1069,6 +1116,40 @@ impl core::fmt::Display for TurnError {
                 write!(
                     f,
                     "bearer cap delegator {delegator} does not hold capability to target {target}"
+                )
+            }
+            TurnError::CapTpIntroducerKeyMismatch {
+                claimed_introducer,
+                signing_pk,
+            } => {
+                write!(
+                    f,
+                    "captp-delivered: the certificate names introducer {} but was signed under \
+                     {} — the wire-supplied introducer_pk is not bound to the claimed introducer \
+                     (classical handoff requires the canonical FederationId == ed25519 pk; a \
+                     hybrid id must use the hybrid path)",
+                    hex::encode(claimed_introducer),
+                    hex::encode(signing_pk)
+                )
+            }
+            TurnError::CapTpIntroducerLacksCapability { introducer, target } => {
+                write!(
+                    f,
+                    "captp-delivered: handoff introducer {introducer} holds no authority over \
+                     target {target} in this ledger — it neither owns the cell nor holds a \
+                     capability to it, so the certificate delegates authority never possessed"
+                )
+            }
+            TurnError::CapTpHandoffAmplification {
+                target,
+                introducer_permissions,
+                granted_permissions,
+            } => {
+                write!(
+                    f,
+                    "captp-delivered: handoff amplifies authority on target {target}: the \
+                     certificate grants {granted_permissions:?} but the introducer only holds \
+                     {introducer_permissions:?} (granted ⊄ held)"
                 )
             }
             TurnError::CustomProofCommitmentMismatch {
