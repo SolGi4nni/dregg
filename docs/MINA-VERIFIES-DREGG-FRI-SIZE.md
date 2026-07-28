@@ -52,7 +52,7 @@ native Poseidon costs 11 rows per permutation; this shape over a foreign 31-bit 
 
 ⚑ **The measurements are wired.** `scripts/check-mina-attestation.sh` — a `scripts/local-gates.sh`
 row and a `ci.yml` job — re-runs **every bolded MEASURED figure above** and fails if any drifts more
-than 2%, on top of KATs against the deployed p3 objects and **55 fault injections** with a
+than 2%, on top of KATs against the deployed p3 objects and **56 fault injections** with a
 two-second pre-flight that verifies each still matches a real pattern. §3.14 separates what is
 measured, what is a stated count × a measured price, and what is still a count nobody has taken.
 
@@ -1040,6 +1040,17 @@ the chain from the wrong height's opening, and roll-ins off by one opening) are 
 derived, not witnessed" claim in §3.12–§3.15 rests on **reading the circuit**, not on a test that
 could distinguish the two. The tests establish that the derived value is *correct*; only the row
 delta establishes that the derivation is *load-bearing*.
+
+⚑ **AND A THIRD ONE, FOUND BY RUNNING THE GATE RATHER THAN READING IT — IN §3.9's LEG, NOT THIS
+ONE.** The Merkle rung's soundness check ("the circuit REFUSES an out-of-range sibling lane") built
+its fault value as `s[0] + p`. But `assertLt2p31` bounds a lane by **2^31, not by `p`**, and
+`s[0] + p ≥ 2^31` only when `s[0] ≥ 2^31 − p = 134,217,727` — **93.3%** of canonical lanes. On the
+other **6.7%** the "fault" is a perfectly legitimate non-canonical representative under 2^31, the
+circuit is *right* to accept it, and the check fails a green tree. The emitted leaves carry a fresh
+128-bit nonce every run, so this was a **one-in-fifteen spurious red**, and the run that found it was
+an ordinary full-gate run. The offset is now `2^31`, which is out of range unconditionally, and the
+leg **asserts its own premise** before using it. A negative check whose fault value might not be a
+fault is a check that reports on the weather.
 
 ⚑ **And a sixth "reading" that is not one.** `g_{L+1}^{reverse_bits_len(s, L+1)}` looks like another
 mistake and is **algebraically the same function**: `s` carries `L` significant bits, so

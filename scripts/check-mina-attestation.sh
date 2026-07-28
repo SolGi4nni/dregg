@@ -433,7 +433,7 @@ red=0; green=0
 # key" to "PLACEHOLDER relay key" in 90718ee6f and its injection was left
 # pointing at the old string, so the anchor's ONE unforgeability check had no
 # live falsifier for a day. Serially that took ~40 minutes of self-test to
-# surface. The pre-flight surfaces all 55 in about two seconds.
+# surface. The pre-flight surfaces all 56 in about two seconds.
 #
 # ⚑ AND PASS 2 CAN BE SCOPED, WHILE PASS 1 NEVER IS. `SELFTEST_LEGS="deep air"`
 # injects only those legs' faults in pass 2 — nine legs at ~2-4 min each is
@@ -552,6 +552,15 @@ expect_red merkle "the in-CIRCUIT compression transposed (circuit vs twin)" \
 expect_red merkle "witnessed-lane range checks removed (rows measured for an UNSOUND circuit)" \
   "s/  for \(const l of d\.limbs\) assertLaneLt2p31\(l\);/  \/* fault *\//" \
   src/Poseidon2Merkle.ts
+# ⚑ AND THE FAULT VALUE'S OWN PREMISE. This check used `s[0] + p` as its
+# "out-of-range" lane, but `assertLt2p31` bounds by 2^31, not by `p`, so
+# `s[0] + p` is only out of range for ~93.3% of canonical lanes — a one-in-
+# fifteen SPURIOUS RED that a full gate run found by hitting it. The offset is
+# `2^31` now and the leg asserts the premise before using it; this injection
+# takes the offset away and requires that assertion to fire.
+expect_red merkle "the out-of-range fault lane stops being out of range" \
+  "s/  const badLane = emSiblings\[0\]\[0\] \+ \(1n << 31n\);/  const badLane = emSiblings[0][0];/" \
+  scripts/poseidon2-merkle-rows.ts
 expect_red merkle "rows/level drifts from the figure the doc quotes" \
   "s/const RECORDED_ROWS_PER_LEVEL = 2677;/const RECORDED_ROWS_PER_LEVEL = 2400;/" \
   scripts/poseidon2-merkle-rows.ts

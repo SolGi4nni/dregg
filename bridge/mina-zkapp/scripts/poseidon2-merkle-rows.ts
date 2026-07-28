@@ -244,13 +244,28 @@ console.log('\n[2] the CIRCUIT computes the same opening, with real witnesses');
   // ⚑ The range checks are load-bearing, and this is what says so: an
   // out-of-range sibling lane must be REFUSED, not silently folded. Without
   // this the bound tracking in Poseidon2BabyBearW16.ts is about nothing.
+  //
+  // ⚑ AND THE FAULT VALUE USED TO BE `s[0] + p`, WHICH IS NOT ALWAYS OUT OF
+  // RANGE. `assertLt2p31` bounds a lane by `2^31`, not by `p`, and
+  // `s[0] + p >= 2^31` only when `s[0] >= 2^31 - p = 134,217,727` — about
+  // 93.3% of canonical lanes. On the other **6.7%** `s[0] + p` is a perfectly
+  // legitimate non-canonical representative under `2^31`, the circuit is RIGHT
+  // to accept it, and this check failed a green tree. Since the emitted leaves
+  // carry a fresh 128-bit nonce every run, that was a one-in-fifteen spurious
+  // red — measured, on a run that hit it. The offset is now `2^31`, which is
+  // out of range unconditionally, and the premise is ASSERTED rather than
+  // assumed: a negative check whose fault value might not be a fault is a check
+  // that reports on the weather.
+  const badLane = emSiblings[0][0] + (1n << 31n);
+  if (badLane < 1n << 31n)
+    fail(`the fault lane ${badLane} is under 2^31 — this check would be testing nothing`);
   let held = false;
   try {
     await Provable.runAndCheck(() => {
       const leaf = Provable.witness(BbDigest, () => BbDigest.from(emLeafDigests[LEAF_INDEX]));
       const ss = emSiblings.map((s, i) =>
         Provable.witness(BbDigest, () =>
-          BbDigest.from(i === 0 ? [s[0] + P, ...s.slice(1)] : s),
+          BbDigest.from(i === 0 ? [badLane, ...s.slice(1)] : s),
         ),
       );
       const bb = em.isRight.map((b) => Provable.witness(Bool, () => Bool(b)));
