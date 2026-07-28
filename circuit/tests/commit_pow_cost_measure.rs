@@ -14,7 +14,10 @@
 //! **What this measures, and what it does not.** This is a COST measurement: permutations per
 //! second, and therefore seconds of prover wall-clock per `(rounds, bits)` pair. It says nothing
 //! about how many bits the grinding buys — that is
-//! `Dregg2.Circuit.FriCommitPow.commitPowLedger`, in Lean, where the column belongs.
+//! `Dregg2.Circuit.FriCommitPow.commitPowBranch`, in Lean, where the column belongs. ⚑ It also does
+//! not decide whether a setting is REACHABLE: `grind` asserts `(1u64 << bits) < F::ORDER_U64` over a
+//! single base-field witness, so BabyBear caps both PoW knobs at 30 bits
+//! (`FriCommitPow.maxGrindBits_is_the_babybear_witness_cap`), and the table below says so per row.
 //!
 //! Run:
 //!   cargo test -p dregg-circuit --release --test commit_pow_cost_measure -- --ignored --nocapture
