@@ -106,10 +106,18 @@ route around measures a tree shaped by the routing.
 
 A floor now leaves the refuted set only via an explicit in-tree `FloorPole.HonestHypothesis`
 declaration, and only when FOUR checks pass — never a sentinel, refuted at a CLOSED instance,
-NOT refuted parametrically, and with a satisfiability witness in the environment. Every failure is
-a hard error naming the missing pole; every success is printed on every root build with both poles.
-It removes nothing gated today (no floor is declared honest as this lands) and it makes the correct
-next move three lines instead of a red root.
+NOT refuted parametrically, and with a satisfiability witness AT AN INHABITED CLASS. Every failure
+is a hard error naming the missing pole; every success is printed on every root build with both
+poles. It removes nothing gated today (no floor is declared honest as this lands) and it makes the
+correct next move three lines instead of a red root.
+
+⚑ **THE MODEL CHECK WAS FAIL-OPEN FOR ONE DAY, AND THIS IS THE REPAIR (2026-07-28).** As shipped,
+check (3) asked only "does some theorem CLAIM `F …` at an exhibited instance". Both declared floors
+are parameterized by the CLASS they are asserted on, and both were honoured on
+`pairSepOn_bot` / `compressSepOn_bot` — the floor holding VACUOUSLY at `fun _ _ => False`, which is
+precisely the shape the check exists to exclude. Anyone could have declared a refuted floor honest
+by supplying a ⊥ model. The check now demands an INHABITED class and it is a REAL PROOF OBLIGATION,
+not a naming convention: see `classTwoDistinct`.
 
   * **B4 — the BINDER-ORDER hole, closed 2026-07-25.** The exemption used to accept a `False`
     conclusion whenever the floor was the INNERMOST binder, since `Γ → F → False` IS `Γ → ¬ F`.
@@ -277,11 +285,37 @@ def injSpecimenVerdicts : List (Name × Bool) :=
   , (`Dregg2.Verify.FloorRatchetSpecimens.specInjParametricComponent, false)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specInjRefutationOfInline, false) ]
 
+/-- The INHABITED-CLASS SELF-TEST specimens and their required verdicts (`true` = the class must be
+ACCEPTED as inhabited, so a model asserted on it is a model).
+
+This one pins the fail-open that shipped on 2026-07-27 and was measured the next day: check (3)
+asked only whether SOMETHING claimed the floor, so both declared floors were honoured on their ⊥
+model (`pairSepOn_bot`, `compressSepOn_bot` — the floor holding vacuously at `fun _ _ => False`).
+The gate stopped billing consumers on the strength of a term with no content in it.
+
+Both degenerations are invisible from a green build, so both are asserted on every run:
+
+  * accept too much and the ⊥ model walks back in — any refuted floor can be relabelled honest by
+    writing four characters of `False`;
+  * accept too little and a genuine model (`modelSep`, `midAbsorbSep` — kernel evaluations of the
+    deployed SHA-256 and BLAKE2b) stops counting, the two honest floors go back to gating their
+    consumers, and the author's reward for writing the refutability pole is a red root again. That
+    is the failure this whole module exists to stop, so it is pinned from the other side too.
+
+`specClassSingleton` is the boundary case and it is the reason "inhabited" is not the test:
+a one-member class satisfies a SEPARATION floor for free, because any two of its members are the
+same member. It must be REFUSED. -/
+def classSpecimenVerdicts : List (Name × Bool) :=
+  [ (`Dregg2.Verify.FloorRatchetSpecimens.specClassEmpty, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specClassSingleton, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specClassTwoDistinct, true) ]
+
 /-- The specimens are the instrument's own fixtures, not tree content: excluded from the carrier
 surface so they never occupy lines in a baseline whose only healthy direction is shorter. -/
 def specimens : NameSet :=
-  injSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
-    (specimenVerdicts.foldl (fun a (n, _) => a.insert n) {})
+  classSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
+    (injSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
+      (specimenVerdicts.foldl (fun a (n, _) => a.insert n) {}))
 
 /-- A CLAIM position, scanned deeply. Floor content in a positive claim (`theorem sat : F good`)
 assumes nothing — the theorem does not become vacuous if `F` is false, it becomes UNPROVABLE. But
@@ -439,8 +473,9 @@ structure Carrier where
 
 structure Surface where
   floors    : Array Name           -- refuted floors, DERIVED from the environment
-  honest    : Array (Name × Name × Name × Name)
-    -- floors DECLARED honest and CHECKED as such: (floor, declaration, ¬-pole, model)
+  honest    : Array (Name × Name × Name × Name × Name)
+    -- floors DECLARED honest and CHECKED as such:
+    -- (floor, declaration, ¬-pole, model, the theorem that proves the model's class INHABITED)
   propBody  : Array Name           -- Prop defs carrying a floor in their BODY (joint fixpoint)
   bundles   : Array Name           -- structures with a floor-carrying FIELD (joint fixpoint)
   carriers  : Array Carrier        -- sorted by name
@@ -476,6 +511,103 @@ def ourNames (env : Environment) : Array Name × Nat := Id.run do
 
 /-- Syntactic `Prop`-valued test on a TYPE (`∀ …, Prop`). No metavariables, no telescope. -/
 def isPropValued (ty : Expr) : Bool := ty.getForallBody == .sort .zero
+
+/-! ### The INHABITED-CLASS test — what makes a model a model (2026-07-28)
+
+A floor of the shape `F (P : α → β → Prop)` is asserted ON A CLASS, and a proof of `F P` says
+nothing at all when `P` is empty: `pairSepOn (fun _ _ => False)` is `fun _ _ _ _ h => h.elim`, a
+model with no hash in it. Check (3) originally asked only "does something CLAIM the floor", so it
+honoured exactly that term on BOTH declared floors. The three functions below are the narrowing.
+
+**WHAT IS DEMANDED, PLAINLY.** For every `Prop`-valued argument `C` of the floor in the model's
+statement:
+
+  1. `C` is a NAMED predicate of ours — not an anonymous `fun … => False`, which is where the ⊥
+     model dies first, and not an imported one (wrap it in a one-line `def` if it is);
+  2. some UNCONDITIONAL in-tree theorem states, in one `∧`-tree, `C ā` and `C b̄` at CLOSED
+     arguments differing at position `i`, TOGETHER WITH `ā[i] ≠ b̄[i]`.
+
+**THIS IS A PROOF OBLIGATION, NOT A NAME CONVENTION.** Nothing keys on `_class_inhabited` or any
+other spelling — the check reads the STATEMENT and the statement has to be PROVED. `C ā` is
+unprovable for an empty `C` at every `ā`, so no amount of renaming buys the ⊥ model a pass. The two
+distinct members are what rules out the second-order dodge: a SINGLETON class satisfies a
+separation floor for free (any two members are the same member), so "inhabited" alone would still
+admit a model with no content.
+
+**WHAT IT DOES NOT REACH, stated so the next reader does not over-read it.** The comparison of
+argument terms is SYNTACTIC, so the two members and their disequality must be written the same way
+— they are, in one theorem, which is why the obligation is stated as one theorem. And the whole
+test is keyed to a `Prop`-VALUED ARGUMENT: a floor with no class parameter (`StrandForkFree l n`)
+has no place for this question to be asked, and its own degenerate instantiation would be
+undetectable, so such a declaration is REFUSED rather than waved through. That is the fail-closed
+direction and it costs nothing today — both declared floors are class-parameterized. -/
+
+/-- `a ≠ b`, either spelling (`Ne a b` or `Not (Eq _ a b)`). -/
+def diseqPair? (e : Expr) : Option (Expr × Expr) :=
+  match e with
+  | .app (.app (.app (.const ``Ne _) _) a) b => some (a, b)
+  | .app (.const ``Not _) p =>
+    match p with
+    | .app (.app (.app (.const ``Eq _) _) a) b => some (a, b)
+    | _ => none
+  | _ => none
+
+/-- No telescope fvar, no loose bvar: the term names a CONCRETE object. -/
+def closedTerm (e : Expr) : Bool := !e.hasFVar && !e.hasLooseBVars
+
+/-- Harvest, from ONE unconditional statement, the class MEMBERSHIPS and the DISEQUALITIES it
+proves. `∧` is the only connective descended: proving a conjunction proves both sides, while `∨`
+proves neither and `→`/`∀` would make the membership CONDITIONAL, which is not an inhabitant. -/
+partial def inhabitFacts (cls : NameSet) (thm : Name) (e : Expr)
+    (acc : Array (Name × Array Expr × Name) × Array (Expr × Expr × Name)) :
+    Array (Name × Array Expr × Name) × Array (Expr × Expr × Name) :=
+  match e with
+  | .app (.app (.const ``And _) l) r => inhabitFacts cls thm r (inhabitFacts cls thm l acc)
+  | e =>
+    match diseqPair? e with
+    | some (a, b) => if closedTerm a && closedTerm b then (acc.1, acc.2.push (a, b, thm)) else acc
+    | none =>
+      match headConst? e with
+      | some h =>
+        if cls.contains h then
+          let args := e.getAppArgs
+          if !args.isEmpty && args.all closedTerm then (acc.1.push (h, args, thm), acc.2) else acc
+        else acc
+      | none => acc
+
+/-- **THE TEST.** `C` is a genuine class exactly when ONE unconditional theorem exhibits two of its
+members at closed arguments that differ in a position, and proves them different there. Returns
+that theorem, so the gate's report can NAME what makes the model a model. -/
+def classTwoDistinct (claims : Array (Name × Array Expr × Name))
+    (diseqs : Array (Expr × Expr × Name)) (C : Name) : Option Name := Id.run do
+  let ts := claims.filterMap fun (h, args, t) => if h == C then some (args, t) else none
+  for (a, ta) in ts do
+    for (b, tb) in ts do
+      if ta != tb then continue
+      for i in [0 : min a.size b.size] do
+        let x := a[i]!
+        let y := b[i]!
+        if x == y then continue
+        for (u, v, td) in diseqs do
+          if td == ta && ((u == x && v == y) || (u == y && v == x)) then return some td
+  return none
+
+/-- Applications of a candidate floor sitting in CLAIM position, returned WHOLE. `posWitnesses`
+answers "is the floor claimed here"; this answers "claimed AT WHAT", which is the question the
+inhabited-class test is about. Same `∧`/`∃` descent, deliberately — the two must agree on what
+counts as a claim or the model check would adjudicate a different term than it selected. -/
+partial def floorApps (cand : NameSet) (e : Expr) (acc : Array Expr) : Array Expr :=
+  match e with
+  | .app (.app (.const ``And _) l) r => floorApps cand r (floorApps cand l acc)
+  | e =>
+    if e.isAppOfArity ``Exists 2 then
+      match e.getAppArgs[1]! with
+      | .lam _ _ b _ => floorApps cand b acc
+      | _ => acc
+    else
+      match headConst? e with
+      | some h => if cand.contains h then acc.push e else acc
+      | none => acc
 
 /-- Compute the whole gated surface from the imported environment. FAILS CLOSED. -/
 def surface : MetaM Surface := do
@@ -550,29 +682,92 @@ def surface : MetaM Surface := do
       if let some h := headConst? b.appArg! then
         if !honestDecl.contains h then honestDecl := honestDecl.insert h nm
   let mut honest : NameSet := {}
-  let mut honestRec : Array (Name × Name × Name × Name) := #[]
+  let mut honestRec : Array (Name × Name × Name × Name × Name) := #[]
+  let honestSet : NameSet := honestDecl.fold (fun a f _ => a.insert f) {}
+  let mut negClosed : Std.HashMap Name Name := {}
+  let mut negParam : Std.HashMap Name Name := {}
+  -- MODEL CANDIDATES: (floor, witness, the named classes it asserts the floor ON, how many
+  -- `Prop`-valued arguments it had). `heads.size < nCls` means at least one class argument was an
+  -- ANONYMOUS term — `fun _ _ => False` is exactly that shape, and it is where the ⊥ model dies.
+  let mut satCand : Array (Name × Name × Array Name × Nat) := #[]
   unless honestDecl.isEmpty do
-    let honestSet : NameSet := honestDecl.fold (fun a f _ => a.insert f) {}
-    let mut negClosed : Std.HashMap Name Name := {}
-    let mut negParam : Std.HashMap Name Name := {}
-    let mut satWit : Std.HashMap Name Name := {}
     for nm in ours do
       let some ci := env.find? nm | continue
       let .thmInfo _ := ci | continue
       unless ci.type.getUsedConstants.any honestSet.contains do continue
-      let (negs, pos) ← forallTelescope ci.type fun xs body => do
+      let (negs, pos, clsOf) ← forallTelescope ci.type fun xs body => do
         let negs := negWitnesses honestSet body #[]
         -- A MODEL must be proved from data alone: any propositional binder makes it a CONDITIONAL
         -- discharge, and a conditional model is not evidence that the obligation is inhabitable.
         let mut condHyp := false
         for x in xs do
           if ← Meta.isProp (← inferType x) then condHyp := true
-        return (negs, if condHyp then #[] else posWitnesses honestSet xs false body #[])
+        if condHyp then return (negs, #[], #[])
+        let pos := posWitnesses honestSet xs false body #[]
+        -- The CLASS arguments of every claim, read here because `inferType` needs the telescope's
+        -- locals. Only `Name`s and `Nat`s escape — no fvar leaves the scope it was bound in.
+        let mut clsOf : Array (Name × Array Name × Nat) := #[]
+        for app in floorApps honestSet body #[] do
+          let some h := headConst? app | continue
+          let mut heads : Array Name := #[]
+          let mut nCls := 0
+          for a in app.getAppArgs do
+            if isPropValued (← inferType a) then
+              nCls := nCls + 1
+              -- Ours-only: the inhabitation obligation is discharged by an in-tree theorem, so a
+              -- class reached through an imported predicate could not be adjudicated here.
+              if let some c := headConst? a then
+                if ourModule (moduleOf env c) then heads := heads.push c
+          clsOf := clsOf.push (h, heads, nCls)
+        return (negs, pos, clsOf)
       for (f, closed) in negs do
         if closed && !negClosed.contains f then negClosed := negClosed.insert f nm
         if !closed && !negParam.contains f then negParam := negParam.insert f nm
       for (f, parametric) in pos do
-        if !parametric && !satWit.contains f then satWit := satWit.insert f nm
+        unless parametric do
+          for (h, heads, nCls) in clsOf do
+            if h == f then satCand := satCand.push (f, nm, heads, nCls)
+  -- ===== the classes those candidates ride on, and whether the tree PROVES them INHABITED =====
+  -- Run UNCONDITIONALLY, because the self-test specimens below must be adjudicated on every build
+  -- whether or not any floor is currently declared honest. A `Prop` def cannot be shown inhabited
+  -- by a statement that does not name it, so the scan is filtered to statements that do.
+  let mut clsSet : NameSet := classSpecimenVerdicts.foldl (fun a (c, _) => a.insert c) {}
+  for (_, _, heads, _) in satCand do
+    for c in heads do clsSet := clsSet.insert c
+  let mut inhClaims : Array (Name × Array Expr × Name) := #[]
+  let mut inhDiseqs : Array (Expr × Expr × Name) := #[]
+  for nm in ours do
+    let some ci := env.find? nm | continue
+    let .thmInfo _ := ci | continue
+    -- UNCONDITIONAL only. A membership under a binder is a claim about a variable, and a
+    -- membership under a hypothesis is not an inhabitant at all.
+    if ci.type.isForall then continue
+    unless ci.type.getUsedConstants.any clsSet.contains do continue
+    let (c, d) := inhabitFacts clsSet nm ci.type (inhClaims, inhDiseqs)
+    inhClaims := c
+    inhDiseqs := d
+  -- (h) THE INHABITED-CLASS SELF-TEST. Both degenerations pass a green build silently: accept the
+  -- empty class and any refuted floor can be relabelled honest for the price of a `False`; refuse
+  -- the genuine two-member class and the honest floors go back to gating their consumers, which is
+  -- the tax this module was built to remove.
+  for (spec, wantOk) in classSpecimenVerdicts do
+    unless env.contains spec do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: inhabited-class specimen {spec} is not in the \
+        environment. `Dregg2/Verify/FloorRatchetSpecimens.lean` is unimported or renamed, so the \
+        model check is running unchecked — and unchecked, it is the check that accepted the ⊥ \
+        model on BOTH declared floors. Refusing to run."
+    let got := (classTwoDistinct inhClaims inhDiseqs spec).isSome
+    unless got == wantOk do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: inhabited-class specimen {spec} classified \
+        {(if got then "INHABITED" else "NOT INHABITED")}, expected \
+        {(if wantOk then "INHABITED" else "NOT INHABITED")}. \
+        The model check has moved. Too ACCEPTING and `pairSepOn (fun _ _ => False)` is a model \
+        again — the fail-open measured on 2026-07-28, where the gate stopped billing a floor's \
+        consumers on the strength of a term with no content in it. Too REFUSING and a genuine \
+        kernel-evaluated model (`modelSep`, `midAbsorbSep`) stops counting, so writing the \
+        refutability pole costs a red root again. Fix `classTwoDistinct`, or change the \
+        specimen's expected verdict IN THE DIFF and say why."
+  unless honestDecl.isEmpty do
     for (f, decl) in honestDecl.toList do
       -- (1) NEVER a named sentinel. These are the deployed-parameter crypto floors the campaign
       -- exists to delete, and "is the refuted instance the deployed one" is exactly the semantic
@@ -601,16 +796,58 @@ def surface : MetaM Surface := do
         | throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest with no REFUTABILITY \
             pole in the environment: no theorem proves `¬ {f} …` at a closed instance. Declaring \
             a floor honest is declaring that both poles exist; write the counterexample."
-      -- (3) the model. A refutation with no inhabitant is a vacuity bomb, not an honest
-      -- obligation — the finding `ae37dd523` landed against `CrossSchemeSameOpening`.
-      let some sw := satWit.get? f
-        | throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest with no SATISFIABILITY \
-            witness in the environment: nothing CLAIMS `{f} …` at an exhibited instance while \
-            assuming no floor content. An obligation with consumers and no inhabitant is \
-            indistinguishable from a vacuity bomb — every consumer is true for free. Exhibit a \
-            model, at deployed shape and not at an escape hatch."
+      -- (3) THE MODEL, AT AN INHABITED CLASS. A refutation with no inhabitant is a vacuity bomb,
+      -- not an honest obligation — the finding `ae37dd523` landed against `CrossSchemeSameOpening`.
+      -- ⚑ And "something claims the floor" is NOT that check: it is satisfied by the floor holding
+      -- VACUOUSLY at the empty class, which is how `pairSepOn_bot`/`compressSepOn_bot` were
+      -- honoured as models for a day. The class the model rides on must be PROVED INHABITED by
+      -- two distinct members. See `classTwoDistinct`.
+      let mut model : Option (Name × Name) := none
+      let mut rejected : Array String := #[]
+      for (_, wnm, heads, nCls) in satCand.filter (fun (g, _, _, _) => g == f) do
+        if model.isSome then continue
+        if nCls == 0 then
+          rejected := rejected.push s!"{wnm}: the floor takes no `Prop`-valued CLASS argument \
+            here, so there is nothing for this checker to show inhabited — a degenerate \
+            instantiation would be indistinguishable from a real one and it must not guess"
+          continue
+        if heads.size != nCls then
+          rejected := rejected.push s!"{wnm}: a class argument is an ANONYMOUS term of ours \
+            (`fun … => False` is exactly this shape). There is no predicate to exhibit members of, \
+            so this cannot be a model"
+          continue
+        let mut inhab : Option Name := none
+        let mut missing : Option Name := none
+        for c in heads do
+          match classTwoDistinct inhClaims inhDiseqs c with
+          | some t => if inhab.isNone then inhab := some t
+          | none   => if missing.isNone then missing := some c
+        match missing, inhab with
+        | none, some t => model := some (wnm, t)
+        | some c, _ =>
+          rejected := rejected.push s!"{wnm}: its class {c} is never shown INHABITED — no \
+            unconditional theorem states `{c} ā` and `{c} b̄` at closed arguments differing in a \
+            position TOGETHER WITH the disequality at that position"
+        | none, none => rejected := rejected.push s!"{wnm}: no class argument resolved"
+      let detail :=
+        if rejected.isEmpty then
+          "Nothing in the tree CLAIMS this floor at an exhibited instance while assuming no \
+           floor content at all."
+        else
+          "Candidates were found and every one was REFUSED:\n  "
+            ++ String.intercalate "\n  " rejected.toList
+      let some (sw, inhabWit) := model
+        | throwError "FLOOR-RATCHET FAIL-CLOSED: {decl} declares {f} honest with no model AT AN \
+            INHABITED CLASS.\n{detail}\n\
+            An obligation with consumers and no inhabitant is indistinguishable from a vacuity \
+            bomb — every consumer is true for free. And a class-parameterized floor asserted at \
+            the EMPTY class is that same bomb wearing a model's clothes: `{f} (fun … => False)` is \
+            proved by `fun … h => h.elim`, with no deployed object anywhere in it. Exhibit the \
+            floor on a NAMED class, and prove that class has two distinct members in one \
+            unconditional theorem (`Sha256MerkleFold.modelSep_class_inhabited` and \
+            `LightClientMidHashFold.midAbsorbSep_class_inhabited` are the worked shape)."
       honest := honest.insert f
-      honestRec := honestRec.push (f, decl, nw, sw)
+      honestRec := honestRec.push (f, decl, nw, sw, inhabWit)
   unless honest.isEmpty do
     floorArr := floorArr.filter (fun f => !honest.contains f)
     floors := floorArr.foldl (·.insert ·) {}
@@ -837,11 +1074,11 @@ def check (baseline : Array String) : MetaM Unit := do
   -- the command's message log. MEASURED 2026-07-28 — the report was invisible on the very probe
   -- that demonstrated the feature working.
   unless s.honest.isEmpty do
-    let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m) =>
-      s!"  {f}\n    declared by {d}\n    refutability pole {n}\n    model {m}")
+    let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m, i) =>
+      s!"  {f}\n    declared by {d}\n    refutability pole {n}\n    model {m}\n    class INHABITED by {i}")
     logInfo s!"floor-ratchet: {s.honest.size} floor(s) DECLARED HONEST and checked \
-      (satisfiable + refutable at a closed instance + not a sentinel + not parametrically \
-      refuted), so their consumers are NOT gated:\n{hlines}"
+      (model at an INHABITED class + refutable at a closed instance + not a sentinel + not \
+      parametrically refuted), so their consumers are NOT gated:\n{hlines}"
   unless fresh.isEmpty do
     let env ← getEnv
     let shown := fresh.toList.take 40
@@ -953,8 +1190,8 @@ def report : MetaM Unit := do
     let n := (s.carriers.filter (fun c => c.floor == b)).size
     blines := blines.push s!"  {n}\t{b}"
   let byCls := fun k => (s.carriers.filter (fun c => c.cls == k)).size
-  let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m) =>
-    s!"  {f}\tby {d}\tpole {n}\tmodel {m}")
+  let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m, i) =>
+    s!"  {f}\tby {d}\tpole {n}\tmodel {m}\tclass inhabited by {i}")
   logInfo s!"floor-ratchet DERIVED SURFACE\n\
     refuted floors ({s.floors.size}), with carrier counts:\n\
     {String.intercalate "\n" lines.toList}\n\

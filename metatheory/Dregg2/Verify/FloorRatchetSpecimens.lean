@@ -204,4 +204,54 @@ build error. -/
 def specInjRefutationOfInline : Prop :=
   ∀ D : (Nat → Nat → ℤ) → ℤ, ¬ Function.Injective D
 
+/-! ## The INHABITED-CLASS split (`FloorRatchet.classSpecimenVerdicts`)
+
+A third classifier, and the one with a MEASURED fail-open behind it rather than a hypothetical.
+
+`FloorPole.HonestHypothesis` lets an author take a floor OUT of the gated set by declaring it
+honest, and `#floor_ratchet` guards that with four checks, of which (3) is "a model exists". As
+shipped on 2026-07-27 that check asked only whether SOMETHING claims the floor. Both declared
+floors are parameterized by the CLASS they are asserted on, and the gate's own report named the
+model it found: `Sha256MerkleFold.pairSepOn_bot` and `LightClientMidHashFold.compressSepOn_bot` —
+the floor holding **vacuously at `fun _ _ => False`**, whose proof is `fun _ _ _ _ h => h.elim` and
+contains no hash, no class and no deployed object. That is precisely the shape check (3) exists to
+exclude, so for one day anyone could have stopped the gate billing a refuted floor's consumers by
+writing four characters of `False`.
+
+The three below pin the repaired predicate at both edges and at the boundary case between them.
+Unlike the two specimen families above they are not declaration TYPES — they are CLASS predicates,
+and what is asserted about each is whether the tree proves it INHABITED BY TWO DISTINCT MEMBERS.
+
+⚑ The obligation is a PROOF, not a naming convention: `classTwoDistinct` keys on nothing but the
+STATEMENT of an unconditional theorem, and `specClassEmpty x y` is unprovable at every `x`, `y`, so
+no spelling rescues it. -/
+
+/-- REFUSED — THE ⊥ MODEL, as a class. This is `pairSepOn_bot`'s and `compressSepOn_bot`'s argument
+with a name on it, and a separation floor asserted on it is true for free. Nothing can ever satisfy
+the check for it: `specClassEmpty a b` is `False`, so no theorem exhibits a member. -/
+def specClassEmpty (_a _b : Nat) : Prop := False
+
+/-- REFUSED, and it is the reason "inhabited" is not the test. A SINGLETON class has a member —
+`specClassSingleton_member` proves it — and a separation floor still holds on it for free, because
+any two of its members ARE the same member. A check that stopped at inhabitation would accept a
+model with exactly as much content as the ⊥ one. -/
+def specClassSingleton (a b : Nat) : Prop := a = 0 ∧ b = 0
+
+/-- ACCEPTED. Two genuinely distinct members, so a separation floor asserted on it has to
+DISTINGUISH something — this is `Sha256MerkleFold.modelSep` and
+`LightClientMidHashFold.midAbsorbSep` in miniature. It must keep passing or the two honest floors
+go back to gating their consumers, which is the tax `Verify/FloorPole` exists to remove. -/
+def specClassTwoDistinct (a b : Nat) : Prop := (a = 0 ∧ b = 0) ∨ (a = 0 ∧ b = 1)
+
+/-- The singleton's member. Present so the singleton verdict tests the DISTINCTNESS half of the
+rule and not merely the inhabitation half — without it, `specClassSingleton` would be refused for
+the same reason `specClassEmpty` is and would pin nothing new. -/
+theorem specClassSingleton_member : specClassSingleton 0 0 := ⟨rfl, rfl⟩
+
+/-- The two distinct members, in the shape the checker demands: both memberships and the
+disequality at the position they differ, in ONE unconditional statement. -/
+theorem specClassTwoDistinct_inhabited :
+    specClassTwoDistinct 0 0 ∧ specClassTwoDistinct 0 1 ∧ (0 : Nat) ≠ 1 :=
+  ⟨Or.inl ⟨rfl, rfl⟩, Or.inr ⟨rfl, rfl⟩, by decide⟩
+
 end Dregg2.Verify.FloorRatchetSpecimens

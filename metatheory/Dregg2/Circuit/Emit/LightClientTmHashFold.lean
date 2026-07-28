@@ -281,6 +281,16 @@ theorem pairSepOn_tmChainSep : pairSepOn tmChainSep := by
       | exact ⟨rfl, rfl⟩
       | exact absurd e (by decide)
 
+/-- The satisfying class is genuinely INHABITED by two DISTINCT pairs — without this the theorem
+above is not distinguishable from `pairSepOn_bot`, which separates the EMPTY class and proves
+nothing about SHA-256. `#floor_ratchet` reads exactly this shape (`Verify/FloorPole` §1): two
+memberships at closed arguments differing in a position, and the disequality at that position. -/
+theorem tmChainSep_class_inhabited :
+    tmChainSep chainIV [1, 2, 3, 4, 5, 6, 7, 8]
+    ∧ tmChainSep chainIV [1, 2, 3, 9, 5, 6, 7, 8]
+    ∧ ([1, 2, 3, 4, 5, 6, 7, 8] : List Nat) ≠ [1, 2, 3, 9, 5, 6, 7, 8] :=
+  ⟨Or.inl ⟨rfl, rfl⟩, Or.inr ⟨rfl, rfl⟩, by decide⟩
+
 /-- **The satisfying floor FIRES** — obtained THROUGH `chainCommit_binding_on`: at a class the floor
 genuinely holds on, two one-leaf collections differing in one word cannot share a chain root. Floor,
 coverage and conclusion exercised together on the real SHA-256. -/
@@ -399,6 +409,7 @@ def tmValLeaves : List (List Nat) := [tmVal1, tmVal2, tmVal3]
 #assert_axioms chainCommit_high_bits_collision
 #assert_axioms chainCommitInjective_false
 #assert_axioms pairSepOn_tmChainSep
+#assert_axioms tmChainSep_class_inhabited
 #assert_axioms tm_chain_binding_fires
 #assert_axioms tmShaLeaf_hash_eq_chainCommit
 #assert_axioms vsetFold_derives_binding

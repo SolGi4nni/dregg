@@ -43,10 +43,14 @@ All of the content is in what `#floor_ratchet` CHECKS before it honours one:
      `¬ F c₁ … cₙ` with no telescope fvars in the arguments. Declaring a floor honest when nothing
      refutes it declares nothing — the honest state for such a floor is `UNREFUTED`, which the
      census already reports and the gate already ignores.
-  3. **A satisfiability witness exists**, in-tree: some theorem CLAIMS `F …` (at a closed instance
-     or under an `∃`) while ASSUMING no floor content. A floor with a refutation and no model is
-     indistinguishable from a vacuity bomb, which is the exact finding `ae37dd523` landed against
-     `CrossSchemeSameOpening`. Both poles or nothing.
+  3. **A satisfiability witness exists AT AN INHABITED CLASS**, in-tree: some theorem CLAIMS
+     `F C₁ … Cₙ` while ASSUMING no floor content, every `Prop`-valued argument `Cᵢ` is a NAMED
+     predicate of ours, and each one is PROVED to have two distinct members by an unconditional
+     in-tree theorem. A floor with a refutation and no model is indistinguishable from a vacuity
+     bomb (the exact finding `ae37dd523` landed against `CrossSchemeSameOpening`) — and a
+     class-parameterized floor asserted at the EMPTY class is that same bomb wearing a model's
+     clothes. ⚑ The second half of this check was MISSING for a day and both floors below rode
+     the ⊥ model through it; see §1.
   4. **The refutation is NOT PARAMETRIC.** `∀ f, ¬ F f` says the floor fails at EVERY instance —
      that is not "refutable", that is FALSE, and its consumers are vacuous however the author
      labels it. A parametric refutation beats the declaration, always.
@@ -94,9 +98,14 @@ Spell it applied to the floor at ARBITRARY arguments, so the declaration is abou
 about one instance of it:
 
 ```lean
-theorem strandForkFree_is_honest (l : Lace) (n : ℕ) :
-    HonestHypothesis (StrandForkFree l n) := trivial
+theorem pairSepOn_is_honest (P : List Nat → List Nat → Prop) :
+    HonestHypothesis (pairSepOn P) := trivial
 ```
+
+⚑ The floor must be parameterized by the CLASS it is asserted on, as this one is. Check (3) is
+answered by exhibiting a NAMED class with two distinct members; a floor with no `Prop`-valued
+argument gives that question nowhere to be asked, so its degenerate instantiation would be
+invisible, and the gate REFUSES the declaration rather than honouring one it cannot adjudicate.
 
 ⚑ It is NOT a licence to assume the floor. Consumers still take it as a hypothesis and still owe
 the discharge; what changes is that the gate stops treating the floor's own COUNTEREXAMPLE as
@@ -140,16 +149,42 @@ while `Sha256MerkleFold` states it as `pairSepOn ⊤ ↔ pairHashInjective`, and
 in assumption position. Only the `.mp` direction is ever used (by `pairSepOn_top_false`). That is
 the fold arc's one-line call, not this file's.
 
-⚑ WHAT THE GATE ACCEPTED AS A MODEL, AND WHY THAT IS THINNER THAN IT READS. The honest-floor report
-names the model it found, and on both floors it found the ⊥ one — `pairSepOn_bot` /
-`compressSepOn_bot`, the class `fun _ _ => False`. Check (3) is satisfied by a floor that holds
-VACUOUSLY at the empty class, which is the shape the check was written to exclude. The real models
-are `pairSepOn_modelSep` and `compressSepOn_midAbsorbSep` (kernel evaluation of the deployed SHA-256
-and BLAKE2b), and what makes THEM models is `modelSep_class_inhabited` / `midAbsorbSep_class_inhabited`
-— companions the gate does not read and, being a type-shape check, cannot. So (3) is a check that
-SOMETHING claims the floor, not that anything inhabits it non-trivially. Stated here rather than
-worked around: the declarations below are sound on the real models, and the gate would have
-honoured them on the empty one.
+⚑ WHAT THE GATE ACCEPTED AS A MODEL — THE FAIL-OPEN, MEASURED 2026-07-28 AND CLOSED THE SAME DAY.
+The honest-floor report names the model it found, and on both floors it found the ⊥ one:
+
+    model Dregg2.Circuit.Emit.Sha256MerkleFold.pairSepOn_bot
+    model Dregg2.Circuit.Emit.LightClientMidHashFold.compressSepOn_bot
+
+— the class `fun _ _ => False`, whose proof is `fun _ _ _ _ h => h.elim` and holds no hash, no class
+and no deployed object. The model check was satisfied by the floor holding VACUOUSLY at the empty
+class, which is precisely the shape it was written to exclude, so ANY refuted floor could have been
+declared honest — and had its consumers stop being billed — for the price of four characters of
+`False`. The real models were `pairSepOn_modelSep` and `compressSepOn_midAbsorbSep` (kernel
+evaluation of the deployed SHA-256 and BLAKE2b) all along, and the declarations were sound on them;
+the gate simply was not reading the thing that made them models.
+
+**THE REPAIR, and what it now demands.** `#floor_ratchet` no longer accepts a claim of the floor as
+a model. Every `Prop`-valued argument of the floor in the model's statement must be a NAMED
+predicate of ours, and each must be PROVED to have TWO DISTINCT MEMBERS by one unconditional in-tree
+theorem — `C ā`, `C b̄` at closed arguments differing at a position, together with the disequality
+there. That is `modelSep_class_inhabited` and `midAbsorbSep_class_inhabited`, which is why the
+declarations below now cite them as the load-bearing half of leg (4).
+
+⚑ **It is a PROOF OBLIGATION, not a name convention.** The checker keys on nothing but the
+STATEMENT — no `_class_inhabited` suffix, no attribute, no list. `pairSepOn_bot`'s class is an
+ANONYMOUS term, so there is no predicate to exhibit members of; and even named, `⊥ a b` is
+unprovable at every `a`, `b`. No spelling buys it a pass. The two members must be DISTINCT for a
+second reason worth writing down: a SINGLETON class satisfies a separation floor for free, because
+any two of its members are the same member, so "inhabited" alone would have admitted a model with
+exactly as much content as the ⊥ one.
+
+⚑ **WHAT THE REPAIR STILL DOES NOT REACH.** The argument comparison is SYNTACTIC, so the two
+members and their disequality have to be spelled the same way — they are, in one theorem, which is
+why the obligation is stated as one theorem. And the test is keyed to a `Prop`-VALUED ARGUMENT: a
+floor with NO class parameter has nowhere for the question to be asked, its degenerate instantiation
+would be undetectable, and such a declaration is now REFUSED rather than waved through. That is the
+fail-closed direction and it costs nothing today, both declared floors being class-parameterized;
+the docstring example above is written in that shape for the same reason.
 
 ⚑ `Circuit.Emit.AutomataflRevealRefine.Hash4NoCollision` is NOT declared here and MUST NOT BE. It
 fails checks (3) and (4) on its own merits: `hash4NoCollision_false_babyBear` refutes it for an
@@ -170,10 +205,13 @@ floor implied the new per-instance residual — and the gate is right to say so.
   3. NOT REFUTED PARAMETRICALLY — the only two `¬ pairSepOn …` theorems in the tree are the two
      above, both at a constant class. There is no `∀ P, ¬ pairSepOn P`, and there cannot be:
      `pairSepOn_bot` proves the ⊥ instance.
-  4. MODEL PRESENT — `pairSepOn_modelSep`, by kernel evaluation of the REAL SHA-256 on all nine
-     ordered pairs of a three-element class, with `modelSep_class_inhabited` pinning that the
-     class holds genuinely distinct members. `pairSepOn_tmChainSep` is a second one at the
-     Tendermint chain's own pairs. -/
+  4. MODEL PRESENT, AT AN INHABITED CLASS — `pairSepOn_modelSep`, by kernel evaluation of the
+     REAL SHA-256 on all nine ordered pairs of a three-element class, **and**
+     `modelSep_class_inhabited`, which is what the gate now reads: it proves `modelSep` holds of
+     two closed pairs differing in their right component and that those components are DISTINCT.
+     ⚑ `pairSepOn_bot` is REFUSED here and that is the point — its class is an anonymous
+     `fun _ _ => False`, so there is no predicate to exhibit members of. `pairSepOn_tmChainSep`
+     is a second model at the Tendermint chain's own pairs, with `tmChainSep_class_inhabited`. -/
 theorem pairSepOn_is_honest (P : List Nat → List Nat → Prop) :
     HonestHypothesis (Dregg2.Circuit.Emit.Sha256MerkleFold.pairSepOn P) := trivial
 
@@ -189,8 +227,10 @@ pairs satisfying `P` at a given `(counter, flag)`.
      BLAKE2b message word is read only modulo `2^64`).
   3. NOT REFUTED PARAMETRICALLY — `compressSepOn_top_false` is the tree's only `¬ compressSepOn …`,
      at a constant class; `compressSepOn_bot` proves the ⊥ instance.
-  4. MODEL PRESENT — `compressSepOn_midAbsorbSep`, kernel-evaluated on the real BLAKE2b, with
-     `midAbsorbSep_class_inhabited` for the class.
+  4. MODEL PRESENT, AT AN INHABITED CLASS — `compressSepOn_midAbsorbSep`, kernel-evaluated on the
+     real BLAKE2b, **and** `midAbsorbSep_class_inhabited`, which the gate reads: two closed
+     `(state, block, counter, flag)` members differing in the BLOCK, and those two blocks proved
+     distinct. ⚑ `compressSepOn_bot` is REFUSED, same reason as `pairSepOn_bot`.
 
 ⚑ (2) here rests on ONE closed instance where `pairSepOn` has two, and the difference is real: the
 `⊤` refutation is the weakest possible pole, since it says only "the floor is not the unrestricted
