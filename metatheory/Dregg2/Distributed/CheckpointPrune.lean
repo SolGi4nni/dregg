@@ -78,7 +78,7 @@ namespace Dregg2.Distributed.CheckpointPrune
 
 open Dregg2.Authority.Blocklace (Block Lace BlockId AuthorId)
 open Dregg2.Distributed.LaceMerge (laceIds mergeLace laceIds_mergeLace laceIds_nil mem_laceIds
-  merge_convergence_to_state)
+  CrossCanonical SameView sameView_of_canonical_eq_ids merge_convergence_to_state)
 open Dregg2.Distributed.BlocklaceFinality (tauOrder tauBlocks executeTau tauGolden)
 open Dregg2.Distributed.CatchupConverges (catchupFrom catchupOnto catchupOnto_keyset catchup_keyset)
 open Dregg2.Exec.ConsensusExec (Decoder)
@@ -295,9 +295,15 @@ theorem recover_keyset (cp : Checkpoint) (B : Lace) (pol : RetentionPolicy) (tip
 The headline safety property. The finalized TURNS are the `(creator, seq)` projection of `tauOrder`
 (`tauGolden`, `BlocklaceFinality.lean:431` — the differential golden vector). If a node prunes below
 a checkpoint and recovers a lace that (i) finalizes the same `tauOrder` and (ii) content-AGREES with
-the original on every finalized id (the §8 content-addressing seam: equal ids ⇒ equal blocks across
-the two laces — guaranteed because both are canonical and the recovered keyset equals the original,
-`recover_keyset`), then the finalized-turn sequence is IDENTICAL — no finalized turn was dropped. -/
+the original at every shared id, then the finalized-turn sequence is IDENTICAL — no finalized turn was
+dropped.
+
+⚑ (ii) is an ASSUMPTION. This paragraph used to say it was "guaranteed because both are canonical and
+the recovered keyset equals the original, `recover_keyset`". That derivation does not exist and the
+claim is false: `LaceMerge.crossCanonical_is_the_gap` exhibits two canonical laces with EQUAL keysets
+that resolve one address to different blocks. What (ii) is, named, is `LaceMerge.CrossCanonical` — the
+§8 content-addressing obligation across the prune boundary — and `recover_keyset` is one of its three
+co-hypotheses, not a proof of it. -/
 
 /-- **`filterMap_resolve_congr` (helper).** If two laces `R` and `B` resolve every id in a list `ids`
 to the SAME `(creator,seq)` under their respective `lookup`s, then the `(creator,seq)`-projection
@@ -316,33 +322,47 @@ theorem filterMap_resolve_congr (R B : Lace) (ids : List BlockId)
     rw [hres h (by simp), ih (fun id hid => hres id (by simp [hid]))]
 
 /-- **`prune_preserves_finalized_prefix` (finalized-prefix preservation, THE headline).**
-A node that prunes below an honest, attested checkpoint and recovers finalizes EXACTLY the same
-sequence of finalized turns (`tauGolden`, the `(creator,seq)` order) as it did before pruning,
-PROVIDED (i) the recovered lace finalizes the same `tauOrder` and (ii) it content-AGREES with the
-original on every finalized id (the canonical-recovery seam — both laces canonical with the SAME
-keyset by `recover_keyset`, so a shared id resolves to the same block). So pruning a checkpoint
-NEVER drops a finalized turn from the recoverable history: the finalized prefix is preserved
-turn-for-turn. The attestation `CheckpointAttested cp` is the crypto portal under which this holds
-(an UNATTESTED checkpoint could commit a bogus snapshot; an attested one commits the real finalized
-prefix). -/
+A node that prunes below an attested checkpoint and recovers finalizes EXACTLY the same sequence of
+finalized turns (`tauGolden`, the `(creator,seq)` order) as it did before pruning, PROVIDED the
+recovered lace is canonical, is CROSS-canonical with the original, and finalizes the same `tauOrder`.
+So pruning a checkpoint NEVER drops a finalized turn from the recoverable history: the finalized
+prefix is preserved turn-for-turn.
+
+⚑ WHAT CHANGED (2026-07-27) AND WHAT IT COST. This theorem used to take an ANONYMOUS hypothesis
+`hres` — pointwise `(creator, seq)` agreement on the finalized ids — while its docstring said `hres`
+was the "canonical-recovery seam … both laces canonical with the SAME keyset by `recover_keyset`, so
+a shared id resolves to the same block". That is not a derivation and the statement is false
+(`LaceMerge.crossCanonical_is_the_gap`); the `_hkey` the proof computed from `recover_keyset` was
+DISCARDED at an underscore, so the keyset fact was doing no work at all. It now takes the NAMED
+`CrossCanonical` and DERIVES the resolution agreement through `sameView_of_canonical_eq_ids`, which
+makes `recover_keyset` load-bearing and puts the assumption on the census's radar.
+COST, stated: `CrossCanonical` is strictly stronger than `hres` (all shared ids, whole blocks, versus
+finalized ids and the `(creator, seq)` projection), so this theorem is WEAKER than the one it replaces.
+Nothing is lost in reach — `filterMap_resolve_congr` above is the general lemma and a caller holding
+only the pointwise fact can still apply it directly — and the module now carries ONE named assumption
+where it carried two spellings of the same idea, one of them unnamed and misdescribed.
+⚑ `_hatt : CheckpointAttested cp` is UNUSED here too. An unattested checkpoint could commit a bogus
+snapshot, and that is exactly what `hsnap : snapshotsLace cp B` assumes away; the attestation is the
+operational reason to believe `hsnap`, not a step in this proof. Named, not laundered. -/
 theorem prune_preserves_finalized_prefix
     (cp : Checkpoint) (B : Lace) (pol : RetentionPolicy) (tip : Nat)
     (participants : List AuthorId) (wavelength : Nat)
     (_hatt : CheckpointAttested cp)
     (hsnap : snapshotsLace cp B)
+    (hcR : (recoverFromCheckpoint cp B pol tip).Canonical) (hcB : B.Canonical)
+    (hcross : CrossCanonical (recoverFromCheckpoint cp B pol tip) B)
     (hOrder : tauOrder (recoverFromCheckpoint cp B pol tip) participants wavelength
-              = tauOrder B participants wavelength)
-    (hres : ∀ id ∈ tauOrder B participants wavelength,
-      ((recoverFromCheckpoint cp B pol tip).lookup id).map (fun b => (b.creator, b.seq))
-        = (B.lookup id).map (fun b => (b.creator, b.seq))) :
+              = tauOrder B participants wavelength) :
     tauGolden (recoverFromCheckpoint cp B pol tip) participants wavelength
       = tauGolden B participants wavelength := by
-  -- recovery loses no id (recover_keyset); the finalized order agrees (hOrder); and the per-id
-  -- (creator,seq) resolution agrees (hres, the content-addressing seam). tauGolden = order ▸ resolve.
-  have _hkey : laceIds (recoverFromCheckpoint cp B pol tip) = laceIds B := recover_keyset cp B pol tip hsnap
+  -- recovery loses no id (recover_keyset) — and this is now USED: with both laces canonical and
+  -- cross-canonical it gives a shared `lookup`, hence the per-id (creator,seq) resolution agreement.
+  have hkey : laceIds (recoverFromCheckpoint cp B pol tip) = laceIds B := recover_keyset cp B pol tip hsnap
+  have hview : SameView (recoverFromCheckpoint cp B pol tip) B :=
+    sameView_of_canonical_eq_ids hcR hcB hkey hcross
   unfold tauGolden
   rw [hOrder]
-  exact filterMap_resolve_congr _ _ _ hres
+  exact filterMap_resolve_congr _ _ _ (fun id _ => by rw [hview id])
 
 /-! ## 6. RECOVERABILITY / STATE CONVERGENCE — a recovered node reaches the SAME finalized state.
 
@@ -358,9 +378,18 @@ finalized state. The node's own doc-comment (`state.rs:584`) names this reductio
 prunes below an honest, attested checkpoint and recovers (checkpoint snapshot + retained tail)
 executes to the SAME finalized `RecChainedState` as a peer that never pruned. The hypotheses are the
 `LaceMerge` convergence quad: both laces canonical (`hcR`, `hcB`), the recovered keyset equals the
-original (proved from `recover_keyset`), content-agreement on shared ids (`hagree`), and the same
+original (PROVED, from `recover_keyset` — not assumed), CROSS-lace canonicity (`hcross`), and the same
 finalized `tauOrder` (`hOrder`). Rides `merge_convergence_to_state` — the prune is a STORAGE
-operation that leaves the executed finalized state INVARIANT. -/
+operation that leaves the executed finalized state INVARIANT.
+
+⚑ Two of the four are ASSUMED and both are named. `hcross` was the unnamed binder `hagree`; it is
+`LaceMerge.CrossCanonical`, is strictly more than `hcR ∧ hcB` even given equal keysets
+(`LaceMerge.crossCanonical_is_the_gap`), and is the §8 collision-resistance obligation at the recovery
+boundary. `hOrder` is the undischarged `tauOrder` permutation-invariance seam (`LaceMerge` §6).
+⚑ `_hatt : CheckpointAttested cp` is UNUSED by this proof. The recovery-invariance is a fact about
+`recoverFromCheckpoint`'s block set; the attestation is what makes the SNAPSHOT trustworthy, and that
+enters through `hsnap`, not here. It is kept as a stated operational precondition, and named as unused
+rather than left to read as load-bearing. -/
 theorem recovered_converges_to_unpruned
     (dec : Decoder) (s0 : RecChainedState)
     (cp : Checkpoint) (B : Lace) (pol : RetentionPolicy) (tip : Nat)
@@ -368,14 +397,14 @@ theorem recovered_converges_to_unpruned
     (_hatt : CheckpointAttested cp)
     (hsnap : snapshotsLace cp B)
     (hcR : (recoverFromCheckpoint cp B pol tip).Canonical) (hcB : B.Canonical)
-    (hagree : ∀ b₁ ∈ recoverFromCheckpoint cp B pol tip, ∀ b₂ ∈ B, b₁.id = b₂.id → b₁ = b₂)
+    (hcross : CrossCanonical (recoverFromCheckpoint cp B pol tip) B)
     (hOrder : tauOrder (recoverFromCheckpoint cp B pol tip) participants wavelength
               = tauOrder B participants wavelength) :
     executeTau dec s0 (recoverFromCheckpoint cp B pol tip) participants wavelength
       = executeTau dec s0 B participants wavelength := by
   have hkey : laceIds (recoverFromCheckpoint cp B pol tip) = laceIds B :=
     recover_keyset cp B pol tip hsnap
-  exact merge_convergence_to_state dec s0 participants wavelength hcR hcB hkey hagree hOrder
+  exact merge_convergence_to_state dec s0 participants wavelength hcR hcB hkey hcross hOrder
 
 /-- **`prune_recovers_full_keyset` (the no-loss bound, corollary).** The id-set the recovered
 node holds EQUALS the original lace's id-set: the checkpoint + retained tail together hold every id
