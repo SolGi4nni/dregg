@@ -32,15 +32,15 @@ DEPLOYED AIR is STRICTLY WEAKER than the staged AIR.
    True-gate AIR asserts strictly more than the deployed verifier enforces. The precise honest
    statement + its limits are documented at the theorem.
 
-§C `engineBinding_of_floor` — `EngineBinding` is NOT an irreducible axiom: it REDUCES to
-   `Poseidon2SpongeCR` (the PI-commitment is a Poseidon2 sponge of the public inputs, the VK among
-   them) + the FRI extraction (`verify ⟹ piCommit = sponge of genuine PIs`). Proved as a lemma off
-   {Poseidon2-CR, FRI-factoring}, with a vk-headed corollary and a non-vacuous concrete instance.
+§C `vk_determined_or_encColl` — the engine binding, FLOOR-FREE. Two verifying sub-proofs exposing
+   the same PI-commitment either attest the same program VK or their absorbed public-input lists
+   are a NAMED collision of the deployed sponge. ⛑ This replaces `engineBinding_of_floor`, which
+   derived the unqualified `EngineBinding E` from `Poseidon2SpongeCR` — a floor PROVED FALSE at
+   deployed BabyBear parameters, and whose CONCLUSION is false there too (see §C's header).
 
 ## Axiom hygiene
-`#assert_axioms` on every load-bearing arm ⊆ {propext, Classical.choice, Quot.sound} + the named
-floor carrier `Poseidon2SpongeCR` AS A HYPOTHESIS. NO new axiom, NO `sorry`. NEW file; all imports
-read-only.
+`#assert_axioms` on every load-bearing arm ⊆ {propext, Classical.choice, Quot.sound}. NO new axiom,
+NO `sorry`, and as of the §C cutover no refuted-floor hypothesis either.
 -/
 import Dregg2.Circuit.CustomApex
 
@@ -156,64 +156,144 @@ theorem starkSoundCustom_unsound_over_deployed :
     (hbridge (fun _ => 0) demoEngine demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] forgedTrace
       forged_satisfied2)
 
-/-! ## §C — `EngineBinding` reduces to the floor (it is NOT an irreducible axiom).
+/-! ## §C — the ENGINE BINDING: determined, or a NAMED collision at THIS pair. FLOOR-FREE.
 
 `EngineBinding E` says the engine's PI-commitment is collision-free across verifying proofs (two
-verifying sub-proofs with the same `piCommit` agree on their program VK). We show this is a THEOREM off
-`Poseidon2SpongeCR` (the sponge is injective) once the engine's commitment FACTORS as the Poseidon2
-sponge of its public inputs (the FRI extraction obligation) with the program VK among them. -/
+verifying sub-proofs with the same `piCommit` agree on their program VK), once the commitment FACTORS
+as the Poseidon2 sponge of the public inputs with the program VK among them.
 
-/-- **`engineBinding_of_floor` — the reduction (NAMED floor carriers as hypotheses, no new axiom).**
-Given an encoding `enc` of a proof's public inputs, IF (FRI extraction) a verifying proof's exposed
-`piCommit` is the Poseidon2 sponge of `enc`, and (structural) the program VK is recoverable from `enc`,
-THEN `Poseidon2SpongeCR hash` alone yields `EngineBinding E`. The chain: `piCommit p = piCommit q`
-⟹ `sponge (enc p) = sponge (enc q)` ⟹ (CR/injective) `enc p = enc q` ⟹ `vkOf p = vkOf q`. -/
-theorem engineBinding_of_floor (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+⛑ **CUT OVER 2026-07-27 — `engineBinding_of_floor` DELETED.** It derived `EngineBinding E` from
+`Poseidon2SpongeCR hash`, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at
+the deployed BabyBear parameters. So the reduction transported nothing to the shipping system, and
+neither did the eight `*_binding_from_fold` carriers that consumed it.
+
+⚑ **AND THE CONCLUSION WAS FALSE TOO, WHICH IS WHY WIDENING THE HYPOTHESIS IS NOT THE REPAIR.**
+`EngineBinding (floorEngine hash)` says `hash [a,b] = hash [c,d] → a = c`; the diagonal
+`n ↦ (n, 0)` is an injection of an infinite set into a range-bounded codomain, so two distinct `n`
+share a digest and disagree on `vkOf`. A `∀ p q, ¬ EncColl …` hypothesis would be refuted for the
+same reason. The honest object is therefore per-PAIR, at the pair the extraction actually hands
+back:
+
+  * `EncColl hash enc p q` — the collision event, stated at the two lists the sponge ABSORBS;
+  * `vk_determined_or_encColl` — the unconditional dichotomy, NO hypothesis at all;
+  * `vk_determined_of_noEncColl` — the per-instance form the fold carriers thread.
+
+**WHAT WAS LOST:** nothing derives the UNQUALIFIED `EngineBinding E` from crypto any more, because
+nothing could. `EngineBinding` survives as a per-pair consequence and, unconditionally, at a sponge
+that is genuinely injective (`refFloorEngine_binding`, on `Poseidon2Binding.Reference.refSponge`
+whose CR is PROVED). -/
+
+/-- **`EncColl hash enc p q`** — the per-instance sponge collision the PI extraction produces at
+THIS pair: two DISTINCT public-input encodings whose digests agree. Stated at exactly the two lists
+the sponge absorbs, so it is an event at NAMED arguments — refutable at deployed parameters, rather
+than (like injectivity over all of `List ℤ`) false there. -/
+def EncColl {P : Type} (hash : List ℤ → ℤ) (enc : P → List ℤ) (p q : P) : Prop :=
+  enc p ≠ enc q ∧ hash (enc p) = hash (enc q)
+
+/-- **POLE 1 — DISCHARGEABLE.** A side condition that can never be discharged is a broken keystone,
+not a repaired one: at a pair with equal encodings there is nothing to collide. -/
+theorem encColl_self_false {P : Type} (hash : List ℤ → ℤ) (enc : P → List ℤ) (p : P) :
+    ¬ EncColl hash enc p p := fun h => h.1 rfl
+
+/-- **POLE 2 — REFUTABLE, so `¬ EncColl` is not free.** A constant hash collides at every pair of
+distinct encodings. -/
+theorem encColl_of_constant {P : Type} (enc : P → List ℤ) {p q : P} (h : enc p ≠ enc q) :
+    EncColl (fun _ => 0) enc p q := ⟨h, rfl⟩
+
+/-- **POLE 3 — THE PORT IS A WEAKENING, NOT A CHANGE OF SUBJECT.** The residual firing REFUTES the
+deleted floor, i.e. the deleted floor implied `¬ EncColl` at every pair. Stated contrapositively so
+it assumes no floor content and is a refutation rather than a carrier. -/
+theorem encColl_refutes_poseidon2CR {P : Type} {hash : List ℤ → ℤ} {enc : P → List ℤ} {p q : P}
+    (h : EncColl hash enc p q) : ¬ Poseidon2SpongeCR hash := fun hCR => h.1 (hCR _ _ h.2)
+
+/-- **`vk_determined_or_encColl` — THE FLOOR-FREE DICHOTOMY.** Two verifying sub-proofs exposing the
+SAME PI-commitment either attest the same program VK, or their two absorbed public-input lists are a
+witnessed collision of the deployed sponge. NO cryptographic hypothesis: an adversary that ghosts the
+attested VK has, by construction, produced the collision. -/
+theorem vk_determined_or_encColl (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
     -- FRI extraction: a VERIFYING proof's exposed PI-commitment IS the sponge of its genuine PIs.
     (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
     -- structural: the program VK is one of the committed public inputs (recoverable from `enc`).
-    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
-    EngineBinding E := by
-  refine ⟨fun p q hp hq hpc => ?_⟩
+    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
+    (p q : E.Proof) (hp : E.verify p = true) (hq : E.verify q = true)
+    (hpc : E.piCommit p = E.piCommit q) :
+    E.vkOf p = E.vkOf q ∨ EncColl hash enc p q := by
   have hh : hash (enc p) = hash (enc q) := by
     rw [← hfactor p hp, ← hfactor q hq]; exact hpc
-  exact hvk p q hp hq (hCR _ _ hh)
+  by_cases henc : enc p = enc q
+  · exact Or.inl (hvk p q hp hq henc)
+  · exact Or.inr ⟨henc, hh⟩
 
-/-- **`engineBinding_of_floor_vkHeaded` — the residual is EXACTLY the FRI factoring.** When the PI
-encoding is vk-headed (`enc p = vkOf p :: tail p` — the program VK is the leading public input, as the
-leaf wrap lays it), the structural `hvk` discharges internally (cons-injectivity). The ONLY remaining
-hypothesis beyond `Poseidon2SpongeCR` is `hfactor` = the FRI extraction "`verify ⟹ piCommit = sponge of
-the genuine PIs`". So `EngineBinding` rests on {Poseidon2-CR, FRI-extraction} and nothing else. -/
-theorem engineBinding_of_floor_vkHeaded (hash : List ℤ → ℤ) (E : ProofEngine)
+/-- **`vk_determined_of_noEncColl` — the per-instance form.** The anti-ghost at ONE pair, off the
+refutable side condition at THAT pair. This is what the `*_binding_from_fold` carriers thread in
+place of the deleted floor. -/
+theorem vk_determined_of_noEncColl (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
+    {p q : E.Proof} (hp : E.verify p = true) (hq : E.verify q = true)
+    (hpc : E.piCommit p = E.piCommit q) (hno : ¬ EncColl hash enc p q) :
+    E.vkOf p = E.vkOf q :=
+  (vk_determined_or_encColl hash E enc hfactor hvk p q hp hq hpc).resolve_right hno
+
+/-- **`vk_determined_of_noEncColl_vkHeaded` — the residual is EXACTLY the FRI factoring.** When the
+PI encoding is vk-headed (`enc p = vkOf p :: tail p` — the program VK is the leading public input, as
+the leaf wrap lays it), the structural `hvk` discharges internally (cons-injectivity), so the only
+hypotheses left are `hfactor` and the per-pair non-collision. -/
+theorem vk_determined_of_noEncColl_vkHeaded (hash : List ℤ → ℤ) (E : ProofEngine)
     (tailEnc : E.Proof → List ℤ)
-    (hCR : Poseidon2SpongeCR hash)
-    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (E.vkOf p :: tailEnc p)) :
-    EngineBinding E := by
-  refine engineBinding_of_floor hash E (fun p => E.vkOf p :: tailEnc p) hCR hfactor ?_
-  intro p q hp hq henc
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (E.vkOf p :: tailEnc p))
+    {p q : E.Proof} (hp : E.verify p = true) (hq : E.verify q = true)
+    (hpc : E.piCommit p = E.piCommit q)
+    (hno : ¬ EncColl hash (fun r => E.vkOf r :: tailEnc r) p q) :
+    E.vkOf p = E.vkOf q := by
+  refine vk_determined_of_noEncColl hash E (fun r => E.vkOf r :: tailEnc r) hfactor ?_ hp hq hpc hno
+  intro p' q' _ _ henc
   injection henc with hvkeq _
 
-/-! ### Non-vacuity: the reduction FIRES, resting on `Poseidon2SpongeCR` ALONE.
+/-! ### Non-vacuity: BOTH branches of the dichotomy are reachable, and neither is free.
 
-`floorEngine hash` is an engine whose proofs are `(vk, statement)` pairs and whose PI-commitment IS the
-sponge of `[vk, statement]` — i.e. the FRI factoring holds BY CONSTRUCTION (`rfl`). Its `EngineBinding`
-then follows from `Poseidon2SpongeCR hash` with NO `EngineBinding` assumption: a concrete witness that
-`EngineBinding` is derivable, not carried. -/
+`floorEngine hash` is an engine whose proofs are `(vk, statement)` pairs and whose PI-commitment IS
+the sponge of `[vk, statement]` — the FRI factoring holds BY CONSTRUCTION (`rfl`). -/
 def floorEngine (hash : List ℤ → ℤ) : ProofEngine where
   Proof    := ℤ × ℤ
   verify   := fun _ => true
   piCommit := fun p => hash [p.1, p.2]
   vkOf     := fun p => p.1
 
-/-- The floor engine satisfies `EngineBinding` resting ONLY on `Poseidon2SpongeCR` — the reduction is
-non-vacuous and `EngineBinding` is PROVEN (not assumed) here. -/
-theorem floorEngine_binding (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    EngineBinding (floorEngine hash) := by
-  refine engineBinding_of_floor hash (floorEngine hash) (fun p => [p.1, p.2]) hCR
-    (fun p _ => rfl) ?_
-  intro p q hp hq henc
+/-- The floor engine's vk-recovery is cons-injectivity. -/
+theorem floorEngine_hvk (hash : List ℤ → ℤ) :
+    ∀ p q, (floorEngine hash).verify p = true → (floorEngine hash).verify q = true →
+      [p.1, p.2] = [q.1, q.2] → (floorEngine hash).vkOf p = (floorEngine hash).vkOf q := by
+  intro p q _ _ henc
   injection henc with h1 _
+
+/-- **The dichotomy FIRES on the floor engine with NO hypothesis at all** — the reduction is a
+theorem about the deployed sponge, not about an assumed one. -/
+theorem floorEngine_binds_or_collides (hash : List ℤ → ℤ) (p q : ℤ × ℤ)
+    (hpc : (floorEngine hash).piCommit p = (floorEngine hash).piCommit q) :
+    (floorEngine hash).vkOf p = (floorEngine hash).vkOf q
+      ∨ EncColl hash (fun r : ℤ × ℤ => [r.1, r.2]) p q :=
+  vk_determined_or_encColl hash (floorEngine hash) (fun r => [r.1, r.2]) (fun _ _ => rfl)
+    (floorEngine_hvk hash) p q rfl rfl hpc
+
+/-- **THE LEFT BRANCH IS REACHABLE (positive non-vacuity), unconditionally.** On
+`Poseidon2Binding.Reference.refSponge` — a sponge whose collision-resistance is PROVED, not assumed —
+the floor engine satisfies the full `EngineBinding`. So `EngineBinding` is still DERIVABLE rather
+than carried; what is gone is only the false claim that it is derivable at the deployed sponge. -/
+theorem refFloorEngine_binding :
+    EngineBinding (floorEngine Dregg2.Circuit.Poseidon2Binding.Reference.refSponge) := by
+  refine ⟨fun p q hp hq hpc => ?_⟩
+  refine vk_determined_of_noEncColl Dregg2.Circuit.Poseidon2Binding.Reference.refSponge
+    (floorEngine Dregg2.Circuit.Poseidon2Binding.Reference.refSponge)
+    (fun r : ℤ × ℤ => [r.1, r.2]) (fun _ _ => rfl) (floorEngine_hvk _) hp hq hpc ?_
+  exact fun h => h.1 (Dregg2.Circuit.Poseidon2Binding.Reference.refSponge_CR _ _ h.2)
+
+/-- **THE RIGHT BRANCH IS REACHABLE (the tooth), so the dichotomy is not a disguised equality.** On
+the constant-zero sponge two distinct floor-engine proofs share a commitment and disagree on the
+attested VK — the ghost the fold carriers exclude, exhibited. -/
+theorem constFloorEngine_collides :
+    EncColl (fun _ : List ℤ => (0 : ℤ)) (fun r : ℤ × ℤ => [r.1, r.2]) (0, 0) (1, 0) :=
+  encColl_of_constant _ (by decide)
 
 /-! ## Axiom audit — every load-bearing arm. -/
 
@@ -222,8 +302,13 @@ theorem floorEngine_binding (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR h
 #assert_axioms forged_not_staged
 #assert_axioms deployed_admits_unbacked
 #assert_axioms starkSoundCustom_unsound_over_deployed
-#assert_axioms engineBinding_of_floor
-#assert_axioms engineBinding_of_floor_vkHeaded
-#assert_axioms floorEngine_binding
+#assert_axioms encColl_self_false
+#assert_axioms encColl_refutes_poseidon2CR
+#assert_axioms vk_determined_or_encColl
+#assert_axioms vk_determined_of_noEncColl
+#assert_axioms vk_determined_of_noEncColl_vkHeaded
+#assert_axioms floorEngine_binds_or_collides
+#assert_axioms refFloorEngine_binding
+#assert_axioms constFloorEngine_collides
 
 end Dregg2.Circuit.CustomCarrierAttack

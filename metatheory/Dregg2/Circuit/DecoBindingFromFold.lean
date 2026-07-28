@@ -31,7 +31,7 @@ This module proves the REAL deployed guarantee from premises that HOLD for the d
     f.paymentHash`, AND (anti-double-mint linkage) the consumed paymentIntentId is DETERMINED by
     `f.paymentHash` — any two verifying attestations exposing the identity agree on their
     paymentIntentId (the identity is a Poseidon2 sponge of the payment tuple, CR ⇒ tuple-
-    determined). Premises = {the FRI floor (`AggAirSound.FriExtract`), `Poseidon2SpongeCR`, the
+    determined). Premises = {the FRI floor (`AggAirSound.FriExtract`), the per-instance non-collision `hno`, the
     identity factoring, the connect}. No staged-AIR carrier, no DECO axiom.
   * **`backedAt_from_fold`** — the GROUNDING onto `DecoBackingAttack.BackedAt`: a satisfying fold
     connected to the leg's published `payment_hash` DISCHARGES the backing predicate the deployed
@@ -55,6 +55,7 @@ carriers appear ONLY as Prop hypotheses. NO new axiom, NO `sorry`. NEW file; imp
 `DecoBackingAttack` STANDS beside it (the deployed-AIR facts remain true).
 -/
 import Dregg2.Circuit.AggAirSound
+import Dregg2.Circuit.CustomCarrierAttack
 import Dregg2.Circuit.DecoBackingAttack
 
 namespace Dregg2.Circuit.DecoBindingFromFold
@@ -62,6 +63,8 @@ namespace Dregg2.Circuit.DecoBindingFromFold
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
+open Dregg2.Circuit.CustomCarrierAttack (EncColl)
 open Dregg2.Circuit.DecoBackingAttack (DecoEngine BackedAt paymentHashOf demoDeco noneConsumed
   forgedDecoMintRow forged_not_backed)
 open Dregg2.Crypto.Deco
@@ -132,7 +135,7 @@ including the re-proved DECO commitment leaf — FORCES, for the leg's published
   AND (anti-double-mint linkage) the consumed paymentIntentId is DETERMINED by `f.paymentHash` —
   any two verifying attestations exposing the identity agree on their paymentIntentId.
 
-The premise set is EXACTLY the `bridge_binding_from_fold` set: the FRI floor, `Poseidon2SpongeCR`,
+The premise set is EXACTLY the `bridge_binding_from_fold` set: the FRI floor, the per-instance `hno`,
 and the identity FACTORING — the published digest of a verifying attestation is the sponge of its
 payment tuple (`deco_payment_hash_felt`'s `hash_fact` chain over `(amountCents, currency,
 recipient, paymentIntentId)`; `henc` recovers the paymentIntentId from the tuple encoding). A
@@ -141,11 +144,13 @@ theorem deco_binding_from_fold
     (E : DecoEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (LeafSat : ℤ → ℤ → Prop)
     (hfri : DecoLeafFriFloor E LeafSat)
-    (hCR : Poseidon2SpongeCR hash)
     (hfactor : ∀ p, E.verify p = true → E.paymentDigest p = hash (enc p))
     (henc : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q →
         E.paymentIntent p = E.paymentIntent q)
-    (f : DecoFold E) (hsat : SatDecoFold E LeafSat f) :
+    (f : DecoFold E)
+    (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.paymentDigest p = f.paymentHash → E.paymentDigest q = f.paymentHash → ¬ EncColl hash enc p q)
+    (hsat : SatDecoFold E LeafSat f) :
     (∃ q : E.Proof, E.verify q = true ∧ E.paymentDigest q = f.paymentHash) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
         E.paymentDigest p = f.paymentHash → E.paymentDigest q = f.paymentHash →
@@ -156,7 +161,35 @@ theorem deco_binding_from_fold
   intro p q' hp hq' hpc hq'c
   have hhash : hash (enc p) = hash (enc q') := by
     rw [← hfactor p hp, ← hfactor q' hq', hpc, hq'c]
-  exact henc p q' hp hq' (hCR _ _ hhash)
+  refine henc p q' hp hq' ?_
+  by_contra hne
+  exact hno p q' hp hq' hpc hq'c ⟨hne, hhash⟩
+
+/-- **`deco_binding_from_fold_or_collides` — the same payload with NO side condition at all.**
+The linkage half reads "the paymentIntent is determined, OR THIS pair of verifying sub-proofs is a witnessed
+collision of the deployed sponge at the two lists it absorbs". Unlike the deleted `Poseidon2SpongeCR`
+premise — PROVED FALSE at deployed BabyBear parameters — this survives instantiation at the sponge
+the system actually runs. -/
+theorem deco_binding_from_fold_or_collides
+    (E : DecoEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
+    (LeafSat : ℤ → ℤ → Prop)
+    (hfri : DecoLeafFriFloor E LeafSat)
+    (hfactor : ∀ p, E.verify p = true → E.paymentDigest p = hash (enc p))
+    (henc : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q →
+        E.paymentIntent p = E.paymentIntent q)
+    (f : DecoFold E) (hsat : SatDecoFold E LeafSat f) :
+    (∃ q : E.Proof, E.verify q = true ∧ E.paymentDigest q = f.paymentHash) ∧
+    (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.paymentDigest p = f.paymentHash → E.paymentDigest q = f.paymentHash →
+        E.paymentIntent p = E.paymentIntent q ∨ EncColl hash enc p q) := by
+  obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafIdentity hsat.leafCV
+  rw [hsat.connect] at hqc
+  refine ⟨⟨q, hq, hqc⟩, ?_⟩
+  intro p q' hp hq' hpc hq'c
+  by_cases hpre : enc p = enc q'
+  · exact Or.inl (henc p q' hp hq' hpre)
+  · refine Or.inr ⟨hpre, ?_⟩
+    rw [← hfactor p hp, ← hfactor q' hq', hpc, hq'c]
 
 /-- **`backedAt_from_fold` — the GROUNDING onto `DecoBackingAttack.BackedAt`.** A satisfying fold
 whose published identity is the row's (`hpub` — the `withPaymentHashPin` pin welds the PI to the
@@ -257,21 +290,23 @@ theorem honestSat (hash : List ℤ → ℤ) :
 
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest Stripe-mint turn the binding
 FIRES: the published identity is BACKED by a verifying DECO attestation whose paymentIntentId is
-uniquely determined by the identity — resting on `Poseidon2SpongeCR` alone. -/
-theorem honest_companion_fires (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    (∃ q : ℤ × ℤ, (honestDeco hash).verify q = true ∧
-        (honestDeco hash).paymentDigest q = (honestFold hash).paymentHash) ∧
-    (∀ p q : ℤ × ℤ, (honestDeco hash).verify p = true → (honestDeco hash).verify q = true →
-        (honestDeco hash).paymentDigest p = (honestFold hash).paymentHash →
-        (honestDeco hash).paymentDigest q = (honestFold hash).paymentHash →
-        (honestDeco hash).paymentIntent p = (honestDeco hash).paymentIntent q) :=
-  deco_binding_from_fold (honestDeco hash) hash (fun p => [p.1, p.2]) (honestNLS hash)
-    (honestFloor hash) hCR (fun _p _ => rfl)
+uniquely determined by the identity — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
+theorem honest_companion_fires :
+    (∃ q : ℤ × ℤ, (honestDeco refSponge).verify q = true ∧
+        (honestDeco refSponge).paymentDigest q = (honestFold refSponge).paymentHash) ∧
+    (∀ p q : ℤ × ℤ, (honestDeco refSponge).verify p = true → (honestDeco refSponge).verify q = true →
+        (honestDeco refSponge).paymentDigest p = (honestFold refSponge).paymentHash →
+        (honestDeco refSponge).paymentDigest q = (honestFold refSponge).paymentHash →
+        (honestDeco refSponge).paymentIntent p = (honestDeco refSponge).paymentIntent q) :=
+  deco_binding_from_fold (honestDeco refSponge) refSponge (fun p => [p.1, p.2]) (honestNLS refSponge)
+    (honestFloor refSponge) (fun _p _ => rfl)
     (by
       intro p q _ _ henc
       have h1 : p.1 = q.1 := by injection henc
       exact h1)
-    (honestFold hash) (honestSat hash)
+    (honestFold refSponge)
+    (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
+    (honestSat refSponge)
 
 /-- **The honest fold DISCHARGES `BackedAt`** — the grounded close is itself non-vacuous: against
 the fresh baseline (`noneConsumed`), the honest fold backs ANY row whose published `payment_hash`
@@ -334,6 +369,7 @@ end Forged
 
 #assert_axioms decoLeafFriFloor_of_aggFriExtract
 #assert_axioms deco_binding_from_fold
+#assert_axioms deco_binding_from_fold_or_collides
 #assert_axioms backedAt_from_fold
 #assert_axioms deco_authenticates_from_fold
 #assert_axioms honest_companion_fires

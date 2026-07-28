@@ -8,7 +8,8 @@ extraction carrier that is **vacuous as deployed**: the deployed per-row `proofB
 vacuous `| .proofBind _ => True` (`DescriptorIR2.VmConstraint2.holdsAt`, `:570`), so over the deployed
 True-gate AIR the staged extraction asserts strictly MORE than the verifier enforces
 (`deployed_admits_unbacked`, `starkSoundCustom_unsound_over_deployed`). It also showed `EngineBinding`
-is NOT an irreducible axiom — it REDUCES to `{Poseidon2-CR, FRI-factoring}` (`engineBinding_of_floor`).
+is NOT an irreducible axiom — at every pair it is determined OR that pair is a witnessed sponge
+collision (`CustomCarrierAttack.vk_determined_or_encColl`, floor-free).
 
 The custom binding is actually enforced at the **FOLD** (decided architecture (a),
 `docs/.../CustomApex` §"What is DEPLOYED"): the per-turn aggregate folds the custom sub-proof leaf,
@@ -22,12 +23,12 @@ aggregate — NOT `StarkSoundCustom`:
   * **`custom_binding_from_fold`** — a verifying AGGREGATE (the per-turn fold including the custom leaf)
     FORCES, for the effect-vm leg's exposed custom-commitment PI `c`: (binding) ∃ a verifying custom
     sub-proof `q` with `E.piCommit q = c`, and (anti-ghost) the attested program VK is DETERMINED by
-    `c`. It rests ONLY on `{the FRI floor (via AggAirSound's carrier), Poseidon2SpongeCR (via
-    engineBinding_of_floor), the connect}`. `StarkSoundCustom` is GONE.
+    `c`. It rests ONLY on `{the FRI floor (via AggAirSound's carrier), the per-instance non-collision (via
+    vk_determined_of_noEncColl), the connect}`. `StarkSoundCustom` is GONE.
 
   * **`custom_companion_grounded`** — the analog of `CustomApex.lightclient_unfoolable_custom_binds`,
     consuming `custom_binding_from_fold` instead of `StarkSoundCustom`: the custom light-client
-    guarantee rests on the SAME floor as everything else (FRI + Poseidon2-CR), no custom carrier. The
+    guarantee rests on the SAME premises as everything else (FRI + the per-instance `hno`), no custom carrier. The
     exposed PI `c` is BACKED by a verifying sub-proof attesting a UNIQUELY DETERMINED program VK.
 
 ## Provenance of the FRI floor (= AggAirSound's carrier)
@@ -49,7 +50,7 @@ circuit twin of the Rust anti-ghost tooth.
 
 ## Axiom hygiene
 `#assert_axioms` on every load-bearing arm ⊆ {propext, Classical.choice, Quot.sound}. The floor
-carriers (`Poseidon2SpongeCR`, the FRI-extraction obligations, `AggAirSound.FriExtract`) appear ONLY
+carriers (the FRI-extraction obligations, `AggAirSound.FriExtract`) appear ONLY
 as Prop HYPOTHESES, never as `axiom`s. NO `StarkSoundCustom`, NO new axiom, NO `sorry`. NEW file; all
 imports read-only.
 -/
@@ -61,8 +62,11 @@ namespace Dregg2.Circuit.CustomBindingFromFold
 open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
-open Dregg2.Circuit.CustomCarrierAttack (engineBinding_of_floor floorEngine)
+open Dregg2.Circuit.CustomCarrierAttack
+  (EncColl vk_determined_of_noEncColl vk_determined_or_encColl floorEngine
+   floorEngine_hvk)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -137,9 +141,9 @@ including the custom leaf — FORCES, for the effect-vm leg's exposed custom-com
   `f.c` agree on their `vkOf`.
 
 The premise set is EXACTLY `{the FRI floor (`hfri`, = AggAirSound's carrier),
-Poseidon2SpongeCR (`hCR`), the FRI-extraction factoring of the engine commitment (`hfactor`) + its
+the per-instance non-collision (`hno`), the FRI-extraction factoring of the engine commitment (`hfactor`) + its
 structural vk-recovery (`hvk`), the connect (inside `hsat`)}`. The anti-ghost rides `EngineBinding E`,
-which is DERIVED here off `{Poseidon2-CR, FRI}` via `engineBinding_of_floor` — NOT taken as an axiom.
+which is DERIVED here, FLOOR-FREE, via `vk_determined_of_noEncColl` — NOT taken as an axiom.
 
 **`StarkSoundCustom` does not appear.** A forged commitment with no backing sub-proof makes the
 aggregate UNSAT: the fold re-verifies the leaf (`hfri`) and the connect ties the commitment, so the
@@ -148,22 +152,45 @@ theorem custom_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop)
     (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hCR : Poseidon2SpongeCR hash)
     (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : CustomFold E) (hsat : SatCustomFold E CustomLeafSat f) :
+    (f : CustomFold E)
+    (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.c → E.piCommit q = f.c → ¬ EncColl hash enc p q)
+    (hsat : SatCustomFold E CustomLeafSat f) :
     (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
         E.piCommit p = f.c → E.piCommit q = f.c → E.vkOf p = E.vkOf q) := by
-  -- EngineBinding rests on {Poseidon2-CR, FRI-factoring} — NOT an axiom, NOT StarkSoundCustom.
-  have hE : EngineBinding E := engineBinding_of_floor hash E enc hCR hfactor hvk
   -- the fold re-verifies the leaf (AggAirSound's FRI floor) and the connect ties its commitment to `c`.
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
   -- the anti-ghost: the determined VK (EngineBinding off the floor).
   intro p q' hp hq' hpc hq'c
-  exact hE.commit_determines_vk p q' hp hq' (by rw [hpc, hq'c])
+  exact vk_determined_of_noEncColl hash E enc hfactor hvk hp hq' (by rw [hpc, hq'c])
+    (hno p q' hp hq' hpc hq'c)
+
+/-- **`custom_binding_from_fold_or_collides` — the same payload with NO side condition at all.**
+The anti-ghost half reads "the attested VK is determined, OR THIS pair of verifying sub-proofs is a
+witnessed collision of the deployed sponge at the two public-input lists it absorbs". Unlike the
+deleted `Poseidon2SpongeCR` premise — PROVED FALSE at deployed BabyBear parameters — this statement
+survives instantiation at the sponge the system actually runs. -/
+theorem custom_binding_from_fold_or_collides
+    (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
+    (CustomLeafSat : ℤ → ℤ → Prop)
+    (hfri : CustomLeafFriFloor E CustomLeafSat)
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
+    (f : CustomFold E) (hsat : SatCustomFold E CustomLeafSat f) :
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.c) ∧
+    (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.c → E.piCommit q = f.c →
+        E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
+  obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
+  rw [hsat.connect] at hqc
+  refine ⟨⟨q, hq, hqc⟩, ?_⟩
+  intro p q' hp hq' hpc hq'c
+  exact vk_determined_or_encColl hash E enc hfactor hvk p q' hp hq' (by rw [hpc, hq'c])
 
 /-- **`custom_companion_grounded` — the grounded Custom light-client guarantee (no custom carrier).**
 The analog of `CustomApex.lightclient_unfoolable_custom_binds`, but consuming `custom_binding_from_fold`
@@ -171,19 +198,21 @@ rather than `StarkSoundCustom`: a verifying aggregate forces that the effect-vm 
 `custom_proof_commitment` PI `f.c` is BACKED — `E.boundTo f.c v` for a UNIQUELY DETERMINED program VK
 `v` (every verifying sub-proof exposing `f.c` attests exactly `v`, the anti-ghost / forged-commitment
 rejection). The custom guarantee rests on the SAME floor as everything else (`FRI` via AggAirSound +
-`Poseidon2-CR`), not on a custom STARK carrier. -/
+the per-instance `hno`), not on a custom STARK carrier. -/
 theorem custom_companion_grounded
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (CustomLeafSat : ℤ → ℤ → Prop)
     (hfri : CustomLeafFriFloor E CustomLeafSat)
-    (hCR : Poseidon2SpongeCR hash)
     (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
-    (f : CustomFold E) (hsat : SatCustomFold E CustomLeafSat f) :
+    (f : CustomFold E)
+    (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.c → E.piCommit q = f.c → ¬ EncColl hash enc p q)
+    (hsat : SatCustomFold E CustomLeafSat f) :
     ∃ v : ℤ, E.boundTo f.c v ∧
       (∀ q : E.Proof, E.verify q = true → E.piCommit q = f.c → E.vkOf q = v) := by
   obtain ⟨⟨q, hq, hqc⟩, hdet⟩ :=
-    custom_binding_from_fold E hash enc CustomLeafSat hfri hCR hfactor hvk f hsat
+    custom_binding_from_fold E hash enc CustomLeafSat hfri hfactor hvk f hno hsat
   refine ⟨E.vkOf q, ⟨q, hq, hqc, rfl⟩, ?_⟩
   intro q' hq' hq'c
   exact hdet q' q hq' hq hq'c hqc
@@ -228,14 +257,17 @@ theorem honestSat (hash : List ℤ → ℤ) :
 
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest custom turn, the grounded
 companion FIRES: the published `custom_proof_commitment` PI `hash [7, 7]` is BACKED by a verifying
-sub-proof attesting a uniquely determined program VK — a real, non-vacuous firing resting on
-`Poseidon2SpongeCR` alone (the FRI legs discharge definitionally on `floorEngine`). -/
-theorem honest_companion_fires (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    ∃ v : ℤ, (floorEngine hash).boundTo (honestFold hash).c v ∧
-      (∀ q : ℤ × ℤ, (floorEngine hash).verify q = true →
-        (floorEngine hash).piCommit q = (honestFold hash).c → (floorEngine hash).vkOf q = v) :=
-  custom_companion_grounded (floorEngine hash) hash (fun p => [p.1, p.2]) (honestCLS hash)
-    (honestFloor hash) hCR (honestFactor hash) (honestHvk hash) (honestFold hash) (honestSat hash)
+sub-proof attesting a uniquely determined program VK — a real, non-vacuous firing, UNCONDITIONAL,
+at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED (the FRI legs discharge definitionally
+on `floorEngine`). -/
+theorem honest_companion_fires :
+    ∃ v : ℤ, (floorEngine refSponge).boundTo (honestFold refSponge).c v ∧
+      (∀ q : ℤ × ℤ, (floorEngine refSponge).verify q = true →
+        (floorEngine refSponge).piCommit q = (honestFold refSponge).c → (floorEngine refSponge).vkOf q = v) :=
+  custom_companion_grounded (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestCLS refSponge)
+    (honestFloor refSponge) (honestFactor refSponge) (honestHvk refSponge) (honestFold refSponge)
+    (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
+    (honestSat refSponge)
 
 end Honest
 
@@ -281,6 +313,7 @@ end Forged
 
 #assert_axioms customLeafFriFloor_of_aggFriExtract
 #assert_axioms custom_binding_from_fold
+#assert_axioms custom_binding_from_fold_or_collides
 #assert_axioms custom_companion_grounded
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat

@@ -35,7 +35,7 @@ sub-proof-folding primitive; sovereign rides the same machinery):
     authority leaf) FORCES, for the leg's published `key_commit` claim `f.kc`: (binding) ∃ a
     verifying authority sub-proof `q` with `E.piCommit q = f.kc`, and (anti-ghost) the attested
     authority is DETERMINED by `f.kc`. Premises = {the FRI floor (= `AggAirSound`'s carrier),
-    `Poseidon2SpongeCR`, the engine-commitment factoring + structural vk-recovery, the connect}.
+    the per-instance non-collision `hno`, the engine-commitment factoring + structural vk-recovery, the connect}.
     No staged-AIR carrier.
 
   * **`authorized_from_fold`** — the GROUNDING onto `SovereignBackingAttack.Authorized`: when the
@@ -71,8 +71,11 @@ namespace Dregg2.Circuit.SovereignBindingFromFold
 open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
-open Dregg2.Circuit.CustomCarrierAttack (engineBinding_of_floor floorEngine)
+open Dregg2.Circuit.CustomCarrierAttack
+  (EncColl vk_determined_of_noEncColl vk_determined_or_encColl floorEngine
+   floorEngine_hvk)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.SovereignBackingAttack (SovAuthorityEngine Authorized keyCommitOf)
 
@@ -148,19 +151,43 @@ theorem sovereign_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (SovereignLeafSat : ℤ → ℤ → Prop)
     (hfri : SovereignLeafFriFloor E SovereignLeafSat)
-    (hCR : Poseidon2SpongeCR hash)
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
+    (f : SovereignFold E)
+    (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.kc → E.piCommit q = f.kc → ¬ EncColl hash enc p q)
+    (hsat : SatSovereignFold E SovereignLeafSat f) :
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) ∧
+    (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.kc → E.piCommit q = f.kc → E.vkOf p = E.vkOf q) := by
+  obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
+  rw [hsat.connect] at hqc
+  refine ⟨⟨q, hq, hqc⟩, ?_⟩
+  intro p q' hp hq' hpc hq'c
+  exact vk_determined_of_noEncColl hash E enc hfactor hvk hp hq' (by rw [hpc, hq'c])
+    (hno p q' hp hq' hpc hq'c)
+
+/-- **`sovereign_binding_from_fold_or_collides` — the same payload with NO side condition at all.**
+The anti-ghost half reads "the attested VK is determined, OR THIS pair of verifying sub-proofs is a
+witnessed collision of the deployed sponge at the two public-input lists it absorbs". Unlike the
+deleted `Poseidon2SpongeCR` premise — PROVED FALSE at deployed BabyBear parameters — this statement
+survives instantiation at the sponge the system actually runs. -/
+theorem sovereign_binding_from_fold_or_collides
+    (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
+    (SovereignLeafSat : ℤ → ℤ → Prop)
+    (hfri : SovereignLeafFriFloor E SovereignLeafSat)
     (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : SovereignFold E) (hsat : SatSovereignFold E SovereignLeafSat f) :
     (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.kc) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.kc → E.piCommit q = f.kc → E.vkOf p = E.vkOf q) := by
-  have hE : EngineBinding E := engineBinding_of_floor hash E enc hCR hfactor hvk
+        E.piCommit p = f.kc → E.piCommit q = f.kc →
+        E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
   intro p q' hp hq' hpc hq'c
-  exact hE.commit_determines_vk p q' hp hq' (by rw [hpc, hq'c])
+  exact vk_determined_or_encColl hash E enc hfactor hvk p q' hp hq' (by rw [hpc, hq'c])
 
 /-- **`authorized_from_fold` — the GROUNDING onto `SovereignBackingAttack.Authorized` (the §C
 close).** `deployed_intent_does_not_force_authority` proved the deployed AIR ALONE never forces
@@ -209,18 +236,20 @@ theorem honestSat (hash : List ℤ → ℤ) :
 
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest sovereign promotion the
 binding FIRES: the published KEY_COMMIT claim is BACKED by a verifying authority sub-proof
-attesting a uniquely determined authority — resting on `Poseidon2SpongeCR` alone. -/
-theorem honest_companion_fires (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    (∃ q : ℤ × ℤ, (floorEngine hash).verify q = true ∧
-        (floorEngine hash).piCommit q = (honestFold hash).kc) ∧
-    (∀ p q : ℤ × ℤ, (floorEngine hash).verify p = true → (floorEngine hash).verify q = true →
-        (floorEngine hash).piCommit p = (honestFold hash).kc →
-        (floorEngine hash).piCommit q = (honestFold hash).kc →
-        (floorEngine hash).vkOf p = (floorEngine hash).vkOf q) :=
-  sovereign_binding_from_fold (floorEngine hash) hash (fun p => [p.1, p.2]) (honestSLS hash)
-    (honestFloor hash) hCR (fun _p _ => rfl)
+attesting a uniquely determined authority — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
+theorem honest_companion_fires :
+    (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
+        (floorEngine refSponge).piCommit q = (honestFold refSponge).kc) ∧
+    (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
+        (floorEngine refSponge).piCommit p = (honestFold refSponge).kc →
+        (floorEngine refSponge).piCommit q = (honestFold refSponge).kc →
+        (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
+  sovereign_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestSLS refSponge)
+    (honestFloor refSponge) (fun _p _ => rfl)
     (by intro p q _ _ henc; injection henc)
-    (honestFold hash) (honestSat hash)
+    (honestFold refSponge)
+    (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
+    (honestSat refSponge)
 
 end Honest
 
@@ -269,6 +298,7 @@ end Forged
 
 #assert_axioms sovereignLeafFriFloor_of_aggFriExtract
 #assert_axioms sovereign_binding_from_fold
+#assert_axioms sovereign_binding_from_fold_or_collides
 #assert_axioms authorized_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms forged_unsat

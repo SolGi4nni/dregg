@@ -7,8 +7,8 @@
 client: the Dfa caveat is a PRECONDITION with NO op on the deployed effect-vm at all — the
 published route-commitment rides free (`deployed_admits_unwitnessed`,
 `deployed_does_not_force_witnessed`), and only the off-AIR re-executing
-`DslCircuitDfaVerifier` ever inspects it. The repair it NAMED (§C, `dslEngineBinding_of_floor`
-— sound on the `Poseidon2SpongeCR` floor, waiting on the descriptor emit) is now DEPLOYED:
+`DslCircuitDfaVerifier` ever inspects it. The repair it NAMED (§C, `dslEngineBinding_or_collides`
+— ⛑ now floor-free, waiting on the descriptor emit) is now DEPLOYED:
 
   * THE rc-EMIT LANDED cohort-wide: every deployed member is wrapped through
     `EffectVmEmitRotationV3.withDfaRcPins`, publishing the caveat-region 4-felt DFA
@@ -38,7 +38,7 @@ deployed aggregate — the EXACT mirror of `SovereignBindingFromFold` / `CustomB
     leaf) FORCES, for the leg's published route-commitment `f.rc`: (binding) ∃ a verifying
     DSL sub-proof `q` with `E.piCommit q = f.rc`, and (anti-ghost) the attested predicate
     program is DETERMINED by `f.rc`. Premises = {the FRI floor (= `AggAirSound`'s carrier),
-    `Poseidon2SpongeCR`, the route-commitment factoring + structural vk-recovery
+    the per-instance non-collision `hno`, the route-commitment factoring + structural vk-recovery
     (`DslBackingAttack.dslEngineBinding_of_route_commitment_factoring` — the §C repair,
     consumed here), the connect}. No staged-AIR carrier, no dsl axiom.
 
@@ -74,8 +74,11 @@ namespace Dregg2.Circuit.DslBindingFromFold
 open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding demoEngine)
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
-open Dregg2.Circuit.CustomCarrierAttack (floorEngine)
+open Dregg2.Circuit.CustomCarrierAttack
+  (EncColl vk_determined_of_noEncColl vk_determined_or_encColl floorEngine
+   floorEngine_hvk)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 open Dregg2.Circuit.DslBackingAttack (DeployedDfaLeg DslWitnessed
   dslEngineBinding_of_route_commitment_factoring)
 
@@ -155,20 +158,43 @@ theorem dsl_binding_from_fold
     (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (DslLeafSat : ℤ → ℤ → Prop)
     (hfri : DslLeafFriFloor E DslLeafSat)
-    (hCR : Poseidon2SpongeCR hash)
+    (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
+    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
+    (f : DslFold E)
+    (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.rc → E.piCommit q = f.rc → ¬ EncColl hash enc p q)
+    (hsat : SatDslFold E DslLeafSat f) :
+    (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) ∧
+    (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.piCommit p = f.rc → E.piCommit q = f.rc → E.vkOf p = E.vkOf q) := by
+  obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
+  rw [hsat.connect] at hqc
+  refine ⟨⟨q, hq, hqc⟩, ?_⟩
+  intro p q' hp hq' hpc hq'c
+  exact vk_determined_of_noEncColl hash E enc hfactor hvk hp hq' (by rw [hpc, hq'c])
+    (hno p q' hp hq' hpc hq'c)
+
+/-- **`dsl_binding_from_fold_or_collides` — the same payload with NO side condition at all.**
+The anti-ghost half reads "the attested VK is determined, OR THIS pair of verifying sub-proofs is a
+witnessed collision of the deployed sponge at the two public-input lists it absorbs". Unlike the
+deleted `Poseidon2SpongeCR` premise — PROVED FALSE at deployed BabyBear parameters — this statement
+survives instantiation at the sponge the system actually runs. -/
+theorem dsl_binding_from_fold_or_collides
+    (E : ProofEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
+    (DslLeafSat : ℤ → ℤ → Prop)
+    (hfri : DslLeafFriFloor E DslLeafSat)
     (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
     (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
     (f : DslFold E) (hsat : SatDslFold E DslLeafSat f) :
     (∃ q : E.Proof, E.verify q = true ∧ E.piCommit q = f.rc) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
-        E.piCommit p = f.rc → E.piCommit q = f.rc → E.vkOf p = E.vkOf q) := by
-  have hE : EngineBinding E :=
-    dslEngineBinding_of_route_commitment_factoring hash E enc hCR hfactor hvk
+        E.piCommit p = f.rc → E.piCommit q = f.rc →
+        E.vkOf p = E.vkOf q ∨ EncColl hash enc p q) := by
   obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafCommit hsat.leafCV
   rw [hsat.connect] at hqc
   refine ⟨⟨q, hq, hqc⟩, ?_⟩
   intro p q' hp hq' hpc hq'c
-  exact hE.commit_determines_vk p q' hp hq' (by rw [hpc, hq'c])
+  exact vk_determined_or_encColl hash E enc hfactor hvk p q' hp hq' (by rw [hpc, hq'c])
 
 /-- **`dslWitnessed_from_fold` — the GROUNDING onto `DslBackingAttack.DslWitnessed` (the §B
 close, at the aggregate).** `deployed_does_not_force_witnessed` proved the deployed AIR ALONE
@@ -218,18 +244,20 @@ theorem honestSat (hash : List ℤ → ℤ) :
 
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest Dfa-gated turn the
 binding FIRES: the published route-commitment is BACKED by a verifying DSL sub-proof
-attesting a uniquely determined predicate program — resting on `Poseidon2SpongeCR` alone. -/
-theorem honest_companion_fires (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    (∃ q : ℤ × ℤ, (floorEngine hash).verify q = true ∧
-        (floorEngine hash).piCommit q = (honestFold hash).rc) ∧
-    (∀ p q : ℤ × ℤ, (floorEngine hash).verify p = true → (floorEngine hash).verify q = true →
-        (floorEngine hash).piCommit p = (honestFold hash).rc →
-        (floorEngine hash).piCommit q = (honestFold hash).rc →
-        (floorEngine hash).vkOf p = (floorEngine hash).vkOf q) :=
-  dsl_binding_from_fold (floorEngine hash) hash (fun p => [p.1, p.2]) (honestDLS hash)
-    (honestFloor hash) hCR (fun _p _ => rfl)
+attesting a uniquely determined predicate program — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
+theorem honest_companion_fires :
+    (∃ q : ℤ × ℤ, (floorEngine refSponge).verify q = true ∧
+        (floorEngine refSponge).piCommit q = (honestFold refSponge).rc) ∧
+    (∀ p q : ℤ × ℤ, (floorEngine refSponge).verify p = true → (floorEngine refSponge).verify q = true →
+        (floorEngine refSponge).piCommit p = (honestFold refSponge).rc →
+        (floorEngine refSponge).piCommit q = (honestFold refSponge).rc →
+        (floorEngine refSponge).vkOf p = (floorEngine refSponge).vkOf q) :=
+  dsl_binding_from_fold (floorEngine refSponge) refSponge (fun p => [p.1, p.2]) (honestDLS refSponge)
+    (honestFloor refSponge) (fun _p _ => rfl)
     (by intro p q _ _ henc; injection henc)
-    (honestFold hash) (honestSat hash)
+    (honestFold refSponge)
+    (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
+    (honestSat refSponge)
 
 /-- **The honest fold DISCHARGES `DslWitnessed`** — the grounded §B close is itself
 non-vacuous: with `Verifying` = the floor engine's acceptance set, the honest Dfa-gated leg
@@ -291,6 +319,7 @@ end Forged
 
 #assert_axioms dslLeafFriFloor_of_aggFriExtract
 #assert_axioms dsl_binding_from_fold
+#assert_axioms dsl_binding_from_fold_or_collides
 #assert_axioms dslWitnessed_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms honest_dslWitnessed

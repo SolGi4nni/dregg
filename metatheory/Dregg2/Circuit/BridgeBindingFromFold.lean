@@ -45,7 +45,7 @@ deployed aggregate — the EXACT mirror of `DslBindingFromFold` / `SovereignBind
     (anti-double-mint linkage) the CONSUMED NULLIFIER is DETERMINED by `f.mintHash` — any
     two verifying spends exposing the published identity agree on their nullifier (the
     identity is a Poseidon2 sponge of the spend tuple, CR ⇒ tuple-determined). Premises =
-    {the FRI floor (= `AggAirSound`'s carrier), `Poseidon2SpongeCR`, the identity factoring
+    {the FRI floor (= `AggAirSound`'s carrier), the per-instance `hno`, the identity factoring
     (the `hash_fact` chain over the spend tuple — `note_spend_mint_hash_felt`'s shape), the
     connect}. No staged-AIR carrier, no bridge axiom.
 
@@ -77,6 +77,7 @@ read-only. `BridgeBackingAttack` STANDS (the deployed-AIR facts remain true); th
 the aggregate-level flip beside it.
 -/
 import Dregg2.Circuit.AggAirSound
+import Dregg2.Circuit.CustomCarrierAttack
 import Dregg2.Circuit.BridgeBackingAttack
 
 namespace Dregg2.Circuit.BridgeBindingFromFold
@@ -84,6 +85,8 @@ namespace Dregg2.Circuit.BridgeBindingFromFold
 open Dregg2.Circuit.RecursiveAggregation (Seg)
 open Dregg2.Circuit.AggAirSound (FriExtract)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
+open Dregg2.Circuit.CustomCarrierAttack (EncColl)
 open Dregg2.Circuit.BridgeBackingAttack (NoteSpendEngine BackedAt mintHashOf demoSpend
   mintHash_goodRow noneConsumed)
 open Dregg2.Circuit.Emit.EffectVmEmitBridgeMint (goodBridgeMintRow)
@@ -159,7 +162,7 @@ mint identity `f.mintHash`:
   two verifying spends exposing the published identity agree on their nullifier.
 
 The premise set is EXACTLY the `dsl_binding_from_fold` / `sovereign_binding_from_fold` set:
-the FRI floor, `Poseidon2SpongeCR`, and the identity FACTORING — the published digest of a
+the FRI floor, the per-instance non-collision `hno`, and the identity FACTORING — the published digest of a
 verifying spend is the sponge of its spend tuple (`note_spend_mint_hash_felt`'s `hash_fact`
 chain over `(nullifier, root, dest_fed, asset, value_lo, value_hi)`; `henc` recovers the
 nullifier from the tuple encoding). A forged identity with no backing spend makes the
@@ -168,11 +171,13 @@ theorem bridge_binding_from_fold
     (E : NoteSpendEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
     (LeafSat : ℤ → ℤ → Prop)
     (hfri : NoteSpendLeafFriFloor E LeafSat)
-    (hCR : Poseidon2SpongeCR hash)
     (hfactor : ∀ p, E.verify p = true → E.spendDigest p = hash (enc p))
     (henc : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q →
         E.nullifier p = E.nullifier q)
-    (f : BridgeFold E) (hsat : SatBridgeFold E LeafSat f) :
+    (f : BridgeFold E)
+    (hno : ∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.spendDigest p = f.mintHash → E.spendDigest q = f.mintHash → ¬ EncColl hash enc p q)
+    (hsat : SatBridgeFold E LeafSat f) :
     (∃ q : E.Proof, E.verify q = true ∧ E.spendDigest q = f.mintHash) ∧
     (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
         E.spendDigest p = f.mintHash → E.spendDigest q = f.mintHash →
@@ -183,7 +188,35 @@ theorem bridge_binding_from_fold
   intro p q' hp hq' hpc hq'c
   have hhash : hash (enc p) = hash (enc q') := by
     rw [← hfactor p hp, ← hfactor q' hq', hpc, hq'c]
-  exact henc p q' hp hq' (hCR _ _ hhash)
+  refine henc p q' hp hq' ?_
+  by_contra hne
+  exact hno p q' hp hq' hpc hq'c ⟨hne, hhash⟩
+
+/-- **`bridge_binding_from_fold_or_collides` — the same payload with NO side condition at all.**
+The linkage half reads "the nullifier is determined, OR THIS pair of verifying sub-proofs is a witnessed
+collision of the deployed sponge at the two lists it absorbs". Unlike the deleted `Poseidon2SpongeCR`
+premise — PROVED FALSE at deployed BabyBear parameters — this survives instantiation at the sponge
+the system actually runs. -/
+theorem bridge_binding_from_fold_or_collides
+    (E : NoteSpendEngine) (hash : List ℤ → ℤ) (enc : E.Proof → List ℤ)
+    (LeafSat : ℤ → ℤ → Prop)
+    (hfri : NoteSpendLeafFriFloor E LeafSat)
+    (hfactor : ∀ p, E.verify p = true → E.spendDigest p = hash (enc p))
+    (henc : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q →
+        E.nullifier p = E.nullifier q)
+    (f : BridgeFold E) (hsat : SatBridgeFold E LeafSat f) :
+    (∃ q : E.Proof, E.verify q = true ∧ E.spendDigest q = f.mintHash) ∧
+    (∀ p q : E.Proof, E.verify p = true → E.verify q = true →
+        E.spendDigest p = f.mintHash → E.spendDigest q = f.mintHash →
+        E.nullifier p = E.nullifier q ∨ EncColl hash enc p q) := by
+  obtain ⟨q, hq, hqc⟩ := hfri f.leafVk f.leafIdentity hsat.leafCV
+  rw [hsat.connect] at hqc
+  refine ⟨⟨q, hq, hqc⟩, ?_⟩
+  intro p q' hp hq' hpc hq'c
+  by_cases hpre : enc p = enc q'
+  · exact Or.inl (henc p q' hp hq' hpre)
+  · refine Or.inr ⟨hpre, ?_⟩
+    rw [← hfactor p hp, ← hfactor q' hq', hpc, hq'c]
 
 /-- **`backedAt_from_fold` — the GROUNDING onto `BridgeBackingAttack.BackedAt` (the §A/§B
 close, at the aggregate).** `deployed_intent_does_not_force_backing` proved the deployed AIR
@@ -246,21 +279,23 @@ theorem honestSat (hash : List ℤ → ℤ) :
 
 /-- **`honest_companion_fires` (POSITIVE non-vacuity).** On the honest bridge-mint turn the
 binding FIRES: the published mint identity is BACKED by a verifying foreign spend whose
-nullifier is uniquely determined by the identity — resting on `Poseidon2SpongeCR` alone. -/
-theorem honest_companion_fires (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    (∃ q : ℤ × ℤ, (honestSpend hash).verify q = true ∧
-        (honestSpend hash).spendDigest q = (honestFold hash).mintHash) ∧
-    (∀ p q : ℤ × ℤ, (honestSpend hash).verify p = true → (honestSpend hash).verify q = true →
-        (honestSpend hash).spendDigest p = (honestFold hash).mintHash →
-        (honestSpend hash).spendDigest q = (honestFold hash).mintHash →
-        (honestSpend hash).nullifier p = (honestSpend hash).nullifier q) :=
-  bridge_binding_from_fold (honestSpend hash) hash (fun p => [p.1, p.2]) (honestNLS hash)
-    (honestFloor hash) hCR (fun _p _ => rfl)
+nullifier is uniquely determined by the identity — unconditionally, at `Poseidon2Binding.Reference.refSponge` whose CR is PROVED. -/
+theorem honest_companion_fires :
+    (∃ q : ℤ × ℤ, (honestSpend refSponge).verify q = true ∧
+        (honestSpend refSponge).spendDigest q = (honestFold refSponge).mintHash) ∧
+    (∀ p q : ℤ × ℤ, (honestSpend refSponge).verify p = true → (honestSpend refSponge).verify q = true →
+        (honestSpend refSponge).spendDigest p = (honestFold refSponge).mintHash →
+        (honestSpend refSponge).spendDigest q = (honestFold refSponge).mintHash →
+        (honestSpend refSponge).nullifier p = (honestSpend refSponge).nullifier q) :=
+  bridge_binding_from_fold (honestSpend refSponge) refSponge (fun p => [p.1, p.2]) (honestNLS refSponge)
+    (honestFloor refSponge) (fun _p _ => rfl)
     (by
       intro p q _ _ henc
       have h1 : p.1 = q.1 := by injection henc
       exact h1)
-    (honestFold hash) (honestSat hash)
+    (honestFold refSponge)
+    (fun _p _q _ _ _ _ hcol => hcol.1 (refSponge_CR _ _ hcol.2))
+    (honestSat refSponge)
 
 /-- **The honest fold DISCHARGES `BackedAt`** — the grounded close is itself non-vacuous:
 against the fresh-baseline consumed set (`noneConsumed`), the honest fold backs ANY row
@@ -323,6 +358,7 @@ end Forged
 
 #assert_axioms noteSpendLeafFriFloor_of_aggFriExtract
 #assert_axioms bridge_binding_from_fold
+#assert_axioms bridge_binding_from_fold_or_collides
 #assert_axioms backedAt_from_fold
 #assert_axioms honest_companion_fires
 #assert_axioms honest_backedAt

@@ -41,13 +41,13 @@ sub-proof exposes; the LC-witnessed (staged) condition is `rc ∈ Verifying`.
    the predicate's light-client witnessing is carried ENTIRELY by the off-AIR registry (or, once
    repaired, the FOLD), NEVER by the deployed circuit. RE-EXEC-ONLY, established as a class.
 
-§C `dslEngineBinding_of_floor` — the REPAIR is SOUND on the floor. The fix (this commit's
+§C `dslEngineBinding_or_collides` — the REPAIR, floor-free. The fix (this commit's
    `circuit-prove/src/dsl_leaf_adapter.rs`) re-proves the DSL/Dfa `CellProgram` as a recursion leaf
    exposing its PI-commitment in-circuit and `connect`s it to the deployed leg's published `rc` inside
    the tree the LC folds. Its binding (two verifying DSL sub-proofs with the same `rc` agree on their
    program VK) is NOT an irreducible axiom: it REDUCES to `Poseidon2SpongeCR` once the DSL engine's
    commitment FACTORS as the Poseidon2 sponge of its public inputs (the route-commitment chain). We
-   instantiate `CustomCarrierAttack.engineBinding_of_floor` for a DSL engine and prove a concrete DSL
+   instantiate `CustomCarrierAttack.vk_determined_or_encColl` for a DSL engine and prove a concrete DSL
    floor engine's `EngineBinding` resting on `Poseidon2SpongeCR` ALONE.
 
 ## Axiom hygiene
@@ -60,7 +60,9 @@ import Dregg2.Circuit.CustomCarrierAttack
 namespace Dregg2.Circuit.DslBackingAttack
 
 open Dregg2.Circuit.DescriptorIR2 (ProofEngine EngineBinding)
-open Dregg2.Circuit.CustomCarrierAttack (floorEngine floorEngine_binding engineBinding_of_floor)
+open Dregg2.Circuit.CustomCarrierAttack
+  (EncColl floorEngine floorEngine_hvk refFloorEngine_binding vk_determined_or_encColl
+   vk_determined_of_noEncColl)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 
 set_option autoImplicit false
@@ -154,27 +156,49 @@ CONSTRUCTION). This is exactly the `dregg-dfa-routing-v1` shape: the published `
 Poseidon2 chain over the predicate's public inputs, the program `vk_hash` leading. -/
 def dslFloorEngine (hash : List ℤ → ℤ) : ProofEngine := floorEngine hash
 
-/-- **§C keystone — `dslEngineBinding_of_floor`.** The DSL/Dfa fold-leaf's commitment binding rests on
-`Poseidon2SpongeCR` ALONE — PROVEN, not assumed. So once the deployed Dfa leg EMITS its route-commitment
+/-- **§C keystone — `dslEngineBinding_or_collides`.** The DSL/Dfa fold-leaf's commitment binding, at
+the pair the extraction actually hands back: two verifying DSL sub-proofs exposing the same
+route-commitment either attest the same predicate program, or their two absorbed public-input lists
+are a NAMED collision of the deployed sponge. So once the deployed Dfa leg EMITS its route-commitment
 at a fixed PI slot (the named big-bang descriptor-emit) and the fold connects it to the re-proved DSL
 leaf, a forged route-commitment that no verifying DSL sub-proof backs is UNSAT in the tree the light
-client folds. The DSL carrier's light-client unfoolability is then grounded on the SAME floor as the
-custom carrier ({Poseidon2-CR, FRI-extraction, connect}), never on a bespoke off-AIR trust. -/
-theorem dslEngineBinding_of_floor (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    EngineBinding (dslFloorEngine hash) :=
-  floorEngine_binding hash hCR
+client folds.
+
+⛑ CUT OVER 2026-07-27. `dslEngineBinding_of_floor` said this rested on `Poseidon2SpongeCR` ALONE;
+that floor is PROVED FALSE at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the statement said nothing about the
+shipping DSL engine — and `EngineBinding (dslFloorEngine hash)` is itself false there (the diagonal
+`n ↦ (n, 0)` is an infinite injection into a bounded codomain). WHAT WAS LOST: the unqualified
+`EngineBinding (dslFloorEngine hash)` for an arbitrary deployed `hash`. What replaces it is this
+dichotomy, which holds AT the deployed hash with no hypothesis, plus `dslFloorEngine_binding` — the
+same conclusion, unconditionally, at a sponge whose CR is PROVED. -/
+theorem dslEngineBinding_or_collides (hash : List ℤ → ℤ) (p q : ℤ × ℤ)
+    (hpc : (dslFloorEngine hash).piCommit p = (dslFloorEngine hash).piCommit q) :
+    (dslFloorEngine hash).vkOf p = (dslFloorEngine hash).vkOf q
+      ∨ EncColl hash (fun r : ℤ × ℤ => [r.1, r.2]) p q :=
+  vk_determined_or_encColl hash (floorEngine hash) (fun r => [r.1, r.2]) (fun _ _ => rfl)
+    (floorEngine_hvk hash) p q rfl rfl hpc
+
+/-- The DSL floor engine's binding, UNCONDITIONALLY, at a sponge that really is collision-free
+(`Poseidon2Binding.Reference.refSponge`, CR PROVED). The non-vacuity witness that `EngineBinding` is
+still DERIVABLE rather than carried. -/
+theorem dslFloorEngine_binding :
+    EngineBinding (dslFloorEngine Dregg2.Circuit.Poseidon2Binding.Reference.refSponge) :=
+  refFloorEngine_binding
 
 /-- A general restatement: ANY DSL engine whose verifying proofs expose a PI-commitment that factors as
-the Poseidon2 sponge of an encoding of their public inputs (VK recoverable from the encoding) satisfies
-`EngineBinding` off `Poseidon2SpongeCR`. This is the route-commitment-chain factoring the
-`dregg-dfa-routing-v1` AIR's `SeedHash2to1`/`ChainedHash2to1` constraints realize. -/
+the Poseidon2 sponge of an encoding of their public inputs (VK recoverable from the encoding) binds the
+program VK at every pair — unless THAT pair is a witnessed sponge collision. This is the
+route-commitment-chain factoring the `dregg-dfa-routing-v1` AIR's `SeedHash2to1`/`ChainedHash2to1`
+constraints realize, and it carries no floor. -/
 theorem dslEngineBinding_of_route_commitment_factoring
     (hash : List ℤ → ℤ) (E : ProofEngine) (enc : E.Proof → List ℤ)
-    (hCR : Poseidon2SpongeCR hash)
     (hfactor : ∀ p, E.verify p = true → E.piCommit p = hash (enc p))
-    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q) :
-    EngineBinding E :=
-  engineBinding_of_floor hash E enc hCR hfactor hvk
+    (hvk : ∀ p q, E.verify p = true → E.verify q = true → enc p = enc q → E.vkOf p = E.vkOf q)
+    {p q : E.Proof} (hp : E.verify p = true) (hq : E.verify q = true)
+    (hpc : E.piCommit p = E.piCommit q) (hno : ¬ EncColl hash enc p q) :
+    E.vkOf p = E.vkOf q :=
+  vk_determined_of_noEncColl hash E enc hfactor hvk hp hq hpc hno
 
 /-! ## Axiom audit — every load-bearing arm. -/
 
@@ -182,7 +206,8 @@ theorem dslEngineBinding_of_route_commitment_factoring
 #assert_axioms deployed_admits_both
 #assert_axioms deployed_admits_unwitnessed
 #assert_axioms deployed_does_not_force_witnessed
-#assert_axioms dslEngineBinding_of_floor
+#assert_axioms dslEngineBinding_or_collides
+#assert_axioms dslFloorEngine_binding
 #assert_axioms dslEngineBinding_of_route_commitment_factoring
 
 end Dregg2.Circuit.DslBackingAttack
