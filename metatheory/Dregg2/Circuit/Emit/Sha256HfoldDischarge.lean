@@ -646,14 +646,21 @@ theorem sol_stake_from_gates (a : Assignment)
       hchain hanchorLen hpin)
 
 /-- **THE SOLANA BINDING, FROM GATES.** Two satisfying witnesses whose stake-row SHA chains are BOTH
-pinned to the SAME anchor root carry the SAME stake table — GIVEN separation on their pairs. This is
-what pins the ACTIVE-STAKE DENOMINATOR. ⚠ Read it with `solTableInjective_false`: the encoder puts a
-raw `Nat` stake in one message word and `pairHash` reads a word only mod `2^64`, so the separation
-class must exclude the high-bit aliases — the missing encoder range-check is a NAMED residual. -/
+pinned to the SAME anchor root carry the SAME stake table — GIVEN separation on their pairs AND the
+emitted stake-width gates on both tables. This is what pins the ACTIVE-STAKE DENOMINATOR.
+
+⚑ 2026-07-28 — the `hr₁`/`hr₂` range legs are NEW and load-bearing. Read them with
+`solTableInjective_false`: without them the conclusion is FALSE, because the encoder truncates the
+stake at `2^64` and `pairHash` reads a message word only mod `2^64` — a stake-inflated table hits the
+same anchor root (`solTable_stake_collision`). They are discharged by
+`LightClientSolHashFold.solRowWidthGates_forces` from the emitted `solRowWidthGates`, so this is a
+CONSTRAINT the circuit carries, not a new assumption. The residual the previous revision NAMED here
+("the missing encoder range-check") is closed. -/
 theorem sol_stake_binding_from_gates (a : Assignment)
     (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
     (t₁ t₂ : List (Nat × Nat × Nat)) (anchor : List Nat)
     (hlen : t₁.length = t₂.length) (hanchorLen : anchor.length = 8)
+    (hr₁ : SolTableInRange t₁) (hr₂ : SolTableInRange t₂)
     (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
     (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
     (bases₁ bases₂ : List Nat)
@@ -662,7 +669,7 @@ theorem sol_stake_binding_from_gates (a : Assignment)
     (hpin₁ : ∀ j, j < 8 → WordIs a (bases₁.getD j 0) (anchor.getD j 0))
     (hpin₂ : ∀ j, j < 8 → WordIs a (bases₂.getD j 0) (anchor.getD j 0)) :
     t₁ = t₂ :=
-  sol_stake_binding_on P hsep t₁ t₂ anchor hlen hc₁ hc₂
+  sol_stake_binding_on P hsep t₁ t₂ anchor hlen hr₁ hr₂ hc₁ hc₂
     (chainHfold_discharged a _ bases₁ anchor hchain₁ hanchorLen hpin₁)
     (chainHfold_discharged a _ bases₂ anchor hchain₂ hanchorLen hpin₂)
 

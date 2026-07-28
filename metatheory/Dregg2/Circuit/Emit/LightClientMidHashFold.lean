@@ -88,10 +88,15 @@ slot). NEW file; imports read-only (`Blake2bGadget`, `Bridge.LightClientMidnight
 imported by the truncated `Dregg2` root, built directly as `Dregg2.Circuit.Emit.LightClientMidHashFold`).
 -/
 import Dregg2.Circuit.Emit.Blake2bGadget
+import Dregg2.Circuit.Emit.StakeWidthRange
 import Dregg2.Bridge.LightClientMidnight
 
 namespace Dregg2.Circuit.Emit.LightClientMidHashFold
 
+open Dregg2.Circuit (Assignment)
+open Dregg2.Circuit.DescriptorIR2 (VmConstraint2)
+open Dregg2.Circuit.Emit.AirBuilder
+open Dregg2.Circuit.Emit.StakeWidthRange
 open Dregg2.Circuit.Emit.Blake2bGadget
 open Dregg2.Bridge.LightClientMidnight
 
@@ -298,6 +303,110 @@ between a floor and an empty premise. (Stated as the refutation, not as an `Iff`
 content and carries nothing.) -/
 theorem compressSepOn_top_false : ¬ compressSepOn (fun _ _ _ _ => True) := fun h =>
   compressInjective_false (fun x m t f y n e => h x m t f y n trivial trivial e)
+
+/-! ## §2c — ⚑ 2026-07-28 — THE WEIGHT WIDTH GATE: the collision's witness is REFUSED.
+
+The weight twin of the Solana stake repair (`LightClientSolHashFold` §1). Unlike Solana, NO ENCODER
+CHANGE IS NEEDED here: a BLAKE2b word IS 64 boolean columns (`Blake2bGadget` §1) and a Midnight
+authority weight IS a `u64`, so `rowBlock`'s one-word-per-field encoding is already the faithful
+fixed-width shape. What was missing is only the RANGE CHECK, and its absence is exactly what
+`authSetRootRef_weight_collision` exploits — the weight `2^64` is one bit wider than the word that
+carries it, and `Ref.compress` reads a message word only modulo `2^64`.
+
+The gate is `StakeWidthRange.widthGate` at 64 bits, generated in Lean from `AirBuilder.rangeNonneg`;
+`widthGate_forces` is what makes it a check rather than a shape. -/
+
+/-- The Midnight authority-weight width: the BLAKE2b word width, which is also the `u64` weight. -/
+def MID_WEIGHT_BITS : Nat := 64
+
+/-- **An authority row is IN RANGE** when its id and weight each fit the BLAKE2b word carrying it. -/
+def MidRowInRange (r : Nat × Nat) : Prop :=
+  r.1 < 2 ^ MID_WEIGHT_BITS ∧ r.2 < 2 ^ MID_WEIGHT_BITS
+
+instance : DecidablePred MidRowInRange := fun r => by
+  unfold MidRowInRange; infer_instance
+
+/-- **An authority SET is in range** when every row is. -/
+def MidSetInRange (t : List (Nat × Nat)) : Prop := ∀ r ∈ t, MidRowInRange r
+
+instance : DecidablePred MidSetInRange := fun t => by
+  unfold MidSetInRange; infer_instance
+
+/-- **THE AUTHORITY-ROW WIDTH GATES — LEAN-AUTHORED AIR.** Per row: one
+`StakeWidthRange.widthGate` per field at the BLAKE2b word width. `2 · (64 + 1) = 130`
+constraints/row. -/
+def midRowWidthGates (idCol wtCol bit0 : Nat) : List VmConstraint2 :=
+  widthGate idCol bit0 MID_WEIGHT_BITS
+  ++ widthGate wtCol (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS
+
+/-- The emitted budget: `65 + 65 = 130` constraints per authority row. -/
+theorem midRowWidthGates_length (idCol wtCol bit0 : Nat) :
+    (midRowWidthGates idCol wtCol bit0).length = 130 := by
+  simp [midRowWidthGates, widthGate, rangeNonneg, bitsFrom, MID_WEIGHT_BITS]
+
+/-- **THE ROW GATES FORCE THE ROW'S WIDTHS** — the bridge from the emitted AIR to the model-side
+predicate. -/
+theorem midRowWidthGates_forces (a : Assignment) (r : Nat × Nat) (idCol wtCol bit0 : Nat)
+    (hid : a idCol = (r.1 : ℤ)) (hwt : a wtCol = (r.2 : ℤ))
+    (hbId : ∀ c ∈ bitsFrom bit0 MID_WEIGHT_BITS, (gBin c).eval a = 0)
+    (hrId : evalH (recompHead (Head.lin 1 idCol) (bitsFrom bit0 MID_WEIGHT_BITS)) a = 0)
+    (hbWt : ∀ c ∈ bitsFrom (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS, (gBin c).eval a = 0)
+    (hrWt : evalH (recompHead (Head.lin 1 wtCol)
+              (bitsFrom (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS)) a = 0) :
+    MidRowInRange r :=
+  ⟨widthGate_forces a r.1 idCol bit0 MID_WEIGHT_BITS hid hbId hrId,
+   widthGate_forces a r.2 wtCol (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS hwt hbWt hrWt⟩
+
+/-- **THE INFLATED AUTHORITY IS OUT OF RANGE** — the collision's second witness is refused by the
+width predicate the gate forces, while the honest one is admitted. -/
+theorem authSetRootRef_weight_collision_out_of_range :
+    MidSetInRange [(1, 0)] ∧ ¬ MidSetInRange [((1, 2 ^ 64) : Nat × Nat)] := by
+  constructor
+  · intro r hr
+    simp only [List.mem_singleton] at hr
+    subst hr
+    exact ⟨by decide, by decide⟩
+  · intro h
+    have := (h (1, 2 ^ 64) (by simp)).2
+    simp only [MID_WEIGHT_BITS] at this
+    omega
+
+/-- **THE `2^64`-ALIAS FAMILY COLLAPSES IN RANGE.** A row whose weight has been shifted by `k·2^64` —
+the exact family `Ref.compress`'s mod-`2^64` message read generates — is in range only when
+`k = 0`. -/
+theorem midRow_weight_alias_collapses (r : Nat × Nat) (k : Nat)
+    (h : MidRowInRange (r.1, r.2 + k * 2 ^ MID_WEIGHT_BITS)) : k = 0 :=
+  alias_collapses_in_range MID_WEIGHT_BITS r.2 k h.2
+
+/-- **NO AUTHORITY SET THE GATE ADMITS CARRIES AN INFLATED ROW.** -/
+theorem midSet_weight_alias_unreachable (t : List (Nat × Nat)) (r : Nat × Nat) (k : Nat)
+    (ht : MidSetInRange t)
+    (hmem : ((r.1, r.2 + k * 2 ^ MID_WEIGHT_BITS) : Nat × Nat) ∈ t) : k = 0 :=
+  midRow_weight_alias_collapses r k (ht _ hmem)
+
+/-- ⛑ **THE WEIGHT COLLISION IS UNWITNESSABLE UNDER THE EMITTED GATE.** Not "no collision is known" —
+there is NO satisfying assignment for `midRowWidthGates` whose weight column carries the exhibit's
+`2^64`. -/
+theorem authSetRootRef_weight_collision_unwitnessable (a : Assignment) (wtCol bit0 : Nat)
+    (hwt : a wtCol = ((2 ^ 64 : Nat) : ℤ))
+    (hbWt : ∀ c ∈ bitsFrom (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS, (gBin c).eval a = 0)
+    (hrWt : evalH (recompHead (Head.lin 1 wtCol)
+              (bitsFrom (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS)) a = 0) :
+    False :=
+  widthGate_refuses a (2 ^ 64) wtCol (bit0 + MID_WEIGHT_BITS) MID_WEIGHT_BITS
+    (Nat.le_refl _) hwt hbWt hrWt
+
+/-- **THE REFUTATION OF THE FLOOR LIVES OUTSIDE THE GATED CLASS.** `compressSepOn` is refuted by the
+weight collision — but the block the refutation needs is one the width gate cannot produce: the
+inflated authority's message block carries a word `≥ 2^64`, so a width-gated absorb never walks it.
+That is the whole reason the honest floor is now plausible on the class a gated fold covers rather
+than refuted on it. -/
+theorem weight_collision_block_out_of_range :
+    ¬ (∀ w ∈ rowBlock ((1, 2 ^ 64) : Nat × Nat), w < 2 ^ MID_WEIGHT_BITS) := by
+  intro h
+  have := h (2 ^ 64) (by simp [rowBlock])
+  simp only [MID_WEIGHT_BITS] at this
+  omega
 
 /-- **`midBlakeLeaf`** — the lawful BLAKE2b `MidLeaf` whose `authSetCommit` IS the multi-block absorb
 `authSetRootRef`. The Ed25519 fields are the demo/EC-arc slot.
@@ -516,6 +625,13 @@ GADGET `blake2bF`. -/
 #assert_axioms compressSepOn_midAbsorbSep
 #assert_axioms midAbsorbSep_class_inhabited
 #assert_axioms mid_authset_binding_fires
+#assert_axioms midRowWidthGates_length
+#assert_axioms midRowWidthGates_forces
+#assert_axioms authSetRootRef_weight_collision_out_of_range
+#assert_axioms midRow_weight_alias_collapses
+#assert_axioms midSet_weight_alias_unreachable
+#assert_axioms authSetRootRef_weight_collision_unwitnessable
+#assert_axioms weight_collision_block_out_of_range
 
 #print axioms mid_authset_from_fold_gate_accepts
 #print axioms authSet_binding_on

@@ -77,6 +77,23 @@ compressing hash and **kept the idealized-injectivity `Prop`**, flipping the car
 
 Commits: `f94704873c`, `7b30b993c6`, `65920071b`, `49913c45d`, and downstream `62af888f5`, `b912a1b64`.
 
+> **STATUS 2026-07-27 / 2026-07-28.** `a83c639ae` replaced all four refuted CR slots with the
+> per-fold separation floors (`pairSepOn` / `compressSepOn`), all three legs proved — and in doing so
+> surfaced the *encoder* half of the same wound as a NAMED RESIDUAL: `solRowLeaf` and `rowBlock` drop
+> an unbounded `Nat` (a stake, a weight) into a hash message word that is read only modulo `2^64`.
+> That residual is now CLOSED. `Dregg2.Circuit.Emit.StakeWidthRange` is the Lean-authored width gate
+> (`AirBuilder.rangeNonneg` plus `rangeNonneg_forces`, the forcing lemma the range gadget had never
+> been given by anything in this tree); `solRowWidthGates` / `midRowWidthGates` emit it per row, and
+> `solTable_binding_on` / `sol_stake_binding_on` now take the width predicate as a hypothesis their
+> conclusion genuinely needs. The collision exhibits are KEPT — `solTable_stake_collision` and
+> `authSetRootRef_weight_collision` are what make the gate load-bearing — and each now has a
+> companion proving its witness is UNWITNESSABLE under the gate
+> (`solTable_stake_collision_unwitnessable`, `authSetRootRef_weight_collision_unwitnessable`).
+> `solRowLeaf` also changed shape: the stake is now TWO fixed-width 32-bit words, the faithful model
+> of the deployed `stake.to_le_bytes()` (`bridge/src/solana_consensus.rs:203`). Every KAT digest is
+> unchanged; no descriptor, golden or VK moves (the SHA fold is still behind the IR-v2 `proofBind`
+> seam — `LightClientSolHashFold` RESIDUAL #3).
+
 The four leaf instantiations, and the exact `Prop` each plugs into the CR slot:
 
 | File:line | Field | The `Prop` as written |

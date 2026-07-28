@@ -75,15 +75,41 @@ it: both rested on injectivity of a compressing hash. Replacements are
 `sol_stake_from_fold_gate_accepts` (carrier-free: the gates discharge `solVerify`) and
 `solTable_binding_on` / `sol_stake_binding_on` (the binding, on `Sha256MerkleFold.pairSepOn`).
 **CAPABILITY LOST, NAMED:** `SolValidAt`'s ∀-quantified table-binding conjunct is not derivable at a
-compressing hash by any premise. ⚠ AND A NEW HOLE IS SURFACED: `solRowLeaf` drops the raw `Nat`
-stake into one message word and `pairHash` reads a word only mod `2^64`, so the anchor root does not
-pin the stake denominator even in principle without an encoder range-check that does not exist.
+compressing hash by any premise. ⚠ AND A NEW HOLE WAS SURFACED: `solRowLeaf` dropped the raw `Nat`
+stake into one message word and `pairHash` reads a word only mod `2^64`, so the anchor root did not
+pin the stake denominator even in principle without an encoder range-check that did not exist.
+
+## ⚑ 2026-07-28 — THAT RESIDUAL IS CLOSED: the encoder is fixed-width and RANGE-GATED
+
+The named residual is now a constraint. Three changes, all Lean-authored AIR (`Dregg2.Circuit.Emit.
+StakeWidthRange`, generated from `AirBuilder.rangeNonneg`; no Rust hand-writes any of it):
+
+  * `solRowLeaf` is FIXED-WIDTH — the stake occupies two 32-bit words, the faithful model of the
+    deployed `stake.to_le_bytes()` (`bridge/src/solana_consensus.rs:203`) and the only shape an AIR
+    whose word is 32 boolean columns can carry. Every KAT digest is UNCHANGED.
+  * `solRowWidthGates` is the emitted per-row width check (`131` constraints/row: `32 + 32 + 64`
+    boolean pins + three recompositions), and `solRowWidthGates_forces` proves a satisfying
+    assignment puts the row `SolRowInRange`. The forcing lemma it rides,
+    `StakeWidthRange.rangeNonneg_forces`, is the bite `AirBuilder.rangeNonneg` had never been given
+    by anything in this tree.
+  * `solTable_binding_on` / `sol_stake_binding_on` now take `SolTableInRange` on both tables, and
+    `sol_denominator_pinned_on` states the payoff directly: two in-range tables at the same anchor
+    root have the SAME TOTAL STAKE. The anchor pins the denominator.
+
+The collision exhibit is DELIBERATELY KEPT (`solTable_stake_collision`) as the tooth: it shows the
+gate is load-bearing, `solTable_stake_collision_out_of_range` shows its witness is refused, and
+`solTable_stake_collision_unwitnessable` shows there is no satisfying assignment carrying it.
 -/
 import Dregg2.Circuit.Emit.LightClientTmHashFold
+import Dregg2.Circuit.Emit.StakeWidthRange
 import Dregg2.Bridge.LightClientSolana
 
 namespace Dregg2.Circuit.Emit.LightClientSolHashFold
 
+open Dregg2.Circuit (Assignment)
+open Dregg2.Circuit.DescriptorIR2 (VmConstraint2)
+open Dregg2.Circuit.Emit.AirBuilder
+open Dregg2.Circuit.Emit.StakeWidthRange
 open Dregg2.Circuit.Emit.Sha256MerkleFold
 open Dregg2.Circuit.Emit.LightClientTmHashFold
 open Dregg2.Bridge.LightClientSolana
@@ -93,10 +119,132 @@ set_option maxRecDepth 8192
 
 /-! ## §1 — The per-row leaf encoding + the SHA `SolLeaf`: `tableCommit = chainCommit ∘ map leaf`. -/
 
+/-! ### The declared field widths — the DEPLOYED shapes, not model conveniences.
+
+`SOL_WORD_BITS` is what a SHA-256 message word IS in the emitted AIR: 32 boolean columns
+(`Sha256Gadget` §1). `SOL_STAKE_BITS` is the deployed stake width — `EpochStakeTable`'s
+`BTreeMap<[u8; 32], u64>` (`bridge/src/solana_consensus.rs:132`), hashed into the root as
+`stake.to_le_bytes()` (`solana_consensus.rs:203`), i.e. FIXED 8 bytes = exactly two 32-bit words. -/
+
+/-- The AIR word width: a SHA-256 message word is 32 boolean columns. -/
+def SOL_WORD_BITS : Nat := 32
+/-- The deployed stake width: `u64` lamports, hashed fixed-width as `stake.to_le_bytes()`. -/
+def SOL_STAKE_BITS : Nat := 64
+
 /-- A stake-table row `(votePubkey, authorizedVoter, stake)` as an 8-word leaf digest (the row's leaf
-in the stake-table commit). Injective in the three fields (distinct positions). -/
+in the stake-table commit).
+
+⚑ 2026-07-28 — THE STAKE IS FIXED-WIDTH, in TWO words. It used to be `[tag, vp, av, stk, 0,0,0,0]`,
+dropping the raw unbounded `Nat` into ONE message word, which is (a) not representable in the emitted
+AIR at all, where a word is 32 boolean columns, and (b) not what the deployed Rust hashes — `root()`
+feeds `stake.to_le_bytes()`, a FIXED 8 bytes. The stake now occupies the low and high 32-bit words,
+which is the faithful model of that encoding and the only shape the AIR can carry.
+
+Being fixed-width, the encoder TRUNCATES above `2^64` and is therefore NOT injective — that is not a
+regression, it is the defect made honest and local: `solTable_stake_collision` still exhibits it, and
+`solRowLeaf_inj_on_range` proves the truncation is invisible once the width gate
+(`solRowWidthGates`) is present. Every KAT digest below is UNCHANGED, because every demo stake is
+`< 2^32` and the high word is `0` exactly where the old encoding already had `0`.
+
+RESIDUAL (named, unchanged): `vp`/`av` are ONE-word demo pubkey ids; a real Solana vote account is 32
+bytes = eight words, and the deployed `root()` preimage also carries the epoch and the row count. The
+row shape is the demo's; the WIDTH DISCIPLINE proved here is not. -/
 def solRowLeaf : Nat × Nat × Nat → List Nat
-  | (vp, av, stk) => [0x766f7465, vp, av, stk, 0, 0, 0, 0]
+  | (vp, av, stk) => [0x766f7465, vp, av, stk % 2 ^ 32, stk / 2 ^ 32 % 2 ^ 32, 0, 0, 0]
+
+/-! ### The width predicate the gate forces, and the gate that forces it. -/
+
+/-- **A stake-table row is IN RANGE** when every field fits the width the encoder declares: the two
+demo pubkey ids in one 32-bit word each, the stake in its `u64`. -/
+def SolRowInRange (r : Nat × Nat × Nat) : Prop :=
+  r.1 < 2 ^ SOL_WORD_BITS ∧ r.2.1 < 2 ^ SOL_WORD_BITS ∧ r.2.2 < 2 ^ SOL_STAKE_BITS
+
+instance : DecidablePred SolRowInRange := fun r => by
+  unfold SolRowInRange; infer_instance
+
+/-- **A stake TABLE is in range** when every row is. -/
+def SolTableInRange (t : List (Nat × Nat × Nat)) : Prop := ∀ r ∈ t, SolRowInRange r
+
+instance : DecidablePred SolTableInRange := fun t => by
+  unfold SolTableInRange; infer_instance
+
+/-- **THE STAKE-TABLE ROW WIDTH GATES — LEAN-AUTHORED AIR.** Per row: one
+`StakeWidthRange.widthGate` per field, i.e. `32 + 32 + 64 = 128` boolean pins and three
+recomposition gates (`131` constraints/row). `bit0` is the row's first fresh bit column; the three
+fields' bit windows are disjoint by construction.
+
+This is the constraint the whole repair turns on, and it is generated here, in Lean, from
+`AirBuilder.rangeNonneg` — no Rust hand-writes it. -/
+def solRowWidthGates (vpCol avCol stkCol bit0 : Nat) : List VmConstraint2 :=
+  widthGate vpCol bit0 SOL_WORD_BITS
+  ++ widthGate avCol (bit0 + SOL_WORD_BITS) SOL_WORD_BITS
+  ++ widthGate stkCol (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS
+
+/-- The emitted budget: `33 + 33 + 65 = 131` constraints per stake-table row. -/
+theorem solRowWidthGates_length (vpCol avCol stkCol bit0 : Nat) :
+    (solRowWidthGates vpCol avCol stkCol bit0).length = 131 := by
+  simp [solRowWidthGates, widthGate, rangeNonneg, bitsFrom, SOL_WORD_BITS, SOL_STAKE_BITS]
+
+/-- **THE ROW GATES FORCE THE ROW'S WIDTHS.** A satisfying assignment whose three value columns carry
+the row's fields puts the row IN RANGE. This is the bridge from the emitted AIR to the model-side
+predicate every theorem below quantifies over. -/
+theorem solRowWidthGates_forces (a : Assignment) (r : Nat × Nat × Nat)
+    (vpCol avCol stkCol bit0 : Nat)
+    (hvp : a vpCol = (r.1 : ℤ)) (hav : a avCol = (r.2.1 : ℤ)) (hstk : a stkCol = (r.2.2 : ℤ))
+    (hbVp : ∀ c ∈ bitsFrom bit0 SOL_WORD_BITS, (gBin c).eval a = 0)
+    (hrVp : evalH (recompHead (Head.lin 1 vpCol) (bitsFrom bit0 SOL_WORD_BITS)) a = 0)
+    (hbAv : ∀ c ∈ bitsFrom (bit0 + SOL_WORD_BITS) SOL_WORD_BITS, (gBin c).eval a = 0)
+    (hrAv : evalH (recompHead (Head.lin 1 avCol)
+              (bitsFrom (bit0 + SOL_WORD_BITS) SOL_WORD_BITS)) a = 0)
+    (hbStk : ∀ c ∈ bitsFrom (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS, (gBin c).eval a = 0)
+    (hrStk : evalH (recompHead (Head.lin 1 stkCol)
+              (bitsFrom (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS)) a = 0) :
+    SolRowInRange r :=
+  ⟨widthGate_forces a r.1 vpCol bit0 SOL_WORD_BITS hvp hbVp hrVp,
+   widthGate_forces a r.2.1 avCol (bit0 + SOL_WORD_BITS) SOL_WORD_BITS hav hbAv hrAv,
+   widthGate_forces a r.2.2 stkCol (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS hstk hbStk hrStk⟩
+
+/-- **THE ENCODER IS INJECTIVE ON IN-RANGE ROWS.** Equal leaves force equal rows once the width gate
+is present — the fixed-width truncation is invisible below `2^64`. Without the range hypothesis this
+is FALSE (`solTable_stake_collision`), so the hypothesis is load-bearing, not decoration. -/
+theorem solRowLeaf_inj_on_range (r₁ r₂ : Nat × Nat × Nat)
+    (h₁ : SolRowInRange r₁) (h₂ : SolRowInRange r₂) (h : solRowLeaf r₁ = solRowLeaf r₂) :
+    r₁ = r₂ := by
+  obtain ⟨a₁, b₁, c₁⟩ := r₁
+  obtain ⟨a₂, b₂, c₂⟩ := r₂
+  simp only [SolRowInRange, SOL_WORD_BITS, SOL_STAKE_BITS] at h₁ h₂
+  simp only [solRowLeaf, List.cons.injEq] at h
+  obtain ⟨-, hva, hvb, hlo, hhi, -⟩ := h
+  have hc : c₁ = c₂ := by
+    have hd₁ : c₁ / 2 ^ 32 < 2 ^ 32 := by omega
+    have hd₂ : c₂ / 2 ^ 32 < 2 ^ 32 := by omega
+    rw [Nat.mod_eq_of_lt hd₁, Nat.mod_eq_of_lt hd₂] at hhi
+    omega
+  simp only [Prod.mk.injEq]
+  exact ⟨hva, hvb, hc⟩
+
+/-- The list lift: equal leaf lists over in-range tables force equal tables. -/
+theorem solRows_eq_of_leaves_eq :
+    ∀ (t₁ t₂ : List (Nat × Nat × Nat)), SolTableInRange t₁ → SolTableInRange t₂ →
+      t₁.map solRowLeaf = t₂.map solRowLeaf → t₁ = t₂ := by
+  intro t₁
+  induction t₁ with
+  | nil =>
+    intro t₂ _ _ h
+    cases t₂ with
+    | nil => rfl
+    | cons _ _ => simp at h
+  | cons r rest ih =>
+    intro t₂ h₁ h₂ h
+    cases t₂ with
+    | nil => simp at h
+    | cons r' rest' =>
+      simp only [List.map_cons, List.cons.injEq] at h
+      have hr : r = r' :=
+        solRowLeaf_inj_on_range r r' (h₁ r (by simp)) (h₂ r' (by simp)) h.1
+      have htail : rest = rest' :=
+        ih rest' (fun x hx => h₁ x (by simp [hx])) (fun x hx => h₂ x (by simp [hx])) h.2
+      rw [hr, htail]
 
 /-- Demo Ed25519-slot verifier (genuine key `7`, genuine sig `7`): the EC-arc residual, NOT folded. -/
 def solEdVerify (pk : Nat) (_m : Nat × List Nat) (s : Nat) : Bool :=
@@ -118,11 +266,21 @@ def solTableInjective : Prop :=
     chainCommit (t₁.map solRowLeaf) = chainCommit (t₂.map solRowLeaf) → t₁ = t₂
 
 set_option maxRecDepth 8192 in
-/-- ⚑ **THE STAKE DENOMINATOR IS NOT BOUND — an executable STAKE-INFLATION collision.** A row with
-stake `50` and a row with stake `50 + 2^64` produce the SAME stake-table root, because `pairHash`
-reads its message words only modulo `2^64` (`Sha256MerkleFold.pairHash_ignores_bits_above_64`) and
-`solRowLeaf` drops the raw `Nat` stake straight into a word. Two tables with WILDLY different
-`totalStake` share an anchor root, so the anchor pins no denominator at all. -/
+/-- ⚑ **THE STAKE DENOMINATOR IS NOT BOUND BY THE ANCHOR ALONE — an executable STAKE-INFLATION
+collision, KEPT as the tooth.** A table with stake `50` and one with stake `50 + 2^64` produce the
+SAME stake-table root. Two tables with WILDLY different `totalStake` share an anchor root, so the
+anchor by itself pins no denominator at all.
+
+The mechanism was, and after the 2026-07-28 encoder repair still is, a `2^64` truncation — only now
+it is LOCAL to the encoder instead of buried in the hash: `solRowLeaf` keeps the stake's low and high
+32-bit words and drops everything above, and independently `pairHash` reads a message word only
+modulo `2^64` (`Sha256MerkleFold.pairHash_ignores_bits_above_64`), so an encoder without a width
+gate is non-injective at the digest whichever of the two you look at.
+
+⚑ THIS THEOREM IS THE REASON THE WIDTH GATE IS LOAD-BEARING, and it is deliberately NOT deleted:
+`solTable_stake_collision_out_of_range` proves its second table is refused by
+`solRowWidthGates`, and `solTable_binding_on` shows the binding conclusion IS recovered once the
+gate is present. Delete the gate and this exhibit comes straight back. -/
 theorem solTable_stake_collision :
     chainCommit (([(1, 7, 50)] : List (Nat × Nat × Nat)).map solRowLeaf)
       = chainCommit (([(1, 7, 50 + 2 ^ 64)] : List (Nat × Nat × Nat)).map solRowLeaf) := by
@@ -132,6 +290,54 @@ theorem solTable_stake_collision :
 theorem solTableInjective_false : ¬ solTableInjective := by
   intro h
   exact absurd (h _ _ solTable_stake_collision) (by decide)
+
+/-! ### ⚑ 2026-07-28 — THE COLLISION IS NOW UNREACHABLE: the width gate refuses its witness.
+
+The residual the 2026-07-27 repair NAMED ("the missing encoder range-check") is closed here. The
+three statements are: the exhibit's second table is REFUSED by the gate; the whole `2^64`-alias
+family collapses to a point in range; and the collision is therefore not merely unexhibited but
+UNWITNESSABLE — no satisfying assignment for `solRowWidthGates` carries it. -/
+
+/-- **THE INFLATED TABLE IS OUT OF RANGE** — the collision's second witness is refused by the width
+predicate the gate forces, while the honest one is admitted. -/
+theorem solTable_stake_collision_out_of_range :
+    SolTableInRange [(1, 7, 50)] ∧ ¬ SolTableInRange [((1, 7, 50 + 2 ^ 64) : Nat × Nat × Nat)] := by
+  constructor
+  · intro r hr
+    simp only [List.mem_singleton] at hr
+    subst hr
+    exact ⟨by decide, by decide, by decide⟩
+  · intro h
+    have := (h (1, 7, 50 + 2 ^ 64) (by simp)).2.2
+    simp only [SOL_STAKE_BITS] at this
+    omega
+
+/-- **THE `2^64`-ALIAS FAMILY COLLAPSES IN RANGE.** A row whose stake has been shifted by `k·2^64` —
+the exact family the truncation generates — is in range only when `k = 0`. -/
+theorem solRow_stake_alias_collapses (r : Nat × Nat × Nat) (k : Nat)
+    (h : SolRowInRange (r.1, r.2.1, r.2.2 + k * 2 ^ SOL_STAKE_BITS)) : k = 0 :=
+  alias_collapses_in_range SOL_STAKE_BITS r.2.2 k h.2.2
+
+/-- **NO TABLE THE GATE ADMITS CARRIES AN INFLATED ROW.** The table-level form: an in-range stake
+table cannot contain a `k·2^64`-shifted row for nonzero `k`. -/
+theorem solTable_stake_alias_unreachable (t : List (Nat × Nat × Nat)) (r : Nat × Nat × Nat) (k : Nat)
+    (ht : SolTableInRange t)
+    (hmem : ((r.1, r.2.1, r.2.2 + k * 2 ^ SOL_STAKE_BITS) : Nat × Nat × Nat) ∈ t) : k = 0 :=
+  solRow_stake_alias_collapses r k (ht _ hmem)
+
+/-- ⚑ **THE COLLISION IS UNWITNESSABLE UNDER THE EMITTED GATE.** Not "no collision is known" — there
+is NO satisfying assignment for `solRowWidthGates` whose stake column carries the exhibit's inflated
+value. The forcing lemma is the whole content; this is it applied to the exact witness on the
+record. -/
+theorem solTable_stake_collision_unwitnessable (a : Assignment)
+    (stkCol bit0 : Nat)
+    (hstk : a stkCol = ((50 + 2 ^ 64 : Nat) : ℤ))
+    (hbStk : ∀ c ∈ bitsFrom (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS, (gBin c).eval a = 0)
+    (hrStk : evalH (recompHead (Head.lin 1 stkCol)
+              (bitsFrom (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS)) a = 0) :
+    False :=
+  widthGate_refuses a (50 + 2 ^ 64) stkCol (bit0 + 2 * SOL_WORD_BITS) SOL_STAKE_BITS
+    (by simp only [SOL_STAKE_BITS]; omega) hstk hbStk hrStk
 
 /-- **`solShaLeaf`** — the lawful SHA `SolLeaf` whose `tableCommit` IS the SHA-256 collection chain
 (`chainCommit` over the per-row `solRowLeaf` digests). The Ed25519 fields are the demo/EC-arc slot.
@@ -178,25 +384,29 @@ generator's SHA-256 row chain — the object `STAKE_TABLE_OK` stood for, via the
 theorem solTableCommit_eq_chainCommit (rows : List (Nat × Nat × Nat)) :
     solShaLeaf.tableCommit rows = chainCommit (rows.map solRowLeaf) := rfl
 
-/-- **THE STAKE-TABLE COMMIT BINDS, at the HONEST floor.** Equal-length tables whose SHA-256 row
-chains agree ARE the same table — so the WS-anchor-pinned root pins the ACTIVE-STAKE DENOMINATOR —
-GIVEN separation on the two chains' OWN pairs (`Sha256MerkleFold.pairSepOn` + `ChainCovered`),
-instead of the refuted global injectivity of `pairHash`. Conclusion unchanged; premise satisfiable. -/
+/-- **THE STAKE-TABLE COMMIT BINDS, at the HONEST floor AND THE EMITTED WIDTH GATE.** Equal-length
+IN-RANGE tables whose SHA-256 row chains agree ARE the same table — so the WS-anchor-pinned root pins
+the ACTIVE-STAKE DENOMINATOR — GIVEN separation on the two chains' OWN pairs
+(`Sha256MerkleFold.pairSepOn` + `ChainCovered`) instead of the refuted global injectivity of
+`pairHash`, and GIVEN that both tables satisfy `solRowWidthGates` (`SolTableInRange`).
+
+⚑ 2026-07-28 — the two range hypotheses are NEW and LOAD-BEARING. Drop either and the conclusion is
+FALSE by `solTable_stake_collision`: the encoder truncates at `2^64` and `pairHash` reads a message
+word only mod `2^64`, so a stake-inflated table hits the same root. `solRowWidthGates_forces`
+discharges them from the emitted gates, so this is not a new trust assumption — it is a constraint
+the circuit now carries. -/
 theorem solTable_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
     (t₁ t₂ : List (Nat × Nat × Nat)) (hlen : t₁.length = t₂.length)
+    (hr₁ : SolTableInRange t₁) (hr₂ : SolTableInRange t₂)
     (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
     (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
     (h : solShaLeaf.tableCommit t₁ = solShaLeaf.tableCommit t₂) : t₁ = t₂ := by
   have hleaf : t₁.map solRowLeaf = t₂.map solRowLeaf :=
     chainCommit_binding_on P hsep (t₁.map solRowLeaf) (t₂.map solRowLeaf)
       (by simp [hlen]) hc₁ hc₂ h
-  -- `solRowLeaf` is injective, so equal leaf lists force equal row lists.
-  have hinj : Function.Injective solRowLeaf := by
-    rintro ⟨a, b, c⟩ ⟨a', b', c'⟩ heq
-    simp only [solRowLeaf, List.cons.injEq] at heq
-    simp only [Prod.mk.injEq]
-    refine ⟨?_, ?_, ?_⟩ <;> omega
-  exact List.map_injective_iff.mpr hinj hleaf
+  -- `solRowLeaf` is injective ON IN-RANGE ROWS (and only there), so equal leaf lists force equal
+  -- row lists.
+  exact solRows_eq_of_leaves_eq t₁ t₂ hr₁ hr₂ hleaf
 
 /-- **THE CARRIER CONTENT, DERIVED from the SHA fold (`*_fold_derives_*` analog).** The fold gates force
 the chain root `= chainCommit (rows)` (RESIDUAL #1, an explicit hypothesis here), and the publish/bind
@@ -245,16 +455,33 @@ theorem sol_stake_from_fold_gate_accepts
   simp only [Bool.and_eq_true, decide_eq_true_eq]
   exact ⟨⟨⟨⟨⟨hpos, hthr⟩, hed⟩, hstk⟩, hrooted⟩, hauth⟩
 
-/-- **THE STAKE DENOMINATOR IS BOUND, at the HONEST floor.** Two equal-length stake tables whose
-SHA-256 row chains both hit the SAME pinned anchor root ARE the same table — GIVEN separation on the
-two chains' own pairs. This is what `STAKE_TABLE_OK` stood for. -/
+/-- **THE STAKE DENOMINATOR IS BOUND, at the HONEST floor AND THE WIDTH GATE.** Two equal-length
+IN-RANGE stake tables whose SHA-256 row chains both hit the SAME pinned anchor root ARE the same
+table — GIVEN separation on the two chains' own pairs. This is what `STAKE_TABLE_OK` stood for. -/
 theorem sol_stake_binding_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
     (t₁ t₂ : List (Nat × Nat × Nat)) (anchor : List Nat) (hlen : t₁.length = t₂.length)
+    (hr₁ : SolTableInRange t₁) (hr₂ : SolTableInRange t₂)
     (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
     (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
     (h₁ : chainCommit (t₁.map solRowLeaf) = anchor)
     (h₂ : chainCommit (t₂.map solRowLeaf) = anchor) : t₁ = t₂ :=
-  solTable_binding_on P hsep t₁ t₂ hlen hc₁ hc₂ (h₁.trans h₂.symm)
+  solTable_binding_on P hsep t₁ t₂ hlen hr₁ hr₂ hc₁ hc₂ (h₁.trans h₂.symm)
+
+/-- ⚑ **THE ANCHOR NOW PINS THE DENOMINATOR — the statement the finding said was false.** Two
+in-range stake tables that both hit the pinned WS anchor root have the SAME TOTAL STAKE, so the
+`≥ 2/3` threshold `solVerifyDecision` computes is computed against a denominator the anchor fixes.
+Before the width gate this was refutable at the same anchor root (`solTable_stake_collision`: totals
+`50` and `50 + 2^64`); it is now a theorem, on the honest hash floor. -/
+theorem sol_denominator_pinned_on (P : List Nat → List Nat → Prop) (hsep : pairSepOn P)
+    (t₁ t₂ : List (Nat × Nat × Nat)) (anchor : List Nat) (hlen : t₁.length = t₂.length)
+    (hr₁ : SolTableInRange t₁) (hr₂ : SolTableInRange t₂)
+    (hc₁ : ChainCovered P chainIV (t₁.map solRowLeaf))
+    (hc₂ : ChainCovered P chainIV (t₂.map solRowLeaf))
+    (h₁ : chainCommit (t₁.map solRowLeaf) = anchor)
+    (h₂ : chainCommit (t₂.map solRowLeaf) = anchor) :
+    (t₁.map (fun r => r.2.2)).sum = (t₂.map (fun r => r.2.2)).sum :=
+  congrArg (fun t : List (Nat × Nat × Nat) => (t.map (fun r => r.2.2)).sum)
+    (sol_stake_binding_on P hsep t₁ t₂ anchor hlen hr₁ hr₂ hc₁ hc₂ h₁ h₂)
 
 /-! ## §3 — KATs: the 2-entry SHA-256 chain, anchored to an independent SHA-256 vector.
 
@@ -290,6 +517,15 @@ def solRows : List (Nat × Nat × Nat) := [solRow1, solRow2]
 #assert_axioms stakeTableOk_from_fold
 #assert_axioms sol_stake_from_fold_gate_accepts
 #assert_axioms sol_stake_binding_on
+#assert_axioms solRowWidthGates_length
+#assert_axioms solRowWidthGates_forces
+#assert_axioms solRowLeaf_inj_on_range
+#assert_axioms solRows_eq_of_leaves_eq
+#assert_axioms solTable_stake_collision_out_of_range
+#assert_axioms solRow_stake_alias_collapses
+#assert_axioms solTable_stake_alias_unreachable
+#assert_axioms solTable_stake_collision_unwitnessable
+#assert_axioms sol_denominator_pinned_on
 
 #print axioms sol_stake_from_fold_gate_accepts
 #print axioms solTable_binding_on
