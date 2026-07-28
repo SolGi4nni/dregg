@@ -734,7 +734,7 @@ theorem bindingExtract_at_the_empty_chain_empties_binding_acceptance
         BindingExtract Proof verify hash CH RH cmb compress compressN agg [])
       (fun agg : Aggregate Proof => verify agg.bindingProof = true) := by
   intro h agg hacc
-  obtain ⟨rows, pub, hsat, hrep, -, -⟩ := h agg hacc
+  obtain ⟨rows, pub, hsat, hrep, -, -, -⟩ := h agg hacc
   cases rows with
   | nil => exact hsat.nonempty rfl
   | cons r rest => simp [Dregg2.Circuit.BindingAirSound.Represents] at hrep
@@ -749,7 +749,7 @@ theorem bindingExtract_at_the_empty_chain_is_false
     (agg : Aggregate Proof) (hacc : verify agg.bindingProof = true) :
     ¬ BindingExtract Proof verify hash CH RH cmb compress compressN agg [] := by
   intro h
-  obtain ⟨rows, pub, hsat, hrep, -, -⟩ := h hacc
+  obtain ⟨rows, pub, hsat, hrep, -, -, -⟩ := h hacc
   cases rows with
   | nil => exact hsat.nonempty rfl
   | cons r rest => simp [Dregg2.Circuit.BindingAirSound.Represents] at hrep

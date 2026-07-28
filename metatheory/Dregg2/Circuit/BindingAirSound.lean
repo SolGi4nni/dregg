@@ -168,6 +168,26 @@ theorem represents_getLast (rows : List BindingRow) (steps : List ChainStep)
           obtain ⟨t, ht, ho, hn⟩ := ih (s' :: ss') htail r hr
           exact ⟨t, by rw [List.getLast?_cons_cons]; exact ht, ho, hn⟩
 
+/-- **`represents_length`** — a represented trace has EXACTLY as many rows as the chain has steps.
+Purely structural (`Represents` is a positional zip that is `False` on a length mismatch), and it is
+what carries the AIR's published `num_turns` onto the chain: `Satisfies.count` says the public count
+is the ROW count, this says the row count is the STEP count. No cryptographic assumption. -/
+theorem represents_length :
+    ∀ (rows : List BindingRow) (steps : List ChainStep),
+      Represents CH RH cmb compress compressN rows steps → rows.length = steps.length := by
+  intro rows
+  induction rows with
+  | nil =>
+    intro steps hrep
+    cases steps with
+    | nil => rfl
+    | cons s ss => simp [Represents] at hrep
+  | cons r rest ih =>
+    intro steps hrep
+    cases steps with
+    | nil => simp [Represents] at hrep
+    | cons s ss => simpa using ih ss hrep.2
+
 /-- **`rowbound_represents_chainbound`** — the temporal tooth on the rows transfers to the steps: a
 `RowBound` represented trace forces `HistoryAggregation.ChainBound` over the steps (the `binding_sound`
 ordering conclusion). Induction matching `ChainBound`'s own 2-lookahead recursion. -/
@@ -229,10 +249,19 @@ theorem foldedFinalRoot_eq_lastNew (g : RecChainedState) (steps : List ChainStep
 /-- **`binding_air_discharges_binding_sound` (THE KEYSTONE).** A satisfying binding-AIR trace whose
 rows expose the chain steps' commitment roots discharges EXACTLY the
 `RecursiveAggregation.EngineSound.binding_sound` obligation: the temporal ordering tooth `ChainBound`
-holds over the whole chain, the public `genesis` is the chain's first `old_root`, and the public
-`final` is the genuine `foldedFinalRoot`. This rests on NO cryptographic assumption — the ordering
-tooth + boundary pins are forced by the AIR's continuity / first-row / last-row constraints alone, so
-the light client's ordering guarantee is PROVED, not assumed. -/
+holds over the whole chain, the public `genesis` is the chain's first `old_root`, the public `final`
+is the genuine `foldedFinalRoot`, and the public `num_turns` IS the chain's step count. This rests on
+NO cryptographic assumption — the ordering tooth + boundary pins + the count are forced by the AIR's
+continuity / first-row / last-row / real-count constraints alone, so the light client's ordering
+guarantee is PROVED, not assumed.
+
+**[2026-07-28 — the count leg was in hand and thrown away.]** `Satisfies.count` (the AIR's constraint
+14, `real_count[last] = pi[num_turns]`, emitted at `Emit/EffectVmEmitTurnChainBinding.lean`'s
+`lastRealCountBind`) has always been a field of the hypothesis, and this keystone used to conclude
+only three of the four facts it could. That omission is precisely why `Aggregate.numTurns` was
+UNPINNED downstream and why an inflated settled height was accepted
+(`SelfSettlement.settle_accepts_inflated_height`, now superseded). The deployed AIR always pinned it;
+the MODEL did not carry it across. It costs nothing: `count` + `represents_length`. -/
 theorem binding_air_discharges_binding_sound
     (hash : List ℤ → ℤ) (rows : List BindingRow) (pub : BindingPublic)
     (steps : List ChainStep) (g : RecChainedState)
@@ -242,16 +271,21 @@ theorem binding_air_discharges_binding_sound
       ∧ pub.genesis = (match steps.head? with
           | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
           | some s => ChainStep.oldRoot CH RH cmb compress compressN s)
-      ∧ pub.final = foldedFinalRoot CH RH cmb compress compressN g steps := by
+      ∧ pub.final = foldedFinalRoot CH RH cmb compress compressN g steps
+      ∧ pub.numTurns = steps.length := by
   -- (1) ChainBound from the row continuity tooth.
   have hbound := rowbound_represents_chainbound CH RH cmb compress compressN rows steps hrep hsat.continuity
+  -- (0) the count leg: public num_turns = row count (AIR constraint 14) = step count (Represents).
+  have hcount : pub.numTurns = steps.length := by
+    rw [hsat.count]
+    exact represents_length CH RH cmb compress compressN rows steps hrep
   -- decompose the (nonempty) rows / steps to read off the endpoints.
   obtain ⟨r, rest, rfl⟩ := List.exists_cons_of_ne_nil hsat.nonempty
   cases steps with
   | nil => simp [Represents] at hrep
   | cons s ss =>
     have hp0 := hrep.1
-    refine ⟨hbound, ?_, ?_⟩
+    refine ⟨hbound, ?_, ?_, hcount⟩
     · -- genesis pin: head row old_root = pub.genesis, paired with step s.
       have hg : r.oldRoot = pub.genesis := hsat.genesis r (by simp)
       show pub.genesis = (match (s :: ss).head? with
@@ -364,15 +398,16 @@ theorem represents_one (s : ChainStep) :
 
 /-- **`keystone_fires` (the discharge is non-vacuous).** On a real single-step chain the keystone
 FIRES, delivering a genuine `binding_sound` conclusion: `ChainBound [s]`, the genesis pin to `s`'s
-`old_root`, and the final pin to `foldedFinalRoot`. So the discharged obligation is a true fact about a
-real chain, not an empty implication. -/
+`old_root`, the final pin to `foldedFinalRoot`, and the count pin `num_turns = 1`. So the discharged
+obligation is a true fact about a real chain, not an empty implication. -/
 theorem keystone_fires (hash : List ℤ → ℤ) (s : ChainStep) (g : RecChainedState) :
     ChainBound CH RH cmb compress compressN [s]
       ∧ (pubOf CH RH cmb compress compressN hash s).genesis = (match ([s] : List ChainStep).head? with
           | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
           | some s => ChainStep.oldRoot CH RH cmb compress compressN s)
       ∧ (pubOf CH RH cmb compress compressN hash s).final
-          = foldedFinalRoot CH RH cmb compress compressN g [s] :=
+          = foldedFinalRoot CH RH cmb compress compressN g [s]
+      ∧ (pubOf CH RH cmb compress compressN hash s).numTurns = ([s] : List ChainStep).length :=
   binding_air_discharges_binding_sound CH RH cmb compress compressN hash _ _ [s] g
     (satisfies_one CH RH cmb compress compressN hash s) (represents_one CH RH cmb compress compressN s)
 
@@ -419,6 +454,7 @@ theorem reordered_not_satisfies (hash : List ℤ → ℤ) (pub : BindingPublic) 
 /-! ## 7. Axiom hygiene. -/
 
 #assert_axioms binding_air_discharges_binding_sound
+#assert_axioms represents_length
 #assert_axioms rowbound_represents_chainbound
 #assert_axioms foldedFinalRoot_eq_lastNew
 #assert_axioms represents_getLast

@@ -293,13 +293,16 @@ theorem argus_engine_sound :
     rw [hx]
     exact List.Forall₂.cons (fun _ => x.commits) List.Forall₂.nil
   · intro _
-    refine ⟨?_, ?_, ?_⟩
+    refine ⟨?_, ?_, ?_, ?_⟩
     · rw [hx]; simp [ChainBound]
     · -- genesisRoot is DEFINED as `match argusSteps.head?` — matches the required pin (`rw [hx]`).
       show argusAggregate.genesisRoot = _
       simp only [argusAggregate, hx, List.head?_cons]
     · -- finalRoot is DEFINED as the genuine fold of `argusSteps`.
       rfl
+    · -- numTurns = 1 IS the singleton strand's length (the count pin, added 2026-07-28).
+      show argusAggregate.numTurns = _
+      simp only [argusAggregate, hx, List.length_cons, List.length_nil]
 
 /-- **`argus_strand_light_client_satisfiable`.** A light client checking ONLY `acceptAll
 argusAggregate.root` over the stepped honest Argus strand obtains `AggregateAttests` (every Argus turn

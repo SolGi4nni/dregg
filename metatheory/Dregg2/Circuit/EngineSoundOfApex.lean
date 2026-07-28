@@ -229,7 +229,8 @@ theorem engineSound_of_apex
                           g.kernel Dregg2.Distributed.HistoryAggregation.zeroTurn
             | some s => Dregg2.Distributed.HistoryAggregation.ChainStep.oldRoot CH' RH' cmb' compress' compressN' s)
         ∧ agg.finalRoot
-            = Dregg2.Distributed.HistoryAggregation.foldedFinalRoot CH' RH' cmb' compress' compressN' g steps) :
+            = Dregg2.Distributed.HistoryAggregation.foldedFinalRoot CH' RH' cmb' compress' compressN' g steps
+        ∧ agg.numTurns = steps.length) :
     EngineSound Proof verify CH' RH' cmb' compress' compressN' agg g steps where
   recursive_sound := hrec
   leaf_sound := leafSound_of_bundles Proof verify CH RH cmb compress compressN
@@ -276,7 +277,8 @@ theorem multiTurn_rests_on_apex
                           g.kernel Dregg2.Distributed.HistoryAggregation.zeroTurn
             | some s => Dregg2.Distributed.HistoryAggregation.ChainStep.oldRoot CH RH cmb compress compressN s)
         ∧ agg.finalRoot
-            = Dregg2.Distributed.HistoryAggregation.foldedFinalRoot CH RH cmb compress compressN g steps)
+            = Dregg2.Distributed.HistoryAggregation.foldedFinalRoot CH RH cmb compress compressN g steps
+        ∧ agg.numTurns = steps.length)
     (hroot : verify agg.root = true) :
     Dregg2.Circuit.RecursiveAggregation.AggregateAttests Proof CH RH cmb compress compressN agg g steps :=
   Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history
@@ -304,7 +306,8 @@ theorem finalized_rests_on_apex
                           g.kernel Dregg2.Distributed.HistoryAggregation.zeroTurn
             | some s => Dregg2.Distributed.HistoryAggregation.ChainStep.oldRoot CH RH cmb compress compressN s)
         ∧ agg.finalRoot
-            = Dregg2.Distributed.HistoryAggregation.foldedFinalRoot CH RH cmb compress compressN g steps)
+            = Dregg2.Distributed.HistoryAggregation.foldedFinalRoot CH RH cmb compress compressN g steps
+        ∧ agg.numTurns = steps.length)
     (hroot : verify agg.root = true)
     (hbound : Dregg2.Distributed.FinalizedLightClient.Bound Proof agg cert finalizedRoot)
     (hcert : Dregg2.Distributed.FinalizedLightClient.CertValid cert) :

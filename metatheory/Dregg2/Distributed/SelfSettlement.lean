@@ -38,9 +38,11 @@ RESIDUAL below — it is not claimed as done.
      child's whole history. The L2 commitment sitting on the L1 is bound to the child's entire executed,
      finalized history — no re-execution. `settlement_root_is_unique` adds the anti-equivocation edge:
      no two accepted settlements of one child history can commit different roots.
-  6. `settle_conserves_child_producer_witness` — the parent inherits child value-conservation, in the
-     PRODUCER-WITNESS form only. ⚠ The stronger verification-derived form is DELIBERATELY NOT TAKEN:
-     see the floor note below.
+  6. `settle_conserves_child_producer_witness` — child value-conservation from an executor-genuine
+     `StateChained` witness. It is `FinalizedLightClient.finalized_history_conserves` under a new name:
+     the statement mentions no parent, no settlement and no account, and it does NOT consume the
+     settlement. ⚠ The stronger verification-derived form is DELIBERATELY NOT TAKEN: see the floor
+     note below.
   7. Teeth: stale/replayed (`stale_settlement_rejected`), forged anchor (`forged_anchor_cannot_settle`),
      root mismatch (`root_mismatch_cannot_settle`), fabricated child genesis
      (`fabricated_genesis_cannot_settle`), and the unset account proving nothing.
@@ -58,14 +60,19 @@ and REMOVED rather than recorded as a new floor carrier. What remains here is th
 producer-witness form. Adopting the strong form requires the `_or_collides` + total-extractor PORT of
 `conserves_from_verification` upstream first — named, not carried.
 
-**⚠ MEASURED LIMITATION OF THE HEIGHT REGISTER (proved, not prose).** `Aggregate.numTurns` is a PUBLIC
-field that `RecursiveAggregation.EngineSound` pins NOWHERE — `binding_sound` pins `genesisRoot` and
-`finalRoot` only. `engineSound_numTurns_irrelevant` proves this by transporting ANY `EngineSound` witness
-across an arbitrary `numTurns`, and `settle_accepts_inflated_height` lifts it: a prover can inflate the
-claimed height arbitrarily and every crypto leg still holds. `inflated_height_commits_same_root` shows
-what that does and does not buy — the ROOT the L1 commits is UNCHANGED. So the height is an advisory
-monotone register (griefable), while the commitment is bound. **Residual: pin `numTurns` to the leaf
-count in the chain-binding AIR** (a real follow-up for the threading step, named here, not hidden).
+**⚑ THE HEIGHT REGISTER IS NOW PINNED (2026-07-28) — and the "residual" it named never existed.** This
+header used to say `Aggregate.numTurns` is pinned by NO leg of `EngineSound`, carry
+`engineSound_numTurns_irrelevant` + `settle_accepts_inflated_height` as the proof of it, and name
+"pin `numTurns` in the chain-binding AIR" as the remaining work. The AIR had pinned it all along:
+`Emit/EffectVmEmitTurnChainBinding.lean` constraint 14 (`lastRealCountBind`,
+`real_count[last] = pi[num_turns]`) is in the byte-golden descriptor, and
+`BindingAirSound.Satisfies.count` models it. The leak was one layer up — the keystone
+`binding_air_discharges_binding_sound` held the count in its hypothesis and dropped it, so
+`EngineSound.binding_sound` had nowhere to put it. Carried across now (no new crypto), so
+`binding_sound` and `AggregateAttests.turns_pinned` give `agg.numTurns = steps.length`, and §8 proves
+the opposite of what it used to: `settle_height_is_child_turn_count` (the height IS the child's turn
+count), `inflated_height_cannot_settle` (the tooth), `settlement_height_is_unique`,
+`replayed_settlement_cannot_advance`. The three superseded theorems are DELETED, not kept alongside.
 
 **Why the native recursion, not the gnark wrap (the single most important design constraint).** The
 cross-field gnark wrap (STARK→BN254→Groth16) is the EXTERNAL-EVM settlement path and its FRI carrier is
@@ -77,9 +84,10 @@ nothing weaker.
 
 **The honest slice-vs-remaining split (claim the slice, not a working L2).** THIS SLICE authors, in
 Lean: the effect data, its acceptance predicate, the whole-finalized-child attestation, the
-L2-commitment binding lemma, the verification-derived conservation, the monotone/anti-ghost teeth, the
-measured height-register limitation, and non-vacuity. There is **no working L2** here: nothing executes,
-nothing is emitted, no Rust calls this yet.
+L2-commitment binding lemma, the PRODUCER-WITNESS conservation (the verification-derived form is
+REFUSED — see the floor note), the monotone/anti-ghost teeth, the height pin + its teeth, and
+non-vacuity. There is **no working L2** here: nothing executes, nothing is emitted, no Rust calls
+this yet.
 
 **NAMED RESIDUALS (NOT built here):**
   * **Recursion-as-effect THREADING.** Wiring `SettleChildChain` into the real turn `Effect` inductive
@@ -96,7 +104,6 @@ nothing is emitted, no Rust calls this yet.
     as a real `RecordKernelState` cell advanced only by the effect, with deposits/withdrawals binding
     the commitment (reusing `Dregg2.Bridge.HoldingFoldRecursive`). This slice models the account
     abstractly (`RollupAccount` + `applySettle`); the concrete cell + its emit is the remaining assembly.
-  * **Pinning `numTurns`** in the binding AIR (see the measured limitation above).
   * **The `_or_collides` port of `conserves_from_verification`**, without which the L1 cannot inherit
     child conservation from verification non-vacuously (see the floor note above).
 
@@ -372,52 +379,89 @@ theorem settle_conserves_child_producer_witness
     recTotal (lastStateOf g steps).kernel = recTotal g.kernel :=
   finalized_history_conserves g steps hch
 
-/-! ## 8. THE HEIGHT REGISTER IS NOT PROOF-PINNED — measured, not asserted.
+/-! ## 8. THE HEIGHT REGISTER IS PROOF-PINNED — repaired 2026-07-28, supersedes the measurement.
 
-`Aggregate.numTurns` appears in NO leg of `RecursiveAggregation.EngineSound` (`binding_sound` pins
-`genesisRoot` and `finalRoot` only). We prove that, rather than noting it: an `EngineSound` witness
-transports across an arbitrary `numTurns`, so a prover may inflate the settled height at will — and
-`inflated_height_commits_same_root` shows exactly what that buys, namely nothing about the commitment.
-The height is an advisory monotone register; the ROOT is bound. Residual: pin `numTurns` to the leaf
-count in the chain-binding AIR. -/
+**What this section used to say, and why it was wrong.** It carried `engineSound_numTurns_irrelevant`
+(an `EngineSound` witness transports across an arbitrary `numTurns`) and `settle_accepts_inflated_height`
+(hence a prover inflates the settled height at will), and named "pin `numTurns` in the chain-binding
+AIR" as the residual. **That residual did not exist.** The deployed AIR has pinned the count since it
+was emitted: `Emit/EffectVmEmitTurnChainBinding.lean` constraint 14 is
+`real_count[last] = pi[num_turns]` (`lastRealCountBind`, `PI_NUM_TURNS`), byte-golden in
+`TURN_CHAIN_BINDING_GOLDEN`, with `firstRealCount`/`realCountAccum`/`realMonotone` making `real_count`
+the genuine count of real rows; and `BindingAirSound.Satisfies.count` models exactly that.
 
-/-- **`engineSound_numTurns_irrelevant` (the measurement).** Engine soundness is INDIFFERENT to the
-aggregate's public `numTurns`: any witness transports to an aggregate with an arbitrary turn count.
-Hence `numTurns` is NOT pinned by the recursion engine's soundness. -/
-theorem engineSound_numTurns_irrelevant
-    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (n : Nat)
-    (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps) :
-    EngineSound Proof verify CH RH cmb compress compressN { agg with numTurns := n } g steps where
-  recursive_sound := es.recursive_sound
-  leaf_sound      := es.leaf_sound
-  binding_sound   := es.binding_sound
+The hole was in the MODEL's carry-across: `binding_air_discharges_binding_sound` held
+`Satisfies.count` in its hypothesis and concluded only three of four facts, so
+`EngineSound.binding_sound` had no slot for the count and `Aggregate.numTurns` arrived at every client
+as an unconstrained public register. Fixing it costs no crypto (`Satisfies.count` +
+`represents_length`, both structural). `binding_sound` and `AggregateAttests.turns_pinned` now carry
+`agg.numTurns = steps.length`, so `engineSound_numTurns_irrelevant` is no longer PROVABLE — it is
+false — and the two theorems below replace it with the opposite content. -/
 
-/-- **`settle_accepts_inflated_height` (the limitation, at the settlement surface).** From ANY accepted
-settlement, an inflated-height settlement of the SAME child history is ALSO accepted, for any height
-strictly above the account's. Every crypto leg still holds — so the height register is griefable. -/
-theorem settle_accepts_inflated_height
+/-- **`settle_height_is_child_turn_count` (THE PIN — supersedes `settle_accepts_inflated_height`).** An
+ACCEPTED settlement's claimed height IS the number of turns in the child's history. Not an advisory
+register: the binding AIR's real-count constraint forces the aggregate's public `numTurns` to the chain
+length, `SettleAccepts.height_is_count` ties the claimed height to it, so the height the L1 records is
+as bound as the root it records. -/
+theorem settle_height_is_child_turn_count
     (acc : RollupAccount) (s : SettleChildChain Proof) (g : RecChainedState) (steps : List ChainStep)
-    (h : SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps)
-    (n : Nat) (hn : acc.latestHeight < n) :
-    SettleAccepts Proof verify CH RH cmb compress compressN acc
-      { s with childAgg := { s.childAgg with numTurns := n }, newHeight := n } g steps where
-  engine          := engineSound_numTurns_irrelevant Proof verify CH RH cmb compress compressN
-                       s.childAgg g steps n h.engine
-  root_ok         := h.root_ok
-  bound           := { agg_binds := h.bound.agg_binds, cert_binds := h.bound.cert_binds }
-  cert_ok         := h.cert_ok
-  genesis_ok      := h.genesis_ok
-  height_is_count := rfl
-  monotone        := hn
+    (h : SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps) :
+    s.newHeight = steps.length := by
+  have hatt := settle_attests_finalized_child Proof verify CH RH cmb compress compressN acc s g steps h
+  rw [h.height_is_count]
+  exact hatt.history.turns_pinned
 
-/-- **`inflated_height_commits_same_root` (what the inflation does NOT buy).** An inflated-height
-settlement commits the very same root into the L1 account. The forgeable quantity is the register, not
-the commitment: the L2 root the parent holds is still the child's genuine whole-history fold. -/
-theorem inflated_height_commits_same_root
-    (acc : RollupAccount) (s : SettleChildChain Proof) (n : Nat) :
-    (applySettle Proof acc
-        { s with childAgg := { s.childAgg with numTurns := n }, newHeight := n }).latestRoot
-      = (applySettle Proof acc s).latestRoot := rfl
+/-- **`settled_account_height_is_child_turn_count`.** The same pin read off the ACCOUNT after the write:
+the height the L1 holds for this child is the child's genuine turn count. -/
+theorem settled_account_height_is_child_turn_count
+    (acc : RollupAccount) (s : SettleChildChain Proof) (g : RecChainedState) (steps : List ChainStep)
+    (h : SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps) :
+    (applySettle Proof acc s).latestHeight = steps.length := by
+  simpa [applySettle] using
+    settle_height_is_child_turn_count Proof verify CH RH cmb compress compressN acc s g steps h
+
+/-- **`inflated_height_cannot_settle` (THE HEIGHT-INFLATION TOOTH — the refusal that used to be an
+acceptance).** A settlement claiming ANY height other than the child's true turn count is REJECTED,
+however monotone, however genuinely proven and finalized the child chain is. This is the exact negation
+of the deleted `settle_accepts_inflated_height`, which constructed such a settlement and proved it
+accepted. -/
+theorem inflated_height_cannot_settle
+    (acc : RollupAccount) (s : SettleChildChain Proof) (g : RecChainedState) (steps : List ChainStep)
+    (hbad : s.newHeight ≠ steps.length) :
+    ¬ SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps := fun h =>
+  hbad (settle_height_is_child_turn_count Proof verify CH RH cmb compress compressN acc s g steps h)
+
+/-- **`settlement_height_is_unique` (the anti-equivocation edge for the REGISTER, matching
+`settlement_root_is_unique` for the commitment).** Two accepted settlements of the same child history
+record the SAME height, whatever accounts or certs they carry. Before the pin this was false: the same
+history could be settled at any two heights above the accounts'. -/
+theorem settlement_height_is_unique
+    (acc acc' : RollupAccount) (s s' : SettleChildChain Proof)
+    (g : RecChainedState) (steps : List ChainStep)
+    (h : SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps)
+    (h' : SettleAccepts Proof verify CH RH cmb compress compressN acc' s' g steps) :
+    s.newHeight = s'.newHeight := by
+  rw [settle_height_is_child_turn_count Proof verify CH RH cmb compress compressN acc s g steps h,
+      settle_height_is_child_turn_count Proof verify CH RH cmb compress compressN acc' s' g steps h']
+
+/-- **`replayed_settlement_cannot_advance` (what the pin buys the monotone register).** A child chain
+cannot be settled TWICE into the same account: the second settlement of the same history would need to
+claim a height strictly above the first, and the pin forces both to the same turn count. So the account
+advances only when the CHILD advances — the monotone leg is no longer satisfiable by inflating a
+number. -/
+theorem replayed_settlement_cannot_advance
+    (acc : RollupAccount) (s s' : SettleChildChain Proof)
+    (g : RecChainedState) (steps : List ChainStep)
+    (h : SettleAccepts Proof verify CH RH cmb compress compressN acc s g steps) :
+    ¬ SettleAccepts Proof verify CH RH cmb compress compressN
+        (applySettle Proof acc s) s' g steps := by
+  intro h'
+  have hs := settle_height_is_child_turn_count Proof verify CH RH cmb compress compressN acc s g steps h
+  have hs' := settle_height_is_child_turn_count Proof verify CH RH cmb compress compressN
+    (applySettle Proof acc s) s' g steps h'
+  have hm := h'.monotone
+  simp only [applySettle] at hm
+  omega
 
 end Effect
 
@@ -575,9 +619,11 @@ end Realize
 #assert_axioms Dregg2.Distributed.SelfSettlement.settled_account_proves_root
 #assert_axioms Dregg2.Distributed.SelfSettlement.settle_preserves_registration
 #assert_axioms Dregg2.Distributed.SelfSettlement.settle_conserves_child_producer_witness
-#assert_axioms Dregg2.Distributed.SelfSettlement.engineSound_numTurns_irrelevant
-#assert_axioms Dregg2.Distributed.SelfSettlement.settle_accepts_inflated_height
-#assert_axioms Dregg2.Distributed.SelfSettlement.inflated_height_commits_same_root
+#assert_axioms Dregg2.Distributed.SelfSettlement.settle_height_is_child_turn_count
+#assert_axioms Dregg2.Distributed.SelfSettlement.settled_account_height_is_child_turn_count
+#assert_axioms Dregg2.Distributed.SelfSettlement.inflated_height_cannot_settle
+#assert_axioms Dregg2.Distributed.SelfSettlement.settlement_height_is_unique
+#assert_axioms Dregg2.Distributed.SelfSettlement.replayed_settlement_cannot_advance
 #assert_axioms Dregg2.Distributed.SelfSettlement.unset_account_proves_nothing
 #assert_axioms Dregg2.Distributed.SelfSettlement.stale_settlement_rejected
 #assert_axioms Dregg2.Distributed.SelfSettlement.forged_anchor_cannot_settle

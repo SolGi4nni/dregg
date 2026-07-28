@@ -134,14 +134,26 @@ structure EngineSound (agg : Aggregate Proof) (g : RecChainedState) (steps : Lis
     (fun (p : Proof) (s : ChainStep) => verify p = true → recCexec s.pre s.turn = some s.post)
     agg.leafProofs steps
   /-- **H-BIND (`BindingAirSound`)** — a verifying `TurnChainBindingAir` leaf attests the temporal
-  tooth over the whole chain (`ChainBound`), AND pins the public genesis/final roots to the chain's
-  endpoints. The chain-binding AIR's in-circuit soundness. -/
+  tooth over the whole chain (`ChainBound`), pins the public genesis/final roots to the chain's
+  endpoints, AND pins the public `numTurns` to the chain's LENGTH. The chain-binding AIR's in-circuit
+  soundness.
+
+  **[2026-07-28 — the `numTurns` leg was added; it was missing, and its absence was exploitable.]**
+  The deployed AIR has pinned the count since it existed: constraint 14 of
+  `Emit/EffectVmEmitTurnChainBinding.lean` is `real_count[last] = pi[num_turns]` (`lastRealCountBind`),
+  with `firstRealCount`/`realCountAccum`/`realMonotone` making `real_count` the genuine count of real
+  rows. `BindingAirSound.Satisfies.count` carries it. What did NOT carry it was THIS field — so
+  `Aggregate.numTurns` reached every downstream client as an unconstrained public register, and
+  `SelfSettlement.settle_accepts_inflated_height` proved an accepted settlement could claim ANY height
+  above the account's. That was a MODEL leak, not a missing constraint; the fix is free
+  (`binding_air_discharges_binding_sound`, no new crypto). -/
   binding_sound : verify agg.bindingProof = true →
     ChainBound CH RH cmb compress compressN steps
       ∧ agg.genesisRoot = (match steps.head? with
           | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
           | some s => ChainStep.oldRoot CH RH cmb compress compressN s)
       ∧ agg.finalRoot = foldedFinalRoot CH RH cmb compress compressN g steps
+      ∧ agg.numTurns = steps.length
 
 /-! ## 3. THE LIGHT-CLIENT HEADLINE — verifying the aggregate attests the WHOLE history.
 
@@ -194,6 +206,9 @@ structure AggregateAttests (agg : Aggregate Proof) (g : RecChainedState) (steps 
   genesis_pinned : agg.genesisRoot = (match steps.head? with
       | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
       | some s => ChainStep.oldRoot CH RH cmb compress compressN s)
+  /-- (5) the public `numTurns` IS the number of turns folded — not an advisory register. Forced by
+  the binding AIR's real-count constraint (`lastRealCountBind`), carried here since 2026-07-28. -/
+  turns_pinned : agg.numTurns = steps.length
 
 /-- **`light_client_verifies_whole_history` (THE MAGNESIUM→GOLD HEADLINE).**
 
@@ -209,12 +224,13 @@ theorem light_client_verifies_whole_history
     (hroot : verify agg.root = true) :
     AggregateAttests Proof CH RH cmb compress compressN agg g steps := by
   obtain ⟨_hleaves, hbind⟩ := es.recursive_sound hroot
-  obtain ⟨hbound, hgen, hfin⟩ := es.binding_sound hbind
+  obtain ⟨hbound, hgen, hfin, hcount⟩ := es.binding_sound hbind
   exact
     { every_turn := every_leaf_verifies_implies_executed Proof verify CH RH cmb compress compressN agg g steps es hroot
     , ordered := hbound
     , final_is_genuine_fold := hfin
-    , genesis_pinned := hgen }
+    , genesis_pinned := hgen
+    , turns_pinned := hcount }
 
 /-! ### 3b. THE GENESIS ANCHOR — the verify-side dual of the final-root anchor (PREFIX completeness).
 
@@ -466,12 +482,14 @@ theorem real_engine_sound :
     intro _
     exact honestStep.commits
   · intro _
-    refine ⟨?_, ?_, ?_⟩
+    refine ⟨?_, ?_, ?_, ?_⟩
     · -- ChainBound on a singleton is `True`.
       simp [realSteps, ChainBound]
     · -- genesisRoot is defined as the genuine oldRoot of the head step.
       simp [realAggregate, realSteps]
     · -- finalRoot is defined as the genuine fold.
+      rfl
+    · -- numTurns = 1 IS the singleton chain's length (the count pin, added 2026-07-28).
       rfl
 
 /-- **`light_client_fires_on_real_chain` (the headline is WITNESSED).** On the realizing
@@ -548,7 +566,7 @@ theorem tampered_aggregate_cannot_bind
                 ≠ ChainStep.oldRoot CH RH cmb compress compressN s')
     (hverify : verify agg.bindingProof = true) :
     False := by
-  obtain ⟨hbound, _, _⟩ := es.binding_sound hverify
+  obtain ⟨hbound, _, _, _⟩ := es.binding_sound hverify
   exact tooth_rejects_broken_order CH RH cmb compress compressN s s' hbreak hbound
 
 /-- **`leaf_pairing_defeats_swap` (the leg-swap tooth).** A verifying leaf proof attests the

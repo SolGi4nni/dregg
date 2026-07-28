@@ -88,8 +88,13 @@ named here, not assumed inside `EngineSound`. -/
 
 /-- **`BindingExtract`** — a verifying `TurnChainBindingAir` leaf yields a satisfying represented trace
 (`Satisfies` + `Represents` over the chain `steps`) whose public inputs are the aggregate's published
-genesis/final roots. The realizer DATA the grounded binding leg takes; the keystone
-`binding_air_discharges_binding_sound` then FORCES the `binding_sound` conclusion from it. -/
+genesis/final roots AND its published `numTurns`. The realizer DATA the grounded binding leg takes; the
+keystone `binding_air_discharges_binding_sound` then FORCES the `binding_sound` conclusion from it.
+
+**[2026-07-28 — `numTurns` joined the exported publics.]** The aggregate's `numTurns` is a public
+input of the very same AIR (`PI_NUM_TURNS = 2`), on exactly the footing of `genesisRoot`/`finalRoot`;
+it was the only one of the four the extraction did not re-export, which is what left the count
+unpinned all the way up to the settlement height. -/
 def BindingExtract (Proof : Type) (verify : Proof → Bool) (hash : List ℤ → ℤ)
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
@@ -100,6 +105,7 @@ def BindingExtract (Proof : Type) (verify : Proof → Bool) (hash : List ℤ →
         ∧ Represents CH RH cmb compress compressN rows steps
         ∧ agg.genesisRoot = pub.genesis
         ∧ agg.finalRoot = pub.final
+        ∧ agg.numTurns = pub.numTurns
 
 /-! ## §2 — `engineSound_grounded`: `EngineSound` with `binding_sound` + `leaf_sound` DERIVED. -/
 
@@ -130,10 +136,10 @@ theorem engineSound_grounded
   engineSound_of_refinements Proof verify hash S hCR CH RH cmb compress compressN agg g steps
     hleaves hrec
     (fun hv => by
-      obtain ⟨rows, pub, hsat, hrep, hgen, hfin⟩ := hbindExtract hv
-      obtain ⟨hbound, hg, hf⟩ :=
+      obtain ⟨rows, pub, hsat, hrep, hgen, hfin, hnum⟩ := hbindExtract hv
+      obtain ⟨hbound, hg, hf, hn⟩ :=
         binding_air_discharges_binding_sound CH RH cmb compress compressN hash rows pub steps g hsat hrep
-      exact ⟨hbound, hgen.trans hg, hfin.trans hf⟩)
+      exact ⟨hbound, hgen.trans hg, hfin.trans hf, hnum.trans hn⟩)
 
 /-! ## §2b — `engineSound_grounded_v2`: ALL THREE legs derived — `recursive_sound` off the per-node fold.
 
@@ -339,7 +345,7 @@ theorem grounded_light_client_fires
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
             pubOf zCH zRH zcmb zcompress zcompressN hash honestStep,
             satisfies_one zCH zRH zcmb zcompress zcompressN hash honestStep,
-            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_⟩
+            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_, rfl⟩
     show realAggregate.finalRoot = (pubOf zCH zRH zcmb zcompress zcompressN hash honestStep).final
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
@@ -372,7 +378,7 @@ theorem grounded_light_client_fires_v2
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
             pubOf zCH zRH zcmb zcompress zcompressN hash honestStep,
             satisfies_one zCH zRH zcmb zcompress zcompressN hash honestStep,
-            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_⟩
+            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_, rfl⟩
     show realAggregate.finalRoot = (pubOf zCH zRH zcmb zcompress zcompressN hash honestStep).final
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]

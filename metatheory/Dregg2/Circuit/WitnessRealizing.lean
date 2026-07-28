@@ -236,7 +236,8 @@ theorem engineSound_of_refinements
         ∧ agg.genesisRoot = (match steps.head? with
             | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
             | some s => ChainStep.oldRoot CH RH cmb compress compressN s)
-        ∧ agg.finalRoot = foldedFinalRoot CH RH cmb compress compressN g steps) :
+        ∧ agg.finalRoot = foldedFinalRoot CH RH cmb compress compressN g steps
+        ∧ agg.numTurns = steps.length) :
     EngineSound Proof verify CH RH cmb compress compressN agg g steps where
   recursive_sound := hrec
   leaf_sound := leafSound_of_refinements Proof verify hash S hCR hb

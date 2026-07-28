@@ -264,7 +264,7 @@ theorem grounded_capstone_engine_fires
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
             pubOf zCH zRH zcmb zcompress zcompressN hash honestStep,
             satisfies_one zCH zRH zcmb zcompress zcompressN hash honestStep,
-            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_⟩
+            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_, rfl⟩
     show realAggregate.finalRoot = (pubOf zCH zRH zcmb zcompress zcompressN hash honestStep).final
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
@@ -301,7 +301,7 @@ theorem grounded_capstone_engine_fires_v2
     refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
             pubOf zCH zRH zcmb zcompress zcompressN hash honestStep,
             satisfies_one zCH zRH zcmb zcompress zcompressN hash honestStep,
-            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_⟩
+            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_, rfl⟩
     show realAggregate.finalRoot = (pubOf zCH zRH zcmb zcompress zcompressN hash honestStep).final
     simp only [realAggregate, pubOf, realSteps]
     exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
