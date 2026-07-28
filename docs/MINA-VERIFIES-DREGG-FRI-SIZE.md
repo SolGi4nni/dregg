@@ -9,35 +9,40 @@ Kimchi already has. So: what does it **cost**, and does it **fit**?*
 
 *This turns "feasible in principle" into a row budget. Both halves of the product are grounded:
 the permutation count against an **in-tree empirical measurement**, the per-permutation row price
-against the Kimchi/Pickles source.*
+**now against a measured o1js circuit** (§3.8, 2026-07-28) rather than the Kimchi/Pickles source
+reading it was first derived from.*
 
 ---
 
 ## 0. Verdict up front
 
-**Feasible-but-huge. Not blocked; nowhere near a handful. ~2 × 10^7 Kimchi rows ⇒ several hundred
-chained Pickles step circuits at deployed parameters, and the FRI knobs alone cannot get it under
-~200.**
+**Feasible-but-huge. Not blocked; nowhere near a handful. ~2.9 × 10^7 Kimchi rows ⇒ several
+hundred chained Pickles step circuits at deployed parameters, and the FRI knobs alone cannot get it
+under ~260.**
 
 | | value | grounding |
 |---|---|---|
 | Poseidon2-w16-BabyBear permutations for **one** full root verify | **~11,000** (measured range 10,000–13,000) | **empirically measured in-tree** (`docs/deos/WRAP-NATIVE-HASH-DECISION.md:102-106`); independently re-derived here at ~10,250 (§2) |
-| Kimchi rows per Poseidon2-w16-BabyBear permutation | **~2,000** (range 1,600–2,600) | derived from Kimchi gate/row source (§3); **pessimistic band ~8,400** — see §3.7 |
-| **Total row budget** | **~2.2 × 10^7 rows** (band 1.8 × 10^7 – 9 × 10^7) | product |
+| Kimchi rows per Poseidon2-w16-BabyBear permutation | **2,600.5 — MEASURED** | **§3.8** — an o1js circuit that compiles, proves, and reproduces the deployed permutation's KAT. Supersedes the ~2,000 design claim (§3.3–3.4) and closes §3.7's 4× band at the optimistic end |
+| **Total row budget** | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7, all remaining spread from the permutation count) | product |
 | Usable rows per Pickles step | **~48,000–55,000** of 65,536 | §4.1, measured overheads |
-| **Pickles step circuits** | **~500–800** deployed; ~1,900–2,800 in the pessimistic band | §4.2 |
-| After the dregg-side FRI knobs (§5) | **~250–350** | |
-| Floor without a column reduction or a Mina-targeted shrink | **~200** | §5.3 |
+| **Pickles step circuits** | **~650–1,040** deployed | §4.2 |
+| After the dregg-side FRI knobs (§5) | **~325–455** | |
+| Floor without a column reduction or a Mina-targeted shrink | **~260** | §5.3 |
 | Security the budget buys | **~50 bits** (`min{51, 73} − 1`) | machine-checked as an *arithmetic reading*, not an adversary bound (§6) |
 
 **The single biggest cost driver is not the FRI logic, not the S-boxes, and not the AIR
-evaluation. It is the `mod p` reduction.** "BabyBear is 31-bit so it fits natively in Pasta" is
-true and load-bearing — it is exactly what makes this route *expressible* where the pairing route
-is not. But a 31-bit prime inside a 255-bit field is still a **foreign modulus**: every
-multiplication chain must be reduced with a witnessed quotient and **range checks**, and those
-range checks are ~70% of the per-permutation rows. Kimchi's native Poseidon costs 11 rows per
-permutation; this shape over a foreign 31-bit prime costs ~2,000. **The ~180× is the reduction,
-not the hash.**
+evaluation. It is the `mod p` reduction** — now measured at **~64% of the per-permutation rows**
+(§3.8), of which pure range-check gates are 38%. "BabyBear is 31-bit so it fits natively in Pasta"
+is true and load-bearing — it is exactly what makes this route *expressible* where the pairing
+route is not. But a 31-bit prime inside a 255-bit field is still a **foreign modulus**: every
+multiplication chain must be reduced with a witnessed quotient and **range checks**. Kimchi's
+native Poseidon costs 11 rows per permutation; this shape over a foreign 31-bit prime costs
+**2,600**. **The ~236× is the reduction, not the hash.**
+
+⚑ **The measurement is wired.** `scripts/check-mina-attestation.sh` — a `scripts/local-gates.sh`
+row and a `ci.yml` job — re-runs it and fails if rows/permutation drifts more than 2% from the
+number this document quotes. Every other figure in the table above is still a derivation.
 
 ---
 
@@ -239,6 +244,10 @@ question.**
 
 ## 3. Pricing ONE Poseidon2-w16-BabyBear permutation in Kimchi rows
 
+> ⚑ **§3.3–3.7 are the DERIVATION, kept because its method is what the measurement confirms.
+> The ANSWER is §3.8: 2,600.5 rows, measured on a circuit that compiles and proves.** Where a
+> number here disagrees with §3.8, §3.8 wins.
+
 ### 3.1 The multiplication count is small
 
 Per permutation, from `Poseidon2BabyBearW16.lean:60-63,127-128,172-177`:
@@ -343,13 +352,13 @@ those lanes leave a round at ~2^62 and the `fullSum` broadcast propagates the gr
 lanes. The state must be re-bounded about once per internal round: ~10 lanes × ~2.8 rows × 13
 rounds ⇒ **~370 rows**.
 
-| per permutation | rows |
-|---|---:|
-| S-boxes (mults + reductions + range checks) | ~1,200 |
-| external linear layers (8×) | ~288 |
-| internal linear layers (13×) | ~200 |
-| internal-layer re-bounding | ~370 |
-| **TOTAL** | **~2,050 — call it ~2,000** (range 1,600–2,600) |
+| per permutation | rows | **measured (§3.8)** |
+|---|---:|---:|
+| S-boxes (mults + reductions + range checks) | ~1,200 | **1,410** |
+| external linear layers (8×) | ~288 | **272** (+34 initial, +128 round-constant adds) |
+| internal linear layers (13×) | ~200 | **728**, together with the re-bounding |
+| internal-layer re-bounding | ~370 | ↑ |
+| **TOTAL** | **~2,050 — call it ~2,000** (range 1,600–2,600) | **2,600.5** |
 
 ### 3.5 ⚑ Lookups are mandatory, and not free either
 
@@ -399,18 +408,90 @@ BabyBear is 200+ bits smaller than BN254. §3.3's whole method — one native el
 value, `p` as a coefficient, non-canonical intermediates, one reduction per S-box — is precisely
 that unexploited headroom.
 
-**So the honest band is:**
+**So the honest band was:**
 
 | assumption | rows/perm | total (× 11,000) |
 |---|---:|---:|
 | §3.3 single-native-element method delivers | ~2,000 | **~2.2 × 10^7** |
 | generic-emulation parity with the measured gnark figure | ~8,400 | **~9 × 10^7** |
 
-The ~2,000 is a design claim, not a measurement. **The first thing to build is a single o1js
-`P2.perm` gadget and read `getRows()` off it** — that one number collapses this 4× band and costs
-an afternoon, versus a 500-step build sitting on an unmeasured assumption.
+The ~2,000 was a design claim, not a measurement.
 
-### 3.8 What a custom gate would buy — and why it is not on the table
+### 3.8 ⚑ MEASURED — the band is closed, and the design claim was ~30% low
+
+*2026-07-28. §3.7's own recommendation was "write a single o1js `P2.perm` gadget and read
+`getRows()` off it". Done: `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`, measured by
+`bridge/mina-zkapp/scripts/poseidon2-babybear-rows.ts` (`npm run poseidon2-rows`) at o1js 2.15.0.
+Everything below this line replaces the estimate above it.*
+
+> ## **2,600.5 Kimchi rows per Poseidon2-w16-BabyBear permutation.**
+>
+> **1.30× the ~2,000 design claim. 3.2× CHEAPER than gnark-emulation parity.**
+> The 4× band is closed at the optimistic end.
+
+`Provable.constraintSystem` reports **2,602 rows** for one permutation and 8,673 for three;
+the marginal figure is `(8,673 − 2,602)/2 = 2,600.5`. Gate mix for one permutation:
+`Generic 1,623 · RangeCheck0 701 · Lookup 278`. `compress(l,r)` — the deployed
+`TruncatedPermutation<·,2,8,16>` the Merkle tree actually calls — is the same 2,602 rows, because
+the truncation to 8 lanes is free.
+
+**It is a measurement of the right object, and of an object that exists.**
+
+- The circuit is checked inside `Provable.runAndCheck`, on three inputs, against a bigint
+  reference which is itself checked against the two `#guard` vectors of
+  `metatheory/Dregg2/Circuit/Poseidon2BabyBearW16.lean` — i.e. against
+  `default_babybear_poseidon2_16().permute(·)`, bit-exact. A wrong output makes the constraint
+  system unsatisfiable (asserted, not assumed).
+- It **compiles and proves**: a one-permutation `ZkProgram` compiles in ~6 s, proves in ~6 s,
+  verifies, and its public output *is* `perm([0..15])`. So "2,602 rows" is a claim about a circuit
+  Pickles accepts, not about a gate count nobody ran.
+- Bound tracking is explicit and enforced: every value carries an integer upper bound and
+  `assertSafe` throws if one could reach the Pasta modulus, because at that point field arithmetic
+  stops agreeing with integer arithmetic and the circuit is unsound rather than slow. (The gate's
+  self-test injects exactly that fault — a 2^32 lane bound instead of 2^31 — and requires a red.)
+
+**Where the rows actually go — §3.4's table, measured.** Marginal rows, from differencing two
+copies of each component:
+
+| item | §3.4 estimate | **MEASURED** | note |
+|---|---:|---:|---|
+| S-box `x^7` (141 per permutation) | ~1,200 (8.5 ea) | **1,410** (10.0 ea) | of the 10, **8 are the `mod p` reduction** |
+| external linear layer (9× incl. the initial one) | ~288 | **306** (34 ea) | add-only; the estimate was *right* |
+| external round-constant materialisation | not budgeted | **128** (16/round) | `lane + rc` is a generic gate, not free |
+| internal rounds, layer + re-bounding (13×) | ~570 | **728** (56 ea) | the estimate's biggest miss |
+| final re-bound before the last external round | not budgeted | **~28** | |
+| **TOTAL** | **~2,050** | **2,600.5** | |
+
+Three corrections worth naming:
+
+1. **§3.3's S-box price was good.** 8.5 estimated, 10.0 measured — the reduction method (one
+   native element per BabyBear value, `p` as a coefficient, non-canonical intermediates, exactly
+   one reduction per S-box) works as described. The extra 1.5 is o1js's cheapest sub-32-bit range
+   check costing ~2.5 rows rather than the ~1.33 §3.3 assumed, plus the 4-limb quotient check.
+2. **§3.4 under-priced the internal layer's re-bounding by ~2×** (~370 → ~728 including its
+   linear ops). The nine lanes carrying a full-width inverse coefficient (`½`, `2⁻⁸`, `2⁻²⁷`, …)
+   gain ~31 bits *every* internal round and must be reduced every round; only the six
+   small-coefficient lanes can be left to grow. Reducing `partSum` once per round instead of all
+   fifteen lanes is what keeps this at 728 rather than ~1,000 — that is an optimisation the
+   measured implementation takes and the estimate did not model.
+3. **⚑ The reduction is confirmed as the driver, and the share is now measured: ~64%.**
+   `RangeCheck0` + `Lookup` gates alone are 979 of 2,602 rows (38%), and the generic gates that
+   carry the `v = q·p + r` identities take it to ~1,676 (64%). §0's "~70%" stands.
+
+**What this does NOT say.** This is a first-cut implementation on o1js's *stock* gadgets
+(`rangeCheck64`, `rangeCheck3x12`, `multiRangeCheck`). A hand-tuned version could plausibly shave
+10–20% — batching quotient limbs across S-boxes into shared `multiRangeCheck` slots is the obvious
+one — but not 2×, because 64% of the cost is range-check gates whose per-bit rate (~66 bits/row) is
+a property of Kimchi's lookup gates, not of this code. **And it re-prices §3.9's custom gate:** a
+`Poseidon2BabyBear` gate would delete the generic gates and leave the reductions, i.e. **~1,700
+rows, not the ~900–1,100 §3.9 guesses** — a 1.5× win, not 2×.
+
+**It is ratcheted, not just recorded.** `scripts/check-mina-attestation.sh` (a `local-gates.sh` row
+and a `ci.yml` job) re-runs the measurement and FAILS if rows/permutation moves more than 2% from
+the 2,600.5 quoted here. A cited number nothing re-produces is not a measurement, and this document
+has been the reason to care about exactly that distinction.
+
+### 3.9 What a custom gate would buy — and why it is not on the table
 
 A `Poseidon2BabyBear` gate could plausibly do one round per 2 rows (a width-16 state does not fit
 15 columns, so it spans `Curr`/`Next`) ⇒ ~42 rows for 21 rounds. **But the mod-`p` range checks do
@@ -468,27 +549,44 @@ One o1js `@method` compiles to one Pickles **step** circuit with a hard ceiling 
 ### 4.2 The arithmetic
 
 ```
-~11,000 permutations  ×  ~2,000 rows  =  ~2.2 × 10^7 rows
-2.2 × 10^7 / 48,000 usable            =  ~460 work-carrying step circuits
-+ a binary aggregation tree over them =  ~500–800 Pickles steps total
+~11,000 permutations  ×  2,600.5 rows  =  ~2.86 × 10^7 rows      [§3.8, MEASURED]
+2.86 × 10^7 / 48,000 usable            =  ~600 work-carrying step circuits
++ a binary aggregation tree over them  =  ~650–1,040 Pickles steps total
 ```
 
-In the §3.7 pessimistic band: **~1,900–2,800 steps.**
+Only 25 permutations fit in one 2^16 step (`floor(65,536 / 2,600.5)`), and ~18 after the Pickles
+recursive-verifier overhead of §4.1 — a useful sanity handle: **one FRI query alone (471
+permutations) is ~26 steps.**
+
+The remaining spread is now entirely the permutation count, not the row price:
+
+| perms/root-verify | total rows | Pickles steps (55k / 48k usable) |
+|---|---:|---:|
+| 10,250 (§2.2, structural) | 2.67 × 10^7 | 485–556 work-carrying |
+| **11,000 (§2.1, measured)** | **2.86 × 10^7** | **521–596 work-carrying** |
+| 13,000 (§2.1, top of range) | 3.38 × 10^7 | 615–705 work-carrying |
+
+*(Previously this section read `~2,000 rows ⇒ ~2.2 × 10^7 ⇒ ~500–800 steps`, with a §3.7
+pessimistic band of ~1,900–2,800 steps. The measurement lands 1.30× above the optimistic figure
+and 3.2× below the pessimistic one; the pessimistic branch is retired.)*
 
 ### 4.3 It does split cleanly, which is what keeps this "huge" and not "blocked"
 
+*Recomputed at the measured 2,600.5 rows/permutation (§3.8); the shape is unchanged, every
+count is 1.30× its previous value.*
+
 1. **One transcript step** replays the Fiat–Shamir challenger and emits the 19 query indices, the
    16 fold challenges `β_i`, `ζ`, and `α` as a Poseidon-committed public output (~1,300
-   permutations ⇒ ~2.6 × 10^6 rows ⇒ **~55 steps**).
-2. **19 independent per-query chains** (one query ≈ 471 permutations ≈ 9.4 × 10^5 rows ⇒ **~20
-   steps each**, ~380 steps total), each consuming the committed challenge digest.
-3. **A binary aggregation tree** (Pickles steps take up to 2 previous proofs), ~another 400 steps
+   permutations ⇒ ~3.4 × 10^6 rows ⇒ **~71 steps**).
+2. **19 independent per-query chains** (one query ≈ 471 permutations ≈ 1.22 × 10^6 rows ⇒ **~26
+   steps each**, ~494 steps total), each consuming the committed challenge digest.
+3. **A binary aggregation tree** (Pickles steps take up to 2 previous proofs), ~another 500 steps
    whose *only* content is the recursive verification.
 4. **One final chain** for the reduced-opening arithmetic and AIR constraint evaluation at ζ —
-   ~1.5–2% of the work (§2.4) ⇒ ~10 steps.
+   ~1.5–2% of the work (§2.4) ⇒ ~13 steps.
 
-Each step is a real Pickles proof at 10–30 s, so **~500–800 steps ≈ 2–7 hours of Mina-side proving
-per dregg root verified**, parallel across the 19 query chains, sequential up the tree.
+Each step is a real Pickles proof at 10–30 s, so **~650–1,040 steps ≈ 3–9 hours of Mina-side
+proving per dregg root verified**, parallel across the 19 query chains, sequential up the tree.
 
 ### 4.4 So: a handful, or hundreds?
 
@@ -512,8 +610,8 @@ All dregg-side. All ordinary greenfield re-emits (rotate the epoch, re-emit desc
 | **`WRAP_LOG_CEIL`** | **16** (`accumulator.rs:236`) | 15 (the natural max) | `\|D⁰\|` 2^22 → 2^21; ~5% | ~2 bits on the commit column (`ε_C ∝ \|D⁰\|²`) |
 | **`num_queries`** | **19** | fewer | linear in everything | **directly weakens the query leg**, and §6 shows it cannot buy back the binding column. Not recommended. |
 
-Turning the first three lands around **~5,500–6,500 permutations ⇒ ~1.2 × 10^7 rows ⇒ ~250–350
-steps.**
+Turning the first three lands around **~5,500–6,500 permutations ⇒ ~1.6 × 10^7 rows ⇒ ~325–455
+steps** at the measured 2,600.5 rows/permutation (§3.8).
 
 ### 5.2 ⚑ The knob the FRI parameters cannot touch
 
@@ -537,7 +635,8 @@ and nobody has read a root proof's `degree_bits`.**)*
 
 Even with arity 8, `cap_height = 8`, and `WRAP_LOG_CEIL = 15`, the irreducible work is the
 column-driven leaf hashing (~2,900), the transcript (~1,300), the capped input paths (~1,100), and
-the folded commit phase (~600) ⇒ **~5,900 permutations ⇒ ~1.2 × 10^7 rows ⇒ ~200 steps.**
+the folded commit phase (~600) ⇒ **~5,900 permutations ⇒ ~1.5 × 10^7 rows ⇒ ~260 steps** at the
+measured 2,600.5 rows/permutation (§3.8).
 
 Below that needs one of two real design moves, and **the second is the one worth arguing**:
 
@@ -669,15 +768,17 @@ AIR.evalAtZeta(...)                   // 7 AIRs, degree 3, ~1,000–1,200 constr
 already has, there is no missing gadget stack, and no pairing wall. That is categorically different
 from the Groth16 wrap, which is *blocked* on a missing primitive.
 
-- **Blocked?** **No.** Nothing here is unbuildable.
-- **A handful of step circuits?** **No.** **~500–800** at deployed parameters (~1,900–2,800 if
-  §3.7's optimisation underdelivers); **~250–350** after the dregg-side FRI knobs; **~200** is the
-  floor short of narrowing the root's trace or adding a Mina-targeted shrink layer.
-- **Honest row budget:** **~2.2 × 10^7 Kimchi rows**, ~98% of it Poseidon2-w16-BabyBear.
-- **Single biggest cost driver:** the **mod-`p` reduction and its range checks** — ~70% of the
-  per-permutation rows, because the S-box is a *multiplication chain* and lazy reduction cannot
-  amortise across it. *Not* the S-boxes (564 multiplications is nothing), *not* the FRI logic,
-  *not* the AIR evaluation (~1.5–2%).
+- **Blocked?** **No.** Nothing here is unbuildable — and as of §3.8 one permutation of it has been
+  compiled, proved and verified on Mina's own proof system.
+- **A handful of step circuits?** **No.** **~650–1,040** at deployed parameters; **~325–455** after
+  the dregg-side FRI knobs; **~260** is the floor short of narrowing the root's trace or adding a
+  Mina-targeted shrink layer. (The ~1,900–2,800 pessimistic branch is **retired** — §3.8 measured
+  the gadget at 3.2× cheaper than the gnark-emulation parity that generated it.)
+- **Honest row budget:** **~2.9 × 10^7 Kimchi rows**, ~98% of it Poseidon2-w16-BabyBear.
+- **Single biggest cost driver:** the **mod-`p` reduction and its range checks** — **measured at
+  ~64%** of the per-permutation rows (§3.8), because the S-box is a *multiplication chain* and lazy
+  reduction cannot amortise across it. *Not* the S-boxes (564 multiplications is nothing), *not*
+  the FRI logic, *not* the AIR evaluation (~1.5–2%).
 - **Second driver:** `max_log_arity = 1` and `cap_height = 0`. Together ~2.5×, against a
   configuration available today that costs **3 bits on a column that is not the binding one**.
 - **What the budget buys:** ~50 bits of ledger reading, commit-column-bound, with **queries
@@ -685,13 +786,15 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 
 **The two things worth doing before building any of this, in order — and neither is Mina-side:**
 
-1. **Measure the gadget.** Write one o1js `P2.perm` and read `getRows()`. That collapses §3.7's 4×
-   band (~2.2 × 10^7 vs ~9 × 10^7 rows — the difference between "ambitious" and "no"), and it
-   costs an afternoon rather than a 500-step build resting on an unmeasured design claim.
+1. ~~**Measure the gadget.**~~ **DONE, 2026-07-28 — §3.8.** `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`,
+   **2,600.5 rows/permutation**, KAT-checked against the deployed hash and Pickles-provable. The 4×
+   band is closed: **~2.9 × 10^7 rows**, i.e. "ambitious", not "no". It cost an afternoon, as
+   predicted, and the estimate it replaces was 30% low.
 2. **Turn the dregg-side knobs and measure a real root.** Flip `max_log_arity` to 3, set
-   `cap_height`, and — the actual open question — **read a root proof's `degree_bits`**, which
-   §1.3 shows nobody ever has. Then decide whether a **Mina-targeted shrink layer** is the right
-   final stage, exactly as `dregg_outer_config.rs` is for BN254.
+   `cap_height`, and — **now the only unmeasured number in this budget** — **read a root proof's
+   `degree_bits`**, which §1.3 shows nobody ever has. §5.2's open contradiction (is there a live
+   W24 table in the root or not?) is worth ~10% on its own. Then decide whether a **Mina-targeted
+   shrink layer** is the right final stage, exactly as `dregg_outer_config.rs` is for BN254.
 
 ---
 
@@ -700,15 +803,17 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | Claim | Resolution |
 |---|---|
 | Kimchi can verify dregg's FRI-STARK **directly**, no Groth16 wrap | **Yes in principle** — field + hash only, every primitive exists. Unlike the pairing route, nothing is missing. |
-| BabyBear fits natively in Pasta ⇒ cheap | **Half true.** It fits (no `ForeignField`), which is why the route exists. It is **not** cheap: reduction + range checks are ~70% of the rows. |
+| BabyBear fits natively in Pasta ⇒ cheap | **Half true.** It fits (no `ForeignField`), which is why the route exists. It is **not** cheap: reduction + range checks are **measured at ~64%** of the rows (§3.8). |
 | Kimchi's Poseidon gate can be reused | **No.** Structurally width-3 Pasta (`&'static [[F;3];3]` MDS, `COLUMNS/SPONGE_WIDTH` layout). A new gate is a **Mina hard fork**, not an app change. |
 | Permutation count | **~11,000 — measured in-tree**, independently re-derived here at ~10,250. |
-| Rows per permutation | **~2,000** by §3.3's method; **~8,400** at parity with the one measured foreign-field comparable. **Band unresolved — measure it first.** |
-| Total | **~2.2 × 10^7 rows** (band 1.8 × 10^7 – 9 × 10^7). |
-| Fits in one circuit | **No** — ~340× the 2^16 ceiling, and **Pickles hard-rejects chunking** (`verify.ml:61-76`). |
-| N step circuits | **~500–800** deployed; **~250–350** knobbed; **~200** floor. |
+| Rows per permutation | **2,600.5 — MEASURED** (§3.8), on an o1js circuit that compiles, proves, verifies and reproduces the deployed permutation's Lean-pinned KAT. 1.30× the ~2,000 design claim; 3.2× cheaper than the ~8,400 gnark-emulation parity. **Band closed.** |
+| Total | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7; the spread is now the permutation count alone). |
+| Fits in one circuit | **No** — ~440× the 2^16 ceiling (**25 permutations per step**), and **Pickles hard-rejects chunking** (`verify.ml:61-76`). |
+| N step circuits | **~650–1,040** deployed; **~325–455** knobbed; **~260** floor. |
 | It buys 128 bits | **No — ~50**, commit-column-bound, and `numQueries` provably cannot move it. |
 | The AIR evaluation is the expensive part | **No — ~1.5–2%.** It is entirely a hashing problem. |
+| A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.9 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
+| The row price is a design claim nobody has run | **No longer.** §3.8 is measured, the circuit is committed at `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`, and `scripts/check-mina-attestation.sh` fails if the number drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**. |
 
 **Sources of record.** dregg: `circuit-prove/src/plonky3_recursion_impl.rs` (config, hash types,
@@ -728,7 +833,15 @@ Mina/Kimchi (`~/dev/proof-systems` @ `f6d958d`, `~/dev/mina`): `kimchi/src/circu
 `polynomials/{generic,poseidon,range_check}.rs`, `gate.rs`, `wires.rs`, `expr.rs`;
 `mina/src/lib/pickles/{common,verify,fix_domains,wrap_domains,compile,step_verifier}.ml`,
 `pickles_types/{plonk_types,plonk_verification_key_evals}.ml`,
-`kimchi_backend/common/plonk_constraint_system.ml`, o1js 1.9.1 gadgets.
+`kimchi_backend/common/plonk_constraint_system.ml`, **o1js 2.15.0 gadgets** (the §3.8 measurement;
+§3.3/§3.5 read o1js 1.9.1 sources — and ⚑ two of their *row prices* are wrong, measured marginally
+on 2.15.0: `rangeCheck32` costs **2 rows**, not ~1, and `rangeCheckN(192)` costs **13**, not ~5.
+The cheap bulk checks are `rangeCheck64` at **1 row/64 bits**, `multiRangeCheck` at **4 rows/264
+bits**, and `rangeCheck3x12` at **1 row/36 bits** — ~66 bits/row is the ceiling, and §3.8's circuit
+uses those. §3.5's "lookups are a precondition, not an optimisation" stands.)
+o1js circuit + measurement: `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`,
+`bridge/mina-zkapp/scripts/poseidon2-babybear-rows.ts`, run by
+`scripts/check-mina-attestation.sh`.
 
 **Companion:** `docs/MINA-DREGG-ZKAPP-BRIDGE.md` — this document answers its §5 "Route A" with a
 budget, and does not disturb its Groth16 verdict.

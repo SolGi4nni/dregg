@@ -23,6 +23,11 @@
 #   [5] the `DreggAttestedGate` zkApp deploys on a local chain, CONSUMES the
 #       attestation proof recursively, and REFUSES one bound to another root
 #
+# Second leg (`bridge/mina-zkapp/scripts/poseidon2-babybear-rows.ts`): the
+# Poseidon2-w16-BabyBear permutation as an o1js circuit, checked against the
+# Lean-pinned KAT of the DEPLOYED hash, compiled and PROVED, and its rows/perm
+# figure RATCHETED against the number docs/MINA-VERIFIES-DREGG-FRI-SIZE.md quotes.
+#
 # ⚑ NO SKIPS. A missing `node`, a missing `npm`, an absent or unpinned o1js, a
 # type error, or a diverging vector are all FAILURES — the same discipline as
 # `embedded-js` and `opentheory-importer`. ~60s including `npm ci` when cold,
@@ -63,6 +68,9 @@ ensure_o1js() {
 run_gate() { # run_gate <dir> -> exit status of the gate
   ( cd "$1" && npm run --silent gate )
 }
+run_rows() { # run_rows <dir> -> exit status of the Poseidon2 row measurement
+  ( cd "$1" && npm run --silent poseidon2-rows )
+}
 
 # ── the headline run ──────────────────────────────────────────────────────────
 if [ "${1:-}" != "--self-test" ]; then
@@ -78,6 +86,20 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'the zkApp CONSUMED the attestation proof' <<<"$out" \
     || die "the zkApp composition did not run"
   grep -q '=== PASS ===' <<<"$out" || die "the gate did not print its PASS line"
+
+  # Leg 2: the Poseidon2-w16-BabyBear row measurement that
+  # docs/MINA-VERIFIES-DREGG-FRI-SIZE.md quotes. It checks the circuit against
+  # the Lean-pinned KAT of the DEPLOYED permutation, compiles and PROVES one
+  # permutation, and RATCHETS the rows/perm figure: if o1js's gadget costs move
+  # or the circuit changes, the document's headline is stale and this says so.
+  # A cited measurement nobody re-runs is a number, not a measurement.
+  rows_out="$(run_rows "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$rows_out"
+  [ "$rc" -eq 0 ] || die "the Poseidon2 row measurement exited $rc"
+  grep -q 'the PROVEN public output == the deployed permutation' <<<"$rows_out" \
+    || die "the Poseidon2 permutation was never actually proved"
+  grep -q 'ratchet: ' <<<"$rows_out" || die "the rows/perm ratchet did not run"
+
   echo "mina-attestation: $n_ok checks green (compile+prove+verify, tamper rejected, zkApp consumed)"
   exit 0
 fi
@@ -96,8 +118,8 @@ ensure_o1js "$APP"
 ln -s "$APP/node_modules" "$COPY/node_modules"
 
 red=0; green=0
-expect_red() { # expect_red <label> <sed-program> <file>
-  local label="$1" prog="$2" file="$3"
+expect_red() { # expect_red <leg: gate|rows> <label> <sed-program> <file>
+  local leg="$1" label="$2" prog="$3" file="$4"
   cp "$COPY/$file" "$WORK/.orig"
   perl -0pi -e "$prog" "$COPY/$file"
   if cmp -s "$WORK/.orig" "$COPY/$file"; then
@@ -105,7 +127,7 @@ expect_red() { # expect_red <label> <sed-program> <file>
     cp "$WORK/.orig" "$COPY/$file"; red=$((red+1)); return
   fi
   rm -rf "$COPY/dist"
-  if run_gate "$COPY" >"$WORK/.out" 2>&1; then
+  if "run_$leg" "$COPY" >"$WORK/.out" 2>&1; then
     echo "  ✗ $label: the gate stayed GREEN with the fault injected"
     red=$((red+1))
   else
@@ -116,21 +138,34 @@ expect_red() { # expect_red <label> <sed-program> <file>
 }
 
 echo "self-test: injecting faults into $COPY"
-expect_red "corrupted gold digest" \
+expect_red gate "corrupted gold digest" \
   "s/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6d/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6e/" \
   src/rust-gold-vectors.ts
-expect_red "corrupted Rust Merkle root" \
+expect_red gate "corrupted Rust Merkle root" \
   "s/0x0f82b06f11a6dea422082c77668f6ac9fd97a5f21b81525cb61a46c335bbb777n/0x0f82b06f11a6dea422082c77668f6ac9fd97a5f21b81525cb61a46c335bbb778n/" \
   src/rust-gold-vectors.ts
-expect_red "broken in-circuit Merkle fold" \
+expect_red gate "broken in-circuit Merkle fold" \
   "s/current = Poseidon\.hash\(\[left, right\]\)/current = Poseidon.hash([right, left])/" \
   src/DreggPoseidonAttestation.ts
-expect_red "unpinned o1js" \
+expect_red gate "unpinned o1js" \
   "s/const PINNED_O1JS = '2\.15\.0'/const PINNED_O1JS = '9.9.9'/" \
   scripts/attestation-gate.ts
-expect_red "type error in the committed source" \
+expect_red gate "type error in the committed source" \
   "s/export const ATTEST_DEPTH = 32;/export const ATTEST_DEPTH: string = 32;/" \
   src/DreggPoseidonAttestation.ts
+# Leg 2: the row measurement must refuse to report a number for the wrong object,
+# and must notice when the document's figure stops matching the circuit.
+expect_red rows "Poseidon2 circuit diverges from the deployed KAT" \
+  "s/const x6 = mul\(x4, x2\);/const x6 = mul(x4, x4);/" \
+  src/Poseidon2BabyBearW16.ts
+expect_red rows "rows/perm drifts from the figure the doc quotes" \
+  "s/const RECORDED_ROWS_PER_PERM = 2600\.5;/const RECORDED_ROWS_PER_PERM = 2000;/" \
+  scripts/poseidon2-babybear-rows.ts
+# A lane bound of 2^32 instead of 2^31 puts x^7 past the Pasta modulus, i.e. the
+# circuit stops being sound. `assertSafe` must refuse to emit a number for it.
+expect_red rows "unsound lane bound (x^7 would wrap mod Pasta)" \
+  "s/qp\.add\(r\)\.assertEquals\(v\.v\);\n  return \{ v: r, max: \(1n << 31n\) - 1n \};/qp.add(r).assertEquals(v.v);\n  return { v: r, max: (1n << 32n) - 1n };/" \
+  src/Poseidon2BabyBearW16.ts
 
 echo
 if [ "$red" -gt 0 ]; then
