@@ -2368,17 +2368,32 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             needs_attenuate_patch: false,
             transfer_caveat: false,
             turn_bound: false,
-            // cap-WRITE light-client axis (THE LOOP IS CLOSED): a revoke IS a cap-tree REMOVE, the node
-            // supplies the actor's c-list (the cap-tree write witness — plumbed end-to-end), and the
-            // deployed `revokeDelegationWriteCapOpenVmDescriptor2R24` now binds the AFTER cap-root (col
-            // 87) ONLY via the `map_op` `write` (`new_root = var87`) — the over-determining poseidon
-            // OUTPUT was dropped (commit 0c2b0704c; col 87 is now an INPUT to the commitment chain, not
-            // a second definition, exactly as note-spend folds its nullifier root). So routing here is
-            // PROVABLE: when the node supplies the c-list (`cap.clist_leaves` non-empty), the prover
-            // proves the write wrapper and the genuine post-cap-root is ON-THE-WIRE light-client
-            // verifiable (a wrong post-root is UNSAT — the `map_op` checks `after = remove(before, key)`).
-            // An empty `clist_leaves` falls back to the authority-only `key` (named, not a silent forge);
-            // the verifier tooth (`is_forbidden_plain_cap_descriptor`) forces the cap-open route.
+            // cap-WRITE light-client axis: a revoke IS a cap-tree REMOVE, and the node supplies the
+            // actor's c-list (the cap-tree write witness — plumbed end-to-end).
+            //
+            // ⚑ THE CORRECTED CLAIM. This comment used to say the post-cap-root was light-client
+            // verifiable "because the `map_op` checks `after = remove(before, key)`". That was FALSE
+            // on this member and on `revokeCapability`, in three ways at once: these descriptors
+            // declare ZERO map-ops; the appendix `capRoot` is welded to the BEFORE group, not the
+            // AFTER one; and the authority-only twin's after-side gates (`c452 == c87`, `c87 == c65`)
+            // had been dropped with nothing put in their place. A prover could publish ANY 8-felt
+            // post-remove root — including one leaving the "revoked" capability LIVE — and both
+            // `prove_vm_descriptor2` and `verify_vm_descriptor2` accepted. Only the AFTER block
+            // state-commitment moved, so a verifier that RECOMPUTES the honest post-state caught it
+            // and a ledgerless light client did not. `cap_open_write_prove_through.rs` measured that.
+            //
+            // What is true NOW, and by what mechanism: the deployed descriptor carries a TOMBSTONE
+            // AFTER-SPINE (Lean `CapOpenEmit.removeTombstoneConstraints` — 16 `node8` chip absorbs
+            // over the SHARED sibling path, 8 root pins onto the committed AFTER cap-root group, and
+            // 8 constant pins holding the level-0 input at `CAP_ZERO8`). So the AFTER group is FORCED
+            // to be `recompose_membership(CAP_ZERO8, siblings, directions)` — exactly
+            // `CanonicalCapTree::remove_witness`'s `new_root` — and a fabricated post-root is UNSAT
+            // AT THE PROVER (`CapRemoveEmit.effCapRemoveV3_rejects_forged_afterRoot`), not merely
+            // rejected downstream. Still no map-op: the binding is the Merkle fold, not a map table.
+            //
+            // An empty `clist_leaves` falls back to the authority-only `key` (named, not a silent
+            // forge); the verifier tooth (`is_forbidden_plain_cap_descriptor`) forces the cap-open
+            // route, and `is_forbidden_authority_only_cap_write_descriptor` forces THIS write route.
             write: Some((
                 "revokeDelegationWriteCapOpenVmDescriptor2R24",
                 dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Remove,
@@ -2428,16 +2443,19 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
             needs_attenuate_patch: true,
             transfer_caveat: false,
             turn_bound: false,
-            // cap-WRITE light-client axis (THE ROUTE-FORGE CLOSED): a revokeCapability IS a cap-tree
-            // REMOVE. The authority-only `revokeCapabilityCapOpenVmDescriptor2R24` (write:None) left the
-            // post-cap-root host-trusted — a light client accepted a forged post-cap-root (the removed cap
-            // fabricated/omitted). The deployed `revokeCapabilityWriteCapOpenVmDescriptor2R24` binds the
-            // AFTER cap-root (rotated limb 264) ONLY via the `map_op` REMOVE against the membership-opened
-            // BEFORE root: when the node supplies the c-list (`cap.clist_leaves` non-empty) the prover
-            // proves the write wrapper and the genuine post-cap-root is on-the-wire light-client-verifiable
-            // (a wrong post-root is UNSAT). An empty c-list falls back to the authority-only `key` (named,
-            // not a silent forge); the verifier tooth (`is_forbidden_plain_cap_descriptor`) forces the
-            // cap-open route. Mirrors revokeDelegation's REMOVE wrapper EXACTLY (same crown facet bit).
+            // cap-WRITE light-client axis: a revokeCapability IS a cap-tree REMOVE. The authority-only
+            // `revokeCapabilityCapOpenVmDescriptor2R24` (write:None) left the post-cap-root
+            // host-trusted, and `is_forbidden_authority_only_cap_write_descriptor` therefore refuses it.
+            //
+            // ⚑ THE CORRECTED CLAIM — see the identical note on the `RevokeDelegation` route above.
+            // This comment used to say the write wrapper bound the AFTER cap-root "via the `map_op`
+            // REMOVE". It did not: this member declares ZERO map-ops and, until the tombstone
+            // after-spine landed, carried ZERO gates on the AFTER cap-root group, so forcing the
+            // producer onto the write route bought nothing a light client could check. What binds it
+            // NOW is the Lean-authored TOMBSTONE spine (`CapOpenEmit.removeTombstoneConstraints`):
+            // the AFTER group is pinned, lane-for-lane, to `CAP_ZERO8` folded up the SHARED sibling
+            // path — `CanonicalCapTree::remove_witness`'s `new_root` — so a fabricated post-root is
+            // UNSAT at the prover. Mirrors revokeDelegation's REMOVE wrapper EXACTLY (no epoch gate).
             write: Some((
                 "revokeCapabilityWriteCapOpenVmDescriptor2R24",
                 dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp::Remove,
@@ -3454,6 +3472,8 @@ fn build_effect_vm_cap_open_leg(
                     after_root8,
                     cap.leaf.slot_hash,
                     cap.leaf.mask_lo,
+                    &cap.siblings,
+                    &cap.directions,
                 )
                 .map_err(|e| {
                     SdkError::InvalidWitness(format!(
@@ -3466,16 +3486,15 @@ fn build_effect_vm_cap_open_leg(
                 })?
             } else {
                 let mut dpis = dpis;
-                dregg_circuit::effect_vm::trace_rotated::apply_rotated_cap_write_after_spine(
+                dregg_circuit::effect_vm::trace_rotated::apply_rotated_cap_remove_after_spine(
                     &mut trace,
                     &mut dpis,
                     cap_open.cap_root,
                     after_root8,
                     cap.leaf.slot_hash,
                     cap.leaf.mask_lo,
-                    BabyBear::ZERO,
-                    BabyBear::ZERO,
-                    BabyBear::ZERO,
+                    &cap.siblings,
+                    &cap.directions,
                 )
                 .map_err(|e| {
                     SdkError::InvalidWitness(format!(
@@ -4229,24 +4248,32 @@ fn prove_cohort_run_chain(
 /// delegation rather than conferring new authority).
 /// The AUTHORITY-ONLY cap-open descriptors for cap-WRITE effects whose write-bearing wrapper makes the
 /// authority crown alone insufficient: the genuine post-cap-root is on-the-wire ONLY via the
-/// `…WriteCapOpenVmDescriptor2R24` `map_op` (BEFORE cap-root var 213 → AFTER cap-root var 264, a genuine
-/// sorted-Poseidon2 cap-tree write). The verifier-half tooth that forces the write route lives here.
+/// `…WriteCapOpenVmDescriptor2R24` wrapper's in-circuit Merkle binding of the committed AFTER cap-root
+/// group. The verifier-half tooth that forces the write route lives here.
 ///
-/// THE TOOTH IS ON. The cap-root advances on the ROTATED-BLOCK limb 213→264 (the `213 == 65` weld dropped,
-/// the v1-state cap-root cols 65/87 FROZEN), and the WRITE wrappers ride the nonce-TICK face — so all three
-/// write-bearing routes now GENUINELY prove + light-client-verify end-to-end (a wrong post-cap-root is UNSAT):
-/// revokeDelegation (REMOVE), delegate & introduce (INSERT). With the on-the-wire alternative proven, the
-/// AUTHORITY-only cap-open descriptors (`revokeCapOpen` / `grantCapCapOpen` / `introduceCapOpen`) are
-/// light-client-REJECTED — a producer cannot strip the write wrapper to leave the post-cap-root host-trusted.
+/// ⚑ THESE MEMBERS DECLARE NO `map_op`. This doc used to attribute the binding to a `map_op` on the
+/// rotated limb 213→264; every one of the seven write wrappers has `map_ops == 0`, and the SDK tests
+/// `cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound` and
+/// `write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge` assert exactly that. The
+/// binding is the depth-16 `node8` FOLD the descriptor carries, not a map table: INSERT welds the
+/// read's `capRoot` to the AFTER group (the spliced leaf opens against the rebuilt tree); UPDATE lays
+/// a second leaf spine; REMOVE lays the TOMBSTONE spine (`CAP_ZERO8` folded up the shared path).
+///
+/// ⚑ AND FOR THE TWO REMOVE MEMBERS THIS TOOTH WAS A TRAP UNTIL 2026-07-28. It denied the plain
+/// route and so forced the producer onto the WRITE wrapper — which, on `revokeDelegationWriteCapOpen`
+/// and `revokeCapabilityWriteCapOpen`, carried ZERO gates on the AFTER cap-root group. The forced
+/// route was the UNCONSTRAINED one: any 8-felt post-remove root proved and verified. The tombstone
+/// after-spine closes that; the tooth now forces a route that actually checks something.
 // Light-client VERIFY path (pure `matches!` on descriptor keys): reached transitively from
 // `verify_effect_vm_rotated_inner` via `is_forbidden_plain_cap_descriptor`, so it must compile
 // in the kernel-free client build too (not gated behind `prover`).
 fn is_forbidden_authority_only_cap_write_descriptor(name: &str) -> bool {
     // THE TOOTH IS ON. The WRITE-bearing cap-open wrappers now GENUINELY prove + light-client-verify
-    // end-to-end (a wrong post-cap-root is UNSAT — the `map_op` binds the BEFORE→AFTER cap-root write on
-    // the rotated limb 213→264, a genuine sorted-Poseidon2 tree write threaded through the c-list→map_heaps
-    // bridge):
-    //   * revokeDelegation — `cap_write_revoke_proves_and_verifies_light_client` (REMOVE)
+    // end-to-end (a wrong post-cap-root is UNSAT — the wrapper's own depth-16 `node8` fold binds the
+    // committed AFTER cap-root group lane-for-lane; there is NO `map_op` on any of these members):
+    //   * revokeDelegation / revokeCapability — the TOMBSTONE spine pins the AFTER group to
+    //     `CAP_ZERO8` folded up the removed leaf's own path
+    //     (`cap_open_write_prove_through::remove_write_twins_bind_the_post_remove_cap_root`)
     //   * delegate / introduce — `cap_write_{delegate,introduce}_proves_and_verifies_light_client` (INSERT)
     // So the AUTHORITY-only cap-open route (the authority crown WITHOUT the on-the-wire cap-root write) is
     // now light-client-REJECTED for these write-bearing effects: a producer cannot strip the write wrapper
@@ -6955,24 +6982,54 @@ mod tests {
              BEFORE-root welds + the tombstone zero-fold) — descriptor: {}",
             desc.name
         );
-        // The 8 `effCapRemoveV3` BEFORE welds: the read `capRoot` lane welded to the committed BEFORE
-        // cap-root block `[lane0 = var 213 ‖ lanes 1..7 = vars 239..=245]`.
-        let before_group: Vec<usize> = std::iter::once(213usize).chain(239..=245).collect();
-        for (lane, g) in before_group.iter().enumerate() {
-            let has_weld = desc.constraints.iter().any(|c| {
+        // The 16 `effCapRemoveV3` cap-root bindings — the 8 BEFORE welds (the revocation READ) and,
+        // since the 2026-07-28 tombstone flag day, the 8 AFTER root pins (the write tooth).
+        //
+        // ⚑ ON THE NARROW MEMBER, DELIBERATELY, AND DERIVED. This block used to read the hardcoded
+        // `[213, 239..=245]` off the WIDE descriptor, which was wrong twice: `239` is not a cap-root
+        // lane at all (`CAP_ROOT_GROUP = [25, 52..=58]`, so BEFORE is `[213, 240..=246]`), real lane 7
+        // was never checked, AND the wide member's columns are S2/E1-COMPACTED, so absolute var
+        // numbers there are a machine-derived artifact that shifts whenever a dead-column run appears
+        // — which it just did (`(1016, 1023)`, the tombstone's unread leaf columns). A hand-written
+        // column list asserted against a compacted numbering cannot go red for naming the wrong
+        // column; it just quietly checks something else. The wide member IS `wideAppend` of the
+        // narrow one, so asserting the welds on the narrow descriptor covers the same constraints and
+        // says something stable.
+        let narrow_json =
+            cap_open_descriptor_json_by_key("revokeDelegationWriteCapOpenVmDescriptor2R24")
+                .expect("the write wrapper is in the narrow V3 registry");
+        let narrow = parse_vm_descriptor2(narrow_json).expect("narrow write wrapper parses");
+        let binds_var = |g: usize| {
+            narrow.constraints.iter().any(|c| {
                 matches!(c,
                     VmConstraint2::Base(dregg_circuit::lean_descriptor_air::VmConstraint::Gate(
                         LeanExpr::Add(_, r)))
                     if matches!(&**r, LeanExpr::Mul(cneg, v)
                         if matches!(&**cneg, LeanExpr::Const(-1))
-                            && matches!(&**v, LeanExpr::Var(x) if x == g)))
-            });
-            assert!(
-                has_weld,
-                "the revokeDelegation keystone wrapper MUST weld the read capRoot lane {lane} to the \
-                 committed BEFORE cap-root var {g} (the effCapRemoveV3 before-root weld) — descriptor: {}",
-                desc.name
-            );
+                            && matches!(&**v, LeanExpr::Var(x) if *x == g)))
+            })
+        };
+        for (label, base) in [
+            (
+                "BEFORE",
+                dregg_circuit::effect_vm::trace_rotated::BEFORE_BASE,
+            ),
+            ("AFTER", dregg_circuit::effect_vm::trace_rotated::AFTER_BASE),
+        ] {
+            for (lane, off) in dregg_circuit::effect_vm::layout_generated::CAP_ROOT_GROUP
+                .iter()
+                .enumerate()
+            {
+                let g = base + off;
+                assert!(
+                    binds_var(g),
+                    "the revokeDelegation keystone wrapper MUST bind {label} cap-root lane {lane} \
+                     (var {g}): BEFORE is the revocation read's weld, AFTER is the tombstone spine's \
+                     root pin — and ZERO AFTER pins is the 2026-07-28 wound where any 8-felt \
+                     post-remove root proved. Descriptor: {}",
+                    narrow.name
+                );
+            }
         }
 
         // The removed delegation-conferring leaf (target == src), exactly as the honest revoke tests.
@@ -7080,6 +7137,8 @@ mod tests {
             after_root8,
             chosen[0],
             chosen[3],
+            &cap_w.siblings,
+            &cap_w.directions,
         )
         .expect("the remove after-spine producer lays the genuine committed root groups");
         // CONFIRM the change is GENUINE (non-vacuous): the committed groups DIFFER (a real tombstone
@@ -7385,20 +7444,23 @@ mod tests {
         );
     }
 
-    /// **THE OVER-DETERMINATION IS GONE — col 87 (AFTER cap-root) is now `map_op`-defined ONLY**
-    /// (commit 0c2b0704c). The prior obstruction was that `revokeDelegationWriteCapOpenVmDescriptor2R24`
-    /// bound the AFTER cap-root (col 87) TWO incompatible ways — the `map_op` `new_root = var87` (a
-    /// sorted `CanonicalHeapTree` REMOVE) AND a poseidon OUTPUT `var87 = hash2(...)` — which disagree for
-    /// an honest c-list (Poseidon is non-invertible), making the wrapper UNPROVABLE. The re-emit dropped
-    /// the poseidon-output definition: col 87 now appears as the `map_op` `write` `new_root` (the sole
-    /// definition) and only as an INPUT to the commitment chain (folded in, never re-derived), exactly as
-    /// note-spend treats its nullifier-accumulator root. This test PINS the descriptor structure (col 87
-    /// is the `map_op` `new_root` AND is NOT a poseidon-output) so the fix is non-vacuous and a regression
-    /// re-introducing the second binding fails here — and exercises the genuine cap-tree→`map_heaps`
-    /// bridge + its missing-key fail-closed guardrail. The end-to-end prove+verify closure of the loop is
-    /// `cap_write_revoke_proves_and_verifies_light_client`.
+    /// **THE POST-REMOVE CAP-ROOT IS TOMBSTONE-SPINE BOUND** (2026-07-28 flag day). This test was
+    /// named `…_after_root_is_map_op_defined_only`, which was a false name twice over: this member
+    /// declares ZERO map-ops (the assertion 30 lines down has always said so), and until the flag
+    /// day NOTHING at all bound the committed AFTER cap-root group — the authority-only twin's
+    /// `c452 == c87` / `c87 == c65` gates had been dropped with no replacement, so any 8-felt
+    /// post-remove root proved and verified.
+    ///
+    /// What binds it now is the Lean-authored TOMBSTONE after-spine
+    /// (`CapOpenEmit.removeTombstoneConstraints`): 16 `node8` chip absorbs over the SHARED sibling
+    /// path from a level-0 input pinned to `CAP_ZERO8`, root-pinned onto the committed AFTER
+    /// cap-root group. This test PINS both welds — the 8 BEFORE welds (the revocation READ) and the
+    /// 8 AFTER root pins (the write tooth) — so a regression that drops either fails HERE, in a
+    /// descriptor-structure check, rather than only in a minutes-long prove-through. The
+    /// end-to-end prove/refuse closure is `cap_write_revoke_proves_and_verifies_light_client` and
+    /// `dregg-circuit`'s `cap_open_write_prove_through::remove_write_twins_bind_the_post_remove_cap_root`.
     #[test]
-    fn cap_write_revoke_descriptor_after_root_is_map_op_defined_only() {
+    fn cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound() {
         use dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp;
         use dregg_circuit::heap_root::HeapLeaf;
 
@@ -7414,10 +7476,11 @@ mod tests {
 
         // THE REMOVE KEYSTONE SHAPE (`effCapRemoveV3`): the arity-2 map-op is GONE (its update-at-key
         // `writesTo` could not express the deployed ZERO-digest tombstone leaf — the break this deploy
-        // closed); the cap-tree REMOVE is carried by the 8 BEFORE cap-root WELD gates pinning the
+        // closed); the cap-tree REMOVE is carried by (a) the 8 BEFORE cap-root WELD gates pinning the
         // cap-open READ's `capRoot` group to the committed BEFORE cap-root block `[lane0=var 213 ‖
-        // lanes 1..7 = vars 239..=245]` — the read opens the REMOVED leaf against BEFORE, and the
-        // committed AFTER group carries the tombstone zero-fold (witness-carried, wide-anchored).
+        // lanes 1..7 = vars 239..=245]` — the read opens the REMOVED leaf against BEFORE — and (b)
+        // the TOMBSTONE after-spine's 8 root pins onto the committed AFTER block (the same lanes at
+        // `+B_SPAN`), which is what makes the post-remove root wire-forced rather than host-trusted.
         let map_ops = desc
             .constraints
             .iter()
@@ -7426,23 +7489,53 @@ mod tests {
         assert_eq!(
             map_ops, 0,
             "the revokeDelegation keystone wrapper carries NO arity-2 map-op (the REMOVE rides the \
-             before-root welds + the tombstone zero-fold) — descriptor: {}",
+             before-root welds + the tombstone spine) — descriptor: {}",
             desc.name
         );
-        let before_group: Vec<usize> = std::iter::once(213usize).chain(239..=245).collect();
-        for (lane, g) in before_group.iter().enumerate() {
-            let has_weld = desc.constraints.iter().any(|c| {
+        // A gate of the shape `<something> + (-1)·var(g)` — both the `eqGate` welds and the
+        // `rootPinGate`s are exactly this, so one matcher pins both groups.
+        let binds_var = |g: usize| {
+            desc.constraints.iter().any(|c| {
                 matches!(c,
                     VmConstraint2::Base(dregg_circuit::lean_descriptor_air::VmConstraint::Gate(
                         LeanExpr::Add(_, r)))
                     if matches!(&**r, LeanExpr::Mul(cneg, v)
                         if matches!(&**cneg, LeanExpr::Const(-1))
-                            && matches!(&**v, LeanExpr::Var(x) if x == g)))
-            });
+                            && matches!(&**v, LeanExpr::Var(x) if *x == g)))
+            })
+        };
+        // ⚑ DERIVED, not hand-listed. This was `once(213).chain(239..=245)`, and BOTH ends of that
+        // were wrong: `239` is not a cap-root lane at all (nothing in the descriptor binds it) and
+        // real lane 7 (`246`) was never checked. The generated layout is the authority —
+        // `CAP_ROOT_GROUP = [25, 52..=58]` offsets, so BEFORE = `188 + …` = `[213, 240..=246]` and
+        // AFTER = those `+ B_SPAN`. A hand-transcribed column list cannot go red for being wrong
+        // about which column it names; a derived one cannot be wrong.
+        let group_at = |base: usize| -> Vec<usize> {
+            dregg_circuit::effect_vm::layout_generated::CAP_ROOT_GROUP
+                .iter()
+                .map(|off| base + off)
+                .collect()
+        };
+        let before_group = group_at(dregg_circuit::effect_vm::trace_rotated::BEFORE_BASE);
+        for (lane, g) in before_group.iter().enumerate() {
             assert!(
-                has_weld,
+                binds_var(*g),
                 "the revokeDelegation keystone wrapper MUST weld the read capRoot lane {lane} to the \
                  committed BEFORE cap-root var {g} (the effCapRemoveV3 before-root weld) — descriptor: {}",
+                desc.name
+            );
+        }
+        // ⚑ THE WRITE TOOTH. Every lane of the committed AFTER cap-root group must be bound — this
+        // is the assertion whose ABSENCE was the wound: before the tombstone spine, ZERO of these
+        // eight held, and a prover could publish any post-remove root.
+        let after_group = group_at(dregg_circuit::effect_vm::trace_rotated::AFTER_BASE);
+        for (lane, g) in after_group.iter().enumerate() {
+            assert!(
+                binds_var(*g),
+                "the revokeDelegation keystone wrapper MUST pin the TOMBSTONE spine's recomposed \
+                 root lane {lane} to the committed AFTER cap-root var {g} — without it the \
+                 post-remove cap-root is host-trusted and ANY 8 felts prove (the 2026-07-28 wound) \
+                 — descriptor: {}",
                 desc.name
             );
         }
@@ -7571,7 +7664,7 @@ mod tests {
     /// faithful witness here advances BOTH the nonce and the delegation epoch (`bump_delegation_epoch`), and
     /// the leg PROVES + LIGHT-CLIENT-VERIFIES end-to-end. revokeCapability / refresh carry no epoch-tick gate
     /// (their REMOVE/UPDATE wide legs prove with a frozen epoch — the source-of-truth distinction). The
-    /// cap-root advance is confirmed correct by `cap_write_revoke_descriptor_after_root_is_map_op_defined_only`.
+    /// cap-root advance is confirmed correct by `cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound`.
     #[test]
     fn cap_write_revoke_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;

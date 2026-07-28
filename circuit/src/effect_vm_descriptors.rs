@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "b1e6d76e202e914cb4502e836f82ee9b8621d7660ad246baf47d465592db7d31";
+    "292e82866fac1fc03d47bb30f454b96fd524988353eb0840ef62c86ddf4ceade";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1218,7 +1218,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "15b8e7d15c5ffffbbf12575df4e3aaebb43ac84a44fc2f93e72a9067c72c5d17";
+    "56cc50f70a2d56dfa0f12703fe1342f6f3353099795683b48034cec1eed0e37c";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1244,7 +1244,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "4b0356289c1e34d850eda5a984d58aa9e56cbda5c8da70089806a67c0260b35e";
+    "db357a13481536bd703dc8ac47f8258a9c12242d154955de5cf265fc41aae6f9";
 
 /// **THE LEAN-EMITTED setField VALUE8 EPOCH (STAGED, VK-AFFECTING BUT NON-DESTRUCTIVE).** The 8
 /// written-slot value8 members (`setFieldValue8VmDescriptor2-{slot}R24`) that swap the deployed
@@ -3515,8 +3515,18 @@ mod tests {
             ("delegateWriteCapOpenVmDescriptor2R24", 1878),
             ("introduceWriteCapOpenVmDescriptor2R24", 1878),
             ("delegateAttenWriteCapOpenVmDescriptor2R24", 1878),
-            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 1878),
-            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 1878),
+            // ⚑ FLAG DAY 2026-07-28: 1878 → 2014. The two REMOVE write twins gained the TOMBSTONE
+            // after-spine (Lean `CapOpenEmit.removeTombstoneConstraints`), so their NARROW host is
+            // now `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119, the same as the UPDATE twin.
+            // Before it, their committed AFTER cap-root group carried ZERO gates.
+            //
+            // ⚠ 2014, not the UPDATE twin's 2021, and the seven-column gap is the interesting part:
+            // a tombstone has no LEAF, only a constant digest, so the shared `afterSpineCols` layout
+            // leaves its 7 leaf-field columns unread — and the E1 dead-column scan strips exactly
+            // that run (`e1_compact_generated.rs` gained `(1016, 1023)` on both members). The narrow
+            // widths coincide because the narrow member is not compacted; the wide ones do not.
+            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2014),
+            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2014),
             ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2021),
             ("spawnWriteCapOpenVmDescriptor2R24", 1878),
             ("spawnCapOpenVmDescriptor2R24", 1878),

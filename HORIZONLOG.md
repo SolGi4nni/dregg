@@ -28,19 +28,66 @@ keyed on `file:line` decays in days here, so every entry below leads with the **
 
 ### A. GRANTS AUTHORITY OR LOSES VALUE — fix these first
 
-**A1 · A REVOKED CAPABILITY CAN BE LEFT LIVE, AND THE SDK ASSERTS THE OPPOSITE IN THE PRESENT TENSE.
-LIVE.** `circuit/tests/cap_open_write_prove_through.rs:682-700` states it and MEASURES it, not
-`#[ignore]`d: on the two REMOVE members (`revokeDelegationWriteCapOpen`, `revokeCapabilityWriteCapOpen`)
-the appendix `capRoot` is welded to the **BEFORE** group and the gates that constrained the after side
-(`c452 == c87`, `c87 == c65`) were dropped with nothing put in their place. **These members declare
-ZERO map-ops**, so the tombstone zero-fold is forced nowhere in-circuit: a prover may publish ANY
-8-felt post-remove cap-root — *including one that leaves the revoked capability live* — and
-`prove_vm_descriptor2` + `verify_vm_descriptor2` accept. A verifier that recomputes the honest
-post-state catches it; **a ledgerless light client, the threat model these members exist for, does
-not.** ⚠ `sdk/src/full_turn_proof.rs:2378-2379` asserts the reverse as fact: *"the genuine
-post-cap-root is ON-THE-WIRE light-client verifiable (a wrong post-root is UNSAT — the `map_op` checks
-`after = remove(before, key)`)"*. Named in `c81f2687d`, routed to ember as descriptor-regen + VK
-rotation. Nothing has moved.
+**A1 · A REVOKED CAPABILITY COULD BE LEFT LIVE, AND THE SDK ASSERTED THE OPPOSITE IN THE PRESENT
+TENSE. FIXED 2026-07-28 — descriptor re-emit + VK rotation, a flag day.** The wound: on the two
+REMOVE members (`revokeDelegationWriteCapOpen`, `revokeCapabilityWriteCapOpen`) the appendix `capRoot`
+was welded to the **BEFORE** group and the gates that constrained the after side (`c452 == c87`,
+`c87 == c65`) had been dropped with nothing put in their place. **Those members declare ZERO
+map-ops**, so the tombstone zero-fold was forced nowhere in-circuit: a prover could publish ANY 8-felt
+post-remove cap-root — *including one that leaves the revoked capability live* — and
+`prove_vm_descriptor2` + `verify_vm_descriptor2` accepted. A verifier that recomputed the honest
+post-state caught it; **a ledgerless light client, the threat model these members exist for, did
+not.** ⚠ And `is_forbidden_authority_only_cap_write_descriptor` DENIED the plain revoke members, so
+the tooth meant to force a checked route **forced producers onto the unconstrained wrapper** — the
+trap that makes this read closed when it is open.
+
+**THE FIX IS AN AIR CONSTRAINT AND IT IS AUTHORED IN LEAN.** `Emit/CapOpenEmit.lean` gained
+`removeTombstoneConstraints`: 16 `node8` chip absorbs over the sibling path the READ already carries,
+8 `rootPinGate`s onto the committed AFTER cap-root group, and 8 constant pins holding the spine's
+level-0 input at `CAP_ZERO8` — the deployed `CanonicalCapTree::remove_witness` fold, in-circuit.
+`effCapRemoveV3` widens by `AFTER_SPINE_SPAN`. `DeployedCapOpen` gained `SpineCore` +
+`capOpen_recomposeFrom8` so a fold can start from a CONSTANT instead of a leaf absorb (a tombstone has
+no leaf). Forcing theorem: `CapRemoveEmit.effCapRemoveV3_forces_tombstoneFold` — `recomposeUp8 0⁸
+path = afterRoot` over the FULL 8-felt group, trace-forced from `Satisfied2`, **riding neither
+`SpineCommits` nor `GapOpen`**. Refusal: `effCapRemoveV3_rejects_forged_afterRoot`. ⚠ Named, not
+laundered: §A's `capRemoves8` still models a COMPACTING `sortedRemove`, which the deployed tombstone
+is not, so §D does not discharge §C's carriers and does not claim to.
+
+**THE FLAG DAY — what re-emits, what refuses to load.** Narrow `rotation-v3-staged-registry.tsv`:
+both members **1976 → 2119** trace width (= the UPDATE twin), constraints **278 → 310** / **277 →
+309**; PI count UNCHANGED at 46. Wide `rotation-wide-registry-staged.tsv`: **1878 → 2014** (not 2021 —
+a tombstone has no leaf, so the E1 dead-column scan strips the 7 unread leaf columns; `(1016, 1023)`
+appears on both rows of `e1_compact_generated.rs`). Welded: **1885 → 2021**. All three registry
+fingerprints rotate (`V3_STAGED_REGISTRY_FP` `b1e6d76e…` → `292e8286…`, `WIDE_REGISTRY_STAGED_FP`
+`15b8e7d1…` → `56cc50f7…`, `WIDE_UMEM_WELD_REGISTRY_FP` `4b035628…` → `db357a13…`), so **every proof
+minted under the old bytes now fails to verify** and every VK derived from them is dead — which is the
+point: an old revoke proof is exactly the object whose post-root was unconstrained. `WIDE_MEMBER_GEOMETRY`
+re-pinned to 2014. A 1976-wide REMOVE trace now refuses at
+`descriptor_ir2.rs`'s "base row width must equal descriptor trace_width". **Exactly 2 members moved in
+each of the 3 registries and no others** (verified by per-member JSON hash against a pre-emit
+snapshot — the emit ran with `DREGG_VK_REGEN_ALLOW_DIRTY=1` because ~15 other lanes' Lean files were
+in flight, so the provenance stamp records `source_dirty=true`; the per-member diff is what makes the
+flag day attributable anyway).
+
+**MEASURED, both poles.** `cap_open_write_prove_through` 8/8 PASS (persvati, debug,
+`--test-threads=4`). The wound sentinel is INVERTED, not deleted:
+`remove_write_twins_bind_the_post_remove_cap_root` proves the honest revoke, proves the fabricated
+post-root is **UNSAT at the prover** against the forgery's OWN published PIs (the ledgerless client,
+which is the one the old boundary let through), and carries a **permanent in-value red-proof** — the
+same forged trace proves and ledgerlessly verifies against a descriptor value with those 32
+constraints stripped, so the green can never rot into a vacuous one. ⚠ **NOT fallout from this flag
+day, measured so nobody re-litigates it:** `sdk full_turn_proof::tests` is **23 failed + 1 timed out
+of 47** at HEAD, and the red set includes `cap_write_{delegate,delegate_atten,grant,spawn}_*` and
+`refresh_deleg_write_*` — members whose descriptors this flag day did not move by one byte (exactly 2
+members changed in each of the 3 registries). `cap_write_revoke_{proves_and_verifies_light_client,
+forge_rejected}` are two more of that family; the member this campaign DID change on the same wide
+path, `cap_write_revoke_cap_route_proves_and_verifies_light_client`, **passes**. Separately,
+`write_cap_open_wrapper_requires_…` proves an UNCOMPACTED wide trace against a COMPACTED descriptor
+(2936 vs 1878 before, 3079 vs 2014 after) — structurally impossible either side of the change. The
+false SDK sentence at
+`full_turn_proof.rs` is rewritten on both routes; the test that misnamed itself
+`…_after_root_is_map_op_defined_only` is now `…_after_root_is_tombstone_spine_bound` and asserts all
+16 welds (8 BEFORE + 8 AFTER).
 
 **A2 · THE EFFECT-VM PROOF IS CONSULTED AFTER THE TURN HAS COMMITTED, CHAINED AND GOSSIPED — AND IT
 CAN NEVER SUCCEED. LIVE.** `require_effect_vm_proof` is `node/src/mcp/proof.rs:377-392`, one

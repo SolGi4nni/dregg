@@ -52,11 +52,15 @@ open Dregg2.Circuit.DeployedCapTree (CapLeaf Cap8Scheme Digest8)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (MembersAt8)
 open Dregg2.Circuit.DeployedCapOpen
   (CapOpenCols leafOf groupVal capPermOut SatisfiedEff capOpenEff_membership
-   MembershipCore membershipCore_opens)
+   MembershipCore membershipCore_opens SpineCore capOpen_recomposeFrom8
+   DEPTH pathOf8 nodeLookup rootPinGate dirBoolGate)
+open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (recomposeUp8 capLeafDigest8)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (capOpenCols eqGate eqGate_eval effCapOpenV3 effCapOpenV3_satisfiedEff
    effCapOpenV3_membershipCore diffGate_exact
-   beforeCapRootWelds effCapRemoveV3)
+   beforeCapRootWelds effCapRemoveV3
+   afterSpineCols afterSpineCols_dir afterSpine_capRoot_after AFTER_SPINE_SPAN
+   zeroPinGate tombstoneZeroPins removeTombstoneConstraints removeSpineConstraints)
 open Dregg2.Circuit.SortedTreeNonMembership
   (SpineCommits keysOf GapOpen keyOf nonMembership_sound)
 open Dregg2.Circuit.CapTreeUpdate (sortedRemove capRemove_sound)
@@ -169,11 +173,24 @@ axiom; never a fabricated shared path; never lane-0). The inverse of `CapInsertE
 wrapper definitions there reference them, and this file imports `CapOpenEmit` — the defs cannot live
 here without a cycle). This section proves the keystone theorems ABOUT them. -/
 
+/-- Every constraint the remove descriptor APPENDS (the 8 BEFORE welds + the 32-constraint tombstone
+spine) is a constraint of the remove descriptor. -/
+theorem effCapRemoveV3_spineMem (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (c : VmConstraint2) (hc : c ∈ removeSpineConstraints base.traceWidth) :
+    c ∈ (effCapRemoveV3 base name n).constraints :=
+  List.mem_append_right _ hc
+
 /-- Every BEFORE-weld constraint is a constraint of the remove descriptor. -/
 theorem effCapRemoveV3_appMem (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (c : VmConstraint2) (hc : c ∈ beforeCapRootWelds base.traceWidth) :
     c ∈ (effCapRemoveV3 base name n).constraints :=
-  List.mem_append_right _ hc
+  effCapRemoveV3_spineMem base name n c (List.mem_append_left _ hc)
+
+/-- Every TOMBSTONE-spine constraint is a constraint of the remove descriptor. -/
+theorem effCapRemoveV3_tombMem (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (c : VmConstraint2) (hc : c ∈ removeTombstoneConstraints base.traceWidth) :
+    c ∈ (effCapRemoveV3 base name n).constraints :=
+  effCapRemoveV3_spineMem base name n c (List.mem_append_right _ hc)
 
 /-- A `Satisfied2` of the remove descriptor strips (constraint-subset) to a `Satisfied2` of the reused
 cap-membership read `effCapOpenV3` — the BEFORE welds are all `.base (.gate …)`, read no base column and
@@ -185,11 +202,13 @@ theorem effCapRemoveV3_strips_to_capOpen (base : EffectVmDescriptor2) (name : St
     Satisfied2 hash (effCapOpenV3 base name n) minit mfin maddrs t := by
   have hmapOps : Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapRemoveV3 base name n)
       = Dregg2.Circuit.DescriptorIR2.mapOpsOf (effCapOpenV3 base name n) := by
-    simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effCapRemoveV3, beforeCapRootWelds,
+    simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effCapRemoveV3, removeSpineConstraints,
+      beforeCapRootWelds, removeTombstoneConstraints, tombstoneZeroPins,
       List.filterMap_append, List.filterMap_map]
   have hmemOps : Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapRemoveV3 base name n)
       = Dregg2.Circuit.DescriptorIR2.memOpsOf (effCapOpenV3 base name n) := by
-    simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effCapRemoveV3, beforeCapRootWelds,
+    simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effCapRemoveV3, removeSpineConstraints,
+      beforeCapRootWelds, removeTombstoneConstraints, tombstoneZeroPins,
       List.filterMap_append, List.filterMap_map]
   have hmemLog : Dregg2.Circuit.DescriptorIR2.memLog (effCapRemoveV3 base name n) t
       = Dregg2.Circuit.DescriptorIR2.memLog (effCapOpenV3 base name n) t := by
@@ -200,7 +219,7 @@ theorem effCapRemoveV3_strips_to_capOpen (base : EffectVmDescriptor2) (name : St
   exact
     { rowConstraints := fun i hi c hc =>
         h.rowConstraints i hi c (by
-          show c ∈ (effCapOpenV3 base name n).constraints ++ beforeCapRootWelds base.traceWidth
+          show c ∈ (effCapOpenV3 base name n).constraints ++ removeSpineConstraints base.traceWidth
           exact List.mem_append_left _ hc)
       rowHashes := h.rowHashes
       rowRanges := h.rowRanges
@@ -304,5 +323,213 @@ theorem effCapRemoveV3_forces_write8 (S8 : Cap8Scheme)
 
 #assert_axioms effCapRemoveV3_forces_beforeMembership
 #assert_axioms effCapRemoveV3_forces_write8
+
+/-! ## §D — THE WRITE TOOTH: the TOMBSTONE after-spine, TRACE-FORCED (the light-client close).
+
+⚑ **What this section closes, stated at the resolution it was measured.** Until it landed, §C's
+`effCapRemoveV3_forces_write8` took the ENTIRE after side as HYPOTHESES (`GapOpen` + the AFTER
+`SpineCommits`), and the committed descriptor put **zero gates on the AFTER cap-root group** — the
+authority-only twin's `c452 == c87` / `c87 == c65` had been dropped with nothing in their place, and
+these members declare NO map-ops. A prover could publish ANY 8-felt post-remove root, including one
+that leaves the "revoked" capability LIVE, and `prove_vm_descriptor2` + `verify_vm_descriptor2` both
+accepted. The only thing that moved was the AFTER block state-commitment, so a verifier that
+independently RECOMPUTES the honest post-state rejected it — and a LEDGERLESS light client, which is
+the threat model these members exist for, did not.
+
+§D changes the KIND of the claim. `recomposeUp8 S8 0⁸ path = afterRoot` — the deployed tombstone
+zero-fold of `cap_root.rs::CanonicalCapTree::remove_witness` — is now FORCED from `Satisfied2` over
+the FULL 8-felt committed AFTER group, along the SAME path the revocation read opened the removed
+leaf against (the `sib`/`dir` columns are literally shared, `afterSpineCols_dir`). Nothing in §D
+rides `SpineCommits` or `GapOpen`.
+
+⚠ **What §D does NOT do, named rather than laundered.** §A's `capRemoves8` models the remove as a
+`sortedRemove` over a key spine — a COMPACTING remove. The deployed object is a TOMBSTONE: positions
+do not shift, the slot is zeroed in place. Those are different post-trees, so §D does not discharge
+§C's `SpineCommits`/`GapOpen` carriers and does not claim to; it forces the object the prover
+actually runs. `capRemoveTombstones8` below is that object, and it is the one the light client now
+checks. -/
+
+/-- **`capRemoveTombstones8 S8 beforeRoot leaf afterRoot`** — the DEPLOYED tombstone remove: ONE
+sibling path on which the removed leaf's 8-felt digest recomposes `beforeRoot` AND the empty-slot
+digest `0⁸` recomposes `afterRoot`. Positions do not shift (every other capability's witness stays
+valid), and the revoked key's slot is demonstrably EMPTY under the published post-root — over the
+FULL committed 8-felt groups, never lane-0. -/
+def capRemoveTombstones8 (S8 : Cap8Scheme) (beforeRoot : Digest8) (leaf : CapLeaf)
+    (afterRoot : Digest8) : Prop :=
+  ∃ path : List (Dregg2.Circuit.CapMerkleGeneric.StepG Digest8),
+    recomposeUp8 S8 (capLeafDigest8 S8 leaf) path = beforeRoot ∧
+    recomposeUp8 S8 (fun _ => 0) path = afterRoot
+
+/-- The TOMBSTONE spine's own `SpineCore`, derived from `Satisfied2` of the remove descriptor. The
+`dirBool` is the READ's (the `dir` columns are SHARED, `afterSpineCols_dir`), so no second direction
+gate is emitted and the two folds provably walk the SAME path. `SpineCore` rather than
+`MembershipCore` is the whole trick: a tombstone's level-0 input is a CONSTANT, so there is no leaf
+absorb to carry. -/
+theorem effCapRemoveV3_tombstoneSpine (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (hdir : ∀ lvl < DEPTH,
+      (dirBoolGate (capOpenCols base.traceWidth) lvl).eval (envAt t i).loc = 0) :
+    SpineCore t.tf (afterSpineCols base.traceWidth) (envAt t i) := by
+  have hrow := hsat.rowConstraints i hi
+  have hlastf : (i + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne]; exact hnotlast
+  refine { nodeHashed := ?_, dirBool := ?_, rootPinned := ?_ }
+  · intro lvl hlvl
+    have hin : VmConstraint2.lookup (nodeLookup (afterSpineCols base.traceWidth) lvl)
+        ∈ removeTombstoneConstraints base.traceWidth := by
+      refine List.mem_append_left _ (List.mem_append_left _ ?_)
+      exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
+    have h := hrow _ (effCapRemoveV3_tombMem base name n _ hin)
+    simpa [VmConstraint2.holdsAt] using h
+  · intro lvl hlvl
+    have := hdir lvl hlvl
+    simpa [afterSpineCols_dir] using this
+  · intro k
+    have hin : VmConstraint2.base (.gate (rootPinGate (afterSpineCols base.traceWidth) k))
+        ∈ removeTombstoneConstraints base.traceWidth := by
+      refine List.mem_append_left _ (List.mem_append_right _ ?_)
+      exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
+    have h := hrow _ (effCapRemoveV3_tombMem base name n _ hin)
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (rootPinGate (afterSpineCols base.traceWidth) k).eval (envAt t i).loc
+        ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold Dregg2.Circuit.DeployedCapOpen.rootPinGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact diffGate_exact (hcells _) (hcells _) h'
+
+/-- The 8 tombstone pins hold EXACTLY (over ℤ, not just mod `p`): the after-spine's level-0 input
+group IS the deployed empty-slot digest `CAP_ZERO8 = 0⁸`. -/
+theorem effCapRemoveV3_tombstoneZero (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
+    groupVal (envAt t i) (afterSpineCols base.traceWidth).leafDigest = (fun _ => 0) := by
+  have hrow := hsat.rowConstraints i hi
+  have hlastf : (i + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne]; exact hnotlast
+  funext k
+  have hin : VmConstraint2.base (.gate (zeroPinGate ((afterSpineCols base.traceWidth).leafDigest k)))
+      ∈ removeTombstoneConstraints base.traceWidth := by
+    refine List.mem_append_right _ ?_
+    exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
+  have h := hrow _ (effCapRemoveV3_tombMem base name n _ hin)
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+  have h' : (zeroPinGate ((afterSpineCols base.traceWidth).leafDigest k)).eval (envAt t i).loc
+      ≡ 0 [ZMOD 2013265921] := by simpa using h
+  unfold zeroPinGate at h'
+  simp only [EmittedExpr.eval] at h'
+  rw [Int.modEq_zero_iff_dvd] at h'
+  obtain ⟨c, hc⟩ := h'
+  obtain ⟨hb0, hb1⟩ := hcells ((afterSpineCols base.traceWidth).leafDigest k)
+  simp only [groupVal]
+  omega
+
+/-- **`effCapRemoveV3_forces_tombstoneFold` — THE DELIVERABLE.** A `Satisfied2` of the remove
+descriptor TRACE-FORCES the committed AFTER cap-root GROUP to be the deployed TOMBSTONE ZERO-FOLD:
+`CAP_ZERO8` recomposed up the SAME sibling path the revocation READ opened the removed leaf against.
+The post-remove root is no longer host-trusted; it is pinned, lane-for-lane, by the wire. -/
+theorem effCapRemoveV3_forces_tombstoneFold (S8 : Cap8Scheme)
+    (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
+    recomposeUp8 S8 (fun _ => 0)
+        (pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH)
+      = (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+  have hopenSat := effCapRemoveV3_strips_to_capOpen base name n hash minit mfin maddrs t hsat
+  have hReadCore : MembershipCore hash t.tf (capOpenCols base.traceWidth) (envAt t i) :=
+    effCapOpenV3_membershipCore base name n hash minit mfin maddrs t hopenSat i hi hnotlast hcells
+  have hspine := effCapRemoveV3_tombstoneSpine base name n hash minit mfin maddrs t hsat i hi
+    hnotlast hcells hReadCore.dirBool
+  have hfold := capOpen_recomposeFrom8 S8 t.tf (afterSpineCols base.traceWidth) (envAt t i)
+    hChip hspine
+  rw [effCapRemoveV3_tombstoneZero base name n hash minit mfin maddrs t hsat i hi hnotlast hcells]
+    at hfold
+  -- the two folds walk the SAME path (the `sib`/`dir` columns are literally shared)…
+  have hpath : pathOf8 (afterSpineCols base.traceWidth) (envAt t i) DEPTH
+      = pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH := rfl
+  rw [hpath] at hfold
+  -- …and the after-spine's `capRoot` group IS the committed AFTER cap-root block, by `rfl`.
+  rw [hfold]
+  rfl
+
+/-- **`effCapRemoveV3_forces_tombstone8`** — both halves in one statement: the removed leaf was a
+genuine MEMBER of the committed BEFORE cap-root, and the committed AFTER cap-root is the tombstone
+zero-fold of that same path. This is the object a ledgerless light client now verifies, and it is
+trace-forced end to end — no `SpineCommits`, no `GapOpen`, no host recomputation. -/
+theorem effCapRemoveV3_forces_tombstone8 (S8 : Cap8Scheme)
+    (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
+    capRemoveTombstones8 S8
+        (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k))
+        (leafOf (capOpenCols base.traceWidth) (envAt t i))
+        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+  refine ⟨pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH, ?_, ?_⟩
+  · -- the BEFORE leg: the read's own fold, welded to the committed BEFORE group.
+    have hopenSat := effCapRemoveV3_strips_to_capOpen base name n hash minit mfin maddrs t hsat
+    have hReadCore : MembershipCore hash t.tf (capOpenCols base.traceWidth) (envAt t i) :=
+      effCapOpenV3_membershipCore base name n hash minit mfin maddrs t hopenSat i hi hnotlast hcells
+    have hfold := capOpen_recomposeFrom8 S8 t.tf (capOpenCols base.traceWidth) (envAt t i)
+      hChip hReadCore.toSpine
+    have hleaf := Dregg2.Circuit.DeployedCapOpen.leafDigest_sound8 S8 hash t.tf
+      (capOpenCols base.traceWidth) (envAt t i) hChip hReadCore
+    rw [hleaf] at hfold
+    -- weld: the read's appendix `capRoot` group IS the committed BEFORE cap-root group.
+    have hroot : groupVal (envAt t i) (capOpenCols base.traceWidth).capRoot
+        = (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k)) := by
+      funext k
+      have hin : VmConstraint2.base (.gate (eqGate ((capOpenCols base.traceWidth).capRoot k)
+          (capRootGroupCol EFFECT_VM_WIDTH k))) ∈ beforeCapRootWelds base.traceWidth :=
+        List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
+      have hmod := effCapRemoveV3_gate_forces base name n hash minit mfin maddrs t hsat i hi
+        hnotlast _ hin
+      unfold Dregg2.Circuit.Emit.CapOpenEmit.eqGate at hmod
+      simp only [EmittedExpr.eval] at hmod
+      have := diffGate_exact (hcells _) (hcells _) hmod
+      simp only [groupVal]
+      linarith
+    rwa [hroot] at hfold
+  · exact effCapRemoveV3_forces_tombstoneFold S8 base name n hash minit mfin maddrs t hChip hsat
+      i hi hnotlast hcells
+
+/-- **`effCapRemoveV3_rejects_forged_afterRoot` — THE TOOTH, both polarities.** A trace whose
+committed AFTER cap-root group is ANYTHING other than the tombstone zero-fold of the read's path is
+**UNSAT**: no proof of the remove descriptor exists for it. This is the statement the deployed
+`prove_vm_descriptor2` realizes — the fabricated post-remove root is refused at the PROVER, not
+caught downstream by a verifier that recomputes the honest post-state. -/
+theorem effCapRemoveV3_rejects_forged_afterRoot (S8 : Cap8Scheme)
+    (base : EffectVmDescriptor2) (name : String) (n : Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (hforged : (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
+      ≠ recomposeUp8 S8 (fun _ => 0)
+          (pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH)) :
+    ¬ Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t := by
+  intro hsat
+  exact hforged (effCapRemoveV3_forces_tombstoneFold S8 base name n hash minit mfin maddrs t
+    hChip hsat i hi hnotlast hcells).symm
+
+#assert_axioms effCapRemoveV3_tombstoneSpine
+#assert_axioms effCapRemoveV3_tombstoneZero
+#assert_axioms effCapRemoveV3_forces_tombstoneFold
+#assert_axioms effCapRemoveV3_forces_tombstone8
+#assert_axioms effCapRemoveV3_rejects_forged_afterRoot
 
 end Dregg2.Circuit.Emit.CapRemoveEmit

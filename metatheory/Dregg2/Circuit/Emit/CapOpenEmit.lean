@@ -941,16 +941,67 @@ def beforeCapRootWelds (w : Nat) : List VmConstraint2 :=
     VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot i)
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.capRootGroupCol EFFECT_VM_WIDTH i))))
 
+/-! ### The TOMBSTONE after-spine — the REMOVE write tooth (⚑ FLAG DAY, see the header of §C).
+
+⚑ Until this landed, `effCapRemoveV3` welded its READ appendix to the BEFORE group and put **nothing**
+on the AFTER group — the authority-only twin's `c452 == c87` / `c87 == c65` gates had been dropped with
+no replacement, and these members declare ZERO map-ops. So the committed post-remove cap-root was
+UNCONSTRAINED: a prover could publish any 8 felts (including a root that leaves the "revoked"
+capability LIVE) and both `prove_vm_descriptor2` and `verify_vm_descriptor2` accepted. Only the AFTER
+block state-commitment moved, so a verifier that RECOMPUTES the honest post-state caught it and a
+ledgerless light client — the threat model these members exist for — did not.
+
+The deployed post-remove root is `cap_root.rs::CanonicalCapTree::remove_witness`'s
+`recompose_membership(CAP_ZERO8, siblings, directions)`: the EMPTY-SLOT digest `0⁸` folded up the
+REMOVED LEAF'S OWN PATH. Positions do not shift, so the path is SHARED with the read — which is why
+this is the `afterSpineCols` layout verbatim (the shape `refreshDelegationWriteCapOpenV3` and
+`attenuateCapOpenEffV3` already deploy), with exactly one substitution: the UPDATE spine's leaf
+absorb + 7 narrowed-leaf welds + key bind are replaced by **8 constant pins to `0`**, because a
+tombstone commits a CONSTANT, not a leaf. -/
+
+/-- A CONSTANT-ZERO pin on one column: `col = 0`. The residual collapses in `(−p, p)` under cell
+canonicality, so this is an exact ℤ pin, not merely a mod-`p` one. -/
+def zeroPinGate (col : Nat) : EmittedExpr := .var col
+
+theorem zeroPinGate_eval (col : Nat) (env : VmRowEnv) :
+    (zeroPinGate col).eval env.loc = 0 ↔ env.loc col = 0 := by
+  simp only [zeroPinGate, EmittedExpr.eval]
+
+/-- The 8 TOMBSTONE pins: the after-spine's level-0 input GROUP is the deployed EMPTY-SLOT digest
+`CAP_ZERO8 = 0⁸` (`cap_root.rs::CAP_ZERO8`). -/
+def tombstoneZeroPins (w : Nat) : List VmConstraint2 :=
+  (List.finRange 8).map (fun i =>
+    VmConstraint2.base (.gate (zeroPinGate ((afterSpineCols w).leafDigest i))))
+
+/-- The REMOVE after-spine constraint list: the 16 `node8` absorbs over the SHARED sibling path, the 8
+root pins onto the committed AFTER cap-root group, and the 8 tombstone zero pins. NO leaf absorb, NO
+leaf welds, NO key bind. 32 constraints; `AFTER_SPINE_SPAN` columns (the 7 leaf-field columns of the
+shared layout are unread and stay zero). -/
+def removeTombstoneConstraints (w : Nat) : List VmConstraint2 :=
+  ((List.range DEPTH).map (fun lvl => VmConstraint2.lookup (nodeLookup (afterSpineCols w) lvl)))
+  ++ ((List.finRange 8).map (fun i => VmConstraint2.base (.gate (rootPinGate (afterSpineCols w) i))))
+  ++ tombstoneZeroPins w
+
+/-- Everything `effCapRemoveV3` appends past the cap-open read: the 8 BEFORE cap-root welds (the
+revocation READ opens the removed leaf against BEFORE) and the 32-constraint TOMBSTONE spine (the
+post-remove root IS the zero-fold of that same path). -/
+def removeSpineConstraints (w : Nat) : List VmConstraint2 :=
+  beforeCapRootWelds w ++ removeTombstoneConstraints w
+
 /-- **`effCapRemoveV3 base name n`** — the REMOVE-shaped cap-write descriptor: the reused cap-membership
 read (`effCapOpenV3 base name n`) with its `capRoot` welded to the committed BEFORE cap-root block —
 the read opens the REMOVED cap leaf against BEFORE (exactly the cap-open READ revokeDelegation must
-exhibit). Its `Satisfied2` FORCES `MembersAt8 beforeRoot (leafOf …)`
-(`CapRemoveEmit.effCapRemoveV3_forces_beforeMembership`); the removed-key non-membership in AFTER + the
-set-recompute ride the realizable carriers (`CapRemoveEmit.effCapRemoveV3_forces_write8`). -/
+exhibit) — PLUS the TOMBSTONE after-spine welding the committed AFTER cap-root block to the zero-fold
+of that same path. Its `Satisfied2` FORCES BOTH halves: `MembersAt8 beforeRoot (leafOf …)`
+(`CapRemoveEmit.effCapRemoveV3_forces_beforeMembership`) and `recomposeUp8 0⁸ path = afterRoot`
+(`CapRemoveEmit.effCapRemoveV3_forces_tombstoneFold`), so a fabricated post-remove root is UNSAT at the
+prover (`CapRemoveEmit.effCapRemoveV3_rejects_forged_afterRoot`) — not merely caught downstream by a
+verifier that recomputes the honest post-state. -/
 def effCapRemoveV3 (base : EffectVmDescriptor2) (name : String) (n : Nat) : EffectVmDescriptor2 :=
   { (effCapOpenV3 base name n) with
     name        := name
-    constraints := (effCapOpenV3 base name n).constraints ++ beforeCapRootWelds base.traceWidth }
+    traceWidth  := (effCapOpenV3 base name n).traceWidth + AFTER_SPINE_SPAN
+    constraints := (effCapOpenV3 base name n).constraints ++ removeSpineConstraints base.traceWidth }
 
 /-- **`introduceWriteCapOpenV3`** — introduce-via-cap on the INSERT-shaped keystone descriptor
 (`effCapInsertV3` over the map-op-free `introduceWriteV3` base): the membership READ opens the spliced
@@ -1050,21 +1101,30 @@ def delegateAttenWriteCapOpenV3 : EffectVmDescriptor2 :=
     (effCapInsertV3 EffectVmEmitRotationV3.delegateAttenV3
       "dregg-effectvm-delegateAtten-v1-rot24-v3-insert-capopen" EFF_DELEGATION_OPS)
 
--- The INSERT/REMOVE-shaped keystone wrappers add the 77-constraint appendix + 8 root welds + the
--- selector tooth (+86 constraints) and `CAP_OPEN_SPAN` cols (the welds add NO columns) over their
--- map-op-free write base. revokeCapability + spawn now ride the keystone wraps too.
+-- The INSERT-shaped keystone wrappers add the 78-constraint appendix + the selector tooth (+79) + 8
+-- AFTER root welds and `CAP_OPEN_SPAN` cols (the welds add NO columns) over their map-op-free write
+-- base. The REMOVE-shaped wrappers add the same 79 + 8 BEFORE welds and, since the TOMBSTONE
+-- after-spine landed, +32 more constraints (16 node absorbs + 8 root pins + 8 zero pins) and
+-- `AFTER_SPINE_SPAN` more columns — the write tooth that makes the post-remove root light-client
+-- forced instead of host-trusted. That width move is the FLAG DAY.
 #guard introduceWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.introduceWriteV3.traceWidth + CAP_OPEN_SPAN
-#guard revokeDelegationWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeDelegationWriteV3.traceWidth + CAP_OPEN_SPAN
+#guard revokeDelegationWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeDelegationWriteV3.traceWidth + CAP_OPEN_SPAN + AFTER_SPINE_SPAN
 #guard delegateWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.grantCapWriteV3.traceWidth + CAP_OPEN_SPAN
 #guard delegateAttenWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.delegateAttenV3.traceWidth + CAP_OPEN_SPAN
-#guard revokeCapabilityWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeCapabilityV3.traceWidth + CAP_OPEN_SPAN
+#guard revokeCapabilityWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.revokeCapabilityV3.traceWidth + CAP_OPEN_SPAN + AFTER_SPINE_SPAN
 #guard introduceWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.introduceWriteV3.constraints.length + 79 + 8
-#guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 79 + 8
+#guard revokeDelegationWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeDelegationWriteV3.constraints.length + 79 + 8 + 32
 #guard delegateWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.grantCapWriteV3.constraints.length + 79 + 8
 #guard delegateAttenWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.delegateAttenV3.constraints.length + 79 + 8
-#guard revokeCapabilityWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeCapabilityV3.constraints.length + 79 + 8
+#guard revokeCapabilityWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.revokeCapabilityV3.constraints.length + 79 + 8 + 32
 #guard spawnWriteCapOpenV3.traceWidth == EffectVmEmitRotationV3.spawnWriteV3.traceWidth + CAP_OPEN_SPAN
 #guard spawnWriteCapOpenV3.constraints.length == EffectVmEmitRotationV3.spawnWriteV3.constraints.length + 79 + 8
+-- The two REMOVE twins are the SAME width as the UPDATE twin (`refreshDelegationWriteCapOpenV3`),
+-- because the tombstone spine reuses `afterSpineCols` verbatim. That is the whole point: one
+-- after-spine layout, one Rust column filler, no second shape.
+#guard revokeDelegationWriteCapOpenV3.traceWidth == refreshDelegationWriteCapOpenV3.traceWidth
+#guard revokeCapabilityWriteCapOpenV3.traceWidth == refreshDelegationWriteCapOpenV3.traceWidth
+#guard (removeTombstoneConstraints 0).length == 32
 
 /-- **`transferCapOpenEffV3`** (residual (a) — THE LIVE transfer cap-open) — the transfer base + the
 effect-GENERAL appendix at `EFF_TRANSFER` (bit 1). Carries `capOpenConstraintsEff 1`: the genuine SUBMASK facet gate
@@ -2141,19 +2201,9 @@ theorem capOpen_recompose8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
         (Dregg2.Circuit.DeployedCapTree.Cap8Scheme.capLeafDigest8 S8 (leafOf c env))
         (pathOf8 c env DEPTH)
       = groupVal env c.capRoot := by
-  have hfold := recompose_reaches_cur8 S8 sponge tf c env hChip hcore DEPTH (le_refl _)
+  have hfold := capOpen_recomposeFrom8 S8 tf c env hChip hcore.toSpine
   have hleaf := leafDigest_sound8 S8 sponge tf c env hChip hcore
-  rw [hleaf] at hfold
-  have hcurTop : curCol c DEPTH = c.node (DEPTH - 1) := rfl
-  rw [hcurTop] at hfold
-  have hroot : groupVal env (c.node (DEPTH - 1)) = groupVal env c.capRoot := by
-    funext i
-    have hpin := hcore.rootPinned i
-    unfold rootPinGate at hpin
-    simp only [EmittedExpr.eval] at hpin
-    simp only [groupVal]
-    linarith
-  rw [hfold, hroot]
+  rwa [hleaf] at hfold
 
 /-- **`capOpen_writesTo8` — THE STEP-A KEYSTONE.** Two `MembershipCore` witnesses sharing the sibling
 path (before = held-leaf membership against the BEFORE cap-root group; after = narrowed-leaf membership

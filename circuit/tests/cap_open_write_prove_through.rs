@@ -25,11 +25,16 @@
 //!     (`c1934..c1941 == c452, c479..c485`), so the appendix opens the SPLICED (conferred) leaf
 //!     against the REBUILT tree. The BEFORE group carries the genuine pre-insert root. Produced by
 //!     `CanonicalCapTree::insert_witness` + `apply_rotated_cap_write_after_spine`.
-//!   * **REMOVE** (`revokeDelegation`, `revokeCapability` — `…-v3-remove-capopen`). The `capRoot`
-//!     group is bound to the **BEFORE** group (`c1934..c1941 == c213, c240..c246`): the appendix
-//!     opens the REMOVED leaf against BEFORE, and the AFTER group carries the tombstone zero-fold
-//!     (`CAP_ZERO8` folded up the SAME path — positions do not shift).
-//!   * **UPDATE-at-key** (`refreshDelegation` — `…-v3-write-capopen`, the ONLY write twin at
+//!   * **REMOVE** (`revokeDelegation`, `revokeCapability` — `…-v3-remove-capopen`, at
+//!     `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119 since the 2026-07-28 flag day). The
+//!     `capRoot` group is bound to the **BEFORE** group (`c1934..c1941 == c213, c240..c246`): the
+//!     appendix opens the REMOVED leaf against BEFORE. The AFTER group is bound by the TOMBSTONE
+//!     after-spine — 16 `node8` absorbs over the SAME sibling path from a level-0 input pinned to
+//!     `CAP_ZERO8`, root-pinned onto the committed AFTER group — so the post-remove root IS
+//!     `remove_witness`'s zero-fold and a fabrication is UNSAT. ⚑ Until that landed the AFTER group
+//!     carried ZERO gates and any post-root proved; see
+//!     `remove_write_twins_bind_the_post_remove_cap_root`.
+//!   * **UPDATE-at-key** (`refreshDelegation` — `…-v3-write-capopen`, also at
 //!     `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119). The READ opens the held leaf against
 //!     BEFORE; the 143-column after-spine re-opens the SAME leaf with `mask_lo := KEEP_MASK`
 //!     (`c1979 == c73`) against AFTER (`c2111..c2118 == the AFTER group`), and the read leaf's
@@ -53,8 +58,8 @@ use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_COMMITTED_HEIGHT, B_STATE_COMMIT, BEFORE_BASE, C_CAVEAT_COMMIT,
     CAP_OPEN_AFTER_SPINE_SPAN, CAP_OPEN_BASE, CAP_OPEN_WIDTH, CAVEAT_BASE, CapOpenWitness,
     DFA_RC_LEN, RotatedBlockWitness, SIGNATURE_AUTH_TAG, V1_PI_COUNT,
-    apply_rotated_cap_write_after_spine, empty_caveat_manifest,
-    generate_rotated_cap_attenuate_after_spine,
+    apply_rotated_cap_remove_after_spine, apply_rotated_cap_write_after_spine,
+    empty_caveat_manifest, generate_rotated_cap_attenuate_after_spine,
     generate_rotated_create_cell_trace_with_accounts_tree, generate_rotated_effect_vm_trace,
     widen_to_cap_open,
 };
@@ -501,11 +506,28 @@ fn build_insert_trace(
 fn prove_remove_member(key: &str, effects: Vec<Effect>, eff_bit: u32, epoch_bump: bool) {
     let desc = parse_vm_descriptor2(reg_json(key))
         .unwrap_or_else(|e| panic!("[{key}] the committed V3 descriptor must parse: {e}"));
+    assert_eq!(
+        desc.trace_width,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN,
+        "[{key}] a REMOVE write twin is the read appendix PLUS the tombstone after-spine"
+    );
 
-    // ⚠ NO self-consistent post-root forge here, and NOT because it was forgotten: on these two
-    // members it PASSES. See `remove_write_twins_do_not_bind_the_post_remove_cap_root` below,
-    // which measures exactly that. Claiming a write tooth here would be claiming a tooth that is
-    // not in the committed bytes.
+    // ⚑ THE SELF-CONSISTENT POST-ROOT FORGE, run FIRST so a green cannot mask it — the REMOVE
+    // twin of the INSERT check in `prove_insert_member`. This is the real attack: the prover
+    // fabricates the post-remove cap-root (one that could leave the "revoked" capability LIVE) and
+    // rebuilds every commitment AROUND it, so the trace is internally consistent and its only lie
+    // is the cap-tree write. The tombstone after-spine's 8 `rootPinGate`s make it UNSAT.
+    {
+        let (t, d, h) = build_remove_trace(key, &effects, eff_bit, epoch_bump, true);
+        assert_refused(
+            &desc,
+            &t,
+            &d,
+            &h,
+            "FABRICATED post-remove cap-root, commitments rebuilt around it",
+        );
+    }
+
     let (trace, dpis, map_heaps) = build_remove_trace(key, &effects, eff_bit, epoch_bump, false);
     finish_and_prove_red(key, &desc, trace, dpis, map_heaps, eff_bit, BEFORE_BASE);
 }
@@ -548,18 +570,17 @@ fn build_remove_trace(
     if forge_post_root {
         welded_after[0] += BabyBear::ONE;
     }
-    apply_rotated_cap_write_after_spine(
+    apply_rotated_cap_remove_after_spine(
         &mut trace,
         &mut dpis,
         cap_open.cap_root,
-        welded_after,
+        welded_after,     // written into the committed AFTER group — the prover's CLAIM
         anchor.slot_hash, // CAP_KEY @ 71 — the removed key
         anchor.mask_lo,   // HELD_MASK @ 72 — the read value
-        BabyBear::ZERO,   // KEEP_MASK @ 73 — a remove confers nothing
-        BabyBear::ZERO,   // ANCHOR_KEY @ 74
-        BabyBear::ZERO,   // ANCHOR_MASK @ 75
+        &rmw.siblings,
+        &rmw.directions,
     )
-    .expect("the REMOVE after-spine override applies");
+    .expect("the REMOVE tombstone after-spine applies");
     (trace, dpis, map_heaps)
 }
 
@@ -661,52 +682,43 @@ fn revoke_capability_write_cap_open_proves_and_verifies() {
     );
 }
 
-/// ⚑⚑⚑ **THE MEASURED HOLE — the two REMOVE write twins DO NOT BIND THE POST-REMOVE CAP-ROOT.**
+/// ⚑⚑⚑ **THE CLOSURE SENTINEL — the two REMOVE write twins DO bind the post-remove cap-root.**
 ///
-/// This test asserts what the committed bytes DO, which is not what the write twins exist to do.
-/// It is a wound sentinel, not a tooth: **when it starts FAILING, the hole has been CLOSED and this
-/// test should be deleted** (and the two `assert_refused` calls restored in `prove_remove_member`).
+/// This test was, until 2026-07-28, the WOUND sentinel of the opposite fact: it asserted that a
+/// fabricated post-remove cap-root PROVED and VERIFIED, and measured the boundary (only the AFTER
+/// block state-commitment moved, so a verifier that RECOMPUTED the honest post-state caught it and
+/// a ledgerless light client did not). Its own docstring said "when it starts FAILING, the hole has
+/// been CLOSED". The hole is closed; the sentinel is inverted rather than deleted, because the
+/// interesting assertion is the same one with the polarity flipped, and a deleted test measures
+/// nothing.
 ///
-/// ## What the committed descriptors actually bind
+/// ## What was wrong, and what fixed it
 ///
-/// Resolve the AFTER rotated cap-root group (`c452` + the seven completion limbs `c479..c485`)
-/// against every constraint of each member:
+/// The appendix `capRoot` is welded to the **BEFORE** group (`c1934..c1941 == c213, c240..c246`) —
+/// the revocation READ. The gates the AUTHORITY-only twin used to constrain the after side
+/// (`c452 == c87`, `c87 == c65`) had been DROPPED with nothing put in their place, and these
+/// members declare ZERO map-ops, so the deployed tombstone zero-fold was forced NOWHERE. Any 8
+/// felts could be published as the post-remove root, including a root leaving the "revoked"
+/// capability LIVE.
 ///
-/// | member | gates/pins on the AFTER cap-root group |
-/// |---|---|
-/// | `delegateWriteCapOpen` / `introduceWrite` / `delegateAttenWrite` / `spawnWrite` (INSERT) | **8** — the appendix `capRoot` (forced by the depth-16 fold from the SPLICED leaf) is welded to it |
-/// | `refreshDelegationWriteCapOpen` (UPDATE) | **8** — the after-spine's recomposed top root is welded to it |
-/// | `revokeDelegationWriteCapOpen` (REMOVE) | **0** |
-/// | `revokeCapabilityWriteCapOpen` (REMOVE) | **0** |
+/// The fix is an AIR constraint and it is authored in Lean, not here:
+/// `Dregg2/Circuit/Emit/CapOpenEmit.lean`'s `removeTombstoneConstraints` — 16 `node8` chip absorbs
+/// over the SHARED sibling path, 8 `rootPinGate`s onto the committed AFTER cap-root group, and 8
+/// constant pins holding the spine's level-0 input at `CAP_ZERO8`. The forcing theorem is
+/// `CapRemoveEmit.effCapRemoveV3_forces_tombstoneFold`; the refusal is
+/// `effCapRemoveV3_rejects_forged_afterRoot`. Descriptor re-emit + VK rotation followed.
 ///
-/// On the REMOVE members the appendix `capRoot` is welded to the **BEFORE** group (`c1934..c1941 ==
-/// c213, c240..c246`), and the gates the AUTHORITY-only twin used to constrain the after side with
-/// (`c452 == c87`, `c87 == c65`) were DROPPED with nothing put in their place. The `map_op` the SDK
-/// route documents ("the `map_op` checks `after = remove(before, key)`") is not in the committed
-/// JSON either — these members declare ZERO map-ops. So the deployed tombstone zero-fold
-/// (`CAP_ZERO8` folded up the removed leaf's path) is **not forced anywhere in-circuit**.
+/// ## What this test proves, at both poles
 ///
-/// ## Consequence, stated at the resolution it was measured
-///
-/// A prover may publish ANY 8-felt post-remove cap-root — including one that leaves the "revoked"
-/// capability LIVE — and `prove_vm_descriptor2` + `verify_vm_descriptor2` accept. The only thing
-/// that moves is the AFTER block state-commitment (PI 43), because the fabricated root is absorbed
-/// into the commitment chain. So the post-root is exactly as HOST-TRUSTED as it was on the
-/// authority-only twin: a verifier that independently recomputes the honest post-state commitment
-/// catches it; a ledgerless light client — the threat model these members were introduced for —
-/// does not. The second half of this test measures that boundary precisely.
-///
-/// `sdk/src/full_turn_proof.rs` states the opposite in the present tense on both routes ("the
-/// genuine post-cap-root is on-the-wire light-client-verifiable (a wrong post-root is UNSAT)").
-///
-/// ## The fix is NOT in this file, and not in Rust
-///
-/// The AFTER-group weld is an AIR constraint. It belongs in the Lean emitter
-/// (`Dregg2/Circuit/Emit/CapRemoveEmit.lean` — `effCapRemoveV3_forces_write8`), emitted exactly as
-/// `CapInsertEmit` and the attenuate after-spine already emit theirs, followed by a descriptor
-/// regen + VK rotation. Writing it in Rust would be authoring an AIR constraint in Rust.
+/// 1. **UNSAT at the PROVER.** `prove_vm_descriptor2` REFUSES the internally-consistent forged
+///    trace. Not "verify rejects it" — the proof does not exist.
+/// 2. **The LEDGERLESS check.** The old boundary was that the forgery moved PI 43, so a verifier
+///    holding the honest post-state commitment rejected. That is the host-side check the write twin
+///    exists to replace, so this test additionally proves the ledgerless case: a client that accepts
+///    the prover's OWN published PIs — recomputing nothing, holding no ledger — still gets nothing
+///    to verify, because there is no proof. That is the distinction the whole member is for.
 #[test]
-fn remove_write_twins_do_not_bind_the_post_remove_cap_root() {
+fn remove_write_twins_bind_the_post_remove_cap_root() {
     let cases: [(&str, Effect, u32, bool); 2] = [
         (
             "revokeDelegationWriteCapOpenVmDescriptor2R24",
@@ -732,70 +744,150 @@ fn remove_write_twins_do_not_bind_the_post_remove_cap_root() {
             .unwrap_or_else(|e| panic!("[{key}] the committed V3 descriptor must parse: {e}"));
         let effects = vec![effect];
 
-        // The HONEST trace, and its published AFTER state commit (PI 43 — the only PI the forgery
-        // moves).
-        let (_honest_trace, honest_dpis, _) =
+        // ── POLE 1: the HONEST revoke PROVES and light-client-VERIFIES.
+        let (honest_trace, honest_dpis, honest_heaps) =
             build_remove_trace(key, &effects, eff_bit, epoch_bump, false);
+        let honest_proof = prove_vm_descriptor2(
+            &desc,
+            &honest_trace,
+            &honest_dpis,
+            &MemBoundaryWitness::default(),
+            &honest_heaps,
+        )
+        .unwrap_or_else(|e| panic!("[{key}] the honest tombstone remove must prove: {e:?}"));
+        verify_vm_descriptor2(&desc, &honest_proof, &honest_dpis).unwrap_or_else(|e| {
+            panic!("[{key}] the honest tombstone remove must light-client-verify: {e:?}")
+        });
 
-        // The FORGED trace: the tombstone AFTER root is a fabrication and every commitment is
-        // rebuilt around it, so the trace is internally consistent and its only lie is the
-        // post-remove cap-tree root.
+        // ── POLE 2: the FORGED post-remove root is UNSAT AT THE PROVER.
+        // The forged trace is internally consistent — the fabricated root is welded into the
+        // committed AFTER cap-root group and BOTH block commitments are recomputed around it, so
+        // the commitment chain and the published PIs agree with the lie. Its ONLY defect is that
+        // the AFTER group is not the zero-fold of the read's path, which is exactly what the
+        // tombstone spine's 8 `rootPinGate`s check.
         let (forged_trace, forged_dpis, forged_heaps) =
             build_remove_trace(key, &effects, eff_bit, epoch_bump, true);
 
-        let proof = prove_vm_descriptor2(
-            &desc,
+        assert_ne!(
+            forged_dpis[V1_PI_COUNT + 1],
+            honest_dpis[V1_PI_COUNT + 1],
+            "[{key}] the forgery must genuinely move the published AFTER commit — otherwise it is \
+             not the self-consistent attack this test claims to run"
+        );
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(
+                &desc,
+                &forged_trace,
+                &forged_dpis,
+                &MemBoundaryWitness::default(),
+                &forged_heaps,
+            )
+        }));
+        // ⚠ THE LEDGERLESS ASSERTION. The verifier here is handed the FORGED trace's OWN published
+        // PIs (`forged_dpis`) — it recomputes no state, holds no ledger, and has nothing to compare
+        // the post-root against. The old wound let exactly this client through. It cannot now,
+        // because the prover produces no proof to hand it.
+        match outcome {
+            Err(_) => eprintln!(
+                "✔ [{key}] UNSAT AT THE PROVER: the fabricated post-remove cap-root makes \
+                 `{}` unsatisfiable (constraint panic). A ledgerless light client is never \
+                 offered a proof.",
+                desc.name
+            ),
+            Ok(Err(e)) => eprintln!(
+                "✔ [{key}] UNSAT AT THE PROVER: `{}` refused the fabricated post-remove \
+                 cap-root: {e:?}. A ledgerless light client is never offered a proof.",
+                desc.name
+            ),
+            Ok(Ok(forged_proof)) => {
+                // The prover accepted. The hole is OPEN again — say exactly how far it reaches
+                // before failing, so the next reader inherits the measurement and not just a red.
+                let ledgerless = verify_vm_descriptor2(&desc, &forged_proof, &forged_dpis).is_ok();
+                panic!(
+                    "[{key}] ⚑ REGRESSION: a FABRICATED post-remove cap-root PROVED against `{}`. \
+                     Ledgerless verify (the forged proof against its OWN published PIs) = {}. The \
+                     tombstone after-spine (Lean `CapOpenEmit.removeTombstoneConstraints`) is not \
+                     binding the committed AFTER cap-root group — check that the emitted \
+                     descriptor still carries its 8 `rootPinGate`s and 8 zero pins, and that the \
+                     producer still lays the spine.",
+                    desc.name,
+                    if ledgerless { "ACCEPTS" } else { "rejects" }
+                );
+            }
+        }
+
+        // ── POLE 2b: THE RED-PROOF, PERMANENT AND IN-VALUE.
+        // A refusal above only means something if the TOMBSTONE SPINE is what causes it. So: derive
+        // a descriptor VALUE that is the committed one MINUS those 32 constraints (a pure in-memory
+        // mutation of parsed data — no source file is disarmed, so no concurrent lane can compile
+        // against a broken tree) and check that the SAME forged trace proves and ledgerlessly
+        // verifies against it. That reproduces the exact wound this member carried until
+        // 2026-07-28, and it means the assertion above can never rot into a vacuous green: strip
+        // the tooth and the green goes away.
+        let mut stripped = desc.clone();
+        let n = stripped.constraints.len();
+        assert!(
+            n > 33,
+            "[{key}] the committed remove twin must carry the tombstone spine + selector"
+        );
+        // The committed tail is: … 8 BEFORE welds, 16 node lookups, 8 root pins, 8 zero pins,
+        // 1 selector gate (`withSelectorGate` appends exactly one `.base`). Assert that shape
+        // before cutting, so a layout change fails loudly instead of stripping the wrong 32.
+        assert!(
+            matches!(
+                stripped.constraints[n - 1],
+                dregg_circuit::descriptor_ir2::VmConstraint2::Base(_)
+            ),
+            "[{key}] the last committed constraint must be the selector gate"
+        );
+        assert!(
+            stripped.constraints[n - 33..n - 17]
+                .iter()
+                .all(|c| matches!(c, dregg_circuit::descriptor_ir2::VmConstraint2::Lookup(_))),
+            "[{key}] the tombstone spine's 16 node absorbs must sit at [n-33, n-17)"
+        );
+        assert!(
+            stripped.constraints[n - 17..n - 1]
+                .iter()
+                .all(|c| matches!(c, dregg_circuit::descriptor_ir2::VmConstraint2::Base(_))),
+            "[{key}] the tombstone spine's 8 root pins + 8 zero pins must sit at [n-17, n-1)"
+        );
+        stripped.constraints.drain(n - 33..n - 1);
+        stripped.name = format!("{}-TOMBSTONE-SPINE-STRIPPED", desc.name);
+
+        let stripped_proof = prove_vm_descriptor2(
+            &stripped,
             &forged_trace,
             &forged_dpis,
             &MemBoundaryWitness::default(),
             &forged_heaps,
         )
-        .unwrap_or_else(|_| {
+        .unwrap_or_else(|e| {
             panic!(
-                "[{key}] ⚑ GOOD NEWS, ACT ON IT: the fabricated post-remove cap-root is now \
-                 REFUSED by the prover. The hole this sentinel pins is CLOSED — delete this test \
-                 and restore the `assert_refused` post-root forge in `prove_remove_member`."
+                "[{key}] RED-PROOF BROKEN: with the tombstone spine stripped the forged trace \
+                 STILL does not prove ({e:?}) — so the refusal above is not attributable to the \
+                 spine and this test proves nothing about it. Fix the red-proof, do not delete it."
             )
         });
-        verify_vm_descriptor2(&desc, &proof, &forged_dpis).unwrap_or_else(|_| {
+        verify_vm_descriptor2(&stripped, &stripped_proof, &forged_dpis).unwrap_or_else(|e| {
             panic!(
-                "[{key}] ⚑ GOOD NEWS, ACT ON IT: the fabricated post-remove cap-root now fails to \
-                 verify. The hole this sentinel pins is CLOSED — delete this test and restore the \
-                 `assert_refused` post-root forge in `prove_remove_member`."
+                "[{key}] RED-PROOF BROKEN: the spine-stripped forged proof does not verify \
+                 ({e:?}); the wound this reproduces was a LEDGERLESS ACCEPT."
             )
         });
         eprintln!(
-            "⚑ [{key}] MEASURED HOLE: a FABRICATED post-remove cap-root PROVES and VERIFIES \
-             against `{}` — the AFTER cap-root group carries ZERO binding gates in the committed \
-             descriptor, so the tombstone zero-fold is not forced in-circuit.",
-            desc.name
-        );
-
-        // THE BOUNDARY. The forgery is not entirely free: the fabricated root is absorbed into the
-        // AFTER block commitment chain, so PI 43 moves. A verifier that carries the HONEST
-        // post-state commitment therefore still rejects — which is exactly the host-trusted
-        // posture the write twin was introduced to eliminate, not a substitute for the missing
-        // constraint.
-        assert_ne!(
-            forged_dpis[V1_PI_COUNT + 1],
-            honest_dpis[V1_PI_COUNT + 1],
-            "[{key}] the fabricated root must at least move the published AFTER commit"
-        );
-        assert!(
-            verify_vm_descriptor2(&desc, &proof, &honest_dpis).is_err(),
-            "[{key}] the forged proof must not verify against the HONEST published PIs"
-        );
-        eprintln!(
-            "   BOUNDARY [{key}]: the forgery moves the published AFTER state-commit (PI {}), so a \
-             verifier that RECOMPUTES the honest post-state still rejects. The check is HOST-side, \
-             not in-circuit — the authority-only posture, on the member that exists to replace it.",
-            V1_PI_COUNT + 1
+            "✔ [{key}] RED-PROOF: with the 32 tombstone constraints REMOVED from the descriptor \
+             value, the identical fabricated post-remove cap-root PROVES and ledgerlessly VERIFIES \
+             — exactly the wound HEAD carried until 2026-07-28. The refusal above is those \
+             constraints, and nothing else."
         );
     }
 }
 
-/// `refreshDelegationWriteCapOpenVmDescriptor2R24` (`…-v3-write-capopen`) — the ONLY write twin
-/// with a real 143-column AFTER-SPINE (width `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119).
+/// `refreshDelegationWriteCapOpenVmDescriptor2R24` (`…-v3-write-capopen`) — the LEAF-BEARING
+/// 143-column AFTER-SPINE (width `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119; the two REMOVE
+/// twins now share that width with a CONSTANT-input tombstone spine instead of a leaf absorb).
 /// The DELEG-tree UPDATE-at-key: the READ opens the held leaf against BEFORE, the after-spine
 /// re-opens the SAME leaf with `mask_lo := KEEP_MASK` against AFTER. Because the after-spine
 /// re-runs `recompute_block_commit` on BOTH blocks, the four rotated commit PIs go stale and must

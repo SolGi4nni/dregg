@@ -124,7 +124,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint)
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (fieldWriteOp)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (setFieldDynV3)
 open Dregg2.Circuit.Emit.CapOpenEmit
-  (capOpenConstraintsEff afterSpineConstraints afterCapRootWelds beforeCapRootWelds)
+  (capOpenConstraintsEff afterSpineConstraints afterCapRootWelds beforeCapRootWelds
+   removeTombstoneConstraints removeSpineConstraints)
 open Dregg2.Circuit.Emit.HeapOpenEmit (heapOpenConstraints afterSpineConstraintsH)
 open Dregg2.Circuit.Emit.FieldsOpenEmit (fieldsOpenConstraints afterSpineConstraintsF)
 open Dregg2.Circuit.Emit.AccumulatorInsertEmit (accumInsertConstraints)
@@ -227,6 +228,16 @@ theorem lookupShaped_afterCapRootWelds (w : Nat) :
 theorem lookupShaped_beforeCapRootWelds (w : Nat) :
     LookupShaped (beforeCapRootWelds w) := by lb_shape
 
+/-- The TOMBSTONE after-spine (16 `node8` lookups + 8 root pins + 8 zero pins) is lookup-shaped. -/
+theorem lookupShaped_removeTombstoneConstraints (w : Nat) :
+    LookupShaped (removeTombstoneConstraints w) := by lb_shape
+
+/-- Everything the REMOVE-shaped keystone appends (BEFORE welds ++ tombstone spine). -/
+theorem lookupShaped_removeSpineConstraints (w : Nat) :
+    LookupShaped (removeSpineConstraints w) :=
+  lookupShaped_append (lookupShaped_beforeCapRootWelds w)
+    (lookupShaped_removeTombstoneConstraints w)
+
 /-- The flag-day three-block capacity-floor refuse weld (39 decode/OR-fold/refuse gates) is
 all-arith. -/
 theorem lookupShaped_deployedRefuseGates (auxBase : Nat) :
@@ -304,7 +315,7 @@ theorem side_delegate : KernelSideConditions (Rfix 1) :=
       (lookupShaped_base_single _)⟩
 
 /-- tags 2 + 14 — revoke(Delegation) on the REMOVE-shaped cap-write keystone
-(`revokeDelegationWriteV3 ++ cap-open appendix ++ BEFORE welds ++ selector`). -/
+(`revokeDelegationWriteV3 ++ cap-open appendix ++ BEFORE welds ++ TOMBSTONE spine ++ selector`). -/
 theorem side_revokeDelegationWrite : KernelSideConditions (Rfix 2) :=
   ⟨⟨rfl, rfl⟩,
     mapShape_append_lookupShaped
@@ -312,7 +323,7 @@ theorem side_revokeDelegationWrite : KernelSideConditions (Rfix 2) :=
         (mapShape_append_lookupShaped
           (mapShape_of_lookupShaped revokeDelegation_sideConditions.2)
           (lookupShaped_capOpenConstraintsEff _ _))
-        (lookupShaped_beforeCapRootWelds _))
+        (lookupShaped_removeSpineConstraints _))
       (lookupShaped_base_single _)⟩
 
 /-- tag 3 — the dedicated-selector supply mint (`supplyMintV3`, the fan-out member verbatim). -/

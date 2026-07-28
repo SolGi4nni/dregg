@@ -576,6 +576,25 @@ def Satisfied.toCore {sponge tf c env} (h : Satisfied sponge tf c env) :
     MembershipCore sponge tf c env :=
   ⟨h.leafHashed, h.nodeHashed, h.dirBool, h.rootPinned⟩
 
+/-- **`SpineCore tf c env`** — the three fields the 8-felt Merkle fold ACTUALLY consumes: the
+per-level `node8` absorbs, direction-booleanity, and the 8-lane root pin. NO leaf absorb.
+
+This is `MembershipCore` minus `leafHashed`, and it exists because the deployed cap-tree has a
+second, equally real spine shape whose level-0 input is NOT any leaf's chip absorb: the TOMBSTONE
+spine of `cap_root.rs::CanonicalCapTree::remove_witness`, which folds the EMPTY-SLOT digest
+`CAP_ZERO8 = 0⁸` — a CONSTANT — up the removed leaf's own path. A `MembershipCore` cannot state that
+row (no leaf hashes to `0⁸`), so the fold lemmas below consume THIS instead and
+`MembershipCore.toSpine` feeds them from the membership shape. -/
+structure SpineCore (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv) : Prop where
+  nodeHashed : ∀ lvl < DEPTH, (nodeLookup c lvl).holdsAt tf env
+  dirBool    : ∀ lvl < DEPTH, (dirBoolGate c lvl).eval env.loc = 0
+  rootPinned : ∀ i : Fin 8, (rootPinGate c i).eval env.loc = 0
+
+/-- A `MembershipCore` projects onto its `SpineCore` (drop the leaf absorb). -/
+def MembershipCore.toSpine {sponge tf c env} (h : MembershipCore sponge tf c env) :
+    SpineCore tf c env :=
+  ⟨h.nodeHashed, h.dirBool, h.rootPinned⟩
+
 /-! ## §6 — soundness: the leaf-digest column carries the genuine `capLeafDigest`.
 
 The chip enforces `leafDigest = sponge (leafFields)` with `sponge := S.chipAbsorb` — and the deployed
@@ -666,10 +685,10 @@ theorem nodeInputs_eval (c : CapOpenCols) (env : VmRowEnv) (lvl : Nat)
 /-- **`node_sound8`** — under a SOUND WIDE chip table, level `lvl`'s 8 node columns carry the genuine
 native-8-felt `nodeOf8 S8` of the dir-mixed `(cur8, sib8)` pair — exactly one `recomposeUp8` step at
 full ~124-bit width. The whole `node8` block is bound (all 8 lanes), not lane-0. -/
-theorem node_sound8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
+theorem node_sound8 (S8 : Cap8Scheme)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
     (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
-    (hcore : MembershipCore sponge tf c env) (lvl : Nat) (hlvl : lvl < DEPTH) :
+    (hcore : SpineCore tf c env) (lvl : Nat) (hlvl : lvl < DEPTH) :
     groupVal env (c.node lvl)
       = (if dirBoolVal c env lvl
           then nodeOf8 S8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
@@ -714,10 +733,10 @@ def pathOf8 (c : CapOpenCols) (env : VmRowEnv) (n : Nat) : List (StepG Digest8) 
 
 /-- Folding `recomposeUp8` over the first `n` levels reproduces `curCol c n` (as a `Digest8`), under
 the WIDE chip soundness — the native 8-felt fold. -/
-theorem recompose_reaches_cur8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
+theorem recompose_reaches_cur8 (S8 : Cap8Scheme)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
     (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
-    (hcore : MembershipCore sponge tf c env) :
+    (hcore : SpineCore tf c env) :
     ∀ n, n ≤ DEPTH →
       recomposeUp8 S8 (groupVal env c.leafDigest) (pathOf8 c env n) = groupVal env (curCol c n) := by
   intro n
@@ -732,7 +751,7 @@ theorem recompose_reaches_cur8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
       simp [pathOf8, List.range_succ, List.map_append]
     rw [hpath, recomposeUp8_append, ih hkle]
     simp only [recomposeUp8, recomposeG]
-    have hns := node_sound8 S8 sponge tf c env hChip hcore k hkd
+    have hns := node_sound8 S8 tf c env hChip hcore k hkd
     have hcur : curCol c (k + 1) = c.node k := rfl
     rw [hcur]
     cases hb : dirBoolVal c env k
@@ -741,18 +760,21 @@ theorem recompose_reaches_cur8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     · simp only [hb, if_true] at hns ⊢
       rw [hns]
 
-/-- **`capOpen_membership8` — the in-circuit 8-felt fold IS a `MembersAt8` opening.** Under a SOUND
-WIDE chip table (the chip's 8-felt squeeze IS `capPermOut S8`), a `Satisfied` row witnesses `MembersAt8
-S8 cap_root leaf` against the FULL 8-felt root — the GENTIAN-tooth-real membership leg. -/
-theorem capOpen_membership8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
+/-- **`capOpen_recomposeFrom8` — the fold, stated at its level-0 INPUT rather than at a leaf.**
+Under a sound WIDE chip table, whatever 8-felt value the row's `leafDigest` GROUP carries recomposes
+the committed `capRoot` GROUP along the column-read path. Two instances ship:
+
+  * pin the group with a LEAF ABSORB and you get `capOpen_membership8` (the membership read);
+  * pin it to the CONSTANT `0⁸` and you get the deployed TOMBSTONE fold
+    (`CapOpenEmit.effCapRemoveV3_forces_tombstoneFold`) — `remove_witness`'s post-remove root.
+
+Only `SpineCore` is consumed, which is what lets the second instance exist at all. -/
+theorem capOpen_recomposeFrom8 (S8 : Cap8Scheme)
     (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
     (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
-    (hcore : MembershipCore sponge tf c env) :
-    MembersAt8 S8 (groupVal env c.capRoot) (leafOf c env) := by
-  refine ⟨pathOf8 c env DEPTH, ?_⟩
-  have hfold := recompose_reaches_cur8 S8 sponge tf c env hChip hcore DEPTH (le_refl _)
-  have hleaf := leafDigest_sound8 S8 sponge tf c env hChip hcore
-  rw [hleaf] at hfold
+    (hcore : SpineCore tf c env) :
+    recomposeUp8 S8 (groupVal env c.leafDigest) (pathOf8 c env DEPTH) = groupVal env c.capRoot := by
+  have hfold := recompose_reaches_cur8 S8 tf c env hChip hcore DEPTH (le_refl _)
   have hcurTop : curCol c DEPTH = c.node (DEPTH - 1) := rfl
   rw [hcurTop] at hfold
   have hroot : groupVal env (c.node (DEPTH - 1)) = groupVal env c.capRoot := by
@@ -763,6 +785,19 @@ theorem capOpen_membership8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     simp only [groupVal]
     linarith
   rw [hfold, hroot]
+
+/-- **`capOpen_membership8` — the in-circuit 8-felt fold IS a `MembersAt8` opening.** Under a SOUND
+WIDE chip table (the chip's 8-felt squeeze IS `capPermOut S8`), a `Satisfied` row witnesses `MembersAt8
+S8 cap_root leaf` against the FULL 8-felt root — the GENTIAN-tooth-real membership leg. -/
+theorem capOpen_membership8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
+    (tf : TraceFamily) (c : CapOpenCols) (env : VmRowEnv)
+    (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
+    (hcore : MembershipCore sponge tf c env) :
+    MembersAt8 S8 (groupVal env c.capRoot) (leafOf c env) := by
+  refine ⟨pathOf8 c env DEPTH, ?_⟩
+  have hfold := capOpen_recomposeFrom8 S8 tf c env hChip hcore.toSpine
+  have hleaf := leafDigest_sound8 S8 sponge tf c env hChip hcore
+  rwa [hleaf] at hfold
 
 /-! ## §8 — the leaf↔effect binding (target = src, write-mask). -/
 
@@ -1219,6 +1254,7 @@ theorem targetBindGate_discriminates (c : CapOpenCols) (env : VmRowEnv)
 #assert_axioms leafDigest_sound8
 #assert_axioms node_sound8
 #assert_axioms recompose_reaches_cur8
+#assert_axioms capOpen_recomposeFrom8
 #assert_axioms capOpen_membership8
 #assert_axioms capOpen_confers
 #assert_axioms capOpen_confers_decoded

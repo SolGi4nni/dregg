@@ -3585,6 +3585,44 @@ fn fill_cap_after_spine(
     cur
 }
 
+/// **The TOMBSTONE after-spine column filler** — the REMOVE twin of [`fill_cap_after_spine`]. The
+/// deployed post-remove root is `CanonicalCapTree::remove_witness`'s
+/// `recompose_membership(CAP_ZERO8, siblings, directions)`: the EMPTY-SLOT digest folded up the
+/// REMOVED LEAF'S OWN path (positions do not shift), so there is no after-LEAF at all — the level-0
+/// input is a CONSTANT.
+///
+/// Fills the same `afterSpineCols` layout the UPDATE spine uses, with one substitution: the 7
+/// leaf-field columns and the 8 leaf-digest columns are left at ZERO (the Lean
+/// `CapOpenEmit.tombstoneZeroPins` PINS the digest group to `0`, and there is no leaf absorb), and
+/// the fold starts from [`CAP_ZERO8`]. Returns the recomposed tombstone root.
+///
+/// LAW #1: this is a COLUMN filler. The constraints it satisfies are authored in
+/// `metatheory/Dregg2/Circuit/Emit/CapOpenEmit.lean` (`removeTombstoneConstraints`) and proved in
+/// `CapRemoveEmit.lean` (`effCapRemoveV3_forces_tombstoneFold`).
+fn fill_cap_tombstone_spine(
+    row: &mut [BabyBear],
+    base_as: usize,
+    siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
+    directions: &[u8],
+) -> [BabyBear; CAP_OPEN_DIGEST_W] {
+    // base_as + 0..6 (leaf fields) and base_as + 7..14 (leaf digest) stay ZERO — the tombstone's
+    // level-0 input IS `CAP_ZERO8`, which the 8 `tombstoneZeroPins` gates pin.
+    for i in 0..15 {
+        row[base_as + i] = BabyBear::ZERO;
+    }
+    let mut cur = crate::cap_root::CAP_ZERO8;
+    for lvl in 0..CAP_OPEN_DEPTH {
+        let (l, r) = cap_mix(cur, siblings[lvl], directions[lvl]);
+        let node = cap_node(l, r);
+        let blk = base_as + 15 + CAP_OPEN_DIGEST_W * lvl;
+        for (j, &n) in node.iter().enumerate() {
+            row[blk + j] = n;
+        }
+        cur = node;
+    }
+    cur
+}
+
 /// Recompute one rotated block's chained `wireCommitR` digests + `state_commit` from the limbs
 /// ALREADY present in the row (cols `base..base+NUM_PRE_LIMBS` + the iroot at `base+B_IROOT`).
 /// Byte-identical to [`fill_block`]'s chain, but reads the limbs in place rather than from a
@@ -4090,20 +4128,104 @@ pub fn generate_rotated_cap_remove_after_spine_wide(
     after_root8: [BabyBear; CAP_OPEN_DIGEST_W],
     removed_key: BabyBear,
     held_value: BabyBear,
+    siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
+    directions: &[u8],
 ) -> Result<Vec<BabyBear>, String> {
     let mut base_pis = base_pis;
-    apply_rotated_cap_write_after_spine(
+    apply_rotated_cap_remove_after_spine(
         trace,
         &mut base_pis,
         before_root8,
         after_root8,
         removed_key,
         held_value,
-        BabyBear::ZERO, // the tombstone writes no conferred value
-        BabyBear::ZERO,
-        BabyBear::ZERO,
+        siblings,
+        directions,
     )?;
-    Ok(append_wide_carriers(trace, base_pis, CAP_OPEN_WIDTH))
+    Ok(append_wide_carriers(
+        trace,
+        base_pis,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN,
+    ))
+}
+
+/// **THE CAP-TREE REMOVE TOMBSTONE AFTER-SPINE OVERRIDE** — the REMOVE-shaped keystone's column
+/// work, at the width the Lean `effCapRemoveV3` now commits
+/// (`CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119). It replaces the REMOVE members' old use of
+/// [`apply_rotated_cap_write_after_spine`], which left the trace at `CAP_OPEN_WIDTH` and therefore
+/// put **nothing** on the committed AFTER cap-root group.
+///
+/// The cap-open READ appendix was already laid by [`widen_to_cap_open`] from the removed leaf's
+/// membership witness in BEFORE (`cap_root.rs::CanonicalCapTree::remove_witness`). This helper:
+///   * resizes each row to the write width and lays the TOMBSTONE after-spine
+///     ([`fill_cap_tombstone_spine`]) — the empty-slot digest `CAP_ZERO8` folded up the SHARED
+///     sibling path, which is exactly `remove_witness`'s `new_root`;
+///   * writes the BEFORE cap-root group (the read's root, bound by the keystone's BEFORE welds) and
+///     the AFTER cap-root group (`after_root8`, the root the prover CLAIMS);
+///   * fills the cap-write param columns (`CAP_KEY @ 71` = the removed key, `HELD_MASK @ 72` = the
+///     read value; a tombstone confers nothing, so `KEEP_MASK`/`ANCHOR_*` are zero);
+///   * recomputes both rotated block commits and re-derives the two commit PIs.
+///
+/// ⚠ `after_root8` is the value WRITTEN into the committed AFTER group — it is the prover's claim,
+/// not a computation this function trusts. The in-circuit tombstone spine PINS that group to the
+/// zero-fold (`removeTombstoneConstraints`'s 8 `rootPinGate`s), so a claim that is not the fold is
+/// **UNSAT at the prover**. Honest callers pass `remove_witness().new_root`; the adversarial tests
+/// pass a fabrication and get a refusal. That asymmetry is the whole point of the member.
+pub fn apply_rotated_cap_remove_after_spine(
+    trace: &mut [Vec<BabyBear>],
+    dpis: &mut [BabyBear],
+    before_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    after_root8: [BabyBear; CAP_OPEN_DIGEST_W],
+    removed_key: BabyBear,
+    held_value: BabyBear,
+    siblings: &[[BabyBear; CAP_OPEN_DIGEST_W]],
+    directions: &[u8],
+) -> Result<(), String> {
+    use super::columns::PARAM_BASE;
+    if trace.is_empty() {
+        return Err("cap remove tombstone spine: empty trace".into());
+    }
+    if trace[0].len() != CAP_OPEN_WIDTH {
+        return Err(format!(
+            "cap remove tombstone spine: trace width {} != CAP_OPEN_WIDTH {CAP_OPEN_WIDTH} \
+             (widen_to_cap_open first)",
+            trace[0].len()
+        ));
+    }
+    if siblings.len() < CAP_OPEN_DEPTH || directions.len() < CAP_OPEN_DEPTH {
+        return Err(format!(
+            "cap remove tombstone spine: need {CAP_OPEN_DEPTH} sibling/direction levels, got {}/{}",
+            siblings.len(),
+            directions.len()
+        ));
+    }
+    let cap_key_col = PARAM_BASE + 3; // 71 — the removed key
+    let held_mask_col = PARAM_BASE + 4; // 72 — the read value
+    let keep_mask_col = PARAM_BASE + 5; // 73 — a remove confers nothing
+    let anchor_key_col = PARAM_BASE + 6; // 74
+    let anchor_value_col = PARAM_BASE + 7; // 75
+    let host_width = CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN;
+    for row in trace.iter_mut() {
+        row.resize(host_width, BabyBear::ZERO);
+        let _fold = fill_cap_tombstone_spine(row, CAP_OPEN_WIDTH, siblings, directions);
+        for lane in 0..CAP_OPEN_DIGEST_W {
+            row[cap_root_group_col(BEFORE_BASE, lane)] = before_root8[lane];
+            row[cap_root_group_col(AFTER_BASE, lane)] = after_root8[lane];
+        }
+        row[cap_key_col] = removed_key;
+        row[held_mask_col] = held_value;
+        row[keep_mask_col] = BabyBear::ZERO;
+        row[anchor_key_col] = BabyBear::ZERO;
+        row[anchor_value_col] = BabyBear::ZERO;
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+    // Re-derive the OLD/NEW rotated commit PIs (the cap-root group override moved the commit).
+    if dpis.len() > V1_PI_COUNT + 1 {
+        dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT];
+        dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT];
+    }
+    Ok(())
 }
 
 /// Fill the two TURN-IDENTITY columns of the TB (turn-bound) cap-open weld on a single row: the

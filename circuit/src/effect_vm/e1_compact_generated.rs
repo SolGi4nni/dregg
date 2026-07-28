@@ -209,11 +209,11 @@ pub const E1_COMPACT_TABLE: &[(&str, &[(usize, usize)])] = &[
     ),
     (
         "revokeDelegationWriteCapOpenVmDescriptor2R24",
-        &[(90, 98), (101, 186), (187, 188), (585, 589)],
+        &[(90, 98), (101, 186), (187, 188), (585, 589), (1016, 1023)],
     ),
     (
         "revokeCapabilityWriteCapOpenVmDescriptor2R24",
-        &[(90, 98), (101, 186), (187, 188), (585, 589)],
+        &[(90, 98), (101, 186), (187, 188), (585, 589), (1016, 1023)],
     ),
     (
         "refreshDelegationWriteCapOpenVmDescriptor2R24",
