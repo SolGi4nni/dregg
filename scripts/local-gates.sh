@@ -120,6 +120,7 @@ GATES=(
   "embedded-js-red|120|python3 scripts/check-embedded-js.py --self-test"
   "test-stubs-firewall|300|bash scripts/check-test-stubs-firewall.sh"
   "no-disarmed-guard|180|bash scripts/check-no-disarmed-guard.sh"
+  "lean-seed-freshness|120|bash scripts/check-lean-seed-freshness.sh"
   # A function that DECIDES something — `verify_*`, `check_*`, `*_admits` — with no
   # production caller. `dregg_circuit::effect_vm::verify_balance_limb_pis` was the
   # Group 6 range precondition, was re-exported twice, said "verifiers MUST call this",
