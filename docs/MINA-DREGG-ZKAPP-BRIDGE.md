@@ -15,7 +15,7 @@ PoC of the minimal real mutual step.*
 |---|---|---|
 | **1. dregg verifies Mina** | a Lean-authored Kimchi verifier checks a real Mina proof | **mostly built** — checks a real Kimchi proof's arithmetic over the real Pasta field, non-vacuously, **modulo 3 named crypto carriers**. A real (partial) proof-checking-a-proof. |
 | **2. Mina verifies dregg** (the hard, novel one) | a Mina zkApp verifies dregg's proof in-circuit | **infeasible in-circuit today** — dregg's proof is a **BN254 Groth16**; Kimchi has **no pairing gate**, and emulating one blows past the 2^16-row step ceiling by orders of magnitude. |
-| **Tractable mutual step** | a Mina zkApp verifies a dregg **Poseidon-over-Pasta attestation** | **BUILT + RUN here** (PoC §6). Native Poseidon (11 rows/perm); the Rust and o1js hashers agree bit-for-bit. |
+| **Tractable mutual step** | a Mina **`ZkProgram`** verifies a **Poseidon-over-Pasta KAT attestation** | **BUILT + RUN, off-pin** (PoC §6). Native Poseidon (11 rows/perm); the Rust and o1js hashers agree bit-for-bit — that part is real and survived adversarial probing. **[CORRECTED 2026-07-27]** the earlier row said *"a Mina **zkApp** verifies a **dregg** Poseidon-over-Pasta attestation."* No zkApp ran (a bare `ZkProgram` did, §6/F-B9), the attested value is a **hash KAT over the literals `[1,2,3,4]`**, not dregg state (F-B8), and it does not run on the repo's pinned o1js (F-B6). |
 
 So the honest shape of a Mina↔dregg bridge that is buildable now is **asymmetric**: direction 1 is a
 real (incomplete) proof-check; direction 2 is a hash-attestation, not yet a proof-check. A *symmetric*
@@ -197,17 +197,42 @@ value (or state root); a Mina zkApp verifies, in-circuit, a Poseidon Merkle path
 commitment and returns the opened leaf as a proof-carrying output.** Two languages, two proof systems,
 one shared commitment.
 
-### The PoC (built + run)
+### The PoC (built + run — with four corrections below)
 
-- **Verifier circuit:** `bridge/mina-zkapp/scripts/attestation-poc.mjs` — a ZkProgram
-  `DreggMembershipAttestation` (`publicInput` = the dregg-emitted Pasta root, `publicOutput` = the
+> **⚑ [CORRECTED 2026-07-27]** This section overstated in four ways, each verified against the code
+> during this pass (audit F-B6/B7/B8/B9/B10). **The cryptographic core is real** — a genuine
+> `ZkProgram.compile()` producing real Pickles keys, a real proof that verifies, a genuinely
+> in-circuit Merkle fold (`analyzeMethods` = 32 rows, `{"Generic":8,"Poseidon":22,"Zero":2}`), and
+> tamper rejection *at the constraint level* (`Constraint unsatisfied (unreduced): rule_main /
+> Equal(Var 443)(Var 1)` inside the Pickles prover, not a JS throw). **What was overstated is the
+> packaging.** Nothing below weakens the hash agreement, which I re-confirmed.
+
+- **Verifier circuit:** `bridge/mina-zkapp/scripts/attestation-poc.mjs` — a **`ZkProgram`**
+  `DreggMembershipAttestation` (`publicInput` = the attested Pasta root, `publicOutput` = the
   proven leaf) whose method walks a Poseidon Merkle path and `assertEquals`es the reconstructed root.
   This is exactly the `CellMerkleWitness.computeRoot` fold that `types.ts` ships but never wired into a
-  method. A committed `.ts` version lives beside it: `bridge/mina-zkapp/src/DreggPoseidonAttestation.ts`.
-- **The cross-system handshake is live, not hardcoded:** the root it checks,
-  `0x0f82b06f11a6dea422082c77668f6ac9fd97a5f21b81525cb61a46c335bbb777`, is the **live stdout of the
-  Rust probe binary** (`merkle_root_1234`), and the PoC asserts o1js's own recomputation equals it.
-  Rust (dregg's Poseidon) produces the root; o1js (Mina's proof system) proves membership under it.
+  method. A `.ts` version is committed beside it: `bridge/mina-zkapp/src/DreggPoseidonAttestation.ts`.
+  **[CORRECTED 2026-07-27]** — that committed `.ts` **does not compile**: `npx tsc --noEmit` gives 3
+  errors (`:55`, `:108`, `:111`), because it is written against the o1js **2.x** API while
+  `package.json:11` pins `"o1js": "^1.0.0"`. It fails `npm run build`. Describing it as a working
+  "committed circuit" was wrong.
+- **[CORRECTED 2026-07-27 — "live, not hardcoded" was FALSE, and the attribution was BACKWARDS.]**
+  The earlier text read: *"the root it checks … is the **live stdout** of the Rust probe binary
+  (`merkle_root_1234`) … Rust (dregg's Poseidon) produces the root; o1js (Mina's proof system) proves
+  membership under it."* The actual code (`attestation-poc.mjs:40-42`) is a pasted literal:
+  ```js
+  const RUST_GOLD_ROOT =
+    0x0f82b06f11a6dea422082c77668f6ac9fd97a5f21b81525cb61a46c335bbb777n;
+  ```
+  There is **no `child_process`, no `spawn`, no FFI anywhere in the file** (I grepped: zero hits).
+  The number is **truthful** — the Rust binary does print exactly that — but it is pasted, not live.
+  And the **direction is inverted**: `mina-pasta-hash-probe/src/main.rs:10-12` states the gold vectors
+  *"were produced by `bridge/mina-zkapp/scripts/poseidon-kat.mjs` (o1js 1.9.1) … pasted verbatim"*,
+  and the test that pins this exact root, `merkle_compress_matches_o1js_merkletree` (`:206-221`),
+  says *"Gold value from poseidon-kat.mjs's MerkleTree case"* and asserts *"depth-2 Merkle root
+  diverges from o1js MerkleTree"* on failure. **o1js is the authority and Rust checks against it** —
+  the reverse of what this doc said. The bit-for-bit agreement is real and worth keeping; the words
+  "live" and the direction were not.
 - **Result (o1js 2.15.0, Node 26):**
   ```
   [1] o1js Poseidon Merkle root == Rust mina_poseidon_hash root (bit-for-bit)   ✓
@@ -219,6 +244,40 @@ one shared commitment.
   A real Kimchi/Pickles proof, non-vacuous (tamper rejects). (Runtime note: the project's pinned
   o1js **1.9.1** prover bindings crash on Node ≥26; run on Node 20–22 with 1.9.1, or `npm i o1js@2`
   on Node 26 — the hashing path in step 1 runs anywhere. The PoC was verified via the latter.)
+
+  **[CORRECTED 2026-07-27 — "runnable PoC" describes something that does not run from the repo.]**
+  With the repo's own pin (`package.json:11` → `"o1js": "^1.0.0"`, 1.9.1 installed),
+  `node scripts/attestation-poc.mjs` dies during `[2] compiling` with
+  `TypeError: Cannot read properties of undefined (reading '0')` at `absorb`
+  (`o1js_node.bc.cjs:296574`), **`EXIT_CODE=7`**. Reproducing the result above required installing
+  **o1js 2.15.0 into a scratch directory**. The version gap *is* disclosed in the runtime note
+  directly above — that part was handled correctly — but "runnable" is not the right word for a
+  script with no npm entry point that exits 7 on the pinned dependency. **Either pin o1js 2.x or say
+  the PoC runs off-pin.** Until then, read every result in this section as **off-pin**.
+
+- **[CORRECTED 2026-07-27 — a `ZkProgram` ran; the zkApp never did.]** What compiled and proved is a
+  bare `ZkProgram` — **no account, no on-chain state, no `SmartContract`**. The actual zkApp,
+  `DreggAttestedGate` (`src/DreggPoseidonAttestation.ts:89-113`), is **never compiled, deployed or
+  exercised, and has zero importers.** The prose above that names a `ZkProgram` is accurate; the
+  headline row in §0 and the scorecard in §8 said "a Mina **zkApp** verifies" and were not.
+
+- **[CORRECTED 2026-07-27 — the attested root is a hash test vector, not "a dregg-emitted root".]**
+  The root is a depth-2 Merkle tree over the literals **`[1,2,3,4]`** (`attestation-poc.mjs:87-90`;
+  Rust `main.rs:92-96`). **No dregg state, cell, turn or chain value touches it**, and nothing in
+  dregg emits a Mina-Poseidon root at all — `mina_poseidon_hash` appears only inside the sketch
+  crate. Everywhere this document says "the dregg-emitted Pasta root" or "a dregg-emitted root",
+  read: **a Mina-Poseidon KAT over `[1,2,3,4]`**. §6.1 below already draws the right boundary for the
+  *re-commitment* case; what it did not say is that today there is no dregg value in the picture at all.
+
+- **[CORRECTED 2026-07-27 — this result cannot go red.]** `grep -rn "mina-zkapp|attestation-poc|
+  poseidon-kat|merkle-constraints" .github/ scripts/` returns **zero hits** across all 26 workflows
+  and `scripts/local-gates.sh`. The Rust probe opts *out* of the workspace
+  (`mina-pasta-hash-probe/Cargo.toml:16` has a bare `[workspace]`) and is absent from the root
+  `Cargo.toml` members and from `Cargo.lock`; there is no root `package.json`/npm workspace and no
+  jest config, so `npm test` has nothing to run. The two crates also draw `mina-poseidon` from
+  **different sources** — root pins `emberian/proof-systems@c5305e63`, the probe pins
+  `o1-labs/proof-systems@36a8b510` — and the KAT is pinned against the latter only. The good
+  cryptographic result above is real **and nothing would ever report if it stopped being true.**
 
 ### The honest boundary of the attestation
 
@@ -242,7 +301,7 @@ laundered one.
 
 | Use-case | What it is | Tractable NOW? |
 |---|---|---|
-| **Cross-chain state read / capability attestation** | a Mina contract gates on "this cell / capability / balance is committed under dregg's root" | **Yes** — the §6 attestation + the K6 Merkle-query shape. Trust boundary = §6.1 (relay attests the Pasta root until Route A). |
+| **Cross-chain state read / capability attestation** | a Mina contract gates on "this cell / capability / balance is committed under dregg's root" | **Shape demonstrated, not the use-case** — the §6 attestation proves membership under a **Poseidon KAT root over `[1,2,3,4]`**, in a `ZkProgram`, off-pin; **no cell, capability or balance has ever been attested**. Plus the K6 Merkle-query shape. Trust boundary = §6.1 (relay attests the Pasta root until Route A). **[CORRECTED 2026-07-27 — this row read "**Yes**".]** |
 | **Proof-carrying deposit/withdraw (shared asset)** | lock MINA → mint a dregg note; burn on dregg → unlock MINA, nullifier-gated | **Partial** — `DreggFederation` deposit/withdraw + nullifier machinery exist and run, but state advance is **trusted-relay** anchored. Trustless mint/unlock needs Route A/B. |
 | **Mina as a dregg light client** (direction 1) | dregg verifies a Mina Kimchi proof + reads a zkApp-state field under the verified root | **Mostly built** in Lean (K5 + K6), modulo the 3 crypto carriers. This is the genuinely novel, mostly-real half. |
 | **Sovereign cell on Mina** | a zkApp whose transitions REQUIRE a dregg authorization proof (`plans/…` Phase 3) | **No** — needs Route B (`.verify()` a real dregg Pickles proof). The product shape is right; the proof path is future. |
@@ -257,17 +316,21 @@ doc names the exact one lift (Route A: foreign-field BabyBear-Poseidon2, no pair
 
 ## 8. Scorecard
 
+**[CORRECTED 2026-07-27 — two rows overstated; see the PoC section for evidence.]**
+
 | Claim | Resolution |
 |---|---|
-| dregg verifies a real Mina Kimchi proof | **arithmetic checked over the real Pasta field, non-vacuous, modulo C3/C6/C9 carriers** (Lean, axiom-clean). Not "verifies Mina." |
-| Mina verifies dregg's Groth16 in-circuit | **infeasible today** — no pairing gate; emulation ≫ 2^16-row step ceiling; step circuits don't chunk. |
-| Mina `.verify()` a dregg STARK/Groth16 | **no path** — `.verify()` is Pickles-proofs-only; DynamicProof = dynamic VK, not dynamic proof system. |
-| Mina verifies a dregg Poseidon attestation | **built + run** (PoC §6): real Pickles proof, tamper-rejecting; Rust/o1js hashers agree bit-for-bit. |
+| dregg verifies a real Mina Kimchi proof | **arithmetic checked over the real Pasta field, non-vacuous, modulo the named carriers** (Lean, axiom-clean; `MINA-REALITY-GATE.md` is authoritative on the current carrier set). Not "verifies Mina." |
+| Mina verifies dregg's Groth16 in-circuit | **infeasible today** — no pairing gate; emulation ≫ 2^16-row step ceiling. *"Step circuits don't chunk"* is **[UNVERIFIED]**: the 2^16/2^15 figures are exact, but no code asserting non-chunking was located (audit §6.8). |
+| Mina `.verify()` a dregg STARK/Groth16 | **no path claimed, but [UNVERIFIED]** — *".verify() is Pickles-proofs-only"* and *"DynamicProof = dynamic VK, not dynamic proof system"* are claims about o1js **2.x**, while `~/dev/o1js` is **v0.16.2 (2024-02-23)** and contains **no `DynamicProof` class at all**. Not refuted; **unchecked** (audit §6.7). |
+| Mina verifies a dregg Poseidon attestation | **[CORRECTED]** A bare **`ZkProgram`** — not a zkApp — verified a **Poseidon KAT over the literals `[1,2,3,4]`**, **off-pin** (exits 7 on the repo's pinned o1js 1.9.1; run on 2.15.0). The real Pickles proof, the constraint-level tamper rejection and the bit-for-bit Rust/o1js hash agreement **all hold**. No dregg value is attested. |
 | dregg emits a Mina-native Pickles proof ("Level 2 today") | **dead premise** — those backends were deleted as vacuous scaffolding (§4). |
 | Path to a symmetric mutual-proof bridge | **Route A** (foreign-field BabyBear-Poseidon2 recompute; BabyBear is 31-bit → cheap, no pairing) or **Route B** (a real Pasta-native dregg prover). |
+| Does any of this go red on its own? | **No.** `bridge/mina-zkapp/**` is a complete orphan — zero hits across all 26 workflows and `scripts/local-gates.sh`; the Rust probe opts out of the workspace. **[ADDED 2026-07-27]** |
 
-**Artifacts:** `bridge/mina-zkapp/scripts/attestation-poc.mjs` (runnable PoC),
-`bridge/mina-zkapp/src/DreggPoseidonAttestation.ts` (committed circuit),
+**Artifacts:** `bridge/mina-zkapp/scripts/attestation-poc.mjs` (PoC — **runs off-pin only; exits 7 on
+the repo's pinned o1js**), `bridge/mina-zkapp/src/DreggPoseidonAttestation.ts` (committed circuit —
+**does not compile: 3 `tsc` errors, written against o1js 2.x under a 1.x pin**),
 `metatheory/Dregg2/Circuit/Emit/{KimchiVerify,KimchiRealProofGate,MinaStateQuery}.lean` (direction 1),
 `circuit-prove/sketches/mina-pasta-hash-probe/` (the Rust↔o1js Poseidon pin),
 `docs/MINA-REALITY-GATE.md` (direction-1 boundary). Supersedes `plans/mina-bridge-design.md` §"already built".

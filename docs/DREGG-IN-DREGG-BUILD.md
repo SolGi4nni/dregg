@@ -26,8 +26,22 @@ below and is NOT done.**
 
 **Landed:** `metatheory/Dregg2/Distributed/SelfSettlement.lean`, green on hbox
 (`scripts/hbuild eth-lc-air 'cd metatheory && lake build Dregg2.Distributed.SelfSettlement'`),
-21 keystones pinned with `#assert_axioms` (⊆ {`propext`, `Classical.choice`, `Quot.sound`}), no
-`sorry`, no `native_decide`.
+**20** keystones pinned with `#assert_axioms` (⊆ {`propext`, `Classical.choice`, `Quot.sound`}), no
+`sorry`, no `native_decide`. **[CORRECTED 2026-07-27 — this said 21.]** There are exactly 20
+`theorem`s and 20 pins; the 21st grep hit was prose at `SelfSettlement.lean:103`. Coverage is
+otherwise complete and 1:1 — no headline theorem is unpinned (audit F-B3, §2.2).
+
+> **[ADDED 2026-07-27 — how this shipped, which the original text did not say.]** The module landed
+> in `ce6da9766` imported by **nothing**: not in `metatheory/Dregg2.lean`, not in
+> `scripts/lean-orphans-allow.txt`, not in `AXIOM_GUARD_TARGETS`. The repo's own gate reported
+> `check-lean-orphans: FAIL — 2 Dregg2 module(s) are reachable from NOTHING`. The line above claiming
+> `#assert_axioms`-clean *"Verified with `lake build Dregg2.Distributed.SelfSettlement`"* was true —
+> **and that hand-typed command was the only thing that ever compiled it**, so all 20 pins ran in no
+> CI target. Repaired by a concurrent lane at `e61619e06` (`Dregg2.Claims` imports `Dregg2`, and CI
+> runs `lake build Dregg2.Claims`), so the pins now elaborate in a real target. **Residual: still
+> absent from the stricter `AXIOM_GUARD_TARGETS`.** Also **[UNVERIFIED]**: whether the orphan gate's
+> red ever *blocked* anything — `main` is not branch-protected here, so in practice it reported.
+> (audit F-B1, §6.5.)
 
 **NOT landed — there is no working L2.** Nothing executes, nothing is emitted, no Rust calls this,
 no descriptor exists, no account cell is persisted. This slice is the effect's *semantics and its
@@ -98,9 +112,46 @@ The settlement does **not** re-derive any recursion soundness. Legs 1–4 are pa
 `light_client_accepts_finalized_history`, so the effect inherits:
 
 - `Circuit/RecursiveAggregation.lean` — `light_client_verifies_whole_history` (one verify ⇒ the whole
-  child history executed, ordered, genuine fold), `conserves_from_verification`, and the fact that
+  child history executed, ordered, genuine fold), and the fact that
   `recursive_sound` is *derived* whole-tree by `RecursiveSoundFromNodes.lean`;
 - `Distributed/FinalizedLightClient.lean` — the third (quorum/`tau`) leg and its teeth.
+
+> **[CORRECTED 2026-07-27 — `conserves_from_verification` was listed here and is NOT inherited.]**
+> This list claimed the effect inherits `conserves_from_verification`. It does not: **§3b of this same
+> document says that leg was written and then REMOVED**, because it rides
+> `compressInjective`/`cellLeafInjective` — floors this tree proves **FALSE** at deployed BabyBear
+> width. `SelfSettlement.lean:80` carries the same leftover, still listing "the verification-derived
+> conservation" among what the slice authors, contradicting §7 of its own file. Both are leftovers
+> from a pre-removal draft. (audit F-B4. The `.lean` line is **not** fixed by this pass — this pass is
+> docs-only — so `SelfSettlement.lean:80` remains wrong and is flagged here.)
+
+> **[ADDED 2026-07-27 — read the non-vacuity witness at its real resolution.]** The commit and this
+> document present `settle_fires_on_real_child` (`SelfSettlement.lean:535`) as non-vacuity "fired on
+> the realizing child chain." It fires at the `zCH/zRH/zcmb/zcompress/zcompressN` portal
+> (`RecursiveAggregation.lean:429-433`), **all of which are constant zero** — machine-confirmed by
+> `rfl`: `foldedFinalRoot zCH … g steps = 0`, `realAccount.childGenesis = 0`,
+> `(applySettle RealProof realAccount realSettle).latestRoot = some 0`. So
+> `real_settlement_binds_child_fold` has the content **`some 0 = some 0`**;
+> `fabricated_genesis_cannot_settle`'s discriminator is constant (`genesis_ok := rfl` is `0 = 0`, not
+> a check passing); and **not one of the five teeth is instantiated on the realizing instance.** The
+> abstract `settled_root_is_child_final_fold` **is** genuinely quantified and real — but the tree
+> exhibits **no instance in which the equation is non-trivial.** Inherited from
+> `RecursiveAggregation`, not introduced here (whose `:511` at least exhibits refutation at
+> `genesisRoot + 1`), but the claim must be read at that resolution. (audit F-B2.)
+
+> **[ADDED 2026-07-27 — two theorem descriptions over-read their own statements (audit F-B5).]**
+> `SelfSettlement.lean:41-42` calls `settle_conserves_child_producer_witness` *"the parent **inherits**
+> child value-conservation"* — the statement mentions no parent, no settlement and no account; it is
+> `finalized_history_conserves` under a new name. `SelfSettlement.lean:39-40` calls
+> `settlement_root_is_unique` *"the anti-equivocation edge … a prover cannot present one child chain
+> to two parents"* — both settlements are quantified over the **same** `g` and `steps`, so the
+> interesting case (one aggregate, two claimed histories) is **not excluded**, and `g`/`steps` are
+> ghost parameters the parent never sees (the file says so at `:173`). Both are `.lean` doc comments
+> and are **not** fixed by this docs-only pass; they are flagged here so this document does not repeat
+> them. The best theorem in the scope is untouched by any of this and worth naming:
+> `engineSound_numTurns_irrelevant`, an honestly-stated **negative** result (the settled height is
+> provably not engine-pinned) lifted to a demonstrated griefing attack by
+> `settle_accepts_inflated_height`.
 
 The residual crypto floor is therefore **unchanged and named**: the per-node in-circuit FRI recursion
 verifier of the plonky3 recursion fork (native BabyBear). Nothing app-specific was added to it.

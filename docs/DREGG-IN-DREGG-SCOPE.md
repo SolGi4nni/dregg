@@ -326,5 +326,23 @@ because the hard part is done.**
   promise-pipelining work).
 - Honesty carriers for §5: `metatheory/Dregg2/Circuit/FriCarrierVacuity.lean`,
   `FriCarrierEpsilon.lean`, `FriWrapHonest.lean`.
-</content>
-</invoke>
+
+---
+
+## Corrections **[2026-07-27]**
+
+**File integrity.** This document previously ended, mid-thought, with a **leaked tool-call
+envelope** committed into its body — lines 329-330 were literally `</content>` and `</invoke>`.
+They are deleted here and the cross-reference list above is the intended end of the document.
+Nothing else in this scope has this defect (audit F-D5).
+
+**Three in-repo pins, corrected.** Citation hygiene in this document is otherwise high — all 18 of
+its Lean pins were opened during the audit and every one landed on the exact line — but three
+in-repo pins drift (audit F-D6):
+
+- `into_recursion_input_pinned` is listed among the symbols *"imported at `ivc_turn_chain.rs:224`"*.
+  It is **not in that import list**: the symbol is real, but it is a **method**, not an import.
+- `node/src/turn_proving.rs:1695` for `mint_and_encode_finalized_turn` — the symbol is at
+  **1744**. Line-drifted by 49.
+- `node/src/blocklace_sync.rs:8050` is a **comment** line; the seam starts at **8053**.
+
