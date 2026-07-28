@@ -39,10 +39,17 @@ open Dregg2.Circuit.ListCommit
 
 /-! ## §1 — the reserved/user key split (the hybrid: low keys fixed, tail mapped). -/
 
-/-- **`reservedKeys`** — the count of reserved low keys held as fixed cells (`R = 8`, the Rust
-`STATE_SLOTS`). Keys `< reservedKeys` are the existing fixed `fields[0..7]`; keys `≥ reservedKeys`
-live in the committed `fields_root` map. -/
-def reservedKeys : Nat := 8
+/-- ⚑ **16, NOT 8.** This tracks Rust's `cell/src/state.rs::STATE_SLOTS`, which is 16 and has
+been since the record-layer upgrade. While this read 8, keys 8..15 were FIXED CELLS in Rust and
+COMMITTED USER-MAP TAIL KEYS in Lean — the two `fields_root` preimages split over an eight-key
+band, and it was a `def` driving `isUserTailKey` below, not merely a stale comment.
+
+Rust states the boundary three times and all three agree: `STATE_SLOTS = 16`
+("Number of user-defined state slots per cell"); `REFUSAL_AUDIT_EXT_KEY` is documented as
+`>= STATE_SLOTS` *so that it lands in the committed `fields_map` / `fields_root`, NOT a
+user-addressable `fields[0..15]` indexed slot*; and `N_SYSTEM_ROOTS` is "parallel to (and
+disjoint from) the 16 user `fields[0..15]` and the `fields_root` map". -/
+def reservedKeys : Nat := 16
 
 /-- **`userKey n`** — the canonical `FieldName` for user map key `n` (a numeric key, base-10
 encoded). Reserved low keys `0..reservedKeys-1` use the same encoding so the fixed cell `fields[i]`
@@ -161,7 +168,7 @@ theorem fieldsRoot_binds_tail (compress2 : Int → Int → Int) (compressN : Lis
 private def legacyCell : Value :=
   .record [("0", .int 11), ("7", .int 99), ("balance", .int 500)]
 private def overflowCell : Value :=
-  .record [("0", .int 11), ("7", .int 99), ("8", .int 1234), ("9", .dig 42)]
+  .record [("0", .int 11), ("7", .int 99), ("16", .int 1234), ("17", .dig 42)]
 
 -- `Value` carries no `BEq`, so read-back is checked via the canonical `Int` leaf of the looked-up
 -- value (and `isSome`/`isNone` for presence). This is the same encoding `tailLeaf` commits.
@@ -170,15 +177,15 @@ private def valInt : Value → Int
 private def tailLookupInt (v : Value) (k : FieldName) : Option Int := (tailLookup v k).map valInt
 
 -- POSITIVE: a present user key reads exactly its value out of the committed tail.
-#guard tailLookupInt overflowCell (userKey 8) == some 1234
-#guard tailLookupInt overflowCell (userKey 9) == some 42
+#guard tailLookupInt overflowCell (userKey 16) == some 1234
+#guard tailLookupInt overflowCell (userKey 17) == some 42
 
 -- NEGATIVE: an ABSENT user key does NOT read a value (the tail does not commit it).
-#guard (tailLookup overflowCell (userKey 10)).isNone
+#guard (tailLookup overflowCell (userKey 18)).isNone
 #guard (tailLookup legacyCell (userKey 8)).isNone
 
 -- The user tail filters out reserved low keys and the `balance` field (carried by fixed cells):
-#guard (userTail overflowCell).map (fun p => (p.1, valInt p.2)) == [("8", (1234 : Int)), ("9", 42)]
+#guard (userTail overflowCell).map (fun p => (p.1, valInt p.2)) == [("16", (1234 : Int)), ("17", 42)]
 #guard (userTail legacyCell).isEmpty   -- a legacy 8-fixed-field cell has an EMPTY user tail.
 
 -- BACKWARD-COMPAT: a legacy cell's `fields_root` equals the fixed empty-tail constant, INDEPENDENT
@@ -193,11 +200,11 @@ private def c2C : Int → Int → Int := fun a b => a * 1000003 + b
 #guard decide (fieldsRoot c2C cNC overflowCell = emptyTailRoot cNC) == false
 -- A tampered user value flips the root (the digest commits the map tail):
 private def overflowTampered : Value :=
-  .record [("0", .int 11), ("7", .int 99), ("8", .int 9999), ("9", .dig 42)]
+  .record [("0", .int 11), ("7", .int 99), ("16", .int 9999), ("17", .dig 42)]
 #guard decide (fieldsRoot c2C cNC overflowCell = fieldsRoot c2C cNC overflowTampered) == false
 -- Two cells with the SAME user tail have the SAME root (completeness dual):
 #guard decide (fieldsRoot c2C cNC overflowCell
-             = fieldsRoot c2C cNC (.record [("8", .int 1234), ("9", .dig 42)]))   -- true
+             = fieldsRoot c2C cNC (.record [("16", .int 1234), ("17", .dig 42)]))   -- true
 
 #assert_axioms fieldsRoot_membership
 #assert_axioms fieldsRoot_empty_legacy
