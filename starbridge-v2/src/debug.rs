@@ -267,6 +267,16 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         | BearerCapRevoked { target, .. }
         | BearerCapInvalidProof { target, .. }
         | BearerCapAmplification { target, .. } => (GuardKind::Capability, vec![*target]),
+
+        // The CapTP-delivered family, added with the executor-side introducer binding. These
+        // classify the same way their `RefusalClass` already does at `turn/src/error.rs:682`
+        // — a certificate that short-circuits the cell's lattice is a capability refusal, not
+        // an authorization one, because what failed is the introducer's HELD authority.
+        CapTpIntroducerLacksCapability { target, .. }
+        | CapTpHandoffAmplification { target, .. } => (GuardKind::Capability, vec![*target]),
+        // No cell to name: this one refuses before any target is resolved, because the
+        // certificate's claimed introducer is not the key that signed it.
+        CapTpIntroducerKeyMismatch { .. } => (GuardKind::Capability, vec![]),
         BearerCapDelegatorLacksCapability { delegator, target } => {
             (GuardKind::Capability, vec![*delegator, *target])
         }
