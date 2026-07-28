@@ -4,10 +4,14 @@ import {
   Poseidon,
   Provable,
   Bool,
+  PrivateKey,
+  PublicKey,
+  Signature,
   SmartContract,
   State,
   state,
   method,
+  type DeployArgs,
 } from 'o1js';
 
 // ---------------------------------------------------------------------------
@@ -174,19 +178,79 @@ export class DreggAttestationProof extends ZkProgram.Proof(
  * membership attestation. This is the proof-carrying composition — the zkApp
  * `.verify()`s the attestation and binds it to the root it tracks.
  *
- * `setDreggRoot` here stands in for the trusted-relay anchor (see the design
- * doc §3/§6.1); the novel part is `actOnAttestedLeaf`, which consumes a REAL
- * recursive proof rather than a bare structural assert.
+ * `setDreggRoot` is the trusted-relay anchor (design doc §3/§6.1); the novel
+ * part is `actOnAttestedLeaf`, which consumes a REAL recursive proof rather
+ * than a bare structural assert.
+ *
+ * ⚑ WHY THE RELAY KEY IS IN STATE AND THE SIGNATURE IS CHECKED IN CIRCUIT.
+ * An earlier shape of this contract had a bare `setDreggRoot(newRoot)` whose
+ * comment said "relay-authorized" and whose body checked nothing. Under Mina's
+ * DEFAULT permissions `editState` is `proof`, and a proof of an unconditional
+ * method is something ANY caller can produce — so the anchor was open to
+ * everyone while reading as a trust boundary. Mina's per-field permissions
+ * cannot fix that on their own: `editState` governs BOTH methods of this
+ * contract, so there is no permission that admits `actOnAttestedLeaf` and
+ * restricts `setDreggRoot`. The authorization therefore has to be a condition
+ * the CIRCUIT asserts, which is what `auth.verify(...).assertTrue()` below is.
  */
 export class DreggAttestedGate extends SmartContract {
-  /** The Pasta state root this gate trusts. */
+  /** The Pasta state root this gate trusts. This is `app_state_0` — the slot
+   *  the daemon names in `Account_app_state_0_precondition_unsatisfied`, so its
+   *  position is load-bearing for the deployment record and must stay first. */
   @state(Field) dreggRoot = State<Field>();
   /** The last leaf a proof successfully opened under `dreggRoot`. */
   @state(Field) lastAttestedLeaf = State<Field>();
+  /** The relay authorized to re-anchor the root. A `PublicKey` occupies two
+   *  field slots (x, isOdd), so this gate uses 4 of the 8 available. Written
+   *  ONCE, by the deploy account update — which is signature-authorized, so
+   *  only the holder of the zkApp key can install it — and no method changes
+   *  it. A relay rotation is therefore a redeploy, which is the honest shape
+   *  for a demo: rotation is a real design question, not a free method. */
+  @state(PublicKey) relay = State<PublicKey>();
 
-  /** Anchor the root (relay-authorized; the trust boundary, §3). */
-  @method async setDreggRoot(newRoot: Field) {
+  /**
+   * Deploying REQUIRES naming the relay. Without it the gate would ship with
+   * `relay = PublicKey.empty()`, and `setDreggRoot` would be unusable rather
+   * than open — but "unusable" is not a state anyone should discover on chain,
+   * so this refuses at transaction-build time instead.
+   */
+  async deploy(props?: DeployArgs & { relay?: PublicKey }) {
+    await super.deploy(props);
+    const relay = props?.relay;
+    if (relay === undefined || relay.isEmpty().toBoolean()) {
+      throw new Error(
+        'DreggAttestedGate.deploy({ relay }) requires a non-empty relay PublicKey: ' +
+          'it is the only key that can ever re-anchor this gate.',
+      );
+    }
+    this.relay.set(relay);
+  }
+
+  /**
+   * Anchor a root. AUTHORIZED, and the authorization is checked here:
+   * `auth` must be a Schnorr signature by the relay public key held in state,
+   * over the exact transition `[oldRoot, newRoot]`. Failing that check makes
+   * the constraint system unsatisfiable, so an unauthorized caller cannot
+   * produce a transaction at all.
+   *
+   * Binding to `oldRoot` (rather than to `newRoot` alone) makes each
+   * authorization specific to one state transition, and makes the transaction
+   * carry an `app_state_0` precondition — so an authorization issued against a
+   * root that has since advanced is refused by the network too.
+   *
+   * ⚑ The one thing this does NOT prevent: if the anchored root ever returned
+   * to `oldRoot`, a captured `auth` for `oldRoot -> newRoot` would be valid
+   * again. Roots here are fresh Poseidon images, so that is not reachable in
+   * practice, but the contract does not itself forbid it. Saying so beats a
+   * comment that implies a replay counter the code does not have.
+   */
+  @method async setDreggRoot(newRoot: Field, auth: Signature) {
     newRoot.assertNotEquals(Field(0));
+    const relay = this.relay.getAndRequireEquals();
+    const oldRoot = this.dreggRoot.getAndRequireEquals();
+    auth
+      .verify(relay, [oldRoot, newRoot])
+      .assertTrue('setDreggRoot: not signed by the anchored relay key');
     this.dreggRoot.set(newRoot);
   }
 
@@ -206,4 +270,24 @@ export class DreggAttestedGate extends SmartContract {
     leaf.assertNotEquals(Field(0));
     this.lastAttestedLeaf.set(leaf);
   }
+}
+
+/**
+ * The message `setDreggRoot` verifies, in ONE place. The signer and the
+ * verifier reading the same function is what stops them drifting into a
+ * signature that binds something other than what the circuit checks — the
+ * failure this repo has hit before (a signed `effects_hash` compared against
+ * nothing).
+ */
+export function anchorAuthMessage(oldRoot: Field, newRoot: Field): Field[] {
+  return [oldRoot, newRoot];
+}
+
+/** Produce the relay authorization for `oldRoot -> newRoot`. */
+export function signAnchor(
+  relayKey: PrivateKey,
+  oldRoot: Field,
+  newRoot: Field,
+): Signature {
+  return Signature.create(relayKey, anchorAuthMessage(oldRoot, newRoot));
 }

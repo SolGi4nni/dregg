@@ -270,15 +270,27 @@ GATES=(
   # in-circuit path, two tamper rejections, and the `DreggAttestedGate` zkApp deploying on
   # a local chain and CONSUMING the proof recursively (that last one is what makes "a Mina
   # zkApp verified…" name something that ran — before this, only a bare ZkProgram had).
-  # ⚠ It needs `node` >= 20 and o1js pinned at 2.15.0, and it FAILS rather than skips
-  # without either — like `embedded-js`. The 1.9.1 the tree used to pin is not a choice:
-  # its prover bindings abort inside Poseidon absorb during `compile()` on node >= 26.
-  # ~45s warm, no cargo, no Lean. The -red row is not optional — three of the six legs are
-  # NEGATIVE assertions (two tamper refusals and a zkApp refusal), which pass just as
-  # happily on a broken driver. It injects five faults into a SCRATCH COPY (never the
-  # shared tree): a corrupted gold digest, a corrupted Merkle root, a transposed
-  # `Poseidon.hash([left,right])`, an off-pin o1js, and a type error in the committed
-  # source — and a fault that matches NOTHING is itself a failure. ~11s.
+  # It also checks the two things the devnet deployment listed AGAINST ITSELF: that
+  # `setDreggRoot` is relay-authorized by a condition the CIRCUIT asserts (its comment
+  # used to say "relay-authorized" over a body that checked nothing, so any caller could
+  # re-anchor), and that a WELL-FORMED proof of another statement is refused by
+  # VERIFICATION rather than by the parser — with the identical proof bytes accepted on
+  # their own account update as the control, which is what makes the refusal attributable.
+  # ⚠ It needs `node` >= 20, o1js pinned at 2.15.0, and now `cargo`, and it FAILS rather
+  # than skips without any of them — like `embedded-js`. The 1.9.1 the tree used to pin is
+  # not a choice: its prover bindings abort inside Poseidon absorb during `compile()` on
+  # node >= 26. Cargo is required because the third leg is the DREGG SIDE:
+  # `circuit-prove/sketches/mina-pasta-hash-probe` is the crate that EMITS the attested
+  # root, it is its own workspace so no other row reaches it, and this gate used to be
+  # Node-only — so the emitting half of the bridge ran in no gate at all. That leg runs
+  # `cargo test --locked` and then the `merkle` subcommand end to end on unprecomputable
+  # leaves, cross-checked elementwise against o1js. ~60s warm, no Lean. The -red row is
+  # not optional — most of these legs are NEGATIVE assertions, which pass just as happily
+  # on a broken driver. It injects THIRTEEN faults into SCRATCH COPIES of both the
+  # TypeScript and the Rust crate (never the shared tree) — and a fault that matches
+  # NOTHING is itself a failure. One of them bends only the `merkle` subcommand's printed
+  # root: every `cargo test` still passes and only the cross-check catches it, which is
+  # the gap the third leg exists to close. ~90s.
   "mina-attestation|600|bash scripts/check-mina-attestation.sh"
   "mina-attestation-red|600|bash scripts/check-mina-attestation.sh --self-test"
 )

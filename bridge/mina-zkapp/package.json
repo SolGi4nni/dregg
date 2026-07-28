@@ -10,6 +10,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "gate": "npm run build && node dist/scripts/attestation-gate.js",
+    "probe": "npm run build && node dist/scripts/probe-gate.js",
     "kat": "npm run build && node dist/scripts/poseidon-kat.js",
     "poseidon2-rows": "npm run build && node dist/scripts/poseidon2-babybear-rows.js",
     "merkle-constraints": "npm run build && node dist/scripts/merkle-constraints.js",

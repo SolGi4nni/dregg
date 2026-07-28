@@ -22,6 +22,17 @@
 //   [5] (composition) the zkApp `DreggAttestedGate` deploys on a local chain
 //       and consumes the attestation proof — so the claim "a Mina zkApp
 //       verified a dregg commitment" names something that actually ran.
+//   [6] AUTHORIZATION. `setDreggRoot` is relay-authorized because the circuit
+//       asserts a relay signature over the exact transition — a non-relay
+//       signer, an empty signature and a signature for another transition are
+//       each refused. The first two would have passed against the earlier
+//       contract, whose "relay-authorized" comment checked nothing.
+//   [7] PARSE vs VERIFY. A well-formed proof carrying a statement its prover
+//       had no witness for parses cleanly and FAILS VERIFICATION — shown both
+//       at the `ZkProgram` level and by moving a proof between two signed
+//       account updates, with the same bytes accepted on their own update as
+//       the control. A damaged encoding is refused at DECODE, separately, so
+//       the two events cannot be mistaken for each other.
 //
 // NO PART OF THIS SKIPS. Absent o1js, an unsupported Node, or a mismatched
 // vector are all hard failures.
@@ -31,7 +42,7 @@
 // bindings abort inside Poseidon absorb during `compile()` on Node >= 26, and
 // its `ZkProgram` method types reject the committed source (`tsc` fails).
 
-import { Field, Poseidon, Bool, Mina, AccountUpdate, PrivateKey } from 'o1js';
+import { Field, Poseidon, Bool, Mina, AccountUpdate, PrivateKey, Signature } from 'o1js';
 import {
   ATTEST_DEPTH,
   DreggMembershipAttestation,
@@ -39,6 +50,7 @@ import {
   DreggAttestedGate,
   makeDreggMembershipAttestation,
   compress,
+  signAnchor,
   sparsePath,
 } from '../src/DreggPoseidonAttestation.js';
 import {
@@ -259,19 +271,28 @@ async function main() {
   const zkAppKey = PrivateKey.random();
   const zkAppAddress = zkAppKey.toPublicKey();
   const zkApp = new DreggAttestedGate(zkAppAddress);
+  // The relay is a THIRD key: not the deployer, not the zkApp account. Only it
+  // can move the anchored root, and [6] below is where that is tested.
+  const relayKey = PrivateKey.random();
+  const relay = relayKey.toPublicKey();
 
   t = Date.now();
   const deployTx = await Mina.transaction(deployer, async () => {
     AccountUpdate.fundNewAccount(deployer);
-    await zkApp.deploy();
+    await zkApp.deploy({ relay });
   });
   await deployTx.prove();
   await deployTx.sign([deployer.key, zkAppKey]).send();
   ok(`deployed the zkApp in ${secs(t)}`);
+  check(
+    zkApp.relay.get().toBase58() === relay.toBase58(),
+    'the deploy installed the relay key in state (the anchor has a named authority)',
+    'the deployed gate does not hold the relay key',
+  );
 
   t = Date.now();
   const anchorTx = await Mina.transaction(deployer, async () => {
-    await zkApp.setDreggRoot(deepRoot);
+    await zkApp.setDreggRoot(deepRoot, signAnchor(relayKey, Field(0), deepRoot));
   });
   await anchorTx.prove();
   await anchorTx.sign([deployer.key]).send();
@@ -315,6 +336,169 @@ async function main() {
     !wrongRootAccepted,
     'the zkApp REFUSES an attestation bound to a different root',
     'the zkApp accepted an attestation bound to a different root (UNSOUND)',
+  );
+
+  // -----------------------------------------------------------------------
+  // [6] The root anchor is AUTHORIZED, and the authorization is a condition
+  //     the circuit asserts.
+  //
+  //     The previous shape of this contract took `setDreggRoot(newRoot)` with
+  //     an empty body and a comment reading "relay-authorized". Under the
+  //     default `proof` permission that is open to everyone: producing a proof
+  //     of an unconditional method is exactly what any caller can do. These
+  //     three checks are what make the comment true — and the first two are
+  //     the ones that would have gone green against the old contract, which is
+  //     why they are here rather than a note in the doc.
+  // -----------------------------------------------------------------------
+  console.log('\n[6] the anchor is relay-authorized (the code checks what the comment says)');
+  const nextRoot = Poseidon.hash([deepRoot, Field(1)]);
+
+  const anchorRefusal = async (label: string, build: () => Promise<void>) => {
+    let accepted = false;
+    let message = '';
+    try {
+      const tx = await Mina.transaction(deployer, build);
+      await tx.prove();
+      await tx.sign([deployer.key]).send();
+      accepted = true;
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    check(
+      !accepted,
+      `${label} — refused (${message.split('\n')[0].slice(0, 60)})`,
+      `${label} — ACCEPTED; the anchor is not authorized`,
+    );
+  };
+
+  await anchorRefusal('an anchor signed by a NON-relay key', async () => {
+    await zkApp.setDreggRoot(nextRoot, signAnchor(PrivateKey.random(), deepRoot, nextRoot));
+  });
+  await anchorRefusal('an anchor carrying NO signature at all', async () => {
+    await zkApp.setDreggRoot(nextRoot, Signature.empty());
+  });
+  await anchorRefusal('a relay signature for a DIFFERENT transition', async () => {
+    await zkApp.setDreggRoot(nextRoot, signAnchor(relayKey, deepRoot, Poseidon.hash([nextRoot])));
+  });
+
+  // -----------------------------------------------------------------------
+  // [7] A WELL-FORMED proof of a statement it does not prove is refused by
+  //     VERIFICATION, not by the parser.
+  //
+  //     The devnet run flipped a character in a serialised proof and got
+  //     `Invalid rich scalar: Proof …` — a DECODE failure that never reached
+  //     the verifier, and therefore no evidence about verification at all.
+  //     Here the two events are produced side by side so they cannot be
+  //     confused:
+  //       (a) an untouched proof round-trips through JSON and VERIFIES;
+  //       (b) the SAME proof bytes carrying a different public input parse
+  //           cleanly and FAIL TO VERIFY;
+  //       (c) a damaged encoding does not parse at all.
+  //     (b) minus (a) isolates the statement as the only variable.
+  //
+  //     ⚑ Stated exactly: the spliced statement is one for which no witness is
+  //     known — leaf 3 opening under the root of a tree built from [7, 8].
+  //     Nothing here proves that no such path EXISTS; that would be a Poseidon
+  //     preimage claim. What is shown is the soundness-relevant direction: the
+  //     verifier does not accept a proof whose prover had no witness for the
+  //     statement it is attached to.
+  // -----------------------------------------------------------------------
+  console.log('\n[7] a well-formed proof of a different statement fails VERIFICATION');
+  const foreignRoot = sparsePath([Field(7), Field(8)], 0, ATTEST_DEPTH).root;
+  const honestJson = pDeep.toJSON();
+
+  const roundTripped = await DreggAttestationProof.fromJSON(honestJson);
+  check(
+    await DreggMembershipAttestation.verify(roundTripped),
+    '(a) the untouched proof round-trips through JSON and VERIFIES',
+    'the untouched proof did not survive a JSON round-trip',
+  );
+
+  const splicedJson = { ...honestJson, publicInput: [foreignRoot.toString()] };
+  const spliced = await DreggAttestationProof.fromJSON(splicedJson);
+  check(
+    spliced.publicInput.toBigInt() === foreignRoot.toBigInt() &&
+      spliced.publicOutput.toBigInt() === 3n,
+    '(b) the spliced proof PARSES — same bytes, statement now (foreign root, leaf 3)',
+    'the spliced proof did not decode, so this says nothing about verification',
+  );
+  check(
+    (await DreggMembershipAttestation.verify(spliced)) === false,
+    '(b) …and the verifier REJECTS it — a verification failure, not a parse failure',
+    'a proof of a statement nobody had a witness for VERIFIED (UNSOUND)',
+  );
+
+  // (c) the contrast case: damage the encoding and it never reaches the
+  // verifier. Truncation rather than a character flip because it fails to
+  // decode deterministically; the devnet run's flipped character is the same
+  // event with a less predictable trigger.
+  const brokenJson = { ...honestJson, proof: honestJson.proof.slice(0, -16) };
+  let brokenParsed = false;
+  let brokenError = '';
+  try {
+    await DreggAttestationProof.fromJSON(brokenJson);
+    brokenParsed = true;
+  } catch (e) {
+    brokenError = (e instanceof Error ? e.message : String(e)).split('\n')[0];
+  }
+  check(
+    !brokenParsed,
+    `(c) a damaged encoding is refused at DECODE, before verification (${brokenError.slice(0, 48)})`,
+    'a truncated proof encoding still decoded',
+  );
+
+  // --- the same experiment one level up: on account updates, on a chain -----
+  // `verifyAccountUpdate` is the local chain's implementation of what a daemon
+  // does. Mina's transaction commitment covers account-update BODIES and not
+  // authorisations, so a proof can be moved between two signed transactions
+  // without disturbing anything else — which makes the statement the only
+  // difference between the refusal and the acceptance below.
+  console.log('    the same, on account updates:');
+  const rootX = Poseidon.hash([deepRoot, Field(3)]);
+  const rootY = Poseidon.hash([deepRoot, Field(4)]);
+  const txX = await Mina.transaction(deployer, async () => {
+    await zkApp.setDreggRoot(rootX, signAnchor(relayKey, deepRoot, rootX));
+  });
+  await txX.prove();
+  const signedX = txX.sign([deployer.key]);
+  const txY = await Mina.transaction(deployer, async () => {
+    await zkApp.setDreggRoot(rootY, signAnchor(relayKey, deepRoot, rootY));
+  });
+  await txY.prove();
+  const signedY = txY.sign([deployer.key]);
+
+  type ProofAu = { authorization: { proof?: string } };
+  const proofAu = (signed: unknown): ProofAu => {
+    const aus = (signed as { transaction: { accountUpdates: ProofAu[] } }).transaction
+      .accountUpdates;
+    const au = aus.find((a) => typeof a.authorization?.proof === 'string');
+    if (!au?.authorization.proof) fail('no proof found on any account update');
+    return au!;
+  };
+  const proofX = proofAu(signedX).authorization.proof!;
+  proofAu(signedY).authorization.proof = proofX;
+
+  let splicedAuAccepted = false;
+  let splicedAuError = '';
+  try {
+    await signedY.send();
+    splicedAuAccepted = true;
+  } catch (e) {
+    splicedAuError = e instanceof Error ? e.message : String(e);
+  }
+  check(
+    !splicedAuAccepted && /Invalid proof for account update/.test(splicedAuError),
+    'a valid proof moved onto a DIFFERENT account update is refused as an invalid PROOF',
+    splicedAuAccepted
+      ? 'the chain accepted a proof of a different account update (UNSOUND)'
+      : `refused, but not as a proof failure: ${splicedAuError.split('\n')[0].slice(0, 90)}`,
+  );
+
+  await signedX.send();
+  check(
+    zkApp.dreggRoot.get().toBigInt() === rootX.toBigInt(),
+    'CONTROL: the identical proof bytes are ACCEPTED on their own account update',
+    'the control transaction did not apply, so the refusal above is not attributable to the statement',
   );
 }
 

@@ -20,10 +20,16 @@
 //        root it was proved against. Anchor a new root, and the earlier
 //        attestation is refused AT INCLUSION TIME. This is the stale-attestation
 //        case and it is the one that yields a rejected tx hash.
-//   [R2] the PROOF ITSELF — corrupt the proof bytes on the wire and the daemon
-//        refuses the command outright (no hash; it never enters a block).
+//   [R2] the PROOF ITSELF — the daemon refuses the command outright (no hash;
+//        it never enters a block). This splits in two, and the split is the
+//        point: [R2a] corrupting the proof's ENCODING is refused at DECODE,
+//        before any cryptography runs, and demonstrates nothing about
+//        verification; [R2b] moving a VALID proof onto a different account
+//        update leaves the bytes well-formed and only the STATEMENT wrong, so
+//        only the verification equation can refuse it — and the same bytes are
+//        then submitted on their own account update and accepted, as a control.
 //
-// All three are exercised below. Claiming more than this — e.g. that the chain
+// All are exercised below. Claiming more than this — e.g. that the chain
 // "caught a forged Merkle path" — would be false: the prover caught it first.
 // ---------------------------------------------------------------------------
 
@@ -33,6 +39,7 @@ import { resolve } from 'node:path';
 import {
   DreggAttestedGate,
   DreggMembershipAttestation,
+  signAnchor,
 } from '../src/DreggPoseidonAttestation.js';
 import type { EmittedRoot } from './devnet-emit-root.js';
 import {
@@ -65,7 +72,7 @@ async function zkAppState(addr: ReturnType<typeof loadKeys>['zkApp']): Promise<S
 async function main() {
   console.log('=== exercise the deployed dregg attestation gate (devnet) ===');
   connect();
-  const { deployerKey, deployer, zkApp } = loadKeys();
+  const { deployerKey, deployer, zkApp, relayKey } = loadKeys();
   const emitted = JSON.parse(readFileSync(ROOT_JSON, 'utf8')) as EmittedRoot;
   const deployment = JSON.parse(readFileSync(DEPLOY_JSON, 'utf8')) as {
     zkAppAddress: string;
@@ -189,10 +196,11 @@ async function main() {
   console.log(`    (its precondition pins dreggRoot == ${emitted.root})`);
 
   console.log(`    re-anchoring to a new root ${'0x' + nextRoot.toBigInt().toString(16)}`);
+  const advanceAuth = signAnchor(relayKey, root, nextRoot);
   const advanceTx = await Mina.transaction(
     { sender: deployer, fee: FEE, nonce: nonceB, memo: 'dregg-root-advance' },
     async () => {
-      await app.setDreggRoot(nextRoot);
+      await app.setDreggRoot(nextRoot, advanceAuth);
     },
   );
   await advanceTx.prove();
@@ -266,52 +274,168 @@ async function main() {
   receipt.rejectOnChain = !admissionRefused && processed;
 
   // ==========================================================================
-  // [R2] The network verifies the PROOF: corrupt it on the wire.
-  // Best-effort probe — recorded, never fatal.
+  // [R2] The network verifies the PROOF ITSELF. Two probes, and the difference
+  // between them is the whole point.
+  //
+  // [R2a] CORRUPTED ENCODING. Flip a character in the serialised proof. This is
+  //       what an earlier version of this script did and called a proof-check
+  //       demonstration. It is not one: the daemon answers `Invalid rich
+  //       scalar: Proof …`, which is a DECODE failure — it never reached the
+  //       verifier. Kept, labelled as what it is, as the contrast case.
+  //
+  // [R2b] WELL-FORMED PROOF, WRONG STATEMENT. Build TWO valid `setDreggRoot`
+  //       transactions and move the proof of one onto the account update of the
+  //       other. Mina's transaction commitment covers account-update BODIES,
+  //       not authorisations, so the fee-payer signature stays valid and the
+  //       bytes stay a perfectly well-formed Pickles proof — it simply attests
+  //       a different account update. Nothing can reject it except the
+  //       verification equation.
+  //
+  //       The CONTROL is what makes this readable: after the spliced command is
+  //       refused, the same proof bytes are submitted on their OWN account
+  //       update and must be ACCEPTED by the same daemon in the same minute.
+  //       Rejected-then-accepted, one variable changed, and the variable is the
+  //       statement.
   // ==========================================================================
-  console.log('\n[R2] corrupted proof on the wire (the daemon must refuse it)');
+  type ProofAu = { authorization: { proof?: string } };
+  const proofOf = (signed: unknown): ProofAu => {
+    const aus = (signed as { transaction: { accountUpdates: ProofAu[] } }).transaction
+      .accountUpdates;
+    const au = aus.find((a) => typeof a.authorization?.proof === 'string');
+    if (!au?.authorization.proof) throw new Error('no proof on any account update');
+    return au;
+  };
+  /** Did the daemon refuse this at DECODE time or at VERIFICATION time? The
+   *  distinction is the defect this section exists to fix, so it is classified
+   *  from the daemon's own words rather than asserted. */
+  const classify = (errs: string): 'parse' | 'verification' | 'other' => {
+    const e = errs.toLowerCase();
+    if (e.includes('rich scalar') || e.includes('could not decode') || e.includes('base64'))
+      return 'parse';
+    if (e.includes('verification_failed') || e.includes('invalid_proof') || e.includes('proof'))
+      return 'verification';
+    return 'other';
+  };
+
+  console.log('\n[R2a] corrupted proof ENCODING (expected: refused at DECODE, not verification)');
   try {
     const nonceC = (await nonceOf(deployer))!;
+    const badRoot = Poseidon.hash([nextRoot, Field(2)]);
     const badTx = await Mina.transaction(
       { sender: deployer, fee: FEE, nonce: nonceC, memo: 'dregg-bad-proof' },
       async () => {
-        await app.setDreggRoot(Poseidon.hash([nextRoot, Field(2)]));
+        await app.setDreggRoot(badRoot, signAnchor(relayKey, nextRoot, badRoot));
       },
     );
     await badTx.prove();
     const signed = badTx.sign([deployerKey]);
-    // Flip the middle of the base64 proof. The statement is untouched, so the
-    // ONLY thing that can reject this is the proof check itself.
-    const aus = (signed as unknown as {
-      transaction: { accountUpdates: { authorization: { proof?: string } }[] };
-    }).transaction.accountUpdates;
-    const withProof = aus.find((au) => typeof au.authorization?.proof === 'string');
-    if (!withProof?.authorization.proof) throw new Error('no proof found on any account update');
-    const p = withProof.authorization.proof;
+    const au = proofOf(signed);
+    const p = au.authorization.proof!;
     const mid = Math.floor(p.length / 2);
-    withProof.authorization.proof =
-      p.slice(0, mid) + (p[mid] === 'A' ? 'B' : 'A') + p.slice(mid + 1);
+    au.authorization.proof = p.slice(0, mid) + (p[mid] === 'A' ? 'B' : 'A') + p.slice(mid + 1);
 
     const sent = await signed.safeSend();
     if (sent.status === 'rejected') {
       const errs = JSON.stringify((sent as { errors?: unknown }).errors);
-      console.log(`    ✓ the daemon REFUSED the corrupted proof: ${errs}`);
-      receipt.corruptedProofOutcome = `rejected by the daemon: ${errs}`;
+      const how = classify(errs);
+      console.log(`    the daemon refused it (${how}): ${errs}`);
+      receipt.corruptedEncodingOutcome = `rejected by the daemon [${how}]: ${errs}`;
+      receipt.corruptedEncodingRefusedAt = how;
     } else {
-      // It entered the mempool; the state must still not move.
       console.log(`    submitted as ${sent.hash}; checking it does not take effect...`);
       const st = await zkAppState(zkApp);
       const tookEffect = st.dreggRoot !== nextRoot.toBigInt();
-      console.log(`    took effect = ${tookEffect}`);
-      receipt.corruptedProofOutcome = tookEffect
+      receipt.corruptedEncodingOutcome = tookEffect
         ? `⚑ ACCEPTED (${sent.hash}) — INVESTIGATE`
         : `submitted as ${sent.hash}; no state change`;
-      receipt.corruptedProofTx = sent.hash;
+      receipt.corruptedEncodingTx = sent.hash;
     }
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
-    console.log(`    the corrupted proof was refused before/at submission: ${m.slice(0, 300)}`);
-    receipt.corruptedProofOutcome = `refused: ${m.slice(0, 300)}`;
+    console.log(`    refused before/at submission: ${m.slice(0, 300)}`);
+    receipt.corruptedEncodingOutcome = `refused: ${m.slice(0, 300)}`;
+  }
+
+  console.log(
+    '\n[R2b] WELL-FORMED proof of a DIFFERENT statement (expected: refused at VERIFICATION)',
+  );
+  try {
+    const nonceD = (await nonceOf(deployer))!;
+    const rootX = Poseidon.hash([nextRoot, Field(3)]);
+    const rootY = Poseidon.hash([nextRoot, Field(4)]);
+
+    // Two independently valid commands, at the SAME nonce so that at most one
+    // of them can ever take effect.
+    const txX = await Mina.transaction(
+      { sender: deployer, fee: FEE, nonce: nonceD, memo: 'dregg-splice-control' },
+      async () => {
+        await app.setDreggRoot(rootX, signAnchor(relayKey, nextRoot, rootX));
+      },
+    );
+    await txX.prove();
+    const signedX = txX.sign([deployerKey]);
+
+    const txY = await Mina.transaction(
+      { sender: deployer, fee: FEE, nonce: nonceD, memo: 'dregg-splice-forged' },
+      async () => {
+        await app.setDreggRoot(rootY, signAnchor(relayKey, nextRoot, rootY));
+      },
+    );
+    await txY.prove();
+    const signedY = txY.sign([deployerKey]);
+
+    const proofX = proofOf(signedX).authorization.proof!;
+    const auY = proofOf(signedY);
+    // The splice. `proofX` is untouched — every byte is a proof the prover
+    // itself produced and the daemon will accept below.
+    auY.authorization.proof = proofX;
+    console.log(`    spliced proof-of-X (${proofX.length} b64 chars) onto the update that sets Y`);
+
+    const sentForged = await signedY.safeSend();
+    let forgedVerdict: string;
+    let forgedHow: string;
+    if (sentForged.status === 'rejected') {
+      const errs = JSON.stringify((sentForged as { errors?: unknown }).errors);
+      forgedHow = classify(errs);
+      forgedVerdict = `rejected by the daemon [${forgedHow}]: ${errs}`;
+      console.log(`    the daemon refused the spliced command (${forgedHow}): ${errs}`);
+    } else {
+      console.log(`    entered the pool as ${sentForged.hash}; checking it takes no effect...`);
+      const st = await zkAppState(zkApp);
+      forgedHow = st.dreggRoot === rootY.toBigInt() ? 'ACCEPTED' : 'no-effect';
+      forgedVerdict =
+        forgedHow === 'ACCEPTED'
+          ? `⚑ ACCEPTED (${sentForged.hash}) — INVESTIGATE, this would be a soundness failure`
+          : `submitted as ${sentForged.hash}; no state change`;
+    }
+    receipt.splicedProofOutcome = forgedVerdict;
+    receipt.splicedProofRefusedAt = forgedHow;
+
+    // --- the control: the SAME bytes, on their own statement ----------------
+    const sentControl = await signedX.safeSend();
+    console.log(`    control tx (same proof, its own account update) ${sentControl.hash}`);
+    console.log(`    ${explorerTx(sentControl.hash)}`);
+    const controlLanded = await until(
+      async () => (await zkAppState(zkApp)).dreggRoot === rootX.toBigInt(),
+      'the control command (identical proof bytes) to be applied',
+      10 * 60_000,
+    );
+    console.log(
+      controlLanded
+        ? '    ✓ CONTROL APPLIED: the identical proof bytes were accepted on their own statement'
+        : '    the control did not land within budget — the splice result stands alone',
+    );
+    receipt.splicedProofControlTx = sentControl.hash;
+    receipt.splicedProofControlApplied = controlLanded;
+    receipt.splicedProofReading = controlLanded
+      ? 'the same proof bytes were REFUSED on a different account update and APPLIED on their own; ' +
+        'the only variable was the statement, so the refusal is a verification failure, not a decode failure'
+      : 'the spliced command was refused; the control did not land in budget, so the ' +
+        'rejected-then-accepted pairing is NOT established by this run';
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    console.log(`    the splice probe failed before it could conclude: ${m.slice(0, 300)}`);
+    receipt.splicedProofOutcome = `inconclusive: ${m.slice(0, 300)}`;
   }
 
   // ==========================================================================

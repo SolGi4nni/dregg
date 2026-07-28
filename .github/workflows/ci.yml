@@ -1238,21 +1238,40 @@ jobs:
   mina-attestation:
     name: Mina↔dregg Poseidon attestation zkApp (runs it, and proves the gate can go red)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     # `bridge/mina-zkapp/` was in ZERO targets — no workflow, no gate script, no npm
     # workspace — and what was committed did not run (`tsc` failed; the PoC that was
     # reported working had run in a scratch dir at an unpinned o1js). This job runs it
     # from the committed TypeScript: 9 Mina-Poseidon gold digests + the depth-2 Merkle
     # root + the field modulus against the Rust probe's pinned table, a real Pickles
     # compile/prove/verify of an in-circuit Merkle path into that root, two tamper
-    # rejections, and the `DreggAttestedGate` zkApp deploying on a local chain and
-    # consuming the attestation proof recursively. Then the self-test injects five faults
-    # into a scratch copy and requires each to turn it red. ~2 min; no cargo, no Lean.
+    # rejections, the `DreggAttestedGate` zkApp deploying on a local chain and
+    # consuming the attestation proof recursively, the relay authorization on
+    # `setDreggRoot`, and a well-formed proof of another statement failing
+    # VERIFICATION (with the identical bytes accepted on their own account update as
+    # the control). Then the self-test injects thirteen faults into a scratch copy and
+    # requires each to turn it red.
+    #
+    # ⚑ CARGO IS NOW REQUIRED and the gate FAILS without it. The Rust leg is the
+    # DREGG SIDE of this bridge — `circuit-prove/sketches/mina-pasta-hash-probe`, the
+    # crate that EMITS the attested root. It was in no target of any kind: its five
+    # tests ran only by hand, and the `merkle` subcommand that produces the deployed
+    # root ran only inside the ungated `npm run devnet:emit-root`. The probe is its own
+    # workspace (`[workspace]` in its Cargo.toml), so no other job reaches it either.
+    # It has git dependencies on o1-labs/proof-systems, so this job fetches; RUSTUP_TOOLCHAIN
+    # from dtolnay/rust-toolchain overrides the crate directory's inherited pin, as
+    # everywhere else here. ~4 min; no Lean.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: circuit-prove/sketches/mina-pasta-hash-probe
       - run: bash scripts/check-mina-attestation.sh
       - run: bash scripts/check-mina-attestation.sh --self-test
 

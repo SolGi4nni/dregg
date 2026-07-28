@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import {
   DreggAttestedGate,
   DreggMembershipAttestation,
+  signAnchor,
 } from '../src/DreggPoseidonAttestation.js';
 import type { EmittedRoot } from './devnet-emit-root.js';
 import {
@@ -36,13 +37,14 @@ const FEE_CALL = 200_000_000; //   0.2 MINA
 async function main() {
   console.log('=== deploy DreggAttestedGate to Mina devnet ===');
   connect();
-  const { deployerKey, deployer, zkAppKey, zkApp } = loadKeys();
+  const { deployerKey, deployer, zkAppKey, zkApp, relayKey, relay } = loadKeys();
   const emitted = JSON.parse(readFileSync(ROOT_JSON, 'utf8')) as EmittedRoot;
   const root = Field(BigInt(emitted.root));
 
   console.log(`  endpoint : ${MINA_ENDPOINT}`);
   console.log(`  deployer : ${deployer.toBase58()}`);
   console.log(`  zkApp    : ${zkApp.toBase58()}`);
+  console.log(`  relay    : ${relay.toBase58()}  (the only key that can re-anchor)`);
   console.log(`  root     : ${emitted.root}`);
   console.log(`             (emitted ${emitted.emittedAt} by ${emitted.emitter})`);
 
@@ -89,7 +91,7 @@ async function main() {
       { sender: deployer, fee: FEE_DEPLOY },
       async () => {
         AccountUpdate.fundNewAccount(deployer);
-        await app.deploy({ verificationKey: gateVk });
+        await app.deploy({ verificationKey: gateVk, relay });
       },
     );
     await deployTx.prove();
@@ -112,17 +114,25 @@ async function main() {
   // --- anchor the root ------------------------------------------------------
   console.log('\n  [2] anchoring the dregg-emitted root...');
   let anchorHash: string | null = null;
-  const anchoredAlready =
-    (await fetchAccount({ publicKey: zkApp })).account?.zkapp?.appState?.[0]?.toBigInt() ===
-    root.toBigInt();
+  // The anchored root BEFORE this call. `setDreggRoot` binds the relay's
+  // signature to the exact transition `[oldRoot, newRoot]` and pins `oldRoot`
+  // as an account precondition, so this read is part of the authorization, not
+  // a convenience — a stale read produces a transaction the network refuses.
+  const onChainRoot =
+    (await fetchAccount({ publicKey: zkApp })).account?.zkapp?.appState?.[0] ?? Field(0);
+  const anchoredAlready = onChainRoot.toBigInt() === root.toBigInt();
   if (anchoredAlready) {
     console.log('      the root is already anchored — skipping.');
   } else {
     t = Date.now();
+    const auth = signAnchor(relayKey, onChainRoot, root);
+    console.log(
+      `      relay-signing the transition 0x${onChainRoot.toBigInt().toString(16)} -> ${emitted.root}`,
+    );
     const anchorTx = await Mina.transaction(
       { sender: deployer, fee: FEE_CALL },
       async () => {
-        await app.setDreggRoot(root);
+        await app.setDreggRoot(root, auth);
       },
     );
     await anchorTx.prove();
@@ -150,6 +160,9 @@ async function main() {
     gitCommit: emitted.gitCommit,
     zkAppAddress: zkApp.toBase58(),
     deployerAddress: deployer.toBase58(),
+    // The authorization boundary, on chain and in the record: the only key
+    // whose signature `setDreggRoot` accepts. Readable from app_state_2/3.
+    relayAddress: relay.toBase58(),
     attestationVkHash: attVk.hash.toString(),
     zkAppVkHash: gateVk.hash.toString(),
     anchoredRoot: emitted.root,

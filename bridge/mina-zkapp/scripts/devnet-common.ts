@@ -37,20 +37,42 @@ export type DevnetKeys = {
   deployerPublic: string;
   zkAppPrivate: string;
   zkAppPublic: string;
+  /** The relay: the ONLY key `DreggAttestedGate.setDreggRoot` will accept an
+   *  anchor authorization from. Deliberately distinct from the deployer, so
+   *  "the account paying the fee" and "the party allowed to move the root" are
+   *  visibly different principals. */
+  relayPrivate: string;
+  relayPublic: string;
 };
 
 /** Mint the throwaway keypairs if they do not exist yet. Never overwrites. */
 export function keygen(): DevnetKeys {
   if (existsSync(KEYS_PATH)) {
-    return JSON.parse(readFileSync(KEYS_PATH, 'utf8')) as DevnetKeys;
+    const existing = JSON.parse(readFileSync(KEYS_PATH, 'utf8')) as Partial<DevnetKeys>;
+    // The key file gained a RELAY key when `setDreggRoot` gained its
+    // authorization check. A pre-relay file cannot deploy or anchor the current
+    // contract, so it REFUSES TO LOAD rather than being silently reinterpreted
+    // (which would surface as an unsatisfiable circuit ten minutes later).
+    if (!existing.relayPrivate || !existing.relayPublic) {
+      throw new Error(
+        `${KEYS_PATH} predates the relay-authorized \`setDreggRoot\` — it has no ` +
+          '`relayPrivate`/`relayPublic`. These are throwaway devnet keys: either add a ' +
+          'relay keypair to that file, or move it aside and re-run `npm run devnet:fund` ' +
+          'to mint and fund a fresh set. Never reuse a deployment address across the change.',
+      );
+    }
+    return existing as DevnetKeys;
   }
   const dep = PrivateKey.random();
   const zk = PrivateKey.random();
+  const relay = PrivateKey.random();
   const keys: DevnetKeys = {
     deployerPrivate: dep.toBase58(),
     deployerPublic: dep.toPublicKey().toBase58(),
     zkAppPrivate: zk.toBase58(),
     zkAppPublic: zk.toPublicKey().toBase58(),
+    relayPrivate: relay.toBase58(),
+    relayPublic: relay.toPublicKey().toBase58(),
   };
   mkdirSync(dirname(KEYS_PATH), { recursive: true, mode: 0o700 });
   writeFileSync(
@@ -77,16 +99,21 @@ export function loadKeys(): {
   deployer: PublicKey;
   zkAppKey: PrivateKey;
   zkApp: PublicKey;
+  relayKey: PrivateKey;
+  relay: PublicKey;
 } {
   const raw = keygen();
   const deployerKey = PrivateKey.fromBase58(raw.deployerPrivate);
   const zkAppKey = PrivateKey.fromBase58(raw.zkAppPrivate);
+  const relayKey = PrivateKey.fromBase58(raw.relayPrivate);
   return {
     raw,
     deployerKey,
     deployer: deployerKey.toPublicKey(),
     zkAppKey,
     zkApp: zkAppKey.toPublicKey(),
+    relayKey,
+    relay: relayKey.toPublicKey(),
   };
 }
 
