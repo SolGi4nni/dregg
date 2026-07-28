@@ -227,7 +227,28 @@ export class PasskeyCustody implements CustodyProvider {
     // `dregg_sdk::mnemonic::validate_mnemonic`), which ARMS this line. The optionality is
     // kept because `CustodyWasm` still declares the member optional for third-party hosts;
     // against the dregg bundle it is always present.
-    if (this.wasm.validate_mnemonic && !this.wasm.validate_mnemonic(mnemonic)) {
+    // ⚑ A MISSING VALIDATOR IS A FAULT, NOT A SKIP — and the comment above was FALSE.
+    //
+    // It claimed "against the dregg bundle it is always present". Measured 2026-07-28:
+    // `grep -c validate_mnemonic extension/dregg_wasm.js` is ZERO. The shipped bundle was last
+    // committed 2026-07-10 (`975078215`) and the export landed after it, so the `&&` short-circuited
+    // and AN INVALID BIP39 MNEMONIC ENROLLED SILENTLY — on the custody path, where the mnemonic is
+    // the key. The guard's own header called itself "fail-open UNTIL the wasm exported it"; the wasm
+    // never did in the artifact this repo ships.
+    //
+    // The optionality is real (`CustodyWasm` declares the member optional for third-party hosts), so
+    // the fix is not to drop it — it is to stop ABSENCE READING AS CONSENT. A host without the
+    // validator gets a named refusal instead of unvalidated enrollment, and a stale dregg bundle
+    // fails loudly instead of quietly widening.
+    if (typeof this.wasm.validate_mnemonic !== "function") {
+      zeroize(mnemonicBytes);
+      throw new Error(
+        "passkey custody: this build cannot validate a BIP39 mnemonic (the wasm bundle exports no " +
+          "validate_mnemonic), so it refuses to enroll one. Rebuild the extension bundle, or supply " +
+          "a CustodyWasm that implements it.",
+      );
+    }
+    if (!this.wasm.validate_mnemonic(mnemonic)) {
       zeroize(mnemonicBytes);
       throw new Error("passkey custody: refusing to enroll an invalid BIP39 mnemonic");
     }
