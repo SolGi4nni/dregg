@@ -1,8 +1,18 @@
 # deos-android-paint — graphideOS step 2: a gpui app painting a real deos frame
 # on android, packaged as an APK (cargo-apk). It is a STANDALONE package (its own
 # [workspace]) so it does not pull the breadstuffs workspace; it depends on the
-# emberian/zed gpui fork by path (the local checkout that carries the new
-# gpui_android PlatformAndroid backend).
+# emberian/zed gpui fork, which carries the new gpui_android PlatformAndroid
+# backend, at the SAME git rev `deos-zed` and `deos-zed-full` already pin.
+#
+# ⚠ Until 2026-07-28 those three deps were `path = "../../../emberian-zed/…"` —
+# a checkout OUTSIDE this repo, resolvable on exactly one machine. This package
+# therefore did not build from a clean checkout of itself for anyone, and nothing
+# said so: it is its own workspace, so no repo-wide build ever touched it. Found by
+# `scripts/check-workspace-closure.py --rev HEAD`, whose extract of HEAD resolved
+# `../../../emberian-zed` to a directory beside the temp dir and failed. The local
+# checkout was at `adb9026524`, clean and pushed to `origin/android-on-pinned`, and
+# `crates/gpui_android` exists at that rev — so the git-pinned form every sibling
+# uses is byte-for-byte the same code, and is what this now says.
 [package]
 name = "deos-android-paint"
 version = "0.1.0"
@@ -18,10 +28,10 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-# The gpui fork carrying the new android backend (local checkout).
-gpui = { path = "../../../emberian-zed/crates/gpui" }
-gpui_platform = { path = "../../../emberian-zed/crates/gpui_platform" }
-gpui_android = { path = "../../../emberian-zed/crates/gpui_android" }
+# The gpui fork carrying the new android backend. Same rev as deos-zed/deos-zed-full.
+gpui = { git = "https://github.com/emberian/zed", rev = "adb9026524" }
+gpui_platform = { git = "https://github.com/emberian/zed", rev = "adb9026524" }
+gpui_android = { git = "https://github.com/emberian/zed", rev = "adb9026524" }
 android-activity = { version = "0.6", features = ["native-activity"] }
 log = "0.4"
 android_logger = "0.14"
