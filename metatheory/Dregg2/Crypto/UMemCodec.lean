@@ -59,6 +59,7 @@ enters ONLY as the named `Poseidon2SpongeCR` hypothesis, never as an axiom. Lean
 circuit Rust, no wire/descriptor/VK change.
 -/
 import Dregg2.Crypto.UniversalMemory
+import Dregg2.Crypto.SpongeCarrierReduction
 import Dregg2.Lightclient.MMR
 import Dregg2.Circuit.Emit.EffectVmEmitCapRoot
 
@@ -71,6 +72,7 @@ open Dregg2.Substrate.Heap (FeltHeap leafOf root addrOf refSponge)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Lightclient.MMR (mroot mroot_injective)
 open Dregg2.Circuit.Emit.EffectVmEmitCapRoot (edgeLeafOf)
+open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 
 universe u v
 
@@ -110,19 +112,42 @@ the leading position (`uaddrEnc d coll key = hash (domainTag d :: [coll, key])`)
 theorem uaddrEnc_eq_tagged_addr (hash : List ℤ → ℤ) (d : Domain) (coll key : ℤ) :
     uaddrEnc hash d coll key = hash (domainTag d :: [coll, key]) := rfl
 
-/-- **`uaddrEnc_injective` — THE ADDRESS CODEC IS FAITHFUL.** Under the named CR floor, equal
-encoded addresses force the SAME domain, collection, AND key: the concrete `hash[domain_tag,
-coll, key]` realizes the abstract `(Domain, coll, key)` triple injectively. One CR peel of the
-3-element list, then the domain tag's injectivity. No narrower assumption than the one
-`Heap.root_injective` already carries. -/
-theorem uaddrEnc_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-! ### The address codec is FAITHFUL — ⛑ CUT OVER 2026-07-27 off `Poseidon2SpongeCR`.
+
+`uaddrEnc_injective` used to say "under the named CR floor, equal encoded addresses force the SAME
+domain, collection, AND key". That floor is `∀ xs ys, hash xs = hash ys → xs = ys` and
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES it false at deployed BabyBear
+parameters, so the statement said nothing about the shipping codec. The premise is now the
+per-instance, refutable non-collision at the two NAMED preimages this address pair absorbs — which
+the old floor implied, so every caller's hypothesis got strictly weaker. -/
+
+/-- **`uaddrEncPre d coll key`** — the address codec's sponge PREIMAGE, named so the per-instance
+collision event below is stated at exactly the list the digest absorbs. -/
+def uaddrEncPre (d : Domain) (coll key : ℤ) : List ℤ := [domainTag d, coll, key]
+
+theorem uaddrEnc_eq_pre (hash : List ℤ → ℤ) (d : Domain) (coll key : ℤ) :
+    uaddrEnc hash d coll key = hash (uaddrEncPre d coll key) := rfl
+
+/-- **THE HYPOTHESIS-FREE ADDRESS BINDING.** Equal encoded addresses force the same triple OR name
+a genuine collision of the deployed sponge at the two ABSORBED preimages. NO floor. -/
+theorem uaddrEnc_binds_or_collides (hash : List ℤ → ℤ)
     {d d' : Domain} {coll key coll' key' : ℤ}
     (h : uaddrEnc hash d coll key = uaddrEnc hash d' coll' key') :
-    d = d' ∧ coll = coll' ∧ key = key' := by
-  have hl := hCR _ _ h
-  rw [List.cons.injEq, List.cons.injEq, List.cons.injEq] at hl
-  obtain ⟨htag, hc, hk, _⟩ := hl
-  exact ⟨domainTag_injective htag, hc, hk⟩
+    (d = d' ∧ coll = coll' ∧ key = key')
+      ∨ IsSpongeColl hash (uaddrEncPre d coll key, uaddrEncPre d' coll' key') := by
+  by_cases hpre : uaddrEncPre d coll key = uaddrEncPre d' coll' key'
+  · refine Or.inl ?_
+    rw [uaddrEncPre, uaddrEncPre, List.cons.injEq, List.cons.injEq, List.cons.injEq] at hpre
+    obtain ⟨htag, hc, hk, _⟩ := hpre
+    exact ⟨domainTag_injective htag, hc, hk⟩
+  · exact Or.inr ⟨hpre, h⟩
+
+theorem uaddrEnc_injective (hash : List ℤ → ℤ)
+    {d d' : Domain} {coll key coll' key' : ℤ}
+    (hno : ¬ IsSpongeColl hash (uaddrEncPre d coll key, uaddrEncPre d' coll' key'))
+    (h : uaddrEnc hash d coll key = uaddrEnc hash d' coll' key') :
+    d = d' ∧ coll = coll' ∧ key = key' :=
+  (uaddrEnc_binds_or_collides hash h).resolve_right hno
 
 /-! ## §2 — THE CAP-LEAF VALUE CODEC: the live `hash[holder, target, rights, op]`.
 
@@ -172,20 +197,39 @@ theorem capLeaf_factors_codec (hash : List ℤ → ℤ) (c : CapEdge) :
     capLeafOf hash c
       = hash [c.holder, (capValEnc c).1, (capValEnc c).2.1, (capValEnc c).2.2] := rfl
 
-/-- **`capLeaf_injective` — the cap leaf BINDS its tuple (the value-codec anti-ghost).** Under the
-named CR floor, equal cap leaves force EVERY bound field equal — the inner peel of
-`capRoot_binds_edge`, now as a clean leaf-codec injectivity. Tampering any of holder / target /
-rights / op moves the leaf. -/
-theorem capLeaf_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {c c' : CapEdge} (h : capLeafOf hash c = capLeafOf hash c') : c = c' := by
-  obtain ⟨h1, t1, r1, o1⟩ := c
-  obtain ⟨h2, t2, r2, o2⟩ := c'
-  unfold capLeafOf edgeLeafOf at h
-  have hl := hCR _ _ h
-  rw [List.cons.injEq, List.cons.injEq, List.cons.injEq, List.cons.injEq] at hl
-  obtain ⟨hh, ht, hr, ho, _⟩ := hl
-  dsimp only at hh ht hr ho
-  subst hh; subst ht; subst hr; subst ho; rfl
+/-! ### The cap leaf BINDS its tuple — ⛑ CUT OVER 2026-07-27 off `Poseidon2SpongeCR`.
+
+The anti-ghost is unchanged in content: tampering any of holder / target / rights / op moves the
+leaf. What changed is the premise — the refuted global injectivity is replaced by the per-instance
+non-collision at the two 4-felt preimages the deployed leaf actually absorbs. -/
+
+/-- **`capLeafPre c`** — the cap leaf's sponge PREIMAGE, named so the per-instance collision event
+is stated at exactly the 4-felt list the deployed leaf absorbs. -/
+def capLeafPre (c : CapEdge) : List ℤ := [c.holder, c.target, c.rights, c.op]
+
+theorem capLeafOf_eq_pre (hash : List ℤ → ℤ) (c : CapEdge) :
+    capLeafOf hash c = hash (capLeafPre c) := rfl
+
+/-- **THE HYPOTHESIS-FREE CAP-LEAF BINDING.** Equal cap leaves force equal edges OR name a genuine
+collision of the deployed sponge at the two ABSORBED 4-felt preimages. NO floor. -/
+theorem capLeaf_binds_or_collides (hash : List ℤ → ℤ) {c c' : CapEdge}
+    (h : capLeafOf hash c = capLeafOf hash c') :
+    c = c' ∨ IsSpongeColl hash (capLeafPre c, capLeafPre c') := by
+  by_cases hpre : capLeafPre c = capLeafPre c'
+  · refine Or.inl ?_
+    obtain ⟨h1, t1, r1, o1⟩ := c
+    obtain ⟨h2, t2, r2, o2⟩ := c'
+    rw [capLeafPre, capLeafPre, List.cons.injEq, List.cons.injEq, List.cons.injEq,
+      List.cons.injEq] at hpre
+    obtain ⟨hh, ht, hr, ho, _⟩ := hpre
+    dsimp only at hh ht hr ho
+    subst hh; subst ht; subst hr; subst ho; rfl
+  · exact Or.inr ⟨hpre, h⟩
+
+theorem capLeaf_injective (hash : List ℤ → ℤ)
+    {c c' : CapEdge} (hno : ¬ IsSpongeColl hash (capLeafPre c, capLeafPre c'))
+    (h : capLeafOf hash c = capLeafOf hash c') : c = c' :=
+  (capLeaf_binds_or_collides hash h).resolve_right hno
 
 /-- **`rootWith`** — the leaf-function-parametric committed root: the sponge of the leaf-mapped
 cells (the generalization of `Heap.root`, which is `rootWith leafOf`). The cap-domain boundary
@@ -200,33 +244,40 @@ theorem heapRoot_eq_rootWith (hash : List ℤ → ℤ) (h : FeltHeap) :
 
 /-- The cap-leaf list map is injective under CR (heads peel by `capLeaf_injective`, tails by
 induction — mirroring `Heap.map_leaf_injective`). -/
-theorem map_capLeaf_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+theorem map_capLeaf_injective (hash : List ℤ → ℤ) :
     ∀ l₁ l₂ : List CapEdge,
+      (∀ c ∈ l₁, ∀ c' ∈ l₂, ¬ IsSpongeColl hash (capLeafPre c, capLeafPre c')) →
       l₁.map (capLeafOf hash) = l₂.map (capLeafOf hash) → l₁ = l₂ := by
   intro l₁
   induction l₁ with
-  | nil => intro l₂ h; cases l₂ with
+  | nil => intro l₂ _ h; cases l₂ with
     | nil => rfl
     | cons hd t => simp at h
   | cons hd₁ t₁ ih =>
-    intro l₂ h
+    intro l₂ hno h
     cases l₂ with
     | nil => simp at h
     | cons hd₂ t₂ =>
       simp only [List.map_cons, List.cons.injEq] at h
       obtain ⟨hleaf, htail⟩ := h
-      rw [capLeaf_injective hash hCR hleaf, ih t₂ htail]
+      have hhd : hd₁ = hd₂ :=
+        capLeaf_injective hash (hno hd₁ (by simp) hd₂ (by simp)) hleaf
+      rw [hhd, ih t₂ (fun c hc c' hc' => hno c (by simp [hc]) c' (by simp [hc'])) htail]
 
 /-- **`capRoot_injective` — THE CAP-DOMAIN BOUNDARY ROOT BINDS ITS CAP CELLS.** Two cap-cell lists
 with EQUAL roots are equal, under the single named CR floor: peel the outer sponge (leaf lists
 equal), then each cap leaf (edges equal). The `Heap.root_injective` anti-ghost, transferred to the
 live 4-felt cap leaf shape via the value codec — a prover cannot keep the published cap root while
 tampering ANY cap edge. -/
-theorem capRoot_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem capRoot_injective (hash : List ℤ → ℤ)
     {l₁ l₂ : List CapEdge}
+    (hnoRoot : ¬ IsSpongeColl hash (l₁.map (capLeafOf hash), l₂.map (capLeafOf hash)))
+    (hnoLeaf : ∀ c ∈ l₁, ∀ c' ∈ l₂, ¬ IsSpongeColl hash (capLeafPre c, capLeafPre c'))
     (h : rootWith (capLeafOf hash) hash l₁ = rootWith (capLeafOf hash) hash l₂) :
-    l₁ = l₂ :=
-  map_capLeaf_injective hash hCR l₁ l₂ (hCR _ _ h)
+    l₁ = l₂ := by
+  refine map_capLeaf_injective hash l₁ l₂ hnoLeaf ?_
+  by_contra hne
+  exact hnoRoot ⟨hne, h⟩
 
 /-! ## §3 — THE MMR BOUNDARY-DERIVATION ANALOGUE (the index domain).
 
@@ -361,8 +412,8 @@ private def cEx : CapEdge := ⟨11, 22, 3, 1⟩
 
 /-- `capLeaf_injective` fires structurally: two edges with equal leaves (here by `rfl` on the same
 edge) are equal — the binder exercised under the abstract CR floor end to end. -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (c : CapEdge) : c = c :=
-  capLeaf_injective hash hCR (c := c) (c' := c) rfl
+example (hash : List ℤ → ℤ) (c : CapEdge) : c = c :=
+  capLeaf_injective hash (c := c) (c' := c) (fun hc => hc.1 rfl) rfl
 
 /-! ### §4.3 — the MMR index boundary. -/
 

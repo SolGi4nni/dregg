@@ -673,9 +673,6 @@ private def c4 : Array String := #[
   "Dregg2.Circuit.Emit.EffectVmEmitTransferSound.absorbed_determined_by_commit_of_injective",
   "Dregg2.Circuit.Emit.EffectVmEmitTransferSound.transferColl_refutable_of_injective",
   "Dregg2.Circuit.Emit.EffectVmEmitTransferSound.transferDescriptor_commit_binds_state_of_injective",
-  "Dregg2.Circuit.Emit.EffectVmEmitUMemCohort.umemCohort_addr_faithful",
-  "Dregg2.Circuit.Emit.EffectVmEmitUMemCohort.umemCohort_cap_root_binds",
-  "Dregg2.Circuit.Emit.EffectVmEmitUMemCohortMulti.noteSpend_addr_faithful",
   "Dregg2.Circuit.Emit.EffectVmEmitV2.attenuateV2_held_determined",
   "Dregg2.Circuit.Emit.EffectVmEmitV2.revokeV2_held_determined",
   "Dregg2.Circuit.Emit.EffectVmEmitV2.revokeV2_post_determined",
@@ -1352,13 +1349,9 @@ private def c8 : Array String := #[
   "Dregg2.Crypto.ThresholdSignerRefinement.threshold_signer_adaptive_ts_uf_lossfree",
   "Dregg2.Crypto.ThresholdSignerRefinement.threshold_signer_concurrent_ts_uf_0",
   "Dregg2.Crypto.TurnSoundness.turn_sound_under_floor",
-  "Dregg2.Crypto.UMemCodec.capLeaf_injective",
-  "Dregg2.Crypto.UMemCodec.capRoot_injective",
   "Dregg2.Crypto.UMemCodec.index_boundary_root_bound"]
 
 private def c9 : Array String := #[
-  "Dregg2.Crypto.UMemCodec.map_capLeaf_injective",
-  "Dregg2.Crypto.UMemCodec.uaddrEnc_injective",
   "Dregg2.Crypto.UcSignature.hybrid_multi_session_advantage_negl",
   "Dregg2.Crypto.UcSignature.hybrid_multi_session_uc_realizes",
   "Dregg2.Crypto.UcSignature.hybrid_sig_advantage_negl",

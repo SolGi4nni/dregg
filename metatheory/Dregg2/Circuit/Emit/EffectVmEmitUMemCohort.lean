@@ -313,23 +313,30 @@ theorem setFieldUMem_survives_concrete :
 encoded `uaddrEnc` addresses force the same domain, collection, and key — the umem-form's
 `(domain, key)` address realizes the abstract triple injectively (the planes the cohort touches
 do not alias). (`UMemCodec.uaddrEnc_injective`.) -/
-theorem umemCohort_addr_faithful (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem umemCohort_addr_faithful (hash : List ℤ → ℤ)
     {d d' : Domain} {coll key coll' key' : ℤ}
+    (hno : ¬ Dregg2.Crypto.SpongeCarrierReduction.IsSpongeColl hash
+      (Dregg2.Crypto.UMemCodec.uaddrEncPre d coll key, Dregg2.Crypto.UMemCodec.uaddrEncPre d' coll' key'))
     (h : Dregg2.Crypto.UMemCodec.uaddrEnc hash d coll key
       = Dregg2.Crypto.UMemCodec.uaddrEnc hash d' coll' key') :
     d = d' ∧ coll = coll' ∧ key = key' :=
-  Dregg2.Crypto.UMemCodec.uaddrEnc_injective hash hCR h
+  Dregg2.Crypto.UMemCodec.uaddrEnc_injective hash hno h
 
 /-- **The caps-plane boundary root BINDS its cap cells.** Under the one named CR floor, two cap
 cell lists with equal boundary roots are equal — a prover cannot keep the published cap root
 (the `caps`-domain boundary commitment the `grantUMem` / `attenuateUMem` touches reconcile
 against) while tampering ANY granted/attenuated cap edge. (`UMemCodec.capRoot_injective`.) -/
-theorem umemCohort_cap_root_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem umemCohort_cap_root_binds (hash : List ℤ → ℤ)
     {l₁ l₂ : List Dregg2.Crypto.UMemCodec.CapEdge}
+    (hnoRoot : ¬ Dregg2.Crypto.SpongeCarrierReduction.IsSpongeColl hash
+      (l₁.map (Dregg2.Crypto.UMemCodec.capLeafOf hash), l₂.map (Dregg2.Crypto.UMemCodec.capLeafOf hash)))
+    (hnoLeaf : ∀ c ∈ l₁, ∀ c' ∈ l₂,
+      ¬ Dregg2.Crypto.SpongeCarrierReduction.IsSpongeColl hash
+        (Dregg2.Crypto.UMemCodec.capLeafPre c, Dregg2.Crypto.UMemCodec.capLeafPre c'))
     (h : Dregg2.Crypto.UMemCodec.rootWith (Dregg2.Crypto.UMemCodec.capLeafOf hash) hash l₁
       = Dregg2.Crypto.UMemCodec.rootWith (Dregg2.Crypto.UMemCodec.capLeafOf hash) hash l₂) :
     l₁ = l₂ :=
-  Dregg2.Crypto.UMemCodec.capRoot_injective hash hCR h
+  Dregg2.Crypto.UMemCodec.capRoot_injective hash hnoRoot hnoLeaf h
 
 /-! ## §4 — the staged wire artifacts (byte-pinned descriptor JSON).
 

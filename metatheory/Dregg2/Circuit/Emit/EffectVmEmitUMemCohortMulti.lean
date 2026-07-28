@@ -291,12 +291,14 @@ theorem noteSpendUMem_survives_concrete :
 encoded `uaddrEnc` addresses force the same domain, collection, and key — so the `heap` balance cell
 and the `nullifiers` freshness cell of a multi-domain effect can NEVER alias (the two planes the
 multi-domain descriptor reconciles are genuinely disjoint). (`UMemCodec.uaddrEnc_injective`.) -/
-theorem noteSpend_addr_faithful (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem noteSpend_addr_faithful (hash : List ℤ → ℤ)
     {d d' : Domain} {coll key coll' key' : ℤ}
+    (hno : ¬ Dregg2.Crypto.SpongeCarrierReduction.IsSpongeColl hash
+      (Dregg2.Crypto.UMemCodec.uaddrEncPre d coll key, Dregg2.Crypto.UMemCodec.uaddrEncPre d' coll' key'))
     (h : Dregg2.Crypto.UMemCodec.uaddrEnc hash d coll key
       = Dregg2.Crypto.UMemCodec.uaddrEnc hash d' coll' key') :
     d = d' ∧ coll = coll' ∧ key = key' :=
-  Dregg2.Crypto.UMemCodec.uaddrEnc_injective hash hCR h
+  Dregg2.Crypto.UMemCodec.uaddrEnc_injective hash hno h
 
 /-! ## §4 — the staged wire artifacts (byte-pinned descriptor JSON).
 
