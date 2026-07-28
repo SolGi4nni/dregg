@@ -88,6 +88,15 @@ first.
   red, not WIP. It stops `lake build Dregg2`, so `#floor_ratchet` and `#teeth_wired` have been DARK
   for every lane, including the one that needed them to classify its own module. Dispatched.
 
+- **C5 CLOSED** — in `local-gates.sh` a TIMEOUT was a `skip`, so a gate that could never finish left
+  the table clean. It is a failure now, named separately in the summary, because "produced no
+  verdict" and "found a defect" both have to fail and want opposite fixes. Red-proved with a 1s
+  budget on a passing gate.
+- **C6 CLOSED** — the red-proof-scaffold sweep AGENTS.md prescribes was a ritual: no script anywhere
+  ran it, and nothing grepped for `MUTANT-` at all. `check-no-disarmed-guard.sh` now does, over 7,642
+  tracked source files, red-proved by planting the real `Monotonic` scaffold back into `eval.rs`.
+  ⚠ Scope: the first run found two vendored Jinja template strings — exempted with the measurement.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
