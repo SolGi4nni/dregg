@@ -343,6 +343,18 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
   conserving holder→well move — and its docstring says it is transcribed verbatim from a Rust
   function **deleted today**. The Lean spec catalog mirrors something that no longer exists.
 
+## Fable-5 lanes — the believed-true / too-much-work set (dispatched at ember's ask)
+- **F1 satisfiability** — NOT the 85-module port. Prove the finite-support successor to
+  `RestHashIffFrame` is SATISFIABLE, REFUTABLE and NOT PROVABLE, re-derive one downstream consumer
+  through it, and price the port in binder positions. Turns ember's decision into a theorem.
+  ⚠ Briefed: if the successor cannot be inhabited either, say so — that is the most valuable outcome.
+- **The conservation composition theorem** — global conservation is six disjoint local invariants
+  plus a pairwise proof nobody wrote. Briefed to **hunt the counterexample FIRST**, and told where I
+  would look: (balance, notes), where a lossy 31-bit fold meets a `u64` asset type.
+- **The FRI floor attachment** — 51 bits is a ledger number, not a bound on `verifyAlgo`. Briefed
+  that an `axiom` would launder the exact thing the task exists to expose; the deliverable I want most
+  is the precise statement of the first lemma the chain needs and does not have.
+
 ## Open for ember
 0. ⚑ **THE GITHUB LFS BUDGET IS EXCEEDED**, so the adversarial suite has not run for at least two
    nights — `actions/checkout` with `lfs: true` fails in 57s. The staged registries are LFS-tracked,
