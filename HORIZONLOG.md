@@ -554,6 +554,8 @@ MEASURED green root is `e0160d116`, **39 commits back.** The two cheap proxies p
 `metatheory/scripts/floor_ratchet_check.sh --presence` exit 0.
 
 **C2 · THE ADVERSARIAL SUITE RUNS NIGHTLY OR NEVER. LIVE, both halves.**
+> ✅ **HALF FIXED 2026-07-28** — the verdict now runs in the cheap local set (`check-nightly-verdict.sh`), which is the path work actually takes; `armed-teeth`'s own `nightly-verdict` mirror was correct but fired only on `pull_request` while work lands on `main` directly. ⚑ **It went RED immediately and the cause is not code**: two consecutive nightlies died in ~57s at `actions/checkout` — *"This repository exceeded its LFS budget"*. The suite has not run for at least two nights. **The budget is ember's.** Still live: `test-gauntlet.sh` is invoked by nothing, and 27 `[[test]]` targets behind unenabled `required-features` print nothing.
+
 `.github/workflows/armed-teeth.yml:116-124` triggers on `schedule` (`cron: '0 5 * * *'`),
 `pull_request` and `workflow_dispatch` — **there is no `push`.** All three heavy jobs are guarded
 `if: github.event_name != 'pull_request'` (`:137`, `:362`, `:507`), and the one PR job,
