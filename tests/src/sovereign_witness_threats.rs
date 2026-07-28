@@ -874,11 +874,260 @@ fn tamper_then_sign_witness_workflow_rejects() {
 // Cross-cutting: sovereign + bilateral + slot caveats
 // ===========================================================================
 
+/// UNBLOCKED (2026-07-27). All three named lanes are resolved — two of them by
+/// having been cancelled (the sovereign AIR teeth are dead-zero / retired; the
+/// γ.2 AIR sub-stage's host is retired and the closure moved off-AIR), and
+/// `caveat-correctness`'s row 24 was stale.
+///
+/// The composition mandate asked for sovereign witness × bilateral transfer ×
+/// slot caveat on one turn. The reason those three are worth composing rather
+/// than testing apart is a specific short-circuit risk: the executor holds TWO
+/// independent claims about a sovereign cell's post-state — the witness's
+/// declared `new_commitment`, and whatever the cell's own program will permit —
+/// and an executor that trusted the declaration could skip re-execution. If it
+/// did, a sovereign owner could sign a post-state its own caveat forbids and
+/// have it committed.
+///
+/// So the sharp leg is not "a caveat fires" (`sovereign_cell_slot_caveats_still_fire`
+/// covers that). It is: **the witness declares, correctly and under a valid
+/// signature, exactly the post-state that the caveat-VIOLATING write produces.**
+/// Every field of the witness is internally consistent with the turn. Only the
+/// cell's own program objects. A commitment-trusting executor commits it.
 #[test]
-#[ignore = "blocked on sovereign witness AIR teeth + γ.2 + caveat-correctness: full composition"]
 fn sovereign_witness_plus_bilateral_transfer_plus_slot_caveats() {
-    // Composition mandate — see CAVEAT-LAYER-COVERAGE composition row.
-    panic!("blocked");
+    use dregg_verifier::{BilateralBundle, BilateralEntry, fabricate_witnessed_receipt};
+
+    const AMOUNT: u64 = 10;
+    const SLOT_BEFORE: u64 = 10;
+
+    // A sovereign cell carrying `Monotonic` on slot 0, plus a plain payee so the
+    // turn has a bilateral transfer for γ.2 to bind.
+    fn build(seed: u8) -> (Ledger, CellId, CellId, Cell, SigningKey, [u8; 32]) {
+        let (mut sovereign, key) = signing_cell(seed, 500);
+        sovereign.program = CellProgram::Predicate(vec![StateConstraint::Monotonic { index: 0 }]);
+        sovereign.state.set_field(0, field_from_u64(SLOT_BEFORE));
+        let sovereign_id = sovereign.id();
+
+        let agent = permissive_cell(1, 1_000);
+        let agent_id = agent.id();
+        let payee = permissive_cell(2, 0);
+        let payee_id = payee.id();
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(payee).unwrap();
+        let old_commitment = sovereign.state_commitment();
+        ledger
+            .register_sovereign_cell(sovereign_id, old_commitment)
+            .unwrap();
+        {
+            let a = ledger.get_mut(&agent_id).unwrap();
+            let _ = a.capabilities.grant(sovereign_id, AuthRequired::None);
+            let _ = a.capabilities.grant(payee_id, AuthRequired::None);
+        }
+        (ledger, agent_id, payee_id, sovereign, key, old_commitment)
+    }
+
+    /// One action TARGETING the sovereign cell, carrying both the value movement
+    /// (γ.2's subject) and the slot write (the caveat's subject).
+    fn turn_for(
+        agent: CellId,
+        sovereign_id: CellId,
+        payee: CellId,
+        slot_value: u64,
+        witnesses: HashMap<CellId, SovereignCellWitness>,
+    ) -> Turn {
+        let action = ActionBuilder::new_unchecked_for_tests(sovereign_id, "pay_and_set", agent)
+            .effect_transfer(sovereign_id, payee, AMOUNT)
+            .effect(Effect::SetField {
+                cell: sovereign_id,
+                index: 0,
+                value: field_from_u64(slot_value),
+            })
+            .build();
+        let mut builder = TurnBuilder::new(agent, 0);
+        builder.add_action(action);
+        let mut turn = builder.fee(0).build();
+        turn.sovereign_witnesses = witnesses;
+        turn
+    }
+
+    /// The post-state that applying THIS turn to `cell` reaches. The cell
+    /// carries a program, so `execute_tree.rs:1250`'s implicit target-nonce bump
+    /// is off in every path and the two effects touch disjoint parts of the
+    /// state — there is no apply-order ambiguity to re-implement here.
+    fn declared_post(cell: &Cell, slot_value: u64) -> [u8; 32] {
+        let mut post = cell.clone();
+        post.state.set_field(0, field_from_u64(slot_value));
+        post.state
+            .set_balance(post.state.balance() - i64::try_from(AMOUNT).unwrap());
+        post.state_commitment()
+    }
+
+    // ── LEG 1 (positive): witness ✓ + Monotonic ✓ + a real transfer.
+    let (mut ledger, agent_id, payee_id, sovereign, key, old_commitment) = build(40);
+    let sovereign_id = sovereign.id();
+    let good = 20u64; // 10 → 20, Monotonic ✓
+    let shape = turn_for(agent_id, sovereign_id, payee_id, good, HashMap::new());
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        sovereign_id,
+        signed_sovereign_witness_with_new_commitment(
+            &[0u8; 32],
+            &sovereign,
+            &key,
+            old_commitment,
+            declared_post(&sovereign, good),
+            shape.sovereign_effects_hash(&sovereign_id),
+            1,
+        ),
+    );
+    let turn = turn_for(agent_id, sovereign_id, payee_id, good, witnesses);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(&result, TurnResult::Committed { .. }),
+        "sovereign witness + Monotonic + transfer, all satisfied, must commit: \
+         {result:?}"
+    );
+    assert_eq!(ledger.last_sovereign_witness_sequence(&sovereign_id), 1);
+
+    // …and γ.2 binds the transfer across the same turn, with the tooth intact.
+    let bundle = |turn: &Turn| BilateralBundle {
+        turn: turn.clone(),
+        entries: [sovereign_id, payee_id]
+            .iter()
+            .map(|cell_id| BilateralEntry {
+                cell_id: *cell_id,
+                witnessed_receipt: fabricate_witnessed_receipt(
+                    turn,
+                    cell_id,
+                    sovereign_dummy_receipt(turn.agent),
+                ),
+            })
+            .collect(),
+        unilateral_attestations: std::collections::BTreeMap::new(),
+    };
+    let verdict = dregg_verifier::verify_bilateral_bundle(&bundle(&turn));
+    assert!(
+        verdict.verified,
+        "γ.2 must bind a sovereign, caveat-guarded transfer: {verdict:?}"
+    );
+    assert_eq!(verdict.transfer_count, 1);
+    let mut tampered = bundle(&turn);
+    tampered.entries[1].witnessed_receipt.public_inputs
+        [dregg_circuit::effect_vm::pi::INCOMING_TRANSFER_ROOT_BASE] ^= 1;
+    assert!(
+        !dregg_verifier::verify_bilateral_bundle(&tampered).verified,
+        "the γ.2 tooth must survive this composition"
+    );
+
+    // ── LEG 2 — THE SHARP ONE. The write goes 10 → 5 (Monotonic ✗), and the
+    //    witness is PERFECT FOR THAT WRITE: it declares exactly the post-state
+    //    the violating apply would reach, over exactly this turn's effects
+    //    digest, signed by the cell's own key at the right sequence. Nothing
+    //    about the witness is wrong. Only the cell's program objects.
+    //
+    //    An executor that took `new_commitment` as authoritative — the whole
+    //    point of the retired proof-carrying shortcut — commits this.
+    let (mut ledger, agent_id, payee_id, sovereign, key, old_commitment) = build(41);
+    let sovereign_id = sovereign.id();
+    let bad = 5u64;
+    let shape = turn_for(agent_id, sovereign_id, payee_id, bad, HashMap::new());
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        sovereign_id,
+        signed_sovereign_witness_with_new_commitment(
+            &[0u8; 32],
+            &sovereign,
+            &key,
+            old_commitment,
+            declared_post(&sovereign, bad),
+            shape.sovereign_effects_hash(&sovereign_id),
+            1,
+        ),
+    );
+    let turn = turn_for(agent_id, sovereign_id, payee_id, bad, witnesses);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: TurnError::ProgramViolation { .. },
+                ..
+            }
+        ),
+        "a sovereign owner cannot sign their cell out of its own slot caveat, \
+         even when every field of the witness agrees with the violating write: \
+         {result:?}"
+    );
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        0,
+        "a caveat rejection must not spend the sovereign replay sequence"
+    );
+
+    // ── LEG 3 — the converse. The caveat is satisfied and the WITNESS lies
+    //    about the post-state (it declares the no-op state). A satisfied program
+    //    must not excuse a witness whose declaration does not survive
+    //    re-execution.
+    let (mut ledger, agent_id, payee_id, sovereign, key, old_commitment) = build(42);
+    let sovereign_id = sovereign.id();
+    let shape = turn_for(agent_id, sovereign_id, payee_id, good, HashMap::new());
+    let mut witnesses = HashMap::new();
+    witnesses.insert(
+        sovereign_id,
+        signed_sovereign_witness_with_new_commitment(
+            &[0u8; 32],
+            &sovereign,
+            &key,
+            old_commitment,
+            // The UNCHANGED state — a well-formed commitment to the wrong thing.
+            sovereign.state_commitment(),
+            shape.sovereign_effects_hash(&sovereign_id),
+            1,
+        ),
+    );
+    let turn = turn_for(agent_id, sovereign_id, payee_id, good, witnesses);
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: TurnError::SovereignCommitmentMismatch { .. },
+                ..
+            }
+        ),
+        "a satisfied slot caveat must not excuse a post-state declaration the \
+         executor's own re-execution refutes: {result:?}"
+    );
+    assert_eq!(ledger.last_sovereign_witness_sequence(&sovereign_id), 0);
+}
+
+/// A receipt shell for the γ.2 fabrication above; the bilateral verifier reads
+/// the schedule out of the `Turn`, so the receipt only has to exist.
+fn sovereign_dummy_receipt(agent: CellId) -> dregg_turn::TurnReceipt {
+    dregg_turn::TurnReceipt {
+        turn_hash: [0u8; 32],
+        forest_hash: [0u8; 32],
+        pre_state_hash: [0u8; 32],
+        post_state_hash: [0u8; 32],
+        timestamp: 0,
+        effects_hash: [0u8; 32],
+        computrons_used: 0,
+        action_count: 0,
+        previous_receipt_hash: None,
+        agent,
+        federation_id: [0u8; 32],
+        routing_directives: vec![],
+        introduction_exports: vec![],
+        derivation_records: vec![],
+        emitted_events: vec![],
+        executor_signature: None,
+        finality: Default::default(),
+        was_encrypted: false,
+        was_burn: false,
+        consumed_capabilities: vec![],
+    }
 }
 
 // ===========================================================================
@@ -1151,10 +1400,168 @@ fn extra_witness_for_non_sovereign_cell_does_not_grant_authorization() {
     );
 }
 
+/// UNBLOCKED (2026-07-27) for two of its three legs, with the third FROZEN and
+/// named rather than faked.
+///
+/// The `#[ignore]` asked for a three-way agreement: "the witness's sequence
+/// number bound in the AIR PI must equal the sequence number in the witness
+/// payload AND in the on-chain cell state".
+///
+/// | leg | status |
+/// |---|---|
+/// | payload ↔ on-chain state | LIVE. `execute.rs` rule 6 demands `witness.sequence == last + 1`; the commit path bumps the ledger to exactly that value. |
+/// | payload ↔ AIR PI | the definition exists (`TurnExecutor::populate_sovereign_witness_pi` writes `pi::SOVEREIGN_WITNESS_SEQUENCE`) and agrees. |
+/// | AIR PI ↔ the deployed proof | **DEAD.** Nothing consults it. |
+///
+/// The third row is why the reason said "AIR teeth", and it is not coming.
+/// `populate_sovereign_witness_pi` has **no caller anywhere in the tree**; the
+/// deployed rotated leg publishes 38–78 PIs and `SOVEREIGN_WITNESS_SEQUENCE`
+/// lives at index 78 of the v1/v3 201-felt layout that leg does not use; and
+/// `EffectVmContext::is_sovereign_cell` is `false` in `Default` with no producer
+/// that sets it, so every deployed proof carries the zero sentinel.
+/// `metatheory/Dregg2/Circuit/SovereignBackingAttack.lean` does not assert this,
+/// it PROVES the consequence — `deployed_admits_replayed_sequence`.
+///
+/// So a test asserting "the PI equals the payload equals the state" on a live
+/// proof would be asserting on a constant zero, and would pass forever. What is
+/// tested instead is what is real: the two live legs, driven as a real chain-walk
+/// across three consecutive turns, plus the two definitions agreeing — and then
+/// the dead leg is pinned as a FREEZE so that wiring a producer makes this test
+/// red and makes someone read this comment.
 #[test]
-#[ignore = "blocked on sovereign-witness AIR teeth: tx-time vs verify-time consistency — the witness's sequence number bound in the AIR PI must equal the sequence number in the witness payload AND in the on-chain cell state"]
-fn sovereign_witness_sequence_pi_state_payload_must_agree() {
-    panic!("blocked");
+fn sovereign_witness_sequence_payload_and_state_agree_and_the_pi_leg_is_dead() {
+    use dregg_circuit::effect_vm::pi;
+    use dregg_circuit::field::BabyBear;
+
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(30);
+
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        0,
+        "a freshly registered sovereign cell starts at sequence 0"
+    );
+
+    // ── LEG 1: the chain-walk. Three consecutive turns, each advancing the
+    //    on-chain counter to exactly the sequence its payload declared.
+    let mut current = sovereign.clone();
+    let mut current_commitment = old_commitment;
+    for seq in 1u64..=3 {
+        // Each turn writes a distinct value so the post-state actually moves and
+        // the witnesses are not accidentally interchangeable.
+        let value = [seq as u8; 32];
+        let new_commitment = post_set_field_commitment(&current, 0, value);
+        let witness = signed_sovereign_witness_with_new_commitment(
+            &[0u8; 32],
+            &current,
+            &signing_key,
+            current_commitment,
+            new_commitment,
+            set_field_effects_hash(agent_id, sovereign_id, 0, value),
+            seq,
+        );
+
+        // The verifier-side PI definition, computed BEFORE the turn runs —
+        // i.e. at tx time, from the payload the owner signed.
+        let mut tx_time_pi = vec![BabyBear::ZERO; pi::ACTIVE_BASE_COUNT];
+        TurnExecutor::populate_sovereign_witness_pi(
+            &mut tx_time_pi,
+            &sovereign_id,
+            &ledger,
+            Some(&witness),
+            None,
+        );
+        assert_eq!(
+            tx_time_pi[pi::SOVEREIGN_WITNESS_SEQUENCE],
+            BabyBear::new((seq & 0x7FFF_FFFF) as u32),
+            "the PI definition must carry the payload's sequence"
+        );
+        assert_eq!(
+            tx_time_pi[pi::IS_SOVEREIGN_CELL],
+            BabyBear::new(1),
+            "a witness-path proof is by definition a sovereign-cell proof"
+        );
+
+        let mut witnesses = HashMap::new();
+        witnesses.insert(sovereign_id, witness);
+        let mut turn = set_field_turn_with_action_witnesses(
+            agent_id,
+            sovereign_id,
+            witnesses,
+            0,
+            value,
+            vec![],
+        );
+        turn.nonce = seq - 1;
+
+        let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+        assert!(
+            matches!(&result, TurnResult::Committed { .. }),
+            "turn {seq} of the sovereign chain must commit, got: {result:?}"
+        );
+
+        // VERIFY TIME: the on-chain counter now equals the sequence the payload
+        // declared — not "at least", exactly.
+        assert_eq!(
+            ledger.last_sovereign_witness_sequence(&sovereign_id),
+            seq,
+            "the on-chain sequence must equal the payload's, exactly"
+        );
+
+        current.state.set_field(0, value);
+        current_commitment = new_commitment;
+    }
+
+    // ── LEG 2: a GAP is refused, and refusing it costs the counter nothing.
+    //    Sequence 5 over a ledger sitting at 3.
+    let value = [0x5A; 32];
+    let gapped = signed_sovereign_witness_with_new_commitment(
+        &[0u8; 32],
+        &current,
+        &signing_key,
+        current_commitment,
+        post_set_field_commitment(&current, 0, value),
+        set_field_effects_hash(agent_id, sovereign_id, 0, value),
+        5,
+    );
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, gapped);
+    let mut turn =
+        set_field_turn_with_action_witnesses(agent_id, sovereign_id, witnesses, 0, value, vec![]);
+    turn.nonce = 3;
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    assert!(
+        matches!(
+            &result,
+            TurnResult::Rejected {
+                reason: TurnError::InvalidEffect { reason },
+                ..
+            } if reason.contains("sequence")
+        ),
+        "a sequence GAP must reject — monotonic is not enough, the chain has no \
+         holes: {result:?}"
+    );
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        3,
+        "a refused turn must leave the on-chain sequence exactly where it was"
+    );
+
+    // ── LEG 3: THE FREEZE. The deployed producer never claims to be a sovereign
+    //    proof, so the PI slots leg 1 computed are a definition nothing on the
+    //    wire consults. Assert that, so wiring a producer turns this red.
+    let ctx = dregg_circuit::effect_vm::EffectVmContext::default();
+    assert!(
+        !ctx.is_sovereign_cell,
+        "IS_SOVEREIGN_CELL is now set by a producer — the AIR PI leg of this \
+         test's three-way agreement is no longer dead, and the doc comment above \
+         (plus SovereignBackingAttack.lean's `deployed_admits_replayed_sequence`) \
+         must be revisited"
+    );
+    assert_eq!(
+        ctx.sovereign_witness_sequence, 0,
+        "the sequence column's default is the zero sentinel"
+    );
 }
 
 // ===========================================================================
