@@ -523,10 +523,19 @@ def sumAcrossOut : List Nat → List DField → Nat → Except DAdmit Nat
         if acc' ≥ two64 then .error .violated else sumAcrossOut rest newRegs acc'
 
 /-- `eval.rs::affine_sum` — `Σ kᵢ·new[fᵢ]` over the low lanes, first bad index
-wins. Exact over `Int`; the Rust side computes in `i128` and the MARSHALLER
-declines any term list that could leave the `i128` envelope (see
-`exec-lean/src/constraint_oracle.rs::affine_envelope_ok`), so within the encoded
-domain the two agree exactly. -/
+wins. Exact over `Int`, and THIS is the referent: the Rust side accumulates
+exactly too (`AffineAcc`, a signed 256-bit value), so the two agree on ALL
+inputs.
+
+⚠ This docstring used to rest the agreement on the MARSHALLER instead — "the
+Rust side computes in `i128` and the marshaller declines any term list that
+could leave the `i128` envelope, so within the encoded domain the two agree
+exactly". True as far as it went, and load-bearing on nothing: the targets that
+WRAPPED are wasm32 and the SP1 zkVM guest, which install no oracle and so never
+reach a marshaller. On those, `eval.rs` IS the whole evaluator, and its `i128`
+accumulator read a true sum of `2^128` as `0` and ADMITTED an `affineLe` with
+`c = 0`. Measured 2026-07-28. The agreement is now a property of the Rust
+arithmetic, not of an envelope in front of it. -/
 def affineSum : List (Int × Nat) → List DField → Except DAdmit Int
   | [], _ => .ok 0
   | (k, idx) :: rest, regs =>

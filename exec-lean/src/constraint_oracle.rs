@@ -54,12 +54,24 @@ fn hex32(f: &FieldElement) -> String {
 
 // ── ENCODING ENVELOPES ──────────────────────────────────────────────────────────────────────────
 //
-// The Lean evaluator computes over unbounded `Nat`/`Int`; the deployed Rust computes the affine
-// sums in `i128`. Inside these envelopes the `i128` arithmetic cannot overflow, so the two agree
-// EXACTLY. Outside them the marshaller DECLINES (returns `None`) and the Rust evaluator runs —
-// no silent disagreement, no wrapped-sum admit.
+// These bound the WIRE, so one admission cannot become a megabyte of tokens. Outside them the
+// marshaller DECLINES (`None`), and `dregg_cell`'s `undecided_subset_disposition` then REFUSES the
+// constraint rather than handing a Lean-subset decision back to the Rust twin.
+//
+// ⚠ THEY ARE NO LONGER LOAD-BEARING FOR AGREEMENT, AND THE ARGUMENT THAT SAID THEY WERE WAS
+// UNSOUND. This block used to read: "the deployed Rust computes the affine sums in `i128`; inside
+// these envelopes the `i128` arithmetic cannot overflow, so the two agree EXACTLY. Outside them the
+// marshaller DECLINES and the Rust evaluator runs — no silent disagreement, no wrapped-sum admit."
+// The first half was true and the last clause was the exact opposite of what happened: outside the
+// envelope the Rust evaluator ran and its `i128` accumulator WRAPPED, so a sum of `2^128` read as
+// `0` and ADMITTED an `AffineLe { c: 0 }` that Lean refuses. Measured on wasm32 (the browser light
+// client), where no oracle is installed and so no envelope stands in front of that accumulator at
+// all. `dregg_cell::program::eval::AffineAcc` now accumulates EXACTLY over a signed 256-bit value
+// on every target, so the Rust evaluator agrees with `DeployedConstraint.affineSum` for ALL inputs,
+// in or out of envelope — and these constants are a wire budget, not a soundness argument.
 
-/// Maximum affine terms marshalled. `1024 · 2^32 · 2^64 = 2^106 < i128::MAX`.
+/// Maximum affine terms marshalled. `1024 · 2^32 · 2^64 = 2^106`, comfortably inside the wire's
+/// decimal-token budget.
 const MAX_AFFINE_TERMS: usize = 1024;
 /// Maximum absolute affine coefficient marshalled (see [`MAX_AFFINE_TERMS`]).
 const MAX_AFFINE_COEFF: i64 = 1 << 32;

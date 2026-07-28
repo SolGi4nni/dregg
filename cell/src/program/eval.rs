@@ -1221,10 +1221,20 @@ fn evaluate_constraint_full(
                 Some(old) => {
                     let old_seq = field_to_u64(&old.fields[idx]);
                     let new_seq = field_to_u64(&new_state.fields[idx]);
-                    if new_seq != old_seq.wrapping_add(1) {
+                    // The successor is MODULAR — `DeployedConstraint.lean`'s
+                    // `monotonicSequence` arm is literally `n ≠ (o + 1) % two64`, so the wrap
+                    // is the Lean-sanctioned semantics and `wrapping_add` is the faithful test.
+                    // The DIAGNOSTIC below used a bare `old_seq + 1`, which is the same
+                    // three-verdict family as the affine accumulator: at `old_seq == u64::MAX`
+                    // with any `new_seq != 0` the refusal path is taken and the message
+                    // computes `u64::MAX + 1` — PANIC under `overflow-checks` (every debug
+                    // build), wrap under release. Same successor as the test, so the message
+                    // can no longer disagree with the check that produced it.
+                    let expected = old_seq.wrapping_add(1);
+                    if new_seq != expected {
                         return violated(
                             constraint,
-                            format!("seq[{idx}]: expected {} got {}", old_seq + 1, new_seq),
+                            format!("seq[{idx}]: expected {expected} got {new_seq}"),
                         );
                     }
                 }
@@ -1727,16 +1737,19 @@ fn evaluate_constraint_full(
         }
 
         StateConstraint::AffineLe { terms, c } => {
-            let sum = affine_sum(terms, new_state)?;
-            if sum > (*c as i128) {
+            // EXACT over ℤ (see `AffineAcc`) — the `i128` accumulator this replaced wrapped
+            // outside `±2^127`, and a wrapped-negative sum ADMITTED what Lean's `affineSum`
+            // refuses. Live on wasm32 / the SP1 zkVM guest, which install no oracle.
+            let sum = affine_sum(constraint, terms, new_state)?;
+            if sum.gt_i128(i128::from(*c)) {
                 return violated(constraint, format!("affine sum {sum} > {c}"));
             }
             Ok(())
         }
 
         StateConstraint::AffineEq { terms, c } => {
-            let sum = affine_sum(terms, new_state)?;
-            if sum != (*c as i128) {
+            let sum = affine_sum(constraint, terms, new_state)?;
+            if !sum.eq_i128(i128::from(*c)) {
                 return violated(constraint, format!("affine sum {sum} != {c}"));
             }
             Ok(())
@@ -2083,8 +2096,8 @@ fn evaluate_constraint_full(
                 constraint: constraint.clone(),
                 index: 0,
             })?;
-            let sum = affine_delta_sum(terms, old, new_state)?;
-            if sum > (*c as i128) {
+            let sum = affine_delta_sum(constraint, terms, old, new_state)?;
+            if sum.gt_i128(i128::from(*c)) {
                 return violated(constraint, format!("affine delta sum {sum} > {c}"));
             }
             Ok(())
@@ -2944,33 +2957,164 @@ pub fn bound_delta_pair_matches(
     })
 }
 
-/// `Σ kᵢ·new[fᵢ]` over named slots (big-endian u64 lifted to i128). Fail-closed on a
-/// bad slot index. Mirrors Lean `Exec.affineSum`.
-fn affine_sum(terms: &[(i64, u8)], state: &CellState) -> Result<i128, ProgramError> {
-    let mut sum: i128 = 0;
+/// An **EXACT** signed 256-bit accumulator: `value = hi·2^128 + lo`, two's complement.
+///
+/// ⚑ WHY THIS EXISTS, AND WHY NOT `i128`. The referent for `AffineLe` / `AffineEq` /
+/// `AffineDeltaLe` is the Lean semantics, which computes over **unbounded `Int`** on BOTH
+/// levels: the abstract model (`Dregg2/Exec/Program.lean::affineSum`, `affineDeltaSum`) and the
+/// DEPLOYED model the oracle actually runs (`Dregg2/Exec/DeployedConstraint.lean::affineSum`,
+/// `affineDeltaSum` — `.ok (k * (low64 …) + s)` over `Int`). This accumulator used to be an
+/// `i128` with an unchecked `sum += (k as i128) * x`, which is not that function: outside
+/// `±2^127` it wrapped, and a wrapped-negative sum ADMITS an `AffineLe` the Lean `affineSum`
+/// REFUSES. `dregg-exec-lean`'s marshalling envelope (`MAX_AFFINE_TERMS` / `MAX_AFFINE_COEFF`)
+/// bounds the sum below `2^106` and so hid the wrap on the native+oracle path — but wasm32 and
+/// the SP1 zkVM guest install NO oracle and have NO envelope
+/// (`oracle::constraint_subset_fails_closed_without_oracle()` is `false` there, by design: the
+/// browser light client has no archive to install from), so THIS function is the whole
+/// evaluator on those targets and it must be the Lean function.
+///
+/// Measured 2026-07-28 on `AffineLe { terms: [(i64::MAX, 0), (i64::MAX, 1)], c: 0 }` with both
+/// slots at `u64::MAX` — one input, three verdicts: wasm32-wasip1 release **ADMIT**, native
+/// release `ConstraintOracleUnavailable`, native debug **PANIC** (`attempt to add with
+/// overflow`). Lean says REFUSE (the exact sum is `≈ 3.40·10^38 > 0`).
+///
+/// **EXACT, NOT SATURATING AND NOT "REFUSE ON OVERFLOW".** Saturation would invent an answer,
+/// and `AffineLe` on a balance slot is exactly where an invented answer moves value. A
+/// checked-`i128` refusal would be wrong in the other direction: it refuses inputs Lean ADMITS
+/// whenever an INTERMEDIATE leaves `i128` but the total does not — e.g.
+/// `[(i64::MAX,0), (i64::MAX,1), (i64::MIN,2), (i64::MIN,3)]` over four `u64::MAX` slots, whose
+/// exact sum is `−2·(2^64−1) ≤ 0`. Exactness also makes the fold ORDER irrelevant, which matters
+/// because Lean folds RIGHT (`affineSum` recurses on the tail) and this loop folds LEFT: over ℤ
+/// the two agree by associativity, and under any bounded accumulator they would not.
+///
+/// **IT CANNOT OVERFLOW.** Each term is `k·x` with `|k| ≤ 2^63` and `|x| < 2^64`, so
+/// `|k·x| < 2^127`; reaching `±2^255` therefore needs `2^128` terms, and a `Vec<(i64, u8)>` of
+/// that length is not representable. The `checked_*` arms below are consequently FLOORS, not
+/// live gates — they cannot fire for this input domain. They are here so that "nothing in this
+/// evaluator wraps" is a property a reader can check locally instead of reconstructing that
+/// bound, and so the failure mode if a future caller widens the domain is a REFUSAL, never a
+/// silent wrap.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct AffineAcc {
+    hi: i128,
+    lo: u128,
+}
+
+impl AffineAcc {
+    const ZERO: Self = Self { hi: 0, lo: 0 };
+
+    /// Sign-extend an exact `i128` into the 256-bit accumulator.
+    #[inline]
+    const fn from_i128(v: i128) -> Self {
+        Self {
+            hi: if v < 0 { -1 } else { 0 },
+            lo: v as u128,
+        }
+    }
+
+    /// The exact value as an `i128`, or `None` if it does not fit.
+    #[inline]
+    fn to_i128(self) -> Option<i128> {
+        let v = self.lo as i128;
+        if Self::from_i128(v) == self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// `self + t`, exact. `None` = the 256-bit accumulator itself would overflow.
+    #[inline]
+    fn checked_add_i128(self, t: i128) -> Option<Self> {
+        let (lo, carry) = self.lo.overflowing_add(t as u128);
+        // The sign-extension limb of `t` is `-1` or `0` and `carry` is `0` or `1`, so their sum
+        // lies in `{-1, 0, 1}` and cannot itself overflow — only the fold into `hi` can.
+        let t_hi: i128 = if t < 0 { -1 } else { 0 };
+        let hi = self.hi.checked_add(t_hi + i128::from(carry))?;
+        Some(Self { hi, lo })
+    }
+
+    /// `self > c`, exact. Two's complement over 256 bits orders by the SIGNED high limb first,
+    /// then by the UNSIGNED low limb — which is exactly this tuple comparison.
+    #[inline]
+    fn gt_i128(self, c: i128) -> bool {
+        let o = Self::from_i128(c);
+        (self.hi, self.lo) > (o.hi, o.lo)
+    }
+
+    /// `self == c`, exact.
+    #[inline]
+    fn eq_i128(self, c: i128) -> bool {
+        self == Self::from_i128(c)
+    }
+}
+
+impl std::fmt::Display for AffineAcc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.to_i128() {
+            Some(v) => write!(f, "{v}"),
+            // Every affine bound `c` is an `i64`, so a sum outside `±2^127` is decided by
+            // magnitude alone and the exact decimal adds nothing to the diagnostic. Print the
+            // exact two's-complement limbs rather than carry a 256-bit decimal printer.
+            None => write!(
+                f,
+                "0x{:032x}{:032x} (exact 256-bit, |sum| > 2^127)",
+                self.hi as u128, self.lo
+            ),
+        }
+    }
+}
+
+/// `acc + k·x`, EXACT. `x` is a u64-lane read (`affine_sum`) or a u64-lane difference
+/// (`affine_delta_sum`); see [`AffineAcc`] for why both `checked_*` arms are floors that cannot
+/// fire for those domains, and why a refusal — never a wrap — is what happens if they ever do.
+fn affine_accumulate(
+    constraint: &StateConstraint,
+    acc: AffineAcc,
+    k: i64,
+    x: i128,
+) -> Result<AffineAcc, ProgramError> {
+    let term = i128::from(k)
+        .checked_mul(x)
+        .ok_or_else(|| viol(constraint, "affine term product out of range"))?;
+    acc.checked_add_i128(term)
+        .ok_or_else(|| viol(constraint, "affine accumulator out of range"))
+}
+
+/// `Σ kᵢ·new[fᵢ]` over named slots (big-endian u64 lifted signed), accumulated EXACTLY in
+/// [`AffineAcc`]. Fail-closed on a bad slot index. Mirrors Lean `Exec.affineSum` /
+/// `DeployedConstraint.affineSum`, both of which compute over unbounded `Int`.
+fn affine_sum(
+    constraint: &StateConstraint,
+    terms: &[(i64, u8)],
+    state: &CellState,
+) -> Result<AffineAcc, ProgramError> {
+    let mut sum = AffineAcc::ZERO;
     for (k, idx) in terms {
         let i = check_index(*idx)?;
-        let x = field_to_u64(&state.fields[i]) as i128;
-        sum += (*k as i128) * x;
+        let x = i128::from(field_to_u64(&state.fields[i]));
+        sum = affine_accumulate(constraint, sum, *k, x)?;
     }
     Ok(sum)
 }
 
 /// `Σ kᵢ·(new[fᵢ] − old[fᵢ])` over named slots — the affine combination of the per-field
-/// DELTAS across the `(old, new)` transition (big-endian u64 lifted to i128 on each side).
-/// Fail-closed on a bad slot index. Mirrors Lean `Exec.affineDeltaSum` (the reader behind
+/// DELTAS across the `(old, new)` transition (big-endian u64 lifted signed on each side),
+/// accumulated EXACTLY in [`AffineAcc`]. Fail-closed on a bad slot index. Mirrors Lean
+/// `Exec.affineDeltaSum` / `DeployedConstraint.affineDeltaSum` (the reader behind
 /// `affineDeltaLe`): the genuine multi-field rate gate the single-field `DeltaBounded` /
 /// `FieldDelta` cannot express.
 fn affine_delta_sum(
+    constraint: &StateConstraint,
     terms: &[(i64, u8)],
     old_state: &CellState,
     new_state: &CellState,
-) -> Result<i128, ProgramError> {
-    let mut sum: i128 = 0;
+) -> Result<AffineAcc, ProgramError> {
+    let mut sum = AffineAcc::ZERO;
     for (k, idx) in terms {
         let i = check_index(*idx)?;
         let delta = field_delta_i128(&old_state.fields[i], &new_state.fields[i]);
-        sum += (*k as i128) * delta;
+        sum = affine_accumulate(constraint, sum, *k, delta)?;
     }
     Ok(sum)
 }
@@ -3124,6 +3268,208 @@ pub fn field_from_u64(val: u64) -> FieldElement {
 /// Alias for `field_from_u64` — explicit big-endian naming for clarity at call sites.
 pub fn field_from_u64_be(val: u64) -> FieldElement {
     field_from_u64(val)
+}
+
+/// THE AFFINE ACCUMULATOR IS EXACT — the same verdict on every target and in every profile.
+///
+/// These call [`affine_sum`] / [`affine_delta_sum`] DIRECTLY rather than through
+/// [`evaluate_constraint_full`], so they are independent of the constraint-oracle gate (which is
+/// release-and-native-only) and therefore mean the same thing in a debug lib test, a release lib
+/// test, and — the configuration that actually ran the wrap — wasm32 / the SP1 zkVM guest. The
+/// end-to-end poles over `CellProgram::evaluate` live in `cell/tests/affine_accumulator_exact.rs`.
+///
+/// Every expectation here is LEAN's: `Dregg2/Exec/Program.lean::affineSum` and
+/// `Dregg2/Exec/DeployedConstraint.lean::affineSum`, both over unbounded `Int`.
+#[cfg(test)]
+mod affine_exact_accumulator_tests {
+    use super::*;
+
+    /// `2·(2^63 − 1)·(2^64 − 1)` — the exact sum of the pinned exploit input. It is `> 2^127`,
+    /// so an `i128` accumulator wraps it to a NEGATIVE number and admits `AffineLe { c: 0 }`.
+    fn pinned_exploit_exact() -> AffineAcc {
+        // `2·(2^63−1)·(2^64−1) = 2^128 − 2^65 − 2^64 + 2`. That is BELOW `2^128` and above
+        // `2^127`, so it occupies the low limb alone with its top bit set — which is precisely
+        // why an `i128` read of it is a large NEGATIVE number.
+        AffineAcc {
+            hi: 0,
+            lo: 0u128.wrapping_sub((1u128 << 65) + (1u128 << 64) - 2),
+        }
+    }
+
+    fn state_with(vals: &[(usize, u64)]) -> CellState {
+        let mut s = CellState::new(0);
+        for (i, v) in vals {
+            s.fields[*i] = field_from_u64(*v);
+        }
+        s
+    }
+
+    #[test]
+    fn acc_is_exact_across_the_i128_boundary() {
+        // `i128::MAX + 1` is representable and ORDERS ABOVE `i128::MAX`. The accumulator this
+        // replaced wrapped it to `i128::MIN` — the whole wound in one line.
+        let over = AffineAcc::from_i128(i128::MAX)
+            .checked_add_i128(1)
+            .expect("2^127 fits the 256-bit accumulator");
+        assert_eq!(over.to_i128(), None, "2^127 must not claim to fit an i128");
+        assert!(over.gt_i128(i128::MAX), "2^127 > i128::MAX, exactly");
+        assert!(over.gt_i128(0), "2^127 > 0, exactly");
+        assert!(
+            !over.eq_i128(i128::MIN),
+            "2^127 is NOT i128::MIN (the wrap)"
+        );
+        // And it comes back down exactly.
+        let back = over
+            .checked_add_i128(-1)
+            .expect("still inside the accumulator");
+        assert_eq!(back.to_i128(), Some(i128::MAX));
+        // The negative boundary, same shape.
+        let under = AffineAcc::from_i128(i128::MIN)
+            .checked_add_i128(-1)
+            .expect("-2^127 - 1 fits");
+        assert_eq!(under.to_i128(), None);
+        assert!(!under.gt_i128(i128::MIN), "-2^127-1 < i128::MIN, exactly");
+    }
+
+    #[test]
+    fn pinned_exploit_sum_is_the_exact_positive_value_not_a_wrapped_negative() {
+        // The input pinned in-tree: two `i64::MAX` coefficients over two `u64::MAX` slots.
+        let c = StateConstraint::AffineLe {
+            terms: vec![(i64::MAX, 0), (i64::MAX, 1)],
+            c: 0,
+        };
+        let state = state_with(&[(0, u64::MAX), (1, u64::MAX)]);
+        let StateConstraint::AffineLe { terms, .. } = &c else {
+            unreachable!()
+        };
+        let sum = affine_sum(&c, terms, &state).expect("slots are in range");
+        assert_eq!(
+            sum,
+            pinned_exploit_exact(),
+            "the sum must be the exact 2·(2^63−1)·(2^64−1), not an i128 residue"
+        );
+        assert!(
+            sum.gt_i128(0),
+            "the exact sum is ~3.40e38 > 0, so Lean REFUSES this AffineLe; a wrapped i128 \
+             accumulator makes it negative and ADMITS"
+        );
+        assert_eq!(
+            sum.to_i128(),
+            None,
+            "it does not fit an i128 — that is the point"
+        );
+    }
+
+    #[test]
+    fn eight_terms_summing_to_two_pow_128_are_not_zero() {
+        // `8 · 2^62 · 2^63 = 2^128`, which an `i128` accumulator reduces to EXACTLY ZERO — so
+        // `AffineEq { c: 0 }` was ADMITTED and `AffineLe { c: 0 }` was ADMITTED.
+        let terms: Vec<(i64, u8)> = (0..8u8).map(|i| (1i64 << 62, i)).collect();
+        let vals: Vec<(usize, u64)> = (0..8).map(|i| (i, 1u64 << 63)).collect();
+        let state = state_with(&vals);
+        let c = StateConstraint::AffineEq {
+            terms: terms.clone(),
+            c: 0,
+        };
+        let sum = affine_sum(&c, &terms, &state).expect("slots are in range");
+        assert_eq!(sum, AffineAcc { hi: 1, lo: 0 }, "the exact sum is 2^128");
+        assert!(!sum.eq_i128(0), "2^128 != 0 — AffineEq{{c:0}} must REFUSE");
+        assert!(sum.gt_i128(0), "2^128 > 0 — AffineLe{{c:0}} must REFUSE");
+    }
+
+    #[test]
+    fn intermediate_overflow_with_an_in_range_total_is_still_exact() {
+        // THE OTHER POLE, and the reason this is EXACT and not "checked, refuse on overflow":
+        // the running total leaves `i128` twice, but the true sum is `−2·(2^64−1)`, which Lean
+        // ADMITS under `AffineLe { c: 0 }`. A checked-`i128` accumulator would REFUSE it — a
+        // checker that refuses a legitimate constraint is as broken as one that wraps.
+        let terms = vec![(i64::MAX, 0), (i64::MAX, 1), (i64::MIN, 2), (i64::MIN, 3)];
+        let c = StateConstraint::AffineLe {
+            terms: terms.clone(),
+            c: 0,
+        };
+        let state = state_with(&[(0, u64::MAX), (1, u64::MAX), (2, u64::MAX), (3, u64::MAX)]);
+        let sum = affine_sum(&c, &terms, &state).expect("slots are in range");
+        let expected = -2i128 * i128::from(u64::MAX);
+        assert_eq!(sum.to_i128(), Some(expected));
+        assert!(!sum.gt_i128(0), "the exact sum is negative — Lean ADMITS");
+    }
+
+    #[test]
+    fn delta_sum_matches_the_same_two_poles() {
+        // REFUSE pole: eight `2^62·2^63` deltas = 2^128 > 0.
+        let terms: Vec<(i64, u8)> = (0..8u8).map(|i| (1i64 << 62, i)).collect();
+        let c = StateConstraint::AffineDeltaLe {
+            terms: terms.clone(),
+            c: 0,
+        };
+        let old = CellState::new(0);
+        let vals: Vec<(usize, u64)> = (0..8).map(|i| (i, 1u64 << 63)).collect();
+        let new = state_with(&vals);
+        let sum = affine_delta_sum(&c, &terms, &old, &new).expect("slots are in range");
+        assert_eq!(sum, AffineAcc { hi: 1, lo: 0 });
+        assert!(
+            sum.gt_i128(0),
+            "2^128 > 0 — AffineDeltaLe{{c:0}} must REFUSE"
+        );
+
+        // ADMIT pole with overflowing intermediates: same four-term shape over the deltas.
+        let wide = vec![(i64::MAX, 0), (i64::MAX, 1), (i64::MIN, 2), (i64::MIN, 3)];
+        let cw = StateConstraint::AffineDeltaLe {
+            terms: wide.clone(),
+            c: 0,
+        };
+        let new_wide = state_with(&[(0, u64::MAX), (1, u64::MAX), (2, u64::MAX), (3, u64::MAX)]);
+        let sum = affine_delta_sum(&cw, &wide, &old, &new_wide).expect("slots are in range");
+        assert_eq!(sum.to_i128(), Some(-2i128 * i128::from(u64::MAX)));
+        assert!(
+            !sum.gt_i128(0),
+            "the exact delta sum is negative — Lean ADMITS"
+        );
+
+        // And the ordinary in-range case still reads exactly (Lean Program.lean:1052 budget).
+        let small = vec![(1i64, 0), (1i64, 1)];
+        let cs = StateConstraint::AffineDeltaLe {
+            terms: small.clone(),
+            c: 5,
+        };
+        let old_s = state_with(&[(0, 10), (1, 10)]);
+        let new_s = state_with(&[(0, 12), (1, 13)]);
+        let sum = affine_delta_sum(&cs, &small, &old_s, &new_s).expect("slots are in range");
+        assert_eq!(sum.to_i128(), Some(5));
+        assert!(!sum.gt_i128(5));
+    }
+
+    #[test]
+    fn a_bad_slot_index_still_fails_closed_before_any_arithmetic() {
+        let terms = vec![(1i64, 0u8), (1i64, 200u8)];
+        let c = StateConstraint::AffineLe {
+            terms: terms.clone(),
+            c: 0,
+        };
+        let state = CellState::new(0);
+        assert!(
+            matches!(
+                affine_sum(&c, &terms, &state),
+                Err(ProgramError::InvalidFieldIndex { index: 200 })
+            ),
+            "an out-of-range slot must still surface InvalidFieldIndex"
+        );
+    }
+
+    #[test]
+    fn display_is_exact_decimal_inside_i128_and_exact_limbs_outside() {
+        assert_eq!(AffineAcc::from_i128(-7).to_string(), "-7");
+        assert_eq!(
+            AffineAcc::from_i128(i128::MAX).to_string(),
+            i128::MAX.to_string()
+        );
+        let over = AffineAcc { hi: 1, lo: 0 };
+        assert!(
+            over.to_string().contains("|sum| > 2^127"),
+            "a sum past i128 must SAY so rather than print a wrapped decimal, got {over}"
+        );
+    }
 }
 
 /// FAIL-CLOSED logic pins for the constraint-oracle subset twin (#2). These exercise the pure
