@@ -317,33 +317,62 @@ fn v3_coverage_ledger() -> Vec<(&'static str, Cov)> {
             "spawnCapOpenVmDescriptor2R24",
             Covered("cap_open_fanout_prove_through::spawn_cap_open_proves_and_verifies"),
         ),
+        // ── the §10 cap-WRITE tail. All seven prove + verify against the committed bytes
+        //    (`cap_open_write_prove_through`, real `CanonicalCapTree` INSERT / REMOVE / UPDATE
+        //    witnesses, five red-proofs apiece).
+        //
+        //    ⚑⚑⚑ AND THE WRITE-TOOTH AUDIT THOSE TESTS RAN FOUND A HOLE, on the two REMOVE
+        //    members. `Covered` here means what this ledger defines it to mean — a real prove+verify
+        //    roundtrip against this registry's committed descriptor — and NOT that the member
+        //    delivers the property it exists for. Resolving the AFTER rotated cap-root group (c452 +
+        //    c479..c485) against every committed constraint: the four INSERT members and the UPDATE
+        //    member each carry EIGHT gates welding it to a forced fold; `revokeDelegationWrite` and
+        //    `revokeCapabilityWrite` carry ZERO, and declare no map-op either. So the tombstone
+        //    zero-fold is not forced in-circuit and a FABRICATED post-remove cap-root proves AND
+        //    verifies — measured, not argued, by
+        //    `cap_open_write_prove_through::remove_write_twins_do_not_bind_the_post_remove_cap_root`.
+        //    The post-root on those two is exactly as host-trusted as on their authority-only twins,
+        //    which is the posture the write twins were introduced to replace. The fix is an AIR
+        //    constraint and belongs in `Dregg2/Circuit/Emit/CapRemoveEmit.lean`, never in Rust.
         (
             "delegateWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered("cap_open_write_prove_through::delegate_write_cap_open_proves_and_verifies"),
         ),
         (
             "introduceWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered("cap_open_write_prove_through::introduce_write_cap_open_proves_and_verifies"),
         ),
         (
             "delegateAttenWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered(
+                "cap_open_write_prove_through::delegate_atten_write_cap_open_proves_and_verifies",
+            ),
         ),
         (
             "revokeDelegationWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered(
+                "cap_open_write_prove_through::revoke_delegation_write_cap_open_proves_and_verifies \
+                 — ⚑ roundtrip only; the POST-REMOVE cap-root is NOT bound in-circuit (see \
+                 ::remove_write_twins_do_not_bind_the_post_remove_cap_root)",
+            ),
         ),
         (
             "revokeCapabilityWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered(
+                "cap_open_write_prove_through::revoke_capability_write_cap_open_proves_and_verifies \
+                 — ⚑ roundtrip only; the POST-REMOVE cap-root is NOT bound in-circuit (see \
+                 ::remove_write_twins_do_not_bind_the_post_remove_cap_root)",
+            ),
         ),
         (
             "refreshDelegationWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered(
+                "cap_open_write_prove_through::refresh_delegation_write_cap_open_proves_and_verifies",
+            ),
         ),
         (
             "spawnWriteCapOpenVmDescriptor2R24",
-            Uncovered("no cap-open write prove-through test exists for this member"),
+            Covered("cap_open_write_prove_through::spawn_write_cap_open_proves_and_verifies"),
         ),
     ]
 }
