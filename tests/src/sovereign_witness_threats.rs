@@ -233,11 +233,24 @@ fn signed_sovereign_witness_for_federation(
 }
 
 /// SECURITY (sovereign-witness hardening): a witness must name the REAL
-/// post-state commitment and a non-zero local-effect hash — all-zero fields are
-/// legacy placeholders the executor now rejects (execute.rs rules 7/8), and the
-/// executor re-executes and checks the declared `new_commitment` against the
-/// recomputed post-state (`SovereignCommitmentMismatch`). Callers whose turn
-/// mutates the cell pass the post-effect commitment here.
+/// post-state commitment and the REAL per-cell effects hash for the turn it
+/// rides — the executor re-executes and checks the declared `new_commitment`
+/// against the recomputed post-state (`SovereignCommitmentMismatch`), and
+/// rule 7b compares the declared `effects_hash` against
+/// `Turn::sovereign_effects_hash(cell)` (`EffectsHashMismatch`). Callers whose
+/// turn mutates the cell pass the post-effect commitment here.
+///
+/// ⚠ `effects_hash` is passed through VERBATIM. This helper used to coerce an
+/// all-zero argument into `blake3("dregg-sovereign-witness-empty-effects")`,
+/// which was a defensible stand-in while the only rule about `effects_hash` was
+/// "must not be the zero placeholder". Rule 7b replaced that rule with a
+/// BINDING (`execute.rs`: "The zero placeholder is still refused; it is refused
+/// by the rule that binds"), and against a binding the coercion is not a
+/// stand-in — it is a value that can never match, so every positive sovereign
+/// test in this file died the moment the binding landed. A fixture that
+/// manufactures a hash the executor cannot accept is worse than one that
+/// demands the caller compute the real one, so callers now do: see
+/// [`set_field_effects_hash`].
 fn signed_sovereign_witness_with_new_commitment(
     federation_id: &[u8; 32],
     cell: &Cell,
@@ -248,11 +261,6 @@ fn signed_sovereign_witness_with_new_commitment(
     sequence: u64,
 ) -> SovereignCellWitness {
     let cell_id = cell.id();
-    let effects_hash = if effects_hash == [0u8; 32] {
-        *blake3::hash(b"dregg-sovereign-witness-empty-effects").as_bytes()
-    } else {
-        effects_hash
-    };
     let timestamp = 0;
     let message = SovereignCellWitness::signing_message_for_federation(
         federation_id,
@@ -283,6 +291,22 @@ fn post_set_field_commitment(cell: &Cell, index: usize, value: [u8; 32]) -> [u8;
     let mut post = cell.clone();
     post.state.set_field(index, value);
     post.state_commitment()
+}
+
+/// The per-cell effects hash that executor rule 7b demands of a witness riding
+/// the turn `set_field_turn_with_action_witnesses(agent, target, …, index,
+/// value, …)` builds.
+///
+/// `Turn::sovereign_effects_hash` is a pure function of the call forest — it
+/// never reads `sovereign_witnesses` — so the value is computable from an
+/// otherwise-identical turn carrying an EMPTY witness map, before the witness
+/// it must be signed into exists. That is what makes rule 7b testable from the
+/// outside without duplicating the canonical hash's definition here: this
+/// helper calls the same `Turn` method the executor calls, so a change to the
+/// canonical encoding cannot silently pass by moving both sides together.
+fn set_field_effects_hash(agent: CellId, target: CellId, index: u64, value: [u8; 32]) -> [u8; 32] {
+    set_field_turn_with_action_witnesses(agent, target, HashMap::new(), index, value, vec![])
+        .sovereign_effects_hash(&target)
 }
 
 fn sovereign_fixture(seed: u8) -> (Ledger, CellId, CellId, Cell, SigningKey, [u8; 32]) {
@@ -331,7 +355,7 @@ fn sovereign_witness_with_legal_key_accepts() {
         &signing_key,
         old_commitment,
         new_commitment,
-        [0u8; 32],
+        set_field_effects_hash(agent_id, sovereign_id, 0, [1u8; 32]),
         1,
     );
     let mut witnesses = HashMap::new();
@@ -442,13 +466,323 @@ fn sovereign_cell_turn_without_witness_rejects() {
     );
 }
 
+// ===========================================================================
+// THE EFFECTS BINDING (executor rule 7b, `execute.rs`)
+//
+// `witness.effects_hash` rides in the canonical signing message and, until
+// 2026-07-27, was compared against NOTHING. `TurnError::EffectsHashMismatch`
+// was defined (`turn/src/error.rs:286`), formatted (`:890`) and matched in a
+// handler (`starbridge-v2/src/debug.rs`) — and CONSTRUCTED ZERO TIMES, while
+// `turn/src/turn.rs` stated the executor "recomputes both during forest
+// execution". A sovereign owner signed `H(Transfer 10)`, the executor applied
+// `Transfer 20`, and it committed.
+//
+// The placeholder that used to sit here (`air_proof_constrains_sovereign_
+// witness_to_transition`, `#[ignore]`d "blocked on T9") described this exact
+// attack in a comment and `panic!("blocked")`. It is now driven, twice.
+// ===========================================================================
+
+/// The post-state commitment of `cell` after it sends `amount` — the value a
+/// sovereign witness must declare as `new_commitment` for a turn whose sole
+/// effect is that outbound transfer.
+fn post_transfer_commitment(cell: &Cell, amount: u64) -> [u8; 32] {
+    let mut post = cell.clone();
+    post.state
+        .set_balance(post.state.balance() - i64::try_from(amount).expect("amount fits i64"));
+    post.state_commitment()
+}
+
+/// A turn whose sole effect is `Transfer { from: sovereign, to, amount }`,
+/// carried by an action TARGETING the sovereign cell (so the transfer needs no
+/// cross-cell `Send` permission — the authority in question is the witness).
+fn transfer_turn(
+    agent: CellId,
+    sovereign: CellId,
+    to: CellId,
+    amount: u64,
+    witnesses: HashMap<CellId, SovereignCellWitness>,
+) -> Turn {
+    let mut call_forest = CallForest::new();
+    call_forest.add_root(Action {
+        target: sovereign,
+        method: symbol("pay"),
+        args: vec![],
+        authorization: Authorization::Unchecked,
+        preconditions: Default::default(),
+        effects: vec![Effect::Transfer {
+            from: sovereign,
+            to,
+            amount,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+        witness_blobs: vec![],
+    });
+
+    Turn {
+        agent,
+        nonce: 0,
+        call_forest,
+        fee: 0,
+        memo: None,
+        valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: witnesses,
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    }
+}
+
+/// The canonical `effects_hash` for `sovereign` on the turn `transfer_turn`
+/// builds — computed by calling the SAME `Turn::sovereign_effects_hash` the
+/// executor calls, on an otherwise-identical witness-free turn (the canonical
+/// sequence never reads `sovereign_witnesses`).
+fn transfer_effects_hash(agent: CellId, sovereign: CellId, to: CellId, amount: u64) -> [u8; 32] {
+    transfer_turn(agent, sovereign, to, amount, HashMap::new()).sovereign_effects_hash(&sovereign)
+}
+
+/// THE ATTACK, as written in the retired placeholder's own comment: the witness
+/// authorized `Transfer(10)`, the executor is handed `Transfer(20)`.
+///
+/// The witness is otherwise PERFECT — signed by the cell's own key over the
+/// canonical federation message, correct `old_commitment`, correct sequence, no
+/// `transition_proof`. The only thing wrong is that the effect set it signed is
+/// not the effect set in the turn.
 #[test]
-#[ignore = "blocked on T9: AIR-side constraint binds the sovereign witness to the cell transition (not just the receipt)"]
-fn air_proof_constrains_sovereign_witness_to_transition() {
-    // Build a turn with a valid witness payload but mismatched effect
-    // (e.g., the witness authorized Transfer(10), the executor applies
-    // Transfer(20)). The AIR's per-transition witness check must reject.
-    panic!("blocked");
+fn sovereign_witness_authorizing_transfer_10_refuses_transfer_20() {
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(20);
+
+    // What Alice signed: pay the agent 10, ending at balance 490.
+    let authorized = transfer_effects_hash(agent_id, sovereign_id, agent_id, 10);
+    let witness = signed_sovereign_witness_with_new_commitment(
+        &[0u8; 32],
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        post_transfer_commitment(&sovereign, 10),
+        authorized,
+        1,
+    );
+
+    // What the submitter attaches it to: pay the agent 20.
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, witness);
+    let forgery = transfer_turn(agent_id, sovereign_id, agent_id, 20, witnesses);
+
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&forgery, &mut ledger);
+    match &result {
+        TurnResult::Rejected {
+            reason:
+                TurnError::EffectsHashMismatch {
+                    cell,
+                    expected,
+                    got,
+                },
+            ..
+        } => {
+            assert_eq!(
+                *expected,
+                transfer_effects_hash(agent_id, sovereign_id, agent_id, 20),
+                "the executor must name the canonical hash of the turn it was handed"
+            );
+            assert_eq!(*got, authorized, "and the hash the owner actually signed");
+            assert_ne!(
+                expected, got,
+                "an EffectsHashMismatch with equal legs is not a mismatch"
+            );
+            assert_eq!(
+                *cell, sovereign_id,
+                "the error must name the witness that was wrong"
+            );
+        }
+        other => panic!(
+            "a witness authorizing Transfer(10) must not authorize Transfer(20); got: {other:?}"
+        ),
+    }
+
+    // Nothing moved, and the replay sequence did not advance.
+    assert_eq!(
+        ledger.get_sovereign_commitment(&sovereign_id),
+        Some(&old_commitment),
+        "a refused forgery must leave the sovereign commitment untouched"
+    );
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        0,
+        "a refused forgery must not burn the witness sequence"
+    );
+}
+
+/// THE COMMITMENT-BLIND FORGERY — the one that proves this check is not
+/// redundant.
+///
+/// Alice signs "pay Bob 10". The submitter rewrites the payee to Mallory and
+/// leaves the amount alone. Alice's post-state is BYTE-IDENTICAL under both
+/// effect sets (she is down 10 either way), so `SovereignCommitmentMismatch`
+/// — the only other thing checking a sovereign witness's declarations — is
+/// structurally blind to it. If rule 7b is removed, this turn COMMITS and
+/// Mallory is paid with Alice's signature.
+#[test]
+fn sovereign_witness_authorizing_payment_to_bob_refuses_payment_to_mallory() {
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(21);
+
+    let bob = permissive_cell(30, 0);
+    let bob_id = bob.id();
+    ledger.insert_cell(bob).unwrap();
+    let mallory = permissive_cell(31, 0);
+    let mallory_id = mallory.id();
+    ledger.insert_cell(mallory).unwrap();
+
+    // Alice signs "pay Bob 10". Her declared post-state is balance 490 — which
+    // is ALSO her post-state under the forgery.
+    let new_commitment = post_transfer_commitment(&sovereign, 10);
+    let authorized = transfer_effects_hash(agent_id, sovereign_id, bob_id, 10);
+    let witness = signed_sovereign_witness_with_new_commitment(
+        &[0u8; 32],
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        new_commitment,
+        authorized,
+        1,
+    );
+    assert_eq!(
+        new_commitment,
+        post_transfer_commitment(&sovereign, 10),
+        "the two effect sets must be commitment-INDISTINGUISHABLE for this test to bite"
+    );
+
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, witness);
+    let forgery = transfer_turn(agent_id, sovereign_id, mallory_id, 10, witnesses);
+
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&forgery, &mut ledger);
+    match &result {
+        TurnResult::Rejected {
+            reason:
+                TurnError::EffectsHashMismatch {
+                    cell,
+                    expected,
+                    got,
+                },
+            ..
+        } => {
+            assert_eq!(
+                *expected,
+                transfer_effects_hash(agent_id, sovereign_id, mallory_id, 10),
+                "the executor must name the canonical hash of the turn it was handed"
+            );
+            assert_eq!(*got, authorized);
+            assert_eq!(
+                *cell, sovereign_id,
+                "the error must name the witness that was wrong"
+            );
+        }
+        other => {
+            panic!("rewriting the payee under a sovereign signature must reject; got: {other:?}")
+        }
+    }
+
+    assert_eq!(
+        ledger
+            .get(&mallory_id)
+            .expect("mallory hosted")
+            .state
+            .balance(),
+        0,
+        "Mallory must not be paid by a signature that named Bob"
+    );
+    assert_eq!(
+        ledger.get_sovereign_commitment(&sovereign_id),
+        Some(&old_commitment),
+        "a refused forgery must leave the sovereign commitment untouched"
+    );
+}
+
+/// THE HONEST POLE. A check that refuses everything is exactly as useless as
+/// one that refuses nothing, so: the SAME fixture, the SAME witness shape, with
+/// the effect set the owner actually signed — and it COMMITS, moves the value,
+/// advances the sovereign commitment and burns the sequence.
+#[test]
+fn sovereign_witness_matching_its_turn_commits() {
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(22);
+
+    let bob = permissive_cell(30, 0);
+    let bob_id = bob.id();
+    ledger.insert_cell(bob).unwrap();
+
+    let new_commitment = post_transfer_commitment(&sovereign, 10);
+    let witness = signed_sovereign_witness_with_new_commitment(
+        &[0u8; 32],
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        new_commitment,
+        transfer_effects_hash(agent_id, sovereign_id, bob_id, 10),
+        1,
+    );
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, witness);
+    let honest = transfer_turn(agent_id, sovereign_id, bob_id, 10, witnesses);
+
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&honest, &mut ledger);
+    assert!(
+        matches!(&result, TurnResult::Committed { .. }),
+        "a witness carrying the canonical effects hash of its own turn must COMMIT, got: {result:?}"
+    );
+    assert_eq!(
+        ledger.get(&bob_id).expect("bob hosted").state.balance(),
+        10,
+        "the honest pole must actually move the value"
+    );
+    assert_eq!(
+        ledger.get_sovereign_commitment(&sovereign_id),
+        Some(&new_commitment),
+        "the honest pole must advance the sovereign commitment to the declared post-state"
+    );
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        1,
+        "the honest pole must burn the witness sequence"
+    );
+}
+
+/// The canonical hash is CELL-BOUND: two sovereign cells in one turn get two
+/// different digests, so a witness digest cannot be transplanted between them
+/// even when their projections coincide.
+#[test]
+fn canonical_effects_hash_is_cell_bound() {
+    let (_ledger, agent_id, alice_id, _alice, _key, _old) = sovereign_fixture(23);
+    let (bob_cell, _bob_key) = signing_cell(24, 500);
+    let bob_id = bob_cell.id();
+
+    let turn = transfer_turn(agent_id, alice_id, bob_id, 10, HashMap::new());
+    assert_ne!(
+        turn.sovereign_effects_hash(&alice_id),
+        turn.sovereign_effects_hash(&bob_id),
+        "one turn must not yield one witness digest for two different cells"
+    );
+
+    // …and it is never the zero sentinel, even for a witness that authorizes
+    // nothing — which is why the executor no longer needs a zero-placeholder
+    // special case (`execute.rs` rule 7b).
+    let empty = turn_with_witnesses(agent_id, HashMap::new());
+    assert_ne!(
+        empty.sovereign_effects_hash(&alice_id),
+        [0u8; 32],
+        "the empty projection must still have an honest, non-zero encoding"
+    );
 }
 
 // ===========================================================================
@@ -602,7 +936,7 @@ fn sovereign_witness_exact_replay_rejects() {
         &signing_key,
         old_commitment,
         new_commitment,
-        [0u8; 32],
+        set_field_effects_hash(agent_id, sovereign_id, 0, [1u8; 32]),
         1,
     );
 
@@ -745,10 +1079,29 @@ fn turn_with_two_sovereign_cells_one_witness_invalid_rejects() {
         .capabilities
         .grant(bob_id, AuthRequired::None);
 
-    let alice_witness =
-        signed_sovereign_witness(&alice, &alice_key, alice_old_commitment, [0u8; 32], 1);
+    // Alice's witness is VALID — including its effects hash, which must be the
+    // canonical one for the two-action turn below. Witness verification walks a
+    // `HashMap`, so Alice may be checked first; if her witness failed rule 7b
+    // this test would go green on an `EffectsHashMismatch` it never meant to
+    // assert and Bob's bad signature would never be reached.
+    let two_cell_effects_hash = |cell: &CellId| {
+        two_set_field_turn(agent_id, alice_id, bob_id, HashMap::new()).sovereign_effects_hash(cell)
+    };
+    let alice_witness = signed_sovereign_witness(
+        &alice,
+        &alice_key,
+        alice_old_commitment,
+        two_cell_effects_hash(&alice_id),
+        1,
+    );
     let wrong_key = SigningKey::from_bytes(&[0xAA; 32]);
-    let bob_witness = signed_sovereign_witness(&bob, &wrong_key, bob_old_commitment, [0u8; 32], 1);
+    let bob_witness = signed_sovereign_witness(
+        &bob,
+        &wrong_key,
+        bob_old_commitment,
+        two_cell_effects_hash(&bob_id),
+        1,
+    );
 
     let mut witnesses = HashMap::new();
     witnesses.insert(alice_id, alice_witness);
@@ -818,7 +1171,17 @@ fn sovereign_cell_slot_caveats_still_fire() {
         .update_sovereign_commitment(&sovereign_id, old_commitment)
         .unwrap();
 
-    let witness = signed_sovereign_witness(&sovereign, &signing_key, old_commitment, [0u8; 32], 1);
+    // The witness declares the REAL effects hash for this turn, so rule 7b
+    // (`EffectsHashMismatch`) cannot be what rejects it — the Monotonic caveat
+    // has to be. A fixture that fails the effects binding would "pass" a
+    // rejection assertion while proving nothing about slot caveats at all.
+    let witness = signed_sovereign_witness(
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        set_field_effects_hash(agent_id, sovereign_id, 0, field_from_u64(9)),
+        1,
+    );
     let mut witnesses = HashMap::new();
     witnesses.insert(sovereign_id, witness);
     let turn = set_field_turn_with_action_witnesses(
@@ -866,7 +1229,7 @@ fn sovereign_with_preimage_gate_requires_both_witnesses() {
         &signing_key,
         old_commitment,
         new_commitment,
-        [0u8; 32],
+        set_field_effects_hash(agent_id, sovereign_id, 0, commitment),
         1,
     );
     let mut missing_preimage_witnesses = HashMap::new();
@@ -1130,7 +1493,11 @@ fn sovereign_witness_carrying_v1_transition_proof_fails_closed() {
     let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
         sovereign_fixture(3);
     let new_commitment = post_set_field_commitment(&sovereign, 0, [1u8; 32]);
-    let effects_hash = *blake3::hash(b"dregg-sovereign-witness-empty-effects").as_bytes();
+    // The REAL effects hash: rule 7b runs BEFORE rule 8, so a witness that
+    // failed the effects binding would be rejected as `EffectsHashMismatch` and
+    // this test would "pass" a rejection assertion while never reaching the
+    // guard it exists to hold.
+    let effects_hash = set_field_effects_hash(agent_id, sovereign_id, 0, [1u8; 32]);
 
     let witness = raw_sovereign_witness(
         &[0u8; 32],
@@ -1236,15 +1603,24 @@ fn sovereign_witness_zero_new_commitment_placeholder_rejects() {
     );
 }
 
-/// SECURITY (executor rule 7b, `execute.rs`): an all-zero `effects_hash` is a
-/// legacy placeholder. A sovereign transition with an empty/local effect set
-/// must still sign the canonical hash of that empty set, never the zero
-/// sentinel — otherwise `EffectsHashMismatch` has nothing real to bind the
-/// declared effects to.
+/// SECURITY (executor rule 7b, `execute.rs`): the all-zero `effects_hash` — the
+/// legacy placeholder — must still be refused, and the interesting part is now
+/// **what refuses it**.
 ///
-/// This gate is why `signed_sovereign_witness_with_new_commitment` coerces zero
-/// -> `blake3("dregg-sovereign-witness-empty-effects")`. That coercion is also
-/// exactly why no test in this suite could trip the gate until now.
+/// This test used to assert a standalone `"zero effects_hash"` rejection string.
+/// That string is GONE: rule 7b replaced the sentinel check with the BINDING
+/// (`witness.effects_hash == turn.sovereign_effects_hash(cell)`), and
+/// `execute.rs` states the reasoning — "Special-casing one wrong value implies
+/// the others are fine, and that implication is exactly what this hole was made
+/// of. The zero placeholder is still refused; it is refused by the rule that
+/// binds." So the property is strictly stronger and the assertion follows it:
+/// the placeholder is rejected AS an `EffectsHashMismatch`, and the reported
+/// `got` is the placeholder itself.
+///
+/// Pinning `got` matters. Asserting only the variant would also pass if the
+/// executor rejected some *other* witness field and happened to reuse the
+/// variant; asserting `got == [0u8; 32]` says the rule looked at the value this
+/// test supplied.
 #[test]
 fn sovereign_witness_zero_effects_hash_placeholder_rejects() {
     let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
@@ -1267,14 +1643,33 @@ fn sovereign_witness_zero_effects_hash_placeholder_rejects() {
 
     let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
     match &result {
-        TurnResult::Rejected { reason, .. } => {
-            let msg = format!("{reason:?}");
-            assert!(
-                msg.contains("zero effects_hash"),
-                "expected the rule-7 zero-effects_hash placeholder rejection, got: {msg}"
+        TurnResult::Rejected {
+            reason:
+                TurnError::EffectsHashMismatch {
+                    cell,
+                    expected,
+                    got,
+                },
+            ..
+        } => {
+            assert_eq!(
+                *got, [0u8; 32],
+                "the rejection must name the placeholder this test supplied"
+            );
+            assert_eq!(
+                *expected,
+                turn.sovereign_effects_hash(&sovereign_id),
+                "the expected side must be the canonical per-cell hash of THIS turn"
+            );
+            assert_eq!(
+                *cell, sovereign_id,
+                "the error must name the witness that was wrong"
             );
         }
-        other => panic!("a zero effects_hash placeholder must be rejected, got: {other:?}"),
+        other => panic!(
+            "a zero effects_hash placeholder must be rejected by the rule-7b effects \
+             binding, got: {other:?}"
+        ),
     }
     assert_eq!(
         ledger.last_sovereign_witness_sequence(&sovereign_id),

@@ -543,13 +543,30 @@ pub(super) async fn tool_sign_sovereign_witness(
     };
     let cell_id = dregg_cell::CellId(cell_id_bytes);
 
-    let effects_hash: [u8; 32] = match params.get("effects_hash").and_then(|v| v.as_str()) {
-        Some(h) => match hex_decode(h) {
-            Ok(b) => b,
-            Err(_) => return McpToolResult::error("invalid hex for effects_hash"),
-        },
-        None => [0u8; 32],
+    // THE EFFECTS the witness authorizes. This used to be an `effects_hash`
+    // CALLER PARAMETER defaulting to `[0u8; 32]` — a caller-supplied binding,
+    // which is to say no binding at all: the caller chose the digest AND the
+    // effects independently, and nothing ever compared them. The tool now takes
+    // the effects, builds the turn they belong to, and DERIVES the digest
+    // through `Turn::sovereign_effects_hash` — the one function the executor's
+    // witness rule 7b recomputes.
+    let effects_json = match params.get("effects").and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => {
+            return McpToolResult::error(
+                "missing required parameter: effects (array of effect descriptors). The \
+                 `effects_hash` parameter is GONE: a witness binds the effects it authorizes, \
+                 and a caller-chosen hash binds nothing.",
+            );
+        }
     };
+    let mut effects: Vec<dregg_turn::Effect> = Vec::with_capacity(effects_json.len());
+    for e in effects_json {
+        match super::proof::parse_effect_json(e) {
+            Ok(effect) => effects.push(effect),
+            Err(msg) => return McpToolResult::error(msg),
+        }
+    }
     let attach_proof = params
         .get("attach_proof")
         .and_then(|v| v.as_bool())
@@ -591,15 +608,48 @@ pub(super) async fn tool_sign_sovereign_witness(
             Ok(b) => b,
             Err(_) => return McpToolResult::error("invalid hex for new_commitment"),
         },
+        // FAIL CLOSED. The old default here was
+        // `derive_key("dregg-mcp-witness-new-commit-v1")(cell_id ‖ old ‖ effects_hash ‖ seq)`
+        // — a fabricated digest that is not the post-state commitment of
+        // anything, so the executor's post-execution check
+        // (`SovereignCommitmentMismatch`) refused every witness this tool
+        // produced without an explicit `new_commitment`. This node does not
+        // execute the effects to learn the post-state, so it says so instead of
+        // inventing a value.
         None => {
-            let mut hasher = blake3::Hasher::new_derive_key("dregg-mcp-witness-new-commit-v1");
-            hasher.update(&cell_id.0);
-            hasher.update(&old_commitment);
-            hasher.update(&effects_hash);
-            hasher.update(&sequence.to_le_bytes());
-            *hasher.finalize().as_bytes()
+            return McpToolResult::error(
+                "missing required parameter: new_commitment (hex-encoded 32-byte post-state \
+                 commitment). This tool does not execute the effects, so it cannot derive the \
+                 post-state; a fabricated commitment is refused by the executor \
+                 (SovereignCommitmentMismatch).",
+            );
         }
     };
+
+    // The turn this witness is FOR. The witness's `effects_hash` is a property of
+    // a specific turn, so the tool builds that turn here and hands it back with
+    // the witness — a witness detached from its turn is not submittable and its
+    // digest is not checkable.
+    let mut witnessed_turn = dregg_turn::Turn {
+        agent: cell_id,
+        nonce: 0,
+        call_forest: super::proof::build_forest_with_effects(cell_id, effects),
+        fee: 0,
+        memo: None,
+        valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: Vec::new(),
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    };
+    let effects_hash: [u8; 32] = witnessed_turn.sovereign_effects_hash(&cell_id);
 
     let signing_msg = dregg_turn::SovereignCellWitness::signing_message(
         &cell_id,
@@ -660,6 +710,12 @@ pub(super) async fn tool_sign_sovereign_witness(
     };
     let witness_postcard = postcard::to_stdvec(&witness).unwrap_or_default();
     let signer_pk_hex = hex_encode(cell.public_key());
+    // Hand back the WITNESSED TURN, not just the witness: `effects_hash` is a
+    // property of this turn and of no other, so submitting the witness against a
+    // different effect set is now a rejection (`EffectsHashMismatch`), not a
+    // silent substitution.
+    witnessed_turn.sovereign_witnesses.insert(cell_id, witness);
+    let turn_postcard = postcard::to_stdvec(&witnessed_turn).unwrap_or_default();
     drop(s);
 
     McpToolResult::json(&serde_json::json!({
@@ -674,7 +730,8 @@ pub(super) async fn tool_sign_sovereign_witness(
         "signer_pubkey": signer_pk_hex,
         "transition_proof_hex": transition_proof_field,
         "witness_postcard_hex": hex_encode(&witness_postcard),
-        "note": "Attach `witness_postcard_hex` (deserialized) to Turn::sovereign_witnesses[cell_id] before submitting the turn; the executor will re-verify the Ed25519 signature against the cell's public key and (when present) the STARK transition_proof.",
+        "witnessed_turn_postcard_hex": hex_encode(&turn_postcard),
+        "note": "Submit `witnessed_turn_postcard_hex` — the witness is already attached at Turn::sovereign_witnesses[cell_id]. The witness's effects_hash is the canonical `Turn::sovereign_effects_hash` of THAT turn; attaching it to a turn with any other effect set is rejected with EffectsHashMismatch.",
     }))
 }
 

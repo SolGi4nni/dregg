@@ -7359,8 +7359,7 @@ fn sovereign_cell_execute_turn_with_valid_witness() {
     let mut expected_cell = sovereign_cell.clone();
     expected_cell.state.fields[0] = new_value;
     let expected_new_commitment = expected_cell.state_commitment();
-    let claimed_effects_hash = [7u8; 32];
-    let turn = Turn {
+    let mut turn = Turn {
         agent: agent_id,
         nonce: 0,
         call_forest: CallForest {
@@ -7392,36 +7391,7 @@ fn sovereign_cell_execute_turn_with_valid_witness() {
         previous_receipt_hash: None,
         depends_on: vec![],
         conservation_proof: None,
-        sovereign_witnesses: {
-            let mut m = std::collections::HashMap::new();
-            // Build a properly-signed witness with monotonic sequence.
-            let timestamp = 1234567890i64;
-            let sequence = 1u64;
-            let signing_message = crate::turn::SovereignCellWitness::signing_message(
-                &sovereign_id,
-                &initial_commitment,
-                &expected_new_commitment,
-                &claimed_effects_hash,
-                timestamp,
-                sequence,
-            );
-            let signature = sovereign_kp.signing_key.sign(&signing_message).to_bytes();
-            m.insert(
-                sovereign_id,
-                crate::turn::SovereignCellWitness {
-                    cell_id: sovereign_id,
-                    old_commitment: initial_commitment,
-                    new_commitment: expected_new_commitment,
-                    effects_hash: claimed_effects_hash,
-                    timestamp,
-                    sequence,
-                    signature,
-                    cell_state: sovereign_cell.clone(),
-                    transition_proof: None,
-                },
-            );
-            m
-        },
+        sovereign_witnesses: std::collections::HashMap::new(),
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
@@ -7430,6 +7400,40 @@ fn sovereign_cell_execute_turn_with_valid_witness() {
         cross_effect_dependencies: Vec::new(),
         effect_witness_index_map: Vec::new(),
     };
+
+    // The witness's `effects_hash` is THE canonical per-cell hash of this turn
+    // (`Turn::sovereign_effects_hash`), which is exactly what executor rule 7b
+    // recomputes. It used to be `[7u8; 32]` — a fixture-invented constant with no
+    // relation to the turn, which committed happily because nothing compared it.
+    // The turn is built with an empty witness map first: the canonical sequence
+    // never reads `sovereign_witnesses`, so the value is computable before the
+    // witness it must be signed into exists.
+    let claimed_effects_hash = turn.sovereign_effects_hash(&sovereign_id);
+    let timestamp = 1234567890i64;
+    let sequence = 1u64;
+    let signing_message = crate::turn::SovereignCellWitness::signing_message(
+        &sovereign_id,
+        &initial_commitment,
+        &expected_new_commitment,
+        &claimed_effects_hash,
+        timestamp,
+        sequence,
+    );
+    let signature = sovereign_kp.signing_key.sign(&signing_message).to_bytes();
+    turn.sovereign_witnesses.insert(
+        sovereign_id,
+        crate::turn::SovereignCellWitness {
+            cell_id: sovereign_id,
+            old_commitment: initial_commitment,
+            new_commitment: expected_new_commitment,
+            effects_hash: claimed_effects_hash,
+            timestamp,
+            sequence,
+            signature,
+            cell_state: sovereign_cell.clone(),
+            transition_proof: None,
+        },
+    );
 
     let executor = zero_cost_executor();
     let result = executor.execute(&turn, &mut ledger);
@@ -7584,36 +7588,10 @@ fn sovereign_witness_rejects_false_post_commitment_claim() {
         .grant(sovereign_id, AuthRequired::None);
 
     let claimed_new_commitment = [9u8; 32];
-    let claimed_effects_hash = [8u8; 32];
     let timestamp = 1234567890i64;
     let sequence = 1u64;
-    let signing_message = crate::turn::SovereignCellWitness::signing_message(
-        &sovereign_id,
-        &initial_commitment,
-        &claimed_new_commitment,
-        &claimed_effects_hash,
-        timestamp,
-        sequence,
-    );
-    let signature = sovereign_kp.signing_key.sign(&signing_message).to_bytes();
 
-    let mut witnesses = std::collections::HashMap::new();
-    witnesses.insert(
-        sovereign_id,
-        crate::turn::SovereignCellWitness {
-            cell_id: sovereign_id,
-            old_commitment: initial_commitment,
-            new_commitment: claimed_new_commitment,
-            effects_hash: claimed_effects_hash,
-            timestamp,
-            sequence,
-            signature,
-            cell_state: sovereign_cell,
-            transition_proof: None,
-        },
-    );
-
-    let turn = Turn {
+    let mut turn = Turn {
         agent: agent_id,
         nonce: 0,
         call_forest: CallForest {
@@ -7645,7 +7623,7 @@ fn sovereign_witness_rejects_false_post_commitment_claim() {
         previous_receipt_hash: None,
         depends_on: vec![],
         conservation_proof: None,
-        sovereign_witnesses: witnesses,
+        sovereign_witnesses: std::collections::HashMap::new(),
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
@@ -7654,6 +7632,37 @@ fn sovereign_witness_rejects_false_post_commitment_claim() {
         cross_effect_dependencies: Vec::new(),
         effect_witness_index_map: Vec::new(),
     };
+
+    // The effects hash is the CANONICAL one, so executor rule 7b cannot be what
+    // rejects this witness — the false `new_commitment` has to be. It was
+    // `[8u8; 32]`, an invented constant; once rule 7b landed (rule 7b runs before
+    // the forest, the post-state check after) that constant made this test go
+    // green on an `EffectsHashMismatch` and stop testing the post-state check at
+    // all.
+    let claimed_effects_hash = turn.sovereign_effects_hash(&sovereign_id);
+    let signing_message = crate::turn::SovereignCellWitness::signing_message(
+        &sovereign_id,
+        &initial_commitment,
+        &claimed_new_commitment,
+        &claimed_effects_hash,
+        timestamp,
+        sequence,
+    );
+    let signature = sovereign_kp.signing_key.sign(&signing_message).to_bytes();
+    turn.sovereign_witnesses.insert(
+        sovereign_id,
+        crate::turn::SovereignCellWitness {
+            cell_id: sovereign_id,
+            old_commitment: initial_commitment,
+            new_commitment: claimed_new_commitment,
+            effects_hash: claimed_effects_hash,
+            timestamp,
+            sequence,
+            signature,
+            cell_state: sovereign_cell,
+            transition_proof: None,
+        },
+    );
 
     let executor = zero_cost_executor();
     let result = executor.execute(&turn, &mut ledger);

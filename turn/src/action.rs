@@ -2772,6 +2772,112 @@ impl Effect {
         )
     }
 
+    /// The cells this effect NAMES — the cells whose state its application can
+    /// read or write, as written in the effect itself.
+    ///
+    /// This is the inclusion rule behind
+    /// [`SovereignCellWitness::canonical_effects_hash`](crate::turn::SovereignCellWitness::canonical_effects_hash):
+    /// a sovereign owner signs over the effects that project onto their cell, so
+    /// "which effects name cell C" is a security-relevant question, not a
+    /// convenience.
+    ///
+    /// Two rules make the answer total rather than best-effort:
+    ///
+    /// 1. **The match is EXHAUSTIVE — no `_ =>` arm.** A new `Effect` variant is
+    ///    a compile error here, not a silently-unattributed effect. (The nearby
+    ///    `starbridge_v2::world::touched_cells` is explicitly a syntactic
+    ///    over-approximation with a wildcard; this is not that function and must
+    ///    not become it.)
+    /// 2. **An EMPTY result means UNATTRIBUTED, not "touches nobody".** Effects
+    ///    that name no cell (`NoteSpend`, `NoteCreate`, `CreateCell`,
+    ///    `BridgeMint`, `SpawnWithDelegation`, `CreateCellFromFactory`,
+    ///    `ReceiptArchive`, `ShieldedTransfer`, `CreateHybridCell`) still move
+    ///    value or create authority. The projection treats an empty set as
+    ///    projecting onto EVERY witnessed cell (fail-closed attribution) so no
+    ///    applied effect can be invisible to every sovereign signature in the
+    ///    turn.
+    ///
+    /// `wake` turns (`Promise`/`Notify`/`React`) contribute only their `agent`:
+    /// the wake turn is a separate turn that will be gated by its own witnesses,
+    /// so recursing into its forest here would attribute effects to a cell twice
+    /// under two different authorities.
+    pub fn participant_cells(&self) -> Vec<CellId> {
+        match self {
+            Effect::SetField { cell, .. }
+            | Effect::RevokeCapability { cell, .. }
+            | Effect::EmitEvent { cell, .. }
+            | Effect::IncrementNonce { cell }
+            | Effect::SetPermissions { cell, .. }
+            | Effect::SetVerificationKey { cell, .. }
+            | Effect::SetProgram { cell, .. }
+            | Effect::MakeSovereign { cell }
+            | Effect::Refusal { cell, .. }
+            | Effect::AttenuateCapability { cell, .. }
+            | Effect::Custom { cell, .. }
+            | Effect::RotatePqIdentity { cell, .. } => vec![*cell],
+
+            Effect::RefreshDelegation { child, .. } | Effect::RevokeDelegation { child } => {
+                vec![*child]
+            }
+
+            Effect::CellSeal { target, .. }
+            | Effect::CellUnseal { target }
+            | Effect::CellDestroy { target, .. }
+            | Effect::Burn { target, .. }
+            | Effect::Mint { target, .. } => vec![*target],
+
+            Effect::Transfer { from, to, .. } => vec![*from, *to],
+
+            Effect::GrantCapability { from, to, cap } => vec![*from, *to, cap.target],
+
+            Effect::Introduce {
+                introducer,
+                recipient,
+                target,
+                ..
+            } => vec![*introducer, *recipient, *target],
+
+            Effect::Promise { cell, wake, .. } => vec![*cell, wake.agent],
+            Effect::Notify { from, to, wake, .. } => vec![*from, *to, wake.agent],
+            Effect::React { wake, .. } => vec![wake.agent],
+
+            // The eventual target is unresolved at signing time; the inner
+            // action's declared target and its effects' participants are what
+            // is knowable, and the enclosing action's target covers the rest.
+            Effect::PipelinedSend { action, .. } => {
+                let mut cells = vec![action.target];
+                for inner in &action.effects {
+                    cells.extend(inner.participant_cells());
+                }
+                cells
+            }
+
+            // The capability slot resolves to a target only at apply time. The
+            // inner effects' participants are what this effect names; the
+            // enclosing ACTION's target is folded in by the projection rule, so
+            // an exercise against a sovereign target is never unattributed.
+            Effect::ExerciseViaCapability { inner_effects, .. } => {
+                let mut cells = Vec::new();
+                for inner in inner_effects {
+                    cells.extend(inner.participant_cells());
+                }
+                cells
+            }
+
+            // UNATTRIBUTED (see rule 2 above): these name no cell, so they
+            // project onto every witnessed cell rather than none.
+            Effect::CreateCell { .. }
+            | Effect::CreateHybridCell { .. }
+            | Effect::NoteSpend { .. }
+            | Effect::NoteCreate { .. }
+            | Effect::SpawnWithDelegation { .. }
+            | Effect::BridgeMint { .. }
+            | Effect::CreateCellFromFactory { .. }
+            | Effect::ReceiptArchive { .. }
+            | Effect::ShieldedTransfer { .. } => Vec::new(),
+        }
+    }
+
     /// Return the effect kind bitmask for this effect.
     ///
     /// Used by `ExerciseViaCapability` to check whether a faceted capability

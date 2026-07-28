@@ -985,12 +985,10 @@ impl TurnExecutor {
                     at_action: vec![],
                 };
             }
-            // 7. Production sovereign witnesses must name real post-state and
-            //    local-effect commitments. All-zero fields are legacy
-            //    placeholders, not explicit no-op commitments. A no-op
-            //    sovereign transition must still sign the real unchanged
-            //    state commitment and the canonical hash of its empty/local
-            //    effect set rather than using zero sentinels.
+            // 7a. Production sovereign witnesses must name a real post-state
+            //     commitment. All-zero is a legacy placeholder, not an explicit
+            //     no-op commitment. A no-op sovereign transition must still sign
+            //     the real unchanged state commitment.
             if is_zero_hash(&witness.new_commitment) {
                 return TurnResult::Rejected {
                     reason: TurnError::InvalidEffect {
@@ -1002,13 +1000,37 @@ impl TurnExecutor {
                     at_action: vec![],
                 };
             }
-            if is_zero_hash(&witness.effects_hash) {
+            // 7b. THE EFFECTS BINDING. `effects_hash` rides in the signing
+            //     message (rule 5 above), so until this check existed it was a
+            //     field the owner signed and NOTHING compared: a sovereign owner
+            //     could sign `H(Transfer 10)` while the executor applied
+            //     `Transfer 20`, and the turn committed. `EffectsHashMismatch`
+            //     was defined, formatted, and handled — and constructed zero
+            //     times.
+            //
+            //     `sovereign_effects_hash` is a pure function of the turn, so
+            //     this runs HERE — with the other witness rules, BEFORE the
+            //     forest mutates anything — rather than beside the
+            //     post-execution `new_commitment` check. The two declarations
+            //     are checked against two different things: this one against the
+            //     turn's own effect sequence, `new_commitment` against the
+            //     recomputed post-state (see `SOVEREIGN CELL POST-EXECUTION`).
+            //
+            //     The all-zero `effects_hash` sentinel that used to live here is
+            //     GONE, and deliberately: the canonical hash absorbs a domain
+            //     tag, the cell id and a length, so `[0u8; 32]` is not a value it
+            //     can take — a witness authorizing no effects has an honest
+            //     encoding. Special-casing one wrong value implies the others are
+            //     fine, and that implication is exactly what this hole was made
+            //     of. The zero placeholder is still refused; it is refused by the
+            //     rule that binds, as `EffectsHashMismatch`.
+            let expected_effects_hash = turn.sovereign_effects_hash(cell_id);
+            if witness.effects_hash != expected_effects_hash {
                 return TurnResult::Rejected {
-                    reason: TurnError::InvalidEffect {
-                        reason: format!(
-                            "sovereign witness for cell {} has zero effects_hash placeholder",
-                            cell_id
-                        ),
+                    reason: TurnError::EffectsHashMismatch {
+                        cell: *cell_id,
+                        expected: expected_effects_hash,
+                        got: witness.effects_hash,
                     },
                     at_action: vec![],
                 };
@@ -1339,6 +1361,14 @@ impl TurnExecutor {
         // SOVEREIGN CELL POST-EXECUTION: Compute new commitments and remove
         // the temporarily-injected cells from the hosted store.
         // The federation stores only the updated 32-byte commitment.
+        //
+        // This block checks the witness's `new_commitment` — the POST-STATE
+        // declaration, which needs execution to have happened. The witness's
+        // OTHER declaration, `effects_hash`, is a pure function of the turn and
+        // is checked as witness rule 7b above, before the forest runs
+        // (`TurnError::EffectsHashMismatch`). Both declarations are checked;
+        // they are checked at different points because they are claims about
+        // different things.
         // =====================================================================
         for cell_id in &sovereign_cell_ids {
             let Some(cell) = ledger.get(cell_id) else {

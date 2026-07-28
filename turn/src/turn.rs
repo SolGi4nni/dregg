@@ -43,7 +43,7 @@ use dregg_cell::state::FieldElement;
 use dregg_cell::{Cell, CellId, DerivationRecord, LedgerDelta};
 use serde::{Deserialize, Serialize};
 
-use crate::action::Symbol;
+use crate::action::{Effect, Symbol};
 use crate::binding_proof::{EffectBindingProof, EffectDependency, EffectWitnessIndex};
 use crate::error::TurnError;
 use crate::forest::CallForest;
@@ -89,14 +89,25 @@ mod sw_sig_serde {
 ///  3. `sequence == ledger.last_sovereign_witness_sequence(cell_id) + 1`
 ///     (per-cell monotonic, no gaps; closes the replay gap even if a
 ///     future hypothetical commitment collision were ever found).
-///  4. If `transition_proof` is `Some`, the STARK is verified via
-///     `EffectVmAir` with PIs binding `old_commitment -> new_commitment +
-///     effects_hash + cell_id`.
+///  4. `effects_hash ==
+///     SovereignCellWitness::canonical_effects_hash(cell_id, turn's canonical
+///     effect sequence)` — the signer's declared effect set must be the effect
+///     set this turn actually presents for this cell. Recomputed in
+///     `execute.rs` as witness rule 7, BEFORE the forest runs; a mismatch is
+///     `TurnError::EffectsHashMismatch`. This is what makes the field in the
+///     signing message bind: without it a sovereign owner signs
+///     `H(Transfer 10)` and the executor applies `Transfer 20`.
+///  5. A `transition_proof` is REFUSED outright (`InvalidExecutionProof`): the
+///     v1 hand-AIR witness-STARK verify is retired and the rotated
+///     proof-carrying turn is the sovereign attestation path. This witness
+///     shape is verified by re-execution, never by proof.
 ///
-/// The `new_commitment` and `effects_hash` declared here are treated as
-/// the signer's promise about the post-state; the executor still
-/// recomputes both during forest execution. Mismatches surface as
-/// `TurnError::EffectsHashMismatch` / `SovereignCommitmentMismatch`.
+/// So the two declarations are checked at two different times and against two
+/// different things: `effects_hash` against the turn's own effect sequence
+/// before execution (rule 7), and `new_commitment` against the recomputed
+/// post-state after execution (`SovereignCommitmentMismatch`, the
+/// `SOVEREIGN CELL POST-EXECUTION` block). Neither is a promise taken on
+/// faith.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SovereignCellWitness {
     /// The cell ID this witness opens. Must equal `cell_state.id()`.
@@ -196,6 +207,92 @@ impl SovereignCellWitness {
         msg.extend_from_slice(&timestamp.to_le_bytes());
         msg.extend_from_slice(&sequence.to_le_bytes());
         msg
+    }
+
+    /// Domain separator for the canonical sovereign effects binding.
+    pub const EFFECTS_DOMAIN: &'static [u8] = b"dregg-sovereign-effects-v1:";
+
+    /// Does `effect`, applied by an action targeting `action_target`, project
+    /// onto `cell_id`?
+    ///
+    /// Three ways in, and each one closes a specific hole:
+    ///
+    /// - **The action targets the cell.** This is exactly the condition under
+    ///   which the executor DEMANDS a witness for the cell
+    ///   (`TurnError::SovereignWitnessRequired`, raised on `action.target`), so
+    ///   every effect the cell's witness paid for is in its projection —
+    ///   including `ExerciseViaCapability`, whose real target is a c-list slot
+    ///   resolved only at apply time and therefore absent from the effect body.
+    /// - **The effect names the cell** ([`Effect::participant_cells`]).
+    /// - **The effect names NO cell.** Value creation/destruction and cell
+    ///   creation (`NoteSpend`/`NoteCreate`/`CreateCell`/…) are attributed to
+    ///   every witnessed cell rather than to none, so an unattributed effect can
+    ///   never be bundled in under a signature that does not cover it.
+    pub fn projects_onto(cell_id: &CellId, action_target: &CellId, effect: &Effect) -> bool {
+        if action_target == cell_id {
+            return true;
+        }
+        let participants = effect.participant_cells();
+        participants.is_empty() || participants.contains(cell_id)
+    }
+
+    /// THE canonical value of [`SovereignCellWitness::effects_hash`].
+    ///
+    /// ```text
+    /// BLAKE3( "dregg-sovereign-effects-v1:"
+    ///       ‖ cell_id                               (32)
+    ///       ‖ projected_count as u64 LE             (8)
+    ///       ‖ for each projected (action_target, effect), IN EXECUTION ORDER:
+    ///             action_target (32) ‖ effect.hash() (32) )
+    /// ```
+    ///
+    /// `sequence` is the turn's canonical `(action target, effect)` sequence —
+    /// [`Turn::canonical_effect_sequence`], which is the executor's own apply
+    /// order. Every producer MUST derive the value through
+    /// [`Turn::sovereign_effects_hash`]; a caller-supplied `effects_hash` binds
+    /// nothing, which is precisely how this field spent its first life.
+    ///
+    /// The shape, and why each piece is load-bearing:
+    ///
+    /// - **Domain separation** so this digest can never be confused with the
+    ///   receipt's turn-wide `effects_hash` (a flat BLAKE3 fold of the same
+    ///   `Effect::hash()` values, no domain tag, no cell) or with a bare
+    ///   `Effect::hash()`.
+    /// - **`cell_id` absorbed** so two sovereign cells in one turn get two
+    ///   different digests even when their projections coincide. A witness
+    ///   digest is not transplantable between cells.
+    /// - **Length prefix** so the projection is prefix-free: without it,
+    ///   `[a, b]` for one cell and `[a]‖[b]` split across a boundary absorb the
+    ///   same stream, which is a signature valid over two different effect sets.
+    /// - **`action_target` per entry** so the same effect body under a different
+    ///   action target is a different authorization. `Effect::hash()` alone does
+    ///   not see the enclosing action.
+    /// - **EXECUTION ORDER, not declaration order.** Within an action the
+    ///   executor applies regular effects first and permission effects last
+    ///   (so an action cannot weaken permissions and then exploit them);
+    ///   `canonical_effect_sequence` reproduces that partition. Hashing the
+    ///   declared order would let a producer and the executor disagree about
+    ///   the same turn.
+    ///
+    /// **Never zero.** The empty projection still absorbs the domain, the
+    /// cell id and a zero count, so `[0u8; 32]` is not a reachable value — a
+    /// witness that authorizes no effects has an honest, checkable encoding and
+    /// does not need a sentinel.
+    pub fn canonical_effects_hash(cell_id: &CellId, sequence: &[(CellId, &Effect)]) -> [u8; 32] {
+        let projected: Vec<&(CellId, &Effect)> = sequence
+            .iter()
+            .filter(|(action_target, effect)| Self::projects_onto(cell_id, action_target, effect))
+            .collect();
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(Self::EFFECTS_DOMAIN);
+        hasher.update(cell_id.as_bytes());
+        hasher.update(&(projected.len() as u64).to_le_bytes());
+        for (action_target, effect) in projected {
+            hasher.update(action_target.as_bytes());
+            hasher.update(&effect.hash());
+        }
+        *hasher.finalize().as_bytes()
     }
 }
 
@@ -590,6 +687,68 @@ impl Turn {
 
     pub fn action_count(&self) -> usize {
         self.call_forest.action_count()
+    }
+
+    /// Every effect this turn will apply, paired with the target of the action
+    /// that carries it, **in the executor's apply order**.
+    ///
+    /// The order is the one `TurnExecutor::execute` + `execute_tree` realize,
+    /// and nothing else is a legitimate reading of "this turn's effects":
+    ///
+    /// 1. roots in index order;
+    /// 2. per action, PRE-order — the action's own effects, then its children
+    ///    left to right;
+    /// 3. within an action, `!is_permission_effect()` first and permission
+    ///    effects last (the executor's `partition`, which exists so an action
+    ///    cannot weaken permissions and then exploit the weakened state).
+    ///
+    /// This is total for a turn that commits: `execute_tree` applies every
+    /// effect of every action it reaches and returns `Err` (rejecting the whole
+    /// turn) otherwise, so on the commit path the applied sequence IS this
+    /// sequence. That is what lets a signer — who cannot run the executor —
+    /// compute the same digest the executor checks.
+    ///
+    /// [`crate::forest::CallForest::total_effects`] is NOT this function: it
+    /// walks declaration order and drops the action target.
+    pub fn canonical_effect_sequence(&self) -> Vec<(CellId, &Effect)> {
+        fn walk<'a>(tree: &'a crate::forest::CallTree, out: &mut Vec<(CellId, &'a Effect)>) {
+            let target = tree.action.target;
+            for effect in tree
+                .action
+                .effects
+                .iter()
+                .filter(|e| !e.is_permission_effect())
+            {
+                out.push((target, effect));
+            }
+            for effect in tree
+                .action
+                .effects
+                .iter()
+                .filter(|e| e.is_permission_effect())
+            {
+                out.push((target, effect));
+            }
+            for child in &tree.children {
+                walk(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        for root in &self.call_forest.roots {
+            walk(root, &mut out);
+        }
+        out
+    }
+
+    /// The canonical `effects_hash` a [`SovereignCellWitness`] for `cell_id`
+    /// must carry for THIS turn.
+    ///
+    /// The one entry point for every producer and for the executor's rule-7
+    /// check. If a producer computes this any other way, the two definitions
+    /// will disagree and the disagreement will be discovered by a rejected
+    /// turn rather than by a compiler.
+    pub fn sovereign_effects_hash(&self, cell_id: &CellId) -> [u8; 32] {
+        SovereignCellWitness::canonical_effects_hash(cell_id, &self.canonical_effect_sequence())
     }
 }
 

@@ -1125,17 +1125,17 @@ pub(super) fn tool_definitions_raw() -> Vec<McpToolDef> {
             title: None,
             output_schema: None,
             annotations: None,
-            description: "Build a properly-signed `SovereignCellWitness` for a sovereign cell currently in the local ledger. Signs the canonical message (cell_id || old_commitment || new_commitment || effects_hash || timestamp || sequence) with the node cipherclerk's Ed25519 key. Pass `attach_proof=true` to also generate an Effect-VM STARK proof binding the transition. Returns the witness postcard-encoded as hex plus structured fields.",
+            description: "Build a properly-signed `SovereignCellWitness` for a sovereign cell currently in the local ledger, together with the TURN it witnesses. Signs the canonical message (cell_id || old_commitment || new_commitment || effects_hash || timestamp || sequence) with the node cipherclerk's Ed25519 key. `effects_hash` is DERIVED from `effects` via `Turn::sovereign_effects_hash` — it is not a caller parameter, because a caller-chosen binding binds nothing. Pass `attach_proof=true` to also generate an Effect-VM STARK proof binding the transition. Returns `witnessed_turn_postcard_hex` (submit this) plus the witness and structured fields.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "cell_id": { "type": "string", "description": "Hex-encoded 32-byte sovereign cell ID. Must be registered via `dregg_make_sovereign` first." },
-                    "new_commitment": { "type": "string", "description": "Hex-encoded 32-byte post-state commitment claimed by the witness. If omitted, derived as BLAKE3(cell_id || old_commitment || effects_hash || sequence)." },
-                    "effects_hash": { "type": "string", "description": "Hex-encoded 32-byte BLAKE3 over the effects applied. If omitted, set to zero." },
+                    "new_commitment": { "type": "string", "description": "Hex-encoded 32-byte post-state commitment claimed by the witness. REQUIRED: this node does not execute the effects, so it cannot derive the post-state, and a fabricated commitment is refused by the executor (SovereignCommitmentMismatch)." },
+                    "effects": { "type": "array", "description": "The effects this witness authorizes — the same descriptors `dregg_act` takes: {type: transfer|increment_nonce|set_field, ...}. The witness's effects_hash is derived from these; submitting it against any other effect set is rejected with EffectsHashMismatch.", "items": { "type": "object" } },
                     "attach_proof": { "type": "boolean", "description": "If true, also generate a STARK transition_proof binding (old, new, effects_hash) via EffectVmAir. Default: false." },
                     "vm_effect_amount": { "type": "integer", "description": "If `attach_proof` is set, the (single-effect VM) amount to use for the synthetic transition. Default: 0." }
                 },
-                "required": ["cell_id"]
+                "required": ["cell_id", "new_commitment", "effects"]
             }),
         },
         // ─── Slot caveats / StateConstraint surface ───────────────────────────────

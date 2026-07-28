@@ -633,8 +633,27 @@ fn cmd_make_sovereign_witness(state_dir: &PathBuf, cell_id_hex: &str, sequence: 
     let post_cell = Cell::with_balance(alice_pk_bytes, [0u8; 32], 999_900);
     let new_commitment = post_cell.state_commitment();
 
-    // effects_hash binds the effect set.
-    let effects_hash: [u8; 32] = *blake3::hash(b"silver-demo-transfer-100").as_bytes();
+    // The effect set this witness authorizes, WRITTEN OUT — the single
+    // `Transfer` of 100 the post-state above is the result of. The demo used to
+    // sign `blake3("silver-demo-transfer-100")`, a label of an effect set rather
+    // than a commitment to one: it would have been byte-identical for a transfer
+    // of 100 and a transfer of 100_000.
+    let bob_cell = CellId(
+        Cell::with_balance(parse_32(&ids.bob_pk), [0u8; 32], 0)
+            .id()
+            .0,
+    );
+    let transfer = Effect::Transfer {
+        from: cell_id,
+        to: bob_cell,
+        amount: 100,
+    };
+    // THE canonical binding — `SovereignCellWitness::canonical_effects_hash` over
+    // the turn's `(action target, effect)` sequence, exactly what the executor's
+    // witness rule 7b recomputes. A turn carrying any other effect set is now
+    // REFUSED with `TurnError::EffectsHashMismatch`.
+    let effects_hash: [u8; 32] =
+        SovereignCellWitness::canonical_effects_hash(&cell_id, &[(cell_id, &transfer)]);
     let timestamp = 1_716_500_000i64;
 
     let signing_message = SovereignCellWitness::signing_message(

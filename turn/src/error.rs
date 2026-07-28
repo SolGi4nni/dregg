@@ -282,8 +282,27 @@ pub enum TurnError {
     /// The execution proof bytes could not be deserialized into a valid STARK proof.
     InvalidExecutionProof(String),
 
-    /// The effects hash in the proof's public inputs does not match the turn's actual effects.
-    EffectsHashMismatch { expected: [u8; 32], got: [u8; 32] },
+    /// A sovereign cell's witness declared an `effects_hash` that is not the
+    /// canonical hash of the effects THIS turn presents for that cell —
+    /// `Turn::sovereign_effects_hash(cell)`, checked as witness rule 7b in
+    /// `executor::execute`.
+    ///
+    /// `expected` is the executor's recomputation over the turn it was handed;
+    /// `got` is what the cell's owner signed. The owner authorized one effect
+    /// set and the submitter attached the signature to another.
+    ///
+    /// ⚠ The doc here used to read "the effects hash in the proof's public
+    /// inputs does not match the turn's actual effects" — describing the
+    /// proof-carrying path, which has never constructed this variant. From its
+    /// introduction until 2026-07-27 NOTHING constructed it: it was defined,
+    /// formatted, and matched in a handler, while `witness.effects_hash` rode in
+    /// the signing message bound to nothing.
+    EffectsHashMismatch {
+        /// The sovereign cell whose witness carried the wrong declaration.
+        cell: CellId,
+        expected: [u8; 32],
+        got: [u8; 32],
+    },
 
     /// The STARK proof verification failed.
     ProofVerificationFailed(String),
@@ -887,10 +906,15 @@ impl core::fmt::Display for TurnError {
             TurnError::InvalidExecutionProof(reason) => {
                 write!(f, "invalid execution proof: {reason}")
             }
-            TurnError::EffectsHashMismatch { expected, got } => {
+            TurnError::EffectsHashMismatch {
+                cell,
+                expected,
+                got,
+            } => {
                 write!(
                     f,
-                    "effects hash mismatch: expected {:02x}{:02x}..., got {:02x}{:02x}...",
+                    "effects hash mismatch for sovereign cell {cell}: expected \
+                     {:02x}{:02x}..., got {:02x}{:02x}...",
                     expected[0], expected[1], got[0], got[1]
                 )
             }
