@@ -928,12 +928,19 @@ count is 1.30× its previous value.*
 1. **One transcript step** replays the Fiat–Shamir challenger and emits the 19 query indices, the
    16 fold challenges `β_i`, `ζ`, and `α` as a Poseidon-committed public output (~1,300
    permutations ⇒ ~3.4 × 10^6 rows ⇒ **~71 steps**).
+   ⚑ **§3.12's 62,637 rows do NOT replace this figure — they are its FRI-only tail.** The 23
+   permutations §3.12 measures cover `verify_fri`'s own schedule (`alpha`, the 16 commitments and
+   `beta`s, the final poly, the arity tags, the query PoW, the 19 indices). The ~1,300 here is the
+   WHOLE batch-STARK transcript, and ~1,171 of it is the single `observe_algebra_slice` over every
+   opened value at ζ (§2.3) — a 940-column term that no FRI knob touches. Binding §3.12's preamble
+   to that absorb is precisely the residual §3.14 lists first.
 2. **19 independent per-query chains** (one query ≈ 471 permutations ≈ 1.22 × 10^6 rows ⇒ **~26
    steps each**, ~494 steps total), each consuming the committed challenge digest.
 3. **A binary aggregation tree** (Pickles steps take up to 2 previous proofs), ~another 500 steps
    whose *only* content is the recursive verification.
 4. **One final chain** for the reduced-opening arithmetic and AIR constraint evaluation at ζ —
-   ~1.5–2% of the work (§2.4) ⇒ ~13 steps.
+   **~3.5%** of the work at the measured 49 rows/Horner step (§3.14, correcting §2.4's ~7)
+   ⇒ **~20–25 steps**, not ~13.
 
 Each step is a real Pickles proof at 10–30 s, so **~650–1,040 steps ≈ 3–9 hours of Mina-side
 proving per dregg root verified**, parallel across the 19 query chains, sequential up the tree.
