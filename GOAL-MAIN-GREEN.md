@@ -183,6 +183,13 @@ first.
   test's own NON-VACUITY guard, so its forge pole is currently unfalsifiable. Dispatched; baselines
   recorded (`dregg-circuit --tests` 751/1, `dregg-cell` 846/0).
 
+- **C9 CLOSED as a refusal** — `passkey.ts`'s BIP39 guard read `if (this.wasm.validate_mnemonic && …)`
+  under a comment claiming "against the dregg bundle it is always present". The shipped bundle exports
+  it **ZERO** times, so an invalid mnemonic enrolled silently on the custody path. Absence is a named
+  refusal now; the bundle is still 18 days stale and that is now LOUD rather than silent.
+  ⚠ Nearly a false green: my first typecheck ran `npx --no-install tsc`, which printed nothing because
+  it did nothing. The real one is `./node_modules/.bin/tsc` — rc 0.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
