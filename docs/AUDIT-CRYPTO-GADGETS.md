@@ -158,7 +158,7 @@ blsAggVerify := fun _ _ _ => false
 ```
 
 with the doc "The BLS fields are inert (never accept — sound and unused here)". They are **not**
-unused. `verifySyncAggregate` (`Bridge/LightClientEth.lean:359-365`) ends with
+unused. `verifySyncAggregate` (`metatheory/Dregg2/Bridge/LightClientEth.lean:359-365`) ends with
 
 ```lean
   && L.blsAggVerify (participants ts.committee agg.bits) (signingRoot L ts hdr) agg.sig
@@ -170,7 +170,7 @@ so `verifySyncAggregate shaWordLeaf … = true` reduces to `false = true`. The h
 therefore **unsatisfiable**, independently of F1.
 
 The foundation names this precise degeneracy and provides the guard against it,
-`Bridge/LightClientEth.lean:593`:
+`metatheory/Dregg2/Bridge/LightClientEth.lean:593`:
 
 > "`NonVacuous` cannot hold for a degenerate leaf (e.g. `blsAggVerify ≡ false` is perfectly
 > SOUND but never accepts), so it is an **INSTANCE obligation**, taken as an argument and
@@ -234,6 +234,23 @@ and moved one theorem down. Nothing in the repo produces `hchain` from a satisfi
 The 20 `#assert_axioms` in the file are all true and all uninformative: an implication with an
 unfilled antecedent is axiom-clean for free.
 
+**REPAIRED 2026-07-28** (`0600cc13d`, `69e480dfd`). `Blake2bFoldForcing.lean` now has a §4½
+acceptance-splitting engine (`foldl_F_split` / `foldl_F_mem_accept` / `foldl_F_forces`) copied from
+`Sha256FoldForcing`'s honest shape, and **eight rungs take `acceptB <generator applied to its real
+arguments>` as a hypothesis**: `blakeG_forces`, `gStep_forces`, `blakeRound_forces`,
+`blake2bCompress_forces`, `blake2bInit_forces`, `blake2bFinalize_forces`, `blake2bF_forces`,
+`absorb_forces`. The file went from 0 occurrences of `acceptB` to 46, 13 of them as hypotheses. The
+old free-base forms survive, renamed to what they are (`blakeG_core_forces`, `gStep_of_blakeG`,
+`blake2bInit_of_words`, `xorRotWord_core_forces`, `xor3Word_core_forces`,
+`xorConstWord_core_forces`) and instantiated by the tied rungs. `absorb_forces`'s abstract
+`nextBases` is replaced by a real chain generator, `absorbGadget`. The opacity trick is gone: the
+induction is over the step LIST, so the ~25k-gate compression wall falls gate-count-independently.
+One generator change was required — `Blake2bGadget.blake2bF` binds its three stages by PROJECTION,
+because destructuring `blake2bCompress` (whose body head is a `List.foldl`) forces `whnf` to drive
+the whole fold and any lemma about `(blake2bF …).1` dies at the `isDefEq` heartbeat wall. **Still a
+named hypothesis, not a theorem: `AllBool a`, and the row-serialization tie from Midnight's
+`authSetBlocks`/`sched` to `absorbGadget`'s block list.**
+
 ---
 
 ## F4 — HIGH. `*_from_gates` theorems contain no gates
@@ -283,7 +300,8 @@ clean"). This is the textbook shape from `minted-` memory: the assertion of hygi
 for the check.
 
 The transcripts show the measurement *was* real but **ephemeral**: the lane ran `#print axioms`
-on the six forcing theorems in a throwaway `/tmp/bls_f_ax2.lean` on hbox via `lake env lean`, got
+on the six forcing theorems in a throwaway `bls_f_ax2.lean` written under `/tmp` on hbox (never a
+repo file — it has no git history and nothing can re-run it) via `lake env lean`, got
 a clean result, and then wrote the property into the file's docstring as though the file checked
 it. It never attempted an in-file `#assert_axioms` and never backed one out — its sibling files
 all got them (Tower 6, TowerExt 1, Sha256Gadget 4, Blake2bGadget 5, Sha512Gadget 5, Ed25519 10);
@@ -298,11 +316,31 @@ gate equations at all, but the *conclusions* of `fp2Mul_cong`/`fp2Add_cong`/`fp2
 theorems are congruence-algebra bookkeeping, correct and useful, but "the `g2DoubleGadget`
 forces" overstates them.
 
+**REPAIRED 2026-07-28** (`e690baf6d`). `Bls12381Forcing.lean` now carries **34 `#assert_axioms`,
+one per named result, and they run in the root build**; the header's unbacked hygiene claim and its
+false "standalone (NOT imported by the truncated `Dregg2.lean`)" are both corrected. A new §9 ties
+six rungs to gate acceptance — `fp2Mul_cong` (at the gadget's own `fp2MulR0`/`fp2MulR1`),
+`fp2Add_cong`, `fp2Sub_cong`, **`mulByXi_cong` (new — the `xi2` bridge the tower theorems assumed
+and no lemma in the tree produced)**, `g1Double_forces` and `g1Add_forces`. The raw-gate forms are
+renamed `*_core_forces`/`*_core_cong`. **NOT tied, and now named so:** `fp6Mul_of_subop_congs`,
+`fp12Mul_of_subop_congs`, `g2Double_of_subop_congs`, `g2Add_of_subop_congs` — their hypotheses are
+other lemmas' `Cong2`/`Cong6` conclusions, not gates. The residual every rung carries is stated in
+the header: these gadgets emit VALUE gates only (no `fpLimbRange`, no `binGate`), so a tied theorem
+says the output columns are congruent mod `p` to the point operation, **not** that they are its
+canonical encoding.
+
 ---
 
 ## F6 — MEDIUM. "The WHOLE gadget forces" is never tied to the gadget's emitted layout
 
 Affects `87cbf40ff`, `68a472b52`, `e83e9d707`, and `35f50a6eb`.
+
+**PARTIALLY REPAIRED 2026-07-28.** `blakeG_forces` is tied, and the 16 column offsets that lived
+only inside `blakeG`'s `let` chain are now the `GLayout` namespace, with `blakeG_split`/`blakeG_out`
+tying the emitted list and the returned output bases to them by `rfl`. `g1Add_forces`/
+`g1Double_forces` are tied at `g1AddGadget`/`g1DoubleGadget`'s own layouts, and `fp2Mul_cong` uses
+the `fp2MulR0`/`fp2MulR1` constants the file defined and never used. **Still open:** `fp2Mul_forces`
+(`Bls12381Tower`) and `edAdd_forces` (`Ed25519Gadget`).
 
 `fp2Mul_forces` (`Bls12381Tower.lean:322`), `edAdd_forces` (`Ed25519Gadget.lean:425`),
 `g1Add_forces`/`g1Double_forces` (`Bls12381Forcing.lean:613, 415`), `blakeG_forces`
@@ -552,6 +590,13 @@ result is auditable:
 9. **Correct the record on Sha512 (F9), retire or consume the dead descriptors (F10), and refresh
    the stale "NOT imported" headers (F11).**
 10. **Two cheap process gates that would have caught most of this (F12).** Both are mechanical:
+    **DONE 2026-07-28 for the first one** — `scripts/check-forcing-gadget-tie.py`, wired into
+    `scripts/local-gates.sh` and `.github/workflows/ci.yml` beside `check-lean-orphans`, with a
+    `--self-test` that proves it can go red. RULE A: a forcing module must consume gate acceptance
+    at least once (it fails both files as they landed: 0 and 0). RULE B: a theorem named
+    `<G>_forces`, for `<G>` a def emitting `List VmConstraint2`, must mention `<G>` in its statement
+    with its own name stripped first. RULE B has a ratcheting baseline holding exactly one entry —
+    `merkleBranchFold_forces`, i.e. F4 below, which this pass did not repair.
     - **A `*_forces` theorem must mention its gadget.** A linter that checks every theorem named
       `X_forces` has `X` in its statement would have flagged `blakeG_forces`, `blake2bF_forces`,
       `merkleBranchFold_forces`, `absorb_forces`, `chainCommit_forces` and `blake2bCompress_forces`
