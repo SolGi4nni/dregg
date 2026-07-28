@@ -1,0 +1,75 @@
+# orb/ IS ITS OWN CARGO WORKSPACE. This manifest is the workspace ROOT for the
+# ten `crates/*` packages below; the repo root's `Cargo.toml` names `"orb"` in its
+# `exclude` array so the two resolves never merge.
+#
+# ── WHY THIS FILE HAD TO COME BACK ─────────────────────────────────────────────
+# It existed (`a827252d6`, `db466dcd9`), was deleted by `9f8370327` ("remove the
+# premature orb / orb-compiler public cut"), and when `4bcb934a3` re-landed the
+# whole 40k-line cut it re-added every crate but NOT this file. In its place it
+# added `orb/.workspace-members` — this file's `members` array as loose text with
+# the paths rewritten root-relative (`orb/crates/…`), i.e. a note-to-self to paste
+# them into the repo root's `members`. Nobody ever did, and no tool has ever read
+# that file. So for the whole window the ten packages sat in a THIRD state:
+# claimed by the repo-root workspace (they are under its directory and declare no
+# `[workspace]` of their own) but listed in neither its `members` nor its
+# `exclude`. Measured consequences of that state:
+#   * `cargo metadata` / `cargo build` from inside any of them exits 101
+#     ("current package believes it's in a workspace when it's not");
+#   * `cargo build --workspace` at the repo root compiles NONE of them, so nothing
+#     type-checks, nothing lints, and a `#[allow(dead_code)]` in here is not
+#     checked by anything — which is how `crates/dataplane/src/proxy_grpc.rs`
+#     (zero callers repo-wide) went unnoticed while its own module doc claimed it
+#     was "wired into the running dataplane";
+#   * `scripts/ci.sh` — orb's own from-scratch gate — runs `cargo build --release
+#     -p aes-fallback` and `cargo build --release` from this directory, and both
+#     were hard errors for want of this file.
+# `scripts/check-workspace-closure.py` now fails if any package in the repo
+# returns to that third state.
+#
+# ── WHY ITS OWN WORKSPACE, RATHER THAN REPO-ROOT MEMBERS ───────────────────────
+# The `.workspace-members` fossil records an intent to fold these into the repo
+# root. That intent is wrong, for reasons that are structural and measured:
+#   1. `crates/dataplane/build.rs` ASSERTS that `orb/.lake/build/lib/libdrorb.a`
+#      exists and fails the build when it does not. That archive is cut by
+#      `ffi/build-dataplane-lib.sh` (`lake build Dataplane:static` over orb's OWN
+#      Lean project, which additionally needs HACL*/EverCrypt on the box). Build
+#      scripts run for `cargo check` as well as `cargo build`, so making dataplane
+#      a repo-root member would turn `cargo build --workspace` — already the
+#      broadest gate this repo has, and already a two-invocation ritual on Linux —
+#      into an unconditional red on every machine that has not built orb's Lean.
+#      The repo would then grow one more `--exclude` in the ritual, which is the
+#      same debt with more steps.
+#   2. Different toolchain. `orb/rust-toolchain.toml` pins
+#      `nightly-2026-03-24`; the repo root pins `nightly-2026-06-21`. One
+#      workspace has one toolchain.
+#   3. Different project. orb carries its own Lean build (`lakefile.lean`,
+#      `lean-toolchain`), its own CI (`scripts/ci.sh`), its own conformance suite,
+#      its own LICENSE/NOTICE, and its own reachability/axiom ratchets. It is a
+#      cut of drorb that happens to live in this tree, not a dregg crate.
+#   4. Resolve pollution. `dataplane` pulls `aws-lc-rs` (via `aes-fallback`),
+#      `io-uring`, `zlib-rs`; folding them in puts a cmake C build into every
+#      repo-root resolve and unifies features onto `dregg-lean-ffi`, which is
+#      exactly the hazard the root manifest already documents for `wasm/`.
+# The coupling that does exist runs the other way and is fine across workspaces:
+# `dataplane` path-depends on `../../../dregg-pq` and `../../../dregg-lean-ffi`.
+#
+# ── WHAT THIS COSTS, STATED PLAINLY ────────────────────────────────────────────
+# A separate workspace is NOT a build. Nothing in this repo's CI compiles orb
+# today, and this file does not change that; it makes orb buildable BY ITS OWN
+# GATE (`scripts/ci.sh`) and makes the membership question answerable by a tool.
+# `crates/cake-serve` and `crates/serve-bench` are deliberately absent from
+# `members`: each declares its own empty `[workspace]` table and builds standalone.
+[workspace]
+resolver = "3"
+members = [
+    "crates/ring-twin",
+    "crates/wake-twin",
+    "crates/borrow-recycle-twin",
+    "crates/splitsend-twin",
+    "crates/multishot-twin",
+    "crates/conn-limit-twin",
+    "crates/config-publish-twin",
+    "crates/oneshot-recv-twin",
+    "crates/aes-fallback",
+    "crates/dataplane",
+]

@@ -103,7 +103,37 @@ default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit
 # poly-commitment's over-strict `rayon = "=1.10.0"` exact-pin. That pin is
 # relaxed via the emberian/proof-systems fork ([patch] above); the root is now
 # on rayon 1.12, so poly-commitment (storage kzg) and tfhe co-resolve.
-exclude =["solana-lock", "solana-settlement", "wasm", "sdk-py", "pg-dregg", "deos-zed-full", "discord-bot", "dregg-tui", "deos-homeserver", "durable-workflow", "forge-ci-runner", "vendor/bulletproofs-r1cs-wgpu", "vendor/curve25519-dalek-dregg"]
+# `orb` is EXCLUDED and is its own workspace root (`orb/Cargo.toml`, which carries
+# the full reasoning). Short version: `orb/crates/dataplane/build.rs` hard-asserts
+# `orb/.lake/build/lib/libdrorb.a` — a leanc archive cut by orb's own Lean project —
+# so folding it in would make `cargo build --workspace` an unconditional red on any
+# box that has not built orb's Lean; orb also pins its own toolchain
+# (`nightly-2026-03-24` vs this tree's `nightly-2026-06-21`) and runs its own gate
+# (`orb/scripts/ci.sh`). It is a cut of drorb that lives here, not a dregg crate.
+# ⚠ It spent this whole window in NEITHER array: the ten `orb/crates/*` packages sit
+# under this workspace's directory and declare no `[workspace]` of their own, so
+# cargo claimed them and then could not find them — `cargo metadata` from inside any
+# of them exited 101, `cargo build --workspace` compiled none of them, and 40k lines
+# of a TLS/HTTP dataplane went un-type-checked and un-linted for the whole window.
+# `scripts/check-workspace-closure.py` now fails on that third state, anywhere in
+# the tree, so this cannot silently recur.
+# `vendor/plonky3-fri-82cfad73` is a `[patch]` SOURCE that sat in neither array —
+# the same third state as `orb`, found by the same gate. A patch target is not a
+# member (nothing depends on it by path), so cargo claimed it from this root, could
+# not find it listed, and refused: `cargo metadata` inside it exited 101.
+# `vendor/bulletproofs-r1cs-wgpu` and `vendor/curve25519-dalek-dregg` were already
+# excluded for exactly this reason; this one was missed.
+#
+# ⚠ `exclude` CANNOT reach a package nested inside a MEMBER's directory, and adding
+# one there would be an inert line that reads like a decision. Cargo's rule
+# (`WorkspaceRootConfig::is_excluded`) is `!explicit_member && excluded`, where
+# `explicit_member` is a path-PREFIX test against every `members` entry — so
+# `servo-render/vendor/servo-net` is "an explicit member" by virtue of living under
+# `servo-render/`, and the exclude entry is silently discarded. The only mechanism
+# that works there is an empty `[workspace]` table in the nested manifest itself,
+# which is what `servo-render/vendor/servo-{net,paint}` and
+# `starbridge-v2/vendor/pathfinder_simd` now carry.
+exclude =["solana-lock", "solana-settlement", "wasm", "sdk-py", "pg-dregg", "deos-zed-full", "discord-bot", "dregg-tui", "deos-homeserver", "durable-workflow", "forge-ci-runner", "orb", "vendor/bulletproofs-r1cs-wgpu", "vendor/curve25519-dalek-dregg", "vendor/plonky3-fri-82cfad73"]
 
 [workspace.package]
 version = "0.1.0"

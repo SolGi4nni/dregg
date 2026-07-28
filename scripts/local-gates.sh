@@ -210,6 +210,33 @@ GATES=(
   # as clean.
   "silent-skip|300|python3 scripts/check-silent-skip.py"
   "silent-skip-red|120|python3 scripts/check-silent-skip.py --self-test"
+  # A Cargo package that NO workspace claims, and a commit that does not resolve from a
+  # clean checkout of ITSELF. Two shapes of the same silence. The first cost the most:
+  # the ten `orb/crates/*` packages — ~40,000 lines of a TLS/HTTP dataplane — were in
+  # neither the root `members` nor its `exclude` from `4bcb934a3` (an untitled sweep-up
+  # with an empty body) until 2026-07-27. `cargo metadata` from inside any of them exited
+  # 101; `cargo build --workspace` compiled NONE of them; so no `#[allow(dead_code)]` in
+  # the subtree was checked by anything, which is how `dataplane/src/proxy_grpc.rs` — zero
+  # callers repo-wide — kept a module doc saying it was "wired into the running dataplane".
+  # The state emits no line: cargo complains only when you stand inside the directory.
+  # This gate found SEVEN MORE the same day (`sel4/verifier-pd`, whose own manifest SAID it
+  # was standalone and had never been made so; four `[patch]` sources; a nested vendored
+  # crate under deos-homeserver's own workspace), so it is a class, not an instance.
+  # The second shape is what a shared tree manufactures: AGENTS.md correctly tells each
+  # lane to commit only its own named paths, and the result is a commit whose manifests
+  # reference a sibling's still-uncommitted work — green for the author, a broken bisect
+  # point for everyone. ⚠ IT IS A MANIFEST CHECK, NOT A BUILD: it catches a missing member
+  # dir, a path dep on an uncommitted sibling, an unparseable manifest and a declared
+  # `[[bin]]` whose source is not in the commit; it does NOT catch a missing `mod foo;`
+  # file, a type error, or a missing build-script artifact. `cargo metadata --no-deps` is
+  # ~0.3s, a `cargo check` per commit is hours; the manifest half is the half that broke.
+  # ~15s / ~20s, no compile. The -red row is not optional — the headline is a NEGATIVE
+  # assertion — and it injects every fault into a FRESH `git archive` EXTRACT in a temp
+  # dir, so unlike most red-proofs it cannot leave the shared tree disarmed. It also
+  # blinds its own reader to drive the MIN_PACKAGES floor red.
+  "workspace-closure|180|python3 scripts/check-workspace-closure.py"
+  "commit-self-contained|180|python3 scripts/check-workspace-closure.py --rev HEAD"
+  "workspace-closure-red|600|python3 scripts/check-workspace-closure.py --self-test"
   # The OpenTheory→Lean importer, RUN. `docs/opentheory-importer-poc/OTPoC.lean` replays a
   # real OpenTheory v6 article into Lean `Expr`s and hands each export to the KERNEL — and
   # until 2026-07-27 it was wired into NOTHING: `grep -rn 'opentheory|OTPoC' .github/ scripts/

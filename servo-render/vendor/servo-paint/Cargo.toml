@@ -9,6 +9,18 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 
+
+# ── ADDED BY THIS TREE, NOT BY THE VENDOR ─────────────────────────────────────
+# This package is a `[patch]` source for the repo-root workspace and sits inside
+# a MEMBER's directory, so the root's `exclude` array cannot reach it: cargo's
+# `is_excluded` is `!explicit_member && excluded`, and `explicit_member` is a path
+# PREFIX test against `members` — the parent member wins and the exclude entry is
+# discarded silently. Without this table cargo claims the package from the repo
+# root, fails to find it in `members`, and refuses (`cargo metadata` here exited
+# 101 for the whole 2026-07 window). An empty `[workspace]` is the only mechanism
+# that detaches a nested package. Kept by `scripts/check-workspace-closure.py`.
+[workspace]
+
 [package]
 edition = "2024"
 rust-version = "1.86.0"

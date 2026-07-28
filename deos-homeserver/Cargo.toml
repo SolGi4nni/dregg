@@ -6,6 +6,10 @@
 # (rust-rocksdb fork, jemalloc forks). Isolating it here keeps that graph OUT of
 # the breadstuffs root resolution. Pinned to the recon rev (built green in-env).
 [workspace]
+# `vendor/askama_derive` is the `[patch.crates-io]` source below. A patch target is
+# not a member, so THIS workspace claimed it and then refused to resolve it —
+# `cargo metadata` inside it exited 101. Excluded explicitly so it is its own root.
+exclude = ["vendor/askama_derive"]
 
 [package]
 name = "deos-homeserver"

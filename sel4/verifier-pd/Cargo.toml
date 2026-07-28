@@ -17,6 +17,16 @@
 # core links Lean-free — IS verified: `cargo build -p dregg-verifier --features
 # no-lean-link` finishes with libSystem+libiconv only, zero Lean/libuv symbols.
 
+# Standalone workspace (empty `[workspace]`) — the mechanism for the paragraph
+# above, which had never been applied. "NOT a member of the repo-root workspace"
+# was a true INTENT and a false FACT: with neither this table nor a repo-root
+# `exclude` entry, cargo claimed this package from `/Cargo.toml`, could not find
+# it in `members`, and refused — `cargo metadata` here exited 101 and nothing in
+# the tree could build it, including the seL4 cross recipe in sel4/README.md that
+# this manifest documents. Same shape as `sel4/render-pd` and
+# `sel4/persist-hosttest`, which do declare it.
+[workspace]
+
 [package]
 name = "dregg-verifier-pd"
 version = "0.1.0"
