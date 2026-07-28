@@ -591,6 +591,8 @@ because they check the CITATION. A sibling tooth that asserted refuse-for-any-re
 right now.** That is the next audit.
 
 **D2 · THE TREASURY FUEL GAUGE CANNOT FALL AND THE REFUEL ALARM CANNOT FIRE. LIVE — real money.**
+> ⚠ **STALE 2026-07-28 — verify before citing.** A concurrent lane repaired this; a production caller now exists at `discord-bot/src/pay.rs:649` inside `PaidNarrator::metered_request`, with a driving test at `:4535` running a real treasury down until the alarm fires. And the recorded "10 test callers" was never right — 15 direct at HEAD.
+
 `Treasury::spend_inference_usd` (`dregg-pay/src/treasury.rs:206`) documents itself *"called for EVERY
 run regardless of how it was paid"* and has **0 production / 10 test callers**. Its one wrapper,
 `PayState::treasury_spend_inference_usd` (`discord-bot/src/pay.rs:1216`), has exactly one call site —
@@ -600,6 +602,8 @@ only ever deposited and never drawn down in production, that is reachable **only
 never funded.** Every real-AI run bills the provider and debits nothing.
 
 **D3 · `/bounty` RENDERS "Bounty Paid" AND MOVES NO VALUE — ALL THREE PAYOUT BUILDERS. LIVE.**
+> ✅ **FIXED 2026-07-28** (`0ea777733`) — all four surfaces (the residual missed `cli/src/commands/bounty.rs:262`) now carry a real `Transfer`, both legs as roots of ONE turn so a refused payment takes the PAID stamp with it. ⚑ The blocker was one level down: `execute_tree.rs:1100` evaluates a touched cell's program over every cell any effect touches, so `StrictMonotonic(STATE)` makes **a self-escrowing bounty cell inexpressible** — the reward is a PROMISE and the payer settles from its own balance. ⚠ SIBLING STILL OPEN: `starbridge-apps/compute-exchange` is the same defect, rendering a green SETTLED pill over SetField+EmitEvent with no conserving effect.
+
 `build_payout_action` (`starbridge-apps/bounty-board/src/lib.rs:296-311`) is `SetField` + `EmitEvent`;
 `payout_effects` (`:600`) is the same; `BountyService::payout` (`bounty-board/src/service.rs:265`) is
 one `SetField`. **None contains an `Effect::Transfer`.** The one builder that does conserve,
