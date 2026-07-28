@@ -435,13 +435,21 @@ def blake2bFinalize (hBases vFinal outBases : List Nat) (fresh : Nat) : List VmC
     (cs ++ cs', fr + 64)) ([], fresh)
 
 /-- **`blake2bF`** — the whole BLAKE2b compression `F`: init ⊕ 12 rounds ⊕ finalize. `768 + 24960 +
-1536 = 27264` gates. -/
+1536 = 27264` gates.
+
+⚠ The three stages are bound by PROJECTION (`i.2.1`), not by pattern-destructuring
+(`let (cs1, vFinal, fr1) := …`). That is load-bearing, not style: `blake2bCompress`'s body head is a
+`List.foldl`, so destructuring it forces `whnf` to DRIVE the whole 24960-gate fold, and any lemma
+relating `(blake2bF …).1` to its three segments then dies at the `isDefEq` heartbeat wall (measured
+2026-07-27). With projections the segments fall out by zeta + iota and
+`Blake2bFoldForcing.blake2bF_split` is `rfl` for free — which is what lets `blake2bF_forces` consume
+gate ACCEPTANCE instead of assuming its stages. -/
 def blake2bF (hBases mBases : List Nat) (t0B t1B f0B f1B : Nat) (outBases : List Nat) (fresh : Nat) :
     List VmConstraint2 × Nat :=
-  let (cs0, vBases, fr0) := blake2bInit hBases t0B t1B f0B f1B fresh
-  let (cs1, vFinal, fr1) := blake2bCompress mBases vBases fr0
-  let (cs2, fr2) := blake2bFinalize hBases vFinal outBases fr1
-  (cs0 ++ cs1 ++ cs2, fr2)
+  let i := blake2bInit hBases t0B t1B f0B f1B fresh
+  let c := blake2bCompress mBases i.2.1 i.2.2
+  let f := blake2bFinalize hBases c.2.1 outBases c.2.2
+  (i.1 ++ c.1 ++ f.1, f.2)
 
 /-! ## §5 — KAT: the GENERATED constraints ACCEPT the reference's honest values and REJECT tamper.
 

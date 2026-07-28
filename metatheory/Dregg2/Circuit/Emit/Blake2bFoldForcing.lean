@@ -34,6 +34,35 @@ The three atomic WORD bridges turn the raw gate satisfactions into `Holds` facts
 block; and `midHfold_discharged` NAMES precisely how the composition discharges `LightClientMidHashFold`'s
 `hfold`.
 
+## ⚑ What was WRONG here until 2026-07-27, and what the repair is
+
+The revision that landed this file contained the string `acceptB` ZERO times across 895 lines and 47
+theorems. Nothing related *gates being satisfied* to *anything*: `blakeG_forces` took 8 raw
+`evalH … = 0` equations over FREE column bases and never mentioned `blakeG`; `blakeRound_forces`,
+`blake2bCompress_forces`, `blake2bF_forces` and `absorb_forces` took the rung below them as an
+ASSUMED `hstep`; not one rung was ever instantiated. The cause is on the record: three lanes hit the
+same `whnf` heartbeat wall on the concrete folds, and two of them made the fold steps opaque `def`s
+so the elaborator would never reduce them — **the move that made the build green is the move that
+severed the theorems from the gadget**, and it was reported as craft ("Key technique") under the
+headline "DISCHARGED end-to-end". It was not discharged.
+
+§4½ is the repair, and it copies the shape of the sibling that broke the identical wall honestly
+(`Sha256FoldForcing`, `foldl_cstep_forces`): ACCEPTANCE-SPLITTING induction. Every rung below now
+takes `acceptB <the generator applied to its real arguments>` as a hypothesis and peels it apart
+along the generator's own `++` / `List.map` structure. The induction is over the step LIST, so it is
+gate-count-INDEPENDENT and no gate is ever reduced — the wall falls without opacity.
+
+TIED to gate acceptance: `blakeG_forces`, `gStep_forces`, `blakeRound_forces`,
+`blake2bCompress_forces`, `blake2bInit_forces`, `blake2bFinalize_forces`, `blake2bF_forces`,
+`absorb_forces`. The old free-base forms survive as the honestly-named helpers `blakeG_core_forces`,
+`gStep_of_blakeG` and `blake2bInit_of_words`, which the tied rungs instantiate.
+
+STILL A NAMED HYPOTHESIS, not a theorem: `AllBool a` (below), and the row-serialization tie that
+would instantiate `absorbGadget`'s block list with Midnight's `authSetBlocks`/`sched` — see
+`absorb_forces`'s docstring. `midHfold_discharged` remains what it always was: `Holds`-functionality
+turning a reconstructed root plus a root pin into the anchor equality; what changed is that its
+`hchain` is now PRODUCIBLE from a satisfied gate list rather than only assumable.
+
 ## The standing hypothesis (`AllBool`)
 
 `blakeG.1` emits only the CORE value gates; booleanity of every column is the separate `pinWord`
@@ -52,20 +81,24 @@ chained gates.
 
 ## Axiom hygiene
 
-`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`/`admit`/`native_decide`/
-`#guard` carrying weight. NEW file; imports read-only (`Blake2bGadget`, `LightClientMidHashFold`);
-standalone (NOT imported by the truncated `Dregg2` root, built directly as
-`Dregg2.Circuit.Emit.Blake2bFoldForcing`).
+Every rung named above carries an in-file `#assert_axioms` (§10) — the check runs, it is not a
+docstring claim. No `sorry`/`admit`/`native_decide`. Imports are read-only (`Blake2bGadget`,
+`LightClientMidHashFold`, `Sha256FoldForcing` for the shared `acceptB` algebra). This file IS
+root-imported (`Dregg2.lean:1529`), so §10 elaborates in the root build; the old header's
+"standalone / NOT imported by the truncated `Dregg2` root" was stale and is deleted.
 -/
 import Dregg2.Circuit.Emit.Blake2bGadget
 import Dregg2.Circuit.Emit.LightClientMidHashFold
+import Dregg2.Circuit.Emit.Sha256FoldForcing
 
 namespace Dregg2.Circuit.Emit.Blake2bFoldForcing
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.Blake2bGadget
-open Dregg2.Circuit.Emit.Sha256Gadget (xorHead)
+open Dregg2.Circuit.Emit.Sha256Gadget (xorHead acceptB gateBodyEvalZero)
+open Dregg2.Circuit.Emit.Sha256FoldForcing
+  (acceptB_append acceptB_cons gateBodyEvalZero_cgH head_of_acceptB_map)
 open Dregg2.Circuit.DescriptorIR2 (VmConstraint2)
 
 set_option autoImplicit false
@@ -348,6 +381,137 @@ theorem xor3Word_forces (a : Assignment) (hbool : AllBool a)
   · rw [wnat, natOfBits64_eq, testBit_bitsToNat _ (fun i => bitCol_le_one a hbool _) 64 k, if_neg hk]
     simp [hk]
 
+/-! ## §4½ — ACCEPTANCE SPLITTING: the `Sha256FoldForcing` discipline, over BLAKE2b's generators.
+
+A forcing theorem is TIED to its gadget exactly when it CONSUMES `acceptB <the generator applied to
+its real arguments>`. Everything in this section peels that acceptance apart along the generator's
+OWN `++` / `List.map` structure — never by reducing a gate, so it is gate-count-INDEPENDENT, the
+same move `Sha256FoldForcing.foldl_cstep_forces` makes on the 64 SHA rounds.
+
+This is the section whose absence was the defect: the previous revision of this file made the fold
+steps opaque `def`s so the elaborator would never reduce them, which made the build green by
+severing every theorem from the gates. Opacity that prevents the gates from ever being related to
+the reference is not a technique; the `acceptB` split below is the replacement. -/
+
+/-- A singleton emitted head is accepted iff it evaluates to zero. -/
+theorem head_of_acceptB_singleton (h : Head) (a : Assignment)
+    (hacc : acceptB [cgH h] a = true) : evalH h a = 0 := by
+  rw [acceptB, List.all_eq_true] at hacc
+  have hb := hacc (cgH h) (by simp)
+  rw [gateBodyEvalZero_cgH] at hb
+  exact of_decide_eq_true hb
+
+/-- **`xorRotCore`'s 64 emitted gates, from its acceptance.** -/
+theorem gates_of_xorRotCore (a : Assignment) (aB bB out car R : Nat)
+    (h : acceptB (xorRotCore aB bB out car R) a = true) :
+    ∀ i, i < 64 → evalH (xorHead (xorRotSources aB bB R i) (out + i) (car + i)) a = 0 := by
+  intro i hi
+  exact head_of_acceptB_map (List.range 64)
+    (fun i => xorHead (xorRotSources aB bB R i) (out + i) (car + i)) a h i (List.mem_range.mpr hi)
+
+/-- **`xor3Core`'s 64 emitted gates, from its acceptance.** -/
+theorem gates_of_xor3Core (a : Assignment) (aB bB cB out car : Nat)
+    (h : acceptB (xor3Core aB bB cB out car) a = true) :
+    ∀ i, i < 64 → evalH (xorHead [aB + i, bB + i, cB + i] (out + i) (car + i)) a = 0 := by
+  intro i hi
+  exact head_of_acceptB_map (List.range 64)
+    (fun i => xorHead [aB + i, bB + i, cB + i] (out + i) (car + i)) a h i (List.mem_range.mpr hi)
+
+/-- **`constWordGate`'s 64 emitted gates, from its acceptance.** -/
+theorem gates_of_constWordGate (a : Assignment) (base k : Nat)
+    (h : acceptB (constWordGate base k) a = true) :
+    ∀ i, i < 64 → evalH ((Head.lin 1 (base + i)).addConst (-(Ref.bit k i : ℤ))) a = 0 := by
+  intro i hi
+  exact head_of_acceptB_map (List.range 64)
+    (fun i => (Head.lin 1 (base + i)).addConst (-(Ref.bit k i : ℤ))) a h i (List.mem_range.mpr hi)
+
+/-- **`xorConstWord`'s 64 value gates, from its acceptance** (its second segment is the output pins). -/
+theorem gates_of_xorConstWord (a : Assignment) (inBase outBase k : Nat)
+    (h : acceptB (xorConstWord inBase outBase k) a = true) :
+    ∀ i, i < 64 → evalH (((Head.lin (1 - 2 * (Ref.bit k i : ℤ)) (inBase + i)).addLin (-1)
+                        (outBase + i)).addConst (Ref.bit k i : ℤ)) a = 0 := by
+  intro i hi
+  rw [xorConstWord, acceptB_append, Bool.and_eq_true] at h
+  exact head_of_acceptB_map (List.range 64)
+    (fun i => ((Head.lin (1 - 2 * (Ref.bit k i : ℤ)) (inBase + i)).addLin (-1)
+      (outBase + i)).addConst (Ref.bit k i : ℤ)) a h.1 i (List.mem_range.mpr hi)
+
+/-! ### The FOLD engine. Every BLAKE2b generator above `blakeG` is a `List.foldl` whose body appends
+its own step's gates and threads a state. `hF` below is that shape, proved `rfl` at the LAMBDA BODY
+(free variables only — the fold is never evaluated, which is what keeps the elaborator out of the
+`whnf` heartbeat wall the previous revision hit). -/
+
+/-- The accumulated gate list keeps the starting list as a PREFIX, and the threaded state does not
+depend on it. (The generic form of `Sha256FoldForcing.cstep_prefix`.) -/
+theorem foldl_F_split {α σ : Type}
+    (F : List VmConstraint2 × σ → α → List VmConstraint2 × σ)
+    (g : σ → α → List VmConstraint2 × σ)
+    (hF : ∀ cs s x, F (cs, s) x = (cs ++ (g s x).1, (g s x).2)) :
+    ∀ (L : List α) (cs : List VmConstraint2) (s : σ),
+      L.foldl F (cs, s) = (cs ++ (L.foldl F ([], s)).1, (L.foldl F ([], s)).2) := by
+  intro L
+  induction L with
+  | nil => intro cs s; simp
+  | cons x xs ih =>
+    intro cs s
+    rw [List.foldl_cons, List.foldl_cons, hF, hF, List.nil_append,
+        ih (cs ++ (g s x).1) (g s x).2, ih (g s x).1 (g s x).2]
+    simp [List.append_assoc]
+
+/-- **Acceptance splits along the fold.** From acceptance of the WHOLE accumulated gate list, every
+step's own emitted gates are accepted — at the state that step actually ran at. -/
+theorem foldl_F_mem_accept {α σ : Type} (a : Assignment)
+    (F : List VmConstraint2 × σ → α → List VmConstraint2 × σ)
+    (g : σ → α → List VmConstraint2 × σ)
+    (hF : ∀ cs s x, F (cs, s) x = (cs ++ (g s x).1, (g s x).2)) :
+    ∀ (L : List α) (cs0 : List VmConstraint2) (s0 : σ),
+      acceptB (L.foldl F (cs0, s0)).1 a = true →
+      ∀ x ∈ L, ∃ s : σ, acceptB (g s x).1 a = true := by
+  intro L
+  induction L with
+  | nil => intro cs0 s0 _ x hx; cases hx
+  | cons y ys ih =>
+    intro cs0 s0 hacc x hx
+    rw [List.foldl_cons, hF] at hacc
+    have hpre := foldl_F_split F g hF ys (cs0 ++ (g s0 y).1) (g s0 y).2
+    have hy : acceptB (g s0 y).1 a = true := by
+      have h0 := hacc
+      rw [hpre, acceptB_append, Bool.and_eq_true, acceptB_append, Bool.and_eq_true] at h0
+      exact h0.1.2
+    rcases List.mem_cons.mp hx with rfl | hx'
+    · exact ⟨s0, hy⟩
+    · exact ih (cs0 ++ (g s0 y).1) (g s0 y).2 hacc x hx'
+
+/-- **THE COMPOSITION ENGINE.** If each step's OWN accepted gates carry the relation `R` from the
+step's input state to the reference step's, then the whole fold's ACCEPTANCE carries `R` across the
+whole fold. Gate-count-INDEPENDENT: the induction is over the step LIST, and no gate is reduced.
+This is `Sha256FoldForcing.foldl_cstep_forces` with the SHA round abstracted out. -/
+theorem foldl_F_forces {α σ τ : Type} (a : Assignment)
+    (F : List VmConstraint2 × σ → α → List VmConstraint2 × σ)
+    (g : σ → α → List VmConstraint2 × σ)
+    (hF : ∀ cs s x, F (cs, s) x = (cs ++ (g s x).1, (g s x).2))
+    (refStep : τ → α → τ) (R : σ → τ → Prop) (P : α → Prop)
+    (hstep : ∀ (s : σ) (t : τ) (x : α), P x → R s t → acceptB (g s x).1 a = true →
+        R (g s x).2 (refStep t x)) :
+    ∀ (L : List α), (∀ x ∈ L, P x) →
+      ∀ (cs0 : List VmConstraint2) (s0 : σ) (t0 : τ), R s0 t0 →
+      acceptB (L.foldl F (cs0, s0)).1 a = true →
+      R (L.foldl F (cs0, s0)).2 (L.foldl refStep t0) := by
+  intro L
+  induction L with
+  | nil => intro _ cs0 s0 t0 h0 _; exact h0
+  | cons y ys ih =>
+    intro hP cs0 s0 t0 h0 hacc
+    rw [List.foldl_cons, hF] at hacc
+    rw [List.foldl_cons, List.foldl_cons, hF]
+    have hpre := foldl_F_split F g hF ys (cs0 ++ (g s0 y).1) (g s0 y).2
+    have hy : acceptB (g s0 y).1 a = true := by
+      have h0' := hacc
+      rw [hpre, acceptB_append, Bool.and_eq_true, acceptB_append, Bool.and_eq_true] at h0'
+      exact h0'.1.2
+    exact ih (fun x hx => hP x (List.mem_cons_of_mem y hx)) (cs0 ++ (g s0 y).1) (g s0 y).2
+      (refStep t0 y) (hstep s0 t0 y (hP y List.mem_cons_self) h0 hy) hacc
+
 /-! ## §5 — `blakeG_forces`: the 8 sub-op bridges COMPOSE into the whole `G` mixing function. -/
 
 /-- The four `G` output words as a function of the six input words — mirrors `Ref.G`'s `let` chain
@@ -363,11 +527,14 @@ def gVals (VA VB VC VD X Y : Nat) : Nat × Nat × Nat × Nat :=
   let b2 := Ref.rotr64 63 (Ref.xorw b1 c2)
   (a2, b2, c2, d2)
 
-/-- **`blakeG_forces`** — the emitted `blakeG` gates (2 `add3` + 2 `add2` + 4 XOR-and-rotate,
-exactly the layout `blakeG` produces) FORCE the four output word-columns to the real BLAKE2b `G`
-mixing of the six input words. A finite chain of the atomic word bridges over `G`'s fixed structure —
-NO gate reduction. -/
-theorem blakeG_forces (a : Assignment) (hbool : AllBool a)
+/-- **`blakeG_core_forces`** — the HELPER form: given the 8 sub-op gate equations over ARBITRARY
+column bases, the four output words are the real BLAKE2b `G` mixing of the six input words. A finite
+chain of the atomic word bridges over `G`'s fixed structure — NO gate reduction.
+
+⚠ This form is NOT tied to `blakeG`: its bases are free parameters and `blakeG` does not appear.
+It was named `blakeG_forces` until 2026-07-27; that name is now carried by the acceptance-tied
+`blakeG_forces` below, which instantiates this at `blakeG`'s OWN emitted layout (`GLayout`). -/
+theorem blakeG_core_forces (a : Assignment) (hbool : AllBool a)
     (va vb vc vd mx my : Nat)
     (a1B ca1 d1B cd1 c1B cc1 b1B cb1 a2B ca2 d2B cd2 c2B cc2 b2B cb2 : Nat)
     (VA VB VC VD X Y : Nat)
@@ -397,6 +564,91 @@ theorem blakeG_forces (a : Assignment) (hbool : AllBool a)
     (by norm_num) (by norm_num) h_b1 h_c2 gb2
   simp only [gVals]
   exact ⟨h_a2, h_b2, h_c2, h_d2⟩
+
+/-! ### `blakeG`'s emitted COLUMN LAYOUT, named.
+
+These 16 offsets lived only inside `blakeG`'s `let` chain, so no theorem could mention them and the
+forcing lemma's bases stayed free parameters — audit finding F6. Naming them is exactly what lets a
+forcing theorem be stated ABOUT the emitted layout rather than about an arbitrary one. -/
+
+namespace GLayout
+/-- `v[a] + v[b] + x` output word. -/ def a1 (f : Nat) : Nat := f
+/-- its two carry bits, at `ca1` and `ca1 + 1`. -/ def ca1 (f : Nat) : Nat := a1 f + 64
+/-- `(v[d] ^ a1) >>> 32`. -/ def d1 (f : Nat) : Nat := ca1 f + 2
+def cd1 (f : Nat) : Nat := d1 f + 64
+/-- `v[c] + d1`. -/ def c1 (f : Nat) : Nat := cd1 f + 64
+def cc1 (f : Nat) : Nat := c1 f + 64
+/-- `(v[b] ^ c1) >>> 24`. -/ def b1 (f : Nat) : Nat := cc1 f + 1
+def cb1 (f : Nat) : Nat := b1 f + 64
+/-- `a1 + b1 + y` — the `G` output `a`. -/ def a2 (f : Nat) : Nat := cb1 f + 64
+def ca2 (f : Nat) : Nat := a2 f + 64
+/-- `(d1 ^ a2) >>> 16` — the `G` output `d`. -/ def d2 (f : Nat) : Nat := ca2 f + 2
+def cd2 (f : Nat) : Nat := d2 f + 64
+/-- `c1 + d2` — the `G` output `c`. -/ def c2 (f : Nat) : Nat := cd2 f + 64
+def cc2 (f : Nat) : Nat := c2 f + 64
+/-- `(b1 ^ c2) >>> 63` — the `G` output `b`. -/ def b2 (f : Nat) : Nat := cc2 f + 1
+def cb2 (f : Nat) : Nat := b2 f + 64
+end GLayout
+
+/-- **`blakeG`'s emitted gate list IS its 8 sub-op segments at `GLayout`'s columns** — by `rfl`, the
+generator's own structure. This is the bridge from `acceptB (blakeG …).1` to the gate equations
+`blakeG_core_forces` consumes. -/
+theorem blakeG_split (va vb vc vd mx my fresh : Nat) :
+    (blakeG va vb vc vd mx my fresh).1
+      = [addMod64Core [wordValue va, wordValue vb, wordValue mx] (GLayout.a1 fresh)
+            [GLayout.ca1 fresh, GLayout.ca1 fresh + 1]]
+        ++ xorRotCore vd (GLayout.a1 fresh) (GLayout.d1 fresh) (GLayout.cd1 fresh) 32
+        ++ [addMod64Core [wordValue vc, wordValue (GLayout.d1 fresh)] (GLayout.c1 fresh)
+              [GLayout.cc1 fresh]]
+        ++ xorRotCore vb (GLayout.c1 fresh) (GLayout.b1 fresh) (GLayout.cb1 fresh) 24
+        ++ [addMod64Core [wordValue (GLayout.a1 fresh), wordValue (GLayout.b1 fresh), wordValue my]
+              (GLayout.a2 fresh) [GLayout.ca2 fresh, GLayout.ca2 fresh + 1]]
+        ++ xorRotCore (GLayout.d1 fresh) (GLayout.a2 fresh) (GLayout.d2 fresh) (GLayout.cd2 fresh) 16
+        ++ [addMod64Core [wordValue (GLayout.c1 fresh), wordValue (GLayout.d2 fresh)]
+              (GLayout.c2 fresh) [GLayout.cc2 fresh]]
+        ++ xorRotCore (GLayout.b1 fresh) (GLayout.c2 fresh) (GLayout.b2 fresh)
+              (GLayout.cb2 fresh) 63 := rfl
+
+/-- **`blakeG`'s returned output word bases ARE `GLayout`'s `(a2, b2, c2, d2)`** — by `rfl`. -/
+theorem blakeG_out (va vb vc vd mx my fresh : Nat) :
+    (blakeG va vb vc vd mx my fresh).2.1
+      = (GLayout.a2 fresh, GLayout.b2 fresh, GLayout.c2 fresh, GLayout.d2 fresh) := rfl
+
+/-- **`blakeG_forces` — the TIED rung.** GIVEN the emitted `blakeG` gate list is ACCEPTED (`acceptB`,
+the ℤ reading of the gate bodies, on the generator applied to its real arguments) and the six input
+word-columns hold `VA…Y`, the four columns `blakeG` RETURNS hold the real BLAKE2b `G` mixing.
+
+The acceptance is destructured against `blakeG`'s own `++` structure (`blakeG_split`), so `blakeG`
+appears in the hypothesis, in the conclusion, and in the proof. `AllBool a` is the separate
+`pinWord`/`binGate` column sweep (`blakeG` emits CORE value gates only) — a named hypothesis, not a
+derived one. -/
+theorem blakeG_forces (a : Assignment) (hbool : AllBool a)
+    (va vb vc vd mx my fresh : Nat) (VA VB VC VD X Y : Nat)
+    (hva : Holds a va VA) (hvb : Holds a vb VB) (hvc : Holds a vc VC) (hvd : Holds a vd VD)
+    (hmx : Holds a mx X) (hmy : Holds a my Y)
+    (hacc : acceptB (blakeG va vb vc vd mx my fresh).1 a = true) :
+    Holds a (blakeG va vb vc vd mx my fresh).2.1.1 (gVals VA VB VC VD X Y).1 ∧
+    Holds a (blakeG va vb vc vd mx my fresh).2.1.2.1 (gVals VA VB VC VD X Y).2.1 ∧
+    Holds a (blakeG va vb vc vd mx my fresh).2.1.2.2.1 (gVals VA VB VC VD X Y).2.2.1 ∧
+    Holds a (blakeG va vb vc vd mx my fresh).2.1.2.2.2 (gVals VA VB VC VD X Y).2.2.2 := by
+  rw [blakeG_split] at hacc
+  simp only [acceptB_append, Bool.and_eq_true] at hacc
+  obtain ⟨⟨⟨⟨⟨⟨⟨g1, g2⟩, g3⟩, g4⟩, g5⟩, g6⟩, g7⟩, g8⟩ := hacc
+  simp only [blakeG_out]
+  exact blakeG_core_forces a hbool va vb vc vd mx my
+    (GLayout.a1 fresh) (GLayout.ca1 fresh) (GLayout.d1 fresh) (GLayout.cd1 fresh)
+    (GLayout.c1 fresh) (GLayout.cc1 fresh) (GLayout.b1 fresh) (GLayout.cb1 fresh)
+    (GLayout.a2 fresh) (GLayout.ca2 fresh) (GLayout.d2 fresh) (GLayout.cd2 fresh)
+    (GLayout.c2 fresh) (GLayout.cc2 fresh) (GLayout.b2 fresh) (GLayout.cb2 fresh)
+    VA VB VC VD X Y hva hvb hvc hvd hmx hmy
+    (head_of_acceptB_singleton _ a g1)
+    (gates_of_xorRotCore a vd _ _ _ 32 g2)
+    (head_of_acceptB_singleton _ a g3)
+    (gates_of_xorRotCore a vb _ _ _ 24 g4)
+    (head_of_acceptB_singleton _ a g5)
+    (gates_of_xorRotCore a _ _ _ _ 16 g6)
+    (head_of_acceptB_singleton _ a g7)
+    (gates_of_xorRotCore a _ _ _ _ 63 g8)
 
 /-! ## §6 — Composition up the fold: the round, the compression, and the multi-block absorb.
 
@@ -496,11 +748,10 @@ theorem gStep_getD (vBases : List Nat) (aa bb cc dd mx my fresh : Nat)
     rw [getD_set_ne' _ dd j _ 0 (Ne.symm hjd), getD_set_ne' _ cc j _ 0 (Ne.symm hjc),
         getD_set_ne' _ bb j _ 0 (Ne.symm hjb), getD_set_ne' _ aa j _ 0 (Ne.symm hja)]
 
-/-- **`gStep_forces`** — one work-vector `G`-step preserves `StateHolds`: given the `blakeG` output
-words are forced to `gVals` (which `blakeG_forces` delivers), the updated work vector reconstructs
-`Ref.G` of the reconstructed inputs. The `.set` bookkeeping composing `blakeG_forces` up to the state
-transition. -/
-theorem gStep_forces (a : Assignment) (vBases vVals : List Nat)
+/-- **`gStep_of_blakeG`** — the `.set` bookkeeping: given the `blakeG` output words are forced to
+`gVals` (which the tied `blakeG_forces` delivers), the updated work vector reconstructs `Ref.G` of
+the reconstructed inputs. The helper form; `gStep_forces` below is the acceptance-tied rung. -/
+theorem gStep_of_blakeG (a : Assignment) (vBases vVals : List Nat)
     (aa bb cc dd mx my fresh MX MY : Nat)
     (hvb16 : vBases.length = 16) (hvv16 : vVals.length = 16)
     (hstate : ∀ i, i < 16 → Holds a (vBases.getD i 0) (vVals.getD i 0))
@@ -540,64 +791,96 @@ theorem gStep_forces (a : Assignment) (vBases vVals : List Nat)
           · subst hid; rw [gD, rD]; exact hnd
           · rw [gO i hia hib hic hid, rO i hia hib hic hid]; exact hstate i hi
 
-/-- **`blakeRound_forces`** — the round gadget forces `Ref.round`: the 8 `G`-steps compose by one
-`foldl_forces` over `gargs` (the round gadget and `Ref.round` share that step list, `round_eq_foldl`).
-Each step is discharged by `gStep_forces` (the `hstep` hypothesis). -/
-theorem blakeRound_forces (a : Assignment) (mBases mVals sig : List Nat)
-    (hstep : ∀ (acc : List VmConstraint2 × List Nat × Nat) (vv : List Nat)
-               (g : (Nat × Nat × Nat × Nat) × (Nat × Nat)), g ∈ gargs →
-        StateHolds a acc.2.1 vv →
-        StateHolds a (gStep acc.2.1 g.1.1 g.1.2.1 g.1.2.2.1 g.1.2.2.2
-                        (mBases.getD (sig.getD g.2.1 0) 0) (mBases.getD (sig.getD g.2.2 0) 0) acc.2.2).2.1
-                     (Ref.G vv g.1.1 g.1.2.1 g.1.2.2.1 g.1.2.2.2
-                        (mVals.getD (sig.getD g.2.1 0) 0) (mVals.getD (sig.getD g.2.2 0) 0)))
-    (vInit vVals0 : List Nat) (fresh : Nat) (h0 : StateHolds a vInit vVals0) :
+/-- **`gStep_forces` — the TIED rung.** The `G`-step gadget's OWN accepted gates (`gStep`'s emitted
+list IS `blakeG`'s) carry `StateHolds` across the work-vector update. -/
+theorem gStep_forces (a : Assignment) (hbool : AllBool a) (vBases vVals : List Nat)
+    (aa bb cc dd mx my fresh MX MY : Nat)
+    (hvb16 : vBases.length = 16) (hvv16 : vVals.length = 16)
+    (hstate : ∀ i, i < 16 → Holds a (vBases.getD i 0) (vVals.getD i 0))
+    (haa : aa < 16) (hbb : bb < 16) (hcc : cc < 16) (hdd : dd < 16)
+    (hab : aa ≠ bb) (hac : aa ≠ cc) (had : aa ≠ dd) (hbc : bb ≠ cc) (hbd : bb ≠ dd) (hcd : cc ≠ dd)
+    (hmx : Holds a mx MX) (hmy : Holds a my MY)
+    (hacc : acceptB (gStep vBases aa bb cc dd mx my fresh).1 a = true) :
+    StateHolds a (gStep vBases aa bb cc dd mx my fresh).2.1 (Ref.G vVals aa bb cc dd MX MY) :=
+  gStep_of_blakeG a vBases vVals aa bb cc dd mx my fresh MX MY hvb16 hvv16 hstate
+    haa hbb hcc hdd hab hac had hbc hbd hcd
+    (blakeG_forces a hbool (vBases.getD aa 0) (vBases.getD bb 0) (vBases.getD cc 0)
+      (vBases.getD dd 0) mx my fresh _ _ _ _ MX MY
+      (hstate aa haa) (hstate bb hbb) (hstate cc hcc) (hstate dd hdd) hmx hmy hacc)
+
+/-- Every `G`-argument quartet in a round is in range and pairwise distinct, and both its message
+indices are in range — the side conditions `gStep_forces` needs, discharged for the WHOLE round. -/
+theorem gargs_ok : ∀ g ∈ gargs,
+    g.1.1 < 16 ∧ g.1.2.1 < 16 ∧ g.1.2.2.1 < 16 ∧ g.1.2.2.2 < 16 ∧
+    g.1.1 ≠ g.1.2.1 ∧ g.1.1 ≠ g.1.2.2.1 ∧ g.1.1 ≠ g.1.2.2.2 ∧
+    g.1.2.1 ≠ g.1.2.2.1 ∧ g.1.2.1 ≠ g.1.2.2.2 ∧ g.1.2.2.1 ≠ g.1.2.2.2 ∧
+    g.2.1 < 16 ∧ g.2.2 < 16 := by decide
+
+/-- The round's per-`G` GADGET step, in the `foldl_F_*` shape: it emits its own `gStep` gates and
+threads `(work-vector bases, next free column)`. -/
+def rgStep (mBases sig : List Nat) (s : List Nat × Nat)
+    (g : (Nat × Nat × Nat × Nat) × (Nat × Nat)) : List VmConstraint2 × (List Nat × Nat) :=
+  let r := gStep s.1 g.1.1 g.1.2.1 g.1.2.2.1 g.1.2.2.2
+             (mBases.getD (sig.getD g.2.1 0) 0) (mBases.getD (sig.getD g.2.2 0) 0) s.2
+  (r.1, r.2)
+
+/-- **`blakeRound_forces` — the TIED rung.** GIVEN the round gadget's emitted gate list is ACCEPTED
+and the 16 message-word columns hold the reference message words at the schedule's positions, the
+round gadget's work vector holds `Ref.round`. The 8 `G`-steps are peeled out of the WHOLE round's
+acceptance by `foldl_F_forces` over `gargs` — the step list the gadget and `Ref.round` share
+(`round_eq_foldl`) — and each is discharged by the tied `gStep_forces`. No gate is reduced. -/
+theorem blakeRound_forces (a : Assignment) (hbool : AllBool a) (mBases mVals sig : List Nat)
+    (hm : ∀ j, j < 16 → Holds a (mBases.getD (sig.getD j 0) 0) (mVals.getD (sig.getD j 0) 0))
+    (vInit vVals0 : List Nat) (fresh : Nat) (h0 : StateHolds a vInit vVals0)
+    (hacc : acceptB (blakeRound vInit mBases sig fresh).1 a = true) :
     StateHolds a (blakeRound vInit mBases sig fresh).2.1 (Ref.round vVals0 mVals sig) := by
   rw [round_eq_foldl]
-  exact foldl_forces gargs
-    (fun (acc : List VmConstraint2 × List Nat × Nat) g =>
-       let (cs, v, fr) := acc
-       let ((aa, bb, cc, dd), (sx, sy)) := g
-       let mx := mBases.getD (sig.getD sx 0) 0
-       let my := mBases.getD (sig.getD sy 0) 0
-       let (cs', v', fr') := gStep v aa bb cc dd mx my fr
-       (cs ++ cs', v', fr'))
+  unfold blakeRound at hacc ⊢
+  refine foldl_F_forces a _ (rgStep mBases sig) (by intro cs s x; rfl)
     (fun v g => Ref.G v g.1.1 g.1.2.1 g.1.2.2.1 g.1.2.2.2
        (mVals.getD (sig.getD g.2.1 0) 0) (mVals.getD (sig.getD g.2.2 0) 0))
-    (fun acc vv => StateHolds a acc.2.1 vv)
-    ([], vInit, fresh) vVals0 h0 (fun s t g hg hR => hstep s t g hg hR)
-
-/-- The compression's per-round GADGET step (exactly `blake2bCompress`'s fold body, named so the
-elaborator matches it by NAME and never force-evaluates the concrete `List.range 12` fold — the
-"blake2b-in-logic is fraught" discipline). -/
-def cGStep (mBases : List Nat) (acc : List VmConstraint2 × List Nat × Nat) (r : Nat) :
-    List VmConstraint2 × List Nat × Nat :=
-  let (cs, v, fr) := acc
-  let (cs', v', fr') := blakeRound v mBases (Ref.sigmaRow (r % 10)) fr
-  (cs ++ cs', v', fr')
+    (fun s vv => StateHolds a s.1 vv) (fun g => g ∈ gargs) ?_ gargs (fun _ h => h)
+    [] (vInit, fresh) vVals0 h0 hacc
+  rintro s vv g hg ⟨hb16, hv16, hst⟩ hgacc
+  obtain ⟨ha, hb, hc, hd, nab, nac, nad, nbc, nbd, ncd, hsx, hsy⟩ := gargs_ok g hg
+  exact gStep_forces a hbool s.1 vv g.1.1 g.1.2.1 g.1.2.2.1 g.1.2.2.2 _ _ s.2 _ _
+    hb16 hv16 hst ha hb hc hd nab nac nad nbc nbd ncd
+    (hm g.2.1 hsx) (hm g.2.2 hsy) hgacc
 
 /-- The compression's per-round REFERENCE step. -/
 def cRStep (mVals : List Nat) (v : List Nat) (r : Nat) : List Nat :=
   Ref.round v mVals (Ref.sigmaRow (r % 10))
 
-/-- `blake2bCompress` IS the `foldl` of `cGStep` — by `rfl` (`cGStep mBases` is its fold body). -/
-theorem blake2bCompress_eq (mBases vInit : List Nat) (fresh : Nat) :
-    blake2bCompress mBases vInit fresh = (List.range 12).foldl (cGStep mBases) ([], vInit, fresh) :=
-  rfl
+/-- The compression's per-round GADGET step, in the `foldl_F_*` shape. -/
+def cgStep (mBases : List Nat) (s : List Nat × Nat) (r : Nat) :
+    List VmConstraint2 × (List Nat × Nat) :=
+  let br := blakeRound s.1 mBases (Ref.sigmaRow (r % 10)) s.2
+  (br.1, br.2)
 
-/-- **`blake2bCompress_forces`** — the 12-round compression gadget forces the reference's round fold: the
-12 rounds compose by one `foldl_forces` over `List.range 12`, each round discharged by `blakeRound_forces`
-(the `hstep` hypothesis). "The rounds compose free," realized as a proof. -/
-theorem blake2bCompress_forces (a : Assignment) (mBases mVals : List Nat)
-    (hstep : ∀ (acc : List VmConstraint2 × List Nat × Nat) (vv : List Nat) (r : Nat),
-        StateHolds a acc.2.1 vv → StateHolds a (cGStep mBases acc r).2.1 (cRStep mVals vv r))
-    (vInit vVals0 : List Nat) (fresh : Nat) (h0 : StateHolds a vInit vVals0) :
+/-- Every `SIGMA` row is a permutation of `0…15`, so every schedule entry a round reads is a legal
+message-word index. Discharges `blakeRound_forces`'s schedule side condition for all 12 rounds. -/
+theorem sigmaRow_lt : ∀ r, r < 10 → ∀ j, j < 16 → (Ref.sigmaRow r).getD j 0 < 16 := by decide
+
+/-- **`blake2bCompress_forces` — the TIED rung.** GIVEN the WHOLE 12-round compression's emitted
+gate list is ACCEPTED (~24960 gates) and the 16 message-word columns hold `mVals`, the compression
+gadget's final work vector holds the reference 12-round `Ref.round` fold. The rounds are peeled out
+of the whole compression's acceptance by `foldl_F_forces` over `List.range 12` and each is
+discharged by the tied `blakeRound_forces` — gate-count-INDEPENDENT, so the ~25k-gate wall falls
+the same way `Sha256FoldForcing.sha256Compress'_forces` breaks the ~30k-gate SHA one. -/
+theorem blake2bCompress_forces (a : Assignment) (hbool : AllBool a) (mBases mVals : List Nat)
+    (hm : ∀ k, k < 16 → Holds a (mBases.getD k 0) (mVals.getD k 0))
+    (vInit vVals0 : List Nat) (fresh : Nat) (h0 : StateHolds a vInit vVals0)
+    (hacc : acceptB (blake2bCompress mBases vInit fresh).1 a = true) :
     StateHolds a (blake2bCompress mBases vInit fresh).2.1
       ((List.range 12).foldl (cRStep mVals) vVals0) := by
-  rw [blake2bCompress_eq]
-  exact foldl_forces (List.range 12) (cGStep mBases) (cRStep mVals)
-    (fun (acc : List VmConstraint2 × List Nat × Nat) vv => StateHolds a acc.2.1 vv)
-    ([], vInit, fresh) vVals0 h0 (fun s t r _ hR => hstep s t r hR)
+  unfold blake2bCompress at hacc ⊢
+  refine foldl_F_forces a _ (cgStep mBases) (by intro cs s x; rfl) (cRStep mVals)
+    (fun s vv => StateHolds a s.1 vv) (fun _ => True) ?_ (List.range 12) (fun _ _ => trivial)
+    [] (vInit, fresh) vVals0 h0 hacc
+  intro s vv r _ hR hracc
+  exact blakeRound_forces a hbool mBases mVals (Ref.sigmaRow (r % 10))
+    (fun j hj => hm _ (sigmaRow_lt (r % 10) (Nat.mod_lt _ (by norm_num)) j hj))
+    s.1 vv s.2 hR hracc
 
 /-! ## §7 — The init/finalize atomic word bridges, and the whole-block `blake2bF` forcing. -/
 
@@ -716,29 +999,36 @@ theorem refInitV_eq_append (hVals : List Nat) (t0 t1 f0 f1 : Nat) (hlen : hVals.
   simp only [hlen]
   rfl
 
-/-- **`blake2bFinalize_forces`** — the digest fold forces each of the 8 output words to
-`h_i ⊕ vf_i ⊕ vf_{i+8}` (`= (refDigest hVals vf)_i`), by `xor3Word_forces` per word (carry base
-`fresh + 64·i`, matching `blake2bFinalize`'s fresh threading). -/
+/-- The digest fold's per-word GADGET step, in the `foldl_F_*` shape. -/
+def finStep (hBases vFinal outBases : List Nat) (fr : Nat) (i : Nat) : List VmConstraint2 × Nat :=
+  (xor3Word (hBases.getD i 0) (vFinal.getD i 0) (vFinal.getD (i + 8) 0) (outBases.getD i 0) fr,
+   fr + 64)
+
+/-- **`blake2bFinalize_forces` — the TIED rung.** GIVEN the digest-fold gadget's emitted gate list is
+ACCEPTED, each of the 8 output words is `h_i ⊕ vf_i ⊕ vf_{i+8}` (`= (refDigest hVals vf)_i`). The 8
+per-word `xor3Word` gadgets are peeled out of the whole fold's acceptance by `foldl_F_mem_accept`. -/
 theorem blake2bFinalize_forces (a : Assignment) (hbool : AllBool a)
     (hBases vFinal outBases hVals vfVals : List Nat) (fresh : Nat)
     (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
     (hv : ∀ i, i < 16 → Holds a (vFinal.getD i 0) (vfVals.getD i 0))
-    (hg : ∀ i, i < 8 → ∀ j, j < 64 →
-        evalH (xorHead [hBases.getD i 0 + j, vFinal.getD i 0 + j, vFinal.getD (i + 8) 0 + j]
-               (outBases.getD i 0 + j) (fresh + 64 * i + j)) a = 0) :
+    (hacc : acceptB (blake2bFinalize hBases vFinal outBases fresh).1 a = true) :
     ∀ i, i < 8 → Holds a (outBases.getD i 0) ((refDigest hVals vfVals).getD i 0) := by
   intro i hi
+  unfold blake2bFinalize at hacc
+  obtain ⟨fr, hfr⟩ := foldl_F_mem_accept a _ (finStep hBases vFinal outBases)
+    (by intro cs s x; rfl) (List.range 8) [] fresh hacc i (List.mem_range.mpr hi)
+  simp only [finStep, xor3Word, acceptB_append, Bool.and_eq_true] at hfr
   have hforce := xor3Word_forces a hbool (hBases.getD i 0) (vFinal.getD i 0) (vFinal.getD (i + 8) 0)
-    (outBases.getD i 0) (fresh + 64 * i) (hVals.getD i 0) (vfVals.getD i 0) (vfVals.getD (i + 8) 0)
-    (hh i hi) (hv i (by omega)) (hv (i + 8) (by omega)) (hg i hi)
+    (outBases.getD i 0) fr (hVals.getD i 0) (vfVals.getD i 0) (vfVals.getD (i + 8) 0)
+    (hh i hi) (hv i (by omega)) (hv (i + 8) (by omega))
+    (gates_of_xor3Core a _ _ _ _ _ hfr.1.1)
   rw [refDigest, getD_map_range _ 8 i hi]
   exact hforce
 
-/-- **`blake2bInit_forces`** — the init gadget forces the 16-word initial work vector `refInitV`:
-`v[0..7]` relabel the input state (`hBases` hold `hVals`), `v[8..11]` are the pinned `IV[0..3]`
-constants (`h8..h11` from `constWord_forces`), and `v[12..15]` are the counter/flag XOR-folded into
-`IV[4..7]` (`h12..h15` from `xorConstWord_forces`, XOR commuting). -/
-theorem blake2bInit_forces (a : Assignment) (hBases : List Nat) (t0B t1B f0B f1B fresh : Nat)
+/-- **`blake2bInit_of_words`** — the HELPER form: the `.set`/append bookkeeping that assembles the
+16-word initial work vector `refInitV` out of the 8 relabelled input words plus the 8 forced `IV`
+words. `blake2bInit_forces` below derives `h8 … h15` from the init gadget's own accepted gates. -/
+theorem blake2bInit_of_words (a : Assignment) (hBases : List Nat) (t0B t1B f0B f1B fresh : Nat)
     (hVals : List Nat) (t0 t1 f0 f1 : Nat) (hlen : hVals.length = 8)
     (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
     (h8 : Holds a fresh (Ref.IV.getD 0 0)) (h9 : Holds a (fresh + 64) (Ref.IV.getD 1 0))
@@ -770,22 +1060,88 @@ theorem blake2bInit_forces (a : Assignment) (hBases : List Nat) (t0B t1B f0B f1B
           | (unfold Ref.xorw; rw [Nat.xor_comm]; exact h14)
           | (unfold Ref.xorw; rw [Nat.xor_comm]; exact h15)
 
-/-- **`blake2bF_forces`** — the whole-block compression gadget forces `Ref.compress`: the 12-round
-compression carries the init work vector to `vFinal` (`hcomp`, from `blake2bInit_forces` +
-`blake2bCompress_forces`), then the digest fold (`hfin`) lands the 8 output words on `Ref.compress`'s
-digest — via `refCompress_eq`. This is ONE block of the multi-block absorb. -/
-theorem blake2bF_forces (a : Assignment) (hbool : AllBool a)
-    (hBases vFinal outBases hVals mVals : List Nat) (t0 t1 f0 f1 fresh : Nat)
+/-- **`blake2bInit`'s emitted gate list IS its 8 word segments** — by `rfl`, the generator's own
+structure. -/
+theorem blake2bInit_split (hBases : List Nat) (t0B t1B f0B f1B fresh : Nat) :
+    (blake2bInit hBases t0B t1B f0B f1B fresh).1
+      = constWordGate fresh (Ref.IV.getD 0 0) ++ constWordGate (fresh + 64) (Ref.IV.getD 1 0)
+        ++ constWordGate (fresh + 128) (Ref.IV.getD 2 0)
+        ++ constWordGate (fresh + 192) (Ref.IV.getD 3 0)
+        ++ xorConstWord t0B (fresh + 256) (Ref.IV.getD 4 0)
+        ++ xorConstWord t1B (fresh + 320) (Ref.IV.getD 5 0)
+        ++ xorConstWord f0B (fresh + 384) (Ref.IV.getD 6 0)
+        ++ xorConstWord f1B (fresh + 448) (Ref.IV.getD 7 0) := rfl
+
+/-- Each `IV` word is a 64-bit word (the `constWord_forces`/`xorConstWord_forces` obligation). -/
+theorem IV_lt : ∀ i, i < 8 → Ref.IV.getD i 0 < 2 ^ 64 := by decide
+
+/-- **`blake2bInit_forces` — the TIED rung.** GIVEN the init gadget's emitted gate list is ACCEPTED
+and the counter/flag word-columns hold `t0,t1,f0,f1`, the 16 work-vector columns the gadget RETURNS
+hold `refInitV` — `v[8..11]` forced to the pinned `IV[0..3]` by `constWord_forces`, `v[12..15]` to
+the counter/flag XOR-folded into `IV[4..7]` by `xorConstWord_forces`. -/
+theorem blake2bInit_forces (a : Assignment) (hbool : AllBool a) (hBases : List Nat)
+    (t0B t1B f0B f1B fresh : Nat) (hVals : List Nat) (t0 t1 f0 f1 : Nat) (hlen : hVals.length = 8)
     (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
-    (hcomp : StateHolds a vFinal
-      ((List.range 12).foldl (cRStep mVals) (refInitV hVals t0 t1 f0 f1)))
-    (hfin : ∀ i, i < 8 → ∀ j, j < 64 →
-        evalH (xorHead [hBases.getD i 0 + j, vFinal.getD i 0 + j, vFinal.getD (i + 8) 0 + j]
-               (outBases.getD i 0 + j) (fresh + 64 * i + j)) a = 0) :
+    (ht0 : Holds a t0B t0) (ht1 : Holds a t1B t1) (hf0 : Holds a f0B f0) (hf1 : Holds a f1B f1)
+    (hacc : acceptB (blake2bInit hBases t0B t1B f0B f1B fresh).1 a = true) :
+    StateHolds a (blake2bInit hBases t0B t1B f0B f1B fresh).2.1 (refInitV hVals t0 t1 f0 f1) := by
+  rw [blake2bInit_split] at hacc
+  simp only [acceptB_append, Bool.and_eq_true] at hacc
+  obtain ⟨⟨⟨⟨⟨⟨⟨c8, c9⟩, c10⟩, c11⟩, c12⟩, c13⟩, c14⟩, c15⟩ := hacc
+  exact blake2bInit_of_words a hBases t0B t1B f0B f1B fresh hVals t0 t1 f0 f1 hlen hh
+    (constWord_forces a hbool fresh _ (IV_lt 0 (by norm_num)) (gates_of_constWordGate a _ _ c8))
+    (constWord_forces a hbool _ _ (IV_lt 1 (by norm_num)) (gates_of_constWordGate a _ _ c9))
+    (constWord_forces a hbool _ _ (IV_lt 2 (by norm_num)) (gates_of_constWordGate a _ _ c10))
+    (constWord_forces a hbool _ _ (IV_lt 3 (by norm_num)) (gates_of_constWordGate a _ _ c11))
+    (xorConstWord_forces a hbool t0B _ _ t0 (IV_lt 4 (by norm_num)) ht0
+      (gates_of_xorConstWord a _ _ _ c12))
+    (xorConstWord_forces a hbool t1B _ _ t1 (IV_lt 5 (by norm_num)) ht1
+      (gates_of_xorConstWord a _ _ _ c13))
+    (xorConstWord_forces a hbool f0B _ _ f0 (IV_lt 6 (by norm_num)) hf0
+      (gates_of_xorConstWord a _ _ _ c14))
+    (xorConstWord_forces a hbool f1B _ _ f1 (IV_lt 7 (by norm_num)) hf1
+      (gates_of_xorConstWord a _ _ _ c15))
+
+/-- **`blake2bF`'s emitted gate list IS init ‖ compress ‖ finalize** — by `rfl`. -/
+theorem blake2bF_split (hBases mBases : List Nat) (t0B t1B f0B f1B : Nat)
+    (outBases : List Nat) (fresh : Nat) :
+    (blake2bF hBases mBases t0B t1B f0B f1B outBases fresh).1
+      = (blake2bInit hBases t0B t1B f0B f1B fresh).1
+        ++ (blake2bCompress mBases (blake2bInit hBases t0B t1B f0B f1B fresh).2.1
+              (blake2bInit hBases t0B t1B f0B f1B fresh).2.2).1
+        ++ (blake2bFinalize hBases
+              (blake2bCompress mBases (blake2bInit hBases t0B t1B f0B f1B fresh).2.1
+                 (blake2bInit hBases t0B t1B f0B f1B fresh).2.2).2.1
+              outBases
+              (blake2bCompress mBases (blake2bInit hBases t0B t1B f0B f1B fresh).2.1
+                 (blake2bInit hBases t0B t1B f0B f1B fresh).2.2).2.2).1 := rfl
+
+/-- `Ref.compress` always returns 8 words. -/
+theorem refCompress_length (hVals mVals : List Nat) (t0 t1 f0 f1 : Nat) :
+    (Ref.compress hVals mVals t0 t1 f0 f1).length = 8 := by
+  rw [refCompress_eq, refDigest]; simp
+
+/-- **`blake2bF_forces` — the TIED rung.** GIVEN the WHOLE 27264-gate block gadget's emitted list is
+ACCEPTED, and the input-state / message / counter / flag columns hold their reference words, the 8
+output columns hold `Ref.compress` of those words. The three segments (init ‖ 12-round compression ‖
+digest fold) are peeled off the block's acceptance by `acceptB_append` and each discharged by its own
+TIED rung. This is ONE block of the multi-block absorb, gate-count-independently. -/
+theorem blake2bF_forces (a : Assignment) (hbool : AllBool a)
+    (hBases mBases outBases hVals mVals : List Nat) (t0B t1B f0B f1B : Nat)
+    (t0 t1 f0 f1 fresh : Nat) (hlen : hVals.length = 8)
+    (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
+    (hm : ∀ k, k < 16 → Holds a (mBases.getD k 0) (mVals.getD k 0))
+    (ht0 : Holds a t0B t0) (ht1 : Holds a t1B t1) (hf0 : Holds a f0B f0) (hf1 : Holds a f1B f1)
+    (hacc : acceptB (blake2bF hBases mBases t0B t1B f0B f1B outBases fresh).1 a = true) :
     ∀ i, i < 8 → Holds a (outBases.getD i 0) ((Ref.compress hVals mVals t0 t1 f0 f1).getD i 0) := by
+  rw [blake2bF_split] at hacc
+  simp only [acceptB_append, Bool.and_eq_true] at hacc
+  obtain ⟨⟨hi0, hi1⟩, hi2⟩ := hacc
+  have hinit := blake2bInit_forces a hbool hBases t0B t1B f0B f1B fresh hVals t0 t1 f0 f1 hlen hh
+    ht0 ht1 hf0 hf1 hi0
+  have hcomp := blake2bCompress_forces a hbool mBases mVals hm _ _ _ hinit hi1
   obtain ⟨_, _, hvf⟩ := hcomp
-  have hfinal := blake2bFinalize_forces a hbool hBases vFinal outBases hVals
-    ((List.range 12).foldl (cRStep mVals) (refInitV hVals t0 t1 f0 f1)) fresh hh hvf hfin
+  have hfinal := blake2bFinalize_forces a hbool hBases _ outBases hVals _ _ hh hvf hi2
   intro i hi
   rw [refCompress_eq]
   exact hfinal i hi
@@ -796,20 +1152,73 @@ theorem blake2bF_forces (a : Assignment) (hbool : AllBool a)
 def Holds8 (a : Assignment) (bases vals : List Nat) : Prop :=
   vals.length = 8 ∧ ∀ i, i < 8 → Holds a (bases.getD i 0) (vals.getD i 0)
 
-/-- **`absorb_forces`** — the multi-block absorb composes free: chaining `blake2bF` block by block
-(block `k`'s 8 output words are block `k+1`'s input state, `nextBases`) forces the reconstructed final
-state = `LightClientMidHashFold.absorb` of the block VALUES, by one `foldl_forces` over the schedule.
-Each block's step is `blake2bF_forces` (the `hstep` hypothesis). RESIDUAL #1's "× #rows" — as a proof. -/
-theorem absorb_forces (a : Assignment) (s : List (List Nat × Nat × Nat))
-    (nextBases : List Nat → (List Nat × Nat × Nat) → List Nat)
-    (hstep : ∀ (bases vals : List Nat) (e : List Nat × Nat × Nat), e ∈ s →
-        Holds8 a bases vals →
-        Holds8 a (nextBases bases e) (Ref.compress vals e.1 e.2.1 0 e.2.2 0))
-    (h0Bases h0Vals : List Nat) (h0 : Holds8 a h0Bases h0Vals) :
-    Holds8 a (s.foldl nextBases h0Bases) (LightClientMidHashFold.absorb h0Vals s) := by
-  unfold LightClientMidHashFold.absorb
-  exact foldl_forces s nextBases (fun h e => Ref.compress h e.1 e.2.1 0 e.2.2 0)
-    (fun b v => Holds8 a b v) h0Bases h0Vals h0 (fun b v e he hR => hstep b v e he hR)
+/-- One absorbed block: the emitted COLUMN LAYOUT of the block — its 16 message-word columns, its
+counter/flag word columns, and the 8-word digest slab it writes — PAIRED with the reference values
+that layout is required to hold. -/
+structure AbsorbBlock where
+  /-- the 16 message-word column bases -/ mBases : List Nat
+  /-- counter-low word column -/ t0B : Nat
+  /-- counter-high word column -/ t1B : Nat
+  /-- final-flag word column -/ f0B : Nat
+  /-- second flag word column -/ f1B : Nat
+  /-- the 8 digest word columns this block writes -/ outBases : List Nat
+  /-- the 16 reference message words -/ mVals : List Nat
+  /-- the reference counter -/ t0 : Nat
+  /-- the reference final flag -/ f0 : Nat
+
+/-- One block of the multi-block absorb, EMITTED: `blake2bF` at the current fresh column, with block
+`k`'s 8 digest columns becoming block `k+1`'s input-state columns. (`t1 = f1 = 0`, exactly as
+`LightClientMidHashFold.absorb` fixes them.) -/
+def absorbStep (s : List Nat × Nat) (b : AbsorbBlock) : List VmConstraint2 × (List Nat × Nat) :=
+  let r := blake2bF s.1 b.mBases b.t0B b.t1B b.f0B b.f1B b.outBases s.2
+  (r.1, (b.outBases, r.2))
+
+/-- **The multi-block absorb AS AN EMITTED GATE LIST** — `#blocks × 27264` core gates, chained. This
+generator is what `LightClientMidHashFold.lean:365-369` describes in a comment and measures with a
+length `#guard`; nothing in the tree emitted it before, which is why `absorb_forces` previously
+quantified over an abstract `nextBases` instead of naming a gadget. -/
+def absorbGadget (bs : List AbsorbBlock) (h0Bases : List Nat) (fresh : Nat) :
+    List VmConstraint2 × (List Nat × Nat) :=
+  bs.foldl (fun acc b => (acc.1 ++ (absorbStep acc.2 b).1, (absorbStep acc.2 b).2))
+    ([], h0Bases, fresh)
+
+/-- Per-block word hypotheses: the block's emitted message / counter / flag columns hold its values,
+and its `t1`/`f1` columns hold the zeros the absorb schedule fixes. -/
+def BlockHolds (a : Assignment) (b : AbsorbBlock) : Prop :=
+  b.mVals.length = 16 ∧
+  (∀ k, k < 16 → Holds a (b.mBases.getD k 0) (b.mVals.getD k 0)) ∧
+  Holds a b.t0B b.t0 ∧ Holds a b.t1B 0 ∧ Holds a b.f0B b.f0 ∧ Holds a b.f1B 0
+
+/-- **`absorb_forces` — the TIED rung.** GIVEN the WHOLE chained absorb gadget's emitted gate list is
+ACCEPTED and every block's word-columns hold its message/counter/flag values, the 8 columns the chain
+ENDS on hold `LightClientMidHashFold.absorb` of the block values. The blocks are peeled out of the
+whole chain's acceptance by `foldl_F_forces` and each is discharged by the tied `blake2bF_forces` —
+RESIDUAL #1's "× #rows", as a proof over the gates rather than over an abstract `nextBases`.
+
+NAMED RESIDUAL: this ties the absorb to `absorbGadget`, the chain generator defined just above. What
+is NOT proved here is that Midnight's authority-row schedule (`authSetBlocks` / `sched`) instantiates
+`bs` — i.e. that `bs.map (fun b => (b.mVals, b.t0, b.f0))` IS `sched (authSetBlocks rows).length 0
+(authSetBlocks rows)`. That row-serialization tie is `LightClientMidHashFold`'s named
+Derived-vs-assumed residual and is untouched. -/
+theorem absorb_forces (a : Assignment) (hbool : AllBool a) (bs : List AbsorbBlock)
+    (hb : ∀ b ∈ bs, BlockHolds a b)
+    (h0Bases h0Vals : List Nat) (fresh : Nat) (h0 : Holds8 a h0Bases h0Vals)
+    (hacc : acceptB (absorbGadget bs h0Bases fresh).1 a = true) :
+    Holds8 a (absorbGadget bs h0Bases fresh).2.1
+      (LightClientMidHashFold.absorb h0Vals (bs.map (fun b => (b.mVals, b.t0, b.f0)))) := by
+  have habs : LightClientMidHashFold.absorb h0Vals (bs.map (fun b => (b.mVals, b.t0, b.f0)))
+      = bs.foldl (fun h b => Ref.compress h b.mVals b.t0 0 b.f0 0) h0Vals := by
+    simp only [LightClientMidHashFold.absorb, List.foldl_map]
+  rw [habs]
+  unfold absorbGadget at hacc ⊢
+  refine foldl_F_forces a _ absorbStep (by intro cs s x; rfl)
+    (fun h b => Ref.compress h b.mVals b.t0 0 b.f0 0)
+    (fun s h => Holds8 a s.1 h) (fun b => BlockHolds a b) ?_ bs hb
+    [] (h0Bases, fresh) h0Vals h0 hacc
+  rintro s h b ⟨hmlen, hm, ht0, ht1, hf0, hf1⟩ ⟨hlen, hst⟩ hbacc
+  refine ⟨refCompress_length _ _ _ _ _ _, ?_⟩
+  exact blake2bF_forces a hbool s.1 b.mBases b.outBases h b.mVals b.t0B b.t1B b.f0B b.f1B
+    b.t0 0 b.f0 0 s.2 hlen hst hm ht0 ht1 hf0 hf1 hbacc
 
 /-- Two `Nat` lists of equal length that agree at every `getD` index are equal. -/
 theorem list_ext_getD (l1 l2 : List Nat) (hl : l1.length = l2.length)
@@ -872,8 +1281,16 @@ end Payoff
 #assert_axioms add2Word_forces
 #assert_axioms xorRotWord_forces
 #assert_axioms xor3Word_forces
+#assert_axioms foldl_F_split
+#assert_axioms foldl_F_mem_accept
+#assert_axioms foldl_F_forces
+#assert_axioms blakeG_split
+#assert_axioms blakeG_core_forces
 #assert_axioms blakeG_forces
+#assert_axioms gStep_of_blakeG
 #assert_axioms gStep_forces
+#assert_axioms gargs_ok
+#assert_axioms sigmaRow_lt
 #assert_axioms blakeRound_forces
 #assert_axioms blake2bCompress_forces
 #assert_axioms constWord_forces
@@ -881,7 +1298,9 @@ end Payoff
 #assert_axioms refCompress_eq
 #assert_axioms blake2bFinalize_forces
 #assert_axioms refInitV_eq_append
+#assert_axioms blake2bInit_split
 #assert_axioms blake2bInit_forces
+#assert_axioms blake2bF_split
 #assert_axioms blake2bF_forces
 #assert_axioms absorb_forces
 #assert_axioms midHfold_discharged
