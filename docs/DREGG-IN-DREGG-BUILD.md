@@ -16,6 +16,14 @@ below and is NOT done.**
 
 ## 1. What landed (the slice) — and what it is not
 
+> **Provenance (the commit trail is split — read this before `git log`).** The slice's content landed
+> in `ce6da9766` (first version, swept in by a concurrent lane's broad commit while this lane's files
+> were staged) and `e9a6605d5` (this lane's floor-ratchet fix). **Both carry another lane's commit
+> subject** — that lane's message file overwrote this one's in a shared scratchpad between write and
+> commit. Neither commit was amended: HEAD had already moved, and rewriting history in a tree with
+> concurrent lanes is not safe. So the subject line above those two commits is wrong; this doc is the
+> findable record of what they contain.
+
 **Landed:** `metatheory/Dregg2/Distributed/SelfSettlement.lean`, green on hbox
 (`scripts/hbuild eth-lc-air 'cd metatheory && lake build Dregg2.Distributed.SelfSettlement'`),
 21 keystones pinned with `#assert_axioms` (⊆ {`propext`, `Classical.choice`, `Quot.sound`}), no
