@@ -214,6 +214,26 @@ impl<S: TreasuryStore> Treasury<S> {
         Ok(remaining)
     }
 
+    /// The fuel tank rendered in USD. **The one place atomic USDC becomes a dollar figure**,
+    /// so the refusal an operator reads in the log and the number `/dregg admin treasury`
+    /// divides by cannot drift apart. Saturates the decimals at 18 (`10^18` is the largest
+    /// power of ten a `u64` atomic unit can meaningfully scale by).
+    pub fn fuel_usd(&self) -> f64 {
+        let scale = 10f64.powi(i32::from(self.usdc_decimals.min(18)));
+        self.store.usdc_balance() as f64 / scale
+    }
+
+    /// `true` when the tank covers `cost_usd`. **Advisory**: a concurrent run can drain
+    /// the tank between this read and the debit, so [`Self::spend_inference_usd`] remains
+    /// the authority. Used to refuse a run BEFORE the provider is called, at the same
+    /// threshold the operator's refuel signal reads.
+    pub fn fuel_covers_usd(&self, cost_usd: f64) -> bool {
+        match self.usd_to_atomic_usdc(cost_usd) {
+            Ok(needed) => needed <= self.store.usdc_balance(),
+            Err(_) => false,
+        }
+    }
+
     /// Draw down the pile by `amount` atomic `$DREGG` (the accounting side of an OTC
     /// fill or a swap; the on-chain transfer executes behind the operator's signer).
     /// Fails closed if the pile is short.
@@ -232,12 +252,84 @@ impl<S: TreasuryStore> Treasury<S> {
     }
 }
 
+/// **The fuel sink one real-AI run draws on**, behind a trait so the thing that
+/// actually makes the hosted call can hold it without knowing which store backs it.
+///
+/// This exists because the debit has to happen at the point EVERY run passes through
+/// (the metered provider call), and that point lives in another crate from the
+/// [`Treasury`]. A run reaches its sink as an `Arc<dyn InferenceFuel>`; `None` there
+/// means exactly "this narrator is not wired to a treasury" (a bare unit-test
+/// narrator), never "the tank is full".
+pub trait InferenceFuel: Send + Sync {
+    /// Atomic USDC currently in the tank.
+    fn fuel_atomic_usdc(&self) -> u64;
+
+    /// The tank in USD (see [`Treasury::fuel_usd`]) — the sink knows its own decimals, so a
+    /// caller never has to reconstruct the scale.
+    fn fuel_usd(&self) -> f64;
+
+    /// `true` when the tank covers `cost_usd`. Advisory (see
+    /// [`Treasury::fuel_covers_usd`]); the debit is the authority.
+    fn fuel_covers_usd(&self, cost_usd: f64) -> bool;
+
+    /// Draw the tank down by one run's ACTUAL USD cost. Fails closed when short.
+    fn spend_inference_usd(&self, cost_usd: f64) -> Result<u64, TreasuryError>;
+}
+
+impl<S: TreasuryStore + Send + Sync> InferenceFuel for Treasury<S> {
+    fn fuel_atomic_usdc(&self) -> u64 {
+        self.usdc_balance()
+    }
+
+    fn fuel_usd(&self) -> f64 {
+        Treasury::fuel_usd(self)
+    }
+
+    fn fuel_covers_usd(&self, cost_usd: f64) -> bool {
+        Treasury::fuel_covers_usd(self, cost_usd)
+    }
+
+    fn spend_inference_usd(&self, cost_usd: f64) -> Result<u64, TreasuryError> {
+        Treasury::spend_inference_usd(self, cost_usd)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn treasury() -> Treasury<InMemoryTreasuryStore> {
         Treasury::new(InMemoryTreasuryStore::new(), 6)
+    }
+
+    #[test]
+    fn fuel_cover_check_agrees_with_the_debit_at_the_boundary() {
+        let t = treasury();
+        t.deposit_usdc(10_000); // exactly one $0.01 run
+        assert!(t.fuel_covers_usd(0.01), "exactly enough is enough");
+        assert!(!t.fuel_covers_usd(0.0100_01), "a hair more is not");
+        assert!(
+            !t.fuel_covers_usd(f64::NAN),
+            "an unpriceable cost never covers"
+        );
+        // The check is honest about the debit: what it admits, the debit takes; what it
+        // refuses, the debit refuses.
+        assert_eq!(t.spend_inference_usd(0.01).unwrap(), 0);
+        assert!(!t.fuel_covers_usd(0.01), "and now the tank is dry");
+        assert!(t.spend_inference_usd(0.01).is_err());
+    }
+
+    #[test]
+    fn the_fuel_sink_trait_debits_the_same_tank() {
+        // The narrator holds the treasury only as `dyn InferenceFuel`; that view must move
+        // the SAME balance, not a copy of it.
+        let t = treasury();
+        t.deposit_usdc(30_000);
+        let sink: &dyn InferenceFuel = &t;
+        assert_eq!(sink.fuel_atomic_usdc(), 30_000);
+        assert!(sink.fuel_covers_usd(0.01));
+        assert_eq!(sink.spend_inference_usd(0.01).unwrap(), 20_000);
+        assert_eq!(t.usdc_balance(), 20_000, "the concrete treasury moved");
     }
 
     #[test]

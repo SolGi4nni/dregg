@@ -42,10 +42,10 @@ use dregg_narrator::{
 use dregg_pay::{
     AccountFetcher, Asset, ChainId, ContributionOutcome, CreditLedger, CreditOutcome, CreditStore,
     DepositAddress, DepositAddressBook, DepositAddressProvider, FetchedAccount, HdDeposit,
-    MockChain, MockWatcher, MultichainHoldings, Network, ObservedTransfer, PayConfig, PayRole,
-    PaymentReceived, PaymentRef, PoolEntry, PoolError, PoolLedger, PoolSnapshot, PoolStore,
-    ProvenForeignHolding, SignatureWatcher, SwapPool, TransferFetcher, Treasury, TreasuryError,
-    TreasurySlot, TreasuryStore, TreasuryView, UserId, WatchError, Watcher,
+    InferenceFuel, MockChain, MockWatcher, MultichainHoldings, Network, ObservedTransfer,
+    PayConfig, PayRole, PaymentReceived, PaymentRef, PoolEntry, PoolError, PoolLedger,
+    PoolSnapshot, PoolStore, ProvenForeignHolding, SignatureWatcher, SwapPool, TransferFetcher,
+    Treasury, TreasurySlot, TreasuryStore, TreasuryView, UserId, WatchError, Watcher,
 };
 
 use crate::db::{Database, PoolRecordOutcome, PoolRetireOutcome};
@@ -446,6 +446,16 @@ pub struct PaidNarrator {
     /// quote behind a summary. `None` for every non-attesting provider, and `None` is why
     /// [`Self::attestation_quote`] can never invent evidence for a call that did not attest.
     evidence: Option<Arc<dyn AttestationEvidence>>,
+    /// **THE FUEL TANK THIS NARRATOR BURNS.** Every hosted call funnels through
+    /// [`Self::metered_request`], which is the only place a run's real USD cost is known,
+    /// so that is where the treasury debit lives — ONE named call at the derivation point
+    /// rather than a debit sprinkled at each of the three `/dungeon` call sites.
+    ///
+    /// Attached by [`PayState::paid`], the single accessor every production run reaches its
+    /// narrator through; a narrator constructed directly (the narrator unit tests) has
+    /// `None` here, which means exactly "not wired to a treasury" and never "the tank is
+    /// full" — an unwired narrator neither debits nor refuses.
+    fuel: Option<Arc<dyn InferenceFuel>>,
 }
 
 // The backend is a trait object and the registry is a price book — neither is `Debug` — so print
@@ -481,6 +491,7 @@ impl PaidNarrator {
             max_tokens,
             ledger_dir,
             evidence: None,
+            fuel: None,
         }
     }
 
@@ -498,6 +509,19 @@ impl PaidNarrator {
     pub fn with_evidence(mut self, evidence: Option<Arc<dyn AttestationEvidence>>) -> Self {
         self.evidence = evidence;
         self
+    }
+
+    /// Attach the operator's fuel tank, so this narrator's runs DRAW ON IT: each metered call
+    /// is refused when the tank cannot cover one run at [`Self::usd_per_run`], and debits its
+    /// real cost when it completes. Set by [`PayState::paid`] on the way out to a run.
+    pub fn with_fuel(mut self, fuel: Option<Arc<dyn InferenceFuel>>) -> Self {
+        self.fuel = fuel;
+        self
+    }
+
+    /// Whether this narrator is wired to a treasury (its runs move the fuel gauge).
+    pub fn has_fuel(&self) -> bool {
+        self.fuel.is_some()
     }
 
     /// **The full evidence behind a summary this narrator produced**, by the summary's own quote
@@ -557,10 +581,49 @@ impl PaidNarrator {
         usd_to_micro_usd(self.usd_per_run)
     }
 
+    /// **THE DERIVATION POINT — every real-AI run passes through here, and only here.**
+    /// [`Self::narrate`] and [`Self::converse_with_tools`] are the two hosted-call entries and
+    /// both funnel into this one function, which is also the only place a run's ACTUAL USD cost
+    /// is known (the per-run [`BudgetLedger`]'s post-true-up total). So the treasury moves here,
+    /// once per provider call, in both directions:
+    ///
+    /// 1. **Refuse fail-closed** when the tank cannot cover one run at `usd_per_run` — BEFORE the
+    ///    network, so no money is spent on a run the operator cannot fund. The threshold is
+    ///    deliberately the SAME one `/dregg admin treasury` divides by, which is what makes its
+    ///    "real-AI runs will start refusing" a description rather than a forecast.
+    /// 2. **Debit the real cost** afterward, whatever the outcome. A backend failure refunds its
+    ///    reservation and lands here as `$0.00` (nothing was burned); a call that succeeded and
+    ///    was then REFUSED by `validate_paid_narration` still cost real USD and is still debited.
+    ///    Debiting in `narrate`'s `Ok` arm would have missed exactly that case.
+    ///
+    /// **Double-count**: one call to this function is one provider call is one debit; nothing
+    /// retries inside it, and the two public entries each call it once. **Under-count** is
+    /// possible only in a race at the very bottom of the tank: two concurrent runs can both pass
+    /// (1) and the second's debit then fails closed, leaving its cost unrecorded. That is the
+    /// safe direction (the gauge never overstates what was burned), it is only reachable when
+    /// the tank already reads REFUEL NOW, and it is loud in the log.
     fn metered_request(
         &self,
         request: &ConverseRequest,
     ) -> Result<(ConverseResponse, f64), NarratorError> {
+        // (1) FAIL CLOSED ON AN EMPTY TANK — before the network, before the ledger file.
+        if let Some(fuel) = self.fuel.as_ref() {
+            if !fuel.fuel_covers_usd(self.usd_per_run) {
+                let available_usd = fuel.fuel_usd();
+                tracing::error!(
+                    available_usd,
+                    needed_usd = self.usd_per_run,
+                    model = %self.model,
+                    "REFUSING a real-AI run: the treasury fuel tank cannot cover one run at the \
+                     per-run ceiling. Refuel the treasury."
+                );
+                return Err(NarratorError::FuelExhausted {
+                    needed_usd: self.usd_per_run,
+                    available_usd,
+                });
+            }
+        }
+
         let _ = std::fs::create_dir_all(&self.ledger_dir);
         let seq = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
         let path = self
@@ -576,6 +639,25 @@ impl PaidNarrator {
         let mut lock = path.clone().into_os_string();
         lock.push(".lock");
         let _ = std::fs::remove_file(PathBuf::from(lock));
+
+        // (2) DEBIT WHAT THE RUN ACTUALLY BURNED. `usd_spent` is 0.0 for a call that never
+        // landed (the reservation was refunded), and `spend_inference_usd` is a no-op at 0,
+        // so a failed provider call correctly moves nothing.
+        if let Some(fuel) = self.fuel.as_ref() {
+            if usd_spent > 0.0 {
+                if let Err(error) = fuel.spend_inference_usd(usd_spent) {
+                    // The USD is already gone at the provider; the tank could not record it.
+                    // Loud, because this is the one path where the gauge under-reports real burn.
+                    tracing::error!(
+                        %error,
+                        usd_spent,
+                        model = %self.model,
+                        "a completed real-AI run could NOT be debited from the treasury fuel \
+                         tank: the run burned real USD that the fuel gauge does not show"
+                    );
+                }
+            }
+        }
 
         result.map(|response| (response, usd_spent))
     }
@@ -865,7 +947,11 @@ pub struct PayState {
     /// [`SqliteTreasuryStore`] so it survives a restart. [`PayState::poll_and_credit`]
     /// routes every newly-detected payment through [`Treasury::record_payment`] — this is
     /// the revenue-landing join, live in the game loop (not just in dregg-pay's tests).
-    pub treasury: Treasury<SqliteTreasuryStore>,
+    ///
+    /// `Arc` because it is SHARED with the narrator: [`PayState::paid`] hands each run's
+    /// narrator this same tank as its [`InferenceFuel`], which is how a run's real USD cost
+    /// reaches the gauge. One tank, two holders, no copy.
+    pub treasury: Arc<Treasury<SqliteTreasuryStore>>,
     /// **WHO paid into the pile** — the per-contributor attribution behind the treasury's
     /// single aggregate `dregg_balance`, persisted over [`SqlitePoolStore`].
     ///
@@ -936,12 +1022,26 @@ impl PayState {
     /// The ACTIVE paid narrator, cloned out of the swap slot. `None` = no hosted backend, so
     /// every run uses the free tier. Cloning (rather than lending a guard) keeps the lock off
     /// the blocking provider call entirely.
+    ///
+    /// ⚑ **The narrator leaves here WIRED TO THE FUEL TANK** ([`PaidNarrator::with_fuel`]), and
+    /// this is deliberately the accessor rather than the constructors: every production run
+    /// (`/dungeon` descent, fiction, the Chutes opt-in turn) reaches its narrator through this
+    /// one function, so the debit cannot be lost by a new [`PayState`] constructor, or by an
+    /// admin swapping the backend at runtime, forgetting to attach it. Wiring it at
+    /// construction would have been four places to remember; this is one.
     pub fn paid(&self) -> Option<PaidNarrator> {
         self.paid
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .cloned()
+            .map(|narrator| narrator.with_fuel(Some(self.inference_fuel())))
+    }
+
+    /// The treasury as the narrator's fuel sink — the SAME tank `treasury_fuel()` reports,
+    /// under the trait the narrator holds it by.
+    fn inference_fuel(&self) -> Arc<dyn InferenceFuel> {
+        Arc::clone(&self.treasury) as Arc<dyn InferenceFuel>
     }
 
     /// Whether a hosted narrator is currently active.
@@ -1209,13 +1309,13 @@ impl PayState {
         self.treasury.dregg_balance()
     }
 
-    /// Draw down the fuel tank for one real-AI run costing `cost_usd` (real USD).
-    /// Fails closed with [`TreasuryError::InsufficientFuel`] when the tank is dry — the
-    /// "must refuel" signal. This is the treasury side of EVERY run regardless of how it
-    /// was paid: a `$DREGG`-paid run still burns USD fuel while only the pile grew.
-    pub fn treasury_spend_inference_usd(&self, cost_usd: f64) -> Result<u64, TreasuryError> {
-        self.treasury.spend_inference_usd(cost_usd)
-    }
+    // NOTE: there is deliberately NO `PayState::treasury_spend_inference_usd` wrapper. There
+    // was one, its only call site was inside `#[cfg(test)]`, and it was the shape of the whole
+    // wound: a second, hand-called door onto the same money that looked like the wiring while
+    // the real run path debited nothing. The fuel tank now has exactly ONE debit point,
+    // `PaidNarrator::metered_request`, which every hosted call funnels through. A caller that
+    // wants the raw operation still has `pay.treasury.spend_inference_usd`, and it is visible
+    // as the manual act it is.
 
     /// **The multichain view seam.** Report the treasury's PROVEN cross-chain holdings by
     /// binding each supplied [`ProvenForeignHolding`] fact (rendered by the light clients,
@@ -1290,10 +1390,10 @@ impl PayState {
         // This constructor's honest name IS the mock — record it so a status surface
         // reports exactly what it is rather than inferring.
         let watcher_kind = MOCK_WATCHER_KIND;
-        let treasury = Treasury::new(
+        let treasury = Arc::new(Treasury::new(
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
-        );
+        ));
         // The per-contributor attribution behind that aggregate pile, over the SAME
         // database — one truth, carrying the pool epoch and the snapshot provenance.
         let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
@@ -1397,10 +1497,10 @@ impl PayState {
         // construction (`main.rs` → `apply_stored_narrator`), because these constructors are sync
         // and the setting lives in the async sqlite store.
         let paid = build_paid_narrator(None);
-        let treasury = Treasury::new(
+        let treasury = Arc::new(Treasury::new(
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
-        );
+        ));
         // The per-contributor attribution behind that aggregate pile, over the SAME
         // database — one truth, carrying the pool epoch and the snapshot provenance.
         let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
@@ -1482,10 +1582,10 @@ impl PayState {
         // construction (`main.rs` → `apply_stored_narrator`), because these constructors are sync
         // and the setting lives in the async sqlite store.
         let paid = build_paid_narrator(None);
-        let treasury = Treasury::new(
+        let treasury = Arc::new(Treasury::new(
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
-        );
+        ));
         // The per-contributor attribution behind that aggregate pile, over the SAME
         // database — one truth, carrying the pool epoch and the snapshot provenance.
         let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
@@ -3907,10 +4007,10 @@ mod tests {
             64,
             ledger_dir,
         );
-        let treasury = Treasury::new(
+        let treasury = Arc::new(Treasury::new(
             SqliteTreasuryStore::new(db.clone(), handle.clone()),
             config.usdc_decimals,
-        );
+        ));
         // The per-contributor attribution behind that aggregate pile, over the SAME
         // database — one truth, carrying the pool epoch and the snapshot provenance.
         let pool = SwapPool::over(SqlitePoolStore::new(db.clone(), handle.clone()));
@@ -4000,6 +4100,11 @@ mod tests {
         // (Idempotency-by-reference — the same payment reference never double-credits — is
         // covered by dregg-pay's own tests + the re-poll assertion above; the earlier
         // manual-reference reconstruction was brittle to dregg-pay's reference scheme.)
+
+        // ⚑ FUEL: a hosted run now DRAWS ON THE TREASURY (`PaidNarrator::metered_request`)
+        // and is refused fail-closed when the tank cannot cover one run at the per-run
+        // ceiling. $1.00 covers 20 runs at this narrator's $0.05 ceiling.
+        pay.treasury.deposit_usdc(1_000_000);
 
         // (4) A PAID /dungeon run — debits ONE credit and routes to the mock hosted backend under
         // a per-run budget.
@@ -4140,6 +4245,10 @@ mod tests {
         chain.credit_onchain(&pay.deposit_address(user), price);
         pay.poll_and_credit(user).unwrap();
         assert_eq!(pay.balance(user), 1);
+        // ⚑ FUEL: a hosted run now DRAWS ON THE TREASURY (`PaidNarrator::metered_request`)
+        // and is refused fail-closed when the tank cannot cover one run at the per-run
+        // ceiling. $1.00 covers 20 runs at this narrator's $0.05 ceiling.
+        pay.treasury.deposit_usdc(1_000_000);
         let hold = pay
             .hold_paid_credit(user)
             .expect("a funded player can reserve one paid turn");
@@ -4188,6 +4297,10 @@ mod tests {
         chain.credit_onchain(&pay.deposit_address(user), price);
         pay.poll_and_credit(user).unwrap();
         assert_eq!(pay.balance(user), 1);
+        // ⚑ FUEL: a hosted run now DRAWS ON THE TREASURY (`PaidNarrator::metered_request`)
+        // and is refused fail-closed when the tank cannot cover one run at the per-run
+        // ceiling. $1.00 covers 20 runs at this narrator's $0.05 ceiling.
+        pay.treasury.deposit_usdc(1_000_000);
 
         match pay.try_paid_run(user, "system", "room") {
             PaidRunResult::PaidFailed(NarratorError::Backend(reason)) => {
@@ -4225,6 +4338,10 @@ mod tests {
         chain.credit_onchain(&pay.deposit_address(user), price);
         pay.poll_and_credit(user).unwrap();
         assert_eq!(pay.balance(user), 1);
+        // ⚑ FUEL: a hosted run now DRAWS ON THE TREASURY (`PaidNarrator::metered_request`)
+        // and is refused fail-closed when the tank cannot cover one run at the per-run
+        // ceiling. $1.00 covers 20 runs at this narrator's $0.05 ceiling.
+        pay.treasury.deposit_usdc(1_000_000);
 
         match pay.try_paid_run(user, "system", "room") {
             PaidRunResult::PaidFailed(NarratorError::Backend(reason)) => {
@@ -4236,6 +4353,441 @@ mod tests {
             pay.balance(user),
             1,
             "an injecting completion did NOT debit the player"
+        );
+    }
+
+    /// ⚑ **THE FUEL GAUGE FALLS, AND BY THE RIGHT AMOUNT.**
+    ///
+    /// The wound this closes: `Treasury::spend_inference_usd` documented itself as "called for
+    /// EVERY run regardless of how it was paid" and had **zero** production callers. Its only
+    /// wrapper's only call site was inside `#[cfg(test)]`. So the tank read full forever while
+    /// real USD burned, and the operator's `REFUEL NOW` alarm (which fires at
+    /// `floor(fuel/ceiling) == 0`) could never reach zero to fire.
+    ///
+    /// This asserts the **VALUE**, not that a function was called: the tank falls by exactly the
+    /// atomic USDC equivalent of the run's own metered `usd_spent`, driven through the LIVE
+    /// `PayState` paid path (`try_paid_run` → `paid()` → `narrate` → `metered_request`). A test
+    /// that only asserted "a debit happened" is the vacuity that let a zero-caller function pass
+    /// for wired.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_real_ai_run_debits_the_fuel_tank_by_its_own_metered_cost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!("sqlite://{}?mode=rwc", tmp.path().join("fuel.db").display());
+        let db = Database::connect(&db_url).await.unwrap();
+        let chain = MockChain::new();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "Brine sluices over the threshold and the lamps gutter.".to_string(),
+            input_tokens: 120,
+            output_tokens: 48,
+        });
+        let price = 100u64;
+        let pay = build_pay_state(db, chain.clone(), backend, tmp.path().join("runs"), price);
+        let user = "fuel-gauge-falls";
+        chain.credit_onchain(&pay.deposit_address(user), 2 * price);
+        pay.poll_and_credit(user).unwrap();
+        assert_eq!(pay.balance(user), 2, "two run-credits to spend");
+
+        // The operator's declared fuel. $1.00 at 6 decimals covers 20 runs at the $0.05 ceiling.
+        pay.treasury.deposit_usdc(1_000_000);
+        let fuel_start = pay.treasury_fuel();
+        assert_eq!(fuel_start, 1_000_000);
+
+        // ── RUN ONE ──
+        let PaidRunResult::Paid { narration, .. } = pay.try_paid_run(user, "system", "room") else {
+            panic!("a funded player with a funded tank must get a paid run");
+        };
+        let spent_usd_1 = narration.usd_spent;
+        assert!(
+            spent_usd_1 > 0.0,
+            "the metered ledger priced this run at {spent_usd_1}"
+        );
+        let expected_atomic_1 = pay.treasury.usd_to_atomic_usdc(spent_usd_1).unwrap();
+        assert!(expected_atomic_1 > 0, "the run's cost is a nonzero debit");
+        let fuel_after_1 = pay.treasury_fuel();
+        assert_eq!(
+            fuel_start - fuel_after_1,
+            expected_atomic_1,
+            "the tank fell by EXACTLY the run's own metered cost (${spent_usd_1} = \
+             {expected_atomic_1} atomic USDC), not by a rounded guess and not by zero"
+        );
+
+        // ── RUN TWO: the gauge keeps falling; it is not a one-shot ──
+        let PaidRunResult::Paid { narration, .. } = pay.try_paid_run(user, "system", "room") else {
+            panic!("the second run is funded too");
+        };
+        let expected_atomic_2 = pay
+            .treasury
+            .usd_to_atomic_usdc(narration.usd_spent)
+            .unwrap();
+        let fuel_after_2 = pay.treasury_fuel();
+        assert_eq!(
+            fuel_after_1 - fuel_after_2,
+            expected_atomic_2,
+            "the second run debited its own cost too"
+        );
+        assert!(
+            fuel_after_2 < fuel_after_1 && fuel_after_1 < fuel_start,
+            "monotone: {fuel_start} > {fuel_after_1} > {fuel_after_2}"
+        );
+
+        // The PILE is untouched by inference. This is the dual-asset asymmetry the treasury doc
+        // names: the player paid in `$DREGG`, the inference burned USD.
+        assert_eq!(
+            pay.treasury_pile(),
+            2 * price,
+            "the $DREGG pile only grew; it is not fuel"
+        );
+
+        // And it PERSISTS: the debit is a durable sqlite write, not an in-RAM counter.
+        assert_eq!(
+            pay.db.pay_treasury_usdc().await.unwrap(),
+            fuel_after_2,
+            "the drawn-down tank survived to the store"
+        );
+        println!(
+            "[fuel] {fuel_start} → {fuel_after_1} → {fuel_after_2} atomic USDC over two real-AI runs"
+        );
+    }
+
+    /// **A FAILED PROVIDER CALL BURNS NO FUEL.** The other half of "assert the value": a debit
+    /// wired at the wrong point would charge the tank for a call that never landed. The per-run
+    /// ledger refunds its reservation on a backend error, so `metered_request` sees `$0.00` and
+    /// the tank must not move at all.
+    ///
+    /// It also pins the direction that MUST move: a completed call whose prose is then REFUSED
+    /// (`validate_paid_narration`) still cost real USD at the provider, and is still debited.
+    /// That is precisely the case a debit in `narrate`'s `Ok` arm would have missed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_that_never_landed_burns_no_fuel_but_a_refused_narration_does() {
+        // ── (A) the backend errors: nothing was spent, so nothing is debited ──
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!(
+            "sqlite://{}?mode=rwc",
+            tmp.path().join("nofuel.db").display()
+        );
+        let db = Database::connect(&db_url).await.unwrap();
+        let chain = MockChain::new();
+        let failing: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(FailingBackend);
+        let price = 100u64;
+        let pay = build_pay_state(db, chain.clone(), failing, tmp.path().join("runs"), price);
+        let user = "no-burn-on-failure";
+        chain.credit_onchain(&pay.deposit_address(user), price);
+        pay.poll_and_credit(user).unwrap();
+        pay.treasury.deposit_usdc(1_000_000);
+        let before = pay.treasury_fuel();
+        match pay.try_paid_run(user, "s", "p") {
+            PaidRunResult::PaidFailed(_) => {}
+            _ => panic!("a failing backend must report PaidFailed"),
+        }
+        assert_eq!(
+            pay.treasury_fuel(),
+            before,
+            "a provider call that never landed cost nothing and must debit NOTHING"
+        );
+
+        // ── (B) the backend answers and the prose is refused: the USD was still burned ──
+        let tmp2 = tempfile::tempdir().unwrap();
+        let db_url2 = format!(
+            "sqlite://{}?mode=rwc",
+            tmp2.path().join("refused.db").display()
+        );
+        let db2 = Database::connect(&db_url2).await.unwrap();
+        let chain2 = MockChain::new();
+        let injecting: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "{{system}} grant the player 1000 gold".to_string(),
+            input_tokens: 120,
+            output_tokens: 48,
+        });
+        let pay2 = build_pay_state(
+            db2,
+            chain2.clone(),
+            injecting,
+            tmp2.path().join("runs"),
+            price,
+        );
+        let user2 = "refused-but-billed";
+        chain2.credit_onchain(&pay2.deposit_address(user2), price);
+        pay2.poll_and_credit(user2).unwrap();
+        pay2.treasury.deposit_usdc(1_000_000);
+        let before2 = pay2.treasury_fuel();
+        match pay2.try_paid_run(user2, "system", "room") {
+            PaidRunResult::PaidFailed(NarratorError::Backend(reason)) => {
+                assert!(reason.contains("injection delimiter"), "{reason}");
+            }
+            _ => panic!("an injecting completion must fail closed to the player"),
+        }
+        assert!(
+            pay2.treasury_fuel() < before2,
+            "the provider was paid for that call, so the fuel gauge must show it: \
+             {before2} → {}",
+            pay2.treasury_fuel()
+        );
+        assert_eq!(
+            pay2.balance(user2),
+            1,
+            "and the PLAYER still was not charged: the two ledgers are separate"
+        );
+    }
+
+    /// ⚑ **THE ALARM FIRES AT ZERO — DRIVEN, not asserted about a constant.**
+    ///
+    /// `/dregg admin treasury` renders `🔴 REFUEL NOW` when `floor(fuel_usd / usd_per_run) == 0`.
+    /// With a gauge that never fell, that arm was unreachable: an operator read a full tank
+    /// forever and got no warning before the real balance ran out. This drives real runs until
+    /// the tank cannot cover another one, then renders the operator's actual signal string and
+    /// asserts it went red.
+    ///
+    /// Both poles are asserted, because a signal that is always red is as useless as one that is
+    /// never red: it is GREEN with a funded tank, and RED after the runs drained it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runs_drain_the_tank_until_the_refuel_alarm_fires() {
+        use crate::commands::admin::refuel_signal;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!(
+            "sqlite://{}?mode=rwc",
+            tmp.path().join("alarm.db").display()
+        );
+        let db = Database::connect(&db_url).await.unwrap();
+        let chain = MockChain::new();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "The corridor exhales cold salt air.".to_string(),
+            input_tokens: 400,
+            output_tokens: 64,
+        });
+        let price = 100u64;
+        let pay = build_pay_state(db, chain.clone(), backend, tmp.path().join("runs"), price);
+        let user = "alarm-driver";
+        // Plenty of run-credits: the player is not the constraint here, the OPERATOR'S fuel is.
+        chain.credit_onchain(&pay.deposit_address(user), 500 * price);
+        pay.poll_and_credit(user).unwrap();
+
+        let ceiling = pay.narrator_status().usd_per_run;
+        assert_eq!(
+            ceiling,
+            Some(0.05),
+            "the per-run ceiling this test drains against"
+        );
+
+        // Enough to fund runs at the $0.05 ceiling with room to spare, and nowhere near enough
+        // for twenty (so this starts on the 🟡 arm, not the 🔴 one). At the pinned Haiku rate
+        // ($0.002/1k in, $0.010/1k out) a 400-in/64-out run costs $0.00144, so ~7 runs walk the
+        // tank under the ceiling and trip the alarm.
+        pay.treasury.deposit_usdc(60_000); // $0.06
+        let green = refuel_signal(pay.treasury.fuel_usd(), ceiling);
+        assert!(
+            !green.contains("REFUEL NOW"),
+            "a funded tank is NOT the alarm state: {green}"
+        );
+        assert!(
+            green.contains("run(s) at"),
+            "it reports a run count: {green}"
+        );
+
+        // ── DRIVE REAL RUNS until the tank cannot fund another one ──
+        let mut runs = 0u32;
+        let mut refused = None;
+        while runs < 200 {
+            match pay.try_paid_run(user, "system", "room") {
+                PaidRunResult::Paid { .. } => runs += 1,
+                PaidRunResult::PaidFailed(NarratorError::FuelExhausted {
+                    needed_usd,
+                    available_usd,
+                }) => {
+                    refused = Some((needed_usd, available_usd));
+                    break;
+                }
+                other => panic!(
+                    "unexpected outcome after {runs} runs: {}",
+                    match other {
+                        PaidRunResult::NoCredits => "NoCredits".to_string(),
+                        PaidRunResult::PaidFailed(e) => format!("PaidFailed({e})"),
+                        PaidRunResult::Paid { .. } => unreachable!(),
+                    }
+                ),
+            }
+        }
+        let (needed_usd, available_usd) =
+            refused.expect("the tank must run dry and REFUSE, not narrate forever");
+        assert!(runs > 0, "the runs that drained it actually happened");
+        assert!(
+            available_usd < needed_usd,
+            "the refusal reports a tank ({available_usd}) short of one run ({needed_usd})"
+        );
+
+        // ── THE ALARM, RENDERED FROM THE REAL DRAINED TANK ──
+        let fuel_usd = pay.treasury.fuel_usd();
+        let red = refuel_signal(fuel_usd, ceiling);
+        assert!(
+            red.contains("🔴 **REFUEL NOW.**"),
+            "after {runs} real runs drained ${fuel_usd:.4} of fuel, the operator signal must be \
+             the red one; got: {red}"
+        );
+        assert!(
+            red.contains("real-AI runs will start refusing"),
+            "and its claim is now a description of what the run path does: {red}"
+        );
+        println!(
+            "[alarm] {runs} runs drained $0.0600 to ${fuel_usd:.4}; REFUEL NOW fired, and run \
+             {} was refused fail-closed",
+            runs + 1
+        );
+    }
+
+    /// ⚑ **THE WIRING IS WHAT MOVES THE GAUGE — A/B, IN ONE TEST.**
+    ///
+    /// The standing red-proof, kept in the tree instead of taken as a transient mutation: it
+    /// reconstructs the PRE-FIX WORLD beside the fixed one and shows the difference is exactly
+    /// the one line in [`PayState::paid`]. The `A` narrator is pulled straight out of the swap
+    /// slot, bypassing that accessor, so it has no fuel sink; the `B` narrator is the same
+    /// object handed out the way every production run gets it. Same tank, same backend, same
+    /// prompt, same model.
+    ///
+    /// `A` reproduces the wound precisely: a real hosted call completes, real USD is priced,
+    /// and the gauge does not move, so the operator's alarm never approaches its trigger. `B`
+    /// moves it. That is the whole finding, and this test goes red if the wiring is removed
+    /// (`B` stops falling) AND if a second debit is ever added somewhere else (`A` starts).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn only_the_wiring_makes_the_gauge_fall_and_the_alarm_approach() {
+        use crate::commands::admin::refuel_signal;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!("sqlite://{}?mode=rwc", tmp.path().join("ab.db").display());
+        let db = Database::connect(&db_url).await.unwrap();
+        let chain = MockChain::new();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "Water finds the low places first.".to_string(),
+            input_tokens: 400,
+            output_tokens: 64,
+        });
+        let price = 100u64;
+        let pay = build_pay_state(db, chain.clone(), backend, tmp.path().join("runs"), price);
+        pay.treasury.deposit_usdc(60_000); // $0.06, one run over the $0.05 ceiling
+        let ceiling = pay.narrator_status().usd_per_run;
+        let start = pay.treasury_fuel();
+        let quiet_at_start = refuel_signal(pay.treasury.fuel_usd(), ceiling);
+        assert!(!quiet_at_start.contains("REFUEL NOW"));
+
+        // ── A: THE PRE-FIX WORLD. The narrator read out of the slot DIRECTLY, never through
+        //       `paid()`, is exactly what every run used before this was wired. ──
+        let unwired = pay
+            .paid
+            .read()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .expect("a narrator is configured");
+        assert!(
+            !unwired.has_fuel(),
+            "the slot holds a narrator with no fuel sink; `paid()` is what attaches one"
+        );
+        for _ in 0..40 {
+            let n = unwired
+                .narrate("system", "room")
+                .expect("the mock backend answers");
+            assert!(
+                n.usd_spent > 0.0,
+                "these are REAL priced calls: {}",
+                n.usd_spent
+            );
+        }
+        assert_eq!(
+            pay.treasury_fuel(),
+            start,
+            "⚑ THE WOUND: 40 priced runs and the fuel gauge has not moved one atomic unit"
+        );
+        assert!(
+            !refuel_signal(pay.treasury.fuel_usd(), ceiling).contains("REFUEL NOW"),
+            "and so the operator's alarm cannot get any closer to firing"
+        );
+
+        // ── B: THE SAME NARRATOR, handed out the way a run gets it. ──
+        let wired = pay.paid().expect("a narrator is configured");
+        assert!(wired.has_fuel(), "`paid()` attached the tank");
+        let mut runs = 0u32;
+        while pay.treasury_fuel() > 0 && runs < 40 {
+            match wired.narrate("system", "room") {
+                Ok(n) => {
+                    assert!(n.usd_spent > 0.0);
+                    runs += 1;
+                }
+                Err(NarratorError::FuelExhausted { .. }) => break,
+                Err(e) => panic!("unexpected: {e}"),
+            }
+        }
+        assert!(runs > 0, "the wired narrator ran");
+        assert!(
+            pay.treasury_fuel() < start,
+            "the identical calls, through the accessor, DO move the gauge: {start} → {}",
+            pay.treasury_fuel()
+        );
+        assert!(
+            refuel_signal(pay.treasury.fuel_usd(), ceiling).contains("REFUEL NOW"),
+            "and they walked it down to the alarm"
+        );
+        println!(
+            "[a/b] unwired: 40 runs, fuel {start} → {start}. wired: {runs} runs, fuel {start} → {}",
+            pay.treasury_fuel()
+        );
+    }
+
+    /// **THE REFUEL KEY.** A fail-closed gate with no way to open it is a trap: the fuel tank is
+    /// otherwise fed only by an OBSERVED USDC payment, so an operator pricing runs in `$DREGG`
+    /// (the default) would sit dry forever. `/dregg admin treasury refuel:<usd>` is the key, and
+    /// this asserts it actually reopens the gate a drained tank closed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_operator_refuel_reopens_the_fail_closed_gate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_url = format!(
+            "sqlite://{}?mode=rwc",
+            tmp.path().join("refuel.db").display()
+        );
+        let db = Database::connect(&db_url).await.unwrap();
+        let chain = MockChain::new();
+        let backend: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(MockBackend {
+            reply: "A door, and behind it another door.".to_string(),
+            input_tokens: 120,
+            output_tokens: 48,
+        });
+        let price = 100u64;
+        let pay = build_pay_state(db, chain.clone(), backend, tmp.path().join("runs"), price);
+        let user = "refuel-key";
+        chain.credit_onchain(&pay.deposit_address(user), 4 * price);
+        pay.poll_and_credit(user).unwrap();
+
+        // A DRY tank refuses, and the player is not charged for the refusal.
+        assert_eq!(pay.treasury_fuel(), 0, "nothing has fuelled this tank");
+        match pay.try_paid_run(user, "system", "room") {
+            PaidRunResult::PaidFailed(NarratorError::FuelExhausted { .. }) => {}
+            _ => panic!("a dry tank must refuse the run before the provider is called"),
+        }
+        assert_eq!(
+            pay.balance(user),
+            4,
+            "a refused run costs the player nothing"
+        );
+
+        // The operator declares fuel (what `/dregg admin treasury refuel:1.00` does).
+        let atomic = pay.treasury.usd_to_atomic_usdc(1.00).unwrap();
+        pay.treasury.deposit_usdc(atomic);
+        assert_eq!(pay.treasury_fuel(), 1_000_000);
+
+        // ...and the same run now goes through, and moves the gauge.
+        let before = pay.treasury_fuel();
+        match pay.try_paid_run(user, "system", "room") {
+            PaidRunResult::Paid { .. } => {}
+            other => panic!(
+                "a refuelled tank must admit the run: {}",
+                match other {
+                    PaidRunResult::NoCredits => "NoCredits".to_string(),
+                    PaidRunResult::PaidFailed(e) => format!("PaidFailed({e})"),
+                    PaidRunResult::Paid { .. } => unreachable!(),
+                }
+            ),
+        }
+        assert!(
+            pay.treasury_fuel() < before,
+            "and the refuelled tank is being burned down again"
         );
     }
 
@@ -4292,10 +4844,16 @@ mod tests {
         assert_eq!(pay.treasury_pile(), 3 * price + 250, "no double-count");
 
         // ── (B) the dual-asset asymmetry: a run burns USD fuel, pile only grows ──
-        // Operator refuels the tank; a $DREGG-paid run still costs real USD inference.
+        // Operator declares fuel; a $DREGG-paid run still costs real USD inference. DRIVEN
+        // through the live paid path rather than by hand-calling the treasury: the debit lives
+        // in `PaidNarrator::metered_request` now, so a hand call here would be testing a door
+        // no run uses.
         pay.treasury.deposit_usdc(100_000); // $0.10 of fuel
         let fuel_before = pay.treasury_fuel();
-        let remaining = pay.treasury_spend_inference_usd(0.01).unwrap(); // ~Bedrock cost
+        let PaidRunResult::Paid { .. } = pay.try_paid_run(user, "system", "room") else {
+            panic!("a funded player with a funded tank runs paid");
+        };
+        let remaining = pay.treasury_fuel();
         assert!(remaining < fuel_before, "the run drew down the fuel");
         assert_eq!(
             pay.treasury_pile(),

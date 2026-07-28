@@ -156,7 +156,7 @@ pub use sweeper::{
     MockSweeper, SolanaSweeper, SweepError, SweepOutcome, SweepRequest, Sweeper, TxSubmitter,
     sweep_message,
 };
-pub use treasury::{InMemoryTreasuryStore, Treasury, TreasuryError, TreasuryStore};
+pub use treasury::{InMemoryTreasuryStore, InferenceFuel, Treasury, TreasuryError, TreasuryStore};
 pub use watcher::{
     AccountFetcher, DEFAULT_TRANSFER_HISTORY_LIMIT, FetchedAccount, MockChain, MockWatcher,
     ObservedTransfer, PaymentReceived, PaymentRef, SignatureWatcher, SolanaWatcher,

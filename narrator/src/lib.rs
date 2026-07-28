@@ -44,6 +44,16 @@ pub enum NarratorError {
     #[error("budget exhausted: ${spent:.6} already spent of a ${cap:.2} cap; this call's reservation would exceed it (refused before any network call)")]
     BudgetExhausted { spent: f64, cap: f64 },
 
+    /// The OPERATOR'S FUEL TANK cannot cover one run at the configured per-run ceiling —
+    /// refused BEFORE the network, and no player action clears it.
+    ///
+    /// Deliberately distinct from [`Self::BudgetExhausted`], which is the PER-RUN ledger cap
+    /// (a bound on one call, reset every run). This one is the treasury being dry: the "must
+    /// refuel" signal the operator surface reports, raised at exactly the threshold that
+    /// surface reads, so "runs will start refusing" is a fact rather than a forecast.
+    #[error("out of inference fuel: the treasury holds ${available_usd:.6} but one run reserves up to ${needed_usd:.6}; refused before any network call. Refuel the treasury.")]
+    FuelExhausted { needed_usd: f64, available_usd: f64 },
+
     /// The model has no pinned price — refused fail-closed (a budget cannot cap an unknown cost).
     #[error("unpriced model `{model}`: no pinned price in the registry — refusing (a budget cannot be enforced on a cost we do not know). Pin its rate before use.")]
     UnpricedModel { model: String },
