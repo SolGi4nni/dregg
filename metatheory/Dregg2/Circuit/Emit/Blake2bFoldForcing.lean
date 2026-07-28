@@ -26,8 +26,8 @@ The vehicle:
 
 The three atomic WORD bridges turn the raw gate satisfactions into `Holds` facts:
   * `addWord_forces` — an `addMod64Core` gate forces `Holds out (w64 Σ)` (from `addMod64_forces` + range).
-  * `xorRotWord_forces` — 64 `xorHead` gates force `Holds out (rotr64 R (xorw A B))` (the bit identity).
-  * `xor3Word_forces` — 64 `xorHead` gates force `Holds out (w64 (xorw (xorw H Vi) Vj))`.
+  * `xorRotWord_core_forces` — 64 `xorHead` gates force `Holds out (rotr64 R (xorw A B))` (the bit identity).
+  * `xor3Word_core_forces` — 64 `xorHead` gates force `Holds out (w64 (xorw (xorw H Vi) Vj))`.
 
 `blakeG_forces` then composes those 8 sub-op bridges over `G`'s fixed structure; `blakeRound_forces` /
 `blake2bCompress_forces` induct over the round list; the absorb induction chains `blake2bF` block by
@@ -325,7 +325,7 @@ theorem testBit_wnat (a : Assignment) (hbool : AllBool a) (base m : Nat) (hm : m
 
 /-- **64 chained XOR-and-rotate gates force the output word** `= rotr64 R (xorw A B)`. The
 composition of `xor2_forces` (per bit) with the rotation bit identity — the bit-vector crux. -/
-theorem xorRotWord_forces (a : Assignment) (hbool : AllBool a)
+theorem xorRotWord_core_forces (a : Assignment) (hbool : AllBool a)
     (aB bB out car R A B : Nat) (hR0 : 0 < R) (hR : R < 64)
     (hA : Holds a aB A) (hB : Holds a bB B)
     (hg : ∀ i, i < 64 → evalH (xorHead (xorRotSources aB bB R i) (out + i) (car + i)) a = 0) :
@@ -356,7 +356,7 @@ theorem xorRotWord_forces (a : Assignment) (hbool : AllBool a)
 
 /-- **64 chained 3-way XOR gates force the output word** `= w64(xorw (xorw H Vi) Vj)` (the
 finalization digest fold). -/
-theorem xor3Word_forces (a : Assignment) (hbool : AllBool a)
+theorem xor3Word_core_forces (a : Assignment) (hbool : AllBool a)
     (hB viB vjB out car H Vi Vj : Nat)
     (hH : Holds a hB H) (hVi : Holds a viB Vi) (hVj : Holds a vjB Vj)
     (hg : ∀ i, i < 64 → evalH (xorHead [hB + i, viB + i, vjB + i] (out + i) (car + i)) a = 0) :
@@ -435,6 +435,35 @@ theorem gates_of_xorConstWord (a : Assignment) (inBase outBase k : Nat)
   exact head_of_acceptB_map (List.range 64)
     (fun i => ((Head.lin (1 - 2 * (Ref.bit k i : ℤ)) (inBase + i)).addLin (-1)
       (outBase + i)).addConst (Ref.bit k i : ℤ)) a h.1 i (List.mem_range.mpr hi)
+
+/-! ### The three word gadgets, TIED. The `*_core_forces` forms above consume the CORE gate
+equations, which is what `blakeG` emits; these consume the WHOLE word gadget's acceptance (core +
+output pins + carry pins), which is what the full descriptor emits. Both are real; only these two
+may carry the gadget's name. -/
+
+/-- **`xorRotWord_forces`** — the whole `xorRotWord` gadget accepted ⟹ its output word is
+`rotr64 R (xorw A B)`. -/
+theorem xorRotWord_forces (a : Assignment) (hbool : AllBool a)
+    (aB bB out car R A B : Nat) (hR0 : 0 < R) (hR : R < 64)
+    (hA : Holds a aB A) (hB : Holds a bB B)
+    (hacc : acceptB (xorRotWord aB bB out car R) a = true) :
+    Holds a out (Ref.rotr64 R (Ref.xorw A B)) := by
+  rw [xorRotWord, acceptB_append, acceptB_append, Bool.and_eq_true, Bool.and_eq_true] at hacc
+  exact xorRotWord_core_forces a hbool aB bB out car R A B hR0 hR hA hB
+    (gates_of_xorRotCore a aB bB out car R hacc.1.1)
+
+/-- **`xor3Word_forces`** — the whole `xor3Word` gadget accepted ⟹ its output word is the 3-way XOR. -/
+theorem xor3Word_forces (a : Assignment) (hbool : AllBool a)
+    (hB viB vjB out car H Vi Vj : Nat)
+    (hH : Holds a hB H) (hVi : Holds a viB Vi) (hVj : Holds a vjB Vj)
+    (hacc : acceptB (xor3Word hB viB vjB out car) a = true) :
+    Holds a out (Ref.w64 (Ref.xorw (Ref.xorw H Vi) Vj)) := by
+  rw [xor3Word, acceptB_append, acceptB_append, Bool.and_eq_true, Bool.and_eq_true] at hacc
+  exact xor3Word_core_forces a hbool hB viB vjB out car H Vi Vj hH hVi hVj
+    (gates_of_xor3Core a hB viB vjB out car hacc.1.1)
+
+(`xorConstWord_forces` is the third; it sits with its `_core_` form in §7, below the constant-word
+bridges it needs.)
 
 /-! ### The FOLD engine. Every BLAKE2b generator above `blakeG` is a `List.foldl` whose body appends
 its own step's gates and threads a state. `hF` below is that shape, proved `rfl` at the LAMBDA BODY
@@ -551,16 +580,16 @@ theorem blakeG_core_forces (a : Assignment) (hbool : AllBool a)
     Holds a a2B (gVals VA VB VC VD X Y).1 ∧ Holds a b2B (gVals VA VB VC VD X Y).2.1 ∧
     Holds a c2B (gVals VA VB VC VD X Y).2.2.1 ∧ Holds a d2B (gVals VA VB VC VD X Y).2.2.2 := by
   have h_a1 := add3Word_forces a hbool va vb mx a1B ca1 (ca1 + 1) VA VB X hva hvb hmx ga1
-  have h_d1 := xorRotWord_forces a hbool vd a1B d1B cd1 32 VD (Ref.add3 VA VB X)
+  have h_d1 := xorRotWord_core_forces a hbool vd a1B d1B cd1 32 VD (Ref.add3 VA VB X)
     (by norm_num) (by norm_num) hvd h_a1 gd1
   have h_c1 := add2Word_forces a hbool vc d1B c1B cc1 VC _ hvc h_d1 gc1
-  have h_b1 := xorRotWord_forces a hbool vb c1B b1B cb1 24 VB _
+  have h_b1 := xorRotWord_core_forces a hbool vb c1B b1B cb1 24 VB _
     (by norm_num) (by norm_num) hvb h_c1 gb1
   have h_a2 := add3Word_forces a hbool a1B b1B my a2B ca2 (ca2 + 1) _ _ Y h_a1 h_b1 hmy ga2
-  have h_d2 := xorRotWord_forces a hbool d1B a2B d2B cd2 16 _ _
+  have h_d2 := xorRotWord_core_forces a hbool d1B a2B d2B cd2 16 _ _
     (by norm_num) (by norm_num) h_d1 h_a2 gd2
   have h_c2 := add2Word_forces a hbool c1B d2B c2B cc2 _ _ h_c1 h_d2 gc2
-  have h_b2 := xorRotWord_forces a hbool b1B c2B b2B cb2 63 _ _
+  have h_b2 := xorRotWord_core_forces a hbool b1B c2B b2B cb2 63 _ _
     (by norm_num) (by norm_num) h_b1 h_c2 gb2
   simp only [gVals]
   exact ⟨h_a2, h_b2, h_c2, h_d2⟩
@@ -913,7 +942,7 @@ theorem xorconstbit_forced (p o : ℤ) (kb : Nat) (hkb : kb ≤ 1)
     subst hp ho <;> simp_all
 
 /-- **An `xor-with-constant` word gate forces the word** to `in ⊕ k` (`k < 2^64`). -/
-theorem xorConstWord_forces (a : Assignment) (hbool : AllBool a) (inBase outBase k IN : Nat)
+theorem xorConstWord_core_forces (a : Assignment) (hbool : AllBool a) (inBase outBase k IN : Nat)
     (hk : k < 2 ^ 64) (hIN : Holds a inBase IN)
     (hg : ∀ i, i < 64 → evalH (((Head.lin (1 - 2 * (Ref.bit k i : ℤ)) (inBase + i)).addLin (-1)
                             (outBase + i)).addConst (Ref.bit k i : ℤ)) a = 0) :
@@ -939,6 +968,15 @@ theorem xorConstWord_forces (a : Assignment) (hbool : AllBool a) (inBase outBase
     have : IN ^^^ k < 2 ^ 64 := Nat.xor_lt_two_pow hINlt hk
     exact Nat.testBit_lt_two_pow
       (Nat.lt_of_lt_of_le this (Nat.pow_le_pow_right (by decide) (by omega)))
+
+/-- **`xorConstWord_forces`** — the whole `xorConstWord` gadget accepted (value gates + output pins)
+⟹ its output word is `in ⊕ k`. The tied form; `xorConstWord_core_forces` above takes the value gates
+alone, which is what a caller holding only the core segment has. -/
+theorem xorConstWord_forces (a : Assignment) (hbool : AllBool a) (inBase outBase k IN : Nat)
+    (hk : k < 2 ^ 64) (hIN : Holds a inBase IN)
+    (hacc : acceptB (xorConstWord inBase outBase k) a = true) :
+    Holds a outBase (IN ^^^ k) :=
+  xorConstWord_core_forces a hbool inBase outBase k IN hk hIN (gates_of_xorConstWord a _ _ _ hacc)
 
 /-! ## §8 — The whole-block `blake2bF` forcing (init ⊕ compress ⊕ finalize), tied to `Ref.compress`. -/
 
@@ -1018,7 +1056,7 @@ theorem blake2bFinalize_forces (a : Assignment) (hbool : AllBool a)
   obtain ⟨fr, hfr⟩ := foldl_F_mem_accept a _ (finStep hBases vFinal outBases)
     (by intro cs s x; rfl) (List.range 8) [] fresh hacc i (List.mem_range.mpr hi)
   simp only [finStep, xor3Word, acceptB_append, Bool.and_eq_true] at hfr
-  have hforce := xor3Word_forces a hbool (hBases.getD i 0) (vFinal.getD i 0) (vFinal.getD (i + 8) 0)
+  have hforce := xor3Word_core_forces a hbool (hBases.getD i 0) (vFinal.getD i 0) (vFinal.getD (i + 8) 0)
     (outBases.getD i 0) fr (hVals.getD i 0) (vfVals.getD i 0) (vfVals.getD (i + 8) 0)
     (hh i hi) (hv i (by omega)) (hv (i + 8) (by omega))
     (gates_of_xor3Core a _ _ _ _ _ hfr.1.1)
@@ -1072,13 +1110,13 @@ theorem blake2bInit_split (hBases : List Nat) (t0B t1B f0B f1B fresh : Nat) :
         ++ xorConstWord f0B (fresh + 384) (Ref.IV.getD 6 0)
         ++ xorConstWord f1B (fresh + 448) (Ref.IV.getD 7 0) := rfl
 
-/-- Each `IV` word is a 64-bit word (the `constWord_forces`/`xorConstWord_forces` obligation). -/
+/-- Each `IV` word is a 64-bit word (the `constWord_forces`/`xorConstWord_core_forces` obligation). -/
 theorem IV_lt : ∀ i, i < 8 → Ref.IV.getD i 0 < 2 ^ 64 := by decide
 
 /-- **`blake2bInit_forces` — the TIED rung.** GIVEN the init gadget's emitted gate list is ACCEPTED
 and the counter/flag word-columns hold `t0,t1,f0,f1`, the 16 work-vector columns the gadget RETURNS
 hold `refInitV` — `v[8..11]` forced to the pinned `IV[0..3]` by `constWord_forces`, `v[12..15]` to
-the counter/flag XOR-folded into `IV[4..7]` by `xorConstWord_forces`. -/
+the counter/flag XOR-folded into `IV[4..7]` by `xorConstWord_core_forces`. -/
 theorem blake2bInit_forces (a : Assignment) (hbool : AllBool a) (hBases : List Nat)
     (t0B t1B f0B f1B fresh : Nat) (hVals : List Nat) (t0 t1 f0 f1 : Nat) (hlen : hVals.length = 8)
     (hh : ∀ i, i < 8 → Holds a (hBases.getD i 0) (hVals.getD i 0))
@@ -1093,13 +1131,13 @@ theorem blake2bInit_forces (a : Assignment) (hbool : AllBool a) (hBases : List N
     (constWord_forces a hbool _ _ (IV_lt 1 (by norm_num)) (gates_of_constWordGate a _ _ c9))
     (constWord_forces a hbool _ _ (IV_lt 2 (by norm_num)) (gates_of_constWordGate a _ _ c10))
     (constWord_forces a hbool _ _ (IV_lt 3 (by norm_num)) (gates_of_constWordGate a _ _ c11))
-    (xorConstWord_forces a hbool t0B _ _ t0 (IV_lt 4 (by norm_num)) ht0
+    (xorConstWord_core_forces a hbool t0B _ _ t0 (IV_lt 4 (by norm_num)) ht0
       (gates_of_xorConstWord a _ _ _ c12))
-    (xorConstWord_forces a hbool t1B _ _ t1 (IV_lt 5 (by norm_num)) ht1
+    (xorConstWord_core_forces a hbool t1B _ _ t1 (IV_lt 5 (by norm_num)) ht1
       (gates_of_xorConstWord a _ _ _ c13))
-    (xorConstWord_forces a hbool f0B _ _ f0 (IV_lt 6 (by norm_num)) hf0
+    (xorConstWord_core_forces a hbool f0B _ _ f0 (IV_lt 6 (by norm_num)) hf0
       (gates_of_xorConstWord a _ _ _ c14))
-    (xorConstWord_forces a hbool f1B _ _ f1 (IV_lt 7 (by norm_num)) hf1
+    (xorConstWord_core_forces a hbool f1B _ _ f1 (IV_lt 7 (by norm_num)) hf1
       (gates_of_xorConstWord a _ _ _ c15))
 
 /-- **`blake2bF`'s emitted gate list IS init ‖ compress ‖ finalize** — by `rfl`. -/
@@ -1279,7 +1317,9 @@ end Payoff
 #assert_axioms testBit_rotr64
 #assert_axioms add3Word_forces
 #assert_axioms add2Word_forces
+#assert_axioms xorRotWord_core_forces
 #assert_axioms xorRotWord_forces
+#assert_axioms xor3Word_core_forces
 #assert_axioms xor3Word_forces
 #assert_axioms foldl_F_split
 #assert_axioms foldl_F_mem_accept
@@ -1294,6 +1334,7 @@ end Payoff
 #assert_axioms blakeRound_forces
 #assert_axioms blake2bCompress_forces
 #assert_axioms constWord_forces
+#assert_axioms xorConstWord_core_forces
 #assert_axioms xorConstWord_forces
 #assert_axioms refCompress_eq
 #assert_axioms blake2bFinalize_forces

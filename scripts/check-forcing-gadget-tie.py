@@ -42,7 +42,17 @@ METATHEORY = ROOT / "metatheory"
 BASELINE = ROOT / "scripts" / "forcing-tie-baseline.txt"
 
 # A forcing module: the file's whole purpose is to relate emitted gates to a reference function.
+# `*Forcing*.lean` anywhere, plus `*Discharge*.lean` UNDER THE EMIT DIRECTORY — `Sha256HfoldDischarge`
+# is a forcing module in substance and would otherwise be unscanned, while the ~20 other
+# `*Discharge*.lean` files in the tree (Authority, Crypto, …) are about proof obligations, not gates.
 FORCING_NAME = re.compile(r"Forcing.*\.lean$")
+EMIT_DISCHARGE = re.compile(r"Discharge.*\.lean$")
+
+
+def is_forcing_module(f: Path) -> bool:
+    if FORCING_NAME.search(f.name):
+        return True
+    return EMIT_DISCHARGE.search(f.name) is not None and "Circuit/Emit" in f.as_posix()
 
 THEOREM = re.compile(r"^(?:private\s+|protected\s+|@\[[^\]]*\]\s*)*theorem\s+([A-Za-z0-9_.']+)")
 # `def foo ... : ... List VmConstraint2 ...` — a generator, i.e. something that EMITS constraints.
@@ -107,7 +117,7 @@ def load_baseline() -> set[str]:
 def scan(tree: Path, extra_defs: list[Path] | None = None) -> tuple[list[str], set[str]]:
     """Returns (violations, rule-B keys actually seen) for the forcing modules under `tree`."""
     all_lean = sorted(tree.rglob("*.lean"))
-    forcing = [f for f in all_lean if FORCING_NAME.search(f.name)]
+    forcing = [f for f in all_lean if is_forcing_module(f)]
     gadgets = generator_names(all_lean + list(extra_defs or []))
 
     violations: list[str] = []
@@ -192,14 +202,16 @@ def main() -> int:
     unbaselined = []
     for v in violations:
         if v.startswith("RULE B"):
-            key = v.split("RULE B  ", 1)[1].split(":", 1)[0]
+            key = v.split("RULE B  ", 1)[1].split(": named for", 1)[0]
             if key in baseline:
                 continue
         unbaselined.append(v)
 
     # The ratchet: a baseline entry that no longer fires must be REMOVED, so the list only shrinks.
     still_failing = {
-        v.split("RULE B  ", 1)[1].split(":", 1)[0] for v in violations if v.startswith("RULE B")
+        v.split("RULE B  ", 1)[1].split(": named for", 1)[0]
+        for v in violations
+        if v.startswith("RULE B")
     }
     stale = sorted(b for b in baseline if b in seen_b and b not in still_failing)
     gone = sorted(b for b in baseline if b not in seen_b)
@@ -221,7 +233,7 @@ def main() -> int:
             )
         return 1
 
-    n_files = len([f for f in METATHEORY.rglob("*.lean") if FORCING_NAME.search(f.name)])
+    n_files = len([f for f in METATHEORY.rglob("*.lean") if is_forcing_module(f)])
     print(
         f"check-forcing-gadget-tie: OK — {n_files} forcing module(s), each consumes gate "
         f"acceptance; {len(seen_b)} `<gadget>_forces` theorem(s) checked, "

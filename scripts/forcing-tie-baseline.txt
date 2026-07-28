@@ -7,7 +7,15 @@
 # The list RATCHETS. The checker fails if an entry no longer fires (fix it, delete the line) and
 # fails if an entry names a theorem that no longer exists. It can only shrink.
 #
-# IT IS CURRENTLY EMPTY, and that is the point: as of 2026-07-27 every `<gadget>_forces` theorem in
-# every forcing module either mentions its gadget or consumes its acceptance. Adding a line here is
-# a deliberate act a reviewer will see in the diff. Do not add one to make a build green; tie the
-# theorem, or rename it to `<gadget>_core_forces` / `<gadget>_of_...` so the name stops claiming.
+# IT HOLDS EXACTLY ONE ENTRY, and none of it is from this repair. Adding a line here is a deliberate
+# act a reviewer will see in the diff. Do not add one to make a build green; tie the theorem, or
+# rename it to `<gadget>_core_forces` / `<gadget>_of_...` so the name stops making the claim.
+
+# ── the one entry, and it is not mine ──────────────────────────────────────────────────────────
+# audit F4 (docs/AUDIT-CRYPTO-GADGETS.md): `merkleBranchFold_forces` quantifies over an ABSTRACT
+# `nextBases : List Nat -> List Nat -> List Nat` and takes the per-step forcing as a hypothesis; it
+# never mentions `merkleBranchFold` and never consumes acceptance. It is the last untied rung of the
+# SHA chain — the audit's ranked fix #5, "the smallest high-value fix in the list, the machinery
+# exists and works" (acceptB_append + the already-proven sha256PairHash_forces). Not repaired here;
+# recorded so it cannot be forgotten and cannot be joined by a second one silently.
+metatheory/Dregg2/Circuit/Emit/Sha256HfoldDischarge.lean::merkleBranchFold_forces
