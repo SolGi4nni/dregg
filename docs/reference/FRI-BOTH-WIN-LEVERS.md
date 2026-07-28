@@ -596,6 +596,26 @@ all 7 shipped dregg configs**. It suppresses the ε_C-side terms, so:
 ⚑ **So the ceiling is a ceiling only at `commit_pow = 0`.** It is complementary to the ε_C-bound regime,
 not a standalone win — precisely where the trace-height lever lives. **Nobody has priced this.**
 
+> **⚑ PRICED, 2026-07-27 — [`../FRI-SECURE-PARAMETERIZATION.md`](../FRI-SECURE-PARAMETERIZATION.md)**
+> and `metatheory/Dregg2/Circuit/FriCommitPow.lean`. Three results bear on this section:
+>
+> 1. **The knob is capped at 30 bits.** `grind` asserts `(1u64 << bits) < F::ORDER_U64` and the
+>    witness is one base-field element, so BabyBear caps *both* PoW knobs at 30
+>    (`FriCommitPow.maxGrindBits_is_the_babybear_witness_cap`). No prior doc records this.
+> 2. **Cost is measured**, `circuit/tests/commit_pow_cost_measure.rs`: ~1.5 M whole-machine trials/s,
+>    so `cpow 16` ≈ 0.7 s, `24` ≈ 179 s, `30` ≈ 11 437 s at 16 fold rounds. Verifier-free; +4 bytes
+>    per fold round.
+> 3. **⚑ DISCREPANCY, UNRESOLVED — the "+1.45 bits deployed" above does not reconcile.** The
+>    saturation *mechanism* stated here is confirmed and is now a theorem
+>    (`commit_pow_saturates_at_the_deployed_geometry`): grinding buys bits until the Johnson branch
+>    takes over the `min`, then exactly nothing. But the saturation *point* differs — this doc's
+>    apex query column reads ≈ **59.43**, and the Lean-pinned Johnson branch at the deployed knobs
+>    reads **68** at `m = 3` (`the_exported_johnson_column_overstates_at_every_finite_m`), which
+>    makes the knob worth **+10**, not +1.45. 68 is forced: the tree's own exported `johnsonBits` is
+>    **73** at `m → ∞`, and the finite-`m` penalty `q·log₂(1 + 1/2m)` is at most `19 × 0.222 ≈ 4.2`
+>    bits, so no `α`-based column can land below ≈ 68.8. Whatever produces 59.43 is not that `α`.
+>    **Do not quote either figure as settled until §1.2's query column is re-derived.**
+
 Two real defects found on the way: `config.rs:18` claims PoW before *"each batching challenge"* but the
 DEEP/ALI `alpha` is **un-ground** (`two_adic_pcs.rs:564` — zero grinds in that file); and **`CirclePcs`
 silently ignores `commit_proof_of_work_bits` entirely** (`circle/src/prover.rs:84-156`).

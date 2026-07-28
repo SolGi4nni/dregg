@@ -26,6 +26,23 @@ computed by an exact transcription of `metatheory/Dregg2/Circuit/FriLedger.lean`
 
 ## 0. Headline
 
+> **⚑ SCOPE CORRECTION, 2026-07-27 — [`../FRI-SECURE-PARAMETERIZATION.md`](../FRI-SECURE-PARAMETERIZATION.md).**
+> Headline 1's *"no knob reaches it"* is true **for 120 at the apex geometry**, and it is **not** a
+> general impossibility. This document's ceiling formula carries no `commit_proof_of_work_bits`
+> term, and that knob — implemented in plonky3 on both sides, `0` at all ten dregg config sites — is
+> worth up to **+30 bits** on the `ε_C` branch (capped there by `grind`'s
+> `(1 << bits) < F::ORDER_U64`, a BabyBear witness limit no prior doc records). With it,
+> **`d = 4` reaches a composite of 100** at a shrunken domain — `lb 2, q 110, arity 8, commit_pow 28,
+> |D⁰| = 2^17` — with no extension change, no VK rotation and no trusted setup
+> (`FriCommitPow.a_hundred_bit_parameterization_exists`). What survives, and is now the *narrow* true
+> claim, is that **`d = 4` cannot reach 128 at any runnable knob setting**.
+>
+> Headline 2's `d = 8` recommendation is **corroborated and strengthened**: at `lb 6, q 38,
+> commit_pow 0, trace 2^15` the composite reads **128** with the prover *cheaper* than today
+> (0.62×), because the domain shrink outruns the degree cost. This document's query column agrees
+> with that analysis to within 0.01 bits/query, and its `d = 4` apex ceiling of **57** is now the
+> Lean theorem `FriCommitPow.the_deployed_composite_is_57`.
+
 1. **⚑ Proven-120 is NOT reachable today, and no knob reaches it. It needs the extension-degree wrap
    rewrite — and only `d = 8`.** The deployed ceiling at `d = 4` is **57** at the apex. `d = 5`
    **cannot reach 120 anywhere**, at any `(lb, q, pow)`, at any trace height a shipped config has — its
