@@ -23,9 +23,9 @@ demonstrate.*
 | **Attested leaf** | `a8935dca69b63466e6e517173f1f5d4385631802`, this repository's commit |
 | **Deployer** | `B62qqqmJk56HN9YJmV9hAFZQRuYshGTjr26mbzZY7dbPN4iHynUfDs7` (faucet-funded; unchanged, and no new funds were needed for the redeploy) |
 | **Deploy tx** | `5Juneee81a8yUBoRBu4gyRa32asVfXcLK6D7TdvQ2LK63j1qqT5g` — block 539534, applied |
-| **Anchor-root tx** | `5Ju4a1gSFhJubAXVgUziNPmG4YwHDzNWWeMBdScPUCfW6baid3Bg` — block 539535, applied. **The first relay-signed anchor**: it carries an in-circuit Schnorr check against the key in `app_state_2/3`, so the transaction could not have been built without it |
+| **Anchor-root tx** | `5Ju4a1gSFhJubAXVgUziNPmG4YwHDzNWWeMBdScPUCfW6baid3Bg` — block 539535, applied. It carries an in-circuit Schnorr check against the key in `app_state_2/3`. ⚑ That check is a **PLACEHOLDER**, not the anchor's authorization design — see §1.1. This transaction PREDATES the proof obligation `setDreggRoot` now carries, so the deployed contract at the address above is the SIGNATURE-ONLY shape; re-deploying is a VK rotation and has not been done |
 | **ACCEPT tx** (honest witness) | `5Ju3uMFNRK4Xa7HxUyt7WARbepMoGQZNjUujZjavt4pERe1Bg57Q` — block 539536, **applied** |
-| root advance (relay-signed) | `5JtgZYmZmHzu3UgTzJPcD3a4Hy7m8mB34UsCoGC3iagEUk2C3E9u` — block 539537, applied |
+| root advance (placeholder-signed) | `5JtgZYmZmHzu3UgTzJPcD3a4Hy7m8mB34UsCoGC3iagEUk2C3E9u` — block 539537, applied |
 | **REJECT tx** (replayed witness) | `5Jv7MRgqHfb7VtoCcReZZ3g5ayJnbFBEJfjfprTQwwc4Qot7xFoK` — block 539538, **included and failed**, `Account_app_state_0_precondition_unsatisfied` |
 | **CONTROL tx** (§3, R2b) | `5JuhgtwrsA4uW7YuyYFvuVEAYGwU7Ldj7qTujTkuspw9TsuLeRxV` — block 539540, **applied**. The *identical proof bytes* the daemon had refused minutes earlier on a different account update |
 
@@ -55,26 +55,54 @@ published or announced anywhere.
 ## 1. What the contract actually checks
 
 `DreggAttestedGate` holds four field slots of state — `dreggRoot` (the anchored dregg-side root, and
-deliberately `app_state_0`), `lastAttestedLeaf`, and a `relay` **public key** (two slots) — and
-exposes two methods:
+deliberately `app_state_0`), `lastAttestedLeaf`, and a `placeholderRelay` **public key** (two
+slots) — and exposes two methods:
 
-- `setDreggRoot(newRoot, auth)` — anchors a root, and **checks in circuit** that `auth` is a Schnorr
-  signature by the `relay` key held in state over the exact transition `[oldRoot, newRoot]`. Failing
-  that makes the constraint system unsatisfiable, so an unauthorised caller cannot build a
-  transaction at all. The relay key is installed by the deploy account update — which the zkApp key
-  signs — and no method changes it, so rotating the relay is a redeploy.
+- `setDreggRoot(anchor, placeholderAuth)` — anchors a root under **two conditions of different
+  kinds**:
+  1. **A PROOF OBLIGATION.** `anchor` must be a verifying proof of `DreggAnchorStatement`, and the
+     anchored root **is that proof's public input** — so there is no way to write a value the proof
+     does not claim. The statement: the anchored Pasta root is a Mina-Poseidon Merkle root whose
+     **slot 0** holds `Poseidon(R_bb)` for a BabyBear-Poseidon2 MMCS root `R_bb` the prover
+     exhibited an opening of, under the DEPLOYED `TruncatedPermutation<Perm,2,8,16>`. Slot 0 is
+     structural — the circuit folds LEFT at every level, so the position is not witnessed.
+  2. **A PLACEHOLDER SIGNATURE.** `placeholderAuth` must be a Schnorr signature by
+     `placeholderRelay` over `[oldRoot, newRoot]`, checked in circuit.
 - `actOnAttestedLeaf(proof)` — takes a **recursive proof** from `DreggMembershipAttestation`,
   `.verify()`s it, asserts `proof.publicInput == this.dreggRoot.getAndRequireEquals()`, and records
   `proof.publicOutput` as the attested leaf.
 
-⚑ The first version of this contract took `setDreggRoot(newRoot)` with an empty body and a comment
-reading "relay-authorized". Under Mina's default `proof` permission that is open to everyone —
-producing a proof of an unconditional method is exactly what any caller can do. Mina's per-field
-permissions cannot fix it either: `editState` governs **both** methods, so no permission admits
-`actOnAttestedLeaf` and restricts `setDreggRoot`. The authorisation therefore has to be a condition
-the circuit asserts, which is what the check above is. §0's superseded address is that first version.
+### 1.1 ⚑ The relay key is a STOPGAP. It is not the anchor's design, and this document previously said otherwise.
 
-What it does **not** prevent, said here rather than implied away: an authorisation for
+The history, so it is not repeated. The FIRST version took `setDreggRoot(newRoot)` with an empty
+body and a comment reading "relay-authorized" — open to everyone, since producing a proof of an
+unconditional method is what any caller can do. The SECOND version closed that with an **in-circuit
+Schnorr signature by a relay key held in state**, and this document recorded it as
+"the anchor is authenticated" and "a real trust boundary". **That framing was wrong for this
+project.** dregg's thesis is proof-as-capability: `chain/contracts/DreggPeerRegistry.sol` accepts a
+peer root because a finality proof verified — no owner, no committee. An anchor accepted because
+**one key signed it** is an oracle bridge wearing a zkApp, and calling it the fix let a trusted key
+stand as an achievement.
+
+What is true as of 2026-07-28:
+
+- The anchor now carries a **real proof obligation** (condition 1 above), and the anchored value is
+  the proof's public input rather than a free parameter. That narrows the anchor from "any field
+  element" to "a commitment somebody built and can open" — Poseidon preimage resistance forbids
+  working backwards from a chosen anchor.
+- **The obligation does not authorize.** It says nothing about dregg's state, no dregg turn, no
+  dregg proof, no legal transition. **Anyone can build a Merkle tree.**
+- **The placeholder key is still the only thing making the anchor unforgeable.** It is named
+  `placeholderRelay` / `placeholderAuth` in the source, the word "authorization" is not applied to
+  it, and it is scheduled for deletion by the FRI verifier — not by a better signature scheme.
+  Deleting it today would make the anchor world-writable, which is a strict weakening.
+- **The honest distance is measured, not guessed.** `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.9–3.10:
+  a depth-22 Merkle opening is **58,971 Kimchi rows** (more than one Pickles step's usable rows),
+  and **one** FRI query at the deployed knobs is **684,726 rows** — 13–15 steps. Nineteen queries is
+  237–272 steps for the query walk alone, before the DEEP quotient, the AIR evaluation or the
+  challenger. That is the size of the thing this key is standing in for.
+
+What condition 2 does **not** prevent, said here rather than implied away: a signature for
 `oldRoot -> newRoot` becomes usable again if the anchored root ever returns to `oldRoot`. Roots here
 are fresh Poseidon images, so that is not reachable in practice; the contract does not itself forbid
 it.
@@ -332,12 +360,16 @@ scripts cannot be pointed at mainnet by changing one variable.
    a nonce. Nothing in dregg emits a Mina-Poseidon root over live cell state, so the root is a
    **re-commitment computed in plain Rust, outside any STARK**. Whoever computes it is trusted for
    that hash.
-3. **The root anchor is authenticated, but the relay is trusted absolutely.** `setDreggRoot` now
-   verifies a relay signature in circuit (§1), so the anchor is a real trust boundary and not a
-   comment claiming to be one. What that boundary *is*, though, is one key: whoever holds the relay
-   key can anchor any root at all, and nothing on chain checks that the root corresponds to anything
-   in dregg. That is the same trust assumption as point 2 — the re-commitment is computed in plain
-   Rust outside any STARK — now named at the key rather than left implicit.
+3. **The root anchor carries a PROOF OBLIGATION, and is still gated on a PLACEHOLDER KEY.**
+   `setDreggRoot` writes the anchor proof's public input, and that proof pins the anchored tree's
+   slot 0 to `Poseidon(R_bb)` for a BabyBear-Poseidon2 MMCS root with a known opening (§1). So the
+   anchored value is no longer an arbitrary field element. **But the obligation is a shape
+   constraint, not a claim about dregg** — anyone can build a Merkle tree — and the
+   `placeholderRelay` key remains the only thing that makes the anchor unforgeable. Nothing on
+   chain checks that the root corresponds to anything in dregg. ⚑ **This document used to call the
+   signature "authentication" and a "real trust boundary"; §1.1 retracts that framing.** The key is
+   a stopgap for a FRI verify whose cost is now measured (`MINA-VERIFIES-DREGG-FRI-SIZE.md`
+   §3.9–3.10), not an authorization design.
 4. **The chain did not catch a forged Merkle path.** The prover caught it first (§3). Only the
    precondition failure is an on-chain refusal.
 5. **Proof-verification refusal IS demonstrated on chain now — state precisely against what.** §3's

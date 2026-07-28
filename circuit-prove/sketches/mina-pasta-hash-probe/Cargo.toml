@@ -21,3 +21,12 @@ edition = "2021"
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", default-features = false, features = ["std"] }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", default-features = false }
 ark-ff = { version = "0.5", default-features = false, features = ["std"] }
+
+# Part B (`src/p2bb.rs`): the DEPLOYED BabyBear Poseidon2-w16 MMCS, so the o1js
+# Merkle/FRI circuits are KAT'd against the real `TruncatedPermutation` and
+# `PaddingFreeSponge` rather than against a transcription of them. Same rev the
+# root workspace pins for every other p3 crate (`Cargo.toml:291-308`); keep them
+# in step or this probe stops describing the deployed hash.
+p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }

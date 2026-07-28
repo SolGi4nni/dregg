@@ -19,6 +19,8 @@
 //! `pasta::fp_kimchi::static_params()`. This is kimchi's own sponge, the same
 //! params o1js compiles into its Poseidon gate.
 
+pub mod p2bb;
+
 use ark_ff::{BigInteger, PrimeField};
 use mina_curves::pasta::Fp;
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
@@ -197,9 +199,12 @@ fn emit_merkle(args: &[String]) {
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    if argv.first().map(String::as_str) == Some("merkle") {
-        emit_merkle(&argv[1..]);
-        return;
+    match argv.first().map(String::as_str) {
+        Some("merkle") => return emit_merkle(&argv[1..]),
+        // Part B: the DEPLOYED BabyBear Poseidon2-w16 MMCS (see `p2bb.rs`).
+        Some("p2merkle") => return p2bb::emit_p2_merkle(&argv[1..]),
+        Some("p2fold") => return p2bb::emit_p2_fold(&argv[1..]),
+        _ => {}
     }
 
     let cases: &[(&str, Vec<Fp>)] = &[

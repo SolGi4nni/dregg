@@ -1238,7 +1238,7 @@ jobs:
   mina-attestation:
     name: Mina↔dregg Poseidon attestation zkApp (runs it, and proves the gate can go red)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     # `bridge/mina-zkapp/` was in ZERO targets — no workflow, no gate script, no npm
     # workspace — and what was committed did not run (`tsc` failed; the PoC that was
     # reported working had run in a scratch dir at an unpinned o1js). This job runs it
@@ -1246,11 +1246,19 @@ jobs:
     # root + the field modulus against the Rust probe's pinned table, a real Pickles
     # compile/prove/verify of an in-circuit Merkle path into that root, two tamper
     # rejections, the `DreggAttestedGate` zkApp deploying on a local chain and
-    # consuming the attestation proof recursively, the relay authorization on
-    # `setDreggRoot`, and a well-formed proof of another statement failing
+    # consuming the attestation proof recursively, the ANCHOR on `setDreggRoot` (its
+    # PROOF OBLIGATION, that the obligation refuses a root with no BabyBear vouch in
+    # it, and the polarities of the PLACEHOLDER key that is still the only thing making
+    # the anchor unforgeable), and a well-formed proof of another statement failing
     # VERIFICATION (with the identical bytes accepted on their own account update as
-    # the control). Then the self-test injects thirteen faults into a scratch copy and
-    # requires each to turn it red.
+    # the control). Then the self-test injects TWENTY-FOUR faults into a scratch copy
+    # and requires each to turn it red.
+    #
+    # ⚑ Since 2026-07-28 it also runs two RATCHETED MEASUREMENTS against the deployed
+    # p3 objects: RUNG 1, a Poseidon2-BabyBear Merkle opening (2,677 rows/level;
+    # 58,971 for the deployed depth 22), and RUNG 2, one FRI query at the deployed
+    # geometry (684,726 rows). Rung 2 builds a 684k-row constraint system, which is
+    # why the node heap is raised in the npm script and this job's timeout is 120 min.
     #
     # ⚑ CARGO IS NOW REQUIRED and the gate FAILS without it. The Rust leg is the
     # DREGG SIDE of this bridge — `circuit-prove/sketches/mina-pasta-hash-probe`, the
@@ -1260,7 +1268,8 @@ jobs:
     # workspace (`[workspace]` in its Cargo.toml), so no other job reaches it either.
     # It has git dependencies on o1-labs/proof-systems, so this job fetches; RUSTUP_TOOLCHAIN
     # from dtolnay/rust-toolchain overrides the crate directory's inherited pin, as
-    # everywhere else here. ~4 min; no Lean.
+    # everywhere else here. ~10 min for the headline run; the self-test is much
+    # longer (24 faults, several of them re-running the Rung-2 measurement). No Lean.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

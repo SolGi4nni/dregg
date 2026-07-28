@@ -313,16 +313,62 @@ one shared commitment.
 
 ### The honest boundary of the attestation
 
+
+### 6.2 ⚑ The anchor: what changed 2026-07-28, and what a trusted key is doing here
+
+An earlier lane closed a real hole — `setDreggRoot` had **no authorization at all** — with an
+**in-circuit Schnorr signature by a relay key held in state**, and both this document and
+`MINA-DEVNET-DEPLOYMENT.md` recorded that as the fix. **It is architecturally backwards for this
+project.** dregg accepts a peer root on Solidity because a *finality proof verified*
+(`chain/contracts/DreggPeerRegistry.sol`) — no owner, no committee. An anchor accepted because one
+key signed it is an oracle bridge wearing a zkApp, and §5.3's own admission ("the relay is trusted
+absolutely… nothing on chain checks that the root corresponds to anything in dregg") was the tell.
+
+What the anchor is now:
+
+- **`setDreggRoot(anchor, placeholderAuth)` takes a PROOF, and the anchored root is that proof's
+  public input.** The root is no longer a free parameter of the method. The statement
+  (`DreggAnchorStatement`) is: the anchored Pasta root is a Mina-Poseidon Merkle root whose **slot
+  0** holds `Poseidon(R_bb)` for a BabyBear-Poseidon2 MMCS root `R_bb` the prover exhibited an
+  opening of, under the DEPLOYED `TruncatedPermutation<Perm,2,8,16>`. Slot 0 is structural: the
+  circuit folds LEFT at every level, so the position is not witnessed.
+- **That obligation does not authorize, and nothing in the code or these docs says it does.**
+  Anyone can build a Merkle tree. It narrows the anchor from "any field element" to "a commitment
+  somebody built and can open" — a necessary condition for being a dregg commitment, not a
+  sufficient one.
+- **The relay key is still there and is still the only thing making the anchor unforgeable.** It is
+  named `placeholderRelay` / `placeholderAuth`, the word "authorization" is not applied to it, and
+  it goes away when `DreggAnchorStatement` becomes the FRI verify. Removing it today would make the
+  anchor world-writable, which is a strict weakening, not a purification.
+
+**The distance is measured, not estimated** (`docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.9–3.10, both
+ratcheted in `scripts/check-mina-attestation.sh`):
+
+| rung | measured | in Pickles steps |
+|---|---:|---|
+| one Poseidon2-w16-BabyBear permutation | 2,600.5 rows | — |
+| one Merkle level (Rung 1) | **2,677 rows** | — |
+| the deployed depth-22 input-phase opening | **58,971 rows** | **more than one step's usable rows** |
+| **one FRI query** at deployed knobs (Rung 2) | **684,726 rows** | **13–15** |
+| 19 queries — the FRI walk alone | 1.30 × 10⁷ rows | **237–272** |
+
+The last row excludes the DEEP quotient, the AIR evaluation, the challenger and the PoW grind, so it
+is a floor. **That is the size of the object the placeholder key is standing in for**, and it is why
+this lane landed rungs and a relabelling rather than a proof-gate.
+
 This verifies dregg's **commitment**, not dregg's **proof**. It is proof-carrying end-to-end only when
 the checked root is one dregg's proof actually attests. Two gaps to close, in order:
 
 1. dregg's canonical root is **Poseidon2-over-BabyBear**, not Mina-Poseidon — so the attested
    Pasta root is today a *re-commitment* the probe computes in **plain Rust, outside the STARK**. Until
-   dregg's STARK (or the Groth16 public output) binds the Pasta re-commitment, the relay that computes
-   it is trusted for that hash. Closing this = have the prover expose a Mina-Poseidon root as a public
+   dregg's STARK (or the Groth16 public output) binds the Pasta re-commitment, whoever computes
+   it is trusted for that hash. ⚑ §6.2's anchor obligation narrows *what shape* can be anchored; it
+   does not close this gap. Closing this = have the prover expose a Mina-Poseidon root as a public
    output, or do Route A (recompute the real BabyBear root in-circuit).
 2. Even then, the Mina side attests *a value under a root*, and trusts that *the root itself* is a
-   valid dregg state (the current `StructureOnly` relay). Full trustlessness = Route A/B.
+   valid dregg state (the current `StructureOnly` relay). Full trustlessness = Route A/B. ⚑ See
+   §6.2: the anchor's trusted component is now NAMED a placeholder in code and in the deployment
+   record, and Route A's cost is measured rather than estimated.
 
 So the PoC is the real, minimal, buildable mutual step — with a precisely named residual, not a
 laundered one.
@@ -333,7 +379,7 @@ laundered one.
 
 | Use-case | What it is | Tractable NOW? |
 |---|---|---|
-| **Cross-chain state read / capability attestation** | a Mina contract gates on "this cell / capability / balance is committed under dregg's root" | **Shape demonstrated, not the use-case** — the §6 attestation proves membership under a **Poseidon KAT root over `[1,2,3,4]`**, in a `ZkProgram`, off-pin; **no cell, capability or balance has ever been attested**. Plus the K6 Merkle-query shape. Trust boundary = §6.1 (relay attests the Pasta root until Route A). **[CORRECTED 2026-07-27 — this row read "**Yes**".]** |
+| **Cross-chain state read / capability attestation** | a Mina contract gates on "this cell / capability / balance is committed under dregg's root" | **Shape demonstrated, not the use-case** — the §6 attestation proves membership under a **Poseidon KAT root over `[1,2,3,4]`**, in a `ZkProgram`, off-pin; **no cell, capability or balance has ever been attested**. Plus the K6 Merkle-query shape. Trust boundary = §6.2 (a PROOF OBLIGATION on the anchored root's shape, plus a PLACEHOLDER key that is still the only thing making the anchor unforgeable, until Route A). **[CORRECTED 2026-07-27 — this row read "**Yes**".]** |
 | **Proof-carrying deposit/withdraw (shared asset)** | lock MINA → mint a dregg note; burn on dregg → unlock MINA, nullifier-gated | **Partial** — `DreggFederation` deposit/withdraw + nullifier machinery exist and run, but state advance is **trusted-relay** anchored. Trustless mint/unlock needs Route A/B. |
 | **Mina as a dregg light client** (direction 1) | dregg verifies a Mina Kimchi proof + reads a zkApp-state field under the verified root | **Mostly built** in Lean (K5 + K6), modulo the 3 crypto carriers. This is the genuinely novel, mostly-real half. |
 | **Sovereign cell on Mina** | a zkApp whose transitions REQUIRE a dregg authorization proof (`plans/…` Phase 3) | **No** — needs Route B (`.verify()` a real dregg Pickles proof). The product shape is right; the proof path is future. |

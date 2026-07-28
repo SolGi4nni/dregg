@@ -22,11 +22,18 @@
 #   [4] a tampered sibling and a tampered public root each FAIL to prove
 #   [5] the `DreggAttestedGate` zkApp deploys on a local chain, CONSUMES the
 #       attestation proof recursively, and REFUSES one bound to another root
-#   [6] the root anchor is RELAY-AUTHORIZED: a non-relay signer, an empty
-#       signature and a signature for another transition are each refused.
-#       (`setDreggRoot` used to take no authorization at all while its comment
-#       said "relay-authorized"; these are the checks that make the comment
-#       true, and the first two would have passed against the old contract.)
+#   [6] the root anchor. TWO conditions of different kinds, and the gate keeps
+#       them apart because conflating them is how a trusted key came to be
+#       recorded as a fix:
+#         - a PROOF OBLIGATION (`DreggAnchorStatement`): the anchored root is
+#           the proof's public input, and the statement pins slot 0 of the
+#           anchored tree to `Poseidon(R_bb)` for a BabyBear-Poseidon2 MMCS root
+#           with a known opening. The gate checks the obligation REFUSES a root
+#           with no vouch in it — an obligation that always holds is not one.
+#         - a PLACEHOLDER SIGNATURE, tested as a placeholder and never called
+#           authorization: a non-placeholder signer, an empty signature, a
+#           signature for another transition, and a signature over a root the
+#           PROOF does not claim are each refused.
 #   [7] a WELL-FORMED proof of a statement its prover had no witness for is
 #       refused by VERIFICATION, not by the parser — at the ZkProgram level and
 #       again by moving a proof between two signed account updates, with the
@@ -51,10 +58,28 @@
 # the root and all 32 siblings elementwise, and then bends the emission three
 # ways to show the comparison can say no.
 #
+# FOURTH leg (`poseidon2-merkle-rows.ts`) — RUNG 1, the Merkle OPENING. A FRI
+# verifier never buys one permutation, it buys openings, and an opening is not
+# `depth x rows-per-perm`: it also pays 8 witnessed-lane range checks and 8 lane
+# reductions per node, neither of which a single permutation pays, and WITHOUT
+# the range checks the bound tracking the whole 2,600.5 rests on is a claim
+# about unconstrained witnesses. KAT'd elementwise against the DEPLOYED Rust
+# MMCS (`p2merkle`: p3 `default_babybear_poseidon2_16` +
+# `TruncatedPermutation<.,2,8,16>` + `PaddingFreeSponge<.,16,8,8>`) on rows
+# carrying a git HEAD, a timestamp and a 128-bit nonce. Ratchets three figures.
+#
+# FIFTH leg (`fri-query-rows.ts`) — RUNG 2, ONE FRI QUERY at the deployed root's
+# geometry (|D^0| = 2^22, 16 arity-2 commit layers, cap_height 0). The fold
+# arithmetic is KAT'd against p3's own `BinomialExtensionField<BabyBear,4>` via
+# the probe's `p2fold`, one commit-phase round COMPILES and PROVES, and the
+# whole query's `getRows()` is ratcheted. ⚑ Needs a 16 GB node heap (the npm
+# script passes `--max-old-space-size`); o1js OOMs at the 4 GB default.
+#
 # ⚑ NO SKIPS. A missing `node`, a missing `npm`, a missing `cargo`, an absent or
 # unpinned o1js, a type error, or a diverging vector are all FAILURES — the same
-# discipline as `embedded-js` and `opentheory-importer`. ~75s including `npm ci`
-# when cold, ~60s warm. Needs cargo for the third leg; no Lean.
+# discipline as `embedded-js` and `opentheory-importer`. ~6 min warm (the Rung-2
+# leg is ~3 of them: 684,726 rows is slow to BUILD, never mind prove). Needs
+# cargo for legs 3-5; no Lean.
 #
 #   bash scripts/check-mina-attestation.sh
 #   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
@@ -107,6 +132,16 @@ run_probe() { # run_probe <dir> -> exit status of the dregg-side emitting leg
   ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
       npm run --silent probe )
 }
+# Rung 1: the Merkle opening, KAT'd against the DEPLOYED BabyBear MMCS.
+run_merkle() { # run_merkle <dir>
+  ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+      npm run --silent poseidon2-merkle )
+}
+# Rung 2: one FRI query at the deployed geometry.
+run_fri() { # run_fri <dir>
+  ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+      npm run --silent fri-query )
+}
 
 # ── the headline run ──────────────────────────────────────────────────────────
 if [ "${1:-}" != "--self-test" ]; then
@@ -119,15 +154,19 @@ if [ "${1:-}" != "--self-test" ]; then
   [ "$rc" -eq 0 ] || die "the attestation gate exited $rc"
   # Floors: a gate that ran but demonstrated nothing must not read as clean.
   n_ok="$(printf '%s' "$out" | grep -c '✓')"
-  [ "$n_ok" -ge 28 ] || die "only $n_ok checks passed; expected >= 28 (a narrowed run is not a pass)"
+  [ "$n_ok" -ge 35 ] || die "only $n_ok checks passed; expected >= 35 (a narrowed run is not a pass)"
   grep -q 'the zkApp CONSUMED the attestation proof' <<<"$out" \
     || die "the zkApp composition did not run"
   grep -q 'refused as an invalid PROOF' <<<"$out" \
     || die "the well-formed-proof-of-another-statement leg did not run"
   grep -q 'the identical proof bytes are ACCEPTED' <<<"$out" \
     || die "the spliced-proof CONTROL did not run (the refusal above is then unattributable)"
-  grep -q 'an anchor signed by a NON-relay key' <<<"$out" \
-    || die "the setDreggRoot authorization leg did not run"
+  grep -q 'an anchor signed by a NON-placeholder key' <<<"$out" \
+    || die "the setDreggRoot placeholder-key leg did not run"
+  grep -q 'the OBLIGATION refuses a root whose slot 0 is not a BabyBear vouch' <<<"$out" \
+    || die "the anchor PROOF OBLIGATION leg did not run (the anchor would be key-only again)"
+  grep -q 'a signature over a root the anchor PROOF does not claim' <<<"$out" \
+    || die "the proof/signature agreement leg did not run"
   grep -q '=== PASS ===' <<<"$out" || die "the gate did not print its PASS line"
 
   # Leg 2: the Poseidon2-w16-BabyBear row measurement that
@@ -159,8 +198,39 @@ if [ "${1:-}" != "--self-test" ]; then
     || die "the cross-check's discriminating polarity did not run"
   grep -q '=== PROBE PASS ===' <<<"$probe_out" || die "the probe leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe checks green (compile+prove+verify, tamper rejected," \
-       "zkApp consumed, anchor authorized, spliced proof refused, Rust emitter cross-checked)"
+  # Leg 4: RUNG 1 — the Merkle OPENING, elementwise against the DEPLOYED p3 MMCS.
+  merkle_out="$(run_merkle "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$merkle_out"
+  [ "$rc" -eq 0 ] || die "the Poseidon2 Merkle-opening leg exited $rc"
+  n_merkle="$(printf '%s' "$merkle_out" | grep -c '✓')"
+  [ "$n_merkle" -ge 12 ] || die "only $n_merkle Merkle checks passed; expected >= 12"
+  grep -q 'siblings, all 22 isRight bits, all 22 nodes and the root agree' <<<"$merkle_out" \
+    || die "the elementwise Rust<->o1js MMCS cross-check did not run"
+  grep -q 'the circuit REFUSES an out-of-range sibling lane' <<<"$merkle_out" \
+    || die "the bound-tracking enforcement check did not run (the row count would be for an UNSOUND circuit)"
+  grep -q 'the PROVEN public output == the leaf digest the DEPLOYED p3 MMCS emitted' <<<"$merkle_out" \
+    || die "the Merkle opening was never actually proved"
+  grep -q 'ratchet: ' <<<"$merkle_out" || die "the Merkle rows ratchet did not run"
+  grep -q '=== MERKLE PASS ===' <<<"$merkle_out" || die "the Merkle leg did not print its PASS line"
+
+  # Leg 5: RUNG 2 — one FRI query at the deployed geometry.
+  fri_out="$(run_fri "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$fri_out"
+  [ "$rc" -eq 0 ] || die "the FRI query leg exited $rc"
+  n_fri="$(printf '%s' "$fri_out" | grep -c '✓')"
+  [ "$n_fri" -ge 10 ] || die "only $n_fri FRI checks passed; expected >= 10"
+  grep -q 'fold_row (arity 2, two-point Lagrange) agrees with p3' <<<"$fri_out" \
+    || die "the fold_row cross-check against p3 did not run"
+  grep -q 'the coset descent (-1)\^b x\^2 matches p3 at the next layer, sign included' <<<"$fri_out" \
+    || die "the coset-descent sign check did not run (it is wrong on half of all indices)"
+  grep -q 'a commit-phase round PROVES and VERIFIES' <<<"$fri_out" \
+    || die "no FRI commit-phase round was actually proved"
+  grep -q 'ratchet: ' <<<"$fri_out" || die "the FRI query rows ratchet did not run"
+  grep -q '=== FRI QUERY PASS ===' <<<"$fri_out" || die "the FRI leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri checks green (compile+prove+verify," \
+       "tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED + placeholder-keyed, spliced proof" \
+       "refused, Rust emitter cross-checked, Merkle opening and FRI query measured against p3)"
   exit 0
 fi
 
@@ -256,6 +326,52 @@ expect_red rows "rows/perm drifts from the figure the doc quotes" \
 expect_red rows "unsound lane bound (x^7 would wrap mod Pasta)" \
   "s/qp\.add\(r\)\.assertEquals\(v\.v\);\n  return \{ v: r, max: \(1n << 31n\) - 1n \};/qp.add(r).assertEquals(v.v);\n  return { v: r, max: (1n << 32n) - 1n };/" \
   src/Poseidon2BabyBearW16.ts
+
+# The anchor's PROOF OBLIGATION, disarmed the way an obligation usually is: made
+# true for free. `setDreggRoot`'s whole claim to be more than a signature check
+# is that this fold has to REACH the anchored root, so leg [6] must notice.
+expect_red gate "the anchor obligation made vacuous (the fold no longer has to reach the root)" \
+  "s/cur\.assertEquals\(anchored\);/cur.assertEquals(cur);/" \
+  src/DreggPoseidonAttestation.ts
+# And the vouch must actually be a function of the BabyBear side: hashing a
+# constant instead of the folded root would leave every check above green while
+# the obligation stopped saying anything about an MMCS root at all.
+expect_red gate "the vouch stops depending on the BabyBear root" \
+  "s/const vouch = Poseidon\.hash\(bbRoot\.limbs\);/const vouch = Poseidon.hash([Field(7)]);/" \
+  src/DreggPoseidonAttestation.ts
+
+# ── Leg 4: RUNG 1, the Merkle opening. Three faults, chosen so each is visible
+# to a DIFFERENT instrument: the twin-vs-p3 comparison, the circuit-vs-twin
+# comparison, and the soundness check that nothing else can see.
+expect_red merkle "the o1js compression twin transposed (twin vs p3)" \
+  "s/return permBigInt\(\[\.\.\.l, \.\.\.r\]\)\.slice\(0, DIGEST_ELEMS\);/return permBigInt([...r, ...l]).slice(0, DIGEST_ELEMS);/" \
+  src/Poseidon2Merkle.ts
+expect_red merkle "the in-CIRCUIT compression transposed (circuit vs twin)" \
+  "s/provablePermBounded\(\[\.\.\.l\.limbs, \.\.\.r\.limbs\], \(1n << 31n\) - 1n\)/provablePermBounded([...r.limbs, ...l.limbs], (1n << 31n) - 1n)/" \
+  src/Poseidon2Merkle.ts
+# ⚑ THE ONE NOTHING ELSE SEES. Drop the witnessed-lane range checks and every
+# KAT still passes, every row count still prints — and the bound tracking the
+# whole 2,600.5 rests on becomes a claim about unconstrained witnesses. This is
+# the fault that makes the measurement one of an UNSOUND circuit.
+expect_red merkle "witnessed-lane range checks removed (rows measured for an UNSOUND circuit)" \
+  "s/  for \(const l of d\.limbs\) assertLaneLt2p31\(l\);/  \/* fault *\//" \
+  src/Poseidon2Merkle.ts
+expect_red merkle "rows/level drifts from the figure the doc quotes" \
+  "s/const RECORDED_ROWS_PER_LEVEL = 2677;/const RECORDED_ROWS_PER_LEVEL = 2400;/" \
+  scripts/poseidon2-merkle-rows.ts
+
+# ── Leg 5: RUNG 2, the FRI query. The coset-descent sign is the interesting one:
+# it is wrong on exactly half of all query indices, so a test that happened to
+# pick an even index would never see it.
+expect_red fri "the coset descent drops its sign (wrong on half of all indices)" \
+  "s/return Provable\.if\(bit, neg, sq\);/return sq;/" \
+  src/FriQueryStep.ts
+expect_red fri "the extension modulus X^4 - W is wrong" \
+  "s/export const EXT_W = 11n;/export const EXT_W = 12n;/" \
+  src/FriQueryStep.ts
+expect_red fri "rows/query drifts from the figure the doc quotes" \
+  "s/const RECORDED_QUERY_ROWS = 684_726;/const RECORDED_QUERY_ROWS = 600_000;/" \
+  scripts/fri-query-rows.ts
 
 # ── Leg 3: the DREGG SIDE. Faults go into $PCOPY, a scratch copy of the Rust
 # crate. Three of them, chosen to separate what each instrument sees:

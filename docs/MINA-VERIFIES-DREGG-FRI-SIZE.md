@@ -25,6 +25,9 @@ under ~260.**
 | Poseidon2-w16-BabyBear permutations for **one** full root verify | **~11,000** (measured range 10,000–13,000) | **empirically measured in-tree** (`docs/deos/WRAP-NATIVE-HASH-DECISION.md:102-106`); independently re-derived here at ~10,250 (§2) |
 | Kimchi rows per Poseidon2-w16-BabyBear permutation | **2,600.5 — MEASURED** | **§3.8** — an o1js circuit that compiles, proves, and reproduces the deployed permutation's KAT. Supersedes the ~2,000 design claim (§3.3–3.4) and closes §3.7's 4× band at the optimistic end |
 | **Total row budget** | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7, all remaining spread from the permutation count) | product |
+| Kimchi rows per **Merkle LEVEL** (the object FRI buys) | **2,677 — MEASURED** | **§3.9** — +76.5 over the bare permutation: 8 witnessed-lane range checks + 8 lane reductions + the cond-swap, none of which a single permutation pays |
+| Kimchi rows for the deployed **depth-22 opening** | **58,971 — MEASURED** | §3.9 — **more than one Pickles step's usable rows** |
+| Kimchi rows for **ONE FRI QUERY** at deployed knobs | **684,726 — MEASURED** | **§3.10** — 238 Merkle levels + 16 sponges + 16 arity-2 folds; 13–15 Pickles steps. FRI walk only, no DEEP/AIR/challenger |
 | Usable rows per Pickles step | **~48,000–55,000** of 65,536 | §4.1, measured overheads |
 | **Pickles step circuits** | **~650–1,040** deployed | §4.2 |
 | After the dregg-side FRI knobs (§5) | **~325–455** | |
@@ -482,16 +485,106 @@ Three corrections worth naming:
 (`rangeCheck64`, `rangeCheck3x12`, `multiRangeCheck`). A hand-tuned version could plausibly shave
 10–20% — batching quotient limbs across S-boxes into shared `multiRangeCheck` slots is the obvious
 one — but not 2×, because 64% of the cost is range-check gates whose per-bit rate (~66 bits/row) is
-a property of Kimchi's lookup gates, not of this code. **And it re-prices §3.9's custom gate:** a
+a property of Kimchi's lookup gates, not of this code. **And it re-prices §3.11's custom gate:** a
 `Poseidon2BabyBear` gate would delete the generic gates and leave the reductions, i.e. **~1,700
-rows, not the ~900–1,100 §3.9 guesses** — a 1.5× win, not 2×.
+rows, not the ~900–1,100 §3.11 guesses** — a 1.5× win, not 2×.
 
 **It is ratcheted, not just recorded.** `scripts/check-mina-attestation.sh` (a `local-gates.sh` row
 and a `ci.yml` job) re-runs the measurement and FAILS if rows/permutation moves more than 2% from
 the 2,600.5 quoted here. A cited number nothing re-produces is not a measurement, and this document
 has been the reason to care about exactly that distinction.
 
-### 3.9 What a custom gate would buy — and why it is not on the table
+### 3.9 ⚑ MEASURED — a Merkle OPENING, which is the object FRI actually pays for
+
+*2026-07-28. §3.8 measured one permutation. A FRI verifier never buys one permutation; it buys
+**openings**, and an opening is not `depth × 2,600.5`. `bridge/mina-zkapp/src/Poseidon2Merkle.ts`,
+measured by `scripts/poseidon2-merkle-rows.ts` (`npm run poseidon2-merkle`).*
+
+> ## **2,677 Kimchi rows per Merkle level. 58,971 rows for the deployed depth-22 opening.**
+>
+> **ONE input-phase opening does not fit in one Pickles step.** 58,971 rows is 0.90× the 2^16
+> step *domain* and **1.07–1.23× the usable rows** (§4.1).
+
+| item | **MEASURED** |
+|---|---:|
+| one permutation, standalone (§3.8) | 2,600.5 |
+| **one Merkle level** (cond-swap + range checks + compress + lane reduction) | **2,677** |
+| depth-22 opening (the deployed `\|D⁰\| = 2^22`, `cap_height = 0`) | **58,971** |
+| one leaf-sponge block (`PaddingFreeSponge<·,16,8,8>`, `ceil(w/8)` blocks) | **2,632** |
+| row opening (width-13 sponge + depth-2 fold), as a `ZkProgram` | **10,775** |
+
+**The +76.5 rows/level over the bare permutation is not overhead to be optimised away.** It is:
+
+- **8 range checks on the witnessed sibling lanes.** The bound tracking §3.8 rests on is a claim
+  about the size of every value in the circuit. A sibling arrives as an unconstrained private
+  input, so without `assertLaneLt2p31` on each of its 8 lanes the whole soundness argument is
+  about numbers nothing forces to be small. The measurement script injects an out-of-range lane
+  and requires a refusal.
+- **8 lane reductions.** ⚑ **A correction to `Poseidon2BabyBearW16.ts`, which claimed the
+  permutation's output lanes are `< 2^31` and "one conditional subtraction away" from canonical.**
+  They are not: the last thing a permutation does is the ADD-ONLY external layer, fan-in 35, so an
+  output lane is bounded by ~35·2^31 ≈ 2^36.13. Re-feeding a digest costs a full `reduce`;
+  comparing one costs a `reduce` *and* a conditional subtraction. That distinction is invisible
+  when you measure ONE permutation — which is exactly what §3.8 did — and it is the first thing a
+  hash chain runs into.
+- the conditional swap (16 `Provable.if`s per level).
+
+**It is KAT'd against the DEPLOYED Rust, not against a transcription.**
+`circuit-prove/sketches/mina-pasta-hash-probe`'s `p2merkle` subcommand calls
+`p3_baby_bear::default_babybear_poseidon2_16`, `p3_symmetric::TruncatedPermutation<·,2,8,16>` and
+`p3_symmetric::PaddingFreeSponge<·,16,8,8>` at the workspace's pinned p3 rev `82cfad73`, on rows
+carrying a git HEAD, a millisecond timestamp and a 128-bit nonce. o1js must reproduce, elementwise:
+every leaf digest, all 23 levels of the zero-subtree ladder, all 22 siblings, all 22 `isRight` bits,
+all 22 intermediate nodes, and the root. The circuit then reproduces the same root inside
+`Provable.runAndCheck`, and a depth-3 instance **compiles, proves and verifies** with the p3-emitted
+leaf as its public output.
+
+**Ratcheted** by `scripts/check-mina-attestation.sh` at 2% on all three of rows/level,
+rows/depth-22-opening and rows/sponge-block.
+
+### 3.10 ⚑ MEASURED — one whole FRI QUERY at the deployed geometry
+
+*2026-07-28. `bridge/mina-zkapp/src/FriQueryStep.ts`, measured by `scripts/fri-query-rows.ts`
+(`npm run fri-query`). This is `verify_query` (`vendor/plonky3-fri-82cfad73/src/verifier.rs:363`)
+at `|D⁰| = 2^22`, `max_log_arity = 1`, 16 commit-phase layers, `cap_height = 0`.*
+
+> ## **684,726 Kimchi rows for ONE FRI query. 13–15 Pickles steps. 10.4× the 2^16 domain.**
+>
+> **19 queries ⇒ 1.30 × 10⁷ rows ⇒ 237–272 Pickles steps — for the FRI query walk ALONE.**
+
+Per query: the input-phase opening at depth 22, plus one commit-phase opening per layer at depths
+21…6 = **238 Merkle levels**, plus 16 leaf sponges (each arity-2 row is 8 BabyBear elements = one
+full sponge block = exactly one permutation), plus 16 arity-2 folds in
+`BinomialExtensionField<BabyBear, 4>`, plus the coset-point descent. Implied rows per Merkle level
+inside the query: **2,877** — higher than §3.9's 2,677 because the per-round sponge, fold and
+extension arithmetic are amortised into it.
+
+**The fold arithmetic is KAT'd against p3.** The probe's `p2fold` subcommand computes the same
+two-point Lagrange interpolation `fold_row` does; the crate's own tests check its `ext_mul` against
+p3's `BinomialExtensionField<BabyBear, 4>` multiplication, pin `X⁴ = 11` against that same type, and
+check the interpolation against an independently solved interpolant plus both boundary cases. o1js
+must reproduce the extension product, the fold, and the coset point — the last **derived from the
+witnessed query-index bits**, not witnessed alongside them.
+
+⚑ **The coset descent is `x_{r+1} = (−1)^{b_r} · x_r²`, not `x_r²`.** `rbl(i, L) = b·2^{L−1} +
+rbl(i≫1, L−1)` and `g_L^{2^{L−1}} = −1`, so the naive squaring is wrong on exactly half the
+indices — invisible to any test whose index happens to be even. Both the Rust test and the o1js
+check exercise both polarities.
+
+⚑ **The 22 query-index bits are ONE object.** Bit `r` selects which slot round `r`'s folded value
+occupies; bits `r+1…22` are the path directions for round `r`'s depth-`21−r` opening. A circuit
+that witnessed a fresh index per round would measure identically and verify something strictly
+weaker.
+
+**⚑ WHAT IS NOT IN THE 684,726.** The DEEP quotient (reduced openings and their `alpha` powers),
+the AIR constraint evaluation, the Fiat–Shamir challenger that produces `beta` and the query index,
+and the proof-of-work grind. **A query costs at least this, not at most.** The 237–272 steps is
+therefore a *floor* on the query walk, and it is already consistent with §5.3's ~260.
+
+**Ratcheted** at 2%. ⚑ The measurement needs `--max-old-space-size=16384`: o1js holds all 684,726
+rows in the JS heap and OOMs at the 4 GB default.
+
+### 3.11 What a custom gate would buy — and why it is not on the table
 
 A `Poseidon2BabyBear` gate could plausibly do one round per 2 rows (a width-16 state does not fit
 15 columns, so it spans `Curr`/`Next`) ⇒ ~42 rows for 21 rounds. **But the mod-`p` range checks do
@@ -812,7 +905,7 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | N step circuits | **~650–1,040** deployed; **~325–455** knobbed; **~260** floor. |
 | It buys 128 bits | **No — ~50**, commit-column-bound, and `numQueries` provably cannot move it. |
 | The AIR evaluation is the expensive part | **No — ~1.5–2%.** It is entirely a hashing problem. |
-| A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.9 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
+| A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
 | The row price is a design claim nobody has run | **No longer.** §3.8 is measured, the circuit is committed at `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`, and `scripts/check-mina-attestation.sh` fails if the number drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**. |
 

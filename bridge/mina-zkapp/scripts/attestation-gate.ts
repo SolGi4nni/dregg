@@ -50,9 +50,15 @@ import {
   DreggAttestedGate,
   makeDreggMembershipAttestation,
   compress,
-  signAnchor,
+  signPlaceholderAnchor,
+  DreggAnchorStatement,
+  proveAnchor,
+  anchorLeavesFromSeed,
+  ANCHOR_MERKLE_DEPTH,
+  vouchOfBbRoot,
   sparsePath,
 } from '../src/DreggPoseidonAttestation.js';
+import { BbDigest, sparsePathBigInt } from '../src/Poseidon2Merkle.js';
 import {
   PASTA_FP_MODULUS_HEX,
   RUST_GOLD_HASHES,
@@ -227,12 +233,40 @@ async function main() {
   // -----------------------------------------------------------------------
   console.log(`\n[5] zkApp composition at ATTEST_DEPTH=${ATTEST_DEPTH}`);
 
-  const { path, nodes, root: deepRoot } = sparsePath(leaves, 2, ATTEST_DEPTH);
+  const { nodes } = sparsePath(leaves, 2, ATTEST_DEPTH);
   check(
     nodes[1].toBigInt() === RUST_MERKLE_ROOT_1234,
     'the depth-32 path passes through the Rust-emitted depth-2 root',
     'the depth-32 path does not pass through the Rust root',
   );
+
+  // ⚑ THE ANCHORED TREE IS NOT THAT TREE. `setDreggRoot` now takes a PROOF
+  // whose statement pins slot 0 of the anchored tree to `Poseidon(R_bb)` for a
+  // BabyBear-Poseidon2 MMCS root the prover opened (`DreggAnchorStatement`).
+  // So the tree that gets anchored carries the vouch at index 0 and the old
+  // leaves after it, and the membership proof the zkApp consumes opens under
+  // THAT root. The Rust-pinned check above stays on the un-vouched tree so the
+  // pin does not move.
+  t = Date.now();
+  await DreggAnchorStatement.compile();
+  ok(`compiled the depth-${ANCHOR_MERKLE_DEPTH} anchor obligation in ${secs(t)}`);
+  t = Date.now();
+  const anchor = await proveAnchor(anchorLeavesFromSeed(20260728n), 1, leaves);
+  ok(`proved the anchor obligation in ${secs(t)}`);
+  check(
+    await DreggAnchorStatement.verify(anchor.proof),
+    'the anchor obligation proof VERIFIES',
+    'the anchor obligation proof failed to verify',
+  );
+  check(
+    anchor.proof.publicOutput.toBigInt() === anchor.vouch.toBigInt(),
+    'the anchor proof carries the BabyBear vouch as its public output',
+    'the anchor proof did not carry the vouch',
+  );
+  const deepRoot = anchor.anchoredRoot;
+  // The leaf the zkApp will be shown: `Field(3)`, which the vouch shifted from
+  // index 2 to index 3.
+  const { path } = sparsePath(anchor.pastaLeaves, 3, ATTEST_DEPTH);
 
   const csDeep = await DreggMembershipAttestation.analyzeMethods();
   console.log(`    attestation circuit: ${csDeep.proveMembership.rows} rows`);
@@ -271,28 +305,30 @@ async function main() {
   const zkAppKey = PrivateKey.random();
   const zkAppAddress = zkAppKey.toPublicKey();
   const zkApp = new DreggAttestedGate(zkAppAddress);
-  // The relay is a THIRD key: not the deployer, not the zkApp account. Only it
-  // can move the anchored root, and [6] below is where that is tested.
+  // The PLACEHOLDER relay is a THIRD key: not the deployer, not the zkApp
+  // account. ⚑ It is not the authorization design — see `DreggAttestedGate`'s
+  // header. [6] below tests both halves of the anchor: the proof obligation and
+  // this stopgap.
   const relayKey = PrivateKey.random();
   const relay = relayKey.toPublicKey();
 
   t = Date.now();
   const deployTx = await Mina.transaction(deployer, async () => {
     AccountUpdate.fundNewAccount(deployer);
-    await zkApp.deploy({ relay });
+    await zkApp.deploy({ placeholderRelay: relay });
   });
   await deployTx.prove();
   await deployTx.sign([deployer.key, zkAppKey]).send();
   ok(`deployed the zkApp in ${secs(t)}`);
   check(
-    zkApp.relay.get().toBase58() === relay.toBase58(),
-    'the deploy installed the relay key in state (the anchor has a named authority)',
-    'the deployed gate does not hold the relay key',
+    zkApp.placeholderRelay.get().toBase58() === relay.toBase58(),
+    'the deploy installed the PLACEHOLDER relay key in state',
+    'the deployed gate does not hold the placeholder relay key',
   );
 
   t = Date.now();
   const anchorTx = await Mina.transaction(deployer, async () => {
-    await zkApp.setDreggRoot(deepRoot, signAnchor(relayKey, Field(0), deepRoot));
+    await zkApp.setDreggRoot(anchor.proof, signPlaceholderAnchor(relayKey, Field(0), deepRoot));
   });
   await anchorTx.prove();
   await anchorTx.sign([deployer.key]).send();
@@ -350,8 +386,9 @@ async function main() {
   //     the ones that would have gone green against the old contract, which is
   //     why they are here rather than a note in the doc.
   // -----------------------------------------------------------------------
-  console.log('\n[6] the anchor is relay-authorized (the code checks what the comment says)');
-  const nextRoot = Poseidon.hash([deepRoot, Field(1)]);
+  console.log('\n[6] the anchor: a PROOF OBLIGATION, and a PLACEHOLDER key');
+  const nextAnchor = await proveAnchor(anchorLeavesFromSeed(1n), 0, [Field(11), Field(12)]);
+  const nextRoot = nextAnchor.anchoredRoot;
 
   const anchorRefusal = async (label: string, build: () => Promise<void>) => {
     let accepted = false;
@@ -371,14 +408,71 @@ async function main() {
     );
   };
 
-  await anchorRefusal('an anchor signed by a NON-relay key', async () => {
-    await zkApp.setDreggRoot(nextRoot, signAnchor(PrivateKey.random(), deepRoot, nextRoot));
+  // -- (a) the PROOF OBLIGATION bites. ------------------------------------
+  // `setDreggRoot` writes the anchor proof's PUBLIC INPUT, so there is no way
+  // to anchor a value the proof does not claim: the old `setDreggRoot(newRoot,
+  // sig)` shape, where the root was a free parameter, is gone by construction.
+  // What remains to test is that the obligation is not satisfiable for a root
+  // whose slot 0 is NOT a vouch — i.e. that it is a real constraint and not a
+  // shape a prover can always meet.
+  let obligationMet = false;
+  try {
+    const bb = anchorLeavesFromSeed(1n);
+    const sp = sparsePathBigInt(bb, 0, ANCHOR_MERKLE_DEPTH);
+    // A tree whose slot 0 is a plain field element, not `Poseidon(R_bb)`.
+    const notAVouch = sparsePath([Field(42), Field(11), Field(12)], 0, ATTEST_DEPTH);
+    await DreggAnchorStatement.proveAnchorShape(
+      notAVouch.root,
+      BbDigest.from(bb[0]),
+      sp.siblings.map((x) => BbDigest.from(x)),
+      sp.isRight.map((b) => Bool(b)),
+      notAVouch.path.siblings,
+    );
+    obligationMet = true;
+  } catch {
+    /* expected: the fold does not reach the claimed root */
+  }
+  check(
+    !obligationMet,
+    'the OBLIGATION refuses a root whose slot 0 is not a BabyBear vouch',
+    'the obligation proved a root with no vouch in it (it constrains nothing)',
+  );
+
+  // The vouch is a Poseidon image of the MMCS root, so it moves when the root
+  // does — an obligation that ignored the BabyBear side would not.
+  check(
+    vouchOfBbRoot(nextAnchor.bbRoot).toBigInt() === nextAnchor.vouch.toBigInt() &&
+      vouchOfBbRoot(anchor.bbRoot).toBigInt() !== nextAnchor.vouch.toBigInt(),
+    'the vouch is a function of the BabyBear root (two trees, two vouches)',
+    'the vouch does not depend on the BabyBear root',
+  );
+
+  // -- (b) the PLACEHOLDER key. ⚑ Not an authorization design: the stopgap
+  //        that currently keeps the anchor from being world-writable, and the
+  //        thing the FRI verify is supposed to delete. These checks say it is
+  //        at least doing the job it is standing in for.
+  await anchorRefusal('an anchor signed by a NON-placeholder key', async () => {
+    await zkApp.setDreggRoot(
+      nextAnchor.proof,
+      signPlaceholderAnchor(PrivateKey.random(), deepRoot, nextRoot),
+    );
   });
   await anchorRefusal('an anchor carrying NO signature at all', async () => {
-    await zkApp.setDreggRoot(nextRoot, Signature.empty());
+    await zkApp.setDreggRoot(nextAnchor.proof, Signature.empty());
   });
-  await anchorRefusal('a relay signature for a DIFFERENT transition', async () => {
-    await zkApp.setDreggRoot(nextRoot, signAnchor(relayKey, deepRoot, Poseidon.hash([nextRoot])));
+  await anchorRefusal('a placeholder signature for a DIFFERENT transition', async () => {
+    await zkApp.setDreggRoot(
+      nextAnchor.proof,
+      signPlaceholderAnchor(relayKey, deepRoot, Poseidon.hash([nextRoot])),
+    );
+  });
+  // The two halves must agree: a signature covering a root the PROOF does not
+  // claim is refused, because the circuit signs over the proof's public input.
+  await anchorRefusal('a signature over a root the anchor PROOF does not claim', async () => {
+    await zkApp.setDreggRoot(
+      nextAnchor.proof,
+      signPlaceholderAnchor(relayKey, deepRoot, anchor.anchoredRoot),
+    );
   });
 
   // -----------------------------------------------------------------------
@@ -454,15 +548,17 @@ async function main() {
   // without disturbing anything else — which makes the statement the only
   // difference between the refusal and the acceptance below.
   console.log('    the same, on account updates:');
-  const rootX = Poseidon.hash([deepRoot, Field(3)]);
-  const rootY = Poseidon.hash([deepRoot, Field(4)]);
+  const anchorX = await proveAnchor(anchorLeavesFromSeed(3n), 0, [Field(31)]);
+  const anchorY = await proveAnchor(anchorLeavesFromSeed(4n), 0, [Field(41)]);
+  const rootX = anchorX.anchoredRoot;
+  const rootY = anchorY.anchoredRoot;
   const txX = await Mina.transaction(deployer, async () => {
-    await zkApp.setDreggRoot(rootX, signAnchor(relayKey, deepRoot, rootX));
+    await zkApp.setDreggRoot(anchorX.proof, signPlaceholderAnchor(relayKey, deepRoot, rootX));
   });
   await txX.prove();
   const signedX = txX.sign([deployer.key]);
   const txY = await Mina.transaction(deployer, async () => {
-    await zkApp.setDreggRoot(rootY, signAnchor(relayKey, deepRoot, rootY));
+    await zkApp.setDreggRoot(anchorY.proof, signPlaceholderAnchor(relayKey, deepRoot, rootY));
   });
   await txY.prove();
   const signedY = txY.sign([deployer.key]);

@@ -407,7 +407,21 @@ function internalRoundBB(rc: bigint, s: BB[]): BB[] {
 /** **The deployed BabyBear Poseidon2-w16 permutation, as an o1js circuit.**
  *  Input lanes must be canonical (`< p`). */
 export function provablePerm(input: Field[]): Field[] {
-  let s: BB[] = input.map((v) => ({ v, max: P - 1n }));
+  return provablePermBounded(input, P - 1n);
+}
+
+/**
+ * The same permutation, on lanes carrying an explicit integer bound.
+ *
+ * `provablePerm` declares `max = p - 1`, but the whole bound chain in the
+ * header is derived at **`< 2^31`** — which is what a `reduce` leaves, and what
+ * a hash chain re-feeding a previous digest actually has. Passing `2^31 - 1`
+ * here is therefore not a relaxation of the analysis; it IS the analysis, and
+ * it saves a conditional subtraction per lane per node. `assertSafe` still
+ * governs: a bound the chain cannot carry throws rather than under-constrains.
+ */
+export function provablePermBounded(input: Field[], maxIn: bigint): Field[] {
+  let s: BB[] = input.map((v) => ({ v, max: maxIn }));
   s = mdsLightBB(s);
   for (const rc of RC_EXT_INITIAL) s = externalRoundBB(rc, s);
   for (const rc of RC_INTERNAL) s = internalRoundBB(rc, s);
@@ -416,16 +430,68 @@ export function provablePerm(input: Field[]): Field[] {
   // that, so bring every lane back under 2^31 exactly once, here.
   s = s.map((x) => (x.max < 1n << 31n ? x : reduce(x)));
   for (const rc of RC_EXT_FINAL) s = externalRoundBB(rc, s);
-  // The digest a hash consumer sees must be canonical; the internal rounds'
-  // last `reduce` already lands every lane < 2^31, and a lane in [p, 2^31) is
-  // one conditional subtraction away. Returned as-is: the sponge/compression
-  // above this would canonicalise once, not 16 times per permutation.
+  // ⚑ The returned lanes are NOT `< 2^31`: the last thing that ran is the
+  // ADD-ONLY external layer, fan-in 35, so each lane is bounded by
+  // `permOutputBound(maxIn)` ~ 2^36. Returned unreduced on purpose — a caller
+  // that only wants ONE permutation's rows should not pay for hygiene it does
+  // not need — but a hash CHAIN must put every lane through `reduceLane`
+  // before re-feeding it, and through `canonicalLane` before comparing it.
   return s.map((x) => x.v);
 }
 
 /** `compress` — the deployed `TruncatedPermutation<., 2, 8, 16>`. */
 export function provableCompress(a: Field[], b: Field[]): Field[] {
   return provablePerm([...a, ...b]).slice(0, 8);
+}
+
+// ---------------------------------------------------------------------------
+// Lane hygiene — what a HASH CHAIN needs and a single permutation does not.
+//
+// ⚑ A CORRECTION. `provablePerm`'s closing comment used to say the returned
+// lanes are "< 2^31" and "one conditional subtraction away" from canonical.
+// They are not. The last thing a permutation does is the ADD-ONLY external
+// layer, whose fan-in is 35, so an output lane's bound is ~35 * 2^31 ~ 2^36.13.
+// Getting a canonical digest out costs a full `reduce` AND a conditional
+// subtraction; getting a re-feedable one costs a `reduce`. That distinction is
+// invisible when you measure ONE permutation — which is exactly what the row
+// probe did — and it is the first thing a Merkle path runs into.
+// ---------------------------------------------------------------------------
+
+/** The bound `provablePermBounded` leaves on each output lane, given inputs
+ *  bounded by `maxIn`: the closing external layer's 35x fan-in. */
+export function permOutputBound(maxIn: bigint): bigint {
+  return 35n * maxIn;
+}
+
+/** Force a lane to a representative `< 2^31` of the same residue class. This is
+ *  what a digest needs before it can be fed back into the permutation. */
+export function reduceLane(v: Field, max: bigint): Field {
+  if (max < 1n << 31n) return v;
+  return reduce({ v, max }).v;
+}
+
+/** Force a lane to its CANONICAL representative `< p`.
+ *
+ *  Witnesses `b in {0,1}` with `c = r - b*p`, and range-checks BOTH `c` and
+ *  `p - 1 - c` under 2^31. Both checks are load-bearing: without the first a
+ *  dishonest `b = 1` on `r < p` passes (`c` wraps to ~N), without the second a
+ *  dishonest `b = 0` on `r >= p` passes (`c = r`, still under 2^31). */
+export function canonicalLane(v: Field, max: bigint): Field {
+  const r = reduceLane(v, max);
+  const b = Provable.witness(Field, () => Field(r.toBigInt() >= P ? 1n : 0n));
+  b.assertBool();
+  const c = r.sub(b.mul(P));
+  assertLt2p31(c);
+  assertLt2p31(Field(P - 1n).sub(c));
+  return c;
+}
+
+/** Range-check a WITNESSED lane to `< 2^31`. Every lane that enters the bound
+ *  chain from a private input must pass through this: the tracked bounds are a
+ *  claim about the witness, and an unchecked witness makes the claim — and so
+ *  the whole soundness argument in this file's header — vacuous. */
+export function assertLaneLt2p31(v: Field) {
+  assertLt2p31(v);
 }
 
 // ---------------------------------------------------------------------------

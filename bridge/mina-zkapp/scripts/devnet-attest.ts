@@ -39,7 +39,10 @@ import { resolve } from 'node:path';
 import {
   DreggAttestedGate,
   DreggMembershipAttestation,
-  signAnchor,
+  signPlaceholderAnchor,
+  DreggAnchorStatement,
+  proveAnchor,
+  anchorLeavesFromSeed,
 } from '../src/DreggPoseidonAttestation.js';
 import type { EmittedRoot } from './devnet-emit-root.js';
 import {
@@ -181,7 +184,12 @@ async function main() {
   // ==========================================================================
   console.log('\n[R1] stale attestation, refused on chain');
   const nonceB = (await nonceOf(deployer))!;
-  const nextRoot = Poseidon.hash([root, Field(1)]); // the relay's "next" root
+  // The "next" anchored root. ⚑ Not a free choice any more: `setDreggRoot`
+  // writes the anchor PROOF's public input, so a new root has to be one the
+  // obligation was discharged for (`DreggAnchorStatement`).
+  await DreggAnchorStatement.compile();
+  const nextAnchor = await proveAnchor(anchorLeavesFromSeed(1n), 0, [root, Field(1)]);
+  const nextRoot = nextAnchor.anchoredRoot;
 
   t = Date.now();
   const staleTx = await Mina.transaction(
@@ -196,11 +204,11 @@ async function main() {
   console.log(`    (its precondition pins dreggRoot == ${emitted.root})`);
 
   console.log(`    re-anchoring to a new root ${'0x' + nextRoot.toBigInt().toString(16)}`);
-  const advanceAuth = signAnchor(relayKey, root, nextRoot);
+  const advanceAuth = signPlaceholderAnchor(relayKey, root, nextRoot);
   const advanceTx = await Mina.transaction(
     { sender: deployer, fee: FEE, nonce: nonceB, memo: 'dregg-root-advance' },
     async () => {
-      await app.setDreggRoot(nextRoot, advanceAuth);
+      await app.setDreggRoot(nextAnchor.proof, advanceAuth);
     },
   );
   await advanceTx.prove();
@@ -342,11 +350,12 @@ async function main() {
   console.log('\n[R2a] corrupted proof ENCODING (expected: refused at DECODE, not verification)');
   try {
     const nonceC = (await nonceOf(deployer))!;
-    const badRoot = Poseidon.hash([nextRoot, Field(2)]);
+    const badAnchor = await proveAnchor(anchorLeavesFromSeed(2n), 0, [nextRoot, Field(2)]);
+    const badRoot = badAnchor.anchoredRoot;
     const badTx = await Mina.transaction(
       { sender: deployer, fee: FEE, nonce: nonceC, memo: 'dregg-bad-proof' },
       async () => {
-        await app.setDreggRoot(badRoot, signAnchor(relayKey, nextRoot, badRoot));
+        await app.setDreggRoot(badAnchor.proof, signPlaceholderAnchor(relayKey, nextRoot, badRoot));
       },
     );
     await badTx.prove();
@@ -383,15 +392,17 @@ async function main() {
   );
   try {
     const nonceD = (await nonceOf(deployer))!;
-    const rootX = Poseidon.hash([nextRoot, Field(3)]);
-    const rootY = Poseidon.hash([nextRoot, Field(4)]);
+    const anchorX = await proveAnchor(anchorLeavesFromSeed(3n), 0, [nextRoot, Field(3)]);
+    const anchorY = await proveAnchor(anchorLeavesFromSeed(4n), 0, [nextRoot, Field(4)]);
+    const rootX = anchorX.anchoredRoot;
+    const rootY = anchorY.anchoredRoot;
 
     // Two independently valid commands, at the SAME nonce so that at most one
     // of them can ever take effect.
     const txX = await Mina.transaction(
       { sender: deployer, fee: FEE, nonce: nonceD, memo: 'dregg-splice-control' },
       async () => {
-        await app.setDreggRoot(rootX, signAnchor(relayKey, nextRoot, rootX));
+        await app.setDreggRoot(anchorX.proof, signPlaceholderAnchor(relayKey, nextRoot, rootX));
       },
     );
     await txX.prove();
@@ -400,7 +411,7 @@ async function main() {
     const txY = await Mina.transaction(
       { sender: deployer, fee: FEE, nonce: nonceD, memo: 'dregg-splice-forged' },
       async () => {
-        await app.setDreggRoot(rootY, signAnchor(relayKey, nextRoot, rootY));
+        await app.setDreggRoot(anchorY.proof, signPlaceholderAnchor(relayKey, nextRoot, rootY));
       },
     );
     await txY.prove();

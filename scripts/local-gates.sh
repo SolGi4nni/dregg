@@ -270,12 +270,21 @@ GATES=(
   # in-circuit path, two tamper rejections, and the `DreggAttestedGate` zkApp deploying on
   # a local chain and CONSUMING the proof recursively (that last one is what makes "a Mina
   # zkApp verified…" name something that ran — before this, only a bare ZkProgram had).
-  # It also checks the two things the devnet deployment listed AGAINST ITSELF: that
-  # `setDreggRoot` is relay-authorized by a condition the CIRCUIT asserts (its comment
-  # used to say "relay-authorized" over a body that checked nothing, so any caller could
-  # re-anchor), and that a WELL-FORMED proof of another statement is refused by
-  # VERIFICATION rather than by the parser — with the identical proof bytes accepted on
-  # their own account update as the control, which is what makes the refusal attributable.
+  # It also checks the two things the devnet deployment listed AGAINST ITSELF: the ANCHOR
+  # (its comment once said "relay-authorized" over a body that checked nothing, and then a
+  # lane "fixed" that with a trusted relay key — so this gate now checks the PROOF
+  # OBLIGATION `setDreggRoot` carries, that the obligation REFUSES a root with no
+  # BabyBear vouch in it, and the placeholder key's polarities as a PLACEHOLDER), and that
+  # a WELL-FORMED proof of another statement is refused by VERIFICATION rather than by the
+  # parser — with the identical proof bytes accepted on their own account update as the
+  # control, which is what makes the refusal attributable.
+  # ⚑ Two more legs since 2026-07-28, both MEASUREMENTS that are ratcheted at 2%: RUNG 1
+  # is a Poseidon2-BabyBear MERKLE OPENING (2,677 rows/level, 58,971 for the deployed
+  # depth-22 — more than one Pickles step's usable rows) and RUNG 2 is ONE FRI QUERY at
+  # the deployed geometry (684,726 rows, 13-15 steps). Both are KAT'd elementwise against
+  # the DEPLOYED p3 objects via the probe's `p2merkle`/`p2fold` subcommands, and Rung 2
+  # needs a 16 GB node heap. That is the size of the thing the placeholder key stands in
+  # for, and having it measured is why the docs can say so.
   # ⚠ It needs `node` >= 20, o1js pinned at 2.15.0, and now `cargo`, and it FAILS rather
   # than skips without any of them — like `embedded-js`. The 1.9.1 the tree used to pin is
   # not a choice: its prover bindings abort inside Poseidon absorb during `compile()` on
@@ -291,8 +300,8 @@ GATES=(
   # NOTHING is itself a failure. One of them bends only the `merkle` subcommand's printed
   # root: every `cargo test` still passes and only the cross-check catches it, which is
   # the gap the third leg exists to close. ~90s.
-  "mina-attestation|600|bash scripts/check-mina-attestation.sh"
-  "mina-attestation-red|600|bash scripts/check-mina-attestation.sh --self-test"
+  "mina-attestation|900|bash scripts/check-mina-attestation.sh"
+  "mina-attestation-red|3600|bash scripts/check-mina-attestation.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

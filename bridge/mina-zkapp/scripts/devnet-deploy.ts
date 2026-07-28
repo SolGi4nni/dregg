@@ -10,9 +10,13 @@ import { AccountUpdate, Field, Mina, fetchAccount } from 'o1js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  ANCHOR_MERKLE_DEPTH,
+  DreggAnchorStatement,
   DreggAttestedGate,
   DreggMembershipAttestation,
-  signAnchor,
+  anchorLeavesFromSeed,
+  proveAnchor,
+  signPlaceholderAnchor,
 } from '../src/DreggPoseidonAttestation.js';
 import type { EmittedRoot } from './devnet-emit-root.js';
 import {
@@ -68,6 +72,13 @@ async function main() {
   console.log(`  compiled DreggMembershipAttestation in ${secs(t)}`);
   console.log(`    attestation VK hash: ${attVk.hash.toString()}`);
 
+  // The ANCHOR OBLIGATION. `setDreggRoot` verifies a proof of this, so its VK
+  // is part of the gate's VK too.
+  t = Date.now();
+  const anchorVk = (await DreggAnchorStatement.compile()).verificationKey;
+  console.log(`  compiled DreggAnchorStatement (depth ${ANCHOR_MERKLE_DEPTH}) in ${secs(t)}`);
+  console.log(`    anchor obligation VK hash: ${anchorVk.hash.toString()}`);
+
   t = Date.now();
   const gateVk = (await DreggAttestedGate.compile()).verificationKey;
   console.log(`  compiled DreggAttestedGate in ${secs(t)}`);
@@ -91,7 +102,7 @@ async function main() {
       { sender: deployer, fee: FEE_DEPLOY },
       async () => {
         AccountUpdate.fundNewAccount(deployer);
-        await app.deploy({ verificationKey: gateVk, relay });
+        await app.deploy({ verificationKey: gateVk, placeholderRelay: relay });
       },
     );
     await deployTx.prove();
@@ -120,19 +131,36 @@ async function main() {
   // a convenience — a stale read produces a transaction the network refuses.
   const onChainRoot =
     (await fetchAccount({ publicKey: zkApp })).account?.zkapp?.appState?.[0] ?? Field(0);
-  const anchoredAlready = onChainRoot.toBigInt() === root.toBigInt();
+
+  // ⚑ WHAT IS ANCHORED IS NOT `emitted.root`. `setDreggRoot` takes a PROOF of
+  // `DreggAnchorStatement`, whose statement pins slot 0 of the anchored tree to
+  // `Poseidon(R_bb)` for a BabyBear-Poseidon2 MMCS root the prover opened. So
+  // the anchored tree is the Rust-emitted leaves with that VOUCH prepended, and
+  // the anchored root is the proof's public input — there is no path by which a
+  // value the proof does not claim reaches `app_state_0`.
+  t = Date.now();
+  const anchor = await proveAnchor(
+    anchorLeavesFromSeed(BigInt('0x' + emitted.gitCommit.slice(0, 12))),
+    0,
+    emitted.leaves.map((h) => Field(BigInt(h))),
+  );
+  console.log(`      proved the anchor obligation in ${secs(t)}`);
+  console.log(`      BabyBear vouch : ${anchor.vouch.toString()}`);
+  console.log(`      anchored root  : ${anchor.anchoredRoot.toString()}`);
+  const anchoredAlready = onChainRoot.toBigInt() === anchor.anchoredRoot.toBigInt();
   if (anchoredAlready) {
     console.log('      the root is already anchored — skipping.');
   } else {
     t = Date.now();
-    const auth = signAnchor(relayKey, onChainRoot, root);
+    // ⚑ PLACEHOLDER, not authorization. See `DreggAttestedGate`'s header.
+    const auth = signPlaceholderAnchor(relayKey, onChainRoot, anchor.anchoredRoot);
     console.log(
-      `      relay-signing the transition 0x${onChainRoot.toBigInt().toString(16)} -> ${emitted.root}`,
+      `      placeholder-signing 0x${onChainRoot.toBigInt().toString(16)} -> ${anchor.anchoredRoot.toString()}`,
     );
     const anchorTx = await Mina.transaction(
       { sender: deployer, fee: FEE_CALL },
       async () => {
-        await app.setDreggRoot(root, auth);
+        await app.setDreggRoot(anchor.proof, auth);
       },
     );
     await anchorTx.prove();
@@ -144,7 +172,7 @@ async function main() {
     const anchored = await until(async () => {
       const r = await fetchAccount({ publicKey: zkApp });
       const s = r.account?.zkapp?.appState?.[0];
-      return s !== undefined && s.toBigInt() === root.toBigInt();
+      return s !== undefined && s.toBigInt() === anchor.anchoredRoot.toBigInt();
     }, 'the root to be anchored on chain');
     if (!anchored) {
       console.error('      the root never appeared in zkApp state. Check the explorer link.');
@@ -160,12 +188,18 @@ async function main() {
     gitCommit: emitted.gitCommit,
     zkAppAddress: zkApp.toBase58(),
     deployerAddress: deployer.toBase58(),
-    // The authorization boundary, on chain and in the record: the only key
-    // whose signature `setDreggRoot` accepts. Readable from app_state_2/3.
-    relayAddress: relay.toBase58(),
+    // ⚑ PLACEHOLDER, recorded as one. The key whose signature `setDreggRoot`
+    // still also requires — a stopgap for the FRI verify, NOT the anchor's
+    // authorization design. Readable from app_state_2/3.
+    placeholderRelayAddress: relay.toBase58(),
     attestationVkHash: attVk.hash.toString(),
+    anchorObligationVkHash: anchorVk.hash.toString(),
     zkAppVkHash: gateVk.hash.toString(),
-    anchoredRoot: emitted.root,
+    // The Rust-emitted tree, and the tree that was actually anchored (the
+    // former with the BabyBear vouch at slot 0).
+    emittedRoot: emitted.root,
+    babyBearVouch: anchor.vouch.toString(),
+    anchoredRoot: anchor.anchoredRoot.toString(),
     deployTx: deployHash,
     anchorRootTx: anchorHash,
     // `null` where a step was skipped because it had already landed (see the
