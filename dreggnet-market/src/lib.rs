@@ -1776,6 +1776,14 @@ fn field_to_u64(f: &[u8; 32]) -> u64 {
     u64::from_be_bytes(b)
 }
 
+/// The verified settlement gate this crate's LIB tests install, reached through the same file the
+/// integration binaries use (`tests/support/mod.rs`) rather than a second copy that could drift.
+/// `dregg-exec-lean` is a `[dev-dependencies]` edge only: the market itself stays FFI-free and a
+/// HOST installs the gate (`dreggnet_web::install_verified_settlement_gate`, `node/src/lib.rs`).
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
+
 #[cfg(test)]
 mod settlement_refusal_tests;
 
@@ -1801,6 +1809,7 @@ mod dark_bazaar_tests {
 
     #[test]
     fn dark_bazaar_is_distinct_keyed_and_honestly_disclosed() {
+        crate::support::install_verified_settlement_gate();
         let offering = DarkBazaarOffering::new();
         assert_eq!(offering.key(), "bazaar");
         assert_eq!(DarkBazaarOffering::KEY, DARK_BAZAAR_OFFERING_KEY);
@@ -1831,6 +1840,7 @@ mod dark_bazaar_tests {
 
     #[test]
     fn dark_bazaar_crawl_lands_real_settlement_and_check_level_verify() {
+        crate::support::install_verified_settlement_gate();
         let offering = DarkBazaarOffering::new();
         let mut session = offering
             .open(SessionConfig::with_seed(711))
@@ -1855,6 +1865,7 @@ mod dark_bazaar_tests {
 
     #[test]
     fn dark_bazaar_exact_ties_follow_the_deterministic_seal_policy() {
+        crate::support::install_verified_settlement_gate();
         fn run(seed: u64) -> AuctionCellId {
             let offering = DarkBazaarOffering::new();
             let mut session = offering

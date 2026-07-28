@@ -52,6 +52,7 @@ fn assert_read_only_refusal(
 
 #[test]
 fn altered_or_ghost_commitments_refuse_before_executor_submission() {
+    crate::support::install_verified_settlement_gate();
     for (seed, ghost) in [(0xB0A4_D001, false), (0xB0A4_D002, true)] {
         let (offering, mut session) = listed_one_bid(seed);
         let cell = session.market.auction_cell.expect("listed cell");
@@ -94,6 +95,7 @@ fn altered_or_ghost_commitments_refuse_before_executor_submission() {
 
 #[test]
 fn occupied_result_register_refuses_without_burning_the_executor_nonce() {
+    crate::support::install_verified_settlement_gate();
     let (offering, mut session) = listed_one_bid(0xB0A4_D003);
     let cell = session.market.auction_cell.expect("listed cell");
     session.market.executor.with_ledger_mut(|ledger| {
@@ -121,6 +123,7 @@ fn occupied_result_register_refuses_without_burning_the_executor_nonce() {
 
 #[test]
 fn spliced_onledger_seller_binding_refuses_before_executor_submission() {
+    crate::support::install_verified_settlement_gate();
     let (offering, mut session) = listed_one_bid(0xB0A4_D004);
     let cell = session.market.auction_cell.expect("listed cell");
     session.market.executor.with_ledger_mut(|ledger| {

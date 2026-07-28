@@ -8,6 +8,11 @@
 
 #![cfg(feature = "private-clearing")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::cell::{Cell, RefCell};
 
 use dreggnet_market::private_clearing::{PrivateClearingExpectation, PrivateClearingReceipt};
@@ -81,6 +86,7 @@ fn raid_reward() -> GuildReward {
 
 #[test]
 fn private_winner_alone_receives_exact_roster_bound_raid_xp_with_crash_recovery() {
+    support::install_verified_settlement_gate();
     let (session, receipt) = privately_settled_market();
     let source = PrivateClearingConsequenceSource::from_verified_receipt(&receipt)
         .expect("pin the exact verified private result");

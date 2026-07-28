@@ -42,6 +42,11 @@
 #![cfg(all(feature = "private-attested-clearing", feature = "fhegg-settlement"))]
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -725,6 +730,7 @@ impl Drop for ScratchDir {
 /// n=4096 Bulletproof. Route the whole binary through nextest's `heavy` profile.
 #[test]
 fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequence() {
+    support::install_verified_settlement_gate();
     let mut timing = ApexPhaseTimings::new("verified-pq-runtime-install");
     install_verified_turn_pq_runtime();
     let scratch = ScratchDir::new();

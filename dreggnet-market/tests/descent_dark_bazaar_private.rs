@@ -15,6 +15,11 @@
 
 #![cfg(feature = "private-clearing")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use dreggnet_market::private_clearing::{PrivateClearingError, PrivateClearingExpectation};
 use dreggnet_market::{DarkBazaarOffering, DarkBazaarSession, TURN_BID, TURN_LIST};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
@@ -69,6 +74,7 @@ fn assert_no_settlement_mutation(
 
 #[test]
 fn fair_descent_loot_moves_only_after_hiding_proof_authorizes_the_real_clear() {
+    support::install_verified_settlement_gate();
     // The item begins as a real fair-drawn Descent note, bound to a committed run
     // seed and carrying a provenance chain that already verifies before market use.
     let run_seed = CommittedSeed::from_bytes([0xD4; 32]);

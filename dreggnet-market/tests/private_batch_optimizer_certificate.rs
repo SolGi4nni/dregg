@@ -7,6 +7,11 @@
 
 #![cfg(feature = "private-clearing")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::cell::Cell;
 
 use dregg_app_framework::TurnReceipt;
@@ -75,6 +80,7 @@ fn allocation_tag() -> PrivateBatchConsequenceTag {
 
 #[test]
 fn ordered_private_batch_certificate_is_bound_and_fires_one_real_turn() {
+    support::install_verified_settlement_gate();
     let (session0, receipt0) = privately_settled_market(
         0xBA_7C_00,
         "bazaar-bidder:batch-low-0",

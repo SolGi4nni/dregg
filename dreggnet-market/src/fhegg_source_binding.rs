@@ -360,6 +360,7 @@ mod tests {
 
     #[test]
     fn exact_source_certificate_commits_the_real_board_and_refuses_every_substitution() {
+        crate::support::install_verified_settlement_gate();
         let source_verifier = SigningKey::from_bytes(&[0x21; 32]);
         let offering = DarkBazaarOffering::new()
             .with_fhegg_source_verifier(source_verifier.verifying_key().to_bytes())

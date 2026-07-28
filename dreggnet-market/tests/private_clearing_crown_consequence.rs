@@ -12,6 +12,11 @@
 
 #![cfg(feature = "private-clearing")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::cell::{Cell, RefCell};
 
 use dregg_app_framework::TurnReceipt;
@@ -87,6 +92,7 @@ fn privately_settled_market() -> (DarkBazaarSession, PrivateClearingReceipt) {
 
 #[test]
 fn proven_bazaar_winner_claims_the_writeonce_keep_crown_exactly_once() {
+    support::install_verified_settlement_gate();
     let (session, receipt) = privately_settled_market();
     assert_eq!(receipt.winner, actor(WINNER));
     assert_eq!(receipt.price(), 3);

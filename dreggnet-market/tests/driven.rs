@@ -3,6 +3,11 @@
 //! executor turn (a genuine [`TurnReceipt`]) or a real refusal; the value move at SETTLE is the
 //! conserved per-asset ring settlement (Σδ = 0). Nothing here is a flag.
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use dreggnet_market::{MarketOffering, TURN_BID, TURN_LIST, TURN_SETTLE};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 
@@ -32,6 +37,7 @@ fn settle(off: &MarketOffering, s: &mut dreggnet_market::MarketSession) -> Outco
 /// conservation-checked (Σδ = 0), every step a real verified turn, and verify() holds.
 #[test]
 fn list_bid_settle_clears_to_the_winning_bid_conserved() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(7)).expect("market opens");
 
@@ -115,6 +121,7 @@ fn list_bid_settle_clears_to_the_winning_bid_conserved() {
 /// refusal (`WriteOnce` commit board). Nothing commits.
 #[test]
 fn a_double_bid_is_refused() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(11)).expect("opens");
     assert!(list(&off, &mut s, 0).landed());
@@ -144,6 +151,7 @@ fn a_double_bid_is_refused() {
 /// THE COMMIT-PHASE TOOTH: a bid after the commit phase closes is refused (nothing submitted).
 #[test]
 fn a_bid_after_close_is_refused() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(13)).expect("opens");
     assert!(list(&off, &mut s, 0).landed());
@@ -164,6 +172,7 @@ fn a_bid_after_close_is_refused() {
 /// bid that meets reserve and settle normally.
 #[test]
 fn a_below_reserve_refusal_does_not_close_commit() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(29)).expect("opens");
     assert!(list(&off, &mut s, 100).landed()); // reserve 100 — below-reserve so no sale
@@ -187,6 +196,7 @@ fn a_below_reserve_refusal_does_not_close_commit() {
 /// THE RESERVE TOOTH: a high sealed bid below the reserve does NOT settle — no value moves.
 #[test]
 fn a_below_reserve_auction_does_not_settle() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(17)).expect("opens");
     assert!(list(&off, &mut s, 100).landed()); // reserve 100
@@ -211,6 +221,7 @@ fn a_below_reserve_auction_does_not_settle() {
 /// THE NO-VALID-BID TOOTH: an auction with no sealed bids does NOT settle.
 #[test]
 fn a_no_bid_auction_does_not_settle() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(19)).expect("opens");
     assert!(list(&off, &mut s, 0).landed());
@@ -225,6 +236,7 @@ fn a_no_bid_auction_does_not_settle() {
 /// The offering surface round-trips: actions() tracks the phase; render() paints the listing + bids.
 #[test]
 fn the_surface_tracks_the_market() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(23)).expect("opens");
     // Unlisted → only LIST is offered.
@@ -301,6 +313,7 @@ fn rendered_text(surface: &dreggnet_offerings::Surface) -> String {
 /// render that simply stopped printing bid values cannot make this pass.
 #[test]
 fn a_bidders_own_bid_is_disclosed_to_them_and_to_nobody_else() {
+    support::install_verified_settlement_gate();
     let off = MarketOffering::new();
     let mut s = off
         .open(SessionConfig::with_seed(11))
@@ -389,16 +402,21 @@ fn a_bidders_own_bid_is_disclosed_to_them_and_to_nobody_else() {
 
     // AFTER THE CLEAR the seals are open by the rules, and the winner is public to everyone.
     //
-    // ⚑ Conditioned on the settle actually landing, and deliberately so: `settle_ring_verified` is
-    // FAIL-CLOSED without a registered verified-executor gate, and this crate's test harness
-    // installs none (the refusal says so in as many words). That is a host-wiring fact about the
-    // test binary, not a property of the fog — every unconditional assertion above is the fog, and
-    // the settle path itself is covered by `list_bid_settle_clears_to_the_winning_bid_conserved`.
-    if let Outcome::Landed { .. } = settle(&off, &mut s) {
-        let after = scannable(&off.render(&s));
-        assert!(
-            after.contains("941"),
-            "the cleared auction does not publish the winning bid:\n{after}"
-        );
-    }
+    // ⚑ THIS IS UNCONDITIONAL AGAIN. It used to be `if let Outcome::Landed { .. } = settle(...)`,
+    // under a comment explaining that `settle_ring_verified` is FAIL-CLOSED without a registered
+    // verified-executor gate and "this crate's test harness installs none". The observation was
+    // correct and the conclusion was not: a fog assertion that only fires when the settle happens
+    // to land asserts NOTHING in a harness where the settle never lands, which was every run for
+    // three days. The harness installs the gate now (`tests/support/mod.rs`), so the clear is a
+    // real one and the disclosure it produces is checked every time.
+    let out = settle(&off, &mut s);
+    assert!(
+        out.landed(),
+        "the market must clear before the post-clear disclosure can be checked: {out:?}"
+    );
+    let after = scannable(&off.render(&s));
+    assert!(
+        after.contains("941"),
+        "the cleared auction does not publish the winning bid:\n{after}"
+    );
 }

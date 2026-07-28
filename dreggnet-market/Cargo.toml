@@ -171,6 +171,14 @@ ed25519-dalek = { version = "2", features = ["std"], optional = true }
 [dev-dependencies]
 rand = "0.8"
 tempfile = { workspace = true }
+# THE VERIFIED SETTLEMENT GATE, for the TEST process only. `dreggnet-market` settles through
+# `dregg_intent::verified_settle::settle_ring_verified`, which is FAIL-CLOSED without a registered
+# `IntentVerifiedGate` — an unregistered gate refuses an honest award rather than falling back. The
+# market crate itself stays FFI-free (a host installs the gate: `dreggnet_web::
+# install_verified_settlement_gate`, `node/src/lib.rs`), so this edge is dev-only and
+# `tests/support/mod.rs` is the ONE place a market test process installs it.
+dregg-exec-lean = { path = "../exec-lean" }
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 dregg-sdk = { path = "../sdk" }
 procgen-dregg = { path = "../procgen-dregg" }
 # Full-apex game consequence: the market's strict private proof result is

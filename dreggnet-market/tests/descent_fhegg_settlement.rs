@@ -28,6 +28,11 @@
 
 #![cfg(feature = "fhegg-settlement")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::thread;
 use std::time::Duration;
 
@@ -259,6 +264,7 @@ fn quorum_masked_curve(
 
 #[test]
 fn authenticated_encrypted_orders_gate_real_game_asset_settlement() {
+    support::install_verified_settlement_gate();
     let run_seed = CommittedSeed::from_bytes([0xD4; 32]);
     let draw = roll_drop(&run_seed, "boss:the Lantern Eater", 0);
     let mut vault = LootVault::new();

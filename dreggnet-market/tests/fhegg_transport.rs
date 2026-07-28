@@ -2,6 +2,11 @@
 
 #![cfg(feature = "fhegg-settlement")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::time::Duration;
 
 use dreggnet_market::fhegg_settlement::FheggSettlementError;
@@ -150,6 +155,7 @@ fn find_unique(bytes: &[u8], needle: &[u8]) -> usize {
 
 #[test]
 fn owning_bundle_roundtrips_and_frontend_neutral_operation_fails_closed() {
+    support::install_verified_settlement_gate();
     let source_verifier = SigningKey::from_bytes(&[0x29; 32]);
     let offering = DarkBazaarOffering::new()
         .with_fhegg_source_verifier(source_verifier.verifying_key().to_bytes())

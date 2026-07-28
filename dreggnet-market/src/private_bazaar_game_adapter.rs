@@ -734,6 +734,7 @@ mod tests {
 
     #[test]
     fn sealed_dispatch_recovers_by_authoritative_receipt_without_second_xp_turn() {
+        crate::support::install_verified_settlement_gate();
         let alice = deploy_hero(0x91);
         let bob = deploy_hero(0x92);
         let carol = deploy_hero(0x93);

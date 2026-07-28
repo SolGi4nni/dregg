@@ -5,6 +5,11 @@
 //! and the original AssetId crosses atomically for $DREGG. No synthetic `GOOD`, no
 //! remint, and the post-sale provenance chain must re-verify.
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use dreggnet_market::{DarkBazaarOffering, TURN_BID, TURN_LIST, TURN_SETTLE};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use dreggnet_trade::TradeWorld;
@@ -31,6 +36,7 @@ fn land(
 
 #[test]
 fn fair_descent_loot_crosses_to_the_verified_bazaar_winner_without_remint() {
+    support::install_verified_settlement_gate();
     const SELLER: &str = "descent-player:alice";
     const LOW: &str = "bazaar-bidder:bob";
     const WINNER: &str = "bazaar-bidder:carol";
@@ -79,6 +85,7 @@ fn fair_descent_loot_crosses_to_the_verified_bazaar_winner_without_remint() {
 
 #[test]
 fn asset_cross_refuses_if_the_verified_winner_cannot_pay_and_returns_the_loot() {
+    support::install_verified_settlement_gate();
     const SELLER: &str = "descent-player:alice";
     const WINNER: &str = "bazaar-bidder:empty-wallet";
 

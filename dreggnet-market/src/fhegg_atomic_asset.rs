@@ -2203,6 +2203,7 @@ mod tests {
 
     #[test]
     fn journal_record_wire_is_strict_bounded_and_canonical() {
+        crate::support::install_verified_settlement_gate();
         let prepared = sample_prepared_record([0x81; 32], [0x82; 32]);
         let wire = prepared.to_wire_bytes().unwrap();
         assert_eq!(
@@ -2251,6 +2252,7 @@ mod tests {
 
     #[test]
     fn file_journal_persists_atomic_cas_and_refuses_corruption() {
+        crate::support::install_verified_settlement_gate();
         let directory = TestJournalDirectory::new(99);
         let transaction_id = [0x91; 32];
         let replay_id = [0x92; 32];
@@ -2331,6 +2333,7 @@ mod tests {
 
     #[test]
     fn file_journal_serializes_competing_replay_reservations() {
+        crate::support::install_verified_settlement_gate();
         let directory = TestJournalDirectory::new(100);
         FileAtomicSettlementJournal::open(&directory.0).unwrap();
         let barrier = Arc::new(Barrier::new(2));
@@ -2381,6 +2384,7 @@ mod tests {
 
     #[test]
     fn atomic_fhegg_asset_cross_rolls_back_every_refusal_and_commits_every_leg_once() {
+        crate::support::install_verified_settlement_gate();
         let mut f = fixture();
         let market_before = market_image(&f.market);
         let world_before = f.world.state_audit_digest();
@@ -2598,6 +2602,7 @@ mod tests {
 
     #[test]
     fn durable_journal_recovers_idempotently_at_every_commit_boundary() {
+        crate::support::install_verified_settlement_gate();
         let crash_points = [
             AtomicSettlementCrashPoint::AfterPrepared,
             AtomicSettlementCrashPoint::AfterMarketApplied,
@@ -2736,6 +2741,7 @@ mod tests {
 
     #[test]
     fn durable_journal_rejects_corruption_and_unclassifiable_live_state() {
+        crate::support::install_verified_settlement_gate();
         let mut f = fixture();
         f.world.fund_dregg(WINNER, 3);
         let transaction_id = [0xD7; 32];

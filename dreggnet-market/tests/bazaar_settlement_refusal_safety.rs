@@ -4,6 +4,11 @@
 //! close another actor's auction, and a below-reserve clear closing COMMIT even
 //! though the offering reports `Refused`.
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use dreggnet_market::{DarkBazaarOffering, TURN_BID, TURN_LIST, TURN_SETTLE};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use starbridge_sealed_auction::Phase;
@@ -37,6 +42,7 @@ fn assert_commit_state_is_unchanged(
 
 #[test]
 fn a_non_seller_cannot_settle_or_close_someone_elses_bazaar() {
+    support::install_verified_settlement_gate();
     let offering = DarkBazaarOffering::new();
     let mut session = offering
         .open(SessionConfig::with_seed(0xA11CE))
@@ -75,6 +81,7 @@ fn a_non_seller_cannot_settle_or_close_someone_elses_bazaar() {
 
 #[test]
 fn below_reserve_refusal_keeps_commit_open_and_appends_no_receipts() {
+    support::install_verified_settlement_gate();
     let offering = DarkBazaarOffering::new();
     let mut session = offering
         .open(SessionConfig::with_seed(0xB310_0E5E))

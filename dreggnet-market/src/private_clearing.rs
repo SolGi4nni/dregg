@@ -1160,6 +1160,7 @@ mod tests {
 
     #[test]
     fn hiding_proof_fail_closes_every_public_join_before_real_settlement() {
+        crate::support::install_verified_settlement_gate();
         let offering = DarkBazaarOffering::new();
         let mut session = listed_two_bid_session(&offering, 0xD4_42);
         let mut authorization = session
@@ -1233,6 +1234,7 @@ mod tests {
 
     #[test]
     fn durable_blind_is_exactly_bound_and_stabilizes_only_the_same_claim() {
+        crate::support::install_verified_settlement_gate();
         let temp = tempfile::tempdir().unwrap();
         let store = PrivateClearingCommitmentStore::open(temp.path()).unwrap();
         let offering = DarkBazaarOffering::new();
@@ -1308,6 +1310,7 @@ mod tests {
 
     #[test]
     fn fixed_family_refuses_before_proving() {
+        crate::support::install_verified_settlement_gate();
         let offering = DarkBazaarOffering::new();
         let mut too_many = listed_two_bid_session(&offering, 7);
         assert!(
@@ -1369,6 +1372,7 @@ mod tests {
     /// book agrees, and every other in-family book disagrees.
     #[test]
     fn ingress_book_pinning_agrees_only_with_the_exact_bound_book() {
+        crate::support::install_verified_settlement_gate();
         let offering = DarkBazaarOffering::new();
         // Bids of 2 (alice) then 3 (bob), in that ingress order.
         let session = listed_two_bid_session(&offering, 0x1_1CE);

@@ -3,6 +3,11 @@
 
 #![cfg(feature = "fhegg-settlement")]
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -243,6 +248,7 @@ fn wire_for(committee: &[SigningKey; 2]) -> WireFixture {
 
 #[test]
 fn settled_operation_survives_restart_burns_replay_and_refuses_journal_tamper() {
+    support::install_verified_settlement_gate();
     let committee = [
         SigningKey::from_bytes(&[0x31; 32]),
         SigningKey::from_bytes(&[0x32; 32]),

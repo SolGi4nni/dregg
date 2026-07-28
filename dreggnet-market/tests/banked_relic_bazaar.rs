@@ -7,6 +7,11 @@
 //! a sealed Bazaar auction fixes the winner + price, and the banked note crosses atomically. The
 //! winner then holds an AssetId whose provenance REPLAYS to the banked run — not a manufactured draw.
 
+/// The verified settlement gate this binary installs before every test — see
+/// `tests/support/mod.rs`. Without it `settle_ring_verified` refuses every award as
+/// NEVER JUDGED, which is a host-wiring fact about this binary and not a market verdict.
+mod support;
+
 use dreggnet_market::{DarkBazaarOffering, TURN_BID, TURN_LIST, TURN_SETTLE};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use dreggnet_trade::TradeWorld;
@@ -33,16 +38,24 @@ fn land(
 
 #[test]
 fn a_banked_descent_relic_crosses_the_bazaar_to_the_verified_winner() {
+    support::install_verified_settlement_gate();
     const SELLER: &str = "descent-player:alice";
     const LOW: &str = "bazaar-bidder:bob";
     const WINNER: &str = "bazaar-bidder:carol";
 
-    // Drive a REAL Descent: floor 1, slay the guardian, loot the way-2 key, flee (the terminal
-    // bank). The key ends in BANKED custody — a real committed cell write, not a draw.
+    // Drive a REAL Descent: floor 1, slay the guardian, loot the way-2 key, CLIMB OUT, then flee
+    // (the terminal bank). The key ends in BANKED custody — a real committed cell write, not a draw.
+    //
+    // ⚑ The `ascend()` is not decoration. `d8e4ec3e2` ("descent: the one-way door swings BOTH
+    // ways") made `flee` demand `depth == 0` — "you cannot bank from below — climb out first" —
+    // which is what makes the Descent lethal. This test still teleported out of floor 1 and had
+    // been red on `dungeon_on_dregg::descent`'s refusal, not on anything the market does, since
+    // 2026-07-25 12:29.
     let mut d = Descent::deploy(0x5A).expect("deploy + genesis");
     d.delve().expect("way 1 open");
     d.smite().expect("floor-1 guardian falls");
     d.loot(1).expect("carry the way-2 key");
+    d.ascend().expect("climb back to the mouth");
     d.flee().expect("bank the pack — run ends");
     let day_seed = *d.day_seed();
     let banked_slot = 1usize;
