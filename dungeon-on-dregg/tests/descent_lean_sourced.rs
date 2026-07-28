@@ -44,16 +44,22 @@ fn evaluator_state(dep: &Deployment, sim: &Sim) -> CellState {
         ("hoard_3", sim.hoard_at(3)),
         ("hoard_4", sim.hoard_at(4)),
     ] {
-        assert!(state.set_field(
-            dep.reg(name) as usize,
-            dregg_app_framework::field_from_u64(value)
-        ));
+        assert!(
+            state.set_field(
+                dep.reg(name)
+                    .expect("a REGISTERS literal resolves to a register") as usize,
+                dregg_app_framework::field_from_u64(value)
+            )
+        );
     }
     for (i, &custody) in sim.custody.iter().enumerate() {
-        assert!(state.set_field_ext(
-            dep.relic_key(i),
-            dregg_app_framework::field_from_u64(custody),
-        ));
+        assert!(
+            state.set_field_ext(
+                dep.relic_key(i)
+                    .expect("a custody slot < RELICS resolves to a heap key"),
+                dregg_app_framework::field_from_u64(custody),
+            )
+        );
     }
     assert!(state.set_field_ext(
         spween_dregg::GENESIS_DONE_EXT_KEY,
@@ -70,7 +76,9 @@ fn evaluator_state(dep: &Deployment, sim: &Sim) -> CellState {
 fn loaded_program_is_the_lean_object() {
     assert!(PROGRAM_JSON.contains(&format!("\"scene\": \"{SCENE_ID}\"")));
     let dep = dungeon_on_dregg::descent::Deployment::new();
-    let program = dep.program();
+    let program = dep
+        .program()
+        .expect("every name in the Lean artifact resolves against the descent layout");
     let CellProgram::Cases(cases) = &program else {
         panic!("descent program must be Cases");
     };
@@ -304,16 +312,18 @@ fn deleting_projection_census_reopens_two_for_one_attack() {
     // Lie only in the compact projection: claim one move although two custody
     // objects advanced.  SumEquals and the loot frame still see a valid +1/-1.
     assert!(forged_state.set_field(
-        dep.reg("pack") as usize,
+        dep.reg("pack").expect("`pack` is a register") as usize,
         dregg_app_framework::field_from_u64(1),
     ));
     assert!(forged_state.set_field(
-        dep.reg("hoard_1") as usize,
+        dep.reg("hoard_1").expect("`hoard_1` is a register") as usize,
         dregg_app_framework::field_from_u64(2),
     ));
     let meta = TransitionMeta::new(symbol(LOOT), 0);
 
-    let strong = dep.program();
+    let strong = dep
+        .program()
+        .expect("every name in the Lean artifact resolves against the descent layout");
     assert!(
         strong
             .evaluate_with_meta(&forged_state, Some(&old_state), None, &meta)

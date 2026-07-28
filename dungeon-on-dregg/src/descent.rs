@@ -272,6 +272,70 @@ pub fn schema() -> Schema {
     s
 }
 
+/// **Why a component name did not resolve to the plane the caller asked for.**
+///
+/// The descent's schema has TWO planes and [`schema`] declares components into both:
+/// the 14 [`REGISTERS`] are register slots, and the eight relics (`relic_0`..`relic_7`,
+/// declared `.collection(..)`) are HEAP-RESIDENT. [`Deployment::reg`] asks for the first
+/// plane and [`Deployment::key`] for the second, so "wrong plane" is a real, reachable
+/// input error — the Lean-emitted artifact names components as strings, and
+/// [`SymConstraint::resolve`] hands whatever name it carries to whichever accessor the
+/// constraint shape implies.
+///
+/// It used to be a `panic!` on the DEPLOY path (`Deployment::story` →
+/// [`load_program_for_day`] → `dep.reg(name)`), i.e. a Lean re-emit that referenced
+/// `relic_0` where a register was expected aborted the process instead of returning a
+/// diagnosis. Every variant below NAMES the component and says which plane it actually
+/// lives in, so the message alone tells you what to ask for instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SlotResolveError {
+    /// The name is in NEITHER plane: [`schema`] never declared this component.
+    Unknown {
+        /// The component name that was asked for.
+        component: String,
+    },
+    /// A REGISTER was asked for, but the component is heap-resident at `key`
+    /// (this is the `relic_*` case — ask [`Deployment::key`] instead).
+    NotARegister {
+        /// The component name that was asked for.
+        component: String,
+        /// The heap key the component actually occupies.
+        key: u64,
+    },
+    /// A HEAP KEY was asked for, but the component is a register at slot `slot`
+    /// (ask [`Deployment::reg`] instead).
+    NotAHeapKey {
+        /// The component name that was asked for.
+        component: String,
+        /// The register slot the component actually occupies.
+        slot: u8,
+    },
+}
+
+impl std::fmt::Display for SlotResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SlotResolveError::Unknown { component } => write!(
+                f,
+                "`{component}` is in no plane of the descent schema \
+                 (neither a register nor a heap key)"
+            ),
+            SlotResolveError::NotARegister { component, key } => write!(
+                f,
+                "`{component}` is not a register: it is HEAP-resident at key {key} \
+                 (ask `Deployment::key`, not `Deployment::reg`)"
+            ),
+            SlotResolveError::NotAHeapKey { component, slot } => write!(
+                f,
+                "`{component}` is not a heap key: it is REGISTER slot {slot} \
+                 (ask `Deployment::reg`, not `Deployment::key`)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SlotResolveError {}
+
 /// The consumed, Legal-checked layout + the Lean-loaded teeth for ONE day's map.
 pub struct Deployment {
     pub layout: CheckedLayout,
@@ -301,47 +365,95 @@ impl Deployment {
     }
 
     /// Resolve a register component to its slot index.
-    pub fn reg(&self, name: &str) -> u8 {
+    ///
+    /// **Never panics.** A heap-resident name (every `relic_*`) is
+    /// [`SlotResolveError::NotARegister`] carrying the key it really occupies; an
+    /// undeclared name is [`SlotResolveError::Unknown`].
+    pub fn reg(&self, name: &str) -> Result<u8, SlotResolveError> {
         match self.layout.resolve(name) {
-            Some(Slot::Register(r)) => r,
-            other => panic!("`{name}` is not a register: {other:?}"),
+            Some(Slot::Register(r)) => Ok(r),
+            Some(Slot::Heap(key)) => Err(SlotResolveError::NotARegister {
+                component: name.to_string(),
+                key,
+            }),
+            None => Err(SlotResolveError::Unknown {
+                component: name.to_string(),
+            }),
         }
     }
 
     /// Resolve a heap component to its key.
-    pub fn key(&self, name: &str) -> u64 {
+    ///
+    /// **Never panics.** A register name is [`SlotResolveError::NotAHeapKey`] carrying
+    /// the slot it really occupies; an undeclared name is [`SlotResolveError::Unknown`].
+    pub fn key(&self, name: &str) -> Result<u64, SlotResolveError> {
         match self.layout.resolve(name) {
-            Some(Slot::Heap(k)) => k,
-            other => panic!("`{name}` is not a heap key: {other:?}"),
+            Some(Slot::Heap(k)) => Ok(k),
+            Some(Slot::Register(slot)) => Err(SlotResolveError::NotAHeapKey {
+                component: name.to_string(),
+                slot,
+            }),
+            None => Err(SlotResolveError::Unknown {
+                component: name.to_string(),
+            }),
         }
     }
 
-    pub fn relic_key(&self, i: usize) -> u64 {
+    /// Relic `i`'s heap key. `i >= RELICS` names an undeclared component and is
+    /// [`SlotResolveError::Unknown`], not a panic.
+    pub fn relic_key(&self, i: usize) -> Result<u64, SlotResolveError> {
         self.key(&relic_name(i))
+    }
+
+    /// **THE NAMED RESIDUAL** — resolve a register whose name is a compile-time literal,
+    /// aborting if it misses.
+    ///
+    /// `reason` must say why THIS site is exempt from the typed
+    /// [`Result`](Deployment::reg) path. The only exemption this crate grants: the caller
+    /// is iterating the [`REGISTERS`] const array (or another `&'static str` literal
+    /// authored beside [`schema`]), so a miss is a BUILD-TIME AUTHORING BUG — the schema
+    /// and the literal disagree in code that is compiled together — never a runtime input.
+    /// A name that arrives from an artifact, a wire, or a user goes through
+    /// [`Deployment::reg`] and gets a [`SlotResolveError`].
+    ///
+    /// Every call site is `rg -n '_or_panic' dungeon-on-dregg/src/descent.rs`.
+    pub fn reg_or_panic(&self, name: &'static str, reason: &'static str) -> u8 {
+        self.reg(name).unwrap_or_else(|e| panic!("{reason}: {e}"))
+    }
+
+    /// **THE NAMED RESIDUAL** for relic custody keys — see [`Deployment::reg_or_panic`].
+    /// Exempt only where `i` is bounded by the [`RELICS`] const the schema itself loops
+    /// over, so a miss is the same build-time authoring bug.
+    pub fn relic_key_or_panic(&self, i: usize, reason: &'static str) -> u64 {
+        self.relic_key(i)
+            .unwrap_or_else(|e| panic!("{reason}: {e}"))
     }
 
     /// The descent teeth for THIS deployment's day, **LOADED from the Lean source of
     /// truth** — see [`load_program_for_day`]. No hand-rolled `CellProgram` exists in
     /// this crate for the descent; the deployed program IS the Lean object, emitted once
     /// per drawn map.
-    pub fn program(&self) -> CellProgram {
+    ///
+    /// A name in the artifact that does not resolve to the plane its constraint shape
+    /// needs is a returned [`SlotResolveError`] — the emit path does not panic.
+    pub fn program(&self) -> Result<CellProgram, SlotResolveError> {
         load_program_for_day(self, self.day)
     }
 
     /// The compiled story to install on the world-cell.
-    pub fn story(&self) -> CompiledStory {
+    pub fn story(&self) -> Result<CompiledStory, SlotResolveError> {
         let mut var_slots = BTreeMap::new();
         for name in REGISTERS {
-            var_slots.insert(name.to_string(), self.reg(name) as u64);
+            var_slots.insert(name.to_string(), self.reg(name)? as u64);
         }
-        CompiledStory {
+        Ok(CompiledStory {
             scene_id: SCENE_ID.to_string(),
             var_slots,
             has_slots: BTreeMap::new(),
             passage_index: BTreeMap::new(),
-            program: self.program(),
+            program: self.program()?,
             fully_gated: BTreeMap::new(),
-        }
+        })
     }
 }
 
@@ -483,14 +595,14 @@ enum SymAtom {
 }
 
 impl SymGuard {
-    fn resolve(&self, dep: &Deployment) -> TransitionGuard {
-        match self {
+    fn resolve(&self, dep: &Deployment) -> Result<TransitionGuard, SlotResolveError> {
+        Ok(match self {
             SymGuard::MethodIs { method } => TransitionGuard::MethodIs {
                 method: symbol(method),
             },
             SymGuard::SlotChangedForMethods { reg, methods } => TransitionGuard::AllOf(vec![
                 TransitionGuard::SlotChanged {
-                    index: dep.reg(reg),
+                    index: dep.reg(reg)?,
                 },
                 TransitionGuard::AnyOf(
                     methods
@@ -499,15 +611,15 @@ impl SymGuard {
                         .collect(),
                 ),
             ]),
-        }
+        })
     }
 }
 
 impl SymKey {
-    fn resolve(&self, dep: &Deployment) -> u64 {
+    fn resolve(&self, dep: &Deployment) -> Result<u64, SlotResolveError> {
         match self {
             SymKey::Named { name } => dep.key(name),
-            SymKey::Sentinel => GENESIS_DONE_EXT_KEY,
+            SymKey::Sentinel => Ok(GENESIS_DONE_EXT_KEY),
         }
     }
 }
@@ -527,69 +639,75 @@ impl SymAtom {
 }
 
 impl SymSimple {
-    fn resolve(&self, dep: &Deployment) -> SimpleStateConstraint {
-        match self {
+    fn resolve(&self, dep: &Deployment) -> Result<SimpleStateConstraint, SlotResolveError> {
+        Ok(match self {
             SymSimple::FieldEquals { reg, value } => SimpleStateConstraint::FieldEquals {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 value: field_from_u64(*value),
             },
             SymSimple::FieldGte { reg, value } => SimpleStateConstraint::FieldGte {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 value: field_from_u64(*value),
             },
             SymSimple::FieldLte { reg, value } => SimpleStateConstraint::FieldLte {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 value: field_from_u64(*value),
             },
             SymSimple::Immutable { reg } => SimpleStateConstraint::Immutable {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
             },
-            SymSimple::Not { inner } => SimpleStateConstraint::Not(Box::new(inner.resolve(dep))),
-        }
+            SymSimple::Not { inner } => SimpleStateConstraint::Not(Box::new(inner.resolve(dep)?)),
+        })
     }
 }
 
 impl SymConstraint {
-    fn resolve(&self, dep: &Deployment) -> StateConstraint {
-        match self {
+    fn resolve(&self, dep: &Deployment) -> Result<StateConstraint, SlotResolveError> {
+        Ok(match self {
             SymConstraint::FieldEquals { reg, value } => StateConstraint::FieldEquals {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 value: field_from_u64(*value),
             },
             SymConstraint::FieldGte { reg, value } => StateConstraint::FieldGte {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 value: field_from_u64(*value),
             },
             SymConstraint::FieldLte { reg, value } => StateConstraint::FieldLte {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 value: field_from_u64(*value),
             },
             SymConstraint::FieldDelta { reg, d } => StateConstraint::FieldDelta {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 delta: field_from_u64(*d),
             },
             SymConstraint::StrictMonotonic { reg } => StateConstraint::StrictMonotonic {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
             },
             SymConstraint::Immutable { reg } => StateConstraint::Immutable {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
             },
             SymConstraint::SumEquals { regs, value } => StateConstraint::SumEquals {
-                indices: regs.iter().map(|n| dep.reg(n)).collect(),
+                indices: regs
+                    .iter()
+                    .map(|n| dep.reg(n))
+                    .collect::<Result<Vec<_>, _>>()?,
                 value: field_from_u64(*value),
             },
             SymConstraint::AffineLe { terms, c } => StateConstraint::AffineLe {
-                terms: terms.iter().map(|(k, n)| (*k, dep.reg(n))).collect(),
+                terms: terms
+                    .iter()
+                    .map(|(k, n)| dep.reg(n).map(|index| (*k, index)))
+                    .collect::<Result<Vec<_>, _>>()?,
                 c: *c,
             },
             SymConstraint::InRangeTwoSided { reg, lo, hi } => StateConstraint::InRangeTwoSided {
-                index: dep.reg(reg),
+                index: dep.reg(reg)?,
                 lo: *lo,
                 hi: *hi,
             },
             SymConstraint::AllowedTransitions { reg, allowed } => {
                 StateConstraint::AllowedTransitions {
-                    slot_index: dep.reg(reg),
+                    slot_index: dep.reg(reg)?,
                     allowed: allowed
                         .iter()
                         .map(|(a, b)| (field_from_u64(*a), field_from_u64(*b)))
@@ -597,28 +715,39 @@ impl SymConstraint {
                 }
             }
             SymConstraint::AnyOf { variants } => StateConstraint::AnyOf {
-                variants: variants.iter().map(|v| v.resolve(dep)).collect(),
+                variants: variants
+                    .iter()
+                    .map(|v| v.resolve(dep))
+                    .collect::<Result<Vec<_>, _>>()?,
             },
             SymConstraint::HeapField { key, atom } => StateConstraint::HeapField {
-                key: key.resolve(dep),
+                key: key.resolve(dep)?,
                 atom: atom.resolve(),
             },
             SymConstraint::CountFieldsEq { keys, value, reg } => {
                 StateConstraint::FieldsCountEquals {
-                    keys: keys.iter().map(|key| key.resolve(dep)).collect(),
+                    keys: keys
+                        .iter()
+                        .map(|key| key.resolve(dep))
+                        .collect::<Result<Vec<_>, _>>()?,
                     value: field_from_u64(*value),
-                    count_index: dep.reg(reg),
+                    count_index: dep.reg(reg)?,
                 }
             }
-        }
+        })
     }
 }
 
 /// **Load the Lean-authored descent program**, resolving the symbolic slot/method names
-/// against the allocator. Panics if the artifact fails to parse or names the wrong
-/// scene — a corrupt/stale artifact must fail loud at deploy, never silently ship a
-/// different program.
-pub fn load_program(dep: &Deployment) -> CellProgram {
+/// against the allocator.
+///
+/// A name that does not resolve to the plane its constraint shape needs (the artifact
+/// asking for a REGISTER where the schema put a heap-resident `relic_*`, or naming a
+/// component the schema never declared) is a returned [`SlotResolveError`] — the emit
+/// path does not panic. A corrupt/stale ARTIFACT (bad JSON, foreign scene, wrong family
+/// size) still fails loud in [`family`]: that is a build-input integrity check on a
+/// `include_str!`ed file, not a runtime resolution.
+pub fn load_program(dep: &Deployment) -> Result<CellProgram, SlotResolveError> {
     load_program_for_day(dep, dep.day)
 }
 
@@ -666,7 +795,7 @@ fn family() -> &'static SymProgram {
 /// LEAN emit: every one of the `DAYS` case lists was authored in Lean for exactly its own
 /// minted homes and guardian vitalities, so choosing a day is choosing an emitted
 /// program, never editing one.
-pub fn load_program_for_day(dep: &Deployment, day: usize) -> CellProgram {
+pub fn load_program_for_day(dep: &Deployment, day: usize) -> Result<CellProgram, SlotResolveError> {
     let sym = family();
     let world = sym
         .worlds
@@ -676,12 +805,18 @@ pub fn load_program_for_day(dep: &Deployment, day: usize) -> CellProgram {
     let cases = world
         .cases
         .iter()
-        .map(|c| TransitionCase {
-            guard: c.guard.resolve(dep),
-            constraints: c.constraints.iter().map(|k| k.resolve(dep)).collect(),
+        .map(|c| {
+            Ok(TransitionCase {
+                guard: c.guard.resolve(dep)?,
+                constraints: c
+                    .constraints
+                    .iter()
+                    .map(|k| k.resolve(dep))
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
         })
-        .collect();
-    CellProgram::Cases(cases)
+        .collect::<Result<Vec<_>, SlotResolveError>>()?;
+    Ok(CellProgram::Cases(cases))
 }
 
 // =============================================================================
@@ -980,7 +1115,12 @@ impl Descent {
         day: usize,
     ) -> Result<Self, WorldError> {
         let dep = Deployment::for_day(day);
-        let story = dep.story();
+        // A plane mismatch in the Lean-emitted artifact refuses the DEPLOYMENT with the
+        // diagnosis attached (which component, which plane it really lives in). It used
+        // to abort the process from inside `dep.story()`.
+        let story = dep
+            .story()
+            .map_err(|e| WorldError::Refused(format!("descent deployment: {e}")))?;
         let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
         let genesis = Sim::genesis_on_day(dep.day);
         let mut game = Descent {
@@ -1025,13 +1165,26 @@ impl Descent {
     /// Every `SetField` effect that writes `sim` in full (14 registers + 8 relic keys).
     /// The counters are PROJECTIONS of custody — the mover cannot even express a
     /// count↔custody disagreement.
+    ///
+    /// ⚑ **A NAMED `_or_panic` RESIDUAL.** This is the mover's projection writer: it is
+    /// driven by `Sim`, is called from paths that cannot carry a resolution error (and
+    /// from the illegal-move test builders), and every name it resolves is one of the
+    /// [`REGISTERS`] literals or an index `< RELICS` — both compile-time constants
+    /// authored beside [`schema`]. A miss is a build-time authoring bug, not a runtime
+    /// input, so it goes through [`Deployment::reg_or_panic`] /
+    /// [`Deployment::relic_key_or_panic`] with the reason stated. Artifact-supplied names
+    /// take [`Deployment::reg`] and get a [`SlotResolveError`].
     pub fn effects_for(&self, sim: &Sim) -> Vec<Effect> {
         let cell = self.cell();
         let mut effects = Vec::with_capacity(REGISTERS.len() + RELICS);
-        let mut set_reg = |name: &str, v: u64| {
+        let mut set_reg = |name: &'static str, v: u64| {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.reg(name) as u64,
+                index: self.dep.reg_or_panic(
+                    name,
+                    "effects_for writes the REGISTERS const array, authored beside \
+                     descent::schema — a miss is a build-time authoring bug",
+                ) as u64,
                 value: field_from_u64(v),
             });
         };
@@ -1057,7 +1210,11 @@ impl Descent {
         for (i, &c) in sim.custody.iter().enumerate() {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.relic_key(i) as u64,
+                index: self.dep.relic_key_or_panic(
+                    i,
+                    "effects_for writes Sim::custody, whose length IS the RELICS const \
+                     the schema declares its collections from",
+                ) as u64,
                 value: field_from_u64(c),
             });
         }
@@ -1157,31 +1314,59 @@ impl Descent {
     }
 
     /// A `SetField` on a named register (illegal-move test builder).
-    pub fn reg_effect(&self, name: &str, v: u64) -> Effect {
+    ///
+    /// ⚑ A NAMED `_or_panic` RESIDUAL — `name` is `&'static str` precisely so this
+    /// builder can only be handed a literal authored in the same build as [`schema`].
+    pub fn reg_effect(&self, name: &'static str, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.reg(name) as u64,
+            index: self.dep.reg_or_panic(
+                name,
+                "reg_effect is the illegal-move test builder and takes a &'static str \
+                 register literal — a miss is a build-time authoring bug",
+            ) as u64,
             value: field_from_u64(v),
         }
     }
 
     /// A `SetField` on a relic custody key (illegal-move test builder).
+    ///
+    /// ⚑ A NAMED `_or_panic` RESIDUAL — `i` is a `RELICS`-bounded custody slot.
     pub fn relic_effect(&self, i: usize, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.relic_key(i) as u64,
+            index: self.dep.relic_key_or_panic(
+                i,
+                "relic_effect is the illegal-move test builder and takes a \
+                 RELICS-bounded custody slot",
+            ) as u64,
             value: field_from_u64(v),
         }
     }
 
-    /// A full forged projection under `method`: `patch` mutates a copy of the current
-    /// sim's effect list AFTER projection — the attack surface for the referee tests.
-    pub fn read_reg(&self, name: &str) -> u64 {
-        self.world.snapshot()[self.dep.reg(name) as usize]
+    /// Read one committed register back OUT of the executor.
+    ///
+    /// ⚑ A NAMED `_or_panic` RESIDUAL — `name` is `&'static str`, so every caller names
+    /// a [`REGISTERS`] literal (or iterates that const array) in the same build as
+    /// [`schema`]; a miss is a build-time authoring bug, not a runtime input.
+    pub fn read_reg(&self, name: &'static str) -> u64 {
+        self.world.snapshot()[self.dep.reg_or_panic(
+            name,
+            "read_reg takes a &'static str register literal — a miss is a build-time \
+             authoring bug",
+        ) as usize]
     }
 
+    /// Read one committed relic custody value back OUT of the executor.
+    ///
+    /// ⚑ A NAMED `_or_panic` RESIDUAL — `i` is a `RELICS`-bounded custody slot.
     pub fn read_relic(&self, i: usize) -> u64 {
-        self.world.read_heap(self.dep.relic_key(i)).unwrap_or(0)
+        self.world
+            .read_heap(
+                self.dep
+                    .relic_key_or_panic(i, "read_relic takes a RELICS-bounded custody slot"),
+            )
+            .unwrap_or(0)
     }
 }
 
