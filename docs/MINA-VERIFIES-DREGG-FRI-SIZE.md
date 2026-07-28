@@ -1404,11 +1404,16 @@ parameter moves them.* Neither does the ~1,171-permutation opened-value absorb i
 is already the campaign for exactly this reduction. So the lever with the most headroom left is
 **narrow the root's trace**, not tune FRI.
 
-*(Note the open contradiction §1.3 inherits: `APEX-VERIFIER-AIR-REDUCTION.md:59-63` states the apex
-carries no live W24 rows, while `ivc_turn_chain.rs:475,497` emits W24 sponge steps on every
-`merge_two_segment_proofs`. If W24 is genuinely absent the root is 6 tables at Σ 488 columns and
-the whole count drops ~1,200 permutations. **Worth measuring — it is a real ~10% on this budget,
-and nobody has read a root proof's `degree_bits`.**)*
+*(⚑ **RESOLVED 2026-07-28 — and the ~10% does NOT drop.** `APEX-VERIFIER-AIR-REDUCTION.md:59-63`
+said the apex carries no live W24 rows; `ivc_turn_chain.rs:475,497` emits W24 sponge steps on every
+`merge_two_segment_proofs`. The root's `degree_bits` — read at last, §1.2 — is
+`[10, 10, 16, 15, 3, 16, 0]`: **the W24 table is PRESENT, at 2³ = eight rows.** Both statements were
+half-right, and they were about different things. Being nearly EMPTY costs the W24 table nothing in
+FRI depth — it is the `Alu` and `recompose` tables at 2¹⁶ that set `|D⁰|` — but its **452 columns are
+opened and observed in full regardless of its height**, because the DEEP quotient and the challenger
+absorb pay per COLUMN, not per row. So the root is 7 tables at Σ 940 columns, the ~1,200
+permutations stay, and the reduction lever §5.2 names is still the right one: **narrow the trace's
+WIDTH.** Reducing the W24 table's height buys nothing at all.)*
 
 ### 5.3 The floor
 
