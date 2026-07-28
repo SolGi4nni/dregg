@@ -21,8 +21,6 @@
 //!
 //! These tests need no STARK: the refusal happens before any trace generation.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::commitment::{V9RotationContext, compute_canonical_state_commitment_v9_8};
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
 use dregg_sdk::AgentCipherclerk;

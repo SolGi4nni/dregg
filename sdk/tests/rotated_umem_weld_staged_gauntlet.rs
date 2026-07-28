@@ -32,8 +32,6 @@
 //!
 //! Requires `prover`. Self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::effect_vm::trace_rotated::transfer_caveat_manifest;
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};

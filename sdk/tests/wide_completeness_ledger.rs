@@ -21,8 +21,6 @@
 //! path; custom → the recursion-bound descriptor), never hidden — the honest remaining worklist for
 //! "which effect can an agent drive to a light-client receipt on THIS path."
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
 use dregg_cell::{Cell, CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::{parse_vm_descriptor2, verify_vm_descriptor2};

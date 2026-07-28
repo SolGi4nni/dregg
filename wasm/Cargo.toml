@@ -78,17 +78,17 @@ dregg-doc = { path = "../dregg-doc", default-features = false, features = ["cell
 # re-renders wholesale after a resolve — the tree SHAPE changes, unlike the slot-repaint cards),
 # the SAME renderer the cockpit's web projection bakes.
 deos-view = { path = "../deos-view", default-features = false, features = ["web"] }
-dregg-sdk = { path = "../sdk", default-features = false, features = ["no-lean-link", "prover"] }
+dregg-sdk = { path = "../sdk", default-features = false, features = ["no-lean-link"] }
 # sdk pulls bulletproofs (via cell crypto) — already covered by the
 # clear_on_drop override below, but listing here for grep-ability.
 #
-# `prover` is in the sdk's DEFAULT set; we re-add it here (default-features
-# is off for the no-lean-link split) so the SDK's cfg MATCHES the single
-# `dregg-circuit` instance in this graph, which feature-unification already
-# pins to `prover` (lightclient/etc. pull it on). Without this the SDK
-# compiles its `#[cfg(not(feature = "prover"))]` v1 effect-VM leg and dangles
-# on the now-deleted `dregg_circuit::EffectVmAir` / `effect_vm_p3_full_air`
-# (the C7 v1-deletion cutover). Aligned, both prove/verify the rotated IR-v2.
+# `prover` USED TO BE NAMED HERE and no longer exists to name. The reason it was named is
+# exactly why it had to die: this line had to re-add a feature it had just switched off,
+# because WITHOUT it the SDK compiled its `#[cfg(not(feature = "prover"))]` v1 effect-VM leg
+# and dangled on the deleted `dregg_circuit::EffectVmAir` / `effect_vm_p3_full_air` (the C7
+# v1-deletion cutover). A feature whose OFF position does not compile is not an option, it is
+# a trap with a name. Those `not(prover)` legs are deleted and the rotated IR-v2 producer +
+# verifier are unconditional, so this graph gets them by default and cannot get anything else.
 dregg-types = { path = "../types" }
 # DreggDL: the REAL parse → lower → userspace-verify pipeline, so the TS SDK's
 # `deploy.check()` calls the SAME checker the `dregg-deploy` CLI runs (not a

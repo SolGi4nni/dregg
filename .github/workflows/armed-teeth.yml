@@ -64,16 +64,21 @@
 #     itself off the pin: while `TAG=` is empty it says so loudly instead of failing nightly for
 #     infrastructure that does not exist yet; the first publish flips it on with no edit here.
 #
-#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. EIGHT
-#     crates declare a `prover` feature (was ten; `dregg-cell`'s and `dregg-demo`'s were both
-#     `prover = []` gating zero code and are DELETED, 2026-07-27), and the census (`default =`
-#     line of every Cargo.toml declaring one) says ALL EIGHT put it in `default`: grain-turn,
-#     dregg-lightclient, dregg-node, dregg-perf, dregg-sdk, dregg-teasting, dregg-tests,
-#     dregg-verifier. Default-on means `cargo test --workspace` already COMPILES and RUNS them,
-#     so the ~96 `prover`-gated tests in `sdk/tests/*` (14 files, 88 tests) and
-#     `verifier/tests/integration_rotated_replay_chain.rs` (8) are not gated off CI at all —
+#   * THE `prover` FEATURE, EXCEPT ONE TARGET — and the reason is that it is NOT a hole. SIX
+#     crates declare a `prover` feature (was ten, then eight; `dregg-cell`'s and `dregg-demo`'s
+#     were both `prover = []` gating zero code and are DELETED, 2026-07-27, and `dregg-sdk`'s and
+#     `dregg-teasting`'s went the same day — see below), and the census (`default =` line of every
+#     Cargo.toml declaring one) says ALL SIX put it in `default`: grain-turn, dregg-lightclient,
+#     dregg-node, dregg-perf, dregg-tests, dregg-verifier. Default-on means `cargo test
+#     --workspace` already COMPILES and RUNS them, so
+#     `verifier/tests/integration_rotated_replay_chain.rs` (8) is not gated off CI at all —
 #     checked file by file, not one of them carries `#[ignore]`. Arming them here would be a
 #     second, slower copy of a lane that already exists.
+#     `dregg-sdk`'s is DELETED: it was `prover = []` over 106 local `#[cfg]` sites, forwarding
+#     nothing and pulling no dep (measured: ON and OFF resolve to the same 490 units / 325
+#     packages), so the 15 whole-file `#![cfg(feature = "prover")]` binaries in `sdk/tests/*`
+#     — 95 tests — are now UNCONDITIONAL rather than default-on. `dregg-teasting`'s is DELETED
+#     as a second `prover = []` over ZERO cfg sites.
 #     The one exception, named:
 #       - `grain-turn`'s `r3_grain_adapter` IS default-compiled but is `#[ignore]`d, so it ran
 #         nowhere — the first axis, missed because it lives outside `circuit-prove/tests/` and

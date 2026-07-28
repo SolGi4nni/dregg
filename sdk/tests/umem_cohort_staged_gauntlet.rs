@@ -34,8 +34,6 @@
 //!
 //! Requires `prover`. Self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::{AuthRequired, Cell, Permissions};
 use dregg_circuit::effect_vm::Effect as VmEffect;
 use dregg_circuit::field::BabyBear;

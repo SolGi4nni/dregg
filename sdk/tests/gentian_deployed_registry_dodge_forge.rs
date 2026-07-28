@@ -23,7 +23,6 @@
 //! WIDE/WELDED registries.
 //!
 //! Requires `prover`; self-skips under `not(prover)`. SLOW (real batch STARK).
-#![cfg(feature = "prover")]
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{

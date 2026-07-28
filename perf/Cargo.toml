@@ -19,17 +19,16 @@ publish = false
 # actually runs.
 
 [features]
-# `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`, all of which
-# default to it) and forwards to `dregg-circuit/prover`, so this crate's own
-# `#[cfg(feature = "prover")]` gates ALIGN with the circuit's prover state. Under `prover`
-# (default) the live EffectVM commit path is the rotated IR-v2 tower, so the perf harnesses measure
-# `prove_turn_self_sovereign` (the real node turn) + the descriptor-interpreter (`prove_vm_descriptor`),
-# NOT the v1 hand-AIR `prove_effect_vm_p3` (which is the `not(prover)` wasm floor, retired here).
+# `prover` FORWARDS NOTHING — it is this crate's OWN gate over 3 local `#[cfg]` sites in
+# `src/lib.rs`, all positive (`#[cfg(feature = "prover")]`), so `not(prover)` compiles a perf
+# harness with three fewer measurements and no alternate path. The claim it "forwards to
+# `dregg-circuit/prover`" was false in every particular: `dregg-circuit` declares only
+# `default = ["plonky3"]` / `plonky3` and has never had a `prover` feature; the forward this
+# actually carried was `dregg-sdk/prover`, now deleted (that cluster is unconditional).
+# Under this feature the harnesses measure `prove_turn_self_sovereign` (the real node turn) +
+# the descriptor-interpreter (`prove_vm_descriptor`), never the retired v1 hand-AIR.
 default = ["prover"]
-# `dregg-turn/prover` was DELETED (proof production moved to the `dregg-turn-prover` crate);
-# perf touches only turn's unconditional `rotation_witness::produce` derivation, so there is
-# nothing to repoint — the forward simply goes away.
-prover = ["dregg-sdk/prover"]
+prover = []
 
 [dependencies]
 dregg-circuit = { path = "../circuit" }

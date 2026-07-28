@@ -47,8 +47,8 @@
 #   dropped. The `#!` counts below are rewritten to match, so a regen always shows in a diff.
 #
 # crate	feature	tier	why
-#!EXPECT_PAIRS=235
-#!EXPECT_T1=146
+#!EXPECT_PAIRS=231
+#!EXPECT_T1=142
 #!EXPECT_T2=3
 #!EXPECT_T3=77
 #!EXPECT_T4=9
@@ -143,10 +143,8 @@ dregg-perf	prover	T1	default@.
 dregg-preflight	default	T1	default@.
 dregg-sdk	default	T1	default@.
 dregg-sdk	dev	T3	the SDK's development-only helpers
-dregg-sdk	exec-lean	T1	default@.
 dregg-sdk	fhegg	T1	default@.
 dregg-sdk	no-lean-link	T1	default@.
-dregg-sdk	prover	T1	default@.
 dregg-sdk	unsafe-test-utils	T3	the authority-check-free constructor. Gated so production builds CANNOT construct it — which means nothing ever compiled the gated code either
 dregg-sdk-net	test-support	T1	default@.
 dregg-sdk-net	world-sink	T3	the client-side NodeWorldSink (a deos_js::WorldSink over a remote node's HTTP API)
@@ -167,8 +165,6 @@ dregg-storage	ark-std	T1	default@.
 dregg-storage	default	T1	default@.
 dregg-storage	kzg	T1	default@.
 dregg-storage	poly-commitment	T1	default@.
-dregg-teasting	default	T1	default@.
-dregg-teasting	prover	T1	default@.
 dregg-tee-produce	default	T1	default@.
 dregg-tee-produce	fixture-backend	T3	the captured-fixture backend — a transport/wiring test aid over the one real captured Nitro doc
 dregg-tee-produce	nitro	T3	the REAL AWS Nitro NSM backend (/dev/nsm ioctl). Its own manifest says an ARM laptop compiles this with no enclave anywhere, so compiling it is the honest hosted gate

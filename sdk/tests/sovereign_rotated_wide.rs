@@ -20,8 +20,6 @@
 //!
 //! Requires `prover` (the wide producer + verifier). Self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
 use dregg_cell::{Cell, CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::{parse_vm_descriptor2, verify_vm_descriptor2};

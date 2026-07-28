@@ -48,8 +48,6 @@
 //!
 //! Requires `prover`. Self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_circuit::cap_root::CapLeaf;
 use dregg_circuit::effect_vm::trace_rotated::{
     CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,

@@ -358,7 +358,6 @@ impl RotationTurnWitness {
     /// wide producer opens against them — the SAME set `prove_cohort_run_chain` threads from
     /// `FullTurnWitness::spent_nullifiers`), so the published 8-felt commit matches. `None` ⇒ empty
     /// set (the standalone-witness case).
-    #[cfg(feature = "prover")]
     pub fn wide_commit_anchors(
         &self,
         initial_state: &CellState,
@@ -591,7 +590,6 @@ pub struct ConservationWitness {
 /// `dregg_turn::rotation_witness::empty_revoked_root_8()`, so the empty set IS the committed
 /// revoked set. When the cap leaf carries provenance, this is the one place to thread
 /// `SpendRevocationWitness::under_ancestor(fold(cred_nul(provenance)), revoked_leaves)`.
-#[cfg(feature = "prover")]
 fn spend_revocation_witness()
 -> dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness<'static> {
     dregg_circuit::effect_vm::trace_rotated::SpendRevocationWitness::undelegated(&[])
@@ -946,7 +944,6 @@ pub fn effect_action_binding(effects: &[effect_vm::Effect]) -> BabyBear {
 
 /// Is the rotated IR-v2 (R=24) prover compiled in? The `prover` feature must be on for the
 /// rotated effect-vm prover (`descriptor_ir2`'s PROVE surface) to exist.
-#[cfg(feature = "prover")]
 pub fn rotated_prover_enabled() -> bool {
     matches!(
         std::env::var("DREGG_ROTATED_PROVER").as_deref(),
@@ -970,7 +967,6 @@ pub fn rotated_prover_enabled() -> bool {
 /// STAGED-ADDITIVE: nothing on the live wire path calls this. The descriptor JSON is the
 /// committed staged registry entry (`V3_STAGED_REGISTRY_TSV`); the four appended PIs are the
 /// rotated OLD/NEW commit · committed height · caveat commit the generator publishes.
-#[cfg(feature = "prover")]
 pub fn prove_effect_vm_rotated_ir2(
     initial_state: &CellState,
     effects: &[VmEffectKind],
@@ -1007,7 +1003,6 @@ pub fn prove_effect_vm_rotated_ir2(
 /// Re-derive the rotated 38-PI vector for a turn (the same `dpis` the rotated prover binds).
 /// Used by [`prove_full_turn`] to record the rotated leg's `sub_public_inputs` and to extend
 /// the composed PI without re-proving.
-#[cfg(feature = "prover")]
 // Scaffolding for the in-flight rotated-leg composed-PI path; retained for the rotated VK epoch.
 #[allow(dead_code)]
 fn rotated_effect_pi_for(
@@ -1063,7 +1058,6 @@ fn rotated_effect_pi_for(
 /// with an explicit caveat manifest. Returns the IR-v2 batch proof; self-verifies before
 /// return. Fails closed (`InvalidWitness`) if the turn's effect is NOT in the rotated cohort
 /// (no rotated descriptor exists for it) or if the turn is empty / heterogeneous.
-#[cfg(feature = "prover")]
 pub fn prove_effect_vm_rotated_ir2_with_caveat(
     initial_state: &CellState,
     effects: &[VmEffectKind],
@@ -1218,7 +1212,6 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
 /// boundary; this entry is opt-in and never on the live wire. The VK flag-day welds the umem leg
 /// INTO the rotated descriptor — until then this proves the umem-form reconciliation STANDALONE,
 /// exactly as the cohort emitter's width-7 descriptors model it.
-#[cfg(feature = "prover")]
 pub fn prove_umem_cohort_staged(
     effect: &VmEffectKind,
     pre: &dregg_turn::umem::UProjection,
@@ -1315,7 +1308,6 @@ pub fn prove_umem_cohort_staged(
 ///
 /// STAGED: opt-in, never on the live wire; `umem_witness_enabled` untouched. The deployed default
 /// stays per-map until the gated VK epoch.
-#[cfg(feature = "prover")]
 pub fn prove_umem_cohort_multidomain_staged(
     effect: &VmEffectKind,
     pre: &dregg_turn::umem::UProjection,
@@ -1411,7 +1403,6 @@ pub fn prove_umem_cohort_multidomain_staged(
 /// STAGED: the deployed default ([`prove_effect_vm_rotated_ir2_with_caveat`]) stays rotated+per-map
 /// with a DEFAULT umem boundary; this entry is opt-in and never on the live wire. No VK epoch, no
 /// committed-VK change.
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 pub fn prove_rotated_umem_welded_staged(
     initial_state: &CellState,
@@ -1557,7 +1548,6 @@ pub fn prove_rotated_umem_welded_staged(
 /// 1-felt producer ([`prove_effect_vm_rotated_ir2_with_caveat`]) is UNTOUCHED — the flag-day repoints
 /// the sovereign producer here (+ the executor's wide verify). Returns `(proof, wide_dpis)` — the
 /// caller publishes the 16 wide commit PIs (the executor anchors them to the trusted cell).
-#[cfg(feature = "prover")]
 pub fn prove_effect_vm_rotated_wide(
     initial_state: &CellState,
     effects: &[dregg_circuit::effect_vm::Effect],
@@ -1599,7 +1589,6 @@ pub fn prove_effect_vm_rotated_wide(
 /// resolved WIDE descriptor (from `WIDE_REGISTRY_STAGED_TSV`), its base trace, the wide PI vector
 /// (the 16 wide commit PIs at the tail = the 8-felt before/after anchors), the grow-gate
 /// `map_heaps`, and the (setFieldDyn-only) mem boundary.
-#[cfg(feature = "prover")]
 #[allow(clippy::type_complexity)]
 fn generate_wide_descriptor_and_trace(
     initial_state: &CellState,
@@ -1685,7 +1674,6 @@ fn generate_wide_descriptor_and_trace(
 ///
 /// STAGED: a NEW wide+umem welded descriptor BESIDE the deployed wide registry; no VK epoch, no
 /// deployed-default flip, no committed-VK change.
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 pub fn prove_wide_umem_welded_staged(
     initial_state: &CellState,
@@ -1792,7 +1780,6 @@ pub fn prove_wide_umem_welded_staged(
 /// A NON-Transfer lead has no fee-in-proof descriptor, so this defers to the unfee'd
 /// [`prove_wide_umem_welded_staged`]. STAGED: a NEW welded descriptor BESIDE the deployed registry;
 /// no VK bump, no default flip, `umem_witness_enabled` untouched. Self-verifies before return.
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 pub fn prove_wide_umem_welded_staged_with_fee(
     initial_state: &CellState,
@@ -1966,7 +1953,6 @@ pub fn prove_wide_umem_welded_staged_with_fee(
 /// NON-Transfer lead falls back to the unfee'd wide prover (so this is a drop-in the sovereign
 /// producer can always call). Returns `(proof, wide_dpis)`; the executor anchors the 16 wide commit
 /// PIs to the trusted cell's 8-felt commitments.
-#[cfg(feature = "prover")]
 pub fn prove_effect_vm_rotated_wide_with_fee(
     initial_state: &CellState,
     effects: &[dregg_circuit::effect_vm::Effect],
@@ -2086,7 +2072,6 @@ pub fn prove_effect_vm_rotated_wide_with_fee(
 /// (`generate_rotated_effect_vm_trace_with_fee` — the fee debited in-proof so NEW_COMMIT binds the
 /// post-fee balance), and proves. A NON-Transfer lead falls back to the unfee'd prover (so this is a
 /// drop-in the sovereign producer can always call). Keeps the broad unfee'd cohort path 100% intact.
-#[cfg(feature = "prover")]
 pub fn prove_effect_vm_rotated_ir2_with_fee(
     initial_state: &CellState,
     effects: &[VmEffectKind],
@@ -2199,7 +2184,6 @@ pub fn prove_effect_vm_rotated_ir2_with_fee(
 ///     effect-kind bit (`EFFECT_<kind> = 1 << n`) the appendix's `effBitGateFor`/`facetEffGate` bind, and
 ///     whether the base needs the attenuate phase-B nonce-freeze patch (`patch_attenuate_base_for_cap_open`).
 ///     `None` (the fallthrough) means no cap-open descriptor for that effect-kind.
-#[cfg(feature = "prover")]
 struct CapOpenRoute {
     key: &'static str,
     eff_bit: u32,
@@ -2247,7 +2231,6 @@ struct CapOpenRoute {
 /// `delegateAttenWriteCapOpenVmDescriptor2R24` wrapper's custom subset-table lookup enforces
 /// in-circuit, so the route and the in-circuit submask agree: an attenuated grant routes to the
 /// submask wrapper, where a grant exceeding held would be UNSAT.
-#[cfg(feature = "prover")]
 fn is_attenuated_grant(w: &dregg_circuit::effect_vm::AttenuateWitness) -> bool {
     let full =
         |lo: BabyBear, hi: BabyBear| -> u64 { (lo.as_u32() as u64) | ((hi.as_u32() as u64) << 16) };
@@ -2257,7 +2240,6 @@ fn is_attenuated_grant(w: &dregg_circuit::effect_vm::AttenuateWitness) -> bool {
     (granted & held) == granted && granted != held
 }
 
-#[cfg(feature = "prover")]
 fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> {
     // The deployed `cell/facet.rs` effect-kind bits (`1 << n`).
     const EFFECT_TRANSFER: u32 = 1 << 1;
@@ -2504,7 +2486,6 @@ fn cap_open_route_for_run(run_effects: &[VmEffectKind]) -> Option<CapOpenRoute> 
 /// AUTHORITY-only `route.key`. The prove path (`prove_effect_vm_cap_open`) and the vk_hash lookup MUST
 /// agree on this key (the proof is descriptor-bound, so a mismatched vk_hash would reject a sound
 /// write proof).
-#[cfg(feature = "prover")]
 fn cap_open_effective_key(route: &CapOpenRoute, cap: &CapMembershipWitness) -> &'static str {
     match route.write {
         Some((write_key, _, _)) if !cap.clist_leaves.is_empty() => write_key,
@@ -2522,7 +2503,6 @@ fn cap_open_effective_key(route: &CapOpenRoute, cap: &CapMembershipWitness) -> &
 /// SOUNDNESS: the inserted key MUST be distinct from the anchor AND absent from the c-list (the sorted
 /// `insert_witness` refuses an already-present or sentinel-colliding key); `generate_rotated_cap_write_base`
 /// enforces both, so a fabricated post-root is unprovable.
-#[cfg(feature = "prover")]
 fn cap_insert_payload_for(
     effects: &[VmEffectKind],
     cap: &CapMembershipWitness,
@@ -2579,7 +2559,6 @@ fn cap_insert_payload_for(
 /// is the SHARED non-TB cap-open prove-THROUGH plumbing (the IR-v2 cap-node lookup-balance gap that
 /// `cap_open_attenuate_self_verifies` also carries — only the TURN-BOUND transfer path self-verifies);
 /// the SDK route for exercise is a follow-on, gated behind that shared prove path landing.
-#[cfg(feature = "prover")]
 fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkError> {
     if run_effects.len() != 1 {
         return Err(SdkError::InvalidWitness(
@@ -2622,7 +2601,6 @@ fn cap_open_supported_for_run(run_effects: &[VmEffectKind]) -> Result<(), SdkErr
 /// (`verify_effect_vm_rotated_with_cutover`) binds the cap-open descriptor naturally (it iterates
 /// every committed cohort descriptor and binds the unique acceptor), so no verify-side change is
 /// needed beyond the cap-open vk_hash.
-#[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // a thin test-only wrapper over the generic prover
 fn prove_effect_vm_cap_open_attenuate(
     initial_state: &CellState,
@@ -2681,7 +2659,6 @@ fn prove_effect_vm_cap_open_attenuate(
 /// NOT resolved by `rotated_descriptor_name_for_effect` (no effect selects them by kind — they are
 /// the cap-AUGMENTED legs the prove site opts into when a consumed-cap witness is present); the SDK
 /// names the registry key directly. Returns the JSON for `key`.
-#[cfg(feature = "prover")]
 fn cap_open_descriptor_json_by_key(key: &str) -> Result<&'static str, SdkError> {
     use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
     V3_STAGED_REGISTRY_TSV
@@ -2702,7 +2679,6 @@ fn cap_open_descriptor_json_by_key(key: &str) -> Result<&'static str, SdkError> 
 /// of the committed bare cap-open descriptor JSON. TEST-ONLY at HEAD — the chain routes via
 /// `cap_open_wide_vk_hash_by_key`, and the wide-only verifiers reject bare legs; the reject-tooth
 /// tests mint narrow foil legs with this pin to assert exactly that rejection.
-#[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))]
 fn cap_open_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
     let json = cap_open_descriptor_json_by_key(key)?;
@@ -2716,7 +2692,6 @@ fn cap_open_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
 /// welded descriptor (the wide carriers + the appended `umemOp` leg). `Ok(None)` when the key has NO
 /// welded twin (the 1-felt-only / wide-twin-pending residual — e.g. `transferCapOpenTB`); `Err` only
 /// on a malformed line (unreachable for the committed TSV).
-#[cfg(feature = "prover")]
 fn wide_umem_weld_registry_json_by_key(key: &str) -> Option<&'static str> {
     use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
     WIDE_UMEM_WELD_REGISTRY_TSV.lines().find_map(|line| {
@@ -2734,7 +2709,6 @@ fn wide_umem_weld_registry_json_by_key(key: &str) -> Option<&'static str> {
 /// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
 /// — the gate the welded routing in [`prove_cohort_run_chain`] keys on (a welded member welds; a
 /// wide-twin-pending residual stays bare).
-#[cfg(feature = "prover")]
 pub fn wide_umem_weld_registry_has(key: &str) -> bool {
     wide_umem_weld_registry_json_by_key(key).is_some()
 }
@@ -2744,7 +2718,6 @@ pub fn wide_umem_weld_registry_has(key: &str) -> bool {
 /// (`verify_effect_vm_rotated_with_cutover`) and the executor's `verify_and_commit_proof_rotated`
 /// re-derive from the uniquely-accepting welded descriptor. So a welded leg's attached vk_hash MUST
 /// pin the welded member (NOT the bare wide member) for the descriptor-identity tooth to pass.
-#[cfg(feature = "prover")]
 fn wide_umem_weld_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
     let json = wide_umem_weld_registry_json_by_key(key).ok_or_else(|| {
         SdkError::InvalidWitness(format!(
@@ -2774,7 +2747,6 @@ fn cap_open_key_has_wide_twin(key: &str) -> bool {
 
 /// Resolve the committed WIDE cap-open descriptor JSON for a key (the `WIDE_REGISTRY_STAGED_TSV`
 /// twin of [`cap_open_descriptor_json_by_key`]).
-#[cfg(feature = "prover")]
 /// **THE EPOCH-1 COLUMN DELETION FOR A WIDE CAP-OPEN TRACE** — S2 then E1, in that order, at the
 /// Lean-emitted per-member kill-sets, so the produced rows match the COMMITTED wide descriptor.
 ///
@@ -2790,7 +2762,6 @@ fn cap_open_key_has_wide_twin(key: &str) -> bool {
 /// which is a pre-flight arity refusal, i.e. those legs never reached a single constraint. Routing
 /// all four branches through one function is what makes "the producer is at the committed member's
 /// geometry" a property of the builder rather than of remembering to paste two calls.
-#[cfg(feature = "prover")]
 fn compact_wide_cap_open_trace(
     trace: &mut [Vec<BabyBear>],
     effective_key: &str,
@@ -2819,14 +2790,12 @@ fn cap_open_wide_descriptor_json_by_key(key: &str) -> Result<&'static str, SdkEr
 }
 
 /// The WIDE cap-open leg's `vk_hash` (blake3 of the WIDE cap-open descriptor JSON).
-#[cfg(feature = "prover")]
 fn cap_open_wide_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
     let json = cap_open_wide_descriptor_json_by_key(key)?;
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
 }
 
 /// The ATTENUATE cap-open leg's `vk_hash` (the blake3 fingerprint of its descriptor JSON).
-#[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_wide_vk_hash_by_key`
 fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
     // The attenuate leg goes WIDE (production route), so its vk_hash is the wide descriptor fingerprint.
@@ -2836,7 +2805,6 @@ fn rotated_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
 /// The TRANSFER cap-open leg's `vk_hash` (#225) — the blake3 fingerprint of the WIDE TURN-BOUND
 /// `transferCapOpenTBVmDescriptor2R24` JSON (the genuine-submask descriptor PLUS the turn-identity
 /// weld, wide 8-felt carriers appended). Production always goes wide for TB; mirror it.
-#[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // test-only; the chain routes via `cap_open_wide_vk_hash_by_key`
 fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
     cap_open_wide_vk_hash_by_key("transferCapOpenTBVmDescriptor2R24")
@@ -2855,7 +2823,6 @@ fn rotated_transfer_cap_open_vk_hash() -> Result<[u8; 32], SdkError> {
 /// c-list opening to the trace-column [`CapOpenWitness`], widen with the 59-column appendix
 /// (`widen_to_cap_open`, which fails CLOSED if the cap does not recompose its root or does not
 /// confer the transfer facet/tier the descriptor's gates pin), then prove + self-verify.
-#[cfg(feature = "prover")]
 #[cfg_attr(not(test), allow(dead_code))] // a thin test-only wrapper over the generic prover
 fn prove_effect_vm_cap_open_transfer(
     initial_state: &CellState,
@@ -2920,7 +2887,6 @@ fn prove_effect_vm_cap_open_transfer(
 /// The descriptor's `effBitGateFor` pins `effBit == route.eff_bit`; `facetEffGate` forces `leaf.mask_lo
 /// == effBit` — so the in-circuit cap-open authorizes the turn's effect-kind ONLY (a wrong-facet cap is
 /// UNSAT / refused). Returns `(proof, dpis)`.
-#[cfg(feature = "prover")]
 fn prove_effect_vm_cap_open(
     initial_state: &CellState,
     effects: &[VmEffectKind],
@@ -2975,7 +2941,6 @@ fn prove_effect_vm_cap_open(
 ///   ([`prove_wide_umem_welded_cap_open_staged`]) share ONE descriptor/trace route (no hand-inlined twin):
 ///   the welded twin welds the universal-memory caps leg onto THIS descriptor + trace before proving. See
 ///   [`prove_effect_vm_cap_open`] for the per-step semantics.
-#[cfg(feature = "prover")]
 #[allow(clippy::type_complexity)]
 fn build_effect_vm_cap_open_leg(
     initial_state: &CellState,
@@ -3620,7 +3585,6 @@ fn build_effect_vm_cap_open_leg(
 /// touch (single-domain caps, derived from the genuine before/after cell projection diff). Self-verifies
 /// before return; returns `(proof, wide_dpis)`. STAGED: a NEW welded descriptor BESIDE the deployed
 /// registry; no VK epoch, no deployed-default flip, `umem_witness_enabled` untouched.
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 fn prove_wide_umem_welded_cap_open_staged(
     initial_state: &CellState,
@@ -3739,7 +3703,6 @@ fn prove_wide_umem_welded_cap_open_staged(
 /// `pre`/`ops` the turn's CAPS-domain universal-memory touch (single-domain caps, the genuine
 /// before/after cell projection diff). Returns `(proof, wide_dpis)`. STAGED: no VK bump, no default
 /// flip, `umem_witness_enabled` untouched.
-#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 pub fn prove_cap_open_umem_welded_staged(
     initial_state: &CellState,
@@ -3781,7 +3744,6 @@ pub fn prove_cap_open_umem_welded_staged(
 /// name via `rotated_descriptor_name_for_effect`, requiring a homogeneous cohort, then the
 /// registry JSON string from `V3_STAGED_REGISTRY_TSV`. Fails closed for empty / heterogeneous /
 /// non-cohort turns. Returns `(name, json)`.
-#[cfg(feature = "prover")]
 // Scaffolding for the in-flight rotated-leg descriptor resolution; retained for the rotated VK epoch.
 #[allow(dead_code)]
 fn rotated_descriptor_json_for_effects(
@@ -3828,7 +3790,6 @@ fn rotated_descriptor_json_for_effects(
 /// re-derives the same fingerprint from the (uniquely) accepting cohort descriptor and rejects a
 /// tampered vk_hash. (The committed registry JSON is the canonical pin the rotated path already
 /// uses to resolve + parse the descriptor at prove/verify time, so fingerprinting it is consistent.)
-#[cfg(feature = "prover")]
 // Scaffolding for the in-flight rotated-leg vk_hash fingerprint; retained for the rotated VK epoch.
 #[allow(dead_code)]
 fn rotated_effect_vm_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkError> {
@@ -3840,7 +3801,6 @@ fn rotated_effect_vm_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkEr
 /// [`rotated_descriptor_json_for_effects`], pulling `WIDE_REGISTRY_STAGED_TSV` instead of the
 /// 1-felt `V3_STAGED_REGISTRY_TSV`). The lead-effect cohort name is the SAME (the registries share
 /// keys; only the commitment width differs), so a wide leg's vk_hash re-pins against the wide JSON.
-#[cfg(feature = "prover")]
 fn rotated_descriptor_wide_json_for_effects(
     effects: &[VmEffectKind],
 ) -> Result<(&'static str, &'static str), SdkError> {
@@ -3884,7 +3844,6 @@ fn rotated_descriptor_wide_json_for_effects(
 /// descriptor JSON (`WIDE_REGISTRY_STAGED_TSV`). The flag-day verifier
 /// (`verify_effect_vm_rotated_with_cutover`, re-pointed to the wide registry) re-derives the SAME
 /// fingerprint from the (uniquely) accepting WIDE descriptor and rejects a tampered vk_hash.
-#[cfg(feature = "prover")]
 fn rotated_effect_vm_wide_vk_hash(effects: &[VmEffectKind]) -> Result<[u8; 32], SdkError> {
     let (_name, json) = rotated_descriptor_wide_json_for_effects(effects)?;
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
@@ -3951,7 +3910,6 @@ pub fn split_into_cohort_runs(effects: &[VmEffectKind]) -> Vec<core::ops::Range<
 /// `STATE_AFTER` cols the rotated weld copies, `trace_rotated.rs:299-307`). `n_effects` is the
 /// number of real effect rows (rows `0..n_effects`; padding follows). Used to thread the synthetic
 /// interior boundary states the executor never materialized.
-#[cfg(feature = "prover")]
 pub(crate) fn cell_state_after_run(
     trace: &[Vec<BabyBear>],
     n_effects: usize,
@@ -4018,7 +3976,6 @@ pub(crate) fn cell_state_after_run(
 ///
 /// Fails closed (`InvalidWitness`) if any run is non-cohort (a NoOp / non-graduated effect) — the
 /// per-run rotated prover cannot rotate it; such a turn keeps the v1 leg upstream.
-#[cfg(feature = "prover")]
 fn prove_cohort_run_chain(
     initial_state: &CellState,
     effects: &[VmEffectKind],
@@ -4347,7 +4304,7 @@ fn is_forbidden_plain_cap_descriptor(name: &str) -> bool {
 /// laundering classes. The per-descriptor crown/write semantics are Lean-modeled (the cap-reshape
 /// crown + the `…WriteCapOpen…` cap-tree write); this closes the *list-completeness* leg the
 /// `RUST-ONLY-LOGIC-CENSUS` named (Tier-1 #1).
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DescriptorAuthorityClass {
     /// Not a capability-AUTHORITY descriptor: the owner/normal path (transfer/mint/setField/spawn
@@ -4377,7 +4334,7 @@ enum DescriptorAuthorityClass {
 /// cap-management verb prefix) but is NOT explicitly classified — a new such descriptor must be
 /// classified (and, if laundering, added to the deny-list) before it can ride the wire. Benign
 /// non-authority effects fall through to `NotAuthority`.
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 fn descriptor_authority_class(key: &str) -> Option<DescriptorAuthorityClass> {
     use DescriptorAuthorityClass::*;
     match key {
@@ -4433,7 +4390,6 @@ fn descriptor_authority_class(key: &str) -> Option<DescriptorAuthorityClass> {
 /// rotated proof binds its own descriptor (each carries the Lean selector tooth), so exactly one
 /// cohort member accepts. Zero ⇒ not a rotated cohort proof (reject); more than one ⇒ ambiguous
 /// (reject rather than launder a wrong-descriptor acceptance).
-#[cfg(feature = "prover")]
 pub fn verify_effect_vm_rotated_with_cutover(
     proof_bytes: &[u8],
     public_inputs: &[BabyBear],
@@ -4669,10 +4625,11 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     components.has_state_transition = true;
     // PATH-PRESERVE §2/§3: the rotated leg is N legs — one per maximal homogeneous cohort-run
     // (`split_into_cohort_runs`). A HOMOGENEOUS turn yields exactly ONE run. The collected PI
-    // vectors flow to the conservation leg (Σ net_delta) + the `is_none` fail-closed guard. The
-    // rotated PROVER (`prove_cohort_run_chain`) is `prover`-gated; on a `not(prover)` build
-    // `rotation` is always `None`, so `rotated_effect_pis` is `None` and the guard fails closed.
-    #[cfg(feature = "prover")]
+    // vectors flow to the conservation leg (Σ net_delta) + the `is_none` fail-closed guard.
+    // `rotated_effect_pis` is `None` exactly when the caller threaded no rotation witness, and
+    // the guard below fails closed on that. (It used to ALSO be forced `None` by a
+    // `not(prover)` shadow binding, which made "the caller threaded no witness" and "this build
+    // has no prover" the same observation.)
     let rotated_effect_pis: Option<Vec<Vec<BabyBear>>> = if let Some(rot) = &witness.rotation {
         // The BEFORE nullifier set for the EffectVM rotated note-spend grow-gate: the
         // caller-threaded already-spent-nullifier SET seeds the in-circuit limb-26
@@ -4699,9 +4656,6 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     } else {
         None
     };
-    #[cfg(not(feature = "prover"))]
-    let rotated_effect_pis: Option<Vec<Vec<BabyBear>>> = None;
-
     if rotated_effect_pis.is_none() {
         // The v1 effect-vm leg is GONE (the rotated chained leg is the SOLE effect-vm prover —
         // PATH-PRESERVE Phases 0-4). A finalized-turn prove with no rotation witness can no
@@ -5047,7 +5001,6 @@ pub fn verify_full_turn_bound(
             // verifies under exactly one cohort descriptor — its own effect's), then verify
             // via the audited IR-v2 batch verifier. `not(prover)` builds never produce this
             // leg, so the arm is prover-gated.
-            #[cfg(feature = "prover")]
             "effect-vm-rotated" => verify_effect_vm_rotated_with_cutover(
                 &attached.proof_bytes,
                 &attached.sub_public_inputs,
@@ -5545,9 +5498,10 @@ pub fn verify_full_turn_bound_with_escrow_weld(
 
     // WELDED ROUTE: the rotated leg must verify under the WELDED descriptor specifically — a
     // declared-escrow turn proven under a non-welded descriptor (no satisfaction gate) is rejected.
-    // Prover-gated (the IR-v2 batch verifier lives behind `prover`); a non-prover verifier cannot
-    // confirm the welded gates, so it fails closed.
-    #[cfg(feature = "prover")]
+    // UNCONDITIONAL. This was `prover`-gated with a `not(prover)` arm that REFUSED every
+    // declared-escrow turn — a VERIFY verdict decided by a cargo feature. The IR-v2 batch verifier
+    // it calls (`dregg_circuit::descriptor_ir2::verify_vm_descriptor2`) never lived behind
+    // `prover`: `dregg-circuit` declares no such feature and is an unconditional dep of this crate.
     {
         use dregg_circuit::descriptor_ir2::{
             DreggStarkConfig, Ir2BatchProof, parse_vm_descriptor2, verify_vm_descriptor2,
@@ -5602,15 +5556,6 @@ pub fn verify_full_turn_bound_with_escrow_weld(
             }
         })?;
         Ok(())
-    }
-    #[cfg(not(feature = "prover"))]
-    {
-        Err(FullTurnVerifyError::EscrowWeldNotForced {
-            reason: "the welded escrow descriptor verify requires the `prover` feature; a \
-                     non-prover verifier cannot confirm the satisfaction gate, so a declared-escrow \
-                     turn is rejected fail-closed"
-                .into(),
-        })
     }
 }
 
@@ -6033,7 +5978,6 @@ mod tests {
     ///    (`LaundersAuthority`) and NOTHING in the allowed classes — so an authority descriptor that is
     ///    classified as laundering but NOT added to `is_forbidden_plain_cap_descriptor` (the original
     ///    gap, which let `delegateCapOpenVmDescriptor2R24` through) FAILS.
-    #[cfg(feature = "prover")]
     #[test]
     fn authority_deny_list_is_complete_over_deployed_registry() {
         use dregg_circuit::effect_vm_descriptors::{
@@ -6086,10 +6030,9 @@ mod tests {
     /// verb the registry did not declare before) is UNCLASSIFIED (`None`), so the enumeration test above
     /// would panic on it rather than silently admit it. (Mirrors the umem-flip risk: a welded authority
     /// twin landing in the registry without a deny-list entry.)
-    // Uses the `#[cfg(all(test, feature = "prover"))]` helper `descriptor_authority_class`; gate to
-    // match (its sibling deny-list test above is already gated). Without this the non-prover test build
-    // fails to compile — a pre-existing break unrelated to any single fix.
-    #[cfg(feature = "prover")]
+    // Uses the `#[cfg(test)]` helper `descriptor_authority_class`. Both this test and the helper
+    // used to carry a second `feature = "prover"` gate; with the feature gone they are plain
+    // `cfg(test)` and there is no build in which one compiles without the other.
     #[test]
     fn new_unlisted_authority_descriptor_is_unclassified_and_bites() {
         // A brand-new cap-open authority descriptor (the laundering shape) — not yet in any match arm.
@@ -6116,7 +6059,6 @@ mod tests {
             descriptor_authority_class("delegateCapOpenVmDescriptor2R24"),
             Some(DescriptorAuthorityClass::LaundersAuthority)
         );
-        #[cfg(feature = "prover")]
         assert!(is_forbidden_plain_cap_descriptor(
             "delegateCapOpenVmDescriptor2R24"
         ));
@@ -6130,7 +6072,6 @@ mod tests {
     /// per effect — a cap permitting a DIFFERENT effect-kind than the run performs cannot satisfy the
     /// `effBitGateFor`/submask gate the keyed descriptor carries. Both polarities: each fan-out routes
     /// (positive), and non-cap-authorized / multi-effect runs fall through to `None` (negative).
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_open_route_binds_each_fanout_effect_to_its_own_bit() {
         const EFFECT_TRANSFER: u32 = 1 << 1;
@@ -6267,7 +6208,6 @@ mod tests {
     /// UPDATE-AT-KEY `CapTreeWriteOp` (attenuate narrows IN PLACE: `read` the held key's mask, `write`
     /// KEEP_MASK at the SAME key) now landed in `trace_rotated.rs`. The cap-open cohort descriptor verifies
     /// on the light-client path (the genuine narrowed cap-root is on-the-wire-verifiable).
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_open_attenuate_leg_proves_and_verifies_end_to_end() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -6423,7 +6363,6 @@ mod tests {
     /// light-client verifier ACCEPTS it. The cap-membership authority crown carries UNCHANGED; the
     /// wide carriers re-absorb the same limbs into the 8-felt commit. This closes the 31-bit floor for
     /// the authority-crown cap-open tail (the residual shrinks to the write-bearing wrappers only).
-    #[cfg(feature = "prover")]
     #[test]
     // WIDE/8felt is deliberate emphasis in the test name (the wide-commit flag-day).
     #[allow(non_snake_case)]
@@ -6569,7 +6508,6 @@ mod tests {
     /// in-circuit: a hand-built witness carrying a wrong-facet leaf (bypassing the build pin) makes the
     /// descriptor's `facetEffGate`/`effBitGate` UNSAT, so the proof FAILS. The general facet bites on
     /// the turn's ACTUAL effect, not a constant.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_open_transfer_leg_proves_verifies_and_general_facet_bites() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -6745,7 +6683,6 @@ mod tests {
     /// (`from_membership_for` fail-closed) AND in-circuit (a hand-built wrong-facet witness makes the
     /// descriptor's `facetEffGate`/`effBitGateFor` UNSAT, so the proof FAILS). The `delegateCapOpen`
     /// route shares the SAME bit, proving the generic prover serves the whole family.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_open_fanout_revoke_proves_verifies_and_wrong_facet_bites() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -6980,7 +6917,6 @@ mod tests {
     ///   (bite) a trace whose committed BEFORE group is TAMPERED away from the membership-opened root
     ///   (the genuine after-spine trace, then BEFORE lane0 perturbed WITHOUT re-deriving the appendix)
     ///   REFUSES to prove — the weld gates bind; there is NO silent forge of the root binding.
-    #[cfg(feature = "prover")]
     #[test]
     fn write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -7206,7 +7142,6 @@ mod tests {
     ///       committed cap-root groups the after-spine welds — the silent forge has no wire);
     ///   (3) FORGE (producer) — a c-list MISSING the narrowed key fails closed (no held-authority
     ///       membership witness, no fabricated post-root).
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_attenuate_no_silent_forge() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -7414,7 +7349,6 @@ mod tests {
     ///   realized against the deployed native-8-felt heaps would be a liveness lie, not a tooth);
     ///   (bite) the plain key is on the deny-list BOTH halves (`is_forbidden_plain_cap_descriptor`)
     ///   — the forced route is the keystone write wrapper.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_cap_no_silent_forge() {
         use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
@@ -7463,7 +7397,6 @@ mod tests {
     /// re-introducing the second binding fails here — and exercises the genuine cap-tree→`map_heaps`
     /// bridge + its missing-key fail-closed guardrail. The end-to-end prove+verify closure of the loop is
     /// `cap_write_revoke_proves_and_verifies_light_client`.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_descriptor_after_root_is_map_op_defined_only() {
         use dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp;
@@ -7639,7 +7572,6 @@ mod tests {
     /// the leg PROVES + LIGHT-CLIENT-VERIFIES end-to-end. revokeCapability / refresh carry no epoch-tick gate
     /// (their REMOVE/UPDATE wide legs prove with a frozen epoch — the source-of-truth distinction). The
     /// cap-root advance is confirmed correct by `cap_write_revoke_descriptor_after_root_is_map_op_defined_only`.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -7808,7 +7740,6 @@ mod tests {
     /// policy step (a VK-epoch decision), NOT a prover blocker: the write wrapper now PROVES + verifies on the
     /// wide DELEG-REMOVE leg (`cap_write_revoke_proves_and_verifies_light_client`), so the provable alternative
     /// exists; flipping the tooth on is the separate forcing step.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_forge_rejected() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -7983,7 +7914,6 @@ mod tests {
     ///       REJECTS it (the tooth is ON — the producer MUST prove the on-the-wire WRITE wrapper).
     /// This is RED before the route fix (the authority-only route was the effective key + accepted) and
     /// GREEN after.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_revoke_cap_route_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -8201,7 +8131,6 @@ mod tests {
     /// `effCapOpenWriteV3_forces_write8` (the arity-2 map-op theorem is DELETED), threaded to the apex
     /// `lightclient_unfoolable_closed_final_genuine` (Rfix 55). RED before the route fix (authority-only was
     /// the effective key + accepted); GREEN after.
-    #[cfg(feature = "prover")]
     #[test]
     fn refresh_deleg_write_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -8493,7 +8422,6 @@ mod tests {
     /// (producer-side authority guard) AND against the SPLICED leaf (the descriptor's
     /// `selectedBitGate` on the conferred mask), so `fresh_edge.1` MUST carry bit
     /// `log2(route_eff_bit)`.
-    #[cfg(feature = "prover")]
     fn run_insert_after_spine_prove_verify_forge(
         effect: VmEffect,
         fresh_edge: (BabyBear, BabyBear),
@@ -8513,7 +8441,6 @@ mod tests {
     /// As [`run_insert_after_spine_prove_verify_forge`] with an explicit ANCHOR held mask —
     /// delegateAtten narrows `keep ⊑ held`, so its anchor must hold a SUPERSET of the conferred
     /// mask (the surviving `submaskLookup` over cols 73/72 bites otherwise).
-    #[cfg(feature = "prover")]
     fn run_insert_after_spine_prove_verify_forge_masked(
         effect: VmEffect,
         fresh_edge: (BabyBear, BabyBear),
@@ -8731,7 +8658,6 @@ mod tests {
     /// (1-felt V3) write-cap leg is now REJECTED by the cutover verifier (its wide twin exists, so the V3
     /// fallback filters it OUT — the producer is forced onto the wide route). Mirrors
     /// `sovereign_rotated_wide`'s flag-day shape for the WRITE-cap tail.
-    #[cfg(feature = "prover")]
     fn run_insert_cap_write_wide_flag_day(
         effect: VmEffect,
         fresh_edge: (BabyBear, BabyBear),
@@ -8894,7 +8820,6 @@ mod tests {
     /// **THE WIDE WRITE-CAP FLAG-DAY for delegate (§10).** The `delegateWriteCapOpenVmDescriptor2R24`
     /// INSERT wrapper now has a proven wide twin: the honest delegate-via-cap turn proves+verifies at the
     /// 8-felt ~124-bit commit, and a narrow 1-felt delegate write-cap leg is REJECTED post-cutover.
-    #[cfg(feature = "prover")]
     #[test]
     // WIDE is deliberate emphasis in the test name (the wide-commit flag-day).
     #[allow(non_snake_case)]
@@ -8952,7 +8877,6 @@ mod tests {
     /// edge is `cap_entry[0..2]`; its conferred mask carries the DELEGATION_OPS bit (an as-is
     /// delegation of a DELEGATION_OPS-permitting held cap). The grant is the GRANTER-side direction
     /// (`phase_b: Some` — the v1-state cap_root passes through, the genuine moving face).
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_delegate_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -9022,7 +8946,6 @@ mod tests {
     ///       light-client verifier REJECTS it (the tooth is ON — the producer MUST prove the on-the-wire
     ///       write wrapper). BEFORE: grantCapability had no NAMED genuine prove-through; AFTER: it proves +
     ///       light-client-verifies through its deployed route, and the authority-only forge is rejected.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_grant_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -9348,7 +9271,6 @@ mod tests {
     /// intro_hash }` routes to `introduceWriteCapOpenVmDescriptor2R24` — the INSERT-shaped keystone
     /// wrapper; the fresh edge is `intro_hash[0..2]`, its conferred mask carrying the INTRODUCE bit
     /// (the as-is introduction of an INTRODUCE-permitting held cap).
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_introduce_proves_and_verifies_light_client() {
         const EFFECT_INTRODUCE: u32 = 1 << 13;
@@ -9387,7 +9309,6 @@ mod tests {
     /// 8-felt AFTER-commit / present-key insert / mismatched 7-field c-list is REJECTED (the shared
     /// keystone harness exercises all three forge poles + the non-vacuous genuine pole). The cap binds
     /// DELEGATION_OPS (1<<16) — the parent confers a cap PERMITTING delegation, exactly like `delegate`.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_spawn_proves_and_verifies_light_client() {
         const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
@@ -9422,7 +9343,6 @@ mod tests {
     /// custom subset-table). This test pins the descriptor STRUCTURE (the wrapper IS in the registry, it
     /// carries the INSERT `map_op` on the rotated cap-root limb 213→264 AND the submask lookup) so the
     /// residual is named NON-vacuously — a regression dropping the submask or the insert FAILS here.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_delegate_atten_descriptor_carries_insert_and_submask() {
         use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
@@ -9497,7 +9417,6 @@ mod tests {
     /// the in-circuit `granted ⊑ held` non-amplification lookup), while a non-narrowing grant stays the
     /// plain `delegateWriteCapOpenVmDescriptor2R24`. BOTH polarities are asserted — the signal is the tooth
     /// that distinguishes the two cap-tree writes.
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_delegate_atten_routes_to_submask_wrapper() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -9600,7 +9519,6 @@ mod tests {
     /// `[KEEP_MASK (col 73) = conferred mask, HELD_MASK (col 72) = anchor held mask]`. The genuine arm
     /// (conferred 0x52 ⊑ held 0xFF) proves + light-client-verifies; the FORGE arm (a grant 0x52 whose
     /// real held authority is only 0x0F — `0x52 ⊄ 0x0F`) is UNSAT (the submask lookup bites).
-    #[cfg(feature = "prover")]
     #[test]
     fn cap_write_delegate_atten_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
@@ -9831,7 +9749,6 @@ mod tests {
     /// honest route (the cap-open descriptor, where the depth-16 membership crown is verified
     /// in-circuit) still VERIFIES (the `cap_open_fanout_revoke_*` test proves that leg end-to-end),
     /// so the forcing is a clean ONE-WAY tooth: plain cap-effect descriptor ⇒ reject, cap-open ⇒ accept.
-    #[cfg(feature = "prover")]
     #[test]
     fn light_client_rejects_cap_effect_under_plain_descriptor() {
         use dregg_turn::rotation_witness as rw;
@@ -9929,7 +9846,6 @@ mod tests {
     }
 
     /// Smoke test: prove and verify a self-sovereign turn (Effect VM only).
-    #[cfg(feature = "prover")]
     #[test]
     fn prove_verify_self_sovereign_turn() {
         let initial = CellState::new(1000, 0);
@@ -9974,7 +9890,6 @@ mod tests {
     ///
     /// Both polarities: a real transfer binds (Ok); a leg whose claimed anchor is off by one felt
     /// is REFUSED (the tie is not vacuous — a mismatched context cannot be laundered into the wrap).
-    #[cfg(feature = "prover")]
     #[test]
     fn full_turn_wrap_adapter_binds_real_transfer_and_rejects_mismatch() {
         // A REAL value-bearing transfer: balance 1000 → 993 (amount 7 leaves the cell).
@@ -10064,7 +9979,6 @@ mod tests {
     }
 
     /// Verify that wrong commitments cause rejection.
-    #[cfg(feature = "prover")]
     #[test]
     fn verify_rejects_wrong_commitment() {
         let initial = CellState::new(500, 5);
@@ -10096,7 +10010,6 @@ mod tests {
     /// This test demonstrates that the Rust verifier code correctly catches
     /// cross-proof PI mismatches. In a future version, this binding will also
     /// be enforced IN-CIRCUIT via a CompositionBindingAir.
-    #[cfg(feature = "prover")]
     #[test]
     fn verify_rejects_cross_proof_splicing() {
         // Create two different cells.
@@ -10155,7 +10068,6 @@ mod tests {
     /// equality check, leaving ONLY the in-circuit boundary binding to catch
     /// it. The audited p3 verifier rejects because the proof's bound trace
     /// commitment is the honest one, not the forged PI.
-    #[cfg(feature = "prover")]
     #[test]
     fn verify_rejects_forged_post_state_on_audited_p3() {
         use dregg_circuit::effect_vm::pi as vmpi;
@@ -10209,7 +10121,6 @@ mod tests {
     /// (`p3-batch-stark`). (The 1-felt non-revocation leg is RETIRED — felt-width
     /// #11 fold-in; spend freshness is in-circuit, exercised by the freshness
     /// tests below.)
-    #[cfg(feature = "prover")]
     #[test]
     fn full_turn_with_membership_through_audited_p3() {
         use dregg_circuit::dsl::membership::create_test_witness as merkle_test_witness;
@@ -10261,7 +10172,6 @@ mod tests {
     /// statement the retired 1-felt rail + host bindings (a)/(b) used to carry,
     /// now at the 8-felt width with the item identity in-circuit
     /// (the `.absent` key IS the published nullifier `param0`).
-    #[cfg(feature = "prover")]
     #[test]
     fn freshness_in_circuit_honest_spend_verifies() {
         use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
@@ -10332,7 +10242,6 @@ mod tests {
     /// PLUS the double-spend tooth: proving a spend whose nullifier IS in the
     /// threaded set REFUSES at prove time (the in-circuit `.absent` op has no
     /// bracketing witness — the generator fails closed).
-    #[cfg(feature = "prover")]
     #[test]
     fn freshness_in_circuit_rejects_prover_chosen_set_and_double_spend() {
         use dregg_circuit::poseidon2::hash_many;
@@ -10420,7 +10329,6 @@ mod tests {
     /// ANTI-GHOST end-to-end: forging the published MEMBERSHIP root in a finished
     /// full-turn proof MUST be rejected by the audited membership verifier (the
     /// proof binds the genuine hash-chain root, not the forged PI).
-    #[cfg(feature = "prover")]
     #[test]
     fn full_turn_rejects_forged_membership_root() {
         use dregg_circuit::dsl::membership::create_test_witness as merkle_test_witness;
@@ -10605,7 +10513,6 @@ mod tests {
             "an empty turn yields zero cohort runs (the chained prover fails closed on it)"
         );
         // And the chained prover fails closed (not panics) on an empty turn — its own guard.
-        #[cfg(feature = "prover")]
         {
             let initial = CellState::new(1234, 7);
             let rot = RotationTurnWitness {
@@ -10648,7 +10555,6 @@ mod tests {
     /// construction the node's `rotation_witness_for_self_sovereign` uses, but inlined here so the
     /// SDK test does not depend on the node crate. The before/after cells are the real
     /// `RecordKernelState` the producer reads; the per-run welds carry the changing scalars.
-    #[cfg(feature = "prover")]
     fn rotation_witness_for_cells(
         before_cell: &dregg_cell::Cell,
         after_cell: &dregg_cell::Cell,
@@ -10694,7 +10600,6 @@ mod tests {
     /// from the v1 trace over `initial`+`effects` (`trace_rotated.rs:294-307`), so they agree with
     /// the monolithic reference (`generate_effect_vm_trace`) BY CONSTRUCTION — the after-cell's raw
     /// field bytes only need to be SOME marker for the producer's heap/authority views.
-    #[cfg(feature = "prover")]
     fn rotation_for_initial(initial: &CellState, effects: &[VmEffect]) -> RotationTurnWitness {
         let before_cell =
             dregg_cell::Cell::with_balance([0xC0; 32], [0u8; 32], initial.balance as i64);
@@ -10715,7 +10620,6 @@ mod tests {
     /// agree with the MONOLITHIC v1 reference transition, and whose Σ net_delta equals the
     /// monolithic net_delta. Then the full chained proof VERIFIES against the real pre/post
     /// commitments.
-    #[cfg(feature = "prover")]
     #[test]
     fn path_preserve_chain_equals_monolithic_and_verifies() {
         // A real (synthetic-shaped) actor cell with a balance. Heterogeneous: debit, set field,
@@ -10831,7 +10735,6 @@ mod tests {
     /// ANTI-GHOST (§6.2): a tampered MIDDLE-leg commitment breaks the chain — `verify_full_turn`
     /// rejects (either the leg's own re-verification fails because PI desyncs from proof, OR the
     /// adjacency chain-check fires). Either rejection path is the soundness tooth.
-    #[cfg(feature = "prover")]
     #[test]
     fn path_preserve_tampered_middle_leg_is_rejected() {
         let before_cell = dregg_cell::Cell::with_balance([0xA2; 32], [0u8; 32], 1_000);
@@ -10897,7 +10800,6 @@ mod tests {
     /// incoming Transfer) sums to the net; the conservation leg checks Σ. A homogeneous run can't
     /// expose this (a single Transfer cohort coalesces), so we interpose a SetField to force two
     /// Transfer runs with opposite signs.
-    #[cfg(feature = "prover")]
     #[test]
     fn path_preserve_conservation_sums_across_the_chain() {
         let before_cell = dregg_cell::Cell::with_balance([0xA3; 32], [0u8; 32], 1_000);
@@ -10954,7 +10856,6 @@ mod tests {
 
     /// CONSERVATION anti-ghost: a WRONG expected net (the prover claims +5 when Σ = 0) is rejected
     /// at prove time by the chain-summed conservation check.
-    #[cfg(feature = "prover")]
     #[test]
     fn path_preserve_conservation_wrong_net_is_rejected() {
         let before_cell = dregg_cell::Cell::with_balance([0xA4; 32], [0u8; 32], 1_000);

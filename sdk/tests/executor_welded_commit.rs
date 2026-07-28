@@ -22,8 +22,6 @@
 //!
 //! Requires `prover`; self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::commitment::{
     V9RotationContext, compute_canonical_state_commitment_v9_8, felt8_to_bytes32,
 };

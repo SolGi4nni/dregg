@@ -36,9 +36,16 @@ dregg-app-framework = { path = "../../app-framework" }
 # with no `IntentVerifiedGate` registered it REFUSES the score ring rather than letting an
 # unverified in-process Rust fold decide, so a process that never registers one cannot land a
 # single contact. This adds ZERO new compilation — `dregg-app-framework` already pulls
-# `dregg-sdk`, whose default features include `exec-lean` (`cargo tree -i dregg-exec-lean`
-# resolves exec-lean <- sdk <- app-framework <- this crate); naming it directly only makes the
-# already-linked capability reachable. Same posture as `dreggnet-web`'s startup installer.
+# `dregg-sdk`, which depends on `dregg-exec-lean` unconditionally on every native target
+# (`cargo tree -i dregg-exec-lean` resolves exec-lean <- sdk <- app-framework <- this crate);
+# naming it directly only makes the already-linked capability reachable. Same posture as
+# `dreggnet-web`'s startup installer.
+#
+# ⚑ THAT SENTENCE USED TO READ "whose default features include `exec-lean`", AND A DEFAULT IS NOT A
+# GUARANTEE. Cargo unifies features across a resolve, so "already pulls" was true of the selections
+# someone happened to try and false of others — which is how this crate REFUSED EVERY CONTACT FRAME
+# FOR THREE DAYS with no gate registered. The feature is deleted; the edge is a `[target.'cfg']`
+# dependency, which cannot be turned off by anything except compiling for wasm32/zkvm.
 dregg-exec-lean = { path = "../../exec-lean" }
 
 blake3 = "1"

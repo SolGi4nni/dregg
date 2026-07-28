@@ -82,7 +82,15 @@ deos-view = { path = "../deos-view", default-features = false, features = ["tele
 # REAL DERIVED IDENTITY — `AgentCipherclerk::from_key_bytes` → a genuine Ed25519 signing
 # identity, mirroring `discord-bot/cipherclerk.rs`'s `UserCipherclerk::derive` (only the
 # BLAKE3 domain differs: `dregg-telegram-bot-v1` vs `-discord-bot-v1`). `default-features
-# = false` = the offline cipherclerk core (no prover / exec-lean).
+# = false` = the offline cipherclerk core, which today means: minus `fhegg` and nothing else.
+#
+# ⚑ IT USED TO SAY "no prover / exec-lean" AND THAT WAS THE BUG, not the configuration. Both are
+# gone as features: the rotated producer/verifier is unconditional, and the verified deployed
+# executor is a `[target.'cfg']` dep of `dregg-sdk`, so this bot ARMS the constraint + conservation
+# oracles at `AgentRuntime::new` on every native build. It did not before, and this bot is the one
+# named in `sdk/src/runtime.rs`'s note as PANICKING at startup on the deployed edge
+# (`dreggnet-surfaces/src/cheevo.rs:155`, a self-check that drives a real turn) — because whether
+# the oracle was installed depended on whether cargo had been asked about other packages.
 dregg-sdk = { path = "../sdk", default-features = false }
 # The seed derivation (BLAKE3 derive_key) + the callback-data hash-free identity path.
 blake3 = "1"

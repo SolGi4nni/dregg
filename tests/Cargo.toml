@@ -14,15 +14,15 @@ path = "src/main.rs"
 # build skips it so the workspace stays buildable while bridge undergoes
 # token-vocabulary changes.
 #
-# `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`/`dregg-verifier`,
-# all of which default to it) and forwards to `dregg-circuit/prover`, so this crate's own
-# `#[cfg(feature = "prover")]` gates ALIGN with the circuit's prover state. Without this
-# forward, a bare `cfg(feature = "prover")` here is ALWAYS false (the crate has no such feature)
-# while `dregg-circuit/prover` is unified ON by the sdk/turn deps — so the v1-hand-AIR test
-# modules (gated `not(prover)` in C7) would never compile out yet `EffectVmAir` would be absent.
-# The `not(prover)` v1-floor test modules (service_mesh_e2e, the `EffectVmAir` legs of
-# every_variant_roundtrip / executor_honesty_threats) are the wasm floor; under `prover` (default)
-# they compile out and the rotated stack is the live one.
+# `prover` is this crate's OWN gate over 2 local `#[cfg(not(feature = "prover"))]` sites in
+# `src/executor_honesty_threats.rs` (the v1 `EffectVmAir` legs). It forwards nothing and always
+# has: the comment that stood here claimed it forwards to `dregg-circuit/prover` and that a bare
+# `cfg(feature = "prover")` would otherwise be always-false — `dregg-circuit` declares only
+# `default = ["plonky3"]` / `plonky3` and has NEVER had a `prover` feature, so the described
+# alignment could not happen and the `[]` body was the whole truth.
+#
+# ⚑ Same measured shape as `dregg-node`'s: `default = ["prover"]` and nothing in the tree passes
+# `--no-default-features` to this crate, so those 2 `not(prover)` legs are compiled by NOTHING.
 default = ["prover"]
 prover = []
 __legacy_tests = ["dep:dregg-bridge"]

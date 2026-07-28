@@ -35,8 +35,6 @@
 //!
 //! Requires `prover`; self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::commitment::{compute_canonical_capability_root_felt, felt8_to_bytes32};
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
 use dregg_circuit::cap_root::CapLeaf;

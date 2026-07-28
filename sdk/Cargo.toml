@@ -37,12 +37,6 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # routing the wire-silo + turn/captp verifies through the Lean-verified core (taking the `fips204` crate
 # out of the SDK-hosted process's verify TCB), the SAME install the node performs.
 dregg-pq = { path = "../dregg-pq" }
-# THE SWAP producer-mode cluster (`produce_via_lean` = the authoritative verified-Lean state
-# producer). Native-only crate (links libdregg_lean.a); pulled by the default-on `exec-lean`
-# feature. A `no-lean-link` (wasm/zkvm) build passes `default-features = false`, so `exec-lean` is
-# OFF and `run_turn` uses the legacy Rust-producer path — the platform boundary is now this dep, not
-# a flag carving the cluster out of `dregg-turn`.
-dregg-exec-lean = { path = "../exec-lean", optional = true }
 dregg-circuit = { path = "../circuit" }
 # The SDK's producer path mints rotated proofs and binds custom sub-proofs
 # (`dregg_circuit_prove::custom_proof_bind`), so it depends on the heavy prove
@@ -92,22 +86,58 @@ thiserror = { workspace = true }
 tracing = "0.1"
 zeroize = { workspace = true }
 
+# ─── THE VERIFIED DEPLOYED EXECUTOR: A TARGET, NOT A FEATURE ────────────────────────────
+# THE SWAP producer-mode cluster (`produce_via_lean` = the authoritative verified-Lean state
+# producer) and the two deployed-executor ORACLES `AgentRuntime::new` arms (the constraint
+# oracle and the conservation oracle, `runtime.rs`).
+#
+# ⚑ THIS WAS `dregg-exec-lean = { optional = true }` BEHIND A DEFAULT-ON `exec-lean` FEATURE,
+# AND THAT IS THE WORST POSSIBLE THING TO DECIDE WITH A FEATURE, because cargo UNIFIES
+# features across a resolve: whether this SDK installs a verified oracle at all depended on
+# WHICH OTHER PACKAGES cargo had been asked about. MEASURED with `cargo build --unit-graph`
+# on the same source:
+#
+#   cargo build -p starbridge-v2 --all-targets   dregg-sdk = prover
+#   cargo build --workspace      --all-targets   dregg-sdk = default,exec-lean,fhegg,prover
+#
+# Nine consumers pass `default-features = false` and were silently overruled the moment a
+# whole-workspace command selected `dregg-sdk` (a root member) alongside them. `dregg-cell`'s
+# fail-closed refusal is native-RELEASE-only, so the difference is invisible to every debug
+# test in the tree and shows up as a deployed bot that boots, reports healthy, and refuses
+# every programmed-cell turn — which is exactly what `starbridge-tussle` did for three days
+# (`settle_ring_verified` is fail-closed with no `IntentVerifiedGate` registered) and what the
+# Discord bot did for a week (`reveal_cron: Daily reveal did not fire`, forever).
+#
+# THE QUESTION IS "CAN THIS TARGET LINK libdregg_lean.a", SO ASK THE TARGET. A `[target.'cfg']`
+# dependency is decided by the compilation target and CANNOT unify: every native build of this
+# crate has the verified executor, under every selection, and wasm32/zkvm has none because it
+# cannot have one. Cost of making it unconditional on native, measured the same way: exactly
+# TWO packages (`dregg-exec-lean`, `dregg-coord`) and two units.
+#
+# A NATIVE host that must not link the archive (`dregg-tui`, `sel4/verifier-pd`) is still served
+# by the `no-lean-link` platform feature below: `dregg-lean-ffi` compiles its marshal-only stubs
+# and `dregg-exec-lean` builds clean against them (verified: `cargo check -p dregg-exec-lean
+# --features dregg-lean-ffi/no-lean-link`, zero errors). Link suppression, never a guarantee.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "zkvm")))'.dependencies]
+dregg-exec-lean = { path = "../exec-lean" }
+
 [features]
 # This crate is the OFFLINE CORE of the SDK. It carries NO networking surface
-# (no tokio/reqwest/dregg-wire/dregg-captp): the networked layer lives in
-# `dregg-sdk-net`. Wasm / no-lean-link verifier builds pass
-# `default-features = false`, so they get neither the SDK rotated prover wrappers
-# nor `dregg-circuit/prover`.
+# (no tokio/reqwest/dregg-wire): the networked layer lives in `dregg-sdk-net`.
 #
-# `prover` is in the DEFAULT set: native builds compile the rotated IR-v2
-# (R=24) producer + verifier (the cutover's target path; `descriptor_ir2` is
-# present via `dregg-circuit`'s own default `prover`).
-default = ["prover", "exec-lean", "fhegg"]
-# THE SWAP producer cluster (native): pulls `dregg-exec-lean` so `AgentRuntime::run_turn` drives
-# the verified Lean executor as the authoritative state producer. ON by default; a
-# `default-features = false` (wasm / no-lean-link) build leaves it off and falls back to the Rust
-# producer. The platform boundary is this dep, not a core-gating flag.
-exec-lean = ["dep:dregg-exec-lean"]
+# ⚑ `prover` IS GONE, and it is not hollowed — the feature is DELETED and the rotated
+# IR-v2 (R=24) producer + verifier it gated are UNCONDITIONAL. It was `prover = []`:
+# forwarding nothing, pulling no dep, 106 local `#[cfg]` sites over code whose entire
+# dependency closure (`dregg-circuit`, `dregg-circuit-prove`) is already unconditional
+# above. MEASURED with `cargo build --unit-graph`: `-p dregg-sdk --no-default-features`
+# and `--no-default-features --features prover` resolve to the SAME 490 units and the
+# SAME 325 packages, differing only in this crate's own feature string. So there was
+# nothing for it to prune, and turning it ON for everyone costs zero resolve — while
+# leaving it OFF decided a VERIFY verdict (the welded-escrow satisfaction gate REFUSED
+# every declared-escrow turn under `not(prover)`), which is exactly the
+# "which guarantees does this dregg have" question .docs-history-noclaude/FEATURE-HYGIENE.md
+# forbids a feature to answer.
+default = ["fhegg"]
 # Plaintext uniform-price clear + self-verifying settlement demo surface.
 fhegg = ["dep:fhegg-solver"]
 # `embed-core` IS GONE. It was kept as an explicit COMPAT NO-OP — `embed-core = []`,
@@ -125,19 +155,6 @@ no-lean-link = [
     "dregg-lean-ffi/no-lean-link",
 ]
 dev = []
-# The SDK PRODUCER cluster (~104 local `#[cfg(feature = "prover")]` sites). The
-# rotated prover surface (`descriptor_ir2` prove, the `*_wide` generators) is
-# unconditional in `dregg-circuit`; the recursion tower + custom-proof-bind ride
-# the unconditional `dregg-circuit-prove` dep above — so this feature forwards
-# NOTHING and pulls no dep.
-#
-# It used to be `["dregg-turn/prover", "dregg-cell/prover"]`. Both forwards are
-# GONE: `dregg-turn`'s `prover` feature was DELETED (proof production is the
-# `dregg-turn-prover` crate now) and `dregg-cell`'s was always a verified no-op
-# (`prover = []`). The flag survives only as this crate's OWN gate, and retiring
-# it the same way (an `sdk-prover` crate) is the next domino in
-# `docs/reference/TURN-PROVER-CRATE-EXTRACTION-DESIGN.md` §5.
-prover = []
 # Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
 # without an authority check. This is a footgun in production and is gated
 # behind a feature flag so that production builds cannot construct it at all.

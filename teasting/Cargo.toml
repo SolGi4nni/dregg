@@ -85,17 +85,13 @@ dregg-exec-lean = { path = "../exec-lean" }
 # `ok` for a test that asserted nothing about the verified gate it is named after.
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
-[features]
-# `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`/`dregg-verifier`,
-# all of which default to it) and forwards to `dregg-circuit/prover`, so this crate's own
-# `#[cfg(feature = "prover")]` gates ALIGN with the circuit's prover state. Without this
-# forward, a bare `cfg(feature = "prover")` here is ALWAYS false (the crate has no such feature)
-# while `dregg-circuit/prover` is unified ON by the sdk/turn deps — so the v1-hand-AIR test
-# modules (gated `not(prover)` — silver_vision_graph_e2e + silver_vision_multi_fed_graph_e2e)
-# would never compile out yet `EffectVmAir` would be absent. Under `prover` (default) they
-# compile out and the rotated stack is the live one. Mirrors the `tests/` crate's feature forward.
-default = ["prover"]
-prover = []
+# NO `[features]`. This crate declared `default = ["prover"]` / `prover = []` under a comment
+# asserting it forwards to `dregg-circuit/prover` and compiles out two v1-hand-AIR test modules
+# (`silver_vision_graph_e2e`, `silver_vision_multi_fed_graph_e2e`). All three claims are false:
+# `dregg-circuit` declares only `default = ["plonky3"]` / `plonky3` and has never had a `prover`
+# feature, the forward was `[]`, and this crate contains ZERO `#[cfg(feature = "prover")]` sites —
+# the two modules it named are not gated on anything. The feature could not compile anything out
+# and could not align anything; it was a name the next reader would have trusted.
 
 [lints]
 workspace = true

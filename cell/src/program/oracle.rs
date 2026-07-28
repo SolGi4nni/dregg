@@ -90,9 +90,11 @@ pub fn constraint_oracle_installed() -> bool {
 /// Two copies of it exist at the time of writing and both are outside this crate:
 /// `dreggnet-web/src/verified_settlement.rs` hand-repeats
 /// `all(not(debug_assertions), any(unix, windows))` verbatim (twice), and `dregg-sdk`'s
-/// `AgentRuntime` arming gates on the WEAKER `all(feature = "exec-lean", not(debug_assertions))` —
-/// which omits `any(unix, windows)`, so those two predicates already do not agree about what a
-/// deployed build is. A copied predicate is a claim that the gate it describes may have moved; call
+/// `AgentRuntime` arming gated on the WEAKER `all(feature = "exec-lean", not(debug_assertions))` —
+/// which omits `any(unix, windows)`, so those two predicates already did not agree about what a
+/// deployed build is. (`dregg-sdk`'s `exec-lean` has since been deleted outright: the verified
+/// executor is a `[target.'cfg']` dependency, because a feature that decides whether an oracle is
+/// installed UNIFIES across the resolve and so answered to the package selection, not the target.) A copied predicate is a claim that the gate it describes may have moved; call
 /// this instead, from any crate, and the answer IS the gate. (Both copies named above
 /// have since been retired: `dreggnet-web/src/verified_settlement.rs:132` and
 /// `sdk/src/runtime.rs:426` now CALL this `const fn`. The paragraph is kept as the

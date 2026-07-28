@@ -169,16 +169,22 @@ metrics-exporter-prometheus = "0.16"
 tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_json-1"] }
 
 [features]
-# `prover` is in the DEFAULT set (matching `dregg-circuit`/`dregg-sdk`/`dregg-turn`, all of
-# which default to it): native builds compile the ROTATED stack, so the v1 hand-AIR (`EffectVmAir`)
-# is absent. It forwards to the deps' `prover` so node's own `#[cfg(feature = "prover")]`
-# gates (the mcp.rs v1-demo-tool fences) align with the circuit's prover state. A `not(prover)`
-# node build keeps the v1 floor (the MCP standalone-effect-VM demo tools).
+# `prover` FORWARDS NOTHING — it is node's OWN gate over 19 local `#[cfg]` sites and nothing
+# else. Every crate it used to name has retired its own: `dregg-turn/prover` was DELETED (proof
+# production is the `dregg-turn-prover` crate, an UNCONDITIONAL dep above), `dregg-cell/prover`
+# was always `[]`, `dregg-circuit` never declared one, and `dregg-sdk/prover` is now deleted too
+# (its cluster is unconditional). The claim that it "aligns node's gates with the circuit's prover
+# state" was never true of any build: `dregg-circuit` has no such state to align to.
+#
+# ⚑ WHAT IS STILL WRONG HERE, MEASURED AND NOT FIXED BY THIS COMMIT. 15 of the 19 sites are
+# `#[cfg(not(feature = "prover"))]` v1-floor test blocks in `src/mcp/mod.rs`, and NOTHING IN THE
+# TREE COMPILES THEM: `default = ["prover"]`, the only consumer (`dreggnet-tavern`) takes defaults,
+# and no workflow or script passes `--no-default-features` to this crate. They are 15 tests that
+# emit no line in any run. The other 4 gate the `exact_fnsp_v3_*` modules ON and are always active.
+# Retiring this feature means deleting the v1-floor lane those 15 describe, which belongs with the
+# v1 retirement, not with the SDK's feature split.
 default = ["prover"]
-# `dregg-turn/prover` was DELETED (proof production is the `dregg-turn-prover` crate, an
-# UNCONDITIONAL dep of this crate above) and `dregg-cell/prover` was always a no-op, so this
-# now forwards only the SDK's own gate plus node's 19 local sites.
-prover = ["dregg-sdk/prover"]
+prover = []
 
 # THE DEOS-HOST: the node hosts a headless userspace deos-js "private server" program
 # (`--deos-program <path.js>`), running fully without gpui. Pulls in `mozjs` via deos-js,

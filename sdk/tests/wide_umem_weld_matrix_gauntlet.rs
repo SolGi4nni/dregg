@@ -41,8 +41,6 @@
 //! Purely additive: the welded WIDE descriptors + the opt-in welded prover; no deployed descriptor / VK /
 //! default prover touched, `umem_witness_enabled` untouched. Requires `prover`; self-skips otherwise.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::{Cell, CellMode, Ledger};
 use dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest;
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};

@@ -469,9 +469,14 @@ pub fn install_verified_pq_cores() {
 /// drifted: this function's copy omitted `any(unix, windows)`, so it and the gate did not agree
 /// about what a deployed build is. Two further effects, both wanted: the install body is now
 /// TYPE-CHECKED in a debug build (before, it compiled only in release — a whole code path `cargo
-/// test` could never see), and the `feature = "exec-lean"` half stays a `cfg` because it gates the
-/// existence of the dependency, which is a link-time fact and not a profile one.
-#[cfg(feature = "exec-lean")]
+/// test` could never see), and the remaining `cfg` gates the existence of the dependency.
+///
+/// ⚑ AND THAT `cfg` NOW ASKS THE TARGET, NOT A FEATURE. It was `feature = "exec-lean"`, default-on
+/// — so whether this installer had a body at all UNIFIED across the resolve, and a `-p` build of a
+/// consumer that passed `default-features = false` compiled the empty one while `--workspace`
+/// compiled this. "Can this target link `libdregg_lean.a`" is a fact about the target; a
+/// `[target.'cfg']` dependency cannot unify. See the dep block in `sdk/Cargo.toml`.
+#[cfg(not(any(target_arch = "wasm32", target_os = "zkvm")))]
 fn ensure_deployed_executor_oracles_installed() {
     use std::sync::Once;
     static LOGGED: Once = Once::new();
@@ -522,12 +527,15 @@ fn ensure_deployed_executor_oracles_installed() {
     });
 }
 
-/// Installs nothing without `exec-lean`: a wasm / zkVM / `default-features = false` embedding links
-/// no archive to install FROM, and `dregg-cell`'s fail-closed gate is inactive on those targets
-/// anyway, so the Rust guest-path evaluator is that build's documented (labeled-unverified) path. It
-/// still RECORDS that the arming point was reached — see the `ARMING_REACHED` note below, which is
-/// why this is not simply an empty body.
-#[cfg(not(feature = "exec-lean"))]
+/// Installs nothing on wasm32 / the zkVM guest: those targets link no archive to install FROM, and
+/// `dregg-cell`'s fail-closed gate is inactive on them anyway, so the Rust guest-path evaluator is
+/// that build's documented (labeled-unverified) path. It still RECORDS that the arming point was
+/// reached — see the `ARMING_REACHED` note below, which is why this is not simply an empty body.
+///
+/// ⚑ THIS ARM IS NOW UNREACHABLE ON NATIVE, WHICH IS THE POINT. Under the old
+/// `#[cfg(not(feature = "exec-lean"))]` a NATIVE build landed here whenever the resolve happened
+/// not to turn the feature on — a deployed x86_64 bot silently taking the do-nothing installer.
+#[cfg(any(target_arch = "wasm32", target_os = "zkvm"))]
 fn ensure_deployed_executor_oracles_installed() {
     ARMING_REACHED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -590,11 +598,14 @@ pub fn deployed_executor_arming_deficiency() -> Option<String> {
         "NO VERIFIED CONSTRAINT ORACLE in this process, and this build fails CLOSED without one: \
          every programmed-cell turn will be refused — the dungeon, the Descent, the campaign, the \
          daily reveal — while every other command keeps working, so the process will look healthy. \
-         Two builds land here: one whose linked `libdregg_lean.a` does not export \
+         EXACTLY ONE build lands here now: one whose linked `libdregg_lean.a` does not export \
          `dregg_constraint_admits` (a `DREGG_REQUIRE_LEAN=0` or stale-archive build degrades to \
-         exactly this — check the `constraint oracle:` warning above), and one compiled with \
-         `dregg-sdk`'s `exec-lean` feature off, which links no verified executor at all. Rebuild \
-         against a HEAD-matching archive, with default features, before serving games."
+         exactly this — check the `constraint oracle:` warning above). Rebuild against a \
+         HEAD-matching archive before serving games. (There used to be a SECOND cause, and it was \
+         the one an operator could not act on: a native build with `dregg-sdk`'s default-on \
+         `exec-lean` feature resolved off, linking no verified executor at all. That feature is \
+         deleted — the verified executor is a `[target.'cfg']` dependency now, so no native build \
+         can be missing it and no feature selection can take it away.)"
             .to_string(),
     )
 }
@@ -1736,21 +1747,28 @@ impl AgentRuntime {
 /// Run one fully-built turn against `ledger`, choosing the PRODUCER per `lean_producer_enabled`.
 ///
 /// This is the single producer-selection seam shared by [`AgentRuntime::run_turn`] and every
-/// worker turn ([`SubAgent::execute_method`]). When producer mode is on (and the crate was built
-/// with `exec-lean`), on the COVERED set the VERIFIED Lean executor is AUTHORITATIVE via
-/// `dregg_exec_lean::produce_via_lean` — its post-state AND commit verdict are committed
-/// unconditionally, and the Rust `TurnExecutor` is demoted to a checked reference. A covered
-/// Lean↔Rust disagreement is a surfaced RUST BUG (`error!`), NOT a fallback to Rust. Off the
-/// covered set (or with producer mode off, or under the `no-lean-link` platform gate) this is the
+/// worker turn ([`SubAgent::execute_method`]). When producer mode is on, on the COVERED set the
+/// VERIFIED Lean executor is AUTHORITATIVE via `dregg_exec_lean::produce_via_lean` — its post-state
+/// AND commit verdict are committed unconditionally, and the Rust `TurnExecutor` is demoted to a
+/// checked reference. A covered Lean↔Rust disagreement is a surfaced RUST BUG (`error!`), NOT a
+/// fallback to Rust. Off the covered set (or with producer mode off, or on wasm32/zkvm) this is the
 /// legacy `executor.execute(turn, ledger)` path — byte-identical to the pre-weld behavior.
-#[cfg_attr(not(feature = "exec-lean"), allow(unused_variables))]
+///
+/// ⚑ "the crate was built with `exec-lean`" IS NO LONGER A CONDITION. On every native target the
+/// verified producer is compiled in; only wasm32 and the zkVM guest, which cannot link the archive,
+/// take the legacy path. It used to be a default-on feature, so a resolve that did not happen to
+/// enable it demoted a NATIVE build to the Rust producer with no line emitted anywhere.
+#[cfg_attr(
+    any(target_arch = "wasm32", target_os = "zkvm"),
+    allow(unused_variables)
+)]
 fn produce(
     executor: &TurnExecutor,
     turn: &Turn,
     ledger: &mut Ledger,
     lean_producer_enabled: bool,
 ) -> TurnResult {
-    #[cfg(feature = "exec-lean")]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "zkvm")))]
     {
         if lean_producer_enabled {
             use dregg_exec_lean::{self as lean_apply, ProducerOutcome};
@@ -1884,7 +1902,7 @@ pub struct SubAgent {
     /// and replay of sub-agent turns.
     last_receipt_hash: Mutex<Option<[u8; 32]>>,
     /// Whether producer mode is active for this worker's turns — inherited from
-    /// the parent runtime at spawn. When on (and built with `exec-lean`), a
+    /// the parent runtime at spawn. When on (and on any native target), a
     /// worker turn on the covered set is produced by the VERIFIED Lean executor
     /// via [`produce`], exactly like a runtime turn through
     /// [`AgentRuntime::run_turn`]. This is what routes served/minted grain

@@ -37,8 +37,6 @@
 //!
 //! Requires `prover`. Self-skips under `not(prover)`.
 
-#![cfg(feature = "prover")]
-
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2, verify_vm_descriptor2};
 use dregg_circuit::effect_vm::trace_rotated::{

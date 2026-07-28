@@ -701,21 +701,23 @@ dregg-cell-crypto = { path = "../cell-crypto", optional = true }
 dregg-types = { path = "../types", optional = true }
 # The wallet-grade clerk itself (`dregg_sdk::AgentCipherclerk`) + the REAL
 # embedded engine (`dregg_sdk::embed::DreggEngine`, the executor+ledger+token
-# core our `World` wraps). `default-features = false` drops the SDK's
-# networking/captp stack (tokio/quinn/async) and its `exec-lean`/`fhegg` clusters.
+# core our `World` wraps). `default-features = false` drops the SDK's `fhegg` cluster.
+# It no longer drops `exec-lean`: that feature is DELETED and the verified deployed executor is
+# a `[target.'cfg']` dep of `dregg-sdk`, so this native build arms the constraint + conservation
+# oracles. MEASURED: `-p starbridge-v2` used to resolve `dregg-sdk = prover` while `--workspace`
+# resolved `dregg-sdk = default,exec-lean,fhegg,prover` — the cockpit was a different program
+# depending on which other packages cargo had been asked about.
 # The cipherclerk + macaroon-token + `DreggEngine` surface we use is in the SDK's
 # always-compiled offline core, so nothing has to be turned on to reach it —
 # `embed-core` used to be named here and was `embed-core = []`, a no-op; it is deleted.
 #
-# `prover` IS still named, and the justification that used to sit here was stale in
-# every particular: it said `dregg-circuit`'s default features include `prover` and
-# `dregg-turn` forwards it. `dregg-circuit` declares only `default = ["plonky3"]` and
-# `plonky3` — there is no `dregg-circuit/prover` — and `dregg-turn`'s `prover` was
-# deleted when proof production moved to `dregg-turn-prover`. What `dregg-sdk/prover`
-# actually is today is that crate's OWN gate over ~104 local `#[cfg(feature = "prover")]`
-# sites (see sdk/Cargo.toml), and it is in the SDK's default set. We name it explicitly
-# because we pass `default-features = false`. It forwards nothing and pulls no dep.
-dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["prover"] }
+# `prover` IS NO LONGER NAMED, because `dregg-sdk` no longer has one. It was that crate's own
+# gate over 106 local `#[cfg]` sites, forwarding nothing and pulling no dep — measured with
+# `cargo build --unit-graph`, ON and OFF resolve to the same 490 units and 325 packages — so it
+# has been DELETED and the rotated IR-v2 producer/verifier it gated is unconditional. This line
+# is therefore STRICTLY MORE than it asked for before: the SDK cluster starbridge-v2 was naming
+# is now simply present.
+dregg-sdk = { path = "../sdk", optional = true, default-features = false }
 # THE VERIFIED SHARED-BUDGET PRIMITIVE — `dregg_coord::StingrayCounter` (the
 # bounded conserved counter, `coord/src/budget.rs`). The swarm's N9 shared budget
 # IS this counter (the conservation bound "the swarm spent at most B"); the over-
@@ -915,7 +917,7 @@ dregg-turn = { path = "../turn", optional = true, default-features = false }
 dregg-cell = { path = "../cell", optional = true, default-features = false }
 dregg-cell-crypto = { path = "../cell-crypto", optional = true }
 dregg-types = { path = "../types", optional = true }
-dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["no-lean-link", "prover"] }
+dregg-sdk = { path = "../sdk", optional = true, default-features = false, features = ["no-lean-link"] }
 dregg-coord = { path = "../coord", optional = true, default-features = false }
 dregg-token = { path = "../token", optional = true, default-features = false, features = ["macaroon", "rand-deps"] }
 dregg-doc = { path = "../dregg-doc", optional = true, features = ["substrate"] }
