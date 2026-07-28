@@ -26,6 +26,15 @@ Stated in those words, at the top, as asked.
    single place where every effect is forced to answer the conservation question is a design
    checklist enforced by rustc, not a tooth. **Fixed** (doc corrected).
 
+   > ⚑ **SUPERSEDED 2026-07-28 — the census stands, the remedy went further.** "Correct the doc"
+   > was not enough: the checklist forces an *arm*, never a *correct* arm, and nothing consumes the
+   > answer, so a wrong answer is free — and two already were (`Mint`/`Burn` colored `Generative`/
+   > `Annihilative` while the deployed `apply_mint`/`apply_burn` are well-paired and conserve
+   > exactly). `LinearityClass`, `Effect::linearity()`, both helpers and the 7 tests OF them are
+   > **deleted**. The classification's real home is `metatheory/Dregg2/Spec/Conservation.lean`,
+   > where it is PROVED — and SPEC-ONLY (no `@[export]`). The line numbers in items 1-2 below no
+   > longer resolve. See `HORIZONLOG.md` B2.
+
 2. **`is_disclosed_non_conservation()`'s doc claimed a receipt field that does not exist.**
    `turn/src/action.rs:976` said it is *"the predicate the executor's adversarial path uses to decide
    whether to require a `was_burn`/`was_mint` disclosure flag."* There is no `was_mint` field on
@@ -55,6 +64,15 @@ Stated in those words, at the top, as asked.
    (`circuit/src/heap_root.rs:832`). Two cells colliding on the key share one leaf, so removing
    either leaves the signed anchor unchanged. The width fix priced the root; it never priced the key.
    **Fixed** (⚑ added at `turn/src/state_commit.rs`).
+
+   ⚑ **UPDATE 2026-07-28 — the BEHAVIOUR is now fixed too, and the site count above was wrong.**
+   There were **four** `dedup_by_key` sites, not one: `heap_root.rs` `CanonicalHeapTree::new`,
+   `compute_canonical_heap_root_8`, `CanonicalHeapTree8::new`, and the in-file `dense_build` test
+   oracle. All four are now `assert_addr_unique` — two leaves at one address are **REFUSED**, not
+   merged. Driven demonstration (pre-fix oracle + post-fix refusal, both poles):
+   `circuit/tests/heap_addr_collision_refusal.rs`. Note also that `as_u32()` was never a truncation
+   — `BabyBear` is canonical in `[0, p-1]` — so "dedup on the full felt" would have been a no-op;
+   the address is narrow because it is ONE felt.
 
 6. **The SDK's operator-facing warning described the pre-fail-closed world.**
    `sdk/src/runtime.rs:452` told operators *"This does not fail closed; it silently decides"* for the
@@ -202,7 +220,10 @@ cell create/spawn, revoke, heap write, and `custom`. **Adversary gains nothing f
   `root`/`new_root`. Lean twin `DescriptorIR2.lean:301-313`.
 - `circuit/src/heap_root.rs:225` — `heap_addr(coll, key) = hash_many(&[coll, key])` → one `BabyBear`.
 - `circuit/src/field.rs:11` — `BABYBEAR_P = 2^31 − 2^27 + 1`. **~30.9 bits.**
-- `circuit/src/heap_root.rs:832` — colliding addresses are **silently deduped**, no error.
+- ~~`circuit/src/heap_root.rs:832` — colliding addresses are **silently deduped**, no error.~~
+  **CLOSED 2026-07-28.** It was FOUR sites, not one; all four now call
+  `heap_root::assert_addr_unique` and **REFUSE**. The KEY WIDTH is unchanged and still narrow —
+  this closes the silent merge, not the ~31-bit address.
 - `turn/src/executor/apply.rs:36-40` — `shielded_nullifier_key` produces a 32-byte `Nullifier`
   carrying **4 bytes of entropy**. The wide type buys nothing.
 
@@ -430,6 +451,24 @@ On the nullifier set the same collision is a **double spend** (or a griefing pre
 permanently blocks an honest note). The refutations are already proved in Lean
 (`narrowLeaf_conflates`). *Blast radius: state-anchor forgery / double spend. Precondition: ~2^31
 offline hashing.*
+
+⚑ **CLOSED 2026-07-28 — the MERGE, not the WIDTH.** All four `dedup_by_key` sites in
+`heap_root.rs` are now `assert_addr_unique`: two leaves at one address are REFUSED. The driven
+demonstration is `circuit/tests/heap_addr_collision_refusal.rs` (pre-fix oracle: the anchor does
+not move when the merged-away entry is removed; post-fix: all four builders refuse). Three
+consequences worth carrying forward:
+
+- The **address is still one ~31-bit felt**. Nothing here widens a key. What changes is that an
+  ambiguous commitment is now a loud refusal instead of a silent wrong answer.
+- The refusal **converts a silent soundness bug into a liveness one** on the surfaces where the
+  colliding value is attacker-chosen (`cells_root` via `CellId::derive_raw`, and the four
+  accumulators via `fold_bytes32_to_bb`). A ground collision now panics the commitment path. That
+  is the right trade — a refusal beats a wrong anchor — but it is a real availability change and
+  the durable fix remains the wider MapOp key epoch.
+- It immediately caught a **live sentinel eviction**: `fold_bytes32_to_bb([0u8; 32]) == 0 ==
+  SENTINEL_MIN`, so a nullifier folding to zero put a real leaf at the genesis sentinel's address
+  and the dedup dropped **the sentinel** — the low bracket every non-membership opening rests on.
+  Fixture pinned at `cell/src/nullifier_set.rs`.
 
 **4. `affine_sum`'s unchecked `i128` admits on the guest what Lean refuses.**
 `cell/src/program/eval.rs:2898`. A wrapped negative sum admits an `AffineLe`. Host fails closed,

@@ -661,13 +661,30 @@ mod tests {
         assert_eq!(w.public_inputs, expected);
     }
 
-    /// A map declares each key ONCE: a duplicate boundary address has no sorted-insert witness
-    /// and is rejected at build time (the canonicity the deployed tree enforces).
+    /// A map declares each key ONCE: a duplicate boundary address is refused.
+    ///
+    /// The refusal MOVED EARLIER on 2026-07-28 and got stronger. It used to be
+    /// `build_whole_image_fold` returning `Err` — but only after
+    /// `whole_boundary_fold` had already folded the two leaves into a root, because
+    /// the tree builders silently `dedup_by_key`'d the duplicate away. So a
+    /// `published` root existed for a view that declares one key twice. The builders
+    /// now refuse the leaf list outright (`heap_root::assert_addr_unique`), so the
+    /// duplicate cannot reach a root at all — which is the canonicity this test is
+    /// about, enforced one step sooner.
     #[test]
     fn duplicate_address_refuses() {
         let leaves = vec![leaf(3, 30), leaf(3, 99)];
-        let published = whole_boundary_fold(&leaves);
-        assert!(build_whole_image_fold(&leaves, published).is_err());
+        let folded = std::panic::catch_unwind(|| whole_boundary_fold(&leaves));
+        assert!(
+            folded.is_err(),
+            "a declared view with one key twice must not produce a published root"
+        );
+
+        // NON-VACUITY: the same shape with DISTINCT addresses folds and builds fine,
+        // so the refusal above is detecting the duplicate and not a broken fixture.
+        let distinct = vec![leaf(3, 30), leaf(4, 99)];
+        let published = whole_boundary_fold(&distinct);
+        assert!(build_whole_image_fold(&distinct, published).is_ok());
     }
 
     /// The empty declared view folds to the empty root — pinned to itself.

@@ -1155,35 +1155,54 @@ mod tests {
     /// A raw high-chunk mutation by exactly the BabyBear modulus is a
     /// deterministic collision in the legacy `u32 mod p` nullifier fold.  The
     /// exact sixteen-u16 tree must distinguish it.
+    ///
+    /// ⚠ THE BASE MUST NOT FOLD TO ZERO. This fixture used the ALL-ZEROS nullifier
+    /// until 2026-07-28, and `fold_bytes32_to_bb([0u8; 32])` is `0` — which is
+    /// [`dregg_circuit::heap_root::SENTINEL_MIN`], the address of the genesis IMT
+    /// sentinel. So the committed accumulator held TWO leaves at address 0, and the
+    /// silent `dedup_by_key` the builders then ran EVICTED THE GENESIS SENTINEL —
+    /// the low bracket every non-membership opening straddles. That builder now
+    /// REFUSES a repeated address (`heap_root::assert_addr_unique`), which is what
+    /// surfaced it. The aliasing property under test is unrelated to the base, so
+    /// the base is simply moved off zero and pinned there.
     #[test]
     fn faithful_root8_exact_rejects_legacy_high_byte_nullifier_alias() {
         use dregg_circuit::field::BABYBEAR_P;
 
-        let zero = Nullifier([0u8; 32]);
-        let mut aliased_bytes = [0u8; 32];
+        // A nonzero base, so the legacy fold lands away from the sentinel address.
+        let mut base_bytes = [0u8; 32];
+        base_bytes[0] = 0xA7;
+        let base = Nullifier(base_bytes);
+        let mut aliased_bytes = base_bytes;
         aliased_bytes[28..32].copy_from_slice(&BABYBEAR_P.to_le_bytes());
         let high_chunk_alias = Nullifier(aliased_bytes);
 
-        assert_ne!(zero, high_chunk_alias);
-        assert_ne!(zero.0[31], high_chunk_alias.0[31]);
+        assert_ne!(base, high_chunk_alias);
+        assert_ne!(base.0[31], high_chunk_alias.0[31]);
         assert_eq!(
-            dregg_circuit::effect_vm::fold_bytes32_to_bb(&zero.0),
+            dregg_circuit::effect_vm::fold_bytes32_to_bb(&base.0),
             dregg_circuit::effect_vm::fold_bytes32_to_bb(&high_chunk_alias.0),
             "vacuity guard: the two hostile raw nullifiers must alias in the legacy fold"
         );
+        assert_ne!(
+            dregg_circuit::effect_vm::fold_bytes32_to_bb(&base.0),
+            dregg_circuit::field::BabyBear::ZERO,
+            "vacuity guard: the base must not fold onto SENTINEL_MIN, or this test \
+             measures the sentinel collision instead of the aliasing it is about"
+        );
 
-        let mut zero_set = NullifierSet::new();
-        zero_set.insert(zero, 17).unwrap();
+        let mut base_set = NullifierSet::new();
+        base_set.insert(base, 17).unwrap();
         let mut alias_set = NullifierSet::new();
         alias_set.insert(high_chunk_alias, 17).unwrap();
 
         assert_eq!(
-            zero_set.root8(),
+            base_set.root8(),
             alias_set.root8(),
             "vacuity guard: legacy accumulator roots really do alias"
         );
         assert_ne!(
-            zero_set.faithful_root8_exact(),
+            base_set.faithful_root8_exact(),
             alias_set.faithful_root8_exact(),
             "the exact tree must bind the hostile high nullifier bytes"
         );

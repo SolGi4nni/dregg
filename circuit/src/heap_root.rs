@@ -218,10 +218,109 @@ pub fn assert_pad_free_tail<T: PartialEq + core::fmt::Debug>(digests: &[T], pad:
     }
 }
 
+/// **`assert_addr_unique`** — refuse to build a sorted openable tree whose leaf
+/// list carries TWO leaves at ONE address. Takes the list ALREADY SORTED by
+/// `addr`, so the check is an adjacent-pair scan, O(n) and free next to the
+/// O(n·depth) fold.
+///
+/// ## What this replaced, and why a silent merge was the wrong answer
+///
+/// Until 2026-07-28 all FOUR leaf-list assemblers here — [`CanonicalHeapTree::new`],
+/// [`compute_canonical_heap_root_8`], [`CanonicalHeapTree8::new`] and the in-file
+/// `dense_build` test oracle — ran `leaves.dedup_by_key(|l| l.addr.as_u32())`
+/// immediately after the sort, documented as "the executor's `Heap.set` is
+/// insert-or-update, so duplicate addresses never occur; belt-and-suspenders".
+/// The premise is false and the belt was load-bearing. NONE of them returned an error.
+///
+/// ⚠ `as_u32()` was never a TRUNCATION, so "dedup on the full felt" is a no-op:
+/// `BabyBear` is canonical in `[0, p-1]` with `p < 2^32`, so `as_u32()` already IS
+/// the whole felt. The address is narrow because it is ONE felt.
+///
+/// The producer's key space is a PAIR of `u32`s — `CellState::heap_map` is a
+/// `BTreeMap<(u32, u32), FieldElement>` — while the committed address is the ONE
+/// felt [`heap_addr`]`(BabyBear::new(coll), BabyBear::new(key))`. That map is not
+/// injective, by two separate mechanisms:
+///
+///   * **mod-p aliasing, cost ZERO.** `BabyBear::new` reduces mod `BABYBEAR_P`, so
+///     the distinct map keys `key` and `key + BABYBEAR_P` produce the SAME felt and
+///     hence the SAME address. No search at all. (The Lean model does NOT cover
+///     this: `Substrate/Heap.lean`'s `AddrPair = Fin babyBearP × Fin babyBearP` is
+///     the IN-RANGE pair, and `truncAddr_inj` — "the truncation loses nothing" — is
+///     stated for exactly those. The deployed `u32` domain is wider than the
+///     modelled one, and the reduction that bridges them is unmodelled.)
+///   * **the birthday bound on a ~31-bit address.** Two distinct IN-RANGE pairs
+///     share an address after ~2^15.5 folds; measured at **43 968** evaluations in
+///     `circuit/tests/heap_addr_collision_refusal.rs`.
+///
+/// A dedup answers both by dropping one leaf. The dropped entry then lives in
+/// `heap_map` and is absent from the commitment, so the root **both presents and
+/// denies it** — the same ambiguity [`assert_pad_free`] refuses, arrived at through
+/// the KEY rather than the padding constant. Concretely: with two colliding entries
+/// present, REMOVING the merged-away one leaves the signed anchor byte-identical, so
+/// a deletion is invisible to every verifier downstream of `heap_root`.
+///
+/// Widening the value or the node (`digest8` / `heap_node8`) cannot reach this —
+/// the two entries are literally the same leaf at any root width. Refusing is what
+/// is available at this layer, and it is the correct answer: the pair is
+/// UNREPRESENTABLE in a tree addressed by one felt, exactly as a leaf AT
+/// [`SENTINEL_MAX`] is unrepresentable in a tree whose terminal pointer is that
+/// value (`relink_next_addrs`).
+///
+/// This also makes the BUILDERS agree with the INSERT gate, which already refused
+/// this input: `insert_witness` returns `None` for a duplicate address
+/// (`ascending_append_inserts_and_still_refuses_invalid_keys`). Only the root
+/// builders accepted it, and they accepted it silently.
+///
+/// FAILS CLOSED, the same discipline as [`assert_pad_free`] and the capacity
+/// assertion in [`CanonicalHeapTree::new`]. Release-active — a `debug_assert` here
+/// would be a guard that cannot go red where it matters.
+pub fn assert_addr_unique(leaves: &[HeapLeaf], tree: &str) {
+    // The adjacency scan below is only complete if the sort key agrees with equality.
+    // `sort_by_key` uses the RAW `as_u32()` while `PartialEq` uses `canonical_val()`,
+    // and `BabyBear`'s field is `pub`, so a hand-built non-canonical address (`.0 >= p`)
+    // would sort AWAY from its canonical twin and slip past the scan. Every address a
+    // producer computes is an arithmetic output and therefore already canonical
+    // (`Add`/`Mul` reduce; `hash_many` returns a state felt), so this only refuses a
+    // leaf that was constructed by hand out of range — which is a producer fault in its
+    // own right. Checking it is what makes the uniqueness scan TOTAL rather than
+    // conditional on an unstated invariant.
+    for (i, l) in leaves.iter().enumerate() {
+        assert!(
+            l.addr.as_u32() < crate::field::BABYBEAR_P,
+            "{tree}: leaf {i} of {n} has a NON-CANONICAL address ({addr} >= BABYBEAR_P). \
+             The sort key (`as_u32`) and equality (`canonical_val`) disagree on such a \
+             value, so it would evade the duplicate-address scan. Refusing to commit.",
+            n = leaves.len(),
+            addr = l.addr.as_u32(),
+        );
+    }
+    for (i, pair) in leaves.windows(2).enumerate() {
+        if pair[0].addr == pair[1].addr {
+            panic!(
+                "{tree}: leaves {i} and {j} of {n} share ONE address ({addr}) with values \
+                 {v0} and {v1} — two distinct `(collection, key)` entries collapse to a single \
+                 committed leaf, so the root both presents and denies one of them and its \
+                 REMOVAL does not move the anchor. A one-felt `heap_addr` cannot separate them \
+                 at any root width (mod-p aliasing of the u32 key space, or the ~2^15.5 \
+                 birthday bound on a ~31-bit address). Refusing to commit an ambiguous root.",
+                j = i + 1,
+                n = leaves.len(),
+                addr = pair[0].addr.as_u32(),
+                v0 = pair[0].value.as_u32(),
+                v1 = pair[1].value.as_u32(),
+            );
+        }
+    }
+}
+
 /// The canonical heap ADDRESS of a `(collection_id, key)` pair: the arity-2
 /// Poseidon2 image `hash[coll, key]` — the sorted-tree sort key. This is the
 /// exact image the descriptor gadget's `siteHeapAddr` recomputes in-row
 /// (`EffectVmEmitHeapRoot.addrOf`); NO domain tag, or cell and circuit fork.
+///
+/// ⚠ The image is ONE felt (~31 bits) over a `(u32, u32)` producer key space, so it
+/// is NOT injective — see [`assert_addr_unique`], which refuses the collisions
+/// rather than merging them.
 pub fn heap_addr(coll: BabyBear, key: BabyBear) -> BabyBear {
     hash_many(&[coll, key])
 }
@@ -312,11 +411,57 @@ fn min_sentinel_leaf() -> HeapLeaf {
     }
 }
 
+/// **`strip_incoming_genesis_sentinel`** — drop a caller-supplied copy of the MIN
+/// sentinel so that prepending the builder's own is IDEMPOTENT, and REFUSE a real
+/// entry that sits at the sentinel's address.
+///
+/// ## Why the builders need this (and why the dedup was hiding it)
+///
+/// [`CanonicalHeapTree::sorted_leaves`] returns the leaves INCLUDING the genesis
+/// sentinel, and every builder here PREPENDS a sentinel. So the extremely common
+/// round-trip "read the leaves, edit one, rebuild" —
+/// `CanonicalHeapTree8::new(tree.sorted_leaves()...)`, which is exactly what the
+/// deployed MapOp producer does (`descriptor_ir2.rs`, the `MapKind::Write` working-set
+/// advance) — hands the builder a list that ALREADY contains a sentinel and gets a
+/// second one pushed on top. That is TWO leaves at address 0.
+///
+/// Until 2026-07-28 the `dedup_by_key` silently absorbed the second copy, so the
+/// round-trip appeared to work and the sentinel-inclusive/sentinel-prepending
+/// asymmetry was never visible. Normalising here makes the round-trip correct BY
+/// CONSTRUCTION rather than by a dedup that also swallowed genuine collisions.
+///
+/// ⚠ A leaf at [`SENTINEL_MIN`] with a NONZERO value is NOT a sentinel copy — it is a
+/// real entry at the genesis address, which is UNREPRESENTABLE in this tree for the
+/// same reason a live leaf at [`SENTINEL_MAX`] is (`relink_next_addrs`): the bracket
+/// that every sorted-gap non-membership opening straddles would no longer exist. It
+/// is refused, symmetrically. Fails closed.
+///
+/// ⚑ NAMED RESIDUAL: a genuine entry whose address hashes to exactly `0` AND whose
+/// value is `0` is indistinguishable from the sentinel and is absorbed. That is a
+/// ~2^-31 accident carrying no committed value; the entry is unrepresentable either
+/// way. It is the one merge this module still performs, and it is stated rather than
+/// silent.
+fn strip_incoming_genesis_sentinel(leaves: &mut Vec<HeapLeaf>, tree: &str) {
+    for l in leaves.iter() {
+        assert!(
+            !(l.addr == SENTINEL_MIN && l.value != BabyBear::ZERO),
+            "{tree}: a live leaf sits AT SENTINEL_MIN ({}) with value {} — that is a real \
+             entry at the genesis address, not the sentinel, and it would displace the low \
+             bracket every sorted-gap non-membership opening straddles (the dual of the \
+             SENTINEL_MAX refusal in `relink_next_addrs`). Refusing to commit.",
+            SENTINEL_MIN.as_u32(),
+            l.value.as_u32(),
+        );
+    }
+    leaves.retain(|l| l.addr != SENTINEL_MIN);
+}
+
 /// Relink the `next_addr` pointers of an ALREADY-sorted, sentinel-headed leaf
 /// list into the IMT chain: each leaf points to its successor's `addr`, and the
 /// last leaf points to [`SENTINEL_MAX`] (the terminal pointer). The Rust twin of
 /// the Lean `ImtSorted` well-linked invariant (`l.nextAddr = l'.addr`, last
-/// `l.addr < l.nextAddr = MAX`). Called by the tree builders after the sort+dedup.
+/// `l.addr < l.nextAddr = MAX`). Called by the tree builders after the
+/// sort + `assert_addr_unique`.
 fn relink_next_addrs(leaves: &mut [HeapLeaf]) {
     let n = leaves.len();
     for i in 0..n {
@@ -328,8 +473,9 @@ fn relink_next_addrs(leaves: &mut [HeapLeaf]) {
     }
     // ── THE WELL-LINKED GUARD — and the STRUCTURAL half of the padding-ghost fix ──
     //
-    // `ImtSorted` requires `addr < next_addr` at every leaf. Sort+dedup already give
-    // it for every leaf but the LAST, whose pointer is the terminal `SENTINEL_MAX`;
+    // `ImtSorted` requires `addr < next_addr` at every leaf. The sort plus
+    // `assert_addr_unique` already give it for every leaf but the LAST, whose
+    // pointer is the terminal `SENTINEL_MAX`;
     // that one fails exactly when a live leaf sits AT `SENTINEL_MAX`. Enforcing it
     // here is what makes the padding ghost UNCONSTRUCTIBLE in this tree, not merely
     // expensive:
@@ -391,17 +537,19 @@ impl CanonicalHeapTree {
     /// Build the canonical heap tree from a cell's heap entries.
     ///
     /// Prepends the single MIN sentinel ([`HEAP_SENTINEL_LEAVES`]), sorts the
-    /// leaves by `addr`, deduplicates by key (the executor's `Heap.set` is
-    /// insert-or-update, so duplicate addresses never occur; belt-and-suspenders),
-    /// links the IMT chain, then builds the padded binary tree.
+    /// leaves by `addr`, REFUSES a repeated address ([`assert_addr_unique`] — this
+    /// used to be a silent `dedup_by_key`, which made a colliding entry's removal
+    /// invisible to the committed root), links the IMT chain, then builds the padded
+    /// binary tree.
     pub fn new(mut leaves: Vec<HeapLeaf>, depth: usize) -> Self {
         // IMT genesis: the SINGLE MIN sentinel `{MIN, 0, MAX}` (points MIN → MAX).
         // The MAX sentinel is no longer a separate sorted leaf — it is the terminal
         // `next_addr` pointer the relink installs on the largest real leaf.
+        strip_incoming_genesis_sentinel(&mut leaves, "CanonicalHeapTree");
         leaves.push(min_sentinel_leaf());
         // Sort by the canonical sort key (addr). Deterministic, total.
         leaves.sort_by_key(|l| l.addr.as_u32());
-        leaves.dedup_by_key(|l| l.addr.as_u32());
+        assert_addr_unique(&leaves, "CanonicalHeapTree");
         // Link the IMT chain: each leaf's next_addr = successor's addr (last → MAX).
         relink_next_addrs(&mut leaves);
 
@@ -509,7 +657,7 @@ impl CanonicalHeapTree {
     /// leaf whose `addr == key`, or `None` if no such (non-padding) leaf
     /// exists.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        // `sorted_leaves` is sorted+deduped by `addr` (BabyBear `Ord` agrees
+        // `sorted_leaves` is sorted by `addr` and unique in it (BabyBear `Ord` agrees
         // with the `as_u32` sort key for canonical values), so an exact hit is a
         // binary search — O(log n) vs the former O(n) scan.
         self.sorted_leaves
@@ -857,9 +1005,10 @@ pub fn compute_canonical_heap_root_8(leaves: Vec<HeapLeaf>) -> Faithful8 {
     let mut leaves = leaves;
     // IMT genesis: the single MIN sentinel `{MIN, 0, MAX}`; the relink installs
     // the terminal MAX pointer on the largest real leaf (no separate MAX leaf).
+    strip_incoming_genesis_sentinel(&mut leaves, "compute_canonical_heap_root_8");
     leaves.push(min_sentinel_leaf());
     leaves.sort_by_key(|l| l.addr.as_u32());
-    leaves.dedup_by_key(|l| l.addr.as_u32());
+    assert_addr_unique(&leaves, "compute_canonical_heap_root_8");
     relink_next_addrs(&mut leaves);
 
     let depth = HEAP_TREE_DEPTH;
@@ -986,14 +1135,15 @@ pub struct CanonicalHeapTree8 {
 
 impl CanonicalHeapTree8 {
     /// Build the canonical 8-felt heap tree from a cell's heap entries. Same
-    /// sorted+sentinel+dedup+sparse-fold discipline as [`CanonicalHeapTree::new`],
-    /// at 8-felt width.
+    /// sorted+sentinel+unique-address+sparse-fold discipline as
+    /// [`CanonicalHeapTree::new`], at 8-felt width.
     pub fn new(mut leaves: Vec<HeapLeaf>, depth: usize) -> Self {
         // IMT genesis: the single MIN sentinel `{MIN, 0, MAX}`; the relink installs
         // the terminal MAX pointer (no separate MAX leaf).
+        strip_incoming_genesis_sentinel(&mut leaves, "CanonicalHeapTree8");
         leaves.push(min_sentinel_leaf());
         leaves.sort_by_key(|l| l.addr.as_u32());
-        leaves.dedup_by_key(|l| l.addr.as_u32());
+        assert_addr_unique(&leaves, "CanonicalHeapTree8");
         relink_next_addrs(&mut leaves);
 
         let capacity = 1usize << depth;
@@ -1062,7 +1212,7 @@ impl CanonicalHeapTree8 {
 
     /// The padded-level position of the leaf whose `addr == key`, or `None`.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        // `sorted_leaves` is sorted+deduped by `addr` (BabyBear `Ord` agrees
+        // `sorted_leaves` is sorted by `addr` and unique in it (BabyBear `Ord` agrees
         // with the `as_u32` sort key for canonical values), so an exact hit is a
         // binary search — O(log n) vs the former O(n) scan.
         self.sorted_leaves
@@ -1890,15 +2040,16 @@ mod tests {
     }
 
     /// The OLD DENSE build, kept verbatim as the in-test oracle: assemble the
-    /// sorted/deduped leaf list EXACTLY as `new`, then `resize` to the full
-    /// `2^depth` with ZERO padding and fold ALL levels. Returns `(sorted_leaves,
-    /// levels)` so membership can be cross-checked against the dense arrays.
+    /// sorted leaf list EXACTLY as `new`, then `resize` to the full `2^depth` with
+    /// ZERO padding and fold ALL levels. Returns `(sorted_leaves, levels)` so
+    /// membership can be cross-checked against the dense arrays.
     fn dense_build(leaves: Vec<HeapLeaf>, depth: usize) -> (Vec<HeapLeaf>, Vec<Vec<BabyBear>>) {
         let mut leaves = leaves;
         // Mirror the IMT `new`: single MIN sentinel + relink (no separate MAX leaf).
+        strip_incoming_genesis_sentinel(&mut leaves, "dense_build");
         leaves.push(min_sentinel_leaf());
         leaves.sort_by_key(|l| l.addr.as_u32());
-        leaves.dedup_by_key(|l| l.addr.as_u32());
+        assert_addr_unique(&leaves, "dense_build");
         relink_next_addrs(&mut leaves);
         let capacity = 1usize << depth;
         assert!(leaves.len() <= capacity);
@@ -1916,8 +2067,32 @@ mod tests {
         (leaves, levels)
     }
 
-    fn rand_entry(rng: &mut Rng) -> HeapLeaf {
-        entry(rng.below(64), rng.below(64), rng.next_u64() as u32)
+    /// `n` random leaves at PAIRWISE-DISTINCT addresses — the only leaf lists a
+    /// real producer can hand a builder, since `CellState::heap_map` is a MAP and
+    /// the builders now refuse a repeated address ([`assert_addr_unique`]). Draws
+    /// `(coll, key)` from `0..64 × 0..64` and rejects any draw whose `heap_addr`
+    /// is already taken, so the differential exercises the FOLD rather than the
+    /// guard. (Rejecting on the ADDRESS, not the pair, matters: distinct pairs can
+    /// still land on one ~31-bit address — that is the wound the guard refuses, and
+    /// a differential that stumbled into it would go red for the wrong reason.)
+    fn rand_distinct_entries(rng: &mut Rng, n: usize) -> Vec<HeapLeaf> {
+        let mut addrs: Vec<BabyBear> = Vec::with_capacity(n);
+        let mut out: Vec<HeapLeaf> = Vec::with_capacity(n);
+        let mut guard = 0usize;
+        while out.len() < n {
+            guard += 1;
+            assert!(
+                guard < 100_000,
+                "distinct-address draw failed to make progress"
+            );
+            let leaf = entry(rng.below(64), rng.below(64), rng.next_u64() as u32);
+            if addrs.contains(&leaf.addr) {
+                continue;
+            }
+            addrs.push(leaf.addr);
+            out.push(leaf);
+        }
+        out
     }
 
     /// THE DIFFERENTIAL: 10k random heaps (varying size incl. empty); the SPARSE
@@ -1933,7 +2108,7 @@ mod tests {
         let mut total_leaves = 0usize;
         for _ in 0..CASES {
             let n = rng.below(60) as usize;
-            let leaves: Vec<HeapLeaf> = (0..n).map(|_| rand_entry(&mut rng)).collect();
+            let leaves: Vec<HeapLeaf> = rand_distinct_entries(&mut rng, n);
             let sparse = CanonicalHeapTree::new(leaves.clone(), DEPTH);
             let (oracle_leaves, oracle_levels) = dense_build(leaves, DEPTH);
 
