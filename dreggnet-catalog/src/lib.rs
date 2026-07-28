@@ -82,6 +82,8 @@ pub mod private_bazaar_live;
 #[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_service;
 #[cfg(feature = "private-bazaar-live")]
+pub mod private_bazaar_submit;
+#[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_targets;
 #[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_worker;
@@ -127,6 +129,11 @@ pub use private_bazaar_service::{
     PrivateBazaarLiveRuntime, PrivateBazaarSourceCapture, PrivateBazaarWorkerFaultClass,
     PrivateBazaarWorkerHealth, PrivateBazaarWorkerServiceConfig, PrivateBazaarWorkerServiceError,
     PrivateBazaarWorkerServicePhase, PrivateBazaarWorkerSupervisor,
+};
+#[cfg(feature = "private-bazaar-live")]
+pub use private_bazaar_submit::{
+    AcceptedSealedBook, PrivateBazaarSubmitError, SealedBookSubmissionRequest,
+    parse_sealed_book_submission, submit_sealed_book, submit_sealed_book_document,
 };
 #[cfg(feature = "private-bazaar-live")]
 pub use private_bazaar_targets::{

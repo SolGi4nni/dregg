@@ -1462,8 +1462,14 @@ mod tests {
     ///
     /// Before this wiring the supervisor could only ever OBSERVE receipts, and
     /// the only thing in the tree that produced one was a test — so a shipped
-    /// deployment polled a source no production caller could fill. Here a book
-    /// is submitted out of band, the production supervisor thread picks it up,
+    /// deployment polled a source no production caller could fill. ⚑ And the
+    /// half that closed LAST (2026-07-28): the submission itself. A queue with a
+    /// production drain and no production submitter is still a queue nothing can
+    /// fill, and this test used to reach past that gap by calling `submit`
+    /// directly. It now goes through `private_bazaar_submit`, the entry the
+    /// shipped `dregg-private-bazaar-submit` binary calls. So: a book is
+    /// submitted out of band by the production submitter, the supervisor thread
+    /// picks it up,
     /// mints and verifies the real `HidingFriPcs` proof of the Lean-emitted
     /// `N=4,K=4` descriptor, lands the executor SETTLE, carries the receipt
     /// through the durable v3 spool, and dispatches the exact pinned Dungeon
@@ -1489,14 +1495,40 @@ mod tests {
         enter_hosted_raid(&mut host, &id, seed);
         let xp_before = hero.read_var("xp");
 
-        // OUT OF BAND. This is the one production ingress, and no frontend
-        // action can reach it: the mounted offering's only route is Enter.
-        let mut ingress = deployment.private_sealed_ingress().unwrap();
-        let accepted = ingress
-            .submit(seed, ingress_bids(), Some([0x0011_57F1; 8]))
-            .unwrap();
-        assert_eq!(accepted.sequence, 1);
-        assert_eq!(ingress.pending().unwrap(), 1);
+        // OUT OF BAND, AND THROUGH THE PRODUCTION SUBMITTER — not around it.
+        //
+        // This is the exact entry `dregg-private-bazaar-submit` calls, on the
+        // exact document an operator pipes in on stdin. Until 2026-07-28 this
+        // test reached straight for `private_sealed_ingress().submit(..)`, which
+        // is why it stayed green while `submit` had 0 production callers: it was
+        // standing in for the caller instead of exercising one. No frontend
+        // action can reach any of it — the mounted offering's only route is Enter.
+        let accepted = crate::private_bazaar_submit::submit_sealed_book_document(
+            &deployment,
+            &format!(
+                "# the operator's out-of-band sealed book\n\
+                 seed {seed}\n\
+                 bid {INGRESS_LOW_BIDDER}=2\n\
+                 bid {INGRESS_WINNER}=3\n\
+                 blinding 001157f1001157f1001157f1001157f1001157f1001157f1001157f1001157f1\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(accepted.submission.sequence, 1);
+        assert_eq!(accepted.pending, 1);
+
+        // The document's book is what became durable — the exact bidders, the
+        // exact limits, and the exact blind the operator wrote, decoded back out
+        // of the record rather than remembered from the call.
+        let queued = deployment
+            .private_sealed_ingress()
+            .unwrap()
+            .next_pending()
+            .unwrap()
+            .expect("the submitted book is on the queue");
+        assert_eq!(queued.session_seed, seed);
+        assert_eq!(queued.book.sealed_bids().to_vec(), ingress_bids());
+        assert_eq!(queued.blinding, Some([0x0011_57F1; 8]));
 
         // A queued submission is NOT a settlement. Nothing has cleared, and the
         // executor board is untouched by the mere act of accepting a book.
@@ -1537,6 +1569,34 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(25));
         }
+
+        // ⚑ WHAT AN IDLE TICK COSTS — measured, because the adjective was wrong.
+        //
+        // The queue is drained now and the loop keeps running. It does NOT prove
+        // over an empty queue: `settle_pending_ingress` calls `next_pending()`
+        // FIRST and `break`s on `None`, so the mint is behind a record that has
+        // to exist. An idle tick is a `File::open` + `fstat` + a 48-byte cursor
+        // read, twice, plus a bounded live-registry scan — not a `HidingFriPcs`
+        // mint. Asserted as a SHAPE rather than a duration, so it cannot flake:
+        // ticks must ADVANCE while settlements and appends must NOT.
+        let idle_from = supervisor.health();
+        thread::sleep(Duration::from_millis(250));
+        let idle_to = supervisor.health();
+        assert!(
+            idle_to.ticks > idle_from.ticks,
+            "the idle measurement needs a loop that is still looping: {idle_from:?} -> {idle_to:?}"
+        );
+        assert_eq!(
+            (
+                idle_to.ingress_settled,
+                idle_to.source_appends,
+                idle_to.ingress_pending
+            ),
+            (idle_from.ingress_settled, idle_from.source_appends, 0),
+            "an idle tick over a drained queue must mint no proof and append nothing: \
+             {idle_from:?} -> {idle_to:?}"
+        );
+
         let health = supervisor.shutdown().unwrap();
         assert_eq!(health.ingress_settled, 1);
         assert_eq!(health.ingress_already_terminal, 0);
@@ -1659,12 +1719,62 @@ mod tests {
         // Not one of those five attempts left a durable trace.
         assert_eq!(ingress.pending().unwrap(), 0);
 
-        // And the type gate is the same one, so an in-family book still passes.
+        // THE SAME REFUSALS COME BACK THROUGH THE PRODUCTION SUBMITTER, BY THE
+        // QUEUE'S OWN NAME. The document reader deliberately does not gate — a
+        // second gate is a second opinion that drifts — so an out-of-family book
+        // parses cleanly and is refused by `submit`, and the operator reads the
+        // limit that was exceeded rather than a parse error about it.
+        drop(ingress);
+        for (document, expected) in [
+            (
+                format!("seed {seed}\nbid {INGRESS_WINNER}=4\n"),
+                "bid limit 4 is outside the proved price family 0..4",
+            ),
+            (
+                format!(
+                    "seed {seed}\n\
+                     bid {INGRESS_LOW_BIDDER}=0\n\
+                     bid {INGRESS_WINNER}=1\n\
+                     bid catalog-private-seller=2\n\
+                     bid {INGRESS_WINNER}=3\n"
+                ),
+                "4 sealed bids exceeds PROVEN_MAX_SEALED_BIDS = 3",
+            ),
+            (
+                format!("seed {seed}\nbid not-on-the-roster=3\n"),
+                "outside the deployment's immutable policy roster",
+            ),
+        ] {
+            let refused =
+                crate::private_bazaar_submit::submit_sealed_book_document(&deployment, &document);
+            let named = refused
+                .as_ref()
+                .expect_err("the production submitter must refuse")
+                .to_string();
+            assert!(
+                named.contains(expected),
+                "expected {expected:?}, got {named:?}"
+            );
+        }
         assert_eq!(
-            ingress.submit(seed, ingress_bids(), None).unwrap().sequence,
-            1
+            deployment
+                .private_sealed_ingress()
+                .unwrap()
+                .pending()
+                .unwrap(),
+            0,
+            "not one refused document may leave a durable trace"
         );
-        assert_eq!(ingress.pending().unwrap(), 1);
+
+        // And the type gate is the same one, so an in-family book still travels
+        // the production entry and lands on the queue.
+        let accepted = crate::private_bazaar_submit::submit_sealed_book_document(
+            &deployment,
+            &format!("seed {seed}\nbid {INGRESS_LOW_BIDDER}=2\nbid {INGRESS_WINNER}=3\n"),
+        )
+        .unwrap();
+        assert_eq!(accepted.submission.sequence, 1);
+        assert_eq!(accepted.pending, 1);
     }
 
     /// THE RESTART PATH KNOWS WHO BID — BECAUSE THE COMMITMENT BINDING DOES NOT.

@@ -11,6 +11,21 @@
 //! This is that missing half: a deployment-custodied, append-only, checksummed
 //! queue of sealed ingress books, drained by the production supervisor loop.
 //!
+//! # Who FILLS it — read this before trusting the paragraph above
+//!
+//! The paragraph above shipped on the day this file did and was only half true
+//! for the next stretch of the repo's life. The queue existed and the supervisor
+//! drained it, but nothing outside test code ever called [`Self::submit`]:
+//! measured 2026-07-28, **0 production callers and 11 test callers**, three of
+//! which reach it through [`Self::open_detached`], itself `#[cfg(test)]`. The
+//! serving process (`dreggnet-web/src/bin/dreggnet-web-server.rs:159`) polled a
+//! queue no deployed process could fill.
+//!
+//! The production filler is now [`crate::private_bazaar_submit`], shipped as the
+//! `dregg-private-bazaar-submit` binary: an operator-run local process that reads
+//! a sealed book from stdin and resolves the same `from_env` deployment — and
+//! therefore the same authority directory — the supervisor drains.
+//!
 //! # Where the scale gate lives
 //!
 //! [`PrivateSealedIngressBook::new`] is the gate, and it is a TYPE gate: the
@@ -264,6 +279,14 @@ impl PrivateBazaarSealedIngressQueue {
     }
 
     /// THE PRODUCTION INGRESS. Accept one sealed book for one hosted market.
+    ///
+    /// That name is a claim, so here is the caller that makes it true:
+    /// [`crate::private_bazaar_submit::submit_sealed_book`], shipped as the
+    /// `dregg-private-bazaar-submit` binary. Until 2026-07-28 there was none —
+    /// this method had 0 production and 11 test callers while the supervisor
+    /// mounted at `dreggnet-web/src/bin/dreggnet-web-server.rs:159` drained the
+    /// queue every tick. If that binary is ever deleted, this line is the one
+    /// that has to change with it.
     ///
     /// Refusal order is load-bearing and every step happens BEFORE anything is
     /// written: the proved-family gate, the handle width, then the deployment

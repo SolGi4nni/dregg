@@ -13,8 +13,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use dreggnet_market::private_clearing::PrivateSealedIngressBook;
-
 use crate::private_bazaar_ingress::{
     MAX_INGRESS_SETTLES_PER_TICK, PrivateBazaarIngressProgress, PrivateBazaarSealedIngressQueue,
 };
@@ -103,36 +101,24 @@ impl PrivateBazaarAuthenticatedReceiptSource {
         Ok(PrivateBazaarSourceCapture { observed, appended })
     }
 
-    /// PRODUCTION: mint the real private-book proof for one live hosted market,
-    /// then capture the receipt it authorized into this worker's durable spool.
-    ///
-    /// This is the one in-tree path from private ingress to the spool that ends
-    /// in real cryptography. `capture_once` alone can only ever observe what
-    /// something else already produced; before this method the producer existed
-    /// only in test code, so the deployed worker polled a source no production
-    /// caller could fill. The clearing is authorized by a verified Plonky3
-    /// `HidingFriPcs` proof of the Lean-emitted `N=4,K=4` descriptor, over a
-    /// book already gated to that proved shape — a refusal anywhere in the
-    /// relation, the binding, or the public joins leaves the spool untouched.
-    pub fn settle_and_capture(
-        &mut self,
-        seed: u64,
-        book: &PrivateSealedIngressBook,
-        new_commitment_blinding: Option<[u32; 8]>,
-    ) -> Result<PrivateBazaarSourceCapture, PrivateBazaarWorkerError> {
-        self.deployment
-            .settle_private_clearing_verified(seed, book, new_commitment_blinding)
-            .map_err(|error| PrivateBazaarWorkerError::PrivateClearingRefused(error.to_string()))?;
-        self.capture_once()
-    }
-
     /// PRODUCTION: drain the deployment's sealed-ingress queue.
     ///
-    /// This is the call that closes the loop. `capture_once` can only observe
-    /// receipts something else already produced, and until this method the only
-    /// thing that could produce one was a test. Each pending submission is
-    /// decoded — re-passing the proved-family type gate on the way out of the
-    /// durable record — and handed to the real relation.
+    /// THIS is the one in-tree path from private ingress to the spool that ends
+    /// in real cryptography, and it is the only one. `capture_once` can only
+    /// observe receipts something else already produced. Each pending submission
+    /// is decoded — re-passing the proved-family AND deployment-roster gates on
+    /// the way out of the durable record — and handed to the real relation: a
+    /// verified Plonky3 `HidingFriPcs` proof of the Lean-emitted `N=4,K=4`
+    /// descriptor, over a book already gated to that proved shape.
+    ///
+    /// ⚠ REMOVED 2026-07-28, and deliberately not replaced: `settle_and_capture`,
+    /// a public `settle_private_clearing_verified` + `capture_once` pair that took
+    /// a raw book. Its doc claimed exactly the role this method holds while never
+    /// touching ingress at all — so it cleared an auction leaving NO durable
+    /// record of who bid, and the commitment binding cannot recover that (it
+    /// digests `(side, qty, limit)`; a bidder identity is not in the relation).
+    /// A book that clears must be a book that was recorded. The two calls it
+    /// composed are both still public if an embedding genuinely wants them.
     ///
     /// Fail-closed, precisely:
     ///

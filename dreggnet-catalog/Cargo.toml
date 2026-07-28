@@ -46,6 +46,17 @@ private-fhegg-game-consequence = [
     "dep:dregg-persist",
 ]
 
+# THE PRODUCTION BID COLLECTOR. `PrivateBazaarSealedIngressQueue::submit` documented itself
+# "THE PRODUCTION INGRESS" while having 0 production callers and 11 test ones, and the supervisor
+# mounted by `dreggnet-web-server` polled that queue every tick. This binary is the caller: an
+# operator-run local process that reads a sealed book on STDIN (never argv — a limit is a secret and
+# argv is world-readable) and appends it to the same deployment authority directory the supervisor
+# drains. No FFI: submitting writes a durable record; the proving happens in the serving process.
+[[bin]]
+name = "dregg-private-bazaar-submit"
+path = "src/bin/dregg-private-bazaar-submit.rs"
+required-features = ["private-bazaar-live"]
+
 [dependencies]
 # The Offering trait + OfferingHost — the frontend-agnostic core this crate populates.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
@@ -101,9 +112,15 @@ dregg-app-framework = { path = "../app-framework", default-features = false }
 # the verified executor rather than against a stub.
 #
 # DEV-ONLY on purpose: the catalog itself must stay FFI-free for the frontend and
-# wasm targets that consume it, which is exactly why the SHIPPED binaries — not
-# this crate — are the ones that must install the gate. See the residual noted in
-# that test's module docs.
+# wasm targets that consume it, which is exactly why the SETTLING binary — not this
+# crate — is the one that must install the gate. `dreggnet-web-server` does
+# (`dreggnet-web/src/verified_settlement.rs:89`, and it exit(2)s if the verified
+# executor cannot decide), which is what closed the residual that used to be noted
+# in that test's module docs.
+#
+# The one binary this crate DOES ship, `dregg-private-bazaar-submit`, needs no gate
+# and stays FFI-free: submitting appends a durable record, and every proof is minted
+# by the supervisor in the serving process.
 dregg-exec-lean = { path = "../exec-lean" }
 tempfile = { workspace = true }
 # `tests/live_descent_day.rs` drives the live day binding against the SAME roots the Descent

@@ -7,9 +7,14 @@
 //! `circuit/descriptors/by-name/dark-bazaar-private-n4k4.json`). Every caller of
 //! it used to be test code, so the deployed worker polled a source that no
 //! production caller could fill. These tests drive the production producer —
-//! `PrivateBazaarLiveDeployment::settle_private_clearing_verified` and the
-//! worker's `PrivateBazaarAuthenticatedReceiptSource::settle_and_capture` — and
-//! pin its teeth.
+//! `PrivateBazaarLiveDeployment::settle_private_clearing_verified`, plus the
+//! worker's `capture_once` over its result — and pin its teeth.
+//!
+//! The SUBMISSION half is not exercised here; it is
+//! `dreggnet_catalog::private_bazaar_submit` (the `dregg-private-bazaar-submit`
+//! binary) into the durable sealed-ingress queue, and it is driven end to end
+//! through a real supervisor thread by `private_bazaar_live::tests::\
+//! the_deployed_supervisor_clears_a_submitted_sealed_book_end_to_end`.
 //!
 //! SCALE, stated plainly: the proved family is four committed order slots, four
 //! price buckets, four-bit quantities. One slot is always the synthetic
@@ -63,13 +68,22 @@ fn actor(name: &str) -> DreggIdentity {
 /// * the verified Lean distributed gate, without which `dregg-intent`'s ring
 ///   settlement fails closed and no proof-authorized SETTLE can land.
 ///
-/// RESIDUAL, and it is not this test's to fix: the three shipped binaries that
-/// mount `PrivateBazaarLiveDeployment::from_env()` — `dreggnet-web-server`,
-/// `dreggnet-telegram-bot`, `discord-bot` — install NO gate and do not even
-/// depend on `dregg-exec-lean`. So the production private clearing still cannot
-/// settle in a deployed process. This is the `drex_clear` regression class
-/// (see `exec-lean/tests/drex_clear_gate.rs`) on a second, product-facing path,
-/// and the fix is the same: the APP installs the gate at startup.
+/// ⚑ CLOSED, and re-measured at HEAD on 2026-07-28 — the paragraph that stood
+/// here said all three binaries mounting `PrivateBazaarLiveDeployment::from_env()`
+/// install NO gate, "so the production private clearing still cannot settle in a
+/// deployed process". That is no longer true of the only binary it could be true
+/// of. `dreggnet-web-server` is the ONE that starts a supervisor
+/// (`dreggnet-web/src/bin/dreggnet-web-server.rs:159`), and at `:111` it calls
+/// `dreggnet_web::install_verified_settlement_gate()` — which registers the real
+/// gate (`dreggnet-web/src/verified_settlement.rs:89`), runs a two-polarity probe,
+/// and `exit(2)`s the process if the verified executor cannot decide.
+/// `dreggnet-web/Cargo.toml:128` carries the `dregg-exec-lean` dependency
+/// outright.
+///
+/// The other two mount the deployment for its Enter-only offering and start no
+/// supervisor, so no clearing runs in them to be gated. A stale residual is worse
+/// than none: this one named a blocker that had been removed, on the exact path
+/// this file exists to certify.
 fn install_verified_test_pq_runtime() {
     dregg_exec_lean::register_distributed_gates();
     assert!(std::env::var_os("DREGG_ALLOW_UNAUDITED_PQ").is_none());
@@ -258,9 +272,12 @@ fn the_durable_spool_carries_a_real_settlement_receipt() {
     let mut source = deployment
         .private_authenticated_receipt_source()
         .expect("production authenticated source");
+    deployment
+        .settle_private_clearing_verified(seed, &in_family_book(), Some([17; 8]))
+        .expect("the real clearing is produced under a verified proof");
     let captured = source
-        .settle_and_capture(seed, &in_family_book(), Some([17; 8]))
-        .expect("the real clearing is produced AND reaches the durable spool");
+        .capture_once()
+        .expect("the real clearing reaches the durable spool");
     assert_eq!(captured.observed, 1);
     assert_eq!(
         captured.appended, 1,
