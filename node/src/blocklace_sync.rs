@@ -630,7 +630,15 @@ pub enum FinalizedBlock {
     /// A membership vote/proposal ready for constitution processing.
     Membership {
         block_id: BlockId,
-        creator: [u8; 32],
+        /// The proposer/voter's **ed25519 strand key** (`Block::ed25519`) — the
+        /// identity space `Constitution::participants` is keyed by, and the ONLY
+        /// one `ConstitutionManager::submit_vote`'s `is_participant` gate can
+        /// accept. Deliberately NOT `Block::creator`: that is the HYBRID
+        /// consensus id `H(ed25519 ‖ ml_dsa)`, which is never equal to any
+        /// constitution member, so handing it over refuses every vote silently.
+        /// Named for its space so the two can never be swapped by a reader
+        /// reaching for the nearest `creator` field.
+        creator_ed25519: [u8; 32],
         action: MembershipAction,
     },
     /// A checkpoint (no active processing needed at consensus level).
@@ -2162,7 +2170,16 @@ impl BlocklaceHandle {
                 Payload::MembershipVote { action } => {
                     finalized.push(FinalizedBlock::Membership {
                         block_id,
-                        creator: block.creator,
+                        // ⚑ `block.ed25519`, NOT `block.creator`. Membership is a
+                        // STRAND/economic act and the constitution's participant
+                        // set is keyed by the ed25519 strand key; `block.creator`
+                        // is the HYBRID consensus id `H(ed25519 ‖ ml_dsa)` and is
+                        // never a member, so passing it made
+                        // `record_vote`'s `is_participant` gate refuse EVERY vote
+                        // on the live path. `committee_replay::derive_from_lace`
+                        // has always passed `block.ed25519`; this is the live half
+                        // agreeing with the replay half.
+                        creator_ed25519: block.ed25519,
                         action: action.clone(),
                     });
                 }
@@ -4266,10 +4283,15 @@ async fn handle_push(
     // check tick. Acking only NON-Ack foreign blocks terminates the exchange
     // (acks do not beget acks), so n nodes acking one turn produce exactly the
     // n attestation blocks the 2f+1 quorum needs, not a storm.
+    // `b.ed25519`, not `b.creator`: `self_key` is this node's ed25519 verify key
+    // (`run_blocklace_sync_with_policy` derives it as `signing_key.verifying_key()`),
+    // while `Block::creator` is the HYBRID id — so the old comparison could never be
+    // false and "foreign" degenerated to "any non-Ack block", including our own
+    // echoed back by a peer.
     if outcome
         .inserted
         .iter()
-        .any(|b| b.creator != handle.self_key && b.payload != Payload::Ack)
+        .any(|b| b.ed25519 != handle.self_key && b.payload != Payload::Ack)
     {
         handle
             .ack_pending
@@ -5354,11 +5376,17 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                     }
                     FinalizedBlock::Membership {
                         block_id,
-                        creator,
+                        creator_ed25519,
                         action,
                     } => {
-                        execute_finalized_membership(&state, &handle, *block_id, *creator, action)
-                            .await;
+                        execute_finalized_membership(
+                            &state,
+                            &handle,
+                            *block_id,
+                            *creator_ed25519,
+                            action,
+                        )
+                        .await;
                         None
                     }
                     FinalizedBlock::Checkpoint {
@@ -5472,23 +5500,34 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
             // ── Record Participant Activity ──────────────────────────────────
             // Track which participants produced blocks in this batch so that
             // the timeout mechanism knows they are still alive.
+            //
+            // ⚑ ED25519, NOT `Block::creator`. `ConstitutionManager::record_activity`
+            // writes `last_active_wave`, which `check_timeouts` reads back keyed by
+            // `constitution.current.participants` — the ed25519 strand keys. Feeding it
+            // the HYBRID id inserted rows under keys no participant ever has, so every
+            // participant's `last_active_wave` stayed at its wave-0 initialisation and
+            // the timeout mechanism could only ever count UP. Same mismatch as the vote
+            // path, one loop away.
             {
-                // Collect all block creators from this batch.
+                // Collect all block creators from this batch, in the ed25519
+                // strand-key space the constitution is keyed by.
                 let lace = handle.lace.read().await;
                 let mut active_creators: Vec<[u8; 32]> = Vec::new();
                 for block in &acknowledged_blocks {
                     match block {
-                        FinalizedBlock::Membership { creator, .. } => {
-                            active_creators.push(*creator);
+                        FinalizedBlock::Membership {
+                            creator_ed25519, ..
+                        } => {
+                            active_creators.push(*creator_ed25519);
                         }
                         FinalizedBlock::Turn { block_id, .. } => {
                             if let Some(b) = lace.get(block_id) {
-                                active_creators.push(b.creator);
+                                active_creators.push(b.ed25519);
                             }
                         }
                         FinalizedBlock::Checkpoint { block_id, .. } => {
                             if let Some(b) = lace.get(block_id) {
-                                active_creators.push(b.creator);
+                                active_creators.push(b.ed25519);
                             }
                         }
                         FinalizedBlock::Inert { .. } => {}
@@ -13427,6 +13466,357 @@ mod tests {
         );
     }
 
+    // ─── GOVERNANCE: the voter identity the live path hands the constitution ──────
+
+    /// A cross-linked finality lace over `members` where round `r`'s block from member
+    /// `i` carries `payloads[r][i]` if present, else `Payload::Ack`. Every round
+    /// references ALL of the previous round (the shape `tau` super-ratifies).
+    fn cross_linked_lace_with(
+        members: &[ed25519_dalek::SigningKey],
+        quorum: usize,
+        rounds: u64,
+        payloads: &[(u64, usize, Payload)],
+    ) -> (Blocklace, HashMap<(u64, usize), BlockId>) {
+        let mut lace = Blocklace::new(members[0].clone(), quorum);
+        let mut ids: HashMap<(u64, usize), BlockId> = HashMap::new();
+        let mut round_prev: Vec<BlockId> = Vec::new();
+        for round in 0..rounds {
+            let mut this_round = Vec::new();
+            for (i, k) in members.iter().enumerate() {
+                let payload = payloads
+                    .iter()
+                    .find(|(r, m, _)| *r == round && *m == i)
+                    .map(|(_, _, p)| p.clone())
+                    .unwrap_or(Payload::Ack);
+                let b = Block::new(k, round, payload, round_prev.clone());
+                let id = b.id();
+                ids.insert((round, i), id);
+                this_round.push(id);
+                lace.receive_block(b).expect("block insert");
+            }
+            round_prev = this_round;
+        }
+        (lace, ids)
+    }
+
+    /// ⚑ **THE GOVERNANCE TOOTH: a membership vote that actually COUNTS, through the
+    /// live poll — and a stranger's that does not, in the same process.**
+    ///
+    /// THE WOUND. `poll_finalized_blocks` built `FinalizedBlock::Membership` with
+    /// `creator: block.creator` — the HYBRID consensus id `H(ed25519 ‖ ml_dsa)` — and
+    /// `execute_finalized_membership` handed that straight to
+    /// `ConstitutionManager::submit_vote`, whose `VoteTracker::record_vote` opens with
+    /// `if !constitution.is_participant(&voter) { return … }` over a participant set
+    /// keyed by **ed25519**. A hybrid id is a BLAKE3 commitment and is never equal to a
+    /// member's ed25519 key, so the gate refused unconditionally: **no membership vote
+    /// submitted through the live path had ever counted.** Every join, leave, threshold
+    /// amendment and route amendment was silently inert. The pure twin
+    /// `committee_replay::fold_membership_block` was fed `block.ed25519` and was right.
+    ///
+    /// WHY ED25519 IS THE RIGHT KEYING and not the convenient one. The hybrid id is a
+    /// ONE-WAY commitment. `project_committed_participants` maps ed25519 → hybrid using
+    /// committed state, and that is the direction consensus needs; the inverse does not
+    /// exist. A hybrid-keyed constitution could not produce the ed25519 keys
+    /// `apply_committee_change` requires — it re-derives each member's hybrid id for
+    /// `enroll_pq` from `(ed25519, ml_dsa)`, hands the ed25519 set to
+    /// `VoteCollector::reconfigure`, and hashes each ed25519 for the gossip `NodeId`.
+    /// `MembershipAction::Join` likewise carries an ed25519 `node_id`. Governance is
+    /// keyed by the strand; finality is keyed by a projection OF the strand, and the two
+    /// keyings are correct precisely because they differ.
+    ///
+    /// BOTH POLES, IN ONE PROCESS, because a path that has never worked grows tests
+    /// shaped around it not working:
+    ///   * PHASE 1 — A proposes Join(D) and B approves. Two CURRENT participants' votes
+    ///     must COUNT (approvals == 2) while the proposal correctly does NOT yet apply
+    ///     (quorum for n=3 is 3). This is the pole the wound erased: pre-fix, approvals
+    ///     was 0 and D would never be admitted no matter how many honest validators voted.
+    ///   * PHASE 2 — a STRANGER (not a participant) casts Approve on the same proposal.
+    ///     Approvals must stay 2 and the proposal must stay unapplied.
+    ///   * PHASE 3 — C, the third CURRENT participant, approves. Quorum is reached, the
+    ///     proposal APPLIES, and it TAKES EFFECT: D is a participant, the constitution
+    ///     version advances, the threshold recomputes, and the LIVE committee advances
+    ///     (`VoteCollector::is_committee_member(D)`) — not merely "submit_vote returned Ok".
+    #[tokio::test]
+    async fn membership_vote_counts_through_the_live_poll_and_a_strangers_is_refused() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // A, B, C = the genesis committee. D = the validator being admitted.
+        // The stranger is not in the committee and never becomes one.
+        let members: Vec<ed25519_dalek::SigningKey> = [[0x71u8; 32], [0x72u8; 32], [0x73u8; 32]]
+            .iter()
+            .map(ed25519_dalek::SigningKey::from_bytes)
+            .collect();
+        let d = ed25519_dalek::SigningKey::from_bytes(&[0x74u8; 32]);
+        let stranger = ed25519_dalek::SigningKey::from_bytes(&[0x7Fu8; 32]);
+        let eds: Vec<[u8; 32]> = members
+            .iter()
+            .map(|k| k.verifying_key().to_bytes())
+            .collect();
+        let ed_d = d.verifying_key().to_bytes();
+        let ed_stranger = stranger.verifying_key().to_bytes();
+
+        // D's ML-DSA half IS committed, so the post-join projection covers the whole
+        // amended committee and the "took effect" pole is about governance rather than
+        // about a missing key.
+        let mut roster = members.clone();
+        roster.push(d.clone());
+        let (_tmp, state) = committed_state_for(&roster).await;
+
+        let handle = test_handle_with_committee(eds[0], eds.clone()).await;
+        let quorum = dregg_blocklace::supermajority_threshold(members.len());
+        assert_eq!(
+            quorum, 3,
+            "n=3 supermajority is 3 — the fixture's quorum arithmetic"
+        );
+
+        // Round 1: A proposes Join(D). Round 2: B approves. Later rounds are Acks that
+        // super-ratify the wave carrying them. C's approval is cast in PHASE 3.
+        let (lace, ids) = {
+            // Two passes: the Approve payload must name the Join block's id, which is
+            // only known after the Join block exists. Build the Join-only lace first to
+            // learn the id, then rebuild the whole lace with both payloads.
+            let (probe, probe_ids) = cross_linked_lace_with(
+                &members,
+                quorum,
+                2,
+                &[(
+                    1,
+                    0,
+                    Payload::MembershipVote {
+                        action: MembershipAction::Join { node_id: ed_d },
+                    },
+                )],
+            );
+            let _ = probe;
+            let join_id = probe_ids[&(1, 0)];
+            cross_linked_lace_with(
+                &members,
+                quorum,
+                6,
+                &[
+                    (
+                        1,
+                        0,
+                        Payload::MembershipVote {
+                            action: MembershipAction::Join { node_id: ed_d },
+                        },
+                    ),
+                    (
+                        2,
+                        1,
+                        Payload::MembershipVote {
+                            action: MembershipAction::Approve {
+                                proposal_block: join_id,
+                            },
+                        },
+                    ),
+                ],
+            )
+        };
+        let join_block = ids[&(1, 0)];
+        *handle.lace.write().await = lace;
+
+        // ── ANTI-VACUITY 1: D is NOT a member, and the stranger is NOT a member.
+        {
+            let c = handle.constitution.read().await;
+            assert!(
+                !c.current.is_participant(&ed_d),
+                "D must start outside the committee"
+            );
+            assert!(
+                !c.current.is_participant(&ed_stranger),
+                "the stranger must start outside the committee — else PHASE 2 refuses nothing"
+            );
+            assert_eq!(c.current.participant_count(), 3);
+            assert_eq!(c.threshold(), 3);
+            assert_eq!(c.version(), 0);
+        }
+
+        // ── ANTI-VACUITY 2 (THE WOUND, EXECUTED — no mutation required). Replay the
+        //    SAME two votes into a scratch manager over the SAME committee using the
+        //    HYBRID ids the shipped code passed. Zero approvals. This is the permanent
+        //    in-tree witness that the identity space is load-bearing: if the two spaces
+        //    ever coincided, this assertion would fail and the test below would be
+        //    asserting nothing.
+        {
+            use dregg_blocklace::constitution::{
+                Constitution, ConstitutionManager, MembershipProposal, MembershipVote,
+            };
+            let mut scratch = ConstitutionManager::new(Constitution::new(eds.clone(), 60_000));
+            scratch.submit_proposal(
+                join_block,
+                MembershipProposal::Join {
+                    node_key: ed_d,
+                    justification: vec![],
+                },
+            );
+            let v = MembershipVote {
+                proposal_block: join_block,
+                approve: true,
+            };
+            scratch.submit_vote(&v, Block::hybrid_id(&members[0]));
+            scratch.submit_vote(&v, Block::hybrid_id(&members[1]));
+            assert_eq!(
+                scratch.votes.approval_count(&join_block),
+                0,
+                "the HYBRID id must be refused by `is_participant` over an ed25519-keyed \
+                 committee — this is the wound the live path shipped. A non-zero count here \
+                 means the two identity spaces coincide in this fixture and the test below \
+                 proves nothing."
+            );
+        }
+
+        // ── PHASE 1: THE REAL POLL, over the REAL handle, then the executor's own
+        //    dispatch loop — the exact call `poll_finalized_blocks` feeds the executor.
+        let finalized = handle.poll_finalized_blocks(&state).await;
+        let membership: Vec<(BlockId, [u8; 32], MembershipAction)> = finalized
+            .iter()
+            .filter_map(|b| match b {
+                FinalizedBlock::Membership {
+                    block_id,
+                    creator_ed25519,
+                    action,
+                } => Some((*block_id, *creator_ed25519, action.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            membership.len(),
+            2,
+            "both the Join proposal and B's Approve must reach finality — else there is no \
+             vote for the constitution to count. Finalized {} block(s) total.",
+            finalized.len()
+        );
+        assert!(
+            matches!(membership[0].2, MembershipAction::Join { .. }),
+            "the proposal must be ordered BEFORE the vote that references it — got {:?}",
+            membership[0].2
+        );
+        for (block_id, creator_ed25519, action) in &membership {
+            execute_finalized_membership(&state, &handle, *block_id, *creator_ed25519, action)
+                .await;
+        }
+
+        let snap = handle.membership_snapshot().await;
+        let status = snap
+            .proposals
+            .iter()
+            .find(|p| p.proposal_block == join_block)
+            .expect("the Join proposal is registered on the live node");
+        assert_eq!(
+            status.approvals, 2,
+            "TWO CURRENT PARTICIPANTS' VOTES MUST COUNT (A's implicit proposer self-vote and \
+             B's Approve). This is the assertion the dead path could never satisfy: with the \
+             hybrid id the count was 0 and no quorum was reachable at any committee size."
+        );
+        assert!(
+            !status.applied,
+            "2 of a required 3 must NOT apply — a vote counting is not a vote passing"
+        );
+        assert_eq!(status.required, 3);
+        assert!(
+            !handle
+                .constitution
+                .read()
+                .await
+                .current
+                .is_participant(&ed_d),
+            "D must not be admitted under quorum"
+        );
+
+        // ── PHASE 2: THE REFUSAL POLE. A stranger casts the identical Approve through
+        //    the identical entry point. The tally must not move.
+        execute_finalized_membership(
+            &state,
+            &handle,
+            BlockId([0xEE; 32]),
+            ed_stranger,
+            &MembershipAction::Approve {
+                proposal_block: join_block,
+            },
+        )
+        .await;
+        let snap = handle.membership_snapshot().await;
+        let status = snap
+            .proposals
+            .iter()
+            .find(|p| p.proposal_block == join_block)
+            .expect("the proposal is still registered");
+        assert_eq!(
+            status.approvals, 2,
+            "a NON-PARTICIPANT's approval must be refused by `Constitution::is_participant` — \
+             the tally must be unchanged at 2"
+        );
+        assert!(
+            !status.applied,
+            "a stranger's vote must not carry a proposal to quorum"
+        );
+        assert!(
+            !handle
+                .constitution
+                .read()
+                .await
+                .current
+                .is_participant(&ed_d),
+            "D must still not be admitted after a stranger's vote"
+        );
+
+        // ── PHASE 3: C, the third CURRENT participant, approves. Quorum → the proposal
+        //    APPLIES and TAKES EFFECT.
+        execute_finalized_membership(
+            &state,
+            &handle,
+            BlockId([0xCC; 32]),
+            eds[2],
+            &MembershipAction::Approve {
+                proposal_block: join_block,
+            },
+        )
+        .await;
+
+        {
+            let c = handle.constitution.read().await;
+            assert!(
+                c.current.is_participant(&ed_d),
+                "QUORUM REACHED AND THE PROPOSAL MUST TAKE EFFECT: D is not in the committee. \
+                 Participants: {}",
+                c.current.participant_count()
+            );
+            assert_eq!(c.current.participant_count(), 4, "the committee grew to 4");
+            assert_eq!(c.version(), 1, "the constitution version advanced");
+            assert_eq!(
+                c.threshold(),
+                dregg_blocklace::supermajority_threshold(4),
+                "the threshold recomputed for the amended committee"
+            );
+            assert!(
+                !c.current.is_participant(&ed_stranger),
+                "the stranger must STILL not be a member — nothing about quorum admits them"
+            );
+        }
+        // THE LIVE EFFECT, not just the record: `apply_passed_proposal` →
+        // `apply_committee_change` advanced the finalization-vote committee, so D's
+        // signed finalization votes count from here.
+        {
+            let votes = handle.votes.read().await;
+            assert!(
+                votes.is_committee_member(&ed_d),
+                "the LIVE consensus committee must have advanced — D's finalization votes \
+                 must count. A constitution that amends without advancing the committee is a \
+                 record, not an effect."
+            );
+            assert!(
+                !votes.is_committee_member(&ed_stranger),
+                "the stranger must not have been admitted to the live committee"
+            );
+            assert_eq!(
+                votes.quorum_threshold(),
+                dregg_blocklace::supermajority_threshold(4),
+                "the live quorum threshold followed the amended committee"
+            );
+        }
+    }
+
     /// The solo enrolled-creator set, in quadrants — so a future widening is a visible diff and not
     /// a quiet boolean flip. Invariant/gate sweeps cannot evaluate this predicate; these four lines
     /// are the complement that catches a `solo_enrolled_creators -> everything` mutant.
@@ -14499,11 +14889,36 @@ pub struct MembershipSnapshot {
 ///
 /// In devnet mode (`auto_approve_joins`), existing nodes automatically cast
 /// approval votes for incoming Join proposals.
+///
+/// ⚑ `creator_ed25519` IS THE ED25519 STRAND KEY, and that is load-bearing, not a
+/// naming preference. `Constitution::participants` holds ed25519 keys —
+/// `run_blocklace_sync_with_policy` seeds it from `signing_key.verifying_key()` /
+/// `known_federation_keys`, `MembershipAction::Join` carries an ed25519 `node_id`,
+/// and `apply_committee_change` consumes the amended set as ed25519 (it re-derives
+/// each member's hybrid id for `enroll_pq` and hashes each key for the gossip
+/// `NodeId`). `VoteTracker::record_vote` therefore gates on
+/// `Constitution::is_participant(&voter)` in the ed25519 space.
+///
+/// This function used to be handed `Block::creator`, the HYBRID consensus id
+/// `H(ed25519 ‖ ml_dsa)`. A hybrid id is a BLAKE3 commitment and is never equal to
+/// any ed25519 member key, so `is_participant` refused unconditionally: **no
+/// membership vote submitted through the live path had ever counted.** Joins,
+/// leaves, threshold amendments and route amendments were all silently inert; the
+/// pure twin `committee_replay::derive_from_lace` passed `block.ed25519` and was
+/// right all along.
+///
+/// The two keyings do NOT need to agree, and unifying them on the hybrid id would
+/// be WRONG: the projection is one-way. `project_committed_participants` maps
+/// ed25519 → hybrid using committed state, but a hybrid id is a hash and cannot be
+/// inverted, so a hybrid-keyed constitution could not produce the ed25519 keys
+/// `apply_committee_change`, `pq_committee_for_participants` and the gossip mesh
+/// all require. Governance is keyed by the strand; finality is keyed by the
+/// projection of the strand.
 async fn execute_finalized_membership(
     state: &NodeState,
     handle: &BlocklaceHandle,
     block_id: BlockId,
-    creator: [u8; 32],
+    creator_ed25519: [u8; 32],
     action: &MembershipAction,
 ) {
     match action {
@@ -14522,10 +14937,13 @@ async fn execute_finalized_membership(
                 proposal_block: block_id,
                 approve: true,
             };
-            let passed = constitution.submit_vote(&self_vote, creator);
+            let passed = constitution.submit_vote(&self_vote, creator_ed25519);
             drop(constitution);
 
-            let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+            let creator_hex: String = creator_ed25519[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             info!(
                 block_id = %block_id,
                 proposer = %creator_hex,
@@ -14569,7 +14987,7 @@ async fn execute_finalized_membership(
                 proposal_block: block_id,
                 approve: true,
             };
-            let passed = constitution.submit_vote(&self_vote, creator);
+            let passed = constitution.submit_vote(&self_vote, creator_ed25519);
             drop(constitution);
 
             let node_hex: String = node_id[..4].iter().map(|b| format!("{b:02x}")).collect();
@@ -14592,10 +15010,13 @@ async fn execute_finalized_membership(
             };
 
             let mut constitution = handle.constitution.write().await;
-            let passed = constitution.submit_vote(&vote, creator);
+            let passed = constitution.submit_vote(&vote, creator_ed25519);
             drop(constitution);
 
-            let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+            let creator_hex: String = creator_ed25519[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             debug!(
                 block_id = %block_id,
                 voter = %creator_hex,
@@ -14616,10 +15037,13 @@ async fn execute_finalized_membership(
             };
 
             let mut constitution = handle.constitution.write().await;
-            constitution.submit_vote(&vote, creator);
+            constitution.submit_vote(&vote, creator_ed25519);
             drop(constitution);
 
-            let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+            let creator_hex: String = creator_ed25519[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             debug!(
                 block_id = %block_id,
                 voter = %creator_hex,

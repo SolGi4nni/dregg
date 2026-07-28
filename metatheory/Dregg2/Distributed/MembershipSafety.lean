@@ -466,15 +466,40 @@ theorem autoEvict_threshold (c : Constitution) (k : AuthorId)
     (autoEvict c k).1.threshold = computeThreshold (autoEvict c k).1.participants.length := by
   simp only [autoEvict, hmem, if_true]
 
-/-! ## 9. THE FINALITY/EXECUTOR CONNECTION — the participant set IS what `tau` round-robins over.
+/-! ## 9. THE FINALITY/EXECUTOR CONNECTION — the participant set is what `tau` round-robins over,
+UP TO THE IDENTITY PROJECTION THE NODE APPLIES.
 
-The constitution's per-version participant set is exactly the `participants : List AuthorId` that
+The constitution's per-version participant set is the `participants : List AuthorId` that
 `BlocklaceFinality.waveLeader` round-robins its leader over and `superMajority` counts ratifiers
 against. So a membership change is not free-floating governance: it RE-PARAMETERIZES the finality
-rule that drives the verified executor (`ConsensusExec.executeFinalized`). -/
+rule that drives the verified executor (`ConsensusExec.executeFinalized`).
+
+⚑ THE CARDINALITY IS SHARED; THE KEY BYTES ARE NOT, AND THIS SECTION USED TO CLAIM OTHERWISE.
+`AuthorId` is ABSTRACT here, so nothing below depends on which key space the ids live in — that is
+why the rule needed no change when the deployed identity split. But in the node the two roles hold
+DIFFERENT BYTES for the same member:
+
+  * `constitution.rs::Constitution.participants` is keyed by the **ed25519 strand key**
+    (`blocklace_sync.rs` seeds it from `signing_key.verifying_key()`; `MembershipAction::Join`
+    carries an ed25519 `node_id`; `apply_committee_change` consumes ed25519 for `enroll_pq`,
+    `VoteCollector::reconfigure` and the gossip `NodeId`).
+  * `ordering.rs::tau` / `BlocklaceFinality.waveLeader` are handed the **hybrid consensus id**
+    `H(ed25519 ‖ ml_dsa)` (`Block::creator`), produced by
+    `blocklace_sync.rs::project_committed_participants` from committed state.
+
+So the deployed relation is `tauParticipants = map project constitutionParticipants`, an INJECTIVE
+one-way map — `project` is a BLAKE3 commitment, so the inverse does not exist and the constitution
+cannot be re-keyed to the hybrid side. The theorem below therefore says exactly two things, and its
+first conjunct is `rfl`: within this model the list is literally reused, and `map` of an injective
+function preserves LENGTH, which is all `superMajority` and `waveLeader`'s `wave % len` read. It
+does NOT say the deployed byte strings coincide. Confusing those two readings is what let
+`blocklace_sync.rs::poll_finalized_blocks` hand the HYBRID id to `ConstitutionManager::submit_vote`
+for eighteen days, where `is_participant` refused every vote in silence. -/
 
 /-- The participant set the finality model consumes (`BlocklaceFinality.waveLeader …` /
-`findAllFinalLeaders … participants …`). The constitution's `participants` IS this list. -/
+`findAllFinalLeaders … participants …`). In this model it is literally the constitution's
+`participants`; in the node it is that list under the ed25519 → hybrid projection (see §9's
+banner) — same length and same order, different bytes. -/
 def Constitution.asWaveParticipants (c : Constitution) : List AuthorId := c.participants
 
 /-- **`membership_change_reparameterizes_finality` (the connection).** After an applied
@@ -482,7 +507,12 @@ Join / Leave, the participant list that `BlocklaceFinality` round-robins `waveLe
 exactly the constitution's NEW participant set, AND the supermajority finality counts against equals
 the constitution's recomputed threshold (`computeThreshold_eq_superMajority`, given `n > 0`). So the
 amendment correctly re-parameterizes the finality rule that feeds the verified executor — the
-membership tower and the finality tower TOUCH at the participant set + threshold. -/
+membership tower and the finality tower TOUCH at the participant set + threshold.
+
+⚑ HONEST STRENGTH: the first conjunct is `rfl` (`asWaveParticipants` is definitionally
+`participants`), so the CONTENT of this theorem is the second — the recomputed threshold IS the
+supermajority of the re-parameterized set. Read §9's banner before citing the first conjunct as a
+statement about the deployed identity spaces; it is not one. -/
 theorem membership_change_reparameterizes_finality (c : Constitution) (k : AuthorId)
     (hmem : c.participants.contains k = true)
     (hpos : 0 < (applyProposal c (.leave k)).1.participants.length) :

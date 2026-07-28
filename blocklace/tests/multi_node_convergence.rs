@@ -65,9 +65,25 @@ fn key(seed: u8) -> SigningKey {
 }
 
 fn pubkey(sk: &SigningKey) -> [u8; 32] {
-    // The identity LABEL is now the HYBRID id (== `Block::creator`), so tau
+    // The CONSENSUS identity label is the HYBRID id (== `Block::creator`), so tau
     // participants match the creators the finality blocks actually carry.
     Block::hybrid_id(sk)
+}
+
+/// The **ed25519 strand key** — the space `Constitution::participants` is keyed by
+/// (`blocklace_sync` seeds it from `signing_key.verifying_key()`, and
+/// `MembershipAction::Join` carries an ed25519 `node_id`).
+///
+/// ⚑ THIS FIXTURE USED TO COLLAPSE THE TWO SPACES, and the collapse is what made its
+/// eviction assertion green. `40a331b35` ("sweepup missed files") flipped `pubkey` to
+/// `Block::hybrid_id` so tau's leader election matched the block creators — and the
+/// same value was then handed to `Constitution::new`, so the constitution here was
+/// HYBRID-keyed and `auto_evict` matched. The real node's constitution is ED25519-keyed,
+/// so on the live path the same call matched nothing and evicted no one, for eighteen
+/// days, invisibly. A fixture that holds one key where the node holds two cannot witness
+/// an identity-space gate; this one now holds both, as the node does.
+fn strand_key(sk: &SigningKey) -> [u8; 32] {
+    sk.verifying_key().to_bytes()
 }
 
 /// One in-process node: a finality blocklace (the live consensus state) plus the
@@ -80,13 +96,17 @@ struct Node {
 }
 
 impl Node {
-    fn new(name: &'static str, sk: SigningKey, participants: Vec<[u8; 32]>) -> Self {
-        let quorum = if participants.len() <= 1 {
+    /// `committee` is the genesis validator set as SIGNING KEYS, so this constructor
+    /// derives BOTH identity spaces the way the node does: the hybrid ids tau orders
+    /// over, and the ed25519 strand keys the constitution is keyed by.
+    fn new(name: &'static str, sk: SigningKey, committee: &[&SigningKey]) -> Self {
+        let quorum = if committee.len() <= 1 {
             1
         } else {
-            (participants.len() * 2 / 3) + 1
+            (committee.len() * 2 / 3) + 1
         };
-        let constitution = Constitution::new(participants.clone(), 0);
+        let strands: Vec<[u8; 32]> = committee.iter().map(|k| strand_key(k)).collect();
+        let constitution = Constitution::new(strands, 0);
         Node {
             name,
             lace: Blocklace::new(sk, quorum),
@@ -231,9 +251,10 @@ fn three_nodes_partition_heal_equivocate_converge() {
     let pk_c = pubkey(&sk_c);
     let participants = vec![pk_a, pk_b, pk_c];
 
-    let mut node_a = Node::new("A", sk_a.clone(), participants.clone());
-    let mut node_b = Node::new("B", sk_b.clone(), participants.clone());
-    let mut node_c = Node::new("C", sk_c.clone(), participants.clone());
+    let committee: [&SigningKey; 3] = [&sk_a, &sk_b, &sk_c];
+    let mut node_a = Node::new("A", sk_a.clone(), &committee);
+    let mut node_b = Node::new("B", sk_b.clone(), &committee);
+    let mut node_c = Node::new("C", sk_c.clone(), &committee);
 
     // ── Phase 1: pre-partition — 4 round-synchronous rounds, fully shared ──
     // Every node ends up with the identical pre-partition DAG.
@@ -379,17 +400,38 @@ fn three_nodes_partition_heal_equivocate_converge() {
     assert!(node_a.lace.contains(&fork_left.id()) && node_a.lace.contains(&fork_right.id()));
 
     // EXCLUSION (membership): the equivocator is auto-evicted from the constitution.
+    //
+    // ⚑ Queried in the ED25519 STRAND space, which is what the node's constitution is
+    // keyed by — `pk_c` (the hybrid consensus id) is never a member of it, so asking
+    // `is_participant(&pk_c)` would be trivially false and would assert NOTHING about
+    // whether the eviction fired. That trivial-false shape is exactly how this
+    // assertion survived `auto_evict` being dead on the live path.
+    let strand_c = strand_key(&sk_c);
     assert!(
-        !node_a.constitution.current.is_participant(&pk_c),
+        !node_a.constitution.current.is_participant(&strand_c),
         "A auto-evicts equivocator C from the constitution"
     );
     assert!(
-        !node_b.constitution.current.is_participant(&pk_c),
+        !node_b.constitution.current.is_participant(&strand_c),
         "B auto-evicts equivocator C from the constitution"
     );
-    // Honest A and B remain participants.
-    assert!(node_a.constitution.current.is_participant(&pk_a));
-    assert!(node_a.constitution.current.is_participant(&pk_b));
+    // Honest A and B remain participants — the ANTI-VACUITY half: a constitution the
+    // query space simply misses would report every key absent, including these two.
+    assert!(
+        node_a
+            .constitution
+            .current
+            .is_participant(&strand_key(&sk_a)),
+        "honest A must STILL be a participant — if this fails, the eviction assertions \
+         above are passing because the query space is wrong, not because C was evicted"
+    );
+    assert!(
+        node_a
+            .constitution
+            .current
+            .is_participant(&strand_key(&sk_b)),
+        "honest B must STILL be a participant (same anti-vacuity guard)"
+    );
 
     // EXCLUSION (finalized order): no forked block from C at the fork seq anchors
     // anything, and the two honest nodes STILL agree with each other (safety
@@ -434,8 +476,9 @@ fn late_joiner_catches_up_to_identical_finalized_state() {
     let dag = build_rounds(&[&sk_a, &sk_b, &sk_c], 4);
     let history = flatten(&dag);
 
-    let mut node_a = Node::new("A", sk_a.clone(), participants.clone());
-    let mut node_b = Node::new("B", sk_b.clone(), participants.clone());
+    let committee: [&SigningKey; 3] = [&sk_a, &sk_b, &sk_c];
+    let mut node_a = Node::new("A", sk_a.clone(), &committee);
+    let mut node_b = Node::new("B", sk_b.clone(), &committee);
     node_a.merge(history.clone()).unwrap();
     node_b.merge(history.clone()).unwrap();
 
@@ -443,7 +486,7 @@ fn late_joiner_catches_up_to_identical_finalized_state() {
     // the full history — delivered REVERSED to stress the engine's topological
     // ordering in `merge`.
     let sk_d = key(13);
-    let mut node_d = Node::new("D", sk_d, participants.clone());
+    let mut node_d = Node::new("D", sk_d, &[&sk_a, &sk_b, &sk_c]);
     let mut reversed = history.clone();
     reversed.reverse();
     node_d.merge(reversed).unwrap();
@@ -480,7 +523,7 @@ fn redundant_reordered_delivery_is_inert() {
     let history = flatten(&dag);
 
     let sk_d = key(23);
-    let mut node_d = Node::new("D", sk_d, participants.clone());
+    let mut node_d = Node::new("D", sk_d, &[&sk_a, &sk_b, &sk_c]);
     node_d.merge(history.clone()).unwrap();
     let keyset_once = node_d.keyset();
     let fin_once = node_d.finalized(&participants);

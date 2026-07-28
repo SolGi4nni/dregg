@@ -351,9 +351,39 @@ pub enum FinalityLevel {
 /// Proof that a creator equivocated (produced conflicting blocks).
 #[derive(Clone, Debug)]
 pub struct EquivocationProof {
+    /// The equivocator's HYBRID consensus id (`Block::creator`) — the label the
+    /// lace's `equivocators` set, `tips` map and PQ roster are keyed by. It is
+    /// NOT a constitution participant key; see [`Self::equivocator_ed25519`].
     pub creator: [u8; 32],
     pub block_a: Block,
     pub block_b: Block,
+}
+
+impl EquivocationProof {
+    /// The equivocator's **ed25519 strand key** — the identity space
+    /// `constitution::Constitution::participants` is keyed by, and therefore the
+    /// only one `auto_evict_equivocator` can match a member against.
+    ///
+    /// [`Self::creator`] is the hybrid id `H(ed25519 ‖ ml_dsa)`, a BLAKE3
+    /// commitment that is never equal to any ed25519 member key. Matching a
+    /// constitution member against it made auto-eviction unconditionally
+    /// fail-closed-dead: a proven equivocator was never removed from the
+    /// committee on the live path (`blocklace_sync::handle_push`).
+    ///
+    /// FAIL-CLOSED on disagreement. Both exhibits are same-`creator` by
+    /// construction (`detect_equivocation` groups on it), and under
+    /// [`Block::verify_hybrid`] an equal `creator` forces an equal `ed25519`
+    /// (the id commits to both halves). So a disagreement here means at least
+    /// one exhibit was never authenticated — the `from_checkpoint_trusted`
+    /// restore path re-inserts blocks with no signature check — and no strand
+    /// can be soundly named. `None` evicts nobody rather than guessing.
+    pub fn equivocator_ed25519(&self) -> Option<[u8; 32]> {
+        if self.block_a.ed25519 == self.block_b.ed25519 {
+            Some(self.block_a.ed25519)
+        } else {
+            None
+        }
+    }
 }
 
 /// Metrics snapshot for observability.

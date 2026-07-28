@@ -256,8 +256,16 @@ fn check_finality_progression() -> Result<(), String> {
 
 /// Verify constitution membership change: propose, vote, apply, auto-evict.
 fn check_constitution_membership() -> Result<(), String> {
-    let participants: Vec<[u8; 32]> = (0..4)
-        .map(|i| *blake3::hash(format!("participant-{i}").as_bytes()).as_bytes())
+    // The participant set is the ed25519 STRAND space (`Constitution::participants`),
+    // so a participant is a signing key's VERIFY key — not an arbitrary 32-byte label.
+    // The eviction step below needs the proof's exhibit blocks to be signed by the
+    // member it names, which only holds if the member IS a real key.
+    let participant_keys: Vec<SigningKey> = (0..4)
+        .map(|i| make_key(format!("participant-{i}").as_bytes()))
+        .collect();
+    let participants: Vec<[u8; 32]> = participant_keys
+        .iter()
+        .map(|k| k.verifying_key().to_bytes())
         .collect();
 
     let mut manager = ConstitutionManager::from_participants(participants.clone(), 10);
@@ -306,14 +314,24 @@ fn check_constitution_membership() -> Result<(), String> {
         ));
     }
 
-    // Auto-evict via equivocation proof.
-    let equivocator = participants[0];
-    let evil_key = make_key("participant-0".to_string().as_bytes());
+    // Auto-evict via equivocation proof. Built the way `Blocklace::detect_equivocation`
+    // builds it: `creator` is the HYBRID consensus id of the two exhibits, and the
+    // member being evicted is named by their ed25519 half (`equivocator_ed25519`).
+    let evil_key = &participant_keys[0];
+    let block_a = Block::new(evil_key, 1, Payload::Data(b"a".to_vec()), vec![]);
+    let block_b = Block::new(evil_key, 1, Payload::Data(b"b".to_vec()), vec![]);
     let proof = EquivocationProof {
-        creator: equivocator,
-        block_a: Block::new(&evil_key, 1, Payload::Data(b"a".to_vec()), vec![]),
-        block_b: Block::new(&evil_key, 1, Payload::Data(b"b".to_vec()), vec![]),
+        creator: block_a.creator,
+        block_a,
+        block_b,
     };
+    if proof.creator == participants[0] {
+        return Err(
+            "the hybrid consensus id must differ from the ed25519 member key — \
+                    else this check cannot witness the eviction identity space"
+                .into(),
+        );
+    }
 
     let evicted = manager.auto_evict(&proof);
     if !evicted {

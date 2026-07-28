@@ -164,9 +164,17 @@ impl Constitution {
     /// Since equivocation proofs are self-evident (two conflicting signed blocks),
     /// this does NOT require a vote -- it applies immediately.
     ///
+    /// ⚑ Matches on [`EquivocationProof::equivocator_ed25519`], the STRAND key, not
+    /// on `proof.creator`. `creator` is the HYBRID consensus id `H(ed25519 ‖ ml_dsa)`
+    /// and [`Self::participants`] is keyed by ed25519, so the old `proof.creator`
+    /// match could never succeed on the live path: `blocklace_sync::handle_push`
+    /// called this for every detected equivocation and it removed nobody, ever.
+    ///
     /// Returns true if the equivocator was actually a participant and was removed.
     pub fn auto_evict_equivocator(&mut self, proof: &EquivocationProof) -> bool {
-        let evicted = proof.creator;
+        let Some(evicted) = proof.equivocator_ed25519() else {
+            return false;
+        };
         if !self.participants.contains(&evicted) {
             return false;
         }
@@ -534,9 +542,15 @@ impl ConstitutionManager {
     /// Returns true if the equivocator was removed from the constitution.
     pub fn auto_evict(&mut self, proof: &EquivocationProof) -> bool {
         if self.current.auto_evict_equivocator(proof) {
-            self.last_active_wave.remove(&proof.creator);
-            self.pending_timeout_leaves.remove(&proof.creator);
-            self.joined_at_wave.remove(&proof.creator);
+            // Same identity space as the participant set: these three maps are all
+            // keyed by the ed25519 strand key, so they must be cleaned by it and
+            // never by `proof.creator` (the hybrid consensus id).
+            let evicted = proof
+                .equivocator_ed25519()
+                .expect("auto_evict_equivocator only returns true when the strand key resolves");
+            self.last_active_wave.remove(&evicted);
+            self.pending_timeout_leaves.remove(&evicted);
+            self.joined_at_wave.remove(&evicted);
             self.history.push(self.current.clone());
             true
         } else {
@@ -1322,6 +1336,100 @@ mod tests {
         assert!(mgr.auto_evict(&proof));
         assert!(!mgr.current.is_participant(&equivocator_pub));
         assert_eq!(mgr.current.participant_count(), count_before - 1);
+    }
+
+    /// ⚑ **THE EVICTION TOOTH, WITH THE PROOF SHAPED AS THE ENGINE ACTUALLY BUILDS IT.**
+    ///
+    /// The two tests around this one hand-build an `EquivocationProof` whose `creator`
+    /// is the equivocator's **ed25519** key. `Blocklace::detect_equivocation` never
+    /// produces that: it sets `creator: block.creator`, the **hybrid** id
+    /// `H(ed25519 ‖ ml_dsa)`. So both of them were green against a proof no production
+    /// path can emit, while the live `blocklace_sync::handle_push` → `auto_evict` call
+    /// matched a hybrid id against an ed25519-keyed participant set and evicted NOBODY,
+    /// for every equivocation the node ever detected.
+    ///
+    /// This builds the proof the engine's way and asserts the eviction lands. The
+    /// `assert_ne!` is the anti-vacuity guard: if the two identity spaces ever
+    /// coincided, this test would be re-asserting its neighbours and proving nothing.
+    #[test]
+    fn auto_eviction_matches_the_strand_key_not_the_hybrid_creator() {
+        let equivocator_key = random_key();
+        let equivocator_ed = equivocator_key.verifying_key().to_bytes();
+        let block_a = Block::new(&equivocator_key, 1, Payload::Data(b"A".to_vec()), vec![]);
+        let block_b = Block::new(&equivocator_key, 1, Payload::Data(b"B".to_vec()), vec![]);
+        let hybrid = block_a.creator;
+
+        assert_ne!(
+            hybrid, equivocator_ed,
+            "the hybrid consensus id must differ from the ed25519 strand key — if they \
+             coincide this test asserts nothing"
+        );
+
+        // A constitution keyed the way the NODE keys it: ed25519 strand keys.
+        let mut participants = make_participants(3);
+        participants.push(equivocator_ed);
+        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
+        assert!(mgr.current.is_participant(&equivocator_ed));
+        assert!(
+            !mgr.current.is_participant(&hybrid),
+            "the hybrid id is NOT a member of an ed25519-keyed constitution — this is why \
+             matching on `proof.creator` could never evict anyone"
+        );
+        let before = mgr.current.participant_count();
+
+        // The proof EXACTLY as `Blocklace::detect_equivocation` emits it.
+        let proof = EquivocationProof {
+            creator: hybrid,
+            block_a,
+            block_b,
+        };
+        assert!(
+            mgr.auto_evict(&proof),
+            "an equivocation proof carrying the HYBRID creator must still evict the member \
+             it names — the strand key is on both exhibits"
+        );
+        assert!(!mgr.current.is_participant(&equivocator_ed));
+        assert_eq!(mgr.current.participant_count(), before - 1);
+        // The honest members are untouched — a wrong key space would evict none, and an
+        // over-broad one could evict more than the equivocator.
+        assert!(mgr.current.is_participant(&make_node_key(1)));
+        assert_eq!(mgr.last_wave_with_block_from(&equivocator_ed), None);
+    }
+
+    /// FAIL-CLOSED: two exhibits that disagree on their ed25519 half name no strand, so
+    /// nothing is evicted. Under `verify_hybrid` an equal `creator` forces an equal
+    /// `ed25519`, so a disagreement means at least one exhibit was never authenticated
+    /// (the `from_checkpoint_trusted` restore path) — and guessing which half is honest
+    /// would hand an attacker an eviction primitive against an arbitrary member.
+    #[test]
+    fn auto_eviction_refuses_a_proof_whose_exhibits_disagree_on_the_strand_key() {
+        let honest_key = random_key();
+        let attacker_key = random_key();
+        let honest_ed = honest_key.verifying_key().to_bytes();
+
+        let mut participants = make_participants(3);
+        participants.push(honest_ed);
+        let mut mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
+        assert!(mgr.current.is_participant(&honest_ed));
+        let before = mgr.current.participant_count();
+
+        // A forged pair: exhibit A is the honest member's block, exhibit B is the
+        // attacker's. They do not agree on the strand key, so no member is named.
+        let block_a = Block::new(&honest_key, 1, Payload::Data(b"A".to_vec()), vec![]);
+        let block_b = Block::new(&attacker_key, 1, Payload::Data(b"B".to_vec()), vec![]);
+        assert_ne!(block_a.ed25519, block_b.ed25519);
+        let proof = EquivocationProof {
+            creator: block_a.creator,
+            block_a,
+            block_b,
+        };
+
+        assert!(
+            !mgr.auto_evict(&proof),
+            "a proof whose exhibits disagree on the strand key must evict NOBODY"
+        );
+        assert!(mgr.current.is_participant(&honest_ed));
+        assert_eq!(mgr.current.participant_count(), before);
     }
 
     #[test]

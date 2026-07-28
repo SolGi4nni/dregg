@@ -60,9 +60,21 @@ fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
 fn pubkey(sk: &SigningKey) -> [u8; 32] {
-    // The identity LABEL is now the HYBRID id (== `Block::creator`), so tau
+    // The CONSENSUS identity label is the HYBRID id (== `Block::creator`), so tau
     // participants match the creators the finality blocks actually carry.
     Block::hybrid_id(sk)
+}
+
+/// The **ed25519 strand key** — the space `Constitution::participants` is keyed by,
+/// and therefore the space `auto_evict` matches an equivocator in.
+///
+/// ⚑ This fixture used to hand `pubkey` (the hybrid id) to `Constitution::new`, so its
+/// constitution was HYBRID-keyed and the eviction assertion below passed. The real
+/// node's constitution is ED25519-keyed (`blocklace_sync` seeds it from
+/// `signing_key.verifying_key()`), so the same `auto_evict` call matched nothing and
+/// evicted no one on the live path. The node holds both spaces; so does this now.
+fn strand_key(sk: &SigningKey) -> [u8; 32] {
+    sk.verifying_key().to_bytes()
 }
 
 /// Byzantine fault budget for an n-member committee: f = ⌊(n−1)/3⌋ (the
@@ -81,13 +93,17 @@ struct Node {
 }
 
 impl Node {
-    fn new(name: impl Into<String>, sk: SigningKey, participants: Vec<[u8; 32]>) -> Self {
-        let quorum = if participants.len() <= 1 {
+    /// `committee` is the validator set as SIGNING KEYS, so this derives BOTH identity
+    /// spaces the way the node does: hybrid ids for tau, ed25519 strand keys for the
+    /// constitution.
+    fn new(name: impl Into<String>, sk: SigningKey, committee: &[&SigningKey]) -> Self {
+        let quorum = if committee.len() <= 1 {
             1
         } else {
-            supermajority_threshold(participants.len())
+            supermajority_threshold(committee.len())
         };
-        let constitution = Constitution::new(participants.clone(), 0);
+        let strands: Vec<[u8; 32]> = committee.iter().map(|k| strand_key(k)).collect();
+        let constitution = Constitution::new(strands, 0);
         Node {
             name: name.into(),
             lace: Blocklace::new(sk, quorum),
@@ -254,7 +270,13 @@ fn kill_scenario(n: usize, killed: usize, rounds: u64) -> (Vec<Vec<([u8; 32], u6
     let dag = flatten(&build_rounds(&alive_keys, rounds));
 
     let mut nodes: Vec<Node> = (0..alive)
-        .map(|i| Node::new(format!("N{i}"), keys[i].clone(), participants.clone()))
+        .map(|i| {
+            Node::new(
+                format!("N{i}"),
+                keys[i].clone(),
+                &keys.iter().collect::<Vec<_>>(),
+            )
+        })
         .collect();
     for node in &mut nodes {
         node.merge(dag.clone())
@@ -338,7 +360,13 @@ fn partition_heals_without_conflicting_finalization() {
     let kref: Vec<&SigningKey> = keys.iter().collect();
 
     let mut nodes: Vec<Node> = (0..n)
-        .map(|i| Node::new(format!("P{i}"), keys[i].clone(), participants.clone()))
+        .map(|i| {
+            Node::new(
+                format!("P{i}"),
+                keys[i].clone(),
+                &keys.iter().collect::<Vec<_>>(),
+            )
+        })
         .collect();
 
     // Phase 1: shared prefix (4 rounds), everyone.
@@ -429,7 +457,13 @@ fn byzantine_equivocation_excluded_safety_and_liveness_held() {
     let kref: Vec<&SigningKey> = keys.iter().collect();
 
     let mut nodes: Vec<Node> = (0..3)
-        .map(|i| Node::new(format!("H{i}"), keys[i].clone(), participants.clone()))
+        .map(|i| {
+            Node::new(
+                format!("H{i}"),
+                keys[i].clone(),
+                &keys.iter().collect::<Vec<_>>(),
+            )
+        })
         .collect();
 
     // A round-synchronous DAG over all 4 (C participates honestly at first).
@@ -482,15 +516,25 @@ fn byzantine_equivocation_excluded_safety_and_liveness_held() {
             nodes[i].lace.equivocators().contains(&pk_c),
             "H{i} records C as equivocator"
         );
+        // ⚑ Queried in the ED25519 STRAND space the constitution is actually keyed
+        // by. Asking with `pk_c` (the hybrid id) is trivially false whether or not
+        // the eviction fired, which is how this assertion stayed green while
+        // `auto_evict` matched nothing on the live path.
         assert!(
-            !nodes[i].constitution.current.is_participant(&pk_c),
+            !nodes[i]
+                .constitution
+                .current
+                .is_participant(&strand_key(&keys[3])),
             "H{i} evicts C"
         );
         assert!(
             nodes[i]
                 .constitution
                 .current
-                .is_participant(&pubkey(&keys[0]))
+                .is_participant(&strand_key(&keys[0])),
+            "H{i}: honest creator 0 must STILL be a participant — the anti-vacuity half. \
+             A wrong query space reports EVERY key absent, which would make the eviction \
+             assertion above meaningless."
         );
     }
 
@@ -539,7 +583,13 @@ fn finality_proceeds_without_a_laggy_node() {
     let prompt_flat = flatten(&prompt_dag);
 
     let mut nodes: Vec<Node> = (0..3)
-        .map(|i| Node::new(format!("F{i}"), keys[i].clone(), participants.clone()))
+        .map(|i| {
+            Node::new(
+                format!("F{i}"),
+                keys[i].clone(),
+                &keys.iter().collect::<Vec<_>>(),
+            )
+        })
         .collect();
     for node in &mut nodes {
         node.merge(prompt_flat.clone()).expect("prompt nodes merge");
