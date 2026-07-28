@@ -395,21 +395,36 @@ discrimination and it is why the arm is worth having:
 `→`/`∀` are NOT descended: `F a → C` claims nothing about `F`, it assumes it, and Pass 0c's
 caller has already rejected any statement that assumes a candidate floor. Only `∧` and `∃` carry
 a positive claim inward. -/
-partial def posWitnesses (cand : NameSet) (underEx : Bool) (e : Expr)
+partial def posWitnesses (cand : NameSet) (binders : Array Expr) (underEx : Bool) (e : Expr)
     (acc : Array (Name × Bool)) : Array (Name × Bool) :=
   match e with
   | .app (.app (.const ``And _) l) r =>
-    posWitnesses cand underEx r (posWitnesses cand underEx l acc)
+    posWitnesses cand binders underEx r (posWitnesses cand binders underEx l acc)
   | e =>
     if e.isAppOfArity ``Exists 2 then
       match e.getAppArgs[1]! with
-      | .lam _ _ b _ => posWitnesses cand true b acc
+      | .lam _ _ b _ => posWitnesses cand binders true b acc
       | _ => acc
     else
       match headConst? e with
       | some h =>
         if cand.contains h then
-          acc.push (h, !underEx && e.getAppArgs.all (·.isFVar))
+          let args := e.getAppArgs
+          -- ⚑ MEASURED 2026-07-28: "all arguments are fvars" alone gives FOUR false PROVABLEs out
+          -- of five on this tree, and each is a different way of not being a general theorem.
+          --   * `leaderIdPins_refl (l : Block) : LeaderIdPins l l` — all fvars, but the SAME fvar
+          --     twice. Reflexivity is the DIAGONAL, not the general pair. Hence pairwise-distinct.
+          --   * `Poseidon2RealizedSponge.spongeCR (self : …) : Poseidon2SpongeCR …` and
+          --     `cellLeafInjective_from_poseidon2_cr` — a binder that is NOT one of the floor's
+          --     arguments is a premise the claim rests on (a bundle to inhabit, a scheme to fix),
+          --     so the floor is reached CONDITIONALLY. Hence every binder must be an argument.
+          -- Together: PROVABLE means "for arbitrary, distinct arguments and nothing else in scope".
+          let distinctFVars :=
+            args.all (·.isFVar) &&
+              args.size == (args.foldl (fun acc a => if acc.contains a then acc else acc.push a)
+                (#[] : Array Expr)).size
+          let allBindersUsed := binders.all (fun x => args.contains x)
+          acc.push (h, !underEx && distinctFVars && allBindersUsed)
         else acc
       | none => acc
 
@@ -721,7 +736,7 @@ def run (outPath : Option String) : MetaM Unit := do
       -- The claim scan is a pure `Expr` walk and is empty for all but a handful of theorems, so
       -- it runs FIRST and the per-binder `isProp` (an `inferType` + `whnf` each) only runs on
       -- those. This loop visits every theorem in the tree on every census.
-      let posRaw := posWitnesses candSet false body #[]
+      let posRaw := posWitnesses candSet xs false body #[]
       let mut pos : Array (Name × Bool) := #[]
       unless posRaw.isEmpty do
         let mut condHyp := false

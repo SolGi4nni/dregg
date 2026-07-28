@@ -567,7 +567,7 @@ def surface : MetaM Surface := do
         let mut condHyp := false
         for x in xs do
           if ← Meta.isProp (← inferType x) then condHyp := true
-        return (negs, if condHyp then #[] else posWitnesses honestSet false body #[])
+        return (negs, if condHyp then #[] else posWitnesses honestSet xs false body #[])
       for (f, closed) in negs do
         if closed && !negClosed.contains f then negClosed := negClosed.insert f nm
         if !closed && !negParam.contains f then negParam := negParam.insert f nm
@@ -830,6 +830,18 @@ def check (baseline : Array String) : MetaM Unit := do
   let cur : Std.HashSet String := s.carriers.foldl (fun a c => a.insert c.name.toString) {}
   let fresh := s.carriers.filter (fun c => !base.contains c.name.toString)
   let slack := baseline.filter (fun b => !cur.contains b)
+  -- ⚑ EVERY honest-floor demotion is printed on EVERY root build, with both of the poles it rode
+  -- in on, and it is printed HERE — BEFORE the violation `throwError`, not after. A gate that
+  -- reports which floors it stopped defending only on the runs where it passes is reporting at
+  -- exactly the wrong time: the run you most need it on is the red one, and `throwError` discards
+  -- the command's message log. MEASURED 2026-07-28 — the report was invisible on the very probe
+  -- that demonstrated the feature working.
+  unless s.honest.isEmpty do
+    let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m) =>
+      s!"  {f}\n    declared by {d}\n    refutability pole {n}\n    model {m}")
+    logInfo s!"floor-ratchet: {s.honest.size} floor(s) DECLARED HONEST and checked \
+      (satisfiable + refutable at a closed instance + not a sentinel + not parametrically \
+      refuted), so their consumers are NOT gated:\n{hlines}"
   unless fresh.isEmpty do
     let env ← getEnv
     let shown := fresh.toList.take 40
@@ -901,15 +913,6 @@ def check (baseline : Array String) : MetaM Unit := do
          the win), `!` only to re-bootstrap the whole baseline.\n\
       \n{paste}\n"
   let byCls := fun k => (s.carriers.filter (fun c => c.cls == k)).size
-  -- ⚑ EVERY honest-floor demotion is printed on EVERY root build, with both of the poles it rode
-  -- in on. A gate that quietly stopped defending a floor would read as a smaller number, which is
-  -- indistinguishable from a port — so it is never quiet.
-  unless s.honest.isEmpty do
-    let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m) =>
-      s!"  {f}\n    declared by {d}\n    refutability pole {n}\n    model {m}")
-    logInfo s!"floor-ratchet: {s.honest.size} floor(s) DECLARED HONEST and checked \
-      (satisfiable + refutable at a closed instance + not a sentinel + not parametrically \
-      refuted), so their consumers are NOT gated:\n{hlines}"
   logInfo s!"floor-ratchet OK — {s.carriers.size} grandfathered carriers over \
     {s.floors.size} refuted floors ({s.propBody.size} prop-body defs, {s.bundles.size} floor \
     bundles); binder {byCls "binder"} + prop-body {byCls "prop-body"} + propdef-user \
