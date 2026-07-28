@@ -1,15 +1,18 @@
 # MINA-REAL-BLOCK-GATE.md — a real Mina block, driven through our checks, per check
 
-**Date:** 2026-07-28. **Status:** the gate is OPEN and green.
+**Date:** 2026-07-28. **Status:** the gate is OPEN and green; **C3 is no longer carried.**
 **Artifacts:** `metatheory/fixtures/pickles-extractors/` (extractor + fixtures, tracked),
 `metatheory/mina_real_block_proof.json` (the dump),
-`metatheory/Dregg2/Circuit/Emit/MinaRealBlockGate.lean` (18 theorems, axiom-clean).
+`metatheory/Dregg2/Circuit/Emit/MinaRealBlockGate.lean` (18 theorems, axiom-clean),
+`metatheory/Dregg2/Circuit/Emit/MinaRealBlockTranscript.lean` (13 theorems, axiom-clean — the
+Fiat–Shamir derivation).
 
-Import line for the new module (the `Dregg2` root was **not** edited, per house practice for
+Import lines for the two modules (the `Dregg2` root was **not** edited, per house practice for
 gates):
 
 ```
 import Dregg2.Circuit.Emit.MinaRealBlockGate
+import Dregg2.Circuit.Emit.MinaRealBlockTranscript
 ```
 
 ---
@@ -51,6 +54,16 @@ entries reproduces `combined_inner_product`; the C5 body reproduces `ft_eval0`; 
 reproduces kimchi's permutation vanishing polynomial; `ω^(n−3)` reproduces `index.w()`; and K4c's
 `bEval` reproduces `RecursionChallenge::evals` at ζ and ζω for **both** carried accumulators.
 
+And, added 2026-07-28 with C3, **three transcript cross-checks** — the extractor replays *both*
+Fiat–Shamir sponges with the real upstream `DefaultFqSponge`/`DefaultFrSponge` and asserts each
+challenge against `oracles(...)`:
+
+```
+[c3] phase-1 Fq-sponge (fp_kimchi over Fp) replay reproduces beta, gamma, alpha', zeta', digest : true
+[c3] phase-2 Fr-sponge (fq_kimchi over Fq) replay over 91 absorbed elements reproduces v', u' : true
+[c3] order controls: ft_eval1-after-public-evals and no-prev-challenge-digest BOTH move v' : true
+```
+
 ## 3. Our side, check by check
 
 `shapeOkRec`/`prevChalFoldOk`/`kimchiVerifyDecisionFieldRec` are the P6 retirement a sibling lane
@@ -66,22 +79,59 @@ landed the same day; this is the first time any of them has seen a Mina object.
 | **C5-inv** witnessed inverse | `(ζ − ω^{n−3})(ζ − 1) · DINV = 1` in `ZMod qN` | **holds** (no `Field (ZMod qN)` instance needed) |
 | **C5 `ftEval0R`** | real `n = 2^14`, real ω, ζ, β, γ, α^21..α^23, w[0..6], σ[0..5], shift[0..6], linearization constant term | **reproduces `ft_eval0`**; 3 tampers reject |
 | **composed `kimchiVerifyDecisionFieldRec`** | all of the above at once | **ACCEPTS the real Mina block**; 4 tampers reject; the pre-P6 decision refuses it outright |
+| **C3 the Fiat–Shamir transcript** (`MinaRealBlockTranscript`) | both sponges, over the block's own commitment coordinates and evaluations | **DERIVES β, γ, α′, ζ′, the digest, the prev-challenge digest, ξ′ and r′**; the endo lifts give α, ζ, ζω, ξ, r; 15 non-vacuity pins |
 
 Everything above is `by decide`/`rfl`, no `sorry`, no `native_decide`;
-`#assert_namespace_axioms` reports **18 theorems pinned kernel-clean**. `lake build` on hbox:
-**82s**.
+`#assert_namespace_axioms` reports **18 theorems pinned kernel-clean** for the gate and **13** for
+the transcript. `lake build` on hbox: **82s** for the gate, **14s** for the transcript.
+
+### C3, retired — what the transcript module derives (2026-07-28)
+
+The Wrap proof is **Pallas**-committed, so by `curve.rs:62-72,87-104` its two sponges are the
+*mirror* of the Vesta-committed Step fixture `PastaPoseidonFq` was built on: **phase 1 is
+`fp_kimchi` over `Fp`** (K3's own constants — `core_is_Ref_at_Fp` proves the instantiation IS
+`PastaPoseidon.Ref`), and **phase 2 is `fq_kimchi` over `Fq`** (`PastaPoseidonFq`). One parametric
+absorb schedule runs both; there is no second transcription to get wrong.
+
+| value | how | pin |
+|---|---|---|
+| β, γ | raw 128-bit squeezes of the phase-1 sponge after 37 absorbed `Fp` elements (index digest · 2 recursion commitments · public commitment · 15 witness commitments) | `wrapPhase1`; `derived_beta`/`derived_gamma` tie the `Nat` to the `Fq` element C5 consumed |
+| α′ → α | + `z_comm`, squeeze, `endoMap ENDO_R` | `derived_alpha`; `derived_alpha_powers` ties α to C5's α²¹/α²²/α²³ |
+| ζ′ → ζ, ζω | + `t_comm` (7 chunks), squeeze, `endoMap` | `derived_zeta` |
+| fq digest | `squeeze_field()` reinterpreted in `Fq` (the mirror of the Step side's `Fp`) | `wrapPhase1` |
+| prev-challenge digest | a FRESH `fq_kimchi` sponge over the **30** carried challenges — an EVEN-length absorb, the branch the 07-27 double-permute defect lived on | `Core.hash fqParams CHALS_FLAT`, with the double-permute anti-value pinned |
+| ξ′ → ξ, r′ → r | phase-2 sponge over 91 `Fq` elements, two squeezes (lanes 0 and 1 of one permuted state), `endoMap` | `wrapPhase2`; `derived_v`/`derived_u` |
+
+⚑ **The phase-2 tape is not a second copy of the evaluations.** `absorb_evaluations`' 86-element
+stream is exactly entries 4.. of the gate's own C8 columns, interleaved ζ/ζω, read through
+`ZMod.val`; `ft_eval1` is `EVZW[3]` and `p(ζ)`/`p(ζω)` are `EVZ[2]`/`EVZW[2]`. A prover cannot show
+one set of evaluations to the transcript and another to the aggregation.
+
+`real_block_accepts_on_derived_challenges` restates the gate's accept with **every** challenge
+argument replaced by the derived expression, and is proved by rewriting — not by a second `decide`.
+
+**Two order facts, verified against `verifier.rs`/`plonk_sponge.rs` at the pinned tag (`0.3.0` =
+`a73ca6ed58`) rather than off a doc, and MEASURED on this object:** `ft_eval1` is absorbed at
+`:382`, **before** the public evaluations at `:391-392`; and the prev-challenge digest (`:290-299`)
+sits between the fq digest and `ft_eval1`. Both mis-orderings produce a **different ξ′** — asserted
+in Rust and pinned in Lean. Both are dead at `prev_challenges = 0`; this block carries 2.
 
 ### What could NOT be fed, and why
 
-* **C3 (the Fiat–Shamir transcript)** — the challenges are *recorded*, not *re-derived*. The Wrap
-  side needs the **Fq-state Poseidon sponge over Pallas's base field**, which is exactly the K3
-  residual a sibling lane is closing (`PastaPoseidonFq.lean`). Until it lands, β/γ/α/ζ/ξ/r on the
-  real block are carried, not recomputed. This is the single largest remaining hole in the gate:
-  every scalar we check is checked *given* the challenges.
 * **C9 / the terminal `msm == 0`** — the IPA opening-soundness floor. Unchanged, inherited, P10.
 * **The commitment arithmetic** — `w_comm`, `t_comm`, `lr`, `delta`, `sg` are dumped as Pallas
   points but nothing in-kernel touches them. K2/K4a/K4b have the curve ops; no gate composes them
-  into the Wrap group check.
+  into the Wrap group check. **C3 does not change this.** The transcript eats `(x, y)` COORDINATES;
+  nothing checks the pair is on the curve, that `public_comm` commits to the public input, or that
+  a `RecursionChallenge`'s `comm` is `⟨b_poly_coefficients(chals), G⟩`.
+* **The verifier-index digest is still an input.** `index.digest::<EFqSponge>()` is itself a sponge
+  over every commitment of the VK (`verifier_index.rs:399-450`); it is absorbed as a value. Making
+  it derived is P8/P9 (a model of the Wrap VK), not C3.
+* **`KimchiVerify.frPhase2Inputs` is the `prev_challenges = 0` helper only** — it hard-codes the
+  prev-challenge digest as `Ref.hash []` *and* runs over `fp_kimchi`/`pN`, which is right for a
+  Vesta-committed Step proof and wrong on both counts for a Wrap proof. Its one caller
+  (`KimchiRealProofGate`) is a `nPrev = 0` Step fixture, so nothing is presently wrong; the
+  recursive/Wrap phase-2 model is `MinaRealBlockTranscript.fqTape2`. Named as debt, not fixed here.
 * **The deferred STEP values** — `expand_deferred`'s Fp outputs (`b`, `combined_inner_product`,
   `xi`, `perm`, `zeta_to_domain_size`, shifted Type1) are dumped and are the P3/P4 input, but no
   Lean check consumes them yet.
@@ -130,7 +180,7 @@ Ordered by effort, with the synthetic-witness estimates replaced by what the rea
 | 1 | C1 at the real Wrap shape | **DONE** (P6's shape half, sibling; measured here). |
 | 2 | the recursion fold into C8 (P6 arithmetic half) | **DONE** on real data. |
 | 3 | C8 / C5 / the witnessed inverse on real Wrap scalars | **DONE**. |
-| 4 | **the Fq-state Poseidon sponge (K3 mirror)** — makes C3 re-derivable instead of carried | **THE NEXT THING.** A sibling lane has the Fq KATs and a `prev_challenges = 2` Kimchi fixture in flight (`PastaPoseidonFq.lean`, `KimchiRecursionGate.lean`). Cost: the KATs exist; wiring them to the real block's absorb order is a day, not a week — the extractor already dumps every input in `verifier.rs:159-276` order. |
+| 4 | **C3 — the Fiat–Shamir transcript re-derived instead of carried** | **DONE, 2026-07-28.** `MinaRealBlockTranscript.lean`, 13 theorems + 15 `#guard` pins, `lake build` 14s. All six challenges plus both digests fall out of the two sponges over the block's own commitments and evaluations; `real_block_accepts_on_derived_challenges` is the gate's accept with every challenge argument replaced. The estimate ("a day, not a week") held. What it needed that was NOT in the dump: the verifier-index digest, the public commitment's coordinates, the prev-challenge digest and `endo_r` — added to the extractor, which now also **replays both sponges in Rust** against `oracles(...)`. |
 | 5 | the Wrap **group** check — `ft_comm`, the linearization commitment, `check_bulletproof` | **NOT STARTED.** K2/K4a/K4b have the curve arithmetic; nothing composes it. This is the largest genuinely-unbuilt block, and it is where the real block's 15 `lr` pairs, `delta` and `sg` finally get consumed. Weeks. |
 | 6 | P3/P4 — `finalize_other_proof` + the transcript-equality binding | **NOT STARTED**, and the real block now supplies the inputs: `step_deferred_values` in the dump is `expand_deferred`'s output, Type1-shifted, with the unshifted values alongside. P4 remains the single hardest buildable item. |
 | 7 | P7/P8/P9 — base case, wrap-VK model, Mina's instantiation | **NOT STARTED**, but P8/P9's *data* is now concrete rather than notional: the devnet blockchain VK is a loadable object with known counts. |
@@ -138,7 +188,10 @@ Ordered by effort, with the synthetic-witness estimates replaced by what the rea
 
 **Say it at the right resolution:** we do not verify a Mina block. We check, in-kernel, on a real
 Mina block, that its shape is the shape the real verifier index demands, that the accumulator
-evaluations it exposes are the b-polynomial of the challenges it carries, and that its aggregated
-opening value and `ft(ζ)` are what the claimed evaluations and the sampled challenges produce —
-**given** those challenges, and with no group element ever touched. The gap between that and a
-light client is items 4, 5 and 6 above, on top of the P10 floor.
+evaluations it exposes are the b-polynomial of the challenges it carries, that its aggregated
+opening value and `ft(ζ)` are what the claimed evaluations and the sampled challenges produce, and
+— since 2026-07-28 — that **those challenges are the ones its own transcript samples** rather than
+the ones it hands us. The word "given" is gone from that sentence. What has not moved: **no group
+element is touched by any check in this gate.** Every commitment enters only as a pair of field
+coordinates the sponge eats; nothing verifies it is a commitment to anything. The gap between here
+and a light client is items 5 and 6 above, on top of the P10 floor.

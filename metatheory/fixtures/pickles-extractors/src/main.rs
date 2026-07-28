@@ -57,6 +57,7 @@ use kimchi::circuits::expr::{Constants, PolishToken};
 use kimchi::circuits::polynomials::permutation;
 use kimchi::circuits::wires::PERMUTS;
 use kimchi::curve::KimchiCurve;
+use kimchi::plonk_sponge::FrSponge as _;
 use kimchi::proof::{PointEvaluations, ProofEvaluations, ProverCommitments, RecursionChallenge};
 use ledger::proofs::accumulator_check::accumulator_check;
 use ledger::proofs::public_input::messages::{MessagesForNextStepProof, MessagesForNextWrapProof};
@@ -79,8 +80,9 @@ use mina_p2p_messages::v2::{
 };
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::FULL_ROUNDS;
-use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge};
-use poly_commitment::commitment::CommitmentCurve;
+use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge, ScalarChallenge};
+use mina_poseidon::FqSponge as _;
+use poly_commitment::commitment::{absorb_commitment, CommitmentCurve};
 use poly_commitment::ipa::OpeningProof;
 use poly_commitment::{PolyComm, SRS as _};
 
@@ -339,6 +341,7 @@ fn devnet() {
         &vi,
         &pp,
         &public_input,
+        &public_comm,
         &o,
     );
 }
@@ -523,6 +526,7 @@ fn dump(
     vi: &VerifierIndex<Fq>,
     pp: &ProverProof<Fq>,
     public_input: &[Fq],
+    public_comm: &PolyComm<Pallas>,
     o: &kimchi::oracles::OraclesResult<FULL_ROUNDS, Pallas, EFqSponge>,
 ) {
     let dv = &p.statement.proof_state.deferred_values;
@@ -778,12 +782,258 @@ fn dump(
         .collect();
     println!("\"wrap_old_prechallenges_raw\": [{}],", mnw_raw.join(","));
 
-    // §I -- the C5 / C8 GOLD INPUTS, in the exact order the shipped Lean defs consume,
+    // §I -- the FIAT-SHAMIR TRANSCRIPT: both sponge tapes, replayed and asserted here.
+    transcript(vi, pp, public_comm, o);
+
+    // §J -- the C5 / C8 GOLD INPUTS, in the exact order the shipped Lean defs consume,
     // each one re-checked here in Rust against kimchi's own oracle output before it is
     // handed to the kernel.
     c5_c8_inputs(vi, pp, o);
 
     println!("}}");
+}
+
+/// The Fq coordinates of a Pallas point, in `absorb_g` order (`sponge.rs:198-211`: `x` then `y`,
+/// and `(0, 0)` for the point at infinity).
+fn xy_of(g: &Pallas) -> [Fp; 2] {
+    match g.xy() {
+        Some((x, y)) => [x, y],
+        None => [Fp::zero(), Fp::zero()],
+    }
+}
+fn xy_of_comm(c: &PolyComm<Pallas>) -> Vec<Fp> {
+    c.chunks.iter().flat_map(|g| xy_of(g)).collect()
+}
+
+/// **C3 on the real block.** Replays BOTH Fiat–Shamir sponges of `ProverProof::oracles`
+/// (`verifier.rs:159-405`) with the REAL upstream sponge types and asserts every challenge against
+/// `oracles(...)`, then emits the two absorb tapes for the Lean side.
+///
+/// The Wrap proof is **Pallas**-committed, so (`curve.rs:62-72,87-104`)
+///
+/// * phase 1 = `DefaultFqSponge` over Pallas's BASE field `Fp`, params `other_curve_sponge_params()`
+///   = **`fp_kimchi`** — K3's `PastaPoseidon` constants; it yields β, γ, α′, ζ′ and the digest;
+/// * phase 2 = `DefaultFrSponge` over Pallas's SCALAR field `Fq`, params `sponge_params()` =
+///   **`fq_kimchi`** — `PastaPoseidonFq`'s constants; it yields v′ and u′.
+///
+/// That is the mirror image of the Vesta-committed Step proof `PastaPoseidonFq` was built on.
+///
+/// Two ORDER facts are measured here rather than read off a doc: `ft_eval1` is absorbed **before**
+/// the public evaluations, and the **prev-challenge digest** sits between the fq digest and
+/// `ft_eval1`. Both are invisible at `prev_challenges = 0`; this block carries 2. Each is given a
+/// negative control that must produce a DIFFERENT v′.
+fn transcript(
+    vi: &VerifierIndex<Fq>,
+    pp: &ProverProof<Fq>,
+    public_comm: &PolyComm<Pallas>,
+    o: &kimchi::oracles::OraclesResult<FULL_ROUNDS, Pallas, EFqSponge>,
+) {
+    let fq_params = <Pallas as KimchiCurve<FULL_ROUNDS>>::other_curve_sponge_params();
+    let fr_params = <Pallas as KimchiCurve<FULL_ROUNDS>>::sponge_params();
+    let (_, endo_r) = <Pallas as KimchiCurve<FULL_ROUNDS>>::endos();
+
+    // ---- phase 1, structured: exactly verifier.rs:159-283 --------------------
+    let vk_digest: Fp = vi.digest::<EFqSponge>();
+    let mut s = EFqSponge::new(fq_params);
+    s.absorb_fq(&[vk_digest]);
+    for rc in &pp.prev_challenges {
+        absorb_commitment(&mut s, &rc.comm);
+    }
+    absorb_commitment(&mut s, public_comm);
+    for c in &pp.commitments.w_comm {
+        absorb_commitment(&mut s, c);
+    }
+    let beta = s.challenge();
+    let gamma = s.challenge();
+    absorb_commitment(&mut s, &pp.commitments.z_comm);
+    let alpha_chal = s.challenge();
+    absorb_commitment(&mut s, &pp.commitments.t_comm);
+    let zeta_chal = s.challenge();
+    let fq_digest: Fq = s.clone().digest();
+
+    assert_eq!(beta, o.oracles.beta, "[c3] phase-1 replay: beta");
+    assert_eq!(gamma, o.oracles.gamma, "[c3] phase-1 replay: gamma");
+    assert_eq!(
+        alpha_chal, o.oracles.alpha_chal.0,
+        "[c3] phase-1 replay: alpha'"
+    );
+    assert_eq!(
+        zeta_chal, o.oracles.zeta_chal.0,
+        "[c3] phase-1 replay: zeta'"
+    );
+    assert_eq!(fq_digest, o.digest, "[c3] phase-1 replay: digest");
+    eprintln!("[c3] phase-1 Fq-sponge (fp_kimchi over Fp) replay reproduces beta, gamma, alpha', zeta', digest : true");
+
+    // the endomorphism lifts, which the Lean `endoMap` mirrors
+    assert_eq!(
+        ScalarChallenge(alpha_chal).to_field(endo_r),
+        o.oracles.alpha,
+        "[c3] endo: alpha' -> alpha"
+    );
+    assert_eq!(
+        ScalarChallenge(zeta_chal).to_field(endo_r),
+        o.oracles.zeta,
+        "[c3] endo: zeta' -> zeta"
+    );
+
+    // ---- phase 1, FLAT: the tape the Lean side absorbs ----------------------
+    let prev_comm_xy: Vec<Fp> = pp
+        .prev_challenges
+        .iter()
+        .flat_map(|rc| xy_of_comm(&rc.comm))
+        .collect();
+    let public_comm_xy = xy_of_comm(public_comm);
+    let w_comm_xy: Vec<Fp> = pp.commitments.w_comm.iter().flat_map(xy_of_comm).collect();
+    let z_comm_xy = xy_of_comm(&pp.commitments.z_comm);
+    let t_comm_xy = xy_of_comm(&pp.commitments.t_comm);
+    assert_eq!(public_comm_xy.len(), 2, "public_comm is not a single chunk");
+    assert_eq!(t_comm_xy.len(), 14, "t_comm is not 7 chunks");
+
+    let mut tape1: Vec<Fp> = vec![vk_digest];
+    tape1.extend(&prev_comm_xy);
+    tape1.extend(&public_comm_xy);
+    tape1.extend(&w_comm_xy);
+    {
+        // the flattening is faithful: driving the sponge off the flat coordinate tape gives the
+        // same five outputs the structured `absorb_commitment` run gave.
+        let mut f = EFqSponge::new(fq_params);
+        f.absorb_fq(&tape1);
+        let b = f.challenge();
+        let g = f.challenge();
+        f.absorb_fq(&z_comm_xy);
+        let a = f.challenge();
+        f.absorb_fq(&t_comm_xy);
+        let z = f.challenge();
+        let d: Fq = f.clone().digest();
+        assert_eq!(
+            (b, g, a, z, d),
+            (beta, gamma, alpha_chal, zeta_chal, fq_digest),
+            "[c3] the FLAT phase-1 coordinate tape does not reproduce the structured replay"
+        );
+    }
+
+    // ---- phase 2: the Fr-sponge over Fq (fq_kimchi) --------------------------
+    let prev_chals_flat: Vec<Fq> = pp
+        .prev_challenges
+        .iter()
+        .flat_map(|rc| rc.chals.clone())
+        .collect();
+    let prev_challenge_digest: Fq = {
+        let mut fr = EFrSponge::from(fr_params);
+        for rc in &pp.prev_challenges {
+            fr.absorb_multiple(&rc.chals);
+        }
+        fr.digest()
+    };
+
+    let mut evals_tape: Vec<Fq> = Vec::new();
+    {
+        let e = &pp.evals;
+        let mut pts: Vec<&PointEvaluations<Vec<Fq>>> = vec![
+            &e.z,
+            &e.generic_selector,
+            &e.poseidon_selector,
+            &e.complete_add_selector,
+            &e.mul_selector,
+            &e.emul_selector,
+            &e.endomul_scalar_selector,
+        ];
+        e.w.iter().for_each(|p| pts.push(p));
+        e.coefficients.iter().for_each(|p| pts.push(p));
+        e.s.iter().for_each(|p| pts.push(p));
+        for p in pts {
+            evals_tape.extend(&p.zeta);
+            evals_tape.extend(&p.zeta_omega);
+        }
+    }
+
+    let mut tape2: Vec<Fq> = vec![fq_digest, prev_challenge_digest, pp.ft_eval1];
+    tape2.extend(&o.public_evals[0]);
+    tape2.extend(&o.public_evals[1]);
+    tape2.extend(&evals_tape);
+
+    let replay2 = |tape: &[Fq]| -> (Fq, Fq) {
+        let mut fr = EFrSponge::from(fr_params);
+        fr.absorb_multiple(tape);
+        let v = fr.challenge().0;
+        let u = fr.challenge().0;
+        (v, u)
+    };
+    let (v_chal, u_chal) = replay2(&tape2);
+    assert_eq!(v_chal, o.oracles.v_chal.0, "[c3] phase-2 replay: v'");
+    assert_eq!(u_chal, o.oracles.u_chal.0, "[c3] phase-2 replay: u'");
+    assert_eq!(
+        ScalarChallenge(v_chal).to_field(endo_r),
+        o.oracles.v,
+        "[c3] endo: v' -> v (polyscale)"
+    );
+    assert_eq!(
+        ScalarChallenge(u_chal).to_field(endo_r),
+        o.oracles.u,
+        "[c3] endo: u' -> u (evalscale)"
+    );
+    eprintln!(
+        "[c3] phase-2 Fr-sponge (fq_kimchi over Fq) replay over {} absorbed elements reproduces v', u' : true",
+        tape2.len()
+    );
+
+    // ---- the two ORDER controls, measured on THIS object ---------------------
+    // (a) ft_eval1 AFTER the public evaluations — the shape the pre-07-27 listing had.
+    let tape2_swapped: Vec<Fq> = {
+        let mut t: Vec<Fq> = vec![fq_digest, prev_challenge_digest];
+        t.extend(&o.public_evals[0]);
+        t.extend(&o.public_evals[1]);
+        t.push(pp.ft_eval1);
+        t.extend(&evals_tape);
+        t
+    };
+    // (b) no prev-challenge digest at all — invisible at prev_challenges = 0.
+    let tape2_no_pcd: Vec<Fq> = {
+        let mut t: Vec<Fq> = vec![fq_digest, pp.ft_eval1];
+        t.extend(&o.public_evals[0]);
+        t.extend(&o.public_evals[1]);
+        t.extend(&evals_tape);
+        t
+    };
+    let sw = replay2(&tape2_swapped);
+    let np = replay2(&tape2_no_pcd);
+    assert_ne!(
+        sw.0, v_chal,
+        "[c3] absorbing ft_eval1 AFTER the public evals gave the SAME v' — the order control is vacuous"
+    );
+    assert_ne!(
+        np.0, v_chal,
+        "[c3] dropping the prev-challenge digest gave the SAME v' — the control is vacuous"
+    );
+    eprintln!("[c3] order controls: ft_eval1-after-public-evals and no-prev-challenge-digest BOTH move v' : true");
+
+    println!("\"wrap_transcript\": {{");
+    println!("  \"_phase1_params\": \"fp_kimchi over Fp (Pallas base field)\",");
+    println!("  \"_phase2_params\": \"fq_kimchi over Fq (Pallas scalar field)\",");
+    println!("  \"verifier_index_digest\": \"{}\",", dfp(&vk_digest));
+    println!("  \"public_comm\": {},", pallas_j(&public_comm.chunks[0]));
+    println!("  \"endo_r\": \"{}\",", dfq(endo_r));
+    println!("  \"phase1_prev_comm_xy\": {},", arr_fp(&prev_comm_xy));
+    println!("  \"phase1_public_comm_xy\": {},", arr_fp(&public_comm_xy));
+    println!("  \"phase1_w_comm_xy\": {},", arr_fp(&w_comm_xy));
+    println!("  \"phase1_z_comm_xy\": {},", arr_fp(&z_comm_xy));
+    println!("  \"phase1_t_comm_xy\": {},", arr_fp(&t_comm_xy));
+    println!("  \"phase1_tape_to_beta_len\": {},", tape1.len());
+    println!("  \"beta\": \"{}\",", dfq(&beta));
+    println!("  \"gamma\": \"{}\",", dfq(&gamma));
+    println!("  \"alpha_chal\": \"{}\",", dfq(&alpha_chal));
+    println!("  \"zeta_chal\": \"{}\",", dfq(&zeta_chal));
+    println!("  \"fq_digest\": \"{}\",", dfq(&fq_digest));
+    println!("  \"prev_chals_flat\": {},", arr_fq(&prev_chals_flat));
+    println!(
+        "  \"prev_challenge_digest\": \"{}\",",
+        dfq(&prev_challenge_digest)
+    );
+    println!("  \"phase2_evals_tape\": {},", arr_fq(&evals_tape));
+    println!("  \"phase2_tape_len\": {},", tape2.len());
+    println!("  \"v_chal\": \"{}\",", dfq(&v_chal));
+    println!("  \"u_chal\": \"{}\"", dfq(&u_chal));
+    println!("}},");
 }
 
 /// Emits the exact argument lists that `KimchiVerify.cipR` (C8) and `ftEval0R` (C5) take, and
