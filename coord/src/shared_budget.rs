@@ -240,6 +240,17 @@ pub struct SharedResourceBudget {
     pub version: BudgetVersion,
     /// Per-agent allowance states.
     pub allowances: HashMap<ParticipantId, AgentAllowance>,
+    /// ⚑ Spend that WAS OBSERVED but could not be attributed to a participant.
+    ///
+    /// `record_observed_debit` refuses an unknown participant (`81658dd50`, which stopped it
+    /// SILENTLY DROPPING the debit — the right fix, and only half of one). But the name is the
+    /// point: the debit was *observed*, meaning the resource was already consumed. Refusing to
+    /// record it leaves the spend real and the accounting blind, so `total_spent()` under-reports
+    /// and `is_overspent()` cannot fire on consumption that actually happened.
+    ///
+    /// This bucket is what a refused observation lands in. It is deliberately NOT per-participant:
+    /// the whole reason it exists is that we do not know whose it was.
+    pub unattributed_spent: ResourceAmount,
     /// The resource's total available balance at epoch start.
     /// This is the ground truth from the ledger.
     pub total_balance: ResourceAmount,
@@ -289,6 +300,7 @@ impl SharedResourceBudget {
             byzantine_tolerance,
             version: 0,
             allowances: HashMap::new(),
+            unattributed_spent: 0,
             total_balance,
             epoch_credits: 0,
             state: ResourceState::Open,
@@ -368,7 +380,14 @@ impl SharedResourceBudget {
 
     /// Get total spent across all agents in this epoch.
     pub fn total_spent(&self) -> ResourceAmount {
-        self.allowances.values().map(|a| a.spent).sum()
+        // Includes `unattributed_spent`, because an observed debit is consumption that HAPPENED.
+        // Summing only per-participant `spent` made an unattributable observation invisible to
+        // `is_overspent()` — the resource drained and the ledger said it had not.
+        self.allowances
+            .values()
+            .map(|a| a.spent)
+            .sum::<ResourceAmount>()
+            .saturating_add(self.unattributed_spent)
     }
 
     /// Record a credit (deposit) to the shared resource.
@@ -547,7 +566,14 @@ impl SharedResourceBudget {
                 allowance.spent = allowance.spent.saturating_add(amount);
                 Ok(())
             }
-            None => Err(SharedBudgetError::UnknownParticipant { agent }),
+            None => {
+                // Record it before refusing. The caller still learns the observation was
+                // unattributable (that is the refusal's job and `81658dd50`'s point), but the
+                // spend is REAL — it was observed — so it must reach `total_spent()` or
+                // `is_overspent()` is blind to consumption that already occurred.
+                self.unattributed_spent = self.unattributed_spent.saturating_add(amount);
+                Err(SharedBudgetError::UnknownParticipant { agent })
+            }
         }
     }
 
@@ -1906,7 +1932,28 @@ mod tests {
             "an unattributable debit must be named, got {outcome:?}"
         );
         // The rest of the batch still landed — one stray block does not wedge observation.
-        assert_eq!(budget.total_spent(), 400);
+        assert_eq!(
+            budget
+                .allowances
+                .values()
+                .map(|a| a.spent)
+                .sum::<ResourceAmount>(),
+            400,
+            "the attributable debit lands on its participant"
+        );
+        // ⚑ AND THE STRAY IS COUNTED NOW. This assertion used to read `total_spent() == 400`,
+        // which is the very blindness this test's own opening comment describes: "the debit left
+        // no trace". Refusing to ATTRIBUTE an observed debit does not un-spend the resource, so
+        // the 900 reaches the total through `unattributed_spent` and `is_overspent()` can see it.
+        assert_eq!(
+            budget.unattributed_spent, 900,
+            "the stray debit is observed, so it is counted"
+        );
+        assert_eq!(
+            budget.total_spent(),
+            1300,
+            "400 attributed + 900 unattributable"
+        );
     }
 
     // ── try_optimistic_debit Tests ─────────────────────────────────────
@@ -2071,5 +2118,88 @@ mod tests {
         // Phase 8: New debits accepted within the reduced allowance.
         assert!(budget.try_optimistic_debit(agent_a, 100, test_digest(300)));
         assert_eq!(budget.remaining(&agent_a), Some(33));
+    }
+}
+
+#[cfg(test)]
+mod unattributed_spend_tooth {
+    use super::*;
+
+    // Local fixtures: the sibling `tests` module's helpers are private, and reaching into
+    // another test module is a coupling that breaks the moment it reorganises.
+    fn res() -> ResourceId {
+        CellId::from_bytes([7u8; 32])
+    }
+    fn agents(n: usize) -> Vec<ParticipantId> {
+        (0..n)
+            .map(|i| CellId::from_bytes([i as u8 + 1; 32]))
+            .collect()
+    }
+
+    /// ⚑ AN OBSERVED DEBIT IS CONSUMPTION THAT HAPPENED.
+    ///
+    /// `record_observed_debit` refuses an unknown participant — correct, and `81658dd50` landed
+    /// that to stop the debit being SILENTLY DROPPED. But refusing an *observation* does not
+    /// un-spend the resource. Before this tooth `total_spent()` summed only per-participant
+    /// `spent`, so an unattributable observation vanished and `is_overspent()` could not fire on
+    /// consumption that had already occurred.
+    ///
+    /// Both poles, and the second is what keeps the first honest: the caller still LEARNS the
+    /// observation was unattributable, AND the spend still reaches the total.
+    #[test]
+    fn an_unattributable_observed_debit_still_reaches_total_spent_and_can_overspend() {
+        let agents = agents(2);
+        let known = agents[0];
+        let mut b =
+            SharedResourceBudget::new(res(), 100, agents.clone(), 0).expect("budget constructs");
+
+        b.record_observed_debit(known, 40)
+            .expect("a known participant records");
+        assert_eq!(
+            b.total_spent(),
+            40,
+            "an attributed debit must reach total_spent"
+        );
+        assert!(
+            !b.is_overspent(),
+            "40 observed against 100 is not overspent"
+        );
+
+        // Unattributable: REFUSED to the caller, and still counted.
+        let stranger: ParticipantId = CellId::from_bytes([99u8; 32]);
+        let err = b
+            .record_observed_debit(stranger, 70)
+            .expect_err("an unknown participant must still be refused");
+        assert!(
+            matches!(err, SharedBudgetError::UnknownParticipant { .. }),
+            "the caller must learn the observation was unattributable; got {err:?}"
+        );
+        assert_eq!(
+            b.unattributed_spent, 70,
+            "an OBSERVED debit is consumption that happened — refusing to attribute it does not un-spend it"
+        );
+        assert_eq!(
+            b.total_spent(),
+            110,
+            "total_spent must include the unattributed bucket"
+        );
+        assert!(
+            b.is_overspent(),
+            "110 observed against a 100 balance IS overspent — the assertion that could not fire \
+             before, because an unattributable observation was invisible to the total"
+        );
+    }
+
+    /// Anti-vacuity for the arithmetic itself, so a future `total_spent()` that drops the term is
+    /// caught here and not only through the overspend path.
+    #[test]
+    fn total_spent_is_attributed_plus_unattributed() {
+        let agents = agents(2);
+        let mut b =
+            SharedResourceBudget::new(res(), 1_000, agents.clone(), 0).expect("budget constructs");
+        b.record_observed_debit(agents[0], 17).expect("records");
+        b.record_observed_debit(agents[1], 23).expect("records");
+        b.unattributed_spent = 5;
+        assert_eq!(b.total_spent(), 45, "17 + 23 + 5");
     }
 }
