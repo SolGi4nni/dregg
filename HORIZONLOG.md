@@ -200,6 +200,10 @@ over an eight-key band, and the divergence is a `def`, not only a stale comment.
 ### B. THE VERIFIED THING IS NOT THE THING THAT RUNS
 
 **B1 · `DREGG_LEAN_SHADOW` IS SET BY NOTHING BUT ONE TEST, SO THE VERIFIED EXECUTOR DECIDES NOTHING IN
+> ⚑ **REWRITTEN 2026-07-28 — THE SWEEP STANDS, THE CONCLUSION IS REFUTED.** `DREGG_LEAN_SHADOW` really is set by nothing (verified four ways incl. a per-file-class inventory over 26 workflows, every Dockerfile/compose/k8s file, 7 systemd units, and every Rust `env::set_var`). But it is the **superseded** seam. The verified executor decides on `DREGG_LEAN_PRODUCER` — **opt-OUT, default ON** — which installs the verified post-state AND verdict unconditionally in BOTH directions, strictly stronger than the shadow's one-way veto.
+>
+> **The real finding is worse than the one recorded**: the dark gate was BROKEN. Measured — a veto restored the ledger but not the executor-owned receipt head, so ONE VETOED TURN PERMANENTLY BRICKED THE AGENT (`ReceiptChainMismatch` forever after). And arming it alongside the default-on producer would have LAUNDERED the producer's central finding, logging `Rust reference AGREES` for a genuine Rust-commits-what-Lean-rejects. Deleted; the tooth moved onto the armed seam.
+
 PRODUCTION. LIVE.** Whole-tree sweep including `.github/`, `scripts/`, `docker/`, `deploy/`, `*.env*`:
 exactly **one setter**, `exec-lean/tests/lean_strict_veto.rs:123`, which unsets it again at `:173`.
 Three readers, all `env::var` (`exec-lean/src/lean_shadow.rs:342, 354`). Zero hits in any CI, container
