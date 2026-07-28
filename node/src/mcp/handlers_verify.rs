@@ -666,11 +666,21 @@ pub(super) async fn tool_sign_sovereign_witness(
             amount: vm_effect_amount,
             direction: 1,
         }];
-        // The standalone v1 material is RETIRED, so this currently always refuses. It
-        // must NOT panic (this runs inside the stdio dispatch loop, which has no
-        // `catch_unwind` — a panic here kills the whole `dregg-node mcp` server), and it
-        // must NOT silently hand back a proof-less witness to a caller who explicitly
-        // asked for `attach_proof`: refuse by name instead.
+        // The standalone v1 material is RETIRED, so this always refuses. It must NOT
+        // panic (this runs inside the stdio dispatch loop, which has no `catch_unwind` —
+        // a panic here kills the whole `dregg-node mcp` server), and it must NOT silently
+        // hand back a proof-less witness to a caller who explicitly asked for
+        // `attach_proof`: refuse by name instead.
+        //
+        // ⚑ THIS REFUSAL IS CORRECT, and it is NOT the class of refusal the five commit
+        // tools carried (2026-07-28). Those refused to COMMIT because an ADDITIVE
+        // attestation could not be minted; this one refuses to MINT AN ARTIFACT THE
+        // EXECUTOR ITSELF REJECTS. `turn/src/executor/execute.rs` (step 8 of sovereign
+        // witness verification) fails a turn CLOSED with `InvalidExecutionProof` the
+        // moment a witness carries a v1 `transition_proof`. Handing one back would build
+        // a witness whose only effect is to make every turn it is attached to
+        // unsubmittable — so the tool refuses the REQUEST, by name, and a caller who
+        // omits `attach_proof` gets a witness that works.
         match try_generate_effect_vm_proof(
             u64::try_from(cell.state.balance()).unwrap_or(0),
             cell.state.nonce(),
@@ -679,7 +689,12 @@ pub(super) async fn tool_sign_sovereign_witness(
             Ok(material) => material.into_parts().0,
             Err(e) => {
                 return McpToolResult::error(format!(
-                    "attach_proof was requested but no transition proof can be produced: {e}"
+                    "attach_proof was requested but no transition proof can be produced: {e}. \
+                     A v1 transition_proof is refused by the executor itself \
+                     (TurnError::InvalidExecutionProof, execute.rs sovereign-witness step 8), \
+                     so attaching one would make this witness unsubmittable. Re-issue without \
+                     `attach_proof`; the sovereign attestation path is the rotated \
+                     proof-carrying turn."
                 ));
             }
         }

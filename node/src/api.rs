@@ -3430,7 +3430,12 @@ pub(crate) fn push_committed_event_enriched(
 /// including the per-turn ROTATION witness built from the REAL before/after actor
 /// cells, so the attestation proves through the LEAN-emitted rotated descriptor
 /// (the v1 hand-AIR is gone from this path).
-enum HttpWitnessOutcome {
+///
+/// ⚑ NOT HTTP-ONLY as of 2026-07-28. The MCP commit paths (`mcp/handlers_*`) now
+/// reach the SAME seam rather than carrying their own answer: they used to consult
+/// the RETIRED standalone v1 helper and refuse to commit when it could not produce
+/// material. One attestation decision, one prove pool, both surfaces.
+pub(crate) enum HttpWitnessOutcome {
     /// The turn carries an Effect-VM-bearing transition the async pool attests
     /// off the lock (rotated when the cell is a rotatable cohort member).
     Rotatable(RotatableTurn),
@@ -3460,7 +3465,7 @@ impl HttpWitnessOutcome {
     /// `/turns/submit-signed`, `/turns/submit-encrypted`, the faucet). Each used to
     /// carry its own pair of `match`es over this enum, which is the same
     /// duplicated-decision shape as the projector twin this gate just lost.
-    fn split(self, turn_hash: &str) -> (ActivityProofStatus, Option<RotatableTurn>) {
+    pub(crate) fn split(self, turn_hash: &str) -> (ActivityProofStatus, Option<RotatableTurn>) {
         match self {
             Self::Rotatable(rotatable) => (ActivityProofStatus::ProofPending, Some(rotatable)),
             Self::NotRequired => (ActivityProofStatus::NotRequired, None),
@@ -3483,7 +3488,7 @@ impl HttpWitnessOutcome {
 /// (the effect-vm leg proves through the rotated descriptor); `None` falls back
 /// to the byte-identical v1 leg INSIDE `prove_and_verify_finalized_turn` — never
 /// the node's own v1 effect-vm hand-AIR.
-struct RotatableTurn {
+pub(crate) struct RotatableTurn {
     agent: CellId,
     pre_balance: u64,
     pre_nonce: u64,
@@ -3569,7 +3574,7 @@ fn http_attestation_coverage(
 /// gathers what the async prove pool needs to (re-)build + self-verify the
 /// composed `FullTurnProof` off the lock.
 ///
-/// `post_ledger` is the ledger AFTER the executor mutated it (the real after-cell
+/// `after_cell` is the ACTOR cell AFTER the executor mutated it (the real after-cell
 /// the rotated leg's welds read); `receipt_hash` seeds the rotation witness's
 /// `iroot` MMR leaf. When the actor cell is a rotatable cohort member the rotation
 /// witness is built (the effect-vm leg then proves through the LEAN-emitted rotated
@@ -3579,10 +3584,17 @@ fn http_attestation_coverage(
 /// [`HttpWitnessOutcome::Unprovable`] when the checked producer projection refuses
 /// the turn by name, or `Err` only when the actor's local pre-state is missing /
 /// unrepresentable.
-fn prepare_rotatable_turn(
+///
+/// Takes the two ACTOR CELLS, not two ledgers: every caller only ever asked the
+/// ledgers for `turn.agent`, and the MCP commit paths hold the before-cell directly
+/// (they arm no per-turn restore-point journal, so there is no `pre_ledger` for them
+/// to hand over). Same function, both surfaces — the alternative was an MCP-local
+/// copy of this decision, which is how the projector twin this gate replaced got
+/// there in the first place.
+pub(crate) fn prepare_rotatable_turn(
     turn: &Turn,
-    pre_ledger: &dregg_cell::Ledger,
-    post_ledger: &dregg_cell::Ledger,
+    before_cell: Option<&dregg_cell::Cell>,
+    after_cell: Option<&dregg_cell::Cell>,
     receipt_hash: [u8; 32],
 ) -> Result<HttpWitnessOutcome, String> {
     // The SAME flat slice the prove pool will project (`ProveJob::effects`), so the
@@ -3599,7 +3611,7 @@ fn prepare_rotatable_turn(
         AttestationCoverage::Refused(why) => return Ok(HttpWitnessOutcome::Unprovable(why)),
     }
 
-    let Some(before_cell) = pre_ledger.get(&turn.agent) else {
+    let Some(before_cell) = before_cell else {
         return Err(format!(
             "missing local pre-state for agent {}",
             hex_encode(&turn.agent.0)
@@ -3617,7 +3629,7 @@ fn prepare_rotatable_turn(
     // rotated pre-state cannot faithfully represent — or a non-cohort effect —
     // yields `None`, and the prover then runs the byte-identical v1 leg. The
     // after-cell is the post-execution state the executor just committed.
-    let rotation = match post_ledger.get(&turn.agent) {
+    let rotation = match after_cell {
         Some(after_cell) => {
             let receipt_hashes = [receipt_hash];
             crate::turn_proving::rotation_witness_for_self_sovereign(
@@ -3647,13 +3659,19 @@ fn prepare_rotatable_turn(
 /// on the running node) or its queue is full, the receipt stays
 /// committed-but-unattested — sound, since the authoritative executor already
 /// validated + committed the state; the proof is additive attestation.
-async fn enqueue_async_proof(
+///
+/// Returns whether a job was actually ACCEPTED into the queue. The HTTP callers
+/// discard it (their `proof_status` is decided by [`HttpWitnessOutcome::split`]
+/// before this runs, and reports `proof_pending` even when no pool is installed —
+/// a named residual of this surface, not something the MCP caller should inherit);
+/// the MCP callers report the returned truth instead of the intention.
+pub(crate) async fn enqueue_async_proof(
     state: &NodeState,
     rotatable: RotatableTurn,
     receipt: dregg_turn::TurnReceipt,
     receipt_hash: [u8; 32],
     turn_hash_hex: String,
-) {
+) -> bool {
     if let Some(pool) = state.prove_pool().await {
         let job = crate::prove_pool::ProveJob {
             agent: rotatable.agent,
@@ -3669,13 +3687,16 @@ async fn enqueue_async_proof(
         if pool.enqueue(job) {
             let mut s = state.write().await;
             s.mark_proof_pending(receipt_hash);
+            return true;
         }
+        false
     } else {
         tracing::warn!(
             turn_hash = %turn_hash_hex,
             "no async prove pool installed; committed receipt left unattested (the executor \
              already validated + committed the state, so the commit is sound)"
         );
+        false
     }
 }
 
@@ -3953,8 +3974,8 @@ async fn post_submit_turn(
             // the receipt is simply left unattested (the executor is the authority).
             let witness_outcome = match prepare_rotatable_turn(
                 &turn,
-                &pre_ledger,
-                &s.ledger,
+                pre_ledger.get(&turn.agent),
+                s.ledger.get(&turn.agent),
                 receipt_hash,
             ) {
                 Ok(outcome) => outcome,
@@ -4257,8 +4278,8 @@ async fn post_submit_signed_turn(
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
                 &signed.turn,
-                &pre_ledger,
-                &s.ledger,
+                pre_ledger.get(&signed.turn.agent),
+                s.ledger.get(&signed.turn.agent),
                 receipt_hash,
             ) {
                 Ok(outcome) => outcome,
@@ -4724,8 +4745,8 @@ async fn post_submit_encrypted_turn(
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
                 &cleartext_turn,
-                &pre_ledger,
-                &s.ledger,
+                pre_ledger.get(&cleartext_turn.agent),
+                s.ledger.get(&cleartext_turn.agent),
                 receipt_hash,
             ) {
                 Ok(outcome) => outcome,
@@ -8103,19 +8124,23 @@ async fn post_faucet(
             // whose per-row welds carry the transfer delta from the v1 sub-trace
             // (the turn-invariant limbs are identical), exactly as the finalized
             // cap-less note-spend leg does.
-            let witness_outcome =
-                match prepare_rotatable_turn(&faucet_turn, &pre_ledger, &s.ledger, receipt_hash) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        tracing::warn!(
-                            turn_hash = %turn_hash_hex,
-                            error = %err,
-                            "faucet turn attestation prep failed; receipt stays \
-                             committed-but-unattested (has_proof will not flip)"
-                        );
-                        HttpWitnessOutcome::NotRequired
-                    }
-                };
+            let witness_outcome = match prepare_rotatable_turn(
+                &faucet_turn,
+                pre_ledger.get(&faucet_turn.agent),
+                s.ledger.get(&faucet_turn.agent),
+                receipt_hash,
+            ) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    tracing::warn!(
+                        turn_hash = %turn_hash_hex,
+                        error = %err,
+                        "faucet turn attestation prep failed; receipt stays \
+                         committed-but-unattested (has_proof will not flip)"
+                    );
+                    HttpWitnessOutcome::NotRequired
+                }
+            };
             let (proof_status, pending_proof) = witness_outcome.split(&turn_hash_hex);
 
             push_committed_event(
@@ -11235,8 +11260,13 @@ mod tests {
         // into the carrier the async pool proves — and for a cohort transfer it builds
         // the ROTATION witness, so the async proof goes through the rotated descriptor,
         // NOT the node's own v1 effect-vm hand-AIR.
-        let outcome = prepare_rotatable_turn(&turn, &pre_ledger, &ledger, receipt.receipt_hash())
-            .expect("projectable HTTP turn prepares for attestation");
+        let outcome = prepare_rotatable_turn(
+            &turn,
+            pre_ledger.get(&agent),
+            ledger.get(&agent),
+            receipt.receipt_hash(),
+        )
+        .expect("projectable HTTP turn prepares for attestation");
         let HttpWitnessOutcome::Rotatable(rotatable) = outcome else {
             panic!("a transfer-bearing HTTP turn must be Rotatable, not NotRequired");
         };
@@ -11288,8 +11318,7 @@ mod tests {
         };
 
         let _ = receipt; // empty-effect turn carries no Effect-VM transition to attest
-        let empty = dregg_cell::Ledger::new();
-        let outcome = prepare_rotatable_turn(&turn, &empty, &empty, [0u8; 32])
+        let outcome = prepare_rotatable_turn(&turn, None, None, [0u8; 32])
             .expect("empty-effect HTTP turn should not require attestation");
         assert!(
             matches!(outcome, HttpWitnessOutcome::NotRequired),

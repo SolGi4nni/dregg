@@ -349,17 +349,20 @@ pub(super) async fn tool_create_cell_from_factory_effect(
 // `register_service`, synthesise one `SetField` row carrying the event's
 // path_hash so the proof remains non-trivial).
 
-/// Build a `Turn` that wraps a single starbridge-app action and submit
-/// it through the executor.  Generates an Effect-VM STARK proof over
-/// the action's `SetField` effects (plus optional synthetic rows the
-/// caller pre-populates in `extra_vm_effects`).  Returns the
-/// canonical (receipt-bearing) JSON response shape used by all four
-/// starbridge tools.
+/// Build a `Turn` that wraps a single starbridge-app action, submit it through the
+/// executor, and hand the committed turn to the node's async prove pool for its
+/// ROTATED attestation. Returns the canonical (receipt-bearing) JSON response shape
+/// used by all four starbridge tools.
+///
+/// ⚠ This function's post-commit block used to call the RETIRED v1 attestation
+/// producer and report `effect_vm_proof_hex: null` with `proof_status:
+/// "v1_attestation_retired"` — permanently, for every call, on a turn that had
+/// already committed, chained and gossiped. It was not a gate (it ran after all
+/// three) and it was not a producer; it was a tombstone in the response body.
 pub(super) async fn run_starbridge_action(
     state: &NodeState,
     action: dregg_turn::Action,
     memo: String,
-    extra_vm_effects: Vec<dregg_circuit::effect_vm::Effect>,
     extra_links: serde_json::Map<String, Value>,
 ) -> McpToolResult {
     let mut s = state.write().await;
@@ -378,17 +381,17 @@ pub(super) async fn run_starbridge_action(
 
     // Make sure the action's target cell exists in the ledger.
     let target = signed_action.target;
-    let (target_balance, target_nonce) = ensure_cell_in_ledger(target, pk_bytes, &mut s.ledger);
+    // (The returned pre-state tuple fed the retired v1 attestation and nothing else;
+    // the rotated leg reads the ACTOR cell's real before/after images instead.)
+    let _ = ensure_cell_in_ledger(target, pk_bytes, &mut s.ledger);
     // Also ensure the agent cell exists — turn-level checks reference it.
     let _ = ensure_cell_in_ledger(agent_cell_id, pk_bytes, &mut s.ledger);
 
-    // Project SetField (and any other supported) effects into VM domain.
-    let mut vm_effects: Vec<dregg_circuit::effect_vm::Effect> = signed_action
-        .effects
-        .iter()
-        .filter_map(project_setfield_to_vm)
-        .collect();
-    vm_effects.extend(extra_vm_effects);
+    // ⚑ DELETED 2026-07-28: the `project_setfield_to_vm` projection + the
+    // `extra_vm_effects` parameter that fed it. Their only consumer was the retired v1
+    // attestation call this function used to make AFTER committing; all four callers
+    // already passed an empty vec. The live attestation is the rotated finalized-turn
+    // proof enqueued below, which projects the turn's effects itself.
 
     // Build the Turn.
     let mut forest = CallForest::new();
@@ -434,6 +437,9 @@ pub(super) async fn run_starbridge_action(
     let signed = s.cclerk.sign_turn(&turn);
     let turn_hash = hex_encode(&turn.hash());
 
+    // The ACTOR cell BEFORE execution — the rotated attestation's before-image.
+    let before_cell = s.ledger.get(&agent_cell_id).cloned();
+
     // Execute locally.
     let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     if let Some(head) = previous_receipt_hash {
@@ -443,7 +449,8 @@ pub(super) async fn run_starbridge_action(
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
-            let receipt_hash_hex = hex_encode(&receipt.receipt_hash());
+            let receipt_hash = receipt.receipt_hash();
+            let receipt_hash_hex = hex_encode(&receipt_hash);
             let receipt_bytes =
                 postcard::to_allocvec(&receipt).expect("TurnReceipt serializes via postcard");
             let receipt_bytes_hex = hex_encode(&receipt_bytes);
@@ -451,12 +458,27 @@ pub(super) async fn run_starbridge_action(
             let post_state_hash_hex = hex_encode(&receipt.post_state_hash);
             let effects_hash_hex = hex_encode(&receipt.effects_hash);
 
+            let planned = plan_attestation(
+                &turn,
+                before_cell.as_ref(),
+                s.ledger.get(&agent_cell_id),
+                receipt_hash,
+                &turn_hash,
+            );
+
             s.cclerk
-                .append_receipt(receipt)
+                .append_receipt(receipt.clone())
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
 
             let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
             drop(s);
+
+            // The LIVE attestation, at the same seam the HTTP submit path uses: the
+            // rotated finalized-turn proof, built + self-verified off the lock by the
+            // async prove pool. (Substrate, said out loud: that leg's effect-vm
+            // descriptor is LEAN-EMITTED — this code only hands the pool a job.)
+            let attestation =
+                attest_committed_turn(state, planned, receipt, receipt_hash, &turn_hash).await;
 
             state.emit(crate::state::NodeEvent::Receipt {
                 hash: turn_hash.clone(),
@@ -469,41 +491,6 @@ pub(super) async fn run_starbridge_action(
                 });
             }
 
-            // Generate Effect-VM proof. The standalone v1 material is RETIRED, so this
-            // currently ALWAYS refuses — report that as data. It used to `panic!`, which
-            // killed the whole `dregg-node mcp` stdio server on every call of this tool,
-            // after the turn had already committed and gossiped.
-            let (proof_error, proof_hex, public_inputs, trace_rows, witness_hash_hex) =
-                match try_generate_effect_vm_proof(target_balance, target_nonce, &vm_effects) {
-                    Ok(material) => {
-                        let (p, pi, tr, wh) = material.into_parts();
-                        (None, p, pi, tr, wh)
-                    }
-                    Err(e) => (
-                        Some(e),
-                        String::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        String::new(),
-                    ),
-                };
-
-            let proof_field = if proof_hex.is_empty() {
-                Value::Null
-            } else {
-                Value::String(proof_hex)
-            };
-            let trace_field = if trace_rows.is_empty() {
-                Value::Null
-            } else {
-                serde_json::to_value(&trace_rows).unwrap_or(Value::Null)
-            };
-            let witness_hash_field = if witness_hash_hex.is_empty() {
-                Value::Null
-            } else {
-                Value::String(witness_hash_hex)
-            };
-
             let mut out = serde_json::Map::new();
             out.insert("committed".into(), Value::Bool(true));
             out.insert("turn_hash".into(), Value::String(turn_hash));
@@ -512,42 +499,23 @@ pub(super) async fn run_starbridge_action(
             out.insert("pre_state_hash".into(), Value::String(pre_state_hash_hex));
             out.insert("post_state_hash".into(), Value::String(post_state_hash_hex));
             out.insert("effects_hash".into(), Value::String(effects_hash_hex));
-            out.insert("effect_vm_proof_hex".into(), proof_field);
-            out.insert(
-                "effect_vm_public_inputs".into(),
-                serde_json::to_value(&public_inputs).unwrap_or(Value::Null),
-            );
-            out.insert("effect_vm_trace_rows".into(), trace_field);
-            out.insert("effect_vm_witness_hash_hex".into(), witness_hash_field);
             out.insert(
                 "proof_status".into(),
-                Value::String(
-                    match &proof_error {
-                        None => "proved",
-                        // NOT "proof_generation_failed" — nothing tried and failed. The v1
-                        // lane is retired and has no producer, so this is the permanent
-                        // answer for this tool, not a transient one. (This call site is
-                        // also the one that runs AFTER the turn has committed, chained and
-                        // gossiped above — it is an annotation on a committed turn, and is
-                        // deliberately not a gate; see `require_effect_vm_proof`'s doc.)
-                        Some(_) => "v1_attestation_retired",
-                    }
-                    .to_string(),
-                ),
+                Value::String(attestation.proof_status.to_string()),
             );
-            if let Some(e) = proof_error {
-                out.insert("effect_vm_proof_error".into(), Value::String(e));
-            }
+            out.insert("attestation".into(), attestation.json());
             for (k, v) in extra_links {
                 out.insert(k, v);
             }
             McpToolResult::json(&Value::Object(out))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            let variant = rejection_variant(&reason);
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "committed": false,
                 "turn_hash": turn_hash,
+                "rejection_variant": variant,
                 "error": format!("turn rejected: {reason}"),
             }))
         }
@@ -697,14 +665,7 @@ pub(super) async fn tool_register_name(params: &Value, state: &NodeState) -> Mcp
         Value::String(hex_encode(blake3::hash(&proof_bytes).as_bytes())),
     );
 
-    run_starbridge_action(
-        state,
-        action,
-        format!("register_name: {name}"),
-        Vec::new(),
-        links,
-    )
-    .await
+    run_starbridge_action(state, action, format!("register_name: {name}"), links).await
 }
 
 // =============================================================================
@@ -836,7 +797,6 @@ pub(super) async fn tool_publish_subscription(params: &Value, state: &NodeState)
         state,
         action,
         format!("publish_subscription: {prior_state_str}->{new_state_str}"),
-        Vec::new(),
         links,
     )
     .await
@@ -1003,7 +963,6 @@ pub(super) async fn tool_issue_credential(params: &Value, state: &NodeState) -> 
         state,
         action,
         format!("issue_credential: {schema_name}"),
-        Vec::new(),
         links,
     )
     .await
@@ -1054,7 +1013,6 @@ pub(super) async fn tool_register_service(params: &Value, state: &NodeState) -> 
     // PI surface (EMIT_EVENT_TOPIC_HASH / EMIT_EVENT_PAYLOAD_HASH) ties
     // the STARK to the actual emitted event.
     let path_hash = *blake3::hash(path.as_bytes()).as_bytes();
-    let extra_vm: Vec<dregg_circuit::effect_vm::Effect> = Vec::new();
 
     let mut links = serde_json::Map::new();
     links.insert(
@@ -1068,14 +1026,7 @@ pub(super) async fn tool_register_service(params: &Value, state: &NodeState) -> 
         Value::String(hex_encode(&target_cell.0)),
     );
 
-    run_starbridge_action(
-        state,
-        action,
-        format!("register_service: {path}"),
-        extra_vm,
-        links,
-    )
-    .await
+    run_starbridge_action(state, action, format!("register_service: {path}"), links).await
 }
 
 // =============================================================================

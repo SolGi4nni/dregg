@@ -14,28 +14,17 @@ pub(super) fn grant_cap_entry_8(scalar: u32) -> [dregg_circuit::BabyBear; 8] {
     a
 }
 
-/// The ONE-felt lane a 32-byte `Effect::SetField` value projects to, byte-identical
-/// to the DEPLOYED executor bridge (`turn::executor::effect_vm_bridge`'s
-/// `field_element_to_bb`, which is this same `field_limbs8(value)[0]`).
-///
-/// `field_limbs8` lane 0 is `u32::from_be_bytes(value[28..32])` — the lo32 of the
-/// kernel's u64 field lane, i.e. the lane `dregg_cell::field_from_u64` writes and
-/// `field_to_u64` reads. The three node-side projectors previously took
-/// `u32::from_le_bytes(value[0..4])` instead, which is a DIFFERENT lane and is
-/// **identically zero** for every canonically-encoded field value (`field_from_u64`
-/// puts the payload in bytes 24..32), so every stat/inventory write projected to the
-/// same felt `0` and no two of them were distinguishable.
-///
-/// RESIDUAL, stated at its real resolution: one felt cannot carry 32 bytes. This lane
-/// binds the u64 lane's low 32 bits only; lanes 1..7 (`value[24..28]` hi32 and
-/// `value[0..24]`) ride the value8 completion seam, which is STAGED, not deployed
-/// (`circuit/tests/setfield_value8_epoch_flip.rs`). Two values differing only outside
-/// bytes 28..32 still share this felt — that is the deployed one-felt ceiling, not
-/// something this projector can fix.
-#[inline]
-pub(super) fn setfield_value_lane(value: &[u8; 32]) -> dregg_circuit::BabyBear {
-    dregg_circuit::effect_vm::field_limbs8(value)[0]
-}
+// ⚑ DELETED 2026-07-28, with the two projectors it served (`project_effects_for_mcp`,
+// `project_setfield_to_vm`) and the `setfield_value_lane_tooth` parity tests that pinned
+// them: `setfield_value_lane`, the node-local `Effect::SetField` -> one-felt projection.
+//
+// Those projectors existed ONLY to feed `require_effect_vm_proof` / the retired v1
+// standalone attestation, and with that gone they had no production caller — the tooth
+// was pinning a TWIN of `dregg_sdk::AgentCipherclerk::try_convert_effects_to_vm` against
+// the executor bridge. Deleting the twin is strictly stronger than testing that it agrees:
+// the ONE producer the node now consults is the cipherclerk's, which is the same function
+// the prove pool runs downstream (`turn_proving::prove_and_verify_finalized_turn`).
+// `parse_effect_json`'s canonical-encoding test survives below — that surface is live.
 
 /// Parse a JSON effect descriptor into a turn `Effect`.
 ///
@@ -194,110 +183,28 @@ impl EffectVmProofMaterial {
             self.witness_hash_hex,
         )
     }
-
-    pub(super) fn proof_json(&self) -> serde_json::Value {
-        serde_json::Value::String(self.proof_hex.clone())
-    }
-
-    pub(super) fn trace_json(&self) -> serde_json::Value {
-        serde_json::to_value(&self.trace_rows).unwrap_or(serde_json::Value::Null)
-    }
-
-    pub(super) fn witness_hash_json(&self) -> serde_json::Value {
-        serde_json::Value::String(self.witness_hash_hex.clone())
-    }
 }
 
-pub(super) fn witnessed_receipt_from_effect_material(
-    receipt: dregg_turn::TurnReceipt,
-    proof: &EffectVmProofMaterial,
-) -> Option<dregg_turn::WitnessedReceipt> {
-    let mut public_inputs: Vec<u32> = proof.public_inputs.iter().map(|x| *x as u32).collect();
-    let needed = dregg_circuit::effect_vm::pi::ACTIVE_BASE_COUNT
-        .max(
-            dregg_circuit::effect_vm::pi::TURN_HASH_BASE
-                + dregg_circuit::effect_vm::pi::TURN_HASH_LEN,
-        )
-        .max(
-            dregg_circuit::effect_vm::pi::PREVIOUS_RECEIPT_HASH_BASE
-                + dregg_circuit::effect_vm::pi::PREVIOUS_RECEIPT_HASH_LEN,
-        );
-    if public_inputs.len() < needed {
-        public_inputs.resize(needed, 0);
-    }
-    let turn_hash = dregg_commit::typed::canonical_32_to_felts_4(&receipt.turn_hash);
-    for (i, felt) in turn_hash.iter().enumerate() {
-        public_inputs[dregg_circuit::effect_vm::pi::TURN_HASH_BASE + i] = felt.as_u32();
-    }
-    let previous = dregg_commit::typed::canonical_32_to_felts_4(
-        &receipt.previous_receipt_hash.unwrap_or([0u8; 32]),
-    );
-    for (i, felt) in previous.iter().enumerate() {
-        public_inputs[dregg_circuit::effect_vm::pi::PREVIOUS_RECEIPT_HASH_BASE + i] = felt.as_u32();
-    }
-    let trace: Vec<Vec<dregg_circuit::BabyBear>> = proof
-        .trace_rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|v| dregg_circuit::BabyBear::new(*v))
-                .collect()
-        })
-        .collect();
-    let public_input_felts: Vec<dregg_circuit::BabyBear> = public_inputs
-        .iter()
-        .map(|v| dregg_circuit::BabyBear::new(*v))
-        .collect();
-    // The v1 hand-AIR (`EffectVmAir`) receipt-bound WR proof is RETIRED. The per-receipt
-    // attestation is the rotated finalized-turn proof produced by the node's async prove
-    // pool; this inline-trace v1 WR is a v1-only artifact, so the helper yields `None`
-    // (the receipt still commits; its rotated attestation arrives separately).
-    let _ = (&trace, &public_input_felts, &public_inputs, receipt);
-    None
-}
+// ⚑ DELETED 2026-07-28: `witnessed_receipt_from_effect_material`. It returned `None`
+// UNCONDITIONALLY (the v1 receipt-bound WR is retired) after computing a PI vector and
+// a trace it then discarded, and its five callers all wrote `if let Some(w) = … {
+// push_witnessed_receipt(w) }`. A function that cannot return `Some` is not a producer
+// that happens to be off — it is a shape that makes a retired lane look live. The
+// per-receipt attestation is the ROTATED finalized-turn proof the async prove pool
+// produces; see [`attest_committed_turn`], which the five callers now use instead.
 
-pub(super) fn project_effects_for_mcp(
-    effects: &[dregg_turn::Effect],
-) -> Vec<dregg_circuit::effect_vm::Effect> {
-    let mut vm_effects = Vec::new();
-    for e in effects {
-        match e {
-            dregg_turn::Effect::Transfer { amount, .. } => {
-                vm_effects.push(dregg_circuit::effect_vm::Effect::Transfer {
-                    amount: *amount,
-                    direction: 1,
-                });
-            }
-            dregg_turn::Effect::SetField { index, value, .. } => {
-                vm_effects.push(dregg_circuit::effect_vm::Effect::SetField {
-                    field_idx: *index as u32,
-                    value: setfield_value_lane(value),
-                });
-            }
-            dregg_turn::Effect::IncrementNonce { .. } => {
-                vm_effects.push(dregg_circuit::effect_vm::Effect::NoOp);
-            }
-            _ => {}
-        }
-    }
-    vm_effects
-}
-
-pub(super) fn require_pre_state(
-    cell: &dregg_cell::CellId,
-    pre_state: Option<(u64, u64)>,
-    label: &str,
-) -> Result<(u64, u64), McpToolResult> {
-    pre_state.ok_or_else(|| {
-        McpToolResult::json(&serde_json::json!({
-            "activity_status": "rejected",
-            "proof_status": "missing_pre_state",
-            "committed": false,
-            "exercised": false,
-            "error": format!("{label}: cell {} is not in the local ledger; refusing to execute without Effect VM pre-state", hex_encode(&cell.0)),
-        }))
-    })
-}
+// ⚑ DELETED 2026-07-28: `require_pre_state`, the ACTOR-cell `(balance, nonce)` guard.
+// Its message said it plainly — "refusing to execute without Effect VM pre-state" — and
+// that tuple was an input to the retired v1 prover and to nothing else. A missing ACTOR
+// cell is the EXECUTOR's question to answer (it rejects the turn, by variant), not an
+// attestation precondition to refuse a commit on. At three of its four call sites it was
+// already redundant with a check made earlier in the same function
+// (`require_local_cell_for_commit` / the bilateral from+to ledger checks), so those
+// refusals are unchanged and their tests still pin them.
+//
+// `require_local_cell_for_commit` and `require_effect_cells_for_commit` below are NOT
+// this: they refuse to SYNTHESIZE a remote stub for a cell the turn will mutate, which is
+// a statement about state, not about proving.
 
 pub(super) fn require_local_cell_for_commit(
     ledger: &dregg_cell::Ledger,
@@ -312,7 +219,7 @@ pub(super) fn require_local_cell_for_commit(
         "proof_status": "missing_pre_state",
         "committed": false,
         "exercised": false,
-        "error": format!("{label}: cell {} is not in the local ledger; refusing to synthesize a remote stub for a committed proof-bearing turn", hex_encode(&cell.0)),
+        "error": format!("{label}: cell {} is not in the local ledger; refusing to synthesize a remote stub for a turn that would mutate it", hex_encode(&cell.0)),
     })))
 }
 
@@ -374,45 +281,176 @@ pub(super) fn require_effect_cells_for_commit(
 /// to async would break the synchronous proof return the demos depend on, so the
 /// proof stays inline — but it is NOT on a remote request path. The DoS fix lives
 /// where the DoS lives: the HTTP submit/commit handlers.
-/// ⚑ THIS CANNOT SUCCEED, AND THE CALLER IS NOW TOLD SO. [`try_generate_effect_vm_proof`]
-/// returns `Err` UNCONDITIONALLY — the v1 hand-AIR (`EffectVmAir`) standalone attestation
-/// is RETIRED — so every call of this function is a guaranteed refusal and the five tools
-/// that consult it (`dregg_bilateral_action` from- and to-side, `grant capability`,
-/// `bearer cap exercise`, `handoff cert exercise`) cannot commit.
+// ⚑ DELETED 2026-07-28: `require_effect_vm_proof`. It called
+// [`try_generate_effect_vm_proof`] — which returns `Err` UNCONDITIONALLY, with no `cfg`,
+// because the v1 hand-AIR (`EffectVmAir`) standalone attestation is RETIRED — and turned
+// the `Err` into an EARLY RETURN from the tool. It had no reachable `Ok`, so the five MCP
+// tools that consulted it (`dregg_grant_capability`, `dregg_exercise_bearer_cap`,
+// `dregg_exercise_handoff_cert`, and both sides of `dregg_bilateral_action`) could not
+// commit AT ALL: every honest call came back `activity_status: "rejected"`, which reads
+// like an authorization failure and is nothing of the kind.
+//
+// The refusal was never fail-closed safety, and `node/src/prove_pool.rs` settles it for
+// the whole node: "Proofs are *additive attestation*, not a per-step soundness gate … the
+// authoritative executor already validated the turn and committed the new state BEFORE
+// this pool ever runs." A tool that refuses to commit because an ADDITIVE ATTESTATION
+// cannot be produced is a dead tool. So the five tools now COMMIT and report the
+// attestation truthfully — see [`attest_committed_turn`], which routes them at the SAME
+// seam the HTTP submit path uses (`api::prepare_rotatable_turn` → the async prove pool,
+// whose effect-vm leg proves through the LEAN-EMITTED ROTATED DESCRIPTOR; no AIR is
+// authored on this path, and none may be).
+//
+// Making the helper return `Ok` instead would have laundered a MISSING attestation into a
+// PRESENT one; the retirement is real and is reported as such.
+
+/// The attestation disposition of a turn the MCP surface has ALREADY COMMITTED.
 ///
-/// It reported that refusal as `proof_status: "proof_generation_failed"`, which reads as a
-/// prover that tried and fell over — a transient, retryable, environmental fault. It is
-/// nothing of the kind: there is no prover behind it to fail. A caller cannot tell a
-/// retired lane from a broken one when both arrive as the same string, and this one has
-/// been retired since `384d0cd5a`. The status is now `v1_attestation_retired` and the
-/// message names the retirement and where the live attestation went.
+/// The executor is the soundness boundary; by the time one of these exists the state
+/// transition is done and chained. This says only what became of the *attestation*, and
+/// every value is a fact about a committed turn:
 ///
-/// This is NOT a security gate and must not be read as one. `node/src/prove_pool.rs`
-/// settles the question for the whole node: "Proofs are *additive attestation*, not a
-/// per-step soundness gate … the authoritative executor already validated the turn and
-/// committed the new state BEFORE this pool ever runs." Refusing to commit because an
-/// attestation cannot be produced is a dead tool, not fail-closed safety — the same
-/// F-DOS-1 confusion the HTTP submit path already unwound.
-pub(super) fn require_effect_vm_proof(
-    initial_balance: u64,
-    initial_nonce: u64,
-    vm_effects: &[dregg_circuit::effect_vm::Effect],
-    label: &str,
-) -> Result<EffectVmProofMaterial, McpToolResult> {
-    try_generate_effect_vm_proof(initial_balance, initial_nonce, vm_effects).map_err(|e| {
-        McpToolResult::json(&serde_json::json!({
-            "activity_status": "rejected",
-            "proof_status": "v1_attestation_retired",
-            "committed": false,
-            "exercised": false,
-            "error": format!(
-                "{label}: refused — {e}. This is a RETIRED lane, not a prover failure: \
-                 retrying cannot help. The live per-turn attestation is the rotated \
-                 finalized-turn proof the node's async prove pool produces through the \
-                 commit pipeline (node/src/prove_pool.rs); this MCP tool does not enqueue one."
-            ),
-        }))
-    })
+/// | `proof_status`            | means | HTTP twin ([`crate::state::ActivityProofStatus`]) |
+/// |---|---|---|
+/// | `attestation_pending`     | job ACCEPTED by the async prove pool; the WitnessedReceipt attaches when it lands | `proof_pending` |
+/// | `attestation_unattested`  | there IS a transition to attest but no pool took it (none installed, or queue full) | *(none — HTTP reports `proof_pending` here regardless, a named residual of that surface)* |
+/// | `attestation_not_required`| no effect in the turn touches the ACTOR cell, so there is no actor transition to prove | `not_required` |
+/// | `attestation_unprovable`  | the CHECKED producer projection refuses this turn BY NAME (a verb with no AIR row, or a `SetField` key wider than the u32 index lane) | `proof_generation_failed` |
+///
+/// The `attestation_` prefix is deliberate: this surface used to answer `proved` (meaning
+/// "standalone v1 material attached", a lane that has produced nothing since `384d0cd5a`)
+/// and `v1_attestation_retired`, and no reader should confuse the two vocabularies.
+#[derive(Debug)]
+pub(super) struct CommittedAttestation {
+    pub(super) proof_status: &'static str,
+    detail: Option<String>,
+}
+
+impl CommittedAttestation {
+    /// The `attestation` block every committed MCP tool response carries. It names the
+    /// LEG so a caller can tell WHICH attestation it is waiting for — the rotated
+    /// finalized-turn proof, not the retired standalone v1 material.
+    pub(super) fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "status": self.proof_status,
+            "leg": "rotated-finalized-turn-proof (node/src/prove_pool.rs)",
+            "detail": self.detail,
+            "note": "The executor committed this turn; the attestation is ADDITIVE, and its \
+                     absence is not a rejection. The retired lane is the standalone v1 \
+                     EffectVmAir material — `effect_vm_proof_hex` and friends are gone from \
+                     this response because that lane has no producer.",
+        })
+    }
+}
+
+/// Plan the committed turn's attestation. Runs UNDER the state-write lock (it reads the
+/// actor cell), at the ONE seam the HTTP commit path uses — `api::prepare_rotatable_turn`
+/// — so the MCP surface cannot drift into its own answer about what is attestable.
+///
+/// `before_cell` is the actor cell CLONED BEFORE `executor.execute` (the MCP paths arm no
+/// per-turn restore-point journal, so there is no `pre_turn_touched_ledger` to read);
+/// `after_cell` is the just-committed one.
+pub(super) fn plan_attestation(
+    turn: &Turn,
+    before_cell: Option<&dregg_cell::Cell>,
+    after_cell: Option<&dregg_cell::Cell>,
+    receipt_hash: [u8; 32],
+    turn_hash: &str,
+) -> crate::api::HttpWitnessOutcome {
+    match crate::api::prepare_rotatable_turn(turn, before_cell, after_cell, receipt_hash) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            tracing::warn!(
+                turn_hash = %turn_hash,
+                error = %err,
+                "mcp: could not prepare the rotated attestation; the turn is committed and \
+                 stays committed — only its attestation is missing"
+            );
+            crate::api::HttpWitnessOutcome::Unprovable(err)
+        }
+    }
+}
+
+/// Hand the planned attestation to the async prove pool and report WHAT ACTUALLY
+/// HAPPENED. Must be called AFTER the state-write guard is dropped: the pool's
+/// bookkeeping takes the write lock itself.
+pub(super) async fn attest_committed_turn(
+    state: &NodeState,
+    planned: crate::api::HttpWitnessOutcome,
+    receipt: dregg_turn::TurnReceipt,
+    receipt_hash: [u8; 32],
+    turn_hash: &str,
+) -> CommittedAttestation {
+    let unprovable_why = match &planned {
+        crate::api::HttpWitnessOutcome::Unprovable(why) => Some(why.clone()),
+        _ => None,
+    };
+    let (_status, pending) = planned.split(turn_hash);
+    match pending {
+        Some(rotatable) => {
+            let enqueued = crate::api::enqueue_async_proof(
+                state,
+                rotatable,
+                receipt,
+                receipt_hash,
+                turn_hash.to_string(),
+            )
+            .await;
+            if enqueued {
+                CommittedAttestation {
+                    proof_status: "attestation_pending",
+                    detail: None,
+                }
+            } else {
+                CommittedAttestation {
+                    proof_status: "attestation_unattested",
+                    detail: Some(
+                        "no async prove pool accepted the job (none installed in this \
+                         process, or its bounded queue is full); the receipt is committed \
+                         and unattested"
+                            .to_string(),
+                    ),
+                }
+            }
+        }
+        None => match unprovable_why {
+            Some(why) => CommittedAttestation {
+                proof_status: "attestation_unprovable",
+                detail: Some(why),
+            },
+            None => CommittedAttestation {
+                proof_status: "attestation_not_required",
+                detail: Some(
+                    "no effect in this turn touches the actor cell, so there is no actor \
+                     state transition to attest"
+                        .to_string(),
+                ),
+            },
+        },
+    }
+}
+
+/// The REJECTION VARIANT of a `TurnResult::Rejected`, derived from the enum itself.
+///
+/// `TurnError` is externally-tagged `Serialize`, so this is the Rust variant name and
+/// nothing else — no hand-maintained table to drift, and no substring matching. A caller
+/// (or a test) can tell `CapTpIntroducerKeyMismatch` from `BearerCapInvalidProof` from
+/// `InsufficientBalance` without parsing prose.
+///
+/// ⚠ This exists because a `node/` test asserted a security property BY SUBSTRING —
+/// `err.contains("rejected") || err.contains("introducer") || err.contains("invalid")` —
+/// over a message that, at the time, came from the v1 retirement and never reached the
+/// executor at all. Substrings cannot distinguish a forged key from a dead lane.
+pub(super) fn rejection_variant(reason: &dregg_turn::TurnError) -> String {
+    match serde_json::to_value(reason) {
+        // Unit variants serialize as a bare string; data variants as `{Variant: {…}}`.
+        Ok(serde_json::Value::String(name)) => name,
+        Ok(serde_json::Value::Object(map)) => map
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| "UnknownTurnError".to_string()),
+        _ => "UnknownTurnError".to_string(),
+    }
 }
 
 /// Generate an Effect VM STARK proof for a sequence of VM-domain effects.
@@ -489,127 +527,17 @@ pub(super) fn try_generate_effect_vm_proof(
 // JSON-RPC types
 // =============================================================================
 
-/// Build a schedule-projected scope-2 `WitnessedReceipt` for one cell of a
-/// committed bilateral Turn.
-///
-/// The Effect-VM proof material carries the real per-cell trace + base PI
-/// vector, but `generate_effect_vm_proof` does not write the bilateral-schedule
-/// / turn-identity PI slots (those are populated by the executor's
-/// `populate_pi`). We replay the *exact same* canonical projection here —
-/// `compute_turn_identity_pi` + `ExpectedBilateral::counts_for/roots_for` +
-/// `project_into_pi` + `IS_AGENT_CELL` — so the resulting WR's PI agrees with
-/// what `WitnessedReceipt::verify_bilateral_chain` (and the outer aggregation
-/// AIR) expect. No fabrication: the trace is the real proven trace, and the
-/// PI slots are derived from the canonical Turn the same way the executor does.
-pub(super) fn schedule_projected_wr(
-    turn: &Turn,
-    cell_id: &CellId,
-    receipt: &dregg_turn::TurnReceipt,
-    material: &EffectVmProofMaterial,
-) -> dregg_turn::WitnessedReceipt {
-    use dregg_circuit::BabyBear;
-    use dregg_circuit::effect_vm::pi as p;
-    use dregg_turn::bilateral_schedule::{ExpectedBilateral, project_into_pi};
-
-    let mut pi: Vec<BabyBear> = material
-        .public_inputs
-        .iter()
-        .map(|&v| BabyBear::new(v as u32))
-        .collect();
-    if pi.len() < p::ACTIVE_BASE_COUNT {
-        pi.resize(p::ACTIVE_BASE_COUNT, BabyBear::ZERO);
-    }
-
-    let (th, eg, actor_nonce, prev) = dregg_turn::TurnExecutor::compute_turn_identity_pi(turn);
-    pi[p::TURN_HASH_BASE..p::TURN_HASH_BASE + p::TURN_HASH_LEN]
-        .copy_from_slice(&th[..p::TURN_HASH_LEN]);
-    pi[p::EFFECTS_HASH_GLOBAL_BASE..p::EFFECTS_HASH_GLOBAL_BASE + p::EFFECTS_HASH_GLOBAL_LEN]
-        .copy_from_slice(&eg[..p::EFFECTS_HASH_GLOBAL_LEN]);
-    pi[p::ACTOR_NONCE] = BabyBear::new((actor_nonce & 0x7FFF_FFFF) as u32);
-    pi[p::PREVIOUS_RECEIPT_HASH_BASE..p::PREVIOUS_RECEIPT_HASH_BASE + p::PREVIOUS_RECEIPT_HASH_LEN]
-        .copy_from_slice(&prev[..p::PREVIOUS_RECEIPT_HASH_LEN]);
-
-    let schedule = ExpectedBilateral::from_turn(turn);
-    let counts = schedule.counts_for(cell_id);
-    let roots = schedule.roots_for(cell_id, actor_nonce);
-    project_into_pi(&mut pi, &counts, &roots);
-    pi[p::IS_AGENT_CELL] = if cell_id == &turn.agent {
-        BabyBear::new(1)
-    } else {
-        BabyBear::ZERO
-    };
-
-    let pi_u32: Vec<u32> = pi.iter().map(|x| x.as_u32()).collect();
-    let trace_bb: Vec<Vec<BabyBear>> = material
-        .trace_rows
-        .iter()
-        .map(|row| row.iter().map(|&v| BabyBear::new(v)).collect())
-        .collect();
-    let mut wr = dregg_turn::WitnessedReceipt::from_components(
-        receipt.clone(),
-        hex_decode_var(&material.proof_hex).unwrap_or_default(),
-        pi_u32,
-        if trace_bb.is_empty() {
-            None
-        } else {
-            Some(trace_bb.as_slice())
-        },
-    );
-    // ROTATED-WR PRODUCER (ROTATION-CUTOVER §EXEC.3): carry the decoupled 49-felt schedule
-    // block NATIVELY so the aggregator's `build_inner_rows_v2` can consume it WITHOUT the
-    // >=204-wide v1 PI a rotated WR (38/39-PI) does not have. `schedule_block_for_cell` produces
-    // the same block `schedule_block_from_inner_pi` would project from a full v1 PI; the field is
-    // `serde(default)`, so it round-trips through the DWR1 artifact and is ignored by every legacy
-    // consumer. CG-3 in-circuit rejects a divergent block, so the honest construction is safe.
-    wr.bilateral_schedule =
-        Some(dregg_turn::bilateral_schedule::schedule_block_for_cell(turn, cell_id).to_vec());
-    wr
-}
-
-/// Translate a turn-domain `Effect` into a single Effect-VM `Effect`.
-/// Covers all AIR-side variants:
-/// - `SetField` → `VmEffect::SetField`
-/// - `Transfer` → `VmEffect::Transfer` (debit side, direction=1)
-/// - `EmitEvent` → `VmEffect::EmitEvent` (BLAKE3 topic + payload, per #110)
-///
-/// Returns `None` for variants without an AIR-side analog (IncrementNonce,
-/// GrantCapability, RevokeCapability, CreateCell, etc.).
-pub(super) fn project_setfield_to_vm(
-    effect: &dregg_turn::Effect,
-) -> Option<dregg_circuit::effect_vm::Effect> {
-    match effect {
-        dregg_turn::Effect::SetField { index, value, .. } => {
-            Some(dregg_circuit::effect_vm::Effect::SetField {
-                field_idx: *index as u32,
-                value: setfield_value_lane(value),
-            })
-        }
-        dregg_turn::Effect::Transfer { amount, .. } => {
-            Some(dregg_circuit::effect_vm::Effect::Transfer {
-                amount: *amount,
-                direction: 1,
-            })
-        }
-        dregg_turn::Effect::EmitEvent { event, .. } => {
-            // Canonical (topic_hash, payload_hash) projection — mirrors
-            // `turn/src/executor/effect_vm_bridge.rs` EmitEvent arm (#110).
-            // topic_hash  = BLAKE3(event.topic)
-            // payload_hash = BLAKE3(event.data[0] ‖ event.data[1] ‖ …)
-            let topic_bytes = *blake3::hash(&event.topic).as_bytes();
-            let mut payload_hasher = blake3::Hasher::new();
-            for d in &event.data {
-                payload_hasher.update(d);
-            }
-            let payload_bytes = *payload_hasher.finalize().as_bytes();
-
-            Some(dregg_circuit::effect_vm::Effect::EmitEvent {
-                topic_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&topic_bytes),
-                payload_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(&payload_bytes),
-            })
-        }
-        _ => None,
-    }
-}
+// ⚑ DELETED 2026-07-28: `schedule_projected_wr`. It projected the bilateral-schedule /
+// turn-identity PI slots onto an `EffectVmProofMaterial` — the RETIRED standalone v1
+// material, which `try_generate_effect_vm_proof` has never once produced. Its only caller
+// was `dregg_bilateral_action`'s joint-aggregation block (`prove_aggregated_bundle` over
+// two schedule-projected WRs), which therefore never ran: the tool refused several
+// hundred lines earlier, on the same retirement. The per-cell v1 WR is the artifact that
+// aggregator consumes and there is no producer for it; the live per-turn attestation is
+// the ACTOR-cell rotated proof the async prove pool builds (see `attest_committed_turn`),
+// which is not a two-sided bundle. The bilateral binding this tool still reports is the
+// SCHEDULE (`ExpectedBilateral::counts_for`), which is derived from the committed turn and
+// is real.
 
 /// Ensure `cell_id` exists in the ledger. If missing, insert a default
 /// hosted cell owned by the node's pubkey with zero balance. This lets
@@ -650,147 +578,19 @@ pub(super) fn ensure_cell_in_ledger(
     }
 }
 
-/// **THE TOOTH — SetField one-felt lane parity.**
+/// **THE SURVIVING TOOTH — the MCP `set_field` JSON encoding.**
 ///
-/// Every node-side `Effect::SetField` → `effect_vm::Effect::SetField` projector must
-/// land in the SAME felt lane as the DEPLOYED executor bridge
-/// (`dregg_turn::executor::convert_turn_effects_to_vm`, whose `field_element_to_bb`
-/// is `field_limbs8(v)[0]`). A skew between two producers over the same value is
-/// worse than a narrow lane: the honest turn goes UNSAT and nothing says why.
+/// The four sibling tests here pinned the node-local `Effect::SetField` -> felt
+/// PROJECTORS against the deployed executor bridge. Those projectors are DELETED (see
+/// the tombstone at the top of this file): they fed the retired v1 attestation and
+/// nothing else, so the node no longer carries a twin of
+/// `AgentCipherclerk::try_convert_effects_to_vm` for them to disagree with.
 ///
-/// These tests FAIL on the pre-fix code, where the node projectors took
-/// `u32::from_le_bytes(value[0..4])` — a different lane, and identically ZERO for
-/// every `dregg_cell::field_from_u64` value (payload in bytes 24..32).
+/// What is still live, and still needs teeth, is `parse_effect_json`: the MCP JSON
+/// surface must emit a field element the KERNEL can read back.
 #[cfg(test)]
 mod setfield_value_lane_tooth {
-    use dregg_circuit::effect_vm::Effect as VmEffect;
     use dregg_turn::Effect;
-
-    /// The canonical door the whole node must agree with.
-    fn bridge_lane(cell: dregg_cell::CellId, value: [u8; 32]) -> dregg_circuit::BabyBear {
-        let forest = super::build_forest_with_effects(
-            cell,
-            vec![Effect::SetField {
-                cell,
-                index: 3,
-                value,
-            }],
-        );
-        let turn = dregg_turn::Turn {
-            agent: cell,
-            nonce: 0,
-            fee: 0,
-            memo: None,
-            valid_until: None,
-            call_forest: forest,
-            depends_on: vec![],
-            previous_receipt_hash: None,
-            conservation_proof: None,
-            sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-            effect_binding_proofs: Vec::new(),
-            cross_effect_dependencies: Vec::new(),
-            effect_witness_index_map: Vec::new(),
-        };
-        match dregg_turn::executor::convert_turn_effects_to_vm(&cell, &turn).as_slice() {
-            [VmEffect::SetField { value, .. }] => *value,
-            other => panic!("expected exactly one VmEffect::SetField, got {other:?}"),
-        }
-    }
-
-    fn projected(cell: dregg_cell::CellId, value: [u8; 32]) -> dregg_circuit::BabyBear {
-        match super::project_setfield_to_vm(&Effect::SetField {
-            cell,
-            index: 3,
-            value,
-        }) {
-            Some(VmEffect::SetField { value, .. }) => value,
-            other => panic!("project_setfield_to_vm produced {other:?}"),
-        }
-    }
-
-    fn projected_bulk(cell: dregg_cell::CellId, value: [u8; 32]) -> dregg_circuit::BabyBear {
-        match super::project_effects_for_mcp(&[Effect::SetField {
-            cell,
-            index: 3,
-            value,
-        }])
-        .as_slice()
-        {
-            [VmEffect::SetField { value, .. }] => *value,
-            other => panic!("project_effects_for_mcp produced {other:?}"),
-        }
-    }
-
-    /// The canonical numeric encoding must SURVIVE the projection. Pre-fix this was
-    /// `0` for every value, because `field_from_u64` writes bytes 24..32.
-    #[test]
-    fn canonical_u64_values_survive_the_projection() {
-        let cell = dregg_cell::CellId([7u8; 32]);
-        for v in [1u64, 42, 9_999, 0x7FFF_FFFE, u32::MAX as u64] {
-            let value = dregg_cell::field_from_u64(v);
-            let got = projected(cell, value);
-            assert_eq!(
-                got,
-                bridge_lane(cell, value),
-                "project_setfield_to_vm must land in the executor bridge's lane for {v}"
-            );
-            assert_eq!(
-                got,
-                projected_bulk(cell, value),
-                "project_effects_for_mcp must agree with project_setfield_to_vm for {v}"
-            );
-            assert_ne!(
-                got,
-                dregg_circuit::BabyBear::ZERO,
-                "a nonzero canonical field value MUST NOT project to the zero felt ({v})"
-            );
-        }
-    }
-
-    /// **The falsifier.** Two values sharing their first four bytes but differing in
-    /// the kernel u64 lane MUST project to different felts. Pre-fix both were `0`.
-    #[test]
-    fn values_sharing_a_four_byte_prefix_are_distinguished() {
-        let cell = dregg_cell::CellId([7u8; 32]);
-        let a = dregg_cell::field_from_u64(1);
-        let b = dregg_cell::field_from_u64(9_999);
-        assert_eq!(
-            a[..4],
-            b[..4],
-            "the pair must share the old projector's lane"
-        );
-        assert_ne!(
-            projected(cell, a),
-            projected(cell, b),
-            "two stat writes differing only above byte 4 must NOT share a felt"
-        );
-    }
-
-    /// **The residual, pinned so nobody over-reads the fix.** One felt cannot carry
-    /// 32 bytes: bytes 0..28 ride `field_limbs8` lanes 1..7, which the deployed
-    /// SetField param does not publish (the STAGED value8 completion seam,
-    /// `circuit/tests/setfield_value8_epoch_flip.rs`). This is a FACT about the
-    /// deployed AIR, not a defect of the projector — and it is identical on the
-    /// executor bridge, so producer parity still holds.
-    #[test]
-    fn the_one_felt_ceiling_is_real_and_shared_with_the_bridge() {
-        let cell = dregg_cell::CellId([7u8; 32]);
-        let mut a = dregg_cell::field_from_u64(5);
-        let mut b = dregg_cell::field_from_u64(5);
-        a[0] = 0xAA;
-        b[0] = 0xBB;
-        assert_eq!(
-            projected(cell, a),
-            projected(cell, b),
-            "byte 0 rides lane 2 — the one-felt param cannot separate it (deployed ceiling)"
-        );
-        assert_eq!(projected(cell, a), bridge_lane(cell, a));
-        assert_eq!(projected(cell, b), bridge_lane(cell, b));
-    }
 
     /// The MCP JSON surface must produce a field element the KERNEL can read back.
     /// Pre-fix `{"value": 42}` became `2a000000…00`, which `field_to_u64` reads as 0.

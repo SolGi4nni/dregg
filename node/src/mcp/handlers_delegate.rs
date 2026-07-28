@@ -66,8 +66,6 @@ pub(super) async fn tool_grant_capability(params: &Value, state: &NodeState) -> 
             &[0u8; 32],
         ),
     };
-    let cap_slot = cap.slot;
-
     let effect = dregg_turn::Effect::GrantCapability {
         from: agent_cell_id,
         to: to_cell_id,
@@ -128,35 +126,15 @@ pub(super) async fn tool_grant_capability(params: &Value, state: &NodeState) -> 
     let signed = s.cclerk.sign_turn(&turn);
     let turn_hash = hex_encode(&turn.hash());
 
-    // Snapshot and prove before execution. A grant that cannot produce its
-    // Effect VM proof is a structured rejection, not a committed null-proof turn.
-    // THE EPOCH: balances are SIGNED (i64); the VM pre-state is u64. The agent
-    // is an ORDINARY cell (non-negative) — checked conversion, never `as`.
-    let pre_state: Option<(u64, u64)> = s.ledger.get(&agent_cell_id).map(|c| {
-        (
-            u64::try_from(c.state.balance()).unwrap_or(0),
-            c.state.nonce(),
-        )
-    });
+    // The ACTOR cell as it stands BEFORE execution — the rotated attestation's
+    // before-image (`api::prepare_rotatable_turn`). One cell, cloned; the MCP paths
+    // arm no per-turn restore-point journal, so this is the whole pre-state the
+    // attestation needs.
+    let before_cell = s.ledger.get(&agent_cell_id).cloned();
 
-    let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
-        // 32-byte widening: the cap-entry identity is a scalar slot index here,
-        // not a 32-byte hash. Anchor it in limb[0] (which drives the AIR's
-        // cap_root advance) with zero high limbs — equivalent to the prior
-        // single-felt binding, now in the [BabyBear; 8] shape.
-        cap_entry: grant_cap_entry_8(cap_slot.wrapping_add(1)),
-        phase_b: None,
-    }];
-    let (bal, n) = match require_pre_state(&agent_cell_id, pre_state, "grant capability") {
-        Ok(pre) => pre,
-        Err(result) => return result,
-    };
-    let proof_material = match require_effect_vm_proof(bal, n, &vm_effects, "grant capability") {
-        Ok(material) => material,
-        Err(result) => return result,
-    };
-
-    // Execute locally.
+    // Execute locally. ⚑ THE COMMIT IS NOT GATED ON AN ATTESTATION. This used to call
+    // `require_effect_vm_proof` HERE, before executing, and return its refusal — and
+    // that helper had no reachable `Ok`, so this tool could not commit at all.
     let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
@@ -166,17 +144,22 @@ pub(super) async fn tool_grant_capability(params: &Value, state: &NodeState) -> 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             let receipt_hash = receipt.receipt_hash();
-            if let Some(witnessed) =
-                witnessed_receipt_from_effect_material(receipt.clone(), &proof_material)
-            {
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            let planned = plan_attestation(
+                &turn,
+                before_cell.as_ref(),
+                s.ledger.get(&agent_cell_id),
+                receipt_hash,
+                &turn_hash,
+            );
             s.cclerk
-                .append_receipt(receipt)
+                .append_receipt(receipt.clone())
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
 
             let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
             drop(s);
+
+            let attestation =
+                attest_committed_turn(state, planned, receipt, receipt_hash, &turn_hash).await;
 
             state.emit(crate::state::NodeEvent::Receipt {
                 hash: turn_hash.clone(),
@@ -189,30 +172,24 @@ pub(super) async fn tool_grant_capability(params: &Value, state: &NodeState) -> 
                 });
             }
 
-            let proof_field = proof_material.proof_json();
-            let public_inputs = proof_material.public_inputs.clone();
-            let trace_field = proof_material.trace_json();
-            let witness_hash_field = proof_material.witness_hash_json();
-
             McpToolResult::json(&serde_json::json!({
                 "activity_status": "committed",
-                "proof_status": "proved",
+                "proof_status": attestation.proof_status,
+                "attestation": attestation.json(),
                 "granted": true,
                 "to_agent": to_agent_hex,
                 "target_cell": target_cell_hex,
                 "permissions": permissions,
                 "turn_hash": turn_hash,
-                "effect_vm_proof_hex": proof_field,
-                "effect_vm_public_inputs": public_inputs,
-                "effect_vm_trace_rows": trace_field,
-                "effect_vm_witness_hash_hex": witness_hash_field,
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            let variant = rejection_variant(&reason);
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "activity_status": "rejected",
                 "proof_status": "not_committed",
+                "rejection_variant": variant,
                 "granted": false,
                 "error": format!("turn rejected: {reason}"),
             }))
@@ -797,33 +774,16 @@ pub(super) async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) 
 
     let turn_hash = hex_encode(&turn.hash());
 
-    // Snapshot the agent cell's pre-state so we can attach an Effect VM proof
-    // over (pre-balance, pre-nonce) → effects. The "agent" view is the one the
-    // bearer operates as on this node (the exerciser of the cap).
-    // THE EPOCH: balances are SIGNED (i64); the VM pre-state is u64. The agent
-    // is an ORDINARY cell (non-negative) — checked conversion, never `as`.
-    let pre_state: Option<(u64, u64)> = s.ledger.get(&agent_cell_id).map(|c| {
-        (
-            u64::try_from(c.state.balance()).unwrap_or(0),
-            c.state.nonce(),
-        )
-    });
+    // The ACTOR cell BEFORE execution — the rotated attestation's before-image. The
+    // "agent" view is the one the bearer operates as on this node (the exerciser of
+    // the cap).
+    let before_cell = s.ledger.get(&agent_cell_id).cloned();
 
-    let vm_effects = project_effects_for_mcp(&parsed_effects);
-    let proof_material = if vm_effects.is_empty() {
-        None
-    } else {
-        let (bal, n) = match require_pre_state(&agent_cell_id, pre_state, "bearer cap exercise") {
-            Ok(pre) => pre,
-            Err(result) => return result,
-        };
-        match require_effect_vm_proof(bal, n, &vm_effects, "bearer cap exercise") {
-            Ok(material) => Some(material),
-            Err(result) => return result,
-        }
-    };
-
-    // Execute locally.
+    // Execute locally. ⚑ THE COMMIT IS NOT GATED ON AN ATTESTATION: this used to call
+    // `require_effect_vm_proof` first and return its refusal, and that helper has no
+    // reachable `Ok` — so an honest bearer-cap exercise carrying ANY effect could not
+    // commit, while one carrying NO effects sailed through (the `vm_effects.is_empty()`
+    // arm). The gate fired on exactly the calls that did something.
     let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
     executor.set_local_federation_id(federation_id);
     executor.set_executor_signing_key(s.cclerk.gossip_signing_key().to_bytes());
@@ -835,60 +795,42 @@ pub(super) async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             let receipt_hash = receipt.receipt_hash();
-            if let Some(proof) = proof_material.as_ref()
-                && let Some(witnessed) =
-                    witnessed_receipt_from_effect_material(receipt.clone(), proof)
-            {
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            let planned = plan_attestation(
+                &turn,
+                before_cell.as_ref(),
+                s.ledger.get(&agent_cell_id),
+                receipt_hash,
+                &turn_hash,
+            );
             s.cclerk
-                .append_receipt(receipt)
+                .append_receipt(receipt.clone())
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
             drop(s);
+
+            let attestation =
+                attest_committed_turn(state, planned, receipt, receipt_hash, &turn_hash).await;
+
             state.emit(crate::state::NodeEvent::Receipt {
                 hash: turn_hash.clone(),
             });
 
-            let proof_status = if proof_material.is_some() {
-                "proved"
-            } else {
-                "not_required"
-            };
-            let proof_field = proof_material
-                .as_ref()
-                .map(|m| m.proof_json())
-                .unwrap_or(serde_json::Value::Null);
-            let public_inputs = proof_material
-                .as_ref()
-                .map(|m| m.public_inputs.clone())
-                .unwrap_or_default();
-            let trace_field = proof_material
-                .as_ref()
-                .map(|m| m.trace_json())
-                .unwrap_or(serde_json::Value::Null);
-            let witness_hash_field = proof_material
-                .as_ref()
-                .map(|m| m.witness_hash_json())
-                .unwrap_or(serde_json::Value::Null);
-
             McpToolResult::json(&serde_json::json!({
                 "activity_status": "committed",
-                "proof_status": proof_status,
+                "proof_status": attestation.proof_status,
+                "attestation": attestation.json(),
                 "exercised": true,
                 "target_cell": target_cell_hex,
                 "method": method,
                 "turn_hash": turn_hash,
-                "effect_vm_proof_hex": proof_field,
-                "effect_vm_public_inputs": public_inputs,
-                "effect_vm_trace_rows": trace_field,
-                "effect_vm_witness_hash_hex": witness_hash_field,
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            let variant = rejection_variant(&reason);
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "activity_status": "rejected",
                 "proof_status": "not_committed",
+                "rejection_variant": variant,
                 "exercised": false,
                 "error": format!("turn rejected: {reason}"),
             }))
@@ -1193,7 +1135,7 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
             "proof_status": "missing_pre_state",
             "exercised": false,
             "target_cell": target_cell_hex,
-            "error": format!("handoff cert exercise: target cell {} is not in the local ledger; refusing to synthesize a stub for a committed proof-bearing turn", target_cell_hex),
+            "error": format!("handoff cert exercise: target cell {} is not in the local ledger; refusing to synthesize a stub for a turn that would mutate it", target_cell_hex),
         }));
     }
     if let Err(result) = require_effect_cells_for_commit(
@@ -1204,30 +1146,15 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
         return result;
     }
 
-    // ── Snapshot agent pre-state for Effect-VM proof ──────────────────────────
-    // THE EPOCH: balances are SIGNED (i64); the VM pre-state is u64. The agent
-    // is an ORDINARY cell (non-negative) — checked conversion, never `as`.
-    let pre_state: Option<(u64, u64)> = s.ledger.get(&agent_cell_id).map(|c| {
-        (
-            u64::try_from(c.state.balance()).unwrap_or(0),
-            c.state.nonce(),
-        )
-    });
-
-    let mut vm_effects: Vec<dregg_circuit::effect_vm::Effect> =
-        vec![dregg_circuit::effect_vm::Effect::NoOp];
-    vm_effects.extend(project_effects_for_mcp(&downstream_effects));
-    let (bal, n) = match require_pre_state(&agent_cell_id, pre_state, "handoff cert exercise") {
-        Ok(pre) => pre,
-        Err(result) => return result,
-    };
-    let proof_material = match require_effect_vm_proof(bal, n, &vm_effects, "handoff cert exercise")
-    {
-        Ok(material) => material,
-        Err(result) => return result,
-    };
+    // ── The ACTOR cell before execution (the rotated attestation's before-image) ──
+    let before_cell = s.ledger.get(&agent_cell_id).cloned();
 
     // ── Build and execute the Turn ────────────────────────────────────────────
+    // ⚑ THE COMMIT IS NOT GATED ON AN ATTESTATION. `require_effect_vm_proof` stood
+    // here and refused unconditionally, so `dregg_exercise_handoff_cert` returned
+    // `exercised: false` for EVERY call — including the honest one — and the
+    // executor's CapTp authorization checks were never reached at all. A `node/`
+    // test read that refusal as proof that a FORGED introducer key was rejected.
     let action = dregg_turn::Action {
         target: target_cell_id,
         method: dregg_turn::action::symbol("captp.route"),
@@ -1285,27 +1212,29 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             let receipt_hash = receipt.receipt_hash();
-            if let Some(witnessed) =
-                witnessed_receipt_from_effect_material(receipt.clone(), &proof_material)
-            {
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            let planned = plan_attestation(
+                &turn,
+                before_cell.as_ref(),
+                s.ledger.get(&agent_cell_id),
+                receipt_hash,
+                &turn_hash,
+            );
             s.cclerk
-                .append_receipt(receipt)
+                .append_receipt(receipt.clone())
                 .expect("local executor and cclerk chains must agree");
             drop(s);
+
+            let attestation =
+                attest_committed_turn(state, planned, receipt, receipt_hash, &turn_hash).await;
+
             state.emit(crate::state::NodeEvent::Receipt {
                 hash: turn_hash.clone(),
             });
 
-            let proof_field = proof_material.proof_json();
-            let public_inputs = proof_material.public_inputs.clone();
-            let trace_field = proof_material.trace_json();
-            let witness_hash_field = proof_material.witness_hash_json();
-
             McpToolResult::json(&serde_json::json!({
                 "activity_status": "committed",
-                "proof_status": "proved",
+                "proof_status": attestation.proof_status,
+                "attestation": attestation.json(),
                 "exercised": true,
                 "target_cell": target_cell_hex,
                 "turn_hash": turn_hash,
@@ -1318,17 +1247,15 @@ pub(super) async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState
                 "recipient_pk": hex_encode(&recipient_pk),
                 "permissions": permissions_str,
                 "swiss": hex_encode(&swiss),
-                "effect_vm_proof_hex": proof_field,
-                "effect_vm_public_inputs": public_inputs,
-                "effect_vm_trace_rows": trace_field,
-                "effect_vm_witness_hash_hex": witness_hash_field,
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            let variant = rejection_variant(&reason);
             drop(s);
             McpToolResult::json(&serde_json::json!({
                 "activity_status": "rejected",
                 "proof_status": "not_committed",
+                "rejection_variant": variant,
                 "exercised": false,
                 "error": format!("handoff cert exercise rejected: {reason}"),
                 "turn_hash": turn_hash,

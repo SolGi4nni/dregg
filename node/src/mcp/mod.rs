@@ -812,48 +812,502 @@ mod tests {
         );
     }
 
-    // ⚑ TOMBSTONE 2026-07-28 — THE `not(feature = "prover")` V1-FLOOR LANE IS DELETED.
+    // ⚑ TOMBSTONE 2026-07-28 — THE `not(feature = "prover")` V1-FLOOR LANE WAS DELETED, AND
+    // THE DEFECT IT WAS HIDING IS NOW FIXED (the suite below is the replacement).
     //
     // Nine tests and four helpers lived here behind `#[cfg(not(feature = "prover"))]`, and
     // `dregg-node`'s `prover` feature was `default = ["prover"]` with no `--no-default-features`
     // consumer in the tree — so they emitted no line in any run. Worse: the OFF position DID NOT
-    // COMPILE, because `blocklace_sync.rs` names the `exact_fnsp_v3_*` modules unconditionally
-    // while `src/lib.rs` gated their declarations ON `prover`. There was no configuration in which
-    // these tests existed.
+    // COMPILE. There was no configuration in which these tests existed.
     //
-    // Un-gated and RUN before deleting (the measurement, not an assumption): all nine FAIL, and
-    // they fail for one reason. `try_generate_effect_vm_proof` (`mcp/proof.rs`) returns `Err`
-    // UNCONDITIONALLY — no `cfg` — because the standalone v1 `EffectVmAir` attestation is retired.
-    // So every test that asserted this surface COMMITS or emits an `effect_vm_proof_hex` asserted
-    // something no build can do:
+    // Un-gated and RUN before deleting, all nine FAILED for ONE reason:
+    // `try_generate_effect_vm_proof` (`mcp/proof.rs`) returns `Err` UNCONDITIONALLY — no `cfg` —
+    // because the standalone v1 `EffectVmAir` attestation is retired, and `require_effect_vm_proof`
+    // turned that into an early return from the TOOL. Five tools therefore could not commit at
+    // all. That helper is now DELETED: the tools commit and report the attestation truthfully
+    // (`attestation_pending` / `attestation_unattested` / `attestation_not_required` /
+    // `attestation_unprovable`), routed to the SAME async prove pool the HTTP submit path uses.
     //
-    //   grant_capability_commits_witness_artifact_for_receipt_chain    (wanted activity_status=committed)
-    //   dregg_register_name_produces_proof_carrying_receipt            (wanted effect_vm_proof_hex: String)
-    //   dregg_publish_subscription_produces_proof_carrying_receipt     (same)
-    //   dregg_issue_credential_produces_proof_carrying_receipt         (same)
-    //   dregg_register_service_produces_proof_carrying_receipt         (same)
-    //   exercise_handoff_cert_honest_path_commits                      (wanted exercised=true)
-    //   silver_captp_mcp_path_exports_cross_fed_verifiable_bundle      (wanted activity_status=committed)
-    //   silver_captp_node_to_node_exchange_imports_and_verifies_witness_artifact (same)
+    // The ninth, `exercise_handoff_cert_forged_introducer_pk_rejected`, was a FAKE SECURITY POLE:
+    // it claimed a forged `introducer_pk` was refused by the executor, but the executor was never
+    // reached — `exercised: false` was satisfied by the RETIREMENT, and its only discriminating
+    // assertion was a substring match over the refusal prose. Its replacement below
+    // (`exercise_handoff_cert_forged_introducer_pk_is_refused_by_variant`) drives the same tool,
+    // reaches `authorize.rs`'s step-3b binding, and asserts `CapTpIntroducerKeyMismatch` BY
+    // VARIANT. The turn-level pole for the same property remains
+    // `turn/tests/captp_delivered_amplification.rs::a2_captp_cert_naming_a_federation_that_did_not_sign_it_is_refused`.
+
+    // =====================================================================
+    // THE FIVE TOOLS THAT COULD NOT COMMIT — driven, honest AND adversarial.
     //
-    // And the ninth, `exercise_handoff_cert_forged_introducer_pk_rejected`, was a FAKE SECURITY
-    // POLE. It claimed to prove that a forged `introducer_pk` is refused by the executor. It never
-    // reached the executor: `require_effect_vm_proof` refuses first, so `exercised: false` was
-    // satisfied by the retirement and not by any authorization check. Its second assertion — that
-    // the error names the authorization failure (`"rejected" | "introducer" | "invalid"`) — is the
-    // one that could tell the two apart, and it FAILS, because the message it actually gets is
-    // "handoff cert exercise: refused — the standalone v1 effect-vm attestation … is RETIRED".
-    // A pole that cannot distinguish a forged key from a retired lane is not a pole.
+    // Every test here dispatches the REAL tool through `dispatch_tool` against a real
+    // NodeState. The honest calls assert `activity_status: "committed"`; the adversarial
+    // ones assert the refusal BY `rejection_variant` (the serde variant name of the
+    // executor's `TurnError`), never by substring — a substring cannot tell a forged key
+    // from a dead lane, which is exactly how the deleted pole above fooled its reader.
     //
-    // THE LIVE POLE FOR THAT PROPERTY, compiled and running today, is
-    // `turn/tests/captp_delivered_amplification.rs::a2_captp_cert_naming_a_federation_that_did_not_sign_it_is_refused`,
-    // which asserts the refusal BY ERROR VARIANT rather than by substring.
-    //
-    // NOT deleted, and deliberately: the five MCP tools that consult `require_effect_vm_proof`
-    // (`dregg_grant_capability`, `dregg_exercise_bearer_cap`, `dregg_exercise_handoff_cert`, and
-    // both sides of `dregg_bilateral_action`) still CANNOT COMMIT, because that helper is a
-    // guaranteed refusal. That is a live defect in the tool surface, not in these tests, and
-    // `require_effect_vm_proof`'s own doc already says the refusal is not fail-closed safety.
+    // `proof_status` on a committed response is an ATTESTATION disposition, not a gate:
+    // these tests install no prove pool, so the honest answer is `attestation_unattested`
+    // (there is a transition to attest and nothing took the job) or
+    // `attestation_not_required` (no effect touches the actor cell). Both are COMMITTED.
+    // =====================================================================
+
+    /// Every committed MCP tool response must carry an attestation disposition that
+    /// (a) is one of the four `attestation_*` values, (b) agrees with the `attestation`
+    /// block, and (c) does NOT resurrect the retired v1 field set.
+    fn assert_committed_attestation_shape(j: &Value) {
+        let status = j
+            .get("proof_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(missing)");
+        assert!(
+            matches!(
+                status,
+                "attestation_pending"
+                    | "attestation_unattested"
+                    | "attestation_not_required"
+                    | "attestation_unprovable"
+            ),
+            "a committed tool response must report an attestation disposition, got '{status}': {j}"
+        );
+        assert_eq!(
+            j.pointer("/attestation/status").and_then(|v| v.as_str()),
+            Some(status),
+            "the attestation block must agree with proof_status: {j}"
+        );
+        assert!(
+            j.pointer("/attestation/leg")
+                .and_then(|v| v.as_str())
+                .is_some_and(|leg| leg.contains("prove_pool")),
+            "the attestation must name the LEG a caller is waiting on: {j}"
+        );
+        for retired in [
+            "effect_vm_proof_hex",
+            "effect_vm_public_inputs",
+            "effect_vm_trace_rows",
+            "effect_vm_witness_hash_hex",
+        ] {
+            assert!(
+                j.get(retired).is_none(),
+                "the retired v1 field '{retired}' must not reappear (it can only ever be null): {j}"
+            );
+        }
+    }
+
+    fn rejection_variant_of(j: &Value) -> &str {
+        j.get("rejection_variant")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("a rejected tool response must name the variant: {j}"))
+    }
+
+    /// Insert a cell owned by `pk` with `balance`, returning its id.
+    async fn insert_cell(state: &NodeState, pk: [u8; 32], balance: i64) -> dregg_cell::CellId {
+        let mut s = state.write().await;
+        let cell = dregg_cell::Cell::with_balance(pk, [0u8; 32], balance);
+        let id = cell.id();
+        s.ledger.insert_cell(cell).expect("cell insert");
+        id
+    }
+
+    // ── dregg_grant_capability ───────────────────────────────────────────
+
+    /// THE HONEST PATH. Before this work the same call returned
+    /// `activity_status: "rejected"` / `proof_status: "v1_attestation_retired"` — a
+    /// refusal that reads like an authorization failure, produced because an ADDITIVE
+    /// attestation could not be minted.
+    #[tokio::test]
+    async fn grant_capability_commits_and_reports_its_attestation() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let (target_cell, recipient_cell) = {
+            let s = state.read().await;
+            let id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+            drop(s);
+            let recipient = insert_cell(&state, [0x77u8; 32], 0).await;
+            (hex_encode(&id.0), hex_encode(&recipient.0))
+        };
+        let params = serde_json::json!({
+            "to_agent": recipient_cell,
+            "target_cell": target_cell,
+            "permissions": "signature",
+        });
+
+        let result = dispatch_tool("dregg_grant_capability", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("committed"),
+            "an honest grant must COMMIT: {j}"
+        );
+        assert_eq!(j.get("granted").and_then(|v| v.as_bool()), Some(true));
+        assert_committed_attestation_shape(&j);
+        assert_eq!(
+            state.read().await.cclerk.receipt_chain_length(),
+            1,
+            "a committed grant must advance the agent's receipt chain"
+        );
+    }
+
+    /// THE POLE. A grant naming a target cell this agent has no authority over is
+    /// refused BY THE EXECUTOR — and the refusal is reported by VARIANT, so it can be
+    /// told apart from an unrelated failure.
+    #[tokio::test]
+    async fn grant_capability_over_a_foreign_cell_is_refused_by_variant() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        // A cell owned by SOMEONE ELSE's key, present in the ledger (so the
+        // missing-pre-state guard cannot be what refuses).
+        let foreign = insert_cell(&state, [0x5Au8; 32], 500).await;
+        let recipient = insert_cell(&state, [0x77u8; 32], 0).await;
+        let params = serde_json::json!({
+            "to_agent": hex_encode(&recipient.0),
+            "target_cell": hex_encode(&foreign.0),
+            "permissions": "signature",
+        });
+
+        let result = dispatch_tool("dregg_grant_capability", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("rejected"),
+            "granting authority over a cell the agent does not hold must be refused: {j}"
+        );
+        assert_eq!(
+            rejection_variant_of(&j),
+            "CapabilityNotHeld",
+            "the refusal must be the executor's authority check, named by variant: {j}"
+        );
+        assert_eq!(
+            state.read().await.cclerk.receipt_chain_length(),
+            0,
+            "a refused grant must not advance the receipt chain"
+        );
+    }
+
+    // ── dregg_exercise_bearer_cap ────────────────────────────────────────
+
+    /// THE HONEST PATH: a self-delegation the node's own key signed, carrying a real
+    /// downstream transfer. Before this work every bearer exercise CARRYING AN EFFECT
+    /// was refused (and one carrying none was not — the gate fired on exactly the calls
+    /// that did something).
+    #[tokio::test]
+    async fn exercise_bearer_cap_honest_delegation_commits() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let recipient = insert_cell(&state, [0x77u8; 32], 0).await;
+        let (agent_cell, delegation_hex, delegator_pk_hex, bearer_pk_hex) = {
+            let s = state.read().await;
+            let agent_cell = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+            let bearer_pk = s.cclerk.public_key().0;
+            let msg = dregg_turn::TurnExecutor::compute_bearer_delegation_message(
+                &agent_cell,
+                &dregg_cell::AuthRequired::Signature,
+                &bearer_pk,
+                10_000,
+                &s.federation_id,
+            );
+            // The delegator IS this node's key: `cell_by_pubkey(delegator_pk)` must find
+            // the agent cell (`Cell::with_balance(cclerk.public_key().0, …)`), and the
+            // signature must verify under that same key.
+            let sig = s.cclerk.sign_bytes(&msg);
+            (
+                hex_encode(&agent_cell.0),
+                hex_encode(&sig.0),
+                hex_encode(&bearer_pk),
+                hex_encode(&bearer_pk),
+            )
+        };
+        let params = serde_json::json!({
+            "target_cell": agent_cell,
+            "method": "transfer",
+            "delegation_chain": delegation_hex,
+            "delegator_pk": delegator_pk_hex,
+            "bearer_pk": bearer_pk_hex,
+            "expires_at": 10_000u64,
+            "effects": [{
+                "type": "transfer",
+                "from": agent_cell,
+                "to": hex_encode(&recipient.0),
+                "amount": 5u64,
+            }]
+        });
+
+        let result = dispatch_tool("dregg_exercise_bearer_cap", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("committed"),
+            "an honest bearer-cap exercise must COMMIT: {j}"
+        );
+        assert_eq!(j.get("exercised").and_then(|v| v.as_bool()), Some(true));
+        assert_committed_attestation_shape(&j);
+    }
+
+    /// THE POLE: a forged delegation signature is refused by the executor's bearer-cap
+    /// verify (`authorize.rs`), by VARIANT.
+    #[tokio::test]
+    async fn exercise_bearer_cap_forged_delegation_is_refused_by_variant() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let recipient = insert_cell(&state, [0x77u8; 32], 0).await;
+        let (agent_cell, delegator_pk_hex, bearer_pk_hex) = {
+            let s = state.read().await;
+            let agent_cell = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
+            (
+                hex_encode(&agent_cell.0),
+                hex_encode(&s.cclerk.public_key().0),
+                hex_encode(&s.cclerk.public_key().0),
+            )
+        };
+        let params = serde_json::json!({
+            "target_cell": agent_cell,
+            "method": "transfer",
+            // A signature over nothing: the delegator never signed this delegation.
+            "delegation_chain": "ab".repeat(64),
+            "delegator_pk": delegator_pk_hex,
+            "bearer_pk": bearer_pk_hex,
+            "expires_at": 10_000u64,
+            "effects": [{
+                "type": "transfer",
+                "from": agent_cell,
+                "to": hex_encode(&recipient.0),
+                "amount": 5u64,
+            }]
+        });
+
+        let result = dispatch_tool("dregg_exercise_bearer_cap", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("rejected"),
+            "a forged delegation must be REFUSED: {j}"
+        );
+        assert_eq!(
+            rejection_variant_of(&j),
+            "BearerCapInvalidProof",
+            "the refusal must be the bearer-cap proof check, named by variant: {j}"
+        );
+        assert_eq!(
+            state.read().await.cclerk.receipt_chain_length(),
+            0,
+            "a forged delegation must not advance the receipt chain"
+        );
+    }
+
+    // ── dregg_exercise_handoff_cert ──────────────────────────────────────
+
+    /// The node's own signing key, as the `introducer_sk` hex the tool takes. The
+    /// introducer must ACTUALLY hold authority over the target cell — a certificate
+    /// from a key that owns nothing is refused (`CapTpIntroducerLacksCapability`),
+    /// which is the executor being right, not the tool being broken.
+    async fn node_sk_hex(state: &NodeState) -> String {
+        let s = state.read().await;
+        hex_encode(&s.cclerk.gossip_signing_key().to_bytes())
+    }
+
+    async fn node_agent_cell_hex(state: &NodeState) -> String {
+        let s = state.read().await;
+        hex_encode(&dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]).0)
+    }
+
+    /// THE HONEST PATH (resurrected: the version of this test that existed was compiled
+    /// by no configuration, and would have failed on the retirement if it had been —
+    /// and its fixture was not honest either: it handed the tool a RANDOM introducer
+    /// key, which the executor correctly refuses because that key holds no authority
+    /// over the target. Nobody could see that, because the retirement refused first).
+    #[tokio::test]
+    async fn exercise_handoff_cert_honest_path_commits() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let target_cell = node_agent_cell_hex(&state).await;
+        let params = serde_json::json!({
+            "target_cell": target_cell,
+            // The introducer OWNS the target cell, so the certificate delegates
+            // authority it actually possesses.
+            "introducer_sk": node_sk_hex(&state).await,
+            "permissions": "signature",
+        });
+
+        let result = dispatch_tool("dregg_exercise_handoff_cert", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("committed"),
+            "an honest handoff-cert exercise must COMMIT: {j}"
+        );
+        assert_eq!(j.get("exercised").and_then(|v| v.as_bool()), Some(true));
+        assert!(j.get("cert_hash").and_then(|v| v.as_str()).is_some());
+        assert_committed_attestation_shape(&j);
+    }
+
+    /// THE POLE THAT WAS FAKE, MADE REAL — and it is the attack `authorize.rs` step 3b
+    /// was written for: the presenter holds a real signing key (so the certificate
+    /// SIGNATURE verifies under the pk it supplies) but names a FEDERATION IT DOES NOT
+    /// CONTROL as the certificate's introducer. Until 2026-07-25 that delivery was
+    /// ATTRIBUTED to the named federation, which never signed anything.
+    ///
+    /// Both refusals below are asserted BY VARIANT, and they are DIFFERENT variants —
+    /// which is the whole point: the deleted version of this test matched the substrings
+    /// `"rejected" | "introducer" | "invalid"` against a message produced by the v1
+    /// RETIREMENT, so it could not tell a forged key from a dead lane, let alone one
+    /// authorization failure from another.
+    #[tokio::test]
+    async fn exercise_handoff_cert_forged_introducer_pk_is_refused_by_variant() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let target_cell = node_agent_cell_hex(&state).await;
+        let honest_sk = node_sk_hex(&state).await;
+
+        // (a) NAMING A FEDERATION THAT DID NOT SIGN: the cert's `introducer` field is a
+        //     federation the presenter does not hold, while the action carries the
+        //     presenter's own (signature-valid) pk. Step 3b binds the two and refuses.
+        let params = serde_json::json!({
+            "target_cell": target_cell,
+            "introducer_sk": honest_sk,
+            "introducer_federation": "bb".repeat(32),
+            "permissions": "signature",
+        });
+        let j = extract_json(&dispatch_tool("dregg_exercise_handoff_cert", params, &state).await);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("rejected"),
+            "a cert naming a federation that did not sign it must be REFUSED: {j}"
+        );
+        assert_eq!(j.get("exercised").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            rejection_variant_of(&j),
+            "CapTpIntroducerKeyMismatch",
+            "the refusal must be the step-3b introducer binding, named by variant: {j}"
+        );
+
+        // (b) A pk the certificate was NOT signed under fails one step earlier, and is a
+        //     DIFFERENT named refusal — not the same catch-all.
+        let params = serde_json::json!({
+            "target_cell": target_cell,
+            "introducer_sk": honest_sk,
+            "introducer_pk": "aa".repeat(32),
+            "permissions": "signature",
+        });
+        let j = extract_json(&dispatch_tool("dregg_exercise_handoff_cert", params, &state).await);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("rejected"),
+            "a forged introducer_pk must be REFUSED: {j}"
+        );
+        assert_eq!(
+            rejection_variant_of(&j),
+            "InvalidAuthorization",
+            "the certificate signature check must refuse this one, by variant: {j}"
+        );
+
+        assert_eq!(
+            state.read().await.cclerk.receipt_chain_length(),
+            0,
+            "neither forged handoff may advance the receipt chain"
+        );
+    }
+
+    // ── dregg_bilateral_action (both sides) ──────────────────────────────
+
+    /// THE HONEST PATH. Both sides used to demand their own v1 per-cell proof before the
+    /// turn ran, so this tool refused every call.
+    #[tokio::test]
+    async fn bilateral_action_transfer_commits_and_reports_the_schedule() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let from = {
+            let s = state.read().await;
+            dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32])
+        };
+        let to = insert_cell(&state, [0x77u8; 32], 0).await;
+        let params = serde_json::json!({
+            "mode": "transfer",
+            "from": hex_encode(&from.0),
+            "to": hex_encode(&to.0),
+            "amount": 10u64,
+        });
+
+        let result = dispatch_tool("dregg_bilateral_action", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("committed"),
+            "an honest bilateral transfer must COMMIT: {j}"
+        );
+        assert_eq!(j.get("committed").and_then(|v| v.as_bool()), Some(true));
+        assert_committed_attestation_shape(&j);
+        assert_eq!(
+            j.pointer("/from_side/outbound_transfer")
+                .and_then(|v| v.as_u64()),
+            Some(1),
+            "the from-side schedule must record the outbound transfer: {j}"
+        );
+        assert_eq!(
+            j.pointer("/to_side/inbound_transfer")
+                .and_then(|v| v.as_u64()),
+            Some(1),
+            "the to-side schedule must record the inbound transfer: {j}"
+        );
+        // The retired two-sided artifacts must not come back as null placeholders.
+        assert!(
+            j.get("aggregated_bundle").is_none() && j.get("aggregation_status").is_none(),
+            "the v1 aggregation keys are gone, not nulled: {j}"
+        );
+    }
+
+    /// THE POLE: a transfer beyond the from-cell's balance is refused by the executor's
+    /// conservation check, by VARIANT.
+    #[tokio::test]
+    async fn bilateral_action_over_balance_is_refused_by_variant() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let from = {
+            let s = state.read().await;
+            dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32])
+        };
+        let to = insert_cell(&state, [0x77u8; 32], 0).await;
+        let params = serde_json::json!({
+            "mode": "transfer",
+            "from": hex_encode(&from.0),
+            "to": hex_encode(&to.0),
+            "amount": 999_999_999_999u64,
+        });
+
+        let result = dispatch_tool("dregg_bilateral_action", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("activity_status").and_then(|v| v.as_str()),
+            Some("rejected"),
+            "a transfer beyond the balance must be REFUSED: {j}"
+        );
+        assert_eq!(
+            rejection_variant_of(&j),
+            "InsufficientBalance",
+            "the refusal must be the balance check, named by variant: {j}"
+        );
+        assert_eq!(
+            state.read().await.cclerk.receipt_chain_length(),
+            0,
+            "an over-balance transfer must not advance the receipt chain"
+        );
+    }
+
+    /// The starbridge-app commit path (`dregg_register_name` and its three siblings)
+    /// consulted the retired v1 producer AFTER committing, chaining and gossiping, then
+    /// reported `proof_status: "v1_attestation_retired"` forever. It now enqueues the
+    /// LIVE attestation at the same seam the HTTP path uses.
+    #[tokio::test]
+    async fn register_name_commits_and_reports_a_live_attestation_disposition() {
+        let (state, _tmp) = fresh_unlocked_state().await;
+        let params = serde_json::json!({
+            "name": "alice.dregg",
+            "expiry_height": 100_000u64,
+        });
+        let result = dispatch_tool("dregg_register_name", params, &state).await;
+        let j = extract_json(&result);
+        assert_eq!(
+            j.get("committed").and_then(|v| v.as_bool()),
+            Some(true),
+            "register_name must commit: {j}"
+        );
+        assert_committed_attestation_shape(&j);
+        assert!(
+            j.get("effect_vm_proof_error").is_none(),
+            "the retired-lane error field must be gone, not reported on every call: {j}"
+        );
+    }
 
     /// The cross-fed AttestedRoot quorum, made HYBRID (ed25519 ∧ ML-DSA-65).
     ///

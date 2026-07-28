@@ -979,19 +979,23 @@ pub(super) async fn tool_captp_deliver(params: &Value, state: &NodeState) -> Mcp
 // =============================================================================
 
 /// Submit a Turn carrying exactly one bilateral effect (Transfer / Grant /
-/// Introduce) and surface per-side WitnessedReceipts. The executor's
-/// `ExpectedBilateral::from_turn` derives the same schedule the AIR PIs
-/// project into; this tool returns the trace + proof for the from- and
-/// to-side cells so the caller can independently verify the bilateral
-/// identity via `WitnessedReceipt::verify_bilateral_chain`.
+/// Introduce) and surface the per-side SCHEDULE. The executor's
+/// `ExpectedBilateral::from_turn` derives the same schedule the AIR PIs project
+/// into, so `from_side` / `to_side` are the two halves of one committed
+/// TurnReceipt.
 ///
-/// Stage 7-γ.2 Phase 2 (#134): when both per-cell proofs are present, the
-/// tool also runs the joint bilateral aggregator
-/// (`prove_aggregated_bundle`) over the two schedule-projected
-/// WitnessedReceipts and attaches the resulting `AggregatedBundle` (real outer
-/// STARK proof bytes) under `aggregated_bundle`. The bundle verifies in
-/// constant time relative to the number of cells via
-/// `verify_aggregated_bundle`.
+/// ⚑ WHAT THIS TOOL NO LONGER CLAIMS (2026-07-28). It used to advertise per-side
+/// `WitnessedReceipt`s and a joint `aggregated_bundle` (Stage 7-γ.2 Phase 2, #134:
+/// `prove_aggregated_bundle` over two schedule-projected WRs, self-verified with
+/// `verify_aggregated_bundle`). Every one of those artifacts was built from the
+/// standalone v1 `EffectVmAir` material, whose producer
+/// (`try_generate_effect_vm_proof`) returns `Err` UNCONDITIONALLY — so the
+/// aggregation code was unreachable, and the tool refused BEFORE executing rather
+/// than committing without it. The turn now commits, and the attestation it reports
+/// is the live one: the ACTOR cell's rotated finalized-turn proof, enqueued on the
+/// node's async prove pool exactly as the HTTP submit path does. There is no
+/// two-sided bundle on that leg, and pretending otherwise is what the deleted code
+/// did.
 pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResult {
     let mode = match params.get("mode").and_then(|v| v.as_str()) {
         Some(m) => m.to_string(),
@@ -1099,7 +1103,7 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
             "activity_status": "rejected",
             "proof_status": "missing_pre_state",
             "committed": false,
-            "error": format!("bilateral action: from cell {} is not in the local ledger; refusing to synthesize a stub for a committed proof-bearing turn", from_hex),
+            "error": format!("bilateral action: from cell {} is not in the local ledger; refusing to synthesize a stub for a turn that would mutate it", from_hex),
         }));
     }
     if s.ledger.get(&to_cell).is_none() {
@@ -1107,26 +1111,12 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
             "activity_status": "rejected",
             "proof_status": "missing_pre_state",
             "committed": false,
-            "error": format!("bilateral action: to cell {} is not in the local ledger; refusing to synthesize a stub for a committed proof-bearing turn", to_hex),
+            "error": format!("bilateral action: to cell {} is not in the local ledger; refusing to synthesize a stub for a turn that would mutate it", to_hex),
         }));
     }
 
     let agent_cell_id = from_cell;
-
-    let action = dregg_turn::Action {
-        target: from_cell,
-        method: dregg_turn::action::symbol("bilateral"),
-        args: vec![],
-        authorization: dregg_turn::Authorization::Unchecked,
-        preconditions: dregg_cell::Preconditions::default(),
-        effects: vec![effect.clone()],
-        may_delegate: dregg_turn::DelegationMode::None,
-        commitment_mode: dregg_turn::CommitmentMode::Full,
-        balance_change: None,
-        witness_blobs: vec![],
-    };
-    let mut forest = CallForest::new();
-    forest.add_root(action);
+    let federation_id = s.federation_id;
 
     // The ACTING CELL's replay nonce, off the ledger. `receipt_chain_length()` is the
     // number of receipts in the node-WIDE log across every agent — the same wrong scope
@@ -1138,6 +1128,42 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
         .get(&agent_cell_id)
         .map(|c| c.state.nonce())
         .unwrap_or(0);
+
+    let mut action = dregg_turn::Action {
+        target: from_cell,
+        method: dregg_turn::action::symbol("bilateral"),
+        args: vec![],
+        authorization: dregg_turn::Authorization::Unchecked,
+        preconditions: dregg_cell::Preconditions::default(),
+        effects: vec![effect.clone()],
+        may_delegate: dregg_turn::DelegationMode::None,
+        commitment_mode: dregg_turn::CommitmentMode::Full,
+        balance_change: None,
+        witness_blobs: vec![],
+    };
+    // ⚑ SECOND WALL, found the moment the first came down (2026-07-28). This action was
+    // built `Authorization::Unchecked`, and an ordinary cell requires `Signature` for
+    // `Send` — so every bilateral transfer the executor ever saw came back
+    // `PermissionDenied { action: "Send", required: Signature }`. Nobody could know:
+    // `require_effect_vm_proof` refused several hundred lines earlier, so the executor
+    // was never reached. The node now signs the action as the FROM cell's owner, the
+    // same construction `tool_grant_capability` uses.
+    //
+    // This STRENGTHENS the authorization rather than widening it: `Unchecked` is the
+    // weakest tag there is (it satisfies only `AuthRequired::None`), and a signature by
+    // a key that does NOT own the from-cell simply fails verification — a caller cannot
+    // reach a cell the node has no key for by asking this tool to sign for them.
+    let msg =
+        dregg_turn::TurnExecutor::compute_signing_message(&action, &federation_id, turn_nonce);
+    let sig = s.cclerk.sign_bytes(&msg);
+    let mut sig_r = [0u8; 32];
+    let mut sig_s = [0u8; 32];
+    sig_r.copy_from_slice(&sig.0[..32]);
+    sig_s.copy_from_slice(&sig.0[32..]);
+    action.authorization = dregg_turn::Authorization::Signature(sig_r, sig_s);
+
+    let mut forest = CallForest::new();
+    forest.add_root(action);
     // The FROM cell is this turn's agent (`agent_cell_id = from_cell` above) — a
     // caller-named counterparty, not the node operator — so its own causal head is the
     // one `append_receipt` checks. Seeded onto the fresh executor below.
@@ -1163,201 +1189,89 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
     };
     let turn_hash = hex_encode(&turn.hash());
 
-    // THE EPOCH: balances are SIGNED (i64); the VM pre-state tuples are u64.
-    // Both sides are ORDINARY cells (non-negative) — checked conversion.
-    let from_pre = s.ledger.get(&from_cell).map(|c| {
-        (
-            u64::try_from(c.state.balance()).unwrap_or(0),
-            c.state.nonce(),
-        )
-    });
-    let to_pre = s.ledger.get(&to_cell).map(|c| {
-        (
-            u64::try_from(c.state.balance()).unwrap_or(0),
-            c.state.nonce(),
-        )
-    });
+    // The ACTOR cell before execution (`agent_cell_id = from_cell`) — the rotated
+    // attestation's before-image. ⚑ THE COMMIT IS NOT GATED ON AN ATTESTATION: this
+    // is where the tool used to demand a per-side v1 `EffectVmAir` proof for BOTH
+    // sides through `require_effect_vm_proof`, which has no reachable `Ok`, so
+    // `dregg_bilateral_action` could not commit at all. Only the actor cell's own
+    // transition is attestable on the live (rotated) leg; the TO-side's per-cell v1
+    // WR — and the joint aggregation over the two — is the retired artifact.
+    let before_cell = s.ledger.get(&agent_cell_id).cloned();
 
-    let (from_vm, to_vm): (
-        Vec<dregg_circuit::effect_vm::Effect>,
-        Vec<dregg_circuit::effect_vm::Effect>,
-    ) = match &effect {
-        dregg_turn::Effect::Transfer { amount, .. } => (
-            vec![dregg_circuit::effect_vm::Effect::Transfer {
-                amount: *amount,
-                direction: 1,
-            }],
-            vec![dregg_circuit::effect_vm::Effect::Transfer {
-                amount: *amount,
-                direction: 0,
-            }],
-        ),
-        dregg_turn::Effect::GrantCapability { cap, .. } => (
-            vec![dregg_circuit::effect_vm::Effect::GrantCapability {
-                cap_entry: grant_cap_entry_8(cap.slot.wrapping_add(1)),
-                phase_b: None,
-            }],
-            vec![dregg_circuit::effect_vm::Effect::GrantCapability {
-                cap_entry: grant_cap_entry_8(cap.slot.wrapping_add(1)),
-                phase_b: None,
-            }],
-        ),
-        dregg_turn::Effect::Introduce { .. } => (
-            vec![dregg_circuit::effect_vm::Effect::NoOp],
-            vec![dregg_circuit::effect_vm::Effect::NoOp],
-        ),
-        _ => (Vec::new(), Vec::new()),
-    };
-    let from_pre = match require_pre_state(&from_cell, from_pre, "bilateral action from-side") {
-        Ok(pre) => pre,
-        Err(result) => return result,
-    };
-    let to_pre = match require_pre_state(&to_cell, to_pre, "bilateral action to-side") {
-        Ok(pre) => pre,
-        Err(result) => return result,
-    };
-    let from_proof = match require_effect_vm_proof(
-        from_pre.0,
-        from_pre.1,
-        &from_vm,
-        "bilateral action from-side",
-    ) {
-        Ok(material) => material,
-        Err(result) => return result,
-    };
-    let to_proof =
-        match require_effect_vm_proof(to_pre.0, to_pre.1, &to_vm, "bilateral action to-side") {
-            Ok(material) => material,
-            Err(result) => return result,
-        };
-
-    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+    // The executor must VERIFY under the same federation id the signature was made
+    // under; a fresh `TurnExecutor` defaults to `[0u8; 32]`, which is only accidentally
+    // right.
+    let mut executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+    executor.set_local_federation_id(federation_id);
     if let Some(head) = previous_receipt_hash {
         executor.set_last_receipt_hash(agent_cell_id, head);
     }
     let exec_result = executor.execute(&turn, &mut s.ledger);
 
-    let (committed_receipt_opt, error_str) = match exec_result {
+    let (committed, rejection) = match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
             let receipt_hash = receipt.receipt_hash();
-            if let Some(witnessed) =
-                witnessed_receipt_from_effect_material(receipt.clone(), &from_proof)
-            {
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
-            if let Some(witnessed) =
-                witnessed_receipt_from_effect_material(receipt.clone(), &to_proof)
-            {
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            let planned = plan_attestation(
+                &turn,
+                before_cell.as_ref(),
+                s.ledger.get(&agent_cell_id),
+                receipt_hash,
+                &turn_hash,
+            );
             s.cclerk
                 .append_receipt(receipt.clone())
                 .expect("local executor and cclerk chains must agree; divergence is a serious bug");
-            (Some(receipt), None)
+            (Some((receipt, receipt_hash, planned)), None)
         }
-        dregg_turn::TurnResult::Rejected { reason, .. } => {
-            (None, Some(format!("turn rejected: {reason}")))
-        }
-        _ => (None, Some("bilateral turn did not commit".to_string())),
+        dregg_turn::TurnResult::Rejected { reason, .. } => (
+            None,
+            Some((
+                rejection_variant(&reason),
+                format!("turn rejected: {reason}"),
+            )),
+        ),
+        _ => (
+            None,
+            Some((
+                "NotCommitted".to_string(),
+                "bilateral turn did not commit".to_string(),
+            )),
+        ),
     };
     drop(s);
 
-    let receipt = match committed_receipt_opt {
-        Some(r) => r,
+    let (receipt, receipt_hash, planned) = match committed {
+        Some(c) => c,
         None => {
+            let (variant, error) = rejection
+                .unwrap_or_else(|| ("UnknownTurnError".to_string(), "unknown".to_string()));
             return McpToolResult::json(&serde_json::json!({
                 "activity_status": "rejected",
                 "proof_status": "not_committed",
+                "rejection_variant": variant,
                 "committed": false,
-                "error": error_str.unwrap_or_else(|| "unknown".to_string()),
+                "error": error,
                 "turn_hash": turn_hash,
             }));
         }
     };
 
+    let attestation =
+        attest_committed_turn(state, planned, receipt, receipt_hash, &turn_hash).await;
+
     let sched = dregg_turn::bilateral_schedule::ExpectedBilateral::from_turn(&turn);
     let from_counts = sched.counts_for(&from_cell);
     let to_counts = sched.counts_for(&to_cell);
 
-    let build_witnessed = |proof_hex: &str, pi: &[u64], trace_rows: &[Vec<u32>]| -> Value {
-        if proof_hex.is_empty() {
-            return serde_json::Value::Null;
-        }
-        let trace_bb: Vec<Vec<dregg_circuit::BabyBear>> = trace_rows
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|&v| dregg_circuit::BabyBear::new(v))
-                    .collect()
-            })
-            .collect();
-        let proof_bytes = match hex_decode_var(proof_hex) {
-            Ok(b) => b,
-            Err(_) => return serde_json::Value::Null,
-        };
-        let pi_u32: Vec<u32> = pi.iter().map(|x| *x as u32).collect();
-        let wr = dregg_turn::WitnessedReceipt::from_components(
-            receipt.clone(),
-            proof_bytes,
-            pi_u32,
-            if trace_bb.is_empty() {
-                None
-            } else {
-                Some(trace_bb.as_slice())
-            },
-        );
-        serde_json::to_value(&wr).unwrap_or(serde_json::Value::Null)
-    };
-
-    let from_wr_json = build_witnessed(
-        &from_proof.proof_hex,
-        &from_proof.public_inputs,
-        &from_proof.trace_rows,
-    );
-    let to_wr_json = build_witnessed(
-        &to_proof.proof_hex,
-        &to_proof.public_inputs,
-        &to_proof.trace_rows,
-    );
-
-    // Stage 7-γ.2 Phase 2 (#134): run the joint bilateral aggregator over the
-    // two schedule-projected WitnessedReceipts and attach the real outer STARK
-    // proof. We re-derive the canonical schedule projection (the executor's
-    // `populate_pi` discipline) so the aggregator's Phase-1 gate and outer AIR
-    // both accept the per-cell PIs.
-    let (aggregated_bundle_json, aggregation_status) = {
-        let from_wr = schedule_projected_wr(&turn, &from_cell, &receipt, &from_proof);
-        let to_wr = schedule_projected_wr(&turn, &to_cell, &receipt, &to_proof);
-        let entries = vec![(from_cell, from_wr), (to_cell, to_wr)];
-        match dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle(
-            &turn, &entries,
-        ) {
-            Ok(bundle) => {
-                // Self-check: the bundle must verify (real outer STARK verify).
-                match dregg_turn_prover::aggregate_bilateral_prover::verify_aggregated_bundle(
-                    &bundle,
-                ) {
-                    Ok(()) => (
-                        serde_json::to_value(&bundle).unwrap_or(Value::Null),
-                        "aggregated".to_string(),
-                    ),
-                    Err(e) => (Value::Null, format!("aggregation_verify_failed: {e}")),
-                }
-            }
-            Err(e) => (Value::Null, format!("aggregation_prove_failed: {e}")),
-        }
-    };
-
     McpToolResult::json(&serde_json::json!({
         "activity_status": "committed",
-        "proof_status": "proved",
+        "proof_status": attestation.proof_status,
+        "attestation": attestation.json(),
         "committed": true,
         "mode": mode,
         "turn_hash": turn_hash,
         "from_cell": from_hex,
         "to_cell": to_hex,
-        "aggregated_bundle": aggregated_bundle_json,
-        "aggregation_status": aggregation_status,
         "expected_schedule": {
             "transfers": sched.transfers.len(),
             "grants": sched.grants.len(),
@@ -1369,7 +1283,6 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
             "intro_as_introducer": from_counts.intro_as_introducer,
             "intro_as_recipient": from_counts.intro_as_recipient,
             "intro_as_target": from_counts.intro_as_target,
-            "witnessed_receipt": from_wr_json,
         },
         "to_side": {
             "inbound_transfer": to_counts.inbound_transfer,
@@ -1377,9 +1290,8 @@ pub(super) async fn tool_bilateral_action(params: &Value, state: &NodeState) -> 
             "intro_as_introducer": to_counts.intro_as_introducer,
             "intro_as_recipient": to_counts.intro_as_recipient,
             "intro_as_target": to_counts.intro_as_target,
-            "witnessed_receipt": to_wr_json,
         },
-        "note": "Both sides' WitnessedReceipts cover the same TurnReceipt; together they expose the γ.2 bilateral algebraic binding (per-cell PI projection). Use WitnessedReceipt::verify_bilateral_chain off-line to re-derive the schedule and check accumulator-root equality.",
+        "note": "The bilateral binding reported here is the SCHEDULE derived from the committed turn (`ExpectedBilateral::counts_for`) — both sides of one TurnReceipt. ⚑ The per-side `witnessed_receipt`s and the joint `aggregated_bundle` are GONE: both were built from the retired standalone v1 `EffectVmAir` material, whose producer returns `Err` unconditionally, so that aggregation never once ran. The live attestation covers the ACTOR cell's transition only (see `attestation`).",
     }))
 }
 

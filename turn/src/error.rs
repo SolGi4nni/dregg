@@ -129,11 +129,19 @@ pub enum TurnError {
     /// The call forest is empty (no actions to execute).
     EmptyForest,
 
-    /// THE SWAP strict mode (`DREGG_LEAN_SHADOW_STRICT=1`): the verified Lean executor REJECTED a
-    /// turn the Rust executor committed. The verified kernel is the authoritative rejection gate —
-    /// it can only TIGHTEN the decision (never launder a Rust rejection to a commit) — so its veto
-    /// rolls the commit back. A turn carrying this reason was accepted by the legacy Rust executor
-    /// but the verified kernel refused it (e.g. an under-authorised burn / delegate).
+    /// THE SWAP authority inversion (`dregg_exec_lean::lean_apply::produce_via_lean`, default-ON via
+    /// `DREGG_LEAN_PRODUCER`): the verified Lean executor REJECTED a turn the demoted Rust reference
+    /// committed, so the verified verdict was installed over it and the reference's speculative state
+    /// was rolled back. A turn carrying this reason was accepted by the legacy Rust executor but the
+    /// verified kernel refused it (e.g. an under-authorised burn) — i.e. a surfaced RUST BUG.
+    ///
+    /// This is the reason for a verified rejection with NO admission reason on the wire (a
+    /// body-level rollback). When the verified refusal happened at the admission prologue the
+    /// producer names the gate instead, via [`TurnError::AdmissionRefused`].
+    ///
+    /// ⚠ It is NOT produced by `DREGG_LEAN_SHADOW_STRICT` — that env var and the
+    /// `TurnExecutor::execute` veto that read it were DELETED 2026-07-28 (armed nowhere; its
+    /// rollback left the agent's receipt head advanced to a receipt never issued).
     LeanShadowVeto,
 
     /// Transfer destination cell not found.

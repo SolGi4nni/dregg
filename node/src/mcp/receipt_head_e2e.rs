@@ -24,12 +24,15 @@
 //!     twice, against a node whose wide-log head belongs to a stranger.
 //!   * The other ten sites are pinned by a source-level assertion. That is a weaker
 //!     instrument and is labelled as one: it catches a regression to the wide
-//!     accessor, it does not execute those paths. Three of them
-//!     (`tool_grant_capability`, `tool_bilateral_action`,
-//!     `tool_exercise_handoff_cert`) cannot be driven at all under the default
-//!     build — they call `require_effect_vm_proof` before executing, and
-//!     `try_generate_effect_vm_proof` returns `Err` unconditionally since the
-//!     standalone v1 effect-VM material was retired.
+//!     accessor, it does not execute those paths.
+//!
+//! ⚑ CORRECTED 2026-07-28. The paragraph here used to end: "Three of them
+//! (`tool_grant_capability`, `tool_bilateral_action`, `tool_exercise_handoff_cert`)
+//! cannot be driven at all under the default build — they call
+//! `require_effect_vm_proof` before executing, and `try_generate_effect_vm_proof`
+//! returns `Err` unconditionally." That was true, and it was a DEFECT being recorded
+//! as a constraint. `require_effect_vm_proof` is deleted; all three tools now commit,
+//! and `mcp::tests` drives each of them live (honest AND adversarial).
 
 #![cfg(test)]
 
