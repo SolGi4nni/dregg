@@ -20,8 +20,9 @@ assembly on real Pallas points, `lake build` 25 s),
 `MinaWrapOpeningWeld.lean` (26 + 1 theorems, axiom-clean — rung 5f, **the IPA opening relation**,
 153 s + 75 s).
 
-The first four are wired into `metatheory/Dregg2.lean` (`06de765e9`, `73853b50f`). The three new
-ones are **not yet** — a lane reports its import line and a root-wiring pass adds it:
+All seven are wired into `metatheory/Dregg2.lean` — the first four by `06de765e9` / `73853b50f`,
+the three new ones by `ec839066d` (a sibling orphan-sweep lane; this lane reported the import
+lines rather than editing the root itself, per house practice):
 
 ```
 import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
@@ -29,9 +30,9 @@ import Dregg2.Circuit.Emit.MinaWrapOpeningGate
 import Dregg2.Circuit.Emit.MinaWrapOpeningWeld
 ```
 
-`#floor_ratchet` reads the environment of that root and nothing else, so it cannot see the three
-until they are wired. **Measured with them wired lane-locally on hbox (`lake build Dregg2`,
-10413 modules): still exactly 1**, and the same name —
+`#floor_ratchet` reads the environment of that root and nothing else, so a module it cannot see
+cannot arm it. **Measured before the wiring landed, with the three added lane-locally on hbox
+(`lake build Dregg2`, 10413 modules): still exactly 1**, and the same name —
 `Emit.AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`, the violation
 `docs/DREGG-IN-DREGG-BUILD.md` records as pre-existing. Expected, and worth saying why: these
 modules bind no floor at all. Every theorem is `by decide` or `#guard` over concrete
