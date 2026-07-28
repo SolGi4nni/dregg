@@ -295,17 +295,31 @@ GATES=(
   # `cargo test --locked` and then the `merkle` subcommand end to end on unprecomputable
   # leaves, cross-checked elementwise against o1js. No Lean. The -red row is not optional
   # — most of these legs are NEGATIVE assertions, which pass just as happily on a broken
-  # driver. It injects THIRTY-EIGHT faults into SCRATCH COPIES of both the TypeScript and
+  # driver. It injects FIFTY-FIVE faults into SCRATCH COPIES of both the TypeScript and
   # the Rust crate (never the shared tree) — and a fault that matches NOTHING is itself a
   # failure. One of them bends only the `merkle` subcommand's printed root: every
   # `cargo test` still passes and only the cross-check catches it, which is the gap the
   # third leg exists to close. Another puts back the coset-descent bug the 16-layer chain
   # leg found — right on ~half of all query indices and on 100% of the all-zero one every
-  # row measurement uses, which is why no single-round check saw it. ~13 min warm: seven
-  # legs, three Pickles compiles, and a 684,726-row constraint system that is slow to
-  # BUILD, never mind prove.
-  "mina-attestation|1500|bash scripts/check-mina-attestation.sh"
-  "mina-attestation-red|7200|bash scripts/check-mina-attestation.sh --self-test"
+  # row measurement uses, which is why no single-round check saw it.
+  # ⚑ Two more legs since 2026-07-28 EVENING, and the eighth is a SOUNDNESS rung, not a
+  # measurement. RUNG 6 is the DEEP QUOTIENT: every rung before it starts its fold chain
+  # from a WITNESSED reduced opening, so the walk authenticates a number the prover chose
+  # and says nothing about the committed trace. It is now COMPUTED from the MMCS-opened
+  # rows, the absorbed claimed evaluations and the transcript's alpha, KAT'd against
+  # `p2deep` (p3's own `open_input`), and the leg PROVES a witness the pre-rung-6
+  # statement admits and requires the new one to REFUSE it — the gap exhibited rather than
+  # asserted. RUNG 7 starts the AIR constraint evaluation at zeta (selectors, alpha-fold,
+  # quotient-chunk recomposition, closing equality, all KAT'd against p3's own domain
+  # algebra) and prices it as `A + N*h` with `A` and `h` MEASURED and `N` — the constraint
+  # count across the root's 7 AIRs — named as uncounted rather than invented.
+  # ⚑ `SELFTEST_LEGS="deep air"` scopes PASS 2 of the -red row to named legs. The
+  # PRE-FLIGHT is never scoped: what you re-run is a budget question, what you notice has
+  # rotted is not. A scoped run says so in its PASS line.
+  # ~18 min warm: nine legs, four Pickles compiles, and a 684,726-row constraint system
+  # that is slow to BUILD, never mind prove.
+  "mina-attestation|2400|bash scripts/check-mina-attestation.sh"
+  "mina-attestation-red|10800|bash scripts/check-mina-attestation.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

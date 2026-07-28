@@ -100,14 +100,47 @@
 # program that DERIVES the index from the transcript and then walks the chain at
 # it, proved on an honest witness found by fixed-point search.
 #
+# EIGHTH leg (`fri-deep-rows.ts`) — RUNG 6, THE DEEP QUOTIENT, and the rung that
+# makes the walk a statement about dregg's trace rather than about a number.
+# Every rung above starts its fold chain from `initial` — the reduced opening at
+# the global max height — and in all of them it is a WITNESS. A FRI walk over a
+# witnessed starting value authenticates a value the PROVER CHOSE. This leg
+# computes it instead, exactly as `p3_fri::verifier::open_input` does, from the
+# MMCS-opened rows, the claimed out-of-domain evaluations (ABSORBED before alpha
+# is sampled, so moving one moves every challenge) and the transcript's own
+# index. KAT'd against `p2deep` — p3's `open_input` over
+# `BinomialExtensionField<BabyBear,4>`, including its `.inverse()`.
+# ⚑ AND IT EXHIBITS THE GAP INSTEAD OF ASSERTING IT: one ZkProgram carries BOTH
+# the new statement and the pre-rung-6 one, the leg PROVES a witness whose
+# starting value is not the DEEP quotient under the old statement, and requires
+# the new one to refuse the same public claim. ⚑ Four of `open_input`'s
+# conventions are silently right on a degenerate fixture — the same shape as the
+# coset-descent bug — so every fixture carries TWO heights, TWO matrices sharing
+# a height across DIFFERENT batches, and multiple opening points, and each wrong
+# reading is a live twin that must diverge. A FIFTH candidate twin turned out to
+# be the SAME FUNCTION (`g_{L+1}^{rev(s,L+1)} == g_L^{rev(s,L)}`); it is asserted
+# as an identity rather than kept as a falsifier that could never fire.
+#
+# NINTH leg (`air-eval-rows.ts`) — RUNG 7, the AIR CONSTRAINT EVALUATION at
+# zeta. Without it the FRI walk authenticates a low-degree function that encodes
+# nothing in particular. The selectors, the alpha-folded accumulator, the
+# quotient-chunk recomposition and the closing equality are built and KAT'd
+# against `p2air` — p3's OWN `TwoAdicMultiplicativeCoset::selectors_at_point`,
+# `create_disjoint_domain`, `split_domains` and `recompose_quotient_from_chunks`
+# — at four different `degree_bits`, because `Z_H` is a chain of `k` squarings
+# and one `k` cannot see an off-by-one in it. ⚑ `C_i` ITSELF IS NOT BUILT and the
+# constraint count `N` is NOT counted, so the price is reported as `A + N*h` with
+# `A` and `h` measured and `N` named. The leg FAILS if that naming disappears.
+#
 # ⚑ NO SKIPS. A missing `node`, a missing `npm`, a missing `cargo`, an absent or
 # unpinned o1js, a type error, or a diverging vector are all FAILURES — the same
-# discipline as `embedded-js` and `opentheory-importer`. ~11 min warm (the
-# Rung-2/3/4 legs are ~8 of them: 684,726 rows is slow to BUILD, never mind
-# prove, and three ZkProgram compiles run). Needs cargo for legs 3-7; no Lean.
+# discipline as `embedded-js` and `opentheory-importer`. ~18 min warm (the
+# Rung-2/3/4/6 legs are ~14 of them: 684,726 rows is slow to BUILD, never mind
+# prove, and four ZkProgram compiles run). Needs cargo for legs 3-9; no Lean.
 #
 #   bash scripts/check-mina-attestation.sh
 #   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
+#   SELFTEST_LEGS="deep air" bash scripts/check-mina-attestation.sh --self-test
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/bridge/mina-zkapp"
@@ -176,6 +209,16 @@ run_chal() { # run_chal <dir>
 run_chain() { # run_chain <dir>
   ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
       npm run --silent fri-chain )
+}
+# Rung 6: the DEEP quotient — the reduced opening, BOUND to the opened trace.
+run_deep() { # run_deep <dir>
+  ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+      npm run --silent fri-deep )
+}
+# Rung 7: the AIR constraint evaluation at zeta — started, and priced.
+run_air() { # run_air <dir>
+  ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+      npm run --silent air-eval )
 }
 
 # ── the headline run ──────────────────────────────────────────────────────────
@@ -302,11 +345,59 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$chain_out" || die "the chain rows ratchet did not run"
   grep -q '=== FRI CHAIN PASS ===' <<<"$chain_out" || die "the chain leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain checks green" \
+  # Leg 8: RUNG 6 — the DEEP QUOTIENT. Every rung above starts its fold chain
+  # from a WITNESSED value, which means the walk authenticates a number the
+  # prover chose. This leg computes it instead, from the MMCS-opened rows, the
+  # absorbed claimed evaluations and the transcript's alpha — and it EXHIBITS
+  # the gap by proving the pre-rung-6 statement on a witness rung 6 refuses.
+  deep_out="$(run_deep "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$deep_out"
+  [ "$rc" -eq 0 ] || die "the DEEP quotient leg exited $rc"
+  n_deep="$(printf '%s' "$deep_out" | grep -c '✓')"
+  [ "$n_deep" -ge 24 ] || die "only $n_deep DEEP checks passed; expected >= 24"
+  grep -q 'all five wrong readings of x diverge' <<<"$deep_out" \
+    || die "the query-point twins did not run (four of them are right at reversed index 0)"
+  grep -q 'is NOT a sixth reading' <<<"$deep_out" \
+    || die "the coset-convention IDENTITY check did not run (a fault written on it could not fire)"
+  grep -q 'BOTH diverge (the key is HEIGHT)' <<<"$deep_out" \
+    || die "the alpha-power keying twins did not run (a one-height fixture cannot see them)"
+  grep -q 'a zero denominator' <<<"$deep_out" \
+    || die "the extension-inverse refusal did not run"
+  grep -q 'the PRE-RUNG-6 statement PROVES' <<<"$deep_out" \
+    || die "the pre-rung-6 counter-example did not run — the gap is asserted, not exhibited"
+  grep -q 'RUNG 6 REFUSES that same public claim' <<<"$deep_out" \
+    || die "rung 6 was never shown refusing what rung 5 admits (the binding is decorative)"
+  grep -q 'NO proof exists for an opened row one element off' <<<"$deep_out" \
+    || die "the opened-row binding check did not run"
+  grep -q 'binding-delta rows are all within 2%' <<<"$deep_out" \
+    || die "the BINDING DELTA ratchet did not run — a binding that costs nothing is decorative"
+  grep -q 'ratchet: ' <<<"$deep_out" || die "the DEEP rows ratchet did not run"
+  grep -q '=== FRI DEEP PASS ===' <<<"$deep_out" || die "the DEEP leg did not print its PASS line"
+
+  # Leg 9: RUNG 7 — the AIR constraint evaluation at zeta. Without it the FRI
+  # walk authenticates a low-degree function that encodes nothing in particular.
+  air_out="$(run_air "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$air_out"
+  [ "$rc" -eq 0 ] || die "the AIR evaluation leg exited $rc"
+  n_air="$(printf '%s' "$air_out" | grep -c '✓')"
+  [ "$n_air" -ge 16 ] || die "only $n_air AIR checks passed; expected >= 16"
+  grep -q 'degree_bits = 16 — all four selectors' <<<"$air_out" \
+    || die "the selectors were not checked at the deployed trace height"
+  grep -q 'dropping the chunk-domain shift MOVES the weights' <<<"$air_out" \
+    || die "the chunk-domain shift twin did not run (the recomposition would be unpinned)"
+  grep -q 'a CONSTRAINT one off breaks the closing equality' <<<"$air_out" \
+    || die "the closing equality was never shown to depend on the constraints"
+  grep -q 'N IS UNCOUNTED' <<<"$air_out" \
+    || die "the AIR price stopped naming its uncounted term (that is how §2.4 went 7x wrong)"
+  grep -q 'ratchet: ' <<<"$air_out" || die "the AIR rows ratchet did not run"
+  grep -q '=== AIR EVAL PASS ===' <<<"$air_out" || die "the AIR leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
-       "FRI query, Fiat-Shamir transcript and the 16-layer fold chain all measured against p3," \
-       "with the query index DERIVED rather than witnessed)"
+       "FRI query, Fiat-Shamir transcript, the 16-layer fold chain and the DEEP quotient all" \
+       "measured against p3, with the query index DERIVED and the reduced opening COMPUTED" \
+       "rather than witnessed; the AIR closing equality built and priced)"
   exit 0
 fi
 
@@ -342,13 +433,25 @@ red=0; green=0
 # key" to "PLACEHOLDER relay key" in 90718ee6f and its injection was left
 # pointing at the old string, so the anchor's ONE unforgeability check had no
 # live falsifier for a day. Serially that took ~40 minutes of self-test to
-# surface. The pre-flight surfaces all 38 in about two seconds.
+# surface. The pre-flight surfaces all 55 in about two seconds.
+#
+# ⚑ AND PASS 2 CAN BE SCOPED, WHILE PASS 1 NEVER IS. `SELFTEST_LEGS="deep air"`
+# injects only those legs' faults in pass 2 — nine legs at ~2-4 min each is
+# hours, and a lane that has just added one rung should be able to falsify it in
+# minutes. The PRE-FLIGHT still checks EVERY pattern in the file: scoping what
+# you re-run is reasonable, scoping what you notice has rotted is not. A scoped
+# run says so in its PASS line so it can never be read as the full one.
 PREFLIGHT=0
-expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain> <label> <perl-program> <file> [base-dir]
+SELFTEST_LEGS="${SELFTEST_LEGS:-}"
+skipped=0
+expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air> <label> <perl-program> <file> [base-dir]
   local leg="$1" label="$2" prog="$3" file="$4" base="${5:-$COPY}"
   if [ ! -f "$base/$file" ]; then
     echo "  ✗ $label: target $file does not exist"
     red=$((red+1)); return
+  fi
+  if [ "$PREFLIGHT" != "1" ] && [ -n "$SELFTEST_LEGS" ] && [[ " $SELFTEST_LEGS " != *" $leg "* ]]; then
+    skipped=$((skipped+1)); return
   fi
   cp "$base/$file" "$WORK/.orig"
   perl -0pi -e "$prog" "$base/$file"
@@ -540,6 +643,104 @@ expect_red chain "rows/chain drifts from the figure the doc quotes" \
   "s/const RECORDED_DEPLOYED_ROWS = 623_310;/const RECORDED_DEPLOYED_ROWS = 600_000;/" \
   scripts/fri-chain-rows.ts
 
+# ── Leg 8: RUNG 6, the DEEP QUOTIENT. Four of these are conventions that are
+# silently RIGHT on a degenerate fixture — the same shape as the coset-descent
+# bug, where a both-polarity check on ONE round could not see a sign error
+# because one round never consumes two index bits. Each fault below is invisible
+# to some fixture the leg deliberately does not use.
+expect_red deep "the DEEP query point drops the multiplicative GENERATOR" \
+  "s/  return reduceLane\(g\.mul\(Field\(BB_GENERATOR\)\), LANE_MAX \* BB_GENERATOR\);/  return g;/" \
+  src/DeepQuotient.ts
+# `g_{L+1}` is the FOLD chain's convention. Both readings give 1 at reversed
+# index 0, i.e. on the all-zero index every getRows() witness supplies.
+expect_red deep "the DEEP query point uses the FOLD chain's generator g_{L+1}" \
+  "s/  const g = powTwoAdicRevBits\(bits, logHeight, logHeight\);/  const g = powTwoAdicRevBits(bits, logHeight + 1, logHeight);/" \
+  src/DeepQuotient.ts
+# The index SHIFT. Invisible unless a matrix sits below the global max height —
+# and the deployed root's own shape is not known to have one (§3.14 item 1), so
+# nothing but a deliberately mixed-height fixture can see this.
+expect_red deep "the DEEP query point reads the UNSHIFTED index" \
+  "s/  const bits = indexBits\.slice\(bitsReduced, bitsReduced \+ logHeight\);/  const bits = indexBits.slice(0, logHeight);/" \
+  src/DeepQuotient.ts
+# `alpha_pow` is keyed by HEIGHT. Resetting it per matrix agrees whenever no two
+# matrices share a height; the deployed root has 7 tables at one height, so this
+# is wrong on the real shape and right on any one-matrix test.
+expect_red deep "alpha_pow reset per MATRIX instead of keyed by height" \
+  "s/      let slot = slots\.find\(\(s\) => s\.logHeight === m\.logHeight\);\n      if \(!slot\) \{/      let slot = undefined as any;\n      if (!slot) {/" \
+  src/DeepQuotient.ts
+# ⚑ THE ONE NOTHING ELSE SEES. The extension inverse's product check is what
+# makes `(z - x)^-1` a division rather than a free witness. Every KAT in the leg
+# runs on an HONEST witness and passes either way; drop the check and a prover
+# picks its own quotient, hence its own reduced opening, hence its own chain.
+expect_red deep "the extension inverse stops being checked (the quotient becomes a free witness)" \
+  "s/  canonicalLane\(prod\.limbs\[0\], LANE_MAX\)\.assertEquals\(Field\(1\)\);/  \/* fault *\//" \
+  src/DeepQuotient.ts
+# The roll-in schedule is DERIVED from the matrix heights. A schedule that
+# ignores them puts every opening at round 0 and the chain still closes for a
+# prover that picks its final polynomial.
+expect_red deep "the roll-in schedule stops depending on the opening heights" \
+  "s/    const r = logGlobalMaxHeight - 1 - o\.logHeight;/    const r = 0;/" \
+  src/DeepQuotient.ts
+# ⚑ A FALSIFIER THAT COULD NOT FIRE, AND ITS ABSENCE IS THE FINDING. The
+# injection written for this slot was "hand the chain a witnessed starting value
+# again" — `initial: Provable.witness(BbExt, () => ro[0].ro)`. It STAYED GREEN,
+# every time: the honest prover's witness callback recomputes the same value from
+# the same inputs, so a derived variable and a witness carrying that variable's
+# value are indistinguishable to `runAndCheck`, to `prove` and to `getRows()`.
+# Same shape as the challenger's `observe`-clears-the-output-buffer twin (leg 6),
+# and deleted for the same reason. What CAN see the realistic regression — witness
+# it AND delete the now-dead computation — is the BINDING DELTA between the two
+# compiled methods, which leg 8 ratchets at 2%; the drift fault below is its
+# falsifier. The two here are the mis-wirings that an honest run does catch.
+expect_red deep "the chain starts from the WRONG reduced opening (the lowest height, not the top)" \
+  "s/            initial: ro\[0\]\.ro,/            initial: ro[ro.length - 1].ro,/" \
+  src/DeepQuotient.ts
+expect_red deep "the roll-ins are off by one opening (each round gets its predecessor's)" \
+  "s/            rollIns: sched\.rounds\.map\(\(r, i\) => \(\{ afterRound: r, value: ro\[i \+ 1\]\.ro \}\)\),/            rollIns: sched.rounds.map((r, i) => ({ afterRound: r, value: ro[i].ro })),/" \
+  src/DeepQuotient.ts
+expect_red deep "the BINDING DELTA drifts (a binding that costs nothing is decorative)" \
+  "s/const RECORDED_BINDING_DELTA = 1_754;/const RECORDED_BINDING_DELTA = 900;/" \
+  scripts/fri-deep-rows.ts
+# And the claimed evaluations must be ABSORBED before alpha is sampled. Drop
+# them from the preamble and f(z) stops steering the transcript: a prover then
+# moves an evaluation without moving a single challenge.
+expect_red deep "f(z) stops being absorbed into the transcript (alpha stops reacting to it)" \
+  "s/  for \(const e of evals\) out\.push\(\.\.\.e\.limbs\);/  \/* fault *\//" \
+  src/DeepQuotient.ts
+expect_red deep "rows/DEEP drifts from the figure the doc quotes" \
+  "s/const RECORDED_DEEP_FACTORED = 154_523;/const RECORDED_DEEP_FACTORED = 120_000;/" \
+  scripts/fri-deep-rows.ts
+
+# ── Leg 9: RUNG 7, the AIR evaluation. `Z_H` is a chain of `k` squarings and the
+# chunk domains carry two shifts that a transcription drops without any hash
+# noticing.
+expect_red air "Z_H(zeta) takes one squaring too few" \
+  "s/  const pow = extPowPow2\(unshifted, logSize\);/  const pow = extPowPow2(unshifted, logSize - 1);/" \
+  src/AirEval.ts
+expect_red air "the selectors' vanishing polynomial loses its -1" \
+  "s/  const zH = extSub\(extPowPow2\(unshifted, logSize\), extOne\(\)\);/  const zH = extPowPow2(unshifted, logSize);/" \
+  src/AirEval.ts
+expect_red air "the quotient chunks are recomposed WITHOUT their Lagrange weights" \
+  "s/    acc = extAdd\(acc, zp === null \? value : extMul\(zp, value\)\);/    acc = extAdd(acc, value);/" \
+  src/AirEval.ts
+# `from_ext_basis_coefficients` folds the overflow back by W = 11. Dropping the
+# fold reassembles a different chunk value while every selector still matches.
+expect_red air "from_ext_basis_coefficients drops the W-fold" \
+  "s/  const W = 11n;\n  const out: Field\[\] = \[Field\(0\), Field\(0\), Field\(0\), Field\(0\)\];/  const W = 1n;\n  const out: Field[] = [Field(0), Field(0), Field(0), Field(0)];/" \
+  src/AirEval.ts
+# ⚑ THE ONE NOTHING ELSE SEES. The closing equality is the whole rung: without
+# it the selectors, the fold and the recomposition are three numbers nobody
+# compares, and the AIR constrains nothing.
+expect_red air "the closing equality compares the accumulator to ITSELF" \
+  "s/    canonicalLane\(lhs\.limbs\[j\], LANE_MAX\)\.assertEquals\(canonicalLane\(quotient\.limbs\[j\], LANE_MAX\)\);/    canonicalLane(lhs.limbs[j], LANE_MAX).assertEquals(canonicalLane(lhs.limbs[j], LANE_MAX));/" \
+  src/AirEval.ts
+expect_red air "the constraint fold stops multiplying by alpha (the order collapses)" \
+  "s/  for \(let i = 1; i < constraints\.length; i\+\+\) acc = extAdd\(extMul\(acc, alpha\), constraints\[i\]\);/  for (let i = 1; i < constraints.length; i++) acc = extAdd(acc, constraints[i]);/" \
+  src/AirEval.ts
+expect_red air "the per-constraint fold price drifts from the figure the doc quotes" \
+  "s/const RECORDED_PER_CONSTRAINT = 48;/const RECORDED_PER_CONSTRAINT = 40;/" \
+  scripts/air-eval-rows.ts
+
 # ── Leg 3: the DREGG SIDE. Faults go into $PCOPY, a scratch copy of the Rust
 # crate. Three of them, chosen to separate what each instrument sees:
 #   - a transposed `compress` breaks BOTH the crate's KATs and the cross-check;
@@ -584,4 +785,9 @@ if [ "$red" -gt 0 ]; then
   echo "self-test FAILED: $red of $((red+green)) fault(s) did not turn the gate red"
   exit 1
 fi
-echo "self-test PASS: all $green injected faults turned the gate red"
+if [ -n "$SELFTEST_LEGS" ]; then
+  echo "self-test PASS (SCOPED to legs: $SELFTEST_LEGS): $green injected faults turned the gate red," \
+       "$skipped not run. This is NOT the full self-test; the pre-flight above was."
+else
+  echo "self-test PASS: all $green injected faults turned the gate red"
+fi

@@ -297,7 +297,17 @@ fn catalog_route_viewer(key: &str, user: &str, established: bool) -> (String, Dr
         // `/act-signed` route verifies to. Every other label — visitor token, seat label, explicit
         // `?user=`, the council electorate — takes the historical `blake3(label)` path, byte for
         // byte unchanged.
-        (user.to_string(), seed_identity::resolve_identity(user))
+        let identity = seed_identity::resolve_identity(user);
+        // ⚑ THE NAME, REMEMBERED WHERE BOTH HALVES ARE IN SCOPE. This function is the ONE place the
+        // web holds a player's asserted label and the identity it derives, and it threw the label
+        // away — which is why the shared party roster could only print the identity, and printed
+        // `71b278f3dc43444…` in a column headed "Holder". `remember_player_name` keeps only labels
+        // that are NAMES: the auto-minted `visitor-<32 hex>` cookie and a `dregg-id-<key>.<mac>`
+        // claim are both far over its length bound, and an all-hex token is refused outright, so a
+        // machine id cannot re-enter through this door. Presentation only — nothing here is
+        // consulted to route, gate or attribute a turn.
+        dreggnet_offerings::player_name::remember_player_name(&identity, user);
+        (user.to_string(), identity)
     }
 }
 
@@ -3306,8 +3316,18 @@ async fn get_offering_session(
             // (429/409). The two HTML arms were the outliers.
             return (StatusCode::NOT_FOUND, Html(catalog_missing_offering(&key))).into_response();
         }
+        // ⚑ `Deploy` JOINS THIS ARM. It used to fall to the catch-all below, which answers the
+        // stale-page notice — "This page is out of date … Reload to see the current state" — to a
+        // reader whose page is current and whose reload will refuse identically. See
+        // [`refused_open_response`] for the condition (a Descent open before the day's beacon has
+        // been fetched is the live one) and for the operator log this now emits beside it.
+        // ⚑ `Deploy` JOINS THIS ARM. It used to fall to the catch-all below, which answers the
+        // stale-page notice — "This page is out of date … Reload to see the current state" — to a
+        // reader whose page is current and whose reload will refuse identically. See
+        // [`refused_open_response`] for the condition (a Descent open before the day's beacon has
+        // been fetched is the live one) and for the operator log this now emits beside it.
         Err(CatalogGameError::Host(
-            e @ (HostError::Policy(_) | HostError::ResumeFailed { .. }),
+            e @ (HostError::Policy(_) | HostError::ResumeFailed { .. } | HostError::Deploy(_)),
         )) => {
             return refused_open_response(&sid, &e);
         }
@@ -3653,8 +3673,11 @@ async fn post_offering_act(
                 return (StatusCode::NOT_FOUND, Html(catalog_missing_offering(&key)))
                     .into_response();
             }
+            // `Deploy` joins this arm for the same reason it joins the GET one above: the
+            // catch-all's stale-page copy names a cause that is not the cause and a remedy that
+            // cannot work.
             Err(CatalogGameError::Host(
-                e @ (HostError::Policy(_) | HostError::ResumeFailed { .. }),
+                e @ (HostError::Policy(_) | HostError::ResumeFailed { .. } | HostError::Deploy(_)),
             )) => {
                 let (kind, reason) = open_audit_parts(&e);
                 audit::log()
@@ -3959,29 +3982,73 @@ async fn post_offering_act(
 
 /// **The honest lifecycle-refusal response** — a policy gate ([`HostError::Policy`]) answers
 /// `429 Too Many Requests` naming the tripped limit (with a `Retry-After` when the gate is the
-/// open rate), and a persisted log that refused to reopen ([`HostError::ResumeFailed`]) answers
-/// `409 Conflict` (the durable record is authoritative; a fresh genesis will not shadow it).
-/// Never a 500 — a refused open is the policy WORKING, not a server fault.
+/// open rate), a persisted log that refused to reopen ([`HostError::ResumeFailed`]) answers
+/// `409 Conflict` (the durable record is authoritative; a fresh genesis will not shadow it), and an
+/// offering that could not be BUILT ([`HostError::Deploy`]) answers `503 Service Unavailable`.
+/// Never a 500 — a refused open is a gate WORKING or a server that has not finished being set up,
+/// not a request that broke something.
+///
+/// ⚑ **WHY `Deploy` IS HERE AND NOT IN THE STALE-PAGE ARM.** It was in neither: `HostError::Deploy`
+/// fell past this function's callers into the `Err(error)` catch-all and got
+/// [`refused_game_route_response`], which tells the reader *"This page is out of date … Reload to
+/// see the current state."* The commonest way to reach it on the live surface is a Descent open on
+/// a server that has not fetched today's drand round yet — `DescentDayBinding::Live` resolves no
+/// verified day, `native_descent::run_day_seed` refuses rather than mint a relic provenance root
+/// anyone could have computed in advance, and the player is told to reload a page whose content is
+/// perfectly current. Reloading cannot fix it, so the advice is not merely unhelpful: it is a loop.
+/// `OfferingError`'s own `Display` is already the audited player half of this condition (it says
+/// nothing was opened, that the fault is the server's and not theirs, and to tell an operator), and
+/// [`OfferingError::operator_diagnostic`] is the half that names the missing piece — which nothing
+/// in this crate emitted until now, so the sentence's promise that *"the server log names the
+/// missing piece"* was, on this surface, false.
 fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
     // Count the refusal at its one funnel point — a labelled policy refusal (WHICH limit
-    // tripped) or a lazy-resume failure (a persisted log that refused to reopen, the 409).
+    // tripped), a lazy-resume failure (a persisted log that refused to reopen, the 409), or an
+    // offering that could not be built at all (the 503).
     match err {
         HostError::Policy(PolicyRefusal::ActorQuota { .. }) => metrics::inc_open_refused("quota"),
         HostError::Policy(PolicyRefusal::OpenRate { .. }) => metrics::inc_open_refused("rate"),
         HostError::Policy(PolicyRefusal::Capacity { .. }) => metrics::inc_open_refused("capacity"),
         HostError::ResumeFailed { .. } => metrics::inc_resume_failure(),
+        HostError::Deploy(_) => metrics::inc_open_refused("deploy"),
         _ => {}
+    }
+    // THE OPERATOR HALF, emitted where the player half is rendered. The two audiences were sharing
+    // one string until `OfferingError` split them; this is the call site that was supposed to keep
+    // the detail and did not exist.
+    if let HostError::Deploy(deploy) = err
+        && let Some(detail) = deploy.operator_diagnostic()
+    {
+        tracing::error!(
+            target: "dregg::refusal",
+            session = %id.0,
+            detail = %detail,
+            "an offering REFUSED TO DEPLOY, so the open was refused with nothing opened; this is a \
+             server build/configuration fault and the detail here is the missing piece the player \
+             was told the log would name"
+        );
     }
     let (status, retry_after) = match err {
         HostError::Policy(PolicyRefusal::OpenRate { retry_after_secs }) => {
             (StatusCode::TOO_MANY_REQUESTS, Some(*retry_after_secs))
         }
         HostError::Policy(_) => (StatusCode::TOO_MANY_REQUESTS, None),
+        // 503, not 409 and not 500: the request is fine and nothing conflicts — this server cannot
+        // build this offering right now. It is the code a monitor should page on and the one that
+        // stays honest when the missing piece arrives (a fetched beacon, a linked archive).
+        HostError::Deploy(_) => (StatusCode::SERVICE_UNAVAILABLE, None),
         _ => (StatusCode::CONFLICT, None),
     };
+    // `OfferingError::Display` already states the loss ("Nothing was opened and nothing was
+    // recorded"), so appending our own would say it twice; every other arm needs it.
+    let loss = if matches!(err, HostError::Deploy(_)) {
+        ""
+    } else {
+        " Nothing was opened."
+    };
     let body = format!(
-        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">Refused: {err}. \
-         Nothing was opened.</div>\
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">Refused: {err}.{loss}\
+         </div>\
          <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse all games</a></p>\
          </main>",
         err = esc(&err.to_string()),

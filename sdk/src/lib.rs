@@ -219,9 +219,7 @@ pub use receipt::{Receipt, TurnProof};
 /// definition the one holding no `AgentRuntime` to install it as a side effect. Same signature,
 /// same verdict, cores armed first. `verify_history` reaches no PQ primitive and is re-exported
 /// unchanged.
-pub use dregg_lightclient::{
-    AttestedHistory, FinalityCert, FinalizedAttestation, verify_history,
-};
+pub use dregg_lightclient::{AttestedHistory, FinalityCert, FinalizedAttestation, verify_history};
 pub use verify::verify_finalized_history;
 
 /// The authorized turn flow: `runtime.turn()` opens a [`turns::TurnBuilder`];

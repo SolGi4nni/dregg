@@ -95,6 +95,13 @@ pub mod operation;
 /// next on a real committed turn. Re-homes `attested-dm`'s proven overworld design onto the real
 /// executor. See [`overworld::OverworldOffering`].
 pub mod overworld;
+/// **The name a ROSTER shows** — the frontend-attributed display name for a [`DreggIdentity`], and
+/// the readable stand-in when none was attributed. A `DreggIdentity` is the right thing to route and
+/// attribute a turn with and the wrong thing to print in a column headed *Holder*; the shared party
+/// lobby printed it anyway, so a player read `71b278f3dc43444…` where a friend's name belongs.
+/// Presentation only — nothing here reaches a record, so a lobby journal replays identically in a
+/// process that has never seen the name.
+pub mod player_name;
 /// The one viewer-blind, copyable receipt card shared by every hosted game surface.
 pub mod player_turn_receipt;
 /// ⚑ **THE PLAYER-FACING REFUSAL VOCABULARY** — the shared copy every surface says "no" with, and

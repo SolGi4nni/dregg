@@ -1132,8 +1132,7 @@ mod tests {
         );
         let short = piv[..RECEIPT_PI_BINDING_MIN_LEN - 1].to_vec();
         assert!(
-            check_receipt_pi_binding(&r, &short, None)
-                .is_some_and(|m| m.contains("too short")),
+            check_receipt_pi_binding(&r, &short, None).is_some_and(|m| m.contains("too short")),
             "one felt short of the last TURN_HASH slot must be refused"
         );
         let exact = piv[..RECEIPT_PI_BINDING_MIN_LEN].to_vec();

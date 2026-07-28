@@ -48,8 +48,8 @@
 //! (hidden value AND hidden threshold), so the auctioneer learned only "someone beat the
 //! commitment". That capability is RETIRED, not moved: there is no emitted IR-v2 descriptor for
 //! it, so `dregg_bridge::present::prove_committed_threshold` returns `None` unconditionally and
-//! `verify_committed_threshold_proof` returns `false` unconditionally. Rather than demo a
-//! fail-closed call, the phase is now the honest surviving thing — a REVEAL: bidders open their
+//! the `verify_committed_threshold_proof` beside it (`false` for every input, zero call sites)
+//! has been DELETED. Rather than demo a fail-closed call, the phase is now the honest surviving thing — a REVEAL: bidders open their
 //! commitments to the auctioneer, who checks each opening against the published commitment and
 //! takes the highest. **The auctioneer therefore learns every bid at reveal.** What it never
 //! needed the amounts for is admission (phase 2), and what third parties hold throughout is only

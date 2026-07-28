@@ -369,17 +369,39 @@ theorem heapStep_field_frame {hash : List ℤ → ℤ} {s : RecChainedState}
   exact fieldOf_setField_ne heapRootField g (s.kernel.cell target) _ hg
 
 /-- **FRAME (untouched keys keep their openings).** On the written cell's heap, every address
-other than the written `(coll, key)` reads the same — under the ONE named CR floor (distinct pairs
-occupy distinct key-hash addresses). The design's "pay-per-touch: untouched data costs nothing". -/
-theorem heapStep_key_frame {hash : List ℤ → ℤ} (hCR : Poseidon2SpongeCR hash)
+other than the written `(coll, key)` reads the same. The design's "pay-per-touch: untouched data
+costs nothing".
+
+⚑ **PORTED OFF THE REFUTED FLOOR (2026-07-28).** This used to assume `Poseidon2SpongeCR hash`, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear — so the
+theorem said nothing where the system stands, and neither did its ∀-form conclusion (over all
+`(coll, key)` pairs, "a write to one leaves the other alone" is refuted by exactly the pigeonhole that
+refutes the premise). It now assumes `Heap.AddrColl`'s DECIDABLE per-instance negation at the two
+addresses in play — strictly weaker (`Heap.addrColl_refutes_poseidon2CR`), and satisfiable. -/
+theorem heapStep_key_frame {hash : List ℤ → ℤ}
+    {s : RecChainedState}
+    {atoms : List HeapAtom} {actor target : CellId} {coll key v : ℤ} {s' : RecChainedState}
+    (h : heapStepGuarded hash s atoms actor target coll key v = some s')
+    (coll' key' : ℤ) (hne : ¬(coll' = coll ∧ key' = key))
+    (hno : ¬ Heap.AddrColl hash coll' key' coll key) :
+    Heap.hget hash (s'.kernel.heaps target) coll' key'
+      = Heap.hget hash (s.kernel.heaps target) coll' key' := by
+  rw [heapStep_heaps h target, if_pos rfl]
+  exact Heap.hget_hset_frame hash (s.kernel.heaps target) coll key coll' key' v hne hno
+
+/-- **THE SAME FRAME LAW WITH NO HYPOTHESIS ON THE SPONGE.** Either the untouched address keeps its
+opening, or the two addresses ALIAS — and that aliasing is a witnessed collision of the deployed
+sponge, which REFUTES the floor this theorem used to assume. -/
+theorem heapStep_key_frame_or_aliases {hash : List ℤ → ℤ}
     {s : RecChainedState}
     {atoms : List HeapAtom} {actor target : CellId} {coll key v : ℤ} {s' : RecChainedState}
     (h : heapStepGuarded hash s atoms actor target coll key v = some s')
     (coll' key' : ℤ) (hne : ¬(coll' = coll ∧ key' = key)) :
     Heap.hget hash (s'.kernel.heaps target) coll' key'
-      = Heap.hget hash (s.kernel.heaps target) coll' key' := by
+        = Heap.hget hash (s.kernel.heaps target) coll' key'
+      ∨ Heap.AddrColl hash coll' key' coll key := by
   rw [heapStep_heaps h target, if_pos rfl]
-  exact Heap.hget_hset_frame hash hCR (s.kernel.heaps target) coll key coll' key' v hne
+  exact Heap.hget_hset_frame_or_aliases hash (s.kernel.heaps target) coll key coll' key' v hne
 
 /-- **READ-AFTER-WRITE through the step.** The written `(coll, key)` reads back exactly `v` on the
 committed post-heap. -/

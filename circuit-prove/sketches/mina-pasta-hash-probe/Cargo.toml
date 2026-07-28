@@ -34,3 +34,10 @@ p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd73
 # Poseidon2BabyBear<16>, 16, 8>` — the same challenger `plonky3_recursion_impl.rs:138`
 # instantiates. Same rev as every other p3 crate here.
 p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+# Part D (`src/p2air.rs`): the batch-STARK verifier's OOD arithmetic — the
+# Lagrange selectors at zeta, the quotient-chunk recomposition and the folded
+# constraint accumulator. `TwoAdicMultiplicativeCoset` and its
+# `selectors_at_point` / `vanishing_poly_at_point` / `split_domains` are the
+# DEPLOYED objects, so the o1js side is KAT'd against p3's own domain algebra
+# rather than against a reading of `p3-commit/src/domain.rs`.
+p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }

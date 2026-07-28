@@ -47,8 +47,13 @@ a *known-toxic-waste* single-party setup:
   runs by design (dev speed), and the file itself says "a real deployment needs an MPC
   ceremony, and its output would NOT live here" (`:24-25`).
 - **on-chain identifier:** `docs/ops/DEPLOY-SOLANA-COSMOS-TESTNET.md:12-14,177-184` pins
-  `vk_hash = dregg_solana_settlement::dev_ceremony_vk_hash() = keccak256("dregg-settlement-vk-dev-setup")
-  = 0x18f57474785bdd93ff7feb573dfadff69516035997115f2854c93f0f31e1ff76` across EVM/Solana/
+  `vk_hash = dregg_solana_settlement::settlement_vk_digest() = vk::VK_DIGEST
+  = 0xcfda612f472e998d1f1bad1bf545ec5b39ca99b64db94e46edf2e8d3790a37cc` across EVM/Solana/
+  Cosmos. ⚑ 2026-07-28: this WAS `dev_ceremony_vk_hash() =
+  keccak256("dregg-settlement-vk-dev-setup") = 0x18f57474...31e1ff76` — a hash of a LABEL,
+  so the "re-pin the vk_hash" step below was a NO-OP that could never be observed to have
+  been skipped. The pin is now derived from the key by `chain/codegen/gen_verifiers.py`,
+  so a ceremony VK moves it mechanically; `chain/codegen/vk_pin_moves.sh` demonstrates it. Under EVM/Solana/
   Cosmos. That doc names this the standing caveat: "a production settlement needs the
   MPC-ceremony VK re-pinned at `Init`/`instantiate`" (`:434-437`).
 
@@ -96,7 +101,7 @@ tailnet" — that path is *false at the network layer* (`deploy/README.md:34-37`
 | apex VK pin (Rust) | `DREGG_APEX_RECURSION_VK` = `3ad1c9c6…5503` (`circuit-prove/src/apex_shrink_gnark_export.rs:216-217`) | re-derive |
 | apex VK pin (Go mirror) | `DreggApexRecursionVk` = `3ad1c9c6…5503` (`chain/gnark/settlement_circuit.go:122`) | re-derive |
 | apex identity fixture | `chain/gnark/fixtures/apex_vk_identity.json` (`FRI-CUTOVER-PLAN.md:125,233`) | regen |
-| on-chain `vk_hash` | `keccak256("dregg-settlement-vk-dev-setup")` (`DEPLOY-SOLANA-COSMOS-TESTNET.md:180-184`) | keccak of MPC VK |
+| on-chain `vk_hash` | `VK_DIGEST` = keccak of the DEV VK's canonical serialization, `0xcfda612f...790a37cc` | `VK_DIGEST` of the MPC VK — emitted by `gen_verifiers.py` from the new spec, no hand-edit |
 | recursion VK pin (KAT) | **none yet** — tautology (`recursive_witness_bundle.rs:191-197`, §6.1) | frozen hex constant |
 | audit row | `docs/VK-REGEN-LOG.md` (append-only) | +1 row, `source dirty = no` |
 
@@ -339,9 +344,13 @@ Then, in ONE commit, update all four to the new fingerprint:
   `fixtures/settlement_groth16.vk` (via the `DREGG_SNARK=1` export path, now consuming the
   ceremony `vk` not a fresh `groth16.Setup`).
 
-Also re-pin the on-chain `vk_hash` (`DEPLOY-SOLANA-COSMOS-TESTNET.md:177-184`) from
-`keccak256("dregg-settlement-vk-dev-setup")` to `keccak256(<ceremony VK bytes>)` at
-`InitSettlement`/`instantiate`.
+The on-chain `vk_hash` re-pin is now AUTOMATIC and cannot be forgotten: drop the
+ceremony VK into `chain/codegen/dregg_vk.json`, run `python3 chain/codegen/gen_verifiers.py`,
+and `VK_DIGEST` moves in all three emitted verifiers at once. `InitSettlement` refuses any
+other value, and `chain/codegen/check_consistency.sh` step 4 fails if the pin did not move.
+(This step used to read "re-pin from `keccak256("dregg-settlement-vk-dev-setup")` to
+`keccak256(<ceremony VK bytes>)`" — a manual edit of a LABEL hash that nothing verified,
+which is exactly how a ceremony could complete with the pin unchanged and nobody the wiser.)
 
 **Negative check (both directions fail-closed):** `check_apex_vk_identity_pin`
 (`apex_shrink_gnark_export.rs:224`) / `loadApexVkIdentity` (Go) must now **REJECT the old

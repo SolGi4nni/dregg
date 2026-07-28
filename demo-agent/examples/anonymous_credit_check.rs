@@ -33,8 +33,10 @@
 //! `Poseidon2(threshold, blinding)` so auditors learned only "some committed value satisfies some
 //! committed threshold". That AIR (`dregg_circuit::committed_threshold::{prove,verify}_committed_threshold`)
 //! was deleted with the hand-STARK engine, and NO IR-v2 descriptor has been emitted to replace it —
-//! `bridge::present::prove_committed_threshold` is hard-coded to return `None` and
-//! `verify_committed_threshold_proof` to return `false`. There is nothing to call.
+//! `bridge::present::prove_committed_threshold` is hard-coded to return `None`, and the
+//! `verify_committed_threshold_proof` that used to sit beside it returning `false` for every
+//! input has been DELETED (an uncalled verifier that decides nothing reads like a check that
+//! happens). There is nothing to call.
 //!
 //! So the threshold (720) is now a PUBLIC input, visible to every verifier. The value stays
 //! private, which is the property this demo still genuinely shows. Restoring the hidden-threshold

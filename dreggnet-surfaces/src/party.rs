@@ -25,6 +25,7 @@
 
 use deos_view::ViewNode;
 use dregg_app_framework::{CellProgram, StateConstraint, TurnReceipt, field_from_u64};
+use dreggnet_offerings::player_name::display_name_of;
 use dreggnet_offerings::{
     Action, CollectiveDecision, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
     SessionConfig, Surface, VerifyReport,
@@ -713,8 +714,15 @@ impl PartyOffering {
             let seat = session.lobby.as_ref().and_then(|lobby| lobby.seat(role));
             rows.push(row(vec![
                 pill(role.name(), "accent"),
+                // ⚑ A PERSON GOES IN THE HOLDER COLUMN. This rendered `short_identity(…)`, i.e. the
+                // first fifteen characters of the routing identity — `71b278f3dc43444…` where the
+                // friend you invited belongs. `display_name_of` returns the name the frontend
+                // attributed to that identity, and when none was (another process, an evicted
+                // entry, a chat surface that never asserted one) the readable stand-in
+                // `player 71b278` rather than a run of hex. Presentation only: the lobby's own
+                // record still holds the identity, so the journal replays identically either way.
                 text(
-                    seat.map(|seat| short_identity(seat.identity()))
+                    seat.map(|seat| display_name_of(seat.identity()))
                         .unwrap_or_else(|| "open".to_string()),
                 ),
                 pill(
@@ -1109,13 +1117,6 @@ fn landed(session: &mut PartySession, receipt: TurnReceipt) -> Outcome {
         receipt,
         ended: false,
     }
-}
-
-fn short_identity(identity: &str) -> String {
-    if identity.chars().count() <= 16 {
-        return identity.to_string();
-    }
-    format!("{}…", identity.chars().take(15).collect::<String>())
 }
 
 fn field_to_u64(field: &dregg_app_framework::FieldElement) -> u64 {

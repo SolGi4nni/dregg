@@ -4502,7 +4502,7 @@ impl AgentCipherclerk {
     // (`dregg_circuit::prove_committed_threshold`) were removed with `circuit/src/stark.rs`,
     // and it had zero live callers. The committed-threshold (hidden value + hidden
     // threshold) predicate has NO emitted IR-v2 descriptor yet (the bridge's
-    // `prove_committed_threshold` / `verify_committed_threshold_proof` are themselves
+    // `prove_committed_threshold` is itself (its always-`false` verifier was deleted)
     // fail-closed), so there is nothing to migrate onto; the method is deleted rather than
     // stubbed.
 

@@ -173,12 +173,15 @@ needs two sides.
 
 #### How the 45 remaining carriers went
 
-- **~22 satisfiability / refutability teeth** across the `*Regrounded*` modules — **PORTED**, names
-  unchanged, conclusion restated at `HashCRHardQuant … (fun _ => True)`. Every one of them was
-  *about* the `⊤` pole; now it says so.
-- **11 old-floor ⟹ new-floor bridges** (`*_CR_of_rosterCR`, `_of_keySetCR`, `_of_leafCR`,
-  `_of_noCollision`, `_of_compressInjective`, `_of_logHashInjective`, `_of_compressionCR`,
-  `_of_floorDigestBinds`, `_of_commitTreeInjective`, …) — **DELETED.** Each implied a refuted floor
+- **26 satisfiability / refutability teeth and family bridges** across the `*Regrounded*` modules —
+  **PORTED**, names unchanged, conclusion restated at `HashCRHardQuant … (fun _ => True)` (measured:
+  declarations present in both HEAD and the port whose type mentioned `CollisionResistant` before and
+  `HashCRHardQuant` after). Every one of them was *about* the `⊤` pole; now it says so. Names are
+  unchanged deliberately — `FloorRatchetBaseline` grandfathers carriers BY NAME, so a rename is a
+  NEW carrier and hard-errors the gate.
+- **9 old-floor ⟹ new-floor bridges** (`_of_keySetCR`, `_of_leafCR`, `_of_noCollision`,
+  `_of_rosterCR`, `_of_compressInjective`, `_of_logHashInjective`, `_of_compressionCR`,
+  `_of_floorDigestBinds`, `_of_commitTreeInjective`) — **DELETED.** Each implied a refuted floor
   from a refuted floor, and each carried the docstring *"the old floor was STRICTLY STRONGER … so
   nothing is lost re-grounding"*, which is **false**: the `⊤` floor they land on is refuted at a real
   digest too, by a tooth in the very same file. Capability lost: the tree no longer records that

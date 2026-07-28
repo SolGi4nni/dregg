@@ -524,7 +524,13 @@ pub(super) async fn run_starbridge_action(
                 Value::String(
                     match &proof_error {
                         None => "proved",
-                        Some(_) => "proof_generation_failed",
+                        // NOT "proof_generation_failed" — nothing tried and failed. The v1
+                        // lane is retired and has no producer, so this is the permanent
+                        // answer for this tool, not a transient one. (This call site is
+                        // also the one that runs AFTER the turn has committed, chained and
+                        // gossiped above — it is an annotation on a committed turn, and is
+                        // deliberately not a gate; see `require_effect_vm_proof`'s doc.)
+                        Some(_) => "v1_attestation_retired",
                     }
                     .to_string(),
                 ),

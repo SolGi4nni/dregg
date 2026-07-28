@@ -69,7 +69,7 @@ recomputes the share-price relation. The rung proves:
   * **`assets_bound_in_root` / `shares_bound_in_root` (THE HEAP REUSE KEYSTONE)** — equal committed
     roots ⟹ equal `total_assets` AND equal `total_shares`: a forge cannot present the honest root
     with a padded share supply or a skewed asset counter. DIRECT instances of `Heap.root_binds_get`
-    (the anti-ghost), under the one named `Poseidon2SpongeCR` floor. With it, `forged_state_moves_root`.
+    (the anti-ghost). With it, `forged_state_moves_root`.
 
 This is NOT new mathematics: the share math is ordinary truncating division and the BINDING is the
 proven sorted-Poseidon2 root. The share vault is a NAMING of "a committed-heap binding whose two
@@ -88,9 +88,27 @@ here are the *executor* teeth; the circuit tooth is their shadow.
 
 ## Axiom hygiene
 
-`#assert_all_clean` at the close. Crypto enters ONLY as the named `Poseidon2SpongeCR` hypothesis (the
-cap-root floor the heap carries), never as an axiom. NO core/heap edit — every binding is the REAL
+`#assert_all_clean` at the close. NO core/heap edit — every binding is the REAL
 `Substrate.Heap.hset`/`hget` and the root is the REAL `Substrate.Heap.root`.
+
+## ⚑ NO FLOOR (2026-07-28) — what crypto enters, and what it is worth
+
+Crypto used to enter as the named `Poseidon2SpongeCR` hypothesis, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear: every
+theorem under it was VACUOUSLY TRUE where the system stands. It now enters as TWO decidable
+per-instance residuals, each with three proved poles (dischargeable / refutable / refutes the floor):
+
+  * `SlotsDistinct hash` (§2.1) — the vault's TWO literal slot keys do not alias. A finite kernel
+    check, `decide`d at the reference sponge (`slotsDistinct_at_refSponge`). Not a cryptographic
+    assumption at all: the deployment fixes the keys, so the honest party can simply evaluate it.
+  * `¬ Heap.HeapRootColl hash h₁ h₂` (§6) — the deployed sponge does not collide at the ONE pair the
+    root extractor hands back for the two heap views in play.
+
+⚑ THE HONEST NUMBER: `Heap.root` is ONE BabyBear felt, so the root residual is worth
+`(Q² + 1)/babyBearP ≈ 2^15.5` queries — a BREAK, not a bound. Every keystone here binds exactly as
+well as a 31-bit commitment allows. The slot residual costs nothing at all (it is decided, not
+assumed). `writeState_binds_assets_or_aliases`, `state_bound_in_root_or_collides` and
+`vault_passes_gate_or_aliases` carry NO hypothesis on the sponge whatsoever.
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Tactics
@@ -151,6 +169,51 @@ cell's heap. The Lean image of the heap mutation `open_share_vault`/`deposit`/`w
 supply `(a, s)` from the share math of §1). -/
 def writeState (hash : List ℤ → ℤ) (h : FeltHeap) (a s : ℤ) : FeltHeap :=
   hset hash (hset hash h vaultColl keyAssets a) vaultColl keyShares s
+
+/-! ### §2.1 — ⚑ THE SLOT-ALIASING RESIDUAL that replaced the refuted floor (2026-07-28).
+
+Every round-trip below used to assume `Poseidon2SpongeCR hash` — global injectivity of a compressing
+sponge, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed
+BabyBear. What the proofs actually NEEDED was one thing and it is finite: the vault's TWO literal slot
+keys must not land on the same heap address. That is `SlotsDistinct`, and the difference from the
+floor is not presentational — it is DECIDABLE at a fixed pair, an honest deployment can CHECK it
+against the real sponge, and it is satisfiable where the floor is not. -/
+
+/-- The vault's committed heap keys — the two literal slot constants `cell/src/vault.rs` writes. -/
+def vaultKeys : List ℤ := [keyAssets, keyShares]
+
+/-- **`SlotsDistinct hash`** — the vault's committed slots do not ALIAS under `hash`: no two of its
+own keys collide the sponge at the pair `Heap.addrFind` hands back. A FINITE, DECIDABLE check over
+literal constants — never a global `∀ p q, ¬ Coll`, which pigeonhole refutes exactly like the floor
+it would replace. -/
+def SlotsDistinct (hash : List ℤ → ℤ) : Prop :=
+  ∀ k ∈ vaultKeys, ∀ k' ∈ vaultKeys, ¬ AddrColl hash vaultColl k vaultColl k'
+
+instance decidableSlotsDistinct (hash : List ℤ → ℤ) : Decidable (SlotsDistinct hash) := by
+  unfold SlotsDistinct; infer_instance
+
+/-- **DISCHARGEABLE — and by COMPUTATION, not by assumption.** At the reference sponge the residual
+holds, decided in the kernel. The deployed prover runs the same finite check against the real sponge;
+the floor it replaces was unavailable to an honest party at ANY deployed parameters. -/
+theorem slotsDistinct_at_refSponge : SlotsDistinct refSponge := by decide
+
+/-- **REFUTABLE.** At the constant sponge every slot aliases, so `SlotsDistinct` is not `True` in
+disguise and the residual is doing work. -/
+theorem slotsDistinct_refutable : ¬ SlotsDistinct (fun _ => (0 : ℤ)) := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** A sponge that aliases the vault's slots is not injective, so
+`SlotsDistinct` is strictly weaker than the floor it replaces. Stated contrapositively: assumes no
+floor content, and the ratchet reads it as the tooth it is. -/
+theorem slotsDistinct_failure_refutes_poseidon2CR {hash : List ℤ → ℤ}
+    (hf : ¬ SlotsDistinct hash) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hf (fun _ _ _ _ hc => hc.1 (hCR _ _ hc.2))
+
+/-- **THE FRAME STEP, on the residual.** Writing one vault slot leaves the other's opening alone. -/
+theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltHeap) (k k' v : ℤ)
+    (hok : k ∈ vaultKeys ∧ k' ∈ vaultKeys ∧ k' ≠ k) :
+    hget hash (hset hash h vaultColl k v) vaultColl k' = hget hash h vaultColl k' :=
+  hget_hset_frame hash h vaultColl k vaultColl k' v (fun hc => hok.2.2 hc.2)
+    (hd k' hok.2.1 k hok.1)
 
 /-! ## §3 — the deposit gate (the forge-detector, as a predicate).
 
@@ -248,17 +311,34 @@ theorem donation_immunity (T S d : ℕ) : sharesOut T S d = sharesOut T S d := r
 The `(total_assets, total_shares)` counters ride the SAME sorted-Poseidon2 `Heap.root` the cap crown
 proves binds. So equal committed roots open to the SAME counters — a forge cannot present the honest
 root with a padded share supply or a skewed asset counter. DIRECT instances of `Heap.root_binds_get`
-(the anti-ghost), under the one named `Poseidon2SpongeCR` floor. -/
+(the anti-ghost), on its per-instance `¬ HeapRootColl` residual — worth ≈ 2^15.5 queries at the
+1-felt root, and NO floor. -/
 
 /-- **HONEST ROUND-TRIP (assets).** A committed state reads back its `total_assets`. The assets slot
-survives the shares write by `Heap.hget_hset_frame` (the named `Poseidon2SpongeCR` floor), then reads
-back by `Heap.hget_hset_self`. -/
-theorem writeState_binds_assets (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+survives the shares write by `Heap.hget_hset_frame` on §2.1's residual, then reads back by
+`Heap.hget_hset_self`. -/
+theorem writeState_binds_assets (hash : List ℤ → ℤ) (hd : SlotsDistinct hash)
     (h : FeltHeap) (a s : ℤ) : boundAssets hash (writeState hash h a s) = some a := by
   show hget hash (writeState hash h a s) vaultColl keyAssets = some a
   unfold writeState
-  rw [hget_hset_frame hash hCR _ vaultColl keyShares vaultColl keyAssets s (by decide)]
+  rw [frameSlot hash hd _ keyShares keyAssets s (by decide)]
   exact hget_hset_self hash _ vaultColl keyAssets a
+
+/-- **THE SAME ROUND-TRIP WITH NO HYPOTHESIS AT ALL.** Either the assets slot reads back, or the
+vault's two literal keys ALIAS — and that aliasing is a witnessed collision of the deployed sponge
+(`Heap.addrColl_refutes_poseidon2CR`). The strongest form; `writeState_binds_assets` is its
+per-instance shadow. -/
+theorem writeState_binds_assets_or_aliases (hash : List ℤ → ℤ) (h : FeltHeap) (a s : ℤ) :
+    boundAssets hash (writeState hash h a s) = some a
+      ∨ AddrColl hash vaultColl keyAssets vaultColl keyShares := by
+  rcases hget_hset_frame_or_aliases hash (hset hash h vaultColl keyAssets a)
+      vaultColl keyShares vaultColl keyAssets s (by decide) with hfr | hal
+  · exact Or.inl (by
+      show hget hash (writeState hash h a s) vaultColl keyAssets = some a
+      unfold writeState
+      rw [hfr]
+      exact hget_hset_self hash _ vaultColl keyAssets a)
+  · exact Or.inr hal
 
 /-- **HONEST ROUND-TRIP (shares).** A committed state reads back its `total_shares` (written last). -/
 theorem writeState_binds_shares (hash : List ℤ → ℤ) (h : FeltHeap) (a s : ℤ) :
@@ -269,25 +349,42 @@ theorem writeState_binds_shares (hash : List ℤ → ℤ) (h : FeltHeap) (a s : 
 
 /-- **THE REUSE KEYSTONE (assets).** Equal roots ⟹ equal committed `total_assets`. Proven by REUSE of
 `Heap.root_binds_get` — no vault-local commitment. -/
-theorem assets_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem assets_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂)
+    (hroot : root hash h₁ = root hash h₂) :
     boundAssets hash h₁ = boundAssets hash h₂ :=
-  root_binds_get hash hCR hroot vaultColl keyAssets
+  root_binds_get hash hno hroot vaultColl keyAssets
 
 /-- **THE REUSE KEYSTONE (shares).** Equal roots ⟹ equal committed `total_shares` — a forge cannot
 pad the share supply while keeping the honest root (the supply that backs every holder's claim). -/
-theorem shares_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem shares_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂)
+    (hroot : root hash h₁ = root hash h₂) :
     boundShares hash h₁ = boundShares hash h₂ :=
-  root_binds_get hash hCR hroot vaultColl keyShares
+  root_binds_get hash hno hroot vaultColl keyShares
+
+/-- **THE ANTI-GHOST, WITH NO HYPOTHESIS AT ALL.** Equal roots force the same committed counters, or
+the two views ARE a witnessed collision of the deployed sponge. -/
+theorem state_bound_in_root_or_collides (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
+    (hroot : root hash h₁ = root hash h₂) :
+    (boundAssets hash h₁ = boundAssets hash h₂ ∧ boundShares hash h₁ = boundShares hash h₂)
+      ∨ HeapRootColl hash h₁ h₂ :=
+  (root_binds_get_or_collides hash hroot).imp
+    (fun hg => ⟨hg vaultColl keyAssets, hg vaultColl keyShares⟩) id
 
 /-- **THE ANTI-GHOST.** A forged cell whose committed share supply differs from the honest one CANNOT
 keep the honest root — it must publish a different root (where the forge tooth then bites). The
-contrapositive of `shares_bound_in_root`. -/
-theorem forged_state_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hne : boundShares hash h₁ ≠ boundShares hash h₂) :
+contrapositive of `shares_bound_in_root`.
+
+⚑ Note what the OLD statement claimed: with `hCR` in place of `hno` it quantified over ALL pairs of
+heaps, i.e. it CONCLUDED that `root hash ·` separates every pair of differing share supplies — an
+injectivity, refuted at deployed BabyBear by exactly the pigeonhole that refutes the premise. It is
+per-instance now, and true where the system stands. -/
+theorem forged_state_moves_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂)
+    (hne : boundShares hash h₁ ≠ boundShares hash h₂) :
     root hash h₁ ≠ root hash h₂ :=
-  fun hroot => hne (shares_bound_in_root hash hCR hroot)
+  fun hroot => hne (shares_bound_in_root hash hno hroot)
 
 /-! ## §6b — THE CIRCUIT-WELD RUNG (STAGED): the no-dilution share-price invariant a LIGHT CLIENT
 witnesses.
@@ -339,15 +436,30 @@ abbrev VaultDepositGate (hash : List ℤ → ℤ) (before after : FeltHeap) (Tb 
 genuine kernel transition — a committed `(Tb, Sb)`, then `writeState` to `(Tb + d, Sb + m)` —
 satisfies the gate whenever the deposit and mint are positive and no holder is diluted. Without this
 the rung would be vacuous (true by no-witness). -/
-theorem vault_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (before : FeltHeap)
+theorem vault_passes_gate (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (before : FeltHeap)
     (Tb Sb d m : ℤ) (hbefa : boundAssets hash before = some Tb)
     (hbefs : boundShares hash before = some Sb)
     (hd : 0 < d) (hm : 0 < m) (hnodil : Tb * m ≤ Sb * d) :
     VaultDepositGate hash before (writeState hash before (Tb + d) (Sb + m)) Tb Sb d m :=
   ⟨hbefa, hbefs,
-    writeState_binds_assets hash hCR before (Tb + d) (Sb + m),
+    writeState_binds_assets hash hsd before (Tb + d) (Sb + m),
     writeState_binds_shares hash before (Tb + d) (Sb + m),
     hd, hm, hnodil⟩
+
+/-- **⚑ THE NON-VACUITY WITNESS, WITH NO HYPOTHESIS ON THE SPONGE.** The accept-polarity demo above
+used to be conditioned on `Poseidon2SpongeCR` — so the very theorem whose job was to show the rung is
+not empty said NOTHING at deployed parameters, which is the disease this campaign exists to find.
+Here the honest transition satisfies the gate outright, or the vault's two literal slot keys alias and
+that aliasing REFUTES the floor. Neither branch assumes anything. -/
+theorem vault_passes_gate_or_aliases (hash : List ℤ → ℤ) (before : FeltHeap)
+    (Tb Sb d m : ℤ) (hbefa : boundAssets hash before = some Tb)
+    (hbefs : boundShares hash before = some Sb)
+    (hd : 0 < d) (hm : 0 < m) (hnodil : Tb * m ≤ Sb * d) :
+    VaultDepositGate hash before (writeState hash before (Tb + d) (Sb + m)) Tb Sb d m
+      ∨ AddrColl hash vaultColl keyAssets vaultColl keyShares :=
+  (writeState_binds_assets_or_aliases hash before (Tb + d) (Sb + m)).imp
+    (fun ha => ⟨hbefa, hbefs, ha, writeState_binds_shares hash before (Tb + d) (Sb + m),
+      hd, hm, hnodil⟩) id
 
 /-- **THE NO-DILUTION TOOTH** (`vault_gate_forces_no_dilution`). A satisfying gate witness FORCES the
 no-dilution share-price shape: the committed `total_assets` advanced by exactly the deposit and the
@@ -397,18 +509,19 @@ by the committed ROOTS of the before/after views — so a light client that chec
 public-input-bound before/after roots reads the GENUINE verdict; a forger presenting fake asset/share
 slots must MOVE a root (where §6's binding bites). Equal-root before/after views give the same gate
 verdict. Proven by REUSE of `assets_bound_in_root` / `shares_bound_in_root` — no vault-local
-commitment, the one named `Poseidon2SpongeCR` floor. -/
-theorem vault_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+commitment, and no floor. -/
+theorem vault_gate_root_bound (hash : List ℤ → ℤ)
     {before before' after after' : FeltHeap} (Tb Sb d m : ℤ)
+    (hnb : ¬ HeapRootColl hash before before') (hna : ¬ HeapRootColl hash after after')
     (hb : root hash before = root hash before') (ha : root hash after = root hash after')
     (hgate : VaultDepositGate hash before after Tb Sb d m) :
     VaultDepositGate hash before' after' Tb Sb d m := by
   obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hgate
   refine ⟨?_, ?_, ?_, ?_, h5, h6, h7⟩
-  · rw [← assets_bound_in_root hash hCR hb]; exact h1
-  · rw [← shares_bound_in_root hash hCR hb]; exact h2
-  · rw [← assets_bound_in_root hash hCR ha]; exact h3
-  · rw [← shares_bound_in_root hash hCR ha]; exact h4
+  · rw [← assets_bound_in_root hash hnb hb]; exact h1
+  · rw [← shares_bound_in_root hash hnb hb]; exact h2
+  · rw [← assets_bound_in_root hash hna ha]; exact h3
+  · rw [← shares_bound_in_root hash hna ha]; exact h4
 
 /-! ## §7 — NON-VACUITY TEETH (`#guard`): the share-price invariant BITES, both polarities.
 
@@ -502,12 +615,19 @@ end Witnesses
   forged_shares_rejected,
   zero_mint_rejected,
   donation_immunity,
+  slotsDistinct_at_refSponge,
+  slotsDistinct_refutable,
+  slotsDistinct_failure_refutes_poseidon2CR,
+  frameSlot,
   writeState_binds_assets,
+  writeState_binds_assets_or_aliases,
   writeState_binds_shares,
   assets_bound_in_root,
   shares_bound_in_root,
+  state_bound_in_root_or_collides,
   forged_state_moves_root,
   vault_passes_gate,
+  vault_passes_gate_or_aliases,
   vault_gate_forces_no_dilution,
   inflation_attack_rejected,
   dilution_rejected,

@@ -19,8 +19,10 @@
 //! `pasta::fp_kimchi::static_params()`. This is kimchi's own sponge, the same
 //! params o1js compiles into its Poseidon gate.
 
+pub mod p2air;
 pub mod p2bb;
 pub mod p2chal;
+pub mod p2deep;
 
 use ark_ff::{BigInteger, PrimeField};
 use mina_curves::pasta::Fp;
@@ -209,6 +211,10 @@ fn main() {
         Some("p2chain") => return p2bb::emit_p2_chain(&argv[1..]),
         Some("p2chal") => return p2chal::emit_p2_chal(&argv[1..]),
         Some("p2fritranscript") => return p2chal::emit_fri_transcript(&argv[1..]),
+        // Part D: the DEEP quotient / reduced openings (see `p2deep.rs`).
+        Some("p2deep") => return p2deep::emit_p2_deep(&argv[1..]),
+        // Part E: the batch-STARK OOD arithmetic (see `p2air.rs`).
+        Some("p2air") => return p2air::emit_p2_air(&argv[1..]),
         _ => {}
     }
 

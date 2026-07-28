@@ -352,7 +352,15 @@ impl Character {
             )
         };
         let character_panel = ViewNode::Section {
-            title: format!("{} · {}", short_name(&self.who), c.class_name()),
+            // The card's title names a PERSON: `alice · Ranger`, and `player 71b278 · Ranger`
+            // when no frontend has attributed a name. It used to be `short_name(&self.who)` —
+            // the first eight characters of the opaque routing key, byte-sliced (so a
+            // multi-byte label panicked it) and unreadable when it did not.
+            title: format!(
+                "{} · {}",
+                crate::player_name::display_name(&self.who),
+                c.class_name()
+            ),
             tag: "genuine".to_string(),
             children: vec![ViewNode::Text(xp_line)],
         };
@@ -522,17 +530,6 @@ impl<S: CharacterStore> AdventurerOffering<S> {
         session
             .character
             .render_over(self.dungeon.render(&session.dungeon))
-    }
-}
-
-/// A short display handle for an identity (the first 8 chars of the opaque key) — for a render
-/// title, not an authority (the executor signs with the world cap, not this label).
-fn short_name(who: &DreggIdentity) -> String {
-    let s = who.as_str();
-    if s.len() > 8 {
-        format!("{}…", &s[..8])
-    } else {
-        s.to_string()
     }
 }
 

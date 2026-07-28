@@ -414,6 +414,27 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     };
     ledger.insert_cell(target).expect("insert target cell");
 
+    // ⚑ THE INTRODUCER'S AUTHORITY, MADE EXPLICIT (2026-07-28). `verify_captp_delivered`
+    // step 5c now requires the introducer to actually HOLD something over the target — the
+    // executor's analogue of the swiss entry Alice registered above (`carol_swiss`), which
+    // IS the target federation's record that Alice holds this cell.
+    //
+    // This fixture previously handed the executor a ledger containing ONLY the target, and
+    // it committed anyway: nothing on the executor path asked whether the certificate's
+    // introducer existed, let alone held anything. That was the authorization bypass
+    // (`turn/tests/captp_delivered_amplification.rs::a1_*`) — a certificate from a key with
+    // no cell and no capability discharged the target cell's `AuthRequired` lattice. Saying
+    // who Alice is, is not a concession to the check; it is the fact the check needed and
+    // this fixture was silently omitting.
+    let mut introducer = Cell::with_balance(alice_pk.0, [0u8; 32], 0);
+    introducer
+        .capabilities
+        .grant(target_cell, P::None)
+        .expect("grant introducer capability over the target");
+    ledger
+        .insert_cell(introducer)
+        .expect("insert introducer cell");
+
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let result = executor.execute(&turn, &mut ledger);
 

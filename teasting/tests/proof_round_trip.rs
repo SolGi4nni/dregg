@@ -88,7 +88,7 @@ fn test_stark_proof_bytes_round_trip() {
 // PresentationVerification::Valid`, but the live `bridge::present::RealPresentationProof`
 // (`bridge/src/present.rs:153`, which "replaced the retired dregg_circuit::RealPresentationProof"
 // per its own docstring at :146) exposes only `total_proof_size_bytes`/`proof_size_display`;
-// verification moved to the free fn `verify_presentation_full(&BridgePresentationProof,
+// verification moved to the free fn `verify_proof_complete(&WirePresentationProof,
 // federation_root, expected_action, now, max_proof_age)`. So the test could not compile and
 // therefore documented NOTHING — it was a comment wearing a #[test] hat, and it kept this whole
 // file (including the STARK round-trip below/above) out of the build.
@@ -97,5 +97,5 @@ fn test_stark_proof_bytes_round_trip() {
 // (`PresentationRoundTripResidual`): it asserted that a full bridge presentation proof survives
 // postcard serialization, and was written to catch `DeserializeUnexpectedEnd` — "a real wire
 // protocol bug (the prover and verifier disagree on the binary format)". Re-landing it means
-// porting to `BridgePresentationProof` + `verify_presentation_full`. Related live coverage:
+// porting to `WirePresentationProof` + `verify_proof_complete`. Related live coverage:
 // `tests/src/wire_format_e2e.rs` (the presentation wire format e2e).

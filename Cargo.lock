@@ -7576,6 +7576,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "dregg-bridge",
+ "dregg-captp",
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-circuit",
@@ -8069,7 +8070,9 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-circuit-prove",
+ "dregg-exec-lean",
  "dregg-intent",
+ "dregg-lean-ffi",
  "dregg-sdk",
  "dregg-turn",
  "dregg-types",

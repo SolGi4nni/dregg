@@ -64,9 +64,25 @@ The value tooth here is the *executor* tooth; the circuit tooth is its shadow.
 
 ## Axiom hygiene
 
-`#assert_all_clean` at the close. Crypto enters ONLY as the named `Poseidon2SpongeCR` hypothesis
-(the cap-root floor the heap carries), never as an axiom. NO core/heap edit — every binding is the
-REAL `Substrate.Heap.hset`/`hget` and the root is the REAL `Substrate.Heap.root`.
+`#assert_all_clean` at the close.
+
+## ⚑ NO FLOOR (2026-07-28) — what crypto enters, and what it is worth
+
+Crypto used to enter as the named `Poseidon2SpongeCR` hypothesis, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear: every
+theorem under it was VACUOUSLY TRUE where the system stands. It now enters as TWO decidable
+per-instance residuals, each with three proved poles (dischargeable / refutable / refutes the floor):
+
+  * `SlotsDistinct hash` (§2.1) — this module's literal slot keys do not alias. A finite kernel check,
+    `decide`d at the reference sponge (`slotsDistinct_at_refSponge`). Not a cryptographic assumption
+    at all: the deployment fixes the keys, so the honest party can simply evaluate it.
+  * `¬ Heap.HeapRootColl hash h₁ h₂` — the deployed sponge does not collide at the ONE pair the root
+    extractor hands back for the two heap views in play.
+
+⚑ THE HONEST NUMBER: `Heap.root` is ONE BabyBear felt, so the root residual is worth
+`(Q² + 1)/babyBearP ≈ 2^15.5` queries — a BREAK, not a bound. Every keystone here binds exactly as
+well as a 31-bit commitment allows. The slot residual costs nothing at all (it is decided, not
+assumed).
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Tactics
@@ -156,6 +172,52 @@ The Lean image of `cell/src/derived.rs::verify_derivation` returning `Ok`. -/
 abbrev Verifies (hash : List ℤ → ℤ) (h : FeltHeap) (agg : Aggregate) (srcs : List Source) : Prop :=
   boundDigest hash h = some (specDigest agg) ∧ boundValue hash h = some (agg.fold srcs)
 
+/-! ### §2.1 — ⚑ THE SLOT-ALIASING RESIDUAL that replaced the refuted floor (2026-07-28).
+
+Every round-trip below used to assume `Poseidon2SpongeCR hash` — global injectivity of a compressing
+sponge, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed
+BabyBear, so each of them was VACUOUSLY TRUE where the system stands. What the proofs actually NEEDED
+was one thing and it is FINITE: the derived cell's TWO literal slot keys must not land on the
+same heap address. That is `SlotsDistinct`, and the difference from the floor is not presentational —
+it is DECIDABLE at a fixed pair, an honest deployment can CHECK it against the real sponge, and it is
+satisfiable where the floor is not. -/
+
+/-- The module's committed heap keys — the literal slot constants the Rust writes. -/
+def derivKeys : List ℤ := [keyDigest, keyValue]
+
+/-- **`SlotsDistinct hash`** — the derived cell's committed slots do not ALIAS under `hash`: no two of its
+own keys collide the sponge at the pair `Heap.addrFind` hands back. A FINITE, DECIDABLE check over
+literal constants — never a global `∀ p q, ¬ Coll`, which pigeonhole refutes exactly like the floor
+it would replace. -/
+def SlotsDistinct (hash : List ℤ → ℤ) : Prop :=
+  ∀ k ∈ derivKeys, ∀ k' ∈ derivKeys, ¬ AddrColl hash derivColl k derivColl k'
+
+instance decidableSlotsDistinct (hash : List ℤ → ℤ) : Decidable (SlotsDistinct hash) := by
+  unfold SlotsDistinct; infer_instance
+
+/-- **DISCHARGEABLE — and by COMPUTATION, not by assumption.** At the reference sponge the residual
+holds, decided in the kernel. The deployed prover runs the same finite check against the real sponge;
+the floor it replaces was unavailable to an honest party at ANY deployed parameters. -/
+theorem slotsDistinct_at_refSponge : SlotsDistinct refSponge := by decide
+
+/-- **REFUTABLE.** At the constant sponge every slot aliases, so `SlotsDistinct` is not `True` in
+disguise and the residual is doing work. -/
+theorem slotsDistinct_refutable : ¬ SlotsDistinct (fun _ => (0 : ℤ)) := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** A sponge that aliases these slots is not injective, so
+`SlotsDistinct` is strictly weaker than the floor it replaces. Stated contrapositively: assumes no
+floor content, and the ratchet reads it as the tooth it is. -/
+theorem slotsDistinct_failure_refutes_poseidon2CR {hash : List ℤ → ℤ}
+    (hf : ¬ SlotsDistinct hash) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hf (fun _ _ _ _ hc => hc.1 (hCR _ _ hc.2))
+
+/-- **THE FRAME STEP, on the residual.** Writing one slot leaves another slot's opening alone. -/
+theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltHeap) (k k' v : ℤ)
+    (hok : k ∈ derivKeys ∧ k' ∈ derivKeys ∧ k' ≠ k) :
+    hget hash (hset hash h derivColl k v) derivColl k' = hget hash h derivColl k' :=
+  hget_hset_frame hash h derivColl k derivColl k' v (fun hc => hok.2.2 hc.2)
+    (hd k' hok.2.1 k hok.1)
+
 /-! ## §3 — THE HONEST ROUND-TRIP + THE TEETH.
 
 `bind` produces a cell the SAME spec+sources verify (round-trip); a forged claim, a stale claim, and
@@ -165,15 +227,15 @@ round-trip's digest leg rides the ONE named `Poseidon2SpongeCR` floor (frame off
 /-- **HONEST ROUND-TRIP.** A freshly re-derived cell verifies against the spec+sources it was bound
 to. The value slot reads back by `Heap.hget_hset_self` (crypto-free); the digest slot survives the
 value write by `Heap.hget_hset_frame` (the named cap-root `Poseidon2SpongeCR` floor). -/
-theorem bind_verifies (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem bind_verifies (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (agg : Aggregate) (srcs : List Source) :
     Verifies hash (bind hash h agg srcs) agg srcs := by
   refine ⟨?_, ?_⟩
   · -- digest slot: frame off the value write (keyValue ≠ keyDigest), then read-after-write.
     show hget hash (hset hash (hset hash h derivColl keyDigest (specDigest agg))
         derivColl keyValue (agg.fold srcs)) derivColl keyDigest = some (specDigest agg)
-    rw [hget_hset_frame hash hCR (hset hash h derivColl keyDigest (specDigest agg))
-        derivColl keyValue derivColl keyDigest (agg.fold srcs) (by decide)]
+    rw [frameSlot hash hsd (hset hash h derivColl keyDigest (specDigest agg))
+        keyValue keyDigest (agg.fold srcs) (by decide)]
     exact hget_hset_self hash h derivColl keyDigest (specDigest agg)
   · -- value slot: read-after-write (value written last; no crypto).
     exact hget_hset_self hash (hset hash h derivColl keyDigest (specDigest agg))
@@ -193,12 +255,12 @@ theorem forged_value_rejected (hash : List ℤ → ℤ) (h : FeltHeap) (agg : Ag
 /-- **THE STALE TOOTH.** A cell honestly re-derived at `oldSrcs`, verified against `newSrcs` whose
 fold differs, is rejected by the SAME value check — staleness IS a forge against the current
 sources. `cell/src/derived.rs::stale_after_source_change_is_rejected`, as a theorem. -/
-theorem stale_rejected (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem stale_rejected (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (agg : Aggregate) (oldSrcs newSrcs : List Source)
     (hne : agg.fold oldSrcs ≠ agg.fold newSrcs) :
     ¬ Verifies hash (bind hash h agg oldSrcs) agg newSrcs :=
   forged_value_rejected hash (bind hash h agg oldSrcs) agg newSrcs (agg.fold oldSrcs)
-    (bind_verifies hash hCR h agg oldSrcs).2 hne
+    (bind_verifies hash hsd h agg oldSrcs).2 hne
 
 /-- **THE WRONG-SPEC TOOTH.** A cell whose committed digest ≠ the supplied spec's digest does not
 verify against that spec — you cannot re-interpret a cell as deriving under a relation it never
@@ -214,12 +276,12 @@ theorem wrong_spec_rejected (hash : List ℤ → ℤ) (h : FeltHeap) (agg' : Agg
 
 /-- A cell bound under spec `agg` cannot be re-verified under a DIFFERENT spec `agg'` with a distinct
 digest. The wrong-spec tooth at a re-derived cell. -/
-theorem wrong_spec_after_bind (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem wrong_spec_after_bind (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (agg agg' : Aggregate) (srcs srcs' : List Source)
     (hdig : specDigest agg ≠ specDigest agg') :
     ¬ Verifies hash (bind hash h agg srcs) agg' srcs' :=
   wrong_spec_rejected hash (bind hash h agg srcs) agg' srcs' (specDigest agg)
-    (bind_verifies hash hCR h agg srcs).1 hdig
+    (bind_verifies hash hsd h agg srcs).1 hdig
 
 /-! ## §4 — THE REUSE KEYSTONE: the claim is bound into the committed root.
 
@@ -232,26 +294,26 @@ floor. -/
 /-- **THE REUSE KEYSTONE — the claimed value is bound into the committed root.** Two heaps with EQUAL
 roots open to the SAME claimed value. The `cell/src/derived.rs::claim_is_bound_into_commitment`
 test, proven by REUSE of `Heap.root_binds_get` — no derived-cell-local commitment. -/
-theorem claim_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem claim_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundValue hash h₁ = boundValue hash h₂ :=
-  root_binds_get hash hCR hroot derivColl keyValue
+  root_binds_get hash hno hroot derivColl keyValue
 
 /-- The spec digest is bound into the committed root too (the twin of `claim_bound_in_root`): a forge
 cannot swap WHICH derivation it claims while keeping the honest root. -/
-theorem spec_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem spec_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundDigest hash h₁ = boundDigest hash h₂ :=
-  root_binds_get hash hCR hroot derivColl keyDigest
+  root_binds_get hash hno hroot derivColl keyDigest
 
 /-- **THE ANTI-GHOST.** A forged cell whose committed claim differs from the honest one CANNOT keep
 the honest root — it must publish a different root (where the forge tooth then bites). The
 contrapositive of `claim_bound_in_root`: there is no honest way to present a different claim under
 the same commitment. -/
-theorem forged_claim_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hne : boundValue hash h₁ ≠ boundValue hash h₂) :
+theorem forged_claim_moves_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hne : boundValue hash h₁ ≠ boundValue hash h₂) :
     root hash h₁ ≠ root hash h₂ :=
-  fun hroot => hne (claim_bound_in_root hash hCR hroot)
+  fun hroot => hne (claim_bound_in_root hash hno hroot)
 
 /-! ## §5 — NON-VACUITY TEETH (`#guard`): the derivation invariant BITES, both polarities.
 
@@ -316,6 +378,10 @@ end Witnesses
 /-! ## §6 — Axiom hygiene. -/
 
 #assert_all_clean [
+  slotsDistinct_at_refSponge,
+  slotsDistinct_refutable,
+  slotsDistinct_failure_refutes_poseidon2CR,
+  frameSlot,
   bind_verifies,
   forged_value_rejected,
   stale_rejected,

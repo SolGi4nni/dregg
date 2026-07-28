@@ -19,6 +19,7 @@ use std::fmt;
 
 use deos_view::ViewNode;
 use dregg_circuit_prove::dark_amm_private::RULE_ID as PRIVATE_AMM_RULE_ID;
+use dreggnet_offerings::player_name::display_name_of;
 use dreggnet_offerings::{
     Action, BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
     BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
@@ -1395,7 +1396,7 @@ impl Offering for CollectiveDarkAmmOffering {
                         ViewNode::Text(match &session.pending_actor {
                             Some(actor) => format!(
                                 "pending candidate belongs to frontend actor {}",
-                                short_identity(actor.as_str())
+                                display_name_of(actor.as_str())
                             ),
                             None => "no frontend actor currently owns the staging slot".to_string(),
                         }),
@@ -1695,17 +1696,6 @@ fn bind_actor(
     hash.update(&len.to_le_bytes());
     hash.update(actor);
     Ok(())
-}
-
-fn short_identity(identity: &str) -> String {
-    const DISPLAY_CHARS: usize = 18;
-    if identity.chars().count() <= DISPLAY_CHARS {
-        return identity.to_string();
-    }
-    format!(
-        "{}…",
-        identity.chars().take(DISPLAY_CHARS).collect::<String>()
-    )
 }
 
 fn hex_digest(bytes: &[u8; 32]) -> String {

@@ -152,7 +152,11 @@ pub fn lean_available() -> bool {
 /// UNSET is ARMED. That asymmetry is the entire change: the condition under which
 /// every verified-gate test used to report `ok` was nobody having set anything.
 pub fn test_require_lean() -> bool {
-    if armed_from_env_value(std::env::var("DREGG_TEST_ALLOW_MISSING_LEAN").ok().as_deref()) {
+    if armed_from_env_value(
+        std::env::var("DREGG_TEST_ALLOW_MISSING_LEAN")
+            .ok()
+            .as_deref(),
+    ) {
         return false;
     }
     match std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref() {
@@ -183,22 +187,55 @@ pub fn demand_lean(available: bool, what: &str) -> bool {
     demand_lean_armed(available, what, test_require_lean())
 }
 
+/// Whether build.rs refused to advertise the linked archive because it was NOT built from this
+/// checkout's Lean source (a VERIFIED-RUNTIME PROVENANCE DOWNGRADE: `lake build` was skipped, could
+/// not run, failed to elaborate, or failed to splice, so a seed / previous build is what is
+/// linkable). When this is true every `*_available()` is deliberately FALSE — see the provenance
+/// gate in `dregg-lean-ffi/build.rs`.
+///
+/// It exists so a refusal can name the RIGHT cause. "The archive lacks the export" and "the archive
+/// is from another day" want opposite fixes, and telling someone to fetch a seed when their Lean
+/// build is red sends them the wrong way.
+pub fn lean_archive_provenance_downgraded() -> bool {
+    cfg!(dregg_lean_stale_archive)
+}
+
 fn demand_lean_armed(available: bool, what: &str, armed: bool) -> bool {
+    demand_lean_full(available, what, armed, lean_archive_provenance_downgraded())
+}
+
+/// The refusal, with BOTH axes as parameters so each is testable. `downgraded` is a genuinely
+/// different failure from an absent export and wants the OPPOSITE remedy: fetching a seed fixes an
+/// absent archive and actively entrenches a stale one.
+fn demand_lean_full(available: bool, what: &str, armed: bool, downgraded: bool) -> bool {
     if available {
         return true;
     }
+    let cause = if downgraded {
+        "PROVENANCE DOWNGRADE — the Lean archive in this build was NOT produced from this \
+         checkout. `lake build` was skipped, could not run, or FAILED TO ELABORATE, so build.rs \
+         withheld every verified-export cfg rather than let you measure another day's Lean.\n\
+         \x20  FIX: repair the Lean build (`lake build Dregg2.FFI` in metatheory/) and rebuild.\n\
+         \x20  ⚠ Do NOT fetch a seed to silence this — that entrenches the stale archive.\n\
+         \x20  ⚠ Until 2026-07-28 this case did NOT refuse: it linked the stale archive and the \
+         verified-rule tests RAN against it. One such run reported a consensus finality gate as \
+         OPEN when it was closed and green at HEAD."
+    } else {
+        "the linked archive lacks that export — no verified runtime was linked.\n\
+         \x20  FIX: get the archive (minutes, not hours):\n\
+         \x20     bash scripts/fetch-lean-seed.sh        # HEAD-keyed prebuilt seed\n\
+         \x20     scripts/pbuild <lane> cargo test …     # auto-provisions it remotely"
+    };
     assert!(
         !armed,
-        "MISSING VERIFIED CAPABILITY: the linked archive lacks the {what}.\n\
+        "MISSING VERIFIED CAPABILITY: cannot exercise {what}.\n\
+         \n\
+         CAUSE: {cause}\n\
          \n\
          This test asserts something about a machine-checked Lean core. Without that \
          core it cannot assert it — and `libtest` has no runtime `skip`, so the only \
          alternative to this failure is printing `ok`, which would be a claim about \
          the verified kernel that nobody checked.\n\
-         \n\
-         Get the archive (minutes, not hours):\n\
-         \x20   bash scripts/fetch-lean-seed.sh        # HEAD-keyed prebuilt seed\n\
-         \x20   scripts/pbuild <lane> cargo test …     # auto-provisions it remotely\n\
          \n\
          If you genuinely mean to test without the verified cores, say so out loud:\n\
          \x20   DREGG_TEST_ALLOW_MISSING_LEAN=1 cargo test …\n\
@@ -239,6 +276,58 @@ mod test_require_lean_gate {
     #[test]
     fn absent_export_skips_when_unarmed() {
         assert!(!demand_lean_armed(false, "missing export", false));
+    }
+
+    /// ⚑ THE TWO CAUSES ARE NOT THE SAME REFUSAL, and confusing them costs a day.
+    ///
+    /// A stale archive that build.rs refused to advertise is a DIFFERENT failure from an archive
+    /// that never had the export, and the remedies are OPPOSITE: fetching a seed fixes the second
+    /// and entrenches the first. Before 2026-07-28 the downgrade did not refuse at all — the
+    /// stale archive was linked and `node/src/finality_gate.rs`'s enrollment falsifier ran against
+    /// a `tauOrder` from before `c6f00c228` and reported "The gate is OPEN" on a tree where it was
+    /// closed. This pins that the refusal now NAMES which of the two it is.
+    #[test]
+    fn the_downgrade_and_the_absence_are_told_apart() {
+        let msg = |downgraded: bool| {
+            let e = std::panic::catch_unwind(move || {
+                demand_lean_full(false, "the finality-gate export", true, downgraded)
+            })
+            .expect_err("an unusable verified capability under hard mode must panic");
+            e.downcast_ref::<String>()
+                .map(String::as_str)
+                .expect("the gate panic must carry an actionable String")
+                .to_string()
+        };
+
+        let stale = msg(true);
+        assert!(
+            stale.contains("PROVENANCE DOWNGRADE"),
+            "a stale archive must be NAMED as such, not reported as a missing export: {stale}"
+        );
+        assert!(
+            stale.contains("lake build Dregg2.FFI"),
+            "the stale-archive refusal must point at the Lean build, the actual fix: {stale}"
+        );
+        assert!(
+            !stale.contains("bash scripts/fetch-lean-seed.sh"),
+            "the stale-archive refusal must NOT prescribe fetching a seed — that entrenches the \
+             stale archive rather than fixing it: {stale}"
+        );
+
+        let absent = msg(false);
+        assert!(
+            !absent.contains("PROVENANCE DOWNGRADE"),
+            "a genuinely absent export must not be blamed on provenance: {absent}"
+        );
+        assert!(
+            absent.contains("bash scripts/fetch-lean-seed.sh"),
+            "an absent archive must still teach the one-command fix: {absent}"
+        );
+        assert_ne!(
+            stale, absent,
+            "the two causes must produce DIFFERENT text — one message for both is the confusion \
+             this test exists to prevent"
+        );
     }
 
     /// THE FLIPPED DEFAULT, asserted rather than assumed.
@@ -301,10 +390,16 @@ mod test_require_lean_gate {
         }
         for truthy in ["1", "true", "on"] {
             unsafe { std::env::set_var("DREGG_TEST_REQUIRE_LEAN", truthy) };
-            assert!(test_require_lean(), "DREGG_TEST_REQUIRE_LEAN={truthy} re-asserts the default");
+            assert!(
+                test_require_lean(),
+                "DREGG_TEST_REQUIRE_LEAN={truthy} re-asserts the default"
+            );
         }
         unsafe { std::env::remove_var("DREGG_TEST_REQUIRE_LEAN") };
-        assert!(test_require_lean(), "UNSET is ARMED — that asymmetry IS the change");
+        assert!(
+            test_require_lean(),
+            "UNSET is ARMED — that asymmetry IS the change"
+        );
     }
 
     #[test]

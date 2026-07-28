@@ -1,5 +1,455 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑⚑ JULY 28 — THE RESIDUAL INDEX: 35 self-reported wounds swept out of commit bodies and `git notes`, re-measured at HEAD, and 9 were already closed
+
+**THE LANES HERE NAME THEIR OWN WOUNDS AGAINST THEIR OWN INTEREST — AND WRITE THEM WHERE NOTHING
+SWEEPS.** *"named, not fixed"*, *"ember's call"*, *"for the next lane"*, *"I did not measure this"*. A
+collection of 20 such residuals came back **`HORIZONLOG: untracked` on all 20**, and a spot-check of
+the citations confirms it: `affine_sum`, `require_effect_vm_proof`, `DreggStateOracle`,
+`dregg_eth_lc_verify`, `PACKET_DATA_SIZE`, `63u8`, `test-gauntlet`, `no_run` appear **zero** times in
+this file. That is the finding — not sloppy work, honest work recorded in a place with no reader.
+
+**Two sources carry evidence-grade residuals in this tree, and only two.** `git log` bodies over the
+last 400 commits (217 residual-shaped lines) and **`git notes`, which hold 24 corrections that were
+never allowed to touch a commit message** — including the two commits whose subjects belong to a
+sibling lane, and the one that shipped an unsoundness under a feature subject. A `cv` sweep of agent
+transcripts was run and is deliberately **not** the basis of anything below: full-text search returns
+the lanes' own PROMPTS far more often than their findings, and a transcript is testimony.
+
+⚑ **THE REASON THIS WAS WORTH DOING, IN ONE NUMBER: 9 of 35 were already closed and nobody had gone
+back to look.** In this tree **a reason string is a timestamp, not a fact.** Each entry below is
+**LIVE** (with the measurement), **FIXED** (with the commit), or **UNVERIFIABLE** (with why).
+
+⚠ **AND SIX OF THE TWENTY COLLECTED CITATIONS ALREADY POINT AT THE WRONG PLACE** — wrong line
+(`eval.rs:3112` → `:3156`, and it asserts the opposite of what was claimed), wrong file
+(`apply.rs:686` → `execute_tree.rs:992`), wrong CRATE (`coord/src/atomic.rs:538` →
+`turn/src/executor/atomic.rs:542`; `turn/…:474` → `node/src/mcp/proof.rs:377`). A residual index
+keyed on `file:line` decays in days here, so every entry below leads with the **symbol**.
+
+### A. GRANTS AUTHORITY OR LOSES VALUE — fix these first
+
+**A1 · A REVOKED CAPABILITY CAN BE LEFT LIVE, AND THE SDK ASSERTS THE OPPOSITE IN THE PRESENT TENSE.
+LIVE.** `circuit/tests/cap_open_write_prove_through.rs:682-700` states it and MEASURES it, not
+`#[ignore]`d: on the two REMOVE members (`revokeDelegationWriteCapOpen`, `revokeCapabilityWriteCapOpen`)
+the appendix `capRoot` is welded to the **BEFORE** group and the gates that constrained the after side
+(`c452 == c87`, `c87 == c65`) were dropped with nothing put in their place. **These members declare
+ZERO map-ops**, so the tombstone zero-fold is forced nowhere in-circuit: a prover may publish ANY
+8-felt post-remove cap-root — *including one that leaves the revoked capability live* — and
+`prove_vm_descriptor2` + `verify_vm_descriptor2` accept. A verifier that recomputes the honest
+post-state catches it; **a ledgerless light client, the threat model these members exist for, does
+not.** ⚠ `sdk/src/full_turn_proof.rs:2378-2379` asserts the reverse as fact: *"the genuine
+post-cap-root is ON-THE-WIRE light-client verifiable (a wrong post-root is UNSAT — the `map_op` checks
+`after = remove(before, key)`)"*. Named in `c81f2687d`, routed to ember as descriptor-regen + VK
+rotation. Nothing has moved.
+
+**A2 · THE EFFECT-VM PROOF IS CONSULTED AFTER THE TURN HAS COMMITTED, CHAINED AND GOSSIPED — AND IT
+CAN NEVER SUCCEED. LIVE.** `require_effect_vm_proof` is `node/src/mcp/proof.rs:377-392`, one
+expression over `try_generate_effect_vm_proof` (`:423-469`) whose **only two returns are both `Err`**;
+the terminal one (`:463`) is *"standalone v1 effect-vm proof material is retired"*. Its five call sites
+(`handlers_delegate.rs:154, 820, 1215`; `handlers_act.rs:1219, 1229`) are pre-commit, so the MCP grant
+/ bearer-exercise / handoff-exercise / bilateral verbs are **dead on arrival**. The sixth site is the
+shape that matters: `node/src/mcp/handlers_apps.rs` executes at `:442`, appends the receipt at `:454`,
+emits at `:461`, gossips at `:465`, and **first asks about a proof at `:477`** — then downgrades the
+guaranteed failure to a JSON field (`"proof_status": "proof_generation_failed"`, `:527`) while
+returning `committed: true` (`:508`). Shared by `dregg_register_name` / `dregg_publish_subscription` /
+`dregg_issue_credential` / `dregg_register_service`.
+
+**A3 · `affine_sum` STILL WRAPS, AND THE TARGETS WHERE IT DECIDES ARE EXACTLY THE PROVEN ONES. LIVE
+on wasm32 + zkVM guest; FIXED on native.** `cell/src/program/eval.rs:2949-2957` accumulates
+`sum += (*k as i128) * x` with no `checked_*` and no `overflow-checks` in the root profile; same in
+`affine_delta_sum` (`:2964-2976`). Lean is unbounded `Int`
+(`Dregg2/Exec/DeployedConstraint.lean:530`, `Exec/Program.lean:462`). The three-verdict divergence
+**is closed on native release** by the fail-closed `undecided_subset_disposition` (`22d9e0f3a`,
+`68ca51abe`) — but that branch is gated on `cell/src/program/oracle.rs:112`,
+`cfg!(all(not(debug_assertions), any(unix, windows)))`, which folds to **false on wasm32 and inside
+the SP1 guest**, where the unchecked Rust `affine_sum` *is* the decider. Both consume `dregg-cell`
+(`wasm/Cargo.toml`, `circuit/sp1-guest/Cargo.toml`), and `wasm/src/bindings_card.rs:1193, 1463` builds
+a live quorum gate as exactly this constraint. **The guest's ACCEPT is what gets proven.**
+
+**A4 · TWO EFFECTS SHARE A DOMAIN TAG, AND ONE TURN HASH ABSORBS NO PAYLOAD AT ALL. LIVE.**
+`Effect::Mint` (`turn/src/action.rs:2423`) and `Effect::ShieldedTransfer` (`:2562`) both write `63u8`
+into `Effect::hash()`, which feeds the sovereign `effects_hash`, the custom-predicate signing message
+(`executor/authorize.rs:2273`) and the receipt/PI binding. Today it is saved only by the preimages
+being length-disjoint (Mint = exactly 45 B; ShieldedTransfer ≥ 47 B) — the separation rests on an
+accidental encoding argument rather than on the tag. ⚑ **The adjacent one is worse:**
+`turn/src/executor/atomic.rs:640-658` `effect_tag_byte` has a `_ => 0xFF` wildcard, and
+`mixed_atomic_turn_hash` (`:630-632`) absorbs the tag **and nothing else** — so `Mint{amount: 1}` and
+`Mint{amount: 10^9}` produce an identical mixed-atomic turn hash. Used at `:1498`, `:1630`.
+
+**A5 · THE CONSERVATION FALLBACK READS A DELTA OF `p` AS ZERO IMBALANCE, ON THE TARGETS THAT GET
+PROVEN. LIVE.** `turn/src/executor/atomic.rs:542`:
+`net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32)` — `u64 → u32` drops the high
+half, then `% BABYBEAR_P`. The enclosing fn carries
+`#[cfg(not(all(any(unix, windows), not(debug_assertions))))]` (`:529`), the exact complement of the
+fail-closed arm at `:496`: **not compiled on native release; compiled on wasm32, in the zkVM guest,
+and in every debug binary and dev node.** The oracle path keeps `i64` (`:453`); the truncation is
+fallback-only.
+
+**A6 · THE CONSERVATION PARTITION KEY IS FOUR BYTES. LIVE.**
+`circuit/src/block_conservation.rs:88-92` — `fold_token_id_to_asset` takes `h[0..4]` of a BLAKE3
+`derive_key` and reduces mod p (~2^31 classes), with the doc directly above calling it
+*"collision-resistant-to-the-field-modulus"*. No collision check exists; two asset ids that fold
+together become one conservation class and cross-asset borrowing between them is invisible. Routing
+through Lean does not help — `atomic.rs:453` hands the oracle the **already-folded** `u32`.
+Unreachable today only because `birth_asset` (`turn/src/executor/apply.rs:1083`) makes a newborn
+inherit its parent's asset: an unstated invariant in a different file, one token-issuance product away
+from live inflation.
+
+**A7 · A CELL REMOVAL IS INVISIBLE TO THE SIGNED ANCHOR FOR A COLLIDING PAIR. LIVE (the false claim
+was retracted; the behaviour was not).** The heap leaf address is one felt —
+`circuit/src/heap_root.rs:225` `heap_addr(coll, key) = hash_many(&[coll, key])`, fed by
+`turn/src/rotation_witness.rs:308` — and four sites silently `dedup_by_key(|l| l.addr.as_u32())`
+(`heap_root.rs:404, 862, 996, 1901`), none returning an error. `a0fcd53ff` did the honest half: the
+*"a removal is not a fixed point"* claim at `turn/src/state_commit.rs:169` is now followed by its own
+refutation at `:171-184` — **a targeted second preimage against a chosen victim cell is a ~2^31
+offline grind, and the 8-felt widening priced the ROOT, never the KEY.** Reaches nullifier
+double-spend.
+
+**A8 · THE COMMITTED NOTE VALUE ALIASES AT 2^30, AND ITS HIGH LIMB IS WRITTEN AND READ BY NOTHING.
+LIVE.** `NOTE_VALUE_HI` (`circuit/src/effect_vm/columns.rs:497`) is written twice
+(`circuit/src/effect_vm/trace.rs:742` NoteSpend, `:752` NoteCreate) and **read zero times** — no AIR
+constraint, no PI pin, no accumulator, no verifier. Everything downstream reads `NOTE_VALUE_LO` alone
+and `split_u64` (`effect_vm/helpers.rs:13`) masks to 30 bits, so `cell/src/commitment_set.rs:268`
+commits `value mod 2^30`. **The committed set cannot testify to the value the host actually
+credited.** The tooth exists and fires in Lean: `Dregg2/Bignum/LedgerBalance.lean:234`
+`accumulatorLeaf_aliases_at_2_30`. Worse: that param slot is described as "a SPARE param slot"
+elsewhere (`EffectVmEmitRotationV3.lean:4927`) and is multiplexed by four other members.
+
+**A9 · THE CROSS-CHAIN "VK COMMITMENT" IS A HASH OF A LABEL STRING — AND IT IS NEVER COMPARED TO
+ANYTHING. LIVE.** The preimage contains zero VK bytes on all three chains:
+`solana-settlement/src/lib.rs:60` `keccak::hashv(&[b"dregg-settlement-vk-dev-setup"])`;
+`chain/script/DeploySettlement.s.sol:59` `keccak256("dregg-settlement-vk-dev-setup")`;
+`cosmos-settlement/tests/settlement.rs:89` the same string. **A VK regeneration leaves both pins
+byte-identical** — they match by construction, not by agreement about a key. And the pin is inert
+besides: EVM `DreggSettlement.sol`'s verify path (`:219`) never consults `_verifyingKeyHash`; Solana
+`processor.rs` reads `vk_hash` only at init (`:162`, `:191`) and `settle` (`:217-`) never touches it.
+`docs/ops/VK-CEREMONY.md:343` already names the repair.
+
+**A10 · THE SOLANA SETTLE TRANSACTION CANNOT BE BROADCAST. LIVE — measured red at HEAD.**
+`cargo test --test settle_flow settle_transaction_fits_in_a_solana_packet` → **EXIT=101**,
+*"settle transaction is 1495 serialized bytes against PACKET_DATA_SIZE = 1232 (over by 263)"*
+(`solana-settlement/tests/settle_flow.rs:244`, deliberately not `#[ignore]`d). Root cause is
+`solana-settlement/src/instruction.rs:24`: `NUM_PUBLIC_INPUTS * 32` = 800 B for values that
+`processor.rs:243` immediately narrows to canonical BabyBear lanes (100 B if encoded as such). The two
+sibling tests are green and structurally cannot see it — `ProgramTest`/`BanksClient` never
+wire-serializes the transaction.
+
+**A11 · THE EVM STATE ORACLE WRITES FOUR MIRROR SUB-ROOTS BOUND TO NOTHING. LIVE, source-only.**
+`chain/contracts/DreggStateOracle.sol:160` checks `settlement.isProvenRoot(stateRoot)` — the TOP root
+only — then `:167-169` writes `e.subRoots[i] = subRootVec[i]` unchecked, under a single immutable
+`recorder` (`:90`, `:139`). `proveHolding` (`:232`) → `subRootOf` (`:200`) reads exactly those
+recorder-attested values, so a compromised recorder proves any balance, nullifier or commitment
+against a genuinely settled root. **Ranked here rather than at the top because it is undeployed**
+(absent from `chain/DEPLOYMENTS.md`, no deploy script, no recorder client in any language) **and the
+contract states the trust grade itself at `:42-52`.**
+
+**A12 · THE LEAN AND RUST `fields_root` PREIMAGES SPLIT AT DIFFERENT KEYS. LIVE.**
+`cell/src/state.rs:57` is `pub const STATE_SLOTS: usize = 16`.
+`metatheory/Dregg2/Exec/FieldsMap.lean:4-5` opens *"The Rust cell has exactly **8** `FieldElement`
+slots (`cell/src/state.rs:STATE_SLOTS = 8`)"* and defines `def reservedKeys : Nat := 8` (`:45`). Keys
+8..15 are **fixed cells in Rust and committed user-map tail keys in Lean** — the two roots disagree
+over an eight-key band, and the divergence is a `def`, not only a stale comment.
+
+### B. THE VERIFIED THING IS NOT THE THING THAT RUNS
+
+**B1 · `DREGG_LEAN_SHADOW` IS SET BY NOTHING BUT ONE TEST, SO THE VERIFIED EXECUTOR DECIDES NOTHING IN
+PRODUCTION. LIVE.** Whole-tree sweep including `.github/`, `scripts/`, `docker/`, `deploy/`, `*.env*`:
+exactly **one setter**, `exec-lean/tests/lean_strict_veto.rs:123`, which unsets it again at `:173`.
+Three readers, all `env::var` (`exec-lean/src/lean_shadow.rs:342, 354`). Zero hits in any CI, container
+or deployment file. `turn/src/executor/execute.rs:339` says the shadow *"only runs when
+`DREGG_LEAN_SHADOW=1`"*, so the strict veto (`turn/src/error.rs:132`) is unreachable and — per
+`a0fcd53ff` — **eleven of thirteen executor joints are trusted Rust.**
+
+**B2 · THE ONE PLACE ALL 36 EFFECTS ANSWER "DOES THIS CONSERVE?" HAS ZERO PRODUCTION CALLERS. LIVE.**
+`Effect::linearity()` (`turn/src/action.rs:1923`) — 0 production / 12 test callers, all inside the
+`#[cfg(test)]` block at `:3134`; the one non-test-looking hit (`starbridge-v2/src/bin/dregg_mcp.rs:1425`)
+is a JSON string literal. Its helpers `requires_paired_sibling` (`:961`) and
+`is_disclosed_non_conservation` (`:976`) have zero call sites anywhere. The real tooth reads
+`action.balance_change` (`turn/src/executor/execute_tree.rs:992` → `:1031`, `:1049`, gated at
+`executor/execute.rs:1283, 1318`) and **`Effect` never enters that path** — global conservation is an
+emergent property of six disjoint local invariants plus a pairwise-interaction proof nobody has
+written. A `⚑ NOTHING READS THIS` block sits at `action.rs:1902`. Documented, not fixed.
+
+**B3 · THE SOVEREIGN CARRIER-WITNESS ARM IS DEAD TWO LEVELS DEEP. LIVE.** `cb605e3fd` named one
+level; there are two. `RetainedCarrierMaterial::attach_to_leg` (`sdk/src/carrier_witness_attach.rs:115`)
+has 0 production / 9 test callers, all in `sdk/tests/carrier_witness_attach_sites.rs`. The drain that
+would feed it, `Cipherclerk::take_retained_carrier_material` (`sdk/src/cipherclerk.rs:2552`), **also
+has 0 production callers.** Production *does* fill the stash (`cipherclerk.rs:5466, 6276, 6499`);
+nothing drains it, nothing attaches it, and the fold's `Sovereign` arm only ever sees a witness a test
+handed it. `cipherclerk.rs:1135` describes the intended caller; it does not exist.
+
+**B4 · THE PROTOCOL CANNOT EXPRESS AN HONEST 32-BYTE FIELD WRITE, AND THE FIX IS BUILT AND PARKED.
+LIVE — the cheapest real win on this list.**
+`circuit/tests/setfield_completion_lane_forge.rs:286`
+`honest_large_value_setfield_fails_the_deployed_freeze` drives it: the written field's high 224 bits
+are frozen to the pre-state, so only lane-0 values are writable. `setFieldValue8` is **complete on the
+Lean side** (`EffectVmEmitRotationV3.lean:5751`; registry `EffectVmEmitRotationV3Refused.lean:90` —
+8 members, `piCount == 57`, `traceWidth == 1692`), emitted, byte-pinned as
+`V3_SETFIELD_VALUE8_STAGED_REGISTRY_TSV` (`circuit/src/effect_vm_descriptors.rs:1274`) and covered by
+four teeth (`circuit/tests/setfield_value8_epoch_flip.rs`) — and **no Rust producer references it.**
+Every live path still uses `V3_STAGED_REGISTRY_TSV` (`sdk/src/full_turn_proof.rs:1078, 1106, 1426,
+1447, 2093, 2125, 2663`). The work is done; the epoch re-point is not.
+
+**B5 · THE SOLO FINALIZATION ARM STILL FINALIZES ANY CREATOR. LIVE, and its own comment says so.**
+`node/src/blocklace_sync.rs:1534` `if admitted.len() <= 1 {` — the body (`:1555-1567`) filters only on
+`Payload` variant, collects `(block.seq, *id)` and sorts. **No creator check at all.** The comment at
+`:1537` is exemplary: it names why (the only sound creator key is the projected hybrid id, which this
+arm skips, so a filter would make solo bootstrap fail-closed on a missing committed ML-DSA key) and it
+names the reachable path — a federation shrunk to n=1, **or a restart through
+`blocklace/src/finality.rs:2123` `from_checkpoint_trusted`, which re-inserts every persisted block
+with no signature, roster or closure check** (verified: `:2130-2134` is a bare deserialize-and-insert
+loop).
+
+**B6 · A NON-PARTICIPANT'S BLOCK STILL COUNTS TOWARD A SUPERMAJORITY, AND IT IS STRONGER THAN THE DOC
+ADMITS. LIVE.** `blocklace/src/ordering.rs:881` says `tau` *"still does NOT do (1)–(4)"*. Measured:
+`:540` calls `compute_rounds(blocklace)` — unfiltered, no `participants` argument — where
+`tau_unified` calls `compute_rounds_filtered(blocklace, reference_group)` at `:909`. And `:357-375`
+`is_super_ratified` builds `ratifying_participants` from `end_round_blocks` via `Some(block.creator)`
+**with no check that the creator is in `participants`**, so a non-participant's wave-end block counts
+toward the threshold at `:377`. The approver side (`ratifies`, `:302-331`) *does* iterate
+`participants`; the leak is at the ratifier level.
+
+⚑ **STANDING-RECORD CORRECTION — the ⚑⚑⚑⚑⚑ "FINALITY GATE OPEN" memory is stale on two of its three
+clauses.** *"Live path imports the unfiltered `tau`"* is **FIXED** (`c6f00c228`):
+`BlocklaceFinality.lean:339` `tauOrder` now filters on `enrolledId`, with `tauOrder_only_enrolled`
+(`:925`) and `tauOrder_enrolled_eq_unfiltered` (`:943`) both `#assert_axioms`-declared and zero
+`sorry` in the file, mirrored at `blocklace/src/ordering.rs:639-646`. *"`VerifiedFinality::admits`'s
+doc is FALSE on both clauses"* is **FIXED** — `node/src/finality_gate.rs:248` now carries `⚑ CORRECTED`
+and splits the clauses, consistent with the body at `:268-274`. What remains open is B5 and B6.
+
+### C. INSTRUMENTS THAT CANNOT REFUSE
+
+**C1 · THE TWO APEX THEOREMS OF THE ASSURANCE CASE ARE VACUOUS, AND THEY PASS THE VACUITY GATE BY
+WEARING BASELINE SLOTS 47 AND 48. LIVE.** `Dregg2.AssuranceCase.deployed_system_secure`
+(`metatheory/Dregg2/AssuranceCase.lean:886`) and `Dregg2.AssuranceCase.unfoolability_guarantee`
+(`:666`) each carry `hCmb`/`hCompress`/`hCompressN`/`hLeaf`, and **all three predicates are refuted in
+this tree** (`HashFloorHonesty.lean:136`, `:114`, and `cellLeafInjective_false_babyBear`). They pass
+`#floor_ratchet` solely because their fully-qualified names occupy
+`Verify/FloorRatchetBaseline.lean:47-48`. The gate is a plain string set
+(`Verify/FloorRatchet.lean:827-830`) and its `slack` — a baseline row matching nothing — is printed in
+the OK line and **never becomes an error**, so a vacated slot stays open forever. (Contrast
+`check-bare-ignore.py` and `check-production-callers.py`, both of which go red on a stale row.)
+**Eleven distinct defeats are substantiable from the code** — name-slot occupancy; unenforced slack;
+only runs under a full `lake build Dregg2`; the preflight stand-in matches on the LAST NAME COMPONENT
+by design; a declared `DREGG_ALLOW_NEW_FLOOR_CARRIER=1` escape; comment-stripped text blind to
+Prop-def chains; **unrefuted floors are structurally invisible** (a floor joins the refuted set only
+if some theorem concludes `¬ F …`, and `ae37dd523` records an author deliberately mis-spelling their
+own pole so the instrument would not see it); the author-declared `FloorPole.HonestHypothesis`
+demotion; `KeystoneLint`/`LoadBearingLint` never reading the statement (`theorem K : True := trivial`
+passes all three); an empty tagged set warning rather than failing; and `checkNotDefEqGate` passing as
+`n/a` with no `gate :=`. ⚠ **UNVERIFIABLE as stated:** the collected "8 independent ways" matches no
+written enumeration anywhere in the tree — 0 of 8 could be mapped to a list. ⚠ Also UNVERIFIABLE at
+HEAD: the real gate needs a full root build, and per `docs/PARKED-vacuity-campaign.md` §0 the last
+MEASURED green root is `e0160d116`, **39 commits back.** The two cheap proxies pass:
+`check-floor-baseline-preflight.sh --all-changed` exit 0 (24 floor names, 2062 baseline entries) and
+`metatheory/scripts/floor_ratchet_check.sh --presence` exit 0.
+
+**C2 · THE ADVERSARIAL SUITE RUNS NIGHTLY OR NEVER. LIVE, both halves.**
+`.github/workflows/armed-teeth.yml:116-124` triggers on `schedule` (`cron: '0 5 * * *'`),
+`pull_request` and `workflow_dispatch` — **there is no `push`.** All three heavy jobs are guarded
+`if: github.event_name != 'pull_request'` (`:137`, `:362`, `:507`), and the one PR job,
+`nightly-verdict` (`:724`), mirrors the last scheduled run's conclusion via `gh api` and runs zero
+tests. **`scripts/test-gauntlet.sh` is invoked by nothing:** 4 occurrences under `.github/`
+(`armed-teeth.yml:53`, `:293`; `ci.yml:507`, `:626`) and **all four are comments**; the one mention in
+`scripts/local-gates.sh:172` is a comment; the pre-push and pre-commit hooks contain no match. Work
+lands on `main` directly at a ~92 s median and `main` is not branch-protected, so the `pull_request`
+path does not fire on the dominant route either.
+
+**C3 · THE `no_run` RATCHET'S TRIGGER HAS FIRED AND THE GATE IS NOT ARMED. LIVE.**
+`scripts/check-bare-ignore.py` knows `no_run` (`:215`, `:221`, and `REASON_RE` at `:224` accepts
+`NO_RUN:`) but **never asks for it**: `scan_fences:362` is `if "ignore" in attrs and
+fence_reason(fence) is None:`. **Measured at HEAD through the script's own `doc_fences`/`fence_reason`:
+680 fences, 43 `no_run`, 14 reasoned, 29 REASONLESS** — `sdk/` 11, `vendor/curve25519-dalek-dregg` 8,
+`dregg-sdk-net/` 4, `chain/` 2, one each in `dregg-pay/`, `git-deploy/`, `host-gateway/`, `wire/`. The
+arming condition is written in prose at `scripts/doctest-ignore-baseline.tsv:29-38` (*"arm it when
+`sdk/` is quiet"*) and the file itself records that `sdk/` **was** quiet on 2026-07-27. Arming is one
+line: `if "ignore" in attrs` → `if attrs & {"ignore", "no_run"}`, plus 29 baseline rows. The gate
+currently exits 0 with 8 baselined exemptions, none of them a `no_run` reason.
+
+**C4 · `check-production-callers` STILL MERGES CALLERS BY NAME, AND IT IS HIDING TWO GUARDS RIGHT
+NOW. LIVE.** `460727e9f` made the ratchet's *definition* key `(kind, name, definition_file)`; the
+**caller counts were not moved with it** — `count_callers` (`scripts/check-production-callers.py:280`)
+builds `counts = {n: [0, 0] for n in names}`, one bucket per NAME, and `classify` (`:347`) does
+`if prod > 0: continue`, dropping **every** definition site of that name. Live instance found while
+re-checking: `check_timeouts` has three definitions — `turn/src/pending.rs:908` and
+`turn/src/executor/migration.rs:200`, whose only callers are inside `#[cfg(test)]`, plus
+`blocklace/src/constitution.rs:605` which IS called in production at `:593`. The single bucket sees
+`prod ≥ 1` and drops all three, so `check_timeouts` **appears nowhere in the baseline** and two
+THEATRE guards in `turn/` are invisible. Re-checking the three symbols the 07-26 entry hand-verified:
+`check_head_match` (`circuit/src/derivation_air.rs:339`) **still zero call sites**; `check_timeout`
+(`coord/src/atomic.rs:832`, drifted from `:805`) **still zero**, with three doc-comment mentions
+(`:445`, `:473`, `:512`) that read in review like a check that happens; and ⚑ **`check_stealth_ownership`
+(`wasm/src/privacy.rs:161`) was a FALSE POSITIVE all along** — it is `#[wasm_bindgen]` and IS called
+(`extension/src/background.ts:5795`, `extension/dregg_wasm.js:1929`), but `#[wasm_bindgen]` is not in
+the scanner's `FFI_MARKERS` (`:129`, which lists only `#[no_mangle]` / `extern "C"` /
+`#[unsafe(no_mangle)]`), so a whole FFI surface is confidently misreported. **A baseline row that is
+wrong is worse than a missing one.**
+
+**C5 · IN `local-gates.sh` A TIMEOUT IS A SKIP, NOT A FAILURE — AND NOTHING INVOKES IT. LIVE.**
+`run_one` treats `rc == 124` as `skip=$((skip+1))` and prints *"not a verdict"*; only a non-zero,
+non-124 exit reaches `failed+=()`. So a gate that **always** times out contributes nothing and the
+script still ends clean — exactly what `b27d55c3e` reported for `gates-executed` (*"TIMED OUT all
+session, so it ran neither phase and reported nothing"*). Its three heaviest rows
+(`gates-executed|2400`, `lean-marshal|1200`, `ci-invariants-falsifiers|14400`) sit in `GATES_ALL` and
+print `SKIP  needs --all` otherwise. ⚠ **And no workflow and no hook invokes `local-gates.sh` at
+all** — the 45-row instrument this repo built *because GitHub cannot answer* runs only when a human
+types it.
+
+**C6 · THE RED-PROOF-SCAFFOLD SWEEP IS A RITUAL, NOT A MECHANISM. LIVE.** `AGENTS.md` prescribes
+`grep -rn "if false &&\|if true {\s*//\|MUST NOT BE COMMITTED\|RED-PROOF"` and says *"the main loop
+sweeps before it believes a green"*. **No script under `scripts/` or `.github/` contains any of those
+patterns, and none contains `MUTANT-`** — the marker of the two `discord-bot/src/db.rs` mutants that
+sat on `main` under security-fix subjects (`c82adbe00` → `6f38efbe3` → `43d114c11`), which the note on
+`c82adbe00` already flagged as undetected. Swept today, twice, and the tree is **clean**: the only
+hits are legitimate red-proof diagnostics in `circuit/tests/cap_open_*` and a vendored askama template
+fixture. Clean today, undetectable tomorrow.
+
+**C7 · THE PUBLISHED LEAN SEED NO LONGER MATCHES THE TREE, SO THE TESTS IT ARMS CANNOT ARM. LIVE.**
+`dregg-lean-ffi/lean-seed.pin` carries `DREGG_TREE_HASH=406424cff5…` (`GENERATED_UTC=2026-07-17`);
+`git rev-parse HEAD:metatheory/Dregg2` is `c97c3524fd…`. Eleven days apart. Per `armed-teeth.yml:527`,
+without an arming seed the ~43 verified-gate tests behind `if !<x>_available() { SKIP }` **assert
+nothing** — and `lean-seed.yml` has been `workflow_dispatch`-only since `29aa30ea3`, so no cut happens
+by itself.
+
+**C8 · THE `pre-push` GATE IS REAL AND IS A PER-CLONE SYMLINK.** `scripts/git-hooks/pre-push` is
+tracked and genuinely blocks (`:66-67` runs `check-doc-refs.sh`, `exit 1` at `:80`;
+`check-workspace-closure.py --rev` at `:86`, `exit 1` at `:97`). But `.git/hooks/pre-push` is a symlink
+installed by `scripts/install-git-hooks.sh` — **a clone that never runs the installer has no blocking
+gate** — `main` is not branch-protected, and there is a declared escape
+(`DREGG_ALLOW_DEAD_DOC_REFS=1`, `:70-73`). Two installers exist (`install-hooks.sh`,
+`install-git-hooks.sh`), one more than there should be.
+
+**C9 · THE SHIPPED EXTENSION BUNDLE IS 16 DAYS OLDER THAN THE GUARD IT IS SUPPOSED TO ARM. LIVE.**
+`extension/src/passkey.ts:230` still reads
+`if (this.wasm.validate_mnemonic && !this.wasm.validate_mnemonic(mnemonic))` — armed only if the
+loaded bundle exports the symbol — and the comment above it claims it is now armed. Against the
+artifact this repo ships it is not: `grep -c validate_mnemonic extension/dregg_wasm.js` → **0**, and
+that tracked blob was last committed in `975078215` (2026-07-10 01:30) while the export landed in
+`289720ca8` (2026-07-26 09:31). **Passkey custody still enrolls any string.** The sibling path was
+hard-required (`extension/src/background.ts:560` throws `staleBundle`); `passkey.ts` was not. Rebuild
+the bundle, or give `passkey.ts` the same hard require.
+
+**C10 · A BLOCKING GATE'S VERDICT IS A FUNCTION OF LOCAL BUILD STATE. LIVE — found by running it
+during this pass, not harvested.** `check-doc-refs` resolves against the **WORKING TREE**
+(`scripts/git-hooks/pre-push:28` says so), and two docs cite
+`chain/codegen/out/DreggGroth16Verifier25.vk.sol` — `docs/ops/regenerating-verifiers.md:32` and
+`docs/reference/FRI-CUTOVER-PLAN.md:126`. That path is **gitignored** (`chain/.gitignore:2`,
+`out/`): it exists only for whoever last ran the verifier codegen. Measured this session: the gate
+read **0 DEAD, EXIT=0** early on and **2 DEAD, EXIT=1** three hours later, with no commit and no doc
+edit in between — a concurrent lane created `chain/codegen/out/` at 01:21 and produced only
+`dregg_vk.evm.json`. Since `0b3471196` made doc-refs **blocking on pre-push**, this is now a gate that
+can refuse a correct push, or pass a wrong one, depending on whether a build artifact happens to be
+on disk. Neither ref is new and neither is this entry's; the ⚑ is that a gate was made blocking
+without making its inputs commit-resolvable.
+
+### D. REAL MONEY AND PLAYER-FACING SURFACES THAT SHOW A NUMBER NOTHING MOVES
+
+**D1 · `dreggnet-market` IS 23 OF 52 RED, AND 22 OF THE 23 ARE ONE WIRING LINE THE CRATE CANNOT
+WRITE. LIVE — measured, deterministic.** `cargo nextest run -p dreggnet-market --no-fail-fast` →
+**52 run, 29 passed, 23 failed, 1 skipped, EXIT=100**, identical failing set across two runs (the
+earlier readings of 9 and 19 were undercounts of the same wound). It **compiles**, no SIGABRT, the
+Lean archive is present — every red is a real panic. 22 of them reach one refusal: *"WIRING BUG in
+this host … no verified executor gate is installed, so the award was NEVER JUDGED"*
+(`intent/src/verified_settle.rs:736`). ⚑ **`dregg-exec-lean` is not a dependency or dev-dependency of
+`dreggnet-market` at all** — `register_distributed_gates` appears in the crate exactly twice, both
+inside the error message string (`dreggnet-market/src/lib.rs:838-839`). The crate documents its own
+cure in prose and has no way to apply it. **Attribution, which the claim said was missing:**
+`e3f0e7b92` (07-24) inverted intent settle to fail-closed and its own "DOWNSTREAM FLAGS" paragraph
+named this exact fallout — **for `starbridge-tussle`**, which got the fix
+(`starbridge-apps/tussle/src/lib.rs:725`). `078d68914` (07-25) hit the same wound at the web surface,
+fixed it there (`dreggnet-web/src/verified_settlement.rs:89`), and added the diagnostic prose to
+`dreggnet-market` without the call. The 23rd is unrelated: `banked_relic_bazaar` fails on
+*"you cannot bank from below"*, a descent precondition added by `d8e4ec3e2` (07-25) without updating
+its dependent test. ⚠ **The measurement's own blind spots, stated:** default features are `[]`, so
+`certified-clearing` / `dark-amm-game` / `oracle-pit` / `dark-pool-offering` /
+`authenticated-clearing` never compile; `.config/nextest.toml:223` skips six market binaries; the
+crate authors **110 `#[test]` fns and this invocation sees 52.** ⚑ **And the sharpest observation:
+two of the reds are *refusal* teeth that now refuse for a completely unrelated reason and only go red
+because they check the CITATION. A sibling tooth that asserted refuse-for-any-reason would be green
+right now.** That is the next audit.
+
+**D2 · THE TREASURY FUEL GAUGE CANNOT FALL AND THE REFUEL ALARM CANNOT FIRE. LIVE — real money.**
+`Treasury::spend_inference_usd` (`dregg-pay/src/treasury.rs:206`) documents itself *"called for EVERY
+run regardless of how it was paid"* and has **0 production / 10 test callers**. Its one wrapper,
+`PayState::treasury_spend_inference_usd` (`discord-bot/src/pay.rs:1216`), has exactly one call site —
+`pay.rs:4298`, inside `#[cfg(test)]`. The alarm at `discord-bot/src/commands/admin.rs:809-826`
+computes `runs = (fuel_usd / usd).floor()` and shouts *"🔴 REFUEL NOW"* at `runs == 0`; since fuel is
+only ever deposited and never drawn down in production, that is reachable **only by a tank that was
+never funded.** Every real-AI run bills the provider and debits nothing.
+
+**D3 · `/bounty` RENDERS "Bounty Paid" AND MOVES NO VALUE — ALL THREE PAYOUT BUILDERS. LIVE.**
+`build_payout_action` (`starbridge-apps/bounty-board/src/lib.rs:296-311`) is `SetField` + `EmitEvent`;
+`payout_effects` (`:600`) is the same; `BountyService::payout` (`bounty-board/src/service.rs:265`) is
+one `SetField`. **None contains an `Effect::Transfer`.** The one builder that does conserve,
+`BountyTreasury::payout` (`lib.rs:802`), has 0 production / 3 test callers. The Discord path calls the
+value-less one (`discord-bot/src/commands/bounty.rs:298`) and renders success at `:311`; `:337` labels
+the cell balance **"Escrowed"**, a balance `build_post_action` never funds either.
+
+**D4 · A ZK SUPERVISOR PROVES EVERY TICK OVER A QUEUE ONLY TESTS CAN FILL. LIVE, with a correction.**
+`PrivateBazaarSealedIngressQueue::submit` (`dreggnet-catalog/src/private_bazaar_ingress.rs:272`, doc:
+*"THE PRODUCTION INGRESS"*) has **0 production / 11 test callers**; the three in its own file reach it
+through `open_detached`, which is itself `#[cfg(test)]`. `PrivateBazaarWorkerSupervisor`
+(`private_bazaar_service.rs:403`) polls it every tick (`:587` → `:154`). ⚠ **Correction to
+`af1de4dd2`: ONE binary mounts the supervisor, not three** —
+`dreggnet-web/src/bin/dreggnet-web-server.rs:159`. The telegram and discord bots construct
+`PrivateBazaarLiveDeployment::from_env()` and never start one. Dead alongside it:
+`PrivateBazaarAuthenticatedReceiptSource::settle_and_capture`, the one in-tree path from private
+ingress to real cryptography, sole caller a test.
+
+**D5 · SHARED-BUDGET DEBITS ARE NOW REPORTED AND STILL NOT COUNTED. LIVE (the reporting half FIXED).**
+`81658dd50` landed the refusal — `coord/src/shared_budget.rs:545` returns
+`SharedBudgetError::UnknownParticipant` instead of dropping the debit, and all three callers propagate
+— but there is still **no `unattributed_spent` bucket** (zero hits in the file) and `total_spent()`
+(`:370-372`) is unchanged, so an unattributable debit cannot make `is_overspent()` fire. The commit
+routed exactly this to ember. ⚠ Second half also live: the three blocklace-observation methods still
+have **no caller outside their own file.**
+
+**D6 · `dregg-intent`'s TWO ROUTING TESTS CAN NEVER PASS IN THEIR OWN CRATE, AND THE THIRD IS A
+DIFFERENT WOUND. LIVE.** Measured: `cargo nextest run -p dregg-intent --no-fail-fast` → **439 passed,
+3 failed, EXIT=100**, three ordinary panics (not a missing-archive SIGABRT).
+`drex_routing_e2e::{generate_fixture, ring_of_locks_routes_end_to_end}` fail with *"no verified gate
+registered"* — the only registrar, `dregg_intent::register_intent_verified_gate`, is called from
+`exec-lean/src/distributed_gates.rs:92`, a **downstream** crate `intent/Cargo.toml` does not depend on
+(named only in a comment at `:34-36`). They are structurally red under `-p` and need the whole-workspace
+closure. ⚠ **`1a2093acf`'s reason string covers two of the three:**
+`fulfillment::tests::test_execute_fulfillment_flow_success` (`intent/src/fulfillment.rs:3120`) is a
+fixture whose two cells hold different asset columns against a kernel that now refuses cross-asset
+`Transfer` — nothing to do with the gate.
+
+### E. THE RECORD ITSELF
+
+**E1 · SIX FINDING/HANDOFF DOCS ARE REFERENCED BY NOTHING, AND TWO ARE GROUNDED 7,341 COMMITS BACK.**
+`docs/FINDING-checkpoint-pipeline-unwired.md` (*"the qc-bearing `Checkpoint` object it depends on is
+never produced"*), `docs/FINDING-federation-wide-settlement.md`,
+`docs/HANDOFF-automata-arithmetization-lane.md`, `docs/HANDOFF-committee-restart-fix.md`,
+`docs/HANDOFF-lassie-lean-seed.md` and `docs/HANDOFF-v13-VK-EPOCH.md` have **zero inbound links from
+this file.** The last two are both grounded at `HEAD = 29ab74bc1` (2026-07-03) — **7,341 commits
+ago** — and their citations have already moved (`persist/src/tests.rs:110+` → `:365`; the test still
+exists). Same disease one altitude up: recorded, findable only by `ls`.
+
+### WHAT THIS PASS DID NOT DO
+
+**It indexed; it did not fix.** No source file was edited, no `#[ignore]` added, no baseline row
+written, nothing stashed or checked out. The tree carried ~35 files of concurrent lanes' WIP
+throughout and none of it was touched or attributed.
+
+**Nothing was "cited, not found."** Every one of the 20 collected residuals was located — six of them
+at a different `file:line`, one (`affine_sum`'s pin) asserting the opposite of the claim, and one
+(`check_stealth_ownership`) refuted outright. The single unlocatable thing is a **number**: the "8
+independent ways" the vacuity instrument is defeated matches no enumeration written anywhere; eleven
+are substantiable from the code and are listed at C1.
+
+**Verdict tally: 36 indexed — 35 harvested plus C10, which the harvest did not contain and running
+the gate found · 9 FIXED-AT-HEAD (or the specific named half) · 25 LIVE · 2
+UNVERIFIABLE.** The nine: captp introducer binding (`560af5d40`), the ETH light-client gate at four
+layers (`b5081491a`), the unfiltered `tau` and `VerifiedFinality::admits`'s doc (both `c6f00c228`),
+the dropped shared-budget debit (`81658dd50`), `check-doc-refs` (`203109b1e` + `0b3471196`, measured
+**0 DEAD, 0 WARN, EXIT=0** at HEAD), the false *"a removal is not a fixed point"* claim (`a0fcd53ff`),
+`affine_sum`'s native three-verdict divergence (`22d9e0f3a`, `68ca51abe`), and
+`check_stealth_ownership`'s "uncalled" row. **Roughly a quarter of what everyone believed was open
+was already shut**, which is the argument for this index existing at all rather than for any single
+line in it.
+
 ## ⚑⚑⚑⚑ JULY 28 — 118 of the last 120 commits did not resolve from a clean checkout of themselves, and the reason was structural, not sloppy
 
 **40,000 LINES WERE IN NEITHER `members` NOR `exclude`, AND THAT STATE EMITS NO LINE.**

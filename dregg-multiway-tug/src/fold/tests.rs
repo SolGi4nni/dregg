@@ -7,10 +7,9 @@
 
 use super::*;
 use crate::hidden_hand::HandTree;
-use dregg_cell::program::{StateConstraint, field_from_u64};
+use dregg_cell::program::field_from_u64;
 use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
 use dregg_lightclient::verify_history;
-use game_turn_slice::compiler::{GameProgramCompiler, SlotAssignment};
 
 /// A deterministic six-card hand: distinct card ids across guilds, distinct nonces (the same
 /// shape `hidden_hand::tests::sample_hand` uses).
@@ -25,42 +24,15 @@ fn sample_hand() -> Vec<(u64, u64)> {
     ]
 }
 
-// The win/score turn's slot layout.
-const WIN_CHARM: u8 = 0; // the winner's total influence — FieldGte >= 11 (range gadget)
-const WIN_SCORE: u8 = 1; // running score — conserved this turn
-const WIN_POINTS: u8 = 2; // influence gained this turn
-
-/// The terminal win/score turn: a range-gadget leaf binding `[charm, winner]` as a public
-/// output, proving the winner crossed the influence threshold (`FieldGte charm >= 11`) with a
-/// conserved score (`new[score] == old[score] + new[points]`). The win is thus a BOUND public
-/// output the light client attests via the leaf's commitment.
-fn win_bundle(charm: u64, winner: u64) -> LeafBundle {
-    let mut c = GameProgramCompiler::new("multiway-tug-win-v1", 16).with_public_inputs(2);
-    c.lower_state_constraint(&StateConstraint::SumEqualsAcross {
-        input_fields: vec![WIN_SCORE],
-        output_fields: vec![WIN_POINTS],
-    })
-    .expect("score conservation lowers");
-    c.lower_state_constraint(&StateConstraint::FieldGte {
-        index: WIN_CHARM,
-        value: field_from_u64(11),
-    })
-    .expect("the win threshold lowers via the range gadget");
-    let program = c.finish();
-    let assign = SlotAssignment::new()
-        .set_new(WIN_CHARM, charm) // >= 11
-        .set_new(WIN_SCORE, 20)
-        .set_old(WIN_SCORE, 15)
-        .set_new(WIN_POINTS, 5); // 20 - 15 - 5 == 0
-    let witness_values = c.witness(&assign, 4).expect("honest win witness");
-    LeafBundle {
-        program,
-        witness_values,
-        num_rows: 4,
-        public_inputs: vec![BabyBear::from_u64(charm), BabyBear::from_u64(winner)],
-        descriptor_state_leaf: None,
-    }
-}
+// DELETED 2026-07-27: `win_bundle` + its WIN_CHARM/WIN_SCORE/WIN_POINTS slot
+// constants. It built the terminal win turn as a 2-PI leaf (`[charm, winner]`),
+// which the deployed custom state-binding ABI refuses outright — it requires at
+// least 16 (`[old_commit8 ‖ new_commit8] ‖ ..app`) and says why: "A program that
+// cannot express the binding is refused rather than zero-padded into a false
+// one." Its only two callers were the folds below, which now build their win
+// leaf with `win_leaf_bound` over the real cell's rotated roots. Keeping an
+// unreachable builder for the shape the ABI exists to reject is how the shape
+// comes back.
 
 // ---------------------------------------------------------------------------
 // Cheap, always-run: the lowering is total + non-vacuous (no proving).
@@ -472,12 +444,33 @@ fn the_field_octet_sits_where_the_deployed_derivation_says_fast() {
 // `[old8 ‖ new8]` over the real cell and is green (measured in the same run). THE RESIDUAL IS
 // EXACTLY: drive TWO plays on the real `WorldCell` and fold their real-prefixed leaves, i.e. extend
 // the green single-play real-cell body to a second turn. It is not a prover gap and not an ABI gap.
+/// UNBLOCKED (2026-07-27) by doing the residual the note above names.
+///
+/// The old body lowered each play with `membership_leaf_for_play`, which
+/// publishes 2 PIs (`[leaf, root]`), and the deployed state-binding node refuses
+/// anything under 16 — correctly, since a 2-PI program cannot express
+/// `[old8 ‖ new8]` and zero-padding it would be a FALSE binding rather than a
+/// missing one. The residual was never a prover gap: `membership_leaf_bound`
+/// already prefixes the real cell's rotated roots, and `fold_match_over_cell`
+/// already chains N of them with the post→pre link check. It had **zero
+/// callers**. This is the call.
+///
+/// So this is now what the note said it should be: TWO real membership plays,
+/// each welded to the real `WorldCell`'s own rotated roots, each linking to the
+/// next — the only two-play private match in the tree, and now the only one that
+/// is welded to real state rather than the `pk[0]=7` fixture.
 #[test]
-#[ignore = "BLOCKED (measured 2026-07-27): the 2-PI membership leaf is REFUSED by the deployed \
-            state-binding ABI (needs >=16 PIs: [old8 || new8] || ..app). NOT superseded — this is \
-            the only TWO-PLAY private match; the real-cell folds are single-turn. Residual: drive \
-            two plays on the real WorldCell and fold their real-prefixed leaves."]
+#[ignore = "HEAVY: TWO real recursion folds in debug (~minutes, multi-GB); run with --ignored on persvati/a RAM-box"]
 fn private_match_folds_and_lightclient_accepts() {
+    use super::{cell_wire_commit8, fixture_wire_commit8, fold_match_over_cell};
+
+    let real = a_real_world_cell();
+    assert_ne!(
+        cell_wire_commit8(&real),
+        fixture_wire_commit8(),
+        "the match must fold over the REAL cell, not the pk[0]=7 fixture"
+    );
+
     let hand = sample_hand();
     let t0 = HandTree::commit(hand.clone());
     let p0 = t0.prove_play(hand[0].0).expect("play A proves membership");
@@ -486,25 +479,27 @@ fn private_match_folds_and_lightclient_accepts() {
         .prove_play(hand[1].0)
         .expect("play B proves membership vs the remaining root");
 
-    let b0: LeafBundle = membership_leaf_for_play(&p0)
-        .expect("play A lowers to a membership leaf")
-        .into();
-    let b1: LeafBundle = membership_leaf_for_play(&p1)
-        .expect("play B lowers to a membership leaf")
-        .into();
-
-    let mut whole = fold_match(&[b0, b1]).expect("the private match folds to one proof");
+    // TWO real plays over the real cell. `fold_match_over_cell` advances the
+    // cell between turns (`nonce_bumped`) and refuses if turn k's post-state
+    // does not link to turn k+1's pre-state, so `num_turns == 2` here is two
+    // REAL play turns — not one play plus a padding tail, which is what every
+    // other real-cell fold in this crate attests.
+    let mut whole = fold_match_over_cell(&real, &[p0, p1])
+        .expect("two real-cell membership plays fold to one proof");
     let vk = whole.root_vk_fingerprint();
 
     let attested =
         verify_history(&whole, &vk).expect("the light client ACCEPTS the honest private match");
     assert_eq!(
         attested.num_turns, 2,
-        "the attestation covers both membership-proven plays"
+        "the attestation covers both membership-proven plays — and BOTH are real \
+         play turns, unlike the single-turn real-cell folds whose second turn is a \
+         plain linking tail"
     );
     eprintln!(
-        "MULTIWAY-TUG PHASE 3 ACCEPT: a 2-play PRIVATE match folded to ONE proof; \
-         verify_history OK, num_turns={} (the cards never appeared in the proof).",
+        "MULTIWAY-TUG PHASE 3 ACCEPT: a 2-play PRIVATE match over the REAL WorldCell \
+         folded to ONE proof; verify_history OK, num_turns={} (the cards never \
+         appeared in the proof).",
         attested.num_turns
     );
 
@@ -525,31 +520,80 @@ fn private_match_folds_and_lightclient_accepts() {
 /// terminal win/score turn folds; the light client attests the whole chain, and the win turn's
 /// leg publishes the honest `custom_proof_pi_commitment([charm, winner])` — the win is a bound
 /// public output. A relabeled final_root is rejected.
+/// UNBLOCKED (2026-07-27), same residual as the two-play match above: the 2-PI
+/// leaves are replaced by real-prefixed ones over the real `WorldCell`.
+///
+/// This one needed a composer that did not exist. `fold_match_over_cell` chains
+/// membership turns only, and `fold_win_over_cell` folds a win turn plus a plain
+/// tail — neither puts a hidden-hand play and a win on the SAME chain, which is
+/// exactly the thing this test is the only cover for.
+///
+/// ⚠ THE WIN TURN IS THE `app_root_binding: None` LEG, deliberately, and this is
+/// the one thing the test does NOT claim. `mint_win_turn_over_cell` forces the
+/// published winner (PI 17) to equal the leg cell's committed `winner` field;
+/// `a_real_world_cell()` opens with three PRIVATE turns and never scores, so its
+/// committed winner is 0 and a welded win over it could only ever attest
+/// "winner = 0". The state-node canary (`mint_win_turn_state_node_canary`) welds
+/// the `[old8 ‖ new8]` prefix to the leg's real roots — which is the property
+/// under test here, the win following a hidden-hand play on ONE chain — but does
+/// NOT force winner agreement. That force is covered, over a genuinely winning
+/// cell, by `tests/fold_real_cell.rs`. Driving a full winning round HERE and
+/// welding both properties at once is a real follow-up and it is stated as one,
+/// not quietly folded into an accept.
 #[test]
-#[ignore = "BLOCKED (measured 2026-07-27): the 2-PI leaf is REFUSED by the deployed state-binding \
-            ABI (needs >=16 PIs). The real-cell win fold covers the WIN leaf; it does NOT cover a \
-            win FOLLOWING a hidden-hand membership play, which is this test. Residual: the same \
-            two-turn real-cell drive."]
+#[ignore = "HEAVY: TWO real recursion folds in debug (~minutes, multi-GB); run with --ignored on persvati/a RAM-box"]
 fn match_win_output_is_attested() {
+    use super::{
+        cell_rotated_roots, cell_wire_commit8, fixture_wire_commit8, membership_leaf_bound,
+        mint_membership_turn_over_cell, mint_win_turn_state_node_canary, nonce_bumped,
+        win_leaf_bound,
+    };
+    use dregg_circuit_prove::ivc_turn_chain::prove_turn_chain_recursive;
+
+    let real = a_real_world_cell();
+    assert_ne!(
+        cell_wire_commit8(&real),
+        fixture_wire_commit8(),
+        "the match must fold over the REAL cell, not the pk[0]=7 fixture"
+    );
+
     let hand = sample_hand();
     let tree = HandTree::commit(hand.clone());
     let p0 = tree
         .prove_play(hand[0].0)
         .expect("the play proves membership");
-    let play: LeafBundle = membership_leaf_for_play(&p0)
-        .expect("the play lowers to a membership leaf")
-        .into();
-    let win = win_bundle(13, 1); // winner = player 1, influence 13 (>= 11)
 
-    let mut whole = fold_match(&[play, win]).expect("the play + win turn fold to one proof");
+    // TURN 0 — the hidden-hand play, welded to the real cell's rotated roots.
+    let (play_old8, play_new8) = cell_rotated_roots(&real);
+    let play_leaf = membership_leaf_bound(play_old8, play_new8, &p0)
+        .expect("the play lowers to a real-prefixed membership leaf");
+    let t0 = mint_membership_turn_over_cell(&real, &play_leaf);
+
+    // TURN 1 — the win, on the cell AS ADVANCED BY TURN 0.
+    let advanced = nonce_bumped(&real);
+    let (win_old8, win_new8) = cell_rotated_roots(&advanced);
+    let win_leaf = win_leaf_bound(win_old8, win_new8, 13, 1);
+    let t1 = mint_win_turn_state_node_canary(&advanced, &win_leaf);
+
+    assert_eq!(
+        t0.new_root(),
+        t1.old_root(),
+        "the win turn must start where the play turn left off — an unlinked pair \
+         would fold two unrelated facts and attest neither"
+    );
+
+    let mut whole = prove_turn_chain_recursive(&[t0, t1])
+        .expect("a real-cell hidden-hand play followed by a win folds to one proof");
     let vk = whole.root_vk_fingerprint();
 
     let attested = verify_history(&whole, &vk)
         .expect("the light client ACCEPTS the membership-play + win-turn match");
-    assert_eq!(attested.num_turns, 2, "one play + the win turn");
+    assert_eq!(attested.num_turns, 2, "one real play + the real win turn");
     eprintln!(
-        "MULTIWAY-TUG PHASE 3 WIN: membership play + win turn folded; verify_history OK, \
-         num_turns={}; the win [charm=13, winner=1] is a bound public output.",
+        "MULTIWAY-TUG PHASE 3 WIN: a hidden-hand membership play + a win turn, both \
+         over the REAL WorldCell, folded to ONE proof; verify_history OK, \
+         num_turns={}; the win [charm=13, winner=1] is a published output on a \
+         state-welded leg.",
         attested.num_turns
     );
 

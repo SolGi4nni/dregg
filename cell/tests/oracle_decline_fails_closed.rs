@@ -11,10 +11,13 @@
 //!   * `encode_u64_list` / `encode_u8_list` / the inline `len() > MAX_LIST` guards — an over-long
 //!     allowlist, edge set, transition table or member set;
 //!   * `coll_cell_count` — a collection read past `MAX_COLL_CELLS`;
-//!   * `encode_branches` — an `AnyOf`/`AllOf` branch the wire cannot carry (a `HeapField` branch);
+//!   * `encode_branches` — an `AnyOf`/`AllOf` branch the wire cannot carry (a `HeapField` branch,
+//!     whose per-branch heap key the one-key-pair header cannot resolve);
 //!   * `Err(_) => None` in `LeanConstraintOracle::admits` — the FFI call itself failed;
 //!   * `decode_verdict`'s `_ => None` — an unparsed verdict;
-//!   * and only LAST, the eleven named class-c arms, which genuinely belong to the trusted-Rust slot.
+//!   * and only LAST, the eleven named class-c arms, which genuinely belong to the trusted-Rust slot
+//!     — INCLUDING when one of them appears as an `AnyOf`/`AllOf` BRANCH (`lift_simple` declines
+//!     `PreimageGate` / `CountGe` by name, which declines the whole combinator).
 //!
 //! The first six are Lean-SUBSET constraints, so falling through ran the twin. The sharpest case is
 //! `AffineLe`: `eval.rs::affine_sum` accumulates with an unchecked `sum += (k as i128) * x`, so
@@ -36,7 +39,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dregg_cell::preconditions::EvalContext;
 use dregg_cell::program::{
-    ConstraintOracle, RenouncedSet, TransitionMeta, install_constraint_oracle,
+    ConstraintOracle, RenouncedSet, SimpleStateConstraint, TransitionMeta,
+    install_constraint_oracle,
 };
 use dregg_cell::{CellProgram, CellState, ProgramError, StateConstraint, field_from_u64};
 
@@ -161,5 +165,103 @@ fn declined_class_c_constraint_still_falls_through_to_the_trusted_rust_slot() {
         ),
         "a class-c constraint must fall through to the trusted Rust slot, not hit the subset \
          fail-closed gate; got {result:?}"
+    );
+}
+
+/// `collective-choice`'s poll program: the sound quorum gate, gated behind `Immutable{RESOLVED}` so
+/// a tally-bump turn (which leaves `RESOLVED` untouched and carries no witness) passes on the cheap
+/// branch. `CountGe` is class-c on both sides, so `encode_branches` declines the whole combinator —
+/// exactly the `None` this declining oracle produces.
+fn poll_quorum_gate() -> StateConstraint {
+    StateConstraint::AnyOf {
+        variants: vec![
+            SimpleStateConstraint::Immutable {
+                index: RESOLVED_SLOT,
+            },
+            SimpleStateConstraint::CountGe {
+                threshold: 2,
+                set_commitment_slot: VOTER_SET_COMMITMENT_SLOT,
+            },
+        ],
+    }
+}
+
+/// The poll cell's `RESOLVED` flag slot (`collective_choice::RESOLVED_SLOT`). Restated rather than
+/// imported: `dregg-cell` sits far below `collective-choice` and must not depend on it. The value is
+/// incidental to what this pins — the CLASS of the combinator, not the poll's slot map.
+const RESOLVED_SLOT: u8 = 7;
+/// The poll cell's voter-set commitment slot (`collective_choice::VOTER_SET_COMMITMENT_SLOT`).
+const VOTER_SET_COMMITMENT_SLOT: u8 = 1;
+
+/// ⚑ **THE COMBINATOR ITSELF REACHES THE TRUSTED-RUST SLOT.** Before the branch recursion in
+/// `constraint_in_lean_subset`, this shape was claimed for the Lean subset, the marshaller declined
+/// it (no `countGe` branch atom exists on the deployed wire), and the disposition refused it
+/// `ConstraintOracleUnavailable` **naming the whole `AnyOf`** — which is why the live DreggNet
+/// Council opened proposals (its own cell program is `Monotonic` + `WriteOnce`, all Lean-routed) and
+/// then refused every ballot cast against the poll cell.
+///
+/// ⚠ WHAT THIS BINARY CAN AND CANNOT SAY. The oracle here declines EVERYTHING, so each branch atom
+/// is also declined — and `Immutable` is a genuine Lean-subset constraint, so it fails closed on its
+/// own, correctly. This test therefore pins the CLASS of the combinator, not the ballot's outcome:
+/// the disjunction is not refused as an undecided subset constraint. That the ballot LANDS is pinned
+/// against the REAL Lean oracle in `exec-lean/tests/combinator_class_c_branch_poles.rs`, and on the
+/// live surface by `dreggnet-web/tests/catalog.rs::a_council_propose_vote_enact_plays_through_the_catalog`.
+#[test]
+fn a_combinator_over_a_class_c_branch_is_not_refused_as_an_undecided_subset() {
+    install();
+    let before = CONSULTED.load(Ordering::SeqCst);
+
+    let gate = poll_quorum_gate();
+    let program = CellProgram::Predicate(vec![gate.clone()]);
+    let mut old = CellState::new(0);
+    old.fields[RESOLVED_SLOT as usize] = field_from_u64(0);
+    let mut new = CellState::new(0);
+    new.fields[RESOLVED_SLOT as usize] = field_from_u64(0);
+    // A tally bump on another slot — the ballot's real effect.
+    new.fields[8] = field_from_u64(1);
+
+    let result = program.evaluate(&new, Some(&old), None);
+
+    assert!(
+        CONSULTED.load(Ordering::SeqCst) > before,
+        "the oracle seam was never reached — this test would pass vacuously"
+    );
+    assert!(
+        !matches!(
+            &result,
+            Err(ProgramError::ConstraintOracleUnavailable { constraint }) if constraint == &gate
+        ),
+        "the AnyOf carrying a class-c CountGe branch must reach the Rust disjunction evaluator (the \
+         trusted-Rust slot, exactly as AnyOfBound does), never be refused as a Lean-subset \
+         constraint the marshaller declined; got {result:?}"
+    );
+}
+
+/// ⚑ **POLE B — AND AN UNEARNED RESOLVE IS STILL REFUSED.** Falling through to the trusted-Rust slot
+/// is not a blanket admit: flip `RESOLVED` (closing the `Immutable` branch) with no exhibited voter
+/// set and the disjunction has no open path, so the turn is REFUSED. If this ever reads `Ok`, the
+/// fall-through has become the permissive fallback it must never be.
+#[test]
+fn the_same_combinator_still_refuses_a_resolve_with_no_exhibited_voter_set() {
+    install();
+    let before = CONSULTED.load(Ordering::SeqCst);
+
+    let program = CellProgram::Predicate(vec![poll_quorum_gate()]);
+    let mut old = CellState::new(0);
+    old.fields[RESOLVED_SLOT as usize] = field_from_u64(0);
+    let mut new = CellState::new(1);
+    // The forgery: arm RESOLVED without exhibiting a distinct-voter set.
+    new.fields[RESOLVED_SLOT as usize] = field_from_u64(1);
+
+    let result = program.evaluate(&new, Some(&old), None);
+
+    assert!(
+        CONSULTED.load(Ordering::SeqCst) > before,
+        "the oracle seam was never reached — this test would pass vacuously"
+    );
+    assert!(
+        result.is_err(),
+        "arming RESOLVED with no exhibited voter set must be REFUSED — the trusted-Rust slot \
+         decides this constraint, it does not wave it through; got {result:?}"
     );
 }

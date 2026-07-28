@@ -92,9 +92,25 @@ UNCHANGED, so this is a verifier-code epoch, not a proving-key rotation.
 
 ## Axiom hygiene
 
-`#assert_all_clean` at the close. Crypto enters ONLY as the named `Poseidon2SpongeCR` hypothesis (the
-cap-root floor the heap carries), never as an axiom. NO core/heap edit — every binding is the REAL
-`Substrate.Heap.hset`/`hget` and the root is the REAL `Substrate.Heap.root`.
+`#assert_all_clean` at the close.
+
+## ⚑ NO FLOOR (2026-07-28) — what crypto enters, and what it is worth
+
+Crypto used to enter as the named `Poseidon2SpongeCR` hypothesis, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear: every
+theorem under it was VACUOUSLY TRUE where the system stands. It now enters as TWO decidable
+per-instance residuals, each with three proved poles (dischargeable / refutable / refutes the floor):
+
+  * `SlotsDistinct hash` (§2.1) — this module's literal slot keys do not alias. A finite kernel check,
+    `decide`d at the reference sponge (`slotsDistinct_at_refSponge`). Not a cryptographic assumption
+    at all: the deployment fixes the keys, so the honest party can simply evaluate it.
+  * `¬ Heap.HeapRootColl hash h₁ h₂` — the deployed sponge does not collide at the ONE pair the root
+    extractor hands back for the two heap views in play.
+
+⚑ THE HONEST NUMBER: `Heap.root` is ONE BabyBear felt, so the root residual is worth
+`(Q² + 1)/babyBearP ≈ 2^15.5` queries — a BREAK, not a bound. Every keystone here binds exactly as
+well as a 31-bit commitment allows. The slot residual costs nothing at all (it is decided, not
+assumed).
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Tactics
@@ -205,6 +221,52 @@ def advance (hash : List ℤ → ℤ) (h : FeltHeap) (t : Terms) (cursor count r
     leaseColl keyRemaining (remaining - t.rent))
     leaseColl keyDrawn (drawn + t.rent)
 
+/-! ### §2.1 — ⚑ THE SLOT-ALIASING RESIDUAL that replaced the refuted floor (2026-07-28).
+
+Every round-trip below used to assume `Poseidon2SpongeCR hash` — global injectivity of a compressing
+sponge, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed
+BabyBear, so each of them was VACUOUSLY TRUE where the system stands. What the proofs actually NEEDED
+was one thing and it is FINITE: the lease's FIVE literal slot keys must not land on the
+same heap address. That is `SlotsDistinct`, and the difference from the floor is not presentational —
+it is DECIDABLE at a fixed pair, an honest deployment can CHECK it against the real sponge, and it is
+satisfiable where the floor is not. -/
+
+/-- The module's committed heap keys — the literal slot constants the Rust writes. -/
+def leaseKeys : List ℤ := [keyDigest, keyNextDue, keyCount, keyRemaining, keyDrawn]
+
+/-- **`SlotsDistinct hash`** — the lease's committed slots do not ALIAS under `hash`: no two of its
+own keys collide the sponge at the pair `Heap.addrFind` hands back. A FINITE, DECIDABLE check over
+literal constants — never a global `∀ p q, ¬ Coll`, which pigeonhole refutes exactly like the floor
+it would replace. -/
+def SlotsDistinct (hash : List ℤ → ℤ) : Prop :=
+  ∀ k ∈ leaseKeys, ∀ k' ∈ leaseKeys, ¬ AddrColl hash leaseColl k leaseColl k'
+
+instance decidableSlotsDistinct (hash : List ℤ → ℤ) : Decidable (SlotsDistinct hash) := by
+  unfold SlotsDistinct; infer_instance
+
+/-- **DISCHARGEABLE — and by COMPUTATION, not by assumption.** At the reference sponge the residual
+holds, decided in the kernel. The deployed prover runs the same finite check against the real sponge;
+the floor it replaces was unavailable to an honest party at ANY deployed parameters. -/
+theorem slotsDistinct_at_refSponge : SlotsDistinct refSponge := by decide
+
+/-- **REFUTABLE.** At the constant sponge every slot aliases, so `SlotsDistinct` is not `True` in
+disguise and the residual is doing work. -/
+theorem slotsDistinct_refutable : ¬ SlotsDistinct (fun _ => (0 : ℤ)) := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** A sponge that aliases these slots is not injective, so
+`SlotsDistinct` is strictly weaker than the floor it replaces. Stated contrapositively: assumes no
+floor content, and the ratchet reads it as the tooth it is. -/
+theorem slotsDistinct_failure_refutes_poseidon2CR {hash : List ℤ → ℤ}
+    (hf : ¬ SlotsDistinct hash) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hf (fun _ _ _ _ hc => hc.1 (hCR _ _ hc.2))
+
+/-- **THE FRAME STEP, on the residual.** Writing one slot leaves another slot's opening alone. -/
+theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltHeap) (k k' v : ℤ)
+    (hok : k ∈ leaseKeys ∧ k' ∈ leaseKeys ∧ k' ≠ k) :
+    hget hash (hset hash h leaseColl k v) leaseColl k' = hget hash h leaseColl k' :=
+  hget_hset_frame hash h leaseColl k leaseColl k' v (fun hc => hok.2.2 hc.2)
+    (hd k' hok.2.1 k hok.1)
+
 /-! ## §3 — the verification core (the forge-detector, as a predicate).
 
 `DischargeOk` is the Lean image of `LeaseState::check_discharge`: the honest-accept path and every
@@ -265,34 +327,34 @@ theorem expectedPeriod_open (t : Terms) : expectedPeriod t t.start = 0 := by
 /-- **HONEST ROUND-TRIP (cursor).** An opened lease commits `next_due = start`. The cursor slot
 survives the later open-writes (count, remaining, drawn) by `Heap.hget_hset_frame`, then reads back
 by `Heap.hget_hset_self`. -/
-theorem opened_cursor (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem opened_cursor (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (digest : ℤ) (t : Terms) :
     boundCursor hash (openLease hash h digest t) = some t.start := by
   show hget hash (openLease hash h digest t) leaseColl keyNextDue = some t.start
   unfold openLease
-  rw [hget_hset_frame hash hCR _ leaseColl keyDrawn leaseColl keyNextDue 0 (by decide),
-    hget_hset_frame hash hCR _ leaseColl keyRemaining leaseColl keyNextDue t.budget (by decide),
-    hget_hset_frame hash hCR _ leaseColl keyCount leaseColl keyNextDue 0 (by decide)]
+  rw [frameSlot hash hsd _ keyDrawn keyNextDue 0 (by decide),
+    frameSlot hash hsd _ keyRemaining keyNextDue t.budget (by decide),
+    frameSlot hash hsd _ keyCount keyNextDue 0 (by decide)]
   exact hget_hset_self hash _ leaseColl keyNextDue t.start
 
 /-- **HONEST ROUND-TRIP + BUDGET-HOLD.** An opened lease HOLDS the full prepaid `budget` in the
 escrow (remaining) slot — the escrow-leg round-trip. The drawn slot (written last) is framed off. -/
-theorem opened_remaining (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem opened_remaining (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (digest : ℤ) (t : Terms) :
     boundRemaining hash (openLease hash h digest t) = some t.budget := by
   show hget hash (openLease hash h digest t) leaseColl keyRemaining = some t.budget
   unfold openLease
-  rw [hget_hset_frame hash hCR _ leaseColl keyDrawn leaseColl keyRemaining 0 (by decide)]
+  rw [frameSlot hash hsd _ keyDrawn keyRemaining 0 (by decide)]
   exact hget_hset_self hash _ leaseColl keyRemaining t.budget
 
 /-- **HONEST ROUND-TRIP (count).** An opened lease commits a discharged-count of `0`. -/
-theorem opened_count (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem opened_count (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (digest : ℤ) (t : Terms) :
     boundCount hash (openLease hash h digest t) = some 0 := by
   show hget hash (openLease hash h digest t) leaseColl keyCount = some 0
   unfold openLease
-  rw [hget_hset_frame hash hCR _ leaseColl keyDrawn leaseColl keyCount 0 (by decide),
-    hget_hset_frame hash hCR _ leaseColl keyRemaining leaseColl keyCount t.budget (by decide)]
+  rw [frameSlot hash hsd _ keyDrawn keyCount 0 (by decide),
+    frameSlot hash hsd _ keyRemaining keyCount t.budget (by decide)]
   exact hget_hset_self hash _ leaseColl keyCount 0
 
 /-- **HONEST DISCHARGE ACCEPTS** (non-vacuity). At the opening cursor (`start`) with the full budget
@@ -400,27 +462,27 @@ theorem remaining_plus_drawn_conserved (budget rent : ℤ) (n : ℕ) :
 /-- **READ-BACK: one discharge DRAWS exactly rent.** The fused write decrements the committed
 remaining budget by exactly `rent`; the remaining slot survives the later drawn write by
 `Heap.hget_hset_frame`. Ties the heap step to the `remainingAfter` closed form. -/
-theorem advance_draws_exactly_rent (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem advance_draws_exactly_rent (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (t : Terms) (cursor count remaining drawn : ℤ) :
     boundRemaining hash (advance hash h t cursor count remaining drawn) = some (remaining - t.rent) := by
   show hget hash (advance hash h t cursor count remaining drawn) leaseColl keyRemaining
       = some (remaining - t.rent)
   unfold advance
-  rw [hget_hset_frame hash hCR _ leaseColl keyDrawn leaseColl keyRemaining (drawn + t.rent) (by decide)]
+  rw [frameSlot hash hsd _ keyDrawn keyRemaining (drawn + t.rent) (by decide)]
   exact hget_hset_self hash _ leaseColl keyRemaining (remaining - t.rent)
 
 /-- **READ-BACK: one discharge METERS the period.** The SAME fused write advances the committed
 cursor by exactly one period; the cursor slot survives the later count/remaining/drawn writes by
 `Heap.hget_hset_frame`. The meter and the draw are the ONE write. -/
-theorem advance_meters_period (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem advance_meters_period (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (t : Terms) (cursor count remaining drawn : ℤ) :
     boundCursor hash (advance hash h t cursor count remaining drawn) = some (cursor + t.period) := by
   show hget hash (advance hash h t cursor count remaining drawn) leaseColl keyNextDue
       = some (cursor + t.period)
   unfold advance
-  rw [hget_hset_frame hash hCR _ leaseColl keyDrawn leaseColl keyNextDue (drawn + t.rent) (by decide),
-    hget_hset_frame hash hCR _ leaseColl keyRemaining leaseColl keyNextDue (remaining - t.rent) (by decide),
-    hget_hset_frame hash hCR _ leaseColl keyCount leaseColl keyNextDue (count + 1) (by decide)]
+  rw [frameSlot hash hsd _ keyDrawn keyNextDue (drawn + t.rent) (by decide),
+    frameSlot hash hsd _ keyRemaining keyNextDue (remaining - t.rent) (by decide),
+    frameSlot hash hsd _ keyCount keyNextDue (count + 1) (by decide)]
   exact hget_hset_self hash _ leaseColl keyNextDue (cursor + t.period)
 
 /-- **READ-BACK: one discharge RECORDS the draw.** The fused write adds exactly `rent` to the
@@ -441,32 +503,32 @@ with a rewound cursor, a padded budget, or an under-reported draw. DIRECT instan
 `Heap.root_binds_get` (the anti-ghost), under the one named `Poseidon2SpongeCR` floor. -/
 
 /-- **THE REUSE KEYSTONE (cursor).** Equal roots ⟹ equal committed cursor. -/
-theorem cursor_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem cursor_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundCursor hash h₁ = boundCursor hash h₂ :=
-  root_binds_get hash hCR hroot leaseColl keyNextDue
+  root_binds_get hash hno hroot leaseColl keyNextDue
 
 /-- **THE REUSE KEYSTONE (budget).** Equal roots ⟹ equal committed remaining budget — a forge cannot
 pad (or hide a spent) prepaid budget while keeping the honest root. -/
-theorem remaining_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem remaining_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundRemaining hash h₁ = boundRemaining hash h₂ :=
-  root_binds_get hash hCR hroot leaseColl keyRemaining
+  root_binds_get hash hno hroot leaseColl keyRemaining
 
 /-- **THE REUSE KEYSTONE (drawn).** Equal roots ⟹ equal committed drawn total — a forge cannot
 under-report the rent drawn while keeping the honest root. -/
-theorem drawn_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem drawn_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundDrawn hash h₁ = boundDrawn hash h₂ :=
-  root_binds_get hash hCR hroot leaseColl keyDrawn
+  root_binds_get hash hno hroot leaseColl keyDrawn
 
 /-- **THE ANTI-GHOST.** A forged cell whose committed remaining budget differs from the honest one
 CANNOT keep the honest root — it must publish a different root (where the insufficient-budget / draw
 teeth then bite). The contrapositive of `remaining_bound_in_root`. -/
-theorem forged_budget_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hne : boundRemaining hash h₁ ≠ boundRemaining hash h₂) :
+theorem forged_budget_moves_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hne : boundRemaining hash h₁ ≠ boundRemaining hash h₂) :
     root hash h₁ ≠ root hash h₂ :=
-  fun hroot => hne (remaining_bound_in_root hash hCR hroot)
+  fun hroot => hne (remaining_bound_in_root hash hno hroot)
 
 /-! ## §6b — THE CIRCUIT-WELD RUNG (STAGED): the fused discharge a LIGHT CLIENT witnesses.
 
@@ -496,15 +558,15 @@ abbrev DischargeGate (hash : List ℤ → ℤ) (t : Terms) (before after : FeltH
 /-- **HONEST FUSED DISCHARGE PASSES THE GATE** (non-vacuity, accept polarity). The genuine kernel
 transition — a committed cursor/remaining/drawn, then `advance` — satisfies the gate whenever the
 clock has reached the due block and the budget covers the rent. Without this the rung is vacuous. -/
-theorem discharge_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap)
+theorem discharge_passes_gate (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (h : FeltHeap)
     (t : Terms) (cursor count remaining drawn clock : ℤ)
     (hcur : boundCursor hash h = some cursor) (hrem : boundRemaining hash h = some remaining)
     (hdrw : boundDrawn hash h = some drawn)
     (hdue : dueBlock t (expectedPeriod t cursor) ≤ clock) (hcov : t.rent ≤ remaining) :
     DischargeGate hash t h (advance hash h t cursor count remaining drawn) clock cursor remaining drawn :=
   ⟨hcur, hrem, hdrw, hdue, hcov,
-    advance_meters_period hash hCR h t cursor count remaining drawn,
-    advance_draws_exactly_rent hash hCR h t cursor count remaining drawn,
+    advance_meters_period hash hsd h t cursor count remaining drawn,
+    advance_draws_exactly_rent hash hsd h t cursor count remaining drawn,
     advance_records_draw hash h t cursor count remaining drawn⟩
 
 /-- **THE FUSION TOOTH.** A satisfying gate witness FORCES meter and draw to move TOGETHER: the
@@ -566,19 +628,21 @@ theorem discharge_gate_insufficient_rejected (hash : List ℤ → ℤ) (t : Term
 the before/after views — a forger presenting fake cursor/budget/drawn slots must MOVE a root (where
 §6's binding bites). Proven by REUSE of `cursor_bound_in_root` / `remaining_bound_in_root` /
 `drawn_bound_in_root` — no lease-local commitment, the one named `Poseidon2SpongeCR` floor. -/
-theorem discharge_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {before before' after after' : FeltHeap} (t : Terms) (clock cb rb db : ℤ)
+theorem discharge_gate_root_bound (hash : List ℤ → ℤ)
+    {before before' after after' : FeltHeap}
+    (hnb : ¬ HeapRootColl hash before before')
+    (hna : ¬ HeapRootColl hash after after') (t : Terms) (clock cb rb db : ℤ)
     (hb : root hash before = root hash before') (ha : root hash after = root hash after')
     (hgate : DischargeGate hash t before after clock cb rb db) :
     DischargeGate hash t before' after' clock cb rb db := by
   obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := hgate
   refine ⟨?_, ?_, ?_, h4, h5, ?_, ?_, ?_⟩
-  · rw [← cursor_bound_in_root hash hCR hb]; exact h1
-  · rw [← remaining_bound_in_root hash hCR hb]; exact h2
-  · rw [← drawn_bound_in_root hash hCR hb]; exact h3
-  · rw [← cursor_bound_in_root hash hCR ha]; exact h6
-  · rw [← remaining_bound_in_root hash hCR ha]; exact h7
-  · rw [← drawn_bound_in_root hash hCR ha]; exact h8
+  · rw [← cursor_bound_in_root hash hnb hb]; exact h1
+  · rw [← remaining_bound_in_root hash hnb hb]; exact h2
+  · rw [← drawn_bound_in_root hash hnb hb]; exact h3
+  · rw [← cursor_bound_in_root hash hna ha]; exact h6
+  · rw [← remaining_bound_in_root hash hna ha]; exact h7
+  · rw [← drawn_bound_in_root hash hna ha]; exact h8
 
 /-! ## §7 — NON-VACUITY TEETH (`#guard`): the fused invariant BITES, both polarities.
 
@@ -664,6 +728,10 @@ end Witnesses
 /-! ## §8 — Axiom hygiene. -/
 
 #assert_all_clean [
+  slotsDistinct_at_refSponge,
+  slotsDistinct_refutable,
+  slotsDistinct_failure_refutes_poseidon2CR,
+  frameSlot,
   cursor_strict_mono,
   advance_strictly_increases,
   expectedPeriod_after_one,

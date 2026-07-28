@@ -214,8 +214,8 @@ pub mod dialogue;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{
-    CompiledStory, DECISION_EXT_KEY, GENESIS_DONE_EXT_KEY, GENESIS_METHOD, WorldCell, choice_method,
-    compile_scene, parse,
+    CompiledStory, DECISION_EXT_KEY, GENESIS_DONE_EXT_KEY, GENESIS_METHOD, WorldCell,
+    choice_method, compile_scene, parse,
 };
 
 /// The dungeon, expressed in the spween narrative DSL. Three rooms

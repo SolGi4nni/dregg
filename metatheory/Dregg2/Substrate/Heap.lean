@@ -11,9 +11,14 @@ as the GENERALIZATION of the proven `cap_root` machinery with a GENERIC leaf:
   * NON-MEMBERSHIP openings reuse `sorted_gap_excludes` LITERALLY (the proven combinatorial heart of
     the sorted-tree non-membership AIR) — `get_none_of_gap` below is that theorem applied to the
     heap's key list;
-  * the ROOT is a recomputed digest of the sorted leaf list, with the SAME single named crypto floor
-    the cap-root advance carries (`Poseidon2SpongeCR`, `Circuit/Poseidon2Binding.lean`) and the same
-    anti-ghost shape (`EffectVmEmitCapRoot.capRoot_binds_edge`): equal roots BIND the whole heap.
+  * the ROOT is a recomputed digest of the sorted leaf list, with the same anti-ghost shape
+    (`EffectVmEmitCapRoot.capRoot_binds_edge`): equal roots BIND the whole heap. ⚑ **NO FLOOR
+    (2026-07-28).** That binding used to assume `Poseidon2SpongeCR` (later spelled
+    `Function.Injective`, the same proposition), which is PROVED FALSE at deployed BabyBear. §2.1–§2.2
+    carry the two DECIDABLE per-instance residuals that replaced it — `AddrColl` (the frame law) and
+    `HeapRootColl` (the anti-ghost) — each with its three poles, plus the hypothesis-free
+    `*_or_collides` dichotomies. The honest strength is `≈ 2^15.5` queries at the 1-felt root; see
+    §2.2's ⚑ block.
 
 ## Layer plan (mirrors the cap-root value model, `circuit/src/cap_root.rs` CanonicalCapTree)
 
@@ -49,7 +54,7 @@ import Dregg2.Tactics
 namespace Dregg2.Substrate.Heap
 
 open Dregg2.Crypto.NonMembership (Sorted Adjacent sorted_gap_excludes)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 open Dregg2.Crypto.SpongeCarrierReduction
   (SpongeCarrier SpongeKeyed spongeFamily carrierBreakGame carrierAnsSize spongeAnsSize
    carrierBreakToFinder carrier_binds_advantage_bound
@@ -444,19 +449,69 @@ theorem hget_hset_frame_of_addr_ne (hash : List ℤ → ℤ)
     hget hash (hset hash h coll key v) coll' key' = hget hash h coll' key' :=
   get_set_frame h _ _ v haddr
 
-/-- **⚑ DEMOTED — `hget_hset_frame` at plain INJECTIVITY, which BabyBear REFUTES.** The named floor
-`Poseidon2SpongeCR` is gone from the statement; what remains is the mathematical special case, kept as
-the strength bridge (nothing was lost re-grounding) and NOT as a deployed guarantee.
+/-- **`AddrColl hash c k c' k'` — THE FRAME LAW'S PER-INSTANCE RESIDUAL.** The deployed sponge
+genuinely ALIASES two heap slots: the pair `addrFind` hands back for these two `(collection, key)`
+addresses is a real collision.
 
-**This is NOT the deployed frame law.** The deployed one is §2.3's reduction
-`heapFrame_binds_advantage_bound` (`hEff` in the open), DISCHARGED on the keyed-ROM floor as §2.4's
-`heapAddr_binds_rom`. A deployed BabyBear sponge does not satisfy `Function.Injective`, so
-reading this theorem as a statement about the running system is exactly the vacuity being retired. -/
-theorem hget_hset_frame (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
+Deliberately NOT `∃ xs ys, xs ≠ ys ∧ hash xs = hash ys` (unconditionally TRUE by pigeonhole at
+deployed BabyBear, so it would carry no more content than `True`) and deliberately NOT
+`∀ p q, ¬ …` (the refuted floor wearing a disjunction). It is the collision AT THE TWO ADDRESSES IN
+PLAY, and it is DECIDABLE — which the floor never was. -/
+def AddrColl (hash : List ℤ → ℤ) (c k c' k' : ℤ) : Prop :=
+  SpongeColl hash (addrFind c k c' k')
+
+instance decidableAddrColl (hash : List ℤ → ℤ) (c k c' k' : ℤ) :
+    Decidable (AddrColl hash c k c' k') := by
+  unfold AddrColl; infer_instance
+
+/-- **DISCHARGEABLE.** One and the same address never aliases itself — for EVERY hash, with no
+cryptographic assumption whatsoever. A side condition that can never be discharged is a broken
+keystone, not a repaired one. -/
+theorem addrColl_dischargeable (hash : List ℤ → ℤ) (c k : ℤ) : ¬ AddrColl hash c k c k :=
+  fun hc => hc.1 rfl
+
+/-- **REFUTABLE.** At the constant sponge two genuinely different slots DO alias, so `¬ AddrColl` is
+not free — the residual is not `True` in disguise. -/
+theorem addrColl_refutable : AddrColl (fun _ => (0 : ℤ)) 0 0 0 1 := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so every port below is a strict WEAKENING of the premise it replaces. Stated contrapositively, so it
+assumes no floor content and the ratchet reads it as the tooth it is. -/
+theorem addrColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {c k c' k' : ℤ}
+    (hc : AddrColl hash c k c' k') : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
+/-- **THE FLOOR-FREE FRAME DICHOTOMY — NO hypothesis on `hash` at all.** Writing `(coll, key)` either
+leaves the opening of a DIFFERENT `(coll', key')` alone, or the two slots ALIAS, and that aliasing is
+a witnessed collision of the deployed sponge. This is the strongest form and the one the callers
+should prefer; the residual-carrying `hget_hset_frame` below is its per-instance shadow. -/
+theorem hget_hset_frame_or_aliases (hash : List ℤ → ℤ)
     (h : FeltHeap) (coll key coll' key' v : ℤ) (hne : ¬(coll' = coll ∧ key' = key)) :
-    hget hash (hset hash h coll key v) coll' key' = hget hash h coll' key' := by
-  refine hget_hset_frame_of_addr_ne hash h coll key coll' key' v (fun haddr => ?_)
-  exact (addrFind_spec hash hne haddr).1 (hinj haddr)
+    hget hash (hset hash h coll key v) coll' key' = hget hash h coll' key'
+      ∨ AddrColl hash coll' key' coll key := by
+  by_cases haddr : addrOf hash coll' key' = addrOf hash coll key
+  · exact Or.inr (addrFind_spec hash hne haddr)
+  · exact Or.inl (hget_hset_frame_of_addr_ne hash h coll key coll' key' v haddr)
+
+/-- **⚑ THE FRAME LAW, PORTED OFF THE REFUTED FLOOR (2026-07-28).** `hget_hset_frame` used to assume
+`Poseidon2SpongeCR hash` — later spelled `Function.Injective hash`, the same proposition — which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear. So the
+theorem was VACUOUS where the system stands, and so was its CONCLUSION: over ALL `(coll, key)` pairs
+"writing one leaves another alone" is refuted by exactly the pigeonhole that refutes the premise
+(`{(0, k) : k ∈ ℤ}` is infinite, `addrOf hash 0 ·` lands in one bounded field, so two distinct keys
+share an address and a write to one moves the other's opening).
+
+What it assumes now is the DECIDABLE per-instance residual at the TWO addresses in play. It is
+strictly weaker than the floor (`addrColl_refutes_poseidon2CR`), it is dischargeable by anyone who can
+evaluate the deployed sponge on two lists, and — unlike the floor — it is satisfiable at deployed
+BabyBear parameters. The asymptotic form remains §2.3's `heapFrame_binds_advantage_bound` (`hEff` in
+the open), DISCHARGED on the keyed-ROM floor as §2.4's `heapAddr_binds_rom`. -/
+theorem hget_hset_frame (hash : List ℤ → ℤ)
+    (h : FeltHeap) (coll key coll' key' v : ℤ) (hne : ¬(coll' = coll ∧ key' = key))
+    (hno : ¬ AddrColl hash coll' key' coll key) :
+    hget hash (hset hash h coll key v) coll' key' = hget hash h coll' key' :=
+  hget_hset_frame_of_addr_ne hash h coll key coll' key' v
+    (fun haddr => hno (addrFind_spec hash hne haddr))
 
 /-- **THE LEAF-LIST EXTRACTOR.** Walk two leaf-equal entry lists to the FIRST position at which the
 entries themselves differ, and hand back that leaf's two preimages. A total function: the fallback
@@ -496,13 +551,32 @@ theorem mapLeafFind_spec (hash : List ℤ → ℤ) :
             simp only [List.cons.injEq, and_true] at hcon
             exact hab (Prod.ext hcon.1 hcon.2)
 
-/-- **⚑ DEMOTED — `map_leaf_injective` at plain INJECTIVITY, which BabyBear REFUTES.** The named floor
-is gone; this is the strength bridge, not a deployed guarantee. The deployed statement is §2.3. -/
-theorem map_leaf_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash) :
-    ∀ (l₁ l₂ : FeltHeap), l₁.map (leafOf hash) = l₂.map (leafOf hash) → l₁ = l₂ := by
-  intro l₁ l₂ hmap
-  by_contra hne
-  exact (mapLeafFind_spec hash l₁ l₂ hne hmap).1 (hinj (mapLeafFind_spec hash l₁ l₂ hne hmap).2)
+/-- **THE LEAF-LIST EXTRACTOR BOTTOMS OUT AT AN EQUAL PAIR** on one and the same list — the whole
+discharge of the leaf residual, and it needs no crypto. -/
+theorem mapLeafFind_self_eq (hash : List ℤ → ℤ) (l : FeltHeap) :
+    (mapLeafFind hash l l).1 = (mapLeafFind hash l l).2 := by
+  induction l with
+  | nil => rfl
+  | cons a as ih => rw [mapLeafFind, if_pos rfl]; exact ih
+
+/-- **THE FLOOR-FREE LEAF DICHOTOMY — NO hypothesis on `hash`.** Two entry lists with equal leaf maps
+are equal, or the sponge collides at the first position where they differ. -/
+theorem map_leaf_binds_or_collides (hash : List ℤ → ℤ) (l₁ l₂ : FeltHeap)
+    (hmap : l₁.map (leafOf hash) = l₂.map (leafOf hash)) :
+    l₁ = l₂ ∨ SpongeColl hash (mapLeafFind hash l₁ l₂) := by
+  by_cases hne : l₁ = l₂
+  · exact Or.inl hne
+  · exact Or.inr (mapLeafFind_spec hash l₁ l₂ hne hmap)
+
+/-- **⚑ PORTED OFF THE REFUTED FLOOR (2026-07-28).** `map_leaf_injective` assumed `Function.Injective
+hash` — definitionally `Poseidon2SpongeCR hash`, PROVED FALSE at deployed BabyBear — and CONCLUDED an
+injectivity of `FeltHeap → List ℤ` composed with a bounded-range digest, which the same pigeonhole
+refutes. Premise and conclusion both empty at deployment. It now assumes the decidable per-instance
+residual at the ONE pair `mapLeafFind` hands back for these two lists. -/
+theorem map_leaf_injective (hash : List ℤ → ℤ) (l₁ l₂ : FeltHeap)
+    (hno : ¬ SpongeColl hash (mapLeafFind hash l₁ l₂))
+    (hmap : l₁.map (leafOf hash) = l₂.map (leafOf hash)) : l₁ = l₂ :=
+  (map_leaf_binds_or_collides hash l₁ l₂ hmap).resolve_right hno
 
 /-- **THE ROOT EXTRACTOR.** Either the two heaps' leaf lists already differ — then the equal roots ARE
 an outer-sponge collision on those lists — or they agree and the collision is inside, located by
@@ -552,29 +626,80 @@ theorem rootFind_len_le (hash : List ℤ → ℤ) (h₁ h₂ : FeltHeap) :
     simp only [List.length_map]
     omega
 
-/-- **⚑ DEMOTED — `root_injective` at plain INJECTIVITY, which BabyBear REFUTES.**
+/-! ### §2.2 — ⚑ THE HEAP-ROOT RESIDUAL, AND ITS THREE POLES.
 
-The named floor `Poseidon2SpongeCR` is DELETED from this statement. What remains is exactly the
-injective special case — the strength bridge showing nothing was lost — and it is **NOT the deployed
-anti-ghost**. A deployed BabyBear sponge is not injective, so this theorem says nothing about the
-running system; that is precisely the vacuity this sweep retires.
+`HeapRootColl hash h₁ h₂` is the ONE named side condition that replaced the floor binder in
+`root_injective`, `root_binds_get` and every Deos house-capacity keystone downstream of them
+(`Vault`, `PrepaidLease`, `StandingObligation`, `SealedEscrow`, `DerivedCell`).
 
-**The deployed anti-ghost is §2.3's `heapRoot_binds_advantage_bound`** (an adversary that keeps the
-published `heap_root` while tampering any address or any value has NEGLIGIBLE advantage, under the
-deployed sponge's collision floor at a class its extracted finder inhabits — `hEff` honestly in the
-open), with the address layer DISCHARGED on the keyed-ROM floor in §2.4. -/
-theorem root_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
-    {h₁ h₂ : FeltHeap} (h : root hash h₁ = root hash h₂) : h₁ = h₂ := by
-  by_contra hne
-  exact (rootFind_spec hash hne h).1 (hinj (rootFind_spec hash hne h).2)
+Three poles, because a side condition that can never fail is `True` in disguise and one that can
+never be discharged is a broken keystone rather than a repaired one.
 
-/-- **(CANARY — the extractor's output is a REAL collision, so it is refutable.)** On an injective
-sponge no equivocation can produce one, which is what makes the extraction load-bearing rather than a
-disjunction whose right branch is always available. This reds if `rootFind` is ever weakened to
-return a trivially-equal pair. -/
-theorem rootColl_refutable_of_injective (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
-    {h₁ h₂ : FeltHeap} (hne : h₁ ≠ h₂) : root hash h₁ ≠ root hash h₂ :=
-  fun hroot => hne (root_injective hash hinj hroot)
+⚑ **THE HONEST ROM NUMBER: ~2^15.5 — A BREAK, NOT A BOUND.** `root hash : FeltHeap → ℤ` is ONE
+BabyBear felt at every heap length; the heap widens the ABSORBED PREIMAGE (one leaf digest per
+entry), never the DIGEST, and nothing here is `Digest8`-valued. So on
+`Crypto.RomQueryFloor.birthday_bound`'s honest rung the residual is `(Q² + 1) / ‖R‖` at
+`‖R‖ = babyBearP ≈ 2^30.9`: **≈ 2^15.5 queries.** Every keystone that threads this residual binds
+exactly as well as a 31-bit commitment allows, and no better. The ~2^123.5 rung belongs to
+`Digest8`-VALUED folds, which the heap does not use. -/
+
+/-- **THE ROOT EXTRACTOR BOTTOMS OUT AT AN EQUAL PAIR** on one and the same heap. -/
+theorem rootFind_self_eq (hash : List ℤ → ℤ) (h : FeltHeap) :
+    (rootFind hash h h).1 = (rootFind hash h h).2 := by
+  unfold rootFind
+  rw [if_pos rfl]
+  exact mapLeafFind_self_eq hash h
+
+/-- **`HeapRootColl hash h₁ h₂` — THE ANTI-GHOST'S PER-INSTANCE RESIDUAL.** The deployed sponge
+genuinely collides at the ONE pair the root extractor returns for these two heaps. Decidable per
+instance, which the floor never was. -/
+def HeapRootColl (hash : List ℤ → ℤ) (h₁ h₂ : FeltHeap) : Prop :=
+  SpongeColl hash (rootFind hash h₁ h₂)
+
+instance decidableHeapRootColl (hash : List ℤ → ℤ) (h₁ h₂ : FeltHeap) :
+    Decidable (HeapRootColl hash h₁ h₂) := by
+  unfold HeapRootColl; infer_instance
+
+/-- **DISCHARGEABLE.** The honest committer — who publishes ONE heap — discharges the residual for
+EVERY hash, with no cryptographic assumption at all. This is what the deleted floor could never do:
+`Poseidon2SpongeCR` is unavailable at the deployed sponge even to an honest party. -/
+theorem heapRootColl_dischargeable (hash : List ℤ → ℤ) (h : FeltHeap) :
+    ¬ HeapRootColl hash h h :=
+  fun hc => hc.1 (rootFind_self_eq hash h)
+
+/-- **REFUTABLE.** At the constant sponge the extractor really does hand back a colliding pair, so
+`¬ HeapRootColl` is not free — the residual is not `True` in disguise. -/
+theorem heapRootColl_refutable : HeapRootColl (fun _ => (0 : ℤ)) [(0, 0)] [(0, 1)] := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so every port that threads it is a strict WEAKENING of the premise it replaces. Stated
+contrapositively, so it assumes no floor content and the ratchet reads it as the tooth it is. -/
+theorem heapRootColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {h₁ h₂ : FeltHeap}
+    (hc : HeapRootColl hash h₁ h₂) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
+/-- **⚑ THE FLOOR-FREE ANTI-GHOST DICHOTOMY — NO hypothesis on `hash` at all, and the strongest form
+in this file.** Two heaps publishing the same `heap_root` are the SAME heap, or the equivocation IS a
+witnessed collision of the deployed sponge at a pair a total extractor hands back. -/
+theorem root_binds_or_collides (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
+    (hroot : root hash h₁ = root hash h₂) : h₁ = h₂ ∨ HeapRootColl hash h₁ h₂ := by
+  by_cases hne : h₁ = h₂
+  · exact Or.inl hne
+  · exact Or.inr (rootFind_spec hash hne hroot)
+
+/-- **⚑ PORTED OFF THE REFUTED FLOOR (2026-07-28).** `root_injective` assumed `Function.Injective
+hash` — definitionally `Poseidon2SpongeCR hash`, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear — and
+its CONCLUSION was refuted by the same pigeonhole: `root hash : FeltHeap → ℤ` maps an infinite domain
+into one bounded field, so two distinct heaps share a root and `root hash` is not injective at ANY
+deployed sponge. A refuted premise carried to a refuted conclusion says nothing in either direction.
+
+What it assumes now is the DECIDABLE per-instance residual at the pair `rootFind` returns for these
+two heaps. **The deployed asymptotic anti-ghost is still §2.3's `heapRoot_binds_advantage_bound`**
+(`hEff` honestly in the open), with the address layer DISCHARGED on the keyed-ROM floor in §2.4. -/
+theorem root_injective (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
+    (hno : ¬ HeapRootColl hash h₁ h₂) (h : root hash h₁ = root hash h₂) : h₁ = h₂ :=
+  (root_binds_or_collides hash h).resolve_right hno
 
 /-- **`root_deterministic` — the root is a function of the map's MEANING.** Two SORTED heaps with
 the same lookup semantics have the SAME root (via canonicity `ext_get`; NO crypto). Build history
@@ -584,26 +709,47 @@ theorem root_deterministic (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
     (hext : ∀ k, get h₁ k = get h₂ k) : root hash h₁ = root hash h₂ := by
   rw [ext_get hs₁ hs₂ hext]
 
-/-- **⚑ DEMOTED — `root_binds_get` at plain INJECTIVITY.** Same demotion as `root_injective`: the named
-floor is gone, and this is the strength bridge, not the deployed opening law (that is §2.3). -/
-theorem root_binds_get (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
-    {h₁ h₂ : FeltHeap} (h : root hash h₁ = root hash h₂) :
+/-- **⚑ THE OPENING LAW, PORTED OFF THE REFUTED FLOOR (2026-07-28) — the theorem every Deos
+house-capacity keystone rides.** Same story as `root_injective`: the old `Function.Injective hash`
+premise is FALSE at deployed BabyBear, and so is the old ∀-form conclusion (two heaps sharing a root
+must exist by pigeonhole, and two heaps that differ at all differ at some address). It now assumes the
+decidable per-instance residual at the pair `rootFind` hands back. The asymptotic form is §2.3. -/
+theorem root_binds_get (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
+    (hno : ¬ HeapRootColl hash h₁ h₂) (h : root hash h₁ = root hash h₂) :
     ∀ coll key, hget hash h₁ coll key = hget hash h₂ coll key := by
   intro coll key
-  rw [root_injective hash hinj h]
+  rw [root_injective hash hno h]
+
+/-- **⚑ THE FLOOR-FREE OPENING DICHOTOMY — NO hypothesis on `hash`.** Equal roots force equal
+openings at EVERY address, or the equivocation is a witnessed sponge collision. -/
+theorem root_binds_get_or_collides (hash : List ℤ → ℤ) {h₁ h₂ : FeltHeap}
+    (hroot : root hash h₁ = root hash h₂) :
+    (∀ coll key, hget hash h₁ coll key = hget hash h₂ coll key) ∨ HeapRootColl hash h₁ h₂ :=
+  (root_binds_or_collides hash hroot).imp (fun he _ _ => by rw [he]) id
 
 #assert_axioms hget_hset_self
 #assert_axioms addrFind_spec
 #assert_axioms hget_hset_frame_of_addr_ne
+#assert_axioms addrColl_dischargeable
+#assert_axioms addrColl_refutable
+#assert_axioms addrColl_refutes_poseidon2CR
+#assert_axioms hget_hset_frame_or_aliases
 #assert_axioms hget_hset_frame
 #assert_axioms mapLeafFind_spec
+#assert_axioms mapLeafFind_self_eq
+#assert_axioms map_leaf_binds_or_collides
 #assert_axioms map_leaf_injective
 #assert_axioms rootFind_spec
 #assert_axioms rootFind_len_le
+#assert_axioms rootFind_self_eq
+#assert_axioms heapRootColl_dischargeable
+#assert_axioms heapRootColl_refutable
+#assert_axioms heapRootColl_refutes_poseidon2CR
+#assert_axioms root_binds_or_collides
 #assert_axioms root_injective
-#assert_axioms rootColl_refutable_of_injective
 #assert_axioms root_deterministic
 #assert_axioms root_binds_get
+#assert_axioms root_binds_get_or_collides
 
 /-! ## §2.3 — ⚑ THE DEPLOYED HEAP-ROOT ANTI-GHOST, AS A SECURITY REDUCTION.
 

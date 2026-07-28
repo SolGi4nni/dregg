@@ -1082,9 +1082,29 @@ mod tests {
     /// Adversarial test: supplying a forged `introducer_pk` that does NOT
     /// match the cert's introducer causes the executor to reject the Turn.
     ///
-    /// Security property: `verify_captp_delivered` step 2 checks
+    /// Security property: `verify_captp_delivered` step 3b checks
     /// `introducer_pk == cert.introducer.0`. A forged pk diverges and the
-    /// executor returns `Rejected` rather than committing.
+    /// executor returns `Rejected` (`TurnError::CapTpIntroducerKeyMismatch`)
+    /// rather than committing.
+    ///
+    /// ⚠ MEASURED 2026-07-28: this doc named a check that DID NOT EXIST. It said
+    /// "step 2", and step 2 compares `target_federation` and `target_cell` — no step
+    /// compared `introducer_pk` to `cert.introducer.0` anywhere on the executor path.
+    /// A forged pk was caught only incidentally, by the *signature* failing under it;
+    /// a presenter who held the introducer sk could name ANY federation and be
+    /// attributed to it. The binding now exists, so the claim above is finally true.
+    ///
+    /// ⚠ AND THIS TEST COULD NOT HAVE CAUGHT IT. `dregg-node` has `default = ["prover"]`,
+    /// nothing in the tree passes `--no-default-features` to it, so the `cfg` below
+    /// means this test is COMPILED BY NOTHING — one of the 15 the crate's own
+    /// `Cargo.toml` (`node/Cargo.toml:179-185`) already measures as emitting no line in
+    /// any run. Even compiled it would have passed for the wrong reason and then failed
+    /// for a third: `require_effect_vm_proof` refuses unconditionally (the v1 attestation
+    /// is retired), so the tool returns `exercised: false` before the executor is ever
+    /// reached — satisfying the first assertion below without the authorization gate
+    /// running at all. The real pole for this property is
+    /// `turn/tests/captp_delivered_amplification.rs::a2_captp_cert_naming_a_federation_that_did_not_sign_it_is_refused`,
+    /// which is compiled, runs, and asserts the refusal BY VARIANT.
     #[cfg(not(feature = "prover"))] // v1-floor standalone proof (see honest_path_commits above)
     #[tokio::test]
     async fn exercise_handoff_cert_forged_introducer_pk_rejected() {

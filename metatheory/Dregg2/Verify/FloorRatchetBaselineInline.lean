@@ -313,14 +313,9 @@ private def i1 : Array String := #[
   "Dregg2.Circuit.WitnessExtractPerEffect.revoke_extract_rejects_wrong_caps",
   "Dregg2.Circuit.WitnessExtractPerEffect.transfer_extract_rejects_wrong_ledger",
   "Dregg2.Crypto.HierarchicalGraphFrame.treeAbsorbInjective_of_digest8_injective",
-  "Dregg2.Distributed.PrivateLeg.exists_forged_leg",
-  "Dregg2.Substrate.Heap.hget_hset_frame",
-  "Dregg2.Substrate.Heap.map_leaf_injective",
-  "Dregg2.Substrate.Heap.rootColl_refutable_of_injective",
-  "Dregg2.Substrate.Heap.root_binds_get",
-  "Dregg2.Substrate.Heap.root_injective"]
+  "Dregg2.Distributed.PrivateLeg.exists_forged_leg"]
 
-/-- The inline-spelled grandfathered carriers (280). Only ever gets SHORTER. -/
+/-- The inline-spelled grandfathered carriers (275). Only ever gets SHORTER. -/
 def inlineSpelled : Array String :=
   i0 ++ i1
 

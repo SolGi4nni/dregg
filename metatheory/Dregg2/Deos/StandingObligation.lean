@@ -80,9 +80,25 @@ staging: `docs/deos/DISCHARGE-OBLIGATION-WELD-DESIGN.md`,
 
 ## Axiom hygiene
 
-`#assert_all_clean` at the close. Crypto enters ONLY as the named `Poseidon2SpongeCR` hypothesis (the
-cap-root floor the heap carries), never as an axiom. NO core/heap edit — every binding is the REAL
-`Substrate.Heap.hset`/`hget` and the root is the REAL `Substrate.Heap.root`.
+`#assert_all_clean` at the close.
+
+## ⚑ NO FLOOR (2026-07-28) — what crypto enters, and what it is worth
+
+Crypto used to enter as the named `Poseidon2SpongeCR` hypothesis, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear: every
+theorem under it was VACUOUSLY TRUE where the system stands. It now enters as TWO decidable
+per-instance residuals, each with three proved poles (dischargeable / refutable / refutes the floor):
+
+  * `SlotsDistinct hash` (§2.1) — this module's literal slot keys do not alias. A finite kernel check,
+    `decide`d at the reference sponge (`slotsDistinct_at_refSponge`). Not a cryptographic assumption
+    at all: the deployment fixes the keys, so the honest party can simply evaluate it.
+  * `¬ Heap.HeapRootColl hash h₁ h₂` — the deployed sponge does not collide at the ONE pair the root
+    extractor hands back for the two heap views in play.
+
+⚑ THE HONEST NUMBER: `Heap.root` is ONE BabyBear felt, so the root residual is worth
+`(Q² + 1)/babyBearP ≈ 2^15.5` queries — a BREAK, not a bound. Every keystone here binds exactly as
+well as a 31-bit commitment allows. The slot residual costs nothing at all (it is decided, not
+assumed).
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Tactics
@@ -176,6 +192,52 @@ def advance (hash : List ℤ → ℤ) (h : FeltHeap) (t : Terms) (cursor count t
   hset hash (hset hash (hset hash h obligColl keyNextDue (cursor + t.period))
     obligColl keyCount (count + 1)) obligColl keyTotal (total + t.amount)
 
+/-! ### §2.1 — ⚑ THE SLOT-ALIASING RESIDUAL that replaced the refuted floor (2026-07-28).
+
+Every round-trip below used to assume `Poseidon2SpongeCR hash` — global injectivity of a compressing
+sponge, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed
+BabyBear, so each of them was VACUOUSLY TRUE where the system stands. What the proofs actually NEEDED
+was one thing and it is FINITE: the obligation's FOUR literal slot keys must not land on the
+same heap address. That is `SlotsDistinct`, and the difference from the floor is not presentational —
+it is DECIDABLE at a fixed pair, an honest deployment can CHECK it against the real sponge, and it is
+satisfiable where the floor is not. -/
+
+/-- The module's committed heap keys — the literal slot constants the Rust writes. -/
+def obligKeys : List ℤ := [keyDigest, keyNextDue, keyCount, keyTotal]
+
+/-- **`SlotsDistinct hash`** — the obligation's committed slots do not ALIAS under `hash`: no two of its
+own keys collide the sponge at the pair `Heap.addrFind` hands back. A FINITE, DECIDABLE check over
+literal constants — never a global `∀ p q, ¬ Coll`, which pigeonhole refutes exactly like the floor
+it would replace. -/
+def SlotsDistinct (hash : List ℤ → ℤ) : Prop :=
+  ∀ k ∈ obligKeys, ∀ k' ∈ obligKeys, ¬ AddrColl hash obligColl k obligColl k'
+
+instance decidableSlotsDistinct (hash : List ℤ → ℤ) : Decidable (SlotsDistinct hash) := by
+  unfold SlotsDistinct; infer_instance
+
+/-- **DISCHARGEABLE — and by COMPUTATION, not by assumption.** At the reference sponge the residual
+holds, decided in the kernel. The deployed prover runs the same finite check against the real sponge;
+the floor it replaces was unavailable to an honest party at ANY deployed parameters. -/
+theorem slotsDistinct_at_refSponge : SlotsDistinct refSponge := by decide
+
+/-- **REFUTABLE.** At the constant sponge every slot aliases, so `SlotsDistinct` is not `True` in
+disguise and the residual is doing work. -/
+theorem slotsDistinct_refutable : ¬ SlotsDistinct (fun _ => (0 : ℤ)) := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** A sponge that aliases these slots is not injective, so
+`SlotsDistinct` is strictly weaker than the floor it replaces. Stated contrapositively: assumes no
+floor content, and the ratchet reads it as the tooth it is. -/
+theorem slotsDistinct_failure_refutes_poseidon2CR {hash : List ℤ → ℤ}
+    (hf : ¬ SlotsDistinct hash) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hf (fun _ _ _ _ hc => hc.1 (hCR _ _ hc.2))
+
+/-- **THE FRAME STEP, on the residual.** Writing one slot leaves another slot's opening alone. -/
+theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltHeap) (k k' v : ℤ)
+    (hok : k ∈ obligKeys ∧ k' ∈ obligKeys ∧ k' ≠ k) :
+    hget hash (hset hash h obligColl k v) obligColl k' = hget hash h obligColl k' :=
+  hget_hset_frame hash h obligColl k obligColl k' v (fun hc => hok.2.2 hc.2)
+    (hd k' hok.2.1 k hok.1)
+
 /-! ## §3 — the verification core (the forge-detector, as a predicate).
 
 `DischargeOk` is the Lean image of `ObligationState::check_discharge`: the honest-accept path and
@@ -238,22 +300,22 @@ theorem expectedPeriod_open (t : Terms) : expectedPeriod t t.start = 0 := by
 /-- **HONEST ROUND-TRIP (cursor).** An opened obligation commits `next_due = start`. The cursor slot
 survives the later open-writes (count, total) by `Heap.hget_hset_frame` (the named
 `Poseidon2SpongeCR` floor), then reads back by `Heap.hget_hset_self`. -/
-theorem opened_cursor (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem opened_cursor (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (digest : ℤ) (t : Terms) :
     boundCursor hash (openObl hash h digest t) = some t.start := by
   show hget hash (openObl hash h digest t) obligColl keyNextDue = some t.start
   unfold openObl
-  rw [hget_hset_frame hash hCR _ obligColl keyTotal obligColl keyNextDue 0 (by decide),
-    hget_hset_frame hash hCR _ obligColl keyCount obligColl keyNextDue 0 (by decide)]
+  rw [frameSlot hash hsd _ keyTotal keyNextDue 0 (by decide),
+    frameSlot hash hsd _ keyCount keyNextDue 0 (by decide)]
   exact hget_hset_self hash _ obligColl keyNextDue t.start
 
 /-- **HONEST ROUND-TRIP (count).** An opened obligation commits a discharged-count of `0`. -/
-theorem opened_count (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem opened_count (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (digest : ℤ) (t : Terms) :
     boundCount hash (openObl hash h digest t) = some 0 := by
   show hget hash (openObl hash h digest t) obligColl keyCount = some 0
   unfold openObl
-  rw [hget_hset_frame hash hCR _ obligColl keyTotal obligColl keyCount 0 (by decide)]
+  rw [frameSlot hash hsd _ keyTotal keyCount 0 (by decide)]
   exact hget_hset_self hash _ obligColl keyCount 0
 
 /-- **HONEST DISCHARGE ACCEPTS** (non-vacuity). At the opening cursor (`start`), a period-0 discharge
@@ -314,33 +376,33 @@ instances of `Heap.root_binds_get` (the anti-ghost), under the one named `Poseid
 
 /-- **THE REUSE KEYSTONE (cursor).** Equal roots ⟹ equal committed cursor. Proven by REUSE of
 `Heap.root_binds_get` — no obligation-local commitment. -/
-theorem cursor_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem cursor_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundCursor hash h₁ = boundCursor hash h₂ :=
-  root_binds_get hash hCR hroot obligColl keyNextDue
+  root_binds_get hash hno hroot obligColl keyNextDue
 
 /-- **THE REUSE KEYSTONE (count).** Equal roots ⟹ equal discharged-count — a forge cannot pad the
 count while keeping the honest root. -/
-theorem count_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem count_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundCount hash h₁ = boundCount hash h₂ :=
-  root_binds_get hash hCR hroot obligColl keyCount
+  root_binds_get hash hno hroot obligColl keyCount
 
 /-- **THE ANTI-GHOST.** A forged cell whose committed cursor differs from the honest one CANNOT keep
 the honest root — it must publish a different root (where the one-shot tooth then bites). The
 contrapositive of `cursor_bound_in_root`. -/
-theorem forged_cursor_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hne : boundCursor hash h₁ ≠ boundCursor hash h₂) :
+theorem forged_cursor_moves_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hne : boundCursor hash h₁ ≠ boundCursor hash h₂) :
     root hash h₁ ≠ root hash h₂ :=
-  fun hroot => hne (cursor_bound_in_root hash hCR hroot)
+  fun hroot => hne (cursor_bound_in_root hash hno hroot)
 
 /-- **THE REUSE KEYSTONE (total).** Equal roots ⟹ equal committed cumulative total — a forge
 cannot under-report (or pad) the discharged total while keeping the honest root. DIRECT instance of
 `Heap.root_binds_get`, the same anti-ghost the cursor/count keystones ride. -/
-theorem total_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) :
+theorem total_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) :
     boundTotal hash h₁ = boundTotal hash h₂ :=
-  root_binds_get hash hCR hroot obligColl keyTotal
+  root_binds_get hash hno hroot obligColl keyTotal
 
 /-! ## §6b — THE CIRCUIT-WELD RUNG (STAGED): per-period discharge a LIGHT CLIENT witnesses.
 
@@ -369,13 +431,13 @@ block is compared. -/
 
 /-- **READ-BACK after one discharge (cursor).** The discharge write advances the committed cursor by
 one period; the cursor slot survives the later total/count writes by `Heap.hget_hset_frame`. -/
-theorem advance_cursor (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem advance_cursor (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (t : Terms) (cursor count total : ℤ) :
     boundCursor hash (advance hash h t cursor count total) = some (cursor + t.period) := by
   show hget hash (advance hash h t cursor count total) obligColl keyNextDue = some (cursor + t.period)
   unfold advance
-  rw [hget_hset_frame hash hCR _ obligColl keyTotal obligColl keyNextDue (total + t.amount) (by decide),
-    hget_hset_frame hash hCR _ obligColl keyCount obligColl keyNextDue (count + 1) (by decide)]
+  rw [frameSlot hash hsd _ keyTotal keyNextDue (total + t.amount) (by decide),
+    frameSlot hash hsd _ keyCount keyNextDue (count + 1) (by decide)]
   exact hget_hset_self hash _ obligColl keyNextDue (cursor + t.period)
 
 /-- **READ-BACK after one discharge (total).** The discharge write adds exactly the schedule amount
@@ -404,12 +466,12 @@ abbrev DischargeGate (hash : List ℤ → ℤ) (t : Terms) (before after : FeltH
 /-- **HONEST DISCHARGE PASSES THE GATE** (non-vacuity, accept polarity). The genuine kernel
 transition — a committed cursor/total, then `advance` — satisfies the gate whenever the clock has
 reached the due block. Without this the rung would be vacuous (true by no-witness). -/
-theorem discharge_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap)
+theorem discharge_passes_gate (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (h : FeltHeap)
     (t : Terms) (cursor count total clock : ℤ)
     (hcur : boundCursor hash h = some cursor) (htot : boundTotal hash h = some total)
     (hdue : dueBlock t (expectedPeriod t cursor) ≤ clock) :
     DischargeGate hash t h (advance hash h t cursor count total) clock cursor total :=
-  ⟨hcur, htot, hdue, advance_cursor hash hCR h t cursor count total,
+  ⟨hcur, htot, hdue, advance_cursor hash hsd h t cursor count total,
     advance_total hash h t cursor count total⟩
 
 /-- **THE DUE ∧ EXACT ∧ ADVANCED TOOTH.** A satisfying gate witness FORCES the schedule shape: the
@@ -464,17 +526,19 @@ before/after roots reads the GENUINE verdict; a forger presenting fake cursor/to
 root (where §6's binding bites). Equal-root before/after views give the same gate verdict. Proven by
 REUSE of `cursor_bound_in_root` / `total_bound_in_root` — no obligation-local commitment, the one
 named `Poseidon2SpongeCR` floor. -/
-theorem discharge_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {before before' after after' : FeltHeap} (t : Terms) (clock cb tb : ℤ)
+theorem discharge_gate_root_bound (hash : List ℤ → ℤ)
+    {before before' after after' : FeltHeap}
+    (hnb : ¬ HeapRootColl hash before before')
+    (hna : ¬ HeapRootColl hash after after') (t : Terms) (clock cb tb : ℤ)
     (hb : root hash before = root hash before') (ha : root hash after = root hash after')
     (hgate : DischargeGate hash t before after clock cb tb) :
     DischargeGate hash t before' after' clock cb tb := by
   obtain ⟨h1, h2, h3, h4, h5⟩ := hgate
   refine ⟨?_, ?_, h3, ?_, ?_⟩
-  · rw [← cursor_bound_in_root hash hCR hb]; exact h1
-  · rw [← total_bound_in_root hash hCR hb]; exact h2
-  · rw [← cursor_bound_in_root hash hCR ha]; exact h4
-  · rw [← total_bound_in_root hash hCR ha]; exact h5
+  · rw [← cursor_bound_in_root hash hnb hb]; exact h1
+  · rw [← total_bound_in_root hash hnb hb]; exact h2
+  · rw [← cursor_bound_in_root hash hna ha]; exact h4
+  · rw [← total_bound_in_root hash hna ha]; exact h5
 
 /-! ## §7 — NON-VACUITY TEETH (`#guard`): the schedule invariant BITES, both polarities.
 
@@ -545,6 +609,10 @@ end Witnesses
 /-! ## §8 — Axiom hygiene. -/
 
 #assert_all_clean [
+  slotsDistinct_at_refSponge,
+  slotsDistinct_refutable,
+  slotsDistinct_failure_refutes_poseidon2CR,
+  frameSlot,
   cursor_strict_mono,
   advance_strictly_increases,
   expectedPeriod_after_one,

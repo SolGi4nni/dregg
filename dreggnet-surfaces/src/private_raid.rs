@@ -74,6 +74,7 @@ use deos_view::ViewNode;
 use dregg_app_framework::{
     CellId, CellProgram, FieldElement, StateConstraint, TurnReceipt, field_from_u64,
 };
+use dreggnet_offerings::player_name::display_name_of;
 use dreggnet_offerings::refusal::belongs_to_another_player;
 use dreggnet_offerings::{
     Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
@@ -1392,7 +1393,7 @@ impl ProofAssignedRaidOffering {
                 actions.push(Action::new(
                     format!(
                         "{} accepts fhIR-selected {} allocation",
-                        short_identity(actor),
+                        display_name_of(actor),
                         allocation.selected_role().name()
                     ),
                     TURN_ACCEPT_FHIR_ALLOCATION,
@@ -1443,7 +1444,7 @@ impl ProofAssignedRaidOffering {
             let identity = &session.roster[seat];
             rows.push(row(vec![
                 text(seat.to_string()),
-                text(short_identity(identity)),
+                text(display_name_of(identity)),
                 pill(raid_role_name(raid_role), "genuine"),
                 pill(capability.name(), "accent"),
                 text(if session.party.role_of(identity) == Some(capability) {
@@ -1520,7 +1521,7 @@ impl ProofAssignedRaidOffering {
                 pill("FHQPB001 EXACT OPTIMUM VERIFIED", "good"),
                 text(format!(
                     "selected {} in the real {} role · {}",
-                    short_identity(actor),
+                    display_name_of(actor),
                     allocation.selected_role().name(),
                     if allocation.landed() {
                         "executor allocation landed"
@@ -2194,7 +2195,7 @@ impl HostedProofAssignedRaidOffering {
             seats.push(row(vec![
                 text(seat.to_string()),
                 match session.roster.get(seat) {
-                    Some(identity) => pill(short_identity(identity), "genuine"),
+                    Some(identity) => pill(display_name_of(identity), "genuine"),
                     None => pill("open", "warn"),
                 },
             ]));
@@ -2639,14 +2640,6 @@ fn proof_stream_hasher() -> blake3::Hasher {
 /// dungeon's raid muster, and native Descent's campaign card cannot drift apart.
 fn raid_role_name(role: RaidRole) -> &'static str {
     role.name()
-}
-
-fn short_identity(identity: &str) -> String {
-    if identity.chars().count() <= 18 {
-        identity.to_string()
-    } else {
-        format!("{}…", identity.chars().take(17).collect::<String>())
-    }
 }
 
 fn encode_lower_hex(bytes: &[u8]) -> String {

@@ -419,6 +419,7 @@ dependencies = [
  "mina-poseidon",
  "p3-baby-bear",
  "p3-challenger",
+ "p3-commit",
  "p3-field",
  "p3-symmetric",
 ]
@@ -531,6 +532,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "p3-commit"
+version = "0.5.1"
+source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
+dependencies = [
+ "itertools 0.14.0",
+ "p3-challenger",
+ "p3-dft",
+ "p3-field",
+ "p3-matrix",
+ "p3-multilinear-util",
+ "p3-util",
+ "serde",
+]
+
+[[package]]
 name = "p3-dft"
 version = "0.5.1"
 source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
@@ -610,6 +626,21 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "spin 0.11.1",
+ "tracing",
+]
+
+[[package]]
+name = "p3-multilinear-util"
+version = "0.5.1"
+source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
+dependencies = [
+ "itertools 0.14.0",
+ "p3-field",
+ "p3-matrix",
+ "p3-maybe-rayon",
+ "p3-util",
+ "rand 0.10.2",
+ "serde",
  "tracing",
 ]
 

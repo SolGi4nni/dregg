@@ -24,14 +24,17 @@ under ~260.**
 |---|---|---|
 | Poseidon2-w16-BabyBear permutations for **one** full root verify | **~11,000** (measured range 10,000–13,000) | **empirically measured in-tree** (`docs/deos/WRAP-NATIVE-HASH-DECISION.md:102-106`); independently re-derived here at ~10,250 (§2) |
 | Kimchi rows per Poseidon2-w16-BabyBear permutation | **2,600.5 — MEASURED** | **§3.8** — an o1js circuit that compiles, proves, and reproduces the deployed permutation's KAT. Supersedes the ~2,000 design claim (§3.3–3.4) and closes §3.7's 4× band at the optimistic end |
-| **Total row budget** | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7, all remaining spread from the permutation count) | product |
+| **Total row budget** | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7, all remaining spread from the permutation count) | product; **the independent per-object sum in §3.14 now reads ~3.0 × 10⁷** |
 | Kimchi rows per **Merkle LEVEL** (the object FRI buys) | **2,677 — MEASURED** | **§3.9** — +76.5 over the bare permutation: 8 witnessed-lane range checks + 8 lane reductions + the cond-swap, none of which a single permutation pays |
 | Kimchi rows for the deployed **depth-22 opening** | **58,971 — MEASURED** | §3.9 — **more than one Pickles step's usable rows** |
 | Kimchi rows for **ONE FRI QUERY** at deployed knobs | **684,726 — MEASURED** | **§3.10** — 238 Merkle levels + 16 sponges + 16 arity-2 folds; 13–15 Pickles steps. FRI walk only, no DEEP/AIR/challenger |
 | Kimchi rows for the whole **Fiat–Shamir TRANSCRIPT** | **62,637 — MEASURED** | **§3.12** — 23 permutations. **0.48% of the walk it authorises**, and without it a prover picks its own queries. The single most important rung, and the cheapest |
 | Kimchi rows for one query's whole **16-layer commit phase** | **623,310 — MEASURED** | **§3.13** — and building it against p3's own 16-round chain found the coset descent taking the wrong index bit |
 | Kimchi rows for **transcript + one commit phase, JOINTLY** | **686,005 — MEASURED** | **§3.13b** — the join costs 58 rows. This is the statement that says *the prover's* FRI proof rather than *a* FRI proof |
-| Kimchi rows for one extension **Horner step** | **49 — MEASURED** | §3.14 — ⚑ **§2.4 priced it at ~7**; the DEEP/AIR residual is **≈ 1.0 × 10⁶ rows**, not 2–4 × 10⁵ |
+| Kimchi rows for one extension **Horner step** | **49 — MEASURED** | §3.14 — ⚑ **§2.4 priced it at ~7** |
+| Kimchi rows for the whole **DEEP QUOTIENT**, one query | **154,523 — MEASURED** | **§3.15** — at the root's real 940+175-column table set, 2,286 terms. **2.94 × 10⁶ across 19 queries**, and §3.14 had priced DEEP *and* AIR together at 1.0 × 10⁶. ⚑ This is the rung that stops the fold chain starting from a number the prover chose |
+| Kimchi rows to **observe the opened values** into the challenger | **2.97 × 10⁶ — MEASURED unit × exact count** | **§3.16** — 2,286 values × 4 lanes = 1,143 permutations. §3.12 stood the whole batch-STARK preamble in with 32 lanes |
+| Kimchi rows for the **AIR evaluation at ζ** | **`A + N·h`, `A` = 14,175 and `h` = 48 MEASURED; `N` UNCOUNTED** | **§3.16** — selectors, α-fold, chunk recomposition and closing equality, KAT'd against p3's own domain algebra. `C_i` itself is not built |
 | Usable rows per Pickles step | **~48,000–55,000** of 65,536 | §4.1, measured overheads |
 | **Pickles step circuits** | **~650–1,040** deployed | §4.2 |
 | After the dregg-side FRI knobs (§5) | **~325–455** | |
@@ -49,15 +52,24 @@ native Poseidon costs 11 rows per permutation; this shape over a foreign 31-bit 
 
 ⚑ **The measurements are wired.** `scripts/check-mina-attestation.sh` — a `scripts/local-gates.sh`
 row and a `ci.yml` job — re-runs **every bolded MEASURED figure above** and fails if any drifts more
-than 2%, on top of KATs against the deployed p3 objects and 38 fault injections. §3.14 separates
-what is measured, what is a stated count × a measured price, and what is still a count nobody has
-taken.
+than 2%, on top of KATs against the deployed p3 objects and **55 fault injections** with a
+two-second pre-flight that verifies each still matches a real pattern. §3.14 separates what is
+measured, what is a stated count × a measured price, and what is still a count nobody has taken.
 
 ⚑ **AND THE MEASUREMENTS ARE NOT THE POINT.** As of §3.12 the query indices and fold challenges are
 **DERIVED from a Fiat–Shamir transcript** rather than witnessed, and §3.13b joins the derivation to
 the walk in one statement. That is the difference between *"there exist 19 indices at which this
 proof is consistent"* — which a cheating prover satisfies by choosing them — and a FRI check. It
 cost 0.48% of the walk's rows. **The row budget was never the hard part; the binding was.**
+
+⚑ **AND AS OF §3.15 THE WALK IS ABOUT SOMETHING.** Every rung through §3.13b starts its fold chain
+from a **witnessed** reduced opening — so it authenticates a number the prover chose, and says
+nothing about the committed trace. §3.15 computes that number instead, from the MMCS-opened rows,
+the claimed evaluations at ζ (which are **absorbed** before `alpha` is sampled) and the transcript's
+own index. The gate does not assert the closure: it **proves a witness the previous statement admits
+and requires the new one to refuse it**. What is still missing is §3.16's `C_i` — the constraints
+themselves. Until those are evaluated, the walk authenticates a low-degree function that encodes
+nothing in particular.
 
 ---
 
@@ -831,12 +843,26 @@ against the deployed Rust and ratcheted at 2%.***
 | one arity-2 `fold_row` | 150 | 3.14 |
 | **one extension Horner step `acc ← acc·α + v`** | **49** | 3.14 |
 | one reduced-opening roll-in | 88 | 3.13 |
+| **the whole DEEP quotient, ONE query, at the root's 940+175-column table set** | **154,523** | **3.15** |
+| the same, p3's literal per-column loop | 287,123 | 3.15 |
+| transcript + DEEP + the capped commit phase, jointly | 285,901 | 3.15 |
+| the DEEP-bound query program, proved (2^6, 2 layers, 3 batches) | 50,409 | 3.15 |
+| the same with `initial` witnessed — every rung before 3.15 | 48,655 | 3.15 |
+| the AIR side's per-instance FIXED cost (selectors, chunk recomposition, closing equality) | 2,025 | 3.16 |
+| the AIR side's per-CONSTRAINT α-fold (**not** `C_i`) | 48 | 3.16 |
 
 ⚑ **§2.4 priced a Horner step at "~7 rows". It is 49 — 7× off**, and the DEEP-quotient and AIR
 residual scales linearly with it. At §2.4's own count (~14,300 Horner ops for the reduced openings,
 plus ~10⁴ quartic multiplies for the constraint fold) that residual is **≈ 1.0 × 10⁶ rows, not the
-2–4 × 10⁵ estimated** — still only ~3.5% of the total, so the conclusion "the size question is a
-hashing question" survives, but the number in §2.4 is wrong by 2.5–3× and is corrected here.
+2–4 × 10⁵ estimated** — the number in §2.4 is wrong by 2.5–3× and was corrected here.
+
+⚑ **AND THAT CORRECTION WAS ITSELF LOW BY 3×, MEASURED 2026-07-28.** §3.15 builds the DEEP quotient
+at the root's own column census — 940 main × 2 points + 175 preprocessed × 2 points + 7 instances ×
+2 chunks × D=4 = **2,286 terms per query** — and it is **154,523 rows per query, 2.94 × 10⁶ across
+19**. The "~2.4 × 10⁴ ext ops" above counted roughly one term per *column*, not per (matrix, point,
+column). So the DEEP quotient **alone** costs three times what this row allotted to DEEP *and* AIR
+together. And §3.16 adds a term nobody had counted at all: the **2.97 × 10⁶ rows** of challenger
+permutations required just to *observe* those 2,286 opened values before `alpha` is sampled.
 
 **DERIVED FROM MEASURED UNITS** (a stated count × a measured price — no longer an estimate × an
 estimate)
@@ -845,19 +871,23 @@ estimate)
 |---|---|---:|
 | input-phase openings, per query, 4 rounds all at depth 22 (§2.2) | 88 levels × 2,677 + 151 sponge blocks × 2,600.5 | **6.3 × 10⁵** |
 | … × 19 queries | | **1.2 × 10⁷** |
-| DEEP quotient + AIR constraint evaluation | ~2.4 × 10⁴ ext ops × 31–49 | **≈ 1.0 × 10⁶** |
+| ~~DEEP quotient + AIR constraint evaluation~~ | ~~~2.4 × 10⁴ ext ops × 31–49~~ | ~~≈ 1.0 × 10⁶~~ — **superseded, see below** |
+| **DEEP quotient × 19 queries** | 154,523 × 19, **measured** (§3.15) | **2.94 × 10⁶** |
+| **observing the 2,286 opened values into the challenger** | 1,143 perms × 2,600.5 (§3.16) | **2.97 × 10⁶** |
+| AIR constraint evaluation | `A + N·h` = 14,175 + N × 48, **plus `C_i`** (§3.16) | **≥ 1.4 × 10⁴, N UNCOUNTED** |
 | commit phase × 19 queries | 623,310 × 19 | **1.18 × 10⁷** |
-| transcript | measured | **6.3 × 10⁴** |
-| **whole root verify** | sum | **≈ 2.5 × 10⁷** — consistent with §0's 2.9 × 10⁷ from the permutation count |
+| transcript (FRI schedule only) | measured | **6.3 × 10⁴** |
+| **whole root verify** | sum | **≈ 3.0 × 10⁷** — and the independent permutation count in §0 says 2.9 × 10⁷ |
 
 **STILL UNCOUNTED — and these are counts, not prices**
 
 1. **The root's own `degree_bits`.** §1.3 says no committed measurement exists; §5.2's open
    contradiction (is there a live W24 table?) is worth ~10% on its own. Every "4 rounds all at
    depth 22" above rests on it.
-2. **The roll-in schedule.** How many reduced openings roll in below the top height is exactly the
-   number of distinct input-matrix heights, i.e. a function of (1). The *price* is measured (88
-   rows); the *count* is not known.
+2. ~~**The roll-in schedule.**~~ **CLOSED as a schedule, 2026-07-28 (§3.15d).** It was never a free
+   parameter: the opening at height `L` rolls in after round `LGMH − 1 − L`, the opening at `LGMH`
+   is `initial`, and `verify_query` refuses any other first height. `rollInSchedule` computes it and
+   the circuit uses it. What remains is the *set of heights*, which is (1).
 3. **The input row widths.** §3.10 measures an 8-element input row (one sponge block). The real main
    round is 940 columns ⇒ 118 blocks. That is in the derivation above, not in the 684,726.
 
@@ -866,12 +896,223 @@ estimate)
 1. **The preamble binding.** §3.12's transcript starts from a stand-in for the batch-STARK's own
    observes. Until those are the real ones, the derivation is "the challenges given this state",
    not "the challenges".
-2. **The DEEP quotient.** The chain's `initial` — the reduced opening at the top height — is a
-   witness in every rung here. Binding it to an input-phase opening under `alpha` is the next rung
-   and is the last structural gap between these circuits and a FRI verifier.
-3. **The AIR constraint evaluation** at ζ, which is what makes the STARK a statement about dregg
-   rather than about an arbitrary low-degree function. Not started.
+2. ~~**The DEEP quotient.**~~ **CLOSED 2026-07-28 — §3.15.** The reduced openings are now COMPUTED
+   from the MMCS-opened rows, the absorbed claimed evaluations and the transcript's `alpha`.
+   `makeDeepBoundQueryProgram` keeps the pre-3.15 statement compiled beside it and the gate
+   **proves a witness the old statement admits and the new one refuses**, so the closure is
+   exhibited rather than asserted.
+3. **The AIR constraint evaluation** at ζ. **STARTED, §3.16**: the selectors, the α-folded
+   accumulator, the quotient-chunk recomposition and the closing equality are built, KAT'd against
+   p3's own domain algebra at four `degree_bits`, and priced at `A + N·h`. **`C_i` itself — dregg's
+   seven AIRs — is not built, and `N` is not counted.** Until it is, the walk still authenticates a
+   low-degree function that encodes nothing in particular.
 4. **19 queries, not 1.** Every rung here walks one.
+5. **The input-phase MMCS opening over MIXED heights.** §3.15's program carries ONE matrix per
+   batch; `MerkleTreeMmcs::verify_batch` over several matrices of different heights under one root
+   is priced (§3.14's 6.3 × 10⁵/query) and not implemented.
+6. **The preamble is still a stand-in** — but a much larger one than §3.12 knew: §3.16 measures the
+   real thing at 2.97 × 10⁶ rows, against the 32 lanes §3.12 used.
+
+---
+
+### 3.15 ⚑ MEASURED — the DEEP QUOTIENT, and the number that stops being the prover's
+
+*2026-07-28. `bridge/mina-zkapp/src/DeepQuotient.ts`, measured by
+`bridge/mina-zkapp/scripts/fri-deep-rows.ts` (`npm run fri-deep`), KAT'd against
+`p2deep` — `p3_fri::verifier::open_input` over `BinomialExtensionField<BabyBear,4>`.*
+
+> ## **154,523 rows for ONE query's whole DEEP quotient at the root's real 940+175-column table set. 2.94 × 10⁶ across 19 queries — and §3.14 priced DEEP *and* AIR together at 1.0 × 10⁶.**
+
+**This is the rung §3.14 named as the last structural gap, and it is the same *kind* of rung the
+challenger was.** Every measurement above §3.15 starts its fold chain from `initial` — the reduced
+opening at the global max height — and in every one of them `initial` is a **witness**. A FRI walk
+over a witnessed starting value authenticates *a number the prover chose*. It says "some low-degree
+function takes this value at this point"; it says nothing whatever about the committed trace. §3.12
+made the index unchooseable and §3.13b made the walk the prover's own — neither touched the number
+the walk is about.
+
+`open_input` (`vendor/plonky3-fri-82cfad73/src/verifier.rs:524-660`) is the object that closes it:
+
+```
+ro[L] += alpha^k * (f(z) - f(x)) / (z - x)
+```
+
+for every opened matrix at height `2^L`, every opening point `z` and every column `f`, with
+
+- **`f(x)`** an entry of the MMCS-opened input row — bound by the input-phase Merkle path;
+- **`f(z)`** the claimed out-of-domain evaluation — bound by being **absorbed** into the challenger
+  before `alpha` is sampled (`two_adic_pcs.rs:780-788`), so moving one moves every challenge and
+  every query index;
+- **`x`** derived from the same index bits the transcript produced;
+- **`alpha`** the transcript's.
+
+and `(f(z) - f(x))/(z - x)` is `q(x)` for `q(X) = (f(X) - f(z))/(X - z)`, which is low-degree
+**exactly when `f(z)` is the true evaluation**. That equivalence is what the whole FRI walk is
+*for*. It is pinned on the Rust side by `deep_quotient_is_the_quotient_polynomial`, which builds `q`
+by **synthetic division** rather than by rearranging the same formula, and requires a falsified
+`f(z)` to give a different DEEP term.
+
+| shape | **MEASURED** |
+|---|---:|
+| the whole DEEP quotient, ONE query, 2,286 terms, factored Horner | **154,523** |
+| the same, p3's literal per-column loop | **287,123** (1.86×) |
+| per DEEP term | **67.6** factored / **125.6** literal |
+| × 19 queries | **2,935,937** |
+| transcript + DEEP + the **capped** commit phase, jointly | **285,901** |
+| the join, over the three standalone figures (62,637 + 45,186 + 154,523) | **23,555** |
+| the proved DEEP-bound query program (`|D⁰| = 2^6`, 2 layers, 3 batches, depth 0) | **50,409** |
+| the same statement with `initial` **witnessed** — i.e. every rung before this one | **48,655** |
+| **what the binding costs at that shape** | **1,754** |
+
+The **factored** form is one Horner over each (matrix, point)'s columns followed by a single scale
+by `alpha_pow · q`, instead of p3's three extension multiplies per column. It is an algebraic
+identity, pinned both by `the_factored_horner_form_agrees_with_p3s_per_column_loop` on the Rust side
+and by the in-circuit KAT running **both** forms against the same p3 output.
+
+⚑ **The deployed-depth joint figure is a COMPOSITION, and is labelled as one.** 285,901 +
+(623,310 − 45,186) = **864,025 rows** for transcript + DEEP + one commit phase at real Merkle
+depths — 16–19 Pickles steps for one query, 299–343 for nineteen. It is not a single `getRows()`
+because `Provable.constraintSystem` serialises the whole gate vector through the Kimchi wasm and
+that allocator dies somewhere past ~8 × 10⁵ rows. The **join** is measured on the capped chain,
+where it is the same object minus 216 Merkle levels that compose additively and were measured
+standalone in §3.13.
+
+#### 3.15b THE GAP, EXHIBITED — not asserted
+
+A rung whose predecessor cannot be caught accepting what it now refuses is a rung nobody has
+measured. So `makeDeepBoundQueryProgram` carries **two methods compiled together**: `proveDeepQuery`
+(the reduced opening computed) and `proveWitnessedInitial` (the reduced opening witnessed — exactly
+the statement of §3.13b and everything before it). The leg then:
+
+1. searches for a witness whose starting value is **not** the DEEP quotient of its own opened rows;
+2. **proves it** under `proveWitnessedInitial`, and verifies the proof — a real proof object of the
+   pre-rung-6 statement;
+3. requires `proveDeepQuery` to **refuse the same public claim**.
+
+Both happen, every run. Three further refusals hold and each isolates a different half of the
+binding: an opened row one element off (the row is **not** in the transcript, so nothing but the
+DEEP computation can see it), a claimed `f(z)` one element off (which moves the transcript *and*
+the reduced opening), and an opening point `z` one element off.
+
+#### 3.15c ⚑ FOUR CONVENTIONS THAT ARE EACH RIGHT ON A DEGENERATE FIXTURE — and one that is not a convention at all
+
+The coset-descent defect of §3.13 survived a deterministic both-polarity check because **one round
+never consumes two index bits**, so the check was right on 100% of the all-zero index every row
+measurement supplies. `open_input` has four of the same shape, and every fixture in this leg
+therefore carries **two heights, two matrices sharing a height in different batches, and multiple
+opening points**:
+
+| convention | when the wrong reading is invisible | live twin diverges |
+|---|---|---:|
+| `x` carries the multiplicative `GENERATOR` (31) | — | 16× |
+| `x` uses `g_L`; the **fold chain** uses `g_{L+1}` | at reversed index 0 — the all-zero index | 12× |
+| the index is **shifted down** by `LGMH − L` before reversal | if every matrix sits at the top height | 2× |
+| `x` reads the **high** bits, not the low ones | at index 0 and at all-ones | 2× |
+| no bit-reversal at all | when `rev(s) = s` | 8× |
+| `alpha_pow` keyed by **height**, in **encounter** order | unless two matrices share a height AND a second height exists | both twins |
+
+#### 3.15e ⚑ A FALSIFIER THAT COULD NOT FIRE — and what it says about every rung here
+
+The fault injection written for *"the DEEP-bound query goes back to a witnessed starting value"* was
+`initial: Provable.witness(BbExt, () => ro[0].ro)`. **It stayed green, every run.** The honest
+prover's witness callback recomputes the same value from the same inputs, so **a derived variable
+and a witness carrying that variable's value are indistinguishable to `Provable.runAndCheck`, to
+`prove`, and to `getRows()`.** Nothing in this harness can tell them apart.
+
+That is the same shape as the challenger's `observe`-clears-the-output-buffer twin (§3.12), and it
+was deleted for the same reason: a falsifier that cannot fire is worse than no falsifier, because a
+green run reads as a discharged obligation. Two of these have now been found by *building* the
+instrument, and both times the finding was that a check nobody would have questioned was free.
+
+What **can** see the realistic form of the regression — witness the value *and* delete the now-dead
+computation, which is what a cleanup pass does — is the **row delta between the two compiled
+methods**: 50,409 − 48,655 = **1,754 rows**, now ratcheted at 2%. A binding that stops costing
+anything is a binding that stopped existing. Two mis-wirings an honest run *does* catch (starting
+the chain from the wrong height's opening, and roll-ins off by one opening) are injected beside it.
+
+⚑ **The general lesson, which applies above this section as well as inside it:** every "X is
+derived, not witnessed" claim in §3.12–§3.15 rests on **reading the circuit**, not on a test that
+could distinguish the two. The tests establish that the derived value is *correct*; only the row
+delta establishes that the derivation is *load-bearing*.
+
+⚑ **And a sixth "reading" that is not one.** `g_{L+1}^{reverse_bits_len(s, L+1)}` looks like another
+mistake and is **algebraically the same function**: `s` carries `L` significant bits, so
+`rev(s, L+1) = 2·rev(s, L)`, and `g_{L+1}² = g_L`. A fault injection written against it **could
+never fire** — the same shape as the challenger's `observe`-clears-the-output-buffer twin (§3.12),
+which stayed green and was deleted. It is **asserted as an identity** here rather than counted as a
+divergence, and the leg fails if the identity ever breaks. Two of these have now been found by
+building the instrument rather than by reading the code; the pattern is worth naming.
+
+#### 3.15d The roll-in schedule was never a free parameter
+
+§3.14 listed "the roll-in schedule" as an uncounted quantity. It is a **function**: `verify_query`
+rolls the opening at height `L` in after the round whose *folded* height is `L`, so at
+`max_log_arity = 1` that is round `LGMH − 1 − L`, and the opening at `LGMH` is not rolled in at all
+— it is `initial`, and `verify_query` **refuses** a proof whose first reduced opening sits anywhere
+else (`:388-393`). `rollInSchedule` computes it, the circuit uses it, and the leg checks the refusal.
+What remains uncounted is the *set of heights*, which is the root's `degree_bits` — §3.14 item 1,
+still open.
+
+### 3.16 ⚑ MEASURED — the AIR constraint evaluation at ζ, started and priced
+
+*2026-07-28. `bridge/mina-zkapp/src/AirEval.ts`, measured by
+`bridge/mina-zkapp/scripts/air-eval-rows.ts` (`npm run air-eval`), KAT'd against `p2air` — p3's own
+`TwoAdicMultiplicativeCoset::selectors_at_point`, `create_disjoint_domain`, `split_domains` and
+`recompose_quotient_from_chunks`.*
+
+> ## **The AIR side is `A + N·h` with `A = 14,175` and `h = 48`, both MEASURED — and `N`, the number of constraints across the root's 7 AIRs, is a count nobody has taken. It is written that way on purpose.**
+
+Rungs 1–5 authenticate a value; §3.15 ties it to the claimed evaluations at ζ. **Nothing yet says
+those evaluations satisfy dregg's constraint system**, so a verifier stopping at §3.15 certifies
+that some low-degree function takes some values at ζ — true of an arbitrary polynomial. The closing
+object is `VerifierData::verify_constraints_with_lookups`
+(`p3-batch-stark/src/verifier/data.rs:49-102`):
+
+```
+accumulator = fold_i alpha (C_i(trace_local, trace_next, prep, ...))
+accumulator * inv_vanishing(zeta) == quotient(zeta)
+```
+
+with `quotient(ζ)` recomposed from the opened chunks by Lagrange over the chunk domains. **This
+module builds everything except `C_i`**, and every piece of it is KAT'd against p3 at four different
+`degree_bits` (4, 9, 15, 16) — because `Z_H(X) = (g^{-1}X)^{2^k} − 1` is a chain of `k` squarings
+and a fixture at one `k` cannot see an off-by-one in it, exactly as one FRI round could not see the
+coset-descent sign.
+
+| object | **MEASURED** |
+|---|---:|
+| per-instance FIXED (selectors at `k = 16`, chunk recomposition, closing equality) | **2,025** |
+| per CONSTRAINT — the α-fold only, **not** `C_i` | **48** |
+| `A` = the fixed cost across the root's **7** tables | **14,175** |
+
+| if `N` were … | fold rows | `+ A` |
+|---|---:|---:|
+| 558 (0.5 × columns) | 26,784 | 40,959 |
+| 1,115 (1 × columns) | 53,520 | 67,695 |
+| 2,230 (2 × columns) | 107,040 | 121,215 |
+| 3,345 (3 × columns) | 160,560 | 174,735 |
+
+⚑ **And `C_i` itself is in none of those numbers.** A degree-3 constraint over extension values
+costs at least two extension multiplies (~62 rows) on top of its fold, so the table is a **floor**
+on the AIR side rather than an estimate of it. Saying that is the point: §2.4 put a guessed unit
+inside a guessed count and was **7× out on the unit alone**.
+
+⚑ **The table set is the ROOT's seven.** `degree_bits = [9,9,15,14,15]` is the **BN254 shrink**
+proof (§1.2). Pricing the AIR side against it would under-count by more than an order of magnitude,
+and that mis-attribution has already been made once in this tree.
+
+**What the AIR side does make exact, and it is large.** Every one of the **2,286** opened values is
+`observe_algebra_slice`d into the challenger before `alpha` is sampled (`two_adic_pcs.rs:780-788`).
+That is 9,144 lanes ⇒ **1,143 permutations ⇒ 2.97 × 10⁶ rows**, and §3.12 stood the entire
+batch-STARK preamble in with **32 lanes**. It was listed only as a soundness residual; it is a size
+term of the same order as the DEEP quotient.
+
+**Three shift conventions are pinned, each with a live twin.** `create_disjoint_domain` multiplies
+the shift by `GENERATOR`; `split_domains` by `h^i`; and `from_ext_basis_coefficients` is a lane
+shift with the overflow folded back by `W = 11`, **not** four extension multiplies. Dropping the
+chunk shift must move the Lagrange weights, and the leg fails if it does not. The closing equality
+accepts a constructed honest instance and refuses a chunk one lane off, the two chunks swapped, and
+— the whole point of the rung — **a constraint one element off**.
 
 ---
 
@@ -1143,7 +1384,9 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 - **Single biggest cost driver:** the **mod-`p` reduction and its range checks** — **measured at
   ~64%** of the per-permutation rows (§3.8), because the S-box is a *multiplication chain* and lazy
   reduction cannot amortise across it. *Not* the S-boxes (564 multiplications is nothing), *not*
-  the FRI logic, *not* the AIR evaluation (~1.5–2%).
+  the FRI logic, *not* the AIR evaluation — but see the correction below: the **DEEP quotient** is
+  2.94 × 10⁶ rows and the **observes** are 2.97 × 10⁶, so "the arithmetic residual" is ~20% of the
+  budget, not the ~3.5% §3.14 first recorded.
 - **Second driver:** `max_log_arity = 1` and `cap_height = 0`. Together ~2.5×, against a
   configuration available today that costs **3 bits on a column that is not the binding one**.
 - **What the budget buys:** ~50 bits of ledger reading, commit-column-bound, with **queries
@@ -1156,8 +1399,10 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
    band is closed: **~2.9 × 10^7 rows**, i.e. "ambitious", not "no". It cost an afternoon, as
    predicted, and the estimate it replaces was 30% low.
 2. **Turn the dregg-side knobs and measure a real root.** Flip `max_log_arity` to 3, set
-   `cap_height`, and — **now the only unmeasured number in this budget** — **read a root proof's
-   `degree_bits`**, which §1.3 shows nobody ever has. §5.2's open contradiction (is there a live
+   `cap_height`, and — **still the number the most rests on** — **read a root proof's
+   `degree_bits`**, which §1.3 shows nobody ever has. Since 2026-07-28 there is a second uncounted
+   number beside it: **`N`, the constraint count across the root's seven AIRs** (§3.16), which is a
+   `get_symbolic_constraints` call away and which nothing in this budget can price without. §5.2's open contradiction (is there a live
    W24 table in the root or not?) is worth ~10% on its own. Then decide whether a **Mina-targeted
    shrink layer** is the right final stage, exactly as `dregg_outer_config.rs` is for BN254.
 
@@ -1176,11 +1421,13 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | Fits in one circuit | **No** — ~440× the 2^16 ceiling (**25 permutations per step**), and **Pickles hard-rejects chunking** (`verify.ml:61-76`). |
 | N step circuits | **~650–1,040** deployed; **~325–455** knobbed; **~260** floor. |
 | It buys 128 bits | **No — ~50**, commit-column-bound, and `numQueries` provably cannot move it. |
-| The AIR evaluation is the expensive part | **No — ~1.5–2%.** It is entirely a hashing problem. |
+| The AIR evaluation is the expensive part | **Still no, but the surrounding arithmetic is bigger than claimed.** §3.15 measures the DEEP quotient at 2.94 × 10⁶ rows over 19 queries and §3.16 the observes at 2.97 × 10⁶ — together ~20% of the budget, where §3.14 first recorded ~3.5% for DEEP *and* AIR. The AIR **fold** itself is `A + N·h` = 14,175 + N × 48 and remains small; `C_i` and `N` are uncounted. It is still mostly a hashing problem. |
+| The DEEP quotient / reduced opening is bound to the trace | **Yes as of §3.15.** The reduced openings are computed from the MMCS-opened rows, the absorbed `f(ζ)` and the transcript's `alpha`, KAT'd against `p3_fri::verifier::open_input`. The gate **proves a witness the previous statement admits and requires the new one to refuse it**, so the closure is exhibited, not asserted. |
+| The AIR constraint evaluation is started | **Partly, §3.16.** The selectors, the α-fold, the chunk recomposition and the closing equality are built and KAT'd against p3's own domain algebra at four `degree_bits`. **`C_i` — dregg's seven AIRs — is not built and `N` is not counted.** Until it is, the FRI walk authenticates a low-degree function that encodes nothing in particular. |
 | A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
 | The row price is a design claim nobody has run | **No longer.** §3.8–3.14 are measured, the circuits are committed under `bridge/mina-zkapp/src/`, and `scripts/check-mina-attestation.sh` fails if any of nine figures drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**, and §3.14 shows how much rests on that. |
-| The FRI walk these circuits perform is *the prover's* | **Yes as of §3.12–3.13b, at the fold chain.** The query index and every `beta` are DERIVED from a `DuplexChallenger` transcript KAT'd against the deployed one, the 16-bit query PoW is checked, and one program joins the derivation to the walk. **Not yet** for the input-phase openings or the DEEP quotient — the reduced opening the chain starts from is still a witness (§3.14). |
+| The FRI walk these circuits perform is *the prover's* | **Yes as of §3.12–3.13b at the fold chain, and as of §3.15 at the value it starts from.** The query index and every `beta` are DERIVED from a `DuplexChallenger` transcript KAT'd against the deployed one, the 16-bit query PoW is checked, one program joins the derivation to the walk, and the reduced opening is now COMPUTED from the opened rows rather than witnessed. **Not yet** for the input-phase opening over MIXED matrix heights (one matrix per batch is built), nor for the batch-STARK preamble the transcript starts from. |
 | The challenger is a rounding error next to the query walk | **Yes — 0.48%, measured (§3.12).** Which is the point: the binding was cheap and was simply absent. |
 | The DEEP/AIR arithmetic is ~1.5–2% | **No — ≈3.5%.** §2.4 priced a Horner step at ~7 rows; it is **49, measured** (§3.14). Still not the driver. |
 | A both-polarity, deterministic check of a step implies the chain is right | **No, and this cost a day.** The single-round coset-descent check was made deterministic and both-polarity on 07-27 and stayed green while the CHAIN descended on the wrong index bit — right on ~half of any chain's rounds and on 100% of the all-zero index every row measurement uses. **Composition needs its own referent** (§3.13). |

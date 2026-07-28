@@ -1435,7 +1435,8 @@ fn a_digest_is_secret_shaped_and_hyphenated_english_is_not() {
     // ── AND THE ENTITY HALF. The reader decodes the typographic references the copy is written in,
     //    so a quoted word arrives as a word — which the tokenizer then trims to eight letters and
     //    the shaper correctly declines. Left encoded it was a 22-character "digest".
-    let decoded = visible_text("<p>&ldquo;asserted&rdquo;&nbsp;and&nbsp;&ldquo;verified&rdquo;</p>");
+    let decoded =
+        visible_text("<p>&ldquo;asserted&rdquo;&nbsp;and&nbsp;&ldquo;verified&rdquo;</p>");
     assert_eq!(decoded, "\"asserted\" and \"verified\"");
     for token in tokens(&decoded) {
         assert!(

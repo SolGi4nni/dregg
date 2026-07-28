@@ -71,8 +71,7 @@ fn run_handoff(
     let target_cell = CellId([0xEE; 32]);
 
     let mut swiss_table = SwissTable::new();
-    let swiss =
-        swiss_table.export_with_options(target_cell, held, 100, None, held_effects, None);
+    let swiss = swiss_table.export_with_options(target_cell, held, 100, None, held_effects, None);
 
     let cert = HandoffCertificate::create(
         &intro_sk,
@@ -193,7 +192,12 @@ fn granting_signature_over_held_impossible_is_refused() {
         return;
     }
     assert_refused_as_amplification(
-        run_handoff(AuthRequired::Impossible, None, AuthRequired::Signature, None),
+        run_handoff(
+            AuthRequired::Impossible,
+            None,
+            AuthRequired::Signature,
+            None,
+        ),
         "granting Signature over a held Impossible (locked) cap",
     );
 }

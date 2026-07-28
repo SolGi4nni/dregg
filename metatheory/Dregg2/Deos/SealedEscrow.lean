@@ -68,9 +68,25 @@ here are the *executor* teeth; the circuit tooth is their shadow.
 
 ## Axiom hygiene
 
-`#assert_all_clean` at the close. Crypto enters ONLY as the named `Poseidon2SpongeCR` hypothesis (the
-cap-root floor the heap carries), never as an axiom. NO core/heap edit — every binding is the REAL
-`Substrate.Heap.hset`/`hget` and the root is the REAL `Substrate.Heap.root`.
+`#assert_all_clean` at the close.
+
+## ⚑ NO FLOOR (2026-07-28) — what crypto enters, and what it is worth
+
+Crypto used to enter as the named `Poseidon2SpongeCR` hypothesis, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear: every
+theorem under it was VACUOUSLY TRUE where the system stands. It now enters as TWO decidable
+per-instance residuals, each with three proved poles (dischargeable / refutable / refutes the floor):
+
+  * `SlotsDistinct hash` (§2.1) — this module's literal slot keys do not alias. A finite kernel check,
+    `decide`d at the reference sponge (`slotsDistinct_at_refSponge`). Not a cryptographic assumption
+    at all: the deployment fixes the keys, so the honest party can simply evaluate it.
+  * `¬ Heap.HeapRootColl hash h₁ h₂` — the deployed sponge does not collide at the ONE pair the root
+    extractor hands back for the two heap views in play.
+
+⚑ THE HONEST NUMBER: `Heap.root` is ONE BabyBear felt, so the root residual is worth
+`(Q² + 1)/babyBearP ≈ 2^15.5` queries — a BREAK, not a bound. Every keystone here binds exactly as
+well as a 31-bit commitment allows. The slot residual costs nothing at all (it is decided, not
+assumed).
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Tactics
@@ -173,6 +189,52 @@ abbrev ClaimOk (hash : List ℤ → ℤ) (h : FeltHeap) (c : Claim) (locked : �
   boundAmount hash h c.take = some locked ∧
   c.claimedValue ≤ locked
 
+/-! ### §2.1 — ⚑ THE SLOT-ALIASING RESIDUAL that replaced the refuted floor (2026-07-28).
+
+Every round-trip below used to assume `Poseidon2SpongeCR hash` — global injectivity of a compressing
+sponge, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed
+BabyBear, so each of them was VACUOUSLY TRUE where the system stands. What the proofs actually NEEDED
+was one thing and it is FINITE: the escrow's FIVE literal slot keys must not land on the
+same heap address. That is `SlotsDistinct`, and the difference from the floor is not presentational —
+it is DECIDABLE at a fixed pair, an honest deployment can CHECK it against the real sponge, and it is
+satisfiable where the floor is not. -/
+
+/-- The module's committed heap keys — the literal slot constants the Rust writes. -/
+def escrowKeys : List ℤ := [keyDigest, amountKey Side.A, amountKey Side.B, statusKey Side.A, statusKey Side.B]
+
+/-- **`SlotsDistinct hash`** — the escrow's committed slots do not ALIAS under `hash`: no two of its
+own keys collide the sponge at the pair `Heap.addrFind` hands back. A FINITE, DECIDABLE check over
+literal constants — never a global `∀ p q, ¬ Coll`, which pigeonhole refutes exactly like the floor
+it would replace. -/
+def SlotsDistinct (hash : List ℤ → ℤ) : Prop :=
+  ∀ k ∈ escrowKeys, ∀ k' ∈ escrowKeys, ¬ AddrColl hash escrowColl k escrowColl k'
+
+instance decidableSlotsDistinct (hash : List ℤ → ℤ) : Decidable (SlotsDistinct hash) := by
+  unfold SlotsDistinct; infer_instance
+
+/-- **DISCHARGEABLE — and by COMPUTATION, not by assumption.** At the reference sponge the residual
+holds, decided in the kernel. The deployed prover runs the same finite check against the real sponge;
+the floor it replaces was unavailable to an honest party at ANY deployed parameters. -/
+theorem slotsDistinct_at_refSponge : SlotsDistinct refSponge := by decide
+
+/-- **REFUTABLE.** At the constant sponge every slot aliases, so `SlotsDistinct` is not `True` in
+disguise and the residual is doing work. -/
+theorem slotsDistinct_refutable : ¬ SlotsDistinct (fun _ => (0 : ℤ)) := by decide
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** A sponge that aliases these slots is not injective, so
+`SlotsDistinct` is strictly weaker than the floor it replaces. Stated contrapositively: assumes no
+floor content, and the ratchet reads it as the tooth it is. -/
+theorem slotsDistinct_failure_refutes_poseidon2CR {hash : List ℤ → ℤ}
+    (hf : ¬ SlotsDistinct hash) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hf (fun _ _ _ _ hc => hc.1 (hCR _ _ hc.2))
+
+/-- **THE FRAME STEP, on the residual.** Writing one slot leaves another slot's opening alone. -/
+theorem frameSlot (hash : List ℤ → ℤ) (hd : SlotsDistinct hash) (h : FeltHeap) (k k' v : ℤ)
+    (hok : k ∈ escrowKeys ∧ k' ∈ escrowKeys ∧ k' ≠ k) :
+    hget hash (hset hash h escrowColl k v) escrowColl k' = hget hash h escrowColl k' :=
+  hget_hset_frame hash h escrowColl k escrowColl k' v (fun hc => hok.2.2 hc.2)
+    (hd k' hok.2.1 k hok.1)
+
 /-! ## §3 — THE HONEST ROUND-TRIP + BOTH-LEG BINDING.
 
 Depositing both conforming legs makes settlement ready AND binds each leg's amount — so settlement
@@ -182,7 +244,7 @@ floor; the read-backs are crypto-free. -/
 /-- **HONEST ROUND-TRIP.** After both legs are deposited, the settlement gate is `Ready`. Leg B's
 status reads back by `Heap.hget_hset_self`; leg A's survives the leg-B writes by
 `Heap.hget_hset_frame` (the named cap-root `Poseidon2SpongeCR` floor). -/
-theorem deposit_both_ready (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem deposit_both_ready (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (aA aB : ℤ) :
     Ready hash (deposit hash (deposit hash h Side.A aA) Side.B aB) := by
   refine ⟨?_, ?_⟩
@@ -190,17 +252,15 @@ theorem deposit_both_ready (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR ha
     show hget hash (deposit hash (deposit hash h Side.A aA) Side.B aB) escrowColl (statusKey Side.A)
         = some stDeposited
     unfold deposit
-    rw [hget_hset_frame hash hCR _ escrowColl (statusKey Side.B) escrowColl (statusKey Side.A)
-        stDeposited (by decide),
-      hget_hset_frame hash hCR _ escrowColl (amountKey Side.B) escrowColl (statusKey Side.A)
-        aB (by decide)]
+    rw [frameSlot hash hsd _ (statusKey Side.B) (statusKey Side.A) stDeposited (by decide),
+      frameSlot hash hsd _ (amountKey Side.B) (statusKey Side.A) aB (by decide)]
     exact hget_hset_self hash _ escrowColl (statusKey Side.A) stDeposited
   · -- leg B's status: read-after-write (written last).
     exact hget_hset_self hash _ escrowColl (statusKey Side.B) stDeposited
 
 /-- **BOTH-LEG BINDING.** After both deposits, EACH leg's committed amount is bound — settlement and
 the claim gate read the genuine `(aA, aB)`. A swap binds BOTH legs into the one commitment. -/
-theorem deposit_binds_amounts (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem deposit_binds_amounts (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (aA aB : ℤ) :
     boundAmount hash (deposit hash (deposit hash h Side.A aA) Side.B aB) Side.A = some aA ∧
     boundAmount hash (deposit hash (deposit hash h Side.A aA) Side.B aB) Side.B = some aB := by
@@ -209,30 +269,26 @@ theorem deposit_binds_amounts (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     show hget hash (deposit hash (deposit hash h Side.A aA) Side.B aB) escrowColl (amountKey Side.A)
         = some aA
     unfold deposit
-    rw [hget_hset_frame hash hCR _ escrowColl (statusKey Side.B) escrowColl (amountKey Side.A)
-        stDeposited (by decide),
-      hget_hset_frame hash hCR _ escrowColl (amountKey Side.B) escrowColl (amountKey Side.A)
-        aB (by decide),
-      hget_hset_frame hash hCR _ escrowColl (statusKey Side.A) escrowColl (amountKey Side.A)
-        stDeposited (by decide)]
+    rw [frameSlot hash hsd _ (statusKey Side.B) (amountKey Side.A) stDeposited (by decide),
+      frameSlot hash hsd _ (amountKey Side.B) (amountKey Side.A) aB (by decide),
+      frameSlot hash hsd _ (statusKey Side.A) (amountKey Side.A) stDeposited (by decide)]
     exact hget_hset_self hash _ escrowColl (amountKey Side.A) aA
   · -- leg B's amount: frame off leg B's status write, then read-after-write.
     show hget hash (deposit hash (deposit hash h Side.A aA) Side.B aB) escrowColl (amountKey Side.B)
         = some aB
     unfold deposit
-    rw [hget_hset_frame hash hCR _ escrowColl (statusKey Side.B) escrowColl (amountKey Side.B)
-        stDeposited (by decide)]
+    rw [frameSlot hash hsd _ (statusKey Side.B) (amountKey Side.B) stDeposited (by decide)]
     exact hget_hset_self hash _ escrowColl (amountKey Side.B) aB
 
 /-- **HONEST CLAIM ACCEPTS** (non-vacuity). On the both-deposited escrow, B's claim of A's leg
 (presenting its own conforming leg, claiming no more than A locked) is accepted by the gate. The
 live path the one-shot tooth later closes. -/
-theorem honest_claim_accepts (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem honest_claim_accepts (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (aA aB v : ℤ) (hv : v ≤ aA) :
     ClaimOk hash (deposit hash (deposit hash h Side.A aA) Side.B aB)
       ⟨Side.B, Side.A, aB, v⟩ aA := by
-  have hready := deposit_both_ready hash hCR h aA aB
-  have hamt := deposit_binds_amounts hash hCR h aA aB
+  have hready := deposit_both_ready hash hsd h aA aB
+  have hamt := deposit_binds_amounts hash hsd h aA aB
   exact ⟨hready.2, hamt.2, hready.1, hamt.1, hv⟩
 
 /-! ## §4 — THE TEETH: one-shot replay, no-conforming-deposit, over-claim.
@@ -240,25 +296,24 @@ theorem honest_claim_accepts (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR 
 Each forge is rejected by the SAME gate the honest path passes — a stub fails one polarity. -/
 
 /-- Settlement flips BOTH legs to `Consumed`. -/
-theorem settle_consumes_both (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap) :
+theorem settle_consumes_both (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (h : FeltHeap) :
     boundStatus hash (settle hash h) Side.A = some stConsumed ∧
     boundStatus hash (settle hash h) Side.B = some stConsumed := by
   refine ⟨?_, ?_⟩
   · show hget hash (settle hash h) escrowColl (statusKey Side.A) = some stConsumed
     unfold settle
-    rw [hget_hset_frame hash hCR _ escrowColl (statusKey Side.B) escrowColl (statusKey Side.A)
-        stConsumed (by decide)]
+    rw [frameSlot hash hsd _ (statusKey Side.B) (statusKey Side.A) stConsumed (by decide)]
     exact hget_hset_self hash _ escrowColl (statusKey Side.A) stConsumed
   · exact hget_hset_self hash _ escrowColl (statusKey Side.B) stConsumed
 
 /-- **THE ONE-SHOT TOOTH.** A settled escrow is no longer `Ready`: leg A is `Consumed`, and
 `Consumed ≠ Deposited`, so the settlement gate REFUSES a replay. `cell/src/escrow_sealed.rs`'s
 `replay_of_settled_leg_is_rejected`, as a theorem — a spent leg is a spent nullifier. -/
-theorem replay_rejected (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap) :
+theorem replay_rejected (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (h : FeltHeap) :
     ¬ Ready hash (settle hash h) := by
   intro hr
   have hA := hr.1
-  rw [(settle_consumes_both hash hCR h).1] at hA
+  rw [(settle_consumes_both hash hsd h).1] at hA
   exact (by decide : stConsumed ≠ stDeposited) (Option.some.inj hA)
 
 /-- **THE NO-CONFORMING-DEPOSIT TOOTH.** A claimant whose own leg is not `Deposited` (it never
@@ -300,25 +355,25 @@ flipped status (a consumed leg posing as deposited) or a swollen amount. DIRECT 
 
 /-- **THE REUSE KEYSTONE (status).** Two heaps with EQUAL roots open to the SAME leg status. Proven
 by REUSE of `Heap.root_binds_get` — no escrow-local commitment. -/
-theorem leg_status_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) (side : Side) :
+theorem leg_status_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) (side : Side) :
     boundStatus hash h₁ side = boundStatus hash h₂ side :=
-  root_binds_get hash hCR hroot escrowColl (statusKey side)
+  root_binds_get hash hno hroot escrowColl (statusKey side)
 
 /-- **THE REUSE KEYSTONE (amount).** Equal roots ⟹ equal leg amount — a forge cannot swell a locked
 amount while keeping the honest root. -/
-theorem leg_amount_bound_in_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (hroot : root hash h₁ = root hash h₂) (side : Side) :
+theorem leg_amount_bound_in_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (hroot : root hash h₁ = root hash h₂) (side : Side) :
     boundAmount hash h₁ side = boundAmount hash h₂ side :=
-  root_binds_get hash hCR hroot escrowColl (amountKey side)
+  root_binds_get hash hno hroot escrowColl (amountKey side)
 
 /-- **THE ANTI-GHOST.** A forged leg whose committed status differs from the honest one CANNOT keep
 the honest root — it must publish a different root (where the status tooth then bites). The
 contrapositive of `leg_status_bound_in_root`. -/
-theorem forged_leg_moves_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ h₂ : FeltHeap} (side : Side) (hne : boundStatus hash h₁ side ≠ boundStatus hash h₂ side) :
+theorem forged_leg_moves_root (hash : List ℤ → ℤ)
+    {h₁ h₂ : FeltHeap} (hno : ¬ HeapRootColl hash h₁ h₂) (side : Side) (hne : boundStatus hash h₁ side ≠ boundStatus hash h₂ side) :
     root hash h₁ ≠ root hash h₂ :=
-  fun hroot => hne (leg_status_bound_in_root hash hCR hroot side)
+  fun hroot => hne (leg_status_bound_in_root hash hno hroot side)
 
 /-! ## §6 — THE CIRCUIT-WELD RUNG (STAGED): settlement atomicity a LIGHT CLIENT witnesses.
 
@@ -350,10 +405,10 @@ abbrev SettleGate (hash : List ℤ → ℤ) (before after : FeltHeap) : Prop :=
 /-- **HONEST SETTLE PASSES THE GATE** (non-vacuity, accept polarity). The genuine kernel
 transition — both legs `Ready`, then `settle` — satisfies the gate, so an honest batch's
 `SettleEscrow` entry verifies. Without this the rung would be vacuous (true by no-witness). -/
-theorem settle_passes_gate (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (h : FeltHeap)
+theorem settle_passes_gate (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash) (h : FeltHeap)
     (hready : Ready hash h) :
     SettleGate hash h (settle hash h) :=
-  ⟨hready.1, hready.2, (settle_consumes_both hash hCR h).1, (settle_consumes_both hash hCR h).2⟩
+  ⟨hready.1, hready.2, (settle_consumes_both hash hsd h).1, (settle_consumes_both hash hsd h).2⟩
 
 /-- **THE ATOMICITY TOOTH.** A satisfying gate witness FORCES the atomic shape: both legs were
 `Deposited` before (the swap was genuinely double-locked) and both `Consumed` after (both legs
@@ -394,17 +449,19 @@ public-input-bound before/after roots reads the GENUINE verdict; a forger presen
 slots must MOVE a root (where §5's status binding bites). Equal-root before/after views give
 the same gate verdict. Proven by REUSE of `leg_status_bound_in_root` — no escrow-local
 commitment, the one named `Poseidon2SpongeCR` floor. -/
-theorem settle_gate_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem settle_gate_root_bound (hash : List ℤ → ℤ)
     {before before' after after' : FeltHeap}
+    (hnb : ¬ HeapRootColl hash before before')
+    (hna : ¬ HeapRootColl hash after after')
     (hb : root hash before = root hash before') (ha : root hash after = root hash after')
     (hgate : SettleGate hash before after) :
     SettleGate hash before' after' := by
   obtain ⟨h1, h2, h3, h4⟩ := hgate
   refine ⟨?_, ?_, ?_, ?_⟩
-  · rw [← leg_status_bound_in_root hash hCR hb Side.A]; exact h1
-  · rw [← leg_status_bound_in_root hash hCR hb Side.B]; exact h2
-  · rw [← leg_status_bound_in_root hash hCR ha Side.A]; exact h3
-  · rw [← leg_status_bound_in_root hash hCR ha Side.B]; exact h4
+  · rw [← leg_status_bound_in_root hash hnb hb Side.A]; exact h1
+  · rw [← leg_status_bound_in_root hash hnb hb Side.B]; exact h2
+  · rw [← leg_status_bound_in_root hash hna ha Side.A]; exact h3
+  · rw [← leg_status_bound_in_root hash hna ha Side.B]; exact h4
 
 /-! ## §7 — NON-VACUITY TEETH (`#guard`): the swap invariant BITES, both polarities.
 
@@ -460,6 +517,10 @@ end Witnesses
 /-! ## §8 — Axiom hygiene. -/
 
 #assert_all_clean [
+  slotsDistinct_at_refSponge,
+  slotsDistinct_refutable,
+  slotsDistinct_failure_refutes_poseidon2CR,
+  frameSlot,
   deposit_both_ready,
   deposit_binds_amounts,
   honest_claim_accepts,
@@ -513,14 +574,13 @@ theorem reclaim_consumes (hash : List ℤ → ℤ) (h : FeltHeap) (side : Side) 
 
 /-- Reclaiming one leg leaves the COUNTERPARTY leg untouched (its slot survives by
 `Heap.hget_hset_frame`, the named cap-root floor) — a reclaim is not a settlement of the other leg. -/
-theorem reclaim_frames_other (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem reclaim_frames_other (hash : List ℤ → ℤ) (hsd : SlotsDistinct hash)
     (h : FeltHeap) (side : Side) :
     boundStatus hash (reclaim hash h side) side.other = boundStatus hash h side.other := by
   show hget hash (reclaim hash h side) escrowColl (statusKey side.other)
       = hget hash h escrowColl (statusKey side.other)
   unfold reclaim
-  exact hget_hset_frame hash hCR _ escrowColl (statusKey side) escrowColl (statusKey side.other)
-    stConsumed (by cases side <;> decide)
+  exact frameSlot hash hsd _ (statusKey side) (statusKey side.other) stConsumed (by cases side <;> decide)
 
 /-! ### §9.1 — the value ledger + accounting. -/
 

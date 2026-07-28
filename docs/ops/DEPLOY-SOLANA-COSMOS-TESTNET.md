@@ -10,7 +10,8 @@ settled on Base-Sepolia).
 
 **Honest scope up front.** This is throwaway-key, no-real-value testnet
 deployment against public devnets. The trusted setup is the **single-party dev
-ceremony** (`keccak256("dregg-settlement-vk-dev-setup")`, byte-identical across
+ceremony** (pinned as `VK_DIGEST` = keccak256 over the canonical serialization of
+that key, byte-identical across
 EVM/Solana/Cosmos), **not** a production MPC ceremony. Nothing here touches
 mainnet or real custody. **The live broadcast is ember-gated** — this document
 prepares and verifies; ember pulls the trigger. Every command that spends a
@@ -177,13 +178,28 @@ lift those into a ~40-line `examples/deploy_settle.rs` binary that:
 1. `InitSettlement { genesis_root, vk_hash }` — pin the fixture genesis and the
    dev VK hash. `genesis_root` = the fixture's `genesis_root`
    `[421210617,1637814550,431291584,1953496675,369364366,1006647231,1866996710,48274474]`;
-   `vk_hash` = `dregg_solana_settlement::dev_ceremony_vk_hash()`
-   (= `keccak256("dregg-settlement-vk-dev-setup")` =
-   `0x18f57474785bdd93ff7feb573dfadff69516035997115f2854c93f0f31e1ff76`).
+   `vk_hash` = `dregg_solana_settlement::settlement_vk_digest()`
+   (= `vk::VK_DIGEST` = `0xcfda612f472e998d1f1bad1bf545ec5b39ca99b64db94e46edf2e8d3790a37cc`).
+   ⚑ FLAG DAY 2026-07-28: this was `dev_ceremony_vk_hash()` =
+   `keccak256("dregg-settlement-vk-dev-setup")` =
+   `0x18f57474785bdd93ff7feb573dfadff69516035997115f2854c93f0f31e1ff76` — a hash of a
+   LABEL, byte-identical under every regeneration of the key, so the pin could not
+   notice a key change. `InitSettlement` now REFUSES any value but the key's own
+   digest (`SettlementError::VkDigestMismatch`), so a runbook still carrying the old
+   constant fails loudly. Any already-initialized settlement account must be
+   re-initialized; any deployed `DreggSettlement` must be REDEPLOYED (no setter).
    Accounts: payer, settlement PDA `["settlement"]`, genesis marker PDA
    `["proven_root", packLanes(genesis)]`, system program.
-2. `Settle { a,b,c,commitment,commitment_pok, inputs:[[u8;32];25] }` — the fixture
-   proof + the 25 decimal `inputs`, **with the 600k CU limit prepended** (§1.7).
+2. `Settle { a,b,c,commitment,commitment_pok, lanes:[u32;25] }` — the fixture proof
+   + the 25 statement lanes as canonical BabyBear `u32`s, **with the 600k CU limit
+   prepended** (§1.7). The whole transaction is **795 serialized bytes** against
+   `PACKET_DATA_SIZE` 1232.
+   ⚑ WIRE FLAG DAY 2026-07-28: the lanes were `inputs:[[u8;32];25]` (full 32-byte
+   Groth16 scalars), which made this transaction **1495 bytes — over the packet limit
+   by 263, so a validator DROPPED it and this step had never actually run**. 700 of
+   those 800 lane bytes were zeros the program already required to be zero. The old
+   payload length (1184) now REFUSES to load (`InvalidInstruction`); it is not
+   reinterpreted. Any client packing 32-byte scalars must be rebuilt.
    Accounts: settlement PDA, payer, final marker PDA
    `["proven_root", packLanes(final)]`, system program.
 3. Verify: `AssertProvenRoot { root: packLanes(final_root) }` succeeds (the CPI-able
@@ -347,7 +363,8 @@ BROADCAST →    --label dregg-settlement --admin <osmo1...> $TXFLAGS
 it); `verifying_key_hash` = a non-zero hex commitment. The contract **stores** the
 hash (it does not re-derive it on the settle path — the VK itself is baked into
 `vk.rs`), so any non-zero hex accepts, but pin the cross-chain dev value
-`keccak256("dregg-settlement-vk-dev-setup")` above for parity with EVM/Solana.
+`VK_DIGEST` = `0xcfda612f...790a37cc` above for parity with EVM/Solana (was
+`keccak256("dregg-settlement-vk-dev-setup")` until 2026-07-28).
 
 ### 2.5 Post-deploy verify — query + settle the fixture
 
@@ -432,7 +449,8 @@ CosmWasm has no per-instruction CU cap like Solana; `--gas auto` sizes the gas
   no real value, ever.
 
 - **B6 — Dev trusted setup, not MPC.** The VK across all three chains is the
-  single-party dev ceremony (`keccak256("dregg-settlement-vk-dev-setup")`). This is
+  single-party dev ceremony (pinned as `VK_DIGEST`, keccak256 over that key's
+  canonical serialization). This is
   the standing "verifier is real, ceremony is dev" caveat — a production settlement
   needs the MPC-ceremony VK re-pinned at `Init`/`instantiate`. Not a deploy blocker;
   a trust-scope statement.

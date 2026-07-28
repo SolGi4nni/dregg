@@ -156,21 +156,52 @@ inductive HeapKeyRef where
   | sentinel
 deriving Repr, DecidableEq
 
-/-- The heap-atom subset the descent uses. -/
+/-- The heap-atom subset the descent uses.
+
+⚑ **`allowedTransitions` — THE HEAP GETS THE ATOM THE REGISTERS HAVE.** A relic's custody
+code is a HEAP-resident object (`dregg_schema` places a `collection` on the heap, not in
+the register file), so a per-relic hop table stated as `Constraint.allowedTransitions
+(relicName i) …` is a tooth about a REGISTER THAT DOES NOT EXIST: `Deployment::reg
+("relic_0")` has no slot to return. The table belongs on the atom, beside `memberOf` —
+one is the value allowlist, the other is the hop allowlist, and both read the same key.
+
+The arm is RELATIONAL (it reads BOTH sides), so it lifts to `Exec.StateConstraint`, not
+`Exec.SimpleConstraint` — the same split both substrates already make for the register
+form. It is therefore admissible at TOP level (`Constraint.heapField`) and NOT inside an
+`anyOf` variant; `simplesCompose` (§2) pins by kernel evaluation that no authored
+`Simple.heapField` carries one. -/
 inductive HeapAtom where
   | equals (v : Nat)
   | immutable
   | monotonic
   | memberOf (set : List Nat)
   | deltaEquals (d : Int)
+  | allowedTransitions (allowed : List (Nat × Nat))
 deriving Repr, DecidableEq
 
-/-- The simple (anyOf-liftable) subset. -/
+/-- Which heap atoms COMPOSE — i.e. lift into the name-keyed `Exec.SimpleConstraint`
+lane and may therefore sit inside an `anyOf` variant or under a `negate`. The deployed
+twin of that lane is `SimpleStateConstraint::HeapField { key, atom }`, which the Rust
+vocabulary already carries; a transition TABLE has no `SimpleStateConstraint` form on
+EITHER substrate. -/
+def HeapAtom.composes : HeapAtom → Bool
+  | .allowedTransitions _ => false
+  | _                     => true
+
+/-- The simple (anyOf-liftable) subset.
+
+⚑ **`heapField` — the arm whose absence made teeth reach for registers a cell has not
+got.** Before it, an `anyOf` variant could only name a REGISTER, so every guarded
+statement about a heap-resident relic (`depth = d ⇒ key k hangs on floor d`) had to be
+written as `fieldEquals "relic_1" …` — a register demand for a name that lives on the
+heap, and a runtime panic in the loader. With this arm the same law is stated where the
+object lives. Mirrors the deployed `SimpleStateConstraint::HeapField { key, atom }`. -/
 inductive Simple where
   | fieldEquals (reg : String) (v : Nat)
   | fieldGte (reg : String) (v : Nat)
   | fieldLte (reg : String) (v : Nat)
   | immutable (reg : String)
+  | heapField (key : HeapKeyRef) (atom : HeapAtom)
   | negate (inner : Simple)
 deriving Repr, DecidableEq
 
@@ -214,19 +245,32 @@ def relicName (i : Nat) : String := s!"relic_{i}"
 def wayName (w : Nat) : String := s!"way_{w}"
 def hoardName (d : Nat) : String := s!"hoard_{d}"
 
-/-- ⚑ **THE KEY-IN-THE-DOOR ZONE.** `hung_d` is the census of keys left hanging in a door
-on floor `d` — custody code `HUNG + d` (`Dungeon.hungAt`). It is a REGISTER, not a
-derived reading, because conservation is a `sumEquals` over registers and a key in a door
-is in none of the old six: it left the pack (`unlock` costs the carry slot back) and it
-never reached the bank (`fleeMap` promotes `CARRIED` and only `CARRIED`). Without this
-family `Σ zones = RELICS` is simply FALSE on every turn after the first `unlock`. -/
-def hungName (d : Nat) : String := s!"hung_{d}"
+/-- ⚑ **THE KEY-IN-THE-DOOR ZONE — ONE register, and the floor law lives on the OBJECT.**
+`hung` is the census of keys left hanging in doors, ANY door — custody code in
+`HUNG + 1 … HUNG + FLOORS` (`Dungeon.hungAt` summed over the floors). A zone counter is
+needed at all only because conservation is a `sumEquals` over REGISTERS and a key in a
+door is in none of the old six: it left the pack (`unlock` costs the carry slot back) and
+it never reached the bank (`fleeMap` promotes `CARRIED` and only `CARRIED`). Without it
+`Σ zones = RELICS` is simply FALSE on every turn after the first `unlock`.
+
+⚑ It is ONE register, not a `hung_1 … hung_4` family, and that is not rationing. A cell
+has `STATE_SLOTS = 16` registers; the descent's other thirteen plus four doors is
+EIGHTEEN, which no cell can hold. The four-counter form spent three registers carrying
+WHICH door a key hangs in — a fact about an OBJECT, stated on a projection of it. Stated
+on the object instead (`doorArrival` / `doorDeparture` / `keyHangsHereTooth` below, all
+`heapField` teeth over the relic's own custody key) it is strictly STRONGER: a per-floor
+counter frame says "this floor's census did not move", the object teeth say "THIS RELIC
+did not enter or leave THIS door", which names the thing that moved. And `hung` itself
+needs no census tooth of its own: `Σ zones = RELICS` plus the six EXACT
+`countFieldsEq` projections plus the per-relic `memberOf` alphabet force it to the true
+door total (every code is a hoard floor, `CARRIED`, `BANKED`, or `HUNG + d`, and the
+other six zones are pinned exactly, so the residue IS the door census). -/
+def hungName : String := "hung"
 
 /-- The relic-zone registers summed by conservation (`Σ = RELICS` on every turn).
-⚑ TEN, not six: the four `hung_d` doors joined the partition with the `HUNG` alphabet. -/
+⚑ SEVEN, not six and not ten: the doors joined the partition as ONE `hung` residue. -/
 def zones : List String :=
-  ["pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4",
-   "hung_1", "hung_2", "hung_3", "hung_4"]
+  ["pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4", "hung"]
 
 /-- The individually committed relic custody fields, in their canonical mint order. -/
 def relicKeys : List HeapKeyRef :=
@@ -263,6 +307,11 @@ def coreTeeth : List Constraint :=
 /-- The floors a key can hang on: `1 … FLOORS`. (`unlock` demands `1 ≤ depth` and `Inv`
 bounds `depth ≤ FLOORS`, so `HUNG + 0` is a code no step ever writes.) -/
 def hangFloors : List Nat := List.range' 1 FLOORS
+
+/-- The whole door census — how many keys hang in doors, across every floor. This is the
+model-side reading the `hung` register projects (`Dungeon.hungAt` summed over the
+floors), and it is what makes the register a PROJECTION rather than a parallel counter. -/
+def hungTotal (s : DState) : Nat := (hangFloors.map (hungAt s)).sum
 
 /-- ⚑ **THE PRIZE NEVER HANGS.** `unlock w` writes slot `keyFor w = w − 1` for
 `2 ≤ w ≤ FLOORS`, so exactly relics `1 … FLOORS − 1` can ever take a `HUNG` code. Relic 0
@@ -301,10 +350,17 @@ def custodyHops (i : Nat) : List (Nat × Nat) :=
         else [])
 
 /-- Per-relic provenance law: custody moves ONLY through the enumerated hops, and only
-through the legal alphabet (no floor-to-floor teleport, no minting a code from nothing). -/
+through the legal alphabet (no floor-to-floor teleport, no minting a code from nothing).
+
+⚑ BOTH teeth are `heapField` teeth now. A relic is a `collection` in the descent's
+schema, i.e. HEAP-resident, so the hop table stated as `Constraint.allowedTransitions
+(relicName i) …` demanded a register slot for `relic_i` — a slot the cell does not have
+and the loader cannot resolve. The atom moved to where the object is; `toExec` is
+UNCHANGED (`Exec` is name-keyed, so the lifted constraint is the same value), which is
+why every inversion over the ratchet reads exactly as it did. -/
 def custodyTeeth : List Constraint :=
   (List.range RELICS).flatMap fun i =>
-    [ .allowedTransitions (relicName i) (custodyHops i),
+    [ .heapField (.named (relicName i)) (.allowedTransitions (custodyHops i)),
       .heapField (.named (relicName i)) (.memberOf (custodyAlphabet i)) ]
 
 /-- Zone counters live in `[0, RELICS]` — no field-wrap tricks. -/
@@ -321,11 +377,13 @@ def projectionTeeth : List Constraint :=
     .countFieldsEq relicKeys 2 (hoardName 2),
     .countFieldsEq relicKeys 3 (hoardName 3),
     .countFieldsEq relicKeys 4 (hoardName 4) ]
-    -- ⚑ The doors get the SAME treatment as the hoards. A `hung_d` counter that is not
-    -- pinned to the census of `HUNG + d` custody codes would let `unlock` debit the pack
-    -- and credit a door without any relic actually hanging there — the object/projection
-    -- split, one zone over.
-    ++ hangFloors.map (fun d => .countFieldsEq relicKeys (HUNG + d) (hungName d))
+    -- ⚑ THE DOOR RESIDUE NEEDS NO CENSUS TOOTH OF ITS OWN. `hung` is not an
+    -- independently-writable counter that a forgery could inflate: conservation
+    -- (`Σ zones = RELICS`) plus these six EXACT censuses plus the per-relic
+    -- `memberOf (custodyAlphabet i)` leave it exactly one value — the number of relics
+    -- whose code is in the `HUNG` family. Adding a seventh `countFieldsEq` would be
+    -- restating a consequence, and it could not be stated anyway: `countFieldsEq` counts
+    -- ONE value, and the door family is four.
 
 /-- Freeze a register set (a verb's write-frame: what it does NOT own, it cannot touch). -/
 def frozen (regs : List String) : List Constraint := regs.map .immutable
@@ -351,15 +409,47 @@ conservation then forces the −1 exactly). -/
 def hoardFrameTooth (d : Nat) : Constraint :=
   .anyOf [.fieldEquals "depth" d, .immutable (hoardName d)]
 
-/-- ⚑ `depth ≠ d ⇒ hung_d frozen` — the door frame, the exact twin of the hoard frame.
-`unlock` may only hang a key in a door ON THE FLOOR IT IS STANDING ON and `take` may only
-lift one out of that same floor's door, so every OTHER floor's door census is immutable.
-Conservation then forces the ±1 exactly, the way it does for the hoards. -/
-def hungFrameTooth (d : Nat) : Constraint :=
-  .anyOf [.fieldEquals "depth" d, .immutable (hungName d)]
+/-- The key relics — the only relics that can ever take a `HUNG` code. -/
+def keyRelics : List Nat := (List.range RELICS).filter isKeyRelic
 
-/-- The whole door census, frozen (verbs that neither hang nor lift a key). -/
-def hungFreeze : List String := hangFloors.map hungName
+/-- ⚑ **THE DOOR FRAME, ON THE OBJECT — ARRIVAL.** `depth ≠ d ⇒ relic `i` did not
+NEWLY arrive in floor `d`'s door. The three disjuncts are exactly the three innocent
+readings: you are standing on floor `d`; relic `i` is not in that door after the turn; or
+relic `i` did not move at all (it was already hanging there, and a key already in a door
+stays put through every other floor's turns).
+
+This REPLACES the `hung_d`-counter frame and is strictly stronger: the counter form said
+"floor `d`'s census did not move", which a two-relic forgery can satisfy while a relic
+teleports between doors; this names the RELIC. It is also METHOD-INDEPENDENT (it rides
+the `spent` rider, i.e. every verb), so a key cannot be hung on a floor you are not
+standing on under `loot`'s or `smite`'s guard either. -/
+def doorArrivalTooth (i d : Nat) : Constraint :=
+  .anyOf [ .fieldEquals "depth" d,
+           .negate (.heapField (.named (relicName i)) (.equals (HUNG + d))),
+           .heapField (.named (relicName i)) (.deltaEquals 0) ]
+
+/-- ⚑ **THE DOOR FRAME, ON THE OBJECT — DEPARTURE.** `depth ≠ d ⇒ relic `i` did not
+make the `HUNG + d → CARRIED` hop. This is the `take` half, and it is the tooth that
+refuses THE REMOTE TAKE (attack 7b): lifting a key out of a door you are not standing at.
+
+The hop is pinned by its exact DELTA, and that is unambiguous rather than clever: the
+lifting hop is the ONLY hop in `custodyHops` with a negative delta (`Dungeon`'s
+`custody_lowers_only_by_take` — `take` is the one verb that lowers a code), and each
+floor's is a different negative number. So `deltaEquals (CARRIED − (HUNG + d))` names
+"lifted out of floor `d`'s door" and nothing else, on ANY verb. Method-independent for
+the same reason as arrival. -/
+def doorDepartureTooth (i d : Nat) : Constraint :=
+  .anyOf [ .fieldEquals "depth" d,
+           .negate (.heapField (.named (relicName i))
+             (.deltaEquals ((CARRIED : Int) - ((HUNG + d : Nat) : Int)))) ]
+
+/-- Both halves of the object-side door frame, for every key relic and every floor. -/
+def doorFrameTeeth : List Constraint :=
+  keyRelics.flatMap fun i =>
+    hangFloors.flatMap fun d => [doorArrivalTooth i d, doorDepartureTooth i d]
+
+/-- The door census, frozen (verbs that neither hang nor lift a key). -/
+def hungFreeze : List String := [hungName]
 
 /-- Every floor's hoard, frozen. -/
 def hoardFreeze : List String := hangFloors.map hoardName
@@ -381,7 +471,7 @@ def genesisCase : Case :=
       .fieldEquals (hoardName 4) (genesisHoard 4) ]
     -- Every door is EMPTY at the mint: no relic is minted already-hanging, which is the
     -- register-side twin of `Dungeon.genesis_pack_zero`/`genesis_bank_zero`.
-    ++ hangFloors.map (fun d => .fieldEquals (hungName d) 0)
+    ++ [.fieldEquals hungName 0]
     ++ (List.range RELICS).map (fun i => .heapField (.named (relicName i)) (.equals (homeCode i)))⟩
 
 /-- **delve** — descend exactly one floor: pay 1 breath, the way to the NEW floor must
@@ -422,14 +512,15 @@ UPWARD into the `HUNG` family, and both counters it touches are pinned exactly.
   `pack`     `(k, k−1)` enumerated — the carry slot comes back. `pack ≥ 1` falls out of
              the enumeration (there is no `(0, ·)` rung), which IS the "you must be
              holding the key" clause of `Dungeon.step`'s `.unlock` arm.
-  `hung_d`   `(k, k+1)` on the standing floor only (`hungFrameTooth`); every other
-             door is immutable, so conservation forces the +1 into THIS floor. -/
+  `hung`     `(k, k+1)` — the door census gains exactly one. WHICH door is not a counter
+             fact any more: `doorArrivalTooth` (on the `spent` rider, so every verb pays
+             it) says the relic that arrived is in the door on the floor you stand on. -/
 def unlockCase : Case :=
   ⟨.methodIs "unlock",
     coreTeeth ++
     [ .fieldDelta "spent" 1, .fieldEquals "fate" 0,
       .allowedTransitions "pack" ((List.range' 1 RELICS).map (fun k => (k, k - 1))),
-      hungFrameTooth 1, hungFrameTooth 2, hungFrameTooth 3, hungFrameTooth 4 ]
+      .allowedTransitions hungName ((List.range' 0 RELICS).map (fun k => (k, k + 1))) ]
     ++ frozen (["depth", "wounds", "bank", "harm"] ++ hoardFreeze)⟩
 
 /-- **smite — THE PRESS.** Wound the standing guardian by exactly 1: pay 2 breath (it
@@ -480,15 +571,16 @@ guardian tooth, one zone over: the relic is not lying in a hoard under a standin
 guardian, it is hanging in a door you already opened, so there is no fight — but the
 carry slot is charged all the same, at the identical posted price, and the capacity
 commons in `coreTeeth` price it against depth and harm exactly as they price a `loot`.
-`hungFrameTooth` pins WHICH door (the one you are standing at); conservation then forces
-the −1 out of that door and the +1 into the pack. `1 ≤ depth` is posted directly, and it
-is also implied — `HUNG + 0` is a code `unlock` can never write. -/
+`doorDepartureTooth` (on the `spent` rider, so every verb pays it) pins WHICH door — the
+one you are standing at — by the relic's own custody hop; the `hung` census then loses
+exactly one and the pack gains it. `1 ≤ depth` is posted directly, and it is also implied
+— `HUNG + 0` is a code `unlock` can never write. -/
 def takeCase : Case :=
   ⟨.methodIs "take",
     coreTeeth ++
     [ .fieldDelta "spent" 1, .fieldDelta "pack" 1,
       .fieldGte "depth" 1, .fieldEquals "fate" 0,
-      hungFrameTooth 1, hungFrameTooth 2, hungFrameTooth 3, hungFrameTooth 4 ]
+      .allowedTransitions hungName ((List.range' 1 RELICS).map (fun k => (k, k - 1))) ]
     ++ frozen (["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4, "harm"]
                ++ hoardFreeze)⟩
 
@@ -520,9 +612,12 @@ def depthRider : Case :=
                   .fieldEquals "wounds" 0,
                   wayTooth 2, wayTooth 3, wayTooth 4]⟩
 
-/-- ⚑ `depth = d ⇒ relic k hangs on floor d`. The floor half of the way law. -/
+/-- ⚑ `depth = d ⇒ relic k hangs on floor d`. The floor half of the way law — and a
+`heapField` variant, because the relic is a heap object: the register form of this tooth
+asked the loader for a slot named `relic_k`, which no cell has. -/
 def keyHangsHereTooth (k d : Nat) : Constraint :=
-  .anyOf [.negate (.fieldEquals "depth" d), .fieldEquals (relicName k) (HUNG + d)]
+  .anyOf [.negate (.fieldEquals "depth" d),
+          .heapField (.named (relicName k)) (.equals (HUNG + d))]
 
 /-- ANY verb that flips `way_w` must carry the `0→1` transition AND exhibit its key-relic.
 
@@ -540,8 +635,8 @@ def wayRider (w : Nat) : Case :=
   ⟨.slotChangedForMethods (wayName w) verbs,
     coreTeeth ++
     [ .allowedTransitions (wayName w) [(0, 1)],
-      .allowedTransitions (relicName (keyFor w))
-        (hangFloors.map (fun d => (CARRIED, HUNG + d))) ]
+      .heapField (.named (relicName (keyFor w)))
+        (.allowedTransitions (hangFloors.map (fun d => (CARRIED, HUNG + d)))) ]
     ++ hangFloors.map (keyHangsHereTooth (keyFor w))⟩
 
 /-- ANY verb that flips `fate` is a lawful banking (`0→1`, pack emptied, AT THE SURFACE).
@@ -571,10 +666,13 @@ def harmRider : Case :=
       .fieldDelta "wounds" 1, .fieldGte "depth" 1, .fieldEquals "fate" 0 ]⟩
 
 /-- ANY exertion (a `spent` change — every verb) pays the heavy commons: zone ranges,
-the per-relic provenance ratchet, and the genesis-sentinel freeze. -/
+the per-relic provenance ratchet, THE OBJECT-SIDE DOOR FRAME, and the genesis-sentinel
+freeze. ⚑ The door frame rides HERE rather than on `unlock`/`take`, which is what makes
+"you must be standing where it hangs" method-independent: there is no verb from which a
+key can be hung in, or lifted out of, a door on another floor. -/
 def spentRider : Case :=
   ⟨.slotChangedForMethods "spent" verbs,
-    coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
+    coreTeeth ++ rangeTeeth ++ custodyTeeth ++ doorFrameTeeth ++ projectionTeeth ++
       [.heapField .sentinel .immutable]⟩
 
 /-- The deployed case list: genesis + the EIGHT verb arms + the seven riders. -/
@@ -586,6 +684,160 @@ def programCases : List Case :=
 
 /-- **`dungeonProgram` — the DEPLOYED descent teeth, authored in Lean.** -/
 def dungeonProgram : CellProgram := .cases programCases
+
+/-! ### ⚑ THE REGISTER WALL — an over-wide program is a BUILD ERROR, here, at the source.
+
+A cell carries `STATE_SLOTS = 16` register slots (`dregg_cell::state::STATE_SLOTS`,
+re-exported through `spween_dregg` to `dregg_schema::layout`). Nothing downstream of
+this file can widen that. Two ways a program can ask for more than a cell has, and both
+were LIVE until this gate existed:
+
+  1. **too many register names** — the four-counter door family put the descent at 18
+     names, and the failure surfaced as a runtime `LayoutError::OutOfRegisters
+     { needed: 18, available: 16 }` at deploy time, in Rust, days after the teeth were
+     authored;
+  2. **a HEAP-resident name used as a register** — a relic is a `collection`, so
+     `Deployment::reg("relic_0")` had no slot to return and PANICKED in the loader.
+
+Both are decidable properties of the authored object, so both are checked HERE, by the
+kernel, in the file that writes the teeth. `registerNames` is the declared register file;
+`regsOfConstraint` walks every tooth and reports every name used in a REGISTER position;
+`programRegistersOK` is `by rfl` — it cannot be satisfied by a comment. -/
+
+/-- The register names the descent's teeth may mention. Heap keys are NOT here: they are
+`HeapKeyRef`s and live in `keyList` (`DungeonDeployed`). -/
+def registerNames : List String :=
+  ["depth", "spent", "wounds", "fate", "pack", "bank",
+   wayName 2, wayName 3, wayName 4,
+   hoardName 1, hoardName 2, hoardName 3, hoardName 4, "harm", hungName]
+
+/-- The cell's register-file width — `dregg_cell::state::STATE_SLOTS`. -/
+def stateSlotsBudget : Nat := 16
+
+/-- Every name a `Simple` uses in a REGISTER position. A `heapField` variant contributes
+NONE: that is the whole point of the arm. -/
+def regsOfSimple : Simple → List String
+  | .fieldEquals r _ => [r]
+  | .fieldGte r _    => [r]
+  | .fieldLte r _    => [r]
+  | .immutable r     => [r]
+  | .heapField _ _   => []
+  | .negate inner    => regsOfSimple inner
+
+/-- Every heap atom under a `Simple` composes (lifts into `Exec.SimpleConstraint`). -/
+def simplesComposeAux : Simple → Bool
+  | .heapField _ a => a.composes
+  | .negate inner  => simplesComposeAux inner
+  | _              => true
+
+/-- Every name a tooth uses in a REGISTER position. `heapField` and `countFieldsEq`'s
+`keys` contribute none; `countFieldsEq`'s COUNT target is a register and does. -/
+def regsOfConstraint : Constraint → List String
+  | .fieldEquals r _ => [r]
+  | .fieldGte r _    => [r]
+  | .fieldLte r _    => [r]
+  | .fieldDelta r _  => [r]
+  | .strictMonotonic r => [r]
+  | .immutable r     => [r]
+  | .sumEquals rs _  => rs
+  | .affineLe ts _   => ts.map Prod.snd
+  | .inRangeTwoSided r _ _ => [r]
+  | .allowedTransitions r _ => [r]
+  | .anyOf vs        => vs.flatMap regsOfSimple
+  | .heapField _ _   => []
+  | .countFieldsEq _ _ r => [r]
+
+/-- A guard's register position (`SlotChanged` indexes the register file). -/
+def regsOfGuard : Guard → List String
+  | .methodIs _ => []
+  | .slotChangedForMethods r _ => [r]
+
+/-- **THE WALL.** The declared register file fits in a cell, and every register position
+in every tooth and every guard of the authored program names a declared register. A tooth
+that reaches for a heap-resident name, or a program that declares more registers than a
+cell has, fails THIS `rfl` — at Lean build time, in this file. -/
+theorem programRegistersOK :
+    (decide (registerNames.length ≤ stateSlotsBudget)
+      && registerNames.eraseDups.length == registerNames.length
+      && programCases.all (fun c =>
+           (regsOfGuard c.guard).all (fun r => decide (r ∈ registerNames))
+             && c.constraints.all (fun t =>
+                  (regsOfConstraint t).all (fun r => decide (r ∈ registerNames))))) = true := by
+  rfl
+
+/-- The companion pin: no `anyOf` variant carries a relational heap atom, so
+`HeapAtom.toExecSimple`'s fail-closed ⊥ branch is unreachable in the authored object. -/
+theorem simplesCompose :
+    (programCases.all fun c => c.constraints.all fun t =>
+      match t with
+      | .anyOf vs => vs.all simplesComposeAux
+      | _ => true) = true := by
+  rfl
+
+/-! ### The wall goes RED — the shapes it refuses, exhibited.
+
+`programRegistersOK` is only a gate if a wrong program fails it. Both shapes below are
+verbatim the ones this campaign removed, and both are REFUSED by the same predicate the
+authored program passes. -/
+
+/-- The register-position walker, as a decidable predicate on any case list. -/
+def registersOK (cs : List Case) : Bool :=
+  decide (registerNames.length ≤ stateSlotsBudget)
+    && registerNames.eraseDups.length == registerNames.length
+    && cs.all (fun c =>
+         (regsOfGuard c.guard).all (fun r => decide (r ∈ registerNames))
+           && c.constraints.all (fun t =>
+                (regsOfConstraint t).all (fun r => decide (r ∈ registerNames))))
+
+section CanonRegisterWall
+local instance : WorldParam := instAt 0
+
+-- The authored program passes.
+#guard registersOK programCases = true
+
+-- ⚑ RED 1 — **THE FOUR-COUNTER DOOR FAMILY.** `Σ zones = RELICS` over ten register
+-- zones, which is what the repaired model asked for. Eighteen register names in a cell
+-- that has sixteen: REFUSED, at Lean build time, in this file — not as a
+-- `LayoutError::OutOfRegisters { needed: 18, available: 16 }` days later at deploy.
+#guard registersOK
+  [⟨.methodIs "unlock",
+     [.sumEquals ["pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4",
+                  "hung_1", "hung_2", "hung_3", "hung_4"] RELICS]⟩] = false
+
+-- ⚑ RED 2 — **A HEAP-RESIDENT NAME IN A REGISTER POSITION.** The per-relic custody hop
+-- table, written the way it was written: `allowedTransitions "relic_1" …`. A relic is a
+-- `collection`, i.e. heap-resident, so this tooth asked `Deployment::reg("relic_1")` for
+-- a slot that does not exist — a runtime PANIC in the loader. REFUSED here.
+#guard registersOK
+  [⟨.methodIs "unlock",
+     [.allowedTransitions (relicName 1) (custodyHops 1)]⟩] = false
+
+-- ⚑ RED 3 — the same wound one level down, inside an `anyOf` variant: the floor half of
+-- the way law as `fieldEquals "relic_1" (HUNG + d)`. This is the shape `Simple.heapField`
+-- exists to make unnecessary; the wall refuses it either way.
+#guard registersOK
+  [⟨.methodIs "unlock",
+     [.anyOf [.negate (.fieldEquals "depth" 1), .fieldEquals (relicName 1) (HUNG + 1)]]⟩] = false
+
+-- …and the GREEN twin of RED 2/3: the same two laws stated on the object are ACCEPTED.
+#guard registersOK
+  [⟨.methodIs "unlock",
+     [.heapField (.named (relicName 1)) (.allowedTransitions (custodyHops 1)),
+      keyHangsHereTooth 1 1]⟩] = true
+
+-- ⚑ THE MEASUREMENT, PINNED. Before this change the authored program used `hung_d` in a
+-- register position 60 times and `relic_i` in one 23 times; both are now ZERO, and the
+-- whole register demand is 15 of the cell's 16.
+#guard (programCases.flatMap (fun c =>
+          regsOfGuard c.guard ++ c.constraints.flatMap regsOfConstraint)).countP
+        (fun r => hangFloors.any (fun d => r == s!"hung_{d}")) = 0
+#guard (programCases.flatMap (fun c =>
+          regsOfGuard c.guard ++ c.constraints.flatMap regsOfConstraint)).countP
+        (fun r => (List.range RELICS).any (fun i => r == relicName i)) = 0
+#guard ((programCases.flatMap (fun c =>
+          regsOfGuard c.guard ++ c.constraints.flatMap regsOfConstraint)).eraseDups).length = 15
+
+end CanonRegisterWall
 
 /-! ## 3. The lift into the LAW-#1 algebra (`Dregg2.Exec`) — proofs run HERE. -/
 
@@ -609,11 +861,29 @@ def methodIdx : String → Nat
   | "take"    => 8
   | _         => 1000
 
+/-- The COMPOSING heap atoms, lifted into the name-keyed `Exec.SimpleConstraint` lane —
+the `Exec` substrate has one namespace, so a heap key reads exactly like a register name
+and the lift is the identity on meaning.
+
+⚑ `allowedTransitions` is relational and has no `SimpleConstraint` form on EITHER
+substrate, so it lowers here to the EMPTY allowlist — `new ∈ ∅`, the canonical ⊥. That is
+fail-closed by construction rather than a silent reinterpretation, and it is UNREACHABLE
+in the authored program: `simplesCompose` (below) pins by kernel evaluation that no
+`Simple.heapField` in `dungeonProgram` carries one. -/
+def HeapAtom.toExecSimple (f : String) : HeapAtom → Dregg2.Exec.SimpleConstraint
+  | .equals v      => .fieldEquals f (v : Int)
+  | .immutable     => .immutable f
+  | .monotonic     => .monotonic f
+  | .memberOf set  => .memberOf f (set.map (fun v => (v : Int)))
+  | .deltaEquals d => .fieldDelta f d
+  | .allowedTransitions _ => .memberOf f []
+
 def Simple.toExec : Simple → Dregg2.Exec.SimpleConstraint
   | .fieldEquals r v => .fieldEquals r (v : Int)
   | .fieldGte r v    => .fieldGe r (v : Int)
   | .fieldLte r v    => .fieldLe r (v : Int)
   | .immutable r     => .immutable r
+  | .heapField k a   => a.toExecSimple k.field
   | .negate inner    => .not inner.toExec
 
 def HeapAtom.toExec (f : String) : HeapAtom → Dregg2.Exec.StateConstraint
@@ -622,6 +892,8 @@ def HeapAtom.toExec (f : String) : HeapAtom → Dregg2.Exec.StateConstraint
   | .monotonic     => .simple (.monotonic f)
   | .memberOf set  => .simple (.memberOf f (set.map (fun v => (v : Int))))
   | .deltaEquals d => .simple (.fieldDelta f d)
+  | .allowedTransitions al =>
+      .allowedTransitions f (al.map (fun p => ((p.1 : Int), (p.2 : Int))))
 
 def Constraint.toExec : Constraint → Dregg2.Exec.StateConstraint
   | .fieldEquals r v => .simple (.fieldEquals r (v : Int))
@@ -865,8 +1137,8 @@ theorem way_flip_exhibits_key (w : Nat) (hw : w = 2 ∨ w = 3 ∨ w = 4)
             TransitionGuard.matches, Dregg2.Exec.allMatch, Dregg2.Exec.anyMatch, hflip]
   have hall := admits_cases_mem (tcs := programCases.map Case.toExec) h
     (tc := (wayRider w).toExec) hmem hmatch
-  have hkey := hall ((Constraint.allowedTransitions (relicName (keyFor w))
-      (hangFloors.map (fun d => (CARRIED, HUNG + d)))).toExec)
+  have hkey := hall ((Constraint.heapField (.named (relicName (keyFor w)))
+      (.allowedTransitions (hangFloors.map (fun d => (CARRIED, HUNG + d))))).toExec)
     (List.mem_map_of_mem (by simp [wayRider, List.mem_append]))
   have htrans := hall ((Constraint.allowedTransitions (wayName w) [(0, 1)]).toExec)
     (List.mem_map_of_mem (by simp [wayRider, List.mem_append]))
@@ -990,8 +1262,8 @@ def encode (s : DState) : Value :=
        (wayName 2, .int (s.ways.getD 0 0)), (wayName 3, .int (s.ways.getD 1 0)),
        (wayName 4, .int (s.ways.getD 2 0)),
        (hoardName 1, .int (hoardAt s 1)), (hoardName 2, .int (hoardAt s 2)),
-       (hoardName 3, .int (hoardAt s 3)), (hoardName 4, .int (hoardAt s 4)) ]
-     ++ hangFloors.map (fun d => (hungName d, Value.int (hungAt s d)))
+       (hoardName 3, .int (hoardAt s 3)), (hoardName 4, .int (hoardAt s 4)),
+       (hungName, .int (hungTotal s)) ]
      ++ (List.range RELICS).map (fun i => (relicName i, .int (s.custody.getD i 0)))
      ++ [(sentinelField, .int 1)])
 
@@ -1004,8 +1276,7 @@ def preGenesis : Value :=
       (wayName 2, .int 0), (wayName 3, .int 0), (wayName 4, .int 0),
       (hoardName 1, .int 0), (hoardName 2, .int 0), (hoardName 3, .int 0),
       (hoardName 4, .int 0),
-      (hungName 1, .int 0), (hungName 2, .int 0), (hungName 3, .int 0),
-      (hungName 4, .int 0), (sentinelField, .int 0) ]
+      (hungName, .int 0), (sentinelField, .int 0) ]
 
 def moveIdx : Move → Nat
   | .delve    => 1
@@ -1055,9 +1326,28 @@ private def spentRiderWithoutProjection : Case :=
 private def dungeonExecWithoutProjection : Dregg2.Exec.RecordProgram :=
   CellProgram.toExec (.cases
     [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
-      ascendCase,
+      ascendCase, takeCase,
       depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, harmRider,
       spentRiderWithoutProjection ])
+
+/-- ⚑ Mutation-canary referee #2: the deployed program with exactly the 24 OBJECT-SIDE
+DOOR-FRAME teeth deleted from the spent rider — everything else, including the whole
+`hung` residue accounting and conservation, left standing. It exists to prove that the
+door frame moving from four `hung_d` REGISTERS onto the relic's own custody key did not
+quietly drop the law: with these teeth gone, THE REMOTE TAKE ADMITS (attack 7b below),
+and with them present it is refused. A frame that is not the rejecting tooth is
+decoration. -/
+private def spentRiderWithoutDoorFrame : Case :=
+  ⟨.slotChangedForMethods "spent" verbs,
+    coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
+      [.heapField .sentinel .immutable]⟩
+
+private def dungeonExecWithoutDoorFrame : Dregg2.Exec.RecordProgram :=
+  CellProgram.toExec (.cases
+    [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase, lungeCase,
+      ascendCase, takeCase,
+      depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider, harmRider,
+      spentRiderWithoutDoorFrame ])
 
 /-! ### The weld, DRIVEN (`#guard` — kernel-evaluated, no axioms):
 the model-legal crowned run is admitted END TO END by the deployed program object,
@@ -1197,23 +1487,47 @@ local instance : WorldParam := instAt 0
 -- ⚑ Attack 7b — THE REMOTE TAKE: lift a key out of a door you are NOT standing at. The
 -- key hangs on floor 1; the run is on floor 2; everything else is a lawful `take` (one
 -- breath, the carry slot charged, conservation balanced, the custody hop
--- `HUNG + 1 → CARRIED` in the enumeration). REFUSED by `hungFrameTooth 1` alone — the
--- door frame is what says "you must be STANDING WHERE IT HANGS"
+-- `HUNG + 1 → CARRIED` in the enumeration). REFUSED by `doorDepartureTooth 1 1` alone —
+-- the door frame is what says "you must be STANDING WHERE IT HANGS"
 -- (`Dungeon.custody_lowers_only_by_take`), and the model refuses the same turn
 -- (`Dungeon.lean` §10: `replay [.delve, .smite, .loot 1, .unlock 2, .delve, .take 1]
 -- = none`).
+-- ⚑ The forgery is now written on the OBJECT alone (`relic_1` back to `CARRIED`, the
+-- carry slot charged, the door residue debited) — there is no per-floor counter left to
+-- forge, which is exactly why the refusing tooth had to move onto the relic.
 #guard
   (let s := st [.delve, .smite, .loot 1, .unlock 2, .delve]
    let forged := setF (setF (setF (setF (encode s)
-      (relicName 1) CARRIED) "pack" 1) (hungName 1) 0) "spent" 7
+      (relicName 1) CARRIED) "pack" 1) hungName 0) "spent" 7
    Dregg2.Exec.RecordProgram.admits dungeonExec 8 (encode s) forged) = false
 -- …and the honest twin: the SAME write set STANDING ON FLOOR 1 is admitted. Without this
 -- pole the tooth above would be indistinguishable from one that refuses every `take`.
 #guard
   (let s := st [.delve, .smite, .loot 1, .unlock 2]
    let forged := setF (setF (setF (setF (encode s)
-      (relicName 1) CARRIED) "pack" 1) (hungName 1) 0) "spent" 6
+      (relicName 1) CARRIED) "pack" 1) hungName 0) "spent" 6
    Dregg2.Exec.RecordProgram.admits dungeonExec 8 (encode s) forged) = true
+-- ⚑ …and the MUTATION CANARY: delete exactly the 24 object-side door-frame teeth and the
+-- SAME remote take ADMITS. This is what makes the move off the `hung_d` registers a
+-- relocation rather than a deletion — the door frame is the rejecting tooth, and it is
+-- now stated on the relic that moved instead of on a projection of it.
+#guard
+  (let s := st [.delve, .smite, .loot 1, .unlock 2, .delve]
+   let forged := setF (setF (setF (setF (encode s)
+      (relicName 1) CARRIED) "pack" 1) hungName 0) "spent" 7
+   Dregg2.Exec.RecordProgram.admits dungeonExecWithoutDoorFrame 8 (encode s) forged) = true
+
+-- ⚑ Attack 7c — THE REMOTE HANG (the arrival half): standing on floor 2, hang the key
+-- into floor 1's door. Everything else is a lawful `unlock` shape. REFUSED by
+-- `doorArrivalTooth 1 1` — a key enters the door on the floor you are STANDING on, and
+-- that is now a fact about the relic, not about a counter.
+#guard
+  (let s := st [.delve, .smite, .loot 1, .unlock 2, .delve, .smite, .loot 2]
+   let forged := setF (setF (setF (setF (encode s)
+      (relicName 2) (HUNG + 1)) "pack" ((pack (st [.delve, .smite, .loot 1, .unlock 2,
+        .delve, .smite, .loot 2])) - 1)) hungName ((hungTotal (st [.delve, .smite, .loot 1,
+        .unlock 2, .delve, .smite, .loot 2])) + 1)) "spent" 9
+   Dregg2.Exec.RecordProgram.admits dungeonExec 2 (encode s) forged) = false
 
 -- Attack 8 — UNKNOWN METHOD: a method outside the seven verbs is default-denied even
 -- with a fully-lawful-looking write set.
@@ -1282,22 +1596,25 @@ def HeapKeyRef.toJson : HeapKeyRef → String
   | .named n  => "{\"kind\":\"named\",\"name\":" ++ jStr n ++ "}"
   | .sentinel => "{\"kind\":\"sentinel\"}"
 
+def jPair (p : Nat × Nat) : String :=
+  "[" ++ toString p.1 ++ "," ++ toString p.2 ++ "]"
+
 def HeapAtom.toJson : HeapAtom → String
   | .equals v      => "{\"kind\":\"equals\",\"value\":" ++ toString v ++ "}"
   | .immutable     => "{\"kind\":\"immutable\"}"
   | .monotonic     => "{\"kind\":\"monotonic\"}"
   | .memberOf set  => "{\"kind\":\"memberOf\",\"set\":" ++ jList (set.map toString) ++ "}"
   | .deltaEquals d => "{\"kind\":\"deltaEquals\",\"d\":" ++ toString d ++ "}"
+  | .allowedTransitions al =>
+      "{\"kind\":\"allowedTransitions\",\"allowed\":" ++ jList (al.map jPair) ++ "}"
 
 def Simple.toJson : Simple → String
   | .fieldEquals r v => "{\"kind\":\"fieldEquals\",\"reg\":" ++ jStr r ++ ",\"value\":" ++ toString v ++ "}"
   | .fieldGte r v    => "{\"kind\":\"fieldGte\",\"reg\":" ++ jStr r ++ ",\"value\":" ++ toString v ++ "}"
   | .fieldLte r v    => "{\"kind\":\"fieldLte\",\"reg\":" ++ jStr r ++ ",\"value\":" ++ toString v ++ "}"
   | .immutable r     => "{\"kind\":\"immutable\",\"reg\":" ++ jStr r ++ "}"
+  | .heapField k a   => "{\"kind\":\"heapField\",\"key\":" ++ k.toJson ++ ",\"atom\":" ++ a.toJson ++ "}"
   | .negate inner    => "{\"kind\":\"not\",\"inner\":" ++ inner.toJson ++ "}"
-
-def jPair (p : Nat × Nat) : String :=
-  "[" ++ toString p.1 ++ "," ++ toString p.2 ++ "]"
 
 def jTerm (t : Int × String) : String :=
   "[" ++ toString t.1 ++ "," ++ jStr t.2 ++ "]"
@@ -1381,6 +1698,8 @@ end CanonEmit
 
 /-! ## 7. Axiom hygiene — every connection theorem on the standard kernel triple. -/
 
+#assert_axioms programRegistersOK
+#assert_axioms simplesCompose
 #assert_axioms admits_cases_mem
 #assert_axioms verb_core_teeth
 #assert_axioms admitted_verb_conserves

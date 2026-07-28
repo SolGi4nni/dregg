@@ -102,13 +102,10 @@ theorem way_flip_key_mutation_refused (w : Nat) (hwLo : 2 ≤ w) (hwHi : w ≤ F
 @[simp] private theorem hoardName_3 : hoardName 3 = "hoard_3" := by decide
 @[simp] private theorem hoardName_4 : hoardName 4 = "hoard_4" := by decide
 -- ⚑ THE DOORS. `hangFloors` is `List.range' 1 FLOORS`, which is opaque to `simp` until
--- it is a literal; without this pin nothing below can reduce a lookup past the `hung_d`
--- block that `encode` now carries in the middle of its field list.
+-- it is a literal; without this pin nothing below can reduce a lookup past the door
+-- residue that `encode` carries.
 @[simp] private theorem hangFloors_eq : hangFloors = [1, 2, 3, 4] := by decide
-@[simp] private theorem hungName_1 : hungName 1 = "hung_1" := by decide
-@[simp] private theorem hungName_2 : hungName 2 = "hung_2" := by decide
-@[simp] private theorem hungName_3 : hungName 3 = "hung_3" := by decide
-@[simp] private theorem hungName_4 : hungName 4 = "hung_4" := by decide
+@[simp] private theorem hungName_eq : hungName = "hung" := by decide
 @[simp] private theorem relicName_0 : relicName 0 = "relic_0" := by decide
 @[simp] private theorem relicName_1 : relicName 1 = "relic_1" := by decide
 @[simp] private theorem relicName_2 : relicName 2 = "relic_2" := by decide
@@ -174,16 +171,14 @@ private theorem encode_scalar_hoard (s : DState) (d : Nat) (hdLo : 1 ≤ d)
     simp [encode, Value.scalar, Value.field]
 
 open Dregg2.Exec in
-/-- ⚑ The door census, read off the encoding. `hungAt` is the model's own projection
-(`countP (· == HUNG + d)`), so the register cannot disagree with custody about how many
-keys hang on floor `d` — the same reason the hoard readings cannot. -/
-private theorem encode_scalar_hung (s : DState) (d : Nat) (hdLo : 1 ≤ d)
-    (hdHi : d ≤ FLOORS) :
-    (encode s).scalar (hungName d) = some (hungAt s d : Int) := by
-  have hdHi' : d ≤ 4 := hdHi
-  have hd : d = 1 ∨ d = 2 ∨ d = 3 ∨ d = 4 := by omega
-  rcases hd with rfl | rfl | rfl | rfl <;>
-    simp [encode, Value.scalar, Value.field]
+/-- ⚑ The door census, read off the encoding. `hungTotal` is a sum of the model's own
+`hungAt` projections (`countP (· == HUNG + d)`), so the register cannot disagree with
+custody about how many keys hang in doors — the same reason the hoard readings cannot.
+The per-FLOOR fact the four old registers carried did not evaporate: it moved onto the
+relic (`doorArrivalTooth` / `doorDepartureTooth` / `keyHangsHereTooth`). -/
+private theorem encode_scalar_hung (s : DState) :
+    (encode s).scalar hungName = some (hungTotal s : Int) := by
+  simp [encode, Value.scalar, Value.field]
 
 open Dregg2.Exec in
 private theorem encode_scalar_relic (s : DState) (i : Nat) (hi : i < RELICS) :
@@ -228,21 +223,14 @@ open Dregg2.Exec in
   simpa using encode_scalar_hoard s 4 (by decide) (by decide)
 
 open Dregg2.Exec in
-@[simp] private theorem encode_scalar_hung1 (s : DState) :
-    (encode s).scalar "hung_1" = some (hungAt s 1 : Int) := by
-  simpa using encode_scalar_hung s 1 (by decide) (by decide)
-open Dregg2.Exec in
-@[simp] private theorem encode_scalar_hung2 (s : DState) :
-    (encode s).scalar "hung_2" = some (hungAt s 2 : Int) := by
-  simpa using encode_scalar_hung s 2 (by decide) (by decide)
-open Dregg2.Exec in
-@[simp] private theorem encode_scalar_hung3 (s : DState) :
-    (encode s).scalar "hung_3" = some (hungAt s 3 : Int) := by
-  simpa using encode_scalar_hung s 3 (by decide) (by decide)
-open Dregg2.Exec in
-@[simp] private theorem encode_scalar_hung4 (s : DState) :
-    (encode s).scalar "hung_4" = some (hungAt s 4 : Int) := by
-  simpa using encode_scalar_hung s 4 (by decide) (by decide)
+@[simp] private theorem encode_scalar_hungLit (s : DState) :
+    (encode s).scalar "hung" = some (hungTotal s : Int) := by
+  simpa using encode_scalar_hung s
+
+/-- The door residue as the four per-floor censuses, for the arithmetic below. -/
+private theorem hungTotal_split (s : DState) :
+    hungTotal s = hungAt s 1 + hungAt s 2 + hungAt s 3 + hungAt s 4 := by
+  simp [hungTotal, hangFloors_eq]; omega
 
 open Dregg2.Exec in
 @[simp] private theorem encode_scalar_relic0 (s : DState) :
@@ -516,11 +504,12 @@ open Dregg2.Exec in
 private theorem encode_sum_zones_of_inv {s : DState} (hInv : Inv s) :
     sumScalars (encode s) zones = some (RELICS : Int) := by
   have htotal := zones_total_of_inv hInv
+  have hht := hungTotal_split s
+  have htotalN : pack s + bank s + hoardAt s 1 + hoardAt s 2 + hoardAt s 3 + hoardAt s 4
+      + hungTotal s = RELICS := by omega
   have htotalZ : (pack s : Int) + (bank s : Int) + (hoardAt s 1 : Int) +
       (hoardAt s 2 : Int) + (hoardAt s 3 : Int) + (hoardAt s 4 : Int) +
-      (hungAt s 1 : Int) + (hungAt s 2 : Int) + (hungAt s 3 : Int) +
-      (hungAt s 4 : Int) = (RELICS : Int) := by
-    exact_mod_cast htotal
+      (hungTotal s : Int) = (RELICS : Int) := by exact_mod_cast htotalN
   simp [sumScalars, zones]
   simpa [RELICS, add_comm, add_left_comm, add_assoc] using htotalZ
 
@@ -811,18 +800,14 @@ private theorem rangeTeeth_honest {s : DState} (hInv : Inv s) (o : Value) :
   · refine ⟨hoardAt s 4, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
     simp only [hoardAt]
     exact_mod_cast (List.countP_le_length (l := s.custody)).trans_eq hlen
-  · refine ⟨hungAt s 1, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
-    simp only [hungAt]
-    exact_mod_cast (List.countP_le_length (l := s.custody)).trans_eq hlen
-  · refine ⟨hungAt s 2, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
-    simp only [hungAt]
-    exact_mod_cast (List.countP_le_length (l := s.custody)).trans_eq hlen
-  · refine ⟨hungAt s 3, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
-    simp only [hungAt]
-    exact_mod_cast (List.countP_le_length (l := s.custody)).trans_eq hlen
-  · refine ⟨hungAt s 4, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
-    simp only [hungAt]
-    exact_mod_cast (List.countP_le_length (l := s.custody)).trans_eq hlen
+  -- ⚑ The door residue: bounded by the PARTITION, not by a `countP` of its own. It is
+  -- one register standing for four censuses, and `zones_total_of_inv` is exactly the
+  -- statement that the seven zones partition the eight relics.
+  · refine ⟨hungTotal s, by simp, by exact_mod_cast Nat.zero_le _, ?_⟩
+    have hpart := zones_total_of_inv hInv
+    have hsplit := hungTotal_split s
+    have : hungTotal s ≤ RELICS := by omega
+    exact_mod_cast this
 
 open Dregg2.Exec in
 /-- The hop tooth, generically — stated over the PAIR so the case analysis lands on the
@@ -918,15 +903,18 @@ private theorem countScalarsEq_relicKeys_encode (s : DState) (hInv : Inv s)
     HeapKeyRef.field, hcustody] using hcount
 
 open Dregg2.Exec in
-/-- ⚑ The census teeth, INCLUDING THE DOORS. A `hung_d` register that is not pinned to the
-census of `HUNG + d` custody codes would let `unlock` debit the pack and credit a door
-with no relic actually hanging there — the object/projection split, one zone over. -/
+/-- ⚑ The census teeth. SIX, and the door residue is not among them BY DERIVATION rather
+than by omission: `hung` is pinned by conservation (`Σ zones = RELICS`) against these six
+EXACT censuses plus the per-relic custody alphabet, so a seventh tooth would restate a
+consequence — and could not be stated anyway, since `countFieldsEq` counts ONE value and
+the door family is four. The per-FLOOR fact the four old registers carried moved onto the
+relic (`doorArrivalTooth` / `doorDepartureTooth`), where it names the object that moved. -/
 private theorem projectionTeeth_honest {s : DState} (hInv : Inv s) (o : Value) :
     ∀ c ∈ projectionTeeth, evalConstraint c.toExec o (encode s) = true := by
   intro c hc
-  simp only [projectionTeeth, List.mem_append, List.mem_cons, List.not_mem_nil,
+  simp only [projectionTeeth, List.mem_cons, List.not_mem_nil,
     or_false] at hc
-  rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl) | hhung
+  rcases hc with rfl | rfl | rfl | rfl | rfl | rfl
   · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
     exact ⟨pack s, countScalarsEq_relicKeys_encode s hInv CARRIED, encode_scalar_pack s⟩
   · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
@@ -943,13 +931,6 @@ private theorem projectionTeeth_honest {s : DState} (hInv : Inv s) (o : Value) :
   · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
     exact ⟨hoardAt s 4, countScalarsEq_relicKeys_encode s hInv 4,
       encode_scalar_hoard s 4 (by decide) (by decide)⟩
-  · obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hhung
-    have hdCases : d = 1 ∨ d = 2 ∨ d = 3 ∨ d = 4 := by
-      simpa using hd
-    apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
-    rcases hdCases with rfl | rfl | rfl | rfl <;>
-      exact ⟨hungAt s _, countScalarsEq_relicKeys_encode s hInv _,
-        encode_scalar_hung s _ (by decide) (by decide)⟩
 
 open Dregg2.Exec in
 private theorem spentRider_honest {s s' : DState} {m : Move}
@@ -1246,7 +1227,7 @@ private theorem ascendCase_honest {s s' : DState}
       wayTooth 2, wayTooth 3, wayTooth 4] ++
     frozen ["pack", "bank", wayName 2, wayName 3, wayName 4, "harm",
       hoardName 1, hoardName 2, hoardName 3, hoardName 4,
-      hungName 1, hungName 2, hungName 3, hungName 4] ++ relicFreeze at hc
+      hungName] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -1288,7 +1269,8 @@ private theorem ascendCase_honest {s s' : DState}
       simp only [step] at hstep
       split at hstep
       · cases hstep
-        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungAt]
+        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungTotal,
+              hangFloors_eq, hungAt]
       · exact absurd hstep (by simp)
   · obtain ⟨i, hiRange, rfl⟩ := List.mem_map.mp hrelic
     have hi : i < RELICS := List.mem_range.mp hiRange
@@ -1339,7 +1321,7 @@ private theorem delveCase_honest {s s' : DState}
       wayTooth 2, wayTooth 3, wayTooth 4] ++
     frozen ["pack", "bank", wayName 2, wayName 3, wayName 4, "harm",
       hoardName 1, hoardName 2, hoardName 3, hoardName 4,
-      hungName 1, hungName 2, hungName 3, hungName 4] ++ relicFreeze at hc
+      hungName] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -1375,7 +1357,8 @@ private theorem delveCase_honest {s s' : DState}
       simp only [step] at hstep
       split at hstep
       · cases hstep
-        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungAt]
+        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungTotal,
+              hangFloors_eq, hungAt]
       · exact absurd hstep (by simp)
   · obtain ⟨i, hiRange, rfl⟩ := List.mem_map.mp hrelic
     have hi : i < RELICS := List.mem_range.mp hiRange
@@ -1915,7 +1898,7 @@ private theorem smiteCase_honest {s s' : DState}
       guardCapTooth 1, guardCapTooth 2, guardCapTooth 3, guardCapTooth 4] ++
     frozen ["depth", "pack", "bank", wayName 2, wayName 3, wayName 4, "harm",
       hoardName 1, hoardName 2, hoardName 3, hoardName 4,
-      hungName 1, hungName 2, hungName 3, hungName 4] ++ relicFreeze at hc
+      hungName] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -1956,7 +1939,8 @@ private theorem smiteCase_honest {s s' : DState}
       simp only [step] at hstep
       split at hstep
       · cases hstep
-        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungAt]
+        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungTotal,
+              hangFloors_eq, hungAt]
       · exact absurd hstep (by simp)
   · obtain ⟨i, hiRange, rfl⟩ := List.mem_map.mp hrelic
     have hi : i < RELICS := List.mem_range.mp hiRange
@@ -2114,7 +2098,7 @@ private theorem lungeCase_honest {s s' : DState}
       guardCapTooth 1, guardCapTooth 2, guardCapTooth 3, guardCapTooth 4] ++
     frozen ["depth", "pack", "bank", wayName 2, wayName 3, wayName 4,
       hoardName 1, hoardName 2, hoardName 3, hoardName 4,
-      hungName 1, hungName 2, hungName 3, hungName 4] ++ relicFreeze at hc
+      hungName] ++ relicFreeze at hc
   simp only [List.mem_append] at hc
   rcases hc with ((hcore | hverb) | hfrozen) | hrelic
   · exact coreTeeth_honest hInv hstep c hcore
@@ -2157,7 +2141,8 @@ private theorem lungeCase_honest {s s' : DState}
       simp only [step] at hstep
       split at hstep
       · cases hstep
-        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungAt]
+        simp [Constraint.toExec, evalConstraint, evalSimple, pack, bank, hoardAt, hungTotal,
+              hangFloors_eq, hungAt]
       · exact absurd hstep (by simp)
   · obtain ⟨i, hiRange, rfl⟩ := List.mem_map.mp hrelic
     have hi : i < RELICS := List.mem_range.mp hiRange
@@ -2386,7 +2371,7 @@ private theorem lootCase_honest {s s' : DState} {r : Nat}
       hoardFrameTooth 1, hoardFrameTooth 2, hoardFrameTooth 3,
       hoardFrameTooth 4] ++
     frozen ["depth", "wounds", "bank", wayName 2, wayName 3, wayName 4, "harm",
-      hungName 1, hungName 2, hungName 3, hungName 4] at hc
+      hungName] at hc
   simp only [List.mem_append] at hc
   rcases hc with (hcore | hverb) | hfrozen
   · exact coreTeeth_honest hInv hstep c hcore
@@ -2914,7 +2899,7 @@ private theorem fleeCase_honest {s s' : DState}
       .fieldEquals "depth" 0] ++
     frozen ["depth", "wounds", wayName 2, wayName 3, wayName 4, "harm",
       hoardName 1, hoardName 2, hoardName 3, hoardName 4,
-      hungName 1, hungName 2, hungName 3, hungName 4] at hc
+      hungName] at hc
   simp only [List.mem_append] at hc
   rcases hc with (hcore | hverb) | hfrozen
   · exact coreTeeth_honest hInv hstep c hcore

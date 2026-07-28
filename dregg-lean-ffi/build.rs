@@ -626,6 +626,20 @@ fn seed_build_archive(seed: &Path, build: &Path) -> bool {
 /// which wipes the previous splice), or the archive's Dregg2 slice is incomplete. `rerun-if-changed`
 /// is emitted by the caller for the source tree + toolchain marker, so a genuine no-op cargo build
 /// does not even re-enter this function.
+/// ⚑ RETURNS `true` iff the archive left in place is NOT built from the current Lean source — a
+/// PROVENANCE DOWNGRADE. Every early `return` below is such a path: the Lean build was skipped,
+/// refused, failed to elaborate, failed to compile, or failed to splice, and what remains linkable
+/// is a seed or a previous build. The caller MUST NOT advertise a downgraded archive as a verified
+/// runtime (see `main`'s provenance gate) — a `cargo:warning` cannot carry that, because cargo
+/// HIDES build-script warnings for dependency crates, and `dregg-lean-ffi` is always a dependency.
+///
+/// This return value is load-bearing and was measured into existence (2026-07-28). Without it a
+/// debug `cargo test` linked a THREE-DAY-OLD seed, `finality_gate_available()` stayed true (the old
+/// seed exports the symbol), and `node/src/finality_gate.rs`'s enrollment falsifier ran against the
+/// PRE-`c6f00c228` `tauOrder` — the one with no `enrolledId` filter — and reported "the VERIFIED
+/// rule FINALIZED a block created by an UNENROLLED identity. The gate is OPEN." The gate was not
+/// open; the test was reading last week's rule. A stale archive and a broken rule were, at the
+/// point of measurement, the same observation.
 fn build_dregg2_archive(
     meta: &Path,
     sysroot: &Path,
@@ -634,7 +648,7 @@ fn build_dregg2_archive(
     seed: &Path,
     require_current_source: bool,
     reseeded: bool,
-) {
+) -> bool {
     // ── COLD-LANE GUARD (2026-07-25) — check the archive BEFORE spending a Lean build ─────────
     //
     // This function used to `lake build` FIRST and only then discover, ~700 lines later, that the
@@ -667,7 +681,7 @@ fn build_dregg2_archive(
                 archive.display(),
                 seed.display()
             );
-            return;
+            return true;
         }
         println!(
             "cargo:warning=dregg-lean-ffi: DREGG_LEAN_COLD_BUILD=1 — running a COLD Lean build. \
@@ -789,7 +803,7 @@ fn build_dregg2_archive(
             // Force the working archive back to the seed (overwrite any prior incoherent splice).
             let _ = std::fs::remove_file(archive);
             let _ = seed_build_archive(seed, archive);
-            return;
+            return true;
         }
         Err(e) => {
             if require_current_source {
@@ -803,7 +817,7 @@ fn build_dregg2_archive(
                 "cargo:warning=dregg-lean-ffi: could not run `lake build` ({e}) — is elan/lake on \
                  PATH? Falling back to the existing archive (if any)."
             );
-            return;
+            return true;
         }
     }
 
@@ -821,7 +835,7 @@ fn build_dregg2_archive(
              Dregg2 native objects. Run `lake build Dregg2.Exec.FFI` in metatheory and re-check.",
             dregg2_ir.display()
         );
-        return;
+        return true;
     }
 
     // Persistent object cache (so the `.c`-newer-than-`.o` guard survives across cargo builds).
@@ -837,7 +851,7 @@ fn build_dregg2_archive(
             "cargo:warning=dregg-lean-ffi: cannot create {} ({e})",
             obj_dir.display()
         );
-        return;
+        return true;
     }
 
     // (2) Compile each Dregg2 `.c` newer than its cached `.o`, in parallel up to the CPU count.
@@ -959,7 +973,7 @@ fn build_dregg2_archive(
                 "cargo:warning=dregg-lean-ffi: at least one Dregg2 C facet failed to compile — \
                  NOT re-splicing the archive (it keeps its previous, consistent contents)."
             );
-            return;
+            return true;
         }
     }
 
@@ -997,7 +1011,7 @@ fn build_dregg2_archive(
              marshal-only for now.",
             archive.display()
         );
-        return;
+        return true;
     }
 
     if needs_splice {
@@ -1012,7 +1026,7 @@ fn build_dregg2_archive(
                 "cargo:warning=dregg-lean-ffi: archive splice failed ({e}) — the archive was left \
                  unchanged; a previous-but-consistent build will be linked."
             );
-            return;
+            return true;
         }
     }
 
@@ -1052,6 +1066,8 @@ fn build_dregg2_archive(
     } else {
         gc_unreachable_members(archive, out_dir);
     }
+    // Reached only on the SUCCESS path: the archive holds this checkout's Dregg2 objects.
+    false
 }
 
 /// Discover every `.lake/build/ir` directory that can supply a `.c` for the dependency closure:
@@ -2052,6 +2068,7 @@ fn shared_link_mode() -> bool {
 fn main() {
     println!("cargo:rerun-if-env-changed=DREGG_LEANC_JOBS");
     println!("cargo::rustc-check-cfg=cfg(lean_lib_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_lean_stale_archive)");
     println!("cargo::rustc-check-cfg=cfg(dregg_handler_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_strand_admit_present)");
@@ -2246,6 +2263,11 @@ fn main() {
     println!("cargo:rerun-if-changed={}", seed_archive.display());
     let reseeded = seed_build_archive(&seed_archive, &build_archive);
 
+    // ⚑ PROVENANCE, not merely PRESENCE. Set by every path that leaves an archive which is NOT
+    // built from this checkout's Lean source. Consumed by the provenance gate below, which then
+    // refuses to emit `lean_lib_present` / any `dregg_*_present` — see that gate for the wound.
+    let mut provenance_downgraded = false;
+
     // ── PRODUCE / REFRESH the archive from the Lean source (the linchpin). We watch the whole
     // `metatheory/Dregg2` source tree + the toolchain marker; when any of those change, build.rs
     // reruns and `build_dregg2_archive` does the incremental `lake build` → `leanc -c` → `ar`
@@ -2265,31 +2287,40 @@ fn main() {
         );
 
         match &sysroot_opt {
-            Some(sysroot) => build_dregg2_archive(
-                meta,
-                sysroot,
-                &build_archive,
-                &out_dir,
-                &seed_archive,
-                require_lean_native,
-                reseeded,
-            ),
+            Some(sysroot) => {
+                provenance_downgraded = build_dregg2_archive(
+                    meta,
+                    sysroot,
+                    &build_archive,
+                    &out_dir,
+                    &seed_archive,
+                    require_lean_native,
+                    reseeded,
+                );
+            }
             None if require_lean_native => panic!(
                 "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate cannot resolve the Lean \
                  sysroot (no DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/); refusing to \
                  reuse an older archive as current-source evidence. Install the pinned Lean \
                  toolchain/mathlib dependencies or provide DREGG_LEAN_SYSROOT."
             ),
-            None => println!(
-                "cargo:warning=dregg-lean-ffi: cannot resolve the Lean sysroot (no \
-                 DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/) — skipping the archive \
-                 refresh; the existing archive (if any) is used as-is. The two common causes: \
-                 (1) elan/lake is not installed or not on PATH; (2) the mathlib LOCAL-PATH \
-                 dependency pinned in metatheory/lakefile.toml is missing on this machine. \
-                 `./scripts/bootstrap.sh` (repo root) checks both and teaches the exact fix."
-            ),
+            None => {
+                // No toolchain ⇒ the archive was NOT refreshed from this checkout, whatever it is.
+                provenance_downgraded = true;
+                println!(
+                    "cargo:warning=dregg-lean-ffi: cannot resolve the Lean sysroot (no \
+                     DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/) — skipping the \
+                     archive refresh; the existing archive (if any) is used as-is. The two common \
+                     causes: (1) elan/lake is not installed or not on PATH; (2) the mathlib \
+                     LOCAL-PATH dependency pinned in metatheory/lakefile.toml is missing on this \
+                     machine. `./scripts/bootstrap.sh` (repo root) checks both and teaches the \
+                     exact fix."
+                );
+            }
         }
     } else {
+        // No metatheory/ at all ⇒ nothing could have been refreshed from source.
+        provenance_downgraded = true;
         println!(
             "cargo:warning=dregg-lean-ffi: metatheory/ not found (set DREGG_METATHEORY_DIR) — \
              cannot refresh libdregg_lean.a from Lean source; using the existing archive if present."
@@ -2336,6 +2367,43 @@ fn main() {
     };
     let lean_lib = sysroot.join("lib").join("lean");
     let lean_include = sysroot.join("include");
+
+    // ── ⚑ PROVENANCE GATE — A STALE ARCHIVE MAY NOT BE ADVERTISED AS A VERIFIED RUNTIME ─────────
+    //
+    // The archive exists and the toolchain resolves, but it was NOT produced from this checkout
+    // (`build_dregg2_archive` returned a downgrade: the Lean build was skipped, could not run,
+    // failed to elaborate, failed to compile a facet, or failed to splice). Until 2026-07-28 that
+    // situation emitted a `cargo:warning` and then fell straight through to the export probes
+    // below — which duly found `dregg_blocklace_finalize` in the OLD archive and emitted
+    // `dregg_finalize_gate_present`. So `finality_gate_available()` returned TRUE, `demand_lean`
+    // did not refuse, and the verified-rule tests RAN — against a rule from another day.
+    //
+    // MEASURED, and it cost a full investigation. `node/src/finality_gate.rs`'s enrollment
+    // falsifier fired with "the VERIFIED rule FINALIZED a block (seq 0) created by an UNENROLLED
+    // identity — The gate is OPEN", `5 passed; 1 failed`, all three of its anti-vacuity guards
+    // passing, on a tree where the gate is CLOSED and green. The linked archive was 3 days old and
+    // predated `c6f00c228` — the commit that put `enrolledId` in the rule — and carried ZERO
+    // `enrolledId` symbols. The falsifier was correct about what it was handed. It was handed the
+    // wrong rule. A stale archive and a broken verified rule produced the SAME observation, and the
+    // only thing distinguishing them was a `cargo:warning`, which cargo HIDES for dependency
+    // crates — and `dregg-lean-ffi` is a dependency of everything that tests a verified gate.
+    //
+    // So the downgrade is now carried in the ONE channel the test can read: the cfgs are withheld.
+    // `lean_available()` and every `*_available()` go FALSE, and `demand_lean` — ARMED BY DEFAULT —
+    // turns each verified-gate test into a loud, correctly-named refusal instead of a verdict about
+    // last week's Lean. That is strictly a subtraction: it removes claims, it weakens no check.
+    // (This is also the FALSE-GREEN direction: a stale archive could equally have hidden a real
+    // regression by passing. Both readings are now refused.)
+    if provenance_downgraded {
+        degrade_guard(
+            require_lean_native,
+            "the linked libdregg_lean.a was NOT built from this checkout's Lean source (see the \
+             VERIFIED-RUNTIME PROVENANCE DOWNGRADE warning above) — a verified node must link the \
+             Lean it ships",
+        );
+        println!("cargo:rustc-cfg=dregg_lean_stale_archive");
+        return;
+    }
 
     println!("cargo:rustc-cfg=lean_lib_present");
 

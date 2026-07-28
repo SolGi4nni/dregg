@@ -724,9 +724,9 @@ pub fn verify_committed_threshold(
     // FAIL-CLOSED. The committed-threshold (hidden value + hidden threshold) predicate was
     // produced/checked by the retired hand-STARK engine (`CommittedThresholdProof` /
     // `dregg_circuit::verify_committed_threshold`), which was deleted. No IR-v2 descriptor
-    // for the committed-threshold statement exists yet — the bridge's counterparts
-    // (`prove_committed_threshold` / `verify_committed_threshold_proof`) are themselves
-    // fail-closed. Rather than accept an unverifiable claim (fail-open), reject every input.
+    // for the committed-threshold statement exists yet — the bridge's `prove_committed_threshold`
+    // is itself fail-closed, and the `verify_committed_threshold_proof` beside it was deleted as an
+    // uncalled always-`false` decider. Rather than accept an unverifiable claim (fail-open), reject every input.
     // (Since no valid committed-threshold proof can be produced in this build, this rejects
     // all inputs, including the empty-`ProgramProof`-style placeholder blobs.)
     Ok(false)
