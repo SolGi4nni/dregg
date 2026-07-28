@@ -97,6 +97,20 @@ first.
   tracked source files, red-proved by planting the real `Monotonic` scaffold back into `eval.rs`.
   ⚠ Scope: the first run found two vendored Jinja template strings — exempted with the measurement.
 
+- ⚑ **A1 CLOSED, and it was the top-ranked live residual.** A prover could publish ANY 8-felt
+  post-remove cap-root — including one leaving the revoked capability LIVE — and a ledgerless light
+  client accepted it. Closed in Lean with `removeTombstoneConstraints` (16 `node8` + 8 `rootPinGate`
+  + 8 constant pins to 0, because a tombstone commits a constant, not a leaf). Flag day: narrow
+  1976→2119, wide 1878→2014, welded 1885→2021, all three FPs rotate. UNSAT at the prover, and the
+  red-proof is IN-VALUE so no source was ever disarmed.
+  ⚠ **My brief was wrong**: I said "declare the map-op". There is no map-op to declare — the INSERT
+  siblings bind their post-root with a Merkle weld, and `MapInsertImtRepoint.lean` proves the
+  `.insert` arm cannot force a write denotation. The lane followed the real mechanism.
+- ⚠ **I opened a scaffold window and a lane saw it.** Red-proofing the disarmed-guard gate against
+  the real `eval.rs` instance was visible to a concurrent lane, which correctly reported it and
+  correctly did not touch it. Restored, byte-identical, gate clean — but the window is the hazard
+  and I made one hours after writing the doctrine saying so. Mutate on a copy.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
