@@ -782,7 +782,30 @@ def read_allowlist(path: Path) -> list[tuple[str, str, str, int]]:
     """Rows as (path, escaped text, reason, FILE line) — the line so a stale row is citable."""
     rows = []
     if not path.exists():
-        return rows
+        # ⚑ A MISSING ALLOWLIST IS A FAULT, NOT AN EMPTY ONE.
+        #
+        # This returned `[]` silently, and it cost 25.5 hours of a gate that was RED in every
+        # clean checkout while its own red-proof reported green. The gate landed (b7f7f249e)
+        # before the allowlist was tracked, so `git archive HEAD` had no file, `read_allowlist`
+        # answered `[]`, and the sweep reported 19 violations and exited 1 — for anyone but the
+        # author, whose working tree had it.
+        #
+        # The exemptions are not decoration: with an empty list this gate finds exactly the 19
+        # sites the committed rows cover, one-for-one. So "no allowlist" and "nothing is exempt"
+        # are the same state to the reader and completely different states in fact. Refuse.
+        #
+        # This is the repo's signature disease at its most embarrassing site — a gate written to
+        # catch silent subtraction, silently subtracting its own configuration. Compare the
+        # mirror-gates G2 canary fixture whose `pkg/.gitignore` contained `*` and ignored ITSELF,
+        # so four files lived only on the author's disk and no clone ever had them.
+        print(
+            f"{path}: MISSING. The allowlist is not on disk. A clean checkout would run this "
+            f"gate with zero exemptions and report every deliberate keep as a violation.\n"
+            f"  This is a FAULT, not an empty allowlist: `git ls-files --error-unmatch {path}` "
+            f"is the check, and a gate whose config is untracked is a gate nobody else can run.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.rstrip("\n")
         if not line.strip() or line.lstrip().startswith("#"):
@@ -942,10 +965,22 @@ def self_test() -> int:
     )
 
     print("self-test — the ratchet")
+    # ⚠ THIS ASSERTION USED TO CARRY `or not DEFAULT_LIST.exists()`, which made it PASS in the
+    # one state it needed to catch: the allowlist missing. The gate then reported red on every
+    # clean checkout for 25.5 hours while this line reported green. An escape clause in a
+    # can-it-go-red check is not a check.
     check(
-        read_allowlist(DEFAULT_LIST) != [] or not DEFAULT_LIST.exists(),
-        "the allowlist parses",
+        DEFAULT_LIST.exists() and read_allowlist(DEFAULT_LIST) != [],
+        "the allowlist is ON DISK and parses to a non-empty row set",
     )
+    # And it must be TRACKED — on disk is not enough, since that is exactly the author-only
+    # state that hid this. `git archive HEAD | tar -x` is what CI actually gets.
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", str(DEFAULT_LIST)],
+        cwd=REPO,
+        capture_output=True,
+    )
+    check(tracked.returncode == 0, "the allowlist is TRACKED, so a clone has it too")
     print("\nself-test " + ("PASSED" if ok else "FAILED"))
     return 0 if ok else 1
 
