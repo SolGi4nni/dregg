@@ -851,7 +851,22 @@ def explain(sym, sites, fns_by_key, edges, roots, label):
     print(f"--- {sym}: paths from {label} ---")
     hit = False
     for s in sites.get(sym, ()):
-        mark = "REACHABLE" if s["key"] in best else "unreachable"
+        # `s["key"] in best` says the ENCLOSING FUNCTION is reachable — it does NOT
+        # say the seam is crossed. A dispatch arm (`Seam::Foo => drorb_foo`) lives
+        # inside a reachable dispatcher and fires only if something CONSTRUCTS the
+        # variant; when nothing does, the site carries `variant:Enum::V` and the
+        # bucketing (resolve_variants) correctly files the export as ORPHANED with
+        # reason `dead-dispatch`. Printing a bare "REACHABLE" beside such a site
+        # contradicts the audit's own verdict, and on 2026-07-28 it did exactly
+        # that for `drorb_grpc_frame_len` — which is orphan #20 in this very run —
+        # long enough to send a reader looking for a bug in the bucketing instead
+        # of at `proxy_grpc.rs`, which no host code calls.
+        if s["key"] not in best:
+            mark = "unreachable"
+        elif any(g.startswith("variant:") for g in s.get("gates", ())):
+            mark = "DISPATCH-ARM (fires only if the variant is constructed)"
+        else:
+            mark = "REACHABLE"
         print(f"  site {s['file']}:{s['line']} in {s['fn']}()  [{mark}]"
               + (f"  site-gates {','.join(s['gates'])}" if s["gates"] else ""))
         if s["key"] not in best:

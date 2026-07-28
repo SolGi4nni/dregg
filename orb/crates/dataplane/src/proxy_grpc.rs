@@ -1,4 +1,25 @@
-//! gRPC / gRPC-Web proxy support wired into the running dataplane.
+//! gRPC / gRPC-Web proxy host seam — PREPARED, NOT WIRED. Nothing calls it.
+//!
+//! ⚠ This file said "wired into the running dataplane" until 2026-07-28, and it was
+//! not true on the day it was written. `is_grpc`, `is_grpc_web` and `frame_len` have
+//! ZERO callers outside this module's own `#[cfg(test)]` block — measured repo-wide —
+//! which is why `main.rs` declares the module under `#[allow(dead_code)]`. Nothing in
+//! this repo could report it: the ten `orb/crates/*` packages were in neither the root
+//! workspace's `members` nor its `exclude` for the whole 2026-07 window, so no build
+//! ever compiled this subtree and no lint ever ran over it.
+//!
+//! `Seam::GrpcFrameLen` is constructed HERE and nowhere else, so the dispatch arm at
+//! `serve.rs`'s `Seam::GrpcFrameLen => drorb_grpc_frame_len` can never fire, and the
+//! proven Lean export `drorb_grpc_frame_len` (`Reactor/Proxy/Grpc.lean:270`) is an
+//! IDLE CARRIER: in the archive, in the serve closure, crossed by nothing.
+//!
+//! KEPT, not deleted, and this is the true reason: orb's own reachability ratchet
+//! already counts it — `scripts/reachability-audit.sh` files `drorb_grpc_frame_len`
+//! in the ORPHANED bucket with `reason: "dead-dispatch"`, one of the 20 orphans its
+//! baseline pins, and that baseline's stated policy is that WIRING a seam lowers the
+//! number. Deleting this host half would leave the same proven export orphaned with no
+//! prepared crossing at all — the identical orphan count and strictly less to wire. So
+//! this is the unwired half of a seam whose Lean half is proven, and it says so.
 //!
 //! gRPC is HTTP/2 with a length-prefixed message framing inside the DATA payload
 //! and a `grpc-status` trailer. The byte transport is the existing streaming
@@ -6,16 +27,19 @@
 //! forward moves the bytes); the gRPC-specific *decisions* are the proven core in
 //! `Reactor.Proxy.Grpc`:
 //!
-//! * message framing (`decodeFrame` / `encodeFrame`, faithful roundtrip) — the
-//!   host consults [`frame_len`] (the `drorb_grpc_frame_len` seam) to find a
-//!   message boundary and enforce the max-message-size limit while streaming;
+//! * message framing (`decodeFrame` / `encodeFrame`, faithful roundtrip) — [`frame_len`]
+//!   (the `drorb_grpc_frame_len` seam) is the crossing a host WOULD consult to find a
+//!   message boundary and enforce the max-message-size limit while streaming. No host
+//!   consults it today;
 //! * `grpc-status` codes and the HTTP→gRPC status map;
 //! * gRPC-Web framing translation (data frames identical, trailers as a `0x80`
 //!   trailer frame) — proven faithful; the byte transcode reuses the passthrough.
 //!
-//! This module is the host seam: content-type detection so the host knows a
+//! This module is the host seam: content-type detection so the host would know a
 //! request is gRPC, and the frame-length crossing. It never re-implements the
-//! framing decision — that is the proven `drorb_grpc_frame_len`.
+//! framing decision — that is the proven `drorb_grpc_frame_len`. What is missing to
+//! make the claim in the first line true is a call from the h2 / reverse-proxy path
+//! (`h2.rs`, `proxy_dial.rs`), and until one exists this file describes an intention.
 
 use std::sync::mpsc::{Receiver, Sender};
 

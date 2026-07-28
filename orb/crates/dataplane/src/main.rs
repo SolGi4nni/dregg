@@ -124,9 +124,13 @@ mod pool;
 mod pq;
 mod proxy_connect;
 mod proxy_dial;
-/// gRPC / gRPC-Web proxy host seam: content-type detection and the proven
-/// `drorb_grpc_frame_len` crossing. The DATA passthrough reuses the streaming
-/// forward; the framing decisions are the proven `Reactor.Proxy.Grpc`.
+/// gRPC / gRPC-Web proxy host seam — PREPARED, NOT WIRED, and the `#[allow(dead_code)]`
+/// below is load-bearing: nothing in this crate calls `is_grpc`, `is_grpc_web` or
+/// `frame_len`. `Seam::GrpcFrameLen` is constructed only inside that module, so the
+/// dispatch arm in `serve.rs` can never fire and the proven Lean export
+/// `drorb_grpc_frame_len` is an idle carrier — orb's own reachability ratchet already
+/// counts it as an orphan with `reason: "dead-dispatch"`. See the module header for
+/// why it is kept rather than deleted, and for what wiring it would take.
 #[allow(dead_code)]
 mod proxy_grpc;
 mod proxy_hook;
