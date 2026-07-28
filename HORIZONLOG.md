@@ -142,6 +142,8 @@ false SDK sentence at
 16 welds (8 BEFORE + 8 AFTER).
 
 **A2 · THE EFFECT-VM PROOF IS CONSULTED AFTER THE TURN HAS COMMITTED, CHAINED AND GOSSIPED — AND IT
+> ✅ **FIXED 2026-07-28** (861bb3b33) — five MCP tools could not commit; `require_effect_vm_proof` deleted, every path routed onto the Lean-emitted rotated descriptor via the same seam HTTP uses
+
 CAN NEVER SUCCEED. LIVE.** `require_effect_vm_proof` is `node/src/mcp/proof.rs:377-392`, one
 expression over `try_generate_effect_vm_proof` (`:423-469`) whose **only two returns are both `Err`**;
 the terminal one (`:463`) is *"standalone v1 effect-vm proof material is retired"*. Its five call sites
@@ -195,6 +197,8 @@ inherit its parent's asset: an unstated invariant in a different file, one token
 from live inflation.
 
 **A7 · A CELL REMOVAL IS INVISIBLE TO THE SIGNED ANCHOR FOR A COLLIDING PAIR. LIVE (the false claim
+> ✅ **FIXED 2026-07-28** (b3111ee18) — all four builders refuse a colliding pair; ⚠ `as_u32()` was never a truncation — the address is ONE ~31-bit felt, so the fix is the refusal, not a wider dedup key
+
 was retracted; the behaviour was not).** The heap leaf address is one felt —
 `circuit/src/heap_root.rs:225` `heap_addr(coll, key) = hash_many(&[coll, key])`, fed by
 `turn/src/rotation_witness.rs:308` — and four sites silently `dedup_by_key(|l| l.addr.as_u32())`
@@ -243,6 +247,8 @@ against a genuinely settled root. **Ranked here rather than at the top because i
 contract states the trust grade itself at `:42-52`.**
 
 **A12 · THE LEAN AND RUST `fields_root` PREIMAGES SPLIT AT DIFFERENT KEYS. LIVE.**
+> ✅ **FIXED 2026-07-28** ((fields_root band)) — Lean's `reservedKeys` 8 → 16 to match `STATE_SLOTS`, 5 `#guard` fixtures moved above the band, pinned by a Rust test that READS the Lean source
+
 `cell/src/state.rs:57` is `pub const STATE_SLOTS: usize = 16`.
 `metatheory/Dregg2/Exec/FieldsMap.lean:4-5` opens *"The Rust cell has exactly **8** `FieldElement`
 slots (`cell/src/state.rs:STATE_SLOTS = 8`)"* and defines `def reservedKeys : Nat := 8` (`:45`). Keys
@@ -462,6 +468,8 @@ lands on `main` directly at a ~92 s median and `main` is not branch-protected, s
 path does not fire on the dominant route either.
 
 **C3 · THE `no_run` RATCHET'S TRIGGER HAS FIRED AND THE GATE IS NOT ARMED. LIVE.**
+> ✅ **FIXED 2026-07-28** (41d8903ef) — `no_run` fences are asked for a reason now; 29 of 43 were reasonless, seeded to ratchet
+
 `scripts/check-bare-ignore.py` knows `no_run` (`:215`, `:221`, and `REASON_RE` at `:224` accepts
 `NO_RUN:`) but **never asks for it**: `scan_fences:362` is `if "ignore" in attrs and
 fence_reason(fence) is None:`. **Measured at HEAD through the script's own `doc_fences`/`fence_reason`:
@@ -492,6 +500,8 @@ the scanner's `FFI_MARKERS` (`:129`, which lists only `#[no_mangle]` / `extern "
 wrong is worse than a missing one.**
 
 **C5 · IN `local-gates.sh` A TIMEOUT IS A SKIP, NOT A FAILURE — AND NOTHING INVOKES IT. LIVE.**
+> ✅ **FIXED 2026-07-28** (69fbda191) — a timeout is a FAILURE, named separately in the summary — 'produced no verdict' and 'found a defect' both fail and want opposite fixes
+
 `run_one` treats `rc == 124` as `skip=$((skip+1))` and prints *"not a verdict"*; only a non-zero,
 non-124 exit reaches `failed+=()`. So a gate that **always** times out contributes nothing and the
 script still ends clean — exactly what `b27d55c3e` reported for `gates-executed` (*"TIMED OUT all
@@ -502,6 +512,8 @@ all** — the 45-row instrument this repo built *because GitHub cannot answer* r
 types it.
 
 **C6 · THE RED-PROOF-SCAFFOLD SWEEP IS A RITUAL, NOT A MECHANISM. LIVE.** `AGENTS.md` prescribes
+> ✅ **FIXED 2026-07-28** (33437417c) — `check-no-disarmed-guard.sh`, 7,642 files, red-proved against the real `Monotonic` scaffold
+
 `grep -rn "if false &&\|if true {\s*//\|MUST NOT BE COMMITTED\|RED-PROOF"` and says *"the main loop
 sweeps before it believes a green"*. **No script under `scripts/` or `.github/` contains any of those
 patterns, and none contains `MUTANT-`** — the marker of the two `discord-bot/src/db.rs` mutants that
@@ -511,6 +523,8 @@ hits are legitimate red-proof diagnostics in `circuit/tests/cap_open_*` and a ve
 fixture. Clean today, undetectable tomorrow.
 
 **C7 · THE PUBLISHED LEAN SEED NO LONGER MATCHES THE TREE, SO THE TESTS IT ARMS CANNOT ARM. LIVE.**
+> ✅ **FIXED 2026-07-28** (0dcc816de) — detection, not a demand — reports drift always, fails past 14 days; deliberately does NOT re-add the push trigger ember removed for a measured cost reason
+
 `dregg-lean-ffi/lean-seed.pin` carries `DREGG_TREE_HASH=406424cff5…` (`GENERATED_UTC=2026-07-17`);
 `git rev-parse HEAD:metatheory/Dregg2` is `c97c3524fd…`. Eleven days apart. Per `armed-teeth.yml:527`,
 without an arming seed the ~43 verified-gate tests behind `if !<x>_available() { SKIP }` **assert
@@ -526,6 +540,8 @@ gate** — `main` is not branch-protected, and there is a declared escape
 `install-git-hooks.sh`), one more than there should be.
 
 **C9 · THE SHIPPED EXTENSION BUNDLE IS 16 DAYS OLDER THAN THE GUARD IT IS SUPPOSED TO ARM. LIVE.**
+> ✅ **FIXED 2026-07-28** (ec31bf984) — absence is a named refusal now; the bundle is still stale and that is LOUD
+
 `extension/src/passkey.ts:230` still reads
 `if (this.wasm.validate_mnemonic && !this.wasm.validate_mnemonic(mnemonic))` — armed only if the
 loaded bundle exports the symbol — and the comment above it claims it is now armed. Against the
@@ -603,6 +619,8 @@ through `open_detached`, which is itself `#[cfg(test)]`. `PrivateBazaarWorkerSup
 ingress to real cryptography, sole caller a test.
 
 **D5 · SHARED-BUDGET DEBITS ARE NOW REPORTED AND STILL NOT COUNTED. LIVE (the reporting half FIXED).**
+> ✅ **FIXED 2026-07-28** (1d0eebcf8) — `unattributed_spent` folded into `total_spent()`; ⚠ the existing test asserted the blindness its own comment described
+
 `81658dd50` landed the refusal — `coord/src/shared_budget.rs:545` returns
 `SharedBudgetError::UnknownParticipant` instead of dropping the debit, and all three callers propagate
 — but there is still **no `unattributed_spent` bucket** (zero hits in the file) and `total_spent()`
