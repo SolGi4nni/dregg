@@ -53,7 +53,9 @@ pub type CellId = [u8; 32];
 
 /// A hosting-fee transfer — the deos charge as a conserving value move. This is
 /// the `turn`-crate `Effect::Transfer { from, to, amount }` shape
-/// (`turn/src/action.rs:819`, `LinearityClass::Conservative`): `amount` coin moves
+/// (`turn/src/action.rs`, `Conservative` per
+/// `metatheory/Dregg2/Spec/Conservation.lean` — the Rust `LinearityClass` twin
+/// was dead and is deleted): `amount` coin moves
 /// `from` the app `to` the host, conserving Σ value. We carry it as its own type
 /// so the durable turn that commits a charge names exactly what moved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

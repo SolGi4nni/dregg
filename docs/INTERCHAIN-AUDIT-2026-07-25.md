@@ -1,5 +1,19 @@
 # Interchain / Cross-Chain Surface Audit — 2026-07-25
 
+> **STATUS ADDENDUM 2026-07-28 — READ BEFORE CITING A FINDING BELOW.** The findings are kept
+> verbatim as the record of what was true on 07-25. Three are CLOSED; the text below is history,
+> not state, and re-reporting it as live has already cost one audit lane an hour.
+>
+> | # | state | where |
+> |---|---|---|
+> | **#1** | **CLOSED** | `consensus_verified` is DERIVED from `EthDepositTrust` (`ethereum_relayer.rs`, `to_bridge_mint_request` / `to_escrow_record`). The RPC-only relayer yields `RpcStructureOnly` ⇒ `false` ⇒ `BridgeMintError::TrustTooLow`. Nothing hard-codes `true`; the cited `:606,619` are now doc lines. |
+> | **#2** | **CLOSED 07-28** | `storage_binds_deposit` **DELETED** (it verified no MPT proof and had none to verify against — see the deletion note in `ethereum_relayer.rs`). `EthProof`/`EthStorageSlot` are relabelled UNVERIFIED TRANSPORT. The line cited (`:840`) was already stale on 07-25; it was `:930`. |
+> | **#13** | **CLOSED** | `WeakSubjectivityStore` landed in `27b15fa95` (`eth-lightclient/src/store.rs`) with a 6-test falsifier. **07-28:** having the store was not the same as using it — `verify_finalized_update` kept its bare-committee signature, so the un-anchored spelling stayed the shortest one. It now demands a `TrustedCommittee`, obtainable only from `WeakSubjectivityStore::trusted_committee` or the loud `TrustedCommittee::new_unchecked`. |
+>
+> Also closed elsewhere and NOT in this table: the three Lean light-client gates were dark at four
+> layers (the ETH relayer's verification gate compiled out entirely) — fixed in `b5081491a`; see
+> `Dregg2/FFI.lean` §4, which is likewise a record of repair and not a defect.
+
 REALITY GATE: **nothing is on mainnet.** Only DreggSettlement + its Groth16 verifier are deployed — to Base
 Sepolia TESTNET (84532), verifying a FIXTURE proof under a single-party dev-ceremony trusted setup. Every
 custody contract + bridge mint path is test/local only. So CRITICAL/HIGH below are PRE-LAUNCH LATENT holes, not

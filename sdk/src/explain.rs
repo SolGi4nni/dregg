@@ -79,7 +79,11 @@ fn sem_tag(hash: &[u8; 32]) -> String {
 ///
 /// The match is exhaustive with NO `_ =>` arm: every present `Effect` variant
 /// has a reading, and every future variant is forced to acquire one at compile
-/// time (mirroring the discipline of [`dregg_turn::LinearityClass`]).
+/// time. (This used to cite `dregg_turn::LinearityClass` as the sibling
+/// discipline. That type was a dead Rust twin with no non-test caller and was
+/// deleted 2026-07-28 — and the link was already broken, since it was never
+/// re-exported at the crate root. The classification lives, proved, in
+/// `metatheory/Dregg2/Spec/Conservation.lean`.)
 fn effect_body(effect: &Effect) -> String {
     match effect {
         Effect::SetField { cell, index, value } => format!(

@@ -12,9 +12,12 @@
 //! - Rust home of that `recTransfer` debit/credit: `dregg_cell::CellState`'s
 //!   signed-balance epoch — [`CellState::debit_balance`] (refuse-below-zero, the
 //!   `InsufficientFunds` floor) + [`CellState::credit_balance`]
-//!   (overflow-checked). `turn/src/action.rs` classifies `Effect::Transfer` as
-//!   `LinearityClass::Conservative` (paired-delta), the executor-level shadow of
-//!   the same theorem.
+//!   (overflow-checked). `metatheory/Dregg2/Spec/Conservation.lean` classifies
+//!   `Effect::Transfer` as `Conservative` (paired-delta) and PROVES the
+//!   classifier facts; that theory is spec-only (no `@[export]`). `turn` used to
+//!   carry a `LinearityClass` twin of it with no non-test caller — deleted
+//!   2026-07-28. The executor-level shadow of the theorem is the per-asset
+//!   `Σδ = 0` gate, not an effect color.
 //!
 //! [`apply_conserving_transfer`] runs the move through `dregg_cell::CellState`
 //! on every build — the deployed Rust home of the proven theorem, not an operated-layer

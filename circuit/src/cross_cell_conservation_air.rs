@@ -43,8 +43,8 @@
 //! > After verifying the N per-cell rotated proofs of a turn (`proof_verify.rs`'s per-cell verify
 //! > loop), the verifier would, FOR EACH asset class touched by the turn: collect each per-cell
 //! > proof's `(pi[NET_DELTA_MAG], pi[NET_DELTA_SIGN], asset_class)` into a
-//! > `Vec<CrossCellDelta>`, append the turn's declared mint/burn supply-change effects as
-//! > additional signed rows, call [`build_cross_cell_conservation_trace`] + [`prove_cross_cell_conservation`],
+//! > `Vec<CrossCellDelta>` (a mint/burn contributes BOTH its legs — holder and issuer well — so it
+//! > needs no extra row kind), call [`build_cross_cell_conservation_trace`] + [`prove_cross_cell_conservation`],
 //! > and require [`verify_cross_cell_conservation`] to accept. The per-asset partition (pi[asset])
 //! > makes a multi-asset turn run one aggregation proof per asset.
 //!
@@ -154,9 +154,10 @@ pub fn cross_cell_conservation_descriptor() -> crate::descriptor_ir2::EffectVmDe
 // Witness construction.
 // ---------------------------------------------------------------------------
 
-/// One per-cell (or declared mint/burn) signed delta contributing to the turn-wide conservation.
-/// The verifier builds this from each per-cell proof's `(NET_DELTA_MAG, NET_DELTA_SIGN)` PI pair
-/// (or from a declared supply-change effect's ±amount).
+/// One per-cell signed delta contributing to the turn-wide conservation. The verifier builds this
+/// from each per-cell proof's `(NET_DELTA_MAG, NET_DELTA_SIGN)` PI pair. A supply change is not a
+/// separate kind of row: a mint/burn is a holder↔issuer-well MOVE, so it appears as two ordinary
+/// per-cell deltas of the same asset (`turn/src/executor/apply.rs::apply_mint` / `apply_burn`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CrossCellDelta {
     /// The asset / issuer-cell class this delta moves (all deltas of one aggregation proof share
@@ -200,7 +201,7 @@ fn sign_felt(credit: bool) -> BabyBear {
 }
 
 /// Build the cross-cell-conservation trace from an ordered list of signed deltas (one per
-/// contributing cell + declared supply-change row), returning `(trace, public_inputs)`. The PI is
+/// contributing cell, issuer wells included), returning `(trace, public_inputs)`. The PI is
 /// `[asset]` (the partition class — read from the first delta; all deltas must share it).
 ///
 /// **v2 MULTI-LIMB.** Each row splits its delta into a non-negative credit / debit contribution

@@ -83,13 +83,22 @@ needs its real public key (`/api/faucet` with `public_key`), which
   submit | payout | status` — drives the bounty lifecycle on a factory-born
   bounty cell. Each write is a canonical Ed25519-signed app `Action`
   (`build_post_action`/`build_claim_action`/`build_submit_action`/
-  `build_payout_action`) submitted through the signed-turn path. The
+  `build_payout_actions`) submitted through the signed-turn path. The
   OPEN→CLAIMED→SUBMITTED→PAID state machine is enforced **on-chain** by the
   cell's program (strictly monotone `STATE`), so double-claim / double-payout
   are rejected by the executor. The bounty cell is supplied by the caller
-  (born via the Starbridge seed or `/dregg`). `status` reports the cell's real
-  on-chain balance/nonce/provenance; per-slot lifecycle state is not exposed
-  by the public read API, so it is not fabricated.
+  (born via the Starbridge seed or `/dregg`).
+  `payout` takes a `claimant-cell` and submits a real conserving
+  `Effect::Transfer` in the SAME turn as the `STATE=PAID` advance, so a payment
+  the executor refuses rolls the PAID stamp back with it — it renders "Bounty
+  Paid" only over a payment that landed. Before 2026-07-28 it carried no
+  transfer at all and rendered that embed regardless. It refuses, with its own
+  embed and no turn, when the bounty is not at SUBMITTED, when the named payee
+  does not match the committed `CLAIMANT_HASH`, or when no reward is recorded.
+  `status` reads the cell's per-slot fields from `GET /api/cell/{id}` (which
+  does serve them, contrary to the note that used to sit here) and reports the
+  real stage and the PROMISED reward — the reward is not escrowed and the embed
+  no longer calls it that.
 - **Federation**: `/setup-federation`, `/link-cipherclerk`, `/unlink-cipherclerk`
 
 External `/link-cipherclerk` records are pending until ownership is proven.

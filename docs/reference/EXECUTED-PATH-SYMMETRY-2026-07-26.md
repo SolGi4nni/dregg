@@ -173,8 +173,13 @@ those invariants are individually sound:
 - `Transfer` — debits `from`, credits `to`, same amount, **same asset enforced on the full 32 bytes**
   (`apply.rs:692`, comparing `asset()`, not the folded class). Locally conserving.
 - `Mint` / `Burn` — well-paired: the issuer well carries `−supply`, so holder↔well moves conserve
-  exactly per asset (`apply.rs:3774-3780`). This is why every live call site passes
-  `declared_supply = &[]`.
+  exactly per asset (`apply.rs:3774-3780`). This is why every live call site passed
+  `declared_supply = &[]` — and on **2026-07-28 that parameter was DELETED** rather than wired, all
+  the way through `ConservationOracle::conserves` and `shadow_cross_cell_conserves` to
+  `dregg_circuit::block_conservation::DeclaredSupplyChange`. It had no producer and can have none
+  here: the well's paired delta IS the disclosure, and unlike an asserted row it is auditable state
+  gated by `mintAuthorizedB`. The Lean rule keeps its supply section (spec ⊋ deployment); see
+  `HORIZONLOG.md`'s (balance, supply) bullet.
 - `CreateCell` — **cannot mint an opening balance** (`apply.rs:1100`, hard `Err`).
 
 `apply.rs:686-689` states the architecture plainly and correctly:

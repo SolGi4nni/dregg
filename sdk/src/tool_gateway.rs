@@ -155,7 +155,8 @@ pub struct ToolGrant {
 ///    a [`GatewayRefusal::OverBudget`] returned as an `Err` (the anti-ghost
 ///    tooth: no turn, no spend, no charge).
 /// 2. **In the executor** — the charge rides as an [`Effect::Transfer`]
-///    (`LinearityClass::Conservative`): if the consumer cannot actually pay
+///    (`Conservative` in `Dregg2/Spec/Conservation.lean`; the Rust
+///    `LinearityClass` twin was dead and is deleted): if the consumer cannot pay
 ///    (balance `< price`), the kernel's per-asset conservation check REJECTS the
 ///    metered turn, so a non-paying call cannot meter. Over-budget is the fast
 ///    in-band cap; insolvency is the conserved backstop under it.
