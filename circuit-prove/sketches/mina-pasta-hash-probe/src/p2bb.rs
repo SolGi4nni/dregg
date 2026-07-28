@@ -589,3 +589,145 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// The whole COMMIT PHASE — all layers, as one emitted object.
+// ---------------------------------------------------------------------------
+
+/// `p2chain <seed> <index> <logD0> <layers> <finalPolyLen> [rollInRounds]` —
+/// run `verify_query`'s fold chain (`p3-fri/src/verifier.rs:401-478`) for
+/// `layers` rounds and emit every intermediate.
+///
+/// ⚑ WHY THE CHAIN AND NOT SIXTEEN CALLS TO `p2fold`. A test script that calls
+/// a one-round emitter sixteen times does the CHAINING ITSELF, so the one thing
+/// a chain adds — that the index is shifted once per round, that the coset point
+/// descends with the sign taken from the SAME bit that chose the slot, that the
+/// roll-in lands at the folded height and is scaled by `beta^arity`, that the
+/// landing value is compared to the final polynomial at the point the LEFTOVER
+/// index bits name — is cross-checked against nothing. This emitter does the
+/// composition on the p3 side.
+///
+/// `rollInRounds` is a comma-separated list of round indices after whose fold a
+/// reduced opening is added. The DEPLOYED schedule is a function of the root's
+/// `degree_bits`, which no committed measurement pins (§1.3), so it is a
+/// parameter here rather than a number invented for the occasion.
+pub fn emit_p2_chain(args: &[String]) {
+    use p3_field::TwoAdicField;
+
+    let seed: u64 = args[0].parse().expect("seed");
+    let index: usize = args[1].parse().expect("index");
+    let log_d0: usize = args[2].parse().expect("logD0");
+    let layers: usize = args[3].parse().expect("layers");
+    let final_poly_len: usize = args[4].parse().expect("finalPolyLen");
+    let roll_in_rounds: Vec<usize> = match args.get(5).map(String::as_str) {
+        None | Some("-") | Some("") => vec![],
+        Some(s) => s
+            .split(',')
+            .map(|x| x.parse().expect("rollInRound"))
+            .collect(),
+    };
+    assert!(layers < log_d0, "a chain cannot fold past its own domain");
+    assert!(
+        roll_in_rounds.iter().all(|r| *r < layers),
+        "a roll-in is scheduled outside the fold chain"
+    );
+
+    let mut prg = crate::p2chal::Prg::new(seed);
+    let initial: Ext = core::array::from_fn(|_| prg.next());
+    let betas: Vec<Ext> = (0..layers)
+        .map(|_| core::array::from_fn(|_| prg.next()))
+        .collect();
+    let siblings: Vec<Ext> = (0..layers)
+        .map(|_| core::array::from_fn(|_| prg.next()))
+        .collect();
+    let roll_in_values: Vec<Ext> = roll_in_rounds
+        .iter()
+        .map(|_| core::array::from_fn(|_| prg.next()))
+        .collect();
+    let final_poly: Vec<Ext> = (0..final_poly_len)
+        .map(|_| core::array::from_fn(|_| prg.next()))
+        .collect();
+
+    // The chain, structured exactly as `verify_query`: slot from the low bit of
+    // the CURRENT index, shift, then fold at the SHIFTED index and the FOLDED
+    // height.
+    let mut domain_index = index;
+    let mut log_current_height = log_d0;
+    let mut folded = initial;
+    let mut xs: Vec<BabyBear> = Vec::with_capacity(layers + 1);
+    let mut folds: Vec<Ext> = Vec::with_capacity(layers);
+    let mut evens: Vec<Ext> = Vec::with_capacity(layers);
+    let mut odds: Vec<Ext> = Vec::with_capacity(layers);
+
+    for r in 0..layers {
+        let index_in_group = domain_index % 2;
+        let (e_even, e_odd) = if index_in_group == 0 {
+            (folded, siblings[r])
+        } else {
+            (siblings[r], folded)
+        };
+        evens.push(e_even);
+        odds.push(e_odd);
+        domain_index >>= 1;
+        let log_folded_height = log_current_height - 1;
+        let x = coset_point(domain_index, log_folded_height);
+        xs.push(x);
+        folded = fold_row_arity2(x, betas[r], e_even, e_odd);
+        log_current_height = log_folded_height;
+        // `folded_eval += beta^arity * ro`, arity = 2.
+        for (i, rr) in roll_in_rounds.iter().enumerate() {
+            if *rr == r {
+                let beta_pow = ext_mul(betas[r], betas[r]);
+                folded = ext_add(folded, ext_mul(beta_pow, roll_in_values[i]));
+            }
+        }
+        folds.push(folded);
+    }
+
+    // The final polynomial's evaluation point and value (`verifier.rs:296-305`).
+    let x_final =
+        BabyBear::two_adic_generator(log_d0).exp_u64(reverse_bits_len(domain_index, log_d0) as u64);
+    let mut eval = [BabyBear::ZERO; EXT_D];
+    for coeff in final_poly.iter().rev() {
+        eval = ext_add(ext_mul(eval, ext_of_base(x_final)), *coeff);
+    }
+
+    println!("{{");
+    println!(
+        "  \"emitter\": \"mina-pasta-hash-probe p2chain (p3 verify_query fold chain, arity 2)\","
+    );
+    println!("  \"seed\": {seed},");
+    println!("  \"index\": {index},");
+    println!("  \"logD0\": {log_d0},");
+    println!("  \"layers\": {layers},");
+    println!("  \"logFinalHeight\": {log_current_height},");
+    println!("  \"finalDomainIndex\": {domain_index},");
+    println!(
+        "  \"rollInRounds\": [{}],",
+        roll_in_rounds
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    println!("  \"initial\": [{}],", arr(&initial));
+    println!("  \"betas\": [{}],", arr2ext(&betas));
+    println!("  \"siblings\": [{}],", arr2ext(&siblings));
+    println!("  \"rollInValues\": [{}],", arr2ext(&roll_in_values));
+    println!("  \"finalPoly\": [{}],", arr2ext(&final_poly));
+    println!("  \"evens\": [{}],", arr2ext(&evens));
+    println!("  \"odds\": [{}],", arr2ext(&odds));
+    println!("  \"cosetPoints\": [{}],", arr(&xs));
+    println!("  \"foldedAfterRound\": [{}],", arr2ext(&folds));
+    println!("  \"folded\": [{}],", arr(&folded));
+    println!("  \"finalX\": \"{}\",", d(x_final));
+    println!("  \"finalPolyEval\": [{}]", arr(&eval));
+    println!("}}");
+}
+
+fn arr2ext(v: &[Ext]) -> String {
+    v.iter()
+        .map(|e| format!("[{}]", arr(e)))
+        .collect::<Vec<_>>()
+        .join(",")
+}

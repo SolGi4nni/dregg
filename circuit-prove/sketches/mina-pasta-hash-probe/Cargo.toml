@@ -30,3 +30,7 @@ ark-ff = { version = "0.5", default-features = false, features = ["std"] }
 p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+# The DEPLOYED Fiat-Shamir transcript (`src/p2chal.rs`): `DuplexChallenger<BabyBear,
+# Poseidon2BabyBear<16>, 16, 8>` — the same challenger `plonky3_recursion_impl.rs:138`
+# instantiates. Same rev as every other p3 crate here.
+p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }

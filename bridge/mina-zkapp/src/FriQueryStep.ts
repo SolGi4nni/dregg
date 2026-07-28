@@ -28,20 +28,28 @@ import { assertLaneLt2p31 } from './Poseidon2BabyBearW16.js';
 //     log_final_height = 6, so (22 - 6)/1 = 16 commit-phase layers
 //     cap_height = 0, so no path is ever truncated
 //
-// ⚑ THE INDEX IS ONE OBJECT. The 22 query-index bits are witnessed ONCE and
-// reused: bit `r` selects which slot round `r`'s folded value occupies, and
-// bits `r+1..22` are the Merkle path directions for round `r`'s depth-`21-r`
-// opening. A circuit that witnessed a fresh index per round would measure the
-// same and verify something strictly weaker, so the sharing is written out
-// rather than left to a comment.
+// ⚑ THE INDEX IS ONE OBJECT, AND IT DOES THREE JOBS AT THREE OFFSETS. The 22
+// query-index bits are supplied ONCE and reused: bit `r` selects which slot
+// round `r`'s folded value occupies; bits `r+1..22` are the Merkle path
+// directions for round `r`'s depth-`21-r` opening; and bit `r+1` — NOT bit `r`
+// — carries the sign of round `r`'s coset descent. The third of those was
+// WRONG here until the 16-layer chain was checked against p3's own chain; see
+// `commitPhaseRound`. A circuit that witnessed a fresh index per round would
+// measure the same and verify something strictly weaker.
 //
 // ⚑ WHAT THIS RUNG IS NOT. It is the FRI FOLD CHAIN. It is not the DEEP
 // quotient (the `(f(zeta) - f(x))/(zeta - x)` reduced openings and their alpha
-// powers), not the AIR constraint evaluation, not the challenger/Fiat-Shamir
-// that produces `beta`, and not the proof-of-work grind. Those are separate
-// cost centres and none of them is priced here. `beta`, the commitments and the
-// claimed final evaluation are PUBLIC INPUTS of this statement precisely
-// because binding them to a transcript is the part that is missing.
+// powers), and not the AIR constraint evaluation. Those are separate cost
+// centres and neither is priced here.
+//
+// ⚑ AND ONE THING IT WAS NOT, WHICH IT NOW IS. This header used to say `beta`
+// and the query index were witnessed "precisely because binding them to a
+// transcript is the part that is missing". `FriChallenger.ts` is that binding —
+// it derives `alpha`, every `beta`, the 16-bit query PoW and every query index
+// from a `DuplexChallenger` transcript KAT'd against the deployed one, and
+// `makeDerivedQueryProgram` joins the derivation to the walk in one statement.
+// The witnessed forms below survive because they are what `getRows()` prices;
+// the DERIVED form is what a verifier would run.
 // ---------------------------------------------------------------------------
 
 /** `BinomialExtensionField<BabyBear, 4>`; `X^4 = W`. `EXT_W` is checked against
@@ -204,16 +212,30 @@ export type CommitRound = {
  *      and the sibling, ordered by the index bit (`index_in_group`);
  *   2. hash that row with the deployed leaf sponge and verify its opening
  *      against `commit` along `path`;
- *   3. fold to the parent evaluation at `beta`.
+ *   3. fold to the parent evaluation at `beta`;
+ *   4. descend the coset point for the NEXT round.
  *
  * `slotBit` is the index bit consumed at this round; `pathBits` are the
  * remaining, higher bits — the SAME bits, which is what makes the openings a
  * consistent walk rather than 17 unrelated ones.
+ *
+ * ⚑ `descentBit` IS NOT `slotBit`, AND THIS WAS WRONG HERE FOR A DAY.
+ * `verify_query` shifts the index BEFORE it folds, so round `r` folds at
+ * `i_r = index >> (r+1)` and height `L_r`. The descent
+ * `x_{r+1} = (-1)^b * x_r^2` is driven by the low bit of `i_r`
+ * (`coset_points_descend_by_squaring_and_a_sign`, p2bb.rs) — which is
+ * `indexBits[r+1]`, one PAST the bit that chose the slot. Passing `slotBit`
+ * agrees whenever two consecutive index bits happen to be equal, i.e. on about
+ * half of every chain's rounds and on 100% of a chain whose index is all-zero —
+ * which is what `getRows()` witnesses. It was caught only by chaining sixteen
+ * rounds against p3's own chain (`p2chain`); no single-round check can see it,
+ * because a single round never consumes two bits.
  */
 export function commitPhaseRound(
   folded: BbExt,
   x: Field,
   slotBit: Bool,
+  descentBit: Bool,
   pathBits: Bool[],
   round: CommitRound,
 ): { folded: BbExt; x: Field } {
@@ -242,7 +264,7 @@ export function commitPhaseRound(
 
   return {
     folded: foldRowArity2(x, round.beta, eEven, eOdd),
-    x: nextCosetPoint(x, slotBit),
+    x: nextCosetPoint(x, descentBit),
   };
 }
 
@@ -265,27 +287,86 @@ export function twoAdicGenerator(k: number): bigint {
 }
 
 /**
- * The first coset point, DERIVED from the witnessed index bits rather than
- * witnessed alongside them.
+ * `g_{logOrder} ^ reverse_bits_len(index, revLen)`, with `index`'s bits given
+ * low-first, as a product of COMPILE-TIME constants selected by the bits.
  *
- * `fold_row` uses `g_{L+1} ^ reverse_bits_len(index, L)`. With `index` the
- * already-shifted index at folded height `L`, the bit-reversal turns the
- * exponent into a product of constants selected by the bits, so this is `L`
- * conditional multiplications by compile-time constants — and it BINDS the
- * domain point to the index instead of trusting a witness for it.
+ * `reverse_bits_len(i, R) = sum_j bit_j * 2^(R-1-j)`, so the exponent
+ * decomposes and each bit contributes a fixed `g^(2^(R-1-j))`. That is `n`
+ * conditional multiplications instead of an exponentiation, and — the point —
+ * it BINDS the domain point to the index instead of trusting a witness for it.
+ *
+ * `bits` may be SHORTER than `revLen`: the missing high bits are zero, which is
+ * exactly the situation at the end of the fold chain, where the index has been
+ * shifted down but the reversal length is still the original one.
  */
-export function cosetPointFromBits(bits: Bool[], logHeight: number): Field {
-  if (bits.length !== logHeight) throw new Error('cosetPointFromBits: bit count != logHeight');
-  const g = twoAdicGenerator(logHeight + 1);
+export function powTwoAdicRevBits(bits: Bool[], logOrder: number, revLen: number): Field {
+  if (bits.length > revLen) throw new Error('powTwoAdicRevBits: more bits than revLen');
+  const g = twoAdicGenerator(logOrder);
   let acc = Field(1);
-  // reverse_bits_len(index, L) = sum_i bit_i * 2^(L-1-i), and bits[i] here is
-  // bit `i` of the shifted index (bottom-up, matching the path directions).
-  for (let i = 0; i < logHeight; i++) {
+  for (let i = 0; i < bits.length; i++) {
     let c = g;
-    for (let k = 0; k < logHeight - 1 - i; k++) c = md(c * c);
+    for (let k = 0; k < revLen - 1 - i; k++) c = md(c * c);
     const scaled = reduceLane(acc.mul(Field(c)), LANE_MAX * LANE_MAX);
     acc = Provable.if(bits[i], scaled, acc);
   }
+  return acc;
+}
+
+/**
+ * The first coset point, DERIVED from the witnessed index bits rather than
+ * witnessed alongside them.
+ *
+ * `fold_row` uses `g_{L+1} ^ reverse_bits_len(index, L)`, with `index` the
+ * already-shifted index at folded height `L`.
+ */
+export function cosetPointFromBits(bits: Bool[], logHeight: number): Field {
+  if (bits.length !== logHeight) throw new Error('cosetPointFromBits: bit count != logHeight');
+  return powTwoAdicRevBits(bits, logHeight + 1, logHeight);
+}
+
+/**
+ * The point at which the FINAL polynomial is evaluated:
+ * `g_{log_global_max_height} ^ reverse_bits_len(domain_index, log_global_max_height)`
+ * (`fri/src/verifier.rs:296-297`), where `domain_index` is what is LEFT of the
+ * query index after every fold has shifted it down.
+ *
+ * ⚑ At the deployed knobs this value is dead weight: `log_final_poly_len = 0`
+ * means the final polynomial is a single coefficient and Horner returns it
+ * regardless of the point. It is computed anyway because the parameter is a
+ * knob, and a verifier that skipped it would be wrong the moment the knob moved
+ * — but the row cost is charged to a term the deployed shape does not need, and
+ * §3.12 says so.
+ */
+export function finalEvalPointFromBits(
+  remainingBits: Bool[],
+  logGlobalMaxHeight: number,
+): Field {
+  return powTwoAdicRevBits(remainingBits, logGlobalMaxHeight, logGlobalMaxHeight);
+}
+
+/** `a^(2^k)` — the roll-in factor `beta^arity` at `arity = 2^k`. */
+export function extPowPow2(a: BbExt, k: number): BbExt {
+  let r = a;
+  for (let i = 0; i < k; i++) r = extMul(r, r);
+  return r;
+}
+
+/** Horner over the extension: `sum_i c_i x^i` at a base-field point `x`.
+ *  p3 starts the accumulator at ZERO and folds `final_poly` in reverse
+ *  (`verifier.rs:302-305`); starting at the top coefficient is the same value
+ *  without the degenerate first multiply. */
+export function evalFinalPoly(coeffs: BbExt[], x: Field): BbExt {
+  if (coeffs.length === 0) throw new Error('evalFinalPoly: no coefficients');
+  let acc = coeffs[coeffs.length - 1];
+  for (let i = coeffs.length - 2; i >= 0; i--) acc = extAdd(extScale(acc, x), coeffs[i]);
+  return acc;
+}
+
+/** The bigint twin of `evalFinalPoly`. */
+export function evalFinalPolyBigInt(coeffs: bigint[][], x: bigint): bigint[] {
+  let acc = coeffs[coeffs.length - 1];
+  for (let i = coeffs.length - 2; i >= 0; i--)
+    acc = extAddBigInt(extScaleBigInt(acc, x), coeffs[i]);
   return acc;
 }
 
@@ -305,6 +386,104 @@ export type QueryWitness = {
   reducedOpening: BbExt;
   rounds: CommitRound[];
 };
+
+// ===========================================================================
+// 4b. The COMMIT PHASE — all layers as ONE object.
+// ===========================================================================
+
+/**
+ * A reduced opening rolled in partway down the chain.
+ *
+ * `verify_query` adds `beta_r^arity * ro` to the folded evaluation AFTER round
+ * `r`'s fold, whenever an input matrix's height equals that round's folded
+ * height (`fri/src/verifier.rs:470-474`). At the deployed shape the number of
+ * such roll-ins is the number of DISTINCT input-matrix heights below the top,
+ * which is a function of the root's `degree_bits` — and §1.3 records that no
+ * committed measurement of the root's own `degree_bits` exists. So the schedule
+ * is a PARAMETER here and the marginal cost per roll-in is reported separately,
+ * rather than a count being invented.
+ */
+export type RollIn = {
+  /** The round AFTER whose fold this opening is added (0-based). */
+  afterRound: number;
+  value: BbExt;
+};
+
+export type CommitPhaseWitness = {
+  /** The query index, low bit first; `logD0` of them. Bit `r` is round `r`'s
+   *  slot selector AND bits `r+1..` are round `r`'s path directions — one
+   *  object, which is what makes the openings a consistent walk. */
+  indexBits: Bool[];
+  /** The evaluation the chain starts from: the reduced opening at the top
+   *  height. ⚑ Binding it to the input-phase row is the DEEP quotient. */
+  initial: BbExt;
+  rounds: CommitRound[];
+  /** Compile-time schedule; may be empty. */
+  rollIns: RollIn[];
+  /** `proof.final_poly`, `2^log_final_poly_len` coefficients. When present the
+   *  chain's landing value is ASSERTED equal to its evaluation — the check that
+   *  makes the walk closed rather than open-ended. */
+  finalPoly?: BbExt[];
+  /** `log_global_max_height`, for the final evaluation point. Defaults to
+   *  `logD0`. */
+  logGlobalMaxHeight?: number;
+};
+
+/**
+ * **The Rung-4 statement.** The whole commit phase: `rounds.length` rounds of
+ * reconstruct-open-fold sharing ONE index, the roll-ins at their scheduled
+ * heights, and — when a final polynomial is supplied — the closing check that
+ * the chain lands on its evaluation.
+ *
+ * Rung 2 proved one round. A chain of rounds is not `n` copies of one round:
+ * the index is shared, the coset point descends by `(-1)^b x^2` sixteen times
+ * with the sign taken from the same bit that selected the slot, and the landing
+ * value has to MEAN something. All three are properties of the chain and none
+ * is visible in a single round.
+ */
+export function verifyCommitPhase(w: CommitPhaseWitness): { folded: BbExt; x: Field } {
+  const logD0 = w.indexBits.length;
+  const layers = w.rounds.length;
+  if (w.rollIns.some((r) => r.afterRound < 0 || r.afterRound >= layers))
+    throw new Error('a roll-in is scheduled outside the fold chain');
+
+  assertExtInRange(w.initial);
+  let folded = w.initial;
+  let x = cosetPointFromBits(w.indexBits.slice(1), logD0 - 1);
+
+  for (let r = 0; r < layers; r++) {
+    const out = commitPhaseRound(
+      folded,
+      x,
+      w.indexBits[r],
+      // The descent bit is the NEXT one — see `commitPhaseRound`. At the last
+      // possible round there is none, and the returned `x` is unused.
+      r + 1 < logD0 ? w.indexBits[r + 1] : Bool(false),
+      w.indexBits.slice(r + 1, logD0),
+      w.rounds[r],
+    );
+    folded = out.folded;
+    x = out.x;
+    // The roll-in uses `beta^arity`, arity = 2 at the deployed max_log_arity.
+    for (const ri of w.rollIns) {
+      if (ri.afterRound !== r) continue;
+      assertExtInRange(ri.value);
+      folded = extAdd(folded, extMul(extPowPow2(w.rounds[r].beta, 1), ri.value));
+    }
+  }
+
+  if (w.finalPoly !== undefined) {
+    for (const c of w.finalPoly) assertExtInRange(c);
+    const lgmh = w.logGlobalMaxHeight ?? logD0;
+    const xFinal = finalEvalPointFromBits(w.indexBits.slice(layers), lgmh);
+    const want = evalFinalPoly(w.finalPoly, xFinal);
+    for (let j = 0; j < EXT_D; j++)
+      canonicalLane(folded.limbs[j], LANE_MAX).assertEquals(
+        canonicalLane(want.limbs[j], LANE_MAX),
+      );
+  }
+  return { folded, x };
+}
 
 /**
  * **The Rung-2 statement.** One FRI query, end to end: the input-phase opening,
@@ -330,21 +509,12 @@ export function verifyQuery(w: QueryWitness): BbExt {
   for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(w.inputCommit.limbs[j]);
 
   // -- commit phase.
-  assertExtInRange(w.reducedOpening);
-  let folded = w.reducedOpening;
-  let x = cosetPointFromBits(w.indexBits.slice(1), logD0 - 1);
-  for (let r = 0; r < w.rounds.length; r++) {
-    const out = commitPhaseRound(
-      folded,
-      x,
-      w.indexBits[r],
-      w.indexBits.slice(r + 1, logD0),
-      w.rounds[r],
-    );
-    folded = out.folded;
-    x = out.x;
-  }
-  return folded;
+  return verifyCommitPhase({
+    indexBits: w.indexBits,
+    initial: w.reducedOpening,
+    rounds: w.rounds,
+    rollIns: [],
+  }).folded;
 }
 
 /** The deployed root's query shape, for measurement: `|D^0| = 2^22`, 16 arity-2
@@ -378,6 +548,158 @@ export function witnessQueryShape(logD0: number, layers: number, inputRowWidth: 
       commit: wit(() => BbDigest.zero(), BbDigest),
     })),
   };
+}
+
+/** Witness a commit-phase chain of the given shape — for `getRows()`. */
+export function witnessCommitPhaseShape(
+  logD0: number,
+  layers: number,
+  pathDepths: number[],
+  rollInRounds: number[],
+  finalPolyLen: number,
+): CommitPhaseWitness {
+  const wit = <T>(f: () => T, t: any) => Provable.witness(t, f);
+  return {
+    indexBits: Array.from({ length: logD0 }, () => wit(() => Bool(false), Bool)),
+    initial: wit(() => BbExt.zero(), BbExt),
+    rounds: Array.from({ length: layers }, (_, i) => ({
+      sibling: wit(() => BbExt.zero(), BbExt),
+      path: Array.from({ length: pathDepths[i] }, () => wit(() => BbDigest.zero(), BbDigest)),
+      beta: wit(() => BbExt.zero(), BbExt),
+      commit: wit(() => BbDigest.zero(), BbDigest),
+    })),
+    rollIns: rollInRounds.map((r) => ({ afterRound: r, value: wit(() => BbExt.zero(), BbExt) })),
+    finalPoly:
+      finalPolyLen > 0
+        ? Array.from({ length: finalPolyLen }, () => wit(() => BbExt.zero(), BbExt))
+        : undefined,
+    logGlobalMaxHeight: logD0,
+  };
+}
+
+/** The bigint twin of the commit phase, for the KAT. Returns the landing value
+ *  and the coset point at every layer, so a divergence localises to a round
+ *  rather than to "the chain". */
+export function verifyCommitPhaseBigInt(w: {
+  indexBits: boolean[];
+  initial: bigint[];
+  betas: bigint[][];
+  siblings: bigint[][];
+  rollIns: { afterRound: number; value: bigint[] }[];
+}): { folded: bigint[]; xs: bigint[] } {
+  const logD0 = w.indexBits.length;
+  const layers = w.betas.length;
+  let folded = w.initial;
+  // `g_{L+1} ^ reverse_bits_len(index >> 1, L)` at L = logD0 - 1.
+  let idx = 0n;
+  for (let i = 1; i < logD0; i++) if (w.indexBits[i]) idx |= 1n << BigInt(i - 1);
+  const L = logD0 - 1;
+  let rev = 0n;
+  for (let i = 0; i < L; i++) if ((idx >> BigInt(i)) & 1n) rev |= 1n << BigInt(L - 1 - i);
+  let x = 1n;
+  {
+    let b = twoAdicGenerator(L + 1);
+    let e = rev;
+    while (e > 0n) {
+      if (e & 1n) x = md(x * b);
+      b = md(b * b);
+      e >>= 1n;
+    }
+  }
+  const xs = [x];
+  for (let r = 0; r < layers; r++) {
+    const even = w.indexBits[r] ? w.siblings[r] : folded;
+    const odd = w.indexBits[r] ? folded : w.siblings[r];
+    folded = foldRowArity2BigInt(x, w.betas[r], even, odd);
+    const sq = md(x * x);
+    // ⚑ The descent sign is bit r+1, NOT the slot bit r — `verify_query` shifts
+    // the index before it folds. See `commitPhaseRound`.
+    x = r + 1 < logD0 && w.indexBits[r + 1] ? md(P - sq) : sq;
+    xs.push(x);
+    for (const ri of w.rollIns) {
+      if (ri.afterRound !== r) continue;
+      folded = extAddBigInt(folded, extMulBigInt(extMulBigInt(w.betas[r], w.betas[r]), ri.value));
+    }
+  }
+  return { folded, xs };
+}
+
+/**
+ * **The Rung-4 program.** All `layers` commit-phase rounds as ONE `ZkProgram`.
+ *
+ * ⚑ THE PATH DEPTHS ARE A PARAMETER, AND THE PROVABLE INSTANCE RUNS THEM AT
+ * ZERO. The deployed chain's Merkle paths (depths 21..6, 216 levels) are two
+ * orders of magnitude past one Kimchi domain — that is §3.10's measurement, not
+ * a defect of this program. At depth 0 the round's leaf digest IS its
+ * commitment, which is the `cap_height = log_folded_height` corner of the same
+ * `MerkleTreeMmcs` and therefore a real configuration rather than a fiction.
+ * What survives at depth 0 is exactly what a single round could not show: the
+ * shared index, the sixteen-fold coset descent, the chained evaluation, the
+ * roll-ins, and the closing comparison against the final polynomial.
+ *
+ * The commitments and the final polynomial are the PUBLIC INPUT. Without that
+ * the statement would be "there EXIST sixteen commitments under which some
+ * index closes", which a prover satisfies by choosing them.
+ */
+export function makeCommitPhaseProgram(opts: {
+  logD0: number;
+  layers: number;
+  pathDepths: number[];
+  rollInRounds: number[];
+  finalPolyLen: number;
+}) {
+  const { logD0, layers, pathDepths, rollInRounds, finalPolyLen } = opts;
+  if (pathDepths.length !== layers) throw new Error('pathDepths.length != layers');
+
+  class CommitPhaseClaim extends Struct({
+    commits: Provable.Array(BbDigest, layers),
+    finalPoly: Provable.Array(BbExt, finalPolyLen),
+  }) {}
+
+  const prog = ZkProgram({
+    name: `dregg-fri-commit-phase-l${layers}-d${logD0}-p${pathDepths.join('_')}-r${rollInRounds.length}`,
+    publicInput: CommitPhaseClaim,
+    publicOutput: Field, // the query index this chain walked, recomposed
+    methods: {
+      proveChain: {
+        privateInputs: [
+          Provable.Array(Bool, logD0), //                    index bits
+          BbExt, //                                          the initial reduced opening
+          Provable.Array(BbExt, layers), //                  siblings
+          Provable.Array(BbExt, layers), //                  betas
+          Provable.Array(BbExt, Math.max(rollInRounds.length, 1)), // roll-ins (>=1 for the type)
+          Provable.Array(Provable.Array(BbDigest, Math.max(...pathDepths, 1)), layers),
+        ],
+        async method(
+          claim: CommitPhaseClaim,
+          indexBits: Bool[],
+          initial: BbExt,
+          siblings: BbExt[],
+          betas: BbExt[],
+          rollInValues: BbExt[],
+          paths: BbDigest[][],
+        ) {
+          verifyCommitPhase({
+            indexBits,
+            initial,
+            rounds: Array.from({ length: layers }, (_, r) => ({
+              sibling: siblings[r],
+              path: paths[r].slice(0, pathDepths[r]),
+              beta: betas[r],
+              commit: claim.commits[r],
+            })),
+            rollIns: rollInRounds.map((r, i) => ({ afterRound: r, value: rollInValues[i] })),
+            finalPoly: claim.finalPoly,
+            logGlobalMaxHeight: logD0,
+          });
+          let acc = Field(0);
+          for (let i = 0; i < logD0; i++) acc = acc.add(indexBits[i].toField().mul(1n << BigInt(i)));
+          return { publicOutput: acc };
+        },
+      },
+    },
+  });
+  return { prog, CommitPhaseClaim };
 }
 
 /**
@@ -414,7 +736,12 @@ export function makeCommitRoundProgram(pathDepth: number) {
         ) {
           assertExtInRange(folded);
           assertLaneLt2p31(x);
-          const out = commitPhaseRound(folded, x, slotBit, pathBits, {
+          // In a chain, the descent bit is the next index bit — which is also
+          // this round's FIRST path direction, because the path walks the
+          // already-shifted index. A one-round program has no later bit, so
+          // that identity is what it can pass.
+          const descentBit = pathDepth > 0 ? pathBits[0] : slotBit;
+          const out = commitPhaseRound(folded, x, slotBit, descentBit, pathBits, {
             sibling,
             path,
             beta,

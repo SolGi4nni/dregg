@@ -1251,14 +1251,27 @@ jobs:
     # it, and the polarities of the PLACEHOLDER key that is still the only thing making
     # the anchor unforgeable), and a well-formed proof of another statement failing
     # VERIFICATION (with the identical bytes accepted on their own account update as
-    # the control). Then the self-test injects TWENTY-FOUR faults into a scratch copy
+    # the control). Then the self-test injects THIRTY-EIGHT faults into a scratch copy
     # and requires each to turn it red.
     #
-    # ⚑ Since 2026-07-28 it also runs two RATCHETED MEASUREMENTS against the deployed
-    # p3 objects: RUNG 1, a Poseidon2-BabyBear Merkle opening (2,677 rows/level;
-    # 58,971 for the deployed depth 22), and RUNG 2, one FRI query at the deployed
-    # geometry (684,726 rows). Rung 2 builds a 684k-row constraint system, which is
-    # why the node heap is raised in the npm script and this job's timeout is 120 min.
+    # ⚑ Since 2026-07-28 it also runs FOUR RATCHETED MEASUREMENTS against the deployed
+    # p3 objects: RUNG 1, a Poseidon2-BabyBear Merkle opening (2,677 rows/level; 58,971
+    # for the deployed depth 22); RUNG 2, one FRI query at the deployed geometry
+    # (684,726 rows); RUNG 3, the whole Fiat-Shamir transcript (62,637 rows, 23
+    # permutations) KAT'd against `p3_challenger::DuplexChallenger` — which is what
+    # makes the query indices DERIVED rather than witnessed, and therefore what makes
+    # rung 2 a FRI check rather than an existential; and RUNG 4, the 16-layer commit
+    # phase as one chain (623,310 rows) KAT'd against p3's own 16-round chain. Rung 2
+    # builds a 684k-row constraint system and three ZkPrograms compile, which is why
+    # the node heap is raised in the npm scripts and this job's timeout is 120 min.
+    #
+    # ⚑ Rung 4 found a real defect the moment it existed: the coset descent took the
+    # index bit that chose the SLOT where `verify_query` takes the next one. It is
+    # right whenever two consecutive index bits agree — on ~half of any chain's rounds
+    # and on 100% of the all-zero index every row measurement uses — and the
+    # single-round descent check, made deterministic and both-polarity the day before,
+    # stayed green through it. Composition needs its own referent. A self-test fault
+    # puts it back.
     #
     # ⚑ CARGO IS NOW REQUIRED and the gate FAILS without it. The Rust leg is the
     # DREGG SIDE of this bridge — `circuit-prove/sketches/mina-pasta-hash-probe`, the
@@ -1268,8 +1281,8 @@ jobs:
     # workspace (`[workspace]` in its Cargo.toml), so no other job reaches it either.
     # It has git dependencies on o1-labs/proof-systems, so this job fetches; RUSTUP_TOOLCHAIN
     # from dtolnay/rust-toolchain overrides the crate directory's inherited pin, as
-    # everywhere else here. ~10 min for the headline run; the self-test is much
-    # longer (24 faults, several of them re-running the Rung-2 measurement). No Lean.
+    # everywhere else here. ~13 min for the headline run; the self-test is much
+    # longer (38 faults, several of them re-running the Rung-2/4 measurements). No Lean.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

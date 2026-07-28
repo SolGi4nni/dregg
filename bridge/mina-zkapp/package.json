@@ -15,6 +15,8 @@
     "poseidon2-rows": "npm run build && node dist/scripts/poseidon2-babybear-rows.js",
     "poseidon2-merkle": "npm run build && node dist/scripts/poseidon2-merkle-rows.js",
     "fri-query": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-query-rows.js",
+    "fri-challenger": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-challenger-rows.js",
+    "fri-chain": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-chain-rows.js",
     "merkle-constraints": "npm run build && node dist/scripts/merkle-constraints.js",
     "test": "npm run gate",
     "deploy": "npm run build && node dist/scripts/deploy.js",

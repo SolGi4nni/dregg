@@ -20,6 +20,7 @@
 //! params o1js compiles into its Poseidon gate.
 
 pub mod p2bb;
+pub mod p2chal;
 
 use ark_ff::{BigInteger, PrimeField};
 use mina_curves::pasta::Fp;
@@ -204,6 +205,10 @@ fn main() {
         // Part B: the DEPLOYED BabyBear Poseidon2-w16 MMCS (see `p2bb.rs`).
         Some("p2merkle") => return p2bb::emit_p2_merkle(&argv[1..]),
         Some("p2fold") => return p2bb::emit_p2_fold(&argv[1..]),
+        // Part C: the DEPLOYED Fiat-Shamir transcript (see `p2chal.rs`).
+        Some("p2chain") => return p2bb::emit_p2_chain(&argv[1..]),
+        Some("p2chal") => return p2chal::emit_p2_chal(&argv[1..]),
+        Some("p2fritranscript") => return p2chal::emit_fri_transcript(&argv[1..]),
         _ => {}
     }
 

@@ -75,11 +75,36 @@
 # whole query's `getRows()` is ratcheted. ⚑ Needs a 16 GB node heap (the npm
 # script passes `--max-old-space-size`); o1js OOMs at the 4 GB default.
 #
+# SIXTH leg (`fri-challenger-rows.ts`) — RUNG 3, THE CHALLENGER, and the one
+# that changes what the others mean. Rungs 1/2 walk a query at a WITNESSED index
+# under WITNESSED betas: that statement says "there EXIST 19 indices at which
+# this proof is consistent", and a cheating prover supplies the 19 it can
+# answer. This leg builds the Fiat-Shamir function itself —
+# `DuplexChallenger<BabyBear, Poseidon2BabyBear<16>, 16, 8>`, KAT'd against the
+# DEPLOYED one (`p2chal`, `p2fritranscript`) on the exact schedule
+# `p3_fri::verifier::verify_fri` runs — so alpha, all 16 betas, the 16-bit query
+# PoW and all 19 query indices are DERIVED. Four state-machine edges each get a
+# discriminating polarity, the one constraint a witness can lie about (the
+# bit-split's high part) gets a lying witness and must refuse, and a 4-layer
+# instance of the same schedule COMPILES and PROVES.
+#
+# SEVENTH leg (`fri-chain-rows.ts`) — RUNG 4, the COMMIT PHASE as ONE object:
+# all 16 fold layers chained, KAT'd against p3's OWN 16-round chain (`p2chain`)
+# rather than 16 calls to a one-round emitter. ⚑ That distinction is not
+# academic: this leg immediately found the coset descent taking `indexBits[r]`
+# where `verify_query` takes `indexBits[r+1]` — right whenever two consecutive
+# index bits agree, hence right on ~half of every chain and on ALL of the
+# all-zero index `getRows()` supplies. The single-round descent check, made
+# deterministic and both-polarity the day before, stayed green through it,
+# because one round never consumes two bits. Also carries [4b], THE SEAM: one
+# program that DERIVES the index from the transcript and then walks the chain at
+# it, proved on an honest witness found by fixed-point search.
+#
 # ⚑ NO SKIPS. A missing `node`, a missing `npm`, a missing `cargo`, an absent or
 # unpinned o1js, a type error, or a diverging vector are all FAILURES — the same
-# discipline as `embedded-js` and `opentheory-importer`. ~6 min warm (the Rung-2
-# leg is ~3 of them: 684,726 rows is slow to BUILD, never mind prove). Needs
-# cargo for legs 3-5; no Lean.
+# discipline as `embedded-js` and `opentheory-importer`. ~11 min warm (the
+# Rung-2/3/4 legs are ~8 of them: 684,726 rows is slow to BUILD, never mind
+# prove, and three ZkProgram compiles run). Needs cargo for legs 3-7; no Lean.
 #
 #   bash scripts/check-mina-attestation.sh
 #   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
@@ -141,6 +166,16 @@ run_merkle() { # run_merkle <dir>
 run_fri() { # run_fri <dir>
   ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
       npm run --silent fri-query )
+}
+# Rung 3: the Fiat-Shamir challenger — the rung that makes the walk the PROVER'S.
+run_chal() { # run_chal <dir>
+  ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+      npm run --silent fri-challenger )
+}
+# Rung 4: the 16-layer commit phase as one chain, plus the seam.
+run_chain() { # run_chain <dir>
+  ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+      npm run --silent fri-chain )
 }
 
 # ── the headline run ──────────────────────────────────────────────────────────
@@ -228,9 +263,50 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$fri_out" || die "the FRI query rows ratchet did not run"
   grep -q '=== FRI QUERY PASS ===' <<<"$fri_out" || die "the FRI leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri checks green (compile+prove+verify," \
-       "tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED + placeholder-keyed, spliced proof" \
-       "refused, Rust emitter cross-checked, Merkle opening and FRI query measured against p3)"
+  # Leg 6: RUNG 3 — the CHALLENGER. Without this the query walk proves nothing,
+  # because a prover picks its own indices.
+  chal_out="$(run_chal "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$chal_out"
+  [ "$rc" -eq 0 ] || die "the FRI challenger leg exited $rc"
+  n_chal="$(printf '%s' "$chal_out" | grep -c '✓')"
+  [ "$n_chal" -ge 25 ] || die "only $n_chal challenger checks passed; expected >= 25"
+  grep -q 'all 19 query indices agree — DERIVED, not witnessed' <<<"$chal_out" \
+    || die "the query-index derivation did not run (the FRI walk is over CHOSEN indices)"
+  grep -q 'check_witness(0' <<<"$chal_out" \
+    || die "the 0-bit check_witness edge did not run (all 16 betas would be wrong)"
+  grep -q 'is CHOOSEABLE\|cannot be split to claim index' <<<"$chal_out" \
+    || die "the bit-split soundness check did not run (the index would be witness-chosen)"
+  grep -q 'a transcript PROVES and VERIFIES' <<<"$chal_out" \
+    || die "no transcript was actually proved"
+  grep -q 'NO proof exists for a query PoW witness' <<<"$chal_out" \
+    || die "the query-PoW refusal did not run"
+  grep -q 'ratchet: ' <<<"$chal_out" || die "the transcript rows ratchet did not run"
+  grep -q '=== FRI CHALLENGER PASS ===' <<<"$chal_out" || die "the challenger leg did not print its PASS line"
+
+  # Leg 7: RUNG 4 — the 16-layer chain, and the seam that joins it to leg 6.
+  chain_out="$(run_chain "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$chain_out"
+  [ "$rc" -eq 0 ] || die "the FRI chain leg exited $rc"
+  n_chain="$(printf '%s' "$chain_out" | grep -c '✓')"
+  [ "$n_chain" -ge 18 ] || die "only $n_chain chain checks passed; expected >= 18"
+  grep -q 'alternating bits (they differ at EVERY round)' <<<"$chain_out" \
+    || die "the bit-alternating index did not run (the descent bug is invisible without it)"
+  grep -q 'the check discriminates' <<<"$chain_out" \
+    || die "the wrong-bit twin did not run (the chain KAT would be unattributable)"
+  grep -q 'PROVES and VERIFIES' <<<"$chain_out" \
+    || die "the 16-layer chain was never actually proved"
+  grep -q 'NO proof exists at a different query index' <<<"$chain_out" \
+    || die "the one-index-threads-all-layers check did not run"
+  grep -q 'is DERIVED from the transcript, not witnessed' <<<"$chain_out" \
+    || die "THE SEAM did not run — the transcript and the walk are still two unjoined objects"
+  grep -q 'ratchet: ' <<<"$chain_out" || die "the chain rows ratchet did not run"
+  grep -q '=== FRI CHAIN PASS ===' <<<"$chain_out" || die "the chain leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain checks green" \
+       "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
+       "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
+       "FRI query, Fiat-Shamir transcript and the 16-layer fold chain all measured against p3," \
+       "with the query index DERIVED rather than witnessed)"
   exit 0
 fi
 
@@ -372,6 +448,76 @@ expect_red fri "the extension modulus X^4 - W is wrong" \
 expect_red fri "rows/query drifts from the figure the doc quotes" \
   "s/const RECORDED_QUERY_ROWS = 684_726;/const RECORDED_QUERY_ROWS = 600_000;/" \
   scripts/fri-query-rows.ts
+
+# ── Leg 6: RUNG 3, the CHALLENGER. One fault per state-machine edge that a
+# transcription gets wrong while every hash still matches, plus the one
+# constraint a witness can lie about, plus the ratchets.
+expect_red chal "the output buffer is popped from the FRONT (samples in the wrong order)" \
+  "s/    return this\.outputBuffer\.pop\(\)!;/    return this.outputBuffer.shift()!;/" \
+  src/FriChallenger.ts
+expect_red chal "observe stops discarding unread squeezes" \
+  "s/  observe\(v: bigint\) \{\n    this\.outputBuffer = \[\];/  observe(v: bigint) {\n    \/* fault *\//" \
+  src/FriChallenger.ts
+expect_red chal "a 0-bit check_witness OBSERVES the witness (all 16 betas move)" \
+  "s/    if \(bits === 0\) return true;/    if (bits === -1) return true;/" \
+  src/FriChallenger.ts
+# The unabsorbed rate lanes are OVERWRITTEN, not zero-filled. A challenger that
+# zero-filled them agrees on every full-rate absorb and diverges the moment a
+# PARTIAL buffer is duplexed — which the deployed schedule does at alpha.
+expect_red chal "a partial absorb zero-fills the unabsorbed rate" \
+  "s/    for \(let i = 0; i < this\.inputBuffer\.length; i\+\+\) this\.state\[i\] = this\.inputBuffer\[i\];/    for (let i = 0; i < RATE; i++) this.state[i] = this.inputBuffer[i] ?? 0n;/" \
+  src/FriChallenger.ts
+# ⚑ THE ONE NOTHING ELSE SEES. Every KAT in the leg compares against p3 on an
+# HONEST witness, and an honest witness produces the right bit decomposition
+# whether or not anything forces it to. Drop the bound on the high part and
+# `c = hi*2^k + sum b_i 2^i` is satisfiable over Pasta for EVERY bit pattern —
+# the prover chooses its own query indices out of a perfectly correct sponge,
+# and every other check in this leg stays green.
+expect_red chal "the bit-split's high-part bound removed (the query index becomes witness-CHOSEN)" \
+  "s/  assertLtPow2\(hi, 31 - k\);/  \/* fault *\//" \
+  src/FriChallenger.ts
+expect_red chal "assertLtPow2 made a no-op" \
+  "s/  if \(n <= 0\) \{/  if (n >= 0) return;\n  if (n <= 0) {/" \
+  src/FriChallenger.ts
+expect_red chal "rows/transcript drifts from the figure the doc quotes" \
+  "s/const RECORDED_TRANSCRIPT_ROWS = 62_637;/const RECORDED_TRANSCRIPT_ROWS = 50_000;/" \
+  scripts/fri-challenger-rows.ts
+expect_red chal "the transcript's permutation count drifts" \
+  "s/const RECORDED_TRANSCRIPT_PERMS = 23;/const RECORDED_TRANSCRIPT_PERMS = 22;/" \
+  scripts/fri-challenger-rows.ts
+
+# ── Leg 7: RUNG 4, the 16-layer chain. The first two faults are THE DEFECT THIS
+# RUNG FOUND, put back: the coset descent driven by the slot bit instead of the
+# next index bit. It is right whenever two consecutive index bits agree — so on
+# the all-zero index every row measurement uses, and on about half of any
+# chain's rounds — and no single-round check can see it, because one round never
+# consumes two bits.
+expect_red chain "the TWIN's coset descent driven by the SLOT bit (the defect this rung found)" \
+  "s/    x = r \+ 1 < logD0 && w\.indexBits\[r \+ 1\] \? md\(P - sq\) : sq;/    x = w.indexBits[r] ? md(P - sq) : sq;/" \
+  src/FriQueryStep.ts
+expect_red chain "the CIRCUIT's coset descent driven by the SLOT bit" \
+  "s/      r \+ 1 < logD0 \? w\.indexBits\[r \+ 1\] : Bool\(false\),/      w.indexBits[r],/" \
+  src/FriQueryStep.ts
+expect_red chain "the roll-in drops its beta^arity factor" \
+  "s/      folded = extAdd\(folded, extMul\(extPowPow2\(w\.rounds\[r\]\.beta, 1\), ri\.value\)\);/      folded = extAdd(folded, ri.value);/" \
+  src/FriQueryStep.ts
+# A chain that does not have to LAND anywhere is not a FRI check: the final-poly
+# comparison is the only thing that makes the fold sequence closed.
+expect_red chain "the final-polynomial comparison made vacuous" \
+  "s/        canonicalLane\(want\.limbs\[j\], LANE_MAX\),/        canonicalLane(folded.limbs[j], LANE_MAX),/" \
+  src/FriQueryStep.ts
+# THE SEAM. The index the chain walks must be the DERIVED one and the beta each
+# round folds at must be the DERIVED one. Either substitution leaves a program
+# that measures the same and verifies something strictly weaker.
+expect_red chain "the seam walks a witnessed index instead of the derived one" \
+  "s/          const bits = chal\.queryIndexBits\[0\];/          const bits = Provable.witness(Provable.Array(Bool, indexBits), () =>\n            Array.from({ length: indexBits }, () => Bool(false)),\n          );/" \
+  src/FriChallenger.ts
+expect_red chain "the seam folds at the wrong round's derived beta" \
+  "s/              beta: chal\.betas\[r\],/              beta: chal.betas[(r + 1) % layers],/" \
+  src/FriChallenger.ts
+expect_red chain "rows/chain drifts from the figure the doc quotes" \
+  "s/const RECORDED_DEPLOYED_ROWS = 623_310;/const RECORDED_DEPLOYED_ROWS = 600_000;/" \
+  scripts/fri-chain-rows.ts
 
 # ── Leg 3: the DREGG SIDE. Faults go into $PCOPY, a scratch copy of the Rust
 # crate. Three of them, chosen to separate what each instrument sees:

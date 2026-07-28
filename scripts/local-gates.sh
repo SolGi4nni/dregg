@@ -293,15 +293,19 @@ GATES=(
   # root, it is its own workspace so no other row reaches it, and this gate used to be
   # Node-only — so the emitting half of the bridge ran in no gate at all. That leg runs
   # `cargo test --locked` and then the `merkle` subcommand end to end on unprecomputable
-  # leaves, cross-checked elementwise against o1js. ~60s warm, no Lean. The -red row is
-  # not optional — most of these legs are NEGATIVE assertions, which pass just as happily
-  # on a broken driver. It injects THIRTEEN faults into SCRATCH COPIES of both the
-  # TypeScript and the Rust crate (never the shared tree) — and a fault that matches
-  # NOTHING is itself a failure. One of them bends only the `merkle` subcommand's printed
-  # root: every `cargo test` still passes and only the cross-check catches it, which is
-  # the gap the third leg exists to close. ~90s.
-  "mina-attestation|900|bash scripts/check-mina-attestation.sh"
-  "mina-attestation-red|3600|bash scripts/check-mina-attestation.sh --self-test"
+  # leaves, cross-checked elementwise against o1js. No Lean. The -red row is not optional
+  # — most of these legs are NEGATIVE assertions, which pass just as happily on a broken
+  # driver. It injects THIRTY-EIGHT faults into SCRATCH COPIES of both the TypeScript and
+  # the Rust crate (never the shared tree) — and a fault that matches NOTHING is itself a
+  # failure. One of them bends only the `merkle` subcommand's printed root: every
+  # `cargo test` still passes and only the cross-check catches it, which is the gap the
+  # third leg exists to close. Another puts back the coset-descent bug the 16-layer chain
+  # leg found — right on ~half of all query indices and on 100% of the all-zero one every
+  # row measurement uses, which is why no single-round check saw it. ~13 min warm: seven
+  # legs, three Pickles compiles, and a 684,726-row constraint system that is slow to
+  # BUILD, never mind prove.
+  "mina-attestation|1500|bash scripts/check-mina-attestation.sh"
+  "mina-attestation-red|7200|bash scripts/check-mina-attestation.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

@@ -418,6 +418,7 @@ dependencies = [
  "mina-curves",
  "mina-poseidon",
  "p3-baby-bear",
+ "p3-challenger",
  "p3-field",
  "p3-symmetric",
 ]

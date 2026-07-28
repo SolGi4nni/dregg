@@ -318,6 +318,26 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
  * strong enough to stand alone (i.e. until it is the FRI verify), removing the
  * key removes the only thing that makes the anchor unforgeable. It stays,
  * labelled, and the docs say what it is.
+ *
+ * ⚑ AND "UNTIL IT IS THE FRI VERIFY" IS NOW A MEASURED DISTANCE, NOT A GESTURE.
+ * `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.9-3.14 prices the ladder against the
+ * deployed p3 objects, and as of 2026-07-28 the FRI query indices and fold
+ * challenges are DERIVED from a Fiat-Shamir transcript (§3.12, 62,637 rows)
+ * rather than witnessed, with one program joining the derivation to a whole
+ * 16-layer commit phase (§3.13b). So the walk is over the PROVER's queries.
+ * FOUR things still stand between that and an anchor this key could be deleted
+ * from, and §3.14 keeps the list:
+ *
+ *   1. the transcript's preamble is a stand-in, not the batch-STARK's own
+ *      observes;
+ *   2. the reduced opening the fold chain starts from is a WITNESS — binding it
+ *      to an input-phase opening under `alpha` IS the DEEP quotient;
+ *   3. the AIR constraint evaluation at zeta is not started, and it is what
+ *      makes the STARK a statement about dregg rather than about an arbitrary
+ *      low-degree function;
+ *   4. every rung walks ONE query of nineteen.
+ *
+ * None of those is a reason to delete the key early. All four closing is.
  */
 export class DreggAttestedGate extends SmartContract {
   /** The Pasta state root this gate trusts. This is `app_state_0` — the slot

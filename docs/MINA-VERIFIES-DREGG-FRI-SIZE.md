@@ -28,6 +28,10 @@ under ~260.**
 | Kimchi rows per **Merkle LEVEL** (the object FRI buys) | **2,677 — MEASURED** | **§3.9** — +76.5 over the bare permutation: 8 witnessed-lane range checks + 8 lane reductions + the cond-swap, none of which a single permutation pays |
 | Kimchi rows for the deployed **depth-22 opening** | **58,971 — MEASURED** | §3.9 — **more than one Pickles step's usable rows** |
 | Kimchi rows for **ONE FRI QUERY** at deployed knobs | **684,726 — MEASURED** | **§3.10** — 238 Merkle levels + 16 sponges + 16 arity-2 folds; 13–15 Pickles steps. FRI walk only, no DEEP/AIR/challenger |
+| Kimchi rows for the whole **Fiat–Shamir TRANSCRIPT** | **62,637 — MEASURED** | **§3.12** — 23 permutations. **0.48% of the walk it authorises**, and without it a prover picks its own queries. The single most important rung, and the cheapest |
+| Kimchi rows for one query's whole **16-layer commit phase** | **623,310 — MEASURED** | **§3.13** — and building it against p3's own 16-round chain found the coset descent taking the wrong index bit |
+| Kimchi rows for **transcript + one commit phase, JOINTLY** | **686,005 — MEASURED** | **§3.13b** — the join costs 58 rows. This is the statement that says *the prover's* FRI proof rather than *a* FRI proof |
+| Kimchi rows for one extension **Horner step** | **49 — MEASURED** | §3.14 — ⚑ **§2.4 priced it at ~7**; the DEEP/AIR residual is **≈ 1.0 × 10⁶ rows**, not 2–4 × 10⁵ |
 | Usable rows per Pickles step | **~48,000–55,000** of 65,536 | §4.1, measured overheads |
 | **Pickles step circuits** | **~650–1,040** deployed | §4.2 |
 | After the dregg-side FRI knobs (§5) | **~325–455** | |
@@ -43,9 +47,17 @@ multiplication chain must be reduced with a witnessed quotient and **range check
 native Poseidon costs 11 rows per permutation; this shape over a foreign 31-bit prime costs
 **2,600**. **The ~236× is the reduction, not the hash.**
 
-⚑ **The measurement is wired.** `scripts/check-mina-attestation.sh` — a `scripts/local-gates.sh`
-row and a `ci.yml` job — re-runs it and fails if rows/permutation drifts more than 2% from the
-number this document quotes. Every other figure in the table above is still a derivation.
+⚑ **The measurements are wired.** `scripts/check-mina-attestation.sh` — a `scripts/local-gates.sh`
+row and a `ci.yml` job — re-runs **every bolded MEASURED figure above** and fails if any drifts more
+than 2%, on top of KATs against the deployed p3 objects and 38 fault injections. §3.14 separates
+what is measured, what is a stated count × a measured price, and what is still a count nobody has
+taken.
+
+⚑ **AND THE MEASUREMENTS ARE NOT THE POINT.** As of §3.12 the query indices and fold challenges are
+**DERIVED from a Fiat–Shamir transcript** rather than witnessed, and §3.13b joins the derivation to
+the walk in one statement. That is the difference between *"there exist 19 indices at which this
+proof is consistent"* — which a cheating prover satisfies by choosing them — and a FRI check. It
+cost 0.48% of the walk's rows. **The row budget was never the hard part; the binding was.**
 
 ---
 
@@ -240,8 +252,14 @@ steps ride between reductions. That lands at ~7 rows per Horner op ⇒ **~200,00
 plus the AIR constraint fold (~1,000–1,200 degree-3 constraints, ~10^4 quartic mults ⇒ tens of
 thousands of rows).
 
-**≈ 1.5–2% of the total.** Real, worth budgeting, not the driver. **The size question is a hashing
-question.**
+> ⚑ **CORRECTION, 2026-07-28 (§3.14): the ~7 rows/Horner is wrong. It is 49 — MEASURED.** The lazy
+> reduction argument above is sound in kind and wrong in size: `extAdd` alone costs 19 rows because
+> each of the 4 lanes carries a `reduceLane`, and `extMul` costs 31. So the residual is
+> **≈ 1.0 × 10⁶ rows, ~3.5% of the total**, not 1.5–2%. The conclusion survives — this is still a
+> hashing problem, not an arithmetic one — but the number was optimistic by 2.5–3×.
+
+**≈ 3.5% of the total** (measured unit × §2.4's own count). Real, worth budgeting, not the driver.
+**The size question is a hashing question.**
 
 ---
 
@@ -579,14 +597,31 @@ fails if the odd polarity never ran. The Rust side's
 saw both. A gate that can only go red on half its inputs is half a gate.
 
 ⚑ **The 22 query-index bits are ONE object.** Bit `r` selects which slot round `r`'s folded value
-occupies; bits `r+1…22` are the path directions for round `r`'s depth-`21−r` opening. A circuit
-that witnessed a fresh index per round would measure identically and verify something strictly
-weaker.
+occupies; bits `r+1…22` are the path directions for round `r`'s depth-`21−r` opening; and bit
+`r+1` — **not** bit `r` — carries the sign of round `r`'s coset descent. A circuit that witnessed a
+fresh index per round would measure identically and verify something strictly weaker.
+
+> ⚑ **CORRECTION, 2026-07-28: this section's own circuit had the third of those three wrong.**
+> `commitPhaseRound` descended on the SLOT bit. `verify_query` shifts the index *before* it folds,
+> so round `r` folds at `i_r = index ≫ (r+1)` and the descent sign is the low bit of `i_r`, i.e.
+> `indexBits[r+1]`. The two readings agree whenever two consecutive index bits are equal — on about
+> half of any chain's rounds, and on **100% of the all-zero index every `getRows()` measurement
+> uses**. The single-round descent check *directly above*, which the previous lane had already
+> caught being green-with-the-fault and repaired into a deterministic both-polarity test, **stayed
+> green through it**: one round never consumes two bits, so no single-round instrument can see it.
+> It was found by §3.13, against p3's own sixteen-round chain. The row count is unchanged (a
+> `Provable.if` costs the same on either bit), so **nothing in this document's arithmetic moves** —
+> which is exactly why it survived. See §3.13.
 
 **⚑ WHAT IS NOT IN THE 684,726.** The DEEP quotient (reduced openings and their `alpha` powers),
 the AIR constraint evaluation, the Fiat–Shamir challenger that produces `beta` and the query index,
 and the proof-of-work grind. **A query costs at least this, not at most.** The 237–272 steps is
 therefore a *floor* on the query walk, and it is already consistent with §5.3's ~260.
+
+The challenger and the grind are no longer merely absent from the number — **§3.12 builds them and
+measures them at 62,637 rows**, i.e. 0.48% of the 19-query walk. The DEEP quotient and the AIR
+evaluation are still not built; §3.14 prices them from measured units and keeps them on the ledger
+as the next rungs.
 
 **Ratcheted** at 2%. ⚑ The measurement needs `--max-old-space-size=16384`: o1js holds all 684,726
 rows in the JS heap and OOMs at the 4 GB default.
@@ -614,6 +649,221 @@ rows each. That is exactly why the set is closed and why the 8-flag Feature-Flag
 *instead of* extensibility.
 
 **Assume generic gates.**
+
+### 3.12 ⚑ MEASURED — the CHALLENGER, and why it outranks every row count here
+
+*2026-07-28. `bridge/mina-zkapp/src/FriChallenger.ts`, measured by `scripts/fri-challenger-rows.ts`
+(`npm run fri-challenger`). This is `DuplexChallenger<BabyBear, Poseidon2BabyBear<16>, 16, 8>`
+running exactly the schedule `p3_fri::verifier::verify_fri` runs at the deployed knobs.*
+
+> ## **62,637 Kimchi rows for the WHOLE Fiat–Shamir transcript. 23 permutations. 2 Pickles steps.**
+>
+> **0.48% of the 1.30 × 10⁷-row query walk it authorises — and without it that walk proves
+> nothing.**
+
+**This is the rung that changes what the others mean.** §3.10 walks one FRI query at a **witnessed**
+index under **witnessed** `beta`s. That statement says *"there exist 19 indices at which this proof
+is consistent"*, and a cheating prover supplies the 19 it can answer. FRI's soundness is entirely
+the claim that the indices are drawn *after* the commitments by a function the prover cannot steer.
+§3.10 showed we can walk *a* FRI proof; this is what makes it *the prover's*.
+
+The schedule, read off `fri/src/verifier.rs:139-270` line for line, and the permutations each part
+costs at the deployed knobs:
+
+| step | source | perms |
+|---|---|---:|
+| the batch-STARK preamble (stand-in, 13 elements) | — | 1 |
+| `alpha = sample_algebra_element()` — the 5 buffered preamble elements force a duplex on a PARTIAL rate | `:139` | 1 |
+| 16 × (`observe(commit)`; `check_witness(0, ·)`; `beta = sample_algebra_element()`) | `:211-219` | 16 |
+| `observe_algebra_slice(final_poly)` | `:236` | 0 |
+| 16 × `observe(Val::from_usize(log_arity))` | `:249-251` | 2 |
+| `check_witness(16, query_pow_witness)` | `:254` | 1 |
+| 19 × `sample_bits(22)` | `:268` | 2 |
+| **total** | | **23** |
+
+**95.5% of the 62,637 rows are the permutations.** The rest is lane hygiene, the 19 22-bit
+decompositions and the PoW range check — about 2,800 rows for the entire index derivation.
+
+**It is KAT'd against the deployed challenger, not against a transcription.** The probe's `p2chal`
+subcommand runs `p3_challenger::DuplexChallenger` on scripted observe/sample traces and emits every
+value plus the final sponge state, input buffer and output buffer; `p2fritranscript` runs the whole
+`verify_fri` schedule and emits `alpha`, all 16 `beta`s, a **ground** 16-bit PoW witness and all 19
+query indices. o1js must reproduce all of it in the bigint twin *and* inside the circuit.
+
+⚑ **The hash was never the risk. The state machine was.** Four edges each look like a detail and
+each silently changes every challenge downstream, and each gets a check *plus* a discriminating
+polarity showing the plausible wrong reading gives a different answer:
+
+1. **`output_buffer.pop()` takes from the BACK** (`duplex_challenger.rs:243-245`). The first sample
+   after a permutation is `sponge_state[RATE-1]`, not `[0]`.
+2. **`observe` CLEARS the output buffer** (`:150`), discarding unread squeezes.
+3. **A partial absorb OVERWRITES only its prefix** (`:86-99`); the unabsorbed rate lanes keep the
+   *previous* permutation's output rather than being zero-filled. The deployed schedule hits this
+   at `alpha`, because the preamble does not end on a rate boundary.
+4. **`check_witness(0, w)` returns BEFORE observing** (`grinding_challenger.rs:41-43`). The deployed
+   commit-phase PoW is 0 bits, so all 16 per-layer calls must leave the transcript byte-identical.
+   A circuit that "checked" them by absorbing the witness would get **all 16 `beta`s wrong.**
+
+⚑ **And one constraint that no KAT can see.** `sample_bits(k)` splits a canonical lane as
+`c = hi·2^k + Σ bᵢ2ⁱ`. Every KAT above compares against p3 on an *honest* witness, which produces
+the right decomposition whether or not anything forces it to. **Drop the bound on `hi` and the
+relation is satisfiable over Pasta for every bit pattern** — `hi = (c − lo)·2^{−k}` always exists —
+so the prover derives whatever query index it likes out of a perfectly correct sponge, and every
+other check stays green. The constraint is therefore split from its witnessing
+(`assertLowBitsSplit`), and the gate supplies a lying `hi` for a named wrong index and requires a
+refusal, at a fixed lane, both polarities.
+
+**A 4-layer instance of the same schedule — same 16-bit PoW, same 22-bit index width — compiles
+(41,033 rows), proves and verifies**, its public output binds every derived challenge, a perturbed
+commitment does not reach the same binding, and no proof exists for a PoW witness one off the
+ground one.
+
+> ⚑ **AND AN INSTRUMENT LIMITATION THAT AFFECTS EVERY RANGE CHECK IN THIS DIRECTORY, found by the
+> negative test above coming back GREEN.** `Provable.runAndCheck` **does not evaluate lookup
+> constraints.** Measured: `Gadgets.rangeCheck3x12(Field(4096))` — a 12-bit lookup on 2^12 — runs
+> clean under `runAndCheck`. So a bound that rests on the lookup alone is sound *in a proof* and
+> **undemonstrable outside one**: no gate can ever show it refusing. The reason
+> `assertLaneLt2p31(2^31)` *is* caught is not the lookup at all — it is that its witness truncates
+> to 12+12+7 = 31 bits, so an out-of-range value loses bits and the recomposition
+> `a + 2¹²b + 2²⁴c = r` fails a plain equality. `assertLtPow2` originally witnessed a full 12-bit
+> top limb, leaving the recomposition slack by `12 − topBits` bits and the bound carried *only* by
+> the lookup — and its own both-polarity test passed. It now masks the top limb to `topBits`, so
+> **the bound is carried twice** and the second carrier is the one an instrument can see.
+
+⚑ **What this does NOT close.** The transcript starts from a *preamble* standing in for the
+batch-STARK's own observes (degree bits, trace commitments, public values, ζ) that precede
+`verify_fri`. Binding that preamble to the real STARK preamble is a further rung. It is a strictly
+smaller hole than a witnessed index — the preamble is absorbed, so changing it changes every `beta`
+and every index — but it is a hole, and §3.14 keeps it on the ledger.
+
+**Ratcheted** at 2% on rows, and **exactly** on the permutation count: a schedule change that
+happens to land within 2% of 62,637 still fails.
+
+### 3.13 ⚑ MEASURED — the COMMIT PHASE as ONE object, and the defect that found
+
+*2026-07-28. `verifyCommitPhase` in `bridge/mina-zkapp/src/FriQueryStep.ts`, measured by
+`scripts/fri-chain-rows.ts` (`npm run fri-chain`).*
+
+> ## **623,310 rows for one query's whole 16-layer commit phase. 45,186 with the paths capped — which FITS, and PROVES.**
+
+| shape | **MEASURED** |
+|---|---:|
+| 16 layers, deployed path depths 21…6 (216 Merkle levels), final-poly check | **623,310** |
+| 16 layers, path depth 0 (`cap_height = log_folded_height`), final-poly check | **45,186** |
+| marginal cost of one reduced-opening roll-in | **88** |
+| implied rows per Merkle level inside the chain | **2,677** — exactly §3.9's standalone figure |
+| the same chain as a `ZkProgram` at depth 0 (public commitments + derived index out) | **45,362** |
+
+**A chain of rounds is not sixteen copies of one round**, and §3.10 proved one round. What only a
+chain has: one index doing three jobs at three different offsets; a coset point descending sixteen
+times; a landing value that has to *mean* something (the comparison against the final polynomial at
+the point the leftover index bits name); and reduced openings rolling in partway down scaled by
+`beta^arity`. All four are now in the circuit and all four are KAT'd against **`p2chain` — p3's own
+sixteen-round chain**, not sixteen calls to a one-round emitter. That distinction is the whole
+point: a script that chains a one-round emitter itself cross-checks the composition against nothing.
+
+⚑ **It found a real defect on the first run.** The coset descent took `indexBits[r]` where
+`verify_query` takes `indexBits[r+1]` — see §3.10's correction box. The leg now runs the chain at
+four indices chosen so the two readings *coincide* (all-zero, all-ones) and *differ at every round*
+(alternating bits), keeps the wrong reading as a **live twin** rather than a comment, and fails if
+that twin ever stops diverging. A "we fixed it" with no standing counter-example is precisely how
+the single-round check stayed green.
+
+**The capped shape is a real p3 configuration, not a fiction**: at path depth 0 the round's leaf
+digest *is* its commitment, which is the `cap_height = log_folded_height` corner of the same
+`MerkleTreeMmcs`. So the whole 16-layer chain **compiles, proves and verifies**, its public output
+names the index it walked, and there is no proof for a final polynomial it does not land on, a
+mid-chain commitment its row does not open under, or a different index against the same
+commitments.
+
+#### 3.13b THE SEAM — the chain driven by DERIVED challenges
+
+> ## **686,005 rows: the whole transcript plus one commit phase at deployed depths, in ONE statement. The join costs 58 rows.**
+
+§3.12 derives an index; §3.13 walks a chain at one. **Each alone is satisfiable by a prover that
+answers at its own index while deriving a different one.** They are a FRI verifier only when the
+*same* index does both jobs — an identity that exists nowhere except inside a program that performs
+both. `makeDerivedQueryProgram` is that program: the index and every `beta` come out of the
+transcript, and **the commitment the challenger absorbs is the commitment the row must open
+under.**
+
+62,637 + 623,310 = 685,947, measured jointly at **686,005**. The composition is essentially free;
+what it buys is the only thing that made the other two mean anything.
+
+⚑ **Finding an honest witness for it is itself the argument.** Because the absorbed commitments are
+the opened-under commitments, the derived index depends on the very rows it selects. A real prover
+escapes the circularity by committing to a whole *codeword* first and opening afterwards; a test
+carrying one row per layer cannot, and must **search** for a fixed point. That the search is
+necessary is the property being demonstrated: the prover does not get to pick the index. The proved
+instance runs at `|D⁰| = 2^6`, 2 layers, 19,248 rows — and, a **labelled reduction**, an 8-bit
+rather than 16-bit query PoW, because the search re-grinds per candidate. The deployed 16 bits are
+exercised at full width by §3.12 (twin, circuit and proof) and by this leg's own refusal. Three
+refusals hold: a commitment absorbed but not opened under, a preamble one element off, and a PoW
+witness that does not grind.
+
+### 3.14 ⚑ The honest remaining distance
+
+*What is now measured, what is derived from measured units, and what is still a count nobody has
+taken. **Everything in the first block is a `getRows()` on a committed circuit that is KAT'd
+against the deployed Rust and ratcheted at 2%.***
+
+**MEASURED**
+
+| object | rows | § |
+|---|---:|---|
+| one Poseidon2-w16-BabyBear permutation | 2,600.5 | 3.8 |
+| one Merkle level | 2,677 | 3.9 |
+| the deployed depth-22 opening | 58,971 | 3.9 |
+| one whole FRI query (input opening + 16-layer commit phase) | 684,726 | 3.10 |
+| the whole Fiat–Shamir transcript (23 permutations) | 62,637 | 3.12 |
+| one query's 16-layer commit phase at deployed depths | 623,310 | 3.13 |
+| transcript + one commit phase, jointly | 686,005 | 3.13b |
+| extension multiply / add / scale | 31 / 19 / 19 | 3.14 |
+| base-field inverse | 15 | 3.14 |
+| one arity-2 `fold_row` | 150 | 3.14 |
+| **one extension Horner step `acc ← acc·α + v`** | **49** | 3.14 |
+| one reduced-opening roll-in | 88 | 3.13 |
+
+⚑ **§2.4 priced a Horner step at "~7 rows". It is 49 — 7× off**, and the DEEP-quotient and AIR
+residual scales linearly with it. At §2.4's own count (~14,300 Horner ops for the reduced openings,
+plus ~10⁴ quartic multiplies for the constraint fold) that residual is **≈ 1.0 × 10⁶ rows, not the
+2–4 × 10⁵ estimated** — still only ~3.5% of the total, so the conclusion "the size question is a
+hashing question" survives, but the number in §2.4 is wrong by 2.5–3× and is corrected here.
+
+**DERIVED FROM MEASURED UNITS** (a stated count × a measured price — no longer an estimate × an
+estimate)
+
+| object | derivation | rows |
+|---|---|---:|
+| input-phase openings, per query, 4 rounds all at depth 22 (§2.2) | 88 levels × 2,677 + 151 sponge blocks × 2,600.5 | **6.3 × 10⁵** |
+| … × 19 queries | | **1.2 × 10⁷** |
+| DEEP quotient + AIR constraint evaluation | ~2.4 × 10⁴ ext ops × 31–49 | **≈ 1.0 × 10⁶** |
+| commit phase × 19 queries | 623,310 × 19 | **1.18 × 10⁷** |
+| transcript | measured | **6.3 × 10⁴** |
+| **whole root verify** | sum | **≈ 2.5 × 10⁷** — consistent with §0's 2.9 × 10⁷ from the permutation count |
+
+**STILL UNCOUNTED — and these are counts, not prices**
+
+1. **The root's own `degree_bits`.** §1.3 says no committed measurement exists; §5.2's open
+   contradiction (is there a live W24 table?) is worth ~10% on its own. Every "4 rounds all at
+   depth 22" above rests on it.
+2. **The roll-in schedule.** How many reduced openings roll in below the top height is exactly the
+   number of distinct input-matrix heights, i.e. a function of (1). The *price* is measured (88
+   rows); the *count* is not known.
+3. **The input row widths.** §3.10 measures an 8-element input row (one sponge block). The real main
+   round is 940 columns ⇒ 118 blocks. That is in the derivation above, not in the 684,726.
+
+**STILL OPEN AS SOUNDNESS, not as size**
+
+1. **The preamble binding.** §3.12's transcript starts from a stand-in for the batch-STARK's own
+   observes. Until those are the real ones, the derivation is "the challenges given this state",
+   not "the challenges".
+2. **The DEEP quotient.** The chain's `initial` — the reduced opening at the top height — is a
+   witness in every rung here. Binding it to an input-phase opening under `alpha` is the next rung
+   and is the last structural gap between these circuits and a FRI verifier.
+3. **The AIR constraint evaluation** at ζ, which is what makes the STARK a statement about dregg
+   rather than about an arbitrary low-degree function. Not started.
+4. **19 queries, not 1.** Every rung here walks one.
 
 ---
 
@@ -913,8 +1163,12 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | It buys 128 bits | **No — ~50**, commit-column-bound, and `numQueries` provably cannot move it. |
 | The AIR evaluation is the expensive part | **No — ~1.5–2%.** It is entirely a hashing problem. |
 | A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
-| The row price is a design claim nobody has run | **No longer.** §3.8 is measured, the circuit is committed at `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`, and `scripts/check-mina-attestation.sh` fails if the number drifts >2%. |
-| `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**. |
+| The row price is a design claim nobody has run | **No longer.** §3.8–3.14 are measured, the circuits are committed under `bridge/mina-zkapp/src/`, and `scripts/check-mina-attestation.sh` fails if any of nine figures drifts >2%. |
+| `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**, and §3.14 shows how much rests on that. |
+| The FRI walk these circuits perform is *the prover's* | **Yes as of §3.12–3.13b, at the fold chain.** The query index and every `beta` are DERIVED from a `DuplexChallenger` transcript KAT'd against the deployed one, the 16-bit query PoW is checked, and one program joins the derivation to the walk. **Not yet** for the input-phase openings or the DEEP quotient — the reduced opening the chain starts from is still a witness (§3.14). |
+| The challenger is a rounding error next to the query walk | **Yes — 0.48%, measured (§3.12).** Which is the point: the binding was cheap and was simply absent. |
+| The DEEP/AIR arithmetic is ~1.5–2% | **No — ≈3.5%.** §2.4 priced a Horner step at ~7 rows; it is **49, measured** (§3.14). Still not the driver. |
+| A both-polarity, deterministic check of a step implies the chain is right | **No, and this cost a day.** The single-round coset-descent check was made deterministic and both-polarity on 07-27 and stayed green while the CHAIN descended on the wrong index bit — right on ~half of any chain's rounds and on 100% of the all-zero index every row measurement uses. **Composition needs its own referent** (§3.13). |
 
 **Sources of record.** dregg: `circuit-prove/src/plonky3_recursion_impl.rs` (config, hash types,
 `cap_height = 0`), `circuit-prove/src/ivc_turn_chain.rs` (root verify, `ir2_leaf_wrap_config`, the
@@ -939,9 +1193,14 @@ on 2.15.0: `rangeCheck32` costs **2 rows**, not ~1, and `rangeCheckN(192)` costs
 The cheap bulk checks are `rangeCheck64` at **1 row/64 bits**, `multiRangeCheck` at **4 rows/264
 bits**, and `rangeCheck3x12` at **1 row/36 bits** — ~66 bits/row is the ceiling, and §3.8's circuit
 uses those. §3.5's "lookups are a precondition, not an optimisation" stands.)
-o1js circuit + measurement: `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts`,
-`bridge/mina-zkapp/scripts/poseidon2-babybear-rows.ts`, run by
-`scripts/check-mina-attestation.sh`.
+o1js circuits + measurement, all run by `scripts/check-mina-attestation.sh`:
+`bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts` (§3.8), `src/Poseidon2Merkle.ts` (§3.9),
+`src/FriQueryStep.ts` (§3.10, §3.13), `src/FriChallenger.ts` (§3.12, §3.13b), with
+`scripts/{poseidon2-babybear-rows,poseidon2-merkle-rows,fri-query-rows,fri-challenger-rows,fri-chain-rows}.ts`.
+The deployed-object referents are `circuit-prove/sketches/mina-pasta-hash-probe`'s `p2merkle`
+(the MMCS), `p2fold` (one fold), `p2chain` (the whole 16-round chain), `p2chal` and
+`p2fritranscript` (`p3_challenger::DuplexChallenger` and the `verify_fri` schedule) — every one of
+them calling the p3 types at rev `82cfad73`, never a transcription.
 
 **Companion:** `docs/MINA-DREGG-ZKAPP-BRIDGE.md` — this document answers its §5 "Route A" with a
 budget, and does not disturb its Groth16 verdict.
