@@ -127,6 +127,15 @@ first.
   `Dregg2.Circuit.WholeImageFoldRealization` — **untracked, another lane's WIP** (570 lines, 29
   theorems). Left red on purpose: it is a message for its author, not a number to make go away.
 
+- **A2 CLOSED** — five MCP tools could not commit because a RETIRED attestation was consulted as a
+  gate. `require_effect_vm_proof` deleted (not made to return `Ok` — that launders the absence into
+  presence); every commit path now routes through the same seam HTTP uses, onto the Lean-emitted
+  rotated descriptor. ⚑ Two defects the wall was hiding: `dregg_bilateral_action` built
+  `Authorization::Unchecked`, so every bilateral transfer the executor ever saw returned
+  `PermissionDenied`; and the honest-path handoff fixture handed a RANDOM introducer key, so it
+  "passed" by being refused for the wrong reason. RP1 also showed the old substring pole would have
+  passed where the by-variant pole fails.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
