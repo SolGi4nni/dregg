@@ -239,6 +239,49 @@ _pbuild_verdict() {
 }
 trap _pbuild_verdict EXIT
 
+# ---- GUARD: a pipe inside the remote command makes the VERDICT LIE --------------
+# The hazard is documented at the top of this file (§"TWO WAYS TO DEFEAT THIS LINE" #1).
+# It has now fired SIX times: three on 2026-07-26 by the person who wrote that comment,
+# and three more on 2026-07-28 by a lane — once on a root build with EIGHTEEN failing
+# targets that printed `VERDICT outcome=PASS status=0`. A documented wound is not a
+# detected one, so the comment is now a check.
+#
+# Why it lies: a pipeline exits with the status of its LAST stage. `lake build X | tail`
+# reports TAIL's status, and pbuild faithfully certifies that. The status boundary moves
+# inside pbuild's blind spot and PASS stops meaning anything.
+#
+# Refusal (not a warning) is deliberate: the whole contract of this script is that the
+# VERDICT line is the one thing an agent may trust. A gate that reports PASS on red is
+# strictly worse than no gate, so this fails CLOSED. PBUILD_PHASE is still `guard` here,
+# so dying reports outcome=REFUSED, which is never confusable with a build FAIL.
+case " $* " in
+  *\|*)
+    # Only status-swallowing consumers matter; a literal `|` inside a Lean/regex argument
+    # (e.g. grep 'a\|b') is not the bug, so key off the pipeline shape we actually see.
+    if printf '%s' "$*" | grep -qE '\|[[:space:]]*(tail|head|grep|tee|wc|cut|sed|awk|less|sort|uniq|jq)\b'; then
+      cat >&2 <<'PBUILD_PIPE_GUARD'
+pbuild: REFUSING — your remote command pipes, so the VERDICT would be about the pipe, not the build.
+
+  A pipeline exits with the status of its LAST stage. `lake build X 2>&1 | tail -50`
+  returns TAIL's status (0, always), and pbuild would certify `outcome=PASS status=0`
+  about a build that failed. This has happened six times; one was a root build with
+  eighteen failing targets reported as PASS.
+
+  Put the pipe OUTSIDE the quoted remote command — the local side is safe:
+      scripts/pbuild <lane> 'cd metatheory && lake build Foo' | tail -50     # RIGHT
+      scripts/hbuild <lane> 'cd metatheory && lake build Foo' | tail -50     # RIGHT
+
+  Or redirect remotely and read the file after:
+      scripts/pbuild <lane> 'cd metatheory && lake build Foo > /tmp/x.log 2>&1'
+
+  Override only if you genuinely mean to grade the pipe:  PBUILD_ALLOW_REMOTE_PIPE=1
+PBUILD_PIPE_GUARD
+      [ "${PBUILD_ALLOW_REMOTE_PIPE:-0}" = 1 ] || exit 64
+      printf 'pbuild: WARNING — PBUILD_ALLOW_REMOTE_PIPE=1; this VERDICT grades the PIPE, not the build.\n' >&2
+    fi
+    ;;
+esac
+
 # Ask the remote whether the thing that just died was killed for memory. Prints the
 # evidence line it found (so the claim is never bare) and returns 0 on a hit.
 _pbuild_oom_evidence() {
