@@ -50,7 +50,13 @@ GATES=(
   "no-unchecked-auth|300|bash scripts/no-unchecked-auth.sh"
   "mirror-gates|900|bash scripts/check-mirror-gates.sh"
   "mirror-gates-canary|900|bash scripts/mirror-gates/canary.sh"
-  "gates-executed|600|python3 scripts/check-gates-executed.py"
+  # SPLIT 2026-07-27. The execution phase is one `cargo test --test <stem>` per gate across
+  # 24 binaries; it grew past 600s and TIMED OUT, which is not a verdict — and a timeout ran
+  # NEITHER phase, so this row reported nothing for a whole session while looking like
+  # coverage. That is precisely the disease this gate was written to catch. S1..S4 need no
+  # cargo, take ~0s, and catch the delete/rename/manifest-edit class; they run here. The
+  # execution half keeps its real budget under --all, where it can finish.
+  "gates-executed-static|120|python3 scripts/check-gates-executed.py --static-only"
   # feature-tiers is the STATIC half only (seconds, no cargo): every (crate, feature) pair in the
   # tree has a tier, and no tier row is stale. The T3 COMPILE sweep it plans is nightly and lives
   # in .github/workflows/feature-surface.yml — `scripts/feature-t3-sweep.sh` runs it by hand.
@@ -183,6 +189,7 @@ GATES=(
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
+  "gates-executed|2400|python3 scripts/check-gates-executed.py"
   "lean-marshal|1200|bash scripts/check-lean-marshal.sh"
   "ci-invariants-falsifiers|14400|bash scripts/ci-invariants.sh falsifiers"
 )

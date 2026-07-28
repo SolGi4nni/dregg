@@ -595,6 +595,23 @@ def self_test() -> bool:
 def main() -> int:
     argv = sys.argv[1:]
     only_self_test = "--self-test" in argv
+    # --static-only: run S1..S4 and STOP, without the 24 cargo invocations.
+    #
+    # WHY THIS EXISTS. The execution phase is one `cargo test --test <stem>` per gate. That
+    # cost is inherent and it grew past the 600s budget `scripts/local-gates.sh` gave it
+    # (measured 2026-07-27: PASS at 528s in the morning, TIMEOUT by evening). A TIMEOUT is
+    # NOT A VERDICT — and worse, it ran NEITHER phase, so the whole gate reported nothing
+    # for a full session while sitting in the cheap table looking like coverage.
+    #
+    # That is this gate's OWN disease. Its docstring says it: "a crate that runs 0 tests and
+    # a crate that runs 191 green ones produce the same shape of success". A gate that cannot
+    # finish inside its budget is a gate that always passes.
+    #
+    # So the phases are split rather than the budget raised. S1..S4 need no cargo, take
+    # seconds, and catch the delete/rename/manifest-edit class on their own — that half now
+    # runs on EVERY invocation of the cheap table. The execution half keeps its full budget
+    # under `--all`, where it can actually finish. Strictly more coverage than a timeout.
+    static_only = "--static-only" in argv
     extra_cargo = [a for a in argv if a.startswith("--cargo=")]
     extra_cargo = [a[len("--cargo=") :] for a in extra_cargo]
 
@@ -625,6 +642,22 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    if static_only:
+        # Say what did NOT run. A phase skipped in silence is the shape this gate exists to
+        # catch, and it would be absurd to introduce one here.
+        print(
+            f"\n  {GRN}{BOLD}STATIC PHASE GREEN{OFF} — {len(man.rows)} recorded tests across "
+            f"{len(man.binaries)} named gate binaries are all present, and the manifest agrees "
+            f"with the tree."
+        )
+        print(
+            f"  {YEL}NOT RUN: the EXECUTION phase.{OFF} Nothing here says those binaries build, "
+            f"link, or pass — only that they EXIST and are armed. The blackout this gate was "
+            f"written for (a gate that compiles nowhere still satisfies S1..S4) is caught only "
+            f"by the execution phase. Run it: {BOLD}./scripts/local-gates.sh --all gates-executed{OFF}"
+        )
+        return 1 if _failures else 0
 
     execution_phase(man, extra_cargo)
 
