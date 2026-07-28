@@ -99,6 +99,7 @@ open Dregg2.Circuit.FieldIntegerLift (vanishingPoly ood_forces_mainAirAccept_fie
 open Dregg2.Circuit.OodQuotientConsistency (exceptionalSet)
 open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.OodCommitmentBinding (OpeningColl openingColl_refutes_poseidon2CR)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.OodColumnLayout (oodBatchResidual)
 open Dregg2.Circuit.LogUpColumnLayout (BusModelOk)
@@ -287,7 +288,7 @@ Nothing in the underlying reduction ever needed a singleton: it is
 `oodBatchResidual d = batchResidual (Rfam d …)` (definitional). -/
 theorem hood_of_oodColumnLayout_cons
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -301,15 +302,16 @@ theorem hood_of_oodColumnLayout_cons
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidual d t ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
     (hLam : Λ ∉ exceptionalSet (oodBatchResidual d t ζ qp)) :
     ∀ c ∈ d.constraints, isArith c →
       (constraintPoly d t c).eval ζ = (vanishingPoly t).eval ζ * (qp c).eval ζ :=
-  hood_of_reductions_cons d sponge hCR perm RATE toNat params vk core A initState logN proof pub
+  hood_of_reductions_cons d sponge perm RATE toNat params vk core A initState logN proof pub
     hacc t ζ Λ qp topen ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
-    hlayout hLam
+    hno hlayout hLam
 
 /-- **`algoStarkSound_of_memoryLegs_cons` — the `∀ d` assembler from the CORRECTED bundle.**
 The exact statement of `AlgoStarkSoundGeneral.algoStarkSound_of_memoryLegs` with `FriLdtExtract`
@@ -338,9 +340,15 @@ theorem algoStarkSound_of_memoryLegs_cons {F : Type*} [Field F] [DecidableEq F]
         hlegs pi π hacc
       have hAir : MainAirAcceptF d (tr pi π) :=
         ood_forces_mainAirAccept_field_of_residuals d (tr pi π) hcap ζ qp
-          (hood_of_oodColumnLayout_cons d sponge hCR perm RATE toNat params vk core A initState
+          (hood_of_oodColumnLayout_cons d sponge perm RATE toNat params vk core A initState
             logN (view pi π).1 (view pi π).2 hacc (tr pi π) ζ Λ qp topen ood vCommitted root
-            oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+            oodRest idx siblings hoodPt hmem hCommitted hOpened
+            -- ⚠ NOT PORTED IN THIS PASS: `FriLdtExtractCons` (the ∀-d bundle of §3) does not carry
+            -- the per-run opening residual, so this assembler still buys it with the REFUTED global
+            -- floor. Grandfathered, not new; the port is one conjunct on that bundle.
+            (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
+              siblings hc hCR)
+            hlayout hLam)
           hnonexc
       have harm : ∀ i < (tr pi π).rows.length, ∀ c ∈ d.constraints, ¬ isArith c →
           c.holdsAt hash (tr pi π).tf (envAt (tr pi π) i) (i == 0)
@@ -646,7 +654,7 @@ equation still feeds it DEFINITIONALLY (`oodBatchResidual transferV3` is `batchR
 (Rfam transferV3 …)`). The named bus-slot gap of the landed version is untouched by the relocation:
 `FriLdtExtractV3Cons` still carries the POST-discharge LogUp arm. -/
 theorem algoStarkSound_transferV3_subsumed_cons
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -659,13 +667,13 @@ theorem algoStarkSound_transferV3_subsumed_cons
     (by
       intro pi π hacc
       obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+        hcap, hoodPt, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
         hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
       refine ⟨t, ?_, hbus, hMem, hMap, hPub⟩
       exact ood_forces_mainAirAccept_field_of_residuals transferV3 t hcap ζ qp
-        (hood_of_oodColumnLayout_cons transferV3 sponge hCR perm RATE toNat params vk core A
+        (hood_of_oodColumnLayout_cons transferV3 sponge perm RATE toNat params vk core A
           initState logN (view pi π).1 (view pi π).2 hacc t ζ Λ qp topen ood vCommitted root
-          oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+          oodRest idx siblings hoodPt hmem hCommitted hOpened hno hlayout hLam)
         hnonexc)
 
 /-! ### §8.2 — THE MIGRATION OBLIGATION for both relocated assemblers. -/
@@ -686,6 +694,7 @@ def FriLdtExtractV3ConsNoOodShape
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (batchResidual (Rfam transferV3 t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -714,19 +723,19 @@ theorem friLdtExtractV3Cons_iff_noOodShape
   constructor
   · intro h pi π hacc
     obtain ⟨t, ζ, Λ, qp, topen, _ood, vCommitted, root, _oodRest, idx, siblings,
-      hcap, _hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hcap, _hoodPt, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
       hbus, hMem, hMap, hPub⟩ := h pi π hacc
     exact ⟨t, ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+      hcap, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
   · intro h pi π hacc
     obtain ⟨ood, oodRest, hcons⟩ :=
       acceptsFull_gives_cons_shape perm RATE toNat params vk core A initState logN
         (view pi π).1 (view pi π).2 hacc
     obtain ⟨t, ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hcap, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
       hbus, hMem, hMap, hPub⟩ := h pi π hacc
     exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-      hcap, hcons, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+      hcap, hcons, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
 
 /-- **★ SHARPER, for the relocated template assembler: NO OOD SHAPE IS NEEDED AT ALL.**
 `FriLdtExtractDeployed.algoStarkSound_transferV3_cons`'s whole conclusion follows from a premise that
@@ -736,7 +745,7 @@ it is the FRI-LDT / Merkle / Fiat–Shamir floor. This and `algoStarkSound_trans
 INTERDERIVABLE through `friLdtExtractV3Cons_iff_noOodShape`. It does NOT say the premise is
 inhabited; that is the separate, still-open question §8.4 records. -/
 theorem algoStarkSound_transferV3_cons_noOodShape
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -745,7 +754,7 @@ theorem algoStarkSound_transferV3_cons_noOodShape
       logN view) :
     AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_transferV3_cons sponge hCR hash perm RATE toNat params vk core A initState logN
+  algoStarkSound_transferV3_cons sponge hash perm RATE toNat params vk core A initState logN
     view
     ((friLdtExtractV3Cons_iff_noOodShape sponge hash perm RATE toNat params vk core A initState
       logN view).mpr hfri)
@@ -753,7 +762,7 @@ theorem algoStarkSound_transferV3_cons_noOodShape
 /-- **★ The same sharper form for the relocated ∀-d-modeler assembler.** Same argument, same
 `.mpr`, so `algoStarkSound_transferV3_subsumed_cons` likewise depends on NO OOD-shape conjunct. -/
 theorem algoStarkSound_transferV3_subsumed_cons_noOodShape
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -762,7 +771,7 @@ theorem algoStarkSound_transferV3_subsumed_cons_noOodShape
       logN view) :
     AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_transferV3_subsumed_cons sponge hCR hash perm RATE toNat params vk core A
+  algoStarkSound_transferV3_subsumed_cons sponge hash perm RATE toNat params vk core A
     initState logN view
     ((friLdtExtractV3Cons_iff_noOodShape sponge hash perm RATE toNat params vk core A initState
       logN view).mpr hfri)

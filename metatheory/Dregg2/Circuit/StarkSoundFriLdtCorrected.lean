@@ -92,7 +92,7 @@ open Dregg2.Circuit.AlgoStarkSoundTransferV3 (FriLdtExtractV3)
 open Dregg2.Circuit.ExtFieldChallenge (verifyAlgoUnifiedFaithfulExt)
 open Dregg2.Circuit.FriLdtExtractDeployed
   (FriLdtExtractV3Cons FriLdtExtractV3Faithful FriLdtExtractV3FaithfulNoOodShape
-   friLdtExtractV3_imp_cons friLdtExtractV3Cons_imp_faithful friLdtExtractV3Faithful_iff_noOodShape
+   friLdtExtractV3Cons_imp_faithful friLdtExtractV3Faithful_iff_noOodShape
    faithfulExt_accept_gives_cons_shape faithfulExt_forces_oodPoint_ne_singleton
    friLdtExtractV3_makes_verifyBatch_reject_everything)
 
@@ -125,12 +125,12 @@ bundle.** The migration target with the smallest gap to reality: the premise is 
 transcript's four-lane `ζ` rather than a base-felt singleton. Floors: `Poseidon2SpongeCR sponge`
 (used in the commitment binding) and the FRI-LDT extraction bundle. -/
 theorem starkSound_of_friLdtExtractFaithful_deployed
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
+    (sponge : List Int → Int) (hash : List Int → Int)
     (hfri : FriLdtExtractV3Faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
       cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView) :
     StarkSound hash (fun _ => transferV3) :=
   Dregg2.Circuit.FriLdtExtractDeployed.starkSound_of_friLdtExtractFaithful_transferV3
-    sponge hCR hash hfri
+    sponge hash hfri
 
 /-- **`StarkSound` for the deployed `transferV3` slice from the CORRECTED BARE-verifier bundle** —
 the drop-in replacement for the RETIRED shape of
@@ -138,45 +138,26 @@ the drop-in replacement for the RETIRED shape of
 conclusion, same floors, and a premise differing from the landed one in exactly one conjunct
 (`oodPoint = ood :: oodRest` instead of `oodPoint = [ood]`). -/
 theorem starkSound_of_friLdtExtractCons_transferV3
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
+    (sponge : List Int → Int) (hash : List Int → Int)
     (hfri : FriLdtExtractV3Cons sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
       cfgInitState cfgLogN cfgView) :
     StarkSound hash (fun _ => transferV3) :=
-  starkSound_of_friLdtExtractFaithful_deployed sponge hCR hash
+  starkSound_of_friLdtExtractFaithful_deployed sponge hash
     (friLdtExtractV3Cons_imp_faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
       cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView hfri)
 
-/-- **The RETIRED apex shape is SUBSUMED, not contradicted.** This is the RETIRED statement of
-`StarkSoundFriLdt.starkSound_of_friLdtExtract_transferV3` VERBATIM, re-proved through the corrected
-chain `FriLdtExtractV3 → FriLdtExtractV3Cons → FriLdtExtractV3Faithful → StarkSound`. It is the
-RECEIPT that the 2026-07-25 cutover of that apex cost its consumers nothing: anything the retired
-shape gave, the migrated one gives. -/
-theorem starkSound_of_friLdtExtract_transferV3_via_corrected
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
-    (hfri : FriLdtExtractV3 sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgInitState cfgLogN cfgView) :
-    StarkSound hash (fun _ => transferV3) :=
-  starkSound_of_friLdtExtractCons_transferV3 sponge hCR hash
-    (friLdtExtractV3_imp_cons sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgInitState cfgLogN cfgView hfri)
+/-! ⚑ **DELETED 2026-07-28 — `starkSound_of_friLdtExtract_transferV3_via_corrected` and
+`landedPremise_imp_correctedPremise`.** Both rode `FriLdtExtractDeployed.friLdtExtractV3_imp_cons`,
+deleted in the same commit: the corrected bundles now carry the PER-RUN opening residual
+`¬ OpeningColl` — the honest replacement for the refuted `Poseidon2SpongeCR` floor the commitment
+binding used to thread — and the LANDED bundle `FriLdtExtractV3` never carried it.
 
-/-- **The premise-level relation, at the deployed arguments**: the landed bundle DISCHARGES the
-replacement's premise (`[ood] = ood :: []`, then acceptance supplies the transcript identity and the
-lane count). This is the fact a migration rides: a consumer currently holding `FriLdtExtractV3` can
-hand it to the corrected apex unchanged. The converse transport does not exist —
-`FriLdtExtractDeployed.bundles_are_not_interchangeable` exhibits a concrete run the bare verifier
-accepts and the unified/extension-faithful verifier rejects, so a bundle indexed by the deployed
-verifier carries obligations on strictly fewer runs and cannot be pushed back to the bare one. -/
-theorem landedPremise_imp_correctedPremise
-    (sponge : List Int → Int) (hash : List Int → Int)
-    (hfri : FriLdtExtractV3 sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgInitState cfgLogN cfgView) :
-    FriLdtExtractV3Faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView :=
-  friLdtExtractV3Cons_imp_faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
-    cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView
-    (friLdtExtractV3_imp_cons sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgInitState cfgLogN cfgView hfri)
+WHAT WAS LOST, precisely: the RECEIPT that a consumer still holding the landed bundle gets the
+corrected apex for free. That receipt was about a premise §3 immediately below PROVES collapses —
+`landedPremise_gives_starkSound_for_ANY_hash_and_registry`: under `FriLdtExtractV3` at the deployed
+arguments, `StarkSound hash' R` holds for EVERY hash and EVERY registry, because `verifyBatch`
+rejects everything. A free transport out of that premise was never carrying security, and the two
+theorems that stated it are gone rather than restated on a hypothesis nothing satisfies. -/
 
 /-! ## §3 — the landed premise, in its sharpest collapsed form. -/
 
@@ -245,11 +226,11 @@ is not a second vacuity": the replacement apex is available under a bundle carry
 at all, so whatever residual emptiness the premise may have is inherited ENTIRELY from the FRI-LDT /
 Merkle / Fiat–Shamir conjuncts — the floor — and none of it from the OOD repair. -/
 theorem starkSound_of_noOodShape_transferV3
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
+    (sponge : List Int → Int) (hash : List Int → Int)
     (hfri : FriLdtExtractV3FaithfulNoOodShape sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk
       cfgCore cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView) :
     StarkSound hash (fun _ => transferV3) :=
-  starkSound_of_friLdtExtractFaithful_deployed sponge hCR hash
+  starkSound_of_friLdtExtractFaithful_deployed sponge hash
     ((correctedPremise_iff_noOodShape sponge hash).mpr hfri)
 
 /-- **The apex-facing predicate accepts something** (re-exported here so the migration record is
@@ -275,8 +256,6 @@ theorem apexFacing_predicate_accepts_something :
 #assert_axioms verifyBatch_accept_imp_faithfulExt
 #assert_axioms starkSound_of_friLdtExtractFaithful_deployed
 #assert_axioms starkSound_of_friLdtExtractCons_transferV3
-#assert_axioms starkSound_of_friLdtExtract_transferV3_via_corrected
-#assert_axioms landedPremise_imp_correctedPremise
 #assert_axioms landedPremise_gives_starkSound_for_ANY_hash_and_registry
 #assert_axioms verifyBatch_accept_gives_cons_shape
 #assert_axioms verifyBatch_accept_refutes_singleton

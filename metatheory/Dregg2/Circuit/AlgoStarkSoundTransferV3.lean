@@ -1,6 +1,6 @@
 /-
 # `Dregg2.Circuit.AlgoStarkSoundTransferV3` — the REAL `AlgoStarkSound` for `transferV3`,
-with `hood`/`hnonexc` DISCHARGED, resting on ONLY `{Poseidon2SpongeCR, FRI-LDT@deployed}`.
+with `hood`/`hnonexc` DISCHARGED, resting on ONLY `{a per-run `¬ OpeningColl` side condition, FRI-LDT@deployed}`.
 
 ## What this closes (the one-line honest claim)
 
@@ -11,8 +11,8 @@ AIR) as an OPAQUE `hextract` premise. This module WIRES the four proven reductio
 
   * `verifyAlgo_accept_forces_table_identity`  (acceptance ⟹ the BATCHED OOD identity
         `topen.constraintEval = A.mul topen.vanishingAtZeta topen.quotientAtZeta`), a THEOREM;
-  * `OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR`  (the opened `constraintEval` BINDS to
-        the committed value, under the named `Poseidon2SpongeCR` floor) — `hood.b`, DERIVED;
+  * `OodCommitmentBinding.commitmentOpening_binds_of_noColl`  (the opened `constraintEval` BINDS to
+        the committed value, on the per-run `¬ OpeningColl` side condition) — `hood.b`, DERIVED;
   * the transferV3 COLUMN-LAYOUT law `hlayout` (§1) — the modeled map from the verifier's single batched
         opening onto `batchResidual` over `transferV3`'s ACTUAL per-arith-constraint residual family
         (`arithList transferV3 = transferV3.constraints.filter isArithB`), carrying the BabyBear→ℤ field bridge;
@@ -39,8 +39,8 @@ in a module that IMPORTS this one. See the `⚑ DELETED` marker at the end of §
 ## The residual floor (exactly two, both honest)
 
 The relocated `algoStarkSound_transferV3_cons` rests on:
-  1. `Poseidon2SpongeCR sponge`  — the Merkle/commitment-opening hash floor (`hood.b`), GENUINELY USED
-     (not re-assumed): `commitmentOpening_binds_of_poseidon2CR` is invoked on the bundle's recompute data.
+  1. `¬ OpeningColl sponge idx …`  — the Merkle/commitment-opening PER-RUN residual (`hood.b`), GENUINELY USED
+     (not re-assumed): `commitmentOpening_binds_of_noColl` is invoked on the bundle's recompute data.
   2. `FriLdtExtractV3 …`  — the FRI-LDT-@-deployed extraction bundle: FRI delivers, per accepting run, the
      opened deployed `VmTrace t`, the OOD point ζ, the per-constraint quotients `qp`, the RLC challenge Λ,
      the opened table `topen` with its Merkle recompute data, the transferV3 COLUMN-LAYOUT equation, the
@@ -50,7 +50,7 @@ The relocated `algoStarkSound_transferV3_cons` rests on:
 
 ## Discipline
 
-Sorry-free; no `def …Sound` carrier; `Poseidon2SpongeCR` is a `Prop` hypothesis where used, never an
+Sorry-free; no `def …Sound` carrier; no REFUTED floor appears in any statement here, never an
 `axiom`. The transferV3 column layout is MODELED, not left vague: `arithList transferV3` is the descriptor's
 actual arith-constraint list and `Rfam transferV3` its concrete per-constraint residual family feeding
 `batchResidual`. New file; imports read-only; builds targeted
@@ -79,8 +79,8 @@ open Dregg2.Crypto.ProbCrypto (winProb)
 open Dregg2.Circuit.OodSoundnessGame
   (batchResidual rlc_debatch batchResidual_exceptionalSet_card_lt oodNonExcAcc
    oodNonExc_soundness_error_babybear ood_hnonexc_escape_prob_le)
-open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ commitmentOpening_binds_of_poseidon2CR)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.OodCommitmentBinding
+  (merkleRecomputeZ OpeningColl commitmentOpening_binds_of_noColl)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 
 /-! ## §1 — THE transferV3 COLUMN LAYOUT: the descriptor's ACTUAL arith-constraint list feeding
@@ -134,7 +134,7 @@ WITHOUT `MainAirAcceptF` (those are derived in §3). -/
 For every batch the specified `verifyAlgo` (at `fullChecks core A …`) accepts, FRI opens a deployed
 `VmTrace t`, an OOD point ζ, per-constraint quotients `qp`, the RLC challenge Λ, and the batched table
 opening `topen`, together with: the Merkle recompute data binding `topen.constraintEval` and the committed
-value `vCommitted` to a common root (feeds `Poseidon2SpongeCR`), the transferV3 COLUMN-LAYOUT equation
+value `vCommitted` to a common root (feeds the opening binding), the transferV3 COLUMN-LAYOUT equation
 (feeds `rlc_debatch`, carries the BabyBear→ℤ bridge), the FS non-exceptionality of Λ and ζ (the honest
 ε-form), and the aux legs. Contains NO `hood`/`MainAirAcceptF`. -/
 def FriLdtExtractV3
@@ -151,7 +151,7 @@ def FriLdtExtractV3
       t.rows.length ≤ domainSize ∧
       (view pi π).1.oodPoint = [ood] ∧
       topen ∈ (view pi π).1.tableOpenings ∧
-      -- commitment recompute data (proof structure; feeds the `Poseidon2SpongeCR` binding):
+      -- commitment recompute data (proof structure; feeds the opening binding):
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
       -- THE transferV3 COLUMN-LAYOUT law (+ BabyBear→ℤ bridge): the batched residual polynomial's value
@@ -174,13 +174,13 @@ def FriLdtExtractV3
 /-! ## §3 — THE WIRING: `MainAirAcceptF` DERIVED, then the real `AlgoStarkSound` instance. -/
 
 /-- **`hood`, DISCHARGED.** From the batched table identity (`verifyAlgo_accept_forces_table_identity`),
-the commitment binding (`commitmentOpening_binds_of_poseidon2CR`, under `Poseidon2SpongeCR`), the
+the commitment binding (`commitmentOpening_binds_of_noColl`, on the per-run residual), the
 transferV3 column layout `hlayout`, and RLC de-batch (`rlc_debatch`, at the non-exceptional Λ), the
 per-constraint OOD identity holds for every arithmetic constraint of `transferV3`. This is `hood` DERIVED
-— not re-assumed — from `{table-identity, Poseidon2SpongeCR, column-layout, Schwartz–Zippel}`. -/
+— not re-assumed — from `{table-identity, ¬ OpeningColl, column-layout, Schwartz–Zippel}`. -/
 theorem hood_of_reductions
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -193,6 +193,7 @@ theorem hood_of_reductions
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (batchResidual (Rfam d t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
@@ -203,9 +204,9 @@ theorem hood_of_reductions
   have htable : topen.constraintEval = A.mul topen.vanishingAtZeta topen.quotientAtZeta :=
     verifyAlgo_accept_forces_table_identity perm RATE toNat params vk core A initState logN
       proof pub ood hoodPt topen hmem hacc
-  -- (2) the opened value BINDS to the committed value (THEOREM, under Poseidon2SpongeCR) — hood.b:
+  -- (2) the opened value BINDS to the committed value (THEOREM, on the per-run residual) — hood.b:
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge hno hCommitted hOpened
   -- so `vCommitted = A.mul …`, hence the layout RHS casts to 0:
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta := hbind.symm.trans htable
   have heval : (batchResidual (Rfam d t ζ qp)).eval Λ = 0 := by
@@ -227,7 +228,7 @@ theorem is descriptor-POLYMORPHIC — the entire crypto composition recurs ident
 the transferV3 instance below is just its specialization at `d := transferV3`. -/
 theorem mainAirAcceptF_of_floor
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -241,6 +242,7 @@ theorem mainAirAcceptF_of_floor
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (batchResidual (Rfam d t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
@@ -249,8 +251,8 @@ theorem mainAirAcceptF_of_floor
         ζ ∉ exceptionalSet (constraintPoly d t c - vanishingPoly t * qp c)) :
     MainAirAcceptF d t :=
   ood_forces_mainAirAccept_field_of_residuals d t hcap ζ qp
-    (hood_of_reductions d sponge hCR perm RATE toNat params vk core A initState logN proof pub hacc
-      t ζ Λ qp topen ood vCommitted root idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+    (hood_of_reductions d sponge perm RATE toNat params vk core A initState logN proof pub hacc
+      t ζ Λ qp topen ood vCommitted root idx siblings hoodPt hmem hCommitted hOpened hno hlayout hLam)
     hnonexc
 
 /-! **⚑ DELETED 2026-07-25 — `algoStarkSound_transferV3`.** It was the ONE consumer in this module of
@@ -264,7 +266,7 @@ therefore vacuously true.
 RELOCATED, not restated in place: the corrected bundle `FriLdtExtractV3Cons` lives in
 `Dregg2.Circuit.FriLdtExtractDeployed`, which IMPORTS this module, so naming it here would be a
 cycle. The replacement is `FriLdtExtractDeployed.algoStarkSound_transferV3_cons` — the same
-statement, the same `Poseidon2SpongeCR` floor, the same generic arguments, over
+statement, the same per-run residual, the same generic arguments, over
 `FriLdtExtractV3Cons`; its `MainAirAcceptF` is derived by `mainAirAcceptF_of_floor_cons`, the
 cons-shaped `mainAirAcceptF_of_floor` retained below. That the corrected premise adds ZERO strength
 (it is equivalent to itself with the OOD conjunct deleted) is

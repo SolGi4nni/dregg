@@ -80,7 +80,7 @@ import Mathlib.Tactic
 namespace Dregg2.Circuit.FriVerifierMerkle
 
 open Dregg2.Circuit.OodCommitmentBinding
-  (merkleRecomputeZ merkleRecomputeZ_binds commitmentOpening_binds_of_poseidon2CR)
+  (merkleRecomputeZ merkleRecomputeZ_binds_of_noColl commitmentOpening_binds_of_noColl)
 open Dregg2.Crypto.RomOracle
 open Dregg2.Crypto.RomCounting
   (cyl mem_cyl condProb condProb_le_of_imp condProb_congr)

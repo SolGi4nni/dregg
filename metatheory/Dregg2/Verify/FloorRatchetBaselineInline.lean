@@ -290,8 +290,6 @@ private def i1 : Array String := #[
   "Dregg2.Circuit.MapPaddedDenotation.narrow_opensToMerkle_functional",
   "Dregg2.Circuit.MapPaddedDenotation.narrow_opensToMerkle_some_excludes_none",
   "Dregg2.Circuit.MapPaddedDenotation.narrow_writesToMerkle_functional",
-  "Dregg2.Circuit.OodCommitmentBinding.commitmentOpening_binds_of_poseidon2CR",
-  "Dregg2.Circuit.OodCommitmentBinding.merkleRecomputeZ_binds",
   "Dregg2.Circuit.Poseidon2KeyedBridge.family_H_injective_of_injective_sponge",
   "Dregg2.Circuit.TurnEmit.mintA_extract_rejects_wrong_supply",
   "Dregg2.Circuit.Witness.CellSealWitness.seal_execute_produces_satisfying_witness",
@@ -322,7 +320,7 @@ private def i1 : Array String := #[
   "Dregg2.Substrate.Heap.root_binds_get",
   "Dregg2.Substrate.Heap.root_injective"]
 
-/-- The inline-spelled grandfathered carriers (282). Only ever gets SHORTER. -/
+/-- The inline-spelled grandfathered carriers (280). Only ever gets SHORTER. -/
 def inlineSpelled : Array String :=
   i0 ++ i1
 

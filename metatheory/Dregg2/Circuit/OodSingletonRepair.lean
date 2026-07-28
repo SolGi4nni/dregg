@@ -92,7 +92,7 @@ open Dregg2.Circuit.TraceColumnInterp (constraintPoly domainSize)
 open Dregg2.Circuit.FieldIntegerLift (vanishingPoly)
 open Dregg2.Circuit.OodQuotientConsistency (exceptionalSet)
 open Dregg2.Circuit.OodCommitmentBinding
-  (merkleRecomputeZ commitmentOpening_binds_of_poseidon2CR)
+  (merkleRecomputeZ OpeningColl commitmentOpening_binds_of_noColl openingColl_refutes_poseidon2CR)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.FriVerifier
   (verifyAlgo BatchProofData WrapPublics FriParams RecursionVk FriCore FieldArith TableOpening
@@ -199,7 +199,7 @@ matches. Identical hypotheses except `hoodPt : proof.oodPoint = ood :: oodRest`;
 conclusion. The landed statement is the `oodRest := []` instance (`…_subsumes_landed`). -/
 theorem hood_of_oodColumnLayoutCons
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -213,15 +213,16 @@ theorem hood_of_oodColumnLayoutCons
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidual d t ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
     (hLam : Λ ∉ exceptionalSet (oodBatchResidual d t ζ qp)) :
     ∀ c ∈ d.constraints, isArith c →
       (constraintPoly d t c).eval ζ = (vanishingPoly t).eval ζ * (qp c).eval ζ :=
-  hood_of_reductions_cons d sponge hCR perm RATE toNat params vk core A initState logN proof pub
+  hood_of_reductions_cons d sponge perm RATE toNat params vk core A initState logN proof pub
     hacc t ζ Λ qp topen ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
-    hlayout hLam
+    hno hlayout hLam
 
 /-- **The corrected tool SUBSUMES the landed one**: `OodColumnLayout.hood_of_oodColumnLayout`'s
 statement verbatim, re-proved as the `oodRest := []` instance of the repair. So nothing is lost by
@@ -229,7 +230,7 @@ consumers moving to the cons form, and the relation between landed and corrected
 instances, not a coincidence. -/
 theorem hood_of_oodColumnLayoutCons_subsumes_landed
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -242,15 +243,16 @@ theorem hood_of_oodColumnLayoutCons_subsumes_landed
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidual d t ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
     (hLam : Λ ∉ exceptionalSet (oodBatchResidual d t ζ qp)) :
     ∀ c ∈ d.constraints, isArith c →
       (constraintPoly d t c).eval ζ = (vanishingPoly t).eval ζ * (qp c).eval ζ :=
-  hood_of_oodColumnLayoutCons d sponge hCR perm RATE toNat params vk core A initState logN proof pub
+  hood_of_oodColumnLayoutCons d sponge perm RATE toNat params vk core A initState logN proof pub
     hacc t ζ Λ qp topen ood vCommitted root [] idx siblings hoodPt hmem hCommitted hOpened
-    hlayout hLam
+    hno hlayout hLam
 
 /-- **⚑ THE STRONGEST FORM OF THE REPAIR AT SITE 1: the OOD hypothesis DELETED.** Nothing about the
 OOD point's shape needs to be assumed at all — §1 derives the cons shape from the acceptance
@@ -258,7 +260,7 @@ hypothesis the tool already carries. A hypothesis that a theorem can prove for i
 reason any premise is empty, so this form is unconditionally free of the wound. -/
 theorem hood_of_oodColumnLayout_noOod
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -270,6 +272,7 @@ theorem hood_of_oodColumnLayout_noOod
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidual d t ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
@@ -279,9 +282,9 @@ theorem hood_of_oodColumnLayout_noOod
   obtain ⟨ood, oodRest, hoodPt⟩ :=
     fullChecks_accept_gives_cons_oodPoint perm RATE toNat params vk core A initState logN
       proof pub hacc
-  exact hood_of_oodColumnLayoutCons d sponge hCR perm RATE toNat params vk core A initState logN
+  exact hood_of_oodColumnLayoutCons d sponge perm RATE toNat params vk core A initState logN
     proof pub hacc t ζ Λ qp topen ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted
-    hOpened hlayout hLam
+    hOpened hno hlayout hLam
 
 /-! ## §3 — SITE `OodExtChallengeLayout.lean:684`: the extension-typed twin of §2. -/
 
@@ -290,7 +293,7 @@ point. Same crypto composition as the landed proof (table identity + Poseidon2-C
 layout right-hand side is `0` ⟹ de-batch over `E`), with the singleton demand removed. -/
 theorem hood_of_oodColumnLayoutExtCons (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -304,6 +307,7 @@ theorem hood_of_oodColumnLayoutExtCons (E : Type*) [Field E] [Algebra BabyBear E
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidualExt E d t ζ qp).eval Λ
         = algebraMap BabyBear E (((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear)))
@@ -315,7 +319,7 @@ theorem hood_of_oodColumnLayoutExtCons (E : Type*) [Field E] [Algebra BabyBear E
     verifyAlgo_accept_forces_table_identity_cons perm RATE toNat params vk core A initState logN
       proof pub ood oodRest hoodPt topen hmem hacc
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge hno hCommitted hOpened
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta := hbind.symm.trans htable
   have heval : (oodBatchResidualExt E d t ζ qp).eval Λ = 0 := by
     rw [hlayout, hvc, sub_self, map_zero]
@@ -325,7 +329,7 @@ theorem hood_of_oodColumnLayoutExtCons (E : Type*) [Field E] [Algebra BabyBear E
 acceptance supplies the shape. -/
 theorem hood_of_oodColumnLayoutExt_noOod (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -337,6 +341,7 @@ theorem hood_of_oodColumnLayoutExt_noOod (E : Type*) [Field E] [Algebra BabyBear
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidualExt E d t ζ qp).eval Λ
         = algebraMap BabyBear E (((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear)))
@@ -347,9 +352,9 @@ theorem hood_of_oodColumnLayoutExt_noOod (E : Type*) [Field E] [Algebra BabyBear
   obtain ⟨ood, oodRest, hoodPt⟩ :=
     fullChecks_accept_gives_cons_oodPoint perm RATE toNat params vk core A initState logN
       proof pub hacc
-  exact hood_of_oodColumnLayoutExtCons E d sponge hCR perm RATE toNat params vk core A initState
+  exact hood_of_oodColumnLayoutExtCons E d sponge perm RATE toNat params vk core A initState
     logN proof pub hacc t ζ Λ qp topen ood vCommitted root oodRest idx siblings hoodPt hmem
-    hCommitted hOpened hlayout hLam
+    hCommitted hOpened hno hlayout hLam
 
 /-! ## §4 — SITE `OodExtChallengeLayout.lean:617`: `DecodedLdtLinkExt`'s singleton CONCLUSION, and
 the vacuity it causes. -/
@@ -522,8 +527,14 @@ theorem mainAirAcceptF_of_decodedLdtLinkExtCons
   have htable : topen.constraintEval = A.mul topen.vanishingAtZeta topen.quotientAtZeta :=
     verifyAlgo_accept_forces_table_identity_cons perm RATE toNat params vk core A initState logN
       (view pi π).1 (view pi π).2 ood oodRest hoodPt topen hmem hacc
+  -- ⚠ NOT PORTED IN THIS PASS: the opening data here arrives from the `DecodedLdtLinkExtCons`
+  -- BUNDLE, which does not carry the per-run residual, so this site still buys its binding with the
+  -- REFUTED global floor. Grandfathered, not new; porting it means adding the conjunct to that
+  -- bundle and to `OodExtChallengeLayout.DecodedLdtLinkExt` upstream.
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge
+      (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
+        siblings hc hCR) hCommitted hOpened
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta := hbind.symm.trans htable
   have heval : (oodBatchResidualExt E d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ = 0 := by
     rw [hlayout, hvc, sub_self, map_zero]

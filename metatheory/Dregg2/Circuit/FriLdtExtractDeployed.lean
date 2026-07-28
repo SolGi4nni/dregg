@@ -37,8 +37,9 @@ The verifier's own scalar restriction never wanted a singleton: `FriVerifier.bat
 (`:803-808`) matches `| ood :: _` and consumes the HEAD lane. Only the bundle demanded `[ood]`. So
 the repair is entirely on the bundle side:
 
-  * `FriLdtExtractV3Cons` (§3) — the bare-verifier bundle with `oodPoint = ood :: oodRest`. Implied
-    by the landed `FriLdtExtractV3` (`friLdtExtractV3_imp_cons`, a real implication, `[ood] = ood :: []`).
+  * `FriLdtExtractV3Cons` (§3) — the bare-verifier bundle with `oodPoint = ood :: oodRest`. As of
+    2026-07-28 it also carries the PER-RUN opening residual `¬ OpeningColl`, so it is NO LONGER
+    implied by the landed `FriLdtExtractV3` (`friLdtExtractV3_imp_cons` DELETED, §3).
   * `FriLdtExtractV3Faithful` (§3) — the deployed-verifier bundle, concluding the OOD point IS the
     transcript's `d.ζ`, of length `params.extDeg` (= 4 on every accepting run), with `ood` its head lane.
   * §4 re-proves the OOD reduction chain at the `ood :: oodRest` shape
@@ -92,8 +93,8 @@ open Dregg2.Circuit.TraceColumnInterp (constraintPoly domainSize)
 open Dregg2.Circuit.FieldIntegerLift (vanishingPoly ood_forces_mainAirAccept_field_of_residuals)
 open Dregg2.Circuit.OodQuotientConsistency (exceptionalSet)
 open Dregg2.Circuit.OodSoundnessGame (batchResidual rlc_debatch)
-open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ commitmentOpening_binds_of_poseidon2CR)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.OodCommitmentBinding
+  (merkleRecomputeZ OpeningColl commitmentOpening_binds_of_noColl openingColl_self_false)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.AlgoStarkSoundTransferV3
   (Rfam arithList isArithB isArithB_iff FriLdtExtractV3 mainAirAcceptF_of_floor)
@@ -336,6 +337,7 @@ def FriLdtExtractV3Cons
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (batchResidual (Rfam transferV3 t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -347,21 +349,21 @@ def FriLdtExtractV3Cons
       t.tf .memory = [] ∧ t.tf .mapOps = [] ∧
       tracePublishedCommit t = pi.toPublished
 
-/-- `FriLdtExtractV3 ⟹ FriLdtExtractV3Cons`, by `[ood] = ood :: []`. A real implication: it uses no
-contradiction, and holds for every instantiation including ones where both sides are inhabited. -/
-theorem friLdtExtractV3_imp_cons
-    (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (h : FriLdtExtractV3 sponge hash perm RATE toNat params vk core A initState logN view) :
-    FriLdtExtractV3Cons sponge hash perm RATE toNat params vk core A initState logN view := by
-  intro pi π hacc
-  obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
-    hbus, hMem, hMap, hPub⟩ := h pi π hacc
-  exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, [], idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+/-! ⚑ **DELETED 2026-07-28 — `friLdtExtractV3_imp_cons`** (`FriLdtExtractV3 ⟹ FriLdtExtractV3Cons`).
+
+The corrected bundle now carries the PER-RUN opening residual `¬ OpeningColl` — the honest
+replacement for the refuted `Poseidon2SpongeCR` floor the whole reduction chain used to thread — and
+the LANDED bundle never carried it, so the implication is no longer provable. It could only be
+restored by assuming the residual at every opening reaching a common root, which is the global
+Merkle-binding floor in disguise and is exactly the move this repair exists to stop.
+
+WHAT WAS LOST, precisely: a free transport from `FriLdtExtractV3` — a premise this very module PROVES
+makes `CircuitSoundness.verifyBatch` reject EVERY input at the deployed arguments
+(`friLdtExtractV3_makes_verifyBatch_reject_everything`). It transported nothing, because there is
+nothing on the other side of an empty premise to transport. Its four downstream receipts
+(`StarkSoundReduce.retiredPremise_imp_reducePremise`, `StarkSoundFriLdt.retiredPremise_imp_apexPremise`,
+`StarkSoundFriLdtCorrected.landedPremise_imp_correctedPremise` and
+`.starkSound_of_friLdtExtract_transferV3_via_corrected`) are deleted with it and say the same there. -/
 
 /-- **`FriLdtExtractV3Faithful` — the corrected bundle over the verifier the apex RUNS.**
 
@@ -395,6 +397,7 @@ def FriLdtExtractV3Faithful
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (batchResidual (Rfam transferV3 t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -429,12 +432,12 @@ theorem friLdtExtractV3Cons_imp_faithful
     faithfulExt_accept_gives_cons_shape perm RATE toNat params vk core A extCore extA W
       initState logN (view pi π).1 (view pi π).2 (extView pi π) hacc
   obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+    hcap, hoodPt, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
     hbus, hMem, hMap, hPub⟩ := h pi π hbare
   have hsame : ood :: oodRest = ood' :: oodRest' := by rw [← hoodPt, hcons']
   exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
     hcap, hoodPt, by rw [hsame]; exact hzeta', by rw [hsame]; exact hlen',
-    hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+    hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
 
 /-! ## §4 — the OOD reduction chain at the `ood :: oodRest` shape.
 
@@ -496,7 +499,7 @@ theorem verifyAlgo_accept_forces_table_identity_cons {F : Type} [Inhabited F] [D
 transferV3 column layout + RLC de-batch at a non-exceptional `Λ`. -/
 theorem hood_of_reductions_cons
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -510,6 +513,7 @@ theorem hood_of_reductions_cons
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (batchResidual (Rfam d t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
@@ -520,7 +524,7 @@ theorem hood_of_reductions_cons
     verifyAlgo_accept_forces_table_identity_cons perm RATE toNat params vk core A initState logN
       proof pub ood oodRest hoodPt topen hmem hacc
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge hno hCommitted hOpened
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta :=
     hbind.symm.trans htable
   have heval : (batchResidual (Rfam d t ζ qp)).eval Λ = 0 := by
@@ -537,7 +541,7 @@ theorem hood_of_reductions_cons
 `AlgoStarkSoundTransferV3.mainAirAcceptF_of_floor`, descriptor-polymorphic exactly as the landed one. -/
 theorem mainAirAcceptF_of_floor_cons
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -552,6 +556,7 @@ theorem mainAirAcceptF_of_floor_cons
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (batchResidual (Rfam d t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
@@ -560,9 +565,9 @@ theorem mainAirAcceptF_of_floor_cons
         ζ ∉ exceptionalSet (constraintPoly d t c - vanishingPoly t * qp c)) :
     MainAirAcceptF d t :=
   ood_forces_mainAirAccept_field_of_residuals d t hcap ζ qp
-    (hood_of_reductions_cons d sponge hCR perm RATE toNat params vk core A initState logN proof pub
+    (hood_of_reductions_cons d sponge perm RATE toNat params vk core A initState logN proof pub
       hacc t ζ Λ qp topen ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
-      hlayout hLam)
+      hno hlayout hLam)
     hnonexc
 
 /-! ## §5 — the apex, RE-DERIVED from the corrected bundle. -/
@@ -570,8 +575,9 @@ theorem mainAirAcceptF_of_floor_cons
 /-- **`starkSound_of_friLdtExtractFaithful_transferV3` — `StarkSound` for the deployed `transferV3`
 slice from the CORRECTED deployed-verifier extraction bundle.**
 
-Two honest floors, unchanged from the landed version: `Poseidon2SpongeCR sponge` (genuinely used in
-the commitment binding) and the FRI-LDT extraction bundle. What changed: the bundle is indexed by the
+ONE honest premise, and it is no longer a refuted floor: the FRI-LDT extraction bundle, which now
+carries the PER-RUN opening residual `¬ OpeningColl` in place of the global `Poseidon2SpongeCR` the
+commitment binding used to thread. What changed besides: the bundle is indexed by the
 verifier `verifyBatch` actually runs, and its OOD conjunct is the deployed 4-lane `d.ζ` rather than a
 base-felt singleton — so, unlike the landed bundle, this premise does not force `verifyBatch` to
 reject every input (§2, §6).
@@ -582,7 +588,7 @@ which `mainAirAcceptF_of_floor_cons` consumes to DERIVE `MainAirAcceptF` from th
 primitives. The aux legs come straight from the bundle and
 `AirLegsDischarged.airAccept_forces_satisfied2_transferV3` closes `Satisfied2`. -/
 theorem starkSound_of_friLdtExtractFaithful_transferV3
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
+    (sponge : List Int → Int) (hash : List Int → Int)
     (hfri : FriLdtExtractV3Faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
       cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView) :
     StarkSound hash (fun _ => transferV3) where
@@ -613,15 +619,15 @@ theorem starkSound_of_friLdtExtractFaithful_transferV3
           cfgVk cfgCore cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN
           (cfgView pi π).1 (cfgView pi π).2 (cfgExtView pi π) hExt)
     obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-      hcap, hoodPt, _hzeta, _hlen, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hcap, hoodPt, _hzeta, _hlen, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
       hbus, hMem, hMap, hPub⟩ := hfri pi π hExt
     exact ⟨fun _ => 0, fun _ => (0, 0), [], t,
       Dregg2.Circuit.AirLegsDischarged.airAccept_forces_satisfied2_transferV3
         hash (fun _ => 0) (fun _ => (0, 0)) t
-        (mainAirAcceptF_of_floor_cons transferV3 sponge hCR cfgPerm cfgRATE cfgToNat cfgParams
+        (mainAirAcceptF_of_floor_cons transferV3 sponge cfgPerm cfgRATE cfgToNat cfgParams
           cfgVk cfgCore cfgA cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2 hAlgo
           t ζ Λ qp topen ood vCommitted root oodRest idx siblings
-          hcap hoodPt hmem hCommitted hOpened hlayout hLam hnonexc)
+          hcap hoodPt hmem hCommitted hOpened hno hlayout hLam hnonexc)
         hbus hMem hMap,
       hPub⟩
 
@@ -633,13 +639,13 @@ there without a cycle. So the theorem was relocated rather than restated in plac
 home, and the upstream site carries a `⚑ DELETED` pointer, not a deprecated twin.
 
 The statement is the landed one with `FriLdtExtractV3` replaced by `FriLdtExtractV3Cons`: same
-conclusion, same `Poseidon2SpongeCR` floor, same generic arguments, and a premise differing in
+conclusion, NO floor hypothesis at all, same generic arguments, and a premise differing in
 exactly one conjunct (`oodPoint = ood :: oodRest` instead of `oodPoint = [ood]`) — the shape
 `FriVerifier.batchTablesCheck` matches and the bundle's own antecedent forces. `MainAirAcceptF` is
 DERIVED per accepting run by `mainAirAcceptF_of_floor_cons`, exactly as the landed proof derived it
 by `mainAirAcceptF_of_floor`. -/
 theorem algoStarkSound_transferV3_cons
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -652,12 +658,12 @@ theorem algoStarkSound_transferV3_cons
     (by
       intro pi π hacc
       obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+        hcap, hoodPt, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
         hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
       exact ⟨t,
-        mainAirAcceptF_of_floor_cons transferV3 sponge hCR perm RATE toNat params vk core A
+        mainAirAcceptF_of_floor_cons transferV3 sponge perm RATE toNat params vk core A
           initState logN (view pi π).1 (view pi π).2 hacc t ζ Λ qp topen ood vCommitted root
-          oodRest idx siblings hcap hoodPt hmem hCommitted hOpened hlayout hLam hnonexc,
+          oodRest idx siblings hcap hoodPt hmem hCommitted hOpened hno hlayout hLam hnonexc,
         hbus, hMem, hMap, hPub⟩)
 
 /-! ## §6 — the repair is not a second vacuity. -/
@@ -679,6 +685,7 @@ def FriLdtExtractV3FaithfulNoOodShape
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (batchResidual (Rfam transferV3 t ζ qp)).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -708,19 +715,19 @@ theorem friLdtExtractV3Faithful_iff_noOodShape
   constructor
   · intro h pi π hacc
     obtain ⟨t, ζ, Λ, qp, topen, _ood, vCommitted, root, _oodRest, idx, siblings,
-      hcap, _hoodPt, _hzeta, _hlen, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hcap, _hoodPt, _hzeta, _hlen, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
       hbus, hMem, hMap, hPub⟩ := h pi π hacc
     exact ⟨t, ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
+      hcap, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc, hbus, hMem, hMap, hPub⟩
   · intro h pi π hacc
     obtain ⟨ood, oodRest, hcons, hzeta, hlen⟩ :=
       faithfulExt_accept_gives_cons_shape perm RATE toNat params vk core A extCore extA W
         initState logN (view pi π).1 (view pi π).2 (extView pi π) hacc
     obtain ⟨t, ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hcap, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
       hbus, hMem, hMap, hPub⟩ := h pi π hacc
     exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-      hcap, hcons, hzeta, hlen, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+      hcap, hcons, hzeta, hlen, hmem, hCommitted, hOpened, hno, hlayout, hLam, hnonexc,
       hbus, hMem, hMap, hPub⟩
 
 /-! ### The concrete accepting pole (the apex-facing predicate really does accept something).
@@ -938,7 +945,6 @@ theorem bundles_are_not_interchangeable :
 #assert_axioms singletonBundle_makes_deployed_verifier_accept_nothing
 #assert_axioms friLdtExtractV3_imp_faithfulSingleton
 #assert_axioms friLdtExtractV3_makes_verifyBatch_reject_everything
-#assert_axioms friLdtExtractV3_imp_cons
 #assert_axioms friLdtExtractV3Cons_imp_faithful
 #assert_axioms batchTablesCheck_rejects_tampered_quotient_cons
 #assert_axioms verifyAlgo_full_rejects_tampered_quotient_cons

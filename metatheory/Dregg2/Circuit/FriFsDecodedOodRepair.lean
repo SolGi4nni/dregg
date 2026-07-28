@@ -139,6 +139,7 @@ open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ)
 open Dregg2.Circuit.OodColumnLayout (oodBatchResidual)
 open Dregg2.Circuit.LogUpColumnLayout (BusModelOk)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.OodCommitmentBinding (OpeningColl openingColl_refutes_poseidon2CR)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.FriBatchedOracle (MatrixOracle)
 open Dregg2.Circuit.FriDeployedRateInstance (friSetupDeployed)
@@ -294,7 +295,7 @@ theorem friLdtExtractV3Cons_imp_sansFSCons
     ExtractBundleSansFSCons sponge hash perm RATE toNat params vk core A initState logN view := by
   intro pi π hacc
   obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, _hLam, _hnonexc,
+    hcap, hoodPt, hmem, hCommitted, hOpened, _hno, hlayout, _hLam, _hnonexc,
     hbus, hMem, hMap, hPub⟩ := h pi π hacc
   exact ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
     hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hbus, hMem, hMap, hPub⟩
@@ -611,9 +612,15 @@ theorem positiveRadiusTraceDecode_decoded_extCons {F : Type*} [Field F] [Decidab
   have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
     ood_forces_mainAirAccept_field_of_residuals_ext BB4 d (decodedTr oracle pubA tfam pi π)
       (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
-      (hood_of_oodColumnLayoutExtCons BB4 d sponge hCR perm RATE toNat params vk core A initState
+      -- ⚠ NOT PORTED IN THIS PASS: the opening data arrives from a `DecodedLdtLink…Cons` BUNDLE
+      -- that does not carry the per-run residual, so this site still buys its binding with the
+      -- REFUTED global floor. Grandfathered, not new.
+      (hood_of_oodColumnLayoutExtCons BB4 d sponge perm RATE toNat params vk core A initState
         logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
-        ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+        ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
+        (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
+          siblings hc hCR)
+        hlayout hLam)
       hnonexc
   obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
     memoryLegs_of_lookupShape hash perm RATE toNat params vk core A initState logN view
@@ -737,9 +744,15 @@ theorem positiveRadiusTraceDecode_decoded_extChallenges
   have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
     ood_forces_mainAirAccept_field_of_residuals_ext BB4 d (decodedTr oracle pubA tfam pi π)
       (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
-      (hood_of_oodColumnLayoutExtCons BB4 d sponge hCR perm RATE toNat params vk core A initState
+      -- ⚠ NOT PORTED IN THIS PASS: the opening data arrives from a `DecodedLdtLink…Cons` BUNDLE
+      -- that does not carry the per-run residual, so this site still buys its binding with the
+      -- REFUTED global floor. Grandfathered, not new.
+      (hood_of_oodColumnLayoutExtCons BB4 d sponge perm RATE toNat params vk core A initState
         logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
-        ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened hlayout hLam)
+        ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
+        (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
+          siblings hc hCR)
+        hlayout hLam)
       hnonexc
   obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
     memoryLegs_of_lookupShape hash perm RATE toNat params vk core A initState logN view

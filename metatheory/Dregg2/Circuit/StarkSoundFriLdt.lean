@@ -60,7 +60,7 @@ open Dregg2.Circuit.StarkSoundDischarge
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.FriLdtExtractDeployed
   (ExtProofView FriLdtExtractV3Cons FriLdtExtractV3Faithful FriLdtExtractV3FaithfulNoOodShape
-   friLdtExtractV3_imp_cons friLdtExtractV3Cons_imp_faithful friLdtExtractV3Faithful_iff_noOodShape
+   friLdtExtractV3Cons_imp_faithful friLdtExtractV3Faithful_iff_noOodShape
    faithfulExt_accept_gives_cons_shape starkSound_of_friLdtExtractFaithful_transferV3
    friLdtExtractV3_makes_verifyBatch_reject_everything)
 
@@ -75,11 +75,11 @@ conjunct is the deployed four-lane transcript squeeze rather than a base-felt si
 premise does NOT force `verifyBatch` to reject every input, whereas the retired one did
 (`deleted_apex_premise_was_empty`). -/
 theorem starkSound_of_friLdtExtract_transferV3
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
+    (sponge : List Int → Int) (hash : List Int → Int)
     (hfri : FriLdtExtractV3Faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
       cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView) :
     StarkSound hash (fun _ => Dregg2.Circuit.RotatedKernelRefinement.transferV3) :=
-  starkSound_of_friLdtExtractFaithful_transferV3 sponge hCR hash hfri
+  starkSound_of_friLdtExtractFaithful_transferV3 sponge hash hfri
 
 /-- **★ THE SHARPER FORM: the apex from a premise that MENTIONS NO OOD SHAPE AT ALL.** The strongest
 available discharge of the migration obligation — whatever residual emptiness the premise may carry
@@ -87,28 +87,20 @@ is inherited ENTIRELY from the FRI-LDT / Merkle / Fiat–Shamir conjuncts (the f
 from the OOD repair, because the OOD repair does not appear in this statement. Interderivable with
 the apex above through `apexPremise_adds_no_strength`. -/
 theorem starkSound_of_friLdtExtract_transferV3_noOodShape
-    (sponge : List Int → Int) (hCR : Poseidon2SpongeCR sponge) (hash : List Int → Int)
+    (sponge : List Int → Int) (hash : List Int → Int)
     (hfri : FriLdtExtractV3FaithfulNoOodShape sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk
       cfgCore cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView) :
     StarkSound hash (fun _ => Dregg2.Circuit.RotatedKernelRefinement.transferV3) :=
-  starkSound_of_friLdtExtract_transferV3 sponge hCR hash
+  starkSound_of_friLdtExtract_transferV3 sponge hash
     ((friLdtExtractV3Faithful_iff_noOodShape sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk
       cfgCore cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView).mpr hfri)
 
-/-- **The transport a consumer still holding the retired bundle rides.** `FriLdtExtractV3` at the
-deployed arguments discharges the migrated premise, so migrating costs a consumer nothing: anything
-the retired apex gave, this one gives. (The converse transport does not exist as an acceptance
-argument — `FriLdtExtractDeployed.bundles_are_not_interchangeable`.) -/
-theorem retiredPremise_imp_apexPremise
-    (sponge : List Int → Int) (hash : List Int → Int)
-    (hfri : FriLdtExtractV3 sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgInitState cfgLogN cfgView) :
-    FriLdtExtractV3Faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView :=
-  friLdtExtractV3Cons_imp_faithful sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore
-    cfgA cfgExtCore cfgExtA cfgExtW cfgInitState cfgLogN cfgView cfgExtView
-    (friLdtExtractV3_imp_cons sponge hash cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA
-      cfgInitState cfgLogN cfgView hfri)
+/-! ⚑ **DELETED 2026-07-28 — `retiredPremise_imp_apexPremise`.** It rode
+`FriLdtExtractDeployed.friLdtExtractV3_imp_cons`, deleted in the same commit: the corrected bundles
+now carry the per-run opening residual `¬ OpeningColl` (the honest replacement for the refuted
+`Poseidon2SpongeCR` floor) and the LANDED bundle never did. WHAT WAS LOST: a free transport from a
+premise PROVED empty at the deployed arguments (`deleted_apex_premise_was_empty`, below) — nothing
+that ever transported. -/
 
 /-! ## §2 — THE MIGRATION OBLIGATION: the installed premise is not ALSO empty. -/
 
@@ -198,7 +190,6 @@ theorem apexPremise_false_of_accepting_run_without_tableOpenings
 
 #assert_axioms starkSound_of_friLdtExtract_transferV3
 #assert_axioms starkSound_of_friLdtExtract_transferV3_noOodShape
-#assert_axioms retiredPremise_imp_apexPremise
 #assert_axioms apexPremise_ood_conjuncts_come_from_acceptance
 #assert_axioms apexPremise_adds_no_strength
 #assert_axioms deleted_apex_premise_was_empty

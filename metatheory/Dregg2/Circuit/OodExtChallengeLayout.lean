@@ -558,7 +558,8 @@ open Dregg2.Circuit.FriVerifierBridge (ProofView)
 open Dregg2.Circuit.FriVerifier
   (verifyAlgo BatchProofData WrapPublics FriParams RecursionVk FriCore FieldArith TableOpening
    fullChecks)
-open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ commitmentOpening_binds_of_poseidon2CR)
+open Dregg2.Circuit.OodCommitmentBinding
+  (merkleRecomputeZ OpeningColl commitmentOpening_binds_of_noColl openingColl_refutes_poseidon2CR)
 open Dregg2.Circuit.OodQuotientConsistency (verifyAlgo_accept_forces_table_identity)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.AlgoStarkSoundGeneral (AcceptsFull)
@@ -641,7 +642,7 @@ conclusion. -/
 arithmetic constraint's OOD identity — as an equation over the CHALLENGE EXTENSION. -/
 theorem hood_of_oodColumnLayoutExt (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -654,6 +655,7 @@ theorem hood_of_oodColumnLayoutExt (E : Type*) [Field E] [Algebra BabyBear E] [D
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidualExt E d t ζ qp).eval Λ
         = algebraMap BabyBear E (((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear)))
@@ -665,7 +667,7 @@ theorem hood_of_oodColumnLayoutExt (E : Type*) [Field E] [Algebra BabyBear E] [D
     verifyAlgo_accept_forces_table_identity perm RATE toNat params vk core A initState logN
       proof pub ood hoodPt topen hmem hacc
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge hno hCommitted hOpened
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta := hbind.symm.trans htable
   have heval : (oodBatchResidualExt E d t ζ qp).eval Λ = 0 := by
     rw [hlayout, hvc, sub_self, map_zero]
@@ -697,8 +699,13 @@ theorem mainAirAcceptF_of_decodedLdtLinkExt (E : Type*) [Field E] [Algebra BabyB
   have htable : topen.constraintEval = A.mul topen.vanishingAtZeta topen.quotientAtZeta :=
     verifyAlgo_accept_forces_table_identity perm RATE toNat params vk core A initState logN
       (view pi π).1 (view pi π).2 ood hoodPt topen hmem hacc
+  -- ⚠ NOT PORTED IN THIS PASS: the opening data arrives from the `DecodedLdtLinkExt` BUNDLE, which
+  -- does not carry the per-run residual, so this site still buys its binding with the REFUTED global
+  -- floor. Grandfathered, not new; the port is a conjunct on that bundle, a separate pass.
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge
+      (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
+        siblings hc hCR) hCommitted hOpened
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta := hbind.symm.trans htable
   have heval : (oodBatchResidualExt E d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ = 0 := by
     rw [hlayout, hvc, sub_self, map_zero]

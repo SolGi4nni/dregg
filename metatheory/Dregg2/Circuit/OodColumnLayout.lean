@@ -62,7 +62,7 @@ open Dregg2.Circuit.OodQuotientConsistency (exceptionalSet)
 open Dregg2.Circuit.OodSoundnessGame
   (batchResidual batchResidual_coeff batchResidual_eval rlc_debatch
    batchResidual_natDegree_lt batchResidual_exceptionalSet_card_lt)
-open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ)
+open Dregg2.Circuit.OodCommitmentBinding (merkleRecomputeZ OpeningColl)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.BabyBearFriField (BabyBear)
 open Dregg2.Circuit.AlgoStarkSoundTransferV3
@@ -217,7 +217,7 @@ specified `verifyAlgo` + the Poseidon2-CR commitment binding + the layout equati
 consumes the general modeler with no per-descriptor plumbing. -/
 theorem hood_of_oodColumnLayout
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat)
@@ -230,14 +230,16 @@ theorem hood_of_oodColumnLayout
     (hmem : topen ∈ proof.tableOpenings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened : merkleRecomputeZ sponge idx topen.constraintEval siblings = root)
+    (hno : ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings)
     (hlayout : (oodBatchResidual d t ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear))
     (hLam : Λ ∉ exceptionalSet (oodBatchResidual d t ζ qp)) :
     ∀ c ∈ d.constraints, isArith c →
       (constraintPoly d t c).eval ζ = (vanishingPoly t).eval ζ * (qp c).eval ζ :=
-  hood_of_reductions d sponge hCR perm RATE toNat params vk core A initState logN proof pub hacc
-    t ζ Λ qp topen ood vCommitted root idx siblings hoodPt hmem hCommitted hOpened hlayout hLam
+  hood_of_reductions d sponge perm RATE toNat params vk core A initState logN proof pub hacc
+    t ζ Λ qp topen ood vCommitted root idx siblings hoodPt hmem hCommitted hOpened hno hlayout
+    hLam
 
 /-! ## §4 — transferV3 RE-DERIVED: the hand-modeled layout is the SPECIALIZATION
 `oodColumnLayout_law transferV3` (subsumption, not a re-proof). -/

@@ -66,7 +66,7 @@ open Dregg2.Circuit.AlgoStarkSoundTransferV3
   (isArithB_iff arithList Rfam FriLdtExtractV3 hood_of_reductions mainAirAcceptF_of_floor)
 open Dregg2.Circuit.FriLdtExtractDeployed
   (FriLdtExtractV3Cons algoStarkSound_transferV3_cons
-   verifyAlgo_accept_forces_table_identity_cons friLdtExtractV3_imp_cons
+   verifyAlgo_accept_forces_table_identity_cons
    friLdtExtractV3_makes_verifyBatch_reject_everything)
 open Dregg2.Circuit.ApexOodLaneRepair
   (FriLdtExtractV3ConsNoOodShape friLdtExtractV3Cons_iff_noOodShape)
@@ -227,7 +227,7 @@ theorem algoExtract_transferV3_orBreak
         Satisfied2 hash transferV3 minit mfin maddrs t ∧
           tracePublishedCommit t = pi.toPublished) := by
   obtain ⟨t, ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc,
+    hcap, hoodPt, hmem, hCommitted, hOpened, _hno, hlayout, hLam, hnonexc,
     hbus, hMem, hMap, hPub⟩ := hfri pi π hacc
   refine OrBreak.imp (fun hAir => ?_)
     (mainAirAcceptF_of_floor_orBreak transferV3 sponge perm RATE toNat params vk core A
@@ -396,16 +396,11 @@ theorem deleted_reduce_premise_was_empty
     verifyBatch vkey pi π = Verdict.reject :=
   friLdtExtractV3_makes_verifyBatch_reject_everything sponge hash h vkey pi π
 
-/-- **The transport a consumer still holding the retired bundle rides.** `FriLdtExtractV3` discharges
-the migrated premise (`[ood] = ood :: []`), so migrating costs a consumer nothing. -/
-theorem retiredPremise_imp_reducePremise
-    (sponge : List ℤ → ℤ) (hash : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (h : FriLdtExtractV3 sponge hash perm RATE toNat params vk core A initState logN view) :
-    FriLdtExtractV3Cons sponge hash perm RATE toNat params vk core A initState logN view :=
-  friLdtExtractV3_imp_cons sponge hash perm RATE toNat params vk core A initState logN view h
+/-! ⚑ **DELETED 2026-07-28 — `retiredPremise_imp_reducePremise`.** It rode
+`FriLdtExtractDeployed.friLdtExtractV3_imp_cons`, deleted in the same commit: `FriLdtExtractV3Cons`
+now carries the per-run opening residual `¬ OpeningColl` and the LANDED bundle never did. WHAT WAS
+LOST: a free transport from a premise PROVED to make `verifyBatch` reject every input
+(`friLdtExtractV3_makes_verifyBatch_reject_everything`) — i.e. nothing that ever transported. -/
 
 /-- **The migrated premise adds EXACTLY ZERO strength.** `FriLdtExtractV3Cons` is EQUIVALENT to
 itself with the OOD-shape conjunct DELETED — the conjunct is supplied by the bundle's OWN antecedent
@@ -489,7 +484,6 @@ theorem reducePremise_false_of_accepting_run_without_tableOpenings
     sponge hash perm RATE toNat params vk core A initState logN view pi π hacc hnil
 
 #assert_axioms deleted_reduce_premise_was_empty
-#assert_axioms retiredPremise_imp_reducePremise
 #assert_axioms reducePremise_adds_no_strength
 #assert_axioms algoStarkSound_transferV3_of_no_sponge_collision_noOodShape
 #assert_axioms lightclient_unfoolable_deployed_of_no_collisions_noOodShape

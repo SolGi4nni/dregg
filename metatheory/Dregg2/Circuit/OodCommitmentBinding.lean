@@ -11,11 +11,18 @@
         BINDS — a prover cannot open the commitment to a different value [THIS FILE];
   * (c) FRI low-degreeness — the genuine hard floor [later].
 
-Sub-obligation (b) is NOT algebra: it is a hash-binding fact. This module REDUCES it to the ONE named
-hash floor `Poseidon2SpongeCR` (`Dregg2/Circuit/Poseidon2Binding.lean`, a `Prop` HYPOTHESIS, never an
-`axiom`) — the SAME floor `AggAirSound.combine_digest_binds` (the CR tooth) and `FriVerifier`'s
-`merkleRecompute_binds` rest on. After this, `hood.b` is a legitimately-named crypto assumption (same
-status as the PQ apex's hash/lattice floors), NOT a bare `hood` premise.
+Sub-obligation (b) is NOT algebra: it is a hash-binding fact.
+
+⚑ **2026-07-28 — THE FLOOR IS GONE FROM THIS MODULE.** It used to reduce (b) to the named floor
+`Poseidon2SpongeCR` (`= Function.Injective sponge` at `List ℤ → ℤ`), which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` REFUTES at deployed parameters — so the theorem
+the whole FRI/STARK tower consumes for its opening binding was a true implication whose hypothesis
+nothing deployed satisfies. `merkleRecomputeZ_binds` and `commitmentOpening_binds_of_poseidon2CR` are
+DELETED. What (b) actually needs is a PER-INSTANCE non-collision at the ONE pair the extractor
+produces — `¬ OpeningColl` (§2) — and the deployed binding is `merkleOpening_binds_rom` (§3.1), which
+carries NO floor hypothesis and rests on `KeyedRomFloor.keyedRom_hard`, the PROVED birthday bound.
+`hood.b` is therefore a per-run side condition with both poles proved, plus a proved bound on how
+often it fails — not a named assumption nothing satisfies.
 
 ## The reduction (a break ⟹ a Poseidon2 collision)
 
@@ -26,24 +33,27 @@ compared to the committed root. We model the node hash as the ordered two-felt P
 `sponge [l, r]` — the EXACT binary specialization whose collision-resistance is `Poseidon2SpongeCR`,
 identical to `AggAirSound.Hsponge`.
 
-  * **`merkleRecomputeZ_binds`** (mirrors `FriVerifier.merkleRecompute_binds`) — under
-    `Poseidon2SpongeCR`, two leaves that recompute the SAME root at the SAME query index over the SAME
-    sibling path are EQUAL. Proven by induction on the path; the ONLY crypto reliance is that each node
-    hash `sponge [·, ·]` is injective, which is `Poseidon2SpongeCR` (`injection` splits `[a,b]=[a',b']`).
-  * **`commitmentOpening_binds_of_poseidon2CR`** (THE `hood.b` REDUCTION) — under `Poseidon2SpongeCR`,
-    an opened value `vOpened` and the honest committed value `vCommitted := (constraintPoly d t c).eval ζ`
-    that BOTH recompute to the same committed root ARE EQUAL: the opened `constraintEval` is BOUND to the
-    committed polynomial's evaluation. An adversary opening a DIFFERENT value forces two distinct leaves
-    to the same root — a Poseidon2 collision (`opening_equivocation_breaks_cr`: a break ⟹ `¬
-    Poseidon2SpongeCR`). This is the honest floor, not a re-assumed `hood.b`.
+  * **`merkleFind` / `merkleFind_spec`** — the walking extractor and its UNCONDITIONAL correctness:
+    two DISTINCT leaves recomputing the SAME root over the same path yield a genuine sponge collision,
+    with no hypothesis. This is the whole content the deleted injectivity floor was hiding.
+  * **`merkleRecomputeZ_binds_of_noColl` / `commitmentOpening_binds_of_noColl`** (THE `hood.b`
+    REDUCTION) — an opened value `vOpened` and the honest committed value
+    `vCommitted := (constraintPoly d t c).eval ζ` that BOTH recompute to the same committed root ARE
+    EQUAL, given `¬ OpeningColl` at that ONE extracted pair. An adversary opening a DIFFERENT value
+    hands over the collision itself (`opening_equivocation_exhibits_coll`, and hence
+    `opening_equivocation_breaks_cr`: a break ⟹ `¬ Poseidon2SpongeCR`).
 
 Anti-ghost, witnessed BOTH ways: on the injective toy sponge (`Poseidon2Binding.Reference.refSponge`,
 CR-discharged) an honest opening BINDS (`honest_opening_binds`); on a NON-injective sponge
 (constant-zero) an adversary equivocates two distinct values to the same root, and that equivocation
-IS a witnessed collision (`constant_sponge_equivocates` — the CR floor is load-bearing, not vacuous).
+IS a witnessed collision (`constant_sponge_equivocates`). And `honest_run_needs_no_residual` proves
+the side condition is FREE on every non-equivocating run, for every sponge — the port costs the
+honest path nothing.
 
-`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); `Poseidon2SpongeCR` is a Prop
-hypothesis where used, never an `axiom`. Imported into `Dregg2.lean` (transitively, via `StarkSoundFriLdt`/`AlgoStarkSoundTransferV3`, which CONSUME `commitmentOpening_binds_of_poseidon2CR` on the deployed soundness path).
+`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); no refuted floor appears in any
+statement here. Imported into `Dregg2.lean` (transitively, via
+`StarkSoundFriLdt`/`AlgoStarkSoundTransferV3`, which CONSUME `commitmentOpening_binds_of_noColl` on
+the deployed soundness path).
 
 ## Remaining wire to `OodInterpF.hood`
 
@@ -54,8 +64,9 @@ names, NOT new crypto): (i) the committed root of the constraint-poly commitment
 `topen.constraintEval` to `A.mul vanishingAtZeta quotientAtZeta`) recomputes to it via `merkleRecomputeZ`;
 (ii) the honest committed leaf equals `(constraintPoly d t c).eval ζ` cast to the leaf felt; (iii) the
 BabyBear→ℤ canonical-representative bridge (the same one `FieldIntegerLift` carries). Given those,
-`commitmentOpening_binds_of_poseidon2CR` yields `topen.constraintEval = (constraintPoly d t c).eval ζ` —
-`hood.b`, now DERIVED FROM `Poseidon2SpongeCR`.
+`commitmentOpening_binds_of_noColl` yields `topen.constraintEval = (constraintPoly d t c).eval ζ` —
+`hood.b`, now DERIVED from a per-run side condition whose failure probability `merkleOpening_binds_rom`
+bounds on a PROVED floor.
 -/
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Crypto.SpongeCarrierReduction
@@ -178,39 +189,118 @@ theorem merkleFind_len_le (sponge : List ℤ → ℤ) :
       · rw [merkleFind, if_neg hnode]
         exact ih (idx / 2) _ _
 
-/-- **⚑ DEMOTED — `merkleRecomputeZ_binds` at plain INJECTIVITY, which BabyBear REFUTES.**
+/-! ### ⚑ THE PER-INSTANCE RESIDUAL — what the binding ACTUALLY needs.
 
-The named floor `Poseidon2SpongeCR` is DELETED from this statement; what remains is exactly the
-injective special case, kept as the strength bridge (nothing was lost re-grounding) and doc-marked as
-NOT a deployed guarantee. A deployed BabyBear sponge is not injective, so reading this as a statement
-about the running verifier is precisely the vacuity being retired.
+`merkleRecomputeZ_binds` and `commitmentOpening_binds_of_poseidon2CR` are **DELETED** (2026-07-28).
+Both took `Function.Injective sponge`, which at `List ℤ → ℤ` IS `Poseidon2SpongeCR` and is refuted by
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`. Neither ever inspected that hypothesis at more
+than ONE argument: the proof applied it to `(merkleFind_spec …).2` — a single pair, produced by a
+TOTAL CONSTRUCTIVE extractor, already known distinct with equal images. A global injectivity floor for
+a one-pair obligation is the injectivity-floor disease in miniature.
 
-**The deployed opening binding is §3.1's `merkleOpening_binds_rom`.** -/
-theorem merkleRecomputeZ_binds (sponge : List ℤ → ℤ) (hinj : Function.Injective sponge) :
-    ∀ (siblings : List ℤ) (idx : Nat) (l1 l2 : ℤ),
-      merkleRecomputeZ sponge idx l1 siblings = merkleRecomputeZ sponge idx l2 siblings →
-      l1 = l2 := by
-  intro siblings idx l1 l2 h
+What replaces it is that one pair, named: `OpeningColl` is the residual "the pair `merkleFind`
+extracts from THIS opening really is a sponge collision", and the binding is stated on its negation.
+Both poles are proved below — `openingColl_self_false` (dischargeable: a side condition that can never
+be discharged is a broken keystone, not a repaired one) and `openingColl_of_constant_sponge`
+(refutable: so `¬ OpeningColl` is not free) — and `openingColl_refutes_poseidon2CR` records that
+holding the residual REFUTES the deleted floor, so the port is visibly a WEAKENING of the hypothesis
+rather than a change of subject.
+
+⚑ **The residual is PRICED, not merely named.** §3.1's `merkleOpening_binds_rom` bounds the
+probability that a query-bounded prover produces exactly this event, on `KeyedRomFloor.keyedRom_hard`
+— the birthday bound, PROVED, carrying no assumption. That is the honest shape of the deployed claim:
+per run a side condition, and a proved bound on how often it fails. -/
+
+/-- **`OpeningColl sponge idx l1 l2 siblings`** — the PER-INSTANCE residual. `merkleFind` walks the
+shared sibling path carrying the two divergent accumulators and returns the first level at which they
+agree; this says that returned pair is a genuine collision of the deployed sponge (two DISTINCT node
+preimages with EQUAL images). It is the exact event `merkleFind_spec` produces from an equivocated
+opening, and nothing wider. -/
+def OpeningColl (sponge : List ℤ → ℤ) (idx : Nat) (l1 l2 : ℤ) (siblings : List ℤ) : Prop :=
+  (merkleFind sponge idx l1 l2 siblings).1 ≠ (merkleFind sponge idx l1 l2 siblings).2
+    ∧ sponge (merkleFind sponge idx l1 l2 siblings).1
+        = sponge (merkleFind sponge idx l1 l2 siblings).2
+
+/-- At a single leaf the extractor returns a pair of EQUAL preimages: either the empty fallback, or
+the same node twice. -/
+theorem merkleFind_self (sponge : List ℤ → ℤ) :
+    ∀ (siblings : List ℤ) (idx : Nat) (l : ℤ),
+      (merkleFind sponge idx l l siblings).1 = (merkleFind sponge idx l l siblings).2 := by
+  intro siblings idx l
+  cases siblings with
+  | nil => simp [merkleFind]
+  | cons s rest => simp [merkleFind]
+
+/-- **(POLE — the residual is DISCHARGEABLE.)** An opening that does not equivocate has nothing to
+collide, so `¬ OpeningColl` holds outright, with no hypothesis about the sponge. A side condition that
+can never be discharged would be a broken keystone rather than a repaired one; this is the proof it is
+not one, and it is what makes an honest prover's run FREE of the residual. -/
+theorem openingColl_self_false (sponge : List ℤ → ℤ) (idx : Nat) (l : ℤ) (siblings : List ℤ) :
+    ¬ OpeningColl sponge idx l l siblings :=
+  fun h => h.1 (merkleFind_self sponge siblings idx l)
+
+/-- **(POLE — the residual is REFUTABLE.)** On a sponge that collapses everything to one value, two
+DISTINCT leaves over a one-level path DO make the extractor return a genuine collision. So
+`¬ OpeningColl` is not free: it is a real hypothesis about the deployed hash at this opening. -/
+theorem openingColl_of_constant_sponge (c s : ℤ) {l1 l2 : ℤ} (hne : l1 ≠ l2) :
+    OpeningColl (fun _ => c) 0 l1 l2 [s] := by
+  have hfind : merkleFind (fun _ => c) 0 l1 l2 [s] = ([l1, s], [l2, s]) := by
+    simp [merkleFind, nodeStep]
+  unfold OpeningColl
+  rw [hfind]
+  exact ⟨by simp [hne], rfl⟩
+
+/-- **THE PORT IS A WEAKENING, NOT A CHANGE OF SUBJECT.** The residual holding at ANY opening REFUTES
+the deleted floor — equivalently, the deleted `Poseidon2SpongeCR sponge` implied `¬ OpeningColl` at
+every instance. So every consumer that used to buy its binding with the global floor can still buy it,
+and the new hypothesis is strictly weaker. (Stated in the ¬-direction deliberately: this is anti-floor
+content, and assumes no floor.) -/
+theorem openingColl_refutes_poseidon2CR (sponge : List ℤ → ℤ) (idx : Nat) (l1 l2 : ℤ)
+    (siblings : List ℤ) (h : OpeningColl sponge idx l1 l2 siblings) :
+    ¬ Poseidon2SpongeCR sponge := fun hCR => h.1 (hCR _ _ h.2)
+
+/-- **THE MERKLE BINDING, FLOOR-FREE.** Two leaves that recompute the SAME root at the same index over
+the same sibling path are EQUAL, provided the ONE pair `merkleFind` extracts from them is not a
+collision. No injectivity, no named floor, and — unlike the theorem it replaces — a statement that is
+not vacuous at deployed BabyBear parameters. -/
+theorem merkleRecomputeZ_binds_of_noColl (sponge : List ℤ → ℤ)
+    (siblings : List ℤ) (idx : Nat) (l1 l2 : ℤ)
+    (hno : ¬ OpeningColl sponge idx l1 l2 siblings)
+    (h : merkleRecomputeZ sponge idx l1 siblings = merkleRecomputeZ sponge idx l2 siblings) :
+    l1 = l2 := by
   by_contra hne
-  exact (merkleFind_spec sponge siblings idx l1 l2 hne h).1
-    (hinj (merkleFind_spec sponge siblings idx l1 l2 hne h).2)
+  exact hno (merkleFind_spec sponge siblings idx l1 l2 hne h)
 
 /-! ## §3 — THE `hood.b` REDUCTION: the opened value is BOUND to the committed polynomial. -/
 
-/-- **`commitmentOpening_binds_of_poseidon2CR` (THE `hood.b` REDUCTION).** Under `Poseidon2SpongeCR`,
-the value `verifyAlgo` opens at ζ (`vOpened`, the `TableOpening.constraintEval`) and the honest
-committed value `vCommitted` (intended `(constraintPoly d t c).eval ζ`) that BOTH recompute to the same
-committed Merkle root `root` at the same query index over the same sibling path ARE EQUAL. So the opened
-`constraintEval` is BOUND to the committed polynomial's evaluation at ζ — a prover cannot open the
-commitment to a different value. The ONLY crypto reliance is the named `Poseidon2SpongeCR` floor; this
-is `hood.b` DERIVED, not re-assumed. -/
-theorem commitmentOpening_binds_of_poseidon2CR (sponge : List ℤ → ℤ)
-    (hinj : Function.Injective sponge)
+/-- **`commitmentOpening_binds_of_noColl` (THE `hood.b` REDUCTION, FLOOR-FREE).** The value
+`verifyAlgo` opens at ζ (`vOpened`, the `TableOpening.constraintEval`) and the honest committed value
+`vCommitted` (intended `(constraintPoly d t c).eval ζ`) that BOTH recompute to the same committed
+Merkle root `root` at the same query index over the same sibling path ARE EQUAL — provided the ONE
+pair the extractor produces from them is not a sponge collision. So the opened `constraintEval` is
+BOUND to the committed polynomial's evaluation at ζ, on a PER-RUN side condition with both poles
+proved, and no refuted hypothesis anywhere. This is `hood.b` DERIVED, not re-assumed. -/
+theorem commitmentOpening_binds_of_noColl (sponge : List ℤ → ℤ)
     {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
+    (hno : ¬ OpeningColl sponge idx vOpened vCommitted siblings)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened    : merkleRecomputeZ sponge idx vOpened    siblings = root) :
     vOpened = vCommitted :=
-  merkleRecomputeZ_binds sponge hinj siblings idx vOpened vCommitted (hOpened.trans hCommitted.symm)
+  merkleRecomputeZ_binds_of_noColl sponge siblings idx vOpened vCommitted hno
+    (hOpened.trans hCommitted.symm)
+
+/-- **A BREAK EXHIBITS THE COLLISION** — the converse direction, and floor-free. A prover that opens
+one committed root at one query to two DIFFERENT values hands over the collision itself, at the exact
+pair the extractor names. This is what makes `¬ OpeningColl` the right side condition: it is
+equivalent to the binding at this opening, not merely sufficient for it. -/
+theorem opening_equivocation_exhibits_coll (sponge : List ℤ → ℤ)
+    {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
+    (hne : vOpened ≠ vCommitted)
+    (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
+    (hOpened    : merkleRecomputeZ sponge idx vOpened    siblings = root) :
+    OpeningColl sponge idx vOpened vCommitted siblings := by
+  by_contra hno
+  exact hne (commitmentOpening_binds_of_noColl sponge hno hCommitted hOpened)
 
 /-! ## §3.1 — ⚑ THE DEPLOYED OPENING BINDING, AS A SECURITY REDUCTION.
 
@@ -308,14 +398,16 @@ theorem merkleOpening_floor_bot_vacuous (D : SpongeKeyed) :
 committed root at the SAME query to TWO DISTINCT values (`vOpened ≠ vCommitted`), it witnesses that the
 sponge is NOT collision-resistant — `¬ Poseidon2SpongeCR`. This is the load-bearing role of the Merkle
 commitment: equivocating the opened `constraintEval` after ζ is fixed is EXACTLY a Poseidon2 collision.
-So `hood.b` bottoms out at the hash floor and nothing weaker. -/
+So `hood.b` bottoms out at the hash floor and nothing weaker. Anti-floor content: it CONCLUDES the
+negation and assumes no floor, and its proof now routes through the floor-free extractor. -/
 theorem opening_equivocation_breaks_cr (sponge : List ℤ → ℤ)
     {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
     (hne : vOpened ≠ vCommitted)
     (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
     (hOpened    : merkleRecomputeZ sponge idx vOpened    siblings = root) :
-    ¬ Poseidon2SpongeCR sponge := fun hCR =>
-  hne (commitmentOpening_binds_of_poseidon2CR sponge hCR hCommitted hOpened)
+    ¬ Poseidon2SpongeCR sponge :=
+  openingColl_refutes_poseidon2CR sponge idx vOpened vCommitted siblings
+    (opening_equivocation_exhibits_coll sponge hne hCommitted hOpened)
 
 /-! ## §4 — NON-VACUITY: honest openings BIND, and the CR floor is LOAD-BEARING.
 
@@ -330,13 +422,25 @@ open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 
 /-- **`honest_opening_binds` (POSITIVE non-vacuity).** On the injective toy sponge whose CR is proved
 (`refSponge_CR`), any two openings to a common root over the same path bind — the reduction FIRES on a
-concrete CR-satisfying instance, so `commitmentOpening_binds_of_poseidon2CR` is not vacuous. -/
+concrete instance where the residual is discharged, so `commitmentOpening_binds_of_noColl` is not
+vacuous. The discharge is by `refSponge_CR`, kept in the PROOF where it is a fact about a concrete toy
+object, rather than in the STATEMENT where it would be a floor. -/
 theorem honest_opening_binds
     {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
     (hCommitted : merkleRecomputeZ refSponge idx vCommitted siblings = root)
     (hOpened    : merkleRecomputeZ refSponge idx vOpened    siblings = root) :
     vOpened = vCommitted :=
-  commitmentOpening_binds_of_poseidon2CR refSponge refSponge_CR hCommitted hOpened
+  commitmentOpening_binds_of_noColl refSponge (fun h => h.1 (refSponge_CR _ _ h.2))
+    hCommitted hOpened
+
+/-- **`honest_run_needs_no_residual` (TOTAL re-inhabitation).** An honest prover — one that opens the
+value it committed — discharges the side condition for EVERY sponge, EVERY index and EVERY path, with
+no hypothesis at all. So routing the tower off the refuted floor onto `¬ OpeningColl` costs the honest
+path nothing: what was bought with a false global assumption is now free on every non-equivocating
+run, and is a real assumption exactly on the runs that equivocate. -/
+theorem honest_run_needs_no_residual (sponge : List ℤ → ℤ) (idx : Nat) (v : ℤ)
+    (siblings : List ℤ) : ¬ OpeningColl sponge idx v v siblings :=
+  openingColl_self_false sponge idx v siblings
 
 /-- The constant-zero sponge — NOT collision-resistant: it maps every input to `0`. -/
 def zSponge : List ℤ → ℤ := fun _ => 0
@@ -357,13 +461,19 @@ end Vacuity
 
 #assert_axioms merkleFind_spec
 #assert_axioms merkleFind_len_le
-#assert_axioms merkleRecomputeZ_binds
+#assert_axioms merkleFind_self
+#assert_axioms openingColl_self_false
+#assert_axioms openingColl_of_constant_sponge
+#assert_axioms openingColl_refutes_poseidon2CR
+#assert_axioms merkleRecomputeZ_binds_of_noColl
 #assert_axioms merkleOpening_binds_rom
 #assert_axioms merkleOpening_floor_top_false_babyBear
 #assert_axioms merkleOpening_floor_bot_vacuous
-#assert_axioms commitmentOpening_binds_of_poseidon2CR
+#assert_axioms commitmentOpening_binds_of_noColl
+#assert_axioms opening_equivocation_exhibits_coll
 #assert_axioms opening_equivocation_breaks_cr
 #assert_axioms honest_opening_binds
+#assert_axioms honest_run_needs_no_residual
 #assert_axioms constant_sponge_equivocates
 
 end Dregg2.Circuit.OodCommitmentBinding
