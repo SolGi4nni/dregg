@@ -16,8 +16,10 @@
 //! userspace [`InterfaceDescriptor`]. `pay` routes through the verified DFA router
 //! ([`crate::routing::resolve_against`]) and desugars to the ONE effect the kernel
 //! already conserves: an [`Effect::Transfer`] moving the asset between two cells
-//! of one `World`/ledger. Because `Transfer` is `LinearityClass::Conservative`
-//! (per-asset Σδ=0), a payment in one app becomes a balance another app's cell
+//! of one `World`/ledger. Because `Transfer` is `Conservative`
+//! (`metatheory/Dregg2/Spec/Conservation.lean`; the Rust `LinearityClass` twin
+//! was dead and is deleted) — per-asset Σδ=0 — a payment in one app becomes a
+//! balance another app's cell
 //! can spend — and the kernel conservation check holds ACROSS the app boundary.
 //!
 //! ## One source of truth, two callers

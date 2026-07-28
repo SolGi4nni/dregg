@@ -36,9 +36,15 @@
 //!     SAME witnessed read a native `bind` closure makes), so the surface advances
 //!     when a fired turn commits;
 //!   - a **"Settlement" `section`** surfacing the FLASHWELL split: `bind`s on the
-//!     funds paid to the provider ([`PAID_SLOT`](crate::PAID_SLOT)) and refunded to
-//!     the requester ([`REFUNDED_SLOT`](crate::REFUNDED_SLOT)) — the conserving
-//!     `PAID + REFUNDED == BUDGET` payout, shown live;
+//!     funds paid to the provider ([`PAID_SLOT`](crate::PAID_SLOT)) and on the
+//!     part of the budget left undrawn ([`REFUNDED_SLOT`](crate::REFUNDED_SLOT)) —
+//!     the `PAID + REFUNDED == BUDGET` record, shown live. ⚑ `paid ·` is a real
+//!     number now: a settlement carries the conserving `Effect::Transfer` that
+//!     moves it (see the crate docs). Until 2026-07-28 it did not, and this
+//!     section rendered a payment that had not happened. The remainder is labelled
+//!     **unspent**, not "refunded", because nothing is returned: the budget is a
+//!     promise the requester never handed over, so the undrawn part simply stays
+//!     where it was;
 //!   - an **"Actions" `section`** of one `icon`+`button` row per lifecycle method
 //!     (`post` / `bid` / `settle`), each `button` carrying its `onClick = { turn,
 //!     arg }` — the EXACT cap-gated verified turn a click fires through the
@@ -146,8 +152,9 @@ fn action(glyph: &str, label: &str, turn: &str) -> Value {
 /// A rich, live compute-market surface: a status header (name + `BIDDING` pill +
 /// lifecycle breadcrumb), a "Job" section surfacing the live lifecycle-phase gauge,
 /// the bid-vs-budget gauge, and the budget / bid / spec / requester / provider
-/// binds, a "Settlement" section with the live paid / refunded binds (the FLASHWELL
-/// split), and an "Actions" section of the three icon-labelled lifecycle buttons.
+/// binds, a "Settlement" section with the live paid / unspent binds (the FLASHWELL
+/// record, over a settle that now really transfers `paid` to the provider), and an
+/// "Actions" section of the three icon-labelled lifecycle buttons.
 /// Renderer-independent DATA. The button `turn` names are the
 /// [`service`](crate::service) method symbols.
 pub fn job_card_value() -> Value {
@@ -173,7 +180,7 @@ pub fn job_card_value() -> Value {
             ]),
             section("Settlement", "", vec![
                 bind(PAID_SLOT, "paid · ", "amount", false),
-                bind(REFUNDED_SLOT, "refunded · ", "amount", false),
+                bind(REFUNDED_SLOT, "unspent · ", "amount", false),
             ]),
             section("Actions", "", vec![
                 action("+", "Post",   METHOD_POST),
@@ -258,6 +265,35 @@ mod tests {
         assert_eq!(fmt(REQUESTER_HASH_SLOT), "id");
         assert_eq!(fmt(PROVIDER_HASH_SLOT), "id");
         assert_eq!(fmt(SPEC_HASH_SLOT), "hash");
+    }
+
+    /// ⚑ THE COPY IS PINNED, because the copy is what lied. `paid ·` names value
+    /// that a settlement really transfers now; the remainder is `unspent ·`,
+    /// NEVER "refunded", because nothing is returned to the requester — the budget
+    /// is a promise it never handed over (see the crate docs).
+    #[test]
+    fn the_settlement_section_labels_do_not_claim_a_refund() {
+        let card = job_card_value();
+        let binds = of_kind(&card, "bind");
+        let label = |slot: usize| -> String {
+            binds
+                .iter()
+                .find(|b| b["props"]["slot"].as_u64() == Some(slot as u64))
+                .and_then(|b| b["props"]["label"].as_str())
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(label(PAID_SLOT), "paid · ");
+        assert_eq!(label(REFUNDED_SLOT), "unspent · ");
+        let all: String = binds
+            .iter()
+            .filter_map(|b| b["props"]["label"].as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            !all.contains("refund"),
+            "no bind may promise a refund the settlement does not make, got: {all}"
+        );
     }
 
     #[test]

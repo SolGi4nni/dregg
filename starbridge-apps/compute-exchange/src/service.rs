@@ -35,8 +35,16 @@
 //! |----------|--------------------------|-------------|-------------|
 //! | `post`   | [`Semantics::Replayable`]| `Signature` | `SetField(REQUESTER, BUDGET, SPEC, STATE=POSTED)` + `EmitEvent(job-posted)` |
 //! | `bid`    | [`Semantics::Replayable`]| `Signature` | `SetField(PROVIDER, BID, STATE=BID)` + `EmitEvent(job-bid)` |
-//! | `settle` | [`Semantics::Replayable`]| `Signature` | `SetField(PAID, REFUNDED, STATE=SETTLED)` + `EmitEvent(job-settled)` |
+//! | `settle` | [`Semantics::Replayable`]| `Signature` | `Transfer(payer → provider)` + `SetField(PAID, REFUNDED, STATE=SETTLED)` + `EmitEvent(job-settled)` |
 //! | `view`   | [`Semantics::Serviced`]  | `None`      | — (the named OFE seam: a pure read, no turn) |
+//!
+//! ⚑ `settle` MOVES VALUE. It desugars to the conserving kernel `Effect::Transfer`
+//! ([`crate::settlement_effects`], via the shared `Payable` desugar) in the SAME
+//! action as the `STATE = SETTLED` advance, so there is no accepted turn in which
+//! the job reads SETTLED and the provider was not paid. This face drives a job cell
+//! that IS the paying agent's own cell, so both legs fit one action; the budget is
+//! a PROMISE rather than an escrow (see the crate docs for the three measured
+//! executor refusals that make a self-escrowing job cell inexpressible).
 //!
 //! `post`/`bid`/`settle` are **replayable**: they desugar (via `invoke()`) to a
 //! verified turn whose post-state the executor checks against the job
@@ -54,7 +62,7 @@ use dregg_cell::permissions::AuthRequired;
 
 use crate::{
     BUDGET_SLOT, REQUESTER_HASH_SLOT, SPEC_HASH_SLOT, STATE_POSTED, STATE_SLOT, bid_effects,
-    settle_effects, state_field,
+    settlement_effects, state_field,
 };
 
 // =============================================================================
@@ -69,7 +77,8 @@ pub const METHOD_POST: &str = "post";
 /// provider bids `price <= BUDGET` (`BID` `WriteOnce`, `STATE → BID`).
 pub const METHOD_BID: &str = "bid";
 /// The `settle` method — a [`Semantics::Replayable`], `Signature`-gated mutator:
-/// split the budget (`PAID + REFUNDED == BUDGET`, `STATE → SETTLED`, terminal).
+/// PAY the provider (`Effect::Transfer`) and record the split (`PAID + REFUNDED ==
+/// BUDGET`, `STATE → SETTLED`, terminal) in one action.
 pub const METHOD_SETTLE: &str = "settle";
 /// The `view` method — a [`Semantics::Serviced`] read (the named OFE seam): read
 /// the job's committed lifecycle state. Never desugared.
@@ -98,8 +107,9 @@ pub fn interface_descriptor() -> InterfaceDescriptor {
         mutator(METHOD_POST, 3),
         // bid(provider, price): a provider bids <= budget.
         mutator(METHOD_BID, 2),
-        // settle(paid, refunded): split the budget, terminal.
-        mutator(METHOD_SETTLE, 2),
+        // settle(paid, refunded, provider): PAY the provider and record the
+        // split, terminal.
+        mutator(METHOD_SETTLE, 3),
         // view(): a pure read — the named OFE seam, never desugared.
         MethodSig {
             args_schema: ArgsSchema::Fixed(0),
@@ -225,24 +235,33 @@ impl JobService {
         )
     }
 
-    /// **Invoke `settle(paid, refunded)`** — close the deal: write `PAID`,
-    /// `REFUNDED`, advance `STATE → SETTLED` (terminal). The FLASHWELL
-    /// `AffineEq(PAID + REFUNDED == BUDGET)` requires the split to conserve the
-    /// budget; a value-conjuring or value-burning split is an executor refusal.
+    /// **Invoke `settle(paid, refunded, provider)`** — close the deal: **PAY
+    /// `paid` to `provider`** (the conserving kernel `Effect::Transfer`) and record
+    /// the split — write `PAID`, `REFUNDED`, advance `STATE → SETTLED` (terminal)
+    /// — in ONE action, so neither leg can land without the other.
+    ///
+    /// The FLASHWELL `AffineEq(PAID + REFUNDED == BUDGET)` requires the recorded
+    /// split to conserve the budget; a value-conjuring or value-burning split is an
+    /// executor refusal, and so is a settlement this cell cannot fund
+    /// (`InsufficientBalance`). A `paid` of zero is the CANCELLATION case: no
+    /// transfer is emitted, because nothing is owed.
     pub fn settle(
         &self,
         cipherclerk: &AppCipherclerk,
+        provider: CellId,
         paid: u64,
         refunded: u64,
         authority: InvokeAuthority,
     ) -> Result<Turn, JobServiceError> {
         let paid_f = field_from_u64(paid);
         let refunded_f = field_from_u64(refunded);
-        let effects = settle_effects(self.cell, paid, refunded);
+        let mut payee = [0u8; 32];
+        payee.copy_from_slice(provider.as_bytes());
+        let effects = settlement_effects(self.cell, provider, paid, refunded);
         self.invoke(
             cipherclerk,
             METHOD_SETTLE,
-            vec![paid_f, refunded_f],
+            vec![paid_f, refunded_f, payee],
             effects,
             authority,
         )

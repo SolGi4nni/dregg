@@ -2,34 +2,39 @@
 name = "starbridge-compute-exchange"
 version = "0.1.0"
 edition = "2024"
-description = "Starbridge compute marketplace — a factory-born job/escrow cell that composes the organ semantics: a budget ceiling (bid <= budget), a write-once accepted-bid commitment, a one-way job lifecycle, and an atomic, value-conserving settlement (paid + refunded == budget). One verified cell program, enforced by the real executor every turn."
+description = "Starbridge compute marketplace — a factory-born job cell that composes the organ semantics: a budget ceiling (bid <= budget), a write-once accepted-bid commitment, a one-way job lifecycle, and a settlement that PAYS the provider a real conserving Effect::Transfer in the same turn as it records the split (paid + refunded == budget). One verified cell program, enforced by the real executor every turn."
 
-# The compute marketplace: a requester POSTS a job with an escrowed BUDGET; a
+# The compute marketplace: a requester POSTS a job with a promised BUDGET; a
 # provider BIDS a price (which must fit the budget); the job SETTLES — the
-# accepted price is PAID to the provider and the remainder REFUNDED to the
-# requester, ATOMICALLY and value-neutrally. It composes — in the slot-caveat
-# idiom of a single factory-born cell — the guarantees the night's organs
-# provide:
+# accepted price is PAID to the provider by a conserving Effect::Transfer in the
+# SAME TURN as the STATE=SETTLED advance, and the remainder is the part of the
+# budget never drawn. It composes — in the slot-caveat idiom of a single
+# factory-born cell — the guarantees the night's organs provide:
 #
 #   - BUDGET     (bid <= budget): the accepted price can never exceed the job's
-#     escrowed budget — `FieldLteField{ BID, BUDGET }`. The provider draws
+#     promised budget — `FieldLteField{ BID, BUDGET }`. The provider draws
 #     against a bounded line, exactly the trustline `drawn <= line` — here the
 #     AffineLe budget gate the prompt asks for.
 #   - ACCEPTED   (write-once bid): the requester accepts a `BID` price under
 #     `WriteOnce`. It is bound exactly once and tamper-evident — the accepted
 #     price cannot be silently re-negotiated after acceptance.
-#   - FLASHWELL  (atomic, conserving settlement): settlement splits the escrowed
-#     budget into PAID (to the provider) and REFUNDED (to the requester) with
-#     `PAID + REFUNDED == BUDGET` enforced by `AffineEq` (+ the universal no-mint
-#     `AffineLe`) — the all-or-nothing, no-mint/no-burn flash-settlement
-#     invariant.
+#   - FLASHWELL  (the settlement RECORD neither mints nor burns): settlement
+#     splits the budget into PAID and REFUNDED with `PAID + REFUNDED == BUDGET`
+#     enforced by `AffineEq` (+ the universal no-mint `AffineLe`) over three
+#     FIELD SLOTS. The VALUE is moved by the settle's Effect::Transfer, which the
+#     kernel conserves per asset; the two legs are roots of one turn.
 #   - one-way LIFECYCLE: POSTED->BID->SETTLED under `StrictMonotonic`, so a job
 #     can never regress, double-settle, or re-bid.
 #
+# ⚑ The BUDGET is a PROMISE, not an escrow: the job cell cannot hold it (three
+# measured executor refusals — see src/lib.rs), so the requester pays at settle
+# out of its own balance and REFUNDED is the undrawn remainder, not a return.
+#
 # Composes dregg primitives only (FactoryDescriptor + Effect::SetField +
-# Effect::EmitEvent + StateConstraint slot caveats) — no domain-specific compute
-# Effect, no Authorization::Unchecked, no placeholder signatures. Routes through
-# the REAL verified executor via EmbeddedExecutor / submit_action.
+# Effect::EmitEvent + Effect::Transfer + StateConstraint slot caveats) — no
+# domain-specific compute Effect, no Authorization::Unchecked, no placeholder
+# signatures. Routes through the REAL verified executor via EmbeddedExecutor /
+# submit_action.
 
 [dependencies]
 dregg-app-framework = { path = "../../app-framework" }

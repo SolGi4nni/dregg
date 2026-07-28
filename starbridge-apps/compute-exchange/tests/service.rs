@@ -22,7 +22,7 @@
 //!    answer rides the OFE cross-cell-read).
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, EmbeddedExecutor, InterfaceRegistry, InvokeAuthority,
+    AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor, InterfaceRegistry, InvokeAuthority,
     InvokeRefused,
 };
 use dregg_cell::interface::{Semantics, method_symbol};
@@ -35,6 +35,20 @@ use starbridge_compute_exchange::{
     BUDGET_SLOT, STATE_BID, STATE_POSTED, STATE_SETTLED, STATE_SLOT, job_program, spec_digest,
     state_field,
 };
+
+/// Co-place a provider cell in the SAME currency as the job cell, so the
+/// settlement's `Transfer` is the single-column move the kernel admits.
+fn co_place_provider(executor: &EmbeddedExecutor, job: CellId, tag: u8) -> CellId {
+    let asset = executor.with_ledger_mut(|ledger| ledger.get(&job).unwrap().asset());
+    let provider = dregg_cell::Cell::with_balance([tag; 32], [tag; 32], 0).in_asset(asset);
+    let id = provider.id();
+    executor.ensure_cell(provider).expect("provider co-placed");
+    id
+}
+
+fn balance_of(executor: &EmbeddedExecutor, cell: CellId) -> i64 {
+    executor.with_ledger_mut(|ledger| ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0))
+}
 
 /// A cipherclerk + an embedded executor whose agent cell IS the job cell, with
 /// the canonical [`job_program`] installed and the cell funded. The cell is
@@ -131,19 +145,50 @@ fn the_full_lifecycle_runs_through_invoke() {
         "the lifecycle advanced to BID"
     );
 
-    // (e) settle — 800 paid + 200 refunded == 1000 budget; STATE → SETTLED.
+    // (e) settle — the provider is PAID 800, 200 stays undrawn (== 1000 budget);
+    // STATE → SETTLED.
+    let provider = co_place_provider(&executor, service.cell, 0xD1);
+    let requester_before = balance_of(&executor, service.cell);
     executor
         .submit_turn(
             &service
-                .settle(&cclerk, 800, 200, InvokeAuthority::Signature)
+                .settle(&cclerk, provider, 800, 200, InvokeAuthority::Signature)
                 .expect("a Signature holder may build a settle invocation"),
         )
         .expect("the desugared conserving settle turn commits");
+
+    // THE CONSERVATION, asserted rather than the flag: the provider HOLDS the
+    // accepted bid and it came out of the paying cell. Before 2026-07-28 this
+    // method desugared to `SetField`s alone and this assertion was unwritable.
+    assert_eq!(
+        balance_of(&executor, provider),
+        800,
+        "an invoke()-desugared settle MOVES the accepted bid to the provider"
+    );
+    assert!(
+        balance_of(&executor, service.cell) <= requester_before - 800,
+        "the payment left the paying cell (plus the turn fee)"
+    );
+
     let state = executor.cell_state(service.cell).unwrap();
     assert_eq!(
         state.fields[STATE_SLOT],
         state_field(STATE_SETTLED),
         "the lifecycle reached SETTLED"
+    );
+
+    // A re-settle is a no-advance SETTLED → SETTLED the executor refuses, and the
+    // two legs are one action, so the refusal takes the second payment with it.
+    let re = executor.submit_turn(
+        &service
+            .settle(&cclerk, provider, 800, 200, InvokeAuthority::Signature)
+            .unwrap(),
+    );
+    assert!(re.is_err(), "a re-settle is refused");
+    assert_eq!(
+        balance_of(&executor, provider),
+        800,
+        "⚑ the refused re-settle paid nothing a second time"
     );
 }
 
@@ -213,13 +258,19 @@ fn a_value_conjuring_settle_is_refused_by_the_executor_flashwell() {
         )
         .expect("post commits");
 
+    let provider = co_place_provider(&executor, service.cell, 0xD4);
     let conjure = service
-        .settle(&cclerk, 900, 200, InvokeAuthority::Signature)
+        .settle(&cclerk, provider, 900, 200, InvokeAuthority::Signature)
         .expect("the conjuring settle invocation BUILDS (front door passes)");
     let rejected = executor.submit_turn(&conjure);
     assert!(
         rejected.is_err(),
         "the executor must refuse a value-conjuring settle"
+    );
+    assert_eq!(
+        balance_of(&executor, provider),
+        0,
+        "⚑ the refused conjuring settle paid NOTHING — the payment rides the same action"
     );
     let msg = format!("{:?}", rejected.unwrap_err()).to_lowercase();
     assert!(

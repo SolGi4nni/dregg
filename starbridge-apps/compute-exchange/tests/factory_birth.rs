@@ -14,17 +14,47 @@
 
 use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, CellMode, Effect, EmbeddedExecutor,
-    field_from_u64,
+    ExecutorSubmitError, TurnReceipt, field_from_u64,
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_compute_exchange::{
     BID_SLOT, BUDGET_SLOT, JOB_FACTORY_VK, PAID_SLOT, STATE_SETTLED, STATE_SLOT, build_bid_action,
-    build_post_action, build_settle_action, job_child_program_vk, job_factory_descriptor,
+    build_post_action, build_settle_actions, job_child_program_vk, job_factory_descriptor,
     spec_digest,
 };
 
 fn make_cipherclerk() -> AppCipherclerk {
     AppCipherclerk::new(AgentCipherclerk::new(), [0x71u8; 32])
+}
+
+/// Co-place a provider cell denominated in the SAME currency as the requester (and
+/// therefore as the factory-born job, which inherits its creator's asset), so the
+/// settlement's `Transfer` is the single-column move the kernel admits.
+fn co_place_provider(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, tag: u8) -> CellId {
+    let asset = exec.with_ledger_mut(|ledger| ledger.get(&cclerk.cell_id()).unwrap().asset());
+    let provider = dregg_cell::Cell::with_balance([tag; 32], [tag; 32], 0).in_asset(asset);
+    let id = provider.id();
+    exec.ensure_cell(provider).expect("provider co-placed");
+    id
+}
+
+/// A cell's live balance.
+fn balance_of(exec: &EmbeddedExecutor, cell: CellId) -> i64 {
+    exec.with_ledger_mut(|ledger| ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0))
+}
+
+/// Settle a job: the payment leg and the record leg as roots of ONE turn.
+fn settle_turn(
+    exec: &EmbeddedExecutor,
+    cclerk: &AppCipherclerk,
+    job: CellId,
+    provider: CellId,
+    paid: u64,
+    refunded: u64,
+) -> Result<TurnReceipt, ExecutorSubmitError> {
+    let turn =
+        cclerk.make_turn_with_actions(build_settle_actions(cclerk, job, provider, paid, refunded));
+    exec.submit_turn(&turn)
 }
 
 /// Deploy the job factory and birth a job cell from it through the executor.
@@ -96,8 +126,23 @@ fn factory_born_job_runs_the_whole_deal() {
     assert_eq!(budget, field_from_u64(1000));
     assert_eq!(bid, field_from_u64(800));
 
-    exec.submit_action(&cclerk, build_settle_action(&cclerk, job, 800, 200))
+    // SETTLE: the provider is PAID 800 and the record advances to SETTLED, in ONE turn.
+    let provider = co_place_provider(&exec, &cclerk, 0xC1);
+    let requester_before = balance_of(&exec, cclerk.cell_id());
+    settle_turn(&exec, &cclerk, job, provider, 800, 200)
         .expect("conserving settlement must commit");
+
+    // THE CONSERVATION, not the flag. Assert the balances, because a `SetField`
+    // landing is exactly what used to pass while nothing moved.
+    assert_eq!(
+        balance_of(&exec, provider),
+        800,
+        "the provider HOLDS the accepted bid"
+    );
+    assert!(
+        balance_of(&exec, cclerk.cell_id()) <= requester_before - 800,
+        "the payment came OUT of the requester's balance (plus the turn fee)"
+    );
 
     let (state, paid) = exec.with_ledger_mut(|ledger| {
         let c = ledger.get(&job).unwrap();
@@ -185,8 +230,8 @@ fn factory_born_job_refuses_minting_tampering_and_double_settle() {
     );
 
     // FLASHWELL: settle minting value (900 + 200 > 1000).
-    let err = exec
-        .submit_action(&cclerk, build_settle_action(&cclerk, job, 900, 200))
+    let provider = co_place_provider(&exec, &cclerk, 0xC3);
+    let err = settle_turn(&exec, &cclerk, job, provider, 900, 200)
         .expect_err("a non-conserving settlement must be refused — the FLASHWELL tooth");
     let msg = format!("{err}").to_lowercase();
     assert!(
@@ -196,19 +241,34 @@ fn factory_born_job_refuses_minting_tampering_and_double_settle() {
             || msg.contains("program"),
         "refusal must cite the conservation bound, got: {msg}"
     );
+    assert_eq!(
+        balance_of(&exec, provider),
+        0,
+        "⚑ the refused mint paid NOTHING — the payment leg rolled back with the record leg"
+    );
 
-    // A conserving settlement now commits…
-    exec.submit_action(&cclerk, build_settle_action(&cclerk, job, 800, 200))
-        .expect("conserving settlement commits");
+    // A conserving settlement now commits, and MOVES the accepted bid…
+    settle_turn(&exec, &cclerk, job, provider, 800, 200).expect("conserving settlement commits");
+    assert_eq!(
+        balance_of(&exec, provider),
+        800,
+        "the provider was paid the accepted bid, once"
+    );
 
-    // LIFECYCLE: a second settlement is refused (StrictMonotonic on STATE).
-    let err = exec
-        .submit_action(&cclerk, build_settle_action(&cclerk, job, 0, 1000))
+    // LIFECYCLE: a second settlement is refused (StrictMonotonic on STATE), and
+    // because the two legs are one turn its refusal takes the SECOND PAYMENT down
+    // with it — the provider cannot be paid twice.
+    let err = settle_turn(&exec, &cclerk, job, provider, 0, 1000)
         .expect_err("a second settlement must be refused — the LIFECYCLE tooth");
     assert!(
         format!("{err}").to_lowercase().contains("monotonic")
             || format!("{err}").to_lowercase().contains("writeonce")
             || format!("{err}").to_lowercase().contains("program"),
         "refusal must cite the one-way lifecycle, got: {err}"
+    );
+    assert_eq!(
+        balance_of(&exec, provider),
+        800,
+        "⚑ the refused second settlement paid nothing a second time"
     );
 }

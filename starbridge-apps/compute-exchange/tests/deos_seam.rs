@@ -25,7 +25,7 @@
 //!     conjured or destroyed) is REFUSED.
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, AuthRequired, EmbeddedExecutor, FireExecuteError,
+    AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, EmbeddedExecutor, FireExecuteError,
     StarbridgeAppContext, field_from_u64,
 };
 
@@ -38,7 +38,26 @@ use starbridge_compute_exchange::{
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
     let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x71; 32]);
     let executor = EmbeddedExecutor::new(&cclerk, "default");
+    executor.with_ledger_mut(|ledger| {
+        if let Some(c) = ledger.get_mut(&cclerk.cell_id()) {
+            c.state.set_balance(100_000_000);
+        }
+    });
     (cclerk, executor)
+}
+
+/// Co-place a provider cell in the SAME currency as the job cell, so the
+/// settlement's `Transfer` is the single-column move the kernel admits.
+fn co_place_provider(executor: &EmbeddedExecutor, job: CellId, tag: u8) -> CellId {
+    let asset = executor.with_ledger_mut(|ledger| ledger.get(&job).unwrap().asset());
+    let provider = dregg_cell::Cell::with_balance([tag; 32], [tag; 32], 0).in_asset(asset);
+    let id = provider.id();
+    executor.ensure_cell(provider).expect("provider co-placed");
+    id
+}
+
+fn balance_of(executor: &EmbeddedExecutor, cell: CellId) -> i64 {
+    executor.with_ledger_mut(|ledger| ledger.get(&cell).map(|c| c.state.balance()).unwrap_or(0))
 }
 
 /// Drive the honest lifecycle up to (but not including) settle: seed POSTED, bid as the
@@ -123,9 +142,22 @@ fn the_honest_lifecycle_runs_bid_settle_through_the_gated_fires() {
     // SETTLE (the REQUESTER, None): cap passes, state BID passes; the fire reads live BID (800)
     // + BUDGET (1000) and pays the provider IN FULL (paid 800, refunded 200), so the FLASHWELL
     // AffineEq (paid + refunded == budget) holds.
-    let r2 = fire_settle(&app, &AuthRequired::None, &cclerk, &executor)
+    let provider = co_place_provider(&executor, cclerk.cell_id(), 0xC1);
+    let requester_before = balance_of(&executor, cclerk.cell_id());
+    let r2 = fire_settle(&app, &AuthRequired::None, provider, &cclerk, &executor)
         .expect("a requester settles, conserving the budget on the honest path");
     assert_ne!(r2.turn_hash, [0u8; 32], "a real verified settle turn");
+
+    // THE CONSERVATION, not the flag: the accepted bid MOVED to the provider.
+    assert_eq!(
+        balance_of(&executor, provider),
+        800,
+        "the provider HOLDS the accepted bid"
+    );
+    assert!(
+        balance_of(&executor, cclerk.cell_id()) <= requester_before - 800,
+        "the payment came OUT of the requester's balance (plus the turn fee)"
+    );
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(
         s.fields[STATE_SLOT as usize],
@@ -214,7 +246,8 @@ fn a_provider_cannot_fire_settle_the_cap_tooth_bites_in_band() {
     // A PROVIDER (Either) firing `settle` (requires None/root): the CAP tooth refuses IN-BAND
     // (Either does not attenuate to None). Nothing is submitted (anti-ghost), even though the
     // state precondition holds.
-    let refused = fire_settle(&app, &AuthRequired::Either, &cclerk, &executor);
+    let provider = co_place_provider(&executor, cclerk.cell_id(), 0xC2);
+    let refused = fire_settle(&app, &AuthRequired::Either, provider, &cclerk, &executor);
     assert!(
         matches!(
             refused,
@@ -223,6 +256,11 @@ fn a_provider_cannot_fire_settle_the_cap_tooth_bites_in_band() {
             ))
         ),
         "a provider's settle is refused at the cap tooth in-band, got {refused:?}"
+    );
+    assert_eq!(
+        balance_of(&executor, provider),
+        0,
+        "the refused settle paid nothing — the cap tooth bites before any value moves"
     );
     let s = executor.cell_state(cclerk.cell_id()).unwrap();
     assert_eq!(
@@ -245,7 +283,8 @@ fn the_executor_re_enforces_a_non_advancing_state_is_refused_strictmonotonic() {
 
     // A settle that conserves the budget (800 + 200 == 1000) but leaves STATE at BID (no advance).
     // The FLASHWELL AffineEq holds, so it is the LIFECYCLE StrictMonotonic that bites.
-    let mut effects = settle_effects(cell, 800, 200);
+    let provider = co_place_provider(&executor, cell, 0xC3);
+    let mut effects = settle_effects(cell, provider, 800, 200);
     for e in effects.iter_mut() {
         if let dregg_app_framework::Effect::SetField { index, value, .. } = e {
             if *index == STATE_SLOT as u64 {
@@ -321,7 +360,8 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
     let cell = cclerk.cell_id();
 
     // MINT: pay 900 + refund 200 == 1100 against a 1000 budget (advancing STATE to SETTLED).
-    let mint = settle_effects(cell, 900, 200);
+    let record_only = co_place_provider(&executor, cell, 0xC5);
+    let mint = settle_effects(cell, record_only, 900, 200);
     let refused = executor.submit_action(&cclerk, cclerk.make_action(cell, "settle", mint));
     assert!(refused.is_err(), "a value-minting settle must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
@@ -335,7 +375,7 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
 
     // BURN: pay 700 + refund 200 == 900 against a 1000 budget — destroys 100. Passes no-mint,
     // caught by no-burn AffineEq.
-    let burn = settle_effects(cell, 700, 200);
+    let burn = settle_effects(cell, record_only, 700, 200);
     let refused = executor.submit_action(&cclerk, cclerk.make_action(cell, "settle", burn));
     assert!(refused.is_err(), "a value-burning settle must be refused");
     let msg = format!("{:?}", refused.unwrap_err()).to_lowercase();
@@ -355,9 +395,15 @@ fn the_executor_re_enforces_a_non_conserving_settle_is_refused_flashwell() {
     );
 
     // And the HONEST conserving settle (800 + 200 == 1000) DOES commit through the same path.
-    let r = fire_settle(&app, &AuthRequired::None, &cclerk, &executor)
+    let provider = co_place_provider(&executor, cell, 0xC4);
+    let r = fire_settle(&app, &AuthRequired::None, provider, &cclerk, &executor)
         .expect("the conserving settle commits");
     assert_ne!(r.turn_hash, [0u8; 32], "a real verified conserving settle");
+    assert_eq!(
+        balance_of(&executor, provider),
+        800,
+        "the conserving settle MOVED the accepted bid to the provider"
+    );
     let after = executor.cell_state(cell).unwrap();
     assert_eq!(
         after.fields[STATE_SLOT as usize],

@@ -1,7 +1,7 @@
 {
   "id": "compute-exchange",
   "name": "Compute Exchange",
-  "description": "Compute marketplace starbridge-app: a factory-born job/escrow cell composing BUDGET (bid <= budget, the AffineLe budget gate) + ACCEPTED (write-once accepted bid) + FLASHWELL (conserving settlement, paid + refunded == budget) + LIFECYCLE (one-way POSTED -> BID -> SETTLED), re-enforced by the verified executor every turn. A requester posts a job with an escrowed budget; a provider bids a price that must fit the budget; settlement pays the provider and refunds the remainder atomically and value-neutrally.",
+  "description": "Compute marketplace starbridge-app: a factory-born job cell composing BUDGET (bid <= budget, the AffineLe budget gate) + ACCEPTED (write-once accepted bid) + FLASHWELL (the settlement RECORD neither mints nor burns, paid + refunded == budget) + LIFECYCLE (one-way POSTED -> BID -> SETTLED), re-enforced by the verified executor every turn. A requester posts a job with a PROMISED budget (the job cell cannot escrow it); a provider bids a price that must fit the budget; settlement PAYS the provider a real conserving Effect::Transfer in the same turn as it records the split, so a requester who cannot cover the accepted bid takes the SETTLED stamp down with the payment.",
   "version": "0.1.0",
   "status": "deos-native",
   "crate": "starbridge-compute-exchange",
@@ -20,7 +20,7 @@
   "host_actions": [
     { "id": "post", "label": "Post (open job)", "builder": "post", "kind": "turn" },
     { "id": "bid", "label": "Bid (offer price)", "builder": "bid", "kind": "turn" },
-    { "id": "settle", "label": "Settle (split budget)", "builder": "settle", "kind": "turn" }
+    { "id": "settle", "label": "Settle (pay the provider)", "builder": "settle", "kind": "turn" }
   ],
   "host_controls": [
     { "id": "job_uri", "label": "Job URI", "type": "uri", "default": "dregg://cell/compute-job-default" },
@@ -61,7 +61,7 @@
     "WriteOnce(SPEC_HASH_SLOT)",
     "WriteOnce(PAID_SLOT)",
     "WriteOnce(REFUNDED_SLOT)",
-    "AffineLe(PAID + REFUNDED - BUDGET <= 0)",
+    "AffineLe(PAID + REFUNDED - BUDGET <= 0)   [three FIELD SLOTS; the VALUE leg is the settle Effect::Transfer]",
     "StrictMonotonic(STATE_SLOT)",
     "MethodIs(settle) => AffineEq(PAID + REFUNDED - BUDGET == 0)"
   ],
@@ -75,10 +75,10 @@
     "affordances": {
       "view_job": "cap-only, Signature (an OBSERVER reads the job state)",
       "bid": "GATED (cap∧state), Either — posted precondition (STATE == POSTED); the fire submits the FULL bid (provider + bid + state->BID), the executor re-enforcing BUDGET FieldLteField(BID <= BUDGET)",
-      "settle": "GATED (cap∧state), None/root — bid precondition (STATE == BID); the fire reads live BID + BUDGET and pays the provider in full (paid := bid, refunded := budget - bid, state->SETTLED), the executor re-enforcing FLASHWELL AffineEq(PAID + REFUNDED == BUDGET)"
+      "settle": "GATED (cap∧state), None/root — bid precondition (STATE == BID); the fire reads live BID + BUDGET, TRANSFERS the accepted bid to the provider and records the split (paid := bid, refunded := budget - bid, state->SETTLED) in ONE action, the executor re-enforcing FLASHWELL AffineEq(PAID + REFUNDED == BUDGET) on the record and InsufficientBalance on the payment"
     },
     "rights_ladder": "Signature ⊂ Either ⊂ None IS the observer ⊂ provider ⊂ requester ladder",
-    "seam": "CLOSED — the fire runs against the seeded job cell carrying the full job program (BUDGET + ACCEPTED + FLASHWELL + LIFECYCLE), so an OVER-BUDGET bid (FieldLteField), a VALUE-CONJURING settle (AffineEq/AffineLe), and a NON-ADVANCING state (StrictMonotonic, strict) all BITE in the deos fire path (tests/deos_seam.rs — the three headline teeth). The factory-born cell carries the flat state_constraints predicate, so the budget and conservation teeth are executor refusals on the born cell too (tests/factory_birth.rs)."
+    "seam": "CLOSED — the fire runs against the seeded job cell carrying the full job program (BUDGET + ACCEPTED + FLASHWELL + LIFECYCLE), so an OVER-BUDGET bid (FieldLteField), a VALUE-CONJURING settle (AffineEq/AffineLe), a NON-ADVANCING state (StrictMonotonic, strict) and an UNFUNDABLE settlement (InsufficientBalance on the settle Transfer) all BITE in the deos fire path (tests/deos_seam.rs — the headline teeth). The factory-born cell carries the flat state_constraints predicate, so the budget and conservation teeth are executor refusals on the born cell too (tests/factory_birth.rs), and tests/settlement_conservation.rs asserts the BALANCES on both poles."
   },
   "manifest_health": {
     "status": "ready",

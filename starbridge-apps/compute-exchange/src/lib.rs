@@ -2,12 +2,12 @@
 //!
 //! A requester needs a unit of work done; a provider has spare compute. They
 //! transact a job neither trusts the other over. The requester **posts a job**
-//! with an escrowed **budget**; a provider **bids** a price (which must fit the
-//! budget); the job **settles atomically** — the accepted price is paid to the
-//! provider and any remainder refunds to the requester, all-or-nothing and
-//! value-neutral. No escrow-agent, no off-chain coordinator: the job is a single
-//! factory-born cell whose installed `CellProgram` IS the rules, re-checked by
-//! the verified executor on every turn that touches it.
+//! with a promised **budget**; a provider **bids** a price (which must fit the
+//! budget); the job **settles atomically** — the accepted price is PAID to the
+//! provider by a real conserving `Effect::Transfer` in the same turn as the
+//! `STATE = SETTLED` advance. No escrow-agent, no off-chain coordinator: the job
+//! is a single factory-born cell whose installed `CellProgram` IS the rules,
+//! re-checked by the verified executor on every turn that touches it.
 //!
 //! This app exists to show the system is **not a toy**: it composes — in one
 //! cell's slot-caveat program — the guarantees of four of the night's organs.
@@ -16,11 +16,67 @@
 //! |------------|------------------------------------------|---------------------------|
 //! | BUDGET     | the bid can never exceed the budget      | `FieldLteField { BID <= BUDGET }` — the accepted price is a bounded draw (the AffineLe budget gate) |
 //! | ACCEPTED   | the accepted price, bound exactly once   | `WriteOnce(BID)` — the requester accepts a price once; tamper-evident |
-//! | FLASHWELL  | atomic, conserving settlement            | `AffineEq { PAID + REFUNDED - BUDGET = 0 }` (settle) + the universal no-mint `AffineLe` — the payout splits the budget with no mint/burn |
+//! | FLASHWELL  | atomic, conserving settlement            | `AffineEq { PAID + REFUNDED - BUDGET = 0 }` (settle) + the universal no-mint `AffineLe` — the RECORD splits the budget with no mint/burn |
 //! | LIFECYCLE  | one-way, no replay, no double-settle      | `StrictMonotonic(STATE)` — `POSTED->BID->SETTLED` |
 //!
+//! ## ⚑ A SETTLEMENT MOVES VALUE, and the budget is a PROMISE, not an escrow
+//!
+//! Until 2026-07-28 every settle builder here was `SetField` + `EmitEvent` and
+//! carried no [`Effect::Transfer`] at all. A job rendered a green `SETTLED` pill
+//! and a live `paid ·` amount, emitted `job-settled`, advanced `STATE`, and moved
+//! **no balance anywhere**. The provider held a receipt for a payment that never
+//! happened, which is worse than a failure because the next reader trusts it.
+//!
+//! The four organ caveats were all true and all about the RECORD: an `AffineEq`
+//! over `PAID + REFUNDED - BUDGET` relates three FIELD SLOTS, and three numbers
+//! agreeing is not money moving.
+//!
+//! [`build_settle_actions`] now carries the conserving kernel [`Effect::Transfer`]
+//! — produced by the shared `Payable` desugar
+//! ([`dregg_app_framework::pay_effects`], the one every `Payable` app pays through
+//! — in the SAME TURN as the `STATE = SETTLED` advance. They are roots of one call
+//! forest, so they commit or roll back together: **there is no accepted turn in
+//! which the job reads SETTLED and the provider was not paid the accepted bid.** A
+//! requester who cannot cover the bid is a `TurnError::InsufficientBalance`
+//! refusal that takes the SETTLED stamp down with it.
+//!
+//! ### ⚠ The budget is NOT held in escrow, and this crate no longer says it is
+//!
+//! The requester pays at settle time, out of its own balance. The job cell CANNOT
+//! hold the budget, and the reason is its own program. Measured on this crate's
+//! own factory-born cell, three ways, all refused:
+//!
+//!   1. one action targeting the REQUESTER, carrying `Transfer(requester -> job)`
+//!      plus the post `SetField`s on the job — `permission denied on cell <job>
+//!      for action 'SetState': requires Signature` (a cross-cell `SetField` needs
+//!      the destination's `set_state` to be [`AuthRequired::None`]);
+//!   2. one action targeting the JOB, carrying `Transfer(requester -> job)` —
+//!      `permission denied on cell <requester> for action 'Send': requires
+//!      Signature` (`apply_transfer` skips its cross-cell `Send` check only when
+//!      the transfer's `from` IS the action target);
+//!   3. two actions in ONE turn (fund, then post) — `program violation on cell
+//!      <job>: field[9] did not strictly increase; StrictMonotonic requires new >
+//!      old`. The executor evaluates a touched cell's `CellProgram` per ACTION
+//!      over every cell any effect touches, INCLUDING a `Transfer` destination, so
+//!      `StrictMonotonic(STATE)` demands that any action crediting the job cell
+//!      also strictly advance its `STATE`.
+//!
+//! Those rules have no common solution, so a self-escrowing job cell is not
+//! expressible, and pretending otherwise would be a second false label rather than
+//! a fix.
+//!
+//! What that costs, stated plainly: between `post` and `settle` nothing stops the
+//! requester spending the money, so a provider is protected against a settlement
+//! that LIES, not against a requester who goes broke. Real escrow needs a separate
+//! holding cell with no `StrictMonotonic` on it — which is a design fork (who
+//! mints it, who holds its cap, what happens to an abandoned job) rather than
+//! wiring.
+//!
+//! And `REFUNDED` is the part of the budget **never drawn**, not a return: it never
+//! left the requester, so no refund transfer exists or could exist.
+//!
 //! Built from dregg primitives only: `FactoryDescriptor`, `Effect::SetField` /
-//! `Effect::EmitEvent`, `Authorization::Signature` from
+//! `Effect::EmitEvent` / `Effect::Transfer`, `Authorization::Signature` from
 //! `AppCipherclerk::make_action`, and Lane-G `StateConstraint` slot caveats.
 //! No domain-specific compute `Effect`, no `Authorization::Unchecked`, no
 //! `[0u8; 64]` placeholder signatures. Routes through the real verified
@@ -34,17 +90,22 @@
 //!
 //! - **post**   — the requester opens a job: writes the `BUDGET` (the most a bid
 //!   may cost) and the `REQUESTER_HASH` + a `SPEC_HASH` (the sealed job
-//!   description), `STATE = POSTED`.
+//!   description), `STATE = POSTED`. Nothing moves: the budget is a ceiling the
+//!   requester promises, and [`build_settle_actions`] is what pays.
 //! - **bid**    — a provider bids `price <= BUDGET` into `BID`, binds
 //!   `PROVIDER_HASH`, `STATE -> BID`.
-//! - **settle** — the deal closes: `PAID + REFUNDED == BUDGET`,
+//! - **settle** — the deal closes: the provider is PAID `PAID` out of the
+//!   requester's balance, the record reads `PAID + REFUNDED == BUDGET`, and
 //!   `STATE -> SETTLED`. Provider paid in full ⇒ `PAID == BID,
-//!   REFUNDED == BUDGET - BID`; the budget is split with no mint/burn.
+//!   REFUNDED == BUDGET - BID` (the undrawn remainder, which never left the
+//!   requester).
 //!
 //! ## The shared compute FUND ([`ComputeFundVault`]) — the pooled-deposit headline
 //!
-//! A single requester escrows a single job's budget above. The *fund* is the
-//! pooled face: many sponsors pool a common budget asset into ONE vault and each
+//! A single requester promises a single job's budget above and pays it at settle
+//! out of its own balance. The *fund* is the pooled face, and the one place in
+//! this crate where value is genuinely HELD: many sponsors pool a common budget
+//! asset into ONE vault (a real custody cell, credited on deposit) and each
 //! holds **shares** proportional to its contribution, redeemable for its
 //! proportional slice of the pool at any time. The fund IS the protocol-proven
 //! [`ShareVault`](dregg_cell::vault) house-capacity — a real *witnessed*
@@ -75,7 +136,7 @@ use dregg_app_framework::{
     CellProgram, ChildVkStrategy, ConstantsModule, DeosApp, DeosCell, Effect, EmbeddedExecutor,
     Event, FactoryDescriptor, FieldElement, FireExecuteError, GatedAffordance, InspectorDescriptor,
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
-    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, pay_effects, symbol,
 };
 
 /// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
@@ -154,11 +215,20 @@ impl From<ShareVaultError> for FundError {
     }
 }
 
-/// The honest executor move: debit `amount` (`> 0`) from `from`, credit it to
-/// `to`. Returns `false` if `from` cannot cover it (no value is created or
-/// destroyed). The role the app plays around the vault's *authorization* — the
-/// capacity decides *how many shares* a deposit mints (or *how much value* a
-/// redemption draws); the value move itself is an ordinary conserving transfer.
+/// Debit `amount` (`> 0`) from `from`, credit it to `to`. Returns `false` if
+/// `from` cannot cover it (no value is created or destroyed). The role the app
+/// plays around the vault's *authorization* — the capacity decides *how many
+/// shares* a deposit mints (or *how much value* a redemption draws); the value
+/// move itself is an ordinary conserving transfer.
+///
+/// ⚠ **Read this at its real resolution.** Value genuinely moves here — these are
+/// balance writes on real [`Cell`]s and `tests/compute_fund.rs` asserts the
+/// per-asset total across wallets plus custody — but it moves **in this process,
+/// not on the ledger**. There is no [`Effect::Transfer`], no signed action, no
+/// turn and no receipt, so nothing a light client witnesses. That is a weaker
+/// claim than the job lifecycle's settlement, which routes its value leg through
+/// the verified executor, and the difference is not cosmetic. Routing the fund
+/// through turns is real work, named here rather than implied.
 pub fn move_value(from: &mut Cell, to: &mut Cell, amount: i64) -> bool {
     if amount <= 0 {
         return false;
@@ -518,6 +588,12 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 /// **post** — the requester opens a job: write `BUDGET`, `REQUESTER_HASH`,
 /// `SPEC_HASH`, `STATE = POSTED`. The budget is the `line` a bid may draw
 /// against; it is frozen by `WriteOnce` thereafter.
+///
+/// ⚑ The `BUDGET` slot is a `WriteOnce` PROMISE, not a holding: nothing moves
+/// here, and nothing can (see the crate docs for the three measured executor
+/// refusals). [`build_settle_actions`] is what pays, out of the requester's own
+/// balance, and it is an `InsufficientBalance` refusal if that balance cannot
+/// cover the accepted bid.
 pub fn build_post_action(
     cclerk: &AppCipherclerk,
     job_cell: CellId,
@@ -590,43 +666,68 @@ pub fn build_bid_action(
     cclerk.make_action(job_cell, "bid", effects)
 }
 
-/// **settle** — close the deal: `paid` to the provider, `refunded` to the
-/// requester, advancing `STATE -> SETTLED`. The flashwell conservation caveat
-/// (`paid + refunded == budget`) makes this atomic and value-neutral: a split
-/// that does not balance is refused by the executor, never committed.
+/// **settle** — close the deal: **the provider is PAID `paid`** out of the
+/// requester's balance, `refunded` is the undrawn remainder of the budget, and
+/// `STATE` advances to SETTLED. Returns one or two [`Action`]s to be submitted as
+/// roots of **ONE** turn ([`AppCipherclerk::make_turn_with_actions`], the node's
+/// multi-action ingress).
 ///
-/// - Provider paid in full: `build_settle_action(.., bid, budget - bid)`.
-/// - Full refund (job cancelled): `build_settle_action(.., 0, budget)`.
-pub fn build_settle_action(
+/// They are one atomic outcome: a requester who cannot cover `paid` rolls the
+/// `STATE = SETTLED` stamp back with the transfer, so no surface can ever show a
+/// settled job over a payment that did not happen.
+///
+///   * the PAYMENT action targets the payer (`cclerk`'s own cell) and carries the
+///     conserving [`Effect::Transfer`] from [`payment_effects`] — it MUST target
+///     the payer, because `apply_transfer` only skips its cross-cell `Send` check
+///     when the transfer's `from` IS the action target, and that check demands
+///     `send == AuthRequired::None`, which a user cell's is not;
+///   * the SETTLE action targets the job and writes `PAID` / `REFUNDED` /
+///     `STATE -> SETTLED`, emitting `job-settled` with the amount, the remainder
+///     and the payee so the event names the value that moved and not only a flag.
+///
+/// When the payer IS the job cell (the deos composition surface and the service
+/// face both drive a job that is the agent's own cell) the two collapse into ONE
+/// action ([`settlement_effects`]), which is strictly stronger: one action cannot
+/// half-commit at all.
+///
+/// - Provider paid in full: `build_settle_actions(.., provider, bid, budget - bid)`.
+/// - Full refund (job cancelled): `build_settle_actions(.., provider, 0, budget)` —
+///   a CANCELLATION. It carries no payment leg because nothing is owed, and the
+///   record reads `paid = 0`, which is what the card then shows.
+///
+/// ⚠ Nothing here binds `provider` to the job's committed `PROVIDER_HASH`, nor the
+/// transfer's amount to the `PAID` slot. No `StateConstraint` relates a `Transfer`
+/// destination or amount to a state slot, so those checks belong to whoever can
+/// read the slots until the constraint language grows atoms for them, which is
+/// Lean-authored work.
+pub fn build_settle_actions(
     cclerk: &AppCipherclerk,
     job_cell: CellId,
+    provider: CellId,
     paid: u64,
     refunded: u64,
-) -> Action {
-    let paid_f = field_from_u64(paid);
-    let refunded_f = field_from_u64(refunded);
-    let effects = vec![
-        Effect::SetField {
-            cell: job_cell,
-            index: PAID_SLOT as u64,
-            value: paid_f,
-        },
-        Effect::SetField {
-            cell: job_cell,
-            index: REFUNDED_SLOT as u64,
-            value: refunded_f,
-        },
-        Effect::SetField {
-            cell: job_cell,
-            index: STATE_SLOT as u64,
-            value: field_from_u64(STATE_SETTLED),
-        },
-        Effect::EmitEvent {
-            cell: job_cell,
-            event: Event::new(symbol("job-settled"), vec![paid_f, refunded_f]),
-        },
-    ];
-    cclerk.make_action(job_cell, "settle", effects)
+) -> Vec<Action> {
+    let payer = cclerk.cell_id();
+    if payer == job_cell {
+        return vec![cclerk.make_action(
+            job_cell,
+            "settle",
+            settlement_effects(job_cell, provider, paid, refunded),
+        )];
+    }
+    let settle = cclerk.make_action(
+        job_cell,
+        "settle",
+        settle_effects(job_cell, provider, paid, refunded),
+    );
+    let payment = payment_effects(payer, provider, paid);
+    if payment.is_empty() {
+        return vec![settle];
+    }
+    vec![
+        cclerk.make_action(payer, "pay_job_settlement", payment),
+        settle,
+    ]
 }
 
 // =============================================================================
@@ -748,10 +849,12 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 //   2. [`fire_bid`] / [`fire_settle`] then submit the FULL multi-effect turn (built
 //      from the cell's LIVE state), and the executor RE-ENFORCES the installed
 //      program — so an OVER-BUDGET bid (`FieldLteField`), a value-conjuring settle
-//      (`AffineEq`/`AffineLe`), and a non-advancing/rewinding STATE (`StrictMonotonic`)
-//      are REAL executor refusals in the SUBMISSION path — the half the floor's
-//      `evaluate`-only tests never exercised through a real signed turn (see
-//      `tests/deos_seam.rs`).
+//      (`AffineEq`/`AffineLe`), a non-advancing/rewinding STATE (`StrictMonotonic`)
+//      and a settlement the requester cannot fund (`InsufficientBalance` on the
+//      settle's `Effect::Transfer`) are REAL executor refusals in the SUBMISSION
+//      path — the half the floor's `evaluate`-only tests never exercised through a
+//      real signed turn (see `tests/deos_seam.rs` and
+//      `tests/settlement_conservation.rs`).
 
 /// The compute-job rights tiers, ON THE REAL ATTENUATION LATTICE — these ARE the
 /// roles the floor crate's cap-graph enforces:
@@ -820,11 +923,13 @@ pub fn bid_precondition() -> CellProgram {
 ///     live-state PRECONDITION (the job is POSTED); the real fire ([`fire_bid`])
 ///     submits the FULL bid turn (PROVIDER_HASH + BID + STATE->BID), re-enforced by
 ///     the executor's installed BUDGET `FieldLteField(BID <= BUDGET)`;
-///   - `settle` — a [`GatedAffordance`] (the REQUESTER splits the budget): `None`, a
-///     live-state PRECONDITION (the job is BID); the real fire ([`fire_settle`]) reads
-///     live `BID` + `BUDGET` and pays the provider IN FULL (PAID := BID, REFUNDED :=
-///     BUDGET - BID, STATE->SETTLED), so the executor's installed FLASHWELL
-///     `AffineEq(PAID + REFUNDED == BUDGET)` holds on the honest path.
+///   - `settle` — a [`GatedAffordance`] (the REQUESTER pays and closes the job):
+///     `None`, a live-state PRECONDITION (the job is BID); the real fire
+///     ([`fire_settle`]) reads live `BID` + `BUDGET`, **transfers `BID` to the
+///     provider** and writes PAID := BID, REFUNDED := BUDGET - BID, STATE->SETTLED
+///     in one action, so the executor's installed FLASHWELL `AffineEq(PAID +
+///     REFUNDED == BUDGET)` holds on the honest path and a requester who cannot
+///     cover the bid takes the SETTLED stamp down with the payment.
 ///
 /// The job cell is published into the web-of-cells at the observer tier and is
 /// discoverable under `compute` / `marketplace`.
@@ -862,10 +967,13 @@ pub fn job_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
         ),
         posted_precondition(),
     );
-    // `settle` — the REQUESTER splits the budget. The decisive effect advances
-    // STATE->SETTLED; gated on the BID precondition ([`bid_precondition`]). The
-    // executor re-enforces the installed FLASHWELL `AffineEq(PAID + REFUNDED ==
-    // BUDGET)` (a value-conjuring split is refused).
+    // `settle` — the REQUESTER pays the provider and closes the job. The decisive
+    // effect shown on the surface is the STATE->SETTLED advance; gated on the BID
+    // precondition ([`bid_precondition`]). The FIRE carries more than this
+    // representative: `fire_settle` adds the conserving `Effect::Transfer` of the
+    // accepted bid. The executor re-enforces the installed FLASHWELL
+    // `AffineEq(PAID + REFUNDED == BUDGET)` (a value-conjuring split is refused)
+    // and refuses the whole action if the requester cannot cover the payment.
     let settle = GatedAffordance::new(
         CellAffordance::new(
             "settle",
@@ -949,15 +1057,37 @@ pub fn bid_effects(cell: CellId, provider: &str, price: u64) -> Vec<Effect> {
     ]
 }
 
-/// **`settle` effects** — the multi-effect settle body: write `PAID := paid`,
-/// `REFUNDED := refunded`, advance `STATE -> SETTLED`, and emit `job-settled`. The
-/// FLASHWELL `AffineEq(PAID + REFUNDED == BUDGET)` requires `paid + refunded ==
-/// budget`; the honest [`fire_settle`] reads live `BID` + `BUDGET` and pays the
-/// provider IN FULL (`paid = bid`, `refunded = budget - bid`). THIS is the turn
-/// [`fire_settle`] submits.
-pub fn settle_effects(cell: CellId, paid: u64, refunded: u64) -> Vec<Effect> {
+/// **The PAYMENT leg** — the conserving kernel [`Effect::Transfer`] moving `paid`
+/// from `payer` to `provider`, produced by [`pay_effects`]: the shared `Payable`
+/// desugar `resolve_pay` / `Payable::pay` resolve to, so this crate has no private
+/// notion of moving money.
+///
+/// EMPTY when `paid == 0`, which is the CANCELLATION case (`build_settle_actions(..,
+/// 0, budget)`): a full-refund settlement owes the provider nothing, so it moves
+/// nothing and the record says so. That is the one honest way this crate emits a
+/// settlement with no transfer, and the `PAID` slot the card binds reads `0`.
+pub fn payment_effects(payer: CellId, provider: CellId, paid: u64) -> Vec<Effect> {
+    if paid == 0 {
+        return Vec::new();
+    }
+    pay_effects(payer, provider, paid)
+}
+
+/// **The RECORD leg** — write `PAID := paid`, `REFUNDED := refunded`, advance
+/// `STATE -> SETTLED`, and emit `job-settled` carrying the amount, the undrawn
+/// remainder and the PAYEE, so the receipt names the value that moved rather than
+/// only a flag having flipped.
+///
+/// The FLASHWELL `AffineEq(PAID + REFUNDED == BUDGET)` requires `paid + refunded ==
+/// budget`, and it constrains exactly these three slots — the RECORD, not the
+/// balances. The value is moved by [`payment_effects`], and the two are bound
+/// together only by the builder that emits both: see the ⚠ on
+/// [`build_settle_actions`].
+pub fn settle_effects(cell: CellId, provider: CellId, paid: u64, refunded: u64) -> Vec<Effect> {
     let paid_f = field_from_u64(paid);
     let refunded_f = field_from_u64(refunded);
+    let mut payee = [0u8; 32];
+    payee.copy_from_slice(provider.as_bytes());
     vec![
         Effect::SetField {
             cell,
@@ -976,9 +1106,23 @@ pub fn settle_effects(cell: CellId, paid: u64, refunded: u64) -> Vec<Effect> {
         },
         Effect::EmitEvent {
             cell,
-            event: Event::new(symbol("job-settled"), vec![paid_f, refunded_f]),
+            event: Event::new(symbol("job-settled"), vec![paid_f, refunded_f, payee]),
         },
     ]
+}
+
+/// **`settle` effects, for a job cell that IS the payer** — the payment leg and the
+/// record leg in ONE action body, which the executor admits because the transfer's
+/// `from` is the action target AND the same action strictly advances `STATE` (a
+/// `StrictMonotonic` cell refuses any action that touches it without advancing,
+/// including a bare credit — see the crate docs).
+///
+/// THIS is the turn [`fire_settle`] submits, and the single-action arm of
+/// [`build_settle_actions`].
+pub fn settlement_effects(cell: CellId, provider: CellId, paid: u64, refunded: u64) -> Vec<Effect> {
+    let mut effects = payment_effects(cell, provider, paid);
+    effects.extend(settle_effects(cell, provider, paid, refunded));
+    effects
 }
 
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of
@@ -1014,14 +1158,24 @@ pub fn fire_bid(
 
 /// **Fire `settle`** — the deos cap∧state PRECONDITION gate (cap ⊇ None AND the job
 /// is BID), then the FULL settle turn the executor re-enforces the job program on.
-/// The settle effects read live `BID` + `BUDGET` and pay the provider IN FULL
-/// (`PAID := BID`, `REFUNDED := BUDGET - BID`), so the FLASHWELL `AffineEq(PAID +
-/// REFUNDED == BUDGET)` holds on the honest path — the conservation is computed from
-/// the cell's own state, never conjured. `StrictMonotonic(STATE)` re-enforces the
-/// one-way advance. Use after a successful [`fire_bid`].
+///
+/// The amount is READ OFF THE LIVE CELL — the committed `BID` slot, which is
+/// `WriteOnce` and therefore exactly the price the requester accepted. The fire
+/// **PAYS `provider` that amount** with the conserving [`Effect::Transfer`] and
+/// writes `PAID := BID`, `REFUNDED := BUDGET - BID`, `STATE -> SETTLED`, all in ONE
+/// action, so the FLASHWELL `AffineEq(PAID + REFUNDED == BUDGET)` holds on the
+/// honest path and neither leg can land without the other. A caller cannot name a
+/// different figure.
+///
+/// On this surface the job cell IS the agent's own cell, so the payment and the
+/// record ride one action ([`settlement_effects`]). The executor is the verified
+/// second gate twice over: `StrictMonotonic(STATE)` on the one-way advance, and
+/// `InsufficientBalance` on a requester that cannot cover the accepted bid. Use
+/// after a successful [`fire_bid`].
 pub fn fire_settle(
     app: &DeosApp,
     held: &AuthRequired,
+    provider: CellId,
     cipherclerk: &AppCipherclerk,
     executor: &EmbeddedExecutor,
 ) -> Result<TurnReceipt, FireExecuteError> {
@@ -1034,7 +1188,7 @@ pub fn fire_settle(
         let budget = field_to_u64(&live.fields[BUDGET_SLOT]);
         let bid = field_to_u64(&live.fields[BID_SLOT]);
         let refunded = budget.saturating_sub(bid);
-        settle_effects(target, bid, refunded)
+        settlement_effects(target, provider, bid, refunded)
     })
 }
 
