@@ -246,6 +246,11 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
 - **24 committed circuit reds dispatched** — they were being carried on every brief as "a live lane's
   uncommitted work", and all three named files are CLEAN and committed. Measurably nobody's.
 
+- **D4 CLOSED** — wired, not retired, because retiring would have deleted the only real path. ⚑ The
+  premise's verb was wrong: it does not prove per tick, and idle cost is ~0.19 % of one core. The
+  waste was a shipped feature with no way in. And its E2E test had been standing in for the missing
+  caller, which is exactly why `submit` could have 0 callers and a green suite.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.

@@ -614,6 +614,8 @@ value-less one (`discord-bot/src/commands/bounty.rs:298`) and renders success at
 the cell balance **"Escrowed"**, a balance `build_post_action` never funds either.
 
 **D4 · A ZK SUPERVISOR POLLS A QUEUE ONLY TESTS CAN FILL. WIRED — and the headline's verb was wrong.**
+> ✅ **FIXED 2026-07-28** (`d0b7635fd`) — WIRED, not retired. Sharper than recorded: the only route to a queue, `private_sealed_ingress`, had exactly ONE non-test caller and it is the DRAIN, so **no production code could obtain a queue handle**. ⚑ And the premise's verb was wrong — it does NOT prove per tick (`next_pending()` runs first and breaks on `None`); measured at **~0.19 % of one core** at the shipped 250 ms poll. The E2E test had been STANDING IN for the caller, which is why it stayed green. `settle_and_capture` DELETED, not reworded: it claimed to be the one path from private ingress to real cryptography while never touching ingress, clearing an auction with no durable record of who bid.
+
 > ✅ **WIRED 2026-07-28** — census reconfirmed at HEAD (0 production / 11 test callers of `submit`;
 > the ONLY route to a queue, `private_sealed_ingress`, had exactly one non-test caller and it was the
 > DRAIN side). Fixed by shipping the caller: `dreggnet-catalog/src/private_bazaar_submit.rs` +
