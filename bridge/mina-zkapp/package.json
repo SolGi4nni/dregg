@@ -18,7 +18,8 @@
     "devnet:fund": "npm run build && node dist/scripts/devnet-fund.js",
     "devnet:deploy": "npm run build && node dist/scripts/devnet-deploy.js",
     "devnet:attest": "npm run build && node dist/scripts/devnet-attest.js",
-    "devnet:emit-root": "npm run build && node dist/scripts/devnet-emit-root.js"
+    "devnet:emit-root": "npm run build && node dist/scripts/devnet-emit-root.js",
+    "devnet:tx-status": "npm run build && node dist/scripts/devnet-tx-status.js"
   },
   "dependencies": {
     "o1js": "2.15.0"
