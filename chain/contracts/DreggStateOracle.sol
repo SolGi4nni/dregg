@@ -2,270 +2,168 @@
 pragma solidity ^0.8.20;
 
 import {IDreggSettlement} from "./IDreggSettlement.sol";
-import {DreggMerkle} from "./DreggMerkle.sol";
 
 /// @title DreggStateOracle
-/// @notice A RICHER on-chain client of dregg: it turns the bare settlement
-///         root-tracker (`DreggSettlement`) into a queryable STATE ORACLE that
-///         any EVM contract can use to PROVE a fact about dregg state on-chain.
+/// @notice An ORDERED, PROOF-BOUND INDEX of settled dregg state roots, plus the
+///         eth→dregg instruction channel. Everything it answers is a function of
+///         `DreggSettlement`; it holds no attestation of its own.
 ///
-/// The bare `DreggSettlement` advances a single `provenRoot` and answers only
-/// "is this root proven?". This oracle adds the two rungs that make dregg's
-/// on-chain presence usable by other contracts (RWA vaults, DeFi markets,
-/// governance) — the highest-value first being on-chain INCLUSION PROOFS:
+/// ## ⚑ WHAT THIS CONTRACT USED TO DO, AND WHY IT NO LONGER DOES (2026-07-28)
 ///
-///  1. EPOCH + SUB-ROOT HISTORY (`recordEpoch` / `epochOf` / `subRoots`):
-///     a history of settled state roots, each carrying its exposed dregg
-///     SUB-ROOTS — the nullifier root, the commitments root, the balance root,
-///     the heap root. These are the roots the dregg state commitment binds
-///     (`metatheory Dregg2.Circuit.StateCommit`: `RestHashIffFrame` lists
-///     `nullifierRoot`, `revokedRoot`, `commitmentsRoot`, `heaps` among the
-///     hashed components; `circuit/src/effect_vm_descriptors.rs` shows the
-///     per-turn nullifier/commitment inserts are already PI-bound). Keeping a
-///     HISTORY (not just the latest) gives reorg-safety and lets a proof made
-///     against a since-superseded root still verify — the same reason
-///     `DreggSettlement._provenRoots` is a set, not a scalar.
+/// `recordEpoch(stateRoot, height, subRootVec)` wrote FOUR keccak "mirror" sub-roots
+/// — balance, nullifier, commitments, heap — and a height, STRAIGHT TO STORAGE, with
+/// exactly one thing checked: that `stateRoot` was `settlement.isProvenRoot`. Nothing
+/// tied the sub-roots or the height to the state that was actually proven. On top of
+/// that storage sat `proveHolding` / `proveNullifierSpent` / `proveCommitmentExists`
+/// / `verifyAgainstSubRoot`, whose keccak Merkle check is sound *given the sub-root*
+/// — so the whole surface inherited the recorder's word. A compromised recorder could
+/// record a sub-root it built itself and produce a valid-looking inclusion proof for
+/// any balance, any spent nullifier, any note: the proof established one thing and the
+/// storage said another, and consumers read the storage. An RWA vault gating on
+/// "A holds >= N" was gating on the recorder.
 ///
-///  2. INCLUSION-PROOF VERIFICATION (`proveHolding` / `proveNullifierSpent` /
-///     `verifyAgainstSubRoot`): given a settled epoch, verify a keccak Merkle
-///     inclusion proof that a balance / holding / nullifier / commitment leaf
-///     is in the corresponding sub-root. THIS is what makes the client usable:
-///     an RWA contract can gate on "address A holds >= N in dregg", a market can
-///     check "this note is unspent", a bridge can honor "this withdrawal leaf is
-///     committed" — all as a pure, EVM-cheap function of a proven root.
+/// Both unbound fields are GONE rather than documented:
 ///
-/// ## Trust grades (honest)
+///  * **height** is now proof-bound and read from the settlement contract.
+///    `DreggSettlement` records the cumulative proven height per proven root
+///    (`provenHeightOf`), which is `numTurns` accumulated over settlements that
+///    passed the pairing check. There is nothing left to attest, so the height
+///    argument was removed rather than checked.
+///  * **the sub-roots** CANNOT be bound today, and the whole surface that read them
+///    is deleted. See the named residual below for exactly what the proof would have
+///    to expose. This follows `DreggSettlement`'s own precedent for the
+///    operator-attested `outboundMessageRoot`: delete the recording path, refuse, and
+///    state the circuit obligation.
 ///
-/// - The INCLUSION CHECK itself (`DreggMerkle.verifyInclusion`) is SOUND given
-///   the sub-root: a forged leaf/path cannot reach the root (keccak CR). This is
-///   the buildable-now, no-weld component.
-/// - Binding a SUB-ROOT to the settled state is proof-bound only once dregg's
-///   settlement proof EXPOSES the sub-roots as public inputs. Today they are
-///   committed INSIDE the Poseidon2 state root (via `restHash`) but not extracted
-///   as separate lanes, so opening them on-chain would need Poseidon2 (heavy).
-///   Until the exposure weld lands (extra apex claim lanes → shrink → new
-///   Groth16 VK — the SAME class of weld as the outbound message root in
-///   `DreggSettlement`), sub-roots are recorded by an authorized RECORDER and
-///   are only as trustworthy as that recorder. The one binding enforced now: the
-///   epoch's TOP state root MUST be a genuinely proven root
-///   (`settlement.isProvenRoot`), so the oracle can never record an epoch for a
-///   state dregg never settled.
+/// With nothing left to attest, the RECORDER ROLE ITSELF IS GONE: `recordEpoch` is
+/// permissionless, because every value it writes is determined by `settlement`. The
+/// strongest available answer to "a compromised recorder forges X" is that there is
+/// no recorder.
 ///
-/// This contract is ADDITIVE: it reads `DreggSettlement` through the existing
-/// `IDreggSettlement` interface and adds no new trust to the settlement path.
+/// ## NAMED RESIDUAL — what the proof must expose (a LEAN-AUTHORED circuit change)
+///
+/// dregg's state commitment binds the sub-roots as Poseidon2/BabyBear FIELD elements
+/// (`metatheory Dregg2.Circuit.StateCommit`: `RestHashIffFrame` lists `nullifierRoot`,
+/// `revokedRoot`, `commitmentsRoot`, `heaps` among the hashed components). The
+/// settlement statement is 25 lanes — `genesis_root[0..8) || final_root[8..16) ||
+/// num_turns[16] || chain_digest[17..25)` — and carries NO sub-root.
+///
+/// Exposing the Poseidon2 sub-roots as extra lanes would NOT be enough. The sub-roots
+/// this contract served were KECCAK mirrors: a different tree over the same set under
+/// a different hash. An EVM contract cannot relate a Poseidon2 field root to a keccak
+/// Merkle root, and no amount of on-chain Poseidon2 changes that. Binding these
+/// requires the CIRCUIT to build the keccak mirror and prove it agrees with the
+/// committed set — keccak-in-circuit over the four sets — and then to expose either
+/// the four keccak roots or a single keccak commitment over them as additional apex
+/// claim lanes. Concretely:
+///
+///   1. the apex claim absorbs a per-span sub-root commitment
+///      `C = keccak(balanceRoot ++ nullifierRoot ++ commitmentsRoot ++ heapRoot)`,
+///      proven equal to the keccak mirror of the sets the Poseidon2 state root commits;
+///   2. `expose_claim` emits `C` as 8 further BabyBear lanes;
+///   3. the shrink + gnark SettlementCircuit bind those lanes as public inputs
+///      (25 → 33 lanes: a NEW Groth16 VK, hence a new `VK_DIGEST` on all three chains);
+///   4. `settle` accepts the sub-root vector and checks `keccak(vector) == C` before
+///      recording — at which point this contract can serve inclusion proofs again.
+///
+/// Steps 1–3 are AIR/constraint work and are authored in Lean under `metatheory/`,
+/// with the Rust emit path following. They are NOT Solidity work and must not be
+/// approximated here. Until they land there is no honest inclusion surface, so there
+/// is none.
 contract DreggStateOracle {
-    using DreggMerkle for bytes32;
+    // ─── Immutables ───────────────────────────────────────────────────────────
 
-    // ─── Sub-root kinds ───────────────────────────────────────────────────────
-
-    /// The dregg state sub-roots this oracle exposes. Order is pinned; it is the
-    /// index into `Epoch.subRoots`.
-    enum SubRoot {
-        Balance, // 0 — (address|cell => balance) leaves: "A holds >= N"
-        Nullifier, // 1 — spent-nullifier set: "this note is spent"
-        Commitments, // 2 — note-commitment set: "this note exists"
-        Heap // 3 — umem heap root: "this cell holds value V"
-    }
-
-    uint256 internal constant NUM_SUBROOTS = 4;
-
-    // ─── Types ────────────────────────────────────────────────────────────────
-
-    struct Epoch {
-        bytes32 stateRoot; // the settled dregg state root (packLanes key)
-        uint64 height; // cumulative proven height at this epoch
-        bool exists;
-        bytes32[NUM_SUBROOTS] subRoots; // keccak MIRROR sub-roots (see trust grades)
-    }
-
-    // ─── Immutables / roles ────────────────────────────────────────────────────
-
-    /// The bare settlement client this oracle enriches. Read-only dependency.
+    /// The settlement client this oracle indexes. Read-only dependency, and the
+    /// sole source of every fact this contract reports.
     IDreggSettlement public immutable settlement;
-
-    /// The authorized sub-root recorder (the dregg operator / relayer). Until the
-    /// sub-root exposure weld lands, sub-roots are operator-attested — but every
-    /// recorded epoch's state root is checked against `settlement.isProvenRoot`,
-    /// so a recorder can never invent a state dregg did not settle.
-    address public immutable recorder;
 
     // ─── State ─────────────────────────────────────────────────────────────────
 
-    /// Epoch by settled state root (packLanes key). History, not just latest.
-    mapping(bytes32 => Epoch) private _epochs;
-
-    /// Ordered list of recorded state roots (for enumeration / reorg windows).
+    /// Ordered list of recorded state roots (enumeration / reorg windows). This is
+    /// the ONE thing `DreggSettlement` cannot answer: it keys proven roots by hash
+    /// with no ordering.
     bytes32[] public epochRoots;
+
+    /// Whether `stateRoot` is already in `epochRoots` (append-once).
+    mapping(bytes32 => bool) private _indexed;
 
     // ─── Events ────────────────────────────────────────────────────────────────
 
-    event EpochRecorded(bytes32 indexed stateRoot, uint64 height);
-    event SubRootsRecorded(
-        bytes32 indexed stateRoot,
-        bytes32 balanceRoot,
-        bytes32 nullifierRoot,
-        bytes32 commitmentsRoot,
-        bytes32 heapRoot
-    );
+    /// `height` is `settlement.provenHeightOf(stateRoot)` — read, never supplied.
+    event EpochRecorded(bytes32 indexed stateRoot, uint64 height, uint256 index);
 
     /// An inbound command/deposit commitment for dregg to ingest (the eth→dregg
     /// leg). dregg's relayer/light-client watches this log and mirrors the
     /// commitment into state. Value custody (if any) is held by a companion
-    /// escrow (see `DreggEscrow` in the design doc); this event is the
-    /// instruction channel.
+    /// escrow; this event is the instruction channel.
     event InboundCommitment(bytes32 indexed commitment, address indexed from, bytes payload);
 
     // ─── Errors ────────────────────────────────────────────────────────────────
 
-    error NotRecorder(address caller);
     error SettlementHasNoCode(address settlement);
     error StateRootNotProven(bytes32 stateRoot);
     error ZeroStateRoot();
     error EpochAlreadyRecorded(bytes32 stateRoot);
     error UnknownEpoch(bytes32 stateRoot);
+    error EpochIndexOutOfRange(uint256 index, uint256 count);
 
     // ─── Constructor ────────────────────────────────────────────────────────────
 
-    constructor(IDreggSettlement settlement_, address recorder_) {
+    constructor(IDreggSettlement settlement_) {
         // Fail closed: a codeless settlement address would make isProvenRoot a
         // vacuous staticcall (the census fail-open pattern).
         if (address(settlement_).code.length == 0) {
             revert SettlementHasNoCode(address(settlement_));
         }
         settlement = settlement_;
-        recorder = recorder_;
     }
 
-    modifier onlyRecorder() {
-        if (msg.sender != recorder) revert NotRecorder(msg.sender);
-        _;
-    }
+    // ─── The index ──────────────────────────────────────────────────────────────
 
-    // ─── Rung 1: epoch + sub-root history ───────────────────────────────────────
-
-    /// @notice Record an epoch: a settled state root together with its exposed
-    ///         keccak-mirror sub-roots. The state root MUST already be proven by
-    ///         the settlement contract (the one binding enforced today).
-    /// @param stateRoot the settled dregg state root (a `packLanes` key).
-    /// @param height    cumulative proven height at this epoch.
-    /// @param subRootVec [Balance, Nullifier, Commitments, Heap] mirror roots.
-    function recordEpoch(
-        bytes32 stateRoot,
-        uint64 height,
-        bytes32[NUM_SUBROOTS] calldata subRootVec
-    ) external onlyRecorder {
+    /// @notice Append a settled state root to the ordered epoch index. PERMISSIONLESS:
+    ///         every value written is determined by `settlement`, so there is nothing
+    ///         a caller could attest and nothing to gate.
+    /// @param stateRoot the settled dregg state root (a `packLanes` key). MUST already
+    ///        be proven by the settlement contract.
+    /// @return index the position of `stateRoot` in `epochRoots`.
+    function recordEpoch(bytes32 stateRoot) external returns (uint256 index) {
         if (stateRoot == bytes32(0)) revert ZeroStateRoot();
-        // The load-bearing binding: only a genuinely settled state can be an
-        // epoch. Sub-roots ride on a proven state root, never a fabricated one.
+        // The load-bearing binding: only a genuinely settled state can be indexed.
         if (!settlement.isProvenRoot(stateRoot)) revert StateRootNotProven(stateRoot);
-        if (_epochs[stateRoot].exists) revert EpochAlreadyRecorded(stateRoot);
+        if (_indexed[stateRoot]) revert EpochAlreadyRecorded(stateRoot);
 
-        Epoch storage e = _epochs[stateRoot];
-        e.stateRoot = stateRoot;
-        e.height = height;
-        e.exists = true;
-        for (uint256 i = 0; i < NUM_SUBROOTS; i++) {
-            e.subRoots[i] = subRootVec[i];
-        }
+        _indexed[stateRoot] = true;
+        index = epochRoots.length;
         epochRoots.push(stateRoot);
 
-        emit EpochRecorded(stateRoot, height);
-        emit SubRootsRecorded(
-            stateRoot,
-            subRootVec[uint256(SubRoot.Balance)],
-            subRootVec[uint256(SubRoot.Nullifier)],
-            subRootVec[uint256(SubRoot.Commitments)],
-            subRootVec[uint256(SubRoot.Heap)]
-        );
+        // Read, not supplied. `provenHeightOf` reverts for an unproven root, so this
+        // cannot report a height for a state dregg never settled.
+        emit EpochRecorded(stateRoot, settlement.provenHeightOf(stateRoot), index);
     }
 
-    /// @notice Whether an epoch has been recorded for `stateRoot`.
-    function hasEpoch(bytes32 stateRoot) external view returns (bool) {
-        return _epochs[stateRoot].exists;
+    /// @notice Whether `stateRoot` has been appended to the index.
+    /// @dev NOT a proxy for "is this root proven" — ask `settlement.isProvenRoot`.
+    ///      A proven root that nobody has indexed yet answers false here.
+    function isIndexed(bytes32 stateRoot) external view returns (bool) {
+        return _indexed[stateRoot];
     }
 
-    /// @notice The height recorded for `stateRoot` (reverts if unknown).
-    function epochHeight(bytes32 stateRoot) external view returns (uint64) {
-        if (!_epochs[stateRoot].exists) revert UnknownEpoch(stateRoot);
-        return _epochs[stateRoot].height;
-    }
-
-    /// @notice The full sub-root vector for a recorded epoch.
-    function subRoots(bytes32 stateRoot) external view returns (bytes32[NUM_SUBROOTS] memory) {
-        if (!_epochs[stateRoot].exists) revert UnknownEpoch(stateRoot);
-        return _epochs[stateRoot].subRoots;
-    }
-
-    /// @notice A single sub-root of a recorded epoch.
-    function subRootOf(bytes32 stateRoot, SubRoot kind) public view returns (bytes32) {
-        if (!_epochs[stateRoot].exists) revert UnknownEpoch(stateRoot);
-        return _epochs[stateRoot].subRoots[uint256(kind)];
-    }
-
-    /// @notice Number of recorded epochs.
+    /// @notice Number of indexed epochs.
     function epochCount() external view returns (uint256) {
         return epochRoots.length;
     }
 
-    // ─── Rung 2: inclusion-proof verification (THE usable surface) ──────────────
-
-    /// @notice Verify a keccak Merkle inclusion of `leaf` in a specific sub-root
-    ///         of a recorded epoch. The generic primitive; the helpers below are
-    ///         typed sugar over it.
-    /// @return true iff `leaf` at `index` is included under the epoch's `kind` sub-root.
-    function verifyAgainstSubRoot(
-        bytes32 stateRoot,
-        SubRoot kind,
-        bytes32 leaf,
-        uint256 index,
-        bytes32[] calldata siblings
-    ) public view returns (bool) {
-        bytes32 root = subRootOf(stateRoot, kind); // reverts on unknown epoch
-        return DreggMerkle.verifyInclusion(root, leaf, index, siblings);
+    /// @notice The `index`-th indexed state root, together with its PROOF-BOUND
+    ///         height read from the settlement contract.
+    function epochAt(uint256 index) external view returns (bytes32 stateRoot, uint64 height) {
+        if (index >= epochRoots.length) {
+            revert EpochIndexOutOfRange(index, epochRoots.length);
+        }
+        stateRoot = epochRoots[index];
+        height = settlement.provenHeightOf(stateRoot);
     }
 
-    /// @notice Prove that `account` holds `balance` in dregg at `stateRoot`.
-    ///         The balance leaf is `keccak(0x00 ++ keccak(account ++ balance))`
-    ///         (encodeLeaf over the (account,balance) commitment). An RWA/DeFi
-    ///         contract gates entitlements on this — e.g. "A holds >= N" by
-    ///         proving A's exact balance leaf and comparing off the returned value.
-    function proveHolding(
-        bytes32 stateRoot,
-        address account,
-        uint256 balance,
-        uint256 index,
-        bytes32[] calldata siblings
-    ) external view returns (bool) {
-        bytes32 element = keccak256(abi.encodePacked(account, balance));
-        bytes32 leaf = DreggMerkle.encodeLeaf(element);
-        return verifyAgainstSubRoot(stateRoot, SubRoot.Balance, leaf, index, siblings);
-    }
-
-    /// @notice Prove that `nullifier` is spent in dregg at `stateRoot` (present in
-    ///         the nullifier set). A market/bridge checks double-spend with this.
-    function proveNullifierSpent(
-        bytes32 stateRoot,
-        bytes32 nullifier,
-        uint256 index,
-        bytes32[] calldata siblings
-    ) external view returns (bool) {
-        bytes32 leaf = DreggMerkle.encodeLeaf(nullifier);
-        return verifyAgainstSubRoot(stateRoot, SubRoot.Nullifier, leaf, index, siblings);
-    }
-
-    /// @notice Prove that `commitment` (a note commitment) exists in dregg at
-    ///         `stateRoot` (present in the commitments set).
-    function proveCommitmentExists(
-        bytes32 stateRoot,
-        bytes32 commitment,
-        uint256 index,
-        bytes32[] calldata siblings
-    ) external view returns (bool) {
-        bytes32 leaf = DreggMerkle.encodeLeaf(commitment);
-        return verifyAgainstSubRoot(stateRoot, SubRoot.Commitments, leaf, index, siblings);
-    }
-
-    // ─── Rung 3: inbound commitments (eth → dregg, the instruction channel) ─────
+    // ─── Inbound commitments (eth → dregg, the instruction channel) ─────────────
 
     /// @notice Emit an inbound commitment for dregg to ingest. This is the
     ///         eth→dregg leg's instruction channel: dregg's relayer/light-client

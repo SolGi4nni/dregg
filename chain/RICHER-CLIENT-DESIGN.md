@@ -7,6 +7,46 @@ tokenized-RWA / DeFi chains (Robinhood Chain, Base): a chain where value already
 gate entitlements, honor withdrawals, and settle instructions on a **proof** of dregg state
 rather than a bridge vote.*
 
+> ## ⚑ SUPERSEDED IN PART — 2026-07-28
+>
+> **Rungs 1 (sub-root history) and 2 (inclusion-proof verification) as described below
+> were BUILT AND HAVE BEEN DELETED.** `DreggStateOracle.recordEpoch(stateRoot, height,
+> subRootVec)` wrote the four keccak mirror sub-roots and the epoch height straight to
+> storage with only `isProvenRoot(stateRoot)` checked, and `proveHolding` /
+> `proveNullifierSpent` / `proveCommitmentExists` / `verifyAgainstSubRoot` served
+> inclusion proofs against them. The keccak check is sound *given the sub-root*, so the
+> entire surface inherited the recorder's word: a compromised recorder could publish a
+> sub-root it built itself and forge any holding, any spend, any note commitment.
+>
+> The document below repeatedly calls this "operator-attested until the exposure weld
+> lands". That is an accurate description of a hole, and it sat for weeks with consumers
+> invited to build on it (`proveHolding` is described as what a lending market gates on).
+> Per `CLAUDE.md` it is fixed rather than documented:
+>
+> - **height** is now PROOF-BOUND: `DreggSettlement` records the cumulative proven height
+>   per proven root and `IDreggSettlement.provenHeightOf` serves it. Nothing attests it.
+> - **the sub-roots and every reader of them are GONE**, following `DreggSettlement`'s own
+>   precedent for the operator-attested `outboundMessageRoot`.
+> - **the recorder role is GONE**: with nothing left to attest, `recordEpoch` is
+>   permissionless.
+>
+> What survives is an ordered, proof-bound index of settled roots plus the eth->dregg
+> instruction channel. Rungs 3-5 below compose against rung 2 and are therefore **blocked
+> on the same weld**, not buildable now.
+>
+> ⚠ **The weld is a LEAN-AUTHORED CIRCUIT CHANGE, and the description below understates
+> it.** Exposing the Poseidon2 sub-roots as public inputs is NOT sufficient: what this
+> contract served were KECCAK MIRRORS — a different tree over the same set under a
+> different hash — and no EVM contract can relate a Poseidon2 field root to a keccak
+> Merkle root. Binding them requires the CIRCUIT to build the keccak mirror and prove it
+> agrees with the committed set (keccak-in-circuit over the four sets), then expose the
+> commitment as extra apex claim lanes (25 -> 33 public inputs, a new Groth16 VK and hence
+> a new `VK_DIGEST` on all three chains). That work belongs in `metatheory/`, with the
+> Rust emit path following; the exact obligation is written out in the contract header of
+> `chain/contracts/DreggStateOracle.sol`.
+>
+> Read the rest of this document as the DESIGN INTENT, not as what is deployed.
+
 ## Where we start (the bare client)
 
 `chain/contracts/DreggSettlement.sol` verifies a Groth16(BN254) proof wrapping dregg's

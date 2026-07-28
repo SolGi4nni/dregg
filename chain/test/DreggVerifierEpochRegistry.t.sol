@@ -6,6 +6,7 @@ import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 import {DreggGroth16VerifierUpgradeable} from "../contracts/DreggGroth16VerifierUpgradeable.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// THE UPGRADEABLE-VK REGISTRY test suite.
 ///
@@ -27,7 +28,9 @@ import {DreggGroth16VerifierUpgradeable} from "../contracts/DreggGroth16Verifier
 ///     the staged VK is inert until activation;
 ///   * a wrong-epoch proof REJECTS; a malformed VK REVERTS at propose time.
 contract DreggVerifierEpochRegistryTest is Test {
-    bytes32 constant VK_HASH = keccak256("dregg-settlement-vk-dev-setup");
+    /// The key-derived VK pin (see DreggSettlementVkPin.t.sol). Was
+    /// `keccak256("dregg-settlement-vk-dev-setup")` until 2026-07-28.
+    bytes32 constant VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     DreggGroth16VerifierUpgradeable verifier;
 

@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: MIT
-// GENERATED VK constant block -- chain/codegen/gen_verifiers.py from
-// chain/codegen/dregg_vk.json. This is the verifying-key half of the gnark
-// DreggGroth16Verifier25.sol. Diff it against that contract to detect EVM VK
-// drift; use it as the injection body for an upgradeable-VK verifier.
+// GENERATED -- chain/codegen/gen_verifiers.py from chain/codegen/dregg_vk.json.
+// DO NOT EDIT BY HAND.
+//
+// The verifying-key half of the gnark DreggGroth16Verifier25.sol, plus the VK
+// COMMITMENT the settlement stack pins. `check_consistency.sh` diffs these
+// constants against the live gnark verifier to detect EVM VK drift, and this is
+// also the injection body for an upgradeable-VK verifier.
+//
+// WHY digest() EXISTS. Until 2026-07-28 the on-chain VK pin was
+// keccak256("dregg-settlement-vk-dev-setup") -- a hash of a LABEL. It was
+// byte-identical under every possible regeneration of the key, so the one
+// artifact whose whole job is to notice a key changed could not notice.
+// VK_DIGEST is keccak256 over the canonical serialization of the ACTUAL key
+// constants below, and digest() recomputes it from them ON-CHAIN, so the pin
+// is a FUNCTION OF THE KEY and moves whenever any VK word moves.
 pragma solidity ^0.8.0;
 
 library DreggSettlementVK {
@@ -82,4 +93,112 @@ library DreggSettlementVK {
     uint256 constant PUB_24_Y = 15992344112717850503777272578835276587653470511632101745260487698728098941499;
     uint256 constant PUB_25_X = 7851125206963537960366673390796083353732755347791881668227649891986410018523;
     uint256 constant PUB_25_Y = 3096611908419292553298124677577482312098136944522856714126318585734291355155;
+
+    // ─── The VK commitment ────────────────────────────────────────────────
+
+    /// Domain tag = the spec schema; a schema bump moves the pin too.
+    string constant DIGEST_DOMAIN = "dregg-groth16-vk/1";
+    uint32 constant NUM_PUBLIC_INPUTS = 25;
+    uint32 constant NUM_IC_BASES = 26;
+
+    /// keccak256 of the canonical VK serialization -- the value every chain
+    /// pins (byte-identical to Solana `vk::VK_DIGEST` and Cosmos `vk::VK_DIGEST`).
+    bytes32 constant VK_DIGEST =
+        0xcfda612f472e998d1f1bad1bf545ec5b39ca99b64db94e46edf2e8d3790a37cc;
+
+    /// The 76 VK coordinates in the digest's pinned order:
+    /// alpha(2) | beta_neg,gamma_neg,delta_neg,pedersen_g,pedersen_gsigma
+    /// (4 each, EIP-197 imaginary-first) | ic0(2) | ic[i](2 each).
+    function words() internal pure returns (uint256[] memory w) {
+        w = new uint256[](76);
+        w[0] = ALPHA_X;
+        w[1] = ALPHA_Y;
+        w[2] = BETA_NEG_X_1;
+        w[3] = BETA_NEG_X_0;
+        w[4] = BETA_NEG_Y_1;
+        w[5] = BETA_NEG_Y_0;
+        w[6] = GAMMA_NEG_X_1;
+        w[7] = GAMMA_NEG_X_0;
+        w[8] = GAMMA_NEG_Y_1;
+        w[9] = GAMMA_NEG_Y_0;
+        w[10] = DELTA_NEG_X_1;
+        w[11] = DELTA_NEG_X_0;
+        w[12] = DELTA_NEG_Y_1;
+        w[13] = DELTA_NEG_Y_0;
+        w[14] = PEDERSEN_G_X_1;
+        w[15] = PEDERSEN_G_X_0;
+        w[16] = PEDERSEN_G_Y_1;
+        w[17] = PEDERSEN_G_Y_0;
+        w[18] = PEDERSEN_GSIGMA_X_1;
+        w[19] = PEDERSEN_GSIGMA_X_0;
+        w[20] = PEDERSEN_GSIGMA_Y_1;
+        w[21] = PEDERSEN_GSIGMA_Y_0;
+        w[22] = CONSTANT_X;
+        w[23] = CONSTANT_Y;
+        w[24] = PUB_0_X;
+        w[25] = PUB_0_Y;
+        w[26] = PUB_1_X;
+        w[27] = PUB_1_Y;
+        w[28] = PUB_2_X;
+        w[29] = PUB_2_Y;
+        w[30] = PUB_3_X;
+        w[31] = PUB_3_Y;
+        w[32] = PUB_4_X;
+        w[33] = PUB_4_Y;
+        w[34] = PUB_5_X;
+        w[35] = PUB_5_Y;
+        w[36] = PUB_6_X;
+        w[37] = PUB_6_Y;
+        w[38] = PUB_7_X;
+        w[39] = PUB_7_Y;
+        w[40] = PUB_8_X;
+        w[41] = PUB_8_Y;
+        w[42] = PUB_9_X;
+        w[43] = PUB_9_Y;
+        w[44] = PUB_10_X;
+        w[45] = PUB_10_Y;
+        w[46] = PUB_11_X;
+        w[47] = PUB_11_Y;
+        w[48] = PUB_12_X;
+        w[49] = PUB_12_Y;
+        w[50] = PUB_13_X;
+        w[51] = PUB_13_Y;
+        w[52] = PUB_14_X;
+        w[53] = PUB_14_Y;
+        w[54] = PUB_15_X;
+        w[55] = PUB_15_Y;
+        w[56] = PUB_16_X;
+        w[57] = PUB_16_Y;
+        w[58] = PUB_17_X;
+        w[59] = PUB_17_Y;
+        w[60] = PUB_18_X;
+        w[61] = PUB_18_Y;
+        w[62] = PUB_19_X;
+        w[63] = PUB_19_Y;
+        w[64] = PUB_20_X;
+        w[65] = PUB_20_Y;
+        w[66] = PUB_21_X;
+        w[67] = PUB_21_Y;
+        w[68] = PUB_22_X;
+        w[69] = PUB_22_Y;
+        w[70] = PUB_23_X;
+        w[71] = PUB_23_Y;
+        w[72] = PUB_24_X;
+        w[73] = PUB_24_Y;
+        w[74] = PUB_25_X;
+        w[75] = PUB_25_Y;
+    }
+
+    /// Recompute VK_DIGEST from the constants above. `digest() == VK_DIGEST` is
+    /// the whole claim: the pin cannot stay still while the key moves.
+    function digest() internal pure returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                DIGEST_DOMAIN,
+                NUM_PUBLIC_INPUTS,
+                NUM_IC_BASES,
+                abi.encodePacked(words())
+            )
+        );
+    }
 }

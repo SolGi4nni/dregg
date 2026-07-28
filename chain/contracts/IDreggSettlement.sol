@@ -73,6 +73,11 @@ interface IDreggSettlement {
     /// the proof's public inputs.
     error MessageRootNotProofBound(bytes32 messageRoot);
 
+    /// `provenHeightOf` was asked for a root this contract never proved. Returning
+    /// 0 would be indistinguishable from the genesis anchor's genuine height, so
+    /// the query fails closed instead.
+    error RootNotProven(bytes32 root);
+
     // ------------------------------------------------------------------
     // Events
     // ------------------------------------------------------------------
@@ -99,6 +104,15 @@ interface IDreggSettlement {
     /// always false. Cross-chain verifiers gate message acceptance on this so a
     /// message proven under a since-superseded root still verifies.
     function isProvenRoot(bytes32 root) external view returns (bool);
+
+    /// The cumulative proven height at which `root` was proven; reverts
+    /// `RootNotProven` if it never was. Proof-bound: the height is `numTurns`
+    /// accumulated over settlements that passed the pairing check.
+    ///
+    /// Added 2026-07-28 so a consumer indexing settled state never has to take an
+    /// epoch height from an operator. `DreggStateOracle.recordEpoch` used to accept
+    /// one as an argument with nothing to check it against.
+    function provenHeightOf(bytes32 root) external view returns (uint64);
 
     /// True iff `messageRoot` is a PROOF-BOUND outbound-message commitment
     /// recorded by a settlement. Adapters (Hyperlane ISM, LayerZero DVN) gate

@@ -27,12 +27,17 @@
 //!
 //! ## The VK
 //!
-//! [`vk`] is GENERATED from the deployed EVM verifier's embedded constants
-//! (`scripts/gen_vk.py`) -- the SAME gnark verifying key, re-encoded for the
-//! Solana syscalls. The proof is chain-agnostic BN254; only the on-chain verifier
-//! differs. The pinned `vk_hash` (`keccak256("dregg-settlement-vk-dev-setup")`)
-//! and genesis anchor are byte-identical to the live Base-Sepolia deployment
-//! (`chain/DEPLOYMENTS.md`), a dev-ceremony key -- NOT a production MPC setup.
+//! [`vk`] is GENERATED from the canonical spec `chain/codegen/dregg_vk.json` by
+//! `chain/codegen/gen_verifiers.py` -- the SAME gnark verifying key the EVM
+//! `DreggGroth16Verifier25` embeds, re-encoded for the Solana syscalls. The proof
+//! is chain-agnostic BN254; only the on-chain verifier differs. The key is a dev
+//! single-party ceremony (toxic-waste-known), NOT a production MPC setup.
+//!
+//! The pinned `vk_hash` is [`settlement_vk_digest`] = [`vk::VK_DIGEST`], keccak256
+//! over the canonical serialization of THAT key (see [`vk_digest`]), byte-identical
+//! on EVM (`DreggSettlementVK.VK_DIGEST`) and Cosmos. It replaced
+//! `keccak256("dregg-settlement-vk-dev-setup")` on 2026-07-28: that pin was a hash
+//! of a LABEL and so was byte-identical under every regeneration of the key.
 
 pub mod error;
 pub mod groth16;
@@ -41,6 +46,7 @@ pub mod merkle;
 pub mod processor;
 pub mod state;
 pub mod vk;
+pub mod vk_digest;
 
 use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
 
@@ -52,13 +58,24 @@ pub const SEED_SETTLEMENT: &[u8] = b"settlement";
 /// (program-owned) is the on-chain proof that a settlement recorded that root.
 pub const SEED_PROVEN_ROOT: &[u8] = b"proven_root";
 
-/// The dev-ceremony verifying-key hash pinned by the live EVM deployment
-/// (`chain/script/DeploySettlement.s.sol`: `keccak256("dregg-settlement-vk-dev-setup")`).
-/// A settlement init pins THIS on the Solana side too, so the on-chain VK
-/// commitment is byte-identical across chains. A dev single-party setup
-/// (toxic-waste-known), NOT a production MPC ceremony.
-pub fn dev_ceremony_vk_hash() -> [u8; 32] {
-    solana_program::keccak::hashv(&[b"dregg-settlement-vk-dev-setup"]).0
+/// THE verifying-key commitment this program pins: keccak256 over the canonical
+/// serialization of the verifying key in [`vk`] (see [`vk_digest`] for the exact
+/// preimage). `InitSettlement` REFUSES any other value, so a settlement account
+/// can only ever be pinned to the key the program actually verifies against.
+///
+/// Byte-identical to `DreggSettlementVK.VK_DIGEST` (EVM) and
+/// `cosmos_settlement::vk::VK_DIGEST` -- all three emitted from
+/// `chain/codegen/dregg_vk.json` -- so cross-chain pin equality now means "the
+/// same key", which under the previous label hash it did not.
+///
+/// ⚠ FLAG DAY 2026-07-28: this replaced `dev_ceremony_vk_hash()` =
+/// `keccak256("dregg-settlement-vk-dev-setup")` =
+/// `0x18f57474785bdd93ff7feb573dfadff69516035997115f2854c93f0f31e1ff76`. Any
+/// settlement account initialized before that pins the old value and must be
+/// re-initialized; every deploy script and test that hard-coded the label hash
+/// now refuses (`SettlementError::VkDigestMismatch`).
+pub fn settlement_vk_digest() -> [u8; 32] {
+    vk::VK_DIGEST
 }
 
 // Native entrypoint. Gated so `cargo test` (host) and dependents can link the

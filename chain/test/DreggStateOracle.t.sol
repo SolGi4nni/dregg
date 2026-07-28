@@ -3,283 +3,240 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import {DreggStateOracle} from "../contracts/DreggStateOracle.sol";
-import {DreggMerkle} from "../contracts/DreggMerkle.sol";
+import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
+import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 
-/// Minimal `IDreggSettlement` mock: the oracle only reads `isProvenRoot`, and
-/// its constructor requires the settlement address to have code. Everything else
-/// is stubbed. `setProven` lets the test mark a root as genuinely settled.
-contract MockSettlement is IDreggSettlement {
-    mapping(bytes32 => bool) public proven;
-
-    function setProven(bytes32 root, bool v) external {
-        proven[root] = v;
-    }
-
-    function isProvenRoot(bytes32 root) external view returns (bool) {
-        return proven[root];
-    }
-
-    function isProvenMessageRoot(bytes32) external pure returns (bool) {
-        return false;
-    }
-
-    function provenRoot() external pure returns (bytes32) {
-        return bytes32(0);
-    }
-
-    function provenRootLanes() external pure returns (uint32[8] memory l) {
-        return l;
-    }
-
-    function genesisAnchor() external pure returns (bytes32) {
-        return bytes32(0);
-    }
-
-    function genesisAnchorLanes() external pure returns (uint32[8] memory l) {
-        return l;
-    }
-
-    function genesisEstablished() external pure returns (bool) {
-        return true;
-    }
-
-    function provenHeight() external pure returns (uint64) {
-        return 0;
-    }
-
-    function verifyingKeyHash() external pure returns (bytes32) {
-        return bytes32(0);
-    }
-
-    function settle(
+/// A verifier that accepts. The state-oracle tests are about what the ORACLE binds,
+/// not about the pairing — `DreggSettlementRealProof.t.sol` exercises the real proof.
+contract AcceptingVerifier is IGroth16Verifier25 {
+    function verifyProof(
         uint256[2] calldata,
         uint256[2][2] calldata,
         uint256[2] calldata,
         uint256[2] calldata,
         uint256[2] calldata,
-        uint32[8] calldata,
-        uint32[8] calldata,
-        uint32,
-        uint32[8] calldata,
-        bytes32
-    ) external {}
+        uint256[25] calldata
+    ) external pure returns (bool) {
+        return true;
+    }
 }
 
-/// THE INCLUSION-PROOF TEST: a genuine keccak Merkle inclusion of a real dregg
-/// nullifier leaf verifies against a recorded epoch's nullifier sub-root; every
-/// forgery polarity (wrong leaf, tampered sibling, wrong index, wrong epoch)
-/// rejects. The tree is a REAL positional keccak Merkle tree over dregg
-/// nullifier elements — the EVM-native mirror of dregg's nullifier sub-root
-/// (`metatheory Dregg2.Circuit.StateCommit` binds `nullifierRoot`; this is its
-/// keccak mirror, the same construction as the outbound message root). The
-/// verifier logic is the real artifact; soundness is keccak collision-resistance.
+/// ⚑ **THE ORACLE MUST NOT BE ABLE TO REPORT ANYTHING THE PROOF DID NOT ESTABLISH.**
+///
+/// Until 2026-07-28 `recordEpoch(stateRoot, height, subRootVec)` wrote four keccak
+/// mirror sub-roots and a height straight to storage with only `isProvenRoot(stateRoot)`
+/// checked. `proveHolding` / `proveNullifierSpent` / `proveCommitmentExists` then served
+/// inclusion proofs against those recorder-supplied roots, so a compromised recorder
+/// forged every one of them. Both unbound fields are gone: the height is read from the
+/// settlement contract (proof-bound), and the sub-root surface is deleted outright
+/// because the 25-lane proof cannot bind it (see the named residual in the contract).
+///
+/// These tests are driven by a REAL `DreggSettlement`, not a mock that returns whatever
+/// the test wants — the point is that the numbers come from the settlement state machine.
 contract DreggStateOracleTest is Test {
-    MockSettlement settlement;
+    DreggSettlement settlement;
     DreggStateOracle oracle;
 
-    address recorder = address(0xDEE6);
+    uint32[8] GENESIS = [uint32(1), 2, 3, 4, 5, 6, 7, 8];
+    uint32[8] SPAN1 = [uint32(11), 12, 13, 14, 15, 16, 17, 18];
+    uint32[8] SPAN2 = [uint32(21), 22, 23, 24, 25, 26, 27, 28];
 
-    // A settled dregg state root (a packLanes key). Marked proven on the mock.
-    bytes32 stateRoot = keccak256("dregg.state.root.epoch.42");
-
-    // The real dregg nullifier elements committed in this epoch's nullifier set.
-    // (Canonical 32-byte nullifier values — the tree leaves are encodeLeaf of these.)
-    bytes32[] nullifiers;
-
-    // The built tree (level 0 = padded leaves … top = [root]).
-    bytes32[][] levels;
-    bytes32 nullifierRoot;
+    bytes32 constant VK_HASH = keccak256("test-vk");
 
     function setUp() public {
-        settlement = new MockSettlement();
-        settlement.setProven(stateRoot, true);
-        oracle = new DreggStateOracle(IDreggSettlement(address(settlement)), recorder);
-
-        // Five genuine nullifier elements (odd count → padding exercised).
-        nullifiers.push(keccak256("nullifier:note-a"));
-        nullifiers.push(keccak256("nullifier:note-b"));
-        nullifiers.push(keccak256("nullifier:note-c"));
-        nullifiers.push(keccak256("nullifier:note-d"));
-        nullifiers.push(keccak256("nullifier:note-e"));
-
-        // Build the positional keccak Merkle tree over encodeLeaf(nullifier).
-        bytes32[] memory leaves = new bytes32[](nullifiers.length);
-        for (uint256 i = 0; i < nullifiers.length; i++) {
-            leaves[i] = DreggMerkle.encodeLeaf(nullifiers[i]);
-        }
-        levels = _buildTree(leaves);
-        nullifierRoot = levels[levels.length - 1][0];
-
-        // Record the epoch: state root proven, nullifier sub-root = our mirror.
-        bytes32[4] memory sub;
-        sub[uint256(DreggStateOracle.SubRoot.Nullifier)] = nullifierRoot;
-        vm.prank(recorder);
-        oracle.recordEpoch(stateRoot, 42, sub);
+        AcceptingVerifier v = new AcceptingVerifier();
+        settlement = new DreggSettlement(IGroth16Verifier25(address(v)), VK_HASH, GENESIS);
+        oracle = new DreggStateOracle(IDreggSettlement(address(settlement)));
     }
 
-    // ─── Polarity 1: GENUINE inclusion verifies ────────────────────────────────
+    // ─── Height: the field that used to be attested ────────────────────────────
 
-    function test_GenuineNullifierInclusionVerifies() public view {
-        // Every real nullifier in the set proves spent.
-        for (uint256 i = 0; i < nullifiers.length; i++) {
-            (uint256 index, bytes32[] memory siblings) = _proof(i);
-            assertTrue(
-                oracle.proveNullifierSpent(stateRoot, nullifiers[i], index, siblings),
-                "genuine nullifier inclusion must verify"
-            );
-        }
+    /// POLE 1 (honest) — an indexed epoch reports the height the SETTLEMENT proved,
+    /// and different spans report their own different heights.
+    function test_EpochHeightComesFromTheProvenSettlement() public {
+        _settle(GENESIS, SPAN1, 5);
+        _settle(SPAN1, SPAN2, 9);
+
+        bytes32 r1 = settlement.packLanes(SPAN1);
+        bytes32 r2 = settlement.packLanes(SPAN2);
+
+        uint256 i1 = oracle.recordEpoch(r1);
+        uint256 i2 = oracle.recordEpoch(r2);
+
+        (bytes32 root1, uint64 h1) = oracle.epochAt(i1);
+        (bytes32 root2, uint64 h2) = oracle.epochAt(i2);
+
+        assertEq(root1, r1);
+        assertEq(root2, r2);
+        // The heights are the accumulated numTurns of the verified settlements —
+        // 5, then 5 + 9. Nobody supplied them.
+        assertEq(h1, 5, "span 1 height is the proven cumulative height");
+        assertEq(h2, 14, "span 2 height accumulates");
+        assertTrue(h1 != h2, "distinct spans must not collapse to one height");
+        assertEq(settlement.provenHeightOf(r1), 5);
+        assertEq(settlement.provenHeightOf(r2), 14);
     }
 
-    function test_GenericVerifyAgainstSubRootVerifies() public view {
-        (uint256 index, bytes32[] memory siblings) = _proof(2);
-        bytes32 leaf = DreggMerkle.encodeLeaf(nullifiers[2]);
-        assertTrue(
-            oracle.verifyAgainstSubRoot(
-                stateRoot, DreggStateOracle.SubRoot.Nullifier, leaf, index, siblings
+    /// POLE 2 (forgery) — THE RIGHT REJECTION. A caller cannot state a height: the
+    /// argument does not exist. Calling the pre-2026-07-28 three-argument
+    /// `recordEpoch(bytes32,uint64,bytes32[4])` — the exact signature that accepted an
+    /// arbitrary height and arbitrary sub-roots — now hits no function and no
+    /// fallback, so it REVERTS rather than recording a forged epoch.
+    function test_ForgedHeightAndSubRootsHaveNoEntryPoint() public {
+        _settle(GENESIS, SPAN1, 5);
+        bytes32 r1 = settlement.packLanes(SPAN1);
+
+        bytes32[4] memory forgedSubRoots = [
+            keccak256("forged.balance.root"),
+            keccak256("forged.nullifier.root"),
+            keccak256("forged.commitments.root"),
+            keccak256("forged.heap.root")
+        ];
+        (bool ok, ) = address(oracle).call(
+            abi.encodeWithSignature(
+                "recordEpoch(bytes32,uint64,bytes32[4])", r1, uint64(999999), forgedSubRoots
+            )
+        );
+        assertFalse(ok, "the height+sub-root recording entry point must be gone");
+
+        // ...and the deleted read surface is gone too: every accessor that served a
+        // recorder-attested value now reverts, so no consumer can be reading one.
+        _assertNoSuchFunction(
+            abi.encodeWithSignature(
+                "proveHolding(bytes32,address,uint256,uint256,bytes32[])",
+                r1, address(0xA11CE), uint256(1_000_000), uint256(0), new bytes32[](0)
             ),
-            "generic sub-root inclusion must verify"
+            "proveHolding"
         );
-    }
-
-    // ─── Polarity 2: FORGERIES reject ──────────────────────────────────────────
-
-    /// A nullifier NOT in the set cannot be proven with any honest sibling path.
-    function test_ForgedNullifierRejects() public view {
-        (uint256 index, bytes32[] memory siblings) = _proof(1);
-        bytes32 notInSet = keccak256("nullifier:never-spent");
-        assertFalse(
-            oracle.proveNullifierSpent(stateRoot, notInSet, index, siblings),
-            "a nullifier not in the set must NOT verify"
-        );
-    }
-
-    /// A tampered sibling breaks the path — the recomputed root differs.
-    function test_TamperedSiblingRejects() public view {
-        (uint256 index, bytes32[] memory siblings) = _proof(3);
-        require(siblings.length > 0, "need a sibling to tamper");
-        siblings[0] = bytes32(uint256(siblings[0]) ^ 1); // flip one bit
-        assertFalse(
-            oracle.proveNullifierSpent(stateRoot, nullifiers[3], index, siblings),
-            "a tampered sibling must NOT verify"
-        );
-    }
-
-    /// The right leaf with the WRONG index (a valid index for a different leaf)
-    /// must not verify — position is bound.
-    function test_WrongIndexRejects() public view {
-        (, bytes32[] memory siblings) = _proof(0);
-        // Present leaf 0 with the siblings for index 0 but claim index 1.
-        bytes32 leaf = DreggMerkle.encodeLeaf(nullifiers[0]);
-        assertFalse(
-            oracle.verifyAgainstSubRoot(
-                stateRoot, DreggStateOracle.SubRoot.Nullifier, leaf, 1, siblings
+        _assertNoSuchFunction(
+            abi.encodeWithSignature(
+                "proveNullifierSpent(bytes32,bytes32,uint256,bytes32[])",
+                r1, keccak256("n"), uint256(0), new bytes32[](0)
             ),
-            "a genuine leaf at a wrong index must NOT verify"
+            "proveNullifierSpent"
         );
-    }
-
-    /// A genuine proof presented against the WRONG sub-root kind (Commitments,
-    /// which is zero here) must not verify.
-    function test_WrongSubRootKindRejects() public view {
-        (uint256 index, bytes32[] memory siblings) = _proof(2);
-        bytes32 leaf = DreggMerkle.encodeLeaf(nullifiers[2]);
-        assertFalse(
-            oracle.verifyAgainstSubRoot(
-                stateRoot, DreggStateOracle.SubRoot.Commitments, leaf, index, siblings
+        _assertNoSuchFunction(
+            abi.encodeWithSignature(
+                "proveCommitmentExists(bytes32,bytes32,uint256,bytes32[])",
+                r1, keccak256("c"), uint256(0), new bytes32[](0)
             ),
-            "inclusion under a different (empty) sub-root must NOT verify"
+            "proveCommitmentExists"
         );
+        _assertNoSuchFunction(
+            abi.encodeWithSignature("subRootOf(bytes32,uint8)", r1, uint8(1)), "subRootOf"
+        );
+        _assertNoSuchFunction(
+            abi.encodeWithSignature("subRoots(bytes32)", r1), "subRoots"
+        );
+        _assertNoSuchFunction(
+            abi.encodeWithSignature("epochHeight(bytes32)", r1),
+            "epochHeight (superseded by settlement.provenHeightOf)"
+        );
+        _assertNoSuchFunction(abi.encodeWithSignature("recorder()"), "recorder");
     }
 
-    // ─── Epoch / binding behavior ───────────────────────────────────────────────
-
-    /// The oracle refuses to record an epoch for a state dregg never settled.
+    /// The oracle refuses to index a state dregg never settled — the binding that
+    /// was already there, still there, and still the right rejection.
     function test_RecordEpochRejectsUnprovenRoot() public {
         bytes32 bogus = keccak256("never.settled");
-        bytes32[4] memory sub;
-        vm.prank(recorder);
         vm.expectRevert(
             abi.encodeWithSelector(DreggStateOracle.StateRootNotProven.selector, bogus)
         );
-        oracle.recordEpoch(bogus, 1, sub);
+        oracle.recordEpoch(bogus);
     }
 
-    /// Only the recorder may record epochs.
-    function test_OnlyRecorderCanRecord() public {
-        bytes32[4] memory sub;
+    function test_RecordEpochRejectsZeroRoot() public {
+        vm.expectRevert(DreggStateOracle.ZeroStateRoot.selector);
+        oracle.recordEpoch(bytes32(0));
+    }
+
+    function test_RecordEpochIsAppendOnce() public {
+        _settle(GENESIS, SPAN1, 5);
+        bytes32 r1 = settlement.packLanes(SPAN1);
+        oracle.recordEpoch(r1);
         vm.expectRevert(
-            abi.encodeWithSelector(DreggStateOracle.NotRecorder.selector, address(this))
+            abi.encodeWithSelector(DreggStateOracle.EpochAlreadyRecorded.selector, r1)
         );
-        oracle.recordEpoch(stateRoot, 1, sub);
+        oracle.recordEpoch(r1);
     }
 
-    /// Querying inclusion against an unrecorded epoch reverts (UnknownEpoch).
-    function test_InclusionAgainstUnknownEpochReverts() public {
-        bytes32 unknown = keccak256("unrecorded.epoch");
-        (uint256 index, bytes32[] memory siblings) = _proof(0);
-        bytes32 leaf = DreggMerkle.encodeLeaf(nullifiers[0]);
-        vm.expectRevert(
-            abi.encodeWithSelector(DreggStateOracle.UnknownEpoch.selector, unknown)
-        );
-        oracle.verifyAgainstSubRoot(
-            unknown, DreggStateOracle.SubRoot.Nullifier, leaf, index, siblings
-        );
-    }
+    /// Indexing is permissionless BECAUSE there is nothing to attest. Anyone
+    /// appending a proven root produces the same, proof-bound, entry.
+    function test_IndexingIsPermissionlessAndCarriesNoAttestation() public {
+        _settle(GENESIS, SPAN1, 5);
+        bytes32 r1 = settlement.packLanes(SPAN1);
 
-    function test_EpochHistoryExposed() public view {
-        assertTrue(oracle.hasEpoch(stateRoot));
-        assertEq(oracle.epochHeight(stateRoot), 42);
+        vm.prank(address(0xBEEF));
+        uint256 i = oracle.recordEpoch(r1);
+
+        (, uint64 h) = oracle.epochAt(i);
+        assertEq(h, 5, "a stranger's recording still reports the proven height");
+        assertTrue(oracle.isIndexed(r1));
         assertEq(oracle.epochCount(), 1);
-        assertEq(
-            oracle.subRootOf(stateRoot, DreggStateOracle.SubRoot.Nullifier),
-            nullifierRoot
+    }
+
+    /// `isIndexed` must NOT be mistaken for `isProvenRoot`: a proven-but-unindexed
+    /// root answers false, so nothing can drift into treating the index as the oracle
+    /// of provenness.
+    function test_IsIndexedIsNotIsProvenRoot() public {
+        _settle(GENESIS, SPAN1, 5);
+        bytes32 r1 = settlement.packLanes(SPAN1);
+        assertTrue(settlement.isProvenRoot(r1), "proven");
+        assertFalse(oracle.isIndexed(r1), "but not yet indexed");
+    }
+
+    function test_EpochAtOutOfRangeReverts() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggStateOracle.EpochIndexOutOfRange.selector, 0, 0)
         );
+        oracle.epochAt(0);
     }
 
-    // ─── Positional keccak Merkle tree helpers (mirror DreggMerkle) ─────────────
+    // ─── The settlement-side binding these rest on ──────────────────────────────
 
-    /// Build all levels of a positional keccak tree; pads level 0 to a power of
-    /// two with `DreggMerkle.EMPTY_LEAF`. levels[0] = leaves, last level = [root].
-    function _buildTree(bytes32[] memory leaves) internal pure returns (bytes32[][] memory) {
-        // Pad to next power of two.
-        uint256 n = 1;
-        while (n < leaves.length) n <<= 1;
-        bytes32[] memory level = new bytes32[](n);
-        for (uint256 i = 0; i < n; i++) {
-            level[i] = i < leaves.length ? leaves[i] : DreggMerkle.EMPTY_LEAF;
-        }
-
-        // Count levels: log2(n) + 1.
-        uint256 depth = 0;
-        for (uint256 t = n; t > 1; t >>= 1) depth++;
-        bytes32[][] memory out = new bytes32[][](depth + 1);
-        out[0] = level;
-
-        uint256 lvl = 0;
-        while (level.length > 1) {
-            uint256 half = level.length / 2;
-            bytes32[] memory parent = new bytes32[](half);
-            for (uint256 i = 0; i < half; i++) {
-                parent[i] = keccak256(abi.encodePacked(level[2 * i], level[2 * i + 1]));
-            }
-            lvl++;
-            out[lvl] = parent;
-            level = parent;
-        }
-        return out;
+    /// `provenHeightOf` fails closed for a root that was never proven — it does not
+    /// return 0, which would be indistinguishable from the genesis anchor's height.
+    function test_ProvenHeightOfFailsClosedForUnprovenRoot() public {
+        bytes32 bogus = keccak256("never.settled");
+        vm.expectRevert(
+            abi.encodeWithSelector(IDreggSettlement.RootNotProven.selector, bogus)
+        );
+        settlement.provenHeightOf(bogus);
     }
 
-    /// The inclusion proof for leaf `index`: the sibling at each level, bottom→top.
-    function _proof(uint256 index) internal view returns (uint256, bytes32[] memory) {
-        uint256 depth = levels.length - 1;
-        bytes32[] memory siblings = new bytes32[](depth);
-        uint256 idx = index;
-        for (uint256 l = 0; l < depth; l++) {
-            uint256 sib = idx ^ 1;
-            siblings[l] = levels[l][sib];
-            idx >>= 1;
-        }
-        return (index, siblings);
+    function test_GenesisAnchorIsProvenAtHeightZero() public view {
+        bytes32 g = settlement.packLanes(GENESIS);
+        assertTrue(settlement.isProvenRoot(g));
+        assertEq(settlement.provenHeightOf(g), 0, "the anchor is height 0, not absent");
+    }
+
+    /// A root that recurs keeps its FIRST proven height, matching the Solana
+    /// registry's idempotent marker.
+    function test_RecurringRootKeepsItsFirstHeight() public {
+        _settle(GENESIS, SPAN1, 5);
+        _settle(SPAN1, SPAN2, 9);
+        _settle(SPAN2, SPAN1, 3); // a cycle back to SPAN1
+
+        assertEq(
+            settlement.provenHeightOf(settlement.packLanes(SPAN1)),
+            5,
+            "the first height at which SPAN1 was proven stands"
+        );
+        assertEq(settlement.provenHeight(), 17, "the running height still accumulates");
+    }
+
+    // ─── helpers ────────────────────────────────────────────────────────────────
+
+    function _settle(uint32[8] memory from, uint32[8] memory to, uint32 turns) internal {
+        uint256[2] memory z2;
+        uint256[2][2] memory z22;
+        uint32[8] memory digest;
+        settlement.settle(z2, z22, z2, z2, z2, from, to, turns, digest, bytes32(0));
+    }
+
+    function _assertNoSuchFunction(bytes memory payload, string memory name) internal {
+        (bool ok, ) = address(oracle).call(payload);
+        assertFalse(ok, string.concat(name, " must no longer exist on the oracle"));
     }
 }

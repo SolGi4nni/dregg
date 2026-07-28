@@ -182,3 +182,15 @@ pub const PUB_G1: [G1Str; 26] = [
         "3096611908419292553298124677577482312098136944522856714126318585734291355155",
     ),
 ];
+
+/// THE VK COMMITMENT — keccak256 over the canonical serialization of the
+/// verifying key ABOVE, byte-identical to the Solana `vk::VK_DIGEST` and the
+/// Solidity `DreggSettlementVK.VK_DIGEST` (all three are emitted from the one
+/// spec `chain/codegen/dregg_vk.json`). Pinned at instantiate.
+///
+/// It replaced `keccak256("dregg-settlement-vk-dev-setup")` on 2026-07-28 — a
+/// hash of a LABEL, which was byte-identical under every regeneration of the key.
+pub const VK_DIGEST: [u8; 32] = [
+    0xcf, 0xda, 0x61, 0x2f, 0x47, 0x2e, 0x99, 0x8d, 0x1f, 0x1b, 0xad, 0x1b, 0xf5, 0x45, 0xec, 0x5b,
+    0x39, 0xca, 0x99, 0xb6, 0x4d, 0xb9, 0x4e, 0x46, 0xed, 0xf2, 0xe8, 0xd3, 0x79, 0x0a, 0x37, 0xcc,
+];

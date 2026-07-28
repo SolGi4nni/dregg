@@ -22,12 +22,26 @@ contract DreggSettlement is IDreggSettlement {
     uint64 private _provenHeight;
 
     /// Every dregg state root this contract has ever proven (packed key), incl.
-    /// the genesis anchor. A cross-chain verifier (Hyperlane ISM, LayerZero DVN)
-    /// checks a message against the root proven AT DISPATCH TIME, which by the
-    /// time the message is processed is no longer `provenRoot()` — so historical
-    /// proven roots must remain queryable. `bytes32(0)` is never recorded
-    /// (the Nomad-law default), so `isProvenRoot(0)` is always false.
-    mapping(bytes32 => bool) private _provenRoots;
+    /// the genesis anchor, MAPPED TO THE CUMULATIVE PROVEN HEIGHT AT WHICH IT WAS
+    /// PROVEN, biased by one so that 0 means "never proven". A cross-chain verifier
+    /// (Hyperlane ISM, LayerZero DVN) checks a message against the root proven AT
+    /// DISPATCH TIME, which by the time the message is processed is no longer
+    /// `provenRoot()` — so historical proven roots must remain queryable.
+    /// `bytes32(0)` is never recorded (the Nomad-law default), so `isProvenRoot(0)`
+    /// is always false.
+    ///
+    /// It was a `mapping(bytes32 => bool)` until 2026-07-28. The height was
+    /// discarded, which is why `DreggStateOracle.recordEpoch` took the epoch height
+    /// as an OPERATOR-SUPPLIED argument that nothing could check — a recorder could
+    /// state any height for any proven root. The height is proof-bound (it is
+    /// `numTurns` accumulated over verified settlements), so throwing it away was
+    /// the whole of that hole; keeping it makes `provenHeightOf` answerable from the
+    /// proof. The Solana twin already carried height in its marker PDA
+    /// (`ProvenRootMarker.height`); this closes the divergence.
+    ///
+    /// A recurring root (a state cycle) keeps its FIRST height, matching the Solana
+    /// registry's idempotent `record_proven_root`.
+    mapping(bytes32 => uint64) private _provenRootHeightPlus1;
 
     // OUTBOUND MESSAGE ROOTS — FAIL-CLOSED (no storage, no recording path).
     //
@@ -89,7 +103,8 @@ contract DreggSettlement is IDreggSettlement {
         }
         _genesisLanes = genesisRoot_;
         _provenLanes = genesisRoot_;
-        _provenRoots[packLanes(genesisRoot_)] = true;
+        // The genesis anchor is proven at height 0 (stored biased by one).
+        _provenRootHeightPlus1[packLanes(genesisRoot_)] = 1;
     }
 
     // ------------------------------------------------------------------
@@ -100,8 +115,22 @@ contract DreggSettlement is IDreggSettlement {
     /// (any historical proven root, plus the genesis anchor). `isProvenRoot(0)`
     /// is always false — the Nomad-law default is never accepted. Cross-chain
     /// verifiers gate message acceptance on this.
-    function isProvenRoot(bytes32 root) external view returns (bool) {
-        return _provenRoots[root];
+    function isProvenRoot(bytes32 root) public view returns (bool) {
+        return _provenRootHeightPlus1[root] != 0;
+    }
+
+    /// The cumulative proven height at which `root` was proven. Reverts
+    /// `RootNotProven` for a root this contract never proved — the height is
+    /// meaningful only for a proven root, and returning 0 would be indistinguishable
+    /// from the genesis anchor's real height.
+    ///
+    /// This is `numTurns` accumulated over VERIFIED settlements, so it is proof-bound
+    /// in the same sense the root is. It exists so no downstream contract has to take
+    /// an epoch height from an operator (see the note on `_provenRootHeightPlus1`).
+    function provenHeightOf(bytes32 root) external view returns (uint64) {
+        uint64 biased = _provenRootHeightPlus1[root];
+        if (biased == 0) revert RootNotProven(root);
+        return biased - 1;
     }
 
     /// FAIL-CLOSED: always false. The 25-lane proof carries no outbound-message
@@ -224,7 +253,12 @@ contract DreggSettlement is IDreggSettlement {
         //    non-zero `outboundMessageRoot` as not proof-bound.)
         _provenLanes = finalRoot;
         _provenHeight += numTurns;
-        _provenRoots[packLanes(finalRoot)] = true;
+        bytes32 packedFinal = packLanes(finalRoot);
+        // Idempotent on a recurring root: the FIRST height at which it was proven
+        // stands, matching the Solana registry's `record_proven_root`.
+        if (_provenRootHeightPlus1[packedFinal] == 0) {
+            _provenRootHeightPlus1[packedFinal] = _provenHeight + 1;
+        }
 
         emit Settled(packedOld, packLanes(finalRoot), _provenHeight);
         emit SettledLanes(genesisRoot, finalRoot, numTurns, chainDigest);

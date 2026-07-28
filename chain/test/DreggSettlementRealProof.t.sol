@@ -7,6 +7,7 @@ import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 import {Groth16Verifier25Adapter} from "../contracts/Groth16Verifier25Adapter.sol";
 import {Verifier as DreggGroth16Verifier25} from "../contracts/DreggGroth16Verifier25.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// THE REAL-PROOF SETTLEMENT TEST: a REAL Groth16 proof — minted by
 /// chain/gnark settlement_snark_test.go over the REAL dregg shrink proof
@@ -22,7 +23,9 @@ import {Verifier as DreggGroth16Verifier25} from "../contracts/DreggGroth16Verif
 /// Fixture: chain/test/fixtures/settlement_groth16.json (regenerate with
 ///   cd chain/gnark && DREGG_SNARK=1 go test -run TestSettlementGroth16EndToEnd -v).
 contract DreggSettlementRealProofTest is Test {
-    bytes32 constant VK_HASH = keccak256("dregg-settlement-vk-dev-setup");
+    /// The key-derived VK pin (see DreggSettlementVkPin.t.sol). Was
+    /// `keccak256("dregg-settlement-vk-dev-setup")` until 2026-07-28.
+    bytes32 constant VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     DreggSettlement settlement;
     Groth16Verifier25Adapter adapter;

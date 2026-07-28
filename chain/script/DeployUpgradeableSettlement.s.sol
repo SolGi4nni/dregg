@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 import {DreggGroth16VerifierUpgradeable} from "../contracts/DreggGroth16VerifierUpgradeable.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// @title DeployUpgradeableSettlement
 /// @notice Deploys the dregg settlement stack with the UPGRADEABLE-VK REGISTRY
@@ -32,7 +33,11 @@ import {DreggGroth16VerifierUpgradeable} from "../contracts/DreggGroth16Verifier
 ///
 /// Dry-run: forge script script/DeployUpgradeableSettlement.s.sol:DeployUpgradeableSettlement
 contract DeployUpgradeableSettlement is Script {
-    bytes32 constant DEFAULT_VK_HASH = keccak256("dregg-settlement-vk-dev-setup");
+    /// THE VK PIN: keccak256 over the canonical serialization of the verifying key
+    /// (`chain/codegen/gen_verifiers.py`). ⚑ FLAG DAY 2026-07-28 — replaced
+    /// `keccak256("dregg-settlement-vk-dev-setup")`, a hash of a LABEL that could not
+    /// move when the key did. Already-deployed settlements pin the old value.
+    bytes32 constant DEFAULT_VK_HASH = DreggSettlementVK.VK_DIGEST;
     uint256 constant ANVIL_DEV_KEY =
         0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 

@@ -13,7 +13,7 @@
 use dregg_solana_settlement::instruction::SettlementInstruction;
 use dregg_solana_settlement::state::{packed_root, ProvenRootMarker, SettlementState};
 use dregg_solana_settlement::{
-    dev_ceremony_vk_hash, process_instruction, SEED_PROVEN_ROOT, SEED_SETTLEMENT,
+    process_instruction, settlement_vk_digest, SEED_PROVEN_ROOT, SEED_SETTLEMENT,
 };
 
 use solana_program_test::{processor, ProgramTest};
@@ -40,7 +40,9 @@ struct Fixture {
     c: [u8; 64],
     commitment: [u8; 64],
     commitment_pok: [u8; 64],
-    inputs: [[u8; 32]; 25],
+    /// The 25-lane statement as canonical BabyBear u32s -- the wire shape since
+    /// 2026-07-28 (see `instruction.rs`'s flag-day note).
+    lanes: [u32; 25],
     genesis_root: [u32; 8],
     final_root: [u32; 8],
 }
@@ -55,11 +57,15 @@ fn hex_be32(s: &str) -> [u8; 32] {
     out
 }
 
-fn dec_be32(s: &str) -> [u8; 32] {
-    let v: u128 = s.parse().unwrap();
-    let mut out = [0u8; 32];
-    out[16..32].copy_from_slice(&v.to_be_bytes());
-    out
+/// A fixture public input is a decimal canonical BabyBear residue. Parsing it as a
+/// u32 is total on the real fixture and asserts the property the wire now relies on.
+fn dec_lane(s: &str) -> u32 {
+    let v: u64 = s.parse().unwrap();
+    assert!(
+        v < 2013265921,
+        "fixture lane {v} is not a canonical BabyBear residue"
+    );
+    v as u32
 }
 
 fn lanes8(v: &serde_json::Value) -> [u32; 8] {
@@ -97,11 +103,11 @@ fn load_fixture() -> Fixture {
         .iter()
         .map(|x| hex_be32(x.as_str().unwrap()))
         .collect();
-    let inputs_vec: Vec<[u8; 32]> = j["inputs"]
+    let lanes_vec: Vec<u32> = j["inputs"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|x| dec_be32(x.as_str().unwrap()))
+        .map(|x| dec_lane(x.as_str().unwrap()))
         .collect();
 
     let mut a = [0u8; 64];
@@ -121,10 +127,8 @@ fn load_fixture() -> Fixture {
     let mut commitment_pok = [0u8; 64];
     commitment_pok[..32].copy_from_slice(&pok[0]);
     commitment_pok[32..].copy_from_slice(&pok[1]);
-    let mut inputs = [[0u8; 32]; 25];
-    for (i, s) in inputs_vec.iter().enumerate() {
-        inputs[i] = *s;
-    }
+    let mut lanes = [0u32; 25];
+    lanes.copy_from_slice(&lanes_vec);
 
     Fixture {
         a,
@@ -132,7 +136,7 @@ fn load_fixture() -> Fixture {
         c,
         commitment,
         commitment_pok,
-        inputs,
+        lanes,
         genesis_root: lanes8(&j["genesis_root"]),
         final_root: lanes8(&j["final_root"]),
     }
@@ -149,9 +153,13 @@ fn marker_pda(lanes: &[u32; 8]) -> Pubkey {
 }
 
 fn init_ix(payer: &Pubkey, genesis_root: [u32; 8]) -> Instruction {
+    init_ix_with_vk_hash(payer, genesis_root, settlement_vk_digest())
+}
+
+fn init_ix_with_vk_hash(payer: &Pubkey, genesis_root: [u32; 8], vk_hash: [u8; 32]) -> Instruction {
     let data = SettlementInstruction::InitSettlement {
         genesis_root,
-        vk_hash: dev_ceremony_vk_hash(),
+        vk_hash,
     }
     .pack();
     Instruction {
@@ -166,21 +174,17 @@ fn init_ix(payer: &Pubkey, genesis_root: [u32; 8]) -> Instruction {
     }
 }
 
-fn settle_ix(fx: &Fixture, inputs: [[u8; 32]; 25], a: [u8; 64], payer: &Pubkey) -> Instruction {
-    // The final-root marker is derived from the STATEMENT's final lanes (inputs
-    // 8..16), so a forged statement points at a different (never-created) marker.
-    let mut final_lanes = [0u32; 8];
-    for i in 0..8 {
-        let b = inputs[8 + i];
-        final_lanes[i] = u32::from_be_bytes([b[28], b[29], b[30], b[31]]);
-    }
+fn settle_ix(fx: &Fixture, lanes: [u32; 25], a: [u8; 64], payer: &Pubkey) -> Instruction {
+    // The final-root marker is derived from the STATEMENT's final lanes (8..16),
+    // so a forged statement points at a different (never-created) marker.
+    let final_lanes: [u32; 8] = lanes[8..16].try_into().unwrap();
     let data = SettlementInstruction::Settle {
         a,
         b: fx.b,
         c: fx.c,
         commitment: fx.commitment,
         commitment_pok: fx.commitment_pok,
-        inputs,
+        lanes,
     }
     .pack();
     Instruction {
@@ -206,7 +210,7 @@ fn assert_proven_ix(lanes: &[u32; 8]) -> Instruction {
     }
 }
 
-/// ⚑ **THE SETTLE TRANSACTION DOES NOT FIT IN A SOLANA PACKET, AND NOTHING HERE COULD TELL US.**
+/// ⚑ **THE SETTLE TRANSACTION MUST FIT IN A SOLANA PACKET, AND NOTHING ELSE HERE CAN TELL US.**
 ///
 /// This gate exists because the two tests below are green and *structurally cannot* go red on it:
 /// `ProgramTest::new(..., processor!(...))` runs the processor natively (so the `solana_bn254`
@@ -214,28 +218,35 @@ fn assert_proven_ix(lanes: &[u32; 8]) -> Instruction {
 /// wire-serializes it. `PACKET_DATA_SIZE` appeared nowhere in this repository before this test.
 ///
 /// A validator drops any transaction whose serialized form exceeds `PACKET_DATA_SIZE` (1232 =
-/// 1280 MTU − 40 IPv6 − 8 UDP, `solana-packet-2.2.1/src/lib.rs:32`). The settle payload carries the
-/// 25 statement lanes as full 32-byte big-endian scalars (`SETTLE_LEN`, `instruction.rs:24`), which
-/// is 800 bytes of the ~1184-byte payload — and the runbook additionally requires a prepended
-/// `ComputeBudget` instruction, because the settle exceeds the 200,000-CU default
-/// (`docs/ops/DEPLOY-SOLANA-COSMOS-TESTNET.md` §1.7).
+/// 1280 MTU − 40 IPv6 − 8 UDP, `solana-packet-2.2.1/src/lib.rs:32`).
 ///
-/// ⚠ **THIS TEST IS EXPECTED RED AT HEAD.** That is the finding, not a flaw in the test: the Solana
-/// settle has never been broadcast because it *cannot* be. It is deliberately NOT `#[ignore]`d —
-/// an ignored gate is one nobody reads. It goes green when the wire encoding carries the lanes as
-/// canonical `u32` (25 × 4 = 100 B instead of 800 B), which is a WIRE-FORMAT decision and therefore
-/// ember's call, not a change this test makes on its own.
+/// ## The measurement, and what closed it
+///
+/// This test was RED at HEAD from the day it was written until 2026-07-28, at **1495 serialized
+/// bytes, over by 263** — the Solana settle had never been broadcast because it *could not* be.
+/// The cause was the wire encoding of the 25 statement lanes as full 32-byte big-endian Groth16
+/// scalars: 800 bytes, of which the processor REQUIRED 700 to be zero (`input_to_lane` rejected
+/// any input with a non-zero high 28 bytes, since a settlement lane is a canonical BabyBear
+/// residue `< 2^31`). The lanes now go on the wire as the `u32`s they provably are — 25 × 4 = 100 B
+/// — putting the transaction at **795 bytes with 437 to spare**, ComputeBudget instruction and all.
+///
+/// That was recorded as "a WIRE-FORMAT decision and therefore ember's call". Per CLAUDE.md the
+/// constituency was invented: nothing held the old format, and deleting 700 bytes the program had
+/// already proved were zero is not a trade — it also NARROWS the wire (a non-canonical scalar is
+/// now unrepresentable rather than merely rejected). See `instruction.rs` for the flag day.
+///
+/// The bound is asserted from both sides: over `PACKET_DATA_SIZE` fails, and so does a transaction
+/// so small it suggests the payload silently stopped carrying the statement.
 #[tokio::test]
 async fn settle_transaction_fits_in_a_solana_packet() {
     let fx = load_fixture();
     let payer = Keypair::new();
 
-    // The runbook's real settle tx: ComputeBudget limit + the settle instruction.
+    // The runbook's real settle tx: a ComputeBudget limit (the settle exceeds the
+    // 200,000-CU default, `docs/ops/DEPLOY-SOLANA-COSMOS-TESTNET.md` §1.7) + the settle.
     let cu_ix = ComputeBudgetInstruction::set_compute_unit_limit(600_000);
-    let mut tx = Transaction::new_with_payer(
-        &[cu_ix, settle_ix(&fx, fx.inputs, fx.a, &payer.pubkey())],
-        Some(&payer.pubkey()),
-    );
+    let settle = settle_ix(&fx, fx.lanes, fx.a, &payer.pubkey());
+    let mut tx = Transaction::new_with_payer(&[cu_ix, settle.clone()], Some(&payer.pubkey()));
     tx.sign(&[&payer], Hash::default());
 
     let wire = bincode::serialize(&tx).expect("a Transaction serializes with bincode");
@@ -244,10 +255,26 @@ async fn settle_transaction_fits_in_a_solana_packet() {
     assert!(
         len <= PACKET_DATA_SIZE,
         "settle transaction is {len} serialized bytes against PACKET_DATA_SIZE = {PACKET_DATA_SIZE} \
-         (over by {}). A validator will DROP it; the settle cannot be broadcast at all. The 25 \
-         statement lanes occupy 800 B of the payload as 32-byte scalars and are canonical u32 \
-         values (100 B) on the wire.",
+         (over by {}). A validator will DROP it; the settle cannot be broadcast at all.",
         len.saturating_sub(PACKET_DATA_SIZE)
+    );
+
+    // Anti-vacuity: the gate must not pass because the payload stopped carrying the
+    // statement. The settle instruction data is tag + 384 B proof + 25 * 4 B lanes.
+    assert_eq!(
+        settle.data.len(),
+        1 + 384 + 25 * 4,
+        "the settle payload must still carry the whole proof and all 25 lanes"
+    );
+    assert_eq!(settle.data.len(), 485);
+
+    // The transaction size is deterministic (fixed-size signature, pubkeys and
+    // payload), so pin it exactly rather than only bounding it: an exact figure
+    // catches silent payload growth long before it reaches the 1232-byte cliff.
+    assert_eq!(
+        len, 795,
+        "settle transaction size changed; it was 1495 B (over by 263) before the u32 \
+         lane encoding and 795 B (437 to spare) after"
     );
 }
 
@@ -269,9 +296,9 @@ async fn real_proof_settles_and_advances_root() {
     tx.sign(&[&payer], blockhash);
     banks.process_transaction(tx).await.expect("init");
 
-    // settle with the REAL proof + REAL 25 inputs.
+    // settle with the REAL proof + REAL 25 lanes.
     let mut tx = Transaction::new_with_payer(
-        &[settle_ix(&fx, fx.inputs, fx.a, &payer.pubkey())],
+        &[settle_ix(&fx, fx.lanes, fx.a, &payer.pubkey())],
         Some(&payer.pubkey()),
     );
     tx.sign(&[&payer], blockhash);
@@ -351,15 +378,15 @@ async fn forged_proof_rejected_root_unchanged() {
     // FORGERY 1 (altered statement): claim a DIFFERENT final root than the proof
     // attests. Continuity still holds (genesis unchanged), so this isolates the
     // crypto check -- the MSM differs, the pairing fails, the proof is rejected.
-    let mut forged_inputs = fx.inputs;
-    // bump final_root[0] (input lane 8) by one -- still canonical, wrong statement.
-    forged_inputs[8] = {
-        let mut b = fx.inputs[8];
-        b[31] = b[31].wrapping_add(1);
-        b
-    };
+    let mut forged_lanes = fx.lanes;
+    // bump final_root[0] (lane 8) by one -- still canonical, wrong statement.
+    forged_lanes[8] += 1;
+    assert!(
+        forged_lanes[8] < 2013265921,
+        "the forgery must stay canonical"
+    );
     let mut tx = Transaction::new_with_payer(
-        &[settle_ix(&fx, forged_inputs, fx.a, &payer.pubkey())],
+        &[settle_ix(&fx, forged_lanes, fx.a, &payer.pubkey())],
         Some(&payer.pubkey()),
     );
     tx.sign(&[&payer], blockhash);
@@ -372,7 +399,7 @@ async fn forged_proof_rejected_root_unchanged() {
     let mut forged_a = fx.a;
     forged_a[0] ^= 0x01;
     let mut tx = Transaction::new_with_payer(
-        &[settle_ix(&fx, fx.inputs, forged_a, &payer.pubkey())],
+        &[settle_ix(&fx, fx.lanes, forged_a, &payer.pubkey())],
         Some(&payer.pubkey()),
     );
     tx.sign(&[&payer], blockhash);

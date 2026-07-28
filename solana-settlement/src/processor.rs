@@ -26,7 +26,7 @@ use crate::instruction::SettlementInstruction;
 use crate::state::{
     is_canonical_lane, packed_root, ProvenRootMarker, SettlementState, MARKER_LEN, STATE_LEN,
 };
-use crate::vk::NUM_PUBLIC_INPUTS;
+use crate::vk::{self, NUM_PUBLIC_INPUTS};
 use crate::{SEED_PROVEN_ROOT, SEED_SETTLEMENT};
 
 pub fn process(
@@ -45,7 +45,7 @@ pub fn process(
             c,
             commitment,
             commitment_pok,
-            inputs,
+            lanes,
         } => settle(
             program_id,
             accounts,
@@ -56,7 +56,7 @@ pub fn process(
                 commitment,
                 commitment_pok,
             },
-            &inputs,
+            &lanes,
         ),
         SettlementInstruction::AssertProvenRoot { root } => {
             assert_proven_root(program_id, accounts, root)
@@ -152,15 +152,23 @@ fn init(
         return Err(SettlementError::AlreadyInitialized.into());
     }
 
-    // Fail-closed: a non-canonical genesis lane or a zero VK hash is refused
-    // (mirrors the EVM constructor's `_requireCanonical` + `ZeroVerifyingKeyHash`).
+    // Fail-closed: a non-canonical genesis lane is refused (mirrors the EVM
+    // constructor's `_requireCanonical`).
     for l in &genesis_root {
         if !is_canonical_lane(*l) {
             return Err(SettlementError::NonCanonicalLane.into());
         }
     }
-    if vk_hash == [0u8; 32] {
-        return Err(SettlementError::InvalidGenesis.into());
+
+    // Fail-closed: the pinned VK commitment must be the digest of the verifying key
+    // THIS program verifies against (`vk_digest::compute() == vk::VK_DIGEST`, asserted
+    // in tests/vk_pin.rs). The old check was `vk_hash != [0; 32]`, which accepted any
+    // 32 bytes -- and the value everyone passed was `keccak256("dregg-settlement-vk-
+    // dev-setup")`, a hash of a LABEL that stayed byte-identical across every possible
+    // key regeneration. A pin that cannot move is not a pin; refusing anything but the
+    // key's own digest is what makes it one.
+    if vk_hash != vk::VK_DIGEST {
+        return Err(SettlementError::VkDigestMismatch.into());
     }
 
     // Create the program-owned state account.
@@ -218,7 +226,7 @@ fn settle(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     proof: &Proof,
-    inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS],
+    lanes: &[u32; NUM_PUBLIC_INPUTS],
 ) -> ProgramResult {
     let ai = &mut accounts.iter();
     let state_ai = next_account_info(ai)?;
@@ -236,12 +244,12 @@ fn settle(
 
     let mut state = SettlementState::unpack(&state_ai.data.borrow())?;
 
-    // (1) Every lane a canonical BabyBear residue; assemble the 25 lanes in the
-    //     pinned order genesis[0..8) || final[8..16) || num_turns[16] ||
-    //     chain_digest[17..25).
-    let mut lanes = [0u32; NUM_PUBLIC_INPUTS];
-    for (i, input) in inputs.iter().enumerate() {
-        lanes[i] = input_to_lane(input)?;
+    // (1) Every lane a canonical BabyBear residue. The lanes arrive in the pinned
+    //     order genesis[0..8) || final[8..16) || num_turns[16] || chain_digest[17..25).
+    for l in lanes.iter() {
+        if !is_canonical_lane(*l) {
+            return Err(SettlementError::NonCanonicalLane.into());
+        }
     }
     let genesis_lanes: [u32; 8] = lanes[0..8].try_into().unwrap();
     let final_lanes: [u32; 8] = lanes[8..16].try_into().unwrap();
@@ -260,7 +268,13 @@ fn settle(
 
     // (4) The Groth16 pairing check (Pedersen commitment PoK + proof). A false /
     //     erroring verify rejects (fail closed) -- a FORGED proof stops here.
-    groth16::verify(proof, inputs).map_err(|_| SettlementError::ProofRejected)?;
+    //     The MSM consumes 32-byte big-endian scalars, so the canonical u32 lanes
+    //     are zero-extended back here. This reconstruction is EXACTLY the inverse of
+    //     what the old wire encoding transmitted: `input_to_lane` used to reject any
+    //     scalar whose high 28 bytes were non-zero, so those 700 bytes could never
+    //     carry information and are now not sent (see instruction.rs's flag-day note).
+    let inputs = lanes.map(lane_to_input);
+    groth16::verify(proof, &inputs).map_err(|_| SettlementError::ProofRejected)?;
 
     // (5) Advance. proven_root <- final_root, proven_height += num_turns.
     state.proven_root = final_lanes;
@@ -310,16 +324,38 @@ fn assert_proven_root(
     Ok(())
 }
 
-/// Interpret a 32-byte big-endian public input as a canonical BabyBear lane, or
-/// reject it (`NonCanonicalLane`). A value `>= 2^32` (any non-zero high byte) or
-/// `>= p` is non-canonical -- the stricter twin of the EVM `_requireCanonical`.
-fn input_to_lane(input: &[u8; 32]) -> Result<u32, SettlementError> {
-    if input[..28].iter().any(|&b| b != 0) {
-        return Err(SettlementError::NonCanonicalLane);
+/// Widen a canonical BabyBear lane to the 32-byte big-endian BN254 scalar the
+/// public-input MSM consumes. Total (every `u32 < p < 2^31 < r`), and injective, so
+/// the wire's u32 lanes and the MSM's scalars are in bijection -- carrying the
+/// 28 leading zero bytes over the network bought nothing but 700 bytes of packet.
+fn lane_to_input(lane: u32) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[28..].copy_from_slice(&lane.to_be_bytes());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reconstruction is exactly the old `input_to_lane`'s inverse on every
+    /// value the old wire could legally carry: high 28 bytes zero, low 4 the lane.
+    #[test]
+    fn lane_to_input_is_the_old_decoders_inverse() {
+        for lane in [0u32, 1, 7, 2013265920, u32::MAX] {
+            let s = lane_to_input(lane);
+            assert!(
+                s[..28].iter().all(|&b| b == 0),
+                "high 28 bytes are always zero"
+            );
+            assert_eq!(u32::from_be_bytes(s[28..].try_into().unwrap()), lane);
+        }
     }
-    let v = u32::from_be_bytes(input[28..32].try_into().unwrap());
-    if !is_canonical_lane(v) {
-        return Err(SettlementError::NonCanonicalLane);
+
+    #[test]
+    fn non_canonical_lanes_are_still_refused() {
+        assert!(!is_canonical_lane(2013265921), "p itself is not canonical");
+        assert!(!is_canonical_lane(u32::MAX));
+        assert!(is_canonical_lane(2013265920), "p-1 is");
     }
-    Ok(v)
 }

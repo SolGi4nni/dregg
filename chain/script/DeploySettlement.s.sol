@@ -7,6 +7,7 @@ import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 import {Groth16Verifier25Adapter} from "../contracts/Groth16Verifier25Adapter.sol";
 import {Verifier as DreggGroth16Verifier25} from "../contracts/DreggGroth16Verifier25.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// @title DeploySettlement
 /// @notice Deploys the dregg whole-history SETTLEMENT stack to Base-Sepolia
@@ -54,9 +55,16 @@ import {Verifier as DreggGroth16Verifier25} from "../contracts/DreggGroth16Verif
 /// away. Nothing here broadcasts on its own.
 /// ===========================================================================
 contract DeploySettlement is Script {
-    /// The dev-ceremony VK pin (matches DreggSettlementRealProof.t.sol:25 and
-    /// EthSettlementProof.verifying_key_hash). Override with DREGG_VK_HASH.
-    bytes32 constant DEFAULT_VK_HASH = keccak256("dregg-settlement-vk-dev-setup");
+    /// THE VK PIN: keccak256 over the canonical serialization of the verifying key
+    /// this stack verifies against (`chain/codegen/gen_verifiers.py`), byte-identical
+    /// to Solana `vk::VK_DIGEST` and Cosmos `vk::VK_DIGEST`. Override with DREGG_VK_HASH.
+    ///
+    /// ⚑ FLAG DAY 2026-07-28: this was `keccak256("dregg-settlement-vk-dev-setup")` —
+    /// a hash of a LABEL, byte-identical under every possible regeneration of the key,
+    /// so the artifact whose whole job was to notice a key change could not notice.
+    /// Any already-deployed DreggSettlement pins the old value and must be REDEPLOYED;
+    /// there is no setter. See chain/test/DreggSettlementVkPin.t.sol.
+    bytes32 constant DEFAULT_VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     /// The well-known anvil dev key — used ONLY so a keyless dry-run can
     /// simulate. A real broadcast supplies DEPLOYER_PRIVATE_KEY.

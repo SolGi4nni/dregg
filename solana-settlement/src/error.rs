@@ -38,6 +38,12 @@ pub enum SettlementError {
     /// A positional-keccak Merkle inclusion proof did not reconstruct the claimed
     /// root from the leaf (wrong leaf, sibling, index, or depth).
     InclusionInvalid = 10,
+    /// The `vk_hash` an init tried to pin is not the digest of the verifying key
+    /// this program verifies against (`vk::VK_DIGEST`). Replaces the former
+    /// "non-zero is fine" check, which accepted the label hash
+    /// `keccak256("dregg-settlement-vk-dev-setup")` -- a value that could not move
+    /// when the key did.
+    VkDigestMismatch = 11,
 }
 
 impl From<SettlementError> for ProgramError {

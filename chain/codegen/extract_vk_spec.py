@@ -66,7 +66,6 @@ def main() -> None:
         "source": {
             "gnark": "chain/gnark/settlement_snark_test.go (ExportSolidity, dev ceremony)",
             "solidity": "chain/contracts/DreggGroth16Verifier25.sol",
-            "vk_hash_domain": "dregg-settlement-vk-dev-setup",
         },
         "deployment": {
             "network": "base-sepolia",

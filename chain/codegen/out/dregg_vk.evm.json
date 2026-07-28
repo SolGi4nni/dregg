@@ -3,7 +3,9 @@
   "curve": "bn254",
   "note": "uint256 words in gnark ExportSolidity order: alpha(2) | beta_neg,gamma_neg,delta_neg,pedersen_g,pedersen_gsigma (4 each) | constant(2) | pub_0..pub_25(2 each). Feed to an upgradeable setVerifyingKey; the on-chain contract recomputes the VK commitment.",
   "num_public_inputs": 25,
-  "vk_hash_domain": "dregg-settlement-vk-dev-setup",
+  "num_ic_bases": 26,
+  "vk_digest": "0xcfda612f472e998d1f1bad1bf545ec5b39ca99b64db94e46edf2e8d3790a37cc",
+  "vk_digest_note": "keccak256 over the canonical VK serialization (see gen_verifiers.py). THE pin: a function of the key, not of a label. Byte-identical to DreggSettlementVK.VK_DIGEST, Solana vk::VK_DIGEST and Cosmos vk::VK_DIGEST.",
   "word_count": 76,
   "words": [
     "15209444214440235001497022803899506217275852229402859607686962191434917642572",

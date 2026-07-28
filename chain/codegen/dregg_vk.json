@@ -4,8 +4,7 @@
   "description": "Canonical VK + proof-format spec for the dregg 25-lane whole-history settlement Groth16 (BN254, gnark, commit-based range checker). THE ONE SOURCE the EVM/Solana/Cosmos verifiers are generated from.",
   "source": {
     "gnark": "chain/gnark/settlement_snark_test.go (ExportSolidity, dev ceremony)",
-    "solidity": "chain/contracts/DreggGroth16Verifier25.sol",
-    "vk_hash_domain": "dregg-settlement-vk-dev-setup"
+    "solidity": "chain/contracts/DreggGroth16Verifier25.sol"
   },
   "deployment": {
     "network": "base-sepolia",

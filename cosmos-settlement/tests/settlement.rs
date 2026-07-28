@@ -85,8 +85,14 @@ fn setup() -> (App, Addr, Fixture) {
             sender,
             &InstantiateMsg {
                 genesis_root: f.genesis_root,
+                // THE VK PIN: keccak256 over the canonical serialization of the
+                // verifying key in `vk.rs` -- byte-identical to the EVM
+                // `DreggSettlementVK.VK_DIGEST` and Solana `vk::VK_DIGEST`.
+                // ⚑ FLAG DAY 2026-07-28: was
+                // `keccak256("dregg-settlement-vk-dev-setup")`, a hash of a LABEL
+                // that stayed byte-identical across every regeneration of the key.
                 verifying_key_hash: "0x".to_string()
-                    + &hex::encode(sha3_keccak(b"dregg-settlement-vk-dev-setup")),
+                    + &hex::encode(cosmos_settlement::vk::VK_DIGEST),
             },
             &[],
             "dregg-settlement",
