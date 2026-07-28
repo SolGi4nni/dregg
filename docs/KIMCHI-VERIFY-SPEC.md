@@ -229,6 +229,13 @@ Derived values (`verifier.rs:301-308`): `zeta1 = ζⁿ`, `ζω = ζ·group_gen`,
 *Gadget:* **K3** (PastaPoseidon sponge, both the Fq-sponge-over-**Fq**-state and
 Fr-sponge-over-**Fp** flavors, plus the 128-bit challenge squeeze + endo map)
 **[CORRECTED 2026-07-27 — field letters swapped here too]**.
+**[2026-07-28 — the Fq-STATE flavour now EXISTS: `PastaPoseidonFq`, real `fq_kimchi` params from
+`proof-systems@f6d958dc05`, KATs at both parities, and β/γ/α′/ζ′/digest of a real proof re-derived
+end-to-end. Also: this section's absorb order (`ft_eval1` FIRST, corrected here 2026-07-27) had
+NEVER been carried into the Lean `transcriptSchedule`, which still listed the public evaluations
+first and omitted the prev-challenge digest entirely; both are fixed. The doc was right and the
+code was not, for a day — the ORDER theorem was pinning a schedule this document had already
+refuted.]**
 *Cost:* ~25–35 commitments + ~40 eval pairs absorbed; each Poseidon permutation
 (Kimchi params) is ~3×10² constraints ⇒ transcript total **10⁴–10⁵** gates.
 **[R-est]**
@@ -461,7 +468,11 @@ no lookup features needs none of this. Flag as advanced/follow-up.
 
 ## K5 build plan (v1: one Kimchi proof, no Pickles recursion) [R-design]
 
-**Freeze for v1:** single proof (no batching); `prev_challenges = 0`; no lookups
+**Freeze for v1:** single proof (no batching); ~~`prev_challenges = 0`~~ **[RETIRED 2026-07-28 —
+`prev_challenges` is now a PARAMETER checked against the verifier index (`shapeOkRec`), its
+commitments are in the phase-1 transcript, its digest is in the phase-2 one, and its b-poly
+evaluations at the head of the C8 list are RECOMPUTED (`prevChalFoldOk`); run on a real
+`prev_challenges = 2` proof in `KimchiRecursionGate`]**; no lookups
 (`lookup_index = None`); `chunk_size = 1` (domain ≤ SRS, the common Mina case);
 `zk_rows = 3`; public input present and small. Proof side: Vesta (**Fp** scalars);
 circuit side: **Fq**-native with non-native **Fp** (K1).

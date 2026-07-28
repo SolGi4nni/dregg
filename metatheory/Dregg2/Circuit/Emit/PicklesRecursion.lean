@@ -63,8 +63,9 @@ open Dregg2.Circuit.Emit.PastaIPA
   (bEval sVec polyEval IpaDeferred absorbChallenges deferredMsmSize sVec_length sVec_eq_bPoly
    deferral_compression)
 open Dregg2.Circuit.Emit.KimchiVerify
-  (shapeOk kimchiVerifyDecision kimchiVerifyDecisionField kimchiVerifyDecisionGates GateEvals
-   gateLinConst genericGateConstraint endomulScalarConstsOk PERMUTS COLUMNS)
+  (shapeOk shapeOkRec kimchiVerifyDecision kimchiVerifyDecisionRec kimchiVerifyDecisionField
+   kimchiVerifyDecisionGates GateEvals gateLinConst genericGateConstraint endomulScalarConstsOk
+   PERMUTS COLUMNS sqIter sqIter_eq)
 
 set_option autoImplicit false
 -- Kernel-heavy `decide`s below (255-step `2^255`, 45-entry eval folds over `ZMod pN`/`ZMod qN`).
@@ -184,23 +185,12 @@ theorem wrapDomain_roundtrip :
 `x ^ 2^k` is `npowRec`-linear in the kernel, so the real wrap domain generator (order `2^15`)
 cannot be anchored by `decide`-ing `ω ^ 32768`. `sqIter` is the repeated-squaring ladder, TIED to
 the power by `sqIter_eq`, so the anchor below is a real theorem about `ω ^ 2^15` that the kernel
-checks in 15 multiplications. (`sqIter` is TAIL-recursive on purpose: `x*x` shares, a naive
-`sqIter k x * sqIter k x` would re-evaluate the base `2^k` times.) -/
+checks in 15 multiplications.
 
-/-- `sqIter k x = x ^ (2^k)`, by `k` squarings. -/
-def sqIter {R : Type} [Monoid R] : Nat → R → R
-  | 0, x => x
-  | k + 1, x => sqIter k (x * x)
-
-/-- **`sqIter_eq`** — the ladder computes the power. -/
-theorem sqIter_eq {R : Type} [Monoid R] : ∀ (k : Nat) (x : R), sqIter k x = x ^ (2 ^ k)
-  | 0, x => by simp [sqIter]
-  | k + 1, x => by
-    show sqIter k (x * x) = x ^ (2 ^ (k + 1))
-    rw [sqIter_eq k (x * x), ← pow_two, ← pow_mul]
-    congr 1
-    rw [pow_succ]
-    omega
+⚑ The ladder MOVED to `KimchiVerify` §7b on 2026-07-28 and is `open`ed above — the C8 recursion
+fold (`bEvalSq`, the `b_poly` squaring ladder of `commitment.rs:429-433`) needs it upstream, and
+this file's copy would have been the second one. Same definition, same proof; no local re-statement
+is kept "for readability". -/
 
 /-! ## §P0.2 — the Wrap scalar field `Fq = ZMod qN`, and the REAL wrap domain generators.
 
@@ -343,7 +333,7 @@ for the same reason). The domain size enters the C5/C8 formulas ONLY as that exp
 `2^13/2^14/2^15` wrap domains are anchored exactly and separately above. Named residual, §Z.
 
 **`prevLen` is 0 in both accepting witnesses, and the real Wrap object's is 2** — see
-`wrap_prev_challenges_refused` below. That is the P6 handoff, proven rather than asserted. -/
+`wrap_prev_challenges_admitted` below — the ACCEPT that replaced the refusal on 2026-07-28. -/
 
 /-- The Wrap statement's `to_data` slot count (§P2 `wrapStatementLayout`) — used as `publicLen`. -/
 def WPUB : Nat := 38
@@ -467,12 +457,27 @@ theorem shapes_do_not_cross :
         WV WU WEVZ WEVZW ((SCIP.val : Nat) : Fq) WOMEGA WZETA WBETA WGAMMA WA0 WA1 WA2
         WS WSHIFT WGEV WZZ WZZW WPZ WDINV WFT0 true true true = false := by decide
 
-/-! ## §P0.4 — the `k`-round split, and the `prev_challenges` freeze (the P6 handoff).
+/-! ## §P0.4 — the `k`-round split, and the `prev_challenges` freeze — **RETIRED 2026-07-28**.
 
 Wrap runs `k = 15` IPA rounds against Step's `k = 16` (`kimchi_pasta_basic.ml:16-17`), so the two
 sides' DEFERRED `⟨s,G⟩` obligations have different sizes: `2^15` vs `2^16` terms from `15` vs `16`
-accumulated challenges (K4c `deferral_compression`). And the real Wrap Kimchi object carries
-`prev_challenges = 2`, which K5's v1 `shapeOk` REFUSES — the freeze is real, and retiring it is P6. -/
+accumulated challenges (K4c `deferral_compression`).
+
+⚑ **`wrap_prev_challenges_refused` IS SUPERSEDED AND ITS STATEMENT IS NOW FALSE OF THE SHIPPED
+DECISION.** It proved that the real Wrap object's `prev_challenges = 2`
+(`side_loaded_verification_key.ml:236`, `compile.ml:714`) was REFUSED by K5's `shapeOk`, with every
+other count correct — the sharpest "we do not verify Mina" fact this tree had. P6 landed:
+`KimchiVerify`'s shape assert is now the upstream one,
+`proof.prev_challenges.len() == index.prev_challenges` (`verifier.rs:810-813`), the transcript
+carries the recursion commitments and the challenge digest, and the `RecursionChallenge` b-poly
+evaluations at the head of the `combined_inner_product` list are RECOMPUTED and CHECKED
+(`shapeOkRec`, `transcriptScheduleRec`, `prevChalFoldOk`). `KimchiRecursionGate` runs the whole
+composed decision on a REAL `prev_challenges = 2` Kimchi proof that the o1-labs verifier accepts.
+
+What is preserved below is the SHAPE fact the old theorem was really about, restated so it stays a
+tooth: the counts are what they are, the non-recursive instantiation still refuses a recursive
+proof (which is now a statement about a verifier INDEX, not about what the decision can express),
+and the recursive instantiation accepts it. -/
 
 /-- **`wrap_ipa_rounds`** — the deferral at each side: `k` challenges ⇒ `2^k` deferred MSM terms.
 Wrap = 15 ⇒ 32768, Step = 16 ⇒ 65536, and the two obligations are NOT the same size. -/
@@ -487,22 +492,32 @@ theorem wrap_ipa_rounds (sg0 : Nat) (us vs : List Fq)
   rw [h1, h2, hw, hs]
   exact ⟨by decide, by decide, by decide⟩
 
-/-- **`wrap_prev_challenges_refused`** — K5's `shapeOk` freezes `prev_challenges = 0`, and the REAL
-Wrap object's is `2` (`side_loaded_verification_key.ml:236`, `compile.ml:714`). So the Wrap shape as
-it actually exists is REFUSED by the v1 decision, with every other count correct. This is not a P0
-gap — it is the `prevLen = 0` frontier, measured; retiring it is **P6** (the `RecursionChallenge`
-fold + Wrap_hack padding). A Step branch that verifies 2 previous proofs is refused likewise. -/
-theorem wrap_prev_challenges_refused :
-    shapeOk wrapShape.prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false
-    ∧ shapeOk (stepShape 0).prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1 = true
-    ∧ shapeOk (stepShape 2).prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false := by
-  refine ⟨?_, ?_, ?_⟩ <;> decide
+/-- ⚑ **`wrap_prev_challenges_admitted`** — the successor of `wrap_prev_challenges_refused`. The
+REAL Wrap object's `prev_challenges = 2` is now ACCEPTED, against a verifier index that declares
+2; a Step branch verifying 2 previous proofs is accepted likewise; and the mismatches
+`verifier.rs:810-813` exists to stop are still refused. The old theorem's negative half survives as
+the third clause — but as a fact about the NON-RECURSIVE instantiation, not about the decision. -/
+theorem wrap_prev_challenges_admitted :
+    shapeOkRec wrapShape.prevChallenges wrapShape.prevChallenges WPUB COLUMNS (PERMUTS - 1)
+        COLUMNS 7 1 = true
+    ∧ shapeOkRec (stepShape 2).prevChallenges (stepShape 2).prevChallenges WPUB COLUMNS
+        (PERMUTS - 1) COLUMNS 7 1 = true
+    ∧ shapeOk wrapShape.prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false
+    ∧ shapeOkRec 0 wrapShape.prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false
+    ∧ shapeOkRec wrapShape.prevChallenges 0 WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false
+    ∧ shapeOkRec (stepShape 0).prevChallenges (stepShape 0).prevChallenges WPUB COLUMNS
+        (PERMUTS - 1) COLUMNS 7 1 = true := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
-/-- The same statement one level up: the composed decision refuses the real Wrap object outright,
-whatever the carriers say. -/
-theorem wrap_decision_refuses_real_prev_challenges :
-    kimchiVerifyDecision wrapShape.prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1
-      true true true = false := by decide
+/-- The same statement one level up: the composed decision ADMITS the real Wrap object's recursion
+count. (What it still cannot do is verify a real Wrap PROOF — there is no Wrap fixture, §Z. This
+theorem is about the shape gate, and says only that.) -/
+theorem wrap_decision_admits_real_prev_challenges :
+    kimchiVerifyDecisionRec wrapShape.prevChallenges wrapShape.prevChallenges WPUB COLUMNS
+        (PERMUTS - 1) COLUMNS 7 1 true true true = true
+    ∧ kimchiVerifyDecision wrapShape.prevChallenges WPUB COLUMNS (PERMUTS - 1) COLUMNS 7 1
+        true true true = false := by
+  refine ⟨?_, ?_⟩ <;> decide
 
 /-! ## §P1 — `accumulator_check`: the `sg` bulletproof-accumulation discharge.
 
@@ -1174,8 +1189,8 @@ theorem branchData_wrap_domains :
 #assert_axioms both_shapes_run
 #assert_axioms shapes_do_not_cross
 #assert_axioms wrap_ipa_rounds
-#assert_axioms wrap_prev_challenges_refused
-#assert_axioms wrap_decision_refuses_real_prev_challenges
+#assert_axioms wrap_prev_challenges_admitted
+#assert_axioms wrap_decision_admits_real_prev_challenges
 #assert_axioms msm_append
 #assert_axioms msm_zipWith_sub
 #assert_axioms msm_batchScalars
@@ -1221,12 +1236,16 @@ theorem branchData_wrap_domains :
   2. **The Fq-state Poseidon sponge is still missing.** K3 (`PastaPoseidon`) baked the `fp_kimchi`
      constants. The Wrap side needs the same permutation over the Fq state
      (`wrap_main_inputs.ml:104-105`); C3's ORDER theorems carry over unchanged, the VALUES do not.
-     Already a named `KimchiVerify` §12.3 residual; P0 does not close it.
+     ⚑ **The Fq-state sponge itself EXISTS as of 2026-07-28** — `PastaPoseidonFq` bakes the real
+     `fq_kimchi` params and re-derives a real proof's β/γ/α′/ζ′ end-to-end. What is still missing
+     on the WRAP side is the fixture to run it on, not the sponge.
   3. **The witness domain is `2^5`, not `2^15`** (kernel cost of `ζ^n` under `npowRec`). The real
      wrap domain generator is anchored separately and exactly (`wrapOmega15_is_the_wrap_domain`),
      but the C5/C8 accept is not evaluated at `n = 32768`.
-  4. **`prev_challenges = 2` is REFUSED, on purpose** (`wrap_prev_challenges_refused`). The real
-     Wrap object cannot pass K5's v1 shape check at all. **That is P6**, not a P0 gap.
+  4. **`prev_challenges = 2` is ADMITTED as of 2026-07-28** (`wrap_prev_challenges_admitted`;
+     P6 landed in `KimchiVerify` + `KimchiRecursionGate`). What remains open on that leg is not
+     the shape gate but the OBJECT: there is still no real WRAP fixture (residual 1 above), so
+     the recursion path is exercised on a real STEP-shape proof only.
 
 ### What P1 leaves open
 

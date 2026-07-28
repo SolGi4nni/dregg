@@ -297,6 +297,29 @@ discharge across recursion** (our `PicklesRecursion.lean` P1) — and our own fi
 hard crux,"* are **not built**. Whether anyone formalizes Plookup or the Pickles recursive layer
 elsewhere is **[UNVERIFIED]** and stays an open question.
 
+> **[UPDATE 2026-07-28 — one half of that sentence moved, and it is a change of FACT, not a claim.]**
+> dregg's `prev_challenges` freeze is retired: `KimchiVerify.shapeOkRec` is now the upstream index
+> check (`verifier.rs:810-813`), the recursion commitments and the prev-challenge digest are in the
+> transcript, the `RecursionChallenge` b-poly evaluations at the head of the
+> `combined_inner_product` list are RECOMPUTED and compared (`prevChalFoldOk`), and
+> `KimchiRecursionGate` runs the composed decision on a real `prev_challenges = 2` Kimchi proof
+> that `kimchi::verifier::verify` accepts. (So the quotation above from
+> `KimchiVerify.lean:104,1211-1212` no longer describes that file.) `l-adic/snarky` still declares
+> `prev_challenges` absent — **as read 2026-07-27, not re-checked since, and their `formal/` moves
+> weekly**. What this is NOT: a Pickles-recursion formalization. It is the *base Kimchi verifier's*
+> recursion-challenge path, one rung below Step/Wrap; P3 (`finalize_other_proof`) and P4 (the
+> transcript-equality binding — the actual soundness of the recursion) are unbuilt here.
+> **Plookup remains a gap in both.** No novelty claim is printed and none is intended.
+>
+> Two measurements this pass that go the OTHER way. They have the **Fq-state Poseidon sponge**
+> (`formal/poseidon/Poseidon/{ConstantsFq,FqSponge}.lean` plus a `poseidon_fq_vectors.json`
+> fixture) — which dregg only built on 2026-07-28, and built from `mina-poseidon` directly, not
+> from theirs (**no license there; read-only**) — and they have the same squaring-ladder trick for
+> high powers (`powPow2`, `Kimchi.lean:221`) that our `sqIter`/`bEvalSq` needs. Their
+> `Bulletproof/Soundness.lean` (IPA knowledge soundness) and `Verifier/Capstone/*` (AGM soundness,
+> axiomatising only Fiat–Shamir) remain the two axes on which they are ahead of anything in this
+> tree, and nothing above narrows that.
+
 ### (c) **dregg-in-dregg recursive self-verification** — **re-treads well-known ground *as a concept*; only the substrate is unusual.**
 - **The concept is standard.** A STARK verifying its own STARK is production practice: Plonky2, Boojum, SP1, RISC0 all do recursive self-verification / STARK→SNARK wrap; the theory is Valiant-IVC / BCCT-PCD / Halo-accumulation / Nova-folding (Query 3). dregg-in-dregg **as recursion** is not new.
   - <https://polygon.technology/blog/introducing-plonky2> · <https://github.com/microsoft/Nova> · <https://eprint.iacr.org/2020/499>

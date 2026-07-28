@@ -1,6 +1,6 @@
 # Kimchi reality-gate extractors — preserved because they were one `git clean` from gone
 
-These two files produce the **ground truth** for the Mina/Kimchi reality gates
+These three files produce the **ground truth** for the Mina/Kimchi reality gates
 (`metatheory/kimchi_real_proof.json` → `KimchiRealProofGate.lean`, and the Poseidon-firing
 fixture → `KimchiPoseidonGate.lean`). Without them the fixtures cannot be regenerated and the
 gates' differentials become unreproducible numbers.
@@ -19,6 +19,21 @@ survives a `git clean`, a re-clone, or a rev bump in that checkout.
 - `reality_gate_poseidon_export.rs` — the same, plus a full `create_poseidon_gadget`, so the emitted
   proof has `poseidon_selector(ζ) ≠ 0`. This is what makes the six transcribed custom-gate bodies
   and the C3 `v`/`u` challenge re-derivation NON-VACUOUS rather than a source reading.
+- `pickles_p6_fq_export.rs` (added 2026-07-28, rev `f6d958dc05` recorded from `git describe`, not
+  hardcoded) — two outputs in one run, both feeding `metatheory/kimchi_p6_prev2_proof.json`:
+  1. **`fq_kimchi` Poseidon KATs** over `Fq = Vesta::BaseField`, driven through the UPSTREAM
+     `ArithmeticSponge::absorb`/`squeeze` state machine at BOTH input parities, plus the
+     double-permute anti-values. These are the gold vectors `PastaPoseidonFq.lean` pins to; the
+     constants themselves are `mina_poseidon::pasta::fq_kimchi::static_params()` dumped whole.
+  2. **A real Kimchi proof with `prev_challenges = 2`** (`create_recursive` + two genuine
+     `RecursionChallenge` accumulators, the `kimchi/src/tests/recursion.rs` recipe), asserted
+     accepted by the real `kimchi::verifier::verify`, with every phase-1 Fq-sponge INPUT dumped in
+     `verifier.rs:159-276` order so β/γ/α′/ζ′ are re-derivable rather than carried. It also
+     independently REPLAYS the Fq-sponge in Rust and asserts the replay reproduces
+     `proof.oracles(...)` — the line
+     `[cross-check] independent Fq-sponge replay reproduces beta/gamma/alpha'/zeta'/digest : true`
+     is that assertion, and it is an `assert!`, not a print. Consumers:
+     `PastaPoseidonFq.lean`, `KimchiRecursionGate.lean`.
 
 ⚠ The `36a8b510` rev cited in the Lean headers is a hardcoded `println!` in the extractor, not a
 recorded fact — true for the original fixture (reflog-confirmed) but nothing enforces it. The rev

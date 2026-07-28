@@ -1,6 +1,8 @@
 # PICKLES-VERIFIER-SCOPE.md — from a single Kimchi verify to Mina's Pickles recursion
 
-**Status:** scoping doc + **P0/P1/P2 BUILT** (2026-07-27). P3–P10 remain unbuilt scoping.
+**Status:** scoping doc + **P0/P1/P2 BUILT** (2026-07-27) + **P6 BUILT, and the Fq-state sponge
+with it** (2026-07-28). P3/P4/P5/P7/P8/P9 remain unbuilt scoping; P10 is the inherited terminal
+floor.
 Audience: ember + the K7 (Pickles) build.
 This is the follow-on named in `docs/MINA-KIMCHI-VERIFIER-PLAN.md` item 6 ("Pickles/recursion tip …
 recursion is the follow-on") and the frontier `KimchiVerify.lean` freezes at `prevLen = 0`.
@@ -14,10 +16,13 @@ P0, P1 and P2 are Lean-authored, `lake build`-green on hbox and `#assert_namespa
   (Step, Vesta-committed, `k=16`) and `Fq = ZMod qN` (Wrap, Pallas-committed, `k=15`);
   `wrap_field_decision_discriminates` (10 tampers), `sides_discriminate`, `cycle_is_a_swap`,
   `wrapOmega15_is_the_wrap_domain` (the real `2^15` wrap-domain generator, exact order, via the
-  `sqIter` ladder). **`wrap_prev_challenges_refused` proves the real Wrap object's
-  `prev_challenges = 2` is REFUSED by K5's v1 `shapeOk`** — the `prevLen = 0` frontier, measured;
-  that is P6, not a P0 gap. Residuals: no real Wrap fixture, no Fq-state sponge, witness domain
-  `2^5` (kernel cost).
+  `sqIter` ladder — since 2026-07-28 the ladder lives in `KimchiVerify`, not here, because the C8
+  recursion fold needs it upstream and two ladders is one too many). **`wrap_prev_challenges_refused`
+  proved the real Wrap object's `prev_challenges = 2` was REFUSED by K5's v1 `shapeOk`** — the
+  `prevLen = 0` frontier, measured. **[SUPERSEDED 2026-07-28 by P6: the theorem is now
+  `wrap_prev_challenges_admitted`, and its old statement is FALSE of the shipped decision.]**
+  Residuals: **no real Wrap fixture**, witness domain `2^5` (kernel cost). The Fq-state sponge
+  residual is CLOSED — `PastaPoseidonFq`.
 - **P1** — `accumulator_check_splits`: the assembled `msm(points, scalars)` of
   `batch_dlog_accumulator_check` IS `Σ r^i·comm_i − Σ r^i·⟨sVec chals_i, G⟩`, plus
   `accumulator_check_complete` / `_one` / `_two_sound`. The per-proof block is K4c's `sVec`;
@@ -28,6 +33,54 @@ P0, P1 and P2 are Lean-authored, `lake build`-green on hbox and `#assert_namespa
   Type1/Type2 bridge (`type1_eq_iff` / `type2_eq_iff` — comparing shifted representatives IS
   comparing field values, the algebraic half of P4), the concrete Pasta shift constants
   (`pasta_shift_constants`: `2^255 + 1` / `2^255`), `branchData_roundtrip`.
+
+### BUILD STATUS — P6 + the Fq-state sponge (2026-07-28)
+
+Two new modules, both `lake build`-green on hbox and `#assert_namespace_axioms`-clean:
+
+- **`metatheory/Dregg2/Circuit/Emit/PastaPoseidonFq.lean`** (22 theorems pinned) — the phase-1
+  sponge that was a NAMED CARRIER. The `fq_kimchi` MDS (3×3) and round constants (55×3) are dumped
+  from `mina_poseidon::pasta::fq_kimchi::static_params()` at o1-labs `proof-systems`
+  **`f6d958dc05`** (`poseidon/src/pasta/fq_kimchi.rs`) — **sourced, not invented**, as the prior
+  lane insisted. The Poseidon schedule is written ONCE, parametrically over `⟨modulus, mds, rcs⟩`,
+  and `core_is_Ref_at_Fp` PROVES the Fp instantiation is `PastaPoseidon.Ref.hash` for every input
+  — so the Fq sponge is that schedule at other constants, not a second hand-copy of the schedule
+  that ate the 2026-07-27 double-permute defect. 12 KATs at BOTH parities + 5 double-permute
+  anti-values, all emitted by the upstream `ArithmeticSponge` state machine itself.
+  ⚑ **β, γ, α′, ζ′ and the phase-1 digest of a REAL Kimchi proof are RE-DERIVED end-to-end**
+  (`fqPhase1`) from the verifier-index digest and the real commitment coordinates. Nothing in that
+  chain is consumed as given, and tampers at each stage of the tape are pinned.
+  **Naming trap, read through:** `fq_kimchi` is the phase-1 sponge of a **Vesta**-committed (Step)
+  proof and the phase-2 sponge of a **Pallas**-committed (Wrap) proof — `curve.rs:62-72,87-97`. One
+  instantiation closes the missing half on both sides of the cycle.
+- **`metatheory/Dregg2/Circuit/Emit/KimchiRecursionGate.lean`** (14 theorems pinned) — **P6**, on a
+  REAL `prev_challenges = 2` Kimchi proof that `kimchi::verifier::verify` accepts
+  (`create_recursive` + two genuine `RecursionChallenge` accumulators; extractor mirrored at
+  `metatheory/fixtures/kimchi-extractors/pickles_p6_fq_export.rs`, fixture at
+  `metatheory/kimchi_p6_prev2_proof.json`). `rec_decision_accepts` runs the composed
+  `kimchiVerifyDecisionFieldRec` over `ZMod pN`; eight tampers flip it.
+
+And in **`KimchiVerify.lean`** the freeze itself is gone:
+
+- `shapeOkRec` is the upstream check `proof.prev_challenges.len() == index.prev_challenges`
+  (`verifier.rs:810-813`). `shapeOk` survives as its instantiation at a non-recursive index — a
+  parameter value, not a wall.
+- `transcriptScheduleRec nPrev` puts the `nPrev` recursion commitments in the phase-1 transcript
+  (`verifier.rs:165-168`) and the prev-challenge digest in the phase-2 one (`:290-299`).
+  **Two corrections landed with it:** `ft_eval1` is absorbed BEFORE the public evaluations (the old
+  listing had them swapped), and the prev-challenge digest was missing from the listing entirely.
+  Neither changed a VALUE at `nPrev = 0` — which is exactly why neither was caught.
+- `prevChalFoldOk` RECOMPUTES the b-poly evaluations of the carried challenges at ζ and ζω and
+  compares them to the two leading entries of the `combined_inner_product` columns. `bEvalSq` (the
+  `commitment.rs:429-433` squaring ladder) is what makes that kernel-tractable at `k = 16`, and
+  `bEvalSq_eq_bEval` proves it is K4c's `bEval`, so `sVec_eq_bPoly` still applies to it.
+- The `sqIter` ladder MOVED from `PicklesRecursion` (downstream) to `KimchiVerify`; the duplicate
+  is deleted, not kept.
+
+**What P6 does NOT do.** The fixture is Step-shape (Vesta-committed, `k = 16`), not Wrap. The
+accumulator commitments are checked only as transcript inputs — that `comm = ⟨b_poly_coeffs, G⟩`
+is `accumulator_check`, bottoming out at P10. `Wrap_hack` padding to 2 is modelled only as the
+count, not as the dummy-challenge construction (that is P7's dummy proof).
 
 **Not claimed:** this is not a Pickles verifier. P3 (`finalize_other_proof`) and P4 (the
 transcript-equality binding — the soundness of P3) are unbuilt; see §Z of the Lean file for the
@@ -90,7 +143,7 @@ field-/curve-generic, so:
 | the b-poly evaluator (`b_correct` deferred check) | **K4c** `bEval` | = OCaml `challenge_polynomial` |
 | `combined_inner_product` + `ft_eval0` (the `cip`/`ft` deferred checks) | **K5** `combinedInnerProduct`, `ftEval0` | reproduce a real proof's scalars over `ZMod pN` |
 | the single-Kimchi-verify decision | **K5** `kimchiVerifyDecision(Field)` | instantiated at the **Step** shape (Vesta-committed, `k=16`) |
-| the Fiat–Shamir Poseidon sponge | **K3** `PastaPoseidon` | **one flavour only** (Fp state) — Wrap needs the Fq-state mirror |
+| the Fiat–Shamir Poseidon sponge | **K3** `PastaPoseidon` (Fp state) + **`PastaPoseidonFq`** (Fq state, real `fq_kimchi` params, 2026-07-28) | **both flavours now** — one parametric core, the Fp instantiation PROVEN equal to K3's (`core_is_Ref_at_Fp`) |
 
 **NEW — the recursion glue, none of which the single-proof verifier contains:** the two
 `Deferred_values` records + the shifted-value field bridge; `finalize_other_proof` (the four-way
@@ -109,7 +162,7 @@ instantiation (real Step/Wrap VKs, the tx-snark merge tree, the block step rule,
 - **P4** — **The transcript-equality binding** (`assert_eq_plonk` + digest/bp-challenge equality) —
   the soundness of P3. *Hard — the single hardest buildable piece.*
 - **P5** — Mirror P3+P4 to the other side (field swap Fp↔Fq). *Small (mirror).*
-- **P6** — `prev_challenges > 0`: the `RecursionChallenge` fold; retire the `prevLen = 0` freeze. *Medium.*
+- **P6** — `prev_challenges > 0`: the `RecursionChallenge` fold; retire the `prevLen = 0` freeze. *Medium.* **BUILT 2026-07-28.**
 - **P7** — Base case + inductive gating (dummy proof, `is_base_case`, `proof_must_verify`). *Small–medium.*
 - **P8** — Wrap-VK model + `branch_data`/domain selection + `max_proofs_verified` encodings. *Medium.*
 - **P9** — Mina's instantiation: real VKs, tx-snark merge tree, block step rule, protocol-state hash,

@@ -101,17 +101,58 @@ def zkRows : Nat := 3
 /-! ## §1 — C1: the shape / length checks (`verifier.rs:640-779, 810-831, 259-266`).
 
 Pure `Nat`/`Bool`, fully decidable — exactly the light-client `syncDecision` register (lengths,
-counts, no crypto). v1 FREEZES: no recursion (`prevLen = 0`), no lookups, `chunk_size = 1`. -/
+counts, no crypto). Still frozen: no lookups, `chunk_size = 1`.
 
-/-- **`shapeOk`** — every length/shape assert of `to_batch`'s preamble, v1-frozen. -/
-def shapeOk (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat) : Bool :=
-  decide (prevLen = 0)                       -- v1: prev_challenges = 0 (no Pickles recursion)
+⚑ **THE `prevLen = 0` FREEZE IS RETIRED (2026-07-28).** Until now the first conjunct read
+`decide (prevLen = 0)`, described as "v1: no Pickles recursion". That is not a weaker version of
+the upstream check — it is a DIFFERENT check. `verifier.rs:810-813` compares the proof's
+`prev_challenges.len()` against the VERIFIER INDEX's `prev_challenges`, and the object a Mina node
+actually verifies carries **2** (`side_loaded_verification_key.ml:236`, Wrap_hack). So the frozen
+form REFUSED the real object outright — measured and proven in `PicklesRecursion`
+`wrap_prev_challenges_refused` (`5c1423632`), which this change supersedes.
+
+The general check is `shapeOkRec`; `shapeOk` survives as its instantiation at a NON-RECURSIVE
+index (`index.prev_challenges = 0`), which is what the existing single-proof fixtures are. It is a
+parameter value now, not a wall. What `prev_challenges > 0` additionally OWES the verifier —
+the commitments in the phase-1 transcript, the challenge digest in the phase-2 transcript, and the
+b-poly evaluations at the head of the `combined_inner_product` poly list — is §2b/§7b below and is
+CHECKED, not waived. -/
+
+/-- **`shapeOkRec`** — every length/shape assert of `to_batch`'s preamble, with the REAL recursion
+check: `proof.prev_challenges.len() == verifier_index.prev_challenges`
+(`verifier.rs:810-813`, `VerifyError::IncorrectPrevChallengesLength`). -/
+def shapeOkRec (idxPrevLen prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat) : Bool :=
+  decide (prevLen = idxPrevLen)              -- verifier.rs:810-813 (was frozen at `= 0`)
   && decide (0 < publicLen)                  -- public input present (verifier.rs:816-820)
   && decide (wLen = COLUMNS)                 -- 15 witness commitments (verifier.rs:173-177)
   && decide (sLen = PERMUTS - 1)             -- 6 σ evaluations (verifier.rs:967-1181)
   && decide (coeffLen = COLUMNS)             -- 15 coefficient columns
   && decide (chunkSize = 1)                  -- v1: domain ≤ SRS (verifier.rs:823-830)
   && decide (tCommLen ≤ 7 * chunkSize)       -- t_comm length bound (verifier.rs:259-266)
+
+/-- **`shapeOk`** — `shapeOkRec` at a verifier index that declares NO previous challenges. Every
+single-proof fixture in this tree is that index; a Pickles Step/Wrap index is not. -/
+def shapeOk (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat) : Bool :=
+  shapeOkRec 0 prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+
+/-- **`shapeOk_is_shapeOkRec_at_zero`** — the specialization is definitional, so nothing that used
+the frozen decision changed meaning. -/
+theorem shapeOk_is_shapeOkRec_at_zero
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat) :
+    shapeOk prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+      = shapeOkRec 0 prevLen publicLen wLen sLen coeffLen tCommLen chunkSize := rfl
+
+/-- **`shapeOkRec_admits_pickles_counts`** — the general check ACCEPTS every `max_proofs_verified`
+Pickles can declare (`pickles_base/proofs_verified.ml:5-17`: 0, 1, 2), and still REFUSES a proof
+whose recursion count disagrees with its index — which is the actual attack the assert stops. -/
+theorem shapeOkRec_admits_pickles_counts :
+    shapeOkRec 0 0 3 COLUMNS (PERMUTS - 1) COLUMNS 7 1 = true
+    ∧ shapeOkRec 1 1 3 COLUMNS (PERMUTS - 1) COLUMNS 7 1 = true
+    ∧ shapeOkRec 2 2 3 COLUMNS (PERMUTS - 1) COLUMNS 7 1 = true
+    ∧ shapeOkRec 2 1 3 COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false
+    ∧ shapeOkRec 2 0 3 COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false
+    ∧ shapeOkRec 0 2 3 COLUMNS (PERMUTS - 1) COLUMNS 7 1 = false := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §2 — C3: the Fiat–Shamir transcript ORDER (`verifier.rs:126-405`; `plonk_sponge.rs:56-156`).
 
@@ -131,18 +172,29 @@ inductive Chal where
 inductive Step where
   | absorb (label : String)
   | squeeze (c : Chal) (endo : Bool)
-  deriving Repr
+  deriving Repr, DecidableEq
 
-/-- **`transcriptSchedule`** — the exact `ProverProof::oracles` order for v1 (no recursion, no
-lookups). Fq-sponge phase (`verifier.rs:161-276`): absorb index digest, public_comm, the 15 w
-commitments, squeeze β (raw), γ (raw); absorb z_comm, squeeze α (endo); absorb t_comm, squeeze ζ
-(endo). Fr-sponge phase (`verifier.rs:278-405`): absorb the fq-sponge digest, the public evals at
-[ζ, ζω], ft_eval1, then all evaluations in `absorb_evaluations` order (z, the 6 gate selectors,
-w[0..15], coefficients[0..15], s[0..6], each ζ then ζω), squeeze v (endo), u (endo). -/
-def transcriptSchedule : List Step :=
+/-- **`transcriptScheduleRec`** — the exact `ProverProof::oracles` order for a proof carrying
+`nPrev` previous recursion challenges (no lookups). Fq-sponge phase (`verifier.rs:159-276`):
+absorb the index digest, **the `nPrev` `RecursionChallenge` commitments** (`:165-168`), the public
+commitment, the 15 w commitments, squeeze β (raw), γ (raw); absorb z_comm, squeeze α′ (endo);
+absorb t_comm, squeeze ζ′ (endo). Fr-sponge phase (`verifier.rs:278-405`): absorb the fq-sponge
+digest, **the prev-challenge digest** (`:290-299` — a FRESH Fr-sponge over every carried `chals`,
+squeezed once), `ft_eval1` (`:381-382`), the public evals at [ζ, ζω] (`:391-392`), then all
+evaluations in `absorb_evaluations` order (z, the 6 gate selectors, w[0..15], coefficients[0..15],
+s[0..6], each ζ then ζω), squeeze v′ (endo), u′ (endo).
+
+⚑ Two corrections land with the recursion argument, both against `verifier.rs` at `f6d958dc05`:
+`ft_eval1` is absorbed **before** the public evaluations, not after (the previous listing had them
+swapped, citing the right two line ranges in the wrong order); and the prev-challenge digest is
+absorbed immediately after the fq digest — at `nPrev = 0` it is the digest of an EMPTY Fr-sponge,
+which is why the v1 listing could omit it and still describe the right sponge state, and it is
+`PastaPoseidon.Ref.hash []` exactly (`KimchiPoseidonGate` §6 pins that). -/
+def transcriptScheduleRec (nPrev : Nat) : List Step :=
   [ .absorb "index_digest"                                  -- verifier.rs:161-163
-  , .absorb "public_comm"                                   -- verifier.rs:170-171
-  ] ++ (List.range COLUMNS).map (fun i => Step.absorb s!"w_comm[{i}]")  -- verifier.rs:173-177
+  ] ++ (List.range nPrev).map (fun i => Step.absorb s!"prev_chal_comm[{i}]")  -- verifier.rs:165-168
+  ++ [ .absorb "public_comm"                                -- verifier.rs:170-171
+     ] ++ (List.range COLUMNS).map (fun i => Step.absorb s!"w_comm[{i}]")  -- verifier.rs:173-177
   ++ [ .squeeze .beta false                                 -- verifier.rs:232-233 (RAW)
      , .squeeze .gamma false                                -- verifier.rs:235-236 (RAW)
      , .absorb "z_comm"                                     -- verifier.rs:249-250
@@ -150,9 +202,10 @@ def transcriptSchedule : List Step :=
      , .absorb "t_comm"                                     -- verifier.rs:259-269
      , .squeeze .zeta true                                  -- verifier.rs:272-276 (endo)
      , .absorb "fq_sponge_digest"                           -- verifier.rs:278-287 (Fr-sponge start)
+     , .absorb "prev_challenge_digest"                      -- verifier.rs:290-299
+     , .absorb "ft_eval1"                                   -- verifier.rs:381-382
      , .absorb "public_eval[zeta]"                          -- verifier.rs:391-392
      , .absorb "public_eval[zeta_omega]"
-     , .absorb "ft_eval1"                                   -- verifier.rs:381-382
      , .absorb "eval:z"                                     -- plonk_sponge.rs:88-96 order …
      , .absorb "eval:generic_selector"
      , .absorb "eval:poseidon_selector"
@@ -167,6 +220,9 @@ def transcriptSchedule : List Step :=
   ++ [ .squeeze .v true                                     -- verifier.rs:395-399 (endo)
      , .squeeze .u true                                     -- verifier.rs:401-405 (endo)
      ]
+
+/-- **`transcriptSchedule`** — the schedule of a proof with no carried recursion challenges. -/
+def transcriptSchedule : List Step := transcriptScheduleRec 0
 
 /-- Extract the squeezes (challenge + endo flag) in order. -/
 def squeezes (l : List Step) : List (Chal × Bool) :=
@@ -185,6 +241,24 @@ theorem absorbs_before_beta :
     (transcriptSchedule.takeWhile (fun s => match s with | .squeeze _ _ => false | _ => true)).length
       = 2 + COLUMNS := by
   decide
+
+/-- **`squeeze_order_rec`** — carrying recursion challenges does NOT reorder or add a squeeze: the
+same six challenges in the same order with the same raw/endo flags. What changes is what the sponge
+has eaten before each one. -/
+theorem squeeze_order_rec :
+    squeezes (transcriptScheduleRec 2) = squeezes transcriptSchedule := by decide
+
+/-- **`absorbs_before_beta_rec`** — a Pickles-shaped proof (`prev_challenges = 2`,
+`side_loaded_verification_key.ml:236`) absorbs TWO more commitments before β than a
+non-recursive one, and they sit between the index digest and the public commitment. A verifier
+that skipped them would sample a different β from the same proof. -/
+theorem absorbs_before_beta_rec :
+    ((transcriptScheduleRec 2).takeWhile
+        (fun s => match s with | .squeeze _ _ => false | _ => true)).length = 2 + 2 + COLUMNS
+    ∧ (transcriptScheduleRec 2).getD 1 (.absorb "?") = Step.absorb "prev_chal_comm[0]"
+    ∧ (transcriptScheduleRec 2).getD 2 (.absorb "?") = Step.absorb "prev_chal_comm[1]"
+    ∧ (transcriptScheduleRec 2).getD 3 (.absorb "?") = Step.absorb "public_comm" := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §3 — C4: public-input evaluation at ζ and ζω (`verifier.rs:336-379`).
 
@@ -328,6 +402,108 @@ def combinedInnerProduct (polyscale evalscale : F) (evZeta evZetaOmega : List F)
   (List.range evZeta.length).foldl
     (fun acc k => acc + polyscale ^ k * (evZeta.getD k 0 + evalscale * evZetaOmega.getD k 0)) 0
 
+/-! ## §7b — P6: the `RecursionChallenge` FOLD into C8 (`verifier.rs:311-327`; `proof.rs:459-494`).
+
+This is the arithmetic content the `prevLen = 0` freeze was hiding. A proof carrying previous
+recursion challenges does not merely *declare* them: each `RecursionChallenge { chals, comm }`
+contributes a polynomial to the batched opening, and that polynomial is the **b-polynomial of its
+own accumulated IPA challenges** — `RecursionChallenge::evals` is literally `b_poly(chals, x)` at
+the two evaluation points (`proof.rs:472`, `commitment.rs:426-436`), which is K4c's `bEval`. Those
+evaluations are **PREPENDED** to the `combined_inner_product` poly list, before the public
+polynomial and before `ft` (`verifier.rs:496-500`: `es` is built from `polys` first, then
+`es.push(public_evals)`, then `es.push([ft_eval0, ft_eval1])`).
+
+So the fold is: `k` accumulated challenges ⇒ one b-poly ⇒ two evaluations ⇒ two leading entries of
+the ξ-weighted sum. Nothing is deferred and nothing is assumed: the entries are RECOMPUTED from
+the carried challenges and compared. `chunk_size = 1` is where `evals` returns the single
+`vec![full]` (`proof.rs:470-471`, `max_poly_size = 2^k`); the chunked branch is out of v1 scope
+exactly as it is for every other column. -/
+
+/-- `sqIter k x = x ^ (2^k)`, by `k` squarings — the ladder `b_poly` ACTUALLY computes
+(`commitment.rs:429-433`: `pow_twos[i] = pow_twos[i-1].square()`), and the only form a kernel can
+evaluate at `k = 16`: `Monoid.npow` is unary, so `x ^ 2^15` is 32768 recursion steps. TAIL-recursive
+on purpose — a naive `sqIter k x * sqIter k x` re-evaluates the base `2^k` times.
+
+(Moved here from `PicklesRecursion` §P0.1, which is downstream and had the only copy; the C8
+recursion fold below needs it, and two ladders that agree today are two that disagree later.) -/
+def sqIter {R : Type} [Monoid R] : Nat → R → R
+  | 0, x => x
+  | k + 1, x => sqIter k (x * x)
+
+/-- **`sqIter_eq`** — the ladder computes the power. -/
+theorem sqIter_eq {R : Type} [Monoid R] : ∀ (k : Nat) (x : R), sqIter k x = x ^ (2 ^ k)
+  | 0, x => by simp [sqIter]
+  | k + 1, x => by
+    show sqIter k (x * x) = x ^ (2 ^ (k + 1))
+    rw [sqIter_eq k (x * x), ← pow_two, ← pow_mul]
+    congr 1
+    rw [pow_succ]
+    omega
+
+/-- **`bEvalSq`** — K4c's `bEval` with the exponents taken up the squaring ladder, i.e. the exact
+shape of `b_poly` (`commitment.rs:426-436`). Tied to `bEval` by `bEvalSq_eq_bEval`, so this is a
+COST change, not a semantic one. -/
+def bEvalSq {R : Type} [CommRing R] (x : R) : List R → R
+  | [] => 1
+  | c :: rest => bEvalSq x rest * (1 + c * sqIter rest.length x)
+
+/-- **`bEvalSq_eq_bEval`** — the ladder form IS K4c's b-polynomial, for every point and every
+challenge list. So `sVec_eq_bPoly` (the identity tying `bEval` to the `2^k`-term deferred `⟨s,G⟩`
+coefficient vector) applies to the value the fold check below computes. -/
+theorem bEvalSq_eq_bEval {R : Type} [CommRing R] (x : R) :
+    ∀ cs : List R, bEvalSq x cs = bEval x cs
+  | [] => rfl
+  | c :: rest => by
+    show bEvalSq x rest * (1 + c * sqIter rest.length x)
+      = bEval x rest * (1 + c * x ^ (2 ^ rest.length))
+    rw [bEvalSq_eq_bEval x rest, sqIter_eq]
+
+/-- **`prevChalEvals`** — the C8 prefix contributed by `prev_challenges`: one b-poly evaluation per
+carried challenge set, at the point `x`. The value IS K4c's `bEval` (`bEvalSq_eq_bEval`), and
+`sVec_eq_bPoly` is the theorem that it IS the `2^k`-term deferred `⟨s,G⟩` obligation's polynomial —
+the same object, evaluated rather than materialized. -/
+def prevChalEvals {R : Type} [CommRing R] (x : R) (chalss : List (List R)) : List R :=
+  chalss.map (fun cs => bEvalSq x cs)
+
+/-- **`prevChalEvals_is_bEval`** — spelled out: the prefix is K4c's b-polynomial, not a lookalike. -/
+theorem prevChalEvals_is_bEval {R : Type} [CommRing R] (x : R) (chalss : List (List R)) :
+    prevChalEvals x chalss = chalss.map (fun cs => bEval x cs) := by
+  simp [prevChalEvals, bEvalSq_eq_bEval]
+
+/-- **`prevChalFoldOk`** — the C8 check that retires the freeze: the leading `chalss.length`
+entries of BOTH evaluation columns are exactly the b-poly evaluations of the carried challenges,
+at ζ and at ζω. A prover that supplies its own numbers there — the whole point of getting the
+recursion accepted — is refused. -/
+def prevChalFoldOk {R : Type} [CommRing R] [DecidableEq R]
+    (zeta zetaOmega : R) (chalss : List (List R)) (evZeta evZetaOmega : List R) : Bool :=
+  decide (evZeta.take chalss.length = prevChalEvals zeta chalss)
+  && decide (evZetaOmega.take chalss.length = prevChalEvals zetaOmega chalss)
+
+/-- **`prevChalFoldOk_is_bEval`** — and therefore the CHECK is about `bEval`, stated so the
+kernel-tractable form cannot drift away from the object K4c proved things about. -/
+theorem prevChalFoldOk_is_bEval {R : Type} [CommRing R] [DecidableEq R]
+    (zeta zetaOmega : R) (chalss : List (List R)) (evZeta evZetaOmega : List R) :
+    prevChalFoldOk zeta zetaOmega chalss evZeta evZetaOmega
+      = (decide (evZeta.take chalss.length = chalss.map (fun cs => bEval zeta cs))
+         && decide (evZetaOmega.take chalss.length = chalss.map (fun cs => bEval zetaOmega cs))) := by
+  simp [prevChalFoldOk, prevChalEvals_is_bEval]
+
+/-- **`prevChalFoldOk_empty`** — at `prev_challenges = 0` the fold check is VACUOUSLY true, for
+every claimed evaluation column. That is the honest statement of what the freeze bought: nothing.
+It is stated so the recursive instantiation cannot be mistaken for a strengthening of the
+non-recursive one. -/
+theorem prevChalFoldOk_empty {R : Type} [CommRing R] [DecidableEq R]
+    (zeta zetaOmega : R) (evZeta evZetaOmega : List R) :
+    prevChalFoldOk zeta zetaOmega [] evZeta evZetaOmega = true := by
+  simp [prevChalFoldOk, prevChalEvals]
+
+/-- **`prevChalEvals_is_bPoly`** — the fold's per-proof block IS K4c's b-polynomial, so the C8
+entries and the deferred `⟨s,G⟩` obligation of `PastaIPA` are two readings of ONE object, not two
+models that happen to agree. -/
+theorem prevChalEvals_is_bPoly {R : Type} [CommRing R] (x : R) (cs : List R) :
+    prevChalEvals x [cs] = [bEval x cs] := by
+  simp [prevChalEvals_is_bEval]
+
 /-! ## §8 — C9: the IPA opening — `b0` + the DEFERRED `⟨s,G⟩` obligation (`ipa.rs:301-502`; K4c).
 
 `b0 = Σⱼ evalscale^j·b(xⱼ)` over `[ζ, ζω]`, `b(X) = ∏(1 + uᵢ·X^{2^…})` (K4c's `bEval`). The
@@ -373,11 +549,19 @@ The verifier's single accept is `to_batch`'s shape asserts (C1) followed by `Ope
 `msm == 0` result over the batch assembled from C4/C5/C6/C7/C8 — the IPA/FRI soundness carrier.
 `deferralOk` = `ipaDeferralOk` (C9's `⟨s,G⟩` recorded, not brute-forced). -/
 
-/-- **`kimchiVerifyDecision`** — the composed single-proof Kimchi verify decision (v1). -/
+/-- **`kimchiVerifyDecisionRec`** — the composed Kimchi verify decision against a verifier index
+that declares `idxPrevLen` previous challenges. -/
+def kimchiVerifyDecisionRec (idxPrevLen prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat)
+    (transcriptOk ipaOk deferralOk : Bool) : Bool :=
+  shapeOkRec idxPrevLen prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+  && transcriptOk && ipaOk && deferralOk
+
+/-- **`kimchiVerifyDecision`** — the composed single-proof Kimchi verify decision, at a
+non-recursive index. -/
 def kimchiVerifyDecision (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize : Nat)
     (transcriptOk ipaOk deferralOk : Bool) : Bool :=
-  shapeOk prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
-  && transcriptOk && ipaOk && deferralOk
+  kimchiVerifyDecisionRec 0 prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+    transcriptOk ipaOk deferralOk
 
 /-- **`kimchiVerifyDecision_refines`** — the decision IS the conjunction of the per-check
 sub-decisions (`rfl`), the translation-validation shape of `ethVerifyDecision_refines`. -/
@@ -466,6 +650,55 @@ def kimchiVerifyDecisionField {R : Type} [CommRing R] [DecidableEq R]
   && decide (((zeta - omega ^ (n - 3)) * (zeta - 1)) * denomInv = 1)                        -- witnessed inverse
   && decide (ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
        zZeta zZetaOmega pZeta linConstTerm denomInv = ftEval0Claimed)                       -- C5
+
+/-- **`kimchiVerifyDecisionFieldRec`** — the P6 decision: the field decision above against a
+verifier index declaring `idxPrevLen` previous challenges, with the `RecursionChallenge` fold
+CHECKED. Two things are added and neither is optional:
+
+* the shape assert becomes the real `prev_challenges.len() == index.prev_challenges`
+  (`shapeOkRec`), so `prev_challenges = 2` is a value the decision can accept; and
+* `prevChalFoldOk` — the leading `idxPrevLen` entries of the two C8 evaluation columns must BE the
+  b-poly evaluations of the carried challenges at ζ and ζω, recomputed here.
+
+`chalss` is the carried `[[chals]]`. At `chalss = []` the fold check is vacuous and this IS
+`kimchiVerifyDecisionField` (`kimchiVerifyDecisionFieldRec_at_zero`), so nothing that ran before
+runs differently; what is new is that a nonzero count is no longer a refusal. -/
+def kimchiVerifyDecisionFieldRec {R : Type} [CommRing R] [DecidableEq R]
+    (idxPrevLen prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta zetaOmega beta gamma alpha0 alpha1 alpha2 : R) (chalss : List (List R))
+    (w s shift : List R) (zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed : R)
+    (transcriptOk ipaOk deferralOk : Bool) : Bool :=
+  kimchiVerifyDecisionRec idxPrevLen prevLen publicLen wLen sLen coeffLen tCommLen chunkSize
+      transcriptOk ipaOk deferralOk
+  && decide (chalss.length = idxPrevLen)                                                    -- P6 count
+  && prevChalFoldOk zeta zetaOmega chalss evZeta evZetaOmega                                 -- P6 fold
+  && decide (cipR polyscale evalscale evZeta evZetaOmega = cipClaimed)                       -- C8
+  && decide (((zeta - omega ^ (n - 3)) * (zeta - 1)) * denomInv = 1)                          -- witnessed inverse
+  && decide (ftEval0R n omega zeta beta gamma alpha0 alpha1 alpha2 w s shift
+       zZeta zZetaOmega pZeta linConstTerm denomInv = ftEval0Claimed)                         -- C5
+
+/-- **`kimchiVerifyDecisionFieldRec_at_zero`** — with no carried challenges the P6 decision IS the
+existing field decision. The recursion machinery is an EXTENSION, not a replacement, and this is
+the theorem that says so rather than a comment claiming it. -/
+theorem kimchiVerifyDecisionFieldRec_at_zero {R : Type} [CommRing R] [DecidableEq R]
+    (prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n : Nat)
+    (polyscale evalscale : R) (evZeta evZetaOmega : List R) (cipClaimed : R)
+    (omega zeta zetaOmega beta gamma alpha0 alpha1 alpha2 : R)
+    (w s shift : List R) (zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed : R)
+    (transcriptOk ipaOk deferralOk : Bool) :
+    kimchiVerifyDecisionFieldRec 0 prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+        polyscale evalscale evZeta evZetaOmega cipClaimed
+        omega zeta zetaOmega beta gamma alpha0 alpha1 alpha2 []
+        w s shift zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed
+        transcriptOk ipaOk deferralOk
+      = kimchiVerifyDecisionField prevLen publicLen wLen sLen coeffLen tCommLen chunkSize n
+        polyscale evalscale evZeta evZetaOmega cipClaimed
+        omega zeta beta gamma alpha0 alpha1 alpha2
+        w s shift zZeta zZetaOmega pZeta linConstTerm denomInv ftEval0Claimed
+        transcriptOk ipaOk deferralOk := by
+  simp [kimchiVerifyDecisionFieldRec, kimchiVerifyDecisionField, kimchiVerifyDecision,
+    prevChalFoldOk_empty]
 
 /-- **`kimchiVerifyDecisionField_refines`** — the composed field decision IS the shape/carrier
 decision conjoined with the three field-arithmetic checks (`rfl`): the field checks are ADDED to
@@ -1141,7 +1374,12 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
 #guard decide (squeezes transcriptSchedule =
   [(Chal.beta, false), (Chal.gamma, false), (Chal.alpha, true),
    (Chal.zeta, true), (Chal.v, true), (Chal.u, true)])
-#guard transcriptSchedule.length == 2 + COLUMNS + 6 + 4 + 7 + COLUMNS + COLUMNS + (PERMUTS - 1) + 2
+-- 73 steps, up ONE from the pre-P6 count: `prev_challenge_digest` (`verifier.rs:290-299`) was
+-- missing from the listing. At `nPrev = 0` it is the digest of an empty Fr-sponge, so its absence
+-- changed no VALUE — only the claim that this list is the schedule.
+#guard transcriptSchedule.length == 2 + COLUMNS + 6 + 5 + 7 + COLUMNS + COLUMNS + (PERMUTS - 1) + 2
+-- and each carried recursion challenge adds exactly one commitment absorb, before public_comm
+#guard (transcriptScheduleRec 2).length == transcriptSchedule.length + 2
 -- C3 sponge realization tie: the K3 transcript sponge runs on a transcript-shaped absorb and
 -- squeezes a determinate (nonzero) Fp challenge — the phase-1 Fq-sponge is K3's `Ref.hash`.
 #guard decide (Dregg2.Circuit.Emit.PastaPoseidon.Ref.hash [1, 2, 3] ≠ 0)
@@ -1208,8 +1446,14 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
      and C7 `ftComm`/`permScalar` (commitment/MSM-valued, the K2 carrier — not field-value checks).
      The batch assembly (`assembleBatch`: the ordered eval list feeding `cip`, the `Evaluation`
      pairing `verifier.rs:967-1181`) is the plumbing the carriers consume.
-  6. **Out of v1 scope:** Pickles recursion (the `sg` split's terminal discharge), proof BATCHING
-     (`prevLen = 0`, single proof), and lookups/Plookup (C10, `lookup_index = None`).
+  6. **Out of v1 scope:** the `sg` split's terminal discharge (P10), multi-proof BATCHING
+     (`to_batch` is run on ONE proof here), and lookups/Plookup (C10, `lookup_index = None`).
+     **`prev_challenges` is NO LONGER on this list** (2026-07-28): `shapeOkRec` +
+     `prevChalFoldOk` + `transcriptScheduleRec` accept and CHECK a recursive index, and
+     `KimchiRecursionGate` runs the whole thing on a real `prev_challenges = 2` proof that the
+     o1-labs verifier accepts. What is still out of scope on that leg: the accumulator
+     COMMITMENTS are checked only as transcript inputs — that they equal `⟨b_poly_coeffs, G⟩` is
+     `PicklesRecursion` P1's `msm == 0`, i.e. the inherited P10 floor.
 
 CONTINUATION (K5+): discharge C6's baked token streams (emit them from Lean per gate), instantiate
 the Fr-sponge, and thread the batch assembly — then the deferral is the ONLY remaining carrier
