@@ -252,6 +252,7 @@ never-run fhegg-fhe test tfhe_wgpu_pbs_extract_keyswitch   # `tfhe-integer`, dit
 never-run fhegg-fhe test party_mpc_certified_preprocessing   # `verified-pq-runtime-tests` links dregg-lean-ffi for the Lean-verified ML-DSA cores, and re-execs itself as a child process.
 never-run fhegg-fhe test party_mpc_preprocessing_use   # `verified-pq-runtime-tests`, ditto.
 never-run fhegg-fhe test distributed_threshold_committee   # `verified-pq-runtime-tests`; spawns THREE party processes + a relying party via CARGO_BIN_EXE.
+never-run fhegg-fhe test distributed_netting_processes   # `verified-pq-runtime-tests`, ditto — the separate-OS-process distributed netting demonstrator (added 2026-07-26 in f84cee425, under the same already-dark gate as the three rows above it; it was never runnable, not newly un-run).
 never-run deos-hermes test hermes_runs_js   # `js-agent` pulls deos-js (real SpiderMonkey/mozjs) — its own manifest calls it "the mozjs elephant".
 never-run deos-hermes test hermes_authors_cards   # `js-agent`, ditto.
 never-run deos-hermes test hermes_authors_card_via_run_js   # `js-agent`, ditto.
@@ -296,3 +297,49 @@ never-run attested-dm test dm_model_provenance   # `tlsn-live` runs the MPC-TLS 
 never-run dregg-deco-prove test tlsn_live_roundtrip   # `tlsn-live`, ditto — local 2PC roundtrip.
 never-run dungeon-on-dregg test bedrock_brain_live   # `tlsn-live`, ditto.
 never-run deos-hermes test narrator_model_provenance_live   # `zk-live` is an optional dep on the `dregg-zkoracle-live` CRATE (it was a forward to `dregg-zkoracle-prove/tlsn-live` until the 2026-07-27 split); the LIVE-Anthropic session is separately named as an operational remainder.
+
+# ── DEFAULT-FEATURE FALLOUT (14): these RAN on every push until 2026-07-27. ───────────
+# ⚑ THIS HEADING IS A COVERAGE REGRESSION, NOT A STANDING COST, and it is the only one
+# here that used to be green. `ba3d84301` changed `starbridge-v2`'s default from
+# `["desktop"]` to `["embedded-executor"]` — correctly, and for a well-measured reason:
+# `starbridge-v2` is a root workspace member, cargo UNIFIES features across a
+# `--workspace` resolve, and its ten-switch default was silently rewriting 60 other
+# packages (153 leave the resolve entirely) and overruling nine consumers' explicit
+# `default-features = false`. That commit is right and should stand.
+#
+# What it did NOT do is notice these. Its own body states "`.github/dark-targets.txt` is
+# unaffected: it is empty, and a `required-features` target that is simply not activated
+# was never one of its rows." Both halves are wrong: this file holds 56 `never-run` rows,
+# and "a target whose gate no invocation activates" is EXACTLY this sweep's subject — it
+# is the third sweep, added 2026-07-26 in 73e3b9b0d, one day before. So the twelve
+# starbridge-v2 file-gated tests and the two servo-render `libservo` tests went from
+# running on every `cargo test --workspace` to running nowhere, and the commit that did
+# it recorded the compile-time saving and not the falsifiers.
+#
+# WHAT ARMS THEM TODAY, AND WHY IT IS NOT ENOUGH: `starbridge-v2-installers.yml`
+# (`push: branches: [main]`, no paths filter) gained
+# `cargo test --release --features desktop --no-run`. That is a REAL and deliberate
+# improvement over the accidental default — rustc reads every line and a compile error
+# fails the push — but `--no-run` builds the binaries and executes none of them, so
+# every assertion inside is still a falsifier that cannot fire. The gate is right to
+# call that never-run.
+#
+# ⚑ OWNER: ember. The open decision is whether the cockpit/desktop suite is worth
+# EXECUTING per-push (gpui + servo + stylo + webrender is the elephant that job already
+# carries once, so the marginal cost is the run, not the build) or whether these belong
+# on a nightly. Dropping `--no-run` from that one step is the whole arming change; it is
+# not made here because it is a CI-budget call, not a wiring omission.
+never-run starbridge-v2 test branch_stitch_settlement_sound_multiplayer   # file-gated on `dev-surfaces`; ran per-push until ba3d84301. Compiled (not run) by starbridge-v2-installers.yml `--features desktop --no-run`.
+never-run starbridge-v2 test card_surface_grafts_live   # `card-pane` + `dev-surfaces`, ditto.
+never-run starbridge-v2 test deos_desktop_conflict_is_a_state   # `gpui-ui`, ditto.
+never-run starbridge-v2 test deos_desktop_editor_types_to_heap   # `gpui-ui`, ditto.
+never-run starbridge-v2 test deos_desktop_explorer_reflects_patches   # `gpui-ui`, ditto.
+never-run starbridge-v2 test deos_desktop_systemui_cap_chrome   # `android-systemui` + `gpui-ui`, ditto.
+never-run starbridge-v2 test deos_desktop_world_explorer_and_spotter   # `gpui-ui`, ditto.
+never-run starbridge-v2 test inspector_card_is_the_inspect_surface   # `card-pane` + `dev-surfaces`, ditto.
+never-run starbridge-v2 test membrane_surface_grafts_live   # `dev-surfaces` + `render-capture`, ditto.
+never-run starbridge-v2 test mode_cards_are_the_surfaces   # `card-pane` + `dev-surfaces`, ditto.
+never-run starbridge-v2 test stitch_pair_settlement_sound_production   # `dev-surfaces`, ditto.
+never-run starbridge-v2 test two_instance_multiplayer_session   # `dev-surfaces`, ditto.
+never-run servo-render test http_render_to_png   # whole-file `#![cfg(feature = "libservo")]`. `starbridge-v2` is the ONLY enabler of `libservo` in the tree (via `desktop` -> `web-shell` -> `servo-render/libservo`), so this test — which constructs a real `servo::Servo` against a one-shot `OnceCell` — existed ONLY in the whole-workspace resolve and vanished with the default. ba3d84301's own unit-graph rows measure exactly this.
+never-run servo-render test https_render_to_png   # `libservo`, ditto — the TLS half of the same pair.
