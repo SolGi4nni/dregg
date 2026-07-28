@@ -280,17 +280,32 @@ mod tests {
     use super::*;
     use crate::ordering::OrderingConfig;
 
+    use crate::test_committee;
+
+    #[allow(dead_code)]
     fn signing_for(id: u8) -> ed25519_dalek::SigningKey {
-        ed25519_dalek::SigningKey::from_bytes(&[id; 32])
+        test_committee::signing_key(id)
     }
 
+    /// The ed25519 public half only. ⚠ Deliberately NOT `test_committee::signer(id)
+    /// .ed25519()`: that would derive the member's ML-DSA key, and most callers here
+    /// want a `NodeKey` for a group roster and never sign as `id`. Routing this
+    /// through the signer measurably regressed tests that had no keygen at all.
     fn make_key(id: u8) -> NodeKey {
-        signing_for(id).verifying_key().to_bytes()
+        test_committee::signing_key(id).verifying_key().to_bytes()
     }
 
     /// A *signed* block authored by `creator` (verified `insert` accepts it).
+    ///
+    /// Signed through the shared test committee — byte-identical to
+    /// `Block::new_signed(&signing_for(creator), ..)`, without its keygen.
     fn make_block(creator: u8, seq: u64, preds: Vec<BlockId>, payload: &[u8]) -> Block {
-        Block::new_signed(&signing_for(creator), seq, preds, payload.to_vec())
+        Block::new_signed_by(
+            test_committee::signer(creator),
+            seq,
+            preds,
+            payload.to_vec(),
+        )
     }
 
     /// A blocklace with the deterministic test creators (`signing_for(0..=63)`)
@@ -299,7 +314,8 @@ mod tests {
     fn test_lace() -> Blocklace {
         let mut lace = Blocklace::new();
         for c in 0u8..=63 {
-            lace.enroll_pq(make_key(c), Block::pq_public_key(&signing_for(c)));
+            let signer = test_committee::signer(c);
+            lace.enroll_pq(signer.ed25519(), signer.pq_public_key().clone());
         }
         lace
     }

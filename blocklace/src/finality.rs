@@ -654,34 +654,34 @@ impl Block {
         postcard::from_bytes(bytes).ok()
     }
 
-    /// Create and HYBRID-sign a new block (ed25519 ∧ ML-DSA-65).
+    /// Create and HYBRID-sign a new block (ed25519 ∧ ML-DSA-65) with an identity
+    /// whose ML-DSA key was derived ONCE, at the signer's construction.
     ///
     /// The ed25519 half signs the compact `signing_content`; the post-quantum
     /// half signs the canonical `id()` (which already commits to the ed25519
-    /// signature) with a key DERIVED from the SAME ed25519 seed
-    /// (`signing_key.to_bytes()`, [`crate::pq::MlDsaSigningKey::from_seed`]), so
-    /// the creator never manages a separate PQ key and the enrolled PQ public
-    /// key is a deterministic function of the ed25519 identity. On a transient
-    /// OS-entropy failure during hedged ML-DSA signing the PQ half is left empty
-    /// — such a block fails [`Block::verify_hybrid`] closed rather than passing
-    /// half-signed.
-    pub fn new(
-        signing_key: &SigningKey,
+    /// signature) with the signer's held ML-DSA key — derived from the SAME
+    /// ed25519 seed, so the creator never manages a separate PQ key and the
+    /// enrolled PQ public key is a deterministic function of the ed25519
+    /// identity. On a transient OS-entropy failure during hedged ML-DSA signing
+    /// the PQ half is left empty — such a block fails [`Block::verify_hybrid`]
+    /// closed rather than passing half-signed.
+    ///
+    /// **This is the authoring path.** [`Block::new`] is the same code with a
+    /// one-shot signer in front of it; every byte of the result is identical,
+    /// which is what `signer_path_is_byte_identical_to_the_one_shot` pins.
+    pub fn new_signed_by(
+        signer: &crate::signer::HybridBlockSigner,
         seq: u64,
         payload: Payload,
         predecessors: Vec<BlockId>,
     ) -> Self {
-        let ed25519: [u8; 32] = signing_key.verifying_key().to_bytes();
-        // Derive the ML-DSA key from the SAME ed25519 seed, and bind BOTH public
-        // keys into the HYBRID identity `creator = H(ed25519 ‖ ml_dsa)`.
-        let (pq_pk, pq_sk) = crate::pq::MlDsaSigningKey::from_seed(&signing_key.to_bytes());
-        let creator = dregg_types::hybrid_id_commitment(&ed25519, &pq_pk.0);
+        let creator = signer.creator();
         // The ed25519 half signs the content, which commits to the hybrid id.
         let content = Self::signing_content(&creator, seq, &payload, &predecessors);
-        let signature = signing_key.sign(&content);
+        let signature = signer.classical().sign(&content);
         let mut block = Block {
             creator,
-            ed25519,
+            ed25519: signer.ed25519(),
             seq,
             payload,
             predecessors,
@@ -691,8 +691,29 @@ impl Block {
         // POST-QUANTUM half: sign the SAME canonical bytes the verifier pins
         // (`id()`) with the from-seed ML-DSA key.
         let id = block.id();
-        block.pq_signature = pq_sk.sign(&id.0).unwrap_or_default();
+        block.pq_signature = signer.sign_pq(&id.0).unwrap_or_default();
         block
+    }
+
+    /// Create and HYBRID-sign a new block from a BARE ed25519 signing key.
+    ///
+    /// ⚠ A ONE-SHOT: it builds a [`crate::signer::HybridBlockSigner`], uses it
+    /// once and drops it, so it pays a **full ML-DSA-65 keygen per block**. Any
+    /// caller that authors more than one block for one identity — every node
+    /// does — should hold a signer and call [`Block::new_signed_by`], which is
+    /// byte-identical. [`Blocklace`] already does.
+    pub fn new(
+        signing_key: &SigningKey,
+        seq: u64,
+        payload: Payload,
+        predecessors: Vec<BlockId>,
+    ) -> Self {
+        Self::new_signed_by(
+            &crate::signer::HybridBlockSigner::new(signing_key.clone()),
+            seq,
+            payload,
+            predecessors,
+        )
     }
 
     /// The HYBRID identity for a creator whose ed25519 signing key is
@@ -700,10 +721,12 @@ impl Block {
     /// value [`Block::new`] stamps as `creator`, the key the roster / tips /
     /// votes / gossip `NodeId` are all keyed by. Equal to
     /// [`Block::hybrid_id_from_parts`] on the two derived public keys.
+    ///
+    /// ⚠ A ONE-SHOT — it pays a full ML-DSA-65 keygen. A holder of a
+    /// [`crate::signer::HybridBlockSigner`] reads the same value off
+    /// [`crate::signer::HybridBlockSigner::creator`] for free.
     pub fn hybrid_id(signing_key: &SigningKey) -> [u8; 32] {
-        let ed25519 = signing_key.verifying_key().to_bytes();
-        let pq_pk = crate::pq::public_from_ed25519_seed(&signing_key.to_bytes());
-        dregg_types::hybrid_id_commitment(&ed25519, &pq_pk.0)
+        crate::signer::HybridBlockSigner::new(signing_key.clone()).creator()
     }
 
     /// The HYBRID identity from an ed25519 verify key and an ML-DSA public key.
@@ -721,8 +744,19 @@ impl Block {
     /// key is `signing_key` — the roster entry a verifier PINS this creator's
     /// consensus blocks against ([`Blocklace::enroll_pq`]). Equal to
     /// [`crate::pq::public_from_ed25519_seed`] on the key's seed.
+    /// ⚠ A ONE-SHOT — it pays a full ML-DSA-65 keygen. A holder of a
+    /// [`crate::signer::HybridBlockSigner`] reads the same key off
+    /// [`crate::signer::HybridBlockSigner::pq_public_key`] for free, and a lace
+    /// reads its own off [`Blocklace::self_pq_public_key`].
+    ///
+    /// Routed through the signer rather than calling
+    /// `crate::pq::public_from_ed25519_seed` directly, so this crate has exactly ONE
+    /// place a block-creator ML-DSA key is derived. When it had two, a mutation of
+    /// one was only half-caught by the tests.
     pub fn pq_public_key(signing_key: &SigningKey) -> crate::pq::MlDsaPublicKey {
-        crate::pq::public_from_ed25519_seed(&signing_key.to_bytes())
+        crate::signer::HybridBlockSigner::new(signing_key.clone())
+            .pq_public_key()
+            .clone()
     }
 
     /// Whether this block carries BOTH halves of a (syntactically) non-zero
@@ -869,8 +903,19 @@ pub struct Blocklace {
     tips: HashMap<[u8; 32], BlockId>,
     /// Detected equivocators.
     equivocators: HashSet<[u8; 32]>,
-    /// Our own signing key.
-    self_key: SigningKey,
+    /// Our own HYBRID signing identity: the ed25519 key AND the ML-DSA-65 key its
+    /// seed derives, derived ONCE here rather than per authored block.
+    ///
+    /// This field used to be a bare `self_key: SigningKey`, and authoring one block
+    /// cost TWO full ML-DSA-65 keygens for this one unchanging identity — one in
+    /// `Block::new(&self.self_key, ..)` and one in `self_creator()` →
+    /// `Block::hybrid_id(&self.self_key)` to key the tips map. A node authored a
+    /// block per round and paid both every time.
+    ///
+    /// The lace OWNS the seed for its whole life, so the derived key belongs here.
+    /// `Clone` stays cheap (the PQ halves are behind `Arc`s), which the node's
+    /// `poll_finalized_blocks` snapshot depends on.
+    signer: crate::signer::HybridBlockSigner,
     /// Our own sequence counter.
     self_seq: u64,
     /// Finality tracking.
@@ -896,12 +941,26 @@ pub struct Blocklace {
 
 impl Blocklace {
     /// Create a new blocklace with the given signing key and quorum threshold.
+    ///
+    /// Derives this identity's ML-DSA-65 half ONCE, here — every block the lace
+    /// authors afterwards, and every `self_creator()`, is keygen-free.
     pub fn new(self_key: SigningKey, quorum_threshold: usize) -> Self {
+        Self::with_signer(
+            crate::signer::HybridBlockSigner::new(self_key),
+            quorum_threshold,
+        )
+    }
+
+    /// Create a new blocklace from an ALREADY-DERIVED hybrid identity — for a
+    /// caller (a node holding its own identity, a test committee) that already has
+    /// a [`crate::signer::HybridBlockSigner`] and should not pay a second keygen to
+    /// build a lace with it.
+    pub fn with_signer(signer: crate::signer::HybridBlockSigner, quorum_threshold: usize) -> Self {
         Blocklace {
             blocks: HashMap::new(),
             tips: HashMap::new(),
             equivocators: HashSet::new(),
-            self_key,
+            signer,
             self_seq: 0,
             finality: FinalityTracker::new(quorum_threshold),
             pq_roster: HashMap::new(),
@@ -1003,14 +1062,30 @@ impl Blocklace {
     /// Our own HYBRID creator id (`H(ed25519 ‖ ml_dsa)`) — the same value
     /// [`Block::new`] stamps on the blocks we author, so `tips`, cohort counting
     /// and round planning key our own blocks consistently.
+    ///
+    /// A field read. It used to be `Block::hybrid_id(&self.self_key)`, i.e. a full
+    /// ML-DSA-65 keygen, and `try_add_block_with_predecessors` calls it on every
+    /// authored block.
     pub fn self_creator(&self) -> [u8; 32] {
-        Block::hybrid_id(&self.self_key)
+        self.signer.creator()
     }
 
     /// Our own Ed25519 verify key (the CARRIED classical half). Distinct from
     /// [`Self::self_creator`], which is now the hybrid identity.
     pub fn self_ed25519(&self) -> [u8; 32] {
-        self.self_key.verifying_key().to_bytes()
+        self.signer.ed25519()
+    }
+
+    /// Our own ENROLLABLE ML-DSA-65 public key — the roster entry peers PIN this
+    /// node's blocks against. Free; no derivation.
+    pub fn self_pq_public_key(&self) -> &crate::pq::MlDsaPublicKey {
+        self.signer.pq_public_key()
+    }
+
+    /// Our own HYBRID signing identity, for a caller that needs to author through
+    /// it directly (or to build a second lace without re-deriving).
+    pub fn signer(&self) -> &crate::signer::HybridBlockSigner {
+        &self.signer
     }
 
     /// Number of blocks in the local view.
@@ -1064,7 +1139,7 @@ impl Blocklace {
 
     /// Get a reference to the signing key.
     pub fn signing_key(&self) -> &SigningKey {
-        &self.self_key
+        self.signer.classical()
     }
 
     // ─── Block Creation ──────────────────────────────────────────────────
@@ -1097,7 +1172,10 @@ impl Blocklace {
             .self_seq
             .checked_add(1)
             .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
-        let block = Block::new(&self.self_key, next_seq, payload, predecessors);
+        // Authored through the HELD identity: no ML-DSA keygen. Byte-identical to
+        // `Block::new(self.signing_key(), ..)` — the one-shot builds this same
+        // signer and calls this same `new_signed_by`.
+        let block = Block::new_signed_by(&self.signer, next_seq, payload, predecessors);
         let frontier = self.validated_consensus_time_frontier_v1(&block)?;
         self.self_seq = next_seq;
         let id = block.id();
@@ -2151,6 +2229,386 @@ fn topological_sort(
     }
 
     Ok(sorted)
+}
+
+// ─── The ML-DSA memo: byte-identity, distinctness, and liveness ───────────────
+//
+// `Block::new` used to run a full ML-DSA-65 keygen per block, and `Blocklace`
+// authored through it and then keyed its tips map with `self_creator()`, which ran
+// a SECOND one. Both now read a key derived once, when the `Blocklace` was built.
+//
+// `creator = H(ed25519 ‖ ml_dsa_pk)` is a CONSENSUS-VISIBLE label. These tests exist
+// to make "nothing moved" checkable rather than asserted:
+//
+//   * byte-identity — the memoised path and the one-shot path agree on every field,
+//     and the HYBRID CREATOR of the deterministic test keys matches golden vectors
+//     captured from the tree BEFORE this change;
+//   * distinctness (the other pole) — a memo that served one identity to everybody
+//     would be catastrophic AND would still look fast, so different seeds must give
+//     different keys, different creators, and signatures that verify under their own
+//     enrolled key and NO other's;
+//   * liveness — proven by `Arc::ptr_eq`, never by a stopwatch, so it cannot flake
+//     on a loaded box and goes red if the memo is removed.
+#[cfg(test)]
+mod signer_memo_tests {
+    use super::*;
+    use crate::signer::HybridBlockSigner;
+    use crate::test_committee;
+
+    /// GOLDEN VECTORS, CAPTURED FROM THE PRE-MEMO TREE. For each deterministic test
+    /// key `[c; 32]`: its HYBRID creator id `H(ed25519 ‖ ml_dsa_pk)`, and
+    /// `blake3(enrolled ML-DSA-65 public key)`.
+    ///
+    /// Produced by running `Block::hybrid_id` / `Block::pq_public_key` on the tree at
+    /// `47d833c03` — i.e. BEFORE the ML-DSA key became a held field — on persvati's
+    /// `crewbraid` lane with the Lean-verified keygen core installed.
+    ///
+    /// This is the assertion that matters most. Every other check in this module
+    /// compares the new code against ITSELF; only these compare it against the OLD
+    /// code. `creator` is a consensus-visible label and the roster PINS the ML-DSA
+    /// key, so a change that moved one byte of either would be a flag day rather
+    /// than an optimisation — and it would redden HERE.
+    ///
+    /// The second column is what makes this sharp: the creator is a HASH of both
+    /// public halves, so pinning it alone could in principle be satisfied by a
+    /// different pair. Pinning the ML-DSA public key too fixes the DERIVATION, not
+    /// just the commitment.
+    const GOLDEN: &[(u8, &str, &str)] = &[
+        (
+            0,
+            "0c29ef765c5f8a24ee93d2ff353d26a7f26cc5e81b097094a5d3c535d19a7e86",
+            "578afd7e6e199ea6f7541b953c29c94250fed8340ce751694fcd4a011ecc859c",
+        ),
+        (
+            1,
+            "5ec846c89771d8c85d1735eebc35a47f22c87a732173089aa31fe1dd534f3012",
+            "177c577d91cf59f1008512a5960e280ffc1889d74e10966fa6d6b9d12fbecc3c",
+        ),
+        (
+            3,
+            "ff33ae934f9bef2e1ce5d89f8a2b8ef435652e8647da3f4a606c1b9d9eabe9b8",
+            "3b60f03fbc3c4e40427bc377a43ab012a1f4c130ba882fe4bccf8f01dc01f0bc",
+        ),
+        (
+            7,
+            "425153f6078182fc097ad4e2a4aeeffde4c65983fd592fbd492abd292e5d6649",
+            "b470b86b94891081659c41ca43129ca4fd136cd247ecbd0b9d3f037f5215fedd",
+        ),
+        (
+            11,
+            "9e2a92c6d310df6b1e4d6d5a2aa7d337b2446875f160c37b1fbb47df2597c89f",
+            "a61af21aa0083eb6fcae176022dbd253647cca70309119bd31f31fd09f21c24d",
+        ),
+        (
+            32,
+            "202e348c0a103e71c57f989e91e0c8aadd675549c71f9565ad6413264a1e0ced",
+            "8e04abbb806697e7ff855df1bce75a4776dbe210f62368bd97e194394c5a1051",
+        ),
+        (
+            64,
+            "13557576dfcd16a2483575eaeb6729b751791d22c8d85c863e493cea07a6a360",
+            "12763083a706747295661e9f46d8d87ab0e93492dffd7148d311701f409e90fb",
+        ),
+        (
+            200,
+            "b5922b868bf892af7f5a013b3ae0300a0862a806c8fb59ae3f26d3ed3907bf72",
+            "46258b26d1b5b7c74e6adacdc64a6899a52631a7e70ff4ed2ddd56ef0593a71d",
+        ),
+    ];
+
+    /// Decode a 32-byte golden hex value.
+    fn hex32(s: &str) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("golden vector is hex");
+        }
+        out
+    }
+
+    /// ⚑ THE BYTE-IDENTITY PROOF, ACROSS THE CHANGE. The hybrid `creator` and the
+    /// enrolled ML-DSA public key a test seed produces today are the ones it
+    /// produced before the ML-DSA key was memoised — through the one-shot entry
+    /// point AND through the held signer.
+    #[test]
+    fn hybrid_identity_matches_the_pre_memo_golden_vectors() {
+        for (c, creator_hex, pq_hex) in GOLDEN {
+            let expected_creator = hex32(creator_hex);
+            let expected_pq = hex32(pq_hex);
+            let key = test_committee::signing_key(*c);
+
+            assert_eq!(
+                Block::hybrid_id(&key),
+                expected_creator,
+                "the HYBRID creator id of test key [{c}; 32] MOVED. `creator` is a \
+                 consensus-visible label — a change here is a flag day, not an optimisation."
+            );
+            assert_eq!(
+                *blake3::hash(&Block::pq_public_key(&key).0).as_bytes(),
+                expected_pq,
+                "the ENROLLED ML-DSA-65 public key derived from test key [{c}; 32] MOVED — \
+                 every roster entry pinning this creator would be invalidated"
+            );
+
+            let signer = test_committee::signer(*c);
+            assert_eq!(
+                signer.creator(),
+                expected_creator,
+                "the HELD signer for test key [{c}; 32] reports a different creator than the \
+                 pre-memo derivation"
+            );
+            assert_eq!(
+                *blake3::hash(&signer.pq_public_key().0).as_bytes(),
+                expected_pq,
+                "the HELD signer for test key [{c}; 32] enrolls a different ML-DSA public key \
+                 than the pre-memo derivation"
+            );
+        }
+    }
+
+    /// ⚑ THE BYTE-IDENTITY PROOF, ACROSS A REAL LACE. A lace authoring through its
+    /// HELD identity produces, block for block, exactly the bytes the one-shot
+    /// `Block::new` produces from the same bare key.
+    ///
+    /// Compares every field, including the ed25519 signature and the block `id()`,
+    /// over a multi-block strand with real predecessors. The ML-DSA half is compared
+    /// by VERIFICATION rather than by bytes, because the crate-fallback signer is
+    /// hedged (randomised) — two honest signatures over the same message differ, and
+    /// asserting they match would be asserting something FIPS 204 does not promise.
+    #[test]
+    fn lace_authoring_is_byte_identical_to_the_one_shot() {
+        let key = test_committee::signing_key(11);
+        let enrolled = Block::pq_public_key(&key);
+
+        let mut lace = Blocklace::new(key.clone(), 1);
+        let mut preds: Vec<BlockId> = Vec::new();
+        for seq in 1..=4u64 {
+            let payload = Payload::Data(vec![seq as u8; 3]);
+
+            // The memoised path: authored by the lace through its held identity.
+            let memoised = lace
+                .try_add_block_with_predecessors(payload.clone(), preds.clone())
+                .expect("local authoring");
+            // The one-shot path: a fresh ML-DSA keygen from the same bare seed.
+            let one_shot = Block::new(&key, seq, payload, preds.clone());
+
+            assert_eq!(
+                memoised.creator, one_shot.creator,
+                "seq {seq}: the lace stamped a different HYBRID creator than the one-shot"
+            );
+            assert_eq!(
+                memoised.ed25519, one_shot.ed25519,
+                "seq {seq}: ed25519 half"
+            );
+            assert_eq!(memoised.seq, one_shot.seq, "seq {seq}: sequence");
+            assert_eq!(memoised.payload, one_shot.payload, "seq {seq}: payload");
+            assert_eq!(
+                memoised.predecessors, one_shot.predecessors,
+                "seq {seq}: predecessors"
+            );
+            assert_eq!(
+                memoised.signature, one_shot.signature,
+                "seq {seq}: the ed25519 signature differs — ed25519 is deterministic \
+                 (RFC 8032), so this means the SIGNED CONTENT differs"
+            );
+            assert_eq!(
+                memoised.id(),
+                one_shot.id(),
+                "seq {seq}: the canonical block id differs"
+            );
+
+            // Both PQ halves verify under the SAME enrolled key, over their own id.
+            assert!(
+                memoised.verify_hybrid(&enrolled).is_ok(),
+                "seq {seq}: the memoised block does not verify under the enrolled key"
+            );
+            assert!(
+                one_shot.verify_hybrid(&enrolled).is_ok(),
+                "seq {seq}: the one-shot block does not verify under the enrolled key"
+            );
+
+            preds = vec![memoised.id()];
+        }
+    }
+
+    /// The held signer agrees with all three bare-key entry points it replaced.
+    #[test]
+    fn signer_path_is_byte_identical_to_the_one_shot() {
+        for c in [0u8, 3, 64, 200] {
+            let key = test_committee::signing_key(c);
+            let signer = HybridBlockSigner::new(key.clone());
+
+            assert_eq!(
+                signer.creator(),
+                Block::hybrid_id(&key),
+                "creator [{c}; 32]"
+            );
+            assert_eq!(
+                signer.ed25519(),
+                key.verifying_key().to_bytes(),
+                "ed25519 [{c}; 32]"
+            );
+            assert_eq!(
+                signer.pq_public_key().0,
+                Block::pq_public_key(&key).0,
+                "enrolled ML-DSA public key [{c}; 32]"
+            );
+
+            let memoised = Block::new_signed_by(&signer, 5, Payload::Ack, vec![]);
+            let one_shot = Block::new(&key, 5, Payload::Ack, vec![]);
+            assert_eq!(memoised.creator, one_shot.creator);
+            assert_eq!(memoised.signature, one_shot.signature);
+            assert_eq!(memoised.id(), one_shot.id());
+        }
+    }
+
+    /// ⚑ THE OTHER POLE. Four identities driven INTERLEAVED through their own laces:
+    /// a memo that returned ONE key for everybody would be catastrophic and would
+    /// still look fast, so this is the check that a speedup did not become a
+    /// collapse.
+    ///
+    /// Interleaving matters: it is the order that a shared-slot memo would corrupt.
+    /// Then the falsifier goes on the wire — each block verifies under its OWN
+    /// creator's enrolled key and under NO other's.
+    #[test]
+    fn four_identities_never_share_a_derived_pq_key() {
+        let ids = [21u8, 22, 23, 24];
+        let mut laces: Vec<Blocklace> = ids
+            .iter()
+            .map(|c| Blocklace::new(test_committee::signing_key(*c), 1))
+            .collect();
+        let enrolled: Vec<crate::pq::MlDsaPublicKey> = ids
+            .iter()
+            .map(|c| Block::pq_public_key(&test_committee::signing_key(*c)))
+            .collect();
+
+        // Every identity's public halves are distinct.
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(
+                    laces[i].self_creator(),
+                    laces[j].self_creator(),
+                    "identities {} and {} share a HYBRID creator id",
+                    ids[i],
+                    ids[j]
+                );
+                // Compared by digest: an `assert_ne!` on the raw 1952-byte keys dumps
+                // both of them into the failure output and buries the message.
+                assert_ne!(
+                    blake3::hash(&enrolled[i].0),
+                    blake3::hash(&enrolled[j].0),
+                    "identities {} and {} derived the SAME ML-DSA public key — the memo is \
+                     serving one identity to everybody",
+                    ids[i],
+                    ids[j]
+                );
+            }
+        }
+
+        // INTERLEAVED authoring: round-robin, two rounds each.
+        let mut blocks: Vec<Vec<Block>> = vec![Vec::new(); ids.len()];
+        for _round in 0..2 {
+            for (i, lace) in laces.iter_mut().enumerate() {
+                let b = lace.add_block(Payload::Data(vec![ids[i]]));
+                blocks[i].push(b);
+            }
+        }
+
+        // THE FALSIFIER, on the wire: each block verifies under its OWN enrolled key
+        // and under NO other identity's.
+        for (i, own_blocks) in blocks.iter().enumerate() {
+            for block in own_blocks {
+                assert_eq!(
+                    block.creator,
+                    enrolled_creator(ids[i]),
+                    "identity {} authored under the wrong creator",
+                    ids[i]
+                );
+                assert!(
+                    block.verify_hybrid(&enrolled[i]).is_ok(),
+                    "identity {}'s block does not verify under its OWN enrolled key",
+                    ids[i]
+                );
+                for (j, other) in enrolled.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    assert!(
+                        block.verify_hybrid(other).is_err(),
+                        "identity {}'s block ALSO verified under identity {}'s enrolled key — \
+                         two identities are sharing one derived ML-DSA key",
+                        ids[i],
+                        ids[j]
+                    );
+                }
+            }
+        }
+    }
+
+    /// The hybrid creator of test key `[c; 32]`, via the one-shot path.
+    fn enrolled_creator(c: u8) -> [u8; 32] {
+        Block::hybrid_id(&test_committee::signing_key(c))
+    }
+
+    /// ⚑ THE MEMO IS LIVE, proven by OBJECT IDENTITY rather than by a stopwatch.
+    ///
+    /// A lace that authors four blocks reads the SAME `Arc<MlDsaSigningKey>` every
+    /// time. This is what goes red if someone reverts `Blocklace` to a bare
+    /// `SigningKey` and re-derives per block: the timings would regress silently,
+    /// but this assertion cannot.
+    #[test]
+    fn a_lace_derives_its_pq_key_once_however_many_blocks_it_authors() {
+        let mut lace = Blocklace::new(test_committee::signing_key(31), 1);
+        let first = std::sync::Arc::clone(lace.signer().pq_handle());
+
+        for _ in 0..4 {
+            lace.add_block(Payload::Ack);
+            assert!(
+                std::sync::Arc::ptr_eq(&first, lace.signer().pq_handle()),
+                "the lace re-derived its ML-DSA key while authoring — the memo is not live"
+            );
+        }
+
+        // And a CLONE of the lace (the node's `poll_finalized_blocks` snapshot path)
+        // shares the key rather than deriving a second one.
+        let snapshot = lace.clone();
+        assert!(
+            std::sync::Arc::ptr_eq(&first, snapshot.signer().pq_handle()),
+            "cloning a Blocklace re-derived its ML-DSA key — the snapshot path pays a keygen"
+        );
+        assert_eq!(snapshot.self_creator(), lace.self_creator());
+    }
+
+    /// The signer's `Arc` fields must not cost `Blocklace` its auto traits: the node
+    /// holds a lace across `await` points and SNAPSHOTS it by `clone` for
+    /// `poll_finalized_blocks`. `Arc<T>` is `Send + Sync` only when `T` is, so a
+    /// non-`Sync` key type would silently break every async consumer — a compile
+    /// error far from here, or none at all until someone spawns.
+    #[test]
+    fn signer_and_lace_stay_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<HybridBlockSigner>();
+        assert_send_sync::<Blocklace>();
+        assert_send_sync::<crate::dissemination::Disseminator>();
+    }
+
+    /// A `Disseminator` derives its identity once, however many blocks it authors.
+    #[test]
+    fn a_disseminator_derives_its_pq_key_once() {
+        use crate::dissemination::Disseminator;
+
+        let signer = test_committee::signer(41).clone();
+        let handle = std::sync::Arc::clone(signer.pq_handle());
+        let mut d = Disseminator::with_signer(signer);
+
+        for i in 0..4u8 {
+            let block = d.create_block(vec![i]);
+            assert_eq!(block.creator, test_committee::signer(41).ed25519());
+        }
+        assert!(
+            std::sync::Arc::ptr_eq(&handle, test_committee::signer(41).pq_handle()),
+            "the disseminator's identity was re-derived"
+        );
+    }
 }
 
 // ─── HYBRID PQ (ed25519 ∧ ML-DSA-65) enroll+PIN tests ─────────────────────────

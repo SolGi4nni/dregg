@@ -63,8 +63,10 @@ pub mod evidence;
 pub mod finality;
 pub mod ordering;
 pub mod pq;
+pub mod signer;
 
 pub use pq::{MlDsaPublicKey, MlDsaSigningKey};
+pub use signer::HybridBlockSigner;
 
 /// THE one quorum formula (strict supermajority `⌊2n/3⌋ + 1`); see
 /// [`ordering::supermajority_threshold`]. `dregg_federation::quorum_threshold`
@@ -185,15 +187,36 @@ impl Block {
     /// the block's canonical `id()` (BLAKE3 of creator/seq/preds/payload). The
     /// resulting block passes [`Block::verify_signature`] and is accepted by the
     /// feed-integrity [`Blocklace::insert`].
+    /// ⚠ A ONE-SHOT: it pays a full ML-DSA-65 keygen for this block alone. A
+    /// caller that authors more than one block for one identity should hold a
+    /// [`HybridBlockSigner`] and call [`Block::new_signed_by`], which is
+    /// byte-identical.
     pub fn new_signed(
         signing_key: &SigningKey,
         sequence: u64,
         predecessors: Vec<BlockId>,
         payload: Vec<u8>,
     ) -> Self {
-        let creator = signing_key.verifying_key().to_bytes();
-        let mut block = Self::new(creator, sequence, predecessors, payload);
-        block.sign(signing_key);
+        Self::new_signed_by(
+            &HybridBlockSigner::new(signing_key.clone()),
+            sequence,
+            predecessors,
+            payload,
+        )
+    }
+
+    /// Create and HYBRID-sign a block with an identity whose ML-DSA key was
+    /// derived ONCE, at the signer's construction. Byte-identical to
+    /// [`Block::new_signed`] on the same seed; this is the form that does not pay
+    /// a keygen per block.
+    pub fn new_signed_by(
+        signer: &HybridBlockSigner,
+        sequence: u64,
+        predecessors: Vec<BlockId>,
+        payload: Vec<u8>,
+    ) -> Self {
+        let mut block = Self::new(signer.ed25519(), sequence, predecessors, payload);
+        block.sign_by(signer);
         block
     }
 
@@ -207,18 +230,26 @@ impl Block {
     /// creator never manages a separate PQ key, and the enrolled PQ public key
     /// is a deterministic function of the ed25519 identity. Returns the ed25519
     /// signature for convenience.
+    /// ⚠ A ONE-SHOT: it pays a full ML-DSA-65 keygen per call. Use
+    /// [`Block::sign_by`] with a held [`HybridBlockSigner`] to sign more than one
+    /// block for one identity; the bytes are identical either way.
     pub fn sign(&mut self, signing_key: &SigningKey) -> [u8; 64] {
-        self.creator = signing_key.verifying_key().to_bytes();
+        self.sign_by(&HybridBlockSigner::new(signing_key.clone()))
+    }
+
+    /// Sign (or re-sign) this block in place with a held HYBRID identity — the
+    /// same bytes [`Block::sign`] produces, with no key derivation however many
+    /// blocks this identity signs.
+    pub fn sign_by(&mut self, signer: &HybridBlockSigner) -> [u8; 64] {
+        self.creator = signer.ed25519();
         let id = self.id();
-        let sig = signing_key.sign(&id);
+        let sig = signer.classical().sign(&id);
         self.signature = sig.to_bytes();
-        // POST-QUANTUM half: derive the ML-DSA key from the SAME ed25519 seed
-        // and sign the SAME canonical bytes. `None` only on a transient
-        // OS-entropy failure during hedged ML-DSA signing; leaving the PQ half
-        // empty makes the block fail `verify_signature` closed (never a
-        // half-signed block that passes).
-        let (_pk, pq_sk) = pq::MlDsaSigningKey::from_seed(&signing_key.to_bytes());
-        self.pq_signature = pq_sk.sign(&id).unwrap_or_default();
+        // POST-QUANTUM half: sign the SAME canonical bytes with the identity's
+        // held ML-DSA key. `None` only on a transient OS-entropy failure during
+        // hedged ML-DSA signing; leaving the PQ half empty makes the block fail
+        // `verify_signature` closed (never a half-signed block that passes).
+        self.pq_signature = signer.sign_pq(&id).unwrap_or_default();
         self.signature
     }
 
@@ -226,8 +257,14 @@ impl Block {
     /// key is `signing_key` — the roster entry a verifier PINS this creator's
     /// blocks against. Convenience for genesis enrollment and tests; equal to
     /// [`pq::public_from_ed25519_seed`] on the key's seed.
+    ///
+    /// ⚠ A ONE-SHOT — it pays a full ML-DSA-65 keygen. A holder of a
+    /// [`HybridBlockSigner`] reads the same key off
+    /// [`HybridBlockSigner::pq_public_key`] for free.
     pub fn pq_public_key(signing_key: &SigningKey) -> pq::MlDsaPublicKey {
-        pq::public_from_ed25519_seed(&signing_key.to_bytes())
+        HybridBlockSigner::new(signing_key.clone())
+            .pq_public_key()
+            .clone()
     }
 
     /// Whether this block carries BOTH halves of a (syntactically) non-zero
@@ -818,17 +855,31 @@ impl Blocklace {
 mod finality_tests;
 
 #[cfg(test)]
+pub(crate) mod test_committee;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::test_committee;
+
     /// A deterministic signing key per creator byte (so `creator` byte ↔ key).
     fn key_for(creator: u8) -> SigningKey {
-        SigningKey::from_bytes(&[creator; 32])
+        test_committee::signing_key(creator)
     }
 
     /// A signed block whose `creator` is the pubkey of `key_for(creator)`.
+    ///
+    /// Signed through the shared test committee, so authoring a block costs a
+    /// signature rather than a signature plus a full ML-DSA-65 keygen. The bytes
+    /// are identical to `Block::new_signed(&key_for(creator), ..)`.
     fn make_block(creator: u8, seq: u64, preds: Vec<BlockId>, payload: &[u8]) -> Block {
-        Block::new_signed(&key_for(creator), seq, preds, payload.to_vec())
+        Block::new_signed_by(
+            test_committee::signer(creator),
+            seq,
+            preds,
+            payload.to_vec(),
+        )
     }
 
     /// A blocklace with the deterministic test creators (`key_for(0..=32)`)
@@ -837,10 +888,8 @@ mod tests {
     fn test_lace() -> Blocklace {
         let mut lace = Blocklace::new();
         for c in 0u8..=32 {
-            lace.enroll_pq(
-                key_for(c).verifying_key().to_bytes(),
-                Block::pq_public_key(&key_for(c)),
-            );
+            let signer = test_committee::signer(c);
+            lace.enroll_pq(signer.ed25519(), signer.pq_public_key().clone());
         }
         lace
     }

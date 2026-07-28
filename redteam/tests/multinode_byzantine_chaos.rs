@@ -60,6 +60,7 @@
 use std::collections::HashSet;
 
 use dregg_blocklace::finality::{Block, BlockError, BlockId, Blocklace as Lace, Payload};
+use dregg_blocklace::signer::HybridBlockSigner;
 use ed25519_dalek::SigningKey;
 
 // See `blocklace_attacks.rs` — `Block::new` derives the creator's ML-DSA-65 half and
@@ -174,12 +175,21 @@ impl Inbox {
 
 /// Build a signed honest strand of `n` blocks for `signer`, each `Turn(payload)`
 /// extending the previous (a real SSB feed). Returns the blocks in causal order.
+///
+/// The strand is ONE identity, so its ML-DSA-65 key is derived ONCE here and every
+/// block is signed with it. `Block::new` takes a bare `&SigningKey` and derives per
+/// call, which made an n-block strand cost n full keygens: `attack_flood_does_not_desync`
+/// builds a 200-block spam strand, and those 200 derivations for one unchanging key
+/// were the bulk of its runtime against nextest's 180 s wall. The bytes are
+/// identical either way — `Block::new` is `Block::new_signed_by` with a one-shot
+/// signer in front of it.
 fn honest_strand(signer: &SigningKey, n: u64, seed: u8) -> Vec<Block> {
+    let signer = HybridBlockSigner::new(signer.clone());
     let mut blocks = Vec::new();
     let mut preds: Vec<BlockId> = Vec::new();
     for seq in 0..n {
         let payload = Payload::Turn(vec![seed, seq as u8, 0xAB]);
-        let b = Block::new(signer, seq, payload, preds.clone());
+        let b = Block::new_signed_by(&signer, seq, payload, preds.clone());
         preds = vec![b.id()];
         blocks.push(b);
     }

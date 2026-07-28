@@ -557,12 +557,17 @@ pub struct Disseminator {
     peer_knowledge: PeerKnowledge,
     /// Our identity (public key).
     self_key: NodeKey,
-    /// Our Ed25519 signing key, present when this disseminator AUTHORS blocks
+    /// Our HYBRID signing identity (ed25519 + the ML-DSA-65 key its seed derives,
+    /// derived ONCE), present when this disseminator AUTHORS blocks
     /// (`create_block`). Authored blocks must be signed so peers' verified
     /// `Blocklace::insert` accepts them. `None` for a projection/peer-tracking
     /// disseminator that never authors (it can still receive signed blocks from
     /// the wire and run dissemination over them).
-    signing_key: Option<SigningKey>,
+    ///
+    /// This was a bare `Option<SigningKey>`, and every `create_block` ran a full
+    /// ML-DSA-65 keygen for this one unchanging identity — an authoring node pays
+    /// that per block it produces.
+    signer: Option<crate::signer::HybridBlockSigner>,
     /// Blocks we've received but can't insert yet (missing predecessors).
     /// Maps block_id -> (block, missing_predecessor_ids).
     pending: HashMap<BlockId, (Block, HashSet<BlockId>)>,
@@ -584,7 +589,7 @@ impl Disseminator {
             blocklace: Blocklace::new(),
             peer_knowledge: PeerKnowledge::new(),
             self_key,
-            signing_key: None,
+            signer: None,
             pending: HashMap::new(),
             subscription: None,
             interest_discovery: None,
@@ -597,17 +602,24 @@ impl Disseminator {
     /// each authored block under this identity — producing blocks that peers'
     /// verified [`Blocklace::insert`] accepts.
     pub fn with_signing_key(signing_key: SigningKey) -> Self {
-        let self_key = signing_key.verifying_key().to_bytes();
+        Self::with_signer(crate::signer::HybridBlockSigner::new(signing_key))
+    }
+
+    /// Create an AUTHORING disseminator from an ALREADY-DERIVED hybrid identity,
+    /// so neither this constructor nor any later `create_block` pays a keygen.
+    pub fn with_signer(signer: crate::signer::HybridBlockSigner) -> Self {
+        let self_key = signer.ed25519();
         let mut blocklace = Blocklace::new();
         // Self-enroll our own ML-DSA key so blocks we AUTHOR pass the hybrid,
         // roster-pinned `insert`. Peers are enrolled by the node from the
-        // committee roster (see `enroll_pq`).
-        blocklace.enroll_pq(self_key, crate::Block::pq_public_key(&signing_key));
+        // committee roster (see `enroll_pq`). The key is READ off the identity we
+        // already hold — this used to be a second `Block::pq_public_key` keygen.
+        blocklace.enroll_pq(self_key, signer.pq_public_key().clone());
         Self {
             blocklace,
             peer_knowledge: PeerKnowledge::new(),
             self_key,
-            signing_key: Some(signing_key),
+            signer: Some(signer),
             pending: HashMap::new(),
             subscription: None,
             interest_discovery: None,
@@ -620,7 +632,7 @@ impl Disseminator {
             blocklace,
             peer_knowledge: PeerKnowledge::new(),
             self_key,
-            signing_key: None,
+            signer: None,
             pending: HashMap::new(),
             subscription: None,
             interest_discovery: None,
@@ -633,7 +645,7 @@ impl Disseminator {
             blocklace: Blocklace::new(),
             peer_knowledge: PeerKnowledge::new(),
             self_key,
-            signing_key: None,
+            signer: None,
             pending: HashMap::new(),
             subscription: Some(subscription),
             interest_discovery: None,
@@ -685,12 +697,19 @@ impl Disseminator {
     /// Rebinds `self_key` to the key's public half so subsequent `create_block`
     /// calls author signed blocks under that identity.
     pub fn set_signing_key(&mut self, signing_key: SigningKey) {
-        self.self_key = signing_key.verifying_key().to_bytes();
+        self.set_signer(crate::signer::HybridBlockSigner::new(signing_key));
+    }
+
+    /// Provide (or replace) this disseminator's authoring identity from an
+    /// ALREADY-DERIVED hybrid signer — the keygen-free form of
+    /// [`Disseminator::set_signing_key`].
+    pub fn set_signer(&mut self, signer: crate::signer::HybridBlockSigner) {
+        self.self_key = signer.ed25519();
         // Self-enroll our own ML-DSA key so authored blocks pass the hybrid,
         // roster-pinned `insert`.
         self.blocklace
-            .enroll_pq(self.self_key, crate::Block::pq_public_key(&signing_key));
-        self.signing_key = Some(signing_key);
+            .enroll_pq(self.self_key, signer.pq_public_key().clone());
+        self.signer = Some(signer);
     }
 
     /// Enroll a committee member's ML-DSA-65 public key into the local roster.
@@ -720,8 +739,8 @@ impl Disseminator {
     /// [`Disseminator::set_signing_key`]). An authoring node MUST hold its key;
     /// authoring an unsigned block would be silently rejected on insert.
     pub fn create_block(&mut self, payload: Vec<u8>) -> Block {
-        let signing_key = self
-            .signing_key
+        let signer = self
+            .signer
             .as_ref()
             .expect("create_block requires a signing key (use with_signing_key/set_signing_key)");
 
@@ -734,7 +753,8 @@ impl Disseminator {
 
         let predecessors: Vec<BlockId> = self.blocklace.frontier().iter().copied().collect();
 
-        let block = Block::new_signed(signing_key, sequence, predecessors, payload);
+        // Authored through the HELD identity: no ML-DSA keygen, byte-identical.
+        let block = Block::new_signed_by(signer, sequence, predecessors, payload);
         let _ = self.blocklace.insert(block.clone());
         block
     }
@@ -1238,21 +1258,36 @@ pub fn chunk_delta_group(delta: DeltaGroup, max_per_chunk: usize) -> Vec<DeltaGr
 mod tests {
     use super::*;
 
+    use crate::test_committee;
+
     /// Deterministic Ed25519 signing key for a creator byte (`id` ↔ key).
+    #[allow(dead_code)]
     fn signing_for(id: u8) -> SigningKey {
-        SigningKey::from_bytes(&[id; 32])
+        test_committee::signing_key(id)
     }
 
     /// The public key (NodeKey) of `signing_for(id)` — the identity a block
     /// authored by `id` carries as its `creator`, and the disseminator's
     /// `self_key`. Keeps the `id` ↔ key correspondence the tests rely on.
+    /// The ed25519 public half only. ⚠ Deliberately NOT `test_committee::signer(id)
+    /// .ed25519()`: that would derive the member's ML-DSA key, and most callers here
+    /// only need the `NodeKey` label. Routing this through the signer measurably
+    /// regressed tests that had no keygen at all.
     fn make_key(id: u8) -> NodeKey {
-        signing_for(id).verifying_key().to_bytes()
+        test_committee::signing_key(id).verifying_key().to_bytes()
     }
 
     /// A *signed* block authored by `creator` (so verified `insert` accepts it).
+    ///
+    /// Signed through the shared test committee — byte-identical to
+    /// `Block::new_signed(&signing_for(creator), ..)`, without its keygen.
     fn make_block(creator: u8, seq: u64, preds: Vec<BlockId>, payload: &[u8]) -> Block {
-        Block::new_signed(&signing_for(creator), seq, preds, payload.to_vec())
+        Block::new_signed_by(
+            test_committee::signer(creator),
+            seq,
+            preds,
+            payload.to_vec(),
+        )
     }
 
     /// Enroll the deterministic test committee (`signing_for(0..=32)`) into a
@@ -1260,7 +1295,8 @@ mod tests {
     /// halves. Every test block/creator uses an id `<= 32`.
     fn enroll_test_committee(lace: &mut Blocklace) {
         for c in 0u8..=32 {
-            lace.enroll_pq(make_key(c), Block::pq_public_key(&signing_for(c)));
+            let signer = test_committee::signer(c);
+            lace.enroll_pq(signer.ed25519(), signer.pq_public_key().clone());
         }
     }
 
@@ -1274,7 +1310,7 @@ mod tests {
     /// An authoring disseminator for identity `id` (holds the signing key), with
     /// the whole test committee enrolled so it accepts blocks by any test peer.
     fn make_disseminator(id: u8) -> Disseminator {
-        let mut d = Disseminator::with_signing_key(signing_for(id));
+        let mut d = Disseminator::with_signer(test_committee::signer(id).clone());
         enroll_test_committee(d.blocklace_mut());
         d
     }
