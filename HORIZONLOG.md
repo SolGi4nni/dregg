@@ -397,6 +397,8 @@ partition — not for the six-color classifier. **Prerequisite either way: recon
 Lean `EffectKind` against the live 36-variant Rust `Effect`, since nothing currently can.**
 
 **B3 · THE SOVEREIGN CARRIER-WITNESS ARM WAS DEAD *FOUR* LEVELS DEEP. RETIRED 2026-07-28 — the SDK
+> ✅ **FIXED 2026-07-28** (`80e1acab3`) — RETIRED, and dead FOUR levels not two. The SDK constructs no `RotatedParticipantLeg` anywhere, the stash was never serializable, and the mint REFUSES a leg carrying a witness. ⚑ Level 4: the object was never arm-admissible — and **the pin check alone would have admitted it**, because on a 68-PI leg the four claim slots ARE the state anchors, each carrying a genuine `PiBinding`. Only the overlap arithmetic refused. ⚠ Residual unchanged: the fold's `Sovereign` arm and every Lean theorem above it still describe an object no production path constructs.
+
 wire is DELETED, and the measurement that settled it is now a tooth.** `cb605e3fd` named one level;
 the entry above named two; there were four, and the fourth is the one that decides it.
 
@@ -471,6 +473,8 @@ Every live path still uses `V3_STAGED_REGISTRY_TSV` (`sdk/src/full_turn_proof.rs
 1447, 2093, 2125, 2663`). The work is done; the epoch re-point is not.
 
 **B5 · THE SOLO FINALIZATION ARM STILL FINALIZES ANY CREATOR. LIVE, and its own comment says so.**
+> ✅ **FIXED 2026-07-28** (`8f275b661`) — the arm consulted NO rule at all. The bootstrap tension its comment cited was resolvable, not a trade: `ML-DSA.KeyGen` is deterministic in the seed and the boot path ALREADY derives the node's own hybrid id before any roster is committed, so `projected ∪ {self_hybrid}` names exactly one key and widens nothing. It could NOT simply call `tauOrder` — checked: a fresh solo lace finalizes nothing under it, so routing solo there would brick cold start. Cold start driven on the real binary through a `from_checkpoint_trusted` restart. ⚑ Separate live wound found and dispatched: `execute_finalized_membership` passes the HYBRID id to a `participants` map keyed by ed25519, so **no membership vote has ever counted on the live path**.
+
 `node/src/blocklace_sync.rs:1534` `if admitted.len() <= 1 {` — the body (`:1555-1567`) filters only on
 `Payload` variant, collects `(block.seq, *id)` and sorts. **No creator check at all.** The comment at
 `:1537` is exemplary: it names why (the only sound creator key is the projected hybrid id, which this

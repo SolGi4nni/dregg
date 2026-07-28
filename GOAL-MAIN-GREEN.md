@@ -301,6 +301,18 @@ Elsewhere: `dregg-cell` 846/0 · `dregg-turn` 914/915 (`stark_kill_wire_roundtri
   ⚠ Residual, unchanged: the fold's `Sovereign` arm and every Lean theorem above it still describe an
   object no production path constructs. Retiring the wire removed what LOOKED like the producer.
 
+- **B5 CLOSED — the ⚑⚑⚑⚑⚑ finality entry's last live half.** The arm consulted no rule at all, and the
+  bootstrap tension its comment cited was RESOLVABLE rather than a trade: the boot path already
+  derives the node's own hybrid id before any roster is committed, so the filter names exactly one
+  key and widens nothing. ⚑ It also checked whether the arm could just call `tauOrder` — it cannot, a
+  fresh solo lace finalizes nothing under it, so that route would brick cold start. Cold start driven
+  on the real binary, through a restart, with zero fail-closed lines.
+- ⚑ **Dispatched: no membership vote has ever counted on the live path.**
+  `execute_finalized_membership` hands the HYBRID id to a `participants` map keyed by ed25519, and its
+  replay twin passes ed25519 correctly — so the live path and its "pure twin" disagree, and the live
+  one is fail-closed dead. Found only because a lane noticed its own change *could not regress the
+  join flow*.
+
 ## Open for ember
 1. **F1?** — the only route that makes a successor to `RestHashIffFrame` satisfiable. Flag day:
    commitment epoch + descriptor re-emit + re-genesis, 234 binder positions across 85 modules.
