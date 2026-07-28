@@ -25,6 +25,15 @@ first.
 | `ci-invariants-structural` | 1 FAILURE |
 
 ## Next 3 moves
+1. **A6** — the conservation partition key is four bytes.
+2. **B3/B5** — the sovereign carrier-witness arm is dead two levels deep; the solo finalization arm
+   still finalizes any creator (the half `c6f00c228` deliberately left).
+3. **The `check_per_asset_conservation_by_asset` seam** — `declared_supply` exists for reconciling
+   disclosed mint/burn against balance deltas, **all four production callers pass `&[]`**, both test
+   callers too (so no test would notice a break), and the verified Lean decider already implements
+   that reconciliation with a `#guard`. Sound today only because mint/burn happen to be well-paired.
+
+## Superseded moves
 1. **`dark-modules` + `ratchet-darkness`** — both are the gating-defaults-to-silence class this
    repo keeps finding; a dark module is code rustc never compiles and a dark `.lean` is a proof
    whose `#assert_axioms` run nowhere. Fix the wiring, not the ratchet.
