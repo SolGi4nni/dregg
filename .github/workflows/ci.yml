@@ -1203,6 +1203,30 @@ jobs:
           lfs: true
       - run: bash scripts/check-lean-orphans.sh
 
+  opentheory-importer:
+    name: OpenTheory→Lean importer (runs the real articles, and proves the gate can go red)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The importer replays a real OpenTheory v6 article into Lean `Expr`s and hands each
+    # export to the KERNEL. Measured 2026-07-27 it was wired into ZERO targets — no workflow,
+    # no lake target, no gate script — and its real-article imports sat behind `pathExists`
+    # fallbacks, so with no articles present it elaborated EXIT=0 having imported one theorem
+    # (`True`). This job runs it, and runs the SELF-TEST that removes each guard (the axiom
+    # gate's exactness check, the `thm` Γ-content check, the articles, the reject-tests'
+    # reason assertion) and requires the matching negative test to go red. ~1 min of `lean`;
+    # no lake, no mathlib — the file is `import Lean` only.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            -o elan-init.sh
+          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - run: bash scripts/check-opentheory-importer.sh --self-test
+
   ratchet-darkness:
     name: Refuted-floor DARKNESS gate (nothing carrying a refuted floor is invisible to the ratchet)
     runs-on: ubuntu-latest

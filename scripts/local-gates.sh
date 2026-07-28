@@ -82,6 +82,28 @@ GATES=(
   # ~1s, no cargo, and no wrapper needed — token 2 of the command is the script itself.
   "player-vocabulary|180|python3 scripts/check-player-vocabulary.py"
   "player-vocabulary-red|60|python3 scripts/check-player-vocabulary.py --self-test"
+  # A ROUTING IDENTITY where a player expects a PERSON — `71b278f3dc43444…` in a column headed
+  # Holder. The third widening of the same shape, and the clearest one yet that scope is the whole
+  # game: `refusal::audit_player_text` has a raw-hex-run rule and has had one for a while — but say
+  # WHERE it bans, because this file's whole thesis is that a gate not in this list is not a gate.
+  # It is not in this list and it is not on any production path: measured 2026-07-27 it has TWENTY-
+  # FOUR call sites and every one of them is test code (`baseline/production-callers.tsv` classes it
+  # THEATRE), in `dreggnet-offerings/src/refusal.rs`'s own module tests, `dreggnet-web/tests/
+  # refusal_copy_gate.rs`, and three `dreggnet-web` src test modules — each pointed by hand at an
+  # ENUMERATED list of surfaces. That is the right runtime for a linter over STATIC copy (a check at
+  # render time would be inspecting a message already on its way to a player), so this is not a
+  # function to wire; it is a claim to state precisely. Its rule scored zero on this wound because it
+  # is pointed at REFUSALS and a roster is not a refusal. It would not have
+  # caught it pointed there either — the sites truncate to 15–18 chars and that rule starts at 32,
+  # the shortest run in this product that IS a key. Seven sites across four crates on 2026-07-27,
+  # each crate having minted its OWN `fn short_identity`, so the wound propagated by copy-paste
+  # rather than by call — which is why rule R2 bans re-minting one (`short_root` / `short_digest`
+  # stay legal: a root IS a machine value). The `-red` row is not optional: the headline is a
+  # NEGATIVE assertion, so it passes just as happily on a broken reader, and the self-test also
+  # narrows the scope to drive the MIN_FILES / MIN_POSITIONS floor red. ~1s, no cargo, and token 2
+  # of the command is the script itself, so it needs no wrapper.
+  "identity-as-a-name|180|python3 scripts/check-identity-as-a-name.py"
+  "identity-as-a-name-red|60|python3 scripts/check-identity-as-a-name.py --self-test"
   # The JavaScript inside a Rust `r##"…"##` is a `&str` to rustc and to every reader
   # downstream of it. `dreggnet-web/src/telegram_miniapp.rs` shipped a SyntaxError in
   # `TG_SHELL_SCRIPT` for FOUR DAYS: a dead Mini App serving 200, `cargo test` green,
@@ -186,6 +208,26 @@ GATES=(
   # as clean.
   "silent-skip|300|python3 scripts/check-silent-skip.py"
   "silent-skip-red|120|python3 scripts/check-silent-skip.py --self-test"
+  # The OpenTheory→Lean importer, RUN. `docs/opentheory-importer-poc/OTPoC.lean` replays a
+  # real OpenTheory v6 article into Lean `Expr`s and hands each export to the KERNEL — and
+  # until 2026-07-27 it was wired into NOTHING: `grep -rn 'opentheory|OTPoC' .github/ scripts/
+  # metatheory/lakefile*` returned zero hits, so it ran only when a human typed a command out
+  # of a plan doc. Worse, its three real-article imports each sat behind `if ← p.pathExists
+  # … else logInfo`, so with the articles absent the file elaborated EXIT=0 having imported
+  # exactly one theorem (`True`). Both halves are closed: the Lean file HARD-ERRORS on a
+  # missing article, and this row is the thing that runs it. The gate asserts FLOORS (≥3
+  # kernel-checked exports, ≥14 axiom-gate discharges, ≥4 reject-tests refused for their
+  # STATED reason), because "exit 0" was exactly the signal that lied. ~8s, no cargo; needs a
+  # Lean toolchain and FAILS rather than skips without one, like `embedded-js` and `node`.
+  # The -red row is not optional: two of the three checks it protects are NEGATIVE assertions
+  # (a gate that refuses, a test that expects refusal), which pass just as happily when the
+  # probe is broken. It removes each guard from a scratch copy — the axiom gate's exactness
+  # check, the `thm` Γ-content check, the articles themselves, the reject-tests' reason
+  # assertion — and requires the matching test to go red for its stated reason. A fault
+  # injection that matches NOTHING is a failure, so renaming these lines breaks the self-test
+  # loudly instead of disarming it. ~42s.
+  "opentheory-importer|600|bash scripts/check-opentheory-importer.sh"
+  "opentheory-importer-red|900|bash scripts/check-opentheory-importer.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

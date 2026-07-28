@@ -4,10 +4,20 @@
   A from-scratch OpenTheory v6 article stack-machine replayer, implemented as a
   Lean 4 metaprogram (`import Lean`, no Mathlib). It parses an OpenTheory article,
   replays the primitive commands into native Lean `Expr`s, and hands each exported
-  theorem to the Lean KERNEL via `addDecl`. The importer is UNTRUSTED: any
-  mistranslation produces an `Expr` the kernel rejects. The TCB is:
+  theorem to the Lean KERNEL via `addDecl`. The importer is UNTRUSTED: a
+  mistranslated CONCLUSION produces an `Expr` the kernel rejects. The TCB is:
     (1) the Lean kernel, (2) the encoding below, (3) the `axiom` discharge table.
   The parser and the ~20 rule realizations are OUTSIDE the TCB.
+
+  WHAT THE KERNEL DOES NOT COVER, stated because it is load-bearing for the whole
+  "import a foreign corpus" thesis: the kernel checks that the exported term
+  proves ITS OWN statement, so it guarantees the export is TRUE — it does NOT
+  guarantee the export is the ARTICLE'S theorem. A Γ the article never assumed is
+  not a kernel-visible error at all; it is a different, still-true theorem. That
+  gap was real (an article declaring the false sequent `q ⊢ p` imported and
+  exported `p → p`), and it is closed HERE, in `thm`, by checking the declared Γ
+  by CONTENT. Anything of that shape has to be checked by the importer or not at
+  all.
 
   Command semantics follow the reference reader
   (HOL4 `src/opentheory/reader/OpenTheoryReader.sml`), including exact pop orders.
@@ -24,10 +34,20 @@
 
   SOUNDNESS GATE: the `axiom` command resolves ONLY to a pre-proved Lean theorem
   whose statement is DEFEQ to the article's asserted formula (the discharge table
-  below). Anything else HARD-ERRORS. An `axiom` NEVER creates a fresh Lean `axiom`
-  (that would be a fail-open gate). Each exported theorem is additionally checked
-  axiom-clean: `collectAxioms` must be a subset of {propext, Classical.choice,
-  Quot.sound} (dregg's classical set), else the import errors.
+  below), with EVERY implicit/instance argument really instantiated — a candidate
+  that leaves an unsolved instance goal is refused BY THIS GATE, not by the kernel
+  downstream of it (see `tryDischarge`). Anything else HARD-ERRORS. An `axiom`
+  NEVER creates a fresh Lean `axiom` (that would be a fail-open gate). Each
+  exported theorem is additionally checked axiom-clean: `collectAxioms` must be a
+  subset of {propext, Classical.choice, Quot.sound} (dregg's classical set), else
+  the import errors.
+
+  THIS FILE IS A GATE, so it is wired to something that runs and it is built to
+  go RED: `scripts/check-opentheory-importer.sh` (a `scripts/local-gates.sh` row,
+  paired with an `opentheory-importer-red` row that removes each guard from a
+  scratch copy and requires the matching negative test to fail). The bundled
+  articles are REQUIRED — a missing one is a hard error, because with them absent
+  this file used to elaborate green having imported only `True`.
 -/
 import Lean
 open Lean Meta Elab Command
@@ -441,19 +461,51 @@ partial def peelImplicit (ty : Expr) (mvars : Array Expr) : MetaM (Expr × Array
     explicit binder stops the peel so a formula-level HOL `!` (encoded as a Lean
     `∀`) is matched, not stripped. Instance metavars that proof-irrelevance
     leaves unassigned after unification are then synthesized from the local
-    context (where each HOL type variable's `Nonempty` witness lives). -/
+    context (where each HOL type variable's `Nonempty` witness lives).
+
+    EXACTNESS — this gate refuses HERE, not one layer downstream. A discharge
+    candidate is accepted ONLY if every peeled binder is really instantiated, so
+    the returned term is metavariable-FREE and its type is defeq to `concl` with
+    the instantiation FIXED. Without that, an instance metavar the synthesizer
+    cannot solve was left UNASSIGNED and `instantiateMVars` returned a proof term
+    with a HOLE in it: measured, `⊦ ∀ (t : Prop), (∀ _ : Empty, t) = t` — which is
+    FALSE (`t := False` gives `True = False`) — was "discharged" to
+    `d_forall_triv` with an open `Nonempty Empty` goal, and the refusal came from
+    the KERNEL at `addDecl`, one layer later than this gate's documented contract.
+    A gate whose line is actually held by something downstream of it is fail-
+    DEFERRED, not fail-closed; see the `GATE-NEG-1` self-test at the end of this
+    file, which fails loudly if that hole comes back. -/
 def tryDischarge (concl : Expr) : MetaM (Option Expr) := do
+  -- The asserted formula must itself be metavariable-free: a metavar in `concl`
+  -- is a hole the unifier below is free to ASSIGN, i.e. the gate would discharge
+  -- a statement the article never asserted.
+  let concl ← instantiateMVars concl
+  if concl.hasExprMVar then
+    throwError m!"AXIOM GATE (fail-closed): the asserted formula still contains metavariables:\n  ⊦ {← ppExpr concl}"
   for dn in dischargeNames do
     let ci ← getConstInfo dn
-    let (dConcl, mvars) ← peelImplicit ci.type #[]
-    if ← isDefEq dConcl concl then
+    -- Each candidate is tried in its own metavariable state, so a partial
+    -- assignment made by a FAILED `isDefEq` cannot leak into the next candidate.
+    -- The accepted term is closed before the state is dropped, so it survives.
+    let pf? ← withoutModifyingState do
+      let (dConcl, mvars) ← peelImplicit ci.type #[]
+      unless ← isDefEq dConcl concl do return none
       for mv in mvars do
         let mvId := mv.mvarId!
         unless ← mvId.isAssigned do
           if let some inst ← synthInstance? (← inferType mv) then
             mvId.assign inst
-      let pf := mkAppN (mkConst dn (ci.levelParams.map (fun _ => Level.zero))) mvars
-      return some (← instantiateMVars pf)
+      let pf ← instantiateMVars (mkAppN (mkConst dn (ci.levelParams.map (fun _ => Level.zero))) mvars)
+      -- (1) no hole may survive into the proof term …
+      if pf.hasExprMVar || pf.hasLevelMVar then return none
+      -- … (2) and the statement it actually proves, with the instantiation now
+      -- fixed, must be the article's formula. Both are metavariable-free here, so
+      -- this comparison cannot be satisfied by inventing an assignment.
+      let ty ← instantiateMVars (← inferType pf)
+      if ty.hasExprMVar then return none
+      unless ← isDefEq ty concl do return none
+      return some pf
+    if let some pf := pf? then return some pf
   return none
 
 /- ======================================================================
@@ -989,8 +1041,40 @@ partial def go (st : St) : List String → TermElabM Unit
           -- Non-empty declared Γ is supported: the proof's remaining hypothesis fvars
           -- (`th.hyps`, = Γ for a well-formed article) are closed as implications
           -- below, so the export is `⊢ ⋀Γ → c`.
+          --
+          -- Γ IS CHECKED BY CONTENT, NOT BY SIZE. Checking only `size` was an
+          -- UNSOUNDNESS in the import path, not a cosmetic gap: the kernel checks
+          -- that the exported term is a proof of ITS OWN statement, so it catches a
+          -- mistranslated CONCLUSION, but a Γ the article never assumed is not a
+          -- kernel-visible error at all — the export is simply a DIFFERENT (true)
+          -- theorem than the one the article asserted. Measured on an article
+          -- declaring the FALSE sequent `q ⊢ p` (distinct bool variables) over a
+          -- proof of `p ⊢ p`: sizes agreed, the size check passed, and the importer
+          -- logged success while exporting `∀ p, p → p`. A bogus article could
+          -- therefore mint a Lean theorem whose stated hypotheses were never
+          -- established. So: every DECLARED hypothesis must match, up to defeq, a
+          -- DISTINCT actually-assumed hypothesis. With the sizes equal, an injective
+          -- total matching is a bijection, so the two Γs agree as multisets.
+          -- (Order is not checked: OpenTheory Γ is a SET, presented sorted by the
+          -- article's own term order, which is not Lean's fvar order.)
           unless th.hyps.size == ls.size do
             throwError "thm: declared Γ ({ls.size}) disagrees with the proof's open hypotheses ({th.hyps.size})"
+          let declaredΓ ← ls.mapM (fun o => o.asTerm)
+          let assumedΓ ← th.hyps.mapM (fun h => do inferType h)
+          let mut usedΓ : Array Bool := (List.replicate assumedΓ.size false).toArray
+          for d in declaredΓ do
+            let mut matched := false
+            for i in [0 : assumedΓ.size] do
+              unless matched do
+                unless usedΓ[i]! do
+                  -- state-neutral: a FAILED comparison must not leave a partial
+                  -- unification behind for the export that follows.
+                  if ← withoutModifyingState (isDefEq assumedΓ[i]! d) then
+                    usedΓ := usedΓ.set! i true
+                    matched := true
+            unless matched do
+              let assumedPP ← assumedΓ.mapM (fun h => do return (← ppExpr h))
+              throwError m!"thm: declared hypothesis is NOT among the proof's open hypotheses — the article asserts a sequent it did not prove.\n  declared Γ ∋ {← ppExpr d}\n  proof assumed Γ = {assumedPP}"
           -- ascribe the proof to the desired (alpha/defeq) conclusion
           let proof0 ← mkExpectedTypeHint th.proof c
           -- close over remaining hypotheses (as implications) and free vars.
@@ -1056,13 +1140,45 @@ def importArticle (label : String) (art : String) : CommandElabM Unit := do
   logInfo m!"=== importing article: {label} ==="
   liftTermElabM do go {} (tokenize art)
 
-/-- expect the import to FAIL (used to test the axiom gate's reject path). -/
-def importArticleExpectFail (label : String) (art : String) : CommandElabM Unit := do
-  try
-    liftTermElabM do go {} (tokenize art)
-    logError m!"REJECT-TEST FAILED: article {label} was accepted but should have been rejected"
-  catch e =>
-    logInfo m!"reject-test OK: article {label} correctly rejected: {← e.toMessageData.toString}"
+/-- Expect the import to FAIL **for a stated reason**: the raised error must
+    contain `why`. An error-AGNOSTIC reject test (catch anything, report OK) is
+    the shape that keeps passing after the gate it tests stops firing — a parse
+    change that makes the rogue article die at `stack underflow` leaves the axiom
+    gate untested and the suite green. So the reason is asserted, and a rejection
+    for the WRONG reason is a failure, not a pass. -/
+def importArticleExpectFail (label : String) (why : String) (art : String) : CommandElabM Unit := do
+  let outcome ← try
+      liftTermElabM do go {} (tokenize art)
+      pure (none : Option String)
+    catch e => pure (some (← e.toMessageData.toString))
+  match outcome with
+  | none =>
+      throwError m!"REJECT-TEST FAILED: article {label} was ACCEPTED but must be refused (expected an error containing {repr why})"
+  | some msg =>
+      if (msg.splitOn why).length ≥ 2 then
+        logInfo m!"reject-test OK: article {label} refused for the stated reason ({repr why})"
+      else
+        throwError m!"REJECT-TEST FAILED: article {label} was refused, but NOT for the reason under test.\n  expected the error to contain: {repr why}\n  actual error: {msg}"
+
+/-- Read a BUNDLED article (one committed beside this file). A missing article is
+    a **HARD ERROR, never a skip**.
+
+    Why this is not a `pathExists` fallback: with the fallback in place and no
+    `.art` file present, this whole file elaborated `EXIT=0` — green — having
+    imported exactly one theorem (`True`) and printed three `logInfo` lines. A
+    missing article was indistinguishable from a passing one at the exit code, so
+    the importer's entire evidence base could evaporate without anything going
+    red. `OT_ARTICLE_DIR` overrides the search (the gate script sets it to an
+    absolute path so the result does not depend on the caller's cwd). -/
+def bundledArticle (name : String) : CommandElabM String := do
+  let roots : Array String ←
+    match ← IO.getEnv "OT_ARTICLE_DIR" with
+    | some d => pure #[d]
+    | none   => pure #["docs/opentheory-importer-poc", "."]
+  for r in roots do
+    let p := System.FilePath.mk (r ++ "/" ++ name)
+    if ← p.pathExists then return (← IO.FS.readFile p)
+  throwError m!"MISSING ARTICLE (hard error, NOT a skip): {name} was not found under {roots} (cwd-relative unless $OT_ARTICLE_DIR is set).\nThis file's evidence IS the real-article imports; with the articles absent there is nothing to verify, so it refuses rather than reporting a green it did not earn."
 
 end OTImport
 
@@ -1084,7 +1200,9 @@ def rogueArticle : String := String.intercalate "\n"
 
 run_cmd OTImport.importArticle "axiom-gate ACCEPT (⊦ T)" acceptArticle
 
-run_cmd OTImport.importArticleExpectFail "axiom-gate REJECT (rogue ⊦ p)" rogueArticle
+run_cmd do
+  OTImport.importArticleExpectFail "axiom-gate REJECT (rogue ⊦ p)"
+    "AXIOM GATE (fail-closed)" rogueArticle
 
 /-- axiom-gate REJECT under the NEW machinery: open a type variable `A` (so the
     `Nonempty`-threaded type-var path is active), then assert a rogue `axiom ⊦ p`.
@@ -1096,34 +1214,164 @@ def rogueArticle2 : String := String.intercalate "\n"
    "\"p\"","\"bool\"","typeOp","nil","opType","var","varTerm",
    "axiom"]
 
-run_cmd OTImport.importArticleExpectFail "axiom-gate REJECT (rogue ⊦ p, type-var path)" rogueArticle2
-
--- Bundled real standard-library article: `unit-def` (the OpenTheory `unit` type
--- definition; exercises defineTypeOp/defineConst/sym/trans/proveHyp/pop). Runs
--- when built from the repo root; a no-op elsewhere.
 run_cmd do
-  let p : System.FilePath := "docs/opentheory-importer-poc/unit-def.art"
-  if ← p.pathExists then
-    let s ← IO.FS.readFile p
-    OTImport.importArticle "unit-def (bundled OpenTheory stdlib)" s
-  else logInfo "unit-def.art not found relative to cwd; import via OT_ARTICLE instead"
+  OTImport.importArticleExpectFail "axiom-gate REJECT (rogue ⊦ p, type-var path)"
+    "AXIOM GATE (fail-closed)" rogueArticle2
 
--- Real PARAMETERIZED-type article: the OpenTheory standard library `pair` theory
--- (product types), composed self-contained (via the `opentheory` tool) so its only
--- assumptions are the two base axioms (extensionality, choice). Exercises
--- PARAMETERIZED (arity-2) defineTypeOp, POLYMORPHIC defineConst, and 30 `thm`
--- exports end-to-end, kernel-checked + axiom-clean.
+/- ======================================================================
+   NEGATIVE GATE TESTS.
+
+   Each drives a bad input at a specific gate and requires THAT gate to refuse
+   it. They are not decoration: every one corresponds to a defect this file
+   actually had, and each fails LOUDLY (a `throwError`, i.e. a nonzero `lean`
+   exit) if the check it names is removed or weakened. `scripts/check-opentheory-
+   importer.sh --self-test` deletes each guard from a scratch copy and requires
+   the matching test below to go red — a negative assertion is exactly the shape
+   that passes just as happily when its own probe is broken.
+   ====================================================================== -/
+
+/-- GATE-NEG-2 (the Γ-CONTENT check). This article DECLARES the sequent `q ⊢ p` —
+    false, `p` and `q` being distinct bool variables — while the proof on the
+    stack is `p ⊢ p`. The declared and assumed Γ have the same SIZE, so the old
+    size-only check passed and the importer logged
+    `imported … OTImport.imported0_1 : ∀ (p : Prop), p → p`: an article's false
+    sequent silently renamed into a true theorem nobody asserted. The kernel
+    cannot catch this — the exported term really does prove its own statement —
+    so the import path has to, and it has to REFUSE rather than substitute. -/
+def gammaSwapArticle : String := String.intercalate "\n"
+  ["6","version",
+   "\"p\"","\"bool\"","typeOp","nil","opType","var","varTerm",
+   "assume",
+   "\"q\"","\"bool\"","typeOp","nil","opType","var","varTerm",
+   "nil","cons",
+   "\"p\"","\"bool\"","typeOp","nil","opType","var","varTerm",
+   "thm"]
+
 run_cmd do
-  let p : System.FilePath := "docs/opentheory-importer-poc/pair-closed.art"
-  if ← p.pathExists then
-    let s ← IO.FS.readFile p
-    OTImport.importArticle "pair-closed (OpenTheory stdlib product types)" s
-  else logInfo "pair-closed.art not found relative to cwd"
+  OTImport.importArticleExpectFail "GATE-NEG-2 Γ-SWAP (article declares q ⊢ p over a proof of p ⊢ p)"
+    "thm: declared hypothesis is NOT among" gammaSwapArticle
 
--- Import a real article from the path in `$OT_ARTICLE` (e.g. prodWitness.art).
+/-- GATE-NEG-2b: the Γ SIZE check still has to bite on its own — declared Γ empty
+    while the proof leaves `p` assumed. -/
+def gammaDropArticle : String := String.intercalate "\n"
+  ["6","version",
+   "\"p\"","\"bool\"","typeOp","nil","opType","var","varTerm",
+   "assume",
+   "nil",
+   "\"p\"","\"bool\"","typeOp","nil","opType","var","varTerm",
+   "thm"]
+
+run_cmd do
+  OTImport.importArticleExpectFail "GATE-NEG-2b Γ-DROP (article declares ⊢ p over a proof of p ⊢ p)"
+    "disagrees with the proof's open hypotheses" gammaDropArticle
+
+-- GATE-NEG-1 (the axiom gate's EXACTNESS). `d_forall_triv` is
+-- `{A} [Nonempty A] : ∀ (t : Prop), (∀ _ : A, t) = t`. At `A := Empty` that
+-- statement is FALSE (`t := False` gives `True = False`) and `Nonempty Empty`
+-- has no instance — so the gate must refuse it HERE. Before the exactness check
+-- it returned `some`, with the unsynthesizable instance left as an UNASSIGNED
+-- METAVAR inside the proof term, and the refusal was deferred to the kernel at
+-- `addDecl`. That is fail-DEFERRED, not fail-closed. Reachability, stated
+-- honestly: no article surface is known to produce an empty HOL type (every type
+-- variable carries a `Nonempty` witness, `bool ↦ Prop`, `ind ↦ Nat`), so this is
+-- a defect in the gate's CONTRACT rather than a demonstrated exploit — but the
+-- documented guarantee is absolute, and a gate whose line is actually held one
+-- layer downstream is not the gate this file's header describes.
+run_cmd liftTermElabM do
+  let e ← Term.elabTerm (← `(term| ∀ (t : Prop), (∀ _ : Empty, t) = t)) none
+  Term.synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
+  match ← OTImport.tryDischarge e with
+  | some pf =>
+      let pf ← instantiateMVars pf
+      throwError m!"GATE-NEG-1 FAILED — the axiom gate DISCHARGED a FALSE statement:\n  ⊦ {← ppExpr e}\n  proof = {← ppExpr pf}\n  proof.hasExprMVar = {pf.hasExprMVar}\nThe gate is fail-DEFERRED, not fail-closed: whatever refuses this now is downstream of the gate's own contract."
+  | none =>
+      logInfo "GATE-NEG-1 OK: the axiom gate itself refused ⊦ ∀ (t : Prop), (∀ _ : Empty, t) = t"
+
+-- GATE-POS-1 (the control on GATE-NEG-1). Exactness must narrow the gate to the
+-- UNSOUND instance, not switch the table off: the same shape at `A := Nat` —
+-- where `Nonempty Nat` really is synthesizable and the statement is TRUE — must
+-- still discharge, with a metavariable-free proof term. Without this control,
+-- "refuses everything" would read as a fix.
+run_cmd liftTermElabM do
+  let e ← Term.elabTerm (← `(term| ∀ (t : Prop), (∀ _ : Nat, t) = t)) none
+  Term.synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
+  match ← OTImport.tryDischarge e with
+  | some pf =>
+      let pf ← instantiateMVars pf
+      if pf.hasExprMVar then
+        throwError m!"GATE-POS-1 FAILED: discharged with a HOLE in the proof term: {← ppExpr pf}"
+      logInfo m!"GATE-POS-1 OK: the true instance still discharges, metavariable-free: {← ppExpr pf}"
+  | none =>
+      throwError "GATE-POS-1 FAILED: the gate refused ⊦ ∀ (t : Prop), (∀ _ : Nat, t) = t, which IS in the discharge table at A := Nat. The exactness check has over-tightened into refusing everything."
+
+-- GATE-NEG-3: a false statement that is not in the table at all must be refused
+-- with no proof term.
+run_cmd liftTermElabM do
+  let e ← Term.elabTerm (← `(term| ∀ (n : Nat), n = n + 1)) none
+  Term.synthesizeSyntheticMVarsNoPostponing
+  let e ← instantiateMVars e
+  match ← OTImport.tryDischarge e with
+  | some pf => throwError m!"GATE-NEG-3 FAILED: discharged ⊦ ∀ (n : Nat), n = n + 1 to {← ppExpr pf}"
+  | none    => logInfo "GATE-NEG-3 OK: a statement outside the discharge table is refused"
+
+/- ======================================================================
+   Real-article imports. These ARE this file's evidence, so a missing article is
+   a hard error (`bundledArticle`), never a `logInfo` skip.
+   ====================================================================== -/
+
+-- `unit-def` — the OpenTheory standard-library `unit` type definition (package
+-- unit-def-1.13, HOL Light provenance). Exercises defineTypeOp / defineConst /
+-- sym / trans / proveHyp / pop and discharges 8 `axiom` assumptions.
+run_cmd do
+  OTImport.importArticle "unit-def (bundled OpenTheory stdlib)"
+    (← OTImport.bundledArticle "unit-def.art")
+
+-- `prodWitness` — the product-type existence witness; discharges the bool-theory
+-- definitions of ∃, ⇒, ∀, ∧ and ⊦ T (5 `axiom` assumptions). It was previously
+-- reachable ONLY through `$OT_ARTICLE`, i.e. only when a human typed the path,
+-- which is one of the two reasons the evidence base could vanish in silence. It
+-- is bundled and required now.
+run_cmd do
+  OTImport.importArticle "prodWitness (bundled)"
+    (← OTImport.bundledArticle "prodWitness.art")
+
+-- `pair-closed` — the OpenTheory standard-library `pair` theory (product types),
+-- composed self-contained (via the `opentheory` tool) so its only assumptions are
+-- the two base axioms (extensionality, choice). It is the article that would
+-- exercise PARAMETERIZED (arity-2) `defineTypeOp` and POLYMORPHIC `defineConst`
+-- on real input; it carries 30 `thm` commands and 2243 `subst` commands.
+--
+-- ⚠ WHAT IS AND IS NOT ESTABLISHED. **A full end-to-end import of this article
+-- has never been observed to complete.** The originating verification run was
+-- still going, with ZERO bytes of output, at 2 h 20 m of CPU and ~3 GB RSS —
+-- against that commit's own "~16 min" estimate — and the re-run made for this
+-- repair passed the same mark. So: the machinery the article needs is
+-- implemented, and the article parses; "30 `thm` exports end-to-end,
+-- kernel-checked + axiom-clean" is NOT a measured result, and this file does not
+-- assert it. The known bottleneck is `subst`, which is quadratic in the article
+-- (each of the 2243 substitutions rewrites a proof term that has been growing
+-- since the first command, and re-interns every affected variable). That is a
+-- real performance defect, not a missing feature.
+--
+-- Because it does not finish in any budget a gate can hold, it is OPT-IN:
+-- `OT_PAIR_CLOSED=1`. Opting in makes the article REQUIRED (a missing file is a
+-- hard error), so the opt-in cannot itself decay into a silent skip.
+run_cmd do
+  match ← IO.getEnv "OT_PAIR_CLOSED" with
+  | some _ =>
+      OTImport.importArticle "pair-closed (OpenTheory stdlib product types)"
+        (← OTImport.bundledArticle "pair-closed.art")
+  | none =>
+      logWarning "pair-closed.art NOT imported (set OT_PAIR_CLOSED=1 to try it). No end-to-end completion of that article has ever been observed — see the note above this command; nothing in this file claims one."
+
+-- An EXTRA article by path, for driving a new one by hand. Unset is fine: the
+-- three bundled imports above are the required ones. A set-but-unreadable path
+-- throws.
 run_cmd do
   match ← IO.getEnv "OT_ARTICLE" with
   | some path =>
       let s ← IO.FS.readFile path
       OTImport.importArticle s!"file:{path}" s
-  | none => logInfo "OT_ARTICLE not set; skipping real-article import"
+  | none => logInfo "OT_ARTICLE not set (that is the optional EXTRA article; the bundled imports above are required)"

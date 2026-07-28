@@ -229,11 +229,19 @@ Why, over the alternative of an OCaml/Rust frontend that *emits Lean source*:
 spike into an importer that replays a **real HOL4-emitted OpenTheory v6 article**
 end-to-end, kernel-checked and axiom-clean. Command semantics follow the reference
 reader (`HOL4 src/opentheory/reader/OpenTheoryReader.sml`), including exact pop
-orders. Run it (Lean 4.30.0):
+orders. Run it (Lean 4.30.0) — as the gate, which is also how CI runs it:
 ```
-OT_ARTICLE=docs/opentheory-importer-poc/prodWitness.art \
-  lean docs/opentheory-importer-poc/OTPoC.lean
+bash scripts/check-opentheory-importer.sh              # ~8s: the real articles, with floors
+bash scripts/check-opentheory-importer.sh --self-test  # ~42s: + proves each guard goes red
+lean docs/opentheory-importer-poc/OTPoC.lean           # the raw elaboration, from the repo root
 ```
+The bundled articles (`unit-def.art`, `prodWitness.art`) are **required**: a missing
+one is a hard error, not a skip. `OT_ARTICLE=<path>` adds one more article;
+`OT_ARTICLE_DIR=<dir>` overrides where the bundled ones are looked for. Until
+2026-07-27 the imports sat behind `pathExists` fallbacks and nothing in the tree
+ran this file at all, so with the articles absent it elaborated **`EXIT=0`, green,
+having imported exactly one theorem (`True`)** — the gate script and the hard
+error exist because of that measurement.
 
 **What now works:**
 1. A **real v6 tokenizer + stack machine + dictionary** (`def`/`ref`/`remove`),
@@ -280,6 +288,79 @@ OT_ARTICLE=docs/opentheory-importer-poc/prodWitness.art \
    `axiom`. Every exported theorem is additionally checked axiom-clean with
    `collectAxioms ⊆ {propext, Classical.choice, Quot.sound}`.
 
+   ⚠ It was fail-**deferred**, not fail-closed, until 2026-07-27. A discharge
+   candidate whose `[Nonempty _]` instance the synthesizer could not solve left an
+   **unassigned metavar** in the returned proof term, so the gate said *discharged*
+   and the refusal came from the kernel at `addDecl`, one layer downstream of the
+   guarantee this doc states. Measured on `⊦ ∀ (t : Prop), (∀ _ : Empty, t) = t` —
+   false at `t := False`. The gate now requires every peeled binder to be really
+   instantiated (the returned term is metavariable-free and its type is re-checked
+   against the article's formula with the instantiation fixed), and refuses there.
+   No article surface was found that reaches it — every HOL type variable carries a
+   `Nonempty` witness — so this was a defect in the gate's *contract*, not a
+   demonstrated exploit; the contract is what the doc sells.
+
+5. The **Γ-content check in `thm`**, which is a soundness check and not a hygiene
+   one. `thm` compared only the SIZE of the article's declared Γ against the
+   proof's open hypotheses, so an article declaring the false sequent `q ⊢ p` over
+   a proof of `p ⊢ p` imported successfully and exported `∀ p, p → p`. The kernel
+   cannot see this: it checks that the exported term proves *its own* statement, so
+   it guarantees the export is TRUE, never that it is the ARTICLE'S theorem. Each
+   declared hypothesis must now match a distinct actually-assumed one up to defeq.
+   That distinction is load-bearing for the whole "import Verifereum" thesis.
+
+> ## ⚑ CORRECTED 2026-07-27 — the audit ledger for §3.3, and what has since been repaired
+>
+> The load-bearing technical work here is **real** and survived adversarial probing: `prodWitness.art`
+> and `unit-def.art` genuinely import end-to-end, kernel-checked and axiom-clean (5 and 8 axiom
+> assumptions discharged respectively — both counts confirmed by re-running the **committed** bytes),
+> the axiom gate genuinely refuses both rogue articles with the real `AXIOM GATE (fail-closed)` error,
+> all 12 discharge-table entries are ordinary Lean theorems with real proofs, and there is no `sorry`,
+> `axiom` or `native_decide` in `OTPoC.lean`. **What was overstated was the packaging around it.**
+>
+> Six findings were measured against the committed artifact on 2026-07-27
+> (`docs/AUDIT-IMPORTER-AND-DOCS.md` §1, F-A1…F-A7, F-C3, F-C4). **Five have since been repaired by a
+> concurrent lane; I re-checked each against HEAD rather than restating the audit.** They are recorded
+> here because a reader who saw the earlier version of this document needs to know what moved.
+>
+> | # | What was wrong (measured) | Status at HEAD |
+> |---|---|---|
+> | **F-A1a** | All three real-article imports were guarded by `if ← p.pathExists then … else logInfo`. With **no article files and `OT_ARTICLE` unset** the file elaborated **`EXIT=0`, green**, having imported exactly one theorem — `True`. `logInfo`, not `logWarning`, not `throwError`: a missing article was indistinguishable from a passing one at the exit code. | **REPAIRED.** One `pathExists` remains (`:1180`) and `:1166` documents in place why it is not a fallback. |
+> | **F-A1b** | `grep -rn "opentheory\|OTPoC\|OPENTHEORY" .github/ scripts/ metatheory/lakefile*` → **zero hits**. Wired into no workflow, no lake target, not `scripts/local-gates.sh`. It ran only when a human typed the command below. | **REPAIRED.** Now two gates in `scripts/local-gates.sh:229-230` (`opentheory-importer` and a `--self-test` red-check) plus `.github/workflows/ci.yml:1206`. |
+> | **F-A2** | `OTPoC.lean:27` and this document said the gate **"HARD-ERRORS"** on anything else. It was fail-***deferred***: `tryDischarge` returned `some` on a proof term carrying an **unassigned instance metavariable** (`synthInstance?` cannot solve e.g. `Nonempty Empty`), so the gate **discharged the false statement** `∀ (t : Prop), (∀ x : Empty, t) = t` with `proof.hasMVar = true`. The kernel refused it one layer later, at `addDecl`. | **REPAIRED.** The discharge path now rejects any surviving hole (`if pf.hasExprMVar \|\| pf.hasLevelMVar then return none`) **and** re-checks that the instantiated statement is still the article's formula, both metavariable-free (`:498-508`). **[UNVERIFIED]** and worth stating: the audit could not construct an article that ever reached the old hole, and did not *prove* the article surface admits no empty type — so the defect was in the gate's **contract**, not demonstrably in its **behaviour**. |
+> | **F-A3** | `thm` checked only `th.hyps.size == ls.size` — the **size** of the declared Γ, never its contents. An article declaring the false HOL sequent `q ⊢ p` over a proof of `p ⊢ p` passed, exported `∀ (p : Prop), p → p`, logged success, and named it `imported0_1` — a name recording nothing about which article theorem it is meant to be. | **REPAIRED**, and §3.3 above now states the distinction: the kernel guarantees the export is **TRUE**, never that it is the **ARTICLE'S** theorem. `:1077` now requires each declared hypothesis to match a distinct actually-assumed one up to defeq, with `:1060-1061`'s size check retained as an independent bite (`:1254`). |
+> | **F-A4** | `importArticleExpectFail` caught **any** exception and reported `reject-test OK` — a malformed 3-token article "passed" it on `stack underflow`, asserting nothing about *why* the rejection happened. | **REPAIRED.** Each reject-test now asserts the reason its rejection carries. |
+> | **F-A5** | `OTPoC.lean:1111-1115` asserted, unhedged and in the present tense, that `pair-closed.art` *"Exercises … 30 `thm` exports end-to-end, kernel-checked + axiom-clean."* It has **never once been observed to complete.** The honest hedge existed only in the commit body — and a reader six weeks out opens the file, not `git log`. This document did not mention `pair-closed.art` **at all**, in either direction. | **REPAIRED** in the residuals below, which now state plainly that it has never been observed to import end-to-end. |
+>
+> **Two further corrections that are not about code.**
+>
+> - **"the axiom-clean gate caught a real `sorryAx` … confirming the new rules cannot smuggle an
+>   axiom"** was a **non-sequitur**. One catch shows the gate fired once; it does not establish
+>   "cannot". The word is withdrawn (and the Results block below now says so).
+> - **`defineConstList` has zero occurrences across all three committed articles**, and the commit
+>   *subject* that shipped it reads as delivered. It is implemented and **wholly unexercised** —
+>   **[UNVERIFIED]**, not wrong: untested.
+>
+> **Two reported results were stated over runs that never reached a terminal state** (audit F-C3,
+> F-C4). *"Builds green (hbox, lean 4.30.0); regression clean"* was written while the last run of the
+> **committed** bytes had not terminated; the last run that *did* reach a terminal state was an
+> **error** (`defineConst Data.Pair.,: defining term has free term variable(s)`) from a file version
+> two edits earlier. The accept/reject and `unit-def` claims **are** true of the committed bytes —
+> the audit independently re-established that by running them — but they were not verified at the time
+> they were made. Separately, the reported *"HOL4 `--otknl` built 62 core dirs in 35 min … the
+> HOL4→article pipeline is **de-risked end-to-end**"* cites as its evidence a build that **FATAL'd**
+> (`opentheory failed: *** FATAL: Build failed in directory .../src/boss`). The third blocker was
+> correctly diagnosed and its fix applied (`opentheory install base` → `base-1.221`) — and then
+> **never rebuilt**: no `bin/build` or `Holmake` invocation exists after that point. **Two of the three
+> blockers were verified by a build; the third's fix was never exercised, so "de-risked end-to-end" is
+> withdrawn.**
+>
+> **Also [UNVERIFIED]** (audit §6, stated rather than passed): whether `pair-closed.art` ever
+> completes, and whether its 30 exports are kernel-checked and axiom-clean — **unverified in both
+> directions**, no failure was observed either; and `prodWitness.art`'s *"real HOL4-emitted"*
+> provenance — its structure is strongly consistent with tool emission and `OpenTheoryReader.sml`
+> exists at the cited path, but it was not re-emitted from HOL4 and the emitter is unconfirmed.
+
 **Results (verbatim).** Two real articles import end-to-end, kernel-checked and
 axiom-clean:
 - **`prodWitness.art`** (1712 lines, ~1170 commands): the product-type existence
@@ -296,20 +377,40 @@ axiom-clean:
   two of which are the type-nonemptiness clauses). It carves the unit type as
   `{b : Prop // b}` and proves its characteristic theorem:
   ```
-  OTImport.imported0_1 : ∀ (x : {b // b}), x = Classical.epsilon (fun x => True)
+  OTImport.imported0_1 : (fun P => ∀ (x : { b // b }), P x) fun v =>
+    v = Classical.epsilon fun x => True
   ```
-Two inline gate tests ship alongside: an **ACCEPT** article (`⊦ T`) and two
-**REJECT** articles (a rogue `axiom ⊦ p`, one of them with the `Nonempty`-threaded
-type-var path active) that the gate refuses fail-closed. Every export additionally
-passes the `collectAxioms ⊆ {propext, Classical.choice, Quot.sound}` gate — which
-also **caught a real `sorryAx`** mid-development when a proof term was
-kernel-rejected, confirming the new rules cannot smuggle an axiom.
+  (That is the importer's actual output, re-measured 2026-07-27. This block
+  previously showed the beta-reduced `∀ (x : {b // b}), x = Classical.epsilon
+  (fun x => True)` under a "verbatim" heading; the two are beta-equivalent, so the
+  mathematics is unaffected, but the printed form was hand-prettified and the
+  authoring commit's own code never emitted it.)
 
-**Remaining (labeled residuals, not blockers).** `defineConstList` and
-*polymorphic* `defineConst` (a constant with free type variables) are not yet
-supported — both hard-error. `defineTypeOp` handles arity-0 type operators (`unit`);
-a **parameterized** type definition (`pair`, `sum`, `option`) needs the type-arg
-abstraction + a metavar-unification instantiation path, and hard-errors today.
+Gate tests ship alongside and RUN on every invocation: an **ACCEPT** article
+(`⊦ T`), two **REJECT** articles (a rogue `axiom ⊦ p`, one with the
+`Nonempty`-threaded type-var path active), a **Γ-SWAP** article (declares `q ⊢ p`
+over a proof of `p ⊢ p`) and a **Γ-DROP** article, plus three direct probes at the
+discharge gate (the `Empty` instance must be refused; the `Nat` instance must
+still discharge, metavariable-free; a statement outside the table must be
+refused). Each reject-test asserts the REASON the rejection carries, because an
+error-agnostic one passes just as happily after the gate it tests stops firing —
+the malformed-article probe run during the audit "passed" on `stack underflow`.
+Every export additionally passes the `collectAxioms ⊆ {propext, Classical.choice,
+Quot.sound}` gate, which **caught a real `sorryAx`** mid-development. (One catch
+shows the gate fires; it is not evidence that an axiom *cannot* be smuggled.)
+
+**Remaining (labeled residuals, not blockers).** `defineConstList`, *polymorphic*
+`defineConst` (a constant with free type variables) and **parameterized**
+`defineTypeOp` (`pair`, `sum`, `option`) are all **implemented** as of `9bb3bb75a`
+— this list said they hard-error, which has been false since that commit.
+What is *not* established is that they work on a real article: the article that
+exercises them, `pair-closed.art` (the composed OpenTheory `pair` theory: 64205
+lines, 30 `thm` commands, **2243** `subst` commands), **has never been observed to
+import end-to-end.** The originating run reached 2 h 20 m of CPU with zero bytes of
+output against a "~16 min" estimate, and a re-run for the 2026-07-27 repair passed
+the same mark. The bottleneck is `subst`, which is quadratic in the article. It is
+therefore opt-in (`OT_PAIR_CLOSED=1`) and no claim of completion is made anywhere.
+`defineConstList` additionally has **zero** occurrences in any committed article.
 `thm`/`axiom` support only an **empty external Γ** (what self-contained standard-
 library articles export). These are the next increments; the spine (parse → replay
 with Γ + type-nonemptiness + nominal `subst` → `Expr` → kernel → axiom-clean, on
