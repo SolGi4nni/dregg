@@ -25,7 +25,8 @@ first.
 | `ci-invariants-structural` | 1 FAILURE |
 
 ## Next 3 moves
-1. **A6** — the conservation partition key is four bytes.
+1. ~~A6~~ dispatched — briefed with the correction that its sibling forced: do NOT inherit my
+   framing of the mechanism, since I named the wrong one for A7 and a wider key would have been a no-op.
 2. **B3/B5** — the sovereign carrier-witness arm is dead two levels deep; the solo finalization arm
    still finalizes any creator (the half `c6f00c228` deliberately left).
 3. **The `check_per_asset_conservation_by_asset` seam** — `declared_supply` exists for reconciling
