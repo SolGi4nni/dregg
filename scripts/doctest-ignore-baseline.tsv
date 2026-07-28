@@ -18,7 +18,8 @@
 #
 # ── THE NEXT RATCHET, NAMED AND NOT YET ARMED ────────────────────────────────────────
 # The same convention says a ```no_run block states what would happen if it ran
-# (`// NO_RUN: binds 0.0.0.0:3000`). All 13 minted by the 2026-07-27 pass do. TWENTY-NINE
+# (`// NO_RUN: binds 0.0.0.0:3000`). All 14 minted under this convention do — 13 from the
+# 2026-07-27 pass plus `sdk/src/embed.rs`'s CLI example, repaired the same day. TWENTY-NINE
 # PRE-EXISTING ONES DO NOT, and the gate does NOT currently detect them — this paragraph
 # is documentation, not a control. They are: 20 in `sdk/` + `dregg-sdk-net/`, 8 upstream
 # in `vendor/curve25519-dalek-dregg` (the ```ascii,no_run rows below), and one each in
@@ -29,6 +30,12 @@
 # 20 of the 29 sit in directories a concurrent lane was editing on 2026-07-27, and a gate
 # that reddens other people's in-flight work is a gate that gets switched off in a week,
 # taking the ```ignore contract with it. Arm it when `sdk/` is quiet.
+#
+# ⚠ AND `sdk/` WAS QUIET, measured 2026-07-27 while retiring the three rows below it: the
+# concurrent lane that condition names had already finished, and the same false blocker was
+# what those three rows were written on. So the trigger has FIRED and the reason this is
+# still un-armed is now honest and different: arming needs 29 rows written here, one
+# argument each, which is its own pass — not another lane's schedule.
 #
 # ─────────────────────────────────────────────────────────────────────────────────────
 # Seeded 2026-07-27, from the pass that repaired 45 of the 71 ```ignore fences this tree
@@ -47,15 +54,30 @@ no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	c4b9e95a28bd	upstream 
 no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	0aac3104d0b0	upstream askama_derive; vendored, not authored here
 no-reason	deos-homeserver/vendor/askama_derive/src/lib.rs	6bd49abc447b	upstream askama_derive; vendored, not authored here
 
-# ⚠ IN SCOPE, OWNED BY ANOTHER LANE. These three are the real thing this gate is about:
-# the gRPC-interceptor and CLI examples are ordinary drifted Rust (undefined `engine`,
-# `Caveat`; the CLI one writes a file, so `no_run`), and only the axum-handler one looks
-# structural. They were left alone because `sdk/` was being edited by a concurrent lane on
-# 2026-07-27 and a two-lane edit to one file is how work gets lost. DELETE THESE ROWS when
-# they are repaired — the gate will tell you, loudly, if you repair them and forget.
-no-reason	sdk/src/embed.rs	102ad8f46ee4	axum handler example; sdk/ owned by a concurrent lane 2026-07-27
-no-reason	sdk/src/embed.rs	a6f8dd99f9ab	gRPC interceptor example; sdk/ owned by a concurrent lane 2026-07-27
-no-reason	sdk/src/embed.rs	833e065f4293	CLI proof-to-file example; sdk/ owned by a concurrent lane 2026-07-27
+# ⚑ REPAIRED AND RETIRED, 2026-07-27 — `sdk/src/embed.rs`, three rows, and this note is the
+# only thing left of them. They were baselined as "owned by a concurrent lane", which had
+# already expired when it was written: `embed.rs` was last committed at 18:29:51 and the
+# exemption was minted 33 minutes later at 19:03:05, on a file that was clean then and is
+# clean now. What the three fences were actually silencing was DRIFT, which is precisely the
+# thing this gate exists to make un-silenceable:
+#
+#   `engine.attenuate(parent, caveats)`          does not exist. It is `attenuate_token`, and
+#                                                it takes (&str, &[u8; 32], &Attenuation) and
+#                                                returns Result<String, _> — not Vec<u8>.
+#   `engine.verify_presentation(&bytes, &root)`  does not exist. It is
+#                                                `verify_presentation_bytes(&bytes, action,
+#                                                resource) -> Result<bool, _>`, which binds the
+#                                                action and checks freshness; the root argument
+#                                                belongs to `verify_presentation_against`.
+#   `engine.prove_presentation(&token, "read", "my-service")`
+#                                                takes FIVE parameters, not three: the root key
+#                                                and the attenuation chain were missing, and the
+#                                                example minted with `for_testing()` (timestamp
+#                                                0), which that method REFUSES.
+#
+# Their new marks: the gRPC one is a plain ``` that compiles AND runs; the CLI one is
+# ```no_run because it writes `proof.bin`; the axum one keeps ```ignore with a reason, because
+# axum genuinely is not a dependency of this crate — the one case the convention allows.
 
 # UPSTREAM, and the reason F2 exists at all. `vendor/curve25519-dalek-dregg` is a fork of
 # curve25519-dalek whose AVX2 backend documents its lane layouts in ```ascii,no_run blocks.

@@ -117,11 +117,20 @@ impl Game {
         }
     }
 
-    /// The board universe's display title.
+    /// The board universe's display title, rendered as the `<h2>` of each `/crown` section.
+    ///
+    /// ⚑ ALSO A CONTENT-ADDRESS PREIMAGE. It is passed to `Universe::authored` AND embedded in
+    /// [`Game::scene`], and `ugc-dregg` hashes both `name` and `source`, so editing it
+    /// re-addresses the board universe. That costs a **restart, not a migration**, and it is worth
+    /// being able to see why: [`GameBoard`]'s registry is in-memory and rebuilt at boot, both
+    /// boards' `canonical_anchor` still returns `None` (nothing baked pins an anchor to an id),
+    /// and the resulting [`UniverseId`] is only ever DISPLAYED — never stored, never compared.
+    /// The day a canonical anchor IS baked, this string becomes load-bearing and moving it
+    /// becomes a re-emit of that reference.
     pub fn title(self) -> &'static str {
         match self {
-            Game::MultiwayTug => "Multiway Tug — Proof Board",
-            Game::Automatafl => "Automatafl — Proof Board",
+            Game::MultiwayTug => "Multiway Tug · Proof Board",
+            Game::Automatafl => "Automatafl · Proof Board",
         }
     }
 

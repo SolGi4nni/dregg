@@ -17,23 +17,35 @@
 #   `NOT_PLAYER_SURFACES` because it renders no markup at all; `descent.rs`'s pointer-width refusal
 #   was simply rewritten, since "exceeds this executor target" named the wrong limit anyway).
 #
-#   What belongs here is a site where the word is doing a job no plain equivalent does, or a file
-#   this pass was not permitted to edit. The second kind is DEBT and every such row says so.
+#   What belongs here is a site where the word is doing a job no plain equivalent does.
 #
-# As of 2026-07-26 there are 6 rows, ALL of the second kind — both files were held by other live
-# lanes during the widening pass, so the copy fix could not land with the gate. Nothing here is a
-# claim that the word is right; each row carries the replacement it is waiting for.
-
-# ── DEBT · `dreggnet-web/src/descent_play.rs` (`/descent/play`, `?engine=browser`) ──────────────
-# The flagship played in the reader's own tab. Its copy is in a JavaScript module inside a Rust
-# literal, and the file was owned by another lane for this pass.
-dreggnet-web/src/descent_play.rs	receipt	· receipt	DEBT · the post-turn line reads "Turn committed · revision N · receipt <short hash>". The hash is the player's handle on that move; the label should say what it hands them, e.g. " · this move: ". File held by another lane this pass.
-dreggnet-web/src/descent_play.rs	executor	the native executor declined the move	DEBT · the fallback text when the in-tab engine refuses without a reason of its own. Should read "the rules did not allow that move". File held by another lane this pass.
-dreggnet-web/src/descent_play.rs	receipt	receipts.	DEBT · "Fresh replay accepted all N receipts." Should count what a player recognises: "Fresh replay accepted all N moves." File held by another lane this pass.
-
-# ── DEBT · `dreggnet-web/src/tug_web.rs` (`/tug`) ───────────────────────────────────────────────
-# The tug table's own rules panel. Note this file ALREADY defines `guild`/`lane` in place, which is
-# why those two are not on the banned list at all; `fog` and `executor` are the residue.
-dreggnet-web/src/tug_web.rs	fog	All of it: the deck, the fog, scoring, and what this build does not do	DEBT · the `<summary>` of the expanded rules. `fog` is the internal name for per-viewer hiding and the panel already explains the mechanism two bullets down ("How the hand is hidden"), so the summary should say "the hidden hand". File held by another lane this pass.
-dreggnet-web/src/tug_web.rs	executor	a card. That {deck} is a conservation tooth the executor enforces: no favor is conjured or destroyed for the length of a round.	DEBT · should name the effect rather than the component: "no favor is conjured or destroyed for the length of a round, and a turn that would is refused". File held by another lane this pass.
-dreggnet-web/src/tug_web.rs	executor	names them: 11 influence takes it outright, else leading 4 lanes. Short of either bar the round is still decided, on the higher total influence, else the more lanes held; and only an exact dead heat on both is a draw. Every one of those clauses is a tooth: the executor refuses a claimed win the rules do not make.	DEBT · same fix as the row above: "a claimed win the rules do not make is refused". File held by another lane this pass.
+# ⚑ THIS FILE IS EMPTY, AND EMPTY IS THE CORRECT STATE. It was seeded on 2026-07-26 with SIX rows,
+# every one of them opening `DEBT ·` and closing "File held by another lane this pass." — which is
+# to say, six pieces of live player copy on `/descent/play` and `/tug` excused for a scheduling
+# reason, each carrying the replacement it was waiting for. On 2026-07-27 that excuse was measured
+# and had expired, so the six replacements were simply written and the rows retired themselves:
+#
+#   descent_play.rs   " · receipt "                    → " · this move recorded as "
+#                     "the native executor declined…"  → "the move was re-run in this tab and
+#                                                         refused, with no reason given"
+#                     "…all N receipts."               → "…all N moves."   (`report.turns` IS moves)
+#   tug_web.rs        "the deck, the fog, scoring"     → "the deck, the hidden hand, scoring"
+#                     "a conservation tooth the executor enforces"
+#                                                      → "That 21 is fixed for the whole round … a
+#                                                         move that would do either is refused"
+#                     "the executor refuses a claimed win the rules do not make"
+#                                                      → "a claimed win the rules do not make is
+#                                                         refused"
+#
+# ⚠ TWO of those six were ALSO STALE AT THE COMMIT THAT WROTE THEM (`8f0a2312a`). Replaying this
+# gate's reader over `git show 8f0a2312a:…` gives 6 rows against 5 live hits, and the two that
+# match nothing are both in `tug_web.rs`: the `fog` `<summary>` (at that tree `fog` was in `//!`
+# doc comments ONLY, which R1 never yields) and the "names them: 11 influence…" `executor` `<li>`.
+# Both were keyed to another lane's UNCOMMITTED working-tree text, which did not land until
+# `4bcb934a3` a day later — so a clean checkout of `8f0a2312a` fails this gate on its own
+# allowlist. The lesson is not "check harder": a row written for a file you are not editing is a
+# row written against a tree you cannot see. Fix the string instead — the fix and the retirement
+# are the same edit.
+#
+# So: adding a row here is legitimate ONLY for a word doing a job no plain equivalent does. There
+# is currently no such word. "Another lane owns the file" is not one of the reasons.

@@ -164,13 +164,13 @@ fn rules_html() -> String {
          rules working. The running account of where all {deck} favors are (held, face down, \
          burnt, placed) is what moves, and the table prints it.</li>\
          </ul>\
-         <details class=\"rules-more\"><summary>All of it: the deck, the fog, scoring, and what \
-         this build does not do</summary>\
+         <details class=\"rules-more\"><summary>All of it: the deck, the hidden hand, scoring, and \
+         what this build does not do</summary>\
          <ul class=\"rules\">\
          <li><strong>{guilds} guilds are the {guilds} lanes</strong> · one thing, two names, and \
          this page uses both: guild 3 <em>is</em> lane 3. There are {deck} <strong>favor \
-         cards</strong> in all: a favor <em>is</em> a card. That {deck} is a conservation tooth the \
-         executor enforces: no favor is conjured or destroyed for the length of a round.</li>\
+         cards</strong> in all: a favor <em>is</em> a card. That {deck} is fixed for the whole \
+         round: no favor is conjured or destroyed, and a move that would do either is refused.</li>\
          <li><strong>How the hand is hidden.</strong> Beside the count, your opponent sees the \
          committed root of your hand; the cards themselves are rendered to you and to nobody else. \
          What a lane pays is what it pays whoever ends up leading it.</li>\
@@ -178,8 +178,8 @@ fn rules_html() -> String {
          played, and the winner is named once, at the reveal. The bars pick <em>which rule</em> \
          names them: 11 influence takes it outright, else leading 4 lanes. Short of either bar the \
          round is still decided, on the higher total influence, else the more lanes held; and only \
-         an exact dead heat on both is a draw. Every one of those clauses is a tooth: the executor \
-         refuses a claimed win the rules do not make.</li>\
+         an exact dead heat on both is a draw. Every one of those clauses is enforced: a claimed \
+         win the rules do not make is refused.</li>\
          <li><strong>Then reveal and score.</strong> Each seat's Secret is turned face up onto its \
          owner's side of its lane, and only then is control counted.</li>\
          <li><strong>The shape of the round is yours.</strong> Which of your four actions to spend, \

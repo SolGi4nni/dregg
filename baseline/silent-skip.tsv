@@ -1,7 +1,20 @@
-# silent-skip.tsv — tests that can return before exercising their subject, on an
-# environment/availability guard, and therefore report `ok` without having run.
-# Written by scripts/check-silent-skip.py --bless. SILENT rows are the disease;
-# DEMANDED rows panic under DREGG_TEST_REQUIRE_LEAN=1 but still report `ok` unarmed.
+# silent-skip.tsv — the NAMED RESIDUALS of the silent-skip sweep.
+# Written by scripts/check-silent-skip.py --bless.
+#
+# This file does NOT hold the disease. SILENT is zero-tolerance and unbaselineable:
+# a test that returns on a missing fixture and reports `ok` is a finding, always.
+# What lives here are the two shapes that LOOK like it and are not:
+#
+#   INVERSE    the test's subject IS the fixture's ABSENCE (`fails_closed_when_the_
+#              archive_is_absent`), so it skips when the fixture is PRESENT. Demanding
+#              availability is backwards. Still a real hole on a provisioned box — the
+#              fix is injecting unavailability, not reading the ambient world.
+#   REENTRANT  one half of a two-process test: the parent re-execs the binary with
+#              `--exact <fn>` + a marker env var and the child does the work. The
+#              assertions DO happen. Residual: the worker still prints `ok` in the
+#              PARENT process. Closing that needs `#[ignore]` on the worker AND
+#              `--ignored` added to the parent's spawn args, since libtest's
+#              `--exact` will not run an ignored test.
 #
 # verdict	file	fn	guard_shape
 INVERSE	dregg-lean-ffi/src/bridge_lc_ffi.rs	fails_closed_when_export_absent	*_present() (via eth_lc_verify_available) [wrapped-if]

@@ -1108,7 +1108,7 @@ fn board_page(views: &[BoardView], ingest_armed: bool) -> String {
         sections.push_str(&format!(
             "<section class=\"deos-section\"><p class=\"eyebrow\">Succinct fold · O(1) accept</p>\
              <h2>{title}</h2><p class=\"prose\">Every row below is a finished match folded to ONE \
-             proof and re-verified <em>on this request</em> against this board's pinned anchor — no \
+             proof and re-verified <em>on this request</em> against this board's pinned anchor: no \
              moves were posted, and none are stored. <strong>One row per human, not per \
              account:</strong> a player who has <a href=\"/identity/link\">proven</a> that their \
              chat and web identities are the same person ranks once, on their best fold; an \
@@ -1176,7 +1176,7 @@ fn board_page(views: &[BoardView], ingest_armed: bool) -> String {
          <p class=\"eyebrow\">Re-verified on this request</p>\
          <h1>Crowns · one board, every surface</h1>\
          <p class=\"deck\">A finished match of a portfolio game folds to ONE succinct proof. A crown \
-         won in a Discord channel and a crown won here rank on the SAME board — not because the \
+         won in a Discord channel and a crown won here rank on the SAME board, not because the \
          surfaces trust each other, but because a proof does not need trust: this server re-runs the \
          whole-history light client itself, on every read.</p></div>\
          <p class=\"prose\">{door}</p>\
@@ -1190,7 +1190,7 @@ fn board_page(views: &[BoardView], ingest_armed: bool) -> String {
          proof verifies here</span></div>\
          <p class=\"prose tag-muted\">Honest scope: the deployed STARK is <em>succinct</em>, not \
          <em>hiding</em>. &ldquo;The moves are never posted&rdquo; is a data-availability privacy \
-         property — this board never sees them and nobody publishes them — not a cryptographic \
+         property (this board never sees them and nobody publishes them), not a cryptographic \
          claim about the transcript, and the proof inherits the deployed FRI/STARK floor.</p>\
          </main>",
         door = door,

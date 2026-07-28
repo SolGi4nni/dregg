@@ -1768,11 +1768,11 @@ function takeTurn(action) {
   if (result.ok) {
     save();
     lastShare = null;
-    say("good", "Turn committed · revision " + result.revision + " · receipt " +
+    say("good", "Turn committed · revision " + result.revision + " · this move recorded as " +
       shortRoot(result.receiptHashHex));
   } else {
     say("bad", "Refused without advancing: " +
-      (result.error || "the native executor declined the move"));
+      (result.error || "the move was re-run in this tab and refused, with no reason given"));
   }
   render();
   // If that landed move settled the run, auto-anchor it to the board (once) — no manual
@@ -1940,7 +1940,7 @@ function render() {
   verify.addEventListener("click", () => {
     const report = JSON.parse(world.verifyJson());
     say(report.verified ? "good" : "bad", report.verified
-      ? "Fresh replay accepted all " + report.turns + " receipts."
+      ? "Fresh replay accepted all " + report.turns + " moves."
       : "Replay verification refused: " + report.detail);
     render();
   });

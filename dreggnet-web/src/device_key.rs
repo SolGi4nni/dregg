@@ -665,7 +665,7 @@ fn device_page(
             list = devices_block(store_path, root),
         ),
         None => "<h2>No identity on this browser yet</h2>\
-             <p class=\"prose\">You can still enrol from here — the form reads your 24 words, not \
+             <p class=\"prose\">You can still enrol from here: the form reads your 24 words, not \
              this browser's cookie. If you have not claimed an identity at all, \
              <a href=\"/identity\">start there</a>: a signing key signs <em>as</em> somebody, so \
              there has to be somebody first.</p>"
@@ -685,7 +685,7 @@ fn device_page(
              <h2>What changes, exactly</h2>\
              <p class=\"prose\">Today a turn you press here is <strong>attributed</strong>: this \
              page hands us the name you are signed in as and we take it at face value. That is not \
-             a flaw in how you played — it is the ordinary way a browser plays, and every board \
+             a flaw in how you played; it is the ordinary way a browser plays, and every board \
              counts those turns. What it cannot do is prove that the person pressing the button was \
              you.</p>\
              <p class=\"prose\">A signing key changes that. Your browser makes one, here, in this \
@@ -745,7 +745,7 @@ fn honest_block() -> String {
      <dt style=\"font-weight:600;margin-top:.6rem\">We cannot sign with it, and neither can your \
      words.</dt>\
      <dd style=\"margin:.15rem 0 0;opacity:.85\">The key was made by this browser and stored in a \
-     form the browser will use but will not hand back — not to us, not to this page's own scripts. \
+     form the browser will use but will not hand back: not to us, not to this page's own scripts. \
      That is what makes a signature from it mean something we could not have produced. It also means \
      there is no recovering it: a new browser makes a new key and you enrol that one.</dd>\
      <dt style=\"font-weight:600;margin-top:.6rem\">It says who moved, not that the move was \

@@ -20,32 +20,80 @@
 //! ## Axum HTTP handler (verify proof from a header)
 //!
 //! ```ignore
+//! // IGNORED: axum is deliberately NOT a dependency of `dregg-sdk` — an embedder brings their
+//! // own framework, which is the whole premise of this module — so `HeaderMap`, `State` and
+//! // `StatusCode` cannot resolve here. Only the framework half is unchecked: every `engine.`
+//! // call below is the real signature, and the two examples under this one compile and run.
+//! use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+//!
 //! async fn verify_handler(headers: HeaderMap, State(engine): State<Arc<DreggEngine>>) -> StatusCode {
-//!     let proof_b64 = headers.get("x-dregg-proof").unwrap();
-//!     let proof_bytes = base64::decode(proof_b64).unwrap();
-//!     let root = engine.federation_root();
-//!     if engine.verify_presentation(&proof_bytes, &root) {
-//!         StatusCode::OK
-//!     } else {
-//!         StatusCode::FORBIDDEN
+//!     let Some(proof_b64) = headers.get("x-dregg-proof") else {
+//!         return StatusCode::BAD_REQUEST;
+//!     };
+//!     let Ok(proof_bytes) = BASE64.decode(proof_b64.as_bytes()) else {
+//!         return StatusCode::BAD_REQUEST;
+//!     };
+//!     // Checks the STARK, the federation-root binding, the (action, resource) binding and
+//!     // freshness — against the engine's OWN root, so there is no root argument to get wrong.
+//!     // `Ok(false)` is "did not verify"; `Err` is "did not decode".
+//!     match engine.verify_presentation_bytes(&proof_bytes, "read", "api/v1/users") {
+//!         Ok(true) => StatusCode::OK,
+//!         Ok(false) => StatusCode::FORBIDDEN,
+//!         Err(_) => StatusCode::BAD_REQUEST,
 //!     }
 //! }
 //! ```
 //!
 //! ## gRPC interceptor (attenuate token per-request)
 //!
-//! ```ignore
-//! fn intercept(engine: &DreggEngine, parent_token: &[u8], caveats: &[Caveat]) -> Vec<u8> {
-//!     engine.attenuate(parent_token, caveats).unwrap()
+//! ```
+//! use dregg_sdk::embed::{DreggEngine, EngineConfig};
+//! use dregg_token::Attenuation;
+//!
+//! // One request in: hand the callee a token that can do strictly less than the parent.
+//! // Attenuation only ever narrows, so this is safe to do per request without re-minting.
+//! fn intercept(
+//!     engine: &DreggEngine,
+//!     parent_token: &str,
+//!     root_key: &[u8; 32],
+//!     restrictions: &Attenuation,
+//! ) -> String {
+//!     engine
+//!         .attenuate_token(parent_token, root_key, restrictions)
+//!         .expect("the parent token decodes under the root key it was minted with")
 //! }
+//!
+//! let engine = DreggEngine::new(EngineConfig::for_testing());
+//! let root_key = b"test-root-key-32-bytes-exactly!!";
+//! let parent = engine.mint_token(root_key, "compute").unwrap();
+//!
+//! let this_request = Attenuation {
+//!     services: vec![("compute".into(), "r".into())],
+//!     ..Default::default()
+//! };
+//! let narrowed = intercept(&engine, &parent, root_key, &this_request);
+//! assert_ne!(narrowed, parent);
 //! ```
 //!
 //! ## CLI tool (generate proof, output bytes)
 //!
-//! ```ignore
-//! let engine = DreggEngine::new(EngineConfig::for_testing());
-//! let token = engine.mint_token(b"my-root-key-32-bytes-exactly!!!!", "my-service").unwrap();
-//! let proof = engine.prove_presentation(&token, "read", "my-service").unwrap();
+//! ```no_run
+//! // NO_RUN: writes `proof.bin` into the process's working directory.
+//! use dregg_sdk::embed::{DreggEngine, EngineConfig};
+//! use std::time::{SystemTime, UNIX_EPOCH};
+//!
+//! // A REAL wall-clock timestamp: `prove_presentation` refuses to sign at 0 rather than emit a
+//! // proof every verifier holding real time would reject as "from the future".
+//! let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+//! let engine = DreggEngine::new(EngineConfig::new(now));
+//!
+//! let root_key = b"my-root-key-32-bytes-exactly!!!!";
+//! let token = engine.mint_token(root_key, "my-service").unwrap();
+//! // (encoded token, the root key it was minted under, the attenuations applied since — none
+//! // here — and the (action, resource) the proof is BOUND to).
+//! let proof = engine
+//!     .prove_presentation(&token, root_key, &[], "read", "my-service")
+//!     .unwrap();
 //! std::fs::write("proof.bin", &proof).unwrap();
 //! ```
 
@@ -379,7 +427,7 @@ impl DreggEngine {
 
     /// Verify a wire presentation proof against the current federation root.
     ///
-    /// Performs the SAME checks as `verify_presentation_full`:
+    /// Delegates to `dregg_bridge::present::verify_proof_complete`, the canonical verifier:
     /// 1. STARK proof validity (issuer membership)
     /// 2. Federation root binding
     /// 3. Action binding — the proof must be bound to `(expected_action, expected_resource)`
