@@ -120,6 +120,26 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("37 pre-iroot limbs")
 }
 
+/// **STAGE AN OLD-GEOMETRY WIDE ROW TO THE COMMITTED WIDE GEOMETRY** — the S2 then E1 column
+/// deletions the deployed registry row was emitted under (Lean `RotWideCompactS2.compactS2` /
+/// `RotWideCompactE1.compactE1`; Rust reads the per-member kill-sets from the Lean-emitted
+/// `s2_compact_generated` / `e1_compact_generated` tables).
+///
+/// The per-family wide producers (`generate_rotated_note_create_wide` and siblings) deliberately stop
+/// at the OLD wide row — the dispatcher owns the staging, and applies exactly these two calls right
+/// after the family dispatch inside `generate_rotated_effect_vm_descriptor_and_trace_wide`. So every
+/// DIRECT caller owes them, and a caller that forgets hands `prove_vm_descriptor2` a row in the wrong
+/// coordinate system.
+fn stage_to_committed_geometry(trace: &[Vec<BabyBear>], registry_key: &str) -> Vec<Vec<BabyBear>> {
+    use dregg_circuit::effect_vm::trace_rotated::{compact_e1_columns, compact_s2_columns};
+    let mut staged = trace.to_vec();
+    compact_s2_columns(&mut staged, registry_key)
+        .expect("S2 compaction (the committed wide geometry)");
+    compact_e1_columns(&mut staged, registry_key)
+        .expect("E1 compaction (the committed wide geometry)");
+    staged
+}
+
 /// `true` iff `prove_vm_descriptor2` REFUSES (returns `Err` OR panics) on the given trace + PIs.
 fn refused(
     desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
@@ -568,11 +588,20 @@ fn notecreate_forced_on_wire_through_live_wide_producer() {
         "wide PI vector (51 base = 47 + 4 dsl rc, + 16 wide commit PIs)"
     );
 
+    // ⚠ THE COMMITTED WIDE GEOMETRY. The per-family wide producer stops at the OLD wide row (asserted
+    // above); the deployed registry row is S2-COMPACTED then E1-COMPACTED, and the live route applies
+    // exactly that staging immediately after the family dispatch, inside
+    // `generate_rotated_effect_vm_descriptor_and_trace_wide`. Every DIRECT caller of a family producer
+    // owes the same two calls — this test skipped them, so from the E1 cutover (`86f1c12a1`,
+    // 2026-07-23) until this repair the honest pole died on "base row width 2936 must equal descriptor
+    // trace_width 1892" and NEITHER tooth in this test ever bit.
+    let staged_trace = stage_to_committed_geometry(&wide_trace, name);
+
     // POSITIVE TOOTH (no downgrade): the honest noteCreate proves + verifies through the WIDE
     // descriptor — the geometry a light client runs.
     let proof = prove_vm_descriptor2(
         &wide_desc,
-        &wide_trace,
+        &staged_trace,
         &wide_dpis,
         &mem_boundary,
         &wide_map_heaps,
@@ -582,14 +611,16 @@ fn notecreate_forced_on_wire_through_live_wide_producer() {
         .expect("NO DOWNGRADE: the honest wide noteCreate proof must verify independently");
 
     // NEGATIVE TOOTH (the bite, at wide geometry, ISOLATED to the grow-gate): CLONE the honest WIDE
-    // trace (insert-shaped, 1792, carrying the GENUINE §J′ insert READ appendix that opens the fresh
-    // commitment against the honest post-insert root), forge the AFTER commitments-root limb (a root
-    // the kernel never grew), re-fill the base AFTER-block commit chain (`recompute_after_blocks_for_test`)
-    // AND re-fill the wide carriers over the forged base (`append_wide_carriers`, which resizes to the
-    // SAME 1792 layout the honest producer laid at `ACCUM_INSERT_HOST_WIDTH`, re-reads the 8-felt wide
-    // commit from the now-forged AFTER block, and re-derives the wide commit PIs — leaving the §J′
-    // insert appendix at `ACCUM_INSERT_READ_BASE` UNTOUCHED). The forged trace is now FULLY
-    // self-consistent at 1792 EXCEPT the in-circuit `.insert` grow-gate: the appendix still proves
+    // trace at the OLD geometry (insert-shaped, carrying the GENUINE §J′ insert READ appendix that
+    // opens the fresh commitment against the honest post-insert root), forge the AFTER
+    // commitments-root limb (a root the kernel never grew), re-fill the base AFTER-block commit chain
+    // (`recompute_after_blocks_for_test`) AND re-fill the wide carriers over the forged base
+    // (`append_wide_carriers`, which resizes to the SAME layout the honest producer laid at
+    // `ACCUM_INSERT_HOST_WIDTH`, re-reads the 8-felt wide commit from the now-forged AFTER block, and
+    // re-derives the wide commit PIs — leaving the §J′ insert appendix at `ACCUM_INSERT_READ_BASE`
+    // UNTOUCHED), and only THEN stage to the committed geometry — both re-derivations reason in the
+    // old coordinates, so the staging has to come last. The forged trace is then FULLY
+    // self-consistent EXCEPT the in-circuit `.insert` grow-gate: the appendix still proves
     // `insert(before, key) == honest_root`, but the AFTER commitments-root limb is forged, so the
     // grow-gate pins the limb against the appendix's genuine post-insert root → forged ≠ honest → no
     // membership witness → UNSAT. This is a REAL grow-gate refuse — an adversary presenting a FULLY
@@ -621,6 +652,12 @@ fn notecreate_forced_on_wire_through_live_wide_producer() {
         wide_trace[wide_trace.len() - 1][AFTER_BASE + B_COMMITMENTS_ROOT],
         "the forged AFTER commitments-root differs from the honest (grow-gate's UNSAT precondition)"
     );
+    let staged_forged = stage_to_committed_geometry(&forged_trace, name);
+    assert_ne!(
+        staged_forged[0], staged_trace[0],
+        "the forge SURVIVES the staging (the forged limb is not in a compacted-away band — else the \
+         negative tooth would be biting on nothing)"
+    );
 
     // The forged wide trace is fully self-consistent (carriers + PIs re-derived over the forged base)
     // EXCEPT the `.insert` grow-gate: the appendix's genuine post-insert root ≠ the forged AFTER
@@ -628,7 +665,7 @@ fn notecreate_forced_on_wire_through_live_wide_producer() {
     assert!(
         refused(
             &wide_desc,
-            &forged_trace,
+            &staged_forged,
             &forged_dpis,
             &mem_boundary,
             &wide_map_heaps
