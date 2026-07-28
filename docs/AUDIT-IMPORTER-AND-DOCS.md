@@ -22,8 +22,10 @@ zkApp PoC is an orphan directory no build touches and does not run at its own pi
 dependency; the Lean module shipped as an unrooted orphan whose 20 axiom pins ran
 nowhere.
 
-**Real-finding count: 38** — **18 FALSE**, **18 OVERCLAIM**, 2 stale/hygiene. Plus 6
-claims I could not verify, listed explicitly in §6 rather than passed.
+**Real-finding count: 38** — **15 FALSE**, **21 OVERCLAIM**, 2 stale/hygiene. Plus 6
+claims I could not verify, listed explicitly in §6 rather than passed. (Tallied by
+counting the F-A/F-B/F-C/F-D verdicts below plus the unrelated-hunks item at rank 17;
+`F-A1..7` = 7, `F-B1..10` = 10, `F-C1..6` = 6, `F-D1..14` = 14.)
 
 **~115 citation pins were opened and read; ~105 resolve exactly.** Citation hygiene is
 high and two docs are flawless. The failures cluster in one place — `KIMCHI-VERIFY-SPEC.md`
