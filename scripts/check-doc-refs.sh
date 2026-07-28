@@ -202,6 +202,23 @@ while IFS=$'\t' read -r file lineno tok; do
   scanned_refs=$((scanned_refs + 1))
 
   if [ ! -e "$path" ]; then
+    # ⚑ A GITIGNORED PATH IS A BUILD OUTPUT, NOT A REFERENCE — and this gate now BLOCKS on
+    # pre-push, so getting it wrong stops a push for a reason the pusher cannot control.
+    #
+    # `docs/ops/regenerating-verifiers.md` documents what the codegen PRODUCES:
+    # `chain/codegen/out/DreggGroth16Verifier25.vk.sol`, under `chain/.gitignore`'s `out/`.
+    # That doc is correct as written. Whether the file EXISTS is a fact about whether you
+    # have run the generator — so before this rule the gate answered differently on a clean
+    # clone than on a built box, which is the same shape as a green that is a function of
+    # your CPU count or your Lean archive.
+    #
+    # So: the reference is OK if the path is ignored AND its parent directory is reachable.
+    # The directory is the checkable claim ("the generator writes here"); the file is not.
+    # Deliberately narrow — an ignored path whose PARENT is also missing is still DEAD,
+    # because that is a doc pointing at a tree the generator does not produce.
+    if git check-ignore -q "$path" 2>/dev/null && [ -d "$(dirname "$path")" ]; then
+      continue
+    fi
     printf 'DEAD  %s:%s  ->  %s\n' "$file" "$lineno" "$tok"
     dead_count=$((dead_count + 1))
     continue
