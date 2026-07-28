@@ -1,5 +1,76 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 28 — 118 of the last 120 commits did not resolve from a clean checkout of themselves, and the reason was structural, not sloppy
+
+**40,000 LINES WERE IN NEITHER `members` NOR `exclude`, AND THAT STATE EMITS NO LINE.**
+`orb/Cargo.toml` was the workspace root for the ten `orb/crates/*` packages. `9f8370327`
+deleted it with the rest of the premature public cut; `4bcb934a3` — an untitled sweep-up
+with an empty body — re-landed all 1,227 files of the tree and not that one, leaving
+`orb/.workspace-members` in its place: the `members` array as loose text, paths rewritten
+root-relative, a note-to-self to paste into the repo root. Nobody did, and no tool has ever
+read that file. So the packages sat in the THIRD state — under a workspace root, declaring
+no `[workspace]`, listed in neither array. `cargo metadata` from inside any of them exits
+101; `cargo build --workspace` compiles none of them; nothing type-checks or lints the
+subtree. **Cargo only complains when you stand inside the directory, and nobody does.**
+
+**DECISION: orb is its own workspace, not repo-root members.** `crates/dataplane/build.rs`
+hard-asserts `orb/.lake/build/lib/libdrorb.a` — measured, `cargo check -p dataplane` panics
+at `build.rs:77` — and build scripts run for `check`, so folding it in would make
+`cargo build --workspace` an unconditional red on every box that has not built orb's Lean.
+It also pins its own toolchain (`nightly-2026-03-24`) and runs its own gate. Restoring the
+manifest also un-breaks `orb/scripts/ci.sh`, which does `cargo build -p aes-fallback` from
+`orb/` and needed orb to BE a workspace. 8 of the 10 crates now `cargo check` clean;
+dataplane needs the leanc archive, which is orb's own gate's job.
+
+**THE GATE FOUND SEVEN MORE THE SAME DAY, so it is a class, not an instance.**
+`sel4/verifier-pd`, whose own manifest says "It is a STANDALONE crate (NOT a member of the
+repo-root workspace)" — a true INTENT and a false FACT, with neither mechanism applied.
+Four `[patch]` sources. One nested inside deos-homeserver's own workspace. ⚠ And a cargo
+rule worth knowing: **`exclude` CANNOT reach a package inside a MEMBER's directory** —
+`is_excluded` is `!explicit_member && excluded` where `explicit_member` is a path-PREFIX
+test, so the parent member wins and the exclude entry is discarded silently. An empty
+`[workspace]` in the nested manifest is the only mechanism.
+
+**`scripts/check-workspace-closure.py`** is the gate: `cargo metadata --no-deps` (~0.3s) at
+every workspace root, over the working tree or a `git archive` extract of any revision. ⚠ It
+is a MANIFEST check and says so in its own header — it does NOT catch a missing `mod foo;`
+file, a type error or a missing build-script artifact, and it deleted one coverage claim it
+could not demonstrate (measured: `--no-deps` exits 0 with a declared `[[bin]]`'s source
+removed; only `cargo check` catches that). 7 faults in `--self-test`, every one injected into
+a fresh temp extract, so unlike most red-proofs it **cannot leave the shared tree disarmed**.
+
+**MEASURED OVER THE WINDOW: 118 of 120.** 112 carried 18 findings each (orb's ten plus the
+seven plus one more), 3 carried the last one alone. So the manifest half was never eight
+transient partial-commit accidents — it was two permanent conditions nothing could see.
+The second: `mobile/deos-android-paint` took gpui from `../../../emberian-zed/`, a checkout
+OUTSIDE the repo, and is its own workspace so no repo-wide build ever touched it. Now pinned
+to `rev = "adb9026524"`, the same git rev its siblings use and the exact rev that checkout
+was on. ⚠ **A live instance of the class was found by hand, not by the gate:**
+`scripts/local-gates.sh` had run `check-identity-as-a-name.py` since `40a59541b` while that
+file existed only on the author's disk — two rows that were MISSING in every clone. Landed,
+and the gate now checks every row's script too.
+
+**doc-refs 34 → 0, AND IT NOW BLOCKS.** It was driven 330 → 0 six weeks ago; all 34 landed
+since. The dominant cause was not rot: case-insensitive APFS makes a doc's `Circuit/`
+collide with the crate `circuit/`, so module-relative Lean paths and citations into OTHER
+repos (Plonky3, plonky3-recursion, mina-rust, l-adic/snarky) read as in-repo and die. Each
+now names the tree it lives in, upstream lines verified against the actual checkouts. It
+reported and did not block, which IS the mechanism — its only reader fires on
+`pull_request`, work lands on `main` directly at a 92s median, and that filter
+(`paths: docs/**`) structurally cannot see the dominant cause, which is CODE moving. `main`
+is not branch-protected, so **pre-push** is the last thing that can refuse; both gates are
+there now with declared, loud escapes. Red-proofed in all three cases, the destructive one
+built as a DANGLING commit so no ref moved and the index was never touched.
+
+**`proxy_grpc` KEPT, with the true reason.** Its module doc said "wired into the running
+dataplane"; `is_grpc`/`is_grpc_web`/`frame_len` have zero callers, `Seam::GrpcFrameLen` is
+constructed only there, so the dispatch arm can never fire. orb's own ratchet was RIGHT all
+along — it files `drorb_grpc_frame_len` as ORPHANED with `reason: "dead-dispatch"`, one of
+its 20. Deleting the Rust half would leave the same proven export orphaned with nothing
+prepared to wire. What was wrong was `--why`, which printed `[REACHABLE]` beside that arm
+because it asked whether the ENCLOSING FUNCTION is reachable — contradicting the audit's own
+verdict in the same run. Ratchet untouched at 20.
+
 ## ⚑⚑⚑⚑ JULY 26 (evening) — the wave's cheap half lands, and the check that was supposed to police Group 6 had never been called
 
 The recovery pass after session `d527daf6` hit the weekly limit mid-wave. Six items were out;
