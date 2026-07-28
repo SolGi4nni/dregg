@@ -5,7 +5,8 @@
 the prototypical *Conservative*/`Paired` effect (a gated debit/credit, `Σδ = 0`) all the way
 through the executor layers, THIS module drives the dregg1 effects that carry **no balance delta**:
 the field/state/lifecycle mutations whose `LinearityClass` color (`turn/src/action.rs
-Effect::linearity`, mirrored in `CatalogInstances.effectLinearity`) is `Neutral`, `Monotonic`, or
+`CatalogInstances.effectLinearity` — Lean-authored; the Rust `Effect::linearity` twin was deleted
+2026-07-28) is `Neutral`, `Monotonic`, or
 `Terminal`. For these the conserved `balance` domain measure (`RecordKernel.recTotal`) is UNCHANGED
 and the authority graph (`Spec.execGraph`) is UNCHANGED; only the METADATA domain advances (a field
 write, a counter bump, a lifecycle flag set). So — as `EffectTransfer §0` foretells — the BESPOKE

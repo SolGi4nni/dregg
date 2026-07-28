@@ -59,7 +59,10 @@ violation even when balance alone checks out — and the authority measure is no
     edge-bearing cap, `addEdge`), balance UNCHANGED, metadata advances.
   * **Terminal / revoke** (`revoke`) ⇒ authority measure does NOT increase (`removeEdge`), balance
     UNCHANGED, metadata advances. One-way subtraction.
-  * **Generative / Annihilative supply** (`mint` / `burn`) ⇒ balance moves by the disclosed `±amt`,
+  * **Generative / Annihilative supply** — ⚠ the SCALAR HERITAGE `FullAction.mint`/`.burn`, which
+    run the one-sided `recKMint`/`recKBurn`. `EffectKind.mint`/`.burn` (i.e. `Effect::Mint` /
+    `Effect::Burn`) are `Conservative` since 2026-07-28; see `TurnExecutorFull/Scalar.lean §2`.
+    The heritage ops ⇒ balance moves by the disclosed `±amt`,
     authority measure UNCHANGED, metadata advances.
   * **Monotonic (metadata, all kinds)** ⇒ the metadata measure strictly advances and NEVER retreats.
 
@@ -463,7 +466,8 @@ theorem terminal_revoke_obligation (s s' : RecChainedState) (holder t : CellId) 
   have := execFull_ledger s s' (.revoke holder t) h
   simpa [ledgerDelta] using this
 
-/-- **Generative/Annihilative supply (`mint`/`burn`): balance moves by the disclosed `±amt` ∧
+/-- **Generative/Annihilative supply (the SCALAR HERITAGE `mint`/`burn`): balance moves by the
+disclosed `±amt` ∧
 authority measure unchanged ∧ metadata advances ∧ the supply effect is a DISCLOSED non-conservation.**
 The supply ops break balance-conservation by design, and leave the authority MEASURE fixed (the cap
 table is framed). PROVED. -/

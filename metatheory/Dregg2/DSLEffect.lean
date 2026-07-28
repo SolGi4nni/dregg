@@ -178,24 +178,51 @@ example : mint.color.is_disclosed_non_conservation = true := mint.obligation
 
 #assert_axioms mint_regime_eq
 
-/-! ## §6 — Worked examples: `burn : Annihilative` and the three inert colors.
+/-! ## §6 — Worked examples: `burn : Conservative`, `bridgeFinalize : Annihilative`, and the
+three inert colors.
 
-`burn` destroys a resource (`Annihilative`, dual of `Generative`): it breaks `Σδ = 0` and
-discloses. The three inert colors (`Monotonic`/`Terminal`/`Neutral`) carry no conservation delta;
-their obligation is "neither paired nor disclosed". -/
+⚑ **`burn` MOVED COLOR ON 2026-07-28.** It was declared `Annihilative` here to match a catalog
+that colored `EffectKind.burn` the same way. Post-W1 a burn is a holder→WELL issuer-move — a
+paired debit/credit that conserves exactly (`Exec/IssuerMove.lean`'s `issuerBurnK_preserves_exact`;
+`SUPPLY-MODEL.md`; `apply.rs`'s `credit_balance` on the issuer well) — so its color is
+`Conservative` and its obligation is the paired sibling, not disclosure.
 
-dregg_effect burn (amount, asset) : Annihilative
+`bridgeFinalize` is the verb that kept the `Annihilative` color and is declared here so the color
+still has a worked example: a cross-chain EXIT removes value with no local counterparty, so it
+genuinely breaks `Σδ = 0` and must disclose. The two declarations sit side by side deliberately —
+they are the two readings that used to be conflated under one name.
+
+The three inert colors (`Monotonic`/`Terminal`/`Neutral`) carry no conservation delta; their
+obligation is "neither paired nor disclosed". -/
+
+dregg_effect burn (amount, asset) : Conservative
+dregg_effect bridgeFinalize (amount, asset) : Annihilative
 dregg_effect incrementNonce : Monotonic
 dregg_effect cellDestroy : Terminal
 dregg_effect setField (field, value) : Neutral
 
-/-- `burn`'s color matches the catalog `burn` Annihilative variant — by `rfl`; obligation is disclosure. -/
+/-- `burn`'s color matches the catalog `burn` Conservative variant — by `rfl`; obligation is the
+paired sibling. -/
 theorem burn_color_eq_catalog :
     burn.color = Dregg2.CatalogInstances.effectLinearity .burn := rfl
-example : burn.color.is_disclosed_non_conservation = true := burn.obligation
-example : burn.regime = Regime.Disclosed := rfl
+example : burn.color.requires_paired_sibling = true := burn.obligation
+example : burn.regime = Regime.Paired := rfl
+
+/-- ANTI-VACUITY, the other pole: `burn` does NOT disclose, while `bridgeFinalize` — the same
+shape of declaration, one color over — does. The `dregg_effect` macro therefore generates a
+genuinely color-dependent obligation rather than a uniform one. -/
+example : burn.color.is_disclosed_non_conservation = false := rfl
+
+/-- `bridgeFinalize`'s color matches the catalog `bridgeFinalize` Annihilative variant — by `rfl`;
+obligation is disclosure. -/
+theorem bridgeFinalize_color_eq_catalog :
+    bridgeFinalize.color = Dregg2.CatalogInstances.effectLinearity .bridgeFinalize := rfl
+example : bridgeFinalize.color.is_disclosed_non_conservation = true := bridgeFinalize.obligation
+example : bridgeFinalize.regime = Regime.Disclosed := rfl
+example : bridgeFinalize.color.requires_paired_sibling = false := rfl
 
 #assert_axioms burn_color_eq_catalog
+#assert_axioms bridgeFinalize_color_eq_catalog
 
 /-- `incrementNonce` is `Monotonic` (inert): obligation is "neither paired nor disclosed". -/
 theorem incrementNonce_color_eq_catalog :
@@ -228,16 +255,17 @@ example : setField.regime = Regime.Inert := rfl
 Each declared effect's `.regime` coincides with `effectObligation` at its namesake catalog variant
 — by `rfl`. -/
 
-/-- The six declared regimes coincide with `CatalogEffects.effectObligation` at their catalog
+/-- The seven declared regimes coincide with `CatalogEffects.effectObligation` at their catalog
 variants — pinned by `rfl`. -/
 theorem regimes_coincide_with_catalog :
     transfer.regime        = effectObligation .transfer ∧
     mint.regime            = effectObligation .bridgeMint ∧
     burn.regime            = effectObligation .burn ∧
+    bridgeFinalize.regime  = effectObligation .bridgeFinalize ∧
     incrementNonce.regime  = effectObligation .incrementNonce ∧
     cellDestroy.regime     = effectObligation .cellDestroy ∧
     setField.regime        = effectObligation .setField :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 #assert_axioms regimes_coincide_with_catalog
 
@@ -245,7 +273,8 @@ theorem regimes_coincide_with_catalog :
 
 #guard transfer.regime       = Regime.Paired
 #guard mint.regime           = Regime.Disclosed
-#guard burn.regime           = Regime.Disclosed
+#guard burn.regime           = Regime.Paired
+#guard bridgeFinalize.regime = Regime.Disclosed
 #guard incrementNonce.regime = Regime.Inert
 #guard cellDestroy.regime    = Regime.Inert
 #guard setField.regime       = Regime.Inert

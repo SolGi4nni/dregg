@@ -34,7 +34,7 @@ We then PROVE that EVERY kind attests its `StepInv` obligations, packaged as `fu
   * **mint/burn** — the supply MOVES by exactly `±amt` (`recMint_delta` / `recBurn_delta`, the
     record-cell refinement of `Generators.mint_delta`/`burn_delta`) with the
     Generative/Annihilative DISCLOSURE obligation discharged off `CatalogEffects`
-    (`g_bridgeMint`/`a_burn` color ⇒ `is_disclosed_non_conservation`), and mint/burn are AUTHORIZED
+    (`g_bridgeMint`/`a_bridgeFinalize` color ⇒ `is_disclosed_non_conservation`), and mint/burn are AUTHORIZED
     (the privileged `mintAuthorizedB` gate — a cell cannot coin its own supply).
 
 The headline `execFull_attests` bundles these per-kind: every committed `FullAction` attests the
@@ -201,19 +201,35 @@ theorem recKBurn_unauthorized_fails (k : RecordKernelState) (actor cell : CellId
     (h : mintAuthorizedB k.caps actor cell = false) : recKBurn k actor cell amt = none := by
   unfold recKBurn; rw [if_neg]; rintro ⟨ha, _⟩; rw [h] at ha; exact absurd ha (by simp)
 
-/-! ## §2 — The DISCLOSURE obligation for mint/burn (the Generative/Annihilative gate).
+/-! ## §2 — The DISCLOSURE obligation for the SCALAR HERITAGE supply ops.
 
-A supply move legitimately breaks `Σδ = 0`, but its delta is FORCED into the receipt — the
-`is_disclosed_non_conservation` obligation `CatalogEffects` proves of the Generative
-(`bridgeMint`/mint) and Annihilative (`burn`) colors. We tie each record-cell supply op to its
-catalog color so the disclosure obligation is discharged for the executable op, not just abstractly.
+⚠ **WHICH MECHANISM THIS SECTION IS ABOUT.** `recKMint`/`recKBurn` above are the pre-W1 SCALAR
+laws: one-sided credit/debit of a single cell's `balance` field, with `recTotal` moving by exactly
+`±amt` (`recKMint_delta`/`recKBurn_delta`). That really IS a non-conservation, and it really must
+disclose its delta — so the obligation below is sound. What it is NOT is `Effect::Burn`.
+
+The LIVE per-asset layer (§MA, `recKBurnAsset`/`recKMintAsset`) is post-W1: both are ISSUER-MOVES
+against the asset's negative-capable well, `Exec/IssuerMove.lean` proves
+`issuerBurnK_preserves_exact`/`issuerMoveK_preserves_exact`, and the one-sided laws survive only as
+`recKBurnAssetLegacy`/`recKMintAssetLegacy` — the non-vacuity teeth that PROVABLY BREAK
+`ExactConservation`. Accordingly `CatalogInstances` colors `EffectKind.burn`/`.mint`
+**`Conservative`** (recolored 2026-07-28; `burn_not_annihilative` states the old color is false).
+
+So the catalog kinds this section names are the CROSS-CHAIN FLOWS, whose shape genuinely matches
+the scalar heritage op: value appears (or leaves) with no local sibling delta. `mintEffect` already
+pointed at `.bridgeMint` rather than a mint kind for exactly this reason; `burnEffect` now points
+at its dual instead of misnaming the conserving local verb.
 -/
 
-/-- A `mint`'s catalog effect kind (dregg1's `Effect::BridgeMint` — Generative). -/
+/-- The catalog effect kind whose color the SCALAR heritage `recKMint` carries: `.bridgeMint`, the
+disclosed cross-chain INFLOW (Generative). NOT `EffectKind.mint`, which is the conserving
+well→holder issuer-move. -/
 def mintEffect : EffectKind := .bridgeMint
 
-/-- A `burn`'s catalog effect kind (dregg1's `Effect::Burn` — Annihilative). -/
-def burnEffect : EffectKind := .burn
+/-- The catalog effect kind whose color the SCALAR heritage `recKBurn` carries: `.bridgeFinalize`,
+the disclosed cross-chain OUTFLOW (Annihilative). NOT `EffectKind.burn`, which is the conserving
+holder→well issuer-move (`burn_conservative`). -/
+def burnEffect : EffectKind := .bridgeFinalize
 
 /-- **Mint discloses.** The mint effect is Generative, hence carries the disclosed
 non-conservation obligation: its supply delta must be revealed in the receipt. Discharged off
@@ -221,13 +237,27 @@ non-conservation obligation: its supply delta must be revealed in the receipt. D
 theorem mint_discloses : (effectLinearity mintEffect).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses mintEffect Dregg2.CatalogEffects.g_bridgeMint
 
-/-- **Burn discloses.** The burn effect is Annihilative, hence disclosed: its destroyed
-amount must be revealed. Discharged off `CatalogEffects.annihilative_discloses` + `a_burn`. -/
+/-- **The heritage burn discloses.** Its catalog color is Annihilative, hence disclosed: the
+removed amount must be revealed. Discharged off `CatalogEffects.annihilative_discloses` +
+`a_bridgeFinalize`. -/
 theorem burn_discloses : (effectLinearity burnEffect).is_disclosed_non_conservation = true :=
-  Dregg2.CatalogEffects.annihilative_discloses burnEffect Dregg2.CatalogEffects.a_burn
+  Dregg2.CatalogEffects.annihilative_discloses burnEffect Dregg2.CatalogEffects.a_bridgeFinalize
 
-/-- Mint/burn carry the `Disclosed` regime (NOT `Paired`): they break conservation BY DESIGN, with
-the delta disclosed — the supply ops are exactly the non-`Paired` half of the catalog. PROVED. -/
+/-- **ANTI-VACUITY / the other pole.** The disclosure obligation above is not a property every
+catalog kind has: the LIVE supply verbs `EffectKind.burn`/`.mint` — the ones the per-asset layer
+runs — come out `false` for the very same predicate, because they conserve. Without this the
+`_discloses` pair could be read as "the classifier is constant". -/
+theorem live_supply_does_not_disclose :
+    (effectLinearity EffectKind.burn).is_disclosed_non_conservation = false ∧
+    (effectLinearity EffectKind.mint).is_disclosed_non_conservation = false ∧
+    (effectLinearity EffectKind.burn).requires_paired_sibling = true ∧
+    (effectLinearity EffectKind.mint).requires_paired_sibling = true :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- The SCALAR HERITAGE mint/burn carry the `Disclosed` regime (NOT `Paired`): the one-sided laws
+break conservation, with the delta disclosed. ⚠ This is a statement about `recKMint`/`recKBurn`,
+NOT about `Effect::Mint`/`Effect::Burn` — the live per-asset issuer-moves are `Regime.Paired`
+(`effectObligation EffectKind.burn = Regime.Paired`). PROVED. -/
 theorem mint_regime_disclosed : effectObligation mintEffect = Regime.Disclosed := rfl
 theorem burn_regime_disclosed : effectObligation burnEffect = Regime.Disclosed := rfl
 
@@ -593,6 +623,9 @@ def fullActionInv (s : RecChainedState) (fa : FullAction) (s' : RecChainedState)
    | .revoke holder t    =>
        Dregg2.Spec.execGraph s'.kernel.caps
          = Dregg2.Spec.removeEdge (Dregg2.Spec.execGraph s.kernel.caps) holder ⟨t, ()⟩
+   -- ⚠ `mintEffect`/`burnEffect` are `.bridgeMint`/`.bridgeFinalize` — the catalog colors of the
+   -- SCALAR HERITAGE one-sided laws these arms run (§2). The LIVE per-asset supply arms conserve
+   -- and carry `Regime.Paired` instead.
    | .mint actor cell _  =>
        mintAuthorizedB s.kernel.caps actor cell = true ∧
        (effectLinearity mintEffect).is_disclosed_non_conservation = true

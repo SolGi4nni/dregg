@@ -105,3 +105,10 @@ pub mod executor_honesty_threats;
 // state_constraint_composition.rs.
 #[cfg(test)]
 pub mod slot_caveat_composition_stress;
+
+// The Lean effect catalog vs the deployed `Effect` enum. Reads BOTH sources as text and
+// pins their symmetric difference to a declared roster, so the drift fires on either
+// side's edit — `CatalogEffects`'s per-effect `rfl` tripwire only fires on Lean edits,
+// which is how the two vocabularies drifted 25/9 apart unobserved.
+#[cfg(test)]
+pub mod effect_catalog_lean_rust_pin;

@@ -3272,7 +3272,9 @@ committed per-asset action across all kinds. Its **Ledger** conjunct is the full
   * **ObsAdvance** — the chain grew by exactly one row (replay-detectable);
   * **KindObligation** — the kind-specific integrity content (asset-orthogonal): balanceA ⇒
     `authorizedB`; delegate ⇒ grounds in the source edge AND edits the graph by `addEdge`; revoke ⇒
-    `removeEdge`; mintA/burnA ⇒ `mintAuthorizedB` AND the Generative/Annihilative disclosure.
+    `removeEdge`; mintA/burnA ⇒ `mintAuthorizedB` AND the live-well witness (the DISCLOSURE leg
+    died with the W1 issuer-move rotation — the per-asset supply ops CONSERVE, and the catalog
+    agrees since 2026-07-28: `EffectKind.mint`/`.burn` are `Conservative`).
 
 The `exerciseA` arm names the INDEPENDENT `innerActionsAttest` (a chain of per-action `fullActionInvA`
 witnesses from the hold-gate post-state) in place of the executor's `execInnerA` fold — so the body no

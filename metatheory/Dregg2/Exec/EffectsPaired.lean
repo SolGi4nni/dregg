@@ -4,8 +4,17 @@
 **Instantiates the `Exec/EffectTransfer.lean` REFERENCE TEMPLATE for the rest of the
 `LinearityClass.Conservative` catalog cluster** — every dregg1 effect whose `effectLinearity`
 color is `Conservative` (`CatalogInstances.effectLinearity`), EXCLUDING `transfer` (done in
-`EffectTransfer`) and the supply pair `mint`/`burn` (done, as `Generative`/`Annihilative`, in
-`TurnExecutorFull`/`TriDomain`). From `effectLinearity`'s `Conservative` arm these are:
+`EffectTransfer`) and the supply pair `mint`/`burn`.
+
+⚠ **2026-07-28: `mint`/`burn` are now `Conservative` TOO** — they were recolored from
+`Generative`/`Annihilative` once burn became a holder→WELL issuer-move (`Exec/IssuerMove.lean`).
+They are still excluded from this cluster, but for a different reason than before: their paired
+counterparty is the asset's ISSUER WELL rather than a second ordinary cell, so the template below
+(a debit at one cell + a credit at another, both ordinary) does not fit them without the well
+resolution. `TurnExecutorFull`/`TriDomain` continue to carry them, and what those modules color
+`Generative`/`Annihilative` is the SCALAR HERITAGE one-sided law, NOT `Effect::Mint`/`Effect::Burn`.
+
+From `effectLinearity`'s `Conservative` arm the cluster instantiated here is:
 
   * **Escrow** — `createEscrow`, `releaseEscrow`, `refundEscrow`, and the committed (privacy)
     triple `createCommittedEscrow`, `releaseCommittedEscrow`, `refundCommittedEscrow`.

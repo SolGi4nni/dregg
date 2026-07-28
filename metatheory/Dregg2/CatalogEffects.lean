@@ -1,5 +1,5 @@
 /-
-# Dregg2.CatalogEffects — exhaustive coloring of dregg1's ~52 `Effect` variants onto
+# Dregg2.CatalogEffects — exhaustive coloring of dregg1's 53 `Effect` variants onto
 # `Spec.Conservation`'s `LinearityClass`, with per-class conservation obligations proved.
 
 Extends `CatalogInstances` (which defines `EffectKind` and `effectLinearity`; this module
@@ -8,9 +8,11 @@ opens them, never redefines them):
   * §1 — the six per-class conservation obligations, derived from `Spec.Conservation`'s
     proved classifier facts: Conservative ⇒ paired-sibling; Generative/Annihilative ⇒
     disclosed; Monotonic/Terminal/Neutral ⇒ neither.
-  * §2 — per-effect coincidence theorems for all ~52 variants (`rfl` tripwire: coloring
-    drift from `Effect::linearity` breaks the matching `rfl`). Grouped by color.
-  * §3 — exhaustiveness three ways: `effectLinearity_total` (cases over all 52),
+  * §2 — per-effect coincidence theorems for all 53 variants (`rfl` tripwire: a coloring
+    change made in `CatalogInstances` breaks the matching `rfl`). Grouped by color.
+    ⚠ The tripwire is ONE-SIDED — it fires on Lean edits only. The Lean↔Rust vocabulary check
+    is `tests/src/effect_catalog_lean_rust_pin.rs`.
+  * §3 — exhaustiveness three ways: `effectLinearity_total` (cases over all 53),
     `every_effect_classified` (paired ⊕ disclosed ⊕ inert), and the bespoke
     `effectObligation` discriminator with `effectObligation_coincides`.
 
@@ -47,8 +49,10 @@ theorem generative_discloses (e : EffectKind)
     (effectLinearity e).is_disclosed_non_conservation = true := by
   rw [h]; rfl
 
-/-- **Annihilative ⇒ disclosed non-conservation.** Same disclosure obligation as `Generative`
-(a burn breaks conservation but discloses the destroyed amount). -/
+/-- **Annihilative ⇒ disclosed non-conservation.** Same disclosure obligation as `Generative`,
+mirrored: a cross-chain EXIT removes value with no local sibling delta, so it breaks `Σδ = 0` and
+must disclose the amount. (A local `burn` does NOT live here — post-W1 it is a holder→well move
+and is `Conservative`; see `CatalogInstances.burn_not_annihilative`.) -/
 theorem annihilative_discloses (e : EffectKind)
     (h : effectLinearity e = Annihilative) :
     (effectLinearity e).is_disclosed_non_conservation = true := by
@@ -88,7 +92,7 @@ color. -/
 
 section PerEffect
 
-/-! ### §2.1 — Conservative (18): paired-delta resource moves (Σδ = 0). -/
+/-! ### §2.1 — Conservative (20): paired-delta resource moves (Σδ = 0). -/
 theorem c_transfer              : effectLinearity .transfer = Conservative := rfl
 theorem c_createEscrow          : effectLinearity .createEscrow = Conservative := rfl
 theorem c_releaseEscrow         : effectLinearity .releaseEscrow = Conservative := rfl
@@ -107,6 +111,10 @@ theorem c_queueAtomicTx         : effectLinearity .queueAtomicTx = Conservative 
 theorem c_queuePipelineStep     : effectLinearity .queuePipelineStep = Conservative := rfl
 theorem c_bridgeLock            : effectLinearity .bridgeLock = Conservative := rfl
 theorem c_bridgeCancel          : effectLinearity .bridgeCancel = Conservative := rfl
+-- ⚑ THE SUPPLY PAIR, recolored 2026-07-28 (`burn` was `Annihilative`, `mint` did not exist).
+-- Both are two-sided issuer-moves against the asset's negative-capable well, so both are paired.
+theorem c_burn                  : effectLinearity .burn = Conservative := rfl
+theorem c_mint                  : effectLinearity .mint = Conservative := rfl
 
 /-! ### §2.2 — Monotonic (5): scalar counters / refcounts going up. -/
 theorem m_incrementNonce        : effectLinearity .incrementNonce = Monotonic := rfl
@@ -139,10 +147,11 @@ theorem g_unseal                : effectLinearity .unseal = Generative := rfl
 theorem g_grantCapability       : effectLinearity .grantCapability = Generative := rfl
 theorem g_introduce             : effectLinearity .introduce = Generative := rfl
 
-/-! ### §2.5 — Annihilative (2): destroys/removes a resource (disclosed non-conservation).
-`bridgeFinalize` is a DISCLOSED CROSS-CHAIN OUTFLOW — the `Bridge` handler proves `delta = -amount`
-(the value leaves for the other chain, a disclosed burn), so it is Annihilative, not Conservative. -/
-theorem a_burn                  : effectLinearity .burn = Annihilative := rfl
+/-! ### §2.5 — Annihilative (1): removes a resource with no local counterparty (disclosed
+non-conservation). `bridgeFinalize` is a DISCLOSED CROSS-CHAIN OUTFLOW — the `Bridge` handler
+proves `delta = -amount` (the value leaves for the other chain), so it is Annihilative, not
+Conservative. It is the SOLE member: `burn` left this section on 2026-07-28 because a local burn
+DOES have a counterparty (the issuer well), which a cross-chain exit does not. -/
 theorem a_bridgeFinalize        : effectLinearity .bridgeFinalize = Annihilative := rfl
 
 /-! ### §2.6 — Neutral (7): no resource delta; pure book-keeping. -/
@@ -161,7 +170,7 @@ end PerEffect
 section Exhaustiveness
 
 /-- **(a) `effectLinearity_total`** — every effect's color is one of the six. The value
-of this proof is the `cases`-exhaustion over all 52 arms — a missing variant would not
+of this proof is the `cases`-exhaustion over all 53 arms — a missing variant would not
 type-check. -/
 theorem effectLinearity_total (e : EffectKind) :
     effectLinearity e = Conservative ∨ effectLinearity e = Monotonic ∨
@@ -199,7 +208,7 @@ theorem effectLinearity_covers_all_colors :
     effectLinearity .incrementNonce = Monotonic ∧
     effectLinearity .cellDestroy = Terminal ∧
     effectLinearity .bridgeMint = Generative ∧
-    effectLinearity .burn = Annihilative ∧
+    effectLinearity .bridgeFinalize = Annihilative ∧
     effectLinearity .setField = Neutral :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 

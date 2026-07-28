@@ -16,7 +16,7 @@ cell* (`Exec/RecordKernel.lean`), reusing — not reinventing — every kernel p
   * `RecChainedState` / `recCexec` / `recFullStepInv` / `recCexec_attests` (the per-step
     receipt-chain attestation of all four `StepInv` conjuncts over ONE op);
   * `Kernel.authorizedB` (the authority gate — l4v `Caps` lift; the `Caps`/`Guard` seam);
-  * `CatalogInstances.EffectKind` / `effectLinearity` + `CatalogEffects.Regime` (the 52-effect
+  * `CatalogInstances.EffectKind` / `effectLinearity` + `CatalogEffects.Regime` (the 53-effect
     `LinearityClass` coloring + per-color conservation obligation — the `Conservative`/`Paired`
     domain gate that decides which actions must net to `0`);
   * `Spec.Conservation.conservedInDomain` / `multi_domain` (the per-domain Σ = 0 criterion).
