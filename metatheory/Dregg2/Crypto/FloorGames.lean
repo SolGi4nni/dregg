@@ -87,7 +87,7 @@ import Mathlib.Tactic
 namespace Dregg2.Crypto.FloorGames
 
 open Dregg2.Crypto.ConcreteSecurity
-  (Ensemble Negl negl_zero not_negl_one negl_two_pow negl_of_eventually_le)
+  (Ensemble Negl negl_zero not_negl_one negl_two_pow negl_of_eventually_le negl_finset_sum)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_nonneg winProb_le_one winProb_top winProb_bot)
 open Dregg2.Crypto.Lattice (ShortNorm IsMSISSolution IsMLWESample nrm)
 
@@ -638,6 +638,60 @@ theorem mod2Family_not_CR :
     norm_num
   · simp [Dregg2.Circuit.HashFloorHonesty.mod2Family]
 
+/-! ### §6.1 — ⚑ THE TWO ADVANTAGE-BOUNDED TEMPLATES, MOVED UP FROM RUNG 1 (2026-07-28).
+
+`HashFloorHonesty.equivocation_advantage_negligible` and `.friFold_advantage_negligible` were the
+only two declarations in the tree that CONSUMED `CollisionResistant` as a security hypothesis rather
+than talking about it. Both are DELETED there and restated here at an EXPLICIT adversary class, which
+is the whole difference between rung 1 and rung 2: `CollisionResistant F` is `HashCRHardQuant F ⊤`
+(`collisionResistant_iff_hashCRHardQuant_top`) and `⊤` is refuted for every compressing family by the
+theorem immediately above, so the two templates the FRI/STARK consumers were told to re-derive
+through were conditioned on a hypothesis no deployed hash satisfies.
+
+⚑ `Eff` IS THE RESIDUAL AND IT IS NOT DISCHARGED HERE. Its poles are priced in this file — `⊤` is
+FALSE for a compressing family (`collisionResistant_false_of_compressing`), `⊥` is vacuous
+(`hard_bot_vacuous`), and `solvableIsAFiniteSearch` (§8) proves `Eff := Computable` cannot help
+because what disqualifies brute force is COST, which this tree has no model of. The one class with a
+PROVED bound is `RomQueryFloor.RomEff F Q` — query-bounded ROM adversaries, where
+`RomQueryFloor.birthday_bound` gives `(Q²+1)/‖R‖` with no assumption at all and
+`romEff_not_iff_solvableFrac_negl` proves the `⊤` collapse does NOT reach it. Instantiating these
+templates there is a MODELLING step (a fixed keyed function is not a uniformly random oracle) and is
+deliberately not taken silently. -/
+
+/-- **THE ADVANTAGE-BOUNDED COMMITMENT BINDING, AT AN EXPLICIT CLASS.** An equivocation adversary —
+one that, per key, opens one commitment to two DISTINCT reveals colliding under the hash — IS a
+`CollisionFinder`; if it lies in the class `Eff`, the floor at `Eff` bounds its advantage. This is the
+concrete-security form of `HermineHintMLWE.commitment_binding` / `FriSoundness.oracle_binding`: the
+Boolean "opens ⟹ equal" becomes "opens ⟹ equal except with negligible probability". Unlike its
+rung-1 predecessor the class membership is CARRIED IN THE OPEN, so a consumer cannot buy the bound
+without saying which adversaries it is bounding. -/
+theorem equivocation_advantage_negligible_eff {F : KeyedHashFamily}
+    {Eff : Adversary (hashGame F) → Prop} (hHard : HashCRHardQuant F Eff)
+    (A : CollisionFinder F) (hEff : Eff (finderToAdv A)) :
+    Negl (collisionAdv F A) := by
+  rw [collisionAdv_eq_gameAdv]
+  exact hHard (finderToAdv A) hEff
+
+/-- **THE ADDITIVE SOUNDNESS-ERROR COMBINATOR, AT AN EXPLICIT CLASS (the FRI/STARK template).** A
+protocol with `rounds` Merkle-binding checks has total binding-failure advantage equal to the SUM of
+the per-round collision advantages; if every round's finder lies in `Eff`, the total is negligible.
+This is how a multi-round FRI/STARK chain re-derives on the honest floor — every per-round binding
+use becomes an ADDITIVE negligible advantage term, threaded across rounds by `negl_finset_sum` — and
+the per-round `Eff` obligation is now visible instead of hidden inside `⊤`. -/
+theorem friFold_advantage_negligible_eff {F : KeyedHashFamily}
+    {Eff : Adversary (hashGame F) → Prop} (rounds : Finset ℕ)
+    (finder : ℕ → CollisionFinder F) (hHard : HashCRHardQuant F Eff)
+    (hEff : ∀ r ∈ rounds, Eff (finderToAdv (finder r))) :
+    Negl (fun n => ∑ r ∈ rounds, collisionAdv F (finder r) n) :=
+  negl_finset_sum rounds (fun r hr =>
+    (collisionAdv_eq_gameAdv (finder r)) ▸ hHard (finderToAdv (finder r)) (hEff r hr))
+
+/-- **(TOOTH — the templates are NOT free.)** At the `⊥` class they hold vacuously, so a consumer that
+never says which adversaries it bounds has bought nothing. Recorded beside the templates so the
+`Eff`-shaped hole cannot be read as closed. -/
+theorem hashCRHardQuant_bot_vacuous (F : KeyedHashFamily) :
+    HashCRHardQuant F (fun _ => False) := hard_bot_vacuous (hashGame F)
+
 /-! ## §7 — decisional MLWE: the LWE-vs-uniform gap, with both worlds PINNED.
 
 `ProbCrypto.DecisionFamily` carries two arbitrary `Type`s and two arbitrary accept predicates — its "real
@@ -772,6 +826,9 @@ def solvableIsAFiniteSearch (G : Game) (hfin : ∀ l, Fintype (G.Ans l)) (l : �
   collisionResistant_iff_hashCRHardQuant_top,
   collisionResistant_false_of_compressing,
   mod2Family_not_CR,
+  equivocation_advantage_negligible_eff,
+  friFold_advantage_negligible_eff,
+  hashCRHardQuant_bot_vacuous,
   distAdv_mem_unit,
   decisionMLWEHardQuant_refutable
 ]

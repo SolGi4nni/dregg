@@ -44,9 +44,9 @@ Poseidon2 refutes it. Toy witness satisfiable; real instantiation false.
 
   * **§3 — THE ADVANTAGE-BOUNDED RESTATEMENT.** Under proper CR the binding keystones survive as
     advantage bounds: an equivocating opener IS a collision finder, so "two openings ⟹ equal" becomes
-    "⟹ equal EXCEPT with negligible probability" (`equivocation_advantage_negligible`); and a
+    "⟹ equal EXCEPT with negligible probability" (now `FloorGames.equivocation_advantage_negligible_eff`); and a
     multi-round FRI/STARK soundness error is a finite SUM of per-round collision advantages, negligible
-    by `negl_finset_sum` (`friFold_advantage_negligible`). This is the template every `HashCR` /
+    by `negl_finset_sum` (now `FloorGames.friFold_advantage_negligible_eff`). This is the template every `HashCR` /
     `Poseidon2SpongeCR` consumer (`FriSoundness.oracle_binding`, `AirSoundness.committed_trace_pinned`,
     `FinBindsKernel`, the `StarkSound` chain) re-derives through — the Boolean "= equal" becomes a
     negligible advantage term, threaded additively.
@@ -345,26 +345,24 @@ as "⟹ equal EXCEPT with negligible probability": an equivocating opener IS a c
 success is negligible. And a multi-round FRI/STARK soundness error is a finite SUM of per-round
 collision advantages, negligible by `negl_finset_sum`. -/
 
-/-- **THE ADVANTAGE-BOUNDED COMMITMENT BINDING.** An equivocation adversary — one that, per key, opens
-one commitment to two DISTINCT reveals colliding under the hash — IS a `CollisionFinder`; under proper
-CR its advantage is negligible. This is the concrete-security form of
-`HermineHintMLWE.commitment_binding` / `FriSoundness.oracle_binding`: the Boolean "opens ⟹ equal"
-becomes "opens ⟹ equal except with negligible probability". The equivocation event is definitionally
-the collision the floor bounds. -/
-theorem equivocation_advantage_negligible {F : KeyedHashFamily} (hCR : CollisionResistant F)
-    (A : CollisionFinder F) : Negl (collisionAdv F A) := hCR A
+/-! ⚑ **DELETED 2026-07-28 — `equivocation_advantage_negligible` and `friFold_advantage_negligible`.**
 
-/-- **THE ADDITIVE SOUNDNESS-ERROR COMBINATOR (the FRI/STARK re-derivation template).** A protocol with
-`rounds` Merkle-binding checks (each `HashCR`-consuming leg of the FRI fold / STARK oracle chain) has a
-total binding-failure advantage equal to the SUM of the per-round collision advantages. If each round's
-finder advantage is negligible (proper CR at each round), the total is negligible. This is how the
-whole `StarkSound` / FRI-proximity chain re-derives on the proper floor: every `HashCR` use becomes a
-negligible advantage term, threaded ADDITIVELY across rounds — the Boolean chain's "no equivocation"
-becomes "negligible total equivocation probability". -/
-theorem friFold_advantage_negligible {F : KeyedHashFamily} (rounds : Finset ℕ)
-    (finder : ℕ → CollisionFinder F) (hCR : CollisionResistant F) :
-    Negl (fun n => ∑ r ∈ rounds, collisionAdv F (finder r) n) :=
-  negl_finset_sum rounds (fun r _ => hCR (finder r))
+They were the only two declarations in the tree that CONSUMED `CollisionResistant` as a security
+hypothesis rather than talking about it, and both were conditioned on a floor this tree REFUTES:
+`FloorGames.collisionResistant_iff_hashCRHardQuant_top` proves `CollisionResistant F` IS the collision
+floor at the UNRESTRICTED adversary class, and `FloorGames.collisionResistant_false_of_compressing`
+proves that class's floor FALSE for EVERY compressing family — one `Classical.choice` collision finder
+later. So "the template every `HashCR` / `Poseidon2SpongeCR` consumer re-derives through" had a
+hypothesis no deployed hash satisfies, which is the identical fate §1 proves for the injective floors
+this section was written to replace.
+
+REPLACED, in the same commit, by `FloorGames.equivocation_advantage_negligible_eff` and
+`.friFold_advantage_negligible_eff` — the same two statements at an EXPLICIT adversary class
+`Eff`, with the class membership carried in the open. They live in `FloorGames` because
+`HashCRHardQuant` is defined there and that module imports this one. Neither had a single Lean
+consumer in this tree, so the move costs nothing but the honesty of the hypothesis. `Eff` is
+undischarged and its poles are priced beside the replacements; the one class with a PROVED bound is
+`RomQueryFloor.RomEff`. -/
 
 /-! ## §4 — axiom-hygiene tripwires. -/
 
@@ -376,7 +374,5 @@ theorem friFold_advantage_negligible {F : KeyedHashFamily} (rounds : Finset ℕ)
 #assert_axioms idFamily_CR
 #assert_axioms mod2_dumb_negligible
 #assert_axioms injective_family_CR
-#assert_axioms equivocation_advantage_negligible
-#assert_axioms friFold_advantage_negligible
 
 end Dregg2.Circuit.HashFloorHonesty
