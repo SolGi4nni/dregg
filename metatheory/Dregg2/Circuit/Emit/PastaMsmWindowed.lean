@@ -526,6 +526,110 @@ theorem plane_inner (T : WTrace) (Sv : Nat → PtP) (ptVals : Nat → PtP) (bits
 
 #assert_axioms plane_inner
 
+/-- Two `PointIsZ` readings of the SAME columns are the same point — the reference is a function
+of the assignment, so a trace cannot represent two different points at one place. -/
+theorem PointIsZ_unique {a : Assignment} {bX bY bZ : Nat} {P Q : PtP}
+    (hP : PointIsZ a bX bY bZ P) (hQ : PointIsZ a bX bY bZ Q) : P = Q := by
+  obtain ⟨p1, p2, p3⟩ := hP
+  obtain ⟨q1, q2, q3⟩ := hQ
+  refine Prod.ext ?_ (Prod.ext ?_ ?_)
+  · rw [← p1, ← q1]
+  · rw [← p2, ← q2]
+  · rw [← p3, ← q3]
+
+/-- ⚑ **`plane_step`** — the windowed rows of ONE plane compute exactly `hornerPlaneRef`: the
+doubling row genuinely doubles (`dblRow_forces`, no hypothesis needed), and the `n` conditional-add
+rows fold in the selected digits (`plane_inner`). -/
+theorem plane_step (T : WTrace) (Sv : Nat → PtP) (ptVals : Nat → PtP) (bits : Nat → Nat → Bool)
+    (n nbits plane : Nat) (acc0 : PtP)
+    (hs : HornerSchedule T Sv ptVals bits n nbits) (hp : plane < nbits)
+    (hrows : ∀ i < nbits * (n + 1), acceptB rowGates (T i) = true)
+    (hthr : ∀ i < nbits * (n + 1), Threaded T i)
+    (hsrc : ∀ i < nbits * (n + 1), PointIsZ (T i) SRCX SRCY SRCZ (Sv i))
+    (h0 : PointIsZ (T 0) ACCX ACCY ACCZ acc0) :
+    windowedRef Sv (fun i => bitAt (T i) BIT) acc0 (rowIndex n (plane + 1) 0)
+      = hornerPlaneRef ptVals bits n
+          (windowedRef Sv (fun i => bitAt (T i) BIT) acc0 (rowIndex n plane 0)) plane := by
+  have hlt : rowIndex n plane 0 < nbits * (n + 1) := by
+    simp only [rowIndex]
+    have := Nat.mul_lt_mul_of_lt_of_le hp (Nat.le_refl (n + 1)) (Nat.succ_pos n)
+    omega
+  set r0 := rowIndex n plane 0 with hr0
+  set acc := windowedRef Sv (fun i => bitAt (T i) BIT) acc0 r0 with hacc0
+  -- the accumulator at the plane boundary is what the rows before it forced
+  have haccP : PointIsZ (T r0) ACCX ACCY ACCZ acc :=
+    windowedRows_forces T Sv acc0 h0 r0
+      (fun i hi => hrows i (by omega)) (fun i hi => hthr i (by omega))
+      (fun i hi => hsrc i (by omega))
+  -- the doubling row genuinely doubles: its source is FORCED to be the accumulator
+  obtain ⟨hsrcAcc, hbit⟩ :=
+    dblRow_forces (T r0) haccP (hrows r0 hlt) (hs.dblRow plane hp)
+  have hSv : Sv r0 = acc := (PointIsZ_unique (hsrc r0 hlt) hsrcAcc)
+  -- so the row after the doubling row holds `acc + acc`
+  have hbase : windowedRef Sv (fun i => bitAt (T i) BIT) acc0 (rowIndex n plane 1)
+      = rcbAddZmod acc acc := by
+    have hstep : rowIndex n plane 1 = r0 + 1 := by simp [rowIndex, hr0]
+    rw [hstep, windowedRef, hSv, hbit]
+    simp only [rowRef, condRef, if_true, ← hacc0]
+  -- and the plane's `n` conditional-add rows fold in the selected digits
+  have hfold := plane_inner T Sv ptVals bits n nbits plane acc0 (rcbAddZmod acc acc) hs hp hbase
+    n (Nat.le_refl n)
+  have hidx : rowIndex n plane (n + 1) = rowIndex n (plane + 1) 0 := by
+    simp only [rowIndex]; ring
+  rw [← hidx, hfold, hornerPlaneRef]
+
+/-- ⚑⚑ **`windowed_forces_hornerRef`** — **the WINDOWED emission forces the SAME predicate the
+straight-line bit-plane AIR forces.** At the Horner schedule, the flat fold of complete adds the
+rows perform IS `PastaMsmLayouts.hornerRefFrom`.
+
+`nbits` and `n` are universally quantified. Nothing in the proof is a function of the row count;
+the emitted constraint list is 45 entries at every `(n, nbits)`
+(`windowedRowDesc_constraints_length`). This is the statement that makes the windowed AIR a
+re-layout rather than a different circuit. -/
+theorem windowed_forces_hornerRef (T : WTrace) (Sv : Nat → PtP) (ptVals : Nat → PtP)
+    (bits : Nat → Nat → Bool) (n nbits : Nat) (acc0 : PtP)
+    (hs : HornerSchedule T Sv ptVals bits n nbits)
+    (hrows : ∀ i < nbits * (n + 1), acceptB rowGates (T i) = true)
+    (hthr : ∀ i < nbits * (n + 1), Threaded T i)
+    (hsrc : ∀ i < nbits * (n + 1), PointIsZ (T i) SRCX SRCY SRCZ (Sv i))
+    (h0 : PointIsZ (T 0) ACCX ACCY ACCZ acc0) :
+    ∀ plane ≤ nbits,
+      windowedRef Sv (fun i => bitAt (T i) BIT) acc0 (rowIndex n plane 0)
+        = hornerRefFrom ptVals bits n plane acc0 := by
+  intro plane
+  induction plane with
+  | zero => intro _; simp [rowIndex, windowedRef, hornerRefFrom]
+  | succ m ih =>
+    intro hm
+    rw [plane_step T Sv ptVals bits n nbits m acc0 hs (by omega) hrows hthr hsrc h0,
+      ih (by omega)]
+    simp [hornerRefFrom, List.range_succ]
+
+/-- ⚑⚑ **`windowed_accumulator_is_hornerRef`** — the deliverable, assembled: a windowed trace at
+the Horner schedule has its FINAL accumulator columns representing, in `ZMod p`, exactly the
+bit-plane MSM `hornerRefFrom` — which `PastaIpaFold.msmHorner_eq_msmN` (unchanged, and proved
+elsewhere) identifies with the `n`-term multi-scalar multiplication the IPA opening check needs. -/
+theorem windowed_accumulator_is_hornerRef (T : WTrace) (Sv : Nat → PtP) (ptVals : Nat → PtP)
+    (bits : Nat → Nat → Bool) (n nbits : Nat) (acc0 : PtP)
+    (hs : HornerSchedule T Sv ptVals bits n nbits)
+    (hrows : ∀ i < nbits * (n + 1), acceptB rowGates (T i) = true)
+    (hthr : ∀ i < nbits * (n + 1), Threaded T i)
+    (hsrc : ∀ i < nbits * (n + 1), PointIsZ (T i) SRCX SRCY SRCZ (Sv i))
+    (h0 : PointIsZ (T 0) ACCX ACCY ACCZ acc0) :
+    PointIsZ (T (nbits * (n + 1))) ACCX ACCY ACCZ (hornerRefFrom ptVals bits n nbits acc0) := by
+  have hforced := windowedRows_forces T Sv acc0 h0 (nbits * (n + 1)) hrows hthr hsrc
+  have heq := windowed_forces_hornerRef T Sv ptVals bits n nbits acc0 hs hrows hthr hsrc h0
+    nbits (Nat.le_refl nbits)
+  have hidx : rowIndex n nbits 0 = nbits * (n + 1) := by simp [rowIndex]
+  rw [hidx] at heq
+  rw [← heq]
+  exact hforced
+
+#assert_axioms PointIsZ_unique
+#assert_axioms plane_step
+#assert_axioms windowed_forces_hornerRef
+#assert_axioms windowed_accumulator_is_hornerRef
+
 /-! ## §6 — WHAT THIS DOES NOT DO. At the CURRENT resolution.
 
 1. **The `DBL` PATTERN is hypothesised, the doubling ITSELF is not.** `dblRow_forces` proves a row
