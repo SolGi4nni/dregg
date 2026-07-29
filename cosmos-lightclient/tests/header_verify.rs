@@ -92,8 +92,14 @@ fn reject_tampered_commit_signature() {
 
 #[test]
 fn reject_wrong_chain_id() {
-    let mut trusted = common::trusted_state();
-    trusted.chain_id = "osmosis-1".parse().unwrap();
+    let th = common::trusted_signed_header();
+    let trusted = common::anchor(
+        "osmosis-1".parse().unwrap(),
+        th.header.time,
+        th.header.height,
+        common::validators_h1(),
+        th.header.next_validators_hash,
+    );
     let r = verify_cosmos_header(
         &trusted,
         &common::untrusted_signed_header(),

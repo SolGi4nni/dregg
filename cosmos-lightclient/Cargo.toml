@@ -17,6 +17,16 @@ license = "AGPL-3.0-or-later"
 description = "Inbound Cosmos/IBC light-client verify core: Tendermint SignedHeader (>=2/3 voting power) verification + ICS-23 (iavl+tendermint) membership proof verification against the header app_hash"
 
 [dependencies]
+# THE VERIFIED DECIDER. `dregg-lean-ffi` is the route-through onto the Lean gates
+# `Dregg2.Bridge.LightClientTendermintGate.dregg_tm_lc_verify` (adjacent advances) and
+# `Dregg2.Bridge.LightClientTendermintSkip.dregg_tm_skip_verify` (skips). ⚠ THIS DEPENDENCY WAS
+# ABSENT until 2026-07-29, which is why `dregg_tm_lc_verify` — proved, `@[export]`ed, C-bridged,
+# archive-probed and listed in REQUIRED_DECISION_EXPORTS — had no caller outside dregg-lean-ffi
+# and gated nothing. Absent the archive, every header verify REFUSES (fail-closed, no twin).
+#
+# No cycle: dregg-lean-ffi's dependency closure is {dregg-circuit -> dregg-dsl, blake3} plus the
+# optional lean-lib extras, none of which reaches cosmos-lightclient.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # tendermint-rs 0.40.4 — the audited Tendermint types + the informalsystems
 # light-client verification algorithm (validator-set hash binding, >= 2/3 voting
 # power over the commit, trust-threshold / trusting-period / monotonic-time

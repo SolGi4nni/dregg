@@ -145,9 +145,20 @@ so the next reader does not have to rediscover it:
 * `Dregg2.Circuit.FriLedger` — `dregg_fri_ledger` (Rust mentions it only in doc comments)
 * `Dregg2.Circuit.Emit.CommitmentTreeAppendEmit` — `dregg_note_tree_root`
 * `Dregg2.Bridge.ConditionalInterchainAdapter` — `dregg_interchain_conditional_admit`
-* `Dregg2.Bridge.LightClientTendermintGate` — `dregg_tm_lc_verify`. ⚠ Still callerless as
-  measured 2026-07-28: `cosmos-lightclient` does not depend on `dregg-lean-ffi` at all, so the
-  Cosmos path is UN-ROUTED rather than gated. That is a finding, not a design.
+* ⚠ `Dregg2.Bridge.LightClientTendermintGate` / `LightClientTendermintSkip` **NO LONGER BELONG IN
+  §1.5** — ROUTED 2026-07-29. They were callerless when this section was written: measured
+  2026-07-28, `dregg_tm_lc_verify` had no caller outside `dregg-lean-ffi` and `cosmos-lightclient`
+  did not depend on that crate at all, so the Cosmos path was UN-ROUTED rather than gated — an
+  ORPHAN, not the ETH pattern of a hand-written Rust twin standing beside a proven decision. There
+  was no Tendermint twin to delete; `verify_cosmos_header` delegated (correctly) to the audited
+  informalsystems `ProdVerifier`, and the proven gate simply sat beside it.
+  `cosmos-lightclient/src/verified_gate.rs` now routes every accept path through them, fail-closed
+  on an absent archive, and the two exports cover DISJOINT height ranges:
+  `dregg_tm_lc_verify` decides the ADJACENT advance (epoch binding + strict `2·tot < 3·sp`) and
+  `dregg_tm_skip_verify` the NON-ADJACENT skip (no epoch binding; the trust-OVERLAP threshold
+  `tn·ttot < td·tsp` in its place, plus the same strict `> 2/3`).
+  `tmSkip_height_disjoint_from_adjacent` is what makes "every header reaches exactly one gate" a
+  theorem rather than a hope.
 * ⚠ `Dregg2.Bridge.LightClientEthGate` / `LightClientMptGate` **NO LONGER BELONG IN §1.5** — they
   have callers (`eth-lightclient`'s `verified_gate.rs` and `evm.rs`) and are listed in §1.3. They
   were callerless when this section was written and the text outlived it; corrected 2026-07-28.

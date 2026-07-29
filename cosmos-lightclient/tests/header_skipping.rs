@@ -30,10 +30,10 @@ fn accept_non_adjacent_skip_with_trust_overlap() {
 
     let skip_height = ush.header.height.value();
     assert!(
-        skip_height > trusted.height.value() + 1,
+        skip_height > trusted.height().value() + 1,
         "fixture must be genuinely non-adjacent: {} vs trusted {}",
         skip_height,
-        trusted.height.value()
+        trusted.height().value()
     );
 
     let verified = verify_cosmos_header(
@@ -71,11 +71,9 @@ fn reject_skip_below_trust_overlap_threshold() {
     let mut infos: Vec<Info> =
         serde_json::from_str(&common::read("bank_validators_h1.json")).unwrap();
     infos.push(fake);
-    let doctored = ValidatorSet::without_proposer(infos);
-
-    let mut trusted = common::bank_trusted_state();
-    trusted.next_validators_hash = doctored.hash(); // self-consistent anchor
-    trusted.next_validators = doctored;
+    // Self-consistent anchor: the commitment is recomputed from the doctored set, so the state is
+    // constructible — the operator asserted a bad anchor, which is exactly what an anchor can be.
+    let trusted = common::bank_anchor_with(ValidatorSet::without_proposer(infos));
 
     let ush = common::skip_signed_header();
     let r = verify_cosmos_header(
@@ -97,32 +95,26 @@ fn reject_skip_below_trust_overlap_threshold() {
 
 #[test]
 fn reject_trusted_set_that_does_not_match_its_commitment() {
-    // Same doctored set, but the next_validators_hash is left as the REAL
-    // commitment from the trusted header: the relayer-delivered set is not the
-    // set the chain committed to. Refused before any overlap tally — otherwise
-    // a fake overlap base could vouch for a fake chain.
+    // Same doctored set, but the next_validators_hash is left as the REAL commitment from the
+    // trusted header: the relayer-delivered set is not the set the chain committed to. Refused at
+    // CONSTRUCTION — otherwise a fake overlap base could vouch for a fake chain, and the check
+    // would be something every verify path has to remember instead of a type invariant.
     let mut infos: Vec<Info> =
         serde_json::from_str(&common::read("bank_validators_h1.json")).unwrap();
     let fake_key = PublicKey::from_raw_ed25519(&[0x42u8; 32]).unwrap();
     infos.push(Info::new(fake_key, Power::try_from(1_000_000u64).unwrap()));
 
-    let mut trusted = common::bank_trusted_state();
-    trusted.next_validators = ValidatorSet::without_proposer(infos);
-    // trusted.next_validators_hash stays the genuine header commitment.
-
-    let ush = common::skip_signed_header();
-    let r = verify_cosmos_header(
-        &trusted,
-        &ush,
-        &common::skip_validators(),
-        None,
-        TrustThreshold::ONE_THIRD,
-        common::trusting_period(),
-        common::now_after(&ush),
+    let th = common::bank_anchor_signed_header();
+    let r = cosmos_lightclient::TrustedCosmosState::weak_subjectivity_anchor(
+        th.header.chain_id.clone(),
+        th.header.time,
+        th.header.height,
+        ValidatorSet::without_proposer(infos),
+        th.header.next_validators_hash, // the GENUINE commitment, not the doctored set's
     );
     assert!(
         matches!(r, Err(HeaderVerifyError::TrustedStateCorrupt(_))),
-        "a trusted set that does not hash to its commitment must refuse, got {r:?}"
+        "a trusted set that does not hash to its commitment must be unconstructible, got {r:?}"
     );
 }
 
@@ -140,11 +132,7 @@ fn half_overlap_anchor() -> cosmos_lightclient::TrustedCosmosState {
     let mut infos: Vec<Info> =
         serde_json::from_str(&common::read("bank_validators_h1.json")).unwrap();
     infos.push(Info::new(fake_key, Power::try_from(total).unwrap()));
-    let doctored = ValidatorSet::without_proposer(infos);
-    let mut trusted = common::bank_trusted_state();
-    trusted.next_validators_hash = doctored.hash();
-    trusted.next_validators = doctored;
-    trusted
+    common::bank_anchor_with(ValidatorSet::without_proposer(infos))
 }
 
 #[test]

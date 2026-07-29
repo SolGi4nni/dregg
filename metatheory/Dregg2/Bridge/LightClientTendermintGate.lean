@@ -59,14 +59,17 @@ content is the `2·total < 3·signed` threshold DECISION over them.
 ## Scope (honest, current resolution)
 
 `tmVerify` formalizes the ADJACENT-advance rule set (`height = trusted.height + 1`, bound by the
-`next_validators_hash` epoch binding). The Rust `verify_cosmos_header` also accepts the
-NON-ADJACENT / skipping shape (any higher height, bound by the trust-threshold overlap rule); the
-Lean re-authoring does not yet cover it, so this gate exports exactly the adjacent decision
-`tmVerify` proves. The skipping-overlap decision is the named follow-up rung (the same rung
-`LightClientTendermint`'s header scopes), extended by the identical method once `tmVerify` gains
-the overlap conjunct.
+`next_validators_hash` epoch binding), and this gate exports exactly that decision. The
+NON-ADJACENT / skipping shape `verify_cosmos_header` also accepts (any strictly-higher height,
+bound by the trust-threshold overlap rule instead of the epoch binding) is a DIFFERENT rule set
+and gets its OWN decision and its OWN export: `Dregg2.Bridge.LightClientTendermintSkip`'s
+`tmSkipVerify` / `@[export] dregg_tm_skip_verify`, with `tmSkipNoForgery` carrying the extra
+trust-overlap conjunct. `tmSkip_height_disjoint_from_adjacent` proves the two decisions cover
+DISJOINT height ranges, so the routing's height dispatch decides every header by exactly one of
+them and none by neither. (Imported below so it reaches the archive through this module.)
 -/
 import Dregg2.Bridge.LightClientTendermint
+import Dregg2.Bridge.LightClientTendermintSkip
 
 set_option maxRecDepth 8192
 

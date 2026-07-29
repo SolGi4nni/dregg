@@ -4561,6 +4561,7 @@ name = "cosmos-lightclient"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "dregg-lean-ffi",
  "hex",
  "ics23",
  "prost 0.13.5",
@@ -6780,6 +6781,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-dfa",
+ "dregg-exec-lean",
  "dregg-federation",
  "dregg-token",
  "dregg-trace",
@@ -7926,6 +7928,7 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-app-framework",
+ "dregg-cell",
  "dregg-types",
  "dreggnet-offerings",
  "starbridge-compute-exchange",

@@ -374,15 +374,19 @@ mod cosmos_fixtures {
         ValidatorSet::without_proposer(infos)
     }
 
+    /// The WEAK-SUBJECTIVITY ANCHOR — `cosmos-lightclient`'s one un-gated constructor (there are
+    /// no public fields; every other trusted state comes from `TrustedCosmosState::advance` off a
+    /// gate-verified header).
     pub fn bank_trusted_state() -> TrustedCosmosState {
         let th = signed_header("bank_commit_h.json");
-        TrustedCosmosState {
-            chain_id: th.header.chain_id.clone(),
-            header_time: th.header.time,
-            height: th.header.height,
-            next_validators: bank_validators_h1(),
-            next_validators_hash: th.header.next_validators_hash,
-        }
+        TrustedCosmosState::weak_subjectivity_anchor(
+            th.header.chain_id.clone(),
+            th.header.time,
+            th.header.height,
+            bank_validators_h1(),
+            th.header.next_validators_hash,
+        )
+        .expect("fixture anchor is self-consistent")
     }
 
     pub fn now_after(sh: &SignedHeader) -> Time {
@@ -397,8 +401,18 @@ mod cosmos_fixtures {
 /// Verify the REAL cosmoshub-4 header advance (full 180-validator set, real
 /// Ed25519 ≥ 2/3 voting power) and bind the REAL ICS-23 bank-balance proof — the
 /// only way a `ProvenCosmosFact` can exist.
+///
+/// Since 2026-07-29 this path runs through the VERIFIED Lean gate
+/// (`dregg_tm_lc_verify`), so an archive that cannot render the decision makes it REFUSE. The
+/// `demand_both` probe is the sanctioned form: under `DREGG_TEST_REQUIRE_LEAN` a missing archive
+/// FAILS here rather than turning the whole cross-chain suite into a silent green.
 fn real_cosmoshub_fact() -> cosmos_lightclient::ProvenCosmosFact {
     use tendermint_light_client_verifier::types::TrustThreshold;
+    assert!(
+        cosmos_lightclient::verified_gate::demand_both(),
+        "the Cosmos light-client gates must be reachable — this suite's ProvenCosmosFact is minted \
+         through them, and without them `verify_cosmos_header` fails closed"
+    );
     let ush = cosmos_fixtures::bank_untrusted_signed_header();
     let header = cosmos_lightclient::verify_cosmos_header(
         &cosmos_fixtures::bank_trusted_state(),

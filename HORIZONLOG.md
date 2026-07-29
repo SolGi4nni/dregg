@@ -1,5 +1,73 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 29 — THE COSMOS LIGHT CLIENT WAS AN ORPHAN, NOT A TWIN. ROUTED, in Lean, both shapes
+
+**The finding, and its exact shape.** `dregg_tm_lc_verify` was proved
+(`tmVerifyDecision_refines`, `rfl`), `@[export]`ed, bridged in C, probed by `build.rs`, listed in
+`REQUIRED_DECISION_EXPORTS` — and had **no caller outside `dregg-lean-ffi`**. `cosmos-lightclient`
+did not depend on that crate at all.
+
+This is **not** the ETH pattern one crate over. There was no hand-written Rust Tendermint rule set
+to delete: `verify_cosmos_header` delegated, correctly and deliberately, to the audited
+informalsystems `ProdVerifier`, and the proven gate simply sat beside it reading, to a maintainer,
+as though it gated something. **Orphan, not twin — so the fix is routing, and nothing was deleted.**
+
+**What now decides.** `cosmos-lightclient/src/verified_gate.rs` routes every accept path onto Lean.
+Acceptance is the CONJUNCTION of the archive's verdict and the audited verifier's, and the archive
+half is MANDATORY: absent, `verify_cosmos_header` refuses with `HeaderVerifyError::
+VerifiedGateUnavailable` **before running any cryptography**, with no fallback and no env var. The
+audited verifier is kept because it decides what `tmVerify` does not model — `header_matches_commit`,
+`valid_commit` (commit length, duplicate votes), the canonical-vote sign-bytes, `next_validators_match`
+— and dropping it would WEAKEN checks. Those are named in the module docs, not silently inherited.
+
+**Tendermint has TWO advance shapes and the second had no Lean at all.** The adjacent rule was
+`tmVerify`; the non-adjacent SKIP (a live, tested accept path — a genuine cosmoshub-4 ~95-block skip
+is an ACCEPT KAT) was the header's own named follow-up and would have stayed un-gated. New:
+`Dregg2.Bridge.LightClientTendermintSkip` — `tmSkipVerify` + `@[export] dregg_tm_skip_verify`, with
+
+* `tmSkipVerifyDecision_refines` — **axiom-free `rfl`**, the exported decision IS `tmSkipVerify`;
+* `tmSkipNoForgery` — FOUR conjuncts where the adjacent one has three. The fourth is the trust
+  OVERLAP: a sub-list of the TRUSTED epoch set carrying strictly more than `trustNum/trustDen` of
+  THAT set's power GENUINELY signed the target. That is the entire security content of skipping —
+  the epoch binding is gone because a skip target's validator set was never committed by the
+  trusted header, and this is what takes its place. Axioms `[propext, Quot.sound]`, identical to
+  the existing `tmNoForgery`;
+* `tmSkip_zero_overlap_rejected` / `tmSkip_zero_denominator_rejected` — a stale anchor and a
+  degenerate threshold are refused with **no crypto hypothesis at all** (`_ < 0` in `Nat`);
+* `tmSkip_height_disjoint_from_adjacent` — the two exports cover DISJOINT height ranges, which is
+  what makes "every header reaches exactly one gate" a theorem instead of a hope. The third arm
+  (height ≤ trusted) reaches neither and is refused outright.
+
+The rules were read off `tendermint-light-client-verifier` 0.40.4, not invented:
+`is_enough_power signed total = signed·den > total·num` is **strict**, so the untrusted leg is
+`2·tot < 3·sp` and the overlap leg is `tn·ttot < td·tsp`, and exactly-2/3 / exactly-1/3 REJECT.
+
+**The trust anchor is named and typed, not gated-and-pretended.** `TrustedCosmosState`'s five `pub`
+fields are gone. Two constructors: `weak_subjectivity_anchor` (the ONE un-gated thing here — the
+operator asserting out of band what nothing precedes and no cryptography can check, Tendermint's
+analogue of the ETH genesis sync committee) and `advance` (gated on a `VerifiedHeader`, which only
+the gate can mint). `TrustProvenance` reports which. Both enforce that `next_validators` hashes to
+`next_validators_hash`, so a self-inconsistent trusted state is now **unconstructible** rather than
+caught later — the skip's overlap tally base is the committed set by type invariant.
+
+**Flag day.** `dregg_tm_skip_verify` is on `REQUIRED_DECISION_EXPORTS`: an archive predating it now
+**fails the build** under the strict gate rather than degrading quietly. Re-splice
+`libdregg_lean.a` (an ordinary `cargo build` does it). `TrustedCosmosState` field access and struct
+literals no longer compile — two `compile_fail` doctests pin that, and they COMPILED before, so they
+were red as doctests. `HeaderVerifyError` grew `VerifiedGateUnavailable` (cold archive — never a
+proved `no`), `VerifiedGateRefused` (gate refused, audited verifier did not — a real divergence,
+never laundered into an ordinary rejection), `UnprojectableTime`, `NonIncreasingHeight`.
+`VerifiedHeader` gained `next_validators_hash`. Nothing persisted or on the wire changes.
+
+**One divergence recorded rather than papered over.** `tmVerify`'s not-from-the-future conjunct is
+`time ≤ now + drift`; the audited `is_header_from_past` is the strict `<`. At the boundary
+nanosecond the Lean model is one tick more permissive; under the conjunction the strict rule wins.
+
+**Can a Cosmos header be accepted by any path that does not pass the verified gate? NO.**
+`verify_cosmos_header` is the only constructor of `VerifiedHeader` (private fields), every branch of
+its height dispatch either reaches a gate or refuses, and `ProvenCosmosFact` requires a
+`VerifiedHeader`. The weak-subjectivity anchor remains un-gated **by nature**, and now says so.
+
 ## ⚑⚑⚑ JULY 28 — THE ETH LIGHT CLIENT'S TRUST ROOT ADVANCED THROUGH A DOOR BESIDE THE GATE. CLOSED, in Lean
 
 **The gate itself was clean.** A lane integrating Mina audited `eth-lightclient`'s verified-gate path
@@ -53,7 +121,7 @@ predating `dregg_eth_committee_rotation` now refuses every committee rotation** 
 
 **Two findings NOT repaired, reported.** `dregg_tm_lc_verify` has NO caller outside `dregg-lean-ffi`
 — `cosmos-lightclient` does not depend on it at all, so the Cosmos light client is UN-ROUTED, not
-gated. And `verifyCommitteeRotation` takes the committee's SSZ root as an opaque digest: the leaf
+gated. **[REPAIRED 2026-07-29 — see the Cosmos entry below.]** And `verifyCommitteeRotation` takes the committee's SSZ root as an opaque digest: the leaf
 `hash_tree_root` is a Rust PROJECTION, one level weaker than `htrHeader`/`htrExec`, named as such in
 the Lean docstring rather than glossed.
 

@@ -48,16 +48,41 @@ pub fn validators_h1() -> ValidatorSet {
     ValidatorSet::without_proposer(infos)
 }
 
+/// Build a WEAK-SUBJECTIVITY ANCHOR — the crate's one un-gated constructor. Every trusted state
+/// in these tests is an operator assertion, because that is what an anchor is; a gated advance
+/// comes from `TrustedCosmosState::advance` off a `VerifiedHeader`.
+pub fn anchor(
+    chain_id: tendermint::chain::Id,
+    header_time: Time,
+    height: tendermint::block::Height,
+    next_validators: ValidatorSet,
+    next_validators_hash: tendermint::Hash,
+) -> TrustedCosmosState {
+    TrustedCosmosState::weak_subjectivity_anchor(
+        chain_id,
+        header_time,
+        height,
+        next_validators,
+        next_validators_hash,
+    )
+    .expect("fixture anchor is self-consistent")
+}
+
+/// Anchor derived from a genuine fixture header, with the given next-validator set. The set must
+/// hash to the header's own `next_validators_hash` or the constructor refuses.
+pub fn anchor_from(sh: &SignedHeader, next_validators: ValidatorSet) -> TrustedCosmosState {
+    anchor(
+        sh.header.chain_id.clone(),
+        sh.header.time,
+        sh.header.height,
+        next_validators,
+        sh.header.next_validators_hash,
+    )
+}
+
 /// The trusted anchor state derived from the genuine header at height 31989760.
 pub fn trusted_state() -> TrustedCosmosState {
-    let th = trusted_signed_header();
-    TrustedCosmosState {
-        chain_id: th.header.chain_id.clone(),
-        header_time: th.header.time,
-        height: th.header.height,
-        next_validators: validators_h1(),
-        next_validators_hash: th.header.next_validators_hash,
-    }
+    anchor_from(&trusted_signed_header(), validators_h1())
 }
 
 /// A deterministic `now` shortly after the untrusted header's block time (so the
@@ -148,16 +173,30 @@ pub fn skip_validators() -> ValidatorSet {
     validators_from("skip_validators.json")
 }
 
+/// The genuine bank-set anchor header (height H).
+pub fn bank_anchor_signed_header() -> SignedHeader {
+    signed_header("bank_commit_h.json")
+}
+
 /// The trusted anchor derived from the genuine bank-set anchor header.
 pub fn bank_trusted_state() -> TrustedCosmosState {
-    let th = signed_header("bank_commit_h.json");
-    TrustedCosmosState {
-        chain_id: th.header.chain_id.clone(),
-        header_time: th.header.time,
-        height: th.header.height,
-        next_validators: bank_validators_h1(),
-        next_validators_hash: th.header.next_validators_hash,
-    }
+    anchor_from(&bank_anchor_signed_header(), bank_validators_h1())
+}
+
+/// A bank-set anchor with a DOCTORED next-validator set, self-consistent by construction (its
+/// commitment is recomputed from the doctored set). This is the operator asserting a bad anchor —
+/// which is precisely the thing no gate can catch, so the tests that use it are testing what
+/// happens DOWNSTREAM of a bad anchor, not whether one can be built.
+pub fn bank_anchor_with(next_validators: ValidatorSet) -> TrustedCosmosState {
+    let th = bank_anchor_signed_header();
+    let hash = next_validators.hash();
+    anchor(
+        th.header.chain_id.clone(),
+        th.header.time,
+        th.header.height,
+        next_validators,
+        hash,
+    )
 }
 
 /// A deterministic `now` shortly after the given header's block time.

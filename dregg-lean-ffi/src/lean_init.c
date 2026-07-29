@@ -503,6 +503,16 @@ extern lean_object *dregg_eth_committee_rotation(lean_object *input);
 #ifdef DREGG_TM_LC_VERIFY
 extern lean_object *dregg_tm_lc_verify(lean_object *input);
 #endif
+/* dregg_tm_skip_verify — the NON-ADJACENT (skipping) Tendermint decision
+ * (`Dregg2.Bridge.LightClientTendermintSkip.tmSkipVerifyGate`). A DIFFERENT rule set from
+ * `dregg_tm_lc_verify`, not a superset: the `next_validators_hash` epoch binding is gone (a skip
+ * target's validator set was never committed by the trusted header) and the TRUST-OVERLAP
+ * threshold takes its place — strictly more than `trust_threshold` of the TRUSTED epoch's voting
+ * power must have signed the target, ON TOP of the full strict `> 2/3` over the target's own set.
+ * `tmSkip_height_disjoint_from_adjacent` proves the two gates cover disjoint height ranges. */
+#ifdef DREGG_TM_SKIP_VERIFY
+extern lean_object *dregg_tm_skip_verify(lean_object *input);
+#endif
 #ifdef DREGG_MPT_LC_VERIFY
 extern lean_object *dregg_mpt_lc_verify(lean_object *input);
 #endif
@@ -1162,6 +1172,34 @@ size_t dregg_tm_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_tm_lc_verify(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_TM_SKIP_VERIFY
+/* dregg_tm_skip_verify_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * TENDERMINT/COSMOS NON-ADJACENT (skipping) verify-logic gate
+ * (`Dregg2.Bridge.LightClientTendermintSkip.dregg_tm_skip_verify`). Input:
+ * `"ci=<Nat>;tci=<Nat>;h=<Nat>;th=<Nat>;ht=<Nat>;t=<Nat>;nw=<Nat>;cd=<Nat>;tp=<Nat>;vb=<BIT>;
+ * tn=<Nat>;td=<Nat>;ttot=<Nat>;tsp=<Nat>;tot=<Nat>;sp=<Nat>"` — SIXTEEN fields, deliberately not
+ * a superset of the adjacent gate's thirteen, so a mis-routed wire decodes to `"ERR"` rather than
+ * a verdict about the wrong rule set. Output: `"1"` / `"0"` / `"ERR"` (fail-closed). Runs the
+ * PROVED `tmSkipVerifyDecision`, which `tmSkipVerifyDecision_refines` proves is DEFINITIONALLY
+ * `tmSkipVerify` — the decision `tmSkipNoForgery` is proven over, whose fourth conjunct is the
+ * trust-overlap anchor a skip trades the epoch binding for. Same return contract as the bridges
+ * above. */
+size_t dregg_tm_skip_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_tm_skip_verify(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
