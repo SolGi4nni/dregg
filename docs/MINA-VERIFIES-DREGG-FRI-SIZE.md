@@ -1370,6 +1370,133 @@ still needs `renderOps_gens_sound`. **The verifier is not sound because the DAG 
 
 ---
 
+### 3.19 ⚑ MEASURED — THE ASSEMBLY: one ZkProgram that consumes a dregg proof and DECIDES
+
+*`bridge/mina-zkapp/src/DreggProofVerify.ts`, `scripts/dregg-proof-verify.ts`,
+`circuit/src/bin/mina_stark_fixture.rs`. Gate leg 10.*
+
+Everything above §3.19 is a **component**. Each rung verifies a piece of a FRI-STARK proof, each is
+KAT'd against the deployed p3 object, and **every one of them is fed a fixture the measurement
+synthesised** — an opened row no prover produced, a fold chain over a value nobody committed to, a
+transcript whose preamble is a stand-in. Until something consumes a proof, "Mina verifies dregg" is
+a statement about a parts list.
+
+**What was built.** `circuit/src/bin/mina_stark_fixture.rs` mints a real proof with
+`p3_uni_stark::prove` under `DreggStarkConfig` — the same `Poseidon2BabyBear<16>`, the same
+`PaddingFreeSponge<.,16,8,8>` / `TruncatedPermutation<.,2,8,16>` MMCS, the same
+`DuplexChallenger<.,16,8>`, the same `BinomialExtensionField<BabyBear,4>`, the same `TwoAdicFriPcs`
+the deployed root runs, with only the six FRI knobs turned down — and runs **dregg's own
+`p3_uni_stark::verify` before emitting anything**. `DreggProofVerify` then does the whole of that
+verifier in one Kimchi circuit:
+
+| | |
+|---|---|
+| the STARK preamble | `degree_bits`, `base_degree_bits`, `preprocessed_width`, the trace commitment and the public values absorbed; `α` SAMPLED; the quotient commitment absorbed; `ζ` SAMPLED (`uni-stark/src/verifier.rs:361-390`) |
+| the opened values | every claimed evaluation absorbed in round order **before** FRI's own `α` (`two_adic_pcs.rs:780-788`) |
+| the FRI transcript | `α`, every `β`, the arity schedule, the 16-bit query grind and every query index DERIVED |
+| **the AIR closing equality** | `Σ αⁱ C_i · Z_H(ζ)⁻¹ == quotient(ζ)`, the three Lagrange selectors computed, the quotient recomposed from **2 chunks** by Lagrange over p3's own chunk domains |
+| per query | the input-phase MMCS openings under the commitments the transcript absorbed, the **DEEP quotient**, and the fold chain onto the final polynomial |
+
+**It proves.** At `degree_bits = 1`, `log_blowup = 1`, 1 query, 1 fold layer, `|D⁰| = 2²`,
+`query_pow_bits = 16` (the deployed value):
+
+| | |
+|---|---:|
+| **rows** | **56,927** (86.9% of the 2^16 step domain) |
+| compile | ~28 s |
+| **prove** | **~12 s** |
+| verify | ~0.3 s |
+| the PROVEN public output | the DERIVED query index — **equal to the one p3's own challenger drew** |
+
+**The ceiling is real and was found, not assumed.** The same program at `degree_bits = 2` is
+**73,259 rows** and `compile()` aborts inside kimchi's wasm (`RuntimeError: unreachable`). 56,927 is
+therefore the largest end-to-end dregg-proof verifier that exists as a single Pickles step today.
+
+**It discriminates, as real `prove()` refusals.** Seven bends, each applied to the same proof
+structure and each **required to be refused by dregg's own verifier before it is emitted** — a
+fault injection that no longer matches its target silently becomes a passing test:
+
+a claimed out-of-domain evaluation · a quotient chunk · the final polynomial · a commit-phase
+sibling · an input-phase opened row element · an input-phase Merkle sibling · the query PoW witness.
+
+**And the AIR closing equality is shown REFUSING.** §3.16 built the arithmetic around `C_i` and
+could not watch it bite, because nothing fed it a proof. Here the proof, the transcript, the
+openings and the whole fold chain are IDENTICAL and only the constraint evaluator moves: an AIR
+reading `a²` where dregg proved `a³` is **refused**, and the control — the same proof under the
+PCS-only statement with no AIR check — is **accepted**. The refusal is attributable.
+
+**⚑ A falsifier that a single geometry cannot see, and it is an identity.** The fold-order
+falsifier (swap `C₁` and `C₃`) is **blind at `degree_bits = 1`** and the leg says so and proves why:
+on a two-row trace `is_first_row = X+1` and `is_last_row = X−1`, so both boundary constraints are
+the *same* multiple of `X²−1` and permuting them cannot change the accumulator. Every falsifier is
+therefore run at `degree_bits = 2` as well, and the blindness is asserted as an identity rather than
+left as an unexplained green — the same discipline §3.15c applied to `open_input`'s conventions and
+§3.15e applied to the challenger's `observe`.
+
+**⚑ And one instrument defect this found in itself.** The transcript-polarity check originally bent
+four absorbed positions and compared `{ζ, α_FRI, indices}`. That comparison **cannot see a bend in
+the last absorbed element** — the query PoW witness — because `ζ` and `α_FRI` are sampled before it
+and the index is only `log_global_max_height` bits wide (2 here): a one-in-four coin flip, and it
+came up green-then-red across runs. The comparison now includes the grind's own verdict and bends
+one element of each of **eight named transcript regions**.
+
+**The marginals, measured.**
+
+| | rows |
+|---|---:|
+| per additional query (at the proved geometry) | 23,314 |
+| per additional fold layer + Merkle level | 16,332 |
+| per additional opened trace column — **absorbed once** | 2,705 |
+| per additional opened trace column — **per query** (its DEEP term + MMCS lane) | 481 |
+| deriving the whole transcript (vs witnessing every challenge) | **32,430 — 57% of the program** |
+
+That last row is the §3.15e evidence: a derived variable is indistinguishable from a witness
+carrying its value to `runAndCheck`, to `prove` AND to `getRows()`, so a **row delta against a twin
+that witnesses them** is the only instrument that can see the difference. It is 32,430 rows.
+
+**The distance to deployed geometry — measured, then projected from measured marginals.**
+
+| | rows |
+|---|---:|
+| ONE query at the deployed FRI geometry (`\|D⁰\| = 2²²`, 16 arity-2 layers, `log_blowup 6`, depth-22 input paths), carrying the fixture AIR | **827,887** — 12.6× a 2^16 step |
+| the same, challenges witnessed and no AIR check — i.e. the query WALK alone | 748,438 |
+| ⇒ transcript + AIR arithmetic at deployed geometry | 79,449 |
+| ⇒ 19 query walks | 14,220,322 |
+| ⇒ + 1,112 more opened columns (940 main + 175 preprocessed − the fixture's 3) | 13,163,370 |
+| **⇒ the deployed root** | **≈ 2.75 × 10⁷ rows, 500–573 Pickles steps** |
+
+⚑ **TWO queries at the deployed geometry does not build**: `analyzeMethods` on the ~1.7 M-row
+circuit aborts in kimchi's **wasm** allocator (32-bit address space), not the node heap. So the
+fixed/per-query split is taken from a witnessed-challenge, AIR-free twin at one query — both halves
+measured, neither subtracted from a guess.
+
+⚑ **2.75 × 10⁷ is a FLOOR, and 500–573 steps is a floor.** The AIR term inside it is the fixture's
+**four** constraints, not the root's **1,093** (§3.17) plus the 187,295 rows of `C_i` (§3.18); and
+the projection prices the extra columns at the fixture's per-column marginal, which does not include
+the root's mixed-height input batches (§3.14 residual 5). The independent §3.14 sum reads
+≈ 3.0 × 10⁷ from an entirely different decomposition, and §0's permutation count reads 2.9 × 10⁷.
+**Three methods now land within 10% of each other.**
+
+**What §3.19 closes, and what it does not.**
+
+* **CLOSES: "nothing consumes a proof."** A proof dregg's prover made is decided by one Pickles
+  step, and the discrimination is seven real `prove()` refusals plus three wrong AIRs.
+* **CLOSES, at the uni-STARK shape: §3.14's preamble residual.** The transcript here is not a
+  13-lane stand-in — it is `uni-stark/src/verifier.rs`'s own observe sequence and *every* opened
+  value. At the **batch**-STARK shape (`observe_instance_count`, per-instance bindings, the
+  permutation commitment and the lookup cumulative sums) it is still a stand-in.
+* **NARROWS: multi-matrix batches.** The quotient commitment here holds **two** matrices under one
+  root, hashed into one leaf. Batches over matrices of **different heights** are still priced and
+  not implemented.
+* **DOES NOT CLOSE: the AIR is not dregg's.** `MinaFixtureAir` is 3 columns and 4 constraints. The
+  root's seven tables at `N = 1,093` are §3.17/§3.18's object; wiring that evaluator into
+  `DreggProofVerify`'s `constraints` argument is the remaining seam, and it is an argument, not a
+  rewrite.
+* **DOES NOT CLOSE: 19 queries, 2²² domains, and the partition.** The program is parameterised by
+  all of them and measured at all of them; it does not FIT in one step at any of them.
+
+---
+
 ## 4. DOES IT FIT
 
 ### 4.1 The real per-step budget

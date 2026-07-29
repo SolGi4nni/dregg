@@ -334,27 +334,56 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
  * a witness the old statement admits and requires the new one to REFUSE the same
  * public claim. Every run.
  *
- * FIVE things still stand between that and an anchor this key could be deleted
- * from, and §3.14 keeps the list:
+ * ⚑ AND AS OF 2026-07-29 THE RUNGS ARE ASSEMBLED — §3.19. `DreggProofVerify`
+ * takes a proof `p3_uni_stark::prove` made under `DreggStarkConfig` (dregg's own
+ * permutation, MMCS, challenger, extension and PCS, six FRI knobs turned down),
+ * which dregg's OWN verifier accepted before it was emitted, and DECIDES it:
+ * the STARK preamble, every opened value absorbed, the FRI transcript, the AIR
+ * closing equality at zeta, the DEEP quotient, the MMCS openings and the fold
+ * chain — 56,927 rows, ONE Pickles step, compiled + PROVED + verified, and
+ * REFUSING seven different bends and three wrong AIRs, all as real `prove()`
+ * refusals. That is the first object in this directory that verifies a dregg
+ * PROOF rather than a piece of one.
  *
- *   1. the transcript's preamble is a stand-in, not the batch-STARK's own
- *      observes — and §3.16 measures what the real one costs: 2.97e6 rows of
- *      challenger permutations just to absorb the 2,286 opened values, against
- *      the 13 lanes §3.12 stands in with;
- *   2. the AIR constraint evaluation at zeta is STARTED but not finished
- *      (§3.16): the selectors, the alpha-fold, the quotient-chunk recomposition
- *      and the closing equality are built and KAT'd against p3's own domain
- *      algebra, but `C_i` — dregg's seven AIRs — is not, and its constraint
- *      count N is uncounted. Until it is, the walk authenticates a low-degree
- *      function that encodes nothing in particular;
- *   3. the input-phase MMCS opening carries ONE matrix per batch;
- *      `verify_batch` over several matrices of MIXED heights is priced and not
- *      implemented;
- *   4. every rung walks ONE query of nineteen;
- *   5. the root's own `degree_bits` has never been read (§1.3), and the roll-in
- *      schedule is a function of it (§3.15d).
+ * WHAT WOULD LET THIS KEY BE DELETED, stated at the resolution §3.19 measured
+ * rather than as a wish. `setDreggRoot` may stop requiring a signature when its
+ * proof argument is a `DreggProofVerify`-shaped statement over the DEPLOYED root
+ * — i.e. when the anchored value is the public input of a proof that dregg's
+ * root FRI-STARK verifies — because at that point any caller producing the proof
+ * is exactly the property wanted, and "any caller" stops being a hole. FOUR
+ * things stand between §3.19 and that, and each is now a size or a seam, not an
+ * unknown:
  *
- * None of those is a reason to delete the key early. All five closing is.
+ *   1. THE AIR IS NOT DREGG'S. `DreggProofVerify` takes its constraint
+ *      evaluator as an ARGUMENT and is closed at the fixture AIR (3 columns, 4
+ *      constraints — and §3.19 shows the closing equality REFUSING a bent one,
+ *      so it is not decoration). The root's seven tables are `N = 1,093`
+ *      constraints (§3.17) with `C_i` a DAG-compiler output at 187,295 rows
+ *      (§3.18) for the 901 BASE constraints; the 192 LogUp constraints are still
+ *      outside that vocabulary. Wiring §3.18's evaluator into §3.19's argument
+ *      is the seam.
+ *   2. THE BATCH-STARK PREAMBLE. §3.19's transcript is `uni-stark`'s OWN observe
+ *      sequence — degree bits, the trace commitment, the public values, every
+ *      opened evaluation — so the 13-lane stand-in is gone at THAT shape. The
+ *      deployed root is a BATCH STARK: `observe_instance_count`, four per-
+ *      instance bindings each observed as an algebra element, the permutation
+ *      commitment and the lookup cumulative sums. Those are not built.
+ *   3. MIXED-HEIGHT BATCHES. §3.19 hashes TWO matrices into one MMCS leaf under
+ *      one root, so multi-matrix is done; `verify_batch` over matrices of
+ *      DIFFERENT heights under one root is still priced (§3.14) and not
+ *      implemented.
+ *   4. IT DOES NOT FIT. 56,927 rows is 86.9% of a step and 73,259 is REFUSED by
+ *      the compiler — measured, not assumed. The deployed root projects to
+ *      ~2.75e7 rows / 500-573 Pickles steps from §3.19's own marginals (a FLOOR:
+ *      the AIR term in it is four constraints, not 1,093). Partitioning is a
+ *      compiler problem with a one-field step-boundary contract, and it is the
+ *      last thing standing.
+ *
+ * None of those is a reason to delete the key early. ⚑ Deleting it TODAY makes
+ * the anchor world-writable — Mina's `editState: proof` accepts any caller who
+ * can produce a proof of an unconditional method, and the obligation below is a
+ * SHAPE constraint. Strictly worse than a labelled placeholder. All four
+ * closing is what removes it.
  */
 export class DreggAttestedGate extends SmartContract {
   /** The Pasta state root this gate trusts. This is `app_state_0` — the slot

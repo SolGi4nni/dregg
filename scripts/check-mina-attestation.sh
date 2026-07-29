@@ -132,6 +132,21 @@
 # constraint count `N` is NOT counted, so the price is reported as `A + N*h` with
 # `A` and `h` measured and `N` named. The leg FAILS if that naming disappears.
 #
+# TENTH leg (`dregg-proof-verify.ts`) — THE ASSEMBLY, and the first object in
+# this directory that verifies a dregg PROOF rather than a piece of one. Rungs
+# 1-7 are all fed fixtures the measurement synthesised; here
+# `circuit/src/bin/mina_stark_fixture.rs` mints a real one with
+# `p3_uni_stark::prove` under `DreggStarkConfig` — the same permutation, MMCS,
+# challenger, extension and PCS the deployed root runs, with the six FRI knobs
+# turned down — and REQUIRES dregg's own verifier to accept it (and to refuse
+# each bent variant) before emitting anything. One `ZkProgram` then does the
+# whole of `p3_uni_stark::verify`: the STARK preamble, the opened-value
+# absorption, the FRI transcript, the AIR closing equality at zeta, the DEEP
+# quotient, the MMCS openings and the fold chain — 56,927 rows, inside ONE 2^16
+# Pickles step, compiled + PROVED + verified, refusing seven bends and three
+# wrong AIRs. ⚑ The AIR is a 3-column degree-3 FIXTURE AIR, not one of dregg's
+# seven root tables; the leg says so and measures what the root would cost.
+#
 # ⚑ NO SKIPS. A missing `node`, a missing `npm`, a missing `cargo`, an absent or
 # unpinned o1js, a type error, or a diverging vector are all FAILURES — the same
 # discipline as `embedded-js` and `opentheory-importer`. ~18 min warm (the
@@ -219,6 +234,14 @@ run_deep() { # run_deep <dir>
 run_air() { # run_air <dir>
   ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
       npm run --silent air-eval )
+}
+# THE ASSEMBLY: one ZkProgram that consumes a proof dregg's own prover made and
+# DECIDES. `DREGG_REPO_ROOT` points at the tree holding `circuit/src/bin/
+# mina_stark_fixture.rs` — the emitter is a `--bin`, not an `--example`, so it
+# never drags in the dev-dependency path to `dregg-lean-ffi` and this leg cannot
+# go red because a Lean module is mid-edit.
+run_verify() { # run_verify <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent dregg-verify )
 }
 
 # ── the headline run ──────────────────────────────────────────────────────────
@@ -392,12 +415,50 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$air_out" || die "the AIR rows ratchet did not run"
   grep -q '=== AIR EVAL PASS ===' <<<"$air_out" || die "the AIR leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air checks green" \
+  # Leg 10: THE ASSEMBLY. Rungs 1-7 are seven objects that each verify a PIECE
+  # of a FRI-STARK proof, and every one of them is fed a fixture the MEASUREMENT
+  # synthesised. This leg is the one that consumes a proof: `p3_uni_stark::prove`
+  # under `DreggStarkConfig`, self-verified by dregg's own verifier before
+  # emission, decided by ONE ZkProgram — transcript, AIR closing equality, DEEP
+  # quotient, MMCS openings and fold chain — that compiles, proves and verifies
+  # inside a single 2^16 Pickles step, and REFUSES seven different bends.
+  verify_out="$(run_verify "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$verify_out"
+  [ "$rc" -eq 0 ] || die "the assembled proof-verify leg exited $rc"
+  n_verify="$(printf '%s' "$verify_out" | grep -c '✓')"
+  [ "$n_verify" -ge 20 ] || die "only $n_verify assembly checks passed; expected >= 20"
+  grep -q "self-verified by dregg's own p3_uni_stark::verify" <<<"$verify_out" \
+    || die "the fixture was not minted by dregg's prover (a synthesised proof proves nothing)"
+  grep -q 'all agree with p3' <<<"$verify_out" \
+    || die "the o1js challenger was not checked against p3's own recorded transcript"
+  grep -q 'a dregg proof, decided on Mina' <<<"$verify_out" \
+    || die "no Pickles proof of the dregg proof was actually produced"
+  grep -q "is the one p3's challenger drew" <<<"$verify_out" \
+    || die "the derived query index was never compared to p3's — the seam is unchecked"
+  grep -q 'prove() REFUSES a claimed out-of-domain evaluation' <<<"$verify_out" \
+    || die "the tamper suite did not run as real prove() refusals"
+  grep -q 'prove() REFUSES an AIR that reads a\^2' <<<"$verify_out" \
+    || die "the AIR closing equality was never shown REFUSING (rung 7 stays decorative)"
+  grep -q 'the control holds' <<<"$verify_out" \
+    || die "the PCS-only control did not run — the AIR refusal above is unattributable"
+  grep -q 'the blindness is an identity, not a hole' <<<"$verify_out" \
+    || die "the multi-geometry falsifier coverage did not run"
+  grep -q 'deriving the transcript costs' <<<"$verify_out" \
+    || die "the derived-vs-witnessed ROW DELTA did not run (§3.15e: nothing else can see it)"
+  grep -q 'the whole root projects to' <<<"$verify_out" \
+    || die "the distance to deployed geometry was not measured"
+  grep -q 'ratchet: ' <<<"$verify_out" || die "the assembly rows ratchet did not run"
+  grep -q '=== DREGG-PROOF-VERIFY PASS ===' <<<"$verify_out" \
+    || die "the assembly leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
        "FRI query, Fiat-Shamir transcript, the 16-layer fold chain and the DEEP quotient all" \
        "measured against p3, with the query index DERIVED and the reduced opening COMPUTED" \
-       "rather than witnessed; the AIR closing equality built and priced)"
+       "rather than witnessed; the AIR closing equality built and priced; and ONE ZkProgram" \
+       "consuming a proof dregg's own prover made — compiled, PROVED, verified, and refusing" \
+       "seven bends and three wrong AIRs)"
   exit 0
 fi
 
@@ -769,6 +830,52 @@ expect_red probe "the depth-32 sparse-path test's own assertion" \
 expect_red probe "the emitted root is off by one level (cargo test cannot see this)" \
   "s/fp_hex\(nodes\[depth - 1\]\)/fp_hex(nodes[depth - 2])/" \
   src/main.rs "$PCOPY"
+
+# ── Leg 10: THE ASSEMBLY. The faults here are chosen so no two are visible to
+# the same instrument, and so that none of them is one an honest witness cannot
+# distinguish. In particular there is NO "witness the query index instead of
+# deriving it" injection: leg 8 recorded that exactly such a fault stays green,
+# because the honest prover's witness callback recomputes the derived value and
+# `runAndCheck`, `prove` and `getRows()` cannot tell the two apart. What sees
+# that class is the ROW DELTA in [9], and its falsifier is the ratchet below.
+#
+# ⚑ NOR is there a `bits[bitsReduced + h] -> bits[h]` injection. At the geometry
+# that fits a Pickles step every input matrix sits at the global max height, so
+# `bitsReduced` is 0 for both batches and the two readings COINCIDE — the same
+# shape as the coset-descent bug. Writing it would be writing a falsifier that
+# can never fire.
+expect_red verify "the transcript observes a wrong instance constant" \
+  "s/            c\.observeConstant\(BigInt\(air\.degreeBits\)\);/            c.observeConstant(BigInt(air.degreeBits + 1));/" \
+  src/DreggProofVerify.ts
+expect_red verify "every batch opens under the FIRST commitment (the quotient tree is unchecked)" \
+  "s/                cur\.limbs\[j\]\.assertEquals\(claim\.inputCommits\[b\]\.limbs\[j\]\);/                cur.limbs[j].assertEquals(claim.inputCommits[0].limbs[j]);/" \
+  src/DreggProofVerify.ts
+expect_red verify "the second opening point collapses onto zeta (zeta_next loses its generator)" \
+  "s/          const zetaNext = extScaleConst\(zeta, gTrace\);/          const zetaNext = zeta;/" \
+  src/DreggProofVerify.ts
+expect_red verify "the DEEP quotient batches at the STARK's alpha instead of FRI's" \
+  "s/              alpha: friAlpha,/              alpha: alphaStark,/" \
+  src/DreggProofVerify.ts
+expect_red verify "the quotient openings stop being absorbed (they steer no challenge)" \
+  "s/            for \(const e of openedQuotient\) c\.observeExt\(e\);/            \/* fault *\//" \
+  src/DreggProofVerify.ts
+# ⚑ THE ONE NOTHING ELSE SEES. Every check above stays green with this in: the
+# transcript still derives, the openings still bind, the chain still closes on
+# the final polynomial. Only the AIR is no longer constrained — so the a^2
+# evaluator is ACCEPTED, and [7] is the only instrument that notices.
+expect_red verify "the AIR closing equality compares the accumulator to ITSELF" \
+  "s/                canonicalLane\(quotient\.limbs\[j\], LANE_MAX\),/                canonicalLane(lhs.limbs[j], LANE_MAX),/" \
+  src/DreggProofVerify.ts
+# The leg's own instruments have to be falsifiable too.
+expect_red verify "the transcript replay's schedule drifts from p3's" \
+  "s/    const alphaStark = c\.sampleExt\(\);/    const alphaStark = c.sampleExt(); c.observe(1n);/" \
+  scripts/dregg-proof-verify.ts
+expect_red verify "the multi-geometry falsifier coverage collapses to ONE geometry" \
+  "s/  const fx2 = mint\(2, LB, NQ, QPOW, seed\);/  const fx2 = mint(DB, LB, NQ, QPOW, seed);/" \
+  scripts/dregg-proof-verify.ts
+expect_red verify "the assembly's row ratchet drifts from the recorded figure" \
+  "s/  const RECORDED_PROVED_ROWS = 56_927;/  const RECORDED_PROVED_ROWS = 50_000;/" \
+  scripts/dregg-proof-verify.ts
 
 }
 

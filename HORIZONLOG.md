@@ -1,5 +1,77 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 29 — THE MINA RUNGS WERE NEVER ASSEMBLED. ONE ZkProgram now DECIDES a dregg proof, 56,927 rows, in ONE Pickles step
+
+**The finding, and it is a shape not a bug.** Seven rungs of a Mina-side dregg verifier were built,
+KAT'd elementwise against deployed p3, `getRows()`-measured and ratcheted — the permutation (2,600.5
+rows), the MMCS opening (2,677/level), one FRI query (684,726), the Fiat-Shamir challenger (62,637),
+the 16-layer commit chain (623,310), the DEEP quotient (154,523/query), the AIR arithmetic around
+`C_i`. **Every one of them was fed a fixture the MEASUREMENT synthesised**: an opened row no prover
+produced, a fold chain over a value nobody committed to, a transcript whose preamble was a 13-lane
+stand-in. Nothing consumed a proof. "Mina verifies dregg" was a statement about a parts list, and
+the deployed anchor was still gated by `placeholderRelay`, an explicitly-labelled trusted key.
+
+**What decides now.** `circuit/src/bin/mina_stark_fixture.rs` mints a proof with
+`p3_uni_stark::prove` under `DreggStarkConfig` — the same `Poseidon2BabyBear<16>`,
+`PaddingFreeSponge<.,16,8,8>`/`TruncatedPermutation<.,2,8,16>` MMCS, `DuplexChallenger<.,16,8>`,
+`BinomialExtensionField<BabyBear,4>` and `TwoAdicFriPcs` the deployed root runs, with the six FRI
+knobs turned down — and runs **dregg's own `p3_uni_stark::verify` before emitting anything**.
+`bridge/mina-zkapp/src/DreggProofVerify.ts` then does the whole of that verifier in ONE Kimchi
+circuit: the STARK preamble, every opened value absorbed before FRI's `α`, the FRI transcript with
+`α`/every `β`/the 16-bit grind/every query index DERIVED, **the AIR closing equality at `ζ`** over
+p3's own chunk domains, the DEEP quotient, the MMCS openings, the fold chain onto the final
+polynomial. **56,927 rows — 86.9% of the 2^16 step domain — compiled, PROVED (~13 s), verified, and
+its PROVEN public output is the query index p3's own challenger drew.**
+
+**The ceiling is measured, not assumed.** The same program at `degree_bits 2` is 73,259 rows and
+`compile()` aborts inside kimchi's wasm. 56,927 is the largest end-to-end dregg-proof verifier that
+exists as a single Pickles step.
+
+**It discriminates, as real `prove()` refusals — never `runAndCheck`, which does not evaluate lookup
+constraints.** Seven bends, each of which the emitter REQUIRES dregg's own verifier to refuse before
+writing it out: an out-of-domain evaluation, a quotient chunk, the final polynomial, a commit-phase
+sibling, an input-phase opened row element, an input-phase Merkle sibling, the query PoW witness.
+**And the AIR closing equality is shown REFUSING**: proof, transcript, openings and fold chain
+identical, only the constraint evaluator moves — `a²` where dregg proved `a³` is refused, and the
+PCS-only control accepts.
+
+**TWO instrument defects it found in itself**, both of the class this repo keeps paying for. (a) The
+fold-order falsifier is BLIND at `degree_bits 1`: on a two-row trace `is_first_row = X+1` and
+`is_last_row = X−1`, so both boundary constraints are the *same* multiple of `X²−1` and permuting
+them cannot move the accumulator — every falsifier now runs at `degree_bits 2` too and the blindness
+is asserted as an **identity**. (b) The transcript-polarity check compared `{ζ, α_FRI, indices}` and
+therefore could not see a bend in the **last** absorbed element (the query PoW witness): a
+one-in-four coin flip that came up green then red. It now includes the grind's verdict and bends one
+element of each of **eight named regions**.
+
+**The distance to deployed, measured then projected from measured marginals.** One query at the
+deployed FRI geometry (`|D⁰| = 2²²`, 16 arity-2 layers, `log_blowup 6`) is **827,887 rows — 12.6× a
+step**; its witnessed-challenge, AIR-free twin is 748,438, so the split is 79,449 fixed + 748,438 per
+query walk, both MEASURED (two queries there does not build — kimchi's **wasm** allocator, not the
+node heap). With the per-opened-column marginal split into absorbed-once (2,705) and per-query (481),
+the root projects to **≈ 2.75 × 10⁷ rows / 500–573 Pickles steps**. §3.14's independent sum reads
+3.0 × 10⁷ and §0's permutation count 2.9 × 10⁷ — **three methods within 10%**. That total is a
+**FLOOR**: its AIR term is the fixture's four constraints, not the root's `N = 1,093`.
+
+**What is still open, at the resolution it is now known.** The AIR is an ARGUMENT to the program and
+is not dregg's (§3.18's DAG evaluator is the seam, not a rewrite); the batch-STARK preamble
+(`observe_instance_count`, the per-instance bindings, the permutation commitment and lookup sums) is
+still a stand-in although the **uni-STARK** one is now real; mixed-height MMCS batches are priced and
+not built; and 19 queries at 2²² does not fit in one step at any parameter.
+
+**`placeholderRelay` is NOT deleted, and the reason is at the call site.** Mina's `editState: proof`
+accepts any caller who can produce a proof of an unconditional method, so removing the key today
+makes the anchor **world-writable** — strictly worse than a labelled placeholder. Its "five vague
+things" list is rewritten as four measured ones.
+
+**Gate:** `scripts/check-mina-attestation.sh` gains a TENTH leg and **9 fault injections (65 total,
+pre-flight green)**. One — the closing equality compared to itself — is invisible to every other
+check and caught only by the `a²`-AIR refusal. There is deliberately **no** "witness the index
+instead of deriving it" injection: leg 8 recorded that such a fault stays green. What sees that class
+is the ROW DELTA — deriving the transcript costs **32,430 rows, 57% of the program**.
+
+Detail: `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.19.
+
 ## ⚑⚑⚑ JULY 29 — THE COSMOS LIGHT CLIENT WAS AN ORPHAN, NOT A TWIN. ROUTED, in Lean, both shapes
 
 **The finding, and its exact shape.** `dregg_tm_lc_verify` was proved
