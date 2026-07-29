@@ -1,3 +1,15 @@
+//! ⚑⚑ **SUPERSEDED AXIS (2026-07-29) — READ BEFORE QUOTING ANY PER-INSTANCE NUMBER BELOW.**
+//!
+//! Every figure in this file that prices an `Ir2Air::ExactPublicRow` BATCH INSTANCE, or that
+//! treats `MAX_EXACT_PUBLIC_ROWS = 128` as a reachability limit, was measured against a
+//! realization that no longer exists. `Ir2Air::ExactPublicTable` carries a whole Lean-emitted
+//! manifest as ONE multiplicity-bearing instance with the rows in a preprocessed matrix — which
+//! is the shape this file's own CONTROL (shape B, the range/byte table) always had. So the
+//! deployed exact-public shape costs 2 instances at every `(k, n, m)`, the caps are `2^21` rows /
+//! `2^25` cells, and the points this file reported as INEXPRESSIBLE now prove. The trace-row,
+//! FRI-knob and Poseidon2-profile measurements are UNAFFECTED and still stand; the per-instance
+//! and cap-reachability ones are HISTORY. The tests themselves have been updated and are green.
+//!
 //! ⚠⚠⚠ HEADLINE CORRECTION — READ BEFORE QUOTING ANY PERCENTAGE FROM THIS FILE.
 //!
 //! An independent re-verification (this harness's own verify agent died before running, so the
@@ -521,10 +533,15 @@ fn best_prove_ms(json: &str, k: usize, n: usize, reps: usize) -> (f64, usize, us
 }
 
 /// The DECLARED-ROW axis in TIME. `k = 1, n = 16` is held bit-identical while `m` multiplies
-/// the declared manifest (16 → 128 rows ⇒ 17 → 129 batch instances). Shape B at the same
-/// `(k, n, m)` is the control: identical trace, identical interaction count, 2 instances
-/// always. `d(prove ms)/d(instances)` from the A column with the B column subtracted is the
-/// marginal cost of ONE extra `ExactPublicRow` batch instance.
+/// the declared manifest (16 → 128 rows).
+///
+/// ⚑ **2026-07-29: THE QUANTITY THIS TEST WAS BUILT TO MEASURE NO LONGER EXISTS.** It used to
+/// report `d(prove ms)/d(instances)` — the marginal cost of one extra `ExactPublicRow` batch
+/// instance — because the manifest cost one instance per declared ROW (16 → 128 rows ⇒ 17 → 129
+/// instances). `Ir2Air::ExactPublicTable` makes a manifest ONE multiplicity-bearing instance, the
+/// shape shape B (the range/byte table) always had, so BOTH columns are 2 instances at every `m`
+/// and the marginal-per-instance slope is over a zero-length axis. What remains measurable is the
+/// A−B time gap at fixed `m`: the residual cost of carrying the declared rows as TABLE rows.
 #[test]
 fn per_instance_cost() {
     println!("\n== (2) MARGINAL COST OF ONE BATCH INSTANCE (fixed trace k=1 n=16) ==");
@@ -533,7 +550,10 @@ fn per_instance_cost() {
     for m in [1usize, 2, 4, 8] {
         let (a_ms, a_inst, a_bytes) = best_prove_ms(&shape_a_json_m(1, 16, m), 1, 16, reps);
         let (b_ms, b_inst, b_bytes) = best_prove_ms(&shape_b_json_m(1, 16, m), 1, 16, reps);
-        assert_eq!(a_inst, 1 + 16 * m);
+        assert_eq!(
+            a_inst, 2,
+            "the manifest is ONE instance now, not one per declared row"
+        );
         assert_eq!(b_inst, 2);
         println!(
             "   m={m:<2} declared={:<4} A inst={a_inst:<4} A={a_ms:>8.2} ms {a_bytes:>7} B  |  B inst={b_inst} B={b_ms:>7.2} ms {b_bytes:>7} B  |  A-B={:>8.2} ms",
@@ -542,12 +562,13 @@ fn per_instance_cost() {
         );
         pts.push((a_inst, b_inst, a_ms, b_ms));
     }
-    let (i0, _, a0, b0) = pts[0];
-    let (i1, _, a1, b1) = pts[pts.len() - 1];
+    let (_, _, a0, b0) = pts[0];
+    let (_, _, a1, b1) = pts[pts.len() - 1];
     println!(
-        "   -> marginal per ExactPublicRow instance = {:.4} ms  (A slope {:.4}, control slope-corrected)",
-        ((a1 - b1) - (a0 - b0)) / (i1 - i0) as f64,
-        (a1 - a0) / (i1 - i0) as f64
+        "   -> the INSTANCE axis is now zero-length (A inst = B inst = 2 at every m); the \
+         declared-row cost that remains is A-B = {:.2} ms at m=1 and {:.2} ms at m=8",
+        a0 - b0,
+        a1 - b1
     );
 }
 

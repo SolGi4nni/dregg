@@ -34,11 +34,19 @@
 //! ## Parameters, and why they are these
 //!
 //! 4 slices × 31 generators = **124 real `srs.g` entries**, 4 bit planes, `4 · 32 = 128` trace rows
-//! per instance. The 128 is not a taste: `descriptor_ir2.rs` caps an exact-public manifest at
-//! `MAX_EXACT_PUBLIC_ROWS = 128` / `MAX_EXACT_PUBLIC_CELLS = 4096`, the balance is a PERMUTATION
-//! (so manifest rows = trace rows), and `instance_airs` spends one batch AIR instance per manifest
-//! row. The Lean forcing theorems are row-count-independent; this MEASUREMENT is not. See
-//! `PastaMsmBound` §6/§7.
+//! per instance.
+//!
+//! ⚑ **The 128 used to be the deployed ceiling; since 2026-07-29 it is only these artifacts'
+//! parameters.** `descriptor_ir2.rs` capped an exact-public manifest at `MAX_EXACT_PUBLIC_ROWS =
+//! 128` / `MAX_EXACT_PUBLIC_CELLS = 4096` because `instance_airs` spent one batch AIR instance per
+//! manifest ROW — and since the balance is a PERMUTATION (manifest rows = trace rows) that was a
+//! 128-row ceiling on any contents-bound trace. `Ir2Air::ExactPublicTable` realizes a whole
+//! manifest as ONE multiplicity-bearing instance with the rows in a preprocessed matrix, so this
+//! cut costs 8 instances rather than 516 and the caps are now `2^21` rows / `2^25` cells. Nothing
+//! about the FORCING moved: the multiplicities are PINNED, so the balance is still exact multiset
+//! equality, and `PastaMsmBound`'s theorems — including the counting ones that derive the `DBL`
+//! pattern — hold verbatim over the same emitted descriptors. See `PastaMsmBound` §6/§7 and
+//! `descriptor_ir2::ExactPublicManifest`.
 //!
 //! ## Why the artifacts are under `tests/fixtures/`, not `circuit/descriptors/by-name/`
 //!
@@ -398,11 +406,13 @@ fn bound_cut_proves_and_verifies() {
     });
     let prove_time = t0.elapsed();
 
-    // 4 main instances + 4 x 128 exact-public row instances.
+    // ⚑ 4 main instances + 4 exact-public TABLE instances. This assertion read
+    // `SLICES * (1 + HEIGHT)` = 516 until `Ir2Air::ExactPublicTable` landed (2026-07-29): the
+    // manifest used to cost one batch instance per ROW, which is what made 128 rows the ceiling.
     assert_eq!(
         proof.degree_bits.len(),
-        SLICES * (1 + HEIGHT),
-        "one main + one instance per manifest row, per descriptor"
+        SLICES * 2,
+        "one main + ONE multiplicity-bearing table instance, per descriptor"
     );
 
     let t1 = Instant::now();
@@ -410,11 +420,52 @@ fn bound_cut_proves_and_verifies() {
     let verify_time = t1.elapsed();
 
     let bytes = postcard::to_allocvec(&proof).expect("serialize").len();
+    let distinct: usize = {
+        let m = manifest_of(&descs[0]);
+        let mut d = m.clone();
+        d.sort_unstable();
+        d.dedup();
+        d.len()
+    };
     println!(
-        "[bound] {SLICES} slices x {HEIGHT} x {BOUND_WIDTH} main cells + {} manifest instances \
-         | prove {prove_time:?} | verify {verify_time:?} | proof {bytes} bytes",
-        SLICES * HEIGHT
+        "[bound] {SLICES} slices x {HEIGHT} x {BOUND_WIDTH} main cells | manifest {HEIGHT} rows \
+         ({distinct} distinct) in {} instances | prove {prove_time:?} | verify {verify_time:?} \
+         | proof {bytes} bytes",
+        proof.degree_bits.len()
     );
+}
+
+/// ⚑ **THE VERIFIER RECOMPUTES THE MANIFEST — it does not accept the prover's.**
+///
+/// The single-instance realization moved the manifest into a PREPROCESSED matrix, and a
+/// preprocessed matrix is only verifier-known if the verifier derives and commits it ITSELF. If
+/// `verify_vm_descriptors2_batch` ever took the prover's preprocessed commitment on trust, every
+/// contents-binding theorem above would be about a table the prover chose — the whole rung would
+/// be laundered through the commitment, silently, with all the other tests still green.
+///
+/// So: prove the HONEST cut, then verify it against a descriptor set in which one slice's manifest
+/// names a different generator. The trace is untouched and internally perfect; only the declared
+/// table moved. It must refuse.
+#[test]
+fn verifier_rebuilds_the_manifest_and_refuses_a_swapped_one() {
+    let descs = parse_set(&BOUND);
+    let (traces, pis) = honest_cut(BOUND_WIDTH);
+    let refs: Vec<&[Vec<BabyBear>]> = traces.iter().map(|t| t.as_slice()).collect();
+    let proof =
+        prove_vm_descriptors2_batch(&descs, &refs, &pis).expect("the honest cut must prove");
+    verify_vm_descriptors2_batch(&descs, &proof, &pis)
+        .expect("control: the honest cut verifies against its OWN descriptors");
+
+    // bend ONE limb of ONE manifest row of slice 2's declared table.
+    let mut bent = parse_set(&BOUND);
+    match &mut bent[2].tables[0].sem {
+        TableSem::ExactPublicRows { rows } => rows[6][3] += 1,
+        other => panic!("expected an exact-public generator table, got {other:?}"),
+    }
+    let refusal = verify_vm_descriptors2_batch(&bent, &proof, &pis).expect_err(
+        "a verifier that rebuilt the manifest must refuse a proof over a different one",
+    );
+    println!("[after]  the verifier REFUSED a swapped manifest: {refusal}");
 }
 
 /// THE CONTROL. Without this a red tamper test proves only that something is broken.

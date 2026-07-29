@@ -1,3 +1,15 @@
+//! ⚑⚑ **SUPERSEDED AXIS (2026-07-29) — READ BEFORE QUOTING ANY PER-INSTANCE NUMBER BELOW.**
+//!
+//! Every figure in this file that prices an `Ir2Air::ExactPublicRow` BATCH INSTANCE, or that
+//! treats `MAX_EXACT_PUBLIC_ROWS = 128` as a reachability limit, was measured against a
+//! realization that no longer exists. `Ir2Air::ExactPublicTable` carries a whole Lean-emitted
+//! manifest as ONE multiplicity-bearing instance with the rows in a preprocessed matrix — which
+//! is the shape this file's own CONTROL (shape B, the range/byte table) always had. So the
+//! deployed exact-public shape costs 2 instances at every `(k, n, m)`, the caps are `2^21` rows /
+//! `2^25` cells, and the points this file reported as INEXPRESSIBLE now prove. The trace-row,
+//! FRI-knob and Poseidon2-profile measurements are UNAFFECTED and still stand; the per-instance
+//! and cap-reachability ones are HISTORY. The tests themselves have been updated and are green.
+//!
 //! # MEGAFAST-PROVER-PATH — what does a k-fold composed tiny automaton COST to prove?
 //!
 //! The composed-automaton size story (few columns, few gates) says nothing about PROVER time,
@@ -272,22 +284,30 @@ fn measure(label: &str, json: &str, k: usize, n: usize) -> Measured {
 }
 
 /// A: the DEPLOYED exact-public shape. n sweep at k=1, then k sweep at n=16.
-/// The manifest cap (`MAX_EXACT_PUBLIC_ROWS = 128`) hard-bounds `k·n <= 128`.
+///
+/// ⚑ **2026-07-29: THIS AXIS IS GONE, AND ITS DISAPPEARANCE IS THE MEASUREMENT.** Shape A used to
+/// cost `1 + k·n` batch instances — one per declared manifest ROW — and `MAX_EXACT_PUBLIC_ROWS =
+/// 128` hard-bounded `k·n ≤ 128` because of it. `Ir2Air::ExactPublicTable` realizes a manifest as
+/// ONE multiplicity-bearing instance with the rows in a preprocessed matrix, which is precisely
+/// the shape this file's own CONTROL (shape B, the range/byte table) always had. So shape A now
+/// costs 2 instances at every `(k, n)`, exactly like shape B, and the sweep below asserts the
+/// COLLAPSE rather than the slope. The caps are now `2^21` rows / `2^25` cells.
 #[test]
 fn shape_a_exact_public_scaling() {
-    println!("== SHAPE A: deployed `exact_public_rows` table routing (1 + k*n batch instances) ==");
+    println!(
+        "== SHAPE A: deployed `exact_public_rows` table routing (2 batch instances, ALWAYS) =="
+    );
     for n in [8usize, 16, 32, 64, 128] {
         let m = measure("A", &shape_a_json(1, n), 1, n);
         assert_eq!(
-            m.instances,
-            1 + n,
-            "one batch instance per declared manifest row"
+            m.instances, 2,
+            "the manifest is ONE instance now, not one per declared row"
         );
     }
     for k in [1usize, 2, 4, 8] {
         let n = 16;
         let m = measure("A", &shape_a_json(k, n), k, n);
-        assert_eq!(m.instances, 1 + k * n);
+        assert_eq!(m.instances, 2);
     }
 }
 
@@ -440,28 +460,23 @@ fn size_point(label: &str, json: &str, k: usize, n: usize, m: usize) -> (usize, 
 }
 
 /// **THE ABSOLUTE SIZE TABLE.** A k=4 composition (four tiny automata over one word) at the
-/// word lengths the goal names, plus the k=1 reference. Shape A is reported only where the
-/// `MAX_EXACT_PUBLIC_ROWS = 128` cap admits it (`k·n ≤ 128`); the points past the cap are
-/// reported as inexpressible, which is itself the measurement.
+/// word lengths the goal names, plus the k=1 reference.
+///
+/// ⚑ **The "INEXPRESSIBLE" column is GONE (2026-07-29).** This test used to report `k=4, n ∈
+/// {64, 256, 1024}` as points shape A could not reach at all, because `MAX_EXACT_PUBLIC_ROWS =
+/// 128` refused `k·n > 128` manifests — and that refusal WAS the measurement. Those points now
+/// prove. They are measured here alongside shape B, which is the honest successor: the two shapes
+/// are the same shape.
 #[test]
 fn absolute_wire_sizes() {
     println!("== ABSOLUTE PROOF SIZE: composed tiny automata, production ir2_config ==");
     println!("-- shape A (deployed exact_public_rows), k=4 composition --");
-    for n in [16usize, 32] {
+    for n in [16usize, 32, 64, 256, 1024] {
         let (inst, _) = size_point("A", &shape_a_json(4, n), 4, n, 1);
-        assert_eq!(inst, 1 + 4 * n);
-    }
-    for n in [64usize, 256, 1024] {
-        // The cap lives in `check_descriptor2`, which `prove_vm_descriptor2` runs FIRST — the
-        // descriptor parses, and the prover refuses it. That refusal is the measurement.
-        let desc = parse_vm_descriptor2(&shape_a_json(4, n)).expect("parses");
-        let (trace, pis) = trace_and_pis(4, n);
-        let mem = MemBoundaryWitness::default();
-        let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-        let err = prove_vm_descriptor2(&desc, &trace, &pis, &mem, &heaps)
-            .err()
-            .unwrap_or_else(|| panic!("A k=4 n={n} should exceed the exact-public cap"));
-        println!("A k=4  n={n:<5} INEXPRESSIBLE: {err}");
+        assert_eq!(
+            inst, 2,
+            "k=4 n={n} was INEXPRESSIBLE under the 128-row cap and is now two instances"
+        );
     }
     println!("-- shape A, k=1 reference --");
     for n in [16usize, 64, 128] {
@@ -479,18 +494,21 @@ fn absolute_wire_sizes() {
 }
 
 /// **THE DECLARED-ROW AXIS, at a FIXED main trace.** `n = 16` rows and `3k` columns are held
-/// bit-identical while the DECLARED manifest grows `m`-fold (16 → 128 rows, i.e. 17 → 129 batch
-/// instances). Shape B at the same `(k, n, m)` is the control: identical trace, identical
-/// interaction count, 2 instances always. A/B at fixed `m` is therefore the per-declared-row
-/// cost with the LogUp-aux-column cost divided out.
+/// bit-identical while the DECLARED manifest grows `m`-fold (16 → 128 rows).
+///
+/// ⚑ **The axis used to be an INSTANCE axis (17 → 129 batch instances) and is now a TABLE-ROW
+/// axis (2 instances throughout).** Shape B — the range/byte table, a multiplicity-bearing single
+/// instance — was the control precisely because it never grew an instance; shape A now has that
+/// same property, so what this reports is the residual wire cost of carrying `m`-fold declared
+/// rows as table rows rather than as instances.
 #[test]
 fn declared_row_axis_sizes() {
     println!("== DECLARED-ROW AXIS at FIXED trace (k=1, n=16; m = lookups per row) ==");
     for m in [1usize, 2, 4, 8] {
         let (ia, ba) = size_point("A", &shape_a_json_m(1, 16, m), 1, 16, m);
         let (ib, bb) = size_point("B", &shape_b_json_m(1, 16, m), 1, 16, m);
-        assert_eq!(ia, 1 + 16 * m, "one instance per declared manifest row");
-        assert_eq!(ib, 2, "the control never grows an instance");
+        assert_eq!(ia, 2, "the manifest is ONE instance now");
+        assert_eq!(ib, 2, "the control never grew an instance either");
         println!(
             "   -> declared={:<4} A/B wire = {:.2}x  (A {} B, delta {} B)",
             16 * m,

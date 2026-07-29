@@ -1,3 +1,15 @@
+//! ⚑⚑ **SUPERSEDED AXIS (2026-07-29) — READ BEFORE QUOTING ANY PER-INSTANCE NUMBER BELOW.**
+//!
+//! Every figure in this file that prices an `Ir2Air::ExactPublicRow` BATCH INSTANCE, or that
+//! treats `MAX_EXACT_PUBLIC_ROWS = 128` as a reachability limit, was measured against a
+//! realization that no longer exists. `Ir2Air::ExactPublicTable` carries a whole Lean-emitted
+//! manifest as ONE multiplicity-bearing instance with the rows in a preprocessed matrix — which
+//! is the shape this file's own CONTROL (shape B, the range/byte table) always had. So the
+//! deployed exact-public shape costs 2 instances at every `(k, n, m)`, the caps are `2^21` rows /
+//! `2^25` cells, and the points this file reported as INEXPRESSIBLE now prove. The trace-row,
+//! FRI-knob and Poseidon2-profile measurements are UNAFFECTED and still stand; the per-instance
+//! and cap-reachability ones are HISTORY. The tests themselves have been updated and are green.
+//!
 //! # PACK `s` STEPS PER TRACE ROW — does dividing TRACE ROWS by `s` divide PROVE TIME by `s`?
 //!
 //! `tiny_automata_prove_time_attack.rs` attributed 97.9% of a `k = 4, n = 1024` prove to

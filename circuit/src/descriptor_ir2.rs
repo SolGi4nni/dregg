@@ -208,6 +208,7 @@
 
 // Prover-only (the trace-assembly histograms): `recursion`.
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use p3_air::{Air, AirBuilder, BaseAir, PermutationAirBuilder, WindowAccess};
 use p3_baby_bear::BabyBear as P3BabyBear;
@@ -398,11 +399,28 @@ const BUS_UMEM_LOG: &str = "ir2_umem_log";
 const BUS_UMEM_CHECK: &str = "ir2_umem_check";
 const BUS_UMEM_ADDRS: &str = "ir2_umem_addrs";
 
-/// Exact-public rows are currently the small, descriptor-carried tooth.  Each
-/// row becomes one batch instance, so bound the grammar before allocation.
-const MAX_EXACT_PUBLIC_ROWS: usize = 128;
+/// ⚑ **FLAG DAY (2026-07-29): a manifest is ONE instance, not one instance per row.**
+///
+/// These caps used to be `128 rows / 4_096 cells`, and they were not geometry — they were the
+/// price of the OLD realization, which spent one `Ir2Air::ExactPublicRow` batch instance (its own
+/// committed matrix, its own FRI opening set) per declared manifest row. Since
+/// `PublicLookupBalanced` is a PERMUTATION, manifest rows = trace rows, so 128 rows was also a
+/// 128-row ceiling on any contents-bound trace. The four-way `⟨s, srs.g⟩` cut needs 1,048,704
+/// manifest rows — 8,193x that — and the eight-way 524,416.
+///
+/// [`Ir2Air::ExactPublicTable`] realizes the whole manifest as ONE multiplicity-bearing instance
+/// (the shape [`Ir2Air::ByteTable`] has always had), so the cost of a row is now one row of one
+/// preprocessed matrix, not one instance. The caps below are therefore an ALLOCATION bound on the
+/// verifier — which materializes and commits the preprocessed manifest itself — and nothing else:
+/// `2^21` rows covers the four-way cut with headroom, and `2^25` cells bounds the preprocessed
+/// commitment at ~134 MB of `BabyBear`.
+const MAX_EXACT_PUBLIC_ROWS: usize = 1 << 21;
 const MAX_EXACT_PUBLIC_ARITY: usize = 64;
-const MAX_EXACT_PUBLIC_CELLS: usize = 4_096;
+const MAX_EXACT_PUBLIC_CELLS: usize = 1 << 25;
+
+/// The committed height floor of an [`Ir2Air::ExactPublicTable`] instance: p3 needs a
+/// power-of-two height and a two-row window, so a one-row manifest still commits two rows.
+const MIN_EXACT_PUBLIC_HEIGHT: usize = 2;
 
 fn exact_public_bus_name(table_id: usize) -> String {
     format!("ir2_exact_public_{table_id}")
@@ -2332,6 +2350,101 @@ const CHIP_MULT_NARROW: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS;
 const CHIP_MULT_STATE16: usize = CHIP_MULT_NARROW;
 const CHIP_WIDTH: usize = CHIP_MULT_NARROW + 1;
 
+/// ⚑ **The realized form of one Lean-emitted exact-public manifest** — the DISTINCT declared rows
+/// plus, per distinct row, the number of times the manifest declares it.
+///
+/// This is the whole content of the new realization. `TableSem::ExactPublicRows` is a LIST, and
+/// `DescriptorIR2.PublicLookupBalanced` demands the trace's lookup log be a PERMUTATION of that
+/// list — i.e. exact MULTISET equality. A multiset is `(distinct element, multiplicity)` pairs, so
+/// committing the manifest as `rows[i]` with capacity `mults[i]` is that same multiset, spelled
+/// the way a single lookup table can carry it. **Nothing is weakened:** the old realization gave
+/// each of the `Σ mults[i]` declared rows unit capacity on its own instance and let global LogUp
+/// balance force exact equality; this one gives each DISTINCT row capacity `mults[i]` on one
+/// instance and lets the same global balance force the same equality. What changes is the price.
+///
+/// The multiplicities are PINNED to descriptor-derived constants, not left free. A free
+/// multiplicity column (the byte table's shape, where the table is a subset relation) would turn
+/// the permutation into a containment, and containment is strictly weaker: `PastaMsmBound`'s
+/// `bound_forces_doubling` derives the `DBL` pattern by COUNTING the manifest's all-zero rows, and
+/// an unpinned all-zero entry would absorb any number of doubling rows — a dropped MSM term would
+/// stop being refused. Membership-only theorems (`row_tuple_is_its_manifest_row` and everything
+/// keyed by `manifest_key_unique`) survive either way; the counting ones need the pin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExactPublicManifest {
+    /// The DISTINCT declared rows, in first-declaration order (so the committed table is a
+    /// function of the descriptor alone and prover and verifier build it identically).
+    rows: Vec<Vec<u32>>,
+    /// `mults[i]` = how many times `rows[i]` occurs in the declared manifest. `Σ mults` is the
+    /// declared manifest length, which is the exact lookup capacity this table offers.
+    mults: Vec<u32>,
+    /// Column arity — the declared tuple width, `rows[i].len()`.
+    arity: usize,
+    /// The committed height: `rows.len()` rounded up to a power of two, floored at
+    /// [`MIN_EXACT_PUBLIC_HEIGHT`]. Rows past `rows.len()` are all-zero pads carrying
+    /// multiplicity ZERO, so they contribute nothing to the bus.
+    height: usize,
+}
+
+impl ExactPublicManifest {
+    /// Deduplicate a declared manifest into `(distinct rows, multiplicities)`.
+    ///
+    /// Order is FIRST-DECLARATION order over the Lean-emitted list, so this is a pure function of
+    /// the descriptor: the verifier's rebuild is byte-identical to the prover's.
+    fn of(rows: &[Vec<u32>], arity: usize) -> Self {
+        let mut index: BTreeMap<&[u32], usize> = BTreeMap::new();
+        let mut distinct: Vec<Vec<u32>> = Vec::new();
+        let mut mults: Vec<u32> = Vec::new();
+        for row in rows {
+            match index.get(row.as_slice()) {
+                Some(&i) => mults[i] += 1,
+                None => {
+                    index.insert(row.as_slice(), distinct.len());
+                    distinct.push(row.clone());
+                    mults.push(1);
+                }
+            }
+        }
+        let height = distinct
+            .len()
+            .next_power_of_two()
+            .max(MIN_EXACT_PUBLIC_HEIGHT);
+        Self {
+            rows: distinct,
+            mults,
+            arity,
+            height,
+        }
+    }
+
+    /// The column index of the pinned multiplicity inside the preprocessed matrix.
+    const fn mult_col(&self) -> usize {
+        self.arity
+    }
+
+    /// The preprocessed matrix: `arity` value columns then the pinned multiplicity, padded to
+    /// [`Self::height`] with all-zero rows (value zeros AND multiplicity zero, so a pad neither
+    /// offers capacity nor names a tuple).
+    fn preprocessed<F: PrimeCharacteristicRing + Send + Sync>(&self) -> RowMajorMatrix<F> {
+        let width = self.arity + 1;
+        let mut values: Vec<F> = Vec::with_capacity(self.height * width);
+        for (row, &mult) in self.rows.iter().zip(self.mults.iter()) {
+            values.extend(row.iter().map(|&v| F::from_u64(u64::from(v))));
+            values.push(F::from_u64(u64::from(mult)));
+        }
+        values.resize(self.height * width, F::ZERO);
+        RowMajorMatrix::new(values, width)
+    }
+
+    /// The committed MAIN trace: one column, the multiplicity the AIR pins to the preprocessed
+    /// one. Height matches [`Self::height`], as p3 requires of a preprocessed instance.
+    fn main_trace(&self) -> Vec<Vec<BabyBear>> {
+        let mut rows: Vec<Vec<BabyBear>> =
+            self.mults.iter().map(|&m| vec![BabyBear::new(m)]).collect();
+        rows.resize(self.height, vec![BabyBear::ZERO]);
+        rows
+    }
+}
+
 /// The five-table interpreter AIR. One Rust type covering every instance of the batch
 /// (the batch prover is monomorphic in the AIR type), entirely descriptor-driven.
 #[derive(Clone)]
@@ -2370,10 +2483,22 @@ pub enum Ir2Air {
     /// dropped (`Nodup` is `nodup_singleton`, Lean `universal_memory_sound_single`). Refuses a
     /// multi-row witness in-circuit via `(next.is_real = 0)` on every transition.
     UMemBoundaryCohort,
-    /// One unit-capacity row of a Lean-emitted exact-public table manifest.
-    /// One AIR instance per row keeps the constraint degree constant and makes
-    /// the descriptor values literal verifier-known constants.
-    ExactPublicRow { table_id: usize, values: Vec<u32> },
+    /// ⚑ **A WHOLE Lean-emitted exact-public manifest, as ONE multiplicity-bearing instance** —
+    /// the shape [`Ir2Air::ByteTable`] has always had, generalized from "value = row index" to
+    /// "row = the manifest's row, held in a preprocessed column".
+    ///
+    /// The manifest values and their multiplicities are PREPROCESSED, so they are verifier-known
+    /// by construction: `verify_vm_descriptors2_batch` rebuilds the AIR from the descriptor and
+    /// `ProverData::from_airs_and_degrees` re-derives and re-commits the preprocessed matrix from
+    /// that AIR — the verifier never accepts a prover-supplied table, it recomputes it. The single
+    /// committed main column is the multiplicity, pinned to the preprocessed one.
+    ///
+    /// This replaces one-instance-per-row. The manifest ceiling was never geometric: see
+    /// [`MAX_EXACT_PUBLIC_ROWS`].
+    ExactPublicTable {
+        table_id: usize,
+        manifest: Arc<ExactPublicManifest>,
+    },
 }
 
 /// Public re-export wrapper of the resolved main layout (kept opaque; constructed by
@@ -2381,7 +2506,10 @@ pub enum Ir2Air {
 #[derive(Clone, Debug)]
 pub struct MainLayoutPub(MainLayout);
 
-impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2Air {
+// `Send` joins `Sync` here because `Ir2Air::ExactPublicTable` materializes a preprocessed
+// `RowMajorMatrix<F>`, and p3's `DenseMatrix::new` requires `F: Clone + Send + Sync`. Every `F`
+// this AIR is instantiated at (`P3BabyBear`, the symbolic builders' expression types) already is.
+impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
     fn width(&self) -> usize {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
@@ -2394,8 +2522,29 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2Air {
             Ir2Air::UMemory => UM_WIDTH,
             Ir2Air::UMemBoundary => UB_WIDTH,
             Ir2Air::UMemBoundaryCohort => UBC_WIDTH,
-            Ir2Air::ExactPublicRow { values, .. } => values.len() + 1,
+            // The committed column is the multiplicity; the manifest itself is preprocessed.
+            Ir2Air::ExactPublicTable { .. } => 1,
         }
+    }
+
+    fn preprocessed_width(&self) -> usize {
+        match self {
+            Ir2Air::ExactPublicTable { manifest, .. } => manifest.arity + 1,
+            _ => 0,
+        }
+    }
+
+    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
+        match self {
+            Ir2Air::ExactPublicTable { manifest, .. } => Some(manifest.preprocessed()),
+            _ => None,
+        }
+    }
+
+    /// The table AIR reads only its OWN row of the preprocessed manifest, so prover and verifier
+    /// open the preprocessed columns at `zeta` alone.
+    fn preprocessed_next_row_columns(&self) -> Vec<usize> {
+        Vec::new()
     }
 
     fn num_public_values(&self) -> usize {
@@ -4013,26 +4162,25 @@ where
                 );
             }
             // ----------------------------------------------------------------
-            Ir2Air::ExactPublicRow { table_id, values } => {
-                let multiplicity: AB::Expr = local[values.len()].into();
-                builder.assert_zero(multiplicity.clone() * (multiplicity.clone() - AB::Expr::ONE));
-                builder
-                    .when_first_row()
-                    .assert_zero(multiplicity.clone() - AB::Expr::ONE);
-                builder
-                    .when_transition()
-                    .assert_zero(next[values.len()].into());
-                for (column, value) in values.iter().enumerate() {
-                    builder
-                        .assert_zero(local[column].into() - AB::Expr::from_u64(u64::from(*value)));
-                }
+            Ir2Air::ExactPublicTable { table_id, manifest } => {
+                // The manifest row this table row offers, straight out of the preprocessed
+                // (verifier-recomputed) matrix — nothing here trusts a committed value.
+                let prep = builder.preprocessed();
+                let prep_row = prep.current_slice();
+                let entry: Vec<AB::Expr> = prep_row[..manifest.arity]
+                    .iter()
+                    .map(|&value| value.into())
+                    .collect();
+                let pinned: AB::Expr = prep_row[manifest.mult_col()].into();
+
+                // The one committed column is the capacity this row offers, and it is PINNED to
+                // the manifest's own count. Free capacity here would demote the permutation to a
+                // containment; see `ExactPublicManifest`.
+                let multiplicity: AB::Expr = local[0].into();
+                builder.assert_zero(multiplicity.clone() - pinned);
+
                 let bus_name = exact_public_bus_name(*table_id);
-                let bus = LookupBus::new(&bus_name);
-                bus.table_entry(
-                    builder,
-                    local[..values.len()].iter().map(|&value| value.into()),
-                    multiplicity,
-                );
+                LookupBus::new(&bus_name).table_entry(builder, entry, multiplicity);
             }
         }
     }
@@ -4437,7 +4585,7 @@ struct Ir2Traces {
     map_absent: Option<Vec<Vec<BabyBear>>>,
     umemory: Option<Vec<Vec<BabyBear>>>,
     umem_boundary: Option<Vec<Vec<BabyBear>>>,
-    exact_public_rows: Vec<Vec<Vec<BabyBear>>>,
+    exact_public_tables: Vec<Vec<Vec<BabyBear>>>,
 }
 
 /// Witness fill of one canonical decomposition block `[hi4, lo27 limbs, is15, inv15]` of a
@@ -5906,7 +6054,7 @@ fn build_traces(
             .collect()
     });
 
-    let exact_public_rows = exact_public_row_traces(desc);
+    let exact_public_tables = exact_public_table_traces(desc);
 
     Ok(Ir2Traces {
         main,
@@ -5919,53 +6067,44 @@ fn build_traces(
         map_absent,
         umemory,
         umem_boundary: umem_boundary_rows,
-        exact_public_rows,
+        exact_public_tables,
     })
 }
 
-/// The `Ir2Air::ExactPublicRow` instance TRACES for a descriptor, in the SAME order
-/// [`instance_airs`] pushes the matching AIRs (`desc.tables` in declaration order, then that
-/// table's `rows` in declaration order).
-///
-/// Each manifest row gets its own two-row instance of width `values.len() + 1`: row 0 is the row
-/// values with the multiplicity column set to ONE (the single unit-capacity table entry), row 1 is
-/// the same values with multiplicity ZERO (the pad the `when_transition` gate pins to zero). That
-/// unit capacity per instance is what turns the LogUp argument into EXACT multiset equality.
-///
-/// This is the SINGLE SOURCE for those traces: [`build_traces`] (single-descriptor path) and
-/// [`batch_airs_and_matrices`] (multi-descriptor path) both call it, so the two paths cannot
-/// drift into committing different tables for the same manifest.
-fn exact_public_row_traces(desc: &EffectVmDescriptor2) -> Vec<Vec<Vec<BabyBear>>> {
+/// The realized manifests a descriptor declares, in `desc.tables` order — the SINGLE SOURCE
+/// [`instance_airs`], [`exact_public_table_traces`] and the verifier's rebuild all walk, so the
+/// AIR list and the trace list cannot slip and prover and verifier cannot commit different tables.
+fn exact_public_manifests(desc: &EffectVmDescriptor2) -> Vec<(usize, Arc<ExactPublicManifest>)> {
     desc.tables
         .iter()
-        .flat_map(|table| match &table.sem {
-            TableSem::ExactPublicRows { rows } => rows
-                .iter()
-                .map(|values| {
-                    let mut real: Vec<BabyBear> =
-                        values.iter().copied().map(BabyBear::new).collect();
-                    real.push(BabyBear::ONE);
-                    let mut pad: Vec<BabyBear> =
-                        values.iter().copied().map(BabyBear::new).collect();
-                    pad.push(BabyBear::ZERO);
-                    vec![real, pad]
-                })
-                .collect(),
-            _ => Vec::new(),
+        .filter_map(|table| match &table.sem {
+            TableSem::ExactPublicRows { rows } => Some((
+                table.id,
+                Arc::new(ExactPublicManifest::of(rows, table.arity)),
+            )),
+            _ => None,
         })
         .collect()
 }
 
-/// The number of `Ir2Air::ExactPublicRow` instances a descriptor contributes — one per declared
-/// manifest row, summed over its exact-public tables. Zero for a table-free descriptor.
-fn exact_public_row_count(desc: &EffectVmDescriptor2) -> usize {
+/// The `Ir2Air::ExactPublicTable` instance MAIN traces for a descriptor, in
+/// [`exact_public_manifests`] order — one committed multiplicity column per table, the values
+/// themselves riding in the AIR's preprocessed matrix.
+fn exact_public_table_traces(desc: &EffectVmDescriptor2) -> Vec<Vec<Vec<BabyBear>>> {
+    exact_public_manifests(desc)
+        .iter()
+        .map(|(_, manifest)| manifest.main_trace())
+        .collect()
+}
+
+/// The number of `Ir2Air::ExactPublicTable` instances a descriptor contributes — ONE per declared
+/// exact-public table (it was one per declared manifest ROW until 2026-07-29). Zero for a
+/// table-free descriptor.
+fn exact_public_instance_count(desc: &EffectVmDescriptor2) -> usize {
     desc.tables
         .iter()
-        .map(|table| match &table.sem {
-            TableSem::ExactPublicRows { rows } => rows.len(),
-            _ => 0,
-        })
-        .sum()
+        .filter(|table| matches!(table.sem, TableSem::ExactPublicRows { .. }))
+        .count()
 }
 
 /// The PRESENT instance AIRs for a checked descriptor, in canonical instance order
@@ -6007,15 +6146,8 @@ fn instance_airs(
             Ir2Air::UMemBoundary
         });
     }
-    for table in &desc.tables {
-        if let TableSem::ExactPublicRows { rows } = &table.sem {
-            for values in rows {
-                airs.push(Ir2Air::ExactPublicRow {
-                    table_id: table.id,
-                    values: values.clone(),
-                });
-            }
-        }
+    for (table_id, manifest) in exact_public_manifests(desc) {
+        airs.push(Ir2Air::ExactPublicTable { table_id, manifest });
     }
     airs
 }
@@ -6192,7 +6324,7 @@ where
     {
         matrices.push(to_matrix(t));
     }
-    for trace in &traces.exact_public_rows {
+    for trace in &traces.exact_public_tables {
         matrices.push(to_matrix(trace));
     }
     debug_assert_eq!(matrices.len(), airs.len());
@@ -6513,12 +6645,12 @@ where
 // ============================================================================
 
 /// Admit a descriptor to the multi-descriptor batch iff its instance list is a `Ir2Air::Main`
-/// followed by `Ir2Air::ExactPublicRow`s — i.e. the ONLY tables it declares are
+/// followed by `Ir2Air::ExactPublicTable`s — i.e. the ONLY tables it declares are
 /// [`TableSem::ExactPublicRows`], and its `Presence` set is empty.
 ///
-/// **Why exact-public tables are admissible and the others are not.** An `ExactPublicRow`
-/// instance is a pure function of the DESCRIPTOR (its manifest rows), carries no witness, and its
-/// count is `exact_public_row_count(desc)` — a number the verifier reads off the same descriptor
+/// **Why exact-public tables are admissible and the others are not.** An `ExactPublicTable`
+/// instance is a pure function of the DESCRIPTOR (its manifest), carries no witness, and its
+/// count is `exact_public_instance_count(desc)` — a number the verifier reads off the same descriptor
 /// list the prover was handed. So prover and verifier compute the identical instance ordering
 /// with no witness-dependent input, which is all the batch ever needed. The chip / byte / memory /
 /// map / umem instances are different in kind: they are witness-bearing, their presence is a
@@ -6554,7 +6686,7 @@ fn require_main_or_exact_public(
     if !extra.is_empty() || !non_exact.is_empty() {
         return Err(format!(
             "descriptor {i} ({}) declares witness-bearing table instances {extra:?}{}; the \
-             multi-descriptor batch carries MAIN and EXACT-PUBLIC-ROW instances only (they are \
+             multi-descriptor batch carries MAIN and EXACT-PUBLIC-TABLE instances only (they are \
              functions of the descriptor alone, so prover and verifier derive the same instance \
              ordering)",
             desc.name,
@@ -6571,19 +6703,22 @@ fn require_main_or_exact_public(
 /// **The instance index of descriptor `k`'s `Ir2Air::Main`** in a multi-descriptor batch.
 ///
 /// The batch emits, per descriptor in order: one main instance, then one
-/// `Ir2Air::ExactPublicRow` instance per declared manifest row (`desc.tables` in declaration
-/// order, each table's `rows` in declaration order). So
+/// `Ir2Air::ExactPublicTable` instance per declared exact-public TABLE (`desc.tables` in
+/// declaration order). So
 ///
 /// ```text
-/// main_index(k) = Σ_{j < k} (1 + rows_j)      where rows_j = exact_public_row_count(descs[j])
+/// main_index(k) = Σ_{j < k} (1 + tables_j)   tables_j = exact_public_instance_count(descs[j])
 /// ```
 ///
-/// and descriptor `k`'s exact-public row instances occupy `main_index(k)+1 ..= main_index(k)+rows_k`.
-/// For a batch of table-free descriptors every `rows_j` is 0 and this collapses to `k`, which is
+/// and descriptor `k`'s table instances occupy `main_index(k)+1 ..= main_index(k)+tables_k`.
+/// For a batch of table-free descriptors every `tables_j` is 0 and this collapses to `k`, which is
 /// what it was unconditionally before exact-public tables were admitted.
 ///
+/// ⚑ Until 2026-07-29 the stride was one instance per manifest ROW, so a four-slice contents-bound
+/// cut carrying 128-row manifests spent 516 instances where it now spends 8.
+///
 /// This is what lets a caller turn a p3 refusal's `index: Some(n)` back into "descriptor `k`"
-/// (or "descriptor `k`'s manifest row `n - main_index(k) - 1`"): see
+/// (or "descriptor `k`'s exact-public table `n - main_index(k) - 1`"): see
 /// [`batch_instance_owner`].
 ///
 /// Returns `Err` if `k` is out of range.
@@ -6596,21 +6731,21 @@ pub fn batch_main_instance_index(descs: &[EffectVmDescriptor2], k: usize) -> Res
     }
     Ok(descs[..k]
         .iter()
-        .map(|desc| 1 + exact_public_row_count(desc))
+        .map(|desc| 1 + exact_public_instance_count(desc))
         .sum())
 }
 
 /// The inverse of [`batch_main_instance_index`]: which descriptor owns batch instance `n`, and
 /// what that instance is. `Ok((k, None))` = descriptor `k`'s MAIN instance; `Ok((k, Some(r)))` =
-/// descriptor `k`'s exact-public manifest row `r` (counted across its tables in declaration
-/// order). This is the function that names the slice behind a refusal's `index: Some(n)`.
+/// descriptor `k`'s exact-public TABLE `r` (its `r`-th exact-public table in declaration order).
+/// This is the function that names the slice behind a refusal's `index: Some(n)`.
 pub fn batch_instance_owner(
     descs: &[EffectVmDescriptor2],
     n: usize,
 ) -> Result<(usize, Option<usize>), String> {
     let mut base = 0usize;
     for (k, desc) in descs.iter().enumerate() {
-        let rows = exact_public_row_count(desc);
+        let rows = exact_public_instance_count(desc);
         if n == base {
             return Ok((k, None));
         }
@@ -6628,9 +6763,9 @@ pub fn batch_instance_owner(
 /// single-descriptor path applies, applied per descriptor.
 ///
 /// Instance order per descriptor: MAIN (the caller's base trace, the caller's public inputs),
-/// then one `Ir2Air::ExactPublicRow` per declared manifest row — the AIRs from
-/// [`instance_airs`]'s tail, the traces from [`exact_public_row_traces`], in the same order, each
-/// with an EMPTY public-value vector exactly as the single-descriptor path's
+/// then one `Ir2Air::ExactPublicTable` per declared exact-public table — the AIRs from
+/// [`instance_airs`]'s tail, the traces from [`exact_public_table_traces`], in the same order,
+/// each with an EMPTY public-value vector exactly as the single-descriptor path's
 /// `pvs.resize(airs.len(), vec![])` gives them.
 #[allow(clippy::type_complexity)]
 fn batch_airs_and_matrices(
@@ -6694,27 +6829,13 @@ fn batch_airs_and_matrices(
         matrices.push(to_matrix(trace));
         pvs.push(public_inputs[i].iter().map(|&v| to_p3(v)).collect());
 
-        // The exact-public row instances, AIRs and traces derived from the SAME descriptor walk
-        // (`desc.tables` in order, then `rows` in order) so the two lists cannot slip.
-        let row_traces = exact_public_row_traces(desc);
-        let mut row_traces = row_traces.into_iter();
-        for table in &desc.tables {
-            let TableSem::ExactPublicRows { rows } = &table.sem else {
-                continue;
-            };
-            for values in rows {
-                airs.push(Ir2Air::ExactPublicRow {
-                    table_id: table.id,
-                    values: values.clone(),
-                });
-                let row_trace = row_traces
-                    .next()
-                    .ok_or_else(|| format!("descriptor {i}: exact-public trace walk underran"))?;
-                matrices.push(to_matrix(&row_trace));
-                pvs.push(vec![]);
-            }
+        // The exact-public TABLE instances, AIRs and traces derived from the SAME descriptor walk
+        // (`exact_public_manifests`, `desc.tables` in order) so the two lists cannot slip.
+        for (table_id, manifest) in exact_public_manifests(desc) {
+            matrices.push(to_matrix(&manifest.main_trace()));
+            airs.push(Ir2Air::ExactPublicTable { table_id, manifest });
+            pvs.push(vec![]);
         }
-        debug_assert!(row_traces.next().is_none());
     }
     debug_assert_eq!(airs.len(), matrices.len());
     debug_assert_eq!(airs.len(), pvs.len());
@@ -6730,25 +6851,37 @@ fn batch_airs_and_matrices(
 /// descriptor `k`. It now ADMITS descriptors declaring [`TableSem::ExactPublicRows`] tables (and
 /// only those — every witness-bearing table instance is still refused by
 /// [`require_main_or_exact_public`]), emitting per descriptor: its main instance, then one
-/// `Ir2Air::ExactPublicRow` instance per declared manifest row. So
+/// `Ir2Air::ExactPublicTable` instance per declared exact-public TABLE. So
 ///
 /// ```text
-/// main_index(k) = Σ_{j < k} (1 + rows_j)      rows_j = exact-public manifest rows of descriptor j
+/// main_index(k) = Σ_{j < k} (1 + tables_j)   tables_j = exact-public tables of descriptor j
 /// ```
 ///
-/// and descriptor `k` owns instances `main_index(k) ..= main_index(k) + rows_k`. Use
+/// and descriptor `k` owns instances `main_index(k) ..= main_index(k) + tables_k`. Use
 /// [`batch_main_instance_index`] / [`batch_instance_owner`] rather than re-deriving it; a
 /// refusal's `index: Some(n)` is named by the latter. **What broke:** any caller that read a
 /// refusal's instance index as a descriptor index is wrong for a batch containing an
-/// exact-public descriptor (it stays correct for an all-table-free batch, where every `rows_j` is
-/// 0 and the sum collapses to `k`). Nothing is persisted or on the wire, so there is nothing to
+/// exact-public descriptor (it stays correct for an all-table-free batch, where every `tables_j`
+/// is 0 and the sum collapses to `k`). Nothing is persisted or on the wire, so there is nothing to
 /// migrate — proofs are minted per run.
+///
+/// ## ⚑ SECOND FLAG DAY, same date: the stride was one instance per manifest ROW
+///
+/// Until [`Ir2Air::ExactPublicTable`] landed, this path emitted one instance per declared manifest
+/// ROW, and `MAX_EXACT_PUBLIC_ROWS` was 128 because of it. Both the batch instance COUNT and the
+/// admissible manifest size change; a four-slice contents-bound cut over 128-row manifests goes
+/// from 516 instances to 8. Proofs are minted per run, so nothing needs migrating, but any test
+/// asserting `degree_bits.len()` against the old stride goes red — which is the intended failure.
 ///
 /// ⚑ The exact-public LogUp bus is named by TABLE ID alone (`exact_public_bus_name`), and LogUp
 /// balance in a batch STARK is GLOBAL. Two descriptors in one batch declaring the same wire id
 /// therefore share one bus: their queries and manifest capacity pool, and one descriptor's extra
-/// query can be cancelled by another's spare row. Give co-batched descriptors DISTINCT exact-public
-/// wire ids if you want per-descriptor multiset equality.
+/// query can be cancelled by another's spare capacity. Give co-batched descriptors DISTINCT
+/// exact-public wire ids if you want per-descriptor multiset equality. **The single-instance
+/// realization does not change this hazard and does not introduce a new one:** the bus name is
+/// still `exact_public_bus_name(table.id)`, computed from the same field, and one table id still
+/// means one bus. What it does change is that a shared id now pools two whole manifests' capacity
+/// in one place rather than across two runs of row instances — the same defect, not a wider one.
 ///
 /// ## What this adds, and what it deliberately does not
 ///
@@ -6878,20 +7011,14 @@ where
                 .map(|&v| to_p3(v))
                 .collect::<Vec<P3BabyBear>>(),
         );
-        // Rebuilt from the DESCRIPTOR alone, in `batch_airs_and_matrices`'s order: a manifest row
-        // the prover did not commit (or committed at a different index) moves this list and the
-        // batch refuses.
-        for table in &desc.tables {
-            let TableSem::ExactPublicRows { rows } = &table.sem else {
-                continue;
-            };
-            for values in rows {
-                airs.push(Ir2Air::ExactPublicRow {
-                    table_id: table.id,
-                    values: values.clone(),
-                });
-                pvs.push(vec![]);
-            }
+        // Rebuilt from the DESCRIPTOR alone, in `batch_airs_and_matrices`'s order. The manifest
+        // itself rides in the AIR's PREPROCESSED matrix, which
+        // `ProverData::from_airs_and_degrees` below re-derives and re-commits from these AIRs —
+        // so the verifier checks the proof against the table it computed, never one the prover
+        // supplied, and a manifest the prover altered gives a different preprocessed commitment.
+        for (table_id, manifest) in exact_public_manifests(desc) {
+            airs.push(Ir2Air::ExactPublicTable { table_id, manifest });
+            pvs.push(vec![]);
         }
     }
     if proof.degree_bits.len() != airs.len() {
@@ -7091,10 +7218,12 @@ mod tests {
     /// with its OWN manifest table (distinct wire ids, so their LogUp buses do not pool), proved
     /// as one batch and accepted by the DEPLOYED verifier.
     ///
-    /// The instance list is main(A), A's 4 manifest rows, main(B), B's 4 manifest rows — 10
-    /// instances for 2 descriptors, so `batch_main_instance_index` (0 and 5), not the descriptor
+    /// The instance list is main(A), A's manifest TABLE, main(B), B's manifest table — 4
+    /// instances for 2 descriptors, so `batch_main_instance_index` (0 and 2), not the descriptor
     /// index, names the slice. Both are asserted here because a verifier that rebuilt the list in
     /// any other order would be verifying a different AIR set than the prover committed.
+    ///
+    /// ⚑ It was 10 instances (one per manifest ROW) until `Ir2Air::ExactPublicTable` landed.
     ///
     /// The bent-cell leg is the point of the whole change: there is deliberately NO prover-side
     /// multiset pre-flight on this path (unlike `build_traces`'s `check` replay), so the ONLY
@@ -7107,21 +7236,21 @@ mod tests {
         let b = parse_vm_descriptor2(BATCH_EXACT_B).expect("descriptor B parses");
         let descs = vec![a, b];
 
-        // Instance-index mapping: 1 main + 4 manifest rows each.
+        // Instance-index mapping: 1 main + 1 manifest TABLE each.
         assert_eq!(batch_main_instance_index(&descs, 0).expect("k=0"), 0);
-        assert_eq!(batch_main_instance_index(&descs, 1).expect("k=1"), 5);
+        assert_eq!(batch_main_instance_index(&descs, 1).expect("k=1"), 2);
         assert!(batch_main_instance_index(&descs, 2).is_err());
         assert_eq!(batch_instance_owner(&descs, 0).expect("owner"), (0, None));
         assert_eq!(
-            batch_instance_owner(&descs, 3).expect("owner"),
-            (0, Some(2))
+            batch_instance_owner(&descs, 1).expect("owner"),
+            (0, Some(0))
         );
-        assert_eq!(batch_instance_owner(&descs, 5).expect("owner"), (1, None));
+        assert_eq!(batch_instance_owner(&descs, 2).expect("owner"), (1, None));
         assert_eq!(
-            batch_instance_owner(&descs, 9).expect("owner"),
-            (1, Some(3))
+            batch_instance_owner(&descs, 3).expect("owner"),
+            (1, Some(0))
         );
-        assert!(batch_instance_owner(&descs, 10).is_err());
+        assert!(batch_instance_owner(&descs, 4).is_err());
 
         let trace_a = public_rows(&[(3, 30), (1, 10), (4, 40), (2, 20)]);
         let trace_b = public_rows(&[(5, 50), (8, 80), (6, 60), (7, 70)]);
@@ -7133,8 +7262,8 @@ mod tests {
         });
         assert_eq!(
             proof.degree_bits.len(),
-            10,
-            "2 mains + 8 manifest-row instances"
+            4,
+            "2 mains + 2 manifest-TABLE instances"
         );
         must_accept(
             "the deployed verifier on a two-descriptor exact-public batch",
@@ -7304,7 +7433,7 @@ mod tests {
                     // descriptor's exact-public row instances (they are the same AIR shape,
                     // hence the same degree). Deliberately no `_ =>` arm: a new `Ir2Air`
                     // variant must fail HERE, not slip through under a catch-all.
-                    Ir2Air::ExactPublicRow { .. } => "exact_public_row",
+                    Ir2Air::ExactPublicTable { .. } => "exact_public_table",
                 };
                 (name.to_string(), deg)
             })
