@@ -50,6 +50,14 @@ modules bind no floor at all. Every theorem is `by decide` or `#guard` over conc
 `Nat`/`ZMod` values, so there is no `CommitSurface`, no injectivity hypothesis and nothing for the
 gate to promote.
 
+⚑ **Re-measured 2026-07-29 with `PastaMsmBound` wired in, on a COMPLETE root build** (hbox lane
+`mina-sg-bound`, `lake build Dregg2`, **10450/10451 jobs**): **still exactly 1, and still the same
+name** — `Emit.AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`, with `#teeth_wired`
+confirming 14 teeth modules. That is the whole of the build's error output; the ratchet is the sole
+failure, exactly as `docs/DREGG-IN-DREGG-BUILD.md` records. Said at the right resolution: this is a
+MEASUREMENT, not the pre-commit `check-floor-baseline-preflight`, which is a source scan and would
+not have caught a floor arriving through an import.
+
 ---
 
 ## 0. What changed, in one paragraph
