@@ -562,6 +562,14 @@ pub mod proof_tier;
 /// feature. The module has no accept path, so it arms nothing in a production build.
 pub mod refusal;
 
+/// WITNESS GENERATION for the LEAN-AUTHORED windowed Pallas RCB AIR
+/// (`dregg-pasta-rcb-windowed::v1`, `metatheory/Dregg2/Circuit/Emit/PastaMsmWindowed.lean`).
+///
+/// Cells only. No constraint, gate, builder gadget or `air_accepts` predicate is authored here —
+/// the AIR is the Lean-emitted descriptor and this module exists solely to fill a trace the
+/// deployed `descriptor_ir2` prover can run against it.
+pub mod pasta_windowed_witness;
+
 // `shielded` moved to `dregg-circuit-prove`.
 
 #[cfg(test)]

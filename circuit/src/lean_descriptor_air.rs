@@ -399,6 +399,57 @@ impl<'a> JsonCursor<'a> {
             .ok_or_else(|| format!("malformed integer at byte {}", start))
     }
 
+    /// Parse an integer literal that denotes a **field element** — an unbounded Lean `ℤ`
+    /// coefficient, reduced into BabyBear.
+    ///
+    /// Lean emits `EmittedExpr.const` / `WindowExpr.const` coefficients as arbitrary-precision
+    /// `ℤ` decimals. Most generators stay small, but any generator over a FOREIGN field carries
+    /// its modulus and its limb scale factors as coefficients: the Pasta 9×30 value head scales
+    /// by `2^(30·i)` up to `2^240`, the reduction coefficient is `∓p_pasta ≈ 2^255`, and a
+    /// degree-2 `Head.mul` of two value heads multiplies those — the windowed Pallas RCB
+    /// descriptor (`dregg-pasta-rcb-windowed::v1`) contains constants of **495 bits**.
+    /// [`Self::parse_int`] caps at `i64` and REFUSES such a descriptor outright with
+    /// "malformed integer", before any structural check runs.
+    ///
+    /// A constant in an AIR only ever denotes the field element `c mod p_babybear` — that is
+    /// exactly what [`i64_to_babybear`] / [`const_to_expr`] compute at eval time — so the
+    /// residue is the entire content of the literal and nothing is lost by taking it here.
+    ///
+    /// Literals that FIT `i64` are returned **verbatim**, so every descriptor that parses today
+    /// parses to a bit-identical AST (and canonical re-encoding is unaffected). Only literals
+    /// that were previously refused change behaviour: from an error to their residue.
+    pub(crate) fn parse_int_field(&mut self) -> Result<i64, String> {
+        self.skip_ws();
+        let start = self.i;
+        let negative = self.peek() == Some(b'-');
+        if negative {
+            self.i += 1;
+        }
+        let digits_start = self.i;
+        while self.i < self.s.len() && self.s[self.i].is_ascii_digit() {
+            self.i += 1;
+        }
+        if self.i == digits_start {
+            return Err(format!("expected integer at byte {}", start));
+        }
+        let text = std::str::from_utf8(&self.s[start..self.i])
+            .map_err(|_| format!("malformed integer at byte {}", start))?;
+        if let Ok(small) = text.parse::<i64>() {
+            return Ok(small);
+        }
+        // Wider than i64: fold the decimal digits mod p with Horner. Every intermediate stays
+        // below `10 * p + 9 < 2^35`, so u64 cannot overflow.
+        let p = u64::from(BABYBEAR_P);
+        let mut acc: u64 = 0;
+        for &d in &self.s[digits_start..self.i] {
+            acc = (acc * 10 + u64::from(d - b'0')) % p;
+        }
+        if negative {
+            acc = (p - acc) % p;
+        }
+        Ok(acc as i64)
+    }
+
     /// Expect a specific quoted key followed by a colon: `"key":`.
     pub(crate) fn expect_key(&mut self, key: &str) -> Result<(), String> {
         let got = self.parse_string()?;
@@ -448,7 +499,7 @@ pub(crate) fn parse_expr(c: &mut JsonCursor) -> Result<LeanExpr, String> {
         "const" => {
             c.expect(b',')?;
             c.expect_key("v")?;
-            LeanExpr::Const(c.parse_int()?)
+            LeanExpr::Const(c.parse_int_field()?)
         }
         "add" | "mul" => {
             c.expect(b',')?;

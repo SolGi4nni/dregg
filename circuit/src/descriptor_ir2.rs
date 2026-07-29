@@ -960,7 +960,7 @@ fn parse_window_expr(c: &mut JsonCursor) -> Result<WindowExpr, String> {
         "const" => {
             c.expect(b',')?;
             c.expect_key("v")?;
-            WindowExpr::Const(c.parse_int()?)
+            WindowExpr::Const(c.parse_int_field()?)
         }
         "add" | "mul" => {
             c.expect(b',')?;

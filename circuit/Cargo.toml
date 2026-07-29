@@ -96,6 +96,11 @@ rmp-serde = { workspace = true }
 # proof-economics measurements (tests/proof_economics.rs): structural walk of
 # serialized proofs to count commitment-path digests for the pickles-bridge estimate.
 serde_json = { workspace = true }
+# TEST-LAYER ONLY. `tests/pasta_windowed_prove.rs` pins the CONTENT of the two Lean-emitted
+# artifacts it consumes (the windowed RCB descriptor and its honest 64-row witness) by sha256, so
+# a silent re-emit cannot slide under a green test. Deliberately a dev-dep: `dregg-circuit` is the
+# verify-level floor and takes no hash dependency it does not need.
+sha2 = { workspace = true }
 
 [lints]
 workspace = true
