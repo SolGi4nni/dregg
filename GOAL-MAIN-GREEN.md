@@ -24,6 +24,30 @@ first.
 | `ratchet-darkness` | FAIL — 2118 `.lean`, 1931 in the ratchet |
 | `ci-invariants-structural` | 1 FAILURE |
 
+## ⚑ NEW THRUST (ember, 2026-07-29): PARE GITHUB, LEAN ON HBOX, KEEP KILLING BUGS
+> *"our entire github setup is wayyyy too expensive/automatic. we should probably be paring things
+> down a lot, before i start paying more for LFS etc. i mean, can't we just be running all things on
+> hbox..?"*
+
+**Measured, last 60 push runs: 562 billed minutes, ~9.4 min per push, 10 workflows** — on a repo with
+a ~92-second commit median and **6,795 push runs** on record. Last 30: 16 failure, 8 success, 5
+cancelled. And the standing measurement says GitHub CANNOT answer here (0/60 green, ~87min verdicts
+against 92s commits) while `main` is not branch-protected, so **every gate reports and none blocks.**
+
+- ✅ **Release artifacts off `push`** (`e52394521`) — `starbridge-v2-installers` (21 min/push) and
+  `sel4-images` (6.3 min/push) were building a release artifact for EVERY main commit, consumed by
+  nothing. Both files correctly explained why they could not use `paths:` (it gates tag pushes too) —
+  but the remedy was never `paths`, it was dropping `branches: [main]`, which leaves the tag path
+  untouched. **~27 min/push saved, releases unaffected.** `publish-sdk-*` were already tags-only.
+- **CI paring dispatched** — 338 of the 562 minutes, 56 min/push, **28 jobs**, several duplicating
+  local gates that run in seconds and already BLOCK at pre-push. Briefed: cut only where the same
+  question is answered BETTER elsewhere, never merely because a job is slow or red; say what coverage
+  goes with each cut; and get LFS off the critical path (a job pulling LFS it never reads is pure
+  bill).
+- **`dregg-exec-lean` 5 reds dispatched** — the seam where the verified producer actually decides.
+  ⚠ Briefed that three of them are REFUSAL poles, so "the corpus lost a case" must be established
+  rather than assumed: a failing refusal pole may mean the refusal broke.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
