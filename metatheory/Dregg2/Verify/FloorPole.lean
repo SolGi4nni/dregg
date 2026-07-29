@@ -136,7 +136,7 @@ adjudicate at all:
     exists to reward.
   * declarations PRESENT — **2**. Both survive on their own merits and neither is in the
     parameterized-class family:
-      - `AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`, below;
+      - `AutomataflRevealRefine.hash4NoCollision_strictly_stronger`, below;
       - `Sha256MerkleFold.pairSepOn_top_iff`, which is a carrier of `pairHashInjective` — the
         IDEALIZED twin, still refuted, still model-free — and NOT of the floor declared honest
         here. The gate reports one floor per carrier, so `pairSepOn` was the name printed against
@@ -167,7 +167,7 @@ in doubt):
     `hashSepOn_top_imp`, `digest_binds_transcript_on`, `assertEqDigest_binds_transcript_on`), 1 to
     `Hash4NoCollision`.
   * declaration PRESENT — **1**, and it is the SAME survivor as the earlier run:
-    `AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`, still red, still correctly so. The
+    `AutomataflRevealRefine.hash4NoCollision_strictly_stronger`, still red, still correctly so. The
     gate named `hashSepOn`'s legs back: pole `hashSepOn_truncHashSep_false` — the SHARPER of the two,
     at the reachable class, not `⊤` — model `hashSepOn_modelHashSep`, class inhabited by
     `modelHashSep_class_inhabited`.
@@ -214,7 +214,7 @@ fails checks (3) and (4) on its own merits: `hash4NoCollision_false_babyBear` re
 ARBITRARY `hash` bounded by the BabyBear modulus, which is a refutation at every instance the tree
 deploys rather than at one degenerate class, and no theorem in the tree claims `Hash4NoCollision …`
 at any instance at all. Its one remaining consumer,
-`not_revealColl_of_hash4NoCollision`, IS vacuous at deployed parameters — it records that the old
+`hash4NoCollision_strictly_stronger`, IS vacuous at deployed parameters — it records that the old
 floor implied the new per-instance residual — and the gate is right to say so. -/
 
 /-- `Sha256MerkleFold.pairSepOn P` — `pairHash` separates on the pairs satisfying `P`.

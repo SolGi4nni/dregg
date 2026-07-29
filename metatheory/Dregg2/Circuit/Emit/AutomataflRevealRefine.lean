@@ -491,11 +491,26 @@ theorem revealColl_of_constant_hash (a b : PublicOpening)
     (hne : openingPreimage a ≠ openingPreimage b) :
     RevealColl (fun _ => (0 : ℤ)) a b := ⟨hne, rfl⟩
 
-/-- **THE OLD FLOOR IS STRICTLY STRONGER.** `Hash4NoCollision` kills every residual at once —
-recorded so the port is visibly a WEAKENING of the hypothesis, not a change of subject. -/
-theorem not_revealColl_of_hash4NoCollision {hash : List ℤ → ℤ} (hCR : Hash4NoCollision hash)
-    (a b : PublicOpening) : ¬ RevealColl hash a b :=
-  fun h => h.1 (hCR _ _ rfl rfl h.2)
+/-
+⚑ `not_revealColl_of_hash4NoCollision` WAS HERE, AND IS DELETED (2026-07-29).
+
+It took `Hash4NoCollision` as a hypothesis and concluded `¬ RevealColl`. This file proves that floor
+FALSE at deployed width (`hash4NoCollision_false_babyBear`), so the theorem was vacuous — and it
+failed `lake build Dregg2` for the whole tree via `#floor_ratchet`, with three separate lanes
+reporting it as "not mine" and nobody owning it.
+
+Its docstring said it was "recorded so the port is visibly a WEAKENING of the hypothesis, not a
+change of subject". That intent is right, and this file's own header ALREADY states it in prose —
+"strictly implied by the deleted global floor". The header also says, in as many words, **"No
+declaration in this file assumes `Hash4NoCollision` any more"**, which was FALSE exactly while this
+theorem existed. Deleting it makes the header true.
+
+⚠ Restating did not work and is worth recording: moving the floor from a named binder into the
+antecedent of an arrow is the same logic, and the ratchet correctly still refused it. **Any statement
+of the form "the old floor implies X" carries the old floor.** The porting record belongs in prose
+and in `hash4NoCollision_false_babyBear`, which is a real refutation rather than a vacuous
+implication. Do NOT reintroduce it under a new name, and do NOT add a `FloorRatchetBaseline` row.
+-/
 
 /-- **Post-reveal swap: bind, or EXHIBIT the collision. FLOOR-FREE.** Two accepted openings of
 the same commitment either reveal the same data or collide at their own preimage pair. This is
@@ -547,7 +562,6 @@ theorem legS_swap_refused {hash : List ℤ → ℤ}
 #assert_axioms hash4NoCollision_false_babyBear
 #assert_axioms revealColl_self_false
 #assert_axioms revealColl_of_constant_hash
-#assert_axioms not_revealColl_of_hash4NoCollision
 #assert_axioms opening_unique_or_collides
 #assert_axioms opening_unique_of_noResid
 #assert_axioms legS_swap_refused
