@@ -57,6 +57,14 @@ import Dregg2.Bridge.PicklesProofChainGate
 -- as the three above. Added 2026-07-29; +1 module to the closure (`PastaPoseidonFq`, the `fq_kimchi`
 -- half; everything else it needs came in with `PicklesProofChainGate`).
 import Dregg2.Bridge.MinaStateHashWordGate
+-- `dregg_mina_deferral_ok` — the `⟨s, srs.g⟩` DEFERRAL: a batch of carried accumulator claims is
+-- accepted only when it has been DISCHARGED. It is here for the same layer-1 reason as the four
+-- above, and for one more that is specific to it: `PastaIpaDeferral.opening_is_vacuous_when_sg_is_
+-- free` proves that an UNdischarged deferral leaves the opening check satisfiable at every
+-- aggregate, so a dark version of this gate would not be a missing check, it would be the
+-- fail-open one. Added 2026-07-29; +2 modules to the closure (`PicklesRecursion` and this file —
+-- `KimchiVerify`, everything else either needs, came in with `PicklesWrapShapeGate`).
+import Dregg2.Circuit.Emit.PastaIpaDeferral
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.
