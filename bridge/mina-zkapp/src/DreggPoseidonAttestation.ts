@@ -372,12 +372,18 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
  *      one root, so multi-matrix is done; `verify_batch` over matrices of
  *      DIFFERENT heights under one root is still priced (§3.14) and not
  *      implemented.
- *   4. IT DOES NOT FIT. 56,927 rows is 86.9% of a step and 73,259 is REFUSED by
- *      the compiler — measured, not assumed. The deployed root projects to
- *      ~2.75e7 rows / 500-573 Pickles steps from §3.19's own marginals (a FLOOR:
- *      the AIR term in it is four constraints, not 1,093). Partitioning is a
- *      compiler problem with a one-field step-boundary contract, and it is the
- *      last thing standing.
+ *   4. IT DOES NOT FIT IN ONE STEP — but it CHAINS, and as of §3.20 that is a
+ *      mechanism rather than a division. 56,927 rows is 86.9% of a step and
+ *      73,259 is REFUSED by the compiler. `DreggProofPartition` takes a dregg
+ *      proof at 103,554 rows — 1.58x the domain, no one-step verifier at all —
+ *      and decides it with FOUR chained Pickles steps built from TWO
+ *      verification keys, carrying `KimchiPartition.StepPublicInput`'s ONE field
+ *      element per boundary, every step proved and verified, with eight splice
+ *      attempts REFUSED against real proof objects and an unbound control for
+ *      each. What is left is size, not mechanism: the boundary costs 34,566 rows
+ *      at a deployed query entry (69.8% of a step) and 762 inside a query, so
+ *      the deployed root is 564-1,838 work-carrying steps rather than 556 — and
+ *      the AIR term in the row total is still four constraints, not 1,093.
  *
  * None of those is a reason to delete the key early. ⚑ Deleting it TODAY makes
  * the anchor world-writable — Mina's `editState: proof` accepts any caller who

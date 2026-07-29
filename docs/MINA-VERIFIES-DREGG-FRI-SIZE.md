@@ -36,7 +36,8 @@ under ~260.**
 | Kimchi rows to **observe the opened values** into the challenger | **2.97 × 10⁶ — MEASURED unit × exact count** | **§3.16** — 2,286 values × 4 lanes = 1,143 permutations. §3.12 stood the whole batch-STARK preamble in with 13 lanes |
 | Kimchi rows for the **AIR evaluation at ζ** | **`A + N·h`, `A` = 14,175 and `h` = 48 MEASURED; `N` UNCOUNTED** | **§3.16** — selectors, α-fold, chunk recomposition and closing equality, KAT'd against p3's own domain algebra. `C_i` itself is not built |
 | Usable rows per Pickles step | **~48,000–55,000** of 65,536 | §4.1, measured overheads |
-| **Pickles step circuits** | **~650–1,040** deployed | §4.2 |
+| Kimchi rows for ONE STEP BOUNDARY at deployed geometry | **34,566 — MEASURED** (762 for an intra-query one) | **§3.20** — 9,103 + 95 carried lanes, linear at 3.75 rows/lane; **69.8% of an aggregation-tree step**, two thirds of it re-range-checking lanes a one-step verifier checks once |
+| **Pickles step circuits** | **~650–1,040** deployed | §4.2 — ⚑ **and §4.2 subtracts no carry**; §3.20 measures it and lands **564–1,838 work-carrying** |
 | After the dregg-side FRI knobs (§5) | **~325–455** | |
 | Floor without a column reduction or a Mina-targeted shrink | **~260** | §5.3 |
 | Security the budget buys | **~50 bits** (`min{51, 73} − 1`) | machine-checked as an *arithmetic reading*, not an adversary bound (§6) |
@@ -70,6 +71,15 @@ own index. The gate does not assert the closure: it **proves a witness the previ
 and requires the new one to refuse it**. What is still missing is §3.16's `C_i` — the constraints
 themselves. Until those are evaluated, the walk authenticates a low-degree function that encodes
 nothing in particular.
+
+⚑ **AND AS OF §3.20 THE STEP COUNT IS A MECHANISM.** §3.19 fits one step; §4 divides a projected row
+count by a per-step budget and calls the quotient "~573 steps". Nobody had ever fed one step's
+output to the next. §3.20 takes a dregg proof with **no one-step verifier** — 103,554 rows, 1.58× the
+domain — and verifies it with **four chained Pickles steps from TWO verification keys**, carrying one
+field element per boundary, with **eight splice attempts refused against real proof objects** and a
+control for each. The boundary is priced: **1.09% at the fixture's geometry, 34,566 rows (69.8% of a
+step) at a deployed query entry, 762 rows inside a query.** The deployed count is therefore a **band,
+564–1,838**, and where it lands is a scheduling decision, not a division.
 
 ---
 
@@ -1492,8 +1502,170 @@ the root's mixed-height input batches (§3.14 residual 5). The independent §3.1
   root's seven tables at `N = 1,093` are §3.17/§3.18's object; wiring that evaluator into
   `DreggProofVerify`'s `constraints` argument is the remaining seam, and it is an argument, not a
   rewrite.
-* **DOES NOT CLOSE: 19 queries, 2²² domains, and the partition.** The program is parameterised by
-  all of them and measured at all of them; it does not FIT in one step at any of them.
+* **DOES NOT CLOSE: 19 queries and 2²² domains.** The program is parameterised by both and measured
+  at both; it does not FIT in one step at either. ⚑ **The PARTITION is no longer on this list —
+  §3.20 runs it**, and the step count it produces is not the one §4.2 quotes.
+
+---
+
+### 3.20 ⚑ MEASURED — THE PARTITION: a proof too big for one step, verified by a CHAIN
+
+*`bridge/mina-zkapp/src/DreggProofPartition.ts`, `scripts/partition-chain.ts`,
+`metatheory/Dregg2/Circuit/Emit/KimchiPartition.lean`. Gate leg 11.*
+
+§3.19 ends with a row count and §4 divides it by a per-step budget to get ~500–573 Pickles steps.
+**That division was an arithmetic over a mechanism nobody had run.** `⌈rows / usable⌉` is a
+quotient; a chain is a different kind of object, and every property that makes one — a step's output
+feeding the next step's input, both proved, a splice refused, the boundary priced — was untested.
+`KimchiPartition` designed the step-boundary contract in Lean and proved the two things a *list*
+partition must satisfy (`chunks_concat`, `chunks_fits`); nothing on the Kimchi side had ever emitted
+a boundary.
+
+**The geometry was chosen so the chain is not decorative.** §3.19's one-step verifier is the
+*largest* dregg proof that happens to fit. The same program at **three queries is 103,554 rows —
+1.58× the 2^16 step domain, and past the 73,259 rows at which `compile()` was watched to abort.**
+That proof has no one-step verifier at all.
+
+**The contract, as an object.** A work step's public input is ONE field element:
+
+```
+boundary_k = Poseidon(rootCommitDigest, challengeDigest, k)
+```
+
+`rootCommitDigest` covers the whole shared proof object — commitments, final polynomial, public
+values, **every claimed out-of-domain evaluation** and the query PoW witness. The opened evaluations
+have to be in it: a later step's DEEP quotient reads them, and a digest that skipped them would let
+a step splice openings from another proof while every commitment matched. `challengeDigest` covers
+`α`, `ζ`, FRI's `α`, every `β` and **every query index** — the whole transcript, not a step's slice
+of it. The per-query MMCS rows and paths are in neither: each belongs to exactly one step and never
+crosses.
+
+⚑ **The carrier is Mina-Poseidon over PACKED lanes, and that is a measurement, not a taste.**
+Hashing the carried BabyBear lanes with the deployed sponge would cost ~333 rows/lane. Eight 31-bit
+lanes pack losslessly into one 254-bit Pasta field and Mina-Poseidon absorbs two of those per
+permutation. The boundary is not a dregg object — nothing in dregg reads it, it lives between two
+Kimchi steps — so it is not built like one. **Measured: 2,208 rows saved on a 4-step chain, 2.96×.**
+The leg requires all 87 single-lane bends to give distinct digests, so the packing is shown
+injective rather than argued to be.
+
+**⚑ ONE WALK CIRCUIT, INVOKED N TIMES — not N circuits, and the first version was N circuits.**
+Per-step programs work at three steps and do not scale: a verifier would need one VK per step, 573
+steps would mean 573 compiles, and — measured — **a node process that has compiled four step
+circuits HANGS at the first `prove`** (kimchi's wasm heap is 32-bit; the worker dies and the promise
+never settles). So the chain is **two** verification keys: a transcript step, and a walk step
+(`first`/`step`) invoked once per query.
+
+A uniform circuit cannot bake in its own position, so the step index `k` and the terminal bit are
+**witnesses** — values the prover chooses. Three things pin them together, none sufficient alone:
+`first` uses the constant `k = 1`; `step` checks `Poseidon(rcd, cd, k) == publicInput` **and**
+`predecessor.publicOutput == publicInput`, while the predecessor emitted `Poseidon(rcd, cd,
+k_prev + 1)`, so `k = k_prev + 1` by collision resistance, inductively from 1; and the **closing
+seal** carries `k + 1`, which the verifier compares against `nSteps`. Step `k` walks query `k − 1`,
+selected from the carried index set by a multiplexer that also asserts `1 ≤ k ≤ num_queries`.
+Together those are **`KimchiPartition.chunks_concat` as an in-circuit invariant** rather than a Lean
+theorem about a list: every query walked exactly once, none twice, none skipped, and a chain that
+dropped one cannot produce the seal.
+
+**Both ends of the chain are verifier-computable, and getting that took a redesign.** An interior
+boundary contains `challengeDigest`, which a verifier cannot compute without running the transcript
+— which is the work it delegated. So the chain **opens** at `Poseidon(rcd, ⊥, 0)` and **closes** at
+`Poseidon(rcd, ⊥, nSteps)`, both computable from the dregg proof alone, and the single external
+check is one field comparison against the terminal proof.
+
+**It proves.** At `degree_bits = 1`, `log_blowup = 1`, 3 queries, `query_pow_bits = 16`:
+
+| | rows | |
+|---|---:|---|
+| the ONE-STEP assembly at 3 queries | **103,554** | 1.58× the domain — **it does not exist** |
+| step 0 — transcript + AIR closing equality + carry | **33,834** | 51.6% of the domain |
+| walk.first — query 0 + carry | **23,623** | |
+| walk.step — query `k−1` + carry, the SAME circuit reused | **23,612** | × 2 |
+| **the chain — 4 steps from 2 VKs** | **104,681** | every step FITS |
+| **⇒ the CARRY** | **1,127** | **1.09%**, 376 rows per boundary crossed |
+
+Compile 24.4 s + 20.9 s; prove 11.5 / 13.2 / 19.2 / 18.4 s; all four verified; each step's
+`publicInput` **is** its predecessor's `publicOutput`, and every public field is checked against an
+out-of-circuit twin computed by the same functions the circuit calls.
+
+**The splice is REFUSED — eight attempts, every one against real proof objects**, i.e. an actual
+step-0 Pickles proof over an actual dregg proof:
+
+a step-0 proof over dregg proof **A** with everything else from dregg proof **B** · A's boundary and
+predecessor but B's witness · **a carried challenge the walk never reads (`α_stark`) bent** · **a
+carried proof datum the walk never reads (the query PoW witness) bent** · step 2 re-declaring itself
+as step 3 (double-count) · step 2 walking query 2 instead of its own query 1 (skip) · a step index
+outside `1..3` · a chain closed one step early. Plus: step 0 refuses an entry boundary belonging to a
+different dregg proof.
+
+⚑ **The third and fourth are the ones that matter, and they are why the CONTROL exists.** `α_stark`
+and the query PoW witness are carried but *never read by the walk* — so bending them cannot break
+the walk, and a refusal is attributable to the carried digest **only if something shows the walk
+would otherwise have accepted**. The leg compiles the same walk circuit with the three boundary
+assertions removed and **requires it to ACCEPT** all three cases the bound one refused, including a
+public input with no relation to its predecessor. Without that control, eight refusals are
+consistent with "the bend broke the walk", and the leg would prove nothing about the binding.
+
+⚑ **AND ONE OF THE EIGHT WENT GREEN BY ACCIDENT, WHICH IS HOW IT WAS FOUND.** `|D⁰| = 2²`, so three
+query indices collide often; on a run that drew `[0,0,0]`, "step 2 walked query 2 instead of query
+1" is not a substitution at all — the rows, the paths and the fold are the same object — and the
+falsifier passed without firing. The falsifier was fine; the **parameter** was not, exactly as in
+§3.19 [8]. Fixture A is now minted until its query indices are **pairwise distinct**, and the leg
+asserts that premise before using it.
+
+**What a boundary costs at deployed geometry — measured, not extrapolated.** At `|D⁰| = 2²²`, 16
+layers, 19 queries and the root's 940 + 175 columns, **9,103 root + 95 challenge lanes cross one
+boundary**. The carry as a circuit — re-witness, range-check, pack, hash, bind — is measured at
+three sizes and is linear at **3.75 rows/lane** across a 100× range (two independent slopes agreeing
+within 5%, so the projection is not a two-point guess):
+
+| | rows |
+|---|---:|
+| **ONE deployed boundary, full carry** | **34,566** |
+| of which pack + hash + bind | 11,571 |
+| **of which range-checking the re-witnessed lanes** | **22,995** |
+| a boundary carrying only the transcript state and a fold value | 762 |
+
+⚑ **And that is the number that changes the shape of the answer — but it is a BAND, and a single
+number here would be a worst case wearing a total.** A boundary at a **query entry** carries the
+whole opened-value set, because the next step's DEEP quotient reads all of it: 34,566 rows, **69.8%
+of an aggregation-tree step**. A boundary **inside** a query, after the DEEP quotient has been
+formed, carries the transcript state and a fold value: 762 rows, 1.5%. One deployed query is 827,887
+rows (§3.19) — 17 steps on its own — so **most deployed boundaries are the cheap kind**, and which
+end of the band the total lands on is exactly the scheduler `KimchiPartition` names as its
+remainder.
+
+| `max_proofs_verified` | usable | every boundary full-carry | intra-query boundaries | carry ignored (what §4.2 quotes) |
+|---|---:|---:|---:|---:|
+| 1 (a straight chain) | 57,532 | **1,198** steps | **485** steps | 478 |
+| **2 (an aggregation tree)** | **49,532** | **1,838** steps | **564** steps | 556 |
+
+**⇒ the deployed count is 564–1,838 work-carrying steps, not 556**, and two thirds of the expensive
+end is **range-checking lanes a one-step verifier range-checks once** — which is what a boundary
+*is*.
+
+**What §3.20 closes, and what it does not.**
+
+* **CLOSES: "nobody has run the partition."** A dregg proof with no one-step verifier is verified by
+  four chained Pickles steps from two VKs, all proved and verified, with `KimchiPartition
+  .StepPublicInput`'s one field element as the only thing crossing a boundary.
+* **CLOSES: the boundary is a BINDING, not a sequence marker.** Eight splice refusals against real
+  proof objects, each with a control showing the unbound circuit accepting the same witness.
+* **CLOSES: a chain does not need a VK per step.** One walk circuit, invoked N times, with the step
+  index and the terminal bit witnessed and pinned inductively.
+* **CLOSES: the per-step carry is a measured number** at the fixture's and at the deployed geometry,
+  linear in the carried lane count over a 100× range.
+* **NARROWS: the step count.** ~556 becomes **564–1,838**, and the spread is a scheduling decision
+  with a measured price on each side.
+* **DOES NOT CLOSE: the AGGREGATION TREE.** This is a straight chain at `max_proofs_verified = 1`.
+  §4.1's binary tree needs steps that verify TWO previous proofs; the ~12,000–16,000-row overhead in
+  the table above is §4.1's source reading, **not measured here**.
+* **DOES NOT CLOSE: the geometry is still the fixture's.** The chain carries a 3-column AIR over a
+  2²-point domain. The deployed *carry* is measured; the deployed *walk* is not — one query at
+  deployed geometry is 827,887 rows, which needs the query walk itself partitioned, not merely
+  separated from the transcript.
+* **DOES NOT CLOSE, AND MUST NOT: nothing here is wired to `setDreggRoot`.** The fixture AIR says
+  nothing about dregg's state, so anchoring on it would look proof-gated while proving a toy —
+  strictly worse than the labelled `placeholderRelay`, which stays.
 
 ---
 
@@ -1538,6 +1710,13 @@ Only 25 permutations fit in one 2^16 step (`floor(65,536 / 2,600.5)`), and ~18 a
 recursive-verifier overhead of §4.1 — a useful sanity handle: **one FRI query alone (471
 permutations) is ~26 steps.**
 
+⚑ **THAT DIVISION SUBTRACTS NO CARRY, AND §3.20 MEASURES ONE.** Splitting a circuit at row `k` is
+only sound if everything the second half reads from the first crosses the boundary, and in Pickles a
+boundary costs re-witnessing plus a hash in *both* adjacent steps. At deployed geometry a boundary
+that carries the opened-value set is **34,566 rows — 69.8% of a `max_proofs_verified = 2` step**; one
+inside a query is **762**. So the honest deployed figure is a band, **564–1,838 work-carrying
+steps**, and the arithmetic below is its optimistic end with the carry set to zero.
+
 The remaining spread is now entirely the permutation count, not the row price:
 
 | perms/root-verify | total rows | Pickles steps (55k / 48k usable) |
@@ -1551,6 +1730,13 @@ pessimistic band of ~1,900–2,800 steps. The measurement lands 1.30× above the
 and 3.2× below the pessimistic one; the pessimistic branch is retired.)*
 
 ### 4.3 It does split cleanly, which is what keeps this "huge" and not "blocked"
+
+⚑ **AS OF §3.20 THIS IS RUN, NOT PROJECTED — at the fixture's geometry.** The decomposition below
+(one transcript step, then independent per-query chains, each consuming the committed challenge
+digest) is exactly the shape §3.20 builds and proves: `walk.first`/`walk.step` consume
+`Poseidon(rootCommitDigest, challengeDigest, k)` and nothing else. What is projected is its SIZE at
+the deployed geometry, and item 2's "19 independent per-query chains" is where the expensive
+boundaries are — each query entry re-witnesses the whole opened-value set.
 
 *Recomputed at the measured 2,600.5 rows/permutation (§3.8); the shape is unchanged, every
 count is 1.30× its previous value.*
@@ -1765,7 +1951,13 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 - **A handful of step circuits?** **No.** **~650–1,040** at deployed parameters; **~325–455** after
   the dregg-side FRI knobs; **~260** is the floor short of narrowing the root's trace or adding a
   Mina-targeted shrink layer. (The ~1,900–2,800 pessimistic branch is **retired** — §3.8 measured
-  the gadget at 3.2× cheaper than the gnark-emulation parity that generated it.)
+  the gadget at 3.2× cheaper than the gnark-emulation parity that generated it.) ⚑ **And those
+  counts subtract no step-boundary carry.** §3.20 runs the partition and measures one: 564–1,838
+  work-carrying steps depending on how much state each cut has to carry.
+- **Is the step count a mechanism or a division?** **A mechanism as of §3.20.** A dregg proof with no
+  one-step verifier is decided by four chained Pickles steps built from TWO verification keys, each
+  proved and verified, with one field element per boundary, eight splice attempts refused against
+  real proof objects, and an unbound control for each refusal.
 - **Honest row budget:** **~2.9 × 10^7 Kimchi rows**, ~98% of it Poseidon2-w16-BabyBear.
 - **Single biggest cost driver:** the **mod-`p` reduction and its range checks** — **measured at
   ~64%** of the per-permutation rows (§3.8), because the S-box is a *multiplication chain* and lazy
@@ -1805,7 +1997,10 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | Rows per permutation | **2,600.5 — MEASURED** (§3.8), on an o1js circuit that compiles, proves, verifies and reproduces the deployed permutation's Lean-pinned KAT. 1.30× the ~2,000 design claim; 3.2× cheaper than the ~8,400 gnark-emulation parity. **Band closed.** |
 | Total | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7; the spread is now the permutation count alone). |
 | Fits in one circuit | **No** — ~440× the 2^16 ceiling (**25 permutations per step**), and **Pickles hard-rejects chunking** (`verify.ml:61-76`). |
-| N step circuits | **~650–1,040** deployed; **~325–455** knobbed; **~260** floor. |
+| N step circuits | **~650–1,040** deployed; **~325–455** knobbed; **~260** floor — ⚑ **all with the step-boundary carry set to zero.** §3.20 measures it: **564–1,838 work-carrying steps** at deployed geometry, the spread being how much state each cut carries. |
+| The partition is a compiler problem with a known contract | **RUN as of §3.20, and it was arithmetic before.** A dregg proof at 103,554 rows — 1.58× the domain, past the measured compile wall, **no one-step verifier** — is verified by four chained Pickles steps from **two** VKs. One field element per boundary (`Poseidon(rootCommitDigest, challengeDigest, k)`), each step proved and verified, its `publicInput` its predecessor's `publicOutput`, both ends of the chain computable by a verifier from the dregg proof alone. |
+| The boundary is a binding, not a sequence marker | **Yes, §3.20 — eight `prove()` refusals against REAL proof objects**, including two on values the walk never reads (`α_stark`, the query PoW witness), each paired with a CONTROL that shows the same circuit ACCEPTING the splice once the three boundary assertions are removed. ⚑ One of the eight went green by accident on a degenerate query draw (`[0,0,0]` at `\|D⁰\| = 2²`) and the fixture is now minted for pairwise-distinct indices. |
+| A chain needs one verification key per step | **No — §3.20 uses ONE walk VK invoked N times**, with the step index and terminal bit witnessed and pinned inductively by the boundary chain. ⚑ Measured why it matters: a node process that has compiled **four** step circuits HANGS at the first `prove` (kimchi's wasm heap is 32-bit). A per-step-VK chain is not merely inelegant, it does not build. |
 | It buys 128 bits | **No — ~50**, commit-column-bound, and `numQueries` provably cannot move it. |
 | The AIR evaluation is the expensive part | **Still no, but the surrounding arithmetic is bigger than claimed.** §3.15 measures the DEEP quotient at 2.94 × 10⁶ rows over 19 queries and §3.16 the observes at 2.97 × 10⁶ — together ~20% of the budget, where §3.14 first recorded ~3.5% for DEEP *and* AIR. The AIR **fold** itself is `A + N·h` = 14,175 + N × 48 and remains small; `C_i` and `N` are uncounted. It is still mostly a hashing problem. |
 | The DEEP quotient / reduced opening is bound to the trace | **Yes as of §3.15.** The reduced openings are computed from the MMCS-opened rows, the absorbed `f(ζ)` and the transcript's `alpha`, KAT'd against `p3_fri::verifier::open_input`. The gate **proves a witness the previous statement admits and requires the new one to refuse it**, so the closure is exhibited, not asserted. |
@@ -1847,7 +2042,11 @@ o1js circuits + measurement, all run by `scripts/check-mina-attestation.sh`:
 `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts` (§3.8), `src/Poseidon2Merkle.ts` (§3.9),
 `src/FriQueryStep.ts` (§3.10, §3.13), `src/FriChallenger.ts` (§3.12, §3.13b),
 `src/DeepQuotient.ts` (§3.15), `src/AirEval.ts` (§3.16), **`src/DreggProofVerify.ts` (§3.19 — the
-assembly)**, with `scripts/{poseidon2-babybear-rows,poseidon2-merkle-rows,fri-query-rows,fri-challenger-rows,fri-chain-rows,fri-deep-rows,air-eval-rows,dregg-proof-verify}.ts`.
+assembly)**, **`src/DreggProofPartition.ts` (§3.20 — the chain)**, with
+`scripts/{poseidon2-babybear-rows,poseidon2-merkle-rows,fri-query-rows,fri-challenger-rows,fri-chain-rows,fri-deep-rows,air-eval-rows,dregg-proof-verify,partition-chain}.ts`.
+§3.20's step-boundary contract is `metatheory/Dregg2/Circuit/Emit/KimchiPartition.lean`
+(`StepPublicInput`, `StepBoundary`, `chunks_concat`, `chunks_fits`) — the Lean side designed it and
+proved the list-partition half; §3.20 is the first object that emits a boundary.
 §3.19's fixture emitter is `circuit/src/bin/mina_stark_fixture.rs` — `p3_uni_stark::prove` under
 `dregg_circuit::plonky3_prover::DreggStarkConfig`, self-verified before emission, canonical-u32 (NOT
 Montgomery) on the wire.

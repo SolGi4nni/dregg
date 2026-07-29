@@ -155,7 +155,7 @@
 #
 #   bash scripts/check-mina-attestation.sh
 #   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
-#   SELFTEST_LEGS="deep air" bash scripts/check-mina-attestation.sh --self-test
+#   SELFTEST_LEGS="deep air partition" bash scripts/check-mina-attestation.sh --self-test
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/bridge/mina-zkapp"
@@ -242,6 +242,14 @@ run_air() { # run_air <dir>
 # go red because a Lean module is mid-edit.
 run_verify() { # run_verify <dir>
   ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent dregg-verify )
+}
+# THE PARTITION: the same verifier split across CHAINED Pickles steps, on a dregg
+# proof that has no one-step verifier at all. Spawns two child node processes of
+# its own (row measurement and the unbound control), because `analyzeMethods`
+# leaves state in kimchi's 32-bit wasm heap and a `compile()` after enough of it
+# aborts in `rust_oom`.
+run_partition() { # run_partition <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent partition )
 }
 
 # ── the headline run ──────────────────────────────────────────────────────────
@@ -451,14 +459,56 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== DREGG-PROOF-VERIFY PASS ===' <<<"$verify_out" \
     || die "the assembly leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify checks green" \
+  # Leg 11: THE PARTITION. §3.19 fits ONE step; §4 divides and calls the quotient
+  # a step count. This leg is the mechanism under that division — a dregg proof
+  # with NO one-step verifier, decided by a chain whose only inter-step carrier is
+  # one field element, with the splice refused and the boundary priced.
+  part_out="$(run_partition "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$part_out"
+  [ "$rc" -eq 0 ] || die "the partition-chain leg exited $rc"
+  n_part="$(printf '%s' "$part_out" | grep -c '✓')"
+  [ "$n_part" -ge 26 ] || die "only $n_part partition checks passed; expected >= 26"
+  grep -q 'this proof has NO one-step verifier' <<<"$part_out" \
+    || die "the chained geometry still fits one step — the chain would be demonstrating nothing"
+  grep -q 'the carrier is not a constant' <<<"$part_out" \
+    || die "the boundary was never shown to move when its preimage moves"
+  grep -q 'the packing loses nothing' <<<"$part_out" \
+    || die "the lane packing was never shown injective (the carry price would be for an unsound carrier)"
+  grep -q 'one transcript step, one walk step reused' <<<"$part_out" \
+    || die "the chain is not built from a uniform walk VK — a per-step VK does not scale and was measured not to"
+  grep -q "consumed step 0's OUTPUT as its INPUT" <<<"$part_out" \
+    || die "no step ever consumed its predecessor's output — this is a sequence, not a chain"
+  grep -q 'the terminal proof carries the CLOSING SEAL' <<<"$part_out" \
+    || die "the chain's terminal proof is not bound to the dregg proof a verifier holds"
+  grep -q 'the same seal does NOT match a chain of length' <<<"$part_out" \
+    || die "the chain's LENGTH is unpinned — a one-step chain would close"
+  grep -q 'prove() REFUSES a step-0 proof over dregg proof A' <<<"$part_out" \
+    || die "the cross-proof splice was not refused — steps from different proofs would compose"
+  grep -q 'prove() REFUSES a carried CHALLENGE the walk never reads' <<<"$part_out" \
+    || die "a carried Fiat-Shamir value the walk cannot notice was accepted — the transcript is unpinned"
+  grep -q 'prove() REFUSES step 2 re-declaring itself as step 3' <<<"$part_out" \
+    || die "the step index does not bite — the chain could double-count"
+  grep -q "\[6\]'s refusal is the CARRY, not the walk" <<<"$part_out" \
+    || die "the UNBOUND control did not run — every refusal above is unattributable"
+  grep -q 'the carry is linear in carried lanes' <<<"$part_out" \
+    || die "the per-lane carry price was never checked for linearity (it is a two-point guess otherwise)"
+  grep -q 'the deployed count is a BAND' <<<"$part_out" \
+    || die "the deployed step count stopped being reported with the measured carry in it"
+  grep -q 'recorded figures are as recorded' <<<"$part_out" \
+    || die "the partition rows ratchet did not run"
+  grep -q '=== PARTITION-CHAIN PASS ===' <<<"$part_out" \
+    || die "the partition leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
        "FRI query, Fiat-Shamir transcript, the 16-layer fold chain and the DEEP quotient all" \
        "measured against p3, with the query index DERIVED and the reduced opening COMPUTED" \
        "rather than witnessed; the AIR closing equality built and priced; and ONE ZkProgram" \
        "consuming a proof dregg's own prover made — compiled, PROVED, verified, and refusing" \
-       "seven bends and three wrong AIRs)"
+       "seven bends and three wrong AIRs; and a proof with NO one-step verifier decided by a" \
+       "FOUR-STEP CHAIN over two VKs, carrying one field element per boundary, refusing eight" \
+       "splices against real proof objects with an unbound control for each)"
   exit 0
 fi
 
@@ -505,7 +555,7 @@ red=0; green=0
 PREFLIGHT=0
 SELFTEST_LEGS="${SELFTEST_LEGS:-}"
 skipped=0
-expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air> <label> <perl-program> <file> [base-dir]
+expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air|verify|partition> <label> <perl-program> <file> [base-dir]
   local leg="$1" label="$2" prog="$3" file="$4" base="${5:-$COPY}"
   if [ ! -f "$base/$file" ]; then
     echo "  ✗ $label: target $file does not exist"
@@ -845,26 +895,26 @@ expect_red probe "the emitted root is off by one level (cargo test cannot see th
 # shape as the coset-descent bug. Writing it would be writing a falsifier that
 # can never fire.
 expect_red verify "the transcript observes a wrong instance constant" \
-  "s/            c\.observeConstant\(BigInt\(air\.degreeBits\)\);/            c.observeConstant(BigInt(air.degreeBits + 1));/" \
+  "s/    c\.observeConstant\(BigInt\(air\.degreeBits\)\);/    c.observeConstant(BigInt(air.degreeBits + 1));/" \
   src/DreggProofVerify.ts
 expect_red verify "every batch opens under the FIRST commitment (the quotient tree is unchecked)" \
-  "s/                cur\.limbs\[j\]\.assertEquals\(claim\.inputCommits\[b\]\.limbs\[j\]\);/                cur.limbs[j].assertEquals(claim.inputCommits[0].limbs[j]);/" \
+  "s/cur\.limbs\[j\]\.assertEquals\(claim\.inputCommits\[b\]\.limbs\[j\]\);/cur.limbs[j].assertEquals(claim.inputCommits[0].limbs[j]);/" \
   src/DreggProofVerify.ts
 expect_red verify "the second opening point collapses onto zeta (zeta_next loses its generator)" \
-  "s/          const zetaNext = extScaleConst\(zeta, gTrace\);/          const zetaNext = zeta;/" \
+  "s/  const zetaNext = extScaleConst\(ch\.zeta, gTrace\);/  const zetaNext = ch.zeta;/" \
   src/DreggProofVerify.ts
 expect_red verify "the DEEP quotient batches at the STARK's alpha instead of FRI's" \
-  "s/              alpha: friAlpha,/              alpha: alphaStark,/" \
+  "s/      alpha: ch\.friAlpha,/      alpha: ch.alphaStark,/" \
   src/DreggProofVerify.ts
 expect_red verify "the quotient openings stop being absorbed (they steer no challenge)" \
-  "s/            for \(const e of openedQuotient\) c\.observeExt\(e\);/            \/* fault *\//" \
+  "s/    for \(const e of openedQuotient\) c\.observeExt\(e\);/    \/* fault *\//" \
   src/DreggProofVerify.ts
 # ⚑ THE ONE NOTHING ELSE SEES. Every check above stays green with this in: the
 # transcript still derives, the openings still bind, the chain still closes on
 # the final polynomial. Only the AIR is no longer constrained — so the a^2
 # evaluator is ACCEPTED, and [7] is the only instrument that notices.
 expect_red verify "the AIR closing equality compares the accumulator to ITSELF" \
-  "s/                canonicalLane\(quotient\.limbs\[j\], LANE_MAX\),/                canonicalLane(lhs.limbs[j], LANE_MAX),/" \
+  "s/canonicalLane\(quotient\.limbs\[j\], LANE_MAX\)\);/canonicalLane(lhs.limbs[j], LANE_MAX));/" \
   src/DreggProofVerify.ts
 # The leg's own instruments have to be falsifiable too.
 expect_red verify "the transcript replay's schedule drifts from p3's" \
@@ -876,6 +926,48 @@ expect_red verify "the multi-geometry falsifier coverage collapses to ONE geomet
 expect_red verify "the assembly's row ratchet drifts from the recorded figure" \
   "s/  const RECORDED_PROVED_ROWS = 56_927;/  const RECORDED_PROVED_ROWS = 50_000;/" \
   scripts/dregg-proof-verify.ts
+
+# ── LEG 11, THE PARTITION ─────────────────────────────────────────────────────
+# Each of these removes exactly one of the three things a step boundary does, and
+# each must turn the chain red. ⚑ Two of them are the reason the leg has a
+# CONTROL: the walk never reads `alpha_stark` or the query PoW witness, so with
+# the boundary check gone the spliced witness sails through and only [6] notices.
+expect_red partition "the step no longer checks the boundary it ENTERS (any predecessor will do)" \
+  "s/        stepBoundary\(rcd, cd, k\)\.assertEquals\(bIn\);/        \/* fault *\//" \
+  src/DreggProofPartition.ts
+expect_red partition "the step no longer checks its PREDECESSOR emitted that boundary" \
+  "s/        prev\.publicOutput\.assertEquals\(bIn\);/        \/* fault *\//" \
+  src/DreggProofPartition.ts
+expect_red partition "the head's entry boundary stops being anchored to the same proof" \
+  "s/          prev\.publicInput\.assertEquals\(stepBoundary\(rcd, GENESIS_CHALLENGE_DIGEST, 0\)\);/          \/* fault *\//" \
+  src/DreggProofPartition.ts
+# The step INDEX is the slot that forbids double-counting and skipping. Freezing
+# it to a constant leaves every other check passing.
+expect_red partition "the step index is dropped from the boundary (every step looks like step 1)" \
+  "s/    typeof stepIndex === 'number' \? Field\(stepIndex\) : stepIndex,/    Field(1),/" \
+  src/DreggProofPartition.ts
+# The rootCommitDigest is what binds every step to the SAME dregg proof. Drop the
+# opened evaluations from it and a step can splice openings from another proof
+# while every commitment still matches.
+expect_red partition "the opened evaluations stop being covered by the rootCommitDigest" \
+  "s/  for \(const e of openedTrace\) lanes\.push\(\.\.\.e\.limbs\);/  \/* fault *\//" \
+  src/DreggProofPartition.ts
+# The challengeDigest is what stops a step choosing its own Fiat-Shamir values.
+expect_red partition "the fold challenges stop being covered by the challengeDigest" \
+  "s/  for \(const b of ch\.betas\) lanes\.push\(\.\.\.b\.limbs\);/  \/* fault *\//" \
+  src/DreggProofPartition.ts
+# Without the range assertion the one-hot is all-false, the multiplexer silently
+# returns query 0's bits, and a step walks a query it was not assigned.
+expect_red partition "the query multiplexer stops asserting 1 <= k <= num_queries" \
+  "s/  cnt\.assertEquals\(Field\(1\)\);/  \/* fault *\//" \
+  src/DreggProofPartition.ts
+# The leg's own instruments have to be falsifiable too.
+expect_red partition "the chained geometry shrinks back to something that fits one step" \
+  "s/\nconst NQ = 3;/\nconst NQ = 1;/" \
+  scripts/partition-chain.ts
+expect_red partition "the partition's row ratchet drifts from the recorded figure" \
+  "s/\['ONE deployed boundary, full carry', deployedCarry, 34_566\]/['ONE deployed boundary, full carry', deployedCarry, 20_000]/" \
+  scripts/partition-chain.ts
 
 }
 

@@ -211,15 +211,40 @@ export const minaFixtureConstraintsNoSelector: ConstraintEvaluator = (ctx) => {
 };
 
 // ===========================================================================
-// 3. The program.
+// 3. The verifier, in PIECES — because a step boundary has to be able to fall
+//    between them.
+//
+// ⚑ WHY THIS IS A SET OF FUNCTIONS AND NOT ONE METHOD BODY. The monolith below
+// is 86.9% of a Pickles step at the smallest geometry that proves, and the
+// deployed one is ~500 steps — so the verifier has to SPLIT, and a split can
+// only fall where the code has a seam. These four functions are that seam, and
+// `DreggProofPartition.ts` cuts between (2) and (3). The monolith calls exactly
+// the same functions in exactly the same order, so the partitioned steps and the
+// one-step program are not two implementations that agree today.
 // ===========================================================================
 
 /** Total base-field lanes in a batch's MMCS leaf. */
 const batchRowWidth = (b: BatchShape) => b.matrices.reduce((a, m) => a + m.numCols, 0);
 
-export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
+/** Everything the compile-time shape implies. Computed ONCE so a shape check
+ *  lives in one place and the monolith and the steps cannot disagree about it. */
+export type VerifyPlan = {
+  sh: DreggProofShape;
+  derive: boolean;
+  nBatches: number;
+  maxCommitDepth: number;
+  maxInputDepth: number;
+  rowWidths: number[];
+  totalRow: number;
+  nTraceCols: number;
+  nQuotientVals: number;
+  nOpenedTrace: number;
+  nRollIns: number;
+};
+
+export function verifyPlan(sh: DreggProofShape): VerifyPlan {
   const { knobs, batches, air, logGlobalMaxHeight } = sh;
-  const { layers, finalPolyLen, numQueries, indexBits: nIndexBits } = knobs;
+  const { layers, indexBits: nIndexBits } = knobs;
   const derive = sh.deriveChallenges ?? true;
   if (sh.commitPathDepths.length !== layers)
     throw new Error(`commitPathDepths has ${sh.commitPathDepths.length} entries for ${layers} layers`);
@@ -238,13 +263,7 @@ export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
       `${nBatches} input-phase batches: this assembly wires the trace round and the quotient ` +
         'round only. A preprocessed round needs its own point wiring — see the note here.',
     );
-  const maxCommitDepth = Math.max(...sh.commitPathDepths, 1);
-  const maxInputDepth = Math.max(...batches.map((b) => b.pathDepth), 1);
   const rowWidths = batches.map(batchRowWidth);
-  const totalRow = rowWidths.reduce((a, b) => a + b, 0);
-  const nTraceCols = air.width;
-  const nQuotientVals = air.numQuotientChunks * EXT_D;
-  const nOpenedTrace = air.hasTraceNext ? 2 * nTraceCols : nTraceCols;
 
   // ⚑ THE ROLL-IN SCHEDULE IS A COMPILE-TIME CONSEQUENCE OF THE HEIGHTS, and
   // `rollInSchedule` recomputes it inside the circuit from the same heights, so
@@ -256,21 +275,332 @@ export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
     throw new Error(
       `the tallest input matrix is at ${heights[0]}, not log_global_max_height ${logGlobalMaxHeight}`,
     );
-  const nRollIns = heights.length - 1;
 
-  class DreggProofClaim extends Struct({
+  return {
+    sh,
+    derive,
+    nBatches,
+    maxCommitDepth: Math.max(...sh.commitPathDepths, 1),
+    maxInputDepth: Math.max(...batches.map((b) => b.pathDepth), 1),
+    rowWidths,
+    totalRow: rowWidths.reduce((a, b) => a + b, 0),
+    nTraceCols: air.width,
+    nQuotientVals: air.numQuotientChunks * EXT_D,
+    nOpenedTrace: air.hasTraceNext ? 2 * air.width : air.width,
+    nRollIns: heights.length - 1,
+  };
+}
+
+/** The public claim's shape. A factory because every array length is a shape
+ *  parameter; the SAME class is used by the monolith and by every partitioned
+ *  step, so a step cannot re-witness a differently shaped claim. */
+export function makeDreggProofClaim(sh: DreggProofShape) {
+  const { knobs, air } = sh;
+  return class DreggProofClaim extends Struct({
     /** `commitments.trace`, `commitments.quotient_chunks`, ... — one per batch,
      *  in the order `coms_to_verify` builds them. `cap_height = 0`, so each is
      *  ONE digest. */
-    inputCommits: Provable.Array(BbDigest, nBatches),
+    inputCommits: Provable.Array(BbDigest, sh.batches.length),
     /** `opening_proof.commit_phase_commits`. */
-    commitPhaseCommits: Provable.Array(BbDigest, layers),
+    commitPhaseCommits: Provable.Array(BbDigest, knobs.layers),
     /** `opening_proof.final_poly`. */
-    finalPoly: Provable.Array(BbExt, finalPolyLen),
+    finalPoly: Provable.Array(BbExt, knobs.finalPolyLen),
     /** The STARK's public values — in the transcript AND, for this AIR, in two
      *  of the constraints. */
     publicValues: Provable.Array(Field, Math.max(air.numPublicValues, 1)),
-  }) {}
+  }) {};
+}
+
+/** A claim's VALUES, structurally — so the pieces below take the claim without
+ *  each needing the shape's own class. */
+export type ClaimValue = {
+  inputCommits: BbDigest[];
+  commitPhaseCommits: BbDigest[];
+  finalPoly: BbExt[];
+  publicValues: Field[];
+};
+
+/** What §1 derives and §3–§4 consume. **This is the set a step boundary has to
+ *  carry**, and it is the reason `DreggProofPartition` exists. */
+export type StarkChallenges = {
+  alphaStark: BbExt;
+  zeta: BbExt;
+  friAlpha: BbExt;
+  betas: BbExt[];
+  queryBits: Bool[][];
+};
+
+/** (0) Range-check the witnessed proof data. Every step that re-witnesses the
+ *  proof pays this again — an unchecked lane makes the whole bound chain in
+ *  `Poseidon2BabyBearW16` a claim about numbers nothing forces to be small. */
+export function assertProofDataInRange(
+  claim: ClaimValue,
+  openedTrace: BbExt[],
+  openedQuotient: BbExt[],
+) {
+  for (const e of openedTrace) assertExtInRange(e);
+  for (const e of openedQuotient) assertExtInRange(e);
+  for (const v of claim.publicValues) assertLaneLt2p31(v);
+}
+
+/** (1) The transcript — `uni-stark`'s preamble, then FRI's own schedule. */
+export function deriveStarkChallenges(
+  plan: VerifyPlan,
+  claim: ClaimValue,
+  openedTrace: BbExt[],
+  openedQuotient: BbExt[],
+  queryPowWitness: Field,
+  /** Read ONLY when the shape says the challenges are carried rather than
+   *  derived — a partitioned walk step, or the §3.15e twin that measures what
+   *  deriving costs. Absent it, a non-deriving shape is a build error rather
+   *  than a circuit that quietly witnesses zero. */
+  wit?: {
+    alphaStark: BbExt;
+    zeta: BbExt;
+    friAlpha: BbExt;
+    betas: BbExt[];
+    queryBits: Bool[][];
+  },
+): StarkChallenges {
+  const { sh, derive } = plan;
+  const { knobs, air } = sh;
+  const { layers, numQueries, indexBits: nIndexBits } = knobs;
+  if (derive) {
+    const c = new Challenger();
+    // `challenger.observe(Val::from_usize(..))` x3 — SHAPE data, fixed by
+    // the circuit, so constants: a prover that changed `degree_bits`
+    // would be proving against a different compiled program.
+    c.observeConstant(BigInt(air.degreeBits));
+    c.observeConstant(BigInt(air.baseDegreeBits));
+    c.observeConstant(BigInt(air.preprocessedWidth));
+    c.observeDigest(claim.inputCommits[0]); //  commitments.trace
+    if (air.numPublicValues > 0) c.observeSlice(claim.publicValues.slice(0, air.numPublicValues));
+    const alphaStark = c.sampleExt();
+    c.observeDigest(claim.inputCommits[1]); //  commitments.quotient_chunks
+    const zeta = c.sampleExt();
+
+    // `two_adic_pcs::verify` observes every opened evaluation, in round
+    // order, BEFORE `verify_fri` samples its alpha. Moving one moves
+    // every challenge below.
+    for (const e of openedTrace) c.observeExt(e);
+    for (const e of openedQuotient) c.observeExt(e);
+
+    const friAlpha = c.sampleExt();
+    const betas: BbExt[] = [];
+    for (let r = 0; r < layers; r++) {
+      c.observeDigest(claim.commitPhaseCommits[r]);
+      // commit_pow_bits = 0: observes NOTHING, constrains nothing.
+      c.assertCheckWitness(knobs.commitPowBits, Field(0));
+      betas.push(c.sampleExt());
+    }
+    for (const coeff of claim.finalPoly) c.observeExt(coeff);
+    for (let r = 0; r < layers; r++) c.observeConstant(BigInt(knobs.maxLogArity));
+    c.assertCheckWitness(knobs.queryPowBits, queryPowWitness);
+    const queryBits = Array.from({ length: numQueries }, () => c.sampleBitsAsBits(nIndexBits));
+    return { alphaStark, zeta, friAlpha, betas, queryBits };
+  }
+  if (!wit)
+    throw new Error(
+      'deriveStarkChallenges: the shape says the challenges are CARRIED, and none were supplied',
+    );
+  assertExtInRange(wit.alphaStark);
+  assertExtInRange(wit.zeta);
+  assertExtInRange(wit.friAlpha);
+  for (const b of wit.betas) assertExtInRange(b);
+  queryPowWitness.seal();
+  return {
+    alphaStark: wit.alphaStark,
+    zeta: wit.zeta,
+    friAlpha: wit.friAlpha,
+    betas: wit.betas,
+    queryBits: wit.queryBits,
+  };
+}
+
+/** (2) The AIR closing equality at `zeta`. */
+export function assertAirClosing(
+  plan: VerifyPlan,
+  claim: ClaimValue,
+  openedTrace: BbExt[],
+  openedQuotient: BbExt[],
+  ch: StarkChallenges,
+) {
+  const { sh, nTraceCols } = plan;
+  const { air } = sh;
+  if (!sh.constraints) return;
+  const sels = selectorsAtPoint(ch.zeta, air.traceLogSize, 1n, air.subgroupGenInv);
+  const traceLocal = openedTrace.slice(0, nTraceCols);
+  const traceNext = air.hasTraceNext
+    ? openedTrace.slice(nTraceCols, 2 * nTraceCols)
+    : Array.from({ length: nTraceCols }, () => BbExt.zero());
+  const cs = sh.constraints({
+    traceLocal,
+    traceNext,
+    publicValues: claim.publicValues,
+    isFirstRow: sels.isFirstRow,
+    isLastRow: sels.isLastRow,
+    isTransition: sels.isTransition,
+    zeta: ch.zeta,
+  });
+  const acc = foldConstraints(ch.alphaStark, cs);
+  const quotient = recomposeQuotient({
+    zeta: ch.zeta,
+    chunks: Array.from({ length: air.numQuotientChunks }, (_, i) =>
+      openedQuotient.slice(i * EXT_D, (i + 1) * EXT_D),
+    ),
+    logChunkSize: air.chunkLogSize,
+    chunkShiftInvs: air.chunkShiftInvs,
+    lagrangeConsts: air.lagrangeConstInvs,
+  });
+  const lhs = extMul(acc, sels.invVanishing);
+  for (let j = 0; j < EXT_D; j++)
+    canonicalLane(lhs.limbs[j], LANE_MAX).assertEquals(canonicalLane(quotient.limbs[j], LANE_MAX));
+}
+
+/** (3+4) The opening points and every query walk. Returns the DERIVED query
+ *  indices — the walk's own account of where it went. */
+export function runQueryWalk(
+  plan: VerifyPlan,
+  claim: ClaimValue,
+  openedTrace: BbExt[],
+  openedQuotient: BbExt[],
+  ch: StarkChallenges,
+  rows: Field[][],
+  inputPaths: BbDigest[][][],
+  siblings: BbExt[][],
+  commitPaths: BbDigest[][][],
+  /** ⚑ THE PARTITION'S ONLY REACH INTO THIS FUNCTION. Which GLOBAL query indices
+   *  this call walks; `rows`/`inputPaths`/`siblings`/`commitPaths` are indexed by
+   *  position in this list, while `ch.queryBits` is indexed GLOBALLY — because
+   *  the carried Fiat-Shamir state is the whole index set and a step walks a
+   *  slice of it. Absent, every query, which is the one-step program. */
+  queries?: number[],
+): Field[] {
+  const { sh, nBatches, rowWidths, nTraceCols, nRollIns } = plan;
+  const { knobs, batches, air, logGlobalMaxHeight } = sh;
+  const { layers, numQueries, indexBits: nIndexBits } = knobs;
+  const qs = queries ?? Array.from({ length: numQueries }, (_, i) => i);
+  for (const g of qs)
+    if (g < 0 || g >= numQueries)
+      throw new Error(`query ${g} is outside the shape's 0..${numQueries - 1}`);
+
+  // `zeta_next = zeta * g` on the NATURAL trace domain
+  // (`domain.rs:169-171`); `g` is protocol data, so the scale is free.
+  const gTrace = twoAdicGenerator(air.traceLogSize);
+  const zetaNext = extScaleConst(ch.zeta, gTrace);
+
+  const outIndices: Field[] = [];
+  for (let q = 0; q < qs.length; q++) {
+    const bits = ch.queryBits[qs[q]];
+    let rowOff = 0;
+    const mats: DeepMatrix[][] = [];
+    for (let b = 0; b < nBatches; b++) {
+      const bs = batches[b];
+      const leaf = rows[q].slice(rowOff, rowOff + rowWidths[b]);
+      rowOff += rowWidths[b];
+      for (const v of leaf) assertLaneLt2p31(v);
+
+      // The MMCS leaf is ONE sponge over every matrix's row in this
+      // batch, concatenated — not one hash per matrix.
+      let cur = spongeBB(leaf);
+      // `open_input` shifts the index by the BATCH's max height, not the
+      // matrix's (`fri/src/verifier.rs:576-580`).
+      const batchMax = Math.max(...bs.matrices.map((m) => m.logHeight));
+      const bitsReduced = logGlobalMaxHeight - batchMax;
+      for (let h = 0; h < bs.pathDepth; h++) {
+        assertDigestInRange(inputPaths[q][b][h]);
+        const [l, r] = condSwap(cur, inputPaths[q][b][h], bits[bitsReduced + h]);
+        cur = compressBB(l, r);
+      }
+      for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(claim.inputCommits[b].limbs[j]);
+
+      // Split the leaf back into its matrices for the DEEP quotient, and
+      // attach the claimed evaluations each one opens at.
+      let colOff = 0;
+      const batchMats: DeepMatrix[] = [];
+      for (const m of bs.matrices) {
+        const openedRow = leaf.slice(colOff, colOff + m.numCols);
+        colOff += m.numCols;
+        const points =
+          b === 0
+            ? // the trace: (zeta, trace_local) and (zeta*g, trace_next)
+              (air.hasTraceNext
+                ? [
+                    { z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) },
+                    { z: zetaNext, psAtZ: openedTrace.slice(nTraceCols, 2 * nTraceCols) },
+                  ]
+                : [{ z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) }])
+            : // a quotient chunk: (zeta, that chunk's D values)
+              [
+                {
+                  z: ch.zeta,
+                  psAtZ: openedQuotient.slice(
+                    batchMats.length * EXT_D,
+                    (batchMats.length + 1) * EXT_D,
+                  ),
+                },
+              ];
+        if (points.length !== m.numPoints)
+          throw new Error(
+            `batch ${b} matrix declares ${m.numPoints} points, the wiring gives ${points.length}`,
+          );
+        batchMats.push({ logHeight: m.logHeight, openedRow, points });
+      }
+      mats.push(batchMats);
+    }
+
+    // -- the DEEP quotient: `initial` stops being a witness.
+    const ro = reducedOpenings({
+      indexBits: bits,
+      logGlobalMaxHeight,
+      alpha: ch.friAlpha,
+      batches: mats,
+    });
+    const sched = rollInSchedule(ro, logGlobalMaxHeight, layers);
+    if (sched.rounds.length !== nRollIns)
+      throw new Error('the in-circuit roll-in schedule disagrees with the compiled shape');
+
+    verifyCommitPhase({
+      indexBits: bits,
+      initial: ro[0].ro,
+      rounds: Array.from({ length: layers }, (_, r) => ({
+        sibling: siblings[q][r],
+        path: commitPaths[q][r].slice(0, sh.commitPathDepths[r]),
+        beta: ch.betas[r],
+        commit: claim.commitPhaseCommits[r],
+      })),
+      rollIns: sched.rounds.map((r, i) => ({ afterRound: r, value: ro[i + 1].ro })),
+      finalPoly: claim.finalPoly,
+      logGlobalMaxHeight,
+    });
+
+    let acc = Field(0);
+    for (let i = 0; i < nIndexBits; i++) acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
+    outIndices.push(acc);
+  }
+  return outIndices;
+}
+
+// ===========================================================================
+// 3b. The one-step program — the four pieces above, in order.
+// ===========================================================================
+
+export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
+  const plan = verifyPlan(sh);
+  const { knobs, air, logGlobalMaxHeight } = sh;
+  const { layers, numQueries, indexBits: nIndexBits } = knobs;
+  const derive = plan.derive;
+  const {
+    nBatches,
+    maxCommitDepth,
+    maxInputDepth,
+    rowWidths,
+    totalRow,
+    nQuotientVals,
+    nOpenedTrace,
+  } = plan;
+
+  const DreggProofClaim = makeDreggProofClaim(sh);
 
   const privateInputs = [
     Provable.Array(BbExt, nOpenedTrace), //                 trace_local (+ trace_next)
@@ -325,193 +655,26 @@ export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
           witBetas: BbExt[],
           witIndexBits: Bool[][],
         ) {
-          for (const e of openedTrace) assertExtInRange(e);
-          for (const e of openedQuotient) assertExtInRange(e);
-          for (const v of claim.publicValues) assertLaneLt2p31(v);
-
-          // -- 1. the transcript ------------------------------------------------
-          let alphaStark: BbExt;
-          let zeta: BbExt;
-          let friAlpha: BbExt;
-          let betas: BbExt[];
-          let queryBits: Bool[][];
-
-          if (derive) {
-            const c = new Challenger();
-            // `challenger.observe(Val::from_usize(..))` x3 — SHAPE data, fixed by
-            // the circuit, so constants: a prover that changed `degree_bits`
-            // would be proving against a different compiled program.
-            c.observeConstant(BigInt(air.degreeBits));
-            c.observeConstant(BigInt(air.baseDegreeBits));
-            c.observeConstant(BigInt(air.preprocessedWidth));
-            c.observeDigest(claim.inputCommits[0]); //  commitments.trace
-            if (air.numPublicValues > 0) c.observeSlice(claim.publicValues.slice(0, air.numPublicValues));
-            alphaStark = c.sampleExt();
-            c.observeDigest(claim.inputCommits[1]); //  commitments.quotient_chunks
-            zeta = c.sampleExt();
-
-            // `two_adic_pcs::verify` observes every opened evaluation, in round
-            // order, BEFORE `verify_fri` samples its alpha. Moving one moves
-            // every challenge below.
-            for (const e of openedTrace) c.observeExt(e);
-            for (const e of openedQuotient) c.observeExt(e);
-
-            friAlpha = c.sampleExt();
-            betas = [];
-            for (let r = 0; r < layers; r++) {
-              c.observeDigest(claim.commitPhaseCommits[r]);
-              // commit_pow_bits = 0: observes NOTHING, constrains nothing.
-              c.assertCheckWitness(knobs.commitPowBits, Field(0));
-              betas.push(c.sampleExt());
-            }
-            for (const coeff of claim.finalPoly) c.observeExt(coeff);
-            for (let r = 0; r < layers; r++) c.observeConstant(BigInt(knobs.maxLogArity));
-            c.assertCheckWitness(knobs.queryPowBits, queryPowWitness);
-            queryBits = Array.from({ length: numQueries }, () => c.sampleBitsAsBits(nIndexBits));
-          } else {
-            alphaStark = witAlphaStark;
-            zeta = witZeta;
-            friAlpha = witFriAlpha;
-            betas = witBetas;
-            queryBits = witIndexBits;
-            assertExtInRange(alphaStark);
-            assertExtInRange(zeta);
-            assertExtInRange(friAlpha);
-            for (const b of betas) assertExtInRange(b);
-            queryPowWitness.seal();
-          }
-
-          // -- 2. the AIR closing equality --------------------------------------
-          if (sh.constraints) {
-            const sels = selectorsAtPoint(zeta, air.traceLogSize, 1n, air.subgroupGenInv);
-            const traceLocal = openedTrace.slice(0, nTraceCols);
-            const traceNext = air.hasTraceNext
-              ? openedTrace.slice(nTraceCols, 2 * nTraceCols)
-              : Array.from({ length: nTraceCols }, () => BbExt.zero());
-            const cs = sh.constraints({
-              traceLocal,
-              traceNext,
-              publicValues: claim.publicValues,
-              isFirstRow: sels.isFirstRow,
-              isLastRow: sels.isLastRow,
-              isTransition: sels.isTransition,
-              zeta,
-            });
-            const acc = foldConstraints(alphaStark, cs);
-            const quotient = recomposeQuotient({
-              zeta,
-              chunks: Array.from({ length: air.numQuotientChunks }, (_, i) =>
-                openedQuotient.slice(i * EXT_D, (i + 1) * EXT_D),
-              ),
-              logChunkSize: air.chunkLogSize,
-              chunkShiftInvs: air.chunkShiftInvs,
-              lagrangeConsts: air.lagrangeConstInvs,
-            });
-            const lhs = extMul(acc, sels.invVanishing);
-            for (let j = 0; j < EXT_D; j++)
-              canonicalLane(lhs.limbs[j], LANE_MAX).assertEquals(
-                canonicalLane(quotient.limbs[j], LANE_MAX),
-              );
-          }
-
-          // -- 3. the opening points --------------------------------------------
-          // `zeta_next = zeta * g` on the NATURAL trace domain
-          // (`domain.rs:169-171`); `g` is protocol data, so the scale is free.
-          const gTrace = twoAdicGenerator(air.traceLogSize);
-          const zetaNext = extScaleConst(zeta, gTrace);
-
-          // -- 4. every query ----------------------------------------------------
-          const outIndices: Field[] = [];
-          for (let q = 0; q < numQueries; q++) {
-            const bits = queryBits[q];
-            let rowOff = 0;
-            const mats: DeepMatrix[][] = [];
-            for (let b = 0; b < nBatches; b++) {
-              const bs = batches[b];
-              const leaf = rows[q].slice(rowOff, rowOff + rowWidths[b]);
-              rowOff += rowWidths[b];
-              for (const v of leaf) assertLaneLt2p31(v);
-
-              // The MMCS leaf is ONE sponge over every matrix's row in this
-              // batch, concatenated — not one hash per matrix.
-              let cur = spongeBB(leaf);
-              // `open_input` shifts the index by the BATCH's max height, not the
-              // matrix's (`fri/src/verifier.rs:576-580`).
-              const batchMax = Math.max(...bs.matrices.map((m) => m.logHeight));
-              const bitsReduced = logGlobalMaxHeight - batchMax;
-              for (let h = 0; h < bs.pathDepth; h++) {
-                assertDigestInRange(inputPaths[q][b][h]);
-                const [l, r] = condSwap(cur, inputPaths[q][b][h], bits[bitsReduced + h]);
-                cur = compressBB(l, r);
-              }
-              for (let j = 0; j < 8; j++)
-                cur.limbs[j].assertEquals(claim.inputCommits[b].limbs[j]);
-
-              // Split the leaf back into its matrices for the DEEP quotient, and
-              // attach the claimed evaluations each one opens at.
-              let colOff = 0;
-              const batchMats: DeepMatrix[] = [];
-              for (const m of bs.matrices) {
-                const openedRow = leaf.slice(colOff, colOff + m.numCols);
-                colOff += m.numCols;
-                const points =
-                  b === 0
-                    ? // the trace: (zeta, trace_local) and (zeta*g, trace_next)
-                      (air.hasTraceNext
-                        ? [
-                            { z: zeta, psAtZ: openedTrace.slice(0, nTraceCols) },
-                            { z: zetaNext, psAtZ: openedTrace.slice(nTraceCols, 2 * nTraceCols) },
-                          ]
-                        : [{ z: zeta, psAtZ: openedTrace.slice(0, nTraceCols) }])
-                    : // a quotient chunk: (zeta, that chunk's D values)
-                      [
-                        {
-                          z: zeta,
-                          psAtZ: openedQuotient.slice(
-                            batchMats.length * EXT_D,
-                            (batchMats.length + 1) * EXT_D,
-                          ),
-                        },
-                      ];
-                if (points.length !== m.numPoints)
-                  throw new Error(
-                    `batch ${b} matrix declares ${m.numPoints} points, the wiring gives ${points.length}`,
-                  );
-                batchMats.push({ logHeight: m.logHeight, openedRow, points });
-              }
-              mats.push(batchMats);
-            }
-
-            // -- the DEEP quotient: `initial` stops being a witness.
-            const ro = reducedOpenings({
-              indexBits: bits,
-              logGlobalMaxHeight,
-              alpha: friAlpha,
-              batches: mats,
-            });
-            const sched = rollInSchedule(ro, logGlobalMaxHeight, layers);
-            if (sched.rounds.length !== nRollIns)
-              throw new Error('the in-circuit roll-in schedule disagrees with the compiled shape');
-
-            verifyCommitPhase({
-              indexBits: bits,
-              initial: ro[0].ro,
-              rounds: Array.from({ length: layers }, (_, r) => ({
-                sibling: siblings[q][r],
-                path: commitPaths[q][r].slice(0, sh.commitPathDepths[r]),
-                beta: betas[r],
-                commit: claim.commitPhaseCommits[r],
-              })),
-              rollIns: sched.rounds.map((r, i) => ({ afterRound: r, value: ro[i + 1].ro })),
-              finalPoly: claim.finalPoly,
-              logGlobalMaxHeight,
-            });
-
-            let acc = Field(0);
-            for (let i = 0; i < nIndexBits; i++)
-              acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
-            outIndices.push(acc);
-          }
+          assertProofDataInRange(claim, openedTrace, openedQuotient);
+          const ch = deriveStarkChallenges(plan, claim, openedTrace, openedQuotient, queryPowWitness, {
+            alphaStark: witAlphaStark,
+            zeta: witZeta,
+            friAlpha: witFriAlpha,
+            betas: witBetas,
+            queryBits: witIndexBits,
+          });
+          assertAirClosing(plan, claim, openedTrace, openedQuotient, ch);
+          const outIndices = runQueryWalk(
+            plan,
+            claim,
+            openedTrace,
+            openedQuotient,
+            ch,
+            rows,
+            inputPaths,
+            siblings,
+            commitPaths,
+          );
 
           return { publicOutput: outIndices };
         },
