@@ -131,6 +131,25 @@ N divergences. And both were warned that inherited diagnoses in this repo have b
   `NativeDescentMove::Take` — the verb from the Lean dungeon re-emit — with no arm. Same shape as the
   two `TurnError` arms I missed yesterday: **the compiler will tell you, but only if something asks.**
 
+- ⚑ **discord-bot 19 reds — and the crate did not COMPILE at HEAD**, so the handed-down "487/18" came
+  from nowhere reachable. `8ee7052f2` added a param, fixed its own four sites, missed an out-of-crate
+  caller, and its "say what broke" never mentions it. Fixed at the cause: `dreggnet-compute`'s worker
+  had no cell, so settlement had nobody to pay; `verify` now reads the WORKER'S BALANCE instead of
+  trusting the `PAID` slot.
+  ⚑ **Family A was not a deserializer bug — the Rust mover is a GENERATION behind the Lean program.**
+  `CAP` is 7 in Lean and Rust said 8 (the mover admitted moves the executor refuses); `unlock` now
+  leaves the key HUNG; `take` is a ninth verb Rust lacked entirely, so **no frontend could retrieve a
+  hung key at all.**
+  ⚑ **And a refusal pole was green for the wrong reason**: `matches!(err, NotConserving(_))` is
+  satisfied by `FfiUnavailable("no verified gate registered")` exactly as well as by an overdraft —
+  it passed through the whole outage while its honest twin died.
+  ⚠ Residual MEASURED not documented: on a native RELEASE build the Descent's custody teeth REFUSE,
+  because `DHeapAtom` has no transition table. Two teeth pin it, one of which **goes red the day the
+  Lean arm lands.**
+- ⚠ **DISK WAS FULL — 188 MiB of 7.3 TiB**, which is what my "17 workspace build errors" actually
+  were (`failed to build archive`, `could not write output` = ENOSPC, not code). Freed 176 GiB by
+  dropping `discord-bot/target`. ⚠ `target` is still 401 G and `~/Library` 644 G, `~/.cache` 311 G.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
