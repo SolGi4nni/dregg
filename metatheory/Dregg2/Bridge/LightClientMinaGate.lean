@@ -38,11 +38,20 @@ scalar decision is DEFINITIONALLY `minaVerify` (`rfl`), over which `mina_no_forg
 
 ## Scope (honest, current resolution)
 
-This gate decides an ANCHORED SEGMENT. It does NOT decide fork choice: Ouroboros Samasika's chain
-selection (VRF-weighted density, long-range) is formalized nowhere in this tree, so nothing here
-distinguishes two `k`-deep proved segments under different anchors. Routing the observer through this
-export upgrades it from "trusts an RPC's arithmetic" to "checks an anchored, parent-linked,
+This gate decides an ANCHORED SEGMENT. It does NOT decide fork choice, so nothing THIS export
+computes distinguishes two `k`-deep proved segments under different anchors. Routing the observer
+through it upgrades it from "trusts an RPC's arithmetic" to "checks an anchored, parent-linked,
 proof-carrying segment"; it does not make dregg a Mina light client.
+
+⚑ UPDATED 2026-07-29. Samasika chain selection is no longer unformalized: `Bridge.MinaChainSelection`
+implements `select` / `is_short_range` / the relative minimum window density against the daemon
+(`proof_of_stake.ml:2951,2971,1221`), proves determinism, irreflexivity, asymmetry and
+ties-only-on-equal-keys, PROVES that the rule is not transitive (two 3-cycles), and is differentialed
+against openmina on 57 real-state vectors. It is deliberately NOT exported yet, and the reason is
+concrete: the long-range branch needs `sub_window_densities`, and `subWindowDensities` **is not a
+field of the public GraphQL `ConsensusState`** (measured 2026-07-29 against
+`api.minascan.io/node/devnet`), so the deployed `mina_observer` physically cannot supply the input.
+An export the caller cannot feed is an un-called gate, and this repo has a named class for those.
 -/
 import Dregg2.Bridge.LightClientMina
 

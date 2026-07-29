@@ -54,12 +54,17 @@ it follows STATE HASHES and checks a proof per block. So the rules are:
 
 ## What is NOT here, named rather than implied
 
-  * **FORK CHOICE IS NOT CHECKED.** Samasika's chain selection (VRF-weighted density / long-range
-    rules) appears nowhere in this file or anywhere else in the tree. These rules say "this exhibited
-    segment is linked, proved and `k` deep from the anchor"; they do NOT say "and it is the chain the
-    network selected". A `k`-deep linked proved segment from a DIFFERENT anchor is not refused by
-    anything here. That is the honest boundary between what this is (an anchored, proof-carrying
+  * **FORK CHOICE IS NOT CHECKED *HERE*.** These rules say "this exhibited segment is linked,
+    proved and `k` deep from the anchor"; they do NOT say "and it is the chain the network
+    selected". A `k`-deep linked proved segment from a DIFFERENT anchor is not refused by anything
+    in THIS file. That is the honest boundary between what this is (an anchored, proof-carrying
     segment verifier) and a Mina light client (which follows the chain).
+    ⚑ UPDATED 2026-07-29: the rule itself now EXISTS in the tree —
+    `Dregg2.Bridge.MinaChainSelection` implements Samasika `select` / `is_short_range` / the
+    relative min-window-density against `proof_of_stake.ml`, differentials it against openmina on
+    real states, and gives the light client `minaBetterTip`. What is still absent is the WIRING:
+    nothing in this file calls it, and `select` is a TOURNAMENT, not an order — it has proved
+    3-cycles, so it can rank two named tips but must never be folded over a candidate set.
   * **NO RE-EXECUTION and no ledger check** beyond the state-row commitment — that is what the
     Pickles proof is for, and `picklesSound` is exactly the assumption that it works.
 

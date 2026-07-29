@@ -172,3 +172,54 @@ that calls `verify_block` literally.
 The Kimchi extractors lived only as untracked files inside `~/dev/proof-systems` — one `git clean`
 from gone. This one is tracked, its input fixture is tracked, and the rev it builds against is
 written down in `Cargo.toml` and in this file.
+
+---
+
+## Second binary: `samasika_vectors` — chain-selection differential vectors
+
+`cargo run --release --bin samasika_vectors` (added 2026-07-29). Where `wrap_group_export` is about
+one block's Wrap proof, this one is about **which chain wins**: it drives openmina's own
+`mina_core::consensus` — `is_short_range_fork`, `relative_min_window_density`,
+`short_range_fork_take`, `long_range_fork_take`, `consensus_take` — over real Mina protocol states,
+and in the SAME run over the SAME state also computes the **OCaml daemon's** semantics
+(`~/dev/mina/src/lib/consensus/proof_of_stake.ml:2951` `is_short_range`, `:1221`
+`update_min_window_density`, `:2971` `select`). It emits both columns side by side so the
+disagreement between the two implementations is a datum, not an argument.
+
+Inputs, both tracked here:
+
+* `../samasika-forks/*.json` — the five real fork pairs copied from `mina-rust/tests/files/forks/`,
+  the fixtures openmina's own `short_range_fork` / `long_range_fork` tests assert against. The
+  binary re-asserts those verdicts before emitting anything.
+* `../samasika-forks/minascan-devnet-bestchain.json` — four consecutive real devnet blocks
+  (539767–539770) fetched read-only from `api.minascan.io/node/devnet` on 2026-07-29, pinned to
+  record what the PUBLIC GraphQL surface does and does not serve.
+
+Outputs:
+
+* `out/MinaSelectionVectors.lean` → copied to `metatheory/Dregg2/Bridge/MinaSelectionVectors.lean`,
+  consumed by `Dregg2.Bridge.MinaChainSelectionDifferential`.
+* `../samasika-forks/samasika_vectors.tsv` — the same rows, human-readable.
+
+### Three things it measured that are worth knowing before touching this code
+
+1. **The fork fixtures no longer deserialize with openmina's own types.** They carry
+   `consensus_state.curr_global_slot`; the generated type calls it
+   `curr_global_slot_since_hard_fork` (`crates/p2p-messages/src/v2/generated.rs:204`), and the
+   enclosing `MinaStateProtocolStateValueStableV2` has since gained
+   `constants.grace_period_slots`. openmina's `short_range_fork` / `long_range_fork` tests read
+   these files with `serde_json::from_str::<MinaStateProtocolStateValueStableV2>` — so **the only
+   tests openmina has over its chain-selection code do not currently run.** This binary renames the
+   key and deserializes the consensus state alone.
+2. **openmina's chain-selection density is not the daemon's**, on 30 of 57 vectors, and its final
+   VERDICT differs on 8. Its `relative_min_window_density` transcribes the spec document's §5.4.12
+   pseudocode (which contradicts the same document's §5.4.9): the shift count is measured in SLOTS
+   rather than SUB-WINDOWS, the loop is `0..=shift_count` (one zero more than the pseudocode), and
+   `GRACE_PERIOD_END` is hardcoded to `1440` where the daemon computes
+   `grace_period_slots + slots_per_window = 2160 + 77 = 2237`. Note openmina's BLOCK-PRODUCTION
+   path (`crates/ledger/src/proofs/block.rs:1116`) is a faithful port of the daemon's
+   `update_min_window_density` — the two live in the same repo and disagree.
+3. **`subWindowDensities` is not a field of the public GraphQL `ConsensusState`.** So the
+   long-range fork rule cannot be evaluated from GraphQL at all; it needs the binprot protocol
+   state. `blockHeight`, `epoch`, `slot`, `minWindowDensity`, `lastVrfOutput` and both
+   `lockCheckpoint`s are served, so the short-range rule can.

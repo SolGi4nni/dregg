@@ -92,8 +92,12 @@ to a point in range (`mina_alias_collapses_in_range`).
     row captures the LINKAGE structure, not the byte-exact protocol-state serialization.
     (3) RESIDUAL #3, `PICKLES_OK` — the Kimchi/IPA arc, a carrier, inheriting the undischarged
     FRI/IPA floor even where §6 discharges it on a real block.
-    (4) RESIDUAL #4, FORK CHOICE — Samasika's chain selection is checked NOWHERE in this tree. This
-    file binds an ANCHORED SEGMENT; it does not follow a chain.
+    (4) RESIDUAL #4, FORK CHOICE — this file binds an ANCHORED SEGMENT; it does not follow a chain.
+    ⚑ NARROWED 2026-07-29: the rule is no longer absent — `Dregg2.Bridge.MinaChainSelection`
+    implements Samasika `select` against `proof_of_stake.ml` and differentials it against openmina
+    on 57 real-state vectors. The residual is now exactly the WIRING (nothing calls it) plus the
+    fact that `select` is a TOURNAMENT with proved 3-cycles, so "the canonical chain" is not a
+    function of a candidate SET.
 
 ## Axiom hygiene
 
