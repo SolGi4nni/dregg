@@ -66,7 +66,10 @@
 use std::collections::BTreeMap;
 
 use p3_air::BaseAir;
-use p3_air::symbolic::{AirLayout, BaseEntry, BaseLeaf, SymbolicExpr, SymbolicExpression};
+use p3_air::symbolic::{
+    AirLayout, BaseEntry, BaseLeaf, ExtEntry, ExtLeaf, SymbolicExpr, SymbolicExpression,
+    SymbolicExpressionExt,
+};
 use p3_baby_bear::BabyBear;
 use p3_batch_stark::symbolic::get_symbolic_constraints;
 use p3_circuit_prover::air::{AluAir, ConstAir, ExposeClaimAir, PublicAir, RecomposeAir};
@@ -985,6 +988,12 @@ enum DagNode {
     Sub(usize, usize),
     Neg(usize),
     Mul(usize, usize),
+    /// An EXTENSION column — a LogUp permutation column, a permutation value, or a challenge — in
+    /// its own `evars` numbering. Only `to_dag_full` emits these; `to_dag`'s output never contains
+    /// one, which is why every base-only theorem and differential above is untouched.
+    EVar(usize),
+    /// An extension constant, as its four canonical BabyBear basis coefficients.
+    ECst([i64; 4]),
 }
 
 /// A constraint system as one shared DAG plus the indices of its constraint roots.
@@ -1004,12 +1013,13 @@ impl Dag {
             .count()
     }
 
-    /// `[var, cst, add, sub, neg, mul]`. ⚑ This is the PRICE'S input, not a curiosity: only `Mul`
-    /// is a full extension multiply (31 rows, §3.14); `Add`/`Sub`/`Neg`/`Var` are extension
-    /// add/scale (19); `Cst` is a pin. Pricing `C_i` off the multiply count alone — which is what
-    /// the ledger did — undercounts by the whole linear half.
-    fn kinds(&self) -> [usize; 6] {
-        let mut k = [0usize; 6];
+    /// `[var, cst, add, sub, neg, mul, evar, ecst]`. ⚑ This is the PRICE'S input, not a curiosity:
+    /// only `Mul` is a full extension multiply (31 rows, §3.14); `Add`/`Sub`/`Neg`/`Var` are
+    /// extension add/scale (19); `Cst` is a pin. Pricing `C_i` off the multiply count alone —
+    /// which is what the ledger did — undercounts by the whole linear half. The two trailing
+    /// slots are zero for every `to_dag` output, so the base-only arithmetic below is unmoved.
+    fn kinds(&self) -> [usize; 8] {
+        let mut k = [0usize; 8];
         for n in &self.nodes {
             let i = match n {
                 DagNode::Var(_) => 0,
@@ -1018,6 +1028,8 @@ impl Dag {
                 DagNode::Sub(_, _) => 3,
                 DagNode::Neg(_) => 4,
                 DagNode::Mul(_, _) => 5,
+                DagNode::EVar(_) => 6,
+                DagNode::ECst(_) => 7,
             };
             k[i] += 1;
         }
@@ -1028,7 +1040,7 @@ impl Dag {
     /// theorem takes as `dagWf`. Checked here so a violation is caught at emission, not in Lean.
     fn wf(&self) -> bool {
         self.nodes.iter().enumerate().all(|(i, n)| match *n {
-            DagNode::Var(_) | DagNode::Cst(_) => true,
+            DagNode::Var(_) | DagNode::Cst(_) | DagNode::EVar(_) | DagNode::ECst(_) => true,
             DagNode::Neg(x) => x < i,
             DagNode::Add(x, y) | DagNode::Sub(x, y) | DagNode::Mul(x, y) => x < i && y < i,
         }) && self.roots.iter().all(|&r| r < self.nodes.len())
@@ -1046,10 +1058,82 @@ impl Dag {
                 DagNode::Sub(i, j) => v[i] - v[j],
                 DagNode::Neg(i) => -v[i],
                 DagNode::Mul(i, j) => v[i] * v[j],
+                DagNode::EVar(_) | DagNode::ECst(_) => panic!(
+                    "the base-field evaluator was handed an EXTENSION node — that is a `to_dag_full` \
+                     DAG and it must be evaluated with `eval_ef`, not silently over F"
+                ),
             };
             v.push(x);
         }
         v
+    }
+
+    /// Evaluate the DAG over the CHALLENGE EXTENSION — which is the ring the Mina-side verifier
+    /// works in, because every opened value at `zeta` is an `EF` element. `dagGens_forces` is
+    /// proved at an arbitrary `CommRing`, so this is the same node program at the ring the
+    /// deployed verifier actually instantiates, not a second semantics.
+    ///
+    /// `a` indexes base columns (lifted), `e` indexes extension columns.
+    fn eval_ef(&self, a: &[EF], e: &[EF]) -> Vec<EF> {
+        let mut v: Vec<EF> = Vec::with_capacity(self.nodes.len());
+        for n in &self.nodes {
+            let x = match *n {
+                DagNode::Var(c) => a[c],
+                DagNode::Cst(k) => EF::from(F::from_u32(
+                    u32::try_from(k.rem_euclid(babybear_p())).unwrap(),
+                )),
+                DagNode::Add(i, j) => v[i] + v[j],
+                DagNode::Sub(i, j) => v[i] - v[j],
+                DagNode::Neg(i) => -v[i],
+                DagNode::Mul(i, j) => v[i] * v[j],
+                DagNode::EVar(c) => e[c],
+                DagNode::ECst(k) => ef_of_limbs(&k),
+            };
+            v.push(x);
+        }
+        v
+    }
+}
+
+/// `EF` from four canonical BabyBear basis coefficients — the wire form the JSON carries.
+fn ef_of_limbs(k: &[i64; 4]) -> EF {
+    let c: Vec<F> = k
+        .iter()
+        .map(|x| F::from_u32(u32::try_from(x.rem_euclid(babybear_p())).unwrap()))
+        .collect();
+    <EF as p3_field::BasedVectorSpace<F>>::from_basis_coefficients_slice(&c)
+        .expect("EF has exactly 4 basis coefficients")
+}
+
+/// The four canonical BabyBear basis coefficients of an `EF` — the inverse of `ef_of_limbs`.
+fn limbs_of_ef(x: &EF) -> [i64; 4] {
+    let c = <EF as p3_field::BasedVectorSpace<F>>::as_basis_coefficients_slice(x);
+    [
+        i64::from(c[0].as_canonical_u32()),
+        i64::from(c[1].as_canonical_u32()),
+        i64::from(c[2].as_canonical_u32()),
+        i64::from(c[3].as_canonical_u32()),
+    ]
+}
+
+/// An extension column's identity, in the same spirit as `VarKey`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ExtVarKey {
+    /// A LogUp permutation column at a row offset.
+    Permutation { offset: usize, index: usize },
+    /// A permutation challenge (`beta`, `gamma`).
+    Challenge { index: usize },
+    /// A cumulative-sum value carried across instances.
+    PermutationValue { index: usize },
+}
+
+impl ExtVarKey {
+    fn label(&self) -> String {
+        match self {
+            Self::Permutation { offset, index } => format!("perm[{offset}][{index}]"),
+            Self::Challenge { index } => format!("challenge[{index}]"),
+            Self::PermutationValue { index } => format!("perm_value[{index}]"),
+        }
     }
 }
 
@@ -1066,10 +1150,18 @@ enum DagWork<'a> {
     BuildNeg(*const SymbolicExpression<F>),
 }
 
+enum ExtWork<'a> {
+    Eval(&'a SymbolicExpressionExt<F, EF>),
+    Build(*const SymbolicExpressionExt<F, EF>, DagOp),
+    BuildNeg(*const SymbolicExpressionExt<F, EF>),
+}
+
 struct DagBuilder {
     dag: Dag,
     /// p3's own cache discipline: `Arc` identity (`compile_base`'s `base_cache`).
     ptr: std::collections::HashMap<*const SymbolicExpression<F>, usize>,
+    /// The same, for the extension tree (`compile_ext`'s `ext_cache`).
+    eptr: std::collections::HashMap<*const SymbolicExpressionExt<F, EF>, usize>,
     /// The extra one: STRUCTURAL identity of the numbered node.
     hc: std::collections::HashMap<DagNode, usize>,
 }
@@ -1079,6 +1171,7 @@ impl DagBuilder {
         Self {
             dag: Dag::default(),
             ptr: std::collections::HashMap::new(),
+            eptr: std::collections::HashMap::new(),
             hc: std::collections::HashMap::new(),
         }
     }
@@ -1125,6 +1218,15 @@ impl DagBuilder {
     /// **THE EXTRACTOR.** An explicit two-stack walk, the same shape as
     /// `SymbolicCompiler::compile_base` — no recursion, so DAG depth cannot blow the stack.
     fn add_root(&mut self, e: &SymbolicExpression<F>, vars: &mut BTreeMap<VarKey, usize>) {
+        let r = self.build(e, vars);
+        self.dag.roots.push(r);
+    }
+
+    /// The same walk, returning the node index instead of pushing a root — which is what the
+    /// EXTENSION walker needs for `ExtLeaf::Base`, so a lifted base sub-tree lands in the SAME
+    /// node list under the SAME pointer cache. That shared `base_cache` is exactly
+    /// `compile_ext`'s discipline (`recursion/src/traits/air.rs:158`).
+    fn build(&mut self, e: &SymbolicExpression<F>, vars: &mut BTreeMap<VarKey, usize>) -> usize {
         let mut tasks: Vec<DagWork<'_>> = vec![DagWork::Eval(e)];
         let mut stack: Vec<usize> = Vec::with_capacity(16);
         while let Some(w) = tasks.pop() {
@@ -1183,6 +1285,104 @@ impl DagBuilder {
                 }
             }
         }
+        stack.pop().expect("final target")
+    }
+
+    /// **THE EXTENSION EXTRACTOR** — §3.18's named remainder, built. `SymbolicExpressionExt` is
+    /// the SAME `SymbolicExpr` shape over `ExtLeaf`, so this is the same two-stack walk with
+    /// three leaf cases instead of two:
+    ///
+    /// * `ExtLeaf::Base(e)` — a LIFTED base sub-tree. It is walked by `build` into the SAME node
+    ///   list, so a sub-expression shared between a base constraint and a LogUp constraint is ONE
+    ///   node, which is what `compile_ext`'s shared `base_cache` buys.
+    /// * `ExtLeaf::ExtVariable(v)` — a permutation column, a permutation value or a challenge,
+    ///   numbered in `evars`.
+    /// * `ExtLeaf::ExtConstant(c)` — an `EF` constant, carried as its four basis coefficients.
+    ///
+    /// Nothing about the LOWERING changes: `Gen1` is at an arbitrary `CommRing` and the deployed
+    /// verifier evaluates every node in `EF` anyway.
+    fn add_root_ext(
+        &mut self,
+        e: &SymbolicExpressionExt<F, EF>,
+        vars: &mut BTreeMap<VarKey, usize>,
+        evars: &mut BTreeMap<ExtVarKey, usize>,
+    ) {
+        let mut tasks: Vec<ExtWork<'_>> = vec![ExtWork::Eval(e)];
+        let mut stack: Vec<usize> = Vec::with_capacity(16);
+        while let Some(w) = tasks.pop() {
+            match w {
+                ExtWork::BuildNeg(key) => {
+                    let x = stack.pop().expect("operand for neg");
+                    let id = self.intern(DagNode::Neg(x));
+                    self.eptr.insert(key, id);
+                    stack.push(id);
+                }
+                ExtWork::Build(key, op) => {
+                    let y = stack.pop().expect("rhs");
+                    let x = stack.pop().expect("lhs");
+                    let id = self.intern(match op {
+                        DagOp::Add => DagNode::Add(x, y),
+                        DagOp::Sub => DagNode::Sub(x, y),
+                        DagOp::Mul => DagNode::Mul(x, y),
+                    });
+                    self.eptr.insert(key, id);
+                    stack.push(id);
+                }
+                ExtWork::Eval(node) => {
+                    let key: *const SymbolicExpressionExt<F, EF> = node;
+                    if let Some(&hit) = self.eptr.get(&key) {
+                        stack.push(hit);
+                        continue;
+                    }
+                    let id = match node {
+                        SymbolicExpr::Leaf(ExtLeaf::Base(b)) => self.build(b, vars),
+                        SymbolicExpr::Leaf(ExtLeaf::ExtConstant(c)) => {
+                            self.intern(DagNode::ECst(limbs_of_ef(c)))
+                        }
+                        SymbolicExpr::Leaf(ExtLeaf::ExtVariable(v)) => {
+                            let k = match v.entry {
+                                ExtEntry::Permutation { offset } => ExtVarKey::Permutation {
+                                    offset,
+                                    index: v.index,
+                                },
+                                ExtEntry::Challenge => ExtVarKey::Challenge { index: v.index },
+                                ExtEntry::PermutationValue => {
+                                    ExtVarKey::PermutationValue { index: v.index }
+                                }
+                            };
+                            let next = evars.len();
+                            let col = *evars.entry(k).or_insert(next);
+                            self.intern(DagNode::EVar(col))
+                        }
+                        SymbolicExpr::Neg { x, .. } => {
+                            tasks.push(ExtWork::BuildNeg(key));
+                            tasks.push(ExtWork::Eval(x));
+                            continue;
+                        }
+                        SymbolicExpr::Add { x, y, .. } => {
+                            tasks.push(ExtWork::Build(key, DagOp::Add));
+                            tasks.push(ExtWork::Eval(y));
+                            tasks.push(ExtWork::Eval(x));
+                            continue;
+                        }
+                        SymbolicExpr::Sub { x, y, .. } => {
+                            tasks.push(ExtWork::Build(key, DagOp::Sub));
+                            tasks.push(ExtWork::Eval(y));
+                            tasks.push(ExtWork::Eval(x));
+                            continue;
+                        }
+                        SymbolicExpr::Mul { x, y, .. } => {
+                            tasks.push(ExtWork::Build(key, DagOp::Mul));
+                            tasks.push(ExtWork::Eval(y));
+                            tasks.push(ExtWork::Eval(x));
+                            continue;
+                        }
+                    };
+                    self.eptr.insert(key, id);
+                    stack.push(id);
+                }
+            }
+        }
         let root = stack.pop().expect("final target");
         self.dag.roots.push(root);
     }
@@ -1202,6 +1402,74 @@ where
         b.add_root(c, &mut vars);
     }
     (b.dag, vars)
+}
+
+/// One table's WHOLE constraint system — all `N = base + ext` of it — as one shared DAG.
+///
+/// ⚑ **The root order is `eval_folded_circuit`'s order and that is load-bearing.** p3 folds every
+/// BASE constraint first, in emission order, then every EXTENSION constraint, each as
+/// `acc = acc*alpha + C` (`recursion/src/traits/air.rs:152-163`). A permuted root list is a
+/// different accumulator and refuses an honest proof, so the split point is reported alongside the
+/// roots rather than left implicit.
+struct FullDag {
+    dag: Dag,
+    vars: BTreeMap<VarKey, usize>,
+    evars: BTreeMap<ExtVarKey, usize>,
+    /// How many of `dag.roots` are BASE constraints; the rest are the LogUp ones.
+    n_base: usize,
+}
+
+fn to_dag_full<A>(air: &A) -> FullDag
+where
+    A: BaseAir<F> + p3_air::Air<p3_lookup::InteractionSymbolicBuilder<F, EF>>,
+{
+    let lookups = Lookups::<F>::from_air::<EF, A>(air);
+    let num_permutation_values = lookups
+        .iter()
+        .filter(|c| matches!(&c.kind, p3_lookup::Kind::Global(_)))
+        .count();
+    let layout = AirLayout {
+        preprocessed_width: air.preprocessed_width(),
+        main_width: air.width(),
+        num_public_values: air.num_public_values(),
+        num_permutation_values,
+        ..Default::default()
+    };
+    let (base, ext) = get_symbolic_constraints::<F, EF, _, _>(air, layout, &lookups, &LogUpGadget);
+    let mut b = DagBuilder::new();
+    let mut vars = BTreeMap::new();
+    let mut evars = BTreeMap::new();
+    for c in &base {
+        b.add_root(c, &mut vars);
+    }
+    let n_base = b.dag.roots.len();
+    for c in &ext {
+        b.add_root_ext(c, &mut vars, &mut evars);
+    }
+    FullDag {
+        dag: b.dag,
+        vars,
+        evars,
+        n_base,
+    }
+}
+
+fn all_full_tables() -> Vec<(&'static str, FullDag)> {
+    let rows = 1024;
+    let mut out = Vec::new();
+    macro_rules! t {
+        ($n:expr, $air:expr) => {{
+            out.push(($n, to_dag_full(&$air)));
+        }};
+    }
+    t!("Const", const_air(rows));
+    t!("Public", public_air(rows));
+    t!("Alu", alu_air(rows));
+    t!("poseidon2_w16", BabyBearD4Width16::default_air());
+    t!("poseidon2_w24", BabyBearD4Width24::default_air());
+    t!("recompose", recompose_air());
+    t!("expose_claim", expose_claim_air());
+    out
 }
 
 fn all_base_tables() -> Vec<(&'static str, Dag, BTreeMap<VarKey, usize>)> {
@@ -1453,6 +1721,14 @@ fn emit_lean_dag() {
             DagNode::Sub(i, j) => format!(".sub {i} {j}"),
             DagNode::Neg(i) => format!(".neg {i}"),
             DagNode::Mul(i, j) => format!(".mul {i} {j}"),
+            // `KimchiDag.Node` has no extension leaves, and `emit_lean_dag` only ever renders a
+            // `to_dag` DAG, which contains none. A panic here rather than a placeholder: a Lean
+            // literal that silently stood in for an extension node would type-check and denote
+            // something else.
+            DagNode::EVar(_) | DagNode::ECst(_) => panic!(
+                "`KimchiDag.Node` has no extension constructor — a `to_dag_full` DAG cannot be \
+                 rendered as Lean literals until `Node` grows `chal`/`lift`"
+            ),
         }
     };
     println!(
@@ -1502,4 +1778,395 @@ fn emit_lean_dag() {
     }
     println!("ROOTS_END");
     println!("COLS {}", vars.len());
+}
+
+// ===========================================================================
+// THE JSON EMISSION — the root's WHOLE constraint system, as an artifact the
+// Mina-side verifier consumes.
+// ===========================================================================
+//
+// ⚑ WHY THIS EXISTS AND WHAT IT IS NOT.
+//
+// `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.19 measures a Kimchi circuit that decides a real
+// dregg STARK proof, and names one seam in it: `DreggProofVerify`'s `constraints` argument is the
+// FIXTURE's four constraints, not the root's 1,093. Every row total downstream of that — the
+// 2.75e7 projection, and §3.21's 591-step schedule over it — is therefore a FLOOR. This emitter
+// closes that seam by rendering the root's own constraint system into a form the o1js side reads.
+//
+// It is an EMISSION, not an authoring. The AIRs are p3's (`plonky3-recursion@0a4a554`); the
+// numbering is `to_dag`'s, already differentially checked against p3's own evaluation over all
+// 901 base constraints (`dag_extractor_agrees_with_p3_evaluation`); the LOWERING of a node list to
+// Kimchi rows is proved in Lean (`Dregg2.Circuit.Emit.KimchiDag.dagGens_forces`, at an arbitrary
+// `CommRing`). What this file adds is the wire form and a KAT, and the KAT is the whole of the
+// evidence that the TypeScript interpreter of this DAG denotes the same thing.
+//
+// ⚑ THE KAT IS THE ONLY THING JOINING THE TWO SIDES AND IT IS NAMED AS THAT. A TypeScript walker
+// over this node list is a THIRD implementation beside p3's and Lean's. Nothing proves it
+// faithful. What is checked is that at pseudorandom EXTENSION-valued assignments it reproduces
+// p3's own alpha-folded accumulator, per table, exactly — the same shape of confession
+// `dag_extractor_agrees_with_p3_evaluation` makes for the extractor, one rung out.
+
+const DAG_KIND_VAR: u8 = 0;
+const DAG_KIND_CST: u8 = 1;
+const DAG_KIND_ADD: u8 = 2;
+const DAG_KIND_SUB: u8 = 3;
+const DAG_KIND_NEG: u8 = 4;
+const DAG_KIND_MUL: u8 = 5;
+const DAG_KIND_EVAR: u8 = 6;
+const DAG_KIND_ECST: u8 = 7;
+
+/// How many KAT trials the artifact carries. Three, because one is a coin flip against a
+/// transcription error that happens to be an identity at a particular point, and the cost is 12
+/// numbers per table.
+const KAT_TRIALS: usize = 3;
+
+/// The KAT's assignment stream, SPECIFIED so a second implementation can reproduce it: from the
+/// trial's seed, draw `alpha` (4 limbs, low to high), then every BASE column in index order (4
+/// limbs each), then every EXTENSION column in index order (4 limbs each). `lcg` is the LCG this
+/// file already uses for its differentials.
+fn kat_assignment(seed: u64, n_base: usize, n_ext: usize) -> (EF, Vec<EF>, Vec<EF>) {
+    let mut s = seed;
+    let mut draw = |s: &mut u64| {
+        let mut c = [F::ZERO; 4];
+        for x in &mut c {
+            *x = lcg(s);
+        }
+        <EF as p3_field::BasedVectorSpace<F>>::from_basis_coefficients_slice(&c)
+            .expect("EF has exactly 4 basis coefficients")
+    };
+    let alpha = draw(&mut s);
+    let a: Vec<EF> = (0..n_base).map(|_| draw(&mut s)).collect();
+    let e: Vec<EF> = (0..n_ext).map(|_| draw(&mut s)).collect();
+    (alpha, a, e)
+}
+
+/// p3's accumulator, `acc = acc*alpha + C_i` over the roots IN ORDER, seeded with ZERO
+/// (`recursion/src/traits/air.rs:152`). ⚑ Seeded with zero and paying `N` folds — §3.17 records
+/// that `AirEval.ts`'s `foldConstraints` seeds with `constraints[0]` and pays `N-1`, which is a
+/// different accumulator by a factor of alpha and is the shape this artifact must not inherit.
+fn fold_roots(alpha: EF, vals: &[EF]) -> EF {
+    let mut acc = EF::ZERO;
+    for v in vals {
+        acc = acc * alpha + *v;
+    }
+    acc
+}
+
+/// **THE ARTIFACT.** Writes the root's seven constraint DAGs to JSON.
+///
+/// `DREGG_AIR_DAG_JSON=<path>` selects the output; with the variable unset the test still builds
+/// every DAG and runs every check, and only the write is skipped — so this is a GATE on all seven
+/// tables in the normal test run, not an emitter that is only exercised when someone asks for it.
+#[test]
+fn emit_root_air_dag_json() {
+    let tables = all_full_tables();
+    let mut out = Vec::new();
+    let mut tot_nodes = 0usize;
+    let mut tot_base = 0usize;
+    let mut tot_ext = 0usize;
+    let mut tot_muls = 0usize;
+    let mut kinds = [0usize; 8];
+
+    println!(
+        "\n{:<16} {:>6} {:>6} {:>8} {:>8} {:>8} {:>8}",
+        "table", "base", "ext", "nodes", "muls", "cols", "extcols"
+    );
+    for (name, fd) in &tables {
+        let d = &fd.dag;
+        assert!(d.wf(), "{name}: DAG is not topologically sorted");
+        let n_ext_roots = d.roots.len() - fd.n_base;
+        println!(
+            "{name:<16} {:>6} {:>6} {:>8} {:>8} {:>8} {:>8}",
+            fd.n_base,
+            n_ext_roots,
+            d.nodes.len(),
+            d.muls(),
+            fd.vars.len(),
+            fd.evars.len()
+        );
+        tot_nodes += d.nodes.len();
+        tot_base += fd.n_base;
+        tot_ext += n_ext_roots;
+        tot_muls += d.muls();
+        let k = d.kinds();
+        for i in 0..8 {
+            kinds[i] += k[i];
+        }
+
+        // ── the node list ────────────────────────────────────────────────
+        let nodes: Vec<serde_json::Value> = d
+            .nodes
+            .iter()
+            .map(|n| match *n {
+                DagNode::Var(c) => serde_json::json!([DAG_KIND_VAR, c]),
+                DagNode::Cst(k) => serde_json::json!([DAG_KIND_CST, k]),
+                DagNode::Add(i, j) => serde_json::json!([DAG_KIND_ADD, i, j]),
+                DagNode::Sub(i, j) => serde_json::json!([DAG_KIND_SUB, i, j]),
+                DagNode::Neg(i) => serde_json::json!([DAG_KIND_NEG, i]),
+                DagNode::Mul(i, j) => serde_json::json!([DAG_KIND_MUL, i, j]),
+                DagNode::EVar(c) => serde_json::json!([DAG_KIND_EVAR, c]),
+                DagNode::ECst(k) => serde_json::json!([DAG_KIND_ECST, k[0], k[1], k[2], k[3]]),
+            })
+            .collect();
+
+        // ── the column legends, in the numbering the nodes index ─────────
+        let mut cols = vec![String::new(); fd.vars.len()];
+        for (k, &i) in &fd.vars {
+            cols[i] = k.label();
+        }
+        let mut ecols = vec![String::new(); fd.evars.len()];
+        for (k, &i) in &fd.evars {
+            ecols[i] = k.label();
+        }
+
+        // ── the KAT ──────────────────────────────────────────────────────
+        let mut kat = Vec::new();
+        for t in 0..KAT_TRIALS {
+            let seed = 0x4d69_6e61_0000_0001u64
+                .wrapping_add((name.len() as u64) << 32)
+                .wrapping_add(name.bytes().map(u64::from).sum::<u64>() << 8)
+                .wrapping_add(t as u64);
+            let (alpha, a, e) = kat_assignment(seed, fd.vars.len(), fd.evars.len());
+            let v = d.eval_ef(&a, &e);
+            let roots: Vec<EF> = d.roots.iter().map(|&r| v[r]).collect();
+            let acc = fold_roots(alpha, &roots);
+            kat.push(serde_json::json!({
+                "seed": format!("{seed:#018x}"),
+                "alpha": limbs_of_ef(&alpha),
+                "acc": limbs_of_ef(&acc),
+            }));
+        }
+
+        out.push(serde_json::json!({
+            "name": name,
+            "nBase": fd.n_base,
+            "nExt": n_ext_roots,
+            "cols": cols,
+            "extCols": ecols,
+            "nodes": nodes,
+            "roots": d.roots,
+            "kat": kat,
+        }));
+    }
+
+    println!(
+        "\ntotals: base {tot_base} + ext {tot_ext} = N {}  |  nodes {tot_nodes}  muls {tot_muls}",
+        tot_base + tot_ext
+    );
+    println!(
+        "node kinds: var {} cst {} add {} sub {} neg {} mul {} evar {} ecst {}",
+        kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6], kinds[7]
+    );
+
+    // ⚑ THE COUNTS ARE PINNED. §3.17 measured N = 1,093 = 901 base + 192 ext by a completely
+    // different route (`census`, which never builds a DAG). If the extractor ever drops or
+    // duplicates a root this reds here, and a Mina-side verifier built on a short constraint list
+    // would otherwise be silently weaker than the deployed one.
+    assert_eq!(tot_base, 901, "the base root count is the census's 901");
+    assert_eq!(tot_ext, 192, "the ext root count is the census's 192");
+    assert_eq!(tot_base + tot_ext, 1093, "N is the census's 1,093");
+    assert_eq!(
+        kinds.iter().sum::<usize>(),
+        tot_nodes,
+        "the kind histogram must cover every node"
+    );
+
+    let doc = serde_json::json!({
+        "kind": "dregg-root-air-dag",
+        "generator": "circuit-prove/tests/root_air_constraint_census.rs::emit_root_air_dag_json",
+        "p": babybear_p(),
+        "extDegree": D,
+        "katTrials": KAT_TRIALS,
+        "kindCodes": {
+            "var": DAG_KIND_VAR, "cst": DAG_KIND_CST, "add": DAG_KIND_ADD, "sub": DAG_KIND_SUB,
+            "neg": DAG_KIND_NEG, "mul": DAG_KIND_MUL, "evar": DAG_KIND_EVAR, "ecst": DAG_KIND_ECST,
+        },
+        "totals": {
+            "nodes": tot_nodes, "muls": tot_muls, "base": tot_base, "ext": tot_ext,
+            "n": tot_base + tot_ext,
+            "kinds": { "var": kinds[0], "cst": kinds[1], "add": kinds[2], "sub": kinds[3],
+                       "neg": kinds[4], "mul": kinds[5], "evar": kinds[6], "ecst": kinds[7] },
+        },
+        "tables": out,
+    });
+
+    let Ok(path) = std::env::var("DREGG_AIR_DAG_JSON") else {
+        println!("\nset DREGG_AIR_DAG_JSON=<path> to write the artifact");
+        return;
+    };
+    std::fs::write(&path, serde_json::to_string(&doc).expect("serialize"))
+        .unwrap_or_else(|e| panic!("cannot write {path}: {e}"));
+    println!("\nwrote {path}");
+}
+
+/// ⚑ **THE ANTI-VACUITY CHECK FOR THE EXTENSION HALF** — the same confession `to_dag` makes, over
+/// the constraints `to_dag` could not see. For every one of the 192 LogUp constraints, the unified
+/// DAG's root and p3's own `SymbolicExpressionExt` must agree at pseudorandom EXTENSION-valued
+/// assignments. Without this the ext walker is an unchecked transcription and `N = 1,093` in the
+/// artifact would be 901 real constraints and 192 decorative ones.
+#[test]
+fn ext_dag_agrees_with_p3_evaluation() {
+    let mut seed = 0x1eaf_0f5e_c0de_0011u64;
+    let mut checked = 0usize;
+    for (name, fd) in all_full_tables() {
+        let ext = ext_constraints_by_name(name);
+        let n_ext_roots = fd.dag.roots.len() - fd.n_base;
+        assert_eq!(
+            ext.len(),
+            n_ext_roots,
+            "{name}: one root per extension constraint"
+        );
+        for _trial in 0..8 {
+            let mut draw = || {
+                let mut c = [F::ZERO; 4];
+                for x in &mut c {
+                    *x = lcg(&mut seed);
+                }
+                <EF as p3_field::BasedVectorSpace<F>>::from_basis_coefficients_slice(&c)
+                    .expect("EF has exactly 4 basis coefficients")
+            };
+            let a: Vec<EF> = (0..fd.vars.len().max(1)).map(|_| draw()).collect();
+            let e: Vec<EF> = (0..fd.evars.len().max(1)).map(|_| draw()).collect();
+            let v = fd.dag.eval_ef(&a, &e);
+            let mut memo = ExtEvalMemo::new();
+            let mut bmemo = ExtBaseMemo::new();
+            for (c, &r) in ext.iter().zip(fd.dag.roots[fd.n_base..].iter()) {
+                let rhs = eval_sym_ext(c, &fd.vars, &fd.evars, &a, &e, &mut memo, &mut bmemo);
+                assert_eq!(v[r], rhs, "{name}: ext DAG root disagrees with p3");
+                checked += 1;
+            }
+        }
+    }
+    println!("\n{checked} ext-DAG-root/SymbolicExpressionExt agreements at 8 assignments each");
+    assert!(checked > 0, "a differential over an empty set says nothing");
+}
+
+type ExtEvalMemo = std::collections::HashMap<*const SymbolicExpressionExt<F, EF>, EF>;
+type ExtBaseMemo = std::collections::HashMap<*const SymbolicExpression<F>, EF>;
+
+/// Evaluate a `SymbolicExpression<F>` at an EXTENSION-valued assignment — which is what the
+/// deployed verifier does, since every opened value at `zeta` lives in `EF`.
+fn eval_sym_in_ef(
+    e: &SymbolicExpression<F>,
+    vars: &BTreeMap<VarKey, usize>,
+    a: &[EF],
+    memo: &mut ExtBaseMemo,
+) -> EF {
+    let key: *const SymbolicExpression<F> = e;
+    if let Some(v) = memo.get(&key) {
+        return *v;
+    }
+    let v = match e {
+        SymbolicExpr::Leaf(leaf) => {
+            let k = match leaf {
+                BaseLeaf::Constant(c) => return EF::from(*c),
+                BaseLeaf::IsFirstRow => VarKey::IsFirstRow,
+                BaseLeaf::IsLastRow => VarKey::IsLastRow,
+                BaseLeaf::IsTransition => VarKey::IsTransition,
+                BaseLeaf::Variable(v) => match v.entry {
+                    BaseEntry::Preprocessed { offset } => VarKey::Preprocessed {
+                        offset,
+                        index: v.index,
+                    },
+                    BaseEntry::Main { offset } => VarKey::Main {
+                        offset,
+                        index: v.index,
+                    },
+                    BaseEntry::Periodic => VarKey::Periodic { index: v.index },
+                    BaseEntry::Public => VarKey::Public { index: v.index },
+                },
+            };
+            a[vars[&k]]
+        }
+        SymbolicExpr::Add { x, y, .. } => {
+            eval_sym_in_ef(x, vars, a, memo) + eval_sym_in_ef(y, vars, a, memo)
+        }
+        SymbolicExpr::Sub { x, y, .. } => {
+            eval_sym_in_ef(x, vars, a, memo) - eval_sym_in_ef(y, vars, a, memo)
+        }
+        SymbolicExpr::Neg { x, .. } => -eval_sym_in_ef(x, vars, a, memo),
+        SymbolicExpr::Mul { x, y, .. } => {
+            eval_sym_in_ef(x, vars, a, memo) * eval_sym_in_ef(y, vars, a, memo)
+        }
+    };
+    memo.insert(key, v);
+    v
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_sym_ext(
+    e: &SymbolicExpressionExt<F, EF>,
+    vars: &BTreeMap<VarKey, usize>,
+    evars: &BTreeMap<ExtVarKey, usize>,
+    a: &[EF],
+    x: &[EF],
+    memo: &mut ExtEvalMemo,
+    bmemo: &mut ExtBaseMemo,
+) -> EF {
+    let key: *const SymbolicExpressionExt<F, EF> = e;
+    if let Some(v) = memo.get(&key) {
+        return *v;
+    }
+    let v = match e {
+        SymbolicExpr::Leaf(ExtLeaf::Base(b)) => eval_sym_in_ef(b, vars, a, bmemo),
+        SymbolicExpr::Leaf(ExtLeaf::ExtConstant(c)) => *c,
+        SymbolicExpr::Leaf(ExtLeaf::ExtVariable(v)) => {
+            let k = match v.entry {
+                ExtEntry::Permutation { offset } => ExtVarKey::Permutation {
+                    offset,
+                    index: v.index,
+                },
+                ExtEntry::Challenge => ExtVarKey::Challenge { index: v.index },
+                ExtEntry::PermutationValue => ExtVarKey::PermutationValue { index: v.index },
+            };
+            x[evars[&k]]
+        }
+        SymbolicExpr::Add { x: l, y: r, .. } => {
+            eval_sym_ext(l, vars, evars, a, x, memo, bmemo)
+                + eval_sym_ext(r, vars, evars, a, x, memo, bmemo)
+        }
+        SymbolicExpr::Sub { x: l, y: r, .. } => {
+            eval_sym_ext(l, vars, evars, a, x, memo, bmemo)
+                - eval_sym_ext(r, vars, evars, a, x, memo, bmemo)
+        }
+        SymbolicExpr::Neg { x: l, .. } => -eval_sym_ext(l, vars, evars, a, x, memo, bmemo),
+        SymbolicExpr::Mul { x: l, y: r, .. } => {
+            eval_sym_ext(l, vars, evars, a, x, memo, bmemo)
+                * eval_sym_ext(r, vars, evars, a, x, memo, bmemo)
+        }
+    };
+    memo.insert(key, v);
+    v
+}
+
+fn ext_constraints_by_name(name: &str) -> Vec<SymbolicExpressionExt<F, EF>> {
+    macro_rules! go {
+        ($air:expr) => {{
+            let air = $air;
+            let lookups = Lookups::<F>::from_air::<EF, _>(&air);
+            let num_permutation_values = lookups
+                .iter()
+                .filter(|c| matches!(&c.kind, p3_lookup::Kind::Global(_)))
+                .count();
+            let layout = AirLayout {
+                preprocessed_width: air.preprocessed_width(),
+                main_width: air.width(),
+                num_public_values: air.num_public_values(),
+                num_permutation_values,
+                ..Default::default()
+            };
+            get_symbolic_constraints::<F, EF, _, _>(&air, layout, &lookups, &LogUpGadget).1
+        }};
+    }
+    let rows = 1024;
+    match name {
+        "Const" => go!(const_air(rows)),
+        "Public" => go!(public_air(rows)),
+        "Alu" => go!(alu_air(rows)),
+        "poseidon2_w16" => go!(BabyBearD4Width16::default_air()),
+        "poseidon2_w24" => go!(BabyBearD4Width24::default_air()),
+        "recompose" => go!(recompose_air()),
+        "expose_claim" => go!(expose_claim_air()),
+        other => panic!("unknown table {other}"),
+    }
 }
