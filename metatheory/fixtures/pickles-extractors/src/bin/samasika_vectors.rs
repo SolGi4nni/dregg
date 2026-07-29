@@ -163,7 +163,7 @@ fn ocaml_select(e: &ConsensusState, c: &ConsensusState, eh: &StateHash, ch: &Sta
 
 fn hash_decimal(h: &StateHash) -> String {
     // `StateHash` derefs to `BigInt`, which holds `field.into_bigint()` — the CANONICAL
-    // representation (mina-p2p-messages `src/bigint.rs:100`). `to_decimal` is therefore the
+    // representation (mina-p2p-messages `src/bigint.rs:103`). `to_decimal` is therefore the
     // numeric value of the field element, which is exactly what the OCaml `compare` on
     // `Snark_params.Tick.Field.t` orders by.
     h.to_decimal()

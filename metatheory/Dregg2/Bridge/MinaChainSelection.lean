@@ -913,6 +913,23 @@ def selectOpenmina (C : Constants) (gpEnd : Nat) (e c : ConsensusState) (eh ch :
     else if dc < de then SelectStatus.keep
     else (if blockchainLengthLonger e c eh ch then SelectStatus.take else SelectStatus.keep)
 
+/-- A state whose `epoch_count` is 2 and whose `curr_epoch` is also 2, staking checkpoint 111. -/
+def keyA : ConsensusState := { mkCS 0 0 [] [] 14280 7140 111 0 with epochCount := 2 }
+/-- Its rival one epoch back in both senses, whose NEXT-epoch checkpoint is `keyA`'s staking one
+but whose STAKING checkpoint is different. -/
+def keyB : ConsensusState := { mkCS 0 0 [] [] 14279 7140 888 111 with epochCount := 1 }
+
+/-- ⚑ **`select_factors_through_selKey` IS NOT VACUOUS: openmina's rule does NOT factor.** Zero out
+the seventeen non-selection fields and the daemon's verdict is unchanged (that theorem is `rfl`);
+do the same to openmina's short-range test and it FLIPS, because it reads a NINTH field —
+`epoch_count`. So "reads exactly eight fields" is a real property of the daemon's rule that the
+second implementation does not have. -/
+theorem openmina_does_not_factor_through_selKey :
+    isShortRangeOpenmina mainnet keyA keyB = true
+    ∧ isShortRangeOpenmina mainnet (selKey keyA) (selKey keyB) = false
+    ∧ isShortRange mainnet keyA keyB = isShortRange mainnet (selKey keyA) (selKey keyB) := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
 /-- The `Slot.succ` off-by-one, isolated: at epoch slot 4759 the daemon's
 `not (in_seed_update_range (4759 + 1))` holds (4760 is the first slot past the range) while
 openmina's `4759 ≥ 4760` does not. -/
@@ -1008,6 +1025,7 @@ theorem minaBetterTip_is_not_foldable :
 #assert_axioms beats_not_transitive
 #assert_axioms three_renderings_three_answers
 #assert_axioms grace_period_end_diverges
+#assert_axioms openmina_does_not_factor_through_selKey
 #assert_axioms short_range_check_diverges
 #assert_axioms succ_off_by_one
 #assert_axioms minaBetterTip_decides
