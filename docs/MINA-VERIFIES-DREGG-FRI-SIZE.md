@@ -1816,6 +1816,8 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | The FRI walk these circuits perform is *the prover's* | **Yes as of §3.12–3.13b at the fold chain, and as of §3.15 at the value it starts from.** The query index and every `beta` are DERIVED from a `DuplexChallenger` transcript KAT'd against the deployed one, the 16-bit query PoW is checked, one program joins the derivation to the walk, and the reduced opening is now COMPUTED from the opened rows rather than witnessed. **Not yet** for the input-phase opening over MIXED matrix heights (one matrix per batch is built), nor for the batch-STARK preamble the transcript starts from. |
 | The challenger is a rounding error next to the query walk | **Yes — 0.48%, measured (§3.12).** Which is the point: the binding was cheap and was simply absent. |
 | The DEEP/AIR arithmetic is ~1.5–2% | **No — ≈3.5%.** §2.4 priced a Horner step at ~7 rows; it is **49, measured** (§3.14). Still not the driver. |
+| A Mina zkApp could today verify a dregg **proof**, not a dregg commitment | **Yes, at a reduced geometry — §3.19.** One `ZkProgram` consumes a proof `p3_uni_stark::prove` made under `DreggStarkConfig` and DECIDES it (preamble, opened-value absorption, FRI transcript, the AIR closing equality, the DEEP quotient, the MMCS openings, the fold chain) in **56,927 rows — ONE 2^16 Pickles step**, compiling, PROVING, verifying, and REFUSING seven bends and three wrong AIRs as real `prove()` refusals. **Not** at the deployed root's geometry: that projects to ≈ 2.75 × 10⁷ rows / 500–573 steps from §3.19's own measured marginals, and the AIR term in that total is the fixture's four constraints, not the root's 1,093. |
+| The rungs are assembled | **Yes as of §3.19, and they were not before.** Every rung up to §3.18 was fed a fixture the measurement synthesised. §3.19's fixture is a proof dregg's prover made and dregg's own verifier accepted before it was emitted. |
 | A both-polarity, deterministic check of a step implies the chain is right | **No, and this cost a day.** The single-round coset-descent check was made deterministic and both-polarity on 07-27 and stayed green while the CHAIN descended on the wrong index bit — right on ~half of any chain's rounds and on 100% of the all-zero index every row measurement uses. **Composition needs its own referent** (§3.13). |
 
 **Sources of record.** dregg: `circuit-prove/src/plonky3_recursion_impl.rs` (config, hash types,
@@ -1843,8 +1845,12 @@ bits**, and `rangeCheck3x12` at **1 row/36 bits** — ~66 bits/row is the ceilin
 uses those. §3.5's "lookups are a precondition, not an optimisation" stands.)
 o1js circuits + measurement, all run by `scripts/check-mina-attestation.sh`:
 `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts` (§3.8), `src/Poseidon2Merkle.ts` (§3.9),
-`src/FriQueryStep.ts` (§3.10, §3.13), `src/FriChallenger.ts` (§3.12, §3.13b), with
-`scripts/{poseidon2-babybear-rows,poseidon2-merkle-rows,fri-query-rows,fri-challenger-rows,fri-chain-rows}.ts`.
+`src/FriQueryStep.ts` (§3.10, §3.13), `src/FriChallenger.ts` (§3.12, §3.13b),
+`src/DeepQuotient.ts` (§3.15), `src/AirEval.ts` (§3.16), **`src/DreggProofVerify.ts` (§3.19 — the
+assembly)**, with `scripts/{poseidon2-babybear-rows,poseidon2-merkle-rows,fri-query-rows,fri-challenger-rows,fri-chain-rows,fri-deep-rows,air-eval-rows,dregg-proof-verify}.ts`.
+§3.19's fixture emitter is `circuit/src/bin/mina_stark_fixture.rs` — `p3_uni_stark::prove` under
+`dregg_circuit::plonky3_prover::DreggStarkConfig`, self-verified before emission, canonical-u32 (NOT
+Montgomery) on the wire.
 The deployed-object referents are `circuit-prove/sketches/mina-pasta-hash-probe`'s `p2merkle`
 (the MMCS), `p2fold` (one fold), `p2chain` (the whole 16-round chain), `p2chal` and
 `p2fritranscript` (`p3_challenger::DuplexChallenger` and the `verify_fri` schedule) — every one of
