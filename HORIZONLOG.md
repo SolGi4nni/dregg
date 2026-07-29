@@ -1,5 +1,46 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 29 — the IR-v2 prover was fail-OPEN under `--release` for 35 days. The constraint system never was.
+
+**Reported** (99307a856): an all-zeros 64x525 trace PROVES against a 45-constraint Lean
+descriptor, every single-cell tamper is accepted, 17 of 68 `descriptor_ir2::tests` red — therefore
+"the prover is not enforcing them" and a green `prove_vm_descriptor2` is "a statement about a FRI
+commitment and not about the constraint system".
+
+**Half of that is right.** Those tests call `prove_vm_descriptor2` and never call
+`verify_vm_descriptor2`. Hand the all-zeros proof to the deployed verifier and it is REFUSED —
+`OodEvaluationMismatch { index: Some(0) }`, instance 0 being the Main AIR that carries the
+Lean-emitted gates. Same for every tamper. **The AIR bound its constraints the whole time.** What
+broke is that `prove` returned `Ok` about a proof its own verifier rejects.
+
+**Root cause, one line, dated.** `934258ea0` (2026-06-24), a perf sweep captioned
+"result-identical" and "No protocol/VK change", moved the unconditional producer self-verify to
+`if check && cfg!(debug_assertions)`. Its justification — "the in-trace replay above ... already
+eagerly refuses a bad witness fail-closed" — is false: `build_traces`'s replay covers exact-public
+manifests, submask bit blocks and the mem/umem/map-op witnesses, and evaluates **no** algebraic
+constraint. p3's own `check_constraints` and LogUp balance check are `#[cfg(debug_assertions)]`
+too, and the latter only runs for instances with lookups. A gate-only, lookup-free descriptor had
+nothing checking it in release. Debug was never affected — 68/68, and that is why `cargo test`
+never saw it.
+
+**Closed** (`135e3382d`): self-verify restored in every profile (~5 ms against a 15.7 s prove); the
+two `fold_chain` map-assembly `debug_assert_eq!`s are fail-closed `Err`s under `check` (they were
+also the pinned mechanism of two teeth that could not fire in release since `bdcb70d52`,
+2026-07-15); fifteen forgery teeth re-routed through the DEPLOYED verifier instead of a debug-only
+prover panic. `circuit/tests/ir2_prove_is_fail_closed.rs` is the permanent falsifier and it FIRES —
+re-introduce the `cfg!` and 4 of its 5 go red, control green. Release: `--lib descriptor_ir2`
+68/68, `pasta_windowed_tamper` 7/7, falsifier 5/5.
+
+**The class, for the next reader.** A perf commit that is genuinely result-identical *on the
+accept path* can still delete the refuse path, and the subject will not say so. Second: a test
+whose oracle is `prove(..).is_ok()` measures nothing about an AIR. Ask the verifier.
+
+**Still open, NOT this lane.** (a) `descriptors/by-name/pasta-rcb-windowed*` landed at `3c3d834bb`
+without the emit/stamp ceremony, so `provenance_json_pins_match_checked_in_descriptor_bytes` is
+red — needs `scripts/emit_descriptors.py`. (b) on-curve-ness is ungated in `hornerAddStep`, with a
+concrete absorbing-state attack (`acc + O = Y1*acc`, so a forged `Y1 = 0` gives `(0,0,0)`, which
+satisfies the terminal predicate).
+
 ## ⚑⚑⚑ JULY 29 — THE MINA RUNGS WERE NEVER ASSEMBLED. ONE ZkProgram now DECIDES a dregg proof, 56,927 rows, in ONE Pickles step
 
 **The finding, and it is a shape not a bug.** Seven rungs of a Mina-side dregg verifier were built,
