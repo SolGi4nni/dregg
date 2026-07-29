@@ -16,6 +16,15 @@ reading it was first derived from.*
 
 ## 0. Verdict up front
 
+⚑ **AS OF §3.22–§3.25 (2026-07-29) THE HEADLINE NUMBERS ARE EMITTED, NOT PROJECTED.** The row
+budget is **2.46 × 10⁷** measured per atom, the deployed step count is **519** (448 at
+`max_proofs_verified = 1`) scheduled over that emitted list, and the AIR term in it is the root's
+own **1,093** constraints rather than the fixture's four. The root's constraint system is
+**275,143 rows — 4.20× a Pickles step**, so it has no one-step verifier; three chained steps over it
+are proved. And it now runs on **dregg's committed root proof**: all seven instances' closing
+equalities checked as Kimchi constraints, with one instance (`expose_claim`, `degree_bits = 0`)
+measured **not to bind ζ at all**.
+
 **Feasible-but-huge. Not blocked; nowhere near a handful. ~2.9 × 10^7 Kimchi rows ⇒ several
 hundred chained Pickles step circuits at deployed parameters, and the FRI knobs alone cannot get it
 under ~260.**
@@ -1828,6 +1837,277 @@ reduced openings must be pairwise distinct — before the splice uses it.
 
 ---
 
+### 3.22 ⚑ MEASURED — THE ROOT'S OWN AIR, EMITTED: all 1,093 constraints, 275,143 rows
+
+*`bridge/mina-zkapp/src/RootAirDag.ts`, `src/generated/root-air-dag.json`,
+`scripts/root-air-rows.ts`, and the extension half of the extractor in
+`circuit-prove/tests/root_air_constraint_census.rs`. Gate leg 13.*
+
+§3.19 named exactly one thing in the assembly as still the fixture's — `DreggProofVerify`'s
+`constraints` argument, a 3-column AIR with **four** constraints against the root's **1,093** — and
+said in terms what that made every figure downstream: *"2.75 × 10⁷ is a FLOOR ... the AIR term
+inside it is the fixture's four constraints"*. §3.21 inherited it whole: *"a floor scheduled is
+still a floor."*
+
+**The root's constraint system is now an artifact the o1js side consumes.**
+
+**§3.18's named remainder is built.** `to_dag` covered the 901 base constraints and left the 192
+LogUp ones *"outside the vocabulary"*, naming the extension precisely — `ExtLeaf::Challenge`, a
+permutation-column leaf, a `lift` of a base index, sharing `base_cache`. `to_dag_full` is that, and
+the whole root is **one shared DAG**:
+
+| | |
+|---|---:|
+| constraints | **1,093** = 901 base + 192 LogUp |
+| DAG nodes | **10,417** |
+| multiplies | **3,029** |
+| node census | var 1,282 · cst 377 · add 3,797 · sub 1,571 · neg 41 · mul 3,029 · **evar 320** |
+| column variables | 1,282 base + 320 extension |
+
+⚑ Three of the seven tables (`Const`, `Public`, `recompose`) have **zero** base constraints, so
+until now this rung covered *nothing* for them. They have 3 LogUp constraints each and are covered.
+
+**THE MEASUREMENT, EMITTED** — `getRows()` on a circuit that walks every node and folds every
+constraint, not a model of one:
+
+| table | N | nodes | cols | witness | `C_i` | fold | rows |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Const | 3 | 32 | 14 | 365 | 432 | 130 | 927 |
+| Public | 3 | 32 | 14 | 365 | 432 | 130 | 927 |
+| Alu | 146 | 1,319 | 307 | 7,983 | 23,610 | 6,986 | 38,579 |
+| poseidon2-W16 | 337 | 3,036 | 379 | 9,855 | 53,381 | 16,162 | 79,398 |
+| poseidon2-W24 | 501 | 5,138 | 571 | 14,847 | 90,389 | 24,034 | 129,270 |
+| recompose | 3 | 32 | 14 | 365 | 432 | 130 | 927 |
+| expose_claim | 100 | 828 | 303 | 7,879 | 12,450 | 4,786 | 25,115 |
+| **Σ** | **1,093** | **10,417** | **1,602** | **41,659** | **181,126** | **52,358** | **275,143** |
+
+and the per-operation marginals are emitted too: **extAdd 18, extSub 18, extMul 30, one α-fold step
+48** — §3.16's measured `h = 48`, reproduced from its two halves. §3.14's model units (31 and 19)
+land 3% and 5% high.
+
+**⇒ the AIR term is 1.00% of §3.19's 2.75 × 10⁷.** That is a small number and it is the whole
+point: it had never been *measured*, so the projection could not honestly be quoted as anything but
+a floor.
+
+**THE SEAM, AND WHAT JOINS IT.** The TypeScript walker is a **third** implementation beside p3's
+and Lean's and nothing proves it faithful. What joins it is 21 KAT vectors carrying the α-folded
+accumulator the Rust side computed from p3's own AIRs, reproduced **both** out of circuit and as an
+**in-circuit assertion** for all seven tables. It refuses a wf-preserving one-child edit to a single
+Alu node, two constraint roots swapped, and one constraint dropped — each checked to be `Constraint
+unsatisfied` and not a harness shape error. The ext walk is separately differential-checked against
+p3's own `SymbolicExpressionExt` evaluation over all 192 constraints, **1,536 agreements**.
+
+**⚑ TWO CORRECTIONS TO THE RECORD, both found by running what the record described.**
+
+- §3.17 records *"the α-FOLD IS OFF BY ONE IN `AirEval.ts`"*. That is a true reading of both bodies
+  and a **wrong conclusion**: seeding with zero and folding `C_0` gives `0·α + C_0 = C_0`, so p3's
+  first fold **is** the other one's seed. Both compute `C_0·α^{N−1} + … + C_{N−1}` exactly, measured
+  here on all 146 Alu constraints. The difference is **34 emitted rows spent on an identity** — a
+  row difference, not a different accumulator. A verifier built on `foldConstraints` would have been
+  **right**. §3.16's "corrected for it by subtracting one marginal price" was the correct treatment;
+  the §3.17 note over-read it. This now runs as a **permanent control** on every green pass.
+- §3.18 charged 1,282 `.var` copy nodes at 19 rows each (24,358 rows) and called them "elidable".
+  **Emitted they are free** — `reduceLane` does not reduce a lane already under 2³¹ — so the elision
+  was always taken and the model overcharged for it. A `constScale` elision measures **zero** for
+  the same reason: a multiply's cost is its four lane *reductions*, not its sixteen products, which
+  is §3.8's central finding one rung out.
+
+**What §3.22 does NOT close.** The extraction is still a Rust seam. One accumulator over all seven
+tables is not the batch-STARK per-instance comparison. Nothing is wired to `setDreggRoot`.
+
+---
+
+### 3.23 ⚑ MEASURED — THE SCHEDULE OVER AN EMITTED ROW LIST: 591 is 519
+
+*`bridge/mina-zkapp/scripts/emitted-atoms.ts` and `scripts/emitted-schedule.ts`,
+`PartitionSchedule.emittedProgram`. Gate leg 14.*
+
+§3.21 says what its 591 is not: *"591 is a schedule over a measured MODEL, not over an emitted row
+list — which is precisely the distinction `KimchiPartition` draws between 'a partitioning number'
+and 'a compiler output', and it is still open."*
+
+**Of the model's 27,590 atoms, every row figure was a measured marginal EXCEPT two divisions:**
+`perArith = (deployedQueryWalk − pathLevels × PERM_ROWS)/(layers+1)` and `tailRows/nTail`. Both are
+replaced by **in-context marginals on the deployed program itself** — rows at 16 fold layers against
+15 against 14 separates a *round* from a *path level*; input depth 22 against 21 gives the input
+level:
+
+| atom | modelled | **EMITTED** | delta |
+|---|---:|---:|---:|
+| one commit-phase path level | 2,668 | **2,677** | +0.3% |
+| one fold **round**'s arithmetic | 3,221 | **2,809** | **−12.8%** |
+| one input-phase path level | 2,668 | **2,677** | +0.3% |
+
+**99.0%** of the 748,438-row deployed query walk is now atoms carrying their own in-context
+marginal; the residual is 7,496 rows.
+
+⚑ **The atom that moved is the one the model leaned on.** 3,221 is the model's *"largest indivisible
+atom, 6.5% of a step"* — the figure that licensed "this is a placement and not a rounding". It is
+2,809, because the division charged the fold rounds for a residual that is not theirs.
+
+**THE FLOOR MOVED IN BOTH DIRECTIONS AND THE NET IS NOT THE DIRECTION "FLOOR" IMPLIES:**
+
+| | atoms | rows |
+|---|---:|---:|
+| §3.21's atom model (fixture AIR, divided marginals) | 27,590 | 27,497,697 |
+| EMITTED, no AIR | 27,566 | 24,333,629 |
+| **EMITTED, the ROOT's AIR** | **39,076** | **24,574,325** |
+
+The AIR term is **+240,696** rows and **+11,510** atoms; the walk term is **−3.16 × 10⁶**. Net the
+emitted total is **10.64% BELOW** §3.19's projection. The projection was called a floor because its
+AIR term was too small; it was **also too big everywhere else, and by more**.
+
+**THE SAME DYNAMIC PROGRAM, THE SAME CHUNK-SIZE SWEEP:**
+
+| | `max_proofs_verified = 1` | `max_proofs_verified = 2` |
+|---|---:|---:|
+| §3.21, modelled atoms, fixture AIR | 504 | **591** |
+| EMITTED atoms, no AIR | 443 | 514 |
+| **EMITTED atoms, the ROOT's AIR** | **448** | **519** |
+
+The model arm reproduces 591 and 504 **exactly**, and the leg fails if it drifts by one step — so
+the movement is the emission and the AIR, not a different scheduler. Boundaries at mpv = 2: 513
+inside a query, 5 in the transcript/AIR block, **zero** at a query entry.
+
+⚑ **AND THOSE COUNTS ARE STILL OPTIMISTIC, BY §3.24's MEASUREMENT.** They are computed against
+§4.1's arithmetic budget of 57,532 usable rows, and §3.24 measures a two-branch program failing to
+compile at that budget. The honest per-branch budget is lower; the schedule has not been re-run
+against it.
+
+---
+
+### 3.24 ⚑ MEASURED — THE ROOT AIR AS A CHAIN, PROVED, and §4.1's budget is ~13% too generous
+
+*`bridge/mina-zkapp/src/RootAirChain.ts`, `scripts/root-air-chain.ts`. Gate leg 15.*
+
+275,143 emitted rows is **4.20× the 65,536-row Pickles step domain**, so **dregg's root constraint
+system has no one-step verifier** — the situation §3.20 constructed deliberately by choosing three
+queries, arrived at here by the object itself.
+
+**THREE CHAINED PICKLES STEPS OVER IT ARE PROVED AND VERIFIED.**
+
+| | nodes | constraints | rows | |
+|---|---|---|---:|---|
+| slice 0 | [0, 1,537) | [0, 186) | **50,398** | 76.9% of the domain |
+| slice 1 | [1,537, 3,327) | [186, 345) | **48,181** | 73.5% |
+| slice 2 | [3,327, 4,798) | [345, 543) | **49,774** | 75.9% |
+
+⇒ **4,798 of 10,417 nodes, 543 of 1,093 constraints**, and the whole of `Const`, `Public`, `Alu`
+and `poseidon2-W16` — four of the seven root tables. Compile 53.4 s for three circuits, prove
+13–14 s each, all verified; each step's `publicInput` **is** its predecessor's `publicOutput`, and
+every public field is checked against an out-of-circuit twin.
+
+⚑ **THE CUT WIDTH IS WHY THIS IS AFFORDABLE, AND IT IS A PROPERTY OF THE DAG.** The extractor emits
+in DFS post-order, so the number of values computed before a boundary and read after it **never
+exceeds 102** across all 10,417 nodes (median 66). A boundary carries ~100 extension values, not the
+1,602 column variables. `liveness` computes it exactly, charging each fold at the position it
+actually happens (`max(roots[0..j])`, not `roots[j]`) — a root computed early and folded late stays
+live the whole way.
+
+**The splice is REFUSED — six attempts**, each a `prove()` refusal checked *not* to be a JavaScript
+shape error: a public input with no relation to its predecessor · one carried **live value** bent ·
+one **column lane** bent in a chunk the slice **does** read · a chunk **digest the slice never
+reads**, bent · the incoming **accumulator** bent · slice 2 handed slice 0's proof, **skipping** the
+middle slice. **The control runs in a CHILD process and builds its own predecessor** (§3.21's
+lesson), and accepts both the unrelated public input and the unread-digest bend — so the fourth
+refusal is the commitment biting rather than the work breaking.
+
+⚑ **§4.1's USABLE-ROW BUDGET IS TOO GENEROUS, MEASURED.** §4.1 computes 65,536 − 3 `zk_rows` − 1
+public input − ~8,000 recursive-verifier overhead = **57,532** usable at `max_proofs_verified = 1`.
+At that budget these slices measure 56,772 / 55,715 / 57,430 rows by `analyzeMethods` — **all under
+the domain** — and `compile()` **fails**:
+
+```
+length mismatch in Array.map2_exn: 1 <> 2
+```
+
+That is Pickles refusing a **chunked branch**: `analyzeMethods` reports the method *body*'s rows,
+the branch Pickles builds carries the recursive verifier on top, and one branch crosses 2¹⁶ while
+another does not, so the two disagree on `numChunks`. Measured: **50,000 compiles, 57,532 does
+not.** ⚑ **Every deployed step count in §3.23 and §4.2 is computed against 57,532 and is optimistic
+by that gap.**
+
+⚑ **THE OTHER WALL, AND WHY IT IS DIFFERENT FROM §3.20's.** The full chain is **7 slices** at the
+measured budget, and they are structurally **different** circuits — different nodes, different
+operands — so §3.20's "one walk circuit invoked N times" is not available: a uniform circuit would
+need an in-circuit multiplexer over the 102-value live set, ~102 rows per operand lane against 30
+for a whole extension multiply, a **27× blowup**. §3.20 measured a node process that compiled
+**four** step circuits hanging at the first `prove`, so one process carries **three**; a 6-slice
+build is **refused at build time** with that number rather than left to hang. What makes a VK per
+slice acceptable here and not there: **the AIR is a FIXED program**, so its slice VKs are protocol
+*constants* emitted once, not a per-proof cost. Full coverage is a process-per-slice architecture —
+each process compiling its predecessor's program for the VK plus its own, two circuits, for any
+chain length. **Not built.**
+
+**What §3.24 does NOT close.** The chain runs on a pseudorandom column assignment; §3.25 runs the
+real one, unchained. A **partial** chain's far end is **not** verifier-computable — the live set is
+in the terminal seal's preimage — and the leg says so rather than quoting the complete chain's
+property for it.
+
+---
+
+### 3.25 ⚑ MEASURED — THE ROOT'S AIR ON THE ROOT'S OWN PROOF, and one instance does not bind ζ
+
+*`circuit-prove/src/bin/root_air_instance.rs`, `bridge/mina-zkapp/scripts/root-air-real.ts`. Gate
+leg 16.*
+
+§3.22 evaluates the root's constraints at **pseudorandom** extension-valued assignments. That
+measures arithmetic and decides nothing — §3.19 killed exactly this one rung down: *"until something
+consumes a proof, 'Mina verifies dregg' is a statement about a parts list."*
+
+`root_air_instance` loads dregg's **committed** root proof — `ugc-dregg/tests/fixtures/
+whole_history_proof.bin`, a 3-turn `prove_turn_chain_recursive` root under VK `434f57d2…`,
+`degree_bits [10,10,16,15,3,16,0]`, exactly §1.2's reading — decodes the `BatchProof`, replays
+`verify_batch`'s observe/sample sequence, and emits every instance's opened values at ζ: main and
+preprocessed local and next, the LogUp permutation columns and cumulative sums, the permutation
+challenges, the quotient chunks, the four Lagrange selectors, the recomposed `quotient(ζ)` and p3's
+folded accumulator.
+
+```
+alpha [923772376, 422847819, 814749997, 1738989069]
+zeta  [656249784, 609259845, 1101119587, 318054937]
+```
+
+It **refuses to emit** unless it has itself verified all seven closing equalities with the replayed
+challenges, and p3's own `verify_batch` — full FRI/PCS, its own sampling — accepts the proof first,
+so a drifted replay is a red rather than a plausible JSON. No visibility was widened; three private
+bodies are replicated and named in place. Run time **17 ms**.
+
+**The emitted DAG reproduces p3's accumulator on all seven instances, exactly**, and
+`acc · Z_H(ζ)⁻¹ == quotient(ζ)` holds for each — first out of circuit, then as a **Kimchi
+constraint**. That is the extraction seam closed against the deployed object on deployed values.
+Six bends refused: an opened trace value · an opened preprocessed value · an opened **LogUp
+permutation** value · `quotient(ζ)` itself · the transcript's α · the vanishing-polynomial inverse.
+
+⚑ **THE FINDING, AND IT IS ABOUT THE DEPLOYED ROOT, NOT ABOUT THIS CIRCUIT.**
+
+| table | `degree_bits` | α binds | **ζ binds** |
+|---|---:|---|---|
+| Const | 10 | yes | yes |
+| Public | 10 | yes | yes |
+| Alu | 16 | yes | yes |
+| poseidon2-W16 | 15 | yes | yes |
+| poseidon2-W24 | 3 | yes | yes |
+| recompose | 16 | yes | yes |
+| **expose_claim** | **0** | yes | **NO** |
+
+`expose_claim` has a **one-row trace domain**, and its closing equality is an **identity in ζ**.
+With `|H| = 1`, `is_first_row` and `is_last_row` are ζ-free constants, `is_transition = ζ − 1 =
+Z_H(ζ)`, and the two size-1 quotient chunks carry **equal** values, so the recomposition
+`[(Q₀+Q₁) + (ζ/g)(Q₀−Q₁)]/2` collapses to `Q₀`. **Both sides are constant in ζ.** The out-of-domain
+point binds *nothing* in that instance's AIR check; its binding is the PCS opening and α. All six
+`degree_bits > 0` instances do bind ζ, and α binds all seven — both asserted, the α one as a hard
+floor. The flags ride in the emitted JSON per instance so a Mina-side verifier is never told a check
+binds ζ when it does not, and this leg's own falsifiers are aimed at a table that **does** bind ζ —
+the same discipline §3.19 [8] and §3.20 applied after a falsifier went green on a degenerate
+parameter.
+
+**What §3.25 does NOT close.** This is the per-instance AIR closing equality, not the batch-STARK
+verifier: the FRI walk, the MMCS openings and the transcript derivation over *this* proof are not in
+this circuit (§3.19 does them at fixture geometry). Nothing is wired to `setDreggRoot`.
+
+---
+
 ## 4. DOES IT FIT
 
 ### 4.1 The real per-step budget
@@ -1857,6 +2137,13 @@ One o1js `@method` compiles to one Pickles **step** circuit with a hard ceiling 
 | 1 | ~6,000–8,000 | ~55,000 |
 | **2** (needed for an aggregation tree) | ~12,000–16,000 | **~48,000–52,000** |
 
+⚑ **THE `max_proofs_verified = 1` ROW IS TOO GENEROUS, MEASURED (§3.24).** A two-branch program
+whose methods measure 55,715 and 57,430 rows by `analyzeMethods` — both under the domain — fails to
+`compile()` with `length mismatch in Array.map2_exn: 1 <> 2`, Pickles refusing a CHUNKED branch:
+`analyzeMethods` prices the method BODY and the branch carries the recursive verifier on top, so one
+branch crosses 2¹⁶ and another does not. 50,000 compiles, 57,532 does not. Every step count computed
+against 57,532 — §3.23's included — is optimistic by that gap.
+
 ### 4.2 The arithmetic
 
 ```
@@ -1880,6 +2167,14 @@ steps**, and the arithmetic below is its optimistic end with the carry set to ze
 against that measured carry, with the commitment chunked so a step re-binds only what it reads. The
 arithmetic below is superseded as an ANSWER and kept as an input — its row totals are what §3.21's
 atom model reproduces to 0.01%.
+
+⚑ **AND §3.23 RE-RUNS THAT SCHEDULE OVER AN EMITTED ROW LIST: 519 work-carrying steps**, 448 at
+`max_proofs_verified = 1`. The two atom prices §3.21 obtained by DIVIDING an aggregate are replaced
+by in-context marginals on the deployed program, and the AIR term becomes the root's own 1,093
+constraints (§3.22) instead of the fixture's four. The emitted total is **2.46 × 10⁷**, 10.64%
+BELOW §3.19's projection — the "floor" was too small in its AIR term and too large everywhere else,
+by more. ⚑ **519 and 448 are themselves optimistic**: they use §4.1's 57,532 usable rows, and §3.24
+MEASURES a two-branch program failing to compile at that budget.
 
 The remaining spread is now entirely the permutation count, not the row price:
 
@@ -2125,7 +2420,8 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
   and verified, with one field element per boundary and an unbound control for every refusal; and
   where the cuts GO is a dynamic program over 27,590 atoms and a measured carry, which turns
   §3.20's 3.3× band into **591**.
-- **Honest row budget:** **~2.9 × 10^7 Kimchi rows**, ~98% of it Poseidon2-w16-BabyBear.
+- **Honest row budget:** **2.46 × 10^7 Kimchi rows — EMITTED per atom (§3.23)**, against ~2.9 × 10^7
+  projected. ~98% of it is still Poseidon2-w16-BabyBear; the root's whole AIR is 1.1% of it.
 - **Single biggest cost driver:** the **mod-`p` reduction and its range checks** — **measured at
   ~64%** of the per-permutation rows (§3.8), because the S-box is a *multiplication chain* and lazy
   reduction cannot amortise across it. *Not* the S-boxes (564 multiplications is nothing), *not*
@@ -2164,7 +2460,7 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | Rows per permutation | **2,600.5 — MEASURED** (§3.8), on an o1js circuit that compiles, proves, verifies and reproduces the deployed permutation's Lean-pinned KAT. 1.30× the ~2,000 design claim; 3.2× cheaper than the ~8,400 gnark-emulation parity. **Band closed.** |
 | Total | **~2.9 × 10^7 rows** (2.7–3.4 × 10^7; the spread is now the permutation count alone). |
 | Fits in one circuit | **No** — ~440× the 2^16 ceiling (**25 permutations per step**), and **Pickles hard-rejects chunking** (`verify.ml:61-76`). |
-| N step circuits | **591 work-carrying — SCHEDULED (§3.21)**, 504 at `max_proofs_verified = 1`. ⚑ §4.2's **~650–1,040** deployed / **~325–455** knobbed / **~260** floor all set the step-boundary carry to **zero**; §3.20 measured one and the honest figure became a band, **564–1,838**; §3.21's dynamic program places the cuts and chunks the commitment, and the band collapses to a number. |
+| N step circuits | **519 work-carrying — SCHEDULED OVER AN EMITTED ROW LIST (§3.23)**, 448 at `max_proofs_verified = 1`, against §3.21's modelled 591/504 (reproduced exactly as the baseline). ⚑ Both are computed against §4.1's 57,532 usable, which §3.24 measures failing to compile. Previously: **591 — SCHEDULED (§3.21)**, 504 at `max_proofs_verified = 1`. ⚑ §4.2's **~650–1,040** deployed / **~325–455** knobbed / **~260** floor all set the step-boundary carry to **zero**; §3.20 measured one and the honest figure became a band, **564–1,838**; §3.21's dynamic program places the cuts and chunks the commitment, and the band collapses to a number. |
 | Where the cuts GO | **§3.21 — 521 of 590 boundaries INSIDE a query, 2 at a query entry.** The 3.3× spread decomposes as 1.66× placement and 2.00× commitment: `rootCommitDigest` becomes the hash of a **vector of chunk digests**, so a fold step stops re-witnessing the 8,920 opened-evaluation lanes it never reads. Proved as a 7-step chain from ONE verification key, nine splices refused, with a control. |
 | The partition is a compiler problem with a known contract | **RUN as of §3.20, and it was arithmetic before.** A dregg proof at 103,554 rows — 1.58× the domain, past the measured compile wall, **no one-step verifier** — is verified by four chained Pickles steps from **two** VKs. One field element per boundary (`Poseidon(rootCommitDigest, challengeDigest, k)`), each step proved and verified, its `publicInput` its predecessor's `publicOutput`, both ends of the chain computable by a verifier from the dregg proof alone. |
 | The boundary is a binding, not a sequence marker | **Yes, §3.20 — eight `prove()` refusals against REAL proof objects**, including two on values the walk never reads (`α_stark`, the query PoW witness), each paired with a CONTROL that shows the same circuit ACCEPTING the splice once the three boundary assertions are removed. ⚑ One of the eight went green by accident on a degenerate query draw (`[0,0,0]` at `\|D⁰\| = 2²`) and the fixture is now minted for pairwise-distinct indices. |
@@ -2172,7 +2468,11 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | It buys 128 bits | **No — ~50**, commit-column-bound, and `numQueries` provably cannot move it. |
 | The AIR evaluation is the expensive part | **Still no, but the surrounding arithmetic is bigger than claimed.** §3.15 measures the DEEP quotient at 2.94 × 10⁶ rows over 19 queries and §3.16 the observes at 2.97 × 10⁶ — together ~20% of the budget, where §3.14 first recorded ~3.5% for DEEP *and* AIR. The AIR **fold** itself is `A + N·h` = 14,175 + N × 48 and remains small; `C_i` and `N` are uncounted. It is still mostly a hashing problem. |
 | The DEEP quotient / reduced opening is bound to the trace | **Yes as of §3.15.** The reduced openings are computed from the MMCS-opened rows, the absorbed `f(ζ)` and the transcript's `alpha`, KAT'd against `p3_fri::verifier::open_input`. The gate **proves a witness the previous statement admits and requires the new one to refuse it**, so the closure is exhibited, not asserted. |
-| The AIR constraint evaluation is started | **Partly, §3.16.** The selectors, the α-fold, the chunk recomposition and the closing equality are built and KAT'd against p3's own domain algebra at four `degree_bits`. **`C_i` — dregg's seven AIRs — is not built and `N` is not counted.** Until it is, the FRI walk authenticates a low-degree function that encodes nothing in particular. |
+| The AIR constraint evaluation is started | **CLOSED as of §3.22, and RUN ON THE REAL PROOF as of §3.25.** All 1,093 constraints of dregg's seven root tables are emitted as one 10,417-node shared DAG and measured at **275,143 Kimchi rows** — 1.00% of the projection. §3.25 evaluates it at the COMMITTED root proof's opened values at ζ, reproduces p3's accumulator on all seven instances, and checks `acc · Z_H(ζ)⁻¹ == quotient(ζ)` as a Kimchi constraint, refusing six bends. Previously: "`C_i` is not built and `N` is not counted." |
+
+| The AIR fits in one Pickles step | **No — §3.24.** 275,143 rows is 4.20× the domain, so the root's constraint system has NO one-step verifier. Three chained steps over it are proved and verified (4,798 of 10,417 nodes, 543 of 1,093 constraints, four of the seven tables), six splices refused with a control that builds its own predecessor. The full chain is 7 slices; the process wall is 3 compiled circuits. |
+
+| The AIR closing equality binds ζ | **In six of seven instances — §3.25.** `expose_claim` has `degree_bits = 0`, so `|H| = 1`, the selectors are ζ-free constants and the two size-1 quotient chunks are equal: **both sides are constant in ζ** and the out-of-domain point binds nothing in that instance's AIR check. α binds all seven. |
 | A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
 | The row price is a design claim nobody has run | **No longer.** §3.8–3.14 are measured, the circuits are committed under `bridge/mina-zkapp/src/`, and `scripts/check-mina-attestation.sh` fails if any of nine figures drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**, and §3.14 shows how much rests on that. |
@@ -2207,6 +2507,15 @@ The cheap bulk checks are `rangeCheck64` at **1 row/64 bits**, `multiRangeCheck`
 bits**, and `rangeCheck3x12` at **1 row/36 bits** — ~66 bits/row is the ceiling, and §3.8's circuit
 uses those. §3.5's "lookups are a precondition, not an optimisation" stands.)
 o1js circuits + measurement, all run by `scripts/check-mina-attestation.sh`:
+`bridge/mina-zkapp/src/RootAirDag.ts` + `src/generated/root-air-dag.json` (§3.22 — the root's own
+1,093 constraints as an emitted DAG), `src/RootAirChain.ts` (§3.24 — the chain over it),
+`PartitionSchedule.emittedProgram` (§3.23), with
+`scripts/{root-air-rows,emitted-atoms,emitted-schedule,root-air-chain,root-air-real}.ts`.
+§3.22's extension extractor is `circuit-prove/tests/root_air_constraint_census.rs`'s `to_dag_full`;
+§3.25's real-proof dumper is `circuit-prove/src/bin/root_air_instance.rs`, which decodes
+`ugc-dregg/tests/fixtures/whole_history_proof.bin` and self-checks all seven closing equalities
+before emitting.
+
 `bridge/mina-zkapp/src/Poseidon2BabyBearW16.ts` (§3.8), `src/Poseidon2Merkle.ts` (§3.9),
 `src/FriQueryStep.ts` (§3.10, §3.13), `src/FriChallenger.ts` (§3.12, §3.13b),
 `src/DeepQuotient.ts` (§3.15), `src/AirEval.ts` (§3.16), **`src/DreggProofVerify.ts` (§3.19 — the
