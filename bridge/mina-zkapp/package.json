@@ -28,7 +28,8 @@
     "fri-deep": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-deep-rows.js",
     "air-eval": "npm run build && node --max-old-space-size=16384 dist/scripts/air-eval-rows.js",
     "dregg-verify": "npm run build && node --max-old-space-size=16384 dist/scripts/dregg-proof-verify.js",
-    "partition": "npm run build && node --max-old-space-size=16384 dist/scripts/partition-chain.js"
+    "partition": "npm run build && node --max-old-space-size=16384 dist/scripts/partition-chain.js",
+    "schedule": "npm run build && node --max-old-space-size=16384 dist/scripts/partition-schedule.js"
   },
   "dependencies": {
     "o1js": "2.15.0"

@@ -149,13 +149,13 @@
 #
 # ⚑ NO SKIPS. A missing `node`, a missing `npm`, a missing `cargo`, an absent or
 # unpinned o1js, a type error, or a diverging vector are all FAILURES — the same
-# discipline as `embedded-js` and `opentheory-importer`. ~18 min warm (the
+# discipline as `embedded-js` and `opentheory-importer`. ~25 min warm (the
 # Rung-2/3/4/6 legs are ~14 of them: 684,726 rows is slow to BUILD, never mind
-# prove, and four ZkProgram compiles run). Needs cargo for legs 3-9; no Lean.
+# prove, and six ZkProgram compiles run). Needs cargo for legs 3-12; no Lean.
 #
 #   bash scripts/check-mina-attestation.sh
 #   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
-#   SELFTEST_LEGS="deep air partition" bash scripts/check-mina-attestation.sh --self-test
+#   SELFTEST_LEGS="deep air partition schedule" bash scripts/check-mina-attestation.sh --self-test
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/bridge/mina-zkapp"
@@ -250,6 +250,15 @@ run_verify() { # run_verify <dir>
 # aborts in `rust_oom`.
 run_partition() { # run_partition <dir>
   ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent partition )
+}
+# THE SCHEDULER: where to cut. §3.20 left the deployed step count as a 3.3x band
+# because a boundary's price depends on where it lands; this leg is the dynamic
+# program that places the cuts, the chunked `rootCommitDigest` that gives it
+# somewhere cheap to cut, and a chain PROVED under both with the cut INSIDE a
+# query. Spawns two child node processes of its own, for the same wasm-heap
+# reason the partition leg does.
+run_schedule() { # run_schedule <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent schedule )
 }
 
 # ── the headline run ──────────────────────────────────────────────────────────
@@ -499,7 +508,52 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== PARTITION-CHAIN PASS ===' <<<"$part_out" \
     || die "the partition leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part checks green" \
+  # Leg 12: THE SCHEDULER. §3.20 leaves the deployed step count as a BAND because
+  # a boundary costs 34,566 rows at a query entry and 762 inside one. This leg
+  # places the cuts against the measured carry, replaces the flat
+  # `rootCommitDigest` with a vector of chunk digests so a step re-binds only what
+  # it reads, reports the deployed step count, and PROVES a chain cut inside a
+  # query — because a schedule that is only arithmetic is what §3.20 exists to
+  # stop happening twice.
+  sched_out="$(run_schedule "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$sched_out"
+  [ "$rc" -eq 0 ] || die "the partition-schedule leg exited $rc"
+  n_sched="$(printf '%s' "$sched_out" | grep -c '✓')"
+  [ "$n_sched" -ge 35 ] || die "only $n_sched schedule checks passed; expected >= 35"
+  grep -q 'ELEMENTWISE equal to `rootCommitLanes`' <<<"$sched_out" \
+    || die "the chunked commitment was never shown to cover what the flat one did"
+  grep -q 'no chunk is decorative' <<<"$sched_out" \
+    || die "the per-chunk anti-vacuity check did not run — a chunk nothing depends on binds nothing"
+  grep -q 'chunk digests are ordered' <<<"$sched_out" \
+    || die "the chunk vector was never shown to be ORDERED (a set would let a step swap chunks)"
+  grep -q 'DISTINCT reduced openings at degree_bits' <<<"$sched_out" \
+    || die "the intra-query splice premise was not asserted — at degree_bits 1 it is an identity"
+  grep -q 'every row in it is a measured marginal' <<<"$sched_out" \
+    || die "the atom model was not checked against §3.19's measured deployed total"
+  grep -q 'the placement rule the DP found' <<<"$sched_out" \
+    || die "the scheduler did not report where it puts its boundaries"
+  grep -q "against §3.20's band of 564-1,838" <<<"$sched_out" \
+    || die "the deployed step count was not reported against the band it collapses"
+  grep -q 'it never witnesses an opened evaluation' <<<"$sched_out" \
+    || die "the DEEP/fold asymmetry the whole schedule rests on was not measured"
+  grep -q 'the two legs price the same boundary' <<<"$sched_out" \
+    || die "this leg's flat-boundary probe was not cross-checked against §3.20's 34,566"
+  grep -q 'it emits the INTRA-QUERY boundary' <<<"$sched_out" \
+    || die "no step ever emitted an intra-query boundary — the cheap cut was not built"
+  grep -q 'the terminal proof carries the CLOSING SEAL' <<<"$sched_out" \
+    || die "the scheduled chain's terminal proof is not bound to the dregg proof a verifier holds"
+  grep -q 'the INTRA-QUERY splice' <<<"$sched_out" \
+    || die "the intra-query splice was not attempted — the new boundary has no falsifier"
+  grep -q 'REFUSES a fold half whose predecessor is a FOLD' <<<"$sched_out" \
+    || die "the deep/fold alternation was never shown to be forced"
+  grep -q "\[6\]'s refusal is the CARRY, not the walk" <<<"$sched_out" \
+    || die "the UNBOUND control did not run — every refusal above is unattributable"
+  grep -q 'recorded figures are as recorded' <<<"$sched_out" \
+    || die "the schedule rows ratchet did not run"
+  grep -q '=== PARTITION-SCHEDULE PASS ===' <<<"$sched_out" \
+    || die "the schedule leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
        "FRI query, Fiat-Shamir transcript, the 16-layer fold chain and the DEEP quotient all" \
@@ -508,7 +562,9 @@ if [ "${1:-}" != "--self-test" ]; then
        "consuming a proof dregg's own prover made — compiled, PROVED, verified, and refusing" \
        "seven bends and three wrong AIRs; and a proof with NO one-step verifier decided by a" \
        "FOUR-STEP CHAIN over two VKs, carrying one field element per boundary, refusing eight" \
-       "splices against real proof objects with an unbound control for each)"
+       "splices against real proof objects with an unbound control for each; and the SCHEDULER" \
+       "that places those cuts, run on the deployed geometry and PROVED on a chain cut INSIDE a" \
+       "query under a chunked rootCommitDigest, refusing nine splices with a control)"
   exit 0
 fi
 
@@ -544,7 +600,7 @@ red=0; green=0
 # key" to "PLACEHOLDER relay key" in 90718ee6f and its injection was left
 # pointing at the old string, so the anchor's ONE unforgeability check had no
 # live falsifier for a day. Serially that took ~40 minutes of self-test to
-# surface. The pre-flight surfaces all 56 in about two seconds.
+# surface. The pre-flight surfaces all 83 in about two seconds.
 #
 # ⚑ AND PASS 2 CAN BE SCOPED, WHILE PASS 1 NEVER IS. `SELFTEST_LEGS="deep air"`
 # injects only those legs' faults in pass 2 — nine legs at ~2-4 min each is
@@ -555,7 +611,7 @@ red=0; green=0
 PREFLIGHT=0
 SELFTEST_LEGS="${SELFTEST_LEGS:-}"
 skipped=0
-expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air|verify|partition> <label> <perl-program> <file> [base-dir]
+expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air|verify|partition|schedule> <label> <perl-program> <file> [base-dir]
   local leg="$1" label="$2" prog="$3" file="$4" base="${5:-$COPY}"
   if [ ! -f "$base/$file" ]; then
     echo "  ✗ $label: target $file does not exist"
@@ -900,11 +956,16 @@ expect_red verify "the transcript observes a wrong instance constant" \
 expect_red verify "every batch opens under the FIRST commitment (the quotient tree is unchecked)" \
   "s/cur\.limbs\[j\]\.assertEquals\(claim\.inputCommits\[b\]\.limbs\[j\]\);/cur.limbs[j].assertEquals(claim.inputCommits[0].limbs[j]);/" \
   src/DreggProofVerify.ts
+# ⚑ RE-POINTED IN THE SAME COMMIT THAT MOVED THEIR TARGETS. Splitting
+# `runQueryWalk` into `runQueryInputAndDeep` + `runQueryCommitPhase` (so
+# `DreggProofSchedule` can put a step boundary between them) moved both of these
+# lines, and the pre-flight caught both matching nothing. That is the six-silently-
+# unpointed-injections failure, and it is why the pre-flight exists.
 expect_red verify "the second opening point collapses onto zeta (zeta_next loses its generator)" \
-  "s/  const zetaNext = extScaleConst\(ch\.zeta, gTrace\);/  const zetaNext = ch.zeta;/" \
+  "s/  return extScaleConst\(zeta, twoAdicGenerator\(plan\.sh\.air\.traceLogSize\)\);/  return zeta;/" \
   src/DreggProofVerify.ts
 expect_red verify "the DEEP quotient batches at the STARK's alpha instead of FRI's" \
-  "s/      alpha: ch\.friAlpha,/      alpha: ch.alphaStark,/" \
+  "s/    alpha: ch\.friAlpha,/    alpha: ch.alphaStark,/" \
   src/DreggProofVerify.ts
 expect_red verify "the quotient openings stop being absorbed (they steer no challenge)" \
   "s/    for \(const e of openedQuotient\) c\.observeExt\(e\);/    \/* fault *\//" \
@@ -968,6 +1029,51 @@ expect_red partition "the chained geometry shrinks back to something that fits o
 expect_red partition "the partition's row ratchet drifts from the recorded figure" \
   "s/\['ONE deployed boundary, full carry', deployedCarry, 34_566\]/['ONE deployed boundary, full carry', deployedCarry, 20_000]/" \
   scripts/partition-chain.ts
+
+# ── LEG 12, THE SCHEDULER ─────────────────────────────────────────────────────
+# The chunked `rootCommitDigest` is what makes a cheap cut possible, and a chunk
+# vector that covered less than the flat digest would look identical and bind
+# less. That is the failure a "cheaper commitment" invites, so it gets the first
+# two faults.
+expect_red schedule "the opened evaluations stop being covered by the chunk vector" \
+  "s/  for \(const e of openedTrace\) open\.push\(\.\.\.e\.limbs\);/  \/* fault *\//" \
+  src/DreggProofSchedule.ts
+expect_red schedule "the fold chunk stops covering the commit-phase commitments" \
+  "s/  for \(const d of claim\.commitPhaseCommits\) fold\.push\(\.\.\.d\.limbs\);/  \/* fault *\//" \
+  src/DreggProofSchedule.ts
+# ⚑ THE INTRA-QUERY BOUNDARY IS THE WHOLE POINT OF THIS LEG. Drop the reduced
+# openings from it and the fold half can be handed any query's fold value while
+# every other check still passes.
+expect_red schedule "the reduced openings stop being covered by the intra-query boundary" \
+  "s/          const cdDeep = digestOfLanes\(\[\.\.\.chal, \.\.\.deepOutLanes\(deep\.ro\)\], pack\);/          const cdDeep = digestOfLanes(chal, pack);/" \
+  src/DreggProofSchedule.ts
+expect_red schedule "the DEEP half stops checking the boundary it ENTERS" \
+  "s/            stepBoundary\(rcd, digestOfLanes\(chal, pack\), k\)\.assertEquals\(bIn\);/            \/* fault *\//" \
+  src/DreggProofSchedule.ts
+expect_red schedule "the FOLD half stops checking the intra-query boundary it ENTERS" \
+  "s/            stepBoundary\(rcd, digestOfLanes\(\[\.\.\.chal, \.\.\.deepOutLanes\(roCarried\)\], pack\), k\)\n              \.assertEquals\(bIn\);/            \/* fault *\//" \
+  src/DreggProofSchedule.ts
+# Without the range assertion the one-hot is all-false, every `Provable.if` falls
+# through to query 0, and a half walks a query it was not assigned.
+expect_red schedule "the query multiplexer stops asserting 0 <= q < num_queries" \
+  "s/    cnt\.assertEquals\(Field\(1\)\);/    \/* fault *\//" \
+  src/DreggProofSchedule.ts
+# The scheduler's own numbers have to be falsifiable. The atom model is checked
+# against §3.19's measured deployed total; move a marginal and it must say so.
+expect_red schedule "the atom model's per-column marginal drifts from the measured one" \
+  "s/  deepPerColumnPerQuery: 481,/  deepPerColumnPerQuery: 48,/" \
+  src/PartitionSchedule.ts
+# A carry that is not charged makes every schedule free and the answer a lie.
+expect_red schedule "a step stops paying for the chunks it re-witnesses" \
+  "s/      this\.rows \+= lanes \* this\.model\.rebindPerLane;/      \/* fault *\//" \
+  src/PartitionSchedule.ts
+# ⚑ AND THE LEG'S OWN PREMISE. At degree_bits 1 every reduced opening is the same
+# constant, so the intra-query splice substitutes a value for itself. [2] asserts
+# the premise; dropping back to degree_bits 1 must turn it red rather than
+# quietly making the falsifier vacuous.
+expect_red schedule "the geometry drops back to where the DEEP quotient is constant" \
+  "s/\nconst DB = 2;/\nconst DB = 1;/" \
+  scripts/partition-schedule.ts
 
 }
 

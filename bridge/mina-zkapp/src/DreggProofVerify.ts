@@ -403,11 +403,20 @@ export function deriveStarkChallenges(
     throw new Error(
       'deriveStarkChallenges: the shape says the challenges are CARRIED, and none were supplied',
     );
+  queryPowWitness.seal();
+  return carriedChallenges(wit);
+}
+
+/** A CARRIED challenge set, range-checked. A re-witnessed lane is unconstrained
+ *  until it is checked, and every step past the transcript re-witnesses the whole
+ *  set in order to re-derive `challengeDigest` — so this is the one place that
+ *  makes the carried transcript mean anything, and it has exactly one
+ *  implementation. */
+export function carriedChallenges(wit: StarkChallenges): StarkChallenges {
   assertExtInRange(wit.alphaStark);
   assertExtInRange(wit.zeta);
   assertExtInRange(wit.friAlpha);
   for (const b of wit.betas) assertExtInRange(b);
-  queryPowWitness.seal();
   return {
     alphaStark: wit.alphaStark,
     zeta: wit.zeta,
@@ -457,6 +466,149 @@ export function assertAirClosing(
     canonicalLane(lhs.limbs[j], LANE_MAX).assertEquals(canonicalLane(quotient.limbs[j], LANE_MAX));
 }
 
+/** What ONE query's input phase hands to its fold chain: the reduced openings at
+ *  each opened height and the roll-in schedule they imply.
+ *
+ * ⚑ THIS IS THE INTRA-QUERY STEP BOUNDARY, and it is the cheap one. Everything a
+ * fold chain needs from the first half of its own query is `ro` — one extension
+ * element per opened height — plus the index bits. The whole opened-value set,
+ * every input Merkle path and the leaf rows are read by the first half and never
+ * again, which is why a cut HERE carries a fold value and a cut at a query ENTRY
+ * carries the entire claim (§3.20). `DreggProofSchedule` is what exploits it. */
+export type QueryDeepResult = {
+  ro: { logHeight: number; ro: BbExt }[];
+  rollInRounds: number[];
+  indexAcc: Field;
+};
+
+/** (3) ONE query's input phase and DEEP quotient — the half that reads the
+ *  opened values. `q` indexes this call's witness arrays; `g` is the GLOBAL
+ *  query index, which is what `ch.queryBits` is indexed by. */
+export function runQueryInputAndDeep(
+  plan: VerifyPlan,
+  claim: ClaimValue,
+  openedTrace: BbExt[],
+  openedQuotient: BbExt[],
+  ch: StarkChallenges,
+  zetaNext: BbExt,
+  rowsQ: Field[],
+  inputPathsQ: BbDigest[][],
+  g: number,
+): QueryDeepResult {
+  const { sh, nBatches, rowWidths, nTraceCols, nRollIns } = plan;
+  const { knobs, batches, air, logGlobalMaxHeight } = sh;
+  const { layers, indexBits: nIndexBits } = knobs;
+  const bits = ch.queryBits[g];
+
+  let rowOff = 0;
+  const mats: DeepMatrix[][] = [];
+  for (let b = 0; b < nBatches; b++) {
+    const bs = batches[b];
+    const leaf = rowsQ.slice(rowOff, rowOff + rowWidths[b]);
+    rowOff += rowWidths[b];
+    for (const v of leaf) assertLaneLt2p31(v);
+
+    // The MMCS leaf is ONE sponge over every matrix's row in this
+    // batch, concatenated — not one hash per matrix.
+    let cur = spongeBB(leaf);
+    // `open_input` shifts the index by the BATCH's max height, not the
+    // matrix's (`fri/src/verifier.rs:576-580`).
+    const batchMax = Math.max(...bs.matrices.map((m) => m.logHeight));
+    const bitsReduced = logGlobalMaxHeight - batchMax;
+    for (let h = 0; h < bs.pathDepth; h++) {
+      assertDigestInRange(inputPathsQ[b][h]);
+      const [l, r] = condSwap(cur, inputPathsQ[b][h], bits[bitsReduced + h]);
+      cur = compressBB(l, r);
+    }
+    for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(claim.inputCommits[b].limbs[j]);
+
+    // Split the leaf back into its matrices for the DEEP quotient, and
+    // attach the claimed evaluations each one opens at.
+    let colOff = 0;
+    const batchMats: DeepMatrix[] = [];
+    for (const m of bs.matrices) {
+      const openedRow = leaf.slice(colOff, colOff + m.numCols);
+      colOff += m.numCols;
+      const points =
+        b === 0
+          ? // the trace: (zeta, trace_local) and (zeta*g, trace_next)
+            (air.hasTraceNext
+              ? [
+                  { z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) },
+                  { z: zetaNext, psAtZ: openedTrace.slice(nTraceCols, 2 * nTraceCols) },
+                ]
+              : [{ z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) }])
+          : // a quotient chunk: (zeta, that chunk's D values)
+            [
+              {
+                z: ch.zeta,
+                psAtZ: openedQuotient.slice(
+                  batchMats.length * EXT_D,
+                  (batchMats.length + 1) * EXT_D,
+                ),
+              },
+            ];
+      if (points.length !== m.numPoints)
+        throw new Error(
+          `batch ${b} matrix declares ${m.numPoints} points, the wiring gives ${points.length}`,
+        );
+      batchMats.push({ logHeight: m.logHeight, openedRow, points });
+    }
+    mats.push(batchMats);
+  }
+
+  // -- the DEEP quotient: `initial` stops being a witness.
+  const ro = reducedOpenings({
+    indexBits: bits,
+    logGlobalMaxHeight,
+    alpha: ch.friAlpha,
+    batches: mats,
+  });
+  const sched = rollInSchedule(ro, logGlobalMaxHeight, layers);
+  if (sched.rounds.length !== nRollIns)
+    throw new Error('the in-circuit roll-in schedule disagrees with the compiled shape');
+
+  let acc = Field(0);
+  for (let i = 0; i < nIndexBits; i++) acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
+  return { ro, rollInRounds: sched.rounds, indexAcc: acc };
+}
+
+/** (4) ONE query's fold chain — the half that reads NONE of the opened values.
+ *  It needs the commit-phase commitments, the betas, the final polynomial, the
+ *  index bits and `deep.ro`, and nothing else. */
+export function runQueryCommitPhase(
+  plan: VerifyPlan,
+  claim: ClaimValue,
+  ch: StarkChallenges,
+  deep: QueryDeepResult,
+  siblingsQ: BbExt[],
+  commitPathsQ: BbDigest[][],
+  g: number,
+): void {
+  const { sh } = plan;
+  const { knobs, logGlobalMaxHeight } = sh;
+  const { layers } = knobs;
+  verifyCommitPhase({
+    indexBits: ch.queryBits[g],
+    initial: deep.ro[0].ro,
+    rounds: Array.from({ length: layers }, (_, r) => ({
+      sibling: siblingsQ[r],
+      path: commitPathsQ[r].slice(0, sh.commitPathDepths[r]),
+      beta: ch.betas[r],
+      commit: claim.commitPhaseCommits[r],
+    })),
+    rollIns: deep.rollInRounds.map((r, i) => ({ afterRound: r, value: deep.ro[i + 1].ro })),
+    finalPoly: claim.finalPoly,
+    logGlobalMaxHeight,
+  });
+}
+
+/** `zeta_next = zeta * g` on the NATURAL trace domain (`domain.rs:169-171`);
+ *  `g` is protocol data, so the scale is free. */
+export function zetaNextOf(plan: VerifyPlan, zeta: BbExt): BbExt {
+  return extScaleConst(zeta, twoAdicGenerator(plan.sh.air.traceLogSize));
+}
+
 /** (3+4) The opening points and every query walk. Returns the DERIVED query
  *  indices — the walk's own account of where it went. */
 export function runQueryWalk(
@@ -476,107 +628,34 @@ export function runQueryWalk(
    *  slice of it. Absent, every query, which is the one-step program. */
   queries?: number[],
 ): Field[] {
-  const { sh, nBatches, rowWidths, nTraceCols, nRollIns } = plan;
-  const { knobs, batches, air, logGlobalMaxHeight } = sh;
-  const { layers, numQueries, indexBits: nIndexBits } = knobs;
+  const { numQueries } = plan.sh.knobs;
   const qs = queries ?? Array.from({ length: numQueries }, (_, i) => i);
   for (const g of qs)
     if (g < 0 || g >= numQueries)
       throw new Error(`query ${g} is outside the shape's 0..${numQueries - 1}`);
 
-  // `zeta_next = zeta * g` on the NATURAL trace domain
-  // (`domain.rs:169-171`); `g` is protocol data, so the scale is free.
-  const gTrace = twoAdicGenerator(air.traceLogSize);
-  const zetaNext = extScaleConst(ch.zeta, gTrace);
+  const zetaNext = zetaNextOf(plan, ch.zeta);
 
+  // ⚑ THE TWO HALVES ARE CALLED, NOT RE-IMPLEMENTED. `DreggProofSchedule` puts a
+  // step boundary between them; if this function inlined the same work a second
+  // time, the monolith and the scheduled chain would be two verifiers that agree
+  // today. The gate order is identical to the inlined version, which is why the
+  // §3.20 row ratchet still holds to the row.
   const outIndices: Field[] = [];
   for (let q = 0; q < qs.length; q++) {
-    const bits = ch.queryBits[qs[q]];
-    let rowOff = 0;
-    const mats: DeepMatrix[][] = [];
-    for (let b = 0; b < nBatches; b++) {
-      const bs = batches[b];
-      const leaf = rows[q].slice(rowOff, rowOff + rowWidths[b]);
-      rowOff += rowWidths[b];
-      for (const v of leaf) assertLaneLt2p31(v);
-
-      // The MMCS leaf is ONE sponge over every matrix's row in this
-      // batch, concatenated — not one hash per matrix.
-      let cur = spongeBB(leaf);
-      // `open_input` shifts the index by the BATCH's max height, not the
-      // matrix's (`fri/src/verifier.rs:576-580`).
-      const batchMax = Math.max(...bs.matrices.map((m) => m.logHeight));
-      const bitsReduced = logGlobalMaxHeight - batchMax;
-      for (let h = 0; h < bs.pathDepth; h++) {
-        assertDigestInRange(inputPaths[q][b][h]);
-        const [l, r] = condSwap(cur, inputPaths[q][b][h], bits[bitsReduced + h]);
-        cur = compressBB(l, r);
-      }
-      for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(claim.inputCommits[b].limbs[j]);
-
-      // Split the leaf back into its matrices for the DEEP quotient, and
-      // attach the claimed evaluations each one opens at.
-      let colOff = 0;
-      const batchMats: DeepMatrix[] = [];
-      for (const m of bs.matrices) {
-        const openedRow = leaf.slice(colOff, colOff + m.numCols);
-        colOff += m.numCols;
-        const points =
-          b === 0
-            ? // the trace: (zeta, trace_local) and (zeta*g, trace_next)
-              (air.hasTraceNext
-                ? [
-                    { z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) },
-                    { z: zetaNext, psAtZ: openedTrace.slice(nTraceCols, 2 * nTraceCols) },
-                  ]
-                : [{ z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) }])
-            : // a quotient chunk: (zeta, that chunk's D values)
-              [
-                {
-                  z: ch.zeta,
-                  psAtZ: openedQuotient.slice(
-                    batchMats.length * EXT_D,
-                    (batchMats.length + 1) * EXT_D,
-                  ),
-                },
-              ];
-        if (points.length !== m.numPoints)
-          throw new Error(
-            `batch ${b} matrix declares ${m.numPoints} points, the wiring gives ${points.length}`,
-          );
-        batchMats.push({ logHeight: m.logHeight, openedRow, points });
-      }
-      mats.push(batchMats);
-    }
-
-    // -- the DEEP quotient: `initial` stops being a witness.
-    const ro = reducedOpenings({
-      indexBits: bits,
-      logGlobalMaxHeight,
-      alpha: ch.friAlpha,
-      batches: mats,
-    });
-    const sched = rollInSchedule(ro, logGlobalMaxHeight, layers);
-    if (sched.rounds.length !== nRollIns)
-      throw new Error('the in-circuit roll-in schedule disagrees with the compiled shape');
-
-    verifyCommitPhase({
-      indexBits: bits,
-      initial: ro[0].ro,
-      rounds: Array.from({ length: layers }, (_, r) => ({
-        sibling: siblings[q][r],
-        path: commitPaths[q][r].slice(0, sh.commitPathDepths[r]),
-        beta: ch.betas[r],
-        commit: claim.commitPhaseCommits[r],
-      })),
-      rollIns: sched.rounds.map((r, i) => ({ afterRound: r, value: ro[i + 1].ro })),
-      finalPoly: claim.finalPoly,
-      logGlobalMaxHeight,
-    });
-
-    let acc = Field(0);
-    for (let i = 0; i < nIndexBits; i++) acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
-    outIndices.push(acc);
+    const deep = runQueryInputAndDeep(
+      plan,
+      claim,
+      openedTrace,
+      openedQuotient,
+      ch,
+      zetaNext,
+      rows[q],
+      inputPaths[q],
+      qs[q],
+    );
+    runQueryCommitPhase(plan, claim, ch, deep, siblings[q], commitPaths[q], qs[q]);
+    outIndices.push(deep.indexAcc);
   }
   return outIndices;
 }

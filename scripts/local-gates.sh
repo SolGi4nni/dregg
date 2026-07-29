@@ -321,10 +321,11 @@ GATES=(
   # ⚑ `SELFTEST_LEGS="deep air"` scopes PASS 2 of the -red row to named legs. The
   # PRE-FLIGHT is never scoped: what you re-run is a budget question, what you notice has
   # rotted is not. A scoped run says so in its PASS line.
-  # ~18 min warm: nine legs, four Pickles compiles, and a 684,726-row constraint system
-  # that is slow to BUILD, never mind prove.
-  "mina-attestation|2400|bash scripts/check-mina-attestation.sh"
-  "mina-attestation-red|10800|bash scripts/check-mina-attestation.sh --self-test"
+  # ~25 min warm: TEN legs, six Pickles compiles, and a 684,726-row constraint system
+  # that is slow to BUILD, never mind prove. Leg 12 (§3.21, the scheduler) added ~7 of
+  # those minutes and 9 of the 83 injections, so both budgets moved with it.
+  "mina-attestation|3000|bash scripts/check-mina-attestation.sh"
+  "mina-attestation-red|14400|bash scripts/check-mina-attestation.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(

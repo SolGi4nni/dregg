@@ -48,7 +48,6 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { assertLaneLt2p31 } from '../src/Poseidon2BabyBearW16.js';
 import {
-  DreggProofShape,
   claimOf,
   makeDreggProofVerifyProgram,
   minaFixtureConstraints,
@@ -56,6 +55,7 @@ import {
   verifyPlan,
   witnessOf,
 } from '../src/DreggProofVerify.js';
+import { DEPLOYED_COLS, deployedShapeOf } from '../src/PartitionSchedule.js';
 import {
   GENESIS_CHALLENGE_DIGEST,
   carriedLaneCount,
@@ -265,21 +265,11 @@ if (PHASE === 'rows') {
 
   // The deployed FRI geometry (§1.2) carrying the deployed COLUMN count (§1.3:
   // 940 main + 175 preprocessed, each opened at two points).
-  const ROOT_COLS = 940 + 175;
-  const deployedShape = (width: number): DreggProofShape => ({
-    ...SHAPE,
-    constraints: undefined,
-    deriveChallenges: false,
-    knobs: { ...SHAPE.knobs, layers: 16, logGlobalMaxHeight: 22, indexBits: 22, logBlowup: 6, numQueries: 19 },
-    logGlobalMaxHeight: 22,
-    commitPathDepths: Array.from({ length: 16 }, (_, i) => 21 - i),
-    batches: SHAPE.batches.map((b, i) => ({
-      matrices: b.matrices.map((m) => ({ ...m, logHeight: 22, numCols: i === 0 ? width : m.numCols })),
-      pathDepth: 22,
-    })),
-    air: { ...SHAPE.air, width },
-  });
-  const deployedLanes = carriedLaneCount(deployedShape(ROOT_COLS));
+  // ⚑ ONE DEFINITION, SHARED WITH §3.21's SCHEDULER. The schedule is priced
+  // against the lane count this leg MEASURES a boundary at; two copies of the
+  // deployed shape that agree today are two that will disagree later, and the
+  // 9,103 in [10]'s ratchet is what both are pinned to.
+  const deployedLanes = carriedLaneCount(deployedShapeOf(SHAPE, DEPLOYED_COLS));
   const fixtureLanes = carriedLaneCount(SHAPE);
 
   /** A step's carry, as a circuit and nothing else: re-witness `nRoot + nChal`
