@@ -260,6 +260,25 @@ run_partition() { # run_partition <dir>
 run_schedule() { # run_schedule <dir>
   ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent schedule )
 }
+# THE ROOT'S OWN AIR. §3.19 named ONE thing in the assembly as still the fixture's
+# — `DreggProofVerify`'s `constraints` argument, four constraints against the
+# root's 1,093 — and every figure downstream of it was a FLOOR because of that.
+# These four legs emit the root's constraint system, measure it, re-run the
+# schedule over an EMITTED row list, prove a chain over an object with no one-step
+# verifier, and run the whole thing on dregg's COMMITTED root proof.
+run_root_air() { # run_root_air <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air )
+}
+run_emitted() { # run_emitted <dir> — the atom row list, then the schedule over it
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent emitted-atoms \
+      && DREGG_REPO_ROOT="$ROOT" npm run --silent emitted-schedule )
+}
+run_air_chain() { # run_air_chain <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air-chain )
+}
+run_air_real() { # run_air_real <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air-real )
+}
 
 # ── the headline run ──────────────────────────────────────────────────────────
 if [ "${1:-}" != "--self-test" ]; then
@@ -553,7 +572,74 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== PARTITION-SCHEDULE PASS ===' <<<"$sched_out" \
     || die "the schedule leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched checks green" \
+  # ── §3.22 the ROOT's own AIR, emitted and measured ─────────────────────────
+  air_out="$(run_root_air "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$air_out"
+  [ "$rc" -eq 0 ] || die "the root-air-rows leg exited $rc"
+  n_rair="$(printf '%s' "$air_out" | grep -c '✓')"
+  [ "$n_rair" -ge 12 ] || die "only $n_rair root-AIR checks passed; expected >= 12"
+  grep -q 'not the fixture.s four' <<<"$air_out" \
+    || die "the leg did not assert N = 1,093 — the fixture's four constraints may still be standing in"
+  grep -q 'in-circuit walk of the emitted DAG satisfies the accumulator p3 produced' <<<"$air_out" \
+    || die "the TypeScript walker was never joined to p3 INSIDE a circuit — the row counts are for an unattached object"
+  grep -q 'REFUSED: a wf-preserving one-child edit' <<<"$air_out" \
+    || die "the in-circuit KAT was never shown going red"
+  grep -q 'is a ROW difference, not a different accumulator' <<<"$air_out" \
+    || die "the permanent fold control did not run"
+  grep -q 'recorded figures are as recorded' <<<"$air_out" \
+    || die "the root-AIR ratchet did not run"
+  grep -q '=== ROOT-AIR-ROWS PASS ===' <<<"$air_out" || die "the root-air leg did not print its PASS line"
+
+  # ── §3.23 the schedule, re-run over an EMITTED row list ────────────────────
+  emit_out="$(run_emitted "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$emit_out"
+  [ "$rc" -eq 0 ] || die "the emitted-atoms/emitted-schedule legs exited $rc"
+  n_emit="$(printf '%s' "$emit_out" | grep -c '✓')"
+  [ "$n_emit" -ge 6 ] || die "only $n_emit emitted-schedule checks passed; expected >= 6"
+  grep -q 'EMITTED per-atom rows, in context' <<<"$emit_out" \
+    || die "the atom row list was not measured by emission"
+  grep -q "reproduced EXACTLY from the model arm" <<<"$emit_out" \
+    || die "§3.21's 591/504 baseline was not reproduced — the delta is against the wrong object"
+  grep -q 'THE WALL, WITH ITS NUMBER' <<<"$emit_out" \
+    || die "the AIR chain's wall was not named with a number"
+  grep -q '=== EMITTED-SCHEDULE PASS ===' <<<"$emit_out" \
+    || die "the emitted-schedule leg did not print its PASS line"
+
+  # ── §3.24 a chain over an object with NO one-step verifier ─────────────────
+  chn_out="$(run_air_chain "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$chn_out"
+  [ "$rc" -eq 0 ] || die "the root-air-chain leg exited $rc"
+  n_achain="$(printf '%s' "$chn_out" | grep -c '✓')"
+  [ "$n_achain" -ge 12 ] || die "only $n_achain AIR-chain checks passed; expected >= 12"
+  grep -q 'it has no one-step verifier' <<<"$chn_out" \
+    || die "the leg did not establish that the root AIR needs a chain at all"
+  grep -q 'REFUSED: a chunk DIGEST slice 1 NEVER READS, bent' <<<"$chn_out" \
+    || die "the carried-but-unread splice was not attempted — the binding has no falsifier"
+  grep -q 'UNBOUND: a bent digest of a chunk the slice never reads is ACCEPTED' <<<"$chn_out" \
+    || die "the UNBOUND control did not run — every refusal above is unattributable"
+  grep -q 'REFUSED at build time with the measured wall' <<<"$chn_out" \
+    || die "the 3-circuit process wall is not enforced — a 6-slice build would HANG, not fail"
+  grep -q '=== ROOT-AIR-CHAIN PASS ===' <<<"$chn_out" \
+    || die "the AIR-chain leg did not print its PASS line"
+
+  # ── §3.25 the root's AIR on the root's OWN PROOF ───────────────────────────
+  real_out="$(run_air_real "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$real_out"
+  [ "$rc" -eq 0 ] || die "the root-air-real leg exited $rc"
+  n_real="$(printf '%s' "$real_out" | grep -c '✓')"
+  [ "$n_real" -ge 11 ] || die "only $n_real real-proof checks passed; expected >= 11"
+  grep -q 'reproduces p3.s accumulator EXACTLY on the real proof' <<<"$real_out" \
+    || die "the emitted DAG was never run on the committed root proof's opened values"
+  grep -q 'SATISFIES both the accumulator identity' <<<"$real_out" \
+    || die "the closing equality on the real proof was never a Kimchi CONSTRAINT"
+  grep -q 'do NOT bind zeta' <<<"$real_out" \
+    || die "the per-instance zeta-binding census did not run — a zeta-blind closing equality would be invisible"
+  grep -q "REFUSED: the QUOTIENT at zeta bent" <<<"$real_out" \
+    || die "dregg's own closing equality was never watched refusing"
+  grep -q '=== ROOT-AIR-REAL PASS ===' <<<"$real_out" \
+    || die "the real-proof leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched + $n_rair + $n_emit + $n_achain + $n_real checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
        "FRI query, Fiat-Shamir transcript, the 16-layer fold chain and the DEEP quotient all" \
@@ -641,6 +727,37 @@ expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air
 }
 
 inject_all() {
+# ── §3.22-§3.25, the ROOT's own AIR ───────────────────────────────────────────
+# The TypeScript walker is a THIRD implementation beside p3's and Lean's and
+# nothing proves it faithful; the in-circuit KAT is the only thing joining it.
+# Bend one operator and the KAT must go red, or every row count in §3.22 is for a
+# circuit that denotes something other than dregg's constraints.
+expect_red root_air "the DAG walker's SUB lowered as an ADD" \
+  "s/v\[i\] = extSub\(v\[n\[1\]\], v\[n\[2\]\]\);/v[i] = extAdd(v[n[1]], v[n[2]]);/" \
+  src/RootAirDag.ts
+# p3 folds BASE constraints then EXTENSION ones, `acc = acc*alpha + C`, in order.
+# A reversed fold is a different accumulator and must not pass the KAT.
+expect_red root_air "the alpha-fold run in REVERSE constraint order" \
+  "s/  for \(const c of roots\) acc = extAdd\(extMul\(acc, alpha\), c\);/  for (const c of roots.slice().reverse()) acc = extAdd(extMul(acc, alpha), c);/" \
+  src/RootAirDag.ts
+# §3.23's whole claim is that the schedule is over an atom list containing the
+# root's 1,093 constraints. Drop the AIR block and the leg must refuse to report a
+# step count as if it had one.
+expect_red emitted "the AIR block dropped from the emitted atom list" \
+  "s/  if \(opts\.withAir !== false\) \{/  if (false) {/" \
+  src/PartitionSchedule.ts
+# The chain's boundary is a BINDING. Disarm the predecessor check and the splices
+# stop being refused — which is exactly the state §3.20 built the control to
+# detect.
+expect_red air_chain "the chain's predecessor check disarmed" \
+  "s/        if \(prev\) prev\.publicOutput\.assertEquals\(bIn\);/        if (prev) prev.publicOutput.assertEquals(prev.publicOutput);/" \
+  src/RootAirChain.ts
+# The binder resolves the artifact's column legend against the REAL proof's
+# opened values. Read `main[1][i]` from the local row and the accumulator no
+# longer matches p3's — which is the whole of §3.25's evidence.
+expect_red air_real "the binder reading the NEXT row from the LOCAL one" \
+  "s/      return pick\(m\[1\] === '0' \? inst\.traceLocal : inst\.traceNext, Number\(m\[2\]\), label\);/      return pick(inst.traceLocal, Number(m[2]), label);/" \
+  src/RootAirDag.ts
 expect_red gate "corrupted gold digest" \
   "s/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6d/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6e/" \
   src/rust-gold-vectors.ts
