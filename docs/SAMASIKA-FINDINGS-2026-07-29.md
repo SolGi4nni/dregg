@@ -85,7 +85,9 @@ has over its chain-selection code do not currently run.
 `mainnet.mlh` ≡ `devnet.mlh` byte-identical: `grace_period_slots = 2160` (`:20`),
 `slots_per_window = 77` (`constants.ml:227`), so `grace_period_end = 2237` (`constants.ml:239-241`).
 
-The written spec's constants table (`docs/specs/consensus/README.md:107`) says **1440**, and openmina
+The written spec's constants table — upstream, at
+<https://github.com/MinaProtocol/mina/blob/develop/docs/specs/consensus/README.md#L107>, **not a path
+in this repo** — says **1440**, and openmina
 hardcodes **1440**. Two independent lanes here caught this from opposite directions.
 
 ---
