@@ -654,3 +654,94 @@ export function witnessTableColumns(t: DagTable, seed: bigint): { base: BbExt[];
     });
   return { base: mk(t.cols.length), ext: mk(t.extCols.length) };
 }
+
+// ===========================================================================
+// 6. Binding the DAG to a REAL root proof's opened values.
+// ===========================================================================
+
+/** One instance of `circuit-prove/src/bin/root_air_instance.rs`'s output — the
+ *  opened values of dregg's committed root proof at the transcript's own
+ *  `zeta`, with the challenges re-derived by replaying `verify_batch`. */
+export type RealInstance = {
+  index: number;
+  table: string;
+  degreeBits: number;
+  width: number;
+  prepWidth: number;
+  nChunks: number;
+  permChallenges: number[][];
+  permutationValues: number[][];
+  periodicValues: number[][];
+  traceLocal: number[][];
+  traceNext: number[][] | null;
+  prepLocal: number[][] | null;
+  prepNext: number[][] | null;
+  permLocal: number[][];
+  permNext: number[][];
+  publicValues: number[];
+  quotientChunks: number[][][];
+  selectors: { isFirstRow: number[]; isLastRow: number[]; isTransition: number[]; invVanishing: number[] };
+  quotientAtZeta: number[];
+  accumulator: number[];
+  alphaBinding: boolean;
+  zetaBinding: boolean;
+};
+
+export type RealRootAir = {
+  kind: string;
+  vkFingerprint: string;
+  numTurns: number;
+  degreeBits: number[];
+  challenges: { alpha: number[]; zeta: number[] };
+  instances: RealInstance[];
+};
+
+/**
+ * **THE BINDER.** Resolve one table's column legend against a real instance's
+ * opened values, so the emitted DAG is evaluated at the values dregg's own
+ * prover produced rather than at pseudorandom ones.
+ *
+ * ⚑ THE LEGEND IS THE CONTRACT AND A MISSING LABEL IS A REFUSAL, NOT A ZERO. A
+ * column the artifact names and the instance does not supply means the two
+ * objects are not the same AIR; substituting zero would make the accumulator
+ * wrong in a way that looks like an arithmetic bug three rungs later.
+ */
+export function bindRealInstance(t: DagTable, inst: RealInstance): { base: bigint[][]; ext: bigint[][] } {
+  const B = (x: number[] | undefined, what: string): bigint[] => {
+    if (!x) throw new Error(`${t.name}: the instance supplies no ${what}`);
+    return x.map((v) => BigInt(v));
+  };
+  const pick = (rows: number[][] | null | undefined, i: number, what: string): bigint[] => {
+    if (!rows || i >= rows.length)
+      throw new Error(`${t.name}: the legend names ${what} and the instance has ${rows?.length ?? 0}`);
+    return B(rows[i], what);
+  };
+  const base = t.cols.map((label) => {
+    let m: RegExpMatchArray | null;
+    if (label === 'is_first_row') return B(inst.selectors.isFirstRow, label);
+    if (label === 'is_last_row') return B(inst.selectors.isLastRow, label);
+    if (label === 'is_transition') return B(inst.selectors.isTransition, label);
+    if ((m = label.match(/^main\[(\d+)\]\[(\d+)\]$/)))
+      return pick(m[1] === '0' ? inst.traceLocal : inst.traceNext, Number(m[2]), label);
+    if ((m = label.match(/^prep\[(\d+)\]\[(\d+)\]$/)))
+      return pick(m[1] === '0' ? inst.prepLocal : inst.prepNext, Number(m[2]), label);
+    if ((m = label.match(/^public\[(\d+)\]$/))) {
+      const i = Number(m[1]);
+      if (i >= inst.publicValues.length)
+        throw new Error(`${t.name}: the legend names ${label}, the instance has ${inst.publicValues.length} public values`);
+      // Public values are BASE field elements, lifted.
+      return [BigInt(inst.publicValues[i]), 0n, 0n, 0n];
+    }
+    if ((m = label.match(/^periodic\[(\d+)\]$/))) return pick(inst.periodicValues, Number(m[1]), label);
+    throw new Error(`${t.name}: the legend has an unhandled column label '${label}'`);
+  });
+  const ext = t.extCols.map((label) => {
+    let m: RegExpMatchArray | null;
+    if ((m = label.match(/^perm\[(\d+)\]\[(\d+)\]$/)))
+      return pick(m[1] === '0' ? inst.permLocal : inst.permNext, Number(m[2]), label);
+    if ((m = label.match(/^challenge\[(\d+)\]$/))) return pick(inst.permChallenges, Number(m[1]), label);
+    if ((m = label.match(/^perm_value\[(\d+)\]$/))) return pick(inst.permutationValues, Number(m[1]), label);
+    throw new Error(`${t.name}: the legend has an unhandled extension column label '${label}'`);
+  });
+  return { base, ext };
+}
