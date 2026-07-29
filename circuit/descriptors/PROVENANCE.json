@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "mode": "emit",
-  "dregg2_tree_hash": "a24dff2a483975d53bcb5d2d4cd790df3f2b44b6",
-  "repo_head": "2cfe16bd98d2bc77608e199b16f9f026d5bd3f91",
-  "source_dirty": true,
+  "mode": "stamp-existing",
+  "dregg2_tree_hash": "b654e03150370c19b427a6af043a4428f3c2c51e",
+  "repo_head": "ce4ce33f08cb8ff6a19379be74e8c63021010ef2",
+  "source_dirty": false,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",
@@ -22,7 +22,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-07-28T14:17:35Z",
+  "generated_utc": "2026-07-29T10:46:23Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -142,6 +142,17 @@
     "merkle-membership-4ary-general.json": "5f4235f777d849c79e99200dcb84522ea242422af213396c0466eac1a4fd75d3",
     "merkle-membership-depth2.json": "287b680c42669fa1064c98efcc078aad7b94f7d3fb1e062b7a0f2456b5da88cf",
     "note-spend-leaf.json": "f5a5683bd0d2cfdeba90d6585bd6aeb275e933c961da004e2ac5684e37b18ee1",
+    "pasta-rcb-sg-slice-0-of-4-w8.json": "694e4e8b6cd18e32f1236d1b13eb02d0cd48079b437c0081312a0d310504071e",
+    "pasta-rcb-sg-slice-0-of-4.json": "deecffe1e52b7f4d3ab8807ce0827d9c71adb4021455c6ac81334a45e876b389",
+    "pasta-rcb-sg-slice-1-of-4-w8.json": "4b506a208e37d164b53a9e9a47ebf8bf3db0b0f1252729613cf6482525608c51",
+    "pasta-rcb-sg-slice-1-of-4.json": "9f33b67cd80375b1aec90281a8b3052cf2ba2c82ac114fd804b9b230d0b61274",
+    "pasta-rcb-sg-slice-2-of-4-w8.json": "729ac4fb006d497824fcee3db6d2e9d5ee7bc3e37eb411ce4cdf657a2054af15",
+    "pasta-rcb-sg-slice-2-of-4.json": "09223f01ba299f638d3eeea84312e6bf840dce47ebbe8b338dddbe87fed1fc3c",
+    "pasta-rcb-sg-slice-3-of-4-w8.json": "28c823f1dd8db886ed08c9a79b0e667e098241f26edd049c358a627fa7208a8d",
+    "pasta-rcb-sg-slice-3-of-4.json": "28f669daf79dcd4694afb2d8be58c8d5c3c981136b52dd7df85f996409d19c03",
+    "pasta-rcb-windowed-trace-1024.txt": "a889d1db943d26322ddce75143bc9f4d9de719b825d77cf09ed782b8ea730925",
+    "pasta-rcb-windowed-trace-64.txt": "287e2f5e542be6672bb8263451791112ffc0453ff30dd884d5655c4e641dc2c9",
+    "pasta-rcb-windowed.json": "6c77c51a4b6a79100e4f8ff28dbb3d616d97b44c4c069e1afc4c844ea3cfa82a",
     "poseidon2-hash-arity2.json": "12dbd9f280be3a0d696c87b63f06df8acd5cd9247ef6f8c33d0a5a3dddb33bcf",
     "predicate-arith-gt.json": "a3ccc4bf4bd5247555f1749850f8eb6e254540a1874e43bfe5963a6b6f07228b",
     "predicate-arith-inrange.json": "bb435c81b1f5dcc6f176225e73c0374eb4129f1078f751f29acfc9786d8ef2e5",
@@ -175,7 +186,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "a30d058fc3c32590d19fd45f825f0a2d5ca987efd6d93cf635f4d9a3ec9ca925",
     "circuit/src/cap_reshape_descriptor.rs": "dde91b8af93dada783dbb4851108e779e4b285e46d6aa60171aaf44ad857a128",
-    "circuit/src/effect_vm_descriptors.rs": "8c5a9dec2d0fa189707a123e8073cc86bf549a94d5e7670207524373003b3f11",
-    "circuit/src/lean_descriptor_air.rs": "aceffe54c45a905a2f34e333214b9b0e30606b40c0f8fd460726b0067d20ddb2"
+    "circuit/src/effect_vm_descriptors.rs": "28d00b55cb4c859ac5d226e2efa98b02ed4e30af97083028509454a8e50a312f",
+    "circuit/src/lean_descriptor_air.rs": "de4caf0447da34707187d69ba851c71aa37044ff177f30a1a42f58bdf61a1316"
   }
 }

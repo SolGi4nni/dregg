@@ -55,6 +55,8 @@ import Dregg2.Circuit.Emit.MerkleMembership4aryEmit
 import Dregg2.Circuit.Emit.MerkleMembershipEmit
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
+import Dregg2.Circuit.Emit.PastaMsmWindowed
+import Dregg2.Circuit.Emit.PastaMsmSliced
 import Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 import Dregg2.Circuit.Emit.PredicatesGtEmit
 import Dregg2.Circuit.Emit.PredicatesInRangeEmit
@@ -278,6 +280,32 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.LightClientSolanaAir.solLcVerifyDesc)
   , ("dregg-midnight-lightclient-verify-v1.json",
       Dregg2.Circuit.Emit.LightClientMidnightAir.midLcVerifyDesc)
+    -- ⚑ THE LEAN-AUTHORED PASTA AIRs. `pasta-rcb-windowed.json` was checked in UNROUTED — its
+    -- bytes were not re-derivable from Lean, which is precisely the ungated hand-transcription hop
+    -- this file exists to delete, on the descriptor the whole Mina opening-check arc rests on.
+  , ("pasta-rcb-windowed.json",
+      Dregg2.Circuit.Emit.PastaMsmWindowed.windowedRowDesc)
+    -- The FOUR-WAY CUT, at the REAL parameters: 8,192 generators per slice. The offset is a
+    -- LITERAL in each emitted gate, so these are four distinct objects and routing them
+    -- separately is the point, not duplication.
+  , ("pasta-rcb-sg-slice-0-of-4.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 0 8192)
+  , ("pasta-rcb-sg-slice-1-of-4.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 1 8192)
+  , ("pasta-rcb-sg-slice-2-of-4.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 2 8192)
+  , ("pasta-rcb-sg-slice-3-of-4.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 3 8192)
+    -- …and at the width that PROVES on a box (`circuit/tests/pasta_sliced_sg_prove.rs`). Same
+    -- `def`, different width literal; `slices_compose` is width-independent, the measurement is not.
+  , ("pasta-rcb-sg-slice-0-of-4-w8.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 0 8)
+  , ("pasta-rcb-sg-slice-1-of-4-w8.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 1 8)
+  , ("pasta-rcb-sg-slice-2-of-4-w8.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 2 8)
+  , ("pasta-rcb-sg-slice-3-of-4-w8.json",
+      Dregg2.Circuit.Emit.PastaMsmSliced.slicedRowDesc 4 3 8)
   ]
 
 /- The routing table covers the checked-in directory exactly. A bare count is a
@@ -292,7 +320,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 67
+#guard byNameDescriptors.length == 76
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

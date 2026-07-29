@@ -158,6 +158,19 @@ CERT_F_MARKET4_FILE = "dregg-cert-f-market4-ir2.json"
 # whitespace change. We reproduce each file's existing convention exactly instead, which keeps the
 # emit a true no-op on a clean tree. Retire this set only as part of a deliberate regen.
 BY_NAME_NEWLINE_TERMINATED = frozenset({
+    # The Lean-authored Pasta AIRs. Emitted by `lake env lean --run … > file`, so newline-
+    # terminated like every other redirect-emitted artifact. Declared here because omitting a
+    # newline-terminated file from this set makes the emit STRIP a byte and re-key the descriptor
+    # for a whitespace change — the exact re-keying this set exists to prevent.
+    "pasta-rcb-windowed.json",
+    "pasta-rcb-sg-slice-0-of-4.json",
+    "pasta-rcb-sg-slice-1-of-4.json",
+    "pasta-rcb-sg-slice-2-of-4.json",
+    "pasta-rcb-sg-slice-3-of-4.json",
+    "pasta-rcb-sg-slice-0-of-4-w8.json",
+    "pasta-rcb-sg-slice-1-of-4-w8.json",
+    "pasta-rcb-sg-slice-2-of-4-w8.json",
+    "pasta-rcb-sg-slice-3-of-4-w8.json",
     "dark-bazaar-private-n4k4.json",
     "faithful-note-spend-v2.json",
     "field-delta-result-range.json",
@@ -751,10 +764,22 @@ def stamp_existing() -> None:
     # (`stamp-existing` is explicitly a stamp of the ON-DISK set — unlike the emit path it makes
     # no Lean claim, and `--verify-provenance --strict` is what refuses a stamp minted this way
     # from an unreviewable tree.)
+    # ⚑ COVERAGE_EXEMPT IS HONOURED HERE TOO. It was not, and that made `--stamp-existing`
+    # SELF-DEFEATING: this function pinned every file on disk, while `verify_provenance` (just
+    # below) and the consumer gate
+    # (`effect_vm_descriptors.rs::provenance_json_pins_match_checked_in_descriptor_bytes`, which
+    # reads this very set out of this file so there is ONE authority) both SUBTRACT the exempt
+    # names. So running the documented re-pin ceremony produced a stamp naming two artifacts the
+    # gate calls "not part of the descriptor set", and the gate stayed red no matter how many times
+    # it was run. Measured 2026-07-29 on `dregg-cert-qp-portfolio6-s3-ir2.json` and
+    # `regen-cert-qp.sh` — both tracked, both exempt, both pinned by the old stamp.
+    #
+    # Two readers of one list, one of them not reading it, is the shape the `COVERAGE_EXEMPT`
+    # comment warned about; it just guarded the wrong pair.
     desc_hashes = {
         str(p.relative_to(DESC)): sha256_hex(p.read_bytes())
         for p in sorted(DESC.rglob("*"))
-        if p.is_file() and p.name != PROVENANCE_FILE
+        if p.is_file() and p.name != PROVENANCE_FILE and p.name not in COVERAGE_EXEMPT
     }
     fp_hashes = {
         str(p.relative_to(ROOT)): sha256_hex(p.read_bytes())
