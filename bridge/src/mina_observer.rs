@@ -40,7 +40,8 @@
 //! | each block's Pickles proof — DECODE | **CHECKED in Rust** (since 2026-07-29). `bestChain` now fetches `protocolStateProof` and [`crate::mina_pickles`] decodes the base64url binprot `Mina_base.Proof.Stable.V2` byte-exactly: every `PaddedSeq` terminator, every `Option` tag, every bounded array, every binprot integer in its CANONICAL width, every field element canonical for its Pasta modulus, and **every byte consumed**. On the real devnet block that is 294 field elements checked and 11138 bytes landed on exactly. A truncated, extended, re-widened or out-of-field proof is a REFUSAL. |
 //! | each block's Pickles proof — PREAMBLE | **VERIFIED** — the decoded counts cross into the Lean gate `dregg_mina_wrap_shape_ok` (`Dregg2.Bridge.PicklesWrapShapeGate`), whose decision `picklesWrapShapeOk_is_shapeOkRec` proves IS `KimchiVerify.shapeOkRec` — the `verifier.rs:810-830` preamble — plus the accumulator-count and IPA-round agreements. `real_block_wrap_shape_accepts` pins the accept on block 539508; `real_block_wrap_shape_refused_by_freeze` pins that the retired `prevLen = 0` form REFUSES a real Mina block. The result IS the gate's `pk` bit. ⚑ TRUSTED here, and it is a lot: the verifier-index parameters themselves ([`crate::mina_pickles::MinaWrapIndexParams`]) — modelling the Wrap VK is P8/P9 and is NOT STARTED. |
 //! | each block's Pickles proof — ARITHMETIC | **NOT CHECKED, and not reachable from here.** C3 (the Fiat–Shamir transcript), C5/C8, the group assembly, `public_comm` and the IPA opening relation all exist and all run on a real Mina block — as `by decide` over the LITERAL constants of one extracted block (`MinaRealBlockGate`, `MinaRealBlockTranscript`, `MinaWrap*`). They are not functions of a proof. Two independent walls, both measured: the values they need (verifier index, SRS, `endo_r`, the 40-element public input) are **not on the wire** — the proof's `messages_for_next_step_proof.app_state` is literally `()` — and they come from a dependency graph deliberately outside this workspace; and their cost is kernel-`decide` cost: 82 s for C5/C8, 153 s + 75 s for the opening rung, **~3.5 h of serial kernel and ~28 GB** for the terminal `⟨s, srs.g⟩` MSM, per block. |
-//! | the proof↔block BINDING | **NOT CHECKED.** ⚑ A Wrap proof is not self-binding to its block. `app_state` is `()` on the wire and the verifier reconstructs the public input from the BLOCK plus the VK's `dlog_plonk_index`, so nothing in the proof's bytes says which block it proves. An endpoint may therefore serve block A's proof under block B's header and every check above still passes. Closing this needs the public-input assembly (a Poseidon over `Fp` against the VK) — the same object P8/P9 needs, and the honest next rung. |
+//! | the proof↔**proof** BINDING | **VERIFIED** (since 2026-07-29) — the exhibited proofs must be a genuine CONSECUTIVE RUN. Pickles recursion makes block N's Step proof verify block N−1's Wrap proof, so block N's bytes carry TWO fingerprints of its parent's proof in the clear: the parent's own IPA accumulator `sg`, and the parent's 16 IPA challenges. [`MinaObserver::check_proof_chain`] extracts both (a CODEC — no arithmetic) and `dregg_mina_proof_chain_ok` (`Dregg2.Bridge.PicklesProofChainGate`) decides. MEASURED on 40 consecutive real devnet blocks: 39/39 pairs link on BOTH fingerprints, 40/40 distinct `sg`, 0 self-naming, 0 non-adjacent coincidences. `chainOk_adjacent_proofs_differ` proves the payoff — **an accepted segment cannot serve the same proof twice in a row** — and `chainOk_pins_every_seam` proves every adjacency is checked, so runs cannot be spliced, shuffled or padded. ⚑ TRUSTED here: that accumulator index `[0]` is the BLOCKCHAIN parent's rather than the transaction SNARK's — an empirical reading of those 39 pairs, not a theorem about Pickles. |
+//! | the proof↔**stateHash** BINDING | **STILL NOT CHECKED**, and the reason is now exact rather than a gesture. A Wrap proof is not self-binding to its block: `messages_for_next_step_proof.app_state` is literally `()` on the wire, and the block enters only as the verifier-SUPPLIED `app_state`, hashed with the VK's `dlog_plonk_index` and the accumulators into one Poseidon digest that is **public-input slot 12 of 40**. The other 39 slots are functions of the proof alone. So the binding is not a comparison anyone can make — it is a conjunct of the full Wrap verification, and reaching it means assembling the whole public input, six of whose words (`combined_inner_product`, `b`, `zeta_to_srs_length`, `zeta_to_domain_size`, `perm`, `xi`) are DROPPED from the wire proof and recoverable only by `expand_deferred` (the front half of a Kimchi verifier), plus a 40-point MSM and two sponges. ⚑ The DATA is all public — `stateHash` + `protocolStateProof.base64` + the blockchain VK is provably sufficient — so what is missing is COMPUTATION, not a source. Consequence, said plainly: an adversary holding a genuine consecutive run of real proofs can still re-label the headers they are served under. |
 //! | the zkApp's settled root | **CHECKED in Rust** — the on-chain `provenRoot` must equal the dregg root we settled. |
 //! | FORK CHOICE | **NOT CHECKED, ANYWHERE.** Ouroboros Samasika's chain selection (VRF-weighted density, long-range) is formalized nowhere in this tree. An accept says "this exhibited segment is anchored, linked, canonical and `k` deep"; it does not say "and it is the chain the network selected". Two `k`-deep segments under different anchors are indistinguishable here. |
 //!
@@ -406,9 +407,23 @@ impl<T: JsonRpcTransport> MinaRpc for MinaGraphQlRpc<T> {
         // ⚑ `protocolStateProof` is the blockchain SNARK — the base64url binprot
         // `Mina_base.Proof.Stable.V2`. Asking for it is the whole of what retired
         // `NEUTRAL_PICKLES_OK`; before 2026-07-29 this query simply did not.
+        // ⚑ `protocolStateProof` IS AN OBJECT, NOT A SCALAR, and getting that wrong is not a
+        // style point — it is the difference between fetching the evidence and fetching `{}`.
+        // `src/lib/mina_graphql/types.ml:1768` declares `obj "protocolStateProof"` with `base64`
+        // and `json` fields, and `Block.protocolStateProof` has type `non_null
+        // protocol_state_proof`. Selecting it BARE does not error on a real node — measured
+        // 2026-07-29 against `api.minascan.io/node/devnet/v1/graphql`, which answered
+        // `"protocolStateProof":{}` with no `errors` array — so the parse below fell to
+        // `unwrap_or("")` and EVERY real block became `WrapProofAbsent`. The observer shipped
+        // 2026-07-29 unable to confirm a single live settlement, and the fail-closed posture is
+        // exactly why that was survivable rather than silent.
+        //
+        // `base64` resolves through `Scalars.PrecomputedBlockProof` =
+        // `Mina_block.Precomputed_block.Proof.to_bin_string` + URI-safe Base64, i.e. the binprot
+        // `Mina_base.Proof.Stable.V2` [`crate::mina_pickles`] decodes byte-exactly.
         let q = format!(
-            "{{ bestChain(maxLength: {max_length}) {{ stateHash protocolStateProof protocolState \
-             {{ previousStateHash consensusState {{ blockHeight }} }} }} }}"
+            "{{ bestChain(maxLength: {max_length}) {{ stateHash protocolStateProof {{ base64 }} \
+             protocolState {{ previousStateHash consensusState {{ blockHeight }} }} }} }}"
         );
         let data = self.query(&q)?;
         let arr = data
@@ -444,6 +459,7 @@ impl<T: JsonRpcTransport> MinaRpc for MinaGraphQlRpc<T> {
                 // refusal in one place, with the block's height in the message.
                 let protocol_state_proof = b
                     .get("protocolStateProof")
+                    .and_then(|p| p.get("base64"))
                     .and_then(|x| x.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -669,6 +685,22 @@ pub enum ObserveError {
         /// The IPA round count the proof exhibited.
         ipa_rounds: usize,
     },
+    /// ⚑ **The VERIFIED proof-chain gate REFUSED an adjacent pair: the exhibited proofs are NOT
+    /// a consecutive run.** This is a DISTINCT variant on purpose, and the distinction is the
+    /// whole safety property. Every other refusal above says "this segment failed a check"; this
+    /// one says "these two proofs are not the two proofs a real Mina chain would have produced
+    /// here", which is the only statement in this module that binds a served proof to anything
+    /// outside its own bytes.
+    ///
+    /// It is also deliberately NOT [`Self::VerifiedGateUnavailable`]. An absent archive is a COLD
+    /// path — nothing was decided — and reading a cold path as a proved `no` is how a repo learns
+    /// to trust refusals that never ran. A `WrapProofNotChained` means the gate RAN and said no.
+    WrapProofNotChained {
+        /// The height of the CHILD block whose proof does not name its parent's.
+        child_height: u64,
+        /// The parent block's height.
+        parent_height: u64,
+    },
     /// The zkApp account was absent or not a zkApp (no app state).
     ZkappNotFound,
     /// The zkApp app state was malformed (wrong arity or a non-Field value).
@@ -755,6 +787,16 @@ impl std::fmt::Display for ObserveError {
                 "the verified preamble gate REFUSED block {block_height}'s Wrap proof \
                  (prev_challenges={prev_challenges}, ipa_rounds={ipa_rounds}): its shape is not \
                  the shape the pinned verifier index demands"
+            ),
+            Self::WrapProofNotChained {
+                child_height,
+                parent_height,
+            } => write!(
+                f,
+                "the VERIFIED proof-chain gate REFUSED block {child_height}: its Pickles proof does \
+                 not name block {parent_height}'s proof (the exhibited accumulator and IPA \
+                 challenges are not the parent proof's), so these are not a consecutive run of real \
+                 Mina proofs and the segment does not witness a depth"
             ),
             Self::ZkappNotFound => write!(f, "zkApp account not found / not a zkApp"),
             Self::MalformedZkappState { reason } => write!(f, "malformed zkApp state: {reason}"),
@@ -981,6 +1023,71 @@ impl<R: MinaRpc> MinaObserver<R> {
         Ok(PicklesOutcome::AllAccepted)
     }
 
+    /// ⚑ **CHECK THAT THE EXHIBITED PROOFS ARE A CONSECUTIVE RUN** — the proof↔proof binding, and
+    /// the first thing in this module that ties a served Pickles proof to anything outside its own
+    /// bytes.
+    ///
+    /// A Wrap proof is not self-binding to its BLOCK: `messages_for_next_step_proof.app_state` is
+    /// `()` on the wire and the block enters only as public-input slot 12, which is not a
+    /// comparison anyone can make without `expand_deferred` (see the module table). But Pickles
+    /// recursion leaves block N's proof carrying **two fingerprints of block N−1's proof** — the
+    /// parent's own IPA accumulator `sg`, and the parent's 16 IPA challenges. Both are in the
+    /// clear, both are read by the codec, and comparing them needs no arithmetic at all.
+    ///
+    /// Same substrate split as [`Self::check_block_proofs`]: Rust extracts and renders (a base
+    /// conversion), the ARCHIVE decides ([`dregg_lean_ffi::verified_mina_proof_chain_ok`], whose
+    /// `linkOk` is pinned on the REAL devnet run 539795→539796→539797 and whose REPLAY / SWAP /
+    /// REORDER / SPLICE / tamper refusals are pinned on the same real objects).
+    ///
+    /// ⚑ FAIL CLOSED, WITH THE RIGHT ERROR. A gate REJECT is
+    /// [`ObserveError::WrapProofNotChained`] — the gate ran and said no. An ABSENT gate is
+    /// [`ObserveError::VerifiedGateUnavailable`] — nothing was decided. Collapsing those two is
+    /// how a cold path gets read as a proved `no`, so they are separate variants and stay that
+    /// way.
+    ///
+    /// ⚑ What this does NOT do: bind a proof to its header's `stateHash`. An adversary holding a
+    /// genuine consecutive run of real proofs can still re-label the headers they are served
+    /// under. What it costs the adversary is everything cheaper than that — and "everything
+    /// cheaper" is what the segment used to accept.
+    pub fn check_proof_chain(&self, chain: &[MinaBlock]) -> Result<(), ObserveError> {
+        use crate::mina_pickles::decimal_of_le32;
+
+        let segment: Vec<&MinaBlock> = chain
+            .iter()
+            .filter(|b| b.block_height > self.config.anchor_height)
+            .collect();
+
+        let mut prev: Option<(u64, crate::mina_pickles::WrapProofShape)> = None;
+        for b in segment {
+            if b.protocol_state_proof.is_empty() {
+                return Err(ObserveError::WrapProofAbsent {
+                    block_height: b.block_height,
+                });
+            }
+            let shape = decode_protocol_state_proof(&b.protocol_state_proof)
+                .map_err(|e| ObserveError::malformed_proof(b.block_height, &e))?;
+            if let Some((parent_height, parent)) = prev {
+                let verdict = dregg_lean_ffi::verified_mina_proof_chain_ok(
+                    &decimal_of_le32(&parent.sg[0]),
+                    &decimal_of_le32(&parent.sg[1]),
+                    &parent.bp_challenges,
+                    &decimal_of_le32(&shape.acc0[0]),
+                    &decimal_of_le32(&shape.acc0[1]),
+                    &shape.acc0_challenges,
+                )
+                .map_err(|why| ObserveError::VerifiedGateUnavailable { why })?;
+                if verdict != dregg_lean_ffi::MinaProofChainVerdict::Accept {
+                    return Err(ObserveError::WrapProofNotChained {
+                        child_height: b.block_height,
+                        parent_height,
+                    });
+                }
+            }
+            prev = Some((b.block_height, shape));
+        }
+        Ok(())
+    }
+
     /// **Confirm an outbound settlement landed on a finalized Mina block.**
     ///
     /// `expected_root` is the dregg root the settlement advanced to;
@@ -1028,6 +1135,14 @@ impl<R: MinaRpc> MinaObserver<R> {
         //      verifier index does not admit is refused here — before the finality
         //      gate, so the refusal is precise and does not need the archive.
         let pickles = self.check_block_proofs(&chain)?;
+
+        // (1d) ⚑ CHECK THAT THOSE PROOFS ARE A CONSECUTIVE RUN. Every check to this point is
+        //      satisfiable by a proof belonging to a different block — that is the residual this
+        //      module's table carried, and in its cheap form it meant ONE real proof replayed
+        //      under a whole fabricated segment. The exhibited proofs must now name one another,
+        //      and a pair that does not is `WrapProofNotChained`, which is deliberately a
+        //      DIFFERENT error from an absent archive.
+        self.check_proof_chain(&chain)?;
 
         // (2) hand the projections to the VERIFIED gate. `lk`, `pk` and `cn` are all
         //     RESULTS of the checks above — `lk` and `cn` are `true` because
@@ -1146,6 +1261,40 @@ pub fn real_devnet_protocol_state_proof() -> String {
         .to_string()
 }
 
+/// ⚑ **FIVE CONSECUTIVE REAL devnet blocks, with their OWN proofs** — heights 539795…539799 as
+/// `metatheory/fixtures/pickles-extractors/mina_devnet_run.json` tracks them: real Base58Check
+/// state hashes, real `previousStateHash` linkage, real contiguous heights, and each block's own
+/// `protocolStateProof`.
+///
+/// This fixture exists because the single-block one CANNOT exhibit the proof chain: one block has
+/// no parent proof to name. Anything asserting that the observer accepts a genuine segment has to
+/// run on this, or it is asserting something about a segment no chain would ever produce.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn real_devnet_run_blocks() -> Vec<MinaBlock> {
+    const FIXTURE: &str =
+        include_str!("../../metatheory/fixtures/pickles-extractors/mina_devnet_run.json");
+    let v: serde_json::Value = serde_json::from_str(FIXTURE).expect("devnet run fixture JSON");
+    v.get("blocks")
+        .and_then(|b| b.as_array())
+        .expect("the fixture carries a `blocks` array")
+        .iter()
+        .map(|b| {
+            let s = |k: &str| {
+                b.get(k)
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_else(|| panic!("fixture block missing `{k}`"))
+                    .to_string()
+            };
+            MinaBlock {
+                state_hash: s("state_hash"),
+                block_height: s("blockchain_length").parse().expect("height"),
+                parent_state_hash: s("previous_state_hash"),
+                protocol_state_proof: s("protocol_state_proof_base64_urlsafe"),
+            }
+        })
+        .collect()
+}
+
 /// Encode a 32-byte little-endian field element as a Mina Base58Check state hash.
 /// The inverse of [`decode_state_hash`]; used by the test double to mint a chain
 /// of GENUINE state hashes (a mock that emitted `"B62hash7"` would make every
@@ -1224,6 +1373,29 @@ impl MockMinaRpc {
             proof: real_devnet_protocol_state_proof(),
             accounts: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// ⚑ **A mock over the FIVE REAL consecutive devnet blocks** (539795…539799), each carrying
+    /// its OWN proof — the only shape in this file that can reach an ACCEPT now that the observer
+    /// checks the proof chain.
+    ///
+    /// [`Self::linked_chain`] deliberately keeps its old behaviour of serving ONE real proof for
+    /// every block, because that is exactly the REPLAY an endpoint would attempt and it is now a
+    /// refusal ([`ObserveError::WrapProofNotChained`]). Before 2026-07-29 the two were
+    /// indistinguishable to the observer, which is the entire point.
+    pub fn real_devnet_run() -> Self {
+        Self {
+            chain: real_devnet_run_blocks(),
+            proof: String::new(),
+            accounts: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The pinned anchor for [`Self::real_devnet_run`]: the OLDEST real block, so the exhibited
+    /// segment is the four above it and three genuine adjacent pairs get checked.
+    pub fn real_devnet_anchor() -> (String, u64) {
+        let b = &real_devnet_run_blocks()[0];
+        (b.state_hash.clone(), b.block_height)
     }
 
     /// Replace the proof every block is served with — the falsifier hook. A tampered
@@ -1510,11 +1682,15 @@ mod tests {
     /// the observer never confirms without the gate.
     #[test]
     fn observer_fails_closed_without_the_verified_gate() {
+        // ⚑ ON THE REAL CONSECUTIVE RUN, and it has to be: since the observer checks the proof
+        // chain, a synthetic segment serving one proof for every block is a REFUSAL, so an ACCEPT
+        // can only be asserted against real chained proofs. Anchor 539795, tip 539799 ⇒ a 4-block
+        // segment and depth 4.
         let settled = root(0x11);
-        let mut rpc = MockMinaRpc::linked_chain(700, 1000);
+        let mut rpc = MockMinaRpc::real_devnet_run();
         rpc.set_zkapp_root(ZKAPP, &settled);
-        let observer = MinaObserver::new(config(700, 290), rpc);
-        let outcome = observer.observe_settlement(&settled, 700);
+        let observer = MinaObserver::new(run_config(4), rpc);
+        let outcome = observer.observe_settlement(&settled, 539_795);
 
         // ⚑ THE BRANCH IS ARMED, not merely chosen. Both arms below are green on their own
         // terms, which means a passing run proves nothing about WHICH ran — the shape a
@@ -1526,9 +1702,9 @@ mod tests {
         ) {
             let observed = outcome.expect("gate present ⇒ genuine settlement confirmed");
             assert_eq!(observed.proven_root, settled);
-            assert_eq!(observed.tip_height, 1000);
-            assert_eq!(observed.segment_len, 300);
-            assert_eq!(observed.depth, 300);
+            assert_eq!(observed.tip_height, 539_799);
+            assert_eq!(observed.segment_len, 4);
+            assert_eq!(observed.depth, 4);
         } else {
             assert!(
                 matches!(outcome, Err(ObserveError::VerifiedGateUnavailable { .. })),
@@ -1542,11 +1718,11 @@ mod tests {
     #[test]
     fn observer_refuses_unfinalized_settlement() {
         let settled = root(0x22);
-        let mut rpc = MockMinaRpc::linked_chain(700, 1000);
+        let mut rpc = MockMinaRpc::real_devnet_run();
         rpc.set_zkapp_root(ZKAPP, &settled);
-        let observer = MinaObserver::new(config(700, 290), rpc);
-        // Submitted at 900, witnessed tip 1000 ⇒ depth 100 < 290.
-        let err = observer.observe_settlement(&settled, 900).unwrap_err();
+        let observer = MinaObserver::new(run_config(290), rpc);
+        // Submitted at 539798, witnessed tip 539799 ⇒ depth 1 < 290.
+        let err = observer.observe_settlement(&settled, 539_798).unwrap_err();
         assert!(matches!(
             err,
             ObserveError::NotFinalized { .. } | ObserveError::VerifiedGateUnavailable { .. }
@@ -1560,9 +1736,9 @@ mod tests {
     #[test]
     fn observer_refuses_settlement_claimed_below_the_anchor() {
         let settled = root(0x66);
-        let mut rpc = MockMinaRpc::linked_chain(700, 701);
+        let mut rpc = MockMinaRpc::real_devnet_run();
         rpc.set_zkapp_root(ZKAPP, &settled);
-        let observer = MinaObserver::new(config(700, 290), rpc);
+        let observer = MinaObserver::new(run_config(290), rpc);
         let err = observer.observe_settlement(&settled, 0).unwrap_err();
         assert!(matches!(
             err,
@@ -1743,6 +1919,222 @@ mod tests {
         }
     }
 
+    // ---- ⚑ THE PROOF↔PROOF CHAIN: the binding, and the falsifier that fires ----
+    //
+    // These run on REAL, CONSECUTIVE Mina devnet blocks with their OWN proofs (539795…539799).
+    // The contrast is the whole test: the genuine run reaches the gate, and every way of serving
+    // real proofs under the wrong headers is a REFUSAL with its own distinct error.
+
+    fn run_config(depth: u64) -> MinaObserverConfig {
+        let (anchor_state_hash, anchor_height) = MockMinaRpc::real_devnet_anchor();
+        MinaObserverConfig {
+            zkapp_address: ZKAPP.to_string(),
+            anchor_state_hash,
+            anchor_height,
+            confirmation_depth: depth,
+            wrap_index: MinaWrapIndexParams::DEVNET_BLOCKCHAIN,
+        }
+    }
+
+    /// ⚑ THE MEASUREMENT, restated as a test. On the real consecutive run, block N's proof carries
+    /// block N−1's own IPA accumulator `sg` AND block N−1's own 16 IPA challenges. This is the
+    /// fact the whole binding rests on, checked here by the RUST codec against the SAME objects
+    /// `Dregg2.Bridge.PicklesProofChainGate`'s `B539795`/`B539796`/`B539797` pin as Lean literals
+    /// — two independent decoders, so a drift in either is a red test.
+    #[test]
+    fn real_devnet_run_exhibits_the_proof_chain() {
+        let blocks = real_devnet_run_blocks();
+        assert_eq!(blocks.len(), 5, "the fixture must carry five blocks");
+        let shapes: Vec<_> = blocks
+            .iter()
+            .map(|b| {
+                crate::mina_pickles::decode_protocol_state_proof(&b.protocol_state_proof)
+                    .unwrap_or_else(|e| panic!("block {} decodes: {e}", b.block_height))
+            })
+            .collect();
+
+        for (i, w) in blocks.windows(2).enumerate() {
+            assert_eq!(
+                w[1].block_height,
+                w[0].block_height + 1,
+                "the fixture must be contiguous"
+            );
+            assert_eq!(
+                shapes[i + 1].acc0,
+                shapes[i].sg,
+                "block {}'s proof must name block {}'s accumulator",
+                w[1].block_height,
+                w[0].block_height
+            );
+            assert_eq!(
+                shapes[i + 1].acc0_challenges,
+                shapes[i].bp_challenges,
+                "block {}'s proof must name block {}'s IPA challenges",
+                w[1].block_height,
+                w[0].block_height
+            );
+            // …and the proofs really are DIFFERENT proofs, or the chain above is vacuous.
+            assert_ne!(shapes[i + 1].sg, shapes[i].sg);
+            assert_ne!(shapes[i].acc0, shapes[i].sg, "no block is self-naming");
+        }
+
+        // ⚑ THE CROSS-CHECK against the Lean literals. If these drift, the Lean gate is deciding
+        // about a different object than the one the observer feeds it.
+        use crate::mina_pickles::decimal_of_le32;
+        assert_eq!(
+            decimal_of_le32(&shapes[0].sg[0]),
+            "20146518149961985083673632976085115247649480898755654722356774610313624222264",
+            "B539795.sgX"
+        );
+        assert_eq!(
+            decimal_of_le32(&shapes[1].acc0[0]),
+            "20146518149961985083673632976085115247649480898755654722356774610313624222264",
+            "B539796.accX"
+        );
+        assert_eq!(
+            shapes[0].bp_challenges[0],
+            9627185902892173217607580080386729855
+        );
+        assert_eq!(
+            shapes[1].acc0_challenges[0],
+            9627185902892173217607580080386729855
+        );
+    }
+
+    /// ⚑ THE ACCEPT HALF. A genuine consecutive run of real Mina proofs passes the chain check —
+    /// so the refusals below discriminate rather than refusing everything.
+    #[test]
+    fn genuine_devnet_run_passes_the_proof_chain_check() {
+        let _ = dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_proof_chain_ok_available(),
+            "dregg_mina_proof_chain_ok Pickles proof-chain gate (the observer's ACCEPT half)",
+        );
+        let rpc = MockMinaRpc::real_devnet_run();
+        let observer = MinaObserver::new(run_config(1), rpc);
+        let chain = observer.rpc.best_chain(16).unwrap();
+        match observer.check_proof_chain(&chain) {
+            Ok(()) => assert!(
+                dregg_lean_ffi::mina_proof_chain_ok_available(),
+                "an accept without the gate would mean the check was skipped"
+            ),
+            Err(ObserveError::VerifiedGateUnavailable { .. }) => assert!(
+                !dregg_lean_ffi::mina_proof_chain_ok_available(),
+                "the gate is present, so it must have rendered a verdict"
+            ),
+            other => panic!("a GENUINE consecutive devnet run must chain, got {other:?}"),
+        }
+    }
+
+    /// ⚑ **THE FALSIFIER: REPLAY.** One real Mina proof — the object every other check in this
+    /// module accepts — served under every header of the segment. Before 2026-07-29 this
+    /// manufactured any confirmation depth for free. It is now `WrapProofNotChained`.
+    #[test]
+    fn observer_refuses_one_real_proof_replayed_across_the_segment() {
+        let _ = dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_proof_chain_ok_available(),
+            "dregg_mina_proof_chain_ok Pickles proof-chain gate (the REPLAY falsifier)",
+        );
+        // `linked_chain` serves ONE real proof for every block — exactly the replay.
+        let rpc = MockMinaRpc::linked_chain(700, 705);
+        let observer = MinaObserver::new(config(700, 1), rpc);
+        let chain = observer.rpc.best_chain(16).unwrap();
+        // The SHAPE check still passes on every block: replay is invisible to it, which is why
+        // the chain check had to exist.
+        assert!(
+            matches!(
+                observer.check_block_proofs(&chain),
+                Ok(PicklesOutcome::AllAccepted) | Err(ObserveError::VerifiedGateUnavailable { .. })
+            ),
+            "a replayed REAL proof passes the per-block shape check — that is the hole"
+        );
+        match observer.check_proof_chain(&chain) {
+            Err(ObserveError::WrapProofNotChained {
+                child_height,
+                parent_height,
+            }) => {
+                assert_eq!((parent_height, child_height), (701, 702));
+                assert!(dregg_lean_ffi::mina_proof_chain_ok_available());
+            }
+            Err(ObserveError::VerifiedGateUnavailable { .. }) => assert!(
+                !dregg_lean_ffi::mina_proof_chain_ok_available(),
+                "the gate is present, so it must have rendered a verdict"
+            ),
+            other => panic!("a REPLAYED proof must be refused, got {other:?}"),
+        }
+    }
+
+    /// ⚑ **THE FALSIFIER: SWAP.** Block A's proof served under block B's header — the attack the
+    /// module table named. Here block 539798's real proof is served in 539797's slot, so the pair
+    /// 539796→(539798's proof) no longer links. Everything else about the segment is untouched and
+    /// still genuine: real state hashes, real linkage, real heights, real proofs.
+    #[test]
+    fn observer_refuses_a_real_proof_served_under_the_wrong_header() {
+        let _ = dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_proof_chain_ok_available(),
+            "dregg_mina_proof_chain_ok Pickles proof-chain gate (the SWAP falsifier)",
+        );
+        let mut blocks = real_devnet_run_blocks();
+        // Swap the proofs of the two middle blocks: both are REAL Mina proofs, both decode, both
+        // pass the shape gate, and both are now under the wrong header.
+        let (a, b) = (2usize, 3usize);
+        let tmp = blocks[a].protocol_state_proof.clone();
+        blocks[a].protocol_state_proof = blocks[b].protocol_state_proof.clone();
+        blocks[b].protocol_state_proof = tmp;
+
+        let mut rpc = MockMinaRpc::real_devnet_run();
+        rpc.set_chain(blocks);
+        let observer = MinaObserver::new(run_config(1), rpc);
+        let chain = observer.rpc.best_chain(16).unwrap();
+        // Still shape-valid — the swap is invisible to every pre-existing check.
+        assert!(
+            matches!(
+                observer.check_block_proofs(&chain),
+                Ok(PicklesOutcome::AllAccepted) | Err(ObserveError::VerifiedGateUnavailable { .. })
+            ),
+            "a swapped REAL proof passes the per-block shape check — that is the hole"
+        );
+        match observer.check_proof_chain(&chain) {
+            Err(ObserveError::WrapProofNotChained { child_height, .. }) => {
+                assert_eq!(child_height, 539_797);
+                assert!(dregg_lean_ffi::mina_proof_chain_ok_available());
+            }
+            Err(ObserveError::VerifiedGateUnavailable { .. }) => assert!(
+                !dregg_lean_ffi::mina_proof_chain_ok_available(),
+                "the gate is present, so it must have rendered a verdict"
+            ),
+            other => panic!("a SWAPPED proof must be refused, got {other:?}"),
+        }
+    }
+
+    /// ⚑ A refused CHAIN and an ABSENT GATE must not be the same error. Collapsing them is how a
+    /// cold path gets read as a proved `no`; this test pins that they are distinct variants and
+    /// that the observer never returns the chain refusal without the gate having run.
+    #[test]
+    fn an_unbound_pair_and_an_absent_gate_are_different_refusals() {
+        let rpc = MockMinaRpc::linked_chain(700, 703);
+        let observer = MinaObserver::new(config(700, 1), rpc);
+        let chain = observer.rpc.best_chain(16).unwrap();
+        let err = observer.check_proof_chain(&chain).unwrap_err();
+        if dregg_lean_ffi::mina_proof_chain_ok_available() {
+            assert!(
+                matches!(err, ObserveError::WrapProofNotChained { .. }),
+                "the gate RAN, so the refusal must be the proved one; got {err:?}"
+            );
+        } else {
+            assert!(
+                matches!(err, ObserveError::VerifiedGateUnavailable { .. }),
+                "no gate means NOTHING was decided; got {err:?}"
+            );
+        }
+        assert_ne!(
+            std::mem::discriminant(&ObserveError::WrapProofNotChained {
+                child_height: 1,
+                parent_height: 0
+            }),
+            std::mem::discriminant(&ObserveError::VerifiedGateUnavailable { why: String::new() }),
+        );
+    }
+
     /// The `pk` projection is genuinely TWO-VALUED — the property `NEUTRAL_PICKLES_OK`
     /// could not have. Without it the Lean gate's Pickles conjunct, and the theorem
     /// pinning `pk = false ⇒ reject` (`mina_decision_discriminates`), describe a branch
@@ -1795,8 +2187,8 @@ mod tests {
         let proof = real_devnet_protocol_state_proof();
         let resp = format!(
             r#"{{"data":{{"bestChain":[
-            {{"stateHash":"{a}","protocolStateProof":"{p}","protocolState":{{"previousStateHash":"{z}","consensusState":{{"blockHeight":"999"}}}}}},
-            {{"stateHash":"{b}","protocolStateProof":"{p}","protocolState":{{"previousStateHash":"{a}","consensusState":{{"blockHeight":"1000"}}}}}}
+            {{"stateHash":"{a}","protocolStateProof":{{"base64":"{p}"}},"protocolState":{{"previousStateHash":"{z}","consensusState":{{"blockHeight":"999"}}}}}},
+            {{"stateHash":"{b}","protocolStateProof":{{"base64":"{p}"}},"protocolState":{{"previousStateHash":"{a}","consensusState":{{"blockHeight":"1000"}}}}}}
         ]}}}}"#,
             z = encode_state_hash(&mock_fe(998)),
             a = encode_state_hash(&mock_fe(999)),
@@ -1832,6 +2224,15 @@ mod tests {
             sent.contains("protocolStateProof"),
             "the bestChain query must fetch the blockchain SNARK: {sent}"
         );
+        // ⚑ AND IT MUST SELECT `base64`. `protocolStateProof` is a GraphQL OBJECT
+        // (`types.ml:1768`), so a bare selection returns `{{}}` — measured against a real devnet
+        // node on 2026-07-29 — and every block then parses to an EMPTY proof and is refused. The
+        // observer shipped that way for a day; this assertion is what makes it impossible again.
+        assert!(
+            sent.contains("protocolStateProof { base64 }"),
+            "protocolStateProof is an OBJECT: without the `base64` subselection a real node \
+             returns {{}} and every block is refused as proofless: {sent}"
+        );
     }
 
     /// A `bestChain` response that omits `protocolStateProof` parses to an EMPTY proof,
@@ -1840,7 +2241,7 @@ mod tests {
     fn graphql_block_without_a_proof_yields_an_empty_proof_and_is_refused() {
         let resp = format!(
             r#"{{"data":{{"bestChain":[
-            {{"stateHash":"{a}","protocolState":{{"previousStateHash":"{z}","consensusState":{{"blockHeight":"999"}}}}}}
+            {{"stateHash":"{a}","protocolStateProof":{{}},"protocolState":{{"previousStateHash":"{z}","consensusState":{{"blockHeight":"999"}}}}}}
         ]}}}}"#,
             z = encode_state_hash(&mock_fe(998)),
             a = encode_state_hash(&mock_fe(999)),

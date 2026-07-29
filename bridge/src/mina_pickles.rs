@@ -122,6 +122,38 @@ pub struct WrapProofShape {
     /// caller can assert the check was not vacuous: a decoder that silently checked
     /// nothing would report `0` here and the observer's tests refuse that.
     pub field_elements_checked: usize,
+
+    // ── the CHAIN projection: what this proof SAYS ABOUT ITS PARENT'S PROOF ──────────
+    //
+    // ⚑ This is the proof↔proof binding, and it is the reason the four fields below are
+    // extracted rather than merely walked past. See `WrapProofShape`'s note above about
+    // `public_len`: the block is NOT in the proof, so a Wrap proof cannot be tied to its own
+    // header from its bytes. But it IS tied to its PARENT'S PROOF, because Pickles recursion
+    // makes block N's Step proof verify block N−1's Wrap proof, and the accumulator it carries
+    // for that verification is literally block N−1's own IPA commitment.
+    //
+    // MEASURED on 40 consecutive real Mina devnet blocks (539761…539800, fetched
+    // 2026-07-29 from `api.minascan.io`, 39 adjacent pairs): `acc0 == parent.sg` on 39/39 and
+    // `acc0_challenges == parent.bp_challenges` on 39/39, with 40 distinct `sg` values, zero
+    // self-references (`acc0 != sg` on every block), and zero NON-adjacent coincidences.
+    /// `bulletproof.challenge_polynomial_commitment` — **this proof's own IPA accumulator**
+    /// `sg`, in Pallas's base field. The value the NEXT block's proof must name.
+    pub sg: Point,
+    /// `statement.messages_for_next_step_proof.challenge_polynomial_commitments[0]` — **the
+    /// accumulator of the proof this one's Step recursion verified**, i.e. the parent block's
+    /// `sg`. All-zero when the proof carries no accumulator at all (`prev_challenges = 0`),
+    /// which the verified chain gate refuses: `(0, 0)` is not on `y² = x³ + 5`.
+    ///
+    /// Index `[1]` is deliberately NOT projected — it is the transaction-SNARK accumulator, and
+    /// it is stable across many blocks (4 distinct values over the measured 40), so it carries
+    /// no positional information.
+    pub acc0: Point,
+    /// `statement.proof_state.deferred_values.bulletproof_challenges` — **this proof's own** 16
+    /// IPA challenges, the second half of what the next block's proof must name.
+    pub bp_challenges: [u128; 16],
+    /// `statement.messages_for_next_step_proof.old_bulletproof_challenges[0]` — the 16
+    /// challenges of the proof this one's Step recursion verified. All-zero when absent.
+    pub acc0_challenges: [u128; 16],
 }
 
 /// **The pinned Wrap verifier-index parameters** the decoded shape is compared against.
@@ -280,8 +312,11 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// A 32-byte little-endian field element, CHECKED canonical against `modulus_be`.
-    fn field(&mut self, modulus_be: &[u8; 32], what: &str) -> Result<(), WrapProofError> {
+    /// A 32-byte little-endian field element, CHECKED canonical against `modulus_be`, and
+    /// RETURNED. Returning the bytes is what lets the chain projection
+    /// ([`WrapProofShape::sg`] / [`WrapProofShape::acc0`]) be read out of the same single walk
+    /// that already checks them; callers that only need the check discard with `?;`.
+    fn field(&mut self, modulus_be: &[u8; 32], what: &str) -> Result<[u8; 32], WrapProofError> {
         let at = self.i;
         let le: [u8; 32] = self.take(32)?.try_into().unwrap();
         // Big-endian compare, most significant byte first. No arithmetic.
@@ -289,7 +324,7 @@ impl<'a> Reader<'a> {
             let a = le[31 - k];
             let m = modulus_be[k];
             if a < m {
-                return Ok(());
+                return Ok(le);
             }
             if a > m {
                 return Err(WrapProofError {
@@ -310,9 +345,10 @@ impl<'a> Reader<'a> {
     /// A curve point as two coordinates in `modulus_be`'s field. Curve MEMBERSHIP is
     /// not checked here and must not be: `y² = x³ + 5` is Lean-authored
     /// (`MinaWrapGroupGate` / `MinaWrapSgCore.srs_g_on_curve`).
-    fn point(&mut self, modulus_be: &[u8; 32], what: &str) -> Result<(), WrapProofError> {
-        self.field(modulus_be, what)?;
-        self.field(modulus_be, what)
+    fn point(&mut self, modulus_be: &[u8; 32], what: &str) -> Result<Point, WrapProofError> {
+        let x = self.field(modulus_be, what)?;
+        let y = self.field(modulus_be, what)?;
+        Ok([x, y])
     }
 
     /// `PaddedSeq<T, N>`: exactly `N` elements followed by the unit terminator.
@@ -325,6 +361,22 @@ impl<'a> Reader<'a> {
             f(self)?;
         }
         self.unit()
+    }
+
+    /// `PaddedSeq<T, N>`, KEEPING the elements. Same walk as [`Self::pseq`] — the
+    /// terminator is still required — but the values survive, which is what the chain
+    /// projection reads.
+    fn pseq_v<T>(
+        &mut self,
+        n: usize,
+        mut f: impl FnMut(&mut Self) -> Result<T, WrapProofError>,
+    ) -> Result<Vec<T>, WrapProofError> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            out.push(f(self)?);
+        }
+        self.unit()?;
+        Ok(out)
     }
 
     /// `Option<T>`.
@@ -363,6 +415,52 @@ impl<'a> Reader<'a> {
 /// A 128-bit Pickles challenge: `PaddedSeq<Hex64, 2>`.
 fn challenge(r: &mut Reader<'_>) -> Result<(), WrapProofError> {
     r.pseq(2, |r| r.int())
+}
+
+/// The same challenge, KEEPING its value. The two `Hex64` limbs are written through binprot's
+/// signed-int encoder (`Number<u64>` writes `self.0 as i64`), so the limb is reinterpreted back
+/// to `u64` and the pair assembled little-endian into the 128-bit challenge.
+///
+/// ⚑ No arithmetic and no field reduction: this is the wire value, and the chain check is an
+/// EQUALITY between two wire values. `two_u64_to_field` (which is what openmina applies before
+/// hashing) is injective on these, so comparing the pre-image is the same test as comparing the
+/// field elements — and it keeps every Pasta operation on the Lean side.
+fn challenge_v(r: &mut Reader<'_>) -> Result<u128, WrapProofError> {
+    let limbs = r.pseq_v(2, |r| r.int())?;
+    Ok(u128::from(limbs[0] as u64) | (u128::from(limbs[1] as u64) << 64))
+}
+
+/// A curve point as its two 32-byte little-endian coordinates, in wire order `(x, y)`.
+pub type Point = [[u8; 32]; 2];
+
+/// Render a 32-byte LITTLE-ENDIAN field element as a decimal string — the form every Lean-side
+/// Pasta constant in this tree is written in, and therefore the form the gate wires carry.
+///
+/// Schoolbook repeated division by 10 over 32-bit limbs. It is a base conversion, not field
+/// arithmetic: no modulus is involved and nothing here depends on which Pasta field the element
+/// came from.
+pub fn decimal_of_le32(le: &[u8; 32]) -> String {
+    let mut limbs = [0u32; 8];
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        let mut b = [0u8; 4];
+        b.copy_from_slice(&le[i * 4..i * 4 + 4]);
+        *limb = u32::from_le_bytes(b);
+    }
+    let mut digits: Vec<u8> = Vec::new();
+    while !limbs.iter().all(|&l| l == 0) {
+        let mut rem: u64 = 0;
+        for limb in limbs.iter_mut().rev() {
+            let cur = (rem << 32) | u64::from(*limb);
+            *limb = (cur / 10) as u32;
+            rem = cur % 10;
+        }
+        digits.push(b'0' + rem as u8);
+    }
+    if digits.is_empty() {
+        return "0".to_string();
+    }
+    digits.reverse();
+    String::from_utf8(digits).expect("ASCII digits")
 }
 
 /// **Decode a `protocolStateProof`** — base64url (unpadded) of the binprot
@@ -412,7 +510,12 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
             );
         }
     }
-    r.pseq(16, challenge)?; // deferred_values.bulletproof_challenges
+    // deferred_values.bulletproof_challenges — KEPT: this proof's own 16 IPA challenges are
+    // half of what its CHILD block's proof must exhibit.
+    let bp_challenges: [u128; 16] = r
+        .pseq_v(16, challenge_v)?
+        .try_into()
+        .expect("pseq_v(16) yields 16");
     let branch_proofs_verified = r.u8()?;
     if branch_proofs_verified > 2 {
         return r.err(format!(
@@ -434,6 +537,7 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
 
     // ── statement.messages_for_next_step_proof ─────────────────────────────────
     r.unit()?; // app_state : () — ⚑ the block is NOT in the proof; see WrapProofShape.
+    let mut acc0: Point = [[0u8; 32]; 2];
     let prev_challenges = {
         let n = r.nat0()?;
         if n > 2 {
@@ -441,22 +545,30 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
                 "challenge_polynomial_commitments length {n} exceeds Pickles' max_proofs_verified 2"
             ));
         }
-        for _ in 0..n {
-            r.point(
+        for k in 0..n {
+            let p = r.point(
                 FP,
                 "messages_for_next_step_proof.challenge_polynomial_commitments",
             )?;
+            // Index 0 is the PARENT BLOCK's accumulator; index 1 is the transaction SNARK's.
+            if k == 0 {
+                acc0 = p;
+            }
             checked += 2;
         }
         n as usize
     };
+    let mut acc0_challenges = [0u128; 16];
     let prev_challenge_vectors = {
         let n = r.nat0()?;
         if n > 2 {
             return r.err(format!("old_bulletproof_challenges length {n} exceeds 2"));
         }
-        for _ in 0..n {
-            r.pseq(16, challenge)?;
+        for k in 0..n {
+            let v = r.pseq_v(16, challenge_v)?;
+            if k == 0 {
+                acc0_challenges = v.try_into().expect("pseq_v(16) yields 16");
+            }
         }
         n as usize
     };
@@ -570,7 +682,9 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
     r.field(FQ, "bulletproof.z_2")?;
     checked += 2;
     r.point(FP, "bulletproof.delta")?;
-    r.point(FP, "bulletproof.challenge_polynomial_commitment")?;
+    // ⚑ `sg` — this proof's own IPA accumulator, the value the CHILD block's proof must carry
+    // as its `messages_for_next_step_proof.challenge_polynomial_commitments[0]`.
+    let sg = r.point(FP, "bulletproof.challenge_polynomial_commitment")?;
     checked += 4;
 
     if r.i != bytes.len() {
@@ -594,6 +708,10 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
         branch_proofs_verified,
         branch_domain_log2,
         field_elements_checked: checked,
+        sg,
+        acc0,
+        bp_challenges,
+        acc0_challenges,
     })
 }
 
@@ -650,6 +768,26 @@ mod tests {
         assert_eq!(
             shape.field_elements_checked, 294,
             "the canonicality check must actually run on every field element"
+        );
+
+        // ⚑ THE CHAIN PROJECTION IS NOT VACUOUS. A decoder that quietly left these at their
+        // zero initialisers would still satisfy every assertion above, and the proof-chain gate
+        // would then compare `(0,0)` against `(0,0)` — which is exactly why the gate refuses the
+        // degenerate accumulator, and exactly why this assertion exists on the Rust side too.
+        assert_ne!(shape.sg, [[0u8; 32]; 2], "sg must be extracted");
+        assert_ne!(shape.acc0, [[0u8; 32]; 2], "acc0 must be extracted");
+        assert_ne!(shape.acc0, shape.sg, "block 539508 is not self-naming");
+        assert!(
+            shape.bp_challenges.iter().any(|&c| c != 0),
+            "the proof's own IPA challenges must be extracted"
+        );
+        assert!(
+            shape.acc0_challenges.iter().any(|&c| c != 0),
+            "the parent's claimed IPA challenges must be extracted"
+        );
+        assert_ne!(
+            shape.bp_challenges, shape.acc0_challenges,
+            "a block's own challenges are not its parent's"
         );
     }
 

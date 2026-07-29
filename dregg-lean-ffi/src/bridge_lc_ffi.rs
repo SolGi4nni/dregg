@@ -1273,6 +1273,193 @@ mod ffi_mina_wrap_shape {
     }
 }
 
+// ===========================================================================
+// MINA — the PER-ADJACENT-PAIR Pickles PROOF-CHAIN gate (`dregg_mina_proof_chain_ok`)
+// ===========================================================================
+//
+// ⚑ WHAT THIS BINDS, AND WHAT IT STILL DOES NOT.
+//
+// `mina_observer`'s per-step table carried a residual that made the whole per-block Pickles rung
+// weaker than it looked: **the proof↔block binding — NOTHING CHECKED IT.** An endpoint could
+// serve block A's proof under block B's header and every check passed — the Lean finality gate,
+// the depth witness, the Base58Check decode and canonicality, the parent linkage, and the
+// byte-exact `Mina_base.Proof.Stable.V2` decode feeding `dregg_mina_wrap_shape_ok`. In its cheap
+// form that is not a subtle attack: ONE real Mina proof, replayed under 290 fabricated headers,
+// manufactured any confirmation depth for free, and the "availability obligation" the
+// `NEUTRAL_PICKLES_OK` retirement claimed to buy cost an adversary exactly one proof.
+//
+// The obstruction is structural and it does NOT go away here. A Wrap proof's
+// `messages_for_next_step_proof.app_state` is literally `()` on the wire, so the proof does not
+// carry the block it proves. The block enters only as the verifier-SUPPLIED `app_state`, hashed
+// with the VK's `dlog_plonk_index` and the accumulators into ONE Poseidon digest that is
+// **public-input slot 12 of 40**; the other 39 slots are functions of the proof alone. Turning
+// slot 12 into a COMPARISON means assembling the whole public input, and six of those 40 words
+// (`combined_inner_product`, `b`, `zeta_to_srs_length`, `zeta_to_domain_size`, `perm`, `xi`) are
+// DROPPED from the wire proof and recoverable only by `expand_deferred` — the front half of a
+// Kimchi verifier — plus a 40-point MSM and two sponges. That rung is
+// `docs/MINA-REAL-BLOCK-GATE.md` §6 and it is NOT this.
+//
+// What IS closeable, and is closed here, is the OTHER binding. Pickles recursion makes block N's
+// Step proof verify block N−1's Wrap proof, so block N's own bytes carry two fingerprints of its
+// parent's proof, in the clear, comparable with zero arithmetic:
+//
+//   * `messages_for_next_step_proof.challenge_polynomial_commitments[0]` = the parent's
+//     `bulletproof.challenge_polynomial_commitment` (`sg`), and
+//   * `messages_for_next_step_proof.old_bulletproof_challenges[0]` = the parent's
+//     `deferred_values.bulletproof_challenges` (16 of them).
+//
+// MEASURED on 40 consecutive real devnet blocks (539761…539800, 39 adjacent pairs): 39/39 on
+// BOTH fingerprints, 40/40 distinct `sg`, 0 self-naming blocks, 0 non-adjacent coincidences.
+//
+// So an accepted segment must exhibit a GENUINE CONSECUTIVE RUN of real Mina Wrap proofs, in
+// order, of the length claimed. Replay, shuffle, splice and pad are all refusals, and depth past
+// the real chain's own production is a refusal. It is still NOT a proof↔`stateHash` binding: an
+// adversary holding a genuine run can re-label the headers those proofs are served under.
+//
+// Wire grammar (mirrors `PicklesProofChainGate.decodeChainWire` byte-for-byte):
+// ```text
+// INPUT := "px=" Nat ";py=" Nat ";pc=" Nat("," Nat)*15
+//        ";cx=" Nat ";cy=" Nat ";cc=" Nat("," Nat)*15
+// ```
+
+/// The verified verdict on one ADJACENT PAIR of exhibited blocks. `Accept` iff the Lean gate
+/// (`dregg_mina_proof_chain_ok`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// archive-absent) is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinaProofChainVerdict {
+    /// The gate ACCEPTED: the child's proof names the parent's proof, on both fingerprints.
+    Accept,
+    /// The gate REJECTED — the pair is UNBOUND, and an unbound pair is a refusal.
+    Reject,
+}
+
+/// Whether the linked archive exports the verified proof-chain gate (`dregg_mina_proof_chain_ok`,
+/// spliced from `Dregg2.Bridge.PicklesProofChainGate`). When false the caller must FAIL CLOSED:
+/// there is no Rust twin of this decision, and a proof-chain check that silently does not run is
+/// indistinguishable from the pre-2026-07-29 state in which no proof was bound to anything.
+pub fn mina_proof_chain_ok_available() -> bool {
+    ffi_mina_proof_chain::mina_proof_chain_ok_present() && lean_init_once().is_ok()
+}
+
+/// Render a 16-element challenge vector as the `,`-separated decimal list the wire carries.
+fn chal_list(v: &[u128; 16]) -> String {
+    let mut out = String::with_capacity(16 * 40);
+    for (i, c) in v.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&c.to_string());
+    }
+    out
+}
+
+/// Build the proof-chain wire from the PARENT block's own fingerprint (`parent_sg_x`,
+/// `parent_sg_y`, `parent_bp_challenges`) and the CHILD block's exhibited claim about it
+/// (`child_acc_x`, `child_acc_y`, `child_acc_challenges`). The coordinates are decimal strings of
+/// the decoded little-endian field elements — [`crate`]'s callers get them from
+/// `bridge::mina_pickles::decimal_of_le32`, which is a base conversion, not field arithmetic.
+pub fn mina_proof_chain_wire(
+    parent_sg_x: &str,
+    parent_sg_y: &str,
+    parent_bp_challenges: &[u128; 16],
+    child_acc_x: &str,
+    child_acc_y: &str,
+    child_acc_challenges: &[u128; 16],
+) -> String {
+    format!(
+        "px={parent_sg_x};py={parent_sg_y};pc={};cx={child_acc_x};cy={child_acc_y};cc={}",
+        chal_list(parent_bp_challenges),
+        chal_list(child_acc_challenges),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_proof_chain_ok` over a pre-built wire and return
+/// the raw output (`"1"` / `"0"` / `"ERR"`). Returns `Err` when the archive did not export it.
+pub fn shadow_mina_proof_chain_ok(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_proof_chain::lean_mina_proof_chain_ok(wire)
+}
+
+/// The end-to-end verified proof-chain query for one adjacent pair. `Ok(Accept)` ONLY on the
+/// gate's `"1"`; every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the
+/// archive lacks the export — the caller must treat that as a REFUSAL with its own distinct
+/// error, never as a skipped check and never as a proved `no`.
+pub fn verified_mina_proof_chain_ok(
+    parent_sg_x: &str,
+    parent_sg_y: &str,
+    parent_bp_challenges: &[u128; 16],
+    child_acc_x: &str,
+    child_acc_y: &str,
+    child_acc_challenges: &[u128; 16],
+) -> Result<MinaProofChainVerdict, String> {
+    let wire = mina_proof_chain_wire(
+        parent_sg_x,
+        parent_sg_y,
+        parent_bp_challenges,
+        child_acc_x,
+        child_acc_y,
+        child_acc_challenges,
+    );
+    let out = shadow_mina_proof_chain_ok(&wire)?;
+    Ok(if out == "1" {
+        MinaProofChainVerdict::Accept
+    } else {
+        MinaProofChainVerdict::Reject
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_proof_chain_ok_present))]
+mod ffi_mina_proof_chain {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_proof_chain_ok_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_proof_chain_ok_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_proof_chain_ok(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_proof_chain_ok_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_proof_chain_ok_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_proof_chain_ok_present)))]
+mod ffi_mina_proof_chain {
+    pub fn mina_proof_chain_ok_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_proof_chain_ok(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_proof_chain_ok not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -56,10 +56,12 @@ pub mod mina;
 /// [`midnight_observer`]; finalized-only, the verify, the injected transport.
 pub mod mina_observer;
 /// The byte-exact decoder for a Mina block's **Pickles Wrap proof**
-/// (`Mina_base.Proof.Stable.V2`, served as base64url binprot by `protocolStateProof`)
-/// and the SHAPE projection the verified Kimchi preamble decision runs over. Pure
-/// codec: no field or group arithmetic, which is Lean-authored. See
-/// `mina_observer`'s per-step table.
+/// (`Mina_base.Proof.Stable.V2`, served as base64url binprot by
+/// `protocolStateProof { base64 }` — an OBJECT, not a scalar) and the SHAPE projection the
+/// verified Kimchi preamble decision runs over, plus the CHAIN projection the verified
+/// proof-chain decision runs over (the parent's `sg` and its 16 IPA challenges, which
+/// Pickles recursion leaves in the child's bytes). Pure codec: no field or group
+/// arithmetic, which is Lean-authored. See `mina_observer`'s per-step table.
 pub mod mina_pickles;
 pub mod present;
 /// Mirror a Solana/pump.fun SPL token (`$DREGG`) into dregg's value layer as a

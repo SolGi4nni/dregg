@@ -540,6 +540,18 @@ extern lean_object *dregg_mina_lc_verify(lean_object *input);
 #ifdef DREGG_MINA_WRAP_SHAPE_OK
 extern lean_object *dregg_mina_wrap_shape_ok(lean_object *input);
 #endif
+/* dregg_mina_proof_chain_ok — the PER-ADJACENT-PAIR Pickles PROOF-CHAIN decision
+ * (`minaProofChainGate`, `Dregg2.Bridge.PicklesProofChainGate`): block N's Wrap proof must NAME
+ * block N-1's Wrap proof, on both fingerprints Pickles recursion leaves in the clear — the
+ * parent's own IPA accumulator `sg` and the parent's 16 IPA challenges. This is the first thing
+ * in the tree that ties a served proof to anything outside its own bytes, and it is what makes
+ * one real proof replayed under a whole fabricated segment a REFUSAL. It does NOT bind a proof to
+ * its block's `stateHash`; see the module header for why that needs `expand_deferred`. Same
+ * `"1"`/`"0"`/`"ERR"` fail-closed contract and no-module-initializer property as the gates
+ * above. */
+#ifdef DREGG_MINA_PROOF_CHAIN_OK
+extern lean_object *dregg_mina_proof_chain_ok(lean_object *input);
+#endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
@@ -1280,6 +1292,39 @@ size_t dregg_mina_wrap_shape_ok_str(const char *in_utf8, char *out, size_t out_c
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_wrap_shape_ok(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_PROOF_CHAIN_OK
+/* dregg_mina_proof_chain_ok_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * per-adjacent-pair Pickles PROOF-CHAIN gate
+ * (`Dregg2.Bridge.PicklesProofChainGate.dregg_mina_proof_chain_ok`). Input:
+ * `"px=<Nat>;py=<Nat>;pc=<Nat>,...x16;cx=<Nat>;cy=<Nat>;cc=<Nat>,...x16"` — the PARENT block's own
+ * `bulletproof.challenge_polynomial_commitment` and its 16 `deferred_values.bulletproof_challenges`,
+ * against the CHILD block's exhibited
+ * `messages_for_next_step_proof.challenge_polynomial_commitments[0]` and
+ * `...old_bulletproof_challenges[0]`. Every one of those is read out of the two blocks' own proofs
+ * by the Rust codec (`bridge/src/mina_pickles.rs`) with no arithmetic. Output: `"1"` / `"0"` /
+ * `"ERR"` (fail-closed). Runs `linkOk`, over which `chainOk_adjacent_proofs_differ` proves an
+ * accepted segment cannot serve the same proof twice in a row and `chainOk_iff_chain'` proves an
+ * accept IS a `List.Chain'` of links; `real_devnet_run_chains` pins the accept on the REAL devnet
+ * run 539795->539796->539797 and `real_devnet_chain_discriminates` pins the REPLAY, SWAP, REORDER,
+ * SPLICE, tamper and degenerate-accumulator refusals on the same real objects. Note the wire is
+ * ~1.6 KB (two 16-element decimal lists), an order of magnitude past the other gates' — the
+ * caller's growable output buffer already handles it. Same return contract as the bridges above. */
+size_t dregg_mina_proof_chain_ok_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_proof_chain_ok(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

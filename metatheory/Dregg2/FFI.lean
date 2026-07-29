@@ -46,6 +46,12 @@ import Dregg2.Bridge.LightClientTendermintGate
 -- `MinaWrapSrsG` (that 32,768-literal module is NOT reachable from these two).
 import Dregg2.Bridge.LightClientMinaGate
 import Dregg2.Bridge.PicklesWrapShapeGate
+-- `dregg_mina_proof_chain_ok` — the PROOF↔PROOF chain gate. Same layer-1 reasoning as the two
+-- above: rooted only in `Dregg2.lean` it would ELABORATE and emit no `:c` facet, so the export
+-- would never enter any archive and the observer would refuse every settlement. Added
+-- 2026-07-29; +0 modules to the closure (it imports only `KimchiVerify`, already pulled in by
+-- `PicklesWrapShapeGate`).
+import Dregg2.Bridge.PicklesProofChainGate
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.

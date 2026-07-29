@@ -254,6 +254,14 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          so the block's own proof shape (`KimchiVerify.shapeOkRec` plus the two length agreements a \
          RECURSIVE Wrap proof owes) is never checked",
     ),
+    (
+        "dregg_mina_proof_chain_ok",
+        "the PER-ADJACENT-PAIR Pickles PROOF-CHAIN gate compiles out — the observer refuses every \
+         settlement rather than admitting an unbound proof, so the ONE binding a served Wrap proof \
+         has to anything outside its own bytes (block N's proof names block N-1's `sg` and its 16 \
+         IPA challenges) is never checked, and one real Mina proof replayed under a whole \
+         fabricated segment would pass every remaining check",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2150,6 +2158,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_proof_chain_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -3099,6 +3108,14 @@ fn main() {
     } else {
         absent_export_warn("dregg_mina_wrap_shape_ok");
     }
+    // The PER-ADJACENT-PAIR Pickles PROOF-CHAIN gate (`Dregg2.Bridge.PicklesProofChainGate`).
+    // Same manifest treatment and the same flag day as the two gates above.
+    let mina_proof_chain_ok_present = archive_exports(&build_archive, "dregg_mina_proof_chain_ok");
+    if mina_proof_chain_ok_present {
+        println!("cargo:rustc-cfg=dregg_mina_proof_chain_ok_present");
+    } else {
+        absent_export_warn("dregg_mina_proof_chain_ok");
+    }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
     // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
@@ -3327,6 +3344,9 @@ fn main() {
     }
     if mina_wrap_shape_ok_present {
         shim.define("DREGG_MINA_WRAP_SHAPE_OK", None);
+    }
+    if mina_proof_chain_ok_present {
+        shim.define("DREGG_MINA_PROOF_CHAIN_OK", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

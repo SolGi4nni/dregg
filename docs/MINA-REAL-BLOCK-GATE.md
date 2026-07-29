@@ -401,3 +401,117 @@ opening relation is the verifier's **check**, not the extraction argument behind
 32768 SRS generators are trusted data, not derived (residual 3); and the two recursion
 commitments are still unchecked (5g). The gap between here and a light client is 5g, item 6 and
 `srs.g`'s derivation, on top of that floor.
+
+## 8. 2026-07-29 — the proof↔block binding: what it actually is, and the half that closed
+
+§7 ended by naming the next rung: *"the proof↔block binding (the public-input assembly)."* That
+framing was right about the object and wrong about the shape of the problem, and getting it exact
+is most of this section's value.
+
+### 8.1 The question, stated precisely
+
+The attack is: an endpoint serves **block A's proof under block B's header**. Every check §7
+deployed still passes — the state-hash decode, the canonicality, the parent linkage, the height
+contiguity, the byte-exact binprot decode, and `dregg_mina_wrap_shape_ok`. In its cheap form this
+is not subtle: **one** real Mina proof, replayed under 290 fabricated headers, manufactured any
+confirmation depth for free, and the "availability obligation" §7 claimed to buy cost an adversary
+exactly one proof.
+
+### 8.2 Where the block actually enters — measured, from both implementations
+
+A Wrap proof's `messages_for_next_step_proof.app_state` is literally `()` on the wire
+(`mina/src/lib/pickles/proof.ml:121`; openmina's generated type has `app_state: ()` with an
+`always_unit` deserializer). The block enters only as the **verifier-supplied** `app_state`:
+
+* OCaml `pickles/verify.ml:159` builds the prepared statement with
+  `{ t.statement.messages_for_next_step_proof with app_state }` — the wire `()` is *overwritten* by
+  the caller's value — and `blockchain_snark_state.ml:384` fixes what that value is:
+  `to_field_elements (t : Protocol_state.Value.t) = [| (Protocol_state.hashes t).state_hash |]`.
+  **One field element: the block's state hash.**
+* openmina `verification.rs:750` `verify_block` does the same, discarding the wire field with a
+  literal `app_state: _, // unused` and passing `MinaHash::hash(&protocol_state)`.
+
+That value is absorbed by `hash_messages_for_next_step_proof` — a prefix-free Poseidon over
+`index_to_field_elements(dlog_plonk_index)` (56 elements, the VK) `++ [state_hash]` (1) `++` the
+two `(commitment, 16 challenges)` accumulator groups (36) = **93 field elements** — and the digest
+lands at **public-input slot 12 of 40** (`prepared_statement.rs`, `to_public_input`).
+
+**Slot 12 is the ONLY block-dependent slot.** The other 39 are functions of the proof alone.
+
+### 8.3 The consequence, which is not the one §7 anticipated
+
+Because the public input is *derived* from `(block, proof, VK)`, computing it is never a check — it
+always succeeds. **The binding is not a comparison anyone can make; it is a conjunct of the full
+Wrap verification.** The shortest closed loop from a block's `stateHash` to a value the proof
+itself exhibits is: slot 12 → the 40-word public input → `public_comm` (a 40-point MSM over the
+Lagrange basis) → the Fq-sponge → `β, γ, α′, ζ′`, which *are* on the wire in the proof's own
+statement. And six of those 40 words — `combined_inner_product`, `b`, `zeta_to_srs_length`,
+`zeta_to_domain_size`, `perm`, `xi` — are **dropped from the wire proof** and recoverable only by
+`expand_deferred`, i.e. the front half of a Kimchi verifier.
+
+⚑ **The public API is NOT the obstruction, and this reverses a plausible prior guess.**
+`stateHash` + `protocolStateProof.base64` + the blockchain VK is provably sufficient to assemble
+all 40 words: the extractor already does exactly this and o1-labs' own `kimchi::verifier::verify`
+accepts the result (§2, ground truth 3). What is missing is **computation, not a source.**
+
+(A separate and real GraphQL gap, which the `subWindowDensities` lane also found: you cannot
+*re-derive* `state_hash` from the served header. `Filtered_external_transition.Protocol_state` drops
+`genesis_state_hash` and `constants` before GraphQL sees them, and `sub_window_densities`,
+`genesis_ledger_hash` and the whole `ledger_proof_statement` have no resolver. So the binprot
+`Protocol_state.Value` — libp2p RPC or a precomputed-block file, not the public API — is what a
+verifier would need to check that a served `stateHash` is the hash of a served header. That is a
+different hole from this one, and it is open.)
+
+### 8.4 What DID close: the proof↔**proof** chain
+
+Pickles recursion makes block N's Step proof verify block N−1's Wrap proof, so block N's own bytes
+carry **two fingerprints of its parent's proof**, in the clear, comparable with zero arithmetic:
+
+| in block N's proof | equals, in block N−1's proof |
+|---|---|
+| `messages_for_next_step_proof.challenge_polynomial_commitments[0]` | `bulletproof.challenge_polynomial_commitment` (`sg`) |
+| `messages_for_next_step_proof.old_bulletproof_challenges[0]` | `statement.proof_state.deferred_values.bulletproof_challenges` (16) |
+
+MEASURED on **40 consecutive real devnet blocks (539761…539800)**, 39 adjacent pairs: **39/39 on
+both fingerprints**, 40/40 distinct `sg`, 0 self-naming blocks, and 0 non-adjacent coincidences.
+Five of them are tracked at `metatheory/fixtures/pickles-extractors/mina_devnet_run.json`.
+
+Deployed as `@[export] dregg_mina_proof_chain_ok`
+(`Dregg2.Bridge.PicklesProofChainGate`), called once per adjacent pair by
+`MinaObserver::check_proof_chain`. `chainOk_adjacent_proofs_differ` proves the payoff — **an
+accepted segment cannot serve the same proof twice in a row** — and `chainOk_pins_every_seam`
+proves every adjacency is checked, so runs cannot be spliced, shuffled or padded.
+`real_devnet_run_chains` pins the accept on 539795→539796→539797 and
+`real_devnet_chain_discriminates` pins fourteen refusals (replay, swap, reorder, splice, coordinate
+tamper, challenge tamper, arity, degenerate accumulator) on the same real objects.
+
+⚑ **TRUSTED, named:** that accumulator index `[0]` is the *blockchain* parent's rather than the
+transaction SNARK's. That is an empirical reading of those 39 pairs, not a theorem about Pickles.
+Index `[1]` took only 4 distinct values over the 40 and is deliberately not projected.
+
+### 8.5 So say it at the right resolution
+
+The observer now requires the exhibited proofs to be a **genuine consecutive run of real Mina Wrap
+proofs, in order, of the length claimed**. Replay, shuffle, splice and pad are refusals, and depth
+past the real chain's own production is a refusal. **It is still not a proof↔`stateHash` binding:**
+an adversary holding a genuine run can re-label the headers those proofs are served under. Closing
+*that* means `expand_deferred` + the MSM + two sponges, and the honest cost note is that all three
+are compiled-Lean-feasible (milliseconds, not the kernel-`decide` hours §7 measured) — the work is
+fidelity to `expand_deferred`, not arithmetic throughput.
+
+And it remains **not a Mina light client**: fork choice is formalized nowhere in this tree, and a
+sibling proved Samasika `select` is a **tournament** rather than an order (genuine 3-cycles at real
+mainnet constants), so a chain follower needs strictly more than a better binding.
+
+### 8.6 ⚑ A defect §7 shipped, found by pointing the observer at a real node
+
+`bestChain { … protocolStateProof … }` — the query §7 landed — **does not fetch the proof.**
+`protocolStateProof` is a GraphQL *object* (`mina_graphql/types.ml:1768`) with `base64` and `json`
+fields, and a bare selection returns `{}`. Measured 2026-07-29 against
+`api.minascan.io/node/devnet/v1/graphql`: `"protocolStateProof":{}`, with no `errors` array. Every
+real block therefore parsed to an empty proof and was refused as `WrapProofAbsent`, so the observer
+shipped 2026-07-29 unable to confirm a single live settlement. Fixed to
+`protocolStateProof { base64 }`, with a test asserting the subselection is in the query. The
+fail-closed posture is exactly why this was survivable rather than silent — but note what found it:
+**a real request to a real endpoint**, not any amount of in-tree testing against a mock that had
+never seen the server's actual response shape.
