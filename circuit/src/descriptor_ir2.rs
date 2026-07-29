@@ -5675,10 +5675,28 @@ fn build_traces(
                     .or_insert(0) += 1;
                 cols[MAP_OLD_LEAF..MAP_OLD_LEAF + CHIP_OUT_LANES].copy_from_slice(&old_leaf8);
                 let end = fold_chain(old_leaf8, MAP_OLD_CHAIN0, &mut cols, &mut chip_hist);
-                debug_assert_eq!(end, root, "old path must authenticate against root8");
+                // ⚑ Was `debug_assert_eq!`, i.e. a guard that existed only in debug builds. Under
+                // `--release` a forged map opening sailed past it, and the two teeth that named
+                // this assert as their mechanism could not fire. It is a fail-closed `Err` under
+                // `check` now: the deployed entry refuses in EVERY profile, and a `check: false`
+                // tooth still reaches the in-circuit fact-bus recompute (which is the leg that
+                // matters in production, and is what those teeth assert on now).
+                if check && end != root {
+                    return Err(
+                        "old path must authenticate against root8 (the claimed pre-state map \
+                         opening does not fold to the committed root)"
+                            .to_string(),
+                    );
+                }
             }
             let end = fold_chain(new_leaf8, MAP_NEW_CHAIN0, &mut cols, &mut chip_hist);
-            debug_assert_eq!(end, new_root, "new path must recompose to new_root8");
+            if check && end != new_root {
+                return Err(
+                    "new path must recompose to new_root8 (the claimed post-state map root is \
+                     not the sorted-Merkle splice of the written content)"
+                        .to_string(),
+                );
+            }
             map_rows.push(cols);
         }
         // Pad rows: all-zero for map-ops (is_real = 0 gates every lookup and the log receive);
@@ -6170,15 +6188,30 @@ where
     let common = &prover_data.common;
     let proof = prove_batch(config, &instances, &prover_data);
 
-    // Self-verify is a producer-side debug/test guard, NOT a soundness boundary: an honest
-    // producer trusts its own witness (and the in-trace replay above, also gated by `check`,
-    // already eagerly refuses a bad witness fail-closed), and the CONSUMER always re-verifies.
-    // So the ~2-5ms full self-verify is pure redundancy on the trusted production prove path.
-    // Gate it on `check && debug_assertions`: ON in debug/test builds (every `prove_vm_descriptor2*`
-    // caller passes `check: true`, so the test path still self-verifies), OFF in release/production
-    // (where the consumer's verify is the real check). This never disables the replay — that stays
-    // under `check` alone.
-    if check && cfg!(debug_assertions) {
+    // ⚑ THE SELF-VERIFY IS THE ONLY COMPLETE PRODUCER-SIDE CHECK THIS PATH HAS. It runs in EVERY
+    // build profile, and `cfg!(debug_assertions)` must never be reintroduced here.
+    //
+    // It was gated on `cfg!(debug_assertions)` from 2026-06-24 (`934258ea0`, a perf sweep
+    // self-described as "result-identical") until 2026-07-29, on the stated grounds that "the
+    // in-trace replay above, also gated by `check`, already eagerly refuses a bad witness
+    // fail-closed". THAT IS FALSE, and provably so from `build_traces` itself: the `check` replay
+    // covers the exact-public manifests, the submask bit blocks, and the mem / umem / map-op
+    // WITNESSES. It never evaluates one algebraic constraint — no `Gate`, no `Boundary`, no
+    // `PiBinding`, no `Transition`, no `WindowGate`. A descriptor made only of algebraic gates
+    // (`pasta-rcb-windowed`: 45 constraints, zero lookups) had NOTHING checking it in release, so
+    // `prove_vm_descriptor2` returned `Ok` for an ALL-ZEROS trace. The proof it returned was
+    // always refused by `verify_vm_descriptor2` — the constraint system bound the whole time —
+    // but a producer cannot learn that from a `Result` that is always `Ok`.
+    //
+    // p3's own row-by-row `check_constraints` does not cover the gap either: `prove_batch` runs it
+    // under `#[cfg(debug_assertions)]` AND only for instances that carry lookups
+    // (`batch-stark/src/prover.rs`, `if !all_lookups[i].is_empty()`).
+    //
+    // The cost is one `verify_batch` — measured at ~5 ms on the 16,384 x 525 shape whose prove is
+    // 15.7 s. That is the price of `prove` meaning "this witness satisfies the AIR" instead of
+    // "a FRI commitment was computed". `circuit/tests/ir2_prove_is_fail_closed.rs` fails if it is
+    // ever paid back.
+    if check {
         verify_batch(config, &airs, &proof, &pvs, common)
             .map_err(|e| format!("IR v2 batch self-verify failed: {e:?}"))?;
     }
@@ -6459,10 +6492,7 @@ where
 mod tests {
     use super::*;
     use crate::poseidon2::hash_many;
-    use crate::refusal::{
-        Outcome, classify, must_accept, must_panic_containing, must_refuse,
-        must_refuse_or_unsat_panic,
-    };
+    use crate::refusal::{Outcome, classify, must_accept, must_refuse, must_refuse_or_unsat_panic};
 
     const DEMO_EXACT_PUBLIC: &str = r#"{"name":"demo-exact-public","ir":2,"trace_width":2,"public_input_count":0,"tables":[{"id":25,"name":"demo_public","arity":2,"sem":"exact_public_rows","rows":[[1,10],[2,20],[3,30],[4,40]]}],"constraints":[{"t":"lookup","table":25,"tuple":[{"t":"var","v":0},{"t":"var","v":1}]}],"hash_sites":[],"ranges":[]}"#;
 
@@ -6477,27 +6507,73 @@ mod tests {
             .collect()
     }
 
-    fn exact_public_hostile_refuses(desc: &EffectVmDescriptor2, rows: &[Vec<BabyBear>]) {
-        let refusal = must_refuse_or_unsat_panic("exact-public hostile multiset", || {
-            let proof = prove_vm_descriptor2_inner(
-                desc,
-                rows,
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )?;
-            verify_vm_descriptor2(desc, &proof, &[]).map(|()| proof)
-        });
-        let reason = refusal.reason();
+    /// **Prove with the pre-flight replay BYPASSED, then run the DEPLOYED VERIFIER.**
+    ///
+    /// A forgery tooth that wants to witness the CONSTRAINT SYSTEM (not the producer's replay)
+    /// passes `check: false` so the forged witness reaches `prove_batch`. That was where these
+    /// teeth used to stop, and stopping there is what made seventeen of them fail-open: with the
+    /// replay bypassed AND `check: false`, `prove_vm_descriptor2_inner` has nothing left that
+    /// refuses in a release build. p3's own row-by-row `check_constraints` and its LogUp balance
+    /// check are BOTH `#[cfg(debug_assertions)]` (`batch-stark/src/prover.rs`), and the balance
+    /// check additionally only runs for instances that declare lookups. So under `--release` the
+    /// forged witness produced a proof, `Ok` came back, and the tooth read it as acceptance.
+    ///
+    /// The proof was invalid the whole time. This helper is the half that was missing: hand the
+    /// minted proof to [`verify_vm_descriptor2`] — the same function a consumer runs — and let
+    /// ITS verdict be the refusal. That verdict exists in every build profile and is strictly
+    /// stronger evidence than a debug-only prover panic, because it is the deployed check.
+    fn prove_unchecked_then_verify(
+        desc: &EffectVmDescriptor2,
+        rows: &[Vec<BabyBear>],
+        public_inputs: &[BabyBear],
+        mem_boundary: &MemBoundaryWitness,
+        map_heaps: &[Vec<HeapLeaf>],
+    ) -> Result<(), String> {
+        let proof = prove_vm_descriptor2_inner(
+            desc,
+            rows,
+            public_inputs,
+            mem_boundary,
+            map_heaps,
+            &UMemBoundaryWitness::default(),
+            false,
+            &ir2_config(),
+        )?;
+        verify_vm_descriptor2(desc, &proof, public_inputs)
+    }
+
+    /// The reasons that count as **the constraint system refused**, as opposed to a crash, a
+    /// shape fault, or a producer-side assembly sanity check.
+    ///
+    /// Two mechanisms, and a tooth may legitimately see either depending on build profile:
+    ///
+    /// * `"constraints not satisfied"` / `"Lookup mismatch"` — p3's DEBUG-ONLY prover checks
+    ///   (`batch-stark/src/check_constraints.rs`, `lookup/src/debug_util.rs`). Absent under
+    ///   `--release`, so a tooth that accepts ONLY these is a debug-only tooth.
+    /// * `"OodEvaluationMismatch"` / `"LookupError"` — the DEPLOYED verifier's own verdicts:
+    ///   `constraints(ζ)/Z_H(ζ) ≠ quotient(ζ)`, and the global LogUp sum failing to cancel.
+    ///   These fire in every profile and are the verdicts that actually protect a consumer.
+    ///
+    /// Shape faults never reach here: [`crate::refusal`]'s `reject_shape_fault` REDs on them
+    /// before an `Outcome` is handed back.
+    fn assert_constraint_refusal(reason: impl AsRef<str>, what: &str) {
+        let reason = reason.as_ref();
         assert!(
             reason.contains("Lookup mismatch")
                 || reason.contains("constraints not satisfied")
-                || reason.contains("verification failed")
-                || reason.contains("OodEvaluationMismatch"),
-            "hostile exact-public multiset refused for the wrong reason: {reason}"
+                || reason.contains("OodEvaluationMismatch")
+                || reason.contains("LookupError"),
+            "{what} — the tooth is OPEN or fired for the wrong reason: {reason}"
+        );
+    }
+
+    fn exact_public_hostile_refuses(desc: &EffectVmDescriptor2, rows: &[Vec<BabyBear>]) {
+        let refusal = must_refuse_or_unsat_panic("exact-public hostile multiset", || {
+            prove_unchecked_then_verify(desc, rows, &[], &MemBoundaryWitness::default(), &[])
+        });
+        assert_constraint_refusal(
+            refusal.reason(),
+            "a hostile exact-public multiset must be refused BY THE CONSTRAINT SYSTEM",
         );
     }
 
@@ -7133,10 +7209,9 @@ mod tests {
         let refusal = must_refuse_or_unsat_panic("state16 high-output-lane tooth", || {
             prove_vm_descriptor2(&desc, &rows, &[], &MemBoundaryWitness::default(), &[])
         });
-        let reason = refusal.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "high output lane must be refused by the state16 permutation bus, got: {reason}"
+        assert_constraint_refusal(
+            refusal.reason(),
+            "a mutated high output lane must be refused by the state16 permutation bus",
         );
     }
 
@@ -7223,28 +7298,18 @@ mod tests {
         // Pre-flight replay refuses.
         assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
         // In-circuit tooth: bypass the replay; the mem_check bus cannot balance. `check: false`
-        // means the forged witness reaches `prove_batch`, whose debug-gated lookup check panics —
-        // so the p3 unsat panic is genuinely the mechanism here. It is still discriminated: a
-        // trace-assembly assert or a stray unwrap would RED rather than pass.
+        // means the forged witness reaches `prove_batch`, and the minted proof is then handed to
+        // the DEPLOYED verifier — so the refusal is observable in every build profile, not only
+        // where p3's debug-gated lookup check panics.
         let refusal =
             must_refuse_or_unsat_panic("ir2_tampered_read (Blum mem_check tooth)", || {
-                prove_vm_descriptor2_inner(
-                    &desc,
-                    &rows,
-                    &[],
-                    &test_boundary(),
-                    &[test_heap()],
-                    &UMemBoundaryWitness::default(),
-                    false,
-                    &ir2_config(),
-                )
+                prove_unchecked_then_verify(&desc, &rows, &[], &test_boundary(), &[test_heap()])
             });
         // WHY it refused: the tampered read unbalances the `ir2_mem_check` multiset argument.
-        let reason = refusal.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "tampered memory read must be refused BY THE CONSTRAINT SYSTEM (an unbalanced \
-             mem_check bus or a violated constraint), got: {reason}"
+        assert_constraint_refusal(
+            refusal.reason(),
+            "a tampered memory read must be refused BY THE CONSTRAINT SYSTEM (an unbalanced \
+             mem_check bus or a violated constraint)",
         );
     }
 
@@ -7252,20 +7317,17 @@ mod tests {
     /// REFUSE. The deployed refusal is the pre-flight replay, asserted below as the load-bearing
     /// leg.
     ///
-    /// ⚑ NAMED SEAM — this test does NOT witness the in-circuit opening tooth, and used to imply
-    /// it did. Its old second leg bypassed the replay (`check: false`) and matched `Err(_) => {}`
-    /// on a `catch_unwind`, which read as "the constraint system refused". It was not: map-row
-    /// assembly's own `debug_assert_eq!(end, root, "old path must authenticate against root8")`
-    /// (this file, in the `fold_chain` old-path leg) fires FIRST, so `prove_batch` was never
-    /// reached and the opening tooth was never exercised. The old arm swallowed that
-    /// indiscriminately; `must_panic_containing` below pins the mechanism that actually fires.
+    /// ⚑ SEAM CLOSED (2026-07-29). This test used to have only a `must_panic_containing` second
+    /// leg pinned to map-row assembly's `debug_assert_eq!(end, root, "old path must authenticate
+    /// against root8")` — a DEBUG-ONLY guard, compiled out under `--release`, which meant the
+    /// in-circuit opening tooth (the leg that matters in production) was the one thing this test
+    /// never witnessed, and under `--release` the test simply failed.
     ///
-    /// Note the assembly assert is a `debug_assert` — compiled OUT under `--release`. So the
-    /// in-circuit opening tooth is exactly the leg that matters in production and exactly the one
-    /// unwitnessed here. Closing it needs a witness forged AFTER assembly (corrupt the assembled
-    /// map row, not the input row) so the forgery reaches the constraint system — tracked in
-    /// HORIZONLOG. Contrast `ir2_tampered_read_refuses`, whose forgery genuinely does reach
-    /// `prove_batch` and is refused by an unbalanced `mem_check` bus.
+    /// Both halves are real now. That assembly check is a fail-closed `Err` under `check`, so the
+    /// deployed entry refuses in every profile; and the `check: false` leg below carries the
+    /// forgery all the way to `prove_batch` and hands the minted proof to the DEPLOYED VERIFIER,
+    /// which refuses it because the MapOps fact-bus recompute of the root over the committed path
+    /// cannot match the forged opening.
     #[test]
     fn ir2_forged_map_opening_refuses() {
         let desc = test_desc();
@@ -7288,22 +7350,21 @@ mod tests {
             "the replay must refuse with a diagnosable reason, got an empty error"
         );
 
-        // The producer-assembly leg, named for what it IS (see the seam note above).
-        must_panic_containing(
-            "ir2_forged_map_opening (producer assembly sanity check)",
-            "old path must authenticate against root8",
-            || {
-                prove_vm_descriptor2_inner(
-                    &desc,
-                    &rows,
-                    &[],
-                    &test_boundary(),
-                    &[test_heap()],
-                    &UMemBoundaryWitness::default(),
-                    false,
-                    &ir2_config(),
-                )
-            },
+        assert!(
+            e.contains("opens to 77") || e.contains("old path must authenticate against root8"),
+            "the deployed replay must refuse by NAMING the forged opening, got: {e}"
+        );
+
+        // THE IN-CIRCUIT LEG: replay bypassed, so the forgery reaches `prove_batch`; the minted
+        // proof is then handed to the DEPLOYED verifier, which refuses it.
+        let r =
+            must_refuse_or_unsat_panic("ir2_forged_map_opening (in-circuit opening tooth)", || {
+                prove_unchecked_then_verify(&desc, &rows, &[], &test_boundary(), &[test_heap()])
+            });
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged map opening must be refused BY THE CONSTRAINT SYSTEM (the MapOps fact-bus \
+             recompute of the root over the committed path)",
         );
     }
 
@@ -7425,35 +7486,29 @@ mod tests {
             "a content-mismatched heap_root must be refused by the deployed splice pre-flight"
         );
 
-        // ⚑ NAMED SEAM — the `check: false` leg below does NOT witness the in-circuit splice
-        // tooth, and used to imply it did. Its old `Err(_) => {}` arm read as "the constraint
-        // system refused"; it was not. Map-row assembly's own
-        // `debug_assert_eq!(end, new_root, "new path must recompose to new_root8")` (this file,
-        // the `fold_chain` new-path leg) fires FIRST, so `prove_batch` is never reached and the
-        // MapOps fact-bus recompute is never asked about col 87. Same class as
-        // `ir2_forged_map_opening_refuses` — both `fold_chain` debug_asserts intercept a forged
-        // map/heap witness before the prover sees it.
+        // ⚑ SEAM CLOSED (2026-07-29). The leg below used to be a `must_panic_containing` pinned
+        // to map-row assembly's `debug_assert_eq!(end, new_root, "new path must recompose to
+        // new_root8")` — a DEBUG-ONLY guard. Under `--release` it was compiled out, so the
+        // in-circuit splice tooth (the leg that matters in production) was never witnessed and
+        // this test simply failed. Same class as `ir2_forged_map_opening_refuses`.
         //
-        // That assert is a `debug_assert` — compiled OUT under `--release`. So the in-circuit
-        // splice tooth is exactly the leg that matters in production and exactly the one
-        // unwitnessed here. Closing it needs the forgery applied AFTER assembly (corrupt the
-        // assembled map row, not the claimed root) so it reaches the constraint system —
-        // tracked in HORIZONLOG. The load-bearing leg is the deployed pre-flight above.
-        must_panic_containing(
-            "hw_splice content-mismatched heap_root (producer assembly sanity check)",
-            "new path must recompose to new_root8",
-            || {
-                prove_vm_descriptor2_inner(
-                    &desc,
-                    &hw_splice_trace(forged),
-                    &[],
-                    &MemBoundaryWitness::default(),
-                    &[hw_pre_heap()],
-                    &UMemBoundaryWitness::default(),
-                    false,
-                    &ir2_config(),
-                )
-            },
+        // That assembly check is a fail-closed `Err` under `check` now, so the pre-flight above
+        // refuses in every profile; and with the replay bypassed the forgery reaches
+        // `prove_batch`, and the DEPLOYED verifier refuses the minted proof because the MapOps
+        // fact-bus recompute of the new root over the membership path cannot match forged col 87.
+        let r = must_refuse_or_unsat_panic("hw_splice content-mismatched heap_root", || {
+            prove_unchecked_then_verify(
+                &desc,
+                &hw_splice_trace(forged),
+                &[],
+                &MemBoundaryWitness::default(),
+                &[hw_pre_heap()],
+            )
+        });
+        assert_constraint_refusal(
+            r.reason(),
+            "a content-mismatched heap_root must be refused BY THE CONSTRAINT SYSTEM (the MapOps \
+             fact-bus recompute of the new root over the membership path)",
         );
     }
 
@@ -7497,25 +7552,15 @@ mod tests {
         // col 18 = the hash site's lane 3 (cols 16..22 hold lanes 1..7). Forge it.
         let real = rows[0][18];
         rows[0][18] = real + BabyBear::ONE;
-        // A forged lane makes the LogUp lookup unsatisfiable: the prover either returns Err or
-        // (in debug builds) the LogUp consistency checker panics. Either is a hard REJECTION.
+        // A forged lane makes the LogUp lookup unsatisfiable, so the minted proof does not
+        // verify. Either the deployed verifier's `Err` or (in debug builds) the LogUp consistency
+        // checker's panic is a hard REJECTION.
         let r = must_refuse_or_unsat_panic("ir2_forged_output_lane (lane binding)", || {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &rows,
-                &[],
-                &test_boundary(),
-                &[test_heap()],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
+            prove_unchecked_then_verify(&desc, &rows, &[], &test_boundary(), &[test_heap()])
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "forged output lane must be refused BY THE CONSTRAINT SYSTEM — the lane binding is \
-             OPEN or fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged output lane must be refused BY THE CONSTRAINT SYSTEM (the lane binding)",
         );
     }
 
@@ -7592,23 +7637,12 @@ mod tests {
             r[1 + 8] += BabyBear::ONE; // in8 at col 9
         }
         let r = must_refuse_or_unsat_panic("wide absorb forged carrier lane (in8)", || {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &bad,
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
+            prove_unchecked_then_verify(&desc, &bad, &[], &MemBoundaryWitness::default(), &[])
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+        assert_constraint_refusal(
+            r.reason(),
             "a wide absorb with a forged carrier lane (in8) must be refused BY THE CONSTRAINT \
-             SYSTEM — the wide carrier is NOT load-bearing, or it fired for the wrong reason: \
-             {reason}"
+             SYSTEM (else the wide carrier is not load-bearing)",
         );
     }
 
@@ -7672,23 +7706,12 @@ mod tests {
             r[1 + 12] += BabyBear::ONE; // in12 at col 13
         }
         let r = must_refuse_or_unsat_panic("node8 forged second-child lane (in12)", || {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &bad,
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
+            prove_unchecked_then_verify(&desc, &bad, &[], &MemBoundaryWitness::default(), &[])
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+        assert_constraint_refusal(
+            r.reason(),
             "node8 with a forged second-child lane (in12) must be refused BY THE CONSTRAINT \
-             SYSTEM — the node8 child is NOT load-bearing, or it fired for the wrong reason: \
-             {reason}"
+             SYSTEM (else the node8 child is not load-bearing)",
         );
     }
 
@@ -7757,22 +7780,11 @@ mod tests {
         }
         assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
         let r = must_refuse_or_unsat_panic("ir2_amplified_submask (non-amp tooth)", || {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &rows,
-                &[],
-                &test_boundary(),
-                &[test_heap()],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
+            prove_unchecked_then_verify(&desc, &rows, &[], &test_boundary(), &[test_heap()])
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "an amplified submask must be refused BY THE CONSTRAINT SYSTEM — the non-amp tooth is \
-             OPEN or fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "an amplified submask must be refused BY THE CONSTRAINT SYSTEM (the non-amp tooth)",
         );
     }
 
@@ -7788,17 +7800,16 @@ mod tests {
         // The chip table gathers the (forged) tuple and binds its own output column to
         // the REAL permutation — prover cannot satisfy both.
         // ⚑ VERIFIED, not assumed: the pre-flight replay does NOT catch a forged digest — the
-        // forgery reaches `prove_batch` even on the PUBLIC (`check: true`) entry, and the p3 debug
-        // prover refuses it with `Lookup mismatch (global lookup 'ir2_p2')`. So the unsat panic is
-        // genuinely the mechanism here; it is still discriminated against a stray crash.
+        // forgery reaches `prove_batch` even on the PUBLIC (`check: true`) entry. In a debug build
+        // p3's LogUp checker panics with `Lookup mismatch (global lookup 'ir2_p2')`; in every
+        // build the restored self-verify surfaces the same refusal as an `Err`.
         let r = must_refuse_or_unsat_panic("ir2_forged_digest (chip tooth)", || {
             prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()])
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "the forged digest must be refused BY THE CONSTRAINT SYSTEM (the ir2_p2 chip table \
-             only contains genuine hash tuples), got: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged digest must be refused BY THE CONSTRAINT SYSTEM (the ir2_p2 chip table \
+             only contains genuine hash tuples)",
         );
     }
 
@@ -8248,10 +8259,9 @@ mod tests {
             let proof = prove_batch(&config, &instances, &prover_data);
             verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "a forged aafi bracket must be refused BY THE CONSTRAINT SYSTEM — the pointer-bracket tooth is OPEN or fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged aafi bracket must be refused BY THE CONSTRAINT SYSTEM (the pointer-bracket tooth)",
         );
     }
 
@@ -8322,10 +8332,9 @@ mod tests {
             let proof = prove_batch(&config, &instances, &prover_data);
             verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "a forged aafi pointer must be refused BY THE CONSTRAINT SYSTEM — the pointer-binding tooth is OPEN or fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged aafi pointer must be refused BY THE CONSTRAINT SYSTEM (the pointer-binding tooth)",
         );
     }
 
@@ -9160,10 +9169,9 @@ mod tests {
             let proof = prove_batch(&config, &instances, &prover_data);
             verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
         });
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "a forged absent bracket must be refused BY THE CONSTRAINT SYSTEM — the gap tooth is OPEN or fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged absent bracket must be refused BY THE CONSTRAINT SYSTEM (the gap tooth)",
         );
     }
 
@@ -9247,10 +9255,9 @@ mod tests {
                 verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
             },
         );
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "a forged WIDE pointer bracket must be refused BY THE CONSTRAINT SYSTEM — the pointer-binding tooth is OPEN or fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "a forged WIDE pointer bracket must be refused BY THE CONSTRAINT SYSTEM (the pointer-binding tooth)",
         );
     }
 
@@ -9438,12 +9445,11 @@ mod tests {
                 verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
             },
         );
-        let reason = r.reason();
-        assert!(
-            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
-            "DEPLOYED noteSpend must refuse a NON-ADJACENT wide-bracket non-membership witness BY \
-             THE CONSTRAINT SYSTEM — the light-client double-spend forgery is OPEN on the \
-             deployed descriptor, or it fired for the wrong reason: {reason}"
+        assert_constraint_refusal(
+            r.reason(),
+            "the DEPLOYED noteSpend descriptor must refuse a NON-ADJACENT wide-bracket \
+             non-membership witness BY THE CONSTRAINT SYSTEM (else the light-client double-spend \
+             forgery is open on the deployed descriptor)",
         );
         eprintln!(
             "DEPLOYED noteSpend D1-WIRE: honest spend proves+verifies; a NON-ADJACENT wide-bracket \
