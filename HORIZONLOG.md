@@ -73,10 +73,10 @@ elision was always taken. Both now run as PERMANENT controls, not notes.
 
 **Gate: 4 new legs** (`root-air`, `emitted-atoms`+`emitted-schedule`, `root-air-chain`,
 `root-air-real`) with 21 `grep -q` obligations, and **5 new fault injections**. Pre-flight is
-**88/88** — nothing was unpointed by the edits. Three of the five have had their RED WATCHED
-(the DAG walker's SUB lowered as an ADD, the α-fold reversed, the binder reading the next row from
-the local one); the two on the slower legs are pre-flight-matched and their red is **not yet
-watched**, which is a documented-not-detected gap and is named as one.
+**88/88** — nothing was unpointed by the edits — and **all five new injections have had their RED
+WATCHED**: the DAG walker's SUB lowered as an ADD, the α-fold reversed, the AIR block dropped from
+the emitted atom list, the chain's predecessor check disarmed, and the binder reading the next row
+from the local one.
 
 **⚠ Named residuals.** The extraction is still a Rust seam. §3.25 is the per-instance AIR closing
 equality, not the batch-STARK verifier — the FRI walk over THAT proof is still §3.19's at fixture
