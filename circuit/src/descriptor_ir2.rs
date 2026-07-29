@@ -6558,11 +6558,12 @@ mod tests {
     /// before an `Outcome` is handed back.
     fn assert_constraint_refusal(reason: impl AsRef<str>, what: &str) {
         let reason = reason.as_ref();
+        let named = crate::refusal::P3_UNSAT_PANIC_MARKERS
+            .iter()
+            .chain(crate::refusal::DEPLOYED_VERIFIER_REFUSAL_MARKERS.iter())
+            .any(|m| reason.contains(m));
         assert!(
-            reason.contains("Lookup mismatch")
-                || reason.contains("constraints not satisfied")
-                || reason.contains("OodEvaluationMismatch")
-                || reason.contains("LookupError"),
+            named,
             "{what} — the tooth is OPEN or fired for the wrong reason: {reason}"
         );
     }

@@ -54,11 +54,11 @@
 //!
 //!   * **With lookups** — p3's debug check runs inside `prove_batch` and PANICS
 //!     (`batch-stark/src/check_constraints.rs:133`, "constraints not satisfied on row N") **before**
-//!     the `check && debug_assertions` self-verify can return anything. So even at a `check: true`
-//!     site, `Err` is **structurally unreachable** and [`must_refuse`] can never pass.
+//!     the self-verify can return anything. So at such a site in a DEBUG build, `Err` is
+//!     structurally unreachable and [`must_refuse`] cannot pass.
 //!   * **Without lookups** — p3 gates that check on `if !all_lookups[i].is_empty()`
-//!     (`batch-stark/src/prover.rs:232`), so it never runs at all, and only the producer's self-verify
-//!     `Err` fires (surfacing as e.g. `OodEvaluationMismatch`).
+//!     (`batch-stark/src/prover.rs:232`), so it never runs at all, and only the producer's
+//!     self-verify `Err` fires (surfacing as e.g. `OodEvaluationMismatch`).
 //!
 //! Note also that `prove_vm_descriptor2_for_config`'s `check: true` pre-flight replays only the
 //! mem/map/umem/exact-public/submask witnesses — **not** the algebraic gates or the PI pins
@@ -70,6 +70,21 @@
 //! panic). Two forgery teeth sat RED for ten days on that mistake while asserting the *right* thing —
 //! the constraint system refused every forgery; the harness just could not observe it. **Pick the
 //! helper by whether the descriptor has lookups, not by the `check` flag.**
+//!
+//! ⚑⚑ **SECOND CORRECTION (2026-07-29) — the paragraph above says `check && debug_assertions`, and
+//! THAT WAS THE BUG.** The producer self-verify was gated on `cfg!(debug_assertions)` from
+//! `934258ea0` (2026-06-24), so under `--release` a forged witness reached NEITHER mechanism: p3's
+//! two panics are `#[cfg(debug_assertions)]` and the self-verify was too. `prove_vm_descriptor2`
+//! returned `Ok` for an all-zeros trace, and **twenty** forgery teeth across `dregg-circuit` and
+//! `dregg-circuit-prove` reported "the forgery was ACCEPTED" for 35 days. The self-verify runs in
+//! every profile now (`descriptor_ir2::prove_vm_descriptor2_inner`, under `check` alone).
+//!
+//! The doctrine that follows from it: **a tooth that accepts only [`P3_UNSAT_PANIC_MARKERS`] is a
+//! DEBUG-ONLY tooth**, because both of those strings come from `#[cfg(debug_assertions)]` code in
+//! p3. Pair them with [`DEPLOYED_VERIFIER_REFUSAL_MARKERS`] — the verdicts that exist in every
+//! profile — or, when the tooth's subject is a specific gate, use
+//! [`assert_violated_constraint_not_bus`], which keeps the constraint-vs-bus discrimination
+//! identically in both.
 //!    accepts it — but **only** it, matched by message against [`P3_UNSAT_PANIC_MARKERS`]. Any other
 //!    panic (a trace-assembly `debug_assert`, a stray `unwrap`, an index OOB, an OOM) is a **test
 //!    failure**, because it is not a refusal — it is a crash wearing a refusal's clothes.
@@ -241,6 +256,49 @@ pub fn assert_committed_shape(
 /// refusal.
 pub const P3_UNSAT_PANIC_MARKERS: [&str; 2] =
     ["constraints not satisfied on row", "Lookup mismatch"];
+
+/// ⚑ The DEPLOYED VERIFIER's own refusal verdicts — the ones that exist in EVERY build profile.
+///
+/// [`P3_UNSAT_PANIC_MARKERS`] above are `#[cfg(debug_assertions)]`-only, and a tooth that accepts
+/// only those is a DEBUG-ONLY tooth. That is not a hypothetical: from `934258ea0` (2026-06-24) to
+/// 2026-07-29 the IR-v2 producer's self-verify was itself behind `cfg!(debug_assertions)`, so
+/// under `--release` a forged witness produced `Ok` and twenty forgery teeth across
+/// `dregg-circuit` and `dregg-circuit-prove` reported "the forgery was ACCEPTED".
+///
+/// * `OodEvaluationMismatch` — `folded_constraints(ζ) · Z_H(ζ)⁻¹ ≠ quotient(ζ)`, i.e. some AIR
+///   constraint of the named instance does not vanish. `index: Some(0)` is the Main AIR.
+/// * `LookupError` — the GLOBAL LogUp sums do not cancel across instances (a bus imbalance).
+///
+/// These two discriminate the same way the p3 pair does: `constraints not satisfied on row` and
+/// `OodEvaluationMismatch` are CONSTRAINT verdicts; `Lookup mismatch` and `LookupError` are BUS
+/// verdicts. A tooth whose subject is "a violated constraint, NOT a bus imbalance" keeps that
+/// discrimination by pairing a constraint marker with the absence of a bus one — see
+/// [`assert_violated_constraint_not_bus`].
+pub const DEPLOYED_VERIFIER_REFUSAL_MARKERS: [&str; 2] = ["OodEvaluationMismatch", "LookupError"];
+
+/// The refusal named a VIOLATED CONSTRAINT, in whichever profile the tooth ran, and did **not**
+/// name a bus/lookup imbalance.
+///
+/// Under `cargo test` this is p3's row-naming `constraints not satisfied on row N`; under
+/// `--release` it is the deployed verifier's `OodEvaluationMismatch`. Both are constraint
+/// verdicts. The load-bearing half is the NEGATIVE clause: a tooth whose subject is a specific
+/// gate (a PI pin, a carry decomposition) must not be satisfied by the bus failing instead, and
+/// that clause holds identically in both profiles.
+pub fn assert_violated_constraint_not_bus(what: &str, reason: &str) {
+    let bus = ["Lookup mismatch", "LookupError"];
+    assert!(
+        !bus.iter().any(|m| reason.contains(m)),
+        "{what}: refused by a BUS IMBALANCE, not by the violated constraint this tooth names: \
+         {reason}"
+    );
+    assert!(
+        reason.contains("constraints not satisfied on row")
+            || reason.contains("OodEvaluationMismatch"),
+        "{what}: the refusal names neither a violated constraint (`constraints not satisfied on \
+         row`, p3's debug check) nor the deployed verifier's constraint verdict \
+         (`OodEvaluationMismatch`): {reason}"
+    );
+}
 
 /// How a call under test refused. Returned by [`must_refuse_or_unsat_panic`] so a caller can
 /// match on the reason once `LeafError`/`Ir2VerifyError` land (CRATE-EXCELLENCE-PLAN Move 5) —

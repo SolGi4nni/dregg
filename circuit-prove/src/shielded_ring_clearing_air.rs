@@ -1444,11 +1444,10 @@ mod tests {
                 &config,
             )
         });
-        let reason = refusal.reason();
-        assert!(
-            reason.contains("constraints not satisfied on row"),
-            "the forged post-commitment lane must be refused by a VIOLATED CONSTRAINT (the \
-             last-row PI pin), not by a bus imbalance or any other path: {reason}"
+        dregg_circuit::refusal::assert_violated_constraint_not_bus(
+            "a forged ring post-commitment lane must be refused by a VIOLATED CONSTRAINT (the \
+             last-row PI pin), not by a bus imbalance or any other path",
+            &refusal.reason(),
         );
     }
 
@@ -1481,11 +1480,10 @@ mod tests {
                 &config,
             )
         });
-        let reason = refusal.reason();
-        assert!(
-            reason.contains("constraints not satisfied on row"),
-            "the forged receipt root must be refused by a VIOLATED CONSTRAINT (its first-row PI \
-             pin), not by a bus imbalance or any other path: {reason}"
+        dregg_circuit::refusal::assert_violated_constraint_not_bus(
+            "a forged two-action receipt root must be refused by a VIOLATED CONSTRAINT (its \
+             first-row PI pin), not by a bus imbalance or any other path",
+            &refusal.reason(),
         );
     }
 

@@ -718,10 +718,9 @@ mod tests {
                 &create_zk_config(),
             )
         });
-        let reason = refusal.reason();
-        assert!(
-            reason.contains("constraints not satisfied on row"),
-            "the mutated quotient must be refused by a VIOLATED CONSTRAINT: {reason}"
+        dregg_circuit::refusal::assert_violated_constraint_not_bus(
+            "a mutated hidden BFV terminal quotient must be refused by a VIOLATED CONSTRAINT",
+            &refusal.reason(),
         );
 
         let mut wrong_carry = trace;
@@ -737,10 +736,9 @@ mod tests {
                 &create_zk_config(),
             )
         });
-        let reason = refusal.reason();
-        assert!(
-            reason.contains("constraints not satisfied on row"),
-            "the mutated equality carry must be refused by a VIOLATED CONSTRAINT: {reason}"
+        dregg_circuit::refusal::assert_violated_constraint_not_bus(
+            "a mutated hidden BFV equality carry must be refused by a VIOLATED CONSTRAINT",
+            &refusal.reason(),
         );
     }
 }
