@@ -1170,6 +1170,44 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated note-spend IR-v2 proof: {e}")));
     }
 
+    // ⚑ THE REVOKED-SET GROW-GATE (the revoke twin of the note-spend arm above). The deployed
+    // `revokeVmDescriptor2R24` declares two map-ops on the limb-37 revoked-root group
+    // (`revokedFreshOp .absent` + `revokedInsertOp .aafiInsert`); the bare generator's empty
+    // `map_heaps` cannot resolve them, so this route died with `map op 0: no witness heap with
+    // root8 …` — i.e. the PLAIN revoke leg was unmintable, which made the light-client forge test
+    // that must MINT one to prove it is REJECTED unable to reach its own assertion. The producer
+    // that fills the group and returns the openable BEFORE leaf-set already existed
+    // (`generate_rotated_revoke_trace_with_revoked_tree`) with no caller outside `circuit/tests`.
+    //
+    // ⚠ NAMED RESIDUAL, same as the wide dispatcher's arm: the BEFORE revoked set is `&[]` (every
+    // live `RotationWitness` here carries `empty_revoked_root_8()`); an openable non-empty revoked
+    // set needs the threading the nullifier set has and does not exist yet. It fails CLOSED.
+    if matches!(
+        lead,
+        dregg_circuit::effect_vm::Effect::RevokeDelegation { .. }
+    ) {
+        use dregg_circuit::effect_vm::trace_rotated::generate_rotated_revoke_trace_with_revoked_tree;
+        let (trace, dpis, map_heaps) = generate_rotated_revoke_trace_with_revoked_tree(
+            initial_state,
+            effects,
+            &before,
+            &after,
+            caveat,
+            &[],
+        )
+        .map_err(|e| {
+            SdkError::InvalidWitness(format!("rotated revoke revoked-set generation: {e}"))
+        })?;
+        return prove_vm_descriptor2(
+            &desc,
+            &trace,
+            &dpis,
+            &MemBoundaryWitness::default(),
+            &map_heaps,
+        )
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated revoke IR-v2 proof: {e}")));
+    }
+
     // LIVE-generate the rotated trace + PI vector. The trace SHAPE follows the COMMITTED
     // descriptor: a hardened `…-v1-avail` transfer/burn member (the GAP #4 availability weld)
     // demands the avail-padded geometry (witness limbs at `[V1_WIDTH, V1_WIDTH + pad)`, appendix
@@ -2774,8 +2812,10 @@ fn cap_open_key_has_wide_twin(key: &str) -> bool {
 /// The insert/remove WRITE branches produced the OLD, uncompacted geometry and then handed it to a
 /// prover holding the compacted descriptor, so every write-bearing cap-open leg died on shape:
 ///
-///     cap-open IR-v2 proof (dregg-effectvm-delegate-v1-rot24-v3-insert-capopen):
-///     base row width 2936 must equal descriptor trace_width 1878
+/// ```text
+/// cap-open IR-v2 proof (dregg-effectvm-delegate-v1-rot24-v3-insert-capopen):
+/// base row width 2936 must equal descriptor trace_width 1878
+/// ```
 ///
 /// which is a pre-flight arity refusal, i.e. those legs never reached a single constraint. Routing
 /// all four branches through one function is what makes "the producer is at the committed member's
@@ -5964,6 +6004,26 @@ mod tests {
     use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
     use dregg_circuit::field::BabyBear;
 
+    /// **A `CapLeaf` FACET MASK IS TWO 16-BIT LIMBS, NEVER ONE u32.** `cap_root::split_effect_mask`
+    /// (the ONLY production constructor — `cell::commitment::compute_rotated_pre_limbs` and
+    /// `CanonicalCapTree`'s builder both go through it) encodes an `EffectMask` as
+    /// `(mask & 0xFFFF, mask >> 16)`, and the deployed cap-open appendix ENFORCES that split in
+    /// circuit: `maskReconLoGate` pins `mask_lo == Σ_{i<16} bitᵢ·2ⁱ` and `maskReconHiGate` pins
+    /// `mask_hi == Σ_{i<16} bit_{16+i}·2ⁱ` over the 32 mask-bit columns `fill_cap_open` lays from
+    /// `full_mask = mask_lo + mask_hi·65536`. Both gates are the MASK-RECON-WRAP FIX (deployed
+    /// soundness gap #2): each limb is a genuine `< 2^16` range check, which is what forbids the
+    /// `p`-shifted decomposition the old single 32-bit recon admitted.
+    ///
+    /// ⚑ So a fixture writing `mask_lo: BabyBear::new(EFFECT_DELEGATION_OPS)` (= `1 << 16`) builds a
+    /// leaf NO production path can produce, and it is UNSAT at row 0 on BOTH recon gates (lo sums to
+    /// 0 ≠ 65536; hi sums to 1 ≠ 0). `CapOpenWitness::from_membership_for` did not catch it because
+    /// its submask test is arithmetic on `full_mask` and `65536 + 0·65536` coincidentally still has
+    /// bit 16 set. Every cap-open fixture below routes its facet mask through THIS helper, so the
+    /// leaf it builds is one the executor could have committed.
+    fn facet_limbs(mask: u32) -> (BabyBear, BabyBear) {
+        dregg_circuit::cap_root::split_effect_mask(mask)
+    }
+
     /// REGRESSION (felt-width class): the wide/narrow leg classifier must work on the NON-PROVER
     /// (light-client verify) build. A prior `#[cfg(not(feature = "prover"))]` stub returned `false`
     /// unconditionally, so a WIDE leg's ~124-bit 8-felt anchor was silently read at its narrow slot-0
@@ -6713,9 +6773,7 @@ mod tests {
     #[test]
     fn cap_open_fanout_revoke_proves_verifies_and_wrong_facet_bites() {
         use dregg_circuit::cap_root::CapLeaf;
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_turn::rotation_witness as rw;
 
         // `EFFECT_DELEGATION_OPS = 1 << 16` — the effect-kind the revoke cap-open binds.
@@ -6729,8 +6787,8 @@ mod tests {
             BabyBear::new(0xDE16A),
             BabyBear::new(7_777), // target (== src)
             BabyBear::new(SIGNATURE_AUTH_TAG),
-            BabyBear::new(EFFECT_DELEGATION_OPS), // mask_lo permits the delegation effect-kind
-            BabyBear::new(FACET_MASK_HI),
+            facet_limbs(EFFECT_DELEGATION_OPS).0, // mask_lo permits the delegation effect-kind
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -6738,8 +6796,8 @@ mod tests {
             BabyBear::new(0xBEEF),
             BabyBear::new(123),
             BabyBear::new(1),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(0),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(9),
             BabyBear::new(0),
         ];
@@ -6841,12 +6899,17 @@ mod tests {
              (`cap_write_revoke_proves_and_verifies_light_client` is the accepted route)",
         );
 
-        // NEGATIVE #1 (fail-closed at the seam): a cap whose facet permits EFFECT_TRANSFER (not the
-        // delegation kind the revoke route binds) is refused at witness build — `from_membership_for`
-        // requires mask_lo == route.eff_bit.
+        // NEGATIVE #1 (fail-closed at the seam): a cap whose facet permits EFFECT_TRANSFER — and ONLY
+        // that — is refused at witness build. `from_membership_for` tests the SUBMASK
+        // `(eff_bit & maskOfLimbs(mask_lo, mask_hi)) == eff_bit` over the FULL mask, so BOTH limbs
+        // must be replaced: overriding `mask_lo` alone while inheriting the anchor's `mask_hi` (which
+        // is where `EFFECT_DELEGATION_OPS = 1<<16` LIVES) leaves the delegation bit permitted and the
+        // negative arm vacuous.
+        let (wrong_lo, wrong_hi) = facet_limbs(EFFECT_TRANSFER);
         let wrong_facet = CapMembershipWitness {
             leaf: CapLeaf {
-                mask_lo: BabyBear::new(EFFECT_TRANSFER),
+                mask_lo: wrong_lo,
+                mask_hi: wrong_hi,
                 ..cap.leaf
             },
             siblings: cap.siblings.clone(),
@@ -6855,19 +6918,29 @@ mod tests {
             cap_leaves: Vec::new(),
             cap_tombstones: Vec::new(),
         };
+        // ⚠ CLASSIFY THE REFUSAL, don't accept any `Err`. This arm's whole content is that the
+        // FACET gate is what bit; a refusal for an unrelated reason (a mis-shaped witness, a missing
+        // heap) reads exactly like the gate biting and would leave the pole vacuous.
+        let wrong_facet_msg = match prove_effect_vm_cap_open(
+            &initial,
+            &effects,
+            &before_w,
+            &after_w,
+            &wrong_facet,
+            &route,
+            None,
+            false,
+        ) {
+            Err(e) => format!("{e}"),
+            Ok(_) => panic!(
+                "a cap permitting a DIFFERENT effect (transfer, not delegation) MUST be refused \
+                 (fail-closed)"
+            ),
+        };
         assert!(
-            prove_effect_vm_cap_open(
-                &initial,
-                &effects,
-                &before_w,
-                &after_w,
-                &wrong_facet,
-                &route,
-                None,
-                false
-            )
-            .is_err(),
-            "a cap permitting a DIFFERENT effect (transfer, not delegation) MUST be refused (fail-closed)"
+            wrong_facet_msg.contains("does not PERMIT effect-kind bit"),
+            "the refusal must be the FACET submask gate (`from_membership_for`), not an incidental \
+             witness error — got: {wrong_facet_msg}"
         );
 
         // NEGATIVE #2 (the GENERAL facet gate BITES AT THE DEPLOYED VERIFIER): hand-build a
@@ -6951,8 +7024,8 @@ mod tests {
             MemBoundaryWitness, VmConstraint2, parse_vm_descriptor2, prove_vm_descriptor2,
         };
         use dregg_circuit::effect_vm::trace_rotated::{
-            AFTER_BASE, B_CAP_ROOT, BEFORE_BASE, CapOpenWitness, FACET_MASK_HI,
-            RotatedBlockWitness, SIGNATURE_AUTH_TAG, empty_caveat_manifest,
+            AFTER_BASE, B_CAP_ROOT, BEFORE_BASE, CapOpenWitness, RotatedBlockWitness,
+            SIGNATURE_AUTH_TAG, empty_caveat_manifest,
             generate_rotated_cap_remove_after_spine_wide, generate_rotated_effect_vm_trace,
             widen_to_cap_open,
         };
@@ -7037,8 +7110,8 @@ mod tests {
             BabyBear::new(0xDE16A),
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(FACET_MASK_HI),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -7046,8 +7119,8 @@ mod tests {
             BabyBear::new(0xBEEF),
             BabyBear::new(123),
             BabyBear::new(1),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(0),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(9),
             BabyBear::new(0),
         ];
@@ -7127,8 +7200,13 @@ mod tests {
             &cap_w.siblings,
             &cap_w.directions,
         );
-        let (mut wtrace, wdpis) =
+        let (mut wtrace, mut wdpis) =
             generate_rotated_effect_vm_trace(&initial, &effects, &before, &after, &caveat).unwrap();
+        // ⚑ THE CAP-OPEN FAMILY IS NOT rc-WRAPPED. The base generator appends the 4-PI dsl route
+        // -commitment tail unconditionally; every cap-open member's PI count excludes it, exactly as
+        // `build_effect_vm_cap_open_leg` lifts it off. Without this the vector is 66 PIs against the
+        // committed 62.
+        wdpis.truncate(wdpis.len() - dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN);
         widen_to_cap_open(&mut wtrace, &cap_w).unwrap();
         let wdpis = generate_rotated_cap_remove_after_spine_wide(
             &mut wtrace,
@@ -7142,16 +7220,15 @@ mod tests {
         )
         .expect("the remove after-spine producer lays the genuine committed root groups");
         // CONFIRM the change is GENUINE (non-vacuous): the committed groups DIFFER (a real tombstone
-        // zero-fold moved the root) — else the bite below would be a no-op.
+        // zero-fold moved the root) — else the bite below would be a no-op. Read + tamper HERE, on
+        // the FULL (pre-compaction) geometry, so `BEFORE_BASE`/`AFTER_BASE` name the columns they say
+        // they do; the Epoch-1 deletion below is what makes the rows the committed member's.
         assert_ne!(
             wtrace[0][BEFORE_BASE + B_CAP_ROOT],
             wtrace[0][AFTER_BASE + B_CAP_ROOT],
             "the tombstone zero-fold MUST move the committed cap-root (BEFORE != AFTER) — else this \
              guardrail would be vacuous"
         );
-        // Sanity: the honest keystone trace PROVES (non-vacuity of the bite below).
-        prove_vm_descriptor2(&desc, &wtrace, &wdpis, &MemBoundaryWitness::default(), &[])
-            .expect("the GENUINE keystone remove trace proves (the bite below is non-vacuous)");
 
         // ── THE BITE: tamper the committed BEFORE cap-root group away from the membership-opened root
         // (lane 0 perturbed on every row, appendix NOT re-derived). The `effCapRemoveV3` BEFORE weld
@@ -7162,6 +7239,29 @@ mod tests {
         for row in forged_trace.iter_mut() {
             row[BEFORE_BASE + B_CAP_ROOT] += BabyBear::new(0x9999);
         }
+
+        // ⚑ THE S2 + E1 DELETION (Epoch 1) — the SAME single-source compaction the deployed leg
+        // builder applies (`compact_wide_cap_open_trace`). Without it this harness handed a
+        // 3079-wide OLD-geometry trace to a 2014-wide committed descriptor, so BOTH poles died in
+        // the pre-flight arity check and neither the honest prove nor the red-proof ever ran.
+        let key = "revokeDelegationWriteCapOpenVmDescriptor2R24";
+        compact_wide_cap_open_trace(&mut wtrace, key).expect("compact the honest keystone trace");
+        compact_wide_cap_open_trace(&mut forged_trace, key).expect("compact the forged trace");
+        assert_eq!(
+            wtrace[0].len(),
+            desc.trace_width,
+            "the produced rows MUST be the committed wide member's geometry"
+        );
+        assert_eq!(
+            wdpis.len(),
+            desc.public_input_count,
+            "the PI vector MUST be the committed wide member's"
+        );
+
+        // Sanity: the honest keystone trace PROVES (non-vacuity of the bite below).
+        prove_vm_descriptor2(&desc, &wtrace, &wdpis, &MemBoundaryWitness::default(), &[])
+            .expect("the GENUINE keystone remove trace proves (the bite below is non-vacuous)");
+
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -7205,9 +7305,7 @@ mod tests {
     fn cap_write_attenuate_no_silent_forge() {
         use dregg_circuit::cap_root::CapLeaf;
         use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
@@ -7241,7 +7339,7 @@ mod tests {
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
             BabyBear::new(0xFFFF), // broad held mask — permits EFFECT_TRANSFER (bit 1)
-            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(dregg_circuit::effect_vm::trace_rotated::FACET_MASK_HI),
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -7668,9 +7766,7 @@ mod tests {
     #[test]
     fn cap_write_revoke_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
@@ -7681,8 +7777,8 @@ mod tests {
             BabyBear::new(0xDE16A),
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(FACET_MASK_HI),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -7690,8 +7786,8 @@ mod tests {
             BabyBear::new(0xBEEF),
             BabyBear::new(123),
             BabyBear::new(1),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(0),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(9),
             BabyBear::new(0),
         ];
@@ -7836,9 +7932,7 @@ mod tests {
     #[test]
     fn cap_write_revoke_forge_rejected() {
         use dregg_circuit::cap_root::CapLeaf;
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
@@ -7848,8 +7942,8 @@ mod tests {
             BabyBear::new(0xDE16A),
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(FACET_MASK_HI),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -7857,8 +7951,8 @@ mod tests {
             BabyBear::new(0xBEEF),
             BabyBear::new(123),
             BabyBear::new(1),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(0),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(9),
             BabyBear::new(0),
         ];
@@ -8010,9 +8104,7 @@ mod tests {
     #[test]
     fn cap_write_revoke_cap_route_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
@@ -8024,7 +8116,7 @@ mod tests {
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
             BabyBear::new(EFFECT_REVOKE_CAPABILITY),
-            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(dregg_circuit::effect_vm::trace_rotated::FACET_MASK_HI),
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -8227,9 +8319,7 @@ mod tests {
     #[test]
     fn refresh_deleg_write_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
@@ -8248,8 +8338,8 @@ mod tests {
             BabyBear::new(0xDE16),
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(FACET_MASK_HI),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(42),
         ];
@@ -8257,8 +8347,8 @@ mod tests {
             BabyBear::new(0xBEEF),
             BabyBear::new(123),
             BabyBear::new(1),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(0),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(9),
             BabyBear::new(0),
         ];
@@ -8538,22 +8628,28 @@ mod tests {
         effect: VmEffect,
         fresh_edge: (BabyBear, BabyBear),
         route_eff_bit: u32,
-        anchor_mask_lo: u32,
+        anchor_mask: u32,
         expected_write_key: &str,
     ) {
         use dregg_circuit::cap_root::{CAP_TREE_DEPTH, CanonicalCapTree, CapLeaf};
-        use dregg_circuit::effect_vm::trace_rotated::{FACET_MASK_HI, SIGNATURE_AUTH_TAG};
+        use dregg_circuit::effect_vm::trace_rotated::SIGNATURE_AUTH_TAG;
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
         // The ANCHOR cap (the delegator's held authority) — its full mask MUST permit the route's
         // eff_bit (`from_membership_for` submask), and its slot_hash is the present anchor key.
+        // `anchor_mask` is the FULL 32-bit `EffectMask`; the leaf carries it as the canonical
+        // low-16/high-16 limb pair the in-circuit recon gates pin (see `facet_limbs`) — a raw
+        // `mask_lo: BabyBear::new(1 << 16)` is UNSAT and was the shared cause of the whole
+        // `cap_write_*` family being red.
+        let (anchor_lo, anchor_hi) = facet_limbs(anchor_mask);
+        let (other_lo, other_hi) = facet_limbs(route_eff_bit);
         let anchor = CapLeaf {
             slot_hash: BabyBear::new(0xA0C0),
             target: BabyBear::new(7_777),
             auth_tag: BabyBear::new(SIGNATURE_AUTH_TAG),
-            mask_lo: BabyBear::new(anchor_mask_lo),
-            mask_hi: BabyBear::new(FACET_MASK_HI),
+            mask_lo: anchor_lo,
+            mask_hi: anchor_hi,
             expiry: BabyBear::new(0x00FF_FFFF),
             breadstuff: BabyBear::new(99),
         };
@@ -8561,8 +8657,8 @@ mod tests {
             slot_hash: BabyBear::new(0xBEEF),
             target: BabyBear::new(123),
             auth_tag: BabyBear::new(1),
-            mask_lo: BabyBear::new(route_eff_bit),
-            mask_hi: BabyBear::new(0),
+            mask_lo: other_lo,
+            mask_hi: other_hi,
             expiry: BabyBear::new(9),
             breadstuff: BabyBear::new(0),
         };
@@ -8758,19 +8854,21 @@ mod tests {
         expected_write_key: &str,
     ) {
         use dregg_circuit::cap_root::{CAP_TREE_DEPTH, CanonicalCapTree, CapLeaf};
-        use dregg_circuit::effect_vm::trace_rotated::{FACET_MASK_HI, SIGNATURE_AUTH_TAG};
+        use dregg_circuit::effect_vm::trace_rotated::SIGNATURE_AUTH_TAG;
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
         // The INSERT keystone fixture: the holder's BEFORE tree is a genuine CanonicalCapTree
         // (mirroring `run_insert_after_spine_prove_verify_forge` — the keystone read opens the
         // SPLICED leaf against the rebuilt AFTER tree, so the full 7-field c-list is threaded).
+        // The facet mask rides the canonical low-16/high-16 limb pair (`facet_limbs`).
+        let (facet_lo, facet_hi) = facet_limbs(route_eff_bit);
         let anchor = CapLeaf {
             slot_hash: BabyBear::new(0xA0C0),
             target: BabyBear::new(7_777),
             auth_tag: BabyBear::new(SIGNATURE_AUTH_TAG),
-            mask_lo: BabyBear::new(route_eff_bit),
-            mask_hi: BabyBear::new(FACET_MASK_HI),
+            mask_lo: facet_lo,
+            mask_hi: facet_hi,
             expiry: BabyBear::new(0x00FF_FFFF),
             breadstuff: BabyBear::new(99),
         };
@@ -8778,8 +8876,8 @@ mod tests {
             slot_hash: BabyBear::new(0xBEEF),
             target: BabyBear::new(123),
             auth_tag: BabyBear::new(1),
-            mask_lo: BabyBear::new(route_eff_bit),
-            mask_hi: BabyBear::new(0),
+            mask_lo: facet_lo,
+            mask_hi: facet_hi,
             expiry: BabyBear::new(9),
             breadstuff: BabyBear::new(0),
         };
@@ -9043,9 +9141,7 @@ mod tests {
     fn cap_write_grant_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
         use dregg_circuit::effect_vm::AttenuateWitness;
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
@@ -9171,8 +9267,8 @@ mod tests {
             BabyBear::new(0xA0C0), // slot_hash (the anchor key)
             BabyBear::new(7_777),  // target (== src)
             BabyBear::new(SIGNATURE_AUTH_TAG),
-            BabyBear::new(EFFECT_DELEGATION_OPS), // facet == the write wrapper's eff_bit
-            BabyBear::new(FACET_MASK_HI),
+            facet_limbs(EFFECT_DELEGATION_OPS).0, // facet == the write wrapper's eff_bit
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(99),
         ];
@@ -9180,8 +9276,8 @@ mod tests {
             BabyBear::new(0xBEEF),
             BabyBear::new(123),
             BabyBear::new(1),
-            BabyBear::new(EFFECT_DELEGATION_OPS),
-            BabyBear::new(0),
+            facet_limbs(EFFECT_DELEGATION_OPS).0,
+            facet_limbs(EFFECT_DELEGATION_OPS).1,
             BabyBear::new(9),
             BabyBear::new(0),
         ];
@@ -9315,7 +9411,7 @@ mod tests {
             BabyBear::new(7_777),
             BabyBear::new(SIGNATURE_AUTH_TAG),
             BabyBear::new(EFFECT_GRANT_CAPABILITY), // facet == the authority-only route's eff_bit (1<<2)
-            BabyBear::new(FACET_MASK_HI),
+            BabyBear::new(dregg_circuit::effect_vm::trace_rotated::FACET_MASK_HI),
             BabyBear::new(0x00FF_FFFF),
             BabyBear::new(99),
         ];
@@ -9461,7 +9557,17 @@ mod tests {
              after-root welds) — descriptor: {}",
             desc.name
         );
-        let after_group: Vec<usize> = std::iter::once(332usize).chain(358..=364).collect();
+        // ⚑ DERIVED, NOT HAND-WRITTEN. This block used to read a hardcoded `[332, 358..=364]`, which
+        // named no cap-root column at all: the AFTER block starts at `AFTER_BASE` (= `V1_WIDTH +
+        // B_SPAN` = 427) and the group is `CAP_ROOT_GROUP` (`[25, 52..=58]`), i.e. `[452, 479..=485]`.
+        // A hand-written column list asserted against a machine-emitted numbering cannot go red for
+        // naming the WRONG column — it just quietly checks something else, or (as here) fails for a
+        // reason that has nothing to do with the property. Same repair as the sibling
+        // `write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge`.
+        let after_group: Vec<usize> = dregg_circuit::effect_vm::layout_generated::CAP_ROOT_GROUP
+            .iter()
+            .map(|off| dregg_circuit::effect_vm::trace_rotated::AFTER_BASE + off)
+            .collect();
         for (lane, g) in after_group.iter().enumerate() {
             let has_weld = desc.constraints.iter().any(|c| {
                 matches!(c,
@@ -9616,25 +9722,33 @@ mod tests {
     fn cap_write_delegate_atten_proves_and_verifies_light_client() {
         use dregg_circuit::cap_root::CapLeaf;
         use dregg_circuit::effect_vm::AttenuateWitness;
-        use dregg_circuit::effect_vm::trace_rotated::{FACET_MASK_HI, SIGNATURE_AUTH_TAG};
+        use dregg_circuit::effect_vm::trace_rotated::SIGNATURE_AUTH_TAG;
         use dregg_circuit::heap_root::HeapLeaf;
         use dregg_turn::rotation_witness as rw;
 
         // The delegateAtten keystone wrapper binds the DELEGATION_OPS facet (1<<16) on the SPLICED
         // (conferred, narrowed) leaf. The anchor cap (the delegator's held authority) holds the BROAD
-        // mask 0x100FF (= DELEGATION_OPS | 0xFF); the conferred KEEP_MASK 0x10052 STRICTLY narrows it
-        // while keeping the crown bit. The surviving submask lookup compares KEEP (col 73) against
-        // the anchor leaf's held mask (col 72).
+        // mask 0x100FF (= DELEGATION_OPS | 0xFF); the conferred grant 0x0052 STRICTLY narrows the
+        // anchor's LOW limb while the crown bit rides the HIGH limb it inherits.
+        //
+        // ⚑ TWO DIFFERENT WIDTHS, AND CONFLATING THEM IS WHY THIS WAS RED. The leaf's facet is TWO
+        // 16-bit limbs (`facet_limbs` — the in-circuit `maskReconLo/HiGate`s pin each `< 2^16`), so
+        // `0x100FF` CANNOT sit in `mask_lo`. The `granted ⊑ held` submask lookup is a separate,
+        // 30-bit relation over the PARAM columns (`KEEP` col 73 = the conferred payload the effect
+        // carries, `HELD` col 72 = `cap.leaf.mask_lo`, the anchor's LOW limb) — so the conferred
+        // value compared there is `0x52 ⊑ 0xFF`, the low limbs.
         const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
-        let held_mask = BabyBear::new(EFFECT_DELEGATION_OPS | 0xFF); // the anchor's broad held authority
-        let granted_mask = BabyBear::new(EFFECT_DELEGATION_OPS | 0x52); // the narrowed conferred mask
+        let (anchor_lo, anchor_hi) = facet_limbs(EFFECT_DELEGATION_OPS | 0xFF);
+        let (other_lo, other_hi) = facet_limbs(EFFECT_DELEGATION_OPS);
+        let held_mask = anchor_lo; // the submask RHS (col 72) — the anchor's LOW limb 0x00FF
+        let granted_mask = BabyBear::new(0x52); // the narrowed conferred mask (col 73), 0x52 ⊑ 0xFF
         let fresh_key = BabyBear::new(0xED57); // distinct from anchor/other keys
         let anchor = CapLeaf {
             slot_hash: BabyBear::new(0xA0C0), // the anchor key
             target: BabyBear::new(7_777),
             auth_tag: BabyBear::new(SIGNATURE_AUTH_TAG),
-            mask_lo: held_mask, // the broad held mask (permits DELEGATION_OPS; the submask RHS)
-            mask_hi: BabyBear::new(FACET_MASK_HI),
+            mask_lo: anchor_lo, // the broad held low limb (the submask RHS)
+            mask_hi: anchor_hi, // carries DELEGATION_OPS (bit 16 → high-limb bit 0)
             expiry: BabyBear::new(0x00FF_FFFF),
             breadstuff: BabyBear::new(99),
         };
@@ -9642,8 +9756,8 @@ mod tests {
             slot_hash: BabyBear::new(0xBEEF),
             target: BabyBear::new(123),
             auth_tag: BabyBear::new(1),
-            mask_lo: BabyBear::new(EFFECT_DELEGATION_OPS),
-            mask_hi: BabyBear::new(0),
+            mask_lo: other_lo,
+            mask_hi: other_hi,
             expiry: BabyBear::new(9),
             breadstuff: BabyBear::new(0),
         };
@@ -9796,11 +9910,13 @@ mod tests {
 
         // FORGE: a grant EXCEEDING the held authority. The phase-B witness still claims attenuation
         // (so the route selects the submask wrapper), but the anchor's REAL committed held mask is
-        // only 0x1000F while the conferred KEEP_MASK is 0x10052 — `0x10052 ⊄ 0x1000F`, so the
+        // only 0x1000F (low limb 0x0F) while the conferred KEEP_MASK is 0x52 — `0x52 ⊄ 0x0F`, so the
         // `granted ⊑ held` submask lookup is UNSAT (the prover refuses or its self-verify panics —
         // both fail-closed; a PASSING proof would be the amplification forge).
+        let (narrow_lo, narrow_hi) = facet_limbs(EFFECT_DELEGATION_OPS | 0x0F);
         let narrow_anchor = CapLeaf {
-            mask_lo: BabyBear::new(EFFECT_DELEGATION_OPS | 0x0F), // narrower than the grant
+            mask_lo: narrow_lo, // narrower than the grant (0x0F ⊉ 0x52)
+            mask_hi: narrow_hi,
             ..anchor
         };
         let forge_tree = dregg_circuit::cap_root::CanonicalCapTree::new(
@@ -9818,6 +9934,8 @@ mod tests {
             cap_leaves: vec![narrow_anchor, other],
             cap_tombstones: Vec::new(),
         };
+        // ANTI-VACUITY: the honest pole above proved + light-client-VERIFIED with the SAME route,
+        // witness shape and producer, so the only difference here is the anchor's real held mask.
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -9829,7 +9947,7 @@ mod tests {
         std::panic::set_hook(prev_hook);
         assert!(
             !matches!(outcome, Ok(Ok(()))),
-            "a grant EXCEEDING the held authority (conferred 0x10052 ⊄ real held 0x1000F) MUST fail \
+            "a grant EXCEEDING the held authority (conferred 0x52 ⊄ real held 0x0F) MUST fail \
              closed — the `granted ⊑ held` submask lookup bites (no amplification)"
         );
     }
@@ -10691,19 +10809,24 @@ mod tests {
     /// before/after producer witnesses the live node mints, over a real `dregg_cell::Cell` whose
     /// EffectVM balance matches `initial`. The rotated leg's OLD/NEW_COMMIT endpoints are welded
     /// from the v1 trace over `initial`+`effects` (`trace_rotated.rs:294-307`), so they agree with
-    /// the monolithic reference (`generate_effect_vm_trace`) BY CONSTRUCTION — the after-cell's raw
-    /// field bytes only need to be SOME marker for the producer's heap/authority views.
+    /// the monolithic reference (`generate_effect_vm_trace`) BY CONSTRUCTION.
+    ///
+    /// ⚑ THE AFTER-CELL'S `fields` ARE NOT A FREE MARKER, AND USED TO BE. This helper set
+    /// `after_cell.state.fields[0] = [1, 0, …]` "so the after-block producer view differs from the
+    /// before one; the rotated endpoints come from the v1 weld, not these bytes." That was true
+    /// while a committed field was ONE lane-0 limb, which the v1 weld overwrites. The v13 FAITHFUL
+    /// FIELDS OCTET (`rotation_witness::produce`, limbs `4+i` ‖ `113 + 7·i .. +6`) gave every field
+    /// SEVEN producer-supplied completion lanes that the v1 weld does NOT touch, and the deployed
+    /// cohort members carry the fields GENTIAN freeze band — `BEFORE[113+7i+k] == AFTER[113+7i+k]`
+    /// on every member that does not write that field (`transferVmDescriptor2R24` gate #124.. in the
+    /// wide registry). So a turn with NO `SetField` whose after-cell moves `fields[0]` is UNSAT at
+    /// row 0, in the PRODUCER's favour: the freeze gate is exactly the law that a transfer may not
+    /// silently rewrite committed app state. The marker is gone; the before/after producer views
+    /// differ where they SHOULD (balance/nonce, welded from the v1 trace).
     fn rotation_for_initial(initial: &CellState, effects: &[VmEffect]) -> RotationTurnWitness {
         let before_cell =
             dregg_cell::Cell::with_balance([0xC0; 32], [0u8; 32], initial.balance as i64);
-        let mut after_cell = before_cell.clone();
-        // A non-zero marker in field[0] so the after-block producer view differs from the before
-        // one; the rotated endpoints come from the v1 weld, not these bytes.
-        after_cell.state.fields[0] = {
-            let mut b = [0u8; 32];
-            b[0] = 1;
-            b
-        };
+        let after_cell = before_cell.clone();
         let _ = effects;
         rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]])
     }
@@ -10746,20 +10869,24 @@ mod tests {
         // Sanity: net = -100 + 30 = -70.
         assert_eq!(mono_net, -70);
 
-        // The real after-cell: balance 1000 - 100 + 30 = 930, field[0] set, nonce 3.
+        // The real after-cell: balance 1000 - 100 + 30 = 930, nonce 3.
+        //
+        // ⚑ THE AFTER-CELL DOES NOT MOVE `fields[0]`, AND THE REASON IS THE CHAIN'S BOUNDARY MODEL,
+        // NOT COSMETICS. `prove_cohort_run_chain` gives EVERY leg `rot.before` as its BEFORE block
+        // and gives only the FINAL leg `rot.after`; so the whole before→after cell delta is
+        // attributed to the LAST run, which here is a `Transfer`. Since the v13 faithful fields
+        // octet, a transfer member FREEZES the fields completion lanes
+        // (`BEFORE[113+7i+k] == AFTER[113+7i+k]`), so a `fields[0]` byte moved by the MIDDLE
+        // (`SetField`) run and carried on the after-cell lands on the final transfer leg and is
+        // UNSAT at row 0. See `rotation_for_initial`'s note.
+        //
+        // ⚠ NAMED, NOT FIXED: that means this chain producer cannot express a heterogeneous turn
+        // whose NON-FINAL run mutates a limb the final run's member freezes — it would need genuine
+        // per-run intermediate cells rather than one before/after pair. The differential this test
+        // measures (chained endpoints == the monolithic v1 reference, Σ net_delta) is driven by the
+        // v1 welds and is unaffected.
         let mut after_cell = before_cell.clone();
         after_cell.state.set_balance(930);
-        after_cell.state.fields[0] = {
-            // field_element_to_bb's inverse is not needed here — set the cell field to the same
-            // 32-byte encoding the SetField projects. The SetField value is BabyBear::new(7);
-            // the cell stores a [u8;32]. For OLD/NEW agreement we only need the EFFECT-VM
-            // commitment to match, which is driven by the welds from the v1 trace, not the cell's
-            // raw field bytes — so the after-cell's field bytes need only be SOME non-zero marker
-            // for the producer's authority/heap views. Use the canonical little-endian of 7.
-            let mut b = [0u8; 32];
-            b[0] = 7;
-            b
-        };
 
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
 
@@ -10847,13 +10974,10 @@ mod tests {
         ];
         let initial = CellState::new(1_000, 0);
 
+        // (no `fields[0]` move — the final run is a Transfer and its member freezes the fields
+        // completion lanes; see `path_preserve_chain_equals_monolithic_and_verifies`.)
         let mut after_cell = before_cell.clone();
         after_cell.state.set_balance(930);
-        after_cell.state.fields[0] = {
-            let mut b = [0u8; 32];
-            b[0] = 7;
-            b
-        };
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
         let (wide_old, wide_new) = rot
             .wide_commit_anchors(&initial, &effects, None)
@@ -10912,13 +11036,10 @@ mod tests {
         ];
         let initial = CellState::new(1_000, 0);
 
-        // After: balance back to 1000, field set, nonce 3.
-        let mut after_cell = before_cell.clone();
-        after_cell.state.fields[0] = {
-            let mut b = [0u8; 32];
-            b[0] = 7;
-            b
-        };
+        // After: balance back to 1000, nonce 3. (No `fields[0]` move — the final run is a Transfer
+        // and its member freezes the fields completion lanes; see
+        // `path_preserve_chain_equals_monolithic_and_verifies`.)
+        let after_cell = before_cell.clone();
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
         let (wide_old, wide_new) = rot
             .wide_commit_anchors(&initial, &effects, None)
@@ -10967,12 +11088,9 @@ mod tests {
             },
         ];
         let initial = CellState::new(1_000, 0);
-        let mut after_cell = before_cell.clone();
-        after_cell.state.fields[0] = {
-            let mut b = [0u8; 32];
-            b[0] = 7;
-            b
-        };
+        // (no `fields[0]` move — the final run is a Transfer and its member freezes the fields
+        // completion lanes; see `path_preserve_chain_equals_monolithic_and_verifies`.)
+        let after_cell = before_cell.clone();
         let rot = rotation_witness_for_cells(&before_cell, &after_cell, &[[0x11u8; 32]]);
         let witness = FullTurnWitness {
             initial_cell_state: initial,

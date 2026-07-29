@@ -102,12 +102,30 @@ fn map_field(runtime: &AgentRuntime, cell: CellId, key: u64) -> Option<[u8; 32]>
         .get_field_ext(key)
 }
 
-/// The cell's canonical state commitment — the value the receipt's
-/// `post_state_hash` carries (folds `fields_root`, so it binds the map).
+/// The CONSENSUS state anchor — the value the executor stamps into a receipt's
+/// `post_state_hash` (`TurnExecutor::consensus_state_commitment` →
+/// `state_commit::consensus_state_commitment`, i.e. `compute_canonical_state_commitment_v9_felt8`
+/// over the V9 rotation context). It folds `fields_root`, so it binds the map.
+///
+/// ⚑ THIS USED TO CALL `dregg_cell::compute_canonical_state_commitment`, AND THAT IS A DIFFERENT
+/// OBJECT. The receipt has carried the V9 consensus anchor — the chip chain over the 178 rotated
+/// pre-limbs PLUS the live nullifier / commitments / revoked accumulator roots — since the V9
+/// rotation landed; the cell-only commitment is the pre-V9 fold and can never equal it. So the
+/// assertion "`receipt.post_state_hash` == the canonical commitment" was comparing two
+/// commitments of different shapes and failing for that reason, not because the map was unbound.
+///
+/// ⚠ NAMED: the roots are read as EMPTY here because this harness's runtime never touches a note or
+/// a revocation (every turn is a `SetField`), which is what makes the reconstruction exact. A
+/// harness that spends or revokes must read the executor's own accumulators instead.
 fn state_commitment(runtime: &AgentRuntime, cell: CellId) -> [u8; 32] {
     let ledger = runtime.ledger().lock().unwrap();
-    let c = ledger.get(&cell).expect("cell exists");
-    dregg_cell::compute_canonical_state_commitment(c)
+    dregg_turn::state_commit::consensus_state_commitment_with_roots(
+        &ledger,
+        &cell,
+        dregg_circuit::heap_root::empty_heap_root_8(),
+        dregg_circuit::heap_root::empty_heap_root_8(),
+        dregg_turn::rotation_witness::empty_revoked_root_8(),
+    )
 }
 
 /// A `SetField` turn writing one map (or slot) key.

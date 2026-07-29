@@ -6327,6 +6327,37 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     } else if matches!(lead, Effect::SpawnWithDelegation { .. }) {
         generate_rotated_spawn_wide(initial_state, effects, before, after, caveat, &[])
             .map_err(|e| format!("wide spawn generation: {e}"))?
+    } else if matches!(lead, Effect::RevokeDelegation { .. }) {
+        // ⚑ THE REVOKED-SET GROW-GATE, WIRED. `revokeVmDescriptor2R24` declares TWO map-ops on the
+        // limb-37 revoked-root group (`revokedFreshOp .absent` + `revokedInsertOp .aafiInsert`), and
+        // this dispatch used to drop a RevokeDelegation into the bare transfer-shape arm below, which
+        // supplies NO map heap. Result: `map op 0: no witness heap with root8 …` — revokeDelegation
+        // was UNPROVABLE on the deployed wide path, and the SDK's own
+        // `wide_completeness_ledger::provability_scoreboard_deployed_wide_path` had been printing it
+        // as `[UNPROVABLE]` for exactly that reason. The producer that fills the group and returns the
+        // openable BEFORE leaf-set already existed —
+        // `generate_rotated_revoke_trace_with_revoked_tree` — with ZERO callers outside one
+        // `circuit/tests` file. This is the call.
+        //
+        // ⚠ NAMED RESIDUAL: the BEFORE revoked set is `&[]` here, exactly as the note-spend arm above
+        // parks its revocation ancestor — every live `RotationWitness` on this route carries
+        // `empty_revoked_root_8()`, so an openable set with prior members needs the same threading the
+        // nullifier set got (`before_nullifiers`) and does not exist yet. A second revoke against a
+        // non-empty committed revoked root still fails closed (loudly, on the root mismatch), never
+        // silently.
+        generate_rotated_revoke_trace_with_revoked_tree(
+            initial_state,
+            effects,
+            before,
+            after,
+            caveat,
+            &[],
+        )
+        .map(|(mut t, base_pis, heaps)| {
+            let d = append_wide_carriers(&mut t, base_pis, GRAD_ROT_WIDTH);
+            (t, d, heaps)
+        })
+        .map_err(|e| format!("wide revoke revoked-set generation: {e}"))?
     } else if matches!(lead, Effect::BridgeMint { .. }) {
         // The felt mint-hash pin member (51 base PIs) — no longer the bare transfer shape.
         let (t, d) =

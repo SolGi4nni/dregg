@@ -33,7 +33,7 @@ use dregg_circuit::effect_vm::columns::rotation::caveat as cav;
 use dregg_circuit::effect_vm::pi::SLOT_CAVEAT_TAG_SETTLE_ESCROW;
 use dregg_circuit::effect_vm::trace_rotated::{
     DFA_RC_LEN, ROT_PI_COUNT, RotatedBlockWitness, RotatedCaveatEntry, RotatedCaveatManifest,
-    generate_rotated_transfer_shape_wide,
+    generate_rotated_effect_vm_descriptor_and_trace_wide,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
@@ -85,6 +85,42 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
     RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("pre-iroot limbs")
 }
 
+/// **THE DEPLOYED WIDE LEG, THROUGH THE DEPLOYED PRODUCER.** This file used to call
+/// `generate_rotated_transfer_shape_wide` directly — the per-family helper — and hand the result to
+/// the committed member. That helper lays the base + the 16 wide carriers and STOPS: it does not run
+/// the Epoch-1 `compact_s2_columns ∘ compact_e1_columns` deletion, and it does not lay the
+/// post-regen registry tail (the refuse aux blocks + the teeth columns). Both of those live in
+/// `generate_rotated_effect_vm_descriptor_and_trace_wide`, which is the route the SDK's own wide
+/// prover takes. So the hand-rolled call produced a 2607-wide OLD-geometry row against a 1606-wide
+/// committed descriptor and BOTH poles of this forge died in the pre-flight arity check — the dodge
+/// was neither demonstrated nor closed, it was never exercised. Go through the deployed producer.
+fn deployed_wide_leg(
+    st: &CellState,
+    effects: &[Effect],
+    before_w: &rw::RotationWitness,
+    after_w: &rw::RotationWitness,
+    caveat: &RotatedCaveatManifest,
+) -> (
+    EffectVmDescriptor2,
+    Vec<Vec<BabyBear>>,
+    Vec<BabyBear>,
+    Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>,
+    MemBoundaryWitness,
+) {
+    generate_rotated_effect_vm_descriptor_and_trace_wide(
+        st,
+        effects,
+        &bridge(before_w),
+        &bridge(after_w),
+        caveat,
+        None,
+        None,
+        None,
+        None,
+    )
+    .expect("the DEPLOYED wide producer mints the bare burn leg at the committed geometry")
+}
+
 /// A caveat manifest that DECLARES the escrow capacity obligation (tag 17) on slot 0 — exactly the
 /// gentian pattern: the capacity is committed into the caveat-commit fold (PI 45), so the proof's own
 /// public inputs carry the declaration. The refuse gate (V3-only) reads the floor derived from this
@@ -111,15 +147,25 @@ fn non_declaring_manifest() -> RotatedCaveatManifest {
 /// what an old (pre-flag-day) producer — or a forger who ignores the declaration-keyed routing — would
 /// emit for a bare burn leg: a genuine wide STARK with NO capacity-floor refuse. Driving its proof
 /// through the CURRENT deployed verify is the decider (it must bind NO deployed cohort descriptor).
+/// The flag-day widening the three refuse aux blocks add PAST the member — **PER-MEMBER, DERIVED**.
+/// It is NOT a constant 48: the two avail-hardened members (transfer/burn) ride the refuse block at
+/// the very top of the trace (widen 45) while the other 34 carry a 3-column dead stride-tail above it
+/// (widen 48), which is exactly why `generate_rotated_effect_vm_descriptor_and_trace_wide` derives it
+/// from the descriptor's own committed floor-refuse gates. A hardcoded 48 here narrowed the burn
+/// member by three columns too many.
+fn refuse_width(welded: &EffectVmDescriptor2) -> usize {
+    dregg_circuit::effect_vm::bare_floor_refuse_weld::refuse_weld_widen(welded)
+}
+
 fn preflip_bare_member(welded: &EffectVmDescriptor2) -> EffectVmDescriptor2 {
     const REFUSE_GATE_COUNT: usize = 39; // 3 blocks × 13 gates (Lean `wideRefuseGates`).
-    const REFUSE_WIDTH: usize = 48; // 3 × REFUSE_STRIDE (16) — the flag-day widening.
+    let refuse_width = refuse_width(welded);
     let mut d = welded.clone();
     d.name = d
         .name
         .trim_end_matches("-gentian-deployed-bare-refuse")
         .to_string();
-    d.trace_width -= REFUSE_WIDTH;
+    d.trace_width -= refuse_width;
     let keep = d.constraints.len() - REFUSE_GATE_COUNT;
     d.constraints.truncate(keep);
     d
@@ -146,10 +192,16 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
         welded_json.contains("gentian-deployed-bare-refuse"),
         "the deployed WELDED bare burn carries the refuse too (the require_welded route is closed)"
     );
-    let wide_bare = wide_desc(WIDE_BARE_MEMBER); // the refuse-welded deployed member (width 2541)
+    let wide_bare = wide_desc(WIDE_BARE_MEMBER); // the refuse-welded deployed member
+    // ⚑ DERIVED, NOT HARDCODED. This read `== 2541` — the PRE-Epoch-1 width. The S2 (dead 1-felt
+    // chains) and E1 (dead v1-face bands) deletions moved every wide member, so an absolute width
+    // here is a number that rots on the next compaction and says nothing about the refuse. What the
+    // flag day actually asserts is the RELATION: the deployed member is the pre-flip bare member
+    // PLUS the three refuse aux blocks.
     assert_eq!(
-        wide_bare.trace_width, 2541,
-        "the WIDE bare burn widened 2493 -> 2541 by the three-block refuse (3 x REFUSE_STRIDE aux)"
+        wide_bare.trace_width,
+        preflip_bare_member(&wide_bare).trace_width + refuse_width(&wide_bare),
+        "the WIDE bare burn is the pre-flip member widened by the three-block refuse aux"
     );
     let vk_hash = *blake3::hash(wide_json.as_bytes()).as_bytes();
 
@@ -187,20 +239,24 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
         &receipt_log,
         &Default::default(),
     );
-    let mem = MemBoundaryWitness::default();
-    let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-
     // ---- 1. COMPLETENESS (liveness preserved): a NON-declaring wide burn still verifies through the
     // deployed LC. The refuse decodes `floor = 0` on every block, is inert, and the honest normal turn
     // proves + verifies — no false reject. ----
-    let (honest_trace, honest_dpis) = generate_rotated_transfer_shape_wide(
+    let (_d, honest_trace, honest_dpis, heaps, mem) = deployed_wide_leg(
         &st,
         &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
+        &before_w,
+        &after_w,
         &non_declaring_manifest(),
-    )
-    .expect("wide bare producer (non-declaring cell)");
+    );
+    // The producer mints the committed geometry MINUS the refuse aux band: those columns are the
+    // floor-refuse GATE's own witnesses, resized + filled at prove time by
+    // `descriptor_ir2`'s `fill_refuse_aux`, never producer-emitted.
+    assert_eq!(
+        honest_trace[0].len(),
+        wide_bare.trace_width - refuse_width(&wide_bare),
+        "the deployed producer mints the committed member's geometry (less the refuse aux band)"
+    );
     let honest_proof = prove_vm_descriptor2(&wide_bare, &honest_trace, &honest_dpis, &mem, &heaps)
         .expect("a NON-declaring wide bare burn proves under the refuse-welded member (floor=0)");
     verify_vm_descriptor2(&wide_bare, &honest_proof, &honest_dpis)
@@ -219,14 +275,8 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
     // ---- 2. THE DODGE: a cell that DECLARES the escrow capacity (tag 17, folded into caveatCommit
     // PI 45) and settles via a plain bare-cohort burn. ----
     let manifest = escrow_declaring_manifest();
-    let (trace, dpis) = generate_rotated_transfer_shape_wide(
-        &st,
-        &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
-        &manifest,
-    )
-    .expect("wide bare producer (declared-capacity cell)");
+    let (_d2, trace, dpis, _h2, _m2) =
+        deployed_wide_leg(&st, &effects, &before_w, &after_w, &manifest);
     assert_eq!(
         dpis.len(),
         ROT_PI_COUNT + DFA_RC_LEN + 16,
@@ -268,12 +318,20 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
     // deployed cohort descriptor. ----
     let preflip = preflip_bare_member(&wide_bare);
     assert_eq!(
-        preflip.trace_width, 2493,
-        "pre-flip member is the un-widened wide bare burn"
+        preflip.trace_width,
+        wide_bare.trace_width - refuse_width(&wide_bare),
+        "pre-flip member is the un-widened wide bare burn (derived, not a pre-Epoch-1 constant)"
     );
     assert!(
         !preflip.name.contains("gentian-deployed-bare-refuse"),
         "pre-flip member carries NO refuse"
+    );
+    // The pre-flip artifact is the SAME producer row — which already carries NO refuse aux band, so
+    // it IS the exact row an old (pre-flag-day) producer emitted, at the pre-flip member's width.
+    assert_eq!(
+        trace[0].len(),
+        preflip.trace_width,
+        "the producer row IS the pre-flip member's geometry (the refuse aux is gate-internal)"
     );
     let dodge_proof = prove_vm_descriptor2(&preflip, &trace, &dpis, &mem, &heaps).expect(
         "the pre-flip bare-dodge STARK proves (the reconstructed pre-flag-day member has no refuse)",
@@ -293,7 +351,7 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
                 "GENTIAN DEPLOYED VERIFY — DODGE CLOSED: a declared-escrow cell settled via a plain \
                  bare-cohort burn was REJECTED by the deployed light-client entry \
                  `verify_effect_vm_rotated_with_cutover`. The deployed WIDE/WELDED bare burn now carries \
-                 the capacity-floor refuse (width 2541); the pre-flip bare-dodge proof binds NO deployed \
+                 the capacity-floor refuse; the pre-flip bare-dodge proof binds NO deployed \
                  cohort descriptor. Reject: {e}"
             );
         }
@@ -377,17 +435,13 @@ fn gate_b_discriminator_alone_rejects_declared_bare_route() {
         &receipt_log,
         &Default::default(),
     );
-    let mem = MemBoundaryWitness::default();
-    let heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-
-    let (trace, dpis) = generate_rotated_transfer_shape_wide(
+    let (_d, trace, dpis, heaps, mem) = deployed_wide_leg(
         &st,
         &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
+        &before_w,
+        &after_w,
         &non_declaring_manifest(),
-    )
-    .expect("wide bare producer (non-declaring)");
+    );
     let proof = prove_vm_descriptor2(&wide_bare, &trace, &dpis, &mem, &heaps)
         .expect("a NON-declaring wide bare burn proves under the refuse-welded member (floor=0)");
     let bytes = postcard::to_allocvec(&proof).expect("serialize");
