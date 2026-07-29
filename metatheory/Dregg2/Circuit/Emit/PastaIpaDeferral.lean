@@ -845,14 +845,29 @@ gate exists so that "not yet discharged" cannot be reported as an accept.
      probability model in this tree**, so no theorem states it. What makes the one-`r` check
      defensible is ORDER — `r` is drawn after the claims are fixed — and that ordering is an
      operational property of the caller, not something proved here.
-  3. ⚑ **The ANCHORING is not measured, and the fixtures on disk cannot measure it.** The claim
-     that block `i`'s Wrap opening `sg` is committed by block `i+1` (which is what stops an
-     adversary choosing `sg` after seeing `r`) is a CROSS-CURVE relation: the Wrap/Pallas `sg`
-     against the next block's Step-side carried commitment. `MinaStateHashWordGate`'s wire carries
-     `accComm` (Pallas, `< pN`) and `mnwComm` (Vesta, `< qN`) but NOT `proof.openings.proof.sg`,
-     so the two sides of the equation are not both present for any block. Testing it needs one
-     extra extractor field over ≥2 consecutive blocks. **Named and unbuilt** — and until it is
-     built, "the claim is committed before it is discharged" is a design intent, not a measurement.
+  3. ⚑ **The ANCHORING is MEASURED (2026-07-29).** This item read "not measured, and the fixtures
+     on disk cannot measure it" — the second half was wrong. The claim that block `i`'s Wrap
+     opening `sg` is committed by block `i+1` (which is what stops an adversary choosing `sg`
+     after seeing `r`) needed ONE extra field on the Lean wire, not a new extraction: the Rust
+     extractor already emitted `sg` and `metatheory/mina_state_hash_binding.json` already carried
+     it for all six blocks. `MinaStateHashWordGate.Header` now carries it too, and
+     `sg_is_committed_by_the_next_block` measures the identity on FOUR genuinely consecutive
+     devnet blocks (539795→96→97→98→99), with `the_non_adjacent_seam_refuses` showing the 287-block
+     seam FAILS, `no_block_commits_its_own_sg` ruling out self-naming, and `the_six_sg_are_distinct`
+     ruling out a constant.
+
+     It is a COMMITMENT and not merely an equality: `accFields` puts the accumulator commitment
+     first, so `parent_sg_is_at_index_57` places the parent's `sg` at indices 57–58 of the child's
+     93-element word-12 preimage, and `headerOk` requires that preimage to hash to the value an
+     accepted `kimchi::verifier::verify` consumed as the child's public-input word 12. The curve
+     crossing is Wrap→Step: `sg` is a **Pallas** point (`Fp` coordinates) produced by the Wrap/Tock
+     proof, carried in the Step-side `messages_for_next_step_proof`, absorbed into an `Fp` Poseidon
+     whose digest is a public input of the next Wrap proof, whose own scalar field is `Fq`.
+     `sg_and_mnw_are_different_objects` pins that this is not secretly about `mnwComm`.
+
+     ⚠ FLAG DAY: the gate wire gained a `;sg=` segment and is EIGHT segments now. A seven-segment
+     wire returns `"ERR"` — it refuses to load rather than reinterpreting. Re-emitted:
+     `dregg-lean-ffi`'s `mina_state_hash_word_wire`, `bridge`'s `MinaObserver::check_header_binding`.
   4. **The FIELD side of the fold is not amortised and not priced here** (§4's note): `N · 2^k`
      non-native multiplications to expand and `r^i`-scale the `b_poly` coefficient vectors. The
      `PastaMsmLayouts` row model counts group operations only.

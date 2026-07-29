@@ -6482,6 +6482,257 @@ where
 }
 
 // ============================================================================
+// MULTI-DESCRIPTOR BATCH: N Lean-authored main AIRs riding in ONE proof
+// ============================================================================
+
+/// Reject a descriptor that pulls in any table instance, so the multi-descriptor batch's
+/// instance list is exactly one `Ir2Air::Main` per descriptor, in the order given.
+///
+/// The canonical single-descriptor order (`instance_airs`) interleaves each descriptor's chip /
+/// byte / memory / map / umem instances directly after its main. Supporting that here would make
+/// the instance index a function of every EARLIER descriptor's presence set, and a verifier that
+/// recomputed it differently from the prover would mis-attribute a refusal — which is exactly the
+/// thing `index: Some(i)` is relied on to answer. So this path REFUSES rather than guesses; a
+/// descriptor needing tables belongs on [`prove_vm_descriptor2`].
+fn require_main_only(
+    desc: &EffectVmDescriptor2,
+    presence: Presence,
+    i: usize,
+) -> Result<(), String> {
+    let extra = [
+        (presence.chip, "chip"),
+        (presence.chip_state16, "chip_state16"),
+        (presence.byte, "byte"),
+        (presence.memory, "memory"),
+        (presence.map_ops, "map_ops"),
+        (presence.map_absent, "map_absent"),
+        (presence.umem, "umem"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect::<Vec<_>>();
+    if !extra.is_empty() || !desc.tables.is_empty() {
+        return Err(format!(
+            "descriptor {i} ({}) declares table instances {extra:?}{}; the multi-descriptor batch \
+             carries MAIN instances only, so that the instance index is the descriptor index",
+            desc.name,
+            if desc.tables.is_empty() {
+                ""
+            } else {
+                " and declares tables"
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// Build the per-descriptor `(air, trace, public values)` triples, with every shape check the
+/// single-descriptor path applies, applied per descriptor.
+#[allow(clippy::type_complexity)]
+fn batch_airs_and_matrices(
+    descs: &[EffectVmDescriptor2],
+    base_traces: &[&[Vec<BabyBear>]],
+    public_inputs: &[Vec<BabyBear>],
+) -> Result<
+    (
+        Vec<Ir2Air>,
+        Vec<RowMajorMatrix<P3BabyBear>>,
+        Vec<Vec<P3BabyBear>>,
+    ),
+    String,
+> {
+    if descs.is_empty() {
+        return Err("multi-descriptor batch must carry at least one descriptor".to_string());
+    }
+    if descs.len() != base_traces.len() || descs.len() != public_inputs.len() {
+        return Err(format!(
+            "multi-descriptor batch is ragged: {} descriptors, {} traces, {} public-input vectors",
+            descs.len(),
+            base_traces.len(),
+            public_inputs.len()
+        ));
+    }
+    let mut airs = Vec::with_capacity(descs.len());
+    let mut matrices = Vec::with_capacity(descs.len());
+    let mut pvs = Vec::with_capacity(descs.len());
+    for (i, desc) in descs.iter().enumerate() {
+        let layout = check_descriptor2(desc).map_err(|e| format!("descriptor {i}: {e}"))?;
+        let presence = Presence::of(desc, &layout);
+        require_main_only(desc, presence, i)?;
+        let trace = base_traces[i];
+        if trace.is_empty() {
+            return Err(format!("descriptor {i}: base trace must be non-empty"));
+        }
+        if !trace.len().is_power_of_two() {
+            return Err(format!(
+                "descriptor {i}: base trace height {} must be a power of two",
+                trace.len()
+            ));
+        }
+        if trace[0].len() != desc.trace_width {
+            return Err(format!(
+                "descriptor {i}: base row width {} must equal descriptor trace_width {}",
+                trace[0].len(),
+                desc.trace_width
+            ));
+        }
+        if public_inputs[i].len() != desc.public_input_count {
+            return Err(format!(
+                "descriptor {i}: public input count {} != descriptor public_input_count {}",
+                public_inputs[i].len(),
+                desc.public_input_count
+            ));
+        }
+        airs.push(Ir2Air::Main {
+            desc: desc.clone(),
+            layout: MainLayoutPub(layout),
+        });
+        matrices.push(to_matrix(trace));
+        pvs.push(public_inputs[i].iter().map(|&v| to_p3(v)).collect());
+    }
+    Ok((airs, matrices, pvs))
+}
+
+/// ⚑ **`prove_vm_descriptors2_batch`** — prove `N` Lean-authored main AIRs as `N` instances of
+/// ONE batch STARK proof, with per-instance `degree_bits`.
+///
+/// ## What this adds, and what it deliberately does not
+///
+/// It adds PLUMBING. Every constraint still comes from the Lean-emitted descriptors: this
+/// function clones them into `Ir2Air::Main`, whose `eval` reads `desc.constraints`. No constraint,
+/// builder gadget or `air_accepts` predicate is authored here.
+///
+/// ## Per-instance `degree_bits` are the trace HEIGHTS
+///
+/// `ProverData::from_instances` reads `instance.trace.height()` and records
+/// `log2(height) + is_zk()` per instance, so the caller sets them by handing each descriptor a
+/// trace of its own power-of-two height. Heterogeneous heights are the ordinary case.
+///
+/// ## The self-verify is NOT optional
+///
+/// The tail mirrors [`prove_vm_descriptor2_inner`]'s unconditional `verify_batch`, for the reason
+/// recorded there: a descriptor made only of algebraic gates has NOTHING else checking it in a
+/// release build, and without this `prove` would return `Ok` for an all-zeros trace. The
+/// four-way-cut descriptors are exactly that shape — 78 constraints, zero lookups — so this path
+/// would inherit the identical 35-day fail-open if the check were ever made conditional.
+pub fn prove_vm_descriptors2_batch(
+    descs: &[EffectVmDescriptor2],
+    base_traces: &[&[Vec<BabyBear>]],
+    public_inputs: &[Vec<BabyBear>],
+) -> Result<BatchProof<DreggStarkConfig>, String> {
+    prove_vm_descriptors2_batch_inner(descs, base_traces, public_inputs, true, &ir2_config())
+}
+
+/// [`prove_vm_descriptors2_batch`] with the producer-side self-verify controllable — `check:
+/// false` is how an adversarial tooth gets a forged witness past the producer and in front of the
+/// DEPLOYED VERIFIER, which is the verdict that matters. Never `false` on a production path.
+#[doc(hidden)]
+pub fn prove_vm_descriptors2_batch_inner<SC>(
+    descs: &[EffectVmDescriptor2],
+    base_traces: &[&[Vec<BabyBear>]],
+    public_inputs: &[Vec<BabyBear>],
+    check: bool,
+    config: &SC,
+) -> Result<BatchProof<SC>, String>
+where
+    SC: StarkGenericConfig,
+    Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
+    SymbolicExpressionExt<Val<SC>, SC::Challenge>: Algebra<SC::Challenge>,
+    SC::Challenge: p3_field::BasedVectorSpace<P3BabyBear>,
+{
+    let (airs, matrices, pvs) = batch_airs_and_matrices(descs, base_traces, public_inputs)?;
+    let instances: Vec<StarkInstance<'_, SC, Ir2Air>> = airs
+        .iter()
+        .zip(matrices.iter())
+        .zip(pvs.iter())
+        .map(|((air, trace), pv)| StarkInstance {
+            air,
+            trace,
+            public_values: pv.clone(),
+        })
+        .collect();
+    let prover_data = ProverData::from_instances(config, &instances);
+    let common = &prover_data.common;
+    let proof = prove_batch(config, &instances, &prover_data);
+    if check {
+        verify_batch(config, &airs, &proof, &pvs, common)
+            .map_err(|e| format!("IR v2 multi-descriptor self-verify failed: {e:?}"))?;
+    }
+    Ok(proof)
+}
+
+/// ⚑ **`verify_vm_descriptors2_batch`** — the DEPLOYED verdict on a multi-descriptor batch.
+///
+/// The instance set is rebuilt from the DESCRIPTORS alone, so a verifier that was handed a
+/// different descriptor list than the prover used gets a different AIR set and refuses. The
+/// instance index in a refusal is therefore the DESCRIPTOR index, which is what makes
+/// `index: Some(k)` in a p3 `OodEvaluationMismatch` name the slice that failed.
+pub fn verify_vm_descriptors2_batch(
+    descs: &[EffectVmDescriptor2],
+    proof: &BatchProof<DreggStarkConfig>,
+    public_inputs: &[Vec<BabyBear>],
+) -> Result<(), String> {
+    verify_vm_descriptors2_batch_with_config(descs, proof, public_inputs, &ir2_config())
+}
+
+/// Measurement-only variant of [`verify_vm_descriptors2_batch`] under an explicit config.
+#[doc(hidden)]
+pub fn verify_vm_descriptors2_batch_with_config<SC>(
+    descs: &[EffectVmDescriptor2],
+    proof: &BatchProof<SC>,
+    public_inputs: &[Vec<BabyBear>],
+    config: &SC,
+) -> Result<(), String>
+where
+    SC: StarkGenericConfig,
+    Domain<SC>: PolynomialSpace<Val = P3BabyBear>,
+    SymbolicExpressionExt<Val<SC>, SC::Challenge>: Algebra<SC::Challenge>,
+    SC::Challenge: p3_field::BasedVectorSpace<P3BabyBear>,
+{
+    if descs.len() != public_inputs.len() {
+        return Err(format!(
+            "verify: {} descriptors but {} public-input vectors",
+            descs.len(),
+            public_inputs.len()
+        ));
+    }
+    let mut airs = Vec::with_capacity(descs.len());
+    let mut pvs = Vec::with_capacity(descs.len());
+    for (i, desc) in descs.iter().enumerate() {
+        let layout = check_descriptor2(desc).map_err(|e| format!("descriptor {i}: {e}"))?;
+        let presence = Presence::of(desc, &layout);
+        require_main_only(desc, presence, i)?;
+        if public_inputs[i].len() != desc.public_input_count {
+            return Err(format!(
+                "descriptor {i}: public input count {} != descriptor public_input_count {}",
+                public_inputs[i].len(),
+                desc.public_input_count
+            ));
+        }
+        airs.push(Ir2Air::Main {
+            desc: desc.clone(),
+            layout: MainLayoutPub(layout),
+        });
+        pvs.push(
+            public_inputs[i]
+                .iter()
+                .map(|&v| to_p3(v))
+                .collect::<Vec<P3BabyBear>>(),
+        );
+    }
+    if proof.degree_bits.len() != airs.len() {
+        return Err(format!(
+            "IR v2 batch carries {} instances but {} descriptors were supplied",
+            proof.degree_bits.len(),
+            airs.len()
+        ));
+    }
+    let common = ProverData::from_airs_and_degrees(config, &airs, &proof.degree_bits).common;
+    verify_batch(config, &airs, proof, &pvs, &common)
+        .map_err(|e| format!("IR v2 multi-descriptor verification failed: {e:?}"))
+}
+
+// ============================================================================
 // Tests (run on persvati with the batched validation, not by the build lane)
 // ============================================================================
 

@@ -1221,6 +1221,12 @@ impl<R: MinaRpc> MinaObserver<R> {
                 .iter()
                 .flat_map(|v| v.iter().map(|c| c.to_string()))
                 .collect();
+            // ⚑ THIS block's own Wrap `sg` (Pallas, Fp). Carried since 2026-07-29 so the gate can
+            // state the ANCHORING in one module: `MinaStateHashWordGate.sg_is_committed_by_the_next
+            // _block` measures that block i's `sg` IS block i+1's `accComm`, which sits at indices
+            // 57-58 of block i+1's word-12 preimage. It was already decoded here
+            // (`WrapProofShape.sg`) and simply never crossed the boundary.
+            let sg = vec![decimal_of_le32(&shape.sg[0]), decimal_of_le32(&shape.sg[1])];
 
             let verdict = dregg_lean_ffi::verified_mina_state_hash_word_ok(
                 &state_hash.to_decimal(),
@@ -1228,6 +1234,7 @@ impl<R: MinaRpc> MinaObserver<R> {
                 &acc_chals,
                 &mnw_comm,
                 &mnw_chals,
+                &sg,
                 &anchor.word12,
                 &anchor.word11,
             )
@@ -1756,10 +1763,14 @@ mod tests {
             &["5".into(), "6".into()],
             &["8".into(), "9".into()],
             &["10".into()],
+            &["13".into(), "14".into()],
             "11",
             "12",
         );
-        assert_eq!(w, "sh=7;ac=1,2,3,4;ah=5,6;wc=8,9;wh=10;w12=11;w11=12");
+        assert_eq!(
+            w,
+            "sh=7;ac=1,2,3,4;ah=5,6;wc=8,9;wh=10;sg=13,14;w12=11;w11=12"
+        );
     }
 
     const DEVNET_539508_B58: &str = "3NLmVB6Fs3dm4kXNkgwheHXzJXNpCCwEDe76RpTVeBTNujm12zNk";

@@ -1505,7 +1505,8 @@ mod ffi_mina_proof_chain {
 //
 // Wire grammar (mirrors `MinaStateHashWordGate.decodeHeaderWire` byte-for-byte):
 // ```text
-// INPUT := "sh=" Nat ";acc=" Nat("," Nat)*35 ";mnw=" Nat("," Nat)*31 ";w12=" Nat ";w11=" Nat
+// INPUT := "sh=" Nat ";ac=" Nat("," Nat)*3 ";ah=" Nat("," Nat)*31 ";wc=" Nat("," Nat)
+//        ";wh=" Nat("," Nat)*29 ";sg=" Nat("," Nat) ";w12=" Nat ";w11=" Nat
 // ```
 
 /// The verified verdict on one exhibited block's header. `Accept` iff the Lean gate
@@ -1539,28 +1540,36 @@ fn dec_list(v: &[String]) -> String {
 /// `acc_comm` is `[x₀, y₀, x₁, y₁]` of `messages_for_next_step_proof.challenge_polynomial_commitments`;
 /// `acc_chals` is its `2 × 16` **RAW 128-bit** prechallenges; `mnw_comm` is `[x, y]` of
 /// `messages_for_next_wrap_proof.challenge_polynomial_commitment`; `mnw_chals` is its `2 × 15`
-/// raw prechallenges; `word12`/`word11` are the public-input words the caller claims the
-/// verification consumed.
+/// raw prechallenges; `sg` is `[x, y]` of THIS block's own Wrap
+/// `bulletproof.challenge_polynomial_commitment` (Pallas, `Fp`); `word12`/`word11` are the
+/// public-input words the caller claims the verification consumed.
+///
+/// ⚑ FLAG DAY 2026-07-29: the wire gained `;sg=` and is now EIGHT segments. A seven-segment wire
+/// no longer decodes — `MinaStateHashWordGate.decodeHeaderWire` returns `none`, the gate answers
+/// `"ERR"`, and every caller treats that as a REFUSAL. The old shape does not reinterpret.
 ///
 /// ⚑ The prechallenges go over RAW. The endomorphism expansion
 /// (`ScalarChallenge::limbs_to_field`) is the GATE's — `MinaStateHashWordGate.expandTick` /
 /// `expandTock` over `KimchiVerify.endoMap` — so there is no field arithmetic on this side of the
 /// boundary to drift from the Lean.
+#[allow(clippy::too_many_arguments)]
 pub fn mina_state_hash_word_wire(
     state_hash: &str,
     acc_comm: &[String],
     acc_chals: &[String],
     mnw_comm: &[String],
     mnw_chals: &[String],
+    sg: &[String],
     word12: &str,
     word11: &str,
 ) -> String {
     format!(
-        "sh={state_hash};ac={};ah={};wc={};wh={};w12={word12};w11={word11}",
+        "sh={state_hash};ac={};ah={};wc={};wh={};sg={};w12={word12};w11={word11}",
         dec_list(acc_comm),
         dec_list(acc_chals),
         dec_list(mnw_comm),
         dec_list(mnw_chals),
+        dec_list(sg),
     )
 }
 
@@ -1581,11 +1590,12 @@ pub fn verified_mina_state_hash_word_ok(
     acc_chals: &[String],
     mnw_comm: &[String],
     mnw_chals: &[String],
+    sg: &[String],
     word12: &str,
     word11: &str,
 ) -> Result<MinaStateHashWordVerdict, String> {
     let wire = mina_state_hash_word_wire(
-        state_hash, acc_comm, acc_chals, mnw_comm, mnw_chals, word12, word11,
+        state_hash, acc_comm, acc_chals, mnw_comm, mnw_chals, sg, word12, word11,
     );
     let out = shadow_mina_state_hash_word_ok(&wire)?;
     Ok(if out == "1" {

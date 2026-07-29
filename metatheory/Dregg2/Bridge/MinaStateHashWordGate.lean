@@ -251,6 +251,14 @@ structure Header where
   mnwComm : List Nat
   /-- `…old_bulletproof_challenges` — 2 × 15 RAW 128-bit prechallenges. -/
   mnwChals : List Nat
+  /-- ⚑ **THIS block's own Wrap `sg`** — `proof.bulletproof.challenge_polynomial_commitment` on the
+  wire, `openings.proof.sg` once lifted — `[x, y]` on **Pallas**, coordinates in `Fp`.
+
+  Carried so the anchoring identity can be STATED IN THIS MODULE. Without it, "block `i`'s `sg` is
+  committed by block `i+1`" could only be assembled by hopping into `PicklesProofChainGate`, and
+  the thing that makes it a commitment rather than an equality — that `accComm` sits inside word
+  12's hashed preimage — lives here. `sg_is_committed_by_the_next_block` (§4b) is the measurement. -/
+  sg : List Nat
   /-- public-input word 12, as the accepted verification saw it. -/
   word12Gold : Nat
   /-- public-input word 11, likewise. -/
@@ -277,6 +285,9 @@ def headerShapeOk (h : Header) : Bool :=
   && h.mnwChals.all (fun c => decide (c < 2 ^ 128))
   && h.accComm.all (fun x => decide (x < pN))
   && h.mnwComm.all (fun x => decide (x < qN))
+  && decide (h.sg.length = 2)
+  && h.sg.all (fun x => decide (x < pN))
+  && h.sg.any (fun x => decide (0 < x))
 
 /-- **`headerOk`** — THE DECISION: the served header and the served proof bytes hash to the two
 public-input words the verification consumed. -/
@@ -393,6 +404,11 @@ def B539795 : Header where
     293374964887923422702312455212475710815, 59744599636071339525535959980361417052,
     46014610541636201163241364948866057084, 76232456176745369306970901371769928663
    ]
+  sg :=
+   [
+    20146518149961985083673632976085115247649480898755654722356774610313624222264,
+    7490304815649096610077713774932066967911710097704988014691714322967665756103
+   ]
   word12Gold := 7305917655436454774997073686562206465408720219409725760329506680431306964487
   word11Gold := 12529463064358683771694025545972905426489759433658543627917081621963342658245
 
@@ -450,6 +466,11 @@ def B539796 : Header where
     315041257541294552571487337054589354862, 244491269745143602934718134076671381883,
     293374964887923422702312455212475710815, 59744599636071339525535959980361417052,
     46014610541636201163241364948866057084, 76232456176745369306970901371769928663
+   ]
+  sg :=
+   [
+    15310153193890092743508059921596149565213446588665909599267615499973707681130,
+    28199024049865301389474973869834450019135650980849302435293961358196141658551
    ]
   word12Gold := 27921654203799970728259940120098797532661888935635864842815902700213776502810
   word11Gold := 14564741825176605826127122711430874983129610892617166946238874683947904485615
@@ -509,6 +530,11 @@ def B539797 : Header where
     293374964887923422702312455212475710815, 59744599636071339525535959980361417052,
     46014610541636201163241364948866057084, 76232456176745369306970901371769928663
    ]
+  sg :=
+   [
+    14872446649294467362168055103889119102732875308817333203618322337998985212663,
+    2913186664279928827956749453688381383681572417952207572483920913979540149404
+   ]
   word12Gold := 7332645084651676244769763838894804393292566606184647839717378542037552683979
   word11Gold := 14618321421330374926388467236360020020692729167627743105406677142941417616525
 
@@ -566,6 +592,11 @@ def B539798 : Header where
     315041257541294552571487337054589354862, 244491269745143602934718134076671381883,
     293374964887923422702312455212475710815, 59744599636071339525535959980361417052,
     46014610541636201163241364948866057084, 76232456176745369306970901371769928663
+   ]
+  sg :=
+   [
+    6774624138987559978335989169022901971817149050038594615128841928380693287272,
+    21036664277972433579105233400489790893073835665155250432987269201730091020579
    ]
   word12Gold := 24698152932720355489563542179926181070998910544210951525812556884709827881374
   word11Gold := 12486497934164818933185565011107357572699402004455583747366135306673519035619
@@ -625,6 +656,11 @@ def B539799 : Header where
     293374964887923422702312455212475710815, 59744599636071339525535959980361417052,
     46014610541636201163241364948866057084, 76232456176745369306970901371769928663
    ]
+  sg :=
+   [
+    24123492140850594461024525319421617431241613245656062989822641776202321398431,
+    2126546286152722914709010735055394116558365424150591058044743199986211633
+   ]
   word12Gold := 25082027196446307325259578107667030139945066715448485336719519745257485314097
   word11Gold := 16947906058108832318537409313356125161410283182380171056950563151346730811124
 
@@ -683,6 +719,11 @@ def B539508 : Header where
     287043157281901125433265935998486326163, 235131466132929779408330466440006021379,
     30693655406188412460764883996357743580, 142235544941811357224107240835941091952
    ]
+  sg :=
+   [
+    27645747947874706201841804187493007015446820953018417773890030413191100025813,
+    22431124833386818350144521797175752507845644373717877723958129425730786166045
+   ]
   word12Gold := 24322017899265084126163599635783679345976168424021275192497824834098868742353
   word11Gold := 16694176452625101103339288558027392732723822717830151635447913532282294450543
 
@@ -712,6 +753,84 @@ theorem the_welded_run_chains :
     PicklesProofChainGate.chainOk
       [PicklesProofChainGate.B539795, PicklesProofChainGate.B539796,
        PicklesProofChainGate.B539797] = true := by decide
+
+/-! ### §4b — ⚑⚑ THE ANCHORING, MEASURED: block `i`'s Wrap `sg` is COMMITTED by block `i+1`.
+
+This is what stops an adversary CHOOSING `sg` after seeing the batching challenge `r`. Until now it
+was design intent: the fixture wire carried `accComm` (Pallas, `Fp`) and `mnwComm` (Vesta, `Fq`)
+but **not** `proof.openings.proof.sg`, so nothing in this repo compared them and the docs said as
+much. `Header.sg` closes that, and what follows is the measurement, not the intent.
+
+**Why "committed" and not merely "equal".** `accFields` puts the accumulator commitment FIRST, and
+`word12`'s preimage is `VK_INDEX ++ stateHash :: accFields …`, so the parent's `sg` sits at indices
+**57 and 58** of the child's 93-element word-12 preimage — and `headerOk` requires that preimage to
+hash to `word12Gold`, the value an accepted `kimchi::verifier::verify` consumed as public-input
+word 12 of the CHILD's Wrap proof. So the parent's `sg` is not merely reproduced by the child; it
+is inside what the child's proof was verified against. Choosing it late means choosing the child's
+public input late.
+
+**Where the curve crossing is.** `sg` is a **Pallas** point with `Fp` coordinates, produced by the
+**Wrap/Tock** proof. It is carried in `messages_for_next_step_proof` — the **Step/Tick** side's
+message — and absorbed into an `Fp` Poseidon (`fpParams`) whose digest is a public input of the
+next Wrap proof, whose own scalar field is `Fq`. `mnwComm` is the `Fq`/Vesta half and is a
+different object; `sg_and_mnw_are_different_objects` pins that they are not accidentally the same
+numbers. -/
+
+/-- The accumulator commitment is the FIRST pair of `accFields`, so it is at indices 57–58 of the
+word-12 preimage. This is WHICH function of the header word 12 is, at the two slots that carry the
+parent's `sg`. -/
+theorem accFields_starts_with_the_commitment {comm chals : List Nat} (hc : comm.length = 4) :
+    (accFields comm chals).take 2 = comm.take 2 := by
+  have h2 : (comm.take 2).length = 2 := by rw [List.length_take, hc]; rfl
+  unfold accFields
+  rw [List.append_assoc, List.append_assoc, List.take_left' h2]
+
+/-- ⚑ **`parent_sg_is_at_index_57`** — the two preimage slots the parent's `sg` occupies, named. -/
+theorem parent_sg_is_at_index_57 (sh : Nat) {comm chals : List Nat} (hc : comm.length = 4) :
+    ((VK_INDEX ++ sh :: accFields comm chals).drop 57).take 2 = comm.take 2 := by
+  have hd : (VK_INDEX ++ sh :: accFields comm chals).drop 57 = accFields comm chals := rfl
+  rw [hd, accFields_starts_with_the_commitment hc]
+
+/-- ⚑⚑ **`sg_is_committed_by_the_next_block`** — THE MEASUREMENT, on four genuinely consecutive
+real devnet blocks. For each adjacent pair, the CHILD's accumulator commitment IS the PARENT's own
+Wrap `sg`, and by `parent_sg_is_at_index_57` those are slots 57–58 of the child's word-12 preimage,
+which `headerOk` requires to hash to the child's `word12Gold`. -/
+theorem sg_is_committed_by_the_next_block :
+    B539796.accComm.take 2 = B539795.sg
+    ∧ B539797.accComm.take 2 = B539796.sg
+    ∧ B539798.accComm.take 2 = B539797.sg
+    ∧ B539799.accComm.take 2 = B539798.sg := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **The seam REFUTES.** 539508 is 287 blocks earlier and is NOT the child of 539799, and the
+identity FAILS there. Without this the measurement above could be a constant that every block
+happens to carry. -/
+theorem the_non_adjacent_seam_refuses :
+    B539508.accComm.take 2 ≠ B539799.sg := by decide
+
+/-- ⚑ **No block names its OWN `sg`.** A self-naming header would make the anchoring vacuous — the
+commitment would say nothing about a parent. All six refuse. -/
+theorem no_block_commits_its_own_sg :
+    [B539795, B539796, B539797, B539798, B539799, B539508].all (fun h => decide (h.accComm.take 2 ≠ h.sg)) = true := by decide
+
+/-- ⚑ **The six `sg` are DISTINCT.** A Fiat–Shamir output that repeated would make the four
+adjacent hits above meaningless. -/
+theorem the_six_sg_are_distinct :
+    ([B539795, B539796, B539797, B539798, B539799, B539508].map (fun h => h.sg)).eraseDups.length = 6 := by decide
+
+/-- The `Fp`/Pallas anchor and the `Fq`/Vesta `messages_for_next_wrap_proof` commitment are
+different objects on every block — so "the anchoring is measured" is not secretly a statement about
+`mnwComm`. -/
+theorem sg_and_mnw_are_different_objects :
+    [B539795, B539796, B539797, B539798, B539799, B539508].all (fun h => decide (h.sg ≠ h.mnwComm)) = true := by decide
+
+#assert_axioms accFields_starts_with_the_commitment
+#assert_axioms parent_sg_is_at_index_57
+#assert_axioms sg_is_committed_by_the_next_block
+#assert_axioms the_non_adjacent_seam_refuses
+#assert_axioms no_block_commits_its_own_sg
+#assert_axioms the_six_sg_are_distinct
+#assert_axioms sg_and_mnw_are_different_objects
 
 /-! ## §4 — ⚑ THE PINS, in the COMPILED evaluator. Each `#guard` is a build error when it fails,
 so these are gates rather than documentation; not one of them is a kernel `decide`. -/
@@ -840,21 +959,29 @@ INPUT := "sh="  Nat                  -- the served stateHash, Base58Check-decode
        ";ah="  Nat("," Nat)*31       -- 2 x 16 RAW 128-bit step prechallenges
        ";wc="  Nat("," Nat)          -- messages_for_next_wrap_proof commitment: x,y
        ";wh="  Nat("," Nat)*29       -- 2 x 15 RAW 128-bit wrap prechallenges
+       ";sg="  Nat("," Nat)          -- THIS block's own Wrap sg: x,y on Pallas
        ";w12=" Nat ";w11=" Nat       -- the two public-input words the verification consumed
 ```
--/
+
+⚑ FLAG DAY. The wire gained a `;sg=` segment and is now EIGHT segments, not seven. A
+seven-segment wire no longer decodes — it returns `none`, so the gate answers `"ERR"` and the
+caller treats that as REFUSE. The old shape does not reinterpret; it refuses to load. Callers to
+re-emit: `dregg-lean-ffi`'s `mina_state_hash_word_wire` and `bridge`'s
+`MinaObserver::check_header_binding`. -/
 def decodeHeaderWire (s : String) : Option Header :=
   match s.splitOn ";" with
-  | [p0, p1, p2, p3, p4, p5, p6] => do
+  | [p0, p1, p2, p3, p4, p5, p6, p7] => do
       let sh ← (parseField? "sh" p0).bind String.toNat?
       let ac ← (parseField? "ac" p1).bind parseNats?
       let ah ← (parseField? "ah" p2).bind parseNats?
       let wc ← (parseField? "wc" p3).bind parseNats?
       let wh ← (parseField? "wh" p4).bind parseNats?
-      let w12 ← (parseField? "w12" p5).bind String.toNat?
-      let w11 ← (parseField? "w11" p6).bind String.toNat?
+      let sg ← (parseField? "sg" p5).bind parseNats?
+      let w12 ← (parseField? "w12" p6).bind String.toNat?
+      let w11 ← (parseField? "w11" p7).bind String.toNat?
       some { height := 0, stateHash := sh, accComm := ac, accChals := ah,
-             mnwComm := wc, mnwChals := wh, word12Gold := w12, word11Gold := w11 }
+             mnwComm := wc, mnwChals := wh, sg := sg,
+             word12Gold := w12, word11Gold := w11 }
   | _ => none
 
 /-- **`minaStateHashWordGate`** — THE GATE. -/
@@ -885,6 +1012,7 @@ def wireOf (h : Header) : String :=
   ++ ";ah=" ++ String.intercalate "," (h.accChals.map toString)
   ++ ";wc=" ++ String.intercalate "," (h.mnwComm.map toString)
   ++ ";wh=" ++ String.intercalate "," (h.mnwChals.map toString)
+  ++ ";sg=" ++ String.intercalate "," (h.sg.map toString)
   ++ ";w12=" ++ toString h.word12Gold
   ++ ";w11=" ++ toString h.word11Gold
 
@@ -898,14 +1026,25 @@ def wireOf (h : Header) : String :=
 #guard (decodeHeaderWire (wireOf B539508)).map (fun h =>
           h.stateHash == B539508.stateHash && h.accComm == B539508.accComm
           && h.accChals == B539508.accChals && h.mnwComm == B539508.mnwComm
-          && h.mnwChals == B539508.mnwChals && h.word12Gold == B539508.word12Gold
+          && h.mnwChals == B539508.mnwChals && h.sg == B539508.sg
+          && h.word12Gold == B539508.word12Gold
           && h.word11Gold == B539508.word11Gold)
        == some true
 -- A malformed wire is `"ERR"`, never an accept.
-#guard minaStateHashWordGate "sh=1;ac=1;ah=1;wc=1;wh=1;w12=1" == "ERR"
-#guard minaStateHashWordGate "xh=1;ac=1;ah=1;wc=1;wh=1;w12=1;w11=1" == "ERR"
-#guard minaStateHashWordGate "sh=1;ac=1,x;ah=1;wc=1;wh=1;w12=1;w11=1" == "ERR"
-#guard minaStateHashWordGate "sh=1;ac=;ah=;wc=;wh=;w12=1;w11=1" == "ERR"
+#guard minaStateHashWordGate "sh=1;ac=1;ah=1;wc=1;wh=1;sg=1,2;w12=1" == "ERR"
+#guard minaStateHashWordGate "xh=1;ac=1;ah=1;wc=1;wh=1;sg=1,2;w12=1;w11=1" == "ERR"
+#guard minaStateHashWordGate "sh=1;ac=1,x;ah=1;wc=1;wh=1;sg=1,2;w12=1;w11=1" == "ERR"
+#guard minaStateHashWordGate "sh=1;ac=;ah=;wc=;wh=;sg=;w12=1;w11=1" == "ERR"
+-- ⚑ FLAG DAY, stated as a guard: the OLD seven-segment wire (no `;sg=`) REFUSES. It does not
+-- reinterpret as some other header, and it does not accept.
+#guard minaStateHashWordGate
+    ("sh=" ++ toString B539508.stateHash
+     ++ ";ac=" ++ String.intercalate "," (B539508.accComm.map toString)
+     ++ ";ah=" ++ String.intercalate "," (B539508.accChals.map toString)
+     ++ ";wc=" ++ String.intercalate "," (B539508.mnwComm.map toString)
+     ++ ";wh=" ++ String.intercalate "," (B539508.mnwChals.map toString)
+     ++ ";w12=" ++ toString B539508.word12Gold
+     ++ ";w11=" ++ toString B539508.word11Gold) == "ERR"
 #guard minaStateHashWordGate "garbage" == "ERR"
 #guard minaStateHashWordGate "" == "ERR"
 -- A well-formed wire with the right arities but a wrong value REFUSES (`"0"`), so `"ERR"` and
