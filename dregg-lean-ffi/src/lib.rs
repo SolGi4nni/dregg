@@ -46,10 +46,11 @@ pub use distributed_ffi::{
 pub mod bridge_lc_ffi;
 
 pub use bridge_lc_ffi::{
-    eth_lc_verify_available, eth_lc_verify_wire, mpt_lc_verify_available, mpt_lc_verify_wire,
-    shadow_eth_lc_verify, shadow_mpt_lc_verify, shadow_tm_lc_verify, tm_lc_verify_available,
-    tm_lc_verify_wire, verified_eth_lc_verify, verified_mpt_lc_verify, verified_tm_lc_verify,
-    EthLcVerdict, MptLcVerdict, TmLcVerdict,
+    eth_lc_verify_available, eth_lc_verify_wire, mina_lc_verify_available, mina_lc_verify_wire,
+    mpt_lc_verify_available, mpt_lc_verify_wire, shadow_eth_lc_verify, shadow_mina_lc_verify,
+    shadow_mpt_lc_verify, shadow_tm_lc_verify, tm_lc_verify_available, tm_lc_verify_wire,
+    verified_eth_lc_verify, verified_mina_lc_verify, verified_mpt_lc_verify, verified_tm_lc_verify,
+    EthLcVerdict, MinaLcVerdict, MptLcVerdict, TmLcVerdict,
 };
 pub use marshal::{AdmissionReason, TurnStatus, WireState};
 

@@ -494,6 +494,19 @@ extern lean_object *dregg_tm_lc_verify(lean_object *input);
 #ifdef DREGG_MPT_LC_VERIFY
 extern lean_object *dregg_mpt_lc_verify(lean_object *input);
 #endif
+/* dregg_mina_lc_verify — the MINA (Ouroboros Samasika / Pickles) anchored-segment decision
+ * (`minaLcVerifyGate`, `Dregg2.Bridge.LightClientMinaGate`): the exhibited segment is non-empty,
+ * the settlement's submitted height is AT OR ABOVE the pinned weak-subjectivity anchor, and the
+ * WITNESSED confirmation depth meets the Samasika requirement. Refined to `minaVerify`
+ * (`minaVerifyDecision_refines`, axiom-free `rfl`), the decision `mina_no_forgery` is proven over.
+ * The Poseidon linkage fold, the per-block Pickles/Kimchi Wrap-proof results and the state-row
+ * canonicality enter as the `lk`/`pk`/`cn` RESULT bits (the named carriers; the first and third are
+ * DERIVED in `Dregg2.Circuit.Emit.LightClientMinaHashFold` rather than trusted). Same
+ * `"1"`/`"0"`/`"ERR"` fail-closed contract, same no-module-initializer property as the three
+ * gates above. */
+#ifdef DREGG_MINA_LC_VERIFY
+extern lean_object *dregg_mina_lc_verify(lean_object *input);
+#endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
@@ -1127,6 +1140,32 @@ size_t dregg_mpt_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mpt_lc_verify(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_LC_VERIFY
+/* dregg_mina_lc_verify_str — the C string bridge over the VERIFIED Lean `String -> String` MINA
+ * (Ouroboros Samasika / Pickles) light-client verify-logic gate
+ * (`Dregg2.Bridge.LightClientMinaGate.dregg_mina_lc_verify`). Input:
+ * `"sl=<Nat>;ah=<Nat>;sh=<Nat>;wd=<Nat>;rd=<Nat>;lk=<BIT>;pk=<BIT>;cn=<BIT>"`. Output: `"1"` /
+ * `"0"` / `"ERR"` (fail-closed). Runs the PROVED `minaVerifyDecision` — the non-empty segment, the
+ * `anchorHeight <= submittedHeight` bound (without which "depth" is measured from OUTSIDE the
+ * exhibited evidence, and a one-block segment witnesses a depth of 1001), and the WITNESSED
+ * confirmation depth — which `minaVerifyDecision_refines` proves is DEFINITIONALLY `minaVerify`,
+ * the decision `mina_no_forgery` is proven over. Same return contract as the bridges above. */
+size_t dregg_mina_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_lc_verify(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

@@ -565,6 +565,191 @@ mod ffi_mpt_lc {
     }
 }
 
+// ============================================================================
+// Mina (Ouroboros Samasika / Pickles) light-client verify (verified route-through)
+// ============================================================================
+//
+// Routes the Mina finality decision through the Lean gate
+// `Dregg2.Bridge.LightClientMinaGate.dregg_mina_lc_verify`, exactly as `verified_eth_lc_verify`
+// routes the ETH verify. What it replaces is NOT a Rust twin of a proven rule set — it is an
+// UNVERIFIED and, measured on the shipped code, largely absent check:
+// `bridge/src/mina_observer.rs::observe_settlement` took the MAXIMUM `blockHeight` out of whatever
+// `bestChain` returned, subtracted the settlement's submitted height, and accepted on the
+// difference. The returned blocks were never checked to form a chain, and with the shipped
+// `best_chain_length` far below a mainnet `confirmation_depth` the settlement's own block was not
+// even in the window.
+//
+// The twin-deletion boundary is drawn where the other three gates draw theirs: the ANCHORED-SEGMENT
+// LOGIC crosses to Lean (non-empty segment; `anchor_height <= submitted_height`, without which the
+// depth is measured from outside the exhibited evidence; the WITNESSED depth meeting the Samasika
+// requirement), while the crypto/codec PRIMITIVES stay in Rust as NAMED carriers supplied as their
+// RESULTS:
+//
+//   * `link_ok`    — the Poseidon parent-linkage fold result over the exhibited headers (the
+//                    `LINK_OK` carrier; `Dregg2.Circuit.Emit.LightClientMinaHashFold` DERIVES it
+//                    from the chain rather than trusting a bit, and its terminal value IS the tip
+//                    state hash).
+//   * `pickles_ok` — the per-block Pickles/Kimchi Wrap-proof results (the IPA/FRI arc; the Lean
+//                    side renders this on a REAL devnet block in
+//                    `LightClientMinaHashFold.mina_decision_accepts_real_block_pickles`).
+//   * `canon_ok`   — the state-row canonicality results (`< p`). Poseidon's `absorbAt` enters every
+//                    input through `(state + x) % p`, so a non-canonical field element is invisible
+//                    at the digest and an anchor `A + p` reaches the same tip as `A`. DERIVED in
+//                    Lean by the authored width gate `minaRowWidthGates` (254 bits, exact because
+//                    `p > 2^254`).
+//
+// `LightClientMinaGate.minaVerifyDecision_refines` PROVES the gate's decision over these projections
+// is DEFINITIONALLY `minaVerify` (axiom-FREE `rfl`), so gating the observer on
+// `dregg_mina_lc_verify` gates it on the decision `mina_no_forgery` is proven over — and
+// `minaVerifyDecision_depth_witnessed` turns an accept into "the confirmation depth is backed by
+// that many exhibited, parent-linked, Pickles-proved blocks".
+//
+// ⚑ NOT decided by this gate, and not by anything else in the tree: FORK CHOICE. Samasika's chain
+// selection (VRF-weighted density, long-range) is formalized nowhere, so two k-deep proved segments
+// under different anchors are indistinguishable here. This is an anchored-segment verifier.
+//
+// ⚑ TODAY THIS EXPORT IS ABSENT FROM EVERY ARCHIVE, because `Dregg2.Bridge.LightClientMinaGate` is
+// not imported by `metatheory/Dregg2.lean`. That is fail-CLOSED and loud, not fail-open: the
+// observer refuses every settlement with `ObserveError::VerifiedGateUnavailable` until the import
+// lands and the seed is regenerated.
+//
+// Wire grammar (mirrors `LightClientMinaGate.decodeMinaWire` byte-for-byte):
+// ```text
+// INPUT := "sl=" sl ";ah=" ah ";sh=" sh ";wd=" wd ";rd=" rd ";lk=" B ";pk=" B ";cn=" B
+// B     := "0" | "1"
+// ```
+
+/// The verified decision the Mina anchored-segment finality claim reduces to. `Accept` iff the Lean
+/// gate (`dregg_mina_lc_verify`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// archive-absent) is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinaLcVerdict {
+    /// The verified gate ACCEPTED the projections (→ `minaVerify = true`, hence — with the named
+    /// Pickles carrier sound — `MinaValidAt`, including the WITNESSED confirmation depth).
+    Accept,
+    /// The verified gate REJECTED (empty segment / submitted height below the anchor / depth not
+    /// witnessed / failed linkage, Pickles or canonicality result / malformed).
+    Reject,
+}
+
+/// Whether the linked archive exports the verified Mina light-client gate (`dregg_mina_lc_verify`,
+/// spliced from `Dregg2.Bridge.LightClientMinaGate`). When false the caller must FAIL CLOSED —
+/// there is no Rust twin to fall back to, and the pre-gate Rust path was not a check.
+pub fn mina_lc_verify_available() -> bool {
+    ffi_mina_lc::mina_lc_verify_present() && lean_init_once().is_ok()
+}
+
+/// Build the Mina verify wire from the exhibited-segment facts + the three carrier RESULTS. Mirrors
+/// `LightClientMinaGate.decodeMinaWire`'s grammar exactly.
+pub fn mina_lc_verify_wire(
+    segment_len: u64,
+    anchor_height: u64,
+    submitted_height: u64,
+    witnessed_depth: u64,
+    required_depth: u64,
+    link_ok: bool,
+    pickles_ok: bool,
+    canon_ok: bool,
+) -> String {
+    let b = |x: bool| if x { '1' } else { '0' };
+    format!(
+        "sl={segment_len};ah={anchor_height};sh={submitted_height};wd={witnessed_depth};rd={required_depth};lk={};pk={};cn={}",
+        b(link_ok),
+        b(pickles_ok),
+        b(canon_ok),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_lc_verify` over a pre-built wire and return the raw
+/// output (`"1"` / `"0"` / `"ERR"`). Requires [`mina_lc_verify_available`]; returns `Err` when the
+/// archive did not export it (so the caller distinguishes "archive missing" from "rejected" and
+/// FAILS CLOSED either way).
+pub fn shadow_mina_lc_verify(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_lc::lean_mina_lc_verify(wire)
+}
+
+/// The end-to-end verified Mina light-client query: build the wire from the projections, run the
+/// gate, and decode to [`MinaLcVerdict`]. Returns `Ok(Accept)` ONLY on the gate's `"1"`; every other
+/// gate output is `Ok(Reject)` (fail-closed). `Err` is returned ONLY when the archive lacks the
+/// export — the caller must treat that as a REFUSAL, never as a skipped check.
+pub fn verified_mina_lc_verify(
+    segment_len: u64,
+    anchor_height: u64,
+    submitted_height: u64,
+    witnessed_depth: u64,
+    required_depth: u64,
+    link_ok: bool,
+    pickles_ok: bool,
+    canon_ok: bool,
+) -> Result<MinaLcVerdict, String> {
+    let wire = mina_lc_verify_wire(
+        segment_len,
+        anchor_height,
+        submitted_height,
+        witnessed_depth,
+        required_depth,
+        link_ok,
+        pickles_ok,
+        canon_ok,
+    );
+    let out = shadow_mina_lc_verify(&wire)?;
+    Ok(if out == "1" {
+        MinaLcVerdict::Accept
+    } else {
+        MinaLcVerdict::Reject
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_lc_verify_present))]
+mod ffi_mina_lc {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_lc_verify_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_lc_verify_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_lc_verify(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_lc_verify_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_lc_verify_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_lc_verify_present)))]
+mod ffi_mina_lc {
+    pub fn mina_lc_verify_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_lc_verify(_wire: &str) -> Result<String, String> {
+        Err("dregg_mina_lc_verify not exported by the linked archive (rebuild to enable)".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

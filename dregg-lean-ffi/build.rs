@@ -2094,6 +2094,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_eth_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_tm_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -2993,6 +2994,19 @@ fn main() {
     } else {
         absent_export_warn("dregg_mpt_lc_verify");
     }
+    // MINA (Ouroboros Samasika / Pickles) anchored-segment gate. ⚑ DELIBERATELY NOT on
+    // `REQUIRED_DECISION_EXPORTS`: `Dregg2.Bridge.LightClientMinaGate` is not imported by
+    // `metatheory/Dregg2.lean`, so the symbol CANNOT be in the archive until that import lands and
+    // the seed is regenerated. Putting it on the manifest today would hard-FAIL every
+    // `DREGG_REQUIRE_VERIFIED_EXPORTS` build for an export nothing can supply yet. Its absence is
+    // still not silent: the Mina observer refuses every settlement (fail-closed, see
+    // `bridge/src/mina_observer.rs`), and `absent_export_warn` says so at build time.
+    let mina_lc_verify_present = archive_exports(&build_archive, "dregg_mina_lc_verify");
+    if mina_lc_verify_present {
+        println!("cargo:rustc-cfg=dregg_mina_lc_verify_present");
+    } else {
+        absent_export_warn("dregg_mina_lc_verify");
+    }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
     // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
@@ -3197,9 +3211,10 @@ fn main() {
     if deleg_admit_present {
         shim.define("DREGG_DELEG_ADMIT", None);
     }
-    // The three light-client gates: each define gates BOTH the extern decl and the `_str` bridge in
-    // `lean_init.c` (no module initializer — see the extern-decl note there). Independently probed,
-    // because an archive can carry one and not the others.
+    // The FOUR light-client gates (ETH / Tendermint / MPT / Mina): each define gates BOTH the extern
+    // decl and the `_str` bridge in `lean_init.c` (no module initializer — see the extern-decl note
+    // there). Independently probed, because an archive can carry one and not the others — and today
+    // NO archive carries the Mina one (its gate module is not yet rooted in `Dregg2.lean`).
     if eth_lc_verify_present {
         shim.define("DREGG_ETH_LC_VERIFY", None);
     }
@@ -3208,6 +3223,9 @@ fn main() {
     }
     if mpt_lc_verify_present {
         shim.define("DREGG_MPT_LC_VERIFY", None);
+    }
+    if mina_lc_verify_present {
+        shim.define("DREGG_MINA_LC_VERIFY", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

@@ -167,8 +167,9 @@ pub use midnight_verified::{
     VerifiedBridgeError, VerifiedDreggToMidnight, commit_midnight_recipient,
 };
 pub use mina_observer::{
-    MinaBlock, MinaGraphQlRpc, MinaObserver, MinaObserverConfig, MinaRpc, MinaZkappAccount,
-    ObserveError, ObservedMinaSettlement, decode_root_from_fields, encode_root_to_fields,
+    CheckedSegment, MinaBlock, MinaGraphQlRpc, MinaObserver, MinaObserverConfig, MinaRpc,
+    MinaStateHash, MinaZkappAccount, NEUTRAL_PICKLES_OK, ObserveError, ObservedMinaSettlement,
+    decode_root_from_fields, decode_state_hash, encode_root_to_fields,
 };
 pub use present::{
     BridgeCommittedThresholdProof, BridgeFactAttestation, BridgePredicateProof,
