@@ -84,6 +84,7 @@ cycle: a module reached from the `import`s below can never itself import `Verify
 
 import Dregg2.Circuit.Emit.Sha256MerkleFold
 import Dregg2.Circuit.Emit.LightClientMidHashFold
+import Dregg2.Circuit.Emit.PicklesTranscriptBinding
 
 set_option autoImplicit false
 
@@ -148,6 +149,28 @@ exempt: `LightClientMidHashFold` states its upper pole as `¬ compressSepOn ⊤`
 while `Sha256MerkleFold` states it as `pairSepOn ⊤ ↔ pairHashInjective`, and an `↔` puts BOTH sides
 in assumption position. Only the `.mp` direction is ever used (by `pairSepOn_top_false`). That is
 the fold arc's one-line call, not this file's.
+
+⚑ RE-MEASURED HOURS LATER ON A THIRD FLOOR NOBODY HAD DECLARED, AND IT CAME IN AT 5. `hashSepOn`
+landed the same night in `5ecafe486` (P4's transcript binding), built DELIBERATELY in this shape,
+and the tree-wide verdict went 1 → **5**. All four additions were `hashSepOn` consumers and not one
+of them was a defect: the floor arrived with a `⊤` pole, a SECOND pole at a reachable two-element
+class, a kernel-evaluated model over the deployed Poseidon, and its `_class_inhabited` companion
+already written. Doing the whole doctrine correctly, in one commit, cost four build errors — the same
+perverse incentive this module exists to remove, arriving through a new FLOOR instead of a new pole.
+MEASURED BOTH WAYS 2026-07-29, lane `floor-honest` on hbox, same control as above plus one more line
+(`Dregg2.Circuit.Emit.MinaWrapSgChunk0` commented LANE-LOCALLY — a co-tenant module landed the same
+night whose ~75G peak `earlyoom` SIGTERMs on a box running five other lanes; its three siblings ARE
+in the environment and contribute ZERO carriers, so the delta below is exact and the absolute is not
+in doubt):
+
+  * declaration ABSENT — **5** violations: 4 keyed to `hashSepOn` (`hashSepOn_mono`,
+    `hashSepOn_top_imp`, `digest_binds_transcript_on`, `assertEqDigest_binds_transcript_on`), 1 to
+    `Hash4NoCollision`.
+  * declaration PRESENT — **1**, and it is the SAME survivor as the earlier run:
+    `AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`, still red, still correctly so. The
+    gate named `hashSepOn`'s legs back: pole `hashSepOn_truncHashSep_false` — the SHARPER of the two,
+    at the reachable class, not `⊤` — model `hashSepOn_modelHashSep`, class inhabited by
+    `modelHashSep_class_inhabited`.
 
 ⚑ WHAT THE GATE ACCEPTED AS A MODEL — THE FAIL-OPEN, MEASURED 2026-07-28 AND CLOSED THE SAME DAY.
 The honest-floor report names the model it found, and on both floors it found the ⊥ one:
@@ -241,7 +264,58 @@ this floor is plausible rather than refuted on the classes its consumers name. -
 theorem compressSepOn_is_honest (P : List Nat → List Nat → Nat → Nat → Prop) :
     HonestHypothesis (Dregg2.Circuit.Emit.LightClientMidHashFold.compressSepOn P) := trivial
 
+/-- `PicklesTranscriptBinding.hashSepOn P` — the REAL Kimchi Poseidon-over-Pasta reference
+`PastaPoseidon.Ref.hash` separates on the transcripts satisfying `P`. The THIRD floor of this shape,
+and the first that arrived with all four legs ALREADY WRITTEN: `5ecafe486` (P4's transcript binding)
+built it deliberately to mirror `pairSepOn`, so this declaration adds no content to that module — it
+tells the gate what the module already proved.
+
+  1. NOT A SENTINEL — `sentinelFloors` names the deployed-parameter crypto floors the campaign exists
+     to delete; this is the campaign's own replacement shape, over a hash the kernel evaluates.
+  2. REFUTED AT A CLOSED INSTANCE — twice, at two DIFFERENT constant classes. `hashSepOn_top_false`
+     at `⊤`, where the floor collapses to the idealized `RefHashInjective`, killed by
+     `hash_singleton_ignores_mod_pN`: `absorbAt` reduces its input mod `pN`, so
+     `Ref.hash [x] = Ref.hash [x + pN]` for EVERY `x` — generic, no numeric coincidence, the
+     analogue of `pairHash_ignores_word_64`. And `hashSepOn_truncHashSep_false` at the two-element
+     class `truncHashSep`, riding `hash_empty_eq_hash_zero`: absorbing NOTHING and absorbing a bare
+     `0` coincide, a ZERO-QUERY structural collision of the add-to-absorb sponge with no modular
+     arithmetic in it at all. The second pole is what makes the class restriction load-bearing rather
+     than decorative — unlike the `⊤` pole, the class it refutes at is a pair of transcripts a real
+     prover could feed the sponge, so a consumer that declines to exhibit its class is not merely
+     unproved. `compressSepOn` above has only the `⊤` pole and says so; this floor does not need
+     that caveat.
+  3. NOT REFUTED PARAMETRICALLY — those two are the tree's only `¬ hashSepOn …` theorems and both sit
+     at a CONSTANT class. There is no `∀ P, ¬ hashSepOn P` and there cannot be: `hashSepOn_bot`
+     proves the ⊥ instance and `hashSepOn_modelHashSep` proves a non-trivial one.
+  4. MODEL PRESENT, AT AN INHABITED CLASS — `hashSepOn_modelHashSep`, by kernel evaluation of the
+     REAL deployed Kimchi Poseidon (the reference `PastaPoseidon.lean` §5 anchors to o1js gold
+     vectors) on all nine ordered pairs of the three-element class `modelHashSep`, **and**
+     `modelHashSep_class_inhabited`, which is the half the gate actually reads: ONE unconditional
+     theorem stating `modelHashSep [0]`, `modelHashSep [1]` and `([0] : List Nat) ≠ [1]` — two
+     members at closed arguments differing at position 0, together with the disequality THERE. ⚑
+     `hashSepOn_bot` is REFUSED, same reason as `pairSepOn_bot`: its class is an anonymous
+     `fun _ => False`, so there is no predicate to exhibit members of.
+
+⚑ WHAT THIS CLEARS, AND THE ONE THING IT CLEARS THAT IS WORTH NAMING. Three of the four carriers it
+removes bind the floor at a UNIVERSALLY QUANTIFIED class and are the port shape the gate exists to
+reward: `hashSepOn_mono` (`hashSepOn Q → hashSepOn P` under `P ≤ Q`), and P4's two payoff theorems
+`digest_binds_transcript_on` / `assertEqDigest_binds_transcript_on`, which turn an `assertEqDigest`
+between two REAL digests into TRANSCRIPT equality given separation on the class the two verification
+instances themselves hash. The fourth, `hashSepOn_top_imp : hashSepOn ⊤ → RefHashInjective`, binds
+the floor at the REFUTED `⊤` instance and is vacuous read as a standalone implication. It is cleared
+because its one remaining floor mention — `RefHashInjective`, still derived as refuted, still gated
+for everyone else — sits in CLAIM position, which the position rule exempts. Say plainly why that is
+right rather than leaving it to be discovered: the declaration is per-FLOOR, not per-INSTANCE, so the
+gate cannot bill a consumer for standing at the one class the floor is known to fail at.
+`hashSepOn_top_imp` is not a guarantee about the deployed system — it is the upper pole's own
+plumbing, its ONLY consumer in the tree is `hashSepOn_top_false`, and deleting it would move the same
+term inline. `Sha256MerkleFold.pairSepOn_top_iff` sits on that same residual from the other side,
+where an `↔` put the idealized twin in ASSUMPTION position and kept it correctly red. -/
+theorem hashSepOn_is_honest (P : List Nat → Prop) :
+    HonestHypothesis (Dregg2.Circuit.Emit.PicklesTranscriptBinding.hashSepOn P) := trivial
+
 #assert_axioms pairSepOn_is_honest
 #assert_axioms compressSepOn_is_honest
+#assert_axioms hashSepOn_is_honest
 
 end Dregg2.Verify.FloorPole
