@@ -52,8 +52,10 @@ manifest so the refusal is the binding and not a malformity.
 
 The digit is bound to the DESCRIPTOR's manifest, which is a `def` of the challenges; the tensor is
 not recomputed INSIDE the AIR. §7.1 prices what would be needed and why this IR cannot express it
-today. The RCB→group-law transport, ℤ↔felt (K1), P10 and the 128-row exact-public cap are all
-inherited unchanged.
+today. ℤ↔felt (K1) and P10 are inherited unchanged. ⛑ The RCB→group-law transport is HALF closed
+since 2026-07-29 (`PastaMsmOnCurve`) — its hypotheses are forced, its conclusion is still cited —
+and the 128-row exact-public cap is gone (`Ir2Air::ExactPublicTable`); §7 carries both at their
+current resolution.
 
 ## Axiom hygiene
 
@@ -453,21 +455,41 @@ exact-public balance is a PERMUTATION. Instantiated at `cs := CHAL_F` and `gens 
 
 That is a statement about the TERMS. It is not yet the MSM. What still stands:
 
-1. **The RCB-formula → group-law transport.** Every `Pasta*` rung's inherited residual (RCB'15
-   Thm 1): the emitted adds are the complete-addition FORMULA, and that the formula computes the
-   Pallas group law is assumed, not discharged here.
+1. **The RCB-formula → group-law transport — ⛑ HALF CLOSED, 2026-07-29, and read WHICH half.**
+   That sentence named two things with very different status. **(a) RCB'15 Thm 1's HYPOTHESES** —
+   that the operands are points of the curve — were not "assumed", they were CHECKED BY NOTHING,
+   and the gap admitted a live forgery: the free initial accumulator taken to `(0,0,0)`, which is
+   ABSORBING under the RCB formula, collapses the whole fold while every constraint of THIS
+   descriptor — including the exact-public lookup over the real generators and the block-derived
+   digits — still holds exactly, and publishes a partial that passes the terminal
+   `X ≡ 0 ∧ Z ≡ 0` predicate. `circuit/tests/pasta_oncurve_gate.rs` PROVES AND VERIFIES it against
+   this descriptor. **(a) IS NOW FORCED** by `Dregg2.Circuit.Emit.PastaMsmOnCurve` — 16 emitted
+   constraints / 270 columns on top of `boundRowDesc`'s 82/529, gating both operands of every row's
+   add with `Y²Z ≡ X³ + 5Z³` and `Y·YINV ≡ 1` — and the forgery is REFUSED by the deployed
+   verifier. **(b) RCB'15 Thm 1's CONCLUSION** — that the formula at on-curve inputs IS the group
+   sum — REMAINS an inherited citation; `PastaMsmOnCurve` §5.2 names exactly what discharging it
+   needs (a formal Pallas group law plus a cofactor certificate for a degree-12 identity in six
+   variables) and why cofactor 1 can never be a gate. So a verified proof of this AIR constrains a
+   formula fold **over curve points**, not yet a group-law MSM.
 2. **ℤ ↔ felt (K1).** These theorems are in the ℤ model; the deployed prover reads the same
    constraints mod BabyBear. Unchanged by this file.
 3. **P10, opening soundness.** The IPA/dlog extraction argument is undischarged here and everywhere
    in this stack.
-4. **Scale.** `descriptor_ir2.rs` caps an exact-public manifest at 128 rows / 4096 cells and spends
-   one batch AIR instance per manifest row, so a contents-bound instance is at most 128 rows tall —
-   124 real generators against 32,768. **The theorems are row-count-independent; the
-   DEMONSTRATION is not.** This file does not change that cap; it removes the OTHER reason the
-   binding could not scale, which was that 32,768 scalars would have had to be carried.
+4. **Scale.** ⚠ THE 128-ROW SENTENCE THAT USED TO STAND HERE IS RETIRED. `instance_airs` spent ONE
+   batch AIR instance per manifest ROW, and because the balance is a PERMUTATION (manifest rows =
+   trace rows) that made 128 the ceiling on any contents-bound trace. `Ir2Air::ExactPublicTable`
+   (2026-07-29) realizes a whole manifest as ONE multiplicity-bearing instance, and the deployed
+   caps are now `MAX_EXACT_PUBLIC_ROWS = 2^21` / `MAX_EXACT_PUBLIC_CELLS = 2^25`
+   (`circuit/src/descriptor_ir2.rs`) — so what binds is the two-adicity ceiling, not the tooth.
+   ⚑ Nothing about the FORCING moved: the multiplicities are PINNED, so the balance is still exact
+   multiset equality. **The theorems here were always row-count-independent; the DEMONSTRATION is
+   4 × 31 = 124 real generators against 32,768, which is a parameter choice and no longer a wall.**
+   `PastaMsmBound` §6's `MAX_ROWS`/`MAX_CELLS` `def`s still carry the OLD numbers and are stale at
+   HEAD; they are that file's to re-pin, named here rather than silently left.
 5. **`gens` provenance.** The generator half is bound to the DECLARED `gens`; that those are
    o1-labs' `srs.g` is the extractor's, checked by `MinaWrapSgCore.srs_g_on_curve` and the chunk
-   KATs, not by this file.
+   KATs, not by this file. ⛑ Since `PastaMsmOnCurve`, a declared generator that is OFF the Pallas
+   curve is refused by the emitted AIR rather than only by a Rust differential test.
 
 ### §7.1 — the honest name for what is NOT here: the tensor is not recomputed IN the AIR
 

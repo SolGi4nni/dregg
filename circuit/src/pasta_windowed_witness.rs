@@ -141,6 +141,21 @@ impl U256 {
         (U256(out), carry != 0)
     }
 
+    /// `self >> 1`.
+    fn shr1(&self) -> U256 {
+        let mut out = [0u64; 4];
+        for i in 0..4 {
+            let hi = if i + 1 < 4 { self.0[i + 1] << 63 } else { 0 };
+            out[i] = (self.0[i] >> 1) | hi;
+        }
+        U256(out)
+    }
+
+    /// Least-significant bit clear.
+    fn is_even(&self) -> bool {
+        self.0[0] & 1 == 0
+    }
+
     /// `self << 1 | bit`. The caller guarantees `self < 2^255` so nothing is lost.
     fn shl1_or(&self, bit: u64) -> U256 {
         debug_assert!(self.0[3] >> 63 == 0, "shl1 would drop the top bit");
@@ -314,6 +329,46 @@ pub fn sub_mod_p(x: &U256, y: &U256) -> (U256, u8) {
     } else {
         (diff, 0)
     }
+}
+
+/// `x⁻¹ mod p` for `0 < x < p`, by the binary extended Euclid (Kaliski) algorithm — `O(512)`
+/// shift/add steps, against `O(2^255)` for a Fermat exponentiation through [`mul_mod_p`].
+///
+/// Every intermediate stays `< p`, and `x1 + p < 2p < 2^256`, so nothing overflows `U256`. Panics
+/// on `x = 0`: the AIR's non-degeneracy gate is *exactly* the statement that no honest coordinate
+/// is zero there, so a zero here means the SCHEDULE is wrong, not that a fallback is wanted.
+pub fn inv_mod_p(x: &U256) -> U256 {
+    assert!(*x != U256::ZERO, "0 has no inverse mod p (nonZeroHead)");
+    debug_assert!(*x < P_PASTA);
+    let half = |v: U256| -> U256 {
+        if v.is_even() {
+            v.shr1()
+        } else {
+            let (s, ovf) = v.adc(&P_PASTA);
+            debug_assert!(!ovf, "v + p < 2p < 2^256");
+            s.shr1()
+        }
+    };
+    let (mut u, mut v) = (*x, P_PASTA);
+    let (mut x1, mut x2) = (U256::ONE, U256::ZERO);
+    while u != U256::ONE && v != U256::ONE {
+        while u.is_even() {
+            u = u.shr1();
+            x1 = half(x1);
+        }
+        while v.is_even() {
+            v = v.shr1();
+            x2 = half(x2);
+        }
+        if u >= v {
+            u = u.sbb(&v).0;
+            x1 = sub_mod_p(&x1, &x2).0;
+        } else {
+            v = v.sbb(&u).0;
+            x2 = sub_mod_p(&x2, &x1).0;
+        }
+    }
+    if u == U256::ONE { x1 } else { x2 }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -594,6 +649,93 @@ pub fn fill_row(acc: &Pt, src: &Pt, bit: bool, dbl: bool) -> Vec<BabyBear> {
     row[COL_BIT] = BabyBear::new(u32::from(bit));
     row[COL_DBL] = BabyBear::new(u32::from(dbl));
     row
+}
+
+// ---------------------------------------------------------------------------------------------
+// PART 2b — the ON-CURVE certificate block (`PastaMsmOnCurve.onCurveGates`).
+//
+// `PastaMsmOnCurve` emits 8 constraints per gated point; this fills the 135 witness columns that
+// make their bodies vanish OVER ℤ. It authors no constraint. The layout is the Lean file's §1
+// table, offset-for-offset.
+// ---------------------------------------------------------------------------------------------
+
+/// Columns one point's on-curve certificate occupies (`PastaMsmOnCurve.OC_COLS`).
+pub const OC_COLS: usize = 135;
+/// `PastaMsmOnCurve.OC_ACC` — the `ACC` point's certificate base (`PastaMsmBound.WB`).
+pub const COL_OC_ACC: usize = 529;
+/// `PastaMsmOnCurve.OC_SRC` — the `SRC` point's certificate base.
+pub const COL_OC_SRC: usize = COL_OC_ACC + OC_COLS;
+/// `PastaMsmOnCurve.WOC` — the curve-gated row template's width.
+pub const ONCURVE_WIDTH: usize = COL_OC_ACC + 2 * OC_COLS;
+
+/// **Fill one point's on-curve certificate** at `base`, in `PastaMsmOnCurve`'s slot order:
+/// `XX, qXX, YY, qYY, ZZ, qZZ, X3, qX3, Z3, qZ3, BZ3, qBZ3, QC, YINV, qINV`.
+///
+/// `QC` is the curve head's reduction quotient. The head is
+/// `YY·Z − X3 − BZ3 + 2p − p·QC`, so with `YY·Z = p·qS + rS` the honest witness is
+/// `QC = qS + (rS + 2p − X3 − BZ3)/p`; the `+2p` is what makes that division exact and
+/// non-negative for every honest input (`rS − X3 − BZ3 ∈ (−2p, p)`).
+///
+/// ⚠ Panics on `Y = 0`, which is precisely the state the emitted `nonZeroHead` refuses. A trace
+/// that wants such a row is the ABSORBING-STATE forgery, and it has no honest witness — see
+/// [`put_on_curve_block_forged`], which is what a test must use to build one.
+pub fn put_on_curve_block(row: &mut [BabyBear], base: usize, pt: &Pt) {
+    let y_inv = inv_mod_p(&pt.y);
+    put_on_curve_block_with_inverse(row, base, pt, &y_inv);
+}
+
+/// [`put_on_curve_block`] with the inverse supplied — the seam a forgery test needs, because at
+/// `Y = 0` no inverse exists and the point of the exercise is to watch the gate refuse the
+/// best witness a prover could possibly write.
+pub fn put_on_curve_block_with_inverse(row: &mut [BabyBear], base: usize, pt: &Pt, y_inv: &U256) {
+    let (xx, q_xx) = mul_mod_p(&pt.x, &pt.x);
+    let (yy, q_yy) = mul_mod_p(&pt.y, &pt.y);
+    let (zz, q_zz) = mul_mod_p(&pt.z, &pt.z);
+    let (x3, q_x3) = mul_mod_p(&xx, &pt.x);
+    let (z3, q_z3) = mul_mod_p(&zz, &pt.z);
+    let (bz3, q_bz3) = smul_mod_p(CURVE_B, &z3);
+    // `YY·Z = p·q_s + r_s`
+    let (r_s, q_s) = mul_mod_p(&yy, &pt.z);
+    // `R = r_s + 2p − X3 − BZ3`, in `(0, 3p) ⊂ [0, 2^256)`.
+    let mut r = r_s;
+    for _ in 0..2 {
+        let (t, ovf) = r.adc(&P_PASTA);
+        debug_assert!(!ovf, "r_s + 2p < 3p < 2^256");
+        r = t;
+    }
+    r = r.sbb(&x3).0;
+    r = r.sbb(&bz3).0;
+    // `R/p ∈ {0, 1, 2}` when the point is on the curve; on an OFF-curve point the remainder is
+    // nonzero and the emitted head does not vanish — which is the refusal we want, not a bug.
+    let mut extra = U256::ZERO;
+    while r >= P_PASTA {
+        r = r.sbb(&P_PASTA).0;
+        extra = extra.adc(&U256::ONE).0;
+    }
+    let qc = q_s.adc(&extra).0;
+    // `Y·YINV = 1 + p·q_inv`
+    let (_, q_inv) = mul_mod_p(&pt.y, y_inv);
+
+    let groups = [
+        xx, q_xx, yy, q_yy, zz, q_zz, x3, q_x3, z3, q_z3, bz3, q_bz3, qc, *y_inv, q_inv,
+    ];
+    for (i, g) in groups.iter().enumerate() {
+        put_field(row, base + NUM_LIMBS * i, g);
+    }
+}
+
+/// The BEST on-curve witness a prover can write for a point the gate refuses — every derivable
+/// slot honest, the inverse slot zero because none exists. Exists so a forgery test cannot be
+/// dismissed as "the witness generator gave up".
+pub fn put_on_curve_block_forged(row: &mut [BabyBear], base: usize, pt: &Pt) {
+    put_on_curve_block_with_inverse(row, base, pt, &U256::ZERO);
+}
+
+/// Widen a 525-column windowed row to [`ONCURVE_WIDTH`] and stamp both certificates. The caller
+/// stamps the four `PastaMsmSliced`/`PastaMsmBound` declaration/index columns itself.
+pub fn put_row_certificates(row: &mut [BabyBear], acc: &Pt, src: &Pt) {
+    put_on_curve_block(row, COL_OC_ACC, acc);
+    put_on_curve_block(row, COL_OC_SRC, src);
 }
 
 /// What one row of the schedule asks for.

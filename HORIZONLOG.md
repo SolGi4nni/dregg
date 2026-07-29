@@ -1,5 +1,66 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 29 — the `⟨s, srs.g⟩` AIR PROVES AND VERIFIES an all-`(0,0,0)` accumulator carrying the real Mina generators. On-curve is now GATED.
+
+**The hole, and it was not bookkeeping.** Three lanes bound the terminal MSM's slice declaration,
+its contents (the real `srs.g`) and its scalars (the block's own s-vector). All of them force
+`PastaMsmLayouts.hornerRefFrom` — a fold of the RCB **FORMULA** over projective triples in
+`ZMod p`. RCB'15 Theorem 1's hypothesis is that the operands are **points of the curve**, and
+**nothing in the emitted constraints said so**. `PastaMsmWindowed` §6.3 named the consequence in
+prose and left it standing: RCB Alg. 7 at `Q = O` returns `Y₁·(X₁,Y₁,Z₁)`, so at `Y₁ = 0` it
+collapses to `(0,0,0)` — which is **ABSORBING** (`rcbAddZmod (0,0,0) Q = (0,0,0)` for every `Q`, a
+`ring` identity) and satisfies `PastaMsmAir`'s terminal `X ≡ 0 ∧ Z ≡ 0` predicate.
+
+**It was a live forgery, and it is measured rather than argued.** Nothing pins the initial
+accumulator. Take it to `(0,0,0)`: every RCB add is then honest arithmetic, every quotient and
+carry real, the thread holds, the `DBL` pins hold, and the exact-public lookup still carries **the
+real Mina SRS generators and the real declared digits** — `SRC` and `BIT` are untouched.
+`circuit/tests/pasta_oncurve_gate.rs::absorbing_state_before_and_after` hands that trace to the
+contents-bound descriptor and **the deployed prover proves it and the deployed verifier accepts
+it**, publishing a partial that passes the terminal predicate. That is the Mina claim, forged, with
+every binding rung green.
+
+**⛑ And the curve equation ALONE cannot close it.** `Y²Z = X³ + bZ³` is HOMOGENEOUS of degree 3, so
+`(0,0,0)` *satisfies* it. `(0,0,0)` is not a point of `P²` and no equation over the coordinates can
+say so. What says so is a NON-DEGENERACY witness: `Y·YINV ≡ 1`. On Pallas — prime order, so no
+2-torsion — "`Y` is a unit" is EQUIVALENT to "this triple is a point", and it is the same condition
+RCB needs for `P + O` to return a correct representative. One gate closes both.
+
+**Closed** (`Dregg2/Circuit/Emit/PastaMsmOnCurve.lean`, Lean-authored AIR): 8 emitted constraints /
+135 columns per gated point, on BOTH operands of every row's add. `onCurve_forces` is the forcing
+over the actually-emitted list; `fold_accumulator_is_a_curve_point` composes
+`PastaMsmWindowed.windowedRows_forces` **unmodified**, so every accumulator the whole fold passes
+through is a curve point with `Y` a unit; `skip_is_projective_identity` turns §6.3's prose wound
+into a theorem; `terminal_is_the_identity` + `origin_is_not_the_identity` make the terminal
+predicate finally MEAN the identity. **PRICE: 82 → 98 constraints, 529 → 799 columns.** Manifest,
+row count, table id and PI count unchanged; `onCurveRowDesc_extends_bound` proves the 82 are still a
+prefix, and `pasta_oncurve_gate.rs` re-checks that on the EMITTED BYTES.
+
+**Satisfiable at birth, refutable under tamper.** The honest cut proves and verifies (838 ms /
+53 ms / 495,512 bytes), and **500 of 512** honest accumulators are NON-AFFINE — a gate accepting
+only `Z = 1` would have refused every honest trace. Three tampers live on ONE instance: curve
+(`OodEvaluationMismatch index 0`), substituted generator (`LookupError GlobalCumulativeMismatch:
+ir2_exact_public_47`), flipped digit (`OodEvaluationMismatch index 4`); plus a forged `Y = 0`
+accumulator and an off-curve source. 10 tests green; the 33 sibling `pasta_*` tests still green.
+
+**⚠ The transport is HALF closed, and read which half.** RCB'15 Thm 1's **HYPOTHESES** were checked
+by nothing and are now FORCED. Its **CONCLUSION** — that `rcbOutG` at on-curve inputs IS the group
+sum — is still an inherited citation. Discharging it needs a formal Pallas group law (mathlib's
+`WeierstrassCurve.Projective` at `p, a=0, b=5`) plus a cofactor certificate for a **degree-12
+identity in 6 variables**, produced outside Lean and checked inside it. That is a distinct
+formalization, not a deferral. And cofactor 1 can never be a gate: it is a fact about the curve's
+ORDER, and it is what makes `Y ≠ 0` a non-degeneracy rather than an over-restriction — stated so
+that reusing this gadget on a cofactor > 1 curve is a visible error. **So a verified proof of this
+AIR now constrains a formula fold OVER CURVE POINTS, not yet a group-law MSM.** ℤ↔felt (K1), P10
+and the 4-generator manifest shortfall are untouched.
+
+**Root build + ratchet, run and reported.** `lake build Dregg2` on hbox `mina-sg-bound`, 10,453
+jobs, everything green. `#floor_ratchet` reports **exactly 1** NEW floor-taking declaration
+tree-wide — `Emit.AutomataflRevealRefine.not_revealColl_of_hash4NoCollision`, landed at `c6b6c8393`
+and **not this lane's**; `PastaMsmOnCurve` contributes zero. `#teeth_wired`: 14 teeth modules
+confirmed. One pre-existing `sorry` warning at `Dregg2/Bignum/LedgerBalance.lean:453`, also not
+this lane's.
+
 ## ⚑⚑⚑ JULY 29 — the IR-v2 prover was fail-OPEN under `--release` for 35 days. The constraint system never was.
 
 **Reported** (99307a856): an all-zeros 64x525 trace PROVES against a 45-constraint Lean
@@ -39,7 +100,9 @@ whose oracle is `prove(..).is_ok()` measures nothing about an AIR. Ask the verif
 without the emit/stamp ceremony, so `provenance_json_pins_match_checked_in_descriptor_bytes` is
 red — needs `scripts/emit_descriptors.py`. (b) on-curve-ness is ungated in `hornerAddStep`, with a
 concrete absorbing-state attack (`acc + O = Y1*acc`, so a forged `Y1 = 0` gives `(0,0,0)`, which
-satisfies the terminal predicate).
+satisfies the terminal predicate) — ⛑ **CLOSED the same day, and the attack was worse than stated:
+it needs no forged `Y1` at all, only the free initial accumulator. See the July 29 entry at the top
+of this file.**
 
 ## ⚑⚑⚑ JULY 29 — THE MINA RUNGS WERE NEVER ASSEMBLED. ONE ZkProgram now DECIDES a dregg proof, 56,927 rows, in ONE Pickles step
 

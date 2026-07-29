@@ -52,8 +52,9 @@ composed.
 That this fold is the multi-scalar multiplication is NOT a rewrite by
 `PastaIpaFold.msmHorner_eq_msmN` — that theorem is an identity in an ABSTRACT
 `AddCommGroup`/`Module`, so reaching it needs the formula-to-group-law transport (RCB'15 Thm 1,
-valid only at ON-CURVE points), which this tree inherits as a residual and does NOT prove, and
-needs an on-curve gate the emitted constraints do NOT contain. See §6.3.
+valid only at ON-CURVE points), which this tree inherits as a residual and does NOT prove. The
+ON-CURVE GATE those points need is now EMITTED — by `PastaMsmOnCurve`, not by this file's 45
+constraints — so RCB'15 Thm 1's hypotheses are forced and its conclusion is still cited. See §6.3.
 
 ## The obstruction windowing MOVES rather than removes — named, per §6
 
@@ -709,15 +710,28 @@ def windowedCells (n nbits : Nat) : Nat := windowedRows n nbits * W
    `Dregg2/Bignum.lean`) — UNCHANGED by this file, and NOT closed by having a proof object.
    A windowed emission does not make that gap smaller or larger; it must not be read as closing it.
 
-3. **On-curve-ness is still not gated, and the skip encoding makes that BITE.** `condRef false P`
-   is `O = (0 : 1 : 0)`, and RCB Alg. 7 at `Q = O` returns `Y₁ · (X₁, Y₁, Z₁)` — a correct
-   projective representative only while `Y₁ ≠ 0`. On Pallas (prime order) no affine point has
-   `Y = 0`, but NOTHING in the emitted gates says the accumulator is on the curve, and at
-   `Y₁ = 0` the formula collapses to `(0,0,0)`, which is ABSORBING and satisfies the terminal
-   `X = 0 ∧ Z = 0` predicate. This is a concrete witness of why the inherited "RCB completeness
-   transport" residual (`PastaMsmAir` §6.4) is load-bearing rather than bookkeeping — and it is
-   PRE-EXISTING: `PastaMsmLayouts.hornerAddStep` already adds `O` on an unset bit, so
-   `hornerGates_forces` carries it too. Not introduced here; surfaced here.
+3. **On-curve-ness is not gated HERE — ⛑ CLOSED DOWNSTREAM, 2026-07-29, and it was a LIVE
+   FORGERY.** `condRef false P` is `O = (0 : 1 : 0)`, and RCB Alg. 7 at `Q = O` returns
+   `Y₁ · (X₁, Y₁, Z₁)` — a correct projective representative only while `Y₁ ≠ 0`. On Pallas
+   (prime order) no affine point has `Y = 0`, but NOTHING in THIS file's emitted gates says the
+   accumulator is on the curve, and at `Y₁ = 0` the formula collapses to `(0,0,0)`, which is
+   ABSORBING and satisfies the terminal `X = 0 ∧ Z = 0` predicate.
+
+   ⛑ **`Dregg2.Circuit.Emit.PastaMsmOnCurve` closes it, on top of the contents-bound descriptor**:
+   8 emitted constraints / 135 columns per gated point, on BOTH operands of every row's add, forcing
+   `Y²Z ≡ X³ + 5Z³` AND `Y·YINV ≡ 1`. The second is not decoration — the projective equation is
+   HOMOGENEOUS, so `(0,0,0)` SATISFIES it, and only the inverse witness refuses it.
+   `fold_accumulator_is_a_curve_point` composes THIS file's `windowedRows_forces` unmodified, so
+   every accumulator the fold passes through is a curve point; `skip_is_projective_identity` is the
+   sentence above as a THEOREM. And the wound was not hypothetical:
+   `circuit/tests/pasta_oncurve_gate.rs::absorbing_state_before_and_after` PROVES AND VERIFIES an
+   all-`(0,0,0)` accumulator against the ungated contents-bound descriptor, carrying the real Mina
+   generators and the real declared digits, publishing a partial that passes the terminal predicate
+   — and the gated descriptor REFUSES it.
+
+   ⚠ What that does NOT close is the OTHER half of the inherited transport (`PastaMsmAir` §6.4):
+   RCB'15 Thm 1's HYPOTHESES are now forced, its CONCLUSION is still a citation. See
+   `PastaMsmOnCurve` §5.
 
 4. **P10 is untouched.** Relation holding ≠ prover knowing (`PastaMsmAir` §6.1).
 
