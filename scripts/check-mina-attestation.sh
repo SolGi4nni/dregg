@@ -279,6 +279,29 @@ run_air_chain() { # run_air_chain <dir>
 run_air_real() { # run_air_real <dir>
   ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air-real )
 }
+# THE COMPILE CEILING. §3.24 left the per-branch budget as a BRACKET — 50,000
+# compiles, §4.1's arithmetic 57,532 does not — and every step count in the record
+# is priced against the arithmetic. This leg narrows the crossing on the REAL
+# object — every arm is a real slice body, because the first instrument here was a
+# dialable synthetic probe and it refuted itself: 63,300 rows of generic multiplies
+# COMPILE where 57,769 rows of the chain's own extension-arithmetic mix FAIL, so
+# the crossing is a function of the gate MIX and a per-`max_proofs_verified`
+# "usable rows" constant cannot exist. The default run does not re-search: it
+# re-CHECKS the recorded ceiling (must still compile) and, where the shape has been
+# narrowed, the recorded first failure (must still fail with Pickles' chunking
+# error). `CEILING_FULL=1` re-narrows.
+run_air_ceiling() { # run_air_ceiling <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air-ceiling )
+}
+# THE FULL CHAIN, ONE PROCESS PER SLICE. §3.24 proves the largest chain ONE
+# process holds — three slices — because a process that has compiled four step
+# circuits hangs at the first `prove`. This leg proves ALL of them: one slice per
+# process, the predecessor side-loaded across the boundary as three files, its
+# verification key hash PINNED as a compile-time constant, on the values decoded
+# out of dregg's committed root proof.
+run_air_fullchain() { # run_air_fullchain <dir>
+  ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air-fullchain )
+}
 
 # ── the headline run ──────────────────────────────────────────────────────────
 if [ "${1:-}" != "--self-test" ]; then
@@ -639,7 +662,47 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== ROOT-AIR-REAL PASS ===' <<<"$real_out" \
     || die "the real-proof leg did not print its PASS line"
 
-  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched + $n_rair + $n_emit + $n_achain + $n_real checks green" \
+  # ── the compile CEILING, measured ──────────────────────────────────────────
+  ceil_out="$(run_air_ceiling "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$ceil_out"
+  [ "$rc" -eq 0 ] || die "the root-air-ceiling leg exited $rc"
+  n_ceil="$(printf '%s' "$ceil_out" | grep -c '✓')"
+  [ "$n_ceil" -ge 4 ] || die "only $n_ceil ceiling checks passed; expected >= 4"
+  grep -q 'the RECORDED ceiling still compiles' <<<"$ceil_out" \
+    || die "the recorded per-branch ceiling was not re-checked — the schedule's budget is unverified"
+  grep -q 'the RECORDED first failure still FAILS' <<<"$ceil_out" \
+    || die "the ceiling has no falsifier: a budget that no longer breaks would read as clean"
+  grep -q 'Array.map2_exn' <<<"$ceil_out" \
+    || die "the failure was not attributed to Pickles' chunking wall"
+  grep -q '=== ROOT-AIR-CEILING PASS ===' <<<"$ceil_out" \
+    || die "the ceiling leg did not print its PASS line"
+
+  # ── the FULL chain, one process per slice ──────────────────────────────────
+  fchn_out="$(run_air_fullchain "$APP" 2>&1)"; rc=$?
+  printf '%s\n' "$fchn_out"
+  [ "$rc" -eq 0 ] || die "the root-air-fullchain leg exited $rc"
+  n_fchain="$(printf '%s' "$fchn_out" | grep -c '✓')"
+  [ "$n_fchain" -ge 14 ] || die "only $n_fchain full-chain checks passed; expected >= 14"
+  grep -q 'covering ALL' <<<"$fchn_out" \
+    || die "the chain is not the FULL one — a partial chain's seal is not verifier-computable"
+  grep -q "in its OWN process" <<<"$fchn_out" \
+    || die "the slices were not proved one per process — the wall is not actually crossed"
+  grep -q 'compiled NOTHING' <<<"$fchn_out" \
+    || die "the end-to-end verification did not run in a process free of prover state"
+  grep -q "REFUSED: slice .*'s proof handed with slice .*'s OWN key" <<<"$fchn_out" \
+    || die "the foreign-proof splice was not attempted — side-loading's named hole has no falsifier"
+  grep -q 'UNPINNED: the same foreign proof under its own key is ACCEPTED' <<<"$fchn_out" \
+    || die "the UNPINNED control did not run — the foreign-proof refusal is unattributable"
+  grep -q "UNBOUND: a bent digest of a chunk the slice never reads is ACCEPTED" <<<"$fchn_out" \
+    || die "the UNBOUND control did not run — every refusal above is unattributable"
+  grep -q "the SAME verification key in a second, independent process" <<<"$fchn_out" \
+    || die "the slice circuit was never shown REPRODUCIBLE across processes — a pinned hash means nothing then"
+  grep -q "verifier holding dregg.s root proof can compute the seal" <<<"$fchn_out" \
+    || die "the terminal seal was not tied back to p3's own per-instance accumulators"
+  grep -q '=== ROOT-AIR-FULLCHAIN PASS ===' <<<"$fchn_out" \
+    || die "the full-chain leg did not print its PASS line"
+
+  echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched + $n_rair + $n_emit + $n_achain + $n_real + $n_ceil + $n_fchain checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
        "FRI query, Fiat-Shamir transcript, the 16-layer fold chain and the DEEP quotient all" \
@@ -758,6 +821,44 @@ expect_red air_chain "the chain's predecessor check disarmed" \
 expect_red air_real "the binder reading the NEXT row from the LOCAL one" \
   "s/      return pick\(m\[1\] === '0' \? inst\.traceLocal : inst\.traceNext, Number\(m\[2\]\), label\);/      return pick(inst.traceLocal, Number(m[2]), label);/" \
   src/RootAirDag.ts
+# ── the compile CEILING and the FULL chain ────────────────────────────────────
+# The ceiling leg does not re-search on a normal run; it re-CHECKS two recorded
+# budgets. Move the recorded ceiling to §4.1's arithmetic — the value §3.24
+# measured FAILING — and the "still compiles" check must go red, or the recorded
+# budget is a number nobody is holding to anything.
+expect_red air_ceiling "the recorded ceiling moved back to §4.1's arithmetic" \
+  "s/  mpv1: \{ okBudget: \d+/  mpv1: { okBudget: 57532/" \
+  scripts/root-air-ceiling.ts
+# And the other side: a recorded FIRST FAILURE that no longer fails is a ceiling
+# with no falsifier — it would read as clean whatever Pickles did.
+expect_red air_ceiling "the recorded first failure moved below the ceiling" \
+  "s/failBudget: 54_324/failBudget: 45000/" \
+  scripts/root-air-ceiling.ts
+# ⚑ AND THE SHAPE CONTROL, which is the leg's only claim that a ceiling cannot be
+# a row count. Point it at two circuits of the same mix and it stops being able to
+# show a bigger one compiling where a smaller one does not.
+expect_red air_ceiling "the shape control aimed at two circuits of the SAME mix" \
+  "s/const SHAPE_OK = \{ coarse: 600, fine: 34_331 \};/const SHAPE_OK = { coarse: 1210, fine: 0 };/" \
+  scripts/root-air-ceiling.ts
+# ⚑ THE PIN IS THE WHOLE OF WHAT SIDE-LOADING GIVES BACK. Without it a prover
+# hands slice k some OTHER slice's proof together with that slice's own key,
+# `prev.verify(vk)` is perfectly satisfied, and the chain "verifies" while
+# carrying a value nothing in it computed. Disarm the pin and the foreign-proof
+# splice must be ACCEPTED — which is the red.
+expect_red air_fullchain "the side-loaded verification key pin disarmed" \
+  "s/        if \(pin\) vk\.hash\.assertEquals\(Field\(pinned\)\);/        if (pin) vk.hash.assertEquals(vk.hash);/" \
+  src/RootAirProcessChain.ts
+# The chain link itself, across a process boundary this time.
+expect_red air_fullchain "the cross-process predecessor check disarmed" \
+  "s/      if \(prevOut\) prevOut\.assertEquals\(bIn\);/      if (prevOut) prevOut.assertEquals(prevOut);/" \
+  src/RootAirProcessChain.ts
+# The terminal seal is only verifier-computable because the concatenated fold is
+# Horner: table T's own accumulator enters weighted by alpha^(R - b_T). Weight it
+# by the span's START instead and the identity must fail — otherwise [7] is
+# comparing two things that agree for a reason other than the one it claims.
+expect_red air_fullchain "the terminal recomposition weighted by the span's START" \
+  "s/ePow\(alpha, R - span\.rootTo\)/ePow(alpha, R - span.rootFrom)/" \
+  scripts/root-air-fullchain.ts
 expect_red gate "corrupted gold digest" \
   "s/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6d/0x10b41a5d3139ef0802e5faf6a7776aab079e44e99ec5b306ddddd88e15fe9e6e/" \
   src/rust-gold-vectors.ts

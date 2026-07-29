@@ -6,6 +6,7 @@ import { shapeOf } from '../src/DreggProofVerify.js';
 import {
   EmittedAtoms,
   MEASURED,
+  MEASURED_CEILING,
   PICKLES_OVERHEAD,
   Program,
   bestSchedule,
@@ -217,6 +218,89 @@ async function main() {
   );
 
   // -----------------------------------------------------------------------
+  // [3b] ⚑ THE SAME SCHEDULE AGAINST THE **MEASURED** PER-BRANCH CEILING.
+  //
+  // Everything above is priced against §4.1's ARITHMETIC overhead, and §3.24
+  // caught that arithmetic being wrong in the direction that flatters: at the
+  // 57,532 usable rows it implies, a real chain's branches measure under the
+  // 65,536-row domain and `compile()` still dies with `Array.map2_exn: 1 <> 2`.
+  // Leg 16 narrows the crossing on the real object and on a probe of the same
+  // gate mix. These are the step counts at a budget that COMPILES.
+  // -----------------------------------------------------------------------
+  console.log('\n[3b] the same schedule at the MEASURED per-branch ceiling');
+  if (!MEASURED_CEILING.mpv1)
+    fail(
+      'the measured per-branch ceiling is absent — run `npm run root-air-ceiling`. This leg must ' +
+        "NOT fall back to §4.1's arithmetic for a headline step count; that is the thing §3.24 " +
+        'measured failing to compile.',
+    );
+  const uArith1 = usableRows(PICKLES_OVERHEAD.straightChain);
+  const uArith2 = usableRows(PICKLES_OVERHEAD.aggregationTree);
+  const measured: Record<string, number> = {};
+
+  // ── mpv = 1: a NARROWED ceiling, so a number ────────────────────────────
+  const m1 = bestEmitted(true, MEASURED_CEILING.mpv1);
+  const a1 = bestEmitted(true, uArith1);
+  measured.mpv1 = m1.steps;
+  console.log(
+    `    mpv = 1  §4.1 ${fmt(uArith1)} usable => ${fmt(a1.steps)} steps;  ` +
+      `MEASURED ${fmt(MEASURED_CEILING.mpv1)} => ${fmt(m1.steps)} steps  ` +
+      `(+${(((m1.steps - a1.steps) / a1.steps) * 100).toFixed(1)}%)`,
+  );
+  if (schedule(m1.prog, MEASURED_CEILING.mpv1).maxStepRows > MEASURED_CEILING.mpv1)
+    fail('a step spends more than the MEASURED mpv = 1 ceiling');
+  if (m1.steps <= a1.steps)
+    fail(
+      `the MEASURED budget gives ${fmt(m1.steps)} steps against §4.1's ${fmt(a1.steps)} — the ` +
+        "measured ceiling is at or above the arithmetic one and §3.24's finding has reversed",
+    );
+  ok(
+    `at the NARROWED mpv = 1 ceiling of ${fmt(MEASURED_CEILING.mpv1)} usable rows the deployed ` +
+      `verifier is ${fmt(m1.steps)} steps — §3.23's ${fmt(out['max_proofs_verified = 1'])} was ` +
+      `priced against ${fmt(uArith1)} usable, which does NOT compile`,
+  );
+
+  // ── mpv = 2: NOT narrowed, so a BRACKET and it is named as one ──────────
+  //
+  // ⚑ WHY THIS IS A BRACKET AND NOT A NUMBER. §3.23's HEADLINE 519 is the mpv = 2
+  // arm and nothing has narrowed that shape's ceiling. Two things bound it, and
+  // both are honest:
+  //
+  //   * BELOW — two real slice bodies, one of them verifying TWO previous
+  //     proofs, COMPILE at `mpv2AtLeast`. A budget known to compile gives an
+  //     UPPER bound on the step count.
+  //   * ABOVE — a two-proof recursive verifier cannot be SMALLER than a
+  //     one-proof one, so the mpv = 2 ceiling is at most the narrowed mpv = 1
+  //     ceiling, which gives a LOWER bound on the step count.
+  //
+  // The bracket is what replaces 519. A single number here would be an
+  // extrapolation wearing a measurement's voice.
+  const hi2 = bestEmitted(true, MEASURED_CEILING.mpv2AtLeast); //  most steps
+  const lo2 = bestEmitted(true, MEASURED_CEILING.mpv1); //         fewest steps
+  measured.mpv2Lo = lo2.steps;
+  measured.mpv2Hi = hi2.steps;
+  const a2 = bestEmitted(true, uArith2);
+  console.log(
+    `    mpv = 2  §4.1 ${fmt(uArith2)} usable => ${fmt(a2.steps)} steps;  ` +
+      `MEASURED bracket [${fmt(MEASURED_CEILING.mpv2AtLeast)}, ${fmt(MEASURED_CEILING.mpv1)}] ` +
+      `usable => [${fmt(lo2.steps)}, ${fmt(hi2.steps)}] steps`,
+  );
+  if (MEASURED_CEILING.mpv2AtLeast >= MEASURED_CEILING.mpv1)
+    fail('the mpv = 2 lower bound is at or above the mpv = 1 ceiling — the bracket is empty');
+  if (a2.steps < lo2.steps || a2.steps > hi2.steps)
+    console.log(
+      `      ⚑ §4.1's ${fmt(a2.steps)} is OUTSIDE that bracket — its ${fmt(16_000)}-row overhead ` +
+        `implies a usable budget the shape has not been shown to accept`,
+    );
+  ok(
+    `at mpv = 2 the honest figure is a BRACKET, ${fmt(lo2.steps)}-${fmt(hi2.steps)} steps, because ` +
+      `that shape's ceiling is bounded (>= ${fmt(MEASURED_CEILING.mpv2AtLeast)} observed to ` +
+      `compile, <= ${fmt(MEASURED_CEILING.mpv1)} since a two-proof verifier is not smaller than a ` +
+      `one-proof one) and NOT narrowed — §3.23's ${fmt(out['max_proofs_verified = 2'])} was a ` +
+      `single number against an overhead that does not compile`,
+  );
+
+  // -----------------------------------------------------------------------
   // [4] The AIR block's own schedule — and the wall.
   // -----------------------------------------------------------------------
   console.log('\n[4] the AIR block alone, and the wall a chain over it hits');
@@ -265,6 +349,9 @@ async function main() {
     ['the emitted atom list, whole', withAir.totalRows, 24574325],
     ['deployed steps, EMITTED + root AIR, mpv 2', out['max_proofs_verified = 2'], 519],
     ['deployed steps, EMITTED + root AIR, mpv 1', out['max_proofs_verified = 1'], 448],
+    ['⚑ at the NARROWED mpv 1 ceiling', measured.mpv1, 0],
+    ['⚑ mpv 2 bracket, fewest steps', measured.mpv2Lo, 0],
+    ['⚑ mpv 2 bracket, most steps', measured.mpv2Hi, 0],
   ];
   let drifted = 0;
   for (const [label, got, want] of RECORDED) {

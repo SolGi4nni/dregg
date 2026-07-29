@@ -72,6 +72,49 @@ export const PICKLES_OVERHEAD = { straightChain: 8_000, aggregationTree: 16_000 
 
 export const usableRows = (overhead: number) => KIMCHI_ROWS - ZK_ROWS - N_PUB - overhead;
 
+/**
+ * ⚑ THE MEASURED PER-BRANCH CEILING — `npm run root-air-ceiling` (leg 16).
+ *
+ * `PICKLES_OVERHEAD` above is §4.1's ARITHMETIC, and §3.24 caught it being
+ * optimistic: at the 57,532 usable rows it implies, the three-slice root-AIR
+ * chain's branches measure 56,772 / 55,715 / 57,430 by `analyzeMethods` — all
+ * comfortably under the 65,536-row domain — and `compile()` dies with
+ * `length mismatch in Array.map2_exn: 1 <> 2`, Pickles refusing a branch whose
+ * BODY PLUS RECURSIVE VERIFIER crossed 2^16 while a sibling's did not.
+ *
+ * ⚑ AND THE FIRST THING THE MEASUREMENT FOUND IS THAT `usableRows` NAMES
+ * SOMETHING THAT DOES NOT EXIST. A per-`max_proofs_verified` constant good for
+ * any circuit would make the crossing a function of the ROW COUNT. It is not:
+ * for one `SelfProof` branch beside a small sibling, **57,769 rows** built from
+ * the chain's extension-arithmetic mix FAILS to compile, and **63,300 rows** of
+ * the same program shape with the extra rows supplied by single-row field
+ * multiplies COMPILES. A bigger circuit compiling where a smaller one does not
+ * is not a ceiling in rows — range checks and lookups carry a table and a domain
+ * requirement `analyzeMethods` never reports. So a ceiling is only honest for the
+ * SHAPE it was measured on, and leg 16 measures every arm on a REAL slice body.
+ *
+ * `mpv1` is NARROWED on the real object. The other two are NOT, and say so in
+ * their names: they are the largest branch of that shape OBSERVED to compile,
+ * which bounds the ceiling from below and therefore bounds the step count from
+ * ABOVE. Anything quoting them must quote them as bounds.
+ */
+export const MEASURED_CEILING = {
+  /** ⚑ NARROWED. The largest EMITTED body, in the widest branch of the real
+   *  three-slice chain, that `compile()` accepts. Budget 54,289 gives 54,300 rows
+   *  and compiles; budget 54,324 gives 54,376 and fails. */
+  mpv1: 54_300,
+  /** The smallest widest-branch row count OBSERVED to fail, same shape. */
+  mpv1Fails: 54_376,
+  /** ⚠ NOT NARROWED — a LOWER BOUND. Two real slice bodies, one verifying TWO
+   *  previous proofs, compile at this width. The true mpv = 2 ceiling is at or
+   *  above it and at or below `mpv1` (a two-proof verifier cannot be smaller
+   *  than a one-proof one), so it brackets the step count rather than fixing it. */
+  mpv2AtLeast: 40_073,
+  /** ⚠ NOT NARROWED — a LOWER BOUND, and a strong one: leg 17 compiled, PROVED
+   *  and VERIFIED a side-loaded slice branch of this width. */
+  sideloadAtLeast: 51_136,
+} as const;
+
 // ===========================================================================
 // 1. The program, as ATOMS.
 // ===========================================================================

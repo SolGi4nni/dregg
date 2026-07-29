@@ -34,7 +34,9 @@
     "emitted-atoms": "npm run build && node --max-old-space-size=16384 dist/scripts/emitted-atoms.js",
     "emitted-schedule": "npm run build && node --max-old-space-size=16384 dist/scripts/emitted-schedule.js",
     "root-air-chain": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-chain.js",
-    "root-air-real": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-real.js"
+    "root-air-real": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-real.js",
+    "root-air-ceiling": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-ceiling.js",
+    "root-air-fullchain": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-fullchain.js"
   },
   "dependencies": {
     "o1js": "2.15.0"

@@ -254,6 +254,113 @@ export function planRootAirChain(
 // 4. The circuit.
 // ===========================================================================
 
+// ---------------------------------------------------------------------------
+// ⚑ THE SLICE'S TWO HALVES, FACTORED OUT — because leg 17 compiles this same
+// slice ONE PER PROCESS with a side-loaded predecessor, and a second copy of the
+// node walk is a second definition of what dregg's AIR means. What is NOT
+// factored out is the BOUNDARY: the single-process chain binds a `SelfProof`
+// against a baked-in verification key, leg 17 binds a `DynamicProof` against a
+// pinned VK hash, and those are different obligations that must read differently.
+// ---------------------------------------------------------------------------
+
+/**
+ * The column commitment. Range-checks the lanes this slice loaded, digests them
+ * chunk by chunk, splices the result into the digests it did NOT load, and
+ * returns the one `dagDigest` every slice re-derives.
+ */
+export function sliceCommitment(
+  plan: ChainPlan,
+  s: Slice,
+  readLanes: Field[],
+  otherDigests: Field[],
+): Field {
+  for (const l of readLanes) canonicalLane(l, LANE_MAX);
+  const computed: Field[] = [];
+  for (let c = 0; c < s.readsChunks.length; c++)
+    computed.push(digestOfLanes(readLanes.slice(c * plan.chunkSize * 4, (c + 1) * plan.chunkSize * 4)));
+  // Splice the computed digests into the witnessed ones in chunk order, so
+  // `dagDigest` is the SAME object whichever chunks this slice read.
+  const digests: Field[] = [];
+  let ci = 0;
+  let oi = 0;
+  for (let c = 0; c < plan.nColChunks; c++)
+    digests.push(s.readsChunks.includes(c) ? computed[ci++] : otherDigests[oi++]);
+  return dagDigestOfChunkDigests(digests);
+}
+
+/**
+ * The slice's own work: the node walk over `[from, to)` and the α-fold over
+ * `[foldFrom, foldTo)`, in p3's constraint order. Returns the outgoing
+ * accumulator and the values this slice must hand on.
+ */
+export function sliceWork(
+  u: UnifiedDag,
+  plan: ChainPlan,
+  s: Slice,
+  alpha: BbExt,
+  accIn: BbExt,
+  liveInVals: BbExt[],
+  readLanes: Field[],
+): { acc: BbExt; liveOutVals: BbExt[] } {
+  const val = new Map<number, BbExt>();
+  s.liveIn.forEach((idx, i) => val.set(idx, liveInVals[i]));
+  const colOf = (g: number): BbExt => {
+    const chunk = Math.floor(g / plan.chunkSize);
+    const at = s.readsChunks.indexOf(chunk);
+    if (at < 0)
+      throw new Error(`slice ${s.index} reads column ${g} in chunk ${chunk}, which it did not load`);
+    const within = g - chunk * plan.chunkSize;
+    const off = (at * plan.chunkSize + within) * 4;
+    return new BbExt({ limbs: readLanes.slice(off, off + 4) });
+  };
+  for (let i = s.from; i < s.to; i++) {
+    const n = u.nodes[i];
+    let v: BbExt;
+    switch (n[0]) {
+      case KIND.var:
+        v = colOf(n[1]);
+        break;
+      case KIND.evar:
+        v = colOf(u.nBaseCols + n[1]);
+        break;
+      case KIND.cst:
+        v = BbExt.from([BigInt(n[1]), 0n, 0n, 0n]);
+        break;
+      case KIND.ecst:
+        v = BbExt.from([BigInt(n[1]), BigInt(n[2]), BigInt(n[3]), BigInt(n[4])]);
+        break;
+      case KIND.add:
+        v = extAdd(val.get(n[1])!, val.get(n[2])!);
+        break;
+      case KIND.sub:
+        v = extSub(val.get(n[1])!, val.get(n[2])!);
+        break;
+      case KIND.neg:
+        v = extSub(BbExt.zero(), val.get(n[1])!);
+        break;
+      case KIND.mul:
+        v = extMul(val.get(n[1])!, val.get(n[2])!);
+        break;
+      default:
+        throw new Error(`unknown kind ${n[0]}`);
+    }
+    val.set(i, v);
+  }
+  let acc = accIn;
+  for (let j = s.foldFrom; j < s.foldTo; j++) {
+    const r = u.roots[j];
+    const c = val.get(r);
+    if (!c) throw new Error(`slice ${s.index} folds constraint ${j} whose root ${r} is not live`);
+    acc = extAdd(extMul(acc, alpha), c);
+  }
+  const liveOutVals = s.liveOut.map((idx) => {
+    const v = val.get(idx);
+    if (!v) throw new Error(`slice ${s.index} must hand on node ${idx} and does not hold it`);
+    return v;
+  });
+  return { acc, liveOutVals };
+}
+
 export type ChainOpts = {
   /** ⚑ FALSE builds the UNBOUND CONTROL — the same circuit with the boundary
    *  assertions removed. A refusal is attributable to the binding only if
@@ -303,20 +410,7 @@ export function makeRootAirChain(u: UnifiedDag, plan: ChainPlan, opts: ChainOpts
       otherDigests: Field[],
     ) => {
       // ── the column commitment ────────────────────────────────────────────
-      for (const l of readLanes) canonicalLane(l, LANE_MAX);
-      const computed: Field[] = [];
-      for (let c = 0; c < s.readsChunks.length; c++)
-        computed.push(
-          digestOfLanes(readLanes.slice(c * plan.chunkSize * 4, (c + 1) * plan.chunkSize * 4)),
-        );
-      // Splice the computed digests into the witnessed ones in chunk order, so
-      // `dagDigest` is the SAME object whichever chunks this slice read.
-      const digests: Field[] = [];
-      let ci = 0;
-      let oi = 0;
-      for (let c = 0; c < plan.nColChunks; c++)
-        digests.push(s.readsChunks.includes(c) ? computed[ci++] : otherDigests[oi++]);
-      const dagDigest = dagDigestOfChunkDigests(digests);
+      const dagDigest = sliceCommitment(plan, s, readLanes, otherDigests);
 
       // ── the boundary in ──────────────────────────────────────────────────
       for (const e of [...liveInVals, accIn, alpha])
@@ -330,66 +424,10 @@ export function makeRootAirChain(u: UnifiedDag, plan: ChainPlan, opts: ChainOpts
         if (prev) prev.publicOutput.assertEquals(bIn);
       }
 
-      // ── the slice's own work ─────────────────────────────────────────────
-      const val = new Map<number, BbExt>();
-      s.liveIn.forEach((idx, i) => val.set(idx, liveInVals[i]));
-      const colOf = (g: number): BbExt => {
-        const chunk = Math.floor(g / plan.chunkSize);
-        const at = s.readsChunks.indexOf(chunk);
-        if (at < 0)
-          throw new Error(`slice ${si} reads column ${g} in chunk ${chunk}, which it did not load`);
-        const within = g - chunk * plan.chunkSize;
-        const off = (at * plan.chunkSize + within) * 4;
-        return new BbExt({ limbs: readLanes.slice(off, off + 4) });
-      };
-      for (let i = s.from; i < s.to; i++) {
-        const n = u.nodes[i];
-        let v: BbExt;
-        switch (n[0]) {
-          case KIND.var:
-            v = colOf(n[1]);
-            break;
-          case KIND.evar:
-            v = colOf(u.nBaseCols + n[1]);
-            break;
-          case KIND.cst:
-            v = BbExt.from([BigInt(n[1]), 0n, 0n, 0n]);
-            break;
-          case KIND.ecst:
-            v = BbExt.from([BigInt(n[1]), BigInt(n[2]), BigInt(n[3]), BigInt(n[4])]);
-            break;
-          case KIND.add:
-            v = extAdd(val.get(n[1])!, val.get(n[2])!);
-            break;
-          case KIND.sub:
-            v = extSub(val.get(n[1])!, val.get(n[2])!);
-            break;
-          case KIND.neg:
-            v = extSub(BbExt.zero(), val.get(n[1])!);
-            break;
-          case KIND.mul:
-            v = extMul(val.get(n[1])!, val.get(n[2])!);
-            break;
-          default:
-            throw new Error(`unknown kind ${n[0]}`);
-        }
-        val.set(i, v);
-      }
-      // ── the fold, in CONSTRAINT order ────────────────────────────────────
-      let acc = accIn;
-      for (let j = s.foldFrom; j < s.foldTo; j++) {
-        const r = u.roots[j];
-        const c = val.get(r);
-        if (!c) throw new Error(`slice ${si} folds constraint ${j} whose root ${r} is not live`);
-        acc = extAdd(extMul(acc, alpha), c);
-      }
+      // ── the slice's own work, then the fold in CONSTRAINT order ──────────
+      const { acc, liveOutVals } = sliceWork(u, plan, s, alpha, accIn, liveInVals, readLanes);
 
       // ── the boundary out ─────────────────────────────────────────────────
-      const liveOutVals = s.liveOut.map((idx) => {
-        const v = val.get(idx);
-        if (!v) throw new Error(`slice ${si} must hand on node ${idx} and does not hold it`);
-        return v;
-      });
       void nLiveOut;
       if (si + 1 === plan.slices.length) {
         // ⚑ THE TERMINAL SEAL CARRIES THE ACCUMULATOR, which is what a verifier
