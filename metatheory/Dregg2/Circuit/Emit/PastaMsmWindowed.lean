@@ -630,6 +630,54 @@ theorem windowed_accumulator_is_hornerRef (T : WTrace) (Sv : Nat → PtP) (ptVal
 #assert_axioms windowed_forces_hornerRef
 #assert_axioms windowed_accumulator_is_hornerRef
 
+/-! ## §5b — ⚑ THE PRICE OF THE WINDOWED LAYOUT, against the deployed geometry.
+
+The straight-line pricing instrument (`PastaMsmAir` §5b) counted GATES, because in a straight-line
+emission the gate count IS the trace. Here the two separate: the gate count is a CONSTANT (45) and
+the ROW count is the computation. So the price is a row count, and the deployed root's geometry
+(trace `2^16` rows, `|D⁰| = 2^22` at `log_blowup 6`) is what it is measured against.
+
+`PastaMsmLayouts.hornerRcbAdds n nbits = nbits * (n + 1)` is the row count: one doubling row per
+plane, one conditional-add row per (plane, term). -/
+
+/-- The deployed root's trace height (`WRAP_LOG_CEIL = 16`). -/
+def DREGG_ROOT_ROWS : Nat := 65536
+/-- The two-adicity ceiling at the deployed `log_blowup = 6` (`BabyBear::TWO_ADICITY = 27`). -/
+def DREGG_MAX_ROWS : Nat := 2097152
+
+/-- The emitted row count of the windowed bit-plane layout at `n` terms and `nbits` planes. -/
+def windowedRows (n nbits : Nat) : Nat := nbits * (n + 1)
+
+/-- Trace cells: rows × the CONSTANT row width. -/
+def windowedCells (n nbits : Nat) : Nat := windowedRows n nbits * W
+
+-- ⚑ STATEMENT (B), the IPA opening relation: 34 terms × 255 bit-planes.
+#guard windowedRows 34 255 == 8925
+-- Against the straight-line term-by-term ladder `PastaMsmAir` priced (17,375 adds): 1.94× fewer
+-- rows, because the bit-plane scan shares ONE doubling chain across all 34 terms.
+#guard Dregg2.Circuit.Emit.PastaMsmAir.openingCheckRcbAdds 34 255 == 17375
+#guard 2 * windowedRows 34 255 < 2 * Dregg2.Circuit.Emit.PastaMsmAir.openingCheckRcbAdds 34 255
+-- ⚑ It fits INSIDE ONE deployed root segment: 8,925 of 65,536 rows.
+#guard windowedRows 34 255 < DREGG_ROOT_ROWS
+-- and inside the two-adicity ceiling with room to spare.
+#guard windowedRows 34 255 < DREGG_MAX_ROWS
+-- A STARK trace height is a power of two, so the honest figure is the PADDED one: 2^14 = 16,384
+-- rows, a quarter of a root segment.
+#guard 8192 < windowedRows 34 255 && windowedRows 34 255 <= 16384
+#guard 4 * 16384 == DREGG_ROOT_ROWS
+-- Cells at the raw row count, against the straight-line 17,375 × 442 = 7,679,750.
+#guard windowedCells 34 255 == 4685625
+#guard windowedCells 34 255 < 7679750
+
+-- ⚑ The `⟨s, srs.g⟩` leg (statement (A)) is UNCHANGED by windowing and still does not fit:
+-- 32,768 terms × 255 planes.
+#guard windowedRows 32768 255 == 8356095
+#guard windowedRows 32768 255 > DREGG_MAX_ROWS
+-- 3.98× past the single-proof ceiling. Windowing fixes the LAYOUT, not the SIZE — the `sg` leg is
+-- still the one Pickles itself defers into an accumulator, and `PastaMsmLayouts` §6's
+-- recommendation (DEFER, do not optimise) is untouched by this file.
+#guard windowedRows 32768 255 / DREGG_MAX_ROWS == 3
+
 /-! ## §6 — WHAT THIS DOES NOT DO. At the CURRENT resolution.
 
 1. **The `DBL` PATTERN is hypothesised, the doubling ITSELF is not.** `dblRow_forces` proves a row
