@@ -83,7 +83,9 @@ export type AtomKind =
   | 'deep-col' //       one column's MMCS leaf lane and its DEEP quotient term
   | 'fold-arith' //     one commit-phase round's fold arithmetic and roll-in
   | 'fold-path' //      one level of one commit-phase Merkle path
-  | 'final-poly'; //    the closing evaluation of `final_poly`
+  | 'final-poly' //     the closing evaluation of `final_poly`
+  | 'air-node' //       one node of the ROOT's constraint DAG (leg 13)
+  | 'air-fold'; //      one `acc = acc*alpha + C_i` step, all 1,093 of them
 
 /** An indivisible unit of verifier work. A cut may be placed between any two
  *  atoms and nowhere else — which is what makes a schedule a placement over a
@@ -598,4 +600,266 @@ export function bestSchedule(
       best = { chunkLanes, prog, sched };
   }
   return best!;
+}
+
+// ===========================================================================
+// 5. THE EMITTED PROGRAM — the same atoms, priced by EMISSION rather than by
+//    dividing an aggregate, and with the ROOT's own AIR in it.
+// ===========================================================================
+//
+// ⚑ WHAT §3.21 LEFT OPEN, IN ITS OWN WORDS:
+//
+//   "The atom model's row figures are §3.19's measured marginals and its
+//    aggregate matches §3.19's projection to 0.01%, but a 2.75 x 10^7-row
+//    circuit has never been emitted. 591 is a schedule over a measured MODEL,
+//    not over an emitted row list."
+//   "2.75 x 10^7 is itself a FLOOR (the AIR term in it is the fixture's four
+//    constraints, not the root's 1,093). A floor scheduled is still a floor."
+//
+// Both are closed here, and neither by argument:
+//
+//  * `deployedProgram` divides TWO aggregates across atoms — `perArith =
+//    (deployedQueryWalk - pathLevels * PERM_ROWS) / (layers + 1)` and `tailRows
+//    / nTail`. `scripts/emitted-atoms.ts` measures each atom kind as an
+//    IN-CONTEXT MARGINAL on the deployed program itself (rows at 16 layers
+//    against 15 against 14; at input depth 22 against 21), so every figure below
+//    is a difference of two emitted circuits.
+//  * the AIR term is leg 13's emission of the root's own 1,093 constraints over
+//    10,417 DAG nodes, not the fixture's four.
+//
+// ⚑ THE LARGEST ATOM MOVED AND THAT IS THE INTERESTING PART. The model's
+// `perArith` is 3,221 rows — its "largest indivisible atom, 6.5% of a step",
+// the figure that licensed "this is a placement and not a rounding". EMITTED it
+// is 2,809, 12.8% lower, because the division charged the fold rounds for a
+// residual that is not theirs.
+
+/** The atom prices `scripts/emitted-atoms.ts` measures. Every one is a
+ *  difference of two `analyzeMethods` readings on the deployed program. */
+export type EmittedAtoms = {
+  kind: string;
+  geometry: { logD0: number; layers: number; logBlowup: number; inputDepth: number; nBatches: number; queries: number };
+  measured: {
+    deployedWalkOneQuery: number;
+    walk15Layers: number;
+    walk14Layers: number;
+    walkInputDepth21: number;
+    wideOneQuery: number;
+    wideCols: number;
+    baseCols: number;
+  };
+  atoms: {
+    foldPath: number;
+    foldArith: number;
+    inputPath: number;
+    perColumnOneQuery: number;
+    residualPerQuery: number;
+  };
+  air: {
+    nodes: number;
+    kinds: Record<string, number>;
+    n: number;
+    rowsMul: number;
+    rowsLin: number;
+    rowsCopy: number;
+    rowsFold: number;
+    rowsWitnessPerCol: number;
+    totalRows: number;
+  };
+};
+
+/**
+ * The deployed verifier as an atom list whose every row figure is EMITTED, with
+ * the root's own AIR included.
+ *
+ * ⚑ WHERE THE AIR BLOCK GOES, AND WHY THERE. `verify_constraints_with_lookups`
+ * runs ONCE per instance per proof, after the transcript has sampled `alpha` and
+ * `zeta` and before any query is walked — which is exactly where
+ * `DreggProofSchedule`'s `transcript` method calls `assertAirClosing`. So the
+ * AIR atoms sit at the end of the transcript block, not inside a query, and
+ * they are paid ONCE rather than 19 times.
+ *
+ * ⚑ WHAT THE AIR ATOMS READ, stated rather than assumed. The DAG's 1,282 base
+ * column variables ARE the root's opened evaluations under the extractor's own
+ * numbering (main and preprocessed at two row offsets, plus the three selectors
+ * and the public values), so they are charged against the SAME `open*` chunks
+ * the absorb atoms read, mapped proportionally — not given a second commitment,
+ * which would double-count the lanes. The 320 EXTENSION column variables are
+ * the LogUp permutation columns and challenges; the deployed lane census
+ * (`carriedLaneCount`) does not carry a permutation commitment at all, so they
+ * are charged to `misc` and that is an UNDERCOUNT this comment exists to name.
+ */
+export function emittedProgram(
+  base: DreggProofShape,
+  em: EmittedAtoms,
+  opts: { openChunkLanes: number; cols?: number; withAir?: boolean },
+): Program {
+  const cols = opts.cols ?? DEPLOYED_COLS;
+  const sh = deployedShapeOf(base, cols);
+  const plan = verifyPlan(sh);
+  const lanes = carriedLaneCount(sh);
+  const { layers, numQueries } = sh.knobs;
+  const inputDepth = plan.maxInputDepth;
+  const atoms: Atom[] = [];
+
+  const openLanes = plan.nOpenedTrace * 4 + plan.nQuotientVals * 4;
+  const foldLanes = layers * 8 + sh.knobs.finalPolyLen * 4;
+  const miscLanes = plan.nBatches * 8 + Math.max(sh.air.numPublicValues, 1) + 1;
+  if (openLanes + foldLanes + miscLanes !== lanes.root)
+    throw new Error(
+      `the chunking covers ${openLanes + foldLanes + miscLanes} root lanes, not the ` +
+        `${lanes.root} that cross a boundary — a lane in no chunk is a lane nothing binds`,
+    );
+  const nOpenChunks = Math.ceil(openLanes / opts.openChunkLanes);
+  const chunks: Chunk[] = [
+    { id: 'misc', lanes: miscLanes },
+    { id: 'fold', lanes: foldLanes },
+    ...Array.from({ length: nOpenChunks }, (_, i) => ({
+      id: `open${i}`,
+      lanes: Math.min(opts.openChunkLanes, openLanes - i * opts.openChunkLanes),
+    })),
+  ];
+  const lanesPerCol = (plan.nOpenedTrace * 4) / cols;
+  const openChunkOf = (c: number) => `open${Math.floor((c * lanesPerCol) / opts.openChunkLanes)}`;
+
+  const SPONGE_LANES = 16;
+  // ── the transcript block ────────────────────────────────────────────────
+  for (let c = 0; c < cols; c++)
+    atoms.push({
+      id: `absorb:${c}`,
+      kind: 'absorb-col',
+      query: null,
+      // The per-column marginal is measured at ONE query and therefore contains
+      // the absorb AND that query's DEEP term; the per-query half is subtracted
+      // so the absorb is charged once and the DEEP term per query.
+      rows: Math.round(em.atoms.perColumnOneQuery - MEASURED.deepPerColumnPerQuery),
+      reads: openChunkOf(c),
+      ownLanes: lanesPerCol,
+      liveAfter: SPONGE_LANES,
+    });
+  const nTail = Math.ceil(em.atoms.residualPerQuery / PERM_ROWS);
+  for (let i = 0; i < nTail; i++)
+    atoms.push({
+      id: `transcript-tail:${i}`,
+      kind: 'transcript-tail',
+      query: null,
+      rows: Math.round(em.atoms.residualPerQuery / nTail),
+      reads: 'misc',
+      ownLanes: 0,
+      liveAfter: SPONGE_LANES,
+    });
+
+  // ── THE ROOT'S OWN AIR ──────────────────────────────────────────────────
+  if (opts.withAir !== false) {
+    const k = em.air.kinds;
+    const nMul = k.mul ?? 0;
+    const nLin = (k.add ?? 0) + (k.sub ?? 0) + (k.neg ?? 0);
+    const nFree = (k.var ?? 0) + (k.cst ?? 0) + (k.evar ?? 0) + (k.ecst ?? 0);
+    // One atom per node, in the emitted node order, at its own EMITTED price.
+    // Free nodes are atoms too: a cut may fall between any two, and an atom of
+    // zero rows still moves the live set.
+    const nDagBaseCols = 1282;
+    const airCols = nDagBaseCols + 320;
+    let placed = 0;
+    const emit = (n: number, rows: number, kind: 'mul' | 'lin' | 'free') => {
+      for (let i = 0; i < n; i++) {
+        const c = Math.floor((placed / em.air.nodes) * cols);
+        atoms.push({
+          id: `air:${kind}:${i}`,
+          kind: 'air-node',
+          query: null,
+          rows,
+          reads: kind === 'free' ? openChunkOf(Math.min(c, cols - 1)) : 'misc',
+          ownLanes: kind === 'free' ? lanesPerCol : 0,
+          // ⚑ The live set is a MEASURED property of the DAG, not a guess:
+          // `RootAirDag.liveness` bounds the cut width at 102 across all 10,417
+          // nodes. 102 extension values is 408 lanes; the mean is 65.1.
+          liveAfter: 4 * 102,
+        });
+        placed++;
+      }
+    };
+    emit(nMul, em.air.rowsMul, 'mul');
+    emit(nLin, em.air.rowsLin, 'lin');
+    emit(nFree, em.air.rowsCopy, 'free');
+    // The witnessing of the AIR's own columns, spread over the free nodes'
+    // chunks — it is what `air.rowsWitnessPerCol` prices.
+    for (let i = 0; i < em.air.n; i++)
+      atoms.push({
+        id: `air:fold:${i}`,
+        kind: 'air-fold',
+        query: null,
+        rows: em.air.rowsFold,
+        reads: 'misc',
+        ownLanes: 0,
+        liveAfter: 4 * 102,
+      });
+    void airCols;
+    void nFree;
+  }
+
+  // ── the query walks, every figure EMITTED ───────────────────────────────
+  const DEEP_OUT_LANES = 4 * (plan.nRollIns + 1) + 1;
+  const FOLD_LANES = 4 + 1 + 1 + 1;
+  const DEEP_LANES = 8 * (plan.nRollIns + 1) + 1;
+
+  for (let q = 0; q < numQueries; q++) {
+    for (let b = 0; b < plan.nBatches; b++)
+      for (let h = 0; h < inputDepth; h++)
+        atoms.push({
+          id: `q${q}:input:${b}:${h}`,
+          kind: 'input-path',
+          query: q,
+          rows: Math.round(em.atoms.inputPath),
+          reads: 'misc',
+          ownLanes: 0,
+          liveAfter: DEEP_LANES,
+        });
+    for (let c = 0; c < cols; c++)
+      atoms.push({
+        id: `q${q}:deep:${c}`,
+        kind: 'deep-col',
+        query: q,
+        rows: MEASURED.deepPerColumnPerQuery,
+        reads: openChunkOf(c),
+        ownLanes: lanesPerCol,
+        liveAfter: c === cols - 1 ? DEEP_OUT_LANES : DEEP_LANES,
+      });
+    for (let r = 0; r < layers; r++) {
+      atoms.push({
+        id: `q${q}:fold:${r}`,
+        kind: 'fold-arith',
+        query: q,
+        rows: Math.round(em.atoms.foldArith),
+        reads: 'fold',
+        ownLanes: 0,
+        liveAfter: FOLD_LANES,
+      });
+      for (let h = 0; h < sh.commitPathDepths[r]; h++)
+        atoms.push({
+          id: `q${q}:foldpath:${r}:${h}`,
+          kind: 'fold-path',
+          query: q,
+          rows: Math.round(em.atoms.foldPath),
+          reads: 'fold',
+          ownLanes: 0,
+          liveAfter: FOLD_LANES,
+        });
+    }
+    atoms.push({
+      id: `q${q}:final`,
+      kind: 'final-poly',
+      query: q,
+      rows: Math.round(em.atoms.foldArith),
+      reads: 'fold',
+      ownLanes: 0,
+      liveAfter: 0,
+    });
+  }
+
+  return {
+    atoms,
+    chunks,
+    challengeLanes: lanes.challenge,
+    totalRows: atoms.reduce((a, x) => a + x.rows, 0),
+  };
 }

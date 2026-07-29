@@ -489,6 +489,157 @@ export function rootColumnShape(d: RootAirDag = rootAirDag()) {
   };
 }
 
+// ===========================================================================
+// 5. The root as ONE node list — what a CHAIN walks.
+// ===========================================================================
+
+/**
+ * The seven tables concatenated into one node list, with node indices and
+ * column indices renumbered into single spaces.
+ *
+ * ⚑ WHY THIS IS THE RIGHT OBJECT FOR A CHAIN AND NOT A CONVENIENCE. A Pickles
+ * step boundary can fall anywhere; a boundary that could only fall between
+ * TABLES would give seven indivisible atoms, the largest of which
+ * (`poseidon2_w24`, 129,270 emitted rows) is 2.2x a step and therefore has no
+ * schedule at all. Concatenating first makes every node a cut point, which is
+ * what `PartitionSchedule`'s "a cut may be placed between any two atoms and
+ * nowhere else" means for the AIR.
+ */
+export type UnifiedDag = {
+  nodes: number[][];
+  roots: number[];
+  /** `[start, end)` of each table's nodes, in root instance order. */
+  tableSpans: { name: string; from: number; to: number; rootFrom: number; rootTo: number }[];
+  nBaseCols: number;
+  nExtCols: number;
+};
+
+export function unifiedDag(d: RootAirDag = rootAirDag()): UnifiedDag {
+  const nodes: number[][] = [];
+  const roots: number[] = [];
+  const tableSpans: UnifiedDag['tableSpans'] = [];
+  let off = 0;
+  let cb = 0;
+  let ce = 0;
+  for (const t of d.tables) {
+    const from = nodes.length;
+    const rootFrom = roots.length;
+    for (const n of t.nodes) {
+      switch (n[0]) {
+        case KIND.var:
+          nodes.push([KIND.var, n[1] + cb]);
+          break;
+        case KIND.evar:
+          nodes.push([KIND.evar, n[1] + ce]);
+          break;
+        case KIND.cst:
+        case KIND.ecst:
+          nodes.push(n.slice());
+          break;
+        case KIND.neg:
+          nodes.push([KIND.neg, n[1] + off]);
+          break;
+        default:
+          nodes.push([n[0], n[1] + off, n[2] + off]);
+      }
+    }
+    for (const r of t.roots) roots.push(r + off);
+    tableSpans.push({
+      name: t.name,
+      from,
+      to: nodes.length,
+      rootFrom,
+      rootTo: roots.length,
+    });
+    off += t.nodes.length;
+    cb += t.cols.length;
+    ce += t.extCols.length;
+  }
+  return { nodes, roots, tableSpans, nBaseCols: cb, nExtCols: ce };
+}
+
+/** EMITTED rows per node kind (leg 13). ⚑ `var`/`evar`/`cst`/`ecst` are FREE:
+ *  a lane already under 2^31 is not reduced, so the copy §3.18 priced at 19
+ *  rows and called elidable costs nothing to begin with. */
+export const NODE_ROWS: Record<number, number> = {
+  [KIND.var]: 0,
+  [KIND.evar]: 0,
+  [KIND.cst]: 0,
+  [KIND.ecst]: 0,
+  [KIND.add]: 18,
+  [KIND.sub]: 18,
+  [KIND.neg]: 18,
+  [KIND.mul]: 30,
+};
+/** EMITTED rows for one `acc = acc*alpha + C` step (leg 13; §3.16's `h = 48`). */
+export const FOLD_ROWS = 48;
+/** EMITTED rows to witness and range-check one carried extension value
+ *  (41,659 / 1,602, leg 13). */
+export const WITNESS_ROWS_PER_VALUE = 26;
+
+/**
+ * **LIVENESS.** `lastUse[i]` is the last position at which node `i`'s value is
+ * still needed: the largest index of a node reading it, or the position at
+ * which the fold consumes it if it is a constraint root.
+ *
+ * ⚑ THE FOLD'S POSITION IS NOT THE ROOT'S POSITION, and getting that wrong
+ * understates every carry. Constraints fold in CONSTRAINT order, so constraint
+ * `j` cannot be folded until every root up to `j` exists — its fold happens at
+ * `max(roots[0..j])`, not at `roots[j]`. A root that is cheap to compute early
+ * and folded late stays live the whole way.
+ */
+export function liveness(u: UnifiedDag): {
+  lastUse: number[];
+  foldAt: number[];
+  widthAt: (c: number) => number;
+  maxWidth: number;
+} {
+  const lastUse = new Array(u.nodes.length).fill(-1);
+  const bump = (i: number, at: number) => {
+    if (at > lastUse[i]) lastUse[i] = at;
+  };
+  for (let i = 0; i < u.nodes.length; i++) {
+    const n = u.nodes[i];
+    if (n[0] === KIND.add || n[0] === KIND.sub || n[0] === KIND.mul) {
+      bump(n[1], i);
+      bump(n[2], i);
+    } else if (n[0] === KIND.neg) bump(n[1], i);
+  }
+  const foldAt = new Array(u.roots.length).fill(0);
+  let cur = -1;
+  for (let j = 0; j < u.roots.length; j++) {
+    cur = Math.max(cur, u.roots[j]);
+    foldAt[j] = cur;
+  }
+  for (let j = 0; j < u.roots.length; j++) bump(u.roots[j], foldAt[j]);
+
+  // A difference array so a width query is O(1) and the scheduler can ask for
+  // one per candidate cut without going quadratic.
+  const ev = new Array(u.nodes.length + 2).fill(0);
+  for (let i = 0; i < u.nodes.length; i++)
+    if (lastUse[i] > i) {
+      ev[i + 1]++;
+      ev[lastUse[i] + 1]--;
+    }
+  const w = new Array(u.nodes.length + 1).fill(0);
+  let acc = 0;
+  let maxWidth = 0;
+  for (let c = 1; c <= u.nodes.length; c++) {
+    acc += ev[c];
+    w[c] = acc;
+    if (acc > maxWidth) maxWidth = acc;
+  }
+  return { lastUse, foldAt, widthAt: (c: number) => w[Math.max(0, Math.min(c, u.nodes.length))], maxWidth };
+}
+
+/** The set of node indices live across a cut at `c` — the values a boundary
+ *  after node `c-1` must carry. */
+export function liveSet(u: UnifiedDag, lastUse: number[], c: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < c; i++) if (lastUse[i] >= c) out.push(i);
+  return out;
+}
+
 /** Witness a whole table's columns — what a measurement or a chained step does
  *  when the opened values come in as private input. Range-checked, because a
  *  re-witnessed lane is unconstrained until it is. */
