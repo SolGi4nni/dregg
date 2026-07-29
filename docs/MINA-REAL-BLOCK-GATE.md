@@ -333,6 +333,58 @@ that by showing the other root breaks the relation, so the sign is pinned by o1-
 accumulators' fixtures. Then item 6 (P3/P4). Neither moves P10, which is the extraction argument
 and belongs with the FRI/IPA floor work; and neither derives `srs.g`, which is residual 3.
 
+---
+
+## 7. 2026-07-29 — the first of this content DEPLOYED, and the measured wall in front of the rest
+
+Everything above runs in a `lake build`. The observer that actually watches Mina
+(`bridge/src/mina_observer.rs`) called **none** of it: it passed a compile-time constant,
+`NEUTRAL_PICKLES_OK = true`, for the Pickles conjunct of its light-client gate, because
+`bestChain` did not fetch `protocolStateProof`. That constant is **deleted**.
+
+**What is deployed now.** `bestChain` fetches `protocolStateProof`; `bridge/src/mina_pickles.rs`
+decodes the base64url binprot `Mina_base.Proof.Stable.V2` byte-exactly (every `PaddedSeq`
+terminator, every `Option` tag, canonical binprot integer widths, canonical field elements against
+both Pasta moduli, and **exact-fit** — on the real block, 294 field elements checked and all 11138
+bytes consumed); and the decoded counts cross into a new `@[export]`,
+`Dregg2.Bridge.PicklesWrapShapeGate.dregg_mina_wrap_shape_ok`, whose decision
+`picklesWrapShapeOk_is_shapeOkRec` proves **is** `KimchiVerify.shapeOkRec` plus two length
+agreements a recursive Wrap proof owes (accumulator commitments = challenge vectors, and
+`lr.len() = log₂ max_poly_size`). `real_block_wrap_shape_accepts` and
+`real_block_wrap_shape_refused_by_freeze` pin both directions on block 539508. Fail-closed: an
+absent export is a REFUSAL, and the Rust decode refusals fire **before** the gate, so they have
+teeth with no archive at all.
+
+**The Rust decoder independently confirms this document's own numbers**, from the block's bytes
+rather than from openmina: `prev_challenges = 2`, `w_comm = 15`, `t_comm = 7`, `s = 6`,
+`coefficients = 15`, `lr = 15`, and `branch_data = {proofs_verified: N2, domain_log2: 16}` — §4.2's
+correction, re-measured by a third implementation.
+
+**⚑ The measured wall, which is the finding.** Nothing else in §3 is runtime-evaluable, for two
+independent reasons and it is worth being precise about both:
+
+* **DATA.** Every arithmetic theorem here is `by decide` over *literal constants of one extracted
+  block*. The values are not on the wire — the proof's `messages_for_next_step_proof.app_state` is
+  literally `()`, so a Wrap proof does not even carry the block it proves — and reconstructing them
+  needs the verifier index, `srs.g`, `endo_r`, the linearization and the 40-element public input,
+  i.e. openmina + `proof-systems`, a dependency graph deliberately kept out of the breadstuffs
+  lockfile (see the extractor's `[workspace]` stanza).
+* **COST.** Even given the data, these are kernel `decide`s, not functions of a proof: 82 s for
+  C5/C8, 153 s + 75 s for the opening rung, ~3.5 h of serial kernel and ~28 GB peak for 5h — **per
+  block**. A light client at one block per ~3 minutes cannot spend hours per block.
+
+So the honest split is: **the preamble is runtime-evaluable and now runs; the arithmetic is
+fixture-bound and does not.** The next rung that genuinely crosses the line is *curve membership*
+of the ~58 group elements the decoder already parses — `y² = x³ + 5` in **compiled** Lean over
+`ZMod` is microseconds per point, not kernel-`decide` hours — and it is deliberately not written in
+Rust. After that, the proof↔block binding (the public-input assembly), which is the same object
+P8/P9 needs.
+
+**Say it at the right resolution, again:** the observer now refuses a block whose blockchain SNARK
+is absent, malformed, or of the wrong shape. It does not verify that SNARK, it does not check the
+SNARK belongs to that block, and it does not do fork choice. Verifying each block's proof is
+necessary for a Mina light client and nowhere near sufficient.
+
 **Say it at the right resolution:** we do not verify a Mina block. We check, in-kernel, on a real
 Mina block, that its shape is the shape the real verifier index demands, that the accumulator
 evaluations it exposes are the b-polynomial of the challenges it carries, that its aggregated
