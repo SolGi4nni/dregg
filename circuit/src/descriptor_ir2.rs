@@ -5906,8 +5906,37 @@ fn build_traces(
             .collect()
     });
 
-    let exact_public_rows: Vec<Vec<Vec<BabyBear>>> = desc
-        .tables
+    let exact_public_rows = exact_public_row_traces(desc);
+
+    Ok(Ir2Traces {
+        main,
+        chip,
+        chip_state16,
+        byte,
+        memory,
+        boundary,
+        map_ops,
+        map_absent,
+        umemory,
+        umem_boundary: umem_boundary_rows,
+        exact_public_rows,
+    })
+}
+
+/// The `Ir2Air::ExactPublicRow` instance TRACES for a descriptor, in the SAME order
+/// [`instance_airs`] pushes the matching AIRs (`desc.tables` in declaration order, then that
+/// table's `rows` in declaration order).
+///
+/// Each manifest row gets its own two-row instance of width `values.len() + 1`: row 0 is the row
+/// values with the multiplicity column set to ONE (the single unit-capacity table entry), row 1 is
+/// the same values with multiplicity ZERO (the pad the `when_transition` gate pins to zero). That
+/// unit capacity per instance is what turns the LogUp argument into EXACT multiset equality.
+///
+/// This is the SINGLE SOURCE for those traces: [`build_traces`] (single-descriptor path) and
+/// [`batch_airs_and_matrices`] (multi-descriptor path) both call it, so the two paths cannot
+/// drift into committing different tables for the same manifest.
+fn exact_public_row_traces(desc: &EffectVmDescriptor2) -> Vec<Vec<Vec<BabyBear>>> {
+    desc.tables
         .iter()
         .flat_map(|table| match &table.sem {
             TableSem::ExactPublicRows { rows } => rows
@@ -5924,21 +5953,19 @@ fn build_traces(
                 .collect(),
             _ => Vec::new(),
         })
-        .collect();
+        .collect()
+}
 
-    Ok(Ir2Traces {
-        main,
-        chip,
-        chip_state16,
-        byte,
-        memory,
-        boundary,
-        map_ops,
-        map_absent,
-        umemory,
-        umem_boundary: umem_boundary_rows,
-        exact_public_rows,
-    })
+/// The number of `Ir2Air::ExactPublicRow` instances a descriptor contributes — one per declared
+/// manifest row, summed over its exact-public tables. Zero for a table-free descriptor.
+fn exact_public_row_count(desc: &EffectVmDescriptor2) -> usize {
+    desc.tables
+        .iter()
+        .map(|table| match &table.sem {
+            TableSem::ExactPublicRows { rows } => rows.len(),
+            _ => 0,
+        })
+        .sum()
 }
 
 /// The PRESENT instance AIRs for a checked descriptor, in canonical instance order
@@ -6485,16 +6512,23 @@ where
 // MULTI-DESCRIPTOR BATCH: N Lean-authored main AIRs riding in ONE proof
 // ============================================================================
 
-/// Reject a descriptor that pulls in any table instance, so the multi-descriptor batch's
-/// instance list is exactly one `Ir2Air::Main` per descriptor, in the order given.
+/// Admit a descriptor to the multi-descriptor batch iff its instance list is a `Ir2Air::Main`
+/// followed by `Ir2Air::ExactPublicRow`s — i.e. the ONLY tables it declares are
+/// [`TableSem::ExactPublicRows`], and its `Presence` set is empty.
 ///
-/// The canonical single-descriptor order (`instance_airs`) interleaves each descriptor's chip /
-/// byte / memory / map / umem instances directly after its main. Supporting that here would make
-/// the instance index a function of every EARLIER descriptor's presence set, and a verifier that
-/// recomputed it differently from the prover would mis-attribute a refusal — which is exactly the
-/// thing `index: Some(i)` is relied on to answer. So this path REFUSES rather than guesses; a
-/// descriptor needing tables belongs on [`prove_vm_descriptor2`].
-fn require_main_only(
+/// **Why exact-public tables are admissible and the others are not.** An `ExactPublicRow`
+/// instance is a pure function of the DESCRIPTOR (its manifest rows), carries no witness, and its
+/// count is `exact_public_row_count(desc)` — a number the verifier reads off the same descriptor
+/// list the prover was handed. So prover and verifier compute the identical instance ordering
+/// with no witness-dependent input, which is all the batch ever needed. The chip / byte / memory /
+/// map / umem instances are different in kind: they are witness-bearing, their presence is a
+/// function of the constraint list AND the supplied boundary/heap witnesses, and this path has no
+/// parameter to carry those witnesses at all. A descriptor needing them belongs on
+/// [`prove_vm_descriptor2`].
+///
+/// ⚑ **The instance index is no longer the descriptor index** — see
+/// [`batch_main_instance_index`], which is the ONE place that mapping is computed.
+fn require_main_or_exact_public(
     desc: &EffectVmDescriptor2,
     presence: Presence,
     i: usize,
@@ -6511,23 +6545,93 @@ fn require_main_only(
     .into_iter()
     .filter_map(|(on, name)| on.then_some(name))
     .collect::<Vec<_>>();
-    if !extra.is_empty() || !desc.tables.is_empty() {
+    let non_exact: Vec<&str> = desc
+        .tables
+        .iter()
+        .filter(|table| !matches!(table.sem, TableSem::ExactPublicRows { .. }))
+        .map(|table| table.name.as_str())
+        .collect();
+    if !extra.is_empty() || !non_exact.is_empty() {
         return Err(format!(
-            "descriptor {i} ({}) declares table instances {extra:?}{}; the multi-descriptor batch \
-             carries MAIN instances only, so that the instance index is the descriptor index",
+            "descriptor {i} ({}) declares witness-bearing table instances {extra:?}{}; the \
+             multi-descriptor batch carries MAIN and EXACT-PUBLIC-ROW instances only (they are \
+             functions of the descriptor alone, so prover and verifier derive the same instance \
+             ordering)",
             desc.name,
-            if desc.tables.is_empty() {
-                ""
+            if non_exact.is_empty() {
+                String::new()
             } else {
-                " and declares tables"
+                format!(" and non-exact-public tables {non_exact:?}")
             }
         ));
     }
     Ok(())
 }
 
+/// **The instance index of descriptor `k`'s `Ir2Air::Main`** in a multi-descriptor batch.
+///
+/// The batch emits, per descriptor in order: one main instance, then one
+/// `Ir2Air::ExactPublicRow` instance per declared manifest row (`desc.tables` in declaration
+/// order, each table's `rows` in declaration order). So
+///
+/// ```text
+/// main_index(k) = Σ_{j < k} (1 + rows_j)      where rows_j = exact_public_row_count(descs[j])
+/// ```
+///
+/// and descriptor `k`'s exact-public row instances occupy `main_index(k)+1 ..= main_index(k)+rows_k`.
+/// For a batch of table-free descriptors every `rows_j` is 0 and this collapses to `k`, which is
+/// what it was unconditionally before exact-public tables were admitted.
+///
+/// This is what lets a caller turn a p3 refusal's `index: Some(n)` back into "descriptor `k`"
+/// (or "descriptor `k`'s manifest row `n - main_index(k) - 1`"): see
+/// [`batch_instance_owner`].
+///
+/// Returns `Err` if `k` is out of range.
+pub fn batch_main_instance_index(descs: &[EffectVmDescriptor2], k: usize) -> Result<usize, String> {
+    if k >= descs.len() {
+        return Err(format!(
+            "descriptor index {k} is out of range for a {}-descriptor batch",
+            descs.len()
+        ));
+    }
+    Ok(descs[..k]
+        .iter()
+        .map(|desc| 1 + exact_public_row_count(desc))
+        .sum())
+}
+
+/// The inverse of [`batch_main_instance_index`]: which descriptor owns batch instance `n`, and
+/// what that instance is. `Ok((k, None))` = descriptor `k`'s MAIN instance; `Ok((k, Some(r)))` =
+/// descriptor `k`'s exact-public manifest row `r` (counted across its tables in declaration
+/// order). This is the function that names the slice behind a refusal's `index: Some(n)`.
+pub fn batch_instance_owner(
+    descs: &[EffectVmDescriptor2],
+    n: usize,
+) -> Result<(usize, Option<usize>), String> {
+    let mut base = 0usize;
+    for (k, desc) in descs.iter().enumerate() {
+        let rows = exact_public_row_count(desc);
+        if n == base {
+            return Ok((k, None));
+        }
+        if n <= base + rows {
+            return Ok((k, Some(n - base - 1)));
+        }
+        base += 1 + rows;
+    }
+    Err(format!(
+        "instance index {n} is out of range for a batch of {base} instances"
+    ))
+}
+
 /// Build the per-descriptor `(air, trace, public values)` triples, with every shape check the
 /// single-descriptor path applies, applied per descriptor.
+///
+/// Instance order per descriptor: MAIN (the caller's base trace, the caller's public inputs),
+/// then one `Ir2Air::ExactPublicRow` per declared manifest row — the AIRs from
+/// [`instance_airs`]'s tail, the traces from [`exact_public_row_traces`], in the same order, each
+/// with an EMPTY public-value vector exactly as the single-descriptor path's
+/// `pvs.resize(airs.len(), vec![])` gives them.
 #[allow(clippy::type_complexity)]
 fn batch_airs_and_matrices(
     descs: &[EffectVmDescriptor2],
@@ -6558,7 +6662,7 @@ fn batch_airs_and_matrices(
     for (i, desc) in descs.iter().enumerate() {
         let layout = check_descriptor2(desc).map_err(|e| format!("descriptor {i}: {e}"))?;
         let presence = Presence::of(desc, &layout);
-        require_main_only(desc, presence, i)?;
+        require_main_or_exact_public(desc, presence, i)?;
         let trace = base_traces[i];
         if trace.is_empty() {
             return Err(format!("descriptor {i}: base trace must be non-empty"));
@@ -6589,12 +6693,62 @@ fn batch_airs_and_matrices(
         });
         matrices.push(to_matrix(trace));
         pvs.push(public_inputs[i].iter().map(|&v| to_p3(v)).collect());
+
+        // The exact-public row instances, AIRs and traces derived from the SAME descriptor walk
+        // (`desc.tables` in order, then `rows` in order) so the two lists cannot slip.
+        let row_traces = exact_public_row_traces(desc);
+        let mut row_traces = row_traces.into_iter();
+        for table in &desc.tables {
+            let TableSem::ExactPublicRows { rows } = &table.sem else {
+                continue;
+            };
+            for values in rows {
+                airs.push(Ir2Air::ExactPublicRow {
+                    table_id: table.id,
+                    values: values.clone(),
+                });
+                let row_trace = row_traces
+                    .next()
+                    .ok_or_else(|| format!("descriptor {i}: exact-public trace walk underran"))?;
+                matrices.push(to_matrix(&row_trace));
+                pvs.push(vec![]);
+            }
+        }
+        debug_assert!(row_traces.next().is_none());
     }
+    debug_assert_eq!(airs.len(), matrices.len());
+    debug_assert_eq!(airs.len(), pvs.len());
     Ok((airs, matrices, pvs))
 }
 
-/// ⚑ **`prove_vm_descriptors2_batch`** — prove `N` Lean-authored main AIRs as `N` instances of
-/// ONE batch STARK proof, with per-instance `degree_bits`.
+/// ⚑ **`prove_vm_descriptors2_batch`** — prove `N` Lean-authored main AIRs in ONE batch STARK
+/// proof, with per-instance `degree_bits`.
+///
+/// ## ⚑ FLAG DAY (2026-07-29): the instance index is NO LONGER the descriptor index
+///
+/// This path used to REFUSE any descriptor that declared a table, so that instance `k` was
+/// descriptor `k`. It now ADMITS descriptors declaring [`TableSem::ExactPublicRows`] tables (and
+/// only those — every witness-bearing table instance is still refused by
+/// [`require_main_or_exact_public`]), emitting per descriptor: its main instance, then one
+/// `Ir2Air::ExactPublicRow` instance per declared manifest row. So
+///
+/// ```text
+/// main_index(k) = Σ_{j < k} (1 + rows_j)      rows_j = exact-public manifest rows of descriptor j
+/// ```
+///
+/// and descriptor `k` owns instances `main_index(k) ..= main_index(k) + rows_k`. Use
+/// [`batch_main_instance_index`] / [`batch_instance_owner`] rather than re-deriving it; a
+/// refusal's `index: Some(n)` is named by the latter. **What broke:** any caller that read a
+/// refusal's instance index as a descriptor index is wrong for a batch containing an
+/// exact-public descriptor (it stays correct for an all-table-free batch, where every `rows_j` is
+/// 0 and the sum collapses to `k`). Nothing is persisted or on the wire, so there is nothing to
+/// migrate — proofs are minted per run.
+///
+/// ⚑ The exact-public LogUp bus is named by TABLE ID alone (`exact_public_bus_name`), and LogUp
+/// balance in a batch STARK is GLOBAL. Two descriptors in one batch declaring the same wire id
+/// therefore share one bus: their queries and manifest capacity pool, and one descriptor's extra
+/// query can be cancelled by another's spare row. Give co-batched descriptors DISTINCT exact-public
+/// wire ids if you want per-descriptor multiset equality.
 ///
 /// ## What this adds, and what it deliberately does not
 ///
@@ -6663,10 +6817,15 @@ where
 
 /// ⚑ **`verify_vm_descriptors2_batch`** — the DEPLOYED verdict on a multi-descriptor batch.
 ///
-/// The instance set is rebuilt from the DESCRIPTORS alone, so a verifier that was handed a
-/// different descriptor list than the prover used gets a different AIR set and refuses. The
-/// instance index in a refusal is therefore the DESCRIPTOR index, which is what makes
-/// `index: Some(k)` in a p3 `OodEvaluationMismatch` name the slice that failed.
+/// The instance set is rebuilt from the DESCRIPTORS alone — main instances AND the exact-public
+/// manifest-row instances, since a manifest is part of the descriptor — so a verifier that was
+/// handed a different descriptor list than the prover used gets a different AIR set and refuses.
+///
+/// ⚑ **The instance index in a refusal is NOT the descriptor index** (it was, back when this path
+/// refused every descriptor declaring a table). Descriptor `k`'s main sits at
+/// `Σ_{j<k} (1 + rows_j)` with its `rows_k` manifest-row instances directly after it; hand a p3
+/// `index: Some(n)` to [`batch_instance_owner`] to name the slice that failed, and
+/// [`batch_main_instance_index`] for the forward direction.
 pub fn verify_vm_descriptors2_batch(
     descs: &[EffectVmDescriptor2],
     proof: &BatchProof<DreggStarkConfig>,
@@ -6701,7 +6860,7 @@ where
     for (i, desc) in descs.iter().enumerate() {
         let layout = check_descriptor2(desc).map_err(|e| format!("descriptor {i}: {e}"))?;
         let presence = Presence::of(desc, &layout);
-        require_main_only(desc, presence, i)?;
+        require_main_or_exact_public(desc, presence, i)?;
         if public_inputs[i].len() != desc.public_input_count {
             return Err(format!(
                 "descriptor {i}: public input count {} != descriptor public_input_count {}",
@@ -6719,11 +6878,28 @@ where
                 .map(|&v| to_p3(v))
                 .collect::<Vec<P3BabyBear>>(),
         );
+        // Rebuilt from the DESCRIPTOR alone, in `batch_airs_and_matrices`'s order: a manifest row
+        // the prover did not commit (or committed at a different index) moves this list and the
+        // batch refuses.
+        for table in &desc.tables {
+            let TableSem::ExactPublicRows { rows } = &table.sem else {
+                continue;
+            };
+            for values in rows {
+                airs.push(Ir2Air::ExactPublicRow {
+                    table_id: table.id,
+                    values: values.clone(),
+                });
+                pvs.push(vec![]);
+            }
+        }
     }
     if proof.degree_bits.len() != airs.len() {
         return Err(format!(
-            "IR v2 batch carries {} instances but {} descriptors were supplied",
+            "IR v2 batch carries {} instances but the {} supplied descriptors derive {} \
+             (one main each, plus one per declared exact-public manifest row)",
             proof.degree_bits.len(),
+            descs.len(),
             airs.len()
         ));
     }
@@ -6906,6 +7082,154 @@ mod tests {
             verify_vm_descriptor2(&substituted, &proof, &[]).is_err(),
             "an old proof must not verify under a one-cell manifest substitution"
         );
+    }
+
+    const BATCH_EXACT_A: &str = r#"{"name":"batch-exact-a","ir":2,"trace_width":2,"public_input_count":0,"tables":[{"id":10,"name":"batch_public_a","arity":2,"sem":"exact_public_rows","rows":[[1,10],[2,20],[3,30],[4,40]]}],"constraints":[{"t":"lookup","table":10,"tuple":[{"t":"var","v":0},{"t":"var","v":1}]}],"hash_sites":[],"ranges":[]}"#;
+    const BATCH_EXACT_B: &str = r#"{"name":"batch-exact-b","ir":2,"trace_width":2,"public_input_count":0,"tables":[{"id":11,"name":"batch_public_b","arity":2,"sem":"exact_public_rows","rows":[[5,50],[6,60],[7,70],[8,80]]}],"constraints":[{"t":"lookup","table":11,"tuple":[{"t":"var","v":0},{"t":"var","v":1}]}],"hash_sites":[],"ranges":[]}"#;
+
+    /// **The multi-descriptor batch now carries EXACT-PUBLIC descriptors** — two of them, each
+    /// with its OWN manifest table (distinct wire ids, so their LogUp buses do not pool), proved
+    /// as one batch and accepted by the DEPLOYED verifier.
+    ///
+    /// The instance list is main(A), A's 4 manifest rows, main(B), B's 4 manifest rows — 10
+    /// instances for 2 descriptors, so `batch_main_instance_index` (0 and 5), not the descriptor
+    /// index, names the slice. Both are asserted here because a verifier that rebuilt the list in
+    /// any other order would be verifying a different AIR set than the prover committed.
+    ///
+    /// The bent-cell leg is the point of the whole change: there is deliberately NO prover-side
+    /// multiset pre-flight on this path (unlike `build_traces`'s `check` replay), so the ONLY
+    /// thing standing between a mismatched query multiset and an `Ok` is the unconditional
+    /// `verify_batch` self-verify — the same verdict a consumer gets. It must surface as one of
+    /// the DEPLOYED verifier's own markers.
+    #[test]
+    fn multi_descriptor_batch_carries_exact_public_tables() {
+        let a = parse_vm_descriptor2(BATCH_EXACT_A).expect("descriptor A parses");
+        let b = parse_vm_descriptor2(BATCH_EXACT_B).expect("descriptor B parses");
+        let descs = vec![a, b];
+
+        // Instance-index mapping: 1 main + 4 manifest rows each.
+        assert_eq!(batch_main_instance_index(&descs, 0).expect("k=0"), 0);
+        assert_eq!(batch_main_instance_index(&descs, 1).expect("k=1"), 5);
+        assert!(batch_main_instance_index(&descs, 2).is_err());
+        assert_eq!(batch_instance_owner(&descs, 0).expect("owner"), (0, None));
+        assert_eq!(
+            batch_instance_owner(&descs, 3).expect("owner"),
+            (0, Some(2))
+        );
+        assert_eq!(batch_instance_owner(&descs, 5).expect("owner"), (1, None));
+        assert_eq!(
+            batch_instance_owner(&descs, 9).expect("owner"),
+            (1, Some(3))
+        );
+        assert!(batch_instance_owner(&descs, 10).is_err());
+
+        let trace_a = public_rows(&[(3, 30), (1, 10), (4, 40), (2, 20)]);
+        let trace_b = public_rows(&[(5, 50), (8, 80), (6, 60), (7, 70)]);
+        let pis = vec![vec![], vec![]];
+
+        let traces: Vec<&[Vec<BabyBear>]> = vec![trace_a.as_slice(), trace_b.as_slice()];
+        let proof = must_accept("two exact-public descriptors in one batch", || {
+            prove_vm_descriptors2_batch(&descs, &traces, &pis)
+        });
+        assert_eq!(
+            proof.degree_bits.len(),
+            10,
+            "2 mains + 8 manifest-row instances"
+        );
+        must_accept(
+            "the deployed verifier on a two-descriptor exact-public batch",
+            || verify_vm_descriptors2_batch(&descs, &proof, &pis),
+        );
+
+        // BEND one cell of descriptor B's trace: (6,60) -> (6,61). Descriptor B's query multiset
+        // no longer equals its manifest, and nothing on the prover path replays it.
+        let mut bent_b = trace_b.clone();
+        bent_b[2][1] = BabyBear::new(61);
+        let bent: Vec<&[Vec<BabyBear>]> = vec![trace_a.as_slice(), bent_b.as_slice()];
+        let refusal = must_refuse_or_unsat_panic("a bent exact-public cell in a batch", || {
+            prove_vm_descriptors2_batch(&descs, &bent, &pis)
+        });
+        let reason = refusal.reason();
+        // Measured verdict (release, 2026-07-29):
+        //   IR v2 multi-descriptor self-verify failed: LookupError(
+        //     "GlobalCumulativeMismatch(None): ir2_exact_public_11")
+        // — the DEPLOYED verifier's global LogUp sum, naming the bent descriptor's OWN bus.
+        let deployed = crate::refusal::DEPLOYED_VERIFIER_REFUSAL_MARKERS
+            .iter()
+            .any(|m| reason.contains(m));
+        // Under `--release` (how this suite runs) the deployed verdict is the ONLY mechanism;
+        // a debug build may see p3's debug-only prover check panic first, which is a weaker
+        // tooth and is named as such rather than laundered into the deployed marker.
+        let debug_only = cfg!(debug_assertions)
+            && crate::refusal::P3_UNSAT_PANIC_MARKERS
+                .iter()
+                .any(|m| reason.contains(m));
+        assert!(
+            deployed || debug_only,
+            "a bent exact-public cell must be refused by the DEPLOYED verifier \
+             (LookupError / OodEvaluationMismatch), got: {reason}"
+        );
+    }
+
+    /// A descriptor declaring a NON-exact-public table, or pulling in any witness-bearing table
+    /// instance, is STILL refused by the multi-descriptor batch — only the exact-public arm was
+    /// opened. Those instances carry witnesses this path has no parameter to supply, and their
+    /// presence is not a function of the descriptor alone.
+    #[test]
+    fn multi_descriptor_batch_still_refuses_non_exact_public_tables() {
+        let base = parse_vm_descriptor2(BATCH_EXACT_A).expect("descriptor A parses");
+        let layout = check_descriptor2(&base).expect("descriptor A checks");
+        let empty = Presence::of(&base, &layout);
+        assert!(
+            require_main_or_exact_public(&base, empty, 0).is_ok(),
+            "the exact-public arm is open"
+        );
+
+        for sem in [
+            TableSem::Poseidon2Chip,
+            TableSem::Range { bits: 8 },
+            TableSem::Memory,
+            TableSem::MapOps,
+            TableSem::UMemory,
+            TableSem::UMemBoundary,
+            TableSem::UMemBoundaryCohort,
+        ] {
+            let mut swapped = base.clone();
+            swapped.tables[0].sem = sem.clone();
+            let err = require_main_or_exact_public(&swapped, empty, 0)
+                .expect_err("a non-exact-public table declaration must be refused");
+            assert!(
+                err.contains("non-exact-public tables") && err.contains("batch_public_a"),
+                "refusal must name the offending table ({sem:?}): {err}"
+            );
+        }
+
+        // …and every witness-bearing PRESENCE flag is still refused on its own.
+        for (mut presence, name) in [
+            (empty, "chip"),
+            (empty, "chip_state16"),
+            (empty, "byte"),
+            (empty, "memory"),
+            (empty, "map_ops"),
+            (empty, "map_absent"),
+            (empty, "umem"),
+        ] {
+            match name {
+                "chip" => presence.chip = true,
+                "chip_state16" => presence.chip_state16 = true,
+                "byte" => presence.byte = true,
+                "memory" => presence.memory = true,
+                "map_ops" => presence.map_ops = true,
+                "map_absent" => presence.map_absent = true,
+                _ => presence.umem = true,
+            }
+            let err = require_main_or_exact_public(&base, presence, 0)
+                .expect_err("a witness-bearing table instance must be refused");
+            assert!(
+                err.contains(name),
+                "refusal must name the {name} instance: {err}"
+            );
+        }
     }
 
     /// **THE 8-FELT CHAIN ↔ CHIP BYTE-IDENTITY CROSS-CHECK** (Phase B-ROTATION). The plain
