@@ -62,6 +62,30 @@ has been pushing builds onto the laptop for nothing.
   + `.lake`, so they are ember's call. `dregg-build.premigrate` (3.6 G, last touched Jul 23) is the
   pre-symlink leftover.
 
+## ⚑ TEST LEDGER — measured 2026-07-29 (`--no-fail-fast`; the default TRUNCATES)
+**256 `#[ignore]` attributes, every one carrying a reason** (the gate enforces it, two-sided).
+⚠ A naive grep reads 441 — it counts comments, the same trap that once had a sibling gate claiming
+174 bare ignores that were all prose.
+
+**~55 failing, and more than half sit in one crate:**
+
+| crate | failing | owner |
+|---|---|---|
+| `sdk` | **29** (23 in `full_turn_proof::tests` + 6) | lane dispatched |
+| `dregg-discord-bot` | **18** | lane dispatched |
+| `dregg-node` | ~6 + 1 timeout | — |
+| `dregg-turn` · `dreggnet-party` | 1 each | known |
+| `dregg-circuit` · `dregg-cell` · `dregg-coord` · `dregg-exec-lean` | **0** | closed today |
+
+Closed today: 24 (`dregg-circuit` → 1222/1222), 5 (`dregg-exec-lean` → 122/122), 23
+(`dreggnet-market` → 53/53). **~52 fixed against ~55 remaining**, and the remainder is concentrated
+rather than scattered — which is the shape that yields to one-cause fixes.
+
+⚑ Both dispatched lanes were briefed with the `dregg-circuit` precedent: **23 of its 24 were ONE
+LINE** (a missing `refresh_commitment()`), so look for the shared producer-side call before assuming
+N divergences. And both were warned that inherited diagnoses in this repo have been wrong — `git log
+-S` what you are handed.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
