@@ -36,8 +36,7 @@ use mina_core::consensus::{
     short_range_fork_take,
 };
 use mina_p2p_messages::v2::{
-    ConsensusProofOfStakeDataConsensusStateValueStableV2 as ConsensusState,
-    MinaStateProtocolStateValueStableV2, StateHash,
+    ConsensusProofOfStakeDataConsensusStateValueStableV2 as ConsensusState, StateHash,
 };
 use std::path::{Path, PathBuf};
 
