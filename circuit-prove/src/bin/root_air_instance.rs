@@ -55,11 +55,22 @@
 //! The root's seventh instance, `expose_claim`, has `degree_bits = 0` — a ONE-ROW trace domain.
 //! There `is_first_row = is_last_row = 1` (zeta-free constants) while `is_transition = Z_H(zeta)`,
 //! and the quotient splits into two size-1 chunks carrying EQUAL values. Both sides of the
-//! closing equality are therefore constant in zeta: the equality is an IDENTITY, and the
-//! out-of-domain point does not bind that instance's constraint check at all (its binding is the
-//! PCS opening and `alpha`, not the AIR equality). Every instance with `degree_bits > 0` DOES
-//! bind zeta and that is asserted. The per-instance `alphaBinding`/`zetaBinding` fields carry
-//! the measurement so an o1js verifier is never told a check binds zeta when it does not.
+//! closing equality are therefore constant in zeta: for THIS, HONEST transcript the equality is
+//! an IDENTITY in zeta. Every instance with `degree_bits > 0` DOES bind zeta and that is asserted.
+//!
+//! ⚑ **`zetaBinding = false` DOES NOT MEAN THE CHECK IS A TAUTOLOGY, AND AN EXTERNAL VERIFIER MUST
+//! NOT SKIP THE OOD POINT THERE.** A one-row trace polynomial IS a constant, so holding the
+//! openings fixed while moving zeta is the CORRECT continuation rather than a perturbation — the
+//! insensitivity is a property of an honest prover, not of the verifier's check. What the check
+//! does is test, at a uniform zeta, the polynomial
+//! `P(X) = A + (X-1)·B - (X-1)·Σ_i zps_i(X)·c_i` of degree ≤ 2, where `A` is the alpha-fold of
+//! every constraint NOT gated by `when_transition`, `B` the fold of the gated ones, and the `c_i`
+//! the quotient chunk openings — all of them fixed BEFORE zeta is sampled, and each pinned to a
+//! constant by `p3_fri`'s height-1 guard (`reduced_openings.get(&params.log_blowup)` must be
+//! zero). `P(1) = A`, so a prover with `A != 0` is refused except with probability `<= 2/|EF|`.
+//! That is measured here as `zetaBindsForgery`, which is asserted for ALL SEVEN instances with no
+//! carve-out: `expose_claim` included, a forgery repaired at the sampled zeta dies at every other
+//! zeta. `circuit-prove/tests/height1_air_check_binding.rs` is the standing control for the shape.
 //!
 //! ## ⚑ Canonical, not Montgomery
 //!
@@ -656,10 +667,9 @@ fn main() {
     // `is_transition = ζ − 1 = Z_H(ζ)`, so `accumulator · Z_H(ζ)^{-1}` is ζ-free whenever the
     // non-transition part of the fold vanishes; and a quotient split into two size-1 chunks
     // carrying EQUAL values recomposes to that same constant at every ζ. The root's
-    // `expose_claim` instance is exactly that shape. Its closing equality is therefore an
-    // IDENTITY in ζ: the out-of-domain challenge does not bind that instance's constraint check
-    // at all (its binding is the PCS opening and alpha, not the AIR equality). Every instance
-    // with `degree_bits > 0` must still bind ζ, and that IS asserted.
+    // `expose_claim` instance is exactly that shape, so for THIS transcript the closing equality
+    // is an IDENTITY in ζ. Every instance with `degree_bits > 0` must still bind ζ, and that IS
+    // asserted.
     for i in 0..n {
         if root.proof.degree_bits[i] > 0 {
             assert!(
@@ -671,15 +681,100 @@ fn main() {
             );
         } else if !zeta_binding[i] {
             eprintln!(
-                "  ⚑ instance {i} ({}) has degree_bits 0: its closing equality is an IDENTITY in \
-                 zeta (is_first_row = is_last_row = 1, is_transition = Z_H(zeta), both quotient \
-                 chunks equal). The OOD point binds nothing there. Emitted as zetaBinding=false.",
+                "  ⚑ instance {i} ({}) has degree_bits 0: for the HONEST transcript its closing \
+                 equality is an IDENTITY in zeta (is_first_row = is_last_row = 1, is_transition = \
+                 Z_H(zeta), both quotient chunks equal) — a one-row trace polynomial IS a \
+                 constant, so a fixed opening is the correct continuation. Emitted as \
+                 zetaBinding=false; see zetaBindsForgery below, which is what says the OOD point \
+                 still binds.",
                 names[i]
             );
         }
     }
+
+    // ---- STEP 5: DOES ZETA BIND A *FORGERY*? THE QUESTION zetaBinding DOES NOT ANSWER ----
+    // ⚑ `zetaBinding` measures the HONEST instance's sensitivity, which at `degree_bits = 0` is
+    // structurally zero and says nothing about the check. This measures the adversarial quantity:
+    // a forged trace shifts the ζ-free half of the fold by a nonzero δ (EXACT at degree_bits = 0,
+    // where `accumulator(ζ) = A + Z_H(ζ)·B` and a forged row moves `A`); the forger is then handed
+    // the strongest move the protocol leaves him — SOLVE the quotient chunk openings that repair
+    // the closing equality at the SAMPLED ζ, which is always possible because the chunks are free
+    // field elements. That repair must then die at every other ζ, because the chunks are committed
+    // BEFORE ζ is sampled. If it does not, that instance's AIR check really is vacuous.
+    let forge_delta = EF::from_u32(0x00c0_ffee);
+    assert_ne!(
+        forge_delta,
+        EF::ZERO,
+        "the forgery must actually move the fold"
+    );
+    let chunk_of = |v: EF| -> Vec<EF> {
+        let limbs: &[F] = <EF as BasedVectorSpace<F>>::as_basis_coefficients_slice(&v);
+        limbs.iter().map(|c| EF::from(*c)).collect()
+    };
+    let mut zeta_binds_forgery = vec![false; n];
+    for i in 0..n {
+        let n_chunks = root.proof.opened_values.instances[i]
+            .base_opened_values
+            .quotient_chunks
+            .len();
+        let closes = |chunks: &[Vec<EF>], z: EF| -> bool {
+            let ev = eval_instance(
+                i,
+                &airs[i],
+                &root,
+                &common.lookups[i],
+                &pvs[i],
+                &rep.per_instance[i],
+                preprocessed_widths[i],
+                rep.alpha,
+                z,
+            );
+            (ev.accumulator + forge_delta) * ev.sels.inv_vanishing
+                == recompose_quotient_from_chunks::<SC>(&ev.chunk_domains, chunks, z)
+        };
+
+        // Solve the repair at the sampled ζ. `zps_0(ζ)` is read off p3's own recomposition by
+        // feeding it a unit first chunk rather than reimplementing the Lagrange weights.
+        let e = &evals[i];
+        let target = (e.accumulator + forge_delta) * e.sels.inv_vanishing;
+        let mut unit: Vec<Vec<EF>> = (0..n_chunks).map(|_| chunk_of(EF::ZERO)).collect();
+        unit[0] = chunk_of(EF::ONE);
+        let zps_0 = recompose_quotient_from_chunks::<SC>(&e.chunk_domains, &unit, rep.zeta);
+        assert_ne!(
+            zps_0,
+            EF::ZERO,
+            "instance {i} ({}): the first quotient chunk's Lagrange weight vanished at zeta",
+            names[i]
+        );
+        let mut repaired: Vec<Vec<EF>> = (0..n_chunks).map(|_| chunk_of(EF::ZERO)).collect();
+        repaired[0] = chunk_of(target * zps_0.inverse());
+
+        // The forger's move must LAND — otherwise this measurement is not measuring a forgery.
+        assert!(
+            closes(&repaired, rep.zeta),
+            "instance {i} ({}): the solved forgery did not close at the sampled zeta, so the \
+             refusals below would prove nothing",
+            names[i]
+        );
+        zeta_binds_forgery[i] = zeta_bends.iter().all(|d| !closes(&repaired, rep.zeta + *d));
+    }
+
+    // ⚑ NO CARVE-OUT. `degree_bits == 0` is exactly where the honest instance is ζ-insensitive and
+    // exactly where it is tempting to conclude the check is free; this is the assertion that says
+    // otherwise, and it is the one an external verifier's "can I skip zeta here?" question must be
+    // answered from.
+    for i in 0..n {
+        assert!(
+            zeta_binds_forgery[i],
+            "instance {i} ({}, degree_bits {}) ACCEPTED a zeta-solved FORGERY at every bent zeta — \
+             its AIR closing equality is genuinely vacuous and the out-of-domain point is not \
+             constraining that instance's trace",
+            names[i], root.proof.degree_bits[i]
+        );
+    }
     eprintln!(
-        "anti-vacuity: alpha binds all {n} instances; zeta binds {} of {n}",
+        "anti-vacuity: alpha binds all {n} instances; zeta binds {} of {n} HONEST instances; \
+         zeta binds a FORGERY in all {n}",
         zeta_binding.iter().filter(|b| **b).count()
     );
 
@@ -696,6 +791,7 @@ fn main() {
         &evals,
         &alpha_binding,
         &zeta_binding,
+        &zeta_binds_forgery,
     );
     match &out_path {
         Some(p) => {
@@ -735,6 +831,7 @@ fn emit(
     evals: &[InstanceEval],
     alpha_binding: &[bool],
     zeta_binding: &[bool],
+    zeta_binds_forgery: &[bool],
 ) -> String {
     let p = &root.proof;
     let n = airs.len();
@@ -864,14 +961,18 @@ fn emit(
             ef_json(e.accumulator),
         )
         .unwrap();
-        // ⚑ MEASURED, not assumed: whether this instance's closing equality actually MOVES when
-        // the challenge moves. `zetaBinding` is FALSE for the one-row `expose_claim` table, where
-        // the equality is an identity in zeta — an external verifier re-checking only the AIR
-        // equality gets nothing from the OOD point there.
+        // ⚑ MEASURED, not assumed. `alphaBinding`/`zetaBinding` say whether THIS, HONEST
+        // instance's closing equality moves when the challenge moves; `zetaBinding` is FALSE for
+        // the one-row `expose_claim` table, where a constant trace polynomial makes a fixed
+        // opening the correct continuation and the equality an identity.
+        // ⚑ `zetaBindsForgery` is the one an external verifier must read before deciding it may
+        // skip anything: it is TRUE everywhere, `expose_claim` included — a forgery repaired at
+        // this zeta is refused at every other zeta. NEVER skip the OOD point on the strength of
+        // `zetaBinding: false`.
         write!(
             s,
-            r#""alphaBinding":{},"zetaBinding":{},"#,
-            alpha_binding[i], zeta_binding[i],
+            r#""alphaBinding":{},"zetaBinding":{},"zetaBindsForgery":{},"#,
+            alpha_binding[i], zeta_binding[i], zeta_binds_forgery[i],
         )
         .unwrap();
         // The lookup layout: without it the aux-column width and the bus each context sits on

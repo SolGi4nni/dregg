@@ -2091,16 +2091,31 @@ permutation** value · `quotient(ζ)` itself · the transcript's α · the vanis
 | recompose | 16 | yes | yes |
 | **expose_claim** | **0** | yes | **NO** |
 
-`expose_claim` has a **one-row trace domain**, and its closing equality is an **identity in ζ**.
-With `|H| = 1`, `is_first_row` and `is_last_row` are ζ-free constants, `is_transition = ζ − 1 =
-Z_H(ζ)`, and the two size-1 quotient chunks carry **equal** values, so the recomposition
-`[(Q₀+Q₁) + (ζ/g)(Q₀−Q₁)]/2` collapses to `Q₀`. **Both sides are constant in ζ.** The out-of-domain
-point binds *nothing* in that instance's AIR check; its binding is the PCS opening and α. All six
-`degree_bits > 0` instances do bind ζ, and α binds all seven — both asserted, the α one as a hard
-floor. The flags ride in the emitted JSON per instance so a Mina-side verifier is never told a check
-binds ζ when it does not, and this leg's own falsifiers are aimed at a table that **does** bind ζ —
-the same discipline §3.19 [8] and §3.20 applied after a falsifier went green on a degenerate
-parameter.
+`expose_claim` has a **one-row trace domain**, and for *this, honest* transcript its closing
+equality is an **identity in ζ**. With `|H| = 1`, `is_first_row` and `is_last_row` are ζ-free
+constants, `is_transition = ζ − 1 = Z_H(ζ)`, and the two size-1 quotient chunks carry **equal**
+values, so the recomposition `[(Q₀+Q₁) + (ζ/g)(Q₀−Q₁)]/2` collapses to `Q₀`. **Both sides are
+constant in ζ.** All six `degree_bits > 0` instances do bind ζ, and α binds all seven — both
+asserted, the α one as a hard floor.
+
+⚑ **`zetaBinding: false` IS NOT "the check is free", AND A MINA-SIDE VERIFIER MUST NOT SKIP THE OOD
+POINT THERE.** A one-row trace polynomial *is* a constant, so holding the openings fixed while
+moving ζ is the correct continuation rather than a perturbation: the insensitivity is a property of
+an honest prover, not of the verifier's check. The check itself evaluates, at a uniform ζ,
+`P(X) = A + (X−1)·B − (X−1)·Σᵢ zpsᵢ(X)·cᵢ` of degree ≤ 2 — `A` the α-fold of every constraint not
+gated by `when_transition`, `B` the fold of the gated ones, `cᵢ` the chunk openings — all of them
+fixed **before** ζ is sampled and each pinned to a constant by p3-fri's height-1 guard (the
+`reduced_openings.get(&params.log_blowup)` must-be-zero check). `P(1) = A`, so a prover with `A ≠ 0`
+is refused except with probability `≤ 2/|EF| ≈ 2⁻¹²³`. That is now MEASURED and emitted per instance
+as **`zetaBindsForgery`**, asserted for **all seven** with no `degree_bits = 0` carve-out: a forgery
+solved to close at the sampled ζ dies at every bent ζ, `expose_claim` included. The three flags ride
+in the emitted JSON, and this leg's own falsifiers are aimed at a table that **does** bind ζ — the
+same discipline §3.19 [8] and §3.20 applied after a falsifier went green on a degenerate parameter.
+`circuit-prove/tests/height1_air_check_binding.rs` is the standing control for the shape: it
+reproduces the identity from the geometry alone, exhibits the forger repairing the equality at one
+prescribed ζ, requires the repair to die at twelve others, and refuses any `degree_bits = 0` table
+that hides a constraint behind `when_transition` (the real one-row hazard — `is_transition` vanishes
+on a one-row domain, so such a constraint is simply unenforced).
 
 **What §3.25 does NOT close.** This is the per-instance AIR closing equality, not the batch-STARK
 verifier: the FRI walk, the MMCS openings and the transcript derivation over *this* proof are not in
@@ -2472,7 +2487,7 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 
 | The AIR fits in one Pickles step | **No — §3.24.** 275,143 rows is 4.20× the domain, so the root's constraint system has NO one-step verifier. Three chained steps over it are proved and verified (4,798 of 10,417 nodes, 543 of 1,093 constraints, four of the seven tables), six splices refused with a control that builds its own predecessor. The full chain is 7 slices; the process wall is 3 compiled circuits. |
 
-| The AIR closing equality binds ζ | **In six of seven instances — §3.25.** `expose_claim` has `degree_bits = 0`, so `|H| = 1`, the selectors are ζ-free constants and the two size-1 quotient chunks are equal: **both sides are constant in ζ** and the out-of-domain point binds nothing in that instance's AIR check. α binds all seven. |
+| The AIR closing equality binds ζ | **In all seven against a forgery; in six of seven for the honest transcript — §3.25.** `expose_claim` has `degree_bits = 0`, so `|H| = 1`, the selectors are ζ-free constants and the two size-1 quotient chunks are equal: **both sides are constant in ζ**, which is what a *constant* trace polynomial forces and is a property of the honest prover, not of the check. Measured as `zetaBindsForgery`: a forgery solved to close at the sampled ζ is refused at every bent ζ in **all seven**, asserted with no carve-out. α binds all seven. A Mina-side verifier must NOT skip the OOD point on the strength of `zetaBinding: false`. |
 | A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
 | The row price is a design claim nobody has run | **No longer.** §3.8–3.14 are measured, the circuits are committed under `bridge/mina-zkapp/src/`, and `scripts/check-mina-attestation.sh` fails if any of nine figures drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**, and §3.14 shows how much rests on that. |
