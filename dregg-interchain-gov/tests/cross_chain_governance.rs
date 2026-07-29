@@ -484,7 +484,7 @@ fn full_cross_chain_flow_three_chains_one_weighted_tally() {
     let sol_fact = solana_holding_to_governance(&sol);
     // 1000 $DREGG on Base (real EIP-1186 verifier over the synthesized world),
     let base = alice_base_holding(1_000);
-    assert_eq!(base.trust, HoldingTrust::ConsensusProven);
+    assert_eq!(base.trust(), HoldingTrust::ConsensusProven);
     let base_fact = evm_holding_to_governance(&base, 8453).expect("the EVM join compiles + holds");
     assert_eq!(base_fact.chain, ChainId::BASE);
     // 500 $DREGG on cosmoshub-4 (edge-decoder-driven fields; fixture verdict).
@@ -714,7 +714,7 @@ fn structure_only_evm_holding_grants_zero_weight() {
         evm_world::BLOCK_NUMBER,
     )
     .expect("structure verifies");
-    assert_eq!(bare.trust, HoldingTrust::StructureOnly);
+    assert_eq!(bare.trust(), HoldingTrust::StructureOnly);
     let fact = evm_holding_to_governance(&bare, 8453).expect("joins, carrying the weak verdict");
     assert!(!fact.consensus_proven);
 

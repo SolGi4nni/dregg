@@ -104,16 +104,19 @@ fn real_robinhood_tsla_holding_accepts() {
     )
     .expect("real Robinhood testnet TSLA EIP-1186 proof must verify");
 
-    assert_eq!(proven.balance, u256(tsla::EXPECTED_BALANCE_HEX));
-    assert_eq!(proven.balance, Uint256::from(5_000_000_000_000_000_000u64)); // 5.0 TSLA
-    assert_eq!(proven.token, h20(tsla::TOKEN));
-    assert_eq!(proven.holder, h20(tsla::HOLDER));
-    assert_eq!(proven.state_root, h32(tsla::STATE_ROOT));
-    assert_eq!(proven.block_number, tsla::BLOCK_NUMBER);
+    assert_eq!(proven.balance(), u256(tsla::EXPECTED_BALANCE_HEX));
+    assert_eq!(
+        proven.balance(),
+        Uint256::from(5_000_000_000_000_000_000u64)
+    ); // 5.0 TSLA
+    assert_eq!(proven.token(), h20(tsla::TOKEN));
+    assert_eq!(proven.holder(), h20(tsla::HOLDER));
+    assert_eq!(proven.state_root(), h32(tsla::STATE_ROOT));
+    assert_eq!(proven.block_number(), tsla::BLOCK_NUMBER);
 
     // HONEST trust grade: verified against a SUPPLIED Robinhood-Chain root (no Altair
     // sync committee on an Arbitrum-Orbit L2) → StructureOnly / weak-subjectivity.
-    assert_eq!(proven.trust, HoldingTrust::StructureOnly);
+    assert_eq!(proven.trust(), HoldingTrust::StructureOnly);
     assert!(!proven.is_consensus_proven());
 }
 

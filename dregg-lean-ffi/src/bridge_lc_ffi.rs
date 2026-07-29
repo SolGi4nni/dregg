@@ -197,6 +197,146 @@ mod ffi_eth_lc {
 }
 
 // ============================================================================
+// Ethereum COMMITTEE ROTATION (verified route-through) — the TRUST-ROOT gate
+// ============================================================================
+//
+// `dregg_eth_lc_verify` decides whether the client may follow the CHAIN. It decides NOTHING about
+// whether the client may change WHOSE SIGNATURES IT TRUSTS. That second decision —
+// `eth-lightclient::verify_committee_update`, reached from
+// `WeakSubjectivityStore::{bootstrap_committee, advance}` — used to be hand-written Rust: a branch
+// depth admissibility rule (5 Altair..Deneb | 6 Electra+) `&&`-ed with a SHA-256 fold, deciding
+// which 512 public keys the light client would trust from then on. The verify gate was honest and
+// there was a door beside it.
+//
+// `Dregg2.Bridge.LightClientEthGate.committeeRotationDecision` is that rule in Lean;
+// `committeeRotationDecision_refines` proves (by `rfl`) the exported decision IS
+// `verifyCommitteeRotation`, and `committeeRotationDecision_binding` is the payoff: given the named
+// SHA-256 CR carrier, one beacon state root commits ONE next committee, so an accepted rotation
+// cannot fork the trust anchor. Rust keeps the SSZ committee-root computation and the branch fold
+// and supplies their RESULT — the same `hashPairCR` carrier boundary the finality/execution
+// branches already use.
+//
+// ```text
+// INPUT  := "nl=" nl ";nr=" B          (nl = branch depth, nr = reconstruction result)
+// B      := "0" | "1"
+// OUTPUT := "1" (ROTATE) | "0" (REFUSE) | "ERR" (malformed ⇒ fail-closed REFUSE)
+// ```
+//
+// Absent export ⇒ `Err`, and `verify_committee_update` refuses: the trusted committee simply does
+// not advance. There is deliberately no Rust fallback — the Rust rule WAS the twin.
+
+/// The verified decision the ETH committee-rotation LOGIC reduces to. `Rotate` iff the Lean gate
+/// returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed, archive-absent) is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EthCommitteeRotationVerdict {
+    /// The verified gate ACCEPTED the rotation projections (→ `verifyCommitteeRotation = true`,
+    /// hence — with the named `hashPairCR` carrier sound — the offered committee is the unique
+    /// `next_sync_committee` the trusted beacon state commits).
+    Rotate,
+    /// The verified gate REFUSED (inadmissible branch depth, or the branch did not reconstruct).
+    Refuse,
+}
+
+/// Whether the linked archive exports the verified ETH committee-rotation gate
+/// (`dregg_eth_committee_rotation`, spliced from `Dregg2.Bridge.LightClientEthGate`). Probed
+/// INDEPENDENTLY of [`eth_lc_verify_available`]: an archive predating this export carries the
+/// verify gate and not the rotation gate, and treating them as one would let a stale seed advertise
+/// a trust-root gate it cannot render.
+pub fn eth_committee_rotation_available() -> bool {
+    ffi_eth_committee::eth_committee_rotation_present() && lean_init_once().is_ok()
+}
+
+/// Build the committee-rotation wire. Mirrors `LightClientEthGate.decodeCommitteeWire`'s grammar
+/// exactly. `branch_len` is the supplied `next_sync_committee_branch` depth; `reconstruct_ok` is the
+/// SHA-256 fold RESULT (the committee's SSZ root folded up the branch at subtree index 23, compared
+/// against the trusted beacon state root).
+pub fn eth_committee_rotation_wire(branch_len: usize, reconstruct_ok: bool) -> String {
+    format!(
+        "nl={branch_len};nr={}",
+        if reconstruct_ok { '1' } else { '0' }
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_eth_committee_rotation` over a pre-built wire and return
+/// the raw output (`"1"` / `"0"` / `"ERR"`). `Err` only when the archive lacks the export.
+pub fn shadow_eth_committee_rotation(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_eth_committee::lean_eth_committee_rotation(wire)
+}
+
+/// The end-to-end verified committee-rotation query: build the wire, run the gate, decode. `Err`
+/// ONLY when the archive lacks the export — the caller must treat that as REFUSE (fail-closed),
+/// never as an excuse to install the committee anyway.
+pub fn verified_eth_committee_rotation(
+    branch_len: usize,
+    reconstruct_ok: bool,
+) -> Result<EthCommitteeRotationVerdict, String> {
+    let wire = eth_committee_rotation_wire(branch_len, reconstruct_ok);
+    let out = shadow_eth_committee_rotation(&wire)?;
+    Ok(if out == "1" {
+        EthCommitteeRotationVerdict::Rotate
+    } else {
+        EthCommitteeRotationVerdict::Refuse
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_eth_committee_rotation_present))]
+mod ffi_eth_committee {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_eth_committee_rotation_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn eth_committee_rotation_present() -> bool {
+        true
+    }
+
+    pub fn lean_eth_committee_rotation(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_eth_committee_rotation_str(
+                    c_in.as_ptr(),
+                    buf.as_mut_ptr() as *mut c_char,
+                    cap,
+                )
+            };
+            if full == usize::MAX {
+                return Err("dregg_eth_committee_rotation_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_eth_committee_rotation_present)))]
+mod ffi_eth_committee {
+    pub fn eth_committee_rotation_present() -> bool {
+        false
+    }
+
+    pub fn lean_eth_committee_rotation(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_eth_committee_rotation not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+}
+
+// ============================================================================
 // Tendermint / Cosmos light-client verify (verified route-through)
 // ============================================================================
 //
@@ -589,9 +729,13 @@ mod ffi_mpt_lc {
 //                    `LINK_OK` carrier; `Dregg2.Circuit.Emit.LightClientMinaHashFold` DERIVES it
 //                    from the chain rather than trusting a bit, and its terminal value IS the tip
 //                    state hash).
-//   * `pickles_ok` — the per-block Pickles/Kimchi Wrap-proof results (the IPA/FRI arc; the Lean
-//                    side renders this on a REAL devnet block in
-//                    `LightClientMinaHashFold.mina_decision_accepts_real_block_pickles`).
+//   * `pickles_ok` — the per-block Pickles/Kimchi Wrap-proof results (the IPA/FRI arc). ⚑ NO
+//                    LONGER A CONSTANT: until 2026-07-29 the observer passed a compile-time
+//                    `NEUTRAL_PICKLES_OK = true` here because it never fetched
+//                    `protocolStateProof`. It now decodes every block's proof and asks
+//                    `verified_mina_wrap_shape_ok` (below) for the PREAMBLE verdict. The arithmetic
+//                    of a Wrap verify is still not in this bit — see that function's header for
+//                    exactly what is and is not, and why the rest is fixture-bound.
 //   * `canon_ok`   — the state-row canonicality results (`< p`). Poseidon's `absorbAt` enters every
 //                    input through `(state + x) % p`, so a non-canonical field element is invisible
 //                    at the digest and an anchor `A + p` reaches the same tip as `A`. DERIVED in
@@ -608,10 +752,13 @@ mod ffi_mpt_lc {
 // selection (VRF-weighted density, long-range) is formalized nowhere, so two k-deep proved segments
 // under different anchors are indistinguishable here. This is an anchored-segment verifier.
 //
-// ⚑ TODAY THIS EXPORT IS ABSENT FROM EVERY ARCHIVE, because `Dregg2.Bridge.LightClientMinaGate` is
-// not imported by `metatheory/Dregg2.lean`. That is fail-CLOSED and loud, not fail-open: the
-// observer refuses every settlement with `ObserveError::VerifiedGateUnavailable` until the import
-// lands and the seed is regenerated.
+// ⚑ TODAY THIS EXPORT IS ABSENT FROM EVERY PUBLISHED ARCHIVE. The reason moved on 2026-07-29 and
+// the old one is retired: `Dregg2.Bridge.LightClientMinaGate` IS now imported by
+// `metatheory/Dregg2.lean` (root line 1536). What is stale is the SEED — the committed
+// `libdregg_lean.a` predates that import, so `archive_exports` still reports the symbol missing.
+// The remedy is a seed regeneration, not a source change. That is fail-CLOSED and loud, not
+// fail-open: the observer refuses every settlement with `ObserveError::VerifiedGateUnavailable`
+// until the seed catches up.
 //
 // Wire grammar (mirrors `LightClientMinaGate.decodeMinaWire` byte-for-byte):
 // ```text
@@ -750,6 +897,188 @@ mod ffi_mina_lc {
     }
 }
 
+// ============================================================================
+// Mina PER-BLOCK Pickles Wrap-proof PREAMBLE gate (verified route-through)
+// ============================================================================
+//
+// This is what supplies the `pk` bit above, and it exists because that bit used to be a
+// compile-time `true` named `NEUTRAL_PICKLES_OK`. The observer now fetches every block's
+// `protocolStateProof`, decodes the binprot `Mina_base.Proof.Stable.V2` in Rust (a CODEC —
+// `bridge/src/mina_pickles.rs`: no field arithmetic, no group arithmetic, both Lean-authored),
+// and hands the resulting COUNTS here. `Dregg2.Bridge.PicklesWrapShapeGate.picklesWrapShapeOk`
+// renders the verdict, and `picklesWrapShapeOk_is_shapeOkRec` proves that verdict IS
+// `KimchiVerify.shapeOkRec` — the `verifier.rs:810-830` preamble — conjoined with two length
+// agreements a recursive Wrap proof owes. `real_block_wrap_shape_accepts` pins the accept on the
+// REAL devnet block 539508, and `real_block_wrap_shape_refused_by_freeze` pins that the retired
+// `prevLen = 0` form REFUSES it.
+//
+// ⚑ SAY THE RESOLUTION OUT LOUD, because "the observer now checks the Pickles proof" is exactly
+// the sentence that will be over-read. What an accept here means is: THE PREAMBLE PASSES. It is
+// the first seven lines of `to_batch`. It does NOT mean the proof verifies, and the rest of the
+// verify is NOT reachable from a deployed observer today, for two independent reasons:
+//
+//   1. DATA. Every arithmetic check this tree has on a real Mina block (`MinaRealBlockGate` C5/C8,
+//      `MinaRealBlockTranscript` C3, the `MinaWrap*` group and opening rungs) is `by decide` over
+//      LITERAL constants dumped by `metatheory/fixtures/pickles-extractors`, which links openmina
+//      + o1-labs `proof-systems` to get the verifier index, the SRS, `endo_r`, the linearization
+//      and the 40-element public input. None of that is on the wire — the proof's
+//      `messages_for_next_step_proof.app_state` is literally `()` — and that dependency graph is
+//      deliberately outside this workspace's lockfile.
+//   2. COST. Those theorems are kernel `decide`s, not functions of a proof. Measured on ONE block
+//      (`docs/MINA-REAL-BLOCK-GATE.md` §6.1): 82 s for C5/C8, 153 s + 75 s for the opening rung,
+//      ~3.5 h of serial kernel and ~28 GB peak for the terminal `⟨s, srs.g⟩` MSM. A per-block cost
+//      in hours is not a light client at any scale.
+//
+// So the honest shape of the residual is: the preamble is RUNTIME-EVALUABLE and now runs; the
+// arithmetic is FIXTURE-BOUND and does not. The next rung that is genuinely runtime-evaluable is
+// curve membership of the ~58 group elements the decoder already parses — compiled Lean over
+// `ZMod`, microseconds per point — and it is deliberately NOT done in Rust.
+//
+// Wire grammar (mirrors `PicklesWrapShapeGate.decodeWrapShapeWire` byte-for-byte):
+// ```text
+// INPUT := "ip=" ip ";pc=" pc ";pv=" pv ";pl=" pl ";w=" w ";s=" s ";cf=" cf ";tc=" tc
+//        ";ck=" ck ";ir=" ir ";pr=" pr
+// ```
+
+/// The verified verdict on a single block's Wrap-proof preamble. `Accept` iff the Lean gate
+/// (`dregg_mina_wrap_shape_ok`) returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed,
+/// archive-absent) is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinaWrapShapeVerdict {
+    /// The gate ACCEPTED: the decoded proof has the shape the pinned verifier index demands.
+    Accept,
+    /// The gate REJECTED.
+    Reject,
+}
+
+/// Whether the linked archive exports the verified per-block Wrap-preamble gate
+/// (`dregg_mina_wrap_shape_ok`, spliced from `Dregg2.Bridge.PicklesWrapShapeGate`). When false the
+/// caller must FAIL CLOSED — there is no Rust twin of this decision and reverting to
+/// `NEUTRAL_PICKLES_OK` is the exact regression this replaced.
+pub fn mina_wrap_shape_ok_available() -> bool {
+    ffi_mina_wrap_shape::mina_wrap_shape_ok_present() && lean_init_once().is_ok()
+}
+
+/// Build the Wrap-preamble wire. `idx_*` are the PINNED verifier-index parameters (trusted
+/// config); everything else is read out of the block's own proof by the Rust decoder.
+#[allow(clippy::too_many_arguments)]
+pub fn mina_wrap_shape_wire(
+    idx_prev_challenges: usize,
+    proof_prev_challenges: usize,
+    proof_prev_challenge_vectors: usize,
+    idx_public_len: usize,
+    w_comm: usize,
+    s_evals: usize,
+    coefficients: usize,
+    t_comm: usize,
+    idx_chunk_size: usize,
+    idx_ipa_rounds: usize,
+    proof_ipa_rounds: usize,
+) -> String {
+    format!(
+        "ip={idx_prev_challenges};pc={proof_prev_challenges};pv={proof_prev_challenge_vectors};\
+         pl={idx_public_len};w={w_comm};s={s_evals};cf={coefficients};tc={t_comm};\
+         ck={idx_chunk_size};ir={idx_ipa_rounds};pr={proof_ipa_rounds}"
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_wrap_shape_ok` over a pre-built wire and return the
+/// raw output (`"1"` / `"0"` / `"ERR"`). Returns `Err` when the archive did not export it.
+pub fn shadow_mina_wrap_shape_ok(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_wrap_shape::lean_mina_wrap_shape_ok(wire)
+}
+
+/// The end-to-end verified per-block Wrap-preamble query. `Ok(Accept)` ONLY on the gate's `"1"`;
+/// every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the archive lacks the
+/// export — the caller must treat that as a REFUSAL, never as a skipped check.
+#[allow(clippy::too_many_arguments)]
+pub fn verified_mina_wrap_shape_ok(
+    idx_prev_challenges: usize,
+    proof_prev_challenges: usize,
+    proof_prev_challenge_vectors: usize,
+    idx_public_len: usize,
+    w_comm: usize,
+    s_evals: usize,
+    coefficients: usize,
+    t_comm: usize,
+    idx_chunk_size: usize,
+    idx_ipa_rounds: usize,
+    proof_ipa_rounds: usize,
+) -> Result<MinaWrapShapeVerdict, String> {
+    let wire = mina_wrap_shape_wire(
+        idx_prev_challenges,
+        proof_prev_challenges,
+        proof_prev_challenge_vectors,
+        idx_public_len,
+        w_comm,
+        s_evals,
+        coefficients,
+        t_comm,
+        idx_chunk_size,
+        idx_ipa_rounds,
+        proof_ipa_rounds,
+    );
+    let out = shadow_mina_wrap_shape_ok(&wire)?;
+    Ok(if out == "1" {
+        MinaWrapShapeVerdict::Accept
+    } else {
+        MinaWrapShapeVerdict::Reject
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_wrap_shape_ok_present))]
+mod ffi_mina_wrap_shape {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_wrap_shape_ok_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_wrap_shape_ok_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_wrap_shape_ok(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_wrap_shape_ok_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_wrap_shape_ok_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_wrap_shape_ok_present)))]
+mod ffi_mina_wrap_shape {
+    pub fn mina_wrap_shape_ok_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_wrap_shape_ok(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_wrap_shape_ok not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -775,6 +1104,73 @@ mod tests {
         if !eth_lc_verify_available() {
             assert!(verified_eth_lc_verify(512, 512, 512, true, 6, true, 4, true).is_err());
         }
+        // Same posture for the TRUST-ROOT gate: no export ⇒ no rotation verdict ⇒ the light
+        // client's trusted sync committee cannot advance at all.
+        if !eth_committee_rotation_available() {
+            assert!(verified_eth_committee_rotation(6, true).is_err());
+        }
+    }
+
+    #[test]
+    fn committee_rotation_wire_grammar_matches_lean_decodeCommitteeWire() {
+        // The exact wires `LightClientEthGate`'s rotation `#guard`s use.
+        assert_eq!(eth_committee_rotation_wire(5, true), "nl=5;nr=1");
+        assert_eq!(eth_committee_rotation_wire(6, true), "nl=6;nr=1");
+        assert_eq!(eth_committee_rotation_wire(7, false), "nl=7;nr=0");
+    }
+
+    /// The TRUST-ROOT gate discriminates through the real C shim + Lean archive. An always-accept
+    /// rotation gate (the pre-gate Rust twin's failure mode — install any committee) fails the
+    /// negative arms; an always-reject / always-`"ERR"` one fails the positive arms.
+    #[test]
+    fn committee_rotation_gate_discriminates_through_the_real_ffi() {
+        if !crate::demand_lean(
+            eth_committee_rotation_available(),
+            "dregg_eth_committee_rotation ETH committee-rotation (trust-root) gate",
+        ) {
+            return;
+        }
+        // ACCEPT — both fork depths, branch reconstructing.
+        assert_eq!(
+            verified_eth_committee_rotation(5, true),
+            Ok(EthCommitteeRotationVerdict::Rotate),
+            "an Altair..Deneb depth-5 rotation that reconstructs must ROTATE"
+        );
+        assert_eq!(
+            verified_eth_committee_rotation(6, true),
+            Ok(EthCommitteeRotationVerdict::Rotate)
+        );
+        // REJECT — the branch does not reconstruct (a committee the state does not commit).
+        assert_eq!(
+            verified_eth_committee_rotation(6, false),
+            Ok(EthCommitteeRotationVerdict::Refuse)
+        );
+        // REJECT — inadmissible depths, including 7, which the OTHER gate's finality conjunct
+        // accepts. Two gates, two rules; the rotation path must not inherit the wrong one.
+        for depth in [0usize, 1, 4, 7, 8] {
+            assert_eq!(
+                verified_eth_committee_rotation(depth, true),
+                Ok(EthCommitteeRotationVerdict::Refuse),
+                "depth {depth} must not be an admissible committee-rotation depth"
+            );
+        }
+        // NON-CONSTANCY, stated as such: two wires one field apart get different verdicts.
+        assert_ne!(
+            verified_eth_committee_rotation(6, true),
+            verified_eth_committee_rotation(7, true),
+            "the rotation gate returned the SAME verdict across the depth boundary — it is a \
+             constant, not a gate"
+        );
+        // Fail-closed on a malformed wire, and on the OTHER gate's wire.
+        assert_eq!(
+            shadow_eth_committee_rotation("garbage").as_deref(),
+            Ok("ERR")
+        );
+        assert_eq!(
+            shadow_eth_committee_rotation("cl=512;bl=512;pc=512;bls=1;fl=6;fr=1;el=4;er=1")
+                .as_deref(),
+            Ok("ERR")
+        );
     }
 
     // ========================================================================

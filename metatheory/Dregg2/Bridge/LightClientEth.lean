@@ -220,6 +220,27 @@ theorem executionPayloadSubtreeIndex_correct :
     executionPayloadSubtreeIndex = executionPayloadGindex % 2 ^ executionPayloadDepth := by
   decide
 
+/-- `NEXT_SYNC_COMMITTEE_GINDEX = 55` (Altair..Deneb, `lib.rs:66-68`). -/
+def nextSyncCommitteeGindex : Nat := 55
+/-- Altair..Deneb committee-rotation branch depth `floor(log2 55) = 5` (`lib.rs:69-70`). -/
+def nextSyncCommitteeDepth : Nat := 5
+/-- `NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA = 87` (`lib.rs:71-73`). -/
+def nextSyncCommitteeGindexElectra : Nat := 87
+/-- Electra+ committee-rotation branch depth `floor(log2 87) = 6` (`lib.rs:74-75`). -/
+def nextSyncCommitteeDepthElectra : Nat := 6
+/-- Committee-rotation SUBTREE index — 23 in BOTH fork families (`lib.rs:76-81`). -/
+def nextSyncCommitteeSubtreeIndex : Nat := 23
+
+/-- The committee-rotation subtree index really is `gindex mod 2^depth` in both fork
+families. ⚠ The Rust states this as a `debug_assert_eq!` (`lib.rs:548-551`) — which is
+COMPILED OUT of every release build, so in the shipped binary it asserts nothing. Here it
+is a kernel-checked theorem. -/
+theorem nextSyncCommitteeSubtreeIndex_correct :
+    nextSyncCommitteeSubtreeIndex = nextSyncCommitteeGindex % 2 ^ nextSyncCommitteeDepth
+    ∧ nextSyncCommitteeSubtreeIndex
+        = nextSyncCommitteeGindexElectra % 2 ^ nextSyncCommitteeDepthElectra := by
+  decide
+
 /-- **The no-rounding-trap boundary** (`lib.rs:301-303`): 342 participants meet the
 multiply-form 2/3 threshold, 341 do not. `342 = ⌈2·512/3⌉` exactly. -/
 theorem quorum_boundary :
@@ -395,6 +416,36 @@ def verifyFinalizedUpdate (L : EthLeaf) (ts : EthState L) (u : LightClientUpdate
   && verifyExecutionPayload L u.finalizedHeader.execution
       u.finalizedHeader.executionBranch u.finalizedHeader.beacon.bodyRoot
 
+/-- **RULE 4 — the COMMITTEE-ROTATION branch** (`verify_committee_update`,
+`lib.rs:534-563`): the branch depth is 5 (Altair..Deneb, `NEXT_SYNC_COMMITTEE_GINDEX = 55`)
+or 6 (Electra+, gindex 87) — any other length fail-closed — and the branch reconstructs the
+offered committee's SSZ `hash_tree_root` into the trusted/attested `state_root` at subtree
+index 23.
+
+**This is a SEPARATE decision from `verifyFinalizedUpdate`, deliberately.** A finalized
+update advances the client's view of the CHAIN; a committee rotation advances the client's
+TRUST ROOT — the set of keys every future update is checked against. `WeakSubjectivityStore`
+reaches it on two paths: `bootstrap_committee` (under the governance-pinned checkpoint state
+root, with no prior committee to sign anything) and `advance` step 3 (under the state root a
+`verifyFinalizedUpdate` just accepted). Folding it into `verifyFinalizedUpdate` would make
+the bootstrap path unreachable and would break `ethVerifyDecision_refines`; it gets its own
+export instead.
+
+⚠ **NAMED RESIDUAL — the committee root is a PROJECTION, not a modelled term.**
+`committeeRoot` is taken as an opaque `L.Digest`: the SSZ `hash_tree_root` of the 512-key
+`SyncCommittee` container (`merkleize([merkleize(map htr_bytes48 pubkeys), htr_bytes48 agg)])`,
+`lib.rs:170-175`) is computed in Rust and supplied. This is ONE level weaker than
+`verifyFinalityBranch` / `verifyExecutionPayload`, whose leaves are modelled here
+(`htrHeader` / `htrExec`) — so the "the offered committee really is the one those bytes
+hash to" step is a Rust projection on this path, exactly as the participant popcount is on
+the sync path. What IS decided here, and what the Rust no longer decides, is the branch-DEPTH
+admissibility and the reconstruction compare. -/
+def verifyCommitteeRotation (L : EthLeaf) (committeeRoot : L.Digest)
+    (branch : List L.Digest) (attestedStateRoot : L.Digest) : Bool :=
+  (decide (branch.length = nextSyncCommitteeDepth)
+    || decide (branch.length = nextSyncCommitteeDepthElectra))
+  && L.beq (reconstruct L committeeRoot branch nextSyncCommitteeSubtreeIndex) attestedStateRoot
+
 /-- The empty / default / uninitialized update — the Nomad-law fail-closed probe: zeroed
 headers, NO participation bits, NO branches, the zero signature. -/
 def emptyHeader (L : EthLeaf) : BeaconBlockHeader L :=
@@ -536,6 +587,39 @@ theorem finalized_header_binding (L : EthLeaf) (hcr : L.hashPairCR) (hinj : L.uC
   have e₂ := L.beq_iff.mp h₂.2
   exact htrHeader_inj L hcr hinj f₁ f₂
     (reconstruct_binding L hcr b₁ b₂ finalizedRootSubtreeIndex _ _ hlen (e₁.trans e₂.symm))
+
+/-- **THE TRUST ROOT DOES NOT FORK, GIVEN the CR carrier.** Two committee-rotation branches
+of the same depth accepted against the SAME trusted/attested state root carry the SAME
+committee root: one state commits ONE `next_sync_committee`. This is the crypto content of
+`UnchainedCommittee` fail-closure and the reason a rotation may advance the trust anchor at
+all — an attacker holding a genuine state root cannot open it to a second, forged committee.
+(For the collapsing hash the conclusion is FALSE — `collapse_committee_rotation_not_binding`
+— so `hcr` is exactly the hypothesis separating commitment from equivocation here too.) -/
+theorem committee_rotation_binding (L : EthLeaf) (hcr : L.hashPairCR)
+    (cr₁ cr₂ : L.Digest) (b₁ b₂ : List L.Digest) (root : L.Digest)
+    (h₁ : verifyCommitteeRotation L cr₁ b₁ root = true)
+    (h₂ : verifyCommitteeRotation L cr₂ b₂ root = true)
+    (hlen : b₁.length = b₂.length) : cr₁ = cr₂ := by
+  unfold verifyCommitteeRotation at h₁ h₂
+  simp only [Bool.and_eq_true] at h₁ h₂
+  have e₁ := L.beq_iff.mp h₁.2
+  have e₂ := L.beq_iff.mp h₂.2
+  exact reconstruct_binding L hcr b₁ b₂ nextSyncCommitteeSubtreeIndex _ _ hlen
+    (e₁.trans e₂.symm)
+
+/-- **COMMITTEE ROTATION FAILS CLOSED — UNCONDITIONAL.** A missing / empty rotation branch
+is refused under EVERY leaf, EVERY committee root and EVERY state root, with NO crypto
+hypothesis: depth 0 is neither 5 nor 6. The bootstrap path (no prior committee has signed
+anything) is exactly where a permissive default would install an attacker's committee as the
+trust anchor, so this leg must hold even for a broken hash. -/
+theorem committee_rotation_fail_closed (L : EthLeaf) (cr root : L.Digest) :
+    verifyCommitteeRotation L cr [] root = false := by
+  rw [Bool.eq_false_iff]
+  intro htrue
+  unfold verifyCommitteeRotation at htrue
+  simp only [Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq] at htrue
+  obtain ⟨hdepth, _⟩ := htrue
+  simp [nextSyncCommitteeDepth, nextSyncCommitteeDepthElectra] at hdepth
 
 /-! ## §8 — THE THREE OBLIGATIONS: NoForgery, FailClosed (both generic over ANY leaf),
 NonVacuous (per-instance; discharged on `modelLeaf` in §9). -/
@@ -749,6 +833,20 @@ theorem collapse_finality_not_binding :
   intro h
   exact absurd (congrArg BeaconBlockHeader.slot h) (by decide)
 
+/-- **The TRUST ROOT forks under the collapse (what the carrier buys on the rotation path).**
+Two DIFFERENT committee roots reconstruct the SAME state root through a same-depth rotation
+branch, so `committee_rotation_binding`'s conclusion is FALSE for the collapsing leaf: with
+a broken SHA-256 an attacker opens one honest attested state root to a second committee and
+takes the trust anchor. The CR carrier is precisely what forbids that. -/
+theorem collapse_committee_rotation_not_binding :
+    ∃ (cr₁ cr₂ : ModelDigest) (b : List ModelDigest),
+      cr₁ ≠ cr₂
+      ∧ b.length = nextSyncCommitteeDepth
+      ∧ reconstruct collapseEthLeaf cr₁ b nextSyncCommitteeSubtreeIndex
+        = reconstruct collapseEthLeaf cr₂ b nextSyncCommitteeSubtreeIndex :=
+  ⟨.chunk 0, .chunk 1, List.replicate nextSyncCommitteeDepth (.chunk 0), by decide, by decide,
+    by decide⟩
+
 /-! ### Concrete witnesses: a genuine 512-committee state and a self-consistent update
 (branches built with the constructive inverse of `is_valid_merkle_branch`, exactly like
 the Rust KATs use `compute_branch_root`, `execution.rs:128-140`). -/
@@ -947,7 +1045,40 @@ theorem eth_adapter_rejects_empty :
     ¬ modelAdapter.foreignFinal (emptyUpdate modelLeaf) :=
   toAdapter_rejects_empty modelEthClient modelState modelIncl
 
+/-! ### The COMMITTEE-ROTATION witnesses (RULE 4) — the TRUST-ROOT advance, both polarities. -/
+
+/-- A concrete `next_sync_committee` SSZ root. (Modelled as the opaque digest it is — see
+the named residual on `verifyCommitteeRotation`.) -/
+def modelCommitteeRoot : ModelDigest := ModelDigest.chunk 55
+/-- A depth-5 (Altair..Deneb) committee-rotation branch. -/
+def modelRotationBranch : List ModelDigest :=
+  List.replicate nextSyncCommitteeDepth (ModelDigest.chunk 4)
+/-- The trusted/attested beacon state root that branch reconstructs into — built with the
+constructive inverse of `is_valid_merkle_branch`, exactly like the Rust KATs. -/
+def modelRotationStateRoot : ModelDigest :=
+  reconstruct modelLeaf modelCommitteeRoot modelRotationBranch nextSyncCommitteeSubtreeIndex
+
+/-- **RULE 4 DISCRIMINATES**, kernel-checked, in all four directions: the genuine rotation
+is ACCEPTED; a DIFFERENT committee root under the same branch and state root is REFUSED
+(the trust-root forgery); a MISSING branch is REFUSED (the bootstrap permissive-default
+trap); and an inadmissible depth is REFUSED. A constant rotation gate fails this. -/
+theorem committee_rotation_discriminates :
+    verifyCommitteeRotation modelLeaf modelCommitteeRoot modelRotationBranch
+        modelRotationStateRoot = true
+    ∧ verifyCommitteeRotation modelLeaf (ModelDigest.chunk 56) modelRotationBranch
+        modelRotationStateRoot = false
+    ∧ verifyCommitteeRotation modelLeaf modelCommitteeRoot [] modelRotationStateRoot = false
+    ∧ verifyCommitteeRotation modelLeaf modelCommitteeRoot
+        (List.replicate 7 (ModelDigest.chunk 4)) modelRotationStateRoot = false := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
 /-! ### It runs (`#guard`): the gate discriminates on concrete data. -/
+
+#guard verifyCommitteeRotation modelLeaf modelCommitteeRoot modelRotationBranch
+  modelRotationStateRoot == true
+#guard verifyCommitteeRotation modelLeaf (ModelDigest.chunk 56) modelRotationBranch
+  modelRotationStateRoot == false
+#guard verifyCommitteeRotation modelLeaf modelCommitteeRoot [] modelRotationStateRoot == false
 
 #guard verifyFinalizedUpdate modelLeaf modelState goodUpdate == true
 #guard verifyFinalizedUpdate modelLeaf modelState quorum342Update == true
@@ -970,6 +1101,7 @@ not `True` in disguise. -/
 
 #assert_axioms finalizedRootSubtreeIndex_correct
 #assert_axioms executionPayloadSubtreeIndex_correct
+#assert_axioms nextSyncCommitteeSubtreeIndex_correct
 #assert_axioms quorum_boundary
 #assert_axioms mem_participants
 #assert_axioms EthLeaf.pair_inj
@@ -977,6 +1109,10 @@ not `True` in disguise. -/
 #assert_axioms reconstruct_binding
 #assert_axioms htrHeader_inj
 #assert_axioms finalized_header_binding
+#assert_axioms committee_rotation_binding
+#assert_axioms committee_rotation_fail_closed
+#assert_axioms committee_rotation_discriminates
+#assert_axioms collapse_committee_rotation_not_binding
 #assert_axioms eth_no_forgery
 #assert_axioms eth_fail_closed
 #assert_axioms toAdapter_foreignFinal_eth

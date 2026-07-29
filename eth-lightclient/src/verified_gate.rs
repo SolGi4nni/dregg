@@ -64,7 +64,9 @@
 
 use crate::Error;
 use dregg_lean_ffi::{
-    eth_lc_verify_wire, shadow_eth_lc_verify, verified_eth_lc_verify, EthLcVerdict,
+    eth_committee_rotation_wire, eth_lc_verify_wire, shadow_eth_committee_rotation,
+    shadow_eth_lc_verify, verified_eth_committee_rotation, verified_eth_lc_verify,
+    EthCommitteeRotationVerdict, EthLcVerdict,
 };
 
 /// The eight scalar/boolean projections `LightClientEthGate.ethProjectedDecision` is stated
@@ -285,6 +287,104 @@ pub fn gate(p: &EthProjections, bls_err: Option<Error>) -> Result<(), Error> {
         Ok(())
     } else {
         Err(refusal_reason(p, bls_err))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The COMMITTEE-ROTATION gate — the TRUST-ROOT decision
+// ---------------------------------------------------------------------------
+//
+// `dregg_eth_lc_verify` decides whether the client may follow the CHAIN. It says nothing about
+// whether the client may change WHOSE SIGNATURES IT TRUSTS, and until now nothing did:
+// [`crate::verify_committee_update`] was a hand-written Rust rule — branch depth ∈ {5, 6} `&&` a
+// SHA-256 fold — and it is what [`crate::store::WeakSubjectivityStore::bootstrap_committee`] and
+// `advance` call to install the 512 keys every subsequent update is checked against. The verify
+// gate was honest and there was a DOOR BESIDE IT: the most trust-bearing decision in the crate
+// went through the one path with no archive on it.
+//
+// That rule is now `LightClientEthGate.committeeRotationDecision`, reached through
+// `@[export] dregg_eth_committee_rotation`. `committeeRotationDecision_refines` proves (by `rfl`)
+// the exported decision IS `LightClientEth.verifyCommitteeRotation`; `committeeRotationDecision_binding`
+// proves the payoff — given the named SHA-256 CR carrier, ONE beacon state root commits ONE next
+// committee, so an accepted rotation cannot fork the trust anchor — and
+// `committee_rotation_fail_closed` pins that a missing branch is refused unconditionally, with no
+// crypto hypothesis at all (the bootstrap path is exactly where a permissive default installs an
+// attacker's committee).
+//
+// **There is no Rust constant left in the rotation path.** The depth admissibility is NOT
+// re-encoded here as a short-circuit: the branch length and the fold RESULT go on the wire and the
+// archive decides. (`NEXT_SYNC_COMMITTEE_DEPTH` / `_ELECTRA` survive in `lib.rs` as documentation
+// and test vectors — they no longer gate anything.) Fail-closed on a missing archive, exactly like
+// the verify gate: [`Error::VerifiedGateUnavailable`], never a silent install.
+
+/// Whether the verified COMMITTEE-ROTATION gate is reachable. Probed INDEPENDENTLY of
+/// [`available`]: an archive built before `dregg_eth_committee_rotation` existed exports the verify
+/// gate and not this one, and conflating them would advertise a trust-root gate that cannot render
+/// a verdict.
+pub fn committee_rotation_available() -> bool {
+    dregg_lean_ffi::eth_committee_rotation_available()
+}
+
+/// The exact bytes handed to `dregg_eth_committee_rotation` (`decodeCommitteeWire`'s grammar).
+/// Exposed so a test can pin the raw archive verdict beside the entry point's.
+pub fn committee_rotation_wire(branch_len: usize, reconstructs: bool) -> String {
+    eth_committee_rotation_wire(branch_len, reconstructs)
+}
+
+/// Hand the rotation projections — the supplied branch's LENGTH and the SHA-256 fold RESULT — to
+/// the VERIFIED gate and return its verdict. `Err(VerifiedGateUnavailable)` means the archive did
+/// not export the decision; the caller must refuse, and [`crate::verify_committee_update`] does.
+pub fn committee_rotation_decide(branch_len: usize, reconstructs: bool) -> Result<bool, Error> {
+    match verified_eth_committee_rotation(branch_len, reconstructs) {
+        Ok(EthCommitteeRotationVerdict::Rotate) => Ok(true),
+        Ok(EthCommitteeRotationVerdict::Refuse) => Ok(false),
+        Err(why) => Err(Error::VerifiedGateUnavailable(why)),
+    }
+}
+
+/// Run the rotation gate over an ARBITRARY wire and return the archive's raw output
+/// (`"1"` / `"0"` / `"ERR"`). Exposed so a test can pin the fail-closed `"ERR"` on a malformed or
+/// FOREIGN wire — the grammar-drift canary. `Err` only when the archive lacks the export.
+pub fn committee_rotation_shadow(wire: &str) -> Result<String, Error> {
+    shadow_eth_committee_rotation(wire).map_err(Error::VerifiedGateUnavailable)
+}
+
+/// The archive's RAW answer for these rotation projections: `"1"` / `"0"` / `"ERR"`, exactly as
+/// `dregg_eth_committee_rotation` emits it — so a test can read the Lean verdict itself rather than
+/// this crate's rendering of it.
+pub fn committee_rotation_raw(branch_len: usize, reconstructs: bool) -> Result<String, Error> {
+    committee_rotation_shadow(&committee_rotation_wire(branch_len, reconstructs))
+}
+
+/// Attach a reason to a rotation refusal the VERIFIED gate has **already rendered**. Diagnostics,
+/// not a decision: it is called on exactly one code path (after [`committee_rotation_decide`]
+/// returned `Ok(false)`) and every arm returns an `Error`.
+fn committee_rotation_refusal_reason(branch_len: usize, reconstructs: bool) -> Error {
+    if branch_len != crate::NEXT_SYNC_COMMITTEE_DEPTH
+        && branch_len != crate::NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA
+    {
+        return Error::WrongBranchLength {
+            got: branch_len,
+            expected: crate::NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA,
+        };
+    }
+    if !reconstructs {
+        return Error::BadMerkleBranch;
+    }
+    // The gate refused for a reason this classifier does not model — it has drifted from the gate,
+    // and the REFUSAL still stands. Carry the wire so the divergence is reproducible.
+    Error::VerifiedGateRefused {
+        wire: committee_rotation_wire(branch_len, reconstructs),
+    }
+}
+
+/// Run the verified ROTATION gate and map the outcome to this crate's fail-closed `Result`. The
+/// single place a committee rotation is turned into `Ok`/`Err`.
+pub fn committee_rotation_gate(branch_len: usize, reconstructs: bool) -> Result<(), Error> {
+    if committee_rotation_decide(branch_len, reconstructs)? {
+        Ok(())
+    } else {
+        Err(committee_rotation_refusal_reason(branch_len, reconstructs))
     }
 }
 

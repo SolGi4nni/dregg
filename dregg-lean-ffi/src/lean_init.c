@@ -488,6 +488,18 @@ extern lean_object *dregg_deleg_admit(lean_object *input);
 #ifdef DREGG_ETH_LC_VERIFY
 extern lean_object *dregg_eth_lc_verify(lean_object *input);
 #endif
+/* dregg_eth_committee_rotation — the SECOND Ethereum gate, from the SAME module
+ * (`Dregg2.Bridge.LightClientEthGate.ethCommitteeRotationGate`). Input `"nl=<Nat>;nr=<BIT>"`
+ * (next_sync_committee branch depth + the SHA-256 reconstruction result). Runs the PROVED
+ * `committeeRotationDecision` — the branch-DEPTH admissibility (5 Altair..Deneb | 6 Electra+,
+ * subtree index 23 in both) composed with the reconstruction — which
+ * `committeeRotationDecision_refines` proves is DEFINITIONALLY `verifyCommitteeRotation`.
+ * This is the decision that advances the light client's TRUSTED SYNC COMMITTEE, i.e. its
+ * trust ROOT, on both `WeakSubjectivityStore::bootstrap_committee` and `advance`. Absent ⇒
+ * `eth-lightclient::verify_committee_update` refuses; there is no Rust twin left. */
+#ifdef DREGG_ETH_COMMITTEE_ROTATION
+extern lean_object *dregg_eth_committee_rotation(lean_object *input);
+#endif
 #ifdef DREGG_TM_LC_VERIFY
 extern lean_object *dregg_tm_lc_verify(lean_object *input);
 #endif
@@ -506,6 +518,17 @@ extern lean_object *dregg_mpt_lc_verify(lean_object *input);
  * gates above. */
 #ifdef DREGG_MINA_LC_VERIFY
 extern lean_object *dregg_mina_lc_verify(lean_object *input);
+#endif
+/* dregg_mina_wrap_shape_ok — the PER-BLOCK Pickles Wrap-proof PREAMBLE decision
+ * (`minaWrapShapeGate`, `Dregg2.Bridge.PicklesWrapShapeGate`), which is
+ * `KimchiVerify.shapeOkRec` (the `verifier.rs:810-830` length asserts) plus the two length
+ * agreements a RECURSIVE Wrap proof owes. This is what retired the Mina observer's
+ * `NEUTRAL_PICKLES_OK` constant: the observer now decodes each block's `protocolStateProof`
+ * (a CODEC, `bridge/src/mina_pickles.rs`) and the ARCHIVE renders the `pk` bit that used to be
+ * a compile-time `true`. Same `"1"`/`"0"`/`"ERR"` fail-closed contract and the same
+ * no-module-initializer property as the gates above. */
+#ifdef DREGG_MINA_WRAP_SHAPE_OK
+extern lean_object *dregg_mina_wrap_shape_ok(lean_object *input);
 #endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
@@ -1098,6 +1121,31 @@ size_t dregg_eth_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) {
 }
 #endif
 
+#ifdef DREGG_ETH_COMMITTEE_ROTATION
+/* dregg_eth_committee_rotation_str — the C string bridge over the VERIFIED Lean
+ * `String -> String` ETHEREUM COMMITTEE-ROTATION gate
+ * (`Dregg2.Bridge.LightClientEthGate.dregg_eth_committee_rotation`). Input `"nl=<Nat>;nr=<BIT>"`.
+ * Output: `"1"` (ACCEPT — rotate) / `"0"` (REJECT) / `"ERR"` (malformed wire — the caller treats
+ * it as REJECT). Runs the PROVED `committeeRotationDecision`; by
+ * `committeeRotationDecision_binding` an ACCEPT under a given beacon state root pins a UNIQUE
+ * next committee (given the named SHA-256 CR carrier), which is what makes advancing the trust
+ * anchor safe. Same return contract as the bridges above. */
+size_t dregg_eth_committee_rotation_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_eth_committee_rotation(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
 #ifdef DREGG_TM_LC_VERIFY
 /* dregg_tm_lc_verify_str — the C string bridge over the VERIFIED Lean `String -> String`
  * TENDERMINT/COSMOS light-client verify-logic gate
@@ -1166,6 +1214,34 @@ size_t dregg_mina_lc_verify_str(const char *in_utf8, char *out, size_t out_cap) 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_lc_verify(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_WRAP_SHAPE_OK
+/* dregg_mina_wrap_shape_ok_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * per-block Pickles Wrap-proof preamble gate
+ * (`Dregg2.Bridge.PicklesWrapShapeGate.dregg_mina_wrap_shape_ok`). Input:
+ * `"ip=<Nat>;pc=<Nat>;pv=<Nat>;pl=<Nat>;w=<Nat>;s=<Nat>;cf=<Nat>;tc=<Nat>;ck=<Nat>;ir=<Nat>;pr=<Nat>"`
+ * — four PINNED verifier-index counts (`ip`,`pl`,`ck`,`ir`) and seven read out of the block's own
+ * proof by the Rust decoder. Output: `"1"` / `"0"` / `"ERR"` (fail-closed). Runs
+ * `picklesWrapShapeOk`, which `picklesWrapShapeOk_is_shapeOkRec` proves is DEFINITIONALLY
+ * `shapeOkRec` conjoined with the accumulator-count and IPA-round agreements, and which
+ * `real_block_wrap_shape_accepts` / `real_block_wrap_shape_refused_by_freeze` pin on the REAL
+ * devnet block 539508 — accepted at `prev_challenges = 2`, refused by the retired `prevLen = 0`
+ * freeze. Same return contract as the bridges above. */
+size_t dregg_mina_wrap_shape_ok_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_wrap_shape_ok(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

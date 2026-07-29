@@ -1,5 +1,62 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 28 — THE ETH LIGHT CLIENT'S TRUST ROOT ADVANCED THROUGH A DOOR BESIDE THE GATE. CLOSED, in Lean
+
+**The gate itself was clean.** A lane integrating Mina audited `eth-lightclient`'s verified-gate path
+end to end for the fail-open class — a verified gate that, ABSENT, logs and proceeds. It does not:
+zero `unwrap_or` / `.ok()` / log-and-continue on the gate result anywhere in the crate, the FFI or
+any caller; the absent-symbol stub returns `Err`; no weak linkage, no `dlsym`, not feature-gated off.
+
+**It found three ways to reach the guarded state without passing the gate at all**, which is the same
+wound one level over.
+
+1. **`verify_committee_update` was an UN-GATED RUST TWIN** — `branch.len() ∈ {5,6}` `&&` a SHA-256
+   fold — and it is what `store::bootstrap_committee` calls to INSTALL the trusted sync committee,
+   the 512 keys every future update is checked against. The most trust-bearing decision in the crate
+   went through the one path that never asked Lean anything. **Now Lean's**:
+   `LightClientEthGate.committeeRotationDecision` + `@[export] dregg_eth_committee_rotation`, with
+   `committeeRotationDecision_refines` (`rfl`), `committeeRotationDecision_binding` (given the
+   SHA-256 CR carrier, one beacon state root commits ONE next committee — the trust anchor cannot be
+   forked), `committee_rotation_fail_closed` (a missing branch is refused with NO crypto hypothesis)
+   and `collapse_committee_rotation_not_binding` (the same conclusion is FALSE for the collapsing
+   leaf, so the carrier discriminates). Lean also PROVES `nextSyncCommitteeSubtreeIndex_correct`,
+   which the Rust asserted with a `debug_assert_eq!` — compiled out of every release build.
+   **There is no Rust constant left in the rotation path**: no depth short-circuit, the length and
+   the fold RESULT go on the wire, the archive decides. Absent archive ⇒ the committee does not
+   advance (`StoreError::RotationGateUnavailable`, deliberately distinct from `UnchainedCommittee`).
+2. **`ProvenErc20Holding.trust` was a `pub` field.** Any crate could write
+   `ProvenErc20Holding { trust: ConsensusProven, .. }` by struct literal, bypassing
+   `dregg_mpt_lc_verify` AND the whole finality path, and convert it straight into
+   `consensus_proven: true` governance weight. Latent — only tests constructed it. Sealed like
+   `FinalizedExecution`: private fields, six accessors, a loud `new_unchecked`, and the
+   `StructureOnly → ConsensusProven` promotion is `pub(crate)`, reachable only from the three sites
+   that HOLD the light-client evidence.
+3. **Three public MPT primitives were `Result<(), MptProofInvalid>`.** Nothing unsound, but the SHAPE
+   lied: `verify_evm_account_proof(..)?; verify_evm_storage_slot(..)?;` was a shorter, `?`-chainable
+   spelling of a proof chain that looks gated and never touches the MPT gate. They are now
+   `bool`-returning carriers named like the crate's others (`*_reconstructs`), each documenting what
+   it does NOT establish. `MptProofInvalid` is no longer public.
+
+**Falsifiers, all of which fail against the pre-fix tree.** `tests/committee_rotation_gate.rs` (7
+tests) does not COMPILE pre-fix — the rotation gate did not exist — and its mutation canary pins,
+case by case over the depth × reconstruction grid, that the entry point's `Ok`/`Err` IS the
+archive's raw `"1"`/`"0"`. Eight `compile_fail` doctests COMPILED pre-fix and therefore FAILED:
+five for the sealed fields, three for the `?`-chain. Plus
+`committee_rotation_gate_discriminates_through_the_real_ffi` at the bridge.
+
+**Flag day.** `ProvenErc20Holding`'s fields are private — every external reader is now an accessor
+call; `verify_evm_{account_proof,storage_slot,storage_slot_absent}` are renamed and return `bool`;
+`StoreError` grew `RotationGateUnavailable`. Nothing persisted or on the wire changes. **An archive
+predating `dregg_eth_committee_rotation` now refuses every committee rotation** — the symbol is on
+`REQUIRED_DECISION_EXPORTS`, so a strict build fails rather than degrading quietly. Re-splice
+`libdregg_lean.a` (an ordinary `cargo build` does it).
+
+**Two findings NOT repaired, reported.** `dregg_tm_lc_verify` has NO caller outside `dregg-lean-ffi`
+— `cosmos-lightclient` does not depend on it at all, so the Cosmos light client is UN-ROUTED, not
+gated. And `verifyCommitteeRotation` takes the committee's SSZ root as an opaque digest: the leaf
+`hash_tree_root` is a Rust PROJECTION, one level weaker than `htrHeader`/`htrExec`, named as such in
+the Lean docstring rather than glossed.
+
 ## ⚑⚑⚑ JULY 28 — THE WHOLE-IMAGE FOLD CHIP REALIZED A HYPOTHESIS IT PROVABLY DOES NOT. REPAIRED, with a tooth; ONE TWIN LEFT OPEN
 
 **The claim.** `circuit/src/whole_image_fold.rs` presented itself as the in-circuit realization of

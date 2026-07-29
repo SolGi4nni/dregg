@@ -86,11 +86,11 @@ fn real_weth_holding_accepts() {
     )
     .expect("real mainnet WETH EIP-1186 proof must verify");
 
-    assert_eq!(proven.balance, u256(weth::EXPECTED_BALANCE_HEX));
-    assert_eq!(proven.token, h20(weth::TOKEN));
-    assert_eq!(proven.holder, h20(weth::HOLDER));
-    assert_eq!(proven.state_root, h32(weth::STATE_ROOT));
-    assert_eq!(proven.block_number, weth::BLOCK_NUMBER);
+    assert_eq!(proven.balance(), u256(weth::EXPECTED_BALANCE_HEX));
+    assert_eq!(proven.token(), h20(weth::TOKEN));
+    assert_eq!(proven.holder(), h20(weth::HOLDER));
+    assert_eq!(proven.state_root(), h32(weth::STATE_ROOT));
+    assert_eq!(proven.block_number(), weth::BLOCK_NUMBER);
 }
 
 /// The computed slot key must equal the key `eth_getProof` was actually queried with —

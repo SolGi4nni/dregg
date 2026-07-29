@@ -38,6 +38,13 @@
 //! [`verified_gate`]. This crate computes the crypto PRIMITIVES (`blst` aggregate verify and
 //! the SHA-256 SSZ reconstructions) and hands their RESULTS to the archive. It no longer
 //! carries a Rust re-authoring of the rules, and it FAILS CLOSED when the archive is absent.
+//!
+//! **TWO gates, because there are two kinds of advance.** `dregg_eth_lc_verify` decides whether
+//! the client may follow the CHAIN. `@[export] dregg_eth_committee_rotation` decides whether it
+//! may change WHOSE SIGNATURES IT TRUSTS — the committee-rotation branch,
+//! [`verify_committee_update`]. The second one was the last hand-written Rust rule in this crate
+//! and the only path that mutated the trust root without an archive; it is Lean's now, and it
+//! fails closed the same way. See [`verified_gate`]'s committee-rotation section.
 
 pub mod ssz;
 
@@ -67,11 +74,19 @@ pub const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 /// (`NEXT_SYNC_COMMITTEE_GINDEX = 55`).
 pub const NEXT_SYNC_COMMITTEE_GINDEX: u64 = 55;
 /// Merkle-branch depth for `next_sync_committee` in Altair..Deneb = `floor(log2(55)) = 5`.
+///
+/// ⚠ **This is documentation and a test vector, NOT the admissibility rule.** Which branch
+/// depths a rotation may carry is decided by `LightClientEthGate.committeeRotationDecision`
+/// (`nextSyncCommitteeDepth` / `nextSyncCommitteeDepthElectra`), reached through
+/// [`verified_gate::committee_rotation_gate`]. [`verify_committee_update`] never compares against
+/// the constants below; the only other use is the non-authoritative refusal diagnostic, which runs
+/// after the archive has already refused. A drift between these and Lean's changes no verdict.
 pub const NEXT_SYNC_COMMITTEE_DEPTH: usize = 5;
 /// `NEXT_SYNC_COMMITTEE_GINDEX` in Electra+ (the deepened `BeaconState`): 87
 /// (consensus-specs `NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA`).
 pub const NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA: u64 = 87;
 /// Merkle-branch depth for the Electra+ `next_sync_committee` = `floor(log2(87)) = 6`.
+/// Documentation / diagnostic only — see [`NEXT_SYNC_COMMITTEE_DEPTH`].
 pub const NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA: usize = 6;
 /// Subtree index used by `is_valid_merkle_branch` = `55 % 2^5 = 87 % 2^6 = 23`.
 /// Identical across the fork boundary (the committee keeps the same left/right walk,
@@ -520,44 +535,68 @@ pub fn verify_sync_aggregate(
     )
 }
 
-/// Verify the committee-rotation Merkle branch: prove `next_sync_committee`
-/// against a finalized/attested header's `state_root`, so the trusted committee
-/// can advance one sync-period. Fail-closed on a bad branch.
+/// The committee-rotation RECONSTRUCTION CARRIER: fold the offered committee's SSZ
+/// `hash_tree_root` up the supplied branch at subtree index 23 and compare against the trusted
+/// beacon state root. This is the `EthLeaf.hashPairCR` crypto primitive — it reports whether the
+/// branch reconstructs and **decides nothing** about whether the branch is an admissible depth.
 ///
-/// This models the SSZ inclusion proof at generalized index
-/// `NEXT_SYNC_COMMITTEE_GINDEX = 55` (Altair..Deneb: depth 5) or
-/// `NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA = 87` (Electra+: depth 6) — subtree index 23
-/// in BOTH, so the only observable fork difference is the branch LENGTH. Real
-/// post-Electra updates carry a 6-node branch; we accept either depth and fail
-/// closed on any other length (the same dual-depth treatment
-/// [`finality::verify_finality_branch`] gives the finalized root).
+/// Sibling of [`finality::finality_branch_reconstructs`] / [`execution::execution_branch_reconstructs`].
+pub fn committee_rotation_reconstructs(
+    next_sync_committee: &SyncCommittee,
+    next_sync_committee_branch: &[[u8; 32]],
+    attested_state_root: &[u8; 32],
+) -> bool {
+    let leaf = next_sync_committee.hash_tree_root();
+    ssz::is_valid_merkle_branch(
+        &leaf,
+        next_sync_committee_branch,
+        NEXT_SYNC_COMMITTEE_SUBTREE_INDEX,
+        attested_state_root,
+    )
+}
+
+/// Verify the committee-rotation Merkle branch — **decided by the verified Lean gate**, not by
+/// Rust. Proves `next_sync_committee` against a trusted/attested header's `state_root`, so the
+/// trusted committee can advance one sync-period.
+///
+/// # This is the TRUST-ROOT advance, and it used to be the door beside the gate
+///
+/// Every other rule in this crate went through `dregg_eth_lc_verify` after the twin deletion —
+/// except this one, the decision that installs the 512 public keys every future update is checked
+/// against. It was a hand-written Rust re-authoring (branch depth ∈ {5, 6} `&&` the SHA-256 fold),
+/// reachable from [`store::WeakSubjectivityStore::bootstrap_committee`], which MUTATES the trusted
+/// committee with no archive involved at all. It is now
+/// `LightClientEthGate.committeeRotationDecision`, exported as `dregg_eth_committee_rotation`:
+///
+///   * `committeeRotationDecision_refines` proves (by `rfl`) the exported decision IS
+///     `LightClientEth.verifyCommitteeRotation`;
+///   * `committeeRotationDecision_binding` proves the payoff — GIVEN the named SHA-256 CR carrier,
+///     one beacon state root commits ONE next committee, so an accepted rotation cannot fork the
+///     trust anchor;
+///   * `committee_rotation_fail_closed` proves a missing branch is refused unconditionally, with
+///     no crypto hypothesis at all.
+///
+/// The SSZ inclusion proof sits at generalized index `NEXT_SYNC_COMMITTEE_GINDEX = 55`
+/// (Altair..Deneb: depth 5) or `NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA = 87` (Electra+: depth 6) —
+/// subtree index 23 in BOTH, so the only observable fork difference is the branch LENGTH. **The
+/// admissibility of those lengths is Lean's, not this function's**: Rust supplies the length and
+/// the [`committee_rotation_reconstructs`] result and the archive renders the verdict. (Lean also
+/// PROVES the subtree-index invariance, `nextSyncCommitteeSubtreeIndex_correct` — the Rust said it
+/// with a `debug_assert_eq!`, which is compiled out of every release build and therefore asserted
+/// nothing in a shipped binary.)
+///
+/// Fail-closed on: an inadmissible branch depth, a branch that does not reconstruct, a tampered
+/// committee — **and on a missing archive** ([`Error::VerifiedGateUnavailable`]), in which case the
+/// trusted committee simply does not advance. There is no unverified twin to fall back to.
 pub fn verify_committee_update(
     next_sync_committee: &SyncCommittee,
     next_sync_committee_branch: &[[u8; 32]],
     attested_state_root: &[u8; 32],
 ) -> Result<(), Error> {
-    if next_sync_committee_branch.len() != NEXT_SYNC_COMMITTEE_DEPTH
-        && next_sync_committee_branch.len() != NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA
-    {
-        return Err(Error::WrongBranchLength {
-            got: next_sync_committee_branch.len(),
-            expected: NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA,
-        });
-    }
-    // Sanity: the subtree index is invariant across the fork boundary.
-    debug_assert_eq!(
-        NEXT_SYNC_COMMITTEE_GINDEX % (1 << NEXT_SYNC_COMMITTEE_DEPTH),
-        NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA % (1 << NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA)
-    );
-    let leaf = next_sync_committee.hash_tree_root();
-    if ssz::is_valid_merkle_branch(
-        &leaf,
+    let reconstructs = committee_rotation_reconstructs(
+        next_sync_committee,
         next_sync_committee_branch,
-        NEXT_SYNC_COMMITTEE_SUBTREE_INDEX,
         attested_state_root,
-    ) {
-        Ok(())
-    } else {
-        Err(Error::BadMerkleBranch)
-    }
+    );
+    verified_gate::committee_rotation_gate(next_sync_committee_branch.len(), reconstructs)
 }

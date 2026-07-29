@@ -63,8 +63,8 @@
 //! from L1 storage.
 
 use crate::evm::{
-    verify_erc20_holding, verify_evm_account_proof, verify_evm_storage_slot, AccountClaim,
-    Erc20ProofError, HoldingTrust, ProvenErc20Holding,
+    evm_account_proof_reconstructs, evm_storage_slot_reconstructs, verify_erc20_holding,
+    AccountClaim, Erc20ProofError, ProvenErc20Holding,
 };
 use crate::finality::FinalizedExecution;
 use alloy_primitives::{keccak256, U256};
@@ -197,6 +197,20 @@ pub fn compute_op_output_root_v0(
 ///
 /// Fail-closed on: `version != v0`, a zero trusted root, or any preimage field that
 /// does not recompute the trusted root.
+///
+/// # Why this one stays `pub` and `Result`-shaped (and what it does NOT establish)
+///
+/// Unlike the MPT primitives in [`crate::evm`], this is not a shorter spelling of anything
+/// gated — there is no verified output-root gate for it to bypass, and its three structured
+/// refusals (`UnsupportedOutputRootVersion` / `ZeroOutputRoot` / `OutputRootMismatch`) are what
+/// both call sites propagate. Stated precisely, an `Ok(())` here establishes exactly ONE fact:
+/// **these four fields keccak to that 32-byte root.** It does NOT establish that
+/// `trusted_output_root` is committed by L1 (that is [`verify_l1_committed_output_root`], and
+/// this function will happily bind a preimage to a root someone made up), that the L2 state is
+/// final or undisputed (that is [`crate::base_fault_proof`]), or that any balance exists. It
+/// mints nothing: [`ProvenErc20Holding`] is unforgeable by construction and cannot be reached
+/// from here. Callers wanting the composed guarantee use [`verify_base_erc20_holding`] or
+/// [`crate::base_fault_proof::verify_base_erc20_holding_fault_proof`].
 pub fn verify_op_output_root(
     version: [u8; 32],
     l2_state_root: [u8; 32],
@@ -309,7 +323,7 @@ pub struct OpOutputAnchor {
 /// bytes linger in storage) and the two `OutputProposal` element slots. Returns
 /// the [`L1CommittedOutput`] — the trusted output root plus the L2 block number it
 /// commits. This REUSES the exact EIP-1186 machinery of the ERC-20 path
-/// ([`verify_evm_account_proof`] / [`verify_evm_storage_slot`]).
+/// ([`evm_account_proof_reconstructs`] / [`evm_storage_slot_reconstructs`]).
 ///
 /// Fail-closed on: a zero claimed output root (unset slot), an account proof that
 /// does not open the oracle under the finalized L1 root, an out-of-bounds index,
@@ -326,25 +340,27 @@ pub fn verify_l1_committed_output_root(
 
     // (1) L1 ACCOUNT PROOF: finalized L1 state_root --MPT--> oracle account,
     //     binding the oracle's storage_hash.
-    verify_evm_account_proof(
+    if !evm_account_proof_reconstructs(
         l1_finalized.execution_state_root(),
         anchor.oracle_address,
         &anchor.oracle_account,
         &anchor.oracle_account_proof,
-    )
-    .map_err(|_| BaseProofError::L1OracleAccountProofInvalid)?;
+    ) {
+        return Err(BaseProofError::L1OracleAccountProofInvalid);
+    }
 
     // (2) ARRAY LENGTH + BOUNDS: storage_hash --MPT--> l2Outputs.length, then
     //     require index < length. Without this, a challenger-DELETED (disputed)
     //     output would remain provable: deletion shrinks the length but leaves the
     //     element slots' bytes in place.
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.oracle_account.storage_hash,
         u64_slot_be32(anchor.l2_outputs_slot),
         U256::from(anchor.l2_outputs_length),
         &anchor.outputs_length_slot_proof,
-    )
-    .map_err(|_| BaseProofError::L1OutputsLengthProofInvalid)?;
+    ) {
+        return Err(BaseProofError::L1OutputsLengthProofInvalid);
+    }
     if anchor.output_index >= anchor.l2_outputs_length {
         return Err(BaseProofError::OutputIndexOutOfBounds {
             index: anchor.output_index,
@@ -354,24 +370,26 @@ pub fn verify_l1_committed_output_root(
 
     // (3) OUTPUT-ROOT SLOT: storage_hash --MPT--> l2Outputs[i].outputRoot.
     let root_slot = l2_output_root_slot(anchor.l2_outputs_slot, anchor.output_index);
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.oracle_account.storage_hash,
         root_slot,
         U256::from_be_bytes(anchor.output_root),
         &anchor.output_root_slot_proof,
-    )
-    .map_err(|_| BaseProofError::L1OutputRootSlotProofInvalid)?;
+    ) {
+        return Err(BaseProofError::L1OutputRootSlotProofInvalid);
+    }
 
     // (4) METADATA SLOT: storage_hash --MPT--> packed timestamp ‖ l2BlockNumber,
     //     so the snapshot height is L1-anchored, never caller-claimed.
     let meta_slot = l2_output_meta_slot(anchor.l2_outputs_slot, anchor.output_index);
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.oracle_account.storage_hash,
         meta_slot,
         pack_output_meta(anchor.timestamp, anchor.l2_block_number),
         &anchor.output_meta_slot_proof,
-    )
-    .map_err(|_| BaseProofError::L1OutputMetaSlotProofInvalid)?;
+    ) {
+        return Err(BaseProofError::L1OutputMetaSlotProofInvalid);
+    }
 
     Ok(L1CommittedOutput {
         output_root: anchor.output_root,
@@ -443,7 +461,7 @@ pub fn verify_base_erc20_holding(
     // (4) The ordinary EVM holding proof, against the now-trusted L2 state root at
     // the L1-proven L2 block number. This mints StructureOnly; the upgrade to
     // ConsensusProven below is justified by links (1)-(3).
-    let mut holding = verify_erc20_holding(
+    let holding = verify_erc20_holding(
         l2_commitment.l2_state_root,
         l2_account_proof,
         l2_storage_proof,
@@ -455,6 +473,5 @@ pub fn verify_base_erc20_holding(
         committed.l2_block_number,
     )
     .map_err(BaseProofError::L2Holding)?;
-    holding.trust = HoldingTrust::ConsensusProven;
-    Ok(holding)
+    Ok(holding.promoted_to_consensus_proven())
 }

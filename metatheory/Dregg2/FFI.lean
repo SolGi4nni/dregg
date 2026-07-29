@@ -130,8 +130,17 @@ so the next reader does not have to rediscover it:
 * `Dregg2.Circuit.FriLedger` — `dregg_fri_ledger` (Rust mentions it only in doc comments)
 * `Dregg2.Circuit.Emit.CommitmentTreeAppendEmit` — `dregg_note_tree_root`
 * `Dregg2.Bridge.ConditionalInterchainAdapter` — `dregg_interchain_conditional_admit`
-* `Dregg2.Bridge.LightClientEthGate` / `LightClientMptGate` / `LightClientTendermintGate` —
-  `dregg_eth_lc_verify`, `dregg_mpt_lc_verify`, `dregg_tm_lc_verify` (see §4)
+* `Dregg2.Bridge.LightClientTendermintGate` — `dregg_tm_lc_verify`. ⚠ Still callerless as
+  measured 2026-07-28: `cosmos-lightclient` does not depend on `dregg-lean-ffi` at all, so the
+  Cosmos path is UN-ROUTED rather than gated. That is a finding, not a design.
+* ⚠ `Dregg2.Bridge.LightClientEthGate` / `LightClientMptGate` **NO LONGER BELONG IN §1.5** — they
+  have callers (`eth-lightclient`'s `verified_gate.rs` and `evm.rs`) and are listed in §1.3. They
+  were callerless when this section was written and the text outlived it; corrected 2026-07-28.
+  `LightClientEthGate` now carries TWO exports: `dregg_eth_lc_verify` (may the client follow the
+  CHAIN) and `dregg_eth_committee_rotation` (may it change WHOSE SIGNATURES IT TRUSTS).
+  `eth-lightclient::verify_committee_update` decided the second in hand-written Rust until
+  2026-07-28, on a path (`store::bootstrap_committee`) that mutates the trusted committee with no
+  archive involved.
 * `Dregg2.Exec.FFIDirect` — `dregg_d_auth_of_tag`
 * `Dregg2.Exec.FFI.Narrow` — `dregg_record_kernel_transfer_total`
 
@@ -225,11 +234,22 @@ running with its verification gate compiled out, green and silent:
    least compiles its absent arm; an undeclared file has no arms at all. CLOSED by
    `dregg-lean-ffi/src/lib.rs:46`'s `pub mod bridge_lc_ffi;`.
 
-**What keeps it closed** (the layer that matters — a repair is not a gate): all three symbols are
-on `build.rs`'s `REQUIRED_DECISION_EXPORTS` (`:122-138`), so a strict build
+**A FIFTH layer, found 2026-07-28 and closed the same day.** The three gates above were the ones
+that *existed*. `eth-lightclient::verify_committee_update` — the decision that installs the
+trusted sync committee, i.e. the ETH light client's whole trust root — had no gate to be dark
+behind: it was a hand-written Rust rule (`branch.len() ∈ {5,6}` `&&` a SHA-256 fold), reachable
+from `store::bootstrap_committee`, mutating the trusted committee with no archive involved. The
+verify gate was honest and there was a DOOR BESIDE IT. CLOSED by `committeeRotationDecision` +
+`@[export] dregg_eth_committee_rotation` in `LightClientEthGate`, with
+`committeeRotationDecision_refines` (`rfl`) and `committeeRotationDecision_binding` (one beacon
+state root commits ONE next committee, given the CR carrier).
+
+**What keeps it closed** (the layer that matters — a repair is not a gate): all four ETH/MPT/TM
+symbols are on `build.rs`'s `REQUIRED_DECISION_EXPORTS`, so a strict build
 (`DREGG_REQUIRE_VERIFIED_EXPORTS=1` / release / `DREGG_TEST_REQUIRE_LEAN=1`) cannot re-enter the
 dark state quietly; and `bridge_lc_ffi.rs`'s three `*_gate_refuses_*_through_the_real_ffi` tests
-are **ungated** — they route archive-absence through `demand_lean`, which PANICS under
+are **ungated** (four now, with `committee_rotation_gate_discriminates_through_the_real_ffi`) —
+they route archive-absence through `demand_lean`, which PANICS under
 `DREGG_TEST_REQUIRE_LEAN=1`, rather than ceasing to exist the way a `#[cfg(…_present)]` test
 module does. Each carries a non-constancy canary (two wires differing in ONE field across the
 decision boundary must not agree), so a gate that has degenerated to always-accept,

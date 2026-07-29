@@ -50,7 +50,7 @@ use eth_lightclient::base_fault_proof::{
     GAME_STATUS_IN_PROGRESS,
 };
 use eth_lightclient::evm::{
-    verify_evm_storage_slot_absent, AccountClaim, Erc20ProofError, HoldingTrust, Uint256,
+    evm_storage_slot_absence_reconstructs, AccountClaim, Erc20ProofError, HoldingTrust, Uint256,
     CHAIN_TAG_EVM,
 };
 use eth_lightclient::finality::FinalizedExecution;
@@ -370,24 +370,22 @@ fn extra_data_l2_block_number_parses_and_fails_closed() {
 /// contain `disputeGameBlacklist[game]`.
 #[test]
 fn blacklist_exclusion_proof_accepts() {
-    assert!(verify_evm_storage_slot_absent(
+    assert!(evm_storage_slot_absence_reconstructs(
         h32(fx::ASR_STORAGE_HASH),
         h32(fx::BLACKLIST_SLOT),
         &nodes(fx::BLACKLIST_ABSENCE_PROOF),
-    )
-    .is_ok());
+    ));
 }
 
 /// REJECT: an absence claim for a PRESENT key. ASR slot 6 IS in the trie; its
 /// (valid!) inclusion proof must not pass as an exclusion proof.
 #[test]
 fn absence_of_present_key_rejects() {
-    assert!(verify_evm_storage_slot_absent(
+    assert!(!evm_storage_slot_absence_reconstructs(
         h32(fx::ASR_STORAGE_HASH),
         slot_be32(6),
         &nodes(fx::ASR_SLOT6_PROOF),
-    )
-    .is_err());
+    ));
 }
 
 /// REJECT (the measured alloy-trie 0.9.5 hole, pinned): every TRUNCATED PREFIX
@@ -403,8 +401,11 @@ fn truncated_inclusion_prefix_rejects_as_absence() {
     assert!(full.len() >= 2, "fixture proof must have interior nodes");
     for cut in 1..full.len() {
         assert!(
-            verify_evm_storage_slot_absent(h32(fx::ASR_STORAGE_HASH), slot_be32(6), &full[..cut],)
-                .is_err(),
+            !evm_storage_slot_absence_reconstructs(
+                h32(fx::ASR_STORAGE_HASH),
+                slot_be32(6),
+                &full[..cut],
+            ),
             "a {cut}-node prefix of the slot-6 inclusion proof must not prove absence"
         );
     }
@@ -417,22 +418,20 @@ fn truncated_absence_proof_rejects() {
     let full = nodes(fx::BLACKLIST_ABSENCE_PROOF);
     for cut in 1..full.len() {
         assert!(
-            verify_evm_storage_slot_absent(
+            !evm_storage_slot_absence_reconstructs(
                 h32(fx::ASR_STORAGE_HASH),
                 h32(fx::BLACKLIST_SLOT),
                 &full[..cut],
-            )
-            .is_err(),
+            ),
             "a {cut}-node prefix of the absence proof must refuse"
         );
     }
     // And the empty proof refuses (the storage root is not the empty-trie root).
-    assert!(verify_evm_storage_slot_absent(
+    assert!(!evm_storage_slot_absence_reconstructs(
         h32(fx::ASR_STORAGE_HASH),
         h32(fx::BLACKLIST_SLOT),
         &[],
-    )
-    .is_err());
+    ));
 }
 
 /// REJECT: a tampered absence-proof node fails the hash linkage.
@@ -441,10 +440,11 @@ fn tampered_absence_proof_rejects() {
     let mut p = nodes(fx::BLACKLIST_ABSENCE_PROOF);
     let last = p.len() - 1;
     p[last][7] ^= 0x01;
-    assert!(
-        verify_evm_storage_slot_absent(h32(fx::ASR_STORAGE_HASH), h32(fx::BLACKLIST_SLOT), &p,)
-            .is_err()
-    );
+    assert!(!evm_storage_slot_absence_reconstructs(
+        h32(fx::ASR_STORAGE_HASH),
+        h32(fx::BLACKLIST_SLOT),
+        &p,
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -469,14 +469,14 @@ fn full_fault_proof_holding_accepts_consensus_proven() {
         u256(fx::EXPECTED_BALANCE_HEX),
     )
     .expect("the full real live-Base fault-proof chain must verify");
-    assert_eq!(proven.trust, HoldingTrust::ConsensusProven);
-    assert_eq!(proven.balance, u256(fx::EXPECTED_BALANCE_HEX));
-    assert_eq!(proven.token, h20(fx::TOKEN));
-    assert_eq!(proven.holder, h20(fx::HOLDER));
+    assert_eq!(proven.trust(), HoldingTrust::ConsensusProven);
+    assert_eq!(proven.balance(), u256(fx::EXPECTED_BALANCE_HEX));
+    assert_eq!(proven.token(), h20(fx::TOKEN));
+    assert_eq!(proven.holder(), h20(fx::HOLDER));
     // Anchored at the L2 state root and the L1-PROVEN L2 block number (parsed
     // from the UUID-bound extraData, never caller-claimed).
-    assert_eq!(proven.state_root, h32(fx::L2_STATE_ROOT));
-    assert_eq!(proven.block_number, fx::L2_BLOCK_NUMBER);
+    assert_eq!(proven.state_root(), h32(fx::L2_STATE_ROOT));
+    assert_eq!(proven.block_number(), fx::L2_BLOCK_NUMBER);
 
     // The governance edge: EVM family tag (Base = ChainId::Evm(8453) downstream).
     let fields = proven.to_foreign_fields().expect("fits u128");

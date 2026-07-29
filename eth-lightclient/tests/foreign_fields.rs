@@ -116,23 +116,35 @@ fn normal_balance_converts_with_left_zero_padding() {
     assert_eq!(fields.snapshot, weth::BLOCK_NUMBER);
 }
 
+/// A holding carrying an ARBITRARY balance, for the conversion-guard tests below. No real
+/// ERC-20 fixture has a balance above `u128::MAX`, so the guard can only be exercised on a
+/// fabricated one — and since `ProvenErc20Holding`'s fields are sealed, fabricating it is spelled
+/// `new_unchecked`, loudly, instead of mutating a legitimately-verified holding.
+fn fabricated_holding_with_balance(balance: Uint256) -> ProvenErc20Holding {
+    ProvenErc20Holding::new_unchecked(
+        h20(weth::HOLDER),
+        h20(weth::TOKEN),
+        balance,
+        h32(weth::STATE_ROOT),
+        weth::BLOCK_NUMBER,
+        HoldingTrust::StructureOnly,
+    )
+}
+
 /// REJECT: a U256 balance above u128::MAX REFUSES with a typed error — it is NEVER
 /// truncated into a small `amount`.
 #[test]
 fn balance_above_u128_max_refuses_never_truncates() {
-    let mut holding = structure_only_holding();
     let over = Uint256::from(u128::MAX) + Uint256::from(1u8);
-    holding.balance = over;
     assert_eq!(
-        holding.to_foreign_fields(),
+        fabricated_holding_with_balance(over).to_foreign_fields(),
         Err(ForeignFieldsError::AmountOverflowsU128 { balance: over })
     );
 
     // And the worst case: U256::MAX must also refuse (a truncation bug would map it
     // to u128::MAX or wrap it small).
-    holding.balance = Uint256::MAX;
     assert_eq!(
-        holding.to_foreign_fields(),
+        fabricated_holding_with_balance(Uint256::MAX).to_foreign_fields(),
         Err(ForeignFieldsError::AmountOverflowsU128 {
             balance: Uint256::MAX
         })
@@ -142,8 +154,7 @@ fn balance_above_u128_max_refuses_never_truncates() {
 /// BOUNDARY: exactly u128::MAX still converts (the refusal starts one above).
 #[test]
 fn balance_exactly_u128_max_converts() {
-    let mut holding = structure_only_holding();
-    holding.balance = Uint256::from(u128::MAX);
+    let holding = fabricated_holding_with_balance(Uint256::from(u128::MAX));
     let fields = holding.to_foreign_fields().expect("u128::MAX fits");
     assert_eq!(fields.amount, u128::MAX);
 }
@@ -153,7 +164,7 @@ fn balance_exactly_u128_max_converts() {
 #[test]
 fn structure_only_holding_yields_consensus_proven_false() {
     let holding = structure_only_holding();
-    assert_eq!(holding.trust, HoldingTrust::StructureOnly);
+    assert_eq!(holding.trust(), HoldingTrust::StructureOnly);
     assert!(!holding.is_consensus_proven());
     let fields = holding.to_foreign_fields().expect("converts");
     assert!(
@@ -179,10 +190,10 @@ fn finalized_path_yields_consensus_proven_true() {
     )
     .expect("the fixture proof must verify against its own finalized root");
 
-    assert_eq!(holding.trust, HoldingTrust::ConsensusProven);
+    assert_eq!(holding.trust(), HoldingTrust::ConsensusProven);
     assert!(holding.is_consensus_proven());
-    assert_eq!(holding.block_number, weth::BLOCK_NUMBER);
-    assert_eq!(holding.state_root, h32(weth::STATE_ROOT));
+    assert_eq!(holding.block_number(), weth::BLOCK_NUMBER);
+    assert_eq!(holding.state_root(), h32(weth::STATE_ROOT));
 
     let fields = holding.to_foreign_fields().expect("converts");
     assert!(fields.consensus_proven);

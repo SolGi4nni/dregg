@@ -42,6 +42,24 @@ re-authored-Rust LOGIC twin is then deletable: the Rust keeps only the crypto-pr
 computation, and the Lean gate renders the verdict, fail-closed when the archive lacks the
 export.
 
+## The SECOND export: the COMMITTEE ROTATION (`dregg_eth_committee_rotation`)
+
+`ethVerifyDecision` decides whether the client may follow the CHAIN. It says nothing about
+whether the client may change WHOSE SIGNATURES IT TRUSTS — and `eth-lightclient`'s
+`verify_committee_update` (`lib.rs:534-563`) decided exactly that in hand-written Rust, on a
+path (`store::bootstrap_committee`) that installs the trusted sync committee with no archive
+involved at all. That is the same twin, one level over: the gate was honest and there was a
+door beside it. `committeeRotationDecision` + `@[export] dregg_eth_committee_rotation` is
+that door closed — the depth admissibility (5|6, gindex 55/87, subtree index 23 in both) is
+now the Lean object, `committeeRotationDecision_refines` ties it to `verifyCommitteeRotation`
+by `rfl`, and `committeeRotationDecision_binding` is the payoff: one beacon state root commits
+ONE next committee, so the trust anchor cannot be forked.
+
+It is a SEPARATE export, not a ninth projection on the composed one, because the bootstrap
+path has no update, no prior committee and no signature to offer — folding the rotation into
+`ethVerifyDecision` would make weak-subjectivity bootstrap unreachable and would break
+`ethVerifyDecision_refines`.
+
 ## The ONE trusted projection (named, not hidden)
 
 The participant COUNT `pc` is a popcount of the 512-bit field, computed in Rust
@@ -91,6 +109,23 @@ carrier. -/
 def execDecision (branchLen : Nat) (reconstructOk : Bool) : Bool :=
   decide (branchLen = executionPayloadDepth) && reconstructOk
 
+/-- **`committeeRotationDecision`** — the COMMITTEE-ROTATION LOGIC (`verify_committee_update`,
+`lib.rs:534-563`): the branch depth is 5 (Altair..Deneb, gindex 55) or 6 (Electra+, gindex 87)
+— any other length fail-closed. `reconstructOk` is the SHA-256 fold RESULT (reconstruct the
+committee's SSZ root into the trusted/attested beacon state root at subtree index 23) — the
+named `hashPairCR` carrier.
+
+**This decision advances the TRUST ROOT, not the chain view**, so it is exported separately
+from `ethVerifyDecision` rather than folded into it: `WeakSubjectivityStore::bootstrap_committee`
+reaches it with NO prior committee and NO update at all (under the governance-pinned checkpoint
+state root), and `advance` reaches it a second time after a `verifyFinalizedUpdate` accept.
+Folding it in would make the bootstrap path unreachable and would break
+`ethVerifyDecision_refines`. -/
+def committeeRotationDecision (branchLen : Nat) (reconstructOk : Bool) : Bool :=
+  (decide (branchLen = nextSyncCommitteeDepth)
+    || decide (branchLen = nextSyncCommitteeDepthElectra))
+  && reconstructOk
+
 /-- **`ethVerifyDecision`** — THE composed verify-logic decision, over the eight
 scalar/boolean projections a deployed node computes (three of them being the crypto
 primitives' results). Grouped `sync && finality && exec` to match `verifyFinalizedUpdate`
@@ -129,6 +164,34 @@ theorem execDecision_refines (L : EthLeaf) (e : ExecutionPayloadHeader L)
     execDecision branch.length
         (L.beq (reconstruct L (htrExec L e) branch executionPayloadSubtreeIndex) bodyRoot)
       = verifyExecutionPayload L e branch bodyRoot := rfl
+
+/-- **THE ROTATION REFINEMENT TIE.** Fed a rotation's true projections — the branch LENGTH
+and the SHA-256 reconstruction RESULT — the exported scalar decision is DEFINITIONALLY
+`verifyCommitteeRotation`, over which `committee_rotation_binding` (one state root commits
+ONE next committee, given the CR carrier) and `committee_rotation_fail_closed` are proven. -/
+theorem committeeRotationDecision_refines (L : EthLeaf) (committeeRoot : L.Digest)
+    (branch : List L.Digest) (attestedStateRoot : L.Digest) :
+    committeeRotationDecision branch.length
+        (L.beq (reconstruct L committeeRoot branch nextSyncCommitteeSubtreeIndex)
+          attestedStateRoot)
+      = verifyCommitteeRotation L committeeRoot branch attestedStateRoot := rfl
+
+/-- **THE ROTATION PAYOFF: acceptance by the EXPORTED scalar decision entails the trust root
+does not fork.** Two rotations of the same depth accepted by the exported decision against
+the SAME beacon state root carry the SAME committee root. This is `committee_rotation_binding`
+routed through the deployed decision object — an attacker with a genuine attested state root
+cannot open it to a second, forged `next_sync_committee` and capture the light client's trust
+anchor. -/
+theorem committeeRotationDecision_binding (L : EthLeaf) (hcr : L.hashPairCR)
+    (cr₁ cr₂ : L.Digest) (b₁ b₂ : List L.Digest) (root : L.Digest)
+    (h₁ : committeeRotationDecision b₁.length
+      (L.beq (reconstruct L cr₁ b₁ nextSyncCommitteeSubtreeIndex) root) = true)
+    (h₂ : committeeRotationDecision b₂.length
+      (L.beq (reconstruct L cr₂ b₂ nextSyncCommitteeSubtreeIndex) root) = true)
+    (hlen : b₁.length = b₂.length) : cr₁ = cr₂ :=
+  committee_rotation_binding L hcr cr₁ cr₂ b₁ b₂ root
+    ((committeeRotationDecision_refines L cr₁ b₁ root) ▸ h₁)
+    ((committeeRotationDecision_refines L cr₂ b₂ root) ▸ h₂) hlen
 
 /-- **`ethProjection`** — the eight projections a node hands the gate for an update `u` under
 trusted state `ts`: the two lengths, the participant count, the three crypto RESULTS
@@ -222,6 +285,45 @@ SHA-256 branch reconstructions) and passes the projections; the archive renders 
 @[export dregg_eth_lc_verify]
 def dregg_eth_lc_verify (s : String) : String := ethLcVerifyGate s
 
+/-- **`decodeCommitteeWire`** — parse the committee-rotation grammar into its two
+projections. Fail-closed (`none`) on any deviation.
+
+```
+INPUT := "nl=" Nat ";nr=" BIT
+BIT   := "0" | "1"
+```
+(`nl` = `next_sync_committee_branch` depth, `nr` = the SHA-256 reconstruction result.) -/
+def decodeCommitteeWire (s : String) : Option (Nat × Bool) :=
+  match s.splitOn ";" with
+  | [p0, p1] => do
+      let nl ← (parseField? "nl" p0).bind String.toNat?
+      let nr ← (parseField? "nr" p1).bind parseBit?
+      some (nl, nr)
+  | _ => none
+
+/-- **`ethCommitteeRotationGate`** — THE ROTATION GATE. Decode the wire, run the VERIFIED
+`committeeRotationDecision` (refined to `verifyCommitteeRotation`), and encode `"1"` (ACCEPT)
+/ `"0"` (REJECT). A malformed wire returns `"ERR"` (fail-closed — an unproven rotation never
+installs a committee). -/
+def ethCommitteeRotationGate (s : String) : String :=
+  match decodeCommitteeWire s with
+  | some (nl, nr) => if committeeRotationDecision nl nr then "1" else "0"
+  | none => "ERR"
+
+/-- **THE ROTATION EXPORT.** `@[export dregg_eth_committee_rotation]` — the C-ABI entry
+`eth-lightclient`'s `verify_committee_update` calls. Rust computes the SSZ committee root and
+the SHA-256 branch fold; the archive renders the verdict that decides whether the light
+client's TRUSTED SYNC COMMITTEE advances. Absent ⇒ the Rust refuses (there is no twin). -/
+@[export dregg_eth_committee_rotation]
+def dregg_eth_committee_rotation (s : String) : String := ethCommitteeRotationGate s
+
+/-- The rotation gate string IS the verified decision, by construction. -/
+theorem ethCommitteeRotationGate_eq_decision (s : String) (nl : Nat) (nr : Bool)
+    (h : decodeCommitteeWire s = some (nl, nr)) :
+    ethCommitteeRotationGate s = (if committeeRotationDecision nl nr then "1" else "0") := by
+  unfold ethCommitteeRotationGate
+  rw [h]
+
 /-- **`ethLcVerifyGate_eq_decision` (the gate string IS the verified decision, by
 construction).** For any wire that decodes to the eight projections, the exported gate's
 output is `"1"`/`"0"` off `ethVerifyDecision` on them. So gating a node on this export gates
@@ -256,6 +358,21 @@ theorem eth_decision_discriminates :
     ∧ ethVerifyDecision 512 512 512 true 6 true 3 true = false := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
+/-- **THE ROTATION DECISION DISCRIMINATES**, kernel-clean: both admissible depths accept
+when the branch reconstructs, and every deviation — a failed reconstruction, the finality
+depth 7, the execution depth 4, a missing branch — is REFUSED. An always-accept rotation
+gate (the pre-gate Rust twin's failure mode: install any committee) fails the negative
+arms; an always-reject one fails the positive arms. -/
+theorem committee_rotation_decision_discriminates :
+    committeeRotationDecision 5 true = true
+    ∧ committeeRotationDecision 6 true = true
+    ∧ committeeRotationDecision 5 false = false
+    ∧ committeeRotationDecision 6 false = false
+    ∧ committeeRotationDecision 7 true = false
+    ∧ committeeRotationDecision 4 true = false
+    ∧ committeeRotationDecision 0 true = false := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
 /-- **THE EXPORTED DECISION ACCEPTS THE MODEL GOOD UPDATE, end-to-end.** The scalar decision,
 fed `goodUpdate`'s true crypto projections under the genuine `modelState`, accepts — obtained
 by refining to `verifyFinalizedUpdate` and reusing `eth_gate_discriminates` (so the projection
@@ -276,6 +393,15 @@ theorem gate_accepts_model_good :
 #guard ethVerifyDecision 512 512 341 true 6 true 4 true == false
 #guard dregg_eth_lc_verify "cl=512;bl=512;pc=512;bls=1;fl=6;fr=1;el=4;er=1" == "1"
 
+#guard ethCommitteeRotationGate "nl=5;nr=1" == "1"
+#guard ethCommitteeRotationGate "nl=6;nr=1" == "1"
+#guard ethCommitteeRotationGate "nl=5;nr=0" == "0"
+#guard ethCommitteeRotationGate "nl=7;nr=1" == "0"
+#guard ethCommitteeRotationGate "nl=0;nr=1" == "0"
+#guard ethCommitteeRotationGate "garbage" == "ERR"
+#guard ethCommitteeRotationGate "cl=512;bl=512;pc=512;bls=1;fl=6;fr=1;el=4;er=1" == "ERR"
+#guard dregg_eth_committee_rotation "nl=6;nr=1" == "1"
+
 /-! ## §5 — Axiom hygiene: the refinement tie + the no-forgery composition + the wire
 faithfulness are kernel-clean (the crypto carriers are the visible `EthLeaf` fields / the
 `hcr`/`hinj` hypotheses, invisible to `#assert_axioms` exactly because they are the audit
@@ -289,6 +415,10 @@ surface — see `LightClientEth.lean` §12). -/
 #assert_axioms ethLcVerifyGate_eq_decision
 #assert_axioms eth_decision_discriminates
 #assert_axioms gate_accepts_model_good
+#assert_axioms committeeRotationDecision_refines
+#assert_axioms committeeRotationDecision_binding
+#assert_axioms ethCommitteeRotationGate_eq_decision
+#assert_axioms committee_rotation_decision_discriminates
 
 #print axioms ethVerifyDecision_refines
 #print axioms ethVerifyDecision_no_forgery

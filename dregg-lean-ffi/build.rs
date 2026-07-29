@@ -121,20 +121,34 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
     ),
     (
         "dregg_eth_lc_verify",
-        "the ETHEREUM light-client verify gate compiles out and the ETH relayer path runs \
-         UN-GATED: `eth_lc_verify_available()` is constantly false, so sync-committee quorum, \
-         branch depth and the BLS/SHA-256 result bits are decided by the Rust twin that \
-         `verifyFinalizedUpdate` was supposed to replace",
+        "the ETHEREUM light-client verify gate compiles out — `eth_lc_verify_available()` goes \
+         constantly false and every ETH verify entry point REFUSES (fail-closed, no twin): \
+         sync-committee quorum, branch depth and the BLS/SHA-256 result bits get no verdict at \
+         all rather than an unverified one",
+    ),
+    (
+        "dregg_eth_committee_rotation",
+        "the ETHEREUM COMMITTEE-ROTATION gate compiles out — `verify_committee_update` REFUSES, \
+         so the light client's TRUSTED SYNC COMMITTEE (its trust root, not just its chain view) \
+         cannot advance at all. Absent, `WeakSubjectivityStore::bootstrap_committee`/`advance` \
+         fail closed; present, the 5|6 depth admissibility and the reconstruction compose in \
+         `committeeRotationDecision`, not in Rust",
     ),
     (
         "dregg_tm_lc_verify",
         "the TENDERMINT/COSMOS light-client verify gate compiles out — the strict `2·tot < 3·sp` \
-         stake threshold, chain-id match and trusting-window revert to the Rust twin",
+         stake threshold, chain-id match and trusting-window go undecidable. ⚠ MEASURED 2026-07-28: \
+         NOTHING OUTSIDE THIS CRATE CALLS IT. `cosmos-lightclient` does not even depend on \
+         dregg-lean-ffi, so the Cosmos path is un-routed rather than gated — this entry's absence \
+         consequence is currently `no change`, which is itself the finding",
     ),
     (
         "dregg_mpt_lc_verify",
-        "the EVM state-inclusion (EIP-1186) verify gate compiles out — the Nomad-law nonzero \
-         balance floor and the state-root/token/slot anchor bindings revert to the Rust twin",
+        "the EVM state-inclusion (EIP-1186) verify gate compiles out — `verify_erc20_holding` \
+         REFUSES every holding (`Erc20ProofError::VerifiedGateUnavailable`), so the Nomad-law \
+         nonzero-balance floor and the state-root/token/slot anchor bindings get no verdict at all \
+         rather than an unverified one (the Rust `&&`-composition that used to decide them was \
+         deleted, `eth-lightclient/src/evm.rs`)",
     ),
     (
         "dregg_blocklace_finalize",
@@ -2092,9 +2106,11 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_constraint_admits_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_cross_cell_conserves_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_eth_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_eth_committee_rotation_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_tm_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -2982,6 +2998,18 @@ fn main() {
     } else {
         absent_export_warn("dregg_eth_lc_verify");
     }
+    // The ETH COMMITTEE-ROTATION gate — the SECOND export from `LightClientEthGate`, probed
+    // INDEPENDENTLY of the verify gate. They ship from the same module today, but an archive
+    // predating this export carries one and not the other, and conflating them would let a stale
+    // seed advertise a trust-root gate it cannot render. Absent ⇒ `verify_committee_update`
+    // refuses and the trusted sync committee cannot advance (fail-closed; no Rust twin remains).
+    let eth_committee_rotation_present =
+        archive_exports(&build_archive, "dregg_eth_committee_rotation");
+    if eth_committee_rotation_present {
+        println!("cargo:rustc-cfg=dregg_eth_committee_rotation_present");
+    } else {
+        absent_export_warn("dregg_eth_committee_rotation");
+    }
     let tm_lc_verify_present = archive_exports(&build_archive, "dregg_tm_lc_verify");
     if tm_lc_verify_present {
         println!("cargo:rustc-cfg=dregg_tm_lc_verify_present");
@@ -3006,6 +3034,18 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_mina_lc_verify_present");
     } else {
         absent_export_warn("dregg_mina_lc_verify");
+    }
+    // The PER-BLOCK Pickles Wrap-proof preamble gate (`Dregg2.Bridge.PicklesWrapShapeGate`). Same
+    // manifest treatment and for the same reason as the gate above: it rides the SAME pending seed
+    // regeneration, so requiring it today would hard-FAIL every `DREGG_REQUIRE_VERIFIED_EXPORTS`
+    // build for a symbol no published archive can supply yet. Its absence is not silent: the Mina
+    // observer refuses every settlement rather than reverting to the `NEUTRAL_PICKLES_OK` constant
+    // it replaced (`bridge/src/mina_observer.rs`), and `absent_export_warn` says so at build time.
+    let mina_wrap_shape_ok_present = archive_exports(&build_archive, "dregg_mina_wrap_shape_ok");
+    if mina_wrap_shape_ok_present {
+        println!("cargo:rustc-cfg=dregg_mina_wrap_shape_ok_present");
+    } else {
+        absent_export_warn("dregg_mina_wrap_shape_ok");
     }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
@@ -3218,6 +3258,9 @@ fn main() {
     if eth_lc_verify_present {
         shim.define("DREGG_ETH_LC_VERIFY", None);
     }
+    if eth_committee_rotation_present {
+        shim.define("DREGG_ETH_COMMITTEE_ROTATION", None);
+    }
     if tm_lc_verify_present {
         shim.define("DREGG_TM_LC_VERIFY", None);
     }
@@ -3226,6 +3269,9 @@ fn main() {
     }
     if mina_lc_verify_present {
         shim.define("DREGG_MINA_LC_VERIFY", None);
+    }
+    if mina_wrap_shape_ok_present {
+        shim.define("DREGG_MINA_WRAP_SHAPE_OK", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

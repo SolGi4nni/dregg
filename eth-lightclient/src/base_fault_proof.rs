@@ -78,8 +78,8 @@
 
 use crate::base::{verify_op_output_root, BaseProofError, L1CommittedOutput, L2StateCommitment};
 use crate::evm::{
-    verify_erc20_holding, verify_evm_account_proof, verify_evm_storage_slot,
-    verify_evm_storage_slot_absent, AccountClaim, Erc20ProofError, HoldingTrust,
+    evm_account_proof_reconstructs, evm_storage_slot_absence_reconstructs,
+    evm_storage_slot_reconstructs, verify_erc20_holding, AccountClaim, Erc20ProofError,
     ProvenErc20Holding,
 };
 use crate::finality::FinalizedExecution;
@@ -641,49 +641,53 @@ pub fn verify_l1_fault_proof_output_root(
     let l1_state_root = l1_finalized.execution_state_root();
 
     // --- Link 1: ASR account proof (binds asr_account.storage_hash). ---
-    verify_evm_account_proof(
+    if !evm_account_proof_reconstructs(
         l1_state_root,
         params.asr_address,
         &anchor.asr_account,
         &anchor.asr_account_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::AsrAccountProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::AsrAccountProofInvalid);
+    }
 
     // --- Link 2: ASR slot 6 = retirementTimestamp ‖ respectedGameType. The
     //     expected word bakes in anchor.game_type (== expected_game_type), so a
     //     chain whose respected type rotated away refuses HERE. ---
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.asr_account.storage_hash,
         u64_slot_be32(ASR_RESPECTED_GAME_TYPE_SLOT),
         pack_asr_respected_word(anchor.retirement_timestamp, anchor.game_type),
         &anchor.respected_game_type_slot_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::RespectedGameTypeSlotProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::RespectedGameTypeSlotProofInvalid);
+    }
 
     // --- Link 3a: ASR slot 1 must hold the pinned DGF address — the factory
     //     identity is L1-anchored, not configuration. ---
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.asr_account.storage_hash,
         u64_slot_be32(ASR_DISPUTE_GAME_FACTORY_SLOT),
         U256::from_be_bytes(pad32_address(&params.dgf_address)),
         &anchor.dgf_binding_slot_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::DgfBindingSlotProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::DgfBindingSlotProofInvalid);
+    }
 
     // --- Link 3b: DGF account proof (binds dgf_account.storage_hash). ---
-    verify_evm_account_proof(
+    if !evm_account_proof_reconstructs(
         l1_state_root,
         params.dgf_address,
         &anchor.dgf_account,
         &anchor.dgf_account_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::DgfAccountProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::DgfAccountProofInvalid);
+    }
 
     // --- Link 4, THE KEYSTONE: _disputeGames[keccak(abi.encode(type, rootClaim,
     //     extraData))] = GameId(type, createdAt, gameProxy). The mapping KEY
     //     commits the whole claim; the VALUE binds the proxy + creation time. ---
     let uuid = game_uuid(anchor.game_type, &anchor.root_claim, &anchor.extra_data);
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.dgf_account.storage_hash,
         dispute_games_mapping_slot(&uuid),
         pack_game_id(
@@ -692,8 +696,9 @@ pub fn verify_l1_fault_proof_output_root(
             &anchor.game_address,
         ),
         &anchor.game_id_slot_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::GameIdSlotProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::GameIdSlotProofInvalid);
+    }
 
     // --- Link 5: game account proof (binds storage_hash AND code_hash), then
     //     the semantics pin (Residual R3, closed): the proven code_hash must
@@ -702,13 +707,14 @@ pub fn verify_l1_fault_proof_output_root(
     //     UUID-bound by Link 4; creator/l1Head are bound HERE — any lie changes
     //     the reconstructed bytecode, and a look-alike contract (same slot-0
     //     layout, different code) cannot produce the hash at all. ---
-    verify_evm_account_proof(
+    if !evm_account_proof_reconstructs(
         l1_state_root,
         anchor.game_address,
         &anchor.game_account,
         &anchor.game_account_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::GameAccountProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::GameAccountProofInvalid);
+    }
     let immutable_args = fault_dispute_game_immutable_args(
         &anchor.game_creator,
         &anchor.root_claim,
@@ -731,7 +737,7 @@ pub fn verify_l1_fault_proof_output_root(
     //     recomputed from the (already-gated) claims with status/flags REQUIRED —
     //     nothing is parsed off-proof. createdAt here is the SAME field the
     //     GameId word proved: the cross-tooth is by construction. ---
-    verify_evm_storage_slot(
+    if !evm_storage_slot_reconstructs(
         anchor.game_account.storage_hash,
         u64_slot_be32(GAME_RESOLUTION_SLOT),
         pack_game_resolution_word(
@@ -742,17 +748,19 @@ pub fn verify_l1_fault_proof_output_root(
             true,
         ),
         &anchor.game_slot0_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::GameResolutionSlotProofInvalid)?;
+    ) {
+        return Err(FaultProofAnchorError::GameResolutionSlotProofInvalid);
+    }
 
     // --- Link 7: the game must NOT be blacklisted — an EXCLUSION proof of the
     //     blacklist mapping slot under the ASR's PROVEN storage hash. ---
-    verify_evm_storage_slot_absent(
+    if !evm_storage_slot_absence_reconstructs(
         anchor.asr_account.storage_hash,
         blacklist_mapping_slot(&anchor.game_address),
         &anchor.blacklist_absence_proof,
-    )
-    .map_err(|_| FaultProofAnchorError::GameBlacklistNotExcluded)?;
+    ) {
+        return Err(FaultProofAnchorError::GameBlacklistNotExcluded);
+    }
 
     // --- Link 8: the finality window. l1_time is the light-client-verified
     //     execution timestamp; resolvedAt was proven by Link 6. Strict `>`
@@ -822,7 +830,7 @@ pub fn verify_base_fault_proof_erc20_holding(
     // Link 9b: the ordinary EVM holding proof against the now-trusted L2 state
     // root, at the L1-proven L2 block number. The StructureOnly it mints is
     // upgraded to ConsensusProven, justified by Links 1-9a.
-    let mut holding = verify_erc20_holding(
+    let holding = verify_erc20_holding(
         l2_commitment.l2_state_root,
         l2_account_proof,
         l2_storage_proof,
@@ -834,6 +842,5 @@ pub fn verify_base_fault_proof_erc20_holding(
         committed.l2_block_number,
     )
     .map_err(FaultProofAnchorError::L2Holding)?;
-    holding.trust = HoldingTrust::ConsensusProven;
-    Ok(holding)
+    Ok(holding.promoted_to_consensus_proven())
 }

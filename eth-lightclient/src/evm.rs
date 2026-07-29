@@ -68,21 +68,31 @@ impl HoldingTrust {
 /// [`FinalizedExecution`] the light client actually verified — yields
 /// [`HoldingTrust::ConsensusProven`]; the bare-root path ([`verify_erc20_holding`])
 /// yields [`HoldingTrust::StructureOnly`], which grants ZERO weight downstream.
+///
+/// **Unforgeable by construction** — the same discipline as
+/// [`crate::finality::FinalizedExecution`], and for the same reason. Every field is PRIVATE, so
+/// external code can neither build one by struct literal nor MUTATE a legitimately-obtained one.
+/// The paragraph above was the ONLY thing standing between a caller and
+///
+/// ```text
+/// ProvenErc20Holding { balance: whatever, trust: HoldingTrust::ConsensusProven, .. }
+/// ```
+///
+/// — a struct literal that skips `dregg_mpt_lc_verify` AND the entire light-client finality path
+/// and converts, via [`ProvenErc20Holding::to_foreign_fields`], straight into
+/// `consensus_proven: true` governance weight. A doc-comment is not an access control. The only
+/// ways to obtain one are now the three verifying entry points
+/// ([`verify_erc20_holding`], [`verify_erc20_holding_wide`], [`verify_erc20_holding_finalized`],
+/// plus [`crate::base`] / [`crate::base_fault_proof`] which compose on them) and the loud,
+/// greppable [`ProvenErc20Holding::new_unchecked`]. Read the fields through the accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvenErc20Holding {
-    /// The holder address (20 bytes) whose balance-slot was opened.
-    pub holder: [u8; 20],
-    /// The ERC-20 token contract address (20 bytes).
-    pub token: [u8; 20],
-    /// The proven balance in atomic units (ERC-20 `balanceOf`), big-endian `U256`.
-    pub balance: U256,
-    /// The execution `state_root` the proof opened against. Only trustworthy as a
-    /// finality anchor when `trust` is [`HoldingTrust::ConsensusProven`].
-    pub state_root: [u8; 32],
-    /// The execution block number (provenance of the snapshot).
-    pub block_number: u64,
-    /// Which verify path minted this holding (consensus-anchored vs bare-root).
-    pub trust: HoldingTrust,
+    holder: [u8; 20],
+    token: [u8; 20],
+    balance: U256,
+    state_root: [u8; 32],
+    block_number: u64,
+    trust: HoldingTrust,
 }
 
 /// The token contract's account fields as returned by `eth_getProof` (the RLP account
@@ -203,26 +213,51 @@ pub fn erc20_balance_slot_key_wide(holder: &[u8; 20], balances_base_slot: &[u8; 
     keccak256(preimage).0
 }
 
-/// An MPT proof did not open the claimed key/value under the claimed root. The
-/// generalized-helper failure marker — callers ([`verify_erc20_holding`],
-/// [`crate::base`]) map it onto their own fail-closed error vocabulary.
+/// An MPT proof did not open the claimed key/value under the claimed root — the internal
+/// failure marker of the private exclusion re-walk. **Not public**: the three MPT primitives
+/// below report a `bool`, deliberately (see [`evm_account_proof_reconstructs`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MptProofInvalid;
+struct MptProofInvalid;
 
-/// **The generalized EIP-1186 ACCOUNT proof open** — `state_root --MPT-->
-/// keccak256(address) -> RLP([nonce, balance, storageHash, codeHash])`.
+/// **The generalized EIP-1186 ACCOUNT-proof RECONSTRUCTION CARRIER** — does
+/// `state_root --MPT--> keccak256(address)` open to `RLP([nonce, balance, storageHash,
+/// codeHash])`? Reconstructing the full RLP account leaf binds all four fields at once, so a
+/// wrong field, wrong address or wrong state root answers `false`.
 ///
-/// This is the exact account-trie step of [`verify_erc20_holding`], factored out so
-/// the SAME audited machinery verifies both an L1 token account and an OP-stack L1
-/// contract account (the Base output-root anchor, [`crate::base`]). Reconstructing
-/// the full RLP account leaf binds all four fields at once — a wrong field, wrong
-/// address, or wrong state root fails closed.
-pub fn verify_evm_account_proof(
+/// # It returns a `bool`, and that is the point
+///
+/// This used to be `verify_evm_account_proof(..) -> Result<(), MptProofInvalid>`. Nothing was
+/// unsound about it, but the SHAPE lied: an `Ok(())` from a function named `verify_…` reads as a
+/// permission, and `verify_evm_account_proof(..)?; verify_evm_storage_slot(..)?;` was a shorter,
+/// `?`-chainable spelling of a proof chain that LOOKS gated and never touches
+/// `dregg_mpt_lc_verify` — a shorter ungated spelling sitting next to the gated one is how the
+/// next defect gets written. A `bool` cannot be mistaken for a permission. These are now named
+/// and shaped like this crate's other crypto carriers
+/// ([`crate::finality::finality_branch_reconstructs`],
+/// [`crate::committee_rotation_reconstructs`]).
+///
+/// **What it does NOT establish**, stated exactly: it says only that these bytes open under
+/// THIS root. It does not say the root is consensus-final (that is
+/// [`crate::finality::verify_finalized_update`]), it does not apply the Nomad-law nonzero-balance
+/// floor, it does not bind the anchors, and it mints nothing. The accept/reject over these
+/// results is `LightClientMptGate.mptVerifyDecision`, rendered by the archive in
+/// [`verify_erc20_holding`] — and a [`ProvenErc20Holding`] can only come from there.
+///
+/// The old permission-shaped spelling no longer exists — the `?`-chain that looked gated and was
+/// not cannot be written:
+/// ```compile_fail
+/// # use eth_lightclient::evm::{evm_account_proof_reconstructs, AccountClaim, Uint256};
+/// fn looks_gated(sr: [u8; 32], t: [u8; 20], a: &AccountClaim, p: &[Vec<u8>]) -> Result<(), ()> {
+///     evm_account_proof_reconstructs(sr, t, a, p)?;
+///     Ok(())
+/// }
+/// ```
+pub fn evm_account_proof_reconstructs(
     state_root: [u8; 32],
     address: [u8; 20],
     account: &AccountClaim,
     account_proof: &[Vec<u8>],
-) -> Result<(), MptProofInvalid> {
+) -> bool {
     let trie_account = TrieAccount {
         nonce: account.nonce,
         balance: account.balance,
@@ -241,23 +276,34 @@ pub fn verify_evm_account_proof(
         Some(account_rlp),
         &account_proof_bytes,
     )
-    .map_err(|_| MptProofInvalid)
+    .is_ok()
 }
 
-/// **The generalized EIP-1186 STORAGE-slot proof open** — `storage_hash --MPT-->
-/// keccak256(slot_key) -> RLP(value)` where `value` is the slot's `uint256` content
-/// (EVM storage values are stored as minimal big-endian RLP).
+/// **The generalized EIP-1186 STORAGE-slot RECONSTRUCTION CARRIER** — does
+/// `storage_hash --MPT--> keccak256(slot_key)` open to `RLP(value)` (EVM storage values are
+/// stored as minimal big-endian RLP)?
 ///
 /// `slot_key` is the RAW 32-byte storage slot (pre-keccak): a mapping-derived key
 /// ([`erc20_balance_slot_key`]) for ERC-20 balances, or a dynamic-array element slot
-/// for the OP-stack `l2Outputs` anchor ([`crate::base`]). Fail-closed: a tampered
-/// node, wrong slot, or wrong value refuses.
-pub fn verify_evm_storage_slot(
+/// for the OP-stack `l2Outputs` anchor ([`crate::base`]). A tampered node, wrong slot,
+/// or wrong value answers `false`.
+///
+/// A `bool`, and what it does NOT establish: see [`evm_account_proof_reconstructs`]. In
+/// particular an opened slot is NOT a proven holding — the zero-balance floor and the anchor
+/// bindings are the archive's, in [`verify_erc20_holding`]:
+/// ```compile_fail
+/// # use eth_lightclient::evm::{evm_storage_slot_reconstructs, Uint256};
+/// fn looks_gated(sh: [u8; 32], k: [u8; 32], v: Uint256, p: &[Vec<u8>]) -> Result<(), ()> {
+///     evm_storage_slot_reconstructs(sh, k, v, p)?;
+///     Ok(())
+/// }
+/// ```
+pub fn evm_storage_slot_reconstructs(
     storage_hash: [u8; 32],
     slot_key: [u8; 32],
     value: U256,
     storage_proof: &[Vec<u8>],
-) -> Result<(), MptProofInvalid> {
+) -> bool {
     let storage_key = Nibbles::unpack(keccak256(slot_key));
     let value_rlp = alloy_rlp::encode(value);
     let storage_proof_bytes: Vec<alloy_primitives::Bytes> = storage_proof
@@ -270,15 +316,15 @@ pub fn verify_evm_storage_slot(
         Some(value_rlp),
         &storage_proof_bytes,
     )
-    .map_err(|_| MptProofInvalid)
+    .is_ok()
 }
 
-/// **The EIP-1186 storage-slot EXCLUSION proof open** — verify that `slot_key` is
-/// **absent** from the storage trie rooted at `storage_hash`, i.e. the slot's value
-/// is zero. In the EVM storage MPT a zero-valued slot is not stored at all, so
+/// **The EIP-1186 storage-slot EXCLUSION RECONSTRUCTION CARRIER** — is `slot_key`
+/// **absent** from the storage trie rooted at `storage_hash`, i.e. is the slot's value
+/// zero? In the EVM storage MPT a zero-valued slot is not stored at all, so
 /// `eth_getProof` answers a zero slot with an exclusion proof: a node path showing
 /// the trie does NOT contain `keccak256(slot_key)`. This is the twin of
-/// [`verify_evm_storage_slot`] with expected value `None` — needed where a verifier
+/// [`evm_storage_slot_reconstructs`] with expected value `None` — needed where a verifier
 /// must prove a NEGATIVE (e.g. the Base fault-proof anchor's "this game is NOT
 /// blacklisted", [`crate::base_fault_proof`]).
 ///
@@ -297,28 +343,41 @@ pub fn verify_evm_storage_slot(
 ///    that exhausts while a hash child on the key path is still pending: UNKNOWN
 ///    is not ABSENT.
 ///
-/// Fail-closed: a proof for a PRESENT key refuses, a truncated/tampered/trailing
-/// proof refuses, and an empty proof is accepted only for the canonical EMPTY
-/// trie root.
-pub fn verify_evm_storage_slot_absent(
+/// Answers `false` for: a proof for a PRESENT key, a truncated/tampered/trailing
+/// proof, and an empty proof against anything but the canonical EMPTY trie root.
+///
+/// A `bool`, and what it does NOT establish: see [`evm_account_proof_reconstructs`]. ⚠ Absence in
+/// a trie is only as meaningful as the ROOT it is taken under — this says nothing about where
+/// `storage_hash` came from. In [`crate::base_fault_proof`] the root is the ASR account's proven
+/// `storageHash` under a light-client-finalized L1 state; anywhere else that binding is the
+/// caller's to make.
+/// ```compile_fail
+/// # use eth_lightclient::evm::evm_storage_slot_absence_reconstructs;
+/// fn looks_gated(sh: [u8; 32], k: [u8; 32], p: &[Vec<u8>]) -> Result<(), ()> {
+///     evm_storage_slot_absence_reconstructs(sh, k, p)?;
+///     Ok(())
+/// }
+/// ```
+pub fn evm_storage_slot_absence_reconstructs(
     storage_hash: [u8; 32],
     slot_key: [u8; 32],
     storage_proof: &[Vec<u8>],
-) -> Result<(), MptProofInvalid> {
+) -> bool {
     let storage_key = Nibbles::unpack(keccak256(slot_key));
     let storage_proof_bytes: Vec<alloy_primitives::Bytes> = storage_proof
         .iter()
         .map(|n| alloy_primitives::Bytes::copy_from_slice(n))
         .collect();
     // Gate 1: the audited baseline exclusion verify.
-    verify_proof(storage_hash.into(), storage_key, None, &storage_proof_bytes)
-        .map_err(|_| MptProofInvalid)?;
+    if verify_proof(storage_hash.into(), storage_key, None, &storage_proof_bytes).is_err() {
+        return false;
+    }
     // Gate 2: the strict-termination re-walk (refuses truncation).
-    walk_storage_exclusion(storage_hash, &storage_key, &storage_proof_bytes)
+    walk_storage_exclusion(storage_hash, &storage_key, &storage_proof_bytes).is_ok()
 }
 
 /// The strict-termination MPT exclusion walk (gate 2 of
-/// [`verify_evm_storage_slot_absent`] — see there for WHY it exists). Re-walks
+/// [`evm_storage_slot_absence_reconstructs`] — see there for WHY it exists). Re-walks
 /// the proof from `storage_hash` along `key` using alloy-trie's own node
 /// decoders (`TrieNode`/`RlpNode` — no hand-rolled RLP or hashing) and accepts
 /// ONLY a proof whose final node is a genuine absence terminal for the key:
@@ -498,18 +557,17 @@ fn mpt_gate_holding(
     let account_ok = if dominated_zero {
         false
     } else {
-        verify_evm_account_proof(state_root, token, account, account_proof).is_ok()
+        evm_account_proof_reconstructs(state_root, token, account, account_proof)
     };
     let storage_ok = if dominated_zero || !account_ok {
         false
     } else {
-        verify_evm_storage_slot(
+        evm_storage_slot_reconstructs(
             account.storage_hash,
             slot_key,
             claimed_balance,
             storage_proof,
         )
-        .is_ok()
     };
 
     // The model's projections are `Nat` decimals; the digest/identifier scalars are the decimal
@@ -689,7 +747,7 @@ pub fn verify_erc20_holding_finalized(
     account: &AccountClaim,
     claimed_balance: U256,
 ) -> Result<ProvenErc20Holding, Erc20ProofError> {
-    let mut holding = verify_erc20_holding(
+    let holding = verify_erc20_holding(
         finalized.execution_state_root(),
         account_proof,
         storage_proof,
@@ -700,8 +758,10 @@ pub fn verify_erc20_holding_finalized(
         claimed_balance,
         finalized.execution_block_number(),
     )?;
-    holding.trust = HoldingTrust::ConsensusProven;
-    Ok(holding)
+    // The promotion is `pub(crate)` and this is one of the three sites that HOLD the evidence:
+    // the root and block number came from the `FinalizedExecution` the light client verified,
+    // never from the caller.
+    Ok(holding.promoted_to_consensus_proven())
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +835,120 @@ pub fn pad_address_32(addr: &[u8; 20]) -> [u8; 32] {
 }
 
 impl ProvenErc20Holding {
+    /// Construct a `ProvenErc20Holding` **WITHOUT any MPT or light-client verification** — the
+    /// caller ASSERTS these values came from a genuinely verified proof chain (the
+    /// `from_utf8_unchecked` idiom, exactly as
+    /// [`crate::finality::FinalizedExecution::new_unchecked`]). Production code obtains one ONLY
+    /// from [`verify_erc20_holding`] / [`verify_erc20_holding_wide`] /
+    /// [`verify_erc20_holding_finalized`]; every other construction site is this loud, greppable
+    /// name. Passing [`HoldingTrust::ConsensusProven`] here asserts a light-client finality proof
+    /// that this function did not see — a grep for `new_unchecked` is the review surface.
+    pub fn new_unchecked(
+        holder: [u8; 20],
+        token: [u8; 20],
+        balance: U256,
+        state_root: [u8; 32],
+        block_number: u64,
+        trust: HoldingTrust,
+    ) -> Self {
+        ProvenErc20Holding {
+            holder,
+            token,
+            balance,
+            state_root,
+            block_number,
+            trust,
+        }
+    }
+
+    /// The holder address (20 bytes) whose balance slot was opened.
+    ///
+    /// External code cannot mutate this field directly:
+    /// ```compile_fail
+    /// # use eth_lightclient::evm::{ProvenErc20Holding, HoldingTrust, Uint256};
+    /// let mut h = ProvenErc20Holding::new_unchecked(
+    ///     [0u8; 20], [0u8; 20], Uint256::from(1u64), [0u8; 32], 0, HoldingTrust::StructureOnly);
+    /// h.holder = [9u8; 20];
+    /// ```
+    pub fn holder(&self) -> [u8; 20] {
+        self.holder
+    }
+
+    /// The ERC-20 token contract address (20 bytes).
+    ///
+    /// External code cannot mutate this field directly:
+    /// ```compile_fail
+    /// # use eth_lightclient::evm::{ProvenErc20Holding, HoldingTrust, Uint256};
+    /// let mut h = ProvenErc20Holding::new_unchecked(
+    ///     [0u8; 20], [0u8; 20], Uint256::from(1u64), [0u8; 32], 0, HoldingTrust::StructureOnly);
+    /// h.token = [9u8; 20];
+    /// ```
+    pub fn token(&self) -> [u8; 20] {
+        self.token
+    }
+
+    /// The proven balance in atomic units (ERC-20 `balanceOf`).
+    ///
+    /// External code cannot inflate it after the fact:
+    /// ```compile_fail
+    /// # use eth_lightclient::evm::{ProvenErc20Holding, HoldingTrust, Uint256};
+    /// let mut h = ProvenErc20Holding::new_unchecked(
+    ///     [0u8; 20], [0u8; 20], Uint256::from(1u64), [0u8; 32], 0, HoldingTrust::StructureOnly);
+    /// h.balance = Uint256::MAX;
+    /// ```
+    pub fn balance(&self) -> U256 {
+        self.balance
+    }
+
+    /// The execution `state_root` the proof opened against. Only trustworthy as a finality
+    /// anchor when [`ProvenErc20Holding::trust`] is [`HoldingTrust::ConsensusProven`].
+    pub fn state_root(&self) -> [u8; 32] {
+        self.state_root
+    }
+
+    /// The execution block number (provenance of the snapshot).
+    pub fn block_number(&self) -> u64 {
+        self.block_number
+    }
+
+    /// Which verify path minted this holding (consensus-anchored vs bare-root).
+    ///
+    /// **This is the field the seal exists for.** External code cannot promote a structure-only
+    /// holding into a consensus-proven one:
+    /// ```compile_fail
+    /// # use eth_lightclient::evm::{ProvenErc20Holding, HoldingTrust, Uint256};
+    /// let mut h = ProvenErc20Holding::new_unchecked(
+    ///     [0u8; 20], [0u8; 20], Uint256::from(1u64), [0u8; 32], 0, HoldingTrust::StructureOnly);
+    /// h.trust = HoldingTrust::ConsensusProven;
+    /// ```
+    /// …and cannot mint one by struct literal either:
+    /// ```compile_fail
+    /// # use eth_lightclient::evm::{ProvenErc20Holding, HoldingTrust, Uint256};
+    /// let h = ProvenErc20Holding {
+    ///     holder: [0u8; 20],
+    ///     token: [0u8; 20],
+    ///     balance: Uint256::from(1_000_000u64),
+    ///     state_root: [0u8; 32],
+    ///     block_number: 0,
+    ///     trust: HoldingTrust::ConsensusProven,
+    /// };
+    /// ```
+    pub fn trust(&self) -> HoldingTrust {
+        self.trust
+    }
+
+    /// Promote a structure-only holding to [`HoldingTrust::ConsensusProven`] — CRATE-INTERNAL,
+    /// and reachable only from a path that HOLDS the light-client evidence: the ERC-20 finalized
+    /// entry ([`verify_erc20_holding_finalized`], which takes a
+    /// [`FinalizedExecution`]) and the Base compositions ([`crate::base`],
+    /// [`crate::base_fault_proof`]), which chain L1 finality → L1-committed output root → bound
+    /// L2 state root before calling it. `pub(crate)` is the whole point: the promotion is the
+    /// governance-weight switch, and no downstream crate can reach it.
+    pub(crate) fn promoted_to_consensus_proven(mut self) -> Self {
+        self.trust = HoldingTrust::ConsensusProven;
+        self
+    }
+
     /// True iff the full light-client finality path backs this holding.
     pub fn is_consensus_proven(&self) -> bool {
         self.trust.is_consensus_proven()

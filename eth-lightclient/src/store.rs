@@ -58,6 +58,26 @@
 //! signature (see the store's gvr-mismatch falsifier). The fork version remains a
 //! per-slot parameter: it legitimately changes across forks and a wrong one can only
 //! make verification FAIL (wrong domain -> `BadSignature`), never forge acceptance.
+//!
+//! ## Which paths change the trusted committee, and what decides each
+//!
+//! Exhaustive, because "what can move the trust root" is the only question that matters here:
+//!
+//!   1. [`WeakSubjectivityStore::bootstrap_committee`] — VERIFIED. Routes through
+//!      [`crate::verify_committee_update`], which is now the archive's
+//!      `dregg_eth_committee_rotation` verdict. Refuses (and leaves the committee unchanged) on
+//!      an inadmissible depth, a branch that does not reconstruct, **or a missing archive**
+//!      ([`StoreError::RotationGateUnavailable`]).
+//!   2. [`WeakSubjectivityStore::advance`] — VERIFIED TWICE. `dregg_eth_lc_verify` on the update,
+//!      then `dregg_eth_committee_rotation` on the rotation, with a monotonicity guard between.
+//!   3. [`WeakSubjectivityStore::pin_genesis_committee`] — **the un-verified ANCHOR, and it is
+//!      supposed to be.** A weak-subjectivity anchor is by definition the one committee no
+//!      cryptography can establish: there is nothing prior to check it against. It is a
+//!      GOVERNANCE CONSTANT, it is a distinct named constructor rather than a setter, and it can
+//!      only be spent at store CONSTRUCTION — no update, however forged, can reach it. Every
+//!      subsequent change to the committee goes through (1) or (2).
+//!
+//! There is deliberately no setter and no `pub` committee field: (1)–(3) are the whole list.
 
 use crate::finality::{verify_finalized_update, FinalizedExecution, LightClientUpdate};
 use crate::{verify_committee_update, Error, SyncCommittee, TrustedCommittee, SYNC_COMMITTEE_SIZE};
@@ -76,7 +96,19 @@ pub enum StoreError {
     /// The committee-rotation Merkle proof did not chain from the trusted state root:
     /// the offered committee is not the `next_sync_committee` the currently trusted
     /// state commits. A committee not descended from the pinned genesis lands here.
+    ///
+    /// This is the archive's REFUSAL, rendered by
+    /// [`crate::verified_gate::committee_rotation_gate`] — not a Rust rule. The
+    /// "no gate at all" case is [`StoreError::RotationGateUnavailable`], kept separate so a
+    /// missing verifier can never be read as a verified rejection.
     UnchainedCommittee(Error),
+    /// **FAIL CLOSED — the verified committee-rotation gate is not reachable.** The linked
+    /// archive does not export `dregg_eth_committee_rotation`, so no rotation verdict can be
+    /// rendered and **the trusted committee does not advance**. Deliberately distinct from
+    /// [`StoreError::UnchainedCommittee`]: "we refused you" and "we cannot decide" are different
+    /// facts, and only the first is evidence about the committee. There is no Rust fallback —
+    /// the Rust depth rule WAS the twin this crate deleted.
+    RotationGateUnavailable(String),
     /// The finalized-update verification (sync-committee BLS / finality branch /
     /// execution branch) failed against the store's trusted committee + pinned
     /// `genesis_validators_root`.
@@ -96,6 +128,17 @@ impl core::fmt::Display for StoreError {
     }
 }
 impl std::error::Error for StoreError {}
+
+/// Split a [`verify_committee_update`] failure into "the gate REFUSED this rotation" and "there
+/// was no gate". Both leave the store's committee UNCHANGED; keeping them apart is what stops a
+/// cold/stale archive from being read as a verified rejection of a legitimate rotation — and stops
+/// the opposite reading, that a refusal was merely a missing verifier.
+fn classify_rotation_error(e: Error) -> StoreError {
+    match e {
+        Error::VerifiedGateUnavailable(why) => StoreError::RotationGateUnavailable(why),
+        other => StoreError::UnchainedCommittee(other),
+    }
+}
 
 /// A weak-subjectivity sync-committee store: the pinned trust root plus the current
 /// trusted committee, advanced only by cryptographic rotation from genesis.
@@ -195,7 +238,7 @@ impl WeakSubjectivityStore {
             next_sync_committee_branch,
             &self.trusted_state_root,
         )
-        .map_err(StoreError::UnchainedCommittee)?;
+        .map_err(classify_rotation_error)?;
         // The committee committed by the checkpoint state (period P) serves period P+1.
         self.current_period = self.current_period.saturating_add(1);
         self.current_committee = Some(committee);
@@ -253,7 +296,7 @@ impl WeakSubjectivityStore {
             next_sync_committee_branch,
             &update.attested_header.state_root,
         )
-        .map_err(StoreError::UnchainedCommittee)?;
+        .map_err(classify_rotation_error)?;
 
         // Rotate.
         self.trusted_state_root = update.attested_header.state_root;

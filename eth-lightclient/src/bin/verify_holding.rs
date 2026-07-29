@@ -259,7 +259,7 @@ fn main() {
     println!("OK");
 
     assert_eq!(
-        holding.trust,
+        holding.trust(),
         HoldingTrust::ConsensusProven,
         "holding must be ConsensusProven (anchored to the finalized root)"
     );

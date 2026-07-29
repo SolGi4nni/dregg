@@ -239,13 +239,13 @@ fn real_mainnet_chain_bls_to_finality_to_consensus_proven_holding() {
     )
     .expect("real WETH holding must prove against the consensus-verified state root");
 
-    assert_eq!(holding.trust, HoldingTrust::ConsensusProven);
+    assert_eq!(holding.trust(), HoldingTrust::ConsensusProven);
     assert!(holding.is_consensus_proven());
-    assert_eq!(holding.balance, u256(e2e::EXPECTED_BALANCE_HEX));
-    assert_eq!(holding.token, h20(e2e::TOKEN));
-    assert_eq!(holding.holder, h20(e2e::HOLDER));
-    assert_eq!(holding.block_number, e2e::EX_BLOCK_NUMBER);
-    assert_eq!(holding.state_root, h32(e2e::EX_STATE_ROOT));
+    assert_eq!(holding.balance(), u256(e2e::EXPECTED_BALANCE_HEX));
+    assert_eq!(holding.token(), h20(e2e::TOKEN));
+    assert_eq!(holding.holder(), h20(e2e::HOLDER));
+    assert_eq!(holding.block_number(), e2e::EX_BLOCK_NUMBER);
+    assert_eq!(holding.state_root(), h32(e2e::EX_STATE_ROOT));
 
     // And it converts to consensus_proven governance fields.
     let fields = holding.to_foreign_fields().expect("WETH balance fits u128");

@@ -182,7 +182,7 @@ fn mint_holding(finalized: &FinalizedExecution) -> HoldingTrust {
         u256(e2e::EXPECTED_BALANCE_HEX),
     )
     .expect("holding must prove at the store-verified finalized root");
-    holding.trust
+    holding.trust()
 }
 
 // ==================== ACCEPT ====================

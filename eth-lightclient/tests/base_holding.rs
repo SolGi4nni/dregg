@@ -279,15 +279,15 @@ fn l1_committed_output_root_accepts() {
 #[test]
 fn real_base_weth_holding_accepts_consensus_proven() {
     let proven = run_default().expect("the full real Base mainnet chain must verify");
-    assert_eq!(proven.trust, HoldingTrust::ConsensusProven);
+    assert_eq!(proven.trust(), HoldingTrust::ConsensusProven);
     assert!(proven.is_consensus_proven());
-    assert_eq!(proven.balance, u256(fx::EXPECTED_BALANCE_HEX));
-    assert_eq!(proven.token, h20(fx::TOKEN));
-    assert_eq!(proven.holder, h20(fx::HOLDER));
+    assert_eq!(proven.balance(), u256(fx::EXPECTED_BALANCE_HEX));
+    assert_eq!(proven.token(), h20(fx::TOKEN));
+    assert_eq!(proven.holder(), h20(fx::HOLDER));
     // The holding is anchored at the L2 state root and the L1-PROVEN L2 block
     // number (never caller-claimed).
-    assert_eq!(proven.state_root, h32(fx::L2_STATE_ROOT));
-    assert_eq!(proven.block_number, fx::OUTPUT_L2_BLOCK_NUMBER);
+    assert_eq!(proven.state_root(), h32(fx::L2_STATE_ROOT));
+    assert_eq!(proven.block_number(), fx::OUTPUT_L2_BLOCK_NUMBER);
 
     // The governance edge: EVM family tag (Base = ChainId::Evm(8453) downstream).
     let fields = proven.to_foreign_fields().expect("fits u128");

@@ -104,7 +104,7 @@ fn prove(state_root: [u8; 32]) -> Result<ProvenErc20Holding, Erc20ProofError> {
 #[test]
 fn real_robinhood_tsla_holding_joins_into_dregg() {
     let holding = prove(h32(tsla::STATE_ROOT)).expect("real Robinhood TSLA proof verifies");
-    assert_eq!(holding.trust, HoldingTrust::StructureOnly);
+    assert_eq!(holding.trust(), HoldingTrust::StructureOnly);
 
     let fact = evm_holding_to_governance(&holding, tsla::CHAIN_ID)
         .expect("EVM holding joins into a governance fact");
