@@ -1213,9 +1213,15 @@ fn produce_via_lean_installs_verified_state_on_covered_refusal() {
 ///   * the OUTCOME is `LeanAuthoritative { rust_agreed: false }` — a surfaced RUST BUG, never the
 ///     removed Rust-wins `CoveredDivergence`;
 ///   * the producer-mode `TurnResult` follows the LEAN commit bit (committed), not Rust's reject;
-///   * the COMMITTED ledger is the AUTHORITATIVE (Lean) post-state, and the committed receipt's
-///     `post_state_hash` equals that installed root (the receipt attests what was actually
-///     committed, not the Rust reference's root).
+///   * the COMMITTED ledger IMAGE is the AUTHORITATIVE (Lean) post-state, and the committed
+///     receipt's `post_state_hash` is the CONSENSUS ANCHOR of that installed state (the receipt
+///     attests what was actually committed, not the Rust reference's state).
+///
+/// ⚠ TWO DIFFERENT VALUES, and this tooth conflated them from `977e73b19` (2026-07-20) until
+/// 2026-07-29. The installed post-state's IMAGE is `Ledger::root()` (BLAKE3); what a receipt STAMPS
+/// is `state_commit::consensus_state_commitment` (the AIR-bound chip 8-felt). `977e73b19` moved the
+/// stamp and this test kept comparing the stamp to the image, so it has been RED ever since. Both
+/// are asserted below, against their own value.
 #[test]
 fn covered_disagreement_resolves_to_lean_not_rust() {
     if skip_no_lean() {
@@ -1256,10 +1262,26 @@ fn covered_disagreement_resolves_to_lean_not_rust() {
         lean_committed,
         "the verified kernel COMMITS the unconditional revoke — the genuine disagreement this tooth needs"
     );
-    let lean_root = lean_only.root();
+    // The BLAKE3 whole-ledger image of the verified post-state. This is the IMAGE the producer
+    // installs (`*ledger = lean_ledger`) — it is NOT what a receipt stamps, and has not been since
+    // `977e73b19`. Keep the two apart by name so this tooth cannot silently conflate them again.
+    let lean_image_root = lean_only.root();
 
     // THE INVERSION: drive the live commit-path helper; the verified verdict must WIN.
     let executor = TurnExecutor::new(ComputronCosts::zero());
+
+    // THE ANCHOR the receipt must carry: `dregg_turn::state_commit::consensus_state_commitment` of
+    // the VERIFIED post-state under this executor — computed EXACTLY as `produce_via_lean` does
+    // (`exec-lean/src/lean_apply.rs:1788`), with the SAME executor instance and BEFORE the Rust
+    // reference runs, since the anchor folds the executor's live accumulator roots.
+    let lean_anchor = executor.consensus_state_commitment(&lean_only, &turn.agent);
+    let pre_anchor = executor.consensus_state_commitment(&pre, &turn.agent);
+    assert_ne!(
+        lean_anchor, pre_anchor,
+        "NON-VACUITY: the verified commit must MOVE the consensus anchor, or the post_state_hash \
+         assertion below would pass on a receipt that attested the pre-state"
+    );
+
     let mut ledger = pre.clone();
     let (result, outcome) = produce_via_lean(&executor, &turn, &mut ledger);
 
@@ -1292,16 +1314,30 @@ fn covered_disagreement_resolves_to_lean_not_rust() {
         "the producer-mode result must follow the AUTHORITATIVE Lean COMMIT, NOT the Rust reject"
     );
 
-    // The committed ledger is the AUTHORITATIVE (Lean) post-state, and the receipt attests THAT root.
+    // The committed ledger IMAGE is the AUTHORITATIVE (Lean) post-state, not the Rust one.
     assert_eq!(
         ledger.root(),
-        lean_root,
+        lean_image_root,
         "the committed ledger must be the verified-producer (Lean) post-state, never the Rust one"
     );
+    // ...and the receipt attests THAT state through the ANCHOR it actually stamps. Since
+    // `977e73b19` a receipt's `post_state_hash` is the AIR-bound chip 8-felt
+    // (`state_commit::consensus_state_commitment`), NOT the BLAKE3 `Ledger::root()`; comparing it
+    // to the ledger image is comparing incomparable values (`turn/src/state_commit.rs:146`).
     if let dregg_turn::TurnResult::Committed { receipt, .. } = &result {
         assert_eq!(
-            receipt.post_state_hash, lean_root,
-            "the committed receipt's post_state_hash must attest the installed (Lean) root"
+            receipt.post_state_hash, lean_anchor,
+            "the committed receipt's post_state_hash must be the consensus anchor of the installed \
+             (Lean) post-state"
+        );
+        assert_ne!(
+            receipt.post_state_hash, pre_anchor,
+            "the receipt must attest the POST-state anchor, never the pre-state one"
+        );
+        assert_ne!(
+            receipt.post_state_hash, lean_image_root,
+            "REGRESSION GUARD: `post_state_hash` is the AIR-bound anchor, not the BLAKE3 ledger \
+             root — if these ever coincide the stamp has been reverted to the pre-977e73b19 value"
         );
     } else {
         unreachable!("asserted committed above");
