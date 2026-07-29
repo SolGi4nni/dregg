@@ -150,6 +150,16 @@ N divergences. And both were warned that inherited diagnoses in this repo have b
   were (`failed to build archive`, `could not write output` = ENOSPC, not code). Freed 176 GiB by
   dropping `discord-bot/target`. ⚠ `target` is still 401 G and `~/Library` 644 G, `~/.cache` 311 G.
 
+- ✅ **DISK: 215 MiB → 543 GiB free.** Cleared `target/` (405 G) and `.claude/worktrees` (5.4 G) on top
+  of the earlier `discord-bot/target` (176 G) — **581 G of pure build output**, all rebuildable, no
+  build processes running. ⚠ KEPT `metatheory/.lake` (4.9 G): that is the expensive Lean build, hours
+  to regenerate, and it is not the problem.
+  Remaining bulk is NOT build output and is ember's call: `~/.cache/huggingface` 277 G (model
+  weights), `~/Library` 644 G. Other `~/dev` targets total ~18 G, biggest is tokeman's 12 G with its
+  daemon live.
+  ⚑ **This was the real cause of the "workspace build errors" I chased for an hour** — `failed to
+  build archive` and `could not write output` are ENOSPC wearing a compiler's voice.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
