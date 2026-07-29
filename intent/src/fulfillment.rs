@@ -3095,7 +3095,17 @@ mod tests {
         let payer_cell = CellId::derive_raw(&payer_pk, &payer_token);
 
         let recipient_pk = [0xBB; 32];
-        let recipient_token = [0x02; 32];
+        // ⚑ SAME TOKEN AS THE PAYER, and that is the whole point of the fixture.
+        //
+        // This read `[0x02; 32]`, so payer and recipient sat in DIFFERENT ASSET COLUMNS and the
+        // fulfillment payment was a cross-asset Transfer — exactly the teleport `b1a370194` closed:
+        // "a Transfer moves a SINGLE asset column (kernel `recTransferBal`); a value swap is two
+        // same-asset transfers or a dedicated effect, never one cross-asset Transfer."
+        //
+        // The test was green only while that hole was open, and red since it was shut. A
+        // fulfillment pays computrons for a service — both parties hold the same currency, and a
+        // fixture where they do not was never modelling the flow it is named for.
+        let recipient_token = payer_token;
         let recipient_cell = CellId::derive_raw(&recipient_pk, &recipient_token);
 
         let mut ledger = Ledger::new();
@@ -3211,7 +3221,17 @@ mod tests {
         let payer_token = [0x01; 32];
         let payer_cell = CellId::derive_raw(&payer_pk, &payer_token);
         let recipient_pk = [0xBB; 32];
-        let recipient_token = [0x02; 32];
+        // ⚑ SAME TOKEN AS THE PAYER, and that is the whole point of the fixture.
+        //
+        // This read `[0x02; 32]`, so payer and recipient sat in DIFFERENT ASSET COLUMNS and the
+        // fulfillment payment was a cross-asset Transfer — exactly the teleport `b1a370194` closed:
+        // "a Transfer moves a SINGLE asset column (kernel `recTransferBal`); a value swap is two
+        // same-asset transfers or a dedicated effect, never one cross-asset Transfer."
+        //
+        // The test was green only while that hole was open, and red since it was shut. A
+        // fulfillment pays computrons for a service — both parties hold the same currency, and a
+        // fixture where they do not was never modelling the flow it is named for.
+        let recipient_token = payer_token;
         let recipient_cell = CellId::derive_raw(&recipient_pk, &recipient_token);
 
         let mut ledger = Ledger::new();
