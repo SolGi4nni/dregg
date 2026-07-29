@@ -115,6 +115,22 @@ N divergences. And both were warned that inherited diagnoses in this repo have b
   The ring was already legal (`DREX-ROUTING.md §2`: same-asset legs, cross-asset effect from the
   CYCLE) — no new verb, no Lean work, `b1a370194` untouched, fixture byte-identical.
 
+- ⚑ **`dregg-sdk` 30 → 0** (`8ece3bd85`) — it was 30, not the 29 I briefed. **Six families, not
+  thirty bugs**, found by DECODING each `failed constraints = [#N]` back through eval order and
+  inverting the S2+E1 column deletions: 20 opaque row-0 panics collapsed to 2 causes. Fields-freeze
+  band (11, harness) · non-canonical facet mask limb (9, harness — every red used `1<<16`, every green
+  fit 16 bits, 100% predictive) · un-called revoked-set grow-gate (3, PRODUCER — the generator existed
+  with zero callers, and `provability_scoreboard` had been printing `[UNPROVABLE] revokeDelegation`
+  the whole time) · stale geometry (4) · **receipt anchor semantics (2 — a FIFTH consumer of
+  `977e73b19`, found independently)** · a doc block (1).
+  ⚑ No AIR, no re-emit, no VK rotation. No mutation window at all — the red-proof IS the pre-fix
+  baseline, reproduced on two boxes with identical counts. Net +3 assertions.
+- **Workspace compiles clean** (`3192a8dda`) — `--workspace --all-targets` was RED at 17, which is why
+  the full-suite run died before executing a single test. Both breaks live in test targets **no
+  per-crate check reaches**: `HeaderVerifyError` lacking `PartialEq` (16 asserts), and
+  `NativeDescentMove::Take` — the verb from the Lean dungeon re-emit — with no arm. Same shape as the
+  two `TurnError` arms I missed yesterday: **the compiler will tell you, but only if something asks.**
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
