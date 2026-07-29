@@ -105,6 +105,16 @@ N divergences. And both were warned that inherited diagnoses in this repo have b
   the feature) and NOT to reopen the teleport (it is a correct security fix); a ring of locks should
   be same-asset legs whose cross-asset effect emerges from the CYCLE.
 
+- ✅ **`dregg-intent` 444/444** (`de5f84a8e`) — and the cause was NOT the teleport. `route()` never
+  invokes `TurnExecutor`, so that guard is unreachable from those tests; the real failure was
+  `VerifiedSettleRefused("no verified gate registered")` from `e3f0e7b92` (07-24) — the UN-CALLED
+  INITIALIZER class, same wound as `dreggnet-market`'s 22-of-23.
+  ⚠ **The misattribution was MINE**: I ran ONE of three co-located failures, read its panic, and
+  wrote the other two up as the same cause — overwriting `HORIZONLOG` D6, which had it RIGHT.
+  `drex_clear.rs:220` had even predicted the misread verbatim. Memory extended.
+  The ring was already legal (`DREX-ROUTING.md §2`: same-asset legs, cross-asset effect from the
+  CYCLE) — no new verb, no Lean work, `b1a370194` untouched, fixture byte-identical.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
