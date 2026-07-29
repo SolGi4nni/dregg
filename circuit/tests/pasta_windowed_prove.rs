@@ -407,3 +407,36 @@ fn mina_opening_shape_measurement() {
 
     prove_and_verify("mina-2^14", &desc, &trace);
 }
+
+/// Prove an EXTERNAL witness file, in the fixture format, named by
+/// `DREGG_PASTA_WINDOWED_TRACE`. The full 34 × 255 witness is ~52 MB, too large to check in, so
+/// this is how a Lean-emitted witness at that shape gets measured without committing it.
+/// Skips cleanly when the variable is unset or the file is missing — this must not become a hard
+/// dependency on anyone's scratchpad.
+///
+/// `DREGG_PASTA_WINDOWED_TRACE=/path/to/trace.txt cargo test -p dregg-circuit --release
+///  --test pasta_windowed_prove -- --ignored --nocapture external_witness`
+#[test]
+#[ignore = "measurement: needs DREGG_PASTA_WINDOWED_TRACE"]
+fn external_witness_proves_and_verifies() {
+    let Ok(path) = std::env::var("DREGG_PASTA_WINDOWED_TRACE") else {
+        println!("DREGG_PASTA_WINDOWED_TRACE unset — skipping");
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        println!("{path}: unreadable — skipping");
+        return;
+    };
+    let desc = descriptor();
+    let t0 = Instant::now();
+    let trace = fixture_trace(&text);
+    println!(
+        "[external] parsed {} rows in {:?}",
+        trace.len(),
+        t0.elapsed()
+    );
+    let doublings = trace.iter().filter(|r| r[COL_DBL].as_u32() == 1).count();
+    println!("[external] {doublings} doubling rows (= bit-planes)");
+    assert_threaded(&trace);
+    prove_and_verify("external", &desc, &trace);
+}
