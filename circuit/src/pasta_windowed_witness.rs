@@ -200,6 +200,14 @@ impl U256 {
         acc
     }
 
+    /// Bit `i` of the value, `0` past bit 255.
+    pub fn bit(&self, i: usize) -> u32 {
+        if i >= 256 {
+            return 0;
+        }
+        ((self.0[i / 64] >> (i % 64)) & 1) as u32
+    }
+
     /// Decimal rendering (test diagnostics).
     pub fn to_dec(&self) -> String {
         if *self == U256::ZERO {
@@ -236,6 +244,16 @@ pub const P_PASTA: U256 = U256([
     0x4000_0000_0000_0000,
 ]);
 
+/// The **Pallas scalar field** prime `q` (`PastaField.qN`), 255 bits. This is the field the IPA
+/// challenges and the s-vector live in — `PastaField.fqMulCore`'s modulus, and therefore the
+/// modulus of the derivation chain `PastaMsmScalarDerive.chainGates` emits.
+pub const Q_PASTA: U256 = U256([
+    0x8c46_eb21_0000_0001,
+    0x2246_98fc_0994_a8dd,
+    0x0000_0000_0000_0000,
+    0x4000_0000_0000_0000,
+]);
+
 /// The RCB constant `b3 = 3·b = 15` (`PastaCurveComplete.curveB3`).
 pub const CURVE_B3: u64 = 15;
 /// The short-Weierstrass `b` coefficient (`PastaCurve.curveB`).
@@ -256,9 +274,10 @@ fn mul_wide(a: &U256, b: &U256) -> [u64; 8] {
     out
 }
 
-/// `(x div p, x mod p)` by binary long division. `x < p²` is required for the quotient to fit
-/// 256 bits (debug-asserted).
-fn divrem_p(x: &[u64; 8]) -> (U256, U256) {
+/// `(x div m, x mod m)` by binary long division, for any 255-bit modulus `m`. `x < m²` is required
+/// for the quotient to fit 256 bits (debug-asserted).
+fn divrem_by(x: &[u64; 8], m: &U256) -> (U256, U256) {
+    debug_assert!(m.0[3] >> 63 == 0, "modulus must be < 2^255");
     let mut msb = None;
     for i in (0..8).rev() {
         if x[i] != 0 {
@@ -272,12 +291,12 @@ fn divrem_p(x: &[u64; 8]) -> (U256, U256) {
     let mut quot = [0u64; 8];
     let mut rem = U256::ZERO;
     for i in (0..=msb).rev() {
-        // `rem < p < 2^255`, so `2·rem + bit < 2p < 2^256` and one conditional subtraction
+        // `rem < m < 2^255`, so `2·rem + bit < 2m < 2^256` and one conditional subtraction
         // restores the invariant.
         let bit = (x[i / 64] >> (i % 64)) & 1;
         rem = rem.shl1_or(bit);
-        if rem >= P_PASTA {
-            let (r, borrow) = rem.sbb(&P_PASTA);
+        if rem >= *m {
+            let (r, borrow) = rem.sbb(m);
             debug_assert!(!borrow);
             rem = r;
             quot[i / 64] |= 1u64 << (i % 64);
@@ -285,9 +304,14 @@ fn divrem_p(x: &[u64; 8]) -> (U256, U256) {
     }
     debug_assert!(
         quot[4] == 0 && quot[5] == 0 && quot[6] == 0 && quot[7] == 0,
-        "quotient exceeds 256 bits (input was not < p²)"
+        "quotient exceeds 256 bits (input was not < m²)"
     );
     (U256([quot[0], quot[1], quot[2], quot[3]]), rem)
+}
+
+/// `(x div p, x mod p)` — [`divrem_by`] at the Pallas BASE modulus.
+fn divrem_p(x: &[u64; 8]) -> (U256, U256) {
+    divrem_by(x, &P_PASTA)
 }
 
 /// `(x·y mod p, x·y div p)` — the reduced product and the `fpMulHead` quotient witness.
@@ -295,6 +319,15 @@ pub fn mul_mod_p(x: &U256, y: &U256) -> (U256, U256) {
     debug_assert!(*x < P_PASTA && *y < P_PASTA);
     let (q, r) = divrem_p(&mul_wide(x, y));
     (r, q)
+}
+
+/// `(x·y mod q, x·y div q)` — the reduced product and the `fqMulHead` quotient witness, at the
+/// Pallas SCALAR modulus. This is the ONLY arithmetic the derivation chain needs: every step of
+/// `PastaMsmScalarDerive.chainGates` is one `fqMulCore`.
+pub fn mul_mod_q(x: &U256, y: &U256) -> (U256, U256) {
+    debug_assert!(*x < Q_PASTA && *y < Q_PASTA);
+    let (quot, rem) = divrem_by(&mul_wide(x, y), &Q_PASTA);
+    (rem, quot)
 }
 
 /// `(k·x mod p, k·x div p)` — the reduced constant-multiple and the `fpSMulHead` quotient.
@@ -736,6 +769,164 @@ pub fn put_on_curve_block_forged(row: &mut [BabyBear], base: usize, pt: &Pt) {
 pub fn put_row_certificates(row: &mut [BabyBear], acc: &Pt, src: &Pt) {
     put_on_curve_block(row, COL_OC_ACC, acc);
     put_on_curve_block(row, COL_OC_SRC, src);
+}
+
+// ---------------------------------------------------------------------------------------------
+// PART 2c — the SCALAR-DERIVATION block (`PastaMsmScalarDerive.deriveGates`).
+//
+// `PastaMsmScalarDerive` emits `8 + 29·nb + 2·planes` constraints that RECOMPUTE the row's own
+// s-vector entry from the challenge vector on the wire. This fills the `10 + 37·nb + 2·planes`
+// witness columns that make their bodies vanish over ℤ. It authors no constraint: the layout below
+// is the Lean file's §1 table, offset for offset, and the arithmetic is the same `fqMulCore`
+// witness `mul_mod_q` produces for any other modular multiplication.
+// ---------------------------------------------------------------------------------------------
+
+/// The column layout `PastaMsmScalarDerive` §1 declares, at a given challenge count and plane
+/// count. Everything is appended above [`ONCURVE_WIDTH`]; not one existing column moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeriveLayout {
+    /// The challenge count (`nb`). 15 for a 2^15-point Wrap SRS.
+    pub nb: usize,
+    /// The bit-plane count (`planes`). 256 for a Pallas-scalar-sized s-vector entry.
+    pub planes: usize,
+}
+
+impl DeriveLayout {
+    /// `PastaMsmScalarDerive.DB` — the base of everything the derivation adds.
+    pub const DB: usize = ONCURVE_WIDTH;
+
+    /// `PIDX` — the row's bit-plane index.
+    pub const PIDX: usize = Self::DB;
+
+    /// `GBc j` — the `j`-th binary digit of `GIDX`.
+    pub fn gb(&self, j: usize) -> usize {
+        debug_assert!(j < self.nb);
+        Self::DB + 1 + j
+    }
+
+    /// `CHc m` — challenge limb `m` (flat: `NUM_LIMBS·j + l`).
+    pub fn ch(&self, m: usize) -> usize {
+        Self::DB + 1 + self.nb + m
+    }
+
+    /// `MUc m` — selected-multiplier limb `m`.
+    pub fn mu(&self, m: usize) -> usize {
+        Self::DB + 1 + self.nb + NUM_LIMBS * self.nb + m
+    }
+
+    /// `PRc m` — running-product limb `m` (`nb + 1` blocks; block `nb` IS `s_GIDX`).
+    pub fn pr(&self, m: usize) -> usize {
+        Self::DB + 1 + self.nb + 2 * NUM_LIMBS * self.nb + m
+    }
+
+    /// `QUc m` — reduction-quotient limb `m`.
+    pub fn qu(&self, m: usize) -> usize {
+        Self::DB + 1 + self.nb + 2 * NUM_LIMBS * self.nb + NUM_LIMBS * (self.nb + 1) + m
+    }
+
+    /// `SBc p` — the `p`-th binary digit of the derived scalar, MSB-first.
+    pub fn sb(&self, p: usize) -> usize {
+        debug_assert!(p < self.planes);
+        Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + p
+    }
+
+    /// `SEc p` — the `p`-th plane selector.
+    pub fn se(&self, p: usize) -> usize {
+        debug_assert!(p < self.planes);
+        Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + self.planes + p
+    }
+
+    /// `PastaMsmScalarDerive.WD` — the derived row template's width.
+    pub fn width(&self) -> usize {
+        Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + 2 * self.planes
+    }
+
+    /// `PastaMsmScalarDerive.PID` — the sliced 29 public inputs plus `NUM_LIMBS·nb` challenge
+    /// limbs.
+    pub fn pi_count(&self) -> usize {
+        SLICED_PI_COUNT + NUM_LIMBS * self.nb
+    }
+}
+
+/// `PastaMsmSliced.PI_COUNT` — `[lo, hi]` plus the 27 published partial limbs.
+pub const SLICED_PI_COUNT: usize = 29;
+
+/// **The tensor, in Rust**: `s_idx = ∏_j c_j^{bit_j(idx)}` in `ZMod q`, the same
+/// `PastaMsmScalarBound.sAt` the manifest is built from — head challenge paired with the HIGH
+/// index bit. Used to cross-check the DESCRIPTOR's digit column against the challenge vector, and
+/// to fill the chain.
+pub fn derive_scalar(chals: &[U256], idx: usize) -> U256 {
+    let nb = chals.len();
+    let mut acc = U256::ONE;
+    for (j, c) in chals.iter().enumerate() {
+        if (idx >> (nb - 1 - j)) & 1 == 1 {
+            acc = mul_mod_q(&acc, c).0;
+        }
+    }
+    acc
+}
+
+/// **Fill one row's derivation block**, returning the derived scalar the chain lands on.
+///
+/// ⚑ THE TWO CHALLENGE VECTORS ARE SEPARATE ON PURPOSE, and the separation IS the fourth tamper.
+/// `wire` fills the `CHc` columns — the PI-bound, threaded vector, i.e. WHAT THE VERIFIER SUPPLIES.
+/// `derived` fills the multiplier, quotient, product and digit columns — i.e. what the PROVER
+/// claims the scalar is. An honest row passes the same slice twice; the forgery passes two
+/// different blocks, and that is precisely `PastaMsmScalarDerive` §5's `katAsg cs ds`.
+///
+/// `gidx` is the ABSOLUTE generator index the row consumes — the value `PastaMsmBound`'s `GIDX`
+/// thread already carries — and `plane` is the row's bit plane, the value the `PIDX` thread
+/// carries. Both are read off the schedule, never invented.
+///
+/// ⚠ `gidx < 2^nb` is required — the emitted `gidxBitsGate` decomposes `GIDX` into exactly `nb`
+/// binary digits, so a generator index past the s-vector's length has no witness at all. That is
+/// the emitted object's own statement that the challenge count and the SRS size are the same
+/// number, and it is asserted rather than silently truncated.
+pub fn put_derive_block(
+    row: &mut [BabyBear],
+    lay: &DeriveLayout,
+    wire: &[U256],
+    derived: &[U256],
+    gidx: usize,
+    plane: usize,
+) -> U256 {
+    assert_eq!(wire.len(), lay.nb, "wire challenge count must be nb");
+    assert_eq!(derived.len(), lay.nb, "derived challenge count must be nb");
+    assert!(
+        lay.nb >= 64 || gidx < (1usize << lay.nb),
+        "GIDX {gidx} does not fit {} binary digits (gidxBitsGate)",
+        lay.nb
+    );
+    assert!(plane < lay.planes, "PIDX {plane} is past the plane count");
+
+    row[DeriveLayout::PIDX] = BabyBear::new(plane as u32);
+    for j in 0..lay.nb {
+        row[lay.gb(j)] = BabyBear::new(((gidx >> j) & 1) as u32);
+    }
+    for (j, c) in wire.iter().enumerate() {
+        put_field(row, lay.ch(NUM_LIMBS * j), c);
+    }
+
+    // The chain: `PR 0 = 1`, `PR (j+1) ≡ PR j · MU j (mod q)`, with `MU j` the challenge selected
+    // by index digit `nb − 1 − j` (`mulSelHead`'s pairing) and the field ONE otherwise.
+    let mut prd = U256::ONE;
+    put_field(row, lay.pr(0), &prd);
+    for (j, c) in derived.iter().enumerate() {
+        let selected = (gidx >> (lay.nb - 1 - j)) & 1 == 1;
+        let mu = if selected { *c } else { U256::ONE };
+        put_field(row, lay.mu(NUM_LIMBS * j), &mu);
+        let (next, quot) = mul_mod_q(&prd, &mu);
+        put_field(row, lay.qu(NUM_LIMBS * j), &quot);
+        put_field(row, lay.pr(NUM_LIMBS * (j + 1)), &next);
+        prd = next;
+    }
+
+    // The decomposition (MSB-first over `planes` planes) and the plane selector.
+    for p in 0..lay.planes {
+        row[lay.sb(p)] = BabyBear::new(prd.bit(lay.planes - 1 - p));
+        row[lay.se(p)] = BabyBear::new(u32::from(p == plane));
+    }
+    prd
 }
 
 /// What one row of the schedule asks for.
