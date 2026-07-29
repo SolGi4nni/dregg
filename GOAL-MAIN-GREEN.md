@@ -160,6 +160,19 @@ N divergences. And both were warned that inherited diagnoses in this repo have b
   ⚑ **This was the real cause of the "workspace build errors" I chased for an hour** — `failed to
   build archive` and `could not write output` are ENOSPC wearing a compiler's voice.
 
+- ✅ **`lake build Dregg2` COMPLETES — 10,456 jobs, first clean root build in days** (`422abab0c`).
+  One vacuous floor carrier had failed it since 07-27, and **three lanes reported it as "not mine"
+  while nobody owned it** — the 24-circuit-reds shape again.
+  ⚠ I tried RESTATING it first and that failed, which is the useful part: moving a floor from a named
+  binder into an arrow's antecedent is the same logic. **Any "the old floor implies X" carries the
+  old floor.** The file's own header already said "no declaration in this file assumes
+  `Hash4NoCollision` any more" — false only because that theorem existed, so deleting it made the
+  header true.
+  ⚑ Sharpens the standing rule: **binder-class carriers sometimes restate and sometimes must be
+  DELETED; `prop-body` carriers (a `def` whose BODY is the floor conjunction) genuinely cannot be
+  restated**, which is why the two `ApexPremiseVacuity` rows legitimately hold baselines and this
+  did not.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
