@@ -48,6 +48,20 @@ against 92s commits) while `main` is not branch-protected, so **every gate repor
   ⚠ Briefed that three of them are REFUSAL poles, so "the corpus lost a case" must be established
   rather than assumed: a failing refusal pole may mean the refusal broke.
 
+## ⚑ BOX ROUTING — CORRECTED 2026-07-29 (measured, not inherited)
+**hbox is NOT disk-critical.** `/` 49% (224 G free), `tank/dregg-build` **8% — 2.5 T free**. I have
+been briefing lanes "both boxes disk-critical, prefer local" all night; that is false for hbox and
+has been pushing builds onto the laptop for nothing.
+
+- **`pbuild` routes to `/tank/dregg-build/<lane>` and was fixed TODAY** to measure the LANE dir
+  rather than `$HOME` — previously a tank-resident lane was refused for a shortage on a disk it never
+  touches, and two lanes escaped by lowering `HBUILD_MIN_FREE_GIB`. Use `pbuild`; it is correct now.
+- **The leak is bare `cargo` in `~/dev/<tree>`** — 7 target dirs on root that never went through a
+  lane. ember: *"we should be using /tank/dregg-build almost exclusively, for disk perf reasons."*
+- Reclaimable in IDLE trees: ~8 GB of target output. The 25 G / 16 G / 19 G items are source + `.git`
+  + `.lake`, so they are ember's call. `dregg-build.premigrate` (3.6 G, last touched Jul 23) is the
+  pre-symlink leftover.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
