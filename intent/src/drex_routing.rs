@@ -70,7 +70,7 @@ use crate::exchange::AssetId;
 use crate::lowering::{Intent, LoweringContext, lower, seal_plan_uniform};
 use crate::solver::{ExchangeSpec, IntentNode, RingSolver, RingTrade, Settlement};
 use crate::verified_settle::{
-    VerifiedLedger, extract_legs, settle_fulfillment_verified, touched_assets,
+    VerifiedLedger, VerifiedLeg, extract_legs, settle_fulfillment_verified, touched_assets,
 };
 
 /// A party in the ring: locks `offer_amount` of `offer_asset` on its own chain, wants at least
@@ -237,7 +237,29 @@ pub struct RoutingFixture {
     /// True: the mirror conserved (`Σ minted ≤ Σ locked`, per asset) across the locks.
     pub mirror_conserves: bool,
     /// True: the ring settled + conserved value per touched asset on the verified executor.
+    ///
+    /// ⚠ This is a RENDERED CLAIM, and on its own it is exactly the "a `SETTLED` pill over a
+    /// no-op" shape this repo has shipped twice. `route` now REFUSES rather than emitting a
+    /// fixture with this false, and [`Self::pre_ledger`]/[`Self::post_ledger`] carry the balances
+    /// a caller must assert instead of trusting the flag.
     pub ring_conserves: bool,
+    /// The VERIFIED pre-ledger the ring settled against (the funded reference `funded_ledger`
+    /// builds: every sender holds exactly its leg's amount in that leg's asset, nothing else).
+    ///
+    /// Not serialized — the Foundry fixture consumes the release legs, not the dregg-side ledger.
+    /// It is on the struct so a caller can assert the ACTUAL per-asset deltas and the ACTUAL
+    /// per-party movement, rather than reading [`Self::ring_conserves`] back as evidence of
+    /// itself.
+    #[serde(skip)]
+    pub pre_ledger: VerifiedLedger,
+    /// The VERIFIED post-ledger, after every ring leg committed through the Lean export.
+    #[serde(skip)]
+    pub post_ledger: VerifiedLedger,
+    /// The verified legs the ring settled, in cycle order — each one a SINGLE-asset column move
+    /// (`from`/`to`/`asset`/`amount`), which is what makes the ring legal: the cross-asset effect
+    /// is the CYCLE, never any one transfer.
+    #[serde(skip)]
+    pub verified_legs: Vec<VerifiedLeg>,
     /// Provenance string naming the real Rust the flow ran through.
     pub provenance: String,
 }
@@ -297,6 +319,26 @@ pub fn verify_mirror_lock(
 ///
 /// A book that does not clear, or a ring the verified executor refuses, is surfaced as an error —
 /// no fixture is emitted for a flow that did not actually settle+conserve.
+///
+/// # A RING OF LOCKS IS A CYCLE OF SAME-ASSET LEGS
+///
+/// The parties trade *different* assets — that is the point — but **no single leg is ever
+/// cross-asset.** The solver emits `Settlement { from, to, asset, amount }` with `asset =
+/// from_node.offer_asset` (`solver.rs`, both `find_rings` and `validate_ring`), so each leg
+/// RE-ASSIGNS one party's own lock to whoever the cycle matched to receive that asset
+/// (`docs/deos/DREX-ROUTING.md §2`: Alice's locked TSLA is released *to Bob*). The cross-asset
+/// effect is a property of the CYCLE, never of a transfer. That is exactly the shape
+/// `turn/src/executor/apply.rs`'s cross-asset refusal names as legal — "a value swap is two
+/// same-asset transfers or a dedicated effect" — and it is why closing that teleport
+/// (`b1a370194`) neither broke this flow nor requires a new kernel verb here: each leg is a
+/// single-`AssetId`-column rewrite, the `recTransferBal`/`recKExecAsset` shape, and
+/// [`crate::verified_settle`] folds it through the Lean export one asset column at a time.
+///
+/// What the ring does NOT survive is a per-party *scalar-balance* cell model: one `dregg_cell::Cell`
+/// carries ONE `asset()` and one scalar balance, so a party that sends GOLD and receives ART needs
+/// a cell per `(party, asset)` (`Cell::in_asset`, `5ec8ce76d`) before the lowered `Turn` could run
+/// on `dregg_turn::TurnExecutor`. This function does not take that path — it settles through the
+/// per-asset verified ledger — and the executor-side vault-cell wiring is the named residual.
 pub fn route(
     parties: &[Party],
     mirror_legs: &[MirrorLeg],
@@ -435,6 +477,18 @@ pub fn route(
     let ring_conserves = touched_assets(&legs)
         .iter()
         .all(|a| pre.total_asset(a) == post.total_asset(a));
+    // …and REFUSE if it does not hold. This function's contract says "no fixture is emitted for a
+    // flow that did not actually settle+conserve", but until 2026-07-29 a false `ring_conserves`
+    // was written into the fixture and returned `Ok` — the flag was a rendered claim with no
+    // consequence, the exact shape of the bounty payout and the compute-exchange settle that both
+    // rendered success over a no-op. `settle_ring_verified` already fails closed on
+    // `ConservationViolated`, so this is unreachable for a committed fold; it is here so a future
+    // relaxation there cannot ship a non-conserving fixture through a `false` bool.
+    if !ring_conserves {
+        return Err(RoutingError::VerifiedSettleRefused(
+            "the verified post-ledger did not conserve per touched asset".into(),
+        ));
+    }
 
     // (4) The clearing root over the VERIFIED settled post-ledger, then one ReleaseLeg per ring leg.
     let clearing_root = clearing_root(batch_id, &post, &legs);
@@ -465,6 +519,9 @@ pub fn route(
         legs: release_legs,
         mirror_conserves,
         ring_conserves,
+        pre_ledger: pre,
+        post_ledger: post,
+        verified_legs: legs,
         provenance: "solana_mirror.verify_lock (lock→mirror) → solver.rs (Johnson circuits + \
                      Shapley–Scarf TTC) → verified_settle.rs (each leg through the proved \
                      recKExecAsset kernel) → clearing root over the verified post-ledger"

@@ -3,23 +3,53 @@
 //! per-leg escrow-release flow, plus the fixture generator the Foundry e2e
 //! (`chain/test/DrexRoutingE2E.t.sol`) replays.
 //!
-//! This lives as an INTEGRATION test (not an inline `#[cfg(test)]` unit module) on purpose: the
-//! `dregg-intent` lib-test build is independently broken (`fulfillment.rs` test code references
-//! circuit symbols that drifted away — `prove_predicate`/`stark`/`verify_authorization_dsl`), so
-//! the whole `cargo test -p dregg-intent` unit build fails to compile. An integration test links
-//! the lib compiled NORMALLY (its `#[cfg(test)]` units excluded), so this runs cleanly via
-//! `cargo test -p dregg-intent --test drex_routing_e2e`.
+//! This lives as an INTEGRATION test (not an inline `#[cfg(test)]` unit module) on purpose: an
+//! integration test links the lib compiled NORMALLY (its `#[cfg(test)]` units excluded), which is
+//! the shape a consumer gets — and, since `e3f0e7b92`, the only shape in which the fail-closed
+//! verified-settle path runs at all (the in-crate `#[cfg(test)]` sibling keeps the Rust fold
+//! authoritative). Run it with `cargo test -p dregg-intent --test drex_routing_e2e`.
+//!
+//! (This header used to add "the `dregg-intent` lib-test build is independently broken —
+//! `fulfillment.rs` test code references circuit symbols that drifted away". That has not been true
+//! since `991c9d18d`: `cargo nextest run -p dregg-intent` compiles and runs 287 lib unit tests.)
+//!
+//! # ⚠ THIS BINARY MUST INSTALL THE VERIFIED EXECUTOR GATE
+//!
+//! Linking `dregg-intent` normally is exactly what makes `verified_settle`'s INVERTED, fail-closed
+//! consumer path run: the Lean export `dregg_record_kernel_step` decides every ring leg, and with
+//! no `IntentVerifiedGate` registered the ring is REFUSED (`FfiUnavailable`), not settled by an
+//! unverified in-process Rust fold. `e3f0e7b92` (2026-07-24) made that the polarity and named
+//! `tussle` as downstream fallout but missed this file, so `ring_of_locks_routes_end_to_end` and
+//! `generate_fixture` went red on 2026-07-24 with
+//!
+//! ```text
+//! VerifiedSettleRefused("verified-executor FFI unavailable: no verified gate registered")
+//! ```
+//!
+//! — which `exec-lean/src/bin/drex_clear.rs` already calls out by name as the failure that "reads
+//! like a matcher bug and sends a day of debugging at the matcher instead of at the missing gate".
+//! It is: the ring was NEVER JUDGED, it was not rejected. Every test here that drives `route` calls
+//! [`gate`] first, exactly as `node/src/lib.rs` and that bin do at startup.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use dregg_intent::drex_routing::{MirrorLeg, Party, RoutingError, route, verify_mirror_lock};
 use dregg_intent::exchange::AssetId;
+use dregg_intent::verified_settle::{
+    VerifiedSettleError, funded_ledger, settle_ring_verified, touched_assets,
+};
 
 use dregg_bridge::midnight::EpochKey;
 use dregg_bridge::solana_mirror::{MirrorConfig, MirrorError, MirrorState, SolanaLockAttestation};
 use dregg_cell::CellId;
 use ed25519_dalek::SigningKey;
 use serde::Serialize;
+
+/// Install the REAL verified-Lean executor gate for this process (idempotent — the seam holds a
+/// `OnceLock`). Without it `settle_ring_verified` refuses every non-empty ring fail-closed.
+fn gate() {
+    dregg_exec_lean::register_distributed_gates();
+}
 
 fn asset(byte: u8) -> AssetId {
     let mut a = [0u8; 32];
@@ -164,8 +194,18 @@ fn verify_all(
     ]
 }
 
+/// POLE 1 (the ring CLEARS): an honest ring of locks settles through the REAL verified Lean
+/// executor, conserves per asset, and — the part a `ring_conserves: true` bool cannot show —
+/// actually MOVES value between the three parties, each of them ending in a DIFFERENT asset than
+/// it started in.
+///
+/// Every assertion below is over the verified pre/post BALANCES, not over a rendered flag. A
+/// conserving no-op ring (nobody's balance changes) satisfies `ring_conserves` trivially and would
+/// pass the old version of this test; it fails `each party's offered column is DRAINED` and `each
+/// party's wanted column is CREDITED` here.
 #[test]
 fn ring_of_locks_routes_end_to_end() {
+    gate();
     let (parties, oa, ob, oc) = three_party();
     let mirror_legs = verify_all(&parties, &oa, &ob, &oc);
     let fx = route(&parties, &mirror_legs, 0).expect("the ring-of-locks routes");
@@ -177,6 +217,113 @@ fn ring_of_locks_routes_end_to_end() {
         "ring must conserve on the verified executor"
     );
     assert_eq!(fx.legs.len(), 3, "a 3-party ring has 3 release legs");
+
+    // ── A RING OF LOCKS IS A CYCLE OF SAME-ASSET LEGS ────────────────────────────────────────
+    // Each leg re-assigns ONE party's own lock, in that party's OWN asset, to whoever the cycle
+    // matched to receive it. No leg is cross-asset — the cross-asset effect is the CYCLE. If the
+    // solver ever emitted a leg whose asset is not the sender's offered asset, that leg would be
+    // the unbacked cross-asset teleport `b1a370194` closed in the executor, and this fails.
+    let offer_of: BTreeMap<u8, AssetId> =
+        parties.iter().map(|p| (p.id_byte, p.offer_asset)).collect();
+    assert_eq!(fx.verified_legs.len(), 3, "3 verified single-column legs");
+    for (i, leg) in fx.verified_legs.iter().enumerate() {
+        assert_eq!(
+            leg.asset, offer_of[&leg.from],
+            "leg {i} ({}→{}) must move the SENDER's own locked asset — a cross-asset leg would be \
+             the teleport the executor refuses",
+            leg.from, leg.to
+        );
+        assert_ne!(leg.from, leg.to, "leg {i} must not be a self-transfer");
+        assert!(leg.amount > 0, "leg {i} must move a positive amount");
+    }
+    // The three legs form a closed cycle: every party sends exactly once and receives exactly once.
+    let senders: BTreeSet<u8> = fx.verified_legs.iter().map(|l| l.from).collect();
+    let receivers: BTreeSet<u8> = fx.verified_legs.iter().map(|l| l.to).collect();
+    assert_eq!(
+        senders,
+        BTreeSet::from([1u8, 2, 3]),
+        "each party sends once"
+    );
+    assert_eq!(
+        receivers,
+        BTreeSet::from([1u8, 2, 3]),
+        "each party receives once"
+    );
+
+    // ── CONSERVATION, ASSERTED ON THE BALANCES (not on `fx.ring_conserves`) ──────────────────
+    let assets = touched_assets(&fx.verified_legs);
+    assert_eq!(assets.len(), 3, "the ring touches GOLD, ART and USD");
+    for a in &assets {
+        let before = fx.pre_ledger.total_asset(a);
+        let after = fx.post_ledger.total_asset(a);
+        assert_eq!(
+            before, after,
+            "asset {:02x} must be conserved across the verified settle ({before} -> {after})",
+            a[0]
+        );
+        assert!(
+            before > 0,
+            "asset {:02x} must carry real supply — a ring over empty columns conserves vacuously",
+            a[0]
+        );
+    }
+
+    // ── ANTI-VACUITY: VALUE ACTUALLY CROSSED PARTIES, INTO A DIFFERENT ASSET ─────────────────
+    // Settled amounts are the RECEIVER's declared minimum capped by the sender's offer
+    // (`solver.rs`): Alice→Carol 30 GOLD, Carol→Bob 20 USD, Bob→Alice 10 ART.
+    let expect: [(u8, u8, u8, i128); 3] = [
+        (1, 3, GOLD, 30), // Alice's locked GOLD is re-assigned to Carol, who wanted GOLD
+        (3, 2, USD, 20),  // Carol's locked USD to Bob
+        (2, 1, ART, 10),  // Bob's locked ART to Alice
+    ];
+    let mut moved: i128 = 0;
+    for (from, to, a, amount) in expect {
+        let a = asset(a);
+        assert_eq!(
+            fx.pre_ledger.get(from, &a),
+            amount,
+            "party {from} must start holding its own {amount} of asset {:02x}",
+            a[0]
+        );
+        assert_eq!(
+            fx.post_ledger.get(from, &a),
+            0,
+            "party {from}'s offered column must be DRAINED by the ring (it gave its lock away)"
+        );
+        assert_eq!(
+            fx.pre_ledger.get(to, &a),
+            0,
+            "party {to} must start with NONE of asset {:02x} — it is buying it",
+            a[0]
+        );
+        assert_eq!(
+            fx.post_ledger.get(to, &a),
+            amount,
+            "party {to} must END holding the {amount} of asset {:02x} the ring matched to it",
+            a[0]
+        );
+        moved += amount;
+    }
+    assert_eq!(moved, 60, "the ring moved 30 GOLD + 20 USD + 10 ART");
+    // And each party genuinely swapped: it holds NONE of what it offered and SOME of what it wanted.
+    for p in &parties {
+        assert_eq!(
+            fx.post_ledger.get(p.id_byte, &p.offer_asset),
+            0,
+            "{} must end holding none of the asset it offered",
+            p.name
+        );
+        assert!(
+            fx.post_ledger.get(p.id_byte, &p.want_asset) >= p.want_min as i128,
+            "{} must end holding at least its declared minimum of the asset it wanted",
+            p.name
+        );
+        assert_ne!(
+            p.offer_asset, p.want_asset,
+            "{} must be swapping ACROSS assets — otherwise the cycle proves nothing",
+            p.name
+        );
+    }
 
     // The clearing root is non-zero and stable across a re-run (deterministic).
     assert_ne!(fx.clearing_root, hex32(&[0u8; 32]));
@@ -323,6 +470,72 @@ fn an_orphan_lock_is_refused() {
     );
 }
 
+/// POLE 2 (the ring is REFUSED when it does not balance): take the EXACT legs the honest ring
+/// settled, fund the ledger from those honest legs, then inflate the LAST leg so the ring tries to
+/// re-assign more than was ever locked — Bob releases 11 ART when only 10 was minted against his
+/// lock. The verified executor refuses that leg by variant (`LegRejected`), and because a ring is
+/// all-or-none (`settleRing_atomic`) the WHOLE ring aborts: the two legs that already committed
+/// leave no trace in the caller's ledger.
+///
+/// The inflated leg is deliberately LAST, so this cannot pass by refusing before anything moved —
+/// legs 0 and 1 commit inside the fold and must be rolled back.
+///
+/// This drives the SAME registered Lean gate as pole 1, so an accept and a refusal are decided by
+/// the same authority.
+#[test]
+fn a_ring_that_does_not_balance_is_refused_and_nothing_moves() {
+    gate();
+    let (parties, oa, ob, oc) = three_party();
+    let mirror_legs = verify_all(&parties, &oa, &ob, &oc);
+    let fx = route(&parties, &mirror_legs, 0).expect("the honest ring routes");
+
+    // Fund from the HONEST legs (the locks that actually minted), then over-claim on the last leg.
+    let honest = fx.verified_legs.clone();
+    let k0 = funded_ledger(&honest);
+    let mut inflated = honest.clone();
+    let last = inflated.len() - 1;
+    inflated[last].amount += 1;
+
+    // The honest ring over this same ledger settles — so the refusal below is about the inflation,
+    // not about a ledger that could never settle anything.
+    let post_before =
+        settle_ring_verified(&k0, &honest).expect("the honest ring settles on this ledger");
+
+    let res = settle_ring_verified(&k0, &inflated);
+    match &res {
+        Err(VerifiedSettleError::LegRejected { index, leg }) => {
+            assert_eq!(*index, last, "the REFUSED leg must be the inflated one");
+            assert_eq!(
+                leg.amount,
+                honest[last].amount + 1,
+                "the refusal must name the over-claimed amount"
+            );
+            assert_eq!(leg.asset, honest[last].asset);
+        }
+        other => panic!(
+            "a ring releasing more than was locked must be refused by LegRejected; got {other:?}"
+        ),
+    }
+
+    // ATOMICITY, with content: legs 0 and 1 DID commit inside the aborted fold. Re-settling the
+    // honest ring must reproduce the identical post-ledger — if the aborted attempt had left any
+    // partial state behind (in the ledger or through the gate), these would diverge.
+    let post_after = settle_ring_verified(&k0, &honest)
+        .expect("the honest ring must still settle after an aborted one");
+    assert_eq!(
+        post_before, post_after,
+        "an aborted ring must leave NO trace: the honest settle is unchanged by it"
+    );
+    for a in touched_assets(&honest) {
+        assert_eq!(
+            post_after.total_asset(&a),
+            k0.total_asset(&a),
+            "asset {:02x} must still conserve after the aborted ring",
+            a[0]
+        );
+    }
+}
+
 /// A book with no cross-chain cycle does not clear — surfaced honestly, no fixture emitted.
 #[test]
 fn non_clearing_book_yields_no_ring() {
@@ -385,6 +598,7 @@ struct FixtureWire {
 /// tree (for a LOCAL cargo run).
 #[test]
 fn generate_fixture() {
+    gate();
     let (parties, oa, ob, oc) = three_party();
     let mirror_legs = verify_all(&parties, &oa, &ob, &oc);
     let fx = route(&parties, &mirror_legs, 0).expect("routes");

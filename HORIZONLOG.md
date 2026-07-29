@@ -808,7 +808,19 @@ routed exactly this to ember. ⚠ Second half also live: the three blocklace-obs
 have **no caller outside their own file.**
 
 **D6 · `dregg-intent`'s TWO ROUTING TESTS CAN NEVER PASS IN THEIR OWN CRATE, AND THE THIRD IS A
-DIFFERENT WOUND. LIVE.** Measured: `cargo nextest run -p dregg-intent --no-fail-fast` → **439 passed,
+DIFFERENT WOUND. FIXED 2026-07-29.**
+> ✅ **FIXED 2026-07-29** — `dregg-exec-lean` is now a `[dev-dependencies]` entry of `dregg-intent`
+> (cargo permits the cycle) and every test that drives `route` calls `register_distributed_gates()`,
+> so the ring is judged by the REAL Lean export instead of being refused unjudged. `cargo nextest
+> run -p dregg-intent --no-fail-fast --test-threads=4` → **444 run, 444 passed, 0 skipped, EXIT=0**
+> (was 443/441/2 after `991c9d18d`). `settle_fail_closed` still refuses — linking is not registering.
+> ⚠ **The cross-asset attribution in `991c9d18d`'s body was WRONG for these two** — the observed
+> panic was `VerifiedSettleRefused("… no verified gate registered")`, never the teleport guard;
+> `route` does not invoke `dregg_turn::TurnExecutor` at all, and every ring leg is already
+> single-asset. Third wrong inherited attribution in three days. This entry had it right on
+> 2026-07-28 and was read past.
+
+Measured: `cargo nextest run -p dregg-intent --no-fail-fast` → **439 passed,
 3 failed, EXIT=100**, three ordinary panics (not a missing-archive SIGABRT).
 `drex_routing_e2e::{generate_fixture, ring_of_locks_routes_end_to_end}` fail with *"no verified gate
 registered"* — the only registrar, `dregg_intent::register_intent_verified_gate`, is called from

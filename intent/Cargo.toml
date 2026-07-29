@@ -29,12 +29,18 @@ serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
 globset = { workspace = true }
 x25519-dalek = { workspace = true }
-# FFI-FREE BY CONSTRUCTION: LIVE ring settlement routes the per-leg verified-executor cross-check
+# FFI-FREE BY CONSTRUCTION: LIVE ring settlement routes the per-leg verified-executor decision
 # through the `verified_gate` SEAM (`IntentVerifiedGate`), never `dregg-lean-ffi` directly. A native
-# node installs the Lean-backed gate (from `dregg-exec-lean`) once at startup; an FFI-free target
-# (wasm / verifier-PD / pg) never registers one and the cross-check is skipped (the in-process
-# verified transition stands). The LIVE-FFI fulfillment test lives in `dregg-exec-lean/tests`. The
+# node installs the Lean-backed gate (from `dregg-exec-lean`) once at startup. The
 # deleted `no-lean-link` feature is now a dependency choice, not a flag.
+#
+# ⚠ An UNREGISTERED gate is a REFUSAL, not a skipped cross-check. This comment read "…never
+# registers one and the cross-check is skipped (the in-process verified transition stands)" until
+# 2026-07-29 — true until `e3f0e7b92` INVERTED the polarity (the Lean export is now the authority
+# per leg and the Rust fold is the cross-checked differential). Since that commit an FFI-free
+# target REFUSES a non-empty ring outright (`VerifiedSettleError::FfiUnavailable`). The stale
+# reading is what let two of `tests/drex_routing_e2e.rs`'s tests sit red for five days looking
+# like a matcher bug; see the `[dev-dependencies]` note on `dregg-exec-lean`.
 
 [features]
 default = []
@@ -59,6 +65,17 @@ dregg-bridge = { path = "../bridge", features = ["test-utils"] }
 # The lock-attestation SIGNING helper (`SolanaLockAttestation::create`) the test
 # uses to build the ring's locks needs an Ed25519 signing key.
 ed25519-dalek = { version = "2", features = ["std"] }
+# THE VERIFIED EXECUTOR GATE, for the test binaries that SETTLE A RING.
+# `settle_ring_verified` fails closed with no `IntentVerifiedGate` registered, so a test that
+# drives `drex_routing::route` (or `trustless::finalize_verified`) must install the REAL Lean-backed
+# gate exactly as `node/src/lib.rs` and `exec-lean/src/bin/drex_clear.rs` do at startup — otherwise
+# the ring is NEVER JUDGED and the refusal reads like a matcher/fixture bug. This is a
+# DEV-DEPENDENCY CYCLE (`dregg-exec-lean` depends on `dregg-intent`); cargo permits cycles through
+# dev-dependencies, and it is the only way to reach the real export from this crate's own tests
+# without re-implementing the gate in Rust (which would be a twin, and forbidden).
+# ⚠ Linking it does NOT register it: `tests/settle_fail_closed.rs` deliberately never calls
+# `register_distributed_gates()` and so still proves the no-gate refusal.
+dregg-exec-lean = { path = "../exec-lean" }
 
 [lints]
 workspace = true
