@@ -10,6 +10,24 @@ on:
   # that ARMS the Lean marshal gate cannot, by itself, trigger the CI run that would arm it.
   # `workflow_dispatch` lets that arming run be kicked without waiting for the next human push.
   workflow_dispatch:
+  # ⚑ THE SLOW LANE (2026-07-29). Four jobs here cost 107-330 MINUTES and are now guarded by
+  # `if: github.event_name != 'push'`, so they run on this schedule, on a PR, or on demand —
+  # never on a push to main. That is a CADENCE change, not a coverage cut, and the number that
+  # forces it is not a bill: main's median inter-commit gap is 92 SECONDS. A 330-minute job on a
+  # 92-second cadence has ~215 copies of itself in flight at steady state; `main` is deliberately
+  # NOT `cancel-in-progress`, so they queue rather than supersede, and none of them ever reaches a
+  # verdict. Measured over the last 60 runs of this workflow: ZERO succeeded.
+  #
+  # `metatheory-pq-apex`'s own comment block argues AGAINST a schedule — "a nightly lane detects a
+  # regression up to 24h late... This job is a CHECK on every run's checks page instead, so its
+  # verdict arrives with the commit that caused it." That argument is right in form and its premise
+  # is false in fact: the verdict does not arrive with the commit, or at all. Measured 2026-07-28
+  # across five consecutive runs, 29 of 30 jobs in this workflow died inside 90 seconds at
+  # `actions/checkout` on an exhausted LFS budget. A nightly verdict a human reads beats a
+  # per-push verdict that is structurally unreachable. If that premise changes — if this workflow
+  # starts finishing — reconsider the guard rather than leaving it because it is here.
+  schedule:
+    - cron: '0 6 * * *'
 
 # Explicit least-privilege. The repo default is ALREADY `read`
 # (`gh api repos/emberian/dregg/actions/permissions/workflow`), so this is
@@ -31,6 +49,56 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ⚑ THE LFS BLOCK — the repo's ONLY real Actions bill, and what was killing every job here.
+#
+# THIS REPOSITORY IS PUBLIC. GitHub Actions minutes on standard hosted runners are FREE for
+# public repositories, and this is measured, not assumed: `gh api .../actions/runs/<id>/timing`
+# returns `billable.UBUNTU.total_ms = 0` for all 29 ubuntu jobs and `MACOS.total_ms = 0` for the
+# macOS leg, on every run sampled. A minute spent here costs nothing. Wall-clock is a LATENCY
+# budget and a signal-to-noise budget; it is not an invoice.
+#
+# GIT LFS IS BILLED REGARDLESS OF VISIBILITY, and it is EXHAUSTED. From the checkout log of
+# every job in run 30398984470:
+#
+#     batch response: This repository exceeded its LFS budget. The account responsible for the
+#     budget should increase it to restore access.
+#     ##[error]error: failed to fetch some objects from '.../dregg.git/info/lfs'
+#
+# WHAT THAT COST, and it is not what the standing story says. This was not one dead nightly
+# workflow. Measured across five consecutive runs of THIS file (30406814498, 30398984470,
+# 30389054636, 30385967614, 30379515052): **29 of 30 jobs died inside 90 seconds**, at
+# `actions/checkout`, before running a single step. The one survivor each time was
+# `mina-attestation` — the only job in the file whose checkout had no `lfs: true`. So every
+# `failure` this workflow reported was a checkout failure wearing a gate's name, and the "0 of
+# 60 runs green" number was measuring the LFS allowance, not the tree.
+#
+# THE ARITHMETIC. `.gitattributes` puts exactly seven files in LFS —
+# `circuit/descriptors/*staged*.tsv`, 22.5 MB in total. `actions/checkout` with `lfs: true`
+# pulls all of them, per job, per run. This file alone carried 24 such checkouts (29 after
+# matrix expansion), i.e. ~650 MB of LFS bandwidth PER PUSH, against a 1 GB/month free
+# allowance — one push burning most of a month.
+#
+# WHAT WAS DONE HERE: `lfs: true` now appears only on jobs that COMPILE a crate in the
+# `dregg-circuit` reverse-dependency cone, plus `descriptor-drift` which regenerates those TSVs
+# and diffs them. The cone was computed from `cargo metadata --no-deps` (184 of 225 workspace
+# members reach `dregg-circuit`); the files are `include_str!`d at
+# `circuit/src/effect_vm_descriptors.rs:833,851,903,1198,1219,1275`, so a pointer file instead
+# of the real bytes fails LOUDLY there — each has a committed `*_FP` sha256 beside it — rather
+# than passing vacuously. Eight jobs keep it; seven had it removed with the reason stated at the
+# site. Per-push LFS from this file: 29 checkouts -> 12 (8 job keys; `excluded-workspaces`
+# expands to 5 legs and `test` to 2, and `descriptor-drift` — the 9th key that keeps it —
+# is guarded off the push path entirely).
+#
+# ⚠ NECESSARY, NOT SUFFICIENT — SAY SO PLAINLY. Twelve checkouts is still ~270 MB per push, and
+# at a 92-second commit cadence ANY per-push LFS pull exhausts a 1 GB monthly allowance in a few
+# hours. Pruning workflows cannot fix this; it only slows the burn. The fix that actually works
+# is to take those seven TSVs OUT of LFS — 22.5 MB of regenerated, line-oriented text that gains
+# nothing from LFS and would be unremarkable as ordinary git blobs. That is deliberately NOT
+# done here: it edits `circuit/`, and it changes the storage shape of a public repository.
+# ember's call.
+# ══════════════════════════════════════════════════════════════════════════════════════════
 
 jobs:
   check:
@@ -111,8 +179,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # solana-lock/Cargo.toml declares NO path dependency — it is a sealed workspace.
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-06-21
@@ -138,8 +208,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # solana-settlement/Cargo.toml declares NO path dependency — sealed workspace.
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-06-21
@@ -729,8 +801,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # dregg-agent is NOT in dregg-circuit reverse-dep cone (cargo metadata, 184 of 225 members are; this is one of the 41 that are not).
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-06-21
@@ -738,46 +812,52 @@ jobs:
       - name: cargo test (dregg-agent, live-brain)
         run: cargo test -p dregg-agent --features live-brain
 
-  clippy:
-    name: Clippy (advisory)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # ADVISORY, not a gate — but for an HONEST reason, corrected 2026-07-17.
-    # The OLD justification here (a pinned CI clippy still carries lints a local
-    # same-dated clippy lacks, e.g. chunks_exact_to_as_chunks / manual_is_multiple_of)
-    # was STALE TWICE OVER: (1) the toolchain is date-pinned (`nightly-2026-06-21`,
-    # committed 80cd71310), so CI's clippy IS the local same-dated clippy — the
-    # nondeterminism it feared is gone; (2) those exact lints are already
-    # `allow`ed in `[workspace.lints.clippy]`, so they never fire on the ~196
-    # crates that inherit them anyway.
-    #
-    # The REAL reason it stays advisory: `cargo clippy --workspace -- -D warnings`
-    # is genuinely RED right now, and not on a clippy style lint — on plain rustc
-    # `unused import` warnings promoted by `-D warnings` (last 4 completed main
-    # runs: ~50 of them, concentrated in the actively-refactored `circuit` crate,
-    # e.g. `crate::dsl::descriptors::merkle_poseidon2_circuit`), plus the handful
-    # of crates that do NOT carry `[lints] workspace = true` (e.g. deos-hermes).
-    # Flipping this to a hard gate TODAY reds main on churn that isn't the PR's.
-    #
-    # THE PATH TO A REAL GATE (do not delete this note until done): drive
-    # `cargo clippy --workspace -- -D warnings` to zero (start with the circuit
-    # unused-imports), give the non-inheriting crates `[lints] workspace = true`
-    # or an explicit exclude, VERIFY green, THEN drop `continue-on-error`. Until
-    # then it RUNS + reports as annotations. Run `cargo clippy` locally before pushing.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          # Pinned: a floating @master nightly can introduce new clippy lints that
-          # red the gate on a day with zero code changes. Bump deliberately.
-          toolchain: nightly-2026-06-21
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace -- -D warnings
+  # ══════════════════════════════════════════════════════════════════════════════════════
+  # WHAT WAS CUT FROM THIS FILE ON 2026-07-29, AND WHERE THE QUESTION IS ANSWERED NOW.
+  #
+  # Nine jobs were deleted. Eight of them ran a command that is character-for-character a row
+  # in `scripts/local-gates.sh`; the ninth could not fail. None of the eight compiles anything,
+  # links anything, or touches the network — each is a static text scan over the checked-out
+  # source, so a hosted runner and a developer's laptop compute the SAME function of the SAME
+  # bytes. GitHub was not adding a second opinion; it was adding ~90 minutes of latency to a
+  # verdict a laptop reaches in about a second.
+  #
+  #   deleted job                  the local row that answers it (scripts/local-gates.sh)
+  #   ───────────────────────────  ─────────────────────────────────────────────────────────
+  #   no-unchecked-auth            no-unchecked-auth   (bash scripts/no-unchecked-auth.sh)
+  #   independence-controls        independence-controls
+  #   p3-rev-lockstep              p3-rev              (bash scripts/check-p3-rev.sh)
+  #   lean-orphans                 lean-orphans + forcing-gadget-tie + forcing-gadget-tie-red
+  #                                (all three of this job's commands, all three present)
+  #   ratchet-darkness             ratchet-darkness
+  #   no-degraded-felt             no-degraded-felt
+  #   descriptor-by-name-routing   descriptor-drift — `check-descriptor-drift.sh:67` runs
+  #                                `emit_descriptors.py --verify-by-name-routing` as its own
+  #                                static preflight, i.e. the identical invocation
+  #   opentheory-importer          opentheory-importer + opentheory-importer-red. This job ran
+  #                                ONLY `--self-test`; that flag is checked at
+  #                                check-opentheory-importer.sh:108, AFTER the headline run, so
+  #                                the local pair is the same work and not less.
+  #   clippy (advisory)            nothing, and nothing is what it asserted: it carried
+  #                                `continue-on-error: true`, so it could not fail. Its own
+  #                                comment recorded that it IS red (~50 unused-import warnings
+  #                                promoted by `-D warnings`). A job that cannot go red is not a
+  #                                gate — and the half of clippy that IS a gate,
+  #                                `clippy-correctness` below, is untouched and still hard-fails.
+  #
+  # ⚠ SAY THE RESIDUAL OUT LOUD. `scripts/local-gates.sh` is invoked BY HAND. The pre-push hook
+  # (`scripts/git-hooks/pre-push`) blocks on exactly two things — `check-doc-refs.sh` and
+  # `check-workspace-closure.py --rev <tip>` — and on nothing else in that table. So these eight
+  # checks are now gated by a human choosing to run a script. If that is not acceptable, the fix
+  # is one line in the pre-push hook, not nine jobs here.
+  #
+  # WHAT WAS NOT CUT, and why the distinction matters more than the list: `fmt` stays. The
+  # pre-commit hook does rustfmt staged files, but it is best-effort by construction — it exits 0
+  # when rustfmt is absent and skips files that do not parse, and its own header says "CI's
+  # `cargo fmt --check` remains the hard gate". There is no `fmt` row in local-gates.sh. Deleting
+  # it would have dropped the only place format drift is refused.
+  # ══════════════════════════════════════════════════════════════════════════════════════
+
 
   # ── The half of clippy that is a REAL gate ───────────────────────────────────
   # The advisory job above cannot fail, and its ~4000 lines of style warnings are
@@ -946,8 +1026,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # rustfmt parses .rs files; it compiles nothing and reads no descriptor.
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-06-21
@@ -964,8 +1046,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # cargo-audit reads Cargo.lock against the RustSec DB; it compiles nothing.
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -1141,102 +1225,11 @@ jobs:
           fi
           exit "$status"
 
-  no-unchecked-auth:
-    name: No-Unchecked-Auth grep guard (P2.F)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: bash scripts/no-unchecked-auth.sh
-
-  independence-controls:
-    name: Independence-guard control gate (every rejector carries its control)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # `#assert_not_depends_on` is a REJECTOR: a closure walk gone blind reports the
-    # SAME green as a genuinely independent proof term. Its blindness is covered only
-    # by the dual `#assert_depends_on` positive control. This gate makes that pairing
-    # mechanical (rejector in a file => control in the SAME file) instead of social,
-    # and FAILS LOUD if it finds zero adopters — a scan that checked nothing is not a
-    # pass. Pure source-text scan: no Lean toolchain, no build.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: bash scripts/check-independence-controls.sh
-
-  p3-rev-lockstep:
-    name: plonky3-recursion rev lockstep (incl. the recursive-VK proving-system id)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # The emberian/plonky3-recursion fork rev resolves the compiled recursive verifier.
-    # It is mirrored into CI workflows, wasm/Cargo.toml, and — most load-bearing —
-    # RECURSION_P3_REV, the proving-system id folded into compute_recursive_vk_hash(),
-    # i.e. the value lookup_recursive_vk() accepts on. scripts/check-p3-rev.sh existed
-    # since 2026-07-16 but was wired into NO workflow, so it only ran when a human
-    # typed it; its VK-constant arm additionally exited 0 by construction (WARN-only).
-    # Both are fixed — the gate runs here and FAILS on any drift, including the VK id.
-    # Pure source-text scan: no Rust toolchain, no build.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: bash scripts/check-p3-rev.sh
-
-  lean-orphans:
-    name: Lean orphan-module coverage gate (no Dregg2 module escapes the build)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # The `Dregg2` lean_lib has no `globs`, so `lake build` compiles only modules
-    # transitively imported from metatheory/Dregg2.lean. A new metatheory/Dregg2/**.lean
-    # that nothing imports builds green under `lake env lean <file>` and its
-    # #assert_all_clean / #assert_axioms / #guard checks run in NO CI target. This gate
-    # FAILS LOUD if any Dregg2 module is neither reachable nor deliberately allowlisted
-    # (scripts/lean-orphans-allow.txt, one reason per entry), and if it finds zero files —
-    # a coverage scan that scanned nothing is not a pass. Pure source-text scan: no Lean
-    # toolchain, no build.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: bash scripts/check-lean-orphans.sh
-      # A forcing module must mention the gates it claims to force. Measured 2026-07-27:
-      # Blake2bFoldForcing (47 theorems) and Bls12381Forcing (29) contained the string
-      # `acceptB` ZERO times, so nothing in either related gate satisfaction to anything —
-      # and both built green with passing `#assert_axioms`. This is the one mechanical
-      # measurement that separates them from the honest sibling. The `--self-test` proves
-      # the gate can go RED; a gate that cannot is not a gate.
-      - run: python3 scripts/check-forcing-gadget-tie.py
-      - run: python3 scripts/check-forcing-gadget-tie.py --self-test
-
-  opentheory-importer:
-    name: OpenTheory→Lean importer (runs the real articles, and proves the gate can go red)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # The importer replays a real OpenTheory v6 article into Lean `Expr`s and hands each
-    # export to the KERNEL. Measured 2026-07-27 it was wired into ZERO targets — no workflow,
-    # no lake target, no gate script — and its real-article imports sat behind `pathExists`
-    # fallbacks, so with no articles present it elaborated EXIT=0 having imported one theorem
-    # (`True`). This job runs it, and runs the SELF-TEST that removes each guard (the axiom
-    # gate's exactness check, the `thm` Γ-content check, the articles, the reject-tests'
-    # reason assertion) and requires the matching negative test to go red. ~1 min of `lean`;
-    # no lake, no mathlib — the file is `import Lean` only.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - name: Install elan (Lean toolchain manager)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            -o elan-init.sh
-          bash elan-init.sh -y --default-toolchain "$(cat metatheory/lean-toolchain)"
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - run: bash scripts/check-opentheory-importer.sh --self-test
-
   mina-attestation:
     name: Mina↔dregg Poseidon attestation zkApp (runs it, and proves the gate can go red)
+    # ⚑ SLOW LANE — see the `schedule:` block at the top of this file. Skipped on a push to
+    # main (92-second commit cadence vs a 107-minute job); runs nightly, on a PR, and on demand.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # `bridge/mina-zkapp/` was in ZERO targets — no workflow, no gate script, no npm
@@ -1297,110 +1290,11 @@ jobs:
       - run: bash scripts/check-mina-attestation.sh
       - run: bash scripts/check-mina-attestation.sh --self-test
 
-  ratchet-darkness:
-    name: Refuted-floor DARKNESS gate (nothing carrying a refuted floor is invisible to the ratchet)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # THE B5 BYPASS, CLOSED (2026-07-25). The job above asks whether a `Dregg2/**` module is
-    # COMPILED by some default lake target. This one asks the strictly harder question the
-    # accrual gate actually depends on: is it in the environment `#floor_ratchet` READS.
-    #
-    # Those differ, and the difference is a hole. `#floor_ratchet` / `#teeth_wired` are Lean
-    # commands at the end of metatheory/Dregg2.lean and see exactly that root's import closure.
-    # metatheory/lakefile.toml has FIVE default targets: `Metatheory.+` and `Polis.+` are GLOBBED
-    # (every file its own target) and `Market`/`Bfv` are separate roots. So a declaration under a
-    # globbed lib compiles in the default build, runs its own #assert_axioms, is green in CI —
-    # and can take a hypothesis this tree PROVES FALSE at deployed BabyBear parameters with NO
-    # instrument counting it. Measured on a clean export of the parent commit: 201 of 2029 in-tree
-    # modules dark to that root, 75 of them still built by lake, NINE of them mentioning a refuted
-    # floor in code (101 mentions) — worst was Metatheory.Adversary.Instances at 41, a module the
-    # globbed `Metatheory.+` lib had been compiling green all along.
-    #
-    # RULE 1: a dark module that mentions a refuted floor must be ROOTED, not allowlisted
-    # (exempting one needs the loud literal `FLOOR-EXEMPT:` token plus a reason — currently ONE
-    # entry, `scripts/floor_ratchet_canary.lean`, whose job is to make the gate error).
-    # RULE 2: a module lake builds outside that closure must be recorded with a reason, so the
-    # surface cannot grow silently.
-    # Fail-closed on a vacuous scan, on a truncated root, and on a stale allowlist entry — and on
-    # its own blindness: the floor NAMES are parsed out of Dregg2/Verify/FloorCensus.lean's
-    # `sentinelFloors` rather than hand-written here, and fewer than 15 parsed names is a FAILURE,
-    # because a gate scanning for nothing passes every module and looks exactly like coverage.
-    # Pure source-text scan: no Lean toolchain, no build.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: bash scripts/check-ratchet-darkness.sh
-
-  descriptor-by-name-routing:
-    name: Committed reference -> uncommitted target (by-name routing, include_str!, Lean import, workflow)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # `metatheory/EmitByName.lean`'s `byNameDescriptors` is the routing table for the whole
-    # `circuit/descriptors/by-name/` dispatch surface. Both of its directions were gated
-    # only by machinery that needs the FULL Lean emit (the `descriptor-drift` job below —
-    # a multi-hour build), and one direction was not gated at all: a name added to the
-    # table with no committed artifact behind it is a GHOST that every other gate is blind
-    # to, because they all start from a file that EXISTS and ask whether it is covered
-    # (the emit's coverage check, `--verify-provenance`, and the derived-coverage test in
-    # circuit/src/effect_vm_descriptors.rs alike). The Lean `#guard
-    # byNameDescriptors.length == N` counts the ghost as a member, so it passes too.
-    # One ghost lived a full day in HEAD.
-    #
-    # This gate reconciles table <-> checked-in set <-> PROVENANCE stamp in BOTH
-    # directions from a STATIC parse of the .lean source: no Lean toolchain, no cargo,
-    # seconds — so it keeps reporting while the emit is blocked, which is precisely when a
-    # routing gap can go unnoticed. The parse is FATAL-on-unparseable (it must find the
-    # decl and the terminator, must yield one name per list entry, and must agree with the
-    # file's own machine-checked length guard), so a reshaped table reds instead of
-    # quietly narrowing what this checks.
-    #
-    # ONE INVOCATION, FOUR DOORS on the same class — a COMMITTED reference to an
-    # UNCOMMITTED target, which is green for the author and red for every fresh checkout,
-    # and which nothing else in this repo can see because every other gate starts from a
-    # file that EXISTS. The job name used to advertise only the first:
-    #   1. the Lean routing table above (GHOST / UNROUTED / UNSTAMPED);
-    #   2. Rust `include_str!`/`include_bytes!` (INCLUDE-GHOST / -UNTRACKED / -ESCAPES-REPO)
-    #      — rustc resolves those at COMPILE time, so an untracked one breaks the crate and
-    #      everything downstream, for everyone but the lane that emitted it;
-    #   3. first-party Lean `import` (LEAN-IMPORT-GHOST / -UNTRACKED) — the wound
-    #      `20b9d9a20f` is titled after, which had already recurred;
-    #   4. paths a tracked `.github/workflows/*.yml` INVOKES (WORKFLOW-GHOST /
-    #      -UNTRACKED / -ESCAPES-REPO). `bash scripts/x.sh` with `scripts/x.sh` untracked is
-    #      `No such file or directory` on every runner; the only other detector was the
-    #      broken job itself, AFTER it landed. Live instance the night it was added:
-    #      `scripts/check-ratchet-darkness.sh` sat untracked under an uncommitted ci.yml
-    #      hunk that ran it.
-    # Deliberately NOT four jobs: the class is one, the check is ~1s, and it is the same
-    # invocation `scripts/check-descriptor-drift.sh` runs as its local preflight — so a new
-    # medium inherits both positions the moment its leg is added, and nothing has to
-    # remember to call it. Doors 2 and 4 parse a real language (Rust tokens; shell inside
-    # YAML block scalars) so they do not red on prose in comments, and both REPORT their
-    # NOT-CHECKABLE counts (macro-built include paths; `${{ }}`/`$VAR`/glob paths, runtime-
-    # produced downloads, .gitignore'd build outputs) rather than guessing.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - run: python3 scripts/emit_descriptors.py --verify-by-name-routing
-
-  no-degraded-felt:
-    name: Faithful-commitment gate (no degraded felt)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # ast-grep tripwire: a lossy 256->31-bit `fold_bytes32_to_bb` fold must not
-    # reach a state-commitment position. See docs/FAITHFUL-COMMITMENT-LAW.md.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - name: Install ast-grep (sg)
-        run: npm install -g @ast-grep/cli@0.44.0
-      - name: Faithful-commitment gate
-        run: bash scripts/check-no-degraded-felt.sh
-
   metatheory-no-sorry:
     name: Metatheory zero-sorry guard
+    # ⚑ SLOW LANE — see the `schedule:` block at the top of this file. Skipped on a push to
+    # main (92-second commit cadence vs a 330-minute job); runs nightly, on a PR, and on demand.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     # Pin the Lean toolchain via metatheory/lean-toolchain (leanprover/lean4:v4.30.0).
@@ -1413,8 +1307,10 @@ jobs:
       MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # lake/Lean only. The staged TSVs are named in metatheory/Emit*.lean COMMENTS as emit TARGETS; no Lean module reads one, and no script this job runs (axiom-hygiene-guard.sh, ci-mathlib-cache.sh, floor_ratchet_check.sh, cone_cutover_textual_check.sh, dregg-multiway-tug/program/regen.sh) mentions circuit/descriptors at all.
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
 
       # Install elan + the toolchain named in metatheory/lean-toolchain.
       - name: Install elan (Lean toolchain manager)
@@ -1747,6 +1643,9 @@ jobs:
   # not infra flake. Do NOT "fix" it by dropping the target.
   metatheory-pq-apex:
     name: ML-DSA verify-core apex spine (the 44-min serial tail, off the critical path)
+    # ⚑ SLOW LANE — see the `schedule:` block at the top of this file. Skipped on a push to
+    # main (92-second commit cadence vs a 150-minute job); runs nightly, on a PR, and on demand.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     # Generous but far below the corpus jobs' 330: the closure is 34 modules and the tail is
     # ~50 min of it. If this ever approaches 150, the spine grew a second expensive module —
@@ -1756,8 +1655,10 @@ jobs:
       MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+        # NO `lfs: true` (2026-07-29): this job never reads circuit/descriptors/*staged*.tsv.
+        # lake/Lean only, same as metatheory-no-sorry.
+        # The LFS allowance is the repo's only real Actions bill and it is EXHAUSTED; a job
+        # that pulls 22.5 MB it never opens is pure bill. See the LFS block at the top.
 
       # Identical toolchain + mathlib setup to metatheory-no-sorry. That was originally a
       # deliberate verbatim COPY — "if that job's mathlib provisioning is wrong, this lane must
@@ -1807,6 +1708,9 @@ jobs:
 
   descriptor-drift:
     name: Descriptor Lean↔JSON drift gate
+    # ⚑ SLOW LANE — see the `schedule:` block at the top of this file. Skipped on a push to
+    # main (92-second commit cadence vs a 330-minute job); runs nightly, on a PR, and on demand.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     # The circuit descriptor JSONs (circuit/descriptors/*.json) and their *_FP
