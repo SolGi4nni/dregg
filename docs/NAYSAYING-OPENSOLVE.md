@@ -274,10 +274,4 @@ Everything above cites real declarations. `metatheory/Metatheory/OptimisticAdjud
 | §4 challenger | `distKnows_honest_does_not_give_a_challenger` · `knows_imp_distKnows` |
 | §5 re-check discipline | `searched_refutation_sound_when_checked` · `RefutationSearchable` |
 | §6 the DNE | `optimistic_gives_double_negation` · `optimistic_sound` · `optimistic_sound_of_decided` |
-| regime separations | `Metatheory/ResearchRegime.lean` |
-
-⚠ One honest warning, which that module carries in its own header: this conceptual
-neighbourhood has already produced one elegant falsehood on our side — an adjudication-adjoint
-thesis that a four-lens adversarial review refuted 4/4. Nothing here should be read as
-"optimistic settlement is sound." The five laws are what it *costs*; the module is careful to
-prove the floor false rather than assume it.
+| regime separations | `metatheory/Metatheory/ResearchRegime.lean` |
