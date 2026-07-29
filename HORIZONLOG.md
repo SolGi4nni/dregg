@@ -1,5 +1,73 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
+
+**§3.24 left two walls with numbers. One is closed and the other turned out to be worse than a
+wall.** *"The full AIR chain is 7 slices and one process carries 3 (a process-per-slice architecture
+is priced, not built)"*, and *"50,000 compiles, 57,532 does not ... every step count computed against
+57,532 — §3.23's included — is optimistic by that gap."*
+
+**§3.27 — THE FULL CHAIN EXISTS AS PROOF OBJECTS.** All **10,417 DAG nodes, all 1,093 constraints,
+seven slices, SEVEN PROCESSES** — each compiling exactly ONE circuit, so §3.20's four-per-process
+wall is never approached. Every proof verified, every step's `publicInput` its predecessor's
+`publicOutput`, every public field checked against an out-of-circuit twin **by a process that
+compiled NOTHING**. The columns are the values `root_air_instance.rs` decodes out of
+`whole_history_proof.bin` (vk `434f57d2…`, degree_bits `[10,10,16,15,3,16,0]`) — **not** an LCG
+instance. 325,355 emitted rows, widest slice **51,136** (78.0% of the domain); compile 1,200 s,
+prove 442 s, **29 min end to end**.
+
+**⚑ AND THE TERMINAL SEAL IS VERIFIER-COMPUTABLE FROM THE PROOF ALONE.** The concatenated fold is
+Horner over contiguous spans, so `acc_unified = Σ_T acc_T·α^(1093−b_T)` over p3's **own** seven
+per-instance accumulators — checked against the Rust side and it holds exactly. A Mina-side verifier
+holding dregg's root proof can compute the value the chain seals to.
+
+**⚑ WHY SIDE-LOADING, AND §3.24 PREDICTED THE WRONG ARCHITECTURE.** `SelfProof` makes seven slices
+seven branches of one program: the wall, unchanged. Seven separate programs is WORSE — o1js resolves
+a non-self proof through `CompiledTag`, which exists only if the producer was compiled **in the same
+process**, and that is **transitive**, so slice 6 means compiling 0–5 first. §3.24's *"two circuits,
+for any chain length"* is refuted. So the predecessor is a **`DynamicProof`**: one compile per
+process, boundary = three files (proof JSON **34,629 bytes**, key, feature flags).
+
+**⛑ THAT MOVES A BINDING OUT OF THE CIRCUIT AND ONE CONSTANT PUTS IT BACK.** o1js: a `DynamicProof`
+circuit *"makes no assertions about the verificationKey used on its own"*. A prover hands slice k
+some OTHER slice's proof with THAT slice's key and `prev.verify(vk)` is perfectly satisfied. Fix:
+`vk.hash.assertEquals(Field(<slice k−1's key hash>))` — seven keys chained into one field element.
+**Seven splices refused** across the process boundary, including **slice 1's proof under slice 1's
+own key**; and the slice compiles to the **same** key in a second independent process.
+
+**⚑ THE CONTROL GOT STRONGER, AND THE OLD LESSON WAS ABOUT BAKED-IN KEYS.** §3.21/§3.24 had to build
+a parallel predecessor because a bound `SelfProof` cannot verify under an unbound VK. Side-loading
+dissolves that — the key is an input — so the control refutes the binding **on the bound chain's own
+proofs**. UNBOUND accepts the unrelated input and the unread-digest bend; UNBOUND-but-PINNED still
+REFUSES the foreign proof; UNPINNED ACCEPTS it, so the refusal is the **pin** and nothing else.
+
+**§3.26 — THE CEILING, AND THE INSTRUMENT REFUTED ITS OWN PREMISE.** Narrowed on the real three-slice
+chain: budget **54,289** (widest branch **54,300** emitted rows) COMPILES, **54,324** (54,376) does
+not. §4.1 assumed 8,000 rows of recursive-verifier overhead; **measured 11,160–11,236 — 1.40×**.
+⚑ Then: **57,769 rows** of the chain's extension-arithmetic mix **FAILS**, and **63,300 rows** of the
+*same program shape* with the extra rows as single-row field multiplies **COMPILES**. A bigger
+circuit compiling where a smaller one does not is not a ceiling in rows — lookups and range checks
+carry a domain requirement `analyzeMethods` never reports. **So `usableRows(overhead)` names
+something that does not exist**, which is the shape of §4.1's whole table. Every arm is now a REAL
+slice body; the two points survive as a permanent control.
+
+**⇒ 519 IS REPLACED BY A BRACKET, NOT A NUMBER.** mpv = 1 is re-scheduled against the narrowed
+54,300 instead of 57,532. mpv = 2 — §3.23's headline — is bounded below by 40,073 usable (two real
+slice bodies with a two-proof branch, observed to compile) and above by 54,300 (a two-proof verifier
+is not smaller than a one-proof one), and **is not narrowed**. A single number there would be an
+extrapolation in a measurement's voice.
+
+**Gate: 2 new legs** (`root-air-ceiling`, `root-air-fullchain`), 17 grep obligations, **6 new fault
+injections**; pre-flight **94/94** — nothing was unpointed, including by the `RootAirChain` refactor
+that pulled `sliceCommitment`/`sliceWork` out so the single-process and cross-process chains cannot
+become two definitions of what dregg's AIR means.
+
+**⚠ Named residuals.** The side-loaded shape's ceiling is an **ENVELOPE** (51,136 rows observed to
+compile, prove and verify), not a narrowed crossing, and `MEASURED_CEILING` says so; its re-check is
+**one-sided and cannot notice that ceiling moving up**. Same for mpv = 2. This is the **AIR half** of
+the STARK verifier — the seven per-instance closing equalities — not the FRI walk, still §3.19's at
+fixture geometry. Nothing is wired to `setDreggRoot`; `placeholderRelay` stays.
+
 ## ⚑⚑⚑⚑ JULY 29 — the ROOT's OWN AIR is emitted, measured and PROVED as a chain, it runs on dregg's COMMITTED root proof, and one instance's closing equality does not bind ζ
 
 **The gap was one sentence and the document wrote it itself.** §3.19 built a Kimchi circuit that

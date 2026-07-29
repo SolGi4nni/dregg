@@ -2123,6 +2123,150 @@ this circuit (§3.19 does them at fixture geometry). Nothing is wired to `setDre
 
 ---
 
+### 3.26 ⚑ MEASURED — THE COMPILE CEILING, and `usableRows` names something that does not exist
+
+*`bridge/mina-zkapp/scripts/root-air-ceiling.ts`, `src/PartitionSchedule.ts`. Gate leg 16.*
+
+§3.24 left the per-branch budget as a bracket — 50,000 compiles, §4.1's arithmetic 57,532 does not —
+and every step count in the record is priced against the arithmetic. Narrowed on the **real**
+three-slice chain, five trials a round in five child processes so a wasm abort is a failed trial and
+not a dead search:
+
+| | budget | widest branch, EMITTED | `compile()` |
+|---|---:|---:|---|
+| largest that compiles | **54,289** | **54,300** | ✔ |
+| smallest that fails | 54,324 | 54,376 | ✗ `Array.map2_exn: 1 <> 2` |
+
+⇒ **§4.1 assumed 8,000 rows of recursive-verifier overhead. Measured it is 11,160–11,236 — 1.40×.**
+
+⚑ **AND THE INSTRUMENT REFUTED ITS OWN PREMISE, WHICH IS THE REAL RESULT.** The first version of
+this leg was a **dialable synthetic probe** with the same gate vocabulary — witnessed BabyBear
+lanes through `canonicalLane`, then an `extMul`/`extAdd` chain, plus a one-row knob — on the theory
+that a ceiling is `65536 − OVERHEAD(proof arity)` and the body only has to supply rows. It is not:
+
+- **57,769 rows** — one `SelfProof` branch beside a small sibling, rows from the extension
+  arithmetic — `compile()` **FAILS**;
+- **63,300 rows** — the *same program shape*, the *same sibling*, the extra rows supplied by
+  single-row field multiplies — `compile()` **SUCCEEDS**.
+
+A **bigger** circuit compiling where a **smaller** one does not is not a ceiling in rows at all.
+Kimchi's row count is not what crosses 2¹⁶: range checks and lookups carry a table and a domain
+requirement `analyzeMethods` never reports, so **the crossing is a function of the gate MIX**.
+⚑ **That kills what `usableRows(overhead)` names** — a per-`max_proofs_verified` constant good for
+any circuit, which is exactly the shape of §4.1's table. A ceiling is only honest for the shape it
+was measured on. Every arm of the leg is therefore a **real slice body** (`sliceCommitment` and
+`sliceWork`, imported from the chain being priced), and the two points above survive as a
+**permanent control**, so a reader reinstating a single-number ceiling has to walk past a green test
+saying it cannot be one.
+
+**What is narrowed and what is not, named as such.** `MEASURED_CEILING.mpv1` is a narrowed crossing.
+`mpv2AtLeast` (40,073 — two real slice bodies, one verifying **two** previous proofs) and
+`sideloadAtLeast` (51,136 — §3.27's shape, compiled *and proved*) are **envelopes**: a lower bound
+on the ceiling, hence an upper bound on a step count. Their re-check is one-sided and **cannot
+notice a ceiling moving up**; `CEILING_FULL=1` narrows them.
+
+**THE SCHEDULE, RE-RUN (leg 14b [3b]).** At the narrowed mpv = 1 ceiling of 54,300 usable rows
+instead of §4.1's 57,532, the deployed verifier's step count rises. At **`max_proofs_verified = 2`,
+which is §3.23's headline 519**, the honest figure is a **bracket and not a number** — bounded below
+by 40,073 usable (observed to compile) and above by 54,300 (a two-proof verifier cannot be smaller
+than a one-proof one). ⚑ **519 is replaced by that bracket.** A single number there would be an
+extrapolation in a measurement's voice.
+
+---
+
+### 3.27 ⚑ MEASURED — THE FULL CHAIN: seven slices, seven processes, on dregg's committed root proof
+
+*`bridge/mina-zkapp/src/RootAirProcessChain.ts`, `scripts/root-air-fullchain.ts`. Gate leg 17.*
+
+§3.24 proves the largest chain **one** process holds — three slices, 4,798 of 10,417 nodes — and
+names the rest: *"the full AIR chain is 7 slices and one process carries 3 (a process-per-slice
+architecture is priced, not built)."* **It is built, and it runs on the values
+`root_air_instance.rs` decodes out of `whole_history_proof.bin`, not on an LCG instance.**
+
+| | nodes | constraints | EMITTED rows | |
+|---|---|---|---:|---|
+| slice 0 | [0, 1,537) | [0, 186) | 50,398 | 76.9% of the domain |
+| slice 1 | [1,537, 3,327) | [186, 345) | 48,181 | 73.5% |
+| slice 2 | [3,327, 4,798) | [345, 543) | 49,776 | 76.0% |
+| slice 3 | [4,798, 6,410) | [543, 731) | 48,763 | 74.4% |
+| slice 4 | [6,410, 8,286) | [731, 820) | 48,805 | 74.5% |
+| slice 5 | [8,286, 9,729) | [820, 1,016) | 51,136 | 78.0% |
+| slice 6 | [9,729, 10,417) | [1,016, 1,093) | 28,296 | 43.2% |
+
+⇒ **ALL 10,417 nodes, ALL 1,093 constraints, an EMPTY terminal live set.** 325,355 emitted rows over
+seven circuits; compile 1,200 s, prove 442 s, 29 min end to end. Every proof verified; every step's
+`publicInput` **is** its predecessor's `publicOutput`; every public field checked against an
+out-of-circuit twin **by a process that compiled nothing**. **No process compiled more than one
+circuit**, so §3.20's four-per-process wall is never approached.
+
+⚑ **THE OBVIOUS ARCHITECTURE DOES NOT WORK, AND §3.24 PREDICTED THE WRONG ONE.** `SelfProof` means
+"a proof of *this* program", so seven slices as seven methods is seven branches compiled in every
+process — the wall, unchanged. Seven separate programs each taking its predecessor's `Proof` is
+**worse**: o1js resolves a non-self proof type through `CompiledTag`, which exists only if the
+producer was **compiled in the same process** —
+
+```
+${consumer}.compile() depends on ${producer}, but we cannot find compilation output for ${producer}.
+```
+
+— and that dependency is **transitive**, so compiling slice 6 means compiling slices 0–5 first.
+§3.24's *"each process compiling its predecessor's program for the VK plus its own, two circuits,
+for any chain length"* is **wrong** and this replaces it.
+
+**So the predecessor is SIDE-LOADED.** A `DynamicProof` is verified against a key that arrives as a
+**runtime input**, so slice k's circuit is built and compiled knowing nothing about slice k−1's
+prover. One compile per process, and the boundary crosses as **three files**: the proof's JSON
+(34,629 bytes), the key (`{data, hash}`), and the feature flags the predecessor's own
+`analyzeMethods` produced.
+
+⚑ **AND THAT MOVES A BINDING OUT OF THE CIRCUIT; ONE CONSTANT PUTS IT BACK.** o1js says it plainly —
+a `DynamicProof` circuit *"makes no assertions about the verificationKey used on its own"*. A prover
+who supplies some **other** program's proof together with **that** program's key satisfies
+`prev.verify(vk)` perfectly, and the chain would "verify" while carrying a value nothing in it
+computed. The fix is one constraint and it must be a **constant**:
+
+```ts
+vk.hash.assertEquals(Field(<slice k−1's verification key hash>));
+```
+
+so slice k's circuit — and therefore slice k's **own** key — is a function of slice k−1's. The seven
+keys form a chain ending in one field element a verifier pins. Affordable for §3.24's reason: **the
+AIR is a fixed program**, so slice keys are protocol constants emitted once. And the slice compiles
+to the **same** key in a second, independent process — a pinned hash means nothing if the key is not
+reproducible.
+
+**SEVEN SPLICES REFUSED**, in a process that compiled only the slice it was bending, against a
+predecessor proof another process made: an unrelated public input · a carried **live value** · a
+**column lane** in a chunk it reads · a chunk **digest it never reads** · the incoming
+**accumulator** · ⚑ **slice 1's proof handed with slice 1's OWN key** · the right proof under a key
+it was not made under. Each checked *not* to be a JavaScript shape error.
+
+⚑ **THE CONTROL GOT STRONGER, AND THE OLD LESSON WAS ABOUT BAKED-IN KEYS.** §3.21 and §3.24 both had
+to build a **parallel predecessor**, because a bound `SelfProof` cannot verify under an unbound VK.
+Side-loading dissolves that — the key is an input — so the control refutes the binding **on the
+bound chain's own proof objects**. Three of them: **UNBOUND** accepts the unrelated public input and
+the unread-digest bend; **UNBOUND-but-PINNED** still **refuses** the foreign proof; **UNPINNED**
+**accepts** it. So the foreign-proof refusal is attributable to the pin and to nothing else.
+
+⚑ **THE TERMINAL SEAL IS VERIFIER-COMPUTABLE FROM THE PROOF ALONE.** Folding p3's way over the
+**concatenated** constraint list is Horner over contiguous spans, so
+
+```
+acc_unified  =  Σ_T  acc_T · α^(1093 − b_T)
+```
+
+for tables `T` whose root spans end at `b_T`. Every `acc_T` is p3's **own** per-instance
+accumulator, which the root proof's own closing equality pins to its opened quotient — and the
+identity is checked against the Rust side's seven accumulators and **holds exactly on the real
+proof**. A Mina-side verifier holding dregg's root proof can compute the value the chain seals to.
+
+**What §3.27 does NOT close.** This is the AIR half — the seven per-instance closing equalities —
+not the FRI walk over that proof, which is still §3.19's at fixture geometry. The side-loaded
+shape's ceiling is an **envelope**, not a narrowed crossing (§3.26). Nothing is wired to
+`setDreggRoot`.
+
+---
+
 ## 4. DOES IT FIT
 
 ### 4.1 The real per-step budget
@@ -2152,12 +2296,17 @@ One o1js `@method` compiles to one Pickles **step** circuit with a hard ceiling 
 | 1 | ~6,000–8,000 | ~55,000 |
 | **2** (needed for an aggregation tree) | ~12,000–16,000 | **~48,000–52,000** |
 
-⚑ **THE `max_proofs_verified = 1` ROW IS TOO GENEROUS, MEASURED (§3.24).** A two-branch program
-whose methods measure 55,715 and 57,430 rows by `analyzeMethods` — both under the domain — fails to
-`compile()` with `length mismatch in Array.map2_exn: 1 <> 2`, Pickles refusing a CHUNKED branch:
-`analyzeMethods` prices the method BODY and the branch carries the recursive verifier on top, so one
-branch crosses 2¹⁶ and another does not. 50,000 compiles, 57,532 does not. Every step count computed
-against 57,532 — §3.23's included — is optimistic by that gap.
+⚑ **THIS TABLE'S PREMISE IS FALSE, MEASURED (§3.26) — IT IS NOT THAT A ROW IS TOO GENEROUS.**
+The `max_proofs_verified = 1` row is too generous by **1.40×**: narrowed on the real object, the
+overhead is **11,160–11,236**, not ~8,000, so the usable budget is **54,300** and not 57,532. Every
+step count computed against 57,532 — §3.23's included — is optimistic by that gap. **But the deeper
+problem is the column heading.** A per-`max_proofs_verified` "usable of 65,536" is a constant good
+for any circuit, and there is no such constant: a **63,300-row** branch of one shape COMPILES where
+a **57,769-row** branch of the *same program shape* built from a different gate mix FAILS, because
+range checks and lookups carry a domain requirement `analyzeMethods` never reports. **A ceiling is
+only honest for the shape it was measured on.** Read the rows below as the order of magnitude they
+are; the numbers that price anything are `PartitionSchedule.MEASURED_CEILING`, and each of those
+names the shape it came from.
 
 ### 4.2 The arithmetic
 
