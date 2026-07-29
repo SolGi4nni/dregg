@@ -1,5 +1,90 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 29 — the ROOT's OWN AIR is emitted, measured and PROVED as a chain, it runs on dregg's COMMITTED root proof, and one instance's closing equality does not bind ζ
+
+**The gap was one sentence and the document wrote it itself.** §3.19 built a Kimchi circuit that
+DECIDES a real dregg STARK proof and named exactly one thing in it as still the fixture's:
+`DreggProofVerify`'s `constraints` argument, a 3-column AIR with **four** constraints against the
+root's **1,093**. Everything downstream inherited that — *"2.75 × 10⁷ is a FLOOR"*, and §3.21's
+591-step schedule over it, *"a floor scheduled is still a floor"*, *"591 is a schedule over a
+measured MODEL, not over an emitted row list."*
+
+**§3.22 — THE ROOT'S CONSTRAINT SYSTEM IS AN ARTIFACT THE o1js SIDE CONSUMES.** All 1,093
+constraints as ONE shared DAG: **10,417 nodes, 3,029 multiplies, 275,143 EMITTED Kimchi rows**
+(per table, per operation: extAdd 18, extSub 18, extMul 30, one α-fold 48 — §3.16's `h = 48`
+reproduced from its halves). §3.18's named remainder is built: `to_dag_full` covers the **192 LogUp
+constraints** the base extractor could not see, differential-checked against p3's own
+`SymbolicExpressionExt` at 1,536 agreements — so three tables with ZERO base constraints (`Const`,
+`Public`, `recompose`) are covered for the first time. The TypeScript walker is a THIRD
+implementation beside p3's and Lean's; 21 KAT vectors carrying p3's own α-folded accumulator join
+it, out of circuit AND as an in-circuit assertion, refusing a wf-preserving one-child edit.
+
+**⇒ the AIR term is 1.00% of the projection.** Small, and the point: it had never been MEASURED, so
+the projection could not honestly be quoted as anything but a floor.
+
+**§3.23 — 591 IS 519.** The two atom prices §3.21 got by DIVIDING an aggregate become in-context
+marginals on the deployed program (16 fold layers against 15 against 14; input depth 22 against 21).
+The model's *largest indivisible atom* — the 3,221 rows that licensed "a placement and not a
+rounding" — is **2,809 emitted, −12.8%**. Emitted total **2.46 × 10⁷, 10.64% BELOW** §3.19's
+2.75 × 10⁷. **The floor moved in BOTH directions and the net is not the direction "floor" implies:**
+the AIR term was too small by 240,696 rows and everything else was too big by 3.16 × 10⁶.
+**519 steps at `max_proofs_verified = 2`, 448 at 1**, with §3.21's 591/504 reproduced EXACTLY as the
+baseline (the leg fails if it drifts by one).
+
+**§3.24 — THE ROOT AIR HAS NO ONE-STEP VERIFIER, AND THREE CHAINED STEPS OVER IT ARE PROVED.**
+275,143 rows is 4.20× the domain. Three Pickles steps, one VK each, proved and verified, covering
+**4,798 of 10,417 nodes / 543 of 1,093 constraints** — the whole of `Const`, `Public`, `Alu` and
+`poseidon2-W16`. Six splices refused (a carried live value, a read column lane, **a chunk digest
+the slice never reads**, the accumulator, a skipped middle slice, an unrelated public input), with
+the unbound control in a CHILD process building its own predecessor. **The cut width is why it is
+affordable and it is a property of the DAG:** DFS post-order emission bounds the live set at **102
+values across all 10,417 nodes**, median 66.
+
+**⛑ AND §4.1's USABLE-ROW BUDGET IS TOO GENEROUS, MEASURED.** At §4.1's 57,532 the slices measure
+56,772 / 55,715 / 57,430 by `analyzeMethods` — ALL under the 65,536 domain — and `compile()` fails
+with `length mismatch in Array.map2_exn: 1 <> 2`: Pickles refusing a CHUNKED branch, because
+`analyzeMethods` prices the method BODY and the branch carries the recursive verifier on top.
+**50,000 compiles, 57,532 does not.** Every step count computed against 57,532 — §3.23's 519/448
+included — is optimistic by that gap, and re-running the schedule against a measured per-branch
+budget is the named follow-up.
+
+**§3.25 — IT RUNS ON DREGG'S COMMITTED ROOT PROOF.** `circuit-prove/src/bin/root_air_instance.rs`
+decodes `whole_history_proof.bin` (VK `434f57d2…`, `degree_bits [10,10,16,15,3,16,0]` — exactly
+§1.2's reading), replays `verify_batch`'s transcript to α and ζ, and refuses to emit unless it has
+verified all seven closing equalities itself. The emitted DAG **reproduces p3's accumulator on all
+seven instances exactly**, and `acc · Z_H(ζ)⁻¹ == quotient(ζ)` holds — first out of circuit, then as
+a **Kimchi constraint**. Six bends refused, including an opened LogUp permutation value and
+`quotient(ζ)` itself. 17 ms.
+
+**⛑ THE FINDING, AND IT IS ABOUT THE DEPLOYED ROOT.** `expose_claim` has `degree_bits = 0` — a
+ONE-ROW trace domain — and **its closing equality is an IDENTITY IN ζ**. With `|H| = 1` the
+selectors are ζ-free constants, `is_transition = Z_H(ζ)`, and the two size-1 quotient chunks carry
+EQUAL values, so the recomposition collapses. **Both sides are constant in ζ; the out-of-domain
+point binds NOTHING in that instance's AIR check** — its binding is the PCS opening and α. Six of
+seven bind ζ; α binds all seven (asserted as a hard floor). The flags ride in the emitted JSON so a
+Mina-side verifier is never told a check binds ζ when it does not.
+
+**TWO ENTRIES IN THE RECORD WERE WRONG, both found by running what they described.** §3.17's
+"the α-fold is OFF BY ONE in `AirEval.ts`" is a true reading and a wrong conclusion — seeding with
+zero and folding `C_0` gives `C_0`, so the accumulators are EQUAL and the difference is 34 emitted
+rows spent on an identity. A verifier built on `foldConstraints` would have been RIGHT. §3.18
+charged 1,282 `.var` copies at 19 rows and called them elidable; **emitted they are free**, the
+elision was always taken. Both now run as PERMANENT controls, not notes.
+
+**Gate: 4 new legs** (`root-air`, `emitted-atoms`+`emitted-schedule`, `root-air-chain`,
+`root-air-real`) with 21 `grep -q` obligations, and **5 new fault injections**. Pre-flight is
+**88/88** — nothing was unpointed by the edits. Three of the five have had their RED WATCHED
+(the DAG walker's SUB lowered as an ADD, the α-fold reversed, the binder reading the next row from
+the local one); the two on the slower legs are pre-flight-matched and their red is **not yet
+watched**, which is a documented-not-detected gap and is named as one.
+
+**⚠ Named residuals.** The extraction is still a Rust seam. §3.25 is the per-instance AIR closing
+equality, not the batch-STARK verifier — the FRI walk over THAT proof is still §3.19's at fixture
+geometry. The full AIR chain is 7 slices and one process carries 3 (a process-per-slice
+architecture is priced, not built). The 320 LogUp extension column variables are charged to `misc`
+in the schedule because the deployed lane census carries no permutation commitment — a named
+undercount. **Nothing is wired to `setDreggRoot`; `placeholderRelay` stays.**
+
 ## ⚑⚑⚑⚑ JULY 29 — the `⟨s, srs.g⟩` AIR PROVES AND VERIFIES an all-`(0,0,0)` accumulator carrying the real Mina generators. On-curve is now GATED.
 
 **The hole, and it was not bookkeeping.** Three lanes bound the terminal MSM's slice declaration,
