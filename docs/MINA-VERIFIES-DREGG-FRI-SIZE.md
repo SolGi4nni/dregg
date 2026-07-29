@@ -1401,7 +1401,7 @@ still needs `renderOps_gens_sound`. **The verifier is not sound because the DAG 
 
 ### 3.19 ⚑ MEASURED — THE ASSEMBLY: one ZkProgram that consumes a dregg proof and DECIDES
 
-*`bridge/mina-zkapp/src/DreggProofVerify.ts`, `scripts/dregg-proof-verify.ts`,
+*`bridge/mina-zkapp/src/DreggProofVerify.ts`, `bridge/mina-zkapp/scripts/dregg-proof-verify.ts`,
 `circuit/src/bin/mina_stark_fixture.rs`. Gate leg 10.*
 
 Everything above §3.19 is a **component**. Each rung verifies a piece of a FRI-STARK proof, each is
@@ -1529,7 +1529,7 @@ the root's mixed-height input batches (§3.14 residual 5). The independent §3.1
 
 ### 3.20 ⚑ MEASURED — THE PARTITION: a proof too big for one step, verified by a CHAIN
 
-*`bridge/mina-zkapp/src/DreggProofPartition.ts`, `scripts/partition-chain.ts`,
+*`bridge/mina-zkapp/src/DreggProofPartition.ts`, `bridge/mina-zkapp/scripts/partition-chain.ts`,
 `metatheory/Dregg2/Circuit/Emit/KimchiPartition.lean`. Gate leg 11.*
 
 §3.19 ends with a row count and §4 divides it by a per-step budget to get ~500–573 Pickles steps.
@@ -1693,7 +1693,7 @@ end is **range-checking lanes a one-step verifier range-checks once** — which 
 ### 3.21 ⚑ MEASURED — THE SCHEDULER: the band is a number, and the number is 591
 
 *`bridge/mina-zkapp/src/PartitionSchedule.ts` (the scheduler), `src/DreggProofSchedule.ts` (the
-chain it schedules), `scripts/partition-schedule.ts`. Gate leg 12.*
+chain it schedules), `bridge/mina-zkapp/scripts/partition-schedule.ts`. Gate leg 12.*
 
 §3.20 priced a step boundary and found the price is a function of **where the cut is** — 34,566 rows
 at a query entry, 762 inside a query — so it could only report the deployed count as a **band,
@@ -1840,7 +1840,7 @@ reduced openings must be pairwise distinct — before the splice uses it.
 ### 3.22 ⚑ MEASURED — THE ROOT'S OWN AIR, EMITTED: all 1,093 constraints, 275,143 rows
 
 *`bridge/mina-zkapp/src/RootAirDag.ts`, `src/generated/root-air-dag.json`,
-`scripts/root-air-rows.ts`, and the extension half of the extractor in
+`bridge/mina-zkapp/scripts/root-air-rows.ts`, and the extension half of the extractor in
 `circuit-prove/tests/root_air_constraint_census.rs`. Gate leg 13.*
 
 §3.19 named exactly one thing in the assembly as still the fixture's — `DreggProofVerify`'s
@@ -1919,7 +1919,7 @@ tables is not the batch-STARK per-instance comparison. Nothing is wired to `setD
 
 ### 3.23 ⚑ MEASURED — THE SCHEDULE OVER AN EMITTED ROW LIST: 591 is 519
 
-*`bridge/mina-zkapp/scripts/emitted-atoms.ts` and `scripts/emitted-schedule.ts`,
+*`bridge/mina-zkapp/scripts/emitted-atoms.ts` and `bridge/mina-zkapp/scripts/emitted-schedule.ts`,
 `PartitionSchedule.emittedProgram`. Gate leg 14.*
 
 §3.21 says what its 591 is not: *"591 is a schedule over a measured MODEL, not over an emitted row
@@ -1978,7 +1978,7 @@ against it.
 
 ### 3.24 ⚑ MEASURED — THE ROOT AIR AS A CHAIN, PROVED, and §4.1's budget is ~13% too generous
 
-*`bridge/mina-zkapp/src/RootAirChain.ts`, `scripts/root-air-chain.ts`. Gate leg 15.*
+*`bridge/mina-zkapp/src/RootAirChain.ts`, `bridge/mina-zkapp/scripts/root-air-chain.ts`. Gate leg 15.*
 
 275,143 emitted rows is **4.20× the 65,536-row Pickles step domain**, so **dregg's root constraint
 system has no one-step verifier** — the situation §3.20 constructed deliberately by choosing three

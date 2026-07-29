@@ -15,7 +15,8 @@ Provenance: `Dregg2/Bridge/MinaChainSelection.lean`, `MinaChainSelectionDifferen
 **Reading the citations.** Those four `.lean` paths and the two `fixtures/` directories are the only
 paths in this document that live in **this** repository. Every other `file:line` — `proof_of_stake.ml`,
 `constants.ml`, `consensus_vrf.ml`, `slot.ml`, `global_slot.ml`, `global_sub_window.ml`, `mainnet.mlh`,
-`devnet.mlh`, `docs/specs/consensus/README.md` — is **upstream `MinaProtocol/mina`**, and
+`devnet.mlh`, and the consensus spec `README.md` under their `docs/specs/consensus/` — is
+**upstream `MinaProtocol/mina`**, and
 `consensus.rs`, `block.rs`, `bigint.rs`, `generated.rs` are **upstream `openmina/openmina`**. Line
 numbers are as of 2026-07-29 and will drift; the surrounding identifier is the durable reference.
 
