@@ -52,16 +52,27 @@
 //! what turns an anchored-segment verifier into a chain follower, and it is being
 //! built by sibling lanes.
 //!
-//! # ⚑ FAIL-CLOSED, AND TODAY THAT MEANS IT REFUSES
+//! # ⚑ FAIL-CLOSED — AND THE TWO WRONG DIAGNOSES THAT KEPT IT REFUSING
 //!
-//! Both `dregg_mina_lc_verify` and `dregg_mina_wrap_shape_ok` are absent from the
-//! published archive right now. ⚑ The reason is no longer the one this file used to
-//! give: `Dregg2.Bridge.LightClientMinaGate` **is** imported by
-//! `metatheory/Dregg2.lean` now. What is stale is the committed Lean SEED, which
-//! predates both imports, so `dregg-lean-ffi`'s `archive_exports` probe still reports
-//! the symbols missing. [`MinaObserver::observe_settlement`] therefore returns
-//! [`ObserveError::VerifiedGateUnavailable`] for every settlement until a seed
-//! regeneration lands. That is deliberate and it is the whole posture: this repo has a
+//! `dregg_mina_lc_verify` and `dregg_mina_wrap_shape_ok` were absent from every
+//! archive until 2026-07-29, and this file carried two successive explanations that
+//! were both wrong. First: "`LightClientMinaGate` is not rooted in `Dregg2.lean`" —
+//! it was rooted (`Dregg2.lean:1536-1537`). Then: "what is stale is the committed Lean
+//! SEED" — the seed is not committed (`dregg-lean-ffi/.gitignore:7`; it has never been
+//! a tracked file), and it never carries these symbols anyway: they are SPLICE-ONLY,
+//! written into the per-`OUT_DIR` working archive by `dregg-lean-ffi/build.rs` on
+//! every build.
+//!
+//! The actual cause was one import. `build.rs` builds exactly one Lake target,
+//! `Dregg2.FFI`, and splices exactly `metatheory/Dregg2/FFI.lean`'s import closure —
+//! so a gate rooted only in `Dregg2.lean` ELABORATES but emits no `:c` facet and its
+//! `@[export]` never enters the archive. That is layer 1 of `Dregg2/FFI.lean` §4, the
+//! failure that made `dregg_{eth,mpt,tm}_lc_verify` dark, re-entered. CLOSED by adding
+//! both modules to `Dregg2/FFI.lean`; both symbols are now on `build.rs`'s
+//! `REQUIRED_DECISION_EXPORTS`, so a strict build cannot re-enter the dark state
+//! quietly. When the gate IS absent, [`MinaObserver::observe_settlement`] returns
+//! [`ObserveError::VerifiedGateUnavailable`] for every settlement. That is deliberate
+//! and it is the whole posture: this repo has a
 //! named, recurring defect class where an absent verified gate logs and PROCEEDS, and a
 //! light client that silently falls back when its verifier is missing looks gated and
 //! is not. There is no fallback, no `allow_unverified` flag, and no environment
@@ -1492,8 +1503,7 @@ mod tests {
 
     // ---- the verified gate: fail-closed --------------------------------------
 
-    /// ⚑ THE FAIL-CLOSED PIN. With the archive absent (which is every archive
-    /// today — `LightClientMinaGate` is not rooted in `Dregg2.lean`), a genuine,
+    /// ⚑ THE FAIL-CLOSED PIN. With the gate absent from the linked archive, a genuine,
     /// fully-checked, deep-enough settlement is REFUSED with
     /// `VerifiedGateUnavailable`. When the export lands this flips to an accept and
     /// the other half of the assertion runs. Either way there is no third outcome:
@@ -1506,7 +1516,14 @@ mod tests {
         let observer = MinaObserver::new(config(700, 290), rpc);
         let outcome = observer.observe_settlement(&settled, 700);
 
-        if dregg_lean_ffi::mina_lc_verify_available() {
+        // ⚑ THE BRANCH IS ARMED, not merely chosen. Both arms below are green on their own
+        // terms, which means a passing run proves nothing about WHICH ran — the shape a
+        // "documented but not detected" wound wears. `demand_lean` PANICS under
+        // `DREGG_TEST_REQUIRE_LEAN=1`, so under that env a green run is a green ACCEPT.
+        if dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_lc_verify_available(),
+            "dregg_mina_lc_verify Mina anchored-segment gate (this test's ACCEPT half)",
+        ) {
             let observed = outcome.expect("gate present ⇒ genuine settlement confirmed");
             assert_eq!(observed.proven_root, settled);
             assert_eq!(observed.tip_height, 1000);
@@ -1686,6 +1703,13 @@ mod tests {
     /// property "refuses everything" would fail.
     #[test]
     fn real_devnet_pickles_proof_reaches_the_verified_gate() {
+        // Same arming as the fail-closed pin: under `DREGG_TEST_REQUIRE_LEAN=1` an absent gate
+        // PANICS here rather than letting the `VerifiedGateUnavailable` arm below carry the test
+        // to green without any verdict having been rendered.
+        let _ = dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_wrap_shape_ok_available(),
+            "dregg_mina_wrap_shape_ok Pickles Wrap-preamble gate (the observer's per-block accept)",
+        );
         let rpc = MockMinaRpc::linked_chain(700, 703);
         let observer = MinaObserver::new(config(700, 1), rpc);
         let chain = observer.rpc.best_chain(16).unwrap();

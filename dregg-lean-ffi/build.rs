@@ -136,11 +136,24 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
     ),
     (
         "dregg_tm_lc_verify",
-        "the TENDERMINT/COSMOS light-client verify gate compiles out — the strict `2·tot < 3·sp` \
-         stake threshold, chain-id match and trusting-window go undecidable. ⚠ MEASURED 2026-07-28: \
-         NOTHING OUTSIDE THIS CRATE CALLS IT. `cosmos-lightclient` does not even depend on \
-         dregg-lean-ffi, so the Cosmos path is un-routed rather than gated — this entry's absence \
-         consequence is currently `no change`, which is itself the finding",
+        "the TENDERMINT/COSMOS ADJACENT-advance gate compiles out — `cosmos_lightclient::\
+         verified_gate::available()` goes constantly false and `verify_cosmos_header` REFUSES \
+         every adjacent header with `HeaderVerifyError::VerifiedGateUnavailable` (fail-closed, no \
+         twin): the strict `2·tot < 3·sp` stake threshold, the chain-id match, the trusting window \
+         and the `next_validators_hash` epoch binding get no verdict at all rather than an \
+         unverified one. (ROUTED 2026-07-29. The prior note here — `NOTHING OUTSIDE THIS CRATE \
+         CALLS IT`, absence consequence `no change` — was accurate for ~5 months and is what this \
+         entry now records as closed.)",
+    ),
+    (
+        "dregg_tm_skip_verify",
+        "the TENDERMINT/COSMOS NON-ADJACENT (skipping) gate compiles out — \
+         `verify_cosmos_header` REFUSES every skip with `HeaderVerifyError::\
+         VerifiedGateUnavailable`, so a light client can only advance block-by-block. Absent, the \
+         trust-OVERLAP threshold (strictly more than `trust_threshold` of the TRUSTED epoch's \
+         power signed the target) gets no verdict; present, it composes in `tmSkipVerifyDecision`, \
+         not in Rust. Probed INDEPENDENTLY of `dregg_tm_lc_verify`: an archive spliced before \
+         2026-07-29 exports the adjacent gate and NOT this one",
     ),
     (
         "dregg_mpt_lc_verify",
@@ -215,6 +228,21 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          all three hand-maintained `deleg_admit`/`play_admit` re-implementations were DELETED when \
          the decision was routed to `Dregg2.Apps.DelegAdmit.delegAdmit`, the predicate \
          `tool_invocation_commit_iff_admit` and its three rejection teeth are proven over",
+    ),
+    (
+        "dregg_mina_lc_verify",
+        "the MINA (Ouroboros Samasika) anchored-segment gate compiles out — \
+         `mina_lc_verify_available()` goes constantly false and `MinaObserver::observe_settlement` \
+         returns `ObserveError::VerifiedGateUnavailable` for EVERY settlement, so Mina cannot \
+         settle at all. Fail-closed with NO Rust twin: the non-empty segment, the anchor-below-tip \
+         ordering and the WITNESSED confirmation depth get no verdict rather than an unverified one",
+    ),
+    (
+        "dregg_mina_wrap_shape_ok",
+        "the PER-BLOCK Pickles Wrap-proof PREAMBLE gate compiles out — the observer refuses every \
+         settlement rather than reverting to the `NEUTRAL_PICKLES_OK = true` constant it retired, \
+         so the block's own proof shape (`KimchiVerify.shapeOkRec` plus the two length agreements a \
+         RECURSIVE Wrap proof owes) is never checked",
     ),
 ];
 
@@ -2108,6 +2136,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_eth_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_eth_committee_rotation_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_tm_lc_verify_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_tm_skip_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mpt_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
@@ -3016,19 +3045,35 @@ fn main() {
     } else {
         absent_export_warn("dregg_tm_lc_verify");
     }
+    // The TENDERMINT SKIPPING gate — the second Cosmos export, from
+    // `Dregg2.Bridge.LightClientTendermintSkip`, probed INDEPENDENTLY of the adjacent one for the
+    // same reason the ETH rotation gate is: they cover DISJOINT height ranges, so an archive that
+    // carries only the adjacent gate must make `cosmos-lightclient` refuse SKIPS while still
+    // advancing block-by-block — not advertise a skip gate it cannot render. Every archive spliced
+    // before 2026-07-29 is exactly that archive.
+    let tm_skip_verify_present = archive_exports(&build_archive, "dregg_tm_skip_verify");
+    if tm_skip_verify_present {
+        println!("cargo:rustc-cfg=dregg_tm_skip_verify_present");
+    } else {
+        absent_export_warn("dregg_tm_skip_verify");
+    }
     let mpt_lc_verify_present = archive_exports(&build_archive, "dregg_mpt_lc_verify");
     if mpt_lc_verify_present {
         println!("cargo:rustc-cfg=dregg_mpt_lc_verify_present");
     } else {
         absent_export_warn("dregg_mpt_lc_verify");
     }
-    // MINA (Ouroboros Samasika / Pickles) anchored-segment gate. ⚑ DELIBERATELY NOT on
-    // `REQUIRED_DECISION_EXPORTS`: `Dregg2.Bridge.LightClientMinaGate` is not imported by
-    // `metatheory/Dregg2.lean`, so the symbol CANNOT be in the archive until that import lands and
-    // the seed is regenerated. Putting it on the manifest today would hard-FAIL every
-    // `DREGG_REQUIRE_VERIFIED_EXPORTS` build for an export nothing can supply yet. Its absence is
-    // still not silent: the Mina observer refuses every settlement (fail-closed, see
-    // `bridge/src/mina_observer.rs`), and `absent_export_warn` says so at build time.
+    // MINA (Ouroboros Samasika / Pickles) anchored-segment gate. ⚑ NOW ON `REQUIRED_DECISION_EXPORTS`
+    // (2026-07-29). It was deliberately off it while nothing could supply the symbol — but the
+    // reason recorded here for that was WRONG, and the wrongness is worth keeping: it said
+    // "`LightClientMinaGate` is not imported by `metatheory/Dregg2.lean`". Rooting in `Dregg2.lean`
+    // is not what puts an export in the archive. THIS build script builds exactly one Lake target,
+    // `Dregg2.FFI`, and splices exactly `Dregg2/FFI.lean`'s import closure — so the gate stayed
+    // absent even after `Dregg2.lean:1536-1537` rooted it, which is layer 1 of `Dregg2/FFI.lean` §4
+    // re-entered. CLOSED by the two `import` lines in `Dregg2/FFI.lean`. FLAG DAY: a strict build
+    // (`--release`, `DREGG_REQUIRE_VERIFIED_EXPORTS=1`, or `DREGG_TEST_REQUIRE_LEAN=1`) against an
+    // archive spliced before those imports now FAILS instead of degrading quietly. The remedy is a
+    // plain `cargo build` — build.rs re-lake-builds and re-splices in place; no fetch, no migration.
     let mina_lc_verify_present = archive_exports(&build_archive, "dregg_mina_lc_verify");
     if mina_lc_verify_present {
         println!("cargo:rustc-cfg=dregg_mina_lc_verify_present");
@@ -3036,11 +3081,8 @@ fn main() {
         absent_export_warn("dregg_mina_lc_verify");
     }
     // The PER-BLOCK Pickles Wrap-proof preamble gate (`Dregg2.Bridge.PicklesWrapShapeGate`). Same
-    // manifest treatment and for the same reason as the gate above: it rides the SAME pending seed
-    // regeneration, so requiring it today would hard-FAIL every `DREGG_REQUIRE_VERIFIED_EXPORTS`
-    // build for a symbol no published archive can supply yet. Its absence is not silent: the Mina
-    // observer refuses every settlement rather than reverting to the `NEUTRAL_PICKLES_OK` constant
-    // it replaced (`bridge/src/mina_observer.rs`), and `absent_export_warn` says so at build time.
+    // manifest treatment and the same flag day as the gate above — it rode the same absent import
+    // and lands with it.
     let mina_wrap_shape_ok_present = archive_exports(&build_archive, "dregg_mina_wrap_shape_ok");
     if mina_wrap_shape_ok_present {
         println!("cargo:rustc-cfg=dregg_mina_wrap_shape_ok_present");
@@ -3263,6 +3305,9 @@ fn main() {
     }
     if tm_lc_verify_present {
         shim.define("DREGG_TM_LC_VERIFY", None);
+    }
+    if tm_skip_verify_present {
+        shim.define("DREGG_TM_SKIP_VERIFY", None);
     }
     if mpt_lc_verify_present {
         shim.define("DREGG_MPT_LC_VERIFY", None);

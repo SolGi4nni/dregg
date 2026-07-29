@@ -527,6 +527,197 @@ mod ffi_tm_lc {
 }
 
 // ============================================================================
+// Tendermint / Cosmos NON-ADJACENT (skipping) light-client verify
+// ============================================================================
+//
+// The second Cosmos gate, `Dregg2.Bridge.LightClientTendermintSkip.dregg_tm_skip_verify`. It is a
+// SEPARATE rule set, not a relaxation of the adjacent one, and the two cover DISJOINT height
+// ranges (`tmSkip_height_disjoint_from_adjacent`):
+//
+//   * the `next_validators_hash` epoch binding is ABSENT — a skip target's validator set was
+//     never committed by the trusted header, which is the whole nature of skipping;
+//   * in its place comes the TRUST-OVERLAP threshold, in the audited verifier's own strict
+//     multiply form `trustNum · trustedTotal < trustDen · trustedSigned`
+//     (`TrustThresholdFraction::is_enough_power signed total = signed·den > total·num`), i.e.
+//     strictly more than `trust_threshold` (canonically 1/3) of the TRUSTED epoch's voting power
+//     signed the target — ON TOP of the full strict `> 2/3` over the target's own set;
+//   * the height conjunct is `trusted.height + 1 < height`, the exact condition under which
+//     `validate_against_trusted` takes its `else` branch and requires `is_monotonic_height`.
+//
+// The crypto boundary is identical to the adjacent gate's: the per-validator Ed25519 verification
+// feeds BOTH tallies (`voting_power_in_sets` walks each validator set looking that validator's
+// vote up in the one commit) and the SHA-256 validator-set hashing feeds `self_bind_ok`. The gate
+// re-derives no crypto. `tmSkipVerifyDecision_refines` PROVES the composed decision over these
+// projections is DEFINITIONALLY `tmSkipVerify` (`rfl`), so an `Accept` here is — with the named
+// `sigSound` / `hashCR` carriers sound — exactly `TmSkipForeignValid`, whose fourth conjunct is
+// the trust-overlap anchor. Fail-closed: archive-absent ⇒ `Err` ⇒ caller REJECTS.
+//
+// Wire grammar (mirrors `decodeTmSkipWire` byte-for-byte, SIXTEEN fields — deliberately not a
+// superset of the adjacent gate's thirteen, so a mis-routed wire is `"ERR"`, never a verdict about
+// the wrong rule set):
+// ```text
+// INPUT := "ci=" ci ";tci=" tci ";h=" h ";th=" th ";ht=" ht ";t=" t ";nw=" nw ";cd=" cd
+//        ";tp=" tp ";vb=" B ";tn=" tn ";td=" td ";ttot=" ttot ";tsp=" tsp ";tot=" tot ";sp=" sp
+// B     := "0" | "1"
+// ```
+
+/// The verified decision the Tendermint SKIPPING verify LOGIC reduces to. `Accept` iff the Lean
+/// gate (`dregg_tm_skip_verify`) returned `"1"`; every other outcome is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TmSkipVerdict {
+    /// The verified gate ACCEPTED the skip's projections (→ `tmSkipVerify = true`, hence — with
+    /// the named carriers sound — `TmSkipForeignValid`, trust-overlap conjunct included).
+    Accept,
+    /// The verified gate REJECTED (sub-quorum / sub-overlap / adjacent-or-backward height /
+    /// stale-or-future time / failed crypto result / malformed).
+    Reject,
+}
+
+/// Whether the linked archive exports the verified Tendermint SKIPPING gate
+/// (`dregg_tm_skip_verify`). Probed INDEPENDENTLY of [`tm_lc_verify_available`]: every archive
+/// spliced before 2026-07-29 exports the adjacent gate and not this one, and conflating them
+/// would advertise a skip gate that cannot render a verdict. When false the caller must FAIL
+/// CLOSED (there is no sound Rust twin to fall back to).
+pub fn tm_skip_verify_available() -> bool {
+    ffi_tm_skip::tm_skip_verify_present() && lean_init_once().is_ok()
+}
+
+/// Build the Tendermint SKIPPING wire. Mirrors `decodeTmSkipWire`'s grammar exactly.
+/// `trusted_total_power` / `trusted_signed_power` are the OVERLAP tally over the TRUSTED
+/// next-validator set; `total_power` / `signed_power` the tally over the untrusted set.
+#[allow(clippy::too_many_arguments)]
+pub fn tm_skip_verify_wire(
+    chain_id: u64,
+    trusted_chain_id: u64,
+    height: u64,
+    trusted_height: u64,
+    header_time: u64,
+    time: u64,
+    now: u64,
+    clock_drift: u64,
+    trusting_period: u64,
+    self_bind_ok: bool,
+    trust_num: u64,
+    trust_den: u64,
+    trusted_total_power: u64,
+    trusted_signed_power: u64,
+    total_power: u64,
+    signed_power: u64,
+) -> String {
+    let b = |x: bool| if x { '1' } else { '0' };
+    format!(
+        "ci={chain_id};tci={trusted_chain_id};h={height};th={trusted_height};ht={header_time};t={time};nw={now};cd={clock_drift};tp={trusting_period};vb={};tn={trust_num};td={trust_den};ttot={trusted_total_power};tsp={trusted_signed_power};tot={total_power};sp={signed_power}",
+        b(self_bind_ok),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_tm_skip_verify` over a pre-built wire and return the raw
+/// output (`"1"` / `"0"` / `"ERR"`). `Err` only when the archive did not export it — so the caller
+/// distinguishes "archive missing" from "rejected" and FAILS CLOSED either way.
+pub fn shadow_tm_skip_verify(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_tm_skip::lean_tm_skip_verify(wire)
+}
+
+/// The end-to-end verified Tendermint SKIPPING query: build the wire, run the gate, decode to
+/// [`TmSkipVerdict`]. `Ok(Accept)` ONLY on the gate's `"1"`; every other gate output (`"0"`,
+/// `"ERR"`, malformed) is `Ok(Reject)`. `Err` is returned ONLY when the archive lacks the export
+/// — the caller must treat that as REJECT, NOT fall back to a Rust twin.
+#[allow(clippy::too_many_arguments)]
+pub fn verified_tm_skip_verify(
+    chain_id: u64,
+    trusted_chain_id: u64,
+    height: u64,
+    trusted_height: u64,
+    header_time: u64,
+    time: u64,
+    now: u64,
+    clock_drift: u64,
+    trusting_period: u64,
+    self_bind_ok: bool,
+    trust_num: u64,
+    trust_den: u64,
+    trusted_total_power: u64,
+    trusted_signed_power: u64,
+    total_power: u64,
+    signed_power: u64,
+) -> Result<TmSkipVerdict, String> {
+    let wire = tm_skip_verify_wire(
+        chain_id,
+        trusted_chain_id,
+        height,
+        trusted_height,
+        header_time,
+        time,
+        now,
+        clock_drift,
+        trusting_period,
+        self_bind_ok,
+        trust_num,
+        trust_den,
+        trusted_total_power,
+        trusted_signed_power,
+        total_power,
+        signed_power,
+    );
+    let out = shadow_tm_skip_verify(&wire)?;
+    Ok(if out == "1" {
+        TmSkipVerdict::Accept
+    } else {
+        TmSkipVerdict::Reject
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_tm_skip_verify_present))]
+mod ffi_tm_skip {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_tm_skip_verify_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn tm_skip_verify_present() -> bool {
+        true
+    }
+
+    pub fn lean_tm_skip_verify(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_tm_skip_verify_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_tm_skip_verify_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_tm_skip_verify_present)))]
+mod ffi_tm_skip {
+    pub fn tm_skip_verify_present() -> bool {
+        false
+    }
+
+    pub fn lean_tm_skip_verify(_wire: &str) -> Result<String, String> {
+        Err("dregg_tm_skip_verify not exported by the linked archive (rebuild to enable)".into())
+    }
+}
+
+// ============================================================================
 // EVM state-inclusion (EIP-1186 / MPT) light-client verify (verified route-through)
 // ============================================================================
 //
@@ -752,13 +943,16 @@ mod ffi_mpt_lc {
 // selection (VRF-weighted density, long-range) is formalized nowhere, so two k-deep proved segments
 // under different anchors are indistinguishable here. This is an anchored-segment verifier.
 //
-// ⚑ TODAY THIS EXPORT IS ABSENT FROM EVERY PUBLISHED ARCHIVE. The reason moved on 2026-07-29 and
-// the old one is retired: `Dregg2.Bridge.LightClientMinaGate` IS now imported by
-// `metatheory/Dregg2.lean` (root line 1536). What is stale is the SEED — the committed
-// `libdregg_lean.a` predates that import, so `archive_exports` still reports the symbol missing.
-// The remedy is a seed regeneration, not a source change. That is fail-CLOSED and loud, not
-// fail-open: the observer refuses every settlement with `ObserveError::VerifiedGateUnavailable`
-// until the seed catches up.
+// ⚑ THIS EXPORT WAS ABSENT FROM EVERY ARCHIVE UNTIL 2026-07-29, under two successive wrong
+// diagnoses. Neither "the gate is not rooted in `Dregg2.lean`" (it was, line 1536) nor "the
+// committed SEED is stale" was the cause. The seed is not committed — `dregg-lean-ffi/.gitignore:7`
+// ignores `*.a` and the file has never been tracked — and it carries NO splice-only export in any
+// case. The cause was that `build.rs` builds one Lake target, `Dregg2.FFI`, and splices exactly
+// `metatheory/Dregg2/FFI.lean`'s import closure; a module rooted only in `Dregg2.lean` elaborates
+// but emits no `:c` facet. FIXED by importing both Mina gates in `Dregg2/FFI.lean`; the remedy for
+// any archive still lacking them is a plain `cargo build`, which re-lake-builds and re-splices.
+// Absent, this stays fail-CLOSED and loud: the observer refuses every settlement with
+// `ObserveError::VerifiedGateUnavailable`.
 //
 // Wire grammar (mirrors `LightClientMinaGate.decodeMinaWire` byte-for-byte):
 // ```text
@@ -1470,6 +1664,166 @@ mod tests {
             accept_raw, reject_raw,
             "the EVM-inclusion gate returned the SAME verdict across the zero-balance floor — \
              it is a constant, not a gate"
+        );
+    }
+
+    /// ⚑ The MINA anchored-segment gate, through the REAL FFI. UNGATED on purpose — like its
+    /// ETH/TM/MPT siblings it routes archive-absence through `demand_lean` (which PANICS under
+    /// `DREGG_TEST_REQUIRE_LEAN=1`) rather than ceasing to exist the way a
+    /// `#[cfg(dregg_mina_lc_verify_present)]` module does. The values are
+    /// `LightClientMinaGate.mina_decision_discriminates`' own, so a divergence between the
+    /// deployed gate and the theorem shows up here.
+    #[test]
+    fn mina_gate_refuses_forged_segments_through_the_real_ffi() {
+        if !crate::demand_lean(
+            mina_lc_verify_available(),
+            "dregg_mina_lc_verify Mina anchored-segment light-client gate",
+        ) {
+            return;
+        }
+
+        // ACCEPT — a genuine 290-deep anchored segment above anchor 1000, settled at 1000.
+        assert_eq!(
+            verified_mina_lc_verify(290, 1000, 1000, 290, 290, true, true, true),
+            Ok(MinaLcVerdict::Accept)
+        );
+        // REJECT — an EMPTY segment (zero exhibited evidence).
+        assert_eq!(
+            verified_mina_lc_verify(0, 1000, 1000, 290, 290, true, true, true),
+            Ok(MinaLcVerdict::Reject),
+            "an empty segment must be REFUSED"
+        );
+        // REJECT — ⚑ the SHIPPED defect's shape: a settlement claimed BELOW the pinned anchor, so
+        // the "depth" comes from outside the exhibited evidence.
+        assert_eq!(
+            verified_mina_lc_verify(1, 1000, 0, 1001, 290, true, true, true),
+            Ok(MinaLcVerdict::Reject),
+            "a settlement claimed below the anchor must be REFUSED"
+        );
+        // REJECT — depth one short of the requirement.
+        assert_eq!(
+            verified_mina_lc_verify(289, 1000, 1000, 289, 290, true, true, true),
+            Ok(MinaLcVerdict::Reject),
+            "an under-deep settlement must be REFUSED"
+        );
+        // REJECT — each of the three carrier RESULTS false in turn: linkage, Pickles, canonicality.
+        for (lk, pk, cn, what) in [
+            (false, true, true, "a failed Poseidon linkage fold"),
+            (true, false, true, "a failed Pickles Wrap proof"),
+            (
+                true,
+                true,
+                false,
+                "a non-canonical state row (the `+p` anchor-substitution family)",
+            ),
+        ] {
+            assert_eq!(
+                verified_mina_lc_verify(290, 1000, 1000, 290, 290, lk, pk, cn),
+                Ok(MinaLcVerdict::Reject),
+                "{what} must be REFUSED"
+            );
+        }
+
+        let accept_raw =
+            shadow_mina_lc_verify("sl=290;ah=1000;sh=1000;wd=290;rd=290;lk=1;pk=1;cn=1");
+        let reject_raw =
+            shadow_mina_lc_verify("sl=289;ah=1000;sh=1000;wd=289;rd=290;lk=1;pk=1;cn=1");
+        assert_eq!(accept_raw.as_deref(), Ok("1"));
+        assert_eq!(reject_raw.as_deref(), Ok("0"));
+        assert_eq!(shadow_mina_lc_verify("garbage").as_deref(), Ok("ERR"));
+        // Fail-closed on a malformed wire, not a permissive parse: a truncated field list and a
+        // non-bit flag are both "ERR", never "1".
+        assert_eq!(
+            shadow_mina_lc_verify("sl=290;ah=1000;sh=1000;wd=290;rd=290;lk=1;pk=1").as_deref(),
+            Ok("ERR")
+        );
+        assert_eq!(
+            shadow_mina_lc_verify("sl=290;ah=1000;sh=1000;wd=290;rd=290;lk=1;pk=1;cn=2").as_deref(),
+            Ok("ERR")
+        );
+
+        // THE STANDING NON-CONSTANCY CANARY: the two wires straddle the depth requirement by ONE.
+        assert_ne!(
+            accept_raw, reject_raw,
+            "the Mina gate returned the SAME verdict on both sides of the confirmation-depth \
+             requirement — it is a constant, not a gate"
+        );
+    }
+
+    /// ⚑ The per-block Pickles Wrap-PREAMBLE gate, through the REAL FFI, on the shape of a REAL
+    /// devnet block (539508 — the object o1-labs' own `kimchi::verifier::verify` accepts). The
+    /// accept is `PicklesWrapShapeGate.real_block_wrap_shape_accepts`' tuple and the rejects are
+    /// `real_block_wrap_shape_discriminates`' single-count tampers, so an accept here is not
+    /// compatible with a decision that accepts everything.
+    #[test]
+    fn mina_wrap_shape_gate_discriminates_through_the_real_ffi() {
+        if !crate::demand_lean(
+            mina_wrap_shape_ok_available(),
+            "dregg_mina_wrap_shape_ok Pickles Wrap-preamble gate",
+        ) {
+            return;
+        }
+
+        // The real block's decoded counts: idx_prev 2 · proof_prev 2 · vectors 2 · public 40 ·
+        // w_comm 15 · s_evals 6 (PERMUTS-1) · coefficients 15 · t_comm 7 · chunk_size 1 ·
+        // idx IPA rounds 15 (k = log2 2^15) · proof lr.len() 15.
+        const OK: [usize; 11] = [2, 2, 2, 40, 15, 6, 15, 7, 1, 15, 15];
+        let call = |v: [usize; 11]| {
+            verified_mina_wrap_shape_ok(
+                v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10],
+            )
+        };
+        assert_eq!(
+            call(OK),
+            Ok(MinaWrapShapeVerdict::Accept),
+            "the verified gate must ACCEPT a real Mina block's Wrap shape"
+        );
+
+        // Every single-count tamper is REFUSED — including the retired `prevLen = 0` freeze, which
+        // rejected Mina itself.
+        for (idx, val, what) in [
+            (0usize, 0usize, "the retired `prevLen = 0` freeze"),
+            (
+                0,
+                1,
+                "the index declaring fewer accumulators than the proof carries",
+            ),
+            (
+                1,
+                1,
+                "the proof carrying fewer accumulators than the index declares",
+            ),
+            (2, 1, "commitments and challenge vectors disagreeing"),
+            (3, 0, "no public input"),
+            (4, 14, "14 witness commitments"),
+            (5, 5, "5 σ evaluations"),
+            (6, 14, "14 coefficient columns"),
+            (7, 8, "8 quotient chunks at chunk_size 1"),
+            (8, 2, "a chunked index"),
+            (10, 14, "a short IPA: 14 rounds against a 2^15 SRS"),
+        ] {
+            let mut bad = OK;
+            bad[idx] = val;
+            assert_eq!(
+                call(bad),
+                Ok(MinaWrapShapeVerdict::Reject),
+                "{what} must be REFUSED"
+            );
+        }
+
+        let accept_raw =
+            shadow_mina_wrap_shape_ok(&mina_wrap_shape_wire(2, 2, 2, 40, 15, 6, 15, 7, 1, 15, 15));
+        let reject_raw =
+            shadow_mina_wrap_shape_ok(&mina_wrap_shape_wire(2, 2, 2, 40, 15, 6, 15, 7, 1, 15, 14));
+        assert_eq!(accept_raw.as_deref(), Ok("1"));
+        assert_eq!(reject_raw.as_deref(), Ok("0"));
+        assert_eq!(shadow_mina_wrap_shape_ok("garbage").as_deref(), Ok("ERR"));
+
+        // THE STANDING NON-CONSTANCY CANARY: the two wires differ in ONE field (`pr`, 15 vs 14).
+        assert_ne!(
+            accept_raw, reject_raw,
+            "the Wrap-preamble gate returned the SAME verdict on a proof with one fewer IPA round \
+             — it is a constant, not a gate"
         );
     }
 }

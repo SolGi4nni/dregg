@@ -37,6 +37,15 @@ import Dregg2.Bridge.ConditionalInterchainAdapter
 import Dregg2.Bridge.LightClientEthGate
 import Dregg2.Bridge.LightClientMptGate
 import Dregg2.Bridge.LightClientTendermintGate
+-- MINA — these two have LIVE callers (`bridge/src/mina_observer.rs`) and belong in §1.3, not
+-- §1.5. They are here because THIS FILE is the archive boundary: rooting a gate in `Dregg2.lean`
+-- makes it ELABORATE, it does not put its `@[export]` in `libdregg_lean.a`. `Dregg2.lean:1536-1537`
+-- rooted both on 2026-07-29 and the symbols were still absent from every archive, so every Mina
+-- settlement returned `VerifiedGateUnavailable` — layer 1 of §4, re-entered by a lane that had
+-- read §4. Added 2026-07-29; +31 modules to the closure (KimchiVerify's Pasta cone), no
+-- `MinaWrapSrsG` (that 32,768-literal module is NOT reachable from these two).
+import Dregg2.Bridge.LightClientMinaGate
+import Dregg2.Bridge.PicklesWrapShapeGate
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.
@@ -95,6 +104,12 @@ a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
 * `Dregg2.Storage.Deployed` — `dregg_storage_content_root`
 * `Dregg2.Bridge.ProofOfHoldings` — `dregg_holding_grant_weight`
 * `Dregg2.Bridge.InterchainAdapterDecision` — `dregg_interchain_reached_consensus`
+* `Dregg2.Bridge.LightClientMinaGate` — `dregg_mina_lc_verify` (the Samasika anchored-segment
+  verdict) and `Dregg2.Bridge.PicklesWrapShapeGate` — `dregg_mina_wrap_shape_ok` (the per-block
+  Pickles Wrap-proof preamble). Both fail closed with NO Rust arm: absent ⇒ `bridge`'s
+  `MinaObserver::observe_settlement` returns `ObserveError::VerifiedGateUnavailable` for EVERY
+  settlement, so Mina cannot settle at all. Added to this closure 2026-07-29 — see the import
+  block's note for why rooting them in `Dregg2.lean` was not enough.
 * `Dregg2.Games.AutomataflFFI` — `dregg_automatafl_rules` (the automatafl board transition,
   legality, conflict set and win — the whole game oracle `dregg-automatafl/src/reference.rs` used
   to answer with a transcription of a non-canonical Rust experiment; see §2)
