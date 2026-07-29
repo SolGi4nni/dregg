@@ -35,23 +35,19 @@ NCPU="$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)"
 
 command -v lake >/dev/null 2>&1 || { echo "FATAL: lake not on PATH (install elan; ./scripts/bootstrap.sh teaches the fix)"; exit 1; }
 
-# Build the executor roots plus every real PQ archive splice root (the same set
-# scripts/lean-ffi-closure.py names). FFI alone is NOT enough: DistributedExports
-# is a ROOT (nothing imports it), and it imports Dregg2.Coord.* — on a fresh box
-# `lake build Dregg2.Exec.FFI` emits no IR for those, and the closure-only
-# archive step below dies asking for Dregg2_Coord_*.o (bit for real on a fresh
-# Linux bootstrap, 2026-07-10).
-echo "==> lake build the executor + real-PQ splice roots (full transitive closure → :c facets)"
-( cd "$META" && lake build \
-    Dregg2.Exec.FFI \
-    Dregg2.Exec.DistributedExports \
-    Dregg2.Exec.FFIDirect \
-    Dregg2.Crypto.Fips204Verify \
-    Dregg2.Crypto.MlDsaSignReal \
-    Dregg2.Crypto.MlDsaKeygen \
-    Dregg2.Crypto.MlKemEncaps \
-    Dregg2.Crypto.MlKemDecaps \
-    Dregg2.Crypto.MlKemKeygen )
+# ⚑ ONE ROOT — `Dregg2.FFI`, the boundary module `dregg-lean-ffi/build.rs` builds and splices.
+#
+# The old note here was right about the SYMPTOM and wrong about the fix: "`Dregg2.Exec.FFI` alone
+# is NOT enough — DistributedExports is a root nothing imports, and a fresh Linux bootstrap died
+# asking for Dregg2_Coord_*.o (2026-07-10)". The answer to that was a 9-entry hand list, and a
+# hand list drifts: by 2026-07-29 it was 95 modules short of `Dregg2/FFI.lean`'s closure, missing
+# EVERY verified light-client gate, the finality gate, cross-cell conservation, R3Verify and the
+# storage content root — so no seed cut by this script could carry them, ever.
+#
+# `Dregg2/FFI.lean` imports `Dregg2.Exec.DistributedExports` and all six PQ cores by name; it is
+# the manifest, and a closure cannot drift from itself.
+echo "==> lake build Dregg2.FFI (the whole boundary closure → :c facets)"
+( cd "$META" && lake build Dregg2.FFI )
 
 INC="$(cd "$META" && lake env printenv LEAN_SYSROOT)/include"
 

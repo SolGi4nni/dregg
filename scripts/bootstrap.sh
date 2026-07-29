@@ -77,19 +77,25 @@ fi
 
 # ── 3. build the verified executor (Lean → C facets) ────────────────────────
 step "lake build the executor + real-PQ splice roots (incremental; FIRST run compiles the Dregg2 corpus — long; mathlib comes prebuilt from the cache step above)"
-# All three splice roots (the triple in build.rs + scripts/lean-ffi-closure.py):
-# DistributedExports is a root (nothing imports it) and pulls Dregg2.Coord.*,
-# which FFI alone never emits — the seed archive step needs those objects.
-( cd "$META" && lake build \
-    Dregg2.Exec.FFI \
-    Dregg2.Exec.DistributedExports \
-    Dregg2.Exec.FFIDirect \
-    Dregg2.Crypto.Fips204Verify \
-    Dregg2.Crypto.MlDsaSignReal \
-    Dregg2.Crypto.MlDsaKeygen \
-    Dregg2.Crypto.MlKemEncaps \
-    Dregg2.Crypto.MlKemDecaps \
-    Dregg2.Crypto.MlKemKeygen ) \
+# ⚑ ONE ROOT — `Dregg2.FFI`, THE SAME ONE `dregg-lean-ffi/build.rs` BUILDS (`lake_targets`).
+#
+# This was a hand-maintained 9-root list until 2026-07-29 (Dregg2.Exec.FFI + DistributedExports +
+# FFIDirect + the six PQ cores), and it was a STRICT SUBSET of `Dregg2/FFI.lean`'s import closure —
+# 95 modules short, measured. Everything it missed is a verified DECISION: all five light-client
+# gates (`dregg_{eth,mpt,tm}_lc_verify`, `dregg_eth_committee_rotation`, `dregg_tm_skip_verify`,
+# `dregg_mina_lc_verify`, `dregg_mina_wrap_shape_ok`), the finality gate, cross-cell conservation,
+# R3Verify, the storage content root, strand admission, DelegAdmit, both game oracles, FriLedger.
+#
+# That is WHY every published seed exports none of them (`docs/ASSESS-cold-build-silent-export.md`
+# §4 measured 142 exports on the seed and 195 on a spliced archive, and read the gap as
+# "splice-only"). It was not splice-only. It was THIS LIST: no `:c` facet was ever emitted for
+# those modules on a seeding host, so no seed could carry them however often it was regenerated.
+# A fetch-seed-only build — CI's `lean-marshal-gate`, `armed-teeth`, a fresh clone, a validator
+# host with no Lean toolchain — therefore linked an archive with no verified decision gate at all.
+#
+# `Dregg2/FFI.lean` exists precisely to abolish hand-maintained target lists ("you cannot forget to
+# add a module to a list that no longer exists"). This script kept one anyway. It does not now.
+( cd "$META" && lake build Dregg2.FFI ) \
   || die "lake build failed. Common causes:
   * mathlib checkout at the wrong revision (see the pin check above);
   * a partial earlier build — re-running this script resumes it (lake is incremental)."

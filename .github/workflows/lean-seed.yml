@@ -207,15 +207,29 @@ jobs:
           # good seed gets "refused to publish" with a message claiming the export is missing.
           # `case` does no piping, and runs $NM once instead of once per symbol.
           syms="$("$NM" "$arch" 2>/dev/null)"
-          for sym in \
-            dregg_exec_full_forest_auth \
-            dregg_tau_order \
-            dregg_fips204_verify_real \
-            dregg_fips204_sign_real \
-            dregg_mldsa_keygen_real \
-            dregg_mlkem_encaps_real \
-            dregg_mlkem_decaps_real \
-            dregg_mlkem_keygen_real
+          # ⚑ THE REQUIRED LIST IS READ FROM build.rs, NOT RETYPED HERE (2026-07-29). It used to be
+          # eight hand-listed symbols: the two executor roots plus the six PQ cores — and not one of
+          # the ~24 verified DECISION exports. So a seed missing every light-client gate, the
+          # finality gate, cross-cell conservation, R3Verify and the storage content root published
+          # CLEANLY, and consumers linked a fully disarmed archive with nothing red anywhere. That
+          # hole had a cause (bootstrap.sh's hand-maintained root list, fixed the same day) and this
+          # is the gate that would have caught it. A SECOND hand-maintained list is how the first one
+          # drifted, so this one is derived: build.rs's `REQUIRED_PQ_CORE_EXPORTS` +
+          # `REQUIRED_DECISION_EXPORTS` are the single source of truth, and a strict consumer build
+          # demands exactly this set — the producer now refuses to publish what the consumer refuses
+          # to link.
+          required="$(awk '/^const REQUIRED_(PQ_CORE|DECISION)_EXPORTS/,/^\];/' \
+                        dregg-lean-ffi/build.rs \
+                      | grep -oE '"dregg_[a-z0-9_]+"' | tr -d '"' | sort -u)"
+          # A gate whose input is empty is not a gate. If the extraction ever stops matching (the
+          # consts renamed, reformatted, moved), FAIL — never publish on a silently empty list.
+          n_required="$(printf '%s\n' "$required" | grep -c . || true)"
+          if [ "${n_required:-0}" -lt 20 ]; then
+            echo "::error::extracted only ${n_required:-0} required export(s) from dregg-lean-ffi/build.rs — the manifest scrape is broken, and publishing on an empty gate is worse than not publishing."
+            exit 1
+          fi
+          echo "checking $n_required required exports (scraped from build.rs's manifests) + the 2 executor roots"
+          for sym in dregg_exec_full_forest_auth dregg_tau_order $required
           do
             case "$syms" in
               *"$sym"*) ;;

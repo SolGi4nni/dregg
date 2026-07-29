@@ -20,20 +20,19 @@ import sys
 from pathlib import Path
 
 meta = Path(sys.argv[1] if len(sys.argv) > 1 else "metatheory")
+# ⚑ ONE ROOT — `Dregg2.FFI`, THE SAME ONE `dregg-lean-ffi/build.rs` builds and splices.
+#
+# This was a hand-maintained 9-root list until 2026-07-29, and it was a strict SUBSET of
+# `Dregg2/FFI.lean`'s import closure: 95 modules short, every one of them a verified DECISION
+# (all five light-client gates, the finality gate, cross-cell conservation, R3Verify, the storage
+# content root, strand admission, DelegAdmit, both game oracles). A seed cut from this list can
+# never carry those exports no matter how often it is regenerated — which is exactly what
+# `docs/ASSESS-cold-build-silent-export.md` §4 measured and misread as "splice-only".
+#
+# `Dregg2/FFI.lean` is the boundary manifest and exists to abolish lists like the one that stood
+# here. Extra roots can still be passed on argv for a one-off.
 ROOTS = [
-    "Dregg2.Exec.FFI",
-    "Dregg2.Exec.DistributedExports",
-    "Dregg2.Exec.FFIDirect",
-    # These roots are deliberately part of the SEED, not only build.rs's
-    # per-OUT_DIR refresh. A fetched seed is the cold-host fast path; if it omits
-    # them, a release build either recompiles the whole crypto closure or fails
-    # the PQ export gate and is tempted toward DREGG_REQUIRE_PQ_CORES=0.
-    "Dregg2.Crypto.Fips204Verify",
-    "Dregg2.Crypto.MlDsaSignReal",
-    "Dregg2.Crypto.MlDsaKeygen",
-    "Dregg2.Crypto.MlKemEncaps",
-    "Dregg2.Crypto.MlKemDecaps",
-    "Dregg2.Crypto.MlKemKeygen",
+    "Dregg2.FFI",
 ]
 ROOTS += sys.argv[2:]
 
