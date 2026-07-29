@@ -461,9 +461,15 @@ pub(super) async fn tool_fulfill_intent(params: &Value, state: &NodeState) -> Mc
     // per-asset transition, cross-checked against the REAL Lean executor export
     // `dregg_record_kernel_step` (Lean unconditional on native). Fail-closed — no
     // fallback to the legacy `dregg_turn::TurnExecutor`.
+    //
+    // The extra `TurnExecutor` supplies the ANCHOR context only: the receipt's
+    // `{pre,post}_state_hash` is `dregg_turn::state_commit::consensus_state_commitment`, which
+    // binds this node's LIVE accumulator roots. It decides nothing about the payment.
+    let anchor_executor = crate::executor_setup::new_verify_executor(&s);
     let result = dregg_intent::fulfillment::execute_fulfillment_flow_verified(
         &intent,
         &fulfillment_with_preds,
+        &anchor_executor,
         &mut s.ledger,
         payer_cell,
         recipient_cell,

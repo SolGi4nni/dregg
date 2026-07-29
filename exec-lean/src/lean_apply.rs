@@ -1577,22 +1577,33 @@ pub fn prof_outer_dump(label: &str) {
 }
 
 /// THE DENOTATIONAL DIFFERENTIAL leg used by [`crate::lean_shadow::maybe_shadow_turn`]: reconstitute
-/// the verified Lean executor's FULL post-state from an already-run [`ShadowState`] and return its
-/// `.root()` — the per-cell-state digest (balance / nonce / 8 fields / cap_root / lifecycle residue)
-/// the shadow compares against the Rust executor's `post_state_hash`.
+/// the verified Lean executor's post-state ledger from an already-run [`ShadowState`], so the shadow
+/// can compare it CELL BY CELL against the Rust executor's post-state.
 ///
 /// Unlike [`execute_via_lean`] this takes the pre-state as the captured [`lean_shadow::ShadowPreLedger`]
 /// snapshot (the only pre-state the live shadow path retains; the mutable `ledger` it has is already
 /// the POST-state) and the ALREADY-EXECUTED `ShadowState`, so it does NOT re-run the FFI. It builds a
 /// template `Ledger` from the snapshotted pre-state cells, then runs the SAME reconstitution
 /// (`wire_state_to_ledger` with the turn's deterministic cap/state ops) that `execute_via_lean` and
-/// `produce_via_lean` use — so the root it returns is the genuine verified post-state root.
-pub(crate) fn lean_post_state_root(
+/// `produce_via_lean` use — so the ledger it returns is the genuine verified post-state.
+///
+/// ⚑ **IT IS A SUB-LEDGER, AND THE CALLER MUST TREAT IT AS ONE.** The template is
+/// `pre.cells` — the turn's REFERENCED CLOSURE (`build_pre_ledger`: the id map plus the
+/// delegation-parent and held-cap-target closures), not the whole ledger. Returning `.root()` here
+/// invited exactly the wrong comparison, and the shadow made it: from `977e73b19` (2026-07-20) to
+/// 2026-07-29 the caller compared this BLAKE3 sub-ledger root against
+/// `TurnReceipt::post_state_hash`, which since that commit is
+/// `dregg_turn::state_commit::consensus_state_commitment` — an 8-felt per-agent-cell chip
+/// commitment over the WHOLE executor's context. Different kind AND different scope, so
+/// `ShadowAgreement::FullState { agreed: false }` fired on every root-agreeing both-committed turn:
+/// a detector that was always red, i.e. no detector at all. The caller now compares this ledger to
+/// the Rust post-state ledger over the same cell set.
+pub(crate) fn lean_post_state_ledger(
     turn: &Turn,
     pre: &lean_shadow::ShadowPreLedger,
     host: &ShadowHostCtx,
     shadow_state: &dregg_lean_ffi::ShadowState,
-) -> Result<[u8; 32], ExtractError> {
+) -> Result<Ledger, ExtractError> {
     // The template ledger the reconstitution starts from = the snapshotted PRE-state cells (so
     // identity / permissions / c-list / program survive into the produced post-state, exactly as
     // `wire_state_to_ledger`'s template contract requires).
@@ -1624,7 +1635,7 @@ pub(crate) fn lean_post_state_root(
     // reconstituted root must reflect the host height stamp the Rust executor folds into every
     // forest-touched cell's commitment, else the shadow root diverges at `block_height > 0`.
     apply_committed_height(&mut ledger, turn, &template, host.block_height, committed);
-    Ok(ledger.root())
+    Ok(ledger)
 }
 
 /// Which executor produced the committed state, plus the verified-vs-Rust differential, for one

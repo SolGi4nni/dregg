@@ -1159,12 +1159,25 @@ pub const COMPUTRON_ASSET: [u8; 32] = [0u8; 32];
 ///   moves EXACTLY the payment leg, conserving the computron column (`settleRing_conserves`).
 ///
 /// The returned receipt binds the SAME canonical payment turn the legacy flow built
-/// ([`create_fulfillment_turn`] — so `turn_hash` is unchanged across the rewire) plus the REAL
-/// pre-/post-state Merkle roots of the ledger around the verified write-back.
+/// ([`create_fulfillment_turn`] — so `turn_hash` is unchanged across the rewire) plus the
+/// executor's OWN consensus state anchor around the verified write-back.
+///
+/// # Why this takes an `executor` when it never calls `executor.execute`
+///
+/// `TurnReceipt::{pre,post}_state_hash` MUST be
+/// [`dregg_turn::state_commit::consensus_state_commitment`] — the AIR-bound chip 8-felt anchor
+/// (`state_commit.rs:146`: "`pre_state_hash` and `post_state_hash` MUST both come from this
+/// function, or every consumer that compares them across receipts compares incomparable
+/// values"). That anchor binds the executor's LIVE accumulator roots (nullifier / commitment /
+/// revocation), which only a `TurnExecutor` holds — so the verified edge borrows one purely to
+/// stamp the same value `TurnExecutor::execute` and
+/// [`dregg_turn::lean_apply::produce_via_lean`] stamp. The value leg still settles through
+/// [`crate::verified_settle`]; the executor is NOT consulted for the payment decision.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_fulfillment_flow_verified(
     intent: &Intent,
     fulfillment: &FulfillmentWithPredicates,
+    executor: &TurnExecutor,
     ledger: &mut Ledger,
     payer_cell: CellId,
     recipient_cell: CellId,
@@ -1174,6 +1187,7 @@ pub fn execute_fulfillment_flow_verified(
     execute_fulfillment_flow_verified_with_key(
         intent,
         fulfillment,
+        executor,
         ledger,
         payer_cell,
         recipient_cell,
@@ -1189,6 +1203,7 @@ pub fn execute_fulfillment_flow_verified(
 pub fn execute_fulfillment_flow_verified_with_key(
     intent: &Intent,
     fulfillment: &FulfillmentWithPredicates,
+    executor: &TurnExecutor,
     ledger: &mut Ledger,
     payer_cell: CellId,
     recipient_cell: CellId,
@@ -1280,7 +1295,13 @@ pub fn execute_fulfillment_flow_verified_with_key(
         FulfillmentError::VerifiedRefusal("verified recipient post-balance overflows i64".into())
     })?;
 
-    let pre_state_hash = ledger.root();
+    // THE CONSENSUS ANCHOR, not `Ledger::root()`. `state_commit.rs:146` requires both stamps to
+    // come from `consensus_state_commitment`; this edge stamped the trusted-Rust BLAKE3 ledger
+    // root from 977e73b19 (2026-07-20) until 2026-07-29, so every receipt this flow produced
+    // carried a value incomparable with every other receipt on the chain. The agent of this
+    // receipt is `payer_cell` (see the `agent:` field below), so that is the cell the anchor
+    // commits — exactly as `produce_via_lean` anchors on `turn.agent`.
+    let pre_state_hash = executor.consensus_state_commitment(ledger, &payer_cell);
     ledger
         .update_with(&payer_cell, |c| c.state.set_balance(payer_post))
         .map_err(|e| {
@@ -1291,7 +1312,7 @@ pub fn execute_fulfillment_flow_verified_with_key(
         .map_err(|e| {
             FulfillmentError::PaymentFailed(format!("ledger write-back (recipient): {e:?}"))
         })?;
-    let post_state_hash = ledger.root();
+    let post_state_hash = executor.consensus_state_commitment(ledger, &payer_cell);
 
     // Step 6: The audit-trail receipt over the SAME canonical payment turn the legacy flow
     // built, so the turn hash a fulfillment receipt carries is unchanged across the rewire.
@@ -3204,15 +3225,27 @@ mod tests {
         (intent, fulfillment, key, ledger, payer_cell, recipient_cell)
     }
 
+    /// A bare executor for the verified edge's ANCHOR context. The flow never executes a turn
+    /// through it — it borrows the executor's live accumulator roots so the receipt's stamp is
+    /// `state_commit::consensus_state_commitment` (see the fn's own docs).
+    fn anchor_executor() -> TurnExecutor {
+        TurnExecutor::new(dregg_turn::ComputronCosts::zero())
+    }
+
     #[test]
     fn test_execute_fulfillment_flow_verified_success_moves_exactly_the_payment() {
         let (intent, fulfillment, key, mut ledger, payer_cell, recipient_cell) =
             verified_flow_fixture(100_000);
+        let executor = anchor_executor();
 
-        let pre_root = ledger.root();
+        // BOTH the old (BLAKE3 whole-ledger) and the new (chip 8-felt) values of the pre-state,
+        // so the assertions below can tell the fix from the bug.
+        let pre_blake3 = ledger.root();
+        let pre_anchor = executor.consensus_state_commitment(&ledger, &payer_cell);
         let receipt = execute_fulfillment_flow_verified_with_key(
             &intent,
             &fulfillment,
+            &executor,
             &mut ledger,
             payer_cell,
             recipient_cell,
@@ -3226,10 +3259,41 @@ mod tests {
         assert_eq!(ledger.get(&payer_cell).unwrap().state.balance(), 99_000);
         assert_eq!(ledger.get(&recipient_cell).unwrap().state.balance(), 1000);
 
-        // The receipt binds the real pre-/post-state roots and the canonical payment turn.
+        // ⚑ THE STAMP IS THE CONSENSUS ANCHOR. Until 2026-07-29 this edge wrote
+        // `Ledger::root()` and this very test asserted it back, so the pair was green while
+        // violating `turn/src/state_commit.rs:146`. The stamp is now the AIR-bound chip 8-felt
+        // `consensus_state_commitment` — the same value `TurnExecutor::execute` and
+        // `lean_apply::produce_via_lean` write.
+        let post_anchor = executor.consensus_state_commitment(&ledger, &payer_cell);
         assert_eq!(receipt.agent, payer_cell);
-        assert_eq!(receipt.pre_state_hash, pre_root);
-        assert_eq!(receipt.post_state_hash, ledger.root());
+        assert_eq!(receipt.pre_state_hash, pre_anchor);
+        assert_eq!(receipt.post_state_hash, post_anchor);
+
+        // ANTI-VACUITY: the new stamp must DIFFER from the old one, else the two assertions
+        // above cannot distinguish the fix from the bug they replaced.
+        let post_blake3 = ledger.root();
+        assert_ne!(
+            pre_anchor, pre_blake3,
+            "the anchor must not be the BLAKE3 ledger root (else this test pins nothing)"
+        );
+        assert_ne!(
+            post_anchor, post_blake3,
+            "the anchor must not be the BLAKE3 ledger root (else this test pins nothing)"
+        );
+        assert_ne!(
+            receipt.pre_state_hash, pre_blake3,
+            "the receipt must NOT carry the old trusted-Rust BLAKE3 pre-state root"
+        );
+        assert_ne!(
+            receipt.post_state_hash, post_blake3,
+            "the receipt must NOT carry the old trusted-Rust BLAKE3 post-state root"
+        );
+        // The payment MOVED the anchor: a stamp that never changes verifies nothing.
+        assert_ne!(
+            receipt.pre_state_hash, receipt.post_state_hash,
+            "the payment debits the payer, so the payer's anchor must move"
+        );
+
         assert_ne!(receipt.turn_hash, [0u8; 32]);
         let expected_turn = create_fulfillment_turn(
             &intent,
@@ -3240,6 +3304,103 @@ mod tests {
             1000,
         );
         assert_eq!(receipt.turn_hash, expected_turn.turn.hash());
+    }
+
+    /// **BOTH POLES of the receipt stamp**, in one process so an unrelated failure cannot read
+    /// as the check: an HONEST fulfillment's `post_state_hash` VERIFIES through the real
+    /// federation-exit verifier against the executor's own commitment, and the SAME receipt
+    /// presented against a TAMPERED post-state is REFUSED with `StateChainBreak`.
+    ///
+    /// The tamper is on the object the anchor actually binds — the payer cell's balance — not a
+    /// byte-flip of the receipt, so the refusal is the commitment doing its job.
+    #[test]
+    fn verified_fulfillment_stamp_verifies_honest_and_refuses_a_tampered_post_state() {
+        use dregg_federation::verify_via_receipt_chain;
+
+        let (intent, fulfillment, key, mut ledger, payer_cell, recipient_cell) =
+            verified_flow_fixture(100_000);
+        let executor = anchor_executor();
+
+        let receipt = execute_fulfillment_flow_verified_with_key(
+            &intent,
+            &fulfillment,
+            &executor,
+            &mut ledger,
+            payer_cell,
+            recipient_cell,
+            1000,
+            1000,
+            Some(&key),
+        )
+        .expect("verified flow settles");
+
+        // ── POLE 1 (HONEST): the stamp verifies against the executor's own commitment.
+        let honest_anchor = executor.consensus_state_commitment(&ledger, &payer_cell);
+        assert_eq!(
+            receipt.post_state_hash, honest_anchor,
+            "an honest fulfillment's stamp IS the executor's consensus commitment"
+        );
+        verify_via_receipt_chain(std::slice::from_ref(&receipt), Some(honest_anchor))
+            .expect("the honest chain head must bind the executor's own commitment");
+
+        // ANTI-VACUITY for pole 1: the value asserted differs from the OLD (BLAKE3) stamp, so
+        // a regression to `ledger.root()` fails here rather than sliding through.
+        assert_ne!(
+            honest_anchor,
+            ledger.root(),
+            "anchor and BLAKE3 ledger root must differ, else pole 1 proves nothing"
+        );
+
+        // ── POLE 2 (TAMPERED): inflate the payer's balance behind the receipt. The payer cell's
+        // balance is inside the anchor's committed limbs, so the recomputed commitment MOVES and
+        // the head-binding check REFUSES the chain.
+        ledger
+            .update_with(&payer_cell, |c| c.state.set_balance(9_999_999))
+            .expect("tamper the payer balance");
+        let tampered_anchor = executor.consensus_state_commitment(&ledger, &payer_cell);
+        assert_ne!(
+            tampered_anchor, honest_anchor,
+            "the tamper must move the anchor, else pole 2 is vacuous"
+        );
+        let err = verify_via_receipt_chain(std::slice::from_ref(&receipt), Some(tampered_anchor))
+            .expect_err("a receipt whose stamp does not bind the presented state must be REFUSED");
+        assert!(
+            matches!(err, dregg_turn::VerifyError::StateChainBreak { .. }),
+            "expected StateChainBreak (the stamp does not bind the tampered state), got {err:?}"
+        );
+
+        // ── AND THE EXECUTOR'S LIVE ACCUMULATORS ARE GENUINELY READ, not a hardcoded empty
+        // context: moving the nullifier accumulator moves the stamp a fresh run produces.
+        let (intent2, fulfillment2, key2, mut ledger2, payer2, recipient2) =
+            verified_flow_fixture(100_000);
+        let executor2 = anchor_executor();
+        executor2
+            .note_nullifiers
+            .lock()
+            .unwrap()
+            .insert(dregg_cell::note::Nullifier([0x5A; 32]), 1)
+            .expect("seed the nullifier accumulator");
+        let receipt2 = execute_fulfillment_flow_verified_with_key(
+            &intent2,
+            &fulfillment2,
+            &executor2,
+            &mut ledger2,
+            payer2,
+            recipient2,
+            1000,
+            1000,
+            Some(&key2),
+        )
+        .expect("verified flow settles");
+        assert_eq!(
+            receipt2.post_state_hash,
+            executor2.consensus_state_commitment(&ledger2, &payer2)
+        );
+        assert_ne!(
+            receipt2.post_state_hash, receipt.post_state_hash,
+            "the executor's LIVE nullifier root must be bound into the stamp — an equal value \
+             here means the flow stamped a constant empty context, not this executor's state"
+        );
     }
 
     #[test]
@@ -3253,6 +3414,7 @@ mod tests {
         let result = execute_fulfillment_flow_verified_with_key(
             &intent,
             &fulfillment,
+            &anchor_executor(),
             &mut ledger,
             payer_cell,
             recipient_cell,
@@ -3284,6 +3446,7 @@ mod tests {
         let result = execute_fulfillment_flow_verified_with_key(
             &intent,
             &fulfillment,
+            &anchor_executor(),
             &mut ledger,
             payer_cell,
             ghost,
@@ -3307,6 +3470,7 @@ mod tests {
         let result = execute_fulfillment_flow_verified_with_key(
             &intent,
             &fulfillment,
+            &anchor_executor(),
             &mut ledger,
             payer_cell,
             payer_cell,

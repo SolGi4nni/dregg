@@ -5350,12 +5350,23 @@ fn commit_intent_fulfillment_verified(
         .map(|r| r.height)
         .unwrap_or(0);
 
+    // The ANCHOR context. The verified edge stamps the receipt with
+    // `dregg_turn::state_commit::consensus_state_commitment`, which binds this node's LIVE
+    // nullifier / commitment / revocation accumulator roots — state only a configured
+    // `TurnExecutor` holds (`executor_setup::configure_turn_executor` restores them from the
+    // store). It is NOT consulted for the payment decision: the value leg still settles through
+    // the verified per-asset transition, fail-closed. `new_verify_executor` rather than
+    // `new_submit_executor` because nothing is being ADMITTED here — we need the accumulators at
+    // the current attested height, not a PQ admission gate.
+    let anchor_executor = crate::executor_setup::new_verify_executor(s);
+
     // Settle the value leg through the VERIFIED executor edge, supplying the same root key
     // so the Trusted-mode HMAC verification inside the flow succeeds. Fail-closed: a refused
     // payment leaves the ledger untouched.
     dregg_intent::fulfillment::execute_fulfillment_flow_verified_with_key(
         intent,
         &fulfillment_with_preds,
+        &anchor_executor,
         &mut s.ledger,
         payer_cell,
         recipient_cell,

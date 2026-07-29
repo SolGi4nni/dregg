@@ -1061,6 +1061,19 @@ impl AgentRuntime {
         &self.ledger
     }
 
+    /// **This runtime's `TurnExecutor`** — the holder of the LIVE nullifier / commitment /
+    /// revocation accumulator roots that
+    /// [`dregg_turn::state_commit::consensus_state_commitment`] binds.
+    ///
+    /// Exposed for the paths that must stamp a receipt with THIS runtime's consensus anchor
+    /// without going through [`Self::execute_turn`] — today that is
+    /// `dregg_intent::fulfillment::execute_fulfillment_flow_verified`, whose value leg settles
+    /// through the verified per-asset transition rather than the executor. Read-only: the
+    /// executor's own interior mutability is its business, and nothing here hands out a `&mut`.
+    pub fn executor(&self) -> &TurnExecutor {
+        &self.executor
+    }
+
     /// Get the agent's current nonce.
     pub fn nonce(&self) -> u64 {
         *self.nonce.lock().unwrap()

@@ -106,21 +106,28 @@ pub fn capture_pre_state_if_eligible(turn: &Turn, ledger: &Ledger, host: ShadowH
 /// labels a commit-bit check as full executor agreement.
 ///
 /// THE DENOTATIONAL DIFFERENTIAL (the directive's bar): a turn in the root-agreeing (swap-safe) set
-/// compares the FULL post-state — the verified Lean executor's reconstituted `.root()` against the
-/// Rust executor's `post_state_hash`, which both bind the whole per-cell commitment (balance / nonce
-/// / 8 fields / cap_root / lifecycle residue). Agreement on that root is genuine eval agreement
-/// (the two executors computed the SAME post-state on the SAME input), NOT a commit-bit coincidence.
+/// compares the FULL post-state — the verified Lean executor's reconstituted post-state ledger
+/// against the Rust executor's post-state ledger, CELL BY CELL over the turn's referenced closure.
+/// Each compared `Cell` binds the whole per-cell commitment (balance / nonce / 8 fields / cap_root /
+/// lifecycle residue), so agreement is genuine eval agreement (the two executors computed the SAME
+/// post-state on the SAME input), NOT a commit-bit coincidence.
+///
+/// ⚑ It compares LEDGERS, not `post_state_hash`. It used to compare the Lean sub-ledger's BLAKE3
+/// `.root()` against the receipt's `post_state_hash` — which `977e73b19` (2026-07-20) changed to the
+/// 8-felt whole-context consensus anchor. Different kind and different scope, so the check was FALSE
+/// on every honest turn for nine days. Fixed 2026-07-29; see [`compare_post_state`].
 ///
 /// For a turn OUTSIDE the root-agreeing set (a characterized root-GAP effect, or one that did not
-/// commit on both sides) the Lean-reconstituted root provably CANNOT byte-match Rust's (the wire
+/// commit on both sides) the Lean-reconstituted post-state provably CANNOT match Rust's (the wire
 /// model is lossier than the cell commitment — see [`producer_root_gap_effects`]), so the strongest
 /// HONEST claim there is commit-bit agreement. `CommitBitOnly` names that weaker check explicitly;
 /// it is never reported as full agreement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShadowAgreement {
-    /// Genuine DENOTATIONAL agreement: both executors committed AND the Lean-reconstituted post-state
-    /// `.root()` equals the Rust executor's `post_state_hash` (full per-cell-state agreement, not a
-    /// commit-bit coincidence). The `bool` is whether they agreed.
+    /// Genuine DENOTATIONAL agreement: both executors committed AND every cell in the turn's
+    /// referenced closure is IDENTICAL in the Lean-reconstituted post-state and the Rust post-state
+    /// (full per-cell-state agreement, not a commit-bit coincidence). The `bool` is whether they
+    /// agreed.
     FullState { agreed: bool },
     /// Commit-bit agreement ONLY — the weaker check. Used when the turn is outside the root-agreeing
     /// set (a characterized root-gap effect) or did not commit on both sides, where the post-state
@@ -162,9 +169,9 @@ impl ShadowAgreement {
 ///
 /// For a turn in the root-agreeing (swap-safe) set that BOTH executors commit, the shadow does NOT
 /// stop at the commit bit: it reconstitutes the verified Lean executor's FULL post-state ledger
-/// (`run_shadow_state` → `lean_apply::wire_state_to_ledger`) and compares its `.root()` to the Rust
-/// executor's `post_state_hash` — genuine eval agreement (the SAME post-state on the SAME input).
-/// A FULL-STATE divergence (commit bits match but the post-state roots differ) is a real finding the
+/// (`run_shadow_state` → `lean_apply::wire_state_to_ledger`) and compares it CELL BY CELL against
+/// the Rust executor's post-state ledger — genuine eval agreement (the SAME post-state on the SAME
+/// input). A FULL-STATE divergence (commit bits match but a cell differs) is a real finding the
 /// commit bit alone would MISS, logged at `dregg::lean_shadow::divergence`. Outside that set (a
 /// characterized root-gap effect, or a turn that did not commit on both sides) the post-state root
 /// cannot byte-match by construction, so the comparison is HONESTLY a commit-bit check (logged as
@@ -176,7 +183,7 @@ pub fn maybe_shadow_turn(
     result: &TurnResult,
     block_height: u64,
 ) -> Option<bool> {
-    let _ = (ledger, block_height);
+    let _ = block_height;
     // Clear any stale reason from a previous turn — a non-comparable turn (FFI off / GAP / not
     // marshallable) must surface NO reason, never a stale one. `run_shadow` re-sets it on a real
     // comparison.
@@ -211,12 +218,6 @@ pub fn maybe_shadow_turn(
 
     let kinds = turn_effect_kinds(turn).join("+");
     let rust_committed = result.is_committed();
-    // The Rust post-state root the committed receipt attests (the full per-cell-state digest).
-    // `None` when Rust did not commit (no receipt root to compare against).
-    let rust_post_root = match result {
-        TurnResult::Committed { receipt, .. } => Some(receipt.post_state_hash),
-        _ => None,
-    };
 
     match run_shadow_state(turn, &pre, &host) {
         Ok(shadow_state) => {
@@ -225,6 +226,9 @@ pub fn maybe_shadow_turn(
             // the verified executor's FULL post-state and compare its `.root()` to Rust's — the
             // genuine eval-agreement check (not a commit-bit coincidence). Otherwise the post-state
             // root cannot byte-match by construction, so we honestly fall back to the commit bit.
+            // `ledger` is the RUST POST-STATE: `TurnExecutor::execute` calls the observer AFTER
+            // `execute_without_shadow` has mutated it (`turn/src/executor/execute.rs:277,293`).
+            // That is the object the reconstituted Lean post-state is compared against.
             let agreement = compare_post_state(
                 turn,
                 &pre,
@@ -232,7 +236,7 @@ pub fn maybe_shadow_turn(
                 &shadow_state,
                 lean_committed,
                 rust_committed,
-                rust_post_root,
+                ledger,
             );
             log_shadow_outcome(turn, &kinds, lean_committed, rust_committed, agreement);
             Some(lean_committed)
@@ -261,30 +265,64 @@ fn compare_post_state(
     shadow_state: &dregg_lean_ffi::ShadowState,
     lean_committed: bool,
     rust_committed: bool,
-    rust_post_root: Option<[u8; 32]>,
+    rust_post_ledger: &Ledger,
 ) -> ShadowAgreement {
     // The full denotational comparison is meaningful only when (a) the turn is root-agreeing — the
-    // swap-safe set where the Lean-reconstituted root provably tracks Rust's — and (b) BOTH executors
-    // committed (so both produced a real post-state root). Off that set, fall back to commit-bit.
+    // swap-safe set where the Lean-reconstituted post-state provably tracks Rust's — and (b) BOTH
+    // executors committed (so both produced a real post-state). Off that set, fall back to
+    // commit-bit.
     if !(forest_is_root_agreeing(turn) && lean_committed && rust_committed) {
         return ShadowAgreement::CommitBitOnly {
             agreed: lean_committed == rust_committed,
         };
     }
-    let Some(rust_root) = rust_post_root else {
-        return ShadowAgreement::CommitBitOnly { agreed: true };
-    };
-    // Reconstitute the verified executor's FULL post-state ledger and take its `.root()`. If
-    // reconstitution fails (a marshaller gap the eligibility gate did not catch), we cannot make the
-    // full-state claim — downgrade honestly to the commit-bit comparison rather than overclaim.
-    match crate::lean_apply::lean_post_state_root(turn, pre, host, shadow_state) {
-        Ok(lean_root) => ShadowAgreement::FullState {
-            agreed: lean_root == rust_root,
-        },
-        Err(_) => ShadowAgreement::CommitBitOnly {
+    // Reconstitute the verified executor's post-state ledger. If reconstitution fails (a marshaller
+    // gap the eligibility gate did not catch), we cannot make the full-state claim — downgrade
+    // honestly to the commit-bit comparison rather than overclaim.
+    let Ok(lean_ledger) = crate::lean_apply::lean_post_state_ledger(turn, pre, host, shadow_state)
+    else {
+        return ShadowAgreement::CommitBitOnly {
             agreed: lean_committed == rust_committed,
-        },
+        };
+    };
+    // ⚑ COMPARE LIKE WITH LIKE — the fix for an always-red detector (2026-07-29).
+    //
+    // This used to be `lean_ledger.root() == receipt.post_state_hash`. Since `977e73b19`
+    // (2026-07-20) `post_state_hash` is `dregg_turn::state_commit::consensus_state_commitment` —
+    // the 8-felt chip commitment of the AGENT'S CELL under the WHOLE executor's rotation context —
+    // while `lean_ledger.root()` is a BLAKE3 Merkle root over the turn's REFERENCED CLOSURE. Wrong
+    // kind, wrong scope: the equality was false on every honest, fully-agreeing turn, so
+    // `FullState { agreed: false }` fired unconditionally and the "post-state ROOT mismatch" warning
+    // meant nothing. Nine days of a detector that could not go green.
+    //
+    // Both sides are compared cell-by-cell over the union of the reconstitution's key set and the
+    // captured pre-state closure — the exact cells this leg is entitled to speak about. `Option`
+    // equality is deliberate: it catches a create the other side did not make and a destroy it did
+    // not perform, not just a value drift. Cells the turn never referenced are outside the Lean
+    // reconstitution's scope and are (correctly) not claimed here.
+    //
+    // The comparison is BLAKE3-free and ctx-free, so it needs no accumulator roots plumbed into
+    // this pure observer — see the module note on why the anchor could not be used instead.
+    ShadowAgreement::FullState {
+        agreed: post_states_agree(pre.cells.keys().copied(), &lean_ledger, rust_post_ledger),
     }
+}
+
+/// **THE FULL-STATE PREDICATE**, split out from [`compare_post_state`] so it is testable without
+/// the Lean FFI: do the two post-states agree on every cell either side can speak about?
+///
+/// `closure` is the turn's captured referenced-cell closure (`ShadowPreLedger::cells`); the union
+/// with `lean`'s own key set adds cells the turn CREATED. `Option` equality is the point: a cell
+/// present on one side and absent on the other is a divergence (a create the other executor did
+/// not make, or a destroy it did not perform), not a skipped comparison.
+///
+/// Cells outside that union are outside the Lean reconstitution's scope — it only ever holds the
+/// referenced closure — so they are deliberately not claimed. That scope limit is exactly what the
+/// old root-vs-root comparison got wrong in the other direction.
+fn post_states_agree(closure: impl Iterator<Item = CellId>, lean: &Ledger, rust: &Ledger) -> bool {
+    let mut compared: std::collections::HashSet<CellId> = closure.collect();
+    compared.extend(lean.iter().map(|(id, _)| *id));
+    compared.iter().all(|id| lean.get(id) == rust.get(id))
 }
 
 /// Log the shadow outcome at the right strength — a FULL-STATE divergence (commit bits agree but the
@@ -315,7 +353,7 @@ fn log_shadow_outcome(
             agent = ?turn.agent,
             effects = %kinds,
             committed = lean_committed,
-            "RUST↔LEAN divergence: post-state ROOT mismatch despite matching commit bit \
+            "RUST↔LEAN divergence: post-state CELL mismatch despite matching commit bit \
              (full-state denotational divergence — the commit bit alone would MISS this)"
         );
     } else {
@@ -2803,5 +2841,91 @@ mod auth_shape_marshal_tests {
             ),
             _ => panic!("SignedDelegation must map to the wire bearer arm with stark=false"),
         }
+    }
+}
+
+#[cfg(test)]
+mod full_state_predicate_tests {
+    use super::*;
+    use dregg_cell::Cell;
+
+    fn cell(pk: u8, bal: u64) -> Cell {
+        let mut c = Cell::new([pk; 32], [0u8; 32]);
+        let _ = c.state.credit_balance(bal);
+        c
+    }
+
+    fn ledger_of(cells: &[Cell]) -> Ledger {
+        let mut l = Ledger::new();
+        for c in cells {
+            l.insert_cell(c.clone()).expect("distinct ids");
+        }
+        l
+    }
+
+    /// AGREEMENT POLE: two post-states holding the identical cells agree.
+    #[test]
+    fn identical_post_states_agree() {
+        let a = cell(1, 100);
+        let b = cell(2, 7);
+        let closure = vec![a.id(), b.id()];
+        let lean = ledger_of(&[a.clone(), b.clone()]);
+        let rust = ledger_of(&[a, b]);
+        assert!(post_states_agree(closure.into_iter(), &lean, &rust));
+    }
+
+    /// DIVERGENCE POLE 1 — a VALUE drift on a compared cell. This is the case the old
+    /// root-vs-`post_state_hash` comparison was supposed to catch and could not, because it
+    /// compared a BLAKE3 sub-ledger root against an 8-felt whole-context anchor and was therefore
+    /// false for agreeing and diverging turns alike.
+    #[test]
+    fn a_balance_drift_on_a_compared_cell_is_a_divergence() {
+        let a = cell(1, 100);
+        let drifted = cell(1, 101);
+        assert_ne!(a, drifted, "the fixture must actually differ");
+        let closure = vec![a.id()];
+        let lean = ledger_of(&[a]);
+        let rust = ledger_of(&[drifted]);
+        assert!(!post_states_agree(closure.into_iter(), &lean, &rust));
+    }
+
+    /// DIVERGENCE POLE 2 — an ASYMMETRIC CREATE: the Lean side birthed a cell Rust did not. The
+    /// `Option` equality is what catches this; a `zip` over the smaller side would launder it.
+    #[test]
+    fn a_cell_the_lean_side_created_and_rust_did_not_is_a_divergence() {
+        let a = cell(1, 100);
+        let newborn = cell(9, 0);
+        let closure = vec![a.id()];
+        let lean = ledger_of(&[a.clone(), newborn]);
+        let rust = ledger_of(&[a]);
+        assert!(!post_states_agree(closure.into_iter(), &lean, &rust));
+    }
+
+    /// DIVERGENCE POLE 3 — an ASYMMETRIC DESTROY: a cell in the turn's captured closure survives on
+    /// the Rust side and is gone on the Lean side. Reached only through the `closure` half of the
+    /// union, so this pins that the closure is genuinely consulted.
+    #[test]
+    fn a_cell_the_lean_side_destroyed_and_rust_kept_is_a_divergence() {
+        let a = cell(1, 100);
+        let doomed = cell(2, 5);
+        let closure = vec![a.id(), doomed.id()];
+        let lean = ledger_of(&[a.clone()]);
+        let rust = ledger_of(&[a, doomed]);
+        assert!(!post_states_agree(closure.into_iter(), &lean, &rust));
+    }
+
+    /// SCOPE: a cell OUTSIDE the turn's closure that differs is NOT claimed — the Lean
+    /// reconstitution only ever holds the referenced closure, so claiming otherwise would be the
+    /// same overclaim in the opposite direction. ⚑ This is a NAMED LIMIT of the differential, not a
+    /// weakened assertion: the un-referenced cells are covered by `produce_via_lean`'s own
+    /// consensus-anchor comparison, not by this observer.
+    #[test]
+    fn a_cell_outside_the_closure_is_out_of_scope_and_not_claimed() {
+        let a = cell(1, 100);
+        let bystander_rust = cell(3, 42);
+        let closure = vec![a.id()];
+        let lean = ledger_of(&[a.clone()]);
+        let rust = ledger_of(&[a, bystander_rust]);
+        assert!(post_states_agree(closure.into_iter(), &lean, &rust));
     }
 }

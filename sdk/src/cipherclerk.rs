@@ -4746,9 +4746,14 @@ impl AgentCipherclerk {
         // (`dregg_intent::verified_settle` — the proved per-asset transition, FFI
         // cross-checked when `verified-settle` is enabled), NOT the legacy
         // `dregg_turn::TurnExecutor`. Fail-closed: a refused payment is refused.
+        //
+        // The runtime's own executor rides along as the ANCHOR context: the receipt's
+        // `{pre,post}_state_hash` is `dregg_turn::state_commit::consensus_state_commitment`, which
+        // binds this runtime's LIVE accumulator roots. It decides nothing about the payment.
         dregg_intent::fulfillment::execute_fulfillment_flow_verified(
             intent,
             &fulfillment_with_preds,
+            runtime.executor(),
             &mut ledger,
             payer_cell,
             recipient_cell,

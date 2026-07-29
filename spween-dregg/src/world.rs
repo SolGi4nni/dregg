@@ -235,6 +235,49 @@ pub(crate) struct WorldCellDurableState {
     pub ledger_root: [u8; 32],
 }
 
+/// **THE AUTHORITY COMMITMENT a world-cell receipt actually carries** — recomputed from a
+/// persisted cell set, so a durable image's signed receipt head can be bound to the image it
+/// claims.
+///
+/// `TurnReceipt::{pre,post}_state_hash` is
+/// [`dregg_turn::state_commit::consensus_state_commitment`] — the AIR-bound chip 8-felt anchor of
+/// the AGENT's cell — and has been since `977e73b19` (2026-07-20). It is **not**
+/// `Ledger::root()`. [`WorldCellDurableState::ledger_root`] remains the BLAKE3 whole-image digest,
+/// which is its own correct role (the restart anchor; see the module docs of
+/// `turn/src/state_commit.rs`, which keep BLAKE3 for exactly that). The two are different values
+/// of different kinds and MUST NOT be compared: doing so left `durable.rs`'s head check and
+/// `restore_compiled`'s head check unsatisfiable from 2026-07-20 to 2026-07-29 — invisible on a
+/// bare `cargo test` because `spween-dregg` is a workspace member but not a `default-member`.
+///
+/// The accumulator roots are the EMPTY ones. A spween world drives only story turns (register /
+/// spilled-slot writes through the compiled program); it emits no shielded-note, note-create or
+/// credential-revocation effect, so this executor's three accumulators never leave their genesis
+/// roots. If a world ever does move one, this check goes RED rather than silently accepting — the
+/// correct direction to fail.
+pub(crate) fn world_authority_commitment(ledger: &Ledger, agent: CellId) -> [u8; 32] {
+    dregg_turn::state_commit::consensus_state_commitment_with_roots(
+        ledger,
+        &agent,
+        dregg_turn::rotation_witness::empty_nullifier_root_8(),
+        dregg_turn::rotation_witness::empty_commitments_root_8(),
+        dregg_turn::rotation_witness::empty_revoked_root_8(),
+    )
+}
+
+/// [`world_authority_commitment`] over a persisted cell VECTOR (the durable image's own shape).
+pub(crate) fn world_authority_commitment_of_cells(
+    cells: &[Cell],
+    agent: CellId,
+) -> Result<[u8; 32], WorldError> {
+    let mut ledger = Ledger::new();
+    for cell in cells {
+        ledger.insert_cell(cell.clone()).map_err(|error| {
+            WorldError::Durability(format!("durable world cell set is invalid: {error}"))
+        })?;
+    }
+    Ok(world_authority_commitment(&ledger, agent))
+}
+
 pub(crate) trait WorldCellDurability: Send + Sync {
     fn bind(&self, state: &WorldCellDurableState) -> Result<(), String>;
     fn prepare(
@@ -488,8 +531,11 @@ impl WorldCell {
                 ));
             }
         }
+        // The head receipt's stamp is the CONSENSUS ANCHOR, not the BLAKE3 image digest checked
+        // above — see `world_authority_commitment`. Comparing it against `found_root` made this
+        // check unsatisfiable for nine days.
         if let Some(head) = state.receipts.last()
-            && head.post_state_hash != found_root
+            && head.post_state_hash != world_authority_commitment(&ledger, agent)
         {
             return Err(WorldError::Durability(
                 "restored receipt head does not commit the restored ledger".to_owned(),

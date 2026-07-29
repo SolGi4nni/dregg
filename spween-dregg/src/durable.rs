@@ -722,7 +722,15 @@ fn validate_state(
             "durable world receipt chain has a discontinuous authority root".to_owned(),
         ));
     }
-    if state.receipts.last().expect("non-empty").post_state_hash != state.ledger_root {
+    // ⚑ The head's stamp is the CONSENSUS ANCHOR of the agent cell
+    // (`dregg_turn::state_commit::consensus_state_commitment`), NOT `state.ledger_root` — which is
+    // the BLAKE3 whole-image digest and keeps that role. Comparing the two made this branch
+    // unsatisfiable from `977e73b19` (2026-07-20) to 2026-07-29: every durable world with at least
+    // one receipt refused to bind, and `prepared_intent_replays_once_through_the_ordinary_executor_after_restart`
+    // was red the whole time — unseen because `spween-dregg` is not a `default-member`.
+    // See `crate::world::world_authority_commitment`.
+    let authority = crate::world::world_authority_commitment_of_cells(&state.cells, agent_cell)?;
+    if state.receipts.last().expect("non-empty").post_state_hash != authority {
         return Err(WorldError::Durability(
             "durable world receipt head does not bind its ledger root".to_owned(),
         ));
