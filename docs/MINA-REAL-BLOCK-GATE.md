@@ -23,6 +23,10 @@ assembly on real Pallas points, `lake build` 25 s),
 `metatheory/Dregg2/Circuit/Emit/PastaIpaFold.lean` (14 theorems, axiom-clean — the group-side
 twin of `sVec_eq_bPoly`: the generator FOLD identity and the bit-plane MSM identity that actually
 makes 5h tractable) and
+`metatheory/Dregg2/Circuit/Emit/PastaMsmBound.lean` (Lean-authored AIR, axiom-clean — §6.1 rung
+**5h-AIR-BOUND**, the exact-public generator table that makes the emitted constraints FORCE a row's
+`SRC` to be `srs.g` at the absolute index the manifest names; artifacts under
+`circuit/tests/fixtures/pasta-sg-bound/`, re-derived by `scripts/regen-pasta-bound.sh`) and
 `metatheory/Dregg2/Circuit/Emit/MinaWrapSgCore.lean` + `MinaWrapSgChunk0..3.lean`
 (13 + 32 theorems, axiom-clean — **rung 5h, the `2^15`-term terminal MSM**), over the generated
 fixtures `MinaWrapSrsG.lean` (the 32768 SRS generators) and `MinaWrapSgParts.lean`.
