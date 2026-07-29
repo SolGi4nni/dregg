@@ -106,8 +106,29 @@ It also prints two measurements the plan in `docs/MINA-REAL-BLOCK-GATE.md` §6.1
   `c·Q + delta − z1·sg − z1·b0·U − z2·H == O` **directly, with arkworks group arithmetic**. It
   must hold, and must FAIL at `z1 + 1` and at `combined + G`.
 * **GT8 — the leg the Lean side defers.** `<b_poly_coefficients(chal), srs.g> == opening.sg`, the
-  2^15-term SRS MSM of rung 5h. Cheap here, ~18 h and ~7 TB in-kernel; asserting it in Rust is
-  what makes 5h's deferral a **known-true premise** of 5f rather than an unexamined one.
+  2^15-term SRS MSM of rung 5h. Cheap here. It used to be quoted at ~18 h and ~7 TB in-kernel and
+  it is neither: **re-measured 2026-07-28 it is ~2.9 h and ~28 GB**, and 5h is now DISCHARGED in
+  the Lean kernel (`MinaWrapSgCore` + `MinaWrapSgChunk0..3`). This assertion is the reference value
+  those theorems are checked against, not a substitute for them.
+
+* **GT9 — the generator FOLD recipe.** GT8's object is a 2^15-term MSM, which is not a shape a
+  Lean kernel can run. GT9 pins the shape that is: 15 rounds of `g <- g_lo + c_j·g_hi`, **first
+  challenge first**, written out as plain group arithmetic (`combine_one_endo` is deliberately
+  *not* called), landing on the *same* point as `<s, srs.g>` and as `opening.sg`. It carries three
+  **orientation controls**, each of which must be FALSE, because a fold identity that survives the
+  wrong convention pins nothing about that convention: challenges consumed in **reversed** order,
+  the **halves swapped** (`g_hi + c·g_lo`), and **`chal_inv`** used in place of `chal`. All three
+  measure false. GT9 also emits, into an untracked `out/`, `MinaWrapSrsG.lean` — the 32768 SRS
+  generators as 64 Lean `List Pt` blocks of 512, decimal `(x, y, 1)`, none at infinity — and
+  `srs_fold_gold.json` (`srs_g_len`, `chals`, `chal_invs`, `sg`, `fold_gold`).
+* **GT10 — the chunk partials.** The kernel cannot discharge a 2^15-term MSM in one `decide`
+  (elaborator memory tracks the largest single one), so the discharge is split into **32
+  contiguous chunks of 1024**, each its own theorem over a pinned arkworks-produced partial. What
+  makes the split sound is that the 32 partials **re-sum to `sg`** — asserted — and that the
+  re-sum **fails** when one partial (index 7) is displaced by `+G`. **None of the 32 partials is
+  the point at infinity**, so the Lean side never has to represent `O`. Emitted as
+  `out/MinaWrapSgParts.lean` (`PARTS`, `SG`) and as `chunk_partials_1024` / `chunk_size` /
+  `n_chunks` in `out/srs_fold_gold.json`.
 
 The 15 IPA *pre*challenges are replayed on a second sponge clone (via `OpeningProof::prechallenges`)
 and each is asserted to endo-lift to the challenge the verify path computed, so the Lean sponge
