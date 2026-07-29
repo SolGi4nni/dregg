@@ -43,9 +43,17 @@ perform. **`h` is universally quantified and appears in the proof only as an ind
 The statement at `h = 8,925` is the same theorem as at `h = 1`.
 
 `windowed_forces_hornerRef` (§5) is the weld: at the Horner schedule, that flat fold **IS**
-`PastaMsmLayouts.hornerRefFrom` — so the windowed emission forces the predicate the straight-line
-`hornerGates_forces` forces, and (through `PastaIpaFold.msmHorner_eq_msmN`, unchanged) the MSM.
-Nothing here restates `pallasRcbStep_forces` or `condPoint_forces`; both are composed.
+`PastaMsmLayouts.hornerRefFrom` — so the windowed emission forces exactly the predicate the
+straight-line `hornerGates_forces` forces, and the re-layout changes the trace shape and NOTHING
+about the relation. Nothing here restates `pallasRcbStep_forces` or `condPoint_forces`; both are
+composed.
+
+⚠ `hornerRefFrom` is a fold of the RCB FORMULA (`rcbAddZmod`) over projective triples in `ZMod p`.
+That this fold is the multi-scalar multiplication is NOT a rewrite by
+`PastaIpaFold.msmHorner_eq_msmN` — that theorem is an identity in an ABSTRACT
+`AddCommGroup`/`Module`, so reaching it needs the formula-to-group-law transport (RCB'15 Thm 1,
+valid only at ON-CURVE points), which this tree inherits as a residual and does NOT prove, and
+needs an on-curve gate the emitted constraints do NOT contain. See §6.3.
 
 ## The obstruction windowing MOVES rather than removes — named, per §6
 
@@ -607,8 +615,14 @@ theorem windowed_forces_hornerRef (T : WTrace) (Sv : Nat → PtP) (ptVals : Nat 
 
 /-- ⚑⚑ **`windowed_accumulator_is_hornerRef`** — the deliverable, assembled: a windowed trace at
 the Horner schedule has its FINAL accumulator columns representing, in `ZMod p`, exactly the
-bit-plane MSM `hornerRefFrom` — which `PastaIpaFold.msmHorner_eq_msmN` (unchanged, and proved
-elsewhere) identifies with the `n`-term multi-scalar multiplication the IPA opening check needs. -/
+bit-plane scan `hornerRefFrom` — the SAME reference object `PastaMsmLayouts.hornerGates_forces`
+lands on for the straight-line emission.
+
+⚠ Read the conclusion at its actual strength: `hornerRefFrom` is a fold of the RCB FORMULA over
+projective triples, not yet "the MSM". The step from the formula fold to the group-law MSM is
+RCB'15 Thm 1 at on-curve points — an INHERITED, undischarged transport (`PastaMsmAir` §6.4) — plus
+an on-curve gate these constraints do not emit (§6.3). This theorem closes the LAYOUT gap; it does
+not close that one. -/
 theorem windowed_accumulator_is_hornerRef (T : WTrace) (Sv : Nat → PtP) (ptVals : Nat → PtP)
     (bits : Nat → Nat → Bool) (n nbits : Nat) (acc0 : PtP)
     (hs : HornerSchedule T Sv ptVals bits n nbits)
