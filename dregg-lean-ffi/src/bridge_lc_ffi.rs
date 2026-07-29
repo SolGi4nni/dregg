@@ -1460,6 +1460,197 @@ mod ffi_mina_proof_chain {
     }
 }
 
+// ===========================================================================
+// MINA — the PER-BLOCK proof↔`stateHash` DERIVATION (`dregg_mina_state_hash_word_ok`)
+// ===========================================================================
+//
+// ⚑ WHAT THE BLOCK ACTUALLY IS, INSIDE A WRAP VERIFICATION.
+//
+// A Wrap proof's `messages_for_next_step_proof.app_state` is `()` on the wire. The block enters
+// ONLY as the verifier-supplied `app_state`, and `blockchain_snark_state.ml:384` fixes that to one
+// `Fp` element — the protocol-state hash. It is absorbed into a 93-element Poseidon over `Fp`
+//
+//     word12 = Poseidon_fp( index_to_field_elements(dlog_plonk_index)  // 56, the Wrap VK
+//                         ‖ [state_hash]                               //  1, THE BLOCK
+//                         ‖ (sg₀,chals₀ ‖ sg₁,chals₁) )                // 36, this proof
+//
+// and that digest is public-input WORD 12 OF 40. Word 11 is the analogous
+// `messages_for_next_wrap_proof` digest, a 32-element Poseidon over `Fq`.
+//
+// MEASURED 2026-07-29 by `metatheory/fixtures/pickles-extractors/src/bin/state_hash_binding_export.rs`
+// over six real devnet blocks (539795…539799 consecutive, plus the anchor 539508):
+//   * `kimchi::verifier::verify` under each block's OWN `stateHash`  — 6/6 `Ok`;
+//   * the same proofs under every FOREIGN `stateHash`                — 30/30 `Err`;
+//   * public-input words other than 12 that move when only the header is swapped — ZERO.
+// So a foreign header is refused by o1-labs' own verifier, and word 12 is the sole carrier.
+//
+// ⚑ WHAT THIS BINDING DOES NOT DO, AND THE MEASUREMENT THAT SETTLED IT.
+//
+// `docs/MINA-REAL-BLOCK-GATE.md` §8.5 proposed a cheap closed loop — word 12 → the 40 words →
+// `public_comm` → the Fq-sponge → β, γ, α′, ζ′, "which ARE on the wire". THEY ARE NOT. The same
+// run measured every adjacent pair of the six blocks: the child's
+// `deferred_values.plonk.{beta,gamma,alpha,zeta}` matched the parent's Wrap oracles on 0/5, and
+// the child's `sponge_digest_before_evaluations` matched the parent's Wrap `fq_digest` on 0/5. A
+// Wrap statement's `deferred_values` describe the STEP proof it wrapped, not the previous Wrap.
+// The only equation in `kimchi::verifier::verify` a wrong word 12 falsifies is therefore the
+// TERMINAL IPA OPENING, whose honest per-block cost includes the 2^15-point `⟨s, srs.g⟩` MSM
+// (rung 5h, unrooted at `228e51de7` for exactly that reason).
+//
+// So this is a DERIVATION with a decision over it, not a Wrap verification, and no caller may
+// describe it as one. What it buys: the observer no longer treats a `stateHash` as a free-floating
+// Base58 string — it hashes it, per block, in compiled Lean, and the digest it produces is welded
+// (`Dregg2.Circuit.Emit.MinaWrapPublicInputFromHeader`) to the 40-word public input the whole
+// in-kernel ladder is stated over, and (`word12_preimage_carries_the_chain_accumulator`) to the
+// accumulator `dregg_mina_proof_chain_ok` compares against the parent block's own `sg`.
+//
+// Wire grammar (mirrors `MinaStateHashWordGate.decodeHeaderWire` byte-for-byte):
+// ```text
+// INPUT := "sh=" Nat ";acc=" Nat("," Nat)*35 ";mnw=" Nat("," Nat)*31 ";w12=" Nat ";w11=" Nat
+// ```
+
+/// The verified verdict on one exhibited block's header. `Accept` iff the Lean gate
+/// (`dregg_mina_state_hash_word_ok`) returned `"1"`; every other outcome (`"0"`, `"ERR"`,
+/// malformed, archive-absent) is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinaStateHashWordVerdict {
+    /// The gate ACCEPTED: the served header and the served proof hash to the two public-input
+    /// words the verification consumed.
+    Accept,
+    /// The gate REJECTED — the exhibited words are not this header's, and that is a refusal.
+    Reject,
+}
+
+/// Whether the linked archive exports the verified header-derivation gate
+/// (`dregg_mina_state_hash_word_ok`, spliced from `Dregg2.Bridge.MinaStateHashWordGate`). When
+/// false the caller must FAIL CLOSED: there is no Rust twin of this Poseidon, and a derivation
+/// that silently does not run is indistinguishable from the pre-2026-07-29 state in which no
+/// arithmetic ever touched the served `stateHash`.
+pub fn mina_state_hash_word_ok_available() -> bool {
+    ffi_mina_state_hash_word::mina_state_hash_word_ok_present() && lean_init_once().is_ok()
+}
+
+/// Render a `,`-separated decimal list.
+fn dec_list(v: &[String]) -> String {
+    v.join(",")
+}
+
+/// Build the header-derivation wire. Every argument is a decoder READ rendered as a decimal (a
+/// base conversion, not field arithmetic): `state_hash` is the Base58Check-decoded `stateHash`;
+/// `acc_comm` is `[x₀, y₀, x₁, y₁]` of `messages_for_next_step_proof.challenge_polynomial_commitments`;
+/// `acc_chals` is its `2 × 16` **RAW 128-bit** prechallenges; `mnw_comm` is `[x, y]` of
+/// `messages_for_next_wrap_proof.challenge_polynomial_commitment`; `mnw_chals` is its `2 × 15`
+/// raw prechallenges; `word12`/`word11` are the public-input words the caller claims the
+/// verification consumed.
+///
+/// ⚑ The prechallenges go over RAW. The endomorphism expansion
+/// (`ScalarChallenge::limbs_to_field`) is the GATE's — `MinaStateHashWordGate.expandTick` /
+/// `expandTock` over `KimchiVerify.endoMap` — so there is no field arithmetic on this side of the
+/// boundary to drift from the Lean.
+pub fn mina_state_hash_word_wire(
+    state_hash: &str,
+    acc_comm: &[String],
+    acc_chals: &[String],
+    mnw_comm: &[String],
+    mnw_chals: &[String],
+    word12: &str,
+    word11: &str,
+) -> String {
+    format!(
+        "sh={state_hash};ac={};ah={};wc={};wh={};w12={word12};w11={word11}",
+        dec_list(acc_comm),
+        dec_list(acc_chals),
+        dec_list(mnw_comm),
+        dec_list(mnw_chals),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_state_hash_word_ok` over a pre-built wire and
+/// return the raw output (`"1"` / `"0"` / `"ERR"`). `Err` when the archive did not export it.
+pub fn shadow_mina_state_hash_word_ok(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_state_hash_word::lean_mina_state_hash_word_ok(wire)
+}
+
+/// The end-to-end verified header-derivation query for one block. `Ok(Accept)` ONLY on the gate's
+/// `"1"`; every other gate output is `Ok(Reject)` (fail-closed). `Err` ONLY when the archive lacks
+/// the export — the caller must treat that as a REFUSAL with its own distinct error.
+#[allow(clippy::too_many_arguments)]
+pub fn verified_mina_state_hash_word_ok(
+    state_hash: &str,
+    acc_comm: &[String],
+    acc_chals: &[String],
+    mnw_comm: &[String],
+    mnw_chals: &[String],
+    word12: &str,
+    word11: &str,
+) -> Result<MinaStateHashWordVerdict, String> {
+    let wire = mina_state_hash_word_wire(
+        state_hash, acc_comm, acc_chals, mnw_comm, mnw_chals, word12, word11,
+    );
+    let out = shadow_mina_state_hash_word_ok(&wire)?;
+    Ok(if out == "1" {
+        MinaStateHashWordVerdict::Accept
+    } else {
+        MinaStateHashWordVerdict::Reject
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_state_hash_word_ok_present))]
+mod ffi_mina_state_hash_word {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_state_hash_word_ok_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_state_hash_word_ok_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_state_hash_word_ok(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_state_hash_word_ok_str(
+                    c_in.as_ptr(),
+                    buf.as_mut_ptr() as *mut c_char,
+                    cap,
+                )
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_state_hash_word_ok_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_state_hash_word_ok_present)))]
+mod ffi_mina_state_hash_word {
+    pub fn mina_state_hash_word_ok_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_state_hash_word_ok(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_state_hash_word_ok not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

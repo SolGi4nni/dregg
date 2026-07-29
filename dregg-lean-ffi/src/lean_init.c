@@ -552,6 +552,27 @@ extern lean_object *dregg_mina_wrap_shape_ok(lean_object *input);
 #ifdef DREGG_MINA_PROOF_CHAIN_OK
 extern lean_object *dregg_mina_proof_chain_ok(lean_object *input);
 #endif
+/* dregg_mina_state_hash_word_ok — the PER-BLOCK proof<->stateHash DERIVATION
+ * (`headerOk`, `Dregg2.Bridge.MinaStateHashWordGate`): public-input words 11 and 12 recomputed,
+ * from the SERVED header and the served proof bytes, as the 93-element Poseidon over
+ * `[dlog_plonk_index(56) || state_hash(1) || accumulators(36)]` over Fp and the 32-element one
+ * over Fq. Word 12 is the ONLY place a Mina block enters a Wrap verification. This does NOT
+ * verify the Wrap proof and must never be described as doing so; the equation that a wrong word
+ * 12 falsifies is the terminal IPA opening, whose per-block cost includes a 2^15-point MSM.
+ * Same `"1"`/`"0"`/`"ERR"` fail-closed contract as the gates above. */
+#ifdef DREGG_MINA_STATE_HASH_WORD_OK
+extern lean_object *dregg_mina_state_hash_word_ok(lean_object *input);
+/* ⚑ THIS ONE NEEDS ITS MODULE INITIALIZER, and the gates above do not. `minaProofChainGate` and
+ * friends decide over their ARGUMENTS only; `headerOk` reads three top-level constants —
+ * `VK_INDEX` (the 56 verification-key field elements) and the `fpParams`/`fqParams` Poseidon
+ * parameter records in `PastaPoseidonFq`. Those live in initialized module data, so calling the
+ * export before `initialize_Dregg2_Dregg2_Bridge_MinaStateHashWordGate` dereferences uninitialized
+ * globals and the process takes SIGSEGV with no Rust panic — measured 2026-07-29, and it looks
+ * exactly like the missing-archive SIGABRT, which is why it is written down here rather than
+ * discovered twice. The initializer chains into `PastaPoseidonFq`/`PastaPoseidon`/`KimchiVerify`
+ * and is re-entrant-safe under Lean's init guards. */
+extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaStateHashWordGate(uint8_t builtin);
+#endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
@@ -659,6 +680,15 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(cares);
+#endif
+#ifdef DREGG_MINA_STATE_HASH_WORD_OK
+    lean_object *mshres = initialize_Dregg2_Dregg2_Bridge_MinaStateHashWordGate(1);
+    if (!lean_io_result_is_ok(mshres)) {
+        lean_io_result_show_error(mshres);
+        lean_dec_ref(mshres);
+        return 1;
+    }
+    lean_dec_ref(mshres);
 #endif
 #ifdef DREGG_CROSS_CELL_CONSERVES
     lean_object *cccres = initialize_Dregg2_Dregg2_Circuit_CrossCellConserveDecision(1);
@@ -1325,6 +1355,31 @@ size_t dregg_mina_proof_chain_ok_str(const char *in_utf8, char *out, size_t out_
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_proof_chain_ok(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_STATE_HASH_WORD_OK
+/* dregg_mina_state_hash_word_ok_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * per-block proof<->stateHash derivation
+ * (`Dregg2.Bridge.MinaStateHashWordGate.dregg_mina_state_hash_word_ok`). Input:
+ * `"sh=<Nat>;acc=<Nat>,...x36;mnw=<Nat>,...x32;w12=<Nat>;w11=<Nat>"` — the served `stateHash`
+ * Base58Check-decoded into Fp, the proof's own 36 accumulator field elements and 32
+ * messages-for-next-wrap elements, and the two public-input words the verification consumed.
+ * Output: `"1"` / `"0"` / `"ERR"` (fail-closed). The wire is ~5 KB (two long decimal lists); the
+ * caller's growable output buffer already handles it. Same return contract as the bridges above. */
+size_t dregg_mina_state_hash_word_ok_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_state_hash_word_ok(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

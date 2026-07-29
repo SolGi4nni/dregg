@@ -41,7 +41,7 @@
 //! | each block's Pickles proof — PREAMBLE | **VERIFIED** — the decoded counts cross into the Lean gate `dregg_mina_wrap_shape_ok` (`Dregg2.Bridge.PicklesWrapShapeGate`), whose decision `picklesWrapShapeOk_is_shapeOkRec` proves IS `KimchiVerify.shapeOkRec` — the `verifier.rs:810-830` preamble — plus the accumulator-count and IPA-round agreements. `real_block_wrap_shape_accepts` pins the accept on block 539508; `real_block_wrap_shape_refused_by_freeze` pins that the retired `prevLen = 0` form REFUSES a real Mina block. The result IS the gate's `pk` bit. ⚑ TRUSTED here, and it is a lot: the verifier-index parameters themselves ([`crate::mina_pickles::MinaWrapIndexParams`]) — modelling the Wrap VK is P8/P9 and is NOT STARTED. |
 //! | each block's Pickles proof — ARITHMETIC | **NOT CHECKED, and not reachable from here.** C3 (the Fiat–Shamir transcript), C5/C8, the group assembly, `public_comm` and the IPA opening relation all exist and all run on a real Mina block — as `by decide` over the LITERAL constants of one extracted block (`MinaRealBlockGate`, `MinaRealBlockTranscript`, `MinaWrap*`). They are not functions of a proof. Two independent walls, both measured: the values they need (verifier index, SRS, `endo_r`, the 40-element public input) are **not on the wire** — the proof's `messages_for_next_step_proof.app_state` is literally `()` — and they come from a dependency graph deliberately outside this workspace; and their cost is kernel-`decide` cost: 82 s for C5/C8, 153 s + 75 s for the opening rung, **~3.5 h of serial kernel and ~28 GB** for the terminal `⟨s, srs.g⟩` MSM, per block. |
 //! | the proof↔**proof** BINDING | **VERIFIED** (since 2026-07-29) — the exhibited proofs must be a genuine CONSECUTIVE RUN. Pickles recursion makes block N's Step proof verify block N−1's Wrap proof, so block N's bytes carry TWO fingerprints of its parent's proof in the clear: the parent's own IPA accumulator `sg`, and the parent's 16 IPA challenges. [`MinaObserver::check_proof_chain`] extracts both (a CODEC — no arithmetic) and `dregg_mina_proof_chain_ok` (`Dregg2.Bridge.PicklesProofChainGate`) decides. MEASURED on 40 consecutive real devnet blocks: 39/39 pairs link on BOTH fingerprints, 40/40 distinct `sg`, 0 self-naming, 0 non-adjacent coincidences. `chainOk_adjacent_proofs_differ` proves the payoff — **an accepted segment cannot serve the same proof twice in a row** — and `chainOk_pins_every_seam` proves every adjacency is checked, so runs cannot be spliced, shuffled or padded. ⚑ TRUSTED here: that accumulator index `[0]` is the BLOCKCHAIN parent's rather than the transaction SNARK's — an empirical reading of those 39 pairs, not a theorem about Pickles. |
-//! | the proof↔**stateHash** BINDING | **STILL NOT CHECKED**, and the reason is now exact rather than a gesture. A Wrap proof is not self-binding to its block: `messages_for_next_step_proof.app_state` is literally `()` on the wire, and the block enters only as the verifier-SUPPLIED `app_state`, hashed with the VK's `dlog_plonk_index` and the accumulators into one Poseidon digest that is **public-input slot 12 of 40**. The other 39 slots are functions of the proof alone. So the binding is not a comparison anyone can make — it is a conjunct of the full Wrap verification, and reaching it means assembling the whole public input, six of whose words (`combined_inner_product`, `b`, `zeta_to_srs_length`, `zeta_to_domain_size`, `perm`, `xi`) are DROPPED from the wire proof and recoverable only by `expand_deferred` (the front half of a Kimchi verifier), plus a 40-point MSM and two sponges. ⚑ The DATA is all public — `stateHash` + `protocolStateProof.base64` + the blockchain VK is provably sufficient — so what is missing is COMPUTATION, not a source. Consequence, said plainly: an adversary holding a genuine consecutive run of real proofs can still re-label the headers they are served under. |
+//! | the proof↔**stateHash** BINDING | **DERIVED per block, and CHECKED at the verified anchor** (since 2026-07-29). A Wrap proof is not self-binding to its block: `messages_for_next_step_proof.app_state` is `()` on the wire. The block enters ONLY as the verifier-supplied `app_state` — one `Fp` element (`blockchain_snark_state.ml:384`) — absorbed into a 93-element Poseidon whose digest is **public-input word 12 of 40**. [`MinaObserver::check_header_binding`] now recomputes words 12 and 11 from the SERVED `stateHash` and the served proof bytes through `dregg_mina_state_hash_word_ok` (`Dregg2.Bridge.MinaStateHashWordGate`, which also does the endomorphism expansion of the 62 raw prechallenges, so no field arithmetic exists on the Rust side to drift). MEASURED over six real devnet blocks: o1-labs' own `kimchi::verifier::verify` accepts each under its OWN `stateHash` and REJECTS **30/30** ordered foreign-header pairs, with NO public-input word but 12 moving. Cost: **28.9 ms/block** through the C ABI. ⚑ SCOPE, said plainly: the comparand exists only at [`MinaObserverConfig::verified_header_anchor`] — the one block verified in-kernel end to end (`MinaWrapPublicInputFromHeader` proves its two words ARE `MinaWrapPublicCommGate.PUBLIC_INPUT[12]`/`[11]`). For any other height NOTHING SERVED carries the value word 12 must equal: the "the wrap challenges are on the child's wire" route was MEASURED FALSE (0/5 on both the four challenges and the sponge digest), so the only equation a wrong word 12 falsifies is the terminal IPA opening with its `2^15`-point MSM. A genuine run re-labelled at heights other than the anchor is still refused only by the proof↔proof chain gate. |
 //! | the zkApp's settled root | **CHECKED in Rust** — the on-chain `provenRoot` must equal the dregg root we settled. |
 //! | FORK CHOICE | **NOT CHECKED, ANYWHERE.** Ouroboros Samasika's chain selection (VRF-weighted density, long-range) is formalized nowhere in this tree. An accept says "this exhibited segment is anchored, linked, canonical and `k` deep"; it does not say "and it is the chain the network selected". Two `k`-deep segments under different anchors are indistinguishable here. |
 //!
@@ -537,6 +537,54 @@ pub struct MinaObserverConfig {
     /// parameter set has been measured and inventing one would be a guess wearing a
     /// constant's clothes.
     pub wrap_index: MinaWrapIndexParams,
+    /// ⚑ **The one block whose Wrap proof this tree has verified end-to-end in-kernel, together
+    /// with the two public-input words that verification consumed.** When the observed segment
+    /// contains a block at this height, its SERVED header must hash to those words
+    /// ([`MinaObserver::check_header_binding`]) or the settlement is refused.
+    ///
+    /// Why an anchor rather than a per-block equation, said plainly: word 12 is the ONLY place a
+    /// Mina block enters a Wrap verification, and nothing a node serves for block N carries the
+    /// value word 12 must equal. MEASURED 2026-07-29 over six real devnet blocks: a child's
+    /// `deferred_values.plonk.{beta,gamma,alpha,zeta}` matched the parent's Wrap oracles on 0/5,
+    /// and its `sponge_digest_before_evaluations` matched the parent's Wrap `fq_digest` on 0/5 —
+    /// so the "the challenges are on the wire" route does not exist. The only equation a wrong
+    /// word 12 falsifies is the terminal IPA opening, whose per-block cost includes a
+    /// `2^15`-point MSM. See `Dregg2.Bridge.MinaStateHashWordGate` for the whole measurement.
+    pub verified_header_anchor: MinaVerifiedHeaderAnchor,
+}
+
+/// A block whose Wrap proof has been verified in-kernel, and the two public-input words that
+/// verification consumed. Both are decimal strings of `Fp`/`Fq` elements.
+///
+/// `Dregg2.Circuit.Emit.MinaWrapPublicInputFromHeader` proves these two numbers ARE
+/// `MinaWrapPublicCommGate.PUBLIC_INPUT[12]` and `[11]` — the literals C3, C5, C8 and rungs
+/// 5a–5h are stated over. So an accepted `check_header_binding` is the statement "the ladder was
+/// run against the header this endpoint just served", which is what those rungs previously could
+/// not say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinaVerifiedHeaderAnchor {
+    /// The verified block's height.
+    pub block_height: u64,
+    /// Public-input word 12 — `Poseidon_fp(dlog_plonk_index ‖ state_hash ‖ accumulators)`.
+    pub word12: String,
+    /// Public-input word 11 — `Poseidon_fq(2 × 15 wrap challenges ‖ commitment)`.
+    pub word11: String,
+}
+
+impl MinaVerifiedHeaderAnchor {
+    /// Devnet block **539508** — the block `docs/MINA-REAL-BLOCK-GATE.md` drives all the way
+    /// through the in-kernel ladder. Both words are pinned in
+    /// `Dregg2.Bridge.MinaStateHashWordGate.B539508` and welded to
+    /// `MinaWrapPublicCommGate.PUBLIC_INPUT` by `MinaWrapPublicInputFromHeader`.
+    pub fn devnet_539508() -> Self {
+        Self {
+            block_height: 539_508,
+            word12: "24322017899265084126163599635783679345976168424021275192497824834098868742353"
+                .to_string(),
+            word11: "16694176452625101103339288558027392732723822717830151635447913532282294450543"
+                .to_string(),
+        }
+    }
 }
 
 /// The largest segment the observer will pull and check in one call.
@@ -701,6 +749,20 @@ pub enum ObserveError {
         /// The parent block's height.
         parent_height: u64,
     },
+    /// ⚑ **The VERIFIED header-derivation gate REFUSED: the served `stateHash` is not the header
+    /// the verified public input belongs to.** Distinct from every variant above, and distinct
+    /// from [`Self::WrapProofNotChained`]: that one says two proofs are not adjacent, this one
+    /// says a proof is being served under the wrong BLOCK. It is the refusal that fires when an
+    /// endpoint re-labels a genuine proof — the residual the proof↔proof chain gate explicitly
+    /// could not close.
+    ///
+    /// Also deliberately NOT [`Self::VerifiedGateUnavailable`]: the gate RAN and said no.
+    HeaderBindingMismatch {
+        /// The height of the block whose header did not hash to the verified words.
+        block_height: u64,
+        /// The `stateHash` the endpoint served for it.
+        served_state_hash: String,
+    },
     /// The zkApp account was absent or not a zkApp (no app state).
     ZkappNotFound,
     /// The zkApp app state was malformed (wrong arity or a non-Field value).
@@ -797,6 +859,17 @@ impl std::fmt::Display for ObserveError {
                  not name block {parent_height}'s proof (the exhibited accumulator and IPA \
                  challenges are not the parent proof's), so these are not a consecutive run of real \
                  Mina proofs and the segment does not witness a depth"
+            ),
+            Self::HeaderBindingMismatch {
+                block_height,
+                served_state_hash,
+            } => write!(
+                f,
+                "the VERIFIED header gate REFUSED block {block_height}: the served stateHash \
+                 `{served_state_hash}` does not hash to the public-input words the verified Wrap \
+                 verification consumed (93-element Poseidon over \
+                 [dlog_plonk_index || state_hash || accumulators]), so this proof is being served \
+                 under a different block than the one it proves"
             ),
             Self::ZkappNotFound => write!(f, "zkApp account not found / not a zkApp"),
             Self::MalformedZkappState { reason } => write!(f, "malformed zkApp state: {reason}"),
@@ -1071,9 +1144,9 @@ impl<R: MinaRpc> MinaObserver<R> {
                     &decimal_of_le32(&parent.sg[0]),
                     &decimal_of_le32(&parent.sg[1]),
                     &parent.bp_challenges,
-                    &decimal_of_le32(&shape.acc0[0]),
-                    &decimal_of_le32(&shape.acc0[1]),
-                    &shape.acc0_challenges,
+                    &decimal_of_le32(&shape.acc0()[0]),
+                    &decimal_of_le32(&shape.acc0()[1]),
+                    &shape.acc0_challenges(),
                 )
                 .map_err(|why| ObserveError::VerifiedGateUnavailable { why })?;
                 if verdict != dregg_lean_ffi::MinaProofChainVerdict::Accept {
@@ -1084,6 +1157,87 @@ impl<R: MinaRpc> MinaObserver<R> {
                 }
             }
             prev = Some((b.block_height, shape));
+        }
+        Ok(())
+    }
+
+    /// ⚑ **CHECK THE PROOF↔`stateHash` BINDING at the verified anchor.**
+    ///
+    /// A Wrap proof does not carry its block: `messages_for_next_step_proof.app_state` is `()` on
+    /// the wire. The block enters ONLY as the verifier-supplied `app_state`, one `Fp` element
+    /// (`blockchain_snark_state.ml:384`), absorbed into a 93-element Poseidon whose digest is
+    /// **public-input word 12 of 40**. MEASURED 2026-07-29 over six real devnet blocks: swapping
+    /// only that word makes o1-labs' own `kimchi::verifier::verify` reject, on **30/30** ordered
+    /// foreign-header pairs, and NO other public-input word moves.
+    ///
+    /// So this method derives words 11 and 12 from the SERVED header plus the served proof bytes
+    /// — through the verified gate `dregg_mina_state_hash_word_ok`
+    /// (`Dregg2.Bridge.MinaStateHashWordGate`), which also does the endomorphism expansion of the
+    /// 62 raw prechallenges, so no field arithmetic exists on this side to drift — and refuses
+    /// when they are not the words a verified Wrap verification consumed.
+    ///
+    /// ⚑ SAY THE SCOPE. The comparand exists only for
+    /// [`MinaObserverConfig::verified_header_anchor`]: the one block this tree has verified
+    /// in-kernel end to end. For every other height there is nothing on the wire to compare a
+    /// derived word 12 against — the "the wrap challenges are on the child's wire" route was
+    /// MEASURED FALSE (0/5 on both fingerprints), and the only equation left is the terminal IPA
+    /// opening with its `2^15`-point MSM. This is therefore a real refusal at one height and a
+    /// stated residual everywhere else; it is not, and must not be called, a Wrap verification.
+    pub fn check_header_binding(&self, chain: &[MinaBlock]) -> Result<(), ObserveError> {
+        use crate::mina_pickles::decimal_of_le32;
+
+        let anchor = &self.config.verified_header_anchor;
+        for b in chain
+            .iter()
+            .filter(|b| b.block_height == anchor.block_height)
+        {
+            if b.protocol_state_proof.is_empty() {
+                return Err(ObserveError::WrapProofAbsent {
+                    block_height: b.block_height,
+                });
+            }
+            let shape = decode_protocol_state_proof(&b.protocol_state_proof)
+                .map_err(|e| ObserveError::malformed_proof(b.block_height, &e))?;
+            let state_hash = decode_state_hash(&b.state_hash)?;
+
+            // Every argument below is a decoder READ rendered as a decimal (a base conversion,
+            // `decimal_of_le32`); the endomorphism expansion and both Poseidons are the gate's.
+            let acc_comm: Vec<String> = shape
+                .acc_comm
+                .iter()
+                .flat_map(|p| [decimal_of_le32(&p[0]), decimal_of_le32(&p[1])])
+                .collect();
+            let acc_chals: Vec<String> = shape
+                .acc_challenges
+                .iter()
+                .flat_map(|v| v.iter().map(|c| c.to_string()))
+                .collect();
+            let mnw_comm = vec![
+                decimal_of_le32(&shape.mnw_comm[0]),
+                decimal_of_le32(&shape.mnw_comm[1]),
+            ];
+            let mnw_chals: Vec<String> = shape
+                .mnw_challenges
+                .iter()
+                .flat_map(|v| v.iter().map(|c| c.to_string()))
+                .collect();
+
+            let verdict = dregg_lean_ffi::verified_mina_state_hash_word_ok(
+                &state_hash.to_decimal(),
+                &acc_comm,
+                &acc_chals,
+                &mnw_comm,
+                &mnw_chals,
+                &anchor.word12,
+                &anchor.word11,
+            )
+            .map_err(|why| ObserveError::VerifiedGateUnavailable { why })?;
+            if verdict != dregg_lean_ffi::MinaStateHashWordVerdict::Accept {
+                return Err(ObserveError::HeaderBindingMismatch {
+                    block_height: b.block_height,
+                    served_state_hash: b.state_hash.clone(),
+                });
+            }
         }
         Ok(())
     }
@@ -1143,6 +1297,13 @@ impl<R: MinaRpc> MinaObserver<R> {
         //      and a pair that does not is `WrapProofNotChained`, which is deliberately a
         //      DIFFERENT error from an absent archive.
         self.check_proof_chain(&chain)?;
+
+        // (1e) ⚑ CHECK THE PROOF↔`stateHash` BINDING wherever there is a comparand: the block
+        //      this tree has verified in-kernel end to end. Its served header must hash to the
+        //      public-input words that verification consumed, or the endpoint is serving a real
+        //      proof under a different block. See `check_header_binding` for why this is one
+        //      height and not every height, and for the measurement that settled it.
+        self.check_header_binding(&chain)?;
 
         // (2) hand the projections to the VERIFIED gate. `lk`, `pk` and `cn` are all
         //     RESULTS of the checks above — `lk` and `cn` are `true` because
@@ -1466,6 +1627,141 @@ mod tests {
 
     /// The two REAL Mina devnet state hashes `MinaRealBlockGate` names, and the
     /// `Fp` decimals `LightClientMinaHashFold` pins for them.
+
+    // ── the proof↔`stateHash` BINDING (`dregg_mina_state_hash_word_ok`) ────────────────────────
+
+    /// The real anchor block 539508 as the observer sees it: the served Base58Check `stateHash`
+    /// and the served `protocolStateProof`, both from the tracked extractor fixture.
+    fn real_anchor_block() -> MinaBlock {
+        MinaBlock {
+            state_hash: DEVNET_539508_B58.to_string(),
+            parent_state_hash: "3NKQvrgBGtHUHkYs9r7hL7cGRJhLDNVGL3zj4b7t9nLTCzfvXHkK".to_string(),
+            block_height: 539_508,
+            protocol_state_proof: real_devnet_protocol_state_proof(),
+        }
+    }
+
+    /// ⚑ **THE ACCEPT.** The header a devnet node actually served for block 539508, hashed with
+    /// that block's own proof bytes, IS the public input the in-kernel Wrap ladder is stated over.
+    /// Everything crosses the real C ABI: the 62 raw prechallenges, both Poseidons and the
+    /// endomorphism expansion are the Lean gate's.
+    #[test]
+    fn real_served_header_binds_to_the_verified_public_input() {
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let chain = vec![real_anchor_block()];
+        match observer.check_header_binding(&chain) {
+            Ok(()) => assert!(
+                dregg_lean_ffi::mina_state_hash_word_ok_available(),
+                "an ACCEPT with no archive would mean the check did not run"
+            ),
+            Err(ObserveError::VerifiedGateUnavailable { .. }) => assert!(
+                !dregg_lean_ffi::mina_state_hash_word_ok_available(),
+                "the gate is available but reported unavailable"
+            ),
+            Err(e) => panic!("the real served header was REFUSED: {e}"),
+        }
+    }
+
+    /// ⚑ **THE FALSIFIER, the other way.** The SAME real proof served under a DIFFERENT real
+    /// block's `stateHash` is refused — and refused as [`ObserveError::HeaderBindingMismatch`],
+    /// its own variant, never laundered into `WrapProofNotChained` (a chain claim) or
+    /// `VerifiedGateUnavailable` (a cold path).
+    ///
+    /// This is precisely the attack the proof↔proof chain gate could not close: a genuine proof
+    /// re-labelled with another genuine header. o1-labs' own `kimchi::verifier::verify` rejects
+    /// exactly this substitution on 30/30 ordered pairs of the six measured blocks
+    /// (`state_hash_binding_export`).
+    #[test]
+    fn a_real_proof_under_a_foreign_real_header_is_refused() {
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let foreign = real_devnet_run_blocks()[0].state_hash.clone();
+        assert_ne!(foreign, DEVNET_539508_B58, "the foreign header must differ");
+        let mut b = real_anchor_block();
+        b.state_hash = foreign.clone();
+        match observer.check_header_binding(&[b]) {
+            Err(ObserveError::HeaderBindingMismatch {
+                block_height,
+                served_state_hash,
+            }) => {
+                assert!(dregg_lean_ffi::mina_state_hash_word_ok_available());
+                assert_eq!(block_height, 539_508);
+                assert_eq!(served_state_hash, foreign);
+            }
+            Err(ObserveError::VerifiedGateUnavailable { .. }) => assert!(
+                !dregg_lean_ffi::mina_state_hash_word_ok_available(),
+                "the gate is available but reported unavailable"
+            ),
+            other => panic!("a foreign header was NOT refused as a binding mismatch: {other:?}"),
+        }
+    }
+
+    /// …and the refusal is not an artefact of the foreign hash being malformed: every one of the
+    /// five other measured real headers is refused, and each is a header a devnet node served.
+    #[test]
+    fn every_foreign_real_header_is_refused() {
+        if !dregg_lean_ffi::mina_state_hash_word_ok_available() {
+            return;
+        }
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let mut refused = 0usize;
+        for other in real_devnet_run_blocks() {
+            let mut b = real_anchor_block();
+            b.state_hash = other.state_hash.clone();
+            match observer.check_header_binding(&[b]) {
+                Err(ObserveError::HeaderBindingMismatch { .. }) => refused += 1,
+                other => panic!("a foreign real header was admitted: {other:?}"),
+            }
+        }
+        assert_eq!(refused, 5, "all five foreign real headers must be refused");
+    }
+
+    /// ⚑ **PER-BLOCK COST**, measured through the real C ABI rather than asserted. The whole point
+    /// of putting this in COMPILED Lean instead of the kernel is that a 93-element Poseidon plus a
+    /// 32-element one plus 62 endomorphism expansions is milliseconds; a `by decide` here would
+    /// recreate the multi-hour wall `docs/MINA-REAL-BLOCK-GATE.md` §7 measured. The bound is loose
+    /// on purpose — it is a REGRESSION tripwire, not a benchmark.
+    #[test]
+    fn header_binding_is_per_block_cheap() {
+        if !dregg_lean_ffi::mina_state_hash_word_ok_available() {
+            return;
+        }
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let chain = vec![real_anchor_block()];
+        observer
+            .check_header_binding(&chain)
+            .expect("warm-up must accept");
+        const N: u32 = 20;
+        let t0 = std::time::Instant::now();
+        for _ in 0..N {
+            observer.check_header_binding(&chain).expect("accept");
+        }
+        let per_block = t0.elapsed() / N;
+        eprintln!(
+            "[measured] proof↔stateHash derivation: {:?} per block (decode + 2 Poseidons + 62 endo expansions, through the C ABI)",
+            per_block
+        );
+        assert!(
+            per_block < std::time::Duration::from_millis(500),
+            "the per-block derivation took {per_block:?} — that is not a per-block cost"
+        );
+    }
+
+    /// The Rust wire builder and the Lean `wireOf` must agree on the grammar, or the gate is
+    /// deciding about a different object than the `#guard`s pin.
+    #[test]
+    fn header_wire_grammar_matches_the_lean_decoder() {
+        let w = dregg_lean_ffi::mina_state_hash_word_wire(
+            "7",
+            &["1".into(), "2".into(), "3".into(), "4".into()],
+            &["5".into(), "6".into()],
+            &["8".into(), "9".into()],
+            &["10".into()],
+            "11",
+            "12",
+        );
+        assert_eq!(w, "sh=7;ac=1,2,3,4;ah=5,6;wc=8,9;wh=10;w12=11;w11=12");
+    }
+
     const DEVNET_539508_B58: &str = "3NLmVB6Fs3dm4kXNkgwheHXzJXNpCCwEDe76RpTVeBTNujm12zNk";
     const DEVNET_539508_FE: &str =
         "26183698926150821166089117776323498226609958862529648923082869093695686732004";
@@ -1480,6 +1776,7 @@ mod tests {
             anchor_height,
             confirmation_depth: depth,
             wrap_index: MinaWrapIndexParams::DEVNET_BLOCKCHAIN,
+            verified_header_anchor: MinaVerifiedHeaderAnchor::devnet_539508(),
         }
     }
 
@@ -1933,6 +2230,7 @@ mod tests {
             anchor_height,
             confirmation_depth: depth,
             wrap_index: MinaWrapIndexParams::DEVNET_BLOCKCHAIN,
+            verified_header_anchor: MinaVerifiedHeaderAnchor::devnet_539508(),
         }
     }
 
@@ -1960,14 +2258,14 @@ mod tests {
                 "the fixture must be contiguous"
             );
             assert_eq!(
-                shapes[i + 1].acc0,
+                shapes[i + 1].acc0(),
                 shapes[i].sg,
                 "block {}'s proof must name block {}'s accumulator",
                 w[1].block_height,
                 w[0].block_height
             );
             assert_eq!(
-                shapes[i + 1].acc0_challenges,
+                shapes[i + 1].acc0_challenges(),
                 shapes[i].bp_challenges,
                 "block {}'s proof must name block {}'s IPA challenges",
                 w[1].block_height,
@@ -1975,7 +2273,7 @@ mod tests {
             );
             // …and the proofs really are DIFFERENT proofs, or the chain above is vacuous.
             assert_ne!(shapes[i + 1].sg, shapes[i].sg);
-            assert_ne!(shapes[i].acc0, shapes[i].sg, "no block is self-naming");
+            assert_ne!(shapes[i].acc0(), shapes[i].sg, "no block is self-naming");
         }
 
         // ⚑ THE CROSS-CHECK against the Lean literals. If these drift, the Lean gate is deciding
@@ -1987,7 +2285,7 @@ mod tests {
             "B539795.sgX"
         );
         assert_eq!(
-            decimal_of_le32(&shapes[1].acc0[0]),
+            decimal_of_le32(&shapes[1].acc0()[0]),
             "20146518149961985083673632976085115247649480898755654722356774610313624222264",
             "B539796.accX"
         );
@@ -1996,7 +2294,7 @@ mod tests {
             9627185902892173217607580080386729855
         );
         assert_eq!(
-            shapes[1].acc0_challenges[0],
+            shapes[1].acc0_challenges()[0],
             9627185902892173217607580080386729855
         );
     }

@@ -139,21 +139,51 @@ pub struct WrapProofShape {
     /// `bulletproof.challenge_polynomial_commitment` — **this proof's own IPA accumulator**
     /// `sg`, in Pallas's base field. The value the NEXT block's proof must name.
     pub sg: Point,
-    /// `statement.messages_for_next_step_proof.challenge_polynomial_commitments[0]` — **the
-    /// accumulator of the proof this one's Step recursion verified**, i.e. the parent block's
-    /// `sg`. All-zero when the proof carries no accumulator at all (`prev_challenges = 0`),
-    /// which the verified chain gate refuses: `(0, 0)` is not on `y² = x³ + 5`.
+    /// `statement.messages_for_next_step_proof.challenge_polynomial_commitments` — **both**
+    /// accumulators. `[0]` is the accumulator of the proof this one's Step recursion verified,
+    /// i.e. the parent block's `sg`; `[1]` is the transaction SNARK's (stable across many blocks
+    /// — 4 distinct values over the measured 40 — so it carries no positional information and
+    /// the chain gate deliberately does not compare it).
     ///
-    /// Index `[1]` is deliberately NOT projected — it is the transaction-SNARK accumulator, and
-    /// it is stable across many blocks (4 distinct values over the measured 40), so it carries
-    /// no positional information.
-    pub acc0: Point,
+    /// ⚑ BOTH are projected since 2026-07-29, and the reason is not the chain gate: **both** are
+    /// in the preimage of public-input word 12, the 93-element Poseidon over
+    /// `[dlog_plonk_index ‖ state_hash ‖ accumulators]` that is the ONLY place the served block
+    /// enters a Wrap verification (`Dregg2.Bridge.MinaStateHashWordGate`). All-zero when the
+    /// proof carries no accumulator at all (`prev_challenges = 0`), which the chain gate refuses:
+    /// `(0, 0)` is not on `y² = x³ + 5`.
+    pub acc_comm: [Point; 2],
     /// `statement.proof_state.deferred_values.bulletproof_challenges` — **this proof's own** 16
     /// IPA challenges, the second half of what the next block's proof must name.
     pub bp_challenges: [u128; 16],
-    /// `statement.messages_for_next_step_proof.old_bulletproof_challenges[0]` — the 16
-    /// challenges of the proof this one's Step recursion verified. All-zero when absent.
-    pub acc0_challenges: [u128; 16],
+    /// `statement.messages_for_next_step_proof.old_bulletproof_challenges` — both 16-element
+    /// vectors of RAW 128-bit prechallenges. `[0]` is the parent proof's; index `[1]` is the
+    /// transaction SNARK's. All-zero when absent.
+    ///
+    /// ⚑ RAW, and that is the point: the 93-element word-12 preimage wants these run through
+    /// `ScalarChallenge::limbs_to_field` (the Vesta-`endo_r` endomorphism), and that expansion is
+    /// done in **Lean** (`MinaStateHashWordGate.expandTick`, over `KimchiVerify.endoMap`), never
+    /// here. There is deliberately no field arithmetic in this codec to drift from the Lean.
+    pub acc_challenges: [[u128; 16]; 2],
+    /// `statement.proof_state.messages_for_next_wrap_proof.challenge_polynomial_commitment` —
+    /// the STEP-side accumulator, coordinates in the OTHER Pasta field (`Fq`). Last two elements
+    /// of the 32-element word-11 preimage.
+    pub mnw_comm: Point,
+    /// `…messages_for_next_wrap_proof.old_bulletproof_challenges` — `2 × 15` RAW 128-bit Tock
+    /// prechallenges, the FIRST thirty elements of the word-11 preimage (challenges first,
+    /// commitment last — the mirror of the step side).
+    pub mnw_challenges: [[u128; 15]; 2],
+}
+
+impl WrapProofShape {
+    /// The parent block's claimed accumulator — `challenge_polynomial_commitments[0]`.
+    pub fn acc0(&self) -> Point {
+        self.acc_comm[0]
+    }
+
+    /// …and its 16 raw prechallenges.
+    pub fn acc0_challenges(&self) -> [u128; 16] {
+        self.acc_challenges[0]
+    }
 }
 
 /// **The pinned Wrap verifier-index parameters** the decoded shape is compared against.
@@ -528,16 +558,26 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
     r.pseq(4, |r| r.int())?; // sponge_digest_before_evaluations
     // messages_for_next_wrap_proof.challenge_polynomial_commitment is the STEP-side
     // accumulator, so its coordinates are in the OTHER Pasta field.
-    r.point(
+    let mnw_comm = r.point(
         FQ,
         "messages_for_next_wrap_proof.challenge_polynomial_commitment",
     )?;
     checked += 2;
-    r.pseq(2, |r| r.pseq(15, challenge))?; // old_bulletproof_challenges: 2 × 15
+    // old_bulletproof_challenges: 2 × 15. Captured (not walked past) since 2026-07-29: with the
+    // commitment above these are the whole 32-element word-11 preimage.
+    let mut mnw_challenges = [[0u128; 15]; 2];
+    for slot in mnw_challenges.iter_mut() {
+        let v = r.pseq_v(15, challenge_v)?;
+        *slot = v.try_into().expect("pseq_v(15) yields 15");
+    }
+    // ⚑ the OUTER `PaddedSeq<_, 2>` terminator. Dropping it desynchronises the whole rest of the
+    // walk — the original `r.pseq(2, |r| r.pseq(15, challenge))` consumed it, and losing it while
+    // switching to the value-keeping reader cost a decode failure at binprot offset 1069.
+    r.unit()?;
 
     // ── statement.messages_for_next_step_proof ─────────────────────────────────
     r.unit()?; // app_state : () — ⚑ the block is NOT in the proof; see WrapProofShape.
-    let mut acc0: Point = [[0u8; 32]; 2];
+    let mut acc_comm: [Point; 2] = [[[0u8; 32]; 2]; 2];
     let prev_challenges = {
         let n = r.nat0()?;
         if n > 2 {
@@ -551,14 +591,13 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
                 "messages_for_next_step_proof.challenge_polynomial_commitments",
             )?;
             // Index 0 is the PARENT BLOCK's accumulator; index 1 is the transaction SNARK's.
-            if k == 0 {
-                acc0 = p;
-            }
+            // BOTH are in the word-12 preimage, so both are kept.
+            acc_comm[k as usize] = p;
             checked += 2;
         }
         n as usize
     };
-    let mut acc0_challenges = [0u128; 16];
+    let mut acc_challenges = [[0u128; 16]; 2];
     let prev_challenge_vectors = {
         let n = r.nat0()?;
         if n > 2 {
@@ -566,9 +605,7 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
         }
         for k in 0..n {
             let v = r.pseq_v(16, challenge_v)?;
-            if k == 0 {
-                acc0_challenges = v.try_into().expect("pseq_v(16) yields 16");
-            }
+            acc_challenges[k as usize] = v.try_into().expect("pseq_v(16) yields 16");
         }
         n as usize
     };
@@ -709,9 +746,11 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
         branch_domain_log2,
         field_elements_checked: checked,
         sg,
-        acc0,
+        acc_comm,
         bp_challenges,
-        acc0_challenges,
+        acc_challenges,
+        mnw_comm,
+        mnw_challenges,
     })
 }
 
@@ -775,18 +814,19 @@ mod tests {
         // would then compare `(0,0)` against `(0,0)` — which is exactly why the gate refuses the
         // degenerate accumulator, and exactly why this assertion exists on the Rust side too.
         assert_ne!(shape.sg, [[0u8; 32]; 2], "sg must be extracted");
-        assert_ne!(shape.acc0, [[0u8; 32]; 2], "acc0 must be extracted");
-        assert_ne!(shape.acc0, shape.sg, "block 539508 is not self-naming");
+        assert_ne!(shape.acc0(), [[0u8; 32]; 2], "acc0 must be extracted");
+        assert_ne!(shape.acc0(), shape.sg, "block 539508 is not self-naming");
         assert!(
             shape.bp_challenges.iter().any(|&c| c != 0),
             "the proof's own IPA challenges must be extracted"
         );
         assert!(
-            shape.acc0_challenges.iter().any(|&c| c != 0),
+            shape.acc0_challenges().iter().any(|&c| c != 0),
             "the parent's claimed IPA challenges must be extracted"
         );
         assert_ne!(
-            shape.bp_challenges, shape.acc0_challenges,
+            shape.bp_challenges,
+            shape.acc0_challenges(),
             "a block's own challenges are not its parent's"
         );
     }

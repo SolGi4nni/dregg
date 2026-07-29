@@ -48,16 +48,18 @@ pub mod bridge_lc_ffi;
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_lc_verify_available, mina_lc_verify_wire,
-    mina_proof_chain_ok_available, mina_proof_chain_wire, mina_wrap_shape_ok_available,
-    mina_wrap_shape_wire, mpt_lc_verify_available, mpt_lc_verify_wire,
-    shadow_eth_committee_rotation, shadow_eth_lc_verify, shadow_mina_lc_verify,
-    shadow_mina_proof_chain_ok, shadow_mina_wrap_shape_ok, shadow_mpt_lc_verify,
+    mina_proof_chain_ok_available, mina_proof_chain_wire, mina_state_hash_word_ok_available,
+    mina_state_hash_word_wire, mina_wrap_shape_ok_available, mina_wrap_shape_wire,
+    mpt_lc_verify_available, mpt_lc_verify_wire, shadow_eth_committee_rotation,
+    shadow_eth_lc_verify, shadow_mina_lc_verify, shadow_mina_proof_chain_ok,
+    shadow_mina_state_hash_word_ok, shadow_mina_wrap_shape_ok, shadow_mpt_lc_verify,
     shadow_tm_lc_verify, shadow_tm_skip_verify, tm_lc_verify_available, tm_lc_verify_wire,
     tm_skip_verify_available, tm_skip_verify_wire, verified_eth_committee_rotation,
     verified_eth_lc_verify, verified_mina_lc_verify, verified_mina_proof_chain_ok,
-    verified_mina_wrap_shape_ok, verified_mpt_lc_verify, verified_tm_lc_verify,
-    verified_tm_skip_verify, EthCommitteeRotationVerdict, EthLcVerdict, MinaLcVerdict,
-    MinaProofChainVerdict, MinaWrapShapeVerdict, MptLcVerdict, TmLcVerdict, TmSkipVerdict,
+    verified_mina_state_hash_word_ok, verified_mina_wrap_shape_ok, verified_mpt_lc_verify,
+    verified_tm_lc_verify, verified_tm_skip_verify, EthCommitteeRotationVerdict, EthLcVerdict,
+    MinaLcVerdict, MinaProofChainVerdict, MinaStateHashWordVerdict, MinaWrapShapeVerdict,
+    MptLcVerdict, TmLcVerdict, TmSkipVerdict,
 };
 pub use marshal::{AdmissionReason, TurnStatus, WireState};
 

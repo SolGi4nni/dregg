@@ -262,6 +262,14 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          IPA challenges) is never checked, and one real Mina proof replayed under a whole \
          fabricated segment would pass every remaining check",
     ),
+
+    (
+        "dregg_mina_state_hash_word_ok",
+        "the PER-BLOCK proof↔`stateHash` DERIVATION compiles out — the observer refuses every \
+         settlement rather than admitting a header it never hashed, so public-input words 11 and \
+         12 (the 93-element Poseidon over `[VK ‖ state_hash ‖ accumulators]`, the ONLY place the \
+         served block enters a Wrap verification) are never computed from the served header",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2159,6 +2167,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_lc_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_proof_chain_ok_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_state_hash_word_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -3116,6 +3125,17 @@ fn main() {
     } else {
         absent_export_warn("dregg_mina_proof_chain_ok");
     }
+    // The PER-BLOCK proof↔`stateHash` DERIVATION (`Dregg2.Bridge.MinaStateHashWordGate`) — public
+    // input words 11 and 12 recomputed from the SERVED header and the served proof bytes. Same
+    // manifest treatment and the same flag day as the three gates above; it rides the `import` line
+    // added to `Dregg2/FFI.lean` on 2026-07-29.
+    let mina_state_hash_word_ok_present =
+        archive_exports(&build_archive, "dregg_mina_state_hash_word_ok");
+    if mina_state_hash_word_ok_present {
+        println!("cargo:rustc-cfg=dregg_mina_state_hash_word_ok_present");
+    } else {
+        absent_export_warn("dregg_mina_state_hash_word_ok");
+    }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
     // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
@@ -3347,6 +3367,9 @@ fn main() {
     }
     if mina_proof_chain_ok_present {
         shim.define("DREGG_MINA_PROOF_CHAIN_OK", None);
+    }
+    if mina_state_hash_word_ok_present {
+        shim.define("DREGG_MINA_STATE_HASH_WORD_OK", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

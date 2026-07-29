@@ -52,6 +52,11 @@ import Dregg2.Bridge.PicklesWrapShapeGate
 -- 2026-07-29; +0 modules to the closure (it imports only `KimchiVerify`, already pulled in by
 -- `PicklesWrapShapeGate`).
 import Dregg2.Bridge.PicklesProofChainGate
+-- `dregg_mina_state_hash_word_ok` — the proof↔`stateHash` DERIVATION: public-input words 11 and 12
+-- computed, per block, from the SERVED header and the served proof bytes. Same layer-1 reasoning
+-- as the three above. Added 2026-07-29; +1 module to the closure (`PastaPoseidonFq`, the `fq_kimchi`
+-- half; everything else it needs came in with `PicklesProofChainGate`).
+import Dregg2.Bridge.MinaStateHashWordGate
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.

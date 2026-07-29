@@ -515,3 +515,97 @@ shipped 2026-07-29 unable to confirm a single live settlement. Fixed to
 fail-closed posture is exactly why this was survivable rather than silent — but note what found it:
 **a real request to a real endpoint**, not any amount of in-tree testing against a mock that had
 never seen the server's actual response shape.
+
+## 9. 2026-07-29 — the proof↔`stateHash` binding: what §8 got wrong, and what closed
+
+§8.5 named the next rung and proposed a route to it. The route does not exist. Measuring that is
+most of this section's value, and the measurement is reproducible:
+`metatheory/fixtures/pickles-extractors/src/bin/state_hash_binding_export.rs`
+(`cargo run --release --bin state_hash_binding_export`), over **six real devnet blocks** —
+539795…539799 consecutive plus the anchor 539508.
+
+### 9.1 ⚑ The binding is REAL and TIGHT, and o1-labs' verifier says so
+
+| ground truth | result |
+|---|---|
+| `kimchi::verifier::verify` on each block under its OWN `stateHash` | **6 / 6 `Ok`** |
+| ⚑ the same proof under EVERY FOREIGN block's `stateHash` | **30 / 30 `Err`** |
+| public-input words other than 12 that move when only the header is swapped | **0**, asserted per word per pair |
+| our 93-element `to_fields` transcription vs openmina's private one | **6 / 6 equal** |
+| our 32-element `messages_for_next_wrap_proof` transcription | **6 / 6 equal** |
+
+So word 12 — `Poseidon_fp(dlog_plonk_index(56) ‖ state_hash(1) ‖ accumulators(36))` — is the sole
+carrier of the block, and moving it alone is enough to make the real verifier refuse. That is no
+longer an argument from the type; it is thirty measured refusals from o1-labs' own code.
+
+### 9.2 ⚑ THE HYPOTHESIS §8.5 SHIPPED IS FALSE
+
+§8.5 wrote: *slot 12 → the 40 words → `public_comm` → the Fq-sponge → β, γ, α′, ζ′, **which are on
+the wire***. They are not. On the same six blocks, every adjacent pair:
+
+  * child `statement.proof_state.deferred_values.plonk.{beta,gamma,alpha,zeta}`
+    vs the parent's Wrap oracles — **0 / 5**;
+  * child `sponge_digest_before_evaluations` vs the parent's Wrap `fq_digest` — **0 / 5**.
+
+The reading behind the guess was that a Wrap statement's `deferred_values` describe the previous
+Wrap proof. They describe the **Step** proof that Wrap wrapped. A Wrap proof's own Fiat–Shamir
+challenges are absorbed into no served field, of its own block or of its child.
+
+**Consequence, and it is the load-bearing sentence of this section:** the only conjunct of
+`kimchi::verifier::verify` that a wrong word 12 can falsify is the **terminal IPA opening**. Every
+step before it is a derivation that always succeeds. And the opening's honest per-block cost
+includes the `2^15`-point `⟨s, srs.g⟩` MSM of §6.1 rung 5h — the family unrooted at `228e51de7`
+for being unaffordable in the kernel, and ~2^15 255-bit ladders in compiled code. **There is no
+cheap per-block equation. Anyone who writes one down again should re-read §9.2 first.**
+
+### 9.3 What landed
+
+`Dregg2.Bridge.MinaStateHashWordGate`, `@[export] dregg_mina_state_hash_word_ok`, rooted through
+`Dregg2/FFI.lean` (the archive boundary — rooting in `Dregg2.lean` emits no `:c` facet):
+
+  * `word12` / `word11` computed from the SERVED `stateHash` and the served proof bytes, in
+    **compiled** Lean. The 62 raw 128-bit prechallenges are expanded through
+    `KimchiVerify.endoMap` **in Lean** (`expandTick` at `ZMod pN` with Vesta's `endo_r`,
+    `expandTock` at `ZMod qN` with Pallas's) — `bridge/src/mina_pickles.rs` was extended to
+    project them RAW, so no field arithmetic exists on the Rust side to drift.
+  * Pins: 6 real blocks accept, all **30** ordered foreign-header assignments refuse, plus
+    accumulator-group swap, per-element tamper, arity, over-wide prechallenge, absent hash, and the
+    Fp/Fq parameter mixup. All `#guard` (the compiled evaluator) — the kernel proves the CHECKER
+    (`headerOk_entails`, `word12_preimage_is_93`, `state_hash_is_at_index_56`,
+    `word12_preimage_carries_the_chain_accumulator`), the differential checks the INSTANCE.
+  * ⚑ `word12_preimage_carries_the_chain_accumulator` welds this gate to
+    `PicklesProofChainGate`: the accumulator inside word 12's preimage IS the one the chain gate
+    compares against the parent block's own `sg`, on both the commitment and the 16 raw
+    prechallenges. Word 12 therefore commits the served header **and** the proof's position in the
+    chain.
+  * `Dregg2.Circuit.Emit.MinaWrapPublicInputFromHeader` (kernel, unrooted) welds word 12 and word
+    11 to `MinaWrapPublicCommGate.PUBLIC_INPUT[12]` / `[11]` — the literals C3, C5, C8 and rungs
+    5a–5h are stated over. **§3's whole ladder now reads "against the header a devnet node served
+    for block 539508", not "against forty numbers".** `no_other_measured_block_is_the_anchor`
+    keeps that from being true of a constant.
+  * `MinaObserver::check_header_binding`, called from `observe_settlement`, with its own refusal
+    variant `ObserveError::HeaderBindingMismatch` — never laundered into `WrapProofNotChained` (a
+    chain claim) or `VerifiedGateUnavailable` (a cold path). Tests fire both ways on real bytes:
+    the served header accepts, all five foreign real headers refuse.
+  * **MEASURED per-block cost: 28.9 ms** through the real C ABI (base64 + binprot decode +
+    Base58Check + two Poseidons + 62 endomorphism expansions), `header_binding_is_per_block_cheap`.
+
+### 9.4 A defect this lane paid for, worth one line
+
+Calling the export before `initialize_Dregg2_Dregg2_Bridge_MinaStateHashWordGate` **SIGSEGVs**.
+The Mina gates before this one decide over their arguments only; `headerOk` reads top-level
+constants (`VK_INDEX`, `fpParams`, `fqParams`), which live in initialized module data. The crash
+looks exactly like the missing-archive SIGABRT that `docs/BUILD-BUDGET.md` warns about, and it is
+not that. The initializer is now in `lean_init.c` next to the extern.
+
+### 9.5 The distance to a Mina light client, restated
+
+Unchanged in shape and shorter by one item. What remains between here and verifying a Mina block
+per-block: `expand_deferred` (the six wire-dropped words — rendered from BOTH implementations in
+this lane's research and NOT implemented; they are functions of the proof alone, so they carry no
+header), the 40-word assembly, and then the opening — of which 5f is in-kernel at literal
+challenges and **5h's `2^15`-point MSM is the wall**. Beyond that: the Wrap VK is trusted config
+(P8/P9), the SRS Lagrange basis and `srs.g` are trusted data, and the IPA opening-soundness floor
+(P10) is inherited. **And fork choice is still formalized nowhere** — a sibling proved Samasika
+`select` is a TOURNAMENT rather than an order at real mainnet constants. None of this is a Mina
+light client, and none of it may be described as one.
