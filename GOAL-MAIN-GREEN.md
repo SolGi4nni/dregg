@@ -86,6 +86,25 @@ LINE** (a missing `refresh_commitment()`), so look for the shared producer-side 
 N divergences. And both were warned that inherited diagnoses in this repo have been wrong — `git log
 -S` what you are handed.
 
+## Done since the ledger
+- **Anchor stamp** (`dad9fd8db`) — `977e73b19` switched receipts to `consensus_state_commitment` and
+  FOUR consumers never followed. `intent/src/fulfillment.rs` wrote the old BLAKE3 root on three LIVE
+  paths, and **its test was green because it was self-consistent with the bug** — that is how it
+  survived nine days. `spween-dregg` was not merely stale but **already RED**. ⚑ And the lane refuted
+  the diagnosis I briefed: `lean_shadow`'s always-false leg was NOT the accumulator roots but wrong
+  KIND *and* wrong SCOPE — `maybe_shadow_turn` was discarding a post-state ledger the executor
+  already handed it. ⚠ Standing gap it named: **no test asserts `ShadowAgreement`'s strength**, which
+  is why an always-red detector was invisible for nine days.
+- **Fulfillment fixture** (`991c9d18d`) — payer and recipient in DIFFERENT asset columns for a
+  same-currency payment; green only while the teleport was open. `dregg-intent` 441/443.
+  ⚠ Attribution corrected: reported as fallout from my `47f4d5b7a`; `git log -S` puts it in
+  `b1a370194`. **Second wrong inherited attribution in two days.**
+- ⚑ **The two survivors are a DESIGN finding, not a fixture bug.** `drex_routing_e2e`'s ring holds
+  `m_gold`/`m_art`/`m_usd` — **cross-asset by design**, so closing the teleport removed the mechanism
+  the feature ran on. Dispatched with the instruction NOT to make the ring single-asset (that deletes
+  the feature) and NOT to reopen the teleport (it is a correct security fix); a ring of locks should
+  be same-asset legs whose cross-asset effect emerges from the CYCLE.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
