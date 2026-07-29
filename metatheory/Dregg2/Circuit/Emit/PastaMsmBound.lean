@@ -293,6 +293,16 @@ theorem boundRowDesc_pi_indices_in_bounds :
 #guard ((List.range 4).map (fun k => (GEN_TID k).wireId)).dedup.length == 4
 #guard (List.range 4).all (fun k => 9 < (GEN_TID k).wireId)
 
+-- Axiom hygiene over the SHAPE theorems too, not just the forcing ones: a shape theorem that
+-- discharges the deployed checker's own predicate is exactly the kind that must not be leaning on
+-- an axiom nobody looked at.
+#assert_axioms range_map_pointwise
+#assert_axioms range_map_congr
+#assert_axioms boundRowDesc_extends_sliced
+#assert_axioms boundRowDesc_constraints_length
+#assert_axioms boundRowDesc_columns_in_bounds
+#assert_axioms boundRowDesc_pi_indices_in_bounds
+
 /-! ## §4 — THE FORCING.
 
 Three separate denotations, because the deployed AIR treats the families differently and one
@@ -573,6 +583,14 @@ theorem row_tuple_is_its_manifest_row (n k w planes : Nat) (gens : List Pt) (sca
 #assert_axioms manifest_key_succ
 #assert_axioms lookupLog_is_rowMap
 #assert_axioms bound_balance
+#assert_axioms tupleOf_cons
+#assert_axioms tupleOf_head
+#assert_axioms manifestRow_head
+#assert_axioms flatMap_singleton_map
+#assert_axioms filterMap_of_noLookup
+#assert_axioms ofNat_eq_cast
+#assert_axioms rowAt_eq
+#assert_axioms rowAt_mem
 #assert_axioms row_tuple_is_its_manifest_row
 
 /-! ## §5 — WHAT THE FORCED TUPLE SAYS, component by component. -/
@@ -822,6 +840,8 @@ descriptor carries exactly one lookup, fired on every row. -/
 theorem manifest_length (lo w planes : Nat) (gens : List Pt) (scal : List Nat) :
     (genManifest lo w planes gens scal).length = planes * (w + 1) := by
   simp [genManifest]
+
+#assert_axioms manifest_length
 
 /-- The manifest's CELL count. -/
 def manifestCells (w planes : Nat) : Nat := planes * (w + 1) * TUP
