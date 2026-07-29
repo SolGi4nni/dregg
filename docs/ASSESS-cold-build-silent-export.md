@@ -1,5 +1,25 @@
 # ASSESS — the cold-build silent-export generator
 
+> ## ⚑ CORRECTION 2026-07-29 — §4's central inference was one level too shallow
+>
+> This document's `nm` **measurements** all hold. Its **explanation** of them does not.
+> §4 concludes "the seed exports none of the security-critical splice-only symbols", and
+> the phrase *splice-only* has since been read tree-wide (including in
+> `dregg-lean-ffi/build.rs`'s own manifest header) as *a seed cannot carry them by nature*.
+>
+> It can. Three copies of one hand-maintained root list — `scripts/bootstrap.sh`,
+> `dregg-lean-ffi/scripts/seed-dregg2-closure.sh`, `scripts/lean-ffi-closure.py` — each
+> `lake build`-ed nine roots (`Dregg2.Exec.{FFI,DistributedExports,FFIDirect}` + the six PQ
+> cores) that are a **strict subset of `metatheory/Dregg2/FFI.lean`'s import closure, 95
+> modules short**. Every one of the 95 is a verified decision or its support. A seeding host
+> therefore emitted no `:c` facet for them, so no seed could carry their `@[export]`s
+> however often it was regenerated — and `lean-seed.yml`'s pre-publish export check listed
+> only the eight symbols the stale roots *did* produce, so the hole published cleanly.
+>
+> Fixed by rooting all three scripts on `Dregg2.FFI` and scraping the publish gate's symbol
+> list out of `build.rs`'s two manifests (commit `ec4ed5e17`). Read §4's numbers; do not
+> reuse its "splice-only" conclusion.
+
 **Date:** 2026-07-24 · **Mode:** read-only (no build was run; the shared `target/` had ~7 lanes on the lock)
 **Subject:** `dregg-lean-ffi/build.rs` — the archive splice, the 24 `cargo:rustc-cfg=*_present` flags it
 emits, and the `#[cfg]`-gated test modules that vanish when it does not emit them.

@@ -44,10 +44,20 @@ mod build_parallel;
 
 // ── THE REQUIRED-EXPORT MANIFEST ────────────────────────────────────────────────────────────
 // The symbols whose ABSENCE silently swaps a Lean-PROVEN decision for an unverified Rust twin (or
-// an unaudited crate). They are all SPLICE-ONLY: the seed archive exports NONE of them (`nm` over
-// the on-disk seed: 126 `dregg_*` exports, of which only `dregg_captp_validate_handoff`,
-// `dregg_coord_2pc_decide` and `dregg_exec_full_forest_auth_direct` are on this list's radar), so
-// "the archive links" is NOT evidence that any of them is there.
+// an unaudited crate). "the archive links" is NOT evidence that any of them is there — every
+// on-disk seed measured before 2026-07-29 exports NONE of them (`nm`: 126-142 `dregg_*` exports,
+// of which only `dregg_captp_validate_handoff`, `dregg_coord_2pc_decide` and
+// `dregg_exec_full_forest_auth_direct` are on this list's radar).
+//
+// ⚑ THAT WAS CALLED "SPLICE-ONLY" HERE AND IN `docs/ASSESS-cold-build-silent-export.md` §4, AND
+// IT WAS THE WRONG READING — corrected 2026-07-29. Nothing about these symbols makes them
+// unseedable. `scripts/bootstrap.sh`, `dregg-lean-ffi/scripts/seed-dregg2-closure.sh` and
+// `scripts/lean-ffi-closure.py` each `lake build`-ed a hand-maintained NINE-ROOT list that was a
+// strict subset of `Dregg2/FFI.lean`'s closure — 95 modules short, every one of them a decision
+// module — so a seeding host emitted no `:c` facet for them and no seed could carry them however
+// often it was regenerated. All three now build the one boundary root, and `lean-seed.yml` scrapes
+// THIS manifest to refuse publishing a seed that lacks any of it. A future seed carries them; the
+// already-published assets do not, and a build against one is a fully disarmed build.
 //
 // The manifest is the ARTIFACT-PROBED gate: it re-reads the archive we are actually about to link
 // instead of trusting control flow, which catches every degrade path at once (including ones added
