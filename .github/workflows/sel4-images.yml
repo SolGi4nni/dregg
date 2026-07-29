@@ -17,12 +17,15 @@ name: seL4 bootable images (Robigalia v0)
 # last-good-image fallback — a broken PD or a microkit link failure fails CI.
 
 on:
-  # NOTE: no `paths:` filter on push — a `paths` filter applies to TAG pushes
-  # too, which would path-gate releases (a sel4-v* tag whose commit didn't touch
-  # sel4/** would be skipped). Releases must always fire, so push is unfiltered;
-  # the PR `paths` filter below keeps PR noise down (no release path there).
+  # ⚑ TAGS ONLY ON PUSH. Measured 2026-07-28: this workflow cost **6.3 billed minutes per push
+  # to main** (37.8 min over 6 runs), building bootable OS images for every commit. Nothing
+  # consumed those; a release is cut from a `sel4-v*` tag.
+  #
+  # The note below was RIGHT that a `paths:` filter would path-gate tag pushes, so `paths` is
+  # still absent. But the remedy for per-commit cost was never `paths` — it is dropping
+  # `branches: [main]`, which leaves the tag path completely untouched. Releases still fire
+  # unfiltered; main commits no longer build an image nobody asked for.
   push:
-    branches: [main]
     tags:
       - 'sel4-v*'
   pull_request:

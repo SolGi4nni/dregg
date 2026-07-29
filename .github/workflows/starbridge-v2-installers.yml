@@ -27,11 +27,17 @@ name: starbridge-v2 native installers
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
-  # No `paths:` on push — a paths filter applies to TAG pushes too and would
-  # path-gate releases. Push is unfiltered (main + starbridge-v* tags); the PR
-  # `paths` filter keeps PR noise down.
+  # ⚑ TAGS ONLY ON PUSH. Measured 2026-07-28: this workflow cost **21 billed minutes per push
+  # to main** (124 min over 6 runs), building a release installer for every commit on a repo
+  # where commits land at a ~92-second median. Nothing consumed those main-branch builds — a
+  # release is cut from a `starbridge-v*` tag.
+  #
+  # The `paths:`-free comment below was RIGHT and its remedy was wrong: a `paths` filter does
+  # apply to tag pushes and would path-gate releases, so `paths` is still absent here. But the
+  # fix for per-commit cost was never `paths` — it is dropping `branches: [main]`, which touches
+  # the tag path not at all. Tag pushes still fire unfiltered, which is the invariant that
+  # mattered; main commits no longer build an installer nobody asked for.
   push:
-    branches: [main]
     tags:
       - 'starbridge-v*'
   pull_request:
