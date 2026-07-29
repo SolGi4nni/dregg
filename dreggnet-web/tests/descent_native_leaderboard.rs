@@ -122,6 +122,13 @@ fn move_wire(command: NativeDescentMove) -> (&'static str, i64) {
             "loot",
             i64::try_from(relic).expect("native relic index fits the action wire"),
         ),
+        // `take` arrived with the Lean model rewrite that added the verb and the HUNG custody
+        // family; this wire map never learned it, and the gap was invisible because only
+        // `--workspace --all-targets` compiles this test target. Same relic-index shape as `loot`.
+        NativeDescentMove::Take { relic } => (
+            "take",
+            i64::try_from(relic).expect("native relic index fits the action wire"),
+        ),
         NativeDescentMove::Flee => ("flee", 0),
     }
 }
