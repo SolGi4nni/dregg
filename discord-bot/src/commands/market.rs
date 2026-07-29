@@ -316,6 +316,10 @@ mod tests {
     }
 
     fn open(channel: u64) {
+        // A SETTLE folds the award ring through `dregg_intent::verified_settle`, which decides each
+        // leg ONLY through the verified Lean export. With no gate installed it does not skip the
+        // cross-check — it REFUSES, and says so. See `tests/support/mod.rs`.
+        crate::support::install_verified_distributed_gates();
         close_in::<MarketOffering>(channel);
         offering::open_in(
             channel,
@@ -328,6 +332,7 @@ mod tests {
     #[test]
     fn dark_bazaar_command_flow_is_sealed_substitution_safe_and_replayable() {
         let channel = 91_050;
+        crate::support::install_verified_distributed_gates();
         close_in::<DarkBazaarOffering>(channel);
         offering::open_in(
             channel,
@@ -641,11 +646,46 @@ mod tests {
         submit(channel, TURN_LIST, 500, &seller);
         submit(channel, TURN_BID, 100, &alice);
 
+        // ⚑ BOTH POLES, IN THIS PROCESS, AGAINST THE SAME INSTALLED GATE — and the honest one
+        // FIRST. Until 2026-07-29 this test read `Refused("… no verified executor gate is
+        // installed, so the award was NEVER JUDGED …")` and reported the reserve tooth as biting;
+        // it did not, because nothing had judged anything. A refusal is only evidence about the
+        // reserve if a settle in the same process CAN clear, so an over-reserve auction is cleared
+        // here before the under-reserve one is refused. If the gate goes missing again, this pole
+        // dies loudly instead of laundering the wiring bug into a rules verdict.
+        {
+            let honest = 91_014;
+            open(honest);
+            submit(honest, TURN_LIST, 100, &seller);
+            submit(honest, TURN_BID, 250, &alice);
+            match press(honest, TURN_SETTLE, 0, &seller) {
+                Outcome::Landed { receipt, .. } => assert_ne!(
+                    receipt.turn_hash, [0u8; 32],
+                    "the honest pole must be a genuine committed clear"
+                ),
+                other => panic!(
+                    "an OVER-reserve settle must clear in this process, or the refusal below is \
+                     evidence about the harness and not about the reserve: {other:?}"
+                ),
+            }
+            assert!(
+                with_live::<MarketOffering, _>(honest, |l| l.session.is_settled()).unwrap(),
+                "the honest pole really settled"
+            );
+            close_in::<MarketOffering>(honest);
+        }
+
         match press(channel, TURN_SETTLE, 0, &seller) {
-            Outcome::Refused(why) => assert!(
-                why.contains("reserve"),
-                "the substrate's own reserve refusal: {why}"
-            ),
+            Outcome::Refused(why) => {
+                assert!(
+                    !why.contains("never been judged") && !why.contains("NEVER JUDGED"),
+                    "the refusal must be the RESERVE, not an unwired host: {why}"
+                );
+                assert!(
+                    why.contains("reserve"),
+                    "the substrate's own reserve refusal: {why}"
+                );
+            }
             other => panic!("a below-reserve settle must be refused, got {other:?}"),
         }
         assert!(

@@ -343,6 +343,30 @@ dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 # `dregg-chutes-e2ee`'s own default stays off, so its offline tests and every other consumer are
 # unaffected — this is one binary's deployment choice, declared where it is made.
 dregg-chutes-e2ee = { path = "../dregg-chutes-e2ee", features = ["collateral-fetch"] }
+# ⚑ THE VERIFIED DISTRIBUTED GATES — `register_distributed_gates()`, the ONE call that installs the
+# Lean-backed implementation into the four FFI-free coordination seams (coord / captp / federation /
+# intent). This bot DRIVES all four: `/market` and the Dark Bazaar settle through
+# `dregg_intent::verified_settle`, `/coordinate` folds a pair round through `dregg-coord`, and
+# `/handoff` redeems a CapTP certificate through `dregg_captp`'s handoff §6. The twin-deletion sweep
+# (`e3f0e7b92`) made the verified export the AUTHORITY on those paths and deleted the Rust fold, so
+# an unregistered seam is not a skipped cross-check — it REFUSES. Measured at HEAD 2026-07-29: six
+# of this crate's tests died on it, and the market's own error text has named the fix since
+# `078d68914` ("no verified executor gate is installed, so the award was NEVER JUDGED").
+#
+# `dregg-exec-lean` is ALREADY compiled and linked into this binary — `dregg-sdk` depends on it
+# unconditionally on every native target — so naming it here adds ZERO compilation. It makes an
+# already-present capability reachable, exactly as `dreggnet-web/Cargo.toml` says of the same dep.
+dregg-exec-lean = { path = "../exec-lean" }
+# `distributed_exports_available` (the startup announcement) and `demand_lean` (so `tests/support`'s
+# ONE gate installer PANICS on an archive that cannot decide, rather than returning and letting a
+# test print `ok` about a settlement nothing judged). Already compiled into this binary via
+# `dregg-exec-lean` → `dregg-lean-ffi`; named here for the two functions.
+#
+# ⚠ THIS IS NOT THE PQ POSTURE CHANGE `.cargo/config.toml` DESCRIBES. That note says the verified
+# ML-DSA core is reached by adding this dep AND calling `dregg_pq::install_lean_sign_core(..)`. Only
+# the dep is here; nothing calls that installer, so `DREGG_ALLOW_UNAUDITED_PQ=1` and the bot's
+# non-TCB signing posture are exactly as they were.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 [dev-dependencies]
 # The shared, viewer-blind Bazaar receipt CONTRACT FIXTURES. `dreggnet-market` is a

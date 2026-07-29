@@ -499,6 +499,51 @@ pub enum HeapAtom {
     /// APPEND-ONLY (declared LAST so every prior postcard/serde variant index
     /// is preserved — factory VKs / content addresses byte-identical, §2).
     DeltaEquals { d: i64 },
+    /// **`(old[heap key], new[heap key])` must appear in the allow-list** — the
+    /// heap-plane twin of [`StateConstraint::AllowedTransitions`], which is
+    /// register-indexed (`slot_index: u8`) and therefore cannot address a key.
+    /// BOTH sides must be present (u64 lane); an absent old OR new REFUSES, with
+    /// no genesis escape, exactly like [`Self::Monotonic`] and
+    /// [`Self::DeltaEquals`].
+    ///
+    /// # Substrate: this atom is LEAN-AUTHORED, and Rust only follows it
+    ///
+    /// The author is `metatheory/Dregg2/Games/DungeonProgram.lean`'s
+    /// `Dregg2.Games.Dungeon.Prog.HeapAtom.allowedTransitions`, added in
+    /// `b15c958fe` because a relic's custody code is HEAP-resident (the descent
+    /// schema declares each `relic_*` a `.collection(..)`), so the per-relic hop
+    /// table had been written as a tooth about a register that does not exist.
+    /// Its meaning is fixed by that file's `HeapAtom.toExec`:
+    ///
+    /// ```text
+    /// | .allowedTransitions al => .allowedTransitions k.field (…)
+    /// ```
+    ///
+    /// i.e. the EXISTING name-keyed `Dregg2.Exec.StateConstraint.allowedTransitions`
+    /// at the heap key's field name, whose evaluator (`Exec/Program.lean`) is
+    /// `match old.scalar f, new.scalar f with | some a, some b => allowed.any …
+    /// | _, _ => false`. The arm below is that rule on the deployed substrate,
+    /// where the register file and the heap are two planes rather than one
+    /// namespace. Nothing here is a new rule.
+    ///
+    /// ⚠ **NOT ORACLE-ENCODABLE YET, AND THAT IS RELEASE-VISIBLE.** The deployed
+    /// constraint wire's own heap vocabulary (`Dregg2/Exec/DeployedConstraint.lean`'s
+    /// `DHeapAtom`) has no transition-table arm, and its register-indexed
+    /// `allowedTransitions` rejects any `idx ≥ stateSlots`. So
+    /// `dregg-exec-lean`'s `encode_heap_atom` DECLINES this atom, and on a native
+    /// RELEASE build `eval.rs` then fails closed for the constraint carrying it —
+    /// the Descent's custody teeth would refuse. Debug (every test build) takes
+    /// the Rust guest-path evaluator below and is unaffected. Closing it is a
+    /// `DHeapAtom` arm plus its wire token, in Lean, in `metatheory/`.
+    /// `cell/tests/heap_allowed_transitions_lean_sourced.rs` MEASURES the gap so
+    /// it cannot rot into a comment nobody re-reads.
+    ///
+    /// APPEND-ONLY (declared LAST, after [`Self::DeltaEquals`], so every prior
+    /// postcard/serde variant index is preserved).
+    AllowedTransitions {
+        /// Allowed `(old_value, new_value)` pairs, u64 lane.
+        allowed: Vec<(u64, u64)>,
+    },
 }
 
 /// Simple (non-recursive) constraint set permitted inside `AnyOf`.

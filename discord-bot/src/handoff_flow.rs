@@ -316,8 +316,19 @@ mod tests {
         );
     }
 
+    /// ⚑ THE HONEST POLE OF THE HANDOFF PAIR. `dregg_captp::handoff::validate_handoff` decides
+    /// §6 non-amplification through the verified Lean export ONLY — the twin-deletion sweep
+    /// (`e3f0e7b92`) removed the Rust sibling from that path — so with no gate registered EVERY
+    /// redemption dies with `HandoffError::VerifiedGateUnavailable`, honest and dishonest alike.
+    ///
+    /// Its two refusal twins below (`wrong_recipient_cannot_redeem`,
+    /// `untrusted_introducer_is_rejected`) were NOT green for the wrong reason during that
+    /// window: each asserts its EXACT inner variant, so `VerifiedGateUnavailable` would have
+    /// failed them. They install the gate anyway, so all three poles are decided by the same
+    /// live rule rather than one of them refusing at an earlier stage.
     #[test]
     fn named_recipient_redeems_real_acceptance() {
+        crate::support::install_verified_distributed_gates();
         let bot_secret = [3u8; 32];
         let alice_seed = user_seed(&bot_secret, 10);
         let bob_seed = user_seed(&bot_secret, 20);
@@ -346,6 +357,7 @@ mod tests {
 
     #[test]
     fn wrong_recipient_cannot_redeem() {
+        crate::support::install_verified_distributed_gates();
         let bot_secret = [4u8; 32];
         let alice_seed = user_seed(&bot_secret, 100);
         let bob_seed = user_seed(&bot_secret, 200);
@@ -376,6 +388,7 @@ mod tests {
     #[test]
     fn untrusted_introducer_is_rejected() {
         // A certificate whose introducer the broker does not know must fail.
+        crate::support::install_verified_distributed_gates();
         let bot_secret = [6u8; 32];
         let alice_seed = user_seed(&bot_secret, 1);
         let bob_seed = user_seed(&bot_secret, 2);

@@ -152,6 +152,14 @@ pub mod audit;
 // executor is still the referee. See [`throttle`].
 pub mod throttle;
 
+// ⚑ ONE gate installer, reached from BOTH test surfaces. The `tests/*.rs` binaries pick this file
+// up as an ordinary `mod support;`; the bot's own `#[cfg(test)] mod tests` blocks reach the SAME
+// file through this `#[path]` declaration, so there is no second copy to drift out of step with it.
+// (The pattern is `dreggnet-market/tests/support/mod.rs`'s, which exists for the same wound.)
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
+
 use std::sync::Arc;
 
 use serenity::Client;
@@ -734,6 +742,36 @@ async fn main() {
             "deployed-executor oracles armed: this build can decide a programmed-cell turn (or is \
              a build whose evaluator legitimately needs no oracle)"
         ),
+    }
+
+    // ⚑ AND THE OTHER FOUR SEAMS, WHICH THE ARMING POINT ABOVE DOES NOT COVER.
+    //
+    // `AgentRuntime::new` arms the CONSTRAINT and CONSERVATION oracles. It does NOT install the
+    // four FFI-free coordination seams (coord / captp / federation / intent), and this bot drives
+    // three of them: `/market` + the Dark Bazaar settle through `dregg_intent::verified_settle`,
+    // `/coordinate` folds a pair round through `dregg-coord`, `/handoff` redeems through
+    // `dregg_captp`'s handoff §6. Since `e3f0e7b92` deleted the Rust fold from those live paths,
+    // an unregistered seam REFUSES rather than falling back — so a player could list, bid, bid and
+    // then be told the award "was NEVER JUDGED", which is exactly what `dreggnet-web` was found
+    // doing on 2026-07-25 and fixed with this same call.
+    //
+    // Same posture as the block above and for the same reason: SAY IT, do not refuse to boot. The
+    // gate's own downstream refusal is the safety property; a crash-loop would take identity,
+    // wallet, gallery and payments down with it.
+    dregg_exec_lean::register_distributed_gates();
+    if dregg_lean_ffi::distributed_exports_available() {
+        info!(
+            "verified distributed gates installed: this build can settle a market award, fold a \
+             coordination round and redeem a CapTP handoff"
+        );
+    } else {
+        error!(
+            "SETTLEMENT IS DEAD IN THIS BUILD — the linked Lean archive does not export the \
+             distributed decisions, so `/market` and the Dark Bazaar cannot settle an award, \
+             `/coordinate` cannot fold a round, and `/handoff` cannot redeem a certificate. They \
+             will each refuse and SAY they were never judged. Rebuild against a HEAD-matching \
+             archive (./scripts/bootstrap.sh)."
+        );
     }
 
     // Load configuration. Graceful error (no panic) for operator UX.

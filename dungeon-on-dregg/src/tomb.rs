@@ -381,11 +381,21 @@ mod tomb_tests {
     //! The dying run is a genuine 18-move line on day 9's real daily map — one of the only two
     //! maps the deployed rules let the light run out on at all (module header).
     use super::*;
-    use crate::descent::{ASCEND, BANKED, DELVE, FLEE, FLOORS, LOOT, SMITE, Sim, UNLOCK};
+    use crate::descent::{ASCEND, BANKED, DELVE, FLEE, FLOORS, LOOT, SMITE, Sim, TAKE, UNLOCK};
     use crate::loot::LootVault;
 
     /// The one lethal line day 9's map admits: down to the bottom, every guardian felled, the three
     /// way-keys still in hand — and the 26th breath spent on the last blow, standing on the prize.
+    /// ⚑ **THE TAPE IS UNCHANGED, AND WHAT IT LEAVES BEHIND IS NOT.** This line is tuned to
+    /// the breath: `spent + depth == BREATH` lands EXACTLY, which is the whole shape of the
+    /// death it demonstrates (the toll ran out, not the clock). So it stays as it was — one
+    /// added move, `take` included, breaks the arithmetic the tomb assertions rest on.
+    ///
+    /// What changed is where the keys ARE at the end. `unlock` now sets the key down in the
+    /// door it opened (`HUNG + depth`), so this line reaches the bottom with an EMPTY pack and
+    /// three keys hanging on the floors above. Lifting one back out is a paid decision now
+    /// ([`Descent::take`], one breath, no guardian), and a line that spends its breath on that
+    /// is a DIFFERENT line — a richer one, which cannot also be this one.
     const DAY_9_DEATH_LINE: [(&str, u64); 18] = [
         (DELVE, 0),
         (SMITE, 0),
@@ -414,6 +424,7 @@ mod tomb_tests {
             SMITE => run.smite(),
             UNLOCK => run.unlock(arg),
             LOOT => run.loot(arg as usize),
+            TAKE => run.take(arg as usize),
             FLEE => run.flee(),
             other => panic!("no such verb `{other}`"),
         };
@@ -494,15 +505,31 @@ mod tomb_tests {
     /// THE CERTIFICATE IS THE COMMITTED RECORD. The tomb's depth/pack/day are read off the
     /// executor's snapshot, and the epitaph names the loss by relic slot. On day 9 the one lethal
     /// position is the cruellest one in the game: the bottom guardian felled, the prize lying under
-    /// your hand, three keys in your fist, and not one breath left to pick it up.
+    /// your hand, and the toll already spent.
+    ///
+    /// ⚑ **AND THE HANDS ARE EMPTY NOW, WHICH IS ITSELF THE NEW RULE.** This read `pack == 3`
+    /// and `lost == [1, 2, 3]` — the three way-keys — back when turning a key kept it. A turned
+    /// key hangs in its door, so this line's keys are on the floors above, not in the fist that
+    /// went into the dark. They were still WON: their provenance replays to the mint. They
+    /// simply banked nothing, and a tomb over them names no loss because the dark did not take
+    /// them from anybody's hands.
     #[test]
     fn a_tomb_names_exactly_what_the_dark_took() {
         let run = a_run_that_dies();
         let tomb = Tomb::seal(&run).expect("sealed");
 
         assert_eq!(tomb.depth(), FLOORS, "you died at the bottom");
-        assert_eq!(tomb.pack(), 3, "three relics in your hands");
-        assert_eq!(tomb.lost(), vec![1, 2, 3], "the three way-keys, by slot");
+        assert_eq!(
+            tomb.pack(),
+            0,
+            "the hands were empty: every key hangs in its door"
+        );
+        assert_eq!(
+            run.sim().hung(),
+            3,
+            "…and all three are accounted for, hanging on the floors above"
+        );
+        assert!(tomb.lost().is_empty(), "so the dark took nothing carried");
         assert!(!tomb.prize_lost(), "the prize was never in the pack");
         assert!(
             tomb.prize_within_reach(),
@@ -521,6 +548,10 @@ mod tomb_tests {
             ep.contains("26 of 30 breath spent and 4 floors to climb"),
             "and the exact shape of the toll — light in hand, and no way to spend it that \
              reaches the surface: {ep}"
+        );
+        assert!(
+            ep.contains("empty-handed"),
+            "and that the hands were empty — the keys hang, they were not carried: {ep}"
         );
         assert!(
             ep.contains("no breath to take it"),
@@ -628,13 +659,18 @@ mod tomb_tests {
         );
 
         // ANTI-GHOST: not one of those refusals moved the committed state.
-        assert_eq!(run.read_reg("spent"), BREATH);
+        assert_eq!(run.read_reg("spent"), dark.spent);
         assert_eq!(run.read_reg("fate"), 0);
         assert_eq!(run.read_reg("bank"), 0, "the dead banked NOTHING");
         assert_eq!(
             run.read_reg("pack"),
+            0,
+            "their hands were empty — every key was left in the door it opened"
+        );
+        assert_eq!(
+            run.read_reg("hung"),
             3,
-            "and their pack is still in the dark"
+            "and all three are still in the dark, hanging where they were turned"
         );
     }
 

@@ -112,6 +112,12 @@ pub struct ComputeSession {
     /// The worker's on-ledger provider handle string (hashed into `PROVIDER_HASH`) — verify()
     /// re-derives it to confirm the on-ledger claimant is the real worker.
     worker_handle: Option<String>,
+    /// **The worker's PAYEE CELL** — the live, job-asset cell the settlement's conserving
+    /// `Effect::Transfer` moves the accepted bid INTO. Co-placed at CLAIM (see
+    /// [`ComputeSession::co_place_worker_cell`]) because `PROVIDER_HASH` binds a *handle*, and a
+    /// handle cannot receive value: `starbridge_compute_exchange::fire_settle` needs a `CellId`.
+    /// `None` until a claim lands.
+    worker_cell: Option<CellId>,
     /// The claim price (the cost the worker charges; `PAID` at settlement).
     claim_price: u64,
     /// The worker's submitted result (the SUBMIT step; required before SETTLE releases the escrow).
@@ -210,6 +216,31 @@ impl ComputeSession {
     /// A stable on-ledger worker handle from a [`DreggIdentity`] (hashed into `PROVIDER_HASH`).
     fn handle_of(who: &DreggIdentity) -> String {
         who.as_str().to_string()
+    }
+
+    /// **Co-place the claiming worker's PAYEE CELL** in the job cell's asset and return its id.
+    ///
+    /// The settlement is a real value move — `fire_settle` emits the conserving
+    /// `Effect::Transfer(job → provider)` — so it needs a live cell to pay, in the SAME asset as
+    /// the payer, or the transfer has no counterparty. The key material is a stable derivation
+    /// from the worker's handle, so the same worker on the same job always resolves to the same
+    /// payee (a re-derivation under the session seed reproduces it) and two different workers
+    /// never collide onto one purse.
+    ///
+    /// Returns `None` when the job cell is not on the ledger (unposted), which is unreachable
+    /// from [`ComputeOffering::do_claim`]'s `is_posted` guard but is a returned `Option` rather
+    /// than a panic on the claim path.
+    fn co_place_worker_cell(&self, handle: &str) -> Option<CellId> {
+        let job = self.job_cell?;
+        let asset = self
+            .executor
+            .with_ledger_mut(|ledger| ledger.get(&job).map(|c| c.asset()))?;
+        let key =
+            *blake3::hash(format!("dreggnet-compute payee handle={handle}").as_bytes()).as_bytes();
+        let payee = dregg_cell::Cell::with_balance(key, key, 0).in_asset(asset);
+        let id = payee.id();
+        self.executor.ensure_cell(payee).ok()?;
+        Some(id)
     }
 }
 
@@ -330,6 +361,10 @@ impl ComputeOffering {
         let handle = ComputeSession::handle_of(&actor);
         match fire_bid(&s.app, &held, &handle, price, &s.cclerk, &s.executor) {
             Ok(receipt) => {
+                // The claim bound a HANDLE on-ledger (`PROVIDER_HASH`); a handle cannot be paid.
+                // Co-place the worker's payee cell now, so the settle has a live counterparty in
+                // the job's asset for its conserving transfer.
+                s.worker_cell = s.co_place_worker_cell(&handle);
                 s.worker = Some(actor);
                 s.worker_handle = Some(handle);
                 s.claim_price = price;
@@ -378,10 +413,20 @@ impl ComputeOffering {
             ));
         }
 
+        // THE PAYEE TOOTH — the settlement MOVES value (`fire_settle` transfers the accepted bid
+        // to the provider), so it needs the worker's live payee cell. A claim that landed without
+        // co-placing one has nobody to pay, and refusing here is the honest answer: the
+        // alternative is a settlement that flips `STATE -> SETTLED` while the money stays put.
+        let Some(provider) = s.worker_cell else {
+            return Outcome::Refused(
+                "the worker has no payee cell on this ledger — the escrow has nowhere to settle to"
+                    .into(),
+            );
+        };
         // The cap tooth: a settle needs REQUESTER_RIGHTS (root). A worker/observer firing settle is
         // refused IN-BAND by the substrate's cap gate (nothing submitted, anti-ghost).
         let held = s.cap_for(&actor);
-        match fire_settle(&s.app, &held, &s.cclerk, &s.executor) {
+        match fire_settle(&s.app, &held, provider, &s.cclerk, &s.executor) {
             Ok(receipt) => {
                 s.result = Some(result);
                 s.settled = true;
@@ -423,6 +468,7 @@ impl Offering for ComputeOffering {
             requester: None,
             worker: None,
             worker_handle: None,
+            worker_cell: None,
             claim_price: 0,
             result: None,
             settled: false,
@@ -569,6 +615,28 @@ impl Offering for ComputeOffering {
             return VerifyReport::broken(
                 turns,
                 "the paid amount is not the worker's claim (the budget did not move to the worker)",
+            );
+        }
+        // ⚑ THE SLOT IS A RECORD, NOT THE MONEY. `PAID` is three field writes the FLASHWELL
+        // `AffineEq` relates to each other and to nothing that moved — `8ee7052f2` measured a turn
+        // recording `PAID = 800` while transferring 1 and the executor ACCEPTED it. So verify reads
+        // the WORKER'S OWN BALANCE and requires the accepted bid to actually be sitting in it. This
+        // is the check the sentence above was already claiming to be.
+        let Some(payee) = session.worker_cell else {
+            return VerifyReport::broken(
+                turns,
+                "the settled job has no worker payee cell — nothing could have been paid",
+            );
+        };
+        let held = session
+            .executor
+            .with_ledger_mut(|ledger| ledger.get(&payee).map(|c| c.state.balance()))
+            .unwrap_or(0);
+        if held as i128 != paid as i128 {
+            return VerifyReport::broken(
+                turns,
+                "the worker's cell does not hold the paid amount (the PAID slot is a record of a \
+                 transfer that did not happen)",
             );
         }
         VerifyReport::ok(turns)

@@ -346,6 +346,12 @@ fn provider_schema_is_not_authority_wrong_room_and_injection_still_refuse() {
     // gate-warden blow one of them, so the seed is what keeps this test's set non-vacuous.
     world.seed_var("hp", spween_dregg::Value::Int(50));
     world.seed_var("mana_budget", spween_dregg::Value::Int(50));
+    // ⚑ THE ANTI-GHOST BASELINE IS READ HERE, NOT WRITTEN AS A LITERAL AT THE BOTTOM. The tail of
+    // this test asserted `hp == 0` — which the two seeds above had just made unsatisfiable, so
+    // from `4bcb934a3` onward the check could only ever fail, and it did. A literal expectation
+    // pinned in one place and a seed set in another is the same drift twice; taking the reading
+    // makes "nothing committed" mean nothing MOVED, whatever the opening state happens to be.
+    let before = (world.read_var("gold"), world.read_var("hp"));
     let view = scene_view(&world, &scene);
 
     let wrong_room = weld::admitted_proposal(
@@ -409,6 +415,16 @@ fn provider_schema_is_not_authority_wrong_room_and_injection_still_refuse() {
         "the Chutes channel is tool-only; free assistant text cannot smuggle a second proposal"
     );
 
-    assert_eq!(world.read_var("gold"), 0, "all refusals are anti-ghost");
-    assert_eq!(world.read_var("hp"), 0, "all refusals commit nothing");
+    // Every proposal above was REFUSED, so the world must read exactly as it did before them —
+    // and the injecting one asked for a thousand gold by name, so an admitted write would be
+    // visible in the first component.
+    assert_eq!(
+        (world.read_var("gold"), world.read_var("hp")),
+        before,
+        "all refusals are anti-ghost: nothing committed, so nothing moved"
+    );
+    assert_eq!(
+        before.1, 50,
+        "…and the seeded opening state is what was held"
+    );
 }

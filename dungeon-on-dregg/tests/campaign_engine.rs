@@ -220,15 +220,28 @@ fn one_player_across_seven_expeditions_the_map_opens_and_the_collection_fills() 
     let sealed = campaign.projection().unwrap();
     assert_eq!(sealed.phase, Phase::Settlement);
     assert_eq!(sealed.cleared_locations, ["keep"]);
-    for relic in 0..=3 {
+    // ⚑ THE REFERENCE LINE BANKS THE PRIZE ALONE. `unlock` sets the key down in the door it
+    // opened (custody `HUNG + depth`) and `flee` promotes `CARRIED` and only `CARRIED`, so a
+    // key this line turned is won, replays to the mint — and banks nothing. Bringing the keys
+    // home is the `take` line: one extra breath per key, on the climb, which the reference
+    // line does not play. It used to read "prize and the three keys" because turning a key
+    // used to be free.
+    assert_eq!(
+        sealed.relics[0],
+        RelicState::Banked,
+        "a crowned run banks the prize"
+    );
+    for relic in 1..=3 {
         assert_eq!(
             sealed.relics[relic],
-            RelicState::Banked,
-            "a crowned run banks the prize and the three keys"
+            RelicState::Unbanked,
+            "way-key {relic} hangs in the door the line turned it in"
         );
     }
-    // First crown + four first relics + four floors of new deepest reach.
-    assert_eq!(xp(&campaign), CROWN_XP + 4 * RELIC_XP + 4 * DEPTH_XP);
+    // First crown + the ONE first relic it brought home + four floors of new deepest reach.
+    // It was `4 * RELIC_XP` when a turned key still came back in the pack; the reference line
+    // now banks the prize alone, and the XP follows what actually came home.
+    assert_eq!(xp(&campaign), CROWN_XP + RELIC_XP + 4 * DEPTH_XP);
     let keep = record(&campaign, "keep");
     assert_eq!((keep.runs, keep.deepest, keep.crowns), (1, FLOORS, 1));
 
@@ -275,7 +288,9 @@ fn one_player_across_seven_expeditions_the_map_opens_and_the_collection_fills() 
     );
     assert_eq!(
         xp(&campaign),
-        CROWN_XP + 5 * RELIC_XP + 4 * DEPTH_XP,
+        // Expedition 1 banked the prize alone (the keys hang), so the running total is
+        // 1 + 1 = TWO relics after this treasure run, not 4 + 1.
+        CROWN_XP + 2 * RELIC_XP + 4 * DEPTH_XP,
         "exactly one new relic was paid for; the keep was already cleared and bottomed"
     );
     let keep = record(&campaign, "keep");
@@ -575,13 +590,22 @@ fn a_forged_history_does_not_replay() {
 
 // ── The tension that persistence must never soften ───────────────────────────────
 
-/// **The Crown or a treasure — never both, on any drawn map.** At the bottom the pack is
-/// already the three way-keys plus the prize, exactly the `CAP - FLOORS` the Lean
-/// capacity law leaves; one extra relic and the Crown cannot be lifted. This is why a
-/// filled reliquary costs a player MORE expeditions rather than fewer, and why banking a
-/// treasure is a real sacrifice instead of a bonus.
+/// **The Crown or a THIRD treasure — never both, on any drawn map.**
+///
+/// ⚑ THIS TEST NAMED THE OLD PRICE, AND THE PRICE MOVED — in the player's favour, which is
+/// exactly the kind of change a stale pin hides. It read *the Crown or a treasure, never both*,
+/// and back when turning a key kept it that was right: the pack at the bottom was already the
+/// three way-keys, `3 + 1 + FLOORS = CAP` landed exactly, and one more relic of any kind
+/// priced the prize out.
+///
+/// A turned key now hangs in its door, so the pack at the bottom is EMPTY and `CAP` tightened
+/// `8 -> 7` to pay for it. What is left is a real budget rather than a wall: `pack + 1 + FLOORS
+/// <= CAP` admits `pack <= 2`, so a run may bring the Crown home beside TWO treasures and a
+/// third is what it cannot have. The sacrifice is still real — it just got a shape a player can
+/// plan against instead of a single forbidden step. Both sides are driven below, so neither the
+/// permitted nor the refused end of the budget is taken on trust.
 #[test]
-fn the_crown_and_a_treasure_never_come_home_together() {
+fn the_crown_and_a_third_treasure_never_come_home_together() {
     for day in 0..DAYS {
         let world = day_world(day);
         assert_eq!(
@@ -597,27 +621,48 @@ fn the_crown_and_a_treasure_never_come_home_together() {
         // `flee`, so the prefix drops `FLOORS + 2` moves rather than 2.
         let at_the_bottom = drive_prefix(day, &line[..line.len() - (FLOORS as usize + 2)]);
         assert_eq!(at_the_bottom.depth, FLOORS);
+        // ⚑ AT THE BOTTOM THE PACK IS EMPTY, AND THAT IS THE NEW RULE, NOT A LOSS. Each way
+        // `w` is still opened by exercising relic `w - 1` — but exercising it now LEAVES it
+        // hanging in that door (`HUNG + depth`), so the keys are not hauled to the bottom.
+        // That is precisely what buys the crown its carry slot, and it is why `CAP` could
+        // tighten 8 -> 7 without making any drawn map uncompletable.
         assert_eq!(
             at_the_bottom.pack(),
+            0,
+            "day {day}: at the bottom the pack is empty — every way-key was left in its door"
+        );
+        assert_eq!(
+            at_the_bottom.hung(),
             FLOORS - 1,
-            "day {day}: at the bottom the pack is exactly the three way-keys — they are \
-             never dropped, and each way `w` is opened by exercising relic `w - 1`"
+            "day {day}: …and all three of them are accounted for, hanging"
         );
         assert!(
             at_the_bottom.loot(0).is_ok(),
             "day {day}: the honest crowned pack CAN lift the Crown (non-vacuity)"
         );
 
-        // One more relic in the pack and it cannot. `pack + 1 + FLOORS <= CAP` with the
-        // three keys already aboard leaves exactly zero spare capacity.
-        for treasure in FLOORS as usize..RELICS {
+        // THE WHOLE BUDGET, BOTH SIDES. `pack + 1 + FLOORS <= CAP` admits `pack <= 2`, so
+        // load the pack one treasure at a time and require the Crown to become unliftable at
+        // EXACTLY the third — not before (which would be a wall, not a budget) and not after
+        // (which would be no price at all).
+        for carried in 0..=3usize {
             let mut laden = at_the_bottom.clone();
-            laden.custody[treasure] = CARRIED;
-            assert_eq!(laden.pack(), FLOORS);
-            assert!(
-                laden.loot(0).is_err(),
-                "day {day}: treasure {treasure} in the pack must price the Crown out \
-                 (pack {} + 1 + depth {FLOORS} > CAP {CAP})",
+            for treasure in (FLOORS as usize)..(FLOORS as usize + carried) {
+                laden.custody[treasure] = CARRIED;
+            }
+            assert_eq!(laden.pack(), carried as u64);
+            let fits = laden.pack() + 1 + FLOORS <= CAP;
+            assert_eq!(
+                fits,
+                carried <= 2,
+                "day {day}: the arithmetic this rests on moved"
+            );
+            assert_eq!(
+                laden.loot(0).is_ok(),
+                fits,
+                "day {day}: with {carried} treasure(s) aboard the Crown must be \
+                 {} (pack {} + 1 + depth {FLOORS} vs CAP {CAP})",
+                if fits { "liftable" } else { "out of reach" },
                 laden.pack()
             );
         }
@@ -759,7 +804,9 @@ fn one_campaign_persists_character_world_relics_and_bazaar_vow() {
     assert_eq!(head.location, "bazaar");
     assert_eq!(head.hero_level, 2);
     assert_eq!(head.relics[0], RelicState::BazaarBound);
-    assert_eq!(head.relics[1], RelicState::Banked);
+    // The way-2 key was turned and left hanging in its door, so it never banked — see the
+    // note on the crowned line's relic states above.
+    assert_eq!(head.relics[1], RelicState::Unbanked);
 
     let bound_head = campaign.root();
     let bound_revision = campaign.revision();
@@ -917,8 +964,9 @@ fn the_settlement_board_names_where_the_missing_relics_lie() {
     assert_eq!(standing.sealed_expeditions, 1);
     assert_eq!(
         standing.missing_relics(),
-        (FLOORS as usize..RELICS).collect::<Vec<_>>(),
-        "a crowned run brings home the prize and the keys; every treasure is still down there"
+        (1..RELICS).collect::<Vec<_>>(),
+        "a crowned run brings home the PRIZE; the three keys hang in the doors it turned them \
+         in and every treasure is still lying where it was minted"
     );
     assert!(
         (20..=BREATH).contains(&standing.map.perfect_line_cost),

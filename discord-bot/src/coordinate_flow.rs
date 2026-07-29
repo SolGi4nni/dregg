@@ -354,6 +354,9 @@ fn hex32(bytes: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The INNER cause of a refused fold — so the refusal pole below names the under-funded leg
+    // instead of accepting any `NotConserving`, which an unwired host also produces.
+    use dregg_app_framework::ring_trade::VerifiedSettleError;
 
     fn cid(b: u8) -> CommitmentId {
         CommitmentId([b; 32])
@@ -361,6 +364,9 @@ mod tests {
 
     #[test]
     fn a_pair_round_settles_atomically_and_conserves() {
+        // A round folds through `dregg_intent::verified_settle`, whose gate this process must
+        // install for itself — see `tests/support/mod.rs`.
+        crate::support::install_verified_distributed_gates();
         // GENUINE ✓ — producer A quotes 30, consumer B (funded 100) pipelines a
         // payment of exactly 30 against A's promise; the round settles atomically
         // and conserves: B 70, A 30, supply unchanged.
@@ -377,17 +383,43 @@ mod tests {
         assert_eq!(out.round_hash_hex().len(), 64);
     }
 
+    /// ⚑ **THIS POLE WAS GREEN FOR THE WRONG REASON UNTIL 2026-07-29, AND ITS HONEST TWIN WAS
+    /// RED.** `matches!(err, CoordinationError::NotConserving(_))` is satisfied by
+    /// `NotConserving(FfiUnavailable("no verified gate registered"))` just as well as by a genuine
+    /// overdraft, and with no gate installed that is exactly what this test was reading. So it
+    /// passed while `a_pair_round_settles_atomically_and_conserves` died on the same missing call:
+    /// the refusal reported the overdraft tooth biting when nothing had judged the fold at all.
+    ///
+    /// Two changes, both tightenings. The gate is installed, so the refusal is the verified
+    /// executor's; and the assertion names the INNER cause, so an unwired host can never again
+    /// read as the rule. `LegRejected` is the under-funded leg's own variant
+    /// (`intent/src/verified_settle.rs`) — an all-or-none ring abort.
     #[test]
     fn an_unaffordable_round_is_refused_whole() {
+        crate::support::install_verified_distributed_gates();
+
+        // THE HONEST POLE, IN THIS PROCESS. A refusal is evidence about affordability only if a
+        // round in the same process CAN settle; otherwise it is evidence about the harness.
+        run_pair_round(cid(1), cid(2), "affordable", 30, 100)
+            .expect("an affordable round must settle here, or the refusal below proves nothing");
+
         // The consumer cannot afford the quote — the verified gate rejects the
         // non-conserving fold and nothing settles (atomic).
         let err = run_pair_round(cid(1), cid(2), "expensive", 999, 100)
             .expect_err("an unaffordable round cannot conserve");
-        assert!(matches!(err, CoordinationError::NotConserving(_)));
+        match err {
+            CoordinationError::NotConserving(inner) => assert!(
+                matches!(inner, VerifiedSettleError::LegRejected { .. }),
+                "the refusal must be the verified executor rejecting the UNDER-FUNDED leg, not a \
+                 host that never judged it: {inner:?}"
+            ),
+            other => panic!("an unaffordable round must fail to conserve, got {other:?}"),
+        }
     }
 
     #[test]
     fn the_round_is_reproducible_for_the_same_pair_and_task() {
+        crate::support::install_verified_distributed_gates();
         let a = run_pair_round(cid(1), cid(2), "task-x", 10, 100).unwrap();
         let b = run_pair_round(cid(1), cid(2), "task-x", 10, 100).unwrap();
         assert_eq!(a.round_hash_hex(), b.round_hash_hex());

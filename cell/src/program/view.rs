@@ -591,6 +591,7 @@ pub enum HeapAtomView {
     InRangeTwoSided { lo: u64, hi: u64 },
     DeltaBounded { d: u64 },
     DeltaEquals { d: i64 },
+    AllowedTransitions { allowed: Vec<(u64, u64)> },
 }
 
 impl HeapAtom {
@@ -616,6 +617,9 @@ impl HeapAtom {
             }
             HeapAtom::DeltaBounded { d } => HeapAtomView::DeltaBounded { d: *d },
             HeapAtom::DeltaEquals { d } => HeapAtomView::DeltaEquals { d: *d },
+            HeapAtom::AllowedTransitions { allowed } => HeapAtomView::AllowedTransitions {
+                allowed: allowed.clone(),
+            },
         }
     }
 }

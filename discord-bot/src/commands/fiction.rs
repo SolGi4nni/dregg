@@ -506,6 +506,18 @@ pub fn register() -> CreateCommand {
             "close",
             "Close the round: apply the party's plurality choice as a real turn, post the next round",
         ))
+        // ⚑ THE DOOR THE BOT WAS ALREADY POINTING PLAYERS AT. `ae7e8861c` gave every offering a
+        // typed `status` door (`menus::offering_door` → `{prefix} status`) and registered the
+        // subcommand on council, market, doc, grain and hermes — five of the six bespoke keys. The
+        // dungeon was missed, so `status_invocation("dungeon")` — the destination the hidden-hand
+        // plaque names when it tells a player to ask for their own view again — spelled
+        // `/adventure dungeon status`, which Discord does not offer and will not accept. Typing
+        // exactly what the bot said got nothing at all.
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "status",
+            "Show this channel's Keep: the room, the party's live ballot, and committed turns",
+        ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "verify",
@@ -565,6 +577,12 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         "list" => handle_list(ctx, command).await,
         "start" => handle_start(ctx, command, state).await,
         "close" => handle_close(ctx, command, state).await,
+        // The SAME generic read-only re-post every other offering's `status` routes to: it
+        // rehydrates a persisted session, renders the viewer's own projection, and keeps a
+        // hidden-information surface ephemeral. Nothing dungeon-specific is needed for it.
+        "status" => {
+            crate::commands::offering::handle_status::<DungeonOffering>(ctx, command, state).await
+        }
         "verify" => handle_verify(ctx, command).await,
         "attestation" => handle_attestation(ctx, command, state).await,
         "chutes-turn" => handle_chutes_turn(ctx, command, state).await,

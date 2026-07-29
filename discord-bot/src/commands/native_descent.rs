@@ -795,13 +795,37 @@ mod tests {
         );
         assert_eq!(session.revision(), before, "a refusal is anti-ghost");
 
+        // ⚑ **"TAKE THE FIRST ENABLED ACTION UNTIL IT ENDS" IS NOT A LINE THAT ENDS**, and this
+        // loop used to assert that it was. The catalogue's order puts `ascend` above `loot`, so a
+        // greedy driver descends one floor, fells the guardian, climbs back, and repeats — a cycle
+        // that banks nothing and burns the light. It terminates in the one state the Lean model
+        // counts by the hundred per map ("living positions with no legal move at all"), where
+        // `.expect("a live native Descent exposes an enabled action")` is asserting something the
+        // rulebook says is false. `descend_until_over` above already knew that and breaks instead.
+        //
+        // What this test is FOR is the terminal share record — the actor, root and settlement
+        // receipt a finished run renders — so it drives the day's own crowned line, the same tape
+        // `crowned_line` mirrors off the Lean `crownedRun` and that `dungeon-on-dregg` proves banks
+        // the prize inside the light on all sixteen draws. It ends in `flee` by construction.
+        let line = dungeon_on_dregg::descent::crowned_line(session.game().day());
+        assert_eq!(
+            line.last().map(|(turn, _)| *turn),
+            Some(dungeon_on_dregg::descent::FLEE),
+            "the tape ends by banking"
+        );
         let mut ended = false;
-        for _ in 0..64 {
+        for (turn, arg) in line {
             let action = offering
                 .actions(&session)
                 .into_iter()
-                .find(|action| action.enabled)
-                .expect("a live native Descent exposes an enabled action");
+                .find(|candidate| candidate.turn == turn && candidate.arg == arg)
+                .unwrap_or_else(|| {
+                    panic!("the crowned tape's `{turn}({arg})` must be an advertised affordance")
+                });
+            assert!(
+                action.enabled,
+                "the crowned tape's `{turn}({arg})` must be live where the tape plays it"
+            );
             match offering.advance(&mut session, action, player.clone()) {
                 Outcome::Landed {
                     ended: turn_ended, ..
@@ -816,7 +840,10 @@ mod tests {
                 }
             }
         }
-        assert!(ended, "the surface-driven line settles within 64 turns");
+        assert!(
+            ended,
+            "the crowned tape settles the run on its terminal flee"
+        );
         let completion = session.completion().expect("terminal settlement");
         assert_eq!(&completion.actor, &player);
         let share_root = completion.root;

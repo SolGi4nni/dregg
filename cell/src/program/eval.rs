@@ -2699,6 +2699,31 @@ fn evaluate_heap_atom(
                 format!("heap[{key}] absent pre- or post-state (DeltaEquals fails closed)"),
             ),
         },
+        // The heap-plane transition table. Lean twin: `Dregg2.Games.Dungeon.Prog.HeapAtom
+        // .allowedTransitions`, whose `toExec` is the name-keyed
+        // `Dregg2.Exec.StateConstraint.allowedTransitions (heap key name)`; that evaluator is
+        // `match old.scalar f, new.scalar f with | some a, some b => allowed.any (…) | _, _ =>
+        // false`. So BOTH sides must be present and the pair must be listed — no genesis escape,
+        // unlike the register-indexed `StateConstraint::AllowedTransitions` above, whose absent
+        // old reads FIELD_ZERO because a register always exists once the state does. A heap key
+        // legitimately does not.
+        HeapAtom::AllowedTransitions { allowed } => match (old_v, new_v) {
+            (Some(ref a), Some(ref b)) => {
+                let (o, n) = (field_to_u64(a), field_to_u64(b));
+                if allowed.iter().any(|(x, y)| *x == o && *y == n) {
+                    Ok(())
+                } else {
+                    violated(
+                        constraint,
+                        format!("heap[{key}] transition {o} -> {n} is not in the allow-list"),
+                    )
+                }
+            }
+            _ => violated(
+                constraint,
+                format!("heap[{key}] absent pre- or post-state (AllowedTransitions fails closed)"),
+            ),
+        },
     }
 }
 

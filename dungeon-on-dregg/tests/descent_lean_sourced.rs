@@ -14,8 +14,8 @@ use dregg_app_framework::{CellProgram, StateConstraint, TransitionGuard, symbol}
 use dregg_cell::program::TransitionMeta;
 use dregg_cell::state::CellState;
 use dungeon_on_dregg::descent::{
-    ASCEND, BANKED, BREATH, CARRIED, DELVE, Deployment, Descent, FLEE, FLOORS, GENESIS, HARMCAP,
-    LOOT, LUNGE, PROGRAM_JSON, RELICS, SCENE_ID, SMITE, Sim, UNLOCK, crowned_line,
+    ASCEND, BANKED, BREATH, CAP, CARRIED, DELVE, Deployment, Descent, FLEE, FLOORS, GENESIS,
+    HARMCAP, LOOT, LUNGE, PROGRAM_JSON, RELICS, SCENE_ID, SMITE, Sim, TAKE, UNLOCK, crowned_line,
 };
 use spween_dregg::WorldError;
 
@@ -82,7 +82,10 @@ fn loaded_program_is_the_lean_object() {
     let CellProgram::Cases(cases) = &program else {
         panic!("descent program must be Cases");
     };
-    assert_eq!(cases.len(), 16, "genesis + 7 verb arms + 8 riders");
+    // ⚑ NINE method arms, not eight: `take` (lift a key back out of the door it hangs in)
+    // became a first-class verb of the model when `unlock` stopped keeping the key, and the
+    // emitted program grew its case with it.
+    assert_eq!(cases.len(), 17, "genesis + 8 verb arms + 8 riders");
     // The genesis arm is MethodIs("genesis") and carries a HeapField tooth on the
     // genesis sentinel (spween keys the sentinel machinery off exactly this shape).
     let genesis = cases
@@ -171,10 +174,17 @@ fn crowned_run_commits_with_real_receipts() {
 
     // The committed world agrees with the model's crowned end-state.
     assert_eq!(d.read_reg("fate"), 1);
+    // ⚑ THE PRIZE ALONE, AND A HUNG KEY IS NOT YOURS. The crowned line turns each way-key
+    // and walks past it: `unlock` sets the key down in the door at `HUNG + depth`, and
+    // `flee` promotes `CARRIED` and only `CARRIED`. So the reference line banks ONE relic —
+    // the prize — and leaves `FLOORS - 1` keys hanging where it turned them. Banking those
+    // too is a RICHER line (`take` each one back before climbing out), which is exactly the
+    // choice the verb exists to offer; this test drives the reference line, not that one.
+    assert_eq!(d.read_reg("bank"), 1, "the prize banks; the keys hang");
     assert_eq!(
-        d.read_reg("bank"),
-        u64::from(FLOORS),
-        "prize + three keys banked"
+        d.read_reg("hung"),
+        u64::from(FLOORS) - 1,
+        "one key left in each door the line opened"
     );
     assert_eq!(d.read_reg("pack"), 0);
     assert_eq!(
@@ -668,19 +678,30 @@ fn the_grip_never_heals_and_the_ratchet_has_a_ceiling() {
     assert_eq!(d.read_reg("harm"), HARMCAP, "anti-ghost: the ratchet held");
 }
 
-/// ⚑ THE STAKE, DRIVEN: `Dungeon.crowned_full_bank_harmless` says a run that banks the
-/// prize AND all three keys took no harm at all. Here is the executor's half of it — the
-/// crowned line with ONE breath saved by a lunge on floor 1 cannot take the prize,
-/// because at depth 4 capacity is `CAP - FLOORS - harm` and the prize needs all of it.
+/// ⚑ **THE STAKE MOVED, AND THIS TEST USED TO NAME THE OLD ONE.** It was
+/// `one_lunge_forfeits_the_crown`, and it was true of a rulebook that no longer exists: back
+/// when `unlock` kept the key, the pack at the bottom held three keys, `3 + 1 + 4 + harm`
+/// broke the commons at the first point of grip, and the retired
+/// `Dungeon.crowned_full_bank_harmless` was a corollary of that one-way accident.
+///
+/// A turned key now HANGS in its door, so the pack at the bottom is the prize alone, and the
+/// decision moved from *never lunge* to **what do you haul**. Both halves are driven here,
+/// because either one alone is a half-truth:
+///
+///   * TWO lunges are crown-compatible — `pack 1 + depth 4 + harm 2 = 7 = CAP` lands exactly,
+///     and what refuses a third is `HARMCAP`, not capacity;
+///   * hauling the three keys back down IS what forfeits the crown — `3 + 1 + 4 = 8 > CAP`,
+///     with no harm taken at all.
 #[test]
-fn one_lunge_forfeits_the_crown() {
+fn hauling_the_keys_forfeits_the_crown_and_two_lunges_no_longer_do() {
+    // ── HALF ONE: the keys stay in their doors, and the grip holds the crown at HARMCAP.
     let mut d = Descent::deploy(7).expect("deploy");
     d.delve().expect("floor 1");
     d.lunge().expect("save a breath on the shallow guardian");
     d.loot(1).expect("the way-2 key");
-    d.unlock(2).expect("exercise it");
+    d.unlock(2).expect("exercise it — and leave it hanging");
     d.delve().expect("floor 2");
-    d.smite().expect("press");
+    d.lunge().expect("and again");
     d.loot(2).expect("the way-3 key");
     d.unlock(3).expect("exercise it");
     d.delve().expect("floor 3");
@@ -691,20 +712,56 @@ fn one_lunge_forfeits_the_crown() {
     d.delve().expect("the bottom");
     d.smite().expect("press");
     d.smite().expect("press");
-    assert_eq!(d.read_reg("pack"), 3, "three keys");
-    assert_eq!(d.read_reg("harm"), 1, "one broken grip");
-    // pack 3 + 1 + depth 4 + harm 1 = 9 > CAP = 8.
-    assert!(
-        d.sim().loot(0).is_err(),
-        "the prize does not fit beside a broken grip"
+    assert_eq!(d.read_reg("pack"), 0, "every key was left in its door");
+    assert_eq!(d.read_reg("hung"), 3, "…and all three are accounted for");
+    assert_eq!(d.read_reg("harm"), HARMCAP, "two broken grips");
+    // pack 0 + 1 + depth 4 + harm 2 = 7 = CAP. It lands EXACTLY, which is the whole point.
+    assert_eq!(
+        0 + 1 + FLOORS + HARMCAP,
+        CAP,
+        "the arithmetic this rests on"
     );
-    // And the executor refuses the forged projection too.
-    let mut forged = d.sim().clone();
+    d.loot(0)
+        .expect("the crown still fits beside two broken grips — the keys bought the slot");
+    assert_eq!(d.read_reg("bank"), 0);
+    assert_eq!(d.read_reg("pack"), 1, "the prize, and only the prize");
+    // A third lunge is the RATCHET's refusal, not the commons'.
+    assert!(
+        d.sim().lunge().is_err(),
+        "harm past HARMCAP is refused whatever the capacity says"
+    );
+
+    // ── HALF TWO: haul the keys instead, take no harm at all, and the crown is out of reach.
+    let mut h = Descent::deploy(11).expect("deploy");
+    for (floor, key) in [(1u64, 1usize), (2, 2), (3, 3)] {
+        h.delve().unwrap_or_else(|e| panic!("floor {floor}: {e:?}"));
+        for _ in 0..h.sim().guard_hp(floor) {
+            h.smite().expect("press");
+        }
+        h.loot(key).expect("the way-key lies here");
+        h.unlock(floor + 1).expect("exercise it");
+        h.take(key).expect("and lift it back out of the door");
+    }
+    h.delve().expect("the bottom, hauling all three");
+    for _ in 0..h.sim().guard_hp(FLOORS) {
+        h.smite().expect("press");
+    }
+    assert_eq!(h.read_reg("pack"), 3, "three keys hauled down");
+    assert_eq!(h.read_reg("harm"), 0, "and not one broken grip");
+    // pack 3 + 1 + depth 4 + harm 0 = 8 > CAP = 7.
+    assert!(
+        h.sim().loot(0).is_err(),
+        "the prize does not fit beside three hauled keys"
+    );
+    // And the executor refuses the forged projection too — the mover's opinion is not the rule.
+    let mut forged = h.sim().clone();
     forged.custody[0] = CARRIED;
     forged.spent += 1;
-    let effects = d.effects_for(&forged);
+    let effects = h.effects_for(&forged);
     assert!(
-        refused(d.commit_raw(LOOT, effects)),
-        "the capacity commons refuse the crowned loot at harm = 1"
+        refused(h.commit_raw(LOOT, effects)),
+        "the capacity commons refuse the crowned loot with the keys in the pack"
     );
+    // ANTI-GHOST: the refusal moved nothing.
+    assert_eq!(h.read_reg("pack"), 3);
 }

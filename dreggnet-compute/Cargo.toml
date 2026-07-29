@@ -23,6 +23,13 @@ starbridge-compute-exchange = { path = "../starbridge-apps/compute-exchange" }
 dregg-app-framework = { path = "../app-framework", default-features = false }
 # `CellId` — the job cell's id (the requester's own cell; the job's on-ledger handle).
 dregg-types = { path = "../types" }
+# `Cell` — the WORKER'S PAYEE CELL. `starbridge_compute_exchange::fire_settle` pays a real
+# `CellId` with a conserving `Effect::Transfer` (it stopped being a slot write in `8ee7052f2`),
+# so a session whose worker is only a `DreggIdentity` string has nobody to pay. CLAIM co-places
+# the worker's cell in the job's asset; SETTLE transfers to it. Already in this graph via
+# `dregg-app-framework` (whose `EmbeddedExecutor::ensure_cell` takes a `dregg_cell::Cell`), so
+# naming it adds NOTHING to the closure — it makes an already-linked type reachable.
+dregg-cell = { path = "../cell" }
 # The deos affordance view-tree an offering's `render` produces (`Section`/`Menu`/`Text`).
 deos-view = { path = "../deos-view", default-features = false }
 # Deterministic federation id + spec payload derivation from a session seed.

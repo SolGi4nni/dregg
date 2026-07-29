@@ -136,6 +136,11 @@ pub const SMITE: &str = "smite";
 /// **The lunge** — the same wound for 1 breath, paid with `+1 harm` (a carry slot).
 pub const LUNGE: &str = "lunge";
 pub const LOOT: &str = "loot";
+/// **Lift a key back out of the door it hangs in** — `loot` minus the guardian, one zone
+/// over. The ninth case of the Lean-emitted program, and the verb without which a turned
+/// key can never be banked: `unlock` leaves it at `HUNG + d` and `flee` promotes `CARRIED`
+/// and only `CARRIED`.
+pub const TAKE: &str = "take";
 pub const FLEE: &str = "flee";
 
 /// The world constants — the Lean model's (`Dregg2.Games.Dungeon`); the DEPLOYED
@@ -147,9 +152,26 @@ pub const RELICS: usize = 8;
 /// floor costs a breath to leave, so the crowned line pays `FLOORS` more and the budget
 /// grew by exactly `FLOORS`. The slack band is unchanged (0–6 spare on every day).
 pub const BREATH: u64 = 30;
-pub const CAP: u64 = 8;
+/// Carrying rights: `pack + depth + harm <= CAP`, the emitted `affineLe … c: 7`.
+///
+/// ⚑ **7, not 8.** It tightened when `unlock` stopped keeping the key: a turned key hangs
+/// in its door instead of riding the descent, so the pack at the bottom is the prize alone
+/// and the commons can afford to shrink. The two numbers are one decision — reading `8`
+/// here while the executor enforces `7` makes the mover admit a move the referee refuses,
+/// which is a game that stops on a legal-looking press.
+pub const CAP: u64 = 7;
 pub const CARRIED: u64 = 8;
 pub const BANKED: u64 = 9;
+/// **The base of the HUNG family** (the Lean `Dregg2.Games.Dungeon.HUNG`): a key turned
+/// while standing on floor `d` takes custody code `HUNG + d`, i.e. `13..=16`. `10, 11`
+/// are left unallocated on purpose — the deployed custody range widens once, to
+/// `HUNG + FLOORS`, and the gap is where a future code lands without moving these.
+///
+/// ⚑ This is what makes `unlock` a real decision rather than a free flip. Turning a key
+/// opens the way for good AND sets the key down where you stand: it leaves the pack (so
+/// it stops costing a carry slot) and leaves the run (so `flee` banks NOTHING for it)
+/// until a breath is spent on [`Sim::take`] to lift it back out.
+pub const HUNG: u64 = 12;
 /// The most harm a run can take: `harm` is a run-long `0..=2` ratchet, and every point
 /// of it is a permanently forfeited carry slot (`pack + depth + harm <= CAP`).
 /// The Lean `Dregg2.Games.Dungeon.HARMCAP`.
@@ -234,9 +256,14 @@ pub fn guard_hp(depth: u64) -> u64 {
 /// ⚑ `harm` is APPENDED last: register slots are assigned in declaration order, so the
 /// thirteen that were here keep their slots and the custody-projection prefix is
 /// untouched.
-pub const REGISTERS: [&str; 14] = [
+/// ⚑ `hung` is APPENDED after `harm`, for the same reason `harm` was appended after the
+/// thirteen before it: register slots are assigned in declaration order, so a name added
+/// at the end moves nothing. It is the LEAN register file's fifteenth name
+/// (`DungeonProgram.lean`'s `registerNames`), and its absence here is what refused every
+/// deploy with "`hung` is in no plane of the descent schema" once the artifact parsed.
+pub const REGISTERS: [&str; 15] = [
     "pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4", "depth", "spent", "wounds", "fate",
-    "way_2", "way_3", "way_4", "harm",
+    "way_2", "way_3", "way_4", "harm", "hung",
 ];
 
 pub fn relic_name(i: usize) -> String {
@@ -265,7 +292,15 @@ pub fn schema() -> Schema {
         .stat("way_4", 0, 1)
         // The run-long grip ratchet. Declared LAST so no existing slot moves; its range
         // is the Lean `HARMCAP` and the emitted `inRangeTwoSided harm 0 2` tooth.
-        .stat("harm", 0, HARMCAP);
+        .stat("harm", 0, HARMCAP)
+        // ⚑ THE DOOR CENSUS — how many keys hang in doors, across every floor. It is a
+        // ZONE, so it carries the same `[0, RELICS]` range every other zone does (the
+        // Lean `rangeTeeth` is `zones.map (.inRangeTwoSided · 0 RELICS)`, and `zones`
+        // gained `hung`). Conservation is `Σ zones = RELICS`, which is simply FALSE on
+        // every turn after the first `unlock` without it: a key in a door has left the
+        // pack and has not reached the bank, so it is in none of the other six.
+        // Declared LAST, after `harm`, so no existing slot moves.
+        .stat("hung", 0, RELICS as u64);
     for i in 0..RELICS {
         s = s.collection(relic_name(i));
     }
@@ -565,6 +600,13 @@ enum SymConstraint {
 }
 
 /// Mirrors Lean `Simple` (the anyOf-liftable subset).
+///
+/// ⚑ `HeapField` is the arm whose ABSENCE here made this loader reject the artifact outright.
+/// Lean grew `Simple.heapField` in `b15c958fe` for the door-frame teeth — "at depth `d`, key `k`
+/// hangs on floor `d`" is a statement about a HEAP-resident relic, and before the arm existed it
+/// had to be written `fieldEquals "relic_1" …`, a register demand for a name the descent schema
+/// puts on the heap. Its deployed twin is `SimpleStateConstraint::HeapField { key, atom }`, which
+/// the Rust vocabulary already carried; only this decoder was behind.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum SymSimple {
@@ -572,6 +614,7 @@ enum SymSimple {
     FieldGte { reg: String, value: u64 },
     FieldLte { reg: String, value: u64 },
     Immutable { reg: String },
+    HeapField { key: SymKey, atom: SymAtom },
     Not { inner: Box<SymSimple> },
 }
 
@@ -583,7 +626,14 @@ enum SymKey {
     Sentinel,
 }
 
-/// Mirrors Lean `HeapAtom` (the descent's subset).
+/// Mirrors Lean `HeapAtom` (the descent's subset —
+/// `Dregg2.Games.Dungeon.Prog.HeapAtom`, NOT the eleven-arm `Dregg2.Exec.HeapAtom`).
+///
+/// ⚑ `AllowedTransitions` is the second arm this decoder was missing. A relic's custody code is
+/// HEAP-resident, so the per-relic hop table stated as `Constraint.allowedTransitions
+/// (relicName i) …` was a tooth about a register that has no slot; Lean moved the table onto the
+/// ATOM, beside `memberOf` — one is the value allowlist, the other the hop allowlist, and both
+/// read the same key.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum SymAtom {
@@ -592,6 +642,7 @@ enum SymAtom {
     Monotonic,
     MemberOf { set: Vec<u64> },
     DeltaEquals { d: i64 },
+    AllowedTransitions { allowed: Vec<(u64, u64)> },
 }
 
 impl SymGuard {
@@ -625,6 +676,8 @@ impl SymKey {
 }
 
 impl SymAtom {
+    /// The TOP-LEVEL lowering — Lean `HeapAtom.toExec`, which maps every arm (the transition
+    /// table included) into the deployed heap-atom vocabulary.
     fn resolve(&self) -> HeapAtom {
         match self {
             SymAtom::Equals { value } => HeapAtom::Equals {
@@ -634,6 +687,26 @@ impl SymAtom {
             SymAtom::Monotonic => HeapAtom::Monotonic,
             SymAtom::MemberOf { set } => HeapAtom::MemberOf { set: set.clone() },
             SymAtom::DeltaEquals { d } => HeapAtom::DeltaEquals { d: *d },
+            SymAtom::AllowedTransitions { allowed } => HeapAtom::AllowedTransitions {
+                allowed: allowed.clone(),
+            },
+        }
+    }
+
+    /// The COMPOSING lowering — Lean `HeapAtom.toExecSimple`, used where the atom sits inside an
+    /// `anyOf` variant or under a `negate`.
+    ///
+    /// ⚑ The `allowedTransitions` arm is the one that carries content. A transition table is
+    /// RELATIONAL and has no `SimpleConstraint` form on either substrate, so Lean lowers it to the
+    /// EMPTY allowlist — `new ∈ ∅`, the canonical ⊥ — and this mirrors that exactly rather than
+    /// reinterpreting it into something satisfiable. It is fail-closed by construction and
+    /// UNREACHABLE in the authored program: `DungeonProgram.lean`'s `simplesCompose` pins by kernel
+    /// evaluation that no `Simple.heapField` in `dungeonProgram` carries one. If a future emit
+    /// breaks that pin, this refuses; it never quietly admits.
+    fn resolve_simple(&self) -> HeapAtom {
+        match self {
+            SymAtom::AllowedTransitions { .. } => HeapAtom::MemberOf { set: Vec::new() },
+            other => other.resolve(),
         }
     }
 }
@@ -655,6 +728,10 @@ impl SymSimple {
             },
             SymSimple::Immutable { reg } => SimpleStateConstraint::Immutable {
                 index: dep.reg(reg)?,
+            },
+            SymSimple::HeapField { key, atom } => SimpleStateConstraint::HeapField {
+                key: key.resolve(dep)?,
+                atom: atom.resolve_simple(),
             },
             SymSimple::Not { inner } => SimpleStateConstraint::Not(Box::new(inner.resolve(dep)?)),
         })
@@ -837,7 +914,8 @@ pub struct Sim {
     pub fate: u64,
     /// `[way_2, way_3, way_4]`, each 0/1 (way 1 is always open).
     pub ways: [u64; 3],
-    /// Per-relic custody code: `1..=4` deep at that floor, `8` carried, `9` banked.
+    /// Per-relic custody code: `1..=4` deep at that floor, `8` carried, `9` banked,
+    /// `HUNG + d` (`13..=16`) hanging in the door on floor `d` — turned and left there.
     pub custody: [u64; RELICS],
     /// **The day's map** — where the relics were minted and how tough each floor's
     /// guardian is. The world is minted once and never moves during a run, which is why
@@ -885,6 +963,16 @@ impl Sim {
     }
     pub fn hoard_at(&self, d: u64) -> u64 {
         self.custody.iter().filter(|&&c| c == d).count() as u64
+    }
+    /// How many keys hang in the door on floor `d` (the Lean `Dungeon.hungAt`).
+    pub fn hung_at(&self, d: u64) -> u64 {
+        self.custody.iter().filter(|&&c| c == HUNG + d).count() as u64
+    }
+    /// **The whole door census** — the `hung` register's value (the Lean `hungTotal`,
+    /// `hungAt` summed over the floors). A PROJECTION of custody, like every other zone
+    /// counter, so the mover cannot express a census that disagrees with the objects.
+    pub fn hung(&self) -> u64 {
+        (1..=FLOORS).map(|d| self.hung_at(d)).sum()
     }
     pub fn way_open(&self, d: u64) -> bool {
         d <= 1 || (2..=FLOORS).contains(&d) && self.ways[(d - 2) as usize] == 1
@@ -936,9 +1024,19 @@ impl Sim {
         Ok(s)
     }
 
-    /// The unlock rule: EXERCISE the carried key-relic for way `w`.
+    /// The unlock rule: EXERCISE the carried key-relic for way `w` (the Lean
+    /// `step (.unlock w)`).
+    ///
+    /// ⚑ **THE KEY STAYS IN THE DOOR.** Turning it opens the way for good — and sets the
+    /// key down where you stand, custody `HUNG + depth`. It leaves the pack (so it stops
+    /// costing a carry slot) and leaves the run (so `flee` banks nothing for it) until a
+    /// breath is spent on [`take`](Self::take) to lift it back out. That is also why a key
+    /// has to hang on a REAL floor: `1 <= depth`, which this rule had not been demanding.
     pub fn unlock(&self, w: u64) -> Result<Sim, &'static str> {
         self.alive_and_paid(1)?;
+        if self.depth < 1 {
+            return Err("there is no door at the mouth to turn a key in");
+        }
         if !(2..=FLOORS).contains(&w) {
             return Err("no such way");
         }
@@ -950,6 +1048,39 @@ impl Sim {
         }
         let mut s = self.clone();
         s.ways[(w - 2) as usize] = 1;
+        // `keyFor w = w - 1` — the relic that opens way `w`. It hangs on the floor the
+        // mover is STANDING on, which is what `doorArrivalTooth` pins in the emitted
+        // program; a code naming any other floor is a real executor refusal.
+        s.custody[(w - 1) as usize] = HUNG + self.depth;
+        s.spent += 1;
+        Ok(s)
+    }
+
+    /// ⚑ **take** — LIFT A KEY BACK OUT OF THE DOOR IT HANGS IN (the Lean `step (.take r)`).
+    ///
+    /// [`loot`](Self::loot) minus the guardian tooth, one zone over: the relic is not lying
+    /// in a hoard under a standing guardian, it is hanging in a door already opened, so
+    /// there is no fight — but the carry slot is charged all the same, at the identical
+    /// posted price, and the capacity commons price it against depth and harm exactly as
+    /// they price a `loot`. `custody[r] == HUNG + depth` pins BOTH facts at once — that it
+    /// hangs, and that you are standing on its floor — and pins `1 <= depth` with them,
+    /// since `HUNG + 0` is a code no step ever writes.
+    pub fn take(&self, r: usize) -> Result<Sim, &'static str> {
+        self.alive_and_paid(1)?;
+        if r >= RELICS {
+            return Err("no such relic");
+        }
+        if self.depth < 1 {
+            return Err("no door hangs at the mouth");
+        }
+        if self.custody[r] != HUNG + self.depth {
+            return Err("that key does not hang in this floor's door");
+        }
+        if self.pack() + 1 + self.depth + self.harm > CAP {
+            return Err("carrying rights exhausted (capacity attenuates)");
+        }
+        let mut s = self.clone();
+        s.custody[r] = CARRIED;
         s.spent += 1;
         Ok(s)
     }
@@ -1206,6 +1337,9 @@ impl Descent {
         set_reg("way_3", sim.ways[1]);
         set_reg("way_4", sim.ways[2]);
         set_reg("harm", sim.harm);
+        // The seventh zone. Like the six above it, a PROJECTION of `custody` — so the
+        // mover cannot even express a door census that disagrees with where the keys are.
+        set_reg("hung", sim.hung());
         drop(set_reg);
         for (i, &c) in sim.custody.iter().enumerate() {
             effects.push(Effect::SetField {
@@ -1270,6 +1404,10 @@ impl Descent {
     }
     pub fn loot(&mut self, r: usize) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(LOOT, self.sim.loot(r))
+    }
+    /// Lift key-relic `r` back out of the door it hangs in on the standing floor.
+    pub fn take(&mut self, r: usize) -> Result<TurnReceipt, WorldError> {
+        self.commit_verb(TAKE, self.sim.take(r))
     }
     pub fn flee(&mut self) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(FLEE, self.sim.flee())
@@ -1383,8 +1521,13 @@ impl Descent {
 /// `homes (keyFor w) < w` (no key is minted behind the door it opens), so every key is in the
 /// pack by the time its way is reached; and the prize sits at the bottom. Way `w`'s key is
 /// relic `w - 1`, relic 0 is the prize, relics 4..7 are treasures this line deliberately
-/// leaves lying — at depth `FLOORS` the pack holds three keys plus the prize, which is
-/// exactly `CAP - FLOORS`, so taking a treasure would price the crown out of reach.
+/// leaves lying.
+///
+/// ⚑ IT IS THE *REFERENCE* LINE, NOT "THE OPTIMAL" ONE, and since `unlock` began leaving the
+/// key in its door that phrase has stopped naming a single object. This line presses every
+/// guardian and walks past every hung key on the way out, so it banks the PRIZE and nothing
+/// else. A cheaper line exists (lunge), and a richer one exists ([`Sim::take`] each key back
+/// on the climb); neither is this one.
 pub fn crowned_line(day: usize) -> Vec<(&'static str, i64)> {
     let world = day_world(day);
     let mut tape: Vec<(&'static str, i64)> = Vec::new();

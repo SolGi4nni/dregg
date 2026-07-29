@@ -177,9 +177,24 @@ mod tests {
                     note.contains("2/2 ballot(s) · 2 voter(s) of record"),
                     "{note}"
                 );
+                // ⚑ THE COPY MOVED AND THIS PIN DID NOT. `d7c171420` ("stop saying 'verified' and
+                // 'on the chain' — there is no chain, and the code knew") replaced the old
+                // "A verified turn landed" header, because `compact_text` prints the grade ladder
+                // one line below it and an `Asserted` turn is not a verified one — a header that
+                // says otherwise makes the ladder unreadable. The COPY is the deliberate side;
+                // this assertion was the stale one. It now pins the shipped header AND the
+                // receipt-id sentence beside it, so the pin cannot pass on a header alone.
                 assert!(
-                    note.contains("A verified turn landed"),
+                    note.contains("The turn landed."),
                     "the close surfaces the real receipt: {note}"
+                );
+                assert!(
+                    note.contains("executor receipt "),
+                    "…and names the copyable receipt id: {note}"
+                );
+                assert!(
+                    !note.contains("A verified turn landed"),
+                    "the retired over-claiming header must not come back: {note}"
                 );
                 match r.outcome {
                     Outcome::Landed { receipt, ended } => {
