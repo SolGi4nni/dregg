@@ -486,10 +486,29 @@ express today:
   `DescriptorIR2` or a column-major schedule (which costs 255 doublings per term instead of 255
   shared). **That is the next rung, and it is an IR change, not a proof.**
 
-Until it lands, the resolution to describe this at is: **the digits are the block's at the same
-resolution the generators are Mina's** — both are carried by an exact-public manifest that the
-descriptor commits to, forced row-by-row into the trace by the emitted lookup, with the difference
-that the scalar half's manifest is now a 15-element DERIVATION rather than a 32,768-element
-witness, and a wrong-block derivation is refused. -/
+### §7.2 — the descriptor DOES commit to the digits, and this was checked, not assumed
+
+The sentence "the digit is bound at the descriptor" is only worth anything if the descriptor
+commitment covers the manifest CONTENTS, so it was read rather than hoped:
+`descriptor_ir2_canonical.rs` encodes `TableSem::ExactPublicRows.rows` value-by-value into the
+canonical bytes, and `effect_vm_descriptor2_semantic_fingerprint` is blake3 over exactly those
+bytes. So a manifest whose digits came from another block's challenges is a DIFFERENT semantic
+fingerprint — the wrong-block forgery cannot be smuggled in under this instance's identity.
+
+⚠ Note the contrast, because it would be easy to reach for the wrong one: `air_descriptor.rs`'s
+`fingerprint` — the AIR-shape commitment in VK v2 — covers `air_id`, column count, PI layout,
+constraint counts and max degree, and does NOT see a manifest. It is the IR2 SEMANTIC fingerprint
+that carries the contents, and it is the one an instance of this descriptor must be pinned by.
+
+What that leaves is exactly one link, and it is the same link the generator half has: whoever pins
+the fingerprint must have built the manifest from the block. That build is now a `def` —
+`sScalars CHAL_F` — whose agreement with `PastaIPA.sVec` of the block's DERIVED challenges is
+machine-checked here, rather than a 32,768-entry list that would have had to be trusted.
+
+Until §7.1 lands, the resolution to describe this at is: **the digits are the block's at the same
+resolution the generators are Mina's** — both are carried by an exact-public manifest the descriptor
+commits to, forced row-by-row into the trace by the emitted lookup, with the difference that the
+scalar half's manifest is now a 15-element DERIVATION rather than a 32,768-element witness, and a
+wrong-block derivation is refused. -/
 
 end Dregg2.Circuit.Emit.PastaMsmScalarBound
