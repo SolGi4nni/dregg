@@ -168,3 +168,24 @@ Dregg2.Circuit.Emit.LightClientSolanaAir  # co-tenant lane; the AIR half of Ligh
 # so its `#assert_axioms`/`#guard`/`by decide` differentials against the Poseidon-firing real proof
 # RUN. Recorded here only as the worked example: the entry existed because a lane was told not to
 # touch the (by then long-healed) truncated root — an allowlist entry standing in for one import line.
+
+# ── MinaWrapSg* : the rung-5h INSTANCE differential, excluded so the ROOT CAN BUILD ─────────────
+# `sg == ⟨s, srs.g⟩` over all 32,768 real generators on Mina devnet block 539508, with 32 index-pinned
+# chunk theorems. These are KATs about ONE BLOCK — the instance differential — not a theorem about the
+# checker. Each chunk peaks near 75 GB elaborating; with them rooted, `lake build Dregg2` reached
+# 10444/10448 and earlyoom SIGTERM'd MinaWrapSgChunk1 at 1212 s (exit 143), so the root could NEVER
+# finish and `#floor_ratchet` could never give an unqualified verdict. Excluding them trades KATs that
+# cover one block for an instrument that covers the tree.
+# ⚠ THIS IS A REAL LOSS, NOT A FREE WIN: their `#assert_axioms` and `#guard`s now run in NO CI target
+# unless someone runs the script. That is the F-B1 shape and it is accepted KNOWINGLY here, with the
+# runner named so it is one command rather than folklore:  scripts/run-mina-sg-instance.sh
+# The CHECKER half stays rooted and gated: `PastaIpaFold` (the folding identity, gate-count-independent,
+# arbitrary `AddCommGroup`), `PastaMsmAir`/`MinaOpeningCheckWeld` (the opening check FORCED by emitted
+# gates), `PastaMsmLayouts`. Nothing that generalises was excluded.
+Dregg2.Circuit.Emit.MinaWrapSrsG
+Dregg2.Circuit.Emit.MinaWrapSgParts
+Dregg2.Circuit.Emit.MinaWrapSgCore
+Dregg2.Circuit.Emit.MinaWrapSgChunk0
+Dregg2.Circuit.Emit.MinaWrapSgChunk1
+Dregg2.Circuit.Emit.MinaWrapSgChunk2
+Dregg2.Circuit.Emit.MinaWrapSgChunk3
