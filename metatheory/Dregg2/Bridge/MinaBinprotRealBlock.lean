@@ -251,17 +251,71 @@ offset 1067, so byte 1068 is its low byte: `0x1a` (540186) becomes `0x1b` (54018
 decides. -/
 def devnetBlock540187 : List Nat := devnetBlock540186.set 1068 27
 
+/-- The identity block 540186 HAS, computed from its own bytes rather than taken from the peer.
+`MinaStateHashRealBlock` is where this number meets ground truth; here it is simply what the gate
+now demands the wire agree with. -/
+def derived540186 : Nat := (MinaStateHashDerive.deriveStateHash devnetBlock540186).getD 0
+
+/-- The identity the one-byte mutation has. Different, because the mutated byte is in the preimage. -/
+def derived540187 : Nat := (MinaStateHashDerive.deriveStateHash devnetBlock540187).getD 0
+
 /-- ⚑ **THE EXPORTED FORK-CHOICE GATE, ON REAL DEVNET BYTES.** The real tip does not displace
 itself; the one-longer sibling displaces it; and the reverse presentation does not. Every one of
-these went in as hex over the same `String → String` C ABI `dregg-lean-ffi` calls. -/
+these went in as hex over the same `String → String` C ABI `dregg-lean-ffi` calls.
+
+⚑ And the `eh`/`ch` fields are no longer free numbers. Until 2026-07-30 these wires read `eh=1;ch=2`
+— any two numbers did, because the served hash was accepted. They now carry the hash the gate
+DERIVES from the bytes beside them, and the tamper cases below show what happens when they do
+not. -/
 def exportedGateOnRealBytes : Bool :=
   let e := hexOf devnetBlock540186
   let c := hexOf devnetBlock540187
-  (minaBetterTipGate ("eh=1;ch=1;e=" ++ e ++ ";c=" ++ e) == "0")
-  && (minaBetterTipGate ("eh=1;ch=2;e=" ++ e ++ ";c=" ++ c) == "1")
-  && (minaBetterTipGate ("eh=2;ch=1;e=" ++ c ++ ";c=" ++ e) == "0")
+  let eh := toString derived540186
+  let ch := toString derived540187
+  (minaBetterTipGate ("eh=" ++ eh ++ ";ch=" ++ eh ++ ";e=" ++ e ++ ";c=" ++ e) == "0")
+  && (minaBetterTipGate ("eh=" ++ eh ++ ";ch=" ++ ch ++ ";e=" ++ e ++ ";c=" ++ c) == "1")
+  && (minaBetterTipGate ("eh=" ++ ch ++ ";ch=" ++ eh ++ ";e=" ++ c ++ ";c=" ++ e) == "0")
 
 theorem the_exported_gate_decides_on_real_devnet_bytes : exportedGateOnRealBytes = true := by
+  native_decide
+
+/-- ⚑ **BOTH POLARITIES, THROUGH THE C ABI, ON REAL BYTES.** The same three wires that the theorem
+above ACCEPTS become `"ERR"` under a state hash the bytes do not have — including the one that
+matters, a real block presented under a fabricated identity in order to win the final tie-break.
+
+The honest pair accepting is the other half and is the theorem above: a guard that only ever refuses
+is indistinguishable from a function returning `false`, and the pair of theorems is what tells them
+apart.
+
+The mutation is `+1` on the served hash, which is the smallest possible lie. It is refused for the
+same reason the largest one is: the gate is not comparing the served hash to anything except the
+hash it computed. -/
+def servedHashTamperIsRefused : Bool :=
+  let e := hexOf devnetBlock540186
+  let c := hexOf devnetBlock540187
+  let eh := toString derived540186
+  let ch := toString derived540187
+  -- the CANDIDATE lies about its identity
+  (minaBetterTipGate ("eh=" ++ eh ++ ";ch=" ++ toString (derived540187 + 1) ++ ";e=" ++ e
+      ++ ";c=" ++ c) == "ERR")
+  -- the EXISTING head lies about its identity
+  && (minaBetterTipGate ("eh=" ++ toString (derived540186 + 1) ++ ";ch=" ++ ch ++ ";e=" ++ e
+      ++ ";c=" ++ c) == "ERR")
+  -- ⚑ THE SWAP: two REAL blocks, each presented under the OTHER's real hash. Both hashes are
+  -- genuine Mina state hashes and both byte strings are genuine Mina blocks; only the PAIRING is a
+  -- lie, and that is exactly what an accepted-carrier design cannot see.
+  && (minaBetterTipGate ("eh=" ++ ch ++ ";ch=" ++ eh ++ ";e=" ++ e ++ ";c=" ++ c) == "ERR")
+  -- and the head gate refuses the same lies rather than rendering a roll
+  && (minaHeadAdvanceGate ("sg=1;fz=0;eh=" ++ eh ++ ";ch=" ++ toString (derived540187 + 1)
+      ++ ";e=" ++ e ++ ";c=" ++ c) == "ERR")
+
+theorem a_served_state_hash_the_bytes_do_not_have_is_refused :
+    servedHashTamperIsRefused = true := by native_decide
+
+/-- The two derived identities really are DISTINCT, so the swap above is a genuine swap and not two
+spellings of one number. (`devnetBlock540187` differs from `devnetBlock540186` in one byte of
+`blockchain_length`, which is in the `MinaProtoStateBody` preimage.) -/
+theorem the_one_byte_mutation_moves_the_identity : derived540186 ≠ derived540187 := by
   native_decide
 
 /-- ⚑ **AND THE HEAD ROLLS, ON REAL DEVNET BYTES.** With the anchored-segment gate accepting
@@ -272,13 +326,16 @@ on real bytes rather than on scalars. -/
 def exportedRollOnRealBytes : Bool :=
   let e := hexOf devnetBlock540186
   let c := hexOf devnetBlock540187
-  let tip := "eh=1;ch=2;e=" ++ e ++ ";c=" ++ c
+  let eh := toString derived540186
+  let ch := toString derived540187
+  let tip := "eh=" ++ eh ++ ";ch=" ++ ch ++ ";e=" ++ e ++ ";c=" ++ c
   (minaHeadAdvanceGate ("sg=1;fz=0;" ++ tip) == "adv=1;fin=539897")
   && (minaHeadAdvanceGate ("sg=0;fz=0;" ++ tip) == "adv=0;fin=0")
   -- ⚑ THE RATCHET: a REFUSED advance does not drop an already-finalized height either.
   && (minaHeadAdvanceGate ("sg=0;fz=539897;" ++ tip) == "adv=0;fin=539897")
   -- and a SHORTER candidate cannot lower it
-  && (minaHeadAdvanceGate ("sg=1;fz=539897;eh=2;ch=1;e=" ++ c ++ ";c=" ++ e) == "adv=0;fin=539897")
+  && (minaHeadAdvanceGate ("sg=1;fz=539897;eh=" ++ ch ++ ";ch=" ++ eh ++ ";e=" ++ c ++ ";c=" ++ e)
+      == "adv=0;fin=539897")
 
 theorem the_head_rolls_on_real_devnet_bytes : exportedRollOnRealBytes = true := by native_decide
 
@@ -293,6 +350,8 @@ Stated, not hidden: a 1,544-byte parse is not a kernel reduction. -/
 #print axioms the_real_state_drives_fork_choice
 #print axioms the_real_block_gate_can_go_red
 #print axioms the_exported_gate_decides_on_real_devnet_bytes
+#print axioms a_served_state_hash_the_bytes_do_not_have_is_refused
+#print axioms the_one_byte_mutation_moves_the_identity
 #print axioms the_head_rolls_on_real_devnet_bytes
 #assert_axioms the_ratchet_is_length_minus_k
 

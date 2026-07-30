@@ -384,8 +384,13 @@ OUTPUT := "mv=" BIT ";adv=" BIT ";fin=" Nat ";rn=" Nat   |   "ERR"
   * `wk` — the Wrap ARITHMETIC verdict. Ignored on a provisional call; required on a checkpoint.
   * `fz` / `rn` / `rc` — the persisted finalized height, the run counter, the run cap.
   * `ph` / `th` / `vh` / `ch` — the state hashes of the candidate's PARENT, the tip, the verified
-    checkpoint and the CANDIDATE. ⚑ SUPPLIED, and this is the one carrier on this wire: `state_hash`
-    is re-derived nowhere in this tree (`docs/MINA-LIGHT-CLIENT.md` row 12).
+    checkpoint and the CANDIDATE. ⚑ **CHECKED as of 2026-07-30, not supplied.** This used to be the
+    one carrier on this wire — `state_hash` was re-derived nowhere in this tree — so a peer handed
+    over both the bytes and the identity of the block those bytes are, and `cheapOk`'s link check
+    (`ph` against the candidate's own `previous_state_hash`) compared one peer-chosen number against
+    another. `Bridge.MinaStateHashDerive` recomputes each from its own bytes and
+    `MinaForkChoiceGate.decodeSide?` REFUSES a disagreement, so the link now runs between two
+    identities we computed.
   * `p` / `t` / `v` / `c` — the four binprot `Protocol_state.Value` prefixes, hex. A trailing
     remainder is fine; the decoder is a prefix decode and says how much it used.
 
@@ -420,14 +425,18 @@ def decodeSides (parts : List String) : Option Sides :=
       match (parseField? "ph" a).bind String.toNat?,
             (parseField? "th" b).bind String.toNat?,
             (parseField? "vh" c).bind String.toNat?,
-            (parseField? "ch" d).bind String.toNat?,
-            (parseField? "p" e).bind decodeSide?,
-            (parseField? "t" f).bind decodeSide?,
-            (parseField? "v" g).bind decodeSide?,
-            (parseField? "c" i).bind decodeSide? with
-      | some ph, some th, some vh, some ch, some p, some t, some v, some cd =>
-          some { parent := p, tip := t, ver := v, cand := cd, ph, th, vh, ch }
-      | _, _, _, _, _, _, _, _ => none
+            (parseField? "ch" d).bind String.toNat? with
+      | some ph, some th, some vh, some ch =>
+          -- ⚑ Each side's bytes are checked against the hash presented WITH it
+          -- (`MinaForkChoiceGate.decodeSide?` re-derives `state_hash`), so all four are claims now.
+          match (parseField? "p" e).bind (decodeSide? ph),
+                (parseField? "t" f).bind (decodeSide? th),
+                (parseField? "v" g).bind (decodeSide? vh),
+                (parseField? "c" i).bind (decodeSide? ch) with
+          | some p, some t, some v, some cd =>
+              some { parent := p, tip := t, ver := v, cand := cd, ph, th, vh, ch }
+          | _, _, _, _ => none
+      | _, _, _, _ => none
   | _ => none
 
 /-- A fully parsed wire. ⚑ `checkpoint` is a `Bool`, not the raw `"p"`/`"c"` string: the DECISION

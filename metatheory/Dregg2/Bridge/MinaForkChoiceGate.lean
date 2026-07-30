@@ -64,6 +64,7 @@ side. A source that cannot supply `sub_window_densities` — i.e. the public Gra
 -/
 import Dregg2.Bridge.MinaChainSelection
 import Dregg2.Bridge.MinaBinprot
+import Dregg2.Bridge.MinaStateHashDerive
 
 set_option autoImplicit false
 set_option maxRecDepth 40000
@@ -241,28 +242,42 @@ def hexBytes? : List Char → Option (List Nat)
   | _ => none
 
 /-- **Decode one side**: hex → bytes → `Protocol_state.Value` → the consensus state `select` runs
-on. Routed through `decodeProtocolStateChecked`, so a block whose CARRIED constants disagree with
+on. Routed through `decodeProtocolStateRawChecked`, so a block whose CARRIED constants disagree with
 the pin, or whose densities exceed `slots_per_sub_window`, is refused here and never reaches the
-rule. -/
-def decodeSide? (hex : String) : Option MinaBinprot.ProtocolState :=
+rule.
+
+⚑ **AND `served` IS NOW CHECKED, NOT ACCEPTED** (2026-07-30). Until this commit a state hash was the
+one carrier on every Mina wire in this tree: the peer handed over both the bytes and the identity of
+the block those bytes are, and every gate above — the chain gate, the header binding, the fork-choice
+tie-break — was anchored on the second. `Bridge.MinaStateHashDerive.stateHash` recomputes it from the
+bytes, and a disagreement is a REFUSAL here, before the rule sees anything.
+
+What that removes, concretely: `minaBetterTip`'s final tie-break is a numeric comparison of the two
+state hashes, so a peer that could supply its own hash could win every tie by claiming a larger one
+while serving whatever bytes it liked. It can no longer name its own tiebreak. -/
+def decodeSide? (served : Nat) (hex : String) : Option MinaBinprot.ProtocolState :=
   match hexBytes? hex.toList with
   | none => none
   | some bs =>
-      match MinaBinprot.decodeProtocolStateChecked mainnet bs with
-      | some (ps, _) => some ps
+      match MinaBinprot.decodeProtocolStateRawChecked mainnet bs with
+      | some (ps, _) =>
+          if MinaStateHashDerive.stateHash ps == served then some ps.view else none
       | none => none
 
-/-- The four-field `TIP` grammar. -/
+/-- The four-field `TIP` grammar. Each side's bytes are checked against the hash presented WITH
+them, so `eh`/`ch` are claims rather than inputs. -/
 def decodeTipPair (parts : List String) :
     Option (ConsensusState × Nat × ConsensusState × Nat) :=
   match parts with
   | [p0, p1, p2, p3] =>
       match (parseField? "eh" p0).bind String.toNat?,
-            (parseField? "ch" p1).bind String.toNat?,
-            (parseField? "e" p2).bind decodeSide?,
-            (parseField? "c" p3).bind decodeSide? with
-      | some eh, some ch, some e, some c => some (e.consensus, eh, c.consensus, ch)
-      | _, _, _, _ => none
+            (parseField? "ch" p1).bind String.toNat? with
+      | some eh, some ch =>
+          match (parseField? "e" p2).bind (decodeSide? eh),
+                (parseField? "c" p3).bind (decodeSide? ch) with
+          | some e, some c => some (e.consensus, eh, c.consensus, ch)
+          | _, _ => none
+      | _, _ => none
   | _ => none
 
 /-- **`minaBetterTipGate`** — THE FORK-CHOICE GATE. `"1"` means the CANDIDATE is canonical and the

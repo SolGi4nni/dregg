@@ -172,10 +172,11 @@ def round (hs : Hst) (kt wt : Nat) : Hst :=
   { a := add2 t1 t2, b := hs.a, c := hs.b, d := hs.c,
     e := add2 hs.d t1, f := hs.e, g := hs.f, h := hs.g }
 
-/-- Compress one 16-word block from the IV → 8 digest words. -/
-def compress (block : List Nat) : List Nat :=
+/-- Compress one 16-word block from an ARBITRARY chaining value → 8 words. This is the
+Merkle–Damgård compression function; `compress` is it at the IV, and a multi-block message folds it
+over the blocks. -/
+def compressFrom (iv : List Nat) (block : List Nat) : List Nat :=
   let w := schedule block
-  let iv := IV
   let init : Hst :=
     { a := iv.getD 0 0, b := iv.getD 1 0, c := iv.getD 2 0, d := iv.getD 3 0,
       e := iv.getD 4 0, f := iv.getD 5 0, g := iv.getD 6 0, h := iv.getD 7 0 }
@@ -183,6 +184,9 @@ def compress (block : List Nat) : List Nat :=
   [ add2 (iv.getD 0 0) fin.a, add2 (iv.getD 1 0) fin.b, add2 (iv.getD 2 0) fin.c,
     add2 (iv.getD 3 0) fin.d, add2 (iv.getD 4 0) fin.e, add2 (iv.getD 5 0) fin.f,
     add2 (iv.getD 6 0) fin.g, add2 (iv.getD 7 0) fin.h ]
+
+/-- Compress one 16-word block from the IV → 8 digest words. -/
+def compress (block : List Nat) : List Nat := compressFrom IV block
 
 /-- Single-block message `"abc"` (0x61 0x62 0x63 ‖ 0x80 ‖ 0…0 ‖ len=24). -/
 def blockAbc : List Nat := [0x61626380] ++ List.replicate 14 0 ++ [0x18]
