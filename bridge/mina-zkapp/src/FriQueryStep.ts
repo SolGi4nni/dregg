@@ -5,10 +5,12 @@ import {
   DEPLOYED_COMMIT_LAYERS,
   DEPLOYED_INPUT_PHASE_DEPTH,
   assertDigestInRange,
+  babyBearMerkleSuite,
   compressBB,
   condSwap,
   spongeBB,
 } from './Poseidon2Merkle.js';
+import type { Digestish, MerkleSuite } from './HashSuiteType.js';
 import { assertLaneLt2p31 } from './Poseidon2BabyBearW16.js';
 
 // ---------------------------------------------------------------------------
@@ -198,12 +200,15 @@ export function nextCosetPoint(x: Field, bit: Bool): Field {
 export type CommitRound = {
   /** The sibling evaluation: the OTHER slot of this round's arity-2 row. */
   sibling: BbExt;
-  /** The Merkle path for this round's opening (depth = folded log height). */
-  path: BbDigest[];
+  /** The Merkle path for this round's opening (depth = folded log height).
+   *  ⚑ `Digestish` rather than `BbDigest`: this chain is hash-agnostic and is
+   *  the SAME code for a `DreggMinaConfig` proof's Pasta digests. See
+   *  `HashSuiteType.ts` for why there is not a second copy of it. */
+  path: Digestish[];
   /** `beta` for this round. */
   beta: BbExt;
   /** The MMCS root this round's row must open under. */
-  commit: BbDigest;
+  commit: Digestish;
 };
 
 /**
@@ -238,6 +243,11 @@ export function commitPhaseRound(
   descentBit: Bool,
   pathBits: Bool[],
   round: CommitRound,
+  /** The MMCS hash. Defaults to the deployed BabyBear one so every existing
+   *  caller and every measured row count in this arc is unchanged; a
+   *  `DreggMinaConfig` proof passes `pastaMerkleSuite` and runs THIS function,
+   *  not a second copy of it. */
+  suite: MerkleSuite = babyBearMerkleSuite,
 ): { folded: BbExt; x: Field } {
   assertExtInRange(round.sibling);
   assertExtInRange(round.beta);
@@ -252,15 +262,19 @@ export function commitPhaseRound(
   const eEven = new BbExt({ limbs: even });
   const eOdd = new BbExt({ limbs: odd });
 
-  // The MMCS leaf for this row: an 8-element BabyBear row => exactly ONE
-  // permutation (`PaddingFreeSponge<.,16,8,8>`, one full block, no pad).
-  let cur = spongeBB([...even, ...odd]);
+  // The MMCS leaf for this row: an 8-element BabyBear row. Under the deployed
+  // `PaddingFreeSponge<.,16,8,8>` that is exactly ONE permutation (one full
+  // block, no pad); under the Pasta `MultiField32PaddingFreeSponge<.,3,2,1>` it
+  // is also one, because sixteen lanes ride a permutation and eight is a
+  // partial block. The lanes came out of `assertExtInRange` above, so the sponge
+  // is told not to bound them again.
+  let cur = suite.sponge([...even, ...odd], true);
   for (let h = 0; h < round.path.length; h++) {
-    assertDigestInRange(round.path[h]);
-    const [l, r] = condSwap(cur, round.path[h], pathBits[h]);
-    cur = compressBB(l, r);
+    suite.assertInRange(round.path[h]);
+    const [l, r] = suite.condSwap(cur, round.path[h], pathBits[h]);
+    cur = suite.compress(l, r);
   }
-  for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(round.commit.limbs[j]);
+  suite.assertEq(cur, round.commit);
 
   return {
     folded: foldRowArity2(x, round.beta, eEven, eOdd),
@@ -379,8 +393,10 @@ export type QueryWitness = {
   indexBits: Bool[];
   /** The opened input-phase row and its path (depth `logD0`). */
   inputRow: Field[];
-  inputPath: BbDigest[];
-  inputCommit: BbDigest;
+  inputPath: Digestish[];
+  inputCommit: Digestish;
+  /** The MMCS hash. Defaults to the deployed BabyBear suite. */
+  suite?: MerkleSuite;
   /** The reduced opening rolled in at the top height — a witnessed extension
    *  value. ⚑ Binding it to `inputRow` is the DEEP quotient, NOT this rung. */
   reducedOpening: BbExt;
@@ -427,6 +443,8 @@ export type CommitPhaseWitness = {
   /** `log_global_max_height`, for the final evaluation point. Defaults to
    *  `logD0`. */
   logGlobalMaxHeight?: number;
+  /** The MMCS hash. Defaults to the deployed BabyBear suite. */
+  suite?: MerkleSuite;
 };
 
 /**
@@ -461,6 +479,7 @@ export function verifyCommitPhase(w: CommitPhaseWitness): { folded: BbExt; x: Fi
       r + 1 < logD0 ? w.indexBits[r + 1] : Bool(false),
       w.indexBits.slice(r + 1, logD0),
       w.rounds[r],
+      w.suite ?? babyBearMerkleSuite,
     );
     folded = out.folded;
     x = out.x;
@@ -499,14 +518,14 @@ export function verifyQuery(w: QueryWitness): BbExt {
     throw new Error('a commit-phase path is not at its round height');
 
   // -- input phase: hash the opened row, walk it to the input commitment.
-  for (const v of w.inputRow) assertLaneLt2p31(v);
-  let cur = spongeBB(w.inputRow);
+  const suite = w.suite ?? babyBearMerkleSuite;
+  let cur = suite.sponge(w.inputRow);
   for (let h = 0; h < logD0; h++) {
-    assertDigestInRange(w.inputPath[h]);
-    const [l, r] = condSwap(cur, w.inputPath[h], w.indexBits[h]);
-    cur = compressBB(l, r);
+    suite.assertInRange(w.inputPath[h]);
+    const [l, r] = suite.condSwap(cur, w.inputPath[h], w.indexBits[h]);
+    cur = suite.compress(l, r);
   }
-  for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(w.inputCommit.limbs[j]);
+  suite.assertEq(cur, w.inputCommit);
 
   // -- commit phase.
   return verifyCommitPhase({
@@ -514,6 +533,7 @@ export function verifyQuery(w: QueryWitness): BbExt {
     initial: w.reducedOpening,
     rounds: w.rounds,
     rollIns: [],
+    suite,
   }).folded;
 }
 

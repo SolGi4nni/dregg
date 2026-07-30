@@ -1,6 +1,5 @@
 import { Bool, Field, Provable, Struct, ZkProgram } from 'o1js';
 import { assertLaneLt2p31, canonicalLane } from './Poseidon2BabyBearW16.js';
-import { BbDigest, compressBB, condSwap, assertDigestInRange, spongeBB } from './Poseidon2Merkle.js';
 import {
   BbExt,
   EXT_D,
@@ -11,7 +10,9 @@ import {
   twoAdicGenerator,
   verifyCommitPhase,
 } from './FriQueryStep.js';
-import { Challenger, FriKnobs } from './FriChallenger.js';
+import { FriKnobs } from './FriChallenger.js';
+import type { ChallengerLike, Digestish, HashSuite } from './HashSuiteType.js';
+import { babyBearSuite, suiteByName } from './HashSuites.js';
 import { DeepMatrix, reducedOpenings, rollInSchedule } from './DeepQuotient.js';
 import {
   extScaleConst,
@@ -126,6 +127,19 @@ export type DreggProofShape = {
    *  deriving them is a measured DELTA rather than a claim; a program built this
    *  way must never be proved as if it verified anything. */
   deriveChallenges?: boolean;
+  /**
+   * ⚑ THE HASH, AS A PARAMETER — the whole reason there is one verifier and not
+   * two. Defaults to `babyBearSuite`, the `DreggStarkConfig` proof every rung
+   * before this one measured. A proof minted under `DreggMinaConfig`
+   * (`circuit-prove/src/dregg_mina_config.rs`) sets `pastaSuite` and runs
+   * EXACTLY the code below: the transcript order, the DEEP quotient, the
+   * roll-in schedule, the AIR closing equality and the fold chain are shared,
+   * and what differs is a hundred lines of hashing in `PastaMmcs` /
+   * `PastaChallenger`. `shapeOf` reads it off the fixture's own `hash` field, so
+   * feeding a Pasta proof to the BabyBear walk is refused by NAME rather than
+   * discovered as a digest mismatch forty thousand rows in.
+   */
+  suite?: HashSuite<any>;
 };
 
 /** What a constraint evaluator is handed. Everything is already derived. */
@@ -230,6 +244,7 @@ const batchRowWidth = (b: BatchShape) => b.matrices.reduce((a, m) => a + m.numCo
  *  lives in one place and the monolith and the steps cannot disagree about it. */
 export type VerifyPlan = {
   sh: DreggProofShape;
+  suite: HashSuite<any>;
   derive: boolean;
   nBatches: number;
   maxCommitDepth: number;
@@ -278,6 +293,7 @@ export function verifyPlan(sh: DreggProofShape): VerifyPlan {
 
   return {
     sh,
+    suite: sh.suite ?? babyBearSuite,
     derive,
     nBatches,
     maxCommitDepth: Math.max(...sh.commitPathDepths, 1),
@@ -296,13 +312,14 @@ export function verifyPlan(sh: DreggProofShape): VerifyPlan {
  *  step, so a step cannot re-witness a differently shaped claim. */
 export function makeDreggProofClaim(sh: DreggProofShape) {
   const { knobs, air } = sh;
+  const Digest = (sh.suite ?? babyBearSuite).Digest;
   return class DreggProofClaim extends Struct({
     /** `commitments.trace`, `commitments.quotient_chunks`, ... — one per batch,
      *  in the order `coms_to_verify` builds them. `cap_height = 0`, so each is
      *  ONE digest. */
-    inputCommits: Provable.Array(BbDigest, sh.batches.length),
+    inputCommits: Provable.Array(Digest, sh.batches.length),
     /** `opening_proof.commit_phase_commits`. */
-    commitPhaseCommits: Provable.Array(BbDigest, knobs.layers),
+    commitPhaseCommits: Provable.Array(Digest, knobs.layers),
     /** `opening_proof.final_poly`. */
     finalPoly: Provable.Array(BbExt, knobs.finalPolyLen),
     /** The STARK's public values — in the transcript AND, for this AIR, in two
@@ -314,8 +331,8 @@ export function makeDreggProofClaim(sh: DreggProofShape) {
 /** A claim's VALUES, structurally — so the pieces below take the claim without
  *  each needing the shape's own class. */
 export type ClaimValue = {
-  inputCommits: BbDigest[];
-  commitPhaseCommits: BbDigest[];
+  inputCommits: Digestish[];
+  commitPhaseCommits: Digestish[];
   finalPoly: BbExt[];
   publicValues: Field[];
 };
@@ -366,7 +383,7 @@ export function deriveStarkChallenges(
   const { knobs, air } = sh;
   const { layers, numQueries, indexBits: nIndexBits } = knobs;
   if (derive) {
-    const c = new Challenger();
+    const c: ChallengerLike<any> = plan.suite.newChallenger();
     // `challenger.observe(Val::from_usize(..))` x3 — SHAPE data, fixed by
     // the circuit, so constants: a prover that changed `degree_bits`
     // would be proving against a different compiled program.
@@ -492,10 +509,10 @@ export function runQueryInputAndDeep(
   ch: StarkChallenges,
   zetaNext: BbExt,
   rowsQ: Field[],
-  inputPathsQ: BbDigest[][],
+  inputPathsQ: Digestish[][],
   g: number,
 ): QueryDeepResult {
-  const { sh, nBatches, rowWidths, nTraceCols, nRollIns } = plan;
+  const { sh, suite, nBatches, rowWidths, nTraceCols, nRollIns } = plan;
   const { knobs, batches, air, logGlobalMaxHeight } = sh;
   const { layers, indexBits: nIndexBits } = knobs;
   const bits = ch.queryBits[g];
@@ -506,21 +523,24 @@ export function runQueryInputAndDeep(
     const bs = batches[b];
     const leaf = rowsQ.slice(rowOff, rowOff + rowWidths[b]);
     rowOff += rowWidths[b];
-    for (const v of leaf) assertLaneLt2p31(v);
 
     // The MMCS leaf is ONE sponge over every matrix's row in this
-    // batch, concatenated — not one hash per matrix.
-    let cur = spongeBB(leaf);
+    // batch, concatenated — not one hash per matrix. The row is a fresh
+    // witness, so the suite bounds every lane here: BabyBear packs 8 lanes per
+    // permutation and Pasta 16, but BOTH need `< 2^31` per lane — for BabyBear
+    // to keep `provablePermBounded`'s bound chain meaningful, for Pasta to make
+    // the shifted radix-2^31 pack injective.
+    let cur = suite.sponge(leaf);
     // `open_input` shifts the index by the BATCH's max height, not the
     // matrix's (`fri/src/verifier.rs:576-580`).
     const batchMax = Math.max(...bs.matrices.map((m) => m.logHeight));
     const bitsReduced = logGlobalMaxHeight - batchMax;
     for (let h = 0; h < bs.pathDepth; h++) {
-      assertDigestInRange(inputPathsQ[b][h]);
-      const [l, r] = condSwap(cur, inputPathsQ[b][h], bits[bitsReduced + h]);
-      cur = compressBB(l, r);
+      suite.assertInRange(inputPathsQ[b][h]);
+      const [l, r] = suite.condSwap(cur, inputPathsQ[b][h], bits[bitsReduced + h]);
+      cur = suite.compress(l, r);
     }
-    for (let j = 0; j < 8; j++) cur.limbs[j].assertEquals(claim.inputCommits[b].limbs[j]);
+    suite.assertEq(cur, claim.inputCommits[b]);
 
     // Split the leaf back into its matrices for the DEEP quotient, and
     // attach the claimed evaluations each one opens at.
@@ -582,7 +602,7 @@ export function runQueryCommitPhase(
   ch: StarkChallenges,
   deep: QueryDeepResult,
   siblingsQ: BbExt[],
-  commitPathsQ: BbDigest[][],
+  commitPathsQ: Digestish[][],
   g: number,
 ): void {
   const { sh } = plan;
@@ -600,6 +620,7 @@ export function runQueryCommitPhase(
     rollIns: deep.rollInRounds.map((r, i) => ({ afterRound: r, value: deep.ro[i + 1].ro })),
     finalPoly: claim.finalPoly,
     logGlobalMaxHeight,
+    suite: plan.suite,
   });
 }
 
@@ -618,9 +639,9 @@ export function runQueryWalk(
   openedQuotient: BbExt[],
   ch: StarkChallenges,
   rows: Field[][],
-  inputPaths: BbDigest[][][],
+  inputPaths: Digestish[][][],
   siblings: BbExt[][],
-  commitPaths: BbDigest[][][],
+  commitPaths: Digestish[][][],
   /** ⚑ THE PARTITION'S ONLY REACH INTO THIS FUNCTION. Which GLOBAL query indices
    *  this call walks; `rows`/`inputPaths`/`siblings`/`commitPaths` are indexed by
    *  position in this list, while `ch.queryBits` is indexed GLOBALLY — because
@@ -687,12 +708,12 @@ export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
     Field, //                                               query_pow_witness
     Provable.Array(Provable.Array(Field, totalRow), numQueries), //          opened rows
     Provable.Array(
-      Provable.Array(Provable.Array(BbDigest, maxInputDepth), nBatches),
+      Provable.Array(Provable.Array(plan.suite.Digest, maxInputDepth), nBatches),
       numQueries,
     ), //                                                   input-phase paths
     Provable.Array(Provable.Array(BbExt, layers), numQueries), //            fold siblings
     Provable.Array(
-      Provable.Array(Provable.Array(BbDigest, maxCommitDepth), layers),
+      Provable.Array(Provable.Array(plan.suite.Digest, maxCommitDepth), layers),
       numQueries,
     ), //                                                   commit-phase paths
     // ⚑ ONLY read when `deriveChallenges` is false — the twin that measures what
@@ -725,9 +746,9 @@ export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
           openedQuotient: BbExt[],
           queryPowWitness: Field,
           rows: Field[][],
-          inputPaths: BbDigest[][][],
+          inputPaths: Digestish[][][],
           siblings: BbExt[][],
-          commitPaths: BbDigest[][][],
+          commitPaths: Digestish[][][],
           witAlphaStark: BbExt,
           witZeta: BbExt,
           witFriAlpha: BbExt,
@@ -770,13 +791,31 @@ export function makeDreggProofVerifyProgram(sh: DreggProofShape) {
 
 const B = (v: number | string) => BigInt(v);
 
-/** The JSON `circuit/src/bin/mina_stark_fixture.rs` prints. */
+/** The JSON the dregg-side emitters print — `mina_stark_fixture` (BabyBear) and
+ *  `mina_pasta_stark_fixture` (Pasta). ONE schema, one `hash` field. */
 export type Fixture = any;
+
+/**
+ * ⚑ THE HASH IS READ OFF THE FIXTURE, NOT PASSED IN. A fixture carries the name
+ * of the config it was minted under, so a Pasta proof handed to this verifier
+ * gets the Pasta suite because it SAYS so — not because a caller remembered. A
+ * fixture with no `hash` field predates the Pasta emitter and is BabyBear;
+ * anything else is refused by name in `suiteByName`.
+ */
+export function suiteOf(fx: Fixture): HashSuite<any> {
+  return suiteByName(fx.hash ?? 'poseidon2-babybear-w16');
+}
 
 /** Derive the compile-time shape from an emitted fixture. */
 export function shapeOf(fx: Fixture, opts?: { constraints?: ConstraintEvaluator; deriveChallenges?: boolean }): DreggProofShape {
   const k = fx.knobs;
   const s = fx.shape;
+  const suite = suiteOf(fx);
+  if (fx.digestElems !== undefined && fx.digestElems !== suite.digestElems)
+    throw new Error(
+      `fixture '${fx.hash}' declares ${fx.digestElems} digest elements, the '${suite.name}' ` +
+        `suite has ${suite.digestElems}`,
+    );
   const knobs: FriKnobs = {
     logBlowup: k.logBlowup,
     logFinalPolyLen: k.logFinalPolyLen,
@@ -831,14 +870,25 @@ export function shapeOf(fx: Fixture, opts?: { constraints?: ConstraintEvaluator;
     },
     constraints: opts?.constraints,
     deriveChallenges: opts?.deriveChallenges,
+    suite,
   };
 }
 
 const ext = (v: (number | string)[]) => BbExt.from(v.map(B));
-const dig = (v: (number | string)[]) => BbDigest.from(v.map(B));
+
+/** One emitted digest -> this suite's digest. ⚑ A Pasta element is emitted as a
+ *  canonical DECIMAL STRING because it does not fit a JSON number; `BigInt`
+ *  takes either, so the ONE decoder serves both schemas and there is no place
+ *  for a "which encoding is this" branch to be got wrong. */
+const digOf = (suite: HashSuite<any>) => (v: (number | string)[]) => {
+  if (v.length !== suite.digestElems)
+    throw new Error(`emitted digest has ${v.length} elements, '${suite.name}' has ${suite.digestElems}`);
+  return suite.from(v.map(B));
+};
 
 /** The public claim, from an emitted fixture. */
 export function claimOf(fx: Fixture, Claim: any) {
+  const dig = digOf(suiteOf(fx));
   const npv = Math.max(fx.shape.numPublicValues, 1);
   const pvs = Array.from({ length: npv }, (_, i) =>
     Field(B(fx.publicValues[i] ?? 0)),
@@ -855,21 +905,23 @@ export function claimOf(fx: Fixture, Claim: any) {
  *  declares. */
 export function witnessOf(fx: Fixture, sh: DreggProofShape): any[] {
   const s = fx.shape;
+  const suite = sh.suite ?? babyBearSuite;
+  const dig = digOf(suite);
   const openedTrace = [
     ...fx.openedValues.traceLocal.map(ext),
     ...(s.hasTraceNext ? fx.openedValues.traceNext.map(ext) : []),
   ];
   const openedQuotient = fx.openedValues.quotientChunks.flatMap((c: any) => c.map(ext));
-  const pad = (arr: BbDigest[], n: number) =>
-    arr.length >= n ? arr.slice(0, n) : [...arr, ...Array.from({ length: n - arr.length }, () => BbDigest.zero())];
+  const pad = (arr: Digestish[], n: number) =>
+    arr.length >= n ? arr.slice(0, n) : [...arr, ...Array.from({ length: n - arr.length }, () => suite.zero())];
 
   const maxInputDepth = Math.max(...sh.batches.map((b) => b.pathDepth), 1);
   const maxCommitDepth = Math.max(...sh.commitPathDepths, 1);
 
   const rows: Field[][] = [];
-  const inputPaths: BbDigest[][][] = [];
+  const inputPaths: Digestish[][][] = [];
   const siblings: BbExt[][] = [];
-  const commitPaths: BbDigest[][][] = [];
+  const commitPaths: Digestish[][][] = [];
   for (const qp of fx.fri.queryProofs) {
     rows.push(qp.inputProof.flatMap((b: any) => b.openedValues.flat().map((v: any) => Field(B(v)))));
     inputPaths.push(qp.inputProof.map((b: any) => pad(b.openingProof.map(dig), maxInputDepth)));

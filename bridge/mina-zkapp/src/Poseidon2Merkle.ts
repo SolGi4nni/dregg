@@ -8,6 +8,7 @@ import {
   provablePermBounded,
   reduceLane,
 } from './Poseidon2BabyBearW16.js';
+import type { MerkleSuite } from './HashSuiteType.js';
 
 // ---------------------------------------------------------------------------
 // RUNG 1 — the Poseidon2-w16-BabyBear MERKLE PATH, as an o1js/Kimchi circuit.
@@ -220,6 +221,46 @@ export function foldOpening(
   }
   return canonicalDigest(cur);
 }
+
+// ===========================================================================
+// 2b. This module, as a `MerkleSuite`.
+//
+// ⚑ NOT AN ADAPTER LAYER — THE ONLY WAY IN. `DreggProofVerify` and
+// `FriQueryStep` reach this hash through this record and through nothing else,
+// which is what makes the query walk, the DEEP quotient and the fold chain ONE
+// implementation shared with the Pasta path rather than two that agree today.
+// The functions above are still exported for the measurement scripts, which
+// price them individually.
+// ===========================================================================
+
+export const babyBearMerkleSuite: MerkleSuite<BbDigest> = {
+  name: 'poseidon2-babybear-w16',
+  digestElems: DIGEST_ELEMS,
+  Digest: BbDigest,
+  zero: () => BbDigest.zero(),
+  from: (v) => BbDigest.from(v),
+  assertInRange: assertDigestInRange,
+  compress: compressBB,
+  condSwap,
+  // ⚑ `lanesAlreadyChecked` is not an optimisation knob, it is the difference
+  // between two call sites: a FRI input-phase leaf is a fresh witness row and
+  // must be bounded here, while a commit-phase leaf is built from extension
+  // values `assertExtInRange` has already bounded. Checking twice would be
+  // sound and would move every measured row count in this arc; checking never
+  // would make `provablePermBounded`'s bound chain a claim about numbers
+  // nothing forces to be small.
+  sponge: (row, lanesAlreadyChecked = false) => {
+    if (!lanesAlreadyChecked) for (const v of row) assertLaneLt2p31(v);
+    return spongeBB(row);
+  },
+  canonical: canonicalDigest,
+  assertEq: (a, b) => {
+    for (let j = 0; j < DIGEST_ELEMS; j++) a.limbs[j].assertEquals(b.limbs[j]);
+  },
+  laneCheckIsFree: false,
+  compressBigInt,
+  spongeBigInt,
+};
 
 // ===========================================================================
 // 3. The ZkProgram.
