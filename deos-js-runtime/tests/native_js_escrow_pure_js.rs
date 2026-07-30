@@ -473,8 +473,23 @@ fn pure_js_escrow_cannot_drain_to_an_uncapped_party() {
         500,
         "uncapped mallory balance untouched"
     );
+    // ⚑ READ THROUGH `unpack_u64`, NOT `fe[0]`.
+    //
+    // `pack_u64` is `dregg_cell::field_from_u64` — the CANONICAL encoding, which does not put the
+    // value in lane 0. Its own doc says so: "the pair must stay on the same lane or every stored
+    // value reads back as garbage." Reading `fe[0]` returned 0 for a field seeded to 123, so this
+    // assertion compared a lane nobody writes.
+    //
+    // ⚠ That matters more here than in an ordinary fixture: this is a SECURITY refusal — "the
+    // uncapped cell was not touched". A read that always yields 0 would keep passing after a real
+    // breach wrote a value, because the breach would land in the canonical lane and this looked
+    // somewhere else.
     assert_eq!(
-        mallory.state.get_field(0).copied().map(|fe| fe[0]),
+        mallory
+            .state
+            .get_field(0)
+            .copied()
+            .map(|fe| deos_js_core::unpack_u64(&fe)),
         Some(77),
         "uncapped mallory field untouched — the drain never reached it"
     );
