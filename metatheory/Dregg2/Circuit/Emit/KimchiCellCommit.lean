@@ -439,7 +439,6 @@ theorem rowAcceptB_sound (a : Nat → ℤ) (r : KRow) (h : rowAcceptB a r = true
       | (simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
          exact ⟨fun b hb => h.1 b hb, h.2⟩)
       | (simp only [Bool.and_eq_true, decide_eq_true_eq] at h; exact h)
-      | simp at h
 
 theorem rowsAcceptB_sound (a : Nat → ℤ) (rs : List KRow) (h : rs.all (rowAcceptB a) = true) :
     rowsHold a rs := by
@@ -534,7 +533,8 @@ theorem tamper_substituted_commit_refused (A : Nat → ℤ)
 `docs/MINA-DREGG-SEMANTICS-NATIVE.md` §3 PROJECTED route B at ≈ 1.05 × 10⁴ rows per effect row,
 with **98.8% of it being exactly these four permutations** (10,402 of ~10,534, at the measured
 o1js marginal 2,600.5 rows per Poseidon2-w16 permutation × 4). Everything below is the EMISSION,
-so it is the projection MEASURED rather than repeated. -/
+so it is the projection MEASURED rather than repeated — and the o1js side is measured against it
+in the same session (`bridge/mina-zkapp/scripts/cellcommit-native.ts`). -/
 
 /-- Emitted rows: the four permutation sub-circuits. -/
 def siteRowCount : Nat := siteRows.length
@@ -561,7 +561,8 @@ def costPinsHold : Bool :=
     && (commitHistogram.filter (fun x => x.2 != 0)
           == [(KGateType.generic, 6154), (KGateType.rangeCheck0, 4416)])
 
-/-! ⚑ The emitted cost, measured. Moving any of these is a deliberate act.
+/-! ⚑ The emitted cost, MEASURED. Moving any of these is a deliberate act and `costPinsHold`
+fails on drift.
 
 | | rows | |
 |---|---:|---|
@@ -570,19 +571,40 @@ def costPinsHold : Bool :=
 | + the 30-row arithmetic core | **10,600** | the whole route-B circuit |
 | the §3 PROJECTION it replaces | ~10,534 | `MINA-DREGG-SEMANTICS-NATIVE.md` |
 
-**+0.6% against the projection**, and the projection was built from a MEASURED o1js marginal, so
-the generated four-site tree prices essentially exactly where the hand-tuned estimate put it.
-The commitment binding is **99.7%** of the emitted circuit (10,570 / 10,600) — slightly MORE
-dominant than the 98.8% projected, because the arithmetic core came in at 30 rows rather than the
-~127 the projection allowed for gates it does not emit.
+**⚑ AND WHAT SNARKY ACTUALLY REPORTS: 10,010** (`npm run cellcommit-native`, o1js 2.15.0,
+`Provable.constraintSystem` over the transcribed stream). The Lean count is 560 rows HIGH, and
+the cause is exact rather than approximate:
 
-**Effect rows per Pickles step: 6**, not the ~5 the projection gave (65,536 / 10,600 = 6.18; on the
-usable ~55,000 after `zk_rows` and the wrapper it is 5.19, so "5 to 6" is the honest reading and 6
-is the ceiling). The re-price does not move the geometry: a small turn is still one step.
+  * the emission is 11,188 generic sub-gates and 4,416 range checks;
+  * packed two to a row, the generics need `⌈11188/2⌉ = 5,594` rows — which is EXACTLY what
+    snarky reports, `5,594 + 4,416 = 10,010`;
+  * `KimchiLower.renderOpsGo` **flushes its pending generic half-row before every `rc0`**, and
+    snarky's double-generic packing carries the pending half ACROSS the range check. 560 of the
+    4,416 range checks interrupt an odd-parity run, and 560 is the gap.
 
-The emitted gate mix is `Generic 6,154 · RangeCheck0 4,416` and **no other gate type** — every row
-is one `KimchiTarget` MODELS, which is what `commitRows_all_modelled` proves and what keeps the
-fail-closed `False` from discharging anything. -/
+This is the SAFE direction — the Lean model is an upper bound the deployed circuit beats, not a
+count the circuit exceeds — and it names a real optimisation: let `renderOpsGo` keep `pending`
+across a non-generic op. Its correctness statement is the same `packGen_holds_iff` shape the
+pure-generic backend already carries. NOT done here; an optimisation whose equivalence is
+unproved is exactly what `KimchiLower` exists not to do.
+
+**Against the §3 projection: −5% for the four sites** (10,010 measured against 10,402 = 4 ×
+2,600.5 projected). The generated tree comes in under the hand-tuned marginal because it
+replaces `inputLanes`' 16 range-check rows per permutation with 4 (the absorbed columns) plus a
+handful of constant pins.
+
+**The commitment binding is 99.7% of the emitted circuit** (10,570 / 10,600) — slightly MORE
+dominant than the 98.8% projected, because the arithmetic core came in at 30 rows rather than
+the ~127 the projection allowed for gates it does not emit.
+
+**Effect rows per Pickles step: 6**, not the ~5 the projection gave (`65,536 / 10,040 = 6.5` at
+the measured snarky price; on the usable ~55,000 after `zk_rows` and the wrapper it is 5.4, so
+"5 to 6" is the honest reading and 6 is the ceiling). The re-price does not move the geometry:
+a small turn is still one step.
+
+The emitted gate mix is `Generic 6,154 · RangeCheck0 4,416` and **no other gate type** — every
+row is one `KimchiTarget` MODELS, which is what `commitRows_all_modelled` proves and what keeps
+the fail-closed `False` from discharging anything. -/
 
 /-- **THE WHOLE COMPUTATIONAL GATE**, in one `def` so `CheckKimchiCellCommit` and
 `EmitKimchiCellCommit` cannot drift apart on what "green" means. -/
