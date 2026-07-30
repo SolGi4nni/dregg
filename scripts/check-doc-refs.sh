@@ -219,7 +219,31 @@ while IFS=$'\t' read -r file lineno tok; do
     if git check-ignore -q "$path" 2>/dev/null && [ -d "$(dirname "$path")" ]; then
       continue
     fi
-    printf 'DEAD  %s:%s  ->  %s\n' "$file" "$lineno" "$tok"
+    # ⚑ NAME THE LIKELY FIX, do not just refuse.
+    #
+    # Measured across four separate pushes: the SAME class keeps arriving — a path written
+    # relative to the subtree the document is ABOUT (`scripts/foo.ts` in a doc about
+    # `bridge/mina-zkapp`; `tests/foo.rs` in a doc about `circuit-prove`). It resolves against
+    # the repo root, where nothing of that name exists, and blocks every push in the tree.
+    #
+    # A convention note in the doc's own header did NOT stop it — a fifth instance arrived
+    # after one was added. The author is not reading the header; they are reading THIS
+    # message. So the message does the work. Ambiguity is reported AS ambiguity rather than
+    # guessed: two candidates means the author picks.
+    suggestion=''
+    for pre in bridge/mina-zkapp circuit-prove circuit node sdk turn cell metatheory; do
+      if [ -e "$pre/$tok" ]; then
+        if [ -n "$suggestion" ]; then suggestion='AMBIGUOUS'; break; fi
+        suggestion="$pre/$tok"
+      fi
+    done
+    if [ "$suggestion" = 'AMBIGUOUS' ]; then
+      printf 'DEAD  %s:%s  ->  %s   (resolves under MORE THAN ONE prefix — name the one you mean)\n' "$file" "$lineno" "$tok"
+    elif [ -n "$suggestion" ]; then
+      printf 'DEAD  %s:%s  ->  %s   -> did you mean `%s` ?\n' "$file" "$lineno" "$tok" "$suggestion"
+    else
+      printf 'DEAD  %s:%s  ->  %s\n' "$file" "$lineno" "$tok"
+    fi
     dead_count=$((dead_count + 1))
     continue
   fi

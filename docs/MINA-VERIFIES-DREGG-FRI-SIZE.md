@@ -2282,7 +2282,7 @@ shape's ceiling is an **envelope**, not a narrowed crossing (§3.26). Nothing is
 
 *`bridge/mina-zkapp/src/RootFriWalk.ts` (the segment list and the planner),
 `src/RootFriSlice.ts` (the interpreter, the twin and the side-loaded slice program),
-`scripts/root-fri-braid.ts` (the leg), `scripts/fri-walk-plan.ts` (the plan alone),
+`bridge/mina-zkapp/scripts/root-fri-braid.ts` (the leg), `bridge/mina-zkapp/scripts/fri-walk-plan.ts` (the plan alone),
 `circuit-prove/src/bin/root_fri_instance.rs` (the FRI half of the committed root proof).*
 
 §3.27 closes the AIR half at real geometry and ends by naming what it does not close: *"this is the

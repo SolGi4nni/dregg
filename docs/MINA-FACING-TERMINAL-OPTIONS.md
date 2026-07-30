@@ -107,7 +107,7 @@ at all**, which retires the hash as a lever and promotes column narrowing
   `dregg_outer_config.rs`. ⚑ Its FRI knobs are the ETH wrap's **element for
   element**, deliberately: the ledger reading is then the already-modeled
   `FriLedgerSound.ethWrapOuterConfig` and **the hash field is the only change**.
-  It is an eighth row in `tests/fri_params_soundness_budget.rs`.
+  It is an eighth row in `circuit-prove/tests/fri_params_soundness_budget.rs`.
 - **`circuit-prove/src/apex_shrink.rs`** — the outer role is now generic over
   `OuterShrinkConfig`, a trait bound that *is* §2's soundness paragraph: a
   config not sharing `Val = BabyBear` / `Challenge = EF4` cannot be named in
@@ -540,7 +540,7 @@ handful and compile stops being a line item at all.
 
 ### 5.1a ⚑ DRAWN — and the estimates above were close but wrong in three places
 
-`src/RootFriUniform.ts` + `scripts/root-fri-uniform.ts` (leg 19) build it. Everything in this
+`src/RootFriUniform.ts` + `bridge/mina-zkapp/scripts/root-fri-uniform.ts` (leg 19) build it. Everything in this
 subsection is **measured on the root's real geometry**, not projected.
 
 **First, the homogeneity is EXACT, and it is now a check rather than an observation.** The walk is
@@ -677,7 +677,7 @@ hash work and pays off in the current regime too:
 - ~~**A. Price the alignment slack.**~~ **DONE — §5.1a.** +4.5% on its own, and the commitment shape
   it enables gives more than that back: **820 instances against 839.**
 - ~~**B. Make the walk slice uniform.**~~ **DONE — §5.1a.** `src/RootFriUniform.ts`,
-  `scripts/root-fri-uniform.ts`. **839 FRI verification keys → 46**, uniformity cost ≤ 204 rows a
+  `bridge/mina-zkapp/scripts/root-fri-uniform.ts`. **839 FRI verification keys → 46**, uniformity cost ≤ 204 rows a
   slice, and the ring that a compile-time key pin cannot close is closed by a carried key tree
   anchored in the terminal seal.
 
