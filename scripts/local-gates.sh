@@ -321,17 +321,49 @@ GATES=(
   # ⚑ `SELFTEST_LEGS="deep air"` scopes PASS 2 of the -red row to named legs. The
   # PRE-FLIGHT is never scoped: what you re-run is a budget question, what you notice has
   # rotted is not. A scoped run says so in its PASS line.
-  # ~25 min warm: TEN legs, six Pickles compiles, and a 684,726-row constraint system
-  # that is slow to BUILD, never mind prove. Leg 12 (§3.21, the scheduler) added ~7 of
-  # those minutes and 9 of the 83 injections, so both budgets moved with it.
-  "mina-attestation|3000|bash scripts/check-mina-attestation.sh"
-  "mina-attestation-red|14400|bash scripts/check-mina-attestation.sh --self-test"
+  # ⚑ TIERED 2026-07-30, and the cheap tier is the DEFAULT. This row was 3000s and its
+  # `-red` partner was 14400s — 56% of this whole table's budget for ONE directory — and
+  # in the window that grew it to nineteen legs the self-test found NOTHING. Everything
+  # that arc found was found by a cheap exhaustive out-of-circuit differential: the braid
+  # twin walks 11,303 segments and found four defects that "would each have compiled and
+  # proved cleanly for as far as any affordable run reaches"; the uniform checker walks
+  # 820 boundaries and found ALL NINETEEN block-to-block joins broken, first observable at
+  # instance 46. An injection proves the gate CAN fire; it does not find defects.
+  # So the row here is TIER 0: MEASURED 25s. It runs those twins, the recorded-figure
+  # census, the npm coverage check, and PASS 1 of the self-test — which on the day it
+  # landed found SIX unusable injections in 3.2 seconds, four pointing at nothing and two
+  # matching two sites each. NOTHING IN IT COMPILES A CIRCUIT, and it says so.
+  # ⚠ WHAT MOVED OUT OF THE EVERYDAY RUN: every Pickles compile/prove/verify — the zkApp
+  # consumption, the tamper refusals proved by a real prover, the row ratchets, the
+  # splices, the chains, the ceiling. `--tier 1` (below, under --all) proves one instance
+  # per family; `--tier 2` is the old headline. docs/MINA-GATE-TIERS.md has the table and
+  # the honest trade.
+  "mina-attestation|300|bash scripts/check-mina-attestation.sh"
+  # The npm-script coverage mechanism, on its own row and with its own can-it-go-red run.
+  # It is the thing that stops tiering becoming a way to quietly stop testing: measured
+  # 2026-07-30, NINE npm scripts in `bridge/mina-zkapp/` were in no gate at all and
+  # nothing went red when a tenth appeared. Lean has `lean-orphans-allow.txt`; TypeScript
+  # had nothing. THREE more scripts appeared while the mechanism was being written, and it
+  # caught all three. ~1s, needs node. The `-red` row is not optional — it is a NEGATIVE
+  # assertion, which passes just as happily when the reader is broken.
+  "mina-npm-coverage|120|bash scripts/check-mina-npm-coverage.sh"
+  "mina-npm-coverage-red|120|bash scripts/check-mina-npm-coverage.sh --self-test"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
   "gates-executed|2400|python3 scripts/check-gates-executed.py"
   "lean-marshal|1200|bash scripts/check-lean-marshal.sh"
   "ci-invariants-falsifiers|14400|bash scripts/ci-invariants.sh falsifiers"
+  # TIER 1 — one representative instance per family, COMPILED AND PROVED. This is the
+  # pre-merge run and the one to reach for after touching a circuit: it restores what a
+  # tier-0 green cannot imply, at one family member each rather than all of them.
+  "mina-attestation-t1|3600|bash scripts/check-mina-attestation.sh --tier 1"
+  # TIER 2 — the old headline. Every family member, the full chains, the ceiling.
+  "mina-attestation-t2|7200|bash scripts/check-mina-attestation.sh --tier 2"
+  # The injection suite. It holds 14 faults a permanent control now covers (their
+  # patterns are still checked, every pass, by tier 0's pre-flight); `SELFTEST_ALL=1`
+  # re-runs those too. ⚑ This is the row that was 4 HOURS of budget in the cheap set.
+  "mina-attestation-red|14400|bash scripts/check-mina-attestation.sh --self-test"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }

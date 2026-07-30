@@ -1287,7 +1287,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: circuit-prove/sketches/mina-pasta-hash-probe
-      - run: bash scripts/check-mina-attestation.sh
+      # ⚑ TIERED 2026-07-30. The gate's default is now TIER 0 — out-of-circuit
+      # differentials, the recorded-figure census, the npm-coverage check and the
+      # injection pre-flight, ~25s, NOTHING COMPILING A CIRCUIT. This job is the
+      # SLOW LANE and it already runs nightly, so it takes the full ladder: tier
+      # 2 is the old headline and the self-test is the injection suite. A run
+      # here is therefore strictly MORE than what it ran before (tier 0 adds
+      # three legs that were in no gate at all), not less.
+      - run: bash scripts/check-mina-npm-coverage.sh
+      - run: bash scripts/check-mina-npm-coverage.sh --self-test
+      - run: bash scripts/check-mina-attestation.sh --tier 2
       - run: bash scripts/check-mina-attestation.sh --self-test
 
   metatheory-no-sorry:

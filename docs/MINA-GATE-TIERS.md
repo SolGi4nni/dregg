@@ -1,0 +1,147 @@
+# The Mina gate, tiered — what the everyday run costs, what it catches, what we gave up
+
+**Landed 2026-07-30.** `scripts/check-mina-attestation.sh` had grown to ~19 legs,
+222+ checks and 94 fault injections. Its headline row carried a 3000-second
+budget and its `--self-test` row 14400 — **56% of the entire default
+`local-gates.sh` budget for one directory**, and the self-test alone was ~6.5
+hours.
+
+---
+
+## The evidence the tiering is built on
+
+**The self-test found nothing this arc.** Every defect that arc actually found
+was found by a **cheap exhaustive out-of-circuit differential**, in seconds:
+
+| instrument | what it walks | what it found |
+|---|---|---|
+| the braid twin (`root-fri-braid` [2b]) | 11,303 segments | **four** defects — a full output buffer on entry, `sample_bits` taking the low bits, `alpha_pow` starting at one, an undefined path direction. Each "would have compiled and proved cleanly for as far as any affordable run reaches". |
+| the uniform checker (`root-fri-uniform` [3b]) | 820 chain boundaries | **all 19** block-to-block joins broken. First observable at instance 46, sealed at 820 — "any affordable proof run would have been green and wrong." |
+| the o1js hash probe | 13 measured rows | settled a 200× question **before any Rust was written**. |
+
+An injection proves the gate **can** fire. It does not find defects. That
+asymmetry is the whole design.
+
+⚑ And on the day the tiering landed, the injection **pre-flight** — promoted out
+of the 6.5-hour run into the everyday one — found **six unusable injections in
+3.2 seconds**: four pointing at nothing after four different refactors, and two
+matching *two sites each*, so `perl s///` (no `/g`) disarmed the first and left
+the other with no falsifier while the suite reported green.
+
+---
+
+## The tiers
+
+`--tier N`, or `MINA_TIER` for a leg run by hand. **The gate's default is tier 0.
+A leg's own default is tier 2**, so `npm run root-fri-braid` is unchanged.
+
+### Tier 0 — the default. **MEASURED 25 s.**
+
+Nothing in it compiles a circuit.
+
+| check | cost | what it says |
+|---|---|---|
+| `tsc --noEmit` at the pinned o1js | 7 s | the committed TypeScript compiles — the directory's *original* defect |
+| the injection **pre-flight** | 3.2 s | all 95 falsifiers still match live code, **each at exactly one site** |
+| `check-mina-npm-coverage.sh` | 1 s | every `package.json` script is in a tier or allowlisted with a reason |
+| `recorded-constants.tsv` census | <1 s | all 24 `RECORDED_*` figures are as recorded, and none is unpinned |
+| `root-fri-braid` @0 | 1–3 s | the 11,303-segment walk against p3's own α, βs and query indices |
+| `root-fri-uniform` @0 | 6–13 s | the homogeneity, the plan, **all 820 chain boundaries** |
+| `root-fri-preamble` @0 | 1–4 s | the batch-STARK preamble differential and its discriminating polarities |
+| `fri-walk-plan`, `kat`, `merkle-constraints` | ~5 s | the cut list, the Poseidon vectors, the hashing-row extrapolation |
+
+### Tier 1 — pre-merge. One representative instance per family, compiled and proved.
+
+`gate` (the zkApp), `poseidon2-rows` (the hash), `probe` (the Rust emitting
+side), `fri-chain` (the FRI family — the leg that *found* the coset-descent bug),
+`dregg-verify` (the assembly), `root-air` + `root-air-real` (the root's own AIR),
+`partition` (the chain family), `cellcommit-native` (Route B).
+
+### Tier 2 — the old headline. Every family member, the full chains, the ceiling.
+
+Plus `--self-test`, the injection suite.
+
+---
+
+## ⚠ What a tier-0 green no longer implies — stated exactly
+
+**Nothing compiled.** So a tier-0 green does **not** say:
+
+- that any Kimchi circuit **accepts** anything — no Pickles proof was produced or
+  verified;
+- that any circuit **refuses** anything — no tamper, splice, forged transcript or
+  wrong AIR was put to a real `prove()`;
+- that the zkApp consumes an attestation proof, or refuses one bound to another
+  root;
+- that any **row count** is still what the docs quote — the ratchets *compare a
+  measurement*, and tier 0 takes no measurement. It checks only that the recorded
+  figure has not moved.
+
+What it **does** say is that every out-of-circuit twin still reproduces p3's own
+numbers on the real geometry, that every recorded figure is pinned, and that
+every falsifier in the suite still points at exactly one piece of live code.
+
+**Tier 1 restores the first four at one family member each. Tier 2 restores the
+rest.**
+
+---
+
+## Injections converted to controls
+
+**A control cannot be forgotten or silently unpointed; an injection can, and has
+been, ten times across four lanes.** So where a permanent control already asserts
+the same thing free on every pass, the injection is **held**:
+
+| held | count | the control that replaced it |
+|---|---|---|
+| constant-drift (`RECORDED_*` bent, whole leg re-run at ~2–4 min) | 11 | `bridge/mina-zkapp/recorded-constants.tsv`, checked every pass, **plus** the reverse — an unpinned `RECORDED_*` is a failure |
+| the `air_fullchain` trio (~87 min, **~22% of the self-test**) | 3 | leg 19's own permanent `REFUSED:` / `UNPINNED:` / `UNBOUND:` greps, asserted on every green pass |
+
+**Held, not deleted, and the distinction is the design:** PASS 1 still checks
+their patterns every single run, so they cannot silently stop existing;
+`SELFTEST_ALL=1` re-runs them; the PASS line says how many were held.
+
+⚠ **What the census does not say** is that a leg still *compares* its figure to a
+measurement. So the trade is three-legged and stated: the census says the figure
+has not moved, the per-leg `ratchet: ` grep says the ratchet **ran**, and **one**
+constant-drift injection (`rows`) stays live to say the mechanism **bites**.
+
+---
+
+## Coverage — the thing that keeps tiering honest
+
+Tiering moves work from the everyday run to a nightly one, which is exactly the
+shape of quietly testing less. `scripts/check-mina-npm-coverage.sh` is what makes
+that safe: **every `package.json` script is in a tier or in
+`bridge/mina-zkapp/npm-scripts-allow.tsv` with a reason of at least 20
+characters**, and a row naming a script that no longer exists is a failure too.
+
+Measured 2026-07-30 before it existed: **nine** npm scripts in no gate at all,
+including ~7,600 LOC of that window's FRI work and the whole of Route B's o1js
+side. Lean has `lean-orphans-allow.txt`; TypeScript had nothing. **Three more
+scripts appeared while this was being written, and the check caught all three.**
+
+`leg_at_tier` does the same job inside the gate: it **dies** on a leg name not in
+`TIER_TABLE`, so a lane that adds a leg and forgets the table gets a hard red
+rather than a leg that quietly runs in the tier that has to finish in a minute.
+
+---
+
+## Named follow-ups (deliberately not done — five lanes were live in these files)
+
+1. **Gate the Pasta family.** `pasta-differential` (tier 0 — it is an
+   out-of-circuit differential and exactly the shape tier 0 is for),
+   `pasta-verify` (tier 1), `pasta-root-rows` and `pasta-chain` (tier 2).
+2. **Gate `cost-gate`** at tier 0 — it is a model check with no compile in it,
+   and it owns the constants `recorded-constants.tsv` pins.
+3. **Gate `root-claim-carry`** once its lane names a PASS line.
+4. **Delete, rather than hold, the 14 converted injections** once their lanes
+   have landed and the controls have a few weeks of standing.
+5. **Pin the three `air_ceiling` budgets.** They were *not* converted, because
+   they are not `RECORDED_*` and the census does not cover them — calling them
+   "already covered" would have been a lie.
+6. **The tier-0 artifact dependency.** Braid/uniform each have one out-of-circuit
+   check that reads `.fullchain/proof-6.json`, a gitignored artifact only a
+   tier-2 run mints. At tier 0 it runs when the file is present and **prints that
+   it did not** when it is absent. Minting it cheaply from the committed root
+   proof would close the last stated gap in tier 0.

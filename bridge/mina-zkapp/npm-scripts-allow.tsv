@@ -31,3 +31,4 @@ pasta-root-rows	LIVE LANE 2026-07-30 (the Pasta-consume lane), added within the 
 pasta-verify	LIVE LANE 2026-07-30 (the Pasta-consume lane). FOLLOW-UP: gate at tier 1 as the Pasta family's representative compile-and-prove instance.
 cost-gate	LIVE LANE 2026-07-30 (the cost-model lane, commit 7e05bf143). FOLLOW-UP: gate at tier 0 -- it is a model check with no compile in it, and it owns the constants `recorded-constants.tsv` pins.
 root-claim-carry	LIVE LANE 2026-07-30, added during this restructure (the script appeared between two runs of the coverage check -- which is the mechanism working). FOLLOW-UP: gate once the lane names its PASS line.
+pasta-chain	LIVE LANE 2026-07-30 (the Pasta-consume lane), the THIRD script to appear during this restructure. FOLLOW-UP: gate with the rest of the Pasta family once the lane lands.
