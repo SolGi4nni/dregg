@@ -102,15 +102,15 @@ namespace Dregg2.Circuit.Emit.PastaMsmScalarDerive
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2 (VmConstraint2 EffectVmDescriptor2 WindowExpr WindowConstraint
-  TableId TableDef VmTrace)
+  TableId TableDef VmTrace lookupLog PublicLookupBalanced)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.PastaField (pN qN numLimbs limbBits fpValue fpVal acceptB)
 open Dregg2.Circuit.Emit.PastaMsmWindowed (WTrace envOf cw BIT DBL fpVal_as_sum)
 open Dregg2.Circuit.Emit.PastaMsmSliced (sliceLo PI_COUNT sMaxPi)
 open Dregg2.Circuit.Emit.PastaMsmBound (Pt TIDX GIDX bMaxVar termAt planeAt scalarDigit rowAt
-  tupleOf manifestRow)
-open Dregg2.Circuit.Emit.PastaMsmOnCurve (WOC onCurveRowDesc)
+  tupleOf manifestRow boundRowDesc isNotLookup filterMap_of_noLookup)
+open Dregg2.Circuit.Emit.PastaMsmOnCurve (WOC onCurveRowDesc onCurveRowGates)
 open Dregg2.Circuit.Emit.PastaMsmScalarBound (sAt sFactors sNat sScalars)
 open Dregg2.Circuit.Emit.MinaWrapOpeningGate (Fq)
 
@@ -1362,7 +1362,9 @@ theorem pidx_counts_doublings (nb : Nat) (T : WTrace) (H : Nat)
 gate and this file does not pretend otherwise — it is `PastaMsmBound`'s, forced there by the emitted
 lookup's exact-public balance (`bound_forces_doubling` / `bound_forces_dbl_off`), and it is what
 `PastaMsmWindowed` §6.1 named as the one thing its row induction hypothesised.
-`dblPattern_of_manifest` below composes with that rung so the pattern is DERIVED here too. -/
+`dblPattern_of_manifest` below composes with that rung so the pattern is DERIVED here too, and
+§4e.1's `derive_balance_transport` supplies that rung's own hypothesis from the DEPLOYED
+descriptor's balance — so nothing in this chain is left as prose. -/
 def DblPattern (w : Nat) (T : WTrace) (H : Nat) : Prop :=
   ∀ i, i < H → T i DBL = if i % (w + 1) = 0 then 1 else 0
 
@@ -1416,6 +1418,83 @@ theorem dblPattern_of_manifest (k w planes : Nat) (gens : List Pt) (scal : List 
     exact Dregg2.Circuit.Emit.PastaMsmBound.bound_forces_dbl_off k w planes gens scal t i
       (hman i hi) hb (htidx i hi) (hbit i)
 
+/-! #### §4e.1 — ⚑⚑ THE BALANCE TRANSPORT, so the plane thread's chain reaches the emitted lookup.
+
+`dblPattern_of_manifest` consumes `PastaMsmBound.row_tuple_is_its_manifest_row`'s conclusion, whose
+own hypothesis is `PublicLookupBalanced (boundRowDesc …)`. The descriptor a prover actually runs is
+`deriveRowDesc`. Nothing carried the balance from one to the other, so the composition existed on
+paper and not in the kernel. It is here now, and its whole content is that **the derivation emits no
+`.lookup`**: the declared table is the same object by `rfl` and the lookup LOG is unchanged. -/
+
+/-- Every constraint of a `map`ped family is a non-lookup when its generator is. -/
+theorem notLookup_map {α : Type} (L : List α) (f : α → VmConstraint2)
+    (hf : ∀ x, isNotLookup (f x) = true) : ∀ c ∈ L.map f, isNotLookup c = true := by
+  intro c hc; obtain ⟨x, -, rfl⟩ := List.mem_map.mp hc; exact hf x
+
+/-- ⚑ **`deriveGates_noLookup`** — the derivation emits no `.lookup`, at every `(nb, planes)`. Every
+family is a `map` of `cgH` / `binGate` / `cw` / `pinPi`, each of which is a `.base` or a
+`.windowGate` by construction. -/
+theorem deriveGates_noLookup (nb planes : Nat) :
+    (deriveGates nb planes).all isNotLookup = true := by
+  rw [List.all_eq_true]
+  intro c hc
+  cases c with
+  | base b => rfl
+  | memOp m => rfl
+  | mapOp m => rfl
+  | umemOp m => rfl
+  | proofBind m => rfl
+  | windowGate w => rfl
+  | lookup l =>
+    exfalso
+    simp only [deriveGates, deriveWireGates, deriveRowGates, gidxBitGates, chalPinGates,
+      chalThreadGates, mulSelGates, chainGates, sBitGates, selGates, canonGates,
+      List.mem_append, List.mem_cons, List.mem_map, List.not_mem_nil, or_false, false_or] at hc
+    simp_all [pidxStartGate, pidxThreadGate, gidxBitsGate, prdOneGate, sBitsGate, selOneGate,
+      selIdxGate, cw, cgH, cg, binGate, pinPi,
+      Dregg2.Circuit.Emit.PastaField.fqMulCore]
+
+/-- The emitted list, split at the two rungs it extends. -/
+theorem deriveRowDesc_constraints_split (nb n k w planes : Nat) (gens : List Pt)
+    (scal : List Nat) :
+    (deriveRowDesc nb n k w planes gens scal).constraints
+      = (boundRowDesc n k w planes gens scal).constraints ++ onCurveRowGates
+          ++ deriveGates nb planes := rfl
+
+/-- ⚑ **The lookup LOG is the rung-below's, unchanged** — the derivation contributes nothing to it,
+at any table id. -/
+theorem derive_lookupLog (nb n k w planes : Nat) (gens : List Pt) (scal : List Nat)
+    (t : VmTrace) (tid : TableId) :
+    lookupLog (deriveRowDesc nb n k w planes gens scal) t tid
+      = lookupLog (boundRowDesc n k w planes gens scal) t tid := by
+  have key : ∀ {β : Type} (f : VmConstraint2 → Option β),
+      (∀ c, isNotLookup c = true → f c = none) →
+      (deriveRowDesc nb n k w planes gens scal).constraints.filterMap f
+        = (boundRowDesc n k w planes gens scal).constraints.filterMap f := by
+    intro β f hf
+    rw [deriveRowDesc_constraints_split, List.filterMap_append, List.filterMap_append,
+      filterMap_of_noLookup f onCurveRowGates hf (by rfl),
+      filterMap_of_noLookup f (deriveGates nb planes) hf (deriveGates_noLookup nb planes)]
+    simp
+  unfold Dregg2.Circuit.DescriptorIR2.lookupLog
+  exact congrArg (fun f => t.rows.flatMap f)
+    (funext (fun row => key _ (fun c hc => by cases c <;> simp_all [isNotLookup])))
+
+/-- ⚑⚑ **`derive_balance_transport`** — the exact-public balance of the DEPLOYED derived descriptor
+IS the balance `PastaMsmBound`'s forcing theorems consume. This is what closes the chain: the
+emitted lookup ⟹ the manifest per row ⟹ the `DBL` pattern ⟹ `PIDX = planeAt w i`. §6.1 named this
+as the lemma nobody had written; it is written. -/
+theorem derive_balance_transport (nb n k w planes : Nat) (gens : List Pt) (scal : List Nat)
+    (t : VmTrace)
+    (h : PublicLookupBalanced (deriveRowDesc nb n k w planes gens scal) t) :
+    PublicLookupBalanced (boundRowDesc n k w planes gens scal) t := by
+  intro td htd
+  have htd' : td ∈ (deriveRowDesc nb n k w planes gens scal).tables := by
+    rw [deriveRowDesc_tables, Dregg2.Circuit.Emit.PastaMsmOnCurve.onCurveRowDesc_tables]
+    exact htd
+  have := h td htd'
+  rwa [derive_lookupLog] at this
+
 /-- A row inside the trace is inside the plane count — the one arithmetic fact the capstone needs
 about the shape, and it is about `planes·(w+1)`, not about any gate. -/
 theorem planeAt_lt (w planes i : Nat) (hi : i < planes * (w + 1)) : planeAt w i < planes := by
@@ -1427,8 +1506,9 @@ theorem planeAt_lt (w planes i : Nat) (hi : i < planes * (w + 1)) : planeAt w i 
 §4d's conclusions range over a challenge list `cs` a caller names and a bit plane `pl` a caller
 names. Here both come from the emitted object: the challenges are the DECLARED PUBLIC INPUTS'
 (`csOfPi pv nb`, via `chalPinGates` + `chalThreadGates`) and the plane is the row's own
-(`planeAt w i`, via `pidxStartGate` + `pidxThreadGate` + the `DBL` pattern the rung below forces).
-What remains carried is named in §6.1 and is not this file's to discharge. -/
+(`planeAt w i`, via `pidxStartGate` + `pidxThreadGate` + the `DBL` pattern the rung below forces,
+carried here by §4e.1's balance transport). What remains carried is named in §6.1 and is not this
+file's to discharge. -/
 
 /-- ⚑⚑ **`derived_row_bit_is_the_wire_svec_bit`** — `derived_row_bit_is_block_svec_bit` with BOTH
 of its carried hypotheses discharged from the emitted wire gates. The conditional-add row's `BIT` is
@@ -1532,6 +1612,11 @@ theorem derived_row_bit_is_manifest_digit
 #assert_axioms count_doublings
 #assert_axioms pidx_is_the_plane_index
 #assert_axioms dblPattern_of_manifest
+#assert_axioms notLookup_map
+#assert_axioms deriveGates_noLookup
+#assert_axioms deriveRowDesc_constraints_split
+#assert_axioms derive_lookupLog
+#assert_axioms derive_balance_transport
 #assert_axioms planeAt_lt
 #assert_axioms derived_row_bit_is_the_wire_svec_bit
 #assert_axioms derived_row_bit_is_manifest_digit
@@ -1794,16 +1879,16 @@ and §5d exhibits a trace satisfying all three). The rest:
 1. **`hgidx : T i GIDX = idx` — NOT this file's.** `PastaMsmBound.bound_forces_gidx` forces the row's
    term-index column to the ABSOLUTE generator index, from the emitted lookup's exact-public
    balance. No gate here touches `GIDX` except to read its digits.
-2. **`hdblpat : DblPattern w T H` — discharged, but at one remove.** `dblPattern_of_manifest` derives
-   it from `PastaMsmBound.row_tuple_is_its_manifest_row`'s CONCLUSION plus
-   `tidx_is_the_row_index`. ⚑ **What is NOT written anywhere is the transport of
-   `PublicLookupBalanced` from `deriveRowDesc` to `boundRowDesc`** — the hypothesis those two rung-
-   below theorems actually consume. The transport is available (`deriveRowDesc_tables` and
-   `PastaMsmOnCurve.onCurveRowDesc_tables` chain the table to `boundRowDesc`'s by `rfl`, and
-   `deriveGates` emits no `.lookup`, so the lookup log is unchanged — the shape
-   `PastaMsmBound.filterMap_of_noLookup` already handles), but it is a LEMMA NOBODY HAS WRITTEN.
-   Until it is, a caller composing the two rungs supplies `hman`/`htidx`/`hbit` itself. This is a
-   missing lemma, not a missing gate.
+2. **`hdblpat : DblPattern w T H` — DISCHARGED, and now all the way down.**
+   `dblPattern_of_manifest` derives it from `PastaMsmBound.row_tuple_is_its_manifest_row`'s
+   conclusion plus `tidx_is_the_row_index`, and §4e.1's `derive_balance_transport` carries the
+   exact-public balance from the DEPLOYED `deriveRowDesc` to the `boundRowDesc` those two theorems
+   consume — so the chain runs: emitted lookup ⟹ manifest per row ⟹ `DBL` pattern ⟹ `PIDX =
+   planeAt w i`. (An earlier revision of this list called that transport "a lemma nobody has
+   written". It was, for about an hour. `deriveGates_noLookup` is its content: the derivation emits
+   no `.lookup`, so the table is the same object by `rfl` and the lookup log is unchanged.) What a
+   caller must still supply is `PastaMsmBound`'s OWN two side conditions — `htidx` from
+   `tidx_is_the_row_index` and `hbit`, the `DBL` column's booleanity from the row template.
 3. **`hcond : i % (w + 1) ≠ 0`** — "row `i` is a conditional-add row", which is a fact about WHERE
    the row is in the Horner schedule and not about any column. It replaces the older `hdbl : T i DBL
    = 0`, which was the same fact asserted about a column a prover fills.
