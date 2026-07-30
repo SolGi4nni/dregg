@@ -21,7 +21,7 @@
 // carrying a git commit, a millisecond timestamp and a 128-bit nonce, so
 // nothing here can be replaying a constant it produced itself.
 
-import { Bool, Field, Poseidon, Provable, ZkProgram } from 'o1js';
+import { Bool, Field, Gadgets, Poseidon, Provable, ZkProgram } from 'o1js';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -235,6 +235,9 @@ function foldOpeningPasta(leaf: Field, siblings: Field[], isRight: Bool[]): Fiel
 // ---------------------------------------------------------------------------
 console.log('\n[3] getRows() — THE MEASUREMENT');
 
+/** Filled in by [4b]; used by [5]'s re-price. */
+let PASTA_SPONGE_ROWS_PER_LANE = 0;
+
 async function rowsOf(f: () => void): Promise<number> {
   const cs = await Provable.constraintSystem(f);
   return cs.rows;
@@ -362,28 +365,268 @@ console.log('\n[4] the circuit is really Pickles-provable, and proves the Rust o
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n[5] what this prices, at the DEPLOYED root geometry');
-// Same decomposition as poseidon2-merkle-rows.ts [5]: one input-phase opening
-// at depth 22 plus one commit-phase opening per fold layer at depths 21..6.
+console.log('\n[4b] the MMCS LEAF SPONGE — the second-biggest hash term');
+//
+// The Merkle path is only half the hashing. A FRI input-phase leaf is a ROW of
+// BabyBear values, and the MMCS packs it into Pasta elements before absorbing:
+// `MultiField32PaddingFreeSponge<BabyBear, PastaFp, MinaPoseidonPerm, 3, 2, 1>`
+// writes 8 shifted radix-2^31 limbs per rate slot, 2 slots per permutation, so
+// SIXTEEN BabyBear lanes ride one Poseidon — against the deployed
+// `PaddingFreeSponge<_, 16, 8, 8>`'s EIGHT.
+//
+// Every value here is KAT'd against `dregg-p3-pasta`'s own emitter, which calls
+// the REAL p3 sponge — not a transcription of it.
+
+const BB_P = 2013265921n; //           BabyBear modulus
+const LIMBS_PER_SLOT = 8;
+const LANES_PER_PERM = LIMBS_PER_SLOT * 2;
+const RADIX = 1n << 31n;
+
+/** `r < 2^31`, via three 12-bit lookups — the same check the deployed BabyBear
+ *  path uses (`Poseidon2BabyBearW16.ts`'s `assertLt2p31`, not exported). */
+function assertLt2p31(r: Field) {
+  const [a, b, c] = Provable.witness(Provable.Array(Field, 3), () => {
+    const v = r.toBigInt();
+    return [Field(v & 0xfffn), Field((v >> 12n) & 0xfffn), Field((v >> 24n) & 0x7fn)];
+  });
+  Gadgets.rangeCheck3x12(a, b, c.mul(16n));
+  a.add(b.mul(1n << 12n)).add(c.mul(1n << 24n)).assertEquals(r);
+}
+
+/** p3 `reduce_packed_shifted(lanes, 31)`: Horner in base 2^31 over the digits
+ *  `lane + 1`. Each lane is range-checked to `< 2^31`, which is what makes the
+ *  packing injective (the +1 shift reserves 0 as "no digit", so lengths do not
+ *  collide).
+ *
+ *  ⚠ NAMED, not fixed here: `< 2^31` is a WEAKER check than `< p_BabyBear`, so
+ *  a prover may present a non-canonical lane in `[p, 2^31)` and pack a
+ *  different Pasta element than the canonical one. The DEPLOYED BabyBear path
+ *  has exactly the same shape, so this is inherited, not introduced — but a
+ *  Mina-side verifier that wants canonical openings must add the `p`-bound. */
+function packSlot(lanes: Field[]): Field {
+  let acc = Field(0);
+  for (let i = lanes.length - 1; i >= 0; i--) {
+    assertLt2p31(lanes[i]);
+    acc = acc.mul(Field(RADIX)).add(lanes[i].add(Field(1)));
+  }
+  return acc;
+}
+
+/** The p3 sponge, in circuit. The rate lanes are OVERWRITTEN per block (p3
+ *  semantics), which o1js expresses by absorbing the DIFFERENCE against a state
+ *  whose rate cells are known in circuit — `Poseidon.update` absorbs by
+ *  addition, and `d - s` added to `s` is `d`. Costs two field subtractions, i.e.
+ *  nothing: Kimchi linear combinations are free. */
+function leafSpongePasta(row: Field[]): Field {
+  let state: [Field, Field, Field] = [Field(0), Field(0), Field(0)];
+  for (let off = 0; off < row.length; off += LANES_PER_PERM) {
+    const block = row.slice(off, off + LANES_PER_PERM);
+    const slots: Field[] = [];
+    for (let c = 0; c < block.length; c += LIMBS_PER_SLOT)
+      slots.push(packSlot(block.slice(c, c + LIMBS_PER_SLOT)));
+    const d0 = slots[0];
+    const d1 = slots.length > 1 ? slots[1] : state[1]; // an unwritten slot KEEPS its value
+    state = Poseidon.update(state, [d0.sub(state[0]), d1.sub(state[1])]);
+  }
+  return state[0];
+}
+
+function runPastaLeaf(rowWidth: number, nRows: number, vals: bigint[]) {
+  const out = execFileSync(
+    'cargo',
+    [
+      'run', '--quiet', '--offline', '-p', 'dregg-p3-pasta', '--bin', 'pasta-mmcs-emit', '--',
+      'leaf', String(rowWidth), String(nRows), ...vals.map((v) => v.toString()),
+    ],
+    { cwd: resolve(dir, '../../..'), encoding: 'utf8', maxBuffer: 1 << 26 },
+  );
+  return JSON.parse(out) as {
+    emitter: string;
+    rowWidth: number;
+    nRows: number;
+    limbsPerSlot: number;
+    radixBits: number;
+    lanesPerPermutation: number;
+    rows: number[][];
+    packedSlots: string[][];
+    leafDigests: string[];
+  };
+}
+
+{
+  const ROW_WIDTH = 13; //  the same width the BabyBear rung measures (§3.9)
+  const N = 3;
+  const lanes: bigint[] = [];
+  {
+    let acc = leafVals[0] % BB_P;
+    for (let i = 0; i < ROW_WIDTH * N; i++) {
+      acc = (acc * 1000003n + BigInt(i) + 17n) % BB_P;
+      lanes.push(acc);
+    }
+  }
+  const em = runPastaLeaf(ROW_WIDTH, N, lanes);
+  ok(`p3 sponge emitter: ${em.emitter}`);
+  if (em.limbsPerSlot !== LIMBS_PER_SLOT || em.radixBits !== 31 || em.lanesPerPermutation !== LANES_PER_PERM)
+    fail('the p3 packing constants moved — this script is describing the wrong sponge');
+  ok(`packing: ${em.limbsPerSlot} limbs/slot at radix 2^${em.radixBits} => ${em.lanesPerPermutation} BabyBear lanes per PERMUTATION (deployed BabyBear sponge: 8)`);
+
+  // The pack alone, out of circuit, against p3.
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < em.packedSlots[r].length; c++) {
+      const chunk = em.rows[r].slice(c * LIMBS_PER_SLOT, (c + 1) * LIMBS_PER_SLOT);
+      let acc = 0n;
+      for (let i = chunk.length - 1; i >= 0; i--) acc = acc * RADIX + BigInt(chunk[i]) + 1n;
+      if (acc !== BigInt(em.packedSlots[r][c]))
+        fail(`the shifted radix-2^31 pack diverges from p3 at row ${r} slot ${c}`);
+    }
+  }
+  ok('the shifted radix-2^31 pack agrees with p3 elementwise');
+
+  // The whole sponge, IN CIRCUIT, against p3.
+  await Provable.runAndCheck(() => {
+    for (let r = 0; r < N; r++) {
+      const row = em.rows[r].map((v) => Provable.witness(Field, () => Field(v)));
+      const d = leafSpongePasta(row);
+      Provable.asProver(() => {
+        if (d.toBigInt() !== BigInt(em.leafDigests[r]))
+          fail(`in-circuit leaf digest ${d.toBigInt()} != p3 ${em.leafDigests[r]}`);
+      });
+    }
+  });
+  ok(`the CIRCUIT's leaf digests == the p3 MultiField sponge, all ${N} rows of width ${ROW_WIDTH}`);
+
+  // REJECT: an out-of-range lane must be refused, or the packing bound is vacuous.
+  let held = false;
+  try {
+    await Provable.runAndCheck(() => {
+      const row = em.rows[0].map((v, i) =>
+        Provable.witness(Field, () => Field(i === 0 ? BigInt(v) + (1n << 31n) : BigInt(v))),
+      );
+      leafSpongePasta(row);
+    });
+    held = true;
+  } catch {
+    /* expected */
+  }
+  if (held) fail('the circuit packed a lane >= 2^31 (the injectivity bound is vacuous)');
+  ok('the circuit REFUSES a lane >= 2^31 (the packing bound is enforced)');
+
+  // The measurement.
+  async function spongeRows(w: number): Promise<number> {
+    return rowsOf(() => {
+      const row = Array.from({ length: w }, () => Provable.witness(Field, () => Field(1)));
+      leafSpongePasta(row).seal();
+    });
+  }
+  const s16 = await spongeRows(16);
+  const s32 = await spongeRows(32);
+  const s48 = await spongeRows(48);
+  const marginalBlock = (s48 - s16) / 2;
+  console.log(`    leaf sponge, 16 lanes (1 perm) : ${s16} rows`);
+  console.log(`    leaf sponge, 32 lanes (2 perms): ${s32} rows`);
+  console.log(`    leaf sponge, 48 lanes (3 perms): ${s48} rows`);
+  console.log(`    MARGINAL rows per 16-lane BLOCK: ${marginalBlock}`);
+  console.log(`    => ${(marginalBlock / LANES_PER_PERM).toFixed(2)} rows per BabyBear LANE`);
+  const BB_SPONGE_BLOCK = 2632; //  §3.9, measured: one 8-lane BabyBear block
+  console.log(
+    `    ⚑ per LANE: Pasta ${(marginalBlock / LANES_PER_PERM).toFixed(2)} vs BabyBear ` +
+      `${(BB_SPONGE_BLOCK / 8).toFixed(1)} — ${((BB_SPONGE_BLOCK / 8) / (marginalBlock / LANES_PER_PERM)).toFixed(0)}x`,
+  );
+  PASTA_SPONGE_ROWS_PER_LANE = marginalBlock / LANES_PER_PERM;
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n[5] RE-MEASURING the Mina-side row count against the 2.9e6 projection');
+//
+// THE MODEL, stated in one line so it can be argued with: a Mina-side verify of
+// the deployed root decomposes into HASH terms and NON-HASH terms; the hash
+// terms scale by their own MEASURED unit ratio, and the non-hash terms do not
+// move at all (they are BabyBear extension arithmetic, which no hash choice
+// touches). The deployed column below is MINA-VERIFIES-DREGG-FRI-SIZE §3's
+// measured decomposition of 24,574,325 rows at q=19, arity 2, cap_height 0.
+
+const USABLE = 54300; //  PartitionSchedule.ts:105 — the currency §5 of the doc uses
+const NUM_QUERIES = 19;
 const COMMIT_LAYERS = 16;
+
+// MEASURED deployed (BabyBear-hashed) unit prices.
+const BB_PERM = 2600.5; //          §3.8
+const BB_LEVEL = 2677; //           §3.9
+const BB_SPONGE_PER_LANE = 2632 / 8; // §3.9: one 8-lane block
+
+// MEASURED Pasta unit prices — this script, above.
+const PASTA_PERM = marginalPerm;
+const PASTA_LEVEL = marginalLevel;
+const PASTA_SPONGE_PER_LANE = PASTA_SPONGE_ROWS_PER_LANE;
+
+// MINA-VERIFIES-DREGG-FRI-SIZE §3's measured decomposition of the 24,574,325.
+const TERMS: { name: string; rows: number; ratio: number | null }[] = [
+  { name: 'Merkle paths', rows: 1.23e7, ratio: PASTA_LEVEL / BB_LEVEL },
+  { name: 'leaf hash + lane range checks', rows: 6.5e6, ratio: PASTA_SPONGE_PER_LANE / BB_SPONGE_PER_LANE },
+  { name: 'challenger observe of opened values', rows: 2.5e6, ratio: PASTA_PERM / BB_PERM },
+  { name: 'DEEP quotient (BabyBear ext. arith)', rows: 2.5e6, ratio: null },
+  { name: 'AIR constraint evaluation at zeta', rows: 1.9e5, ratio: null },
+];
+
+let bbTotal = 0;
+let pastaTotal = 0;
+console.log('    term                                   deployed        Pasta   ratio');
+for (const t of TERMS) {
+  const p = t.ratio === null ? t.rows : t.rows * t.ratio;
+  bbTotal += t.rows;
+  pastaTotal += p;
+  console.log(
+    `    ${t.name.padEnd(36)} ${t.rows.toExponential(2).padStart(9)}  ${p.toExponential(2).padStart(11)}   ` +
+      (t.ratio === null ? 'unchanged' : `${t.ratio.toFixed(4)}`),
+  );
+}
+console.log(
+  `    ${'TOTAL'.padEnd(36)} ${bbTotal.toExponential(3).padStart(9)}  ${pastaTotal.toExponential(3).padStart(11)}`,
+);
+console.log(
+  `    slices @ ${USABLE.toLocaleString()} usable rows: ` +
+    `${Math.ceil(bbTotal / USABLE)}  ->  ${Math.ceil(pastaTotal / USABLE)}`,
+);
+
+// A CROSS-CHECK on the method, not a restatement of it: the Merkle term can be
+// computed two independent ways — by scaling the deployed term by the measured
+// unit ratio (above), and DIRECTLY from the geometry (levels x queries x the
+// measured rows/level). If the two disagree the decomposition being scaled is
+// not the decomposition that was measured.
 const commitDepths = Array.from({ length: COMMIT_LAYERS }, (_, i) => DEPTH - 1 - i);
 const levelsPerQuery = DEPTH + commitDepths.reduce((a, b) => a + b, 0);
-const NUM_QUERIES = 19;
-const merkleRowsAll = levelsPerQuery * marginalLevel * NUM_QUERIES;
-const bbMerkleRowsAll = levelsPerQuery * BB_ROWS_PER_LEVEL * NUM_QUERIES;
-const USABLE = 54300; //  PartitionSchedule.ts:105, the currency §5 of the doc uses
+const merkleDirect = levelsPerQuery * NUM_QUERIES * PASTA_LEVEL;
+const merkleScaled = 1.23e7 * (PASTA_LEVEL / BB_LEVEL);
+const merkleDrift = Math.abs(merkleDirect - merkleScaled) / merkleScaled;
 console.log(
-  `    ${levelsPerQuery} Merkle levels/query x ${NUM_QUERIES} queries = ` +
-    `${(levelsPerQuery * NUM_QUERIES).toLocaleString()} levels`,
+  `\n    cross-check on the Merkle term: direct ${merkleDirect.toExponential(3)} ` +
+    `(${levelsPerQuery} levels x ${NUM_QUERIES} queries x ${PASTA_LEVEL}) vs ` +
+    `scaled ${merkleScaled.toExponential(3)} — ${(merkleDrift * 100).toFixed(1)}% apart`,
+);
+if (merkleDrift > 0.1)
+  fail(
+    'the two independent Merkle computations disagree by more than 10%: the ' +
+      'deployed decomposition being scaled is not the geometry being measured',
+  );
+
+// The deliverable.
+const PROJECTED = 2.923071e6; //  MINA-FACING-TERMINAL-OPTIONS §3, "q 19, arity 2, cap 0"
+const PROJECTED_SLICES = 54;
+const delta = (pastaTotal - PROJECTED) / PROJECTED;
+console.log('');
+console.log(
+  `    ⚑ RE-MEASURED ${pastaTotal.toExponential(3)} rows = ${Math.ceil(pastaTotal / USABLE)} slices, ` +
+    `against the PROJECTED ${PROJECTED.toExponential(3)} / ${PROJECTED_SLICES} slices ` +
+    `(${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)}%)`,
 );
 console.log(
-  `    Merkle rows, all queries: BabyBear ${bbMerkleRowsAll.toExponential(3)} ` +
-    `(${(bbMerkleRowsAll / USABLE).toFixed(0)} slices)  ->  ` +
-    `Pasta ${merkleRowsAll.toExponential(3)} (${(merkleRowsAll / USABLE).toFixed(2)} slices)`,
+  `    ⚑ and the shape flips: hashing was ${(((1.23e7 + 6.5e6 + 2.5e6) / bbTotal) * 100).toFixed(0)}% ` +
+    `of the deployed budget and is ${(((TERMS[0].rows * TERMS[0].ratio! + TERMS[1].rows * TERMS[1].ratio! + TERMS[2].rows * TERMS[2].ratio!) / pastaTotal) * 100).toFixed(1)}% of this one; ` +
+    `the DEEP quotient is now ${((2.5e6 / pastaTotal) * 100).toFixed(0)}%.`,
 );
 console.log(
-  '    ⚑ the doc projects the WHOLE Pasta-hashed root verify at 2.9e6 rows / 54 slices;\n' +
-    `      the Merkle term measured here is ${((merkleRowsAll / 2.9e6) * 100).toFixed(2)}% of that budget.`,
+  '    ⚑ SENSITIVITY: a 3x error in EVERY measured Pasta hash price above moves\n' +
+    `      the total to ${((pastaTotal + 2 * (TERMS[0].rows * TERMS[0].ratio! + TERMS[1].rows * TERMS[1].ratio! + TERMS[2].rows * TERMS[2].ratio!)) / USABLE).toFixed(0)} slices. The answer is not sensitive to the hash any more.`,
 );
 
 // ---------------------------------------------------------------------------

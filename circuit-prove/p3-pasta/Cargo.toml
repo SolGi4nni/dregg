@@ -14,6 +14,10 @@ path = "src/lib.rs"
 # here is a drift in what `PrimeField`/`CryptographicPermutation` even mean.
 p3-field = { workspace = true }
 p3-symmetric = { workspace = true }
+# p3-baby-bear is a NORMAL dep, not a dev-dep: the `pasta-mmcs-emit` bin is the
+# dregg-side emitter the o1js measurement KATs against, and it hashes BabyBear
+# rows. Keeping it dev-only would make the emitter unbuildable.
+p3-baby-bear = { workspace = true }
 
 # The Mina side. Declared at o1-labs/proof-systems `36a8b510` — the SAME
 # coordinates the probe crate uses — which the root manifest's
@@ -37,7 +41,6 @@ rand = "0.10"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
-p3-baby-bear = { workspace = true }
 p3-challenger = { workspace = true }
 p3-commit = { workspace = true }
 p3-matrix = { workspace = true }
