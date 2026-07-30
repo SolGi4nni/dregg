@@ -17,6 +17,15 @@ Attempt 1's failure was one bug: a two-level `match` does not iota-reduce under 
 rewrite in each weld found nothing. Attempt 2's was another: a theorem→`#guard` conversion left its
 docstring attached to nothing, in 22 places.
 
+**Update 2026-07-30 — the MSM moved, and the projection it rested on was wrong by 1.75×.**
+`Dregg2.Bridge.MinaWrapSg` (the compiled checker, rooted at +0 closure), its instance differential
+`MinaWrapSgWeld`, and `lean_exe mina_sg_bench` are **WRITTEN AND NOT YET BUILT** — no build has seen
+them. What *has* been measured, at full scale and compiled, is the evaluator they call: **35.1 s and
+18.8 MB for one 32,768-point Pallas MSM**, against ~3.5 h and ~28 GB in the kernel. So the
+kernel→compiled ratio is **359×, not the 630× §5a projected**, a checkpoint is **~105 s, not ~60 s**,
+and **the 10-minute cadence still closes** — with a 5.7× margin instead of a 10× one. §5a carries the
+per-add rate, the box, and the falsifier.
+
 Read the verbs literally. **Elaborated clean** = seen by a build. **States** = written and not yet
 seen by a build. **Predicted** = arithmetic from a measured figure, with the falsifier named. The
 cadence result rests only on measured protocol constants and on the first two.
@@ -106,20 +115,58 @@ every `C` blocks delays a height's finalization by at most `C × 180 s` **on top
 |---|---|---|
 | public-input words 11, 12 | 2 Poseidons (93 + 32 elements) + 62 endo expansions | **28.9 ms — MEASURED**, through the C ABI |
 | `expand_deferred` | the six wire-dropped words | sub-ms; **NOT WRITTEN** |
-| `public_comm` | 40-point Lagrange MSM | ~28 ms predicted |
-| phase-1 + phase-2 + IPA sponges | ~150 Poseidon permutations | ~30 ms predicted |
-| opening relation (rung 5f) | 34 × 255-bit ladders | ~24 ms predicted |
-| **`⟨s, srs.g⟩` (rung 5h)** | **32,768-point MSM** | **~20 s predicted** |
-| **the 2 accumulator MSMs (5g)** | **2 × 32,768** | **~40 s predicted** |
-| | | **≈ 60 s per checkpoint, 99 % of it the three 2^15 MSMs** |
+| `public_comm` | 40-point Lagrange MSM (≈5.4 k complete adds) | ~45 ms predicted, at the rate below |
+| phase-1 + phase-2 + IPA sponges | ~150 Poseidon permutations | ~45 ms predicted |
+| opening relation (rung 5f) | 34 × 255-bit ladders (≈17 k complete adds) | ~150 ms predicted, at the rate below |
+| **`⟨s, srs.g⟩` (rung 5h)** | **32,768-point MSM, 4,161,791 complete adds** | **35.1 s — MEASURED** |
+| **the 2 accumulator MSMs (5g)** | **2 × 32,768, same shape** | **70.2 s — by symmetry** |
+| | | **≈ 105 s per checkpoint, 99.7 % of it the three 2^15 MSMs** |
 
-**Where the predictions come from, and their falsifier.** The kernel figures are measured: rung 5h
-is **105 min of wall at 2-way parallelism ≈ 3.5 h of serial kernel, ~28 GB peak**, on this block, in
-this tree. The kernel→compiled ratio is taken from a sibling that moved the *same shape* — a 2^15
-MSM — from 3.5 h of kernel to a 20 s compiled path, **≈ 630×**. Every "predicted" row above is that
-ratio applied to a measured kernel cost. **The falsifier is the build request's timing test**: if a
-compiled 32,768-point Pallas MSM in Lean is not within an order of magnitude of 20 s, the 10-minute
-cadence is not real and the table's first row goes away.
+**⚑ THE 630× DID NOT TRANSFER. IT IS 359×, MEASURED (2026-07-30).** The row above is no longer a
+ratio applied to a kernel cost — it is a clock.
+
+The evaluator (`PastaIpaFold.msmHornerM` at `(p, b3 = 15, nbits = 255)`, driving
+`PastaCurveComplete.rcbTraceM`: 12 mulmods, 2 const-muls, 19 add/sub-mods and one 33-field
+allocation per complete add) was run standalone at **full scale — 32,768 points, 255 bit planes,
+4,162,977 complete adds** — compiled by `leanc -O3`:
+
+| | per complete add | one 2^15 MSM | peak RSS |
+|---|---|---|---|
+| **native (`leanc -O3`)** | **8.44 µs** | **35.1 s** | **18.8 MB** |
+| interpreted (`lean --run`, = what `#guard` costs) | 12.31 µs | 51.2 s | — |
+| kernel `decide` (prior lane, measured on hbox) | ~3.0 ms | ~3.5 h serial | ~28 GB |
+
+Linear to within 0.5 % across n = 1024 / 4096 / 8192 / 32768. Box: **Apple M2 Max, one core.**
+
+* **kernel → native compiled = 12,600 s / 35.1 s ≈ 359×**, not 630×. The 630× was `3.5 h / 20 s`
+  where the 20 s had no located measurement anywhere in this tree — it appeared only in the sentence
+  that defined the ratio.
+* **kernel → `#guard` = 244×.** `#guard` uses Lean's *untrusted evaluator*, and this package sets no
+  `precompileModules`, so it interprets imported IR. That costs 1.46× native here — small, because
+  GMP dominates. **A `#guard` wall time is an upper bound on the compiled cost, never the compiled
+  cost**; `lean_exe mina_sg_bench` exists to keep the two apart.
+* ⚑ **Memory, which was the constraint that actually bit.** The kernel path peaks at ~28 GB (and
+  near 75 GB per chunk when rooted, which is what made `lake build Dregg2` unable to finish). The
+  compiled path peaks at **18.8 MB** — a factor of ~1,500 to ~4,000. **The reason `MinaWrapSg*` is
+  allowlisted out of the root does not exist on this path.**
+* Where the time is NOT: the bit-plane traversal (`as.zip ps` rebuilt per plane, 8.4 M
+  `Nat.testBit`s) is **0.8 %** of the total — measured by running the same scan with all-zero
+  scalars. Hoisting the zip out of the plane loop was implemented and measured: **no gain, 8.50 µs
+  vs 8.57 µs**, i.e. inside the noise. It was not landed. The cost is the modular arithmetic, all of
+  it: ~256 ns per 255-bit `Nat` mulmod including allocation.
+
+**Evidence class, stated plainly.** The 35.1 s is measured on a **faithful standalone
+re-expression** of the deployed evaluator — same `rcbTraceM` op sequence, same 33-field allocation,
+same fold, full scale — not yet on the artifact. `metatheory/MinaSgBench.lean` (`lake build
+mina_sg_bench`) measures the artifact itself and is self-checking in both polarities. **Its falsifier
+is stated in the build request; if it comes in above ~5 min, the 10-minute row needs re-examining.**
+
+**Two levers are left on the table and neither is in the number above.** (i) `PastaMsmWindowed` is
+already authored: bucketed/Pippenger at an 11-bit window is ≈ 0.86 M complete adds against
+4.16 M — **~4.9×, i.e. ~7 s per MSM** — and it is algebra, needing its own identity theorem, not
+FFI. (ii) openmina itself **defers and batches** the `sg` accumulator check
+(`batch_dlog_accumulator_check`); a client batching legs 5g/5h across checkpoints is following the
+upstream design.
 
 Two things could improve it and neither is in the estimate: `Circuit.Emit.PastaMsmWindowed` is
 already authored (a windowed MSM instead of 32,768 independent ladders), and **openmina itself
@@ -136,16 +183,25 @@ throughput** and needs batching or parallelism to be anything else.
 
 ### 5c. So: three tiers, three cadences
 
-| what closes | cost | cadence it supports |
-|---|---|---|
-| the cheap tier (decode, link, density, `select`) | milliseconds | **every block, 180 s** |
-| a **checked** checkpoint (compiled Lean Wrap verify) | ~60 s *predicted* | **10 min**, comfortably 1 h |
-| a **checked** checkpoint in the kernel (today's rungs) | ~3.5 h *measured* | **nothing below a day** |
-| a **proved** checkpoint (a dregg STARK of the check) | ~15.4 h *extrapolated from a measurement* | **a day**, and only with batching |
+| what closes | cost | duty cycle at 10 min | cadence it supports |
+|---|---|---|---|
+| the cheap tier (decode, link, density, `select`) | milliseconds | ~0 | **every block, 180 s** |
+| a **checked** checkpoint (compiled Lean Wrap verify) | **~105 s**, 35.1 s of it measured | **17.6 % of one core** (5.9 % on three) | **10 min, with margin**; 1 h is free |
+| a **checked** checkpoint in the kernel (today's rungs) | ~10.5 h *measured* (3 × 3.5 h) | 175× oversubscribed | **nothing below a day** |
+| a **proved** checkpoint (a dregg STARK of the check) | ~15.4 h *extrapolated from a measurement* | — | **a day**, and only with batching |
 
-**The headline: a Mina checkpoint closes at a 10-minute cadence if the 2^15 MSM moves from kernel
-`decide` to compiled Lean, and at nothing shorter than a day if it does not.** That single move is
-the whole difference, and it is the same move a sibling already made once on the same shape.
+**The headline: a Mina checkpoint closes at a 10-minute cadence — 105 s of single-core compute
+inside a 600 s period — because the 2^15 MSM moved from kernel `decide` to compiled Lean. In the
+kernel it is 10.5 hours and nothing below a day is possible.** The move is worth **359×** in time
+and ~**1,500×** in memory; it is not worth the 630× that was projected, and 105 s is not the 60 s
+that was projected either. Neither correction changes the recommendation: 105 s ≪ 600 s, so the
+10-minute row survives with a 5.7× margin and the "+1.0 % of Mina's own 14.5 h" figure stands.
+
+**What would change the recommendation.** If the artifact-true bench comes in ≥ 5× worse than the
+standalone measurement — i.e. above ~3 min per MSM, ~9 min per checkpoint — a 10-minute cadence
+stops having margin and the recommended default becomes the 1-hour row, which is +6.9 % of a delay
+Mina already imposes on itself and still costs nothing that matters. **A day remains the only bad
+option, and nothing measured here puts us near it.**
 
 ## 6. ⚑ What stays trusted — at every cadence
 
@@ -214,3 +270,27 @@ means "checked nothing".
 | the client, the cadence policy, the fail-closed arms | `bridge/src/mina_checkpoint.rs` |
 | archive rooting (+1 and +0 modules, measured on the import graph) | `metatheory/Dregg2/FFI.lean` |
 | export presence + `REQUIRED_DECISION_EXPORTS` | `dregg-lean-ffi/build.rs` |
+| **the `2^15` MSM as a compiled checker** — `sgVerdict chals gens sg`, no fixture, `some true`/`some false`/**`none`** | `metatheory/Dregg2/Bridge/MinaWrapSg.lean` (ROOTED, +0 closure) |
+| its instance differential on block 539508 — both polarities, plus the 32 chunk statements the kernel `decide`s | `metatheory/Dregg2/Bridge/MinaWrapSgWeld.lean` (not rooted; carries the fixture) |
+| the native-compiled timing, self-checking in both polarities | `metatheory/MinaSgBench.lean`, `lake build mina_sg_bench` |
+| the evaluator both paths share (`msmHornerM`, §3c) and the theorem that says it computes the MSM (`msmHorner_eq_msmN`) | `metatheory/Dregg2/Circuit/Emit/PastaIpaFold.lean` |
+| runner for all three | `scripts/run-mina-sg-compiled.sh` |
+
+## 9. ⚑ What the compiled path does NOT change
+
+1. **It is not a proof.** `#guard` is Lean's untrusted evaluator. The kernel proves the CHECKER
+   (`PastaIpaFold.msmHorner_eq_msmN`: the bit-plane scan computes the MSM, at arbitrary
+   `AddCommGroup`, with the 255-bit budget a real hypothesis); a differential checks the INSTANCE.
+   Rung 5h's 32 kernel theorems still say what they said and are not superseded — `MinaWrapSgWeld`
+   §4 reproduces their 32 statements as `#guard`s precisely so the two paths are compared on one
+   object rather than trusted separately.
+2. **It binds CONTENTS, not a proof object.** `sg` really is `⟨s, srs.g⟩` over the real generators.
+   The `5h-AIR` rungs (`PastaMsmBound`/`PastaMsmOnCurve`) force an emitted row's source to be
+   `srs.g` at the index the manifest names and bind **no contents**. Neither subsumes the other.
+3. **`srs.g` is still trusted** (§6.5). On-curve-checked — now in compiled code too, as part of the
+   shape gate — but not derived.
+4. **The RCB residual is still carried.** `PastaIpaFold` §3's group statement transports to §3c's
+   `Nat`-triple evaluation by RCB'15 Thm 1, inherited from rungs 5a–5f. The compiled path adds no
+   new assumption and removes none.
+5. **`expand_deferred` is still the blocker** (§7). A fast `sg` leg does not make `public_comm`
+   derivable, and until it is, every height but the pinned one is `WrapVerdict::Unavailable`.
