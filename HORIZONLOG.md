@@ -1,5 +1,103 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 30 — route B's commitment binding LANDED; three perfectly valid transitions were refused by a real `prove()`; and the row model was found conservative by exactly 560
+
+**E1 · ✅ THE GAP THE ROUTE-B LANE WEIGHTED ABOVE ITS OWN DEMO IS CLOSED.**
+
+> Its words: *"The commitment binding is ABSENT. The 4 GROUP-4 hash sites are not emitted, so the
+> circuit relates two bare 13-tuples and does not prove they are the pre-image of any commitment —
+> i.e. that they are a dregg cell. Read the claim as 'checks a transition's ARITHMETIC'."*
+>
+> `metatheory/Dregg2/Circuit/Emit/KimchiCellCommit.lean` emits all four. Each `hash_4_to_1` site is
+> `KimchiPoseidon2.permGen` — the Lean `def`-generator folded over the imported round constants,
+> 141 S-boxes and not one spelled out — and the WIRING is `def`-generated from the deployed
+> `incNonceHashSites` by `inColsGo` rather than restated. Measured: sites 0/1/2 absorb
+> `[76,77,78,79]`/`[80,81,82,83]`/`[84,85,86,87]`, site 3 absorbs `[98,99,100,186]` (the three
+> digest columns plus the audit-P0-2 authority residue) and lands on `saCol STATE_COMMIT = 88`.
+> TWO ARROWS, ONE `def`: `babybear_forces_cellCommit` and `kimchi_forces_cellCommit` both force
+> `cellCommitOf hash env.loc`.
+>
+> ⚑ **THE ASYMMETRY RUNS THE SAME WAY IT DOES FOR THE ARITHMETIC — the BabyBear side is again the
+> weaker one.** There, `siteHoldsAll` is an ASSUMPTION about the deployed trace: the descriptor
+> carries `VmHashSite`s whose denotation is "the digest column holds the hash of these inputs",
+> and **no gate in `incrementNonceVmDescriptor.constraints` establishes it** — the Poseidon2 chip
+> is outside the constraint list this file's sibling reasons about. Here it is DERIVED
+> (`commit_rows_force_siteHoldsAll`), because the emitted circuit CONTAINS the permutation.
+>
+> **THE TEST THAT SEPARATES "ARITHMETIC" FROM "CELL", against a real `prove()`:**
+> ```
+> honest cell: prove OK (24.34s) · verify OK (0.74s)
+> -- substituted commitment      arithmetic 0 violated — STILL FULLY SATISFIED   prove() REFUSED
+> -- swapped authority residue   arithmetic 0 violated — STILL FULLY SATISFIED   prove() REFUSED
+> -- forged intermediate digest  arithmetic 0 violated — STILL FULLY SATISFIED   prove() REFUSED
+> ```
+> The `0 violated` line is the point: each of those three is a PERFECTLY VALID `incrementNonceA`
+> transition, and before the hash sites landed all three were **indistinguishable from the honest
+> instance** — nothing in the circuit read column 88, aux 96 or aux 8. `tamper_non_preimage_refused`
+> is the general form: NO assignment whatever satisfies the emitted circuit while carrying a
+> `state_commit` that is not `cellCommitOf hash` of its own after-state.
+
+**E2 · ⚑ THE ROW MODEL IS CONSERVATIVE BY EXACTLY 560, AND THE CAUSE IS ONE LINE.**
+
+> Lean says 10,570; snarky says **10,010**. Not a modelling error and not a coincidence: the
+> emission is 11,188 generic sub-gates and 4,416 range checks, and `⌈11188/2⌉ + 4416 = 10,010` —
+> snarky's number to the row. `KimchiLower.renderOpsGo` **flushes its pending generic half-row
+> before every `rc0`**, where snarky's double-generic packing carries the pending half across.
+> The Lean model is a beaten UPPER BOUND (the safe direction), and the fix is a real optimisation
+> — let `renderOpsGo` keep `pending` across a non-generic op — whose correctness statement is the
+> same `packGen_holds_iff` shape the pure-generic backend already carries. NOT taken: an
+> optimisation whose equivalence is unproved is what `KimchiLower` exists not to do. **Open.**
+>
+> RE-PRICED against the ~1.05 × 10⁴/effect-row projection: four sites **10,010** measured against
+> 10,402 projected (−5%); route B total **10,040**; the hashing is **99.7%** of it (projected
+> 98.8%); **6 effect rows per Pickles step**, not the ~5 projected (`65536/10040 = 6.5`, and 5.4
+> on the usable ~55,000 — "5 to 6", 6 the ceiling).
+
+**E3 · ⚑ `#guard` IS NOT A FREE INSTRUMENT AT THIS SIZE — 20 GB, AND A KERNEL "DEEP RECURSION".**
+
+> The emitted object is 15,604 instructions / 76,489 witness values / 10,570 rows. `#guard`
+> evaluates at ELABORATION time through `whnf`, which materialises the whole `List KRow` as an
+> expression: the module went past 20 GB resident, still climbing, and had to be killed twice.
+> Worse and more interesting: a `digestLaneVars.length = 4` LEMMA hit the kernel's *"deep
+> recursion detected"* — its proof projects `.1` through the fold step, and the step DESTRUCTURES
+> `h4Gen`'s pair, so `whnf` had to reduce four Poseidon2 permutations to learn a list's length.
+> Deleting that one lemma took the module from **3 min / 21.5 GB to 1.7 s**. The same trap sat in
+> `simp [pinGens]`, which would have normalised the closed term `digLane 0` the same way; it is
+> now a constructive `List.Mem` chain.
+>
+> ⚑ **The instrument moved, it did not weaken.** `CheckKimchiCellCommit.lean` runs the same `def`s
+> COMPILED and **exits nonzero** — mutation-proved red by moving the pinned commitment felt by one
+> — and `EmitKimchiCellCommit` refuses to write an artifact unless the same `emissionChecksHold`
+> is true, so the o1js side cannot consume a broken emission. `scripts/check-kimchi-cellcommit.sh`.
+
+**E4 · ⚑ THE ONE UNDISCHARGED LEG IS NOT MERELY UNPROVED — IT NEEDS TWO REPAIRS FIRST. Open.**
+
+> `DigestCarrier` is `KimchiPoseidon2`'s own first remainder (`permGen_forces`), and wiring it up
+> surfaced why it cannot simply be proved at the emitted object:
+> 1. **`bbRange64` leaves its two 12-bit COPY columns UNPINNED** — allocated as fresh variables
+>    holding `0` with **no gate** forcing them, so the emitted `RangeCheck0` recomposition bounds
+>    its value by ~2⁸⁸ rather than 2⁶⁴. Fix: one shared pinned-zero variable, one sub-gate for the
+>    whole circuit.
+> 2. **`bbReduce`'s remainder carries a TRACKED bound of `2³¹` while the emitted check is the
+>    64-bit one.** The `2³¹` is load-bearing: the S-box chain's Pasta safety is `35·2³¹ = 2³⁶·¹³`
+>    into `x⁷ < 2²⁵³·²`, and at a `2³²` lane it is `2²⁵⁹·⁹ > p_Pasta` — unsound rather than slow,
+>    which `KimchiPoseidon2`'s own §2 says in as many words.
+> 3. The four 12-bit plookup columns are the LOOKUP argument's, which `KimchiTarget.holds` models
+>    as `False`; a real forcing lemma takes the lookup as a hypothesis.
+>
+> Nothing assumes it away: it is a hypothesis of every theorem that needs it, and it is checked
+> HOLDING at the honest cell, so it demands nothing an honest instance does not supply.
+
+**E5 · ⚠ AND THE LINE THAT DID NOT MOVE: MEMBERSHIP.**
+
+> Route B now checks a **cell**. It still does not check **membership**, and the commitment
+> binding could not have changed that — hashing a tuple you invented is as easy as inventing it.
+> A well-formed transition of a cell that never existed passes every row. Said in the module
+> header, in `Dregg2.lean`'s annotation, in `DreggCellCommitNative.ts`, in the run's own verdict
+> banner and in `docs/MINA-DREGG-SEMANTICS-NATIVE.md` §0/§4.2/§5. Still open beside it:
+> `transitionAll` unemitted (14 of 35 constraints — B does not chain row to row) and the 7
+> boundary PI pins.
+
 ## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
 
 **E4 · ⚑⚑ LAW #1 IS RED ON `main` — A HAND-WRITTEN RUST AIR LANDED TODAY. LIVE.**
