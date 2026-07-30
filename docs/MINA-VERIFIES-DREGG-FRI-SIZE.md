@@ -1,5 +1,15 @@
 # Can a Kimchi circuit verify dregg's FRI-STARK *directly*? — the size question
 
+> ⚠ **CITATION CONVENTION.** The measurement scripts live at `bridge/mina-zkapp/scripts/*.ts` and
+> must be cited with that full prefix. Dropping it and writing them bare — natural, since this
+> document is *about* the zkapp — resolves against the repo ROOT, where no such directory exists, and
+> `check-doc-refs` then refuses the push for everyone. This has now happened three times in this file.
+>
+> (Yes: the first draft of this very note spelled out the bad form as an example, and the checker
+> refused *that* — correctly. A path in backticks is a citation no matter what the surrounding prose
+> says about it.)
+
+
 *Research / circuit budget, 2026-07-27. `docs/MINA-DREGG-ZKAPP-BRIDGE.md` correctly ruled out
 verifying dregg's **BN254 Groth16 wrap** on Mina: Kimchi has no pairing gate and the Fp12/Miller
 stack does not exist. That verdict is about the **wrap**. This document asks the different question
@@ -2176,7 +2186,7 @@ extrapolation in a measurement's voice.
 
 ### 3.27 ⚑ MEASURED — THE FULL CHAIN: seven slices, seven processes, on dregg's committed root proof
 
-*`bridge/mina-zkapp/src/RootAirProcessChain.ts`, `scripts/root-air-fullchain.ts`. Gate leg 17.*
+*`bridge/mina-zkapp/src/RootAirProcessChain.ts`, `bridge/mina-zkapp/scripts/root-air-fullchain.ts`. Gate leg 17.*
 
 §3.24 proves the largest chain **one** process holds — three slices, 4,798 of 10,417 nodes — and
 names the rest: *"the full AIR chain is 7 slices and one process carries 3 (a process-per-slice
