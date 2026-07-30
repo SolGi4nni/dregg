@@ -3,7 +3,7 @@ SCRATCH executable: emit the CHALLENGE VECTOR that `EmitPastaDerive.lean`'s desc
 against, as JSON decimal strings.
 
   lake env lean --run EmitPastaDeriveChals.lean [<block>]
-      > ../circuit/tests/fixtures/pasta-sg-derive/chals-block<block>.json
+      > emitted/mina-opening/chals-block<block>.json
 
 ⚑ WHY THIS IS A SEPARATE ARTIFACT AND NOT A CONSTANT IN THE RUST TEST. The 15 IPA challenges are
 NOT in the descriptor: `PastaMsmScalarDerive.chalPinGates` binds them to PUBLIC INPUT slots

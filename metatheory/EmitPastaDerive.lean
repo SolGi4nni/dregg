@@ -4,7 +4,7 @@ descriptor as IR-v2 JSON, over the REAL Mina devnet Wrap SRS generators and the 
 challenges the block's own Fq sponge produces.
 
   lake env lean --run EmitPastaDerive.lean <n> <k> <w> <planes> [<block>]
-      > ../circuit/tests/fixtures/pasta-sg-derive/pasta-rcb-sg-derive-<k>-of-<n>.json
+      > emitted/mina-opening/pasta-rcb-sg-derive-<k>-of-<n>.json
 
 The descriptor is `Dregg2.Circuit.Emit.PastaMsmScalarDerive.deriveRowDesc 15 n k w planes
 MinaWrapSrsG.SRS_G (SCAL …)` — `PastaMsmOnCurve.onCurveRowDesc`'s 98 constraints verbatim

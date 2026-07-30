@@ -763,6 +763,37 @@ pub enum ObserveError {
         /// The `stateHash` the endpoint served for it.
         served_state_hash: String,
     },
+    /// ⚑ **NOTHING WAS DECIDED about the `⟨s, srs.g⟩` opening check** — the exhibited segment
+    /// carries no block at a height this tree has an IPA challenge vector for, so
+    /// [`MinaObserver::prove_opening_check`] has nothing to prove ABOUT.
+    ///
+    /// Deliberately NOT [`Self::MinaOpeningCheckRefused`], on the same principle that separates
+    /// [`Self::VerifiedGateUnavailable`] from [`Self::WrapProofNotChained`]: a check that could not
+    /// run and a check that ran and said no are different facts, and collapsing them is how a cold
+    /// path gets read as a proved `no`. A Wrap proof's own opening challenges are Fiat–Shamir
+    /// outputs of its own transcript and are **not on its wire** (measured 0/6 against
+    /// `MinaWrapOpeningGate.IPA_PRECHALS` over six real devnet blocks), so this is a real and
+    /// permanent limit of what a decoder can reach, not a missing feature.
+    MinaOpeningChallengesUnavailable {
+        /// The heights present in the exhibited segment.
+        exhibited_heights: Vec<u64>,
+        /// The heights a challenge vector is pinned for.
+        pinned_heights: Vec<u64>,
+    },
+    /// ⚑ **The LEAN-AUTHORED opening-check AIR REFUSED this block** — the witness could not be
+    /// built from the block's challenge vector, or the deployed prover or the deployed verifier
+    /// said no.
+    ///
+    /// Its own variant, never folded into [`Self::HeaderBindingMismatch`] or
+    /// [`Self::WrapProofNotChained`]: those say a proof is being served under the wrong block or
+    /// out of sequence, this one says the `⟨s, srs.g⟩` fold over Mina's real Wrap SRS does not
+    /// hold at the challenges supplied.
+    MinaOpeningCheckRefused {
+        /// The block whose opening check was refused.
+        block_height: u64,
+        /// The typed refusal from [`crate::mina_opening_check`].
+        why: crate::mina_opening_check::MinaOpeningCheckError,
+    },
     /// The zkApp account was absent or not a zkApp (no app state).
     ZkappNotFound,
     /// The zkApp app state was malformed (wrong arity or a non-Field value).
@@ -870,6 +901,21 @@ impl std::fmt::Display for ObserveError {
                  verification consumed (93-element Poseidon over \
                  [dlog_plonk_index || state_hash || accumulators]), so this proof is being served \
                  under a different block than the one it proves"
+            ),
+            Self::MinaOpeningChallengesUnavailable {
+                exhibited_heights,
+                pinned_heights,
+            } => write!(
+                f,
+                "REFUSED, nothing decided: the exhibited segment {exhibited_heights:?} carries no \
+                 block at a height with a pinned IPA challenge vector {pinned_heights:?}, and a \
+                 Wrap proof's own opening challenges are Fiat-Shamir outputs of its own transcript \
+                 rather than wire data, so the opening check has nothing to be about here"
+            ),
+            Self::MinaOpeningCheckRefused { block_height, why } => write!(
+                f,
+                "the LEAN-AUTHORED ⟨s, srs.g⟩ opening-check AIR REFUSED Mina block \
+                 {block_height}: {why}"
             ),
             Self::ZkappNotFound => write!(f, "zkApp account not found / not a zkApp"),
             Self::MalformedZkappState { reason } => write!(f, "malformed zkApp state: {reason}"),
@@ -1247,6 +1293,96 @@ impl<R: MinaRpc> MinaObserver<R> {
             }
         }
         Ok(())
+    }
+
+    /// ⚑⚑ **ASK dregg to PROVE it verified this Mina block's `⟨s, srs.g⟩` opening leg.**
+    ///
+    /// This is the entry the Mina opening-check AIR never had. Until 2026-07-30
+    /// `grep -rln "pasta-rcb-sg|PastaMsm|minaOpeningCheck" node/ bridge/src/ circuit-prove/src/
+    /// dregg-lean-ffi/src/` was EMPTY: a circuit that forces Mina's real Wrap SRS generators, the
+    /// block's own canonical s-vector, both operands on the curve and the real group law — and
+    /// nothing that could invoke it.
+    ///
+    /// ## The order, and why it is that order
+    ///
+    /// 1. **Decode every exhibited proof and check the shape.** The block's own decoded
+    ///    `ipa_rounds` must equal the AIR's challenge count `nb = 15`; a proof whose IPA has a
+    ///    different round count is not the object this descriptor witnesses, and is refused rather
+    ///    than proved about.
+    /// 2. **[`Self::check_header_binding`] FIRST.** This is what makes the proof about *this*
+    ///    block rather than about a challenge vector in isolation: it recomputes public-input words
+    ///    12 and 11 from the SERVED `stateHash` and the SERVED proof bytes through the verified
+    ///    Lean gate, and refuses a re-labelled or tampered proof. If it refuses, **no proof is
+    ///    produced** — the refusal propagates.
+    /// 3. Only then [`crate::mina_opening_check::prove_block_opening_check`].
+    ///
+    /// ## ⚑ SAY THE SCOPE, plainly
+    ///
+    /// A returned receipt says: *for the 15 IPA challenges of this block, four chosen 3-generator
+    /// slices of Mina's real 32,768-point Wrap SRS fold, under the canonical s-vector those
+    /// challenges derive, to the published accumulator values — and a STARK proof of that was
+    /// produced and checked by the deployed verifier.*
+    ///
+    /// It does **not** say the full `⟨s, srs.g⟩` MSM holds: 12 of 32,768 generators are bound.
+    /// It does **not** discharge the FRI/STARK soundness floor beneath the proof system, or P10,
+    /// the IPA opening-soundness floor `MinaWrapOpeningGate` names. And it is available at exactly
+    /// the heights [`crate::mina_opening_check::PINNED_CHALLENGES`] covers — the ones whose
+    /// Fiat–Shamir transcript this tree has actually run — because those challenges are **not on
+    /// the wire**. Every other height is
+    /// [`ObserveError::MinaOpeningChallengesUnavailable`] and proves nothing.
+    pub fn prove_opening_check(
+        &self,
+        chain: &[MinaBlock],
+    ) -> Result<crate::mina_opening_check::MinaOpeningCheckReceipt, ObserveError> {
+        use crate::mina_opening_check as oc;
+
+        // (1) find a block the opening check can be ABOUT, and check the shape it decodes to.
+        let pinned = oc::pinned_heights();
+        let target = chain
+            .iter()
+            .find(|b| pinned.contains(&b.block_height))
+            .ok_or_else(|| ObserveError::MinaOpeningChallengesUnavailable {
+                exhibited_heights: chain.iter().map(|b| b.block_height).collect(),
+                pinned_heights: pinned.clone(),
+            })?;
+        if target.protocol_state_proof.is_empty() {
+            return Err(ObserveError::WrapProofAbsent {
+                block_height: target.block_height,
+            });
+        }
+        let shape = decode_protocol_state_proof(&target.protocol_state_proof)
+            .map_err(|e| ObserveError::malformed_proof(target.block_height, &e))?;
+        // ⚑ THE BLOCK'S OWN DECODED VALUE GATES THE PROOF: the descriptor witnesses a 15-round
+        // IPA, and `PastaMsmScalarDerive`'s `gidxBitsGate` decomposes the generator index into
+        // exactly `nb` digits, so a proof exhibiting a different round count has no satisfying
+        // trace at all. Refuse it here rather than discover it as an opaque prover error.
+        if shape.ipa_rounds != dregg_circuit::mina_opening_witness::NB {
+            return Err(ObserveError::MinaOpeningCheckRefused {
+                block_height: target.block_height,
+                why: oc::MinaOpeningCheckError::DescriptorShapeMismatch {
+                    artifact: "the block's own Wrap proof",
+                    why: format!(
+                        "its bulletproof exhibits {} IPA rounds, but the emitted AIR witnesses \
+                         nb = {} challenges",
+                        shape.ipa_rounds,
+                        dregg_circuit::mina_opening_witness::NB
+                    ),
+                },
+            });
+        }
+
+        // (2) ⚑ THE BINDING, and it is what makes the falsifier fire through this wiring: a
+        //     tampered proof or a re-labelled header moves public-input words 12/11 and the
+        //     VERIFIED Lean gate refuses BEFORE anything is proved.
+        self.check_header_binding(chain)?;
+
+        // (3) the ask.
+        oc::prove_block_opening_check(target.block_height).map_err(|why| {
+            ObserveError::MinaOpeningCheckRefused {
+                block_height: target.block_height,
+                why,
+            }
+        })
     }
 
     /// **Confirm an outbound settlement landed on a finalized Mina block.**
@@ -1751,6 +1887,215 @@ mod tests {
             per_block < std::time::Duration::from_millis(500),
             "the per-block derivation took {per_block:?} — that is not a per-block cost"
         );
+    }
+
+    // ── ⚑⚑ THE ⟨s, srs.g⟩ OPENING CHECK, THROUGH THE WIRING ────────────────────────────────────
+    //
+    // The AIR is LEAN-AUTHORED (`Dregg2.Circuit.Emit.PastaMsmScalarDerive`). These tests do not
+    // reach into `dregg_circuit`; they drive `MinaObserver::prove_opening_check` on a REAL devnet
+    // block, which is the entry the circuit never had.
+
+    /// ⚑⚑ **THE ASK, END TO END, ON A REAL DEVNET BLOCK.** Block 539508 as a devnet node served it
+    /// — real Base58Check `stateHash`, real `protocolStateProof` bytes — goes in; a verified STARK
+    /// proof that four chosen 3-generator slices of Mina's real 32,768-point Wrap SRS fold to the
+    /// published accumulators under the canonical s-vector of the block's own 15 IPA challenges
+    /// comes out. Cost is MEASURED here, in situ, and printed.
+    ///
+    /// Slow by construction (the cut is 4 × 1024 × 2131 cells); segregated into the `heavy`
+    /// nextest profile by name.
+    #[test]
+    fn opening_check_proves_and_verifies_on_a_real_devnet_block_end_to_end() {
+        if !dregg_lean_ffi::mina_state_hash_word_ok_available() {
+            // The header binding is a VERIFIED gate and this path will not prove without it. No
+            // archive means nothing was decided, which is exactly what the path reports.
+            let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+            match observer.prove_opening_check(&[real_anchor_block()]) {
+                Err(ObserveError::VerifiedGateUnavailable { .. }) => return,
+                other => panic!("with no archive the path must refuse as unavailable: {other:?}"),
+            }
+        }
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let t0 = std::time::Instant::now();
+        let receipt = observer
+            .prove_opening_check(&[real_anchor_block()])
+            .expect("the LEAN-AUTHORED opening check must prove and verify on the real block");
+        let wall = t0.elapsed();
+
+        assert_eq!(receipt.block_height, 539_508);
+        assert_eq!(receipt.descriptor_names.len(), 4);
+        assert_eq!(
+            receipt.descriptor_names[0],
+            "dregg-pasta-rcb-sg-derive-0-of-10922::v1"
+        );
+        assert_eq!(receipt.cells, 4 * 1024 * 2131);
+        assert!(
+            !receipt.proof.is_empty(),
+            "a receipt with no proof bytes is not a receipt"
+        );
+        assert!(
+            receipt.challenge_provenance.contains("CHAL_F"),
+            "the receipt must carry where its challenges came from"
+        );
+        eprintln!("[in-situ] {}", receipt.cost_line());
+        eprintln!(
+            "[in-situ] observer wall clock (decode + header binding + prove + verify): {wall:?}"
+        );
+    }
+
+    /// ⚑⚑ **THE FALSIFIER, THROUGH THE WIRING.** A TAMPERED block — the same real proof bytes
+    /// served under a different real devnet block's `stateHash`, which is the re-labelling attack
+    /// the proof↔proof chain gate explicitly cannot close — must produce **no proof at all**.
+    ///
+    /// The refusal comes from the VERIFIED header gate, before the prover is entered, and it
+    /// arrives as [`ObserveError::HeaderBindingMismatch`] rather than being laundered into the
+    /// opening check's own variant. That ordering is the point: an unbound proof is never produced
+    /// and then reasoned about, it is never produced.
+    #[test]
+    fn a_tampered_block_is_refused_through_the_opening_check_wiring() {
+        if !dregg_lean_ffi::mina_state_hash_word_ok_available() {
+            return;
+        }
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let foreign = real_devnet_run_blocks()[0].state_hash.clone();
+        assert_ne!(foreign, DEVNET_539508_B58);
+        let mut b = real_anchor_block();
+        b.state_hash = foreign.clone();
+        match observer.prove_opening_check(&[b]) {
+            Err(ObserveError::HeaderBindingMismatch {
+                block_height,
+                served_state_hash,
+            }) => {
+                assert_eq!(block_height, 539_508);
+                assert_eq!(served_state_hash, foreign);
+            }
+            other => panic!("a re-labelled block must produce NO proof, got {other:?}"),
+        }
+    }
+
+    /// ⚑⚑ **WHAT A CORRUPTED PROOF ACTUALLY BUYS — measured, because the first version of this
+    /// test asserted the wrong thing and a flipped byte PROVED.**
+    ///
+    /// Say the shape plainly. The opening-check proof is a function of the PINNED challenge vector,
+    /// not of the served bytes: it is a statement about block 539508's 15 IPA challenges, and the
+    /// served block's role is to be *identified* as that block. So what a tampered proof has to
+    /// defeat is [`Self::check_header_binding`] — and that gate's preimage is
+    /// `[dlog_plonk_index ‖ state_hash ‖ accumulators]` for word 12 and `[2×15 wrap challenges ‖
+    /// commitment]` for word 11. **It does not cover the polynomial commitments, the evaluations
+    /// or the IPA `lr` points**, which are the bulk of the 11,138 proof bytes. A single-byte flip
+    /// out there moves nothing either word reads, and the path proves — correctly, because the
+    /// block is still 539508.
+    ///
+    /// This test measures that coverage instead of asserting a coverage it does not have, and
+    /// [`Self::prove_opening_check`]'s own falsifier below drives the full wiring on a position the
+    /// gate DOES catch.
+    #[test]
+    fn corrupting_the_proof_bytes_is_caught_exactly_where_the_header_preimage_reaches() {
+        if !dregg_lean_ffi::mina_state_hash_word_ok_available() {
+            return;
+        }
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let base = real_anchor_block();
+        let n = base.protocol_state_proof.len();
+        let (mut refused, mut malformed, mut admitted) = (0usize, 0usize, 0usize);
+        let mut first_caught: Option<usize> = None;
+        const PROBES: usize = 96;
+        for p in 0..PROBES {
+            let at = p * n / PROBES;
+            let mut cs: Vec<u8> = base.protocol_state_proof.clone().into_bytes();
+            cs[at] = if cs[at] == b'A' { b'B' } else { b'A' };
+            let mut b = base.clone();
+            b.protocol_state_proof = String::from_utf8(cs).expect("base64 stays ASCII");
+            match observer.check_header_binding(&[b]) {
+                Err(ObserveError::HeaderBindingMismatch { .. }) => {
+                    refused += 1;
+                    first_caught.get_or_insert(at);
+                }
+                Err(ObserveError::MalformedWrapProof { .. }) => malformed += 1,
+                Ok(()) => admitted += 1,
+                other => panic!("unexpected verdict at byte {at}: {other:?}"),
+            }
+        }
+        eprintln!(
+            "[coverage] single-byte flips over {n} proof bytes, {PROBES} probes: \
+             {refused} REFUSED by the header gate, {malformed} refused as malformed, \
+             {admitted} admitted (outside the word-12/11 preimage)"
+        );
+        assert!(
+            refused + malformed > 0,
+            "the header gate must catch SOME corruption, or it reads nothing of the proof"
+        );
+        assert!(
+            admitted > 0,
+            "if every flip were caught, the doc above is wrong and the preimage is wider than \
+             stated — restate the scope rather than deleting this assertion"
+        );
+
+        // ⚑ …and on a position the gate DOES catch, the FULL wiring produces no proof.
+        let at = first_caught.expect("at least one probe must be caught by the binding gate");
+        let mut cs: Vec<u8> = base.protocol_state_proof.clone().into_bytes();
+        cs[at] = if cs[at] == b'A' { b'B' } else { b'A' };
+        let mut b = base.clone();
+        b.protocol_state_proof = String::from_utf8(cs).expect("base64 stays ASCII");
+        match observer.prove_opening_check(&[b]) {
+            Err(ObserveError::HeaderBindingMismatch { block_height, .. }) => {
+                assert_eq!(block_height, 539_508);
+                eprintln!("[falsifier] a proof corrupted at byte {at} produced NO proof");
+            }
+            other => panic!("a caught corruption must produce NO proof, got {other:?}"),
+        }
+    }
+
+    /// ⚑ **NOTHING WAS DECIDED, and it says so.** A segment with no block at a pinned height is
+    /// [`ObserveError::MinaOpeningChallengesUnavailable`] — its own variant, never an `Ok` that
+    /// checked nothing, and never collapsed into the refusal that means the AIR said no.
+    #[test]
+    fn a_segment_with_no_pinned_height_decides_nothing_and_says_so() {
+        let observer = MinaObserver::new(config(539_507, 1), MockMinaRpc::default());
+        let chain = real_devnet_run_blocks(); // 539795..539799, all real, none pinned
+        match observer.prove_opening_check(&chain) {
+            Err(ObserveError::MinaOpeningChallengesUnavailable {
+                exhibited_heights,
+                pinned_heights,
+            }) => {
+                assert_eq!(exhibited_heights.len(), 5);
+                assert!(!exhibited_heights.contains(&539_508));
+                assert_eq!(pinned_heights, vec![539_508]);
+            }
+            other => panic!("an unpinned segment must decide NOTHING, got {other:?}"),
+        }
+    }
+
+    /// ⚑⚑ **THE OTHER FALSIFIER, and it fires INSIDE the circuit rather than before it.** The
+    /// block is genuine and its header binds; what is wrong is the CHALLENGE VECTOR — a different
+    /// block's, well-formed, fifteen reduced Pallas scalars, one round bumped.
+    ///
+    /// This is the arm the header gate cannot reach, and without it the runtime path's only red
+    /// would be a refusal that never touches the AIR. `build_opening_cut` recomputes the s-vector
+    /// from the supplied challenges and compares it to the Lean-emitted descriptor's own digit
+    /// column, so the refusal is legible and arrives before the prover — and if it ever did NOT,
+    /// `pasta_derive_prove.rs::tamper_4_challenge_inconsistent_derivation_is_refused` is the
+    /// deployed verifier saying no to the same disagreement.
+    #[test]
+    fn a_foreign_challenge_vector_is_refused_through_the_opening_check_wiring() {
+        use crate::mina_opening_check as oc;
+        let pinned = oc::pinned_challenges_for(539_508).expect("539508 is pinned");
+        let foreign = dregg_circuit::mina_opening_witness::parse_challenges(
+            oc::COUNTER_EXAMPLE_CHALLENGES.json,
+        )
+        .expect("the counter-example vector parses");
+        match oc::prove_opening_check_with_challenges(539_508, pinned, &foreign) {
+            Err(oc::MinaOpeningCheckError::WitnessRefused { why }) => {
+                assert!(
+                    why.contains("derived s-vector") || why.contains("declared digit"),
+                    "the refusal must name the s-vector disagreement, got: {why}"
+                );
+                eprintln!("[falsifier] a foreign challenge vector was REFUSED: {why}");
+            }
+            other => panic!(
+                "a different block's challenge vector must be REFUSED by the runtime path, got \
+                 {other:?}"
+            ),
+        }
     }
 
     /// The Rust wire builder and the Lean `wireOf` must agree on the grammar, or the gate is

@@ -24,9 +24,18 @@
 # ⚠ SAME REASON AS `regen-pasta-oncurve.sh` FOR LIVING HERE RATHER THAN IN THE BY-NAME DRIVER: the
 # artifact carries Mina's REAL Wrap SRS generators, so emitting it needs
 # `Dregg2.Circuit.Emit.MinaWrapSrsG` (32,768 pinned points), allowlisted OUT of the `Dregg2` root
-# by `scripts/lean-orphans-allow.txt`. The artifacts live under
-# `circuit/tests/fixtures/pasta-sg-derive/` and are sha256-pinned by
-# `circuit/tests/pasta_derive_prove.rs::lean_artifacts_are_pinned`.
+# by `scripts/lean-orphans-allow.txt`. Landing these under `circuit/descriptors/` would drag that
+# import into the drift gate's HOT PATH — `scripts/emit_descriptors.py` stamps that tree with
+# `DESC.rglob("*")` and `--verify-by-name-routing` then demands an emitter for every file it finds.
+# THIS SCRIPT is their drift gate instead, and `--check` is how it is run.
+#
+# ⚑ THE ARTIFACTS MOVED 2026-07-30, from `circuit/tests/fixtures/pasta-sg-derive/` to
+# `metatheory/emitted/mina-opening/`, because they stopped being fixtures: `dregg-bridge`'s
+# `mina_opening_check` `include_str!`s them on a RUNTIME path, and a runtime that reads a fixture
+# path is a smell. They now sit beside the Lean that emits them. They are sha256-pinned in TWO
+# places, both of which go red on an un-re-pinned re-emit:
+#   * `circuit/tests/pasta_derive_prove.rs::lean_artifacts_are_pinned`
+#   * `bridge/src/mina_opening_check.rs`'s `DESCRIPTORS` / `PINNED_CHALLENGES` / `COUNTER_EXAMPLE_*`
 #
 # ⚠ THE PINS ARE THE GATE. A re-emit turns that test red until you re-pin; that is the intended
 # failure mode. `--check` diffs without writing.
@@ -38,7 +47,7 @@ set -euo pipefail
 LANE="${1:?usage: regen-pasta-derive.sh <hbox-lane> [--check]}"
 MODE="${2:-write}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/circuit/tests/fixtures/pasta-sg-derive"
+OUT="$ROOT/metatheory/emitted/mina-opening"
 REMOTE="\$HOME/lanes/$LANE/metatheory"
 
 # n, w, planes — see the geometry note above.
@@ -75,6 +84,8 @@ if [ "$MODE" = "--check" ]; then
 else
   cp "$tmp"/*.json "$OUT/"
   echo "regen-pasta-derive: re-emitted $(ls "$tmp"/*.json | wc -l | tr -d ' ') artifacts into $OUT"
-  echo "  now re-pin the sha256s in circuit/tests/pasta_derive_prove.rs:"
+  echo "  now re-pin the sha256s in BOTH pin sites:"
+  echo "    circuit/tests/pasta_derive_prove.rs::lean_artifacts_are_pinned"
+  echo "    bridge/src/mina_opening_check.rs (DESCRIPTORS / PINNED_CHALLENGES / COUNTER_EXAMPLE_CHALLENGES)"
   (cd "$OUT" && shasum -a 256 ./*.json 2>/dev/null || sha256sum ./*.json)
 fi
