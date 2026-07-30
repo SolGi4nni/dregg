@@ -969,12 +969,17 @@ estimate)
 
 **STILL OPEN AS SOUNDNESS, not as size**
 
-1. **The preamble binding.** §3.12's transcript starts from a **13-lane stand-in** for the
-   batch-STARK's own observes. Until those are the real ones, the derivation is "the challenges
-   given this state", not "the challenges". ⚑ And §3.16 measures what the real one costs:
-   **2.97 × 10⁶ rows** of challenger permutations just to absorb the 2,286 opened values. It was
-   listed here only as a soundness residual; it is a **size term of the same order as the DEEP
-   quotient**.
+1. ~~**The preamble binding.**~~ **CLOSED 2026-07-30 — §3.29.** §3.12's transcript started from a
+   **13-lane stand-in** for the batch-STARK's own observes, so the derivation was "the challenges
+   given this state" and not "the challenges"; §3.28 carried the same hole at real geometry, as a
+   committed witness. The real sequence now runs in circuit — `observe_instance_count`, the seven
+   per-instance bindings, all four commitments **in the transcript's own order, which is not the PCS
+   round order**, the 25 public values, the 64 cumulative sums, `α_stark`, `ζ` and all **2,630**
+   opened values — and the derived `ζ` is asserted to BE the point all 35 committed matrices were
+   opened at. ⚑ **The size estimate on this row was low.** 1,373 permutations and **3,575,411
+   rows**, not the 1,143 / 2.97 × 10⁶ derived here from the superseded 2,286-value census; §3.28's
+   correction to 2,630 is what moves it. It is a size term of the same order as the DEEP quotient,
+   exactly as this row said.
 2. ~~**The DEEP quotient.**~~ **CLOSED 2026-07-28 — §3.15.** The reduced openings are now COMPUTED
    from the MMCS-opened rows, the absorbed claimed evaluations and the transcript's `alpha`.
    `makeDeepBoundQueryProgram` keeps the pre-3.15 statement compiled beside it and the gate
@@ -3003,8 +3008,9 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
 | The row price is a design claim nobody has run | **No longer.** §3.8–3.14 are measured, the circuits are committed under `bridge/mina-zkapp/src/`, and `scripts/check-mina-attestation.sh` fails if any of nine figures drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**, and §3.14 shows how much rests on that. |
-| The FRI walk these circuits perform is *the prover's* | **Yes as of §3.12–3.13b at the fold chain, and as of §3.15 at the value it starts from.** The query index and every `beta` are DERIVED from a `DuplexChallenger` transcript KAT'd against the deployed one, the 16-bit query PoW is checked, one program joins the derivation to the walk, and the reduced opening is now COMPUTED from the opened rows rather than witnessed. **Not yet** for the input-phase opening over MIXED matrix heights (one matrix per batch is built), nor for the batch-STARK preamble the transcript starts from. |
-| The challenger is a rounding error next to the query walk | **Yes — 0.48%, measured (§3.12).** Which is the point: the binding was cheap and was simply absent. |
+| The FRI walk these circuits perform is *the prover's* | **Yes, and as of §3.29 the transcript is too.** The query index and every `beta` are DERIVED (§3.12–3.13b), the reduced opening is COMPUTED from the opened rows (§3.15), the mixed-height input opening is built (§3.28), and the state the whole transcript starts from is now derived from the batch's own commitments, public values, cumulative sums and all 2,630 opened values rather than witnessed — with a forged-but-consistent transcript refused and the refusal attributable to an unsealed control. **What is left is not inside the walk:** nothing in circuit says which *proof* this is (§3.29). |
+| The challenger is a rounding error next to the query walk | **NO — and this row was measuring 1.7% of the challenger.** §3.12's 0.48% is the FRI schedule *alone*, 23 permutations. The transcript that authorises it is **1,373** permutations and **3,575,411 rows — 10.5% of the walk, +10.8% on the query-aligned total** (§3.29), because 1,315 of them are the opened-value absorb. The binding was never cheap; only the part that had been measured was. |
+| The chain says *which* proof it verified | **No — §3.29, and it is now the largest gap.** Every statement is relative to `dagDigest`/`friDigest`, digests of lane tables the prover supplies; slice 0 enters a genesis constant. A Mina-side verifier learns "*some* batch of seven AIRs with these column digests verifies", not "dregg's root proof for chain head H over N turns verifies". The claim is already in the lane table — `expose_claim`'s 25 public values, which §3.29's preamble absorbs — and closing it means carrying those lanes out as a public output. |
 | The DEEP/AIR arithmetic is ~1.5–2% | **No — ≈3.5%.** §2.4 priced a Horner step at ~7 rows; it is **49, measured** (§3.14). Still not the driver. |
 | A Mina zkApp could today verify a dregg **proof**, not a dregg commitment | **Yes, at a reduced geometry — §3.19.** One `ZkProgram` consumes a proof `p3_uni_stark::prove` made under `DreggStarkConfig` and DECIDES it (preamble, opened-value absorption, FRI transcript, the AIR closing equality, the DEEP quotient, the MMCS openings, the fold chain) in **56,927 rows — ONE 2^16 Pickles step**, compiling, PROVING, verifying, and REFUSING seven bends and three wrong AIRs as real `prove()` refusals. **Not** at the deployed root's geometry: that projects to ≈ 2.75 × 10⁷ rows / 500–573 steps from §3.19's own measured marginals, and the AIR term in that total is the fixture's four constraints, not the root's 1,093. |
 | The rungs are assembled | **Yes as of §3.19, and they were not before.** Every rung up to §3.18 was fed a fixture the measurement synthesised. §3.19's fixture is a proof dregg's prover made and dregg's own verifier accepted before it was emitted. |
