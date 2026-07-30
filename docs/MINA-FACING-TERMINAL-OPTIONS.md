@@ -282,15 +282,93 @@ Mina settlement should cost per dregg root, not whether it can happen at all.
 That said, the gap between **453 slices** and **30** is the difference between "a batch job" and
 "a thing a relayer runs on every root", and the lever costs no trusted setup and no soundness.
 
-At the measured **234 s per slice** (171 s compile + 63 s prove), taken as a flat per-slice cost:
+### ⚑ Which slice currency this document is in
+
+There are two, and they are not interchangeable. **Every slice figure above is `rows / 54,300`** — the
+same currency as §3.23's emitted schedule, which reads **448 steps at `mpv = 1`** against my 453, so
+the two agree. The *other* currency is the live leg-18 planner (`fri-walk-plan`), which models
+30,363,795 rows and places real cuts at a 50,000-row budget with measured carry:
+**839 FRI slices + 7 AIR slices = 846**, 23.4% of it carry. That number is larger because it
+schedules rather than divides and because it prices the AIR braid.
+
+**The ratios in this document hold in either currency** — they are ratios of row counts, and the
+hash swap does not change how cuts are placed. Read "453" as "the deployed root, in the currency the
+prompt's ~460 came from", not as a scheduling result.
+
+### Wall clock — and the provenance correction
+
+⚠ The often-quoted **171 s compile + 63 s prove** is §3.27's per-**process** average for the seven
+**AIR** slices (1,200 s / 7, 442 s / 7) and includes node boot, o1js load and `analyzeMethods`. The
+**FRI** slices' own artifacts (`.fullchain/fri-meta-{0..24}.json`, 25 slices, all `verified: true`)
+measure **53.6 s compile / 19.7 s prove** mean — the `compile()`/`prove()` calls themselves. Using
+the FRI figures, at ~73 s per slice:
 
 | | slices | serial | 7-way | 16-way |
 |---|---:|---:|---:|---:|
-| root, deployed | 453 | 29 h | **4.2 h** | 1.8 h |
-| root + `arity 8` + `cap 8` + `q 16` | 255 | 17 h | 2.4 h | 1.0 h |
-| BabyBear-hashed shrink | 180 | 12 h | 1.7 h | 0.7 h |
-| **Pasta-hashed root** | **54** | 3.5 h | **30 min** | 13 min |
-| **Pasta-hashed shrink** | **30** | 2.0 h | **17 min** | 7 min |
+| root, deployed | 453 | 9.2 h | **1.3 h** | 35 min |
+| root + `arity 8` + `cap 8` + `q 16` | 255 | 5.2 h | 44 min | 19 min |
+| BabyBear-hashed shrink | 180 | 3.7 h | 31 min | 14 min |
+| **Pasta-hashed root** | **54** | 1.1 h | **9 min** | 4 min |
+| **Pasta-hashed shrink** | **30** | 37 min | **5 min** | 2 min |
+
+⚑ **Compile is 73% of that, and §5.1 below shows it should be ~zero.**
+
+### 5.1 ⚑ THE SECOND LEVER, and it is orthogonal to the hash: the 19 query walks are the SAME SHAPE, and the walk compiles 839 distinct circuits anyway
+
+The hash swap cuts **rows**. This cuts **compiles**, and it is a bigger factor.
+
+The deployed FRI walk builds **one `ZkProgram` per slice index**: `friSliceProgramName(si, …)` bakes
+`si` into the program name (`RootFriSlice.ts:832-838`), `friSliceShape(si)` makes the private-input
+widths a function of `si` (`:841-856`), and `AIR_SLICES + si` enters the boundary as a
+**compile-time constant** rather than a witness (`:955-957`, `:967-971`). So **839 slices means 839
+compiles and 839 verification keys.**
+
+But the planner's own output shows the object is homogeneous. Live run of the committed
+`fri-walk-plan`, slices per query:
+
+```
+[45,45,45,45,44,45,44,43,44,44,44,44,44,43,44,44,43,43,43]   + 3 for the transcript
+```
+
+**Nineteen structurally identical query walks, 43–45 slices each.** The ~15× redundancy is thrown
+away by a planner that cuts greedily and *globally*, so each query's cut list drifts by a slice or
+two and no two slices end up the same shape.
+
+**The mechanism to fix it is already built and already proved, one section over.** §3.20's
+`DreggProofPartition.makeChainedProofVerify` is exactly a uniform circuit that *cannot* bake in its
+own position: the step index `k` and the terminal bit are **witnesses**, pinned three ways (constant
+`k = 1` on `first`; `Poseidon(rcd, cd, k) == publicInput` **and**
+`predecessor.publicOutput == publicInput` on `step`; `k+1` in the closing seal). Measured there:
+the whole chain is **two verification keys — one transcript step, one walk step reused N times** —
+and the uniformity costs **11 rows** (`walk.first` 23,623 vs `walk.step` 23,612).
+
+⚑ **Nothing applies this to the deployed FRI walk, and nothing in the repo discusses doing so.** The
+only place the homogeneity is named at all is `root-air-chain.ts:33-40`, and it is named as a
+*contrast* — explaining why the **AIR** slices legitimately need one VK each (*"the AIR's slices are
+DIFFERENT programs … their chains are ONE circuit invoked N times, **because 19 query walks are the
+same shape**"*). The observation is written down and the consequence is not drawn.
+
+| | today | query-aligned cuts |
+|---|---:|---:|
+| slice instances | 846 | 846 |
+| **distinct shapes / compiles / VKs** | **846** | **≈ 55** (45 query + 3 transcript + 7 AIR) |
+| compile, serial @ 53.6 s | **12.6 h** | **49 min** |
+| prove, serial @ 19.7 s | 4.6 h | 4.6 h |
+
+And the win is bigger than 15×, because **a VK for a fixed program is a protocol constant emitted
+once** — the exact argument §3.24/§3.27 already makes for the AIR slice keys. Compile leaves the
+per-proof path entirely and the marginal cost of verifying a root becomes **prove-only**, fully
+parallel across the 19 queries.
+
+⚠ **The cost, and it is not measured anywhere:** the 45 per-query shapes must be *identical*, so the
+cuts must be forced onto a common offset grid. Measured carry per slice currently ranges
+**4,940 to 32,318** rows against a 50,000-row budget, so aligning them wastes slack. **How much
+slack is the first thing to price**, and it is a cheap measurement — re-run the planner with the cut
+offsets constrained to repeat per query and compare the slice count.
+
+**This composes with the hash swap rather than competing with it.** At the Pasta-hashed shrink's
+~30 slices over 19 queries the walk is ~1.5 slices per query, so the distinct-shape count falls to a
+handful and compile stops being a line item at all.
 
 ### ⚑ And the boundary carry stops mattering too
 
