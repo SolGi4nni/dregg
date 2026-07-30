@@ -11,7 +11,7 @@
 //! Law #1 forbids Rust-authored constraints in `src/`. It does not forbid a Rust-side EXPECTATION
 //! in a test — an emit-gate differential has to build one in order to compare it against the Lean
 //! emission; that is the law working, and it is why the gate scopes `tests/` trees out by name.
-//! [`hand_written_reference`] below is the DELETED AIR, verbatim, kept as the thing the emitted
+//! [`HandWrittenReference`] below is the DELETED AIR, verbatim, kept as the thing the emitted
 //! descriptor must reproduce. If it ever moves to `src/`, the gate reds.
 //!
 //! ## What the differential actually decides, and why it is not a syntax comparison
