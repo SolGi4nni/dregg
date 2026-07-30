@@ -390,6 +390,17 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
  * can produce a proof of an unconditional method, and the obligation below is a
  * SHAPE constraint. Strictly worse than a labelled placeholder. All four
  * closing is what removes it.
+ *
+ * ⚑ AND THE SUCCESSOR NOW EXISTS AS CODE, WHICH CHANGES WHAT "SCHEDULED FOR
+ * DELETION" MEANS HERE. `DreggHeadAnchor.ts` builds `DreggHeadGate`: a contract
+ * with NO key in it, whose head advances because the terminal proof of dregg's
+ * root-proof verification chain verified under a pinned key, at a pinned key-
+ * list root, at the pinned chain LENGTH, and whose claim `(G, H, N, D)` is read
+ * off that proof (§3.30) rather than supplied to it. `PLACEHOLDER_CUTOVER` in
+ * that file is the retirement plan, and its trigger is one observable event: an
+ * `advanceHead` transaction included on Devnet against pins a real chain compile
+ * emitted. Until that has happened this contract stays EXACTLY as it is —
+ * unedited, key intact — because the alternative is an ungated anchor.
  */
 export class DreggAttestedGate extends SmartContract {
   /** The Pasta state root this gate trusts. This is `app_state_0` — the slot
@@ -405,7 +416,10 @@ export class DreggAttestedGate extends SmartContract {
    *  available. Written ONCE, by the deploy account update — which is
    *  signature-authorized, so only the holder of the zkApp key can install it —
    *  and no method changes it. It is deleted when `DreggAnchorStatement`
-   *  becomes the FRI verify, not before. */
+   *  becomes the FRI verify, not before — and as of 2026-07-30 that successor is
+   *  written rather than described: `DreggHeadAnchor.makeDreggHeadGate`, whose
+   *  `PLACEHOLDER_CUTOVER` names the five phases and what refuses to load after
+   *  P5. This field dies at P5 and not at P1. */
   @state(PublicKey) placeholderRelay = State<PublicKey>();
 
   /**
