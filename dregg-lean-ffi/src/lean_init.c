@@ -573,6 +573,34 @@ extern lean_object *dregg_mina_state_hash_word_ok(lean_object *input);
  * and is re-entrant-safe under Lean's init guards. */
 extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaStateHashWordGate(uint8_t builtin);
 #endif
+/* dregg_mina_wrap_challenges — ⚑ THE PER-BLOCK CHALLENGE DERIVATION
+ * (`Dregg2.Bridge.MinaWrapChallenges`): a Wrap proof's own Fiat-Shamir challenges — beta, gamma,
+ * alpha', zeta', the phase-1 digest, `t`, `c'` and the FIFTEEN raw IPA prechallenges — run forward
+ * from the block's own absorbed coordinates. This is what retires `mina_opening_check.rs`'s
+ * one-height `PINNED_CHALLENGES`.
+ *
+ * ⚑ THE EXPORT LANDED 2026-07-30 AND HAD NO BRIDGE. `Dregg2/FFI.lean` rooted the module and
+ * `build.rs` probed the symbol, so the archive carried it and `cargo` set
+ * `dregg_mina_wrap_challenges_present` — and there was no `_str` bridge here and no wrapper in
+ * `lib.rs`, so nothing could call it. That is the GATING-DEFAULTS-TO-SILENCE class: not broken
+ * code, code never connected. The bridge is here now.
+ *
+ * ⚑ NEEDS ITS MODULE INITIALIZER, for the reason `headerOk` does: the sponge schedules read the
+ * top-level `fpParams` record out of initialized module data, and calling the export first
+ * dereferences uninitialized globals and takes SIGSEGV with no Rust panic. */
+#ifdef DREGG_MINA_WRAP_CHALLENGES
+extern lean_object *dregg_mina_wrap_challenges(lean_object *input);
+extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaWrapChallenges(uint8_t builtin);
+#endif
+/* dregg_mina_wrap_ft_eval0 — ⚑ THE OTHER HALF (`Dregg2.Bridge.MinaWrapFtEval0`): the linearization
+ * constant term DERIVED from the six transcribed gate bodies, `ft_eval0`, the domain generator and
+ * the two challenge lifts, at either side of the Pasta cycle. `MinaWrapChallenges` above cannot
+ * supply `public_comm` or `cipShifted` without it. Same `"ERR"` fail-closed contract; same module
+ * initializer requirement (`pN`/`qN` and every `KimchiVerify` constant are module data). */
+#ifdef DREGG_MINA_WRAP_FT_EVAL0
+extern lean_object *dregg_mina_wrap_ft_eval0(lean_object *input);
+extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaWrapFtEval0(uint8_t builtin);
+#endif
 /* dregg_mina_better_tip / dregg_mina_head_advance — the SAMASIKA FORK-CHOICE decision and the
  * ROLLING VERIFIED HEAD (`Dregg2.Bridge.MinaForkChoiceGate`, over the `select` rule of
  * `Dregg2.Bridge.MinaChainSelection`). The anchored-segment gate above deliberately decides no fork
@@ -717,6 +745,24 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(mshres);
+#endif
+#ifdef DREGG_MINA_WRAP_CHALLENGES
+    lean_object *mwcres = initialize_Dregg2_Dregg2_Bridge_MinaWrapChallenges(1);
+    if (!lean_io_result_is_ok(mwcres)) {
+        lean_io_result_show_error(mwcres);
+        lean_dec_ref(mwcres);
+        return 1;
+    }
+    lean_dec_ref(mwcres);
+#endif
+#ifdef DREGG_MINA_WRAP_FT_EVAL0
+    lean_object *mwfres = initialize_Dregg2_Dregg2_Bridge_MinaWrapFtEval0(1);
+    if (!lean_io_result_is_ok(mwfres)) {
+        lean_io_result_show_error(mwfres);
+        lean_dec_ref(mwfres);
+        return 1;
+    }
+    lean_dec_ref(mwfres);
 #endif
 #if defined(DREGG_MINA_BETTER_TIP) || defined(DREGG_MINA_HEAD_ADVANCE)
     /* ONE initializer for BOTH fork-choice exports — they share a module, and it is what brings the
@@ -1420,6 +1466,62 @@ size_t dregg_mina_state_hash_word_ok_str(const char *in_utf8, char *out, size_t 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_state_hash_word_ok(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_WRAP_CHALLENGES
+/* dregg_mina_wrap_challenges_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * per-block Fiat-Shamir derivation (`Dregg2.Bridge.MinaWrapChallenges.minaWrapChallengesGate`).
+ * Input:
+ *   `"vk=<Nat>;er=<Nat>;pc=<NATS>;pu=<NATS>;wc=<NATS>;zc=<NATS>;tc=<NATS>;cs=<Nat>;lr=<NATS>;dl=<NATS>"`
+ * — the verifier-index digest (TRUSTED CONFIG), the Pallas `endo_r`, the 2 accumulator
+ * commitments, `public_comm`, the 15 witness commitments, `z_comm`, the 7 `t_comm` chunks,
+ * `shift_scalar(combined_inner_product)`, the 15 IPA rounds FLAT (60 numbers, re-chunked in Lean
+ * because a caller that chunks is a caller that can mis-chunk) and `delta`.
+ * Output: `"b=..;g=..;a=..;z=..;fq=..;t=..;c=..;ch=<15 NATS>"` or `"ERR"` (fail-closed).
+ * The wire is ~3 KB of decimals; the caller's growable output buffer already handles it. */
+size_t dregg_mina_wrap_challenges_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_wrap_challenges(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_WRAP_FT_EVAL0
+/* dregg_mina_wrap_ft_eval0_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * per-block `ft_eval0` derivation (`Dregg2.Bridge.MinaWrapFtEval0.minaWrapFtEval0Gate`). Input:
+ *   `"m=<p|q>;lg=<Nat>;al=<Nat>;be=<Nat>;ga=<Nat>;ze=<Nat>;ez=<43 NATS>;ew=<43 NATS>;pz=<Nat>;
+ *     er=<Nat>;en=<Nat>;sh=<7 NATS>;md=<9 NATS>"`
+ * — the field selector (`p` = STEP/Tick, `q` = WRAP/Tock), the domain log2, the four RAW plonk
+ * challenges, the 43 evaluation columns at zeta and at zeta*omega in `to_absorption_sequence`
+ * order, the public polynomial at zeta, the challenge-lift endomorphism scalar, the gate
+ * `endo_coefficient` (a DIFFERENT constant), the seven coset shifts and the nine MDS entries.
+ * Output: `"lct=..;ft0=..;om=..;ze=..;al=.."` or `"ERR"` (fail-closed).
+ *
+ * ⚑ There is deliberately no Rust linearization and no Rust modular inverse: the inverse the C5
+ * fold needs is produced AND CHECKED (`x*y = 1`) inside the archive. */
+size_t dregg_mina_wrap_ft_eval0_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_wrap_ft_eval0(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

@@ -2727,3 +2727,347 @@ mod tests {
         );
     }
 }
+
+// ===========================================================================
+// MINA — THE PER-BLOCK DERIVATION PAIR (`dregg_mina_wrap_challenges`,
+// `dregg_mina_wrap_ft_eval0`)
+// ===========================================================================
+//
+// ⚑ WHY THIS SECTION EXISTS, and it is not "a new feature". On 2026-07-30
+// `Dregg2.Bridge.MinaWrapChallenges` landed, was rooted in `Dregg2/FFI.lean`, and `build.rs`
+// probed its symbol and set `dregg_mina_wrap_challenges_present`. There was no `_str` bridge in
+// `lean_init.c` and no wrapper here, so the archive carried the export and **nothing in the
+// process could call it**. That is the GATING-DEFAULTS-TO-SILENCE class in its purest form: no
+// broken code, no red test, a gate that cannot go red because it cannot be entered.
+//
+// ⚑ AND THERE IS NO RUST TWIN OF EITHER, deliberately. A Rust Fq-sponge is a re-rendering of a
+// transcript, and a Rust linearization is a re-rendering of a circuit's meaning; both would be
+// exactly the drift `Dregg2.Bridge.MinaChainSelection`'s gate deletes for `select`. Rust here
+// formats decimals and parses `key=value`. Absent exports are `Err`, never a local computation.
+
+/// The per-block Fiat–Shamir challenges of ONE Wrap proof, as the verified gate derived them.
+///
+/// ⚑ Every field is the gate's output, parsed. Nothing in this struct is computed on this side,
+/// and there is no constructor that fills one in from anywhere else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinaWrapChallenges {
+    /// β — the first raw 128-bit phase-1 squeeze.
+    pub beta: String,
+    /// γ — the second.
+    pub gamma: String,
+    /// α′ — the quotient prechallenge.
+    pub alpha_chal: String,
+    /// ζ′ — the evaluation-point prechallenge.
+    pub zeta_chal: String,
+    /// `fq_sponge.digest()` reinterpreted in the scalar field — what seeds phase 2.
+    pub fq_digest: String,
+    /// `challenge_fq()`'s full-field output, the group map's preimage.
+    pub t: String,
+    /// `c′`, squeezed after `delta`.
+    pub c_pre: String,
+    /// ⚑ **The 15 RAW IPA prechallenges** — the vector `mina_opening_check.rs` used to have pinned
+    /// for exactly one height.
+    pub ipa_prechallenges: Vec<String>,
+}
+
+/// The per-block `ft_eval0` derivation's answer for ONE side of the Pasta cycle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinaWrapFtEval0 {
+    /// ⚑ The linearization constant term, DERIVED from the six transcribed gate bodies. This is
+    /// the value `Dregg2.Circuit.Emit.MinaRealBlockGate` carries as `LCT`.
+    pub lin_const_term: String,
+    /// `ft_eval0`.
+    pub ft_eval0: String,
+    /// The derived domain generator.
+    pub omega: String,
+    /// ζ, endomorphism-lifted.
+    pub zeta: String,
+    /// α, endomorphism-lifted.
+    pub alpha: String,
+}
+
+/// Is the per-block challenge derivation callable in THIS build?
+///
+/// ⚑ A `false` is a refusal, never a licence to derive challenges some other way.
+pub fn mina_wrap_challenges_available() -> bool {
+    ffi_mina_wrap_challenges::present() && lean_init_once().is_ok()
+}
+
+/// Is the per-block `ft_eval0` derivation callable in THIS build?
+pub fn mina_wrap_ft_eval0_available() -> bool {
+    ffi_mina_wrap_ft_eval0::present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_wrap_challenges` over a pre-built wire and return
+/// its raw answer. The wire grammar is `Dregg2.Bridge.MinaWrapChallenges` §4.
+pub fn shadow_mina_wrap_challenges(wire: &str) -> Result<String, String> {
+    lean_init_once()?;
+    ffi_mina_wrap_challenges::call(wire)
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_wrap_ft_eval0` over a pre-built wire.
+pub fn shadow_mina_wrap_ft_eval0(wire: &str) -> Result<String, String> {
+    lean_init_once()?;
+    ffi_mina_wrap_ft_eval0::call(wire)
+}
+
+/// Split `"k=v;k=v"` into its values, checking every key IN ORDER.
+///
+/// ⚑ Positional AND named: a gate that grew a field, or reordered two, is a parse failure here
+/// rather than a silently mis-assigned value. That is the same reason the Lean side checks its own
+/// keys positionally in `parseChallengeWire`.
+fn parse_kv_ordered(out: &str, keys: &[&str]) -> Result<Vec<String>, String> {
+    let parts: Vec<&str> = out.split(';').collect();
+    if parts.len() != keys.len() {
+        return Err(format!(
+            "the gate answered {} field(s), expected {} ({:?})",
+            parts.len(),
+            keys.len(),
+            keys
+        ));
+    }
+    let mut vals = Vec::with_capacity(keys.len());
+    for (part, key) in parts.iter().zip(keys.iter()) {
+        let (k, v) = part
+            .split_once('=')
+            .ok_or_else(|| format!("field `{part}` is not `key=value`"))?;
+        if k != *key {
+            return Err(format!("field {k} is not the expected `{key}`"));
+        }
+        vals.push(v.to_string());
+    }
+    Ok(vals)
+}
+
+/// Every value the gate returns must be a canonical decimal — no sign, no leading `+`, no
+/// whitespace. A malformed answer is a REFUSAL; nothing downstream sees a partially-parsed one.
+fn all_decimal(v: &str) -> bool {
+    !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// ⚑⚑ **THE PER-BLOCK CHALLENGE DERIVATION.** Hand the gate one Wrap proof's absorbed coordinates
+/// and get its own 15 IPA prechallenges back.
+///
+/// Every argument is a decimal rendering of a value `bridge/src/mina_pickles.rs` decoded, except
+/// `vk_digest` and `endo_r`, which are TRUSTED CONFIG and are named as such by the caller.
+/// `lr` arrives FLAT (60 numbers) and is re-chunked INSIDE the archive.
+#[allow(clippy::too_many_arguments)]
+pub fn verified_mina_wrap_challenges(
+    vk_digest: &str,
+    endo_r: &str,
+    prev_comm: &[String],
+    public_comm: &[String],
+    w_comm: &[String],
+    z_comm: &[String],
+    t_comm: &[String],
+    cip_shifted: &str,
+    lr_flat: &[String],
+    delta: &[String],
+) -> Result<MinaWrapChallenges, String> {
+    let join = |xs: &[String]| xs.join(",");
+    let wire = format!(
+        "vk={vk_digest};er={endo_r};pc={};pu={};wc={};zc={};tc={};cs={cip_shifted};lr={};dl={}",
+        join(prev_comm),
+        join(public_comm),
+        join(w_comm),
+        join(z_comm),
+        join(t_comm),
+        join(lr_flat),
+        join(delta),
+    );
+    let out = shadow_mina_wrap_challenges(&wire)?;
+    if out == "ERR" {
+        return Err(
+            "the VERIFIED challenge gate REFUSED this tape: a wrong-shaped absorb sequence, a \
+             non-canonical coordinate, or fewer than 15 IPA rounds. Nothing was derived"
+                .to_string(),
+        );
+    }
+    let v = parse_kv_ordered(&out, &["b", "g", "a", "z", "fq", "t", "c", "ch"])?;
+    let chals: Vec<String> = v[7].split(',').map(|s| s.to_string()).collect();
+    if chals.len() != 15 {
+        return Err(format!(
+            "the gate returned {} IPA prechallenges, and the emitted AIR witnesses 15",
+            chals.len()
+        ));
+    }
+    for x in v.iter().take(7).chain(chals.iter()) {
+        if !all_decimal(x) {
+            return Err(format!("the gate returned a non-decimal field `{x}`"));
+        }
+    }
+    Ok(MinaWrapChallenges {
+        beta: v[0].clone(),
+        gamma: v[1].clone(),
+        alpha_chal: v[2].clone(),
+        zeta_chal: v[3].clone(),
+        fq_digest: v[4].clone(),
+        t: v[5].clone(),
+        c_pre: v[6].clone(),
+        ipa_prechallenges: chals,
+    })
+}
+
+/// ⚑⚑ **THE PER-BLOCK `ft_eval0` DERIVATION.** `wrap_side` selects the modulus: `true` is the
+/// WRAP/Tock side (`ZMod qN`), `false` the STEP/Tick side (`ZMod pN`).
+///
+/// `ez`/`ew` are the 43 evaluation columns at ζ and ζω in `to_absorption_sequence` order; the
+/// archive slices `w`, `coefficients`, `s` and the six selectors out of them, because a caller that
+/// slices is a caller that can mis-slice.
+#[allow(clippy::too_many_arguments)]
+pub fn verified_mina_wrap_ft_eval0(
+    wrap_side: bool,
+    domain_log2: u32,
+    alpha_chal: &str,
+    beta_chal: &str,
+    gamma_chal: &str,
+    zeta_chal: &str,
+    ez: &[String],
+    ew: &[String],
+    p_zeta: &str,
+    endo_r: &str,
+    endo_coefficient: &str,
+    shifts: &[String],
+    mds: &[String],
+) -> Result<MinaWrapFtEval0, String> {
+    let join = |xs: &[String]| xs.join(",");
+    let wire = format!(
+        "m={};lg={domain_log2};al={alpha_chal};be={beta_chal};ga={gamma_chal};ze={zeta_chal};\
+         ez={};ew={};pz={p_zeta};er={endo_r};en={endo_coefficient};sh={};md={}",
+        if wrap_side { "q" } else { "p" },
+        join(ez),
+        join(ew),
+        join(shifts),
+        join(mds),
+    );
+    let out = shadow_mina_wrap_ft_eval0(&wire)?;
+    if out == "ERR" {
+        return Err(
+            "the VERIFIED ft_eval0 gate REFUSED this side: a column list that is not 43 long, a \
+             domain beyond the field's two-adicity, or a denominator with no witnessed inverse. \
+             Nothing was derived"
+                .to_string(),
+        );
+    }
+    let v = parse_kv_ordered(&out, &["lct", "ft0", "om", "ze", "al"])?;
+    for x in &v {
+        if !all_decimal(x) {
+            return Err(format!("the gate returned a non-decimal field `{x}`"));
+        }
+    }
+    Ok(MinaWrapFtEval0 {
+        lin_const_term: v[0].clone(),
+        ft_eval0: v[1].clone(),
+        omega: v[2].clone(),
+        zeta: v[3].clone(),
+        alpha: v[4].clone(),
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_wrap_challenges_present))]
+mod ffi_mina_wrap_challenges {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_wrap_challenges_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn present() -> bool {
+        true
+    }
+
+    pub fn call(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        // The answer is eight decimals plus fifteen more — comfortably under 2 KB — but the loop
+        // grows anyway rather than truncating, the same contract every other bridge has.
+        let mut cap = 2048;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_wrap_challenges_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_wrap_challenges_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_wrap_challenges_present)))]
+mod ffi_mina_wrap_challenges {
+    pub fn present() -> bool {
+        false
+    }
+
+    pub fn call(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_wrap_challenges not exported by the linked archive (rebuild to enable). \
+             There is NO Rust fallback and there must not be one"
+                .into(),
+        )
+    }
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_wrap_ft_eval0_present))]
+mod ffi_mina_wrap_ft_eval0 {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_wrap_ft_eval0_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn present() -> bool {
+        true
+    }
+
+    pub fn call(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 2048;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_wrap_ft_eval0_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_wrap_ft_eval0_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_wrap_ft_eval0_present)))]
+mod ffi_mina_wrap_ft_eval0 {
+    pub fn present() -> bool {
+        false
+    }
+
+    pub fn call(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_wrap_ft_eval0 not exported by the linked archive (rebuild to enable). \
+             There is NO Rust fallback and there must not be one"
+                .into(),
+        )
+    }
+}

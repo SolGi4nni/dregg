@@ -302,6 +302,14 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          Rust twin and there must not be one: a Rust Fq-sponge is a re-rendering of a transcript, \
          i.e. of the meaning of `these are the proof's own challenges`",
     ),
+    (
+        "dregg_mina_wrap_ft_eval0",
+        "the PER-BLOCK `ft_eval0` DERIVATION compiles out — the linearization constant term goes \
+         back to being a CARRIER, so neither `public_comm` nor `cipShifted` can be computed and \
+         `dregg_mina_wrap_challenges` above has two arguments nobody can supply. Fail-closed with \
+         NO Rust twin and there must not be one: the six gate constraint bodies ARE the circuit's \
+         meaning, and a Rust rendering of them would carry no proof and no differential",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2204,6 +2212,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_head_advance_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_checkpoint_advance_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_challenges_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_ft_eval0_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -3212,6 +3221,18 @@ fn main() {
     } else {
         absent_export_warn("dregg_mina_wrap_challenges");
     }
+    // ⚑ The PER-BLOCK `ft_eval0` DERIVATION (`Dregg2.Bridge.MinaWrapFtEval0`). Probed exactly like
+    // the gate above, and for a reason that gate's history makes concrete: on 2026-07-30
+    // `dregg_mina_wrap_challenges` was rooted in `Dregg2/FFI.lean` and probed HERE, and had no
+    // `_str` bridge in `lean_init.c` and no wrapper in `lib.rs` — so the cfg was set, the archive
+    // carried the symbol, and nothing on earth could call it. Both halves of the plumbing land
+    // together now.
+    let mina_wrap_ft_eval0_present = archive_exports(&build_archive, "dregg_mina_wrap_ft_eval0");
+    if mina_wrap_ft_eval0_present {
+        println!("cargo:rustc-cfg=dregg_mina_wrap_ft_eval0_present");
+    } else {
+        absent_export_warn("dregg_mina_wrap_ft_eval0");
+    }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
     // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
@@ -3446,6 +3467,15 @@ fn main() {
     }
     if mina_state_hash_word_ok_present {
         shim.define("DREGG_MINA_STATE_HASH_WORD_OK", None);
+    }
+    // ⚑ THE TWO PER-BLOCK DERIVATION GATES. `DREGG_MINA_WRAP_CHALLENGES` was MISSING here while its
+    // cfg probe above was already live — the export entered the archive and no `_str` bridge was
+    // ever compiled, which is a gate that cannot go red because it cannot be called at all.
+    if mina_wrap_challenges_present {
+        shim.define("DREGG_MINA_WRAP_CHALLENGES", None);
+    }
+    if mina_wrap_ft_eval0_present {
+        shim.define("DREGG_MINA_WRAP_FT_EVAL0", None);
     }
     // The FORK-CHOICE pair. Independently probed like every gate above, but they share ONE module
     // initializer in `lean_init.c` (both are `Dregg2.Bridge.MinaForkChoiceGate`, and the gate reads
