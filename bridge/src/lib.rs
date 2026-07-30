@@ -55,6 +55,14 @@ pub mod mina;
 /// dregg root) instead of trusting a relayer ack. The Mina-direction twin of
 /// [`midnight_observer`]; finalized-only, the verify, the injected transport.
 pub mod mina_observer;
+/// ⚑⚑ **The callable path that proves dregg verified a Mina block's `⟨s, srs.g⟩` opening leg.**
+///
+/// The AIR is LEAN-AUTHORED (`Dregg2.Circuit.Emit.PastaMsmScalarDerive`, emitted by
+/// `metatheory/EmitPastaDerive.lean`); this module resolves the four sha-pinned emitted
+/// descriptors, fills trace cells through [`dregg_circuit::mina_opening_witness`], and runs the
+/// deployed prover and verifier. Until 2026-07-30 that circuit was reachable from no runtime path
+/// at all — it existed only in a test.
+pub mod mina_opening_check;
 /// The byte-exact decoder for a Mina block's **Pickles Wrap proof**
 /// (`Mina_base.Proof.Stable.V2`, served as base64url binprot by
 /// `protocolStateProof { base64 }` — an OBJECT, not a scalar) and the SHAPE projection the
