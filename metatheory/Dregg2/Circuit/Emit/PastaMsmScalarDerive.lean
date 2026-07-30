@@ -1546,9 +1546,21 @@ theorem derived_row_bit_is_the_wire_svec_bit
 holds.** `PastaMsmBound.manifestRow` declares trace row `i`'s digit as `scalarDigit scal planes
 (lo + termAt w i) (planeAt w i)` — an INDEX argument and a PLANE argument. This theorem reproduces
 BOTH from the emitted derivation: the index through `hgidx` (which `PastaMsmBound.bound_forces_gidx`
-supplies from the same manifest) and the plane through the emitted plane thread. So on a satisfying
-trace the manifest's `digit` field is derived twice and the second copy checks nothing a satisfying
-trace could violate.
+supplies from the same manifest) and the plane through the emitted plane thread.
+
+⚑ **Read the conclusion carefully — it ranges over `sScalars (csOfPi pv nb) N`, the s-vector of the
+challenges ON THE WIRE, and NOT over the descriptor's declared `scal`.** Composed with
+`PastaMsmBound.bound_forces_digit` (which gives `BIT = scalarDigit scal planes (lo + termAt w i)
+(planeAt w i)` from the manifest) that is a two-sided statement, and both sides matter:
+
+  * where the declared `scal` IS the wire's s-vector — the deployed emission — the manifest's
+    `digit` field is derived twice and the second copy checks nothing a satisfying trace could
+    violate. That is the redundancy claim, and it is now at the manifest's OWN index and the
+    manifest's OWN plane rather than at ones a caller named.
+  * where it is NOT, the two forcings disagree on a conditional-add row and **no trace satisfies
+    both** — which is why `tamper_2_wrong_block_scalar_is_refused` and
+    `tamper_4_challenge_inconsistent_derivation_is_refused` are refusals rather than mismatched
+    numbers.
 
 ⚠ The manifest's other three fields are NOT redundant and this changes nothing about them: **no
 emitted gate in this file relates a generator INDEX to generator COORDINATES.** Delete the manifest
