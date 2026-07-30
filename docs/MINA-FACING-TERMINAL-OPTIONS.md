@@ -636,6 +636,18 @@ blockSegs]` is 19 slots shorter than `liveIn[headSegs]`. **Every one of the 19 b
 was broken.** Those joins first occur at instance 46 and the seal at instance 820, so a proof run of
 any affordable length would have been green and wrong.
 
+**Proved, against dregg's committed root proof, one process per slice:**
+
+| | | |
+|---|---|---|
+| `head0` | k = **7** (constant) | predecessor **AIR slice 6** under its own key, pinned by the compile-time constant, entering AIR slice 6's own terminal seal |
+| `head1` | k = 8 (constant) | `publicInput` **is** head0's `publicOutput`; predecessor's key proved at **leaf 0 of the carried key tree** |
+| `head2` | k = 9 (constant) | — |
+| **`block0`** | **k = 10, WITNESSED** | **q witnessed and tied to k; the current-query register muxed out of the 19 carried transcript indices; the two-level per-query commitment; the key tree at leaf 2** |
+
+`head0`'s verification key hash is bit-identical across three independent processes and two working
+directories, so the list the tree is built over is a constant and not an accident of one run.
+
 ⚑ **What re-emits.** The FRI lane table is chunk-aligned per query and `friDigest` is two-level, so
 **every boundary in this chain is a different field element from the deployed one's**. Nothing holds
 the old shape — the deployed FRI slice artifacts are a leg's measurements, not state — but the two
