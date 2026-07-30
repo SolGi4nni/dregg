@@ -82,6 +82,17 @@ type TestChallenger = DuplexChallenger<P3BabyBear, Perm16, 16, 8>;
 type TestPcs =
     TwoAdicFriPcs<P3BabyBear, DreggDft, TestMmcs, ExtensionMmcs<P3BabyBear, EF, TestMmcs>>;
 
+/// [`DreggStarkConfig`]'s base-field MMCS, NAMED.
+///
+/// Exported because [`crate::mina_fixture_emit`] is generic over the hash suite
+/// and has to spell the MMCS out in a bound — the two suites differ in exactly
+/// this type and its Pasta twin. Nothing else about the config is reachable
+/// from a bound, which is why these two aliases exist and no more.
+pub type FixtureValMmcs = TestMmcs;
+/// [`DreggStarkConfig`]'s challenge-field (FRI commit-phase) MMCS. See
+/// [`FixtureValMmcs`].
+pub type FixtureChallengeMmcs = ExtensionMmcs<P3BabyBear, EF, TestMmcs>;
+
 /// The actual STARK config type used (matching Plonky3's own test setup).
 pub type DreggStarkConfig = StarkConfig<TestPcs, EF, TestChallenger>;
 

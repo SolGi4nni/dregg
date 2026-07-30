@@ -393,6 +393,15 @@ pub mod descriptor_ir2;
 /// identity.
 pub mod descriptor_ir2_canonical;
 
+/// The **one** dregg-side fixture emitter for a Mina/o1js verifier: mint a real
+/// FRI-STARK proof of the Lean-authored `mina-fixture` AIR, verify it, replay
+/// the verifier's transcript, cross-check the replay against p3's own
+/// `verify_constraints`, and print the fixture JSON.
+///
+/// Generic over the commitment hash suite so the BabyBear and Pasta binaries are
+/// two instantiations of ONE emitter rather than two emitters that agree today.
+pub mod mina_fixture_emit;
+
 /// Checked finite Bool/enum FOL front end to the live descriptor IR-v2 grammar.
 pub mod direct_logic_frontend;
 
