@@ -8,11 +8,36 @@ use crate::poseidon2::{hash_2_to_1, hash_many, hash_many_8};
 
 use super::{AUX_BASE, Effect, aux_off};
 
-/// Split a u64 into two BabyBear elements: (lo = lower 30 bits, hi = upper 34 bits).
-/// Both values fit in BabyBear (< 2^31).
+/// Split a u64 into two BabyBear elements: `(lo = value mod 2^30, hi = value >> 30)`.
+///
+/// ⚠ **NOT INJECTIVE, IN TWO SEPARATE PLACES — and the contract that stood here
+/// ("both values fit in BabyBear (< 2^31)" / "fits in u32 since val < 2^64") was
+/// FALSE.** Measured, both poles pinned by
+/// `circuit/tests/split_u64_is_not_injective.rs`:
+///
+///  * `hi` is `(val >> 30) as u32`, and `val >> 30` reaches `2^34` — so the `as u32`
+///    **truncates bits 62..64 outright**. `split_u64(2^62)` equals `split_u64(0)` in
+///    BOTH limbs, not merely the low one.
+///  * `BabyBear::new` then reduces mod `p ≈ 2^31`, so `hi` aliases again at a value
+///    period of `p · 2^30 ≈ 2^61`.
+///
+/// The limb pair is therefore faithful only on `[0, 2^61)`, and the LOW LIMB ALONE
+/// — which is what every committed note-accumulator leaf carries
+/// (`cell/src/commitment_set.rs` / `cell/src/nullifier_set.rs` `accumulator_leaf`)
+/// — is faithful only on `[0, 2^30)`. `param::NOTE_VALUE_HI` (the companion limb)
+/// is written by `effect_vm/trace.rs` on both note rows and read by NOTHING: no
+/// gate, no PI pin, no accumulator, no verifier. See `HORIZONLOG.md` A8 and the Lean
+/// tooth `metatheory/Dregg2/Bignum/LedgerBalance.lean` `accumulatorLeaf_aliases_at_2_30`.
+///
+/// ⚑ The arithmetic is DEPLOYED and is deliberately not changed here: this felt pair
+/// is the balance-limb encoding the in-circuit 30-bit range proof runs on, it is the
+/// preimage `compute_effects_hash_4` absorbs, and the low limb is the leaf value the
+/// noteSpend/noteCreate grow-gates open against BY CONSTRAINT
+/// (`prmCol NOTE_VALUE_LO`). Widening any of that is a descriptor re-emit plus a VK
+/// rotation, not a helper edit.
 pub fn split_u64(val: u64) -> (BabyBear, BabyBear) {
     let lo = (val & 0x3FFF_FFFF) as u32; // lower 30 bits
-    let hi = (val >> 30) as u32; // upper 34 bits (fits in u32 since val < 2^64)
+    let hi = (val >> 30) as u32; // bits 30..62 ONLY — bits 62..64 are truncated here
     (BabyBear::new(lo), BabyBear::new(hi))
 }
 

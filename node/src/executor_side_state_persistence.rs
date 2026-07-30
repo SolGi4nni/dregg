@@ -241,7 +241,7 @@ pub(crate) fn capture_executor_accumulators(
         .note_commitments
         .lock()
         .map_err(|_| "executor note-commitment mutex is poisoned".to_string())?;
-    let note_commitments = commitments
+    let note_commitments: Vec<ExecutorNoteCommitmentRecord> = commitments
         .iter_in_append_order()
         .map(|(commitment, value, seq)| ExecutorNoteCommitmentRecord {
             commitment,
@@ -249,7 +249,29 @@ pub(crate) fn capture_executor_accumulators(
             seq,
         })
         .collect();
+    // ⚑ VALUE-FAITHFULNESS OF THE EXPORT (A8). The committed `root8()` leaf value is
+    // `split_u64(value).0` — the note value's LOW 30 BITS — so `root8()` CANNOT
+    // witness this check: a record whose value lost bit 30 (or bit 62, where
+    // `split_u64`'s `as u32` truncates) folds to the byte-identical legacy root.
+    // Compare on `faithful_root8_exact()` instead, which binds all 64 value bits and
+    // all 32 commitment bytes, so a record codec that narrows the note value fails
+    // CLOSED here rather than round-tripping to a silently different accumulator.
+    let live_exact = commitments.faithful_root8_exact();
     drop(commitments);
+    let exported_exact = dregg_cell::commitment_set::CommitmentSet::from_records(
+        note_commitments
+            .iter()
+            .map(|record| (record.commitment, record.value, record.seq)),
+    )
+    .map_err(|error| format!("executor note-commitment export is not replayable: {error}"))?
+    .faithful_root8_exact();
+    if exported_exact != live_exact {
+        return Err(
+            "executor note-commitment export is not value-faithful: the exported records \
+             reconstruct to a different exact commitments root than the live accumulator"
+                .to_string(),
+        );
+    }
 
     let revoked = executor
         .note_revoked
