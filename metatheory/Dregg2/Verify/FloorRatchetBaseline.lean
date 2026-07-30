@@ -2174,7 +2174,29 @@ def manual : Array String := #[
   "Metatheory.Adversary.deployed_system_secure_via_schema",
   "Metatheory.Adversary.non_domination_and_unfoolability",
   "Metatheory.Adversary.unfoolability_via_schema",
-  "Metatheory.Adversary.unfoolable_against_adversary"]
+  "Metatheory.Adversary.unfoolable_against_adversary",
+  -- ⚑ RAISE OF 2026-07-29, +3 — the F2 root-combiner (`compressInjective cmb`) port's OWN
+  -- "no strength lost" bridges, the same species as `StateCommitLeafRegrounded.movedDigest_binds_of_
+  -- carriers` / `frameDigest_binds_of_carriers` already grandfathered above (c7): each one is a
+  -- DELIBERATE re-derivation of an old floor-carrying statement THROUGH the new `_or_collides` /
+  -- `_of_noColl` port, kept so a reader can see the port is strictly stronger, not a different
+  -- theorem. `StateCommitLeafRegrounded` had ported `compressInjective compress`/`compressNInjective`/
+  -- `cellLeafInjective` (§2-§3b) but left `compressInjective cmb` — the ROOT combiner, `CombineInjective`
+  -- / `recStateCommit_binds` / `recStateCommit_binds_kernel`'s own floor — untouched; this raise is
+  -- that closing piece. The FLOOR-FREE forms these bridges recover are NOT grandfathered and carry no
+  -- floor at all: `RecStateCommitColl`/`CellDigestColl`, `cellDigest_binds_cells_or_collides`/
+  -- `_of_noColl`, `recStateCommit_binds_or_collides`/`_of_noCmbColl`,
+  -- `recStateCommit_binds_kernel_or_collides`/`_of_noColl` — those are the actual port and take none
+  -- of the four apex legs as hypotheses.
+  --   noCellDigestColl_of_carriers — the three-carrier (`compress`/`compressN`/leaf) bridge killing
+  --     every `CellDigestColl` disjunct; the `cmb`-free half of the whole-kernel bridge below.
+  --   noRecStateCommitColl_of_carriers — all FOUR carriers (adds `cmb`) killing `RecStateCommitColl`.
+  --   recStateCommit_binds_kernel_of_carriers — reproduces `StateCommit.recStateCommit_binds_kernel`'s
+  --     EXACT original signature (itself already grandfathered, c7) through the new port, the direct
+  --     "no strength lost" witness for the composed whole-kernel keystone.
+  "Dregg2.Circuit.StateCommitLeafRegrounded.noCellDigestColl_of_carriers",
+  "Dregg2.Circuit.StateCommitLeafRegrounded.noRecStateCommitColl_of_carriers",
+  "Dregg2.Circuit.StateCommitLeafRegrounded.recStateCommit_binds_kernel_of_carriers"]
 
 /-- The grandfathered carriers. Only ever gets SHORTER. -/
 def grandfathered : Array String :=

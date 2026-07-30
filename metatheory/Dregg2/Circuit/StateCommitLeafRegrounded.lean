@@ -54,7 +54,7 @@ namespace Dregg2.Circuit.StateCommitLeafRegrounded
 open Dregg2.Exec
 open Dregg2.Circuit.StateCommit
   (compressInjective compressNInjective cellLeafInjective movedDigest frameDigest cellDigest
-   recStateCommit recStateCommit_binds AccountsWF RestHashIffFrame)
+   recStateCommit recStateCommit_binds AccountsWF RestHashIffFrame kS0 goodTurnS)
 
 set_option autoImplicit false
 
@@ -357,6 +357,154 @@ theorem recStateCommit_binds_kernel_of_noLeafColl (CH : CellId → Value → ℤ
   cases k; cases k'
   simp_all
 
+/-! ## §3c — THE ROOT COMBINER (`compressInjective cmb`), the ONE leg §3b left floor-borne, and the
+FULLY floor-free whole-kernel capstone.
+
+`recStateCommit_binds_kernel_of_noLeafColl` above removed only the LEAF floor from
+`StateCommit.recStateCommit_binds_kernel`; it still carries `hCmb : compressInjective cmb`,
+`hCompress : compressInjective compress`, `hCompressN : compressNInjective compressN` as raw
+hypotheses. `cmb` — the ROOT combiner — has the IDENTICAL type `ℤ → ℤ → ℤ` as `compress`, so it rides
+the SAME `CompressColl`/`compress_binds_or_collides`/`compress_binds_of_noColl` machinery from §2
+UNCHANGED; no new primitive predicate is needed for it. Composing that with §3's `CellDigestColl`-
+shaped node/frame/moved union (built here, generalizing `CellDigestLeafColl` to the leaf's TWO
+siblings as well) gives a whole-kernel port that is floor-free in ALL FOUR of the apex's commitment
+legs at once — the genuinely new piece this file was missing, not a restatement of what already
+existed. -/
+
+/-- **`CellDigestColl`** — a `cellDigest` equivocation broke ONE of the three deployed objects the
+`compress`/`compressN`/leaf floors used to cover jointly: the node split itself (`compress` at the
+frame/moved children), the frame sponge or its leaves, or the moved node or its leaves. Strictly MORE
+general than `CellDigestLeafColl` (§3b), which assumed the node split (`compressInjective compress`)
+and the sponge (`compressNInjective compressN`) to isolate only the leaf residual. -/
+def CellDigestColl (CH : CellId → Value → ℤ) (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (k k' : RecordKernelState) (t : Turn) : Prop :=
+  CompressColl compress
+      (frameDigest CH compressN k (k.accounts \ {t.src, t.dst}))
+      (movedDigest CH compress k.cell t.src t.dst)
+      (frameDigest CH compressN k' (k.accounts \ {t.src, t.dst}))
+      (movedDigest CH compress k'.cell t.src t.dst)
+    ∨ FrameColl CH compressN k k' (k.accounts \ {t.src, t.dst})
+    ∨ MovedColl CH compress k.cell k'.cell t.src t.dst
+
+/-- **S2 of `StateCommit.cellDigest_binds_cells`, FULLY hypothesis-free.** Equal cell-digests (same
+turn, equal accounts, both `AccountsWF`) force the whole cell map equal, OR a named `CellDigestColl`.
+No `compressInjective compress`, no `compressNInjective compressN`, no `cellLeafInjective CH`
+anywhere — all three floors' collision events are named in the conclusion instead. -/
+theorem cellDigest_binds_cells_or_collides (CH : CellId → Value → ℤ)
+    (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (k k' : RecordKernelState) (t : Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hAcc : k.accounts = k'.accounts)
+    (hcd : cellDigest CH compress compressN k t = cellDigest CH compress compressN k' t) :
+    k.cell = k'.cell ∨ CellDigestColl CH compress compressN k k' t := by
+  unfold cellDigest at hcd
+  rw [← hAcc] at hcd
+  rcases compress_binds_or_collides compress _ _ _ _ hcd with ⟨hframeEq, hmovedEq⟩ | hnode
+  · rcases frameDigest_binds_or_collides CH compressN k k' (k.accounts \ {t.src, t.dst}) hframeEq
+      with hframe | hframeColl
+    · rcases movedDigest_binds_or_collides CH compress k.cell k'.cell t.src t.dst hmovedEq
+        with ⟨hmsrc, hmdst⟩ | hmovedColl
+      · refine Or.inl ?_
+        funext c
+        by_cases hcsrc : c = t.src
+        · subst hcsrc; exact hmsrc
+        · by_cases hcdst : c = t.dst
+          · subst hcdst; exact hmdst
+          · by_cases hcacc : c ∈ k.accounts
+            · have hmem : c ∈ k.accounts \ {t.src, t.dst} := by
+                simp only [Finset.mem_sdiff, Finset.mem_insert, Finset.mem_singleton, not_or]
+                exact ⟨hcacc, hcsrc, hcdst⟩
+              exact hframe c hmem
+            · have hk'acc : c ∉ k'.accounts := by rw [← hAcc]; exact hcacc
+              rw [hwf c hcacc, hwf' c hk'acc]
+      · exact Or.inr (Or.inr (Or.inr hmovedColl))
+    · exact Or.inr (Or.inr (Or.inl hframeColl))
+  · exact Or.inr (Or.inl hnode)
+
+/-- **S3 of `StateCommit.cellDigest_binds_cells`, fully floor-free.** -/
+theorem cellDigest_binds_cells_of_noColl (CH : CellId → Value → ℤ)
+    (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (k k' : RecordKernelState) (t : Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hAcc : k.accounts = k'.accounts)
+    (hno : ¬ CellDigestColl CH compress compressN k k' t)
+    (hcd : cellDigest CH compress compressN k t = cellDigest CH compress compressN k' t) :
+    k.cell = k'.cell :=
+  (cellDigest_binds_cells_or_collides CH compress compressN k k' t hwf hwf' hAcc hcd).resolve_right
+    hno
+
+/-- **`RecStateCommitColl`** — a `recStateCommit` equivocation broke the ROOT combiner `cmb`, OR one
+of the three objects underneath it (`CellDigestColl`). Union of ALL FOUR apex commitment-floor
+collision events (`compressInjective cmb`, `compressInjective compress`, `compressNInjective
+compressN`, `cellLeafInjective CH`), at the exact pair the whole-kernel recovery's own extraction
+visits. -/
+def RecStateCommitColl (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (k k' : RecordKernelState) (t : Turn) : Prop :=
+  CompressColl cmb (cellDigest CH compress compressN k t) (RH k)
+      (cellDigest CH compress compressN k' t) (RH k')
+    ∨ CellDigestColl CH compress compressN k k' t
+
+/-- **S2 of `StateCommit.recStateCommit_binds`.** Equal full-state roots (same turn) force equal
+cell-digest AND equal rest-hash, OR a named root-combiner `CompressColl`. `cmb` shares `compress`'s
+exact type, so this rides §2's machinery unchanged — no new primitive needed for the root layer. -/
+theorem recStateCommit_binds_or_collides (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (k k' : RecordKernelState) (t : Turn)
+    (hroot : recStateCommit CH RH cmb compress compressN k t
+      = recStateCommit CH RH cmb compress compressN k' t) :
+    (cellDigest CH compress compressN k t = cellDigest CH compress compressN k' t ∧ RH k = RH k')
+      ∨ CompressColl cmb (cellDigest CH compress compressN k t) (RH k)
+          (cellDigest CH compress compressN k' t) (RH k') := by
+  unfold recStateCommit at hroot
+  exact compress_binds_or_collides cmb _ _ _ _ hroot
+
+/-- **S3 of `StateCommit.recStateCommit_binds`.** -/
+theorem recStateCommit_binds_of_noCmbColl (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (k k' : RecordKernelState) (t : Turn)
+    (hno : ¬ CompressColl cmb (cellDigest CH compress compressN k t) (RH k)
+      (cellDigest CH compress compressN k' t) (RH k'))
+    (hroot : recStateCommit CH RH cmb compress compressN k t
+      = recStateCommit CH RH cmb compress compressN k' t) :
+    cellDigest CH compress compressN k t = cellDigest CH compress compressN k' t ∧ RH k = RH k' :=
+  (recStateCommit_binds_or_collides CH RH cmb compress compressN k k' t hroot).resolve_right hno
+
+/-- **S2 of `StateCommit.recStateCommit_binds_kernel` — THE FULLY FLOOR-FREE WHOLE-KERNEL PORT.**
+Equal full-state roots (same turn) force the whole kernel equal, OR a named `RecStateCommitColl`.
+`RestHashIffFrame RH` is the ONE hypothesis kept (F1's concern, a separate campaign — see
+`Verify.RestFrameFiniteSupportSuccessor`); `AccountsWF` is structural, not crypto. None of the four
+apex legs (`compressInjective cmb/compress`, `compressNInjective compressN`, `cellLeafInjective CH`)
+appears as a binder anywhere in this statement. -/
+theorem recStateCommit_binds_kernel_or_collides (CH : CellId → Value → ℤ)
+    (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hroot : recStateCommit CH RH cmb compress compressN k t
+      = recStateCommit CH RH cmb compress compressN k' t) :
+    k = k' ∨ RecStateCommitColl CH RH cmb compress compressN k k' t := by
+  unfold recStateCommit at hroot
+  rcases compress_binds_or_collides cmb _ _ _ _ hroot with ⟨hcd, hRHeq⟩ | hrootColl
+  · obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps,
+      hNR, hRR, hCR⟩ := (hRest k k').mp hRHeq
+    rcases cellDigest_binds_cells_or_collides CH compress compressN k k' t hwf hwf' hAcc.symm hcd
+        with hcell | hcoll
+    · refine Or.inl ?_
+      cases k; cases k'
+      simp_all
+    · exact Or.inr (Or.inr hcoll)
+  · exact Or.inr (Or.inl hrootColl)
+
+/-- **S3 of `StateCommit.recStateCommit_binds_kernel`, fully floor-free.** -/
+theorem recStateCommit_binds_kernel_of_noColl (CH : CellId → Value → ℤ)
+    (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hno : ¬ RecStateCommitColl CH RH cmb compress compressN k k' t)
+    (hroot : recStateCommit CH RH cmb compress compressN k t
+      = recStateCommit CH RH cmb compress compressN k' t) :
+    k = k' :=
+  (recStateCommit_binds_kernel_or_collides
+    CH RH cmb compress compressN hRest k k' t hwf hwf' hroot).resolve_right hno
+
 /-! ## §4 — NO STRENGTH LOST: each old endpoint is the injective special case of its port, and the
 CUTOVER BRIDGES that make the remaining floor use UNIFORM.
 
@@ -457,6 +605,59 @@ theorem noFrameColl_self {CH : CellId → Value → ℤ} {compressN : List ℤ �
     {k k' : RecordKernelState} {S : Finset CellId}
     (hno : ¬ FrameColl CH compressN k k' S) : ¬ FrameColl CH compressN k k' S := hno
 
+/-! ### §4c — the §3c bridges: `CellDigestColl`/`RecStateCommitColl`, and the ROOT-combiner's
+`cmb`-carriers reproducing `StateCommit.recStateCommit_binds_kernel`'s EXACT statement. -/
+
+/-- All three carriers (`compress`, `compressN`, leaf) kill every `CellDigestColl` disjunct. -/
+theorem noCellDigestColl_of_carriers {CH : CellId → Value → ℤ} {compress : ℤ → ℤ → ℤ}
+    {compressN : List ℤ → ℤ}
+    (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
+    (hLeaf : cellLeafInjective CH)
+    {k k' : RecordKernelState} {t : Turn} : ¬ CellDigestColl CH compress compressN k k' t := by
+  rintro (hn | hf | hm)
+  · exact hn.1 (hCompress _ _ _ _ hn.2)
+  · exact noFrameColl_of_carriers hCompressN hLeaf hf
+  · exact noMovedColl_of_carriers hCompress hLeaf hm
+
+/-- All FOUR apex commitment-floor carriers (`cmb`, `compress`, `compressN`, leaf) together kill
+every `RecStateCommitColl` disjunct. -/
+theorem noRecStateCommitColl_of_carriers {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
+    {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
+    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    {k k' : RecordKernelState} {t : Turn} :
+    ¬ RecStateCommitColl CH RH cmb compress compressN k k' t := by
+  rintro (hr | hc)
+  · exact hr.1 (hCmb _ _ _ _ hr.2)
+  · exact noCellDigestColl_of_carriers hCompress hCompressN hLeaf hc
+
+/-- **The deleted-shape bridge for the whole kernel**: `StateCommit.recStateCommit_binds_kernel`'s
+EXACT statement, re-derived THROUGH the port at all four legs simultaneously. Nothing genuinely
+proved was given up — only the pretence that the deployed hash satisfies the four injectivities. -/
+theorem recStateCommit_binds_kernel_of_carriers (CH : CellId → Value → ℤ)
+    (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
+    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hroot : recStateCommit CH RH cmb compress compressN k t
+      = recStateCommit CH RH cmb compress compressN k' t) :
+    k = k' :=
+  recStateCommit_binds_kernel_of_noColl CH RH cmb compress compressN hRest k k' t hwf hwf'
+    (noRecStateCommitColl_of_carriers hCmb hCompress hCompressN hLeaf) hroot
+
+/-- Identity carrier for `CellDigestColl`'s bridge (the ConePort `AppRule` shape). -/
+theorem noCellDigestColl_self {CH : CellId → Value → ℤ} {compress : ℤ → ℤ → ℤ}
+    {compressN : List ℤ → ℤ} {k k' : RecordKernelState} {t : Turn}
+    (hno : ¬ CellDigestColl CH compress compressN k k' t) :
+    ¬ CellDigestColl CH compress compressN k k' t := hno
+
+/-- Identity carrier for `RecStateCommitColl`'s bridge. -/
+theorem noRecStateCommitColl_self {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
+    {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ} {k k' : RecordKernelState} {t : Turn}
+    (hno : ¬ RecStateCommitColl CH RH cmb compress compressN k k' t) :
+    ¬ RecStateCommitColl CH RH cmb compress compressN k k' t := hno
+
 /-! ## §5 — TEETH: the ports are not vacuous, the side conditions are load-bearing, refutable, and
 satisfiable. Concrete carriers: a positional 2-to-1 pairing (the deployed-shaped injective node) and
 a CONSTANT hash as the refuted pole. -/
@@ -532,6 +733,59 @@ theorem canary_moved_tamper_moves_digest_or_collides :
   · rcases hcoll with ⟨-, heq⟩ | (⟨-, heq⟩ | ⟨-, heq⟩) <;>
       exact absurd heq (by decide)
 
+/-! ### §5b — TEETH for the §3c root/whole-kernel residual (`RecStateCommitColl`): SATISFIABLE,
+REFUTABLE, and hence NOT PROVABLE — the same three-check doctrine `Verify.
+RestFrameFiniteSupportSuccessor` ran for F1, here for F2's last leg. -/
+
+/-- **SATISFIABLE, with NO hash hypothesis at all.** At the diagonal (`k' = k`) every one of
+`RecStateCommitColl`'s four disjuncts demands a genuine argument-pair DISEQUALITY that is trivially
+`rfl`-refuted — the same reason `Verify.RestFrameFiniteSupportSuccessor.restSeparatesAt_satisfiable`
+holds on the diagonal for the F1 successor. So `¬ RecStateCommitColl` is inhabited for EVERY choice
+of `CH`/`RH`/`cmb`/`compress`/`compressN`, not merely a hand-picked injective one. -/
+theorem noRecStateCommitColl_diag (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (k : RecordKernelState) (t : Turn) :
+    ¬ RecStateCommitColl CH RH cmb compress compressN k k t := by
+  rintro (hr | hn | hf | hm)
+  · exact hr.1 ⟨rfl, rfl⟩
+  · exact hn.1 ⟨rfl, rfl⟩
+  · rcases hf with ⟨hne, -⟩ | ⟨_, -, hl⟩
+    · exact hne rfl
+    · exact hl.1 rfl
+  · rcases hm with hn | hl | hl
+    · exact hn.1 ⟨rfl, rfl⟩
+    · exact hl.1 rfl
+    · exact hl.1 rfl
+
+/-- **REFUTABLE — the event genuinely FIRES**, reusing `movedColl_refutable` unchanged: at the
+constant node/leaf hashes, two states differing only at the moved cells (`kS0` with `cell` forced
+constant `0` / constant `1`) equivocate the moved digest, which `CellDigestColl`/`RecStateCommitColl`
+both see through their `MovedColl` disjunct. So the residual is not vacuously false either — a bad
+instantiation is caught, not defined away. -/
+theorem cellDigestColl_refutable :
+    CellDigestColl constLeaf constNode (fun _ : List ℤ => (0 : ℤ))
+      ({ kS0 with cell := fun _ => Value.int 0 }) ({ kS0 with cell := fun _ => Value.int 1 })
+      goodTurnS :=
+  Or.inr (Or.inr movedColl_refutable)
+
+theorem recStateCommitColl_refutable :
+    RecStateCommitColl constLeaf (fun _ : RecordKernelState => (0 : ℤ)) constNode constNode
+      (fun _ : List ℤ => (0 : ℤ))
+      ({ kS0 with cell := fun _ => Value.int 0 }) ({ kS0 with cell := fun _ => Value.int 1 })
+      goodTurnS :=
+  Or.inr cellDigestColl_refutable
+
+/-- **NOT PROVABLE.** Since some instantiation satisfies `RecStateCommitColl` (the previous
+theorem), `¬ RecStateCommitColl` is not a schema true of every hash/state choice outright — a
+genuine per-instance residual, discharged case by case, not a tautology in a floor's clothing.
+Together with `noRecStateCommitColl_diag`, `RecStateCommitColl` clears all three checks the tree's
+floor doctrine demands: SATISFIABLE, REFUTABLE, NOT PROVABLE. -/
+theorem noRecStateCommitColl_not_provable :
+    ¬ ∀ (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (k k' : RecordKernelState) (t : Turn),
+      ¬ RecStateCommitColl CH RH cmb compress compressN k k' t :=
+  fun h => h constLeaf (fun _ => (0 : ℤ)) constNode constNode (fun _ => (0 : ℤ)) _ _ goodTurnS
+    recStateCommitColl_refutable
+
 /-! ## §6 — kernel pins. -/
 
 #assert_all_clean [compress_binds_or_collides, cellLeaf_binds_or_collides,
@@ -542,11 +796,18 @@ theorem canary_moved_tamper_moves_digest_or_collides :
   frameDigest_binds_of_noLeafColl, frameDigest_binds_of_noCNColl,
   movedDigest_binds_of_carriers, frameDigest_binds_of_carriers,
   cellDigest_binds_cells_of_noLeafColl, recStateCommit_binds_kernel_of_noLeafColl,
+  cellDigest_binds_cells_or_collides, cellDigest_binds_cells_of_noColl,
+  recStateCommit_binds_or_collides, recStateCommit_binds_of_noCmbColl,
+  recStateCommit_binds_kernel_or_collides, recStateCommit_binds_kernel_of_noColl,
+  noCellDigestColl_of_carriers, noRecStateCommitColl_of_carriers,
+  recStateCommit_binds_kernel_of_carriers,
   noCompressColl_of_inj, noCellLeafColl_of_inj, noMovedLeafColl_of_inj, noFrameLeafColl_of_inj,
   noMovedColl_of_carriers, noFrameColl_of_carriers, noCellDigestLeafColl_of_inj,
   CompressColl.extracts, CellLeafColl.extracts, MovedColl.extracts, FrameColl.extracts,
   noCompressColl_satisfiable, compressColl_refutable, cellLeafColl_refutable, movedColl_refutable,
   compress_binds_unconditional_false, movedDigest_unconditional_false,
-  canary_moved_tamper_moves_digest_or_collides]
+  canary_moved_tamper_moves_digest_or_collides,
+  noRecStateCommitColl_diag, cellDigestColl_refutable, recStateCommitColl_refutable,
+  noRecStateCommitColl_not_provable]
 
 end Dregg2.Circuit.StateCommitLeafRegrounded
