@@ -1156,6 +1156,32 @@ def DeriveWindowAccepted (nb : Nat) (T : WTrace) (i : Nat) : Prop :=
   ∀ wc : WindowConstraint, VmConstraint2.windowGate wc ∈ deriveWireGates nb →
     wc.body.eval (envOf T i) = 0
 
+/-- ⚑ **The DECIDABLE twin of those three predicates**, over the same emitted list — `acceptB`'s
+counterpart for the constructors `acceptB` cannot see. §5d decides it in the kernel, which is what
+makes the wire tampers MEASUREMENTS rather than assertions.
+
+⚠ `pv` is a SEPARATE argument and not `envOf`'s `pub` field. `PastaMsmWindowed.envOf` sets
+`pub := T 0` — the trace's first row, not the public-input vector — and the deployed `envAt` sets
+`pub := t.pub`. No `WindowExpr` constructor reads `pub` at all, so the discrepancy is inert for the
+window gates; but a PI pin is exactly the constraint that WOULD read it, so it is given the
+deployed reading here and not `envOf`'s. -/
+def wireAcceptB (nb : Nat) (T : WTrace) (pv : Nat → ℤ) (i : Nat) : Bool :=
+  (deriveWireGates nb).all (fun c => match c with
+    | .base (.boundary .first e)      => decide (e.eval (T 0) = 0)
+    | .base (.piBinding .first col k) => decide (T 0 col = pv k)
+    | .windowGate wc                  => decide (wc.body.eval (envOf T i) = 0)
+    | _                               => true)
+
+/-- ⚑ **`wireAccept_forces`** — and the decidable twin IMPLIES the three predicates, so a kernel
+`#guard` on it is evidence about the theorems above and not about a separate object. -/
+theorem wireAccept_forces (nb : Nat) (T : WTrace) (pv : Nat → ℤ) (i : Nat)
+    (h : wireAcceptB nb T pv i = true) :
+    DeriveStartAccepted nb T ∧ DerivePiAccepted nb T pv ∧ DeriveWindowAccepted nb T i := by
+  rw [wireAcceptB, List.all_eq_true] at h
+  exact ⟨fun e he => of_decide_eq_true (h _ he),
+         fun col k hk => of_decide_eq_true (h _ hk),
+         fun wc hw => of_decide_eq_true (h _ hw)⟩
+
 /-- The challenge PI pin for flat limb `m` is IN the emitted list. -/
 theorem mem_chalPin (nb m : Nat) (hm : m < numLimbs * nb) :
     pinPi (CHc nb m) (PI_COUNT + m) ∈ deriveWireGates nb := by
@@ -1427,6 +1453,7 @@ theorem derived_row_bit_is_manifest_digit
 #assert_axioms derived_is_sNat
 #assert_axioms derived_row_bit_is_block_svec_bit
 #assert_axioms derived_row_bit_is_manifest_digit_at_a_named_plane
+#assert_axioms wireAccept_forces
 #assert_axioms mem_chalPin
 #assert_axioms mem_chalThread
 #assert_axioms pidxStart_forces
@@ -1617,5 +1644,76 @@ def canonCert (v p : Nat) : ℤ := (((qN - 1 - v) / 2 ^ p % 2 : Nat) : ℤ)
 -- PINS are the whole content of the bound, and `CBITS` is not a formality.
 #guard acceptB [cgH (canonHead 2 256)] (canonAsg (5 + qN) (fun p => if p = 0 then -6 else 0))
 #guard ! acceptB (canonGates 2 256) (canonAsg (5 + qN) (fun p => if p = 0 then -6 else 0))
+
+/-! ### §5d — ⚑⚑ THE WIRE GATES BITE, AND THE PER-ROW CHALLENGE SWAP IS THE FORGERY THEY KILL.
+
+§5 exercises `deriveRowGates` on ONE row. The wire gates are not row-local and `acceptB` cannot
+see them, so they need their own exhibit or §4e is four theorems about an object nothing satisfies.
+Both polarities below are decided in the kernel over the ACTUALLY EMITTED `deriveWireGates`, on a
+WHOLE TRACE at `nb = 2, planes = 4, w = 1` — eight rows, one doubling row every two, four planes.
+
+⚑ **The forgery is the one §2.3's prose named and no theorem in this file could see before §4e:**
+a prover who picks a FRESH CHALLENGE VECTOR PER ROW. `katSwapRow1`'s row 1 carries a complete,
+internally consistent derivation against the OTHER block's challenges — its own challenge columns,
+multipliers, running product, digits and `BIT` all agree with one another — so `deriveRowGates`
+ACCEPTS it, and the guard below measures that acceptance rather than asserting it. Only the emitted
+challenge thread refuses. -/
+
+/-- The declared public inputs of the exhibit: challenge `0` is `3`, challenge `1` is `5` — this
+block's own (`katC`), in the bottom limb of each nine-limb slot. -/
+def katPv : Nat → ℤ := fun k =>
+  if k = PI_COUNT then 3 else if k = PI_COUNT + numLimbs then 5 else 0
+
+/-- ⚑ **The honest TRACE.** Row `i` is in plane `i / 2` and doubles iff `i` is even (`w = 1`); its
+`PIDX` is that plane, its `DBL` is that pattern, its `BIT` is pinned on at a doubling row, and every
+other cell is §5's honest row-local assignment at index 0 and the row's own plane. Nothing is
+re-authored: the row-local half IS `katAsg`. -/
+def katFull : WTrace := fun i => fun c =>
+  if c = PIDX then ((i / 2 : Nat) : ℤ)
+  else if c = DBL then (if i % 2 = 0 then 1 else 0)
+  else if c = BIT ∧ i % 2 = 0 then 1
+  else katAsg katC katC 0 (i / 2) c
+
+/-- A one-cell perturbation of ONE ROW of a trace. -/
+def bumpRow (T : WTrace) (r c : Nat) : WTrace :=
+  fun i => if i = r then bump (T i) c else T i
+
+/-- ⚑⚑ **THE PER-ROW CHALLENGE SWAP.** Row 1 derives against `katC' = [3,4]` — a different block's
+challenges — consistently, and every other row is honest. -/
+def katSwapRow1 : WTrace := fun i =>
+  if i = 1 then
+    (fun c => if c = PIDX then 0 else if c = DBL then 0 else katAsg katC' katC' 0 0 c)
+  else katFull i
+
+-- ⚑ SATISFIABLE, JOINTLY — the capstone's hypotheses are INHABITED, which is the thing a forcing
+-- theorem is worthless without. Every row satisfies the ROW-LOCAL derivation…
+#guard (List.range 8).all (fun i => acceptB (deriveRowGates 2 4) (katFull i))
+-- …every window satisfies the WIRE gates against the SAME declared public inputs…
+#guard (List.range 8).all (fun i => wireAcceptB 2 katFull katPv i)
+-- …and the exhibit's `PIDX` really is `planeAt 1 i`, which is what `pidx_is_the_plane_index`
+-- concludes and what `DblPattern` supplies on the way.
+#guard (List.range 8).all (fun i => decide (katFull i PIDX = ((planeAt 1 i : Nat) : ℤ)))
+#guard (List.range 8).all (fun i =>
+  decide (katFull i DBL = (if i % (1 + 1) = 0 then 1 else 0)))
+
+-- ⚑⚑ THE MEASUREMENT. Row 1's swapped derivation is ACCEPTED by the row-local denotation — every
+-- theorem of §4–§4d sees nothing wrong with it…
+#guard acceptB (deriveRowGates 2 4) (katSwapRow1 1)
+-- …and REFUSED by the emitted challenge thread on the window that spans rows 0 and 1. A first-row
+-- pin ALONE would not refuse it: row 0 is untouched and its PI pin still holds.
+#guard ! wireAcceptB 2 katSwapRow1 katPv 0
+#guard wireAcceptB 2 katSwapRow1 katPv 2
+
+-- ⚑ REFUTABLE — the PI PIN alone: row 0's challenge limb differing from its declared public input.
+#guard ! wireAcceptB 2 (bumpRow katFull 0 (CHc 2 0)) katPv 0
+-- ⚑ REFUTABLE — the ORIGIN PIN alone: the plane thread starting anywhere but plane 0.
+#guard ! wireAcceptB 2 (bumpRow katFull 0 PIDX) katPv 0
+-- ⚑ REFUTABLE — the PLANE THREAD alone: a row claiming a plane that is not its own. This is the
+-- tooth that makes `hpidx` a theorem instead of a hypothesis — without it a prover reads the right
+-- scalar's digit at whatever plane it likes, and the manifest's PLANE argument is unchecked.
+#guard ! wireAcceptB 2 (bumpRow katFull 2 PIDX) katPv 1
+-- ⚑ …and the plane thread is not satisfied by an arbitrary monotone column either: advancing on a
+-- NON-doubling row is refused too.
+#guard ! wireAcceptB 2 (bumpRow katFull 1 PIDX) katPv 0
 
 end Dregg2.Circuit.Emit.PastaMsmScalarDerive
