@@ -11,7 +11,7 @@ import {
   rootAirDag,
   unifiedDag,
 } from '../src/RootAirDag.js';
-import { dagDigestOfChunkDigests, digestOfLanes, terminalSeal } from '../src/RootAirChain.js';
+import { dagDigestOfChunkDigests, digestOfLanes, airTerminalSeal } from '../src/RootAirChain.js';
 import { atTier, belowTier, tierStop } from '../src/tier.js';
 import {
   RealRootFri,
@@ -838,7 +838,7 @@ async function main() {
   if (atTier(1) || existsSync(airProof())) {
   if (!existsSync(airProof())) fail(`${airProof()} is missing — the AIR half has not been proved`);
   const air6 = JSON.parse(readFileSync(airProof(), 'utf8'));
-  const want = terminalSeal(c.dagDigest, digestOfLanes(c.acc.map((x) => Field(x))), AIR_SLICES);
+  const want = airTerminalSeal(c.dagDigest, digestOfLanes(c.acc.map((x) => Field(x))), AIR_SLICES);
   if (air6.publicOutput[0] !== want.toString())
     fail(
       'AIR slice 6\'s publicOutput is not what the uniform FRI side recomputes — the braid would ' +
@@ -872,7 +872,7 @@ async function main() {
   {
     const order = chainOrder(c);
     const root = keyList(c).root;
-    let prevOut = terminalSeal(
+    let prevOut = airTerminalSeal(
       c.dagDigest,
       digestOfLanes(c.acc.map((x) => Field(x))),
       AIR_SLICES,
@@ -1093,29 +1093,54 @@ async function main() {
     // [7b] The splices, ACROSS the process boundary.
     //
     // ⚑ CARRYING A MERKLE SIBLING IS NOT ENOUGH TO FALSIFY ONE, AND THIS RUN
-    // FOUND THAT THE HARD WAY. §3.27's rule — cut at "the last slice that
-    // consumes a witnessed sibling" — selects on the presence of the WITNESS,
-    // and what refuses a bent sibling is the presence of the ASSERTION that
-    // closes over it. At `block7` (56 aux lanes, seven `inLevel` steps, no
-    // closer) a bent sibling only changes the digest the slice hands on: the
-    // first `cur == commitment` check is `inRoot`, three cuts later at `block9`.
-    // So `auxBent` was ACCEPTED there, correctly, and asserting it must be
-    // refused was the harness being wrong about its own cut.
+    // FOUND IT TWICE, EACH TIME SHARPENING THE RULE. §3.27's rule — cut at "the
+    // last slice that consumes a witnessed sibling" — selects on the presence of
+    // the WITNESS, and what refuses a bent sibling is the ASSERTION that closes
+    // over the digest it feeds.
     //
-    // The cut is therefore chosen to contain a CLOSER — `inRoot`, `cpRoot` or
-    // `final` — as well as `aux`. When no proved cut has one, `auxBent` is
-    // reported as NOT ATTRIBUTABLE at this cut, with the reason, instead of
-    // being asserted or silently dropped.
+    //   * `block7` — 56 aux lanes, seven `inLevel` steps, NO closer at all. A
+    //     bent sibling only changes the digest the slice hands on; the first
+    //     `cur == commitment` is `inRoot`, three cuts later. ACCEPTED, correctly.
+    //   * `block9` — HAS an `inRoot`, and `auxBent` was ACCEPTED AGAIN. Its
+    //     segments are `inRoot(r0) inBlock(r1)×7 inLevel(r1,l0..l6)`: the closer
+    //     comes FIRST and closes round 0, while every sibling the slice consumes
+    //     belongs to round 1. "Contains a closer" is necessary and not
+    //     sufficient.
+    //
+    // The rule is therefore: the FIRST aux-consuming segment must be followed,
+    // INSIDE THIS SLICE, by a closer for the SAME round (`inRoot r`) or the same
+    // fold layer (`cpRoot L`) — or by `final`. Measured at the root's geometry:
+    // 25 of the 43 block positions carry aux, 16 satisfy this, and the first is
+    // `block14`. When no proved cut satisfies it, `auxBent` is reported NOT
+    // ATTRIBUTABLE, with the reason, instead of being asserted (a false red) or
+    // dropped (an absent falsifier reading exactly like a passing one).
     // ---------------------------------------------------------------------
-    const CLOSERS = new Set(['inRoot', 'cpRoot', 'final']);
+    const closerTag = (s: any): string | null =>
+      s.t === 'inRoot' ? `r${s.round}` : s.t === 'cpRoot' ? `L${s.r}` : s.t === 'final' ? 'final' : null;
+    const auxTag = (s: any): string | null =>
+      s.t === 'inLevel' ? `r${s.round}` : s.t === 'cpLevel' || s.t === 'cpLeaf' ? `L${s.r}` : null;
     const cutInfo = (i: number) => {
       const sl = uniformSlice(c.plan, order[i].sp);
       let aux = 0;
-      let closer: string | null = null;
+      let firstAuxAt = -1;
+      let tag: string | null = null;
       for (let k2 = sl.from; k2 < sl.to; k2++) {
-        aux += auxLanes(c.w.segs[k2]);
-        if (CLOSERS.has(c.w.segs[k2].t)) closer = c.w.segs[k2].t;
+        const a = auxLanes(c.w.segs[k2]);
+        aux += a;
+        if (a > 0 && firstAuxAt < 0) {
+          firstAuxAt = k2;
+          tag = auxTag(c.w.segs[k2]);
+        }
       }
+      let closer: string | null = null;
+      if (firstAuxAt >= 0)
+        for (let k2 = firstAuxAt + 1; k2 < sl.to; k2++) {
+          const t = closerTag(c.w.segs[k2]);
+          if (t !== null && (t === tag || t === 'final')) {
+            closer = `${c.w.segs[k2].t} ${t}`;
+            break;
+          }
+        }
       return { aux, closer };
     };
     let at: Instance | null = null;
@@ -1143,7 +1168,7 @@ async function main() {
           'process that compiled only that program' +
           (atCloser === null
             ? ' ⚠ this cut has NO closing assertion, so auxBent is not attributable here'
-            : `, and this cut CLOSES a ${atCloser} so a bent sibling has something to fail against`),
+            : `, and this cut CLOSES the ${atCloser} its OWN first sibling feeds — so a bent one has something to fail against`),
       );
       const sp2 = await child({ ...env, UNIFORM_PHASE: 'splice' }, 'splice');
       const declared = readVk(keyPath(at.sp)).hash;
