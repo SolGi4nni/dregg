@@ -19,10 +19,11 @@ reason that was correct at the time and is stated in its own §9: the long-range
 `proof_of_stake.ml:2440-2536` has no arm for it). An export the caller cannot feed is an UN-CALLED
 GATE, and this repo has a named class for those.
 
-That blocker was a DATA-SOURCE blocker, not a formalization one, and it is now closed on the Rust
-side: `bridge/src/mina_p2p.rs` decodes the binprot `Protocol_state.Value` — where
-`sub_window_densities` is an ordinary positional field — off Mina's peer-to-peer RPC
-(`get_best_tip`/`get_transition_chain`, `/coda/rpcs/0.0.1`). So the gate can be fed, and here it is.
+That blocker was a DATA-SOURCE blocker, not a formalization one, and it is now closed —
+**in Lean.** `Bridge.MinaBinprot` decodes the binprot `Protocol_state.Value`, where
+`sub_window_densities` is an ordinary positional field, and `Bridge.MinaBinprotRealBlock` shows it
+reading a live devnet block byte-exactly off `coda/rpcs/0.0.1`. Rust's remaining job is a socket:
+it hands over the bytes it received and knows nothing about what they mean.
 
 ## What the two exports decide
 
@@ -62,6 +63,7 @@ side. A source that cannot supply `sub_window_densities` — i.e. the public Gra
 `"ERR"`, which the caller treats as a REFUSAL. There is no arm that proceeds without them.
 -/
 import Dregg2.Bridge.MinaChainSelection
+import Dregg2.Bridge.MinaBinprot
 
 set_option autoImplicit false
 set_option maxRecDepth 40000
@@ -187,20 +189,29 @@ theorem longTip_beats_by_the_short_range_rule :
     ∧ minaBetterTip mainnet lcycA longTip 1 999 = true := by
   refine ⟨?_, ?_⟩ <;> decide
 
-/-! ## §5 — THE WIRE. Same `String → String` C-ABI shape as `dregg_mina_lc_verify`.
+/-! ## §5 — THE WIRE: **RAW BINPROT BYTES**, not a field list.
 
-Fail-closed on any deviation: a malformed wire is `"ERR"` and the caller treats it as REFUSE.
+⚑ This is deliberately NOT a wire of eight named fields per side. An earlier shape of this gate had
+one, and it was a MIRROR SURFACE: for Rust to fill `el=`/`ed=`/`ew=`… Rust had to know which bytes
+were `min_window_density`, which is exactly the semantics that belongs here. The wire carries the
+`Protocol_state.Value` bytes and `Bridge.MinaBinprot` decodes them, so the only thing Rust knows
+about a Mina consensus state is that it is a byte string it got from a peer.
 
 ```text
-SIDE(x) := "x" "l=" Nat ";" "x" "d=" Nat ";" "x" "w=" NatList11 ";" "x" "v=" ByteList32
-         ";" "x" "g=" Nat ";" "x" "p=" Nat ";" "x" "s=" Nat ";" "x" "n=" Nat ";" "x" "h=" Nat
-TIP     := SIDE("e") ";" SIDE("c")
+TIP     := "eh=" Nat ";ch=" Nat ";e=" HEX ";c=" HEX
+HEX     := an even-length string of [0-9a-fA-F]
 ```
-with `l`=`blockchain_length`, `d`=`min_window_density`, `w`=`sub_window_densities` (EXACTLY 11,
-oldest-relative-index-first), `v`=`Blake2b(last_vrf_output)` (EXACTLY 32 bytes), `g`=
-`curr_global_slot.slot_number`, `p`=`curr_global_slot.slots_per_epoch`, `s`=
-`staking_epoch_data.lock_checkpoint`, `n`=`next_epoch_data.lock_checkpoint`, `h`=the state hash as
-its numeric field element. `e`=the EXISTING tip, `c`=the CANDIDATE. -/
+`e` is the EXISTING tip's protocol state, `c` the CANDIDATE's. A trailing remainder is allowed —
+on the wire the protocol state is followed by the Wrap proof and the block body — so a caller may
+hand over the whole header prefix.
+
+⚑ **`eh` / `ch` are a NAMED CARRIER, and this is the one thing on this wire that is not derived.**
+They are the two tips' state hashes as field elements, and `select` uses them only as the FINAL
+tie-break, after `blockchain_length` and the VRF digest have both tied. They are supplied rather
+than computed because `state_hash = Poseidon(prefix "MinaProtoState")[previous_state_hash, body_hash]`
+and `Body.hash` absorbs `to_input` in an order that is NOT the binprot order — re-deriving it is a
+separate Lean job that does not exist yet. `docs/MINA-LIGHT-CLIENT.md` carries that as an open row.
+Everything else on this wire — including the Blake2b VRF digest — is DERIVED from the bytes. -/
 
 /-- Parse a `key=value` field, fail-closed on a key mismatch or a missing `=`. -/
 def parseField? (key part : String) : Option String :=
@@ -212,71 +223,59 @@ def parseField? (key part : String) : Option String :=
 def parseBit? (s : String) : Option Bool :=
   if s == "1" then some true else if s == "0" then some false else none
 
-/-- Every element of a comma-split must be a `Nat`, or the whole list fails. -/
-def parseNats? : List String → Option (List Nat)
+/-- One hex digit. -/
+def hexDigit? (c : Char) : Option Nat :=
+  let n := c.toNat
+  if 48 ≤ n ∧ n ≤ 57 then some (n - 48)        -- '0'..'9'
+  else if 97 ≤ n ∧ n ≤ 102 then some (n - 87)  -- 'a'..'f'
+  else if 65 ≤ n ∧ n ≤ 70 then some (n - 55)   -- 'A'..'F'
+  else none
+
+/-- Hex characters to bytes. An ODD length is a REFUSAL, not a dropped nibble. -/
+def hexBytes? : List Char → Option (List Nat)
   | [] => some []
-  | s :: rest =>
-      match s.toNat?, parseNats? rest with
-      | some n, some r => some (n :: r)
-      | _, _ => none
-
-/-- A comma-separated `Nat` list of EXACTLY `n` entries. Length is checked, not truncated. -/
-def parseNatList? (n : Nat) (s : String) : Option (List Nat) :=
-  match parseNats? (s.splitOn ",") with
-  | some xs => if xs.length == n then some xs else none
-  | none => none
-
-/-- A comma-separated BYTE list of exactly `n` entries — every entry `< 256`. The VRF digest is
-compared BYTEWISE (`lexLt`), so an entry outside a byte is not a representable digest and must not
-be silently admitted as a large `Nat` that then wins every comparison. -/
-def parseByteList? (n : Nat) (s : String) : Option (List Nat) :=
-  match parseNatList? n s with
-  | some xs => if xs.all (· < 256) then some xs else none
-  | none => none
-
-/-- One side of the wire: the eight selection fields plus the state hash.
-
-⚑ `slots_per_epoch` is REFUSED at zero. `currEpoch`/`currSlot` divide by the value's OWN
-`slots_per_epoch` (`global_slot.ml:79` — an asymmetry the daemon really has), and Lean's `Nat`
-division by zero is `0`, which would silently collapse every state into epoch 0 and make every pair
-look same-epoch. -/
-def decodeSide? (p : String) (parts : List String) : Option (ConsensusState × Nat) :=
-  match parts with
-  | [a0, a1, a2, a3, a4, a5, a6, a7, a8] =>
-      match (parseField? (p ++ "l") a0).bind String.toNat?,
-            (parseField? (p ++ "d") a1).bind String.toNat?,
-            (parseField? (p ++ "w") a2).bind (parseNatList? mainnet.subWindowsPerWindow),
-            (parseField? (p ++ "v") a3).bind (parseByteList? 32),
-            (parseField? (p ++ "g") a4).bind String.toNat?,
-            (parseField? (p ++ "p") a5).bind String.toNat?,
-            (parseField? (p ++ "s") a6).bind String.toNat?,
-            (parseField? (p ++ "n") a7).bind String.toNat?,
-            (parseField? (p ++ "h") a8).bind String.toNat? with
-      | some l, some d, some w, some v, some g, some sp, some s, some n, some hsh =>
-          if sp == 0 then none else some (mkCS l d w v g sp s n, hsh)
-      | _, _, _, _, _, _, _, _, _ => none
+  | a :: b :: rest =>
+      match hexDigit? a, hexDigit? b, hexBytes? rest with
+      | some x, some y, some r => some ((16 * x + y) :: r)
+      | _, _, _ => none
   | _ => none
 
-/-- **`decodeTipPair`** — the 18-field `TIP` grammar into (existing, hash, candidate, hash). -/
-def decodeTipPair (parts : List String) : Option (ConsensusState × Nat × ConsensusState × Nat) :=
+/-- **Decode one side**: hex → bytes → `Protocol_state.Value` → the consensus state `select` runs
+on. Routed through `decodeProtocolStateChecked`, so a block whose CARRIED constants disagree with
+the pin, or whose densities exceed `slots_per_sub_window`, is refused here and never reaches the
+rule. -/
+def decodeSide? (hex : String) : Option MinaBinprot.ProtocolState :=
+  match hexBytes? hex.toList with
+  | none => none
+  | some bs =>
+      match MinaBinprot.decodeProtocolStateChecked mainnet bs with
+      | some (ps, _) => some ps
+      | none => none
+
+/-- The four-field `TIP` grammar. -/
+def decodeTipPair (parts : List String) :
+    Option (ConsensusState × Nat × ConsensusState × Nat) :=
   match parts with
-  | [a0, a1, a2, a3, a4, a5, a6, a7, a8, b0, b1, b2, b3, b4, b5, b6, b7, b8] =>
-      match decodeSide? "e" [a0, a1, a2, a3, a4, a5, a6, a7, a8],
-            decodeSide? "c" [b0, b1, b2, b3, b4, b5, b6, b7, b8] with
-      | some (e, eh), some (c, ch) => some (e, eh, c, ch)
-      | _, _ => none
+  | [p0, p1, p2, p3] =>
+      match (parseField? "eh" p0).bind String.toNat?,
+            (parseField? "ch" p1).bind String.toNat?,
+            (parseField? "e" p2).bind decodeSide?,
+            (parseField? "c" p3).bind decodeSide? with
+      | some eh, some ch, some e, some c => some (e.consensus, eh, c.consensus, ch)
+      | _, _, _, _ => none
   | _ => none
 
 /-- **`minaBetterTipGate`** — THE FORK-CHOICE GATE. `"1"` means the CANDIDATE is canonical and the
-existing tip must be dropped; `"0"` means keep the existing one; `"ERR"` is a malformed or
-under-supplied wire (fail-closed). -/
+existing tip must be dropped; `"0"` means keep the existing one; `"ERR"` is a malformed wire, a
+block that fails the decode's structural refusals, or carried constants that disagree with the pin
+— all fail-closed, and the caller treats every one of them as REFUSE. -/
 def minaBetterTipGate (s : String) : String :=
   match decodeTipPair (s.splitOn ";") with
   | some (e, eh, c, ch) => if minaBetterTip mainnet e c eh ch then "1" else "0"
   | none => "ERR"
 
 /-- **THE EXPORT.** `@[export dregg_mina_better_tip]` — the C-ABI entry `dregg-lean-ffi` calls.
-Rust decodes binprot and fills the eight fields; the ARCHIVE renders the fork-choice verdict. -/
+Rust opens a socket and hands over bytes; the ARCHIVE decodes them and renders the verdict. -/
 @[export dregg_mina_better_tip]
 def dregg_mina_better_tip (s : String) : String := minaBetterTipGate s
 
@@ -319,9 +318,9 @@ def dregg_mina_head_advance (s : String) : String := minaHeadAdvanceGate s
 /-! ## §7 — NON-VACUITY: the decisions DISCRIMINATE, kernel-clean.
 
 The scalar decisions are pure `Nat`/`Bool`, so `decide` reduces them in the kernel. The STRING wire
-layer uses well-founded recursion the kernel cannot reduce under `decide`; the `#guard`s run it in
-the interpreter at build time, and `minaBetterTipGate_eq_decision` ties the string surface to the
-decision without needing to reduce the parser. -/
+layer parses 1,500-plus bytes of hex per side and is exercised by
+`Bridge.MinaBinprotRealBlock` on a real devnet block; `minaBetterTipGate_eq_decision` ties the
+string surface to the decision without needing to reduce the parser. -/
 
 /-- The two branches of `select` are BOTH exercised by the exported decision, and the ratchet is a
 real function of its inputs. -/
@@ -336,82 +335,20 @@ theorem fork_choice_discriminates :
     ∧ minaBetterTip mainnet lcycA lcycA 1 1 = false := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
--- The wire layer, in the interpreter. `W`/`V` are the 11 densities and the 32-byte VRF digest.
--- A genuine pair decides; a 10-entry density list, a 31-byte digest, a >255 digest byte, a zero
--- `slots_per_epoch` and a truncated field list are all `"ERR"` (fail-closed) rather than a verdict
--- computed from what did arrive.
-#guard minaBetterTipGate
-  ("el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "1"
-
-#guard minaBetterTipGate
-  ("el=1000;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=999;"
-   ++ "cl=0;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=1") == "0"
-
--- ⚑ TEN densities, not eleven — this is what the PUBLIC GRAPHQL SURFACE can supply (nothing), and
--- what a truncated binprot decode looks like. REFUSED, not evaluated on the short-range branch.
-#guard minaBetterTipGate
-  ("el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "ERR"
-
--- A 31-byte VRF digest.
-#guard minaBetterTipGate
-  ("el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "ERR"
-
--- A digest "byte" of 256 — a `Nat` that is not a byte, which would otherwise win every `lexLt`.
-#guard minaBetterTipGate
-  ("el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=256,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "ERR"
-
--- `slots_per_epoch = 0` — Lean's `Nat` division would make it epoch 0 rather than fail.
-#guard minaBetterTipGate
-  ("el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=0;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "ERR"
-
+-- The wire layer, in the interpreter. A malformed wire, an odd-length hex string, a non-hex
+-- character and a byte string that is not a protocol state are all `"ERR"` — a REFUSAL, never a
+-- verdict computed from what did arrive.
 #guard minaBetterTipGate "garbage" == "ERR"
 #guard minaBetterTipGate "" == "ERR"
-
--- The ROLL gate: a genuine advance raises the ratchet to 710; the SAME wire with `sg=0` (the
--- anchored-segment gate refused, or was unavailable) advances nothing and keeps the old finalized
--- height. This is the fail-closed arm, exercised on the wire and not only at the scalars.
-#guard minaHeadAdvanceGate
-  ("sg=1;fz=0;"
-   ++ "el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "adv=1;fin=710"
-
-#guard minaHeadAdvanceGate
-  ("sg=0;fz=0;"
-   ++ "el=0;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=1;"
-   ++ "cl=1000;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=999") == "adv=0;fin=0"
-
--- ⚑ THE RATCHET ON THE WIRE: a REFUSED advance still reports the OLD finalized height rather than
--- dropping it, and a shorter candidate cannot lower it either.
-#guard minaHeadAdvanceGate
-  ("sg=1;fz=710;"
-   ++ "el=1000;ed=10;ew=0,0,0,0,0,0,0,0,0,0,7;ev=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "eg=7212;ep=7140;es=1044;en=0;eh=999;"
-   ++ "cl=0;cd=10;cw=0,0,0,0,0,0,0,0,0,0,7;cv=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0;"
-   ++ "cg=7212;cp=7140;cs=1044;cn=0;ch=1") == "adv=0;fin=710"
-
-#guard minaHeadAdvanceGate "sg=1;fz=0;garbage" == "ERR"
+#guard minaBetterTipGate "eh=1;ch=2;e=00;c=00" == "ERR"
+#guard minaBetterTipGate "eh=1;ch=2;e=0;c=00" == "ERR"
+#guard minaBetterTipGate "eh=1;ch=2;e=zz;c=00" == "ERR"
+#guard minaBetterTipGate "eh=1;ch=2;e=00" == "ERR"
+#guard minaHeadAdvanceGate "sg=1;fz=0;eh=1;ch=2;e=00;c=00" == "ERR"
 #guard minaHeadAdvanceGate "garbage" == "ERR"
+-- ⚑ An unavailable source cannot be laundered into an advance: `sg=0` with an unparseable tip is
+-- still `"ERR"`, and `sg=0` with a good tip is `adv=0` with the finalized height UNCHANGED. The
+-- second is exercised on real bytes in `MinaBinprotRealBlock`.
 
 /-! ## §8 — axiom hygiene. -/
 

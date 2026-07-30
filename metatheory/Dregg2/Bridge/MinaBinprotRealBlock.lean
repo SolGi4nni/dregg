@@ -48,7 +48,7 @@ MACHINE-DERIVED from the OCaml `.bin_prot` shapes, so on the question "which byt
 it is a transcription of the daemon, not a second opinion. Agreement on the parse is evidence;
 agreement on a verdict would not have been.
 -/
-import Dregg2.Bridge.MinaBinprot
+import Dregg2.Bridge.MinaForkChoiceGate
 
 set_option autoImplicit false
 set_option maxRecDepth 40000
@@ -57,6 +57,7 @@ namespace Dregg2.Bridge.MinaBinprotRealBlock
 
 open Dregg2.Bridge.MinaChainSelection
 open Dregg2.Bridge.MinaBinprot
+open Dregg2.Bridge.MinaForkChoiceGate
 
 /-- The 1,544 bytes of devnet block 540186's `Protocol_state.Value.Stable.V2`, exactly as the peer
 served them. -/
@@ -230,11 +231,69 @@ theorem the_real_block_gate_can_go_red : refutabilityCheck = true := by native_d
 unrelated reason. -/
 theorem the_density_count_byte_is_eleven : devnetBlock540186.getD 1074 0 = 11 := by native_decide
 
+
+/-! ## ⚑ THE WHOLE THING, END TO END, ON REAL BYTES.
+
+Not the decoder in isolation and not the rule in isolation: the two `@[export]`ed gates, driven
+through their STRING C-ABI wire, on the bytes a devnet peer actually served. -/
+
+/-- A hex digit. -/
+def hexDigitChar (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+
+/-- Bytes to lowercase hex — the form the gate wire carries. -/
+def hexOf (bs : List Nat) : String :=
+  String.mk (bs.flatMap (fun b => [hexDigitChar (b / 16), hexDigitChar (b % 16)]))
+
+/-- The real block, one block longer. `blockchain_length` is the 5-byte `0xfd` form beginning at
+offset 1067, so byte 1068 is its low byte: `0x1a` (540186) becomes `0x1b` (540187). Everything else
+— including the staking lock checkpoint — is untouched, so the pair is SHORT-range and length
+decides. -/
+def devnetBlock540187 : List Nat := devnetBlock540186.set 1068 27
+
+/-- ⚑ **THE EXPORTED FORK-CHOICE GATE, ON REAL DEVNET BYTES.** The real tip does not displace
+itself; the one-longer sibling displaces it; and the reverse presentation does not. Every one of
+these went in as hex over the same `String → String` C ABI `dregg-lean-ffi` calls. -/
+def exportedGateOnRealBytes : Bool :=
+  let e := hexOf devnetBlock540186
+  let c := hexOf devnetBlock540187
+  (minaBetterTipGate ("eh=1;ch=1;e=" ++ e ++ ";c=" ++ e) == "0")
+  && (minaBetterTipGate ("eh=1;ch=2;e=" ++ e ++ ";c=" ++ c) == "1")
+  && (minaBetterTipGate ("eh=2;ch=1;e=" ++ c ++ ";c=" ++ e) == "0")
+
+theorem the_exported_gate_decides_on_real_devnet_bytes : exportedGateOnRealBytes = true := by
+  native_decide
+
+/-- ⚑ **AND THE HEAD ROLLS, ON REAL DEVNET BYTES.** With the anchored-segment gate accepting
+(`sg=1`) the head advances and the finalized height ratchets to `540187 − k = 539897`. With it
+REFUSING (`sg=0`) — which is what an unavailable source supplies — nothing advances and the
+persisted finalized height comes back UNCHANGED. That second line is the fail-closed arm, exercised
+on real bytes rather than on scalars. -/
+def exportedRollOnRealBytes : Bool :=
+  let e := hexOf devnetBlock540186
+  let c := hexOf devnetBlock540187
+  let tip := "eh=1;ch=2;e=" ++ e ++ ";c=" ++ c
+  (minaHeadAdvanceGate ("sg=1;fz=0;" ++ tip) == "adv=1;fin=539897")
+  && (minaHeadAdvanceGate ("sg=0;fz=0;" ++ tip) == "adv=0;fin=0")
+  -- ⚑ THE RATCHET: a REFUSED advance does not drop an already-finalized height either.
+  && (minaHeadAdvanceGate ("sg=0;fz=539897;" ++ tip) == "adv=0;fin=539897")
+  -- and a SHORTER candidate cannot lower it
+  && (minaHeadAdvanceGate ("sg=1;fz=539897;eh=2;ch=1;e=" ++ c ++ ";c=" ++ e) == "adv=0;fin=539897")
+
+theorem the_head_rolls_on_real_devnet_bytes : exportedRollOnRealBytes = true := by native_decide
+
+/-- The finalized height really is `blockchain_length − k` at the pinned `k`, so the number above is
+not a coincidence of the fixture. -/
+theorem the_ratchet_is_length_minus_k : 540187 - mainnet.k = 539897 := by decide
+
 /-! ## axiom hygiene — these are `native_decide` (EXECUTION) results and carry `Lean.ofReduceBool`.
 Stated, not hidden: a 1,544-byte parse is not a kernel reduction. -/
 
 #print axioms the_decoder_reads_a_real_devnet_block
 #print axioms the_real_state_drives_fork_choice
 #print axioms the_real_block_gate_can_go_red
+#print axioms the_exported_gate_decides_on_real_devnet_bytes
+#print axioms the_head_rolls_on_real_devnet_bytes
+#assert_axioms the_ratchet_is_length_minus_k
 
 end Dregg2.Bridge.MinaBinprotRealBlock
