@@ -14,6 +14,7 @@ import {
 import { digestOfLanes, airTerminalSeal } from '../src/RootAirChain.js';
 import {
   RealRootFri,
+  Segment,
   airColumnIndex,
   deepTermCensus,
   friLaneTable,
@@ -65,6 +66,40 @@ const LIMIT = Number(process.env.FRIBRAID_LIMIT ?? 4);
  *  every reused proof against its own key and its predecessor's output — so a
  *  stale artifact is caught rather than trusted. */
 const REUSE = process.env.FRIBRAID_REUSE === '1';
+
+// ── THE CUT-RULE FIGURES, RECORDED ───────────────────────────────────────────
+// Measured 2026-07-30 on the deployed 839-slice plan at the root's real
+// geometry. `[2c]` re-measures and compares them on EVERY run including tier 0,
+// and `recorded-constants.tsv` pins them, so neither the measurement nor the
+// figure can move alone.
+/** Cuts in the full plan that CONSUME at least one witnessed Merkle sibling. */
+const RECORDED_CUTS_WITH_AUX = 489;
+/** …and of those, the ones that also CLOSE the round their FIRST sibling feeds
+ *  — the only cuts at which a bent sibling has something to fail against. */
+const RECORDED_CUTS_ATTRIBUTING = 330;
+/** The `block9` shape: carries siblings, contains a closer, and that closer is
+ *  for a DIFFERENT round or sits BEFORE the siblings. ZERO on this geometry —
+ *  which is a property of the DEPLOYED SLICING, not of the rule. If the slicing
+ *  changes and this shape appears, the figure drifts and the leg goes red. */
+const RECORDED_CUTS_STRAY_CLOSER = 0;
+/** The first cut that can attribute a bent sibling. `FRIBRAID_LIMIT` must reach
+ *  past it for `[5]`'s `auxBent` row to be more than a stated reason. */
+const RECORDED_FIRST_ATTRIBUTING_CUT = 11;
+/** How many of `[5]`'s eight falsifiers are ATTRIBUTABLE at the cut the default
+ *  budget can reach. Seven: every one but `auxBent`, whose first attributing cut
+ *  is slice 11 and this run proves four. */
+const RECORDED_SPLICES_ATTRIBUTED = 7;
+
+/** ⚑ THE SPLICE CUT IS PART OF THE EXPERIMENT, NOT OF THE BUDGET. `[5]` chooses
+ *  it explicitly (see THE CUT RULE below) and PRINTS the choice; this forces it
+ *  instead, for a lane that wants a named cut rather than the best one. */
+const FORCE_AT = process.env.FRIBRAID_SPLICE_AT;
+/** ⚑ THE FLOOR THAT MAKES NARROWING VISIBLE. `[5]`'s result is three-valued, so
+ *  a smaller run no longer goes red — it goes QUIETER, attributing fewer of the
+ *  eight falsifiers. That is exactly the failure the third value could create,
+ *  so the count has a floor: a run that attributes fewer than this must SAY so
+ *  by lowering it, in the invocation, where a reader can see it. */
+const MIN_ATTRIBUTED = Number(process.env.FRIBRAID_MIN_ATTRIBUTED ?? RECORDED_SPLICES_ATTRIBUTED);
 
 let checks = 0;
 const ok = (m: string) => {
@@ -209,6 +244,196 @@ function context(): Ctx {
     realAir,
     realFri,
   };
+}
+
+// ===========================================================================
+// THE CUT RULE — where in the walk a falsifier can be ATTRIBUTED at all.
+// ===========================================================================
+//
+// ⚑ A SPLICE TABLE IS WORTH THE CUT IT WAS TAKEN AT, AND FOR HALF OF THESE
+// FALSIFIERS THE CUT DECIDES WHETHER THE ATTEMPT MEANS ANYTHING. §3.27's
+// original rule — cut at "the last proved slice that consumes a witnessed
+// sibling" — selects on the presence of the WITNESS (`aux > 0`), and what
+// refuses a BENT sibling is the ASSERTION THAT CLOSES OVER IT: the
+// `cur == commitment` of that sibling's OWN round, which can be several cuts
+// later. The uniform-walk lane measured the coarse rule wrong at two positions
+// for two different reasons:
+//
+//   * `block7` — 56 aux lanes, seven `inLevel` steps, NO closer at all. A bent
+//     sibling only changes the digest the slice hands on; the first
+//     `cur == commitment` is three cuts later. ACCEPTED, and correctly.
+//   * `block9` — HAS a closer, and it closes the PREVIOUS round, before any of
+//     this slice's own siblings are consumed. ACCEPTED, and correctly, again.
+//     "Contains a closer" is NECESSARY AND NOT SUFFICIENT.
+//
+// ⚑ THE CORRECTED RULE, implemented here: a cut can attribute a bent sibling iff
+// it contains a closer for the SAME round (or the same fold layer) as its FIRST
+// aux-consuming segment, POSITIONED AFTER that segment. Anywhere else an ACCEPT
+// IS CORRECT BEHAVIOUR BY THE CIRCUIT — so asserting a refusal is a FALSE RED
+// and dropping the attempt is an ABSENT FALSIFIER READING AS A PASS. Both are
+// wrong, which is why the result is THREE-VALUED: refused / accepted / NOT
+// ATTRIBUTABLE, with the reason, counted, and floored.
+//
+// The rule is not only about siblings. Three more of the eight are properties of
+// the cut and not of the circuit, and `attribution()` states each one:
+//   * `friDigestBent` at cut 0 — cut 0 enters `airTerminalSeal(dagDigest, …)`,
+//     which does not close over `friCommit`. The bend changes only the boundary
+//     this cut HANDS ON, and its SUCCESSOR is what refuses it.
+//   * `carryBent` at cut 0 — the walk starts there and carries nothing in.
+//   * `airDigestBent` / `friDigestBent` at a cut that READS every chunk — there
+//     is then no unread chunk whose digest could be bent.
+
+/** The segments that CLOSE a witnessed digest — `cur == commitment` for an input
+ *  round, for a fold layer, or the final-polynomial landing. */
+function closerTag(s: Segment): string | null {
+  if (s.t === 'inRoot') return `r${s.round}`;
+  if (s.t === 'cpRoot') return `L${s.r}`;
+  if (s.t === 'final') return 'final';
+  return null;
+}
+
+/** The segments that CONSUME a witnessed sibling, tagged by what would close it. */
+function auxTag(s: Segment): string | null {
+  if (s.t === 'inLevel') return `r${s.round}`;
+  if (s.t === 'cpLevel' || s.t === 'cpLeaf') return `L${s.r}`;
+  return null;
+}
+
+type CutProfile = {
+  si: number;
+  from: number;
+  to: number;
+  head: string;
+  /** aux lanes this cut consumes. */
+  aux: number;
+  /** the round/layer of its FIRST sibling, or null when it consumes none. */
+  tag: string | null;
+  /** the SAME-round closer positioned AFTER that first sibling, if any. */
+  closer: string | null;
+  /** a closer that is present and does NOT qualify — the `block9` shape. */
+  stray: string | null;
+  nLiveIn: number;
+  nAirOther: number;
+  nFriOther: number;
+};
+
+function cutProfile(c: Ctx, si: number): CutProfile {
+  const sl = c.plan.slices[si];
+  let aux = 0;
+  let firstAuxAt = -1;
+  let tag: string | null = null;
+  for (let k = sl.from; k < sl.to; k++) {
+    const a = auxLanes(c.w.segs[k]);
+    aux += a;
+    if (a > 0 && firstAuxAt < 0) {
+      firstAuxAt = k;
+      tag = auxTag(c.w.segs[k]);
+    }
+  }
+  let closer: string | null = null;
+  let stray: string | null = null;
+  if (firstAuxAt >= 0) {
+    //  A closer BEFORE the first sibling is the `block9` shape by construction:
+    //  it closed a round this cut's own siblings do not feed.
+    for (let k = sl.from; k < firstAuxAt && stray === null; k++) {
+      const t = closerTag(c.w.segs[k]);
+      if (t !== null) stray = `${c.w.segs[k].t} ${t} (BEFORE the siblings)`;
+    }
+    for (let k = firstAuxAt + 1; k < sl.to; k++) {
+      const t = closerTag(c.w.segs[k]);
+      if (t === null) continue;
+      if (t === tag || t === 'final') {
+        closer = `${c.w.segs[k].t} ${t}`;
+        break;
+      }
+      if (stray === null) stray = `${c.w.segs[k].t} ${t} (a DIFFERENT round)`;
+    }
+  }
+  const sh = friSliceShape(c, si);
+  return {
+    si,
+    from: sl.from,
+    to: sl.to,
+    head: c.w.segs[sl.from].t,
+    aux,
+    tag,
+    closer,
+    stray: closer === null ? stray : null,
+    nLiveIn: sh.nLiveIn,
+    nAirOther: sh.nAirOther,
+    nFriOther: sh.nFriOther,
+  };
+}
+
+/** ⚑ THE THIRD VALUE, DERIVED FROM THE CUT AND NOT FROM THE RESULT. This is
+ *  computed BEFORE the child runs, so "not attributable" is a PREDICTION the
+ *  harness commits to, not an excuse it reaches for after seeing an accept. A
+ *  falsifier predicted attributable and then accepted is a hard red. */
+function attribution(key: string, p: CutProfile): { can: boolean; why: string } {
+  switch (key) {
+    case 'unrelatedInput':
+    case 'accBent':
+      return { can: true, why: 'the entered boundary is asserted in every cut body' };
+    case 'foreignProofAndKey':
+    case 'rightProofWrongKey':
+      return { can: true, why: 'the key pin and `prev.verify` are in every cut body' };
+    case 'airDigestBent':
+      return p.nAirOther > 0
+        ? { can: true, why: `${p.nAirOther} AIR chunks are unread here and enter dagDigest` }
+        : { can: false, why: 'this cut READS every AIR chunk — there is no unread chunk to bend' };
+    case 'friDigestBent':
+      if (p.si === 0)
+        return {
+          can: false,
+          why:
+            'cut 0 enters `airTerminalSeal(dagDigest, digest(acc))`, which does NOT close over ' +
+            'friCommit — the bend moves only the boundary this cut HANDS ON, and its successor is ' +
+            'what refuses it (and [4] checks that boundary out of circuit)',
+        };
+      return p.nFriOther > 0
+        ? { can: true, why: `${p.nFriOther} FRI chunks are unread here and enter friCommit` }
+        : { can: false, why: 'this cut READS every FRI chunk — there is no unread chunk to bend' };
+    case 'carryBent':
+      return p.nLiveIn > 0
+        ? { can: true, why: `${p.nLiveIn} live lanes are carried in and are under the entered boundary` }
+        : { can: false, why: 'the walk STARTS at this cut — it carries no live lane in to bend' };
+    case 'auxBent':
+      if (p.aux === 0)
+        return { can: false, why: 'this cut consumes no witnessed Merkle sibling at all' };
+      if (p.closer === null)
+        return {
+          can: false,
+          why:
+            `this cut consumes ${p.aux} sibling lanes of ${p.tag} and contains no closer for ${p.tag} ` +
+            `after them${p.stray ? ` — only ${p.stray}` : ''}; the first \`cur == commitment\` they ` +
+            'feed is in a LATER cut, so an accept here is correct behaviour by the circuit',
+        };
+      return { can: true, why: `this cut CLOSES the ${p.closer} its own first sibling feeds` };
+    default:
+      throw new Error(`no attribution rule for splice '${key}' — every falsifier needs one`);
+  }
+}
+
+/** The rule applied to the WHOLE plan, out of circuit and in milliseconds. This
+ *  is the deliverable figure: how many of the braid's cuts can attribute a
+ *  bent Merkle sibling at all. */
+function cutCensus(c: Ctx) {
+  let withAux = 0;
+  let attributing = 0;
+  let stray = 0;
+  let firstAux = -1;
+  let firstAttributing = -1;
+  for (let si = 0; si < c.plan.slices.length; si++) {
+    const p = cutProfile(c, si);
+    if (p.aux === 0) continue;
+    withAux++;
+    if (firstAux < 0) firstAux = si;
+    if (p.closer !== null) {
+      attributing++;
+      if (firstAttributing < 0) firstAttributing = si;
+    } else if (p.stray !== null) stray++;
+  }
+  return { withAux, attributing, stray, firstAux, firstAttributing };
 }
 
 // ===========================================================================
@@ -365,7 +590,15 @@ async function splicePhase() {
     JSON.parse(readFileSync(resolve(WORK, 'proof-5.json'), 'utf8')),
   );
 
-  const results: Record<string, { refused: boolean; err?: string }> = {};
+  //  ⚑ EVERY FALSIFIER GETS AN ENTRY, INCLUDING THE ONES THAT CANNOT BE APPLIED
+  //  HERE. A bend of a witness lane this cut does not HAVE is sliced away in
+  //  circuit and would prove cleanly for a reason that has nothing to do with
+  //  the braid — a guaranteed accept carrying no information. Those are declared
+  //  `noop`, with the witness width that makes them one, instead of being left
+  //  out: an absent key and an inapplicable one are the same silence, and the
+  //  driver refuses a table with a hole in it.
+  const sh = friSliceShape(c, si);
+  const results: Record<string, { refused?: boolean; err?: string; noop?: string }> = {};
   const attempt = async (name: string, f: () => Promise<unknown>) => {
     try {
       await f();
@@ -373,6 +606,10 @@ async function splicePhase() {
     } catch (e) {
       results[name] = { refused: true, err: String((e as Error)?.message ?? e).slice(0, 300) };
     }
+  };
+  const attemptIf = async (name: string, wide: number, what: string, f: () => Promise<unknown>) => {
+    if (wide > 0) return attempt(name, f);
+    results[name] = { noop: `this cut has no ${what} — the bend is sliced away in circuit` };
   };
   const call = (bIn: Field, p: any, vk: VerificationKey, wt: any) =>
     (prog as any).slice(bIn, p, vk, wt.acc, wt.liveIn, wt.airRead, wt.airOther, wt.friRead, wt.friOther, wt.aux);
@@ -384,32 +621,36 @@ async function splicePhase() {
       acc: BbExt.from(c.acc.map((v, i) => (i === 0 ? (v + 1n) % P : v))),
     }),
   );
-  await attempt('airDigestBent', () => {
+  await attemptIf('airDigestBent', sh.nAirOther, 'unread AIR chunk', () => {
     const bent = wit.airOther.slice();
     bent[0] = bent[0].add(Field(1));
     return call(b, prevProof, vkObject(prevVk), { ...wit, airOther: bent });
   });
-  await attempt('friDigestBent', () => {
+  await attemptIf('friDigestBent', sh.nFriOther, 'unread FRI chunk', () => {
     const bent = wit.friOther.slice();
     bent[0] = bent[0].add(Field(1));
     return call(b, prevProof, vkObject(prevVk), { ...wit, friOther: bent });
   });
-  await attempt('carryBent', () => {
+  await attemptIf('carryBent', sh.nLiveIn, 'carried live lane', () => {
     const bent = wit.liveIn.slice();
     bent[0] = bent[0].add(Field(1));
     return call(b, prevProof, vkObject(prevVk), { ...wit, liveIn: bent });
   });
-  if (wit.aux.length > 1)
-    await attempt('auxBent', () => {
-      const bent = wit.aux.slice();
-      bent[0] = bent[0].add(Field(1));
-      return call(b, prevProof, vkObject(prevVk), { ...wit, aux: bent });
-    });
+  await attemptIf('auxBent', sh.nAux, 'witnessed Merkle sibling', () => {
+    const bent = wit.aux.slice();
+    bent[0] = bent[0].add(Field(1));
+    return call(b, prevProof, vkObject(prevVk), { ...wit, aux: bent });
+  });
   await attempt('foreignProofAndKey', () => call(b, foreignProof, vkObject(foreignVk), wit));
   await attempt('rightProofWrongKey', () => call(b, prevProof, vkObject(foreignVk), wit));
 
   console.log(
-    `##JSON##${JSON.stringify({ si, vkHash: verificationKey.hash.toString(), results })}`,
+    `##JSON##${JSON.stringify({
+      si,
+      vkHash: verificationKey.hash.toString(),
+      shape: { nLiveIn: sh.nLiveIn, nAirOther: sh.nAirOther, nFriOther: sh.nFriOther, nAux: sh.nAux },
+      results,
+    })}`,
   );
 }
 
@@ -634,6 +875,68 @@ async function main() {
     );
   }
 
+  // -----------------------------------------------------------------------
+  // [2c] THE CUT RULE, CENSUSED OVER THE WHOLE PLAN — out of circuit, and this
+  // is what makes [5]'s third value a measurement rather than an excuse.
+  // -----------------------------------------------------------------------
+  console.log('\n[2c] the cut rule — which cuts can ATTRIBUTE a bent Merkle sibling, and which cannot');
+  const cc = cutCensus(c);
+  const pctPlan = ((cc.attributing / c.plan.slices.length) * 100).toFixed(1);
+  const pctAux = ((cc.attributing / Math.max(cc.withAux, 1)) * 100).toFixed(1);
+  console.log(
+    `    of ${fmt(c.plan.slices.length)} cuts in the full plan, ${fmt(cc.withAux)} CONSUME a witnessed ` +
+      `Merkle sibling; ${fmt(cc.attributing)} of those also CLOSE the round their FIRST sibling feeds`,
+  );
+  console.log(
+    `    so ${fmt(cc.attributing)} cuts — ${pctPlan}% of the plan, ${pctAux}% of the ones that carry a ` +
+      `sibling — can attribute a bend in one. The first is cut ${cc.firstAttributing}; the first cut ` +
+      `that carries a sibling AT ALL is cut ${cc.firstAux}`,
+  );
+  //  ⚑ THE FALSIFIABILITY CONTROLS FOR THE RULE ITSELF, and they are the reason
+  //  this census is at tier 0 rather than beside the table it serves. A cut rule
+  //  that admits everything, or nothing, is decorative — and a three-valued
+  //  result built on a decorative rule launders a non-test as a stated reason.
+  if (cc.withAux === 0)
+    fail('NO cut in the plan consumes a witnessed Merkle sibling — `auxBent` has nowhere to fire at any budget');
+  if (cc.attributing === 0)
+    fail(
+      'no cut in the plan CLOSES the round its own first sibling feeds — a bent sibling could never be ' +
+        'attributed at any cut, and [5]\'s `auxBent` row would be a permanent stated reason',
+    );
+  if (cc.withAux === cc.attributing)
+    fail(
+      'every cut that carries a Merkle sibling also closes it — the corrected rule DISCRIMINATES ' +
+        'NOTHING on this geometry, so "carries a sibling" would have been the whole rule and the ' +
+        'three-valued treatment below is decoration',
+    );
+  ok(
+    `the cut rule is STRICTLY STRONGER than "carries a witnessed sibling": ${fmt(cc.withAux - cc.attributing)} ` +
+      'cuts carry one and CANNOT attribute a bend in it — at each of those an ACCEPT is correct ' +
+      'behaviour by the circuit, and asserting a refusal there would be a false red',
+  );
+  console.log(
+    `    of those ${fmt(cc.withAux - cc.attributing)}, ${fmt(cc.stray)} have the \`block9\` shape — a closer ` +
+      'that is present but for a DIFFERENT round, or positioned before the siblings. On THIS geometry ' +
+      'that count is a measured property of the DEPLOYED SLICING and not evidence about the rule; the ' +
+      "uniform walk's per-block slicing is where that shape was found.",
+  );
+  const CUTS: [string, number, number][] = [
+    ['cuts consuming a sibling', cc.withAux, RECORDED_CUTS_WITH_AUX],
+    ['cuts that can attribute one', cc.attributing, RECORDED_CUTS_ATTRIBUTING],
+    ['`block9`-shaped cuts', cc.stray, RECORDED_CUTS_STRAY_CLOSER],
+    ['first attributing cut', cc.firstAttributing, RECORDED_FIRST_ATTRIBUTING_CUT],
+  ];
+  for (const [label, got, want] of CUTS)
+    if (got !== want)
+      fail(
+        `the cut census says ${label} = ${fmt(got)} and the recorded figure is ${fmt(want)} — re-measure, ` +
+          'then move recorded-constants.tsv in the SAME commit and say what changed about the slicing',
+      );
+  ok(
+    `the cut-rule census is as recorded (${fmt(cc.withAux)} carry, ${fmt(cc.attributing)} attribute, ` +
+      `${fmt(cc.stray)} block9-shaped, first at cut ${cc.firstAttributing})`,
+  );
+
   // ── THE TIER-0 STOP ───────────────────────────────────────────────────────
   //  ⚑ EVERYTHING ABOVE IS THE INSTRUMENT THAT FOUND THIS LEG'S DEFECTS, and
   //  everything below is the one that did not. [2b] walks all 11,303 segments
@@ -723,68 +1026,60 @@ async function main() {
   );
 
   // -----------------------------------------------------------------------
-  // [5] The splices, ACROSS the process boundary.
+  // [5] The splices, ACROSS the process boundary, at an EXPLICITLY CHOSEN cut.
+  //
+  //  ⚑ THE CUT IS PART OF THE EXPERIMENT AND IS STATED, NOT IMPLIED BY THE RUN
+  //  SIZE. THE CUT RULE above is the whole treatment; what is left here is (a)
+  //  choosing among the cuts THIS run reached, (b) printing what each of them
+  //  could have attributed, and (c) reading every result through the prediction
+  //  made before the child ran. A "smaller run of the same test" is only smaller
+  //  if the test does not choose its own subject from what the run happened to
+  //  do — and this one does, measured: the same `friDigestBent` bend is REFUSED
+  //  at cut 1 and ACCEPTED at cut 0, same circuit, same bend, because the cut
+  //  moved. So the choice is printed with its reason and every unattributable
+  //  row carries the reason it is unattributable.
   // -----------------------------------------------------------------------
-  //  ⚑ SPLICE AT A SLICE THAT CARRIES MERKLE DATA. A transcript-only slice has
-  //  no `aux`, so the `auxBent` attempt cannot fire there and the table would
-  //  quietly report seven of eight — a falsifier that is absent reads exactly
-  //  like one that passed. The cut is chosen to be the LAST proved slice that
-  //  consumes a witnessed sibling.
-  //
-  //  ⚑⚑ KNOWN DEFECT, FLAGGED AND NOT FIXED HERE — DO NOT READ THIS RULE AS
-  //  COVERED. It selects on the presence of the WITNESS (`aux > 0`) and not on
-  //  the presence of the ASSERTION THAT CLOSES OVER IT. A bent Merkle sibling is
-  //  only caught by the `cur == commitment` check of its round, which can be
-  //  several cuts later — so a cut chosen this way can carry `aux`, accept a
-  //  bent sibling CORRECTLY, and have that accept read as a failed falsifier.
-  //  The uniform-walk lane MEASURED it in its own splice suite: at `block7` a
-  //  bent sibling was accepted because the first closing root is three cuts on
-  //  at `block9`.
-  //
-  //  ⚑ AND "REQUIRES A CLOSER" IS NOT THE FIX EITHER — that rule still passes a
-  //  bad cut, and the uniform lane measured it being wrong at TWO positions for
-  //  TWO different reasons:
-  //
-  //    * `block7` — NO closer at all after the aux segment. The bend is
-  //      correctly accepted because nothing downstream in the slice closes over
-  //      it.
-  //    * `block9` — HAS a closer, but it closes the PREVIOUS round, before any
-  //      of this slice's own siblings are consumed. The cut looks valid under
-  //      "requires a closer" and still tests nothing about the siblings it
-  //      carries.
-  //
-  //  ⚑ THE CORRECTED RULE: the cut requires a SAME-ROUND closer POSITIONED
-  //  AFTER the first aux segment. Measured on the uniform walk, 25 of 43 block
-  //  positions carry `aux` and only 16 satisfy that — more than a third of the
-  //  positions that LOOK like valid cut points are not.
-  //
-  //  ⚑ AND BOTH OBVIOUS HANDLINGS ARE WRONG, which is why this is a flag and
-  //  not a quick patch: asserting the refusal is a FALSE RED (the bend genuinely
-  //  cannot be caught at that cut), and dropping the attempt is an ABSENT
-  //  FALSIFIER READING AS A PASS. The fix is THREE-VALUED — refused / accepted /
-  //  NOT ATTRIBUTABLE, with the reason — and the third state is the honest one.
-  //  Both of those ACCEPTs were CORRECT BEHAVIOUR BY THE CIRCUIT; the harness
-  //  was wrong about where it could test. That is the distinction to carry: a
-  //  falsifier applied where the closing assertion is absent, or belongs to a
-  //  different round, reads as a pass and proves nothing.
-  //
-  //  Whoever next edits this table should carry that treatment across. Leg 21
-  //  (the claim carry) touched neither the cut rule nor this splice table; its
-  //  own accept/refuse table does not select a cut at all — it PLACES the seal
-  //  and the read it closes over in the same slice body, so the falsifier and
-  //  its closer are co-located by construction rather than by a heuristic.
-  let AT = Math.min(1, N - 1);
-  for (let si = N - 1; si >= 0; si--) {
-    const sl = c.plan.slices[si];
-    let aux = 0;
-    for (let k = sl.from; k < sl.to; k++) aux += auxLanes(c.w.segs[k]);
-    if (aux > 0) {
-      AT = si;
-      break;
-    }
+  const SPLICES: [string, string][] = [
+    ['unrelatedInput', 'a boundary with no relation to its predecessor'],
+    ['accBent', 'the carried AIR ACCUMULATOR bent — the AIR half\'s own result'],
+    ['airDigestBent', 'a digest of an AIR column chunk this slice never reads, bent'],
+    ['friDigestBent', 'a digest of a FRI lane chunk this slice never reads, bent'],
+    ['carryBent', 'one carried live lane bent'],
+    ['auxBent', 'one Merkle sibling bent'],
+    ['foreignProofAndKey', 'AIR slice 5\'s proof with AIR slice 5\'s OWN key — a valid proof of the wrong program'],
+    ['rightProofWrongKey', 'the right proof paired with a key it was not made under'],
+  ];
+  console.log('\n[5] the splice cut — CHOSEN and stated, then the table read through that choice');
+  const cand = [];
+  for (let si = 0; si < N; si++) {
+    const p = cutProfile(c, si);
+    cand.push({ p, can: SPLICES.filter(([k]) => attribution(k, p).can).length });
   }
+  let AT: number;
+  if (FORCE_AT !== undefined) {
+    AT = Number(FORCE_AT);
+    if (!Number.isInteger(AT) || AT < 0 || AT >= N)
+      fail(`FRIBRAID_SPLICE_AT='${FORCE_AT}' is not one of the ${N} cuts this run proved (0..${N - 1})`);
+  } else {
+    //  `>=` keeps the LATEST cut on a tie: deeper into the walk is more of it.
+    AT = cand.reduce((best, x) => (x.can >= best.can ? x : best), cand[0]).p.si;
+  }
+  console.log(`    the ${N} cuts this run proved, and what each of them can attribute:`);
+  for (const x of cand)
+    console.log(
+      `      ${x.p.si === AT ? '→' : ' '} cut ${String(x.p.si).padStart(3)} segments ` +
+        `[${fmt(x.p.from)},${fmt(x.p.to)}) ${x.p.head.padEnd(8)} aux ${String(x.p.aux).padStart(4)} ` +
+        `${(x.p.closer ? `closes ${x.p.closer}` : x.p.aux > 0 ? `NO closer for ${x.p.tag}` : '—').padEnd(20)} ` +
+        `attributes ${x.can} of ${SPLICES.length}`,
+    );
+  const prof = cutProfile(c, AT);
   console.log(
-    `\n[5] the splice is REFUSED at FRI slice ${AT} — in a process that compiled only that slice`,
+    `    CHOSEN: cut ${AT}, ${
+      FORCE_AT !== undefined
+        ? 'because FRIBRAID_SPLICE_AT named it'
+        : 'because it attributes more falsifiers than any other cut this run reached (ties to the latest)'
+    } — and the choice is the experiment, so a run at another FRIBRAID_LIMIT reaches other cuts and is ` +
+      'ANOTHER test, not a smaller one',
   );
   const sp = await child({ FRIBRAID_PHASE: 'splice', FRIBRAID_SLICE: String(AT) }, 'splice');
   if (sp.vkHash !== metas[AT].vkHash)
@@ -796,38 +1091,111 @@ async function main() {
     `FRI slice ${AT} compiles to the SAME verification key in a second, independent process — the ` +
       'pin is a constant, not an accident of one run',
   );
-  const SPLICES: [string, string][] = [
-    ['unrelatedInput', 'a boundary with no relation to its predecessor'],
-    ['accBent', 'the carried AIR ACCUMULATOR bent — the AIR half\'s own result'],
-    ['airDigestBent', 'a digest of an AIR column chunk this slice never reads, bent'],
-    ['friDigestBent', 'a digest of a FRI lane chunk this slice never reads, bent'],
-    ['carryBent', 'one carried live lane bent'],
-    ['auxBent', 'one Merkle sibling bent'],
-    ['foreignProofAndKey', 'AIR slice 5\'s proof with AIR slice 5\'s OWN key — a valid proof of the wrong program'],
-    ['rightProofWrongKey', 'the right proof paired with a key it was not made under'],
-  ];
-  let attempted = 0;
+  //  ⚑ THE HARNESS'S OWN PREDICTION, CHECKED AGAINST THE CHILD'S WITNESS WIDTHS.
+  //  `attribution()` reasons from the plan; the child reasons from the shape it
+  //  was actually given. If those two ever disagree the third value is being
+  //  computed from a picture of the circuit rather than from the circuit.
+  for (const [k, got] of [
+    ['nLiveIn', prof.nLiveIn],
+    ['nAirOther', prof.nAirOther],
+    ['nFriOther', prof.nFriOther],
+  ] as [string, number][])
+    if (sp.shape[k] !== got)
+      fail(
+        `the driver's cut profile says ${k}=${got} at cut ${AT} and the child that built the witness ` +
+          `says ${sp.shape[k]} — the three-valued verdicts below would be derived from the wrong shape`,
+      );
+  ok(
+    `the driver's cut profile and the proving child agree on cut ${AT}'s witness widths ` +
+      `(liveIn ${fmt(prof.nLiveIn)}, unread AIR ${fmt(prof.nAirOther)}, unread FRI ${fmt(prof.nFriOther)}, ` +
+      `siblings ${fmt(sp.shape.nAux)}) — the attribution is over the circuit, not over a picture of it`,
+  );
+  //  ⚑ THREE-VALUED: refused / accepted / NOT ATTRIBUTABLE, with the reason. The
+  //  third is neither a pass nor a fail, it is COUNTED, and the count has a
+  //  floor — so a table that went all-reason could never read as green.
+  let attributed = 0;
+  const unattributable: string[] = [];
   for (const [key, label] of SPLICES) {
+    const pred = attribution(key, prof);
     const r = sp.results[key];
-    if (!r) {
-      console.log(`    · ${label}: not attempted at this cut`);
+    if (!r)
+      fail(
+        `${label}: the splice child returned NO entry — an absent falsifier reads exactly like one ` +
+          'that passed, and every falsifier must report refused, accepted, or why neither applies',
+      );
+    if (r.noop !== undefined) {
+      if (pred.can)
+        fail(
+          `${label}: the driver predicted this cut could attribute it and the child could not even ` +
+            `APPLY it (${r.noop}) — the two halves of the harness disagree about the cut`,
+        );
+      unattributable.push(label);
+      console.log(`    ⚠ ${label}: NOT ATTRIBUTABLE at cut ${AT}, and NOT APPLIED — ${pred.why}`);
       continue;
     }
-    attempted++;
-    if (!r.refused) fail(`${label}: ACCEPTED`);
+    if (!pred.can) {
+      unattributable.push(label);
+      console.log(
+        `    ⚠ ${label}: ${r.refused ? 'refused' : 'ACCEPTED'} — NOT ATTRIBUTABLE at cut ${AT}: ${pred.why}`,
+      );
+      continue;
+    }
+    attributed++;
+    if (!r.refused) fail(`${label}: ACCEPTED, at a cut where ${pred.why}`);
     if (!isConstraintFailure(r.err)) fail(`${label}: the error is not a constraint failure — ${r.err}`);
     ok(`REFUSED: ${label}`);
   }
-  if (attempted !== SPLICES.length)
+  console.log(
+    `    ${attributed} of ${SPLICES.length} falsifiers ATTRIBUTED at cut ${AT}; ` +
+      `${unattributable.length} NOT ATTRIBUTABLE, each with its reason above` +
+      (unattributable.length ? ` (${unattributable.join('; ')})` : ''),
+  );
+  if (attributed === 0)
     fail(
-      `${SPLICES.length - attempted} splice(s) were NOT ATTEMPTED at this cut — an absent falsifier ` +
-        'reads exactly like one that passed, and this table is only worth what it fired',
+      `NO falsifier is attributable at cut ${AT} — this table is all stated reason and no test, and a ` +
+        'table of NOT ATTRIBUTABLE must never be able to read as green',
     );
+  if (attributed < MIN_ATTRIBUTED)
+    fail(
+      `cut ${AT} attributes ${attributed} of ${SPLICES.length} falsifiers and the recorded floor is ` +
+        `${MIN_ATTRIBUTED}. This run tests strictly LESS than the recorded one — it did not fail, it went ` +
+        'QUIETER, which is the failure mode the third value creates. Set FRIBRAID_MIN_ATTRIBUTED in the ' +
+        'invocation to accept that, where a reader can see it.',
+    );
+  ok(
+    `the splice table is three-valued and counted: ${attributed} attributed, ${unattributable.length} ` +
+      `not attributable with a stated reason, floor ${MIN_ATTRIBUTED}`,
+  );
+  //  ⚑ AND THE HONEST OUTCOME WHEN THE BUDGET CANNOT REACH A CUT THAT ATTRIBUTES
+  //  A BENT SIBLING. It is neither forced to a pass nor asserted into a false
+  //  red: the leg says which cut would, and what it would cost to get there.
+  if (!attribution('auxBent', prof).can) {
+    const need = cc.firstAttributing + 1;
+    console.log(
+      `    ⚑ 'one Merkle sibling bent' is NOT ATTRIBUTABLE WITHIN THIS BUDGET, and that — not a pass ` +
+        `— is the outcome. No cut this run reached (0..${N - 1}) closes a round its own siblings feed; ` +
+        `the first that does is cut ${cc.firstAttributing}, so FRIBRAID_LIMIT=${need} is what buys the ` +
+        `row, at roughly ${need - N} more slices of proving. ${fmt(cc.attributing)} of the plan's ` +
+        `${fmt(c.plan.slices.length)} cuts can attribute it; this run reaches ${
+          cand.filter((x) => x.p.closer !== null).length
+        }.`,
+    );
+  }
 
   // -----------------------------------------------------------------------
   // [6] The controls.
   // -----------------------------------------------------------------------
-  console.log('\n[6] the controls — the same slice with ONE binding removed');
+  console.log(`\n[6] the controls — cut ${AT} again, with ONE binding removed`);
+  //  ⚑ THE CONTROL IS SUBJECT TO THE SAME CUT PROBLEM AS THE TABLE. Its
+  //  `airDigestBent` arm has to show the UNBOUND circuit ACCEPTING a bend — and
+  //  a bend of a chunk this cut READS would be accepted for a reason that has
+  //  nothing to do with the binding. That would be a vacuous control reading as
+  //  the strongest line in the leg.
+  if (prof.nAirOther === 0)
+    fail(
+      `cut ${AT} reads every AIR chunk, so the unbound control's "bent digest of a chunk it never ` +
+        'reads" bends nothing — the control would ACCEPT vacuously and be credited as evidence',
+    );
   const ctl = await child(
     { FRIBRAID_PHASE: 'control', FRIBRAID_SLICE: String(AT), FRIBRAID_PIN: '1' },
     'control (unbound, pinned)',

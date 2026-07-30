@@ -36,6 +36,11 @@ scripts/mina-poseidon-merkle-rows.ts	RECORDED_PERM_ROWS	Number(process.env.MINA_
 scripts/mina-poseidon-merkle-rows.ts	RECORDED_LEVEL_ROWS	Number(process.env.MINA_PASTA_LEVEL_ROWS ?? PASTA_HASH.merkleLevel)
 scripts/mina-poseidon-merkle-rows.ts	RECORDED_DEPTH22_ROWS	Number(process.env.MINA_PASTA_D22_ROWS ?? 342)
 scripts/partition-schedule.ts	RECORDED_FLAT	34_566
+scripts/root-fri-braid.ts	RECORDED_CUTS_WITH_AUX	489
+scripts/root-fri-braid.ts	RECORDED_CUTS_ATTRIBUTING	330
+scripts/root-fri-braid.ts	RECORDED_CUTS_STRAY_CLOSER	0
+scripts/root-fri-braid.ts	RECORDED_FIRST_ATTRIBUTING_CUT	11
+scripts/root-fri-braid.ts	RECORDED_SPLICES_ATTRIBUTED	7
 scripts/poseidon2-babybear-rows.ts	RECORDED_ROWS_PER_PERM	2600.5
 scripts/poseidon2-merkle-rows.ts	RECORDED_ROWS_PER_LEVEL	BABYBEAR_HASH.merkleLevel
 scripts/poseidon2-merkle-rows.ts	RECORDED_DEPTH22_ROWS	58971
