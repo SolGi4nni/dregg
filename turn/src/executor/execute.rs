@@ -1338,8 +1338,19 @@ impl TurnExecutor {
                     second,
                     class,
                 },
+                // A ROW WHOSE MAGNITUDE THE FIELD CANNOT DENOTE. Surfaced as
+                // ITSELF, never collapsed into a conservation "violation" (nor
+                // into `ExcessNotZero`, which here would report `excess: 0` and
+                // read as a contradiction): the turn's arithmetic may be exact —
+                // what cannot happen is carrying the row to a decider. `|δ| = p`
+                // used to encode to the field's ZERO and this turn COMMITTED —
+                // `Action::balance_change` is an arbitrary `i64`, so THIS path is
+                // the reachable producer. See `atomic::net_delta_mag_felt`.
+                super::atomic::AtomicTurnError::NetDeltaNotRepresentable { asset, delta } => {
+                    TurnError::NetDeltaNotRepresentable { asset, delta }
+                }
                 // `check_per_asset_conservation_by_asset_id` returns only those
-                // three; any other variant is a contract break, surfaced as a
+                // four; any other variant is a contract break, surfaced as a
                 // plain conservation failure.
                 _ => TurnError::ExcessNotZero { excess },
             };

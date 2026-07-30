@@ -2037,6 +2037,15 @@ impl TurnExecutor {
             // was installed to say so. Collapsing this into `InvalidExecutionProof` would blame the
             // prover for the verifier's missing archive.
             AtomicTurnError::ConservationGateUnavailable => TurnError::ConservationGateUnavailable,
+            // A ROW THE CONSERVATION FIELD CANNOT DENOTE — surfaced as ITSELF for
+            // the same reason as the executor path. Unreachable from THIS caller
+            // as long as every bundle delta comes from `extract_net_delta` (a
+            // `BabyBear` magnitude, so `< p` by construction); routed explicitly
+            // anyway so a future PI-width change cannot land it in the catch-all
+            // and read as a malformed proof.
+            AtomicTurnError::NetDeltaNotRepresentable { asset, delta } => {
+                TurnError::NetDeltaNotRepresentable { asset, delta }
+            }
             other => TurnError::InvalidExecutionProof(format!(
                 "bundle per-asset conservation check failed: {other}"
             )),

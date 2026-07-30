@@ -4138,6 +4138,193 @@ fn test_cross_asset_excess_netting_rejected() {
 }
 
 // =============================================================================
+// ⚑ THE SAME CROSS-ASSET FORGE, AT ±p, USED TO COMMIT
+//
+// `test_cross_asset_excess_netting_rejected` above is this turn at ±1_000_000
+// and it is REFUSED. Raise the two deltas to ±p = 2013265921 and the IDENTICAL
+// forge was ACCEPTED: each row reached the per-asset collector as
+// `BabyBear::new_canonical(|δ| as u32)`, `p % p == 0`, so BOTH asset classes
+// reported a zero imbalance and the turn committed — minting 2013265921 of
+// asset X out of a destroyed 2013265921 of asset Y.
+//
+// `balance_change` is an arbitrary `i64` on any action, so this is the reachable
+// producer of an un-representable row: the sovereign and light-client legs read
+// their delta out of a proof PI (already a `BabyBear`, so `< p` by construction),
+// and the mixed-atomic hosted legs are always emitted in cancelling pairs of the
+// same asset. The cleartext path is the one that can hand the gate a lone,
+// arbitrary, cross-asset magnitude.
+// =============================================================================
+
+#[test]
+fn cross_asset_forge_of_exactly_p_is_refused_not_wrapped_to_zero() {
+    let p = dregg_circuit::field::BABYBEAR_P as i64;
+
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(11, 5000);
+    let token_x = [0x11u8; 32];
+    let token_y = [0x22u8; 32];
+    let (cell_a, _) = make_open_cell_token(12, token_x, 0);
+    let (cell_b, _) = make_open_cell_token(13, token_y, p);
+    let agent_id = agent.id();
+    let a_id = cell_a.id();
+    let b_id = cell_b.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps.capabilities.grant(a_id, AuthRequired::None);
+    agent_with_caps.capabilities.grant(b_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(cell_a).unwrap();
+    ledger.insert_cell(cell_b).unwrap();
+
+    let executor = zero_cost_executor();
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    // Mint +p of asset X on cellA…
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(a_id, "mint_x", agent_id)
+            .with_declared_excess(p)
+            .build(),
+    );
+    // …against a −p burn of self-issued asset Y on cellB. Scalar excess nets 0,
+    // and BOTH per-asset magnitudes used to encode to the field's zero.
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(b_id, "burn_y", agent_id)
+            .with_declared_excess(-p)
+            .build(),
+    );
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "a ±p cross-asset forge must be REFUSED, got: {result:?}"
+    );
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        // The row cannot be carried by the one-felt magnitude the per-asset
+        // verdict is taken over, so it is refused BEFORE any verdict — the
+        // executor is the last place holding the true i64.
+        TurnError::NetDeltaNotRepresentable { delta, .. } => {
+            assert!(
+                delta == p || delta == -p,
+                "the refusal must name the un-representable delta, got {delta}"
+            );
+        }
+        other => panic!("expected NetDeltaNotRepresentable, got {other:?}"),
+    }
+
+    // Atomicity: nothing moved.
+    assert_eq!(ledger.get(&a_id).unwrap().state.balance(), 0);
+    assert_eq!(ledger.get(&b_id).unwrap().state.balance(), p);
+}
+
+// =============================================================================
+// THE HONEST POLE, AT THE REPRESENTABLE MAXIMUM. A same-asset turn moving
+// exactly `p − 1` — one unit below the refusal — still COMMITS, so the guard
+// fires at `p` and not one unit early, and the largest magnitude the field can
+// denote is not collateral damage.
+// =============================================================================
+
+#[test]
+fn honest_same_asset_turn_at_the_representable_maximum_still_commits() {
+    let p = dregg_circuit::field::BABYBEAR_P as i64;
+    let max = p - 1;
+
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(14, 5000);
+    let token_x = [0x33u8; 32];
+    let (cell_a, _) = make_open_cell_token(15, token_x, max);
+    let (cell_b, _) = make_open_cell_token(16, token_x, 0);
+    let agent_id = agent.id();
+    let a_id = cell_a.id();
+    let b_id = cell_b.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps.capabilities.grant(a_id, AuthRequired::None);
+    agent_with_caps.capabilities.grant(b_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(cell_a).unwrap();
+    ledger.insert_cell(cell_b).unwrap();
+
+    let executor = zero_cost_executor();
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(a_id, "withdraw", agent_id)
+            .with_declared_excess(-max)
+            .build(),
+    );
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(b_id, "deposit", agent_id)
+            .with_declared_excess(max)
+            .build(),
+    );
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "an honest same-asset turn at |δ| = p − 1 must still COMMIT, got: {result:?}"
+    );
+    assert_eq!(ledger.get(&a_id).unwrap().state.balance(), 0);
+    assert_eq!(ledger.get(&b_id).unwrap().state.balance(), max);
+}
+
+// =============================================================================
+// ⚠ WHAT THIS BROKE, ASSERTED. A same-asset turn moving exactly `p` conserves
+// perfectly and is now REFUSED, because neither leg can be carried by the felt
+// the verdict is taken over. That is a liveness refusal above the committed
+// per-asset AIR's own per-row ceiling (a magnitude occupies two 15-bit limbs, so
+// `build_cross_cell_conservation_trace` can only certify `mag < 2^30`), so no
+// turn this now refuses was ever provable. It refuses LOUDLY, by its own
+// variant, rather than reducing itself mod p.
+// =============================================================================
+
+#[test]
+fn same_asset_turn_at_exactly_p_now_refuses_as_unrepresentable() {
+    let p = dregg_circuit::field::BABYBEAR_P as i64;
+
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(17, 5000);
+    let token_x = [0x44u8; 32];
+    let (cell_a, _) = make_open_cell_token(18, token_x, p);
+    let (cell_b, _) = make_open_cell_token(19, token_x, 0);
+    let agent_id = agent.id();
+    let a_id = cell_a.id();
+    let b_id = cell_b.id();
+
+    let mut agent_with_caps = agent;
+    agent_with_caps.capabilities.grant(a_id, AuthRequired::None);
+    agent_with_caps.capabilities.grant(b_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(cell_a).unwrap();
+    ledger.insert_cell(cell_b).unwrap();
+
+    let executor = zero_cost_executor();
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(a_id, "withdraw", agent_id)
+            .with_declared_excess(-p)
+            .build(),
+    );
+    builder.add_action(
+        ActionBuilder::new_unchecked_for_tests(b_id, "deposit", agent_id)
+            .with_declared_excess(p)
+            .build(),
+    );
+    let turn = builder.fee(100).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::NetDeltaNotRepresentable { delta, .. } => {
+            assert!(delta == p || delta == -p);
+        }
+        other => panic!("expected NetDeltaNotRepresentable, got {other:?}"),
+    }
+    assert_eq!(ledger.get(&a_id).unwrap().state.balance(), p);
+    assert_eq!(ledger.get(&b_id).unwrap().state.balance(), 0);
+}
+
+// =============================================================================
 // Test: a genuine SINGLE-ASSET conserving turn still LANDS (no over-rejection)
 //
 // Two cells of the SAME (non-native) asset: withdraw −100 from C, deposit +100

@@ -658,6 +658,31 @@ pub enum TurnError {
         /// The single class both ids fold to.
         class: u32,
     },
+
+    /// A CONSERVATION ROW'S NET DELTA DOES NOT FIT THE FIELD THE PER-ASSET
+    /// VERDICT IS TAKEN OVER. Each row reaches the collector as ONE `BabyBear`
+    /// magnitude + a sign bit, read straight back as the integer `±mag`, so the
+    /// encoding denotes the delta only while `|δ| < p = 2013265921`. The producer
+    /// was `BabyBear::new_canonical(delta.unsigned_abs() as u32)` — a `u64 → u32`
+    /// truncation then `% p` — which maps `|δ| = p` to **zero**: an imbalance of
+    /// two billion read as perfect conservation. `Action::balance_change` is an
+    /// arbitrary `i64`, so the cleartext path could hand the gate such a row.
+    ///
+    /// REFUSED, not "violated": the turn's arithmetic may be exact. What is wrong
+    /// is that nothing downstream — the felt, the committed per-asset AIR (whose
+    /// row magnitude is two 15-bit limbs, a tighter `2^30` ceiling), the verified
+    /// Lean decider — can carry this row without changing its value. The refusal
+    /// happens in the executor because that is the last place holding the true
+    /// `i64` (`executor::atomic::net_delta_mag_felt`).
+    ///
+    /// ⚠ APPENDED AT THE END ON PURPOSE — same postcard variant-index reason as
+    /// `AssetClassCollision` above.
+    NetDeltaNotRepresentable {
+        /// The asset class the un-representable row belongs to.
+        asset: u32,
+        /// The true signed delta, as the executor computed it.
+        delta: i64,
+    },
 }
 
 /// Operational classification of a refusal, for the security observability
@@ -873,6 +898,18 @@ impl core::fmt::Display for TurnError {
                     second[1],
                     second[2],
                     second[3]
+                )
+            }
+            TurnError::NetDeltaNotRepresentable { asset, delta } => {
+                write!(
+                    f,
+                    "net delta {delta} on asset {asset} is not representable in the conservation \
+                     field: the per-asset Σδ=0 verdict is taken over one BabyBear magnitude + a \
+                     sign bit (read back as ±mag), so |δ| must be < p = {} — REFUSING the turn \
+                     rather than reducing it mod p, which makes an imbalance of exactly p read as \
+                     ZERO. The committed per-asset AIR is tighter still (a row magnitude is two \
+                     15-bit limbs, so mag < 2^30), so nothing this refuses was provable",
+                    dregg_circuit::field::BABYBEAR_P
                 )
             }
             TurnError::BalanceChangeUnderflow {

@@ -284,6 +284,13 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         // `fold_token_id_to_asset` and the per-asset Σδ=0 gate would otherwise net them against
         // each other. Classified as Conservation, which is the guard it protects.
         AssetClassCollision { .. } => (GuardKind::Conservation, vec![]),
+        // A conservation ROW whose magnitude the one-felt per-asset column cannot
+        // denote (`|δ| ≥ p`), refused rather than reduced mod p — which used to
+        // turn an imbalance of exactly `p` into a zero. Names no cell for the same
+        // reason as the collision above: the defect is a property of the ROW's
+        // encoding, not of any one cell's state. Classified as Conservation, the
+        // guard it protects.
+        NetDeltaNotRepresentable { .. } => (GuardKind::Conservation, vec![]),
         BearerCapDelegatorLacksCapability { delegator, target } => {
             (GuardKind::Capability, vec![*delegator, *target])
         }

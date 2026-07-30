@@ -203,6 +203,37 @@ pub enum AtomicTurnError {
         /// The single class both fold to.
         class: u32,
     },
+    /// A CONSERVATION ROW'S NET DELTA DOES NOT FIT THE FIELD THE VERDICT IS TAKEN
+    /// OVER. Every per-cell contribution reaches the collector as ONE `BabyBear`
+    /// magnitude plus a sign bit
+    /// (`dregg_circuit::block_conservation::PerCellContribution`), and
+    /// `CrossCellDelta::signed` reads that felt straight back as the integer
+    /// `±mag`. So the encoding DENOTES the delta only while
+    /// `|δ| < p = 2013265921`.
+    ///
+    /// The producer was `BabyBear::new_canonical(delta.unsigned_abs() as u32)` — a
+    /// `u64 → u32` truncation followed by `% p`, neither of which checks. It maps
+    /// `|δ| = p` to **ZERO**, so the row contributed nothing at all to its asset's
+    /// sum and an imbalance of two billion read as perfect conservation; `2^32`
+    /// lost its high half before the reduction even ran.
+    ///
+    /// REFUSED, not wrapped, and not "violated": the turn may conserve exactly.
+    /// What is wrong is that nothing downstream of this point — not the felt, not
+    /// the committed per-asset AIR (whose row magnitude occupies two 15-bit limbs,
+    /// giving it its own tighter `2^30` ceiling), not the verified Lean decider —
+    /// can be handed this row without changing its value. That is a
+    /// WITNESS-GENERATION FAULT, and the executor is the last place that still
+    /// holds the true `i64`. Same posture, and the same reason, as
+    /// [`Self::AssetClassCollision`].
+    ///
+    /// ⚠ APPENDED AT THE END ON PURPOSE — the same postcard variant-index reason
+    /// spelled out on `AssetClassCollision` above.
+    NetDeltaNotRepresentable {
+        /// The asset class the un-representable row belongs to.
+        asset: u32,
+        /// The true signed delta, as the executor computed it.
+        delta: i64,
+    },
 }
 
 impl core::fmt::Display for AtomicTurnError {
@@ -265,6 +296,17 @@ impl core::fmt::Display for AtomicTurnError {
                 second[2],
                 second[3],
                 class
+            ),
+            Self::NetDeltaNotRepresentable { asset, delta } => write!(
+                f,
+                "net delta {} on asset {} is not representable in the conservation field: the \
+                 per-asset verdict is taken over one BabyBear magnitude + a sign bit, read back as \
+                 ±mag, so |δ| must be < p = {} — REFUSING the turn rather than reducing it mod p, \
+                 which makes an imbalance of exactly p read as ZERO (and truncates |δ| ≥ 2^32 \
+                 first). See dregg_circuit::block_conservation::PerCellContribution",
+                delta,
+                asset,
+                dregg_circuit::field::BABYBEAR_P
             ),
             Self::AgentNotFound(id) => write!(f, "agent cell not found: {}", id),
             Self::InsufficientFee {
@@ -439,6 +481,50 @@ impl TurnExecutor {
                 class: c.class,
             }
         })
+    }
+
+    /// Encode ONE conservation row's signed delta as the magnitude field element
+    /// the per-asset collector carries, REFUSING any magnitude the field cannot
+    /// denote.
+    ///
+    /// `dregg_circuit::block_conservation::PerCellContribution::net_delta_mag` is
+    /// one `BabyBear`, and `CrossCellDelta::signed` reads it back as the integer
+    /// `±mag` — so the encoding is faithful exactly when `|δ| < p`. Past that,
+    /// `BabyBear::new_canonical` reduces mod `p` (and a `u64 → u32` cast truncates
+    /// first), silently turning the row into a DIFFERENT, smaller delta:
+    /// `|δ| = p` encoded to `0`, so a two-billion imbalance summed to a perfectly
+    /// conserving zero. There is no field representation of a magnitude ≥ `p` to
+    /// choose instead — a wider `u64` in this position would only move the wrap —
+    /// so the row is refused where the true `i64` still exists.
+    ///
+    /// ⚠ SUBSTRATE: this is RUST, and only Rust. It changes NO constraint. The
+    /// conservation RULE — what `Σδ = 0` means, and how the committed AIR forces
+    /// it — remains the Lean-authored `Dregg2.Circuit.CrossCellConserveDecision` /
+    /// `CrossCellConservation`, untouched. That AIR already fixed the ANALOGOUS
+    /// wrap on its own side (its v2 multi-limb revision replaced a `balance[last]`
+    /// summed as one felt mod `p` with an exact-ℤ 3×15-bit limb recurrence,
+    /// precisely because two credits summing to `p ≡ 0` forged conservation). What
+    /// was still broken is the PRODUCER-side function assigning an `i64` to that
+    /// AIR's one-felt magnitude column, which is this side of the seam — the same
+    /// division of labour as [`Self::refuse_colliding_asset_classes`].
+    ///
+    /// The tighter DOWNSTREAM bound is the AIR's own: a row's magnitude occupies
+    /// two 15-bit limbs (`CCC_CC0`/`CCC_CC1`), so
+    /// `build_cross_cell_conservation_trace` can only certify `mag < 2^30` and its
+    /// range gate rejects above that. This refusal is the FIELD bound (`< p`) —
+    /// the exact point at which the felt stops denoting the magnitude at all —
+    /// which is the strongest thing this function is entitled to decide.
+    pub(super) fn net_delta_mag_felt(
+        asset: u32,
+        delta: i64,
+    ) -> Result<dregg_circuit::field::BabyBear, AtomicTurnError> {
+        let magnitude = delta.unsigned_abs();
+        if magnitude >= dregg_circuit::field::BABYBEAR_P as u64 {
+            return Err(AtomicTurnError::NetDeltaNotRepresentable { asset, delta });
+        }
+        Ok(dregg_circuit::field::BabyBear::new_canonical(
+            magnitude as u32,
+        ))
     }
 
     /// Fold a 32-byte `token_id` to a single asset-class field element.
@@ -627,6 +713,29 @@ impl TurnExecutor {
             return Ok(());
         }
 
+        // ── REPRESENTABILITY, BEFORE ANY DECIDER ────────────────────────────────────────────────
+        // Every row below is about to be carried as ONE `BabyBear` magnitude + a sign bit: into the
+        // labeled Rust collector at the bottom of this function, into the committed per-asset AIR
+        // whenever the block is proved, and — as the same `i64`, but destined for the same one-felt
+        // column — into the Lean decider. That encoding DENOTES the delta only while `|δ| < p`. It
+        // used to be applied as `BabyBear::new_canonical(delta.unsigned_abs() as u32)`, which does
+        // not check: `|δ| = p` encoded to ZERO, so a `+p` row contributed NOTHING to its asset's sum
+        // and an imbalance of two billion read as perfect conservation (measured: a ±p cross-asset
+        // `balance_change` turn COMMITTED, minting 2013265921 of one asset out of a destroyed
+        // 2013265921 of another). `|δ| ≥ 2^32` lost its high half before the reduction even ran.
+        //
+        // REFUSE the row here, where the true `i64` still exists — the same posture, and the same
+        // last-place-that-can-see-it reason, as `refuse_colliding_asset_classes` above.
+        //
+        // ⚑ ON BOTH DECIDER PATHS ON PURPOSE. The oracle receives the full-width `i64` and would
+        // decide such a turn exactly; the fallback cannot. Checking only the fallback would make
+        // which turns are DECIDABLE depend on whether a Lean archive happened to be linked, and the
+        // committed AIR cannot certify these rows on either path anyway (its per-row magnitude is
+        // two 15-bit limbs — `mag < 2^30`, tighter than this bound).
+        for (asset, delta) in entries {
+            Self::net_delta_mag_felt(asset.0, *delta)?;
+        }
+
         let rows: Vec<(u32, i64)> = entries.iter().map(|(a, d)| (a.0, *d)).collect();
 
         if let Some(oracle) = super::conservation_oracle::installed_conservation_oracle() {
@@ -696,7 +805,11 @@ impl TurnExecutor {
             let sign_credit = *delta >= 0;
             block.add_contribution(PerCellContribution {
                 asset: *asset,
-                net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32),
+                // CHECKED, never `new_canonical(|δ| as u32)`. `check_per_asset_conservation_by_asset`
+                // already refused an un-representable row before routing here, but this must not
+                // rest on a distant precondition: the wrap it replaces is exactly the kind a later
+                // refactor re-introduces by calling this function directly. See `net_delta_mag_felt`.
+                net_delta_mag: Self::net_delta_mag_felt(asset.0, *delta)?,
                 net_delta_sign: if sign_credit {
                     BabyBear::ZERO
                 } else {
@@ -3503,7 +3616,11 @@ mod hardening_tests {
             let credit = *delta >= 0;
             block.add_contribution(PerCellContribution {
                 asset,
-                net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32),
+                // Through the CHECKED encoder, so `new_canonical(|δ| as u32)` — the
+                // expression that mapped `|δ| = p` to ZERO — survives nowhere in the
+                // tree, not even as a test's own construction next to the real gate.
+                net_delta_mag: TurnExecutor::net_delta_mag_felt(asset.0, *delta)
+                    .expect("fixture deltas are representable"),
                 net_delta_sign: if credit {
                     BabyBear::ZERO
                 } else {
@@ -3704,5 +3821,151 @@ mod hardening_tests {
         )
         .expect("ONE asset over many cells is not a collision");
         assert!(TurnExecutor::check_per_asset_conservation(&ledger, &one_asset).is_ok());
+    }
+
+    // =======================================================================
+    // ⚑ A MAGNITUDE THAT DOES NOT FIT THE FIELD WAS REDUCED INTO ONE
+    // =======================================================================
+    //
+    // Every conservation row reaches the collector as a `BabyBear` magnitude +
+    // a sign bit, and `CrossCellDelta::signed` reads that felt straight back as
+    // the integer `±mag`. So the encoding DENOTES the delta only while
+    // `|δ| < p = 2013265921`. The producer was
+    // `BabyBear::new_canonical(delta.unsigned_abs() as u32)` — a `u64 → u32`
+    // truncation followed by `% p` — which does not check, and maps `|δ| = p`
+    // to ZERO. The row then contributes nothing at all to its asset's sum, so
+    // an imbalance of two billion reads as perfect conservation.
+
+    /// ⚑ THE WOUND AND THE REFUSAL, AT THE GATE ITSELF.
+    ///
+    /// The "before" pole is a VERBATIM IN-TEST ORACLE of the pre-fix encoder —
+    /// the exact expression that stood in `unverified_rust_conservation_fallback`
+    /// — driven through the REAL `BlockConservation` collector. So the wound stays
+    /// demonstrated permanently rather than resting on a git-history claim.
+    #[test]
+    fn a_net_delta_of_exactly_p_no_longer_encodes_to_zero() {
+        use dregg_circuit::block_conservation::{BlockConservation, PerCellContribution};
+        use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+
+        let asset = BabyBear::new(7);
+        let p = BABYBEAR_P as i64;
+
+        // ── BEFORE: the encoder, verbatim. ──────────────────────────────────
+        let legacy_mag = |delta: i64| BabyBear::new_canonical(delta.unsigned_abs() as u32);
+        assert_eq!(
+            legacy_mag(p),
+            BabyBear::ZERO,
+            "THE WOUND: a delta of exactly p encoded to ZERO (p % p == 0)"
+        );
+        assert_eq!(
+            legacy_mag(1i64 << 32),
+            BabyBear::ZERO,
+            "and 2^32 lost its high half to the `as u32` cast before the reduction"
+        );
+
+        // With that encoding a LONE credit of p summed to a perfectly conserving
+        // zero: a mint of 2013265921 out of nothing, ACCEPTED by the collector.
+        let mut forged = BlockConservation::new();
+        forged.add_contribution(PerCellContribution {
+            asset,
+            net_delta_mag: legacy_mag(p),
+            net_delta_sign: BabyBear::ZERO, // credit
+        });
+        assert_eq!(
+            forged.per_asset_balances().get(&asset.0),
+            Some(&0),
+            "the collector's own per-asset balance for a +p row was 0"
+        );
+        forged
+            .check()
+            .expect("THE WOUND: the collector saw a balanced class");
+
+        // The SAME row ONE UNIT smaller is seen in full, so the acceptance above
+        // is the reduction and not a broken collector.
+        let mut seen = BlockConservation::new();
+        seen.add_contribution(PerCellContribution {
+            asset,
+            net_delta_mag: legacy_mag(p - 1),
+            net_delta_sign: BabyBear::ZERO,
+        });
+        assert_eq!(seen.per_asset_balances().get(&asset.0), Some(&(p - 1)));
+        assert!(seen.check().is_err(), "a +(p−1) row is an imbalance");
+
+        // ── AFTER: the gate REFUSES the row rather than encoding it. ────────
+        match TurnExecutor::check_per_asset_conservation_by_asset(&[(asset, p)]) {
+            Err(AtomicTurnError::NetDeltaNotRepresentable { asset: a, delta }) => {
+                assert_eq!(a, asset.0);
+                assert_eq!(delta, p);
+            }
+            other => panic!(
+                "a net delta of exactly p must be REFUSED as un-representable, got {:?}",
+                other
+            ),
+        }
+        match TurnExecutor::check_per_asset_conservation_by_asset(&[(asset, -(1i64 << 32))]) {
+            Err(AtomicTurnError::NetDeltaNotRepresentable { asset: a, delta }) => {
+                assert_eq!(a, asset.0);
+                assert_eq!(delta, -(1i64 << 32));
+            }
+            other => panic!(
+                "the u64→u32 truncation half must be REFUSED too, got {:?}",
+                other
+            ),
+        }
+
+        // ── ANTI-VACUITY: the gate still DECIDES every representable row. ───
+        // The LARGEST representable imbalance is reported at full width, not
+        // wrapped — so the refusal above fires at exactly p and not one unit early.
+        match TurnExecutor::check_per_asset_conservation_by_asset(&[(asset, p - 1)]) {
+            Err(AtomicTurnError::PerAssetConservationViolation {
+                asset: a,
+                imbalance,
+            }) => {
+                assert_eq!(a, asset.0);
+                assert_eq!(
+                    imbalance,
+                    p - 1,
+                    "the largest representable imbalance must be SEEN in full"
+                );
+            }
+            other => panic!(
+                "a +(p−1) imbalance must be a conservation VIOLATION, got {:?}",
+                other
+            ),
+        }
+        // …and an honest turn at that same maximum still conserves.
+        TurnExecutor::check_per_asset_conservation_by_asset(&[(asset, p - 1), (asset, -(p - 1))])
+            .expect("an honest turn at the representable maximum must still commit");
+    }
+
+    /// The refusal is a property of the ROW, not of the turn's arithmetic: a
+    /// turn whose rows CANCEL exactly is still refused when a row cannot be
+    /// carried. `Σδ = 0` here is true and un-checkable — the felt column the
+    /// verdict is taken over cannot hold either leg.
+    ///
+    /// This is the liveness cost of the fix, asserted rather than assumed. It is
+    /// above the committed AIR's own per-row ceiling (a magnitude occupies two
+    /// 15-bit limbs, so `build_cross_cell_conservation_trace` can only certify
+    /// `mag < 2^30 = 1073741824`), so no turn that this now refuses was ever
+    /// provable.
+    #[test]
+    fn a_balanced_pair_of_unrepresentable_rows_is_refused_not_accepted() {
+        use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+        let asset = BabyBear::new(7);
+        let p = BABYBEAR_P as i64;
+
+        match TurnExecutor::check_per_asset_conservation_by_asset(&[(asset, p), (asset, -p)]) {
+            Err(AtomicTurnError::NetDeltaNotRepresentable { delta, .. }) => {
+                assert!(delta == p || delta == -p);
+            }
+            other => panic!(
+                "a balanced pair of un-representable rows must still be REFUSED, got {:?}",
+                other
+            ),
+        }
+
+        // The empty scope is still not a decision, and still not a refusal.
+        TurnExecutor::check_per_asset_conservation_by_asset(&[])
+            .expect("a turn that moves no value has no row to be un-representable");
     }
 }
