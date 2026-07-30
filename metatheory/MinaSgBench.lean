@@ -31,6 +31,29 @@ open Dregg2.Circuit.Emit.MinaWrapSgParts (SG)
 /-- Render a millisecond count as seconds, one decimal. -/
 def secs (ms : Nat) : String := s!"{ms / 1000}.{(ms % 1000) / 100} s"
 
+/-! ⚑ EVERY MEASURED COMPUTATION GOES THROUGH AN `IO`-RETURNING HELPER, and that is not style.
+A `let x := e` in a `do` block is a pure binding: Lean is free to leave it unforced until `x` is
+first demanded, which is *after* the closing clock read. Measured, on exactly this shape: a fold of
+4.16 M complete adds timed at **0 ms** that way. Returning a scalar derived from the result out of
+`IO` forces it and pins it between the two reads. -/
+
+/-- The `2^15`-point MSM, forced. Returns a digest of the point so nothing can be elided. -/
+def timedMsm (nbits : Nat) (as : List Nat) (ps : List (Nat × Nat × Nat)) (sg : Nat × Nat × Nat) :
+    IO Bool := do
+  let out := msmHornerM pN curveB3 nbits as ps
+  return projEqM pN out sg
+
+/-- The s-vector, forced. -/
+def timedSVec (chals : List Nat) : IO (List Nat) := do
+  let s := sVecN qN chals
+  let _ ← pure s.length
+  return s
+
+/-- The shape gate, forced. -/
+def timedShape (chals : List Nat) (ps : List (Nat × Nat × Nat)) (sg : Nat × Nat × Nat) :
+    IO Bool := do
+  return sgWireOk chals ps sg
+
 def main : IO Unit := do
   let gens := SRS_G
   let ng := gens.length
@@ -40,21 +63,19 @@ def main : IO Unit := do
 
   -- The scalars, from the 15 challenges. This is the compression the deferral rests on.
   let t0 ← IO.monoMsNow
-  let scalars := sVecN qN CHALS_W
-  let ns := scalars.length
+  let scalars ← timedSVec CHALS_W
   let t1 ← IO.monoMsNow
-  IO.println s!"  s-vector        : {ns} scalars in {t1 - t0} ms"
+  IO.println s!"  s-vector        : {scalars.length} scalars in {t1 - t0} ms"
 
   -- The shape gate, which includes the 32,768-point on-curve scan.
   let t2 ← IO.monoMsNow
-  let shape := sgWireOk CHALS_W gens SG
+  let shape ← timedShape CHALS_W gens SG
   let t3 ← IO.monoMsNow
   IO.println s!"  shape gate      : {shape} in {t3 - t2} ms  (2^15 on-curve + non-degeneracy)"
 
   -- ⚑ THE MEASUREMENT: one 2^15-point Pallas MSM by the shared doubling chain.
   let t4 ← IO.monoMsNow
-  let out := msmHornerM pN curveB3 255 scalars gens
-  let ok := projEqM pN out SG
+  let ok ← timedMsm 255 scalars gens SG
   let t5 ← IO.monoMsNow
   let msmMs := t5 - t4
   IO.println s!"  MSM <s, srs.g>  : {secs msmMs} ({msmMs} ms) for {sgFoldAdds 15 255} complete adds"
@@ -63,8 +84,7 @@ def main : IO Unit := do
   -- ⚑ THE OTHER POLARITY: one generator swapped for another REAL generator. Shape stays valid,
   -- so this is a genuine disagreement rather than a refusal.
   let t6 ← IO.monoMsNow
-  let bad := projEqM pN
-    (msmHornerM pN curveB3 255 scalars (gens.set 12345 (gens.getD 12346 Oproj))) SG
+  let bad ← timedMsm 255 scalars (gens.set 12345 (gens.getD 12346 Oproj)) SG
   let t7 ← IO.monoMsNow
   IO.println s!"  tamper          : one generator swapped -> {bad} (must be false), {secs (t7 - t6)}"
 

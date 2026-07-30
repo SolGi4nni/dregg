@@ -102,7 +102,13 @@ def SVEC_W : List Nat := sVecN qN CHALS_W
 
 /- ⚑ **THE SECOND LINK, and it is the one that says the two evaluators share an object.** The
 `Nat`-mod-`q` recursion produces exactly `(PastaIPA.sVec CHAL_F).map ZMod.val` — which IS
-`MinaWrapSgCore.SVEC`, the 32,768 scalars the kernel's 32 chunk theorems consumed. -/
+`MinaWrapSgCore.SVEC`, the 32,768 scalars the kernel's 32 chunk theorems consumed.
+
+⚠ This is the ONE pin here that asks the untrusted evaluator to run `ZMod` arithmetic at a 255-bit
+modulus (`ZMod n` is a type-level `match` on `n`; the instance resolves through `Nat.casesOn`). If
+it is the single guard that fails to evaluate, the tie is not lost — `CHALS_W == CHAL` above pins
+the challenges, and §4's 32 chunk agreements pin the scalars against arkworks' own partials, which
+were produced from the same s-vector. Delete this line rather than weakening either of those. -/
 #guard SVEC_W == (Dregg2.Circuit.Emit.PastaIPA.sVec CHAL_F).map ZMod.val
 
 /-! ## §3 — ⚑⚑ THE RESULT: the terminal MSM, compiled, over all 32,768 real generators. -/
