@@ -34,6 +34,15 @@ import {
   runSegments,
 } from './RootFriSlice.js';
 import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, terminalSeal } from './RootAirChain.js';
+import {
+  ChainClaim,
+  ClaimCarry,
+  ClaimedBoundary,
+  assertClaimCarried,
+  assertClaimSeal,
+  claimOfLanes,
+  readClaimLanes,
+} from './RootClaim.js';
 
 // ---------------------------------------------------------------------------
 // THE UNIFORM WALK — one circuit per POSITION IN A QUERY, not one per slice.
@@ -612,6 +621,15 @@ export type UniformOpts = {
    *  builds three variants in one process and must share it. */
   prevClass?: any;
   prevFlags: FeatureFlags;
+  /** ⚑ THE CLAIM THE CHAIN CARRIES OUT (§3.30). ABSENT builds the chain exactly
+   *  as §3.29 left it — `publicOutput: Field`, a boundary and nothing else, and
+   *  a Mina-side verifier that learns "*some* batch with these column digests
+   *  verifies". PRESENT makes the public output `ClaimedBoundary`, so the
+   *  terminal proof STATES `(genesisRoot, finalRoot, numTurns, chainDigest)`.
+   *
+   *  ⚑ BREAKING WHEN PRESENT: the public output type changes, so every
+   *  verification key in the chain changes and the whole key list re-emits. */
+  claim?: ClaimCarry;
 };
 
 export function uniformProgramName(sp: UniformSpec, o: UniformOpts) {
@@ -622,6 +640,7 @@ export function uniformProgramName(sp: UniformSpec, o: UniformOpts) {
     `dregg-root-fri-${sp.kind}${sp.pos}` +
     (uni ? '' : `-BAKED-q${o.bakedQuery ?? 0}`) +
     (o.constKeyPin === undefined ? '' : '-CONSTKEY') +
+    (o.claim === undefined ? '' : o.claim.armed === false ? '-CLAIM-UNSEALED' : '-CLAIM') +
     (bind ? '' : '-UNBOUND') +
     (pin ? '' : '-UNPINNED')
   );
@@ -669,16 +688,21 @@ let sideloadedClasses = 0;
 
 /** ⚑ ONE side-loaded class per process — `DynamicProof.tag()` names itself off a
  *  process-global counter, so a second class in one process gets an identifier
- *  that depends on creation ORDER. */
-export function makePrevProofClass(flags: FeatureFlags) {
+ *  that depends on creation ORDER.
+ *
+ *  ⚑ `withClaim` PICKS THE PREDECESSOR'S PUBLIC OUTPUT TYPE, and it is not
+ *  cosmetic: head slice 0's predecessor is the AIR chain, which emits a plain
+ *  `Field` terminal seal, while every later predecessor is a claim-carrying
+ *  slice emitting a `ClaimedBoundary`. */
+export function makePrevProofClass(flags: FeatureFlags, withClaim = false) {
   if (sideloadedClasses > 0)
     throw new Error(
       'a SECOND side-loaded proof class in one process: build one slice program per process',
     );
   sideloadedClasses++;
-  class PrevProof extends DynamicProof<Field, Field> {
+  class PrevProof extends DynamicProof<Field, any> {
     static publicInputType = Field;
-    static publicOutputType = Field;
+    static publicOutputType = (withClaim ? ClaimedBoundary : Field) as any;
     static maxProofsVerified = 1 as const;
     static featureFlags = flags;
   }
@@ -710,7 +734,10 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
         "side-loaded chain accepts any program's proof and is not a chain",
     );
 
-  const Prev = opts.prevClass ?? makePrevProofClass(opts.prevFlags);
+  //  ⚑ HEAD SLICE 0's PREDECESSOR IS THE AIR CHAIN and emits a plain `Field`;
+  //  every other predecessor is a claim-carrying slice.
+  const Prev = opts.prevClass ?? makePrevProofClass(opts.prevFlags, !!opts.claim && !isHead0);
+  const carry = opts.claim;
   const arr = (n: number) => Provable.Array(Field, Math.max(n, 1));
   //  The plan's slices index `runSegments`, which reads `plan.slices[si]`.
   const runPlan: FriPlan = {
@@ -732,7 +759,10 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
   const prog = ZkProgram({
     name: uniformProgramName(sp, opts),
     publicInput: Field,
-    publicOutput: Field,
+    //  ⚑ THE CHAIN'S PUBLIC OUTPUT. `Field` is §3.29's — a boundary, and a
+    //  verifier that never learns which proof it verified. `ClaimedBoundary`
+    //  carries the claim beside it.
+    publicOutput: (carry ? ClaimedBoundary : Field) as any,
     methods: {
       slice: {
         privateInputs: [
@@ -751,6 +781,13 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
           arr(sh.nOtherQuery),
           Provable.Array(Field, Q),
           arr(sh.nAux),
+          //  ⚑ THE CLAIM IS A PRIVATE INPUT AND THAT IS NOT A HOLE. It is
+          //  forced twice: the sealing slice asserts it IS the `expose_claim`
+          //  lanes under `dagDigest`, and every slice asserts it equals its
+          //  predecessor's. A slice that only propagates therefore has no
+          //  freedom either — its claim is pinned inductively from the seal,
+          //  exactly the way `k` is pinned from the base of the chain.
+          ...(carry ? [ChainClaim] : []),
         ] as any,
         async method(
           bIn: Field,
@@ -769,6 +806,7 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
           otherQuery: Field[],
           otherQd: Field[],
           aux: Field[],
+          claimIn?: ChainClaim,
         ) {
           // ---- the query, and what forces it -----------------------------
           //  ⚑ `q` is a private input and a private input is a value the prover
@@ -853,8 +891,33 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
                 terminalSeal(dagDigest, digestOfLanes([...acc.limbs]), AIR_SLICES)
               : stepBoundary(friCommit, carriedDigest(live, acc.limbs, vkRoot), k);
             want.assertEquals(bIn);
-            prev.publicOutput.assertEquals(bIn);
+            //  ⚑ THE PREDECESSOR'S BOUNDARY, and — once the chain carries a
+            //  claim — its CLAIM. Head slice 0's predecessor is the AIR chain
+            //  and has no claim to carry; the seal below is what forces head
+            //  slice 0's claim anyway, inductively, through this equality.
+            if (carry && !isHead0) {
+              const po = prev.publicOutput as ClaimedBoundary;
+              po.boundary.assertEquals(bIn);
+              assertClaimCarried(po.claim, claimIn!);
+            } else {
+              (prev.publicOutput as Field).assertEquals(bIn);
+            }
           }
+
+          // ---- the claim, sealed where the chunks already are -------------
+          //  ⚑ NOT A FRESH WITNESS. `readClaimLanes` resolves the 25
+          //  `expose_claim|public[i]` lanes out of the SAME loaded AIR chunks
+          //  whose digests were just spliced into `dagDigest`, which the
+          //  boundary above pins. Replacing one prover-chosen value with
+          //  another is this campaign's failure mode, not its fix.
+          if (carry?.seals)
+            assertClaimSeal(
+              claimIn!,
+              claimOfLanes(
+                readClaimLanes(carry.ix, sh.sl.readsAirChunks, CL, airLanes.slice(0, sh.nAirRead)),
+              ),
+              carry.armed !== false,
+            );
 
           // ---- the walk ---------------------------------------------------
           const sto = new Map<number, Field>();
@@ -899,10 +962,13 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
             Field(totalSteps(plan)),
           );
           const step = stepBoundary(friCommit, carriedDigest(out, acc.limbs, vkRoot), kOut);
-          const publicOutput = sh.isBlockLast
-            ? Provable.if(isQ[Q - 1], seal, step)
-            : step;
-          return { publicOutput };
+          const boundary = sh.isBlockLast ? Provable.if(isQ[Q - 1], seal, step) : step;
+          //  ⚑ THE TERMINAL PROOF NOW STATES WHAT IT PROVED. The boundary field
+          //  is byte-for-byte §3.29's; the claim rides beside it, so a Mina-side
+          //  verifier reads `(genesisRoot, finalRoot, numTurns, chainDigest)`
+          //  instead of comparing a digest of prover-supplied lanes against
+          //  nothing.
+          return { publicOutput: carry ? new ClaimedBoundary({ boundary, claim: claimIn! }) : boundary };
         },
       },
     },

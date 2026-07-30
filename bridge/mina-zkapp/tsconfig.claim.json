@@ -1,0 +1,17 @@
+// The CLAIM-CARRY lane's build. Identical compiler options to `tsconfig.json`;
+// the only difference is WHAT IT COMPILES — the shared `src/` tree plus this
+// lane's own leg, and nothing else.
+//
+// ⚑ WHY A SECOND CONFIG EXISTS AND WHAT IT IS NOT. Several lanes are live in
+// this package at once, and `tsc` over `scripts/**/*` fails the whole build for
+// a type error in ANY sibling's in-flight script. That is a build-ordering
+// accident, not a fact about this lane's sources, and a lane that cannot build
+// cannot measure. This config narrows the file set; it does NOT relax a single
+// compiler option, so a type error in `src/` or in this leg still fails here.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-claim"
+  },
+  "include": ["src/**/*", "scripts/root-claim-carry.ts"]
+}
