@@ -465,6 +465,11 @@ export function verifyCommitPhase(w: CommitPhaseWitness): { folded: BbExt; x: Fi
   if (w.rollIns.some((r) => r.afterRound < 0 || r.afterRound >= layers))
     throw new Error('a roll-in is scheduled outside the fold chain');
 
+  // ⚑ See `PastaMmcs.assertPastaLookupTable`: a body of Pasta lane checks alone
+  // compiles and cannot be proved, because kimchi installs the 12-bit table only
+  // for a circuit that also carries a `RangeCheck0`. No-op for BabyBear, so no
+  // measured BabyBear row count moves.
+  (w.suite ?? babyBearMerkleSuite).anchorLookupTable?.();
   assertExtInRange(w.initial);
   let folded = w.initial;
   let x = cosetPointFromBits(w.indexBits.slice(1), logD0 - 1);

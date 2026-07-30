@@ -223,6 +223,7 @@ braid|0|root-fri-braid
 uniform|0|root-fri-uniform
 preamble|0|root-fri-preamble
 consume|0|root-consume-differential
+consume-rows|1|root-consume-rows
 gate|1|gate
 rows|1|poseidon2-rows
 probe|1|probe
@@ -484,6 +485,7 @@ run_mina_merkle(){ ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATT
 run_uniform()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-uniform ); }
 run_preamble()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-preamble ); }
 run_consume()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-consume-differential ); }
+run_consume_rows() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-consume-rows ); }
 
 # ── the headline run ──────────────────────────────────────────────────────────
 if [ "$MODE" = "headline" ]; then
@@ -665,6 +667,27 @@ if [ "$MODE" = "headline" ]; then
       || die "the four-round DEEP quotient was never compared against p3's reduced openings"
     grep -q '=== FOUR-ROUND CONSUME DIFFERENTIAL PASS ===' <<<"$con_out" \
       || die "the consume differential did not print its PASS line"
+  fi
+  # ⚑ WHAT MINA-SIDE VERIFICATION OF THE REAL ROOT COSTS, MEASURED. The projection
+  # said 54 Pasta slices and the cost gate re-derived 80; this leg is the same
+  # object with `getRows()` instead of a unit price times a count. It also carries
+  # the falsifier for the lookup-table defect the merge surfaced: a Pasta-only
+  # body compiles and CANNOT be proved without an anchoring `RangeCheck0`.
+  if leg_at_tier consume-rows; then
+    cr_out="$(run_consume_rows "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$cr_out"
+    [ "$rc" -eq 0 ] || die "the root-consume rows leg exited $rc"
+    grep -q 'REFUSES TO PROVE' <<<"$cr_out" \
+      || die "the Pasta-only lookup-table falsifier did not run — the anchor would be a dead no-op"
+    grep -q 'PROVED and VERIFIED' <<<"$cr_out" \
+      || die "the four-round Pasta input phase was never proved on the real object"
+    if [ "$TIER" -eq 0 ]; then
+      grep -q '=== ROOT-CONSUME-ROWS TIER-0 PASS ===' <<<"$cr_out" \
+        || die "the consume-rows leg did not stop at its tier-0 boundary"
+    else
+      grep -q '=== ROOT-CONSUME-ROWS PASS ===' <<<"$cr_out" \
+        || die "the consume-rows leg did not print its PASS line"
+    fi
   fi
   if leg_at_tier walk-plan; then
     wp_out="$(run_walk_plan "$APP" 2>&1)"; rc=$?

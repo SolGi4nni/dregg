@@ -50,7 +50,8 @@
     "pasta-root-rows": "npm run build && node --max-old-space-size=16384 dist/scripts/pasta-root-rows.js",
     "pasta-verify": "npm run build && node --max-old-space-size=16384 dist/scripts/pasta-proof-verify.js",
     "pasta-chain": "npm run build && node --max-old-space-size=16384 dist/scripts/pasta-chain.js",
-    "root-consume-differential": "npm run build && node --max-old-space-size=16384 dist/scripts/root-consume-differential.js"
+    "root-consume-differential": "npm run build && node --max-old-space-size=16384 dist/scripts/root-consume-differential.js",
+    "root-consume-rows": "npm run build && node --max-old-space-size=16384 dist/scripts/root-consume-rows.js"
   },
   "dependencies": {
     "o1js": "2.15.0"

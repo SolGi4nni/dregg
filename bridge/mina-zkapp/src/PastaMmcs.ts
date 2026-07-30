@@ -95,6 +95,44 @@ export function assertLt2p31(r: Field) {
 }
 
 /**
+ * ⚑ MAKE THE 12-BIT LOOKUP TABLE EXIST. A CIRCUIT OF PASTA LANE CHECKS ALONE
+ * COMPILES, ANALYSES, PASSES `runAndCheck` — AND CANNOT BE PROVED.
+ *
+ * Measured 2026-07-30, o1js 2.15.0, on a `ZkProgram` whose whole body is EIGHT
+ * `assertLt2p31` calls on honest in-range lanes:
+ *
+ *     rows 21
+ *     Error: the lookup failed to find a match in the table: row=16
+ *
+ * Add one `Gadgets.rangeCheck64` — 22 rows — and the IDENTICAL lookups succeed
+ * and the proof verifies. kimchi installs the fixed 12-bit table only when the
+ * circuit also carries a `RangeCheck0`/`RangeCheck1` gate, and
+ * `Gadgets.rangeCheck3x12` emits neither.
+ *
+ * ⚑ WHY NOTHING CAUGHT IT, WHICH IS THE ACTUAL FINDING. Every Pasta circuit in
+ * this tree so far also ran BabyBear extension arithmetic, and
+ * `Poseidon2BabyBearW16.quotientTimesP` calls `Gadgets.rangeCheck64` on its
+ * limbs. So the DEPLOYED HASH was installing the lookup table for the
+ * Mina-native one, and the dependency was invisible for exactly as long as
+ * nobody built a Pasta-only body. The four-round merge is the first thing that
+ * can: a Pickles step holding only mixed-height MMCS openings has no BabyBear
+ * arithmetic in it at all. `compile()` is green, `analyzeMethods` gives a row
+ * count, `runAndCheck` passes — and `prove()` dies in the wasm.
+ *
+ * ⚠ AND IT IS NOT A NO-OP RETAINED FOR COMPATIBILITY. Every call site that
+ * needs it reaches it through `MerkleSuite.anchorLookupTable`, and
+ * `root-consume-rows` [5] PROVES a Pasta-only body with the anchor and requires
+ * the same body WITHOUT it to fail with this exact error. A gate that cannot go
+ * red is not a gate.
+ */
+export function assertPastaLookupTable(): void {
+  const z = Provable.witness(Field, () => Field(0));
+  Gadgets.rangeCheck64(z);
+  z.assertEquals(Field(0));
+}
+
+
+/**
  * `0 <= v < 2^n` for `n` in `1..=60`, same discipline as `assertLt2p31`.
  *
  * The challenger's base-`|F|` split needs 38 bits for its remainder and 31 for
@@ -351,6 +389,7 @@ export const pastaMerkleSuite: MerkleSuite<PastaDigest> = {
   zero: () => PastaDigest.zero(),
   from: (v) => PastaDigest.from(v),
   assertInRange: assertPastaDigestInRange,
+  anchorLookupTable: assertPastaLookupTable,
   compress: compressPasta,
   condSwap: condSwapPasta,
   sponge: (row, lanesAlreadyChecked = false) => spongePasta(row, lanesAlreadyChecked),

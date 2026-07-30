@@ -627,42 +627,56 @@ export type QueryDeepResult = {
   indexAcc: Field;
 };
 
-/** (3) ONE query's input phase and DEEP quotient — the half that reads the
- *  opened values. `q` indexes this call's witness arrays; `g` is the GLOBAL
- *  query index, which is what `ch.queryBits` is indexed by. */
-export function runQueryInputAndDeep(
+/**
+ * (3a) ONE query's input-phase MMCS openings — every round, at whatever mix of
+ * heights it commits. Returns each batch's rows SPLIT BY MATRIX, which is what
+ * the DEEP quotient consumes next.
+ *
+ * ⚑ A SEAM, NOT A HELPER. This is the half of a query the four-round merge
+ * changed, and it is separated so a measurement can price it ALONE — at
+ * BabyBear against Pasta, on dregg's real four-round geometry — rather than
+ * inferring its share of a combined figure. `runQueryInputAndDeep` calls it, so
+ * the priced object and the verified object are the same code.
+ */
+export function verifyInputBatches(
   plan: VerifyPlan,
   claim: ClaimValue,
-  openedTrace: BbExt[],
-  openedQuotient: BbExt[],
-  ch: StarkChallenges,
-  /** The extension values of every distinct `ζ · c` in `plan.pointScales`, in
-   *  that order — `zetaPointsOf`'s output, computed ONCE per proof outside the
-   *  query loop. */
-  zPoints: BbExt[],
   rowsQ: Field[],
   inputPathsQ: Digestish[][],
-  g: number,
-): QueryDeepResult {
-  const { sh, suite, nBatches, rowWidths, nRollIns, wiring, batchHeights } = plan;
-  const { knobs, batches, logGlobalMaxHeight } = sh;
-  const { layers, indexBits: nIndexBits } = knobs;
-  const bits = ch.queryBits[g];
-  if (zPoints.length !== plan.pointScales.length)
-    throw new Error(
-      `${zPoints.length} opening points for ${plan.pointScales.length} distinct scales`,
-    );
-  //  The whole opened-value list, in p3's observe order. The two arguments keep
-  //  their names because at the fixture's shape they ARE the trace round and the
-  //  quotient round; at four rounds the second is every non-main round, and the
-  //  wiring — not the argument boundary — says which values belong to which
-  //  matrix.
-  const opened = [...openedTrace, ...openedQuotient];
-
+  bits: Bool[],
+  /** ⚑ MEASUREMENT ONLY, and it changes NOTHING about what is verified: which
+   *  batches emit their opening. Absent, all of them — which is the only form
+   *  any verifier calls. A row measurement uses it to price one PCS round at a
+   *  time, because the rounds sit at different widths and a single combined
+   *  figure hides which one the hash swap actually moves. The row split is
+   *  tracked for every batch either way, so a selected batch's gates are
+   *  identical to the ones it emits in a full call. */
+  only?: number[],
+): Field[][][] {
+  const { sh, suite, nBatches, rowWidths, batchHeights } = plan;
+  const { batches, logGlobalMaxHeight } = sh;
+  // ⚑ THE SUITE'S RANGE CHECKS HAVE TO EXIST BEFORE THEY ARE USED. Absent for
+  // BabyBear — which is why no measured BabyBear row count moves — and one
+  // `RangeCheck0` for Pasta, without which a body made only of Pasta MMCS work
+  // compiles, analyses, passes `runAndCheck` and dies in `prove()`. See
+  // `PastaMmcs.assertPastaLookupTable` for the measurement that found it.
+  suite.anchorLookupTable?.();
+  const out: Field[][][] = [];
   let rowOff = 0;
-  const mats: DeepMatrix[][] = [];
   for (let b = 0; b < nBatches; b++) {
     const bs = batches[b];
+    if (only && !only.includes(b)) {
+      const leafSkip = rowsQ.slice(rowOff, rowOff + rowWidths[b]);
+      rowOff += rowWidths[b];
+      const perSkip: Field[][] = [];
+      let off = 0;
+      for (const m of bs.matrices) {
+        perSkip.push(leafSkip.slice(off, off + m.numCols));
+        off += m.numCols;
+      }
+      out.push(perSkip);
+      continue;
+    }
     const leaf = rowsQ.slice(rowOff, rowOff + rowWidths[b]);
     rowOff += rowWidths[b];
 
@@ -703,11 +717,32 @@ export function runQueryInputAndDeep(
       if (hs.includes(nextH)) cur = suite.compress(cur, suite.sponge(rowsAt(nextH)));
     }
     suite.assertEq(cur, claim.inputCommits[b]);
+    out.push(perMat);
+  }
+  return out;
+}
 
-    // Attach the claimed evaluations each matrix opens at, from the wiring.
+/**
+ * (3b) Attach each matrix's claimed evaluations, from the wiring — the whole of
+ * what the four-round merge replaced a `b === 0` switch with.
+ *
+ * Emits NO gates: it is array slicing over values the caller already holds. It
+ * is separate so a measurement can build the DEEP quotient's input without
+ * re-deriving the wiring, which would be a second reading of the thing most
+ * likely to be got wrong.
+ */
+export function deepMatricesOf(
+  plan: VerifyPlan,
+  opened: BbExt[],
+  zPoints: BbExt[],
+  perBatch: Field[][][],
+): DeepMatrix[][] {
+  const { sh, nBatches, wiring } = plan;
+  const mats: DeepMatrix[][] = [];
+  for (let b = 0; b < nBatches; b++) {
     const batchMats: DeepMatrix[] = [];
-    for (let i = 0; i < bs.matrices.length; i++) {
-      const m = bs.matrices[i];
+    for (let i = 0; i < sh.batches[b].matrices.length; i++) {
+      const m = sh.batches[b].matrices[i];
       const points = wiring[b][i].map((w) => ({
         z: zPoints[w.scaleIndex],
         psAtZ: opened.slice(w.offset, w.offset + w.len),
@@ -716,10 +751,47 @@ export function runQueryInputAndDeep(
         throw new Error(
           `batch ${b} matrix declares ${m.numPoints} points, the wiring gives ${points.length}`,
         );
-      batchMats.push({ logHeight: m.logHeight, openedRow: perMat[i], points });
+      batchMats.push({ logHeight: m.logHeight, openedRow: perBatch[b][i], points });
     }
     mats.push(batchMats);
   }
+  return mats;
+}
+
+/** (3) ONE query's input phase and DEEP quotient — the half that reads the
+ *  opened values. `q` indexes this call's witness arrays; `g` is the GLOBAL
+ *  query index, which is what `ch.queryBits` is indexed by. */
+export function runQueryInputAndDeep(
+  plan: VerifyPlan,
+  claim: ClaimValue,
+  openedTrace: BbExt[],
+  openedQuotient: BbExt[],
+  ch: StarkChallenges,
+  /** The extension values of every distinct `ζ · c` in `plan.pointScales`, in
+   *  that order — `zetaPointsOf`'s output, computed ONCE per proof outside the
+   *  query loop. */
+  zPoints: BbExt[],
+  rowsQ: Field[],
+  inputPathsQ: Digestish[][],
+  g: number,
+): QueryDeepResult {
+  const { sh, nBatches, nRollIns, wiring } = plan;
+  const { knobs, batches, logGlobalMaxHeight } = sh;
+  const { layers, indexBits: nIndexBits } = knobs;
+  const bits = ch.queryBits[g];
+  if (zPoints.length !== plan.pointScales.length)
+    throw new Error(
+      `${zPoints.length} opening points for ${plan.pointScales.length} distinct scales`,
+    );
+  //  The whole opened-value list, in p3's observe order. The two arguments keep
+  //  their names because at the fixture's shape they ARE the trace round and the
+  //  quotient round; at four rounds the second is every non-main round, and the
+  //  wiring — not the argument boundary — says which values belong to which
+  //  matrix.
+  const opened = [...openedTrace, ...openedQuotient];
+
+  const perBatch = verifyInputBatches(plan, claim, rowsQ, inputPathsQ, bits);
+  const mats = deepMatricesOf(plan, opened, zPoints, perBatch);
 
   // -- the DEEP quotient: `initial` stops being a witness.
   const ro = reducedOpenings({

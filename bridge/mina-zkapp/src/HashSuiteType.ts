@@ -51,6 +51,16 @@ export type MerkleSuite<D extends Digestish = Digestish> = {
    *  a Pasta element — and eight lane checks for BabyBear, without which its
    *  bound tracking is a claim about numbers nothing forces to be small. */
   assertInRange(d: D): void;
+  /**
+   * ⚑ EMIT WHATEVER GATE THIS SUITE'S RANGE CHECKS NEED TO EXIST AT ALL, once
+   * per circuit body. Absent for BabyBear, whose `quotientTimesP` already emits
+   * a `RangeCheck0` on every reduction. Present for Pasta, whose lane check is
+   * a bare `rangeCheck3x12` and whose 12-bit lookup table kimchi therefore does
+   * NOT install — a Pasta-only body compiles, analyses, passes `runAndCheck`
+   * and then dies in `prove()` with "the lookup failed to find a match in the
+   * table". See `PastaMmcs.assertPastaLookupTable`.
+   */
+  anchorLookupTable?(): void;
   /** The MMCS node compression, inputs assumed already in range. */
   compress(l: D, r: D): D;
   /** `(left, right)` for a level, where `isRight` says the CURRENT node is the

@@ -41,6 +41,8 @@ scripts/root-fri-braid.ts	RECORDED_CUTS_ATTRIBUTING	330
 scripts/root-fri-braid.ts	RECORDED_CUTS_STRAY_CLOSER	0
 scripts/root-fri-braid.ts	RECORDED_FIRST_ATTRIBUTING_CUT	11
 scripts/root-fri-braid.ts	RECORDED_SPLICES_ATTRIBUTED	7
+scripts/root-consume-rows.ts	RECORDED_PASTA_QUERY_ROWS	171_742
+scripts/root-consume-rows.ts	RECORDED_BB_QUERY_ROWS	1_537_038
 scripts/poseidon2-babybear-rows.ts	RECORDED_ROWS_PER_PERM	2600.5
 scripts/poseidon2-merkle-rows.ts	RECORDED_ROWS_PER_LEVEL	BABYBEAR_HASH.merkleLevel
 scripts/poseidon2-merkle-rows.ts	RECORDED_DEPTH22_ROWS	58971

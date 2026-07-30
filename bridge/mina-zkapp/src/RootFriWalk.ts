@@ -1,7 +1,7 @@
 import { BbExt } from './FriQueryStep.js';
 import { DEPLOYED_KNOBS, FriKnobs } from './FriChallenger.js';
 import { rootAirDag } from './RootAirDag.js';
-import { BABYBEAR_HASH, HashPrice, LANE_COST } from './CostModel.js';
+import { BABYBEAR_HASH, HashPrice, LANE_COST, PASTA_HASH } from './CostModel.js';
 
 // ---------------------------------------------------------------------------
 // THE ROOT'S FRI WALK AS A SEGMENT LIST — the object the AIR chain's terminal
@@ -130,6 +130,44 @@ export const priceAt = (h: HashPrice): WalkPrice => ({
 /** The DEPLOYED price table — the root as it commits today, Poseidon2 over
  *  BabyBear, emulated in a Pasta circuit. */
 export const PRICE: WalkPrice = priceAt(BABYBEAR_HASH);
+
+/**
+ * The price table for a hash suite, BY THE SUITE'S OWN NAME.
+ *
+ * ⚑ THE HALF-CLOSED GAP THIS IS THE CLOSED HALF OF. This walk is the
+ * real-geometry model — four PCS rounds, five heights, the mixed-height
+ * injection schedule — and it priced at `BABYBEAR_HASH` and nothing else, while
+ * `PASTA_HASH` sat in `CostModel.ts` used by a comment and by
+ * `cost-model-gate`'s own re-derivation. A model that can only be priced at one
+ * hash is a model of one hash.
+ *
+ * ⚑ AND THE CONSTANTS ARE IMPORTED, NEVER RE-DERIVED. `CostModel.ts` is the
+ * single owner and `npm run cost-gate` reds on a second home; this maps a name
+ * to the owner's row and does no arithmetic of its own.
+ *
+ * ⚠ WHAT IS STILL BABYBEAR-ONLY, SAID HERE BECAUSE THIS IS WHERE A READER WILL
+ * LOOK. Pricing is not execution. `RootFriSlice`'s segment executor still calls
+ * `compressBB`/`condSwap` directly and its state slots are eight lanes wide
+ * (`LANES_PER_DIGEST`), so the SLICED chain — the braid and the uniform walk —
+ * runs the deployed hash whatever this returns. The path that is BOTH
+ * four-round AND hash-agnostic is the consumer: `DreggProofVerify` +
+ * `RootConsume`, measured at both hashes by `npm run root-consume-rows`. That is
+ * the merge; this function is the model catching up to it, and the slice
+ * executor's digest width is the remaining item.
+ */
+export function priceForSuite(name: string): WalkPrice {
+  switch (name) {
+    case 'poseidon2-babybear-w16':
+      return priceAt(BABYBEAR_HASH);
+    case 'mina-poseidon-pasta':
+      return priceAt(PASTA_HASH);
+    default:
+      throw new Error(
+        `no walk price for hash suite '${name}' — a proof minted under a config nobody has ` +
+          'measured must be refused by NAME here, not priced at whichever table was the default',
+      );
+  }
+}
 
 // ===========================================================================
 // 2. The shape — the root's PCS rounds, read off the committed proof.
