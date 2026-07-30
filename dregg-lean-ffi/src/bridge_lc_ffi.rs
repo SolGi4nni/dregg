@@ -1661,6 +1661,374 @@ mod ffi_mina_state_hash_word {
     }
 }
 
+// ===========================================================================
+// MINA — SAMASIKA FORK CHOICE (`dregg_mina_better_tip`) and the ROLLING VERIFIED HEAD
+// (`dregg_mina_head_advance`)
+// ===========================================================================
+//
+// `dregg_mina_lc_verify` above says in its own header what it does NOT decide: FORK CHOICE. Two
+// k-deep, parent-linked, Pickles-proved segments under different anchors are indistinguishable to
+// it. These two exports are that missing decision. They are authored in
+// `Dregg2.Bridge.MinaForkChoiceGate` over the `select` rule formalized in
+// `Dregg2.Bridge.MinaChainSelection` — short-range: the longer chain; long-range: sub-window
+// density, then length, then the VRF digest, then the state hash — and Rust decides nothing here.
+//
+// ⚑ THE COMPARISON IS PAIRWISE AND MUST NEVER BE FOLDED OVER A CANDIDATE SET.
+//
+// `MinaChainSelection.beats_not_transitive` PROVES `select` has genuine 3-cycles at REAL mainnet
+// constants (`decide`-checked, by two independent mechanisms). So "the best tip in a set" is not a
+// function of the set: it depends on presentation order, and a peer that controls presentation
+// order can walk a node around the cycle. `verified_mina_better_tip` therefore compares ONE
+// candidate against the CURRENT head and nothing else. A `fold`/`max_by`/`sort_by` over candidates
+// using this function is NOT an improvement over the loop — it is order-dependent by construction,
+// and `MinaForkChoiceGate.head_can_be_walked_in_a_cycle` executes three legitimate Samasika
+// advances that return the head to exactly where it started. Do not "clean this up" into a fold.
+//
+// ⚑ AND THE GUARANTEE THAT SURVIVES THAT. The head is a PREFERENCE and it can cycle; the finalized
+// height is a RATCHET and it cannot decrease — `MinaForkChoiceGate.rollHead_finalized_monotone`, on
+// ANY input, for ANY candidate, under ANY presentation order, including around the cycle
+// (`the_cycle_moves_the_head_but_not_the_finalized_point`). That asymmetry is what makes running a
+// pairwise head safe: the worst an order-controlling peer achieves is churning which tip we serve,
+// never un-finalizing something. Callers must persist BOTH halves of `MinaHeadRoll` and must never
+// write back a `finalized` they computed themselves.
+//
+// ⚑ THE WIRE CARRIES RAW BINPROT BYTES, AND THAT IS DELIBERATE. `e` and `c` are the lowercase hex
+// of the `Protocol_state.Value.Stable.V2` bytes as they came off the peer, and `Dregg2.Bridge.
+// MinaBinprot` decodes them IN LEAN (`decodeProtocolStateChecked`, which also refuses a block whose
+// CARRIED constants disagree with the pinned mainnet ones). Rust deliberately does not know which
+// bytes are `min_window_density`, which are `sub_window_densities`, or where the VRF output sits: a
+// Rust decoder would be a mirror of openmina's `p2p-messages`, and its correctness would then rest
+// on a differential test — a confession, not a mitigation. The only thing this side knows about a
+// Mina consensus state is that it is a byte string a socket produced. A trailing remainder is
+// allowed by the decoder (on the wire the protocol state is followed by the Wrap proof and the
+// block body), so a caller may hand over the whole header prefix rather than slicing it.
+//
+// ⚑ `eh` / `ch` ARE THE ONE SUPPLIED (NOT DERIVED) INPUT, and they are a NAMED CARRIER, not a
+// hidden trust. They are the two tips' state hashes as `Fp` elements in decimal, and `select` reads
+// them ONLY as the FINAL tie-break, after `blockchain_length` and the VRF digest have both tied.
+// They are supplied rather than recomputed because `state_hash =
+// Poseidon("MinaProtoState")[previous_state_hash, body_hash]` and `Body.hash` absorbs `to_input` in
+// a field ordering that is NOT the binprot ordering; re-deriving it is a separate Lean job that
+// does not exist yet (`docs/MINA-LIGHT-CLIENT.md` carries it as an open row). Everything else on
+// this wire — including the Blake2b VRF digest — is DERIVED from the bytes by the gate.
+//
+// ⚑ WHAT AN ABSENT EXPORT COSTS. There is NO Rust twin of `select` and there will not be one; a
+// hand-written Samasika in Rust is exactly the drift these gates exist to delete. Absent, both
+// `*_available()` go constantly false, `verified_mina_better_tip` returns `Err` (never
+// `TakeCandidate`) and `verified_mina_head_advance` returns `Err` (never an advance), so the client
+// keeps whatever head it already persisted and its finalized height does not move. A light client
+// that cannot choose between forks is stalled; one that guesses is forked. Stalled is the refusal.
+//
+// Wire grammar (mirrors `MinaForkChoiceGate.decodeTipPair` / `minaHeadAdvanceGate` byte-for-byte):
+// ```text
+// TIP        := "eh=" Nat ";ch=" Nat ";e=" HEX ";c=" HEX
+// HEX        := an even-length string of [0-9a-fA-F]
+// BETTER_TIP := TIP
+//            -> "1" (the CANDIDATE is canonical, drop the existing tip) | "0" | "ERR"
+// HEAD_ADV   := "sg=" BIT ";fz=" Nat ";" TIP        -- `e` = the persisted head, `c` = the candidate
+//            -> "adv=" BIT ";fin=" Nat | "ERR"
+// ```
+
+/// Lowercase hex, two digits per byte, no separators — the `HEX` production of the fork-choice
+/// wire. This is a RENDERING of bytes the caller received, not a decode: nothing here interprets a
+/// single one of them (see the section header on why the decode is Lean's).
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// The verified Samasika verdict on ONE pair of tips. `TakeCandidate` iff the Lean gate
+/// (`dregg_mina_better_tip`) returned `"1"`; `"0"`, `"ERR"`, a malformed wire, a block the binprot
+/// decoder structurally refuses and an absent archive are ALL `KeepExisting` (fail-closed).
+///
+/// ⚑ This is a verdict about a PAIR, never about a set — `select` is not transitive
+/// (`MinaChainSelection.beats_not_transitive`), so there is no "best" to compute. See the section
+/// header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinaForkChoiceVerdict {
+    /// The gate PREFERS the candidate: it is canonical and the existing tip must be dropped.
+    TakeCandidate,
+    /// The gate does NOT prefer the candidate — keep the existing tip. Also the answer on every
+    /// refusal, because a fork choice that cannot be rendered is not a licence to switch.
+    KeepExisting,
+}
+
+/// The persisted result of rolling the verified head once. Callers write BOTH fields back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinaHeadRoll {
+    /// Whether to replace the persisted head tip with the candidate. A PREFERENCE — it can cycle
+    /// under an adversarial presentation order (`MinaForkChoiceGate.head_can_be_walked_in_a_cycle`).
+    pub advance: bool,
+    /// The NEW finalized height. A RATCHET: `rollHead_finalized_monotone` proves this is never
+    /// below the `finalized` that went in, on any input. Persist it as returned; never recompute
+    /// `blockchain_length - k` on this side.
+    pub finalized: u64,
+}
+
+/// Whether the linked archive exports the verified pairwise fork-choice gate
+/// (`dregg_mina_better_tip`, spliced from `Dregg2.Bridge.MinaForkChoiceGate`). When false the caller
+/// must FAIL CLOSED and keep the tip it has: there is no Rust twin of Samasika `select`, and the
+/// pre-gate behaviour — asking a peer's `bestChain` which chain it likes — is the thing being
+/// deleted, not a fallback.
+pub fn mina_better_tip_available() -> bool {
+    ffi_mina_better_tip::mina_better_tip_present() && lean_init_once().is_ok()
+}
+
+/// Build the pairwise fork-choice wire from two tips' RAW binprot `Protocol_state.Value.Stable.V2`
+/// bytes plus their state hashes.
+///
+/// `existing_state_hash` / `candidate_state_hash` are decimal `Fp` elements (they exceed `u64`, so
+/// they are `&str`, and they are the supplied tie-break carrier described in the section header —
+/// pass the Base58Check-decoded `stateHash` as a decimal, not the Base58 string). A value that is
+/// not a decimal `Nat`, or one that smuggles a `;` or `=`, does not produce a verdict computed from
+/// what did parse: the gate structurally refuses it and answers `"ERR"`, which is `KeepExisting`.
+pub fn mina_better_tip_wire(
+    existing_state_hash: &str,
+    candidate_state_hash: &str,
+    existing_protocol_state: &[u8],
+    candidate_protocol_state: &[u8],
+) -> String {
+    format!(
+        "eh={existing_state_hash};ch={candidate_state_hash};e={};c={}",
+        hex_lower(existing_protocol_state),
+        hex_lower(candidate_protocol_state),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_better_tip` over a pre-built wire and return the raw
+/// output (`"1"` / `"0"` / `"ERR"`). Requires [`mina_better_tip_available`]; returns `Err` when the
+/// archive did not export it (so the caller distinguishes "archive missing" from "not preferred"
+/// and keeps its existing tip either way).
+pub fn shadow_mina_better_tip(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_better_tip::lean_mina_better_tip(wire)
+}
+
+/// The end-to-end verified Samasika comparison of ONE candidate tip against the CURRENT head.
+/// `Ok(TakeCandidate)` ONLY on the gate's `"1"`; every other gate output is `Ok(KeepExisting)`
+/// (fail-closed). `Err` is returned ONLY when the archive lacks the export — the caller must treat
+/// that as a REFUSAL to choose, never as a skipped check and never as an advance.
+///
+/// ⚑ Call this against the head you currently hold, once per candidate, and act on each answer
+/// before considering the next. It is NOT a comparator: `select` is not transitive, so folding this
+/// over a candidate set yields an order-dependent "winner" a hostile peer picks by choosing the
+/// order. See the section header and `MinaChainSelection.beats_not_transitive`.
+pub fn verified_mina_better_tip(
+    existing_state_hash: &str,
+    candidate_state_hash: &str,
+    existing_protocol_state: &[u8],
+    candidate_protocol_state: &[u8],
+) -> Result<MinaForkChoiceVerdict, String> {
+    let wire = mina_better_tip_wire(
+        existing_state_hash,
+        candidate_state_hash,
+        existing_protocol_state,
+        candidate_protocol_state,
+    );
+    let out = shadow_mina_better_tip(&wire)?;
+    Ok(if out == "1" {
+        MinaForkChoiceVerdict::TakeCandidate
+    } else {
+        MinaForkChoiceVerdict::KeepExisting
+    })
+}
+
+/// Whether the linked archive exports the verified head-roll gate (`dregg_mina_head_advance`,
+/// spliced from `Dregg2.Bridge.MinaForkChoiceGate`). When false the caller must FAIL CLOSED: the
+/// head does not move and the finalized height does not rise. A client that stops following the
+/// chain is visibly stalled; one that rolls its own head is silently forked.
+pub fn mina_head_advance_available() -> bool {
+    ffi_mina_head_advance::mina_head_advance_present() && lean_init_once().is_ok()
+}
+
+/// Build the head-roll wire: the anchored-segment verdict, the persisted finalized height, and the
+/// `TIP` pair with the PERSISTED HEAD as `e` and the candidate as `c`.
+///
+/// `segment_ok` is the `dregg_mina_lc_verify` verdict for the candidate's segment — i.e. whether
+/// [`verified_mina_lc_verify`] returned [`MinaLcVerdict::Accept`]. It is a conjunct, not a hint:
+/// `rollHead_fails_closed_without_the_segment` proves `sg=0` moves nothing, so an unavailable or
+/// refused segment gate supplies `false` here and NEVER a skip. Fork choice presupposes both tips
+/// are valid; running `select` on an unvalidated tip is believing a stranger's arithmetic.
+///
+/// `finalized` is the height read back from persistence, unmodified.
+pub fn mina_head_advance_wire(
+    segment_ok: bool,
+    finalized: u64,
+    head_state_hash: &str,
+    candidate_state_hash: &str,
+    head_protocol_state: &[u8],
+    candidate_protocol_state: &[u8],
+) -> String {
+    format!(
+        "sg={};fz={finalized};{}",
+        if segment_ok { '1' } else { '0' },
+        mina_better_tip_wire(
+            head_state_hash,
+            candidate_state_hash,
+            head_protocol_state,
+            candidate_protocol_state,
+        ),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_head_advance` over a pre-built wire and return the
+/// raw output (`"adv=B;fin=N"` / `"ERR"`). `Err` when the archive did not export it.
+pub fn shadow_mina_head_advance(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_head_advance::lean_mina_head_advance(wire)
+}
+
+/// The end-to-end verified head roll: present ONE candidate to the persisted head and get back both
+/// halves of the decision the client must persist.
+///
+/// The output is parsed STRICTLY — exactly `"adv=" ("0"|"1") ";fin=" u64`. The gate's `"ERR"` (a
+/// malformed wire, an odd-length hex string, a byte string that is not a `Protocol_state.Value`, or
+/// a block whose carried constants disagree with the pinned mainnet ones), an absent archive, and
+/// any other shape all come back as `Err`. There is no arm that returns an advance it did not read,
+/// and none that returns a `finalized` this side computed: on `Err` the caller keeps its persisted
+/// head AND its persisted finalized height, unchanged.
+///
+/// ⚑ ONE CANDIDATE, ONE CALL, against the head as it stands after the previous call. Not a fold —
+/// see the section header.
+pub fn verified_mina_head_advance(
+    segment_ok: bool,
+    finalized: u64,
+    head_state_hash: &str,
+    candidate_state_hash: &str,
+    head_protocol_state: &[u8],
+    candidate_protocol_state: &[u8],
+) -> Result<MinaHeadRoll, String> {
+    let wire = mina_head_advance_wire(
+        segment_ok,
+        finalized,
+        head_state_hash,
+        candidate_state_hash,
+        head_protocol_state,
+        candidate_protocol_state,
+    );
+    let out = shadow_mina_head_advance(&wire)?;
+    parse_mina_head_roll(&out)
+}
+
+/// Strict decode of the head-roll gate's output. Anything that is not exactly
+/// `"adv=" ("0"|"1") ";fin=" u64` — including the gate's own `"ERR"` — is an `Err`, and the caller
+/// persists nothing.
+fn parse_mina_head_roll(out: &str) -> Result<MinaHeadRoll, String> {
+    let malformed = || format!("dregg_mina_head_advance returned an undecodable output: {out:?}");
+    let (adv_part, fin_part) = out.split_once(';').ok_or_else(malformed)?;
+    let adv = adv_part.strip_prefix("adv=").ok_or_else(malformed)?;
+    let fin = fin_part.strip_prefix("fin=").ok_or_else(malformed)?;
+    let advance = match adv {
+        "1" => true,
+        "0" => false,
+        _ => return Err(malformed()),
+    };
+    let finalized: u64 = fin.parse().map_err(|_| malformed())?;
+    Ok(MinaHeadRoll { advance, finalized })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_better_tip_present))]
+mod ffi_mina_better_tip {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_better_tip_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_better_tip_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_better_tip(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_better_tip_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_better_tip_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_better_tip_present)))]
+mod ffi_mina_better_tip {
+    pub fn mina_better_tip_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_better_tip(_wire: &str) -> Result<String, String> {
+        Err("dregg_mina_better_tip not exported by the linked archive (rebuild to enable)".into())
+    }
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_head_advance_present))]
+mod ffi_mina_head_advance {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_head_advance_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_head_advance_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_head_advance(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_head_advance_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_head_advance_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_head_advance_present)))]
+mod ffi_mina_head_advance {
+    pub fn mina_head_advance_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_head_advance(_wire: &str) -> Result<String, String> {
+        Err("dregg_mina_head_advance not exported by the linked archive (rebuild to enable)".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2212,6 +2580,147 @@ mod tests {
             accept_raw, reject_raw,
             "the Wrap-preamble gate returned the SAME verdict on a proof with one fewer IPA round \
              — it is a constant, not a gate"
+        );
+    }
+
+    /// The 1,544 binprot bytes of devnet block 540186's `Protocol_state.Value.Stable.V2`, as
+    /// lowercase hex — the SAME bytes `Dregg2.Bridge.MinaBinprotRealBlock.devnetBlock540186` pins
+    /// and decodes. Provenance and regeneration: `goldens/REGENERATE.md`.
+    const REAL_DEVNET_BLOCK_540186_HEX: &str =
+        include_str!("../goldens/mina-devnet-block-540186.hex");
+
+    /// The golden back to the bytes a peer served (whitespace-insensitive). The fork-choice API
+    /// takes BYTES precisely so that nothing on this side interprets them; going hex → bytes here
+    /// and bytes → hex in `hex_lower` also makes the encoder's round-trip part of the test.
+    fn real_devnet_block_540186() -> Vec<u8> {
+        let digits: Vec<u8> = REAL_DEVNET_BLOCK_540186_HEX
+            .bytes()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect();
+        assert_eq!(
+            digits.len() % 2,
+            0,
+            "the golden is not an even number of hex digits"
+        );
+        digits
+            .chunks(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
+                    .expect("the golden is not hex")
+            })
+            .collect()
+    }
+
+    /// ⚑ The SAMASIKA FORK-CHOICE pair, through the REAL FFI, on REAL DEVNET BYTES. UNGATED on
+    /// purpose, like its four Mina siblings: archive-absence routes through `demand_lean` (which
+    /// PANICS under `DREGG_TEST_REQUIRE_LEAN=1`) rather than the test ceasing to exist.
+    ///
+    /// The cases are `MinaBinprotRealBlock.exportedGateOnRealBytes` /`exportedRollOnRealBytes`'
+    /// own, so a divergence between the deployed exports and the `native_decide` theorems shows up
+    /// here — and it runs them through the Rust wire builders and the C ABI rather than inside
+    /// Lean, which is the part those theorems cannot see.
+    #[test]
+    fn mina_fork_choice_decides_on_real_devnet_bytes_through_the_real_ffi() {
+        if !crate::demand_lean(
+            mina_better_tip_available() && mina_head_advance_available(),
+            "dregg_mina_better_tip / dregg_mina_head_advance Samasika fork-choice gates",
+        ) {
+            return;
+        }
+
+        let existing = real_devnet_block_540186();
+        assert_eq!(existing.len(), 1544, "the golden is not the pinned block");
+        // `blockchain_length` is the 5-byte `0xfd` form beginning at offset 1067, so byte 1068 is
+        // its low byte: 540186 (`0x1a`) becomes 540187 (`0x1b`). Everything else — including the
+        // staking lock checkpoint — is untouched, so the pair is SHORT-range and LENGTH decides.
+        let mut candidate = existing.clone();
+        assert_eq!(candidate[1068], 26, "the golden is not the pinned block");
+        candidate[1068] = 27;
+
+        // A tip does not displace ITSELF (`select_irrefl`) — a peer cannot churn the head by
+        // replaying it.
+        assert_eq!(
+            verified_mina_better_tip("1", "1", &existing, &existing),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "a tip must not displace itself"
+        );
+        // The one-block-longer sibling DOES.
+        assert_eq!(
+            verified_mina_better_tip("1", "2", &existing, &candidate),
+            Ok(MinaForkChoiceVerdict::TakeCandidate),
+            "a strictly longer short-range tip must be taken"
+        );
+        // And the REVERSE presentation does not (`select_asymm`).
+        assert_eq!(
+            verified_mina_better_tip("2", "1", &candidate, &existing),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "presentation order must not make both sides win"
+        );
+
+        // THE ROLL. `k = 290`, so the ratchet lands at 540187 − 290 = 539897.
+        assert_eq!(
+            verified_mina_head_advance(true, 0, "1", "2", &existing, &candidate),
+            Ok(MinaHeadRoll {
+                advance: true,
+                finalized: 539897
+            }),
+        );
+        // FAIL CLOSED — an unavailable or refusing anchored-segment gate supplies `false` and
+        // NOTHING moves (`rollHead_fails_closed_without_the_segment`).
+        assert_eq!(
+            verified_mina_head_advance(false, 0, "1", "2", &existing, &candidate),
+            Ok(MinaHeadRoll {
+                advance: false,
+                finalized: 0
+            }),
+            "an unverified segment must move nothing"
+        );
+        // THE RATCHET — a refused advance does not DROP an already-finalized height, and neither
+        // does a genuinely verified SHORTER candidate (`rollHead_finalized_monotone`).
+        assert_eq!(
+            verified_mina_head_advance(false, 539897, "1", "2", &existing, &candidate),
+            Ok(MinaHeadRoll {
+                advance: false,
+                finalized: 539897
+            }),
+            "a refused advance must not un-finalize"
+        );
+        assert_eq!(
+            verified_mina_head_advance(true, 539897, "2", "1", &candidate, &existing),
+            Ok(MinaHeadRoll {
+                advance: false,
+                finalized: 539897
+            }),
+            "a shorter candidate must not un-finalize"
+        );
+
+        // A REFUSAL IS NOT A VERDICT COMPUTED FROM WHAT DID PARSE. A malformed wire, and a byte
+        // string that is not a `Protocol_state.Value`, both come back as `"ERR"` — which is
+        // `KeepExisting` for the comparison and an `Err` (persist nothing) for the roll.
+        assert_eq!(shadow_mina_better_tip("garbage").as_deref(), Ok("ERR"));
+        assert_eq!(shadow_mina_head_advance("garbage").as_deref(), Ok("ERR"));
+        assert_eq!(
+            verified_mina_better_tip("1", "2", b"\x00", b"\x00"),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "bytes that are not a protocol state must not displace the head"
+        );
+        assert!(
+            verified_mina_head_advance(true, 0, "1", "2", b"\x00", b"\x00").is_err(),
+            "bytes that are not a protocol state must not yield a roll to persist"
+        );
+
+        // THE STANDING NON-CONSTANCY CANARY (see the ETH test): the two wires differ in exactly ONE
+        // BYTE of 1,544 — the low byte of `blockchain_length` — and the gate must straddle it.
+        let take_raw =
+            shadow_mina_better_tip(&mina_better_tip_wire("1", "2", &existing, &candidate));
+        let keep_raw =
+            shadow_mina_better_tip(&mina_better_tip_wire("2", "1", &candidate, &existing));
+        assert_eq!(take_raw.as_deref(), Ok("1"));
+        assert_eq!(keep_raw.as_deref(), Ok("0"));
+        assert_ne!(
+            take_raw, keep_raw,
+            "the fork-choice gate returned the SAME verdict on a chain one block longer — it is a \
+             constant, not a gate"
         );
     }
 }

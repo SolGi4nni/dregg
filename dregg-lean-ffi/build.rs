@@ -270,6 +270,21 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          12 (the 93-element Poseidon over `[VK ‖ state_hash ‖ accumulators]`, the ONLY place the \
          served block enters a Wrap verification) are never computed from the served header",
     ),
+    (
+        "dregg_mina_better_tip",
+        "the SAMASIKA FORK-CHOICE decision compiles out — `verified_mina_better_tip` returns `Err` \
+         for every pair, so the client keeps whatever tip it already holds and cannot choose \
+         between two equally-valid k-deep segments under different anchors. There is NO Rust twin \
+         and there must not be one: a hand-written `select` is the drift this gate deletes, and the \
+         pre-gate behaviour was asking a peer's `bestChain` which chain it liked",
+    ),
+    (
+        "dregg_mina_head_advance",
+        "the ROLLING VERIFIED HEAD compiles out — `verified_mina_head_advance` returns `Err`, the \
+         persisted head never moves and the FINALIZED height never rises, so the client degrades \
+         from following a chain to verifying whatever segment it is handed. Fail-closed and \
+         stalled, which is the refusal: a client that guesses its own head is silently forked",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2168,6 +2183,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_proof_chain_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_state_hash_word_ok_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_better_tip_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_head_advance_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -3136,6 +3153,24 @@ fn main() {
     } else {
         absent_export_warn("dregg_mina_state_hash_word_ok");
     }
+    // The SAMASIKA FORK-CHOICE pair (`Dregg2.Bridge.MinaForkChoiceGate`): the pairwise tip
+    // comparison and the head roll that drives it. They ride the `import` line in `Dregg2/FFI.lean`
+    // exactly as the four gates above do — a module rooted only in `Dregg2.lean` elaborates but
+    // emits no `:c` facet, so the archive would carry the theorems and none of the entry points.
+    // Absent, the light client keeps its head and its finalized height frozen rather than choosing
+    // a fork with arithmetic nobody proved.
+    let mina_better_tip_present = archive_exports(&build_archive, "dregg_mina_better_tip");
+    if mina_better_tip_present {
+        println!("cargo:rustc-cfg=dregg_mina_better_tip_present");
+    } else {
+        absent_export_warn("dregg_mina_better_tip");
+    }
+    let mina_head_advance_present = archive_exports(&build_archive, "dregg_mina_head_advance");
+    if mina_head_advance_present {
+        println!("cargo:rustc-cfg=dregg_mina_head_advance_present");
+    } else {
+        absent_export_warn("dregg_mina_head_advance");
+    }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
     // The PQ-core gate above is the SAME instrument, and it says the quiet part out loud:
@@ -3370,6 +3405,15 @@ fn main() {
     }
     if mina_state_hash_word_ok_present {
         shim.define("DREGG_MINA_STATE_HASH_WORD_OK", None);
+    }
+    // The FORK-CHOICE pair. Independently probed like every gate above, but they share ONE module
+    // initializer in `lean_init.c` (both are `Dregg2.Bridge.MinaForkChoiceGate`, and the gate reads
+    // the pinned `mainnet` constants record out of initialized module data).
+    if mina_better_tip_present {
+        shim.define("DREGG_MINA_BETTER_TIP", None);
+    }
+    if mina_head_advance_present {
+        shim.define("DREGG_MINA_HEAD_ADVANCE", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

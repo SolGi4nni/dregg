@@ -573,6 +573,34 @@ extern lean_object *dregg_mina_state_hash_word_ok(lean_object *input);
  * and is re-entrant-safe under Lean's init guards. */
 extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaStateHashWordGate(uint8_t builtin);
 #endif
+/* dregg_mina_better_tip / dregg_mina_head_advance — the SAMASIKA FORK-CHOICE decision and the
+ * ROLLING VERIFIED HEAD (`Dregg2.Bridge.MinaForkChoiceGate`, over the `select` rule of
+ * `Dregg2.Bridge.MinaChainSelection`). The anchored-segment gate above deliberately decides no fork
+ * choice; these two do. `dregg_mina_better_tip` compares ONE candidate tip against the existing one
+ * and answers `"1"` (take the candidate) / `"0"` / `"ERR"`; `dregg_mina_head_advance` rolls the
+ * persisted head and answers `"adv=<0|1>;fin=<Nat>"` / `"ERR"`.
+ *
+ * ⚑ PAIRWISE, NEVER FOLDED: `MinaChainSelection.beats_not_transitive` proves `select` has genuine
+ * 3-cycles at real mainnet constants, so a "best of a set" is a function of presentation order and
+ * a hostile peer picks the order. What survives that is the ratchet —
+ * `rollHead_finalized_monotone`: `fin` never decreases, on any input.
+ *
+ * ⚑ THESE NEED THE MODULE INITIALIZER, for the same reason `headerOk` above does: the gate reads
+ * the top-level `MinaChainSelection.mainnet` constants record (`k = 290`, `grace_period_end = 2237`,
+ * `sub_windows_per_window`, …), which is initialized module data. Those constants are pinned in the
+ * Lean and are NOT carried on the wire — a peer that supplied both the states and the constants
+ * would supply the ones that make its fork win. Calling either export before initialization
+ * dereferences uninitialized globals and takes SIGSEGV with no Rust panic, which looks exactly like
+ * the missing-archive SIGABRT. */
+#if defined(DREGG_MINA_BETTER_TIP) || defined(DREGG_MINA_HEAD_ADVANCE)
+extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaForkChoiceGate(uint8_t builtin);
+#endif
+#ifdef DREGG_MINA_BETTER_TIP
+extern lean_object *dregg_mina_better_tip(lean_object *input);
+#endif
+#ifdef DREGG_MINA_HEAD_ADVANCE
+extern lean_object *dregg_mina_head_advance(lean_object *input);
+#endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
@@ -689,6 +717,18 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(mshres);
+#endif
+#if defined(DREGG_MINA_BETTER_TIP) || defined(DREGG_MINA_HEAD_ADVANCE)
+    /* ONE initializer for BOTH fork-choice exports — they share a module, and it is what brings the
+     * pinned `mainnet` selection constants into existence. Re-entrant-safe under Lean's init
+     * guards, so the `||` gate is correct even when only one export is present. */
+    lean_object *mfcres = initialize_Dregg2_Dregg2_Bridge_MinaForkChoiceGate(1);
+    if (!lean_io_result_is_ok(mfcres)) {
+        lean_io_result_show_error(mfcres);
+        lean_dec_ref(mfcres);
+        return 1;
+    }
+    lean_dec_ref(mfcres);
 #endif
 #ifdef DREGG_CROSS_CELL_CONSERVES
     lean_object *cccres = initialize_Dregg2_Dregg2_Circuit_CrossCellConserveDecision(1);
@@ -1380,6 +1420,66 @@ size_t dregg_mina_state_hash_word_ok_str(const char *in_utf8, char *out, size_t 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_state_hash_word_ok(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_BETTER_TIP
+/* dregg_mina_better_tip_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * pairwise Samasika fork-choice decision (`Dregg2.Bridge.MinaForkChoiceGate.minaBetterTipGate`).
+ * Input: `"eh=<Nat>;ch=<Nat>;e=<hex>;c=<hex>"` — the two tips' state hashes as Fp elements, and the
+ * RAW binprot `Protocol_state.Value.Stable.V2` bytes of the EXISTING and CANDIDATE tips in
+ * lowercase hex. Output: `"1"` (the candidate is canonical, drop the existing tip) / `"0"` (keep
+ * the existing one) / `"ERR"` (fail-closed).
+ *
+ * The bytes are DECODED HERE, by `Dregg2.Bridge.MinaBinprot` — the caller hands over what a socket
+ * gave it and knows nothing about which bytes are which consensus field, so there is no Rust mirror
+ * of openmina's `p2p-messages` whose correctness would rest on a differential test. `eh`/`ch` are
+ * the ONE supplied input, read only as the final tie-break after length and the VRF digest tie.
+ * The wire is ~3 KB (two full protocol states in hex), well past the other gates'; the caller's
+ * growable output buffer is unaffected since the OUTPUT is one byte. Same return contract as the
+ * bridges above. */
+size_t dregg_mina_better_tip_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_better_tip(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_HEAD_ADVANCE
+/* dregg_mina_head_advance_str — the C string bridge over the VERIFIED Lean `String -> String` head
+ * roll (`Dregg2.Bridge.MinaForkChoiceGate.minaHeadAdvanceGate`). Input:
+ * `"sg=<0|1>;fz=<Nat>;eh=<Nat>;ch=<Nat>;e=<hex>;c=<hex>"` — the anchored-segment verdict for the
+ * candidate (i.e. whether `dregg_mina_lc_verify` returned `"1"`), the persisted finalized height,
+ * and the tip pair with the PERSISTED HEAD as `e`. Output: `"adv=<0|1>;fin=<Nat>"` / `"ERR"`
+ * (fail-closed).
+ *
+ * Both halves come back because the caller persists a decision it did not make: `adv` says whether
+ * to replace the head, `fin` is the new finalized height. `rollHead_fails_closed_without_the_segment`
+ * proves `sg=0` moves nothing, so an unavailable segment gate supplies `0` and never a skip;
+ * `rollHead_finalized_monotone` proves `fin` is never below the `fz` that went in. Same return
+ * contract as the bridges above. */
+size_t dregg_mina_head_advance_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_head_advance(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

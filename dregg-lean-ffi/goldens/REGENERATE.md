@@ -1,3 +1,8 @@
+# `goldens/` — provenance & regeneration
+
+Two goldens live here. `mina-devnet-block-540186.hex` is documented at the bottom; the rest of this
+file is about `marshal-golden.txt`.
+
 # `marshal-golden.txt` — provenance & regeneration
 
 `marshal-golden.txt` is the **translation-validation golden corpus** for the hand-written Rust T8/T9
@@ -65,3 +70,44 @@ bytes — a real seam bug to fix in `marshal.rs` (not in the golden). The golden
 - **The `MarshalError` paths** (negative wire-`Nat`, missing envelope field) are total-encoder guards
   with no Lean counterpart (the Lean types make those states unrepresentable); they are exercised by
   `marshal.rs`'s own unit tests, not by this Lean-anchored byte corpus.
+
+---
+
+# `mina-devnet-block-540186.hex` — provenance & regeneration
+
+The 1,544 bytes of Mina **devnet block 540186**'s binprot `Protocol_state.Value.Stable.V2`, exactly
+as a peer served them over `coda/rpcs/0.0.1`, rendered as lowercase hex (76 columns, whitespace
+insignificant). It is **not** emitted by a Lean run like `marshal-golden.txt` — it is a transcript of
+a real network object, and the same bytes are pinned in Lean as
+`Dregg2.Bridge.MinaBinprotRealBlock.devnetBlock540186`.
+
+It exists so the Samasika fork-choice route-through
+(`mina_fork_choice_decides_on_real_devnet_bytes_through_the_real_ffi`, in `../src/bridge_lc_ffi.rs`)
+can drive `dregg_mina_better_tip` / `dregg_mina_head_advance` on a REAL block through the Rust wire
+builders and the C ABI. The Lean `native_decide` theorems `the_exported_gate_decides_on_real_devnet_bytes`
+and `the_head_rolls_on_real_devnet_bytes` make the same assertions **inside** Lean; what the Rust
+test adds is the four layers those theorems cannot see (archive facet, `cfg`, the C `_str` shim, and
+the `hex_lower` encoding).
+
+The test's SIBLING tip is derived, not stored: byte 1068 (the low byte of the 5-byte `0xfd`-form
+`blockchain_length` beginning at 1067) is bumped `0x1a → 0x1b`, making a chain one block longer with
+an untouched staking-lock checkpoint — so the pair is short-range and length decides.
+
+## Regenerate (only if the pinned block changes)
+
+```sh
+python3 - <<'PY'
+import re
+src = open('metatheory/Dregg2/Bridge/MinaBinprotRealBlock.lean').read()
+body = re.search(r'def devnetBlock540186 : List Nat := \[(.*?)\]', src, re.S).group(1)
+nums = [int(x) for x in re.findall(r'\d+', body)]
+assert len(nums) == 1544 and all(0 <= n < 256 for n in nums)
+h = ''.join('%02x' % n for n in nums)
+lines = [h[i:i+76] for i in range(0, len(h), 76)]
+open('dregg-lean-ffi/goldens/mina-devnet-block-540186.hex', 'w').write('\n'.join(lines) + '\n')
+PY
+cargo test -p dregg-lean-ffi --lib mina_fork_choice
+```
+
+A red test after regenerating means the Rust route and the Lean gate disagree about the same bytes —
+a seam bug, not a golden to edit.
