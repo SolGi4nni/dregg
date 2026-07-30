@@ -113,6 +113,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-bn254"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-crypto-primitives"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -402,6 +413,16 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
+name = "bcs"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85b6598a2f5d564fb7855dc6b06fd1c38cff5a72bd8b863a4d021938497b440a"
+dependencies = [
+ "serde",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "beef"
@@ -1390,6 +1411,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-commit",
+ "dregg-p3-pasta",
  "futures-channel",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
@@ -1757,6 +1779,22 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "dregg-p3-pasta"
+version = "0.1.0"
+dependencies = [
+ "ark-ff",
+ "mina-curves",
+ "mina-poseidon",
+ "num-bigint",
+ "p3-baby-bear",
+ "p3-field",
+ "p3-symmetric",
+ "paste",
+ "rand 0.10.1",
+ "serde",
 ]
 
 [[package]]
@@ -2761,6 +2799,9 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "hexf-parse"
@@ -3400,6 +3441,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "mina-curves"
+version = "0.7.0"
+source = "git+https://github.com/o1-labs/proof-systems?rev=36a8b510#36a8b510cd34b9bd350e04989c87280f99e21e37"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+ "num-bigint",
+]
+
+[[package]]
+name = "mina-poseidon"
+version = "0.7.0"
+source = "git+https://github.com/o1-labs/proof-systems?rev=36a8b510#36a8b510cd34b9bd350e04989c87280f99e21e37"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "mina-curves",
+ "o1-utils",
+ "rand 0.8.6",
+ "serde",
+ "serde_with",
+]
+
+[[package]]
 name = "minicov"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3497,6 +3566,8 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
+ "rand 0.8.6",
+ "serde",
 ]
 
 [[package]]
@@ -3533,6 +3604,27 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "o1-utils"
+version = "0.7.0"
+source = "git+https://github.com/o1-labs/proof-systems?rev=36a8b510#36a8b510cd34b9bd350e04989c87280f99e21e37"
+dependencies = [
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "bcs",
+ "hex",
+ "num-bigint",
+ "num-integer",
+ "rand 0.8.6",
+ "rustversion",
+ "serde",
+ "serde_with",
+ "sha2 0.10.9",
+ "spin 0.10.1",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -5423,6 +5515,12 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 dependencies = [
  "lock_api",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 
 [[package]]
 name = "spin"
