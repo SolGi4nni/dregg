@@ -49,12 +49,12 @@ const DESC_SHA256: &str = "6c77c51a4b6a79100e4f8ff28dbb3d616d97b44c4c069e1afc4c8
 /// A Lean-emitted HONEST witness (`metatheory/EmitPastaWindowedTrace.lean`), 4 terms × 8 planes.
 /// Every cell comes from `PastaMsmWindowed.rowAsg`, the assignment whose acceptance by the emitted
 /// `rowGates` is `#guard`-verified in the Lean kernel — not a second witness generator.
-const TRACE_64: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed-trace-64.txt");
+const TRACE_64: &str = include_str!("fixtures/pasta-rcb-windowed-trace-64.txt");
 /// sha256 of `TRACE_64`.
 const TRACE_64_SHA256: &str = "287e2f5e542be6672bb8263451791112ffc0453ff30dd884d5655c4e641dc2c9";
 
 /// The same emitter at 34 terms × 25 planes — the REAL Mina term count, plane count reduced.
-const TRACE_1024: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed-trace-1024.txt");
+const TRACE_1024: &str = include_str!("fixtures/pasta-rcb-windowed-trace-1024.txt");
 /// sha256 of `TRACE_1024`.
 const TRACE_1024_SHA256: &str = "a889d1db943d26322ddce75143bc9f4d9de719b825d77cf09ed782b8ea730925";
 

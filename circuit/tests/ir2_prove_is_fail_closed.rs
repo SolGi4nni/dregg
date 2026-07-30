@@ -45,7 +45,7 @@ use dregg_circuit::descriptor_ir2::{
 /// The algebraic-only descriptor: 45 constraints, ZERO lookups. This is the shape p3's debug
 /// lookup check cannot see even in a debug build, so it is the strictest witness of the property.
 const DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed.json");
-const TRACE_64: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed-trace-64.txt");
+const TRACE_64: &str = include_str!("fixtures/pasta-rcb-windowed-trace-64.txt");
 
 const WIDTH: usize = 525;
 /// The X3 output limb of `pallasCompleteAdd`; row 1 is constrained (row 0's accumulator is a free

@@ -23,7 +23,7 @@ use dregg_circuit::descriptor_ir2::{
 };
 
 const DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed.json");
-const TRACE_64: &str = include_str!("../descriptors/by-name/pasta-rcb-windowed-trace-64.txt");
+const TRACE_64: &str = include_str!("fixtures/pasta-rcb-windowed-trace-64.txt");
 
 /// Column bases, mirroring `PastaMsmWindowed` §1.
 const COL_OUTX: usize = 234;
