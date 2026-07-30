@@ -344,7 +344,33 @@ def classify(defs, counts) -> list[tuple[str, str, str, int, int]]:
     rows = []
     for name, sites in sorted(defs.items()):
         prod, test = counts.get(name, (0, 0))
+        # ⚑ A NAME'S CALLERS DO NOT CLEAR EVERY DEFINITION OF THAT NAME.
+        #
+        # `460727e9f` moved the ratchet's DEFINITION key to `(kind, name, definition_file)` and left
+        # the caller counts keyed by bare NAME. So when two files define the same function and only
+        # one of them is called, `prod > 0` silently cleared BOTH — the uncalled sibling vanished
+        # from the report entirely. Measured: it was hiding two guards.
+        #
+        # ⚠ The counts CANNOT be split per definition without name resolution: a bare `foo()` call
+        # site does not say which `foo` it reached, and this scanner is deliberately a call-SHAPE
+        # scan (the alternation-over-every-name spelling is quadratic and the first cut never
+        # finished). So the fix is not "count better" — it is to stop treating an ambiguous clear as
+        # a definite one.
+        #
+        # Narrow rule: a production caller clears the name only when the name has exactly ONE
+        # definition site. With several, `prod > 0` proves only that SOME one of them is reached, so
+        # the rest stay in the report, flagged as ambiguous rather than silently dropped or falsely
+        # accused.
+        distinct_files = {str(path) for path, _ in sites}
+        if prod > 0 and len(distinct_files) == 1:
+            continue
         if prod > 0:
+            # Several definitions share this name and something calls it. Which one is unknowable
+            # here, so report them as AMBIGUOUS — a reader can resolve it in seconds and the gate
+            # stops asserting a clearance it cannot establish.
+            for path in sorted(distinct_files):
+                earliest_line = min(l for pth, l in sites if str(pth) == path)
+                rows.append(("AMBIGUOUS", name, path, earliest_line, test))
             continue
         kind = "THEATRE" if test > 0 else "UNCALLED"
         earliest: dict[str, int] = {}
