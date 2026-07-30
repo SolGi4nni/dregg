@@ -65,6 +65,17 @@ import Dregg2.Bridge.MinaStateHashWordGate
 -- fail-open one. Added 2026-07-29; +2 modules to the closure (`PicklesRecursion` and this file —
 -- `KimchiVerify`, everything else either needs, came in with `PicklesWrapShapeGate`).
 import Dregg2.Circuit.Emit.PastaIpaDeferral
+-- `dregg_mina_better_tip` / `dregg_mina_head_advance` — ⚑ FORK CHOICE, and the ROLLING VERIFIED
+-- HEAD. `Bridge.MinaChainSelection` landed Samasika's `select` on 2026-07-29 and deliberately
+-- exported NOTHING, because the long-range branch reads `sub_window_densities` and the public
+-- GraphQL `ConsensusState` has no resolver for it — an export the caller cannot feed is an
+-- un-called gate. That blocker was a DATA SOURCE, not a formalization, and `bridge/src/mina_p2p.rs`
+-- closes it by decoding the binprot `Protocol_state.Value` off Mina's peer-to-peer RPC, where the
+-- field is ordinary and positional. Same layer-1 reasoning as the five above — rooted only in
+-- `Dregg2.lean` this would ELABORATE and emit no `:c` facet, so the observer could never stop
+-- trusting `bestChain`. Added 2026-07-30; +0 modules to the closure beyond `MinaChainSelection`
+-- itself (pure `Nat`/`Bool`, no Pasta cone).
+import Dregg2.Bridge.MinaForkChoiceGate
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.
