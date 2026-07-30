@@ -656,6 +656,29 @@ either way**, and it is a one-time protocol-constant cost rather than a per-proo
 `head0`'s verification key hash is bit-identical across three independent processes and two working
 directories, so the list the tree is built over is a constant and not an accident of one run.
 
+⚑ **And the splice suite found a defect in ITSELF, twice, in the same direction.** §3.27's rule for
+where to cut the falsifier table — *"the LAST proved slice that consumes a witnessed sibling"* —
+selects on the presence of the **witness**. What refuses a bent sibling is the **assertion that
+closes over the digest it feeds**, and at this geometry those are several cuts apart:
+
+- **`block7`** — 56 aux lanes, seven `inLevel` steps, no closing segment at all. A bent sibling only
+  changes the digest the slice hands on; the first `cur == commitment` is three cuts later.
+  `auxBent` **ACCEPTED**, and correctly.
+- **`block9`** — *does* contain an `inRoot`, and `auxBent` was **ACCEPTED again**. Its segments are
+  `inRoot(r0) inBlock(r1)×7 inLevel(r1,l0..l6)`: the closer comes **first** and closes round 0, while
+  every sibling the slice consumes belongs to round **1**. "Contains a closer" is necessary and not
+  sufficient.
+
+The rule that holds: the **first** aux-consuming segment must be followed, *inside the slice*, by a
+closer for the **same** round (`inRoot r`) or fold layer (`cpRoot L`), or by `final`. Measured over
+the 43 block positions: **25 carry aux, only 16 satisfy this**, and the first is **`block14`**.
+Where no proved cut satisfies it, `auxBent` is now reported **NOT ATTRIBUTABLE** with the reason —
+neither asserted (a false red) nor dropped (an absent falsifier reads exactly like a passing one).
+
+Both times the harness was wrong and the circuit was right. ⚑ `root-fri-braid.ts` carries the same
+one-line selection and the same exposure; it should be checked against the cut its own `LIMIT`
+lands on.
+
 ⚑ **What re-emits.** The FRI lane table is chunk-aligned per query and `friDigest` is two-level, so
 **every boundary in this chain is a different field element from the deployed one's**. Nothing holds
 the old shape — the deployed FRI slice artifacts are a leg's measurements, not state — but the two
