@@ -256,6 +256,23 @@ shape that has yielded one-cause fixes five times this week.
   red count is partly a function of box load, the same shape as the CPU-count-dependent greens
   already on record.
 
+- ✅ **`dregg-persist` 13 → 0, 194/194** (`7474756f0`) — and it corrected my census: **TWO families,
+  not one.** 5 were the seam I traced; **8 were bare SIGABRTs** (`refused to run UNAUDITED PQ`) that
+  had never reached their first assertion. ⚑ The seam's fault was a **test-only authority twin** —
+  the class minted hours ago — with zero production callers, PROVEN by the `#[cfg(test)]` gate
+  removing a pre-existing dead-code warning. Production writes both authorities in one transaction
+  and is structurally incapable of the one-sided image.
+  ⚑ **New defect found and reported, not papered**: a frame's `predecessor_receipt_(index, hash)` is
+  read by two durable authorities with incompatible expectations, so **Alice-frame → Alice-ordinary →
+  Alice-frame is unsatisfiable in production today.**
+- ✅ **`dregg-storage-templates` 137 → 141/141** (`7ebfd0c9b`) — the seizure's landing site was minted
+  in the ZERO asset while the bond held `blake3("default")`, so every `Transfer` was correctly refused
+  as cross-asset. ⚑ **The API had documented this exact trap at the constructor the call should have
+  used** — third artifact this week naming its own defect in advance and going unread.
+  ⚠ Same error message, three different causes this week (DREX ring built on the teleport; a
+  same-currency fulfillment in split columns; this). **I generalised one to its neighbours once and
+  was wrong**, so each was read on its own.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
