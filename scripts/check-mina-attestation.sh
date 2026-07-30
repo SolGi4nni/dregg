@@ -458,6 +458,13 @@ run_mconstr()   { ( cd "$1" && npm run --silent merkle-constraints ); }
 #
 # 330 of the plan's 839 cuts can attribute that bend; 489 carry a sibling. The
 # leg's `[2c]` censuses that at tier 0 in milliseconds.
+# ⚑ THE BRAID AT TIER 0, FOR THE ONE INJECTION AIMED AT ITS CUT-RULE CENSUS. The
+# self-test forces MINA_TIER=2 so that a fault in code a cheap run never reaches
+# still gets exercised — the right default, and the wrong one here: `[2c]` is a
+# tier-0 check that takes about a second, and running the leg's tier-2 half to
+# watch it go red would cost thirteen minutes to learn nothing extra. The tier is
+# named in the runner, not left to the injection, so it is visible.
+run_braid_cut() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" MINA_TIER=0 npm run --silent root-fri-braid ); }
 run_braid() {
   if [ "${MINA_TIER:-0}" -ge 2 ]; then
     ( cd "$1" && DREGG_REPO_ROOT="$ROOT" FRIBRAID_LIMIT=12 FRIBRAID_MIN_ATTRIBUTED=8 \
@@ -1340,6 +1347,19 @@ expect_red air_chain "the chain's predecessor check disarmed" \
 expect_red air_real "the binder reading the NEXT row from the LOCAL one" \
   "s/      return pick\(m\[1\] === '0' \? inst\.traceLocal : inst\.traceNext, Number\(m\[2\]\), label\);/      return pick(inst.traceLocal, Number(m[2]), label);/" \
   src/RootAirDag.ts
+# ⚑ THE CUT RULE, AND THIS INJECTION IS THE DEFECT THE LANE FIXED, RE-COMMITTED.
+# `root-fri-braid` [5] is three-valued because a falsifier applied where nothing
+# closes over it reads as a pass and proves nothing. What decides "nothing closes
+# over it" is the cut rule, and §3.27's original selected on the WITNESS — a cut
+# carries a Merkle sibling, therefore a bent one can be caught there. It cannot:
+# 159 of the 489 aux-carrying cuts in this plan close no round their own siblings
+# feed. Put that rule back and `[2c]`'s falsifiability control must fire, because
+# every carrying cut would then "attribute" and the corrected rule would be
+# discriminating nothing — which is exactly the state in which a NOT ATTRIBUTABLE
+# verdict launders a non-test as a stated reason.
+expect_red braid_cut "the cut rule selecting on the WITNESS again, as §3.27 did" \
+  "s/    if \(p\.closer !== null\) \{/    if (p.aux > 0) {/" \
+  scripts/root-fri-braid.ts
 # ── the compile CEILING and the FULL chain ────────────────────────────────────
 # The ceiling leg does not re-search on a normal run; it re-CHECKS two recorded
 # budgets. Move the recorded ceiling to §4.1's arithmetic — the value §3.24

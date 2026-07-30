@@ -42,9 +42,9 @@ Nothing in it compiles a circuit.
 | check | cost | what it says |
 |---|---|---|
 | `tsc --noEmit` at the pinned o1js | 7 s | the committed TypeScript compiles — the directory's *original* defect |
-| the injection **pre-flight** | 3.2 s | all 95 falsifiers still match live code, **each at exactly one site** |
+| the injection **pre-flight** | 3.2 s | all 96 falsifiers still match live code, **each at exactly one site** |
 | `check-mina-npm-coverage.sh` | 1 s | every `package.json` script is in a tier or allowlisted with a reason |
-| `recorded-constants.tsv` census | <1 s | all 24 `RECORDED_*` figures are as recorded, and none is unpinned |
+| `recorded-constants.tsv` census | <1 s | all 28 `RECORDED_*` figures are as recorded, and none is unpinned |
 | `root-fri-braid` @0 | 1–3 s | the 11,303-segment walk against p3's own α, βs and query indices |
 | `root-fri-uniform` @0 | 6–13 s | the homogeneity, the plan, **all 820 chain boundaries** |
 | `root-fri-preamble` @0 | 1–4 s | the batch-STARK preamble differential and its discriminating polarities |
@@ -137,6 +137,16 @@ The candidate table the leg prints is itself the evidence for the rule: at
 because nothing in it closes `r0`. The old rule would have cut there at
 `LIMIT=11` and asserted a refusal that cannot happen.
 
+**And the rule has its own falsifier — the 96th injection, `braid_cut`.** It puts
+§3.27's original rule back (select on the witness: `if (p.aux > 0)` in place of
+`if (p.closer !== null)`) and the tier-0 census must go red, because every
+carrying cut would then "attribute" and the corrected rule would be
+discriminating nothing. That is the precise state in which a NOT ATTRIBUTABLE
+verdict launders a non-test as a stated reason. **Measured: 9.5 s end to end**,
+including the pre-flight over all 96 — it runs the braid at `MINA_TIER=0`,
+because the check it falsifies is a tier-0 check and watching it go red does not
+need the leg's proving half.
+
 ---
 
 ## ⚠ What a tier-0 green no longer implies — stated exactly
@@ -183,7 +193,7 @@ has not moved, the per-leg `ratchet: ` grep says the ratchet **ran**, and **one*
 constant-drift injection (`rows`) stays live to say the mechanism **bites**.
 
 Measured end to end, `SELFTEST_LEGS="rows" --self-test`: **33 s** — pre-flight
-over all 95, then three faults injected and all three turning the gate red,
+over all 96, then three faults injected and all three turning the gate red,
 including the surviving constant-drift representative. The PASS line reports the
 14 held.
 
