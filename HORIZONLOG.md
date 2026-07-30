@@ -71,6 +71,8 @@ artifact.
 
 
 **E2 · `dreggnet-web-server` REFUSES EVERY DESCENT MOVE ON A BOX. LIVE OUTAGE — measured.**
+> ✅ **CLOSED 2026-07-30, end to end** — Lean arm `4e0a05fac` (`DHeapAtom.allowedTransitions`, 12th arm, wire round-trip PROVED over every `List (Nat × Nat)`, no genesis escape) + encoder arm `6e27f4983` (`HAT`, u64 lanes DECIMAL — deliberately not the sibling `hex32` nor the REGISTER `AT` convention; two atoms that look alike encode differently). ⚑ **The tooth reported its own completion by going red** — it pinned the decline and carried its retirement instruction in the assertion message. ⚠ And its pole had to CHANGE SHAPE, not flip: "both decline identically" was honest while both answered `None`, and is wrong now that an unlisted destination must be REFUSED BY THE TABLE. `dregg-exec-lean` + `dregg-cell` 979/979.
+
 `d0e10d0bc` added `HeapAtom::AllowedTransitions` to `dregg-cell` without the matching
 `exec-lean/src/constraint_oracle.rs` arm, so the oracle DECLINES that atom — and
 `dungeon_program.json` uses `allowedTransitions` **576 times**.

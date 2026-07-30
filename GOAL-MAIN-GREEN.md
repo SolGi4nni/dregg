@@ -394,6 +394,18 @@ Three analysis-first lanes on the three genuinely hard remainders:
   asserts bare `is_err()` on a route that errors for every input, and the other **has never reached
   its forge**, so the family's ~124-bit binding tooth has never been exercised.
 
+- ✅ **E2 CLOSED END TO END — the live outage is gone.** Lean arm (`4e0a05fac`) + `HAT` encoder arm
+  (`6e27f4983`), `dregg-exec-lean` + `dregg-cell` **979/979**.
+  ⚑ **A tooth brokered the handoff.** It pinned the decline and carried its own retirement instruction
+  in the assertion message — *"THE RUST ENCODER ARM HAS LANDED, this decline is stale"*. The arm landed,
+  it went red on exactly that assertion, and the message named the next step. **A tooth designed to
+  fail when a gap closes is the only kind that reports its own completion.**
+  ⚠ Two traps in the second half: the encoding is **u64 decimal**, not the `hex32` of the sibling arms
+  two lines up nor the REGISTER `AT` tag's convention — two atoms that look alike encode differently,
+  and the wrong choice compiles fine while agreeing with nothing. And the refusal pole had to **change
+  shape rather than flip**: "both decline identically" was the honest assertion while both answered
+  `None`, and is the WRONG one now that an unlisted destination must be refused BY THE TABLE.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
