@@ -1160,7 +1160,26 @@ pub fn compute_rotated_pre_limbs(
     // (fields[i] lanes 1..7 → `113 + 7·i .. +6`). THE v13 FAITHFUL FIELDS OCTET: each field's
     // 32 bytes ride a full `field_limbs8` 8-lane split (lane 0 = the u64-lane lo32, the faithful
     // ~124-bit binding), REPLACING the eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode
-    // one `from_lossy_31bit_DANGER` octet. This CLOSES the last degraded-felt residual: the whole
+    // one `from_lossy_31bit_DANGER` octet.
+    //
+    // ⚠ THIS COMMENT USED TO CLAIM "the whole state commitment is now faithful". IT IS NOT. The v13
+    // octet is a real WIDTH improvement — one Horner fold became eight lanes, and
+    // `from_lossy_31bit_DANGER` now has grep-zero callers — but each lane is `u32 % p`, and since
+    // `2p < 2^32` EVERY field value has a sibling with an identical lane vector, constructible by
+    // adding `p` to any 4-byte chunk with no grind. Width is not hardness; `circuit/src/faithful8.rs`
+    // says exactly that about every sibling constructor, and `from_field_limbs8` was missed by that
+    // sweep. Eight lanes carry 247.26 bits against 256 — no 8-lane encoding of 32 bytes is injective
+    // under any chunking.
+    //
+    // ⚑ AND THIS IS THE ONE PLACE IT BITES. Sixty lines up, `fields[8..STATE_SLOTS]` enter the
+    // authority residue BYTE-EXACT. `fields[0..8]` are excluded there deliberately ("bound by their
+    // own limbs"), so these lanes are their ONLY binding — and they reach
+    // `TurnReceipt::{pre,post}_state_hash`, the executor signature and the receipt QC. The tier that
+    // carries proof obligations has the breakable commitment; the tier with no proof lane at all is
+    // bound at BLAKE3 strength. A full node that also re-checks `canonical_ledger_root` is covered,
+    // but that is a DIFFERENT CONSUMER, not a fix — a receipt-only client is not.
+    //
+    // The layout below is exhaustive and correct; only the per-lane reduction is lossy. The whole
     // state commitment is now faithful. The setField value8 weld FORCES the written slot's 8 lanes
     // to the declared params; the completion freezes pin every non-written field's 7 lanes on a
     // value turn (the fields GENTIAN law). Byte-identical to the `rotation_witness` producer fill.

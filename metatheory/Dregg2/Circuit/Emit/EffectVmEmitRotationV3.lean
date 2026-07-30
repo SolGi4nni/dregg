@@ -3225,11 +3225,32 @@ def permsVKCompletionFreezes (w : Nat) : List VmConstraint :=
   permsVKCompletionOffs.map (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
 
 /-- **All 56 fields[0..7] completion-lane offsets** (`113..168`) — the eight flat fields' lanes 1..7
-of the faithful `field_limbs8` split (`fields[j]` lanes 1..7 → `113 + 7·j .. +6`; lane 0 rides the
-welded limb `4 + j`). These previously-absent lanes now carry the genuine higher bytes of each 32-byte
-record field, so the deployed state commitment binds ALL 32 bytes of every field (the v13 fields-octet
-grow closing the LAST degraded-felt residual). An explicit literal list (like `permsVKCompletionOffs`)
-so the non-vacuity `fin_cases` discharge reduces. -/
+of the `field_limbs8` split (`fields[j]` lanes 1..7 → `113 + 7·j .. +6`; lane 0 rides the welded limb
+`4 + j`). These previously-absent lanes carry the higher bytes of each 32-byte record field.
+
+⚠ **THIS DOCSTRING USED TO SAY "so the deployed state commitment binds ALL 32 bytes of every field
+(the v13 fields-octet grow closing the LAST degraded-felt residual)". THAT IS FALSE**, and it was the
+only false statement about the encoding anywhere in `metatheory/` (corrected 2026-07-30).
+
+All 32 bytes are READ — the layout is exhaustive, no gap and no overlap. They are not BOUND. Each
+Rust-side lane is `u32 % p`, and since `2p = 4026531842 < 2^32` every residue has at least two u32
+preimages, so a colliding sibling is CONSTRUCTED by adding `p` to any 4-byte chunk, with no grind.
+Eight lanes carry `8 · log₂ p = 247.26` bits against a 32-byte field's 256, so **no 8-lane encoding of
+32 bytes is injective under any chunking** — pigeonhole, independent of the reduction.
+
+⚑ Note this is a claim about the DEPLOYED Rust projector, which `metatheory/` does not model: neither
+`field_limbs8` nor `bytes32_to_8_limbs` has a `def` here, and every setField capstone takes the
+encoder's effect as a HYPOTHESIS (`hval : env.loc (prmCol VALUE) = v`) rather than deriving it. So no
+theorem below is unsound and none needed retracting — the encoding step is simply outside the verified
+perimeter, and this docstring was the one place that reached past it. `32463e3cf`'s own commit message
+said so correctly while shipping this line.
+
+The injective codec this should migrate onto already exists and is proved:
+`Dregg2/Circuit/CommitmentTreeWide.lean`'s `commitmentToLanes16` / `commitmentToLanes16_injective`
+(16 lanes × 16 bits, every lane `< 65536 < p`, so nothing reduces).
+
+An explicit literal list (like `permsVKCompletionOffs`) so the non-vacuity `fin_cases` discharge
+reduces. -/
 def fieldsCompletionOffs : List Nat :=
   [113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128,
    129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144,

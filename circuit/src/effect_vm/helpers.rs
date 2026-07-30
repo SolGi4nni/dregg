@@ -126,8 +126,27 @@ pub fn bytes32_to_8_limbs(b: &[u8; 32]) -> [BabyBear; 8] {
 /// ```
 ///
 /// Each lane reduced mod `p` (same as `bytes32_to_8_limbs`; deterministic,
-/// total, identical on all projectors). All 32 bytes are bound across the 8
-/// lanes — the same ~124-bit faithful bar as every other committed octet.
+/// total, identical on all projectors).
+///
+/// ⚠ **ALL 32 BYTES ARE READ. THEY ARE NOT BOUND.** This doc used to say "All 32 bytes are bound
+/// across the 8 lanes — the same ~124-bit faithful bar as every other committed octet", and that is
+/// false in the same way the word "canonical" was false twenty lines up, for the same reason.
+///
+/// The *layout* is exhaustive and correct — lanes 0/1 are BE over `b[28..32]`/`b[24..28]`, lanes 2..7
+/// are LE over `b[0..24]`, every byte covered once with no gap or overlap. The loss is entirely the
+/// per-lane `% p`:
+///
+///  * `p = 2013265921`, so `log2 p = 30.907` and eight lanes carry **247.26 bits** against 256.
+///    **No 8-lane encoding of 32 bytes is injective under any chunking** — pigeonhole.
+///  * `2p = 4026531842 < 2^32`, so **every** residue has ≥2 u32 preimages (`c`, `c + p`), and
+///    residues below `2^32 − 2p` have three. A colliding sibling is CONSTRUCTED by adding `p` to any
+///    4-byte chunk, with no grind — e.g. `01000000` and `02000078` share a lane.
+///
+/// ⚑ This is load-bearing here and nowhere else in the octet family: `fields[0..7]` are deliberately
+/// excluded from the byte-exact authority residue (`cell/src/commitment.rs:1099`), so these lanes are
+/// their only binding and they reach `TurnReceipt::{pre,post}_state_hash`. Every other consumer of a
+/// mod-`p` octet either hashes the same preimage byte-exactly alongside, or takes a hash image the
+/// caller cannot choose.
 ///
 /// ## Consequences (the derivation, pinned)
 ///

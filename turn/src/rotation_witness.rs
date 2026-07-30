@@ -421,7 +421,13 @@ pub fn produce(
     // `cell::commitment::compute_rotated_pre_limbs`): each field's 32 bytes ride a full
     // `field_limbs8` 8-lane split (lane 0 = the u64-lane lo32, the faithful ~124-bit binding),
     // REPLACING the eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode one
-    // `from_lossy_31bit_DANGER` octet. This CLOSES the last degraded-felt residual. The setField
+    // `from_lossy_31bit_DANGER` octet.
+    //
+    // ⚠ THIS USED TO CLAIM IT CLOSED THE LAST DEGRADED-FELT RESIDUAL. It did not — see the twin at
+    // `cell/src/commitment.rs` for the arithmetic. Each lane is `u32 % p`, `2p < 2^32`, so every
+    // field value has a constructible sibling with an identical lane vector; eight lanes carry
+    // 247.26 bits against 256. This producer must stay BYTE-IDENTICAL to the commitment twin, so
+    // when that one migrates, this one migrates in the same commit.
     // value8 weld FORCES the written slot's 8 lanes to the declared params; the completion freezes
     // pin every non-written field's 7 lanes on a value turn (the fields GENTIAN law).
     for i in 0..8 {
