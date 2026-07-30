@@ -471,6 +471,20 @@ Three analysis-first lanes on the three genuinely hard remainders:
   Post-fix all three nodes reach `latest_height 1`, round 5 → 11; absent-peer stays at 0 for 45 s and
   four equivocation refusals still bite, so liveness was not bought by accepting less.
 
+- **E1's successor dispatched.** `payoff_client_turn` no longer fails an assertion — it **TIMES OUT**
+  at 180 s with `heights = [1,1,1,1]`, so node-authored consensus works and a later leg hangs: an
+  external client turn submitted over HTTP returns `accepted:true` and **never enters the DAG**.
+  ⚠ I checked the obvious suspect and it is NOT the bug: `/turns/submit`'s unconditional rollback is
+  deliberate and correct — *"consensus finalization is the sole authoritative application … this
+  ingress run is admission staging only"* — and it exists because a crash between two writes once made
+  finalization falsely skip execution. Briefed NOT to re-commit at ingress, since that restores the
+  original wound.
+  ⚑ Briefed to distinguish four outcomes the way E1's lane did (never enqueued / enqueued and never
+  drained / drained and never planned / planned and never finalized) — **E1 turned out to be the second
+  and only instrumentation could tell.** Also to check whether `proof_pending` is load-bearing, since
+  `HttpWitnessOutcome::split` decides BEFORE the enqueue and can report pending with no pool installed.
+  ⚠ And it needs a budget row: 180.051 s against `45s × 4` means it was **killed, not failed**.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
