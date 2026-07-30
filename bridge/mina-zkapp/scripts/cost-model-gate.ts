@@ -24,6 +24,7 @@ import {
   priceAt,
   rootFriShape,
   rootPreambleMeta,
+  segmentReads,
   segmentWalk,
 } from '../src/RootFriWalk.js';
 //  ⚑ IMPORTED FOR EFFECT. These modules `register()` their cost constants at
@@ -468,6 +469,94 @@ else {
       `the colliding name \`${DEPRECATED}\` is GONE: \`airTerminalSeal\` (4-field, tagged) and ` +
         '`partitionTerminalSeal` (3-field, untagged) are the two names, and `stepBoundary` is ' +
         'one shared definition both families re-export',
+    );
+}
+
+// ===========================================================================
+console.log('\n[5] the inherited justification — "no 45x cliff", MEASURED rather than assumed');
+// ===========================================================================
+//
+// ⚑ `planFriWalk` TOOK `planRootAirChain`'s GREEDY PLANNER AND ITS JUSTIFICATION.
+// `RootAirChain` says "`PartitionSchedule`'s DP exists because a query-entry
+// boundary costs 45x an intra-query one; there is no such cliff here" — and that
+// sentence was written about the AIR DAG, whose carry is a smooth function of a
+// live set bounded at 102. The FRI walk's own §3.20/§3.28 numbers say its carry
+// per slice runs 4,940 / 7,215 / 32,318 (min / median / max), a 6.5x spread. That
+// is smaller than 45x and it is not "no cliff".
+//
+// So the question is not whether the sentence is literally true. It is what the
+// greedy planner COSTS, and that is measurable: run the same carry function under
+// a dynamic program and compare. Inheriting a justification is exactly the defect
+// this whole task is about, so it gets re-derived instead of re-quoted.
+
+{
+  const op = planOpenedValues(shape, air);
+  const w = segmentWalk(shape, { price: priceAt(BABYBEAR_HASH) });
+  const ft = friLaneTable(shape, op, BABYBEAR_HASH.spongeRate);
+  const budget = PICKLES.friWalkBudget;
+  const greedy = planFriWalk(w, op, ft, { usableRows: budget, chunkLanes: 256 });
+
+  //  The same carry function `planFriWalk` uses, under a DP that minimises the
+  //  slice count with ties broken by total carry.
+  const CH = 256;
+  const nAirChunks = Math.ceil(((air.nBase + air.nExt) * 4) / CH);
+  const nFriChunks = Math.max(1, Math.ceil(ft.nLanes / CH));
+  const witnessLane = LANE_COST.witnessPerLane;
+  const fixed = (nAirChunks + nFriChunks) * witnessLane * 4;
+  const n = w.segs.length;
+  const INF = Number.POSITIVE_INFINITY;
+  const steps = new Float64Array(n + 1).fill(INF);
+  const carryTo = new Float64Array(n + 1).fill(INF);
+  steps[0] = 0;
+  carryTo[0] = 0;
+  const reads = w.segs.map((_, k) => segmentReads(w, op, ft, k));
+  for (let i = 0; i < n; i++) {
+    if (steps[i] === INF) continue;
+    const airSet = new Set<number>();
+    const friSet = new Set<number>();
+    let work = 0;
+    for (let j = i + 1; j <= n; j++) {
+      work += w.segs[j - 1].rows;
+      for (const l of reads[j - 1].air) airSet.add(Math.floor(l / CH));
+      for (const l of reads[j - 1].fri) friSet.add(Math.floor(l / CH));
+      const c =
+        (w.liveIn[i].length + w.liveIn[j].length) * witnessLane +
+        (airSet.size + friSet.size) * CH * witnessLane +
+        fixed;
+      if (work + c > budget) break;
+      const s = steps[i] + 1;
+      const cc = carryTo[i] + c;
+      if (s < steps[j] || (s === steps[j] && cc < carryTo[j])) {
+        steps[j] = s;
+        carryTo[j] = cc;
+      }
+    }
+  }
+  const dp = steps[n];
+  const lower = Math.ceil(w.totalRows / (budget - 4940));
+  console.log(
+    `    at a ${fmt(budget)}-row budget over the real walk's ${fmt(n)} segments:\n` +
+      `      greedy (deployed)            ${String(greedy.slices.length).padStart(5)} slices,` +
+      ` carry ${fmt(greedy.totalCarry)}\n` +
+      `      dynamic program              ${String(dp).padStart(5)} slices, carry ${fmt(carryTo[n])}\n` +
+      `      optimistic lower bound       ${String(lower).padStart(5)} slices  (work / (budget − min carry))`,
+  );
+  const gain = (greedy.slices.length - dp) / greedy.slices.length;
+  if (dp > greedy.slices.length)
+    fail(`the DP found ${dp} slices against greedy's ${greedy.slices.length} — the DP is wrong`);
+  else if (gain > 0.02)
+    console.log(
+      `    ⚑ THE INHERITED JUSTIFICATION DOES NOT HOLD: a DP over the SAME measured carry saves\n` +
+        `      ${greedy.slices.length - dp} slices (${(gain * 100).toFixed(1)}%). "There is no such cliff here" was written about the\n` +
+        '      AIR DAG and carried across to the FRI walk, whose carry spread is 6.5x. The greedy\n' +
+        '      planner is a CHOICE with a measured price, not a free simplification.',
+    );
+  else
+    console.log(
+      `    ⚑ THE INHERITED JUSTIFICATION HOLDS, and now it is measured rather than quoted: a DP\n` +
+        `      over the same carry saves ${greedy.slices.length - dp} slices (${(gain * 100).toFixed(1)}%). The 6.5x carry spread is real and\n` +
+        '      the greedy planner is close to optimal anyway — but the reason is this number, not\n' +
+        "      `planRootAirChain`'s sentence about a different object.",
     );
 }
 

@@ -494,7 +494,15 @@ the FRI figures, at ~73 s per slice:
 
 ⚑ **Compile is 73% of that, and §5.1 below shows it should be ~zero.**
 
-### 5.1 ⚑ THE SECOND LEVER, and it is orthogonal to the hash: the 19 query walks are the SAME SHAPE, and the walk compiles 839 distinct circuits anyway
+### 5.1 ⚑ THE SECOND LEVER, and it is orthogonal to the hash: the 19 query walks are STRUCTURALLY IDENTICAL, and the walk compiles 839 distinct circuits anyway
+
+> ⚑ **HEADING CORRECTED, 2026-07-30.** It read *"the 19 query walks are the SAME SHAPE"*, and
+> §5.1a below — which is the measurement, not the estimate — found **46 distinct programs**, not
+> one. Both statements are true of different things and the old heading collapsed them: the 19
+> query BLOCKS are byte-for-byte identical (`assertHomogeneous`: 593 segments each, 1,593,956.5
+> modelled rows each, **zero mismatches**), and a query block still contains **43 distinct slice
+> positions** because a 50,000-row budget cuts one query into 43 pieces. 839 compiles collapses to
+> 46 (3 head + 43 block), not to 1. The lever is real and its size is 18x, not 839x.
 
 The hash swap cuts **rows**. This cuts **compiles**, and it is a bigger factor.
 

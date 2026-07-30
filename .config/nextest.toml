@@ -110,6 +110,21 @@
 #   binary retained_history_ivc_seam                          node (172.9s — 7s under the old kill)
 #   test   retained_finalized_turn_round_trips_and_readmits   node (lib, 126.4s)
 #   binary n3_plateau_probe                                   node (113.5s)
+#
+# ⚑ ADDED 2026-07-30 (a FIFTH `dregg-node` row, same day, same reasoning) —
+#   binary payoff_client_turn                                 node (81.0s green; 180.1s KILLED before)
+# It spawns FOUR real `dregg-node` processes, meshes them over loopback QUIC, and drives an
+# external-client-signed turn through consensus. Its floor is structural, not incidental: a 45s
+# port wait, an 8s settle, a 90s faucet-finality wait and a 90s client-turn-finality wait, so its
+# legitimate worst case is ~4 minutes. It measured 180.051s and was reported as a FAILURE — it was
+# KILLED by `[profile.default]`'s 45s x 4, mid-wait, and the kill was read as a consensus defect for
+# long enough to matter. It is now 81.007s green on hbox (measured 2026-07-30 after the three
+# dissemination fixes in `blocklace_sync.rs`/`finalization_votes.rs`), which is 45% of the old kill
+# and would have been a coin-flip on a busy box. BUDGETED, not segregated: it is the only test in
+# the tree that proves an external client's own signed turn reaches the DAG and commits cross-node,
+# and it now carries the refusal pole too (forged ed25519 / stripped ML-DSA / agent substitution /
+# substituted ML-DSA signer / replay, each refused BY VARIANT). Moving it to `heavy` would take the
+# whole external-ingress gate out of the everyday gauntlet.
 # The three circuit-LIB tests are excluded by name (their binary, dregg-circuit's
 # lib, holds ~960 other fast tests we keep). The integration suites above
 # are excluded whole-binary. Binary/test names are unique workspace-wide.
@@ -209,7 +224,7 @@
 # different question from which profile ought to run it, and only the first is a
 # timeout's business. Durations are from the reference run; re-measure before trimming.
 [[profile.default.overrides]]
-filter = 'test(~quorum_decision_matches_verified_lean_gate) or binary(retained_history_ivc_seam) or test(~retained_finalized_turn_round_trips_and_readmits) or binary(n3_plateau_probe) or binary(pasta_derive_prove) or binary(cap_open_write_prove_through) or binary(multi_round_fold) or binary(ext_degree_cost_measure) or binary(catalog_flow_harness) or binary(e2_fold_arity_recompose_probe) or binary(private_raid_player_journey) or binary(tiny_automata_prover_shape_measure) or binary(note_spend_binding_node_tooth) or binary(sovereign_binding_deployed_tooth) or binary(hosted_party) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once) or test(~private_match_folds_and_lightclient_accepts) or test(~match_win_output_is_attested) or test(~membership_play_folds_over_the_real_cell_and_lightclient_accepts) or test(~win_folds_over_the_real_cell_and_lightclient_accepts) or test(~app_root_weld_refuses_disagreeing_winner_through_verify_history) or test(~the_leg_octet_exposes_the_committed_field_values)'
+filter = 'test(~quorum_decision_matches_verified_lean_gate) or binary(retained_history_ivc_seam) or test(~retained_finalized_turn_round_trips_and_readmits) or binary(n3_plateau_probe) or binary(payoff_client_turn) or binary(pasta_derive_prove) or binary(cap_open_write_prove_through) or binary(multi_round_fold) or binary(ext_degree_cost_measure) or binary(catalog_flow_harness) or binary(e2_fold_arity_recompose_probe) or binary(private_raid_player_journey) or binary(tiny_automata_prover_shape_measure) or binary(note_spend_binding_node_tooth) or binary(sovereign_binding_deployed_tooth) or binary(hosted_party) or binary(rotation_batchstark_leaf_smoke) or binary(proptest_invariants) or binary(descriptor_leaf_recursion) or binary(private_attested_clearing) or binary(private_book_bfv_zk) or binary(private_book_distributed_bfv_exact) or binary(private_bfv_attested_clearing) or binary(private_clearing_apex_e2e) or binary(private_clearing_crown_consequence) or binary(private_clearing_guild_allocation) or binary(private_bazaar_playable_journey) or test(~k_fold_turn_chain_proves_and_verifies) or test(~two_step_inductive_core_proves_and_verifies) or test(~shielded_whole_note_swap_substrate_hiding_proof_and_hostile_publics) or test(~foreign_circuit_root_is_refused_by_vk_pin) or test(~authenticated_encrypted_orders_gate_real_game_asset_settlement) or test(~production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair) or test(~private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once) or test(~private_match_folds_and_lightclient_accepts) or test(~match_win_output_is_attested) or test(~membership_play_folds_over_the_real_cell_and_lightclient_accepts) or test(~win_folds_over_the_real_cell_and_lightclient_accepts) or test(~app_root_weld_refuses_disagreeing_winner_through_verify_history) or test(~the_leg_octet_exposes_the_committed_field_values)'
 # 120s × 30 = 3600s. Warn at two minutes (all of these exceed it — the SLOW line is
 # how you notice one has regressed), kill at an hour (none has ever come close).
 #
@@ -217,7 +232,9 @@ filter = 'test(~quorum_decision_matches_verified_lean_gate) or binary(retained_h
 # `heavy`, on the same reasoning: it is a security tooth — four tampers (substituted generator,
 # wrong-block scalar, absorbing state, challenge-inconsistent derivation) plus a both-polarity
 # control and a canonicity probe, every one of them a real `prove_vm_descriptors2_batch` roundtrip
-# against a 1,876-column / 1,024-row Lean-emitted AIR. The whole binary is ~365s at
+# against a 2,131-column / 1,024-row Lean-emitted AIR (`PastaMsmScalarDerive.WD`,
+# `circuit/src/mina_opening_witness.rs:60`; it was 1,876 before the canonicity columns landed and
+# this budget quoted the old width). The whole binary is ~365s at
 # `--test-threads=2` in release; the single honest proof is ~41s. Segregating it into `heavy` would
 # take four live teeth out of the everyday gauntlet, which is the `Documented ≠ Detected` failure.
 # Run it as `cargo nextest run -p dregg-circuit --test pasta_derive_prove` (release strongly

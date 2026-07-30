@@ -1619,6 +1619,16 @@ export function segmentReads(
  * **THE PLANNER.** Greedy-maximal slices under a row budget, exactly as
  * `planRootAirChain` cuts the AIR: extend while work + carry fits, then cut.
  *
+ * ⚑ THE GREEDY CHOICE IS MEASURED HERE, NOT INHERITED. This planner took
+ * `planRootAirChain`'s shape AND its justification — "there is no such cliff
+ * here" — which was established for the AIR DAG's carry, bounded by a cut width
+ * of 102, and is NOT established for this walk, whose carry spread is 6.5x.
+ * `npm run cost-gate` phase [5] runs a dynamic program over this exact carry
+ * function: at the deployed 50,000-row budget both give **839 slices**, and the
+ * DP recovers 260,065 rows of carry (2.8%) at the same count. So greedy costs
+ * nothing in slices at this budget — which is a measurement, and it is the
+ * reason to keep the greedy planner rather than the borrowed sentence.
+ *
  * The carry is recomputed at every candidate end because it is a function of
  * the CUT rather than of the slice's length — a boundary that falls inside a
  * DEEP run carries five height accumulators and their `alpha_pow`s; one that
