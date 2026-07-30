@@ -5,14 +5,23 @@
 //! Combined with the lane split in [`dregg_circuit::effect_vm::field_limbs8`]
 //! (`circuit/src/effect_vm/helpers.rs:133`):
 //!
-//! | lane | bytes | endianness | on a setField turn |
-//! |------|-------|------------|--------------------|
-//! | 0    | 28..32 | big     | **FREE** (the welded u64-lane lo32) |
-//! | 1    | 24..28 | big     | FROZEN |
-//! | 2..7 | 0..24  | little  | FROZEN |
+//! | lane | source | on a setField turn |
+//! |------|--------|--------------------|
+//! | 0    | `be(b[28..32]) % p` | **FREE** (the welded u64-lane lo32) |
+//! | 1    | `be(b[24..28]) % p` | FROZEN (under the historical freeze-ALL wrap) |
+//! | 2..7 | a Poseidon2 image over ALL 32 bytes | FROZEN (ditto) |
 //!
 //! ⇒ **only bytes 28..32 of a 32-byte field value are writable on a setField turn.** An encoder that
 //! puts a scalar anywhere in bytes 0..28 does not "silently truncate" — it makes the turn UNSAT.
+//!
+//! ⚠ **BOTH HALVES OF THAT TABLE HAVE SINCE MOVED, IN OPPOSITE DIRECTIONS, AND THE FILE'S TOOTH
+//! SURVIVED BOTH.** The VALUE8 epoch FREED the written slot's completion lanes (they are published
+//! as PIs 46..=52, not frozen), so the prover stopped refusing wrong-lane encoders — see
+//! `canonical_and_le_prefix_encodings_both_prove_but_only_one_round_trips`. And lanes 2..7 stopped
+//! being `u32 % p` chunks over bytes `0..24`: they are now the leading six felts of a Poseidon2
+//! image over an injective 16 × u16-LE preimage of the whole value, because the chunk form collided
+//! in `O(1)`. Consequence for this file: an honest small value no longer has a zero completion
+//! octet, so "the frozen lanes really are 0 after" is not the non-vacuity check any more.
 //!
 //! `dregg_cell::field_from_u64` is the canonical encoder and writes big-endian into 24..32, so it is
 //! provable exactly for `v < 2^32` (at `v ≥ 2^32` byte 24..28 lights frozen lane 1 — that ceiling is
@@ -202,13 +211,19 @@ fn canonical_and_le_prefix_encodings_both_prove_but_only_one_round_trips() {
         "canonical encoding of a small value must leave the frozen prefix 0..28 clear"
     );
     let good = build_setfield(canon);
-    // Non-vacuity: the frozen completion lanes really are 0 after, so the freeze `0==0` holds.
+    // ⚑ THIS CHECK USED TO BE "every written-slot completion lane is 0 after". That was true only
+    // while lanes 2..7 were `u32 % p` chunks over the (all-zero) bytes `0..24` — the O(1)-aliasable
+    // shape. They are a Poseidon2 image over the whole value now, so the canonical small write
+    // lights all seven, and what the generator must get right is that they are the HONEST octet.
+    let canon8 = dregg_circuit::effect_vm::field_limbs8(&canon);
     for row in &good.trace {
         for k in 0..7 {
             assert_eq!(
                 row[AFTER_BASE + COMPLETION_BASE + k],
-                BabyBear::ZERO,
-                "canonical small value must leave every written-slot completion lane at 0"
+                canon8[1 + k],
+                "canonical small value: written-slot completion lane {k} must be the honest \
+                 field_limbs8 lane {}",
+                1 + k
             );
         }
     }
@@ -224,13 +239,26 @@ fn canonical_and_le_prefix_encodings_both_prove_but_only_one_round_trips() {
     let le = le_prefix_encoding(V);
     assert_eq!(le[0], 1, "LE-prefix encoding puts the low byte at 0");
     let bad = build_setfield(le);
-    // Non-vacuity: the LE encoding genuinely lights a high completion lane (not a lane-0 value).
-    let lit = (0..7).any(|k| bad.trace[0][AFTER_BASE + COMPLETION_BASE + k] != BabyBear::ZERO);
-    assert!(
-        lit,
-        "the LE-prefix encoding must move ≥1 completion lane off zero (else this tooth proves \
-         nothing)"
+    // Non-vacuity. "≥1 completion lane is off zero" is satisfied by EVERY value now, so it is a
+    // check that cannot go red. The discriminating property is that the two encodings of the SAME
+    // logical value land on DIFFERENT lanes: identical lane 0 would mean the LE write reached the
+    // u64 window, and an identical completion octet would mean it reached nothing at all.
+    let le8 = dregg_circuit::effect_vm::field_limbs8(&le);
+    assert_ne!(
+        le8[0], canon8[0],
+        "the LE-prefix encoding must NOT land in the u64 lane — that is the bug it exhibits"
     );
+    assert!(
+        (1..8).any(|k| le8[k] != canon8[k]),
+        "the LE-prefix encoding must reach the completion octet (else this tooth proves nothing)"
+    );
+    for k in 0..7 {
+        assert_eq!(
+            bad.trace[0][AFTER_BASE + COMPLETION_BASE + k],
+            le8[1 + k],
+            "the generator must publish the LE-prefix value's honest completion lane {k}"
+        );
+    }
     assert!(
         accepts(&bad),
         "the VALUE8 epoch makes the WHOLE 32-byte value writable, so a high-lane encoding must \

@@ -412,6 +412,28 @@ pub fn raw_to_u16_le(raw: [u8; 32]) -> [u16; KEY_LIMBS] {
     out
 }
 
+/// **The injective hash preimage of a 32-byte field value**, domain-separated.
+///
+/// Sixteen little-endian `u16` limbs — every one `< 65536 < p`, so **nothing reduces** and the
+/// preimage determines all 32 bytes exactly. This is the same construction
+/// [`crate::openable_fields_root::EXACT_FIELDS_VALUE_LIMBS`] and `dregg_codec::Limbs16` use.
+///
+/// Used by [`crate::effect_vm::field_limbs8`] to fill lanes 2..7 with a Poseidon2 image instead of
+/// six `u32 % p` chunks that aliased in O(1). The leading domain felt keeps this preimage from
+/// colliding with a bare sixteen-limb key/value run elsewhere in the tree.
+pub fn field_value_preimage(b: &[u8; 32]) -> [BabyBear; KEY_LIMBS + 1] {
+    let mut out = [BabyBear::ZERO; KEY_LIMBS + 1];
+    out[0] = BabyBear::new(FIELD_VALUE_PREIMAGE_DOMAIN);
+    for (dst, limb) in out[1..].iter_mut().zip(raw_to_u16_le(*b)) {
+        *dst = BabyBear::new(u32::from(limb));
+    }
+    out
+}
+
+/// Domain tag for [`field_value_preimage`]. Distinct from every other preimage domain in this
+/// module so a field value cannot be confused with a nullifier or commitment leaf run.
+pub const FIELD_VALUE_PREIMAGE_DOMAIN: u32 = 0x4656_4C38; // "FVL8"
+
 pub fn u16_le_to_raw(limbs: [u16; KEY_LIMBS]) -> [u8; 32] {
     let mut out = [0u8; 32];
     for (limb, bytes) in limbs.iter().zip(out.chunks_exact_mut(2)) {

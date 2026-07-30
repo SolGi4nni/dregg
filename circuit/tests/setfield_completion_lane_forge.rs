@@ -120,12 +120,16 @@ struct Honest {
     map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>>,
 }
 
-/// Build an honest single-effect setField trace whose written value has ZERO high bytes (so the
-/// deployed completion freeze `before == after == 0` holds and the honest write proves).
+/// Build an honest single-effect setField trace whose written value sits entirely inside the kernel
+/// u64 lane (bytes `28..32`) — the smallest honest write there is.
+///
+/// ⚑ Its completion lanes are NOT zero any more. They used to be, because `field_limbs8` lanes 2..7
+/// were `u32 % p` chunks over the (all-zero) bytes `0..24`; they now carry a Poseidon2 image over
+/// the whole 32-byte value, so an honest small write moves all seven freed lanes off zero. The
+/// deployed member frees and PUBLISHES exactly those lanes (PIs 46..=52), so this is provable —
+/// which is what `honest_small_value_setfield_proves_and_verifies` measures.
 fn build_honest_small() -> (Honest, BabyBear) {
     let before: i64 = 50_000;
-    // A small numeric field value: only the low 4 bytes (big-endian 28..32) are set, so
-    // `field_limbs8` completion lanes 1..7 are all ZERO.
     let mut field_bytes = [0u8; 32];
     field_bytes[28..32].copy_from_slice(&1_000u32.to_be_bytes());
     let new_value = fold_bytes32_to_bb(&field_bytes);
@@ -203,24 +207,53 @@ fn refused(h: &Honest, trace: &[Vec<BabyBear>], dpis: &[BabyBear]) -> bool {
     }
 }
 
+/// ⚑ **THE SELF-CHECK WAS INVERTED HERE AND THAT IS THE WHOLE MEASUREMENT.** It read
+/// "written-slot completion lane {k} must be zero" on every row, which held only while
+/// `field_limbs8` lanes 2..7 were `u32 % p` chunks over bytes `0..24` — the shape that collided in
+/// `O(1)` on the one octet with no byte-exact companion. Those lanes are a hash of the whole value
+/// now, so an honest SMALL write lights all seven, and the question this test answers changed with
+/// them: not "does a zero completion octet prove" but **"does a NONZERO one"**.
+///
+/// It must, because the deployed member frees the written slot's lanes and publishes them as PIs
+/// 46..=52 (`withSetFieldCompletionPins`). If this ever refuses, the freeze-ALL wrap is back and the
+/// encoding change made honest field writes unprovable — which is the specific failure the fields
+/// octet repair had to avoid.
 #[test]
 fn honest_small_value_setfield_proves_and_verifies() {
     let (h, _v) = build_honest_small();
-    // Self-check: the honest AFTER completion lanes of the written slot are ZERO on every row.
-    for row in &h.trace {
+
+    // The honest value8 the producer projected, recomputed from the encoder.
+    let mut field_bytes = [0u8; 32];
+    field_bytes[28..32].copy_from_slice(&1_000u32.to_be_bytes());
+    let honest = dregg_circuit::effect_vm::field_limbs8(&field_bytes);
+
+    // Self-check: every row's written-slot completion lanes carry EXACTLY the honest lanes 1..7.
+    for (r, row) in h.trace.iter().enumerate() {
         for k in 0..7 {
             assert_eq!(
                 row[AFTER_BASE + COMPLETION_BASE + k],
-                BabyBear::ZERO,
-                "honest small value: written-slot completion lane {k} must be zero"
+                honest[1 + k],
+                "row {r}: written-slot completion lane {k} must be the honest field_limbs8 lane \
+                 {}",
+                1 + k
             );
         }
     }
+    // NON-VACUITY: a zero octet would make this test the OLD one wearing a new assertion.
+    assert!(
+        (0..7).any(|k| h.trace[0][AFTER_BASE + COMPLETION_BASE + k] != BabyBear::ZERO),
+        "the honest small-value completion octet must be NONZERO — if every lane is zero, the \
+         `u32 % p` chunk encoding is back and this test proves nothing about the repair"
+    );
+
     let proof = prove_vm_descriptor2(&h.desc, &h.trace, &h.dpis, &h.mem_boundary, &h.map_heaps)
         .expect("HONEST small-value setField must prove against the deployed descriptor");
     verify_vm_descriptor2(&h.desc, &proof, &h.dpis)
         .expect("HONEST small-value setField proof must verify");
-    eprintln!("R1 PROBE: honest small-value setField proves+verifies on the deployed descriptor.");
+    eprintln!(
+        "R1 PROBE: honest small-value setField proves+verifies on the deployed descriptor with a \
+         NONZERO published completion octet."
+    );
 }
 
 /// Build an honest single-effect setField whose written value has NONZERO high bytes (so the
@@ -295,14 +328,34 @@ fn build_honest_large() -> Honest {
 #[test]
 fn honest_large_value_setfield_proves_on_the_deployed_member() {
     let h = build_honest_large();
-    // At least one written-slot completion lane is nonzero on the active row (non-vacuity): if the
-    // value fits in lane 0 this test proves nothing.
-    let any_nonzero =
-        (0..7).any(|k| h.trace[0][AFTER_BASE + COMPLETION_BASE + k] != BabyBear::ZERO);
-    assert!(
-        any_nonzero,
-        "the large value must move ≥1 written-slot completion lane off zero"
+    // NON-VACUITY. This used to read "≥1 completion lane is nonzero", which every value satisfies
+    // once the lanes carry a hash — a gate that cannot go red. The property that still discriminates
+    // is that the LARGE value's completion octet differs from the SMALL value's: the high bytes
+    // (0xAB, 0xCD at positions 0/1) are outside the u64 lane, so ONLY the completion lanes can
+    // carry them, and if they did not this test would be about a value lanes 0/1 already bound.
+    let mut small_bytes = [0u8; 32];
+    small_bytes[28..32].copy_from_slice(&1_000u32.to_be_bytes());
+    let mut large_bytes = small_bytes;
+    large_bytes[0] = 0xAB;
+    large_bytes[1] = 0xCD;
+    let small8 = dregg_circuit::effect_vm::field_limbs8(&small_bytes);
+    let large8 = dregg_circuit::effect_vm::field_limbs8(&large_bytes);
+    assert_eq!(
+        small8[0], large8[0],
+        "the pair must agree on lane 0 — the high bytes are invisible to the u64 lane"
     );
+    assert_eq!(small8[1], large8[1], "and on lane 1");
+    assert!(
+        (1..8).any(|k| small8[k] != large8[k]),
+        "the high bytes must reach the completion octet, else this test measures nothing"
+    );
+    for k in 0..7 {
+        assert_eq!(
+            h.trace[0][AFTER_BASE + COMPLETION_BASE + k],
+            large8[1 + k],
+            "the generator must publish the honest large-value completion lane {k}"
+        );
+    }
     // The generator publishes the 7 freed lanes as PIs 46..=52, ahead of the 4 rc pins.
     assert_eq!(
         h.dpis.len(),
@@ -341,7 +394,9 @@ fn forged_written_slot_completion_lanes_is_unsat() {
     verify_vm_descriptor2(&h.desc, &proof, &h.dpis).expect("honest baseline must verify");
 
     // THE FORGE: on the active row (row 0), set the written slot's completion lanes 1..7 to
-    // arbitrary NONZERO values (≠ the honest/pre-state 0), keeping lane 0 (the welded limb) honest.
+    // arbitrary values that are NOT the honest published value8 (the honest lanes are now a
+    // Poseidon2 image, not zeros — see `build_honest_small`), keeping lane 0 (the welded limb)
+    // honest.
     // Recompute the AFTER chain so NEW_COMMIT genuinely absorbs the forged high bytes — the exact
     // wire view a ledgerless client would accept. BEFORE stays honest (pre-state completion 0), so
     // the ONLY thing that can bite is the completion freeze `before == after`.

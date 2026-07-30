@@ -18,6 +18,42 @@
 //!
 //! The Lean tooth for the same shape is `metatheory/Dregg2/Bignum/LedgerBalance.lean`
 //! `accumulatorLeaf_aliases_at_2_30`.
+//!
+//! ═══ ⚑ WHY THIS TOOTH IS STILL DOCUMENTING AND NOT YET ASSERTING A REPAIR ════════
+//! The sibling wound at `fields[0..7]` (`turn/tests/fields_octet_aliases_at_the_anchor.rs`) was
+//! closed in a Rust helper with no descriptor, VK or Lean consequence, and the plan that closed it
+//! proposed the same move here: route `accumulator_leaf` onto the injective
+//! `commitment_set::exact_commitment_leaf8`. **That is not available, and the deployed descriptors
+//! say so rather than a doc comment.** Measured 2026-07-30 over all four rotation registries:
+//!
+//! ```text
+//!   noteSpendVmDescriptor2R24   map_op aafi_insert  key={"var":68}  value={"var":69}
+//!   noteCreateVmDescriptor2R24  map_op aafi_insert  key={"var":68}  value={"var":69}
+//! ```
+//!
+//! Column 68 is `PARAM_BASE + param::NULLIFIER` (`= param::NOTE_COMMITMENT` on the create side) and
+//! column 69 is `PARAM_BASE + param::NOTE_VALUE_LO`. The leaf's ADDRESS and its VALUE are each ONE
+//! trace column, bound BY CONSTRAINT, in all three deployed registries — and the IR types them that
+//! way at the source: `Dregg2/Circuit/DescriptorIR2.lean` gives `MapOp` a `root, newRoot : Fin 8 →
+//! EmittedExpr` but `key : EmittedExpr`, a single expression. An eight-felt exact leaf is not
+//! REPRESENTABLE in the deployed map-op, so swapping the Rust leaf would make the executor-derived
+//! accumulator root disagree with the `CanonicalHeapTree8` the grow-gate opens against, and every
+//! noteSpend / noteCreate turn would go UNSAT.
+//!
+//! So A2 (the address) and A3 (the value) are **not** the same class of repair as the fields octet.
+//! Closing them is a Lean AIR change — `MapOp.key`/`value` widened to eight felts plus lex-8 sorted
+//! bracketing on both the open and insert sides (the compare gadget exists:
+//! `Circuit/Emit/LexCompare8Emit.lean::lexLt8_refines`) — followed by a descriptor re-emit and a VK
+//! rotation. `circuit/src/effect_vm/trace_rotated.rs` registers the address half as felt-width wound
+//! site #20 and reaches the same conclusion independently.
+//!
+//! ⚠ And that re-emit is currently BLOCKED upstream: `circuit/descriptors/PROVENANCE.json` reads
+//! `"source_dirty": true`, so anything riding the emit pipeline inherits that drift.
+//!
+//! Until then the assertions below are TRUE and must stay: they are the characterization that keeps
+//! the aliasing detected. `a8_the_exact_duals_separate_what_the_committed_roots_alias` is the pole
+//! that shows the injective successor already exists and already separates the pair — it is simply
+//! not what any consensus object commits to.
 
 use dregg_cell::commitment_set::CommitmentSet;
 use dregg_cell::note::{NoteCommitment, Nullifier};

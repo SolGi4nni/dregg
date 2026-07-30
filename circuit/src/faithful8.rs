@@ -64,10 +64,13 @@
 //!   directly-chosen preimage (`v` and `v + p` collide for 53.1% of 4-byte chunks).
 //! * [`Faithful8::from_canonical_key`] **is** `canonical_32_to_felts_8` — family F2, 16 source
 //!   bits discarded.
-//! * [`Faithful8::from_field_limbs8`] **is** `field_limbs8` — family F3, `O(1)` aliasable exactly
-//!   like F1. ⚑ **This one was missing from the list**, and it is the constructor that feeds
-//!   `fields[0..7]` — the only octet in the v9 commitment with no byte-exact companion, so it is
-//!   the one where the alias reaches the signed anchor. Added 2026-07-30 with the arithmetic below.
+//! * [`Faithful8::from_field_limbs8`] **is** `field_limbs8` — family F3. ⚑ **This one was missing
+//!   from the list**, and it is the constructor that feeds `fields[0..7]` — the only octet in the
+//!   v9 commitment with no byte-exact companion, so it is the one where an alias reaches the signed
+//!   anchor. Added 2026-07-30. It WAS `O(1)` aliasable exactly like F1; lanes 2..7 now carry a
+//!   Poseidon2 image over an injective preimage, so the constructed alias is gone and the cost is
+//!   the hash's. It is still not injective — the counting argument below applies to every 8-lane
+//!   scheme regardless of what the lanes carry.
 //!
 //! ⚑ **THE COUNTING ARGUMENT, which subsumes every entry above.** `p = 2013265921`, so
 //! `log2 p = 30.907` and eight lanes carry **247.26 bits** against a 32-byte field's **256**. No
@@ -190,32 +193,39 @@ impl Faithful8 {
 
     /// The v13 FIELDS-OCTET projection ([`crate::effect_vm::field_limbs8`]).
     ///
-    /// ⚠ **NOT FAITHFUL, and this doc used to say it was.** It read "the faithful ~124-bit 8-lane
-    /// split" — the same overclaim [`Faithful8::from_bytes32`]'s doc carried before it was
-    /// corrected, and it survived that sweep. Eight lanes cannot injectively carry 32 bytes
-    /// (247.26 bits vs 256), and each lane is `u32 % p` with `2p < 2^32`, so **every** value has a
-    /// constructible sibling with an identical lane vector. See the module header.
+    /// ⚠ **STILL NOT FAITHFUL — but no longer `O(1)`.** This doc has now been wrong in two
+    /// directions and both are recorded here on purpose.
+    ///
+    /// It first read "the faithful ~124-bit 8-lane split" — the same overclaim
+    /// [`Faithful8::from_bytes32`]'s doc carried, and it survived that sweep. That was corrected to
+    /// "`O(1)` aliasable exactly like F1", which was TRUE OF THE OLD BODY: lanes 2..7 were six
+    /// `u32 % p` chunks over bytes `0..24`, and `2p < 2^32`, so a sibling with a byte-identical lane
+    /// vector was CONSTRUCTED by adding `p` to any chunk, with no grind.
+    ///
+    /// Lanes 2..7 now carry the leading six felts of a Poseidon2 image over an INJECTIVE 16 × u16-LE
+    /// preimage of the whole 32-byte value, so that constructed alias is gone: a colliding sibling
+    /// must match lanes 0/1 **and** a six-felt hash. What is NOT gone is the counting argument —
+    /// eight lanes carry 247.26 bits against 256, so **no 8-lane encoding of 32 bytes is injective
+    /// under any chunking**, whatever the lanes contain. This constructor's octet is a
+    /// hash-strength projection, not an injection, and this doc must never call it faithful.
     ///
     /// ⚑ This matters more here than at any sibling constructor: `fields[0..7]` are excluded from
     /// the byte-exact authority residue (`cell/src/commitment.rs:1099` — "bound by their own
     /// limbs"), so these lanes are their ONLY binding, and they reach
     /// `TurnReceipt::{pre,post}_state_hash`. `fields[8..15]`, which have no proof lane at all, are
-    /// bound at BLAKE3 strength — the attested tier has the weaker commitment.
+    /// bound at BLAKE3 strength — the attested tier still has the weaker commitment.
     ///
-    /// The layout is nonetheless correct and exhaustive: lane
-    /// 0 = the u64-lane `lo32`, lane 1 = the u64-lane `hi32`, lanes 2..7 = the
-    /// remaining bytes little-endian (see the `field_limbs8` doc for the encoding
+    /// The layout: lane 0 = the u64-lane `lo32`, lane 1 = the u64-lane `hi32` (both unchanged
+    /// deployed ABI), lanes 2..7 = the hash image (see the `field_limbs8` doc for the encoding
     /// audit). THE constructor for the `fields[0..7]` octets — it REPLACES the
     /// former eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode one
     /// `from_lossy_31bit_DANGER` octet.
     ///
-    /// ⚠ That replacement was real and is a genuine improvement on the WIDTH axis — one Horner fold
-    /// to eight lanes — and `from_lossy_31bit_DANGER` now has grep-zero callers. But the v13
-    /// burn-down was described as "closing the LAST degraded-felt residual", and it did not: it
-    /// exchanged a one-felt fold for an eight-lane projection that is still `O(1)` aliasable. Width
-    /// is not hardness, which is exactly what this module's header says about every other
-    /// constructor. Each field's lane 0 rides its existing welded
-    /// limb `4 + i`; lanes 1..7 ride the completion lanes `112 + 7·i .. +6`.
+    /// The v13 burn-down described that earlier replacement as "closing the LAST degraded-felt
+    /// residual" and it did not — it exchanged a one-felt fold for an eight-lane projection that was
+    /// still `O(1)` aliasable. Width is not hardness, which is exactly what this module's header
+    /// says about every other constructor. Each field's lane 0 rides its existing welded
+    /// limb `4 + i`; lanes 1..7 ride the completion lanes `113 + 7·i .. +6`.
     #[inline]
     pub fn from_field_limbs8(b: &[u8; 32]) -> Self {
         Self(crate::effect_vm::field_limbs8(b))

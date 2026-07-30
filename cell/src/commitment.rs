@@ -1162,27 +1162,35 @@ pub fn compute_rotated_pre_limbs(
     // ~124-bit binding), REPLACING the eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode
     // one `from_lossy_31bit_DANGER` octet.
     //
-    // ⚠ THIS COMMENT USED TO CLAIM "the whole state commitment is now faithful". IT IS NOT. The v13
-    // octet is a real WIDTH improvement — one Horner fold became eight lanes, and
-    // `from_lossy_31bit_DANGER` now has grep-zero callers — but each lane is `u32 % p`, and since
-    // `2p < 2^32` EVERY field value has a sibling with an identical lane vector, constructible by
-    // adding `p` to any 4-byte chunk with no grind. Width is not hardness; `circuit/src/faithful8.rs`
-    // says exactly that about every sibling constructor, and `from_field_limbs8` was missed by that
-    // sweep. Eight lanes carry 247.26 bits against 256 — no 8-lane encoding of 32 bytes is injective
-    // under any chunking.
+    // ⚠ THIS COMMENT USED TO CLAIM "the whole state commitment is now faithful". IT IS NOT, and the
+    // sentence survived one correction pass before this one — it is deleted here. The v13 octet was
+    // a real WIDTH improvement (one Horner fold became eight lanes, `from_lossy_31bit_DANGER` has
+    // grep-zero callers) but every lane was `u32 % p`, and since `2p < 2^32` EVERY field value had a
+    // sibling with an identical lane vector, constructible by adding `p` to any 4-byte chunk with no
+    // grind. Width is not hardness.
     //
-    // ⚑ AND THIS IS THE ONE PLACE IT BITES. Sixty lines up, `fields[8..STATE_SLOTS]` enter the
+    // ⚑ AND THIS IS THE ONE PLACE IT BIT. Sixty lines up, `fields[8..STATE_SLOTS]` enter the
     // authority residue BYTE-EXACT. `fields[0..8]` are excluded there deliberately ("bound by their
     // own limbs"), so these lanes are their ONLY binding — and they reach
     // `TurnReceipt::{pre,post}_state_hash`, the executor signature and the receipt QC. The tier that
-    // carries proof obligations has the breakable commitment; the tier with no proof lane at all is
+    // carries proof obligations had the breakable commitment; the tier with no proof lane at all is
     // bound at BLAKE3 strength. A full node that also re-checks `canonical_ledger_root` is covered,
     // but that is a DIFFERENT CONSUMER, not a fix — a receipt-only client is not.
     //
-    // The layout below is exhaustive and correct; only the per-lane reduction is lossy. The whole
-    // state commitment is now faithful. The setField value8 weld FORCES the written slot's 8 lanes
-    // to the declared params; the completion freezes pin every non-written field's 7 lanes on a
-    // value turn (the fields GENTIAN law). Byte-identical to the `rotation_witness` producer fill.
+    // ⚑ THE O(1) ALIAS IS CLOSED; THE OCTET IS STILL NOT INJECTIVE. `field_limbs8` lanes 2..7 now
+    // carry the leading six felts of a Poseidon2 image over an injective 16 × u16-LE preimage of the
+    // WHOLE 32-byte value (lanes 0/1 are byte-identically the kernel u64 lane, unchanged deployed
+    // ABI). A colliding sibling must match lanes 0/1 AND a six-felt hash. Eight lanes still carry
+    // only 247.26 bits against 256, so no 8-lane encoding of 32 bytes is injective under any
+    // chunking — the repair moved the attacker's cost, not the pigeonhole.
+    //
+    // ⚠ EVERY COMMITTED FIELD VALUE MOVED. This is a RE-GENESIS, not a migration; it is
+    // descriptor-invariant (no deployed member pins a completion lane to a constant or relates it to
+    // lane 0), so no VK rotates and no descriptor re-emits. The setField value8 pins PUBLISH the
+    // written slot's 7 lanes as PIs 46..=52; the completion freezes pin every non-written field's 7
+    // lanes on a value turn (the fields GENTIAN law) and still hold, because the lanes are a
+    // FUNCTION of the field value. Byte-identical to the `rotation_witness` producer fill: both
+    // sides call `Faithful8::from_field_limbs8`, so they move together by construction.
     for i in 0..8 {
         // REVOKED-ROOT flag-day: the fields[0..7] completion octet shifted 112..=167 → 113..=168
         // (every limb index ≥ 37 shifted +1 for the new base `revoked_root` limb 37).

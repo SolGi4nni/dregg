@@ -95,29 +95,63 @@ and priced as #20 in `docs/WOUND-felt-width-boundaries-2026-07-19.md`. A suppres
 only as the conclusion of an argument — that argument is the doc-comment section on the function, not
 this sentence.
 
-The `fields[0..7]` residual is **CLOSED** (v13 fields-octet epoch): the
-r3..r10 Horner folds in `compute_rotated_pre_limbs` and its `rotation_witness`
-twin are REPLACED by the faithful `Faithful8::from_field_limbs8` 8-lane split
-(lane 0 = the u64-lane lo32 riding the welded limb `4 + i`, lanes 1..7 riding the
-new completion lanes `112 + 7·i .. +6` — `NUM_PRE_LIMBS` 112→169). The state
-commitment now binds ALL 32 bytes of every flat field at ~124 bits. The ast-grep
-allowlist directives are gone; the gate PASSES with zero fields entries.
+### ⚠ The `fields[0..7]` residual — this section claimed CLOSED and was FALSE (corrected 2026-07-30)
 
-The **one remaining in-circuit seam** (a CIRCUIT weld, NOT a degraded producer
-felt): the setField[0..7] WRITTEN slot's 7 completion lanes ride the
-deliberately-gated setField **VALUE8 weld** follow-on (forcing them to the declared
-value8 params). This is a named circuit residual, not a lossy commitment.
+**What it said:** *"The `fields[0..7]` residual is CLOSED (v13 fields-octet epoch) … The state
+commitment now binds ALL 32 bytes of every flat field at ~124 bits."* This is the same overclaim
+`commitment.rs`, `faithful8.rs`, `helpers.rs` and `EffectVmEmitRotationV3.lean` all carried, and it
+survived the sweep that corrected those four — **the law document was the one place nobody looked.**
+It matters more here than in any of them, because this file is what a reader consults to decide
+whether a commitment position is safe.
 
-**Deployed reality (2026-07-03 R1 audit, `circuit/tests/setfield_completion_lane_forge.rs`):**
-the DEPLOYED registry member (`EffectVmEmitRotationV3.lean:5363`) is
-`v3OfFrozen (setFieldTickFace slot)` — freeze-**ALL**, so the written slot's own
-completion lanes are FROZEN before==after too (bound to the pre-state). The
-`fieldsCompletionFreezesExcept` / `setFieldV3` "except" variant is defined + carries
-the value keystones but is NOT deployed. Consequence: a forge of the written field's
-high 224 bits is UNSAT (the freeze bites — no ledgerless silent-forge), but an
-honest LARGE-value setField (high bytes ≠ pre-state) currently cannot prove. So the
-seam is a **completeness** residual (the value8 weld unlocks faithful large-value
-writes AND declared-value binding), NOT a soundness hole. VK-affecting; gated.
+**The arithmetic.** The v13 grow did replace the r3..r10 Horner folds in
+`compute_rotated_pre_limbs` and its `rotation_witness` twin with the
+`Faithful8::from_field_limbs8` 8-lane split (lane 0 = the u64-lane lo32 riding the welded limb
+`4 + i`, lanes 1..7 riding the completion lanes `113 + 7·i .. +6`). But every lane was `u32 % p`, and
+`2p = 4026531842 < 2^32`, so a colliding sibling was **CONSTRUCTED** by adding `p` to any 4-byte
+chunk with no grind. `fields[0..7]` are deliberately excluded from the byte-exact authority residue
+(`cell/src/commitment.rs` — it walks `fields[8..]`), so those lanes are their ONLY binding, and the
+alias reached `TurnReceipt::{pre,post}_state_hash`, the executor signature and the receipt QC.
+Exhibited at the anchor by `turn/tests/fields_octet_aliases_at_the_anchor.rs`.
+
+**Where it stands now.** `field_limbs8` lanes 2..7 carry the leading six felts of a Poseidon2 image
+over an injective 16 × u16-LE preimage of the whole 32-byte value; lanes 0/1 (the kernel u64 lane)
+are byte-identical to before. The constructed alias is gone. **The octet is still NOT injective**:
+eight BabyBear lanes carry 247.26 bits against 256, so no 8-lane encoding of 32 bytes is injective
+under any chunking, whatever the lanes contain. Say "hash-strength", never "faithful", and never
+"binds all 32 bytes".
+
+⚑ **Price the right attack.** Six BabyBear lanes carry `6 · log₂ p = 185.4` bits of IMAGE, and lanes
+0/1 contribute NOTHING to an attacker's bill (they are `u32 % p` over bytes 24..32, matched for free
+by leaving the window alone or adding `p`). So **second preimage ≈ 2^185** — an attacker holding an
+honest value and wanting a different 32-byte value with the same octet — and **collision ≈ 2^92.7**,
+the birthday bound, when the attacker chooses both values. Quoting the image size where the birthday
+bound is meant is the house error; it is how `compute_effects_hash_4` came to claim ~124 bits for a
+~2^15.5 object. ⚠ **2^92.7 is below the ~124-bit bar quoted elsewhere in this document**, so the
+fields octet is now the weakest COLLISION term in the rotated commitment even though it is no longer
+`O(1)`-forgeable.
+
+Cost of that change: a **re-genesis** (`PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH` 12 → 13, so a
+pre-v13 store refuses to load rather than carrying stale commitments). **No** descriptor re-emit and
+**no** VK rotation — audited across all 175 rotated members of the four registries, the only
+constraints that touch a fields-completion column are the `colEq(before, after)` freeze, the setField
+`pi_binding` publications, and the Poseidon2 absorption lookups. None constrains a lane's value.
+
+**What closes it properly:** a NINTH lane. That is a descriptor re-emit, a VK rotation and a
+re-genesis, and it is gated on `circuit/descriptors/PROVENANCE.json` losing its `"source_dirty":
+true`.
+
+**Deployed reality — the R1 paragraph here was also stale.** It said the deployed member is
+`v3OfFrozen (setFieldTickFace slot)` (freeze-**ALL**), so an honest LARGE-value setField could not
+prove and the seam was a *completeness* residual. The VALUE8 epoch landed: `v3RegistryBare` now emits
+`withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))` — freeze-EXCEPT
+(the written slot's 7 lanes are FREED) plus 7 `.piBinding .last` pins publishing them as PIs 46..=52.
+The high 224 bits are bound by PUBLICATION rather than by being frozen shut. Consequences, both
+measured by `circuit/tests/setfield_completion_lane_forge.rs`: an honest large-value write now
+PROVES, and the written-slot completion forge is still UNSAT (the pin bites where the freeze used
+to). ⚠ The side effect is that **the prover no longer refuses a wrong-lane encoder** — the whole
+32-byte value is writable — so `circuit/tests/setfield_encoder_window_gate.rs`'s type-directed source
+walk is now the only detector for that class, not belt-and-braces.
 
 ## The capstone: the `Faithful8` TYPE WALL (built)
 
@@ -137,9 +171,11 @@ degraded felt in a typed commitment position is now a **compile error**
   (internally via the crate-private `from_root8`);
 - the **wire-commit chain** — `from_wire_commit` / `from_wire_commit_chip`;
 - `from_canonical_key` — the 30-bit KEY_COMMIT packing (the `pubkey8` lane);
-- `from_field_limbs8` — the v13 **flat-fields[0..7] octet** projection (`field_limbs8`:
-  lane 0 = u64-lane lo32, lanes 1..7 = the higher bytes), THE constructor for the
-  `fields[0..7]` octets (it REPLACED the `from_lossy_31bit_DANGER` fields hatch);
+- `from_field_limbs8` — the **flat-fields[0..7] octet** projection (`field_limbs8`: lane 0 =
+  u64-lane lo32, lane 1 = u64-lane hi32, lanes 2..7 = a Poseidon2 image over an injective
+  16 × u16-LE preimage of the whole value), THE constructor for the `fields[0..7]` octets (it
+  REPLACED the `from_lossy_31bit_DANGER` fields hatch). ⚠ Hash-strength, **not injective** — see the
+  corrected section above; lanes 1..7 have not carried "the higher bytes" since 2026-07-30;
 - `Faithful8::ZERO` — the absent-material / vk-revoke sentinel;
 - `Faithful8::from_lossy_31bit_DANGER(reason, limbs)` — the **greppable escape
   hatch** for named residuals (currently UNUSED — the burn-down list is empty).

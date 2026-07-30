@@ -625,9 +625,9 @@ pub use constraint_prover::{
 // `EffectVmAir` (the v1 hand-AIR) is RETIRED; the rotated IR-v2 descriptor path
 // is the sole effect-VM circuit.
 pub use effect_vm::{
-    CellState, EFFECT_VM_WIDTH, Effect, NUM_EFFECTS, compute_effects_hash, encode_net_delta,
-    extract_asset_class, extract_custom_proof_commitments, extract_net_delta,
-    generate_effect_vm_trace, verify_balance_limb_pis,
+    CellState, EFFECT_VM_WIDTH, Effect, EffectVmTraceError, NUM_EFFECTS, compute_effects_hash,
+    encode_net_delta, extract_asset_class, extract_custom_proof_commitments, extract_net_delta,
+    generate_effect_vm_trace, try_generate_effect_vm_trace, verify_balance_limb_pis,
 };
 pub use field::BabyBear;
 // The simulated IVC engine (`prove_ivc`/`verify_ivc`, `IvcProof`, `IvcBuilder`,

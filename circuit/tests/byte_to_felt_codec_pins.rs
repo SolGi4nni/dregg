@@ -7,15 +7,34 @@
 //! 1. `effect_vm::bytes32_to_8_limbs` — now the SINGLE family-F1 body, after twelve byte-identical
 //!    copies were deleted and rewired into it — computes exactly the map those copies computed.
 //!    Pinned against an INDEPENDENTLY WRITTEN reference, not against itself.
-//! 2. `field_limbs8` is NOT that map, and the vectors the pre-existing tests use CANNOT tell them
-//!    apart. That is a live trap for whoever writes the next differential, so it is made explicit.
+//! 2. `field_limbs8` is NOT that map. Its lanes 0/1 are a byte-swapped F1 tail (deployed ABI,
+//!    unchanged); its lanes 2..7 are a Poseidon2 image over an injective preimage, NOT the six F1
+//!    chunks they used to be. On a uniform vector the lane-0/1 half still coincides with F1 — a live
+//!    trap for whoever writes the next differential, so it is made explicit.
 //! 3. `dregg_codec` — the designation — agrees with the deployed exact-fields codec it was promoted
 //!    from, and its prime matches the field's.
 
 use dregg_circuit::effect_vm::{bytes32_to_8_limbs, field_limbs8};
-use dregg_circuit::exact_nullifier_aafi::{raw_to_u16_le, u16_le_to_raw};
+use dregg_circuit::exact_nullifier_aafi::{
+    FIELD_VALUE_PREIMAGE_DOMAIN, raw_to_u16_le, u16_le_to_raw,
+};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use dregg_circuit::poseidon2::hash_many_8;
 use dregg_codec::{BABYBEAR_P as CODEC_P, Bytes32};
+
+/// An INDEPENDENT transcription of `field_limbs8`'s COMPLETION half, written from the specification
+/// ("the leading six felts of a Poseidon2 wide squeeze over `FVL8` followed by sixteen
+/// little-endian `u16` limbs of the value") rather than by calling `field_value_preimage`. Only the
+/// sponge primitive is shared, which is unavoidable and is not the thing under test.
+fn completion_reference(b: &[u8; 32]) -> [BabyBear; 6] {
+    let mut preimage = [BabyBear::ZERO; 17];
+    preimage[0] = BabyBear::new(FIELD_VALUE_PREIMAGE_DOMAIN);
+    for (i, chunk) in b.chunks_exact(2).enumerate() {
+        preimage[1 + i] = BabyBear::new(u32::from(u16::from_le_bytes([chunk[0], chunk[1]])));
+    }
+    let d = hash_many_8(&preimage);
+    [d[0], d[1], d[2], d[3], d[4], d[5]]
+}
 
 /// An INDEPENDENT transcription of family F1, written from the specification
 /// ("eight little-endian 4-byte chunks, each reduced mod p, ascending") rather than by copying the
@@ -72,9 +91,16 @@ fn the_single_f1_body_matches_an_independent_reference() {
 }
 
 /// **The trap, made explicit.** `field_limbs8` is a DIFFERENT map — lanes 0/1 are big-endian over
-/// bytes `28..32` and `24..28`, lanes 2..7 little-endian over `0..24` — so it is F1's lanes 0..5
-/// rotated up by two plus a byte swap on two lanes. It is kept (its lane-0-first order is deployed
+/// bytes `28..32` and `24..28`; lanes 2..7 are the leading six felts of a Poseidon2 image over the
+/// injective 16 × u16-LE preimage of the WHOLE field. It is kept (its lane-0-first order is deployed
 /// ABI) and it must never be substituted for F1.
+///
+/// ⚑ **THE COMPLETION HALF OF THIS PIN WAS REWRITTEN, NOT RELAXED.** Lanes 2..7 used to be exactly
+/// F1 lanes 0..5 (six `u32 % p` chunks over bytes `0..24`), and this test asserted that equality
+/// lane-for-lane. That equality was the `O(1)` alias: `c` and `c + p` in any of those chunks gave a
+/// byte-identical octet, with no grind, on the ONLY binding `fields[0..7]` have. So the pin is now
+/// the negation *plus* an independent reconstruction of what replaced it — a revert to the chunk
+/// form fails both halves.
 #[test]
 fn field_limbs8_is_a_different_map_and_must_not_be_substituted() {
     let mut asc = [0u8; 32];
@@ -89,14 +115,10 @@ fn field_limbs8_is_a_different_map_and_must_not_be_substituted() {
     // The exact relationship, so a change to either is caught rather than merely noticed.
     let f1 = bytes32_to_8_limbs(&asc);
     let fl = field_limbs8(&asc);
-    for k in 2..8usize {
-        assert_eq!(
-            fl[k],
-            f1[k - 2],
-            "field_limbs8 lane {k} is F1 lane {}",
-            k - 2
-        );
-    }
+
+    // (a) the DEPLOYED-ABI half — unchanged, and it must stay unchanged: lane 0 is the welded v1
+    //     face column `stateBase + FIELD_BASE + i` that `field_to_u64` and every capacity weld
+    //     read, lane 1 is the staged capacity descriptors' hi-pin slot.
     let swap = |x: BabyBear| BabyBear::new(x.as_u32().swap_bytes() % BABYBEAR_P);
     assert_eq!(
         fl[0],
@@ -108,18 +130,50 @@ fn field_limbs8_is_a_different_map_and_must_not_be_substituted() {
         swap(f1[6]),
         "field_limbs8 lane 1 is byteswap(F1 lane 6)"
     );
+
+    // (b) the COMPLETION half — no longer F1's lanes 0..5, and pinned against an independent
+    //     transcription of the replacement rather than against the function itself.
+    for raw in adversarial_vectors() {
+        let fl = field_limbs8(&raw);
+        assert_eq!(
+            &fl[2..8],
+            &completion_reference(&raw)[..],
+            "the completion octet diverged from its specification on {raw:02x?}"
+        );
+    }
+    for k in 2..8usize {
+        assert_ne!(
+            fl[k],
+            f1[k - 2],
+            "field_limbs8 lane {k} must NOT be F1 lane {} — that chunk form is the O(1) alias",
+            k - 2
+        );
+    }
 }
 
-/// ⚠ **Why the pre-existing distinctness tests could not have caught a swap.** They use
-/// `[0x42; 32]`, on which the two maps AGREE: every 4-byte chunk is byte-palindromic and the chunk
-/// sequence is rotation-invariant. Any future differential must use a non-uniform vector.
+/// ⚠ **Why the pre-existing distinctness tests could not have caught a swap — and where that trap
+/// SURVIVES.** They use `[0x42; 32]`, on which F1 and `field_limbs8` agreed outright: every 4-byte
+/// chunk is byte-palindromic and the chunk sequence is rotation-invariant.
+///
+/// ⚑ The completion lanes now separate the two maps on ANY input, so the whole-octet coincidence is
+/// gone. The trap itself is not: it lives exactly where the deployed ABI is unchanged, so on a
+/// uniform vector **lanes 0 and 1 still coincide** and a differential written over those two lanes
+/// still cannot tell the maps apart. Any future lane-0/1 differential must use a non-uniform vector.
 #[test]
 fn the_uniform_vector_cannot_distinguish_f1_from_field_limbs8() {
     for uniform in [[0x42u8; 32], [0u8; 32]] {
+        let fl = field_limbs8(&uniform);
+        let f1 = bytes32_to_8_limbs(&uniform);
         assert_eq!(
-            field_limbs8(&uniform),
-            bytes32_to_8_limbs(&uniform),
-            "on a uniform vector the two maps coincide — this is the trap, not a bug"
+            &fl[..2],
+            &f1[..2],
+            "on a uniform vector the two maps still coincide on lanes 0/1 — this is the trap, not \
+             a bug"
+        );
+        assert_ne!(
+            fl, f1,
+            "the completion lanes must separate the maps even on the uniform vector — if this \
+             fails, lanes 2..7 went back to being `u32 % p` chunks"
         );
     }
 }

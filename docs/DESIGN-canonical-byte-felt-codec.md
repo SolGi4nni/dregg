@@ -56,7 +56,7 @@ Raw symbol references, `grep` over `*.rs` excluding `target/`, at HEAD:
 | `fold_bytes32` (F3, incl. `_to_bb`) | 166 / 42 | | `canonical_32_to_felts_4` (F2) | 75 / 17 |
 | `bytes32_to_8_limbs` (F1) | 135 / 31 | | `encode_hash` (F1 root) | 74 / 29 |
 | `bytes_to_babybear` (F3) | 117 / 22 | | `hash_to_8` (F1, 8 refs are a name collision) | 63 / 10 |
-| `fold_bytes32_to_bb` (F4) | 109 / 28 | | `field_limbs8` (F1 lane-reordered) | 62 / 17 |
+| `fold_bytes32_to_bb` (F4) | 109 / 28 | | `field_limbs8` (⚑ **no longer F1**, see below) | 62 / 17 |
 | `hash_bytes` (F3, heavily name-polluted) | 218 / — | | `commitment_to_field` (F3) | 41 / 10 |
 | `bytes32_to_felt8` (F1) | 28 / 10 | | `canonical_to_babybear_pi` (F2) | 21 / 5 |
 | `canonical_32_to_felts_8` (F2) | 19 / 8 | | `from_bytes_packed` (F1, var-len) | 15 / 7 |
@@ -606,9 +606,20 @@ ceiling, which is Stage 2/4 work, not a projector bug.
 (`commit/src/typed.rs:531` **and** `storage/src/commitment.rs:482` — even the correct answers were
 duplicated).
 
-**Kept, re-founded.** `circuit/src/effect_vm/helpers.rs:122` `field_limbs8` — its lane-0-first
+**Kept, re-founded.** `circuit/src/effect_vm/helpers.rs` `field_limbs8` — its lane-0-first
 order is deployed protocol ABI for the welded rotated limbs and its doc-comment correctly warns of
 the lane-order hazard. It becomes a *view* over `Limbs16` in `dregg-codec`, not a separate encoder.
+
+⚑ **UPDATE 2026-07-30 — it is no longer a lane-reordering of F1, and the census table above is
+annotated accordingly.** Lanes 0/1 are still the byte-swapped F1 tail (deployed ABI, unmoved), but
+lanes 2..7 stopped being six `u32 % p` chunks over bytes `0..24` and now carry the leading six felts
+of `hash_many_8` over `exact_nullifier_aafi::field_value_preimage` — the domain-tagged, INJECTIVE
+16 × u16-LE preimage, i.e. F5 already. The chunk form was the `O(1)` alias on the only octet in the
+rotated commitment with no byte-exact companion (`turn/tests/fields_octet_aliases_at_the_anchor.rs`
+is the exhibit, now a regression pin). The Stage-2 endpoint is unchanged and is what half of this
+function already does: the remaining work is lanes 0/1, which cannot move without a VK epoch.
+Priced honestly: second preimage ≈ 2^185, **collision ≈ 2^92.7** (six lanes = 185.4 bits of image;
+lanes 0/1 are free for an attacker to match) — below the ~124-bit bar, so not the end state.
 
 **Deletion tally: ~34 encoder bodies and 11 dead functions removed; 1 canonical codec remains.**
 

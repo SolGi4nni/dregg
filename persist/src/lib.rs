@@ -256,7 +256,21 @@ impl PersistentStore {
     /// carries value on this tree (the devnet was decommissioned 2026-06-22 and
     /// no `*.redb` is tracked in git), so the correct answer for an existing
     /// store is to re-genesis it, exactly as the v10→v11 fields-root change did.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 12;
+    ///
+    /// Epoch 13 changes what `fields[0..7]` COMMIT TO. `circuit/src/effect_vm/helpers.rs`
+    /// `field_limbs8` lanes 2..7 stopped being six `u32 % p` chunks over bytes `0..24` — an
+    /// encoding that collided in `O(1)` on the only octet in the rotated commitment with no
+    /// byte-exact companion — and now carry a Poseidon2 image over an injective 16 × u16-LE
+    /// preimage of the whole 32-byte value. Lanes 0/1 (the kernel u64 lane) are byte-identical.
+    ///
+    /// The CELL BYTES did not move; the PROJECTION did. So a pre-v13 store would still decode, and
+    /// that is precisely the hazard: every persisted `TurnReceipt::{pre,post}_state_hash`, every
+    /// stored rotated `state_commit` and every checkpointed consensus anchor was computed under the
+    /// old projection and no longer equals a recomputation. A store that loads and quietly disagrees
+    /// with its own recomputation is worse than one that refuses, so this epoch makes it refuse. No
+    /// descriptor re-emits and no VK rotates — the deployed members never constrain a completion
+    /// lane's value (audited across all 175 rotated members of the four registries).
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 13;
 
     /// Open a persistent store backed by a file on disk.
     ///

@@ -28,9 +28,23 @@
 //!
 //! Built on `note_value_aliases_at_2_30.rs`'s template deliberately, so the two read alike.
 //!
-//! ⚠ **THIS TEST IS EXPECTED TO FAIL TODAY.** It asserts the property we want, not the behaviour we
-//! have. It goes green when the field octet migrates onto an injective preimage. Do not "fix" it by
-//! weakening the assertion — that is the whole failure mode it exists to prevent.
+//! ═══ ⚑ THIS TOOTH'S MEANING WAS FLIPPED, AND SAYING SO IS THE POINT ══════════════
+//! It shipped RED, and its docstring said so: *"THIS TEST IS EXPECTED TO FAIL TODAY. It asserts the
+//! property we want, not the behaviour we have. It goes green when the field octet migrates onto an
+//! injective preimage."* 3 of its 5 assertions failed.
+//!
+//! The octet migrated. `field_limbs8` lanes 2..7 now carry the leading six felts of a Poseidon2
+//! image over an injective 16 × u16-LE preimage of the whole 32-byte value, so the constructed
+//! `c` / `c + p` pair no longer reaches one anchor. **Every assertion below is now a REGRESSION PIN
+//! for that repair, not a statement of a wound.** A red here means the chunk encoding came back.
+//!
+//! ⚠ **AND THE WOUND IT NAMED IS NOT FULLY CLOSED.** Eight lanes carry 247.26 bits against 256, so
+//! the octet is still NOT injective — the repair converted a CONSTRUCTED alias into a hash-strength
+//! one and did not deliver injectivity. Injectivity needs a ninth lane (a descriptor re-emit, a VK
+//! rotation and a re-genesis). Nothing here may be described as "faithful".
+//!
+//! Anti-vacuity throughout: the field values are asserted to ROUND-TRIP out of the cell, so an
+//! encoder that scrambled everything — and separated the pair by accident — would not pass.
 
 use dregg_cell::commitment_set::CommitmentSet;
 use dregg_cell::nullifier_set::NullifierSet;
@@ -65,12 +79,31 @@ fn anchor_with_field(seed: u8, slot: usize, value: [u8; 32]) -> [u8; 32] {
 
 /// A 32-byte field value whose LE `u32` chunk at `chunk` holds `v`, zero elsewhere.
 ///
-/// Chunks 2..8 of `field_limbs8` are LE over bytes `0..24`, so chunk index `k` here is byte range
-/// `4k..4k+4` and lands in lane `k + 2`.
+/// Chunk index `k` is byte range `4k..4k+4`. Chunks 0..6 sit below byte 24, i.e. OUTSIDE the kernel
+/// u64 lane that `field_limbs8` lanes 0/1 read — so the only way such a value reaches the
+/// commitment at all is through the completion lanes. Under the old encoding chunk `k` rode lane
+/// `k + 2` alone, which is exactly what made `c` / `c + p` a one-lane collision; the lanes are a
+/// hash of all 32 bytes now.
 fn field_with_le_chunk(chunk: usize, v: u32) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[chunk * 4..chunk * 4 + 4].copy_from_slice(&v.to_le_bytes());
     b
+}
+
+/// ⚑ **THE ANTI-VACUITY POLE.** "Two values give two anchors" is satisfied by an encoder that
+/// destroys information, so every separation asserted below is paired with this: the field value
+/// still ROUND-TRIPS out of the cell it was written into, byte for byte.
+fn assert_round_trips(slot: usize, value: [u8; 32]) {
+    let mut cell = cell_with(0x5A);
+    assert!(
+        cell.state.set_field(slot, value),
+        "set_field({slot}) must take"
+    );
+    assert_eq!(
+        cell.state.fields[slot], value,
+        "the field value must survive the round trip — the encoder is a projection of the state, \
+         not a rewrite of it"
+    );
 }
 
 #[test]
@@ -98,6 +131,11 @@ fn a_constructed_field_alias_must_not_reach_the_same_signed_anchor() {
     let honest = field_with_le_chunk(0, 1);
     let alias = field_with_le_chunk(0, 1 + P);
 
+    // ANTI-VACUITY: both values survive the store, so the separation below is the COMMITMENT
+    // distinguishing them and not the state having been mangled.
+    assert_round_trips(0, honest);
+    assert_round_trips(0, alias);
+
     let anchor_honest = anchor_with_field(0xA1, 0, honest);
     let anchor_alias = anchor_with_field(0xA1, 0, alias);
 
@@ -110,8 +148,9 @@ fn a_constructed_field_alias_must_not_reach_the_same_signed_anchor() {
          The pair costs one addition to construct. `fields[0..7]` have no byte-exact companion in\n\
          the commitment (the authority residue starts at `fields[8]`), so these lanes are the only\n\
          binding.\n\n\
-         This is EXPECTED to fail until the field octet migrates onto an injective preimage —\n\
-         `openable_fields_root::EXACT_FIELDS_VALUE_LIMBS` (16 × u16) or `dregg_codec::Limbs16`.\n"
+         THIS ASSERTION IS A REGRESSION PIN, NOT A WOUND REPORT: it went green when `field_limbs8`\n\
+         lanes 2..7 moved onto a Poseidon2 image over an injective 16 x u16-LE preimage. A red here\n\
+         means the `u32 % p` chunk encoding came back.\n"
     );
 }
 
@@ -126,6 +165,8 @@ fn the_alias_reaches_the_anchor_from_every_le_chunk_not_just_the_first() {
             honest, alias,
             "chunk {chunk}: the pair must differ in bytes"
         );
+        assert_round_trips(1, honest);
+        assert_round_trips(1, alias);
         assert_ne!(
             anchor_with_field(0xB2, 1, honest),
             anchor_with_field(0xB2, 1, alias),
@@ -146,6 +187,79 @@ fn an_honest_field_change_does_move_the_anchor() {
         anchor_with_field(0xC3, 0, two),
         "a sub-modulus field change MUST move the anchor, or this test proves nothing"
     );
+}
+
+/// ⚑ **THE PRODUCER TWIN, ASSERTED RATHER THAN READ.** `dregg_turn::rotation_witness::produce` and
+/// `dregg_cell::commitment::compute_rotated_pre_limbs` both fill the fields octet, and both are
+/// documented as byte-identical — but the carrier-octet three-way test
+/// (`circuit/tests/effect_vm_rotation_flip.rs`) covers `child_vk8`/`contract_hash8`, not this one.
+/// A doc comment is a name, not a proof, and this octet is the one whose encoding just moved.
+///
+/// The structural reason it holds is that there is ONE encoder and two call sites of it
+/// (`Faithful8::from_field_limbs8` at `turn/src/rotation_witness.rs` and `cell/src/commitment.rs`,
+/// with the same `[4 + i, 113 + 7·i .. +6]` index array); this asserts the consequence, so a future
+/// hand-inlined second body is caught instead of trusted.
+#[test]
+fn both_producers_fill_the_fields_octet_byte_identically() {
+    use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
+    use dregg_turn::rotation_witness as rw;
+
+    // A cell whose eight flat fields are all DIFFERENT and none of them small — so a twin that
+    // agreed only on zeros, or only on the u64 lane, would not pass.
+    let mut cell = cell_with(0xE7);
+    for slot in 0..8usize {
+        let mut v = [0u8; 32];
+        v[0] = 0xF0 ^ slot as u8;
+        v[7] = slot as u8;
+        v[24..32].copy_from_slice(&(((slot as u64) << 33) | 0x0BAD_F00D).to_be_bytes());
+        assert!(cell.state.set_field(slot, v));
+    }
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(cell.clone()).unwrap();
+
+    let z8 = dregg_circuit::heap_root::empty_heap_root_8();
+    let revoked = dregg_turn::rotation_witness::empty_revoked_root_8();
+    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
+    let w = rw::produce(
+        &cell,
+        &ledger,
+        &z8,
+        &z8,
+        &revoked,
+        &receipt_log,
+        &Default::default(),
+    );
+    let twin = compute_rotated_pre_limbs(
+        &cell,
+        &V9RotationContext {
+            cells_root: rw::cells_root(&ledger),
+            nullifier_root: z8,
+            commitments_root: z8,
+            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            iroot: w.iroot,
+            material: Default::default(),
+        },
+    );
+
+    let zero = dregg_circuit::field::BabyBear::ZERO;
+    for slot in 0..8usize {
+        // lane 0 rides the welded limb `4 + slot`; lanes 1..7 ride `113 + 7·slot .. +6`.
+        let positions: Vec<usize> = std::iter::once(4 + slot)
+            .chain((0..7).map(|k| 113 + 7 * slot + k))
+            .collect();
+        // NON-VACUITY: an all-zero octet would let a twin that writes nothing pass.
+        assert!(
+            positions.iter().any(|&p| w.pre_limbs[p] != zero),
+            "slot {slot}: the octet must be non-zero, or this comparison proves nothing"
+        );
+        for (lane, &pos) in positions.iter().enumerate() {
+            assert_eq!(
+                w.pre_limbs[pos], twin[pos],
+                "producer twins must write fields[{slot}] lane {lane} (limb {pos}) \
+                 byte-identically"
+            );
+        }
+    }
 }
 
 #[test]

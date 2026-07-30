@@ -3232,11 +3232,16 @@ of the `field_limbs8` split (`fields[j]` lanes 1..7 → `113 + 7·j .. +6`; lane
 (the v13 fields-octet grow closing the LAST degraded-felt residual)". THAT IS FALSE**, and it was the
 only false statement about the encoding anywhere in `metatheory/` (corrected 2026-07-30).
 
-All 32 bytes are READ — the layout is exhaustive, no gap and no overlap. They are not BOUND. Each
-Rust-side lane is `u32 % p`, and since `2p = 4026531842 < 2^32` every residue has at least two u32
-preimages, so a colliding sibling is CONSTRUCTED by adding `p` to any 4-byte chunk, with no grind.
-Eight lanes carry `8 · log₂ p = 247.26` bits against a 32-byte field's 256, so **no 8-lane encoding of
-32 bytes is injective under any chunking** — pigeonhole, independent of the reduction.
+All 32 bytes are READ — the layout is exhaustive, no gap and no overlap. They are not BOUND. Eight
+lanes carry `8 · log₂ p = 247.26` bits against a 32-byte field's 256, so **no 8-lane encoding of 32
+bytes is injective under any chunking** — pigeonhole, independent of what the lanes carry.
+
+Until 2026-07-30 it was worse than the deficit suggests: every Rust-side lane was `u32 % p`, and
+since `2p = 4026531842 < 2^32` every residue has at least two u32 preimages, so a colliding sibling
+was CONSTRUCTED by adding `p` to any 4-byte chunk, with no grind. Rust `field_limbs8` lanes 2..7 now
+carry the leading six felts of a Poseidon2 image over an injective 16 × u16-LE preimage of the whole
+value (lanes 0/1, the kernel u64 lane, are unchanged), so that constructed alias is gone and a
+collision costs the hash. The octet is still not injective and nothing here may call it faithful.
 
 ⚑ Note this is a claim about the DEPLOYED Rust projector, which `metatheory/` does not model: neither
 `field_limbs8` nor `bytes32_to_8_limbs` has a `def` here, and every setField capstone takes the

@@ -424,12 +424,20 @@ pub fn produce(
     // `from_lossy_31bit_DANGER` octet.
     //
     // ⚠ THIS USED TO CLAIM IT CLOSED THE LAST DEGRADED-FELT RESIDUAL. It did not — see the twin at
-    // `cell/src/commitment.rs` for the arithmetic. Each lane is `u32 % p`, `2p < 2^32`, so every
-    // field value has a constructible sibling with an identical lane vector; eight lanes carry
-    // 247.26 bits against 256. This producer must stay BYTE-IDENTICAL to the commitment twin, so
-    // when that one migrates, this one migrates in the same commit.
-    // value8 weld FORCES the written slot's 8 lanes to the declared params; the completion freezes
-    // pin every non-written field's 7 lanes on a value turn (the fields GENTIAN law).
+    // `cell/src/commitment.rs` for the arithmetic. Every lane was `u32 % p`, `2p < 2^32`, so every
+    // field value had a constructible sibling with an identical lane vector.
+    //
+    // ⚑ Lanes 2..7 now carry a Poseidon2 image over an injective 16 × u16-LE preimage of the whole
+    // value, so that constructed alias is gone; eight lanes still carry only 247.26 bits against
+    // 256, so the octet is NOT injective and this comment must not say "faithful". Lanes 0/1 are
+    // byte-identically the kernel u64 lane and did not move.
+    //
+    // THE TWIN MOVES WITH IT BY CONSTRUCTION: both this producer and
+    // `cell::commitment::compute_rotated_pre_limbs` call `Faithful8::from_field_limbs8` over the
+    // same `[4 + i, 113 + 7·i .. +6]` index array, so there is one encoder and no second body to
+    // drift. The setField value8 pins PUBLISH the written slot's 7 lanes as PIs 46..=52; the
+    // completion freezes pin every non-written field's 7 lanes on a value turn (the fields GENTIAN
+    // law) and still hold, because the lanes are a FUNCTION of the field value.
     for i in 0..8 {
         // REVOKED-ROOT flag-day: the fields[0..7] completion octet shifted 112..=167 → 113..=168
         // (every limb index ≥ 37 shifted +1 for the new base `revoked_root` limb 37).
