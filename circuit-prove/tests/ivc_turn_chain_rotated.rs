@@ -1267,6 +1267,25 @@ fn mixed_root_forgery_executes_A_claims_B() {
 /// (verify tooth 1) transitively certifies the whole tree's leaf identity. (The sibling
 /// `accumulator::pinned_fold_rejects_foreign_vk_in_circuit` exercises the same fork lever on the
 /// ONLINE fixed-point path; this is the K-fold light-client path.)
+///
+/// ⚑ **2026-07-30 — READ BEFORE CITING THIS AS "the close". The paragraph above is RETRACTED.**
+/// The constant does NOT live in the op-list as a VALUE: `ConstAir` commits a const's value in its
+/// constraint-free MAIN trace and only `[ext_mult, out_idx]` in preprocessed, so the root VK
+/// fingerprint is blind to which cap was baked. MEASURED twice on `main`:
+/// `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) and
+/// `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`). There is no transitive
+/// certification.
+///
+/// ⚑ And what case (2) below MEASURES is narrower than its assertion reads. It pins an HONEST child
+/// to a FOREIGN cap — the DUAL of the attack, which is a foreign child under its OWN cap (and that
+/// one is measured invisible). On this path the honest witness generator is handed two different
+/// values for one `connect`-shared witness slot, so the error is PREDICTED to be a runner
+/// `WitnessConflict` — the honest prover declining to write a trace, which an adversarial prover
+/// does not do. The assertion inspects only `is_err()`, so it cannot distinguish that from the
+/// in-circuit preprocessed-trace opening being UNSAT. Printing the actual error variant here is the
+/// cheapest way to settle it; until then this test is NOT evidence for horn 1. See
+/// `circuit-prove/src/ivc_turn_chain.rs`'s module docs for the two-horn analysis and the designed
+/// repair.
 #[test]
 #[ignore = "SLOW: a real segment fold (~minutes); run with --ignored — fork follow-up (a) close"]
 fn pinned_leaf_identity_rejects_foreign_child_in_band() {

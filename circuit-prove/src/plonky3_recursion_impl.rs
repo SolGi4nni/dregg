@@ -711,6 +711,23 @@ pub mod recursive {
     /// caller-supplied values. Pinning child identity through the root needs
     /// fork work — see the module docs of [`crate::ivc_turn_chain`] for the
     /// precise follow-up.
+    ///
+    /// ⚑ 2026-07-30: THIS PARAGRAPH IS THE CORRECT ONE. `ivc_turn_chain`'s
+    /// module docs used to carry a contradicting "CLOSED" bullet claiming the
+    /// `alloc_const` + `connect` VK pin transitively certified the tree's
+    /// child identities; that label is RETRACTED and the measurements are
+    /// cited there. Two probes on `main`:
+    /// `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) — two circuits
+    /// differing only in an `alloc_const` value fingerprint IDENTICALLY here
+    /// and both verify, so a k = 7 anchor accepts a k = 9 proof; and
+    /// `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`) — baking a
+    /// perturbed child cap on the deployed fold path leaves this fingerprint's
+    /// preprocessed-commitment input unmoved, while the positive control
+    /// (dropping the pin entirely) moves it. The cause is that a const's VALUE
+    /// lives in `ConstAir`'s main trace while only `[ext_mult, out_idx]` is
+    /// preprocessed. The designed repair (exposing the pinned cap through the
+    /// bound `expose_claim` channel and checking it against a caller-held
+    /// anchor) is written out in [`crate::ivc_turn_chain`]'s module docs.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct RecursionVk(pub [u8; 32]);
 

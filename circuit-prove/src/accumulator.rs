@@ -83,6 +83,18 @@
 //!     captured and every subsequent fold pins the running (left) input against it — the IVC
 //!     self-verification check (witness: `pinned_fold_rejects_foreign_vk_in_circuit`, which exhibits
 //!     a corrupted-VK fold being rejected in-circuit on the leaf∘leaf shape).
+//!
+//!     ⚑ 2026-07-30, READ THIS BEFORE CITING THE PIN. The pin's constant is NOT circuit identity:
+//!     `ConstAir` puts a const's VALUE in its constraint-free MAIN trace and only `[ext_mult,
+//!     out_idx]` in preprocessed, so two circuits differing only in a pinned constant present ONE
+//!     `recursion_vk_fingerprint` (MEASURED: `circuit-prove/tests/const_pin_probe.rs`,
+//!     `vk_pin_lever_a_probe.rs`). What survives for THIS path is only the first horn — a cap that
+//!     is not the child's real preprocessed commitment has no satisfying in-circuit opening — which
+//!     is a restatement of `recursive_sound`, not an extra tooth. `pinned_fold_rejects_foreign_vk_
+//!     in_circuit` asserts an error on a path where the honest witness generator is handed two
+//!     values for one `connect`-shared slot, so its `is_err()` does not separate UNSAT from a runner
+//!     `WitnessConflict`. The K-fold analysis and the designed repair are in
+//!     [`crate::ivc_turn_chain`]'s module docs.
 //!   - **(b) public-value propagation across layers — THREADED.** `into_recursion_input` no longer
 //!     hardcodes empty `table_public_inputs`; it threads the proof's GENUINE per-table public values
 //!     so the next layer's packed public vector MATCHES the targets it allocates. This is also what

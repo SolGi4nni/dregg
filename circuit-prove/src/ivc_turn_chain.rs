@@ -168,19 +168,148 @@
 //!   now mismatches the root digest. The ONLINE [`crate::accumulator`] is scoped OUT (it
 //!   keeps the single-felt binding-leaf carrier, zero-padded to the new lane width — codex
 //!   #4 mixed-root weakness for that path is unchanged).
-//! - **Child-circuit identity under the VK pin (fork follow-up — CLOSED).** [`aggregate_tree`]
-//!   now folds EVERY child (descriptor leaf or interior aggregation node) through the fork's
-//!   `into_recursion_input_pinned` path: each child's own preprocessed commitment (its
-//!   VK-identity core — the Merkle cap binding its static op-list) is baked as a CONSTANT the
-//!   parent aggregation circuit `connect`s its child-commitment targets to. A foreign-circuit
-//!   child is refused in-band either way — keep the honest constant and the foreign child's
-//!   in-circuit preprocessed-trace FRI check is UNSAT (its real commitment ≠ the pinned
-//!   constant); bake the foreign commitment and the parent op-list changes, so the ROOT
-//!   preprocessed commitment changes and the root VK fingerprint (tooth 1) stops matching the
-//!   honest anchor. The pinned constants live in every node's op-list up to the root, so the
-//!   root VK pin TRANSITIVELY certifies the whole tree's leaf-circuit identity — the leaf VK no
-//!   longer rests on a same-shape argument. (Previously pinned only on the online
-//!   [`crate::accumulator`] fixed-point path; the balanced-tree K-fold is now pinned too.)
+//! - **Child-circuit identity under the VK pin — ⚑ THE "CLOSED" LABEL IS RETRACTED (2026-07-30).**
+//!   The bullet that stood here claimed this hole was closed by [`aggregate_tree`] folding every
+//!   child through the fork's `into_recursion_input_pinned`, baking each child's own preprocessed
+//!   commitment as a CONSTANT. Two probes on `main` MEASURE that claim false at its load-bearing
+//!   half. A comment claiming a closed hole is worse than the hole, so it is retracted here rather
+//!   than softened.
+//!
+//!   * `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) — two circuits differing ONLY in an
+//!     `alloc_const` value both verify and present the SAME `recursion_vk_fingerprint`
+//!     (`65c5643c…7413f88c` at both k = 7 and k = 9; 39154 vs 39083 proof bytes, so they are
+//!     genuinely different artifacts, and `const_pool` was measured NOT to fold 7 with 9). An
+//!     anchor extracted from the k = 7 circuit ACCEPTS the k = 9 proof.
+//!   * `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`) — on the deployed pin path,
+//!     building the parent verifier circuit over ONE child with the honest cap baked and with a
+//!     perturbed cap baked yields an IDENTICAL parent preprocessed cap (`[1901438425, …]`) and
+//!     identical `Const degree_bits` (7). The positive control — drop the pin entirely
+//!     (`expected_preprocessed_commit: None`) — DOES move both (`[439113501, …]`, degree_bits 6),
+//!     so the instrument is not blind to the op-list and the verdict is attributable.
+//!
+//!   MECHANISM, read: `pin_preprocessed_commit` emits `alloc_const(v)` + `connect(target, const)`.
+//!   `ConstAir`'s preprocessed row is `[ext_mult, out_idx]` — wiring only; the VALUE lives in the
+//!   constraint-free MAIN trace (its own header: "The AIR has no constraints"). So the parent's
+//!   op-list records THAT a constant sits at that slot, never WHICH — and `recursion_vk_fingerprint`
+//!   hashes shape + preprocessed commitment. The retracted bullet's second horn ("bake the foreign
+//!   commitment and the parent op-list changes, so the ROOT preprocessed commitment changes") is
+//!   therefore FALSE as measured. Compounding it, [`batch_to_pinned_input`] and
+//!   [`merge_two_segment_proofs`] read the expected cap OFF THE CHILD PROOF
+//!   (`child.stark_common.preprocessed.commitment`) — the pin is self-referential.
+//!
+//!   CONSEQUENCE: a prover substitutes ANY circuit with a matching table manifest that does no
+//!   descriptor verification at all, and the parent re-verifies it, because the parent reconstructs
+//!   the child's AIRs from SHAPE alone. Every sentence in this module, in `lightclient`, and in the
+//!   K-fold tests reading "the root VK pin TRANSITIVELY certifies the whole tree's leaf-circuit
+//!   identity" is UNSUPPORTED. `plonky3_recursion_impl.rs`'s "does NOT (cannot, harness-side) pin
+//!   the **child** proofs' circuit identity" is the correct comment; this one was not.
+//!
+//!   THE TWO HORNS, each at its own resolution:
+//!   * **Horn 1 — bake the HONEST cap, fold a FOREIGN child.** The cap targets are not merely
+//!     transcript-observed: the fork pushes them as a commitment ROUND of the in-circuit PCS check
+//!     (`recursion/src/verifier/batch_stark.rs`, `coms_to_verify.push((global.commitment.clone(),
+//!     pre_round))`), so a child whose real preprocessed commitment differs has no satisfying
+//!     opening — UNSAT under MMCS binding. READ, not measured, and it is a restatement of
+//!     `recursive_sound` rather than an independent tooth. The one test that looks like evidence,
+//!     `ivc_turn_chain_rotated::pinned_leaf_identity_rejects_foreign_child_in_band`, exercises the
+//!     DUAL (honest child, FOREIGN cap) and asserts only `is_err()`; on that path the honest witness
+//!     generator is handed two different values for one `connect`-shared slot, so the error is
+//!     PREDICTED to be a runner `WitnessConflict` — a refusal by the honest prover, which an
+//!     adversarial prover simply does not perform. Until that error value is inspected the test does
+//!     not separate "UNSAT" from "the runner declined to write the trace".
+//!   * **Horn 2 — bake the FOREIGN cap.** MEASURED INVISIBLE, twice, above. This is the horn a
+//!     forger takes, and it costs them nothing.
+//!
+//!   ### THE REPAIR, DESIGNED — "the exposed VK spine" (⚑ DESIGNED, NOT BUILT)
+//!
+//!   The obvious fix — put const values in `ConstAir`'s PREPROCESSED trace and constrain
+//!   `main.value == prep.value` — is a change to a hand-written Rust AIR in the p3 fork. Under this
+//!   repo's standing law that IS the drift, not the fix. It is named here so the next reader does
+//!   not rediscover it and take it. Nor is there a no-AIR-change variant of it: every primitive
+//!   lane's preprocessed columns carry WIRING ONLY (`ConstAir`/`PublicAir`
+//!   `[multiplicity, witness_idx]`; `AluPrepLaneCols`'s 13 selector/index columns), so no existing
+//!   op has a preprocessed IMMEDIATE the pin could be re-expressed over.
+//!
+//!   What stays out of the AIR is the `expose_claim` channel this module already runs the segment
+//!   over — and it has teeth the const pin lacks:
+//!
+//!     * `ExposeClaimAir`'s per-lane PREPROCESSED columns are `[witness_idx, read_mult]`, so WHICH
+//!       witness a lane surfaces IS circuit identity (inside the preprocessed commitment, hence
+//!       inside the root fingerprint). A const's value never is.
+//!     * its per-lane constraint is `active * (public_value[lane] − v_0) == 0`, and
+//!       `verify_all_tables` feeds `proof.non_primitives[].public_values` straight into
+//!       `verify_batch` as that AIR's public values — so the host-readable lane is bound to the
+//!       committed main trace, not a free scalar a forger edits in the proof struct.
+//!     * `v_0` is RECEIVED on the `WitnessChecks` bus at that preprocessed `witness_idx`, against
+//!       the slot's single CREATOR. `connect` is one shared witness slot per class
+//!       (`ConnectDsu::alloc_witness`), and the fork demotes every later writer of an
+//!       already-defined slot to a bus reader (`circuit/src/circuit.rs`: `Op::Public` with
+//!       `is_dup` ⇒ `increment_ext_reads`, multiplicity −1); constants are emitted before publics
+//!       (`emit_constants` then `emit_publics`), so the cap class has EXACTLY ONE send. One send
+//!       tuple against N reads forces every read to that tuple — which is precisely why an exposed
+//!       lane carries the same value the child's preprocessed-trace opening consumed, rather than a
+//!       second independently-chooseable copy. (Had the class two creators, a forger could feed the
+//!       exposure one value and the FRI check another, and this design would be broken. It does
+//!       not, and that is the load-bearing reading.)
+//!
+//!   So: EXPOSE the pinned cap and check it against a CALLER-HELD anchor. Concretely —
+//!
+//!   1. **fork plumbing, no AIR change.** `VerifierCircuitResult` gains
+//!      `child_vk_cap_targets() -> Vec<Target>` (returning
+//!      `common_data.preprocessed_commit_observation_targets()`), and `AggExposeHook` /
+//!      `NextLayerExposeHook` widen to pass the left/right cap targets alongside
+//!      `air_public_targets`. Already-allocated Targets only; zero new constraints in any AIR.
+//!   2. **the spine, in [`segment_combine_expose`] and its two window siblings.** Each node appends
+//!      a `VK_SPINE_WIDTH` (= 8) lane block to its exposed claim:
+//!      `vk_spine = seg_poseidon_commit(L.cap8 ‖ L.vk_spine8 ‖ R.cap8 ‖ R.vk_spine8)`, over the SAME
+//!      isolated `BABY_BEAR_D4_W24` sponge the ordered digest already runs on. A leaf
+//!      ([`prove_descriptor_leaf_rotated_with_segment`]) exposes
+//!      `vk_spine = seg_poseidon_commit([VK_SPINE_LEAF_TAG])`; a leaf's own identity IS its cap,
+//!      which its parent absorbs, so the leaf sentinel need not itself be identity-bound.
+//!   3. **the anchor.** [`RecursionVk`] is joined by an 8-felt `VkSpine`, minted by the SAME honest
+//!      setup fold (`WholeChainProof::root_vk_fingerprint` gains a `root_vk_spine` sibling), and
+//!      verify tooth (1) compares BOTH, fail-closed. ⚑ This costs the client nothing
+//!      asymptotically, because the whole-chain anchor is ALREADY per-shape — see
+//!      `WholeChainProof::root_vk_fingerprint`'s own caveat ("an anchor pins one accepted window
+//!      shape; a client accepting several window shapes holds one anchor per shape"). The spine
+//!      rides exactly that existing shape-specificity; it adds no new class of client burden.
+//!   4. **shape arithmetic.** [`exposed_board_window`] derives the combine mode from a child's
+//!      claim width; it becomes `SEG_WIDTH + VK_SPINE_WIDTH + 2W` and REFUSES anything else, so
+//!      every artifact minted before the spine fails to fold — loudly, at the existing fail-closed
+//!      branch, not silently truncated.
+//!
+//!   WHAT A FORGER MUST DO AFTER THIS. Substituting any node circuit — leaf or interior — changes
+//!   that node's cap; its parent absorbs the changed cap into `vk_spine`; the change propagates to
+//!   the root. So the forger must either find a Poseidon2 collision on the 8-felt sponge (~124-bit,
+//!   the SAME carrier the ordered-history digest already rests on), or make an exposed lane differ
+//!   from the bus-read witness (refuted by the single-creator reading above). The only remaining
+//!   route is horn 1: fold a foreign child while baking the HONEST cap, which requires breaking the
+//!   in-circuit MMCS opening — i.e. `recursive_sound`. That is the intended shape: the app-specific
+//!   escape is gone and what is left is the named crypto carrier. ⚠ The design ROUTES AROUND horn 1;
+//!   it does not close it. After the repair horn 1 matters MORE, because it is the only door left.
+//!
+//!   WHAT THE SPINE DOES NOT DO. It binds the tree's circuit identities to ONE anchor value per fold
+//!   SHAPE. It does not make the anchor K-independent. That needs canonical shape normalization —
+//!   `p3_recursion::recursion::{CanonicalShapeSpec, check_canonical_shape, inject_canonical_fillers}`
+//!   exists in the fork and is referenced NOWHERE in this tree — so that one fixed-point merge
+//!   circuit verifies any child; with it, every interior cap collapses to one value and the sponge
+//!   fold degenerates to a `connect`. That is the follow-on, and it is the SAME follow-on the
+//!   existing per-shape `RecursionVk` anchor already needs, not a new debt the spine creates.
+//!
+//!   THE FLAG DAY (greenfield: a rebuild, not a migration — stated so it is findable). Landing the
+//!   spine changes every fold node's op-list, so EVERY `RecursionVk` in this tree re-emits.
+//!   Re-emit `ugc-dregg/tests/fixtures/whole_history_proof.bin` + `whole_history_anchor.hex` via
+//!   `produce_history_envelope`, plus the three checked-in copies of that anchor
+//!   (`portal/dist/history.json`, `site/light-client/history.json`,
+//!   `site/dist/light-client/history.json`). Re-pin `circuit-prove/src/bin/root_fri_instance.rs`'s
+//!   `EXPECTED_DEGREE_BITS` and the Mina-side degree-bits / VK-prefix pins in
+//!   `bridge/mina-zkapp/scripts/root-air-real.ts` and `root-air-fullchain.ts`. Bump
+//!   [`WHOLE_CHAIN_PROOF_ENVELOPE_V1`] and `pg-dregg`'s INDEPENDENT
+//!   `WHOLE_CHAIN_PROOF_TRANSPORT_V1` to carry the spine anchor. `DREGG_APEX_RECURSION_VK` +
+//!   `chain/gnark/settlement_circuit.go` + `chain/gnark/fixtures/apex_vk_identity.json` move only if
+//!   the apex/shrink circuit is itself folded through a spine node. WHAT REFUSES TO LOAD: every
+//!   pre-spine recursion artifact — [`exposed_board_window`]'s width check refuses to fold it, and
+//!   the envelope version gate refuses to decode it.
 //! - **Leaf public values re-exposed at the root (fork follow-up — CLOSED).** Each child is fed
 //!   with its GENUINE per-table public inputs threaded up (`into_recursion_input_pinned` calls
 //!   `genuine_table_public_inputs`, not the empty-vector legacy path), so a child's exposed
