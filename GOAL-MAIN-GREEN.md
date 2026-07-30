@@ -406,6 +406,22 @@ Three analysis-first lanes on the three genuinely hard remainders:
   shape rather than flip**: "both decline identically" was the honest assertion while both answered
   `None`, and is the WRONG one now that an unlisted destination must be refused BY THE TABLE.
 
+- ✅ **tail closed** (`18a388def`) — `starbridge-v2` 792/792, `dregg-bridge` 456/456, `dregg-doc`
+  138/138. ⚑ **The canonical ledger root was a function of the WALL CLOCK**, hidden by a
+  `#[cfg(test)]` twin whose own comment was the bug report — *"so the recovered receipts re-derive
+  bit-identically across reopens"*. Three resume tests stayed green while **every returning user's
+  durable image was unopenable.** Chain measured, not argued: `receipt.timestamp` → next turn's
+  `previous_receipt_hash` → `Turn::hash()` → cap `provenance` → cell → `canonical_ledger_root`.
+  ⚠ **And the stitcher diagnosis I handed over was WRONG.** `merge_branches` is a pure additive union
+  and faithfully surfaced an antichain `Doc::edit` had actually built — `diff_to_ops` anchored a
+  replacement after the last KEPT atom instead of the tombstone it replaces. Fixed one level up.
+  ⚑ A refusal was green **with an empty subject** (tampering a 0 into a 0), and one red-proof is
+  reported as having produced NOTHING because its guard fired — reported rather than read as a result.
+- ⚠ **A measurement of mine was worthless and I caught it**: I piped a background run through
+  `grep Summary`, so the log was 111 bytes, and then grepped THAT for oracle-decline messages and read
+  the zero as evidence the E2 family had lifted. **A reader that scans nothing reports nothing** — the
+  exact trap this repo keeps finding. Re-running with full output.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
