@@ -91,15 +91,23 @@ the same file.
     little-endian read, the round constants, the sponge's initial state and the absorb/squeeze
     schedule at once. It is the strongest external anchor in the file.
 
-## What is NOT anchored by anything in this file, said plainly
+## The ORDER, and how it was settled
 
-Every PRIMITIVE above is checked against ground truth outside this repo. The **ORDER** — roughly 30
-field elements and 1,400 packed bits, assembled in §4 — is transcribed from two independent
-implementations that agree, and is checked against neither until it meets a real block. The reality
-gate is `Bridge.MinaStateHashRealBlock`, and the honest form of it needs **no oracle at all**:
-`state_hash` is not on Mina's p2p wire (every node computes it), so the check is
-`derive(parent_bytes) = child.previous_state_hash` on a consecutive pair the peer itself served. If
-any of the four order traps or two leaf facts above is wrong, that equation fails.
+Every PRIMITIVE above is checked against ground truth outside this repo. The **ORDER** — 38 field
+elements and 819 packed chunks (2,381 bits), assembled in §4 — is transcribed from two independent
+implementations that agree, and agreement between two readings is not evidence that either is right.
+
+⚑ **It was settled against the chain, and it took no oracle.** `state_hash` is not on Mina's p2p
+wire — every node computes it, which is why `get_best_tip` never sends one — but
+`previous_state_hash` IS, as the first 32 bytes of every `Protocol_state.Value`. So on a consecutive
+pair, `derive(block_N) = block_{N+1}.previous_state_hash`, with the daemon on both sides.
+`Bridge.MinaStateHashRealBlock` is that equation on live devnet blocks **540221 → 540222** and it
+**HOLDS**, in 26 s of kernel `decide`. If any of the four order traps or the two leaf facts above
+were wrong, it would not.
+
+That gate also catches what `MinaBinprotRealBlock` structurally cannot: a flipped byte INSIDE
+`Blockchain_state` keeps the 1,544-byte exact fit and `select` reads nothing there, so every check
+in that file still passes while the preimage moves.
 
 ## Kernel where it can go, compiled where it structurally cannot
 
