@@ -435,16 +435,25 @@ run_air_fullchain() { # run_air_fullchain <dir>
 run_walk_plan() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent fri-walk-plan ); }
 run_kat()       { ( cd "$1" && npm run --silent kat ); }
 run_mconstr()   { ( cd "$1" && npm run --silent merkle-constraints ); }
-# ⚑ TIER 1 IS "ONE REPRESENTATIVE INSTANCE PER FAMILY", AND THE BRAID HAS TO BE
-# TOLD. Its own default proves FOUR slices, one process each, which is the tier-2
-# amount and takes tens of minutes; at tier 1 it proves one. The distinction is
-# the whole reason tier 1 can be a pre-merge run rather than a nightly one.
-run_braid()     {
-  local lim=""
-  [ "$TIER" -eq 1 ] && lim="FRIBRAID_LIMIT=1"
-  # shellcheck disable=SC2086
-  ( cd "$1" && env $lim DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid )
-}
+# ⚑ THE BRAID KEEPS ITS OWN SLICE BUDGET AT EVERY TIER, AND THAT IS A FINDING,
+# NOT A CONCESSION. Tier 1 is "one representative instance per family", so the
+# obvious move was `FRIBRAID_LIMIT=1`. It was tried, measured 2026-07-30, and it
+# turned the leg RED — but not because anything was wrong with the circuit.
+#
+# `[5]`'s splice cut `AT` is chosen by searching BACKWARDS over the slices this
+# run PROVED for one with `aux > 0`. Narrowing the budget to one slice forces
+# `AT = 0`, and at slice 0 the "a FRI lane chunk this slice never reads, bent"
+# bend genuinely CANNOT be caught — the closing assertion is not in that slice
+# body. The leg's own comment above that table already names this exact hazard
+# and calls for a THREE-VALUED result (refused / accepted / NOT ATTRIBUTABLE).
+# So a smaller budget does not run a smaller version of the same experiment; it
+# moves a falsifier to a cut where it proves nothing, and the honest reading of
+# the red is "the harness was wrong about where it could test".
+#
+# Until that table is three-valued, narrowing this leg is not available, and
+# paying its full cost at tier 1 is the correct answer. Named as follow-up 7 in
+# docs/MINA-GATE-TIERS.md.
+run_braid()     { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid ); }
 # ── ROUTE B, the o1js side. `bridge/mina-zkapp/` grew a whole second route —
 # dregg's own transition semantics emitted into Kimchi gates — and until
 # 2026-07-30 not one of its three npm scripts was in any gate.

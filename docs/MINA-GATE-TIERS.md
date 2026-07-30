@@ -145,3 +145,18 @@ rather than a leg that quietly runs in the tier that has to finish in a minute.
    tier-2 run mints. At tier 0 it runs when the file is present and **prints that
    it did not** when it is absent. Minting it cheaply from the committed root
    proof would close the last stated gap in tier 0.
+7. **Make `root-fri-braid` [5]'s splice table three-valued**, so the leg can be
+   narrowed at tier 1. This one was measured, not guessed. `FRIBRAID_LIMIT=1`
+   was the obvious tier-1 budget; it turned the leg **red**, and the red was not
+   a defect in the circuit. `[5]` picks its splice cut `AT` by searching
+   backwards over the slices the run **proved**, so one slice forces `AT = 0`,
+   and at slice 0 the "a FRI lane chunk this slice never reads, bent" bend
+   genuinely cannot be caught — the closing assertion is not in that slice body.
+   The leg's own comment above that table already names the hazard and asks for
+   **refused / accepted / NOT ATTRIBUTABLE**. Until it has that, narrowing this
+   leg moves a falsifier to a cut where it proves nothing, so tier 1 pays the
+   braid's full slice budget.
+
+   ⚑ The general lesson, and it is the reason this is written down: **a "smaller
+   run of the same test" is only smaller if the test does not choose its own
+   subject from what the run happened to do.** This one does.
