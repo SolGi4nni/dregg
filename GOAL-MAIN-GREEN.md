@@ -230,6 +230,15 @@ failure twice, so the raw grep says 364; the unique count is 182.
 shape that has yielded one-cause fixes five times this week.
 
 ## Next 3 moves
+1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
+   Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
+2. ~~`dregg-circuit-prove` 11 + `dreggnet-adventure` 9~~ dispatched — briefed to **DECODE** constraint
+   indices rather than debug tests, which is what collapsed `dregg-sdk`'s 20 opaque row-0 panics into
+   two causes.
+3. **`dregg-persist` 5 · `starbridge-v2` 4 · `dreggnet-offerings` 4 · `storage-templates` 4 ·
+   `dregg-bridge` 4** — the tail, once the big blocks report.
+
+## Superseded moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
 2. **`test-gauntlet.sh` is invoked by nothing** — C2's surviving half. It owns the `--ignored`
