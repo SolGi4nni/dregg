@@ -3222,6 +3222,22 @@ compile 2,621 s and prove 960 s** — **54.6 s to compile, 20.0 s to prove**, pe
 LIST. It does not prove the chain, it does not verify dregg's root on Mina, and it does not wire
 anything to `setDreggRoot` — `placeholderRelay` stands. Every residual in §3.32 is untouched by it.
 
+#### Which guarantees the run must RE-CONFIRM, because tier 0 cannot
+
+Three of the five survive the re-shaping at tier 0 and were re-run on this checkout after every
+commit above. Two are compile-gated and **must not be assumed to transfer**:
+
+| guarantee | status |
+|---|---|
+| `k` / `q` bound so double-count and skip are impossible | ✅ tier 0 — `root-fri-uniform` [3b], all **820** boundaries out of circuit, both joins the deployed chain does not have |
+| the challenger **derived**, not witnessed | ✅ tier 0 — `root-fri-preamble` [2], all **8** discriminating polarities land on a different challenger state, and the seal holds against all 35 matrices and 128 challenge lanes |
+| the anchor's terminal seal pins chain **LENGTH** | ✅ tier 0 — `head-anchor` [1], **all four** preimage slots move the seal; the key-list root and the length both bite |
+| **15/15 splices refused with four attributable controls** | ⚠ **COMPILE-GATED.** Tier 0 gives only the plan-level precondition (the cut-rule census: 489 cuts carry a sibling, **330** can attribute, 0 `block9`-shaped, first at cut 11). The refusals themselves need proofs from other processes. |
+| **the claim carried as public output** | ⚠ **COMPILE-GATED.** `root-claim-carry` [4b]/[5] — the +185-row seal on the deployed program and the five-row forgery table, of which the CARRY row emits **zero** rows and is the only thing that says the carry bites. |
+
+⚑ `root-claim-carry` is **not tier-aware** — it compiles regardless of `MINA_TIER`. That is a real
+gap in the tier discipline and is named here rather than worked around.
+
 ---
 
 ## 4. DOES IT FIT
