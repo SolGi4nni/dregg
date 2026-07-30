@@ -435,25 +435,37 @@ run_air_fullchain() { # run_air_fullchain <dir>
 run_walk_plan() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent fri-walk-plan ); }
 run_kat()       { ( cd "$1" && npm run --silent kat ); }
 run_mconstr()   { ( cd "$1" && npm run --silent merkle-constraints ); }
-# ⚑ THE BRAID KEEPS ITS OWN SLICE BUDGET AT EVERY TIER, AND THAT IS A FINDING,
-# NOT A CONCESSION. Tier 1 is "one representative instance per family", so the
-# obvious move was `FRIBRAID_LIMIT=1`. It was tried, measured 2026-07-30, and it
-# turned the leg RED — but not because anything was wrong with the circuit.
+# ⚑ THE BRAID'S SLICE BUDGET IS THE SPLICE CUT, AND THE CUT IS THE EXPERIMENT.
+# `[5]` chooses its cut from the slices the run PROVED, so a smaller budget is
+# not a smaller version of the same test — it is a different one. Measured
+# 2026-07-30: the same `friDigestBent` bend is REFUSED at the cut a 4-slice run
+# picks and ACCEPTED at the cut a 1-slice run forces, same circuit, same bend.
 #
-# `[5]`'s splice cut `AT` is chosen by searching BACKWARDS over the slices this
-# run PROVED for one with `aux > 0`. Narrowing the budget to one slice forces
-# `AT = 0`, and at slice 0 the "a FRI lane chunk this slice never reads, bent"
-# bend genuinely CANNOT be caught — the closing assertion is not in that slice
-# body. The leg's own comment above that table already names this exact hazard
-# and calls for a THREE-VALUED result (refused / accepted / NOT ATTRIBUTABLE).
-# So a smaller budget does not run a smaller version of the same experiment; it
-# moves a falsifier to a cut where it proves nothing, and the honest reading of
-# the red is "the harness was wrong about where it could test".
+# Since 2026-07-30 the leg says this itself: `[5]` is THREE-VALUED (refused /
+# accepted / NOT ATTRIBUTABLE with the reason), prints the cut it chose and what
+# every cut it reached could have attributed, and floors the attributed count so
+# a narrower run cannot go quietly. So the tiers can now differ HONESTLY:
 #
-# Until that table is three-valued, narrowing this leg is not available, and
-# paying its full cost at tier 1 is the correct answer. Named as follow-up 7 in
-# docs/MINA-GATE-TIERS.md.
-run_braid()     { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid ); }
+#   tier 1  the default 4-slice budget. 7 of 8 falsifiers attributed; `one
+#           Merkle sibling bent` is reported NOT ATTRIBUTABLE WITHIN BUDGET,
+#           because no cut below 11 closes a round its own siblings feed. That is
+#           the outcome, stated, not a pass.
+#   tier 2  FRIBRAID_LIMIT=12, which reaches cut 11 — the first cut in the whole
+#           839-slice plan that can attribute a bent sibling — and the floor goes
+#           to 8, so the eighth falsifier cannot silently stop firing. Costs
+#           about twice tier 1's braid, which is nothing in a tier measured in
+#           hours.
+#
+# 330 of the plan's 839 cuts can attribute that bend; 489 carry a sibling. The
+# leg's `[2c]` censuses that at tier 0 in milliseconds.
+run_braid() {
+  if [ "${MINA_TIER:-0}" -ge 2 ]; then
+    ( cd "$1" && DREGG_REPO_ROOT="$ROOT" FRIBRAID_LIMIT=12 FRIBRAID_MIN_ATTRIBUTED=8 \
+        npm run --silent root-fri-braid )
+  else
+    ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid )
+  fi
+}
 # ── ROUTE B, the o1js side. `bridge/mina-zkapp/` grew a whole second route —
 # dregg's own transition semantics emitted into Kimchi gates — and until
 # 2026-07-30 not one of its three npm scripts was in any gate.
@@ -565,11 +577,33 @@ if [ "$MODE" = "headline" ]; then
       || die "THE TWIN WALK did not reproduce p3's own alpha/betas/indices — the instrument that found four defects"
     grep -q "reproduce p3's OWN chain" <<<"$braid_out" \
       || die "the 11,303-segment fold walk did not run against p3's own numbers"
+    # ⚑ THE CUT-RULE CENSUS, AND IT IS TIER 0. `[5]`'s third value (NOT
+    # ATTRIBUTABLE) is only honest if the rule behind it discriminates: the
+    # census fails when NO cut can attribute a bent sibling and, the interesting
+    # direction, when EVERY cut that carries one can — because then the rule is
+    # doing nothing and the third value is laundering a non-test as a reason.
+    grep -q 'the cut rule is STRICTLY STRONGER than' <<<"$braid_out" \
+      || die "the cut-rule census did not run — [5]'s NOT ATTRIBUTABLE would be a stated reason with no measurement under it"
+    grep -q 'the cut-rule census is as recorded' <<<"$braid_out" \
+      || die "the cut-rule figures were never compared to their pins"
     if [ "$TIER" -eq 0 ]; then
       grep -q '=== ROOT-FRI-BRAID TIER-0 PASS ===' <<<"$braid_out" \
         || die "the braid leg did not stop at its tier-0 boundary (it should compile nothing)"
     else
       grep -q '=== ROOT-FRI-BRAID PASS ===' <<<"$braid_out" || die "the braid leg did not print its PASS line"
+      # ⚑ THE SPLICE TABLE IS THREE-VALUED, AND THE COUNT IS THE POINT. A table
+      # of all-NOT-ATTRIBUTABLE must not be able to read as green, so the leg
+      # prints how many of the eight it attributed and floors it — and the cut it
+      # chose is stated, because a run at another budget reaches other cuts and is
+      # another test.
+      grep -q 'CHOSEN: cut ' <<<"$braid_out" \
+        || die "the splice cut was not STATED — an implied cut makes a smaller run look like the same test"
+      grep -q 'the splice table is three-valued and counted' <<<"$braid_out" \
+        || die "the splice table did not report its attribution count against the floor"
+      if [ "$TIER" -ge 2 ]; then
+        grep -q 'REFUSED: one Merkle sibling bent' <<<"$braid_out" \
+          || die "tier 2 reaches cut 11 and must ATTRIBUTE the bent Merkle sibling, not report it unattributable"
+      fi
     fi
   fi
   if leg_at_tier uniform; then

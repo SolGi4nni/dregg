@@ -1099,6 +1099,7 @@ async function main() {
     ['nLiveIn', prof.nLiveIn],
     ['nAirOther', prof.nAirOther],
     ['nFriOther', prof.nFriOther],
+    ['nAux', prof.aux],
   ] as [string, number][])
     if (sp.shape[k] !== got)
       fail(
@@ -1147,8 +1148,9 @@ async function main() {
   }
   console.log(
     `    ${attributed} of ${SPLICES.length} falsifiers ATTRIBUTED at cut ${AT}; ` +
-      `${unattributable.length} NOT ATTRIBUTABLE, each with its reason above` +
-      (unattributable.length ? ` (${unattributable.join('; ')})` : ''),
+      (unattributable.length
+        ? `${unattributable.length} NOT ATTRIBUTABLE, each with its reason above (${unattributable.join('; ')})`
+        : 'none unattributable — every falsifier at this cut had something to fail against'),
   );
   if (attributed === 0)
     fail(

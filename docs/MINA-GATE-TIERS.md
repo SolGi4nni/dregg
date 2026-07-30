@@ -61,23 +61,81 @@ side), `fri-chain` (the FRI family — the leg that *found* the coset-descent bu
 `partition` (the chain family), `cellcommit-native` (Route B), and the three walk
 legs at their full selves.
 
-⚠ **Tier 1 and tier 2 are RED on `main` as of 2026-07-30, and not because of the
-tiering.** `root-fri-braid` [5] exits 1 at its own default budget with
-
-> `✗ 1 splice(s) were NOT ATTEMPTED at this cut — an absent falsifier reads
-> exactly like one that passed, and this table is only worth what it fired`
-
-— `one Merkle sibling bent` is not attempted at the cut the leg picks. That is
-the leg's own three-valued splice-table problem (follow-up 7), mid-flight in a
-live lane. **Tier 0 is green**, and a tier-0 green therefore does not imply the
-braid's splice table fires — which is exactly the kind of thing this page exists
-to say out loud. Measured parts, so tier 1 has numbers even while it cannot
-finish: braid **5 m 27 s**, `root-air` 103 s, `root-air-real` 83 s,
+✅ **The tier-1/tier-2 red closed 2026-07-30** (was: `root-fri-braid` [5] exiting
+1 with `1 splice(s) were NOT ATTEMPTED at this cut`). Nothing was wrong with the
+circuit; the leg had no vocabulary for the third outcome. It has one now — see
+**the cut rule**, below. Measured after: braid **6 m 42 s** at tier 1 (24 checks,
+7 of 8 falsifiers attributed), `root-air` 103 s, `root-air-real` 83 s,
 `cellcommit-native` 21 s, `mina-merkle` 60 s, `incnonce-native` 16 s.
 
 ### Tier 2 — the old headline. Every family member, the full chains, the ceiling.
 
-Plus `--self-test`, the injection suite.
+Plus `--self-test`, the injection suite. The braid runs at `FRIBRAID_LIMIT=12`
+here, which is what reaches the first cut that can attribute a bent Merkle
+sibling; see below.
+
+---
+
+## The cut rule — why a smaller run of the braid was a *different* test
+
+`root-fri-braid` [5] proves a prefix of the walk and then puts eight falsifiers
+to a real `prove()` at one **cut**. The cut used to be implied by the run size: a
+backwards search for the last proved slice carrying a witnessed Merkle sibling.
+That selects on the **witness** (`aux > 0`) and what refuses a *bent* sibling is
+the **assertion that closes over it** — the `cur == commitment` of that sibling's
+own round, which can be several cuts later. The uniform-walk lane measured the
+coarse rule wrong at two positions for two different reasons (`block7`: no closer
+at all; `block9`: a closer for the *previous* round). **Both accepts were correct
+behaviour by the circuit. The harness was wrong about where it could test.**
+
+**The corrected rule, now implemented:** a cut can attribute a bent sibling iff
+it contains a closer for the **same** round (or fold layer) as its **first**
+aux-consuming segment, **positioned after** it. Measured on the braid's own
+839-slice plan, in milliseconds, at tier 0:
+
+| | cuts |
+|---|---|
+| in the deployed plan | 839 |
+| consuming a witnessed Merkle sibling | 489 |
+| **also closing the round their first sibling feeds — can attribute a bend** | **330** |
+| carrying a sibling and unable to attribute a bend in it | 159 |
+| the `block9` shape (a closer, wrong round) | 0 |
+
+So **39.3% of the plan's cuts, and 67.5% of the ones that carry a sibling, can
+attribute the bend.** The first is cut 11; the first cut carrying a sibling at
+all is cut 10. The zero is worth reading precisely: on *this* slicing the coarse
+"contains a closer" rule happens to coincide with the corrected one. That is a
+property of the deployed slicing, not evidence about the rule — and it is
+recorded, so if the slicing changes and that shape appears, the leg goes red.
+
+**And both obvious handlings are wrong.** Asserting the refusal is a false red;
+dropping the attempt is an absent falsifier reading as a pass. So the result is
+**three-valued — refused / accepted / NOT ATTRIBUTABLE, with the reason** — where
+the reason is a *prediction the harness commits to before the child runs*.
+Predicted-attributable and then accepted is still a hard red.
+
+Four of the eight are cut properties rather than circuit properties, and each
+says which: `auxBent` needs a same-round closer; `friDigestBent` at cut 0 is
+unattributable because cut 0 enters `airTerminalSeal(dagDigest, …)`, which does
+not close over `friCommit`; `carryBent` at cut 0 has nothing carried in; both
+digest bends need an unread chunk.
+
+**The count is floored** (`FRIBRAID_MIN_ATTRIBUTED`, recorded 7). This is the
+failure a third value creates: a narrower run no longer goes red, it goes
+**quieter**. A run that attributes less than the recorded one must say so in its
+invocation, where a reader sees it.
+
+**Measured, both budgets, 2026-07-30:**
+
+| budget | cut chosen | attributed | the eighth row |
+|---|---|---|---|
+| `FRIBRAID_LIMIT=4` (default, tier 1) | cut 3 | **7 of 8** | `one Merkle sibling bent` — **NOT ATTRIBUTABLE WITHIN BUDGET**, stated with the cut that would buy it |
+| `FRIBRAID_LIMIT=12` (tier 2) | cut 11 | **8 of 8** | `✓ REFUSED: one Merkle sibling bent` |
+
+The candidate table the leg prints is itself the evidence for the rule: at
+`LIMIT=12`, **cut 10 carries 96 sibling lanes and still attributes only 7 of 8**,
+because nothing in it closes `r0`. The old rule would have cut there at
+`LIMIT=11` and asserted a refusal that cannot happen.
 
 ---
 
@@ -168,24 +226,16 @@ rather than a leg that quietly runs in the tier that has to finish in a minute.
    tier-2 run mints. At tier 0 it runs when the file is present and **prints that
    it did not** when it is absent. Minting it cheaply from the committed root
    proof would close the last stated gap in tier 0.
-7. **Make `root-fri-braid` [5]'s splice table three-valued**, so the leg can be
-   narrowed at tier 1. This one was measured, not guessed. `FRIBRAID_LIMIT=1`
-   was the obvious tier-1 budget; it turned the leg **red**, and the red was not
-   a defect in the circuit. `[5]` picks its splice cut `AT` by searching
-   backwards over the slices the run **proved**, so one slice forces `AT = 0`,
-   and at slice 0 the "a FRI lane chunk this slice never reads, bent" bend
-   genuinely cannot be caught — the closing assertion is not in that slice body.
-   The leg's own comment above that table already names the hazard and asks for
-   **refused / accepted / NOT ATTRIBUTABLE**. Until it has that, narrowing this
-   leg moves a falsifier to a cut where it proves nothing, so tier 1 pays the
-   braid's full slice budget.
+7. ~~**Make `root-fri-braid` [5]'s splice table three-valued.**~~ **DONE
+   2026-07-30** — see *The cut rule* above. The measurement that motivated it
+   stands and is the reason the section exists: the *same* splice, `a digest of a
+   FRI lane chunk this slice never reads, bent`, was **✓ REFUSED** at the cut a
+   4-slice run picks and **✗ ACCEPTED** at the cut a 1-slice run forces. Same
+   circuit, same bend, opposite verdicts — because the cut moved, not because
+   anything about the object changed.
 
-   ⚑ The general lesson, and it is the reason this is written down: **a "smaller
-   run of the same test" is only smaller if the test does not choose its own
-   subject from what the run happened to do.** This one does.
-
-   The two budgets give a clean control for that claim: the *same* splice,
-   `a digest of a FRI lane chunk this slice never reads, bent`, is **✓ REFUSED**
-   at the cut a 4-slice run picks (slice 1) and **✗ ACCEPTED** at the cut a
-   1-slice run forces (slice 0). Same circuit, same bend, opposite verdicts —
-   because the cut moved, not because anything about the object changed.
+   ⚑ The general lesson, and it is why this stays written down: **a "smaller run
+   of the same test" is only smaller if the test does not choose its own subject
+   from what the run happened to do.** This one does — so the leg now *states*
+   its cut, lists what every cut it reached could have attributed, and floors the
+   attributed count. Narrowing is available, and it is legible.
