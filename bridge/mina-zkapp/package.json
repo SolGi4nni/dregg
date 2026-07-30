@@ -43,7 +43,9 @@
     "root-fri-uniform": "npm run build && node --max-old-space-size=16384 dist/scripts/root-fri-uniform.js",
     "root-fri-preamble": "npm run build && node --max-old-space-size=16384 dist/scripts/root-fri-preamble.js",
     "incnonce-native": "npm run build && node --max-old-space-size=16384 dist/scripts/incnonce-native.js",
-    "cellcommit-native": "npm run build && node --max-old-space-size=16384 dist/scripts/cellcommit-native.js"
+    "cellcommit-native": "npm run build && node --max-old-space-size=16384 dist/scripts/cellcommit-native.js",
+    "cost-gate": "npm run build && node --max-old-space-size=16384 dist/scripts/cost-model-gate.js",
+    "pasta-differential": "npm run build && node --max-old-space-size=16384 dist/scripts/pasta-hash-differential.js"
   },
   "dependencies": {
     "o1js": "2.15.0"

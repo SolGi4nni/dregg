@@ -27,6 +27,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { compress, foldPath, sparsePath } from '../src/DreggPoseidonAttestation.js';
+import { BABYBEAR_HASH, PASTA_HASH, PICKLES } from '../src/CostModel.js';
 
 function ok(msg: string) {
   console.log('  ✓ ' + msg);
@@ -280,8 +281,8 @@ const marginalLevel = (openRows[16] - openRows[8]) / 8;
 console.log(`    MARGINAL rows per Merkle LEVEL (swap + hash): ${marginalLevel}`);
 
 // The contrast the whole document is about, in one line.
-const BB_ROWS_PER_LEVEL = 2677; //   MINA-VERIFIES-DREGG-FRI-SIZE §3.9, measured
-const BB_PERM_ROWS = 2600.5; //      §3.8, measured
+const BB_ROWS_PER_LEVEL = BABYBEAR_HASH.merkleLevel; //  §3.9 — OWNED by src/CostModel.ts
+const BB_PERM_ROWS = BABYBEAR_HASH.perm; //          §3.8 — OWNED by src/CostModel.ts
 console.log('');
 console.log(
   `    ⚑ NATIVE ${marginalPerm} rows/permutation vs the EMULATED Poseidon2-BabyBear ` +
@@ -545,14 +546,14 @@ console.log('\n[5] RE-MEASURING the Mina-side row count against the 2.9e6 projec
 // touches). The deployed column below is MINA-VERIFIES-DREGG-FRI-SIZE §3's
 // measured decomposition of 24,574,325 rows at q=19, arity 2, cap_height 0.
 
-const USABLE = 54300; //  PartitionSchedule.ts:105 — the currency §5 of the doc uses
+const USABLE = PICKLES.usableRowsMpv1; //  leg 16 — OWNED by src/CostModel.ts
 const NUM_QUERIES = 19;
 const COMMIT_LAYERS = 16;
 
 // MEASURED deployed (BabyBear-hashed) unit prices.
-const BB_PERM = 2600.5; //          §3.8
-const BB_LEVEL = 2677; //           §3.9
-const BB_SPONGE_PER_LANE = 2632 / 8; // §3.9: one 8-lane block
+const BB_PERM = BABYBEAR_HASH.perm; //          §3.8 — OWNED
+const BB_LEVEL = BABYBEAR_HASH.merkleLevel; //  §3.9 — OWNED
+const BB_SPONGE_PER_LANE = 2632 / BABYBEAR_HASH.spongeRate; // §3.9: one 8-lane block. COST-OK: 2632 is the block, not a registered per-unit price
 
 // MEASURED Pasta unit prices — this script, above.
 const PASTA_PERM = marginalPerm;
@@ -639,8 +640,8 @@ console.log(
 // (11 + ~4 for the conditional swap) lands at a measured **15.5**, so the
 // derivation was right for the wrong reason — the swap is ~2.5 rows, not ~4,
 // and the permutation is 13, not 11.
-const RECORDED_PERM_ROWS = Number(process.env.MINA_PASTA_PERM_ROWS ?? 13);
-const RECORDED_LEVEL_ROWS = Number(process.env.MINA_PASTA_LEVEL_ROWS ?? 15.5);
+const RECORDED_PERM_ROWS = Number(process.env.MINA_PASTA_PERM_ROWS ?? PASTA_HASH.perm);
+const RECORDED_LEVEL_ROWS = Number(process.env.MINA_PASTA_LEVEL_ROWS ?? PASTA_HASH.merkleLevel);
 const RECORDED_DEPTH22_ROWS = Number(process.env.MINA_PASTA_D22_ROWS ?? 342);
 for (const [what, got, want] of [
   ['rows per native permutation', marginalPerm, RECORDED_PERM_ROWS],

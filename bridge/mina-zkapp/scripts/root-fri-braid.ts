@@ -37,6 +37,8 @@ import {
   walkTwin,
 } from '../src/RootFriSlice.js';
 import { dagDigestOfChunkDigests } from '../src/RootAirChain.js';
+import { atTier, belowTier, tierStop } from '../src/tier.js';
+import { MEASURED_ROOT_GEOMETRY } from '../src/CostModel.js';
 
 // ---------------------------------------------------------------------------
 // LEG 18 — THE BRAID: the AIR chain's terminal seal chained INTO the FRI walk,
@@ -533,6 +535,11 @@ async function main() {
   // [2] The braid's arithmetic, BEFORE a single circuit is compiled.
   // -----------------------------------------------------------------------
   console.log('\n[2] the seal AIR slice 6 emitted, recomputed from the FRI side');
+  //  ⚑ THE ONE OUT-OF-CIRCUIT CHECK THAT NEEDS AN ARTIFACT. `.fullchain/
+  //  proof-6.json` is a Pickles proof only a tier-2 run mints, and it is
+  //  gitignored, so on a fresh tree there is nothing here to compare against.
+  //  It is stated rather than skipped: the tier-0 PASS line names it.
+  if (atTier(1) || existsSync(airProof())) {
   if (!existsSync(airProof())) fail(`${airProof()} is missing — the AIR half has not been proved`);
   const air6 = JSON.parse(readFileSync(airProof(), 'utf8'));
   const want = terminalSeal(c.dagDigest, digestOfLanes(c.acc.map((x) => Field(x))), AIR_SLICES);
@@ -547,6 +554,12 @@ async function main() {
       'assignment it loads and (b) the α-weighted sum of p3\'s own seven accumulators — so the ' +
       'braid is over one column commitment, checked out of circuit before anything compiled',
   );
+  } else {
+    console.log(
+      `    NOT CHECKED at MINA_TIER=0: ${airProof()} is absent. It is a Pickles proof only a ` +
+        'tier-2 run mints and it is gitignored; when it IS on disk this check runs at tier 0 too.',
+    );
+  }
 
   // -----------------------------------------------------------------------
   // [2b] THE WHOLE WALK, OUT OF CIRCUIT, AGAINST P3'S OWN NUMBERS.
@@ -619,6 +632,26 @@ async function main() {
         `${folds} fold steps reproduce p3's OWN chain; all ${K.numQueries} queries land on the ` +
         'committed final polynomial',
     );
+  }
+
+  // ── THE TIER-0 STOP ───────────────────────────────────────────────────────
+  //  ⚑ EVERYTHING ABOVE IS THE INSTRUMENT THAT FOUND THIS LEG'S DEFECTS, and
+  //  everything below is the one that did not. [2b] walks all 11,303 segments
+  //  against p3's own numbers in seconds; [3]-[8] compile Pickles circuits for
+  //  minutes to prove a PREFIX of the same walk. Four defects — a full output
+  //  buffer on entry, `sample_bits` on the low bits, `alpha_pow` starting at
+  //  one, an undefined path direction — were each caught above and would each
+  //  have compiled and proved cleanly below.
+  if (belowTier(1)) {
+    tierStop(
+      'ROOT-FRI-BRAID',
+      checks,
+      secs(T0),
+      `[3] ${Math.min(LIMIT, c.plan.slices.length)} FRI slices compiled+proved one process each, ` +
+        '[4] the chain verified end to end, [5] the cross-process splices, [6] the unbound ' +
+        'controls, [7] cost, [8] the row ratchet — MINA_TIER=1 or 2 runs them',
+    );
+    return;
   }
 
   // -----------------------------------------------------------------------
@@ -841,7 +874,7 @@ async function main() {
 const RATCHET = {
   segments: 11_303,
   slices: 839,
-  deepTerms: 2_630,
+  deepTerms: MEASURED_ROOT_GEOMETRY.censusPerQuery,
   airBound: 1_236,
   friLanes: 33_062,
 };

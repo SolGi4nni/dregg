@@ -25,6 +25,7 @@ import {
 } from '../src/RootAirChain.js';
 import { makeSliceProgram } from '../src/RootAirProcessChain.js';
 import { MEASURED_CEILING } from '../src/PartitionSchedule.js';
+import { PICKLES } from '../src/CostModel.js';
 
 // ---------------------------------------------------------------------------
 // LEG 16 — THE COMPILE CEILING, BISECTED.
@@ -109,13 +110,20 @@ const FULL = process.env.CEILING_FULL === '1';
  */
 const RECORDED = {
   /** ⚑ NARROWED, both sides. */
-  mpv1: { okBudget: 54_289, failBudget: 54_324, okRows: 54_300, failRows: 54_376 },
+  mpv1: {
+    okBudget: 54_289,
+    failBudget: 54_324,
+    //  ⚑ THIS LEG MEASURED THEM; `src/CostModel.ts` OWNS them. Imported back so the
+    //  measurement and every consumer of it cannot disagree.
+    okRows: PICKLES.usableRowsMpv1,
+    failRows: PICKLES.failsAtMpv1,
+  },
   /** ⚠ ONE-SIDED. `failBudget: 0` means this shape's crossing has NOT been
    *  narrowed and the re-check is therefore only the COMPILING half: it can go
    *  red if the envelope stops holding, and it CANNOT notice the ceiling moving
    *  up. That is a named hole, not a rounding — `CEILING_FULL=1` closes it. */
   mpv2: { okBudget: 40_000, failBudget: 0, okRows: 40_073, failRows: 0 },
-  sideload: { okBudget: 50_000, failBudget: 0, okRows: 51_136, failRows: 0 },
+  sideload: { okBudget: 50_000, failBudget: 0, okRows: PICKLES.sideloadAtLeast, failRows: 0 },
 };
 
 let checks = 0;

@@ -39,6 +39,7 @@ import {
   spongeBigInt,
   zeroAtBigInt,
 } from '../src/Poseidon2Merkle.js';
+import { BABYBEAR_HASH } from '../src/CostModel.js';
 
 function ok(msg: string) {
   console.log('  ✓ ' + msg);
@@ -402,7 +403,7 @@ const PROVE_DEPTH = 3;
 // ---------------------------------------------------------------------------
 // [5] Ratchet. A measurement nobody re-runs is a number.
 // ---------------------------------------------------------------------------
-const RECORDED_ROWS_PER_LEVEL = 2677; //   docs/MINA-VERIFIES-DREGG-FRI-SIZE.md §3.9, measured 2026-07-28
+const RECORDED_ROWS_PER_LEVEL = BABYBEAR_HASH.merkleLevel; //  §3.9 — OWNED by src/CostModel.ts
 const RECORDED_DEPTH22_ROWS = 58971; //    §3.9
 const RECORDED_SPONGE_BLOCK_ROWS = 2632; // §3.9
 for (const [what, got, want] of [

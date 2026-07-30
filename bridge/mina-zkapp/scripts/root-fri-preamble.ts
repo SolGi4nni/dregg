@@ -4,6 +4,7 @@ import { Cache, Field, Poseidon, Provable, ZkProgram, verify } from 'o1js';
 import { permBigInt } from '../src/Poseidon2BabyBearW16.js';
 import { RealRootAir, bindRealInstance, rootAirDag, DagTable, RealInstance } from '../src/RootAirDag.js';
 import { digestOfLanes } from '../src/RootAirChain.js';
+import { belowTier, tierStop } from '../src/tier.js';
 import {
   AbsorbRef,
   PreOp,
@@ -40,6 +41,7 @@ import {
   walkTwin,
 } from '../src/RootFriSlice.js';
 import { dagDigestOfChunkDigests } from '../src/RootAirChain.js';
+import { MEASURED_ROOT_GEOMETRY } from '../src/CostModel.js';
 
 // ---------------------------------------------------------------------------
 // LEG 20 — THE PREAMBLE: the challenger state entering FRI, DERIVED.
@@ -637,6 +639,7 @@ function forge(ctx: Ctx): { airLanes: bigint[]; friLanes: bigint[]; bentAt: numb
 // ===========================================================================
 
 async function main() {
+  const TIER_T0 = Date.now();
   mkdirSync(WORK, { recursive: true });
   console.log('\n=== LEG 20 — THE CHALLENGER STATE ENTERING FRI, DERIVED ===');
   const bound = context({ bind: true });
@@ -660,6 +663,19 @@ async function main() {
 
   if (PHASE === 'plan') {
     console.log(`\n=== ${checks} checks passed (plan only) ===\n`);
+    return;
+  }
+  //  ⚑ THE TIER-0 STOP. [1]-[3b] are the DIFFERENTIAL — the whole batch-STARK
+  //  preamble reproduced out of circuit against p3's own numbers, plus every
+  //  discriminating polarity. That is the instrument; [4]-[6] compile it.
+  if (belowTier(1)) {
+    tierStop(
+      'ROOT-FRI-PREAMBLE',
+      checks,
+      `${((Date.now() - TIER_T0) / 1000).toFixed(1)}s`,
+      '[4] the circuit compiled and the DERIVED row delta, [5] the forgery, [6] the ratchet — ' +
+        'MINA_TIER=1 or 2 runs them',
+    );
     return;
   }
 
@@ -808,7 +824,7 @@ async function main() {
 
 const RATCHET = {
   permutations: 1373,
-  openedValues: 2630,
+  openedValues: MEASURED_ROOT_GEOMETRY.censusPerQuery,
   cumulativeSums: 64,
   publicValues: 25,
   logUpChallenges: 2,
