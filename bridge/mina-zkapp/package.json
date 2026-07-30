@@ -36,7 +36,9 @@
     "root-air-chain": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-chain.js",
     "root-air-real": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-real.js",
     "root-air-ceiling": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-ceiling.js",
-    "root-air-fullchain": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-fullchain.js"
+    "root-air-fullchain": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-fullchain.js",
+    "fri-walk-plan": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-walk-plan.js",
+    "root-fri-braid": "npm run build && node --max-old-space-size=16384 dist/scripts/root-fri-braid.js"
   },
   "dependencies": {
     "o1js": "2.15.0"
