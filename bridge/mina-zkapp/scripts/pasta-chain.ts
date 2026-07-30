@@ -83,10 +83,41 @@ const check = (c: boolean, m: string) => (c ? ok(m) : fail(m));
 const n = (x: number) => Math.round(x).toLocaleString('en-US');
 const secs = (t: number) => `${((Date.now() - t) / 1000).toFixed(1)}s`;
 
+const FIXTURES_DIR = FIXTURES;
+
+/** ⚑ MINT RATHER THAN REQUIRE. A checked-in fixture is a snapshot that goes
+ *  stale against its emitter without anything going red, so a missing one is
+ *  REGENERATED from `mina_pasta_stark_fixture` rather than being a hard stop —
+ *  and the regeneration runs `p3_uni_stark::verify` before it prints, so a
+ *  minted fixture is one dregg itself accepts. A missing TOOLCHAIN is still a
+ *  failure: cargo not being there throws. */
+function mint(name: string, args: string[], bin: 'pasta' | 'bb' = 'pasta') {
+  const root = process.env.DREGG_REPO_ROOT ?? resolve(process.cwd(), '../..');
+  const pkg = bin === 'pasta' ? 'dregg-circuit-prove' : 'dregg-circuit';
+  const target = bin === 'pasta' ? 'mina_pasta_stark_fixture' : 'mina_stark_fixture';
+  execFileSync('cargo', ['build', '-p', pkg, '--release', '--bin', target], {
+    cwd: root,
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  const out = execFileSync(resolve(root, 'target/release', target), args, {
+    encoding: 'utf8',
+    maxBuffer: 1 << 26,
+  });
+  writeFileSync(resolve(FIXTURES_DIR, name), out);
+  return JSON.parse(out);
+}
+
+const MINT_ARGS: Record<string, string[]> = {
+  'honest-d3-q2.json': ['3', '1', '2', '16', '1', 'none'],
+  'honest-d3-q2-seedB.json': ['3', '1', '2', '16', '77', 'none'],
+};
+
 function load(name: string): any {
   const p = resolve(FIXTURES, name);
-  if (!existsSync(p)) throw new Error(`missing Pasta fixture ${p}`);
-  return JSON.parse(readFileSync(p, 'utf8'));
+  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
+  const a = MINT_ARGS[name];
+  if (!a) throw new Error(`missing Pasta fixture ${p} and no minting recipe for it`);
+  return mint(name, a);
 }
 
 function childPhase(phase: string, extra: Record<string, string> = {}): any {

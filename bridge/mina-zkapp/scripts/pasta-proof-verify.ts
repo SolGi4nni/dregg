@@ -1,5 +1,6 @@
 import { Field, Provable } from 'o1js';
-import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   claimOf,
@@ -65,14 +66,49 @@ function check(cond: boolean, msg: string) {
   else fail(msg);
 }
 
+const FIXTURES_DIR = DIR;
+
+/** ⚑ MINT RATHER THAN REQUIRE. A checked-in fixture is a snapshot that goes
+ *  stale against its emitter without anything going red, so a missing one is
+ *  REGENERATED from `mina_pasta_stark_fixture` rather than being a hard stop —
+ *  and the regeneration runs `p3_uni_stark::verify` before it prints, so a
+ *  minted fixture is one dregg itself accepts. A missing TOOLCHAIN is still a
+ *  failure: cargo not being there throws. */
+function mint(name: string, args: string[], bin: 'pasta' | 'bb' = 'pasta') {
+  const root = process.env.DREGG_REPO_ROOT ?? resolve(process.cwd(), '../..');
+  const pkg = bin === 'pasta' ? 'dregg-circuit-prove' : 'dregg-circuit';
+  const target = bin === 'pasta' ? 'mina_pasta_stark_fixture' : 'mina_stark_fixture';
+  execFileSync('cargo', ['build', '-p', pkg, '--release', '--bin', target], {
+    cwd: root,
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  const out = execFileSync(resolve(root, 'target/release', target), args, {
+    encoding: 'utf8',
+    maxBuffer: 1 << 26,
+  });
+  writeFileSync(resolve(FIXTURES_DIR, name), out);
+  return JSON.parse(out);
+}
+
+const MINT_ARGS: Record<string, [string[], 'pasta' | 'bb']> = {
+  'honest-d2-q1.json': [['2', '1', '1', '16', '1', 'none'], 'pasta'],
+  'honest-d3-q2.json': [['3', '1', '2', '16', '1', 'none'], 'pasta'],
+  'bb-honest-d3-q2.json': [['3', '1', '2', '16', '1', 'none'], 'bb'],
+  'tamper-opened.json': [['3', '1', '2', '16', '1', 'opened'], 'pasta'],
+  'tamper-quotient.json': [['3', '1', '2', '16', '1', 'quotient'], 'pasta'],
+  'tamper-finalpoly.json': [['3', '1', '2', '16', '1', 'finalpoly'], 'pasta'],
+  'tamper-sibling.json': [['3', '1', '2', '16', '1', 'sibling'], 'pasta'],
+  'tamper-inputrow.json': [['3', '1', '2', '16', '1', 'inputrow'], 'pasta'],
+  'tamper-inputpath.json': [['3', '1', '2', '16', '1', 'inputpath'], 'pasta'],
+  'tamper-querypow.json': [['3', '1', '2', '16', '1', 'querypow'], 'pasta'],
+};
+
 function load(name: string): any {
   const p = resolve(DIR, name);
-  if (!existsSync(p))
-    throw new Error(
-      `the Pasta fixture ${p} is missing. Mint it with:\n` +
-        `  cargo run -p dregg-circuit-prove --release --bin mina_pasta_stark_fixture -- 3 1 2 16 1 none`,
-    );
-  return JSON.parse(readFileSync(p, 'utf8'));
+  if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
+  const r = MINT_ARGS[name];
+  if (!r) throw new Error(`missing Pasta fixture ${p} and no minting recipe for it`);
+  return mint(name, r[0], r[1]);
 }
 
 console.log('=== o1js CONSUMES A PASTA-HASHED DREGG PROOF ===\n');
@@ -169,10 +205,10 @@ async function main() {
   const fx = load('honest-d3-q2.json');
   const fxBb = load('bb-honest-d3-q2.json');
   const TAMPERS = ['opened', 'quotient', 'finalpoly', 'sibling', 'inputrow', 'inputpath', 'querypow'];
-  const tamperFx = (t: string) => {
-    const p = resolve(DIR, `tamper-${t}.json`);
-    return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
-  };
+  // ⚑ NOT `?? null`. A tamper fixture that is silently absent turns [4] into a
+  // loop that runs zero times and reports success — the exact shape of a gate
+  // that cannot go red. `load` mints it instead.
+  const tamperFx = (t: string) => load(`tamper-${t}.json`);
 
   console.log('[1] THE TRANSCRIPT, permutation by permutation, against p3');
   check(fx.hash === 'mina-poseidon-pasta', `the fixture says it was minted under '${fx.hash}'`);
@@ -186,15 +222,11 @@ async function main() {
   check(BigInt(fx.commitments.trace[0][0]) < P_PASTA, 'and it is canonical');
   replayTranscript(fxSmall, 'd2-q1');
   replayTranscript(fx, 'd3-q2');
-  let bentReplays = 0;
-  for (const t of TAMPERS) {
-    const b = tamperFx(t);
-    if (b) {
-      replayTranscript(b, `tamper-${t}`);
-      bentReplays++;
-    }
-  }
-  ok(`and on all ${bentReplays} BENT fixtures too — the twin tracks p3 through a transcript p3 itself rejects`);
+  for (const t of TAMPERS) replayTranscript(tamperFx(t), `tamper-${t}`);
+  ok(
+    `and on all ${TAMPERS.length} BENT fixtures too — the twin tracks p3 through a transcript p3 ` +
+      'itself rejects',
+  );
 
   // -------------------------------------------------------------------------
   console.log('\n[2] THE WALK, in circuit, on the real proof');
