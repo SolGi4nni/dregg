@@ -40,6 +40,7 @@
     "root-air-fullchain": "npm run build && node --max-old-space-size=16384 dist/scripts/root-air-fullchain.js",
     "fri-walk-plan": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-walk-plan.js",
     "root-fri-braid": "npm run build && node --max-old-space-size=16384 dist/scripts/root-fri-braid.js",
+    "root-fri-uniform": "npm run build && node --max-old-space-size=16384 dist/scripts/root-fri-uniform.js",
     "incnonce-native": "npm run build && node --max-old-space-size=16384 dist/scripts/incnonce-native.js"
   },
   "dependencies": {

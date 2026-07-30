@@ -80,8 +80,8 @@ export const stepBoundary = (dag: Field, live: Field, k: Field | number): Field 
 /** The terminal seal carries the ACCUMULATOR's digest, not a live set — so the
  *  single external check is one field comparison a verifier computes from the
  *  expected accumulator and the artifact alone. */
-export const terminalSeal = (dag: Field, accDigest: Field, nSteps: number): Field =>
-  Poseidon.hash([dag, accDigest, Field(nSteps), Field(1)]);
+export const terminalSeal = (dag: Field, accDigest: Field, nSteps: number | Field): Field =>
+  Poseidon.hash([dag, accDigest, typeof nSteps === 'number' ? Field(nSteps) : nSteps, Field(1)]);
 
 export const extLanes = (e: BbExt): Field[] => e.limbs;
 
