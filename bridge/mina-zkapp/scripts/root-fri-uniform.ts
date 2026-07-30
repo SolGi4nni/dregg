@@ -623,7 +623,7 @@ async function splicePhase() {
   await attempt('stepIndexRepeated', () =>
     call(prog as any, b, prevProof, pv, { ...wit, k: wit.k.sub(1) }),
   );
-  if (sp.kind === 'block')
+  if (sp.kind === 'block') {
     await attempt('queryDoubleCounted', () => {
       //  The same k, claiming a DIFFERENT query — the double-count. `k` and `q`
       //  are tied by one equation, so this is the shape a witnessed index has to
@@ -631,6 +631,19 @@ async function splicePhase() {
       const other = (q + 1) % L.numQueries;
       return call(prog as any, b, prevProof, pv, { ...wit, q: Field(other) });
     });
+    //  ⚑ THE ONE THE AFFINE TIE CANNOT CATCH, and the reason the boundary is
+    //  still doing work: `k + |block|` with `q + 1` SATISFIES `k = f(q)`. It is
+    //  this slice replayed one whole query later — the splice a witnessed index
+    //  makes available and nothing else in the table reaches. Only the boundary
+    //  refuses it, which is exactly what the control below shows.
+    await attempt('positionShiftedConsistently', () =>
+      call(prog as any, b, prevProof, pv, {
+        ...wit,
+        k: wit.k.add(c.plan.block.length),
+        q: Field(q + 1),
+      }),
+    );
+  }
   await attempt('vkRootBent', () =>
     call(prog as any, b, prevProof, pv, { ...wit, vkRoot: wit.vkRoot.add(1) }),
   );
@@ -710,8 +723,12 @@ async function controlPhase() {
   await accepts('unrelatedInput', () =>
     call(prog as any, Field(0x1234), prevProof, vkObject(prevVk), wit),
   );
-  await accepts('stepIndexSkipped', () =>
-    call(prog as any, b, prevProof, vkObject(prevVk), { ...wit, k: wit.k.add(1) }),
+  await accepts('positionShiftedConsistently', () =>
+    call(prog as any, b, prevProof, vkObject(prevVk), {
+      ...wit,
+      k: wit.k.add(c.plan.block.length),
+      q: Field(q + 1),
+    }),
   );
   await accepts('foreignProofAndKey', () =>
     call(prog as any, b, foreignProof, vkObject(foreignVk), wit),
@@ -1098,6 +1115,7 @@ async function main() {
         ['stepIndexSkipped', '⚑ the witnessed step index k ADVANCED by one — a SKIP'],
         ['stepIndexRepeated', '⚑ the witnessed step index k HELD BACK by one — a DOUBLE-COUNT'],
         ['queryDoubleCounted', '⚑ the same k claiming a DIFFERENT query — the same block walked twice'],
+        ['positionShiftedConsistently', '⚑ k AND q shifted together so k = f(q) still HOLDS — this slice replayed one whole query later'],
         ['vkRootBent', 'the carried key-list root bent'],
         ['vkPathBent', "the predecessor key's path bent"],
         ['foreignProofAndKey', "the AIR chain's slice 5 proof with its OWN key — a valid proof of the wrong program"],
@@ -1138,11 +1156,16 @@ async function main() {
             'broke the work"',
         );
       ok('UNBOUND: a public input with no relation to its predecessor is ACCEPTED');
-      if (!ctl.results.stepIndexSkipped)
-        fail('the UNBOUND control REFUSED a skipped step index — then the boundary is not what pins k');
+      if (!ctl.results.positionShiftedConsistently)
+        fail(
+          'the UNBOUND control REFUSED k and q shifted TOGETHER — then the boundary is not what ' +
+            'refuses a replay at another position, and the k = f(q) tie is being credited with ' +
+            'work it does not do',
+        );
       ok(
-        '⚑ UNBOUND: a SKIPPED step index is ACCEPTED — so the refusal above is the boundary chain ' +
-          'pinning k inductively, and not the walk breaking',
+        '⚑ UNBOUND: this slice replayed one whole query later, with k = f(q) still satisfied, is ' +
+          'ACCEPTED — so the bound refusal of it is the BOUNDARY CHAIN pinning the position, and ' +
+          'the affine tie and the boundary are each shown doing their own half',
       );
       if (ctl.results.foreignProofAndKey)
         fail('the UNBOUND-but-PINNED control ACCEPTED a foreign proof — the pin is not what refuses it');
