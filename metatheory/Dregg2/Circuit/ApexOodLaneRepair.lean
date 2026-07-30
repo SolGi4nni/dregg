@@ -300,7 +300,7 @@ theorem consResidual_iff_opening_functional (sponge : List ℤ → ℤ)
     exact Dregg2.Circuit.OodCommitmentBinding.commitmentOpening_binds_of_noColl sponge hno
       hCommitted hOpened
   · rintro rfl
-    exact Dregg2.Circuit.OodCommitmentBinding.openingColl_self_false sponge idx vOpened siblings
+    exact Dregg2.Circuit.OodCommitmentBinding.openingColl_self_false sponge idx _ siblings
 
 /-! ⚑ **DELETED 2026-07-30 — `friLdtExtract_imp_cons`** (`FriLdtExtract ⟹ FriLdtExtractCons`).
 
