@@ -683,6 +683,9 @@ export type RealInstance = {
   selectors: { isFirstRow: number[]; isLastRow: number[]; isTransition: number[]; invVanishing: number[] };
   quotientAtZeta: number[];
   accumulator: number[];
+  /** The instance's lookup contexts, in `global_lookup_data[i]` order — the
+   *  order `BatchTranscript::sample_perm_challenges` walks. */
+  lookups: { kind: string; bus: string; column: number; numTuples: number }[];
   alphaBinding: boolean;
   zetaBinding: boolean;
 };

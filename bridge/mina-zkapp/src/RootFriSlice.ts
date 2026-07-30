@@ -218,12 +218,14 @@ export type TwinState = Map<number, bigint>;
  *  ~30, so a wrong convention would compile and prove cleanly for as far as any
  *  affordable run reaches. */
 export type TwinCheck = {
-  kind: 'inputRoot' | 'ro' | 'fold' | 'final';
+  kind: 'inputRoot' | 'ro' | 'fold' | 'final' | 'preSealZeta' | 'preSealChal';
   q: number;
   round?: number;
   h?: number;
   i?: number;
   got: bigint[];
+  /** For the preamble seal: the committed value `got` must equal. */
+  want?: bigint[];
 };
 
 export type WalkTwin = {
@@ -281,10 +283,18 @@ export function walkTwin(
     const a: bigint[] = [];
     switch (s.t) {
       case 'duplex': {
+        //  ⚑ `entry` REPLACED `k === 0`. With the preamble bound, segment 0 is
+        //  the preamble's first duplex and starts from the all-zero sponge; the
+        //  FRI transcript's first segment then carries. A positional test would
+        //  have pointed the FRI transcript back at the witnessed state and every
+        //  challenge downstream would still have matched p3 — because it IS the
+        //  right number, just not derived.
         const state =
-          k === 0
+          s.entry === 'chalState'
             ? friLanes.slice(ft.chalState, ft.chalState + CHAL_WIDTH)
-            : S.chal.map((i) => st.get(i)!);
+            : s.entry === 'zero'
+              ? new Array<bigint>(CHAL_WIDTH).fill(0n)
+              : S.chal.map((i) => st.get(i)!);
         const lanes = state.slice();
         s.absorbs.forEach((ab, i) => {
           lanes[i] =
@@ -294,7 +304,17 @@ export function walkTwin(
                 ? friLanes[ft.finalPoly[ab.i] + ab.lane]
                 : ab.src === 'pow'
                   ? friLanes[ft.powWitness]
-                  : BigInt(K.maxLogArity);
+                  : ab.src === 'arity'
+                    ? BigInt(K.maxLogArity)
+                    : ab.src === 'shape'
+                      ? BigInt(ab.v)
+                      : ab.src === 'roundCommit'
+                        ? friLanes[ft.inputCommit[ab.round] + ab.lane]
+                        : ab.src === 'publicValue'
+                          ? airLanes[ab.at * EXT_LANES]
+                          : ab.src === 'cumSum'
+                            ? airLanes[ab.at * EXT_LANES + ab.lane]
+                            : fzOf(ab.round, ab.mat, ab.point, ab.col)[ab.lane];
         });
         const out = s.perm ? permBigInt(lanes) : state;
         S.chal.forEach((id, i) => st.set(id, out[i]));
@@ -306,6 +326,9 @@ export function walkTwin(
           //  ⚑ `sample_bits(k)` is the LOW k bits of the sample, not the sample.
           else if (smp.dst === 'qidx')
             st.set(S.qidx[smp.query], v & ((1n << BigInt(K.indexBits)) - 1n));
+          else if (smp.dst === 'permChal') st.set(S.permChal[smp.i][smp.lane], v);
+          else if (smp.dst === 'airAlpha') st.set(S.airAlpha[smp.lane], v);
+          else if (smp.dst === 'zeta') st.set(S.zetaS[smp.lane], v);
         }
         break;
       }
@@ -443,6 +466,27 @@ export function walkTwin(
       case 'final':
         checks.push({ kind: 'final', q: s.q, got: extOf(st, S.folded) });
         break;
+      case 'preSeal': {
+        //  The twin RECORDS both sides rather than asserting, so a divergence
+        //  localises here instead of dying inside a circuit thirty slices on.
+        s.zetaAt.forEach((lane, i) =>
+          checks.push({
+            kind: 'preSealZeta',
+            q: i,
+            got: extOf(st, S.zetaS),
+            want: friLanes.slice(lane, lane + EXT_LANES),
+          }),
+        );
+        s.chalAt.forEach((c, i) =>
+          checks.push({
+            kind: 'preSealChal',
+            q: i,
+            got: extOf(st, S.permChal[c.chal]),
+            want: airLanes.slice(c.at * EXT_LANES, (c.at + 1) * EXT_LANES),
+          }),
+        );
+        break;
+      }
     }
     aux[k] = a;
   }
@@ -564,10 +608,15 @@ export function runSegments(
     const s = w.segs[k];
     switch (s.t) {
       case 'duplex': {
+        //  ⚑ `entry` REPLACED `k === 0` — see the twin's note. `zero` is a
+        //  CONSTANT `Field(0)` per lane, which is the whole point: the derived
+        //  chain starts from a literal nobody can choose.
         const state =
-          k === 0
+          s.entry === 'chalState'
             ? Array.from({ length: CHAL_WIDTH }, (_, i) => laneFri(ft.chalState + i))
-            : S.chal.map((i) => sto.get(i)!);
+            : s.entry === 'zero'
+              ? Array.from({ length: CHAL_WIDTH }, () => Field(0))
+              : S.chal.map((i) => sto.get(i)!);
         const lanes = state.slice();
         s.absorbs.forEach((ab, i) => {
           lanes[i] =
@@ -577,7 +626,22 @@ export function runSegments(
                 ? laneFri(ft.finalPoly[ab.i] + ab.lane)
                 : ab.src === 'pow'
                   ? laneFri(ft.powWitness)
-                  : Field(K.maxLogArity); //  a protocol constant, not proof data
+                  : ab.src === 'arity'
+                    ? Field(K.maxLogArity) //  a protocol constant, not proof data
+                    : //  ⚑ A LITERAL. The instance count, the degree bits, the
+                      //  widths and the chunk counts are the batch's SHAPE; a
+                      //  prover cannot reach them, so they are not witnessed.
+                      ab.src === 'shape'
+                      ? Field(ab.v)
+                      : //  The same `inputCommit` lanes `inRoot` closes against.
+                        ab.src === 'roundCommit'
+                        ? laneFri(ft.inputCommit[ab.round] + ab.lane)
+                        : //  A public value is a BASE element: lane `4·at` alone.
+                          ab.src === 'publicValue'
+                          ? laneAir(ab.at * EXT_LANES)
+                          : ab.src === 'cumSum'
+                            ? laneAir(ab.at * EXT_LANES + ab.lane)
+                            : fzOf(ab.round, ab.mat, ab.point, ab.col).limbs[ab.lane];
         });
         const bound = permOutputBound(LANE_MAX);
         //  ⚑ `perm === false` is the ENTERING state: no permutation, the output
@@ -609,10 +673,18 @@ export function runSegments(
             for (let i = 0; i < K.indexBits; i++) acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
             sto.set(S.qidx[smp.query], acc);
             bitsMemo.set(smp.query, bits);
-          } else {
+          } else if (smp.dst === 'permChal') sto.set(S.permChal[smp.i][smp.lane], v);
+          else if (smp.dst === 'airAlpha') sto.set(S.airAlpha[smp.lane], v);
+          else if (smp.dst === 'zeta') sto.set(S.zetaS[smp.lane], v);
+          else {
             //  ⚑ `check_witness(16, w)`: the witness was ABSORBED above and the
             //  next sample's low 16 bits must be zero. Getting this wrong does
             //  not fail loudly — it shifts every one of the 19 query indices.
+            //  ⚑ AND THIS ARM WAS A BARE `else` UNTIL THE PREAMBLE LANDED. Three
+            //  new sample kinds would have fallen into it and been range-checked
+            //  as PoW samples — α_stark and ζ refused for having non-zero low
+            //  bits, which reads as a transcript bug and is a dispatch bug.
+            if (smp.dst !== 'pow') throw new Error(`unhandled sample destination ${(smp as any).dst}`);
             const hi = Provable.witness(Field, () => Field(v.toBigInt() >> BigInt(K.queryPowBits)));
             assertLowBitsZero(v, hi, K.queryPowBits);
           }
@@ -778,6 +850,27 @@ export function runSegments(
         const got = get(S.folded);
         for (let j = 0; j < EXT_D; j++)
           canonicalLane(got.limbs[j], LANE_MAX).assertEquals(canonicalLane(want.limbs[j], LANE_MAX));
+        break;
+      }
+      case 'preSeal': {
+        //  ⚑ THE PREAMBLE'S TEETH. Everything above this line computes; this
+        //  line refuses. `ζ` derived from the batch's own commitments, public
+        //  values, cumulative sums and 2,630 opened values must BE the point the
+        //  proof says every matrix was opened at, and the LogUp challenges the
+        //  preamble drew must BE the ones the AIR chain folded with.
+        if (!s.armed) break;
+        const z = get(S.zetaS);
+        for (const lane of s.zetaAt) {
+          const committed = extFri(lane);
+          for (let j = 0; j < EXT_D; j++)
+            canonicalLane(z.limbs[j], LANE_MAX).assertEquals(canonicalLane(committed.limbs[j], LANE_MAX));
+        }
+        for (const c of s.chalAt) {
+          const drew = get(S.permChal[c.chal]);
+          const used = extAir(c.at);
+          for (let j = 0; j < EXT_D; j++)
+            canonicalLane(drew.limbs[j], LANE_MAX).assertEquals(canonicalLane(used.limbs[j], LANE_MAX));
+        }
         break;
       }
     }

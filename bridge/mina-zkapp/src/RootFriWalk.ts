@@ -518,10 +518,16 @@ export type SlotLayout = {
   dh: number[];
   folded: number[];
   x: number;
+  /** ⚑ APPENDED AFTER `x`, DELIBERATELY. The preamble's three outputs are new
+   *  slots and every existing slot keeps its id, so a plan built without a
+   *  preamble is byte-identical to the one the braid measured. */
+  permChal: number[][];
+  airAlpha: number[];
+  zetaS: number[];
   names: string[];
 };
 
-export function slotLayout(shape: FriShape): SlotLayout {
+export function slotLayout(shape: FriShape, nPermChal = 0): SlotLayout {
   const names: string[] = [];
   const take = (label: string, n: number): number[] => {
     const out: number[] = [];
@@ -544,6 +550,9 @@ export function slotLayout(shape: FriShape): SlotLayout {
   const dh = take('dh', EXT_LANES);
   const folded = take('folded', EXT_LANES);
   const x = take('x', 1)[0];
+  const permChal = Array.from({ length: nPermChal }, (_, i) => take(`permChal${i}`, EXT_LANES));
+  const airAlpha = nPermChal > 0 ? take('airAlpha', EXT_LANES) : [];
+  const zetaS = nPermChal > 0 ? take('zeta', EXT_LANES) : [];
   return {
     n: names.length,
     chal,
@@ -559,6 +568,9 @@ export function slotLayout(shape: FriShape): SlotLayout {
     dh,
     folded,
     x,
+    permChal,
+    airAlpha,
+    zetaS,
     names,
   };
 }
@@ -572,7 +584,27 @@ export type AbsorbRef =
   | { src: 'commit'; layer: number; lane: number }
   | { src: 'finalPoly'; i: number; lane: number }
   | { src: 'arity' } //  a COMPILE-TIME constant, not proof data
-  | { src: 'pow' };
+  | { src: 'pow' }
+  // ---- the batch-STARK preamble (`preambleOps`) -----------------------------
+  /** A protocol SHAPE constant — the instance count, a degree-bits field, an
+   *  AIR width, a quotient-chunk count, a preprocessed width, or one of the
+   *  three zero limbs `observe_usize` lifts a `usize` into. The circuit absorbs
+   *  a LITERAL, so this is the part of the transcript a prover cannot reach at
+   *  all. */
+  | { src: 'shape'; v: number; what: string }
+  /** One lane of one of the four PCS round commitments — the SAME `inputCommit`
+   *  lanes the walk's `inRoot` segments close their Merkle roots against. */
+  | { src: 'roundCommit'; round: number; lane: number }
+  /** One public value, at AIR extension index `at` — a BASE element, so lane
+   *  `4·at` alone, not four. */
+  | { src: 'publicValue'; at: number }
+  /** One lane of one global-lookup cumulative sum, at AIR extension index `at`.
+   *  The AIR chain reads the same value as `perm_value[i]`. */
+  | { src: 'cumSum'; at: number; lane: number }
+  /** One lane of one opened value, resolved through `OpenedPlan` exactly as the
+   *  DEEP quotient resolves it — 47% of them literally the AIR chain's own
+   *  lanes, under `dagDigest`. */
+  | { src: 'opened'; round: number; mat: number; point: number; col: number; lane: number };
 
 export type SampleRef =
   | { dst: 'alpha'; lane: number }
@@ -582,12 +614,34 @@ export type SampleRef =
    *  output-buffer position, and a schedule that skipped it would draw all 19
    *  query indices one position early. */
   | { dst: 'pow' }
-  | { dst: 'qidx'; query: number };
+  | { dst: 'qidx'; query: number }
+  // ---- the batch-STARK preamble --------------------------------------------
+  /** A LogUp permutation challenge. The AIR chain reads these as `challenge[k]`
+   *  and today witnesses them; derived here, they stop being the prover's. */
+  | { dst: 'permChal'; i: number; lane: number }
+  /** The AIR's constraint-folding α — NOT FRI's batch-combination α. */
+  | { dst: 'airAlpha'; lane: number }
+  | { dst: 'zeta'; lane: number };
+
+/** Where a `duplex` segment's ENTERING sponge state comes from.
+ *
+ *  ⚑ THIS WAS `k === 0` AND IT IS NOW EXPLICIT, because the preamble makes the
+ *  walk's first segment a different object. `chalState` is the witnessed
+ *  entering state (§3.14 residual 1, the shape this module exists to remove);
+ *  `zero` is `DuplexChallenger::new`'s all-zero sponge, a compile-time literal. */
+export type DuplexEntry = 'chalState' | 'zero' | 'carry';
 
 export type Segment =
   /** One challenger permutation, with the lanes it absorbed and the challenges
    *  drawn from its output buffer before the next one. */
-  | { t: 'duplex'; absorbs: AbsorbRef[]; samples: SampleRef[]; perm: boolean; rows: number }
+  | {
+      t: 'duplex';
+      absorbs: AbsorbRef[];
+      samples: SampleRef[];
+      perm: boolean;
+      rows: number;
+      entry: DuplexEntry;
+    }
   /** One `PaddingFreeSponge` block over the concatenated opened rows at one
    *  height of one input round. `first` starts the sponge, `last` finishes it
    *  into a digest. */
@@ -646,7 +700,312 @@ export type Segment =
    *  are authenticated by the FRI walk and connected to nothing the AIR read. */
   | { t: 'permBind'; mat: number; point: number; from: number; to: number; rows: number }
   /** The chain lands on the final polynomial. */
-  | { t: 'final'; q: number; rows: number };
+  | { t: 'final'; q: number; rows: number }
+  /** ⚑ THE PREAMBLE'S CLOSING EQUALITY, and the reason a forged preamble is
+   *  refused HERE rather than twelve slices later at a Merkle root.
+   *
+   *  The preamble does not merely reach a state — it re-derives two things both
+   *  halves of the braid already use: `ζ`, the out-of-domain point every matrix
+   *  is opened at, and the LogUp challenges the AIR chain folds its permutation
+   *  constraints with. Asserting the derivation reproduces them is what makes
+   *  the transcript's inputs load-bearing: bend ANY absorbed value — a public
+   *  value, a cumulative sum, a commitment lane, one of the 2,630 opened values
+   *  — and `ζ` moves, and this segment refuses.
+   *
+   *  Without it a bent input would produce a perfectly self-consistent wrong
+   *  transcript whose first contradiction is a Merkle root ~12 slices in. */
+  | {
+      t: 'preSeal';
+      /** FRI lanes of every matrix's point-0 opening point. */
+      zetaAt: number[];
+      /** `{ at }` an AIR extension index holding a `challenge[k]` the AIR chain
+       *  reads, `{ chal }` the sampled challenge it must equal. */
+      chalAt: { at: number; chal: number }[];
+      /** ⚑ FALSE builds the UNSEALED CONTROL: identical segments, identical
+       *  lane reads, identical rows — only the closing equalities removed. That
+       *  is what makes a refusal attributable to the seal rather than to the
+       *  forged proof being malformed somewhere else. */
+      armed: boolean;
+      rows: number;
+    };
+
+// ===========================================================================
+// 4b. THE BATCH-STARK PREAMBLE — what the challenger state entering FRI is a
+//     function of, read off p3's own source rather than reconstructed.
+// ===========================================================================
+
+/**
+ * The shape of the batch-STARK the preamble transcribes. Everything here is a
+ * COMPILE-TIME fact about the root's seven instances; the values the script
+ * absorbs are proof data and live in the two lane tables.
+ */
+export type PreambleMeta = {
+  instances: {
+    /** The `root-air-dag.json` spelling, for the AIR-lane lookups. */
+    name: string;
+    degreeBits: number;
+    width: number;
+    nChunks: number;
+    prepWidth: number;
+    /** AIR extension indices of this instance's public values, in order. */
+    publicAt: number[];
+    /** AIR extension indices of this instance's global-lookup cumulative sums,
+     *  in `global_lookup_data[i]` order. */
+    cumSumAt: number[];
+  }[];
+  /** `lookupBuses[i][j]` — the bus name of instance `i`'s `j`-th lookup context,
+   *  or `null` for a `Kind::Local` one. ⚑ p3 samples a Global bus's challenges
+   *  ONCE, on first encounter, and every later context with that name reuses
+   *  them; a Local one samples fresh. Getting this wrong changes the number of
+   *  permutations, not just the values. */
+  lookupBuses: (string | null)[][];
+  /** `LogUpGadget::num_challenges()` — 2. */
+  challengesPerLookup: number;
+};
+
+export type PreOp = { t: 'observe'; a: AbsorbRef } | { t: 'sample'; s: SampleRef };
+
+/** The shape of `root_air_instance.rs`'s output that the preamble needs. Kept
+ *  structural rather than importing `RealRootAir`, so this module does not gain
+ *  a dependency on the AIR emitter's whole record. */
+export type PreambleSource = {
+  instances: {
+    table: string;
+    degreeBits: number;
+    width: number;
+    prepWidth: number;
+    nChunks: number;
+    publicValues: number[];
+    permutationValues: number[][];
+    lookups: { kind: string; bus: string }[];
+  }[];
+};
+
+/**
+ * Build the preamble's compile-time shape from the root proof, resolving every
+ * proof-data input to a lane of the AIR chain's OWN committed assignment.
+ *
+ * ⚑ EVERY VALUE THE PREAMBLE ABSORBS THAT IS NOT A LITERAL IS ALREADY UNDER A
+ * COMMITMENT THE BRAID CARRIES. The public values are `expose_claim|public[i]`
+ * and the cumulative sums are `<table>|perm_value[i]` — both `dagDigest` lanes,
+ * both read by the AIR half; the four round commitments are `ft.inputCommit`,
+ * the lanes the walk's own Merkle roots close against; the 2,630 opened values
+ * resolve through the same `OpenedPlan` the DEEP quotient uses. There is no
+ * fresh witness anywhere in the derivation, which is the property that makes it
+ * a derivation.
+ */
+export function rootPreambleMeta(real: PreambleSource, air: AirColumnIndex): PreambleMeta {
+  const at = (label: string): number => {
+    const g = air.byLabel.get(label);
+    if (g === undefined)
+      throw new Error(
+        `the AIR legend does not name \`${label}\` — the preamble would have to WITNESS a value ` +
+          'the AIR chain does not commit, which is the hole it exists to close',
+      );
+    return g;
+  };
+  return {
+    instances: real.instances.map((inst) => {
+      const t = dagTableName(inst.table);
+      return {
+        name: t,
+        degreeBits: inst.degreeBits,
+        width: inst.width,
+        nChunks: inst.nChunks,
+        prepWidth: inst.prepWidth,
+        publicAt: inst.publicValues.map((_, i) => at(`${t}|public[${i}]`)),
+        cumSumAt: inst.permutationValues.map((_, i) => at(`${t}|perm_value[${i}]`)),
+      };
+    }),
+    lookupBuses: real.instances.map((inst) =>
+      inst.lookups.map((l) => (l.kind === 'global' ? l.bus : null)),
+    ),
+    //  `LogUpGadget::num_challenges()` — `lookup/src/logup.rs:269`.
+    challengesPerLookup: 2,
+  };
+}
+
+/**
+ * **THE PREAMBLE SCRIPT.** `verify_batch`'s transcript from
+ * `initialise_challenger()` to `verify_fri`'s door, as an ordered op list.
+ *
+ * Read off, line for line, and every line cited because the four defects the
+ * FRI walk paid for were all ordering or convention errors that looked fine:
+ *
+ * | | source |
+ * |---|---|
+ * | `observe_instance_count(n)` | `batch-stark/src/verifier/mod.rs:144` |
+ * | `observe_instance_binding(ext_db, base_db, width, n_chunks)` × n | `:274` |
+ * | `observe_main(main_commit, public_values)` | `:278` |
+ * | `observe_preprocessed(prep_widths, prep_commit)` | `:279` |
+ * | `sample_perm_challenges` | `:289` |
+ * | `observe_perm_and_sample_alpha(perm_commit, cumulative sums)` | `:290` |
+ * | `observe_quotient_commitment` | `:294` |
+ * | `sample_zeta` | `:300` |
+ * | every claimed evaluation, in round / matrix / point order | `fri/src/two_adic_pcs.rs:782-788` |
+ *
+ * ⚑ THE COMMITMENT-OBSERVE ORDER IS NOT THE PCS ROUND ORDER. The transcript
+ * absorbs **main, preprocessed, permutation, quotient**; `coms_to_verify` is
+ * built **main, quotient, preprocessed, permutation**, and it is the second
+ * order the opened values are absorbed in. Reading one for the other gives a
+ * well-formed, completely different transcript — it is polarity 1 of the leg's
+ * discriminating table.
+ *
+ * ⚑ `observe_usize(v)` IS FOUR ELEMENTS, NOT ONE. `observe_base_as_algebra_element::<EF>`
+ * lifts to the extension and absorbs the basis coefficients — `[v, 0, 0, 0]`
+ * (`challenger/src/lib.rs:141-147`). Absorbing one costs 14 fewer permutations
+ * and every challenge after the first.
+ */
+export function preambleOps(shape: FriShape, meta: PreambleMeta): PreOp[] {
+  const ops: PreOp[] = [];
+  const obs = (a: AbsorbRef) => ops.push({ t: 'observe', a });
+  const smp = (s: SampleRef) => ops.push({ t: 'sample', s });
+  /** `observe_base_as_algebra_element::<Challenge>(F::from_usize(v))`. */
+  const usize = (v: number, what: string) => {
+    obs({ src: 'shape', v, what });
+    for (let j = 1; j < EXT_LANES; j++) obs({ src: 'shape', v: 0, what: `${what}#pad${j}` });
+  };
+  const roundIx = (name: RoundSpec['name']) => {
+    const i = shape.rounds.findIndex((r) => r.name === name);
+    if (i < 0) throw new Error(`the proof has no ${name} round — the preamble script cannot be built`);
+    return i;
+  };
+  const commit = (name: RoundSpec['name']) => {
+    const r = roundIx(name);
+    for (let l = 0; l < LANES_PER_DIGEST; l++) obs({ src: 'roundCommit', round: r, lane: l });
+  };
+
+  const n = meta.instances.length;
+  usize(n, 'instanceCount');
+  for (let i = 0; i < n; i++) {
+    const inst = meta.instances[i];
+    //  `validate_degree_bits(.., is_zk = 0, ..)` returns `base_db == ext_db`.
+    usize(inst.degreeBits, `inst${i}.logExtDegree`);
+    usize(inst.degreeBits, `inst${i}.logDegree`);
+    usize(inst.width, `inst${i}.width`);
+    usize(inst.nChunks, `inst${i}.numQuotientChunks`);
+  }
+  commit('main');
+  for (let i = 0; i < n; i++)
+    for (const at of meta.instances[i].publicAt) obs({ src: 'publicValue', at });
+  for (let i = 0; i < n; i++) usize(meta.instances[i].prepWidth, `inst${i}.prepWidth`);
+  commit('preprocessed');
+
+  //  `transcript.rs:74-102` — a Global bus samples once, on FIRST ENCOUNTER.
+  {
+    const { base } = permChalAssignment(meta);
+    const drawn = new Set<number>();
+    for (let i = 0; i < n; i++)
+      for (const b of base[i] ?? []) {
+        if (drawn.has(b)) continue;
+        drawn.add(b);
+        for (let c = 0; c < meta.challengesPerLookup; c++)
+          for (let l = 0; l < EXT_LANES; l++) smp({ dst: 'permChal', i: b + c, lane: l });
+      }
+  }
+
+  commit('permutation');
+  for (let i = 0; i < n; i++)
+    for (const at of meta.instances[i].cumSumAt)
+      for (let l = 0; l < EXT_LANES; l++) obs({ src: 'cumSum', at, lane: l });
+  for (let l = 0; l < EXT_LANES; l++) smp({ dst: 'airAlpha', lane: l });
+
+  commit('quotient_chunk');
+  for (let l = 0; l < EXT_LANES; l++) smp({ dst: 'zeta', lane: l });
+
+  //  `two_adic_pcs.rs:782-788` — in `coms_to_verify` order, which is the round
+  //  order the shape already carries.
+  shape.rounds.forEach((round, ri) =>
+    round.matrices.forEach((m, mi) => {
+      for (let pt = 0; pt < m.numPoints; pt++)
+        for (let c = 0; c < m.width; c++)
+          for (let l = 0; l < EXT_LANES; l++)
+            ops.push({ t: 'observe', a: { src: 'opened', round: ri, mat: mi, point: pt, col: c, lane: l } });
+    }),
+  );
+  return ops;
+}
+
+/**
+ * The FRI-lane index of each committed matrix's POINT-0 opening point — ζ, for
+ * every matrix, because `verify_batch` opens all of them there.
+ *
+ * ⚑ TWO NUMBERINGS OF ONE TABLE IS THE SHAPE THAT DRIFTS, so this repeats
+ * `friLaneTable`'s prefix arithmetic on purpose and `assertPreambleSealLanes`
+ * requires the two to agree. `segmentWalk` cannot take an `ft` — the table is
+ * built FROM the walk — so the choice is this or a lane number smuggled through
+ * the meta.
+ */
+export function preambleZetaLanes(shape: FriShape): number[] {
+  let at =
+    CHAL_WIDTH +
+    shape.knobs.layers * LANES_PER_DIGEST +
+    shape.rounds.length * LANES_PER_DIGEST +
+    shape.knobs.finalPolyLen * EXT_LANES +
+    1;
+  const out: number[] = [];
+  for (const r of shape.rounds)
+    for (const m of r.matrices) {
+      out.push(at); //  point 0 is ζ; point 1, where present, is `g·ζ`
+      at += m.numPoints * EXT_LANES;
+    }
+  return out;
+}
+
+/** Require the two numberings to agree, lane for lane. */
+export function assertPreambleSealLanes(shape: FriShape, ft: FriLaneTable) {
+  const mine = preambleZetaLanes(shape);
+  let i = 0;
+  shape.rounds.forEach((r, ri) =>
+    r.matrices.forEach((_, mi) => {
+      if (mine[i] !== ft.z[ri][mi][0])
+        throw new Error(
+          `the preamble seal points at FRI lane ${mine[i]} for round ${ri} matrix ${mi} and the ` +
+            `lane table says ${ft.z[ri][mi][0]} — two numberings of one table have drifted`,
+        );
+      i++;
+    }),
+  );
+  if (i !== mine.length) throw new Error(`the preamble seal names ${mine.length} matrices, the shape has ${i}`);
+}
+
+/**
+ * `base[i][j]` — the index of the FIRST sampled challenge that instance `i`'s
+ * `j`-th lookup context uses, and `total`, how many are sampled.
+ *
+ * ⚑ THE SHARING IS NOT MODULAR AND ASSUMING IT IS WOULD BE RIGHT ON THIS PROOF
+ * AND WRONG IN GENERAL. Every one of the root's 64 lookup contexts is on the
+ * single `WitnessChecks` bus, so today `challenge[k] == permChal[k mod 2]` — a
+ * coincidence of this batch, not the protocol. p3 keys the map by NAME
+ * (`transcript.rs:84-99`): a second bus, or a `Kind::Local` context, samples a
+ * fresh pair and the modular reading silently binds the wrong challenge. The
+ * near-miss this repo already paid for — 216 of 512 permutation values matching
+ * by coincidence — is the same shape.
+ */
+export function permChalAssignment(meta: PreambleMeta): { base: number[][]; total: number } {
+  const seen = new Map<string, number>();
+  const base: number[][] = [];
+  let n = 0;
+  for (const ctxs of meta.lookupBuses) {
+    const row: number[] = [];
+    for (const bus of ctxs ?? []) {
+      if (bus !== null && seen.has(bus)) {
+        row.push(seen.get(bus)!);
+        continue;
+      }
+      if (bus !== null) seen.set(bus, n);
+      row.push(n);
+      n += meta.challengesPerLookup;
+    }
+    base.push(row);
+  }
+  return { base, total: n };
+}
+
+/** How many LogUp challenges `preambleOps` samples. */
+export function preambleChallengeCount(meta: PreambleMeta): number {
+  return permChalAssignment(meta).total;
+}
 
 export type SegmentedWalk = {
   shape: FriShape;
@@ -677,8 +1036,12 @@ export function roundHeights(round: RoundSpec): number[] {
  * the FRI transcript, then per query the input-phase openings, the DEEP
  * quotient, and the fold chain onto the final polynomial.
  */
-export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): SegmentedWalk {
-  const slots = slotLayout(shape);
+export function segmentWalk(
+  shape: FriShape,
+  opts: { deepCols?: number; preamble?: PreambleMeta; seal?: boolean } = {},
+): SegmentedWalk {
+  const nPermChal = opts.preamble ? preambleChallengeCount(opts.preamble) : 0;
+  const slots = slotLayout(shape, nPermChal);
   const deepCols = opts.deepCols ?? 128;
   const K = shape.knobs;
   const segs: Segment[] = [];
@@ -689,6 +1052,129 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
     reads.push(rd);
     writes.push(wr);
   };
+
+  /** The `DuplexChallenger` state machine as a segment emitter. Both the
+   *  preamble and the FRI transcript run it; the ONLY differences are where the
+   *  entering state comes from and whether the entering output buffer is live.
+   *  ⚑ ONE emitter, because two would be two chances to get `sample`'s
+   *  re-duplex condition subtly different. */
+  const challengerRun = (
+    entry: DuplexEntry,
+    entryBufferLive: boolean,
+    sampleSlots: (s: SampleRef) => number[],
+    body: (io: { observe: (a: AbsorbRef) => void; sample: (s: SampleRef) => void }) => void,
+  ) => {
+    let inBuf: AbsorbRef[] = [];
+    let outCount = entryBufferLive ? CHAL_RATE : 0;
+    let pending: SampleRef[] = [];
+    let absorbed: AbsorbRef[] = [];
+    let perm = false;
+    let firstEntry = entry;
+    const flush = () => {
+      push(
+        {
+          t: 'duplex',
+          absorbs: absorbed,
+          samples: pending,
+          perm,
+          rows: perm ? PRICE.perm : 64,
+          entry: firstEntry,
+        },
+        segs.length === 0 ? [] : [...slots.chal],
+        [...slots.chal, ...pending.flatMap(sampleSlots)],
+      );
+      absorbed = [];
+      pending = [];
+      firstEntry = 'carry';
+    };
+    let open = entryBufferLive;
+    const duplex = () => {
+      if (open) flush();
+      absorbed = inBuf;
+      inBuf = [];
+      outCount = CHAL_RATE;
+      perm = true;
+      open = true;
+    };
+    body({
+      observe: (a: AbsorbRef) => {
+        outCount = 0;
+        inBuf.push(a);
+        if (inBuf.length === CHAL_RATE) duplex();
+      },
+      sample: (dst: SampleRef) => {
+        if (inBuf.length > 0 || outCount === 0) duplex();
+        outCount--;
+        pending.push(dst);
+      },
+    });
+    if (open) flush();
+    if (inBuf.length !== 0)
+      throw new Error(
+        `the challenger run ended with ${inBuf.length} unabsorbed lanes — a segment list that ` +
+          'drops them describes a different transcript',
+      );
+  };
+
+  // ---- the batch-STARK PREAMBLE, when it is bound -------------------------
+  //
+  // ⚑ THIS IS §3.14 RESIDUAL 1. Without this block the walk's first segment
+  // reads `ft.chalState` — a WITNESS, covered by `friDigest` and by nothing
+  // else. A prover who picks it picks FRI's α, all 16 βs and all 19 query
+  // indices, and the whole 11,303-segment walk then authenticates a transcript
+  // nobody forced. With it, the entering state is the all-zero sponge of
+  // `DuplexChallenger::new` — a literal — driven by the root's own commitments,
+  // public values, cumulative sums and 2,630 opened values.
+  if (opts.preamble) {
+    const ops = preambleOps(shape, opts.preamble);
+    challengerRun(
+      'zero',
+      false,
+      (s) =>
+        s.dst === 'permChal'
+          ? [slots.permChal[s.i][s.lane]]
+          : s.dst === 'airAlpha'
+            ? [slots.airAlpha[s.lane]]
+            : s.dst === 'zeta'
+              ? [slots.zetaS[s.lane]]
+              : [],
+      ({ observe, sample }) => {
+        for (const op of ops) (op.t === 'observe' ? observe(op.a) : sample(op.s));
+      },
+    );
+    //  The closing equality. `ft` is not in scope here, so the lane numbers are
+    //  recomputed from the same construction `friLaneTable` uses — asserted
+    //  identical by `assertPreambleSealLanes` at the leg, because two
+    //  independent numberings of one table is exactly the shape that drifts.
+    const zetaAt = preambleZetaLanes(shape);
+    const air = airColumnIndex();
+    const { base } = permChalAssignment(opts.preamble);
+    const chalAt: { at: number; chal: number }[] = [];
+    opts.preamble.instances.forEach((inst, i) => {
+      //  Instance `i`'s `j`-th lookup owns `challenge[C·j .. C·j+C)`, and those
+      //  are the pair its bus was assigned.
+      (base[i] ?? []).forEach((b, j) => {
+        for (let c = 0; c < opts.preamble!.challengesPerLookup; c++) {
+          const label = `${inst.name}|challenge[${opts.preamble!.challengesPerLookup * j + c}]`;
+          const g = air.byLabel.get(label);
+          if (g === undefined)
+            throw new Error(`the AIR legend does not name \`${label}\` — the preamble seal cannot bind it`);
+          chalAt.push({ at: g, chal: b + c });
+        }
+      });
+    });
+    push(
+      {
+        t: 'preSeal',
+        zetaAt,
+        chalAt,
+        armed: opts.seal !== false,
+        rows: (zetaAt.length + chalAt.length) * EXT_LANES * PRICE.witnessLane,
+      },
+      [...slots.zetaS, ...slots.permChal.flat()],
+      [],
+    );
+  }
 
   // ---- the FRI transcript -------------------------------------------------
   // The schedule is `verify_fri`'s, simulated so the duplex boundaries — the
@@ -704,62 +1190,38 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
   // β, the PoW sample and all 19 query indices with it. This was measured, not
   // reasoned: the first slice to reach the 16-bit grind refused, because the
   // low bits of a sample from the wrong permutation are not zero.
-  {
-    let inBuf: AbsorbRef[] = [];
-    let outCount = CHAL_RATE;
-    let pending: SampleRef[] = [];
-    let absorbed: AbsorbRef[] = [];
-    let perm = false;
-    const flush = () => {
-      push(
-        { t: 'duplex', absorbs: absorbed, samples: pending, perm, rows: perm ? PRICE.perm : 64 },
-        segs.length === 0 ? [] : [...slots.chal],
-        [...slots.chal, ...pending.flatMap(sampleSlots)],
-      );
-      absorbed = [];
-      pending = [];
-    };
-    const sampleSlots = (s: SampleRef): number[] => {
+  //  ⚑ The entering buffer is LIVE either way: the preamble ends on a rate
+  //  boundary (its last absorb duplexes), so `verify_fri` is entered with a full
+  //  output buffer whether that state was witnessed or derived. `entry` says
+  //  which — and with a preamble the FRI transcript's first segment is no longer
+  //  the walk's first, so `k === 0` would have silently pointed it at
+  //  `ft.chalState` again.
+  challengerRun(
+    opts.preamble ? 'carry' : 'chalState',
+    true,
+    (s: SampleRef): number[] => {
       if (s.dst === 'alpha') return [slots.alpha[s.lane]];
       if (s.dst === 'beta') return [slots.beta[s.layer][s.lane]];
-      if (s.dst === 'pow') return [];
-      return [slots.qidx[s.query]];
-    };
-    let open = true; //  the ENTERING buffer is live and its samples are open
-    const duplex = () => {
-      if (open) flush();
-      absorbed = inBuf;
-      inBuf = [];
-      outCount = CHAL_RATE;
-      perm = true;
-      open = true;
-    };
-    const observe = (a: AbsorbRef) => {
-      outCount = 0;
-      inBuf.push(a);
-      if (inBuf.length === CHAL_RATE) duplex();
-    };
-    const sample = (dst: SampleRef) => {
-      if (inBuf.length > 0 || outCount === 0) duplex();
-      outCount--;
-      pending.push(dst);
-    };
-    for (let l = 0; l < EXT_LANES; l++) sample({ dst: 'alpha', lane: l });
-    for (let r = 0; r < K.layers; r++) {
-      for (let j = 0; j < LANES_PER_DIGEST; j++) observe({ src: 'commit', layer: r, lane: j });
-      //  commit_pow_bits = 0: `check_witness` returns BEFORE observing.
-      for (let l = 0; l < EXT_LANES; l++) sample({ dst: 'beta', layer: r, lane: l });
-    }
-    for (let i = 0; i < K.finalPolyLen; i++)
-      for (let l = 0; l < EXT_LANES; l++) observe({ src: 'finalPoly', i, lane: l });
-    for (let r = 0; r < K.layers; r++) observe({ src: 'arity' });
-    //  query_pow_bits = 16: the witness IS observed, and the next sample's low
-    //  16 bits are forced to zero. That sample is charged to its duplex.
-    observe({ src: 'pow' });
-    sample({ dst: 'pow' });
-    for (let q = 0; q < K.numQueries; q++) sample({ dst: 'qidx', query: q });
-    if (open) flush();
-  }
+      if (s.dst === 'qidx') return [slots.qidx[s.query]];
+      return [];
+    },
+    ({ observe, sample }) => {
+      for (let l = 0; l < EXT_LANES; l++) sample({ dst: 'alpha', lane: l });
+      for (let r = 0; r < K.layers; r++) {
+        for (let j = 0; j < LANES_PER_DIGEST; j++) observe({ src: 'commit', layer: r, lane: j });
+        //  commit_pow_bits = 0: `check_witness` returns BEFORE observing.
+        for (let l = 0; l < EXT_LANES; l++) sample({ dst: 'beta', layer: r, lane: l });
+      }
+      for (let i = 0; i < K.finalPolyLen; i++)
+        for (let l = 0; l < EXT_LANES; l++) observe({ src: 'finalPoly', i, lane: l });
+      for (let r = 0; r < K.layers; r++) observe({ src: 'arity' });
+      //  query_pow_bits = 16: the witness IS observed, and the next sample's low
+      //  16 bits are forced to zero. That sample is charged to its duplex.
+      observe({ src: 'pow' });
+      sample({ dst: 'pow' });
+      for (let q = 0; q < K.numQueries; q++) sample({ dst: 'qidx', query: q });
+    },
+  );
 
   // ---- the permutation round's bridge to the AIR half, once ---------------
   {
@@ -1019,15 +1481,33 @@ export function segmentReads(
   };
   switch (s.t) {
     case 'duplex':
-      //  ⚑ ONLY the first duplex loads the entering state from the commitment;
-      //  every later one takes it from the carry. A slice that re-witnessed it
-      //  would be starting a fresh transcript in the middle of one.
-      if (k === 0) range(ft.chalState, ft.chalState + CHAL_WIDTH, fri);
+      //  ⚑ ONLY a `chalState` duplex loads the entering state from the
+      //  commitment; a `carry` one takes it from the carry and a `zero` one from
+      //  a literal. A slice that re-witnessed it would be starting a fresh
+      //  transcript in the middle of one. (This tested `k === 0` until the
+      //  preamble landed, and `k === 0` is now the preamble's first segment.)
+      if (s.entry === 'chalState') range(ft.chalState, ft.chalState + CHAL_WIDTH, fri);
       for (const a of s.absorbs) {
         if (a.src === 'commit') fri.push(ft.commit[a.layer] + a.lane);
         else if (a.src === 'finalPoly') fri.push(ft.finalPoly[a.i] + a.lane);
         else if (a.src === 'pow') fri.push(ft.powWitness);
+        else if (a.src === 'roundCommit') fri.push(ft.inputCommit[a.round] + a.lane);
+        else if (a.src === 'publicValue') air.push(a.at * EXT_LANES);
+        else if (a.src === 'cumSum') air.push(a.at * EXT_LANES + a.lane);
+        else if (a.src === 'opened') {
+          const r = op.refs[a.round][a.mat][a.point][a.col];
+          if (r.where === 'air') air.push(r.at * EXT_LANES + a.lane);
+          else fri.push(r.at + a.lane);
+        }
+        //  `shape` and `arity` are literals and read nothing.
       }
+      break;
+    case 'preSeal':
+      //  ζ, against the point-0 lane of EVERY committed matrix — the point both
+      //  halves open at.
+      for (const z of s.zetaAt) range(z, z + EXT_LANES, fri);
+      //  The LogUp challenges, against the AIR chain's own `challenge[k]`.
+      for (const c of s.chalAt) range(c.at * EXT_LANES, (c.at + 1) * EXT_LANES, air);
       break;
     case 'inBlock': {
       const [a, b] = ft.blockLanes(s.q, s.round, s.height, s.block);
