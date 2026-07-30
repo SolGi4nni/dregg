@@ -7,9 +7,17 @@
 //! `effect_vm_ir2_validate.rs`) is proven through BOTH provers and the postcard-serialized
 //! wire sizes are compared.
 //!
-//!   * **v1** — the LIVE path: `lean_descriptor_air::prove_vm_descriptor` over the graduated
-//!     transfer descriptor (the single-table extended-row AIR; the wire `EffectVmP3Proof` the
-//!     SDK cutover emits today — `.docs-history-noclaude/PROOF-ECONOMICS.md` §1's 451.7 KiB baseline).
+//!   * **v1** — ⚠ **the RETIRED path, kept here only as the historical BASELINE.**
+//!     `lean_descriptor_air::prove_vm_descriptor` over the graduated transfer descriptor (the
+//!     single-table extended-row AIR; `.docs-history-noclaude/PROOF-ECONOMICS.md` §1's 451.7 KiB
+//!     baseline). This header used to call it "the LIVE path ... the wire `EffectVmP3Proof` the
+//!     SDK cutover emits today". That was TRUE when written and has been false since the C4
+//!     cutover: `sdk/src/full_turn_proof.rs:4269` and `:5064` both record the `EffectVmP3Proof`
+//!     route as RETIRED and name `"effect-vm-rotated"` as the live leg, and
+//!     `lean_descriptor_air.rs`'s own header has said RETIRED since 2026-07-16. Every caller of
+//!     `prove_vm_descriptor` outside its own definition is now `#[cfg(test)]` or a `tests/` tree.
+//!     Corrected 2026-07-30 — a size measurement whose header tells you which side ships is a
+//!     measurement people quote, and this one was quoting the wrong side.
 //!   * **IR-v2** — `descriptor_ir2::prove_vm_descriptor2` over the graduated
 //!     `transferVmDescriptor2` (the five-table EPOCH batch STARK: main + poseidon2-chip +
 //!     range + memory + map-ops).
