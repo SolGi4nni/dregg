@@ -482,9 +482,15 @@ theorem audit_slot_forced (compressN : List FieldElem → FieldElem)
 
 /-- **`refusal_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for refusal.** The `"refusal" := 1`
 audit-slot write is FORCED via the committed `auditSlotRoot`; the whole `cell`-map move, the guard, the
-log, and the 16-field frame are the named decode residual. -/
+log, and the 16-field frame are the named decode residual.
+
+⚑ **THE `compressNInjective` BINDER WAS DEAD AND IS GONE (2026-07-30).** The proof reads only the
+decode's own components; nothing here applies the floor. The rungs that DO apply it —
+`audit_slot_forced`, `audit_descriptorRefines_rejects_unwritten` — keep it and are still
+carriers, which is the point: this
+deletion clears the declarations whose floor was decorative and leaves the ones whose floor is
+load-bearing exactly where they were. -/
 theorem refusal_descriptorRefines (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId)
     (henc : auditEncodes compressN pre post actor cell refusalField) :
     RefusalSpec pre actor cell post :=
@@ -495,19 +501,24 @@ theorem refusal_descriptorRefines (compressN : List FieldElem → FieldElem)
 
 /-- The refinement against `execFullA` directly (via `execFullA_refusalA_iff_spec`). -/
 theorem refusal_descriptorRefines_execFullA (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId)
     (henc : auditEncodes compressN pre post actor cell refusalField) :
     execFullA pre (.refusalA actor cell) = some post :=
   (Dregg2.Circuit.Spec.CellStateAudit.execFullA_refusalA_iff_spec pre actor cell post).mpr
-    (refusal_descriptorRefines compressN hN pre post actor cell henc)
+    (refusal_descriptorRefines compressN pre post actor cell henc)
 
 /-- **`receiptArchive_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for receiptArchive.** The
 `"lifecycle" := 1` RECORD-slot write is FORCED via the committed `auditSlotRoot` (over `lifecycleField`);
 the whole `cell`-map move + guard + log + frame are the named decode residual. NOTE: this writes the
-RECORD slot, NOT the `lifecycle` side-table (`frLifecycle` confirms the side-table is frozen). -/
+RECORD slot, NOT the `lifecycle` side-table (`frLifecycle` confirms the side-table is frozen).
+
+⚑ **THE `compressNInjective` BINDER WAS DEAD AND IS GONE (2026-07-30).** The proof reads only the
+decode's own components; nothing here applies the floor. The rungs that DO apply it —
+`audit_slot_forced`, `audit_descriptorRefines_rejects_unwritten` — keep it and are still
+carriers, which is the point: this
+deletion clears the declarations whose floor was decorative and leaves the ones whose floor is
+load-bearing exactly where they were. -/
 theorem receiptArchive_descriptorRefines (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId)
     (henc : auditEncodes compressN pre post actor cell lifecycleField) :
     ReceiptArchiveSpec pre actor cell post :=
@@ -520,12 +531,11 @@ theorem receiptArchive_descriptorRefines (compressN : List FieldElem → FieldEl
 `receiptArchiveRecordStep_iff_spec`). Keyed off the record write, NOT the deployed `execFullA` arm
 (which moves the lifecycle side-table). -/
 theorem receiptArchive_descriptorRefines_recordStep (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId)
     (henc : auditEncodes compressN pre post actor cell lifecycleField) :
     Dregg2.Circuit.Spec.CellStateAudit.receiptArchiveRecordStep pre actor cell = some post :=
   (Dregg2.Circuit.Spec.CellStateAudit.receiptArchiveRecordStep_iff_spec pre actor cell post).mpr
-    (receiptArchive_descriptorRefines compressN hN pre post actor cell henc)
+    (receiptArchive_descriptorRefines compressN pre post actor cell henc)
 
 /-- **TOOTH — `audit_descriptorRefines_rejects_unwritten`.** A decode asserting a post whose `cell`
 audit slot `f` is NOT `1` cannot ride a satisfying FIX witness (the audit-slot-root gate bites). Covers
@@ -1067,9 +1077,16 @@ theorem refusal_forced (compressN : List FieldElem → FieldElem) (hash : List �
 DEPLOYED `refusalV3` witness + the realizable `RefusalTraceReadout` forces `RefusalSpec`. The
 `refusalField := 1` write is forced from the DEPLOYED record pin's `Satisfied2` (`refusal_forced`); the
 whole `cell`-map move, guard, log, and 16-field frame are the named residual. Editing `refusalV3` turns
-this RED. -/
+this RED.
+
+⚑ **THE `compressNInjective` BINDER WAS DEAD AND IS GONE (2026-07-30).** The proof reads only the
+decode's own components; nothing here applies the floor. The rungs that DO apply it —
+`refusal_forced`, `refusal_sat_rejects_unwritten` — keep it and are still
+carriers, which is the point: this
+deletion clears the declarations whose floor was decorative and leaves the ones whose floor is
+load-bearing exactly where they were. -/
 theorem refusal_descriptorRefines_sat (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN) (hash : List ℤ → ℤ)
+    (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash refusalFieldsWriteV3 minit mfin maddrs t)

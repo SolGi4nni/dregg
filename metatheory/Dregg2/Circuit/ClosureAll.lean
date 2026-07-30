@@ -411,7 +411,7 @@ theorem refusal_closedLog
       show fullActionStep pre (.refusalA actor cell) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementLifecycle.refusal_descriptorRefines
-        compressN2 hN pre post actor cell (logNeeds hadv))
+        compressN2 pre post actor cell (logNeeds hadv))
 
 /-- receiptArchive (tag 40), CLASS A — forced from the DEPLOYED `receiptArchiveV3` disc gate (the
 `lifecycle := Archived` side-table move). Mirrors `cellUnseal_closedLog_sat`/`refusal_closedLog_sat`:
@@ -464,7 +464,7 @@ theorem setPermissions_closedLog
       show fullActionStep pre (.setPermissionsA actor cell p) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementPermsVK.setPermissions_descriptorRefines
-        compressN2 hN pre post actor cell p (logNeeds hadv))
+        compressN2 pre post actor cell p (logNeeds hadv))
 
 /-- setVK (tag 9). -/
 theorem setVK_closedLog
@@ -486,7 +486,7 @@ theorem setVK_closedLog
       show fullActionStep pre (.setVKA actor cell vk) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementPermsVK.setVK_descriptorRefines
-        compressN2 hN pre post actor cell vk (logNeeds hadv))
+        compressN2 pre post actor cell vk (logNeeds hadv))
 
 /-- emitEvent (tag 6). Value-forced (no compressN). Receipt is `emitReceipt actor cell`. -/
 theorem emitEvent_closedLog
@@ -1271,7 +1271,7 @@ theorem setProgram_closedLog_sat
       show fullActionStep pre (.setProgramA actor cell prog) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementProgram.setProgram_descriptorRefines_sat
-        compressN hN hash hside hsat pre post actor cell prog (logNeeds hadv))
+        compressN hash hside hsat pre post actor cell prog (logNeeds hadv))
 
 /-- createCell (tag 17), CLASS A — forced from `createCellV3` (grow-gate, no `RotTableSide`). -/
 theorem createCell_closedLog_sat
@@ -1454,7 +1454,7 @@ theorem refusal_closedLog_sat
       show fullActionStep pre (.refusalA actor cell) post
       simp only [fullActionStep]
       exact Dregg2.Circuit.RotatedKernelRefinementLifecycle.refusal_descriptorRefines_sat
-        compressN2 hN hash hside hsat pre post actor cell (logNeeds hadv))
+        compressN2 hash hside hsat pre post actor cell (logNeeds hadv))
 
 /-- cellUnseal (tag 53), CLASS A — forced from `cellUnsealV3`. -/
 theorem cellUnseal_closedLog_sat

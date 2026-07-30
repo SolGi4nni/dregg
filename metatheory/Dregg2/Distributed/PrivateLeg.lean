@@ -320,10 +320,16 @@ theorem privLeg_forged_rejected (scommit : RecordKernelState → Int)
 two commitments are equal `(c, c)` while claiming asset-`a` movement: any real `recKExecAsset` step
 that COMMITS moves a nonzero `amt` from `src ≠ dst`, so pre ≠ post as states; but a content-addressed
 `scommit` that is injective would force `commitPre ≠ commitPost`. We exhibit the forge against an
-injective commitment by choosing `commitPre = commitPost` yet requiring a strictly-positive move —
-witnessed below via the always-false statement under an injective root. -/
+injective commitment by choosing `commitPre = commitPost` yet requiring a strictly-positive move.
+
+⚑ **AND IT NEVER NEEDED THE INJECTIVITY (binder deleted 2026-07-30).** The work is done by
+`hchange` — "every committing step moves the commitment" — which is the per-instance, refutable form
+of the property. The `Function.Injective scommit` binder was already spelled `_hinj`, i.e. the author
+had recorded it as unused, and it is not a mild idealization: `scommit : RecordKernelState → Int`
+digests a state carrying function fields (`bal : CellId → AssetId → ℤ`), so its domain is UNCOUNTABLE
+and NO such injection exists at any parameters (`Verify/InjSpelledFloors`). The theorem is strictly
+stronger without it. -/
 theorem exists_forged_leg (scommit : RecordKernelState → Int)
-    (_hinj : Function.Injective scommit)
     -- a leg claiming equal pre/post commitments but a state-CHANGING step is impossible:
     (pl : PrivLeg) (hsame : pl.commitPre = pl.commitPost)
     -- ...PROVIDED every committing step actually changes the state's commitment:

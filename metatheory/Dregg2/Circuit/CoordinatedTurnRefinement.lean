@@ -244,18 +244,25 @@ def coordinatedTurnCircuitStep
   step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB)
 
 /-- **`coordinated_turn_circuit_refines_spec`** — SOUNDNESS: a well-formed circuit witness implies
-`BilateralTurnSpec`. Carries the standard Poseidon-CR portals (for the frame anti-ghost layer) plus
-abstract leg-root / charter / binding injectivity portals on the public-input digests. -/
+`BilateralTurnSpec`.
+
+⚑ **THE CR PORTALS WERE DEAD AND ARE GONE (2026-07-30).** This theorem used to bind
+`compressInjective compress`, `compressNInjective compressN`, `cellLeafInjective CH`,
+`RestHashIffFrame RH`, and two `Function.Injective` portals on the leg-root digests — and the proof
+below never mentions one of them: it destructures `h` and applies `jointApplyRec_of_halves`. The old
+doc-comment said the portals were carried "for the frame anti-ghost layer"; the frame facts arrive
+from `CoordinatedLegFrameSat`'s own components, not from any injectivity. So the hypotheses were a
+NAME for work the term does not do, and every one of them is refuted in-tree — `RestHashIffFrame` by
+CARDINALITY at any width (`Circuit/RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`)
+and the two leg-root portals the same way (`RecordKernelState` carries function fields, so its
+product with `BiTurn` is uncountable; `Verify/InjSpelledFloors`). Deleting them is strictly
+STRENGTHENING: same conclusion, fewer hypotheses, identical proof term. -/
 theorem coordinated_turn_circuit_refines_spec
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (legRootA legRootB : RecordKernelState → BiTurn → ℤ)
     (covenantH : Dregg2.Exec.CoordinatedCaveat.CoordinatedCaveat → KernelState → KernelState → ℤ)
     (bindH : ∀ {bt : BiTurn}, SharedBinding bt → ℤ)
-    (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH)
-    (hLegA : Function.Injective (fun p : RecordKernelState × BiTurn => legRootA p.1 p.2))
-    (hLegB : Function.Injective (fun p : RecordKernelState × BiTurn => legRootB p.1 p.2))
     (hCov : ∀ (c : Dregg2.Exec.CoordinatedCaveat.CoordinatedCaveat) A B,
       covenantH c A B = pubCharter → c.φ A B = true)
     (hBind : ∀ {bt} (bind : SharedBinding bt), bindH bind = pubBind → bind.sidOfA = bind.sidOfB)
@@ -273,15 +280,14 @@ theorem coordinated_turn_circuit_refines_spec
   exact ⟨by simpa [recChainedKernelView] using hφ, jointApplyRec_of_halves hOut hIn,
     SharedBinding.agree step.bind⟩
 
-/-- Convenience: circuit soundness when public-input hashes are definitionally the honest values. -/
+/-- Convenience: circuit soundness when public-input hashes are definitionally the honest values.
+Same 2026-07-30 deletion as above — the four CR portals were unmentioned by the proof. -/
 theorem coordinated_turn_circuit_refines_spec_honest
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (legRootA legRootB : RecordKernelState → BiTurn → ℤ)
     (covenantH : Dregg2.Exec.CoordinatedCaveat.CoordinatedCaveat → KernelState → KernelState → ℤ)
     (bindH : ∀ {bt : BiTurn}, SharedBinding bt → ℤ)
-    (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH)
     (pub : CoordinatedPublicInputs) (sA sB : RecChainedState) (step : BilateralStep)
     (sA' sB' : RecChainedState)
     (hPub : pub.rootA = legRootA sA.kernel step.bt ∧
@@ -301,17 +307,16 @@ theorem coordinated_turn_circuit_refines_spec_honest
     SharedBinding.agree step.bind⟩
 
 /-- Circuit ⊑ spec aligned with exec: a circuit witness and a matching forest commit imply the same
-`CoordinatedTurnStep` (kernel spec from the circuit; logs from the exec routing). -/
+`CoordinatedTurnStep` (kernel spec from the circuit; logs from the exec routing).
+
+Its six CR portals were dead for the same reason and by one more step: it only ever passed them to
+`coordinated_turn_circuit_refines_spec`, which never read them. Deleted 2026-07-30. -/
 theorem coordinated_turn_circuit_exec_agree
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (legRootA legRootB : RecordKernelState → BiTurn → ℤ)
     (covenantH : Dregg2.Exec.CoordinatedCaveat.CoordinatedCaveat → KernelState → KernelState → ℤ)
     (bindH : ∀ {bt : BiTurn}, SharedBinding bt → ℤ)
-    (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH)
-    (hLegA : Function.Injective (fun p : RecordKernelState × BiTurn => legRootA p.1 p.2))
-    (hLegB : Function.Injective (fun p : RecordKernelState × BiTurn => legRootB p.1 p.2))
     (hCov : ∀ (c : Dregg2.Exec.CoordinatedCaveat.CoordinatedCaveat) A B,
       covenantH c A B = pubCharter → c.φ A B = true)
     (hBind : ∀ {bt} (bind : SharedBinding bt), bindH bind = pubBind → bind.sidOfA = bind.sidOfB)
@@ -324,7 +329,7 @@ theorem coordinated_turn_circuit_exec_agree
       CoordinatedTurnStep g.pair.sA g.pair.sB g.step sA' sB' := by
   refine ⟨
     coordinated_turn_circuit_refines_spec CH RH compress compressN legRootA legRootB covenantH bindH
-      hCompress hCompressN hLeaf hRest hLegA hLegB hCov hBind pubCharter pubBind pub g.pair.sA
+      hCov hBind pubCharter pubBind pub g.pair.sA
       g.pair.sB g.step sA' sB' hCircuit,
     coordinated_turn_refines_joint g hExec⟩
 

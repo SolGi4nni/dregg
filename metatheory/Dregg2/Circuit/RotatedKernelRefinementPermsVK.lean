@@ -153,9 +153,15 @@ theorem setPermissions_slot_forced (compressN : List FieldElem → FieldElem)
 /-- **`setPermissions_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for setPermissions.** The
 `"permissions" := p` record-slot write is FORCED via the committed slot-root (`setPermissions_slot_forced`,
 consistent with the whole-`cell`-map move whose `cell`-entry IS the forced slot); the whole-map move, the
-guard, the log, and the 16-field frame are the named decode residual. -/
+guard, the log, and the 16-field frame are the named decode residual.
+
+⚑ **THE `compressNInjective` BINDER WAS DEAD AND IS GONE (2026-07-30).** The proof reads only the
+decode's own components; nothing here applies the floor. The rungs that DO apply it —
+`setPermissions_slot_forced`, `setPermissions_descriptorRefines_rejects_wrong_value` — keep it and are still
+carriers, which is the point: this
+deletion clears the declarations whose floor was decorative and leaves the ones whose floor is
+load-bearing exactly where they were. -/
 theorem setPermissions_descriptorRefines (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (p : Int)
     (henc : setPermissionsEncodes compressN pre post actor cell p) :
     SetPermissionsSpec pre actor cell p post :=
@@ -166,12 +172,11 @@ theorem setPermissions_descriptorRefines (compressN : List FieldElem → FieldEl
 
 /-- The refinement against `execFullA` directly (via `execFullA_setPermissions_iff_spec`). -/
 theorem setPermissions_descriptorRefines_execFullA (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (p : Int)
     (henc : setPermissionsEncodes compressN pre post actor cell p) :
     execFullA pre (.setPermissionsA actor cell p) = some post :=
   (Dregg2.Circuit.Spec.CellStatePermissions.execFullA_setPermissions_iff_spec pre actor cell p post).mpr
-    (setPermissions_descriptorRefines compressN hN pre post actor cell p henc)
+    (setPermissions_descriptorRefines compressN pre post actor cell p henc)
 
 /-- **TOOTH — `setPermissions_descriptorRefines_rejects_wrong_value`.** A decode asserting a post whose
 `cell` permissions slot is NOT `p` cannot ride a satisfying FIX witness (the slot-root gate pins it). -/
@@ -186,7 +191,6 @@ theorem setPermissions_descriptorRefines_rejects_wrong_value (compressN : List F
 /-- **TOOTH — `setPermissions_descriptorRefines_rejects_wrong_map`.** A post whose `cell` map is NOT the
 permissions write cannot ride a satisfying FIX witness. -/
 theorem setPermissions_descriptorRefines_rejects_wrong_map (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (p : Int)
     (henc : setPermissionsEncodes compressN pre post actor cell p)
     (hwrong : post.kernel.cell ≠ setPermsCellMap pre.kernel cell p) :
@@ -235,9 +239,15 @@ theorem setVK_slot_forced (compressN : List FieldElem → FieldElem)
 
 /-- **`setVK_descriptorRefines` — THE FIX CIRCUIT→KERNEL REFINEMENT for setVK.** The
 `"verification_key" := vk` record-slot write is FORCED via the committed slot-root; the whole-map move,
-guard, log, and 16-field frame are the named decode residual. -/
+guard, log, and 16-field frame are the named decode residual.
+
+⚑ **THE `compressNInjective` BINDER WAS DEAD AND IS GONE (2026-07-30).** The proof reads only the
+decode's own components; nothing here applies the floor. The rungs that DO apply it —
+`setVK_slot_forced`, `setVK_descriptorRefines_rejects_wrong_value` — keep it and are still
+carriers, which is the point: this
+deletion clears the declarations whose floor was decorative and leaves the ones whose floor is
+load-bearing exactly where they were. -/
 theorem setVK_descriptorRefines (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (vk : Int)
     (henc : setVKEncodes compressN pre post actor cell vk) :
     SetVKSpec pre actor cell vk post :=
@@ -248,12 +258,11 @@ theorem setVK_descriptorRefines (compressN : List FieldElem → FieldElem)
 
 /-- The refinement against `execFullA` directly (via `execFullA_setVK_iff_spec`). -/
 theorem setVK_descriptorRefines_execFullA (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (vk : Int)
     (henc : setVKEncodes compressN pre post actor cell vk) :
     execFullA pre (.setVKA actor cell vk) = some post :=
   (Dregg2.Circuit.Spec.CellStateVK.execFullA_setVK_iff_spec pre actor cell vk post).mpr
-    (setVK_descriptorRefines compressN hN pre post actor cell vk henc)
+    (setVK_descriptorRefines compressN pre post actor cell vk henc)
 
 /-- **TOOTH — `setVK_descriptorRefines_rejects_wrong_value`.** A post whose `cell` vk slot is NOT `vk`
 cannot ride a satisfying FIX witness (the slot-root gate pins it — the upgrade-safety tooth). -/
@@ -267,7 +276,6 @@ theorem setVK_descriptorRefines_rejects_wrong_value (compressN : List FieldElem 
 
 /-- **TOOTH — `setVK_descriptorRefines_rejects_wrong_map`.** -/
 theorem setVK_descriptorRefines_rejects_wrong_map (compressN : List FieldElem → FieldElem)
-    (hN : compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (vk : Int)
     (henc : setVKEncodes compressN pre post actor cell vk)
     (hwrong : post.kernel.cell ≠ setVKCellMap pre.kernel cell vk) :

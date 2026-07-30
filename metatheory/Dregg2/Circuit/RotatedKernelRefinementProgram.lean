@@ -160,9 +160,16 @@ theorem setProgram_forced (compressN : List ℤ → ℤ) (hash : List ℤ → �
 satisfying DEPLOYED `setProgramV3` witness + the realizable `SetProgramTraceReadout` forces
 `SetProgramSpec`. The `programField := prog` write is forced from the DEPLOYED record pin's `Satisfied2`
 (`setProgram_forced` ⟹ the readout's `cellMapMove`); the whole `cell`-map move, guard, log, and 16-field
-frame are the named residual. Editing `setProgramV3` turns this RED. -/
+frame are the named residual. Editing `setProgramV3` turns this RED.
+
+⚑ **THE `compressNInjective` BINDER WAS DEAD AND IS GONE (2026-07-30).** The proof reads only the
+decode's own components; nothing here applies the floor. The rungs that DO apply it —
+`setProgram_forced`, `setProgram_sat_rejects_unwritten` — keep it and are still
+carriers, which is the point: this
+deletion clears the declarations whose floor was decorative and leaves the ones whose floor is
+load-bearing exactly where they were. -/
 theorem setProgram_descriptorRefines_sat (compressN : List ℤ → ℤ)
-    (hN : compressNInjective compressN) (hash : List ℤ → ℤ)
+    (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash setProgramV3 minit mfin maddrs t)
