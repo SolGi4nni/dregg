@@ -819,7 +819,13 @@ statement at `L = 8` is the statement at `L = 1,056,896`.
 
 ⚠ What is still carried is `PastaMsmWindowed`'s own — `hsrc`, that a row's `SRC` columns carry the
 point they are supposed to. §7.1 is unchanged by this section: the slice CONTENTS are bound one
-rung up, in `PastaMsmBound`, and not here. -/
+rung up, in `PastaMsmBound`, and not here.
+
+⚠ **INHABITATION, said at the resolution it holds.** The hypotheses are inhabited across TWO
+exhibits and not in one object: `hrows`/`hthr`/`hsrc` by `PastaMsmWindowed` §4c's accepting RCB
+rows, `hpi` by §5d and by `pi_pins_refuse_no_trace`. A single trace satisfying the RCB row template
+AND the declaration AND the pins is not built here, so "these hypotheses are jointly satisfiable"
+is an argument in two pieces rather than one kernel `#guard`. §7.10. -/
 theorem published_partial_is_the_fold (lo w L : Nat) (T : WTrace) (pv : Nat → ℤ)
     (Sv : Nat → PtP) (acc0 : PtP)
     (h0 : PointIsZ (T 0) ACCX ACCY ACCZ acc0)
@@ -1142,6 +1148,15 @@ theorem real_cut_composes {M : Type} [AddCommGroup M] (as : List Nat) (ps : List
    A consumer must compare projectively — `circuit/tests/pasta_sliced_sg_prove.rs` does (`proj_eq`)
    — and `slices_compose`'s `P k` is the point the representative denotes, which
    `published_partial_is_the_fold` states in `ZMod p` via `PointIsZ` rather than on limbs.
+
+10. ⚠ **`published_partial_is_the_fold`'s hypotheses are inhabited in TWO PIECES, not one.**
+    `hrows`/`hthr`/`hsrc` are exhibited by `PastaMsmWindowed` §4c's accepting RCB rows; `hpi` by
+    §5d and, generally, by `pi_pins_refuse_no_trace`. No single trace here satisfies the RCB row
+    template AND the declaration AND the pins at once, because building one means carrying
+    `PastaCurveComplete.rcbAsg`'s concrete witness through a multi-row fold. That is a real gap in
+    the exhibit and not in the theorem — every hypothesis is separately known satisfiable, and the
+    capstone is not true-because-empty — but it is one kernel `#guard` short of the standard
+    `PastaMsmScalarDerive` §5d meets, and the honest thing is to say which one.
 -/
 
 end Dregg2.Circuit.Emit.PastaMsmSliced
