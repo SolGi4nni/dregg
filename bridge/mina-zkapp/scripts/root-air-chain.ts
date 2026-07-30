@@ -17,7 +17,7 @@ import {
   makeRootAirChain,
   planRootAirChain,
   stepBoundary,
-  terminalSeal,
+  airTerminalSeal,
 } from '../src/RootAirChain.js';
 import { PICKLES_OVERHEAD, usableRows } from '../src/PartitionSchedule.js';
 
@@ -159,7 +159,7 @@ function terminalOf(plan: ChainPlan, side: any): Field {
     side.chunks.map((c: bigint[]) => digestOfLanes(c.map((x) => Field(x)))),
   );
   const last = plan.slices.length - 1;
-  return terminalSeal(
+  return airTerminalSeal(
     dag,
     digestOfLanes([
       ...side.accs[last + 1].map((x: bigint) => Field(x)),

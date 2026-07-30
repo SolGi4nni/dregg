@@ -51,7 +51,7 @@ import {
   extInvBigInt,
   extSubBase,
 } from './DeepQuotient.js';
-import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, terminalSeal } from './RootAirChain.js';
+import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, airTerminalSeal } from './RootAirChain.js';
 import {
   CHAL_RATE,
   CHAL_WIDTH,
@@ -76,7 +76,7 @@ import {
 // ⚑ WHAT THE JOIN IS, IN ONE SENTENCE. Slice 0 of this chain takes AIR slice 6's
 // proof as a `DynamicProof`, pins its verification key hash to a compile-time
 // constant, re-derives `dagDigest` from the AIR chain's OWN chunked column
-// commitment, recomputes `terminalSeal(dagDigest, digest(acc), 7)` and asserts
+// commitment, recomputes `airTerminalSeal(dagDigest, digest(acc), 7)` and asserts
 // it IS that proof's public output — and then reads the DEEP quotient's `f(z)`
 // out of those same chunks. So the FRI walk authenticates the numbers the AIR
 // chain folded, rather than numbers of its own.
@@ -955,7 +955,7 @@ export function friSliceShape(ctx: FriBraidCtx, si: number) {
  * key hash to a compile-time constant.
  *
  * ⚑ SLICE 0's PREDECESSOR IS THE AIR CHAIN. It does not enter a
- * `stepBoundary`; it enters `terminalSeal(dagDigest, digest(acc), 7)` — the
+ * `stepBoundary`; it enters `airTerminalSeal(dagDigest, digest(acc), 7)` — the
  * value AIR slice 6 emitted — recomputed here from the `dagDigest` THIS circuit
  * re-derives out of the AIR column chunks it loaded, and from the accumulator it
  * carries. That single assertion is the braid: a FRI walk over a different
@@ -1037,7 +1037,7 @@ export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSlice
             //  later slice enters this chain's own step boundary.
             const want =
               si === 0
-                ? terminalSeal(dagDigest, digestOfLanes([...acc.limbs]), AIR_SLICES)
+                ? airTerminalSeal(dagDigest, digestOfLanes([...acc.limbs]), AIR_SLICES)
                 : stepBoundary(friCommit, digestOfLanes([...live, ...acc.limbs]), AIR_SLICES + si);
             want.assertEquals(bIn);
             prev.publicOutput.assertEquals(bIn);
@@ -1060,7 +1060,7 @@ export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSlice
           });
 
           const publicOutput = sh.isLast
-            ? terminalSeal(friCommit, digestOfLanes([...acc.limbs, ...out]), AIR_SLICES + N)
+            ? airTerminalSeal(friCommit, digestOfLanes([...acc.limbs, ...out]), AIR_SLICES + N)
             : stepBoundary(friCommit, digestOfLanes([...out, ...acc.limbs]), AIR_SLICES + si + 1);
           return { publicOutput };
         },
@@ -1081,7 +1081,7 @@ export function friBoundaryIn(
   acc: bigint[],
 ): Field {
   const sl = ctx.plan.slices[si];
-  if (si === 0) return terminalSeal(dagDigest, digestOfLanes(acc.map((x) => Field(x))), AIR_SLICES);
+  if (si === 0) return airTerminalSeal(dagDigest, digestOfLanes(acc.map((x) => Field(x))), AIR_SLICES);
   return stepBoundary(
     friCommit,
     digestOfLanes([...twin.carry[sl.from].map((x) => Field(x)), ...acc.map((x) => Field(x))]),
@@ -1100,7 +1100,7 @@ export function friBoundaryOut(
   const N = ctx.plan.slices.length;
   const out = twin.carry[sl.to].map((x) => Field(x));
   if (si + 1 === N)
-    return terminalSeal(friCommit, digestOfLanes([...acc.map((x) => Field(x)), ...out]), AIR_SLICES + N);
+    return airTerminalSeal(friCommit, digestOfLanes([...acc.map((x) => Field(x)), ...out]), AIR_SLICES + N);
   return stepBoundary(
     friCommit,
     digestOfLanes([...out, ...acc.map((x) => Field(x))]),

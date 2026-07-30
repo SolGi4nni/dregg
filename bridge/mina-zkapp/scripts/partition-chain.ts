@@ -64,7 +64,7 @@ import {
   makeChainedProofVerify,
   rootCommitLanes,
   stepBoundary,
-  terminalSeal,
+  partitionTerminalSeal,
 } from '../src/DreggProofPartition.js';
 
 function ok(msg: string) {
@@ -426,7 +426,7 @@ console.log('\n[3] the boundary contract, and it is not a constant');
   ok(`the same proof and transcript at ${C.nSteps + 1} different step indices are ${seen.size} different boundaries`);
 
   // The entry and the closing seal are the two ends a verifier can compute.
-  if (A.entry.toString() === terminalSeal(A.rcd, C.nSteps).toString())
+  if (A.entry.toString() === partitionTerminalSeal(A.rcd, C.nSteps).toString())
     fail('the entry boundary and the terminal seal coincide — a chain of length 0 would close');
   ok(
     `the chain's two verifier-computable ends — entry (rcd, -, 0) and seal (rcd, -, ${C.nSteps}) — ` +
@@ -553,7 +553,7 @@ const proofs: any[] = [];
   }
 
   // -- the chain's single external check.
-  const seal = terminalSeal(A.rcd, CHAIN.nSteps);
+  const seal = partitionTerminalSeal(A.rcd, CHAIN.nSteps);
   const terminalProof = proofs[proofs.length - 1];
   if (terminalProof.publicOutput.toString() !== seal.toString())
     fail(
@@ -566,7 +566,7 @@ const proofs: any[] = [];
   );
   // A seal at any other length must NOT match, or the chain's length is unpinned.
   for (const wrong of [CHAIN.nSteps - 1, CHAIN.nSteps + 1])
-    if (terminalProof.publicOutput.toString() === terminalSeal(A.rcd, wrong).toString())
+    if (terminalProof.publicOutput.toString() === partitionTerminalSeal(A.rcd, wrong).toString())
       fail(`the terminal seal also matches a chain of length ${wrong} — the length is not pinned`);
   ok(`the same seal does NOT match a chain of length ${CHAIN.nSteps - 1} or ${CHAIN.nSteps + 1}`);
   ok(`the carried challengeDigest commits to p3's own query indices [${fxA.challenges.queryIndices}]`);
@@ -643,7 +643,7 @@ console.log('\n[6] the SPLICE is REFUSED — eight attempts, each with a real pr
       // The last case is REFUSED only by the seal it produces, not by a
       // constraint — say which, rather than pretending they are the same thing.
       const got = out?.proof?.publicOutput?.toString();
-      if (what.startsWith('a chain closed') && got !== terminalSeal(A.rcd, CHAIN.nSteps).toString()) {
+      if (what.startsWith('a chain closed') && got !== partitionTerminalSeal(A.rcd, CHAIN.nSteps).toString()) {
         ok(`the chain REFUSES ${what} — it proves, and its seal is NOT the one a verifier checks  [${secs(t)}]`);
         continue;
       }

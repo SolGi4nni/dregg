@@ -10,6 +10,7 @@ import {
   liveSet,
   liveness,
 } from './RootAirDag.js';
+import { chainStepBoundary, taggedTerminalSeal } from './CostModel.js';
 
 // ---------------------------------------------------------------------------
 // THE ROOT AIR AS A CHAIN — 275,143 emitted rows do not fit in a 65,536-row
@@ -72,16 +73,31 @@ export function packLanes(lanes: Field[]): Field[] {
 export const digestOfLanes = (lanes: Field[]): Field =>
   lanes.length === 0 ? Field(0) : Poseidon.hash(packLanes(lanes));
 
-/** `boundary_k = Poseidon(dagDigest, liveDigest, k)` — `KimchiPartition
- *  .StepPublicInput`'s three slots, unchanged. */
-export const stepBoundary = (dag: Field, live: Field, k: Field | number): Field =>
-  Poseidon.hash([dag, live, typeof k === 'number' ? Field(k) : k]);
+/**
+ * `boundary_k = Poseidon(dagDigest, liveDigest, k)` — `KimchiPartition
+ * .StepPublicInput`'s three slots, unchanged.
+ *
+ * ⚑ RE-EXPORTED, NOT RE-DEFINED. This had an IDENTICAL signature and an
+ * IDENTICAL body in `DreggProofPartition`, so importing the wrong one compiled,
+ * type-checked and was numerically right — until the day one of them changed.
+ * There is now ONE definition (`CostModel.chainStepBoundary`) and both families
+ * name it, so a wrong import is not merely undetectable, it is not wrong.
+ */
+export const stepBoundary = chainStepBoundary;
 
-/** The terminal seal carries the ACCUMULATOR's digest, not a live set — so the
- *  single external check is one field comparison a verifier computes from the
- *  expected accumulator and the artifact alone. */
-export const terminalSeal = (dag: Field, accDigest: Field, nSteps: number | Field): Field =>
-  Poseidon.hash([dag, accDigest, typeof nSteps === 'number' ? Field(nSteps) : nSteps, Field(1)]);
+/**
+ * The AIR/FRI chain's closing seal. Carries the ACCUMULATOR's digest rather than
+ * a live set, and a fourth field `1` that domain-separates it from every step
+ * boundary — so the single external check is one field comparison a verifier
+ * computes from the expected accumulator and the artifact alone.
+ *
+ * ⚑ NAMED `air…`, BECAUSE THE OTHER FAMILY'S SEAL IS A DIFFERENT FUNCTION.
+ * `DreggProofPartition`'s is three-field and UNTAGGED. Both used to be called
+ * `terminalSeal`, and the only thing standing between a wrong import and a
+ * silently different digest was that the arities happened to differ.
+ */
+export const airTerminalSeal = taggedTerminalSeal;
+
 
 export const extLanes = (e: BbExt): Field[] => e.limbs;
 
@@ -438,7 +454,7 @@ export function makeRootAirChain(u: UnifiedDag, plan: ChainPlan, opts: ChainOpts
         // live set is not empty and it is in the preimage — which means a
         // partial chain's far end is NOT verifier-computable, and the leg says
         // so rather than quoting the complete chain's property for it.
-        return terminalSeal(
+        return airTerminalSeal(
           dagDigest,
           digestOfLanes([...extLanes(acc), ...liveOutVals.flatMap(extLanes)]),
           plan.slices.length,

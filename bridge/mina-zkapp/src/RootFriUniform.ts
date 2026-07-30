@@ -33,7 +33,7 @@ import {
   chunkedCommitment,
   runSegments,
 } from './RootFriSlice.js';
-import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, terminalSeal } from './RootAirChain.js';
+import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, airTerminalSeal } from './RootAirChain.js';
 import {
   ChainClaim,
   ClaimCarry,
@@ -888,7 +888,7 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
             const want = isHead0
               ? //  ⚑ THE BRAID. Head slice 0 enters AIR slice 6's terminal seal,
                 //  recomputed from the AIR column chunks THIS circuit loads.
-                terminalSeal(dagDigest, digestOfLanes([...acc.limbs]), AIR_SLICES)
+                airTerminalSeal(dagDigest, digestOfLanes([...acc.limbs]), AIR_SLICES)
               : stepBoundary(friCommit, carriedDigest(live, acc.limbs, vkRoot), k);
             want.assertEquals(bIn);
             //  ⚑ THE PREDECESSOR'S BOUNDARY, and — once the chain carries a
@@ -956,7 +956,7 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
           //  ⚑ THE TERMINAL BIT IS NOT A WITNESS. The block's last position
           //  seals exactly when `q` is the last query, and `q` is pinned by `k`.
           const kOut = k.add(1);
-          const seal = terminalSeal(
+          const seal = airTerminalSeal(
             friCommit,
             terminalDigest(acc.limbs, out, vkRoot),
             Field(totalSteps(plan)),
@@ -1056,7 +1056,7 @@ export function uniformBoundaryIn(
   vkRoot: Field,
 ): Field {
   if (sp.kind === 'head' && sp.pos === 0)
-    return terminalSeal(dagDigest, digestOfLanes(acc.map((x) => Field(x))), AIR_SLICES);
+    return airTerminalSeal(dagDigest, digestOfLanes(acc.map((x) => Field(x))), AIR_SLICES);
   const live = carriedLanes(ctx, twin, sp, q, 'in').map((x) => Field(x));
   return stepBoundary(
     friCommit,
@@ -1079,7 +1079,7 @@ export function uniformBoundaryOut(
   const a = acc.map((x) => Field(x));
   const last = sp.kind === 'block' && sp.pos + 1 === p.block.length && q === p.layout.numQueries - 1;
   return last
-    ? terminalSeal(friCommit, terminalDigest(a, out, vkRoot), Field(totalSteps(p)))
+    ? airTerminalSeal(friCommit, terminalDigest(a, out, vkRoot), Field(totalSteps(p)))
     : stepBoundary(friCommit, carriedDigest(out, a, vkRoot), Field(stepIndexOf(p, sp, q) + 1));
 }
 

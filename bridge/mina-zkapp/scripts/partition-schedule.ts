@@ -62,7 +62,7 @@ import {
   digestOfLanes,
   rootCommitLanes,
   stepBoundary,
-  terminalSeal,
+  partitionTerminalSeal,
 } from '../src/DreggProofPartition.js';
 import {
   makeScheduledVerify,
@@ -694,7 +694,7 @@ const proofs: any[] = [];
         'fold chunk and forwarded every other chunk as a digest',
     );
   }
-  const seal = terminalSeal(A.rcd, CHAIN.nSteps);
+  const seal = partitionTerminalSeal(A.rcd, CHAIN.nSteps);
   const terminal = proofs[proofs.length - 1];
   if (terminal.publicOutput.toString() !== seal.toString())
     fail(
@@ -702,7 +702,7 @@ const proofs: any[] = [];
         'not bind the chain to the dregg proof it holds, nor to its length',
     );
   for (const wrong of [CHAIN.nSteps - 1, CHAIN.nSteps + 1])
-    if (terminal.publicOutput.toString() === terminalSeal(A.rcd, wrong).toString())
+    if (terminal.publicOutput.toString() === partitionTerminalSeal(A.rcd, wrong).toString())
       fail(`the terminal seal also matches a chain of length ${wrong} — the length is not pinned`);
   ok(
     `the terminal proof carries the CLOSING SEAL (rcd, -, ${CHAIN.nSteps}) — computed by the ` +
@@ -825,7 +825,7 @@ console.log('\n[6] the SPLICE is REFUSED — nine attempts, each against a real 
       // The early close is refused by the SEAL it produces, not by a constraint
       // — say which, rather than pretending they are the same thing.
       const got = out?.proof?.publicOutput?.toString();
-      if (what.startsWith('a chain closed') && got !== terminalSeal(A.rcd, CHAIN.nSteps).toString()) {
+      if (what.startsWith('a chain closed') && got !== partitionTerminalSeal(A.rcd, CHAIN.nSteps).toString()) {
         ok(`the chain REFUSES ${what} — it proves, and its seal is NOT the one a verifier checks  [${secs(t)}]`);
         continue;
       }

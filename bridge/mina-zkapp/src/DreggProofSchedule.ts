@@ -22,7 +22,7 @@ import {
   challengeLanes,
   digestOfLanes,
   stepBoundary,
-  terminalSeal,
+  partitionTerminalSeal,
 } from './DreggProofPartition.js';
 
 // ---------------------------------------------------------------------------
@@ -426,7 +426,7 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
           return {
             publicOutput: Provable.if(
               isLast,
-              terminalSeal(rcd, kOut),
+              partitionTerminalSeal(rcd, kOut),
               stepBoundary(rcd, digestOfLanes(chal, pack), kOut),
             ),
           };

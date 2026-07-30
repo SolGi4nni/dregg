@@ -7,6 +7,7 @@ import {
 } from '../src/PastaMmcs.js';
 import { PastaChallenger } from '../src/PastaChallenger.js';
 import { BbExt } from '../src/FriQueryStep.js';
+import { PICKLES } from '../src/CostModel.js';
 
 // ---------------------------------------------------------------------------
 // THE MINA-SIDE ROW COUNT, MEASURED AT THE ROOT'S REAL GEOMETRY.
@@ -242,7 +243,7 @@ async function main() {
   const measuredHash = hashAllQueries + transcript;
   const total = measuredHash + DEEP + AIR;
 
-  const USABLE = 54300; //  PartitionSchedule.ts — the slice currency
+  const USABLE = PICKLES.usableRowsMpv1; //  leg 16 — OWNED by src/CostModel.ts
   const slices = Math.ceil(total / USABLE);
 
   const table: [string, number, string][] = [

@@ -416,6 +416,61 @@ for (const f of files) {
 if (stale.length) for (const s of stale) fail(s);
 else ok('no retired census figure is quoted without saying it is retired');
 
+// ---------------------------------------------------------------------------
+// ⚑ THE DEPRECATED COLLIDING NAME, on a self-clearing schedule.
+//
+// `stepBoundary` had an identical signature AND body in two families and
+// `terminalSeal` differed only by arity. Both are fixed — one shared definition
+// and two distinct names — but `RootAirChain.terminalSeal` survives as an alias
+// because `main`'s `root-fri-uniform.ts` still imports it and that file carries
+// another lane's uncommitted work. This is the mechanism that removes it:
+// tracked importers FAIL, and when nothing imports it the gate says delete it.
+// ---------------------------------------------------------------------------
+const DEPRECATED = 'terminalSeal';
+const importers: { rel: string; tracked: boolean }[] = [];
+for (const f of files) {
+  const rel = relative(ROOT, f);
+  if (rel === 'src/RootAirChain.ts' || rel === OWNER || rel.endsWith('cost-model-gate.ts')) continue;
+  //  ⚑ IMPORT STATEMENTS ONLY. A doc comment explaining why the name was
+  //  retired mentions it too, and flagging the explanation as the defect is how
+  //  a gate trains people to ignore it.
+  const src = readFileSync(f, 'utf8');
+  const imports = [...src.matchAll(/import\s*\{([^}]*)\}\s*from/g)].map((m) => m[1]);
+  if (imports.some((spec) => new RegExp(`(^|[,\\s])${DEPRECATED}(\\s*,|\\s*$|\\s)`).test(spec)))
+    importers.push({ rel, tracked: tracked.has(rel) });
+}
+const landed = importers.filter((i) => i.tracked);
+if (landed.length)
+  for (const i of landed)
+    fail(
+      `${i.rel} imports the deprecated colliding name \`${DEPRECATED}\` — use ` +
+        '`airTerminalSeal` (4-field, domain-tagged) or `partitionTerminalSeal` (3-field, ' +
+        'untagged). They are DIFFERENT FUNCTIONS and the old name did not say which.',
+    );
+else if (importers.length)
+  console.log(
+    `    ⚠ \`${DEPRECATED}\` survives for ${importers.length} IN-FLIGHT file(s): ` +
+      `${importers.map((i) => i.rel).join(', ')}. Delete the alias in ` +
+      '`src/RootAirChain.ts` once they land.',
+  );
+else {
+  //  ⚑ AND WHEN NOBODY IMPORTS IT, THE ALIAS ITSELF MUST BE GONE. A name kept
+  //  past its last caller is the "no-op retained for compatibility" the project
+  //  doctrine forbids, so the gate demands the deletion and then confirms it.
+  const home = readFileSync(resolve(ROOT, 'src/RootAirChain.ts'), 'utf8');
+  if (new RegExp(`export\\s+(const|function)\\s+${DEPRECATED}\\b`).test(home))
+    fail(
+      `nothing imports the deprecated \`${DEPRECATED}\` any more — DELETE the alias in ` +
+        '`src/RootAirChain.ts`.',
+    );
+  else
+    ok(
+      `the colliding name \`${DEPRECATED}\` is GONE: \`airTerminalSeal\` (4-field, tagged) and ` +
+        '`partitionTerminalSeal` (3-field, untagged) are the two names, and `stepBoundary` is ' +
+        'one shared definition both families re-export',
+    );
+}
+
 // ===========================================================================
 console.log('');
 if (failures) {

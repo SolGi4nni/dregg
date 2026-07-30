@@ -11,7 +11,7 @@ import {
   rootAirDag,
   unifiedDag,
 } from '../src/RootAirDag.js';
-import { digestOfLanes, terminalSeal } from '../src/RootAirChain.js';
+import { digestOfLanes, airTerminalSeal } from '../src/RootAirChain.js';
 import {
   RealRootFri,
   airColumnIndex,
@@ -542,7 +542,7 @@ async function main() {
   if (atTier(1) || existsSync(airProof())) {
   if (!existsSync(airProof())) fail(`${airProof()} is missing — the AIR half has not been proved`);
   const air6 = JSON.parse(readFileSync(airProof(), 'utf8'));
-  const want = terminalSeal(c.dagDigest, digestOfLanes(c.acc.map((x) => Field(x))), AIR_SLICES);
+  const want = airTerminalSeal(c.dagDigest, digestOfLanes(c.acc.map((x) => Field(x))), AIR_SLICES);
   if (air6.publicOutput[0] !== want.toString())
     fail(
       `AIR slice 6's publicOutput is ${String(air6.publicOutput[0]).slice(0, 18)}… and the FRI side ` +

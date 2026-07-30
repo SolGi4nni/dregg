@@ -17,7 +17,7 @@ import {
   sliceCommitment,
   sliceWork,
   stepBoundary,
-  terminalSeal,
+  airTerminalSeal,
 } from './RootAirChain.js';
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ export function sliceProgramName(si: number, n: number, opts: SliceOpts = {}) {
  *
  * The boundary algebra is `RootAirChain`'s, unchanged and unforked:
  * `stepBoundary(dagDigest, liveDigest, k)` in, the same out, and
- * `terminalSeal(dagDigest, digest(acc), nSteps)` at the end. A chain built here
+ * `airTerminalSeal(dagDigest, digest(acc), nSteps)` at the end. A chain built here
  * and a chain built there carry the SAME public values — which is what makes
  * §3.24's three-slice run and this one two runs of one protocol rather than two
  * protocols.
@@ -192,7 +192,7 @@ export function makeSliceProgram(u: UnifiedDag, plan: ChainPlan, si: number, opt
     }
     const { acc, liveOutVals } = sliceWork(u, plan, s, alpha, accIn, liveInVals, readLanes);
     if (isLast)
-      return terminalSeal(
+      return airTerminalSeal(
         dagDigest,
         digestOfLanes([...extLanes(acc), ...liveOutVals.flatMap(extLanes)]),
         plan.slices.length,

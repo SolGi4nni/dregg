@@ -9,7 +9,7 @@ import { BABYBEAR_HASH, HashPrice, LANE_COST } from './CostModel.js';
 //
 // ⚑ WHAT THIS IS FOR. The AIR half is closed at real geometry: seven slices,
 // seven processes, all 10,417 DAG nodes and all 1,093 constraints over dregg's
-// committed root proof, ending in `terminalSeal(dagDigest, digest(acc), 7)` —
+// committed root proof, ending in `airTerminalSeal(dagDigest, digest(acc), 7)` —
 // and `acc` is verifier-computable as `Σ_T acc_T · α^(1093 − b_T)`. That seal
 // says the AIR's closing equalities hold **at the opened values the chain was
 // handed**. It says nothing about whether those opened values are the ones

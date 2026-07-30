@@ -20,7 +20,7 @@ import {
   digestOfLanes,
   planRootAirChain,
   stepBoundary,
-  terminalSeal,
+  airTerminalSeal,
 } from '../src/RootAirChain.js';
 import { makeSliceProgram, sliceMaxProofsVerified } from '../src/RootAirProcessChain.js';
 import { MEASURED_CEILING } from '../src/PartitionSchedule.js';
@@ -43,7 +43,7 @@ import { MEASURED_CEILING } from '../src/PartitionSchedule.js';
 // header says why that forces side-loading and what the side-loading takes away.
 //
 // ⚑ THE CHAIN'S PUBLIC ALGEBRA IS §3.24's, UNFORKED. `stepBoundary(dagDigest,
-// liveDigest, k)` in and out, `terminalSeal(dagDigest, digest(acc), nSteps)` at
+// liveDigest, k)` in and out, `airTerminalSeal(dagDigest, digest(acc), nSteps)` at
 // the end, and the node walk and α-fold are the SAME functions the
 // single-process chain calls — `sliceCommitment` and `sliceWork`, imported, not
 // re-implemented. Two implementations of what dregg's AIR means is exactly the
@@ -247,7 +247,7 @@ function boundaryIn(plan: ChainPlan, side: any, si: number, alpha: bigint[]): Fi
 
 function terminalOf(plan: ChainPlan, side: any): Field {
   const last = plan.slices.length - 1;
-  return terminalSeal(
+  return airTerminalSeal(
     dagDigestOf(side),
     digestOfLanes([
       ...side.accs[last + 1].map((x: bigint) => Field(x)),

@@ -13,6 +13,7 @@ import {
   runQueryWalk,
   verifyPlan,
 } from './DreggProofVerify.js';
+import { chainStepBoundary, untaggedTerminalSeal } from './CostModel.js';
 
 // ---------------------------------------------------------------------------
 // THE PARTITION — `DreggProofVerify` split across Pickles steps, and the
@@ -97,27 +98,21 @@ export function digestOfLanes(lanes: Field[], pack: boolean): Field {
  *  index is CARRIED: a uniform walk circuit is invoked at every position, so its
  *  own index cannot be baked in — it is forced by the chain instead (see
  *  `makeChainedProofVerify`). */
-export function stepBoundary(
-  rootCommitDigest: Field,
-  challengeDigest: Field,
-  stepIndex: number | Field,
-): Field {
-  return Poseidon.hash([
-    rootCommitDigest,
-    challengeDigest,
-    typeof stepIndex === 'number' ? Field(stepIndex) : stepIndex,
-  ]);
-}
+/** ⚑ RE-EXPORTED, NOT RE-DEFINED — see `CostModel.chainStepBoundary`. This and
+ *  `RootAirChain.stepBoundary` were two identical bodies under one name. */
+export const stepBoundary = chainStepBoundary;
 
 /** The chain's CLOSING boundary — the one field a verifier checks against the
  *  terminal proof. Same three-slot shape as the entry, with the challenge slot
  *  empty and the index at `nSteps`: "the chain over THIS proof closed after
  *  exactly this many steps". Both ends of the chain are therefore computable
  *  from the dregg proof alone, and neither needs the transcript the verifier
- *  delegated. */
-export function terminalSeal(rootCommitDigest: Field, nSteps: number | Field): Field {
-  return stepBoundary(rootCommitDigest, GENESIS_CHALLENGE_DIGEST, nSteps);
-}
+ *  delegated.
+ *
+ *  ⚑ NAMED `partition…`: this is the THREE-field UNTAGGED seal, and the AIR/FRI
+ *  chain's `airTerminalSeal` is four-field and domain-tagged. Both were called
+ *  `terminalSeal` and differed only by arity, which is not a mechanism. */
+export const partitionTerminalSeal = untaggedTerminalSeal;
 
 /**
  * The lanes `rootCommitDigest` covers.
@@ -419,7 +414,7 @@ export function makeChainedProofVerify(sh: DreggProofShape, opts: ChainOpts = {}
       return {
         publicOutput: Provable.if(
           isLast,
-          terminalSeal(rcd, kOut),
+          partitionTerminalSeal(rcd, kOut),
           stepBoundary(rcd, cd, kOut),
         ),
       };
@@ -478,7 +473,7 @@ export function makeChainedProofVerify(sh: DreggProofShape, opts: ChainOpts = {}
 // The out-of-circuit side of the contract.
 //
 // ⚑ THE SAME FUNCTIONS, ON CONSTANTS. `digestOfLanes`, `packLanes`,
-// `stepBoundary` and `terminalSeal` are `Field` arithmetic and evaluate outside
+// `stepBoundary` and `partitionTerminalSeal` are `Field` arithmetic and evaluate outside
 // a circuit, so the harness and the circuit compute the boundary in ONE place. A
 // second implementation that "agrees today" is the drift this repo has paid for.
 // ===========================================================================
