@@ -2604,6 +2604,11 @@ are counts, not prices.
 
 #### What this does NOT close, and what is now the largest gap
 
+⚑ **CLOSED 2026-07-30 — §3.30.** The paragraph below stood for one day. The claim is now a public
+output of the chain, sealed against the same `dagDigest` lanes this preamble absorbs, with a
+forged-claim chain refused and the refusal attributable. Read on for what it was, then §3.30 for
+what it is.
+
 ⚑ **THE CHAIN VERIFIES A PROOF AND NEVER SAYS WHAT THE PROOF CLAIMS.** Every statement in this
 tower is relative to `dagDigest` and `friDigest` — digests of lane tables the prover supplies. The
 AIR chain's slice 0 enters `stepBoundary(dagDigest, GENESIS_LIVE_DIGEST, 0)`, a genesis constant,
@@ -2631,6 +2636,171 @@ Smaller and still open, unchanged by this leg: the **192 LogUp constraints** are
 vocabulary and the `C_i` extraction is a differentially-checked seam rather than a theorem (§3.18);
 **19 queries, not 1**, though `bfdc935a5` makes that a compute residual rather than a structural one;
 and the **FRI soundness floor**, undischarged here as everywhere.
+
+
+### 3.30 ⚑ MEASURED — THE CLAIM: the chain says WHICH proof it verified
+
+*2026-07-30. `bridge/mina-zkapp/src/RootClaim.ts`, the `claim` option on
+`src/RootFriUniform.ts`'s `makeUniformSliceProgram`, `scripts/root-claim-carry.ts`
+(`npm run root-claim-carry`). The layout is mirrored from
+`circuit-prove/src/ivc_turn_chain.rs:268-278,343-368` and the Rust host's own segment tooth at
+`:3096-3115`.*
+
+§3.29 closed the challenger state and named what it did not close: *"the chain verifies a proof and
+never says what the proof claims."* This is that, closed — **the third and last instance of one
+shape.** A prover-chosen value feeding everything downstream: first the fold chain's `initial`
+(§3.15, closed by the DEEP quotient binding), then the transcript (§3.29, closed by deriving it from
+the batch's own commitments), now the **identity of the proof itself**.
+
+#### What was actually missing
+
+Not a binding of the claim to the proof — **the preamble already absorbs all 25 public values**, so
+bending one moves `ζ` and §3.29's `preSeal` refuses. What was missing is the lanes coming **out**,
+where a verifier can read them. Every public field the chain emitted was a `Field`: a boundary hash
+over `Poseidon(dagDigest, friDigest)`, digests of lane tables the *prover* supplies.
+
+#### Where the claim is, measured rather than assumed
+
+`expose_claim`'s 25 public values **are** the chain claim — `[first_old8 ‖ last_new8 ‖ count ‖
+acc_0..7]` (`ivc_turn_chain.rs:278`, `SEG_ANCHOR_WIDTH = SEG_DIGEST_WIDTH = 8`) — and the Rust host
+compares exactly that vector against `[genesis_root8 ‖ final_root8 ‖ num_turns ‖ chain_digest]`.
+
+On dregg's committed root proof: **AIR extension indices 1105..1177, stride 3** (they are *not*
+contiguous — the legend interleaves them with `prep[]` and `main[]`), **lanes 4420..4708**, spanning
+**AIR chunks 17 and 18**.
+
+#### The differential, against three independent oracles
+
+| | |
+|---|---|
+| all 25 lanes = the proof's own `expose_claim` `public_values` | **oracle 1** |
+| `numTurns` decodes to **3** = the artifact's own top-level `numTurns` | **oracle 2 — outside the assignment** |
+| the preamble absorbs **exactly** these 25 | **oracle 3** |
+| limbs 1..3 are zero in all 25 — a public value **is** a base element | |
+| all 25 canonical, so the octet packing is injective | |
+| the 4-field packing round-trips to all 25 lanes | |
+| the chunk accessor and the flat lane table agree on all 25 | |
+
+Oracle 2 is the one that matters: `numTurns` is recorded at the top of the artifact, **outside** the
+column assignment the claim is read from, so the decode is checked against something that is not
+itself.
+
+⚑ **EIGHT DISCRIMINATING POLARITIES, and two of them leave `numTurns` at 3.** That is why every row
+of the table is signed on all four fields rather than on the count:
+
+| the misreading | it decodes to |
+|---|---|
+| the AIR index read as a **lane** index (`at`, not `4·at`) | turns 1284447546 |
+| the **pre-lift** 4-lane anchor width (`SEG_ANCHOR_WIDTH` *was* 4) | turns 1139774588 |
+| the 25 public columns as **contiguous** indices | turns 1885745139 |
+| `count` **last** | turns 1659981296 |
+| the two anchors **swapped** | turns 3, `finalRoot` moves |
+| **positional** packing — `packLanes` over the flat 25 | turns 3759344820… |
+| an octet packed **most-significant lane first** | turns 3, `finalRoot` moves |
+| read off the `Public` table | **unresolved** |
+
+The pre-lift width is not invented: the FAITHFUL-FLOOR lift widened the anchors from 4 lanes
+(~62-bit birthday) to 8, so anyone working from the older record decodes a claim and gets a
+different one.
+
+#### What comes out, and why it is not a fresh witness
+
+The public output is `ClaimedBoundary { boundary, claim }`. `boundary` is byte-for-byte §3.29's
+field; `claim` is four Pasta fields — `genesisRoot`, `finalRoot`, `numTurns`, `chainDigest` — three
+of them a BabyBear octet packed at 31 bits a lane (248 of 254) and one a small integer a verifier
+reads directly.
+
+⚑ **PACKED PER NAMED BLOCK, NOT POSITIONALLY.** `packLanes` over the flat 25 cuts at 0-7 / 8-15 /
+16-23 / 24, and its third field straddles `num_turns` and seven digest lanes — a field with no name,
+for the same four fields.
+
+⚑ **AND THE CLAIM IS NOT WITNESSED.** `readClaimLanes` resolves the 25 lanes out of the **same
+loaded AIR chunks** whose digests were just spliced into `dagDigest`, which
+`Poseidon(dagDigest, friDigest) == publicInput` already pins. Replacing one prover-chosen value with
+another would have been this campaign's failure mode rather than its fix.
+
+#### Where the seal goes — found, not chosen
+
+The 25 lanes span AIR chunks 17 and 18, and **head slice 1 (segments [17, 32)) already loads
+[17, 18, 20, 21]**. So the seal costs **zero extra chunk loads**, the planner's carry does not move,
+and the plan is unchanged. Every other slice only propagates.
+
+#### The two equalities, and why only one of them costs rows
+
+| | emitted rows |
+|---|---:|
+| the **seal** — `claim` **is** the lanes under `dagDigest`, on one slice | **+185** |
+| of which the read, the packing and the range checks | +162 |
+| of which the **four closing equalities** | **+23** |
+| the **carry** — `claim` equals its predecessor's, on each of the other 904 | **+0** |
+| the whole chain, on 42,245,547 | **+185 — 0.0004%** |
+
+⚑ **ZERO IS NOT AN ABSENCE, AND THIS IS THE PLACE THAT MISREADS.** An equality between two *witness*
+variables compiles to a Kimchi **copy constraint**: the permutation argument enforces it and no gate
+row is emitted. So the carry is free **and** enforced, and the row count is silent about which.
+§3.29's own rule — *"row count is the only signal for derived, not witnessed"* — **does not transfer
+here**, and the accept/refuse table below is the only thing in the leg that says the carry bites.
+
+**Measured on the deployed program, not only on a probe:**
+`dregg-root-fri-head1-CLAIM` emits **51,091** rows against **50,906** for the same position without
+the claim (measured in a child process — one `DynamicProof` class per process, and the two variants
+carry different public-output types). +185, the same figure the standalone probe pair gives.
+
+#### The gate, five rows, every refusal a real constraint failure
+
+| | | |
+|---|---|---|
+| **BOUND** (seal armed) on the **forged claim** | head 1 | **REFUSED** |
+| **UNSEALED** (seal removed) on the **same forged claim** | head 1 | ACCEPTED |
+| **BOUND** (seal armed) on the **real claim** | head 1 | ACCEPTED |
+| **UNBOUND** — the §3.29 chain — on the **forged claim** | head 1 | ACCEPTED |
+| **CARRY** — claim ≠ **predecessor's** claim, seal removed | head 1 | **REFUSED** |
+
+⚑ **THE LANE TABLE IS UNTOUCHED.** Bending an `expose_claim` lane moves `ζ` and §3.29's preamble
+seal refuses — that hole is already closed. This forgery leaves every committed lane exactly as
+dregg emitted it, so every Merkle root, every DEEP quotient, every fold and the preamble seal itself
+still pass, and lies **only** about what the proof is *of*. Today that is not even a lie, because
+the chain says nothing.
+
+⚑ **ROW 4 IS A MEASUREMENT, NOT A TAUTOLOGY.** The §3.29 chain's public output is **identical**
+under the real claim and the forged one — checked, field for field — and the claim-carrying output
+**differs**. That is the gap exhibited rather than described.
+
+⚑ **ROW 5 EXISTS BECAUSE THE CARRY COSTS NOTHING.** Row 2 is its control: same mode, same reads,
+same rows, `prev == claim`. And the harness's own first version compared the claim **against
+itself** — a tautology that passes for every input and would have reported the carry as gated while
+nothing gated it.
+
+#### What a Mina-side verifier now learns, and what it still does not
+
+> **dregg's root proof — genesis root `G`, final root `H`, over `N` turns, with ordered-history
+> commitment `D` — has a batch-STARK whose seven AIRs' closing equalities hold at values dregg
+> committed to, and whose FRI walk over those commitments verifies at a transcript derived from the
+> batch itself.**
+
+with `G`, `H`, `N`, `D` read off the terminal proof rather than supplied to it.
+
+**What it still does not:**
+
+1. **That the committed function is low-degree.** The FRI soundness argument is exactly as
+   undischarged here as everywhere else in this tree.
+2. **That `(G, H, N, D)` is the chain head Mina should care about.** Nothing is wired to
+   `setDreggRoot`; `placeholderRelay` stays. The chain now *states* a claim a relay could compare
+   against the root it was told about — comparing it is a separate rung.
+3. **That the 25 lanes are what the AIR's `expose_claim` constraints force.** The AIR half proves
+   the closing equalities hold at the opened values; that `public[i]` *is* the fold of the real wide
+   descriptor leaves is the Rust host's tooth (`ivc_turn_chain.rs:3096-3115`), not this chain's.
+4. **The 192 LogUp constraints** are still not in the DAG vocabulary and the `C_i` extraction is
+   still a differentially-checked seam (§3.18).
+
+**BREAKING.** The public output type changes from `Field` to `ClaimedBoundary`, so **every
+verification key in the chain changes and the whole 131-key list re-emits.** The `DynamicProof`
+predecessor class takes a `withClaim` parameter because head slice 0's predecessor is the AIR chain
+and still emits a plain `Field`. With `claim` absent the program is byte-identical to §3.29's, which
+is what makes row 4 of the gate buildable.
+
+**Ratcheted**: the rows at 2%, and **exactly** on the 25 lanes, the stride of 3, the chunks
+`[17,18]`, the binding head slice 1, `numTurns = 3`, and 905 instances / 131 programs.
 
 
 ---
@@ -3008,9 +3178,9 @@ from the Groth16 wrap, which is *blocked* on a missing primitive.
 | A custom `Poseidon2BabyBear` Kimchi gate would buy ~2× | **No — ~1.5×.** §3.11 guessed ~900–1,100 rows/perm; the measured split (§3.8) puts the reductions a custom gate CANNOT remove at ~1,700 rows. Still a Mina hard fork. |
 | The row price is a design claim nobody has run | **No longer.** §3.8–3.14 are measured, the circuits are committed under `bridge/mina-zkapp/src/`, and `scripts/check-mina-attestation.sh` fails if any of nine figures drifts >2%. |
 | `degree_bits = [9,9,15,14,15]` describes the root | **No** — that is the BN254 **shrink** proof. The root's own heights are **unmeasured**, and §3.14 shows how much rests on that. |
-| The FRI walk these circuits perform is *the prover's* | **Yes, and as of §3.29 the transcript is too.** The query index and every `beta` are DERIVED (§3.12–3.13b), the reduced opening is COMPUTED from the opened rows (§3.15), the mixed-height input opening is built (§3.28), and the state the whole transcript starts from is now derived from the batch's own commitments, public values, cumulative sums and all 2,630 opened values rather than witnessed — with a forged-but-consistent transcript refused and the refusal attributable to an unsealed control. **What is left is not inside the walk:** nothing in circuit says which *proof* this is (§3.29). |
+| The FRI walk these circuits perform is *the prover's* | **Yes, and as of §3.29 the transcript is too.** The query index and every `beta` are DERIVED (§3.12–3.13b), the reduced opening is COMPUTED from the opened rows (§3.15), the mixed-height input opening is built (§3.28), and the state the whole transcript starts from is now derived from the batch's own commitments, public values, cumulative sums and all 2,630 opened values rather than witnessed — with a forged-but-consistent transcript refused and the refusal attributable to an unsealed control. **What is left is not inside the walk:** ~~nothing in circuit says which *proof* this is~~ — **§3.30 carries `expose_claim`'s 25 public values out as the chain's public output**, so the terminal proof states `(genesisRoot, finalRoot, numTurns, chainDigest)`. |
 | The challenger is a rounding error next to the query walk | **NO — and this row was measuring 1.7% of the challenger.** §3.12's 0.48% is the FRI schedule *alone*, 23 permutations. The transcript that authorises it is **1,373** permutations and **3,575,411 rows — 10.5% of the walk, +10.8% on the query-aligned total** (§3.29), because 1,315 of them are the opened-value absorb. The binding was never cheap; only the part that had been measured was. |
-| The chain says *which* proof it verified | **No — §3.29, and it is now the largest gap.** Every statement is relative to `dagDigest`/`friDigest`, digests of lane tables the prover supplies; slice 0 enters a genesis constant. A Mina-side verifier learns "*some* batch of seven AIRs with these column digests verifies", not "dregg's root proof for chain head H over N turns verifies". The claim is already in the lane table — `expose_claim`'s 25 public values, which §3.29's preamble absorbs — and closing it means carrying those lanes out as a public output. |
+| The chain says *which* proof it verified | **Yes — §3.30.** The public output is `ClaimedBoundary`, and its claim is `expose_claim`'s 25 public values — `genesisRoot`, `finalRoot`, `numTurns`, `chainDigest` — SEALED against the same `dagDigest` lanes the §3.29 preamble absorbs, on head slice 1, which already loads the chunks they live in. A forged claim over an UNTOUCHED lane table is refused, the refusal is attributable to an unsealed control that is row-for-row identical, and the carry across the other 904 slices has its own falsifier because it costs **zero rows** (a Kimchi copy constraint). +185 rows on 42,245,547 — **0.0004%** — and 905 instances / 131 programs are unchanged. ⚑ What it still does NOT say: that `(G,H,N,D)` is the head Mina should care about. Nothing is wired to `setDreggRoot`. |
 | The DEEP/AIR arithmetic is ~1.5–2% | **No — ≈3.5%.** §2.4 priced a Horner step at ~7 rows; it is **49, measured** (§3.14). Still not the driver. |
 | A Mina zkApp could today verify a dregg **proof**, not a dregg commitment | **Yes, at a reduced geometry — §3.19.** One `ZkProgram` consumes a proof `p3_uni_stark::prove` made under `DreggStarkConfig` and DECIDES it (preamble, opened-value absorption, FRI transcript, the AIR closing equality, the DEEP quotient, the MMCS openings, the fold chain) in **56,927 rows — ONE 2^16 Pickles step**, compiling, PROVING, verifying, and REFUSING seven bends and three wrong AIRs as real `prove()` refusals. **Not** at the deployed root's geometry: that projects to ≈ 2.75 × 10⁷ rows / 500–573 steps from §3.19's own measured marginals, and the AIR term in that total is the fixture's four constraints, not the root's 1,093. |
 | The rungs are assembled | **Yes as of §3.19, and they were not before.** Every rung up to §3.18 was fed a fixture the measurement synthesised. §3.19's fixture is a proof dregg's prover made and dregg's own verifier accepted before it was emitted. |
