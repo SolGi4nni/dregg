@@ -32,7 +32,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use dreggnet_discord_identity::seed_for as discord_seed_for;
-use dreggnet_offerings::{FileResumeStore, OfferingHost, SessionId, TurnSigner};
+use dreggnet_offerings::{DreggIdentity, FileResumeStore, OfferingHost, SessionId, TurnSigner};
 use dreggnet_surfaces::PartyOffering;
 use dreggnet_surfaces::party::{
     TURN_ACT, TURN_ADVANCE_ENEMY, TURN_CLAIM, TURN_FORK, TURN_LAUNCH, TURN_READY, TURN_RESOLVE_FORK,
@@ -205,6 +205,15 @@ async fn web_act(app: &Router, turn: &str, arg: i64, user: &str) -> String {
     .await;
     assert_eq!(status, StatusCode::OK, "web {turn} response: {body}");
     assert!(body.contains("Turn committed"), "web {turn} lands: {body}");
+    // ⚑ THE ASSERTED POLE, and it was not pinned at all. This file's own header promises "the
+    // browser cookie remains honestly `Asserted` provenance; this test does not promote it to a
+    // signature" — and nothing checked it, so the signed assertions below had no counterpart to be
+    // different FROM. `PlayerAttributionGrade::Asserted` reads "Recorded (asserted {id})".
+    assert!(
+        body.contains("Recorded (asserted"),
+        "the browser cookie must stay ASSERTED — a signature it never made would be the whole \
+         point of the two signed adapters below: {body}"
+    );
     body
 }
 
@@ -221,9 +230,16 @@ async fn tg_act(app: &Router, init_data: &str, turn: &str, arg: i64) -> String {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "Telegram {turn} response: {body}");
+    // ⚑ THE NAME OUTLIVED ITS REFERENT. `Telegram-attested` was the per-surface wording that commit
+    // `907e4eaf5` ("games: unify player receipts across hosted surfaces") replaced: there is no
+    // `Telegram-attested` anywhere in this tree's `src` any more, and this assertion has been asking
+    // for it ever since while the adapter signed correctly. What the unified grammar states — and
+    // what this test is actually about — is the ATTRIBUTION GRADE: a custodial key signed
+    // (`PlayerAttributionGrade::SignedCustodial`), against the browser pole's "Recorded (asserted …)"
+    // above. WHICH platform signed is pinned by identity, further down, off the rendered roster.
     assert!(
-        body.contains("Turn committed") && body.contains("Telegram-attested"),
-        "Telegram {turn} crosses its signed adapter: {body}"
+        body.contains("Turn committed") && body.contains("Signed (custodial) by "),
+        "Telegram {turn} crosses its SIGNED adapter (not the asserted browser path): {body}"
     );
     body
 }
@@ -241,9 +257,10 @@ async fn da_act(app: &Router, ticket: &str, turn: &str, arg: i64) -> String {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "Discord {turn} response: {body}");
+    // `Discord-attested` went the same way as `Telegram-attested` in `907e4eaf5` — see `tg_act`.
     assert!(
-        body.contains("Turn committed") && body.contains("Discord-attested"),
-        "Discord {turn} crosses its signed adapter: {body}"
+        body.contains("Turn committed") && body.contains("Signed (custodial) by "),
+        "Discord {turn} crosses its SIGNED adapter (not the asserted browser path): {body}"
     );
     body
 }
@@ -260,8 +277,19 @@ async fn web_get(app: &Router, suffix: &str, user: &str) -> (StatusCode, String)
     .await
 }
 
-fn short(identity: &str) -> &str {
-    &identity[..15.min(identity.len())]
+/// **The name the ROSTER shows for an identity** — the surface's own function, not a mirror of it.
+///
+/// ⚑ This was `&identity[..15]`, i.e. fifteen characters of a raw 64-hex key, and it was correct
+/// while the roster printed the key. It does not any more: `dreggnet_offerings::player_name` renders
+/// a frontend-attributed label when there is one (`browser-tank`) and a `player 32ac82` handle when
+/// there is not, precisely so a 64-character run never reaches a person's screen. So the roster read
+/// `Tank | browser-tank | ready` while this test looked for `758409d4944bc7d`, and reported a
+/// perfectly shared four-seat table as missing its leader.
+///
+/// Calling `display_name` rather than re-deriving the short form keeps this a check of WHICH ACTOR
+/// the roster names: the identities are still derived independently, per platform, by the test.
+fn roster_name(identity: &DreggIdentity) -> String {
+    dreggnet_offerings::player_name::display_name(identity)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -326,11 +354,35 @@ async fn one_party_forms_votes_fights_and_restarts_across_all_three_adapters() {
     let web_healer = web_identity("browser-healer");
     let tg_scout = TelegramCipherclerk::derive(&TG_SECRET, TG_UID).identity();
     let da_mage = TurnSigner::from_seed(discord_seed_for(&DA_SECRET, DA_UID)).identity();
-    for identity in [&web_tank, &tg_scout, &da_mage, &web_healer] {
+    let named: Vec<String> = [&web_tank, &tg_scout, &da_mage, &web_healer]
+        .into_iter()
+        .map(roster_name)
+        .collect();
+    // Four DISTINCT names, or "all four appear" would be one seat counted four times.
+    let distinct: std::collections::BTreeSet<&String> = named.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        4,
+        "the four platform identities must render as four different holders: {named:?}"
+    );
+    for (identity, name) in [&web_tank, &tg_scout, &da_mage, &web_healer]
+        .into_iter()
+        .zip(&named)
+    {
         assert!(
-            roster.contains(short(&identity.0)),
-            "one rendered roster contains platform actor {}: {roster}",
+            roster.contains(name.as_str()),
+            "one rendered roster contains platform actor {} (shown as {name:?}): {roster}",
             identity.0,
+        );
+    }
+    // …and the two chat adapters' seats are held by their KEY, not by a browser label: a custodial
+    // signer has no attributed name, so its holder is the readable handle over its derived key.
+    for signed in [&tg_scout, &da_mage] {
+        assert_eq!(
+            roster_name(signed),
+            dreggnet_offerings::player_name::readable_handle(&signed.0),
+            "a custodial platform seat is shown as its own derived key's handle, never a label \
+             some browser asserted"
         );
     }
     assert!(

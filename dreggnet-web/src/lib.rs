@@ -3461,8 +3461,8 @@ enum CatalogAct {
 }
 
 /// **The label of the affordance that was pressed** — `(turn, arg)` matched against the surface the
-/// act was collected from, exact pair first and the turn alone as a fallback (a `CoordGrid` cell or
-/// an `Input` fires a turn whose `arg` is the user's, so no row carries that exact pair).
+/// act was collected from: the exact pair first, and the turn alone ONLY when that turn name has
+/// exactly one row (an `Input` fires a turn whose `arg` is the user's, so no row carries the pair).
 ///
 /// ⚑ WHY THIS EXISTS. The success banner used to read `Turn committed — Recorded (asserted) ·
 /// executor receipt 02f5138e…`: a 64-character hex and no item, no price, no action. A first-time
@@ -3470,6 +3470,23 @@ enum CatalogAct {
 /// (`docs/reference/UX-QA-SWEEP-2026-07-26.md`, finding 3). The label is the only string in the whole
 /// path that knows what the player meant — the executor is handed a typed `{turn, arg}` and the
 /// receipt is a hash — so it has to be carried from the surface to the banner deliberately.
+///
+/// ⚑ **AND AN AMBIGUOUS FALLBACK NAMED A CONTROL THE PLAYER NEVER TOUCHED.** The fallback used to
+/// take the FIRST row sharing the turn name, whatever the arg. On a `CoordGrid` — where every square
+/// is its own row under one turn name — a click on an unoffered square therefore borrowed a
+/// different square's label, and automatafl's refusal read
+///
+/// > Refused: **Seal a move to (3,0)** · illegal move (3,1) → **(4,2)**: a move is a rook line …
+///
+/// naming one square in the clause about what the player did and another in the clause about why it
+/// was refused. A reader cannot tell a mis-drawn board from a mis-click from a broken referee when
+/// the confirmation contradicts itself, and the same shape rode the SUCCESS banner: a landed press
+/// could be confirmed as some other row.
+///
+/// So the fallback now fires only when it cannot be wrong — one row bearing that turn name, which is
+/// exactly the `Input` case it was written for (the row IS the control; the number is the player's).
+/// With several rows and no exact pair we do not know which was pressed, and [`named_act`] prints the
+/// raw turn name, which is the honest answer to *what did I just fire*.
 ///
 /// It is presentation, never authority: the label is read off the same projection the press was
 /// VALIDATED against, and the executor still resolves the typed pair alone. An empty label yields
@@ -3524,6 +3541,9 @@ fn pressed_label<'a>(
     arg: i64,
 ) -> Option<String> {
     let mut by_turn: Option<&Action> = None;
+    // Rows bearing this turn name that the posted `arg` did NOT match. An exact match returns
+    // immediately, so reaching the end with more than one of these means the press is ambiguous.
+    let mut unmatched_rows = 0_usize;
     for action in offered {
         if action.turn != turn {
             continue;
@@ -3531,9 +3551,15 @@ fn pressed_label<'a>(
         if action.arg == arg {
             return Some(action.label.clone()).filter(|l| !l.trim().is_empty());
         }
+        unmatched_rows += 1;
         if by_turn.is_none() {
             by_turn = Some(action);
         }
+    }
+    if unmatched_rows != 1 {
+        // Zero rows: the surface does not offer this turn at all. Several rows: it offers many under
+        // this name and the player pressed none of them — naming the first would invent the act.
+        return None;
     }
     by_turn
         .map(|a| a.label.clone())
@@ -3888,6 +3914,10 @@ async fn post_offering_act(
         table_seats::record_landed_act(&key, &sid.0, &user);
     }
 
+    // ⚑ **A STALE ROUTE MUST NOT REPORT ITSELF AS AN OK.** Read BEFORE the match below consumes
+    // `acted`; the status is applied at the one return point. See that arm for the whole account.
+    let stale_route = matches!(&acted, CatalogAct::GameRouteRefused(_));
+
     let notice = match acted {
         CatalogAct::Advanced {
             outcome: Outcome::Landed { receipt, ended },
@@ -3954,6 +3984,21 @@ async fn post_offering_act(
         // authority epochs), so it goes to the operator log at the refusal site
         // ([`refused_game_route_response`]) and the reader gets the same sentence as every other
         // stale control.
+        //
+        // ⚑ **AND THE STATUS SAYS SO NOW — it used to answer `200 OK`.** This is the SAME CONDITION
+        // [`refused_game_route_response`] answers `409 Conflict` + [`REFUSAL_STALE_GAME_ROUTE`] for,
+        // reached one layer later: the presented authority parses, and the BINDING it names turns out
+        // to be retired (a tab held across a close/reopen, a pre-restart incarnation). Nothing
+        // commits — but the response said `OK`, carried no refusal header, and differed from a landed
+        // turn only in the prose of a notice. So every non-human reader of this route — the
+        // progressive-enhancement `fetch` that swaps the fragment in, a monitor, the shared
+        // `tests/common::guard` tripwire whose eyes are a CONFLICT plus a header — was told a retired
+        // route had been accepted. `dreggnet-web/tests/game_epoch_runtime.rs` asked for the 409 and had
+        // never reached the line: it died earlier on a stale copy assertion.
+        //
+        // The player still gets the RE-RENDERED live surface (better than the standalone stale page:
+        // they see the board they can act on), and now the status and the header match the refusal
+        // the other site emits for the identical cause.
         CatalogAct::GameRouteRefused(reason) => {
             tracing::error!(
                 target: "dregg::refusal",
@@ -3969,15 +4014,23 @@ async fn post_offering_act(
     // hidden hand (and their own cap-gated affordances), not the viewer-blind public fog. When the
     // POST came from the progressive-enhancement script (`X-Fragment: 1`), return JUST the
     // re-rendered surface fragment for an in-place swap; a plain no-JS form POST gets the full page.
-    Html(render_offering_response(
+    let page = Html(render_offering_response(
         &state,
         &key,
         &sid,
         Some(&notice),
         &actor,
         wants_fragment(&headers),
-    ))
-    .into_response()
+    ));
+    if !stale_route {
+        return page.into_response();
+    }
+    let mut refused = (StatusCode::CONFLICT, page).into_response();
+    refused.headers_mut().insert(
+        axum::http::HeaderName::from_static(REFUSAL_KIND_HEADER),
+        axum::http::HeaderValue::from_static(REFUSAL_STALE_GAME_ROUTE),
+    );
+    refused
 }
 
 /// **The honest lifecycle-refusal response** — a policy gate ([`HostError::Policy`]) answers
@@ -5256,8 +5309,17 @@ mod binding_labels {
         }
     }
 
-    /// The pressed row is identified by the exact `(turn, arg)` pair, falling back to the turn alone
-    /// — otherwise two rows differing only by index would confirm each other's action.
+    /// The pressed row is identified by the exact `(turn, arg)` pair, and the turn-alone fallback
+    /// fires ONLY where it cannot be wrong — otherwise two rows differing only by index would
+    /// confirm each other's action.
+    ///
+    /// ⚑ **THIS TEST USED TO PIN THE FABRICATION.** It asserted `pressed_label(offered, "list", 99)
+    /// == Some("List Ember Cloak (2◈)")` against a list holding TWO `list` rows — i.e. it required
+    /// the banner to name a listing the player did not press. That is what put *"Refused: Seal a move
+    /// to (3,0) · illegal move (3,1) → (4,2)"* on automatafl's board: one square named in the clause
+    /// about what happened, a different one in the clause about why it was refused. The assertion is
+    /// STRICTER now (an ambiguous press earns no label at all), and the `Input` case the fallback was
+    /// written for is asserted separately, on a list where it is unambiguous.
     #[test]
     fn the_named_action_is_the_row_that_was_actually_pressed() {
         let offered = vec![
@@ -5273,12 +5335,26 @@ mod binding_labels {
             pressed_label(offered.iter(), "cancel", 0).as_deref(),
             Some("Cancel your listing")
         );
-        // A board cell / value-taking turn carries an arg no row declares: name the turn's row.
+        // AMBIGUOUS: two `list` rows and the posted arg matches neither (a board cell off the
+        // offered set, a stale index). There is no honest answer, so there is no label.
         assert_eq!(
-            pressed_label(offered.iter(), "list", 99).as_deref(),
-            Some("List Ember Cloak (2◈)")
+            pressed_label(offered.iter(), "list", 99),
+            None,
+            "an unoffered index must NOT borrow another row's label"
         );
         assert_eq!(pressed_label(offered.iter(), "nothing", 0), None);
+
+        // …and the case the fallback exists for is untouched: ONE row bearing the turn name, whose
+        // `arg` the player supplies (an `Input` affordance). The row IS the control they pressed.
+        let with_input = vec![
+            Action::new("Transfer dregg", "transfer", 0, true),
+            Action::new("Cancel your listing", "cancel", 0, true),
+        ];
+        assert_eq!(
+            pressed_label(with_input.iter(), "transfer", 42).as_deref(),
+            Some("Transfer dregg"),
+            "a value-taking turn with one row is named by that row"
+        );
 
         // And the banner clause: a label when there is one, the turn name when there is not, and
         // nothing at all when there is neither.

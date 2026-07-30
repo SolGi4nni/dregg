@@ -1361,7 +1361,12 @@ function maybeAutoAnchor() {
 const FLOORS = 4;
 const RELICS = 8;
 const BREATH = 30;
-const CAP = 8;
+// ⚑ 7, NOT 8. It tightened when `unlock` stopped keeping the key (`dungeon_on_dregg::descent::CAP`,
+// the emitted `affineLe … c: 7`) and this mirror was left behind — which is exactly the delay-fused
+// bug this block's own comment warns about, and the one the Rust constant spells out: a browser
+// sizing the pack bar to 8 while the executor enforces 7 offers a take the referee refuses, so the
+// game stops on a legal-looking press.
+const CAP = 7;
 const CARRIED = 8;
 const BANKED = 9;
 // The two prices the WAY HOME is made of. `flee` demands the surface and the climb buys one floor

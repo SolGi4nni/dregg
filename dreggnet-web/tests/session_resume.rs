@@ -49,6 +49,57 @@ fn app_over(dir: PathBuf) -> axum::Router {
     ))))
 }
 
+/// The two hidden route-authority fields a spined game's play form carries that are minted PER
+/// SERVER PROCESS: the host incarnation, and the form token bound to it.
+const PER_PROCESS_AUTHORITY: [&str; 2] = ["game_host_incarnation", "game_form_token"];
+
+/// **A rendered page with the per-process route authority blanked** — everything about the SESSION,
+/// with nothing about which process is serving it.
+///
+/// ⚑ **WHY THIS EXISTS, and why the check it enables is stronger than the byte equality it
+/// replaces.** `a_played_session_survives_a_restart_from_the_same_dir` asserted `after_body ==
+/// before_body` on the whole document. Since the game spine landed, that document carries
+/// `game_host_incarnation` (and the `game_form_token` derived from it) in every play form, and those
+/// are minted fresh by every host process ON PURPOSE — a new incarnation is exactly what makes a
+/// form printed before the restart REFUSE afterwards. So the assertion demanded that a restart NOT
+/// change the one field whose whole job is to change on a restart, and it went red while the resume
+/// was working perfectly: measured at HEAD, all 49 differing byte-runs between the two documents lay
+/// inside those two values, and every other byte — the prose, the state, the receipts, the turn
+/// count, `game_expected_pre_head`, `game_session_generation` — was identical.
+///
+/// The repair keeps the equality on everything that is about the session and adds the assertion the
+/// old shape could not make: that the authority DID rotate. Both halves are now pinned instead of
+/// one being accidentally negated.
+fn without_route_authority(html: &str) -> String {
+    let mut out = html.to_string();
+    for field in PER_PROCESS_AUTHORITY {
+        let marker = format!("name=\"{field}\" value=\"");
+        let mut rebuilt = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some((head, tail)) = rest.split_once(&marker) {
+            let (_value, after) = tail
+                .split_once('"')
+                .expect("a hidden input's value is a quoted attribute");
+            rebuilt.push_str(head);
+            rebuilt.push_str(&marker);
+            rebuilt.push_str("<per-process>\"");
+            rest = after;
+        }
+        rebuilt.push_str(rest);
+        out = rebuilt;
+    }
+    out
+}
+
+/// Every value a page carries for one hidden field, in document order.
+fn authority_values(html: &str, field: &str) -> Vec<String> {
+    let marker = format!("name=\"{field}\" value=\"");
+    html.split(&marker)
+        .skip(1)
+        .filter_map(|tail| tail.split_once('"').map(|(value, _)| value.to_string()))
+        .collect()
+}
+
 async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -110,9 +161,26 @@ async fn a_played_session_survives_a_restart_from_the_same_dir() {
         "genesis + three landed turns: {before_verify}"
     );
     assert_ne!(
-        before_body, genesis_body,
-        "three landed moves changed the rendered surface — the survival equality below is non-vacuous"
+        without_route_authority(&before_body),
+        without_route_authority(&genesis_body),
+        "three landed moves changed the rendered SESSION — the survival equality below is \
+         non-vacuous, and it is non-vacuous because the game moved rather than because a per-process \
+         nonce did"
     );
+
+    // ⚑ THE CONTROL FOR THE ROTATION PIN BELOW, taken BEFORE the restart. "The authority differs
+    // after a restart" is worth nothing unless it is the same WITHOUT one — otherwise any two
+    // renders would satisfy it and the pin could never go red. Re-reading the same live process must
+    // give back the same authority.
+    let (_s, same_process_body) = get(&app, base).await;
+    for field in PER_PROCESS_AUTHORITY {
+        assert_eq!(
+            authority_values(&same_process_body, field),
+            authority_values(&before_body, field),
+            "{field} is per PROCESS: two reads of one live process must agree, or the \
+             rotation pin after the restart proves nothing"
+        );
+    }
 
     // THE RESTART: a brand-new app + host over the SAME directory. Nothing in-memory survives;
     // the session must come back from the persisted move-log, by replay.
@@ -120,9 +188,31 @@ async fn a_played_session_survives_a_restart_from_the_same_dir() {
     let (status, after_body) = get(&app2, base).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        after_body, before_body,
+        without_route_authority(&after_body),
+        without_route_authority(&before_body),
         "the resumed session renders the IDENTICAL surface (not a fresh genesis)"
     );
+    // …AND the half a whole-document equality had to deny: the route authority is per PROCESS, so a
+    // restart must rotate it. Without this the form a player had open before the restart would keep
+    // being accepted, which is the epoch the game spine exists to enforce.
+    for field in PER_PROCESS_AUTHORITY {
+        let before = authority_values(&before_body, field);
+        let after = authority_values(&after_body, field);
+        assert!(
+            !before.is_empty(),
+            "the play form must carry {field} at all, or this pin checks nothing"
+        );
+        assert_eq!(
+            before.len(),
+            after.len(),
+            "the restart served the same number of {field} controls"
+        );
+        assert!(
+            before.iter().zip(&after).all(|(b, a)| b != a),
+            "the restart must MINT A NEW {field} — a pre-restart form has to stop being accepted \
+             ({before:?} vs {after:?})"
+        );
+    }
     let (_s, after_verify) = get(&app2, &verify).await;
     assert!(
         after_verify.contains("\"verified\":true"),

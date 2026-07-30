@@ -52,6 +52,129 @@ fn app() -> axum::Router {
     common::guard(catalog_router(Arc::new(CatalogState::new())))
 }
 
+/// **POST an act as `user`, carrying the route authority read off `authority_of`'s page.**
+///
+/// ⚑ WHY THE TWO IDENTITIES ARE SEPARATE HERE. `common::post_act` reads the authority off the
+/// POSTER's own page, which is right for a player and impossible for a SPECTATOR: a viewer holding
+/// no seat is served the viewer-blind public projection, which carries no control at all and
+/// therefore no `game_*` fields — so a spectator posting through `post_act` presents no authority,
+/// is answered `409 invalid game reference`, and never reaches the seat gate the test is about. (The
+/// shared silent-`/act` tripwire catches exactly that and killed this test until it was split, which
+/// is the tripwire doing its job.)
+///
+/// The authority is bound to `{offering, session, incarnation, generation, pre-head}` and NOT to the
+/// viewer (`common::authority_suffix`), so a seat's page is where a real attacker would get one:
+/// a shoulder-surfed form, a shared screen, a copied `curl`. Posting THAT as a third identity is the
+/// honest spectator attack — everything about the request is valid except who is making it.
+async fn post_act_as_other(
+    app: &axum::Router,
+    act_uri: &str,
+    turn: &str,
+    arg: i64,
+    user: &str,
+    authority_of: &str,
+) -> (StatusCode, String) {
+    let authority =
+        common::authority_suffix(app, act_uri, Some(&format!("dregg_user={authority_of}"))).await;
+    assert!(
+        !authority.is_empty(),
+        "the seat's own page must carry a route authority, or this posts nothing to refuse"
+    );
+    let cookie = format!("dregg_user={user}");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(act_uri)
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", &cookie)
+                .body(Body::from(format!("turn={turn}&arg={arg}{authority}")))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// GET a play surface AS `user` — the page that user's browser would be looking at, and therefore
+/// the only page whose controls are theirs to press.
+async fn get_as(app: &axum::Router, uri: &str, user: &str) -> String {
+    let (status, body) =
+        common::get_with_cookie(app, uri, Some(&format!("dregg_user={user}"))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// **THE OUTCOME, not the copy** — how many turns the offering's own replay proof accepts on this
+/// session's committed chain right now (`GET …/verify` → `{"verified":…,"turns":N}`).
+///
+/// Every "did that land?" / "did that commit nothing?" assertion in this file is anchored here
+/// rather than on a banner string: a rendered notice is what the page SAYS, and this is what the
+/// chain HOLDS. A refusal that quietly committed, or a landing that quietly did not, moves this
+/// number and no amount of correct-looking copy hides it.
+async fn committed_turns(app: &axum::Router, base: &str) -> u64 {
+    let (status, body) = get(app, &format!("{base}/verify")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let json: serde_json::Value = serde_json::from_str(&body).expect("verify answers JSON");
+    assert_eq!(
+        json["verified"], true,
+        "the committed chain must re-verify at every step: {body}"
+    );
+    json["turns"].as_u64().expect("verify reports a turn count")
+}
+
+/// **The `{turn, arg}` this user's own page OFFERS them, ENABLED** — derived, never a literal.
+///
+/// ⚑ `arg` is an INDEX into the offering's LIVE decision list, not a stable move name. `games.rs`
+/// posted a hardcoded `("comp", 3)` schedule, which was legal only while tug ran a fixed per-seat
+/// action order; since the seats CHOOSE, index 3 names whatever the deal put there, so the press was
+/// refused — correctly — as a control that is not on the current surface, and every assertion after
+/// it was about a turn that never happened. Reading the pair off the served form is what a browser
+/// does, so this test is about "a browser user's offered play lands" and not about the engine's
+/// ordering. (`common::first_offered_act`'s own doc records the same drift on `demo_playthrough`.)
+fn live_press(page: &str) -> Option<(String, i64)> {
+    common::offered_acts(page)
+        .into_iter()
+        .find(|act| act.enabled)
+        .map(|act| (act.turn, act.arg))
+}
+
+async fn offered_press(app: &axum::Router, base: &str, user: &str) -> Option<(String, i64)> {
+    live_press(&get_as(app, base, user).await)
+}
+
+/// **Which of these browser users is offered a live control, and what it is.** Tug ALTERNATES —
+/// only the seat that owes the next move is offered an enabled row, and after a cut it is the
+/// RESPONDER who owes it, not the next seat in a rota — so "whose turn is it" is a question for the
+/// served pages, never for a schedule written into a test. `None` when neither is owed anything,
+/// which is how a driven round knows it is over.
+///
+/// `just_pressed` is consulted LAST. A tug open + advance is seconds of real Lean work per call, so
+/// the page fetches here dominate this file's wall clock: asking the other seat first is right far
+/// more often than not (a cut is answered by the opponent) and roughly halves the renders.
+async fn whoever_moves(
+    app: &axum::Router,
+    base: &str,
+    users: [&'static str; 2],
+    just_pressed: Option<&str>,
+) -> Option<(&'static str, String, i64)> {
+    let mut order = users;
+    if just_pressed == Some(order[0]) {
+        order.swap(0, 1);
+    }
+    for user in order {
+        if let Some((turn, arg)) = offered_press(app, base, user).await {
+            return Some((user, turn, arg));
+        }
+    }
+    None
+}
+
 /// The automatafl board index of `(x, y)` — derived from the board's OWN width
 /// ([`dregg_automatafl::game::N`], the stock two-player game), never a literal, so a board-size
 /// change moves this test with it instead of silently addressing the wrong squares.
@@ -128,14 +251,29 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
     );
 
     // An ILLEGAL move — (3,1) → (4,2) is a diagonal. REFUSED; nothing commits.
+    //
+    // ⚑ THE REFEREE'S OWN SENTENCE, and the CHAIN — not the concatenation. This asserted
+    // `contains("Refused: illegal move")`, which is not a claim about the referee at all: the notice
+    // is `Refused: {what you pressed} · {why}`, so naming the pressed control (a real improvement,
+    // and the thing that tells a blind player WHICH of four buttons was refused) split the literal
+    // and reddened this line while the rule it is about was working perfectly. The refusal had NOT
+    // broken. What is checked now is the referee's verdict, quoted from the rule it enforces, plus
+    // the only thing that actually settles "nothing committed": the committed chain did not grow.
+    let before = committed_turns(&app, base).await;
     let (_, body) = post(&app, &format!("{base}/act"), "commit", idx(4, 2), "alice").await;
     assert!(
-        body.contains("Refused: illegal move"),
-        "a diagonal is refused by the real referee: {body}"
+        body.contains("Refused")
+            && body.contains(&format!("illegal move ({},{}) → ({},{})", 3, 1, 4, 2)),
+        "a diagonal is refused by the real referee, which names the move it refused: {body}"
+    );
+    assert_eq!(
+        committed_turns(&app, base).await,
+        before,
+        "the refused move committed NOTHING — the chain must not have grown"
     );
     assert!(
         body.contains("COMMIT (both seats seal a move)"),
-        "the refused move committed nothing — still the commit phase"
+        "…and the board did not advance — still the commit phase"
     );
 
     // The legal seal lands. The POST re-renders AS alice (the viewer-aware host boundary), so the
@@ -278,47 +416,74 @@ async fn the_server_form_automatafl_board_is_polished() {
 
 /// **A tug play lands for a browser user.** The seat-claiming adapter seats the first two browser
 /// users; a third is a spectator (refused, nothing commits), and the chain verifies.
+///
+/// ⚑ The three presses are settled by ONE exact count on the committed chain at the end, not by
+/// three banners: `genesis + 2` means both plays landed AND the spectator's press committed nothing.
+/// It is one number because it has to be — `verify` REPLAYS the round (a fresh open plus one real
+/// executor turn per committed turn), so a count taken between every press would make this test
+/// quadratic in real Lean work against a live kill budget.
 #[tokio::test]
 async fn a_tug_play_lands_for_a_browser_user() {
     let app = app();
     let base = "/offerings/tug/session/tug-1";
 
-    let (status, body) = get(&app, base).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("Multiway-Tug"), "the tug surface renders");
+    // ⚑ ONE page fetch, and the opening press is read off IT. A tug open and a tug advance are each
+    // seconds of real Lean work, so every avoidable round-trip here is spent against this file's
+    // budget: the page that proves the surface renders is the same page that names the move.
+    let opened = get_as(&app, base, "alice").await;
+    assert!(opened.contains("Multiway-Tug"), "the tug surface renders");
     assert!(
-        body.contains("Guild 0") && body.contains("Guild 6"),
+        opened.contains("Guild 0") && opened.contains("Guild 6"),
         "the seven guild lanes paint"
     );
 
-    // The scheduled opening action is `comp` (the round's action order is Competition → Gift →
-    // Discard → Secret). A browser user CLAIMS seat A by acting — and the play lands a REAL turn
-    // (before the adapter, every web play was refused as "actor holds no seat").
-    let (_, body) = post(&app, &format!("{base}/act"), "comp", 3, "alice").await;
+    // A browser user CLAIMS seat A by acting — and the play lands a REAL turn (before the adapter,
+    // every web play was refused as "actor holds no seat"). The press is whatever ALICE'S OWN PAGE
+    // offers her; see `offered_press` for why a literal pair cannot be used here.
+    let (turn, arg) =
+        live_press(&opened).expect("the opening surface offers a claimable-seat move");
+    let (_, body) = post(&app, &format!("{base}/act"), &turn, arg, "alice").await;
     assert!(
         body.contains("Turn committed"),
-        "a browser user's play lands a real turn: {body}"
+        "a browser user's play lands a real turn ({turn} {arg}): {body}"
     );
 
-    // Seat B is claimed by the next browser user; their scheduled action lands too.
-    let (_, body) = post(&app, &format!("{base}/act"), "comp", 3, "bob").await;
+    // Seat B is claimed by the next browser user, off HIS OWN page: in an alternating game the
+    // re-render of seat A's act is not seat B's move, so re-reading A's response would hand B a
+    // control that is not theirs.
+    let (turn, arg) = offered_press(&app, base, "bob")
+        .await
+        .expect("with seat A taken, the second browser user is offered the other seat's move");
+    let (_, body) = post(&app, &format!("{base}/act"), &turn, arg, "bob").await;
     assert!(
         body.contains("Turn committed"),
-        "the second browser user claims seat B and plays: {body}"
+        "the second browser user claims seat B and plays ({turn} {arg}): {body}"
     );
 
-    // A THIRD browser user is a spectator — refused, nothing commits.
-    let (_, body) = post(&app, &format!("{base}/act"), "gift", 2, "carol").await;
+    // ── THE REFUSAL POLE, in this same process and on this same chain. A THIRD browser user is a
+    // spectator. Carol posts the EXACT control the seat to move is legitimately offered, carrying
+    // that seat's own valid route authority (see `post_act_as_other`) — so the ONLY thing that
+    // differs between the two landings above and the refusal here is WHO is pressing, which is what
+    // makes this a test of the SEAT gate and not of a stale argument or a missing form token.
+    let (mover, turn, arg) = whoever_moves(&app, base, ["alice", "bob"], Some("bob"))
+        .await
+        .expect("with both seats held, one of them owes the next move");
+    let (status, body) =
+        post_act_as_other(&app, &format!("{base}/act"), &turn, arg, "carol", mover).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert!(
-        body.contains("Refused"),
-        "a third browser user is a spectator: {body}"
+        body.contains("Refused") && body.contains("spectator"),
+        "a third browser user is refused AS A SPECTATOR, not for some other reason ({turn} {arg}): {body}"
     );
 
-    let (status, body) = get(&app, &format!("{base}/verify")).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.contains("\"verified\":true"),
-        "the committed tug round verifies: {body}"
+    // THE OUTCOME, and it settles all three presses at once: EXACTLY the genesis plus the two seat
+    // claims. Bigger and the spectator's refusal committed something; smaller and one of the two
+    // "Turn committed" banners was over a chain that never grew. (That carol was answered as a
+    // SPECTATOR is itself only reachable once both seats are genuinely held.)
+    assert_eq!(
+        committed_turns(&app, base).await,
+        3,
+        "genesis + seat A's play + seat B's play, and the spectator's press on neither side of it"
     );
 }
 
@@ -327,31 +492,54 @@ async fn a_tug_play_lands_for_a_browser_user() {
 /// "to move" banner. Both browser identities keep their claimed seats across
 /// the full alternating round. The browser then fires the separately surfaced
 /// SCORE affordance, preserving the Offering invariant that one press is one
-/// executor turn and one receipt; `/verify` re-drives all nine inputs.
+/// executor turn and one receipt; `/verify` re-drives every input.
+///
+/// ⚑ **THE ROUND IS DRIVEN OFF THE SERVED PAGES, NOT OFF A SCHEDULE.** This test used to POST a
+/// literal `[("comp",3), ("comp",3), ("gift",2), …]` list, which described an engine that no longer
+/// exists twice over: `arg` is an INDEX into the acting seat's LIVE `legal_decisions()` (so no fixed
+/// index names a fixed move), and the round is not eight presses — a Gift or a Competition PRESENTS
+/// a cut that the OPPONENT then answers, so [`dregg_multiway_tug::reference::ROUND_TURNS`] committed
+/// turns are 8 actions plus 4 responses. The old schedule was therefore refused on its first press
+/// and, had it not been, would have asserted a nine-turn chain against a fourteen-turn round.
+///
+/// What is asserted is the invariant, derived rather than transcribed: each press is exactly one
+/// committed executor turn, the round runs to its own end, and the whole chain replays.
 #[tokio::test]
 async fn a_full_tug_match_scores_and_replays_through_the_web_surface() {
     let app = app();
     let base = "/offerings/tug/session/tug-full-scored";
-    let schedule = [
-        ("comp", 3, "alice"),
-        ("comp", 3, "bob"),
-        ("gift", 2, "alice"),
-        ("gift", 2, "bob"),
-        ("discard", 1, "alice"),
-        ("discard", 1, "bob"),
-        ("secret", 0, "alice"),
-        ("secret", 0, "bob"),
-    ];
 
-    for (turn, arg, actor) in schedule {
-        let (status, body) = post(&app, &format!("{base}/act"), turn, arg, actor).await;
+    // Drive the round to its end: at each step ask the two browser identities' OWN pages which of
+    // them is offered a live control, and press it. ⚑ The chain is read ONCE, at the end, not per
+    // press: a tug open and a tug advance are seconds of real Lean work apiece, and `/verify`
+    // REPLAYS the whole chain, so a per-press verify makes this file quadratic against a real kill
+    // budget. `turns == genesis + presses` at the end says the same thing about every press.
+    let mut presses = 0_u64;
+    let mut last_actor: Option<&'static str> = None;
+    while let Some((actor, turn, arg)) =
+        whoever_moves(&app, base, ["alice", "bob"], last_actor).await
+    {
+        let (status, body) = post(&app, &format!("{base}/act"), &turn, arg, actor).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body.contains("Turn committed"), "{actor}/{turn}: {body}");
+        assert!(
+            body.contains("Turn committed"),
+            "{actor} press #{presses} ({turn} {arg}) did not land: {body}"
+        );
+        presses += 1;
+        last_actor = Some(actor);
+        assert!(
+            presses <= 64,
+            "the round must terminate; it is still offering moves after {presses} presses"
+        );
     }
 
-    let (status, body) = post(&app, &format!("{base}/act"), "score", 4, "alice").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("Turn committed"), "score: {body}");
+    // The shape the engine itself declares: every round turn, plus the separately surfaced SCORE.
+    let round_turns = dregg_multiway_tug::reference::ROUND_TURNS;
+    assert_eq!(
+        presses,
+        round_turns + 1,
+        "the whole round plus the score press ({round_turns} round turns + 1)"
+    );
 
     let (status, body) = get(&app, base).await;
     assert_eq!(status, StatusCode::OK);
@@ -365,11 +553,12 @@ async fn a_full_tug_match_scores_and_replays_through_the_web_surface() {
         "final influence renders: {body}"
     );
 
-    let (status, body) = get(&app, &format!("{base}/verify")).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("\"verified\":true"), "{body}");
-    assert!(
-        body.contains("\"turns\":10"),
-        "genesis + eight plays + score replay: {body}"
+    // THE OUTCOME: the whole chain replays, and it is exactly the genesis plus ONE turn per press —
+    // the Offering invariant this test exists for, stated over the round that was actually played
+    // rather than over a transcribed count.
+    assert_eq!(
+        committed_turns(&app, base).await,
+        1 + presses,
+        "genesis + ONE executor turn per press, and nothing else on the chain"
     );
 }

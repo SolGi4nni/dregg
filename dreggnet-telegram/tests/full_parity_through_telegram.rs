@@ -55,6 +55,63 @@ fn last_text(h: &TelegramHost<MockTransport>) -> String {
         .clone()
 }
 
+/// **EVERYTHING THIS CHAT'S READER HAS SEEN**, every message in order.
+///
+/// ⚑ A Telegram surface is not one message. `build_present_request_with_callback_data` splits a page
+/// that exceeds the text limit and sends the OVERFLOW PARTS FIRST, so the main message lands at the
+/// bottom of the chat and ends with *"The last N parts of this page did not fit in one message and
+/// are shown just above."* `last_text` therefore reads ONE PART of the page, and which claims land in
+/// it is a function of how long the round's prose happens to be: the tug surface grew past the limit,
+/// so the seated player's own hand stayed in the last part while `Opponent (hidden hand)` moved into
+/// an earlier one and a live, correct fog projection read as missing.
+///
+/// A person in a DM read all of them. So does this.
+fn whole_page(h: &TelegramHost<MockTransport>, chat: i64) -> String {
+    h.frontend()
+        .transport()
+        .sent_to(chat)
+        .iter()
+        .map(|message| message.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// **The `callback_data` of the first LIVE button on the surface this chat was last presented** —
+/// what a person's thumb reaches, derived from the keyboard the bot actually sent.
+///
+/// ⚑ NEVER `encode_callback("comp", 3)`. `arg` is an INDEX into the acting seat's LIVE
+/// `legal_decisions()`, and since the seats CHOOSE (rather than running a fixed per-seat action
+/// order) index 3 names whatever the deal put there — so a literal pair is refused, correctly, as a
+/// control that is not on the current surface, and every assertion after it is about a turn that
+/// never happened. `build_present_request_with_callback_data` sorts LIVE affordances before locked
+/// ones and prefixes a locked label with [`LOCK_GLYPH`], so the first un-prefixed, non-`/verify`
+/// button is exactly the move this chat is being offered.
+fn live_press(h: &TelegramHost<MockTransport>, chat: i64) -> String {
+    let sent = h.frontend().transport().sent_to(chat);
+    let message = sent.last().expect("the chat was presented a surface");
+    let markup = message
+        .reply_markup
+        .as_ref()
+        .expect("an interactive surface carries an inline keyboard");
+    markup
+        .inline_keyboard
+        .iter()
+        .flatten()
+        .find(|button| {
+            !button.text.starts_with(dreggnet_telegram::api::LOCK_GLYPH)
+                && !button
+                    .callback_data
+                    .starts_with(dreggnet_telegram::verify_control::TURN_VERIFY)
+        })
+        .map(|button| button.callback_data.clone())
+        .unwrap_or_else(|| {
+            panic!(
+                "the presented surface offers no live control: {:?}",
+                markup.inline_keyboard
+            )
+        })
+}
+
 /// **BOTH-POLARITY parity with the LIVE web catalog.** The Telegram host — driven over
 /// [`MockTransport`] through its real `HostThread` — registers exactly the offering-key set
 /// `dreggnet_web::demo_host()` registers. Polarity 1: every web offering is reachable on Telegram
@@ -220,13 +277,11 @@ fn the_tug_hidden_hand_threads_the_viewer_in_a_dm() {
         .expect("tug opens in a DM on Telegram");
     assert_eq!(h.active_offering(&sid), Some("tug"));
 
-    // ALICE plays the round's opening action (Competition) — claims seat A, lands a real receipt, and
-    // the re-render is projected FOR alice: her own hand is revealed.
-    let alice_press = h.press(CallbackQuery::press(
-        chat,
-        ALICE,
-        encode_callback("comp", 3),
-    ));
+    // ALICE plays the round's opening action — claims seat A, lands a real receipt, and the
+    // re-render is projected FOR alice: her own hand is revealed. The press is the one her keyboard
+    // actually offers (see `live_press`), never a literal `("comp", 3)`.
+    let offered = live_press(&h, chat);
+    let alice_press = h.press(CallbackQuery::press(chat, ALICE, offered.clone()));
     assert!(
         matches!(
             alice_press,
@@ -235,9 +290,9 @@ fn the_tug_hidden_hand_threads_the_viewer_in_a_dm() {
                 ..
             }
         ),
-        "alice's opening comp lands + claims seat A: {alice_press:?}"
+        "alice's opening press ({offered}) lands + claims seat A: {alice_press:?}"
     );
-    let alice_view = last_text(&h);
+    let alice_view = whole_page(&h, chat);
     assert!(
         !alice_view.trim().is_empty(),
         "the tug surface for the seated player is non-empty (not a silent drop)"

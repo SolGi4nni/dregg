@@ -74,6 +74,24 @@ async fn act(app: &axum::Router, uri: &str, cookie: &str, turn: &str, arg: i64) 
         .expect("POST request")
 }
 
+/// **The `{turn, arg}` this browser's own tug page OFFERS it, ENABLED** — derived, never a literal.
+///
+/// ⚑ These tests posted a hardcoded `("comp", 3)`. `arg` is an INDEX into the acting seat's LIVE
+/// `legal_decisions()`, and a tug round is seeded from its SESSION ID, so which decision index 3
+/// names differs per table: the same literal lands on one session and is refused on the next as a
+/// control that is not on the current surface. A seat-claim test that is refused before the executor
+/// checks nothing about seats at all — and it would report the drift as "this visitor could not
+/// claim a seat", which is a diagnosis of the wrong thing.
+async fn offered_press(app: &axum::Router, base: &str, cookie: &str) -> (String, i64) {
+    let (status, _, _, page) = send(app, get(base, Some(cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    common::offered_acts(&page)
+        .into_iter()
+        .find(|act| act.enabled)
+        .map(|act| (act.turn, act.arg))
+        .unwrap_or_else(|| panic!("this browser's tug page offers it no enabled move: {page}"))
+}
+
 #[tokio::test]
 async fn signed_route_is_not_wrapped_in_the_asserted_visitor_bootstrap() {
     let app = app();
@@ -149,23 +167,27 @@ async fn two_cookie_less_browsers_get_distinct_durable_actors_and_can_take_both_
     // Multiway-Tug assigns the first two distinct actors seats A and B. The old
     // literal `anon` fallback made the second browser the same actor and this
     // second scheduled play was refused.
+    let (turn, arg) = offered_press(&app, base, cookie_a).await;
     let (_, _, _, first) = send(
         &app,
-        act(&app, &format!("{base}/act"), cookie_a, "comp", 3).await,
+        act(&app, &format!("{base}/act"), cookie_a, &turn, arg).await,
     )
     .await;
     assert!(
         first.contains("Turn committed"),
-        "first visitor claims seat A: {first}"
+        "first visitor claims seat A ({turn} {arg}): {first}"
     );
+    // Seat B's move is read off SEAT B'S OWN page — tug alternates, so the seat that just played is
+    // not the seat that owes the next move.
+    let (turn, arg) = offered_press(&app, base, cookie_b).await;
     let (_, _, _, second) = send(
         &app,
-        act(&app, &format!("{base}/act"), cookie_b, "comp", 3).await,
+        act(&app, &format!("{base}/act"), cookie_b, &turn, arg).await,
     )
     .await;
     assert!(
         second.contains("Turn committed"),
-        "second visitor claims seat B: {second}"
+        "second visitor claims seat B ({turn} {arg}): {second}"
     );
 }
 
@@ -187,37 +209,45 @@ async fn explicit_query_and_cookie_identities_are_not_replaced() {
     );
 
     // Query retains precedence over cookie: these are two distinct players and
-    // therefore claim the two alternating seats successfully.
+    // therefore claim the two alternating seats successfully. Each press is read off the page THAT
+    // actor is served — the query actor's page carries `?user=`, the cookie actor's does not.
+    let (turn, arg) = offered_press(
+        &app,
+        &format!("{base}?user=query-player"),
+        "dregg_user=cookie-player",
+    )
+    .await;
     let (_, _, _, first) = send(
         &app,
         act(
             &app,
             &format!("{base}/act?user=query-player"),
             "dregg_user=cookie-player",
-            "comp",
-            3,
+            &turn,
+            arg,
         )
         .await,
     )
     .await;
     assert!(
         first.contains("Turn committed"),
-        "query actor claims seat A: {first}"
+        "query actor claims seat A ({turn} {arg}): {first}"
     );
+    let (turn, arg) = offered_press(&app, base, "dregg_user=cookie-player").await;
     let (_, _, _, second) = send(
         &app,
         act(
             &app,
             &format!("{base}/act"),
             "dregg_user=cookie-player",
-            "comp",
-            3,
+            &turn,
+            arg,
         )
         .await,
     )
     .await;
     assert!(
         second.contains("Turn committed"),
-        "cookie actor claims seat B: {second}"
+        "cookie actor claims seat B ({turn} {arg}): {second}"
     );
 }

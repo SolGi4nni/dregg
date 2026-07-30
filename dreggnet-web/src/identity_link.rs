@@ -1935,8 +1935,30 @@ mod tests {
             None,
         );
         // The post-link view lists BOTH rows, each with its own custody sentence.
-        assert!(after.contains("Custodial"), "{after}");
-        assert!(after.contains("Self-held"), "{after}");
+        //
+        // ⚑ THESE TWO LINES WERE RED SINCE BIRTH. They asked for `Custodial` and `Self-held`,
+        // capitalised. The page has never rendered either word that way — `git log -S 'strong>Custodial<'`
+        // and `git log -S '<b>Custodial</b>'` over ALL history find no commit, and the assertions and
+        // the copy they contradict landed in the SAME commit (`eeaddfff4`). They were a guess about the
+        // copy, written in a measurement's voice, and they have been reporting a live and correct page
+        // as broken ever since.
+        //
+        // The property was right; the probe was not. What the post-link view owes a reader is one
+        // custody sentence PER ROW, and the two must say OPPOSITE things about who can reproduce the
+        // key — which is the whole point of the page. That is what is pinned now, verbatim against the
+        // sentences the rows are built from.
+        assert!(
+            after.contains(
+                "This key is <strong>custodial</strong>: the bot's operator can derive it."
+            ),
+            "the linked platform row must say the operator can derive its key: {after}"
+        );
+        assert!(
+            after.contains(
+                "This key is <strong>self-held</strong>: only your 24 words reproduce it."
+            ),
+            "the web row must say only the phrase reproduces its key: {after}"
+        );
         for page in [&before, &after] {
             assert!(page.contains("still CUSTODIAL"), "{page}");
             assert!(page.contains("bot_secret"), "{page}");

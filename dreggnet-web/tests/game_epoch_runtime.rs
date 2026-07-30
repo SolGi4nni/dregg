@@ -109,8 +109,19 @@ async fn web_game_epoch_survives_restart_and_close_reopen_retires_old_route() {
 
     let (status, landed) = response(&app, act(path, "choose", 0, &generation_one_surface)).await;
     assert_eq!(status, StatusCode::OK, "{landed}");
+    // ⚑ THE NAME OUTLIVED ITS REFERENT, and it was a MISSED SITE rather than a drift. Commit
+    // `9d5dd5afa` replaced the `"Verified {kind} receipt {hash} · publication {hash} · …"` grammar
+    // with prose and migrated the two assertions that pinned it (`discord_activity`,
+    // `telegram_miniapp`) — and missed this third one, which has asserted a sentence no producer
+    // emits ever since. The turn it is about lands perfectly.
+    //
+    // The property is unchanged: the web turn returns the VIEWER-BLIND publication's own grammar and
+    // nothing richer. That grammar is now the ruleset family + the lifecycle clause + the provenance
+    // clause (`game_session::public_receipt_text`), and on THIS route the provenance is the asserted
+    // one — the signed siblings pin "checked against a signature" in the same place.
     assert!(
-        landed.contains("publication") && landed.contains("Verified dungeon receipt"),
+        landed.contains("dungeon · the session is still going.")
+            && landed.contains("trusts the name you are playing under"),
         "the actual web turn returns only the common public receipt grammar: {landed}"
     );
 

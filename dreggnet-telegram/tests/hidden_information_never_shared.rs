@@ -87,6 +87,42 @@ fn assert_chat_never_showed_private(h: &TelegramHost<MockTransport>, chat: i64) 
     }
 }
 
+/// **The `callback_data` of the first LIVE button on the surface this chat was last presented** —
+/// what a person's thumb reaches, derived from the keyboard the bot actually sent.
+///
+/// ⚑ NEVER `encode_callback("comp", 3)`. `arg` is an INDEX into the acting seat's LIVE
+/// `legal_decisions()`, and since the seats CHOOSE (rather than running a fixed per-seat action
+/// order) index 3 names whatever the deal put there — so a literal pair is refused, correctly, as a
+/// control that is not on the current surface, and every assertion after it is about a turn that
+/// never happened. `build_present_request_with_callback_data` sorts LIVE affordances before locked
+/// ones and prefixes a locked label with [`LOCK_GLYPH`], so the first un-prefixed, non-`/verify`
+/// button is exactly the move this chat is being offered.
+fn live_press(h: &TelegramHost<MockTransport>, chat: i64) -> String {
+    let sent = h.frontend().transport().sent_to(chat);
+    let message = sent.last().expect("the chat was presented a surface");
+    let markup = message
+        .reply_markup
+        .as_ref()
+        .expect("an interactive surface carries an inline keyboard");
+    markup
+        .inline_keyboard
+        .iter()
+        .flatten()
+        .find(|button| {
+            !button.text.starts_with(LOCK_GLYPH)
+                && !button
+                    .callback_data
+                    .starts_with(dreggnet_telegram::verify_control::TURN_VERIFY)
+        })
+        .map(|button| button.callback_data.clone())
+        .unwrap_or_else(|| {
+            panic!(
+                "the presented surface offers no live control: {:?}",
+                markup.inline_keyboard
+            )
+        })
+}
+
 /// **THE LEAK TEST.** A hidden-information offering opened in a GROUP does not render a per-viewer
 /// surface into the shared message: the open is REFUSED with a legible redirect, and the chat's
 /// entire transcript is free of private content.
@@ -591,8 +627,10 @@ fn a_dm_still_serves_the_player_their_own_hidden_hand() {
     let sid = h.open("tug", dm, None, ALICE).expect("tug opens in a DM");
 
     // ALICE plays the opening move — claims seat A, lands a real receipt, and the re-present is
-    // projected FOR her.
-    let press = h.press(CallbackQuery::press(dm, ALICE, encode_callback("comp", 3)));
+    // projected FOR her. The press is the one her keyboard actually offers (see `live_press`),
+    // never a literal `("comp", 3)`.
+    let offered = live_press(&h, dm);
+    let press = h.press(CallbackQuery::press(dm, ALICE, offered.clone()));
     assert!(
         matches!(
             press,
@@ -601,7 +639,7 @@ fn a_dm_still_serves_the_player_their_own_hidden_hand() {
                 ..
             }
         ),
-        "alice's opening comp lands + claims seat A: {press:?}"
+        "alice's opening press ({offered}) lands + claims seat A: {press:?}"
     );
 
     let visible = h

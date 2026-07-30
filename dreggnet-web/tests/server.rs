@@ -48,6 +48,20 @@ async fn post(
     common::post_act(app, uri, turn, arg, user).await
 }
 
+/// **THE OUTCOME, not the copy** — how many turns the offering's own replay proof accepts on this
+/// session's committed chain right now (`GET …/verify` → `{"verified":…,"turns":N}`). A refusal that
+/// quietly committed, or a landing that quietly did not, moves this number; a banner cannot.
+async fn committed_turns(app: &axum::Router, base: &str) -> u64 {
+    let (status, body) = get(app, &format!("{base}/verify")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let json: serde_json::Value = serde_json::from_str(&body).expect("verify answers JSON");
+    assert_eq!(
+        json["verified"], true,
+        "the committed chain must re-verify at every step: {body}"
+    );
+    json["turns"].as_u64().expect("verify reports a turn count")
+}
+
 /// POST a JSON body (the `POST /descent/submit` run-ingest shape).
 async fn post_json(app: &axum::Router, uri: &str, body: &str) -> (StatusCode, String) {
     let resp = app
@@ -336,10 +350,21 @@ async fn a_full_automatafl_turn_plays_through_the_merged_app() {
     );
 
     // An illegal diagonal (3,1)->(4,2) is refused by the real referee; nothing commits.
+    //
+    // ⚑ Asserted on the referee's VERDICT and on the committed chain, not on the concatenation
+    // `"Refused: illegal move"`: the notice is `Refused: {what you pressed} · {why}`, so naming the
+    // pressed control split that literal and reddened this line while the rule was working. The
+    // refusal had not broken — see `games.rs` for the same repair on the same sentence.
+    let before = committed_turns(&app, base).await;
     let (_, body) = post(&app, &act, "commit", idx(4, 2), "alice").await;
     assert!(
-        body.contains("Refused: illegal move"),
-        "a diagonal is refused: {body}"
+        body.contains("Refused") && body.contains("illegal move (3,1) → (4,2)"),
+        "a diagonal is refused by the real referee, which names the move it refused: {body}"
+    );
+    assert_eq!(
+        committed_turns(&app, base).await,
+        before,
+        "the refused move committed NOTHING — the chain must not have grown"
     );
     assert!(
         body.contains("COMMIT (both seats seal a move)"),
