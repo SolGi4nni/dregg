@@ -33,13 +33,35 @@ The derivation is repeated once per ROW rather than once per TERM — `planes`-f
 That redundancy is nearly free, and the reason is structural: **an AIR's columns are global.** A
 stride-`k` arm would let the chain's gates fire only on plane-0 rows, but its columns would still
 be committed on all `planes·(w+1)` rows, and a guarded gate is a HIGHER-degree gate, not a cheaper
-one. The committed area — which is what FRI pays for — is identical either way. §6 prices both
-against the deployed four-way cut.
+one. The committed area — which is what FRI pays for — is identical either way. §6.3 prices both
+against the deployed four-way cut, in the kernel.
 
-The one shape that IS cheaper is a SEPARATE, SHORTER instance (`w` rows, not `planes·(w+1)`) tied
-to the MSM rows by a bus. That needs a `provide` dual of `Lookup`, which this IR does not have
+The one shape that IS cheaper is a SEPARATE, SHORTER instance (`w + 1` rows, not `planes·(w+1)`)
+tied to the MSM rows by a bus. That needs a `provide` dual of `Lookup`, which this IR does not have
 (`descriptor_ir2.rs`'s main arm calls `LookupBus::lookup_key` with multiplicity `ONE` and never
-`table_entry`). §6.2 names it as the cost rung, with its price.
+`table_entry`). §6.3 names it as the cost rung, with its price.
+
+## ⚑⚑ The third half: THE WIRE GATES FORCE, they are no longer ASSUMED
+
+`deriveWireGates` emits four objects — the plane thread's origin pin and step, the challenge PI pins
+and the challenge threads. Until §4e existed they appeared in exactly ONE theorem in this file, and
+that theorem was `deriveGates_length`, a COUNTING lemma; `derived_is_sNat` took their content as raw
+hypotheses (`hwire`, `hpidx`). The module emitted the gates and assumed what they were supposed to
+force. §4e discharges both in `PastaMsmBound.tidxThread_forces` / `tidx_is_the_row_index`'s shape —
+`wire_forces_challenges` for the challenges, `pidx_is_the_plane_index` for the plane — and §4f is
+the trace-level capstone with neither hypothesis carried. §5d exhibits an accepting eight-row trace
+and the forgery the thread kills (a prover using a FRESH CHALLENGE VECTOR PER ROW, which the
+row-local denotation accepts and the wire gates refuse).
+
+⚑ **This is what fixed the redundancy claim.** `derived_row_bit_is_manifest_digit` used to hold for
+the manifest's INDEX argument and not for its PLANE argument, because `pl` was a parameter a caller
+named while the manifest declares row `i`'s digit at `planeAt w i`. The row-local statement survives
+as `derived_row_bit_is_manifest_digit_at_a_named_plane`, which says so; the unqualified name is now
+§4f's, which reproduces BOTH arguments from the emitted object.
+
+⚠ **§6 is the residual list** — the first one this module has had. Read it before citing anything
+here, and §6.2 first: nothing in this descriptor says the declared public inputs ARE the block's
+transcript challenges.
 
 ## The chain, and what it is anchored to
 
@@ -1390,11 +1412,12 @@ theorem derived_row_bit_is_the_wire_svec_bit
     (hdblpat : DblPattern w T H)
     (hi : i < H)
     (hgidx : T i GIDX = (idx : ℤ))
-    (hdbl : T i DBL = 0)
+    (hcond : i % (w + 1) ≠ 0)
     (hpl : planeAt w i < planes) :
     T i BIT
-      = ((sNat (csOfPi pv nb) idx / 2 ^ (planes - 1 - planeAt w i) % 2 : Nat) : ℤ) :=
-  derived_row_bit_is_block_svec_bit (T i) nb planes idx (planeAt w i) (csOfPi pv nb)
+      = ((sNat (csOfPi pv nb) idx / 2 ^ (planes - 1 - planeAt w i) % 2 : Nat) : ℤ) := by
+  have hdbl : T i DBL = 0 := by rw [hdblpat i hi, if_neg hcond]
+  exact derived_row_bit_is_block_svec_bit (T i) nb planes idx (planeAt w i) (csOfPi pv nb)
     (csOfPi_length pv nb) hrow hgidx
     (wire_forces_challenges nb T pv H hpi hwin i hi) hdbl hpl
     (pidx_is_the_plane_index nb w T H hstart hwin hdblpat i hi)
@@ -1422,14 +1445,14 @@ theorem derived_row_bit_is_manifest_digit
     (hdblpat : DblPattern w T H)
     (hi : i < H)
     (hgidx : T i GIDX = (idx : ℤ))
-    (hdbl : T i DBL = 0)
+    (hcond : i % (w + 1) ≠ 0)
     (hpl : planeAt w i < planes) :
     T i BIT
       = ((scalarDigit (sScalars (csOfPi pv nb) N) planes idx (planeAt w i) : Nat) : ℤ) := by
   rw [Dregg2.Circuit.Emit.PastaMsmScalarBound.digit_is_block_svec_bit
         (csOfPi pv nb) N planes idx (planeAt w i) hidx]
   exact derived_row_bit_is_the_wire_svec_bit nb w planes idx i H T pv hrow hstart hpi hwin
-    hdblpat hi hgidx hdbl hpl
+    hdblpat hi hgidx hcond hpl
 
 #assert_axioms head_of_map
 #assert_axioms limb_split
@@ -1715,5 +1738,92 @@ def katSwapRow1 : WTrace := fun i =>
 -- ⚑ …and the plane thread is not satisfied by an arbitrary monotone column either: advancing on a
 -- NON-doubling row is refused too.
 #guard ! wireAcceptB 2 (bumpRow katFull 1 PIDX) katPv 0
+
+/-! ## §6 — ⚑⚑ WHAT THIS FILE DOES NOT DO.
+
+Every sibling in this family carries this section and until now this one did not — while its header
+forward-referenced a `§6` that did not exist, so the residuals were named NOWHERE and a Rust test
+comment stated the stronger reading. What follows is the list, at the resolution it is true at.
+
+### §6.1 — the hypotheses that remain CARRIED, and whose they are
+
+`derived_row_bit_is_manifest_digit` takes six hypotheses beyond the emitted gates. Three are
+discharged elsewhere in this file (`hstart`, `hpi`, `hwin` are the emitted wire gates themselves,
+and §5d exhibits a trace satisfying all three). The rest:
+
+1. **`hgidx : T i GIDX = idx` — NOT this file's.** `PastaMsmBound.bound_forces_gidx` forces the row's
+   term-index column to the ABSOLUTE generator index, from the emitted lookup's exact-public
+   balance. No gate here touches `GIDX` except to read its digits.
+2. **`hdblpat : DblPattern w T H` — discharged, but at one remove.** `dblPattern_of_manifest` derives
+   it from `PastaMsmBound.row_tuple_is_its_manifest_row`'s CONCLUSION plus
+   `tidx_is_the_row_index`. ⚑ **What is NOT written anywhere is the transport of
+   `PublicLookupBalanced` from `deriveRowDesc` to `boundRowDesc`** — the hypothesis those two rung-
+   below theorems actually consume. The transport is available (`deriveRowDesc_tables` and
+   `PastaMsmOnCurve.onCurveRowDesc_tables` chain the table to `boundRowDesc`'s by `rfl`, and
+   `deriveGates` emits no `.lookup`, so the lookup log is unchanged — the shape
+   `PastaMsmBound.filterMap_of_noLookup` already handles), but it is a LEMMA NOBODY HAS WRITTEN.
+   Until it is, a caller composing the two rungs supplies `hman`/`htidx`/`hbit` itself. This is a
+   missing lemma, not a missing gate.
+3. **`hcond : i % (w + 1) ≠ 0`** — "row `i` is a conditional-add row", which is a fact about WHERE
+   the row is in the Horner schedule and not about any column. It replaces the older `hdbl : T i DBL
+   = 0`, which was the same fact asserted about a column a prover fills.
+4. **`hpl : planeAt w i < planes`** — arithmetic, supplied by `planeAt_lt` from `i < planes·(w+1)`.
+
+### §6.2 — ⚑⚑ THE PUBLIC INPUTS THEMSELVES ARE NOT BOUND HERE, and that is the largest residual
+
+`csOfPi pv nb` is *whatever the declared public inputs say*. `chalPinGates` and `chalThreadGates`
+bind every row of the trace to `pv`; **nothing in this descriptor says `pv` is the Mina block's IPA
+transcript challenges.** That binding is the light client's own: it recomputes the transcript and
+supplies the PI vector, and if it supplies the wrong one, every theorem in this file is still true
+and the conclusion is about the wrong s-vector. The rung this file closes is "the trace's scalar is
+the tensor of the challenges ON THE WIRE"; "the challenges on the wire are the block's" is a
+different rung and is not here.
+
+### §6.3 — the cost, priced against the deployed four-way cut
+
+The derivation is repeated once per ROW rather than once per TERM — exactly `planes`-fold redundant
+WORK. It is nearly free because **an AIR's columns are global**: the derivation's `WD 15 256 − WOC =
+1332` columns are committed on all `planes·(w+1)` rows whichever rows the gates fire on, and FRI
+pays for committed area. A stride-`k` window arm firing only on plane-0 rows would commit the same
+area and RAISE the gate degree (a guard is a multiplication), so it is strictly worse.
+
+The one shape that IS cheaper is a SEPARATE, SHORTER instance — `w + 1` rows, not `planes·(w+1)` —
+tied to the MSM rows by a bus. That needs a `provide` dual of `Lookup`, which this IR does not have:
+`descriptor_ir2.rs`'s main arm calls `LookupBus::lookup_key` with multiplicity `ONE` and never
+`table_entry`. Its price, at the deployed shape, decided in the kernel below rather than asserted:
+the derivation block is 5,455,872 of the cut's 8,728,576 committed cells — **62.5% of everything the
+deployed proof commits** — and the bussed shape would be 21,312, a factor of exactly `planes`. That
+is the cost rung, and it is an IR change, not a re-parameterisation.
+
+### §6.4 — K1, inherited unchanged
+
+Every forcing theorem here — §4's and §4e's alike — is the ℤ reading of the emitted bodies. The
+deployed prover reads the same bodies in BabyBear, where a weighted boolean sum can wrap.
+`PastaMsmWindowed` §6.2 names that gap and this rung does not narrow it. `DeriveStartAccepted` /
+`DerivePiAccepted` / `DeriveWindowAccepted` are stated the same way and inherit it identically; the
+deployed `VmConstraint.holdsVm` and `WindowConstraint.holdsAt` both read `≡ 0 [ZMOD 2013265921]`.
+
+### §6.5 — the manifest is still load-bearing, and `wireAcceptB` is fail-open by construction
+
+**No emitted gate in this file relates a generator INDEX to generator COORDINATES.** Delete the
+manifest and the substituted-generator forgery — same row key, same digit, a DIFFERENT real SRS
+point — has a satisfying trace. The manifest stays; §4f only shortens the list of forgeries it is
+the sole defence against to that one.
+
+⚠ And `wireAcceptB`'s `match` ends in `_ => true`. That is correct for the four constructors
+`deriveWireGates` emits today and it is a FAIL-OPEN shape: a fifth constructor added to that list
+would be silently accepted by every `#guard` in §5d while `wireAccept_forces` kept proving three
+predicates that no longer cover the emitted object. Any addition to `deriveWireGates` must extend
+`wireAcceptB`'s match and the three predicates in the same commit. -/
+
+-- ⚑ THE PRICE, AS AN OBJECT — the §6.3 arithmetic, decided rather than asserted. 4 slices,
+-- `planes·(w+1) = 1024` rows each, `w = 3`.
+#guard WD 15 256 - WOC == 1332
+#guard 4 * (256 * (3 + 1)) * WD 15 256 == 8728576
+#guard 4 * (256 * (3 + 1)) * (WD 15 256 - WOC) == 5455872
+#guard 4 * (3 + 1) * (WD 15 256 - WOC) == 21312
+#guard 5455872 / 21312 == 256
+-- …and the canonicity certificate's own share of that, which §2.7 costs and nothing else does.
+#guard 4 * (256 * (3 + 1)) * CBITS == 1044480
 
 end Dregg2.Circuit.Emit.PastaMsmScalarDerive
