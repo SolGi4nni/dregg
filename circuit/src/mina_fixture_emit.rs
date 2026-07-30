@@ -708,10 +708,14 @@ fn emit<S: FixtureHashSuite<N>, const N: usize>(
 
     let mut o = String::new();
     o.push('{');
-    let _ = S::HASH_NAME;
+    // ⚑ `hash` + `digestElems` are what the o1js consumer DISPATCHES on: the two
+    // suites emit the same schema at different digest shapes, and a consumer
+    // that has to guess which one it is holding is a consumer that will
+    // eventually guess wrong.
     write!(
         o,
-        r#""kind":"dregg-uni-stark-fixture","tamper":"{tamper}","#
+        r#""kind":"dregg-uni-stark-fixture","hash":"{}","digestElems":{N},"tamper":"{tamper}","#,
+        S::HASH_NAME
     )
     .unwrap();
     write!(
