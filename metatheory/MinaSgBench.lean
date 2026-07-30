@@ -81,6 +81,22 @@ def main : IO Unit := do
   IO.println s!"  MSM <s, srs.g>  : {secs msmMs} ({msmMs} ms) for {hornerAdds 15 255} complete adds"
   IO.println s!"  verdict         : sg == <s, srs.g>  ->  {ok}"
 
+  -- ⚑ THE CROSS-EVALUATOR HANDLE, and it closes a chain rather than restating a fixture.
+  -- This prints the AFFINE target the Lean fold was just checked against by cross-multiplication
+  -- (`projEqM`, no modular inversion anywhere in this tree). `sg_msm_bench` prints the point
+  -- arkworks' Pippenger MSM actually produced, and `scripts/run-mina-sg-compiled.sh` diffs the
+  -- two lines. Rust asserts `arkworks_fold == gold_sg` and prints `arkworks_fold`; Lean asserts
+  -- `lean_fold ≡ SG` and prints `SG`; a text match closes `lean_fold ≡ arkworks_fold`.
+  -- ⚑ That is a differential between TWO INDEPENDENT IMPLEMENTATIONS — o1-labs'
+  -- `b_poly_coefficients` + arkworks' bucketed MSM against our bit-plane scan — with no linking,
+  -- no shared definition, and nothing added to the TCB. The pure-Lean kernel-vs-compiled
+  -- comparison cannot produce this: it is one definition evaluated twice and shares every
+  -- modelling mistake in it.
+  if SG.2.2 != 1 then
+    throw (IO.userError "the fixture's SG is not in affine form (Z != 1); the diff below is unsound")
+  IO.println s!"  POINT.x         : {SG.1}"
+  IO.println s!"  POINT.y         : {SG.2.1}"
+
   -- ⚑ THE OTHER POLARITY: one generator swapped for another REAL generator. Shape stays valid,
   -- so this is a genuine disagreement rather than a refusal.
   let t6 ← IO.monoMsNow

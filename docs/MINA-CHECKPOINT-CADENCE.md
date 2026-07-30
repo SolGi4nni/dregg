@@ -161,12 +161,84 @@ same fold, full scale — not yet on the artifact. `metatheory/MinaSgBench.lean`
 mina_sg_bench`) measures the artifact itself and is self-checking in both polarities. **Its falsifier
 is stated in the build request; if it comes in above ~5 min, the 10-minute row needs re-examining.**
 
-**Two levers are left on the table and neither is in the number above.** (i) `PastaMsmWindowed` is
-already authored: bucketed/Pippenger at an 11-bit window is ≈ 0.86 M complete adds against
-4.16 M — **~4.9×, i.e. ~7 s per MSM** — and it is algebra, needing its own identity theorem, not
-FFI. (ii) openmina itself **defers and batches** the `sg` accumulator check
-(`batch_dlog_accumulator_check`); a client batching legs 5g/5h across checkpoints is following the
-upstream design.
+**A lever left inside the pure-Lean path:** `PastaMsmWindowed` is already authored — bucketed at an
+11-bit window is ≈ 0.86 M complete adds against 4.16 M, **~4.9×, ~7 s per MSM** — and it is algebra
+needing its own identity theorem, not FFI. And openmina itself **defers and batches** the `sg`
+accumulator check (`batch_dlog_accumulator_check`), so a client batching legs 5g/5h across
+checkpoints is following the upstream design.
+
+### 5a-bis. ⚑⚑ THE THIRD EVALUATOR: Lean calling out to Rust — 46 ms, and a better reason than speed
+
+`metatheory/Dregg2/World.lean` already declares `@[extern "dregg_world_clock"]`,
+`@[extern "dregg_world_recv"]`, `@[extern "dregg_world_rand"]`: the law stated in Lean, the
+realization outside it. It has only ever been used for **effects**. Using it for **compute** is a
+small extension of an established idiom, and the Rust side already holds real Pasta arithmetic —
+the extractors link o1-labs' `proof-systems` and arkworks.
+
+**MEASURED 2026-07-30, same box, same block, same statement**
+(`metatheory/fixtures/pickles-extractors/src/bin/sg_msm_bench.rs`, `cargo run --release --bin
+sg_msm_bench` — reproduces block 539508's `opening.sg` and refuses the one-generator tamper):
+
+| evaluator | schedule | arithmetic | one 2^15 MSM |
+|---|---|---|---|
+| Lean kernel `decide` | sequential bit-plane, 4.16 M complete adds | kernel `Nat` | ~3.5 h, ~28 GB |
+| Lean compiled (`leanc -O3`) | **the same** sequential schedule | boxed `Nat` + GMP | 35.1 s, 18.8 MB |
+| **arkworks `msm_bigint`** | **bucketed (Pippenger)** | Montgomery + asm, rayon | **~46 ms** (44–56 ms, median of 5) |
+
+**~760× over compiled Lean; ~274,000× over the kernel.** Two independent changes compound: the
+schedule (4.16 M sequential adds → ~0.86 M bucketed) and the arithmetic (~256 ns per boxed `Nat`
+mulmod → tens of ns in Montgomery form).
+
+**⚑ THE COST TABLE COLLAPSES, AND SO DOES THE CADENCE QUESTION.** Three MSMs are **~140 ms**; the
+transcript legs still in pure Lean are ~300 ms. **A checkpoint is well under a second.** At that
+price a client can verify a Wrap proof **every block** (180 s), never mind every ten minutes, and
+§3's table stops being a trade-off — every row is free except the one nobody wanted.
+
+**⚑⚑ THE REAL REASON TO DO IT IS NOT THE SPEED.** Rungs 1–3 above compare the Lean kernel against
+compiled Lean. That is **one definition evaluated two ways**: it catches evaluator bugs and nothing
+else, and both readings share every modelling mistake, transcription error and wrong constant. The
+Rust path is a **second implementation** — o1-labs' own `b_poly_coefficients`, arkworks' own MSM,
+the code Mina itself runs. This is the discipline the rest of the campaign runs on: the Mina work
+asserts **o1-labs' own verifier accepts a block** before anything is emitted, and the Samasika lane
+drove **openmina's own consensus code** over 57 vectors and found **8 verdict divergences**. Neither
+would have surfaced from re-evaluating our own model faster.
+
+So calling out is not a shortcut around the check. **It upgrades the check from a re-evaluation to
+a differential.** `scripts/run-mina-sg-compiled.sh` step (4) closes the chain with no linking and
+no modular inversion: Rust asserts `arkworks_fold == gold_sg` and prints the point; Lean asserts
+`lean_fold ≡ SG` by cross-multiplication and prints `SG`; the two lines matching gives
+`lean_fold ≡ arkworks_fold`.
+
+**⚠ WHAT A GREEN MEANS CHANGES, AND THE CHANGE MUST BE STATED.** A `#guard` that calls Rust is **no
+longer kernel-checked**. It becomes a differential against an implementation whose correctness is
+not in the TCB — which is *right* for an instance check and *wrong* for a checker theorem. So:
+
+* **`Dregg2.Bridge.MinaWrapSg.sgVerdict` — the CHECKER — stays pure Lean and kernel-evaluable, and
+  calls nothing.** Its theorem (`PastaIpaFold.msmHorner_eq_msmN`) is where the assurance lives.
+* Only the weld's **INSTANCE evaluation** may call out, and an `@[extern] opaque` structurally
+  cannot leak into a proof: `opaque` has no kernel reduction, so no `decide` can ever consume it.
+  That is the same property `World.lean` relies on.
+* **HOUSE LAW #1 is untouched.** It governs **AIR authorship** — constraints, gadgets,
+  `air_accepts` — all of which stay Lean-authored and are not moved. What moves is the arithmetic
+  that decides whether *this block's* fold lands on *this block's* `sg`. **A differential's job is
+  to disagree with us, not to be trusted by us.**
+
+**The seam, designed and priced, not yet written.** The right ABI keeps the SRS on the Rust side —
+it is trusted config, not per-block data (§6.5), and `get_srs` already holds it — so the boundary
+carries **15 challenges and one point**, ~17 field elements, and marshalling is free rather than
+98,304 bignum conversions. `@[extern "dregg_mina_wrap_sg_fold"] opaque sgFoldNative (chals : @&(List
+Nat)) : Option (Nat × Nat × Nat)`, with the differential in an executable (`moreLinkArgs` on a
+`lean_exe`) rather than a `#guard`, so no `extern_lib` machinery and no `lakefile.lean` conversion
+is needed. **Not written**: the linking is untested and the dependency question — whether
+`mina-rust`/arkworks enters the node's graph or stays in the out-of-workspace extractor crate — is
+a topology decision, not a lane decision.
+
+⚑ **None of this retires the two measurements above.** The 359× and the ~1,500× memory collapse are
+properties of the *pure-Lean* path, and the memory one is structural: **~28 GB → 18.8 MB means the
+constraint that exiled `MinaWrapSg*` from the root does not exist on that path**, whether or not a
+faster option exists beside it. Keeping both is the point — pure-Lean compiled buys
+kernel-adjacency and no new trust; Rust FFI buys three orders of magnitude and a genuine second
+opinion. **The checker runs neither.**
 
 Two things could improve it and neither is in the estimate: `Circuit.Emit.PastaMsmWindowed` is
 already authored (a windowed MSM instead of 32,768 independent ladders), and **openmina itself
@@ -186,22 +258,29 @@ throughput** and needs batching or parallelism to be anything else.
 | what closes | cost | duty cycle at 10 min | cadence it supports |
 |---|---|---|---|
 | the cheap tier (decode, link, density, `select`) | milliseconds | ~0 | **every block, 180 s** |
-| a **checked** checkpoint (compiled Lean Wrap verify) | **~105 s**, 35.1 s of it measured | **17.6 % of one core** (5.9 % on three) | **10 min, with margin**; 1 h is free |
+| a **checked** checkpoint, **Lean calling out to Rust** | **~0.45 s** (140 ms of MSM, measured) | 0.08 % | **every block**, and the question stops mattering |
+| a **checked** checkpoint, **pure compiled Lean** | **~105 s**, 35.1 s of it measured | **17.6 % of one core** (5.9 % on three) | **10 min, with margin**; 1 h is free |
 | a **checked** checkpoint in the kernel (today's rungs) | ~10.5 h *measured* (3 × 3.5 h) | 175× oversubscribed | **nothing below a day** |
 | a **proved** checkpoint (a dregg STARK of the check) | ~15.4 h *extrapolated from a measurement* | — | **a day**, and only with batching |
 
-**The headline: a Mina checkpoint closes at a 10-minute cadence — 105 s of single-core compute
-inside a 600 s period — because the 2^15 MSM moved from kernel `decide` to compiled Lean. In the
-kernel it is 10.5 hours and nothing below a day is possible.** The move is worth **359×** in time
-and ~**1,500×** in memory; it is not worth the 630× that was projected, and 105 s is not the 60 s
-that was projected either. Neither correction changes the recommendation: 105 s ≪ 600 s, so the
-10-minute row survives with a 5.7× margin and the "+1.0 % of Mina's own 14.5 h" figure stands.
+**The headline, in pure Lean: a Mina checkpoint closes at a 10-minute cadence** — 105 s of
+single-core compute inside a 600 s period — **because the 2^15 MSM moved from kernel `decide` to
+compiled Lean. In the kernel it is 10.5 hours and nothing below a day is possible.** The move is
+worth **359×** in time and ~**1,500×** in memory; it is not worth the 630× that was projected, and
+105 s is not the 60 s that was projected either. Neither correction changes the recommendation:
+105 s ≪ 600 s, so the 10-minute row survives with a 5.7× margin and the "+1.0 % of Mina's own
+14.5 h" figure stands.
 
-**What would change the recommendation.** If the artifact-true bench comes in ≥ 5× worse than the
-standalone measurement — i.e. above ~3 min per MSM, ~9 min per checkpoint — a 10-minute cadence
-stops having margin and the recommended default becomes the 1-hour row, which is +6.9 % of a delay
-Mina already imposes on itself and still costs nothing that matters. **A day remains the only bad
-option, and nothing measured here puts us near it.**
+**And with the Rust differential beside it (§5a-bis), the cadence question dissolves entirely** —
+~0.45 s per checkpoint, affordable every block. That path is a *second implementation* rather than a
+faster reading of our own, which is why it is worth having for reasons other than the clock; and it
+is **not in the TCB**, which is why it does not replace the row above it.
+
+**What would change the recommendation.** If the artifact-true pure-Lean bench comes in ≥ 5× worse
+than the standalone measurement — above ~3 min per MSM, ~9 min per checkpoint — the 10-minute
+cadence stops having margin and the recommended default becomes the 1-hour row, which is +6.9 % of
+a delay Mina already imposes on itself and still costs nothing that matters. **A day remains the
+only bad option, and nothing measured here puts us near it.**
 
 ## 6. ⚑ What stays trusted — at every cadence
 

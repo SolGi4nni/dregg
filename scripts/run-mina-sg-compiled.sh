@@ -35,9 +35,47 @@ scripts/hbuild "$LANE" "cd metatheory && time lake build Dregg2.Bridge.MinaWrapS
 echo "=== (2) the INSTANCE differential — #guard, INTERPRETED (upper bound) ==="
 scripts/hbuild "$LANE" "cd metatheory && time lake build Dregg2.Bridge.MinaWrapSgWeld"
 
-echo "=== (3) the NATIVE-COMPILED number — this is the cadence figure ==="
+echo "=== (3) the NATIVE-COMPILED number — this is the pure-Lean cadence figure ==="
 scripts/hbuild "$LANE" "cd metatheory && time lake build mina_sg_bench"
-scripts/hbuild "$LANE" "cd metatheory && ./.lake/build/bin/mina_sg_bench"
+scripts/hbuild "$LANE" "cd metatheory && ./.lake/build/bin/mina_sg_bench" | tee /tmp/mina-sg-lean.txt
 
-echo "run-mina-sg-compiled: done. Divide step (3)'s MSM number — not step (2)'s — into"
-echo "docs/MINA-CHECKPOINT-CADENCE.md §5a."
+# (4) ⚑ THE CROSS-IMPLEMENTATION DIFFERENTIAL, and it is a different KIND of check.
+#
+# Steps 1–3 compare the Lean kernel against compiled Lean. That is ONE DEFINITION EVALUATED TWO
+# WAYS: it catches evaluator bugs and nothing else, and both readings share every modelling
+# mistake, transcription error and wrong constant in the definition. `sg_msm_bench` is a SECOND
+# IMPLEMENTATION — o1-labs' own `b_poly_coefficients` and arkworks' own bucketed MSM, the code
+# Mina itself runs, on a different schedule (Pippenger, not a sequential bit-plane scan) over
+# different arithmetic (Montgomery + asm, not boxed `Nat`).
+#
+# ⚠ IT IS NOT IN THE TCB AND MUST NOT BE. A differential's job is to disagree with us, not to be
+# trusted by us. The CHECKER (`Dregg2.Bridge.MinaWrapSg.sgVerdict`) stays pure Lean and
+# kernel-evaluable; nothing below can reach a proof.
+#
+# The chain the diff closes, with no modular inversion and no linking:
+#   Rust asserts `arkworks_fold == gold_sg`   and prints `arkworks_fold` as POINT.x/POINT.y
+#   Lean asserts `lean_fold ≡ SG` (`projEqM`) and prints `SG`          as POINT.x/POINT.y
+#   these two lines matching  ⟹  `lean_fold ≡ arkworks_fold`
+#
+# Requires the openmina `mina-rust` sibling checkout the extractor crate documents; skipped, not
+# failed, when it is absent — its absence is a checkout state, not a disagreement.
+echo "=== (4) the CROSS-IMPLEMENTATION differential (arkworks vs our bit-plane scan) ==="
+EXT=metatheory/fixtures/pickles-extractors
+if [ -d "${EXT}/../../../mina-rust" ] || [ -d "$HOME/dev/mina-rust" ]; then
+  ( cd "$EXT" && cargo build --release --bin sg_msm_bench && ./target/release/sg_msm_bench ) \
+    | tee /tmp/mina-sg-rust.txt
+  if diff <(grep '^  POINT\.' /tmp/mina-sg-lean.txt) <(grep '^  POINT\.' /tmp/mina-sg-rust.txt); then
+    echo "⚑ AGREE: the bit-plane scan and arkworks' Pippenger MSM land on the same point."
+  else
+    echo "⚑⚑ DISAGREE — two independent implementations of <s, srs.g> differ on a real block."
+    echo "   This is the finding. Do not patch either side until it is understood."
+    exit 1
+  fi
+else
+  echo "SKIPPED: no mina-rust sibling checkout; the extractor crate needs it. Not a disagreement."
+fi
+
+echo "run-mina-sg-compiled: done."
+echo "  step (3)'s MSM number is the PURE-LEAN cadence figure (docs/MINA-CHECKPOINT-CADENCE.md §5a);"
+echo "  step (4)'s is what the same statement costs when Lean calls out to Rust, and is ~3 orders"
+echo "  of magnitude smaller. They answer different questions — §5a says which."

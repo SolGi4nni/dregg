@@ -220,7 +220,44 @@ rebuilt on all 255 planes, 8.4 M `Nat.testBit`s) is **0.8 %** of the total, meas
 scalars. Hoisting the zip out of the plane loop was implemented and measured — 8.50 µs against
 8.57 µs, inside the noise — and **deliberately not landed**, because it would have bought a
 non-`rfl` mirror for nothing. The cost is the modular arithmetic: ~256 ns per 255-bit `Nat` mulmod,
-allocation included. The real lever is `PastaMsmWindowed` (bucketed, 11-bit window: ~0.86 M adds
-against 4.16 M, ~4.9×), which needs its own identity theorem and is not this file's job. -/
+allocation included. The lever inside this path is `PastaMsmWindowed` (bucketed, 11-bit window:
+~0.86 M adds against 4.16 M, ~4.9×), which needs its own identity theorem and is not this file's
+job. -/
+
+/-! ## §7 — ⚑⚑ THE THIRD EVALUATOR, AND WHY THIS FILE MUST NOT BECOME IT
+
+There is a fourth number and it is three orders of magnitude smaller: **~46 ms**, arkworks'
+bucketed `msm_bigint` over o1-labs' own `b_poly_coefficients`, on this same block and this same
+`srs.g` — measured 2026-07-30 by
+`metatheory/fixtures/pickles-extractors/src/bin/sg_msm_bench.rs`, reproducing `opening.sg` and
+refusing the one-generator tamper. ~760× this file's compiled path, ~274,000× the kernel's.
+
+**⚑ AND THE SPEED IS THE LESSER REASON.** The kernel path and this file's compiled path are **one
+definition evaluated two ways**: they catch evaluator bugs and nothing else, and they share every
+modelling mistake, transcription error and wrong constant. The Rust path is a **second
+implementation** — the code Mina itself runs. That is the discipline the rest of this campaign is
+built on (o1-labs' own verifier accepts the block before anything is emitted; the Samasika lane
+drove openmina's own consensus code and found 8 verdict divergences). **Calling out upgrades the
+check from a re-evaluation to a differential.**
+
+**⚠ AND THAT IS EXACTLY WHY IT DOES NOT COME IN HERE.** A `#guard` that calls Rust is no longer
+kernel-checked; it becomes a differential against an implementation that is not in the TCB. That is
+*right* for an instance check and *wrong* for a checker theorem. So the line is drawn here and it
+is not a matter of taste:
+
+* **`sgVerdict` and everything above it stays pure Lean and kernel-evaluable, and calls nothing.**
+  The assurance lives in `PastaIpaFold.msmHorner_eq_msmN`, not in any measurement.
+* Only an **instance evaluation** may call out, and only as `@[extern] opaque` — which
+  *structurally* cannot leak into a proof, because `opaque` has no kernel reduction and no `decide`
+  can consume it. `Dregg2.World` relies on the same property for the clock, the network and the
+  randomness beacon.
+* **HOUSE LAW #1 is untouched.** It governs AIR authorship — constraints, gadgets, `air_accepts` —
+  none of which is here or moves. What may move is the arithmetic deciding whether *this block's*
+  fold lands on *this block's* `sg`. **A differential's job is to disagree with us, not to be
+  trusted by us.**
+
+The cross-implementation diff runs today with no linking at all:
+`scripts/run-mina-sg-compiled.sh` step (4) matches the point arkworks produced against the point
+this path was checked against. `docs/MINA-CHECKPOINT-CADENCE.md` §5a-bis prices the seam. -/
 
 end Dregg2.Bridge.MinaWrapSg
