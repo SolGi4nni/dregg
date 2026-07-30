@@ -161,15 +161,17 @@ whole. -/
 #guard sgVerdict [0, 0] [GpP, GpP, GpP, GpP] GpP == some true
 #guard sgVerdict [0, 0] [GpP, GpP, GpP, GpP] (sgSum [GpP, GpP]) == some false
 
-/- …and the shape gate REFUSES rather than answering, in each of the four ways it can. A verdict
-that folded these would be a plausible point for a different claim. -/
+/- …and the shape gate REFUSES rather than answering, in each of the six ways it can: no
+challenges, the wrong generator COUNT, a non-canonical challenge, an off-curve generator, a
+generator that is `O`, and an off-curve `sg`. A verdict that folded any of these would be a
+plausible point for a different claim. -/
 #guard (sgVerdict [] [] GpP).isNone
 #guard (sgVerdict [0, 0] [GpP, GpP] GpP).isNone
 #guard (sgVerdict [0, qN] [GpP, GpP, GpP, GpP] GpP).isNone
 #guard (sgVerdict [0, 0] [GpP, GpP, GpP, (1, 1, 1)] GpP).isNone
 #guard (sgVerdict [0, 0] [GpP, GpP, GpP, Oproj] GpP).isNone
 #guard (sgVerdict [0, 0] [GpP, GpP, GpP, GpP] (1, 1, 1)).isNone
-/- …and the gate ADMITS the shape it is supposed to, so the five refusals above are not a gate
+/- …and the gate ADMITS the shape it is supposed to, so the six refusals above are not a gate
 that refuses everything. -/
 #guard sgWireOk [0, 0] [GpP, GpP, GpP, GpP] GpP
 
@@ -193,5 +195,36 @@ multiplication out of `2^15`, is worth nothing. -/
 #guard naiveAdds 15 255 / sgFoldAdds 15 255 == 4
 /- Mina's wrap SRS is `k = 15`: 15 challenges, 32,768 generators, 32,768 scalars. -/
 #guard 2 ^ 15 == 32768
+
+/-! ## §6 — ⚑ WHAT CALLING THIS COSTS, with its evidence class.
+
+A `#guard` cannot pin a clock, so the numbers live here. **Measured 2026-07-30 on an Apple M2 Max,
+one core**, running this evaluator — `msmHornerM` over `rcbTraceM` — at full scale, 32,768 points
+and 255 bit planes, 4,162,977 complete adds:
+
+| | per complete add | one `sgFold` at `k = 15` | peak RSS |
+|---|---|---|---|
+| native (`leanc -O3`) | 8.44 µs | **35.1 s** | **18.8 MB** |
+| interpreted (`lean --run`, = `#guard`) | 12.31 µs | 51.2 s | — |
+| kernel `decide` (rung 5h, measured on hbox) | ~3.0 ms | ~3.5 h serial | ~28 GB |
+
+Linear to within 0.5 % across n = 1024 / 4096 / 8192 / 32768. **kernel → native ≈ 359×**, and
+**≈ 1,500× in memory** — the memory factor is the one that matters structurally, because ~28 GB
+(and near 75 GB per chunk when rooted) is what made `lake build Dregg2` unable to finish and is why
+`MinaWrapSg*` is allowlisted out of the root. That constraint does not exist on this path.
+
+**Evidence class.** Measured on a *faithful standalone re-expression* of this evaluator — same
+`rcbTraceM` op sequence (12 mulmods, 2 const-muls, 19 add/sub-mods, one 33-field allocation), same
+fold, full scale — **not yet on this artifact.** `metatheory/MinaSgBench.lean` measures the
+artifact; until it has run, treat 35.1 s as a prediction with a named falsifier
+(`docs/MINA-CHECKPOINT-CADENCE.md` §5a).
+
+**Where the time is NOT**, so nobody optimises the wrong half: the bit-plane traversal (`as.zip ps`
+rebuilt on all 255 planes, 8.4 M `Nat.testBit`s) is **0.8 %** of the total, measured with all-zero
+scalars. Hoisting the zip out of the plane loop was implemented and measured — 8.50 µs against
+8.57 µs, inside the noise — and **deliberately not landed**, because it would have bought a
+non-`rfl` mirror for nothing. The cost is the modular arithmetic: ~256 ns per 255-bit `Nat` mulmod,
+allocation included. The real lever is `PastaMsmWindowed` (bucketed, 11-bit window: ~0.86 M adds
+against 4.16 M, ~4.9×), which needs its own identity theorem and is not this file's job. -/
 
 end Dregg2.Bridge.MinaWrapSg

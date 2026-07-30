@@ -1,5 +1,53 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 30 — the 2^15 MSM left the kernel; and the 630× that decided the Mina cadence had no measurement under it
+
+**The named follow-up:** *"a Mina checkpoint closes at a 10-minute cadence if the 2^15 MSM moves
+from kernel `decide` to compiled Lean, and at nothing shorter than a day if it does not."*
+
+**Moved. WRITTEN, NOT YET BUILT** — no build has seen `Dregg2.Bridge.MinaWrapSg` (the checker,
+rooted at +0 closure), `MinaWrapSgWeld` (the instance differential on devnet block 539508, both
+polarities, plus the 32 chunk statements the kernel `decide`s), or `lean_exe mina_sg_bench`. The
+build request is `scripts/run-mina-sg-compiled.sh`.
+
+**⚑ THE PROJECTION IT ALL RESTED ON WAS A PROJECTION IN A MEASUREMENT'S VOICE.** `docs/MINA-CHECKPOINT-CADENCE.md`
+§5a derived every compiled cost by applying "a sibling moved the same shape from 3.5 h of kernel to
+a **20 s** compiled path, **≈630×**". That 20 s exists in exactly one sentence in this tree — the
+one that defines the ratio from it. `git log -S`, `grep`, the docs, the logs: nothing else.
+
+**MEASURED instead**, running the deployed evaluator (`msmHornerM` over `rcbTraceM`) standalone at
+full scale — 32,768 points, 255 bit planes, 4,162,977 complete adds, Apple M2 Max, one core:
+
+| | per add | one 2^15 MSM | peak RSS |
+|---|---|---|---|
+| native `leanc -O3` | **8.44 µs** | **35.1 s** | **18.8 MB** |
+| interpreted (= what `#guard` costs) | 12.31 µs | 51.2 s | — |
+| kernel `decide` (prior lane, hbox) | ~3.0 ms | ~3.5 h | ~28 GB |
+
+* **359×, not 630×.** A checkpoint is **~105 s, not ~60 s** (three MSMs; everything else is
+  ~0.3 s).
+* **It still closes at ten minutes** — 105 s inside a 600 s period, a 17.6 % duty cycle on one
+  core, 5.9 % on three. The margin is 5.7×, not 10×. A day was only ever required by the 10.5-hour
+  kernel path.
+* ⚑ **The memory result is the bigger one and nobody had priced it: ~1,500×.** 18.8 MB against
+  ~28 GB — and ~4,000× against the ~75 GB per-chunk peak that made `lake build Dregg2` unable to
+  finish. **The constraint that exiled `MinaWrapSg*` from the root does not exist on this path.**
+* `#guard` is the **untrusted evaluator** and this package sets no `precompileModules`, so it
+  INTERPRETS imported IR at 1.46× native. A `#guard` wall time is an upper bound on the compiled
+  cost, never the compiled cost. `mina_sg_bench` exists to keep the two apart.
+
+**Two traps this lane walked into and left signposted.** (i) A control that would have been VACUOUS
+and green: the obvious "the 255-bit budget is load-bearing" test is to run the scan at 254 bits and
+expect disagreement — but `q − 2^254` is ~`2^-125` of the field, so no scalar among 32,768 reaches
+bit 254 and a 254-bit scan agrees exactly. The weld cuts at **253** and CHECKS first that a scalar
+in the slice really sets bit 253. (ii) `let x := e` in a `do` block does not force: a fold of 4.16 M
+complete adds timed at **0 ms**, twice, before the cause was found. Every measured computation in
+`MinaSgBench` now returns through `IO`.
+
+**Left open, with its number:** `PastaMsmWindowed` (bucketed, 11-bit window) is ~0.86 M adds against
+4.16 M — **~4.9×, ~7 s per MSM** — and it is algebra needing its own identity theorem, not FFI. And
+`expand_deferred` is still the blocker: a fast `sg` leg does not make `public_comm` derivable.
+
 ## ⚑⚑⚑⚑ JULY 30 — route B's commitment binding LANDED; three perfectly valid transitions were refused by a real `prove()`; and the row model was found conservative by exactly 560
 
 **E1 · ✅ THE GAP THE ROUTE-B LANE WEIGHTED ABOVE ITS OWN DEMO IS CLOSED.**
