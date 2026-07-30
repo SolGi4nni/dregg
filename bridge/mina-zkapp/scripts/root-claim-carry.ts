@@ -665,13 +665,25 @@ async function circuit(c: Ctx) {
   const base = c.plan.totalWork + c.plan.totalCarry;
   console.log(
     `\n    ⇒ the whole chain: +${fmt(dSeal)} once + ${fmt(dCarry)} × ${fmt(c.plan.totalSlices - 1)} = ` +
-      `+${fmt(total)} rows on ${fmt(base)} — ${((total / base) * 100).toFixed(3)}%`,
+      `+${fmt(total)} rows on ${fmt(base)} — ${((total / base) * 100).toFixed(4)}%`,
   );
+  //  ⚑ ZERO IS NOT "NOT THERE", AND THIS IS EXACTLY THE PLACE THAT MISREADS. An
+  //  equality between two WITNESS variables compiles to a Kimchi COPY
+  //  CONSTRAINT: the permutation argument enforces it and no gate row is
+  //  emitted. So the carry is free AND enforced, and the row count is silent
+  //  about which. §3.29's own note — "row count is the only signal for derived,
+  //  not witnessed" — does not transfer here, and phase [5]'s CARRY row is what
+  //  says the equality bites.
+  if (dCarry === 0)
+    console.log(
+      '    ⚑ THE CARRY IS FREE IN ROWS AND THAT IS NOT AN ABSENCE. An equality between two witness\n' +
+        '      variables is a Kimchi COPY CONSTRAINT — enforced by the permutation argument, no gate\n' +
+        '      row. The row count therefore CANNOT witness the carry, and [5]\'s CARRY row is the only\n' +
+        '      thing in this leg that does.',
+    );
   console.log(
-    '    ⚑ THE PROPAGATION FIGURE IS EXTRAPOLATED FROM ONE HEAD SLICE and every other slice is\n' +
-      '      charged at it. That is exact for the equality count (4 per slice, a compile-time fact)\n' +
-      '      and a model for the emitted rows, which is why it is reported as a rate and not measured\n' +
-      `      905 times. Instances and programs are UNCHANGED at ${fmt(c.plan.totalSlices)} / ${c.plan.distinctPrograms}.`,
+    `    ⚑ Instances and programs are UNCHANGED at ${fmt(c.plan.totalSlices)} / ${c.plan.distinctPrograms}: the\n` +
+      '      claim adds no segment, no slice and no chunk load, so the cut points are §3.29\'s.',
   );
   return { dSeal, dUnsealed, dCarry, total, base };
 }
@@ -756,12 +768,18 @@ function witnessOf(c: Ctx, sl: FriSlice) {
 
 /** Run the binding slice's body in circuit, exactly as `probeProgram` builds it,
  *  and report whether it accepted — and, when it did, the public output a
- *  Mina-side verifier would read. */
+ *  Mina-side verifier would read.
+ *
+ *  ⚑ `prevClaim` IS A SEPARATE WITNESS AND THAT IS THE POINT. The first version
+ *  of this harness called `assertClaimCarried(claimIn, claimIn)` — the claim
+ *  against ITSELF — which is a tautology that passes for every input and would
+ *  have reported the carry as gated while nothing gated it. */
 async function runSlice(
   c: Ctx,
   sl: FriSlice,
   mode: Mode,
   claim: ChainClaim | null,
+  prevClaim: ChainClaim | null = claim,
 ): Promise<{ accepted: boolean; why: string; out: string }> {
   const wit = witnessOf(c, sl);
   let accepted = true;
@@ -792,11 +810,9 @@ async function runSlice(
       );
       const friCommit = Poseidon.hash([dagDigest, friDigest]);
       friCommit.assertEquals(wit.bIn);
-      const claimIn =
-        claim === null
-          ? null
-          : Provable.witness(ChainClaim, () => claim);
-      if (claimIn !== null) assertClaimCarried(claimIn, claimIn);
+      const claimIn = claim === null ? null : Provable.witness(ChainClaim, () => claim);
+      const prevIn = prevClaim === null ? null : Provable.witness(ChainClaim, () => prevClaim);
+      if (claimIn !== null) assertClaimCarried(prevIn!, claimIn);
       if (mode === 'seal' || mode === 'unsealed')
         assertClaimSeal(
           claimIn!,
@@ -820,12 +836,18 @@ async function runSlice(
         sl.index + 1,
       );
       //  What the chain HANDS ON — the thing a Mina-side verifier reads.
-      out =
-        claimIn === null
-          ? boundary.toString()
-          : [boundary, claimIn.genesisRoot, claimIn.finalRoot, claimIn.numTurns, claimIn.chainDigest]
-              .map((f) => f.toString())
-              .join('|');
+      //  ⚑ INSIDE `asProver`. `toString()` on a variable field element throws in
+      //  provable code, and that throw is a HARNESS error that `isConstraintFailure`
+      //  would have to reject — the run would die on the CONTROL rows and read
+      //  like the table found something.
+      Provable.asProver(() => {
+        out =
+          claimIn === null
+            ? boundary.toBigInt().toString()
+            : [boundary, claimIn.genesisRoot, claimIn.finalRoot, claimIn.numTurns, claimIn.chainDigest]
+                .map((f) => f.toBigInt().toString())
+                .join('|');
+      });
     });
   } catch (e) {
     accepted = false;
@@ -841,19 +863,34 @@ async function forgery(c: Ctx, realLanes: bigint[]) {
   const sl = c.plan.head[c.bindPos];
   const realClaim = claimOfLanes(realLanes.map((x) => Field(x)));
   const bad = forge(realClaim);
-  console.log(`    real  finalRoot ${realClaim.finalRoot.toString().slice(0, 22)}…  numTurns ${realClaim.numTurns}`);
-  console.log(`    forged finalRoot ${bad.finalRoot.toString().slice(0, 22)}…  numTurns ${bad.numTurns}`);
+  //  ⚑ THE TAIL, NOT THE HEAD. A packed octet is `Σ laneⱼ·2^31ʲ`, so `+1` moves
+  //  lane 0 and therefore the LOW digits; printing the first 22 characters shows
+  //  two identical-looking numbers and reads as a no-op forgery.
+  const tail = (f: Field) => `…${(f.toBigInt() % 10n ** 14n).toString().padStart(14, '0')}`;
+  console.log(`    real   finalRoot ${tail(realClaim.finalRoot)}  numTurns ${realClaim.numTurns}`);
+  console.log(`    forged finalRoot ${tail(bad.finalRoot)}  numTurns ${bad.numTurns}`);
+  if (bad.finalRoot.toBigInt() === realClaim.finalRoot.toBigInt() && bad.numTurns.toBigInt() === realClaim.numTurns.toBigInt())
+    fail('the forged claim IS the real claim — the forgery is a no-op and the table would be vacuous');
   console.log('    ⚑ the LANE TABLE IS UNTOUCHED: every Merkle root, every fold and §3.29\'s preamble seal still pass\n');
 
-  const rows: [string, Mode, ChainClaim | null, boolean][] = [
-    ['BOUND    (seal armed)    forged claim', 'seal', bad, false],
-    ['UNSEALED (seal removed)  forged claim', 'unsealed', bad, true],
-    ['BOUND    (seal armed)    REAL claim', 'seal', realClaim, true],
-    ['UNBOUND  (the §3.29 chain)  forged claim', 'none', null, true],
+  //  ⚑ FIVE ROWS, BECAUSE THERE ARE TWO EQUALITIES AND ONLY ONE OF THEM COSTS
+  //  ROWS. The SEAL (`claim == the lanes under dagDigest`) emits 23 rows and the
+  //  CARRY (`claim == predecessor's claim`) emits ZERO — o1js compiles an
+  //  equality between two witness variables to a Kimchi COPY CONSTRAINT, which
+  //  the permutation argument enforces without a gate row. So the row count
+  //  cannot witness the carry AT ALL, and a table that only exercised the seal
+  //  would leave the 904 propagating slices gated by something nothing measured.
+  //  Row 5 is that falsifier, and row 2 is its control.
+  const rows: [string, Mode, ChainClaim | null, ChainClaim | null, boolean][] = [
+    ['BOUND    (seal armed)    forged claim', 'seal', bad, bad, false],
+    ['UNSEALED (seal removed)  forged claim', 'unsealed', bad, bad, true],
+    ['BOUND    (seal armed)    REAL claim', 'seal', realClaim, realClaim, true],
+    ['UNBOUND  (the §3.29 chain)  forged claim', 'none', null, null, true],
+    ['CARRY    (seal removed)  claim ≠ PREDECESSOR\'s', 'unsealed', realClaim, bad, false],
   ];
   const outs: Record<string, string> = {};
-  for (const [label, mode, claim, expect] of rows) {
-    const r = await runSlice(c, sl, mode, claim);
+  for (const [label, mode, claim, prev, expect] of rows) {
+    const r = await runSlice(c, sl, mode, claim, prev);
     outs[label] = r.out;
     const good = r.accepted === expect;
     console.log(
@@ -864,6 +901,7 @@ async function forgery(c: Ctx, realLanes: bigint[]) {
     checks++;
   }
   ok('the refusal is ATTRIBUTABLE: the same forged claim is accepted with the seal removed, same slice, same reads');
+  ok('the CARRY equality bites too — and it emits ZERO rows, so this table is the ONLY thing that says so');
 
   //  ⚑ AND THE §3.29 ROW IS A MEASUREMENT, NOT A TAUTOLOGY. The unbound chain's
   //  public output is IDENTICAL under the real claim and the forged one — there
@@ -875,11 +913,20 @@ async function forgery(c: Ctx, realLanes: bigint[]) {
   const boundForgedOut = await runSlice(c, sl, 'unsealed', bad);
   if (boundReal.out === boundForgedOut.out)
     fail('the claim-carrying output is the same under the real and forged claims — the claim is not in it');
+  //  ⚑ SHOWN ON THE FIELDS THAT MOVE. The boundary is 77 digits and the claim's
+  //  octets differ in their LOW digits, so a truncated dump of either prints two
+  //  identical-looking lines and the row reads as a no-op.
+  const claimOf = (s: string) => {
+    const p = s.split('|');
+    return `finalRoot …${(BigInt(p[2]) % 10n ** 14n).toString().padStart(14, '0')}  numTurns ${p[3]}`;
+  };
   console.log(
-    `\n    the §3.29 public output is ONE field and it is the SAME either way:\n      ${unboundReal.out.slice(0, 76)}…\n` +
+    `\n    the §3.29 public output is ONE field and it is the SAME either way:\n` +
+      `      real   ${unboundReal.out.slice(0, 60)}…\n` +
+      `      forged ${outs['UNBOUND  (the §3.29 chain)  forged claim'].slice(0, 60)}…\n` +
       `    the claim-carrying output DIFFERS, and a Mina-side verifier can see it:\n` +
-      `      real   …|${boundReal.out.split('|').slice(2).join('|').slice(0, 60)}…\n` +
-      `      forged …|${boundForgedOut.out.split('|').slice(2).join('|').slice(0, 60)}…`,
+      `      real   ${claimOf(boundReal.out)}\n` +
+      `      forged ${claimOf(boundForgedOut.out)}`,
   );
   ok('the §3.29 output cannot distinguish the two claims and the claim-carrying one does — the gap, exhibited');
 }
@@ -898,11 +945,19 @@ const RATCHET = {
   uniformInstances: 905,
   uniformPrograms: 131,
   uniformRows: 42_245_547,
-  /** The emitted-row price of the whole carry, at 2%. */
-  claimRows: 4_200,
+  /** The emitted-row price of the WHOLE carry across 905 instances, at 2%. It is
+   *  the seal's slice alone, because the propagation is a copy constraint and
+   *  costs nothing — 0.0004% of the walk. */
+  claimRows: 185,
+  /** The four closing equalities, in emitted rows on the sealing slice. */
+  sealEqualityRows: 23,
 };
 
-function ratchet(c: Ctx, decoded: { numTurns: bigint }, m: { total: number } | null) {
+function ratchet(
+  c: Ctx,
+  decoded: { numTurns: bigint },
+  m: { total: number; dSeal: number; dUnsealed: number } | null,
+) {
   console.log('\n[6] THE RATCHET\n');
   const exact: [string, number | string, number | string][] = [
     ['claim lanes', NUM_CHAIN_CLAIMS, RATCHET.claimLanes],
@@ -919,7 +974,12 @@ function ratchet(c: Ctx, decoded: { numTurns: bigint }, m: { total: number } | n
   }
   const banded: [string, number, number][] = [
     ['uniform modelled rows', c.plan.totalWork + c.plan.totalCarry, RATCHET.uniformRows],
-    ...(m ? ([['claim emitted rows', m.total, RATCHET.claimRows]] as [string, number, number][]) : []),
+    ...(m
+      ? ([
+          ['claim emitted rows', m.total, RATCHET.claimRows],
+          ['seal equality rows', m.dSeal - m.dUnsealed, RATCHET.sealEqualityRows],
+        ] as [string, number, number][])
+      : []),
   ];
   for (const [n, got, want] of banded) {
     const d = Math.abs(got - want) / want;
