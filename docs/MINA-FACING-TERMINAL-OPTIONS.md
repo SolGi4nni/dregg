@@ -76,6 +76,23 @@ is.** The module's own doc states the seam precisely (`apex_shrink.rs:34-40`):
 > `Val`/`Challenge`, and only the PCS/challenger — swapped wholesale via the outer config — touch
 > the hash field.
 
+### ⚑ Can dregg shrink its own root TODAY, with what exists? **Yes — and with no new code.**
+
+There are two entrypoints, and only one of them is BN254-shaped:
+
+- **One config for both roles** — `build_and_prove_next_layer_with_expose::<DreggRecursionConfig,
+  ..>`. This is the ordinary BabyBear recursion layer, and it is exercised at **eight leaf adapters
+  plus the GPU backend** (`membership`, `sovereign`, `factory`, `hatchery`, `presentation`,
+  `custom`, `caveat_admission`, `blinded_membership`, `gpu_backend.rs:5320`). Pointed at the root's
+  `RecursionOutput`, **this produces a BabyBear-hashed shrink of the root today.** No trusted setup,
+  no new config, no generalisation. It is the same operation `RecursiveAggregation` performs at
+  every turn-chain fold — the root is just the last thing that has not had it applied to it.
+- **Split configs** — `apex_shrink.rs`, needed only when the *output* must be hashed differently
+  from the *input*. That is the Pasta case, and the BN254 instantiation is the worked example.
+
+So the plonky3-native shrink is not a thing to build; it is a thing to *call*. What has to be built
+is only the Pasta variant of the second entrypoint.
+
 `shrink_apex_to_outer(apex, inner_config, outer_config: &DreggOuterConfig)` names a concrete type,
 but every step it re-plays is generic over `StarkGenericConfig` (`build_next_layer_circuit`,
 `get_airs_and_degrees_with_prep`, `ProverData::from_airs_and_degrees`,
