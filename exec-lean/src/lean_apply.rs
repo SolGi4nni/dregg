@@ -83,7 +83,7 @@ use dregg_cell::capability::CapabilityRef;
 use dregg_cell::lifecycle::DeathCertificate;
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::{Cell, CellId, Ledger, Permissions, VerificationKey};
-use dregg_lean_ffi::marshal::{Cap, WireState, WireValue};
+use dregg_lean_ffi::marshal::{Cap, WideInt, WireState, WireValue};
 
 use dregg_turn::ShadowHostCtx;
 use dregg_turn::TurnResult;
@@ -525,14 +525,16 @@ impl std::fmt::Display for ExtractError {
 
 impl std::error::Error for ExtractError {}
 
-/// Read a named `Int` field out of a cell record (returns `None` if absent or not an Int).
+/// Read a named `Int` field out of a cell record at the NARROW `i128` width (`balance`/`nonce` —
+/// scalars whose Rust carrier is genuinely narrow). `None` if absent, not an Int, OR too wide to
+/// fit — a value that does not fit is REFUSED, never truncated, and the caller fails closed.
 fn record_int(v: &WireValue, name: &str) -> Option<i128> {
     match v {
         WireValue::Record(fs) => fs
             .iter()
             .find(|(k, _)| k == name)
             .and_then(|(_, x)| match x {
-                WireValue::Int(i) => Some(*i),
+                WireValue::Int(i) => i.to_i128(),
                 _ => None,
             }),
         _ => None,
@@ -556,12 +558,18 @@ fn field_name_to_index(name: &str) -> Option<usize> {
     }
 }
 
-/// Inverse of `lean_shadow::field_to_i128`: write the low 64 bits of an `i128` into the canonical
-/// big-endian slot (`bytes[24..32]`).
-fn i128_to_field(v: i128) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[24..32].copy_from_slice(&(v as u64).to_be_bytes());
-    out
+/// **THE SURVIVING REFUSAL.** Inverse of `lean_shadow::field_to_wire`: a produced wire `Int` back
+/// to the 32-byte big-endian field word.
+///
+/// `None` — REFUSE, never wrap — when the produced value is NEGATIVE. A cell state field is an
+/// unsigned 256-bit word; a negative `Int` has no field image, and silently taking its
+/// two's-complement or its magnitude would be exactly the class of silent reinterpretation the old
+/// low-64 truncation was. (A magnitude ≥ 2^256 cannot reach here: the decoders refuse it at the
+/// wire — `WideInt::parse_decimal` on the JSON path, the 4-limb carrier width on the no-copy path.)
+/// The refusal surfaces as [`ExtractError::NonIntScalar`], which fences the turn onto the Rust
+/// producer rather than installing a mangled field.
+fn wide_to_field(v: &WideInt) -> Option<[u8; 32]> {
+    v.to_be_bytes32()
 }
 
 /// Build the inverse id map (wire Nat → `CellId`) from the pre-state snapshot's id map.
@@ -1063,32 +1071,34 @@ pub fn wire_state_to_ledger(
 
         // Any other named Int field maps to a `fields[]` slot.
         //
-        // The wire projects each 32-byte field down to its low-8-byte u64 lane
-        // (`lean_shadow::field_to_i128` reads only `field[24..32]`); the high 24
-        // bytes NEVER cross the wire. Writing the lane back unconditionally
-        // therefore TRUNCATES any field holding a full-width value (a 32-byte
-        // cell id, a digest) on every producer turn that re-emits the cell — even
-        // a turn that never touched that field. A `GrantCapability{to: c}` re-emits
-        // `c` because its cap_root moved, yet performs no SetField: it silently
-        // shredded the execution-lease PROVIDER slot's 32-byte cell id to its low
-        // 8 bytes, on the executing node only (docs/FINDING-state-field-truncation.md).
+        // ⚑ FULL WIDTH since 2026-07-30. The wire used to project each 32-byte field down to its
+        // low-8-byte u64 lane, so writing the lane back TRUNCATED any field holding a full-width
+        // value (a 32-byte cell id, a digest) on every producer turn that re-emitted the cell —
+        // even a turn that never touched that field. A `GrantCapability{to: c}` re-emits `c`
+        // because its cap_root moved, yet performs no SetField: it silently shredded the
+        // execution-lease PROVIDER slot's 32-byte cell id, on the executing node only
+        // (docs/FINDING-state-field-truncation.md). The acute fix was to compare the produced LANE
+        // against the template's lane and skip an unchanged one.
         //
-        // `cell` is a clone of the pre-state template, so `fields[idx]` still holds
-        // the intact 32 bytes. Install the produced lane ONLY when this turn actually
-        // moved it; otherwise keep the template's full-width field.
+        // Now the carrier is the whole 256-bit word, so the comparison is over the WHOLE field:
+        //   * an unchanged field is still skipped (cheap, and keeps the leaf cache honest);
+        //   * a field the turn genuinely moved is installed at FULL WIDTH, which is what closes
+        //     the residual the acute fix could only fence;
+        //   * ⚑ and the lane comparison's own blind spot goes with it — a write whose LOW 64 bits
+        //     happened to equal the template's, over a template with non-zero high bytes, used to
+        //     read as "unchanged" and silently keep the old wide value.
         //
-        // RESIDUAL (unfixed, by design): a turn that genuinely SetFields a slot to a
-        // NEW full-width value still loses its high 24 bytes, because the wire cannot
-        // carry them. Closing that needs the wire field encoding widened from a u64
-        // `Int` to a 32-byte carrier — a wire-model change, not a local fix.
+        // A produced value with no field image (negative) REFUSES here rather than wrapping.
         if let WireValue::Record(fs) = value {
             for (k, x) in fs {
                 if let (Some(idx), WireValue::Int(i)) = (field_name_to_index(k), x) {
                     if idx < dregg_cell::state::STATE_SLOTS {
-                        let mut template_lane = [0u8; 8];
-                        template_lane.copy_from_slice(&cell.state.fields[idx][24..32]);
-                        if (*i as u64) != u64::from_be_bytes(template_lane) {
-                            let _ = cell.state.set_field(idx, i128_to_field(*i));
+                        let produced = wide_to_field(i).ok_or(ExtractError::NonIntScalar {
+                            nat: *nat,
+                            field: "state field (negative — no 256-bit unsigned image)",
+                        })?;
+                        if produced != cell.state.fields[idx] {
+                            let _ = cell.state.set_field(idx, produced);
                         }
                     }
                 }

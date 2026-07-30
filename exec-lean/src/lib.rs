@@ -49,7 +49,9 @@ pub use distributed_gates::{LeanDistributedGate, register_distributed_gates};
 pub use lean_apply::{
     ProducerOutcome, execute_via_lean, produce_via_lean, prof_outer_dump, profile_lean_phases,
 };
-pub use lean_shadow::{ShadowAgreement, ShadowReport, maybe_shadow_turn, shadow_report};
+pub use lean_shadow::{
+    ShadowAgreement, ShadowReport, maybe_shadow_turn, shadow_agreement_for, shadow_report,
+};
 pub use spec_audit::{
     AuditEntry, AuditOutcome, AuditWorker, DivergenceKind, DivergenceReport, DivergenceSink,
     SpeculativeAudit, WorkerStop,

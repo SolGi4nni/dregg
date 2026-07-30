@@ -192,6 +192,215 @@ impl From<[u8; 32]> for Digest {
 }
 
 // ===================================================================
+// WIDE INT — the FULL-WIDTH signed scalar the Lean `Int` always was.
+//
+// The Lean wire type for every `{"int":…}` payload (`Value.int`, `setFieldA.v`,
+// `emitEventA.topic`) is `Int` — UNBOUNDED. `parseInt`/`toString` on that side
+// carry arbitrary precision. The Rust mirror carried `i128`, and the producer
+// projected a 32-byte `FieldElement` through `field[24..32]` — a 64-bit lane —
+// so any field holding a full 32-byte value (a digest, a `cell_tag`) had no
+// faithful wire image and the whole turn was failed closed onto the Rust
+// executor (docs/FINDING-state-field-truncation.md).
+//
+// `WideInt` is a 256-bit-magnitude signed integer: exactly as wide as a
+// `FieldElement`, so every state field crosses LOSSLESSLY, and still REFUSING
+// (never truncating) anything outside that range — the decoder returns an error
+// for a magnitude ≥ 2^256, which fences the turn onto Rust exactly as the old
+// low-64 guard did, just at the honest boundary.
+// ===================================================================
+
+/// A signed integer with a 256-bit magnitude — the faithful Rust mirror of the Lean wire `Int`
+/// for the field carrier. Big-endian magnitude bytes; the sign is separate and normalized
+/// (a zero magnitude is never negative, so `Eq` is the mathematical equality).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct WideInt {
+    neg: bool,
+    /// Big-endian 256-bit magnitude.
+    mag: [u8; 32],
+}
+
+impl WideInt {
+    /// The additive identity.
+    pub const ZERO: WideInt = WideInt {
+        neg: false,
+        mag: [0u8; 32],
+    };
+
+    /// Build from a big-endian 256-bit magnitude and a sign. A zero magnitude normalizes to `+0`.
+    pub fn from_parts(neg: bool, mag: [u8; 32]) -> Self {
+        let zero = mag.iter().all(|&b| b == 0);
+        WideInt {
+            neg: neg && !zero,
+            mag,
+        }
+    }
+
+    /// A NON-NEGATIVE value from a big-endian 32-byte magnitude — the state-field projection.
+    /// Total and lossless: a `FieldElement` is exactly 256 bits, so every field has a wire image.
+    pub fn from_be_bytes32(b: [u8; 32]) -> Self {
+        WideInt::from_parts(false, b)
+    }
+
+    /// The big-endian 32-byte magnitude, iff the value is NON-NEGATIVE. `None` for a negative
+    /// value — a field slot holds an unsigned 256-bit word, so a negative produced `Int` has no
+    /// faithful field image and the caller must REFUSE rather than wrap.
+    pub fn to_be_bytes32(&self) -> Option<[u8; 32]> {
+        if self.neg {
+            None
+        } else {
+            Some(self.mag)
+        }
+    }
+
+    /// Whether the value is strictly negative.
+    pub fn is_negative(&self) -> bool {
+        self.neg
+    }
+
+    /// Whether the value is zero.
+    pub fn is_zero(&self) -> bool {
+        self.mag.iter().all(|&b| b == 0)
+    }
+
+    /// The `i128` view, iff the value fits. `None` when the magnitude exceeds `i128`'s range —
+    /// the caller must refuse rather than truncate (this is the narrow-field fail-closed leg).
+    pub fn to_i128(&self) -> Option<i128> {
+        if self.mag[..16].iter().any(|&b| b != 0) {
+            return None;
+        }
+        let mut lo = [0u8; 16];
+        lo.copy_from_slice(&self.mag[16..32]);
+        let mag = u128::from_be_bytes(lo);
+        if self.neg {
+            if mag > (i128::MAX as u128) + 1 {
+                None
+            } else if mag == (i128::MAX as u128) + 1 {
+                Some(i128::MIN)
+            } else {
+                Some(-(mag as i128))
+            }
+        } else if mag > i128::MAX as u128 {
+            None
+        } else {
+            Some(mag as i128)
+        }
+    }
+
+    /// The magnitude as four LITTLE-ENDIAN-ordered 64-bit limbs (`limb[0]` least significant) —
+    /// the shape the no-copy Lean builder (`dregg_d_int_of_limbs`) consumes.
+    pub fn limbs_le(&self) -> [u64; 4] {
+        let mut out = [0u64; 4];
+        for (k, slot) in out.iter_mut().enumerate() {
+            // limb k occupies big-endian bytes [32-8(k+1) .. 32-8k).
+            let hi = 32 - 8 * k;
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&self.mag[hi - 8..hi]);
+            *slot = u64::from_be_bytes(b);
+        }
+        out
+    }
+
+    /// Rebuild from four little-endian-ordered 64-bit limbs plus a sign — the inverse of
+    /// [`WideInt::limbs_le`], used to read a Lean `Int` back over the no-copy boundary.
+    pub fn from_limbs_le(limbs: [u64; 4], neg: bool) -> Self {
+        let mut mag = [0u8; 32];
+        for (k, limb) in limbs.iter().enumerate() {
+            let hi = 32 - 8 * k;
+            mag[hi - 8..hi].copy_from_slice(&limb.to_be_bytes());
+        }
+        WideInt::from_parts(neg, mag)
+    }
+
+    /// Parse a signed decimal token (the wire form, matching Lean `toString : Int → String`).
+    /// `None` on a malformed token OR on a magnitude ≥ 2^256 — the honest refusal boundary that
+    /// replaces the old low-64 truncation.
+    pub fn parse_decimal(s: &str) -> Option<Self> {
+        let (neg, digits) = match s.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, s),
+        };
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut mag = [0u8; 32];
+        for d in digits.bytes() {
+            // mag = mag * 10 + d, big-endian, refusing on carry out of 256 bits.
+            let mut carry = u32::from(d - b'0');
+            for byte in mag.iter_mut().rev() {
+                let v = u32::from(*byte) * 10 + carry;
+                *byte = (v & 0xff) as u8;
+                carry = v >> 8;
+            }
+            if carry != 0 {
+                return None; // ≥ 2^256 — REFUSE, never wrap.
+            }
+        }
+        Some(WideInt::from_parts(neg, mag))
+    }
+
+    /// The signed decimal wire form (matches Lean `toString : Int → String`).
+    pub fn to_decimal(&self) -> String {
+        if self.is_zero() {
+            return "0".to_string();
+        }
+        let mut digits: Vec<u8> = Vec::with_capacity(78);
+        let mut work = self.mag;
+        while work.iter().any(|&b| b != 0) {
+            // work /= 10, collecting the remainder digit (big-endian long division).
+            let mut rem: u32 = 0;
+            for byte in work.iter_mut() {
+                let cur = (rem << 8) | u32::from(*byte);
+                *byte = (cur / 10) as u8;
+                rem = cur % 10;
+            }
+            digits.push(b'0' + rem as u8);
+        }
+        let mut out = String::with_capacity(digits.len() + 1);
+        if self.neg {
+            out.push('-');
+        }
+        for d in digits.iter().rev() {
+            out.push(*d as char);
+        }
+        out
+    }
+}
+
+impl From<i128> for WideInt {
+    fn from(v: i128) -> Self {
+        let neg = v < 0;
+        let mag = v.unsigned_abs();
+        let mut b = [0u8; 32];
+        b[16..32].copy_from_slice(&mag.to_be_bytes());
+        WideInt::from_parts(neg, b)
+    }
+}
+
+impl From<i64> for WideInt {
+    fn from(v: i64) -> Self {
+        WideInt::from(v as i128)
+    }
+}
+
+impl From<i32> for WideInt {
+    fn from(v: i32) -> Self {
+        WideInt::from(v as i128)
+    }
+}
+
+impl From<u64> for WideInt {
+    fn from(v: u64) -> Self {
+        WideInt::from(v as i128)
+    }
+}
+
+impl std::fmt::Display for WideInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_decimal())
+    }
+}
+
+// ===================================================================
 // VALUE — the wide `Value` codec (`dig` as the 64-hex ByteArray32 field).
 // FFI.lean:1121 (encodeValueW). NOTE: `dig` is WIDE here (quoted 64-hex), unlike the
 // narrow record-kernel codec where `dig` was a bare Nat.
@@ -199,11 +408,20 @@ impl From<[u8; 32]> for Digest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireValue {
-    Int(i128),
+    /// The Lean `Value.int` payload — an UNBOUNDED `Int` on that side, carried here at the
+    /// full 256-bit width a `FieldElement` occupies (see [`WideInt`]).
+    Int(WideInt),
     /// A `[u8;32]` digest. Encoded as the low 256 bits, big-endian, 64 LOWERCASE hex.
     Dig(u64),
     Sym(u64),
     Record(Vec<(String, WireValue)>),
+}
+
+impl WireValue {
+    /// A `Value.int` from a narrow scalar (balances / nonces / the fixture literals).
+    pub fn int(v: impl Into<WideInt>) -> WireValue {
+        WireValue::Int(v.into())
+    }
 }
 
 // ===================================================================
@@ -458,19 +676,19 @@ pub enum WireAction {
         asset: u64,
         amt: i128,
     },
-    /// {"setfield":[actor,cell,"FIELD",v]}  (v SIGNED)
+    /// {"setfield":[actor,cell,"FIELD",v]}  (v SIGNED, FULL 256-bit — see [`WideInt`])
     SetField {
         actor: u64,
         cell: u64,
         field: String,
-        v: i128,
+        v: WideInt,
     },
-    /// {"emit":[actor,cell,topic,data]}  (topic,data SIGNED)
+    /// {"emit":[actor,cell,topic,data]}  (topic,data SIGNED, FULL 256-bit — see [`WideInt`])
     Emit {
         actor: u64,
         cell: u64,
-        topic: i128,
-        data: i128,
+        topic: WideInt,
+        data: WideInt,
     },
     /// {"incnonce":[actor,cell,newNonce]}  (newNonce SIGNED)
     IncNonce {
@@ -719,6 +937,11 @@ fn push_int(out: &mut String, i: i128) {
     // decimal, leading '-' if negative — matches Lean `toString : Int -> String`.
     out.push_str(&i.to_string());
 }
+/// The FULL-WIDTH signed decimal — the same `toString : Int → String` form `push_int` emits,
+/// for the 256-bit carrier (`Value.int` / `setfield.v` / `emit.topic`).
+fn push_wide(out: &mut String, w: &WideInt) {
+    out.push_str(&w.to_decimal());
+}
 fn encode_opt_nat(out: &mut String, v: Option<u64>) {
     match v {
         None => out.push_str("{\"none\":0}"),
@@ -824,7 +1047,7 @@ fn encode_value(v: &WireValue, out: &mut String) {
     match v {
         WireValue::Int(i) => {
             out.push_str("{\"int\":");
-            push_int(out, *i);
+            push_wide(out, i);
             out.push('}');
         }
         WireValue::Dig(d) => {
@@ -1111,7 +1334,7 @@ fn encode_action(a: &WireAction, out: &mut String) {
             out.push_str(",\"");
             push_json_escaped(out, field);
             out.push_str("\",");
-            push_int(out, *v);
+            push_wide(out, v);
             out.push_str("]}");
         }
         WireAction::Emit {
@@ -1125,9 +1348,9 @@ fn encode_action(a: &WireAction, out: &mut String) {
             out.push(',');
             push_nat(out, *cell);
             out.push(',');
-            push_int(out, *topic);
+            push_wide(out, topic);
             out.push(',');
-            push_int(out, *data);
+            push_wide(out, data);
             out.push_str("]}");
         }
         WireAction::IncNonce {
@@ -1598,13 +1821,13 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
             actor: 19,
             cell: 20,
             field: "balance".into(),
-            v: -21,
+            v: (-21).into(),
         },
         WireAction::Emit {
             actor: 22,
             cell: 23,
-            topic: -24,
-            data: 25,
+            topic: (-24).into(),
+            data: 25.into(),
         },
         WireAction::IncNonce {
             actor: 26,
@@ -1648,14 +1871,14 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
                 WireAction::Emit {
                     actor: 200,
                     cell: 201,
-                    topic: -202,
-                    data: 203,
+                    topic: (-202).into(),
+                    data: 203.into(),
                 },
                 WireAction::SetField {
                     actor: 204,
                     cell: 205,
                     field: "balance".into(),
-                    v: -206,
+                    v: (-206).into(),
                 },
             ],
         },
@@ -1821,7 +2044,7 @@ fn conf_state_minimal() -> WireState {
     WireState {
         cells: vec![(
             0,
-            WireValue::Record(vec![("balance".into(), WireValue::Int(0))]),
+            WireValue::Record(vec![("balance".into(), WireValue::int(0))]),
         )],
         ..Default::default()
     }
@@ -1835,13 +2058,13 @@ fn conf_state_demo() -> WireState {
             (
                 0,
                 WireValue::Record(vec![
-                    ("balance".into(), WireValue::Int(100)),
-                    ("nonce".into(), WireValue::Int(7)),
+                    ("balance".into(), WireValue::int(100)),
+                    ("nonce".into(), WireValue::int(7)),
                 ]),
             ),
             (
                 1,
-                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+                WireValue::Record(vec![("balance".into(), WireValue::int(5))]),
             ),
         ],
         caps: vec![(9, vec![Cap::Node(0)])],
@@ -1889,8 +2112,8 @@ fn conf_state_full() -> WireState {
             (
                 0,
                 WireValue::Record(vec![
-                    ("balance".into(), WireValue::Int(-100)),
-                    ("nonce".into(), WireValue::Int(7)),
+                    ("balance".into(), WireValue::int(-100)),
+                    ("nonce".into(), WireValue::int(7)),
                     (
                         "meta".into(),
                         WireValue::Record(vec![
@@ -1899,12 +2122,12 @@ fn conf_state_full() -> WireState {
                         ]),
                     ),
                     // an escaped field name: a literal `"` and `\` inside the key.
-                    ("weird\"key\\x".into(), WireValue::Int(1)),
+                    ("weird\"key\\x".into(), WireValue::int(1)),
                 ]),
             ),
             (
                 1,
-                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+                WireValue::Record(vec![("balance".into(), WireValue::int(5))]),
             ),
             (2, WireValue::Dig(0xABCDEF)),
         ],
@@ -2079,8 +2302,8 @@ fn conf_forest_deep() -> WForest {
         action: WireAction::Emit {
             actor: 0,
             cell: 0,
-            topic: 0,
-            data: 0,
+            topic: WideInt::ZERO,
+            data: WideInt::ZERO,
         },
         children: vec![
             WChild {
@@ -2101,8 +2324,8 @@ fn conf_forest_deep() -> WForest {
                     action: WireAction::Emit {
                         actor: 1,
                         cell: 1,
-                        topic: 0,
-                        data: 0,
+                        topic: WideInt::ZERO,
+                        data: WideInt::ZERO,
                     },
                     children: vec![WChild {
                         holder: 2,
@@ -2519,7 +2742,10 @@ impl<'a> Parser<'a> {
     fn peek(&self) -> Option<u8> {
         self.s.get(self.i).copied()
     }
-    fn int(&mut self) -> Result<i128, String> {
+    /// The FULL-WIDTH signed decimal scalar (the Lean `Int` wire form). Fail-closed on a
+    /// magnitude ≥ 2^256 — the honest refusal boundary. It never truncates: a value the carrier
+    /// cannot hold is an error the caller turns into a Rust-producer fence.
+    fn wide(&mut self) -> Result<WideInt, String> {
         let start = self.i;
         if self.peek() == Some(b'-') {
             self.i += 1;
@@ -2532,8 +2758,15 @@ impl<'a> Parser<'a> {
             return Err("expected digits".into());
         }
         let txt = std::str::from_utf8(&self.s[start..self.i]).map_err(|e| e.to_string())?;
-        txt.parse::<i128>()
-            .map_err(|e| format!("bad int `{txt}`: {e}"))
+        WideInt::parse_decimal(txt)
+            .ok_or_else(|| format!("int `{txt}` exceeds the 256-bit wire carrier"))
+    }
+    /// A NARROW scalar field (amounts / perms / vk / nonces): parsed at full width, then required
+    /// to fit `i128`. A wider value is REFUSED, never truncated.
+    fn int(&mut self) -> Result<i128, String> {
+        let w = self.wide()?;
+        w.to_i128()
+            .ok_or_else(|| format!("int `{w}` does not fit this field's i128 carrier"))
     }
     fn nat(&mut self) -> Result<u64, String> {
         let v = self.int()?;
@@ -2620,7 +2853,7 @@ impl<'a> Parser<'a> {
 
 fn parse_value(p: &mut Parser) -> Result<WireValue, String> {
     if p.try_lit("{\"int\":") {
-        let i = p.int()?;
+        let i = p.wide()?;
         p.lit("}")?;
         Ok(WireValue::Int(i))
     } else if p.try_lit("{\"dig\":\"") {

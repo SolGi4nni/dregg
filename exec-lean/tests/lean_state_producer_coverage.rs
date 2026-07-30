@@ -951,9 +951,74 @@ fn forest_is_root_agreeing_covers_transfer_and_refusal() {
 
     assert_eq!(
         lean_shadow::producer_root_gap_effects(),
-        &["NoteSpend", "NoteCreate", "RevokeCapability"],
-        "only unproduced executor accumulator mutations remain fenced"
+        &["NoteSpend", "NoteCreate", "RevokeCapability", "Mint"],
+        "the fenced set is the three unproduced executor accumulator mutations PLUS Mint (the \
+         scalar-supply vs conserving-issuer-well model divergence, added 2026-07-30 — it was \
+         mappable and in NEITHER public list, so its fallback named `unknown`)"
     );
+}
+
+/// ⚑ NO NAMELESS FALLBACK. `produce_via_lean`'s contract is that a fenced turn names the gap that
+/// fenced it. A `Mint` turn is MAPPABLE (`effect_is_mappable` accepts `slot: 0` and `effect_to_wire`
+/// emits the `mint` arm) but not root-agreeing — and because `Mint` was absent from
+/// `producer_mappable_effects`, `first_root_gap_kind` matched nothing and the reason degraded to
+/// `RootGap { kind: "unknown" }`. This pins that it names ITSELF.
+#[test]
+fn a_mint_turn_names_mint_as_its_root_gap_not_unknown() {
+    let (_pre, a_id) = one_open_cell();
+    let mint = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::Mint {
+            target: a_id,
+            slot: 0,
+            amount: 5,
+        },
+    );
+
+    assert!(
+        lean_shadow::forest_is_marshallable(&mint),
+        "a slot-0 Mint has a wire arm — that is why the missing list entry mattered"
+    );
+    assert!(
+        !lean_shadow::forest_is_root_agreeing(&mint),
+        "…and it is still correctly fenced OUT of the covered set (this fix changes reporting, \
+         never gating)"
+    );
+    assert_eq!(
+        lean_shadow::first_root_gap_kind(&mint),
+        Some("Mint"),
+        "the fallback must NAME Mint; `None` here means the reason degrades to `unknown` again"
+    );
+    assert!(
+        lean_shadow::producer_covers_kind("Mint"),
+        "the public mappable list must agree with `effect_is_mappable`, its stated source of truth"
+    );
+}
+
+/// The full-surface enumeration must not silently omit an `Effect` variant: an omitted variant is
+/// invisible to `producer_uncovered_effects()`, the honest-boundary report the node publishes.
+#[test]
+fn the_effect_surface_enumeration_names_the_previously_unnamed_variants() {
+    let all: std::collections::HashSet<&str> =
+        lean_shadow::all_effect_kinds().iter().copied().collect();
+    for k in ["Mint", "SetProgram", "Promise", "Notify"] {
+        assert!(
+            all.contains(k),
+            "`{k}` is a real Effect variant and must appear in all_effect_kinds() — it did not \
+             until 2026-07-30, so the uncovered report was short by four kinds"
+        );
+    }
+    let uncovered: std::collections::HashSet<&str> = lean_shadow::producer_uncovered_effects()
+        .into_iter()
+        .collect();
+    for k in ["SetProgram", "Promise", "Notify"] {
+        assert!(
+            uncovered.contains(k),
+            "`{k}` has no wire arm, so the honest boundary report must LIST it as uncovered"
+        );
+    }
 }
 
 #[test]

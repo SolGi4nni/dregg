@@ -127,15 +127,18 @@ fn field_from_u64(v: u64) -> FieldElement {
 
 /// A REAL 32-byte blake3-digest field — the `app-framework::fields::field_from_bytes` convention a
 /// `dregg name register` uses for its `set_field` (the raw digest, high bytes non-zero). Its leading
-/// 24 bytes are (overwhelmingly) NON-ZERO, so the value EXCEEDS the low-64 wire carrier
-/// (`lean_shadow::field_to_i128` reads only `bytes[24..32]`) — the `> 2^64` cohort the gauntlet must
-/// exercise so its parity claim stops OVERSTATING (docs/FINDING-state-field-truncation.md).
+/// 24 bytes are (overwhelmingly) NON-ZERO, so the value exceeds the low-64 lane the wire carrier
+/// USED to be — the `> 2^64` cohort the gauntlet must exercise so its parity claim stops
+/// OVERSTATING (docs/FINDING-state-field-truncation.md). Since the carrier widening (2026-07-30)
+/// this cohort round-trips through BOTH executors instead of fail-closing to `WireGap`.
 fn field_from_bytes(bytes: &[u8]) -> FieldElement {
     *blake3::hash(bytes).as_bytes()
 }
 
-/// True iff a field EXCEEDS the low-64 wire carrier (its leading 24 bytes are non-zero) — the
-/// producer cannot marshal it losslessly and must FAIL-CLOSED rather than truncate.
+/// True iff a field has NON-ZERO leading 24 bytes — i.e. it exceeds the low-64 lane the wire
+/// carrier used to be. This is no longer a refusal predicate (the carrier is 256 bits wide since
+/// 2026-07-30); it is the NON-VACUITY precondition of the wide-field cohort: a fixture that fails
+/// it would exercise the narrow path and prove nothing about the widening.
 fn exceeds_wire_carrier(f: &FieldElement) -> bool {
     f[0..24].iter().any(|&b| b != 0)
 }
@@ -454,12 +457,11 @@ fn build_corpus() -> Vec<Case> {
 
     // SetField — a REAL 32-byte blake3-digest value that EXCEEDS the low-64 wire carrier (> 2^64).
     // This is the `dregg name register` → `set_field(name_slot, blake3(name))` scenario from
-    // docs/FINDING-state-field-truncation.md. Pre-fix the producer SILENTLY truncated the digest to
-    // its low 8 bytes and BOTH executors committed a DIVERGING state (a `BothAcceptStateDiverge` the
-    // corpus never exercised — so parity was OVERSTATED). The FAIL-CLOSED interim rejects the
-    // truncation at the marshaller: the value is not wire-carriable, so the turn is INELIGIBLE and
-    // falls to the full-width Rust path → `WireGap`, NEVER a silent divergence. (Full-width field
-    // marshal is the v13 faithful-fields epoch, NOT this interim.)
+    // docs/FINDING-state-field-truncation.md. It has been through three regimes: the producer once
+    // SILENTLY truncated the digest to its low 8 bytes and both executors committed a DIVERGING
+    // state; the fail-closed interim made it INELIGIBLE → `WireGap` (correct, but the verified
+    // producer never ran); and since the 2026-07-30 carrier widening it round-trips at full width
+    // → `BothAcceptStateAgree`.
     {
         let a = make_open_cell(1, 100);
         let ida = a.id();
@@ -487,7 +489,7 @@ fn build_corpus() -> Vec<Case> {
     }
 
     // SetField — a > 2^64 value on the developer slot 6 (the exec-lease PROVIDER_SLOT `cell_tag`
-    // pattern from the FINDING). Same FAIL-CLOSED expectation: `WireGap`, not a truncated commit.
+    // pattern from the FINDING). Same full-width expectation as the name-digest case above.
     {
         let a = make_open_cell(1, 100);
         let ida = a.id();
@@ -1259,19 +1261,23 @@ fn rust_lean_parity_gauntlet() {
     );
 }
 
-/// FOCUSED FAIL-CLOSED CANARY (docs/FINDING-state-field-truncation.md). A SetField whose value is a
-/// REAL 32-byte blake3 digest (> 2^64) must FAIL-CLOSED: the producer cannot marshal it losslessly,
-/// so `execute_via_lean` returns `Ineligible` and `run_case` classifies the turn `WireGap` — it falls
-/// to the full-width Rust path, NEVER a silent `BothAcceptStateDiverge`.
+/// ⚑ FOCUSED WIDE-FIELD CANARY (docs/FINDING-state-field-truncation.md). A SetField whose value is a
+/// REAL 32-byte blake3 digest (> 2^64) now ROUND-TRIPS: the wire carrier is the full 256 bits, so
+/// both executors run it and commit the SAME post-state — `BothAcceptStateAgree`.
 ///
-/// CANARY: this is the exact cohort the interim guard protects. If `field_fits_wire_carrier` in
-/// `lean_shadow::{effect_is_mappable, effect_to_wire}` is reverted, the producer silently truncates
-/// the digest to its low 8 bytes, both executors commit a DIVERGING state, and this case REDS as
-/// `BothAcceptStateDiverge` (the main gauntlet's `state_diverges.is_empty()` teeth also fire). WHAT
-/// REMAINS FOR v13: widen the wire carrier to the full 32 bytes so this cohort round-trips as
-/// `BothAcceptStateAgree` instead of fail-closing to `WireGap`.
+/// This assertion was `WireGap` until 2026-07-30, and the doc here named the flip as the remaining
+/// work: "widen the wire carrier to the full 32 bytes so this cohort round-trips as
+/// `BothAcceptStateAgree` instead of fail-closing to `WireGap`." `WireGap` meant the VERIFIED
+/// producer never ran and the unverified Rust executor decided the turn — correct (truncating
+/// would have been worse) but a live hole, reachable by every app that writes a digest into a
+/// scalar slot.
+///
+/// CANARY, both directions: a REGRESSION to `WireGap` means the carrier narrowed again (the verified
+/// producer stopped running for this cohort); a `BothAcceptStateDiverge` means the carrier is wide
+/// but LOSSY somewhere — the silent-truncation failure itself, which the main gauntlet's
+/// `state_diverges.is_empty()` teeth also catch.
 #[test]
-fn setfield_over_u64_fails_closed_not_silent_divergence() {
+fn setfield_over_u64_round_trips_at_full_width() {
     if !dregg_lean_ffi::demand_lean(
         dregg_lean_ffi::lean_available(),
         "Lean archive (the verified kernel)",
@@ -1306,8 +1312,10 @@ fn setfield_over_u64_fails_closed_not_silent_divergence() {
     let (verdict, detail) = run_case(&case);
     assert_eq!(
         verdict,
-        Verdict::WireGap,
-        "a > 2^64 SetField must FAIL-CLOSED to WireGap (producer ineligible → full-width Rust path), \
-         never a silent BothAcceptStateDiverge; got {verdict:?} ({detail})"
+        Verdict::BothAcceptStateAgree,
+        "a > 2^64 SetField must now be EXECUTED BY BOTH and agree byte-exactly on the post-state. \
+         `WireGap` means the carrier narrowed again and the verified producer stopped running for \
+         this cohort; `BothAcceptStateDiverge` means the widened carrier is lossy. Got {verdict:?} \
+         ({detail})"
     );
 }

@@ -30,7 +30,7 @@ use crate::marshal::{WForest, WireHostCtx, WireState};
 // marshalling path (the `#[cfg(dregg_direct_present)]` block below) — gate the
 // import to match its consumer, or it reads as unused when the FFI is absent.
 #[cfg(dregg_direct_present)]
-use crate::marshal::{Auth, Cap, WireAuth, WireCaveat, WireValue};
+use crate::marshal::{Auth, Cap, WideInt, WireAuth, WireCaveat, WireValue};
 use crate::ShadowState;
 // ShadowVerdict/TurnStatus are only produced by the FFI-present marshalling path.
 #[cfg(dregg_direct_present)]
@@ -98,7 +98,11 @@ mod imp {
         fn lean_mk_string(s: *const std::os::raw::c_char) -> Obj;
 
         // ---- the FFIDirect BUILDER family (construct real Lean inductives) ----
-        fn dregg_d_int_of_u64(mag: u64, neg: u8) -> Obj;
+        /// THE FULL-WIDTH `Int` CARRIER: four 64-bit limbs LOW-first + a sign. The limb
+        /// composition is done in LEAN (`FFIDirect.intOfLimbs`); this side hands over four
+        /// opaque words. Replaces the `dregg_d_int_of_u64` builder, whose `u64` magnitude
+        /// CLAMPED every value a state field can hold.
+        fn dregg_d_int_of_limbs(l0: u64, l1: u64, l2: u64, l3: u64, neg: u8) -> Obj;
         fn dregg_d_nat_of_u64(n: u64) -> Obj;
 
         static dregg_d_natlist_nil: Obj;
@@ -231,7 +235,10 @@ mod imp {
         fn dregg_d_res_loglen(r: Obj) -> u64;
         fn dregg_d_res_reason(r: Obj) -> u64;
         fn dregg_d_res_state(r: Obj) -> Obj;
-        fn dregg_d_int_mag(i: Obj) -> u64;
+        /// THE FULL-WIDTH `Int` READER: the `k`-th 64-bit limb (LOW-first) of the magnitude.
+        /// Four calls reconstruct 256 bits byte-exactly. Replaces `dregg_d_int_mag`, which
+        /// TRUNCATED anything ≥ 2^64 (so a produced state field lost its high 24 bytes).
+        fn dregg_d_int_limb(i: Obj, k: u64) -> u64;
         fn dregg_d_int_neg(i: Obj) -> u8;
 
         fn dregg_d_st_cells(w: Obj) -> Obj;
@@ -298,33 +305,40 @@ mod imp {
         lean_mk_string(c.as_ptr())
     }
 
-    /// Build a Lean `Int` from an `i128`. Returns an OWNED `Obj`. The kernel ints (balances, field
-    /// values, fees) fit `i64` in practice; we carry the magnitude + sign through the Lean builder
-    /// (which boxes a real `Int`), so no precision is lost up to `u64` magnitude.
-    unsafe fn mk_int(i: i128) -> Obj {
-        let neg = i < 0;
-        let mag = i.unsigned_abs();
-        // The wire/kernel ints are <= u64 magnitude; clamp defensively (a value beyond u64 would be a
-        // marshalling bug the JSON path would also mis-handle). The builder takes a u64 magnitude.
-        let mag_u64 = if mag > u64::MAX as u128 {
-            u64::MAX
-        } else {
-            mag as u64
-        };
-        dregg_d_int_of_u64(mag_u64, neg as u8)
+    /// Build a Lean `Int` from a [`WideInt`] at FULL 256-bit width. Returns an OWNED `Obj`.
+    ///
+    /// ⚑ This used to be `mk_int(i128)` folding through `dregg_d_int_of_u64`, whose `u64`
+    /// magnitude CLAMPED — so the no-copy path (the DEFAULT one) could not carry a state field
+    /// wider than 64 bits at all, and the producer fail-closed every such turn onto the
+    /// unverified Rust executor. The Lean `Int` was never narrow; this side was.
+    unsafe fn mk_wide(w: &WideInt) -> Obj {
+        let l = w.limbs_le();
+        dregg_d_int_of_limbs(l[0], l[1], l[2], l[3], w.is_negative() as u8)
     }
 
-    /// Read an owned Lean `Int` back to `i128` (consumes the obj via the mag/neg readers, which each
-    /// consume — so we `inc` before the first and let the second consume).
-    unsafe fn read_owned_int(i: Obj) -> i128 {
-        dregg_rt_inc(i);
-        let mag = dregg_d_int_mag(i); // consumes one ref (the inc'd one)
-        let neg = dregg_d_int_neg(i) != 0; // consumes the original ref
-        if neg {
-            -(mag as i128)
-        } else {
-            mag as i128
+    /// Build a Lean `Int` from a NARROW `i128` scalar (amounts / fees / nonces) — the same
+    /// full-width builder, so no path clamps.
+    unsafe fn mk_int(i: i128) -> Obj {
+        mk_wide(&WideInt::from(i))
+    }
+
+    /// Read an owned Lean `Int` back at FULL 256-bit width (consumes the obj: each reader call
+    /// consumes one ref, so we `inc` before all but the last).
+    unsafe fn read_owned_wide(i: Obj) -> WideInt {
+        let mut limbs = [0u64; 4];
+        for (k, slot) in limbs.iter_mut().enumerate() {
+            dregg_rt_inc(i);
+            *slot = dregg_d_int_limb(i, k as u64); // consumes the inc'd ref
         }
+        let neg = dregg_d_int_neg(i) != 0; // consumes the original ref
+        WideInt::from_limbs_le(limbs, neg)
+    }
+
+    /// Read an owned Lean `Int` back into a NARROW `i128` (balances / fees). Saturating is NOT
+    /// acceptable here and is not what this does: the value is read at full width first, and a
+    /// magnitude beyond `i128` yields `None` so the caller fails closed.
+    unsafe fn read_owned_int(i: Obj) -> Option<i128> {
+        read_owned_wide(i).to_i128()
     }
 
     // ---- list builders (Auth / Cap / Value-fields / AuthW / caveat / action / child) ----
@@ -357,7 +371,7 @@ mod imp {
 
     unsafe fn build_value(v: &WireValue) -> Obj {
         match v {
-            WireValue::Int(i) => dregg_d_value_int(mk_int(*i)),
+            WireValue::Int(i) => dregg_d_value_int(mk_wide(i)),
             WireValue::Dig(n) => dregg_d_value_dig(*n),
             WireValue::Sym(n) => dregg_d_value_sym(*n),
             WireValue::Record(fs) => {
@@ -476,13 +490,13 @@ mod imp {
                 cell,
                 field,
                 v,
-            } => dregg_d_act_setfield(*actor, *cell, mk_string(field), mk_int(*v)),
+            } => dregg_d_act_setfield(*actor, *cell, mk_string(field), mk_wide(v)),
             A::Emit {
                 actor,
                 cell,
                 topic,
                 data,
-            } => dregg_d_act_emit(*actor, *cell, mk_int(*topic), mk_int(*data)),
+            } => dregg_d_act_emit(*actor, *cell, mk_wide(topic), mk_wide(data)),
             A::IncNonce {
                 actor,
                 cell,
@@ -644,7 +658,9 @@ mod imp {
         match tag {
             0 => {
                 dregg_rt_inc(v);
-                WireValue::Int(read_owned_int(dregg_d_value_int_get(v))) // int_get consumes inc'd
+                // FULL WIDTH: a produced state field is up to 256 bits, so read every limb —
+                // `read_owned_int`'s i128 view would refuse (and the old u64 mag TRUNCATED).
+                WireValue::Int(read_owned_wide(dregg_d_value_int_get(v))) // int_get consumes inc'd
             }
             1 => {
                 dregg_rt_inc(v);
@@ -732,7 +748,11 @@ mod imp {
         }
     }
 
-    unsafe fn read_post_state(w: Obj) -> WireState {
+    /// Read the produced `WState` back out. Fallible ONLY where a produced scalar does not fit the
+    /// narrow Rust carrier for its field (a `bal` amount beyond `i128`) — that is an error, not a
+    /// wrap, so the caller fences the turn instead of installing a mangled balance. Cell FIELDS are
+    /// read at full 256-bit width and never fail.
+    unsafe fn read_post_state(w: Obj) -> Result<WireState, String> {
         // cells
         let cells_o = {
             dregg_rt_inc(w);
@@ -815,7 +835,15 @@ mod imp {
             };
             let amt = {
                 dregg_rt_inc(bal_o);
-                read_owned_int(dregg_d_bal_amt(bal_o, i))
+                match read_owned_int(dregg_d_bal_amt(bal_o, i)) {
+                    Some(a) => a,
+                    None => {
+                        dregg_rt_dec(bal_o);
+                        return Err(format!(
+                            "direct read: produced bal[{cell},{asset}] exceeds the i128 carrier"
+                        ));
+                    }
+                }
             };
             bal.push((cell, asset, amt));
         }
@@ -828,7 +856,7 @@ mod imp {
         let death_cert = read_cellnats_field(w, StField::DeathCert);
         let delegate = read_cellnats_field(w, StField::Delegate);
 
-        WireState {
+        Ok(WireState {
             cells,
             caps,
             bal,
@@ -841,7 +869,7 @@ mod imp {
             lifecycle,
             death_cert,
             delegate,
-        }
+        })
     }
 
     enum StField {
@@ -914,7 +942,7 @@ mod imp {
         state: &WireState,
         turn_root: &WForest,
         turn: &WireTurnHdr,
-    ) -> ShadowState {
+    ) -> Result<ShadowState, String> {
         unsafe {
             let dbg = std::env::var("DREGG_DIRECT_DEBUG").as_deref() == Ok("1");
             macro_rules! step {
@@ -993,6 +1021,7 @@ mod imp {
             let post = read_post_state(post_o);
             dregg_rt_dec(post_o);
             dregg_rt_dec(res);
+            let post = post?;
 
             if prof {
                 let (in0, ex0, rd0) = (t_in0.unwrap(), t_exec0.unwrap(), t_read0.unwrap());
@@ -1010,7 +1039,7 @@ mod imp {
                 _ => Some(TurnStatus::Rejected),
             };
             let committed = status_code == 2;
-            ShadowState {
+            Ok(ShadowState {
                 verdict: ShadowVerdict {
                     committed,
                     loglen,
@@ -1022,7 +1051,7 @@ mod imp {
                     divergence_note: None,
                 },
                 state: post,
-            }
+            })
         }
     }
 
@@ -1065,7 +1094,7 @@ mod imp {
         state: &WireState,
         turn_root: &WForest,
         turn: &WireTurnHdr,
-    ) -> ShadowState {
+    ) -> Result<ShadowState, String> {
         unsafe {
             let host_o = dregg_d_mk_whostctx(
                 host.now,
@@ -1105,13 +1134,14 @@ mod imp {
             let post = read_post_state(post_o);
             dregg_rt_dec(post_o);
             dregg_rt_dec(res);
+            let post = post?;
             let status = match status_code {
                 2 => Some(TurnStatus::BodyCommitted),
                 1 => Some(TurnStatus::PrologueCommittedBodyFailed),
                 _ => Some(TurnStatus::Rejected),
             };
             let committed = status_code == 2;
-            ShadowState {
+            Ok(ShadowState {
                 verdict: ShadowVerdict {
                     committed,
                     loglen,
@@ -1123,7 +1153,7 @@ mod imp {
                     divergence_note: None,
                 },
                 state: post,
-            }
+            })
         }
     }
 }
@@ -1154,7 +1184,7 @@ pub fn shadow_exec_direct(
     crate::lean_available()
         .then_some(())
         .ok_or_else(|| "lean runtime not initialised".to_string())?;
-    Ok(imp::run_direct(host, state, turn_root, turn))
+    imp::run_direct(host, state, turn_root, turn)
 }
 
 #[cfg(not(dregg_direct_present))]
@@ -1200,7 +1230,7 @@ pub fn shadow_exec_direct_profiled(
     crate::lean_available()
         .then_some(())
         .ok_or_else(|| "lean runtime not initialised".to_string())?;
-    Ok(imp::run_direct_profiled(host, state, turn_root, turn))
+    imp::run_direct_profiled(host, state, turn_root, turn)
 }
 
 #[cfg(not(dregg_direct_present))]

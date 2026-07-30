@@ -86,13 +86,13 @@ fn honest_committing_wire() -> String {
             (
                 0,
                 WireValue::Record(vec![
-                    ("balance".into(), WireValue::Int(100)),
-                    ("nonce".into(), WireValue::Int(7)),
+                    ("balance".into(), WireValue::int(100)),
+                    ("nonce".into(), WireValue::int(7)),
                 ]),
             ),
             (
                 1,
-                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+                WireValue::Record(vec![("balance".into(), WireValue::int(5))]),
             ),
         ],
         bal: vec![(0, 0, 100), (1, 0, 5)],

@@ -79,13 +79,13 @@ fn wide_demo_state() -> WireState {
             (
                 0,
                 WireValue::Record(vec![
-                    ("balance".into(), WireValue::Int(100)),
-                    ("nonce".into(), WireValue::Int(7)),
+                    ("balance".into(), WireValue::int(100)),
+                    ("nonce".into(), WireValue::int(7)),
                 ]),
             ),
             (
                 1,
-                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+                WireValue::Record(vec![("balance".into(), WireValue::int(5))]),
             ),
         ],
         caps: vec![(9, vec![Cap::Node(0)])],
@@ -304,8 +304,8 @@ fn deleg_turn(keep: Vec<Auth>, parent_cap: Cap) -> WireTurn {
             action: WireAction::Emit {
                 actor: 0,
                 cell: 0,
-                topic: 0,
-                data: 0,
+                topic: Default::default(),
+                data: Default::default(),
             },
             children: vec![WChild {
                 holder: 1,
@@ -320,8 +320,8 @@ fn deleg_turn(keep: Vec<Auth>, parent_cap: Cap) -> WireTurn {
                     action: WireAction::Emit {
                         actor: 1,
                         cell: 1,
-                        topic: 0,
-                        data: 0,
+                        topic: Default::default(),
+                        data: Default::default(),
                     },
                     children: vec![],
                 },

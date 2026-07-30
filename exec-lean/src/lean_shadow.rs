@@ -182,7 +182,7 @@ pub fn maybe_shadow_turn(
     ledger: &Ledger,
     result: &TurnResult,
     block_height: u64,
-) -> Option<bool> {
+) -> Option<(bool, ShadowAgreement)> {
     let _ = block_height;
     // Clear any stale reason from a previous turn — a non-comparable turn (FFI off / GAP / not
     // marshallable) must surface NO reason, never a stale one. `run_shadow` re-sets it on a real
@@ -219,27 +219,10 @@ pub fn maybe_shadow_turn(
     let kinds = turn_effect_kinds(turn).join("+");
     let rust_committed = result.is_committed();
 
-    match run_shadow_state(turn, &pre, &host) {
-        Ok(shadow_state) => {
-            let lean_committed = shadow_state.verdict.committed;
-            // DENOTATIONAL leg: when the turn is root-agreeing and BOTH committed, reconstitute
-            // the verified executor's FULL post-state and compare its `.root()` to Rust's — the
-            // genuine eval-agreement check (not a commit-bit coincidence). Otherwise the post-state
-            // root cannot byte-match by construction, so we honestly fall back to the commit bit.
-            // `ledger` is the RUST POST-STATE: `TurnExecutor::execute` calls the observer AFTER
-            // `execute_without_shadow` has mutated it (`turn/src/executor/execute.rs:277,293`).
-            // That is the object the reconstituted Lean post-state is compared against.
-            let agreement = compare_post_state(
-                turn,
-                &pre,
-                &host,
-                &shadow_state,
-                lean_committed,
-                rust_committed,
-                ledger,
-            );
+    match shadow_compare(turn, &pre, &host, rust_committed, ledger) {
+        Ok((lean_committed, agreement)) => {
             log_shadow_outcome(turn, &kinds, lean_committed, rust_committed, agreement);
-            Some(lean_committed)
+            Some((lean_committed, agreement))
         }
         Err(e) => {
             tracing::warn!(
@@ -252,6 +235,60 @@ pub fn maybe_shadow_turn(
             None
         }
     }
+}
+
+/// **THE COMPARISON ITSELF**, split out of [`maybe_shadow_turn`] so its STRENGTH is assertable by a
+/// test without touching `DREGG_LEAN_SHADOW` or the thread-local pre-state.
+///
+/// ⚑ This split is the fix for a standing hole: [`ShadowAgreement`] existed, distinguished a genuine
+/// denotational agreement from a commit-bit coincidence, and NOTHING anywhere asserted which one a
+/// real turn produced — the strength was only ever `tracing`-logged. That is why an always-red
+/// `FullState` detector (the root-vs-anchor kind mismatch) ran for nine days unnoticed: a detector
+/// no test can read is a detector no test can find broken. `shadow_agreement_strength.rs` now pins
+/// both faces against the live FFI.
+///
+/// Returns `(lean_committed, agreement)`. Errors are marshal/exec failures (the turn was NOT
+/// compared) — never a silent "agreed".
+fn shadow_compare(
+    turn: &Turn,
+    pre: &ShadowPreLedger,
+    host: &ShadowHostCtx,
+    rust_committed: bool,
+    rust_post_ledger: &Ledger,
+) -> Result<(bool, ShadowAgreement), String> {
+    let shadow_state = run_shadow_state(turn, pre, host)?;
+    let lean_committed = shadow_state.verdict.committed;
+    // DENOTATIONAL leg: when the turn is root-agreeing and BOTH committed, reconstitute the verified
+    // executor's FULL post-state and compare it CELL BY CELL against Rust's — the genuine
+    // eval-agreement check (not a commit-bit coincidence). Otherwise the post-state cannot match by
+    // construction, so we honestly fall back to the commit bit.
+    let agreement = compare_post_state(
+        turn,
+        pre,
+        host,
+        &shadow_state,
+        lean_committed,
+        rust_committed,
+        rust_post_ledger,
+    );
+    Ok((lean_committed, agreement))
+}
+
+/// The differential comparison, driven from EXPLICIT pre/post ledgers — the harness entry for
+/// [`shadow_compare`]. `pre_ledger` must be the state BEFORE the Rust executor ran and
+/// `rust_post_ledger` the state after it, exactly as `TurnExecutor::execute` supplies them.
+pub fn shadow_agreement_for(
+    turn: &Turn,
+    pre_ledger: &Ledger,
+    host: &ShadowHostCtx,
+    rust_committed: bool,
+    rust_post_ledger: &Ledger,
+) -> Result<(bool, ShadowAgreement), String> {
+    if !forest_is_marshallable(turn) {
+        return Err("turn forest is not marshallable (no wire projection)".to_string());
+    }
+    let pre = build_pre_ledger(turn, pre_ledger);
+    shadow_compare(turn, &pre, host, rust_committed, rust_post_ledger)
 }
 
 /// Decide the STRENGTH of agreement and whether the executors agreed at that strength. A root-agreeing
@@ -468,6 +505,14 @@ pub fn effect_kind(eff: &Effect) -> &'static str {
         Effect::Mint { .. } => "Mint",
         Effect::AttenuateCapability { .. } => "AttenuateCapability",
         Effect::ReceiptArchive { .. } => "ReceiptArchive",
+        // ⚑ NAMED 2026-07-30. These three fell through to `"Unknown"`, so a turn carrying any of
+        // them reported a fallback reason that named no effect, they were absent from
+        // `all_effect_kinds`, and `producer_uncovered_effects` therefore never listed them — a
+        // boundary the honest-boundary report could not see. (They remain uncovered; only the
+        // NAMING changed.)
+        Effect::SetProgram { .. } => "SetProgram",
+        Effect::Promise { .. } => "Promise",
+        Effect::Notify { .. } => "Notify",
         #[allow(unreachable_patterns)]
         _ => "Unknown",
     }
@@ -511,6 +556,14 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
         "GrantCapability",
         "AttenuateCapability",
         "Introduce",
+        // ⚑ ADDED 2026-07-30 — this list had DRIFTED from `effect_is_mappable`, its stated source
+        // of truth. `effect_is_mappable` accepts `Mint { slot: 0 }` and `effect_to_wire` emits the
+        // `mint` wire arm, so a Mint turn IS marshallable and the shadow does compare it — but
+        // `producer_covers_kind("Mint")` was FALSE, so `first_root_gap_kind` found no offending
+        // kind and `produce_via_lean` fenced the turn with `RootGap { kind: "unknown" }`: a
+        // fallback that named nothing, in the function whose whole contract is that the fallback is
+        // never a silent skip. It is a root-GAP (see `producer_root_gap_effects`), not covered.
+        "Mint",
         // §FACTORY-DISSOLVED: the escrow/obligation/queue/bridge-3phase/caps-in-slots
         // families no longer EXIST as Effect variants (the verb lockstep deleted them);
         // their semantics live in factory-born cells (cell::blueprint + sdk::factories,
@@ -654,15 +707,23 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
 /// (the nonce-bump + `dregg-refusal-audit-v1` EXT write / the `Cell::archive` Archived-payload
 /// replay — both pure turn data, see `apply_state_ops`' `StateOp::Refusal`/`StateOp::ReceiptArchive`).
 ///
-/// The remaining gaps are the three effects that mutate executor-owned consensus accumulators:
+/// Three of the four gaps are the effects that mutate executor-owned consensus accumulators:
 /// `NoteSpend` grows the nullifier set, `NoteCreate` grows the commitment set, and
 /// `RevokeCapability` grows the revocation set.  The Lean producer currently reconstitutes only the
 /// cell ledger.  Treating these as swap-safe used to compute `lean_root` from the OLD accumulator,
 /// run Rust (which grew the accumulator), and then stamp the signed receipt back to the stale root.
 /// They therefore fall back to the Rust producer before the Lean/reference execution window until
 /// the verified producer returns a typed post-image for all three accumulators.
+///
+/// ⚑ `Mint` is the FOURTH, and it was MISSING from every public list until 2026-07-30 (see
+/// `producer_mappable_effects`). It is a gap for a DIFFERENT reason — not an unproduced
+/// accumulator but a MODEL divergence: dregg1's `Mint` is a scalar supply entry, while the verified
+/// `mintH` runs the conserving issuer-well move `recKMintAsset` gated on `mintAuthorizedB actor
+/// asset`, and asset 0's "issuer" on this wire is whatever cell the snapshot numbered 0. Until the
+/// native asset carries a genesis issuer well the two do not model the same operation, so the turn
+/// is fenced — now with `Mint` as its named reason instead of `"unknown"`.
 pub fn producer_root_gap_effects() -> &'static [&'static str] {
-    &["NoteSpend", "NoteCreate", "RevokeCapability"]
+    &["NoteSpend", "NoteCreate", "RevokeCapability", "Mint"]
 }
 
 /// The first executor-owned consensus accumulator mutation inside an effect.
@@ -752,6 +813,15 @@ pub fn all_effect_kinds() -> &'static [&'static str] {
         "Burn",
         "AttenuateCapability",
         "ReceiptArchive",
+        // ⚑ ADDED 2026-07-30 — four real `Effect` variants were ABSENT from this "full surface"
+        // enumeration, so `producer_uncovered_effects()` (the honest-boundary report the node's
+        // `/api/status` publishes) UNDER-REPORTED the uncovered set by four and the node's
+        // `total_effect_kinds` was wrong. `Mint` is additionally mappable (a root-gap); the other
+        // three have no wire arm at all.
+        "Mint",
+        "SetProgram",
+        "Promise",
+        "Notify",
     ]
 }
 
@@ -856,7 +926,7 @@ pub fn shadow_report(
 /// True when every effect in the forest maps to a wire action and the cell-id set is
 /// closed (so a Nat id can be assigned). Any unmappable effect ⇒ ineligible (the turn is
 /// skipped rather than silently mis-encoded). Decided identically in both builds.
-pub(crate) fn forest_is_marshallable(turn: &Turn) -> bool {
+pub fn forest_is_marshallable(turn: &Turn) -> bool {
     if turn.call_forest.roots.is_empty() {
         return false;
     }
@@ -979,16 +1049,16 @@ fn tree_is_marshallable(tree: &CallTree, id_map: &HashMap<CellId, u64>, any: &mu
 fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
     let has = |c: &CellId| id_map.contains_key(c);
     match eff {
-        // FAIL-CLOSED value guard (MUST mirror effect_to_wire's `field_to_i128_checked?`): a SetField
-        // whose value exceeds the low-64 wire carrier (≥ 2^64 — a full 32-byte digest / cell_tag) is
-        // NOT marshallable, so the turn is ineligible and falls to the full-width Rust path instead of
-        // silently truncating (docs/FINDING-state-field-truncation.md; v13 widens the carrier).
-        Effect::SetField { cell, value, .. } => has(cell) && field_fits_wire_carrier(value),
+        // ⚑ The value-WIDTH guard is GONE (2026-07-30): the wire carrier is now the full 256 bits a
+        // `FieldElement` occupies (`field_to_wire` → `WideInt`), so EVERY `SetField` value has a
+        // faithful wire image and none of them can fall back for width. What remains here is the
+        // cell-CLOSURE condition, which is a different (and still real) one.
+        Effect::SetField { cell, .. } => has(cell),
         Effect::Transfer { from, to, .. } => has(from) && has(to),
         Effect::SetPermissions { cell, .. } => has(cell),
         Effect::SetVerificationKey { cell, .. } => has(cell),
-        // Same low-64 carrier guard as SetField: a > 2^64 event topic is not wire-carriable.
-        Effect::EmitEvent { cell, event } => has(cell) && field_fits_wire_carrier(&event.topic),
+        // Same full-width carrier as SetField: an event topic is a 32-byte word and crosses whole.
+        Effect::EmitEvent { cell, .. } => has(cell),
         Effect::MakeSovereign { cell } => has(cell),
         Effect::RevokeDelegation { child } => has(child),
         // Note set-transitions: the actor is the action target (already in the id map),
@@ -1258,12 +1328,10 @@ fn effect_to_wire(
                 actor,
                 cell: id(cell)?,
                 field: field_index_to_name(fixed_index),
-                // FAIL-CLOSED (docs/FINDING-state-field-truncation.md): a SetField value that exceeds the
-                // low-64 wire carrier (a full 32-byte digest / cell_tag, ≥ 2^64) has NO faithful wire
-                // image — `?` marks the whole turn ineligible so it falls to the Rust path (full-width
-                // native) rather than committing a silently-truncated value the Rust executor would
-                // diverge from. Widening the carrier to full 32 bytes is the v13 faithful-fields epoch.
-                v: field_to_i128_checked(value)?,
+                // FULL 32 BYTES (docs/FINDING-state-field-truncation.md, closed 2026-07-30): the
+                // carrier is now as wide as the field, so the value crosses whole. No `?` here —
+                // the projection is TOTAL, which is exactly why this arm no longer falls back.
+                v: field_to_wire(value),
             }
         }
         Effect::Transfer { from, to, amount } => WireAction::Balance {
@@ -1331,11 +1399,9 @@ fn effect_to_wire(
         Effect::EmitEvent { cell, event } => WireAction::Emit {
             actor,
             cell: id(cell)?,
-            // FAIL-CLOSED, same carrier as SetField: a > 2^64 topic has no faithful low-64 wire image,
-            // so `?` bails the turn to the Rust path rather than truncating it silently
-            // (docs/FINDING-state-field-truncation.md).
-            topic: field_to_i128_checked(&event.topic)?,
-            data: event_data_to_i128(event),
+            // FULL 32 BYTES, same carrier as SetField — the topic crosses whole (2026-07-30).
+            topic: field_to_wire(&event.topic),
+            data: event_data_to_wire(event),
         },
         Effect::MakeSovereign { cell } => WireAction::MakeSovereign {
             actor,
@@ -1834,18 +1900,22 @@ fn ledger_to_wire_state(
         let mut fields = Vec::new();
         fields.push((
             "balance".to_string(),
-            WireValue::Int(cell.state.balance() as i128),
+            WireValue::int(cell.state.balance() as i128),
         ));
         fields.push((
             "nonce".to_string(),
-            WireValue::Int(cell.state.nonce() as i128),
+            WireValue::int(cell.state.nonce() as i128),
         ));
         for (idx, value) in cell.state.fields.iter().enumerate() {
             if field_is_zero(value) {
                 continue;
             }
             let name = field_index_to_name(idx);
-            fields.push((name, WireValue::Int(field_to_i128(value))));
+            // FULL 32 BYTES. This used to be `field_to_i128` — the PRE-state projection dropped the
+            // high 24 bytes of every snapshotted field with no guard at all (the write side at least
+            // fail-closed), so the verified executor read a truncated pre-image of any cell holding a
+            // digest. It now reads the real one.
+            fields.push((name, WireValue::Int(field_to_wire(value))));
         }
         cells.push((*nat, WireValue::Record(fields)));
         bal.push((*nat, 0, cell.state.balance() as i128));
@@ -2531,33 +2601,23 @@ fn field_index_to_name(index: usize) -> String {
     }
 }
 
-fn field_to_i128(field: &FieldElement) -> i128 {
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&field[24..32]);
-    u64::from_be_bytes(bytes) as i128
-}
-
-/// Whether a 32-byte field VALUE can cross the Lean wire WITHOUT LOSS.
+/// **THE FIELD CARRIER — FULL 32 BYTES, LOSSLESS.** A cell state field is a 256-bit big-endian
+/// word; the Lean wire scalar it crosses as (`Value.int` / `setFieldA.v` / `emitEventA.topic`) is an
+/// UNBOUNDED `Int`. `WideInt` is exactly 256 bits of magnitude, so this projection is TOTAL and
+/// INJECTIVE — every field has one wire image and no two fields share one.
 ///
-/// `field_to_i128` reads ONLY the low 8 bytes (`field[24..32]`); the wire `SetField.v` / `Emit.topic`
-/// scalar is a low-64 lane (`app-framework::fields::field_from_u64`'s convention — value in the
-/// trailing 8 bytes, leading 24 zero). A field whose leading 24 bytes are NON-ZERO (a full blake3
-/// digest, a `cell_tag`, any value ≥ 2^64) cannot cross losslessly: the producer would commit the
-/// low limb, zero-padded, SILENTLY, and the Rust executor — which carries the full 32 bytes natively —
-/// would diverge (docs/FINDING-state-field-truncation.md). So such a field is NOT wire-carriable and
-/// the turn is FAIL-CLOSED (ineligible for the shadow → falls to the Rust path), never truncated.
-/// Widening the carrier to the full 32 bytes is the v13 faithful-fields epoch — NOT this interim.
-fn field_fits_wire_carrier(field: &FieldElement) -> bool {
-    field[0..24].iter().all(|&b| b == 0)
-}
-
-/// `field_to_i128`, but FAIL-CLOSED: `None` when the field exceeds the low-64 wire carrier
-/// (`!field_fits_wire_carrier` — a ≥ 2^64 value), so the producer projector (`effect_to_wire`) bails
-/// the turn to ineligible instead of committing a SILENTLY TRUNCATED value. Mirrors the Nat-overflow
-/// ERROR idiom in `dregg-lean-ffi/src/marshal.rs` (`nat()` rejects `v > u64::MAX` rather than
-/// truncating). See `field_fits_wire_carrier` / docs/FINDING-state-field-truncation.md.
-fn field_to_i128_checked(field: &FieldElement) -> Option<i128> {
-    field_fits_wire_carrier(field).then(|| field_to_i128(field))
+/// ⚑ FLAG DAY (2026-07-30). This used to be `field_to_i128`, reading ONLY `field[24..32]` — a
+/// low-64 lane. Because the projection lost the high 24 bytes, a `SetField`/`EmitEvent` carrying a
+/// full 32-byte value (a digest, a `cell_tag`) had NO faithful wire image, and
+/// `field_fits_wire_carrier` fail-closed the whole turn onto the unverified Rust executor
+/// (docs/FINDING-state-field-truncation.md). Both are DELETED: the refusal they implemented was a
+/// refusal to lose data, and the data is no longer lost. The surviving refusal is on the way BACK —
+/// [`crate::lean_apply::wide_to_field`] refuses a produced value that is not a 256-bit unsigned
+/// word, so a value the field type cannot hold still fences the turn instead of wrapping.
+fn field_to_wire(field: &FieldElement) -> dregg_lean_ffi::marshal::WideInt {
+    let mut be = [0u8; 32];
+    be.copy_from_slice(&field[0..32]);
+    dregg_lean_ffi::marshal::WideInt::from_be_bytes32(be)
 }
 
 fn field_is_zero(field: &FieldElement) -> bool {
@@ -2595,8 +2655,8 @@ fn permissions_to_i128(_perms: &dregg_cell::Permissions) -> i128 {
     0
 }
 
-fn event_data_to_i128(_event: &dregg_turn::action::Event) -> i128 {
-    0
+fn event_data_to_wire(_event: &dregg_turn::action::Event) -> dregg_lean_ffi::marshal::WideInt {
+    dregg_lean_ffi::marshal::WideInt::ZERO
 }
 
 #[cfg(test)]
@@ -2621,11 +2681,12 @@ mod producer_coverage_tests {
                 "producer_covers_kind disagrees for {name}"
             );
         }
-        // Twenty-one effect kinds are projected to the wire today (mirrors effect_is_mappable;
+        // Twenty-two effect kinds are projected to the wire today (mirrors effect_is_mappable;
         // VERB-LOCKSTEP: the escrow/obligation §SIDE-TABLE batch died with its Effect variants).
+        // 21 → 22 on 2026-07-30: `Mint` was mappable in `effect_is_mappable` and missing here.
         assert_eq!(
             covered.len(),
-            21,
+            22,
             "producer coverage count changed — update the report and confirm effect_is_mappable agrees"
         );
     }

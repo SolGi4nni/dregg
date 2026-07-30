@@ -41,11 +41,24 @@ each freshly-built element/tail to the cons. -/
 @[export dregg_d_nat_of_u64]
 def natOfU64 (n : UInt64) : Nat := n.toNat
 
-/-- (u64,bool) → signed `Int`. The C side cannot pass a negative directly through `UInt64`, so it
-hands the magnitude + a sign flag; `neg = true` ⇒ `-mag`. -/
-@[export dregg_d_int_of_u64]
-def intOfU64 (mag : UInt64) (neg : Bool) : Int :=
-  if neg then -(Int.ofNat mag.toNat) else Int.ofNat mag.toNat
+/-- **THE FULL-WIDTH INT CARRIER.** Four 64-bit limbs (LOW-first: `l0` is the least significant)
+plus a sign → a signed `Int` with a 256-bit magnitude.
+
+The `intOfU64` builder this REPLACES (deleted 2026-07-30) could only carry a `u64` magnitude, so
+the no-copy path CLAMPED anything wider — which is why a cell state field (a full `[u8;32]`, i.e.
+256 bits) had no faithful no-copy image and every turn writing one was failed closed onto the
+unverified Rust executor. The Lean `Int` was
+never the narrow side: `Value.int`/`setFieldA.v` are UNBOUNDED here and the JSON codec's
+`parseInt`/`toString` already round-trip arbitrary precision. This export makes the no-copy
+boundary as wide as the type it was always crossing, so the two paths agree at full width.
+
+The limb composition is done HERE, in Lean, over `Nat` — the C side hands four opaque `UInt64`s
+and performs no arithmetic on the value. -/
+@[export dregg_d_int_of_limbs]
+def intOfLimbs (l0 l1 l2 l3 : UInt64) (neg : Bool) : Int :=
+  let mag : Nat :=
+    l0.toNat + (l1.toNat <<< 64) + (l2.toNat <<< 128) + (l3.toNat <<< 192)
+  if neg then -(Int.ofNat mag) else Int.ofNat mag
 
 /-! ### `List Nat` (nullifiers / commitments / revoked / frozen). -/
 
@@ -423,10 +436,25 @@ the JSON wire already carries. With this reader the no-copy direct path returns 
 JSON oracle does (`reason:0` iff admitted, by `reasonCode_eq_zero_iff_admits`). -/
 @[export dregg_d_res_reason] def resReason (r : WStatusResult) : UInt64 := UInt64.ofNat r.reason
 
-/-- `Int → (mag : UInt64, neg : Bool)` reader: the C side reads the magnitude and sign separately
-(the wire/kernel `bal`/value ints can be negative). -/
-@[export dregg_d_int_mag] def intMag (i : Int) : UInt64 := UInt64.ofNat i.natAbs
+/-- `Int → Bool` sign reader; the MAGNITUDE is read limb-wise by `intLimb` below.
+
+⚑ There was a `dregg_d_int_mag : Int → UInt64` beside this, and a `dregg_d_int_of_u64` builder
+opposite it. Both are DELETED (2026-07-30): each carried a `u64` magnitude, so the no-copy boundary
+TRUNCATED (reader) or CLAMPED (builder) every value wider than 64 bits — which is every state
+field. Keeping them "for the small scalars" would leave a lossy path a future call site could pick
+up by accident; there is now exactly ONE `Int` carrier and it is lossless to 256 bits. -/
 @[export dregg_d_int_neg] def intNeg (i : Int) : Bool := i < 0
+
+/-- **THE FULL-WIDTH INT READER** — the dual of `intOfLimbs`. The `k`-th 64-bit limb (LOW-first) of
+an `Int`'s MAGNITUDE; the sign is read separately by `intNeg`. Four calls (`k = 0,1,2,3`)
+reconstruct a 256-bit magnitude byte-exactly, so a state field the verified executor produced
+crosses back out of the no-copy boundary without losing its high 24 bytes. Limbs at or above the
+magnitude's width are `0`, and `k ≥ 4` is `0` too (the carrier's width, stated here rather than
+assumed by the caller). -/
+@[export dregg_d_int_limb]
+def intLimb (i : Int) (k : UInt64) : UInt64 :=
+  if k.toNat ≥ 4 then 0
+  else UInt64.ofNat ((i.natAbs >>> (64 * k.toNat)) % (2 ^ 64))
 
 /-! ### `WState` field/list readers (length + indexed access). -/
 
@@ -550,5 +578,31 @@ private def directMatchesJson (input : String) : Bool :=
 -- the satisfied/violated caveat demos: the caveat leg agrees through the direct path too:
 #guard (directMatchesJson satisfiedCaveatInput)
 #guard (directMatchesJson violatedCaveatInput)
+
+/-! ### The FULL-WIDTH `Int` carrier round-trips (build-gating `#guard`s).
+
+`intOfLimbs`/`intLimb` are the no-copy boundary's field carrier. If they stopped being mutually
+inverse at 256 bits, a state field would silently lose its high limbs on the path the node actually
+runs — the exact failure the now-deleted narrow `intOfU64`/`intMag` pair caused. These `#guard`s
+FAIL THE BUILD rather than let that regress. -/
+
+/-- Rebuild an `Int` from its own four limbs + sign; the identity iff the carrier is lossless. -/
+private def limbRoundtrip (i : Int) : Bool :=
+  intOfLimbs (intLimb i 0) (intLimb i 1) (intLimb i 2) (intLimb i 3) (intNeg i) == i
+
+#guard (limbRoundtrip 0)
+#guard (limbRoundtrip 1)
+#guard (limbRoundtrip (-1))
+-- the width the NARROW pair could still carry (2^64 - 1):
+#guard (limbRoundtrip 18446744073709551615)
+-- ⚑ 2^64: the first magnitude the deleted narrow reader truncated to 0 — lossless here:
+#guard (limbRoundtrip 18446744073709551616)
+#guard (limbRoundtrip (-18446744073709551616))
+-- a full 32-byte state field (2^256 - 1 = 0xff…ff), the carrier's exact top:
+#guard (limbRoundtrip 115792089237316195423570985008687907853269984665640564039457584007913129639935)
+-- a real-shaped digest field (the FINDING's `cell_tag`, high bytes NON-zero):
+#guard (limbRoundtrip 66628299364684951453394541779169376965124783602359430925973682466438981779556)
+-- limbs at/above the carrier width read 0 (the stated width, not an assumed one):
+#guard (intLimb 1 4 == 0)
 
 end Dregg2.Exec.FFIDirect

@@ -78,7 +78,43 @@ and falls back to the node's operator cell (which is node-local, so the
 settlement is not federation-replicable). Restoring a federation-wide rent
 beneficiary depends on this being fixed.
 
-## The residual — scholar verdict 2026-07-10: DON'T widen the wire
+## ⚑ STATUS 2026-07-30 — CLOSED. The wire WAS widened; read this before the two sections below.
+
+Everything from here down is the record of the interim, and its verdict ("DON'T widen the
+wire", "sequence it WITH the v13 epoch") is **superseded**. What changed:
+
+* **The Lean side was never the narrow one.** `setFieldA`'s `v` and `Value.int` are `Int` —
+  *unbounded* — and the JSON codec's `parseInt`/`toString` already round-tripped arbitrary
+  precision. The 64-bit lane was **entirely a Rust-side artifact**: `lean_shadow::field_to_i128`
+  read `field[24..32]`, and `marshal::WireValue::Int` / `WireAction::SetField.v` were `i128`.
+* **The carrier is now `marshal::WideInt`** — a 256-bit magnitude, exactly a `FieldElement`'s
+  width. The projection `field_to_wire` is total and injective, so every field has one wire image.
+* **The no-copy path needed two new Lean exports** (`dregg_d_int_of_limbs` /
+  `dregg_d_int_limb` in `Dregg2/Exec/FFIDirect.lean`, with build-gating `#guard` round-trips).
+  Its old builder/reader pair took a `u64` magnitude and **clamped**, so the DEFAULT FFI path
+  could not carry a field even though the JSON oracle could.
+* **`field_fits_wire_carrier` and `field_to_i128_checked` are DELETED.** They implemented a
+  refusal to lose data; the data is no longer lost. The refusal **moved**, it did not vanish:
+  `lean_apply::wide_to_field` refuses a produced NEGATIVE `Int` (a field is an unsigned 256-bit
+  word), and both decoders refuse a magnitude ≥ 2^256 rather than wrapping.
+* **What this closes operationally:** the apps named in the "Residual reachability" section below
+  — `supply-chain-provenance` `TIP_SLOT`, `collective-choice` `ELECTORATE_ROOT_SLOT`,
+  `execution-lease` `PROVIDER_SLOT`/`STATE_DIGEST_SLOT` — were *fail-closed onto the unverified
+  Rust executor* on every such turn. They are now decided by the verified Lean producer.
+* **The acute fix's own blind spot went with it.** "Install the produced lane only when it differs
+  from the template's lane" silently DROPPED a write whose low 64 bits happened to match a wide
+  template's. The comparison is now over the whole 32-byte word.
+* ⚠ **Still true, and still the deeper debt:** the committed `fields[0..7]` root is a
+  `Faithful8::from_lossy_31bit_DANGER` Horner fold (`circuit/src/faithful8.rs`), so the
+  *commitment* still does not bind all 256 bits. Widening the wire does not fix that, and the
+  design correction below (relocate 32-byte identities to a `field_limbs8` digest side-table)
+  remains the right end state.
+
+Guards: `exec-lean/tests/state_field_truncation_regression.rs` (reconstitution poles, incl. the
+refusal), `exec-lean/tests/lean_producer_wide_field.rs` (end-to-end through the live FFI, asserting
+the LEAN post-state is what was installed).
+
+## The residual — scholar verdict 2026-07-10: DON'T widen the wire (SUPERSEDED, see above)
 
 The acute fix (skip fields the turn did not move) covers the operated need: a
 32-byte id pinned at seed time SURVIVES an unrelated turn. The residual is only a
