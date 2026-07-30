@@ -208,6 +208,27 @@ Run each family, read ITS OWN output.
   have ZERO consumers four days on** and the port they serve has not started. Recorded as a condition
   rather than accepted: if the ConePort campaign does not run, delete the rows and the bridges.
 
+## ⚑⚑ THE FIRST HONEST WHOLE-WORKSPACE NUMBER (2026-07-29, `--no-fail-fast`)
+**18,336 tests · 182 unique failures · 99.0% passing.**
+
+Never measured before. Every prior figure in this file was a SUM OVER CRATES SOMEONE HAD ALREADY
+LOOKED AT — my "~55" missed 127 failures in crates nobody had opened. ⚠ And nextest prints each
+failure twice, so the raw grep says 364; the unique count is 182.
+
+| crate | unique | status |
+|---|---|---|
+| `dreggnet-telegram` | **34** | never examined |
+| `dreggnet-web` | **28** | never examined |
+| `dregg-circuit` | 17 | mostly `pasta_*`, a live lane's Mina WIP |
+| `dregg-app-framework` | 15 | **already fixed** (`c1607d871`) — suite predates it |
+| `dregg-node` | 14 | lane running |
+| `dregg-circuit-prove` | 11 | — |
+| `dreggnet-adventure` | 9 | — |
+| `dregg-persist` 5 · `starbridge-v2` 4 · `dreggnet-offerings` 4 · `storage-templates` 4 · `dregg-bridge` 4 | | — |
+
+**62 of the 182 sit in the two frontend crates nobody has opened**, which is the same concentration
+shape that has yielded one-cause fixes five times this week.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
