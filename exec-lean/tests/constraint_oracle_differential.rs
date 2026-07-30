@@ -1049,6 +1049,110 @@ fn variant_corpus() -> Vec<(&'static str, Vec<Case>)> {
                 reg(0, 7),
                 true,
             ),
+            // ⚑ THE HEAP-BRANCH SHAPE — the deployed door-frame tooth, and the second half of
+            // HORIZONLOG E2. `dungeon_program.json` emits 576 of these; `encode_branches` used to
+            // decline every one, so the marshaller returned `None`, the subset gate failed closed,
+            // and every Descent verb refused. The branch's key rides the wire HEADER (there is one
+            // `(heapOld, heapNew)` pair, resolved by `combinator_heap_key`), not the token stream —
+            // so these cases are what hold that resolution honest. `low64` of an absent key is not
+            // zero on either side, which is why the old-state variants below matter.
+            //
+            // ADMIT: the second branch's `deltaEquals 0` holds over an unchanged key.
+            case(
+                SC::AnyOf {
+                    variants: vec![
+                        SimpleStateConstraint::FieldEquals {
+                            index: 0,
+                            value: field_from_u64(5),
+                        },
+                        SimpleStateConstraint::HeapField {
+                            key: HEAP_KEY,
+                            atom: HeapAtom::DeltaEquals { d: 0 },
+                        },
+                    ],
+                },
+                heap(HEAP_KEY, 8),
+                true,
+            )
+            .old(heap(HEAP_KEY, 8)),
+            // REFUSE: neither branch holds — the register is wrong AND the key moved by 1, not 0.
+            // If the header key were left absent, `deltaEquals` would answer `violated` here too,
+            // so this case alone cannot see the resolution; the ADMIT above is what does.
+            case(
+                SC::AnyOf {
+                    variants: vec![
+                        SimpleStateConstraint::FieldEquals {
+                            index: 0,
+                            value: field_from_u64(5),
+                        },
+                        SimpleStateConstraint::HeapField {
+                            key: HEAP_KEY,
+                            atom: HeapAtom::DeltaEquals { d: 0 },
+                        },
+                    ],
+                },
+                heap(HEAP_KEY, 9),
+                false,
+            )
+            .old(heap(HEAP_KEY, 8)),
+            // The RELATIONAL heap atom in a branch, under a `Not` — the Descent's exact
+            // `anyOf[fieldEquals, not(heapField/equals), heapField/deltaEquals]` rider shape.
+            case(
+                SC::AnyOf {
+                    variants: vec![SimpleStateConstraint::Not(Box::new(
+                        SimpleStateConstraint::HeapField {
+                            key: HEAP_KEY,
+                            atom: HeapAtom::Equals {
+                                value: field_from_u64(13),
+                            },
+                        },
+                    ))],
+                },
+                heap(HEAP_KEY, 9),
+                true,
+            )
+            .old(heap(HEAP_KEY, 8)),
+            // A transition-table branch: the `HAT` atom nested inside an `ANY` run, which is the two
+            // halves of E2 meeting. `8 -> 13` is listed, so it admits.
+            case(
+                SC::AnyOf {
+                    variants: vec![SimpleStateConstraint::HeapField {
+                        key: HEAP_KEY,
+                        atom: HeapAtom::AllowedTransitions {
+                            allowed: vec![(8, 13), (8, 14)],
+                        },
+                    }],
+                },
+                heap(HEAP_KEY, 13),
+                true,
+            )
+            .old(heap(HEAP_KEY, 8)),
+            // ⚠ THE ENVELOPE DECLINE, kept in the corpus so it is DRIVEN rather than described: two
+            // branches naming DIFFERENT heap keys cannot be carried by a one-pair header, so the
+            // marshaller declines and this case does not route. Rust admits it (branch 1 holds),
+            // which is exactly why falling through would be unsound to rely on — `dregg-cell`'s
+            // `constraint_in_lean_subset` still calls it subset, so the deployed executor REFUSES.
+            // Carrying it needs a per-branch cell run in `Dregg2.Exec.DeployedConstraint`, i.e. Lean.
+            case(
+                SC::AnyOf {
+                    variants: vec![
+                        SimpleStateConstraint::HeapField {
+                            key: HEAP_KEY,
+                            atom: HeapAtom::Equals {
+                                value: field_from_u64(13),
+                            },
+                        },
+                        SimpleStateConstraint::HeapField {
+                            key: OTHER_KEY,
+                            atom: HeapAtom::Equals {
+                                value: field_from_u64(13),
+                            },
+                        },
+                    ],
+                },
+                heap(HEAP_KEY, 13),
+                true,
+            ),
         ],
     ));
     v.push((
@@ -1263,6 +1367,31 @@ fn variant_corpus() -> Vec<(&'static str, Vec<Case>)> {
                 reg(0, 3),
                 false,
             ),
+            // The heap branch on the CONJUNCTION side too: `AllOf` and `AnyOf` share
+            // `encode_branches` and `combinator_heap_key`, so a fix that only served one fold would
+            // be caught here and nowhere else.
+            case(
+                SC::AllOf {
+                    variants: vec![SimpleStateConstraint::HeapField {
+                        key: HEAP_KEY,
+                        atom: HeapAtom::Monotonic,
+                    }],
+                },
+                heap(HEAP_KEY, 9),
+                true,
+            )
+            .old(heap(HEAP_KEY, 8)),
+            case(
+                SC::AllOf {
+                    variants: vec![SimpleStateConstraint::HeapField {
+                        key: HEAP_KEY,
+                        atom: HeapAtom::Monotonic,
+                    }],
+                },
+                heap(HEAP_KEY, 7),
+                false,
+            )
+            .old(heap(HEAP_KEY, 8)),
         ],
     ));
     v.push((

@@ -186,9 +186,15 @@ fn the_subset_mirror_agrees_with_the_marshallers_own_routing() {
             },
             false,
         ),
-        // ⚠ THE ENVELOPE DECLINES — subset atoms the WIRE cannot carry. `admits` is `None` and the
-        // mirror still says SUBSET, so they fail closed. That asymmetry is deliberate; it is the
-        // whole reason the mirror exists.
+        // A combinator with a SINGLE-KEY `HeapField` branch: DECIDED, and subset.
+        //
+        // ⚑ This entry used to sit below among the envelope declines, with `key: 4096` and the note
+        // "the wire header carries one heap key pair". The header does — and the verified evaluator
+        // reads exactly that pair for a `.heapField` branch (`parseConstraint` falls through to
+        // `parseHeapAtom`; `branchAdmits` → `heapAdmits atom i.heapOld i.heapNew`), so ONE key is
+        // faithfully carried and the decline was the marshaller not asking. `dungeon_program.json`
+        // emits 576 of these and every Descent verb touched one, so the decline refused the whole
+        // game (HORIZONLOG E2). `combinator_heap_key` now resolves the branches' key into the header.
         (
             StateConstraint::AnyOf {
                 variants: vec![
@@ -197,6 +203,31 @@ fn the_subset_mirror_agrees_with_the_marshallers_own_routing() {
                         atom: dregg_cell::program::HeapAtom::Immutable,
                     },
                     SimpleStateConstraint::SenderIs { pk: [3u8; 32] },
+                ],
+            },
+            false,
+        ),
+        // ⚠ THE ENVELOPE DECLINES — subset atoms the WIRE cannot carry. `admits` is `None` and the
+        // mirror still says SUBSET, so they fail closed. That asymmetry is deliberate; it is the
+        // whole reason the mirror exists.
+        //
+        // The heap one is now the MULTI-KEY combinator, and it is a genuine wire limit rather than a
+        // missing Rust case: `DInput` carries ONE `(heapOld, heapNew)` pair, so encoding two keys
+        // would evaluate branch 2 against branch 1's cell — silently wrong in both directions.
+        // Carrying it needs a per-branch cell run in `Dregg2.Exec.DeployedConstraint`'s
+        // `DInput`/`parseBranches`, i.e. a LEAN change; nothing deployed emits this shape (measured
+        // 2026-07-30: every heap-bearing combinator in `dungeon_program.json` names one key).
+        (
+            StateConstraint::AnyOf {
+                variants: vec![
+                    SimpleStateConstraint::HeapField {
+                        key: 4096,
+                        atom: dregg_cell::program::HeapAtom::Immutable,
+                    },
+                    SimpleStateConstraint::HeapField {
+                        key: 4097,
+                        atom: dregg_cell::program::HeapAtom::Immutable,
+                    },
                 ],
             },
             true,

@@ -3597,10 +3597,18 @@ mod constraint_oracle_fail_closed_tests {
         );
     }
 
-    /// THE OTHER POLE, AND THE ONE THAT MUST NOT MOVE. `encode_branches` ALSO declines a `HeapField`
-    /// branch — but that is an ENVELOPE decline (the wire header carries one heap key pair), not a
-    /// class decline: the atom IS in the Lean-evaluated subset, so handing it to the Rust twin is
-    /// exactly the fail-OPEN this gate exists to stop. It must keep failing closed.
+    /// THE OTHER POLE, AND THE ONE THAT MUST NOT MOVE. `encode_branches` declines a combinator whose
+    /// `HeapField` branches name TWO DIFFERENT keys — an ENVELOPE decline (the wire header carries
+    /// ONE heap key pair), not a class decline: the atoms ARE in the Lean-evaluated subset, so
+    /// handing them to the Rust twin is exactly the fail-OPEN this gate exists to stop. It must keep
+    /// failing closed.
+    ///
+    /// ⚑ The SINGLE-key case used to be here too, and it was the wrong half of this pin: the
+    /// verified `branchAdmits` reads the header pair for a `.heapField` branch, so one key is
+    /// faithfully carried and the marshaller was simply not resolving it. That decline refused every
+    /// Descent verb on any surface with the oracle armed (HORIZONLOG E2); `combinator_heap_key` in
+    /// `dregg-exec-lean` resolves it now, and only the multi-key shape remains — which needs a
+    /// per-branch cell run in `Dregg2.Exec.DeployedConstraint`, i.e. Lean, not Rust.
     #[test]
     fn undecided_disposition_still_fails_closed_for_an_envelope_declined_branch() {
         let heap_branch = StateConstraint::AnyOf {
@@ -3609,7 +3617,10 @@ mod constraint_oracle_fail_closed_tests {
                     key: 4096,
                     atom: HeapAtom::Immutable,
                 },
-                SimpleStateConstraint::SenderIs { pk: [7u8; 32] },
+                SimpleStateConstraint::HeapField {
+                    key: 4097,
+                    atom: HeapAtom::Immutable,
+                },
             ],
         };
         assert!(
@@ -3617,8 +3628,8 @@ mod constraint_oracle_fail_closed_tests {
                 undecided_subset_disposition(&heap_branch),
                 Some(Err(ProgramError::ConstraintOracleUnavailable { .. }))
             ),
-            "a HeapField branch is a WIRE-envelope decline over a Lean-subset atom and must still \
-             fail closed, never fall through to the unverified twin"
+            "a multi-key HeapField combinator is a WIRE-envelope decline over Lean-subset atoms and \
+             must still fail closed, never fall through to the unverified twin"
         );
         // And an all-routable combinator is plain subset: fail-closed when Lean did not answer.
         let routable = StateConstraint::AnyOf {

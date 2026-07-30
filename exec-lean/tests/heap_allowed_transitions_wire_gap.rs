@@ -17,29 +17,22 @@
 //! calling `dregg_lean_ffi::shadow_constraint_admits` directly with a hand-built wire — i.e. asking
 //! the Lean FFI export the question this file used to be unable to ask.
 //!
-//! What did NOT change: `exec-lean/src/constraint_oracle.rs`'s `encode_heap_atom` — another lane's
-//! uncommitted WIP, out of scope here — still has no `HeapAtom::AllowedTransitions { .. } => ...`
-//! arm and still `return`s `None` for it. So `LeanConstraintOracle::admits` (the path
-//! `dreggnet-web-server`'s `verified_settlement.rs` actually calls) **still declines this atom**,
-//! for a DIFFERENT reason than before: not because the verified decider cannot answer, but because
-//! the Rust-side encoder has not yet been taught the `HAT` token that would let it ask. The
-//! [`the_transition_table_decides_both_poles_through_the_rust_encoder`] test below pins that this is exactly
-//! what remains, so THE OUTAGE DOES NOT LIFT FROM THE LEAN ARM ALONE. Closing it needs one
-//! mechanical arm in `encode_heap_atom`:
+//! `exec-lean/src/constraint_oracle.rs`'s `encode_heap_atom` gained the matching `HAT` arm in
+//! `6e27f4983` (decimal, u64-lane pairs — the SAME convention `HMEM`/`HDB`/`HDE` use, not the
+//! register `AT` tag's hex full-field pairs), so `LeanConstraintOracle::admits` — the path
+//! `dreggnet-web-server`'s `verified_settlement.rs` actually calls — decides this atom now, and
+//! [`the_transition_table_decides_both_poles_through_the_rust_encoder`] asserts that through the FULL
+//! pipeline rather than pinning a decline.
 //!
-//! ```text
-//! HeapAtom::AllowedTransitions { allowed } => {
-//!     if allowed.len() > MAX_LIST { return None; }
-//!     let mut s = format!("HAT {}", allowed.len());
-//!     for (o, n) in allowed { s.push_str(&format!(" {o} {n}")); }
-//!     s
-//! }
-//! ```
-//!
-//! (decimal, u64-lane pairs — the SAME convention `HMEM`/`HDB`/`HDE` already use, not the register
-//! `AT` tag's hex full-field pairs). Once that lands, delete the "still declines" half below and add
-//! the atom to `constraint_oracle_differential.rs`'s corpus instead, where both poles are held
-//! against the Lean evaluator through the FULL pipeline.
+//! ⚠ **AND THAT WAS ONLY HALF OF THE OUTAGE.** With the atom encoding, the Descent still refused
+//! every verb, because the OTHER shape on the same rider — an `AnyOf` over `HeapField` branches —
+//! was declined too, by `encode_branches`, on the stated ground that the wire header carries one
+//! heap key pair. It does, and the verified `branchAdmits` reads exactly that pair, so a
+//! single-key combinator was always carriable; the marshaller was not resolving the key.
+//! `combinator_heap_key` does (2026-07-30). The measurement that would have named both halves at
+//! once, instead of one guess per round, is
+//! `dreggnet-web/tests/deployed_program_oracle_decidable.rs`: it walks the REAL
+//! `dungeon_program.json` through the REAL marshaller and reports every constraint that declines.
 //!
 //! ⚑ A DECLINE IS NOT A REFUSAL AND THIS TEST DISTINGUISHES THEM. Asking the oracle and getting
 //! `None` proves nothing on its own — an oracle that declined *everything* would look identical.

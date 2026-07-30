@@ -8314,6 +8314,7 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-automatafl",
+ "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-exec-lean",

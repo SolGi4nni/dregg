@@ -501,16 +501,66 @@ fn resolve_cells(c: &StateConstraint, new_state: &CellState) -> Option<Vec<Optio
     })
 }
 
+/// The ONE heap key an `AnyOf`/`AllOf`'s `HeapField` branches read — `Some(None)` for a combinator
+/// with no heap branch at all, `Some(Some(key))` for one whose heap branches (under any `Not`
+/// parity) all name the SAME key.
+///
+/// **`None` = DECLINE.** The branches name TWO OR MORE DISTINCT keys, and `DInput` carries exactly
+/// one `(heapOld, heapNew)` pair in the wire header — see [`build_wire`]. Encoding such a combinator
+/// would evaluate branch 2's atom against branch 1's key: a silently WRONG verdict, in both
+/// directions, which is strictly worse than the fail-closed refusal. Adding the second key is a LEAN
+/// change (a per-branch cell run in `DInput`/`parseBranches`), not a Rust one; until it exists this
+/// shape refuses. Measured 2026-07-30: `dungeon_program.json`'s 576 heap-bearing combinators name
+/// exactly ONE key each, so nothing deployed is on this residual.
+fn combinator_heap_key(variants: &[SimpleStateConstraint]) -> Option<Option<u64>> {
+    let mut found: Option<u64> = None;
+    for v in variants {
+        let mut atom = v;
+        while let SimpleStateConstraint::Not(inner) = atom {
+            atom = inner.as_ref();
+        }
+        if let SimpleStateConstraint::HeapField { key, .. } = atom {
+            match found {
+                None => found = Some(*key),
+                Some(k) if k == *key => {}
+                Some(_) => return None,
+            }
+        }
+    }
+    Some(found)
+}
+
 /// Encode `AnyOf` / `AllOf` branches: `<TAG> n (N0|N1 <base-run>)*n`.
 ///
 /// Each branch carries the PEELED `Not` parity (`N1` = negated) and the `Not`-free atom under it —
 /// exactly the reduction `eval.rs::evaluate_simple_constraint` performs before `lift_simple`.
 /// A branch whose atom is outside the Lean-evaluated subset declines the WHOLE combinator (the
 /// caller then evaluates it in Rust), so a combinator never half-routes.
+///
+/// ⚑ **A `HeapField` BRANCH IS CARRIED NOW — and the substrate did not move to let it be.** This
+/// arm used to decline every combinator with a heap branch, on the stated ground that "the header
+/// carries one key pair". That is true of the header and was false as a reason: the VERIFIED
+/// evaluator already decides a heap branch. `Dregg2.Exec.DeployedConstraint`'s `parseConstraint`
+/// falls through to `parseHeapAtom` and yields `.heapField atom`, `parseBranches` parses base runs
+/// back-to-back so an atom token stream nests inside `ANY`/`ALL` unchanged, and `branchAdmits` →
+/// `admits` → `.heapField atom => heapAdmits atom i.heapOld i.heapNew` reads exactly the header pair
+/// this marshaller fills. Nothing in `metatheory/` needed an arm; the marshaller was simply not
+/// asking. So the whole fix is Rust's: stop declining, and RESOLVE the branches' key into the header
+/// ([`combinator_heap_key`] + [`build_wire`]).
+///
+/// What that closes: `dungeon_program.json` emits **576** heap-bearing combinators (measured
+/// 2026-07-30 over all 16 days), **24 of them under the single `SlotChanged{spent}` rider** — and
+/// every verb in the Descent spends breath, so one decline there refused every delve, unlock, smite,
+/// loot, flee, lunge, ascend and take on any surface that arms this oracle. `dreggnet-web` arms it
+/// unconditionally (`install_verified_settlement_gate`), including debug, so this was live in tests
+/// as well as on a box. HORIZONLOG E2's second half; the first was the `HAT` atom below.
 fn encode_branches(tag: &str, variants: &[SimpleStateConstraint]) -> Option<String> {
     if variants.len() > MAX_LIST {
         return None;
     }
+    // Decline a combinator whose heap branches disagree about the key BEFORE emitting anything: the
+    // header can carry one, and half-routing is not an option here.
+    combinator_heap_key(variants)?;
     let mut s = format!("{tag} {}", variants.len());
     for v in variants {
         // Peel the negation chain to its parity + the `Not`-free atom (eval.rs:2691).
@@ -521,11 +571,10 @@ fn encode_branches(tag: &str, variants: &[SimpleStateConstraint]) -> Option<Stri
             atom = inner.as_ref();
         }
         let lifted = lift_simple(atom)?;
-        // A HeapField branch would need a per-branch heap slot on the wire (the header carries one
-        // key pair); decline rather than resolve the wrong key.
-        if matches!(lifted, StateConstraint::HeapField { .. }) {
-            return None;
-        }
+        // A `HeapField` branch encodes to its bare ATOM run (`HEQ`/`HDE`/`HAT`/…), exactly as the
+        // top-level `HeapField` arm does: the key never rides the token stream on either surface,
+        // it rides the header, and `combinator_heap_key` above has already established that every
+        // branch here means the same one.
         let run = encode_constraint(&lifted)?;
         s.push(' ');
         s.push_str(if negated { "N1" } else { "N0" });
@@ -718,6 +767,20 @@ fn build_wire(
             new_state.get_field_ext(*key),
             new_state.get_field_ext(*other_key),
         ),
+        // A combinator's `HeapField` branches read the SAME pair — the verified `branchAdmits` looks
+        // at `i.heapOld`/`i.heapNew` for `.heapField`, so the key must be resolved HERE or every such
+        // branch would decide against an absent cell. `combinator_heap_key` declines (and the caller
+        // then fails closed) when the branches disagree about which key that is.
+        StateConstraint::AnyOf { variants } | StateConstraint::AllOf { variants } => {
+            match combinator_heap_key(variants)? {
+                Some(key) => (
+                    old_state.and_then(|s| s.get_field_ext(key)),
+                    new_state.get_field_ext(key),
+                    None,
+                ),
+                None => (None, None, None),
+            }
+        }
         _ => (None, None, None),
     };
 

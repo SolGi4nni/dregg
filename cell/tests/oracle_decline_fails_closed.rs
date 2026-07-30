@@ -11,8 +11,10 @@
 //!   * `encode_u64_list` / `encode_u8_list` / the inline `len() > MAX_LIST` guards — an over-long
 //!     allowlist, edge set, transition table or member set;
 //!   * `coll_cell_count` — a collection read past `MAX_COLL_CELLS`;
-//!   * `encode_branches` — an `AnyOf`/`AllOf` branch the wire cannot carry (a `HeapField` branch,
-//!     whose per-branch heap key the one-key-pair header cannot resolve);
+//!   * `encode_branches` / `combinator_heap_key` — an `AnyOf`/`AllOf` whose `HeapField` branches name
+//!     TWO DIFFERENT keys, which the one-key-pair header cannot resolve. (A SINGLE-key heap branch
+//!     used to decline here too, and that was a marshaller gap rather than a wire limit: the verified
+//!     `branchAdmits` reads exactly that header pair. It refused every Descent verb until 2026-07-30.)
 //!   * `Err(_) => None` in `LeanConstraintOracle::admits` — the FFI call itself failed;
 //!   * `decode_verdict`'s `_ => None` — an unparsed verdict;
 //!   * and only LAST, the eleven named class-c arms, which genuinely belong to the trusted-Rust slot

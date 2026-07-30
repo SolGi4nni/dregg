@@ -350,6 +350,13 @@ tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 # The KP_* choice constants the driven test plays a winning / illegal line with.
 dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# The constraint vocabulary itself — `StateConstraint` / `SimpleStateConstraint` / `HeapAtom` /
+# `ConstraintOracle` / `constraint_in_lean_subset`. `tests/deployed_program_oracle_decidable.rs`
+# walks the deployed Descent program through the installed Lean oracle and needs to name the shapes
+# it finds; `dregg-sdk` re-exports a subset but not the classifier or the oracle trait. Already in
+# this crate's dependency graph (via `dregg-sdk`/`dregg-exec-lean`/`spween-dregg`), so naming it here
+# adds ZERO compilation and no feature unification: the same `dregg-cell` build is reused.
+dregg-cell = { path = "../cell" }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`, not
 # `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone
