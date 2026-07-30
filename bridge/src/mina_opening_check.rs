@@ -168,9 +168,18 @@ pub struct PinnedChallenges {
     pub provenance: &'static str,
 }
 
-/// ⚑ **The whole pinned set — ONE height.** Say the scope out loud: the opening check is provable
-/// at exactly the height whose Fiat–Shamir transcript this tree has run in-kernel. Anything else
-/// is [`MinaOpeningCheckError::ChallengesUnavailable`].
+/// ⚑ **THE REFERENCE SET — one height, and since 2026-07-30 it is a COMPARAND, not a SOURCE.**
+///
+/// This used to be the only way a challenge vector could reach the prover, and every other height
+/// was a refusal *because it was not in this table*. That is no longer the shape:
+/// [`derive_challenges_for_block`] runs the per-block derivation for EVERY height, this vector is
+/// what the derivation is CHECKED AGAINST at the one height where both exist
+/// ([`MinaOpeningCheckError::DerivationDisagreesWithReference`]), and a height's absence from the
+/// table is not by itself a reason to refuse anything.
+///
+/// It remains a fallback source at its own height while the derivation's remaining legs land, and
+/// the receipt says which one produced the vector ([`MinaOpeningCheckReceipt::challenge_provenance`])
+/// — never both silently.
 pub const PINNED_CHALLENGES: [PinnedChallenges; 1] = [PinnedChallenges {
     block_height: 539_508,
     artifact: PinnedArtifact {
@@ -234,14 +243,33 @@ pub enum MinaOpeningCheckError {
         /// Which number moved.
         why: String,
     },
-    /// ⚑ **NOTHING WAS DECIDED.** No challenge vector is pinned for this height, and a Wrap
-    /// proof's own IPA challenges are not on its wire (see the module header's 0/6 measurement).
+    /// ⚑ **NOTHING WAS DECIDED.** The per-block derivation could not run to the end, and no
+    /// reference vector exists for this height either.
+    ///
+    /// ⚑ The payload is a STAGE, not a height table, and that is the change of 2026-07-30. The old
+    /// shape said "no challenge vector is pinned for this height" — which described a lookup, so
+    /// every height that missed the table was one undifferentiated refusal and the reader could
+    /// not tell a missing config constant from an unmeasured sponge from a routing decision.
+    /// [`DerivationStage`] names which leg stopped, per block.
+    ///
     /// Deliberately NOT [`Self::ProofRefused`]: that one means the prover ran and said no.
     ChallengesUnavailable {
         /// The height that was asked for.
         block_height: u64,
-        /// The heights that are pinned.
-        pinned_heights: Vec<u64>,
+        /// ⚑ Which leg of the per-block derivation could not run.
+        stage: DerivationStage,
+        /// What the leg said.
+        why: String,
+    },
+    /// ⚑ **THE DERIVATION AND THE REFERENCE VECTOR DISAGREE.** Reachable only at a height that has
+    /// both, and it is the loudest refusal in this file: it means the compiled per-block path and
+    /// the in-kernel one produced different challenges for the same block, so at least one of them
+    /// is wrong about what a Mina Wrap transcript is.
+    DerivationDisagreesWithReference {
+        /// The height where they disagreed.
+        block_height: u64,
+        /// How many of the fifteen differ.
+        differing: usize,
     },
     /// The pinned challenge JSON did not parse as 15 reduced Pallas scalars.
     ChallengesMalformed {
@@ -293,14 +321,23 @@ impl std::fmt::Display for MinaOpeningCheckError {
             ),
             Self::ChallengesUnavailable {
                 block_height,
-                pinned_heights,
+                stage,
+                why,
             } => write!(
                 f,
-                "REFUSED, nothing decided: no IPA challenge vector is pinned for Mina block \
-                 {block_height} (pinned: {pinned_heights:?}). A Wrap proof's own opening \
-                 challenges are Fiat-Shamir outputs of its own transcript and are NOT on the \
-                 wire (measured 0/6 against IPA_PRECHALS on six real devnet blocks), so this \
-                 path will not invent them and proves nothing here"
+                "REFUSED, nothing decided: the per-block IPA challenge derivation for Mina block \
+                 {block_height} stopped at {stage} — {why}. A Wrap proof's own opening challenges \
+                 are Fiat-Shamir outputs of its own transcript, so this path will not invent them \
+                 and proves nothing here"
+            ),
+            Self::DerivationDisagreesWithReference {
+                block_height,
+                differing,
+            } => write!(
+                f,
+                "the per-block DERIVATION and the in-kernel REFERENCE vector disagree at Mina \
+                 block {block_height} on {differing} of 15 challenges. One of the two is wrong \
+                 about what a Wrap transcript is; nothing is proved until that is settled"
             ),
             Self::ChallengesMalformed { why } => {
                 write!(f, "the pinned challenge vector is malformed: {why}")
@@ -475,6 +512,280 @@ pub fn pinned_heights() -> Vec<u64> {
 }
 
 // =================================================================================================
+// TRUSTED CONFIG, named where a reader trips over it
+// =================================================================================================
+
+/// ⚑ **`index.digest::<EFqSponge>()` of the devnet blockchain Wrap verifier index.**
+///
+/// One `Fp` element, and the largest trusted object under this whole story: it is the compressed
+/// form of the 56 `VK_INDEX` elements and it is the FIRST thing the phase-1 sponge absorbs. A wrong
+/// digest produces a complete, self-consistent, entirely wrong challenge vector and nothing
+/// downstream can tell. Same value as `Dregg2.Circuit.Emit.MinaRealBlockTranscript.VKDIGEST`.
+pub const WRAP_VK_DIGEST: &str =
+    "27413372650305777331568266454809682207773200268004525410015286142538704636274";
+
+/// ⚑ **Pallas's `endo_r`** — the scalar the `ScalarChallenge` lift multiplies by
+/// (`Dregg2.Circuit.Emit.PastaCurve.lambdaPallas`). CONFIG, carried so the wire record is complete;
+/// the derivation returns RAW prechallenges and the lift is the consumer's.
+pub const PALLAS_ENDO_R: &str =
+    "26005156700822196841419187675678338661165322343552424574062261873906994770353";
+
+// =================================================================================================
+// ⚑⚑ THE PER-BLOCK DERIVATION — the thing that replaces a height table
+// =================================================================================================
+
+/// ⚑ **Which leg of the per-block derivation a refusal stopped at.**
+///
+/// The point of naming these is that they are NOT the same kind of missing. One is a config
+/// constant somebody has to extract; one is a sponge nobody has welded to a real block; one is a
+/// topology decision about a dependency graph. A single `ChallengesUnavailable` per height said
+/// none of that, and a reader could not tell how far from done the path was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DerivationStage {
+    /// The block's decoded proof did not supply an argument the derivation needs — a shape the
+    /// decoder walks past today rather than keeping.
+    WireIncomplete,
+    /// The STEP side's `ft_eval0`, which produces public-input word 0 and therefore the whole
+    /// public input. ⚑ Blocked on ONE config object: the seven Tick coset `shifts` at
+    /// `domain_log2 = 16`. They are Blake2b-derived per domain
+    /// (`kimchi/src/circuits/polynomials/permutation.rs` `Shifts::new`), so this is an extractor
+    /// line against openmina's Step verifier index, not a formalization.
+    /// `Dregg2.Bridge.MinaWrapFtEval0Weld` §6 exhibits the hole as a refusal.
+    StepFtEval0,
+    /// `public_comm` — the 40-point Lagrange MSM over the public-input words
+    /// (`Dregg2.Bridge.MinaWrapPublicInput.publicCommOf`). It EXISTS and is welded; what is not
+    /// settled is where the group arithmetic runs. See this module's header.
+    PublicComm,
+    /// The WRAP side's ξ and r — `KimchiVerify.deriveVU` over the phase-2 Fr-sponge stream. The
+    /// function exists and reproduces a synthetic Vesta proof's `v`/`u`
+    /// (`KimchiPoseidonGate`); it has never been welded to a real Mina block's stream.
+    WrapPolyscale,
+    /// The WRAP side's `ft_eval0` and `combined_inner_product`, hence `shift_scalar(cip)`.
+    WrapFtEval0,
+    /// The phase-1 Fq-sponge and the IPA transcript — `dregg_mina_wrap_challenges`.
+    Transcript,
+    /// The verified gate is not in the linked archive at all.
+    GateUnavailable,
+}
+
+impl std::fmt::Display for DerivationStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::WireIncomplete => "the decoded wire (an argument the decoder walks past)",
+            Self::StepFtEval0 => {
+                "the STEP-side ft_eval0 (blocked on ONE config object: the 7 Tick coset shifts \
+                 at domain_log2 = 16)"
+            }
+            Self::PublicComm => "public_comm, the 40-point Lagrange MSM",
+            Self::WrapPolyscale => {
+                "the WRAP-side Fr-sponge (xi, r) — deriveVU, never welded to a \
+                                    real block"
+            }
+            Self::WrapFtEval0 => "the WRAP-side ft_eval0 / combined_inner_product",
+            Self::Transcript => "the phase-1 sponge and the IPA transcript",
+            Self::GateUnavailable => "the verified gate, which is not in the linked archive",
+        };
+        f.write_str(s)
+    }
+}
+
+/// **Everything the per-block challenge derivation needs from ONE served block**, as decimals.
+///
+/// ⚑ Decimals and not field elements, deliberately: `mina_pickles.rs` renders a decoded 32-byte
+/// little-endian coordinate with `decimal_of_le32`, which is a base conversion and not field
+/// arithmetic. There is no Pasta operation on this side of the boundary to drift from the Lean.
+#[derive(Clone, Debug, Default)]
+pub struct MinaWrapWire {
+    /// `index.digest::<EFqSponge>()`. ⚑ TRUSTED CONFIG, one `Fp` element.
+    pub vk_digest: String,
+    /// The Pallas `endo_r`. ⚑ CONFIG.
+    pub endo_r: String,
+    /// `messages_for_next_step_proof.challenge_polynomial_commitments`, flat — 4 numbers.
+    pub prev_comm: Vec<String>,
+    /// `commitments.w_comm`, flat — 30.
+    pub w_comm: Vec<String>,
+    /// `commitments.z_comm`, flat — 2.
+    pub z_comm: Vec<String>,
+    /// `commitments.t_comm`, flat — 14.
+    pub t_comm: Vec<String>,
+    /// `bulletproof.lr`, FLAT — 60. Re-chunked inside the archive.
+    pub lr_flat: Vec<String>,
+    /// `bulletproof.delta`, flat — 2.
+    pub delta: Vec<String>,
+    /// `public_comm`'s `(x, y)`. ⚑ Not on the wire; the [`DerivationStage::PublicComm`] leg.
+    pub public_comm: Vec<String>,
+    /// `shift_scalar(combined_inner_product)`. ⚑ Not on the wire; the
+    /// [`DerivationStage::WrapFtEval0`] leg.
+    pub cip_shifted: String,
+}
+
+impl MinaWrapWire {
+    /// The shapes the archive's own gate will check, checked here first so the refusal names the
+    /// FIELD rather than arriving as an undifferentiated `"ERR"`.
+    ///
+    /// ⚑ This duplicates no arithmetic and makes no decision: `phase1WireOk` and `openingWireOk`
+    /// remain the authority and still run. This is a diagnostic pre-check, and the gate refusing
+    /// after it passes is still a refusal.
+    fn first_incomplete_field(&self) -> Option<(DerivationStage, &'static str)> {
+        let checks: [(usize, usize, DerivationStage, &'static str); 8] = [
+            (
+                self.prev_comm.len(),
+                4,
+                DerivationStage::WireIncomplete,
+                "prev_comm (2 points)",
+            ),
+            (
+                self.w_comm.len(),
+                30,
+                DerivationStage::WireIncomplete,
+                "w_comm (15 points)",
+            ),
+            (
+                self.z_comm.len(),
+                2,
+                DerivationStage::WireIncomplete,
+                "z_comm",
+            ),
+            (
+                self.t_comm.len(),
+                14,
+                DerivationStage::WireIncomplete,
+                "t_comm (7 chunks)",
+            ),
+            (
+                self.lr_flat.len(),
+                60,
+                DerivationStage::WireIncomplete,
+                "lr (15 rounds x 4)",
+            ),
+            (
+                self.delta.len(),
+                2,
+                DerivationStage::WireIncomplete,
+                "delta",
+            ),
+            (
+                self.public_comm.len(),
+                2,
+                DerivationStage::PublicComm,
+                "public_comm",
+            ),
+            (
+                usize::from(!self.cip_shifted.is_empty()),
+                1,
+                DerivationStage::WrapFtEval0,
+                "cip_shifted",
+            ),
+        ];
+        checks
+            .into_iter()
+            .find(|(got, want, _, _)| got != want)
+            .map(|(_, _, stage, what)| (stage, what))
+    }
+}
+
+/// Parse a canonical decimal into a [`U256`], refusing rather than panicking.
+///
+/// ⚑ `U256::from_dec` PANICS on a non-digit or on overflow past 256 bits and says so in its own
+/// doc comment — it is a compile-time-constant helper. A value crossing the C ABI is not a
+/// compile-time constant, so it is bounded here first: 77 digits cannot reach `2^256`.
+fn u256_from_decimal(s: &str) -> Result<U256, String> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!("`{s}` is not a canonical decimal"));
+    }
+    if s.len() > 77 {
+        return Err(format!(
+            "`{s}` has {} digits and cannot be a 256-bit value",
+            s.len()
+        ));
+    }
+    Ok(U256::from_dec(s))
+}
+
+/// ⚑⚑ **DERIVE this block's own 15 IPA challenges.** No height table, no lookup.
+///
+/// The whole path runs inside the archive: `dregg_mina_wrap_challenges` picks the phase-1 Fq-sponge
+/// up from the block's absorbed coordinates and runs it forward through the opening transcript.
+/// Rust formats decimals and reads back fifteen; it computes nothing.
+///
+/// Every failure is a REFUSAL naming its [`DerivationStage`], and there is no arm that returns a
+/// vector this function did not get from the gate.
+pub fn derive_challenges_for_block(
+    block_height: u64,
+    wire: &MinaWrapWire,
+) -> Result<Vec<U256>, MinaOpeningCheckError> {
+    if !dregg_lean_ffi::mina_wrap_challenges_available() {
+        return Err(MinaOpeningCheckError::ChallengesUnavailable {
+            block_height,
+            stage: DerivationStage::GateUnavailable,
+            why: "dregg_mina_wrap_challenges is not exported by the linked archive; there is NO \
+                  Rust fallback and there must not be one"
+                .to_string(),
+        });
+    }
+    if let Some((stage, what)) = wire.first_incomplete_field() {
+        return Err(MinaOpeningCheckError::ChallengesUnavailable {
+            block_height,
+            stage,
+            why: format!("the assembled wire has no usable `{what}`"),
+        });
+    }
+    let derived = dregg_lean_ffi::verified_mina_wrap_challenges(
+        &wire.vk_digest,
+        &wire.endo_r,
+        &wire.prev_comm,
+        &wire.public_comm,
+        &wire.w_comm,
+        &wire.z_comm,
+        &wire.t_comm,
+        &wire.cip_shifted,
+        &wire.lr_flat,
+        &wire.delta,
+    )
+    .map_err(|why| MinaOpeningCheckError::ChallengesUnavailable {
+        block_height,
+        stage: DerivationStage::Transcript,
+        why,
+    })?;
+    derived
+        .ipa_prechallenges
+        .iter()
+        .map(|c| u256_from_decimal(c))
+        .collect::<Result<Vec<U256>, String>>()
+        .map_err(|why| MinaOpeningCheckError::ChallengesMalformed { why })
+}
+
+/// ⚑ **THE DIFFERENTIAL.** Where a height has both a derivation and a reference vector, they must
+/// agree — and a disagreement is louder than either being absent.
+///
+/// This is what makes [`PINNED_CHALLENGES`] worth keeping after it stopped being a source: it is
+/// the in-kernel answer for one block, and the compiled per-block path has to reproduce it.
+pub fn cross_check_against_reference(
+    block_height: u64,
+    derived: &[U256],
+) -> Result<(), MinaOpeningCheckError> {
+    let Some(reference) = pinned_challenges_for(block_height) else {
+        return Ok(());
+    };
+    check_pin(&reference.artifact)?;
+    let want = opening::parse_challenges(reference.artifact.json)
+        .map_err(|why| MinaOpeningCheckError::ChallengesMalformed { why })?;
+    let differing = want
+        .iter()
+        .zip(derived.iter())
+        .filter(|(a, b)| a != b)
+        .count()
+        + want.len().abs_diff(derived.len());
+    if differing != 0 {
+        return Err(MinaOpeningCheckError::DerivationDisagreesWithReference {
+            block_height,
+            differing,
+        });
+    }
+    Ok(())
+}
+
+// =================================================================================================
 // ⚑⚑ THE ASK
 // =================================================================================================
 
@@ -499,17 +810,38 @@ pub fn pinned_heights() -> Vec<u64> {
 /// soundness floor beneath the proof system itself.
 pub fn prove_block_opening_check(
     block_height: u64,
+    wire: &MinaWrapWire,
 ) -> Result<MinaOpeningCheckReceipt, MinaOpeningCheckError> {
-    let pinned = pinned_challenges_for(block_height).ok_or_else(|| {
-        MinaOpeningCheckError::ChallengesUnavailable {
-            block_height,
-            pinned_heights: pinned_heights(),
+    // (a) ⚑ THE PER-BLOCK PATH IS TRIED FIRST, AT EVERY HEIGHT. It is not conditioned on a table.
+    match derive_challenges_for_block(block_height, wire) {
+        Ok(chals) => {
+            // …and where a reference vector exists, it must agree. A disagreement refuses.
+            cross_check_against_reference(block_height, &chals)?;
+            let provenance: &'static str = "DERIVED per block by Dregg2.Bridge.MinaWrapChallenges from this block's own                  absorbed coordinates, through dregg_mina_wrap_challenges. Cross-checked against                  the in-kernel reference vector wherever one exists.";
+            prove_opening_check_with_challenges(
+                block_height,
+                &PinnedChallenges {
+                    block_height,
+                    artifact: PINNED_CHALLENGES[0].artifact,
+                    provenance,
+                },
+                &chals,
+            )
         }
-    })?;
-    check_pin(&pinned.artifact)?;
-    let chals = opening::parse_challenges(pinned.artifact.json)
-        .map_err(|why| MinaOpeningCheckError::ChallengesMalformed { why })?;
-    prove_opening_check_with_challenges(block_height, pinned, &chals)
+        // (b) The derivation stopped at a named leg. At a height that has an in-kernel reference
+        //     vector we can still prove — and the receipt SAYS the vector was asserted about the
+        //     block rather than derived from it, which is the whole job of `challenge_provenance`.
+        //     Everywhere else the stage-named refusal propagates and nothing is proved.
+        Err(stopped) => {
+            let Some(reference) = pinned_challenges_for(block_height) else {
+                return Err(stopped);
+            };
+            check_pin(&reference.artifact)?;
+            let chals = opening::parse_challenges(reference.artifact.json)
+                .map_err(|why| MinaOpeningCheckError::ChallengesMalformed { why })?;
+            prove_opening_check_with_challenges(block_height, reference, &chals)
+        }
+    }
 }
 
 /// [`prove_block_opening_check`] with the challenge vector supplied explicitly.
@@ -597,22 +929,66 @@ mod tests {
         );
     }
 
-    /// ⚑ **THE FAIL-CLOSED ARM, on the runtime path.** A height with no pinned challenge vector
-    /// proves NOTHING and says so with its own variant — it does not fall back, log, or return an
-    /// `Ok` that means "checked nothing".
+    /// ⚑ **THE FAIL-CLOSED ARM, on the runtime path.** A height whose per-block derivation cannot
+    /// run, and which has no reference vector either, proves NOTHING — and the refusal NAMES THE
+    /// LEG rather than reporting a table miss. It does not fall back, log, or return an `Ok` that
+    /// means "checked nothing".
     #[test]
-    fn an_unpinned_height_is_refused_and_nothing_is_proved() {
+    fn a_height_whose_derivation_cannot_run_is_refused_and_names_the_leg() {
+        // An empty wire: nothing was decoded, so the derivation cannot even be attempted.
+        let empty = MinaWrapWire::default();
         for h in [0u64, 1, 539_507, 539_509, 539_795, u64::MAX] {
-            match prove_block_opening_check(h) {
+            match prove_block_opening_check(h, &empty) {
                 Err(MinaOpeningCheckError::ChallengesUnavailable {
                     block_height,
-                    pinned_heights,
+                    stage,
+                    ..
                 }) => {
                     assert_eq!(block_height, h);
-                    assert_eq!(pinned_heights, vec![539_508]);
+                    assert!(
+                        matches!(
+                            stage,
+                            DerivationStage::WireIncomplete | DerivationStage::GateUnavailable
+                        ),
+                        "an empty wire must stop at the wire or at an absent gate, got {stage:?}"
+                    );
                 }
                 other => panic!("height {h} must be REFUSED as unavailable, got {other:?}"),
             }
+        }
+    }
+
+    /// ⚑ The stage really discriminates: an empty wire and a wire that is complete except for
+    /// `public_comm` are DIFFERENT refusals, which is the whole reason the payload changed.
+    #[test]
+    fn the_derivation_stage_discriminates_between_legs() {
+        if !dregg_lean_ffi::mina_wrap_challenges_available() {
+            return; // a cold archive; `GateUnavailable` is then the only reachable stage.
+        }
+        let mut w = MinaWrapWire {
+            vk_digest: "1".into(),
+            endo_r: "1".into(),
+            prev_comm: vec!["1".into(); 4],
+            w_comm: vec!["1".into(); 30],
+            z_comm: vec!["1".into(); 2],
+            t_comm: vec!["1".into(); 14],
+            lr_flat: vec!["1".into(); 60],
+            delta: vec!["1".into(); 2],
+            public_comm: Vec::new(),
+            cip_shifted: String::new(),
+        };
+        match derive_challenges_for_block(1, &w) {
+            Err(MinaOpeningCheckError::ChallengesUnavailable { stage, .. }) => {
+                assert_eq!(stage, DerivationStage::PublicComm)
+            }
+            other => panic!("a missing public_comm must name its own leg, got {other:?}"),
+        }
+        w.public_comm = vec!["1".into(); 2];
+        match derive_challenges_for_block(1, &w) {
+            Err(MinaOpeningCheckError::ChallengesUnavailable { stage, .. }) => {
+                assert_eq!(stage, DerivationStage::WrapFtEval0)
+            }
+            other => panic!("a missing cip_shifted must name its own leg, got {other:?}"),
         }
     }
 

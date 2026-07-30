@@ -1338,16 +1338,24 @@ impl<R: MinaRpc> MinaObserver<R> {
         chain: &[MinaBlock],
     ) -> Result<crate::mina_opening_check::MinaOpeningCheckReceipt, ObserveError> {
         use crate::mina_opening_check as oc;
+        use crate::mina_pickles::decimal_of_le32;
 
-        // (1) find a block the opening check can be ABOUT, and check the shape it decodes to.
-        let pinned = oc::pinned_heights();
-        let target = chain
-            .iter()
-            .find(|b| pinned.contains(&b.block_height))
-            .ok_or_else(|| ObserveError::MinaOpeningChallengesUnavailable {
-                exhibited_heights: chain.iter().map(|b| b.block_height).collect(),
-                pinned_heights: pinned.clone(),
-            })?;
+        // (1) ⚑ THE TARGET IS THE TIP-MOST EXHIBITED BLOCK, NOT A TABLE LOOKUP.
+        //
+        //     Until 2026-07-30 this line was `chain.iter().find(|b| pinned.contains(&b.block_height))`
+        //     — the opening check was ABOUT a block only if that block's challenge vector had been
+        //     derived in the Lean kernel, i.e. about exactly one height, forever. The per-block
+        //     derivation (`oc::derive_challenges_for_block`) is not conditioned on a table, so
+        //     neither is the choice of block: every served block enters the same path, and what a
+        //     block that cannot be proved about gets is a refusal NAMING THE LEG
+        //     (`oc::DerivationStage`), not a report that it was missing from a list.
+        let target =
+            chain
+                .last()
+                .ok_or_else(|| ObserveError::MinaOpeningChallengesUnavailable {
+                    exhibited_heights: Vec::new(),
+                    pinned_heights: oc::pinned_heights(),
+                })?;
         if target.protocol_state_proof.is_empty() {
             return Err(ObserveError::WrapProofAbsent {
                 block_height: target.block_height,
@@ -1379,8 +1387,42 @@ impl<R: MinaRpc> MinaObserver<R> {
         //     VERIFIED Lean gate refuses BEFORE anything is proved.
         self.check_header_binding(chain)?;
 
-        // (3) the ask.
-        oc::prove_block_opening_check(target.block_height).map_err(|why| {
+        // (3) ⚑ ASSEMBLE THE WIRE FROM WHAT THE DECODER ACTUALLY KEPT, and let the derivation
+        //     refuse precisely where it runs out. `acc_comm` IS
+        //     `messages_for_next_step_proof.challenge_polynomial_commitments`, i.e. the
+        //     derivation's `prev_comm`, and it is kept today because the proof-chain gate reads
+        //     it. `w_comm` / `z_comm` / `t_comm` / `lr` / `delta` are WALKED AND DISCARDED by
+        //     `decode_proof_at` — every one of them is on the wire, none of them survives the
+        //     decode, and that is why the refusal below reads `WireIncomplete` rather than
+        //     something about the transcript. It is a decoder change, not a formalization.
+        let wire = oc::MinaWrapWire {
+            vk_digest: oc::WRAP_VK_DIGEST.to_string(),
+            endo_r: oc::PALLAS_ENDO_R.to_string(),
+            prev_comm: shape
+                .acc_comm
+                .iter()
+                .flat_map(|p| [decimal_of_le32(&p[0]), decimal_of_le32(&p[1])])
+                .collect(),
+            // ⚑ NOT YET KEPT BY THE DECODER — see above. Left empty rather than filled with a
+            // stand-in: an invented coordinate would produce a complete, well-formed, entirely
+            // wrong challenge vector and nothing downstream could tell.
+            w_comm: Vec::new(),
+            z_comm: Vec::new(),
+            t_comm: Vec::new(),
+            lr_flat: Vec::new(),
+            delta: Vec::new(),
+            // ⚑ NOT ON THE WIRE AT ALL, and each has its own named leg:
+            // `public_comm` is the 40-point Lagrange MSM over the public input, and `cip_shifted`
+            // is the WRAP-side `ft_eval0`'s downstream. `Dregg2.Bridge.MinaWrapFtEval0Weld`
+            // measures the second and reduces the first to the STEP side's seven coset shifts.
+            public_comm: Vec::new(),
+            cip_shifted: String::new(),
+        };
+
+        // (4) the ask. Per block, at every height; the reference vector is a COMPARAND wherever
+        //     one exists and a fallback source only at its own height, and the receipt's
+        //     `challenge_provenance` says which of the two produced the vector.
+        oc::prove_block_opening_check(target.block_height, &wire).map_err(|why| {
             ObserveError::MinaOpeningCheckRefused {
                 block_height: target.block_height,
                 why,
@@ -2080,6 +2122,19 @@ mod tests {
                 assert!(!exhibited_heights.contains(&539_508));
                 assert_eq!(pinned_heights, vec![539_508]);
             }
+            // ⚑ SINCE 2026-07-30 THIS IS THE EXPECTED SHAPE, and it is a better refusal: the
+            // segment is no longer "not in a table", it is a block whose per-block derivation
+            // stopped at a NAMED LEG. `MinaOpeningChallengesUnavailable` survives only for an
+            // EMPTY segment, which is why the arm above is still here.
+            Err(ObserveError::MinaOpeningCheckRefused { why, .. }) => match why {
+                crate::mina_opening_check::MinaOpeningCheckError::ChallengesUnavailable {
+                    stage,
+                    ..
+                } => eprintln!("[refusal] the derivation stopped at: {stage}"),
+                other => {
+                    panic!("an unprovable segment must be refused by the DERIVATION, got {other:?}")
+                }
+            },
             other => panic!("an unpinned segment must decide NOTHING, got {other:?}"),
         }
     }
