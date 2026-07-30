@@ -44,7 +44,7 @@ Nothing in it compiles a circuit.
 | `tsc --noEmit` at the pinned o1js | 7 s | the committed TypeScript compiles — the directory's *original* defect |
 | the injection **pre-flight** | 3.2 s | all 96 falsifiers still match live code, **each at exactly one site** |
 | `check-mina-npm-coverage.sh` | 1 s | every `package.json` script is in a tier or allowlisted with a reason |
-| `recorded-constants.tsv` census | <1 s | all 28 `RECORDED_*` figures are as recorded, and none is unpinned |
+| `recorded-constants.tsv` census | <1 s | all 29 pinned rows are as recorded, and every `RECORDED_*` in the tree is pinned |
 | `root-fri-braid` @0 | 1–3 s | the 11,303-segment walk against p3's own α, βs and query indices |
 | `root-fri-uniform` @0 | 6–13 s | the homogeneity, the plan, **all 820 chain boundaries** |
 | `root-fri-preamble` @0 | 1–4 s | the batch-STARK preamble differential and its discriminating polarities |
