@@ -50,6 +50,21 @@ globs = ["Polis.+"]
 name = "polis_governor"
 root = "PolisGovernor"
 
+# mina_sg_bench — the NATIVE-COMPILED cost of one Mina checkpoint's `<s, srs.g>` leg.
+# `Dregg2.Bridge.MinaWrapSgWeld` pins the same fold under `#guard`, which runs Lean's INTERPRETER
+# (no `precompileModules` here), so the weld's wall time is an upper bound and not the compiled
+# cost. This exe runs the identical `PastaIpaFold.msmHornerM` over the same 32,768 real generators
+# through `leanc` and prints the number `docs/MINA-CHECKPOINT-CADENCE.md` §5a needs — self-checking
+# in both polarities (non-zero exit if the fold misses block 539508's `sg`, and non-zero exit if a
+# tampered generator list is accepted).
+#
+# ⚠ DELIBERATELY NOT IN `defaultTargets`: it drags `MinaWrapSrsG` (5.4 MB of Lean, 64 blocks of 512
+# points) through C codegen. Build it explicitly, like `polis_governor`:
+#     lake build mina_sg_bench && ./.lake/build/bin/mina_sg_bench
+[[lean_exe]]
+name = "mina_sg_bench"
+root = "MinaSgBench"
+
 # Market/* — DrEX (Dragon's Egg Exchange): the Lean-first proof-carrying exchange tower
 # (namespace `Market`, composing with Dregg2.Intent + Dregg2.Intent.Ring). Root module
 # `Market` (./Market.lean) aggregates Market/*; also imported from the Dregg2 root so the

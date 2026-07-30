@@ -19,11 +19,18 @@ partials (`MinaWrapSgParts`), both emitted by the extractor from o1-labs' own ob
 ## Why the evaluation looks like this
 
 `PastaIpaFold.msmHorner_eq_msmN` is the identity: one shared doubling chain over the 255 bit
-planes, one addition per set bit. `msmHornerM` below is that function with `+` replaced by
-`PastaCurveComplete.rcbAddM` and `0` by `Oproj`, term for term — `bitPassM`/`hornerAuxM`/
-`msmHornerM` mirror `bitPass`/`hornerAux`/`msmHorner`. The transport from the abstract statement
-to this evaluation is the SAME inherited RCB residual (RCB'15 Thm 1) that rungs 5a–5f carry; no
-new assumption.
+planes, one addition per set bit. `PastaIpaFold.msmHornerM` (§3c there) is that function with `+`
+replaced by `PastaCurveComplete.rcbAddM` and `0` by `Oproj`, term for term —
+`bitPassM`/`hornerAuxM`/`msmHornerM` mirror `bitPass`/`hornerAux`/`msmHorner`. The transport from
+the abstract statement to this evaluation is the SAME inherited RCB residual (RCB'15 Thm 1) that
+rungs 5a–5f carry; no new assumption.
+
+⚑ Those three mirrors USED to be defined in this file (until 2026-07-30) and are now imported,
+because there is a second consumer: `Dregg2.Bridge.MinaWrapSg` is the same statement evaluated by
+the COMPILED evaluator instead of by kernel `decide`, and a private copy here would have been a
+twin that agrees today. One definition, two evaluators, so the comparison between them
+(`Dregg2.Bridge.MinaWrapSgWeld` §4 reproduces all 32 chunk statements below as `#guard`s) is a
+comparison of the same object rather than of two things that look alike.
 
 The generator FOLD (`PastaIpaFold.msm_sVec_eq_fold`) is the right structural statement about this
 object and is **not** what evaluates it: it costs `2^15 − 1` scalar multiplications against the
@@ -47,12 +54,11 @@ open Dregg2.Circuit.Emit.PastaCurveComplete
 open Dregg2.Circuit.Emit.MinaWrapOpeningGate (CHAL CHAL_F)
 open Dregg2.Circuit.Emit.MinaWrapSrsG (SRS_G)
 open Dregg2.Circuit.Emit.MinaWrapSgParts (PARTS SG)
+open Dregg2.Circuit.Emit.PastaIpaFold (Pt bitPassM hornerAuxM msmHornerM ptsSumM)
 
 set_option autoImplicit false
 set_option maxRecDepth 4000000
 set_option maxHeartbeats 0
-
-abbrev Pt := Nat × Nat × Nat
 
 /-! ## §1 — The scalars, derived in-kernel from the 15 carried challenges. -/
 
@@ -61,20 +67,16 @@ abbrev Pt := Nat × Nat × Nat
 is `b_poly_coefficients` — the vector o1-labs' `SRS::verify` builds at `ipa.rs`. -/
 def SVEC : List Nat := (Dregg2.Circuit.Emit.PastaIPA.sVec CHAL_F).map ZMod.val
 
-/-! ## §2 — The kernel evaluator: `PastaIpaFold.msmHorner` over the RCB complete add. -/
+/-! ## §2 — The evaluator: `PastaIpaFold.msmHornerM`, the §3c mirror of `msmHorner` over the RCB
+complete add.
 
-/-- One bit plane over the RCB add: fold in the points whose scalar has bit `i` set.
-Mirror of `PastaIpaFold.bitPass`. -/
-def bitPassM (m b3 i : Nat) (as : List Nat) (ps : List Pt) (acc : Pt) : Pt :=
-  (as.zip ps).foldl (fun a ap => if ap.1.testBit i then rcbAddM m b3 a ap.2 else a) acc
-
-/-- The Horner scan over bit indices, MSB first. Mirror of `PastaIpaFold.hornerAux`. -/
-def hornerAuxM (m b3 : Nat) (as : List Nat) (ps : List Pt) (idxs : List Nat) (acc : Pt) : Pt :=
-  idxs.foldl (fun a i => bitPassM m b3 i as ps (rcbAddM m b3 a a)) acc
-
-/-- `⟨a, P⟩` by ONE doubling chain. Mirror of `PastaIpaFold.msmHorner`. -/
-def msmHornerM (m b3 nbits : Nat) (as : List Nat) (ps : List Pt) : Pt :=
-  hornerAuxM m b3 as ps (List.range nbits).reverse Oproj
+⚑ MOVED 2026-07-30, and the move is the point. `bitPassM`/`hornerAuxM`/`msmHornerM` used to be
+defined HERE, and the compiled per-block checker (`Dregg2.Bridge.MinaWrapSg`) would have needed a
+second copy — a twin that agrees today. They now live once, in `PastaIpaFold` §3c, and the kernel
+instance below and the compiled checker evaluate the SAME definitions. Nothing about `ChunkOk`
+changed: the definitions are character-identical, so the 32 chunk theorems state exactly what they
+stated. They do have to be RE-RUN to be re-checked (`scripts/run-mina-sg-instance.sh`); the
+statements did not move. -/
 
 /-! ## §3 — The chunking, INDEX-PINNED.
 
@@ -174,7 +176,7 @@ theorem sg_is_the_openings_sg :
 /-! ## §5 — The assembly: the 32 partials re-sum to `sg`. -/
 
 /-- The 32 chunk partials, added up left to right over the RCB complete add. -/
-def partsSum : Pt := PARTS.foldl (fun acc P => rcbAddM pN curveB3 acc P) Oproj
+def partsSum : Pt := ptsSumM pN curveB3 PARTS
 
 /-- **`parts_sum_is_sg`** — the partials re-sum to the block's own `sg`. With the 32 `ChunkOk`
 theorems (`MinaWrapSgChunk0..3`) this is statement (A). -/

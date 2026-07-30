@@ -189,3 +189,11 @@ Dregg2.Circuit.Emit.MinaWrapSgChunk0
 Dregg2.Circuit.Emit.MinaWrapSgChunk1
 Dregg2.Circuit.Emit.MinaWrapSgChunk2
 Dregg2.Circuit.Emit.MinaWrapSgChunk3
+# The COMPILED half of the same rung, added 2026-07-30. `Dregg2.Bridge.MinaWrapSg` — the checker,
+# parameterised over challenges/generators/`sg`, holding no fixture — IS rooted, at +0 closure
+# (it imports `PastaIpaFold` and nothing else). Only its INSTANCE differential is excluded, and for
+# exactly the reason the seven lines above are: it imports `MinaWrapSrsG`. Its `#guard`s are the
+# untrusted evaluator, so they run in seconds-to-minutes rather than the kernel's ~3.5 h — but they
+# still run NOWHERE unless someone runs the script, which is now:
+#   scripts/run-mina-sg-compiled.sh   (and `lake build mina_sg_bench` for the native number)
+Dregg2.Bridge.MinaWrapSgWeld

@@ -378,6 +378,53 @@ theorem chunk_length {α : Type} (c n k : Nat) (l : List α) (hl : l.length = c 
       _ ≤ c * n := Nat.mul_le_mul_left c hk
   omega
 
+/-! ## §3c — THE SAME SCAN OVER THE `Nat`-TRIPLE RCB ADD: the object that is actually EVALUATED.
+
+§3 is stated at an arbitrary `AddCommGroup`, which no Pallas point in this tree carries. The
+evaluated mirror below replaces `+` by `PastaCurveComplete.rcbAddM` and `0` by `Oproj`, term for
+term: `bitPassM`/`hornerAuxM`/`msmHornerM` against `bitPass`/`hornerAux`/`msmHorner`. The transport
+between the two is the SAME inherited RCB residual (RCB'15 Thm 1: the unified formula is the
+complete group law on a prime-order short Weierstrass curve) that rungs 5a–5f carry. No new
+assumption, and §3's `msmHorner_eq_msmN` is what says the scan computes the MSM at all.
+
+⚑ THESE THREE LIVE HERE AND NOT IN A CONSUMER, because there are now TWO consumers and a second
+copy would be a twin that agrees today:
+
+* `MinaWrapSgCore.ChunkOk` — the KERNEL instance, 32 `decide`s, ~3.5 h of serial kernel;
+* `Dregg2.Bridge.MinaWrapSg` — the COMPILED per-block checker, the same definitions under `#guard`.
+
+Both must evaluate the same `msmHornerM` or the comparison between them means nothing. -/
+
+section NatEval
+open Dregg2.Circuit.Emit.PastaCurveComplete (rcbAddM Oproj)
+
+/-- A Pasta point in projective `Nat` coordinates, the form the RCB reference add works on. -/
+abbrev Pt := Nat × Nat × Nat
+
+/-- One bit plane over the RCB complete add: fold in the points whose scalar has bit `i` set.
+Mirror of `bitPass`. -/
+def bitPassM (m b3 i : Nat) (as : List Nat) (ps : List Pt) (acc : Pt) : Pt :=
+  (as.zip ps).foldl (fun a ap => if ap.1.testBit i then rcbAddM m b3 a ap.2 else a) acc
+
+/-- The Horner scan over bit indices, MSB first. Mirror of `hornerAux`. -/
+def hornerAuxM (m b3 : Nat) (as : List Nat) (ps : List Pt) (idxs : List Nat) (acc : Pt) : Pt :=
+  idxs.foldl (fun a i => bitPassM m b3 i as ps (rcbAddM m b3 a a)) acc
+
+/-- `⟨a, P⟩` by ONE doubling chain over the RCB complete add. Mirror of `msmHorner`.
+
+⚑ In the KERNEL this must be fed at most 512 terms at a time: `whnf` builds the `foldl` accumulator
+as a thunk chain of depth `nbits × terms` and blows the C stack outright at `255 × 1024`. COMPILED,
+`List.foldl` is a tail loop and there is no such wall — the whole `2^15` goes through one call, and
+the chunking in `MinaWrapSgCore` is an artefact of the kernel, not of the object. -/
+def msmHornerM (m b3 nbits : Nat) (as : List Nat) (ps : List Pt) : Pt :=
+  hornerAuxM m b3 as ps (List.range nbits).reverse Oproj
+
+/-- The left-to-right sum of a list of points over the RCB complete add. -/
+def ptsSumM (m b3 : Nat) (ps : List Pt) : Pt :=
+  ps.foldl (fun acc P => rcbAddM m b3 acc P) Oproj
+
+end NatEval
+
 /-! ## §4 — The op counts these two identities actually buy, and the direction of the trade. -/
 
 /-- Group scalar-multiplications the `k`-round generator fold performs: `2^k − 1`. -/
