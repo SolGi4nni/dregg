@@ -60,9 +60,11 @@ def SCAL (cs : List Fq) (lo w : Nat) : List Nat :=
   List.replicate lo 0 ++ (List.range w).map (fun t => sNat cs (lo + t))
 
 -- ⚑ THE DEPLOYED DERIVED SHAPE, as an object, checked in the kernel before anything is rendered.
-#guard WD 15 256 == 1876
+-- The canonicity certificate (`PastaMsmScalarDerive` §2.7) is `CBITS = 255` more columns and
+-- `CBITS + 1 = 256` more constraints than the shape `9b88bc06e` proved: 1876 → 2131, 1053 → 1309.
+#guard WD 15 256 == 2131
 #guard PID 15 == 164
-#guard 98 + (8 + 29 * 15 + 2 * 256) == 1053
+#guard 98 + (264 + 29 * 15 + 2 * 256) == 1309
 #guard 256 * (3 + 1) == 1024
 -- …and the challenge vector really is the block's 15.
 #guard CHAL_F.length == 15

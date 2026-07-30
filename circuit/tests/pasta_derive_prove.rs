@@ -4,7 +4,7 @@
 //!
 //! **The AIRs are Lean-authored.** `dregg-pasta-rcb-sg-derive-<k>-of-10922::v1` is
 //! `Dregg2.Circuit.Emit.PastaMsmScalarDerive.deriveRowDesc 15 10922 k 3 256 MinaWrapSrsG.SRS_G
-//! (SCAL …)` — 1053 constraints, of which the first 98 are `PastaMsmOnCurve.onCurveRowDesc`'s
+//! (SCAL …)` — 1309 constraints, of which the first 98 are `PastaMsmOnCurve.onCurveRowDesc`'s
 //! verbatim (`deriveRowDesc_extends_onCurve` proves the prefix in the Lean kernel), the first 82
 //! of THOSE are `PastaMsmBound`'s, the first 78 of those `PastaMsmSliced`'s and the first 45 of
 //! those `PastaMsmWindowed`'s row template. Nothing in this file or in
@@ -24,13 +24,35 @@
 //!
 //! ```text
 //!   PR 0 = 1,   PR (j+1) ≡ PR j · MU j  (mod q),   MU j = c_j if GIDX's digit (nb−1−j) else 1
-//!   Σ_p 2^(planes−1−p) · SB p = PR nb                          (a canonical bit decomposition)
+//!   Σ_p 2^(planes−1−p) · SB p = PR nb                          (a bit decomposition)
+//!   PR nb + Σ_{p<255} 2^p · CB p = q − 1                       (⚑ and it is the CANONICAL one)
 //!   (1 − DBL) · (BIT − Σ_p SE p · SB p) = 0                    (the row's plane reads its digit)
 //! ```
 //!
 //! so `s_GIDX = ∏_j c_j^{bit_j(GIDX)}` is a value the AIR COMPUTES from the wire, and the row's
 //! conditional-add bit is its digit. What the verifier now hands the circuit is the challenge
 //! vector; what the circuit produces is the scalar. That is the thing this file proves.
+//!
+//! ## ⚑⚑ WHAT THE CANONICITY LINE ADDS, and what it retires
+//!
+//! `9b88bc06e` proved the first three lines through the deployed prover and found its own bridge
+//! FALSE AS STATED: booleanity pins `PR nb` into `[0, 2^planes)`, `planes = 256` while `q < 2^255`,
+//! so `s, s+q, s+2q, s+3q, s+4q` all fit, and `fqMulCore` witnesses a QUOTIENT — the chain gate is
+//! exactly zero over ℤ for every one of them. The digits were therefore *a* representative's, not
+//! **the** s-vector entry's, and only the MANIFEST refused an internally consistent forgery.
+//!
+//! The fourth line is the standard less-than-the-modulus certificate over `CBITS = 255` boolean
+//! columns. `PastaMsmScalarDerive.canon_forces` proves it pins `0 ≤ s < q`; `derived_is_sNat` then
+//! proves the landing value IS `PastaMsmScalarBound.sNat cs GIDX`, so the conclusion ranges over the
+//! CANONICAL s-vector rather than over a witnessed decomposition.
+//! `the_canonicity_gate_refuses_the_non_canonical_representative` measures it as a before/after on
+//! ONE instance: with §2.7 truncated off the forgery proves and verifies (manifest patched to
+//! agree); with §2.7 present the same trace is refused by a gate.
+//!
+//! ⚠ K1 IS INHERITED UNCHANGED and this rung does not narrow it. Every forcing theorem here is the
+//! ℤ reading of the emitted bodies; the deployed prover reads them in BabyBear, where a weighted
+//! boolean sum can wrap. `PastaMsmWindowed` §6.2 names that gap. What closed is the gap that was
+//! open IN THE ℤ MODEL ITSELF.
 //!
 //! ## The shape, and why it is what it is
 //!
@@ -48,7 +70,7 @@
 //!
 //! ⚠ TOY IN ONE AXIS, DEPLOYED IN THE OTHER, and the labels are not decoration. The challenge
 //! count (15), the challenges themselves (the block's own, from `MinaWrapOpeningGate.CHAL_F`), the
-//! plane count (256), the generators (Mina's real Wrap SRS) and the column count (1876) are the
+//! plane count (256), the generators (Mina's real Wrap SRS) and the column count (2131) are the
 //! deployed ones. The number of GENERATORS PER SLICE is 3, against 8,192 in the full cut. Binding
 //! more of them is `PastaMsmBound`'s axis, not this one.
 
@@ -58,10 +80,10 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptors2_batch,
 };
 use dregg_circuit::pasta_windowed_witness::{
-    COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, COL_OC_ACC, COL_OC_SRC, COL_SRCX, COL_SRCY,
-    COL_SRCZ, DeriveLayout, NUM_LIMBS, Pt, Q_PASTA, RowSpec, SLICED_PI_COUNT, TRACE_WIDTH, U256,
-    build_trace, derive_scalar, mul_mod_q, put_derive_block, put_on_curve_block,
-    put_on_curve_block_forged, read_point,
+    CBITS, COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, COL_OC_ACC, COL_OC_SRC, COL_SRCX,
+    COL_SRCY, COL_SRCZ, DeriveLayout, NUM_LIMBS, Pt, Q_PASTA, RowSpec, SLICED_PI_COUNT,
+    TRACE_WIDTH, U256, build_trace, canonicity_certificate, derive_scalar, mul_mod_q,
+    put_derive_block, put_on_curve_block, put_on_curve_block_forged, read_point,
 };
 use dregg_circuit::refusal::{DEPLOYED_VERIFIER_REFUSAL_MARKERS, must_refuse};
 use sha2::{Digest, Sha256};
@@ -76,19 +98,19 @@ use std::time::Instant;
 const DERIVE: [(&str, &str); 4] = [
     (
         include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-0-of-10922.json"),
-        "5597c0fab01edf9eeb4f63c7bb93daee08b5f66dccd918da843efd9acedadd4d",
+        "b45b12f9e043d2c6e2b5acc6a623ffc00d05f71a4185ac20083d16113ea5e649",
     ),
     (
         include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-3640-of-10922.json"),
-        "b37d83b77b86cbb567173b0a66de37d1e97ab594797a660df78f8d56e3d743b7",
+        "1ae911d2a38054fba124729eda8d56e6b2fafc139c37b8d07b981bf03e92ebbf",
     ),
     (
         include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-7281-of-10922.json"),
-        "81f209ddd76e2ae916a18635f5e633faa86023a3aaa7b6130dd2cc6034bcacb9",
+        "0c4148a144f7cfe799ce1ba9c5ead81d30907fa2ebbac3b21b615f2ad4477631",
     ),
     (
         include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-10921-of-10922.json"),
-        "9ea08d35b4d07c71e185c1fb4c595b9d6ad1e6be9ec2e62fd37cace405adc3e6",
+        "95a94ccb0869dfd6b98970c013557be7a716936c72ede5e9886e9dcb8bbf0d89",
     ),
 ];
 
@@ -97,7 +119,7 @@ const DERIVE: [(&str, &str); 4] = [
 /// forged derivation is exhibited PROVING against its own challenges and REFUSED against ours.
 const DERIVE_BLOCK_B: (&str, &str) = (
     include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-0-of-10922-blockB.json"),
-    "7c76e675d570c542411d4d0d5f6318ea06dca1d5e838536d8e072a8b7913f11c",
+    "bbf56051b37d5b73faf90cefc110ceb21a27e4ce4a8982f5166e19d08e2f92fe",
 );
 
 /// The challenge vectors. ⚑ NOT in the descriptors — they are PUBLIC INPUTS, so the harness must
@@ -125,9 +147,17 @@ const W: usize = 3;
 const N: usize = 10922;
 const KS: [usize; 4] = [0, 3640, 7281, 10921];
 const HEIGHT: usize = PLANES * (W + 1);
-const DERIVE_WIDTH: usize = 1876;
+const DERIVE_WIDTH: usize = 2131;
 const DERIVE_PI_COUNT: usize = 164;
-const DERIVE_CONSTRAINTS: usize = 1053;
+const DERIVE_CONSTRAINTS: usize = 1309;
+
+/// ⚑ The shape `9b88bc06e` proved — the derivation WITHOUT `PastaMsmScalarDerive` §2.7's canonicity
+/// certificate. The certificate is the LAST `CBITS = 255` columns and the LAST `CBITS + 1 = 256`
+/// constraints of the emitted object, so truncating to these two numbers reconstructs the previous
+/// rung EXACTLY, on the same fixtures. That is what makes the canonicity measurement a before/after
+/// on one instance rather than a comparison of two descriptors.
+const PRE_CANON_WIDTH: usize = 1876;
+const PRE_CANON_CONSTRAINTS: usize = 1053;
 
 /// `PastaMsmOnCurve.WOC` — the width this rung extends.
 const ONCURVE_WIDTH: usize = 799;
@@ -268,11 +298,17 @@ fn partial_product(chals: &[U256], idx: usize, n: usize) -> U256 {
 
 /// Rewrite one row's chain landing block and digits to the representative `s + q`, keeping every
 /// emitted gate of the chain satisfied over ℤ. Returns that representative.
+///
+/// ⚑ THE CERTIFICATE COLUMNS GET THE BEST WITNESS THAT EXISTS, which is the whole point: `q − 1 −
+/// (s + q) = −(s + 1)` is NEGATIVE, so no assignment of 255 boolean places reaches it and
+/// `PastaMsmScalarDerive.canon_forces` proves there is none. What a real prover would write is the
+/// 255-bit truncation `2^255 − (s + 1)`, and that is what goes in — a forgery test whose witness
+/// generator simply gave up would measure nothing.
 fn make_noncanonical(row: &mut [BabyBear], chals: &[U256], gidx: usize) -> U256 {
     let lay = layout();
     let nb = chals.len();
     let prev = partial_product(chals, gidx, nb - 1);
-    let mu = if (gidx >> 0) & 1 == 1 {
+    let mu = if gidx & 1 == 1 {
         chals[nb - 1]
     } else {
         U256::ONE
@@ -291,7 +327,64 @@ fn make_noncanonical(row: &mut [BabyBear], chals: &[U256], gidx: usize) -> U256 
     for p in 0..PLANES {
         row[lay.sb(p)] = BabyBear::new(s2.bit(PLANES - 1 - p));
     }
+    // `2^255 − (s + 1)`, the residue of `q − 1 − s2` in the 255-bit budget.
+    let two_255 = U256([0, 0, 0, 1u64 << 63]);
+    let (sp1, c1) = s.adc(&U256::ONE);
+    assert!(!c1);
+    let (trunc, b1) = two_255.sbb(&sp1);
+    assert!(!b1);
+    for p in 0..CBITS {
+        row[lay.cb(p)] = BabyBear::new(trunc.bit(p));
+    }
     s2
+}
+
+/// The pre-canonicity descriptors: the SAME emitted objects with §2.7's certificate truncated off.
+/// `PRE_CANON_*` explains why this reconstructs the previous rung exactly.
+fn strip_canonicity(descs: &[EffectVmDescriptor2]) -> Vec<EffectVmDescriptor2> {
+    descs
+        .iter()
+        .map(|d| {
+            let mut d = d.clone();
+            d.constraints.truncate(PRE_CANON_CONSTRAINTS);
+            d.trace_width = PRE_CANON_WIDTH;
+            d
+        })
+        .collect()
+}
+
+/// …and the matching traces (the certificate columns are the last `CBITS` of the row).
+fn strip_canonicity_traces(traces: &[Vec<Vec<BabyBear>>]) -> Vec<Vec<Vec<BabyBear>>> {
+    traces
+        .iter()
+        .map(|t| t.iter().map(|r| r[..PRE_CANON_WIDTH].to_vec()).collect())
+        .collect()
+}
+
+/// Rewrite a parsed descriptor's manifest DIGIT column, at one generator index, to the digits of
+/// `s2`. Used to hand the forgery the one thing that used to catch it — so that what refuses it
+/// afterwards can only be the derivation's own constraints.
+fn patch_manifest_digits(desc: &mut EffectVmDescriptor2, gidx: usize, s2: &U256) -> usize {
+    let mut moved = 0usize;
+    match &mut desc.tables[0].sem {
+        TableSem::ExactPublicRows { rows } => {
+            for (row_index, row) in rows.iter_mut().enumerate() {
+                if row.iter().all(|&v| v == 0) {
+                    continue;
+                }
+                if row[1] as usize - 1 != gidx {
+                    continue;
+                }
+                let want = s2.bit(PLANES - 1 - row_index / (W + 1));
+                if row[2] != want {
+                    moved += 1;
+                }
+                row[2] = want;
+            }
+        }
+        other => panic!("expected an exact-public generator table, got {other:?}"),
+    }
+    moved
 }
 
 /// Widen a 525-column windowed trace to the derived width: the four declaration/index columns, the
@@ -441,13 +534,23 @@ fn lean_artifacts_are_pinned() {
             format!("dregg-pasta-rcb-sg-derive-{}-of-{N}::v1", KS[i])
         );
         assert_eq!(desc.trace_width, DERIVE_WIDTH, "PastaMsmScalarDerive.WD");
+        assert_eq!(
+            desc.trace_width - PRE_CANON_WIDTH,
+            CBITS,
+            "the canonicity certificate is exactly CBITS columns wide"
+        );
+        assert_eq!(
+            desc.constraints.len() - PRE_CANON_CONSTRAINTS,
+            CBITS + 1,
+            "…and CBITS booleanity pins plus one bound gate"
+        );
         assert_eq!(desc.trace_width, layout().width(), "the Rust layout agrees");
         assert_eq!(desc.public_input_count, DERIVE_PI_COUNT, "29 + 9·15");
         assert_eq!(desc.public_input_count, layout().pi_count());
         assert_eq!(
             desc.constraints.len(),
             DERIVE_CONSTRAINTS,
-            "98 on-curve + (8 + 29·15 + 2·256)"
+            "98 on-curve + (264 + 29·15 + 2·256)"
         );
         assert_eq!(
             manifest_of(desc).len(),
@@ -566,7 +669,7 @@ fn every_challenge_bit_is_exercised() {
 /// (`dsl::circuit::ProgramDescriptor::validate`). The IR-v2 path consults NEITHER: `check_descriptor2`
 /// bounds every column against the descriptor's OWN `trace_width` and every PI index against its own
 /// `public_input_count`, and nothing else. This test states that as a measurement rather than as a
-/// reading of the source — the descriptor at 1876 columns and 164 PIs PARSES AND CHECKS, and the
+/// reading of the source — the descriptor at 2131 columns and 164 PIs PARSES AND CHECKS, and the
 /// proof below is what makes it more than a parse.
 #[test]
 fn the_v1_width_cap_does_not_bind_the_ir2_path() {
@@ -635,7 +738,24 @@ fn the_derivation_block_marginal_cost_is_measured_at_the_same_shape() {
     let derive_verify = t3.elapsed();
     let derive_bytes = postcard::to_allocvec(&dp).expect("serialize").len();
 
+    // ⚑ …AND THE CANONICITY CERTIFICATE ON ITS OWN, which is the rung this commit adds. The middle
+    // point is the SAME emitted objects with §2.7 truncated off — the exact shape `9b88bc06e`
+    // measured at 41.2 s / 922 ms / 993,090 B — so the third ratio below is the certificate's price
+    // and nothing else's.
+    let mid = strip_canonicity(&derived);
+    let mid_traces = strip_canonicity_traces(&traces);
+    let refs: Vec<&[Vec<BabyBear>]> = mid_traces.iter().map(|t| t.as_slice()).collect();
+    let t4 = Instant::now();
+    let mp = prove_vm_descriptors2_batch(&mid, &refs, &pis)
+        .expect("the pre-canonicity derivation must prove on the same witness");
+    let mid_prove = t4.elapsed();
+    let t5 = Instant::now();
+    verify_vm_descriptors2_batch(&mid, &mp, &pis).expect("…and verify");
+    let mid_verify = t5.elapsed();
+    let mid_bytes = postcard::to_allocvec(&mp).expect("serialize").len();
+
     let base_area = KS.len() * HEIGHT * ONCURVE_WIDTH;
+    let mid_area = KS.len() * HEIGHT * PRE_CANON_WIDTH;
     let derive_area = KS.len() * HEIGHT * DERIVE_WIDTH;
     println!(
         "[marginal] SAME shape ({} slices x {HEIGHT} rows), derivation block ON vs OFF:\n  \
@@ -650,6 +770,20 @@ fn the_derivation_block_marginal_cost_is_measured_at_the_same_shape() {
         derive_prove.as_secs_f64() / base_prove.as_secs_f64(),
         derive_verify.as_secs_f64() / base_verify.as_secs_f64(),
         derive_bytes as f64 / base_bytes as f64,
+    );
+    println!(
+        "[canon-cost] the CANONICITY CERTIFICATE alone, same shape, §2.7 OFF vs ON:\n  \
+         area   {mid_area} -> {derive_area}  ({:.4}x)\n  \
+         cons   {PRE_CANON_CONSTRAINTS} -> {DERIVE_CONSTRAINTS}  ({:.4}x)\n  \
+         cols   {PRE_CANON_WIDTH} -> {DERIVE_WIDTH}  (+{CBITS})\n  \
+         prove  {mid_prove:?} -> {derive_prove:?}  ({:.4}x)\n  \
+         verify {mid_verify:?} -> {derive_verify:?}  ({:.4}x)\n  \
+         proof  {mid_bytes} -> {derive_bytes} bytes  ({:.4}x)",
+        derive_area as f64 / mid_area as f64,
+        DERIVE_CONSTRAINTS as f64 / PRE_CANON_CONSTRAINTS as f64,
+        derive_prove.as_secs_f64() / mid_prove.as_secs_f64(),
+        derive_verify.as_secs_f64() / mid_verify.as_secs_f64(),
+        derive_bytes as f64 / mid_bytes as f64,
     );
 }
 
@@ -759,6 +893,17 @@ fn the_derived_scalar_is_the_blocks_s_vector() {
 
 /// ⚑⚑ **TAMPER 1 — A SUBSTITUTED GENERATOR.** Slice 2's row 2 rebuilt around the generator at the
 /// WRONG absolute index, the whole trace regenerated so every RCB add and carry holds.
+///
+/// ⚑ **AND THIS IS THE MANIFEST'S VERDICT, decided on evidence.** After `PastaMsmScalarDerive` §2.7
+/// the manifest row's **digit** field is derived twice — `derived_row_bit_is_manifest_digit` proves
+/// the trace's `BIT` is `scalarDigit (sScalars cs N) planes idx pl` with no reference to
+/// `PublicLookupBalanced`, and `the_canonicity_gate_refuses_the_non_canonical_representative` shows
+/// the forgery that used to need the manifest is now refused by a gate. Its **generator
+/// coordinates** are not: NO EMITTED GATE RELATES A GENERATOR INDEX TO GENERATOR COORDINATES, so
+/// substituting one real SRS generator for another leaves the derivation, the curve gate and the
+/// RCB fold all satisfied. The assertion below is therefore tightened from "some deployed refusal
+/// marker" to **`LookupError` specifically**: that is the manifest speaking, and if it ever stopped
+/// being the thing that fires, this forgery would have a satisfying trace. **The manifest stays.**
 #[test]
 fn tamper_1_substituted_generator_is_refused() {
     let descs = parse_cut();
@@ -790,7 +935,12 @@ fn tamper_1_substituted_generator_is_refused() {
             .any(|m| refusal.contains(m)),
         "the substituted generator must be refused by the DEPLOYED verifier, got: {refusal}"
     );
-    println!("[tamper 1] REFUSED (generator): {refusal}");
+    assert!(
+        refusal.contains("LookupError"),
+        "the generator substitution must be caught by the MANIFEST — anything else would mean an \
+         emitted gate binds coordinates to indices, and none does: {refusal}"
+    );
+    println!("[tamper 1] REFUSED by the MANIFEST, which is what it is still for: {refusal}");
 }
 
 /// ⚑⚑ **TAMPER 2 — A WRONG-BLOCK SCALAR DIGIT.** One conditional-add row's `BIT` is set to the
@@ -982,34 +1132,34 @@ fn tamper_4_polarity_the_other_block_proves_against_its_own_challenges() {
 }
 
 // =============================================================================================
-// (d) ⚑⚑ WHAT THE DERIVATION DOES *NOT* PIN — and therefore what the manifest is still for
+// (d) ⚑⚑ THE CANONICITY GATE — the forgery `9b88bc06e` could only catch with the manifest
 // =============================================================================================
 
-/// ⚑⚑ **THE DECOMPOSITION IS NOT CANONICAL, AND THE MANIFEST IS WHAT CATCHES IT.**
+/// ⚑⚑ **THE CANONICITY GATE BITES, MEASURED AS A BEFORE/AFTER ON ONE INSTANCE.**
 ///
-/// `PastaMsmScalarDerive` §2.5 says the boolean digits plus the weighted sum make the reconstructed
-/// value "CANONICAL rather than merely congruent mod `q`". Read at the deployed shape that is
-/// **too strong**, and the gap is exactly one plane wide: booleanity pins `PR nb` into
-/// `[0, 2^planes)`, and `planes = 256` while `q < 2^255`. There are therefore FIVE representatives
-/// of every s-vector entry inside the digit budget — `s, s+q, s+2q, s+3q, s+4q` — and the emitted
-/// chain accepts any of them, because `fqMulCore` witnesses a QUOTIENT: shifting the landing block
-/// by `q` and the last quotient limb-block by `1` keeps the gate exactly zero over ℤ.
+/// `9b88bc06e` found its own bridge false as stated. Booleanity pins the chain's landing value into
+/// `[0, 2^planes)`; `planes = 256` while `q < 2^255`, so `s, s+q, s+2q, s+3q, s+4q` ALL fit, and
+/// `fqMulCore` witnesses a QUOTIENT — shifting the landing block by `q` and the last quotient block
+/// by `1` leaves the chain gate exactly zero over ℤ. So the derivation alone bound `BIT` to *a digit
+/// of some representative*, and the ONLY thing that refused an internally consistent non-canonical
+/// row was the manifest.
 ///
-/// So the derivation alone binds `BIT` to *a digit of some representative*, not to the digit of
-/// **the** s-vector entry. What closes it on the deployed instance is the manifest, whose digit
-/// column is the canonical `sNat`. This test measures that, in the only way that distinguishes the
-/// two gates — by which one fires:
+/// `PastaMsmScalarDerive` §2.7 closes it with the standard less-than-the-modulus certificate:
+/// `s + Σ_{p<255} 2^p·CBc p = q − 1`, over `CBITS = 255` boolean columns. This test measures that it
+/// bites, on a forgery that has been handed EVERYTHING the old rung caught it with:
 ///
-///   * with `BIT` left honest, the JOIN refuses (`OodEvaluationMismatch`) — the row's own digits no
-///     longer agree with the digit it declares;
-///   * with `BIT` moved to the non-canonical representative's digits (so the row is INTERNALLY
-///     consistent, the fold rebuilt around the new schedule), the LOOKUP refuses
-///     (`LookupError`) — and nothing else does.
+///   * the fold is rebuilt around the non-canonical digits, so the RCB adds, the threads, the
+///     selector and the join are all honest;
+///   * the descriptor's own MANIFEST DIGIT COLUMN is patched to declare those digits, so the
+///     exact-public lookup is satisfied too;
+///   * the certificate columns carry the best witness that exists (`2^255 − (s+1)`, the 255-bit
+///     residue of the negative value the gate demands).
 ///
-/// The second refusal is the manifest's alone. **That is why the manifest is kept**, and it is a
-/// stronger reason than "belt and braces": delete it and this forgery has a satisfying trace.
+/// Then: with §2.7's 256 constraints TRUNCATED OFF — the exact shape `9b88bc06e` proved — that
+/// forgery **PROVES AND VERIFIES**. With them present it is **REFUSED, by a gate**. Nothing else
+/// about the instance moves between the two runs.
 #[test]
-fn the_decomposition_is_not_canonical_and_the_manifest_is_what_catches_it() {
+fn the_canonicity_gate_refuses_the_non_canonical_representative() {
     let descs = parse_cut();
     let a = chals_a();
     // slice 3 (lo = 32763) — its first term's index has bit 0 set, so the LAST chain step really
@@ -1029,105 +1179,130 @@ fn the_decomposition_is_not_canonical_and_the_manifest_is_what_catches_it() {
         !differing.is_empty(),
         "s and s+q must differ somewhere in the digit budget"
     );
+
+    // The certificate EXISTS for the canonical value and CANNOT for the shifted one — the two
+    // arithmetic facts the gate turns into a constraint.
+    let cert = canonicity_certificate(&s);
+    let (recon, cb) = cert.adc(&s);
+    assert!(!cb);
+    let (qm1, _) = Q_PASTA.sbb(&U256::ONE);
+    assert_eq!(recon, qm1, "s + (q − 1 − s) = q − 1");
+    assert!(
+        s2 > qm1,
+        "and no non-negative certificate can exist for s + q"
+    );
     println!(
         "[canon] s and s+q are BOTH inside the {PLANES}-bit budget and differ at {} of {PLANES} \
          planes — the digits alone do not name a representative",
         differing.len()
     );
 
+    // ── the forgery, handed the manifest as well ────────────────────────────────────────────────
     let noncanon = Fill {
         wire: &a,
         derived: &a,
         noncanonical_at: Some(lo),
     };
+    let mut fdescs = descs.clone();
+    let moved = patch_manifest_digits(&mut fdescs[slice], lo, &s2);
+    assert_eq!(
+        moved,
+        differing.len(),
+        "the patched manifest digits are exactly the ones that moved"
+    );
 
-    // --- (i) BIT honest: the JOIN refuses ------------------------------------------------------
-    {
-        let mut traces = Vec::new();
-        let mut pis = Vec::new();
-        for (i, k) in KS.iter().enumerate() {
-            let fill = if i == slice {
-                noncanon
-            } else {
-                honest_fill(&a)
-            };
-            let (t, p) = slice_trace(
-                manifest_of(&descs[i]),
-                *k,
-                &Pt::INFINITY,
-                fill,
-                None,
-                i != slice,
-            );
+    let mut traces = Vec::new();
+    let mut pis = Vec::new();
+    for (i, k) in KS.iter().enumerate() {
+        let manifest = manifest_of(&descs[i]);
+        if i != slice {
+            let (t, p) = slice_trace(manifest, *k, &Pt::INFINITY, honest_fill(&a), None, true);
             traces.push(t);
             pis.push(p);
+            continue;
         }
+        // Rebuild the schedule around the NON-CANONICAL digits, so the RCB fold, the selector and
+        // the whole row template stay honest and only the representative is out of step.
+        let mut sched = schedule_of(manifest);
+        for (row_index, spec) in sched.iter_mut().enumerate() {
+            if row_index % (W + 1) == 0 {
+                continue;
+            }
+            let gidx = lo + row_index % (W + 1) - 1;
+            if gidx != lo {
+                continue;
+            }
+            let plane = row_index / (W + 1);
+            if let RowSpec::CondAdd { src, .. } = *spec {
+                *spec = RowSpec::CondAdd {
+                    src,
+                    bit: s2.bit(PLANES - 1 - plane) == 1,
+                };
+            }
+        }
+        let hi = lo + W;
+        let t = widen_derive(build_trace(&Pt::INFINITY, &sched), lo, hi, noncanon, false);
+        let p = public_inputs_of(&t, lo, hi, &a);
+        traces.push(t);
+        pis.push(p);
+    }
+
+    // ── (i) the shape `9b88bc06e` proved: the forgery is ACCEPTED ───────────────────────────────
+    {
+        let base = strip_canonicity(&fdescs);
+        let base_traces = strip_canonicity_traces(&traces);
+        let refs: Vec<&[Vec<BabyBear>]> = base_traces.iter().map(|t| t.as_slice()).collect();
+        let proof = prove_vm_descriptors2_batch(&base, &refs, &pis).unwrap_or_else(|e| {
+            panic!(
+                "the PRE-CANONICITY constraint set must ACCEPT this forgery — if it does not, the \
+                 before/after below measures something else entirely: {e}"
+            )
+        });
+        verify_vm_descriptors2_batch(&base, &proof, &pis)
+            .expect("…and the deployed verifier must accept it");
+        println!(
+            "[canon] the PRE-CANONICITY cut ({PRE_CANON_CONSTRAINTS} constraints / \
+             {PRE_CANON_WIDTH} columns) PROVED AND VERIFIED the non-canonical row, manifest and all"
+        );
+    }
+
+    // ── (ii) with §2.7's certificate: REFUSED, by a GATE ────────────────────────────────────────
+    {
         let refusal = must_refuse(
-            "a non-canonical representative with an honest digit",
-            || prove_cut(&descs, &traces, &pis),
+            "an INTERNALLY CONSISTENT non-canonical representative, manifest patched to match",
+            || prove_cut(&fdescs, &traces, &pis),
         );
         assert!(
             refusal.contains("OodEvaluationMismatch"),
-            "the JOIN should be what fires here, got: {refusal}"
-        );
-        println!("[canon] REFUSED by the JOIN (BIT still the manifest's): {refusal}");
-    }
-
-    // --- (ii) BIT moved to the non-canonical digits: only the LOOKUP refuses --------------------
-    {
-        let mut traces = Vec::new();
-        let mut pis = Vec::new();
-        for (i, k) in KS.iter().enumerate() {
-            let manifest = manifest_of(&descs[i]);
-            if i != slice {
-                let (t, p) = slice_trace(manifest, *k, &Pt::INFINITY, honest_fill(&a), None, true);
-                traces.push(t);
-                pis.push(p);
-                continue;
-            }
-            // Rebuild the schedule around the NON-CANONICAL digits, so the RCB fold, the selector
-            // and the whole row template stay honest and only the declared digit is out of step.
-            let mut sched = schedule_of(manifest);
-            let mut moved = 0usize;
-            for (row_index, spec) in sched.iter_mut().enumerate() {
-                if row_index % (W + 1) == 0 {
-                    continue;
-                }
-                let gidx = lo + row_index % (W + 1) - 1;
-                if gidx != lo {
-                    continue;
-                }
-                let plane = row_index / (W + 1);
-                if let RowSpec::CondAdd { src, .. } = *spec {
-                    let want = s2.bit(PLANES - 1 - plane) == 1;
-                    if want != matches!(*spec, RowSpec::CondAdd { bit: true, .. }) {
-                        moved += 1;
-                    }
-                    *spec = RowSpec::CondAdd { src, bit: want };
-                }
-            }
-            assert_eq!(
-                moved,
-                differing.len(),
-                "the moved digits are the differing ones"
-            );
-            let hi = lo + W;
-            let t = widen_derive(build_trace(&Pt::INFINITY, &sched), lo, hi, noncanon, false);
-            let p = public_inputs_of(&t, lo, hi, &a);
-            traces.push(t);
-            pis.push(p);
-        }
-        let refusal = must_refuse(
-            "an INTERNALLY CONSISTENT non-canonical representative",
-            || prove_cut(&descs, &traces, &pis),
-        );
-        assert!(
-            refusal.contains("LookupError"),
-            "ONLY the manifest lookup should be able to catch this, got: {refusal}"
+            "the CANONICITY GATE should be what fires — a LookupError here would mean the manifest \
+             is still what catches it, got: {refusal}"
         );
         println!(
-            "[canon] REFUSED by the MANIFEST alone (the row is internally consistent): {refusal}"
+            "[canon] REFUSED by the DERIVATION'S OWN CONSTRAINTS ({DERIVE_CONSTRAINTS} / \
+             {DERIVE_WIDTH}), with the manifest satisfied: {refusal}"
         );
+    }
+
+    // ── (iii) …and the certificate columns are not free-floating: the honest row's certificate is
+    //          pinned to the honest value, so a prover cannot keep the old certificate and move `s`.
+    {
+        let mut t2 = traces.clone();
+        // put the CANONICAL landing value back on one forged row while leaving its certificate at
+        // the truncation — the mirror image of (ii).
+        let lay = layout();
+        let row = 1usize;
+        put_field_at(&mut t2[slice][row], lay.pr(NUM_LIMBS * NB), &s);
+        let refusal = must_refuse(
+            "a canonical value under the non-canonical certificate",
+            || prove_cut(&fdescs, &t2, &pis),
+        );
+        assert!(
+            DEPLOYED_VERIFIER_REFUSAL_MARKERS
+                .iter()
+                .any(|m| refusal.contains(m)),
+            "got: {refusal}"
+        );
+        println!("[canon] …and a mismatched certificate is refused too: {refusal}");
     }
 }
 

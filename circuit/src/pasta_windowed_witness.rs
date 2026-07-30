@@ -774,11 +774,12 @@ pub fn put_row_certificates(row: &mut [BabyBear], acc: &Pt, src: &Pt) {
 // ---------------------------------------------------------------------------------------------
 // PART 2c — the SCALAR-DERIVATION block (`PastaMsmScalarDerive.deriveGates`).
 //
-// `PastaMsmScalarDerive` emits `8 + 29·nb + 2·planes` constraints that RECOMPUTE the row's own
-// s-vector entry from the challenge vector on the wire. This fills the `10 + 37·nb + 2·planes`
-// witness columns that make their bodies vanish over ℤ. It authors no constraint: the layout below
-// is the Lean file's §1 table, offset for offset, and the arithmetic is the same `fqMulCore`
-// witness `mul_mod_q` produces for any other modular multiplication.
+// `PastaMsmScalarDerive` emits `264 + 29·nb + 2·planes` constraints that RECOMPUTE the row's own
+// s-vector entry from the challenge vector on the wire and certify that it is the CANONICAL
+// representative of its class mod `q`. This fills the `265 + 37·nb + 2·planes` witness columns that
+// make their bodies vanish over ℤ. It authors no constraint: the layout below is the Lean file's §1
+// table, offset for offset, and the arithmetic is the same `fqMulCore` witness `mul_mod_q` produces
+// for any other modular multiplication, plus one subtraction for the certificate.
 // ---------------------------------------------------------------------------------------------
 
 /// The column layout `PastaMsmScalarDerive` §1 declares, at a given challenge count and plane
@@ -836,9 +837,19 @@ impl DeriveLayout {
         Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + self.planes + p
     }
 
+    /// `CBc p` — the `p`-th bit of the canonicity certificate `q − 1 − s`, LSB-first.
+    ///
+    /// ⚠ Indexed by [`CBITS`], the CONSTANT 255 — never by `planes`. The two counts are
+    /// independent and only one of them is a property of the field; see
+    /// `PastaMsmScalarDerive.CBITS`.
+    pub fn cb(&self, p: usize) -> usize {
+        debug_assert!(p < CBITS);
+        Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + 2 * self.planes + p
+    }
+
     /// `PastaMsmScalarDerive.WD` — the derived row template's width.
     pub fn width(&self) -> usize {
-        Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + 2 * self.planes
+        Self::DB + 1 + self.nb + 4 * NUM_LIMBS * self.nb + NUM_LIMBS + 2 * self.planes + CBITS
     }
 
     /// `PastaMsmScalarDerive.PID` — the sliced 29 public inputs plus `NUM_LIMBS·nb` challenge
@@ -850,6 +861,27 @@ impl DeriveLayout {
 
 /// `PastaMsmSliced.PI_COUNT` — `[lo, hi]` plus the 27 published partial limbs.
 pub const SLICED_PI_COUNT: usize = 29;
+
+/// `PastaMsmScalarDerive.CBITS` — the canonicity certificate's width. **The constant 255, never
+/// `planes`**: `q < 2^255`, so `q − 1 − s` needs exactly 255 boolean places. Writing `planes` here
+/// would make the gate refuse every honest trace at every small plane count.
+pub const CBITS: usize = 255;
+
+/// **The canonicity certificate for `s`**: `q − 1 − s`, which exists as a non-negative 255-bit
+/// number exactly when `s < q` — i.e. exactly when `s` is a reduced Pallas scalar. There is no
+/// search: the honest prover subtracts.
+///
+/// Panics if `s ≥ q`, which is the witness generator refusing to pretend a non-canonical value has
+/// a certificate. That refusal is the point: `PastaMsmScalarDerive.canon_forces` proves no
+/// satisfying assignment exists there, so a witness that produced one would be a bug in this file.
+pub fn canonicity_certificate(s: &U256) -> U256 {
+    assert!(*s < Q_PASTA, "no canonicity certificate exists for s >= q");
+    let (qm1, b1) = Q_PASTA.sbb(&U256::ONE);
+    debug_assert!(!b1);
+    let (cert, b2) = qm1.sbb(s);
+    debug_assert!(!b2);
+    cert
+}
 
 /// **The tensor, in Rust**: `s_idx = ∏_j c_j^{bit_j(idx)}` in `ZMod q`, the same
 /// `PastaMsmScalarBound.sAt` the manifest is built from — head challenge paired with the HIGH
@@ -925,6 +957,14 @@ pub fn put_derive_block(
     for p in 0..lay.planes {
         row[lay.sb(p)] = BabyBear::new(prd.bit(lay.planes - 1 - p));
         row[lay.se(p)] = BabyBear::new(u32::from(p == plane));
+    }
+    // ⚑ The CANONICITY CERTIFICATE (`PastaMsmScalarDerive` §2.7): `q − 1 − s`, LSB-first over the
+    // constant 255 places. `mul_mod_q` reduces, so `prd < q` always holds on an honest chain and
+    // the certificate always exists — satisfiability of the new gate is structural here, not a
+    // property of the particular challenge vector.
+    let cert = canonicity_certificate(&prd);
+    for p in 0..CBITS {
+        row[lay.cb(p)] = BabyBear::new(cert.bit(p));
     }
     prd
 }
