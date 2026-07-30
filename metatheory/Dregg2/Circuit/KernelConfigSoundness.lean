@@ -35,7 +35,9 @@ The conclusion rests on EXACTLY the following, all NAMED hypotheses (never axiom
 `StarkSound`/`EffectDecodeBridge`):
 
   ALLOWED FLOOR (the crypto modulus — do NOT discharge):
-    * `Poseidon2SpongeCR hash` + `Poseidon2SpongeCR sponge` — the commitment-binding hash floor.
+    * `Poseidon2SpongeCR hash` — the commitment-binding hash floor. ⛑ 2026-07-30 the second
+      instance `Poseidon2SpongeCR sponge` is GONE (`FriLdtExtractCons` carries the residual it
+      bought); the `hash` one is an unported ENDPOINT and this theorem is still its carrier.
     * `hfri : ∀ e, FriLdtExtractCons … (Rfix e)` — the `{FRI-LDT @ deployed}` extraction, per effect tag
       at the CORRECTED cons-shaped OOD point (`ApexOodLaneRepair`). ⚑ MIGRATED 2026-07-25: this was
       `AlgoStarkSoundGeneral.FriLdtExtract`, whose singleton OOD conjunct is REFUTED on accepting
@@ -118,7 +120,7 @@ local notation "Slive" =>
 
 /-- **`kernelConfigSound` — verifyBatch-accept over `Rfix` ⟹ a REAL kernel-config transition.**
 
-From the STARK-side floor (Poseidon2 CR ×2, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
+From the STARK-side floor (Poseidon2 CR ×1 — ⛑ ×2 until 2026-07-30 —, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
 `MapTableAssembly`, `DeployedRefines`) composed through `algoStarkSound_kernel` +
 `starkSound_of_verifyAlgo`, and the config-side genuine readout bundle (`ClosureReadouts`, `mkLog`,
 `WitnessDecodes`) composed through `closedLogExtract_all_genuine`, a `verifyBatch`-accepted batch at
@@ -140,7 +142,7 @@ theorem kernelConfigSound
     -- the ONE shared commitment hash + its collision-resistance floor
     (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
     -- the STARK-side FRI/constraint sponge + its collision-resistance floor
-    (sponge : List ℤ → ℤ) (hCRs : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -179,7 +181,7 @@ theorem kernelConfigSound
   -- STARK layer: the ENUMERATED kernel object → AlgoStarkSound → StarkSound (opaque carrier gone).
   haveI hAlgo : AlgoStarkSound hash Rfix perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-    algoStarkSound_kernel sponge hCRs hash hCRh fp embed perm RATE toNat params vk core A
+    algoStarkSound_kernel sponge hash hCRh fp embed perm RATE toNat params vk core A
       initState logN view tr hfri hbusF hrec hasm
   haveI hSS : StarkSound hash Rfix :=
     starkSound_of_verifyAlgo hash Rfix perm RATE toNat params vk

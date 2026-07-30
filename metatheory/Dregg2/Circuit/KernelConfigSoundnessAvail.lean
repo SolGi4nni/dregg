@@ -39,7 +39,7 @@ PROVED to force `verifyBatch` to reject every input (so this theorem was vacuous
 `ApexOodLaneRepair.FriLdtExtractCons`, with the zero-added-strength receipt at
 `AlgoStarkSoundKernelAvail.kernelAvailPremise_adds_no_strength`.
 
-Same as `kernelConfigSound` (Poseidon2 CR ×2, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
+Same as `kernelConfigSound` (Poseidon2 CR ×1 — ⛑ ×2 until 2026-07-30 —, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
 `MapTableAssembly`, `DeployedRefines`, the per-effect readouts, `WitnessDecodes`, `mkLog`), PLUS the two
 umem `MemoryLegs` at the welded avail members, and the two `ClosureTransferAvail` `_availFix` readout
 bundles (the hardened transfer column+ledger+authority readouts / the hardened burn readout). Nothing
@@ -98,7 +98,8 @@ local notation "Slive" =>
 /-- **`kernelConfigSoundAvail` — verifyBatch-accept over `RfixAvail` ⟹ a REAL kernel-config transition with
 availability DISCHARGED.**
 
-From the HARDENED STARK-side floor (Poseidon2 CR ×2, `FriLdtExtractCons`/`BusModelFamily` at each `RfixAvail`
+From the HARDENED STARK-side floor (Poseidon2 CR ×1 — ⛑ ×2 until 2026-07-30 —,
+`FriLdtExtractCons`/`BusModelFamily` at each `RfixAvail`
 descriptor, `MapReconcileFamily`/`MapTableAssembly` at the off-debit tags, the two umem `MemoryLegs` at the
 welded avail members, `DeployedRefines RfixAvail`) composed through `algoStarkSound_kernelAvail` +
 `starkSound_of_verifyAlgo`, and the config-side genuine readout bundle + the two `_availFix` readout
@@ -113,7 +114,7 @@ theorem kernelConfigSoundAvail
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (LH : List Turn → ℤ)
     (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
-    (sponge : List ℤ → ℤ) (hCRs : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -188,7 +189,7 @@ theorem kernelConfigSoundAvail
   -- STARK layer: the ENUMERATED hardened kernel object → AlgoStarkSound → StarkSound (opaque gone).
   haveI hAlgo : AlgoStarkSound hash RfixAvail perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-    algoStarkSound_kernelAvail sponge hCRs hash hCRh fp embed perm RATE toNat params vk core A
+    algoStarkSound_kernelAvail sponge hash hCRh fp embed perm RATE toNat params vk core A
       initState logN view tr hfri hbusF hrec hasm hlegs0 hlegs4
   haveI hSS : StarkSound hash RfixAvail :=
     starkSound_of_verifyAlgo hash RfixAvail perm RATE toNat params vk
