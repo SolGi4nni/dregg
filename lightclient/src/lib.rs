@@ -195,6 +195,16 @@ pub struct AttestedHistory {
     pub chain_digest: [BabyBear; SEG_DIGEST_WIDTH],
     /// How many finalized turns the attested history folds (`WholeChainProof.num_turns`). The light
     /// client learns ALL of them executed correctly without seeing any.
+    ///
+    /// **Bounded, since envelope v6.** The count rides as ONE BabyBear lane of the root's exposed
+    /// segment, so through v5 every `n + kp` and `n + k·2^32` was the SAME lane as `n`: a relayer
+    /// edited that one field — no key, no proving, no witness — and this struct reported the
+    /// relayer's number. A genuine 2-turn history was measured attesting `num_turns =
+    /// 6,308,233,219`. `WholeChainProofBytes::num_turns` is now a `u32` refused at decode unless
+    /// `< BABY_BEAR_MODULUS`, and the verifier core refuses it independently, so nothing reaching
+    /// the copy below can carry a non-canonical count. There is still no branch between the teeth
+    /// and the copy, and there does not need to be one — the tooth that holds that reasoning to
+    /// account is `tests/num_turns_alias_reaches_attested_history.rs`.
     pub num_turns: usize,
     /// **THE ATTESTED APPLICATION STATE the history STARTED from**, when the chain carried a board
     /// window (the two-leg automatafl fold): the first leaf's IN window, checked lane-for-lane

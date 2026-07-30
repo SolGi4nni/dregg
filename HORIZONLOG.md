@@ -1,5 +1,60 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 30 — a relayer could inflate a history's length by editing one integer. CLOSED at the decode gate; both probes inverted; the wasm32 leg measured, not read
+
+**The measurement that opened it** (`c80ee7c92`, `0a1854df0`): editing one `u64` in a
+`WholeChainProofBytes` envelope — **no key, no proving, no witness** — made a genuine **2-turn**
+history verify and report `AttestedHistory.num_turns = 6,308,233,219`. **12/12** aliases admitted
+across the envelope, blob and in-memory seams; the control `n + 1` refused, so it was attributable
+to modular aliasing and not a dead tooth.
+
+The count rides as ONE BabyBear lane. Both comparison sites build `BabyBear::new(num_turns as u32)`
+— `as u32` truncates mod 2^32, `BabyBear::new` reduces mod p — and **every** `num_turns <
+BABY_BEAR_MODULUS` guard in the file sat on a `turns.len()` **prover** site. None on a verify path.
+The AIR-level version of the same defect (constraint 14 pinning `real_count[last] = pi[num_turns]`)
+had been closed **earlier the same day**. *The fix was local; the wire never got it.*
+
+**CLOSED — envelope v6, four places, one of which the original audit missed:**
+
+| | where | what it catches |
+|---|---|---|
+| by type | `WholeChainProofBytes.num_turns: u64 -> u32` | the whole `2^32` family, unrepresentable on the wire |
+| decode gate | `WholeChainProofBytes::from_postcard` | `>= p`, on the `u32`, ahead of every consumer's `as usize` |
+| verifier core | `verify_turn_chain_recursive_from_parts_with_board_window` | the 4 funnelling entries incl. the `pg-dregg` blob seam (a bare `usize`, no decode gate) |
+| ⚑ sibling | `verify_wide_turn_chain_recursive` | **does NOT funnel** — builds its own `BabyBear::new(proof.num_turns as u32)`. The first read covered only the funnelling entries and would have left this one aliasing. |
+
+**MEASURED after, against real folds** (`--release`, 28 s each): `0/2` representable aliases
+admitted (was 12/12), on all three seams; the honest baseline still verifies and still attests
+`num_turns = 2`; and the control `n + 1` is still refused by the **binding/segment tooth**
+(`BB(2)` vs `BB(3)`) and *not* by the new bound — so the new guard is not masking a dead tooth.
+
+**⚑ The wasm32 leg was the one the falsification lane READ rather than measured.** Now measured,
+running as real wasm under node: `size_of::<usize>() == 4` there, and `(2 + 2^32) as usize == 2` —
+a `usize`-typed guard would have been handed the honest count and waved the forgery through. That
+is why the gate is on the `u32`. The v6 gate fires in the tab, and a v5 artifact refuses to load
+there too. (`wasm/tests/wasm32_count_gate_is_not_truncated_past.rs` — but note `wasm` is
+workspace-excluded and **no push/PR CI job builds it**, so this is only a gate if something runs it.)
+
+**Both probes INVERTED, deliberately** — assertions rewritten to state the refusal the fix owes,
+not edited to match the new behaviour. `num_turns_alias_probe.rs` gained three FAST legs needing no
+fold: the decode gate refuses `>= p` and still admits `p - 1` (a bound, not a blanket); a hand-built
+`u64`-shaped envelope carrying **6,308,233,219** does not decode **at the bytes** ("dead by type"
+measured about the wire, not about Rust); a v5 artifact refuses to load.
+
+**THE FLAG DAY.** `WHOLE_CHAIN_PROOF_ENVELOPE_V1` **5 -> 6**. Every v5 artifact now refuses to load
+rather than being reinterpreted. **Re-emit the envelope only** —
+`WholeChainProofBytes::from_proof(&proof).to_postcard()` on the same fold. **No VK rotation, no
+re-proving, no descriptor re-emit, no re-genesis**; the root proof, binding proof and segment
+exposure are untouched. Stored `.to_postcard()` bytes must be re-emitted (wasm
+`ExternalHistoryEnvelope.proof_bytes_b64`, pg-dregg transports, on-disk fixtures —
+`chain/gnark/fixtures/gnark_witness_minimal.json` regenerated). The 25-lane gnark public-input
+contract is UNCHANGED. `cargo check --workspace --all-targets` green.
+
+**⚠ Residual, named:** `pg-dregg`'s `SerializedWholeChainProof` is a *separate* transport that still
+carries `num_turns: u64` (`WHOLE_CHAIN_PROOF_TRANSPORT_V1`). It is closed by the verifier-core bound
+rather than by type, which is enough on a 64-bit host and is the weaker of the two guarantees.
+Narrowing it is a transport bump, not a re-proof.
+
 ## ⚑⚑⚑ JULY 30 — the 2^15 MSM left the kernel; and the 630× that decided the Mina cadence had no measurement under it
 
 **The named follow-up:** *"a Mina checkpoint closes at a 10-minute cadence if the 2^15 MSM moves
