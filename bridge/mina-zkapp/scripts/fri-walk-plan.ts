@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DEPLOYED_KNOBS } from '../src/FriChallenger.js';
-import { RealRootAir } from '../src/RootAirDag.js';
+
 import {
   airColumnIndex,
   deepTermCensus,
+  friLaneTable,
+  RealRootFri,
   planFriWalk,
   planOpenedValues,
   rootFriShape,
@@ -23,12 +25,12 @@ import {
 
 const WORK = process.env.FRIBRAID_WORKDIR ?? resolve(process.cwd(), '.fullchain');
 const BUDGET = Number(process.env.FRIBRAID_BUDGET ?? 50_000);
-const CHUNK = Number(process.env.FRIBRAID_CHUNK ?? 64);
+const CHUNK = Number(process.env.FRIBRAID_CHUNK ?? 256);
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 
 function main() {
-  const real: RealRootAir = JSON.parse(readFileSync(resolve(WORK, 'real-root-air.json'), 'utf8'));
-  if (real.kind !== 'dregg-root-air-instance') throw new Error(`not a root instance: ${real.kind}`);
+  const real: RealRootFri = JSON.parse(readFileSync(resolve(WORK, 'real-root-fri.json'), 'utf8'));
+  if (real.kind !== 'dregg-root-fri-instance') throw new Error(`not a root FRI instance: ${real.kind}`);
   const shape = rootFriShape(real);
   const census = deepTermCensus(shape);
   const air = airColumnIndex();
@@ -48,7 +50,7 @@ function main() {
         `${fmt(r.matrices.reduce((a, m) => a + m.width, 0)).padStart(6)} base columns  ` +
         `${fmt(census[r.name]).padStart(6)} DEEP terms`,
     );
-  console.log(`    DEEP terms per query: ${fmt(census.total)}  (§3.15 says 2,286 — it omits the permutation round)`);
+  console.log(`    DEEP terms per query: ${fmt(census.total)}  (§3.15 says 2,286: it omits the permutation round AND assumes 2 points everywhere)`);
 
   console.log(
     `\n[2] the braid: of ${fmt(op.split.total)} opened values, ${fmt(op.split.air)} ` +
@@ -77,8 +79,16 @@ function main() {
   const maxLive = w.liveIn.reduce((a, l) => Math.max(a, l.length), 0);
   console.log(`    widest single segment ${fmt(maxSeg)} rows; widest live set ${maxLive} lanes`);
 
-  const plan = planFriWalk(w, op, { usableRows: BUDGET, chunkSize: CHUNK });
-  console.log(`\n[4] the cut list at a ${fmt(BUDGET)}-row budget, chunk size ${CHUNK}`);
+  const ft = friLaneTable(shape, op);
+  const plan = planFriWalk(w, op, ft, { usableRows: BUDGET, chunkLanes: CHUNK });
+  console.log(
+    `\n[4] the FRI-side lane table is ${fmt(ft.nLanes)} lanes: the challenger state entering FRI, ` +
+      `the ${DEPLOYED_KNOBS.layers} commit-phase roots, the ${shape.rounds.length} input-round ` +
+      `roots, the final polynomial, the query PoW witness, every out-of-domain point, the ` +
+      `${fmt(op.nFri)} opened values the AIR never reads, and all ${fmt(ft.perQueryRowLanes)} ` +
+      `opened row lanes of each of the ${DEPLOYED_KNOBS.numQueries} queries`,
+  );
+  console.log(`\n[5] the cut list at a ${fmt(BUDGET)}-row budget, chunk ${CHUNK} lanes`);
   console.log(
     `    ${fmt(plan.slices.length)} slices; work ${fmt(plan.totalWork)} + carry ` +
       `${fmt(plan.totalCarry)} = ${fmt(plan.totalWork + plan.totalCarry)} rows ` +
@@ -110,7 +120,7 @@ function main() {
     if (typeof seg.q === 'number') perQuery[seg.q]++;
   }
   console.log(
-    `\n[5] slices per query: [${perQuery.join(', ')}]  (the transcript takes ` +
+    `\n[6] slices per query: [${perQuery.join(', ')}]  (the transcript takes ` +
       `${plan.slices.length - perQuery.reduce((a, b) => a + b, 0)})`,
   );
   console.log('');

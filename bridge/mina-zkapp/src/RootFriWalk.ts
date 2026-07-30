@@ -1,6 +1,6 @@
 import { BbExt } from './FriQueryStep.js';
 import { DEPLOYED_KNOBS, FriKnobs } from './FriChallenger.js';
-import { RealRootAir, rootAirDag } from './RootAirDag.js';
+import { rootAirDag } from './RootAirDag.js';
 
 // ---------------------------------------------------------------------------
 // THE ROOT'S FRI WALK AS A SEGMENT LIST — the object the AIR chain's terminal
@@ -27,25 +27,29 @@ import { RealRootAir, rootAirDag } from './RootAirDag.js';
 // `dagDigest` and the boundary would refuse.
 //
 // ⚑ WHAT THE AIR LEGEND DOES NOT COVER, MEASURED RATHER THAN ASSUMED. The AIR
-// reads only the columns it constrains: 1,060 of the 1,880 opened main values,
-// 176 of the 350 preprocessed, and all 128 permutation ones. The quotient-chunk
-// openings it never touches at all. So the braid binds 1,364 of the walk's
-// 2,798 DEEP terms to the AIR's own commitment and the remaining 1,434 to a
-// second, FRI-side one (`friDigest`). Both are in the boundary; only the first
-// is shared with the AIR half, and `deepTermSplit` reports the ratio so the
-// claim is a number.
+// reads only the columns it constrains. Measured against the proof's own opened
+// set: **1,748 of the 2,630 opened values (66.5%) are lanes of the AIR chain's
+// assignment**, and the other 882 — the main and preprocessed columns the AIR
+// never touches, plus all 56 quotient-chunk openings — go under a second,
+// FRI-side commitment (`friDigest`). Both are in the boundary; only the first is
+// shared with the AIR half, and `planOpenedValues` reports the ratio so the
+// claim is a number rather than a word.
 //
-// ⚑ 2,798, NOT 2,286. §3.15 prices the DEEP quotient at 2,286 terms —
-// `940·2 + 175·2 + 7·2·4`. That census omits the PERMUTATION round entirely:
-// the root's seven instances carry 64 extension permutation columns, which is
-// `64 · 4 · 2 = 512` further base terms. The real count is 2,798, 22% higher,
-// and every per-query DEEP figure derived from 2,286 is low by that factor.
+// ⚑ 2,630, NOT 2,286 — AND THE CORRECTION GOES BOTH WAYS. §3.15 prices the DEEP
+// quotient at `940·2 + 175·2 + 7·2·4 = 2,286`. Two things are wrong with that
+// and they pull in opposite directions. It omits the PERMUTATION round entirely
+// (the root's seven instances carry 64 extension permutation columns = 512
+// further base terms, all of them opened at two points). And it assumes every
+// matrix is opened at TWO points, which the proof refutes: `Const`, `Public`,
+// `recompose` and `expose_claim` reference no next-row main or preprocessed
+// value, so those matrices are opened at ζ ALONE. The shape is therefore taken
+// from the proof's own `inputRounds` and never derived from a table of widths.
 //
 // ⚑ THE UNIT OF ACCOUNT IS A SEGMENT, AND A CUT MAY ONLY FALL BETWEEN TWO.
 // A slice is a contiguous run of segments, exactly as an AIR slice is a
 // contiguous run of DAG nodes. Segments are chosen so that every one of them
-// fits inside a step domain with room to spare (the widest is one 452-column
-// DEEP matrix at ~34,000 rows) and so that the state crossing a cut is small:
+// fits inside a step domain with room to spare (the widest is 9,600 rows, a
+// 128-column DEEP run) and so that the state crossing a cut is small:
 // a challenger sponge, a running Merkle digest, a running fold value, and the
 // derived challenges. What does NOT cross is the per-query Merkle data — every
 // row, path digest and sibling belongs to exactly one segment, and is
@@ -111,7 +115,7 @@ export type MatrixSpec = {
 };
 
 export type RoundSpec = {
-  name: 'main' | 'preprocessed' | 'permutation' | 'quotient';
+  name: 'main' | 'quotient_chunk' | 'preprocessed' | 'permutation';
   matrices: MatrixSpec[];
 };
 
@@ -123,9 +127,74 @@ export type FriShape = {
   heights: number[];
 };
 
+/** `circuit-prove/src/bin/root_fri_instance.rs`'s output — the FRI half of
+ *  dregg's committed root proof, canonical. */
+export type RealRootFri = {
+  kind: string;
+  vkFingerprint: string;
+  degreeBits: number[];
+  knobs: FriKnobs;
+  challengerStateBeforeFriAlpha: { width: number; rate: number; sponge: number[]; inputBuffer: number[]; outputBuffer: number[] };
+  zeta: number[];
+  airAlpha: number[];
+  friAlpha: number[];
+  betas: number[][];
+  commits: number[][];
+  finalPoly: number[][];
+  queryPowWitness: number;
+  inputRounds: {
+    round: number;
+    kindName: string;
+    commit: number[];
+    matrices: {
+      matrix: number;
+      instance: number;
+      table: string;
+      kindName: string;
+      chunk: number | null;
+      logHeight: number;
+      width: number;
+      points: number[][];
+    }[];
+  }[];
+  openedEvals: {
+    round: number;
+    matrix: number;
+    instance: number;
+    table: string;
+    kindName: string;
+    chunk: number | null;
+    logHeight: number;
+    pointIndex: number;
+    point: number[];
+    values: number[][];
+  }[];
+  queries: {
+    index: number;
+    inputBatches: { matrices: { logHeight: number; width: number }[]; rows: number[][]; path: number[][] }[];
+    reducedOpenings: { logHeight: number; ro: number[] }[];
+    commitPhase: { sibling: number[]; path: number[][] }[];
+    rollIns: { afterRound: number; value: number[] }[];
+    foldedAfterRound: number[][];
+  }[];
+};
+
 /**
- * The root's PCS round structure, derived from the committed proof's own
- * per-instance metadata rather than from a table in a document.
+ * The root's PCS round structure, READ OFF THE PROOF.
+ *
+ * ⚑ THE OPENING-POINT COUNT IS NOT 2, AND ASSUMING IT IS COSTS 168 PHANTOM
+ * TERMS PER QUERY. `Const`, `Public`, `recompose` and `expose_claim` reference
+ * no next-row main or preprocessed value, so their main and preprocessed
+ * matrices are opened at ζ ALONE — one point, not two. Their PERMUTATION
+ * matrices are opened at both, because a LogUp running sum always reads the
+ * next row. A census that multiplies every width by two gets 2,798; the proof
+ * says 2,630, and the shape is therefore taken from `inputRounds` rather than
+ * derived from a table of widths.
+ *
+ * ⚑ AND THE ROUND ORDER IS THE PROOF'S. `main`, `quotient_chunk`,
+ * `preprocessed`, `permutation` — not the order a reader would guess. It
+ * matters twice: `alpha_pow` in `open_input` advances in ENCOUNTER order across
+ * rounds, and each round's input commitment is indexed by it.
  *
  * ⚑ THE QUOTIENT CHUNKS SIT AT THE TRACE HEIGHT. `TwoAdicFriPcs` commits the
  * quotient over `create_disjoint_domain(1 << (db + log_quotient_degree))` split
@@ -133,40 +202,18 @@ export type FriShape = {
  * `db + log_blowup` — the same height as the instance's main matrix, which is
  * why no new height appears in the roll-in schedule.
  */
-export function rootFriShape(real: RealRootAir, knobs: FriKnobs = DEPLOYED_KNOBS): FriShape {
-  const lb = knobs.logBlowup;
-  const main: MatrixSpec[] = [];
-  const prep: MatrixSpec[] = [];
-  const perm: MatrixSpec[] = [];
-  const quot: MatrixSpec[] = [];
-  for (const i of real.instances) {
-    const logHeight = i.degreeBits + lb;
-    main.push({ instance: i.index, name: i.table, logHeight, width: i.width, numPoints: 2 });
-    if (i.prepWidth > 0)
-      prep.push({ instance: i.index, name: i.table, logHeight, width: i.prepWidth, numPoints: 2 });
-    if (i.permLocal.length > 0)
-      perm.push({
-        instance: i.index,
-        name: i.table,
-        logHeight,
-        width: i.permLocal.length * EXT_LANES,
-        numPoints: 2,
-      });
-    for (let c = 0; c < i.nChunks; c++)
-      quot.push({
-        instance: i.index,
-        name: `${i.table}/chunk${c}`,
-        logHeight,
-        width: EXT_LANES,
-        numPoints: 1,
-      });
-  }
-  const rounds: RoundSpec[] = [
-    { name: 'main', matrices: main },
-    { name: 'preprocessed', matrices: prep },
-    { name: 'permutation', matrices: perm },
-    { name: 'quotient', matrices: quot },
-  ];
+export function rootFriShape(real: RealRootFri): FriShape {
+  const knobs = real.knobs;
+  const rounds: RoundSpec[] = real.inputRounds.map((r) => ({
+    name: r.kindName as RoundSpec['name'],
+    matrices: r.matrices.map((m) => ({
+      instance: m.instance,
+      name: m.chunk === null ? m.table : `${m.table}/chunk${m.chunk}`,
+      logHeight: m.logHeight,
+      width: m.width,
+      numPoints: m.points.length,
+    })),
+  }));
   const heights = [...new Set(rounds.flatMap((r) => r.matrices.map((m) => m.logHeight)))].sort(
     (a, b) => b - a,
   );
@@ -257,6 +304,116 @@ export type OpenedPlan = {
 };
 
 /**
+ * **THE FRI-SIDE LANE TABLE.** Everything the walk reads that the AIR chain's
+ * assignment does not already hold, in one lane space with one digest over it.
+ *
+ * ⚑ WHY THE OPENED ROWS ARE IN HERE AND NOT WITNESSED FREELY. A Merkle sibling
+ * can be witnessed by whichever slice needs it — bend it and the root check
+ * fails, so it is self-authenticating. An opened ROW is not, because it is read
+ * TWICE and by two different slices: the `inBlock` segments sponge it into a
+ * leaf that the path binds to the commitment, and a `deep` segment thirty
+ * slices later uses the same numbers as `f(x)`. Witnessed separately those are
+ * two unrelated arrays, and the DEEP quotient would be over a row nothing
+ * authenticated — a splice that every Merkle check in the walk still passes.
+ * One commitment over the rows is what makes the two reads the same read.
+ *
+ * ⚑ AND THE PATHS ARE DELIBERATELY *NOT* IN HERE. 47,424 lanes of path digests
+ * and siblings per proof, each read exactly once, each already pinned by the
+ * opening it feeds. Committing to them would be 47,424 lanes of range checks
+ * bought for nothing.
+ */
+export type FriLaneTable = {
+  nLanes: number;
+  /** The `DuplexChallenger` state the FRI transcript is entered at — a
+   *  STAND-IN for a full `BatchTranscript` replay, and the walk's largest
+   *  remaining soundness residual. It is committed here so both halves of the
+   *  chain read the same one. */
+  chalState: number;
+  commit: number[];
+  inputCommit: number[];
+  finalPoly: number[];
+  powWitness: number;
+  /** `z[round][matrix][point]` — the out-of-domain point, 4 lanes. Per MATRIX,
+   *  because `g·ζ` is taken in the matrix's OWN trace domain and the seven
+   *  instances have five different ones. */
+  z: number[][][];
+  /** `fx[query][round][matrix]` — the lane the matrix's opened row starts at,
+   *  in the SPONGE order `verify_batch` hashes: by round, then by height
+   *  descending, then by matrix in round order. */
+  fx: number[][][];
+  /** The lane range one sponge block covers. */
+  blockLanes: (q: number, round: number, height: number, block: number) => [number, number];
+  perQueryRowLanes: number;
+};
+
+export function friLaneTable(shape: FriShape, op: OpenedPlan): FriLaneTable {
+  let at = 0;
+  const take = (n: number) => {
+    const o = at;
+    at += n;
+    return o;
+  };
+  const chalState = take(CHAL_WIDTH);
+  const commit = Array.from({ length: shape.knobs.layers }, () => take(LANES_PER_DIGEST));
+  const inputCommit = shape.rounds.map(() => take(LANES_PER_DIGEST));
+  const finalPoly = Array.from({ length: shape.knobs.finalPolyLen }, () => take(EXT_LANES));
+  const powWitness = take(1);
+  const z = shape.rounds.map((r) => r.matrices.map((m) => Array.from({ length: m.numPoints }, () => take(EXT_LANES))));
+  //  The AIR-uncovered f(z): `planOpenedValues` already numbered them, and the
+  //  numbering is dense, so one contiguous block holds them all.
+  const fzBase = take(op.nFri * EXT_LANES);
+  //  Re-point the fri refs at absolute lanes.
+  for (const byMat of op.refs)
+    for (const byPt of byMat)
+      for (const byCol of byPt)
+        for (const r of byCol) if (r.where === 'fri') r.at = fzBase + r.at * EXT_LANES;
+
+  //  The opened rows, per query, in `verify_batch`'s hashing order.
+  const roundOrder = shape.rounds.map((round) => {
+    const hs = roundHeights(round);
+    const order: number[] = [];
+    for (const h of hs) round.matrices.forEach((m, mi) => m.logHeight === h && order.push(mi));
+    return order;
+  });
+  const perQueryRowLanes = shape.rounds.reduce(
+    (a, r) => a + r.matrices.reduce((b, m) => b + m.width, 0),
+    0,
+  );
+  const fx: number[][][] = [];
+  for (let q = 0; q < shape.knobs.numQueries; q++) {
+    const byRound: number[][] = [];
+    shape.rounds.forEach((round, ri) => {
+      const perMat: number[] = new Array(round.matrices.length).fill(-1);
+      for (const mi of roundOrder[ri]) perMat[mi] = take(round.matrices[mi].width);
+      byRound.push(perMat);
+    });
+    fx.push(byRound);
+  }
+
+  const blockLanes = (q: number, ri: number, height: number, block: number): [number, number] => {
+    const round = shape.rounds[ri];
+    const mats = roundOrder[ri].filter((mi) => round.matrices[mi].logHeight === height);
+    const start = fx[q][ri][mats[0]];
+    const w = mats.reduce((a, mi) => a + round.matrices[mi].width, 0);
+    const a = start + block * CHAL_RATE;
+    return [a, Math.min(a + CHAL_RATE, start + w)];
+  };
+
+  return {
+    nLanes: at,
+    chalState,
+    commit,
+    inputCommit,
+    finalPoly,
+    powWitness,
+    z,
+    fx,
+    blockLanes,
+    perQueryRowLanes,
+  };
+}
+
+/**
  * Resolve every opened value against the AIR legend.
  *
  * The legend labels are the contract: `main[0][i]` is main column `i` at ζ,
@@ -282,6 +439,7 @@ export function planOpenedValues(shape: FriShape, air: AirColumnIndex): OpenedPl
           if (r.name === 'main') label = `main[${p}][${c}]`;
           else if (r.name === 'preprocessed') label = `prep[${p}][${c}]`;
           else if (r.name === 'permutation') label = `perm[${p}][${Math.floor(c / EXT_LANES)}]`;
+          //  `quotient_chunk` is never in the AIR's assignment.
           // The quotient chunks are never in the AIR's assignment.
           const key = label === null ? null : `${t}|${label}`;
           const hit = key === null ? undefined : air.byLabel.get(key);
@@ -322,6 +480,11 @@ export type SlotLayout = {
   qidx: number[];
   cur: number[];
   sponge: number[];
+  /** One pending mixed-height digest per height BELOW the round's tallest. A
+   *  round's shorter matrices are sponged when their rows are read and sit here
+   *  until the Merkle walk reaches the level their height names — up to four of
+   *  them live at once, which is why this is not one slot. */
+  inj: number[][];
   dacc: number[][];
   dpow: number[][];
   ro: number[][];
@@ -349,6 +512,7 @@ export function slotLayout(shape: FriShape): SlotLayout {
   const qidx = take('qidx', shape.knobs.numQueries);
   const cur = take('cur', LANES_PER_DIGEST);
   const sponge = take('sponge', CHAL_WIDTH);
+  const inj = shape.heights.map((h) => take(`inj${h}`, LANES_PER_DIGEST));
   const dacc = shape.heights.map((h) => take(`dacc${h}`, EXT_LANES));
   const dpow = shape.heights.map((h) => take(`dpow${h}`, EXT_LANES));
   const ro = shape.heights.map((h) => take(`ro${h}`, EXT_LANES));
@@ -363,6 +527,7 @@ export function slotLayout(shape: FriShape): SlotLayout {
     qidx,
     cur,
     sponge,
+    inj,
     dacc,
     dpow,
     ro,
@@ -555,6 +720,7 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
       // Every height's opened rows are sponged; the tallest seeds `cur`, the
       // rest wait to be injected at the level their height names.
       for (const h of hs) {
+        const hi = shape.heights.indexOf(h);
         const w = rowWidthAt(round, h);
         const nb = ceilDiv(w, CHAL_RATE);
         for (let b = 0; b < nb; b++) {
@@ -576,7 +742,7 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
               rows: PRICE.perm + lanes * PRICE.witnessLane,
             },
             first ? [] : [...slots.sponge],
-            last ? [...slots.cur] : [...slots.sponge],
+            last ? [...(seeds ? slots.cur : slots.inj[hi])] : [...slots.sponge],
           );
         }
       }
@@ -595,7 +761,11 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
             inject,
             rows: PRICE.merkleLevel + (inject === null ? 0 : PRICE.merkleInject),
           },
-          [...slots.cur, ...idxSlot],
+          [
+            ...slots.cur,
+            ...idxSlot,
+            ...(inject === null ? [] : slots.inj[shape.heights.indexOf(inject)]),
+          ],
           [...slots.cur],
         );
       }
@@ -742,14 +912,67 @@ export type FriPlan = {
   totalCarry: number;
 };
 
-/** Which opened values a segment reads, as `(where, extIndex)` pairs. */
-export function openedReads(w: SegmentedWalk, plan: OpenedPlan, k: number): OpenedRef[] {
+/** Which committed lanes a segment reads, split by which commitment holds them.
+ *  Everything else a segment touches — Merkle siblings, path digests — is
+ *  self-authenticating and is not here. */
+export function segmentReads(
+  w: SegmentedWalk,
+  op: OpenedPlan,
+  ft: FriLaneTable,
+  k: number,
+): { air: number[]; fri: number[] } {
   const s = w.segs[k];
-  if (s.t !== 'deep' || s.mat < 0) return [];
-  const cols = plan.refs[s.round][s.mat][s.point];
-  const out: OpenedRef[] = [];
-  for (let c = s.from; c < s.to; c++) out.push(cols[c]);
-  return out;
+  const air: number[] = [];
+  const fri: number[] = [];
+  const range = (a: number, b: number, into: number[]) => {
+    for (let i = a; i < b; i++) into.push(i);
+  };
+  switch (s.t) {
+    case 'duplex':
+      range(ft.chalState, ft.chalState + CHAL_WIDTH, fri);
+      for (const a of s.absorbs) {
+        if (a.src === 'commit') fri.push(ft.commit[a.layer] + a.lane);
+        else if (a.src === 'finalPoly') fri.push(ft.finalPoly[a.i] + a.lane);
+        else if (a.src === 'pow') fri.push(ft.powWitness);
+      }
+      break;
+    case 'inBlock': {
+      const [a, b] = ft.blockLanes(s.q, s.round, s.height, s.block);
+      range(a, b, fri);
+      break;
+    }
+    case 'inRoot':
+      range(ft.inputCommit[s.round], ft.inputCommit[s.round] + LANES_PER_DIGEST, fri);
+      break;
+    case 'cpRoot':
+      range(ft.commit[s.r], ft.commit[s.r] + LANES_PER_DIGEST, fri);
+      break;
+    case 'final':
+      for (const o of ft.finalPoly) range(o, o + EXT_LANES, fri);
+      break;
+    case 'deep': {
+      if (s.mat < 0) break;
+      //  f(x): the opened row, always FRI-side.
+      const base = ft.fx[s.q][s.round][s.mat];
+      range(base + s.from, base + s.to, fri);
+      //  f(z): AIR-side wherever the legend names it.
+      const cols = op.refs[s.round][s.mat][s.point];
+      for (let c = s.from; c < s.to; c++) {
+        const r = cols[c];
+        if (r.where === 'air') range(r.at * EXT_LANES, (r.at + 1) * EXT_LANES, air);
+        else range(r.at, r.at + EXT_LANES, fri);
+      }
+      //  z, on the segment that closes the run and forms `1/(z − x)`.
+      if (s.close) {
+        const zo = ft.z[s.round][s.mat][s.point];
+        range(zo, zo + EXT_LANES, fri);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return { air, fri };
 }
 
 /**
@@ -766,12 +989,17 @@ export function openedReads(w: SegmentedWalk, plan: OpenedPlan, k: number): Open
 export function planFriWalk(
   w: SegmentedWalk,
   op: OpenedPlan,
-  opts: { usableRows: number; chunkSize: number; maxSlices?: number },
+  ft: FriLaneTable,
+  opts: { usableRows: number; chunkLanes: number; maxSlices?: number },
 ): FriPlan {
-  const { chunkSize } = opts;
+  const chunkSize = opts.chunkLanes;
   const air = airColumnIndex();
-  const nAirChunks = Math.ceil((air.nBase + air.nExt) / chunkSize);
-  const nFriChunks = Math.max(1, Math.ceil(op.nFri / chunkSize));
+  const nAirChunks = Math.ceil(((air.nBase + air.nExt) * EXT_LANES) / chunkSize);
+  const nFriChunks = Math.max(1, Math.ceil(ft.nLanes / chunkSize));
+  /** A chunk digest costs one witnessed lane's worth of range check plus the
+   *  Poseidon over it; the AIR chain charges both at `WITNESS_ROWS_PER_VALUE`
+   *  per extension value and this mirrors that. */
+  const DIGEST_ROWS = PRICE.witnessLane * EXT_LANES;
   const slices: FriSlice[] = [];
   let from = 0;
   while (from < w.segs.length) {
@@ -786,13 +1014,14 @@ export function planFriWalk(
     let to = from;
     while (to < w.segs.length) {
       work += w.segs[to].rows;
-      for (const r of openedReads(w, op, to))
-        (r.where === 'air' ? airSet : friSet).add(Math.floor(r.at / chunkSize));
+      const rd = segmentReads(w, op, ft, to);
+      for (const l of rd.air) airSet.add(Math.floor(l / chunkSize));
+      for (const l of rd.fri) friSet.add(Math.floor(l / chunkSize));
       to++;
       const carry =
         (w.liveIn[from].length + w.liveIn[to].length) * PRICE.witnessLane +
-        (airSet.size * chunkSize + friSet.size * chunkSize) * EXT_LANES * PRICE.witnessLane +
-        (nAirChunks + nFriChunks) * PRICE.witnessLane * EXT_LANES;
+        (airSet.size + friSet.size) * chunkSize * PRICE.witnessLane +
+        (nAirChunks + nFriChunks) * DIGEST_ROWS;
       if (work + carry > opts.usableRows) {
         to--;
         work -= w.segs[to].rows;
