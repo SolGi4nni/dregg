@@ -268,6 +268,24 @@ export function splitToFieldOrderLimbs(v: Field): Field[] {
     const { limbs, rem } = splitPastaBigInt(v.toBigInt());
     return [...limbs, rem].map((x) => Field(x));
   });
+  return pinSplitHint(v, hint);
+}
+
+/**
+ * The CONSTRAINT half of the split, separated from the witnessing half ON
+ * PURPOSE.
+ *
+ * ⚑ A FUNCTION THAT WITNESSES ITS OWN INPUTS CANNOT BE SHOWN TO REFUSE A
+ * DISHONEST ONE. `splitToFieldOrderLimbs` computes the honest hint itself, so no
+ * test written against it can ever watch (a)-(d) bite — a gate that cannot go
+ * red is not a gate. This entry point takes the hint as an ARGUMENT so
+ * `scripts/pasta-hash-differential.ts` can supply the wrapped decomposition (the
+ * exact attack (d) exists for: canonical limbs, satisfying the linear relation,
+ * yielding DIFFERENT challenges) and REQUIRE a refusal.
+ */
+export function pinSplitHint(v: Field, hint: Field[]): Field[] {
+  if (hint.length !== SQUEEZE_NUM_F_ELMS + 1)
+    throw new Error(`pinSplitHint: ${hint.length} hint elements, want ${SQUEEZE_NUM_F_ELMS + 1}`);
   const limbs = hint.slice(0, SQUEEZE_NUM_F_ELMS);
   const rem = hint[SQUEEZE_NUM_F_ELMS];
 
