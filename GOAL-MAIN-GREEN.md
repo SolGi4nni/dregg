@@ -311,6 +311,39 @@ shape that has yielded one-cause fixes five times this week.
   The lane that first called them load-dependent **corrected itself with a measurement**, which is the
   right shape.
 
+## ⚑ TALLY — every dispatched lane has now reported
+
+| crate | before | after |
+|---|---|---|
+| `dregg-circuit` | 24 | **0** (1222/1222) |
+| `dregg-sdk` | 30 | **0** |
+| `dreggnet-market` | 23 | **0** (53/53) |
+| `discord-bot` | 19 | **~1** |
+| `dregg-app-framework` | 15 | **0** (202/202) |
+| `dregg-persist` | 13 | **0** (194/194) |
+| `dreggnet-adventure` | 9 | **0** (9/9) |
+| `dregg-circuit-prove` | 6 fixed | 3 priced + 2 foreign ratchets + 16 budget-class |
+| `dregg-exec-lean` | 5 | **0** (122/122) |
+| `dregg-storage-templates` | 4 | **0** (141/141) |
+| `dregg-intent` | 3 | **0** (444/444) |
+| `dreggnet-telegram` + `dreggnet-web` | 62 | **32** |
+| `dregg-node` | 7 | **3** |
+
+**~220 test failures closed.** What remains is mostly NOT ordinary breakage:
+- **10** are E2, the live oracle-decline outage — a Lean-authored gap in `metatheory/`.
+- **16** were a BUDGET ARTIFACT and are now budgeted; one passes at 700 s against a 180 s kill.
+- **3** cap-write are diagnosed and priced (a producer re-plumb, no Lean/VK work).
+- **2** are architectural ratchets red on OTHER lanes' committed files, including ⚑ **Law #1**.
+- The rest are named families in other lanes' uncommitted work.
+
+## ⚑⚑ OPEN FOR EMBER — the three that are not mine to close
+1. **LAW #1 IS RED ON `main`** (E4) — a hand-written Rust AIR landed today in `6ce0c7a14`. Not
+   baselined, per the gate's own instruction. The Mina lane owns it.
+2. **E2, a live outage** — `dreggnet-web-server` refuses every Descent move on a deployed box.
+   Lean-authored fix (`DHeapAtom` arm + `parseHeapAtom` token).
+3. **E1, a consensus regression** — a 3-node committee wedges permanently on one undelivered block;
+   gossip/anti-entropy, inside a ~25-commit window.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
