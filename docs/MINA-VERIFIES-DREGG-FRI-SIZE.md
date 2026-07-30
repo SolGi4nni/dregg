@@ -2271,9 +2271,208 @@ identity is checked against the Rust side's seven accumulators and **holds exact
 proof**. A Mina-side verifier holding dregg's root proof can compute the value the chain seals to.
 
 **What §3.27 does NOT close.** This is the AIR half — the seven per-instance closing equalities —
-not the FRI walk over that proof, which is still §3.19's at fixture geometry. The side-loaded
+not the FRI walk over that proof. ⚑ **§3.28 braids that walk onto this seal and runs it at the
+root's REAL geometry**; what remains of this sentence is the part §3.28 also does not close. The side-loaded
 shape's ceiling is an **envelope**, not a narrowed crossing (§3.26). Nothing is wired to
 `setDreggRoot`.
+
+---
+
+### 3.28 ⚑ MEASURED — THE BRAID: the AIR seal chained into the FRI walk, at the root's real geometry
+
+*`bridge/mina-zkapp/src/RootFriWalk.ts` (the segment list and the planner),
+`src/RootFriSlice.ts` (the interpreter, the twin and the side-loaded slice program),
+`scripts/root-fri-braid.ts` (the leg), `scripts/fri-walk-plan.ts` (the plan alone),
+`circuit-prove/src/bin/root_fri_instance.rs` (the FRI half of the committed root proof).*
+
+§3.27 closes the AIR half at real geometry and ends by naming what it does not close: *"this is the
+AIR half — the seven per-instance closing equalities — not the FRI walk over that proof, which is
+still §3.19's at fixture geometry."* This is that walk, at the root's real geometry, chained to the
+AIR half's terminal seal.
+
+**Two chains glued end to end would prove strictly less than either looks like it proves**: the AIR
+half folds one set of opened values, the FRI half authenticates another, and nothing says they are
+the same set. So the braid is built on **one column commitment**. `dagDigest` — the AIR chain's own
+chunked commitment over its 1,602 extension values — is carried across the seal, and FRI slice 0
+**recomputes `terminalSeal(dagDigest, digest(acc), 7)` from the AIR column assignment it loads** and
+asserts it *is* AIR slice 6's public output. That check runs **out of circuit before anything
+compiles**, and it passes against the artifact §3.27's run left on disk:
+
+```
+acc              1115370058, 392087499, 1512245278, 1909299373
+recomputed seal  9641100034022665855204649324820202945538794125581438690095474365720638566508
+AIR slice 6 out  the same
+```
+
+#### The walk, and it reproduces p3's own verification
+
+The FRI half of the committed root proof is dumped by `root_fri_instance.rs`, which runs p3's own
+`verify_batch`, re-verifies every Merkle opening with the real MMCS, and refuses to emit if its
+mirrored challenger state does not reproduce the 16-bit query grind. **The `DuplexChallenger` state
+at `verify_fri`'s door is emitted**, so the o1js side starts its transcript where dregg's own
+verifier starts it.
+
+Against that, the whole 11,303-segment walk runs **out of circuit, in seconds**, by the same
+functions the circuit calls:
+
+| | |
+|---|---|
+| FRI `α`, all 16 `β`s, all 19 query indices | **derived, and equal to p3's own** |
+| 76 mixed-height input openings (19 queries × 4 rounds) | **reproduce dregg's own four commitments** |
+| all 95 reduced openings | **reproduce p3's own `open_input`** |
+| 304 fold steps | **reproduce p3's own fold chain** |
+| all 19 queries | **land on the committed final polynomial** |
+
+⚑ **THAT INSTRUMENT EXISTS BECAUSE THE SLICE RUN CANNOT BE IT.** A slice run proves the first N cuts;
+the first assertion against a committed Merkle root is ~12 slices in and the fold chain ~30, so a
+wrong convention **compiles and proves cleanly for as far as any affordable run reaches.** It found
+four, and every one of them would have been a green:
+
+1. **The transcript does not start empty.** `verify_fri` is entered with the challenger's *output
+   buffer already full* — `two_adic_pcs::verify` has just observed every opened evaluation — so
+   FRI's `α` is drawn by **popping**, with no permutation. Duplexing first puts `α`, every `β`, the
+   PoW sample and all 19 indices one permutation ahead.
+2. **`sample_bits(k)` is the low `k` bits**, not the sample.
+3. **`alpha_pow` starts at one.** At zero every reduced opening is zero — and a chain of zeros folds
+   and closes without complaining.
+4. **A missing derived knob is silent.** The dumper emits p3's knobs, not this side's derived
+   `indexBits`; undefined, `Array.from({length: undefined})` is an empty bit array, every path
+   direction is `undefined`, and every `undefined ? a : b` takes the same branch. A walk that runs,
+   proves, and is about nothing.
+
+#### What the braid binds, as a number
+
+⚑ **The permutation round is NOT in the AIR's assignment, and assuming it was is an error this leg
+made and measured.** The PCS commits an extension permutation column as **four base columns** and
+opens each at `ζ`; the AIR holds **one** extension value, the whole column's opening. They are
+related — `perm[p][k] = Σ_j f_{4k+j}(ζ)·X^j` — and not equal. Mapped as equal, 216 of 512 matched by
+coincidence of layout and 296 did not.
+
+| | opened values | |
+|---|---:|---|
+| lanes of the AIR chain's own column commitment, read out of it | **1,236** | 47.0% |
+| bridged to it by `permBind` (`Σ_j f_j(ζ)·X^j`, paid **once**, not per query) | **512** | 19.5% |
+| under `friDigest` alone — main and preprocessed columns the AIR never reads, plus all 56 quotient-chunk openings | 882 | 33.5% |
+| **total per query** | **2,630** | |
+
+⚑ **2,630, and §3.14/§3.15 say 2,286 — wrong in two directions that do not cancel.** The old census
+`940·2 + 175·2 + 7·2·4` **omits the permutation round** (64 extension columns × 4 × 2 = 512 terms)
+and **assumes two opening points everywhere**, which the proof refuses: `Const`, `Public`,
+`recompose` and `expose_claim` reference no next-row main or preprocessed value, so those matrices
+are opened at `ζ` alone — 168 terms §3.15 charges and the proof does not have.
+
+⚑ **And every input-phase opening is MIXED-HEIGHT.** The root's committed matrices sit at **five**
+distinct heights (22, 21, 16, 9, 6), so `MerkleTreeMmcs::verify_batch` compresses a shorter matrix's
+own row digest into the running root at the level its height names — four injections per round. §3.14
+residual 5 ("the input-phase MMCS opening over MIXED heights ... is priced and not implemented") is
+**closed**; §3.14's flat-depth-22 derivation of 6.3 × 10⁵ rows/query was pricing a different tree.
+
+#### The size, and the cut list
+
+| | |
+|---|---:|
+| segments in the walk | **11,303** |
+| modelled work rows | **30,363,795** |
+| carry | **9,275,994** (23.4%) |
+| **⇒ slices at a 50,000-row budget** | **839** |
+| slices per query | 43–45 |
+| carry per slice | min 4,940 · median 7,215 · max 32,318 |
+| widest single segment | 9,600 rows |
+| widest live set | 135 lanes |
+
+The carry band is §3.20's, confirmed at the real geometry and at a finer granularity: a boundary
+inside a Merkle path carries a digest and the derived challenges; a boundary inside the DEEP quotient
+carries five height accumulators, their `alpha_pow`s and the column chunks it reads.
+
+#### It proves, and 48 slices is one complete query walk
+
+Every slice below is its own `ZkProgram`, compiled and proved in **its own process**, taking its
+predecessor as a side-loaded `DynamicProof` with the predecessor's verification-key hash pinned as
+a compile-time constant — §3.27's mechanism, extended by one link: **FRI slice 0's predecessor is
+AIR slice 6.**
+
+| FRI slice | segments | | EMITTED rows | model | compile | prove |
+|---:|---|---|---:|---:|---:|---:|
+| 0 | [0, 17) | the transcript, from dregg's own challenger state | 46,439 | 47,946 | 111 s | 31 s |
+| 1 | [17, 32) | the transcript closes; `permBind` begins | 48,476 | 47,361 | 58 s | 39 s |
+| 2 | [32, 44) | `permBind` — the permutation round bridged to the AIR | 47,134 | 47,887 | 94 s | 23 s |
+| 3 | [44, 60) | the main round's opened rows, sponged | 46,656 | 49,559 | 49 s | 18 s |
+| 11 | [167, 180) | **the main round's MIXED-HEIGHT root, closed on dregg's commitment** | 43,494 | 46,009 | 42 s | 16 s |
+| 13 | [193, 208) | the quotient round's root | 46,890 | 49,695 | 39 s | 13 s |
+| 21 | [313, 318) | **the DEEP quotient begins** — f(z) read out of the AIR's own chunks | 39,615 | 44,649 | 35 s | 13 s |
+| 31 | [365, 378) | the last DEEP run; the fold chain begins | 42,411 | 47,604 | 67 s | 24 s |
+| 36 | [443, 459) | a commit-phase row: leaf, fold at β, coset descent | 45,068 | 48,412 | 72 s | 21 s |
+| 47 | [623, 640) | **query 0 lands on the committed final polynomial** | 45,570 | 47,770 | 43 s | 14 s |
+
+| | |
+|---|---:|
+| **FRI slices proved** | **48** of 839 |
+| **the braided chain** | **55 steps** — 7 AIR + 48 FRI, one key-pinned side-loaded chain |
+| emitted rows | **2,101,955** (the model said 2,245,109 — **−6.4%**) |
+| compile / prove | 2,621 s / 960 s |
+| **per slice** | **75 s** |
+| **of the walk, PROVED** | segments [0, 640) of 11,303 — **5.66%** |
+| **⇒ the whole 19-query walk, EXTRAPOLATED** | 839 × 75 s = **17.4 hours serial** |
+
+⚑ **Segments [0, 640) contain query 0's ENTIRE walk** — its four mixed-height input openings, its
+whole DEEP quotient, all sixteen fold layers with their four roll-ins, and its landing on the
+committed final polynomial. So what is proved is not a prefix of a query; it is **one complete
+query, end to end, braided to the AIR half**, plus the transcript and the permutation bridge that
+the other eighteen share.
+
+**The splice is refused, and every refusal is attributable.** Eight attempts in a process that
+compiled only the spliced slice, against a predecessor proof another process made — and the cut is
+chosen to be one that carries Merkle data, so the sibling bend can actually fire:
+
+a boundary unrelated to its predecessor · **the carried AIR accumulator bent** · a digest of an AIR
+column chunk the slice never reads, bent · the same for a FRI lane chunk · a carried live lane bent ·
+a Merkle sibling bent · **AIR slice 5's proof under AIR slice 5's own key** · the right proof under a
+key it was not made under.
+
+And the controls, which are what make those refusals mean anything. The same slice with the
+boundary assertions removed **accepts** a public input unrelated to its predecessor and **accepts** a
+bent digest of a chunk it never reads — so the bound refusals are the braid biting, not the work
+breaking. Unbound **but pinned** still refuses the foreign proof; **unpinned accepts it** — so
+side-loading's named hole is shown open and one constant shown closing it. ⚑ Side-loading makes
+those controls strictly better than a fault injection: the key is an input, so the control refutes
+the binding **on the bound chain's own proof objects**.
+
+#### What is PROVED, and what is extrapolated
+
+⚑ **The two are never the same sentence.** `FRIBRAID_LIMIT` says how many of the 839 slices a run
+proves; the rest is a rate multiplied out, and it is labelled as one.
+
+Every proved slice is its own `ZkProgram` compiled in its own process, taking its predecessor as a
+side-loaded `DynamicProof` with the predecessor's verification-key hash pinned as a compile-time
+constant — §3.27's mechanism, unchanged, extended by one link: **FRI slice 0's predecessor is AIR
+slice 6**, so the object is ONE key-pinned chain and not two.
+
+#### What the braided chain establishes — and what it does not
+
+**It establishes**, at the resolution the artifacts support:
+
+* the root's 1,093 AIR constraints fold, at the opened values under `dagDigest`, to an accumulator
+  that IS the α-weighted sum of p3's own seven per-instance accumulators (§3.27);
+* **those same opened values** — 47.0% of them literally the AIR's own lanes, a further 19.5%
+  bridged by `permBind` — open under the four commitments dregg's transcript absorbed, at the 19
+  query indices that transcript derived, through mixed-height `verify_batch` paths;
+* their DEEP quotients fold through sixteen layers onto the committed final polynomial.
+
+**It does not establish**:
+
+* **that the committed function is low-degree.** That is the FRI soundness argument, and it is
+  exactly as undischarged here as everywhere else in this tree. A verifier that runs every query
+  correctly still inherits the FRI floor.
+* **that the challenger state entering FRI is the batch-STARK's.** It is a committed WITNESS
+  (`friDigest` covers it), emitted by the Rust side. That is §3.14 residual 1 and it is now the
+  largest thing between this chain and a verifier: binding it means running `BatchTranscript`'s
+  whole observe sequence — `observe_instance_count`, the per-instance bindings, the main and
+  permutation commitments, the global lookup data, the quotient commitment, and the sampling of
+  `α_stark` and `ζ` — in circuit.
+* **anything about all inputs.** Every figure here is `getRows()` on a committed circuit and a
+  `prove()` that returned; "it proves on a box" is the resolution.
+* **and nothing is wired to `setDreggRoot`.** `placeholderRelay` stays.
+
 
 ---
 
