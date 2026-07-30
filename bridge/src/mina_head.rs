@@ -197,8 +197,10 @@ pub const MIN_PROTOCOL_STATE_BYTES: usize = 512;
 pub struct MinaVerifiedHead {
     /// The head tip's `Protocol_state.Value` binprot bytes.
     pub protocol_state: Vec<u8>,
-    /// The head tip's state hash as a decimal field element. ⚑ SUPPLIED, not derived — see
-    /// [`MinaVerifiedHead::offer`].
+    /// The head tip's state hash as a decimal field element. ⚑ Passed to the gate, which
+    /// RE-DERIVES it from `protocol_state` and refuses the pair on a mismatch — see
+    /// [`tip_wire`]. A head that ever held a hash its own bytes do not have could not have
+    /// advanced into that position, because the wire that put it there was checked.
     pub state_hash: String,
     /// The greatest height this client has ever finalized. Never decreases.
     pub finalized_height: u64,
@@ -261,12 +263,22 @@ pub fn hex_of(bytes: &[u8]) -> String {
 
 /// Build the `TIP` half of both gate wires.
 ///
-/// ⚑ `existing_hash`/`candidate_hash` are the ONE supplied input. `select` uses them only as the
-/// final tie-break, after `blockchain_length` and the Blake2b VRF digest have both tied. They are
-/// not derived because `state_hash = Poseidon("MinaProtoState")[previous_state_hash, body_hash]`
-/// and `Body.hash` absorbs `to_input` in an order that is **not** the binprot order — re-deriving
-/// it is a Lean job that does not exist yet, and `docs/MINA-LIGHT-CLIENT.md` carries it as an open
-/// row rather than implying otherwise.
+/// ⚑ **`existing_hash`/`candidate_hash` are CHECKED, not accepted** (since 2026-07-30). They used
+/// to be the one supplied input on this wire: `state_hash =
+/// Poseidon("MinaProtoState")[previous_state_hash, body_hash]` was re-derived nowhere, so the peer
+/// named both the bytes and the identity of the block those bytes are.
+/// `Dregg2.Bridge.MinaStateHashDerive` recomputes it inside the archive and
+/// `MinaForkChoiceGate.decodeSide?` returns `"ERR"` on a disagreement, so what these two strings
+/// carry is now a claim the gate refutes rather than an input it trusts.
+///
+/// That matters for exactly the use `select` puts them to: they are the FINAL tie-break, after
+/// `blockchain_length` and the Blake2b VRF digest have both tied, and it is a numeric comparison —
+/// so a peer that could name its own hash could win every tie by claiming a larger one while
+/// serving whatever bytes it liked.
+///
+/// They are still *passed in* rather than returned by the gate. Deleting the fields entirely — the
+/// gate derives both identities from the bytes and the wire stops carrying a hash at all — is the
+/// remaining hygiene, and it no longer changes what an adversary can do.
 pub fn tip_wire(
     existing_hash: &str,
     candidate_hash: &str,
