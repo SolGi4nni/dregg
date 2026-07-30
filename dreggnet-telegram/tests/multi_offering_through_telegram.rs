@@ -21,6 +21,8 @@ use dreggnet_telegram::host::{HostPress, TURN_OPEN, TURN_VERIFY, TelegramHost};
 use dreggnet_telegram::transport::MockTransport;
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON, KP_SEIZE};
 
+mod support;
+
 /// A deterministic bot secret (a real deploy loads 32 bytes from env).
 const BOT_SECRET: [u8; 32] = [7u8; 32];
 /// Two Telegram users registered as the council electorate (their derived identities are the
@@ -224,6 +226,10 @@ fn a_council_propose_vote_enact_plays_through_the_telegram_host() {
 /// turns (`list` reserve, `bid` value) carry their value in the press.
 #[test]
 fn a_market_list_bid_settle_plays_through_the_telegram_host() {
+    // The award ring folds through `dregg_intent::verified_settle`, which REFUSES with no gate
+    // registered — the bot binary installs it at startup and a test binary must do the same, or
+    // the auction below is never judged rather than judged and cleared.
+    support::install_verified_distributed_gates();
     let mut h = host();
     let chat: i64 = -2002;
     let sid = h

@@ -24,6 +24,8 @@ use dreggnet_telegram::host::TelegramHost;
 use dreggnet_telegram::runtime::{TextDecision, route_text_decided};
 use dreggnet_telegram::transport::MockTransport;
 
+mod support;
+
 const BOT_SECRET: [u8; 32] = [0x71; 32];
 /// A positive chat id → a DM, so nothing is refused for hiding per-player state.
 const CHAT: i64 = 4242042;
@@ -31,6 +33,10 @@ const ALICE: u64 = 909090;
 
 #[test]
 fn every_registered_offering_opens_into_something_visible_or_says_why_not() {
+    // The running bot arms both of these before it builds a host; a test binary never runs `main`.
+    // Without the day, `descent` and `descent-campaign` — two of the three SHIPPED keys — refuse to
+    // open at all, and this walk would be measuring the arming, not the painting.
+    support::arm_like_the_running_bot();
     let mut host: TelegramHost<MockTransport> =
         TelegramHost::new(BOT_SECRET, MockTransport::new(), &[ALICE]);
     let keys: Vec<String> = host

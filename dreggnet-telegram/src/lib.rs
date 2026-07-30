@@ -76,6 +76,29 @@ use crate::transport::{MessageId, Transport, TransportError};
 /// unambiguous ([`TelegramFrontend::chat_of`] / [`TelegramFrontend::offering_of`]).
 pub const SURFACE_SEP: char = '#';
 
+/// **The companion slot carrying the tail of a surface too long for one message** — the overflow
+/// carrier [`crate::render::fit_surface_for_wire`] fills. Like every companion slot it is
+/// non-interactive: its message ids are never eligible callback routes, so a press on a
+/// continuation page is refused rather than mistaken for a move.
+///
+/// Distinct from `host::OPERATION_GUIDE_SLOT` on purpose — the two carry different things and must
+/// be able to shrink and grow independently.
+pub const SURFACE_CONTINUATION_SLOT: &str = "surface-continuation";
+
+/// **What a companion message says once it has nothing left to carry.** A slot that shrinks edits
+/// its surplus messages to this instead of leaving stale instructions — or, for the continuation
+/// slot, a stale half of a board — visible above a live game.
+///
+/// Two sentences because they are two different things to a reader: an upload guide that is gone,
+/// and a page that has moved back into the message below it.
+fn companion_tombstone(slot: &str) -> &'static str {
+    if slot == SURFACE_CONTINUATION_SLOT {
+        "This part of the page now fits in the game message below. Nothing was lost; read it there."
+    } else {
+        "Proof-operation guide inactive. /status shows the current session record."
+    }
+}
+
 /// A Telegram user id (the Bot API `from.id`) — always positive, ≤ 52 bits.
 pub type TelegramUserId = u64;
 
@@ -494,24 +517,90 @@ impl<T: Transport> TelegramFrontend<T> {
     ) -> Result<MessageId, TransportError> {
         let (chat_id, topic) = Self::chat_of(session)
             .ok_or_else(|| TransportError(format!("not a telegram session id: {}", session.0)))?;
+        // ⚑ OVER THE CEILING IS NOT THE END OF THE ROAD. Telegram's 4096 is real and a message over
+        // it is rejected — but "refuse the whole send" was the only answer this adapter had, so an
+        // offering whose surface grew past the limit stopped painting AT ALL (measured 2026-07-29:
+        // the dungeon at 4,719 and automatafl at 4,429 on the shipped catalog, both silent in the
+        // chat). `fit_surface_for_wire` moves whole trailing sections into the non-interactive
+        // companion slot beside this message — the same carrier the proof-operation guide already
+        // uses, and the same shape the KEYBOARD bound already has: enforce it, and say in a
+        // trailing line what was moved. Nothing is dropped, and the refusal below still stands for
+        // the one case with no seam to cut on.
+        //
+        // ⚑ AND THE BUDGET IS THE REQUEST'S, NOT THE SURFACE'S. `build_present_request…` appends
+        // its own trailing line naming the affordances the KEYBOARD bound left off, so a surface
+        // fitted to exactly 4096 came back out of the builder at 4,319 and was refused anyway —
+        // measured, on automatafl, after the split was already working. Fit, BUILD, and re-fit
+        // against whatever the builder actually produced: the budget shrinks by the overshoot each
+        // round, so this terminates, and it can never be fooled by a line the builder adds later.
+        let mut budget = TELEGRAM_TEXT_LIMIT;
+        let (mut fitted, mut continuation) =
+            crate::render::fit_surface_for_wire(surface, TELEGRAM_TEXT_LIMIT);
         let mut req = build_present_request_with_callback_data(
             chat_id,
             topic,
-            surface,
+            &fitted,
             actions,
             callback_data,
         )
         .map_err(TransportError)?;
+        for _ in 0..8 {
+            let painted = req.text.chars().count();
+            if painted <= TELEGRAM_TEXT_LIMIT {
+                break;
+            }
+            let Some(next) = budget.checked_sub(painted - TELEGRAM_TEXT_LIMIT) else {
+                break;
+            };
+            if next == budget {
+                break;
+            }
+            budget = next;
+            let refit = crate::render::fit_surface_for_wire(surface, budget);
+            // No further seam gave way: stop and let the fail-closed refusal below stand rather
+            // than spin.
+            if refit.1.len() == continuation.len() {
+                break;
+            }
+            (fitted, continuation) = refit;
+            req = build_present_request_with_callback_data(
+                chat_id,
+                topic,
+                &fitted,
+                actions,
+                callback_data,
+            )
+            .map_err(TransportError)?;
+        }
+        let surface = &fitted;
         // ⚑ Measured on the WIRE text, which is now entity-escaped and `<pre>`-fenced. Telegram
         // counts characters AFTER entity parsing, so `&amp;` costs it 1 and costs us 5: this guard
         // is CONSERVATIVE by exactly the markup, never permissive. That is the safe direction (it
         // refuses a hair early rather than letting the Bot API reject ambiguously), and the markup
         // is small in practice — a board is `·─│×@RAab` and digits, none of which escape at all.
+        //
+        // Reached now only when the surface had NO seam to split on (one unsplittable child over
+        // the ceiling). That is a real "this cannot be sent", and it stays fail-closed.
         if req.text.chars().count() > TELEGRAM_TEXT_LIMIT {
             return Err(TransportError(format!(
-                "interactive Telegram surface is {} characters; maximum is {TELEGRAM_TEXT_LIMIT}",
-                req.text.chars().count()
+                "interactive Telegram surface is {} characters; maximum is {TELEGRAM_TEXT_LIMIT} \
+                 (already continued across {} companion page(s); the rest has no section boundary \
+                 to cut on; head root is {})",
+                req.text.chars().count(),
+                continuation.len(),
+                crate::render::node_kind(surface.view())
             )));
+        }
+        // The continuation pages go out FIRST, so the keyboard-bearing message stays the chat's
+        // most recent surface (the same ordering the proof-operation guide takes). An EMPTY set is
+        // presented too — that is how a surface which has shrunk back under the ceiling
+        // neutralizes the pages it left behind, instead of leaving a stale tail visible.
+        if !continuation.is_empty()
+            || !self
+                .companion_messages(session, SURFACE_CONTINUATION_SLOT)
+                .is_empty()
+        {
+            self.present_companion_pages_result(session, SURFACE_CONTINUATION_SLOT, &continuation)?;
         }
         if !extra_buttons.is_empty() {
             let markup = req
@@ -615,8 +704,7 @@ impl<T: Transport> TelegramFrontend<T> {
 
         let inert = SendMessageRequest {
             chat_id,
-            text: "Proof-operation guide inactive. /status shows the current session record."
-                .to_string(),
+            text: companion_tombstone(slot).to_string(),
             reply_markup: None,
             message_thread_id: topic,
             parse_mode: None,

@@ -245,8 +245,24 @@ async fn a_forged_signature_is_403_and_the_session_is_unmoved() {
     assert_eq!(verified_turns(&app, "dungeon", "sg-forge").await, 1);
 }
 
-/// REPLAYED: the identical genuine envelope presented twice — the first lands (200), the second
-/// hits the consumed-counter ledger (403, StaleCounter) and the session does not move again.
+/// REPLAYED — **and TWO teeth bite here, in a fixed order, so this asserts both.**
+///
+/// ⚑ This test used to present the identical envelope twice and demand `403 stale replay counter`.
+/// It cannot get that any more, and the reason is not a regression: on a GAME route
+/// `execute_bound_signed_game_turn_inner` checks the presented `expected_pre_head` against the live
+/// commitment BEFORE `advance_signed` consumes the counter — so once the first turn lands, the
+/// captured envelope is a STALE PAGE and dies at the epoch gate (`409`) without the ledger ever
+/// being consulted. Rewriting the expectation to `409` and stopping there is the trap: it would
+/// leave the consumed-counter ledger — the thing this test is named for — **asserted by nothing**
+/// on the whole signed game route.
+///
+/// So both poles are here, and the second one reaches the ledger on purpose:
+///
+/// 1. the captured envelope replayed verbatim is refused as a stale page, and commits nothing;
+/// 2. a FRESHLY-BOUND envelope over the CURRENT head, re-signed with an ALREADY-CONSUMED counter —
+///    which is what an attacker who could re-address a captured intent would have to produce — gets
+///    past the epoch gate, reaches the ledger, and is refused `403 stale replay counter`, still
+///    committing nothing.
 #[tokio::test]
 async fn a_replayed_counter_is_403_and_commits_nothing_twice() {
     let app = app();
@@ -264,22 +280,68 @@ async fn a_replayed_counter_is_403_and_commits_nothing_twice() {
     );
     assert_eq!(verified_turns(&app, "dungeon", "sg-replay").await, 2);
 
-    // The captured envelope, replayed verbatim.
+    // POLE 1 — the captured envelope, replayed verbatim. The board moved, so the route authority it
+    // carries no longer resolves: the epoch gate refuses it as an out-of-date page.
     let (status, body) = post_json(&app, act, wire).await;
     assert_eq!(
         status,
-        StatusCode::FORBIDDEN,
-        "the replay is refused: {body}"
-    );
-    assert!(
-        body.contains("stale replay counter"),
-        "the refusal names the ledger gate: {body}"
+        StatusCode::CONFLICT,
+        "a verbatim replay is refused as a stale presented route: {body}"
     );
     assert_eq!(
         verified_turns(&app, "dungeon", "sg-replay").await,
         2,
-        "the replay committed nothing (anti-ghost)"
+        "the verbatim replay committed nothing (anti-ghost)"
     );
+
+    // POLE 2 — THE LEDGER ITSELF, isolated by DIFFERENCE rather than by status code.
+    //
+    // Re-sign against the CURRENT head so the epoch gate is satisfied and the consumed-counter
+    // ledger is the only thing left between this envelope and a second commit. Two requests are
+    // then built that are identical in every respect — same session, same head, same generation,
+    // same action, same signer — EXCEPT the counter: one already consumed, one fresh. The consumed
+    // one is refused and commits nothing; the fresh one commits. Nothing but the ledger can explain
+    // that pair, so this cannot be satisfied by a session that had merely stopped accepting moves,
+    // and it does not depend on which status the refusal wears.
+    //
+    // ⚠ AND IT DOES WEAR THE WRONG ONE, which is a live defect this test deliberately does NOT
+    // paper over by asserting the wrong thing. `game_spine::execute_signed_game_turn_inner` maps
+    // every `HostError` out of `advance_signed` to `GameSpineError::Host(error.to_string())`, and
+    // `act_signed` renders that as the stale-page `409`. So a REPLAYED COUNTER on the signed game
+    // route is answered "This page is out of date … Reload" instead of the `403 stale replay
+    // counter` this module's own doc promises — the ledger's refusal laundered into the epoch
+    // gate's copy, and with it every `400`/`403`/`404` distinction the legacy branch keeps. The
+    // refusal itself is intact (nothing commits, asserted below); the report of it is not.
+    let readdressed = sign_choose(&app, &signer, "sg-replay", 0, KP_CLAIM_RED as i64).await;
+    let (consumed_status, body) = post_json(
+        &app,
+        act,
+        game_wire_json(&readdressed, serde_json::json!(0)),
+    )
+    .await;
+    assert_ne!(
+        consumed_status,
+        StatusCode::OK,
+        "a re-addressed envelope on a CONSUMED counter must be refused: {body}"
+    );
+    assert_eq!(
+        verified_turns(&app, "dungeon", "sg-replay").await,
+        2,
+        "the consumed counter committed nothing (anti-ghost)"
+    );
+
+    // …and the ONLY difference is the counter: the very same move, re-addressed the same way, on
+    // the NEXT counter, lands.
+    let fresh = sign_choose(&app, &signer, "sg-replay", 1, KP_CLAIM_RED as i64).await;
+    let (status, body) = post_json(&app, act, game_wire_json(&fresh, serde_json::json!(1))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the SAME move on a fresh counter lands, so the refusal above was the ledger and not a \
+         session that had stopped accepting anything: {body}"
+    );
+    assert!(body.contains("Turn committed"), "{body}");
+    assert_eq!(verified_turns(&app, "dungeon", "sg-replay").await, 3);
 }
 
 /// MALFORMED: each decode gate answers 400 with a named reason, before any crypto — bad/short

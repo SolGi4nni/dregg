@@ -3,6 +3,7 @@
 use dreggnet_offerings::chutes_consent::{
     CHUTES_CONSENT_WIRE, ViewerBlindChutesConsent, ViewerBlindChutesReceipt, admits_chutes_consent,
 };
+use dreggnet_offerings::player_turn_receipt::PlayerReplaySurface;
 use dreggnet_telegram::chutes_consent::{
     build_chutes_consent_request, build_chutes_receipt_request,
 };
@@ -68,7 +69,23 @@ fn public_receipt_has_full_replay_handle_but_no_account_or_prompt_side_channel()
     let wire = serde_json::to_string(&request).unwrap();
     assert!(request.reply_markup.is_none());
     assert!(request.text.contains(&"ef".repeat(32)));
-    assert!(request.text.contains("Use the Verify action"));
+    // ⚑ THE REPLAY INSTRUCTION, READ OFF ITS SOURCE OF TRUTH RATHER THAN RE-TYPED. This pinned the
+    // literal "Use the Verify action", which `907e4eaf5` retired when it unified the player receipt
+    // card across hosted surfaces — the Telegram surface says "Run `/verify` to replay the record."
+    // and has since this test went red. A hand-copied sentence is a second copy that goes stale the
+    // day the first one is improved; asking `PlayerReplaySurface::Telegram` for it keeps the
+    // property ("the public receipt tells the reader how to replay it, in THIS surface's words")
+    // true across any future rewording, and still fails if the instruction stops being carried.
+    let replay_instruction = PlayerReplaySurface::Telegram.instruction();
+    assert!(
+        !replay_instruction.trim().is_empty(),
+        "the Telegram surface declares a replay instruction at all"
+    );
+    assert!(
+        request.text.contains(replay_instruction),
+        "the public receipt carries this surface's replay instruction ({replay_instruction:?}): {}",
+        request.text
+    );
     assert!(request.text.contains("operator spend $0.020001"));
     assert!(request.text.contains("player charge 1 run credit"));
     for forbidden in [

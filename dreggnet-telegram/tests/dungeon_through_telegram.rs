@@ -21,10 +21,11 @@
 use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, TURN_CHOOSE};
 use dreggnet_offerings::{Frontend, Offering, Outcome, SessionConfig};
 use dreggnet_telegram::api::{
-    LOCK_GLYPH, TELEGRAM_KEYBOARD_MAX_ROWS, TELEGRAM_PARSE_MODE, decode_callback, encode_callback,
+    LOCK_GLYPH, TELEGRAM_KEYBOARD_MAX_ROWS, TELEGRAM_PARSE_MODE, TELEGRAM_TEXT_LIMIT,
+    decode_callback, encode_callback,
 };
 use dreggnet_telegram::cipherclerk::TelegramCipherclerk;
-use dreggnet_telegram::render::render_surface_html;
+use dreggnet_telegram::render::{fit_surface_for_wire, render_surface_html, render_surface_text};
 use dreggnet_telegram::transport::MockTransport;
 use dreggnet_telegram::{CallbackQuery, ChatKind, TelegramFrontend};
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_PRESS_ON, KP_TRADE_BLOWS};
@@ -67,11 +68,47 @@ fn present_builds_a_message_and_one_keyboard_button_per_affordance() {
     );
     // The text half is the deos surface walked to prose — the Menu is NOT duplicated into text —
     // in the WIRE form: entity-escaped, with any board fenced, matching the `parse_mode` below.
+    //
+    // ⚑ AND THE MESSAGE IS THE FITTED HEAD, NOT NECESSARILY THE WHOLE SURFACE. This used to assert
+    // `req.text == render_surface_html(&surface)` outright, which was true only while every surface
+    // fit in one Telegram message. The Keep's does not (4,705 characters against a 4,096 ceiling),
+    // and the adapter now continues the tail into companion pages rather than refusing to paint at
+    // all (`render::fit_surface_for_wire`). So the contract asserted here is the stronger one: the
+    // message carries the HEAD of that split, and the split is LOSSLESS — head plus continuation
+    // covers the whole surface, with nothing dropped on the floor.
+    let (head, continuation) = fit_surface_for_wire(&surface, TELEGRAM_TEXT_LIMIT);
     assert_eq!(
         req.text,
-        render_surface_html(&surface),
-        "the message text is the rendered surface, in the form the parse mode declares"
+        render_surface_html(&head),
+        "the message text is the rendered surface head, in the form the parse mode declares"
     );
+    assert!(
+        req.text.chars().count() <= TELEGRAM_TEXT_LIMIT,
+        "the head fits Telegram's ceiling: {} chars",
+        req.text.chars().count()
+    );
+    // NOTHING WAS DROPPED: every line of the full surface is either in the message or on a
+    // continuation page. Asserted over the PLAIN reading, because the pages carry no parse mode.
+    let carried = format!(
+        "{}\n{}",
+        render_surface_text(&head),
+        continuation.join("\n")
+    );
+    // `▸` is the walker's DEPTH marker for a nested section heading, not content: a section that
+    // moves to a page of its own is rendered at depth 0 there and heads it without one. Comparing
+    // with the marker stripped keeps this about what was carried, not about where it sits.
+    let carried = carried.replace("▸ ", "");
+    for line in render_surface_text(&surface).lines() {
+        let line = line.trim().trim_start_matches("▸ ");
+        // The continuation note is new text the head gained; the surface never had it.
+        if line.is_empty() || line.starts_with("The last ") {
+            continue;
+        }
+        assert!(
+            carried.contains(line),
+            "the split lost a line of the surface: {line:?}"
+        );
+    }
     assert_eq!(
         req.parse_mode.as_deref(),
         Some(TELEGRAM_PARSE_MODE),

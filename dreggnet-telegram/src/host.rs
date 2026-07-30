@@ -1534,6 +1534,9 @@ impl<T: Transport> TelegramHost<T> {
                 operations.len(),
             );
             let guide_pages = operation_guide_pages(key, &operations, shared);
+            // The guide above carries every disclosure verbatim; do not send the same 2,000
+            // characters twice into one chat (and past Telegram's ceiling) — see the function.
+            elide_guide_disclosures(&mut projection.surface, &operations);
             // Host controls follow the offering's own actions. Re-verification is always
             // visible, including at terminal states; it is read-only and never recorded among
             // the presented offering Actions. In a DM, the Mini App launch follows it.
@@ -2633,6 +2636,62 @@ fn append_game_session_record(
             };
         }
     }
+}
+
+/// **Take the operation disclosures OUT of the keyboard-bearing message, because the companion
+/// guide beside it already carries them VERBATIM.**
+///
+/// ⚑ Measured 2026-07-29: the dungeon's Telegram message was 4,705 characters and **2,009 of them
+/// were three `BinaryOperationDescriptor::disclosure` strings that [`operation_guide_pages`] prints
+/// again, word for word, in the companion message directly above it.** The offering builds them
+/// into its own [`Surface`] (`dreggnet_offerings::dungeon` pushes `PRIVATE_PREFERENCE_DISCLOSURE`,
+/// `PRIVATE_SHUFFLE_DISCLOSURE` and `PRIVATE_QUEST_DISCLOSURE` as `Text` nodes) because the WEB
+/// page has no ceiling and wants them inline. On Telegram that is the same 2,000 characters sent
+/// twice into one chat, and it is what pushed the flagship past 4,096 and made it refuse to paint.
+///
+/// So: elide exactly the nodes whose text is BYTE-IDENTICAL to a disclosure this paint is also
+/// shipping as a guide page. Keyed off the SAME `operations` list that builds those pages, matched
+/// by whole-string equality, so it can only ever remove text the guide provably carries — never a
+/// state line, never prose, never anything with no second copy. The session record already tells
+/// the reader where it went (*"N proof operation(s) are described in the non-interactive companion
+/// guide"*), and `append_game_session_record` writes that line from the same count.
+///
+/// Returns how many nodes were elided, so a caller can assert the de-duplication really happened
+/// rather than trusting that it did.
+fn elide_guide_disclosures(
+    surface: &mut Surface,
+    operations: &[BinaryOperationDescriptor],
+) -> usize {
+    if operations.is_empty() {
+        return 0;
+    }
+    let carried: Vec<&str> = operations
+        .iter()
+        .map(|operation| operation.disclosure.as_str())
+        .collect();
+    fn strip(node: &mut ViewNode, carried: &[&str], removed: &mut usize) {
+        let children = match node {
+            ViewNode::Section { children, .. }
+            | ViewNode::VStack(children)
+            | ViewNode::List(children)
+            | ViewNode::Row(children)
+            | ViewNode::Table(children) => children,
+            _ => return,
+        };
+        children.retain(|child| match child {
+            ViewNode::Text(text) if carried.contains(&text.as_str()) => {
+                *removed += 1;
+                false
+            }
+            _ => true,
+        });
+        for child in children.iter_mut() {
+            strip(child, carried, removed);
+        }
+    }
+    let mut removed = 0;
+    strip(&mut surface.0, &carried, &mut removed);
+    removed
 }
 
 /// Render the complete operation contract into stable, non-interactive Telegram companion pages.

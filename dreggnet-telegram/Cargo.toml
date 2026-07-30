@@ -110,6 +110,19 @@ serde_json = { workspace = true }
 # plain synchronous long-poll; no tokio) + rustls (no OpenSSL link), mirroring the discord-bot's
 # reqwest posture. The verified core stays net-free: everything above `HttpPost` is pure.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# ⚑ THE VERIFIED DISTRIBUTED GATES, WHICH THIS BOT SETTLES THROUGH AND NEVER INSTALLED.
+# `/market` and the Dark Bazaar fold their award ring through `dregg_intent::verified_settle`,
+# which is FAIL-CLOSED with no `IntentVerifiedGate` registered — so the auction cleared nothing and
+# said "WIRING BUG in this host … the award was NEVER JUDGED". `dregg-exec-lean` is the one crate
+# that implements the four FFI-free coordination seams, and it is ALREADY in this binary's graph
+# (`dregg-sdk` takes it as a `[target.'cfg']` dependency on every native target), so naming it here
+# adds ZERO compilation and makes an already-linked capability reachable — exactly the argument
+# `dreggnet-web/Cargo.toml` makes for the same edge. `node/src/lib.rs`, `discord-bot/src/main.rs`
+# and `dreggnet_web::install_verified_settlement_gate` all do this at startup; this bot now does too.
+dregg-exec-lean = { path = "../exec-lean" }
+# The archive-presence question, so a test can PANIC naming the missing capability instead of
+# printing `ok` about a settlement nothing judged (`tests/support/mod.rs`).
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`, not
 # `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone

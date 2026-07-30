@@ -241,9 +241,18 @@ impl EnrolRefusal {
                 "Refused: {detail} Nothing was enrolled and this browser's key was not registered. \
                  Check that one word and try again."
             ),
+            // ⚑ "recorded nothing." READ AS NO LOSS STATEMENT AT ALL, and the gate was right.
+            // `audit_player_text`'s loss markers are the phrases this house actually uses — "nothing
+            // was enrolled", "nothing was changed", "nothing committed" — and a sentence that ends
+            // on the bare word makes the reader infer the answer to "did anything happen to my
+            // words?" from grammar instead of being told. Every other refusal in this enum says
+            // "nothing was …"; this one said "…recorded nothing." and was the only one that failed
+            // `every_refusal_passes_the_shared_copy_gate`. Say it the same way they do, and say the
+            // second half a player of THIS box cares about: their phrase was not kept either.
             EnrolRefusal::SelfCheckFailed => "Refused: this server built an enrolment that its own \
-                 checker would not accept, so it recorded nothing. That is a fault on our side, not \
-                 in what you did, and the server log names the cause."
+                 checker would not accept, so nothing was recorded and your words were not kept. \
+                 That is a fault on our side, not in what you did, and the server log names the \
+                 cause."
                 .to_string(),
             EnrolRefusal::NotRecorded => "Refused: the enrolment was proven but could not be \
                  written to the shared record, so nothing is enrolled and this browser still plays \
@@ -771,6 +780,7 @@ mod tests {
     use dreggnet_offerings::refusal::audit_player_text;
     use dreggnet_offerings::{Action, SessionId, TurnSigner, verify_signed};
     use webauth_core::identity_resolve::RootResolver;
+    use webauth_core::link_registry::account_id_of_root;
 
     const NOW: u64 = 1_790_000_000;
 
@@ -826,11 +836,42 @@ mod tests {
         assert_eq!(actor.0, browser.pubkey_hex());
 
         // …and the board sees one human, not two strangers.
+        //
+        // ⚑ THE JOIN KEY IS THE ACCOUNT ID, NOT THE ROOT PUBKEY, and this used to compare
+        // `resolve(device)` against `resolve(root)`. `RootResolver::from_store` maps a custodial key
+        // to `account_id_of_root(root)` — "the rotation-ready account id, byte-identical to the
+        // identity cell's id, never the raw root pubkey" — while `resolve` falls back to echoing an
+        // unknown label, so the old comparison was `account_id_of_root(root)` against `root` and
+        // could only ever hold if the two were the same string. Asserted where the join actually
+        // lives: the browser key resolves to the PHRASE'S ACCOUNT.
         let resolver = RootResolver::from_store(&FileLinkStore::new(&path));
+        let account = account_id_of_root(&root).expect("a derived root pubkey has an account id");
         assert_eq!(
-            resolver.resolve(browser.pubkey_hex()),
-            resolver.resolve(&root),
-            "a device key and the phrase's key must resolve to ONE human"
+            resolver.resolve_opt(browser.pubkey_hex()),
+            Some(account.clone()),
+            "the browser's device key resolves to the phrase's human, not to a stranger"
+        );
+        // Non-vacuous in both directions: an account id is not the key that resolved to it (so this
+        // is a real join and not an echo), and an UNENROLLED browser key resolves to nobody.
+        assert_ne!(
+            account.as_str(),
+            browser.pubkey_hex(),
+            "the account id is a join key, not the device key echoed back"
+        );
+        assert_eq!(
+            resolver.resolve_opt(a_browser_key(0x5b).pubkey_hex()),
+            None,
+            "a browser key that never enrolled is nobody"
+        );
+        // And the phrase's own key resolves only once something records a SELF-ROW for it, which is
+        // the web door's job ([`crate::identity_link`]'s `WEB_PLATFORM` row, whose custodial key IS
+        // the root — see [`DEVICE_PLATFORM`]'s note on why a device row is deliberately not that).
+        // A device enrolment on its own writes one row, and it is not that one. Asserted so the
+        // scope of what this ceremony joins is stated rather than assumed.
+        assert_eq!(
+            resolver.resolve_opt(&root),
+            None,
+            "a device enrolment alone does not mint the phrase key's own self-row"
         );
         let _ = std::fs::remove_dir_all(path.parent().expect("a temp dir"));
     }

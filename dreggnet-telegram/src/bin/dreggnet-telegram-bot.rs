@@ -150,6 +150,31 @@ fn main() {
         Err(e) => eprintln!("WARN: setMyCommands failed ({e}) — the client / menu may be stale"),
     }
 
+    // 6a-bis. ⚑ INSTALL THE VERIFIED DISTRIBUTED GATES — WITHOUT WHICH `/market` NEVER SETTLES.
+    //     `/market` and the Dark Bazaar fold their award ring through
+    //     `dregg_intent::verified_settle`, which the twin-deletion sweep made authoritative per
+    //     leg: an unregistered `IntentVerifiedGate` REFUSES the leg, and a ring is all-or-none. So
+    //     a player could list, bid, bid — three real committed turns — and then read "WIRING BUG in
+    //     this host … the award was NEVER JUDGED" at the one turn that moves value. Nothing in this
+    //     binary's graph registered one; `node/src/lib.rs`, `discord-bot/src/main.rs` and
+    //     `dreggnet_web::install_verified_settlement_gate` all do this at startup.
+    //     Non-fatal on purpose: the dungeon, the Descent and every non-settling offering play
+    //     without it, and refusing to boot would take the whole bot down for one surface. The line
+    //     below is how an operator learns which surface is dark.
+    dregg_exec_lean::register_distributed_gates();
+    if dregg_lean_ffi::distributed_exports_available() {
+        eprintln!(
+            "verified distributed gates installed (a market/Bazaar award is judged by the linked \
+             verified executor)"
+        );
+    } else {
+        eprintln!(
+            "WARN: the linked archive exports no distributed coordination gates — /market and the \
+             Dark Bazaar will REFUSE to settle an award (fail-closed, not degraded); every other \
+             offering is unaffected"
+        );
+    }
+
     // 6b. ⚑ ARM THE DESCENT'S DAY BEFORE THE HOST IS BUILT — and keep it armed.
     //     The catalog registers the Descent against the LIVE verified drand day, so a run's
     //     banked relics mint under a provenance root that could not exist before that round was

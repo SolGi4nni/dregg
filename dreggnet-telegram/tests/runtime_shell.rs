@@ -24,12 +24,18 @@ use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
 use dungeon_on_dregg::KP_PRESS_ON;
 use serde_json::json;
 
+mod support;
+
 /// A deterministic bot secret (a real deploy loads/derives 32 bytes in the bin).
 const BOT_SECRET: [u8; 32] = [9u8; 32];
 const ALICE: u64 = 1001;
 
 /// A fresh in-memory host (no council members needed for the dungeon).
 fn host() -> TelegramHost<MockTransport> {
+    // The running bot arms both of these before it builds a host (`src/bin/dreggnet-telegram-bot.rs`);
+    // a test binary never runs `main`, and without them the Descent refuses to open and a market
+    // settle refuses to judge. Idempotent, so every host in this file gets the live posture.
+    support::arm_like_the_running_bot();
     TelegramHost::new(BOT_SECRET, MockTransport::new(), &[])
 }
 

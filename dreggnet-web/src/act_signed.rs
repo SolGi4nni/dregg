@@ -529,15 +529,38 @@ pub async fn post_offering_act_signed(
         }) {
             Ok(actor) => actor,
             Err(error) => {
+                // ⚑ A MALFORMED KEY IS A 400 ON THIS BRANCH TOO, and it was not.
+                //
+                // This module's own contract says so ("`400` — malformed body … or a pubkey that is
+                // not 32 bytes of hex — [`SignedError::MalformedKey`]"), the LEGACY branch's error
+                // mapping below implements it, and the game branch collapsed every verifier error
+                // into `403`. So `actor_pubkey_hex: "abcd"` — a request that never named a
+                // verifiable signer at all — was answered "signed advance refused" with the status
+                // reserved for a WELL-FORMED envelope the verifier rejected. Measured 2026-07-29 by
+                // `act_signed::a_malformed_body_is_400_before_any_crypto`, which asserts the
+                // documented split and had been red on exactly this case.
+                //
+                // Nothing about the refusal itself changed: the envelope was refused before, is
+                // refused now, and nothing commits either way. What changes is that the two
+                // conditions a caller must tell apart — "fix your request" and "your signature was
+                // rejected" — no longer share one code on one of the two branches.
+                let status = if matches!(error, SignedError::MalformedKey) {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::FORBIDDEN
+                };
                 audit::log().emit(
                     signed_audit_event(audit::Actor::unattributed(), &key, &sid, audit_detail)
-                        .decided("gated", "bad_signature"),
+                        .decided(
+                            "gated",
+                            if status == StatusCode::BAD_REQUEST {
+                                "malformed_key"
+                            } else {
+                                "bad_signature"
+                            },
+                        ),
                 );
-                return (
-                    StatusCode::FORBIDDEN,
-                    format!("signed advance refused: {error}"),
-                )
-                    .into_response();
+                return (status, format!("signed advance refused: {error}")).into_response();
             }
         };
         (RoutedSignedAction::Game(command), actor)
