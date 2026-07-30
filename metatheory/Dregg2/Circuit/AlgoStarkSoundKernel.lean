@@ -12,8 +12,10 @@ that premise forces `CircuitSoundness.verifyBatch` to reject EVERY input, so thi
 `KernelConfigSoundness.kernelConfigSound` above it — quantified over an EMPTY accepting set and was
 vacuously true. It now takes `ApexOodLaneRepair.FriLdtExtractCons` (`oodPoint = ood :: oodRest`,
 the shape `FriVerifier.batchTablesCheck` matches at `FriVerifier.lean:805`), routed through
-`algoStarkSound_of_memoryLegs_cons`. Nothing is lost — `friLdtExtract_imp_cons` sends the old
-premise into the new one, so the statement is strictly STRONGER. Nothing is silently re-emptied —
+`algoStarkSound_of_memoryLegs_cons`. ⚑ 2026-07-30: "nothing is lost — `friLdtExtract_imp_cons` sends
+the old premise into the new one" is FALSE now and is corrected rather than left; that transport is
+DELETED along with the per-run opening residual the corrected bundle gained and the landed one never
+carried. Nothing reachable was lost either way: the old premise is the empty one named above. Nothing is silently re-emptied —
 §5b proves the new premise is EQUIVALENT to itself with the OOD conjunct deleted. The FRI floor
 under it is unchanged, and no accepting model of the corrected bundle is exhibited at the deployed
 `opaque` arguments (`docs/WOUND-apex-premise-vacuity-2026-07-24.md`).

@@ -306,9 +306,12 @@ to itself with the OOD conjunct deleted, because acceptance itself supplies the 
 (`acceptsFull_gives_cons_shape`) — so the corrected premise adds exactly ZERO strength and cannot
 empty anything.
 
-NO TWIN IS KEPT. A caller still holding the old bundle composes `ApexOodLaneRepair.friLdtExtract_imp_cons`
-(a real implication) — but note that doing so buys nothing, since the old bundle is empty at deployed
-args. `FriLdtExtract` the DEFINITION is deliberately retained below as the SUBJECT of the vacuity
+NO TWIN IS KEPT. ⚑ 2026-07-30: the line that stood here — "a caller still holding the old bundle
+composes `ApexOodLaneRepair.friLdtExtract_imp_cons` (a real implication)" — is FALSE now and is
+corrected rather than left. That transport is DELETED: `FriLdtExtractCons` gained the PER-RUN
+Merkle-opening residual `¬ OpeningColl` (the honest replacement for the refuted `Poseidon2SpongeCR`
+the assemblers used to thread), and the landed bundle never carried it. Nothing reachable was lost,
+because the old bundle is empty at deployed args. `FriLdtExtract` the DEFINITION is deliberately retained below as the SUBJECT of the vacuity
 theorems, so the broken shape cannot be reintroduced silently. -/
 
 /-! ## §4 — the MEM/MAP-FREE corollary: no memory-leg input at all. -/

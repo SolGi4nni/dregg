@@ -43,7 +43,10 @@ The conclusion rests on EXACTLY the following, all NAMED hypotheses (never axiom
       `AlgoStarkSoundGeneral.FriLdtExtract`, whose singleton OOD conjunct is REFUTED on accepting
       runs and PROVED to force `verifyBatch` to reject EVERY input
       (`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`) — so this theorem was
-      vacuously true. The replacement premise is WEAKER (`friLdtExtract_imp_cons`) and adds zero
+      vacuously true. ⚑ 2026-07-30: "the replacement premise is WEAKER (`friLdtExtract_imp_cons`)"
+      is FALSE now — that transport is DELETED, because the corrected bundle gained the per-run
+      opening residual the landed one never carried. Nothing reachable was lost: the landed bundle
+      is the empty one named two lines up. The replacement adds zero OOD-shape
       strength (`AlgoStarkSoundKernel.kernelPremise_adds_no_strength` — equivalent to itself with
       the OOD conjunct deleted). The FRI floor beneath is unchanged and remains undischarged.
 
