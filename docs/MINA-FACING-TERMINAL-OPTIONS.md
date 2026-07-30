@@ -168,8 +168,27 @@ are worth only 16% (2.92 × 10⁶ → 2.47 × 10⁶), where at BabyBear hashing 
 ### What it costs to build
 
 - A `DreggPastaConfig` — the direct twin of `dregg_outer_config.rs`, with `mina-poseidon` in place of
-  `Poseidon2Bn254`. The crates are already in the tree (`mina-poseidon`, `mina-curves`, pinned in
-  the root `Cargo.toml`); the probe already has the hash and both MMCS primitives.
+  `Poseidon2Bn254`. `mina-poseidon` and `mina-curves` are already pinned in the root `Cargo.toml`,
+  and the probe already has the hash and both MMCS primitives.
+
+  ⚑ **The one piece that does NOT exist, and it is the real cost of this lever: there is no
+  `p3-pasta`.** `DreggOuterConfig` gets `Bn254` (a `p3_field::PrimeField`) for free from upstream
+  `p3-bn254`; the Pasta side needs that written — a newtype over `mina_curves::pasta::Fp` (ark-ff)
+  implementing p3's `Field`/`PrimeField`, plus a `CryptographicPermutation<[Fp; 3]>` adapter over
+  `mina-poseidon`'s `ArithmeticSponge`. **`p3-bn254` is the template and it is a small crate.** With
+  those two, everything above them drops in unchanged and generically:
+  `MultiField32PaddingFreeSponge<BabyBear, Fp, Perm, 3, 2, 1>`,
+  `TruncatedPermutation<Perm, 2, 1, 3>`, `MultiField32Challenger<BabyBear, Fp, Perm, 3, 2>` — the
+  exact type shapes `dregg_outer_config.rs:166-189` already instantiates.
+
+  The `TruncatedPermutation`/`Poseidon.hash` equivalence is not an assumption: permuting `[l, r, 0]`
+  and truncating to one element **is** absorbing two lanes at rate 2 into a zero state and squeezing
+  `state[0]`. The probe writes `compress` as `mina_poseidon_hash(&[left, right])` for that reason.
+
+  ⚠ **Prover-side cost, not free:** kimchi's Poseidon is **55 full rounds** at width 3 (α = 7)
+  against `Poseidon2Bn254`'s 8 full + 56 partial — roughly **2× the S-boxes per permutation**. The
+  BN254 shrink proves in ~95 s, so expect a Pasta-hashed one nearer ~150–200 s. That is prover time
+  on dregg's side, traded against ~15× fewer Kimchi rows on Mina's. Estimate, not measured.
 - Generalising `shrink_apex_to_outer` over `SC` (§2) — or, since the root's own outer config is a
   choice too, minting the Mina-facing proof directly at `DreggPastaConfig` with no shrink at all.
   **That variant alone is 453 → 54 slices with no other change.**
