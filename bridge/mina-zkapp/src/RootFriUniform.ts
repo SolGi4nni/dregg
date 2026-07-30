@@ -456,7 +456,10 @@ export const totalSteps = (p: UniformPlan) => AIR_SLICES + p.totalSlices;
 /** The leaf of the key tree a slice's PREDECESSOR occupies. Head slice 0's
  *  predecessor is the AIR chain and is pinned by a constant instead. */
 export function prevLeaf(p: UniformPlan, sp: UniformSpec, q: number): number {
-  if (sp.kind === 'head') return sp.pos - 1;
+  //  Head slice 0's predecessor is AIR slice 6, pinned by a compile-time
+  //  constant and NOT by the tree; leaf 0 is returned so a path can still be
+  //  built for it, and the circuit never looks at it.
+  if (sp.kind === 'head') return Math.max(sp.pos - 1, 0);
   if (sp.pos > 0) return p.head.length + sp.pos - 1;
   return q === 0 ? p.head.length - 1 : p.head.length + p.block.length - 1;
 }
