@@ -2803,6 +2803,92 @@ is what makes row 4 of the gate buildable.
 `[17,18]`, the binding head slice 1, `numTurns = 3`, and 905 instances / 131 programs.
 
 
+
+---
+
+### 3.31 ⚑ THE HASH IS A PARAMETER — and the residual list, re-stated with that pulled
+
+*2026-07-30. `src/HashSuiteType.ts`, `src/HashSuites.ts`, `src/PastaMmcs.ts`,
+`src/PastaChallenger.ts`; `npm run pasta-differential`, `npm run pasta-verify`,
+`npm run pasta-root-rows`, `npm run pasta-chain`. The full account is
+`MINA-FACING-TERMINAL-OPTIONS.md` §0.2.*
+
+`DreggProofVerify`'s walk now takes a `HashSuite` and a real proof minted under
+`DreggMinaConfig` is consumed, **proved and verified**, with seven bends refused
+and a five-step chain whose splices are refused in a fresh process from
+serialised bytes. **17.2×** fewer rows than the same statement under the deployed
+hash — and 145,323 rows does not fit a Pickles step while 8,445 does.
+
+**Measured at the root's geometry: 2.906 × 10⁶ rows = 54 slices**, against the
+2.85 × 10⁶ / 53 projection (+2.0%). **The shape has flipped**: hashing was 89% of
+this budget and is **7.4%**; the DEEP quotient was 10% and is **86.0%**.
+
+#### What that does to the list above
+
+| row | then | now |
+|---|---|---|
+| the hash | the dominant term, and every other lever was priced against it | **7.4%.** A **3× error in every measured Pasta unit price is worth 7 slices.** It is no longer a lever. |
+| the FRI knobs (§6, ember-gated) | worth ~35% | worth **~1%** — and still rotates the apex VK. Do not. |
+| the compile lever (§5.1) | 839 → 46 keys, the cheapest real win | still real, still orthogonal, and now **second-order against the columns** |
+| **column narrowing** | "then, and only then" | ⚑ **THE LEVER.** 2.50 × 10⁶ rows over ~2,342 opened values at ζ = **1,067 rows per opened value**. Halving the root's committed column count is **54 slices → 31.** |
+
+#### ⚑ THE LARGEST REMAINING GAP, and it is not a soundness one
+
+**The two halves of "Mina verifies dregg" are each missing what the other has.**
+
+- `DreggProofVerify` + `DreggProofSchedule` consume a **real emitted proof end to
+  end** — transcript derived, DEEP quotient computed, AIR closing equality
+  checked, chain proved, splices refused — and are now **hash-agnostic**. But
+  `verifyPlan` **throws on `nBatches !== 2`**: it wires the trace round and the
+  quotient round only, and a preprocessed or permutation round has point wiring
+  that is neither shape. **The root has four.**
+- `RootFriSlice` / `RootFriUniform` run at the root's **real four-round
+  geometry** (§3.28, §5.1a — 839 compiles collapsed to 46 keys). But they
+  hard-code `compressBB` / `condSwap` / `provablePermBounded`: they are
+  **Poseidon2-BabyBear**, and `RootFriWalk`'s `PRICE` is `priceAt(BABYBEAR_HASH)`
+  while `PASTA_HASH` sits in `CostModel.ts` used by nothing but a comment.
+
+So the verifier that consumes a proof cannot be pointed at the root's shape, and
+the walk at the root's shape does not consume a proof and does not hash natively.
+**Neither half is both, and closing it is engineering rather than research:**
+`RootFriSlice` takes the same `HashSuite` parameter `commitPhaseRound` already
+takes, and `verifyPlan`'s two-batch refusal becomes per-round point wiring.
+
+#### The other residuals, unchanged by this work and named so they are not read as closed
+
+1. **Three objects, one measured.** The 54 slices price a **Pasta-hashed root**.
+   The proof actually consumed is a small `DreggMinaConfig` **fixture**. The
+   third — the real **Mina terminal** (`mina_terminal_tooth.rs`: a real apex
+   shrunk under `DreggMinaConfig`, log_blowup 3, 38 queries) — **has never been
+   priced on the Mina side at all.** Its `degree_bits` are far below the root's
+   2^22, so it is plausibly the cheapest of the three and it is the next
+   measurement worth taking.
+2. **The AIR is still a parameter** (§3.18): 901 of 1,093 base constraints
+   compile from the DAG, the **192 LogUp constraints are not in that
+   vocabulary**, the extraction is a differentially-checked **seam** and not a
+   theorem, and the Lean accumulator is not welded to `AirEval.ts`'s closing
+   equality. The AIR term in the 2.906 × 10⁶ is §3's figure for an object that
+   is only partly built.
+3. **Leaf lanes are bounded `< 2^31`, not `< p_BabyBear`** — inherited from the
+   deployed path, not introduced. Stated precisely rather than as a scare: a
+   non-canonical lane packs to a **different** Pasta element, so it fails the
+   Merkle check rather than being accepted. It is a completeness wart. The
+   **challenger squeeze does not inherit it** — `assertCanonicalBb` makes every
+   squeezed limb canonical, because there a non-canonical limb *would* be a hole
+   with teeth.
+4. **The Pasta ROM idealization is unconnected.** It is named on the Pickles side
+   (`PicklesTranscriptBinding`'s `SpongeKeyedROFaithful`) and points at none of
+   the FRI/MMCS carrier sites the way `Poseidon2RomInstantiation` points at the
+   BabyBear ones. An unconnected leg, not a hole — and the hash swap moved the
+   carrier without moving the leg.
+5. **Nothing wires any of this to the governance-pinned dregg root.**
+   `setDreggRoot` is untouched and `placeholderRelay` stands. The chain's
+   terminal seal says *"I verified the proof with this `rootCommitDigest`"*; it
+   does not say that digest is dregg's.
+6. **The FRI/STARK floor is undischarged**, as everywhere. A Kimchi proof that a
+   FRI verifier accepted is not a proof that the committed function is low
+   degree.
+
 ---
 
 ## 4. DOES IT FIT
