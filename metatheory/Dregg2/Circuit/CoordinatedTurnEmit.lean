@@ -533,8 +533,15 @@ theorem coordinated_emitted_refines_spec
   have hCircuit := (coordinated_emitted_refines_circuit a).mpr hEmit
   have hstep := coordinated_circuit_step_of_sat CH RH compress compressN legRootA legRootB covenantH bindH
       pub sA sB step sA' sB' hwfA hwfB hwfA' hwfB' hOut hIn hCircuit
+  -- ⚑ `hCompress hCompressN hLeaf hRest` were dropped here on 2026-07-30: `10ebf016e` deleted
+  -- those four floor binders from `coordinated_turn_circuit_refines_spec_honest` because its
+  -- proof term never mentioned them (strictly strengthening — same conclusion, fewer
+  -- hypotheses). This call applied them POSITIONALLY, so every argument after the first one
+  -- landed in the wrong slot and `hCompress : compressInjective compress` was offered where a
+  -- `CoordinatedPublicInputs` was wanted. That lane checked for Rust consumers and found none;
+  -- the break was a Lean consumer in the same tree, invisible until a whole-tree `lake build`.
   exact coordinated_turn_circuit_refines_spec_honest CH RH compress compressN legRootA legRootB
-      covenantH (fun {bt} bind => bindH bt bind) hCompress hCompressN hLeaf hRest
+      covenantH (fun {bt} bind => bindH bt bind)
       pub sA sB step sA' sB' hPub hstep
 
 /-- Round-trip decode recovers the source circuit. -/
