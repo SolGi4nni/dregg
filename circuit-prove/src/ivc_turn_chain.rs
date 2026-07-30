@@ -1980,8 +1980,23 @@ pub struct WholeChainProofBytes {
     /// pairs ([`SEG_DIGEST_WIDTH`] = 8 canonical `BabyBear` lanes as `u32`). Codex #3 widened
     /// this from a single felt; the FAITHFUL-FLOOR lift widened it again 4→8.
     pub chain_digest: [u32; SEG_DIGEST_WIDTH],
-    /// The number of finalized turns folded.
-    pub num_turns: u64,
+    /// The number of finalized turns folded — a **`u32`**, and refused at decode unless it is
+    /// `< BABY_BEAR_MODULUS`.
+    ///
+    /// **v6 flag day.** This was a `u64` through v5, and that was a zero-cost forgery: the count
+    /// rides as ONE BabyBear lane of the root's exposed segment, so both comparison sites build
+    /// `BabyBear::new(num_turns as u32)` — `as u32` truncates mod `2^32` and `BabyBear::new`
+    /// reduces mod `p`. A relayer editing this one field to `n + p`, `n + 2p`, `n + 2^32` (no key,
+    /// no proving, no witness) produced an envelope that passed every tooth while reporting the
+    /// inflated count: a genuine 2-turn history attested as 6,308,233,219 turns
+    /// (`circuit-prove/tests/num_turns_alias_probe.rs`,
+    /// `lightclient/tests/num_turns_alias_reaches_attested_history.rs`).
+    ///
+    /// The `u32` kills the `2^32` alias BY TYPE — it is not representable on the wire — and
+    /// [`WholeChainProofBytes::from_postcard`] kills the `mod p` alias at the ONE decode gate
+    /// every wire consumer passes, on the `u32` itself, BEFORE any `as usize` (which is 32 bits
+    /// under `wasm32`, where a `usize`-typed guard would have been truncated past).
+    pub num_turns: u32,
     /// **THE BOARD WINDOW** (`v5`) — `[first.IN ‖ last.OUT]` as canonical `u32` lanes, `None` for
     /// every chain that declares no state window. The verifier appends it to the expected root
     /// exposure, so a board-window root shipped WITHOUT it is refused (25-lane `expected` vs a
@@ -2002,11 +2017,28 @@ pub struct WholeChainProofBytes {
 /// **v5** (the two-leg board-window fold): the optional `board_window` claim
 /// (`[first.IN ‖ last.OUT]`) rides the envelope. Old readers are fail-closed off a v5 artifact
 /// rather than silently ignoring lanes the root exposes and they never check.
-pub const WHOLE_CHAIN_PROOF_ENVELOPE_V1: u16 = 5;
+/// **v6** (the count-lane alias close): `num_turns` narrowed `u64` -> `u32` and refused at decode
+/// unless `< BABY_BEAR_MODULUS`. Through v5 a relayer could edit that one field to any modular
+/// alias (`n + p`, `n + 2^32`, …) and the artifact still passed every tooth while reporting the
+/// inflated count — no key, no proving, no witness. A v5 artifact now REFUSES to load rather than
+/// being reinterpreted; re-emit the envelope from the same fold (no VK rotation, no re-proving).
+pub const WHOLE_CHAIN_PROOF_ENVELOPE_V1: u16 = 6;
 
 impl WholeChainProofBytes {
     /// Project a [`WholeChainProof`] to its verify-sufficient byte envelope.
+    ///
+    /// **Panics** if `proof.num_turns >= BABY_BEAR_MODULUS`, rather than narrowing a count that
+    /// the wire cannot represent faithfully. Every fold entry point already refuses such a chain
+    /// ([`prove_turn_chain_recursive`] and its wide/conflict twins), so this is unreachable from
+    /// any produced artifact; it fires only on a hand-mutated `WholeChainProof`, and then a
+    /// truncating `as u32` would be exactly the forgery v6 exists to kill.
     pub fn from_proof(proof: &WholeChainProof) -> Self {
+        assert!(
+            (proof.num_turns as u64) < BABY_BEAR_MODULUS as u64,
+            "num_turns {} >= BabyBear modulus {BABY_BEAR_MODULUS}: the count rides as ONE field \
+             lane, so this envelope cannot represent it faithfully (v6 refuses to narrow it)",
+            proof.num_turns
+        );
         let root_proof = postcard::to_allocvec(&proof.root.0)
             .expect("root BatchStarkProof postcard-encodes (serde(bound=\"\"))");
         let binding_proof = postcard::to_allocvec(&proof.binding_proof)
@@ -2019,7 +2051,7 @@ impl WholeChainProofBytes {
             genesis_root: core::array::from_fn(|i| proof.genesis_root[i].as_u32()),
             final_root: core::array::from_fn(|i| proof.final_root[i].as_u32()),
             chain_digest: core::array::from_fn(|i| proof.chain_digest[i].as_u32()),
-            num_turns: proof.num_turns as u64,
+            num_turns: proof.num_turns as u32,
             board_window: proof.board_window.as_ref().map(|w| {
                 (
                     w.first_in.iter().map(|f| f.as_u32()).collect(),
@@ -2035,8 +2067,15 @@ impl WholeChainProofBytes {
     }
 
     /// Decode from wire bytes. Fail-closed: empty input, a malformed body, a wrong
-    /// version, or an empty proof component is an `Err` — never a silently-accepted
-    /// half-envelope.
+    /// version, an empty proof component, or a **non-canonical `num_turns`** is an `Err` —
+    /// never a silently-accepted half-envelope.
+    ///
+    /// **THE COUNT GATE (v6).** `num_turns >= BABY_BEAR_MODULUS` is refused HERE, on the `u32`,
+    /// before any consumer converts it. This is the single decode seam every wire path shares
+    /// ([`verify_whole_chain_proof_bytes`], `dregg_lightclient::verify_history_bytes`, the wasm
+    /// `verify_devnet_history` family, the gnark exporter, the ETH bridge), and it must sit on
+    /// the `u32` and not a `usize`: under `wasm32` a `usize` is 32 bits, so `env.num_turns as
+    /// usize` would already have truncated by the time a `usize`-typed guard could see it.
     pub fn from_postcard(bytes: &[u8]) -> Result<Self, TurnChainError> {
         if bytes.is_empty() {
             return Err(TurnChainError::EnvelopeDecode {
@@ -2063,6 +2102,17 @@ impl WholeChainProofBytes {
         if env.binding_proof.is_empty() {
             return Err(TurnChainError::EnvelopeDecode {
                 reason: "envelope carries an empty binding proof".to_string(),
+            });
+        }
+        if env.num_turns >= BABY_BEAR_MODULUS {
+            return Err(TurnChainError::EnvelopeDecode {
+                reason: format!(
+                    "num_turns {} >= BabyBear modulus {BABY_BEAR_MODULUS}: the count rides as ONE \
+                     field lane, so a count at or above p is an ALIAS of {} and the teeth cannot \
+                     tell them apart — refused, never reduced",
+                    env.num_turns,
+                    env.num_turns % BABY_BEAR_MODULUS
+                ),
             });
         }
         Ok(env)
@@ -3078,6 +3128,21 @@ pub fn verify_wide_turn_chain_recursive(
     proof: &WideWholeChainProof,
     expected_vk: &RecursionVk,
 ) -> Result<(), TurnChainError> {
+    // (0) THE COUNT BOUND. This verifier does NOT funnel through
+    // `verify_turn_chain_recursive_from_parts_with_board_window` — it builds its own
+    // `BabyBear::new(proof.num_turns as u32)` below — so it needs its own branch. (The first pass
+    // of this fix read only the funnelling entries and would have left this one aliasing.)
+    if (proof.num_turns as u64) >= BABY_BEAR_MODULUS as u64 {
+        return Err(TurnChainError::ClaimedPublicsUnattested {
+            reason: format!(
+                "num_turns {} >= BabyBear modulus {BABY_BEAR_MODULUS}: the wide count lane would \
+                 wrap mod p, making this claim indistinguishable from {} — refused",
+                proof.num_turns,
+                (proof.num_turns as u64) % (BABY_BEAR_MODULUS as u64)
+            ),
+        });
+    }
+
     // (1) VK pin.
     let found = recursion_vk_fingerprint(&proof.root.0);
     if found != *expected_vk {
@@ -5585,6 +5650,32 @@ pub fn verify_turn_chain_recursive_from_parts_with_board_window(
     board_window: Option<&BoardWindow>,
     expected_vk: &RecursionVk,
 ) -> Result<(), TurnChainError> {
+    // (0) THE COUNT BOUND — the verify-side twin of the fold's `num_turns < p` refusal.
+    //
+    // Both comparison sites below embed the count as ONE BabyBear lane
+    // (`BabyBear::new(num_turns as u32)`), and `BabyBear::new` reduces mod p while `as u32`
+    // truncates mod 2^32. Without this branch every `n + kp` and `n + k*2^32` is the SAME lane as
+    // `n`, so an inflated claim passes all four teeth unchanged — measured, on a real fold, at
+    // `circuit-prove/tests/num_turns_alias_probe.rs`. The prover refused this at `:2593`, `:3021`,
+    // `:3432` and `:5249`; the VERIFIER did not, which is the half that matters, because the
+    // attacker is the party holding the artifact.
+    //
+    // This one branch covers `verify_turn_chain_recursive` (in-memory),
+    // `verify_turn_chain_recursive_from_parts`, `verify_turn_chain_recursive_from_blobs` (the
+    // `pg-dregg` seam, which takes the count as a bare `usize` and never passes a decode gate) and
+    // `verify_whole_chain_proof_bytes`. The byte paths ALSO refuse at
+    // `WholeChainProofBytes::from_postcard` — deliberately both, since the blob seam has no
+    // envelope and the in-memory seam has no wire.
+    if (num_turns as u64) >= BABY_BEAR_MODULUS as u64 {
+        return Err(TurnChainError::ClaimedPublicsUnattested {
+            reason: format!(
+                "num_turns {num_turns} >= BabyBear modulus {BABY_BEAR_MODULUS}: the count lane \
+                 would wrap mod p, making this claim indistinguishable from {} — refused",
+                (num_turns as u64) % (BABY_BEAR_MODULUS as u64)
+            ),
+        });
+    }
+
     // (1) VK pin.
     let found = recursion_vk_fingerprint(root_proof);
     if found != *expected_vk {

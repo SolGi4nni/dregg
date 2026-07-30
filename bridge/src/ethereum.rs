@@ -706,7 +706,11 @@ impl EthPublicInputsV2 {
         Self::new(
             src.genesis_root,
             src.final_root,
-            src.num_turns,
+            // Envelope v6 narrowed this field `u64` -> `u32` (the count-lane alias close), so the
+            // "does not fit u32" arm of `new` is now unreachable FROM THIS SEAM — dead by type,
+            // not by check. `new` keeps taking a `u64` because callers that are not the envelope
+            // (raw settlement JSON, the interchain adapter) still hand it one.
+            u64::from(src.num_turns),
             src.chain_digest,
         )
     }

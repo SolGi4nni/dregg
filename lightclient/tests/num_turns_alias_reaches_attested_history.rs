@@ -1,16 +1,31 @@
-//! **FALSIFICATION PROBE — does the count alias reach `AttestedHistory`?**
+//! **DOES THE COUNT ALIAS REACH `AttestedHistory`? — measured YES, then CLOSED. Now the
+//! REGRESSION TOOTH.**
 //!
-//! `circuit-prove/tests/num_turns_alias_probe.rs` MEASURED that
-//! `verify_whole_chain_proof_bytes` admits an envelope whose `num_turns` has been inflated
-//! by any multiple of the BabyBear prime (or of `2^32`), because both comparison sites
-//! build `BabyBear::new(num_turns as u32)`.
+//! ## What this probe measured when it was written (commit `0a1854df0`)
 //!
-//! That is a verifier-level fact. This probe closes the last hop: `verify_history_bytes`
-//! copies `env.num_turns as usize` into the returned [`AttestedHistory`]
-//! (`lightclient/src/lib.rs:245`) with no branch between the teeth and the copy — so the
-//! number the light client *reports* is the relayer's, not the fold's. `AttestedHistory`'s
-//! own doc (`:131`) reads: "every one of `num_turns` finalized turns executed correctly,
-//! in order".
+//! `circuit-prove/tests/num_turns_alias_probe.rs` had MEASURED that
+//! `verify_whole_chain_proof_bytes` admits an envelope whose `num_turns` has been inflated by any
+//! multiple of the BabyBear prime (or of `2^32`), because both comparison sites build
+//! `BabyBear::new(num_turns as u32)`.
+//!
+//! That was a verifier-level fact. This probe closed the last hop: `verify_history_bytes` copies
+//! `env.num_turns as usize` into the returned [`dregg_lightclient::AttestedHistory`] with no
+//! branch between the teeth and the copy — so the number the light client *reported* was the
+//! relayer's, not the fold's, against an `AttestedHistory` doc that reads "every one of
+//! `num_turns` finalized turns executed correctly, in order".
+//!
+//! **Measured: a genuine 2-turn history attested as `num_turns = 6,308,233,219`.**
+//!
+//! ## What this file asserts NOW
+//!
+//! **The assertions are DELIBERATELY INVERTED, not edited to match observed behaviour.** Each one
+//! states the refusal envelope v6 owes, so a regression re-opens this file loudly.
+//!
+//! The fix sits in `circuit-prove`, upstream of this crate: `num_turns` is a `u32` (the `2^32`
+//! family is unrepresentable) and `WholeChainProofBytes::from_postcard` refuses `>= p`. There is
+//! still no branch between the teeth and the copy at `lightclient/src/lib.rs` — and there does not
+//! need to be one, because nothing that reaches the copy can carry a non-canonical count. This
+//! probe is what holds that reasoning to account.
 //!
 //! SLOW: one real recursion fold (~minutes). Run with:
 //!   cargo test -p dregg-lightclient --test num_turns_alias_reaches_attested_history -- --ignored --nocapture
@@ -26,7 +41,7 @@ use dregg_lightclient::verify_history_bytes;
 use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 /// The BabyBear prime `2^31 - 2^27 + 1`.
-const P: u64 = 0x7800_0001;
+const P: u32 = 0x7800_0001;
 
 fn open_permissions() -> dregg_cell::Permissions {
     use dregg_cell::AuthRequired;
@@ -73,8 +88,8 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> FinalizedTurn {
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
-/// **THE MEASUREMENT.** The light client accepts an envelope whose count was edited on the
-/// wire and reports the edited count as the number of turns it attests.
+/// **THE MEASUREMENT, INVERTED.** The light client must REFUSE an envelope whose count was edited
+/// on the wire, so no `AttestedHistory` is ever minted carrying a relayer's number.
 #[test]
 #[ignore = "SLOW: one real recursion fold (~minutes); run with --ignored --nocapture"]
 fn light_client_reports_the_relayers_inflated_count() {
@@ -85,6 +100,8 @@ fn light_client_reports_the_relayers_inflated_count() {
     let bytes = whole.to_bytes();
     let env = WholeChainProofBytes::from_postcard(&bytes).expect("the honest envelope decodes");
 
+    // The honest artifact must still attest, and at the TRUE count — a fix that refused this, or
+    // that reduced the count into range, would be worse than the hole.
     let honest = verify_history_bytes(&bytes, &vk).expect("the honest envelope must attest");
     println!(
         "[baseline] AttestedHistory.num_turns = {}",
@@ -92,32 +109,25 @@ fn light_client_reports_the_relayers_inflated_count() {
     );
     assert_eq!(honest.num_turns, 2);
 
-    for (label, n) in [
-        ("n + p", 2 + P),
-        ("n + 2^32", 2 + (1u64 << 32)),
-        ("n + 2^32 + p", 2 + (1u64 << 32) + P),
-    ] {
+    // `n + 2^32` and `n + 2^32 + p` are absent from this table because envelope v6's `u32` cannot
+    // hold them; that leg is measured at the bytes in
+    // `circuit-prove/tests/num_turns_alias_probe.rs::wire_u64_shaped_count_is_not_even_decodable`.
+    for (label, n) in [("n + p", 2 + P), ("n + 2p", 2 + 2 * P)] {
         let mut bad = env.clone();
         bad.num_turns = n;
         match verify_history_bytes(&bad.to_postcard(), &vk) {
-            Ok(att) => {
-                println!(
-                    "[alias] {label}: envelope claims {n}, AttestedHistory reports {}",
-                    att.num_turns
-                );
-                assert_eq!(
-                    att.num_turns as u64, n,
-                    "the light client reports the RELAYER's count verbatim"
-                );
-            }
-            Err(e) => panic!(
-                "REFUTED: the light client refused the aliased count {label} = {n}: {e:?} — \
-                 something on this path bounds the count after all"
+            Err(e) => println!("[alias] {label} = {n}: REFUSED — {e}"),
+            Ok(att) => panic!(
+                "REGRESSION: the light client ADMITTED the aliased count {label} = {n} and minted \
+                 an AttestedHistory reporting {} turns — a relayer can inflate a history's length \
+                 by editing one integer, with no key, no proving and no witness",
+                att.num_turns
             ),
         }
     }
 
-    // CONTROL: a non-aliasing edit must still be refused, else nothing above is attributable.
+    // CONTROL: a non-aliasing edit (below p, so it sails past the new count bound) must still be
+    // refused by the segment tooth — else nothing above is attributable.
     let mut bad = env.clone();
     bad.num_turns = 3;
     let r = verify_history_bytes(&bad.to_postcard(), &vk);

@@ -271,7 +271,7 @@ fn ethereum_publics_v2_from_whole_chain_bytes() {
         genesis_root: G_GENESIS,
         final_root: G_FINAL,
         chain_digest: G_DIGEST,
-        num_turns: G_NUM_TURNS,
+        num_turns: G_NUM_TURNS as u32,
         // Non-automatafl envelope: no board window (the migration added this field;
         // the correct default for a chain that declares no state window is `None`).
         board_window: None,
@@ -284,10 +284,19 @@ fn ethereum_publics_v2_from_whole_chain_bytes() {
     bad.final_root[0] = BABYBEAR_MODULUS;
     assert!(EthPublicInputsV2::from_whole_chain_bytes(&bad).is_err());
 
-    // REJECT: num_turns beyond u32.
+    // REJECT: a non-canonical num_turns (>= p). Envelope v6 narrowed the field to `u32`, so
+    // "beyond u32" is no longer expressible AT THIS SEAM — that arm of the refusal is dead by
+    // type. `>= p` still is expressible in a hand-built envelope and must still be refused.
     let mut bad = env;
-    bad.num_turns = u64::from(u32::MAX) + 1;
+    bad.num_turns = BABYBEAR_MODULUS;
     assert!(EthPublicInputsV2::from_whole_chain_bytes(&bad).is_err());
+
+    // …and the "does not fit u32" arm of the constructor is still live for the NON-envelope
+    // callers that hand it a raw `u64` (raw settlement JSON, the interchain adapter).
+    assert!(
+        EthPublicInputsV2::new(G_GENESIS, G_FINAL, u64::from(u32::MAX) + 1, G_DIGEST).is_err(),
+        "a raw u64 count beyond u32 must still be refused by the constructor"
+    );
 }
 
 /// Serde cannot smuggle a non-canonical value around the constructor: decode

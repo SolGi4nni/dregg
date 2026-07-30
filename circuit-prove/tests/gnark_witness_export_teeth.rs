@@ -127,7 +127,7 @@ fn accept_minimal_envelope_full_shape() {
     for i in 0..SEG_DIGEST_WIDTH {
         assert_eq!(publics["chain_digest"][i], env.chain_digest[i]);
     }
-    assert_eq!(publics["num_turns"], env.num_turns as u32);
+    assert_eq!(publics["num_turns"], env.num_turns);
 
     // root_proof_hex round-trips to the exact postcard bytes.
     let hex = v["root_proof_hex"]
@@ -166,7 +166,7 @@ fn public_input_vector_order_is_genesis_final_numturns_digest() {
     let mut expected: Vec<u32> = Vec::with_capacity(25);
     expected.extend_from_slice(&env.genesis_root);
     expected.extend_from_slice(&env.final_root);
-    expected.push(env.num_turns as u32);
+    expected.push(env.num_turns);
     expected.extend_from_slice(&env.chain_digest);
     assert_eq!(vector.to_vec(), expected);
 
@@ -200,7 +200,7 @@ fn accept_boundary_lane_p_minus_1() {
     env.genesis_root[0] = BABYBEAR_MODULUS - 1;
     env.final_root[7] = BABYBEAR_MODULUS - 1;
     env.chain_digest[3] = BABYBEAR_MODULUS - 1;
-    env.num_turns = (BABYBEAR_MODULUS - 1) as u64;
+    env.num_turns = BABYBEAR_MODULUS - 1;
     let vector = gnark_public_input_vector(&env).expect("p-1 lanes are canonical");
     assert_eq!(vector[0], BABYBEAR_MODULUS - 1);
     assert_eq!(vector[15], BABYBEAR_MODULUS - 1);
@@ -257,15 +257,19 @@ fn reject_non_canonical_lanes_every_block() {
     }
 }
 
-/// `num_turns` beyond u32 (would truncate) and at/above p (would wrap in the
-/// field lane) are BOTH refused — no clamping, no silent reduction.
+/// `num_turns` at/above p (would wrap in the field lane) is refused — no clamping, no silent
+/// reduction.
+///
+/// **v6 note.** This test used to also cover `1 << 32` and `u64::MAX` ("would truncate"). The
+/// envelope's `num_turns` is now a `u32`, so those cases are UNREPRESENTABLE — killed by type
+/// rather than by a check, which is the stronger of the two. What remains representable, and so
+/// still needs a check, is `p <= n <= u32::MAX`.
 #[test]
 fn reject_num_turns_overflow_and_wrap() {
     for bad in [
-        BABYBEAR_MODULUS as u64,       // == p: wraps to 0 in the field lane
-        (BABYBEAR_MODULUS as u64) + 5, // > p, still fits u32: wraps
-        1u64 << 32,                    // u32 overflow: would truncate to 0
-        u64::MAX,                      // way out
+        BABYBEAR_MODULUS,     // == p: wraps to 0 in the field lane
+        BABYBEAR_MODULUS + 5, // > p, still fits u32: wraps
+        u32::MAX,             // the top of what the v6 field can even hold
     ] {
         let mut env = minimal_envelope();
         env.num_turns = bad;

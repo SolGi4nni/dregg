@@ -83,9 +83,12 @@ pub enum GnarkWitnessExportError {
         value: u32,
     },
     /// `num_turns` is not a canonical BabyBear residue. The host tooth embeds
-    /// the count as ONE BabyBear lane, so `num_turns >= p` (which includes
-    /// everything above `u32::MAX`) would wrap in-field; refused instead.
-    NumTurnsNotCanonical { value: u64 },
+    /// the count as ONE BabyBear lane, so `num_turns >= p` would wrap in-field;
+    /// refused instead. (Envelope v6 narrowed the field to `u32`, so the old
+    /// "above `u32::MAX`" arm of this refusal is now dead BY TYPE — and
+    /// `WholeChainProofBytes::from_postcard` refuses `>= p` before the exporter
+    /// ever sees a decoded envelope. This remains for hand-built envelopes.)
+    NumTurnsNotCanonical { value: u32 },
     /// The envelope carries no root proof bytes — nothing to wrap.
     EmptyRootProof,
 }
@@ -140,7 +143,7 @@ pub fn gnark_public_input_vector(
     check_lanes("genesis_root", &env.genesis_root)?;
     check_lanes("final_root", &env.final_root)?;
     check_lanes("chain_digest", &env.chain_digest)?;
-    if env.num_turns >= BABYBEAR_MODULUS as u64 {
+    if env.num_turns >= BABYBEAR_MODULUS {
         return Err(GnarkWitnessExportError::NumTurnsNotCanonical {
             value: env.num_turns,
         });
@@ -149,7 +152,7 @@ pub fn gnark_public_input_vector(
     let mut v = [0u32; GNARK_PUBLIC_INPUT_LEN];
     v[..SEG_ANCHOR_WIDTH].copy_from_slice(&env.genesis_root);
     v[SEG_ANCHOR_WIDTH..2 * SEG_ANCHOR_WIDTH].copy_from_slice(&env.final_root);
-    v[2 * SEG_ANCHOR_WIDTH] = env.num_turns as u32;
+    v[2 * SEG_ANCHOR_WIDTH] = env.num_turns;
     v[2 * SEG_ANCHOR_WIDTH + 1..].copy_from_slice(&env.chain_digest);
     Ok(v)
 }
@@ -225,7 +228,7 @@ pub fn export_gnark_witness_json(
         "    \"final_root\": {},\n",
         json_u32_array(&env.final_root)
     ));
-    out.push_str(&format!("    \"num_turns\": {},\n", env.num_turns as u32));
+    out.push_str(&format!("    \"num_turns\": {},\n", env.num_turns));
     out.push_str(&format!(
         "    \"chain_digest\": {}\n",
         json_u32_array(&env.chain_digest)
