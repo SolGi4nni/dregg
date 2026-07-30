@@ -50,12 +50,30 @@ Nothing in it compiles a circuit.
 | `root-fri-preamble` @0 | 1–4 s | the batch-STARK preamble differential and its discriminating polarities |
 | `fri-walk-plan`, `kat`, `merkle-constraints` | ~5 s | the cut list, the Poseidon vectors, the hashing-row extrapolation |
 
+Measured on an idle box: **25 s**. Measured while a tier-1 run competed for the
+same machine: **39 s**. Against the 3000-second budget the row used to carry.
+
 ### Tier 1 — pre-merge. One representative instance per family, compiled and proved.
 
 `gate` (the zkApp), `poseidon2-rows` (the hash), `probe` (the Rust emitting
 side), `fri-chain` (the FRI family — the leg that *found* the coset-descent bug),
 `dregg-verify` (the assembly), `root-air` + `root-air-real` (the root's own AIR),
-`partition` (the chain family), `cellcommit-native` (Route B).
+`partition` (the chain family), `cellcommit-native` (Route B), and the three walk
+legs at their full selves.
+
+⚠ **Tier 1 and tier 2 are RED on `main` as of 2026-07-30, and not because of the
+tiering.** `root-fri-braid` [5] exits 1 at its own default budget with
+
+> `✗ 1 splice(s) were NOT ATTEMPTED at this cut — an absent falsifier reads
+> exactly like one that passed, and this table is only worth what it fired`
+
+— `one Merkle sibling bent` is not attempted at the cut the leg picks. That is
+the leg's own three-valued splice-table problem (follow-up 7), mid-flight in a
+live lane. **Tier 0 is green**, and a tier-0 green therefore does not imply the
+braid's splice table fires — which is exactly the kind of thing this page exists
+to say out loud. Measured parts, so tier 1 has numbers even while it cannot
+finish: braid **5 m 27 s**, `root-air` 103 s, `root-air-real` 83 s,
+`cellcommit-native` 21 s, `mina-merkle` 60 s, `incnonce-native` 16 s.
 
 ### Tier 2 — the old headline. Every family member, the full chains, the ceiling.
 
@@ -105,6 +123,11 @@ their patterns every single run, so they cannot silently stop existing;
 measurement. So the trade is three-legged and stated: the census says the figure
 has not moved, the per-leg `ratchet: ` grep says the ratchet **ran**, and **one**
 constant-drift injection (`rows`) stays live to say the mechanism **bites**.
+
+Measured end to end, `SELFTEST_LEGS="rows" --self-test`: **33 s** — pre-flight
+over all 95, then three faults injected and all three turning the gate red,
+including the surviving constant-drift representative. The PASS line reports the
+14 held.
 
 ---
 
@@ -160,3 +183,9 @@ rather than a leg that quietly runs in the tier that has to finish in a minute.
    ⚑ The general lesson, and it is the reason this is written down: **a "smaller
    run of the same test" is only smaller if the test does not choose its own
    subject from what the run happened to do.** This one does.
+
+   The two budgets give a clean control for that claim: the *same* splice,
+   `a digest of a FRI lane chunk this slice never reads, bent`, is **✓ REFUSED**
+   at the cut a 4-slice run picks (slice 1) and **✗ ACCEPTED** at the cut a
+   1-slice run forces (slice 0). Same circuit, same bend, opposite verdicts —
+   because the cut moved, not because anything about the object changed.
