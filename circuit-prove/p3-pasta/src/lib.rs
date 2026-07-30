@@ -93,7 +93,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// live in — presented to Plonky3 as a [`PrimeField`].
 ///
 /// `p = 28948022309329048855892746252171976963363056481941560715954676764349967630337`
-/// (254.6 bits, two-adicity 32, multiplicative generator 5).
+/// — **exactly `2^254.000`** (it is `2^254` plus a 190-bit tail, so `log2(p)`
+/// rounds to 254 to seventeen places). ⚠ `docs/MINA-FACING-TERMINAL-OPTIONS.md`
+/// §3 says 254.6; that is wrong, and `tests/commitment_birthday_bar.rs`
+/// computes it. Two-adicity 32, multiplicative generator 5.
 ///
 /// The inner `Fp` is public: the whole point of this type is to be a *view*, so
 /// crossing back to `mina-poseidon` / `mina-curves` must not need a conversion
@@ -407,8 +410,8 @@ ring_sum!(PastaFp);
 impl_div_methods!(PastaFp, PastaFp);
 
 impl Distribution<PastaFp> for StandardUniform {
-    /// Rejection sampling over the 255-bit range. `p ≈ 2^254.6`, so the top bit
-    /// is always clear and acceptance is ~78% per trial.
+    /// Rejection sampling over the 255-bit range. `p = 2^254.000`, so the top bit
+    /// is always clear and acceptance is ~50% per trial.
     #[inline]
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> PastaFp {
         loop {

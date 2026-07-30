@@ -40,7 +40,7 @@
 //! | piece | ETH (`DreggOuterConfig`) | MINA (this) |
 //! |---|---|---|
 //! | permutation | `Poseidon2Bn254<3>` (α=5, 8 full + 56 partial) | [`MinaPoseidonPerm`] (α=7, **55 full**) |
-//! | hash field | `Bn254` (2^254.0) | [`PastaFp`] (2^254.6) |
+//! | hash field | `Bn254` (2^253.60) | [`PastaFp`] (**2^254.00**) |
 //! | leaf hash | `MultiField32PaddingFreeSponge<_, _, _, 3, 2, 1>` | **same shape** |
 //! | compression | `TruncatedPermutation<_, 2, 1, 3>` | **same shape** |
 //! | challenger | `MultiField32Challenger<_, _, _, 3, 2>` | **same shape** |

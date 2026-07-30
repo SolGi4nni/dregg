@@ -343,8 +343,8 @@ fn multifield_challenger_pack_split_constants() {
     assert_eq!(ch.absorb_num_f_elms(), 8);
     // ⚑ The squeeze split is NOT a bit count: `squeeze_field_order_num_limbs`
     // returns the largest `k` with `|BabyBear|^{k+2} ≤ |PF|`, i.e. base-`p`
-    // digits that stay near-uniform over BabyBear. Pasta (2^254.6) and BN254
-    // (2^254.0) both land on **7** — so all three challenger constants coincide
+    // digits that stay near-uniform over BabyBear. Pasta (2^254.00) and BN254
+    // (2^253.60) both land on **7** — so all three challenger constants coincide
     // with the ETH wrap's, and `chain/gnark/multifield_challenger.go`'s
     // `mfAbsorbRadixBits=31 / mfAbsorbNumFElms=8 / mfSqueezeNumFElms=7` is
     // simultaneously the Mina-side spec. Measured, not assumed: an earlier draft

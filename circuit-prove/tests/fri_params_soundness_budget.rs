@@ -50,7 +50,11 @@
 //! `#assert_axioms` is blind to hypotheses — the Lean being kernel-clean is NOT what makes these
 //! numbers unconditional; the discharge theorems are.
 //!
-//! ## ⚑ THE FINDINGS — 7 shipped configs, 7 different postures, 2 corrected claims
+//! ## ⚑ THE FINDINGS — 8 shipped configs, 7 different postures, 2 corrected claims
+//!
+//! (The eighth, `create_mina_config`, is deliberately not an eighth posture: it
+//! carries the ETH wrap's knob set element for element so that the ONLY thing
+//! differing between the two foreign-hash terminals is the hash field.)
 //!
 //! The old gate judged **2 of 7** shipped FRI knob sets. It also collapsed: one `~112.6` headline was
 //! narrated for the system. Reading every config through the same theorem says otherwise.
@@ -150,6 +154,10 @@ use dregg_circuit::stark_zk::{
     ZK_FRI_MAX_LOG_ARITY, ZK_FRI_NUM_QUERIES, ZK_FRI_QUERY_POW_BITS,
 };
 use dregg_circuit_prove::accumulator::WRAP_LOG_CEIL;
+use dregg_circuit_prove::dregg_mina_config::{
+    MINA_EXT_DEGREE, MINA_FRI_COMMIT_POW_BITS, MINA_FRI_LOG_BLOWUP, MINA_FRI_LOG_FINAL_POLY_LEN,
+    MINA_FRI_MAX_LOG_ARITY, MINA_FRI_NUM_QUERIES, MINA_FRI_QUERY_POW_BITS,
+};
 use dregg_circuit_prove::dregg_outer_config::{
     OUTER_EXT_DEGREE, OUTER_FRI_COMMIT_POW_BITS, OUTER_FRI_LOG_BLOWUP,
     OUTER_FRI_LOG_FINAL_POLY_LEN, OUTER_FRI_MAX_LOG_ARITY, OUTER_FRI_NUM_QUERIES,
@@ -218,7 +226,7 @@ const PER_FOLD_FLOOR_BITS: usize = 109;
 /// The floor on the BCIKS20 COMMIT-PHASE column `ε_C` (`commit_bits`), **AT `FIXTURE_LOG_D0`**.
 ///
 /// **Derivation — READ OFF LEAN, not chosen (2026-07-15).** Running the gate at
-/// `log_d0 = 12, bciks_m = 7` and reading what Lean reports for all 7 shipped configs:
+/// `log_d0 = 12, bciks_m = 7` and reading what Lean reports for all 8 shipped configs:
 ///
 /// ```text
 ///   ir2_config (DEPLOYED wrap, lb=6, arity 8) ... 71   ← WEAKEST
@@ -351,7 +359,7 @@ struct ShippedConfig {
 
 /// The DEPLOYED knob sets, read from the production exports — the only input the live gate judges.
 ///
-/// All 7 shipped configs (the census that produced this list read every `FriParameters` /
+/// All 8 shipped configs (the census that produced this list read every `FriParameters` /
 /// `create_*_config` construction site in the tree; the excluded ones are `#[ignore]`d sweeps and
 /// R1CS-cost grids that never touch the wire). The old gate covered rows 0 and 1 only.
 fn shipped() -> Vec<ShippedConfig> {
@@ -540,6 +548,41 @@ fn shipped() -> Vec<ShippedConfig> {
                 log_d0: FIXTURE_LOG_D0,
                 bciks_m: BCIKS_M,
                 commit_pow: OUTER_FRI_COMMIT_POW_BITS,
+            },
+            modeled: FriKnobs {
+                log_blowup: 3,
+                num_queries: 38,
+                query_pow_bits: 16,
+                max_log_arity: 1,
+                log_final_poly_len: 0,
+                ext_deg: 4,
+                log_d0: FIXTURE_LOG_D0,
+                bciks_m: BCIKS_M,
+                commit_pow: 0,
+            },
+        },
+        ShippedConfig {
+            name: "create_mina_config (MINA terminal — Mina-Poseidon over Pasta)",
+            // ⚑ THE SAME LEAN MODEL AS THE ETH WRAP, AND THAT IS THE DESIGN.
+            // `DreggMinaConfig` ships the ETH wrap's knob set element for
+            // element (asserted in `dregg_mina_config`'s own tests), so its FRI
+            // ledger reading IS `ethWrapOuterConfig`'s — the ONLY difference
+            // between the two terminals is the hash field, and the hash field
+            // is not a FRI knob. A Mina config that re-knobbed (the gnark pins
+            // on arity and commit-PoW do not bind it) would need its OWN Lean
+            // model before this row could be honest, which is exactly why it
+            // does not re-knob yet.
+            lean_model: "FriLedgerSound.ethWrapOuterConfig",
+            deployed: FriKnobs {
+                log_blowup: MINA_FRI_LOG_BLOWUP,
+                num_queries: MINA_FRI_NUM_QUERIES,
+                query_pow_bits: MINA_FRI_QUERY_POW_BITS,
+                max_log_arity: MINA_FRI_MAX_LOG_ARITY,
+                log_final_poly_len: MINA_FRI_LOG_FINAL_POLY_LEN,
+                ext_deg: MINA_EXT_DEGREE,
+                log_d0: FIXTURE_LOG_D0,
+                bciks_m: BCIKS_M,
+                commit_pow: MINA_FRI_COMMIT_POW_BITS,
             },
             modeled: FriKnobs {
                 log_blowup: 3,
@@ -832,7 +875,7 @@ fn deployed_wrap_consts_equal_the_lean_modeled_config() {
 
 /// **PROOF THE GATE BITES — perturb the DEPLOYED consts and require the REAL gate to red.**
 ///
-/// Walks each of the 6 pinned knobs on each of the 7 shipped configs, degrades that ONE knob from its
+/// Walks each of the 6 pinned knobs on each of the 8 shipped configs, degrades that ONE knob from its
 /// real deployed value, and requires `check_config` — the same function the live gate calls — to
 /// refuse, NAMING that knob. So it measures the gate's margin against reality: if a deployed knob
 /// could be moved without a red, this test says so.
