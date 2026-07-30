@@ -24,6 +24,12 @@ p3-baby-bear = { workspace = true }
 # (dregg_outer_config.rs), the BN254-native-hash wrap layer.
 p3-bn254 = { workspace = true }
 p3-poseidon2 = { workspace = true }
+# dregg-p3-pasta: the MINA-facing twin of p3-bn254 — Pasta Fp as a p3 PrimeField
+# plus kimchi's own Poseidon as a p3 CryptographicPermutation. Used ONLY by
+# `dregg_mina_config.rs`, the Mina-native-hash terminal config. There is no
+# upstream `p3-pasta`; this crate is that gap
+# (docs/MINA-FACING-TERMINAL-OPTIONS.md §3).
+dregg-p3-pasta = { path = "p3-pasta" }
 p3-air = { workspace = true }
 p3-matrix = { workspace = true }
 p3-uni-stark = { workspace = true }

@@ -6254,6 +6254,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-lean-ffi",
+ "dregg-p3-pasta",
  "dregg-turn",
  "dregg-turn-prover",
  "fhegg-solver",
@@ -7077,6 +7078,27 @@ dependencies = [
  "dregg-zkoracle-live",
  "dregg-zkoracle-prove",
  "hex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dregg-p3-pasta"
+version = "0.1.0"
+dependencies = [
+ "ark-ff 0.5.0",
+ "mina-curves",
+ "mina-poseidon",
+ "num-bigint",
+ "p3-baby-bear",
+ "p3-challenger",
+ "p3-commit",
+ "p3-field",
+ "p3-matrix",
+ "p3-merkle-tree",
+ "p3-symmetric",
+ "paste",
+ "rand 0.10.1",
  "serde",
  "serde_json",
 ]

@@ -1,0 +1,45 @@
+[package]
+name = "dregg-p3-pasta"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Pasta Fp as a Plonky3 PrimeField, plus Mina-Poseidon as a Plonky3 CryptographicPermutation — the Mina-facing twin of upstream p3-bn254."
+
+[lib]
+name = "p3_pasta"
+path = "src/lib.rs"
+
+[dependencies]
+# The p3 side. Same pinned rev as every other p3 crate in the workspace; a drift
+# here is a drift in what `PrimeField`/`CryptographicPermutation` even mean.
+p3-field = { workspace = true }
+p3-symmetric = { workspace = true }
+
+# The Mina side. Declared at o1-labs/proof-systems `36a8b510` — the SAME
+# coordinates the probe crate uses — which the root manifest's
+# `[patch."https://github.com/o1-labs/proof-systems"]` redirects to
+# `emberian/proof-systems c5305e63` (a rayon-pin relaxation, byte-identical
+# otherwise; see the root Cargo.toml note).
+#
+# ⚠ So the probe crate and this crate resolve to DIFFERENT checkouts: the probe
+# opts out of the workspace and therefore out of the patch. Both carry
+# `pasta::FULL_ROUNDS = 55` and the same `fp_kimchi::static_params()`, and
+# `tests/mina_poseidon_gold_kat.rs` re-pins THIS crate's permutation against the
+# SAME o1js gold vectors, so a divergence between the two would fail a test
+# rather than become a silent transcript fork.
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", default-features = false }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "36a8b510", default-features = false, features = ["std"] }
+ark-ff = { version = "0.5", default-features = false, features = ["std"] }
+
+num-bigint = "0.4.6"
+paste = "1"
+rand = "0.10"
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+p3-baby-bear = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-matrix = { workspace = true }
+p3-merkle-tree = { workspace = true }
+serde_json = { workspace = true }
