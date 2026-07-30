@@ -1065,22 +1065,44 @@ async function main() {
     // ---------------------------------------------------------------------
     // [7b] The splices, ACROSS the process boundary.
     //
-    // ⚑ SPLICE AT A SLICE THAT CARRIES MERKLE DATA and whose predecessor is
-    // proved. A transcript-only slice has no `aux`, so the `auxBent` attempt
-    // cannot fire there and the table would quietly report one short — a
-    // falsifier that is absent reads exactly like one that passed.
+    // ⚑ CARRYING A MERKLE SIBLING IS NOT ENOUGH TO FALSIFY ONE, AND THIS RUN
+    // FOUND THAT THE HARD WAY. §3.27's rule — cut at "the last slice that
+    // consumes a witnessed sibling" — selects on the presence of the WITNESS,
+    // and what refuses a bent sibling is the presence of the ASSERTION that
+    // closes over it. At `block7` (56 aux lanes, seven `inLevel` steps, no
+    // closer) a bent sibling only changes the digest the slice hands on: the
+    // first `cur == commitment` check is `inRoot`, three cuts later at `block9`.
+    // So `auxBent` was ACCEPTED there, correctly, and asserting it must be
+    // refused was the harness being wrong about its own cut.
+    //
+    // The cut is therefore chosen to contain a CLOSER — `inRoot`, `cpRoot` or
+    // `final` — as well as `aux`. When no proved cut has one, `auxBent` is
+    // reported as NOT ATTRIBUTABLE at this cut, with the reason, instead of
+    // being asserted or silently dropped.
     // ---------------------------------------------------------------------
-    let at: Instance | null = null;
-    for (let i = nProve - 1; i >= 1; i--) {
-      const { sp, q } = order[i];
-      const sl = uniformSlice(c.plan, sp);
+    const CLOSERS = new Set(['inRoot', 'cpRoot', 'final']);
+    const cutInfo = (i: number) => {
+      const sl = uniformSlice(c.plan, order[i].sp);
       let aux = 0;
-      for (let k2 = sl.from; k2 < sl.to; k2++) aux += auxLanes(c.w.segs[k2]);
-      if (aux > 0) {
+      let closer: string | null = null;
+      for (let k2 = sl.from; k2 < sl.to; k2++) {
+        aux += auxLanes(c.w.segs[k2]);
+        if (CLOSERS.has(c.w.segs[k2].t)) closer = c.w.segs[k2].t;
+      }
+      return { aux, closer };
+    };
+    let at: Instance | null = null;
+    let atCloser: string | null = null;
+    for (let i = nProve - 1; i >= 1 && at === null; i--) {
+      const { aux, closer } = cutInfo(i);
+      if (aux > 0 && closer !== null) {
         at = order[i];
-        break;
+        atCloser = closer;
       }
     }
+    if (at === null)
+      for (let i = nProve - 1; i >= 1 && at === null; i--)
+        if (cutInfo(i).aux > 0) at = order[i];
     if (at === null) {
       console.log('\n[7b] no proved slice carries Merkle data yet — the splice table is not run');
     } else {
@@ -1091,7 +1113,10 @@ async function main() {
       };
       console.log(
         `\n[7b] the splice is REFUSED at ${specName(at.sp)} q${at.q} (chain step ${at.k}) — in a ` +
-          'process that compiled only that program',
+          'process that compiled only that program' +
+          (atCloser === null
+            ? ' ⚠ this cut has NO closing assertion, so auxBent is not attributable here'
+            : `, and this cut CLOSES a ${atCloser} so a bent sibling has something to fail against`),
       );
       const sp2 = await child({ ...env, UNIFORM_PHASE: 'splice' }, 'splice');
       const declared = readVk(keyPath(at.sp)).hash;
@@ -1123,10 +1148,25 @@ async function main() {
         ['inListWrongLeaf', "⚑ a key that IS in this chain's key list, at the WRONG LEAF, with its own path"],
       ];
       let attempted = 0;
+      let excused = 0;
       for (const [key, label] of SPLICES) {
         const r = sp2.results[key];
         if (!r) {
           console.log(`    · ${label}: not attempted at this cut`);
+          continue;
+        }
+        //  ⚑ THE ONE FALSIFIER THAT IS A PROPERTY OF THE CUT AND NOT OF THE
+        //  CIRCUIT. A Merkle sibling is refused by the assertion that CLOSES
+        //  over the digest it feeds, not by the segment that consumes it. At a
+        //  cut with no closer an accept is CORRECT, and it is reported as
+        //  inapplicable rather than as a pass — the successor is what refuses
+        //  it, and `[3b]` already checks every successor boundary.
+        if (key === 'auxBent' && atCloser === null) {
+          excused++;
+          console.log(
+            `    ⚠ ${label}: ${r.refused ? 'refused' : 'ACCEPTED'} — NOT ATTRIBUTABLE at this cut, ` +
+              'which carries siblings but closes no root; the successor refuses it',
+          );
           continue;
         }
         attempted++;
@@ -1135,10 +1175,10 @@ async function main() {
           fail(`${label}: the error is not a constraint failure — ${r.err}`);
         ok(`REFUSED: ${label}`);
       }
-      if (attempted < SPLICES.length - 1)
+      if (attempted + excused < SPLICES.length)
         fail(
-          `${SPLICES.length - attempted} splice(s) were NOT ATTEMPTED at this cut — an absent ` +
-            'falsifier reads exactly like one that passed',
+          `${SPLICES.length - attempted - excused} splice(s) were NOT ATTEMPTED at this cut — an ` +
+            'absent falsifier reads exactly like one that passed',
         );
 
       // -------------------------------------------------------------------
