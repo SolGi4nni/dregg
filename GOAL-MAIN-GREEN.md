@@ -229,6 +229,33 @@ failure twice, so the raw grep says 364; the unique count is 182.
 **62 of the 182 sit in the two frontend crates nobody has opened**, which is the same concentration
 shape that has yielded one-cause fixes five times this week.
 
+- ✅ **`dreggnet-adventure` 9 → 0** (`6219f52e1`) — all nine on one string. `CROWNED_LINE` was an
+  18-move literal written once and never touched: **a hand-written twin of the game's rules that went
+  stale THREE times with no compile error** (the day's map stopped being constant; `flee` gained a
+  `depth == 0` demand and the literal has no climb; `unlock` started leaving the key hung and `CAP`
+  went 8→7). Every other consumer already called `crowned_line(day)`; this crate was the last
+  holdout. ⚑ And a SECOND wound was hiding behind it — an assertion **unsatisfiable by construction**
+  since `8b42856d6` made that constructor draw its own custody root.
+- ✅ **`dregg-circuit-prove` 6 → 0** on four binaries (`7c2684fc2`, `19dca8b4b`) — **two coordinate
+  systems**: layout constants name columns BEFORE the S2+E1 deletion, which is what the NARROW
+  registry still commits, so consumers comparing the two refuse in silence.
+  ⚑ **The Dsl carrier fold arm has been DEAD**: `dsl_rc_claim_pi_lo` searched raw column 715 where the
+  committed wide transfer binds 501 — and the arm that recomputed `rc_col0` made the SAME raw
+  computation, **so the two agreed with each other and disagreed with the committed member.**
+  ⚑ **`wide_old_root8`/`wide_new_root8` guarded on `n < 16` while their doc said "None for a narrow
+  leg"** — every narrow leg carries far more, so they returned ordinary rotated PIs as ~124-bit
+  anchors for ALL of them. The fold was never fooled; every direct caller was.
+  ⚠ **It caught its own near-regression**: it first set the guard to 66, then measured the registries'
+  PI histogram and found **20 committed wide members publish the anchor tail at 62/63/65** — 66 would
+  have converted a lie into a false refusal. Corrected to 62 with the residual named.
+  ⚑ Two more refusal poles green-for-the-wrong-reason: one asserts bare `is_err()` on a route where
+  EVERY mint errors; the other **has never reached its forge at all.**
+  ⚠ Family E (cap-write gauntlet, 3) **priced not hacked** — needs test-local scaffolding promoted
+  into `dregg-circuit`; no Lean, no re-emit, but a real day's work.
+- ⚠ **8 `dregg-circuit-prove` lib tests exceed the 180s kill on hbox under load** — so that crate's
+  red count is partly a function of box load, the same shape as the CPU-count-dependent greens
+  already on record.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
