@@ -82,6 +82,7 @@ use p3_circuit_prover::{
     expose_claim_air_builders, expose_claim_preprocessor, poseidon2_air_builders,
     poseidon2_preprocessor, recompose_air_builders, recompose_preprocessor,
 };
+use p3_commit::{Pcs as P3Pcs, PolynomialSpace};
 use p3_field::extension::BinomialExtensionField;
 use p3_lookup::logup::LogUpGadget;
 use p3_recursion::traits::RecursiveAir;
@@ -103,13 +104,50 @@ type EF = BinomialExtensionField<P3BabyBear, D>;
 /// under [`DreggOuterConfig`], plus the prover data whose
 /// `stark_common.preprocessed` is the shrink circuit's VK core (a BN254-native
 /// Merkle commitment to the verifier circuit's static op-list).
-pub struct ApexShrinkProof {
-    /// The shrink proof itself — BN254 commitments, MultiField transcript.
-    pub proof: BatchStarkProof<DreggOuterConfig>,
+pub struct ApexShrinkProof<SC: OuterShrinkConfig = DreggOuterConfig> {
+    /// The shrink proof itself — outer-field commitments, MultiField transcript.
+    pub proof: BatchStarkProof<SC>,
     /// Prover-side data (preprocessed binding etc.). Kept for VK extraction /
     /// re-proving; NOT needed by [`verify_shrink_proof`] (the proof carries its
     /// own `stark_common`).
-    pub prover_data: Rc<CircuitProverData<DreggOuterConfig>>,
+    pub prover_data: Rc<CircuitProverData<SC>>,
+}
+
+/// The bound an OUTER config must satisfy to sit in the shrink's second role.
+///
+/// ⚑ **This is the seam the module doc argues is sound, written as a trait
+/// bound instead of a paragraph.** The split works because the two configs
+/// share `Val = BabyBear` and `Challenge = EF4`: the verifier circuit is a
+/// field-level object (`Circuit<EF4>`), its table AIRs depend only on
+/// `Val`/`Challenge`, and only the PCS/challenger — swapped wholesale — touch
+/// the hash field. A config that did NOT share those two cannot be named here,
+/// so the seam cannot be widened by accident.
+///
+/// Two configs satisfy it today:
+/// [`DreggOuterConfig`] (Poseidon2-BN254, the ETH terminal) and
+/// [`crate::dregg_mina_config::DreggMinaConfig`] (Mina-Poseidon over Pasta, the
+/// Mina terminal). Adding a third destination chain is a config, not a change
+/// here.
+pub trait OuterShrinkConfig:
+    StarkGenericConfig<
+        Challenge = EF,
+        Pcs: P3Pcs<EF, Self::Challenger, Domain: PolynomialSpace<Val = P3BabyBear>>,
+    >
+    + 'static
+    + Send
+    + Sync
+{
+}
+
+impl<SC> OuterShrinkConfig for SC where
+    SC: StarkGenericConfig<
+            Challenge = EF,
+            Pcs: P3Pcs<EF, SC::Challenger, Domain: PolynomialSpace<Val = P3BabyBear>>,
+        >
+        + 'static
+        + Send
+        + Sync
+{
 }
 
 /// Shrink a REAL apex — the root [`RecursionOutput`] of a turn-chain fold
@@ -120,11 +158,11 @@ pub struct ApexShrinkProof {
 /// ([`crate::ivc_turn_chain::ir2_leaf_wrap_config`] for the rotated fold): its
 /// `FriVerifierParams` drive the in-circuit re-verification of all 19 FRI
 /// queries (+ the 16-bit PoW witness) of the apex.
-pub fn shrink_apex_to_outer(
+pub fn shrink_apex_to_outer<SC: OuterShrinkConfig>(
     apex: &RecursionOutput<DreggRecursionConfig>,
     inner_config: &DreggRecursionConfig,
-    outer_config: &DreggOuterConfig,
-) -> Result<ApexShrinkProof, String> {
+    outer_config: &SC,
+) -> Result<ApexShrinkProof<SC>, String> {
     let input = apex.into_recursion_input::<BatchOnly>();
     shrink_recursion_input_to_outer(&input, inner_config, outer_config)
 }
@@ -151,12 +189,12 @@ pub fn default_shrink_packing() -> TablePacking {
 /// [`shrink_apex_to_outer`] at a caller-chosen [`TablePacking`]. Use
 /// [`default_shrink_packing`] as the baseline; a heavier ALU packing (e.g.
 /// `TablePacking::new(1, 8).with_horner_pack_k(4)`) trims the ALU-table LDE.
-pub fn shrink_apex_to_outer_with_packing(
+pub fn shrink_apex_to_outer_with_packing<SC: OuterShrinkConfig>(
     apex: &RecursionOutput<DreggRecursionConfig>,
     inner_config: &DreggRecursionConfig,
-    outer_config: &DreggOuterConfig,
+    outer_config: &SC,
     packing: &TablePacking,
-) -> Result<ApexShrinkProof, String> {
+) -> Result<ApexShrinkProof<SC>, String> {
     let input = apex.into_recursion_input::<BatchOnly>();
     shrink_recursion_input_to_outer_with_packing(&input, inner_config, outer_config, packing)
 }
@@ -168,11 +206,11 @@ pub fn shrink_apex_to_outer_with_packing(
 ///
 /// Proves at [`default_shrink_packing`]; use
 /// [`shrink_recursion_input_to_outer_with_packing`] to retarget the packing.
-pub fn shrink_recursion_input_to_outer<A>(
+pub fn shrink_recursion_input_to_outer<A, SC: OuterShrinkConfig>(
     input: &RecursionInput<'_, DreggRecursionConfig, A>,
     inner_config: &DreggRecursionConfig,
-    outer_config: &DreggOuterConfig,
-) -> Result<ApexShrinkProof, String>
+    outer_config: &SC,
+) -> Result<ApexShrinkProof<SC>, String>
 where
     A: RecursiveAir<P3BabyBear, EF, LogUpGadget>,
 {
@@ -191,12 +229,12 @@ where
 /// rebuilds the AIRs from `proof.table_packing`). The FRI knobs come from
 /// `outer_config`, NOT from packing — reducing a non-max table's height never
 /// changes the FRI shape the gnark side depends on.
-pub fn shrink_recursion_input_to_outer_with_packing<A>(
+pub fn shrink_recursion_input_to_outer_with_packing<A, SC: OuterShrinkConfig>(
     input: &RecursionInput<'_, DreggRecursionConfig, A>,
     inner_config: &DreggRecursionConfig,
-    outer_config: &DreggOuterConfig,
+    outer_config: &SC,
     packing: &TablePacking,
-) -> Result<ApexShrinkProof, String>
+) -> Result<ApexShrinkProof<SC>, String>
 where
     A: RecursiveAir<P3BabyBear, EF, LogUpGadget>,
 {
@@ -224,14 +262,14 @@ where
         recompose_preprocessor::<P3BabyBear>(false),
         expose_claim_preprocessor::<P3BabyBear>(),
     ];
-    let air_builders: Vec<Box<dyn NpoAirBuilder<DreggOuterConfig, D>>> = {
-        let mut builders = poseidon2_air_builders::<DreggOuterConfig, D>();
-        builders.extend(recompose_air_builders::<DreggOuterConfig, D>(1, false));
-        builders.extend(expose_claim_air_builders::<DreggOuterConfig, D>());
+    let air_builders: Vec<Box<dyn NpoAirBuilder<SC, D>>> = {
+        let mut builders = poseidon2_air_builders::<SC, D>();
+        builders.extend(recompose_air_builders::<SC, D>(1, false));
+        builders.extend(expose_claim_air_builders::<SC, D>());
         builders
     };
     let (airs_degrees, primitive_columns, non_primitive_columns) =
-        get_airs_and_degrees_with_prep::<DreggOuterConfig, EF, D>(
+        get_airs_and_degrees_with_prep::<SC, EF, D>(
             &circuit,
             packing,
             &preprocessors,
@@ -305,9 +343,9 @@ where
 /// [`crate::plonky3_recursion_impl::recursive::verify_recursive_batch_proof`]
 /// (the shrink circuit is the same verifier-circuit family, only committed
 /// with BN254 hashing).
-pub fn verify_shrink_proof(
-    proof: &BatchStarkProof<DreggOuterConfig>,
-    outer_config: &DreggOuterConfig,
+pub fn verify_shrink_proof<SC: OuterShrinkConfig>(
+    proof: &BatchStarkProof<SC>,
+    outer_config: &SC,
 ) -> Result<(), String> {
     outer_shrink_prover(outer_config)
         .verify_all_tables(proof)
@@ -322,9 +360,9 @@ pub fn verify_shrink_proof(
 /// `FriRecursionBackendForExt::non_primitive_provers` — the SAME provers,
 /// constructed through `BatchStarkProver`'s public registration API because
 /// the backend's are typed at the inner config.
-pub(crate) fn outer_shrink_prover(
-    outer_config: &DreggOuterConfig,
-) -> BatchStarkProver<DreggOuterConfig> {
+pub(crate) fn outer_shrink_prover<SC: OuterShrinkConfig>(
+    outer_config: &SC,
+) -> BatchStarkProver<SC> {
     let mut prover = BatchStarkProver::new(outer_config.clone());
     prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
     prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
