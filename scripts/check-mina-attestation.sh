@@ -1489,10 +1489,23 @@ expect_red rows "Poseidon2 circuit diverges from the deployed KAT" \
 expect_red rows "rows/perm drifts from the figure the doc quotes" \
   "s/const RECORDED_ROWS_PER_PERM = 2600\.5;/const RECORDED_ROWS_PER_PERM = 2000;/" \
   scripts/poseidon2-babybear-rows.ts
-# A lane bound of 2^32 instead of 2^31 puts x^7 past the Pasta modulus, i.e. the
+# A lane bound of 2^32 instead of ~2^31 puts x^7 past the Pasta modulus, i.e. the
 # circuit stops being sound. `assertSafe` must refuse to emit a number for it.
 expect_red rows "unsound lane bound (x^7 would wrap mod Pasta)" \
-  "s/qp\.add\(r\)\.assertEquals\(v\.v\);\n  return \{ v: r, max: \(1n << 31n\) - 1n \};/qp.add(r).assertEquals(v.v);\n  return { v: r, max: (1n << 32n) - 1n };/" \
+  "s/qp\.add\(r\)\.assertEquals\(v\.v\);\n  return \{ v: r, max: LANE_BOUND \};/qp.add(r).assertEquals(v.v);\n  return { v: r, max: (1n << 32n) - 1n };/" \
+  src/Poseidon2BabyBearW16.ts
+# ⚑ THE ONE THE INJECTION ABOVE COULD NOT SEE, AND WHY THIS ONE EXISTS.
+# The fault above bends the bound this file TRACKS. Until 2026-07-30 the bound it
+# ENFORCED was a separate number in a separate function — `assertLt2p31` scaled
+# its top limb by 16, admitting `r <= 2^32.005` — so the injection above was
+# bending a claim while the circuit had been living at the injected value all
+# along. `LANE_BOUND` is now DERIVED from `LANE_LIMB_SCALE`, which is what makes
+# the enforced bound injectable at all: put the historical 16 back and the
+# tracked bound doubles with it, `assertSafe` throws, and the leg cannot report a
+# row count for an unsound circuit. A gate for the claim is not a gate for the
+# check; this is the check.
+expect_red rows "the enforced lane bound loosens to 2^32 (the historical defect)" \
+  "s/const LANE_LIMB_SCALE = 32n;/const LANE_LIMB_SCALE = 16n;/" \
   src/Poseidon2BabyBearW16.ts
 
 # The anchor's PROOF OBLIGATION, disarmed the way an obligation usually is: made

@@ -76,7 +76,7 @@ export const LANES_PER_PERM = LIMBS_PER_SLOT * PASTA_RATE;
 // ===========================================================================
 
 /**
- * `0 <= r < 2^31`, via three 12-bit lookups.
+ * `0 <= r <= 2,163,736,575` (~`2^31.011`), via three 12-bit lookups.
  *
  * ⚑ THE BOUND IS CARRIED TWICE AND THE SECOND CARRIER IS WHY. `Provable.
  * runAndCheck` DOES NOT EVALUATE LOOKUP CONSTRAINTS, so a gadget whose bound
@@ -84,14 +84,26 @@ export const LANES_PER_PERM = LIMBS_PER_SLOT * PASTA_RATE;
  * gate can ever watch it refuse. The witness therefore masks each limb, so the
  * recomposition `assertEquals` is tight on its own and an out-of-range input
  * loses bits and fails a plain equality every instrument can see.
+ *
+ * ⚑ AND IT IS NOW ONE FUNCTION, NOT TWO. This was a hand-rolled copy of
+ * `assertLtPow2Pasta(r, 31)` that scaled its top limb by `16` where the
+ * width-parametric one computes `2^(12 - topBits)` = `32`. So the two disagreed
+ * by exactly one bit and the hand-rolled one was the loose one: it admitted
+ * `r <= 4,310,695,935 ~ 2^32.005`, twice the bound its own name claimed, for as
+ * long as both existed.
+ *
+ * That is a hole with teeth here, not a rounding. `packSlot` packs
+ * `LIMBS_PER_SLOT = 8` lanes at radix `2^31`, and the justification for eight is
+ * an INJECTIVITY argument at that radix. Lanes admitted up to `2^32.005` make
+ * adjacent lanes' contributions overlap, so two different leaf rows pack to the
+ * same Pasta slot and hash to the same digest — a second preimage on the MMCS
+ * leaf, which is the object every Merkle opening in this route is checked
+ * against. Deleting the copy in favour of the correct one is the fix; the gate
+ * stream is identical (three 12-bit lookups and one recomposition either way),
+ * so no row count moves.
  */
 export function assertLt2p31(r: Field) {
-  const [a, b, c] = Provable.witness(Provable.Array(Field, 3), () => {
-    const v = r.toBigInt();
-    return [Field(v & 0xfffn), Field((v >> 12n) & 0xfffn), Field((v >> 24n) & 0x7fn)];
-  });
-  Gadgets.rangeCheck3x12(a, b, c.mul(16n));
-  a.add(b.mul(1n << 12n)).add(c.mul(1n << 24n)).assertEquals(r);
+  assertLtPow2Pasta(r, 31);
 }
 
 /**

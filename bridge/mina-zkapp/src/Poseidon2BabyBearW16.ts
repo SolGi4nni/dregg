@@ -52,14 +52,25 @@ import { Field, Provable, Gadgets } from 'o1js';
 //      most four multiplications ride before the native modulus is hit and there
 //      is no amortisation across S-boxes. One reduction per S-box is the floor.
 //
-// The bound chain, which is why the lane target is 2^31 and not 2^32:
-//   * after a reduction a lane is < 2^31;
+// The bound chain, which is why the lane target is ~2^31 and not 2^32. Every
+// number below is derived from `LANE_BOUND` — the bound `assertLt2p31` ACTUALLY
+// ENFORCES — and not from the `2^31` an honest witness happens to satisfy:
+//   * after a reduction a lane is <= LANE_BOUND = 2,163,736,575 ~ 2^31.011;
 //   * the external layer's coefficients sum to at most 35 per output, so the
-//     layer's output is < 35*2^31 ~ 2^36.13;
-//   * the S-box input is that plus a round constant, < 2^36.17, and its 7th
-//     power is < 2^253.2 — under the Pasta modulus with ~0.8 bits to spare.
-//   A 2^32 lane target would put x^7 at ~2^260 and wrap. This is measured, not
-//   assumed: `assertSafe` is what would catch it.
+//     layer's output is <= 35*LANE_BOUND ~ 2^36.14;
+//   * the S-box input is that plus a round constant, ~2^36.18, and its 7th
+//     power is ~2^253.25 — under the Pasta modulus (~2^254.0) with ~0.75 bits
+//     to spare.
+//   A 2^32 lane target puts x^7 at ~2^260 and wraps. This is not assumed:
+//   `assertSafe` is what catches it, and it now watches the ENFORCED bound.
+//
+// ⚑ IT DID NOT, UNTIL 2026-07-30. `assertLt2p31` scaled its top limb by 16 and
+// therefore admitted `r <= 2^32.005`, while `reduce` tracked a hard-coded
+// `2^31 - 1`. The claim and the check lived in two places and only the claim was
+// instrumented, so `assertSafe` computed this chain over a bound no gate
+// produced and the circuit was unsound by its own analysis for as long as it
+// existed. `LANE_LIMB_SCALE` and `LANE_BOUND` are now one source: bend the scale
+// and the tracked bound moves with it and `assertSafe` refuses.
 // ---------------------------------------------------------------------------
 
 /** BabyBear prime. */
@@ -259,17 +270,71 @@ function mul(a: BB, b: BB): BB {
   return { v: a.v.seal().mul(b.v.seal()), max };
 }
 
-/** `r < 2^31`, via three 12-bit lookups (o1js's cheapest sub-32-bit check) and a
- *  recomposition over the integers. `rangeCheck32` would give `r < 2^32`, which
- *  the external layer's 35x growth cannot absorb (see the header). */
+/**
+ * The scale applied to the TOP limb so that a 12-bit lookup on the scaled value
+ * is a `12 - log2(scale)`-bit check on the limb itself. `2^5` gives 7 bits.
+ *
+ * ⚑ THIS CONSTANT IS THE WHOLE SOUNDNESS ARGUMENT, WHICH IS WHY IT IS NAMED AND
+ * WHY `LANE_BOUND` IS DERIVED FROM IT rather than written down beside it. It was
+ * `16n` — a 6-bit... no, an EIGHT-bit top limb — from birth until 2026-07-30, so
+ * `assertLt2p31` enforced `r <= 4,310,695,935 ~ 2^32.005` while every comment,
+ * every tracked bound, and the header's entire bound chain said `2^31`. At that
+ * bound the S-box's `x^7` reaches ~2^260.1 against a Pasta modulus of ~2^254.0,
+ * which is exactly the wrap the header calls UNSOUND rather than slow.
+ *
+ * Nothing saw it, and the reason is the shape worth remembering: `assertSafe`
+ * reads the bound this file TRACKS, and the tracked bound was a hard-coded
+ * `2^31 - 1` written next to a check that admitted twice that. A claim and its
+ * enforcement in two places drift, and only the claim was instrumented. The two
+ * are now one constant — bend this scale and `LANE_BOUND` doubles, `assertSafe`
+ * refuses, and the row measurement dies rather than reporting a number for an
+ * unsound circuit.
+ *
+ * ⚑ `PastaMmcs.assertLtPow2Pasta(v, 31)` had the arithmetic right all along
+ * (`2^(12 - topBits)` with `topBits = 7` IS `32`); `PastaMmcs.assertLt2p31` was
+ * the same hand-rolled `16n` and is now that function's one-line caller. Two
+ * shapes that should have agreed, one of them wrong, for as long as both existed.
+ */
+const LANE_LIMB_SCALE = 32n;
+
+/**
+ * **The largest value `assertLt2p31` ADMITS** — derived from its own limb
+ * schedule, not asserted alongside it.
+ *
+ * The check is `a, b, LANE_LIMB_SCALE*c in [0, 2^12)` plus
+ * `a + 2^12 b + 2^24 c = r`. `LANE_LIMB_SCALE*c = t` is the constrained
+ * quantity, so `2^24 c = (2^24 / LANE_LIMB_SCALE) * t` and the reachable
+ * maximum is with `a = b = t = 2^12 - 1`:
+ *
+ *     (2^12 - 1) + (2^12 - 1)*2^12 + (2^12 - 1)*2^19 = 2,163,736,575 ~ 2^31.011
+ *
+ * ⚠ THIS IS 0.76% ABOVE `2^31 - 1` AND THAT IS NOT A ROUNDING. Three 12-bit
+ * lookups cannot cut a 31-bit value exactly: the top limb's granularity is
+ * coarser than its range. The 16,252,928 of slack is REAL and is carried
+ * honestly here instead of being rounded away in a comment — the bound chain is
+ * re-derived against THIS number (S-box input ~2^36.18, `x^7` ~2^253.25, under
+ * the Pasta modulus with ~0.75 bits to spare), not against `2^31`. Cutting it
+ * exactly costs a second `assertLt2p31` on `2^31 - 1 - r` (the `canonicalLane`
+ * trick), i.e. ~2x the most-called gadget in the circuit; the slack is 250 times
+ * cheaper than the margin it spends.
+ */
+export const LANE_BOUND =
+  ((1n << 12n) - 1n) +
+  ((1n << 12n) - 1n) * (1n << 12n) +
+  ((1n << 12n) - 1n) * ((1n << 24n) / LANE_LIMB_SCALE);
+
+/** `r <= LANE_BOUND`, via three 12-bit lookups (o1js's cheapest sub-32-bit
+ *  check) and a recomposition over the integers. `rangeCheck32` would give
+ *  `r < 2^32`, which the external layer's 35x growth cannot absorb (header). */
 function assertLt2p31(r: Field) {
   const [a, b, c] = Provable.witness(Provable.Array(Field, 3), () => {
     const v = r.toBigInt();
     return [Field(v & 0xfffn), Field((v >> 12n) & 0xfffn), Field((v >> 24n) & 0x7fn)];
   });
-  // a, b < 2^12 and 16*c < 2^12  =>  c < 2^7
-  Gadgets.rangeCheck3x12(a, b, c.mul(16n));
-  // a + 2^12 b + 2^24 c <= (2^12-1) + (2^12-1)2^12 + (2^7-1)2^24 = 2^31 - 1
+  // a, b < 2^12 and LANE_LIMB_SCALE*c < 2^12  =>  c < 2^12 / LANE_LIMB_SCALE.
+  // The honest witness masks `c` to 7 bits, so `32*c <= 4064 < 4096` holds and
+  // tightening the scale never costs an honest instance its proof.
+  Gadgets.rangeCheck3x12(a, b, c.mul(LANE_LIMB_SCALE));
   a.add(b.mul(1n << 12n)).add(c.mul(1n << 24n)).assertEquals(r);
 }
 
@@ -291,7 +356,7 @@ function quotientTimesP(qmax: bigint, value: () => bigint): { qp: Field; q: Fiel
   // soundness: the largest q the checks admit, and its q*p + 2^31 must be < N.
   let soundMax = 0n;
   for (let i = 0; i < nLimbs; i++) soundMax += ((1n << LIMB) - 1n) << (STRIDE * BigInt(i));
-  if (soundMax * P + (1n << 31n) >= N)
+  if (soundMax * P + LANE_BOUND >= N)
     throw new Error(
       `quotient range check admits q up to 2^${bits(soundMax)}; q*p would reach ` +
         `2^${bits(soundMax * P)} >= Pasta modulus — UNSOUND`,
@@ -320,9 +385,15 @@ function quotientTimesP(qmax: bigint, value: () => bigint): { qp: Field; q: Fiel
 }
 
 /**
- * Reduce `v` to a representative `< 2^31` of the same residue class mod p.
- * Witnesses `q, r` with `v = q*p + r` over the INTEGERS (both sides < N, so the
- * field equation implies it), range-checks both, and returns `r`.
+ * Reduce `v` to a representative `<= LANE_BOUND` of the same residue class mod
+ * p. Witnesses `q, r` with `v = q*p + r` over the INTEGERS (both sides < N, so
+ * the field equation implies it), range-checks both, and returns `r`.
+ *
+ * ⚑ The returned bound is `LANE_BOUND` — what `assertLt2p31` ENFORCES — and not
+ * `p - 1` or `2^31 - 1`, which are what an HONEST `r` satisfies. The tracked
+ * bound is a claim about every admissible witness, so it has to be the check's
+ * bound; writing the honest one here is what made this file's whole soundness
+ * argument rest on a number no gate produced.
  */
 function reduce(v: BB): BB {
   const qmax = v.max / P;
@@ -330,7 +401,7 @@ function reduce(v: BB): BB {
   const r = Provable.witness(Field, () => Field(v.v.toBigInt() % P));
   assertLt2p31(r);
   qp.add(r).assertEquals(v.v);
-  return { v: r, max: (1n << 31n) - 1n };
+  return { v: r, max: LANE_BOUND };
 }
 
 /** `x -> x^7` with exactly one reduction: four multiplications ride unreduced
@@ -414,11 +485,12 @@ export function provablePerm(input: Field[]): Field[] {
  * The same permutation, on lanes carrying an explicit integer bound.
  *
  * `provablePerm` declares `max = p - 1`, but the whole bound chain in the
- * header is derived at **`< 2^31`** — which is what a `reduce` leaves, and what
- * a hash chain re-feeding a previous digest actually has. Passing `2^31 - 1`
- * here is therefore not a relaxation of the analysis; it IS the analysis, and
- * it saves a conditional subtraction per lane per node. `assertSafe` still
- * governs: a bound the chain cannot carry throws rather than under-constrains.
+ * header is derived at **`<= LANE_BOUND`** — which is what a `reduce` leaves,
+ * and what a hash chain re-feeding a previous digest actually has. Passing
+ * `LANE_BOUND` here is therefore not a relaxation of the analysis; it IS the
+ * analysis, and it saves a conditional subtraction per lane per node.
+ * `assertSafe` still governs: a bound the chain cannot carry throws rather than
+ * under-constrains.
  */
 export function provablePermBounded(input: Field[], maxIn: bigint): Field[] {
   let s: BB[] = input.map((v) => ({ v, max: maxIn }));
@@ -428,7 +500,7 @@ export function provablePermBounded(input: Field[], maxIn: bigint): Field[] {
   // The internal rounds leave six small-coefficient lanes unreduced (they grow
   // ~2 bits a round, not ~31). The external layer's 35x fan-in cannot absorb
   // that, so bring every lane back under 2^31 exactly once, here.
-  s = s.map((x) => (x.max < 1n << 31n ? x : reduce(x)));
+  s = s.map((x) => (x.max <= LANE_BOUND ? x : reduce(x)));
   for (const rc of RC_EXT_FINAL) s = externalRoundBB(rc, s);
   // ⚑ The returned lanes are NOT `< 2^31`: the last thing that ran is the
   // ADD-ONLY external layer, fan-in 35, so each lane is bounded by
@@ -466,7 +538,7 @@ export function permOutputBound(maxIn: bigint): bigint {
 /** Force a lane to a representative `< 2^31` of the same residue class. This is
  *  what a digest needs before it can be fed back into the permutation. */
 export function reduceLane(v: Field, max: bigint): Field {
-  if (max < 1n << 31n) return v;
+  if (max <= LANE_BOUND) return v;
   return reduce({ v, max }).v;
 }
 
@@ -502,27 +574,27 @@ export function assertLaneLt2p31(v: Field) {
 
 /** One S-box on a lane-sized input (the external-round shape). */
 export function probeSbox(x: Field): Field {
-  // 35*(2^31 - 1) + (p - 1) is the real external-round S-box input bound.
-  return sbox({ v: x, max: 35n * ((1n << 31n) - 1n) + P - 1n }).v;
+  // 35*LANE_BOUND + (p - 1) is the real external-round S-box input bound.
+  return sbox({ v: x, max: 35n * LANE_BOUND + P - 1n }).v;
 }
 /** One external linear layer on reduced lanes (add-only). */
 export function probeMdsLight(s: Field[]): Field[] {
-  return mdsLightBB(s.map((v) => ({ v, max: (1n << 31n) - 1n }))).map((x) => x.v);
+  return mdsLightBB(s.map((v) => ({ v, max: LANE_BOUND }))).map((x) => x.v);
 }
 /** One external round: 16 S-boxes + the linear layer. */
 export function probeExternalRound(s: Field[]): Field[] {
-  return externalRoundBB(RC_EXT_INITIAL[0], s.map((v) => ({ v, max: (1n << 31n) - 1n }))).map(
+  return externalRoundBB(RC_EXT_INITIAL[0], s.map((v) => ({ v, max: LANE_BOUND }))).map(
     (x) => x.v,
   );
 }
 /** One internal round: 1 S-box + the broadcast/diagonal layer + re-bounding. */
 export function probeInternalRound(s: Field[]): Field[] {
-  return internalRoundBB(RC_INTERNAL[0], s.map((v) => ({ v, max: (1n << 31n) - 1n }))).map(
+  return internalRoundBB(RC_INTERNAL[0], s.map((v) => ({ v, max: LANE_BOUND }))).map(
     (x) => x.v,
   );
 }
 /** One `mod p` reduction of a value the size an S-box produces. */
 export function probeReduceSboxOutput(x: Field): Field {
-  const yMax = 35n * ((1n << 31n) - 1n) + P - 1n;
+  const yMax = 35n * LANE_BOUND + P - 1n;
   return reduce({ v: x, max: yMax ** 7n }).v;
 }
