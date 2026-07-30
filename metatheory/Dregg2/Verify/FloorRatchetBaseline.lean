@@ -1561,6 +1561,43 @@ def manual : Array String := #[
   --   this one. The baseline only ever gets shorter; this is that.
   "Dregg2.Verify.ApexPremiseVacuity.ApexCommitFloor",
   "Dregg2.Verify.ApexPremiseVacuity.ApexCommitFloorSansRest",
+  -- ⚑⚑ RAISE OF 2026-07-30, +2 — THE CR BRIDGE OF `Circuit/ApexMapOpVacuityJoin.lean`, THE MODULE
+  -- THAT REFUTES THE STARK APEX'S OWN `hrec` AT FIVE DEPLOYED MAP-OP TAGS.
+  --
+  -- Same species as the `ApexPremiseVacuity` rows above, and the same irony: a module written to
+  -- show an apex premise is FALSE needs two rows here to land. It is recorded, not escaped.
+  --
+  -- The module's BACKBONE carries NO floor and is deliberately built that way. Composing straight
+  -- from `MapReconcileImtRepoint.reconcileGatesAt_unsat_at_imtRoot` (already grandfathered in the
+  -- chunks above) would have inherited `Poseidon2SpongeCR` into all fifteen results and made every
+  -- one of them vacuous for the SAME reason as the apex they refute. Instead everything is stated
+  -- over `RootSeparated` — the bare fact that the deployed arity-3 indexed-Merkle root is not ALSO
+  -- the arity-2 `mapRoot` of some heap. That is strictly weaker than CR, it is REFUTED at the
+  -- constant hash (`rootSeparated_false_at_constant_hash`, so it is not a tautology in premise
+  -- clothing), and it is not known false at deployed BabyBear width — so
+  -- `apex_hrec_false_at_deployed_map_traces`, `apex_is_dead_either_way` and
+  -- `deployed_mapOp_census` SURVIVE the felt-width refutation of CR that the apex's own premise
+  -- does not. Those are the statements to cite; none of them is a carrier.
+  --
+  --   rootSeparated_of_poseidon2CR_under_the_apex_floor — CR ⟹ `RootSeparated`, one application of
+  --     `MapReconcileImtRepoint.imtRoot_ne_mapRoot`.
+  --   apex_hrec_false_at_deployed_map_traces_under_the_apex_floor — the same refutation with the
+  --     separation discharged that way.
+  --
+  -- ⚑ THE FLOOR IS THEIR SUBJECT, NOT THEIR SUPPORT (the `padImtRoot8Coll_refutable_of_injective`
+  -- reasoning above). Their whole content is "on the apex's OWN floor — the very instance
+  -- `algoStarkSound_kernel` binds as `hCRh` — at the apex's own registry, fed the traces the
+  -- deployed prover produces, the apex's own `hrec` is FALSE." Deleting them would leave that last
+  -- step to a reader, which is precisely the hand-composition across disjoint cones the module
+  -- exists to end. Neither is a keystone and nothing consumes either.
+  --
+  -- PORT NAMED, NOT TAKEN: direction (a) is reachable here and is the follow-up —
+  -- `MapMerkleRoot.perfectRoot_binds_or_collides` + `perfectRootFind` already supply the total
+  -- extractor, and the leaf step is a collision at ONE named pair whose lists have lengths 3 and 2,
+  -- so `RootSeparated` can be discharged as `binding ∨ named-refutable-collision` with no floor at
+  -- all. That is a separate piece of work and was not smuggled into this change.
+  "Dregg2.Circuit.ApexMapOpVacuityJoin.apex_hrec_false_at_deployed_map_traces_under_the_apex_floor",
+  "Dregg2.Circuit.ApexMapOpVacuityJoin.rootSeparated_of_poseidon2CR_under_the_apex_floor",
 -- ⚑⚑ RAISE OF 2026-07-25 (second), +2 — THE TWO SECURITY CLAIMS THE B4 HOLE WAS HIDING.
 --
 -- These are not new theorems and nothing about them changed. What changed is the RULER: the
