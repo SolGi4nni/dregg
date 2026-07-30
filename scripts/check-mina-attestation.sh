@@ -435,7 +435,16 @@ run_air_fullchain() { # run_air_fullchain <dir>
 run_walk_plan() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent fri-walk-plan ); }
 run_kat()       { ( cd "$1" && npm run --silent kat ); }
 run_mconstr()   { ( cd "$1" && npm run --silent merkle-constraints ); }
-run_braid()     { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid ); }
+# ⚑ TIER 1 IS "ONE REPRESENTATIVE INSTANCE PER FAMILY", AND THE BRAID HAS TO BE
+# TOLD. Its own default proves FOUR slices, one process each, which is the tier-2
+# amount and takes tens of minutes; at tier 1 it proves one. The distinction is
+# the whole reason tier 1 can be a pre-merge run rather than a nightly one.
+run_braid()     {
+  local lim=""
+  [ "$TIER" -eq 1 ] && lim="FRIBRAID_LIMIT=1"
+  # shellcheck disable=SC2086
+  ( cd "$1" && env $lim DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid )
+}
 # ── ROUTE B, the o1js side. `bridge/mina-zkapp/` grew a whole second route —
 # dregg's own transition semantics emitted into Kimchi gates — and until
 # 2026-07-30 not one of its three npm scripts was in any gate.
@@ -610,7 +619,14 @@ if [ "$MODE" = "headline" ]; then
   fi
   T_T0=$(( $(date +%s) - T_START ))
   echo
-  echo "── tier 0 GREEN in ${T_T0}s: $n_t0 out-of-circuit checks, and NOTHING compiled ──"
+  if [ "$TIER" -eq 0 ]; then
+    echo "── tier 0 GREEN in ${T_T0}s: $n_t0 out-of-circuit checks, and NOTHING compiled ──"
+  else
+    # ⚠ At tier 1+ the three walk legs run their FULL selves, compiles and all,
+    # so this is not the tier-0 wall time and must not be reported as it.
+    echo "── the tier-0 checks are green (${T_T0}s at TIER $TIER — the walk legs ran FULL," \
+         "so this is not the tier-0 cost; that is measured at \`--tier 0\`) ──"
+  fi
   if [ "$TIER" -eq 0 ]; then
     echo "   NOT RUN at tier 0: every Pickles compile/prove/verify in this directory —"
     echo "   the zkApp consumption, the tamper refusals, the row ratchets, the splices,"
@@ -1099,6 +1115,17 @@ if [ "$MODE" = "headline" ]; then
       || die "the Mina-Poseidon Merkle leg did not print its PASS line"
   fi
 
+  # ⚑ THE TIER IS IN THE VERDICT, so a transcript can never be read as a fuller
+  # run than it was. A tier-1 line naming legs it did not run would be the
+  # `Documented ≠ Detected` class in the summary itself.
+  echo
+  echo "── TIER $TIER GREEN in $(( $(date +%s) - T_START ))s ──"
+  if [ "$TIER" -eq 1 ]; then
+    echo "   ONE REPRESENTATIVE INSTANCE PER FAMILY was compiled and proved."
+    echo "   NOT RUN at tier 1: the other members of each family, the FULL chains,"
+    echo "   the compile-ceiling search, and the injection suite. \`--tier 2\` runs"
+    echo "   them; \`--self-test\` is the injections. See docs/MINA-GATE-TIERS.md."
+  fi
   echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched + $n_rair + $n_emit + $n_achain + $n_real + $n_ceil + $n_fchain checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
        "placeholder-keyed, spliced proof refused, Rust emitter cross-checked; Merkle opening," \
