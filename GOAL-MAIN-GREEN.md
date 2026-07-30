@@ -368,6 +368,32 @@ because several fixes landed after the second sweep started and some crates were
   written for. Briefed explicitly NOT to restore the conditional, and that making everything fold
   clean would pass the test while destroying the feature.
 
+## ⚑ HARD-WORK THRUST (ember, 2026-07-30): take up the features, ground them, do the work
+> *"The remaining work will probably be actually hard work, which is fine … orient ourselves into
+> taking up these features, performing the necessary analysis to ground them in the present advanced
+> state of the code, and then doing the work."* Law #1 is another terminal's.
+
+Three analysis-first lanes on the three genuinely hard remainders:
+
+- **E2 — the live outage, and the only one with its fix already specified.** A `DHeapAtom` arm plus a
+  `parseHeapAtom` token in `metatheory/`. Briefed to read the arity/denotation precedent FIRST
+  (`MapDenotationSchema` moved the denotation onto arity-3 after a Lean model committed arity-2 and
+  every theorem to the apex described an object the prover never runs) so the shape does not repeat
+  that divergence. ⚑ **A tooth already exists that is DESIGNED to go red the day the arm lands** —
+  that is the completion signal, and the lane must say it changed a tooth whose job was to go red.
+  Must also answer whether the arm is SUFFICIENT or whether `constraint_oracle.rs` needs its Rust arm.
+- **E1 — analysis before code, deliberately.** Establish the delivery mechanism (never sent / dropped /
+  rejected / not admitted — the logs distinguish these), name the commit in the ~25-commit window, and
+  answer whether unanimous lock-step at n=3 is INTENDED. ⚠ Hard constraint: **do not weaken the
+  supermajority.** A repaired anti-entropy path is a bug fix; a lowered threshold is a protocol change
+  for ember. Must drive the real binaries — a test that mocks delivery proves nothing about a delivery
+  bug.
+- **Cap-write onto the committed `…WriteCapOpen` members** — promote the write-spine producer out of
+  test-local scaffolding, repoint `cap_write_wide_plan` off the retired `map_op`, re-anchor the weld
+  2014→2021. No Lean, no re-emit, no VK. ⚑ Also fixes two teeth green-for-the-wrong-reason: one
+  asserts bare `is_err()` on a route that errors for every input, and the other **has never reached
+  its forge**, so the family's ~124-bit binding tooth has never been exercised.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
