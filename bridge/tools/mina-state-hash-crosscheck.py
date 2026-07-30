@@ -177,20 +177,27 @@ def state_hash(ps):
     bh = absorb_all(SALT_BODY, body_input(ps).fields())[0]
     return absorb_all(SALT_PS, [ps['prev'], bh])[0]
 
-lean = open("/Users/ember/dev/breadstuffs/metatheory/Dregg2/Bridge/MinaBinprotRealBlock.lean").read()
-i = lean.index("def devnetBlock540186 : List Nat := [")
-j = lean.index("]", i)
-nums=[int(x) for x in re.findall(r"\d+", lean[i+len("def devnetBlock540186 : List Nat := ["):j])]
-buf=bytes(nums); print("bytes", len(buf))
-ps, used = decode(buf); print("consumed", used, "of", len(buf))
-print("blockchain_length", ps['cs']['bl'], "densities", ps['cs']['dens'], "total_currency", ps['cs']['tc'])
-inp = body_input(ps)
-print("field elements:", len(inp.f), " packed items:", len(inp.p), " packed bits:", sum(n for _,n in inp.p))
-fs = inp.fields(); print("poseidon input length:", len(fs))
-print("max packed chunk < p:", all(x < P for x in fs))
-print()
-print("state_body_hash(540186) =", absorb_all(SALT_BODY, fs)[0])
-print("state_hash(540186)      =", state_hash(ps))
-b2 = bytearray(buf); b2[1068]=27
-ps2,_ = decode(bytes(b2))
-print("state_hash(540187 mut)  =", state_hash(ps2))
+# ⚑ Guarded so the module can be IMPORTED (by `mina-consecutive-pair.py`, which reuses this
+# binprot reader rather than carrying a second one) without running the report.
+def main():
+    lean = open("/Users/ember/dev/breadstuffs/metatheory/Dregg2/Bridge/MinaBinprotRealBlock.lean").read()
+    i = lean.index("def devnetBlock540186 : List Nat := [")
+    j = lean.index("]", i)
+    nums=[int(x) for x in re.findall(r"\d+", lean[i+len("def devnetBlock540186 : List Nat := ["):j])]
+    buf=bytes(nums); print("bytes", len(buf))
+    ps, used = decode(buf); print("consumed", used, "of", len(buf))
+    print("blockchain_length", ps['cs']['bl'], "densities", ps['cs']['dens'], "total_currency", ps['cs']['tc'])
+    inp = body_input(ps)
+    print("field elements:", len(inp.f), " packed items:", len(inp.p), " packed bits:", sum(n for _,n in inp.p))
+    fs = inp.fields(); print("poseidon input length:", len(fs))
+    print("max packed chunk < p:", all(x < P for x in fs))
+    print()
+    print("state_body_hash(540186) =", absorb_all(SALT_BODY, fs)[0])
+    print("state_hash(540186)      =", state_hash(ps))
+    b2 = bytearray(buf); b2[1068]=27
+    ps2,_ = decode(bytes(b2))
+    print("state_hash(540187 mut)  =", state_hash(ps2))
+
+
+if __name__ == "__main__":
+    main()

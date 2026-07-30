@@ -62,6 +62,7 @@ persisted.
 """
 
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
@@ -94,54 +95,39 @@ def fetch():
 
 
 # ---------------------------------------------------------------------------
-# The three integers this script reads, and no others.
+# ⚑ THE PROTOCOL STATE IS A PREFIX OF WHAT THE PEER SENDS.
 #
-# `previous_state_hash` is the first 32 bytes, little-endian. `blockchain_length`
-# is the first field of the consensus state, and finding it means walking the
-# blockchain state -- which this script does NOT do. Instead it uses the ONE
-# structural fact it can rely on without a parser: the Lean decoder is the parser,
-# so we ask it. Failing that, two captures whose byte strings differ are almost
-# certainly consecutive on devnet at a 45 s poll; the Lean gate REFUSES if they
-# are not, because then the equation simply does not hold. The height is read
-# below only to make the log and the fixture's docstring honest, and it is read
-# by re-deriving the same offset the existing 540186 fixture documents.
+# `mina-besttip.py --emit-protocol-state` hands over the whole `get_best_tip`
+# response payload from the Option tag onward: the `Protocol_state.Value` and
+# then the rest of the block (header, the entire staged-ledger diff) and the
+# proof. Measured on the 540221/540222 pair: 108,140 and 312,394 bytes, of which
+# the protocol state is 1,544 each. Embedding the whole payload as a Lean list
+# literal is a ~17,600-line file that heartbeats out at `whnf` during
+# ELABORATION, before any theorem runs -- which is exactly what the first
+# version of this script produced, and the cascading "unknown identifier
+# devnetParent" was that def having failed rather than a binding bug.
+#
+# So we decode, and truncate to the byte count the decode consumed. That also
+# retires the height heuristic this file used to carry: the decoder knows.
+#
+# ⚑ The decoder is IMPORTED from `mina-state-hash-crosscheck.py`, not copied.
+# One binprot reader in `tools/`, as there is one in Lean.
 # ---------------------------------------------------------------------------
 
-
-def previous_state_hash(buf):
-    v = int.from_bytes(buf[:32], "little")
-    if v >= PALLAS_BASE_MODULUS:
-        raise ValueError("previous_state_hash is not canonical")
-    return v
-
-
-def blockchain_length_offset(buf):
-    """Scan for the `sub_window_densities` count byte (11) and read backwards.
-
-    ⚑ HEURISTIC, and it is only used for the LOG and the docstring. Nothing the
-    Lean gate checks depends on it: the gate re-derives the hash and compares it
-    to the child's `previous_state_hash`, and neither side involves this offset.
-    The count byte is `11` followed by eleven small `Length`s; `min_window_density`
-    and `epoch_count` precede it as one-byte ints, and `blockchain_length` as a
-    5-byte `0xfd` form once it exceeds 65535.
-    """
-    for i in range(900, min(len(buf) - 20, 1400)):
-        if buf[i] != 11:
-            continue
-        # eleven plausible densities follow (each <= slots_per_sub_window = 7)
-        if all(buf[i + 1 + j] <= 7 for j in range(11)):
-            # ... preceded by min_window_density, epoch_count (one byte each),
-            # then blockchain_length in the 5-byte 0xfd form.
-            if buf[i - 7] == 0xFD:
-                return i - 7
-    return None
+_spec = importlib.util.spec_from_file_location(
+    "mina_state_hash_crosscheck", os.path.join(HERE, "mina-state-hash-crosscheck.py")
+)
+_cc = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cc)
 
 
-def blockchain_length(buf):
-    off = blockchain_length_offset(buf)
-    if off is None:
+def parse(buf):
+    """Decode the protocol-state prefix. Returns (record, prefix_length) or None."""
+    try:
+        return _cc.decode(buf)
+    except Exception as e:
+        log("decode failed: %s: %s" % (type(e).__name__, e))
         return None
-    return int.from_bytes(buf[off + 1 : off + 5], "little")
 
 
 LEAN_HEADER = '''/-
@@ -179,13 +165,29 @@ reads have openmina's values. A field-order slip *inside* `Blockchain_state` —
 elements swapped, say — passes both: the byte count is identical and `select` reads none of them.
 It moves the hash preimage. This gate sees it.
 
+## Kernel, and what that costs
+
+⚑ Every theorem below is kernel `decide` — `native_decide` appears nowhere. The generator used to
+emit it; that was a tool left behind when the modules were converted on 2026-07-30, which is how a
+retired pattern reintroduces itself. Each derivation costs ~9 s of kernel (measured), so the file
+states ONE derivation per theorem and gets both refusal polarities for free by instantiating
+`MinaStateHashDerive.the_guard_accepts_the_derived_and_refuses_the_rest` — a `∀` over every wrong
+hash, which is strictly stronger than sampling two neighbours and costs nothing.
+
+⚑ Only the 1,544-byte PROTOCOL STATE is embedded, not the whole `get_best_tip` payload. The payload
+is the protocol state followed by the rest of the block and the proof — 108 KB and 312 KB on the
+captured pair — and embedding that produced a 17,600-line file that heartbeat out at `whnf` during
+elaboration, before a single theorem ran.
+
 Captured by `bridge/tools/mina-consecutive-pair.py` over Mina's own protocol
 (`TCP → pnet → Noise XX → yamux → coda/rpcs/0.0.1 → get_best_tip v2`). REGENERATE, do not edit.
 -/
 import Dregg2.Bridge.MinaBinprotRealBlock
 
 set_option autoImplicit false
-set_option maxRecDepth 40000
+-- ⚑ MEASURED: the Poseidon reductions exhaust 40000 with "maximum recursion depth has been
+-- reached" — a limit, not a timeout. Same value as `MinaStateHashDerive`, for the same reason.
+set_option maxRecDepth 1000000
 
 namespace Dregg2.Bridge.MinaStateHashRealBlock
 
@@ -230,57 +232,61 @@ field of the wire, not a value anyone in this repo produced. -/
 def childPreviousStateHash : Nat := %d
 
 /-- ⚑ **THE EQUATION.** The identity we compute for the parent, from the parent's bytes, IS the
-identity the daemon put in the child's header. Nothing on either side is ours. -/
-def theChainAgreesWithTheDerivation : Bool :=
-  deriveStateHash devnetParent == some childPreviousStateHash
+identity the daemon put in the child's header. Nothing on either side is ours: the left is our
+derivation over bytes a peer served, the right is a field of another block the same peer served.
 
-/-- ⚑ **A MINA TIP'S IDENTITY IS CHECKED, NOT SUPPLIED.** -/
+This is the only claim in the tree that can REFUTE the ~1,400-bit order of `Body.to_input`. -/
 theorem the_derived_state_hash_is_the_one_the_chain_recorded :
-    theChainAgreesWithTheDerivation = true := by native_decide
+    deriveStateHash devnetParent = some childPreviousStateHash := by decide
 
 /-- The child's own first 32 bytes really are that number, little-endian — so the oracle is read
 off the wire and not asserted. -/
 theorem the_oracle_is_the_childs_first_thirty_two_bytes :
-    leNat (devnetChild.take 32) = childPreviousStateHash := by native_decide
+    leNat (devnetChild.take 32) = childPreviousStateHash := by decide
 
-/-- ⚑ **AND IT IS REFUTABLE.** One flipped byte anywhere in the parent's preimage moves the derived
-identity — in the `Blockchain_state` the fork-choice gate never reads, in the consensus state it
-does, and in `previous_state_hash` itself. A derivation that cannot go red on a real block is not a
-derivation.
-
-The first of these is the one that matters: `MinaBinprotRealBlock`'s exact-fit and field checks are
-BLIND to a change inside `Blockchain_state` (same byte count, and `select` reads nothing there).
-This is not. -/
-def mutationsMoveTheIdentity : Bool :=
-  (deriveStateHash (devnetParent.set 200 ((devnetParent.getD 200 0 + 1) %% 128))
-     != some childPreviousStateHash)
-  && (deriveStateHash (devnetParent.set 0 ((devnetParent.getD 0 0 + 1) %% 128))
-     != some childPreviousStateHash)
-  && (deriveStateHash (devnetParent.take (devnetParent.length - 1)) == none)
-
-theorem a_one_byte_change_moves_the_identity : mutationsMoveTheIdentity = true := by native_decide
-
-/-- ⚑ **AND THE GUARD ACCEPTS AND REFUSES, ON THESE BYTES.** The honest pair is `true`; the same
-bytes under the neighbouring hash are `false`. Both polarities, on a real chain. -/
-def theGuardDiscriminatesOnRealBytes : Bool :=
-  stateHashMatches devnetParent childPreviousStateHash
-  && (stateHashMatches devnetParent (childPreviousStateHash + 1) == false)
-  && (stateHashMatches devnetParent (childPreviousStateHash - 1) == false)
-  -- ⚑ and the CHILD's bytes do not have the PARENT's identity: two real blocks, one real hash,
-  -- and the pairing is what is checked.
-  && (stateHashMatches devnetChild childPreviousStateHash == false)
-
+/-- ⚑ **BOTH POLARITIES, ON REAL BYTES, FOR THE PRICE OF NEITHER.** The honest pair is accepted and
+**every** other served hash is refused — a `∀`, not two sampled neighbours — by instantiating the
+general guard theorem at the equation above. No second derivation, and a strictly stronger claim
+than re-deriving twice would have bought. -/
 theorem the_guard_discriminates_on_real_devnet_bytes :
-    theGuardDiscriminatesOnRealBytes = true := by native_decide
+    stateHashMatches devnetParent childPreviousStateHash = true
+    ∧ ∀ x, x ≠ childPreviousStateHash → stateHashMatches devnetParent x = false :=
+  the_guard_accepts_the_derived_and_refuses_the_rest devnetParent childPreviousStateHash
+    the_derived_state_hash_is_the_one_the_chain_recorded
 
-/-! ## axiom hygiene — `native_decide` (EXECUTION) results, carrying `Lean.ofReduceBool`. A Poseidon
-over ~40 field elements plus two SHA-256 blocks plus a 1,500-byte parse is not a kernel reduction,
-and pretending otherwise is how a sibling spent 153 s per check. -/
+/-- ⚑ **AND IT IS REFUTABLE.** One flipped byte inside the `Blockchain_state` — the region the
+fork-choice gate never reads — moves the derived identity.
 
-#print axioms the_derived_state_hash_is_the_one_the_chain_recorded
-#print axioms the_oracle_is_the_childs_first_thirty_two_bytes
-#print axioms a_one_byte_change_moves_the_identity
-#print axioms the_guard_discriminates_on_real_devnet_bytes
+This is the mutation that matters, and it is the one `MinaBinprotRealBlock` is structurally BLIND
+to: the byte count is unchanged, so its exact-fit check passes, and `select` reads nothing there, so
+every field assertion passes too. -/
+theorem a_flipped_byte_in_the_blockchain_state_moves_the_identity :
+    deriveStateHash (devnetParent.set 200 ((devnetParent.getD 200 0 + 1) %% 128))
+      ≠ some childPreviousStateHash := by decide
+
+/-- And in `previous_state_hash` itself, which enters the OUTER Poseidon rather than the body. -/
+theorem a_flipped_byte_in_the_parent_link_moves_the_identity :
+    deriveStateHash (devnetParent.set 0 ((devnetParent.getD 0 0 + 1) %% 128))
+      ≠ some childPreviousStateHash := by decide
+
+/-- A truncated protocol state is a REFUSAL, not a hash of what did arrive. -/
+theorem a_truncated_protocol_state_is_refused :
+    deriveStateHash (devnetParent.take (devnetParent.length - 1)) = none := by decide
+
+/-- ⚑ **AND THE CHILD'S BYTES DO NOT HAVE THE PARENT'S IDENTITY.** Two real blocks, one real hash,
+and the PAIRING is what is checked — the case an accepted-carrier design structurally cannot see. -/
+theorem the_child_does_not_have_the_parents_identity :
+    stateHashMatches devnetChild childPreviousStateHash = false := by decide
+
+/-! ## axiom hygiene — ⚑ **ALL KERNEL.** No `native_decide`, no `sorry`, no axioms. -/
+
+#assert_axioms the_derived_state_hash_is_the_one_the_chain_recorded
+#assert_axioms the_oracle_is_the_childs_first_thirty_two_bytes
+#assert_axioms the_guard_discriminates_on_real_devnet_bytes
+#assert_axioms a_flipped_byte_in_the_blockchain_state_moves_the_identity
+#assert_axioms a_flipped_byte_in_the_parent_link_moves_the_identity
+#assert_axioms a_truncated_protocol_state_is_refused
+#assert_axioms the_child_does_not_have_the_parents_identity
 
 end Dregg2.Bridge.MinaStateHashRealBlock
 '''
@@ -295,39 +301,34 @@ def main():
     ap.add_argument("--max-minutes", type=float, default=25.0)
     ap.add_argument("--interval", type=float, default=45.0)
     ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--from-lean", default=None,
+                    help="re-emit from an already-generated module instead of capturing")
     args = ap.parse_args()
 
+    if args.from_lean:
+        return reemit(args.from_lean, args.out)
+
     deadline = time.time() + args.max_minutes * 60
-    seen = {}  # blockchain_length -> payload
+    seen = {}  # blockchain_length -> the TRUNCATED protocol state
 
     while time.time() < deadline:
         buf = fetch()
         if buf is not None:
-            h = blockchain_length(buf)
-            if h is None:
-                log("could not locate blockchain_length; keeping the bytes under a synthetic key")
+            got = parse(buf)
+            if got is None:
+                log("payload did not decode; discarding rather than embedding it")
             else:
+                rec, used = got
+                h = rec["cs"]["bl"]
+                ps = buf[:used]
                 if h not in seen:
-                    log("captured height %d (%d bytes)" % (h, len(buf)))
-                seen[h] = buf
-                if (h - 1) in seen:
-                    parent, child = seen[h - 1], seen[h]
-                    want = previous_state_hash(child)
-                    log("CONSECUTIVE PAIR: %d -> %d" % (h - 1, h))
-                    log("child.previous_state_hash = %d" % want)
-                    emit(args.out, parent, child, h - 1, h, want)
-                    log("wrote %s" % args.out)
-                    log("now: (cd metatheory && lake build Dregg2.Bridge.MinaStateHashRealBlock)")
-                    return 0
-                if (h + 1) in seen:
-                    parent, child = seen[h], seen[h + 1]
-                    want = previous_state_hash(child)
-                    log("CONSECUTIVE PAIR: %d -> %d" % (h, h + 1))
-                    log("child.previous_state_hash = %d" % want)
-                    emit(args.out, parent, child, h, h + 1, want)
-                    log("wrote %s" % args.out)
-                    log("now: (cd metatheory && lake build Dregg2.Bridge.MinaStateHashRealBlock)")
-                    return 0
+                    log("captured height %d: payload %d bytes, protocol state %d"
+                        % (h, len(buf), used))
+                seen[h] = ps
+                for lo in (h - 1, h):
+                    hi = lo + 1
+                    if lo in seen and hi in seen:
+                        return finish(args.out, seen[lo], seen[hi], lo, hi)
         remaining = deadline - time.time()
         if remaining <= 0:
             break
@@ -338,6 +339,64 @@ def main():
         % (args.max_minutes, sorted(seen)))
     log("writing nothing: a fixture that is not what it claims is worse than no fixture")
     return 1
+
+
+def finish(out, parent, child, hp, hc):
+    """Emit, after saying out loud what the Lean gate is about to decide."""
+    want = int.from_bytes(child[:32], "little")
+    if want >= PALLAS_BASE_MODULUS:
+        log("child previous_state_hash is not canonical; refusing to write")
+        return 1
+    log("CONSECUTIVE PAIR: %d -> %d  (protocol states %d and %d bytes)"
+        % (hp, hc, len(parent), len(child)))
+    log("child.previous_state_hash = %d" % want)
+
+    # ⚑ This script's OWN verdict, logged and never substituted for the gate's. It shares the
+    # reading with the Lean, so agreement here is not evidence -- it is a heads-up about what the
+    # build is about to say. A DISAGREEMENT here would mean the two renderings have drifted, and
+    # the honest thing is still to write the file and let the kernel report it.
+    try:
+        rec, _ = _cc.decode(parent)
+        mine = _cc.state_hash(rec)
+        log("python rendering says: %s" % ("MATCH" if mine == want else "MISMATCH -> %d" % mine))
+    except Exception as e:
+        log("python rendering could not run (%s); the Lean gate is the verdict anyway" % e)
+
+    emit(out, parent, child, hp, hc, want)
+    log("wrote %s (%d bytes)" % (out, os.path.getsize(out)))
+    log("now: (cd metatheory && lake build Dregg2.Bridge.MinaStateHashRealBlock)")
+    return 0
+
+
+def reemit(src_path, out):
+    """Recover a captured pair from a previously generated module and emit again.
+
+    ⚑ Exists because the capture is the expensive, non-reproducible half: devnet moves on, and a
+    generator bug should never cost a fresh 25-minute poll. It also truncates payloads that an
+    older generator embedded whole.
+    """
+    import re as _re
+    src = open(src_path).read()
+
+    def grab(name):
+        i = src.index("def %s : List Nat := [" % name)
+        j = src.index("]", i)
+        head = "def %s : List Nat := [" % name
+        return bytes(int(x) for x in _re.findall(r"\d+", src[i + len(head):j]))
+
+    par, chi = grab("devnetParent"), grab("devnetChild")
+    gp, gc = parse(par), parse(chi)
+    if gp is None or gc is None:
+        log("recovered bytes do not decode; refusing")
+        return 1
+    (rp, up), (rc, uc) = gp, gc
+    hp, hc = rp["cs"]["bl"], rc["cs"]["bl"]
+    if hc != hp + 1:
+        log("recovered blocks are NOT consecutive (%d, %d); refusing" % (hp, hc))
+        return 1
+    log("recovered %d -> %d; truncating %d/%d payload bytes to %d/%d protocol state"
+        % (hp, hc, len(par), len(chi), up, uc))
+    return finish(out, par[:up], chi[:uc], hp, hc)
 
 
 if __name__ == "__main__":
