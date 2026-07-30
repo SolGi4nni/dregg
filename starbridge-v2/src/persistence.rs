@@ -62,12 +62,22 @@ use dregg_turn::turn::{Turn, TurnReceipt};
 /// covered by `close_and_reopen_restores_the_exact_image`).
 pub use dregg_persist::canonical_ledger_root;
 
-/// The METADATA_BYTES config-key prefix for a durably-persisted input `Turn`,
-/// keyed by its commit ordinal (zero-padded so lexicographic == numeric order).
+/// The METADATA_BYTES config-key prefix for a durably-persisted [`DurableTurn`]
+/// (the input `Turn` + the wall-clock it committed under), keyed by its commit
+/// ordinal (zero-padded so lexicographic == numeric order).
 /// (A.4: the commit log carries post-state cells + teeth but NOT the input turn;
 /// this sibling table carries the replayable input so `History` rebuilds and the
 /// image is *rewindable*, not merely *resumable*.)
-const TURN_KEY_PREFIX: &str = "sbv2_turn:";
+///
+/// ⚠ FLAG DAY (`sbv2_turn:` → `sbv2_turn_v2:`): the payload changed from a bare
+/// postcard `Turn` to a [`DurableTurn`] (`{ turn, timestamp }`) because the
+/// canonical ledger root is a FUNCTION OF THE WALL CLOCK — see [`DurableTurn`].
+/// The prefix is bumped rather than reused so an image written under the old
+/// shape REFUSES to load (`load_committed_turns` errs "durable input turn N
+/// missing (corrupt store)") instead of being replayed under a wrong clock and
+/// reported as a store-integrity divergence. Any pre-existing per-user session
+/// image must be re-genesised (delete it; login provisions a fresh one).
+const TURN_KEY_PREFIX: &str = "sbv2_turn_v2:";
 /// The METADATA_BYTES config-key prefix for a durably-persisted genesis cell,
 /// keyed by its CELL ID (hex). (SEAM §2: out-of-band genesis installs + in-place
 /// genesis-path mutations — `set_cell_program`/`genesis_grant_cap`/
@@ -162,17 +172,50 @@ pub struct WorldPersist {
     cursor: u64,
 }
 
+/// One durably-recorded committed turn: the replayable input `Turn` **plus the
+/// executor wall-clock it committed under**.
+///
+/// ⚑ WHY THE CLOCK IS PART OF THE IMAGE (measured 2026-07-30). The canonical
+/// ledger root is a function of the wall clock, transitively:
+/// `TurnReceipt::timestamp` = the executor's `current_timestamp` → the next turn's
+/// `previous_receipt_hash` folds that receipt → `Turn::hash` folds
+/// `previous_receipt_hash` → an installed capability's `provenance` folds
+/// `created_by_turn == Turn::hash` (`turn/src/executor/apply.rs`
+/// `grant_ref_provenanced`) → the cap lives IN THE CELL → `canonical_ledger_root`
+/// commits to it.
+///
+/// So re-executing a recorded turn under a *different* clock re-derives a
+/// different ledger, and [`crate::world::World::open`]'s fail-closed convergence
+/// check correctly refuses the image. Before this field existed, `World::open`
+/// replayed under `now_unix()` and therefore **no durable image with two or more
+/// committed turns could ever be reopened** — the returning-user login path was
+/// dead (`starbridge-v2/tests/login_key_ceremony.rs`).
+///
+/// Recording the clock per TURN (not per image) is what keeps the fix honest: the
+/// replay is bit-exact AND the live clock still advances, so `expires_at` /
+/// `valid_until` gates are not frozen at the image's birth instant.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DurableTurn {
+    /// The replayable input turn.
+    pub turn: Turn,
+    /// The executor wall-clock this turn's receipt was stamped with
+    /// ([`TurnReceipt::timestamp`]). Replay MUST pin the executor here.
+    pub timestamp: i64,
+}
+
 /// The fully-recovered image content `World::open` rebuilds its in-RAM spine on.
 pub struct RecoveredImage {
     /// The recovered ledger (checkpoint ⊕ overlay, convergence-verified).
     pub ledger: Ledger,
     /// The durable genesis cells, in install order (for History::record_genesis).
     pub genesis_cells: Vec<Cell>,
-    /// The durable input turns, in ordinal order. `World::open` RE-EXECUTES these
-    /// through the embedded executor (History::record_commit) to rebuild the
-    /// History/receipts/engine spine + re-prime each agent's chain head — the
-    /// receipt is re-derived, never carried across the durable boundary (A.4).
-    pub committed: Vec<Turn>,
+    /// The durable input turns (each with the wall-clock it committed under), in
+    /// ordinal order. `World::open` RE-EXECUTES these through the embedded executor
+    /// (History::record_commit) to rebuild the History/receipts/engine spine +
+    /// re-prime each agent's chain head — the receipt is re-derived, never carried
+    /// across the durable boundary (A.4) — pinning the executor clock to each
+    /// turn's recorded [`DurableTurn::timestamp`] so the re-derivation is bit-exact.
+    pub committed: Vec<DurableTurn>,
     /// The durable commit cursor (== number of committed turns).
     pub cursor: u64,
 }
@@ -294,8 +337,14 @@ impl WorldPersist {
         // Persist the input turn FIRST (under the ordinal this commit will take),
         // so that if the commit txn lands, the turn is already durable; if the
         // turn write fails we abort before advancing the cursor (fail-closed).
+        // The receipt's wall-clock rides WITH the turn: the ledger root commits to
+        // it (see `DurableTurn`), so a reopen that cannot read it cannot replay.
+        let durable = DurableTurn {
+            turn: turn.clone(),
+            timestamp: receipt.timestamp,
+        };
         let bytes =
-            postcard::to_stdvec(turn).map_err(|e| StoreError::Serialization(e.to_string()))?;
+            postcard::to_stdvec(&durable).map_err(|e| StoreError::Serialization(e.to_string()))?;
         self.store.set_config(&turn_key(self.cursor), &bytes)?;
         let assigned = self.store.commit_finalized_turn(self.cursor, &record)?;
         self.cursor = assigned + 1;
@@ -408,7 +457,7 @@ impl WorldPersist {
         Ok(out)
     }
 
-    fn load_committed_turns(&self, cursor: u64) -> Result<Vec<Turn>, OpenError> {
+    fn load_committed_turns(&self, cursor: u64) -> Result<Vec<DurableTurn>, OpenError> {
         let mut out = Vec::with_capacity(cursor as usize);
         for ordinal in 0..cursor {
             // The commit record must exist for every ordinal below the cursor (a
@@ -425,12 +474,14 @@ impl WorldPersist {
             }
             let bytes = self.store.get_config(&turn_key(ordinal))?.ok_or_else(|| {
                 OpenError::Store(StoreError::Integrity(format!(
-                    "durable input turn {ordinal} missing (corrupt store)"
+                    "durable input turn {ordinal} missing (corrupt store, or an image written \
+                     under the retired `sbv2_turn:` shape that carried no wall-clock — re-genesis \
+                     it; see TURN_KEY_PREFIX)"
                 )))
             })?;
-            let turn: Turn = postcard::from_bytes(&bytes)
+            let durable: DurableTurn = postcard::from_bytes(&bytes)
                 .map_err(|e| StoreError::Serialization(e.to_string()))?;
-            out.push(turn);
+            out.push(durable);
         }
         Ok(out)
     }
@@ -569,6 +620,105 @@ mod tests {
             recovered.ledger().get(&user).unwrap().state.balance(),
             5_000 + 100 + 250 + 50
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// ⚑ THE CLOCK MOVED BETWEEN SESSIONS — the only realistic reopen, and it was
+    /// impossible until 2026-07-30.
+    ///
+    /// The canonical ledger root is a function of the executor wall clock (see
+    /// [`DurableTurn`]), so recovery's re-execution of the durable turns must run
+    /// each under the clock IT committed at. Every test above pins `TS` on both
+    /// sides and therefore cannot see this; the production front door
+    /// (`World::open` / `open_recovering` / `session::open_session_world`) opens with
+    /// `now_unix()`, so a real relaunch ALWAYS moves the clock and the image was
+    /// refused as a store-integrity event. This drives the move EXPLICITLY (a day
+    /// later) so the property is pinned deterministically, not by whether two
+    /// `now_unix()` calls in one test happened to straddle a second boundary.
+    #[test]
+    fn a_reopen_a_day_later_recovers_the_exact_image_and_advances_the_live_clock() {
+        let path = scratch_path();
+        let (treasury, user, root_before, cells_before) = make_durable_image(&path);
+        let later = TS + 86_400;
+
+        let reopened = World::open_with_timestamp(&path, ComputronCosts::zero(), later)
+            .expect("a reopen under a MOVED clock must still converge");
+
+        // The IMAGE is byte-exact — the recovered ledger commits to the same root
+        // the closing session recorded, and the values are the ones that were there.
+        assert_eq!(
+            canonical_ledger_root(reopened.ledger()),
+            root_before,
+            "the moved clock must not change the recovered ledger root"
+        );
+        assert_eq!(reopened.cell_count(), cells_before);
+        assert_eq!(
+            reopened.ledger().get(&treasury).unwrap().state.balance(),
+            1_000_000 - 100 - 250 - 50,
+            "treasury resumed exactly under a moved clock"
+        );
+        assert_eq!(
+            reopened.ledger().get(&user).unwrap().state.balance(),
+            5_000 + 100 + 250 + 50,
+            "user resumed exactly under a moved clock"
+        );
+
+        // ... AND the live clock is the NEW one. This is the half that keeps the fix
+        // honest: pinning the image to its birth instant forever would also converge,
+        // and would silently freeze every `expires_at` / `valid_until` gate.
+        assert_eq!(
+            reopened.timestamp(),
+            later,
+            "the LIVE clock advanced to the reopening instant (expiry gates still move)"
+        );
+
+        // The rewindable image still verifies at every step — `History::replay_to`
+        // re-executes each recorded step under the clock that step ran at, so a
+        // history spanning two clocks still re-derives its recorded root teeth.
+        let h = reopened.recorded_turns();
+        for k in 0..=h.len() {
+            assert!(
+                h.replay_to(k).is_ok(),
+                "rewind step {k} verifies after a moved-clock reopen"
+            );
+        }
+
+        // And a turn committed in THIS session is stamped with the new clock, lands,
+        // and survives a further reopen — the history now genuinely holds two clocks.
+        let mut reopened = reopened;
+        let nonce = reopened
+            .ledger()
+            .get(&treasury)
+            .map(|c| c.state.nonce())
+            .unwrap_or(0);
+        let t = bare_turn(treasury, nonce, vec![transfer(treasury, user, 7)]);
+        assert!(
+            reopened.commit_turn(t).is_committed(),
+            "a new turn commits on the reopened image"
+        );
+        reopened.checkpoint_now();
+        let two_clock_root = canonical_ledger_root(reopened.ledger());
+        drop(reopened);
+
+        let third = World::open_with_timestamp(&path, ComputronCosts::zero(), later + 3_600)
+            .expect("a TWO-CLOCK image must reopen under a third clock");
+        assert_eq!(
+            canonical_ledger_root(third.ledger()),
+            two_clock_root,
+            "an image whose turns ran under two different clocks still recovers exactly"
+        );
+        assert_eq!(
+            third.ledger().get(&user).unwrap().state.balance(),
+            5_000 + 100 + 250 + 50 + 7,
+            "the second session's turn survived the reopen"
+        );
+        let h = third.recorded_turns();
+        for k in 0..=h.len() {
+            assert!(
+                h.replay_to(k).is_ok(),
+                "rewind step {k} verifies across a two-clock history"
+            );
+        }
         let _ = std::fs::remove_file(&path);
     }
 

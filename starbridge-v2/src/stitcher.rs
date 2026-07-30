@@ -525,20 +525,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_clean_document_surfaces_nothing_to_stitch() {
-        // FALSE bite: two DISJOINT edits fold clean — the stitcher fabricates no
-        // conflict where there is none.
+    /// Two branches off `alpha/beta`, each REPLACING one line in place. `which`
+    /// picks whether they replace DIFFERENT lines (disjoint) or the SAME line
+    /// (overlapping). Both poles are driven through the identical shape so the only
+    /// variable is the overlap.
+    fn replacement_branches(same_line: bool) -> Stitcher {
         let mut base = Doc::new(Granularity::Line);
         base.edit(Author(1), "alpha\nbeta\n");
 
         let mut ours = Doc::from_history(base.history().clone(), Granularity::Line);
-        ours.edit(Author(1), "ALPHA\nbeta\n"); // edits line 1
+        ours.edit(Author(1), "ALPHA\nbeta\n"); // replaces line 1
 
         let mut theirs = Doc::from_history(base.history().clone(), Granularity::Line);
-        theirs.edit(Author(2), "alpha\nBETA\n"); // edits line 2 (disjoint)
+        if same_line {
+            theirs.edit(Author(2), "AlPhA\nbeta\n"); // replaces line 1 TOO — overlapping
+        } else {
+            theirs.edit(Author(2), "alpha\nBETA\n"); // replaces line 2 — disjoint
+        }
+        Stitcher::from_docs(&ours, &theirs)
+    }
 
-        let st = Stitcher::from_docs(&ours, &theirs);
+    #[test]
+    fn a_clean_document_surfaces_nothing_to_stitch() {
+        // FALSE bite: two DISJOINT edits fold clean — the stitcher fabricates no
+        // conflict where there is none.
+        let st = replacement_branches(false);
         // Disjoint edits at different lines do not conflict; if they happen to,
         // the surface still must not invent a region for a clean document — assert
         // the contract on a truly clean stitch.
@@ -553,6 +564,59 @@ mod tests {
             st.conflicts().is_empty(),
             "clean doc => no conflicts to surface"
         );
+        // And the clean fold carries BOTH edits — folding clean must mean MERGED,
+        // never "one side quietly dropped to avoid a conflict".
+        let text = st.rendered().to_marked_string();
+        assert_eq!(
+            text, "ALPHA\nBETA\n",
+            "the clean fold is the pushout of both replacements, in order: {text:?}"
+        );
+    }
+
+    /// ⚑ THE PAIRED TOOTH for the test above, asserted in the SAME process: making
+    /// two disjoint replacements fold clean must NOT be achieved by making
+    /// everything fold clean. Two branches that replace the SAME line genuinely
+    /// overlap, and the stitcher must STILL surface that as a conflict with both
+    /// readings — otherwise the disjoint-edit fix silently deleted the feature.
+    #[test]
+    fn two_replacements_of_the_SAME_line_still_conflict_with_both_readings() {
+        let st = replacement_branches(true);
+        assert!(
+            st.has_conflict(),
+            "two branches replacing the SAME line overlap — the conflict is REAL and must surface"
+        );
+        let conflicts = st.conflicts();
+        assert_eq!(conflicts.len(), 1, "exactly one region: {conflicts:?}");
+        let c = &conflicts[0];
+        assert!(!c.is_field, "a prose antichain, not a field clash");
+        assert_eq!(c.alternatives.len(), 2, "BOTH readings surfaced");
+
+        let texts: Vec<&str> = c.alternatives.iter().map(|a| a.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains("ALPHA")),
+            "our reading surfaced: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("AlPhA")),
+            "their reading surfaced: {texts:?}"
+        );
+        let authors: Vec<Author> = c.alternatives.iter().map(|a| a.provenance.author).collect();
+        assert!(authors.contains(&Author(1)) && authors.contains(&Author(2)));
+
+        // And it is RESOLVABLE (a live surface, not a dead-end): picking a side
+        // collapses it and the kept reading survives.
+        let mut st = st;
+        let alice = if st.conflicts()[0].alt(Side::A).unwrap().provenance.author == Author(1) {
+            Side::A
+        } else {
+            Side::B
+        };
+        st.pick_and_resolve(0, alice, Author(1))
+            .expect("a two-way fork picks a side");
+        assert!(!st.has_conflict(), "the pick collapsed the real conflict");
+        let text = st.rendered().to_marked_string();
+        assert!(text.contains("ALPHA"), "kept our reading: {text:?}");
+        assert!(!text.contains("AlPhA"), "dropped theirs: {text:?}");
     }
 
     #[test]

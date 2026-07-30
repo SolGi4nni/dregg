@@ -25,9 +25,12 @@
 //!    is positional and exact).
 //! 4. **Deletes** become [`Op::Delete`]; **inserts** become an [`Op::Add`]
 //!    anchored after the running predecessor (a kept atom, a freshly-inserted
-//!    atom, or [`AtomId::ROOT`] at the head) plus an [`Op::Connect`] threading
-//!    the insertion back into the successor chain (the `insert_in_the_middle`
-//!    pattern).
+//!    atom, the TOMBSTONE the insert *replaces*, or [`AtomId::ROOT`] at the head)
+//!    plus an [`Op::Connect`] threading the insertion back into the successor
+//!    chain (the `insert_in_the_middle` pattern). Anchoring a replacement on the
+//!    tombstone it replaces — rather than on the last surviving atom before it —
+//!    is what keeps two branches editing DIFFERENT lines from fabricating a
+//!    conflict; see [`diff_to_ops`].
 //!
 //! ## The stable-atom-id trap (the load-bearing correctness issue)
 //!
@@ -259,81 +262,100 @@ fn seed_from(pred: AtomId) -> u64 {
 
 /// Turn the token-level diff into the `Add`/`Delete`/`Connect` ops.
 ///
-/// Walks the new-token stream. A matched (kept) token reuses its existing atom
-/// id and advances the predecessor cursor. An unmatched (inserted) new token
-/// mints a fresh atom — `Add` anchored after the current predecessor, with a
-/// `Connect` from it to the successor chain so the insertion threads in — and
-/// becomes the new predecessor (so a run of inserts chains, and identical
-/// inserted tokens stay distinct). Current tokens not in the LCS are deleted.
+/// Walks the LCS alignment as a sequence of HUNKS. Each hunk is a (possibly
+/// empty) run of current tokens that were dropped, a (possibly empty) run of new
+/// tokens that were inserted, and the kept token that terminates it. A kept token
+/// keeps its EXISTING atom id (never re-minted) and advances the predecessor; a
+/// dropped current token is tombstoned; an inserted new token mints a fresh atom
+/// `Add`ed after the running predecessor with a `Connect` threading it into the
+/// hunk's terminating kept atom, and becomes the next predecessor (so a run of
+/// inserts chains, and identical inserted tokens stay distinct).
+///
+/// ## A REPLACEMENT IS ANCHORED AFTER THE TOMBSTONE IT REPLACES
+///
+/// The load-bearing subtlety, and a real merge defect until 2026-07-30. When a
+/// hunk both DROPS and INSERTS — a *replacement* — the inserted run is anchored
+/// after the LAST DROPPED atom, not after the last kept atom before the hunk.
+///
+/// A tombstone still CONDUCTS order ([`crate::content::live_successors`] walks
+/// *through* dead atoms), so `ROOT → alpha† → ALPHA → beta` places `ALPHA` in the
+/// exact slot `alpha` held. Anchoring it at `ROOT` instead is strictly WEAKER: it
+/// says only "somewhere before `beta`", and it drops the fact that the
+/// replacement stands where the replaced line stood.
+///
+/// That lost edge is a *fabricated conflict* the moment two branches replace
+/// DIFFERENT lines. `alpha/beta` → (`ALPHA/beta`, `alpha/BETA`) used to union to
+/// `ROOT → {ALPHA, BETA†…}` with `ALPHA` and `BETA` mutually unreachable — a
+/// two-element antichain, so [`crate::content`] surfaced a conflict region for
+/// two edits that do not overlap at all, and the merge UI asked a user to resolve
+/// nothing. With the replacement anchored on its tombstone, `BETA` is reachable
+/// from `ALPHA` (`ALPHA → beta† → BETA`), the antichain collapses, and the fold is
+/// clean — while two branches replacing the SAME line still both anchor on the
+/// same tombstone, stay mutually unreachable, and still conflict. The pole pair is
+/// pinned in `crate::tests` and `starbridge_v2::stitcher`.
 pub(crate) fn diff_to_ops(
     cur_tokens: &[String],
     cur_ids: &[AtomId],
     new_tokens: &[String],
 ) -> Vec<Op> {
     let pairs = lcs_pairs(cur_tokens, new_tokens);
-
-    // Which new-index is matched to which current-id (kept tokens).
-    let mut kept_new_to_cur: Vec<Option<usize>> = vec![None; new_tokens.len()];
-    let mut kept_cur: Vec<bool> = vec![false; cur_tokens.len()];
-    for &(ci, nj) in &pairs {
-        kept_new_to_cur[nj] = Some(ci);
-        kept_cur[ci] = true;
-    }
-
     let mut ops = Vec::new();
 
-    // Deletes: every current token NOT in the LCS gets tombstoned.
-    for (ci, kept) in kept_cur.iter().enumerate() {
-        if !*kept {
-            ops.push(Op::Delete { id: cur_ids[ci] });
-        }
-    }
-
-    // Adds + Connects: walk the new stream, threading inserts after the running
-    // predecessor and into the next kept successor.
+    // The predecessor the NEXT hunk's content hangs off: ROOT at the head, then
+    // the last kept atom.
     let mut pred = AtomId::ROOT;
-    for (nj, token) in new_tokens.iter().enumerate() {
-        match kept_new_to_cur[nj] {
-            Some(ci) => {
-                // A kept token: reuse the existing atom, advance the predecessor.
-                pred = cur_ids[ci];
-            }
-            None => {
-                // An inserted token: mint a fresh atom anchored after `pred`,
-                // its id seeded by the predecessor so duplicates stay distinct.
-                let id = AtomId::derive(seed_from(pred), token);
-                ops.push(Op::Add {
-                    id,
-                    content: AtomContent::Text(token.clone()),
-                    after: pred,
+    // Cursors into the current / new token streams (just past the last match).
+    let mut ci = 0usize;
+    let mut nj = 0usize;
+
+    for pi in 0..=pairs.len() {
+        // The hunk runs up to the next matched pair — or to the end of both
+        // streams for the final (unterminated) hunk.
+        let (end_ci, end_nj) = pairs
+            .get(pi)
+            .copied()
+            .unwrap_or((cur_tokens.len(), new_tokens.len()));
+
+        // 1. DROP `cur[ci..end_ci]`. Each tombstone still conducts order, and the
+        //    LAST of them is where a replacement belongs (see the doc above).
+        let mut anchor = pred;
+        for d in ci..end_ci {
+            ops.push(Op::Delete { id: cur_ids[d] });
+            anchor = cur_ids[d];
+        }
+
+        // 2. INSERT `new[nj..end_nj]`, chained after `anchor`, each threaded into
+        //    the kept atom that terminates this hunk (`None` at the tail).
+        let succ = cur_ids.get(end_ci).copied();
+        let mut p = anchor;
+        for token in &new_tokens[nj..end_nj] {
+            // Seeded by the predecessor so identical tokens at different
+            // positions stay distinct atoms (the duplicate-token trap).
+            let id = AtomId::derive(seed_from(p), token);
+            ops.push(Op::Add {
+                id,
+                content: AtomContent::Text(token.clone()),
+                after: p,
+            });
+            if let Some(next_id) = succ {
+                ops.push(Op::Connect {
+                    from: id,
+                    to: next_id,
                 });
-                // Thread into the successor chain: connect this new atom to the
-                // next KEPT atom (the existing successor the insert lands before),
-                // so the walk passes through the insert rather than around it.
-                if let Some(next_id) = next_kept_after(nj, new_tokens, &kept_new_to_cur, cur_ids) {
-                    ops.push(Op::Connect {
-                        from: id,
-                        to: next_id,
-                    });
-                }
-                pred = id;
             }
+            p = id;
+        }
+
+        // 3. The kept token terminating this hunk keeps its atom and becomes the
+        //    predecessor. (Absent for the final hunk — the loop ends.)
+        if pi < pairs.len() {
+            pred = cur_ids[end_ci];
+            ci = end_ci + 1;
+            nj = end_nj + 1;
         }
     }
 
     ops
-}
-
-/// The atom id of the first KEPT new-token after position `nj` — the existing
-/// successor an insertion at `nj` must thread into. `None` if the insertion is at
-/// the tail (no kept successor follows).
-fn next_kept_after(
-    nj: usize,
-    new_tokens: &[String],
-    kept_new_to_cur: &[Option<usize>],
-    cur_ids: &[AtomId],
-) -> Option<AtomId> {
-    ((nj + 1)..new_tokens.len()).find_map(|k| kept_new_to_cur[k].map(|ci| cur_ids[ci]))
 }
 
 #[cfg(test)]

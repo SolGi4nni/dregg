@@ -1480,14 +1480,43 @@ mod tests {
         let mut h = Keccak256::new();
         h.update(&cd);
         let digest: [u8; 32] = h.finalize().into();
-        // Regenerated for the post-shrink 4.98M SettlementCircuit fixture
-        // (`chain/test/fixtures/settlement_groth16.json`, re-minted at 151ba219e). Independently
-        // computed by Foundry `cast keccak $(cast calldata "settle(...)" <fixture args…>)` — NOT via
-        // the Rust encoder under test; the Rust `settle_calldata` output matches it byte-for-byte.
+        // Independently computed by Foundry over the CURRENT fixture — NOT read off the
+        // Rust encoder under test (that would make this assert `encoder == encoder` and
+        // delete the only cross-implementation check on the settle() ABI).
+        //
+        // ⚠ THE PREVIOUS PIN WAS STALE, AND SILENTLY: it was regenerated at `17cf1273b`,
+        // then `c652ce454` RE-MINTED `chain/test/fixtures/settlement_groth16.json` with a
+        // fresh Groth16 proof and did not touch the pin. Every per-slot spot-check above
+        // still passed (they read the same fixture), so the only thing that could see it
+        // was this whole-buffer digest, and it has been red since 2026-07-14. Regenerating
+        // it confirmed the encoder is byte-exact; the pin was the wrong side.
+        //
+        // REGENERATE (verbatim, from the repo root) whenever the fixture is re-minted:
+        //
+        // ```sh
+        // SIG='settle(uint256[2],uint256[2][2],uint256[2],uint256[2],uint256[2],uint32[8],uint32[8],uint32,uint32[8],bytes32)'
+        // python3 - <<'PY' > /tmp/args.txt
+        // import json
+        // r = json.load(open('chain/test/fixtures/settlement_groth16.json'))
+        // p, c, k = r['proof'], r['commitments'], r['commitment_pok']
+        // a = lambda xs: "[" + ",".join(str(x) for x in xs) + "]"
+        // print("\n".join([a([p[0],p[1]]),
+        //                  f"[[{p[2]},{p[3]}],[{p[4]},{p[5]}]]",
+        //                  a([p[6],p[7]]), a(c), a(k),
+        //                  a(r['genesis_root']), a(r['final_root']),
+        //                  str(r['num_turns']), a(r['chain_digest']),
+        //                  "0x" + "00"*32]))
+        // PY
+        // mapfile -t ARGS < /tmp/args.txt        # bash, not zsh
+        // cast keccak "$(cast calldata "$SIG" "${ARGS[@]}")"
+        // ```
+        //
+        // Last run 2026-07-30 → 0xd2474aea… (cast 1.7.1), and `settle_calldata()` matched
+        // it byte-for-byte.
         let expected: [u8; 32] = [
-            0x7f, 0x2d, 0xc8, 0x0d, 0xb9, 0x91, 0x35, 0xb4, 0x25, 0xb7, 0xf0, 0xf8, 0xbd, 0x7b,
-            0xf3, 0xc3, 0x27, 0x95, 0xbc, 0xf1, 0x76, 0xf7, 0x38, 0x1b, 0x49, 0xa9, 0x48, 0x52,
-            0xc5, 0xe3, 0xbb, 0xce,
+            0xd2, 0x47, 0x4a, 0xea, 0xeb, 0x4b, 0xb7, 0xa8, 0xa9, 0x31, 0x34, 0x83, 0xc5, 0x6c,
+            0x66, 0xff, 0x46, 0x68, 0x66, 0x4f, 0x7f, 0x71, 0xd8, 0xf5, 0x87, 0x59, 0x1a, 0xa3,
+            0xe4, 0x07, 0x63, 0xf2,
         ];
         assert_eq!(
             digest, expected,

@@ -84,9 +84,36 @@ pub const PI_ROOT: usize = 1;
 /// Public-input count.
 pub const MEMBERSHIP_4ARY_PI_COUNT: usize = 2;
 
-/// Legacy dispatch prefix retained as a wire-level alias. Every supported
-/// depth resolves to the same Lean-emitted, depth-uniform descriptor.
+/// THE WIRE DISPATCH PREFIX. Every supported depth resolves to the same
+/// Lean-emitted, depth-uniform descriptor (the depth rides the trace height).
+///
+/// ⚠ THIS IS *NOT* THE EMITTED DESCRIPTOR'S OWN `name`. Use
+/// [`membership_4ary_dispatch_name`] to build a wire identity — never
+/// `membership_descriptor_of_depth_4ary(d).name`. See that function for the
+/// production wound that distinction cost.
 pub const MEMBERSHIP_4ARY_NAME_PREFIX: &str = "merkle-membership::poseidon2-4ary-general-depth";
+
+/// **THE WIRE DISPATCH IDENTITY** a producer must put in a proof wire's
+/// `predicate`/`descriptor_name`, and the string
+/// [`crate::descriptor_by_name::descriptor_by_name`] resolves.
+///
+/// ⚑ IT IS DELIBERATELY DIFFERENT FROM THE EMITTED DESCRIPTOR'S `name`, and the
+/// two were conflated in production. Before `9ba02881b` the 4-ary membership
+/// descriptor was *built in Rust* and its `name` WAS this string, so producers
+/// wrote `predicate: desc.name` and it routed. That commit replaced it with the
+/// Lean-emitted artifact (LAW #1 — the AIR is authored in Lean), whose own name is
+/// `dregg-merkle-membership-4ary-general::v1`. `descriptor_by_name` still routes
+/// ONLY the prefix above, so every `desc.name` producer silently began emitting an
+/// identity NO CONSUMER CAN RESOLVE: `dregg_bridge::present::verify_ir2_issuer_wire`
+/// answers `UnknownAir` and `verify_with_predicate` refuses an HONEST proof. It
+/// compiled, it proved, and it failed only at the far end of the wire.
+///
+/// The kernel's own verifier (`turn/src/executor/membership_verifier.rs`) always
+/// built the name this way; this function exists so every other producer reads the
+/// identity from the SAME place instead of re-deriving it or reaching for `.name`.
+pub fn membership_4ary_dispatch_name(depth: usize) -> String {
+    format!("{MEMBERSHIP_4ARY_NAME_PREFIX}{depth}")
+}
 
 /// Exact bytes emitted and byte-pinned by
 /// `Dregg2.Circuit.Emit.MerkleMembership4aryEmit`.
@@ -412,5 +439,43 @@ mod tests {
             .count();
         assert_eq!(win, 1, "the single cross-row continuity gate");
         assert_eq!(d.name, "dregg-merkle-membership-4ary-general::v1");
+    }
+
+    /// ⚑ THE ROUTING GATE — the tooth for the wound documented on
+    /// [`membership_4ary_dispatch_name`]: a proof wire's identity must RESOLVE, and
+    /// the emitted descriptor's own `name` is NOT that identity.
+    ///
+    /// Both halves are asserted, because either alone is misleading. Without the
+    /// first, a producer can emit an unroutable string and nothing local complains.
+    /// Without the second, the next reader "simplifies" a producer back to
+    /// `desc.name` — which is exactly how `dregg_bridge::present` shipped an
+    /// unresolvable predicate.
+    #[test]
+    fn the_wire_dispatch_name_resolves_and_is_not_the_emitted_descriptor_name() {
+        use crate::descriptor_by_name::descriptor_by_name;
+        for depth in [2usize, 4, 8, 16] {
+            let dispatch = membership_4ary_dispatch_name(depth);
+            let routed = descriptor_by_name(&dispatch).unwrap_or_else(|| {
+                panic!("the wire identity {dispatch:?} MUST resolve — a producer emitting it would be refused by every consumer")
+            });
+            let direct = membership_descriptor_of_depth_4ary(depth);
+            assert_eq!(
+                routed, direct,
+                "the routed descriptor must BE the one a producer proves under"
+            );
+            assert_ne!(
+                direct.name, dispatch,
+                "the emitted descriptor's own name is NOT the wire identity — if these \
+                 ever coincide again, delete this assert and the two-name distinction \
+                 together, deliberately"
+            );
+            assert!(
+                descriptor_by_name(&direct.name).is_none(),
+                "the emitted name {:?} does NOT route: a producer that puts it on the wire \
+                 emits an UnknownAir. This is the failure mode the dispatch helper exists \
+                 to prevent.",
+                direct.name
+            );
+        }
     }
 }

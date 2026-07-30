@@ -1106,3 +1106,119 @@ fn doc_text_reads_past_a_conflict() {
         "Doc::text does NOT drop the tail past the conflict: {t:?}"
     );
 }
+
+// ── REPLACEMENT ANCHORING: the disjoint/overlapping pole pair ────────────────
+//
+// ⚑ These two are a PAIR and must be read together. `diff_to_ops` anchors a
+// replacement on the TOMBSTONE it replaces (not on the last surviving atom before
+// it), which is what stops two branches editing DIFFERENT lines from unioning into
+// a spurious antichain. The obvious wrong way to get the first test green is to
+// weaken conflict detection; the second test is the tooth that catches that — it
+// drives the IDENTICAL shape with the only difference being the overlap.
+
+/// Two `Granularity::Line` branches off `base_text`, each replacing one line.
+/// Returns the merged fold of the two histories (the stitch = pushout).
+fn merged_line_replacements(base_text: &str, ours: &str, theirs: &str) -> Rendered {
+    let mut base = Doc::new(Granularity::Line);
+    base.edit(Author(1), base_text);
+
+    let mut l = Doc::from_history(base.history().clone(), Granularity::Line);
+    l.edit(Author(1), ours);
+    let mut r = Doc::from_history(base.history().clone(), Granularity::Line);
+    r.edit(Author(2), theirs);
+
+    let mut merged = l.history().clone();
+    merged.stitch(r.history());
+    content(&merged.replay())
+}
+
+#[test]
+fn replacements_of_different_lines_fold_clean_and_keep_both() {
+    // Line 1 replaced on one side, line 2 on the other: the edits do not overlap,
+    // so the pushout is a CHAIN, not an antichain — no conflict to resolve, and
+    // BOTH replacements survive (folding clean must mean merged, never dropped).
+    let m = merged_line_replacements("alpha\nbeta\n", "ALPHA\nbeta\n", "alpha\nBETA\n");
+    assert!(
+        !m.has_conflict(),
+        "disjoint single-line replacements must fold clean: {:?}",
+        m.to_marked_string()
+    );
+    assert_eq!(
+        m.to_marked_string(),
+        "ALPHA\nBETA\n",
+        "the clean fold carries BOTH replacements in document order"
+    );
+}
+
+#[test]
+fn replacements_of_the_same_line_still_conflict() {
+    // THE PAIRED TOOTH: the same shape, but both sides replace line 1. That IS an
+    // overlap — both new atoms are anchored on the same tombstone with no order
+    // between them — so the antichain is real and MUST surface, with both readings
+    // and their provenance. If this ever goes green-by-folding-clean, the
+    // false-positive fix above has eaten the feature.
+    let m = merged_line_replacements("alpha\nbeta\n", "ALPHA\nbeta\n", "AlPhA\nbeta\n");
+    assert!(
+        m.has_conflict(),
+        "two branches replacing the SAME line genuinely overlap: {:?}",
+        m.to_marked_string()
+    );
+    let regions: Vec<&ConflictRegion> = m.conflicts().collect();
+    assert_eq!(regions.len(), 1, "exactly one region: {regions:?}");
+    let alts = &regions[0].alternatives;
+    assert_eq!(alts.len(), 2, "BOTH readings surfaced: {alts:?}");
+    assert!(
+        alts.iter().any(|a| a.text.contains("ALPHA")),
+        "our reading: {alts:?}"
+    );
+    assert!(
+        alts.iter().any(|a| a.text.contains("AlPhA")),
+        "their reading: {alts:?}"
+    );
+    assert_eq!(regions[0].regime, Regime::Prose);
+    let authors: Vec<Author> = alts.iter().map(|a| a.provenance.author).collect();
+    assert!(
+        authors.contains(&Author(1)) && authors.contains(&Author(2)),
+        "each reading attributed: {authors:?}"
+    );
+}
+
+#[test]
+fn a_replacement_is_anchored_on_the_tombstone_it_replaces() {
+    // The MECHANISM, asserted directly (so a future refactor that reverts the
+    // anchoring fails HERE with a legible reason, not only via a merge outcome).
+    let mut d = Doc::new(Granularity::Line);
+    d.edit(Author(1), "alpha\nbeta\n");
+    let before = d.history().replay();
+    let old_alpha = before
+        .atoms()
+        .find(|a| a.content.as_text() == Some("alpha\n"))
+        .expect("the base line-1 atom")
+        .id;
+
+    d.edit(Author(1), "ALPHA\nbeta\n");
+    let after = d.history().replay();
+    let new_alpha = after
+        .atoms()
+        .find(|a| a.content.as_text() == Some("ALPHA\n"))
+        .expect("the replacement atom")
+        .id;
+
+    assert!(
+        !after
+            .atom(old_alpha)
+            .expect("the replaced atom is retained, tombstoned")
+            .is_alive(),
+        "the replaced line is tombstoned, not removed"
+    );
+    assert!(
+        after.successors(old_alpha).any(|s| s == new_alpha),
+        "the replacement is ordered AFTER the tombstone it replaces — the edge that \
+         keeps a disjoint concurrent replacement from fabricating an antichain"
+    );
+    assert_eq!(
+        content(&after).to_marked_string(),
+        "ALPHA\nbeta\n",
+        "and the single-branch reading is unchanged"
+    );
+}

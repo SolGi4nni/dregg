@@ -323,7 +323,7 @@ pub(crate) fn ir2_membership_prove(leaf_value: u32, depth: u32) -> Result<Ir2Pro
     use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::membership_descriptor_4ary::{
-        membership_descriptor_of_depth_4ary, membership_witness_4ary,
+        membership_4ary_dispatch_name, membership_descriptor_of_depth_4ary, membership_witness_4ary,
     };
 
     let depth = (depth.clamp(2, 8)).next_power_of_two() as usize; // {2, 4, 8}
@@ -349,8 +349,14 @@ pub(crate) fn ir2_membership_prove(leaf_value: u32, depth: u32) -> Result<Ir2Pro
     let proof_postcard = postcard::to_allocvec(&proof).map_err(|e| e.to_string())?;
     let proof_size_bytes = proof_postcard.len();
     let root_value = pis[1].as_u32();
+    // ⚠ THE WIRE DISPATCH IDENTITY, *not* `desc.name`. The Lean-emitted descriptor's
+    // own name (`dregg-merkle-membership-4ary-general::v1`) does NOT resolve through
+    // `descriptor_by_name`, so an envelope carrying it fails the consumer's
+    // fail-closed dispatch on an HONEST proof. See
+    // `dregg_circuit::membership_descriptor_4ary::membership_4ary_dispatch_name`.
+    let dispatch_name = membership_4ary_dispatch_name(depth);
     let envelope = Ir2ProofEnvelope {
-        descriptor_name: desc.name.clone(),
+        descriptor_name: dispatch_name.clone(),
         public_inputs: pis.iter().map(|f| f.as_u32()).collect(),
         proof_postcard,
     };
@@ -362,7 +368,7 @@ pub(crate) fn ir2_membership_prove(leaf_value: u32, depth: u32) -> Result<Ir2Pro
         depth,
         leaf_value: leaf.as_u32(),
         root_value,
-        descriptor_name: desc.name,
+        descriptor_name: dispatch_name,
     })
 }
 

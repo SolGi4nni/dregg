@@ -96,6 +96,18 @@ pub enum RecordedStep {
         /// (leaving `roots[k]` honest) changes no replay outcome. It is surfaced via
         /// [`RecordedStep::root_after`] for external inspection, not verification.
         post_root: [u8; 32],
+        /// The executor wall-clock this turn committed under
+        /// ([`TurnReceipt::timestamp`]).
+        ///
+        /// ⚑ LOAD-BEARING FOR REPLAY, not decoration. The clock is folded into the
+        /// receipt, the receipt into the NEXT turn's `previous_receipt_hash`, that
+        /// into `Turn::hash`, and `Turn::hash` into an installed capability's
+        /// provenance — which lives in the cell. So [`History::replay_to`]
+        /// re-derives the recorded root ONLY if it re-executes each step under the
+        /// clock that step actually ran under. A history rebuilt from a durable
+        /// image that spans two sessions (`World::open`) genuinely holds two clocks;
+        /// carrying one per step is what keeps the scrub bit-exact across a reopen.
+        timestamp: i64,
     },
 }
 
@@ -176,8 +188,17 @@ pub struct History {
     /// same (a co-recorded round-trip check, strictly weaker than
     /// [`Self::replay_to`]'s re-execution ground truth — see [`Self::reify_to`]).
     boundaries: Vec<UProjection>,
-    /// The fixed executor timestamp used for every recorded turn, so replay is
-    /// bit-deterministic (a recorded receipt re-derives identically).
+    /// The executor wall-clock the recording STARTED at — the FLOOR a replay's
+    /// executor is initialised to, not a per-step value.
+    ///
+    /// ⚠ It used to be "the fixed timestamp used for every recorded turn". That is
+    /// true only of a history confined to ONE session: a history rebuilt from a
+    /// durable image spans as many clocks as the image has sessions, so each
+    /// [`RecordedStep::Committed`] carries its OWN
+    /// [`RecordedStep::Committed::timestamp`] and the replay steps the executor
+    /// clock forward per step. This field only has to be `<=` every recorded step's
+    /// clock, because [`dregg_turn::TurnExecutor::set_timestamp`] refuses to move
+    /// backwards — [`Self::replay_clock_floor`] enforces that.
     timestamp: i64,
     /// The computron cost model the recording executor meters at — pinned to the
     /// live [`World`](crate::world::World)'s engine costs so a recorded turn
@@ -211,14 +232,33 @@ impl History {
         }
     }
 
-    /// The recording executor: an executor metering at the history's pinned costs
-    /// and timestamp (matches the live [`World`](crate::world::World)'s engine).
-    /// Public so a live `World` can stand up the recorder substrate it drives this
-    /// history against, in lock-step with its engine.
+    /// The recording executor: an executor metering at the history's pinned costs,
+    /// with its clock at [`Self::replay_clock_floor`] (matches the live
+    /// [`World`](crate::world::World)'s engine on a fresh history). Public so a live
+    /// `World` can stand up the recorder substrate it drives this history against,
+    /// in lock-step with its engine.
+    ///
+    /// The clock is a FLOOR, not the value every step runs at — a replay steps it
+    /// forward to each [`RecordedStep::Committed::timestamp`] (see `apply_step`).
     pub fn fresh_executor(&self) -> TurnExecutor {
         let mut e = TurnExecutor::new(self.costs.clone());
-        e.set_timestamp(self.timestamp);
+        e.set_timestamp(self.replay_clock_floor());
         e
+    }
+
+    /// The clock a replay's executor must START at: no later than the earliest
+    /// recorded step's clock, because [`dregg_turn::TurnExecutor::set_timestamp`]
+    /// only moves FORWARD — an executor started above the first step's clock would
+    /// silently re-execute it under the wrong one and re-derive a different root.
+    fn replay_clock_floor(&self) -> i64 {
+        self.steps
+            .iter()
+            .filter_map(|s| match s {
+                RecordedStep::Committed { timestamp, .. } => Some(*timestamp),
+                RecordedStep::Genesis { .. } => None,
+            })
+            .min()
+            .map_or(self.timestamp, |earliest| earliest.min(self.timestamp))
     }
 
     /// The number of recorded steps (the head index).
@@ -291,6 +331,9 @@ impl History {
                 let post_root = ledger.root();
                 self.steps.push(RecordedStep::Committed {
                     turn: Box::new(turn),
+                    // The clock this turn actually ran under — read off the receipt
+                    // the executor just stamped, so it can never drift from it.
+                    timestamp: receipt.timestamp,
                     receipt: Box::new(receipt.clone()),
                     post_root,
                 });
@@ -324,9 +367,9 @@ impl History {
             });
         }
         let mut ledger = Ledger::new();
-        let executor = self.fresh_executor();
+        let mut executor = self.fresh_executor();
         for step in &self.steps[..k] {
-            apply_step(&executor, &mut ledger, step)?;
+            apply_step(&mut executor, &mut ledger, step)?;
         }
         // The root tooth: the reconstructed ledger MUST commit to the recorded
         // root at k (the same anti-substitution discipline as snapshot.rs).
@@ -408,7 +451,7 @@ impl History {
     /// state for step `i` is the running ledger BEFORE step `i` is applied — exactly
     /// what `replay_to(i)` would reconstruct, but reusing one running ledger.
     pub fn reversibility_classification(&self) -> Vec<Option<bool>> {
-        let executor = self.fresh_executor();
+        let mut executor = self.fresh_executor();
         let mut ledger = Ledger::new();
         let mut out = Vec::with_capacity(self.steps.len());
         for step in &self.steps {
@@ -419,7 +462,7 @@ impl History {
                 }
                 RecordedStep::Genesis { .. } => out.push(None),
             }
-            if apply_step(&executor, &mut ledger, step).is_err() {
+            if apply_step(&mut executor, &mut ledger, step).is_err() {
                 while out.len() < self.steps.len() {
                     out.push(None);
                 }
@@ -462,9 +505,9 @@ impl History {
         // checkpoint step. A fresh executor whose chain-head table we re-prime
         // by replaying through the checkpoint, then continue.
         let mut ledger = Ledger::new();
-        let executor = self.fresh_executor();
+        let mut executor = self.fresh_executor();
         for step in &self.steps[..checkpoint_step] {
-            apply_step(&executor, &mut ledger, step)?;
+            apply_step(&mut executor, &mut ledger, step)?;
         }
         // Verify the checkpoint tooth.
         let cp_got = ledger.root();
@@ -477,7 +520,7 @@ impl History {
         }
         // The overlay half: re-execute the post-checkpoint turns.
         for step in &self.steps[checkpoint_step..k] {
-            apply_step(&executor, &mut ledger, step)?;
+            apply_step(&mut executor, &mut ledger, step)?;
         }
         let got = ledger.root();
         let want = self.roots[k];
@@ -504,11 +547,11 @@ impl History {
 
         // Re-prime an executor's chain-head table to the branch point by
         // replaying through k (so the alt turn chains correctly), then apply alt.
-        let executor = self.fresh_executor();
+        let mut executor = self.fresh_executor();
         {
             let mut warm = Ledger::new();
             for step in &self.steps[..k] {
-                apply_step(&executor, &mut warm, step)?;
+                apply_step(&mut executor, &mut warm, step)?;
             }
         }
         let mut alt = alt;
@@ -567,8 +610,14 @@ impl History {
 }
 
 /// Apply one recorded step to a ledger under a (warm) executor, re-deriving it.
+///
+/// Takes the executor by `&mut` because a committed step must be re-executed under
+/// the WALL-CLOCK IT RAN AT (`RecordedStep::Committed::timestamp`), and the clock is
+/// executor state. Under any other clock the receipt chain — and therefore the
+/// installed-capability provenance in the cells, and therefore the ledger root —
+/// re-derives differently, which a root tooth would (correctly) refuse.
 fn apply_step(
-    executor: &TurnExecutor,
+    executor: &mut TurnExecutor,
     ledger: &mut Ledger,
     step: &RecordedStep,
 ) -> Result<(), ReplayError> {
@@ -578,7 +627,13 @@ fn apply_step(
             let _ = ledger.insert_cell(*cell.clone());
             Ok(())
         }
-        RecordedStep::Committed { turn, receipt, .. } => {
+        RecordedStep::Committed {
+            turn,
+            receipt,
+            timestamp,
+            ..
+        } => {
+            executor.set_timestamp(*timestamp);
             let mut t = turn.clone();
             t.previous_receipt_hash = executor.get_last_receipt_hash(&t.agent);
             match executor.execute(&t, ledger) {
@@ -1462,9 +1517,9 @@ mod tests {
         // replay reference).
         let (h, _live, _a, _b) = fixture();
         let mut scratch = Ledger::new();
-        let ex = h.fresh_executor();
+        let mut ex = h.fresh_executor();
         for step in h.steps() {
-            apply_step(&ex, &mut scratch, step).unwrap();
+            apply_step(&mut ex, &mut scratch, step).unwrap();
         }
         assert_eq!(scratch.root(), h.root_at(h.len()).unwrap());
     }

@@ -347,7 +347,23 @@ impl World {
         // normal (non-persisting) paths. `persist` is None here, so neither the
         // genesis mirror nor the dual-write fires during rebuild — we attach the
         // store only AFTER, so the rebuild never duplicates the durable log.
-        let mut world = Self::with_costs_and_timestamp(costs, timestamp);
+        //
+        // ⚑ THE IMAGE CARRIES ITS OWN CLOCK, PER TURN. The canonical ledger root is
+        // a function of the executor wall-clock (receipt.timestamp → the next turn's
+        // `previous_receipt_hash` → `Turn::hash` → an installed cap's provenance →
+        // the cell → the root; see `crate::persistence::DurableTurn`). So the
+        // rebuild is started at the EARLIEST recorded clock and each turn is
+        // replayed under its OWN (`TurnExecutor::set_timestamp` only moves forward,
+        // so starting above the first turn's clock would silently replay it under
+        // the wrong one). `timestamp` is applied at the END, as the LIVE clock new
+        // turns are stamped with — which is why cap-expiry / `valid_until` gates
+        // still advance instead of freezing at the image's birth instant.
+        let replay_start = committed
+            .first()
+            .map(|d| d.timestamp)
+            .unwrap_or(timestamp)
+            .min(timestamp);
+        let mut world = Self::with_costs_and_timestamp(costs, replay_start);
 
         // Reinstall the durable genesis cells (genesis-time content), in order.
         for cell in genesis_cells {
@@ -358,11 +374,14 @@ impl World {
         // teeth), the receipts provenance log, the engine ledger, AND re-primes
         // every agent's receipt-chain head — the real receipt is re-derived, never
         // carried across the durable boundary.
-        for turn in committed {
+        for durable in committed {
+            // Pin the clock to the one THIS turn committed under, or the receipt
+            // chain (and therefore the ledger) re-derives differently.
+            world.set_clock(durable.timestamp);
             // Re-executing a recorded committed turn must commit again (the
             // `recover_eq_replay` determinism). A rejection here would mean the
             // durable turn does not re-derive — a real integrity event.
-            let outcome = world.commit_turn(turn);
+            let outcome = world.commit_turn(durable.turn);
             if !outcome.is_committed() {
                 return Err(OpenError::Store(dregg_persist::StoreError::Integrity(
                     "a durable committed turn did NOT re-commit on recovery — \
@@ -371,6 +390,9 @@ impl World {
                 )));
             }
         }
+        // The replay is done: run the LIVE clock forward to the caller's wall-clock
+        // so turns committed in THIS session are stamped honestly.
+        world.set_clock(timestamp);
 
         // FAIL-CLOSED cross-check: the rebuilt engine ledger MUST equal the
         // checkpoint⊕overlay recovered ledger (both are `recover_eq_replay`). This
@@ -491,6 +513,27 @@ impl World {
     /// byte-for-byte equivalence check (e.g. direct vs. semihost executor-PD).
     pub fn timestamp(&self) -> i64 {
         self.timestamp
+    }
+
+    /// Move this world's executor wall-clock (the value folded into every receipt,
+    /// and thus — transitively — into the canonical ledger root; see
+    /// [`crate::persistence::DurableTurn`]).
+    ///
+    /// FORWARD ONLY: [`dregg_turn::TurnExecutor::set_timestamp`] refuses a
+    /// backwards step, so a caller that wants an earlier clock must construct the
+    /// world at it. Moves the engine executor AND the replay-tape recorder in
+    /// LOCK-STEP — they must agree or the tape's recorded post-state root stops
+    /// matching the live one (`collapse`'s convergence check would then refuse).
+    ///
+    /// Private: the only legitimate mid-life clock moves are recovery's per-turn
+    /// replay pin and its final advance to the live wall-clock
+    /// ([`World::open_with_timestamp`]).
+    fn set_clock(&mut self, ts: i64) {
+        self.engine.executor_mut().set_timestamp(ts);
+        self.record_exec.set_timestamp(ts);
+        if ts > self.timestamp {
+            self.timestamp = ts;
+        }
     }
 
     /// Set the fee stamped onto every turn built by [`World::turn`] /

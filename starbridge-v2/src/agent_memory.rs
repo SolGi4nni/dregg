@@ -139,7 +139,7 @@ impl AgentMemoryCheckpoint {
             cell: self.agent,
             slot: slot as u64,
         }) {
-            Some(umem::UVal::Bytes32(b)) => deos_js_unpack_u64(b),
+            Some(umem::UVal::Bytes32(b)) => field_slot_u64(b),
             _ => 0,
         }
     }
@@ -205,13 +205,26 @@ impl AgentMemoryCheckpoint {
     }
 }
 
-/// Unpack a u64 from a model field element (the low 8 bytes, little-endian) — the same
-/// convention `deos_js::applet::pack_u64`/`unpack_u64` and `Effect::SetField` counter
-/// shapes use, re-implemented here so the core does not pull `deos-js`/mozjs.
-fn deos_js_unpack_u64(fe: &[u8; 32]) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(&fe[..8]);
-    u64::from_le_bytes(b)
+// ⚠ THE u64 LANE — a RE-IMPLEMENTED unpack used to live here and it had DRIFTED.
+//
+// It read the low 8 bytes LITTLE-endian (`fe[..8]`), documented as "the same
+// convention `deos_js::applet::pack_u64`/`unpack_u64` uses". That convention MOVED:
+// `deos_js_core::{pack_u64, unpack_u64}` now delegate to
+// `dregg_cell::{field_from_u64, field_to_u64}`, which is BIG-endian in bytes
+// `24..32` — the OPPOSITE end of the value — because the deployed
+// `setFieldVmDescriptor2-{slot}R24` freezes every lane outside `28..32` on a
+// setField turn, so a `0..8` write is not merely truncated, it is UNPROVABLE
+// (`deos-js-core/src/lib.rs`). The twin here was never moved with it, so
+// `working_slot` read every counter back as `0` while the write was correct: both
+// `agent_memory` live-round-trip tests failed on `left: 0, right: 12` / `3`.
+//
+// So there is no local unpack any more: the ONE codec is `dregg_cell::field_to_u64`,
+// which `dregg_cell` (already a dependency — no `deos-js`/mozjs pulled) exports.
+
+/// Unpack a u64 from a model field element via the ONE canonical codec.
+/// Delegates — never re-derives the lane (see the note above).
+fn field_slot_u64(fe: &[u8; 32]) -> u64 {
+    dregg_cell::field_to_u64(fe)
 }
 
 #[cfg(test)]
@@ -236,7 +249,7 @@ mod tests {
             .ledger()
             .get(&agent)
             .and_then(|c| c.state.get_field(COUNTER_SLOT))
-            .map(super::deos_js_unpack_u64)
+            .map(super::field_slot_u64)
             .unwrap_or(0);
         let effects = vec![
             Effect::SetField {
@@ -258,7 +271,7 @@ mod tests {
             .ledger()
             .get(&agent)
             .and_then(|c| c.state.get_field(COUNTER_SLOT))
-            .map(super::deos_js_unpack_u64)
+            .map(super::field_slot_u64)
             .unwrap_or(0)
     }
 
@@ -319,6 +332,18 @@ mod tests {
         let agent = anchors[2];
         bump(&mut world, agent, 7);
         let checkpoint = AgentMemoryCheckpoint::capture(&world, agent).expect("capture");
+        // ⚑ THE REFUSAL'S SUBJECT, PINNED BY VALUE. Without this the tooth is
+        // satisfied by a checkpoint that carries NOTHING: the u64 lane used to be
+        // read off the wrong end of the field (see the note on `field_slot_u64`),
+        // so `working_slot` answered 0 for every counter and this test stayed green
+        // — tampering a slot that read as 0 to one that read as 0 still moved the
+        // root. Assert the carried value first, so the thing being tampered is
+        // known to be there.
+        assert_eq!(
+            checkpoint.working_slot(COUNTER_SLOT),
+            7,
+            "the checkpoint CARRIES the live working-set (7) — the tamper below has a subject"
+        );
 
         let mut tampered = checkpoint.clone();
         tampered.umem.insert(
@@ -334,8 +359,17 @@ mod tests {
             Ok(_) => panic!("a tampered umem must NOT resume — it bypassed the root tooth"),
         }
 
-        // The untampered checkpoint still resumes cleanly (sanity).
-        assert!(checkpoint.resume_into_fresh_world().is_ok());
+        // THE HONEST POLE, in the SAME process, asserted as a VALUE: the
+        // untampered checkpoint resumes AND the resumed agent reads back 7. "is_ok()"
+        // alone would also pass for a resume that stood up an empty agent.
+        let resumed = checkpoint
+            .resume_into_fresh_world()
+            .expect("the untampered checkpoint resumes");
+        assert_eq!(
+            counter(&resumed, agent),
+            7,
+            "the honest resume CONTINUES from the checkpointed working-set"
+        );
     }
 
     /// A SECOND handoff hop — the umem is a durable relay baton, not a one-shot: resume,

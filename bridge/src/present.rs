@@ -495,14 +495,15 @@ pub fn prove_issuer_membership_ir2(
 ) -> Result<Ir2IssuerWire, AuthError> {
     use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
     use dregg_circuit::membership_descriptor_4ary::{
-        membership_descriptor_of_depth_4ary, membership_witness_4ary,
+        membership_4ary_dispatch_name, membership_descriptor_of_depth_4ary, membership_witness_4ary,
     };
 
     let depth = siblings.len();
     // Honest 4-ary witness → base trace + public inputs `[leaf, root]`.
     let (trace, pis) = membership_witness_4ary(leaf, siblings, positions)
         .map_err(|e| AuthError::InvalidRequest(format!("issuer membership 4-ary witness: {e}")))?;
-    // The depth-general 4-ary descriptor (name pins the depth ⇒ VK-separated).
+    // The Lean-emitted, depth-uniform 4-ary descriptor (the depth rides the trace
+    // height, not the artifact).
     let desc = membership_descriptor_of_depth_4ary(depth);
     // The REAL IR-v2 prover — the deployed descriptor-prover, not a mock.
     let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
@@ -516,7 +517,13 @@ pub fn prove_issuer_membership_ir2(
         vk.extend_from_slice(&p.0.to_le_bytes());
     }
     Ok(Ir2IssuerWire {
-        predicate: desc.name,
+        // ⚠ THE WIRE DISPATCH IDENTITY, *not* `desc.name`. Since the descriptor
+        // became a Lean-emitted artifact its own name
+        // (`dregg-merkle-membership-4ary-general::v1`) no longer routes through
+        // `descriptor_by_name`, so `predicate: desc.name` put an UNRESOLVABLE
+        // identity on the wire and every consumer refused this HONEST proof with
+        // `UnknownAir`. See `membership_4ary_dispatch_name` for the full note.
+        predicate: membership_4ary_dispatch_name(depth),
         blob,
         vk,
     })
@@ -2335,6 +2342,28 @@ pub enum Predicate {
     InRange(u32, u32),
 }
 
+impl Predicate {
+    /// Is this predicate TRUE of `value`? The statement a proof would assert.
+    ///
+    /// A producer needs this because a FALSE statement has no witness, and the
+    /// producer — not the prover — is the layer that must answer "cannot prove".
+    /// It is NOT a soundness check: the descriptor's gates remain the authority
+    /// (`circuit::predicate_comparison_witness`'s teeth prove each one REFUSES a
+    /// false witness), so a producer that skipped this could still never make a
+    /// verifier accept. It exists so the refusal is a `None`, in every build
+    /// profile — see [`prove_predicate_for_fact`].
+    pub fn holds(&self, value: u32) -> bool {
+        match *self {
+            Predicate::Gte(t) => value >= t,
+            Predicate::Lte(t) => value <= t,
+            Predicate::Gt(t) => value > t,
+            Predicate::Lt(t) => value < t,
+            Predicate::Neq(t) => value != t,
+            Predicate::InRange(lo, hi) => lo <= value && value <= hi,
+        }
+    }
+}
+
 /// A predicate proof over a token attribute, ready for verification.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BridgePredicateProof {
@@ -2550,6 +2579,27 @@ pub fn prove_predicate_for_fact(
         PREDICATE_ARITH_NEQ_NAME, predicate_gt_witness, predicate_le_witness, predicate_lt_witness,
         predicate_neq_witness,
     };
+
+    // ⚑ A FALSE STATEMENT HAS NO WITNESS — decide that HERE, before the prover.
+    //
+    // This function's contract is "`None` when the comparison is FALSE", and it was
+    // relying on the prover to deliver that as an `Err` for `prove_one`'s `.ok()?` to
+    // swallow. That holds only for the ops whose falsity shows up as an out-of-RANGE
+    // limb; for `Neq` a false statement violates an ALGEBRAIC gate
+    // (`diff·diff_inv = 1` cannot hold at `diff = 0`), and the deployed p3 prover
+    // signals an unsatisfiable algebraic gate by PANICKING in a debug build
+    // (`batch-stark/src/check_constraints.rs:133`, "constraints not satisfied on row
+    // 0: failed constraints = [#4]") rather than returning. `.ok()?` cannot observe a
+    // panic, so the unwind escaped THE LIBRARY: measured 2026-07-30, asking for
+    // `Neq(40)` about the value 40 CRASHED the caller instead of answering "no".
+    //
+    // The AIR is not the problem and is not touched — its unsatisfiability IS the
+    // refusal, and `circuit::predicate_comparison_witness::neq_honest_accepts_equal_rejects`
+    // proves it bites. What was missing is the producer's half: a wallet asked to
+    // prove something untrue must return `None`, in every profile, without unwinding.
+    if !predicate.holds(private_value) {
+        return None;
+    }
 
     let v = private_value as u64;
     // The fact commitment is DERIVED from the value being proved about — it is not a caller-supplied

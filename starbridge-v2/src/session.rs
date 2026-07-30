@@ -1734,7 +1734,6 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static RESUME_COUNTER: AtomicU64 = AtomicU64::new(0);
-    const RTS: i64 = 1_700_000_000;
 
     /// A unique throwaway base DIR for a per-user session image (cleaned up).
     fn scratch_dir() -> PathBuf {
@@ -1747,30 +1746,33 @@ mod tests {
         std::env::temp_dir().join(format!("sbv2-session-{pid}-{nanos}-{n}"))
     }
 
-    /// Open a per-user durable session world deterministically at a pinned clock
-    /// (so the recovered receipts re-derive bit-identically across reopens). Mirrors
-    /// `open_session_world` exactly but pins the test timestamp.
+    /// Open a per-user durable session world through THE PRODUCTION FRONT DOOR.
+    ///
+    /// ⚠ THIS USED TO BE A `#[cfg(test)]` AUTHORITY TWIN of [`open_session_world`],
+    /// and the twinning hid a dead product path for as long as it existed. It
+    /// re-implemented the provisioning inline and — the load-bearing difference —
+    /// opened via `World::open_with_timestamp` at a PINNED clock, "so the recovered
+    /// receipts re-derive bit-identically across reopens".
+    ///
+    /// That sentence was the bug report. The canonical ledger root is a function of
+    /// the wall clock (see `crate::persistence::DurableTurn`), so a reopen under any
+    /// OTHER clock re-derived a different ledger and the fail-closed convergence
+    /// check refused the image. The real front door opens with `now_unix()` — so
+    /// EVERY returning user's session image was unopenable — while these three
+    /// resume tests, pinned to `RTS`, stayed green and reported the feature working.
+    /// Only the integration test that calls the real function
+    /// (`tests/login_key_ceremony.rs::returning_user_presents_the_key_and_re_derives_the_same_session`)
+    /// could see it, and it was red.
+    ///
+    /// The reopen is now clock-independent (each turn replays under its own durably
+    /// recorded clock), so there is nothing left for a twin to pin: these tests
+    /// drive the production function, unwrapped.
     fn open_resume(
         dir: &std::path::Path,
         principal: &Principal,
     ) -> (World, [CellId; 3], LoginManager, bool) {
-        let path = session_world_path(dir, principal);
-        let _ = std::fs::create_dir_all(dir);
-        let mut world = World::open_with_timestamp(&path, ComputronCosts::zero(), RTS)
-            .expect("open per-user session image");
-        let [st, ss, su] = ANCHOR_SEEDS;
-        let anchors = [anchor_id(st), anchor_id(ss), anchor_id(su)];
-        let fresh = world.ledger().get(&anchors[0]).is_none();
-        let system_principal = if fresh {
-            world.genesis_install(make_open_cell(st, 1_000_000));
-            world.genesis_install(make_open_cell(ss, 0));
-            world.genesis_install(make_open_cell(su, 5_000));
-            provision_system_principal(&mut world, &anchors)
-        } else {
-            // The system principal is recovered from the durable image on relaunch.
-            anchor_id(SYSTEM_PRINCIPAL_SEED)
-        };
-        (world, anchors, LoginManager::new(system_principal), fresh)
+        open_session_world(dir, principal, ComputronCosts::zero())
+            .expect("open per-user session image")
     }
 
     #[test]
