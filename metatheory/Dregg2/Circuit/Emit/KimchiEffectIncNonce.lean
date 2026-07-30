@@ -320,17 +320,31 @@ cells is bounded by `2013265921`, and the Kimchi field is larger than that by ~2
 theorem babybear_lt_pallas : 2013265921 < PALLAS_BASE_MODULUS := by
   norm_num [PALLAS_BASE_MODULUS]
 
-/-- **The Kimchi-side canonicality envelope** — `IncNonceRowCanon` MINUS the `nonce_before + 1 < p`
-overflow hypothesis. The BabyBear side needs that hypothesis because its residual is read mod
-`2013265921`; the Kimchi side does not, because the same residual is read mod a `> 2^254` prime. -/
+/-- The bound the DEPLOYED o1js circuit actually enforces on every state cell:
+`Gadgets.rangeCheck32`, i.e. `< 2^32`. It is a whole binade LOOSER than BabyBear canonicality and
+still ~2^222 below the Kimchi modulus, which is the point. -/
+theorem two_pow_32_lt_pallas : 4294967296 < PALLAS_BASE_MODULUS := by
+  norm_num [PALLAS_BASE_MODULUS]
+
+/-- **The Kimchi-side canonicality envelope** — weaker than `IncNonceRowCanon` in TWO ways: the
+`nonce_before + 1 < p` overflow hypothesis is gone, and the per-cell box is `2^32` rather than the
+BabyBear modulus. The BabyBear side needs both because its residual is read mod `2013265921`; the
+Kimchi side needs neither, because the same residual is read mod a `> 2^254` prime.
+
+`2^32` is not a slack chosen for comfort: it is EXACTLY what the deployed o1js circuit enforces
+(`Gadgets.rangeCheck32` on every state-block column), so this envelope is discharged by the
+circuit rather than assumed about it. -/
 def KimchiRowCanon (env : VmRowEnv) : Prop :=
   (∀ off, off < STATE_SIZE →
-      (0 ≤ env.loc (sbCol off) ∧ env.loc (sbCol off) < 2013265921)
-      ∧ (0 ≤ env.loc (saCol off) ∧ env.loc (saCol off) < 2013265921))
+      (0 ≤ env.loc (sbCol off) ∧ env.loc (sbCol off) < 4294967296)
+      ∧ (0 ≤ env.loc (saCol off) ∧ env.loc (saCol off) < 4294967296))
   ∧ (env.loc sel.NOOP = 0 ∨ env.loc sel.NOOP = 1)
 
 theorem kimchiRowCanon_of_incNonceRowCanon (env : VmRowEnv) (h : IncNonceRowCanon env) :
-    KimchiRowCanon env := ⟨h.1, h.2.1⟩
+    KimchiRowCanon env := by
+  refine ⟨fun off hoff => ?_, h.2.1⟩
+  have := h.1 off hoff
+  omega
 
 /-- The columns any source head reads all live below `NV0`, so a Kimchi assignment that agrees with
 the row on `[0, NV0)` pins every head's value. -/
@@ -359,7 +373,7 @@ theorem kimchi_pallas_forces_intent (env : VmRowEnv)
     (hcanon : KimchiRowCanon env)
     (hr : rowsHold A incNonceKimchiRows) : IncNonceRowIntent env := by
   obtain ⟨hcells, hnoopB⟩ := hcanon
-  have hbb : 2013265921 < PALLAS_BASE_MODULUS := babybear_lt_pallas
+  have hbb : 4294967296 < PALLAS_BASE_MODULUS := two_pow_32_lt_pallas
   -- a head's value over the Pallas assignment is the cast of its ℤ value
   have hforce := kimchi_rows_force_heads A hr
   -- the freeze heads
@@ -492,7 +506,7 @@ theorem kimchi_envelope_strictly_weaker :
   constructor
   · refine ⟨?_, Or.inl ?_⟩
     · intro off hoff
-      have hall : ∀ v, 0 ≤ highNonceRow.loc v ∧ highNonceRow.loc v < 2013265921 := by
+      have hall : ∀ v, 0 ≤ highNonceRow.loc v ∧ highNonceRow.loc v < 4294967296 := by
         intro v; simp only [highNonceRow]; split_ifs <;> norm_num
       exact ⟨hall _, hall _⟩
     · show highNonceRow.loc 0 = 0
