@@ -823,13 +823,21 @@ export function runSegments(
           even.push(Provable.if(bits[s.r], sib.limbs[i], folded.limbs[i]));
           odd.push(Provable.if(bits[s.r], folded.limbs[i], sib.limbs[i]));
         }
-        //  ⚑ `sponge([even, odd])` THROUGH THE SUITE, not a hand-written
-        //  `perm([even, odd, 0^8])`. The eight zero lanes were the deployed
-        //  sponge's padding of a one-block absorb; the suite's own leaf hash is
-        //  the thing that is true at both hashes. `assertExtInRange` has already
-        //  bounded the four sibling lanes and the four folded ones, so the
-        //  lanes are checked.
-        putD(S.cur, suite.sponge([...even, ...odd], true));
+        //  ⚑ `sponge([even, odd])` THROUGH THE SUITE'S STREAM, not a
+        //  hand-written `perm([even, odd, 0^8])` and NOT the one-shot `sponge`.
+        //  The eight zero lanes were the deployed sponge's padding of a
+        //  one-block absorb; the suite's own leaf hash is the thing that is true
+        //  at both hashes. `assertExtInRange` has already bounded the four
+        //  sibling lanes and the four folded ones, so the lanes are checked.
+        //
+        //  ⚠ AND IT IS `spongeStream`, NOT `sponge`, FOR A MEASURED REASON. The
+        //  one-shot BabyBear form reduces only the eight lanes it returns; the
+        //  streaming form reduces all sixteen, because its state crosses a cut.
+        //  This segment's inline predecessor reduced sixteen. Reaching for
+        //  `sponge` here would have dropped 8 `reduceLane`s on each of the 304
+        //  commit-phase leaves — a real EMITTED-row change that no tier-0 figure
+        //  could see, because the model prices a leaf at `P.perm` either way.
+        putD(S.cur, SS.finish(SS.absorb(SS.init(), [...even, ...odd], true)));
         const x = s.r === 0 ? cosetPointFromBits(bits.slice(1), lgmh - 1) : sto.get(S.x)!;
         put(
           S.folded,
