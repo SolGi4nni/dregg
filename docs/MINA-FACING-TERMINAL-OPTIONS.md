@@ -523,9 +523,10 @@ own position: the step index `k` and the terminal bit are **witnesses**, pinned 
 the whole chain is **two verification keys — one transcript step, one walk step reused N times** —
 and the uniformity costs **11 rows** (`walk.first` 23,623 vs `walk.step` 23,612).
 
-⚑ **Nothing applies this to the deployed FRI walk, and nothing in the repo discusses doing so.** The
-only place the homogeneity is named at all is `root-air-chain.ts:33-40`, and it is named as a
-*contrast* — explaining why the **AIR** slices legitimately need one VK each (*"the AIR's slices are
+⚑ **Nothing applied this to the deployed FRI walk, and nothing in the repo discussed doing so** —
+until §5.1a below, which does. The only place the homogeneity was named at all is
+`root-air-chain.ts:33-40`, and it is named there as a *contrast* — explaining why the **AIR**
+slices legitimately need one VK each (*"the AIR's slices are
 DIFFERENT programs … their chains are ONE circuit invoked N times, **because 19 query walks are the
 same shape**"*). The observation is written down and the consequence is not drawn.
 
@@ -540,7 +541,8 @@ handful and compile stops being a line item at all.
 
 ### 5.1a ⚑ DRAWN — and the estimates above were close but wrong in three places
 
-`src/RootFriUniform.ts` + `bridge/mina-zkapp/scripts/root-fri-uniform.ts` (leg 19) build it. Everything in this
+`bridge/mina-zkapp/src/RootFriUniform.ts` + `bridge/mina-zkapp/scripts/root-fri-uniform.ts`
+(leg 19, `npm run root-fri-uniform`) build it. Everything in this
 subsection is **measured on the root's real geometry**, not projected.
 
 **First, the homogeneity is EXACT, and it is now a check rather than an observation.** The walk is
@@ -587,10 +589,22 @@ recomputes the seal from the protocol's own key list. The admissible key at each
   block slice, which asserts `stepBoundary(friCommit, carry, k) == publicInput` **and**
   `predecessor.publicOutput == publicInput` while the predecessor emitted `…, k_prev + 1`. So
   `k = k_prev + 1` by collision resistance, inductively. `makeChainedProofVerify`'s argument verbatim.
-- **`q`, the query.** Not independently witnessed-and-hoped: `k == 10 + q·43 + pos` with `pos` a
-  compile-time constant, plus a one-hot over the 19 queries that range-checks `q`. Since
-  `0 ≤ pos, pos' < 43`, `k − 10 − pos ≡ k − 10 − pos' ≡ 0 (mod 43)` forces `pos = pos'` — **the
-  program admissible at step `k` is unique**, and so is `q`.
+- **`q`, the query.** Not independently witnessed-and-hoped: the program at position `pos` asserts
+  `k == 10 + q·43 + pos` with `pos` a compile-time constant, and a one-hot over the 19 queries
+  range-checks `q ∈ [0, 19)`. So **`q` is a function of `k`** — and so is `pos`: if the program at
+  `pos'` were used at a step whose true position is `pos`, then `43 | (pos − pos')` with
+  `|pos − pos'| < 43`, hence `pos = pos'`. **The program admissible at step `k` is unique.** The
+  key-tree leaf check then forces the predecessor to be position `pos − 1`, so the program *sequence*
+  is forced too.
+
+  ⚑ **Double-count and skip are therefore impossible for exactly the reason they are in the deployed
+  chain, and one more.** `k` starts at the head's compile-time constant, increases by exactly one per
+  step (the successor's boundary hash carries `k+1` and the successor asserts its own `k` against
+  it), and the terminal seal fixes the last one at **827** — so the chain visits `7 … 826` once each,
+  and each `k` names exactly one `(q, pos)`. What is *new* is a splice the deployed chain cannot
+  express: **`k + 43` together with `q + 1` satisfies the tie**. It is this slice replayed a whole
+  query later, and only the boundary refuses it — which is why the splice table has it and the
+  unbound control shows that control *accepting* it.
 - **the terminal bit is not a witness at all.** The block's last position seals exactly when
   `q == 18`, and `q` is pinned by `k`. §3.20 had to witness `isLast` and argue that neither setting
   passes; here there is nothing to set.
