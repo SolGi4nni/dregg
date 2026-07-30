@@ -44,6 +44,18 @@
 //!   outputs.
 //!
 //! A divergence anywhere panics before a fixture is printed.
+//!
+//! ⚑ **AND THE CHECK CAN GO RED.** A gate that cannot fail is not a gate, so
+//! each of the three errors a re-implementer of this challenger is most likely
+//! to make was injected into [`SpongeReplica`] alone and the suite re-run:
+//!
+//! | mutation | what went red |
+//! |---|---|
+//! | squeeze limbs `7 → 6` | `challenge 0 diverged` — the sampled-output leg |
+//! | absorb radix `31 → 32` | `sponge diverged at partial batch` — the finalize/sponge leg |
+//! | drop `sponge_state[RATE] += length_tag` | both that and [`tests::native_digest_absorb_is_not_the_scalar_path`] |
+//!
+//! Two independent legs, three plausible errors, all red — then reverted.
 
 use dregg_circuit::mina_fixture_emit::{
     EF, F, FixtureHashSuite, FixtureTranscript, arr, ef_json, f_u32, nums,
