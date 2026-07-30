@@ -202,11 +202,17 @@ def publicCommOf (words : List Nat) : Pt :=
 
 ⚑ Deliberately `unfold` and not `decide`: this must close SYNTACTICALLY. A `decide` here would run
 40 × 255-bit ladders in the kernel (~15 s, by rung 5e's own measurement) to establish something that
-is true by definition, and paying the 40-ladder cost twice is exactly what parameterising is for. -/
+is true by definition, and paying the 40-ladder cost twice is exactly what parameterising is for.
+
+⚑ And the closing `rfl` is load-bearing, not decoration: `unfold` REWRITES, it does not close. Left
+off, this reported `unsolved goals` and Lean recovered with `sorryAx` — a theorem that looks proved
+and is not. By the time `rfl` runs both sides are the SAME TERM, so it is syntactic and instant; it
+never reaches the MSM. -/
 theorem publicCommOf_is_rung5e : publicCommOf PUBLIC_INPUT = publicComm := by
   unfold publicCommOf
     Dregg2.Circuit.Emit.MinaWrapPublicCommGate.publicComm
     Dregg2.Circuit.Emit.MinaWrapPublicCommGate.NEG_PUBLIC
+  rfl
 
 /-! ## §3 — THE CENSUS, on the pinned block.
 
@@ -340,7 +346,7 @@ theorem publicInputWords_reads_every_field :
 in the COMPILED evaluator instead, in milliseconds. The per-block path runs none of this in the
 kernel either — see `Dregg2.Bridge.MinaWrapChallenges`. -/
 
-/-- ⚑ **A CHANGED WORD 12 CHANGES THE COMMITMENT.** So the served header is not merely *present* in
+/- ⚑ **A CHANGED WORD 12 CHANGES THE COMMITMENT.** So the served header is not merely *present* in
 the preimage of slot 12; it reaches the point the transcript absorbs, and therefore every challenge
 that descends from it. This is the one link that makes a re-labelled header falsifiable at all.
 
@@ -356,7 +362,7 @@ Compared with `projEqM` rather than tuple inequality, because these are PROJECTI
 #guard projEqM pN (publicCommOf (PUBLIC_INPUT.set 12 (B539508.word12Gold + 1)))
          PUBLIC_COMM_GOLD == false
 
-/-- …and the untampered words DO reproduce the gold, so the `#guard` above is a discrimination and
+/- …and the untampered words DO reproduce the gold, so the `#guard` above is a discrimination and
 not a function that returns `false` on everything. -/
 #guard projEqM pN (publicCommOf PUBLIC_INPUT) PUBLIC_COMM_GOLD == true
 

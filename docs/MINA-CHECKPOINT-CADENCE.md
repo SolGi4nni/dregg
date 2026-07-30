@@ -1,13 +1,21 @@
 # Verifying Mina at a checkpoint cadence — what it costs, and what a longer one loses
 
-**Status 2026-07-30, after the coordinator's first build run.** Build attempt 1 elaborated the three
-Lean modules and **failed on three gate-rendering welds only** — `rewrite` could not find its pattern
-because a two-level `match` does not iota-reduce under `rw`, and Lean inserted `sorryAx` to recover.
-The axiom-hygiene check named those three theorems and **no others**, so the safety theorems below
-(`provisional_never_ratchets`, `runSteps_finalized_monotone`,
-`a_checkpointless_run_finalizes_nothing`) **elaborated clean in that run**. Build attempt 2 is
-pending; the three welds have been restructured to a single-scrutinee shape and the 40-ladder kernel
-`decide` demoted to a `#guard`.
+**Status 2026-07-30, after two coordinator build runs.**
+
+* **`Dregg2.Bridge.MinaCheckpoint` — ELABORATES CLEAN**, hygiene silent. Every safety theorem below
+  *and* the gate welds hold, so `provisional_never_ratchets` is a property of the **exported symbol**,
+  not of a function beside it.
+* **`Dregg2.Bridge.MinaWrapChallenges` — ELABORATES CLEAN**, hygiene silent.
+* **`MinaWrapChallengesWeld` — NOT YET RUN.** Attempt 1 stopped before it; attempt 2 hit a syntax
+  error in it. ⚑ **The per-block compiled derivation is therefore still UNVERIFIED**, and it is the
+  lane's headline result. Nobody has seen it.
+* **`MinaWrapPublicInput` — RED.** Two orphaned doc-comments (a `/-- … -/` cannot precede a `#guard`;
+  `#guard` is a command, not a declaration) plus a bare `unfold` that rewrote without closing, which
+  Lean recovered with `sorryAx`. Both fixed; unverified.
+
+Attempt 1's failure was one bug: a two-level `match` does not iota-reduce under `rw`, so the second
+rewrite in each weld found nothing. Attempt 2's was another: a theorem→`#guard` conversion left its
+docstring attached to nothing, in 22 places.
 
 Read the verbs literally. **Elaborated clean** = seen by a build. **States** = written and not yet
 seen by a build. **Predicted** = arithmetic from a measured figure, with the falsifier named. The
@@ -26,8 +34,8 @@ So a client does not need per-block verification at Mina's 180 s block cadence. 
 **latency and liveness, not safety** — provided nothing a longer cadence leaves unverified can move
 the finalized point.
 
-That proviso is a theorem rather than a convention — and these three **elaborated clean** in the
-coordinator's build run. `Dregg2.Bridge.MinaCheckpoint`:
+That proviso is a theorem rather than a convention — and these three, plus the welds that tie them to
+the exported symbol, **elaborate clean**. `Dregg2.Bridge.MinaCheckpoint`:
 
 * `provisional_never_ratchets` — a between-checkpoint step is *definitionally* unable to touch the
   verified head;

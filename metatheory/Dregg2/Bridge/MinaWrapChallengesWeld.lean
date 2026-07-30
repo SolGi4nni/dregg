@@ -74,7 +74,7 @@ def B539508 : WrapAbsorbed :=
     -- Pallas `endo_r`; carried so the record is complete, not read by the derivation.
     endoR := 26005156700822196841419187675678338661165322343552424574062261873906994770353 }
 
-/-- The real block's tape passes the shape gate — so the refusals in `phase1_shape_discriminates`
+/- The real block's tape passes the shape gate — so the refusals in `phase1_shape_discriminates`
 are not refusing everything. -/
 #guard phase1WireOk B539508.prevComm B539508.pubComm B539508.wComm B539508.zComm B539508.tComm
 #guard openingWireOk B539508.lr B539508.delta
@@ -86,7 +86,7 @@ def p1 : Phase1 :=
   wrapPhase1Of B539508.vkDigest B539508.prevComm B539508.pubComm B539508.wComm
     B539508.zComm B539508.tComm
 
-/-- β, γ, α′, ζ′ and the phase-1 digest — all five, all equal to the values
+/- β, γ, α′, ζ′ and the phase-1 digest — all five, all equal to the values
 `MinaRealBlockTranscript` pinned against `proof.oracles(...)` on the real object. -/
 #guard p1.beta == BETA_N
 #guard p1.gamma == GAMMA_N
@@ -94,7 +94,7 @@ def p1 : Phase1 :=
 #guard p1.zetaChal == ZETA_CHAL
 #guard p1.fqDigest == FQ_DIGEST
 
-/-- …and the state itself is the one `MinaWrapOpeningGate` picked up: `SRS::verify` receives exactly
+/- …and the state itself is the one `MinaWrapOpeningGate` picked up: `SRS::verify` receives exactly
 this sponge. Comparing the STATE, not only its digest, is what makes the continuation in §3 a
 continuation of the same transcript rather than of a state that merely agrees at one squeeze. -/
 #guard p1.st == Dregg2.Circuit.Emit.MinaWrapOpeningGate.wrapPhase1State
@@ -104,27 +104,27 @@ continuation of the same transcript rather than of a state that merely agrees at
 A phase-1 function that dropped one of its five tapes would still reproduce nothing but itself; these
 say the digest moves when any single coordinate does. -/
 
-/-- Bump the VK digest — the FIRST absorb. ⚑ This is the trusted-config argument, so it is the one
+/- Bump the VK digest — the FIRST absorb. ⚑ This is the trusted-config argument, so it is the one
 whose silence would be most expensive. -/
 #guard (wrapPhase1Of (VKDIGEST + 1) PREVCOMM_XY PUBCOMM_XY WCOMM_XY ZCOMM_XY TCOMM_XY).fqDigest
        != FQ_DIGEST
-/-- Bump a `public_comm` coordinate — the argument `expand_deferred` gates. -/
+/- Bump a `public_comm` coordinate — the argument `expand_deferred` gates. -/
 #guard (wrapPhase1Of VKDIGEST PREVCOMM_XY (PUBCOMM_XY.set 0 0) WCOMM_XY ZCOMM_XY TCOMM_XY).fqDigest
        != FQ_DIGEST
-/-- Bump an accumulator coordinate — the proof↔proof chain's own object. -/
+/- Bump an accumulator coordinate — the proof↔proof chain's own object. -/
 #guard (wrapPhase1Of VKDIGEST (PREVCOMM_XY.set 3 0) PUBCOMM_XY WCOMM_XY ZCOMM_XY TCOMM_XY).fqDigest
        != FQ_DIGEST
-/-- Bump the LAST witness commitment coordinate — a fold that stopped early passes the earlier
+/- Bump the LAST witness commitment coordinate — a fold that stopped early passes the earlier
 controls and fails this one. -/
 #guard (wrapPhase1Of VKDIGEST PREVCOMM_XY PUBCOMM_XY (WCOMM_XY.set 29 0) ZCOMM_XY TCOMM_XY).fqDigest
        != FQ_DIGEST
-/-- `z_comm` is absorbed AFTER β and γ, so moving it leaves those two and moves α′ onward. This pins
+/- `z_comm` is absorbed AFTER β and γ, so moving it leaves those two and moves α′ onward. This pins
 the ORDER, not just the membership. -/
 #guard (wrapPhase1Of VKDIGEST PREVCOMM_XY PUBCOMM_XY WCOMM_XY (ZCOMM_XY.set 0 0) TCOMM_XY).beta
        == BETA_N
 #guard (wrapPhase1Of VKDIGEST PREVCOMM_XY PUBCOMM_XY WCOMM_XY (ZCOMM_XY.set 0 0) TCOMM_XY).alphaChal
        != ALPHA_CHAL
-/-- …and `t_comm` after α′, so moving it leaves α′ and moves ζ′. -/
+/- …and `t_comm` after α′, so moving it leaves α′ and moves ζ′. -/
 #guard (wrapPhase1Of VKDIGEST PREVCOMM_XY PUBCOMM_XY WCOMM_XY ZCOMM_XY (TCOMM_XY.set 13 0)).alphaChal
        == ALPHA_CHAL
 #guard (wrapPhase1Of VKDIGEST PREVCOMM_XY PUBCOMM_XY WCOMM_XY ZCOMM_XY (TCOMM_XY.set 13 0)).zetaChal
@@ -139,20 +139,20 @@ come out of a compiled function of the block's own coordinates. -/
 /-- The opening challenges of the real block, computed from the phase-1 state §2 computed. -/
 def ic : IpaChallenges := ipaChallengesOf p1.st B539508.cipShifted B539508.lr B539508.delta
 
-/-- ⚑ **THE RESULT.** `t`, all fifteen IPA prechallenges and `c′` — identical to the literals rung
+/- ⚑ **THE RESULT.** `t`, all fifteen IPA prechallenges and `c′` — identical to the literals rung
 5f's 26 kernel theorems are stated over. -/
 #guard ic.t == T_FQ
 #guard ic.prechals == IPA_PRECHALS
 #guard ic.cPre == C_PRE
 #guard ic.prechals.length == 15
 
-/-- …and the whole derivation, through the fail-closed entry point, in one call. -/
+/- …and the whole derivation, through the fail-closed entry point, in one call. -/
 #guard (deriveWrapChallenges B539508).isSome
 #guard match deriveWrapChallenges B539508 with
        | some (q, j) => q.fqDigest == FQ_DIGEST && j.prechals == IPA_PRECHALS && j.cPre == C_PRE
        | none => false
 
-/-- ⚑ **AND IT REFUSES A MALFORMED TAPE RATHER THAN DERIVING ON IT.** `prev_challenges = 0` — the
+/- ⚑ **AND IT REFUSES A MALFORMED TAPE RATHER THAN DERIVING ON IT.** `prev_challenges = 0` — the
 shape the retired `prevLen = 0` freeze assumed and that REJECTS real Mina blocks — produces `none`,
 not a challenge vector. -/
 #guard (deriveWrapChallenges { B539508 with prevComm := [] }).isNone
@@ -164,20 +164,20 @@ not a challenge vector. -/
 Mirrors `MinaWrapOpeningGate`'s own `#guard` battery, but through the PARAMETERISED functions, so a
 parameterisation that quietly ignored an argument is caught. -/
 
-/-- The absorbed `combined_inner_product` is inside the transcript: move it and `t` moves. -/
+/- The absorbed `combined_inner_product` is inside the transcript: move it and `t` moves. -/
 #guard (ipaChallengesOf p1.st (CIP_SHIFTED + 1) LR_XY DELTA_XY).t != T_FQ
-/-- An IPA round point moves its own challenge and every later one, but NOT `t` (absorbed after). -/
+/- An IPA round point moves its own challenge and every later one, but NOT `t` (absorbed after). -/
 #guard (ipaChallengesOf p1.st CIP_SHIFTED (LR_XY.set 0 ((LR_XY.getD 0 []).set 0 0)) DELTA_XY).t
        == T_FQ
 #guard (ipaChallengesOf p1.st CIP_SHIFTED
           (LR_XY.set 0 ((LR_XY.getD 0 []).set 0 0)) DELTA_XY).prechals != IPA_PRECHALS
-/-- The LAST round is read too. -/
+/- The LAST round is read too. -/
 #guard (ipaChallengesOf p1.st CIP_SHIFTED
           (LR_XY.set 14 ((LR_XY.getD 14 []).set 3 0)) DELTA_XY).prechals != IPA_PRECHALS
-/-- `delta` is absorbed AFTER the rounds: it moves `c′` and leaves the fifteen alone. -/
+/- `delta` is absorbed AFTER the rounds: it moves `c′` and leaves the fifteen alone. -/
 #guard (ipaChallengesOf p1.st CIP_SHIFTED LR_XY (DELTA_XY.set 0 0)).prechals == IPA_PRECHALS
 #guard (ipaChallengesOf p1.st CIP_SHIFTED LR_XY (DELTA_XY.set 0 0)).cPre != C_PRE
-/-- ⚑ And phase 1 is genuinely upstream: a different `public_comm` produces a different phase-1
+/- ⚑ And phase 1 is genuinely upstream: a different `public_comm` produces a different phase-1
 state and therefore a DIFFERENT fifteen. This is the link that makes the block's public input reach
 the opening argument at all — the reason `expand_deferred` is the blocker and not a detail. -/
 #guard (ipaChallengesOf
@@ -210,10 +210,10 @@ def EXPECTED_539508 : String :=
     ++ ";t=" ++ toString T_FQ ++ ";c=" ++ toString C_PRE
     ++ ";ch=" ++ nats IPA_PRECHALS
 
-/-- ⚑⚑ **THE EXPORTED GATE, ON A REAL MINA BLOCK, END TO END.** -/
+/- ⚑⚑ **THE EXPORTED GATE, ON A REAL MINA BLOCK, END TO END.** -/
 #guard minaWrapChallengesGate WIRE_539508 == EXPECTED_539508
 
-/-- …and the same wire with ONE coordinate of `public_comm` moved is a different answer, not the
+/- …and the same wire with ONE coordinate of `public_comm` moved is a different answer, not the
 same one — so the string path is not a constant. -/
 #guard minaWrapChallengesGate
          ("vk=" ++ toString VKDIGEST ++ ";er=" ++ toString B539508.endoR
@@ -223,7 +223,7 @@ same one — so the string path is not a constant. -/
           ++ ";lr=" ++ nats (LR_XY.flatten) ++ ";dl=" ++ nats DELTA_XY)
        != EXPECTED_539508
 
-/-- …and a wire whose `lr` is 56 numbers instead of 60 is `"ERR"`: the re-chunking drops the short
+/- …and a wire whose `lr` is 56 numbers instead of 60 is `"ERR"`: the re-chunking drops the short
 tail and `openingWireOk` refuses the 14 rounds. A gate that derived on 14 rounds would produce a
 plausible vector for a proof of a different index. -/
 #guard minaWrapChallengesGate
