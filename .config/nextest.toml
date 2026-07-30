@@ -272,6 +272,41 @@ slow-timeout = { period = "120s", terminate-after = 30 }
 filter = 'package(dregg-zkoracle-prove) or package(dregg-zkoracle-live) or package(servo-render) or package(starbridge-tussle)'
 slow-timeout = { period = "30s", terminate-after = 2 }
 
+# ⚑ THE PROVING LEAF-ADAPTERS AND RING-CLEARING AIRs IN `dregg-circuit-prove`.
+#
+# MEASURED 2026-07-29, and the first measurement was WRONG in an instructive way. A lane reported
+# these as load-dependent — "they pass uncontended and TIMEOUT under load". That was an INFERENCE
+# stated as fact; not one of them had ever been OBSERVED to pass. Driven properly under bare
+# `cargo test` with no nextest kill:
+#
+#     caveat_admission_leaf_adapter::tests::admission_binds_to_trade ... ok
+#     test result: ok. 1 passed ... finished in 700.38s
+#
+# single-threaded, ~11 GB RSS, 99.9% CPU. It PASSES — in 700s, which is **3.9x** `[profile.default]`'s
+# `45s x 4 = 180s`. So this is not contention and not a hang: it is a DETERMINISTIC class of
+# real multi-minute proving tests that sit in the default profile with no budget and no `heavy`
+# routing, and are therefore red in ANY `cargo nextest run -p dregg-circuit-prove`, on any box.
+#
+# That is exactly the failure this file's own TIMEOUT DOCTRINE names — "a budget that truncates a
+# real 5-minute fold is exactly the failure this file calls worse than having no budget at all" —
+# and the four suites above were granted budget for it. These are the ones that were missed.
+#
+# ⚠ CONSEQUENCE FOR ANY RED COUNT: the workspace's 182-failure measurement is PARTLY A BUDGET
+# ARTIFACT. Nothing was broken in these; the budget was. Re-measure before attributing them.
+#
+# 720s x 2 = 24 minutes, chosen so the observed 700s worst case has headroom without becoming
+# "never terminate" — this file's other stated bound, since an unbounded heavy suite is how
+# `cargo test --workspace` came to need an external watchdog on 2026-07-26.
+[[profile.default.overrides]]
+filter = '''package(dregg-circuit-prove) and (
+  test(/caveat_admission_leaf_adapter/) or test(/blinded_membership_leaf_adapter/)
+  or test(/shielded_ring_clearing_nleg_air/) or test(/shielded_ring_clearing_air/)
+  or test(/presentation_leaf_adapter/) or test(/factory_leaf_adapter/)
+  or test(/hatchery_leaf_adapter/) or test(/shielded_spend_leaf_adapter/)
+  or test(/custom_fold_wire_tests/) or test(/broken_order_rejected/)
+)'''
+slow-timeout = { period = "720s", terminate-after = 2 }
+
 [profile.default]
 # Default runs should execute backend coverage that is passing on the 24-core
 # test host. Keep only the currently failing/timeout diagnostics quarantined,
