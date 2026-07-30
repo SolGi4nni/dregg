@@ -2,6 +2,33 @@
 
 ## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
 
+**E4 · ⚑⚑ LAW #1 IS RED ON `main` — A HAND-WRITTEN RUST AIR LANDED TODAY. LIVE.**
+`law1_enforcement_gate::law1_no_new_rust_authored_constraints` fails:
+> `NEW Rust-authored constraints: circuit/src/bin/mina_stark_fixture.rs (7 sites: 7 symbolic, 0 closure, 0 IR)`
+> `-> EMIT IT FROM LEAN. Do not add it to the baseline.`
+
+Verified at source, and it is not a false positive:
+`impl<AB: AirBuilder> Air<AB> for MinaFixtureAir { fn eval(&self, builder: &mut AB) { … } }` — a
+3-column AIR with `max_constraint_degree = 3`, hand-authored in Rust. Landed by `6ce0c7a14`
+(2026-07-29, the Mina lane) as the emitter that mints a real dregg FRI-STARK proof for an o1js/Kimchi
+verifier to check.
+
+⚑ **This is the exact drift the law exists to catch, and it is CLAUDE.md's own named tripwire**:
+*"we start in Lean, you slide into Rust because a Rust AIR crate is right there, every step compiles
+so nothing looks wrong."* A fixture AIR is still an AIR — the law's letter is ZERO Rust-authored
+constraints, and "it is only for a fixture" is precisely the reasoning the tripwire anticipates.
+
+**NOT baselined, deliberately** — the gate's own instruction is not to, and adding a row would convert
+a caught violation into a permanent exemption. Left red and surfaced because the Mina lane is ACTIVE
+in these files and silently rewriting another lane's in-flight AIR is worse than reporting it. The
+remedy is the one the gate names: emit the fixture AIR from Lean and have the binary call the emitted
+artifact.
+
+⚠ A second architectural ratchet is also red on another lane's committed file:
+`mock_proof_purge_gate::no_new_production_surface_rides_a_mock_prover` on
+`fhegg-fhe/src/private_book_canonical_backend.rs` (3 sites, `70f24bc09`, 07-22).
+
+
 **E2 · `dreggnet-web-server` REFUSES EVERY DESCENT MOVE ON A BOX. LIVE OUTAGE — measured.**
 `d0e10d0bc` added `HeapAtom::AllowedTransitions` to `dregg-cell` without the matching
 `exec-lean/src/constraint_oracle.rs` arm, so the oracle DECLINES that atom — and
