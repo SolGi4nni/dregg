@@ -50,10 +50,29 @@ exposure are untouched. Stored `.to_postcard()` bytes must be re-emitted (wasm
 `chain/gnark/fixtures/gnark_witness_minimal.json` regenerated). The 25-lane gnark public-input
 contract is UNCHANGED. `cargo check --workspace --all-targets` green.
 
-**⚠ Residual, named:** `pg-dregg`'s `SerializedWholeChainProof` is a *separate* transport that still
-carries `num_turns: u64` (`WHOLE_CHAIN_PROOF_TRANSPORT_V1`). It is closed by the verifier-core bound
-rather than by type, which is enough on a 64-bit host and is the weaker of the two guarantees.
-Narrowing it is a transport bump, not a re-proof.
+**THE FLAG DAY, DISCHARGED IN THE CONCRETE.** `cargo nextest` caught the one committed artifact
+holding v5: `ugc-dregg/tests/fixtures/whole_history_proof.bin`. postcard encodes `u16` and `u32`
+alike as LEB128 and the fixture's count is 3, so the v5 and v6 encodings of that envelope differ in
+**exactly one byte** — the leading version varint. `cmp -l`: byte 1, `5 -> 6`, 487,393 bytes
+untouched; same root proof, same binding proof, same VK anchor `434f57d2…`, same degree_bits. All 5
+`height1_air_check_binding` tests pass, including "the committed root proof must verify unmodified".
+*That* is what "re-emit the envelope, no re-proving" means when you actually do it.
+
+**⚠ Residuals, named:**
+
+1. `pg-dregg`'s `SerializedWholeChainProof` is a *separate* transport still carrying
+   `num_turns: u64` (`WHOLE_CHAIN_PROOF_TRANSPORT_V1`), closed by the verifier-core bound rather
+   than by type — enough on a 64-bit host, and the weaker of the two guarantees. A transport bump,
+   not a re-proof.
+2. `ugc-dregg::proof_leaderboard` is still red, and **not** on the envelope: it decodes now and
+   reaches tooth (2), then fails `OodEvaluationMismatch` in the Lean-emitted turn-chain descriptor
+   — the baked descriptor proof against the descriptor the tree emits today, while
+   `circuit/src/effect_vm/helpers.rs` carries 235 lines of another lane's uncommitted AIR-helper
+   changes. Re-baking is a real fold.
+3. `portal/dist/history.json` + `site/light-client/history.json` +
+   `site/dist/light-client/history.json` carry an inner envelope that is **v3**, 472,583 bytes — a
+   different, older proof. Measured from the bytes: they were already refusing to decode two bumps
+   before v6, so this closure neither broke nor fixed them. Same job as (2).
 
 ## ⚑⚑⚑ JULY 30 — the 2^15 MSM left the kernel; and the 630× that decided the Mina cadence had no measurement under it
 
