@@ -36,6 +36,8 @@ pub mod dark_amm_private;
 pub mod dark_bazaar_private;
 pub mod deco_leaf_adapter;
 pub mod descent_census;
+/// The MINA-facing terminal config — `DreggOuterConfig`'s twin over Pasta.
+pub mod dregg_mina_config;
 pub mod dregg_outer_config;
 pub mod dsl_leaf_adapter;
 pub mod effect_vm_p3_air;
