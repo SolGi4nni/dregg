@@ -730,6 +730,26 @@ async function main() {
   //  quietly report seven of eight — a falsifier that is absent reads exactly
   //  like one that passed. The cut is chosen to be the LAST proved slice that
   //  consumes a witnessed sibling.
+  //
+  //  ⚑⚑ KNOWN DEFECT, FLAGGED AND NOT FIXED HERE — DO NOT READ THIS RULE AS
+  //  COVERED. It selects on the presence of the WITNESS (`aux > 0`) and not on
+  //  the presence of the ASSERTION THAT CLOSES OVER IT. A bent Merkle sibling is
+  //  only caught by the `cur == commitment` check of its round, which can be
+  //  several cuts later — so a cut chosen this way can carry `aux`, accept a
+  //  bent sibling CORRECTLY, and have that accept read as a failed falsifier.
+  //  The uniform-walk lane MEASURED it in its own splice suite: at `block7` a
+  //  bent sibling was accepted because the first closing root is three cuts on
+  //  at `block9`, and of 43 block positions 25 carry `aux` while only 16 close
+  //  a root.
+  //
+  //  ⚑ AND BOTH OBVIOUS HANDLINGS ARE WRONG, which is why this is a flag and
+  //  not a quick patch: asserting the refusal is a FALSE RED (the bend genuinely
+  //  cannot be caught at that cut), and dropping the attempt is an ABSENT
+  //  FALSIFIER READING AS A PASS. The uniform lane's fix is THREE-VALUED — the
+  //  cut must contain a CLOSER, and at an aux-only cut `auxBent` is reported
+  //  NOT ATTRIBUTABLE with its reason rather than asserted or skipped. Whoever
+  //  next edits this table should carry that treatment across; leg 21 (the claim
+  //  carry) touched neither the cut rule nor the splice table and did not.
   let AT = Math.min(1, N - 1);
   for (let si = N - 1; si >= 0; si--) {
     const sl = c.plan.slices[si];
