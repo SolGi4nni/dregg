@@ -406,8 +406,11 @@ to 61.** The answer is no longer sensitive to the hash at all.
 
 **The next lever is column narrowing**, and it is the only one worth its cost:
 the DEEP quotient is 2.50 × 10⁶ rows over ~2,342 opened values at ζ =
-**1,067 rows per opened value**. Halving the root's committed column count
-halves it: **54 slices → 31**. Nothing hash-shaped or FRI-knob-shaped is worth
+⚠ **RETIRED — see §3.34 of `MINA-VERIFIES-DREGG-FRI-SIZE.md` and `npm run deep-columns`:
+the measured figure is 1,484 rows per opened value, the 2,342 denominator was the retired flat
+census, and the 86%-of-budget share is 41.2% once the hash-independent carry is counted.**
+~~**1,067 rows per opened value**. Halving the root's committed column count
+halves it: **54 slices → 31**.~~ Nothing hash-shaped or FRI-knob-shaped is worth
 anything like that — §5.1's compile lever and §6's knobs are both now
 second-order.
 
@@ -1012,8 +1015,13 @@ decomposition whose unit cost is set by the hash. Changing the hash is the re-sl
    `npm run pasta-root-rows`, `npm run pasta-chain`.
 6. **Then, and only then, the column narrowing** (`APEX-VERIFIER-AIR-REDUCTION.md`) — **and it is
    now step 1, with a number.** §0.2 measures the DEEP quotient at **86.0%** of a 2.906 × 10⁶-row
-   Mina-side verify, **1,067 rows per opened value at ζ**. Halving the root's committed column count
-   is **54 slices → 31**. A 3× error in every Pasta hash price is worth 7 slices; nothing else on
+   Mina-side verify. ⚠ **RE-DERIVED 2026-07-30 — the number below is retired.** `npm run
+   deep-columns` (MINA-VERIFIES-DREGG-FRI-SIZE §3.34) prices it from `ARITH_PRICE` at the measured
+   census: **1,484 rows per opened value, not 1,067** — the old pair was `2.5e6 / 2,342` and 2,342 is
+   the retired flat census. And the lever is ONE table: `poseidon2_perm/baby_bear_d4_w24` is **40.8%
+   of the 2,630 opened values** for a matrix of 8 trace rows, because a DEEP term is priced per
+   opened value and is independent of height. ~~**1,067 rows per opened value at ζ**. Halving the
+   root's committed column count is **54 slices → 31**.~~ A 3× error in every Pasta hash price is worth 7 slices; nothing else on
    this list is within an order of magnitude of the columns.
 
 **Do not start with the FRI knobs.** They are worth 35% today and 1% after step 5 — **measured, now

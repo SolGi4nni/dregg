@@ -241,7 +241,7 @@ console.log(
 
 //  ⚑ THE SENSITIVITY §4 NAMED, now that the census is right.
 const deepRows = (() => {
-  const w = segmentWalk(shape, { price: priceAt(PASTA_HASH) });
+  const w = segmentWalk(shape, { price: priceAt(PASTA_HASH), priceOnly: true });
   return w.segs.filter((s) => s.t === 'deep').reduce((a, s) => a + s.rows, 0);
 })();
 console.log(

@@ -238,7 +238,17 @@ async function main() {
   console.log('\n[4] THE TOTAL, against the 2.85e6 / 53 PROJECTION');
   // The hash-independent halves, MEASURED in §3 and unchanged by any hash
   // choice: BabyBear extension arithmetic all the way down.
-  const DEEP = 2.5e6;
+  //  ⚠ RETIRED, AND KEPT ONLY SO THE MOVE IS VISIBLE. `2.5e6` was the DEEP
+  //  quotient priced over the RETIRED FLAT CENSUS of 2,342 opened values —
+  //  2,286 plus the 56 quotient openings counted twice, the model
+  //  `CostModel.RETIRED_FLAT_MODEL` already documents as wrong. Re-derived from
+  //  `ARITH_PRICE` at the measured census of 2,630, the term is 3,902,258 rows
+  //  and the per-opened-value price is 1,484, not 1,067. `npm run deep-columns`
+  //  owns that derivation and prices the levers; this leg keeps the retired pair
+  //  so its own headline can still be read against §0.1's, and says so.
+  const DEEP_RETIRED = 2.5e6;
+  const DEEP_CENSUS_RETIRED = 2342;
+  const DEEP = 3_902_258;
   const AIR = 1.9e5;
   const measuredHash = hashAllQueries + transcript;
   const total = measuredHash + DEEP + AIR;
@@ -285,10 +295,14 @@ async function main() {
   );
   console.log(
     `    ⚑ THE NEXT LEVER IS COLUMN NARROWING, with a number: the DEEP quotient is ` +
-      `${fmt(DEEP)} rows over ${fmt(2342)} opened values at zeta = ${(DEEP / 2342).toFixed(0)} rows ` +
+      `${fmt(DEEP)} rows over 2,630 opened values at zeta = ${(DEEP / 2630).toFixed(0)} rows ` +
       `per opened value. Halving the root's committed column count halves it, i.e. ` +
-      `${Math.ceil((measuredHash + DEEP / 2 + AIR) / USABLE)} slices. Nothing hash-shaped or ` +
-      `FRI-knob-shaped is worth anything like that.`,
+      `${Math.ceil((measuredHash + DEEP / 2 + AIR) / USABLE)} slices.\n` +
+      `      ⚠ THIS LEG USED TO SAY ${(DEEP_RETIRED / DEEP_CENSUS_RETIRED).toFixed(0)} ROWS PER OPENED VALUE ` +
+      `(${fmt(DEEP_RETIRED)} / ${fmt(DEEP_CENSUS_RETIRED)}) and both literals were the retired flat model's.\n` +
+      `      \`npm run deep-columns\` re-derives the term from \`ARITH_PRICE\` at the measured census and\n` +
+      `      prices six levers with exact opened-value deltas — the lever is 39% BIGGER than this\n` +
+      `      leg advertised, and it is ONE table (\`poseidon2_perm/baby_bear_d4_w24\`, 40.8%).`,
   );
   console.log('');
 }
