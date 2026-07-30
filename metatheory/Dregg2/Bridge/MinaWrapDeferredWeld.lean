@@ -52,7 +52,8 @@ namespace Dregg2.Bridge.MinaWrapDeferredWeld
 open Dregg2.Bridge.MinaWrapDeferred
 open Dregg2.Circuit.Emit.PastaField (pN)
 open Dregg2.Circuit.Emit.MinaWrapPublicCommGate (PUBLIC_INPUT)
-open Dregg2.Bridge.MinaWrapPublicInput (DeferredWords WIRE_539508 DEFERRED_539508 w539508)
+open Dregg2.Bridge.MinaWrapPublicInput
+  (DeferredWords WIRE_539508 DEFERRED_539508 w539508 publicInputWords)
 
 /-! ## §1 — block 539508's wire values, from its own binprot bytes. -/
 
@@ -339,14 +340,16 @@ on the Wrap side of this block. ⚑ This control is NOT isolating: `oldChals` al
 /- And the carried scalar itself is read, so slot 0 is not being reproduced without it. -/
 #guard (expandDeferred E539508 (FT_EVAL0 + 1)).cip != w539508 0
 
-/-! ## §5 — ⚑⚑ THE SLOT ORDER AT 5-7: `MinaWrapPublicInput` IS WRONG, MEASURED.
+/-! ## §5 — ⚑⚑ THE SLOT ORDER AT 5-7: MEASURED, and the sibling was CORRECTED.
 
-`MinaWrapPublicInput.publicInputWords` places `alpha` at slot 5, `beta` at 6, `gamma` at 7.
+`MinaWrapPublicInput.publicInputWords` USED TO PLACE `alpha` at slot 5, `beta` at 6, `gamma` at 7.
 `Wrap.Statement.to_data` (`composition_types.ml:856-866`) places `beta, gamma, alpha`. That file
 flagged the mapping as **a stated reading, not a measurement**, and named the falsifier: an
-extractor emitting the wire values and comparing. This is that extractor's output.
+extractor emitting the wire values and comparing. This is that extractor's output, and on
+2026-07-30 the sibling was corrected in place — `publicInputWords` and `WIRE_539508` both now read
+`to_data`'s order, and the transitional duplicate `publicInputWordsCorrected` is deleted.
 
-The disagreement is invisible to every instrument that file has:
+The disagreement was invisible to every instrument that file had:
 
   * its round trip is definitional — `WIRE_539508` is projected OUT of `PUBLIC_INPUT` at the slots
     it claims, so `layout_reassembles_the_pinned_words` holds under ANY permutation of the three
@@ -355,31 +358,38 @@ The disagreement is invisible to every instrument that file has:
     moves the list, it just moves the wrong slot;
   * the width signature cannot help — all three are 128-bit challenges.
 
-What DOES see it is `perm`, which reads β, γ and α in three distinct roles. -/
+What DOES see it is `perm`, which reads β, γ and α in three distinct roles. So the guards below are
+the ONLY thing standing between the tree and a silent re-rotation, and they must stay. -/
 
 /- ⚑ The wire's β is at slot 5, its γ at slot 6, its α′ at slot 7 — NOT `alpha, beta, gamma`. -/
 #guard BETA_CHAL == w539508 5
 #guard GAMMA_CHAL == w539508 6
 #guard ALPHA_CHAL == w539508 7
 
-/- ⚑ …and `MinaWrapPublicInput.WIRE_539508` therefore has three fields carrying each other's
-values. This is the defect, exhibited rather than described. -/
-#guard WIRE_539508.alpha == BETA_CHAL
-#guard WIRE_539508.beta == GAMMA_CHAL
-#guard WIRE_539508.gamma == ALPHA_CHAL
-#guard WIRE_539508.alpha != ALPHA_CHAL
+/- ⚑ …and the corrected `WIRE_539508` now carries each value under its own name. Before the fix
+these three fields held each other's values. -/
+#guard WIRE_539508.beta == BETA_CHAL
+#guard WIRE_539508.gamma == GAMMA_CHAL
+#guard WIRE_539508.alpha == ALPHA_CHAL
 
-/- ⚑⚑ **AND THE ARITHMETIC AGREES WITH `to_data`, NOT WITH THE LAYOUT.** `permOf` under the
-layout's naming — feeding slot 5 as β and slot 7 as γ, which is what `WIRE_539508` hands over —
-does NOT reproduce slot 4. Only `beta, gamma, alpha` does. -/
+/- ⚑⚑ **AND THE ARITHMETIC AGREES WITH `to_data`.** `permOf` under the RETIRED naming — reading
+slot 5 as α, slot 6 as β and slot 7 as γ — does NOT reproduce slot 4. This is the discrimination
+that made the correction a measurement rather than a re-reading, and it is kept in the retired
+direction so a regression is caught. -/
+#guard (expandDeferred { E539508 with
+          betaChal := w539508 6, gammaChal := w539508 7,
+          alphaChal := w539508 5 } FT_EVAL0).perm != w539508 4
+
+/- …and under the CORRECTED naming it does, so the guard above is a discrimination and not a
+function that rejects everything. -/
 #guard (expandDeferred { E539508 with
           betaChal := WIRE_539508.beta, gammaChal := WIRE_539508.gamma,
-          alphaChal := WIRE_539508.alpha } FT_EVAL0).perm != w539508 4
+          alphaChal := WIRE_539508.alpha } FT_EVAL0).perm == w539508 4
 
-/- The corrected layout reassembles the pinned forty; the sibling's does too, because both are fed
-projections of the same list — which is precisely why the round trip was never the test. -/
-#guard publicInputWordsCorrected BETA_CHAL GAMMA_CHAL ALPHA_CHAL ZETA_CHAL SPONGE_DIGEST
-         (w539508 11) (w539508 12) D BP_CHALS 67 == PUBLIC_INPUT
+/- The corrected layout reassembles the pinned forty. Definitional in the round-trip direction —
+which is precisely why the round trip was never the test — but it pins that the correction did not
+lose a slot. -/
+#guard publicInputWords WIRE_539508 D == PUBLIC_INPUT
 
 /-! ## §6 — ⚑ THE CENSUS, CLOSED TO 39 + 1.
 
@@ -407,14 +417,25 @@ different object in a different field from slot 0's, computed by the Wrap verifi
 proof's own evaluations, which `decode_proof_at` also walks. `MinaRealBlockGate` §4 reproduces it
 on this block with `KimchiVerify.cipR`, carrying the WRAP-side `LCT`. So after this file the
 per-block path's residual is **two `ft_eval0`s** — the Step one (this file's `FT_EVAL0`, for
-`public_comm`) and the Wrap one (for `cipShifted`) — and nothing else. Both are the same species of
-computation and both want a linearization constant term this tree carries rather than derives. -/
+`public_comm`) and the Wrap one (for `cipShifted`).
+
+⚑ **UPDATE 2026-07-30 — `Dregg2.Bridge.MinaWrapFtEval0Weld` addresses both, and they were not the
+same size.** The linearization constant term is not carried at all: `KimchiVerify.gateLinConst`
+transcribes all six v1 gate bodies, the real block's six gate SELECTORS are all non-zero, and that
+file measures the derived constant term against `MinaRealBlockGate.LCT`. Consequently:
+
+  * the **WRAP** `ft_eval0` — and with it `cipShifted`, via `shift_scalar` — is derived from the
+    block's own bytes, and the sentence above about "a linearization constant term this tree
+    carries" is retired on that side;
+  * the **STEP** `ft_eval0` is derived to within ONE config object, the seven Tick coset `shifts`
+    at `domain_log2 = 16`, which are Blake2b-derived per domain and are an extractor line rather
+    than a formalization. `FT_EVAL0` above stays SOLVED-FROM-SLOT-0 until that line lands, and is
+    the comparand it must hit. -/
 
 /- The forty words this file assembles ARE the pinned public input, so `publicCommOf` at them is
 `PUBLIC_COMM_GOLD` by `MinaWrapPublicInput`'s own §4 pin. Stated as the list equality, because that
 is the whole content: the MSM is already welded one file over. -/
-#guard (publicInputWordsCorrected BETA_CHAL GAMMA_CHAL ALPHA_CHAL ZETA_CHAL SPONGE_DIGEST
-         (w539508 11) (w539508 12) D BP_CHALS 67).length == 40
+#guard (publicInputWords WIRE_539508 D).length == 40
 
 /- …and the six words it contributes are exactly `DEFERRED_539508`, the projection
 `MinaWrapPublicInput` could only exhibit. -/

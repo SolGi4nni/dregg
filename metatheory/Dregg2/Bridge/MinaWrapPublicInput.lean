@@ -182,10 +182,25 @@ theorem branch_data_of_the_pinned_block : branchDataPacked 3 16 = 67 := by decid
 ⚑ Order is the whole correctness question, exactly as it is in `MinaBinprot`: a slot map with two
 fields swapped does not fail, it silently commits to a different statement and the Fq-sponge below
 it produces different challenges that nothing compares against. The width signature in §3 is the
-instrument that catches it. -/
+instrument that catches it.
+
+⚑⚑ **CORRECTED 2026-07-30, and this is a MEASURED correction, not a re-reading.** Slots 5-7 used to
+read `alpha, beta, gamma`. `Wrap.Statement.to_data` (`composition_types.ml:826-880`) lays the
+`challenge` bucket down before the `scalar_challenge` one, so they are **`beta, gamma, alpha`**.
+Every instrument this file had was blind to the difference — the round trip in §3 is definitional
+(`WIRE_539508` is projected OUT of the list being reassembled, so it holds under any permutation of
+the three names), `publicInputWords_reads_every_field` is permutation-blind by construction, and
+all three are 128-bit challenges so the width signature cannot separate them. What sees it is
+`MinaWrapDeferred.permOf`, which reads β, γ and α in three distinct roles;
+`MinaWrapDeferredWeld` §5 exhibits the disagreement on the real block's own bytes.
+
+**What broke:** any caller that fed this function three challenges positionally is now feeding
+different slots. There is exactly one such shape in the tree and it was this file's own
+`WIRE_539508`, corrected below; the transitional duplicate
+`MinaWrapDeferred.publicInputWordsCorrected` is DELETED rather than kept beside this. -/
 def publicInputWords (w : WireWords) (d : DeferredWords) : List Nat :=
   [d.cip, d.b, d.zetaToSrsLength, d.zetaToDomainSize, d.perm,
-   w.alpha, w.beta, w.gamma, w.zeta, d.xi,
+   w.beta, w.gamma, w.alpha, w.zeta, d.xi,
    w.spongeDigest, w.word11, w.word12]
   ++ w.bpChallenges
   ++ [w.branchData]
@@ -226,7 +241,9 @@ def w539508 (i : Nat) : Nat := PUBLIC_INPUT.getD i 0
 
 /-- The 34 wire words of block 539508, as this layout locates them. -/
 def WIRE_539508 : WireWords :=
-  { alpha := w539508 5, beta := w539508 6, gamma := w539508 7, zeta := w539508 8
+  -- ⚑ β at slot 5, γ at 6, α′ at 7 — `to_data`'s order, MEASURED against the block's own binprot
+  -- bytes in `MinaWrapDeferredWeld` §5. The three names used to be rotated here.
+  { beta := w539508 5, gamma := w539508 6, alpha := w539508 7, zeta := w539508 8
     spongeDigest := w539508 10, word11 := w539508 11, word12 := w539508 12
     bpChallenges := (List.range 16).map (fun j => w539508 (13 + j))
     branchData := w539508 29 }

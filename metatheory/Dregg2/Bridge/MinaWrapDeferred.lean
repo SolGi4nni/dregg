@@ -41,8 +41,9 @@ index            = [branch_data]                                                
 ```
 
 so slots 5-9 are **`beta, gamma, alpha, zeta, xi`** — NOT `alpha, beta, gamma, zeta, xi`, which is
-what `MinaWrapPublicInput.publicInputWords` says. `MinaWrapPublicInput` itself flagged that reading
-as UNMEASURED; the weld measures it, and it is wrong at slots 5 and 7. See
+what `MinaWrapPublicInput.publicInputWords` USED TO SAY. `MinaWrapPublicInput` itself flagged that
+reading as UNMEASURED; the weld measured it, it was wrong at slots 5 and 7, and **the sibling was
+corrected in place on 2026-07-30** rather than shadowed by a second layout here. See
 `MinaWrapDeferredWeld` §5 — the correction is exhibited on the real block by `perm`, which reads
 β, γ and α in three distinct roles and reproduces the block's slot-4 word only under this order.
 
@@ -385,36 +386,16 @@ arrive". -/
 def expandDeferred? (e : WrapEvals) (ftEval0 : Nat) : Option DeferredWords :=
   if wrapEvalsOk e && decide (ftEval0 < pN) then some (expandDeferred e ftEval0) else none
 
-/-! ## §8 — the layout, CORRECTED.
+/-! ## §8 — the layout, CORRECTED **AT THE SOURCE**.
 
-⚑ `MinaWrapPublicInput.publicInputWords` places `alpha, beta, gamma` at slots 5, 6, 7.
+⚑ `MinaWrapPublicInput.publicInputWords` used to place `alpha, beta, gamma` at slots 5, 6, 7.
 `Wrap.Statement.to_data` places `beta, gamma, alpha`. The two agree on the LIST when the wire
-record is a projection out of the very list being reassembled — which is what
-`WIRE_539508` is, and is why that file's own round-trip could not see this. It is measured in
-`MinaWrapDeferredWeld` §5.
+record is a projection out of the very list being reassembled — which is what `WIRE_539508` is, and
+is why that file's own round-trip could not see it. It is measured in `MinaWrapDeferredWeld` §5.
 
-Rather than edit a live sibling from this lane, the corrected layout is stated here as a function
-and the weld exhibits the disagreement on real data. Deleting the wrong one is the follow-on; there
-must not be two. -/
-
-/-- **`publicInputWordsCorrected`** — the 40 words in `to_data` order. Differs from
-`MinaWrapPublicInput.publicInputWords` in exactly one way: `beta, gamma, alpha` at slots 5-7. -/
-def publicInputWordsCorrected (beta gamma alpha zeta spongeDigest word11 word12 : Nat)
-    (d : DeferredWords) (bpChallenges : List Nat) (branchData : Nat) : List Nat :=
-  [d.cip, d.b, d.zetaToSrsLength, d.zetaToDomainSize, d.perm,
-   beta, gamma, alpha, zeta, d.xi,
-   spongeDigest, word11, word12]
-  ++ bpChallenges
-  ++ [branchData]
-  ++ List.replicate 10 0
-
-/-- The corrected layout still has forty slots. -/
-theorem publicInputWordsCorrected_length
-    (beta gamma alpha zeta spongeDigest word11 word12 : Nat) (d : DeferredWords)
-    (bpChallenges : List Nat) (branchData : Nat) (h : bpChallenges.length = 16) :
-    (publicInputWordsCorrected beta gamma alpha zeta spongeDigest word11 word12 d
-      bpChallenges branchData).length = 40 := by
-  simp [publicInputWordsCorrected, h]
+**This file used to carry a `publicInputWordsCorrected` beside the wrong one. That is deleted.**
+`MinaWrapPublicInput.publicInputWords` and `WIRE_539508` were corrected in place on 2026-07-30, so
+there is one layout again; two shapes that agree today are two shapes that disagree later. -/
 
 /-! ## §9 — the shape gate really refuses. Kernel `decide` over lengths and comparisons; no sponge
 is run, so this is cheap and it is the CHECKER half of the split. -/
@@ -477,7 +458,6 @@ theorem shiftType1_roundtrips :
 #assert_axioms powMod_is_pow_mod
 #assert_axioms sqMod_is_iterated_squaring
 #assert_axioms shiftType1_roundtrips
-#assert_axioms publicInputWordsCorrected_length
 
 #print axioms wrapEvals_shape_discriminates
 #print axioms shiftType1_roundtrips

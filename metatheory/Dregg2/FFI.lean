@@ -99,6 +99,22 @@ import Dregg2.Bridge.MinaCheckpoint
 -- same off-the-hot-path split `mina_opening_check.rs` uses for descriptor drift. Added 2026-07-30;
 -- **+0 modules** to the closure (`PastaPoseidonFq` and `PastaField` are already in it — measured).
 import Dregg2.Bridge.MinaWrapChallenges
+-- `dregg_mina_wrap_ft_eval0` — ⚑ THE OTHER HALF of the per-block derivation, and the one that
+-- retires a CARRIER rather than a pin. `MinaWrapChallenges` above reaches the IPA challenges from
+-- five wire objects and two it cannot supply: `public_comm` and `cipShifted`. Both are downstream
+-- of an `ft_eval0`, one per side of the Pasta cycle, and both were described as wanting a
+-- linearization constant term "this tree carries rather than derives". It does not carry it:
+-- `KimchiVerify.gateLinConst` transcribes all six v1 gate bodies, and the real devnet block's six
+-- gate SELECTORS are every one of them non-zero — so this module instantiates those bodies at
+-- `ZMod pN` / `ZMod qN` and derives the constant term, `ft_eval0`, the public polynomial at ζ (the
+-- C4 residual) and `shift_scalar`. ⚑ It authors NO arithmetic: a `Nat`-mod mirror of a gate body
+-- would be a twin, and the census note says a `def` with no `@[export]` is the best predictor there
+-- is one. The weld to the one-block literals is `Bridge.MinaWrapFtEval0Weld`, which is NOT rooted —
+-- same off-the-hot-path split as `MinaWrapChallengesWeld`. Added 2026-07-30; **+0 modules** to the
+-- closure claimed — `KimchiVerify` and `PastaField` are already in it (`PicklesProofChainGate`
+-- measured the same +0 for the same reason). ⚠ VERIFY that claim on the import graph before
+-- quoting it; it is a prediction from the graph as read, not a measurement of this build.
+import Dregg2.Bridge.MinaWrapFtEval0
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.
