@@ -53,8 +53,9 @@
 //! and it is on this machine; hand-writing Salsa20, a Noise XX state machine and a yamux muxer into
 //! this crate would be reconstructing a thing that already exists, which is the same mistake as a
 //! Rust binprot decoder wearing different clothes. [`CommandProtocolStateSource`] runs an
-//! operator-configured helper and takes its stdout. The helper this was built against is
-//! `bridge/tools/mina-besttip`.
+//! operator-configured helper and takes its stdout. The helper shipped here is
+//! `bridge/tools/mina-besttip.py` — a small Python client, deliberately not a second Rust
+//! implementation of a stack openmina already implements.
 //!
 //! # Fail closed
 //!
@@ -106,9 +107,15 @@ pub trait MinaProtocolStateSource {
 
 /// A source that runs an external helper and takes its stdout as the bytes.
 ///
-/// The helper speaks Mina's peer-to-peer stack. `bridge/tools/mina-besttip` is the one this was
-/// built against; it links openmina's `p2p` and `p2p-messages` crates, connects to a devnet seed,
-/// issues `get_best_tip` v2, and writes the `Protocol_state.Value` binprot bytes to stdout.
+/// The helper speaks Mina's peer-to-peer stack. `bridge/tools/mina-besttip.py --emit-protocol-state`
+/// is the one this was built against and the one measured: it connects to a devnet seed, negotiates
+/// pnet / Noise XX / yamux / `coda/rpcs/0.0.1`, issues `get_best_tip` v2, and writes the response
+/// payload from the Option tag onward to stdout.
+///
+/// ⚑ That helper is a small dependency-light Python client, NOT audited crypto and NOT the
+/// production path. openmina (`~/dev/mina-rust`) is a complete, maintained Rust implementation of
+/// the same stack and is what to link when this leaves `tools/`. Naming the real thing here rather
+/// than implying a Rust helper exists: it does not.
 ///
 /// ⚑ The helper is TRUSTED FOR AVAILABILITY ONLY, not for content. It cannot make the client accept
 /// a chain: every byte it produces goes through the Lean decoder's canonicality, bound and
