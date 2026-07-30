@@ -485,6 +485,18 @@ Three analysis-first lanes on the three genuinely hard remainders:
   `HttpWitnessOutcome::split` decides BEFORE the enqueue and can report pending with no pool installed.
   ⚠ And it needs a budget row: 180.051 s against `45s × 4` means it was **killed, not failed**.
 
+- ✅ **E2 CLOSED, AND THIS TIME MEASURED** — `dreggnet-web` **24 → 16 failed, 0 timed out**, with
+  **zero of the 16 carrying a live oracle refusal.** ⚑ The cause was neither thing I chased: not the
+  `HAT` atom, not `AnyOf`, but **`AnyOf` carrying a `HeapField` branch** — a blanket decline in
+  `encode_branches`. **24 of the 576 sit under one `SlotChanged{spent}` rider and every Descent verb
+  spends breath**, so a single decline refused every verb.
+  ⚑ **Substrate: RUST's. `metatheory/` needed no arm** — the Lean parser already decided a heap
+  branch; the marshaller was not asking. My E2 brief assumed a Lean gap and was wrong.
+  ⚑ **And it classified the 24 by the LIVE composed refusal, not by the copy appearing in a
+  template** — which is exactly the error I made when I grepped rendered HTML and counted 10.
+  ⚠ A residual that genuinely IS Lean's is named and not papered over: heap branches at two DIFFERENT
+  keys still decline, with zero deployed instances but a real producer in `spween-dregg`.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.

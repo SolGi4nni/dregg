@@ -71,6 +71,24 @@ artifact.
 
 
 **E2 · `dreggnet-web-server` REFUSES EVERY DESCENT MOVE ON A BOX. LIVE OUTAGE — measured.**
+> ✅ **CLOSED 2026-07-30, MEASURED** (`38d43025d` + `4dd28b6d6`, after `4e0a05fac` + `6e27f4983`).
+> `dreggnet-web` **434 run / 24 failed → 439 run / 16 failed, 0 timed out**, and **zero of the 16
+> remaining carry a live oracle refusal.** ⚑ The cause was **neither** thing I chased: not the `HAT`
+> atom and not `AnyOf` itself, but **an `AnyOf` carrying a `HeapField` BRANCH** — `encode_branches`
+> held a blanket `if matches!(lifted, HeapField{..}) { return None; }`. **24 of the 576 sit under the
+> single `SlotChanged{spent}` rider, and every Descent verb spends breath**, so one decline refused
+> delve/unlock/smite/loot/flee/lunge/ascend/take.
+> ⚑ **Substrate verdict: RUST's — `metatheory/` needed no arm.** The Lean parser already decides a
+> heap branch (`parseConstraint` → `parseHeapAtom`, `branchAdmits` → `heapAdmits`); **the marshaller
+> was not asking.**
+> ⚠ **A residual that IS Lean's, named and not worked around**: a combinator whose heap branches name
+> two DIFFERENT keys still declines and still fails closed. Zero deployed instances, but a real
+> producer exists (`spween-dregg/src/compiler.rs`'s `ConditionExpr::Or` over two `Has` at different
+> keys) — latent, not live.
+> ⚠ And it was found by **walking the deployed program through the real loader and the real oracle**,
+> not by inspection: `dreggnet-web/tests/deployed_program_oracle_decidable.rs` names every constraint
+> the installed oracle will not decide, and carries a permanent red-proof needing no mutation.
+
 > ⚠ **REOPENED 2026-07-30 — I CLOSED THE WRONG HALF.** Measured after the fix: `dreggnet-web` is still **434 run, 407 passed, 24 failed, 3 timed out**, and the rendered pages still carry the decline. The Lean arm and the `HAT` encoder arm are real and `dregg-exec-lean` + `dregg-cell` are 979/979 on the SAME archive — so it is neither the atom nor staleness. RULED OUT: the atom (round-trip is a theorem), `AnyOf` (encoded at `:403`), a stale archive (same workspace archive passes exec-lean). ⚑ **And two of my own greps were worthless**: one over a log a pipeline had reduced to 111 bytes, and one that counted the refusal copy inside rendered HTML templates as live refusals. Dispatched with a probe-first brief. Below was the premature claim:
 > ~~CLOSED end to end~~ — Lean arm `4e0a05fac` (`DHeapAtom.allowedTransitions`, 12th arm, wire round-trip PROVED over every `List (Nat × Nat)`, no genesis escape) + encoder arm `6e27f4983` (`HAT`, u64 lanes DECIMAL — deliberately not the sibling `hex32` nor the REGISTER `AT` convention; two atoms that look alike encode differently). ⚑ **The tooth reported its own completion by going red** — it pinned the decline and carried its retirement instruction in the assertion message. ⚠ And its pole had to CHANGE SHAPE, not flip: "both decline identically" was honest while both answered `None`, and is wrong now that an unlisted destination must be REFUSED BY THE TABLE. `dregg-exec-lean` + `dregg-cell` 979/979.
 
