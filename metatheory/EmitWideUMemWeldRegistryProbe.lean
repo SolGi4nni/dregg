@@ -36,6 +36,13 @@ SCRATCH executable: `lake env lean --run EmitWideUMemWeldRegistryProbe.lean`.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
 import Dregg2.Deos.BareCohortFloorRefuseWide
+-- THE LAST-ROW ANCHOR FORGE CLOSURE (flag day), the welded twin: the SAME `hardenLastRow` the bare
+-- wide probe applies, on the SAME final object shape. The umem weld appends its `umemOp` at the TAIL
+-- and `hardenLastRow` is an order-preserving map that is the identity on `.umemOp`, so hardening
+-- COMMUTES with the weld — the Rust byte-parity tooth
+-- (`wide_umem_weld_registry_parity_and_no_narrowing`, which recomputes
+-- `weld_umem_into_wide_descriptor(bare_wide_member, domain)` in Rust) still matches member for member.
+import Dregg2.Circuit.Emit.LastRowFrameHardening
 -- THE S2 DELETION (Epoch 1): the welded twins are compacted through the SAME verified
 -- `compactS2` at the SAME per-key `bb` as the bare wide registry (the umem/refuse welds append
 -- strictly PAST the S2 columns, so the geometry triple is identical), gated per member by
@@ -141,7 +148,10 @@ def main : IO Unit := do
       -- subset of a `compactE1Ok`-valid pure-dead kill-set stays `compactE1Ok`-valid.
       if Dregg2.Circuit.Emit.RotWideCompactE1.transitionCeilingOk cm 90 then
         let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm (deadColsE1Fast cm (e1Ceiling key cm))
-        IO.println s!"{key}\t{e1cm.name}\t{emitVmJson2 e1cm}"
+        -- THE LAST-ROW HARDENING (see the import note): geometry-preserving, order-preserving, and
+        -- the identity on the welded `.umemOp`, so it commutes with the weld.
+        let hardened := Dregg2.Circuit.Emit.LastRowFrameHardening.hardenLastRow e1cm
+        IO.println s!"{key}\t{hardened.name}\t{emitVmJson2 hardened}"
       else throw (IO.userError
           s!"E1-compact REFUSED for welded {key} — transitionCeilingOk failed (a `.transition` \
              reads a face column ≥ 90); the emit fails closed")

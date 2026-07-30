@@ -55,8 +55,15 @@ import Dregg2.Circuit.Emit.AvailWireMembers
 -- rotated base), authority keystones re-established, availability circuit-forced. See
 -- RotatedKernelRefinementCapOpenAvail.
 import Dregg2.Circuit.RotatedKernelRefinementCapOpenAvail
+-- THE LAST-ROW ANCHOR FORGE CLOSURE (flag day), the NARROW leg. MEASURED over the emitted registry:
+-- 60 of 60 live members carry ZERO last-row-live algebra (no `boundary`, no whole-domain
+-- `windowGate`) while every one of them pins 3..11 PIs on `.last` — the same class the wide
+-- registries carry, at 60/60 rather than 56/57. `hardenLastRow` lifts every row-local `gate` body
+-- onto the WHOLE domain so those pinned rows carry algebra.
+import Dregg2.Circuit.Emit.LastRowFrameHardening
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
+open Dregg2.Circuit.Emit.LastRowFrameHardening (hardenLastRow)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR (rotationProbeVmDescriptorR2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
@@ -116,7 +123,7 @@ def main : IO Unit := do
       -- floor-refuse + rc pins.
   for (key, d0) in v3RegistryCapOpenDep do
     let d := (availOverride.lookup key).getD d0
-    IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
+    IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 <| hardenLastRow <| d}"
   -- THE TURN-IDENTITY WELD (CapOpenTurnPins): the transfer cap-open PLUS the three turn-identity PI
   -- pins welding `capOpenCols.src`/`actor`/`dst` to published PIs (the in-circuit realization of
   -- `TurnIdentityBound`/`hsrc`). Emitted as a NEW member (`transferCapOpenTBVmDescriptor2R24`) so the
@@ -128,7 +135,7 @@ def main : IO Unit := do
   -- turn-identity pins; RotatedKernelRefinementCapOpenAvail.transferCapOpenEffV3TBAvail).
   let transferCapOpenTB : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2 :=
     Dregg2.Circuit.RotatedKernelRefinementCapOpenAvail.transferCapOpenEffV3TBAvail
-  IO.println s!"v3rot\ttransferCapOpenTBVmDescriptor2R24\t{transferCapOpenTB.name}\t{emitVmJson2 transferCapOpenTB}"
+  IO.println s!"v3rot\ttransferCapOpenTBVmDescriptor2R24\t{transferCapOpenTB.name}\t{emitVmJson2 <| hardenLastRow <| transferCapOpenTB}"
   -- THE WRITE-BEARING TAIL (`v3RegistryHeap` positions 45..50): the apex-proven, registry-deployed
   -- descriptors that FORCE guarantee A (the cap-tree / heap-root / DELEG-tree WRITE), now on the wire so the
   -- deployed Rust interpreter parses exactly what the soundness apex proves about. heapWrite is the Class-A
@@ -137,47 +144,47 @@ def main : IO Unit := do
   -- authority-only wrappers at positions 36..38); `refreshDelegationWriteCapOpenV3` (position 50, `Rfix 55`
   -- re-pointed) carries the DELEGATIONS-tree UPDATE-write (the `delegRoot_runtime_column_pending` close).
   -- Keys match `v3RegistryHeap`'s declared names.
-  IO.println s!"v3rot\theapWriteVmDescriptor2R24\t{Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3.name}\t{emitVmJson2 Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3}"
-  IO.println s!"v3rot\tdelegateWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3}"
-  IO.println s!"v3rot\tintroduceWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3}"
-  IO.println s!"v3rot\tdelegateAttenWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3}"
-  IO.println s!"v3rot\trevokeDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3}"
-  IO.println s!"v3rot\trevokeCapabilityWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3}"
-  IO.println s!"v3rot\trefreshDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3}"
+  IO.println s!"v3rot\theapWriteVmDescriptor2R24\t{Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3}"
+  IO.println s!"v3rot\tdelegateWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.delegateWriteCapOpenV3}"
+  IO.println s!"v3rot\tintroduceWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.introduceWriteCapOpenV3}"
+  IO.println s!"v3rot\tdelegateAttenWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.delegateAttenWriteCapOpenV3}"
+  IO.println s!"v3rot\trevokeDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.revokeDelegationWriteCapOpenV3}"
+  IO.println s!"v3rot\trevokeCapabilityWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.revokeCapabilityWriteCapOpenV3}"
+  IO.println s!"v3rot\trefreshDelegationWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.refreshDelegationWriteCapOpenV3}"
   -- The spawn WRITE-FORCING cap-open wrapper (`v3RegistryHeap` position 52, `Rfix 19` re-pointed): the
   -- parent→child CAPABILITY HANDOFF cap-tree INSERT FORCED (limb 25) ALONGSIDE the accounts grow-gate
   -- INSERT (limb 0) — the spawn cap-handoff close, guarantee A circuit-forced.
-  IO.println s!"v3rot\tspawnWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3}"
+  IO.println s!"v3rot\tspawnWriteCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.spawnWriteCapOpenV3}"
   -- The AUTHORITY-ONLY spawn cap-open (the frozen `spawnV3` base + authority appendix): the named,
   -- light-client-REJECTED fallback (the verifier tooth forces the write route).
-  IO.println s!"v3rot\tspawnCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.spawnCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.spawnCapOpenV3}"
+  IO.println s!"v3rot\tspawnCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.spawnCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.spawnCapOpenV3}"
   -- The EXERCISE cap-open (`v3RegistryHeap` position 53, `Rfix 16` re-pointed): the FROZEN exercise base +
   -- the EFF_EXERCISE authority appendix (the depth-16 cap-membership crown forcing the exercise hold-gate
   -- `exerciseGuard`'s `confersEdgeTo target` membership in-circuit). The LAST named cap-open residual CLOSED.
-  IO.println s!"v3rot\texerciseCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.exerciseCapOpenV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.CapOpenEmit.exerciseCapOpenV3}"
+  IO.println s!"v3rot\texerciseCapOpenVmDescriptor2R24\t{Dregg2.Circuit.Emit.CapOpenEmit.exerciseCapOpenV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.CapOpenEmit.exerciseCapOpenV3}"
   -- The DEDICATED SUPPLY-MINT descriptor (`v3RegistryHeap` tail position 54, SUPPLY-MODEL.md Stage
   -- 2b): the turn-layer `Effect::Mint` proves under its OWN selector (`sel.MINT = 14`) rather than
   -- riding BridgeMint's slot. Body byte-identical to `mintVmDescriptor2R24` save the appended
   -- `selectorGate` operand. Emitted so the deployed Rust IR-2 interpreter parses exactly what the
   -- apex's `Rfix 3 = supplyMintV3` proves.
-  IO.println s!"v3rot\tsupplyMintVmDescriptor2R24\t{Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3.name}\t{emitVmJson2 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3}"
+  IO.println s!"v3rot\tsupplyMintVmDescriptor2R24\t{Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3.name}\t{emitVmJson2 <| hardenLastRow <| Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3}"
   -- THE WELDED SEALED-ESCROW SATISFACTION descriptor (VK-EPOCH §6 BLOCKER 1, the prior pass's
   -- named-only gap, made real): the staged `settleEscrowSatVmDescriptor2R24` (legs in field slots
   -- 0/1) — `graduateV1 (rotateV3 settle-base)` PLUS the four selector-gated satisfaction gates over
   -- the rotated FIELD columns PLUS the selector PI pin (PI 46). Emitted BESIDE the deployed cohort
   -- (no live routing, no VK committed); the descriptor a flippable escrow weld commits a VK for. Its
   -- in-proof refinement is `Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatV3_forces_settle_gate`.
-  IO.println s!"v3rot\tsettleEscrowSatVmDescriptor2R24\t{(Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24 0 1).name}\t{emitVmJson2 (Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24 0 1)}"
+  IO.println s!"v3rot\tsettleEscrowSatVmDescriptor2R24\t{(Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24 0 1).name}\t{emitVmJson2 <| hardenLastRow <| (Dregg2.Deos.SettleEscrowSatDescriptor.settleEscrowSatVmDescriptor2R24 0 1)}"
   -- THE WELDED DISCHARGE-OBLIGATION SATISFACTION descriptor (G5 tag 18): the staged
   -- `dischargeSatVmDescriptor2R24` (legs cur/tot/due in field slots 0/1/2) — the two additive
   -- satisfaction equalities + the DUE_BITS range check + the selector PI pin (PI 46). Emitted BESIDE
   -- the deployed cohort (no live routing, no deployed-default flip — GENTIAN-blocked); the descriptor
   -- a flippable discharge weld commits a VK for. In-proof refinement
   -- `Dregg2.Deos.DischargeSatDescriptor.dischargeSatV3_forces`.
-  IO.println s!"v3rot\tdischargeSatVmDescriptor2R24\t{(Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24 0 1 2).name}\t{emitVmJson2 (Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24 0 1 2)}"
+  IO.println s!"v3rot\tdischargeSatVmDescriptor2R24\t{(Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24 0 1 2).name}\t{emitVmJson2 <| hardenLastRow <| (Dregg2.Deos.DischargeSatDescriptor.dischargeSatVmDescriptor2R24 0 1 2)}"
   -- THE WELDED VAULT-DEPOSIT SATISFACTION descriptor (G5 tag 19): the staged
   -- `vaultSatVmDescriptor2R24` (asset/share in field slots 0/1) — the overflow-safe multi-limb
   -- no-dilution product gate + the selector PI pin (PI 46). Emitted BESIDE the deployed cohort (no
   -- live routing, no deployed-default flip — GENTIAN-blocked); the descriptor a flippable vault weld
   -- commits a VK for. In-proof refinement `Dregg2.Deos.VaultSatDescriptor.vaultSatV3_forces`.
-  IO.println s!"v3rot\tvaultSatVmDescriptor2R24\t{(Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24 0 1).name}\t{emitVmJson2 (Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24 0 1)}"
+  IO.println s!"v3rot\tvaultSatVmDescriptor2R24\t{(Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24 0 1).name}\t{emitVmJson2 <| hardenLastRow <| (Dregg2.Deos.VaultSatDescriptor.vaultSatVmDescriptor2R24 0 1)}"

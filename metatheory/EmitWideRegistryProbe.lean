@@ -58,6 +58,13 @@ import Dregg2.Circuit.Emit.WideCompactTable
 -- carry the kill-set (POST-S2 coords, as half-open runs) to the Rust producer table
 -- (`e1_compact_generated.rs`).
 import Dregg2.Circuit.Emit.RotWideCompactE1
+-- THE LAST-ROW ANCHOR FORGE CLOSURE (flag day): every emitted member's row-local `gate` bodies are
+-- lifted OFF the transition domain onto the WHOLE domain (`windowGate … onTransition := false`), so
+-- the LAST row — the row every member pins its published 8-felt AFTER anchor on — carries algebra.
+-- Applied LAST, after S2 + E1, so it is column-index-preserving: widths, PI counts and both
+-- compaction kill-sets are untouched, and the `s2compact`/`e1compact` companion lines do not move.
+-- See Dregg2.Circuit.Emit.LastRowFrameHardening.{satisfied2_of_hardened, hardened_gate_binds_on_last_row}.
+import Dregg2.Circuit.Emit.LastRowFrameHardening
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.CapOpenEmit (v3RegistryCapOpenWide v3RegistryCapOpenWriteWide)
@@ -140,7 +147,13 @@ def emitCompact (key : String) (d : EffectVmDescriptor2) : IO Unit := do
     let ks := deadColsE1Fast cm (e1Ceiling key cm)
     if Dregg2.Circuit.Emit.RotWideCompactE1.transitionCeilingOk cm e1Floor then
       let e1cm := Dregg2.Circuit.Emit.RotWideCompactE1.compactE1 cm ks
-      IO.println s!"{key}\t{e1cm.name}\t{emitVmJson2 e1cm}"
+      -- THE LAST-ROW HARDENING, applied to the FINAL emitted object: `hardenLastRow` preserves
+      -- `traceWidth`, `piCount`, `tables`, `hashSites`, `ranges` and the constraint ORDER
+      -- definitionally, so it commutes with everything above it and changes only which DOMAIN each
+      -- `gate` body is asserted on. The existing keystone chain re-connects through
+      -- `satisfied2_of_hardened` (a hardened witness IS an `e1cm` witness).
+      let hardened := Dregg2.Circuit.Emit.LastRowFrameHardening.hardenLastRow e1cm
+      IO.println s!"{key}\t{hardened.name}\t{emitVmJson2 hardened}"
       IO.println s!"s2compact\t{key}\t{bb}\t{lb}"
       IO.println s!"e1compact\t{key}\t{intervalsStr ks}"
     else throw (IO.userError
