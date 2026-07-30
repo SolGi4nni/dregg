@@ -273,6 +273,25 @@ shape that has yielded one-cause fixes five times this week.
   same-currency fulfillment in split columns; this). **I generalised one to its neighbours once and
   was wrong**, so each was read on its own.
 
+- ✅ **`dregg-node` 7 → 3** (`2865f385e`) — not the 10 the workspace said; that run predated tonight.
+  ⚑ **Family B: an exemption written for exactly this crash image that DECIDED NOTHING** — the
+  executor's head was seeded from the whole durable log, so it sat one link PAST the turn being
+  re-executed and refused before the exemption could apply. And **the test discarded the return value
+  that names the failure**, so every one arrived as a bare `0 != 1`.
+  ⚑ **Family C had been red for NINE DAYS and its message blamed the cell program**, which was never
+  at fault — `/turns/submit` has rolled its ledger mutation back unconditionally since 07-21.
+  ⚑ **The timeout was never survivable**: it passes at **540s** against a 180s kill. Plus a latent
+  second instance at **172.9s — 7.1 s under the kill**, i.e. the same red one busy box away.
+- ⚑ **E1 recorded in HORIZONLOG, not guessed at**: a three-node committee **wedges permanently on one
+  undelivered block**. `supermajority_threshold(3) = 3` is unanimous lock-step with no timeout and no
+  partial-progress rule. tau is healthy throughout with the Rust differential agreeing — **not the
+  ordering rule, not the Lean gate**, it is gossip/anti-entropy, and a regression inside a ~25-commit
+  window. The lane that found it declined to guess inside consensus code, which was right.
+- ⚠ **Minted a build trap**: red-proofing on a lane leaves artifacts newer than the pristine source
+  rsynced in next; rsync restores the OLDER mtime, cargo skips the rebuild, and the run **measures a
+  stale binary**. One lane reported a false red this way. Tell: **a panic line offset by exactly the
+  mutation's delta.**
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
