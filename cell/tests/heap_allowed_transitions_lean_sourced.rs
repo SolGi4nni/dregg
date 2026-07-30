@@ -173,25 +173,31 @@ fn an_empty_table_is_the_canonical_bottom() {
     assert!(!decide(&bottom, &CellState::default(), None));
 }
 
-/// ⚠ **THE MEASURED GAP, NOT A COMMENT ABOUT ONE.**
+/// ⚠ **THE MEASURED GAP — HALF CLOSED. THE REMAINING HALF, NOT A COMMENT ABOUT ONE.**
 ///
 /// This atom answers `true` to [`constraint_in_lean_subset`] — it IS a pure state/heap rule, so a
 /// native RELEASE build routes it to the verified `dregg_constraint_admits` and FAILS CLOSED if the
-/// oracle does not decide it. And the oracle does not: the deployed wire's heap vocabulary
-/// (`Dregg2/Exec/DeployedConstraint.lean`'s `DHeapAtom`) has eleven arms — exactly this enum's
-/// previous eleven — and no transition table, while its register-indexed `allowedTransitions`
-/// answers `.badIndex` for any `idx ≥ stateSlots`. So `dregg-exec-lean`'s `encode_heap_atom`
-/// declines, on purpose, rather than inventing a tag the verified decider would misread.
+/// oracle does not decide it. The LEAN SIDE now does: `Dregg2/Exec/DeployedConstraint.lean`'s
+/// `DHeapAtom` carries a twelfth arm, `allowedTransitions (allowed : List (Nat × Nat))` (u64 lane,
+/// both sides present, no genesis escape), with a `HAT` wire token in `parseHeapAtom` and a PROVED
+/// encode/decode round-trip over every `allowed` list (not an example corpus). Its register-indexed
+/// sibling `allowedTransitions` still answers `.badIndex` for any `idx ≥ stateSlots` — it was never
+/// a substitute — but the heap arm is real now.
 ///
-/// The consequence, stated at its real resolution: **on a native release build the Descent's
-/// custody teeth refuse.** Debug — every test build in this repo, including the ones above — takes
-/// `eval.rs`'s guest-path evaluator and plays. Closing it is a `DHeapAtom` arm plus a
-/// `parseHeapAtom` token, in Lean, in `metatheory/`.
+/// What is NOT yet real: `dregg-exec-lean`'s `encode_heap_atom` has no matching arm and still
+/// `return`s `None` for this variant, so the oracle can decide it but is never ASKED. The
+/// consequence, stated at its real resolution: **on a native release build the Descent's custody
+/// teeth still refuse.** Debug — every test build in this repo, including the ones above — takes
+/// `eval.rs`'s guest-path evaluator and plays. Closing the remainder is one mechanical
+/// `encode_heap_atom` arm emitting `HAT <count> <o1> <n1> …` (decimal, u64-lane pairs — the same
+/// convention `HMEM`/`HDB`/`HDE` already use, not the register `AT` tag's hex full-field pairs).
 ///
 /// This test pins the SUBSET half from `dregg-cell` (which cannot see the encoder); the encoder's
-/// own decline is measured in `exec-lean/tests/heap_allowed_transitions_wire_gap.rs`. Both must be
-/// revisited together when the Lean arm lands — and the second one goes RED at that moment, which
-/// is the point of writing it down as a test.
+/// remaining decline is measured in `exec-lean/tests/heap_allowed_transitions_wire_gap.rs`, which
+/// now ALSO pins (via a direct `dregg_lean_ffi::shadow_constraint_admits` call, bypassing the
+/// encoder) that the Lean arm itself decides both poles correctly. Both files must be revisited
+/// together when the Rust encoder arm lands — the file's remaining "still declines" test goes RED
+/// at that moment, which is the point of writing it down as a test.
 #[test]
 fn the_atom_is_in_the_lean_subset_so_a_release_build_needs_an_oracle_that_decides_it() {
     assert!(

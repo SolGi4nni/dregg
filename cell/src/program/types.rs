@@ -526,17 +526,25 @@ pub enum HeapAtom {
     /// where the register file and the heap are two planes rather than one
     /// namespace. Nothing here is a new rule.
     ///
-    /// ⚠ **NOT ORACLE-ENCODABLE YET, AND THAT IS RELEASE-VISIBLE.** The deployed
-    /// constraint wire's own heap vocabulary (`Dregg2/Exec/DeployedConstraint.lean`'s
-    /// `DHeapAtom`) has no transition-table arm, and its register-indexed
-    /// `allowedTransitions` rejects any `idx ≥ stateSlots`. So
-    /// `dregg-exec-lean`'s `encode_heap_atom` DECLINES this atom, and on a native
-    /// RELEASE build `eval.rs` then fails closed for the constraint carrying it —
-    /// the Descent's custody teeth would refuse. Debug (every test build) takes
-    /// the Rust guest-path evaluator below and is unaffected. Closing it is a
-    /// `DHeapAtom` arm plus its wire token, in Lean, in `metatheory/`.
-    /// `cell/tests/heap_allowed_transitions_lean_sourced.rs` MEASURES the gap so
-    /// it cannot rot into a comment nobody re-reads.
+    /// ⚠ **HALF-CLOSED, AND THE REMAINING HALF IS STILL RELEASE-VISIBLE.** The
+    /// deployed constraint wire's heap vocabulary
+    /// (`Dregg2/Exec/DeployedConstraint.lean`'s `DHeapAtom`) now carries an
+    /// `allowedTransitions (allowed : List (Nat × Nat))` arm (u64 lane, both
+    /// sides present required, no genesis escape) with a wire token `HAT
+    /// <count> <o1> <n1> …` in `parseHeapAtom`, and a PROVED encode/decode
+    /// round-trip over every `allowed` list — the register-indexed
+    /// `allowedTransitions` above (which still rejects any `idx ≥ stateSlots`)
+    /// was never a substitute for it. **But `dregg-exec-lean`'s
+    /// `encode_heap_atom` has not yet been given the matching arm**, so it
+    /// still `return`s `None` for this variant and a native RELEASE build
+    /// still fails closed for the constraint carrying it — the Descent's
+    /// custody teeth still refuse on `dreggnet-web-server`. Debug (every test
+    /// build) takes the Rust guest-path evaluator below and is unaffected.
+    /// Closing the remainder is one mechanical `encode_heap_atom` arm emitting
+    /// `HAT` (decimal, u64-lane pairs — the same convention `HMEM`/`HDB`/
+    /// `HDE` already use). `cell/tests/heap_allowed_transitions_lean_sourced.rs`
+    /// and `exec-lean/tests/heap_allowed_transitions_wire_gap.rs` MEASURE
+    /// exactly this remainder so it cannot rot into a comment nobody re-reads.
     ///
     /// APPEND-ONLY (declared LAST, after [`Self::DeltaEquals`], so every prior
     /// postcard/serde variant index is preserved).

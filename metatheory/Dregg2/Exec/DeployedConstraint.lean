@@ -70,11 +70,18 @@ this module now decides:
 
 ## Import discipline
 
-Imports NOTHING beyond core `Init` — no Mathlib. The `@[export]`ed object must
-be self-contained so its leanc-emitted `.c` splices into `libdregg_lean.a` without
-dragging a Mathlib-tactic initializer closure into the FFI link (same discipline
-as `Dregg2.Grain.R3Verify` / the crypto FFI cores; see `lean_init.c`).
+Imports NOTHING beyond core `Init` and Lean's OWN bundled `Std` (ships with the
+toolchain itself, not an external package — no Mathlib). The one import below
+(`Std.Data.String.ToNat`) is a single narrow leaf (`Nat.toNat?_repr`, the
+`(Nat.repr n).toNat? = some n` fact) needed for the `allowedTransitions` heap
+atom's wire round-trip PROOF; it carries none of Mathlib's tactic-elaboration
+/ initializer-closure machinery, so the `@[export]`ed object stays
+self-contained and its leanc-emitted `.c` still splices into
+`libdregg_lean.a` cleanly (same discipline as `Dregg2.Grain.R3Verify` / the
+crypto FFI cores; see `lean_init.c`).
 -/
+
+import Std.Data.String.ToNat
 
 namespace Dregg2.Exec.DeployedConstraint
 
@@ -111,7 +118,34 @@ AND the lane is `< 2^30`. On the `Nat` model that is exactly `n < 2^30`. -/
 /-- The pure heap-atom subset (`cell/src/program/types.rs::HeapAtom`,
 `eval.rs::evaluate_heap_atom`). `equals`/`gte`/`lte` compare the FULL 256-bit
 field; `memberOf`/`inRange`/`deltaBounded`/`deltaEquals` read the `field_to_u64`
-low lane, exactly as the deployed evaluator does. -/
+low lane, exactly as the deployed evaluator does.
+
+## `allowedTransitions` — the heap gets the atom the registers have
+
+⚑ Landed to close a MEASURED release-visible outage: a relic's custody code is
+HEAP-resident (`dregg_schema` places a `collection` on the heap, not in the
+register file), so the descent's per-relic hop table
+(`Dregg2.Games.Dungeon.Prog.HeapAtom.allowedTransitions`,
+`cell::HeapAtom::AllowedTransitions`) could not be expressed by the
+REGISTER-indexed `DConstraint.allowedTransitions` above (`idx ≥ stateSlots`
+always answers `.badIndex`). Until this arm landed, `exec-lean`'s
+`encode_heap_atom` had NO token for it and declined on purpose — a native
+release build (`dreggnet-web-server`'s `verified_settlement.rs`, which installs
+the oracle UNCONDITIONALLY) then failed CLOSED on every constraint carrying
+it, i.e. every Descent/dungeon/campaign move. `cell/tests/
+heap_allowed_transitions_lean_sourced.rs` and `exec-lean/tests/
+heap_allowed_transitions_wire_gap.rs` pin the two halves of that gap.
+
+Reads the `field_to_u64` low lane on BOTH sides (u64-lane pairs, matching
+`cell::HeapAtom::AllowedTransitions`'s doc: "Allowed `(old_value, new_value)`
+pairs, u64 lane") — UNLIKE the register-indexed `DConstraint.allowedTransitions`
+above, which compares the FULL 256-bit field (mirroring
+`StateConstraint::AllowedTransitions`'s `FieldElement` pairs exactly). BOTH
+`oldV`/`newV` must be `some` — no genesis escape, exactly like `monotonic`/
+`strictMonotonic`/`deltaBounded`/`deltaEquals` above and EXACTLY
+`eval.rs`'s `HeapAtom::AllowedTransitions` arm (`_ => violated` on any absence):
+a heap key legitimately does not exist yet, unlike a register, which the
+register form's `if i.oldPresent then … else 0` default relies on. -/
 inductive DHeapAtom where
   | equals (v : DField)
   | gte (v : DField)
@@ -124,6 +158,7 @@ inductive DHeapAtom where
   | strictMonotonic
   | deltaBounded (d : Nat)
   | deltaEquals (d : Int)
+  | allowedTransitions (allowed : List (Nat × Nat))
   deriving Repr, DecidableEq
 
 /-! ## The COLLECTION fragment (`cell/src/program/collection.rs`)
@@ -481,6 +516,11 @@ def heapAdmits (atom : DHeapAtom) (oldV newV : Option DField) : DAdmit :=
       | some a, some b =>
           let delta : Int := (low64 b : Int) - (low64 a : Int)
           if delta = d then .ok else .violated
+      | _, _ => .violated
+  | .allowedTransitions allowed =>
+      match oldV, newV with
+      | some a, some b =>
+          if allowed.any (fun p => p.1 == low64 a && p.2 == low64 b) then .ok else .violated
       | _, _ => .violated
 
 /-- SumEquals with faithful u64-overflow: accumulate the low-64 lanes; a partial
@@ -1126,7 +1166,94 @@ def parseHeapAtom : List String → Option (DHeapAtom × List String)
   | "HSMON" :: r => some (.strictMonotonic, r)
   | "HDB" :: d :: r => (parseNat d).map (fun x => (.deltaBounded x, r))
   | "HDE" :: d :: r => (parseInt d).map (fun x => (.deltaEquals x, r))
+  | "HAT" :: n :: r => do
+      let k ← parseNat n
+      let (hd, tl) ← popN (2 * k) r
+      let ps ← pairNatNat hd
+      some (.allowedTransitions ps, tl)
   | _ => none
+
+/-! ## The `HAT` wire round-trip — PROVED, not pinned by example.
+
+Every other atom in this codec is pinned only by the `#guard` battery at the end of the file
+(`DungeonDeployed.lean` says so explicitly: "the String wire codec's faithfulness is
+`DeployedConstraint.lean`'s own `#guard` battery, not re-proven here"). This `allowedTransitions`
+heap arm is closing a MEASURED release outage, so it gets a stronger instrument: a theorem that for
+EVERY `allowed : List (Nat × Nat)` — not a finite list of examples — the canonical wire rendering,
+parsed back, recovers the exact atom and leaves the tail untouched. `renderHeapAllowedTransitions` is
+the Lean-side mirror of the token shape `exec-lean`'s (still-untouched) `encode_heap_atom` needs to
+emit: tag `HAT`, decimal count, then `2k` decimal u64-lane tokens (matching `cell::
+HeapAtom::AllowedTransitions`'s doc "u64 lane", the same convention `HMEM`/`HDB`/`HDE` already use —
+UNLIKE the register `AT` tag, whose pairs are hex full-field). -/
+
+/-- Render a `(Nat × Nat)` pair list as flat decimal tokens — the exact shape `pairNatNat` inverts. -/
+def renderPairsNatNat : List (Nat × Nat) → List String
+  | [] => []
+  | (a, b) :: rest => toString a :: toString b :: renderPairsNatNat rest
+
+theorem renderPairsNatNat_length (l : List (Nat × Nat)) :
+    (renderPairsNatNat l).length = 2 * l.length := by
+  induction l with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨a, b⟩ := p
+      simp only [renderPairsNatNat, List.length_cons, ih]
+      omega
+
+/-- `popN` on an exact-length prefix returns that prefix and the untouched tail. -/
+theorem popN_append (l rest : List String) :
+    popN l.length (l ++ rest) = some (l, rest) := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+      simp only [List.length_cons, List.cons_append, popN]
+      rw [ih]
+
+/-- `pairNatNat` inverts `renderPairsNatNat` on EVERY list (the general leaf: `parseNat` inverts
+`toString` on a `Nat` via `Nat.toNat?_repr`, imported from Lean's own `Std`). -/
+theorem pairNatNat_render (l : List (Nat × Nat)) :
+    pairNatNat (renderPairsNatNat l) = some l := by
+  induction l with
+  | nil => rfl
+  | cons p ps ih =>
+      obtain ⟨a, b⟩ := p
+      simp only [renderPairsNatNat, pairNatNat, show toString a = Nat.repr a from rfl,
+        show toString b = Nat.repr b from rfl, parseNat, Nat.toNat?_repr, ih]
+
+/-- The canonical wire rendering of a `DHeapAtom.allowedTransitions` value — the Lean-side mirror of
+what `exec-lean`'s `encode_heap_atom` needs to emit once its `AllowedTransitions` arm lands. -/
+def renderHeapAllowedTransitions (allowed : List (Nat × Nat)) : List String :=
+  "HAT" :: toString allowed.length :: renderPairsNatNat allowed
+
+/-- **THE ROUND TRIP, proved for every `allowed`.** Rendering an `allowedTransitions` atom to wire
+tokens and parsing those tokens back recovers EXACTLY the original atom, with the tail (whatever
+follows on the wire) untouched — the encode/decode correspondence this wire tag rests on. -/
+theorem parseHeapAtom_renderHeapAllowedTransitions (allowed : List (Nat × Nat)) (rest : List String) :
+    parseHeapAtom (renderHeapAllowedTransitions allowed ++ rest) =
+      some (.allowedTransitions allowed, rest) := by
+  unfold renderHeapAllowedTransitions parseHeapAtom
+  simp only [List.cons_append]
+  rw [show toString allowed.length = Nat.repr allowed.length from rfl]
+  show (do
+      let k ← parseNat (Nat.repr allowed.length)
+      let (hd, tl) ← popN (2 * k) (renderPairsNatNat allowed ++ rest)
+      let ps ← pairNatNat hd
+      some (DHeapAtom.allowedTransitions ps, tl) : Option (DHeapAtom × List String))
+    = some (.allowedTransitions allowed, rest)
+  rw [show parseNat (Nat.repr allowed.length) = some allowed.length from Nat.toNat?_repr _]
+  show (do
+      let (hd, tl) ← popN (2 * allowed.length) (renderPairsNatNat allowed ++ rest)
+      let ps ← pairNatNat hd
+      some (DHeapAtom.allowedTransitions ps, tl) : Option (DHeapAtom × List String))
+    = some (DHeapAtom.allowedTransitions allowed, rest)
+  rw [show 2 * allowed.length = (renderPairsNatNat allowed).length from (renderPairsNatNat_length allowed).symm,
+      popN_append]
+  show (do
+      let ps ← pairNatNat (renderPairsNatNat allowed)
+      some (DHeapAtom.allowedTransitions ps, rest) : Option (DHeapAtom × List String))
+    = some (DHeapAtom.allowedTransitions allowed, rest)
+  rw [pairNatNat_render]
+  rfl
 
 /-- Parse an `ElemPredAtom`, RETURNING the unconsumed tail. -/
 def parseElemPred : List String → Option (DElemPred × List String)
@@ -1535,6 +1662,29 @@ private def bigHex : String :=
 -- AllowedTransitions: (1 → 2) allowed, (1 → 3) not.
 #guard admitsWire (wireH hdrPlain (regsAt 0 "1") (regsAt 0 "2") "AT 0 1 1 2") = "0"
 #guard admitsWire (wireH hdrPlain (regsAt 0 "1") (regsAt 0 "3") "AT 0 1 1 2") = "1"
+
+-- ── heap AllowedTransitions (`HAT`) — closing the measured release outage ───────────────────
+-- The per-relic custody hop table `heapField (.named relic) (.allowedTransitions [(8,13),…])`
+-- (`Dregg2.Games.Dungeon.Prog.HeapAtom.allowedTransitions`, `cell::HeapAtom::AllowedTransitions`).
+-- BOTH POLES, over the SAME key: the listed hop 8 → 13 admits; the same destination from the WRONG
+-- origin (9 → 13), the same origin to an UNLISTED destination (8 → 99), and the unlisted identity
+-- hop (8 → 8) all refuse — a `memberOf {13}` would wrongly admit two of these three.
+#guard admitsWire (wireH "1 0 1 8 1 d 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 8 13") = "0"
+#guard admitsWire (wireH "1 0 1 8 1 63 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 8 13") = "1"
+#guard admitsWire (wireH "1 0 1 9 1 d 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 8 13") = "1"
+#guard admitsWire (wireH "1 0 1 8 1 8 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 8 13") = "1"
+-- ⚑ ABSENT-KEY vs PRESENT-ZERO (the sibling Rust tooth `cell/tests/
+-- heap_allowed_transitions_lean_sourced.rs::an_absent_key_on_either_side_refuses_with_no_genesis_escape`
+-- asserts the same discrimination): a table that DOES list `(0, 13)` must still refuse an absent old
+-- — reading absence as zero would let a relic be conjured into a door from a key never minted — while
+-- a genuinely PRESENT zero admits the same listed hop. No genesis escape, unlike the register form.
+#guard admitsWire (wireH "1 0 0 0 1 d 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 0 13") = "1"
+#guard admitsWire (wireH "1 0 1 0 1 d 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 0 13") = "0"
+-- An absent POST-state key refuses too (no erasure escape), old present and the pair listed.
+#guard admitsWire (wireH "1 0 1 8 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 1 8 13") = "1"
+-- The empty table is the canonical bottom (matches every other atom's fail-closed empty allowlist).
+#guard admitsWire (wireH "1 0 1 8 1 8 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 0") = "1"
+#guard admitsWire (wireH "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" zeros16 zeros16 "HAT 0") = "1"
 
 -- SymEq / SymMemberOf / DigEq / DigFieldEq / MemberOf / InRange / DeltaBounded.
 #guard admitsWire (wireH hdrPlain zeros16 (regsAt 0 "7") "SYE 0 7") = "0"

@@ -23,10 +23,20 @@ diverge. This module closes what is now closable, by PROOF:
     1. `countFieldsEq` — the 6 census teeth. Unchanged; `DConstraint.fieldsCountEquals`
        exists but the resolved-cells run is not marshalled here.
     2. `heapField _ (.allowedTransitions …)` — the 8 per-relic custody HOP tables.
-       `DHeapAtom` carries `equals/gte/lte/memberOf/inRange/immutable/writeOnce/monotonic/
-       strictMonotonic/deltaBounded/deltaEquals` and NO transition table, on EITHER
-       substrate. Closing it is a `DHeapAtom` arm + one wire tag + the `tr_heapField`
-       pattern — mechanical, but it is deployed admission logic, so it is ember-gated.
+       ⚑ UPDATED 2026-07-30: `DHeapAtom` NOW carries a twelfth arm,
+       `allowedTransitions (allowed : List (Nat × Nat))` (u64 lane, both sides present, no
+       genesis escape), with a `HAT` wire token in `parseHeapAtom` and a PROVED
+       encode/decode round-trip (`Dregg2.Exec.DeployedConstraint.
+       parseHeapAtom_renderHeapAllowedTransitions`, over every `allowed` list) — closing
+       the release-visible outage this arm's absence caused
+       (`exec-lean/tests/heap_allowed_transitions_wire_gap.rs`,
+       `cell/tests/heap_allowed_transitions_lean_sourced.rs`). `HeapAtom.toDHeap` below is
+       DELIBERATELY UNCHANGED — it still lowers `.allowedTransitions _` to `none` — because
+       routing THIS descent's hop tooth through the new arm still needs the `tr_heapField`
+       proof pattern (the transport theorem), which is separate, larger, ember-gated work
+       this Lean arm does not itself discharge. `exec-lean/src/constraint_oracle.rs`'s
+       `encode_heap_atom` also still declines the atom (another lane's WIP) — so the arm
+       existing here is NECESSARY but not yet SUFFICIENT for the deployed wire to reach it.
     3. `anyOf` carrying a `heapField` branch — the 24 object-side DOOR-FRAME teeth
        (`doorArrivalTooth`/`doorDepartureTooth`) and `keyHangsHereTooth`. This one is a
        MARSHALLING limit, not a vocabulary one: `dgInput` resolves ONE heap key per tooth,
@@ -460,11 +470,14 @@ def branchesOf : List Simple → Option (List (Bool × DConstraint))
     | _,      _       => none
 
 /-- The descent heap atoms embed into the deployed heap-atom vocabulary VERBATIM —
-except the hop TABLE. ⚑ `DHeapAtom` has `equals`/`gte`/`lte`/`memberOf`/`inRange`/
-`immutable`/`writeOnce`/`monotonic`/`strictMonotonic`/`deltaBounded`/`deltaEquals` and NO
-`allowedTransitions`: a per-object transition table is not in the exported subset on
-EITHER substrate. So the per-relic custody hop tooth lowers to `none` and joins the §9
-remainder; its companion `memberOf (custodyAlphabet i)` lowers as before. -/
+except the hop TABLE, DELIBERATELY, for now. ⚑ UPDATED 2026-07-30: `DHeapAtom` NOW HAS an
+`allowedTransitions` arm (§9 ledger item 2 above has the detail) — the transition table IS
+in the exported subset as of this arm landing. This `toDHeap` still lowers
+`.allowedTransitions _` to `none` anyway, because routing the descent's OWN hop tooth
+through it needs the `tr_heapField` transport theorem (separate, larger, ember-gated
+work), not just the arm existing. So the per-relic custody hop tooth still lowers to
+`none` and joins the §9 remainder; its companion `memberOf (custodyAlphabet i)` lowers as
+before. -/
 def HeapAtom.toDHeap : HeapAtom → Option DHeapAtom
   | .equals v      => some (.equals v)
   | .immutable     => some .immutable
