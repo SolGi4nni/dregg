@@ -493,7 +493,9 @@ was an EMPTY premise and it was the only route into the DEEP-ALI residual. Its r
 `FriFsDecodedOodRepair.decodedLdtLinkCons_of_friLdtExtractCons`, which lands directly in
 `DecodedLdtLinkCons` (the `ood :: oodRest` shape `FriVerifier.batchTablesCheck` matches at
 `FriVerifier.lean:805`) from `ApexOodLaneRepair.FriLdtExtractCons`. No twin is kept: routing the
-old adapter through `decodedLdtLink_imp_cons` would have preserved the empty ENTRY. -/
+old adapter through `decodedLdtLink_imp_cons` would have preserved the empty ENTRY — and that
+transport is itself DELETED as of 2026-07-30, when `DecodedLdtLinkCons` gained the per-run opening
+residual the landed link never carried. -/
 
 /-- **`DecodedBusLink`** — the LogUp bus models AT the decoded trace (the aux-column analogue of
 the DEEP link; `BusModelOk` is `LogUpColumnLayout`'s named FS side-condition bundle, carried
@@ -543,10 +545,15 @@ They are SUPERSEDED, exactly and without loss, by the single chain in `FriFsDeco
 * `positiveRadiusTraceDecode_decoded_cons` — the base-typed link, now a COROLLARY of the above via
   `decodedLdtLinkExtCons_of_decodedLdtLinkCons`.
 
-Anyone holding the landed `DecodedLdtLink` recovers the deleted statements verbatim as
-`positiveRadiusTraceDecode_decoded_cons … (decodedLdtLink_imp_cons … h)`. They are deleted rather
-than kept because a twin of a statement that is provably about nothing at deployment is exactly what
-this campaign is removing. -/
+⚑ 2026-07-30: the line that stood here — "anyone holding the landed `DecodedLdtLink` recovers the
+deleted statements verbatim as `positiveRadiusTraceDecode_decoded_cons … (decodedLdtLink_imp_cons …
+h)`" — is FALSE now and is corrected rather than left. `decodedLdtLink_imp_cons` is DELETED:
+`DecodedLdtLinkCons` gained the PER-RUN opening residual `¬ OpeningColl` (the honest replacement for
+the refuted `Poseidon2SpongeCR` the assembly used to thread) and the landed link never carried it.
+Holding the landed link recovers nothing, which costs nothing, because that link is one this tree
+PROVES makes `verifyBatch` reject every close run at the deployed arguments. The statements are
+deleted rather than kept because a twin of a statement that is provably about nothing at deployment
+is exactly what this campaign is removing. -/
 
 /-! ## §5 — TEETH on the assembly (the derived AIR leg is genuine, both polarities). -/
 

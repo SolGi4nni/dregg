@@ -48,10 +48,13 @@ The verifier never wanted a singleton: `FriVerifier.batchTablesCheck` (`:803-808
     DELETED outright, because `fullChecks_accept_gives_cons_oodPoint` (§1) derives it from the
     acceptance hypothesis the tool already has. This is the strongest form of "the repair adds zero
     strength": the repaired hypothesis is not merely satisfiable, it is REDUNDANT.
-  * `DecodedLdtLinkExtCons` — the corrected link, implied by the landed one
-    (`decodedLdtLinkExt_imp_cons`) and by the base-typed `DecodedLdtLink`
-    (`decodedLdtLinkExtCons_of_decodedLdtLink`), and still delivering the consumer's conclusion
-    (`mainAirAcceptF_of_decodedLdtLinkExtCons`).
+  * `DecodedLdtLinkExtCons` — the corrected link, still delivering the consumer's conclusion
+    (`mainAirAcceptF_of_decodedLdtLinkExtCons`). ⛑ 2026-07-30 it also carries the PER-RUN opening
+    residual `¬ OpeningColl`, which is what let that consumer drop `Poseidon2SpongeCR`; the two
+    transports out of the landed links (`decodedLdtLinkExt_imp_cons`,
+    `decodedLdtLinkExtCons_of_decodedLdtLink`) are DELETED with it, since neither landed link
+    carries the residual. The corrected link is reached from the corrected BASE link instead
+    (`FriFsDecodedOodRepair.decodedLdtLinkExtCons_of_decodedLdtLinkCons`).
 
 ## §D THE INHABITABILITY RESULTS (§5) — the part that makes the repair worth anything
 
@@ -447,6 +450,7 @@ def DecodedLdtLinkExtCons (E : Type*) [Field E] [Algebra BabyBear E] [DecidableE
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (oodBatchResidualExt E d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ
         = algebraMap BabyBear E (((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear)) ∧
@@ -457,58 +461,31 @@ def DecodedLdtLinkExtCons (E : Type*) [Field E] [Algebra BabyBear E] [DecidableE
               - liftPoly E (vanishingPoly (decodedTr oracle pubA tfam pi π)) * qp c)) ∧
       tracePublishedCommit (decodedTr oracle pubA tfam pi π) = pi.toPublished
 
-/-- **The landed link implies the corrected one** (`[ood] = ood :: []`). A real implication: it uses
-no contradiction and holds at every instantiation, including ones where both sides are inhabited. -/
-theorem decodedLdtLinkExt_imp_cons
-    (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E] {numCols : ℕ}
-    (sponge : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
-    (pubA : BatchPublicInputs → BatchProof → Assignment)
-    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
-    (d : EffectVmDescriptor2)
-    (h : DecodedLdtLinkExt E sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d) :
-    DecodedLdtLinkExtCons E sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d := by
-  intro pi π hacc hcols
-  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
-  exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, [], idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+/-! ⚑ **DELETED 2026-07-30 — `decodedLdtLinkExt_imp_cons` and
+`decodedLdtLinkExtCons_of_decodedLdtLink`.**
 
-/-- The base-typed link still reaches the corrected extension-typed one, by composing the landed lift
-`decodedLdtLinkExt_of_decodedLdtLink` with the cons weakening. (The base link
-`FriDecodedTraceWitness.DecodedLdtLink` carries the SAME singleton wound at `:464`; that site is not
-this file's, and this composition does not repair it — it only shows the corrected link is no harder
-to reach than the landed one.) -/
-theorem decodedLdtLinkExtCons_of_decodedLdtLink
-    (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E] {numCols : ℕ}
-    (sponge : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
-    (pubA : BatchPublicInputs → BatchProof → Assignment)
-    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
-    (d : EffectVmDescriptor2)
-    (h : DecodedLdtLink sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d) :
-    DecodedLdtLinkExtCons E sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d :=
-  decodedLdtLinkExt_imp_cons E sponge perm RATE toNat params vk core A initState logN view
-    oracle pubA tfam d
-    (decodedLdtLinkExt_of_decodedLdtLink E sponge perm RATE toNat params vk core A initState logN
-      view oracle pubA tfam d h)
+`DecodedLdtLinkExtCons` now carries the PER-RUN opening residual
+`¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings`, at the witnesses its own
+existential produces — the honest replacement for the refuted `Poseidon2SpongeCR` floor that
+`mainAirAcceptF_of_decodedLdtLinkExtCons` used to buy its Merkle binding with. Neither the landed
+`DecodedLdtLinkExt` nor the base-typed `DecodedLdtLink` carries that conjunct, so neither implication
+is provable any more, and restoring either would mean assuming non-collision at EVERY opening
+reaching a common root — the global Merkle-binding floor under another name.
+
+WHAT WAS LOST: transports out of two premises this file and its sibling PROVE force
+`CircuitSoundness.verifyBatch` to reject every close run at the deployed arguments
+(`decodedLdtLinkExt_makes_verifyBatch_reject_everything`,
+`FriFsDecodedOodRepair.decodedLdtLink_makes_verifyBatch_reject_every_close_run`). The corrected link
+is still REACHED, from the corrected base link, by
+`FriFsDecodedOodRepair.decodedLdtLinkExtCons_of_decodedLdtLinkCons` — which now carries the residual
+through instead of dropping it. -/
 
 /-- **THE CONSUMER SURVIVES THE REPAIR.** The corrected link delivers exactly what the landed one
 delivered: the base-field per-row AIR acceptance on the decoded trace. Same crypto composition, with
 `verifyAlgo_accept_forces_table_identity_cons` in place of the singleton-shaped table lemma. -/
 theorem mainAirAcceptF_of_decodedLdtLinkExtCons
     (E : Type*) [Field E] [Algebra BabyBear E] [DecidableEq E] {numCols : ℕ}
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
     (initState : List ℤ) (logN : Nat) (view : ProofView)
@@ -523,18 +500,15 @@ theorem mainAirAcceptF_of_decodedLdtLinkExtCons
     (hcols : MatrixOracle.ColsClose friSetupDeployed.C 7340032 (oracle pi π)) :
     MainAirAcceptF d (decodedTr oracle pubA tfam pi π) := by
   obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, -⟩ := hlink pi π hacc hcols
+    hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, -⟩ := hlink pi π hacc hcols
   have htable : topen.constraintEval = A.mul topen.vanishingAtZeta topen.quotientAtZeta :=
     verifyAlgo_accept_forces_table_identity_cons perm RATE toNat params vk core A initState logN
       (view pi π).1 (view pi π).2 ood oodRest hoodPt topen hmem hacc
-  -- ⚠ NOT PORTED IN THIS PASS: the opening data here arrives from the `DecodedLdtLinkExtCons`
-  -- BUNDLE, which does not carry the per-run residual, so this site still buys its binding with the
-  -- REFUTED global floor. Grandfathered, not new; porting it means adding the conjunct to that
-  -- bundle and to `OodExtChallengeLayout.DecodedLdtLinkExt` upstream.
+  -- ⛑ PORTED 2026-07-30: the per-run residual comes OFF THE BUNDLE now, at the witnesses the
+  -- bundle's own existential named. The inline `openingColl_refutes_poseidon2CR … hCR` bridge that
+  -- stood here is gone, and with it the refuted floor binder.
   have hbind : topen.constraintEval = vCommitted :=
-    commitmentOpening_binds_of_noColl sponge
-      (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
-        siblings hc hCR) hCommitted hOpened
+    commitmentOpening_binds_of_noColl sponge hnoOpen hCommitted hOpened
   have hvc : vCommitted = A.mul topen.vanishingAtZeta topen.quotientAtZeta := hbind.symm.trans htable
   have heval : (oodBatchResidualExt E d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ = 0 := by
     rw [hlayout, hvc, sub_self, map_zero]
@@ -564,6 +538,7 @@ def DecodedLdtLinkExtNoOodShape
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (oodBatchResidualExt E d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ
         = algebraMap BabyBear E (((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear)) ∧
@@ -599,17 +574,18 @@ theorem decodedLdtLinkExtCons_iff_noOodShape
   constructor
   · intro h pi π hacc hcols
     obtain ⟨ζ, Λ, qp, topen, _ood, vCommitted, root, _oodRest, idx, siblings,
-      _hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
+      _hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ :=
+      h pi π hacc hcols
     exact ⟨ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+      hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
   · intro h pi π hacc hcols
     obtain ⟨ood, oodRest, hoodPt⟩ :=
       fullChecks_accept_gives_cons_oodPoint perm RATE toNat params vk core A initState logN
         (view pi π).1 (view pi π).2 hacc
     obtain ⟨ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
+      hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
     exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-      hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+      hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
 
 end Link
 
@@ -676,8 +652,6 @@ theorem corrected_hypothesis_dischargeable_landed_is_not :
   hood_of_oodColumnLayoutExt_noOod,
   decodedLdtLinkExt_forces_deployed_reject,
   decodedLdtLinkExt_makes_verifyBatch_reject_everything,
-  decodedLdtLinkExt_imp_cons,
-  decodedLdtLinkExtCons_of_decodedLdtLink,
   mainAirAcceptF_of_decodedLdtLinkExtCons
 ]
 

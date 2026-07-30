@@ -60,11 +60,15 @@ which are NOT edited):
     bundle `FriLdtExtractDeployed.FriLdtExtractV3Cons` (`friLdtExtractV3Cons_imp_sansFSCons` — the
     same ten-conjunct audit gate `friLdtExtractV3_imp_sansFS` was — ⚑ that landed gate is DELETED as
     of 2026-07-25, and `friLdtExtractV3Cons_imp_sansFSCons` below is its sole replacement).
-  * `DecodedLdtLinkCons` (§6), with `oodPoint = ood :: oodRest`. Implied by the landed
-    `DecodedLdtLink` (`decodedLdtLink_imp_cons`), and — the point of the exercise — the ENTIRE L5·R4b
-    assembly is re-derived from it: `positiveRadiusTraceDecode_decoded_cons` /
+  * `DecodedLdtLinkCons` (§6), with `oodPoint = ood :: oodRest` and (⛑ 2026-07-30) the PER-RUN
+    opening residual `¬ OpeningColl`. ⚑ The transport out of the landed `DecodedLdtLink`
+    (`decodedLdtLink_imp_cons`) is DELETED with that second conjunct — the landed residual never
+    carried it — and the corrected one is entered from `ApexOodLaneRepair.FriLdtExtractCons` instead
+    (`decodedLdtLinkCons_of_friLdtExtractCons`). The point of the exercise, the ENTIRE L5·R4b
+    assembly, is re-derived from it: `positiveRadiusTraceDecode_decoded_cons` /
     `positiveRadiusTraceDecode_transferV3_cons`, via the sibling lane's cons-shaped
-    `ApexOodLaneRepair.hood_of_oodColumnLayout_cons`. Nothing downstream needed the singleton.
+    `ApexOodLaneRepair.hood_of_oodColumnLayout_cons`. Nothing downstream needed the singleton, and
+    (2026-07-30) nothing downstream needs `Poseidon2SpongeCR` either.
 
 ## §D Why the repair is not a second vacuity (§4, §7)
 
@@ -470,6 +474,7 @@ def DecodedLdtLinkCons {numCols : ℕ}
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (oodBatchResidual d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -479,25 +484,16 @@ def DecodedLdtLinkCons {numCols : ℕ}
                 - vanishingPoly (decodedTr oracle pubA tfam pi π) * qp c)) ∧
       tracePublishedCommit (decodedTr oracle pubA tfam pi π) = pi.toPublished
 
-/-- The landed residual implies the corrected one, by `[ood] = ood :: []`. -/
-theorem decodedLdtLink_imp_cons {numCols : ℕ}
-    (sponge : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (oracle : BatchPublicInputs → BatchProof → MatrixOracle (Fin (8 * 2 ^ 21)) numCols BabyBear)
-    (pubA : BatchPublicInputs → BatchProof → Assignment)
-    (tfam : BatchPublicInputs → BatchProof → TraceFamily)
-    (d : EffectVmDescriptor2)
-    (h : DecodedLdtLink sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d) :
-    DecodedLdtLinkCons sponge perm RATE toNat params vk core A initState logN view
-      oracle pubA tfam d := by
-  intro pi π hacc hcols
-  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
-  exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, [], idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+/-! ⚑ **DELETED 2026-07-30 — `decodedLdtLink_imp_cons`.** `DecodedLdtLinkCons` now carries the
+PER-RUN opening residual `¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings`, at the
+witnesses its own existential produces, and the landed `FriDecodedTraceWitness.DecodedLdtLink` never
+carried it. So the implication is no longer provable, and restoring it would mean assuming
+non-collision at EVERY opening reaching a common root — the global Merkle-binding floor in disguise,
+which is the move this repair exists to stop. What is lost is a transport out of a residual this
+file PROVES makes `verifyBatch` reject every close run at the deployed arguments
+(`decodedLdtLink_makes_verifyBatch_reject_every_close_run`); the corrected residual is still ENTERED,
+from `ApexOodLaneRepair.FriLdtExtractCons`, by `decodedLdtLinkCons_of_friLdtExtractCons` below —
+which now carries the conjunct through instead of dropping it. -/
 
 /-- **⚑ THE CONS-SHAPED ENTRY into `DecodedLdtLinkCons`** — the replacement for the DELETED
 `FriDecodedTraceWitness.decodedLdtLink_of_friLdtExtract`, which routed the only supply of the
@@ -526,9 +522,9 @@ theorem decodedLdtLinkCons_of_friLdtExtractCons {numCols : ℕ}
       oracle pubA tfam d := by
   intro pi π hacc _
   obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    -, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hfri pi π hacc
+    -, hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := hfri pi π hacc
   exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+    hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
 
 /-! ## §6.5 — ⚑ THE CHALLENGE-TYPING CUTOVER: the L5·R4b assembly ON THE EXTENSION-TYPED LINK.
 
@@ -568,10 +564,10 @@ theorem decodedLdtLinkExtCons_of_decodedLdtLinkCons {numCols : ℕ}
       oracle pubA tfam d := by
   intro pi π hacc hcols
   obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
+    hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
   refine ⟨algebraMap BabyBear BB4 ζ, algebraMap BabyBear BB4 Λ,
     fun c => liftPoly BB4 (qp c), topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, ?_, ?_, ?_, hPub⟩
+    hoodPt, hmem, hCommitted, hOpened, hnoOpen, ?_, ?_, ?_, hPub⟩
   · rw [oodBatchResidualExt_eval_lift, hlayout]
   · rw [oodBatchResidualExt_lift]
     exact notMem_exceptionalSet_lift hLam
@@ -588,7 +584,7 @@ step now runs over `BB4` and lands the base-field per-row AIR acceptance through
 conclusion. -/
 theorem positiveRadiusTraceDecode_decoded_extCons {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -608,18 +604,16 @@ theorem positiveRadiusTraceDecode_decoded_extCons {F : Type*} [Field F] [Decidab
       friSetupDeployed oracle 7340032 := by
   intro pi π hacc hcols
   obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
+    hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
   have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
     ood_forces_mainAirAccept_field_of_residuals_ext BB4 d (decodedTr oracle pubA tfam pi π)
       (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
-      -- ⚠ NOT PORTED IN THIS PASS: the opening data arrives from a `DecodedLdtLink…Cons` BUNDLE
-      -- that does not carry the per-run residual, so this site still buys its binding with the
-      -- REFUTED global floor. Grandfathered, not new.
+      -- ⛑ PORTED 2026-07-30: the per-run residual comes OFF THE LINK BUNDLE, at the witnesses the
+      -- bundle's own existential named; the inline floor bridge that stood here is gone.
       (hood_of_oodColumnLayoutExtCons BB4 d sponge perm RATE toNat params vk core A initState
         logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
         ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
-        (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
-          siblings hc hCR)
+        hnoOpen
         hlayout hLam)
       hnonexc
   obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
@@ -644,9 +638,10 @@ theorem positiveRadiusTraceDecode_decoded_extCons {F : Type*} [Field F] [Decidab
     simp at hr
 
 /-- The deployed `transferV3` slice at the deployed challenge typing. Residual =
-{`Poseidon2SpongeCR`, `DecodedLdtLinkExtCons BB4 @ transferV3`, `DecodedBusLink @ transferV3`}. -/
+{`DecodedLdtLinkExtCons BB4 @ transferV3`, `DecodedBusLink @ transferV3`} — ⛑ `Poseidon2SpongeCR`
+left that list on 2026-07-30. -/
 theorem positiveRadiusTraceDecode_transferV3_extCons {F : Type*} [Field F] [DecidableEq F]
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -662,7 +657,7 @@ theorem positiveRadiusTraceDecode_transferV3_extCons {F : Type*} [Field F] [Deci
     PositiveRadiusTraceDecode hash (fun _ => transferV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view
       friSetupDeployed oracle 7340032 :=
-  positiveRadiusTraceDecode_decoded_extCons transferV3 sponge hCR hash fp embed perm RATE toNat
+  positiveRadiusTraceDecode_decoded_extCons transferV3 sponge hash fp embed perm RATE toNat
     params vk core A initState logN view oracle pubA tfam htfMem htfMap
     Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
     Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
@@ -720,7 +715,7 @@ trace and the memory log. This is the L5 assembly with NO base-typed challenge o
 hypotheses. -/
 theorem positiveRadiusTraceDecode_decoded_extChallenges
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → BB4) (lanes : Fin 4 → BB4)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -740,18 +735,16 @@ theorem positiveRadiusTraceDecode_decoded_extChallenges
       friSetupDeployed oracle 7340032 := by
   intro pi π hacc hcols
   obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-    hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
+    hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := hlink pi π hacc hcols
   have hAir : MainAirAcceptF d (decodedTr oracle pubA tfam pi π) :=
     ood_forces_mainAirAccept_field_of_residuals_ext BB4 d (decodedTr oracle pubA tfam pi π)
       (decodedTr_rows_le oracle pubA tfam pi π) ζ qp
-      -- ⚠ NOT PORTED IN THIS PASS: the opening data arrives from a `DecodedLdtLink…Cons` BUNDLE
-      -- that does not carry the per-run residual, so this site still buys its binding with the
-      -- REFUTED global floor. Grandfathered, not new.
+      -- ⛑ PORTED 2026-07-30: the per-run residual comes OFF THE LINK BUNDLE, at the witnesses the
+      -- bundle's own existential named; the inline floor bridge that stood here is gone.
       (hood_of_oodColumnLayoutExtCons BB4 d sponge perm RATE toNat params vk core A initState
         logN (view pi π).1 (view pi π).2 hacc (decodedTr oracle pubA tfam pi π) ζ Λ qp topen
         ood vCommitted root oodRest idx siblings hoodPt hmem hCommitted hOpened
-        (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
-          siblings hc hCR)
+        hnoOpen
         hlayout hLam)
       hnonexc
   obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
@@ -778,7 +771,7 @@ theorem positiveRadiusTraceDecode_decoded_extChallenges
 
 /-- **The deployed `transferV3` slice with BOTH challenge families at the deployed typing.** -/
 theorem positiveRadiusTraceDecode_transferV3_extChallenges
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → BB4) (lanes : Fin 4 → BB4)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -794,7 +787,7 @@ theorem positiveRadiusTraceDecode_transferV3_extChallenges
     PositiveRadiusTraceDecode hash (fun _ => transferV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view
       friSetupDeployed oracle 7340032 :=
-  positiveRadiusTraceDecode_decoded_extChallenges transferV3 sponge hCR hash fp lanes perm RATE
+  positiveRadiusTraceDecode_decoded_extChallenges transferV3 sponge hash fp lanes perm RATE
     toNat params vk core A initState logN view oracle pubA tfam htfMem htfMap
     Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
     Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
@@ -862,7 +855,7 @@ statement is still a real (stronger) hypothesis someone may hold — but it no l
 derivation, so the deployed-typed assembly is the single source and the two cannot drift. -/
 theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -880,16 +873,17 @@ theorem positiveRadiusTraceDecode_decoded_cons {F : Type*} [Field F] [DecidableE
     PositiveRadiusTraceDecode hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view
       friSetupDeployed oracle 7340032 :=
-  positiveRadiusTraceDecode_decoded_extCons d sponge hCR hash fp embed perm RATE toNat params vk
+  positiveRadiusTraceDecode_decoded_extCons d sponge hash fp embed perm RATE toNat params vk
     core A initState logN view oracle pubA tfam htfMem htfMap hshape hsites hranges
     (decodedLdtLinkExtCons_of_decodedLdtLinkCons sponge perm RATE toNat params vk core A initState
       logN view oracle pubA tfam d hlink)
     hbusF
 
 /-- The deployed `transferV3` slice of the re-derived assembly. Residual =
-{`Poseidon2SpongeCR`, `DecodedLdtLinkCons @ transferV3`, `DecodedBusLink @ transferV3`}. -/
+{`DecodedLdtLinkCons @ transferV3`, `DecodedBusLink @ transferV3`} — ⛑ `Poseidon2SpongeCR` left
+that list on 2026-07-30. -/
 theorem positiveRadiusTraceDecode_transferV3_cons {F : Type*} [Field F] [DecidableEq F]
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -905,7 +899,7 @@ theorem positiveRadiusTraceDecode_transferV3_cons {F : Type*} [Field F] [Decidab
     PositiveRadiusTraceDecode hash (fun _ => transferV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view
       friSetupDeployed oracle 7340032 :=
-  positiveRadiusTraceDecode_decoded_cons transferV3 sponge hCR hash fp embed perm RATE toNat
+  positiveRadiusTraceDecode_decoded_cons transferV3 sponge hash fp embed perm RATE toNat
     params vk core A initState logN view oracle pubA tfam htfMem htfMap
     Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
     Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
@@ -933,6 +927,7 @@ def DecodedLdtLinkNoOodShape {numCols : ℕ}
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (oodBatchResidual d (decodedTr oracle pubA tfam pi π) ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -963,17 +958,18 @@ theorem decodedLdtLinkCons_iff_noOodShape {numCols : ℕ}
   constructor
   · intro h pi π hacc hcols
     obtain ⟨ζ, Λ, qp, topen, _ood, vCommitted, root, _oodRest, idx, siblings,
-      _hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
+      _hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ :=
+      h pi π hacc hcols
     exact ⟨ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+      hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
   · intro h pi π hacc hcols
     obtain ⟨ood, oodRest, hcons⟩ :=
       acceptsFull_gives_cons_shape perm RATE toNat params vk core A initState logN
         (view pi π).1 (view pi π).2 hacc
     obtain ⟨ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
+      hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc hcols
     exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-      hcons, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+      hcons, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
 
 /-! ## §8 — Axiom hygiene. -/
 
@@ -985,7 +981,6 @@ theorem decodedLdtLinkCons_iff_noOodShape {numCols : ℕ}
 #assert_axioms cons_ood_shape_inhabited_at_bare_verifier
 #assert_axioms decodedLdtLink_makes_deployed_verifier_reject_close_runs
 #assert_axioms decodedLdtLink_makes_verifyBatch_reject_every_close_run
-#assert_axioms decodedLdtLink_imp_cons
 #assert_axioms decodedLdtLinkCons_of_friLdtExtractCons
 #assert_axioms positiveRadiusTraceDecode_decoded_cons
 #assert_axioms positiveRadiusTraceDecode_transferV3_cons
