@@ -48,6 +48,11 @@ pub mod midnight_inclusion;
 pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;
+/// ⚑ **The per-CHECKPOINT Mina verification loop.** Pickles recursion means verifying ONE block's
+/// Wrap proof attests the chain behind it, so a client verifies at a CHECKPOINT cadence it chooses
+/// and the cost of a longer cadence is latency, not safety — provided the cheap between-checkpoint
+/// tier can never move the ratchet, which `MinaCheckpoint.provisional_never_ratchets` proves.
+pub mod mina_checkpoint;
 /// ⚑ **The Mina peer-to-peer BYTE SOURCE and the persisted, rolling VERIFIED HEAD.**
 ///
 /// Rust's whole job here is I/O: get the raw binprot `Protocol_state.Value` bytes a Mina peer

@@ -76,6 +76,29 @@ import Dregg2.Circuit.Emit.PastaIpaDeferral
 -- trusting `bestChain`. Added 2026-07-30; +0 modules to the closure beyond `MinaChainSelection`
 -- itself (pure `Nat`/`Bool`, no Pasta cone).
 import Dregg2.Bridge.MinaForkChoiceGate
+-- `dregg_mina_checkpoint_advance` — ⚑ THE PER-CHECKPOINT LOOP. Mina's Pickles proof is recursive, so
+-- verifying ONE block's Wrap proof attests the validity of the whole chain behind it; a client
+-- therefore needs per-CHECKPOINT verification at a cadence it chooses, not per-block verification at
+-- Mina's 180 s. This gate is the two-tier head that makes a longer cadence a LATENCY cost rather
+-- than a safety one: `provisional_never_ratchets` proves the cheap tier cannot move `finalized`, and
+-- `runSteps_finalized_monotone` proves the ratchet survives ANY interleaving of the two tiers. It
+-- also closes `docs/MINA-LIGHT-CLIENT.md` row 7 for the cheap tier — the density window is
+-- RE-DERIVED from the parent by `MinaSlidingWindow.step` instead of bound-checked from the served
+-- value. Same layer-1 reasoning as the six above. Added 2026-07-30; **+1 module** to the closure
+-- (`MinaSlidingWindow`, a 3-module `Nat`/`Bool` cone — measured on the import graph, not guessed).
+import Dregg2.Bridge.MinaCheckpoint
+-- `dregg_mina_wrap_challenges` — ⚑ THE PER-BLOCK CHALLENGE DERIVATION, the thing that retires
+-- `mina_opening_check.rs`'s ONE-HEIGHT `PINNED_CHALLENGES`. A Wrap proof's IPA challenges are
+-- Fiat–Shamir outputs of its own transcript; five of the six absorbed objects are on the wire and
+-- `mina_pickles.rs` already walks past every one. The "153 s per block" this replaces was a KERNEL
+-- `decide` cost, never the function's — this module is the same two sponge schedules as
+-- parameterised COMPILED functions. ⚑ Deliberately imports NOTHING but the sponge: the anchor
+-- literals live in `MinaRealBlockTranscript`/`MinaWrapOpeningGate`, five modules carrying ~4 min of
+-- one-block kernel `decide`, and rooting THOSE here would put that four minutes into every archive
+-- build forever. The weld to them is `Bridge.MinaWrapChallengesWeld`, which is NOT rooted — the
+-- same off-the-hot-path split `mina_opening_check.rs` uses for descriptor drift. Added 2026-07-30;
+-- **+0 modules** to the closure (`PastaPoseidonFq` and `PastaField` are already in it — measured).
+import Dregg2.Bridge.MinaWrapChallenges
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.

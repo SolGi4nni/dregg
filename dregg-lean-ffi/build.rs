@@ -285,6 +285,23 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          from following a chain to verifying whatever segment it is handed. Fail-closed and \
          stalled, which is the refusal: a client that guesses its own head is silently forked",
     ),
+    (
+        "dregg_mina_checkpoint_advance",
+        "the PER-CHECKPOINT LOOP compiles out — the two-tier head has no verdict, so a client can \
+         only fall back to per-block verification it cannot afford or to a single-tier head whose \
+         ratchet moves on CHEAP checks alone. The theorem that is lost is the one the whole cadence \
+         design rests on (`provisional_never_ratchets`: a block accepted between checkpoints \
+         CANNOT raise the finalized height), and with it the density window re-derived from the \
+         parent rather than bound-checked from the served value",
+    ),
+    (
+        "dregg_mina_wrap_challenges",
+        "the PER-BLOCK Wrap CHALLENGE DERIVATION compiles out — `mina_opening_check.rs` is back to \
+         `PINNED_CHALLENGES`' ONE height (devnet 539508) and returns `ChallengesUnavailable` for \
+         every other block, so no checkpoint at any cadence can be verified. Fail-closed with NO \
+         Rust twin and there must not be one: a Rust Fq-sponge is a re-rendering of a transcript, \
+         i.e. of the meaning of `these are the proof's own challenges`",
+    ),
 ];
 
 /// One bounded worker budget for every independent `leanc` phase.  The env
@@ -2185,6 +2202,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_state_hash_word_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_better_tip_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_head_advance_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_checkpoint_advance_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_challenges_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
@@ -3170,6 +3189,28 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_mina_head_advance_present");
     } else {
         absent_export_warn("dregg_mina_head_advance");
+    }
+    // The PER-CHECKPOINT LOOP (`Dregg2.Bridge.MinaCheckpoint`) and the PER-BLOCK Wrap CHALLENGE
+    // DERIVATION (`Dregg2.Bridge.MinaWrapChallenges`). ⚑ These two are what make Mina verification
+    // affordable at all: Pickles recursion means verifying ONE block attests the chain behind it,
+    // so the client verifies at a CHECKPOINT cadence it chooses and the cost of a longer cadence is
+    // latency, not safety — provided the cheap between-checkpoint tier can never move the ratchet,
+    // which is `provisional_never_ratchets`. Absent, there is no tier that can and the client is
+    // back to `PINNED_CHALLENGES`' one height. Same `Dregg2/FFI.lean` layer-1 reasoning as the six
+    // gates above; measured closure cost is +1 module and +0 modules respectively.
+    let mina_checkpoint_advance_present =
+        archive_exports(&build_archive, "dregg_mina_checkpoint_advance");
+    if mina_checkpoint_advance_present {
+        println!("cargo:rustc-cfg=dregg_mina_checkpoint_advance_present");
+    } else {
+        absent_export_warn("dregg_mina_checkpoint_advance");
+    }
+    let mina_wrap_challenges_present =
+        archive_exports(&build_archive, "dregg_mina_wrap_challenges");
+    if mina_wrap_challenges_present {
+        println!("cargo:rustc-cfg=dregg_mina_wrap_challenges_present");
+    } else {
+        absent_export_warn("dregg_mina_wrap_challenges");
     }
 
     // ── VERIFIED-DECISION EXPORT GATE (DREGG_REQUIRE_VERIFIED_EXPORTS) ──────────────────────
