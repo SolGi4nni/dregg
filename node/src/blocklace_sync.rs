@@ -231,12 +231,43 @@ static REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK: std::sync::Mutex<Option<[u8; 3
 static FAIL_FINALIZED_REJECTION_WRITE_FOR_BLOCK: std::sync::Mutex<Option<[u8; 32]>> =
     std::sync::Mutex::new(None);
 
-/// A strictly-monotonic per-process counter stamped into each `Frontier` message
-/// so repeated frontiers are byte-unique and never collapse under the gossip
-/// layer's hash-dedup (see `BlocklaceGossipMessage::Frontier`).
-fn frontier_nonce() -> u64 {
-    static FRONTIER_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    FRONTIER_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+/// A strictly-monotonic per-process counter stamped into every ANTI-ENTROPY
+/// message so each SEND is byte-unique and cannot collapse under the gossip
+/// layer's hash-dedup.
+///
+/// ⚑ WHY EVERY REPAIR MESSAGE NEEDS THIS, not just `Frontier`.
+///
+/// `GossipNetwork` dedups on `blake3(PeerMessage::encode_raw())` and the `seen`
+/// set is the Plumtree flood terminator: a receiver that has the hash `return`s
+/// before the subscriber ever sees the payload (`net/src/gossip.rs`, the
+/// `s.seen.contains(&msg_hash)` arm). That is correct for FORWARDING — a
+/// re-forward carries the originator's identical bytes, so the flood still
+/// terminates — but it is wrong for a RETRANSMISSION, which is a new send of the
+/// same content and must be delivered.
+///
+/// `Frontier` was given a nonce for exactly this reason and its doc names the
+/// failure ("a permanent bootstrap deadlock"). `Push` / `Pull` / `PullResponse`
+/// were left as pure content, and they are the messages that actually CARRY the
+/// round cohort. The consequence, measured on hbox at n=4 on 2026-07-30:
+///
+///   * every node authored its round-8 block and eager-pushed it;
+///   * one copy per peer was lost, so each node's lace held its OWN round-8
+///     block and none of its peers' (`creator_max_rounds=[7,7,7,8]`,
+///     `tip_seq_round=[(7,7),(7,7),(7,7),(8,8)]`, on ALL FOUR nodes);
+///   * `plan_round_block` then needs 3 distinct creators at round 8 and sees 1,
+///     so every node returned `RoundPlan::Wait` — forever;
+///   * and the repair path could not help, because a WEDGED DAG produces a
+///     FROZEN delta: `handle_frontier` recomputed the identical `Push(4 blocks)`
+///     every tick, the identical `Pull([tip])` every backoff window, and every
+///     one of them was byte-identical to the first and dropped at the receiver.
+///
+/// So the anti-entropy channel died at exactly the moment it was needed: the
+/// instant the state stops changing, every retry is a duplicate. A client turn
+/// submitted into that committee returned `accepted: true` and was re-staged by
+/// the cadence ~90 times without ever entering a block.
+fn gossip_send_nonce() -> u64 {
+    static GOSSIP_SEND_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    GOSSIP_SEND_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,11 +286,19 @@ pub struct InvalidBlocklaceBundleEvidence {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum BlocklaceGossipMessage {
     /// Push blocks I think you need (causally-closed delta).
-    Push(Vec<Block>),
-    /// Request blocks I'm missing.
-    Pull(Vec<BlockId>),
-    /// Response to a pull request.
-    PullResponse(Vec<Block>),
+    ///
+    /// `nonce` makes each SEND byte-unique — see [`gossip_send_nonce`]. Without
+    /// it a wedged committee re-derives an identical delta every tick and the
+    /// receiver's hash-dedup drops every copy after the first, so the round
+    /// cohort can never be repaired.
+    Push { blocks: Vec<Block>, nonce: u64 },
+    /// Request blocks I'm missing. `nonce` per [`gossip_send_nonce`]: a re-request
+    /// for the SAME missing ids is the whole point of the backoff loop, and is
+    /// byte-identical without it.
+    Pull { ids: Vec<BlockId>, nonce: u64 },
+    /// Response to a pull request. `nonce` per [`gossip_send_nonce`]: answering
+    /// two identical pulls must deliver twice, not once.
+    PullResponse { blocks: Vec<Block>, nonce: u64 },
     /// Lightweight frontier for efficient sync: creator -> tip block ID.
     ///
     /// `nonce` is a per-send liveness counter that makes every frontier message
@@ -820,7 +859,33 @@ impl BlocklaceHandle {
         let mut lace = self.lace.write().await;
         let plan = plan_round_block(&lace, lace.self_creator(), supermajority);
         let produced = match plan {
-            RoundPlan::Wait => return None,
+            RoundPlan::Wait {
+                my_max_round,
+                cohort_creators,
+                creator_max_rounds,
+            } => {
+                let mut tip_seq_round: Vec<(u64, u64)> = lace
+                    .tips()
+                    .values()
+                    .map(|t| {
+                        (
+                            lace.get(t).map(|b| b.seq).unwrap_or(0),
+                            lace.round_of(t).unwrap_or(0),
+                        )
+                    })
+                    .collect();
+                tip_seq_round.sort_unstable();
+                debug!(
+                    my_max_round,
+                    cohort_creators,
+                    supermajority,
+                    lace_size = lace.len(),
+                    ?creator_max_rounds,
+                    ?tip_seq_round,
+                    "round production WAITING: too few distinct creators at our current round"
+                );
+                return None;
+            }
             RoundPlan::Genesis => produce_payload_with_consensus_time_v1(
                 &mut lace,
                 payload,
@@ -879,7 +944,7 @@ impl BlocklaceHandle {
             let mut candidate = live.clone();
             let plan = plan_round_block(&candidate, candidate.self_creator(), supermajority);
             let produced = match plan {
-                RoundPlan::Wait => return Ok(None),
+                RoundPlan::Wait { .. } => return Ok(None),
                 RoundPlan::Genesis => produce_payload_with_consensus_time_v1(
                     &mut candidate,
                     payload,
@@ -939,10 +1004,25 @@ impl BlocklaceHandle {
             // and `Local` finality (not yet ordered — it orders when its round
             // block is produced and a wave super-ratifies it cross-node).
             let receipt = Self::payload_receipt_id(&payload);
-            self.pending_payloads
-                .write()
-                .await
-                .push_back(PendingBlocklacePayload::ordinary(payload));
+            let depth = {
+                let mut q = self.pending_payloads.write().await;
+                q.push_back(PendingBlocklacePayload::ordinary(payload));
+                q.len()
+            };
+            // SUBMISSION-PATH TRACE. The staging step is the FIRST of the four
+            // places a submitted turn can be lost (never enqueued / enqueued and
+            // never drained / drained and never planned / planned and never
+            // finalized), and until 2026-07-30 none of the four was observable:
+            // an operator watching a turn that "returned accepted:true and never
+            // appeared" had no way to tell them apart without patching the node.
+            // This line plus the `carried a STAGED turn payload` /
+            // `RE-STAGED` pair in `cadence_tick_round_driven` separate all four.
+            info!(
+                receipt = %receipt,
+                queue_depth = depth,
+                "submission STAGED for round-driven production (n>1); the cadence carries it \
+                 in its next round block"
+            );
             // Nudge the cadence/executor so the staged turn is picked up promptly.
             self.finality_notify.notify_one();
             return (receipt, FinalityLevel::Local);
@@ -1093,7 +1173,16 @@ impl BlocklaceHandle {
 
         // Send the block (and its immediate context) to peers.
         if let Some(block) = lace.get(&our_tip) {
-            let msg = BlocklaceGossipMessage::Push(vec![block.clone()]);
+            debug!(
+                block_id = %our_tip,
+                seq = block.seq,
+                round = lace.round_of(&our_tip).unwrap_or(0),
+                "push_new_blocks: eager-broadcasting our own tip"
+            );
+            let msg = BlocklaceGossipMessage::Push {
+                blocks: vec![block.clone()],
+                nonce: gossip_send_nonce(),
+            };
             self.broadcast_gossip_message(&msg).await;
         }
     }
@@ -1118,11 +1207,25 @@ impl BlocklaceHandle {
                 .max()
                 .unwrap_or(0);
             crate::metrics::set_blocklace_depth(depth as f64);
+            let mut announced: Vec<(u64, u64)> = tips
+                .values()
+                .map(|t| {
+                    (
+                        lace.get(t).map(|b| b.seq).unwrap_or(0),
+                        lace.round_of(t).unwrap_or(0),
+                    )
+                })
+                .collect();
+            announced.sort_unstable();
+            debug!(
+                ?announced,
+                "frontier: announcing our per-creator tips (seq, round)"
+            );
             tips.iter().map(|(k, v)| (*k, *v)).collect()
         };
         let msg = BlocklaceGossipMessage::Frontier {
             tips: frontier_tips,
-            nonce: frontier_nonce(),
+            nonce: gossip_send_nonce(),
             votes: self.frontier_votes().await,
         };
         self.broadcast_gossip_message(&msg).await;
@@ -1167,8 +1270,11 @@ impl BlocklaceHandle {
                     roots = due.len(),
                     buffered, "catch-up: re-requesting missing predecessors (backoff-gated)"
                 );
-                self.broadcast_gossip_message(&BlocklaceGossipMessage::Pull(due))
-                    .await;
+                self.broadcast_gossip_message(&BlocklaceGossipMessage::Pull {
+                    ids: due,
+                    nonce: gossip_send_nonce(),
+                })
+                .await;
             }
         }
         // If we have an open gap, also announce our frontier so a peer pushes the
@@ -4073,9 +4179,11 @@ async fn handle_blocklace_gossip(
     // committee that had stopped — so the stall is timed and named at source.
     let started = std::time::Instant::now();
     let kind = match &gossip_msg {
-        BlocklaceGossipMessage::Push(b) => format!("Push[{}]", b.len()),
-        BlocklaceGossipMessage::Pull(ids) => format!("Pull[{}]", ids.len()),
-        BlocklaceGossipMessage::PullResponse(b) => format!("PullResponse[{}]", b.len()),
+        BlocklaceGossipMessage::Push { blocks, .. } => format!("Push[{}]", blocks.len()),
+        BlocklaceGossipMessage::Pull { ids, .. } => format!("Pull[{}]", ids.len()),
+        BlocklaceGossipMessage::PullResponse { blocks, .. } => {
+            format!("PullResponse[{}]", blocks.len())
+        }
         BlocklaceGossipMessage::Frontier { tips, votes, .. } => {
             format!("Frontier[tips={} votes={}]", tips.len(), votes.len())
         }
@@ -4109,13 +4217,15 @@ async fn handle_blocklace_gossip_inner(
     gossip_msg: BlocklaceGossipMessage,
 ) {
     match gossip_msg {
-        BlocklaceGossipMessage::Push(blocks) => {
+        BlocklaceGossipMessage::Push { blocks, .. } => {
             handle_push(handle, state, from, blocks).await;
         }
-        BlocklaceGossipMessage::Pull(missing_ids) => {
+        BlocklaceGossipMessage::Pull {
+            ids: missing_ids, ..
+        } => {
             handle_pull(handle, from, missing_ids).await;
         }
-        BlocklaceGossipMessage::PullResponse(blocks) => {
+        BlocklaceGossipMessage::PullResponse { blocks, .. } => {
             handle_push(handle, state, from, blocks).await;
         }
         BlocklaceGossipMessage::Frontier { tips, votes, .. } => {
@@ -4627,7 +4737,10 @@ async fn handle_push(
     // catch-up roots so a peer pushes them; their causal past comes along
     // (handle_pull includes `causal_past`), draining the buffer.
     if !outcome.pull_roots.is_empty() {
-        let pull_msg = BlocklaceGossipMessage::Pull(outcome.pull_roots);
+        let pull_msg = BlocklaceGossipMessage::Pull {
+            ids: outcome.pull_roots,
+            nonce: gossip_send_nonce(),
+        };
         handle.broadcast_gossip_message(&pull_msg).await;
     }
 }
@@ -4639,6 +4752,7 @@ async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Ve
     if missing_ids.is_empty() {
         return;
     }
+    debug!(from = %from, requested = missing_ids.len(), "handling pull request");
 
     let lace = handle.lace.read().await;
 
@@ -4674,27 +4788,64 @@ async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Ve
 
     let total = to_send.len();
 
-    // Small response: send in one shot.
-    if total <= MAX_BLOCKS_PER_PUSH {
-        let response = BlocklaceGossipMessage::PullResponse(to_send);
-        handle.broadcast_gossip_message(&response).await;
-        debug!(from = %from, blocks = total, "sent pull response");
-        return;
-    }
-
-    // Large response: chunk it.
-    debug!(from = %from, blocks = total, "sending chunked pull response");
-    let mut sent_so_far = 0usize;
-    for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
-        let response = BlocklaceGossipMessage::PullResponse(chunk.to_vec());
-        handle.broadcast_gossip_message(&response).await;
-        sent_so_far += chunk.len();
-
-        if sent_so_far < total {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    // OFF THE FUNNEL (see `spawn_gossip_send`): answering a pull is an OUTBOUND
+    // act, and the chunked form even sleeps between chunks. Neither belongs on
+    // the single serial inbound consumer.
+    let sender = handle.clone();
+    spawn_gossip_send(async move {
+        if total <= MAX_BLOCKS_PER_PUSH {
+            let response = BlocklaceGossipMessage::PullResponse {
+                blocks: to_send,
+                nonce: gossip_send_nonce(),
+            };
+            sender.broadcast_gossip_message(&response).await;
+            debug!(from = %from, blocks = total, "sent pull response");
+            return;
         }
-    }
-    debug!(from = %from, blocks = total, "completed chunked pull response");
+        debug!(from = %from, blocks = total, "sending chunked pull response");
+        let mut sent_so_far = 0usize;
+        for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
+            let response = BlocklaceGossipMessage::PullResponse {
+                blocks: chunk.to_vec(),
+                nonce: gossip_send_nonce(),
+            };
+            sender.broadcast_gossip_message(&response).await;
+            sent_so_far += chunk.len();
+
+            if sent_so_far < total {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        debug!(from = %from, blocks = total, "completed chunked pull response");
+    });
+}
+
+/// Run one OUTBOUND gossip send off the inbound funnel task.
+///
+/// ⚑ WHY. The blocklace funnel is ONE task that `await`s each inbound handler in
+/// turn, and three of those handlers finish by BROADCASTING — the frontier delta,
+/// the self-healing pull, and the pull response. A broadcast is not cheap: it
+/// takes the gossip layer's `state.write()` (contended by every inbound stream
+/// handler) and then writes a QUIC frame per live connection, and the chunked
+/// forms additionally SLEEP between chunks. Awaiting that on the funnel makes the
+/// receive path's service rate a function of the SEND path's latency.
+///
+/// Measured on hbox at n=4, 2026-07-30, node-0 over one ~150 s run: `Frontier`
+/// handling averaged **2372 ms** (max 9254 ms) across 31 logged-slow handlers,
+/// **73.6 s of the run** on the one consumer — against 3 peers each announcing a
+/// frontier every cadence tick. Every round-cohort block queued behind that
+/// waited, so inter-round latency degraded 13 s → 20 s → 33 s → 60 s and a client
+/// turn needing several rounds to close its wave never finalized inside 90 s.
+///
+/// Ordering is not load-bearing for any of the three: they are idempotent
+/// anti-entropy, each send carries its own [`gossip_send_nonce`], and the
+/// receiver dedups blocks by id. So the funnel computes the payload under a read
+/// lock (cheap) and hands the send away.
+fn spawn_gossip_send<F>(fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(fut);
 }
 
 /// Handle a Frontier announcement: determine what the peer needs and push it.
@@ -4724,14 +4875,31 @@ async fn handle_frontier(
     // predecessor gap heals atomically. Backoff-gated (shared with the catch-up
     // pull limiter), so a tip we already requested is not re-hammered and steady
     // state — every announced tip known — stays quiet.
-    let tips_to_pull: Vec<BlockId> = {
+    let (tips_to_pull, held): (Vec<BlockId>, Vec<(u64, u64)>) = {
         let lace = handle.lace.read().await;
-        their_tips
+        let to_pull = their_tips
             .values()
             .filter(|tip_id| !lace.contains(tip_id))
             .copied()
-            .collect()
+            .collect();
+        let mut held: Vec<(u64, u64)> = their_tips
+            .values()
+            .filter_map(|t| lace.get(t).map(|b| (b.seq, lace.round_of(t).unwrap_or(0))))
+            .collect();
+        held.sort_unstable();
+        (to_pull, held)
     };
+    // ANTI-ENTROPY TRACE. `announced` vs `lacking` separates "the peer told us
+    // about a tip we do not hold" from "we already hold everything it announced"
+    // — the two are indistinguishable from the outside and the second one looks
+    // exactly like a healthy cluster while the committee is wedged.
+    debug!(
+        from = %from,
+        announced = their_tips.len(),
+        lacking = tips_to_pull.len(),
+        ?held,
+        "frontier: reconciling announced tips"
+    );
     if !tips_to_pull.is_empty() {
         let due: Vec<BlockId> = {
             let mut bo = handle.tip_pull_backoff.write().await;
@@ -4742,9 +4910,16 @@ async fn handle_frontier(
         };
         if !due.is_empty() {
             debug!(from = %from, tips = due.len(), "frontier: pulling announced tips we lack");
-            handle
-                .broadcast_gossip_message(&BlocklaceGossipMessage::Pull(due))
-                .await;
+            // OFF THE FUNNEL (see `spawn_gossip_send`).
+            let sender = handle.clone();
+            spawn_gossip_send(async move {
+                sender
+                    .broadcast_gossip_message(&BlocklaceGossipMessage::Pull {
+                        ids: due,
+                        nonce: gossip_send_nonce(),
+                    })
+                    .await;
+            });
         }
     }
 
@@ -4808,49 +4983,62 @@ async fn handle_frontier(
 
     let total_missing = to_send.len();
 
-    // If the delta fits in one message, send it directly (common case for
-    // incremental updates after initial sync).
-    if total_missing <= MAX_BLOCKS_PER_PUSH {
-        let msg = BlocklaceGossipMessage::Push(to_send);
-        handle.broadcast_gossip_message(&msg).await;
-        debug!(from = %from, blocks = total_missing, "pushed delta after frontier exchange");
-        return;
-    }
+    // OFF THE FUNNEL (see `spawn_gossip_send`). THIS is the send that made the
+    // receive path's service rate a function of the send path's latency: it runs
+    // once per inbound frontier, i.e. `peers x cadence-ticks` times a second, and
+    // it was measured at 2.4 s average on the one serial consumer.
+    let sender = handle.clone();
+    spawn_gossip_send(async move {
+        // If the delta fits in one message, send it directly (common case for
+        // incremental updates after initial sync).
+        if total_missing <= MAX_BLOCKS_PER_PUSH {
+            let msg = BlocklaceGossipMessage::Push {
+                blocks: to_send,
+                nonce: gossip_send_nonce(),
+            };
+            sender.broadcast_gossip_message(&msg).await;
+            debug!(from = %from, blocks = total_missing, "pushed delta after frontier exchange");
+            return;
+        }
 
-    // Large delta: send in chunks to avoid OOM / timeout on either side.
-    let num_chunks = total_missing.div_ceil(MAX_BLOCKS_PER_PUSH);
-    info!(
-        from = %from,
-        total_blocks = total_missing,
-        chunk_size = MAX_BLOCKS_PER_PUSH,
-        chunks = num_chunks,
-        "syncing blocklace: sending chunked delta to peer"
-    );
-
-    let mut sent_so_far = 0usize;
-    for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
-        let msg = BlocklaceGossipMessage::Push(chunk.to_vec());
-        handle.broadcast_gossip_message(&msg).await;
-
-        sent_so_far += chunk.len();
+        // Large delta: send in chunks to avoid OOM / timeout on either side.
+        let num_chunks = total_missing.div_ceil(MAX_BLOCKS_PER_PUSH);
         info!(
-            "syncing blocklace: sent {}/{} blocks to peer {}",
-            sent_so_far, total_missing, from
+            from = %from,
+            total_blocks = total_missing,
+            chunk_size = MAX_BLOCKS_PER_PUSH,
+            chunks = num_chunks,
+            "syncing blocklace: sending chunked delta to peer"
         );
 
-        // Small delay between chunks to avoid overwhelming the receiver's
-        // inbound buffer. The receiver's `pending` mechanism handles any
-        // transient ordering issues between chunks.
-        if sent_so_far < total_missing {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
+        let mut sent_so_far = 0usize;
+        for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
+            let msg = BlocklaceGossipMessage::Push {
+                blocks: chunk.to_vec(),
+                nonce: gossip_send_nonce(),
+            };
+            sender.broadcast_gossip_message(&msg).await;
 
-    debug!(
-        from = %from,
-        blocks = total_missing,
-        "completed chunked frontier sync"
-    );
+            sent_so_far += chunk.len();
+            info!(
+                "syncing blocklace: sent {}/{} blocks to peer {}",
+                sent_so_far, total_missing, from
+            );
+
+            // Small delay between chunks to avoid overwhelming the receiver's
+            // inbound buffer. The receiver's `pending` mechanism handles any
+            // transient ordering issues between chunks.
+            if sent_so_far < total_missing {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+
+        debug!(
+            from = %from,
+            blocks = total_missing,
+            "completed chunked frontier sync"
+        );
+    });
 }
 
 // ─── Round-Disciplined Production Plan ───────────────────────────────────────
@@ -4874,7 +5062,21 @@ pub(crate) enum RoundPlan {
     /// Do not produce: we lack a supermajority of distinct creators at our
     /// current round, so advancing would link too few of the previous round for
     /// `tau` to super-ratify. The caller retries on a later tick.
-    Wait,
+    ///
+    /// The two counts are carried so a stalled producer can SAY WHY. "Round could
+    /// not advance" without `my_max_round` and `cohort_creators` is unactionable:
+    /// it cannot distinguish a peer that has not caught up (creators short, DAG
+    /// still moving) from a local creator that has run AHEAD of the cohort it
+    /// needs (the wedge this whole path can enter and never leave).
+    Wait {
+        my_max_round: u64,
+        cohort_creators: usize,
+        /// Every committee creator's own max round in THIS lace, ascending. The
+        /// wedge is visible only here: if the local creator sits strictly above
+        /// the `supermajority`-th highest entry, no honest peer will ever join
+        /// its round and the wait is permanent, not transient.
+        creator_max_rounds: Vec<u64>,
+    },
 }
 
 /// Decide how the local creator advances the DAG by ONE round (Cordial-Miners
@@ -4895,12 +5097,16 @@ pub(crate) fn plan_round_block(
     my_creator: [u8; 32],
     supermajority: usize,
 ) -> RoundPlan {
-    // Round of every block in the lace (DAG depth; genesis = 1).
+    // Round of every block in the lace (DAG depth; genesis = 1), and each
+    // creator's own high-water round (the wedge diagnostic — see `Wait`).
     let mut round_of: HashMap<BlockId, u64> = HashMap::new();
+    let mut creator_max: HashMap<[u8; 32], u64> = HashMap::new();
     let mut my_max_round: u64 = 0;
     for (id, block) in lace.iter() {
         let r = lace.round_of(id).unwrap_or(0);
         round_of.insert(*id, r);
+        let entry = creator_max.entry(block.creator).or_insert(0);
+        *entry = (*entry).max(r);
         if block.creator == my_creator {
             my_max_round = my_max_round.max(r);
         }
@@ -4929,7 +5135,13 @@ pub(crate) fn plan_round_block(
             next_round: my_max_round + 1,
         }
     } else {
-        RoundPlan::Wait
+        let mut creator_max_rounds: Vec<u64> = creator_max.into_values().collect();
+        creator_max_rounds.sort_unstable();
+        RoundPlan::Wait {
+            my_max_round,
+            cohort_creators: cohort_creators.len(),
+            creator_max_rounds,
+        }
     }
 }
 
@@ -5333,6 +5545,24 @@ async fn cadence_tick_round_driven(
         action = CadenceAction::Nothing;
     }
 
+    // SUBMISSION-PATH TRACE (the drain half). Logged only while a turn is
+    // actually staged, so a quiescent committee stays silent: this is the line
+    // that distinguishes "enqueued and never drained" from "drained and never
+    // planned into a block", which is exactly the pair E1 could only tell apart
+    // by instrumenting a lane copy.
+    if queued_turns > 0 {
+        debug!(
+            queued_turns,
+            ack_pending,
+            wave_is_open,
+            exec_pending,
+            since_last_block_ms = since_last_block.as_millis() as u64,
+            min_block_interval_ms,
+            ?action,
+            "cadence tick with a STAGED turn"
+        );
+    }
+
     // QUIESCENCE: nothing to finalize (or the rate cap is holding) → produce NO
     // block this tick. Rounds stop advancing; the DAG goes quiet. We still
     // announce our frontier below so a lagging peer can catch up cheaply.
@@ -5379,7 +5609,13 @@ async fn cadence_tick_round_driven(
         }
     };
     match advanced {
-        Some(_) => {
+        Some(block_id) => {
+            if carried_turn {
+                info!(
+                    block_id = %block_id,
+                    "round block carried a STAGED turn payload into the DAG"
+                );
+            }
             // A peer's freshly-received non-Ack block has now been attested by our
             // round advance — clear the reactive-ack flag (the round block IS the
             // attestation; acks no longer beget separate ack blocks). The open
@@ -5394,6 +5630,10 @@ async fn cadence_tick_round_driven(
             // creators at our current round). Re-stage any pulled payload so it is
             // carried by the next produced round block.
             if carried_turn {
+                debug!(
+                    "round could not advance (no supermajority at our current round) — \
+                     staged turn RE-STAGED for the next produced round block"
+                );
                 handle.pending_payloads.write().await.push_front(staged);
             }
         }

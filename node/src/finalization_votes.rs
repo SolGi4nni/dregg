@@ -495,6 +495,46 @@ impl VoteCollector {
         let Some(pq_pubkey) = self.pq_committee.get(&vote.voter) else {
             return RecordOutcome::Rejected;
         };
+
+        // ⚑ AN ALREADY-COUNTED (block, voter) PAIR IS INERT — DO NOT PAY FOR IT AGAIN.
+        //
+        // The tally below is FIRST-WRITE-WINS per signer (`or_insert`), so a second
+        // copy of a (block_id, voter) pair cannot change `distinct_votes`, cannot
+        // displace the stored signature, and cannot alter `verified_quorum_reached`.
+        // Verifying it is pure waste — and it is not small waste: `verify_hybrid` is
+        // ed25519 AND ML-DSA-65, and the ML-DSA half runs through the extracted Lean
+        // verify core over the C ABI. Measured on hbox at n=4 on 2026-07-30: 376-1880
+        // ms PER VOTE.
+        //
+        // And repeats are the OVERWHELMING majority of what arrives.
+        // `reemit_pending_votes` re-broadcasts every pending vote once per cadence
+        // tick for 30 sweeps, AND `frontier_votes` piggybacks the same set onto EVERY
+        // outgoing frontier. `blocklace_sync`'s funnel scheduler dedupes standalone
+        // `FinalizationVote` messages within a drained batch — but the frontier
+        // piggyback bypasses that entirely and is the far bigger carrier: 8-19 votes
+        // on EVERY inbound frontier, verified serially before `handle_frontier` even
+        // runs. Measured: `Frontier` handling averaged 2889 ms (max 7264 ms) on the
+        // ONE serial funnel consumer, 69 s of a 150 s run, which starved the
+        // round-cohort block deliveries the supermajority gate needs and degraded
+        // inter-round latency to 13 s -> 20 s -> 33 s -> 60 s until a client turn
+        // could not close its wave inside any reasonable window.
+        //
+        // NOTHING ABOUT VERIFICATION IS RELAXED. Every vote that is ever COUNTED
+        // still passes the identical hybrid check — this arm is reached only when a
+        // verified vote from this signer for this block is ALREADY in the tally. The
+        // outcomes returned are exactly the ones the full path would have returned
+        // for the same inert repeat, so caller metrics are unchanged.
+        if let Some(signers) = self.votes.get(&vote.block_id)
+            && signers.contains_key(&vote.voter)
+        {
+            let distinct_votes = signers.len();
+            return if self.attested.contains(&vote.block_id) {
+                RecordOutcome::AlreadyQuorum { distinct_votes }
+            } else {
+                RecordOutcome::Counted { distinct_votes }
+            };
+        }
+
         if !vote.verify_hybrid(pq_pubkey) {
             return RecordOutcome::Rejected;
         }

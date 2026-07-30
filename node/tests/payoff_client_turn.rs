@@ -230,7 +230,15 @@ fn launch(
         // the verified Lean FINALITY GATE (DREGG_FINALITY_GATE) is left ON by default,
         // so consensus is finalized by the verified tau-order — a VERIFIED federation.
         .env("DREGG_LEAN_PRODUCER", "0")
-        .env("RUST_LOG", "warn")
+        // `warn` by default so the harness output stays readable. A diagnostic run
+        // raises it (`DREGG_PAYOFF_NODE_LOG=dregg_node::blocklace_sync=debug,warn`)
+        // WITHOUT editing this file — the submission path is the thing that has
+        // needed tracing twice now, and a lane that must patch the test to see the
+        // node's own logs takes a shared-tree mutation window to do it.
+        .env(
+            "RUST_LOG",
+            std::env::var("DREGG_PAYOFF_NODE_LOG").unwrap_or_else(|_| "warn".to_string()),
+        )
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::from(log_file));
     // node-0 is the faucet operator (funds the fresh external client, step 1).
@@ -456,6 +464,85 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
         bearer.len()
     );
 
+    // ── THE REFUSAL POLE, BEFORE THE HONEST ONE ───────────────────────────────
+    // A harness that only shows an honest turn landing proves the pipe is open, not
+    // that it is a GATE. Each of these is a real `SignedTurn` on the identical
+    // transport, refused BY VARIANT (`signed_turn_validation::SignedTurnValidationError`),
+    // and each must leave the ledger exactly as it found it — the ingress arms an
+    // undo journal before the first-turn claim precisely so a refused envelope
+    // writes nothing. Run BEFORE the honest submit so a residue would poison it.
+    let bearer_opt = if bearer.is_empty() {
+        None
+    } else {
+        Some(bearer.as_str())
+    };
+    let submit_refused = |wire: &[u8], expect: &str, label: &str| {
+        let body = http_post(
+            http_ports[0],
+            "/turns/submit",
+            "application/octet-stream",
+            bearer_opt,
+            wire,
+        )
+        .unwrap_or_else(|| panic!("POST /turns/submit ({label}) reached node-0"));
+        assert_eq!(
+            json_field(&body, "accepted"),
+            Some("false"),
+            "{label}: node-0 must REFUSE this envelope; got: {body}"
+        );
+        let err = json_field(&body, "error").unwrap_or("");
+        assert!(
+            err.contains(expect),
+            "{label}: refusal must name the variant {expect:?}; got error {err:?} in {body}"
+        );
+        eprintln!("[payoff] REFUSED ({label}): {err}");
+    };
+
+    // (a) A forged Ed25519 half over an otherwise well-formed envelope.
+    {
+        let mut forged = signed.clone();
+        forged.signature.0[0] ^= 0x80;
+        submit_refused(
+            &postcard::to_stdvec(&forged).expect("encode forged-ed25519"),
+            "invalid turn signature",
+            "forged ed25519",
+        );
+    }
+    // (b) The classical-only adversary: the ML-DSA half stripped entirely. The
+    //     deployed posture is required-PQ, so this is refused, not downgraded.
+    {
+        let mut stripped = signed.clone();
+        stripped.pq_signature.clear();
+        stripped.pq_signer.clear();
+        submit_refused(
+            &postcard::to_stdvec(&stripped).expect("encode stripped-pq"),
+            "post-quantum turn signature required but absent",
+            "stripped ML-DSA half",
+        );
+    }
+    // (c) AGENT SUBSTITUTION: both of the client's own keys are genuine, and only
+    //     the signer→agent authority relation is false. Re-signed after naming the
+    //     foreign cell, so the cryptography is valid and the AUTHORITY is not.
+    {
+        let mut victim_turn = turn.clone();
+        victim_turn.agent = dest_cell;
+        let victim = client.sign_turn(&victim_turn);
+        submit_refused(
+            &postcard::to_stdvec(&victim).expect("encode agent-substituted"),
+            "turn agent does not match signer default cell",
+            "agent substitution",
+        );
+    }
+    // …and none of the three may have materialised the destination anywhere.
+    for (i, &p) in http_ports.iter().enumerate() {
+        assert_eq!(
+            cell_balance(p, &dest_hex),
+            (false, 0),
+            "a refused envelope must write NOTHING: node-{i} has the destination cell \
+             {dest_hex} before any honest turn was submitted"
+        );
+    }
+
     // ── Submit via /turns/submit to node-0 (the external-client path), authenticated
     //    with the operator bearer token. ──
     let resp = http_post(
@@ -555,6 +642,76 @@ fn fresh_client_attested_turn_finalizes_cross_node_on_verified_n4() {
              cross-node finalization of the external-client turn did not complete (destination per \
              node = {last_dest:?}). If this box is resource-starved, raise \
              DREGG_TEST_FINALITY_WAIT_S or set DREGG_TEST_ALLOW_FINALITY_MISS=1 to downgrade to a report."
+        );
+    }
+
+    // ── THE REFUSAL POLE, AFTER THE HONEST TURN HAS FINALIZED ─────────────────
+    // Two refusals that are only MEANINGFUL once the client's account exists as its
+    // canonical, ML-DSA-anchored self — i.e. after the first turn established the
+    // identity. Before that the cell is a zero-pk faucet stub with no PQ commitment
+    // to substitute against, so running them earlier would prove nothing.
+    if all_have_dest {
+        // (d) PQ SUBSTITUTION: a cryptographically VALID ML-DSA signature under an
+        //     attacker's own key, carried on an envelope whose Ed25519 half is the
+        //     client's genuine one. The cell now commits to the client's ML-DSA key,
+        //     so the carried signer is refused against that commitment — the whole
+        //     point of the hybrid anchor.
+        let attacker = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&[0xA9u8; 32]);
+        let mut substituted = signed.clone();
+        substituted.pq_signer = attacker.public_bytes();
+        substituted.pq_signature = attacker
+            .sign(&turn.hash())
+            .expect("attacker produces a valid ML-DSA signature under its OWN key");
+        assert!(
+            dregg_turn::pq::ml_dsa_verify(
+                &substituted.pq_signer,
+                &turn.hash(),
+                &substituted.pq_signature,
+            ),
+            "the substitution fixture must itself be cryptographically valid, or it \
+             tests the wrong refusal"
+        );
+        submit_refused(
+            &postcard::to_stdvec(&substituted).expect("encode pq-substituted"),
+            "carried post-quantum signer does not match",
+            "substituted ML-DSA signer",
+        );
+
+        // (e) REPLAY: the byte-identical envelope that just finalized. It must not
+        //     credit the destination a second time.
+        let replay = http_post(
+            http_ports[0],
+            "/turns/submit",
+            "application/octet-stream",
+            bearer_opt,
+            &wire,
+        )
+        .expect("POST /turns/submit (replay) reached node-0");
+        assert_eq!(
+            json_field(&replay, "accepted"),
+            Some("false"),
+            "a byte-identical replay of an already-finalized turn must be REFUSED; got: {replay}"
+        );
+        eprintln!(
+            "[payoff] REFUSED (replay): {}",
+            json_field(&replay, "error").unwrap_or("")
+        );
+
+        // Neither refusal may move value: the destination still holds exactly the
+        // ONE transfer, on every node.
+        std::thread::sleep(Duration::from_secs(6));
+        for (i, &p) in http_ports.iter().enumerate() {
+            assert_eq!(
+                cell_balance(p, &dest_hex),
+                (true, transfer_amount),
+                "node-{i}: a refused envelope moved value — destination {dest_hex} is not \
+                 exactly the one honest transfer of {transfer_amount}"
+            );
+        }
+        eprintln!(
+            "[payoff] BOTH POLES: the honest client turn finalized on all {FED_SIZE} nodes; \
+             forged-ed25519, stripped-ML-DSA, agent-substituted, PQ-substituted and replayed \
+             envelopes were each REFUSED BY VARIANT and moved nothing."
         );
     }
 }
