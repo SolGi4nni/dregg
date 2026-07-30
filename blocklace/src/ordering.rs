@@ -330,10 +330,60 @@ fn ratifies(
     approving_count >= supermajority
 }
 
+/// Whether a wave-end block counts as a RATIFIER: its own creator is an enrolled participant AND
+/// it `ratifies` the leader.
+///
+/// ⚑ THE RATIFIER-ENROLLMENT GATE (HORIZONLOG B6) — the differential mirror of the verified rule's
+/// `BlocklaceFinality.ratifiesEnrolled`. `ratifies` above consults `participants` on the APPROVER
+/// side (how many participants have an approving block in the observer's past) and never asks who
+/// the OBSERVER is; `is_super_ratified` then collected `block.creator` from `end_round_blocks` with
+/// no enrollment check at all, so a NON-PARTICIPANT's wave-end block contributed a distinct creator
+/// to a count this function's own docstring calls "a supermajority of distinct participants".
+///
+/// The THRESHOLD is untouched — `supermajority_threshold` is the same formula and
+/// `supermajority_threshold(3) == 3` still holds. What changed is WHO IS ELIGIBLE TO BE COUNTED.
+///
+/// The harm is SAFETY: an unenrolled creator's ordinary well-formed block SUBSTITUTES for a silent
+/// honest validator and pushes a leader over the finality threshold the enrolled committee did not
+/// reach — and in the limit a wave anchors with ZERO enrolled ratifiers. No attacker is required:
+/// `finality.rs::enroll_pq` is INSERT-ONLY while `constitution.current.participants` SHRINKS on a
+/// passed membership proposal, so a rotated-out validator keeps its ratifying power; and
+/// `from_checkpoint_trusted` reloads the persisted DAG with no roster check at all.
+///
+/// Applied at BOTH sites that map a wave-end block to a decision — `is_super_ratified` (does the
+/// wave anchor?) and `tau_with_config`'s coverage loop (what does the anchor order?) — because an
+/// unenrolled ack must neither decide finality nor decide WHERE an honest block lands in the total
+/// order. On a lace where every creator IS a participant this is the identity
+/// (`BlocklaceFinality.ratifiesEnrolled_eq_of_enrolled` /
+/// `isSuperRatified_eq_pre_of_enrolled` prove exactly that).
+#[allow(clippy::too_many_arguments)]
+fn ratifies_enrolled(
+    cache: &PastCache,
+    blocklace: &Blocklace,
+    equiv: &EquivocationIndex,
+    observer: &BlockId,
+    observer_creator: &[u8; 32],
+    leader_id: &BlockId,
+    leader_creator: &[u8; 32],
+    participants: &[[u8; 32]],
+) -> bool {
+    participants.contains(observer_creator)
+        && ratifies(
+            cache,
+            blocklace,
+            equiv,
+            observer,
+            leader_id,
+            leader_creator,
+            participants,
+        )
+}
+
 /// Check if a leader block is super-ratified (finalized).
 ///
-/// Super-ratification: a supermajority of distinct participants have blocks at
-/// the wave's last round that ratify the leader.
+/// Super-ratification: a supermajority of distinct ENROLLED participants have blocks at
+/// the wave's last round that ratify the leader. The enrollment half is the B6 repair — see
+/// [`ratifies_enrolled`].
 fn is_super_ratified(
     cache: &PastCache,
     blocklace: &Blocklace,
@@ -358,11 +408,12 @@ fn is_super_ratified(
         .iter()
         .filter_map(|block_id| {
             let block = blocklace.get(block_id)?;
-            if ratifies(
+            if ratifies_enrolled(
                 cache,
                 blocklace,
                 equiv,
                 block_id,
+                &block.creator,
                 leader_id,
                 leader_creator,
                 participants,
@@ -510,10 +561,14 @@ fn xsort(cache: &PastCache, blocklace: &Blocklace, blocks: &HashSet<BlockId>) ->
 ///
 /// Returns block IDs in their finalized total order. For each finalized leader,
 /// the ordered segment is drawn from the UNION of the causal pasts of all
-/// wave-end blocks that ratify that leader (which is broader than the leader's
-/// own causal past), minus what earlier leaders already covered, excluding
+/// wave-end blocks BY ENROLLED PARTICIPANTS that ratify that leader (which is broader than the
+/// leader's own causal past), minus what earlier leaders already covered, excluding
 /// blocks from creators that equivocated (as visible from the leader), and — since the
 /// enrollment repair — excluding blocks from creators that are not in `participants`.
+///
+/// A leader anchors only when a supermajority of DISTINCT ENROLLED participants have wave-end
+/// blocks ratifying it ([`ratifies_enrolled`], HORIZONLOG B6) — a non-participant's block counts
+/// toward neither the threshold nor the coverage.
 ///
 /// Uses default configuration (wavelength = 3).
 ///
@@ -564,15 +619,24 @@ pub fn tau_with_config(
             .map(|b| b.creator)
             .unwrap_or([0u8; 32]);
 
-        // Collect the union of causal pasts of all wave-end blocks that ratify.
+        // Collect the union of causal pasts of all ENROLLED wave-end blocks that ratify. The
+        // enrollment half is the B6 repair (`ratifies_enrolled`): an unenrolled ack must not decide
+        // WHERE an honest block lands in the total order, because non-participants' blocks are
+        // exactly the ones honest nodes are not guaranteed to have all seen — letting them shape
+        // coverage breaks the reduction `tauOrder_deterministic` rests on ("agreement reduces to
+        // seeing the same lace"). Mirrors `BlocklaceFinality.leaderCoverage`.
         let mut coverage: HashSet<BlockId> = HashSet::new();
         for (id, r) in &rounds {
+            let Some(observer) = blocklace.get(id) else {
+                continue;
+            };
             if *r == wave_end
-                && ratifies(
+                && ratifies_enrolled(
                     &cache,
                     blocklace,
                     &equiv,
                     id,
+                    &observer.creator,
                     leader_id,
                     &leader_creator,
                     participants,
@@ -874,21 +938,34 @@ fn compute_rounds_filtered(
 /// implementations of one rule — `tau` has one participant set and no notion of an outsider,
 /// `tau_unified` is parameterised by which view you are asking about. Neither replaces the other.
 ///
-/// What DID change (the enrollment repair): `tau`'s docstring used to carry "assumes all blocks
-/// belong to participants" as an unchecked PRECONDITION, and the live path cannot honour it — the
-/// pinned-ingest roster is insert-only while the constitution's participant set shrinks, and
-/// `finality.rs::from_checkpoint_trusted` reloads the persisted DAG with no check at all. So `tau`
-/// now enforces item (5) below for itself. It still does NOT do (1)–(4): a non-participant's blocks
-/// are still counted for ROUNDS and can still contribute to a RATIFIER count. That is the residual,
-/// and it is a different shape of harm — wave-timing and finalization LIVENESS, not "an unenrolled
-/// creator's state transition reaches the executor", which is what (5) closes. `tau_unified`
-/// remains the only one of the two that is sound on a lace it does not own.
+/// What DID change (the enrollment repairs, in two rounds): `tau`'s docstring used to carry
+/// "assumes all blocks belong to participants" as an unchecked PRECONDITION, and the live path
+/// cannot honour it — the pinned-ingest roster is insert-only while the constitution's participant
+/// set shrinks, and `finality.rs::from_checkpoint_trusted` reloads the persisted DAG with no check
+/// at all. So `tau` enforces items (4) and (5) below for itself:
+///   * (5), the OUTPUT filter, closed by `enrolledId` / the `participant_set` filter in
+///     `tau_with_config` — an unenrolled creator's state transition cannot reach the executor;
+///   * (4), the RATIFIER filter, closed by [`ratifies_enrolled`] (HORIZONLOG B6) — an unenrolled
+///     creator can no longer make up a supermajority that anchors a wave, nor shape which blocks a
+///     wave's coverage orders. These are independent: (5) held of the pre-B6 rule too, because the
+///     unenrolled creator's OWN blocks were dropped from the ORDER while its VOTE still finalized
+///     the honest ones.
+///
+/// ⚑ It still does NOT do (1)–(3). `tau` calls `compute_rounds` (unfiltered), so a
+/// non-participant's blocks still receive ROUND NUMBERS and a deep non-participant chain that
+/// honest blocks ack still INFLATES honest rounds, shifting the wave structure — no honest block
+/// then sits at a wave-start or wave-end round and the federation stops finalizing. That residual
+/// is wave TIMING; it is not "an unenrolled creator decides finality", which is what (4) closes,
+/// nor "reaches the executor", which is what (5) closes. Fixing it means `compute_rounds` taking
+/// the participant set — i.e. the verified `BlocklaceFinality.computeRounds` taking it, since the
+/// RULE is Lean-authored and this is its differential sibling. `tau_unified` remains the only one
+/// of the two that is sound on a lace it does not own.
 ///
 /// The algorithm is the same as `tau_with_config`, but:
 /// 1. `compute_rounds_filtered` only counts blocks from `reference_group.participants`
 /// 2. Wave assignment uses filtered rounds
 /// 3. Leader selection from reference group only
-/// 4. Approval/ratification counts from reference group only
+/// 4. Approval/ratification counts from reference group only (`tau` now does this too)
 /// 5. Output only contains blocks from reference group participants (`tau` now does this too)
 ///
 /// External blocks in the DAG are IGNORED (not counted for rounds, waves, or finality).
@@ -933,15 +1010,23 @@ pub fn tau_unified(
             .map(|b| b.creator)
             .unwrap_or([0u8; 32]);
 
-        // Collect the union of causal pasts of all wave-end blocks that ratify.
+        // Collect the union of causal pasts of all wave-end blocks that ratify. `ratifies_enrolled`
+        // rather than `ratifies` so both orderings read the SAME ratifier rule; here it is provably
+        // the identity (`compute_rounds_filtered` assigns no round to a non-participant, so no
+        // non-participant block is ever at `wave_end`), and stating it makes it impossible for a
+        // change to the round filter to silently reopen the B6 hole on this path.
         let mut coverage: HashSet<BlockId> = HashSet::new();
         for (id, r) in &rounds {
+            let Some(observer) = blocklace.get(id) else {
+                continue;
+            };
             if *r == wave_end
-                && ratifies(
+                && ratifies_enrolled(
                     &cache,
                     blocklace,
                     &equiv,
                     id,
+                    &observer.creator,
                     leader_id,
                     &leader_creator,
                     participants,
@@ -1442,6 +1527,326 @@ mod tests {
             for id in &result {
                 assert!(participants.contains(&bl.get(id).unwrap().creator));
             }
+        }
+    }
+
+    /// Build a lace whose per-round creator sets are given EXPLICITLY (so a round can be missing a
+    /// participant, or hold only non-participants), every block referencing ALL blocks of the
+    /// previous round — the same fully-connected shape `build_full_blocklace` produces.
+    fn build_lace_by_round(rounds_creators: &[Vec<[u8; 32]>]) -> (Blocklace, Vec<Vec<BlockId>>) {
+        let mut bl = Blocklace::new();
+        let mut by_round: Vec<Vec<BlockId>> = Vec::new();
+        for (r, creators) in rounds_creators.iter().enumerate() {
+            let preds: Vec<BlockId> = if r == 0 {
+                vec![]
+            } else {
+                by_round[r - 1].clone()
+            };
+            let mut this_round = Vec::new();
+            for (i, &creator) in creators.iter().enumerate() {
+                let block = make_block(creator, r as u64, preds.clone(), vec![r as u8, i as u8]);
+                let id = block.id();
+                bl.insert_unverified(block).unwrap();
+                this_round.push(id);
+            }
+            by_round.push(this_round);
+        }
+        (bl, by_round)
+    }
+
+    /// The distinct creators of wave-end blocks that `ratifies` the leader, split into ALL and
+    /// ENROLLED.
+    ///
+    /// This is a MEASUREMENT, not a reimplementation of the fix: it drives the module's own
+    /// `compute_rounds`, `EquivocationIndex` and `ratifies` — the exact primitives
+    /// `is_super_ratified` composes — and the only thing it does differently is decline to apply
+    /// the enrollment gate. So `all` IS the pre-B6 ratifier count and `enrolled` is the post-B6
+    /// one, and asserting `all >= threshold > enrolled` executes the wound rather than describing
+    /// it.
+    fn wave_end_ratifier_creators(
+        bl: &Blocklace,
+        participants: &[[u8; 32]],
+        leader_id: &BlockId,
+        wave_end_round: u64,
+    ) -> (HashSet<[u8; 32]>, HashSet<[u8; 32]>) {
+        let cache = PastCache::new();
+        let (rounds, _) = compute_rounds(bl);
+        let equiv = EquivocationIndex::build(bl, &rounds);
+        let leader_creator = bl.get(leader_id).expect("leader in lace").creator;
+        let all: HashSet<[u8; 32]> = rounds
+            .iter()
+            .filter(|(_, r)| **r == wave_end_round)
+            .filter(|(id, _)| {
+                ratifies(
+                    &cache,
+                    bl,
+                    &equiv,
+                    id,
+                    leader_id,
+                    &leader_creator,
+                    participants,
+                )
+            })
+            .filter_map(|(id, _)| bl.get(id).map(|b| b.creator))
+            .collect();
+        let enrolled: HashSet<[u8; 32]> = all
+            .iter()
+            .copied()
+            .filter(|c| participants.contains(c))
+            .collect();
+        (all, enrolled)
+    }
+
+    /// The wave-0 leader block: the round-robin leader's block at the wave-start round.
+    fn wave0_leader_block(bl: &Blocklace, by_round: &[Vec<BlockId>], leader: [u8; 32]) -> BlockId {
+        by_round[0]
+            .iter()
+            .copied()
+            .find(|id| bl.get(id).map(|b| b.creator) == Some(leader))
+            .expect("the wave-0 leader must have a genesis block")
+    }
+
+    /// **HORIZONLOG B6 — A NON-PARTICIPANT'S BLOCK MUST NOT MAKE UP A SUPERMAJORITY.**
+    ///
+    /// The exhibit: 3 enrolled participants, one unenrolled creator, and the enrolled validator `3`
+    /// is SILENT at the wave-end round. `supermajority_threshold(3) == 3`, so the enrolled
+    /// committee is one short — and the unenrolled creator's wave-end block `ratifies` the leader
+    /// on the merits (every enrolled participant has an approving round-2 block in its causal
+    /// past), so before the ratifier gate it made the count up to three and ANCHORED THE WAVE.
+    ///
+    /// This is not an attacker-only shape. `finality.rs::enroll_pq` is INSERT-ONLY while
+    /// `constitution.current.participants` shrinks on a passed membership proposal, so a
+    /// ROTATED-OUT validator keeps producing exactly these blocks; and
+    /// `finality.rs::from_checkpoint_trusted` reloads the persisted DAG with no roster check.
+    ///
+    /// BOTH POLES, because a rule that anchors nothing is not a fix:
+    ///   * the Sybil cannot substitute for the silent validator — `tau` finalizes NOTHING; and
+    ///   * put validator `3` back at the wave end, change nothing else, and the committee anchors
+    ///     again, finalizing all NINE enrolled blocks.
+    /// The Lean twin is `BlocklaceFinality.traceSybilRatify` (which IS `traceUnenrolled` minus that
+    /// one block) and its `#guard` red/green pair on `isSuperRatifiedPreEnrollment`/
+    /// `isSuperRatified`.
+    #[test]
+    fn test_unenrolled_ratifier_cannot_substitute_for_a_silent_participant() {
+        let participants = vec![make_key(1), make_key(2), make_key(3)];
+        let unenrolled = make_key(9);
+        assert!(
+            !participants.contains(&unenrolled),
+            "the unenrolled creator must not be enrolled — else this test has no adversary"
+        );
+        let threshold = supermajority_threshold(participants.len());
+        assert_eq!(
+            threshold, 3,
+            "n=3 tolerates f=0: the committee is all three"
+        );
+
+        // Rounds 1-2 fully connected over all four creators; at the WAVE END (round 3) the enrolled
+        // validator 3 is silent and the unenrolled creator is present.
+        let (bl, by_round) = build_lace_by_round(&[
+            vec![make_key(1), make_key(2), make_key(3), unenrolled],
+            vec![make_key(1), make_key(2), make_key(3), unenrolled],
+            vec![make_key(1), make_key(2), unenrolled],
+        ]);
+        let leader = wave0_leader_block(&bl, &by_round, participants[0]);
+
+        let (all_ratifiers, enrolled_ratifiers) =
+            wave_end_ratifier_creators(&bl, &participants, &leader, 3);
+
+        // ANTI-VACUITY — the unenrolled creator really is a wave-end ratifier on the merits. If it
+        // were not, "the Sybil does not count" would be true for a reason that has nothing to do
+        // with enrollment.
+        assert!(
+            all_ratifiers.contains(&unenrolled),
+            "the unenrolled creator must RATIFY the leader from a wave-end block — else there is \
+             no ratifier to refuse and every assertion below is vacuous"
+        );
+
+        // THE WOUND, EXECUTED. Counting wave-end ratifiers WITHOUT the enrollment gate makes the
+        // supermajority; counting only ENROLLED ones does not. The gap is exactly the Sybil.
+        assert!(
+            all_ratifiers.len() >= threshold,
+            "the un-gated ratifier count must reach the supermajority ({} of {threshold}) — this \
+             is the pre-B6 rule anchoring the wave",
+            all_ratifiers.len()
+        );
+        assert!(
+            enrolled_ratifiers.len() < threshold,
+            "the ENROLLED committee must be SHORT at the wave end ({} of {threshold}) — otherwise \
+             the wave would anchor honestly and the refusal below would prove nothing",
+            enrolled_ratifiers.len()
+        );
+
+        // POLE 1 — THE REFUSAL. The rule declines the wave: a non-participant cannot make quorum.
+        let result = tau(&bl, &participants);
+        assert!(
+            result.is_empty(),
+            "tau ANCHORED a wave whose enrolled ratifiers were {} of {threshold} — an UNENROLLED \
+             creator made up the supermajority and finalized the honest committee's blocks for it \
+             (Lean: BlocklaceFinality.traceSybilRatify #guard). Finalized {} blocks.",
+            enrolled_ratifiers.len(),
+            result.len()
+        );
+
+        // POLE 2 — THE HONEST COMMITTEE STILL FINALIZES. Same lace, validator 3 back at the wave
+        // end, nothing else changed: all nine enrolled blocks finalize, in round-major order.
+        let (bl_full, _) = build_lace_by_round(&[
+            vec![make_key(1), make_key(2), make_key(3), unenrolled],
+            vec![make_key(1), make_key(2), make_key(3), unenrolled],
+            vec![make_key(1), make_key(2), make_key(3), unenrolled],
+        ]);
+        let live = tau(&bl_full, &participants);
+        assert_eq!(
+            live.len(),
+            9,
+            "with the full enrolled committee at the wave end, all NINE enrolled blocks must still \
+             finalize — a ratifier gate that stops everything anchoring is not a fix"
+        );
+        for id in &live {
+            assert!(
+                participants.contains(&bl_full.get(id).unwrap().creator),
+                "only enrolled creators may be finalized"
+            );
+        }
+        let seqs: Vec<u64> = live
+            .iter()
+            .filter_map(|id| bl_full.get(id).map(|b| b.sequence))
+            .collect();
+        assert!(
+            seqs.windows(2).all(|w| w[0] <= w[1]),
+            "the surviving order is still round-major, matching the Lean model"
+        );
+    }
+
+    /// **THE EXTREME OF THE SAME DEFECT — a wave anchored with ZERO enrolled ratifiers.**
+    ///
+    /// Rounds 1-2 are the honest 3-node lace. The ENTIRE wave-end round is three DISTINCT
+    /// unenrolled creators, each acking all three honest round-2 blocks, so each `ratifies` the
+    /// leader on the merits and not one of them is a participant. Before the gate the rule counted
+    /// `{7, 8, 9}` = 3 ≥ 3 and anchored wave 0: the "supermajority of the committee" was entirely
+    /// OUTSIDE the committee.
+    ///
+    /// Lean twin: `BlocklaceFinality.traceSybilOnly`, and this is the trace that makes
+    /// `superRatified_exists_enrolled_ratifier` non-vacuous — its conclusion is unreachable here.
+    #[test]
+    fn test_wave_cannot_anchor_on_zero_enrolled_ratifiers() {
+        let participants = vec![make_key(1), make_key(2), make_key(3)];
+        let outsiders = [make_key(7), make_key(8), make_key(9)];
+        let threshold = supermajority_threshold(participants.len());
+
+        let (bl, by_round) = build_lace_by_round(&[
+            participants.clone(),
+            participants.clone(),
+            outsiders.to_vec(),
+        ]);
+        let leader = wave0_leader_block(&bl, &by_round, participants[0]);
+
+        let (all_ratifiers, enrolled_ratifiers) =
+            wave_end_ratifier_creators(&bl, &participants, &leader, 3);
+
+        // ANTI-VACUITY — all three outsiders genuinely ratify, and none is enrolled.
+        for o in &outsiders {
+            assert!(
+                all_ratifiers.contains(o),
+                "every outsider must ratify the leader from a wave-end block — else the wound is \
+                 not the one being exhibited"
+            );
+            assert!(!participants.contains(o));
+        }
+
+        // THE WOUND — a full supermajority of ratifiers, ZERO of them enrolled.
+        assert!(
+            all_ratifiers.len() >= threshold,
+            "the un-gated count must reach the supermajority with only outsiders present"
+        );
+        assert!(
+            enrolled_ratifiers.is_empty(),
+            "no enrolled participant has a wave-end block here — that is the point"
+        );
+
+        // THE REFUSAL — the rule cannot anchor a wave no member of the committee ratified.
+        let result = tau(&bl, &participants);
+        assert!(
+            result.is_empty(),
+            "tau ANCHORED a wave super-ratified by THREE UNENROLLED creators with ZERO enrolled \
+             ratifiers — finality was decided entirely outside the committee. Finalized {} blocks.",
+            result.len()
+        );
+
+        // THE HONEST POLE, same shape: put the committee at the wave end and it anchors.
+        let (bl_ok, _) = build_lace_by_round(&[
+            participants.clone(),
+            participants.clone(),
+            participants.clone(),
+        ]);
+        assert_eq!(
+            tau(&bl_ok, &participants).len(),
+            9,
+            "the honest 3-node lace must still finalize all nine blocks"
+        );
+    }
+
+    /// **THE SYBIL STANDING IN FOR THE TOLERATED FAULT, at n=4.** `supermajority_threshold(4) == 3`
+    /// (f=1), so two enrolled validators at the wave end are one short. An unenrolled creator makes
+    /// it three — restoring exactly the voting power the committee's own fault budget withholds.
+    /// This is the case that matters operationally: at n=4 a single crashed validator plus one
+    /// rotated-out identity is enough, and neither is an attack.
+    #[test]
+    fn test_unenrolled_ratifier_cannot_replace_the_fault_budget_at_n4() {
+        let participants = vec![make_key(1), make_key(2), make_key(3), make_key(4)];
+        let unenrolled = make_key(9);
+        let threshold = supermajority_threshold(participants.len());
+        assert_eq!(threshold, 3, "n=4, f=1: three of four");
+
+        let mut all_creators = participants.clone();
+        all_creators.push(unenrolled);
+        // Wave end: validators 3 and 4 are silent; 1, 2 and the unenrolled creator are present.
+        let (bl, by_round) = build_lace_by_round(&[
+            all_creators.clone(),
+            all_creators.clone(),
+            vec![make_key(1), make_key(2), unenrolled],
+        ]);
+        let leader = wave0_leader_block(&bl, &by_round, participants[0]);
+
+        let (all_ratifiers, enrolled_ratifiers) =
+            wave_end_ratifier_creators(&bl, &participants, &leader, 3);
+        assert!(
+            all_ratifiers.contains(&unenrolled),
+            "anti-vacuity: it ratifies"
+        );
+        assert!(
+            all_ratifiers.len() >= threshold && enrolled_ratifiers.len() < threshold,
+            "the un-gated count reaches {threshold} only because of the unenrolled creator \
+             (all={}, enrolled={})",
+            all_ratifiers.len(),
+            enrolled_ratifiers.len()
+        );
+
+        assert!(
+            tau(&bl, &participants).is_empty(),
+            "tau anchored a wave at n=4 on {} enrolled ratifiers of {threshold} — an unenrolled \
+             identity supplied the committee's fault budget back to it",
+            enrolled_ratifiers.len()
+        );
+
+        // THE HONEST POLE — the full committee at the wave end finalizes all TWELVE enrolled blocks.
+        let (bl_full, _) = build_lace_by_round(&[
+            all_creators.clone(),
+            all_creators.clone(),
+            all_creators.clone(),
+        ]);
+        let live = tau(&bl_full, &participants);
+        assert_eq!(
+            live.len(),
+            12,
+            "4 enrolled participants x 3 rounds must still finalize with the unenrolled creator \
+             present throughout"
+        );
+        for id in &live {
+            assert_ne!(
+                bl_full.get(id).unwrap().creator,
+                unenrolled,
+                "no unenrolled creator's block may be finalized"
+            );
         }
     }
 

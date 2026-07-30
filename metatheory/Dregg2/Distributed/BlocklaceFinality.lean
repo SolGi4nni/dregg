@@ -182,9 +182,63 @@ def ratifies (B : Lace) (participants : List AuthorId) (o l : Block) : Bool :=
 def blocksAtRound (B : Lace) (r : Nat) : List BlockId :=
   (B.filter (fun b => roundOf B b.id == r)).map (·.id)
 
-/-- **`isSuperRatified`** — a supermajority of DISTINCT participants have wave-end blocks that
-ratify the leader (`ordering.rs:240..278`). The node's finality condition for a leader. -/
+/-- **`ratifiesEnrolled`** — the RATIFIER-SIDE enrollment gate: a wave-end block counts as a
+ratifier only when its OWN creator is an enrolled participant, on top of the Cordial-Miners
+`ratifies` predicate.
+
+**Why this exists** (HORIZONLOG B6). `ratifies` above consults `participants` on the APPROVER side
+— it counts how many participants have an approving block in the observer's past — and never asks
+who the OBSERVER is. `isSuperRatified` then collected `b.creator` from the wave-end blocks with no
+enrollment check at all, so a NON-PARTICIPANT's wave-end block contributed a distinct creator to a
+count whose own docstring says "a supermajority of DISTINCT PARTICIPANTS". The threshold is not
+weakened by this repair (`superMajority` is untouched — `supermajority_threshold(3) = 3` stays);
+what changes is WHO IS ELIGIBLE TO BE COUNTED.
+
+The harm is SAFETY, not liveness: an unenrolled creator's ordinary, well-formed block SUBSTITUTES
+for a silent honest validator and pushes a leader over the finality threshold that the enrolled
+committee did not reach. §9's `traceSybilRatify` exhibits exactly that (creator `3` silent at the
+wave end, unenrolled creator `9` present ⇒ the pre-repair rule super-ratifies on `{1,2,9}`), and
+`traceSybilOnly` exhibits the extreme — a wave super-ratified by THREE unenrolled creators with
+ZERO enrolled ratifiers. It is not an attacker-only shape: `blocklace/src/finality.rs::enroll_pq`
+is INSERT-ONLY while `constitution.current.participants` SHRINKS on a passed membership proposal,
+so a ROTATED-OUT validator keeps its ratifying power under the pre-repair rule; and
+`from_checkpoint_trusted` reloads the persisted DAG with no roster check at all.
+
+Applied at BOTH sites that map a wave-end block to a decision — `isSuperRatified` (does the wave
+anchor?) and `leaderCoverage` (what does the anchor order?) — because an unenrolled ack must
+neither decide finality nor decide WHERE an honest block lands in the total order. The second
+matters because non-participants' blocks are exactly the ones honest nodes are NOT guaranteed to
+have all seen, so letting them shape coverage breaks the reduction `tauOrder_deterministic` rests
+on ("agreement reduces to seeing the same lace").
+
+On an `EnrolledLace` this is the IDENTITY (`ratifiesEnrolled_eq_of_enrolled`), so no honest
+federation loses a ratifier — the liveness pole. -/
+def ratifiesEnrolled (B : Lace) (participants : List AuthorId) (o l : Block) : Bool :=
+  participants.contains o.creator && ratifies B participants o l
+
+/-- **`isSuperRatified`** — a supermajority of DISTINCT ENROLLED participants have wave-end blocks
+that ratify the leader (`ordering.rs::is_super_ratified`). The node's finality condition for a
+leader. The `ratifiesEnrolled` gate is the B6 repair; see its docstring. -/
 def isSuperRatified (B : Lace) (participants : List AuthorId)
+    (l : Block) (waveEndRound : Nat) : Bool :=
+  let endBlocks := blocksAtRound B waveEndRound
+  let ratifyingCreators : List AuthorId :=
+    (endBlocks.filterMap (fun bid => match B.lookup bid with
+       | some b => if ratifiesEnrolled B participants b l then some b.creator else none
+       | none   => none)).dedup
+  ratifyingCreators.length ≥ superMajority participants.length
+
+/-- **`isSuperRatifiedPreEnrollment`** — the super-ratification test EXACTLY as it stood before the
+B6 ratifier-enrollment repair: the wave-end creators are counted with no check that they are
+participants.
+
+⚑ THIS IS NOT THE FINALITY CONDITION. It is kept, named, and reachable from nothing but the §9
+`#guard`s for one reason: it is the FALSIFICATION WITNESS for `isSuperRatified`'s gate — the same
+discipline `tauOrderUnfiltered` carries for `enrolledId`. The §9 guards run it against
+`traceSybilRatify` / `traceSybilOnly` and show it returns `true` exactly where the repaired rule
+returns `false`, so the gate is demonstrably load-bearing rather than a no-op that "obviously"
+changes nothing. A red-proof that lives in the tree forever instead of in a reverted source edit. -/
+def isSuperRatifiedPreEnrollment (B : Lace) (participants : List AuthorId)
     (l : Block) (waveEndRound : Nat) : Bool :=
   let endBlocks := blocksAtRound B waveEndRound
   let ratifyingCreators : List AuthorId :=
@@ -239,15 +293,17 @@ wave-end blocks), take the NEW blocks (minus previous coverage, minus equivocato
 append. The intra-segment linearization is the OPEN-CM-XSORT residual; here we sort by `(round, id)`
 — deterministic and causal-respecting (a pred has strictly smaller round). -/
 
-/-- The coverage of a final leader: union of causal pasts of all wave-end blocks that ratify it
-(`ordering.rs:442..458`). -/
+/-- The coverage of a final leader: union of causal pasts of all wave-end blocks by ENROLLED
+participants that ratify it (`ordering.rs::tau`'s coverage loop). The `ratifiesEnrolled` gate is the
+B6 repair — an unenrolled ack must not decide WHERE an honest block lands in the total order; see
+`ratifiesEnrolled`. -/
 def leaderCoverage (B : Lace) (participants : List AuthorId) (l : Block) (wavelength : Nat) : List BlockId :=
   let lr := roundOf B l.id
   let lwave := roundToWave lr wavelength
   let waveEnd := waveLastRound lwave wavelength
   let endBlocks := blocksAtRound B waveEnd
   (endBlocks.flatMap (fun bid => match B.lookup bid with
-     | some b => if ratifies B participants b l then causalPastIncl B bid else []
+     | some b => if ratifiesEnrolled B participants b l then causalPastIncl B bid else []
      | none   => [])).dedup
 
 /-- Deterministic intra-segment linearization by `(round, id)` — the OPEN-CM-XSORT stand-in. A
@@ -499,20 +555,29 @@ theorem ratifiesC_eq (B : Lace) (participants : List AuthorId) (o l : Block) :
     ratifiesC B (mkPastCache B) (mkRoundCache B) participants o l = ratifies B participants o l := by
   simp only [ratifiesC, ratifies, cachedPast_eq, approvesC_eq]
 
+/-- `ratifiesEnrolled` with both caches (`§4`) — the B6 ratifier-enrollment gate on the fast path. -/
+def ratifiesEnrolledC (B : Lace) (cache : PastCache) (rc : RoundCache) (participants : List AuthorId) (o l : Block) : Bool :=
+  participants.contains o.creator && ratifiesC B cache rc participants o l
+
+theorem ratifiesEnrolledC_eq (B : Lace) (participants : List AuthorId) (o l : Block) :
+    ratifiesEnrolledC B (mkPastCache B) (mkRoundCache B) participants o l
+      = ratifiesEnrolled B participants o l := by
+  simp only [ratifiesEnrolledC, ratifiesEnrolled, ratifiesC_eq]
+
 /-- `isSuperRatified` with both caches (`§4`). -/
 def isSuperRatifiedC (B : Lace) (cache : PastCache) (rc : RoundCache) (participants : List AuthorId)
     (l : Block) (waveEndRound : Nat) : Bool :=
   let endBlocks := blocksAtRoundR rc B waveEndRound
   let ratifyingCreators : List AuthorId :=
     (endBlocks.filterMap (fun bid => match B.lookup bid with
-       | some b => if ratifiesC B cache rc participants b l then some b.creator else none
+       | some b => if ratifiesEnrolledC B cache rc participants b l then some b.creator else none
        | none   => none)).dedup
   ratifyingCreators.length ≥ superMajority participants.length
 
 theorem isSuperRatifiedC_eq (B : Lace) (participants : List AuthorId) (l : Block) (waveEndRound : Nat) :
     isSuperRatifiedC B (mkPastCache B) (mkRoundCache B) participants l waveEndRound
       = isSuperRatified B participants l waveEndRound := by
-  simp only [isSuperRatifiedC, isSuperRatified, blocksAtRoundR_eq, ratifiesC_eq]
+  simp only [isSuperRatifiedC, isSuperRatified, blocksAtRoundR_eq, ratifiesEnrolledC_eq]
 
 /-- `finalLeaderAt` with both caches (`§5`). -/
 def finalLeaderAtC (B : Lace) (cache : PastCache) (rc : RoundCache) (participants : List AuthorId)
@@ -546,13 +611,14 @@ def leaderCoverageC (B : Lace) (cache : PastCache) (rc : RoundCache) (participan
   let waveEnd := waveLastRound lwave wavelength
   let endBlocks := blocksAtRoundR rc B waveEnd
   (endBlocks.flatMap (fun bid => match B.lookup bid with
-     | some b => if ratifiesC B cache rc participants b l then cachedPast B cache bid else []
+     | some b => if ratifiesEnrolledC B cache rc participants b l then cachedPast B cache bid else []
      | none   => [])).dedup
 
 theorem leaderCoverageC_eq (B : Lace) (participants : List AuthorId) (l : Block) (wavelength : Nat) :
     leaderCoverageC B (mkPastCache B) (mkRoundCache B) participants l wavelength
       = leaderCoverage B participants l wavelength := by
-  simp only [leaderCoverageC, leaderCoverage, roundOfR_eq, blocksAtRoundR_eq, cachedPast_eq, ratifiesC_eq]
+  simp only [leaderCoverageC, leaderCoverage, roundOfR_eq, blocksAtRoundR_eq, cachedPast_eq,
+    ratifiesEnrolledC_eq]
 
 /-- `leaderSegment` with both caches (`§6`). -/
 def leaderSegmentC (B : Lace) (cache : PastCache) (rc : RoundCache) (participants : List AuthorId) (wavelength : Nat)
@@ -713,13 +779,18 @@ def fastRatifies (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.
 def fastBlocksAtRound (B : Lace) (rm : Std.HashMap BlockId Nat) (r : Nat) : List BlockId :=
   (B.filter (fun b => fastROf rm b.id == r)).map (·.id)
 
+/-- Runtime twin of `ratifiesEnrolledC` — the B6 ratifier-enrollment gate on the runtime path. -/
+def fastRatifiesEnrolled (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
+    (participants : List AuthorId) (o l : Block) : Bool :=
+  participants.contains o.creator && fastRatifies B pm rm participants o l
+
 /-- Runtime twin of `isSuperRatifiedC`. -/
 def fastIsSuperRatified (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm : Std.HashMap BlockId Nat)
     (participants : List AuthorId) (l : Block) (waveEndRound : Nat) : Bool :=
   let endBlocks := fastBlocksAtRound B rm waveEndRound
   let ratifyingCreators : List AuthorId :=
     (endBlocks.filterMap (fun bid => match B.lookup bid with
-       | some b => if fastRatifies B pm rm participants b l then some b.creator else none
+       | some b => if fastRatifiesEnrolled B pm rm participants b l then some b.creator else none
        | none   => none)).dedup
   ratifyingCreators.length ≥ superMajority participants.length
 
@@ -758,7 +829,7 @@ def fastLeaderCoverage (B : Lace) (pm : Std.HashMap BlockId (List BlockId)) (rm 
   let waveEnd := waveLastRound lwave wavelength
   let endBlocks := fastBlocksAtRound B rm waveEnd
   (endBlocks.flatMap (fun bid => match B.lookup bid with
-     | some b => if fastRatifies B pm rm participants b l then fastPast B pm bid else []
+     | some b => if fastRatifiesEnrolled B pm rm participants b l then fastPast B pm bid else []
      | none   => [])).dedup
 
 /-- Runtime twin of `xsortByR`. -/
@@ -953,6 +1024,92 @@ theorem tauOrder_enrolled_eq_unfiltered (B : Lace) (participants : List AuthorId
     have hmem : b ∈ B := List.mem_of_find?_eq_some hl
     exact h b hmem
 
+/-! ## 7c. THE RATIFIER-ENROLLMENT TOOTH (HORIZONLOG B6) — the supermajority counts ONLY enrolled
+creators, and on an enrolled lace the gate is the IDENTITY.
+
+The §7b tooth (`enrolledId`) governs WHOSE BLOCKS MAY BE ORDERED. It says nothing about WHO MAY
+DECIDE that a wave anchors: `isSuperRatified` collected `b.creator` off the wave-end blocks with no
+enrollment check, so an unenrolled creator was a full member of the quorum whose own docstring reads
+"a supermajority of DISTINCT PARTICIPANTS". The two are independent — `tauOrder_only_enrolled` holds
+of the pre-repair rule too, because the unenrolled creator's OWN blocks were filtered out of the
+ORDER while its VOTE still finalized the honest ones. That is the shape B6 names, and it is safety:
+finality reached without the committee.
+
+Both halves, as §7b: the count exhibits an ENROLLED ratifier (safety), and on an enrolled lace the
+gate changes nothing (liveness). -/
+
+/-- **`ratifiesEnrolled_eq_of_enrolled`** — on a lace whose every block is from a participant, the
+ratifier gate is the IDENTITY on `ratifies`. The pointwise liveness half: no honest federation loses
+a ratifier, so no wave that used to anchor stops anchoring. The `EnrolledLace` hypothesis is
+genuinely refutable (`traceUnenrolled`, `traceSybilRatify`, `traceSybilOnly` all refute it, §9). -/
+theorem ratifiesEnrolled_eq_of_enrolled (B : Lace) (participants : List AuthorId) (o l : Block)
+    (ho : o ∈ B) (h : EnrolledLace B participants) :
+    ratifiesEnrolled B participants o l = ratifies B participants o l := by
+  simp only [ratifiesEnrolled, h o ho, Bool.true_and]
+
+/-- **`isSuperRatified_eq_pre_of_enrolled` (THE LIVENESS HALF).** On an HONEST lace — every block
+from a participant, the only kind a correct federation produces — the repaired super-ratification
+test is BIT-IDENTICAL to the pre-repair one. So this is a pure subtraction of unenrolled ratifiers,
+never a liveness trade: the honest committee anchors exactly the waves it anchored before, and no
+finalization is delayed by one wave. (Whole-rule liveness is machine-checked by the §9 `#guard`s on
+`trace3`, `traceUnenrolled`, `traceMW4`, and by `Consensus.TauPrefixMonotone`'s `lagBase`/`lagGrown`
+golden orders, all of which are unchanged by this repair.) -/
+theorem isSuperRatified_eq_pre_of_enrolled (B : Lace) (participants : List AuthorId)
+    (l : Block) (waveEndRound : Nat) (h : EnrolledLace B participants) :
+    isSuperRatified B participants l waveEndRound
+      = isSuperRatifiedPreEnrollment B participants l waveEndRound := by
+  unfold isSuperRatified isSuperRatifiedPreEnrollment
+  have hf : (fun bid => match B.lookup bid with
+                | some b => if ratifiesEnrolled B participants b l then some b.creator else none
+                | none   => (none : Option AuthorId))
+          = (fun bid => match B.lookup bid with
+                | some b => if ratifies B participants b l then some b.creator else none
+                | none   => (none : Option AuthorId)) := by
+    funext bid
+    cases hl : B.lookup bid with
+    | none => rfl
+    | some b =>
+      have hmem : b ∈ B := List.mem_of_find?_eq_some hl
+      show (if ratifiesEnrolled B participants b l = true then some b.creator else none)
+         = (if ratifies B participants b l = true then some b.creator else none)
+      rw [ratifiesEnrolled_eq_of_enrolled B participants b l hmem h]
+  rw [hf]
+
+/-- **`superRatified_exists_enrolled_ratifier` (THE SAFETY HALF).** Super-ratification now EXHIBITS
+an ENROLLED ratifier: if the rule says a leader is super-ratified, some block of the lace, created
+by a PARTICIPANT, ratifies it. No hypothesis on the lace — this holds on a lace stuffed with
+unenrolled creators' blocks, which is precisely the case that mattered. Before the repair the
+strongest available statement was "SOME block of the lace ratifies it"
+(`Consensus.SuperRatifyBridge.exists_ratifying_observer`), which a Sybil satisfies; that theorem now
+rides this one.
+
+Non-vacuity: the conclusion is genuinely unreachable on `traceSybilOnly` (§9), where every wave-end
+block ratifies the leader and NOT ONE of them is enrolled — the pre-repair predicate returns `true`
+there and this one returns `false`. -/
+theorem superRatified_exists_enrolled_ratifier {B : Lace} {participants : List AuthorId}
+    {l : Block} {r : Nat} (hsr : isSuperRatified B participants l r = true) :
+    ∃ o ∈ B, participants.contains o.creator = true ∧ ratifies B participants o l = true := by
+  unfold isSuperRatified at hsr
+  simp only [decide_eq_true_eq] at hsr
+  set cs := ((blocksAtRound B r).filterMap (fun bid => match B.lookup bid with
+      | some b => if ratifiesEnrolled B participants b l then some b.creator else none
+      | none => none)).dedup with hcs
+  have hpos : 0 < cs.length := lt_of_lt_of_le (Nat.succ_pos _) hsr
+  obtain ⟨c, hc⟩ := List.exists_mem_of_ne_nil _ (List.ne_nil_of_length_pos hpos)
+  rw [hcs, List.mem_dedup, List.mem_filterMap] at hc
+  obtain ⟨bid, _, hf⟩ := hc
+  cases hlk : B.lookup bid with
+  | none => rw [hlk] at hf; simp at hf
+  | some b =>
+    rw [hlk] at hf
+    have hf' : (if ratifiesEnrolled B participants b l = true then some b.creator else none)
+        = some c := hf
+    by_cases hr : ratifiesEnrolled B participants b l = true
+    · have hr' := hr
+      simp only [ratifiesEnrolled, Bool.and_eq_true] at hr'
+      exact ⟨b, List.mem_of_find?_eq_some hlk, hr'.1, hr'.2⟩
+    · rw [if_neg hr] at hf'; simp at hf'
+
 /-! ## 8. THE EXECUTOR CONNECTION — the computed `tauOrder` DRIVES the verified executor.
 
 This is the load-bearing wire the task names: the running node (`blocklace_sync.rs::poll_finalized_blocks`)
@@ -1076,6 +1233,37 @@ def traceUnenrolledR3 : Lace :=
    ⟨32,3,2,[11,21,31,91],true⟩, ⟨92,9,2,[11,21,31,91],true⟩]
 def traceUnenrolled : Lace := traceUnenrolledR1 ++ traceUnenrolledR2 ++ traceUnenrolledR3
 
+/-- **THE SYBIL-RATIFIER TRACE (HORIZONLOG B6)** — `traceUnenrolled` with EXACTLY ONE BLOCK REMOVED:
+the enrolled creator `3`'s wave-end block `32`. Nothing else differs, which is what makes the pair
+an experiment rather than two anecdotes.
+
+`superMajority 3 = 3`, so the enrolled committee is now SHORT at the wave end: only creators `1`
+(block 12) and `2` (block 22) are there. The unenrolled creator `9`'s block `92` is also at the wave
+end, is fully cross-linked, and `ratifies` the leader on the merits — every one of the three enrolled
+participants has an approving round-2 block in its causal past.
+
+So the pre-repair rule counts `{1, 2, 9}` = 3 ≥ 3 and ANCHORS THE WAVE. The Sybil stood in for the
+silent honest validator. It is exactly the block a ROTATED-OUT validator keeps producing
+(`enroll_pq` is insert-only; `constitution.current.participants` shrinks), so no attacker is
+required. -/
+def traceSybilRatify : Lace := traceUnenrolled.filter (fun b => b.id != 32)
+
+/-- **THE ZERO-HONEST-RATIFIER TRACE** — the extreme of the same defect. Rounds 1-2 are `trace3`'s
+honest blocks; the ENTIRE wave-end round is three DISTINCT unenrolled creators (`7`, `8`, `9`), each
+acking all three honest round-2 blocks. Every one of them `ratifies` the leader on the merits, and
+NOT ONE is a participant.
+
+Pre-repair the rule counts `{7, 8, 9}` = 3 ≥ 3 and anchors wave 0 with ZERO enrolled ratifiers: the
+"supermajority of the committee" is entirely outside the committee. This is the trace that makes
+`superRatified_exists_enrolled_ratifier` non-vacuous — its conclusion is unreachable here while the
+pre-repair predicate is `true`. -/
+def traceSybilOnlyR3 : Lace :=
+  [⟨72,7,2,[11,21,31],true⟩, ⟨82,8,2,[11,21,31],true⟩, ⟨92,9,2,[11,21,31],true⟩]
+def traceSybilOnly : Lace := traceR1 ++ traceR2 ++ traceSybilOnlyR3
+
+/-- The wave-0 leader block both Sybil traces share: creator `1`'s genesis (`participants[0]`). -/
+def sybilLeader : Block := ⟨10,1,0,[],true⟩
+
 /-- **THE DIFFERENTIAL GOLDEN VECTOR** — the finalized order projected to `(creator, seq)` pairs.
 This is the level at which the Lean model and the Rust `ordering.rs::tau` are compared: the abstract
 `BlockId` is a `Nat` here vs. a blake3 hash in Rust, but the `(creator, seq)` coordinate of each
@@ -1119,9 +1307,13 @@ enrollment filter were vacuous — if the rule had "obviously" never emitted a n
 guard would be FALSE and the build would break. It is the Lean-side answer to "prove it can go red",
 and unlike a reverted-and-restored source edit it stays in the tree forever. -/
 
--- (RED) THE WOUND: without the filter the rule finalizes the UNENROLLED creator 9's blocks — all
--- three of them, the whole lace, exactly what `node/src/finality_gate.rs:379` measured (12 of 12).
-#guard (tauOrderUnfiltered traceUnenrolled trace3Participants 3).length == 12
+-- (RED) THE WOUND: without the filter the rule finalizes the UNENROLLED creator 9's blocks.
+-- ⚑ This length was 12 (the whole lace, exactly what `node/src/finality_gate.rs:379` measured)
+-- until the B6 ratifier repair; it is 11 now because `leaderCoverage`'s `ratifiesEnrolled` gate no
+-- longer sweeps creator 9's OWN wave-end block (92) into the anchor's coverage. Blocks 90 and 91
+-- are still there — honest blocks ack them, so they ride in through the honest ratifiers' causal
+-- pasts — which is exactly what keeps `enrolledId` load-bearing and this guard a real red.
+#guard (tauOrderUnfiltered traceUnenrolled trace3Participants 3).length == 11
 #guard (tauOrderUnfiltered traceUnenrolled trace3Participants 3).any
         (fun id => match traceUnenrolled.lookup id with | some b => b.creator == 9 | none => false)
 -- (GREEN) THE REFUSAL: the verified rule finalizes NO block from the unenrolled creator.
@@ -1143,6 +1335,56 @@ and unlike a reverted-and-restored source edit it stays in the tree forever. -/
 -- and the memoized + runtime-twin paths carry the filter too (the exports run `tauOrderFast`).
 #guard tauOrderFast traceUnenrolled trace3Participants 3 == tauOrder traceUnenrolled trace3Participants 3
 #guard tauGoldenFast traceUnenrolled trace3Participants 3 == tauGolden traceUnenrolled trace3Participants 3
+
+/-! ### THE RATIFIER-ENROLLMENT `#guard`s (HORIZONLOG B6) — a RED/GREEN PAIR AT THE POINT OF THE FIX,
+on two laces, plus the liveness pole on the SAME lace shape.
+
+`isSuperRatifiedPreEnrollment` is the pre-repair predicate, kept for exactly this: the first guard of
+each pair EXECUTES THE WOUND. If the ratifier gate were vacuous — if a non-participant's wave-end
+block could not have made quorum — those guards would be FALSE and the build would break. -/
+
+-- ── EXHIBIT 1: the Sybil SUBSTITUTES for a silent honest validator. ──
+-- Anti-vacuity: the two laces differ by EXACTLY the one honest wave-end block, so the pair isolates
+-- the mechanism (the enrolled committee is short; only the unenrolled creator makes up the number).
+#guard traceSybilRatify.length + 1 == traceUnenrolled.length
+#guard traceUnenrolled.all (fun b => b.id == 32 || traceSybilRatify.contains b)
+#guard !traceSybilRatify.any (fun b => b.id == 32)
+-- the wave-end round genuinely holds the unenrolled creator's block, and it genuinely `ratifies`.
+#guard (blocksAtRound traceSybilRatify 3) == [12, 22, 92]
+#guard ratifies traceSybilRatify trace3Participants ⟨92,9,2,[11,21,31,91],true⟩ sybilLeader
+#guard !trace3Participants.contains 9
+-- (RED) THE WOUND: the PRE-REPAIR rule super-ratifies the wave on `{1, 2, 9}`.
+#guard isSuperRatifiedPreEnrollment traceSybilRatify trace3Participants sybilLeader 3
+-- (GREEN) THE REFUSAL: the repaired rule does not — the ENROLLED count is 2, and 2 < 3.
+#guard !isSuperRatified traceSybilRatify trace3Participants sybilLeader 3
+#guard (finalLeaderAt traceSybilRatify trace3Participants 0 3).isNone
+#guard (tauOrder traceSybilRatify trace3Participants 3).isEmpty
+#guard (tauOrderFast traceSybilRatify trace3Participants 3).isEmpty
+
+-- ── EXHIBIT 2: the wave anchored with ZERO enrolled ratifiers. ──
+-- Anti-vacuity: all three wave-end blocks ratify the leader on the merits, and none is enrolled.
+#guard (blocksAtRound traceSybilOnly 3) == [72, 82, 92]
+#guard traceSybilOnlyR3.all (fun b => ratifies traceSybilOnly trace3Participants b sybilLeader)
+#guard traceSybilOnlyR3.all (fun b => !trace3Participants.contains b.creator)
+-- (RED) THE WOUND: three unenrolled creators are a "supermajority of DISTINCT PARTICIPANTS".
+#guard isSuperRatifiedPreEnrollment traceSybilOnly trace3Participants sybilLeader 3
+-- (GREEN) THE REFUSAL, and `superRatified_exists_enrolled_ratifier`'s conclusion is unreachable here.
+#guard !isSuperRatified traceSybilOnly trace3Participants sybilLeader 3
+#guard (tauOrder traceSybilOnly trace3Participants 3).isEmpty
+
+-- ── THE LIVENESS POLE, on the SAME lace shape: put the honest validator back at the wave end and
+--    the committee anchors again, finalizing all NINE enrolled blocks in the golden order. A gate
+--    that stops everything ratifying is not a fix; this is the both-halves check, executably.
+--    (`traceSybilRatify` IS `traceUnenrolled` minus block 32, guarded above.)
+#guard isSuperRatified traceUnenrolled trace3Participants sybilLeader 3
+#guard (finalLeaderAt traceUnenrolled trace3Participants 0 3) == some sybilLeader
+#guard (tauOrder traceUnenrolled trace3Participants 3).length == 9
+-- and the gate is the IDENTITY on every all-enrolled lace in this file (the `EnrolledLace` half of
+-- `isSuperRatified_eq_pre_of_enrolled`, executably, on both the golden and the multi-wave trace).
+#guard isSuperRatified trace3 trace3Participants sybilLeader 3
+        == isSuperRatifiedPreEnrollment trace3 trace3Participants sybilLeader 3
+#guard isSuperRatified traceMW4 traceMW4Participants ⟨11,1,0,[],true⟩ 3
+        == isSuperRatifiedPreEnrollment traceMW4 traceMW4Participants ⟨11,1,0,[],true⟩ 3
 
 -- THE MEMOIZED FAST PATH agrees with the pure rule on the concrete traces (the live gate exports run
 -- `tauOrderFast`/`tauGoldenFast`; the exponential re-traversal is gone, the order is IDENTICAL).
@@ -1201,3 +1443,6 @@ constrain a REAL, non-trivial finalized order, and the model reproduces the node
 #assert_axioms tauOrderFastUnfiltered_eq
 #assert_axioms tauOrder_only_enrolled
 #assert_axioms tauOrder_enrolled_eq_unfiltered
+#assert_axioms ratifiesEnrolled_eq_of_enrolled
+#assert_axioms isSuperRatified_eq_pre_of_enrolled
+#assert_axioms superRatified_exists_enrolled_ratifier

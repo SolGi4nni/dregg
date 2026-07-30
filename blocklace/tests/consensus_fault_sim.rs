@@ -624,6 +624,157 @@ fn finality_proceeds_without_a_laggy_node() {
     }
 }
 
+// ─── SCENARIO F — an UNENROLLED creator must not supply a missing quorum member
+//                 (HORIZONLOG B6) ────────────────────────────────────────────────
+
+/// Run an `n`-validator federation for one wave (wavelength 3) where EVERY member authors the
+/// first two rounds — so `ratifies`' approver-side quorum is satisfied for everyone — and only
+/// `wave_end_alive` of them author the WAVE-END round, modelling validators that crash or slow
+/// between rounds. Throughout, a signer that is **NOT in the committee** authors a well-formed,
+/// correctly hybrid-signed block in every round and gossips it to everyone.
+///
+/// That signer is not an exotic adversary: `finality.rs::enroll_pq` is INSERT-ONLY while
+/// `constitution.current.participants` shrinks on a passed membership proposal, so a ROTATED-OUT
+/// validator keeps producing exactly these blocks and they keep passing ingest — which is why this
+/// sim uses the same `receive_block`/`merge` path the live node uses and defeats no check to get
+/// the block in. Returns each node's finalized order plus the committee and the outsider's id.
+fn wave_end_short_with_outsider(
+    n: usize,
+    wave_end_alive: usize,
+) -> (Vec<Vec<([u8; 32], u64)>>, Vec<[u8; 32]>, [u8; 32]) {
+    let keys: Vec<SigningKey> = (0..n).map(|i| key(10 + i as u8)).collect();
+    let participants: Vec<[u8; 32]> = keys.iter().map(pubkey).collect();
+    let outsider = key(200);
+    let outsider_id = pubkey(&outsider);
+    assert!(
+        !participants.contains(&outsider_id),
+        "the outsider must NOT be enrolled — else this scenario has no adversary"
+    );
+
+    // Rounds 1-2: the whole committee plus the outsider, fully connected.
+    let mut early: Vec<&SigningKey> = keys.iter().collect();
+    early.push(&outsider);
+    let head = build_rounds_seeded(&early, 0, 2, &[]);
+    let preds: Vec<BlockId> = head[1].iter().map(|b| b.id()).collect();
+
+    // Round 3 (the wave end): only `wave_end_alive` committee members, plus the outsider.
+    let mut late: Vec<&SigningKey> = keys.iter().take(wave_end_alive).collect();
+    late.push(&outsider);
+    let tail = build_rounds_seeded(&late, 2, 1, &preds);
+
+    let dag: Vec<Block> = flatten(&head).into_iter().chain(flatten(&tail)).collect();
+
+    let committee: Vec<&SigningKey> = keys.iter().collect();
+    let mut nodes: Vec<Node> = (0..n)
+        .map(|i| Node::new(format!("N{i}"), keys[i].clone(), &committee))
+        .collect();
+    for node in &mut nodes {
+        node.merge(dag.clone())
+            .expect("honest nodes accept the outsider's well-formed, correctly signed blocks");
+    }
+
+    // ANTI-VACUITY — the outsider really is in every honest node's lace, at every round,
+    // including the wave-end round. A refusal that came from the block being absent would say
+    // nothing about the finality rule.
+    for node in &nodes {
+        let seqs: Vec<u64> = node
+            .lace
+            .iter()
+            .filter(|(_, b)| b.creator == outsider_id)
+            .map(|(_, b)| b.seq)
+            .collect();
+        assert_eq!(
+            seqs.len(),
+            3,
+            "[{}] the outsider must be in the lace at all three rounds, got {seqs:?}",
+            node.name
+        );
+        assert!(
+            seqs.contains(&2),
+            "[{}] the outsider must have a WAVE-END block — that is the ratifier under test",
+            node.name
+        );
+    }
+
+    let refs: Vec<&Node> = nodes.iter().collect();
+    assert_safety(
+        &refs,
+        &participants,
+        &format!("n={n} wave_end_alive={wave_end_alive} +outsider"),
+    );
+
+    let orders = nodes.iter().map(|nd| nd.finalized(&participants)).collect();
+    (orders, participants, outsider_id)
+}
+
+/// **HORIZONLOG B6, on the RUN.** `is_super_ratified` counted the DISTINCT CREATORS of the
+/// wave-end blocks that ratify the leader, with no check that those creators are participants —
+/// so a non-member's wave-end block was a full member of the quorum whose own name is
+/// "a supermajority of distinct participants".
+///
+/// The consequence is the TOLERANCE property this file already asserts, defeated from outside:
+/// at n=4 the quorum is 3, so a wave end reached by only 2 committee members MUST NOT anchor
+/// (that is the safe stall `n4_survives_f_kills_and_stalls_at_f_plus_one` demands). Add ONE
+/// unenrolled creator's block at that wave end and, before the ratifier gate, the count is 3 and
+/// the federation COMMITS — the honest committee's turns finalized on a wave the committee did not
+/// ratify. Two honest nodes with different views of a non-member's blocks (and non-members are
+/// exactly the creators dissemination does not guarantee) would then finalize different prefixes.
+///
+/// BOTH POLES, in the same harness:
+///   * the outsider cannot restore the quorum — the federation stalls, as it must; and
+///   * with the committee's own wave end intact and the SAME outsider still in every lace at
+///     every round, the federation finalizes normally and orders NOT ONE of its blocks.
+///
+/// Verified twin: `BlocklaceFinality.traceSybilRatify` and the `#guard` red/green pair on
+/// `isSuperRatifiedPreEnrollment` / `isSuperRatified`.
+#[test]
+fn unenrolled_creator_cannot_supply_a_missing_wave_end_ratifier() {
+    let n = 4;
+    let quorum = supermajority_threshold(n);
+    assert_eq!(quorum, 3, "n=4, f=1: three of four");
+
+    // ── THE REFUSAL. Two committee members at the wave end is one short of the quorum; the
+    //    outsider's wave-end block must not make it up.
+    let (orders, participants, outsider) = wave_end_short_with_outsider(n, quorum - 1);
+    for (i, o) in orders.iter().enumerate() {
+        assert!(
+            o.is_empty(),
+            "[B6] node {i} FINALIZED {} coordinates on a wave whose enrolled wave-end ratifiers \
+             were {} of a quorum of {quorum} — an UNENROLLED creator supplied the missing \
+             ratifier and turned a correct safe stall into a commit: {o:?}",
+            o.len(),
+            quorum - 1
+        );
+    }
+
+    // ── THE LIVENESS POLE. Whole committee at the wave end, same outsider present throughout:
+    //    the federation finalizes, and no outsider coordinate is in the order.
+    let (orders_ok, participants_ok, outsider_ok) = wave_end_short_with_outsider(n, n);
+    assert_eq!(participants_ok, participants);
+    assert_eq!(outsider_ok, outsider);
+    for (i, o) in orders_ok.iter().enumerate() {
+        assert!(
+            !o.is_empty(),
+            "[LIVENESS] node {i} finalized NOTHING with the full committee at the wave end — the \
+             ratifier gate must be a pure subtraction of non-members, never a liveness trade"
+        );
+        assert!(
+            o.iter().all(|(c, _)| *c != outsider),
+            "[B6] node {i} finalized an UNENROLLED creator's block: {o:?}"
+        );
+        assert!(
+            o.iter().all(|(c, _)| participants.contains(c)),
+            "[B6] node {i} finalized a creator outside the committee: {o:?}"
+        );
+    }
+    // The two arms are genuinely different outcomes, so neither assertion is vacuous.
+    assert_ne!(
+        orders[0].is_empty(),
+        orders_ok[0].is_empty(),
+        "the scenario must DISTINGUISH the safe stall from the honest commit"
+    );
+}
+
 // ─── META-tests: the property checkers are NON-VACUOUS (they reject the fault) ──
 
 #[test]

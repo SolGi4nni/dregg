@@ -13,7 +13,7 @@ hypotheses it does not.
 
 | | deployed (`isSuperRatified`/`finalLeaderAt`) | proved (`Committed`) | direction |
 |-|-|-|-|
-|outer quorum|supermajority of DISTINCT wave-end creators, each `ratifies`|**one** observer anywhere in the lace|deployed STRONGER|
+|outer quorum|supermajority of DISTINCT **ENROLLED** wave-end creators, each `ratifies`|**one** observer anywhere in the lace|deployed STRONGER|
 |inner threshold|`superMajority n = ⌊2n/3⌋+1`|`cfg.n − cfg.f`|**incomparable**|
 |leader-in-past|`causal_past_INCLUSIVE`|(was strict `≺`; repaired 2026-07-28)|now agree|
 |equivocation guard|observer-LOCAL, same-ROUND pair in `o`'s past|GLOBAL `Equivocator` = incomparable pair anywhere|**incomparable**|
@@ -384,27 +384,19 @@ theorem quorum_of_ratifies {B : Lace} {rnd : Nat → Nat} {ps : List AuthorId} {
 
 /-- **`exists_ratifying_observer`** — `is_super_ratified` returning `true` MEANS at least one
 wave-end block of the lace ratifies the leader (the supermajority is `≥ 1`). This is all the
-bridge needs from the outer quorum: the algebra asks for ONE observer, the node exhibits many. -/
+bridge needs from the outer quorum: the algebra asks for ONE observer, the node exhibits many.
+
+⚑ STRENGTHENED UPSTREAM (HORIZONLOG B6). This used to be the strongest statement available, and a
+SYBIL SATISFIED IT: before `BlocklaceFinality.ratifiesEnrolled`, `isSuperRatified` counted the
+wave-end creators with no enrollment check, so the observer this theorem exhibits could be a
+non-participant — and on `BlocklaceFinality.traceSybilOnly` EVERY exhibited observer was. The rule
+now gates the ratifier, so `superRatified_exists_enrolled_ratifier` exhibits an ENROLLED one; this
+theorem is its projection, kept because the bridge's consumers only need the `ratifies` half. -/
 theorem exists_ratifying_observer {B : Lace} {ps : List AuthorId} {l : Block} {r : Nat}
     (hsr : isSuperRatified B ps l r = true) :
     ∃ o ∈ B, ratifies B ps o l = true := by
-  unfold isSuperRatified at hsr
-  simp only [decide_eq_true_eq] at hsr
-  set cs := ((blocksAtRound B r).filterMap (fun bid => match B.lookup bid with
-      | some b => if ratifies B ps b l then some b.creator else none
-      | none => none)).dedup with hcs
-  have hpos : 0 < cs.length := lt_of_lt_of_le (Nat.succ_pos _) hsr
-  obtain ⟨c, hc⟩ := List.exists_mem_of_ne_nil _ (List.ne_nil_of_length_pos hpos)
-  rw [hcs, List.mem_dedup, List.mem_filterMap] at hc
-  obtain ⟨bid, _, hf⟩ := hc
-  cases hlk : B.lookup bid with
-  | none => rw [hlk] at hf; simp at hf
-  | some b =>
-    rw [hlk] at hf
-    have hf' : (if ratifies B ps b l = true then some b.creator else none) = some c := hf
-    by_cases hr : ratifies B ps b l = true
-    · exact ⟨b, lookup_mem hlk, hr⟩
-    · rw [if_neg hr] at hf'; simp at hf'
+  obtain ⟨o, hoB, _, hrat⟩ := superRatified_exists_enrolled_ratifier hsr
+  exact ⟨o, hoB, hrat⟩
 
 /-- **`finalLeaderAt_spec`** — unpacking the node's per-wave commit decision: a unique
 leader-slot candidate AND super-ratification by the wave end. -/
