@@ -39,7 +39,12 @@ a from-prose reconstruction gets wrong:
   2. **`Length` is a binprot SIGNED int** — not a `Nat0`, not a fixed four bytes
      (`Unsigned_extended.UInt32` writes through `bin_write_int`).
   3. **`Global_slot_since_hard_fork` / `..._since_genesis` are single-constructor VARIANTS**, so each
-     costs a leading tag byte before its integer.
+     costs a leading tag byte before its integer — and the two are NOT the same shape.
+     `curr_global_slot_since_hard_fork` is `Consensus.Global_slot = { slot_number; slots_per_epoch }`
+     (`consensus/global_slot.ml:22-24`), a PAIR of `u32`s of which the second is the value's own
+     `slots_per_epoch`; `global_slot_since_genesis` is a bare `Mina_numbers` wrapper, one `u32`.
+     Both halves of the pair are absorbed by `Global_slot.to_input` (`global_slot.ml:50-52`), so a
+     reader that assumes symmetry either drops a `u32` from the hash preimage or invents one.
 
 ## Canonicality is enforced, not assumed
 
@@ -51,16 +56,23 @@ compares unequal to itself.
 
 ## What is decoded, and what is deliberately not
 
-`Blockchain_state` is WALKED IN FULL and discarded — it has to be walked, because it sits between
-`genesis_state_hash` and `consensus_state` and binprot has no length prefix a reader could jump. The
-block BODY (a whole staged-ledger diff) and the header fields after the Wrap proof are not reached
-by this file at all; `decodeProtocolState` is total on its prefix and says how many bytes it used.
+`Protocol_state.Value.Stable.V2` is decoded ENTIRE — `Blockchain_state` included, down to
+`aux_hash` and `pending_coinbase_aux`. The block BODY (a whole staged-ledger diff) and the header
+fields after the Wrap proof are not reached by this file at all; `decodeProtocolStateRaw` is total on
+its prefix and says how many bytes it used.
 
-**Not done here, and not done anywhere yet: re-deriving `state_hash` from the body.** That is
-`Poseidon(prefix "MinaProtoState")[previous_state_hash, body_hash]` (`protocol_state.ml:45-55`), and
-`Body.hash` absorbs `to_input` in an order that is NOT the binprot order
-(`protocol_state.ml:119-130`). `previous_state_hash` below is the parent LINK; a tip's own identity
-still comes from the peer's framing. That row is open in the table, stated as open.
+⚑ **2026-07-30: `Blockchain_state` stopped being discarded.** It used to be walked-and-dropped on
+the grounds that `select` reads nothing in it. `select` still reads nothing in it — but `state_hash`
+is `Poseidon(prefix "MinaProtoState")[previous_state_hash, Body.hash body]` and `Body.hash` absorbs
+ALL of it, so dropping it was precisely why a tip's own identity could not be re-derived and had to
+be taken from the peer's framing. `Bridge.MinaStateHashDerive` closes that; this file's job was to
+stop throwing the preimage away.
+
+**ONE PARSER, TWO VIEWS.** `protocolStateRaw` reads the bytes. `ProtocolStateRaw.view` projects the
+fork-choice `ProtocolState` (and `ConsensusRaw.toSelection` the `ConsensusState` the tournament
+theorems are stated over, applying `blake2b256` to the raw VRF bytes on the way). No byte is read
+twice and there is no second structure to keep in agreement — the digest is what the RULE needs,
+the raw bytes are what the HASH needs, and both come out of one decode.
 -/
 import Dregg2.Bridge.MinaChainSelection
 import Dregg2.Circuit.Emit.Blake2bGadget
@@ -212,12 +224,20 @@ def singleVariant {α : Type} (p : P α) : P α := do
   let t ← u8
   if t == 0 then p else pfail
 
-/-- `Public_key.Compressed.Stable.V1 = { x : Fp; is_odd : bool }` — walked, value discarded (nothing
-`select` reads is in it, but binprot has no way to skip what it has not parsed). -/
-def compressedPk : P Unit := do
-  let _ ← fpLE
-  let _ ← boolB
-  pure ()
+/-- `Public_key.Compressed.Stable.V1 = { x : Fp; is_odd : bool }`. Nothing `select` reads is in it,
+but `Body.to_input` absorbs both halves, so both are RETAINED. -/
+structure Pk where
+  /-- The compressed `x` coordinate. -/
+  x : Nat
+  /-- The parity bit. -/
+  isOdd : Bool
+deriving Repr, DecidableEq
+
+/-- `Public_key.Compressed.Stable.V1`. -/
+def compressedPk : P Pk := do
+  let x ← fpLE
+  let isOdd ← boolB
+  pure { x, isOdd }
 
 /-! ## §2 — Blake2b-256, so the VRF digest is DERIVED and not a carrier.
 
@@ -297,33 +317,93 @@ def subWindowsPerWindow : Nat := 11
 /-! ## §4 — The records, in binprot order. -/
 
 /-- `Mina_base.Epoch_data.Poly.Stable.V1` — ⚑ `ledger` FIRST, then `seed`. Only `lock_checkpoint`
-is read by `select`; the rest is walked because it must be. Returns the lock checkpoint. -/
-def epochData : P Nat := do
-  let _ledgerHash ← fpLE
-  let _ledgerTotalCurrency ← amountU64
-  let _seed ← fpLE
-  let _startCheckpoint ← fpLE
+is read by `select`, but `Body.to_input` absorbs ALL SIX in a DIFFERENT order
+(`proof_of_stake.ml:1007-1017`: seed, start, epoch_length, ledger, lock), so all six are retained. -/
+structure EpochRaw where
+  /-- `ledger.hash`. -/
+  ledgerHash : Nat
+  /-- `ledger.total_currency`. -/
+  ledgerTotalCurrency : Nat
+  /-- `seed`. -/
+  seed : Nat
+  /-- `start_checkpoint`. -/
+  startCheckpoint : Nat
+  /-- `lock_checkpoint` — the field `is_short_range` keys on. -/
+  lockCheckpoint : Nat
+  /-- `epoch_length`. -/
+  epochLength : Nat
+deriving Repr, DecidableEq
+
+/-- `Mina_base.Epoch_data.Poly.Stable.V1`, in BINPROT order. -/
+def epochData : P EpochRaw := do
+  let ledgerHash ← fpLE
+  let ledgerTotalCurrency ← amountU64
+  let seed ← fpLE
+  let startCheckpoint ← fpLE
   let lockCheckpoint ← fpLE
-  let _epochLength ← lengthU32
-  pure lockCheckpoint
+  let epochLength ← lengthU32
+  pure { ledgerHash, ledgerTotalCurrency, seed, startCheckpoint, lockCheckpoint, epochLength }
 
-/-- `(Amount, Sgn) Signed_poly.Stable.V1 = { magnitude; sgn }`. -/
-def signedAmount : P Unit := do
-  let _ ← amountU64
+/-- `(Amount, Sgn) Signed_poly.Stable.V1 = { magnitude; sgn }`. `Sgn.t = Pos | Neg` is a nullary
+two-constructor variant, so its tag byte IS the value; `Amount.Signed.to_input` absorbs
+`sgn_to_bool Pos = true` (`currency.ml:494`). -/
+structure SignedAmt where
+  /-- `magnitude`, a `u64`. -/
+  magnitude : Nat
+  /-- `sgn = Pos`. -/
+  isPos : Bool
+deriving Repr, DecidableEq
+
+/-- `(Amount, Sgn) Signed_poly.Stable.V1`. -/
+def signedAmount : P SignedAmt := do
+  let magnitude ← amountU64
   let s ← u8
-  if s == 0 ∨ s == 1 then pure () else pfail
+  if s == 0 then pure { magnitude, isPos := true }
+  else if s == 1 then pure { magnitude, isPos := false }
+  else pfail
 
-/-- `Mina_transaction_logic.Zkapp_command_logic.Local_state.Stable.V1`. -/
-def localState : P Unit := do
-  let _stackFrame ← fpLE
-  let _callStack ← fpLE
-  let _txnCommitment ← fpLE
-  let _fullTxnCommitment ← fpLE
-  let _ ← signedAmount   -- excess
-  let _ ← signedAmount   -- supply_increase
-  let _ledger ← fpLE
-  let _success ← boolB
-  let _accountUpdateIndex ← lengthU32
+/-- `Mina_transaction_logic.Zkapp_command_logic.Local_state.Stable.V1`. ⚑ `failure_status_tbl` is
+walked and DROPPED — `local_state.ml:120` excludes it from `to_input` explicitly, so it is the one
+decoded field that is genuinely not in the hash preimage. -/
+structure LocalRaw where
+  /-- `stack_frame`. -/
+  stackFrame : Nat
+  /-- `call_stack`. -/
+  callStack : Nat
+  /-- `transaction_commitment`. -/
+  txnCommitment : Nat
+  /-- `full_transaction_commitment`. -/
+  fullTxnCommitment : Nat
+  /-- `excess`. -/
+  excess : SignedAmt
+  /-- `supply_increase`. -/
+  supplyIncrease : SignedAmt
+  /-- `ledger`. -/
+  ledger : Nat
+  /-- `success`. -/
+  success : Bool
+  /-- `account_update_index`, a `u32`. -/
+  accountUpdateIndex : Nat
+  /-- `will_succeed`. -/
+  willSucceed : Bool
+deriving Repr, DecidableEq
+
+/-- Run a unit parser `n` times. -/
+def forEachN : Nat → P Unit → P Unit
+  | 0, _ => pure ()
+  | n + 1, p => do let _ ← p; forEachN n p
+
+/-- `Mina_transaction_logic.Zkapp_command_logic.Local_state.Stable.V1`, in BINPROT order. -/
+def localState : P LocalRaw := do
+  let stackFrame ← fpLE
+  let callStack ← fpLE
+  let txnCommitment ← fpLE
+  let fullTxnCommitment ← fpLE
+  let excess ← signedAmount
+  let supplyIncrease ← signedAmount
+  let ledger ← fpLE
+  let success ← boolB
+  let accountUpdateIndex ← lengthU32
   -- `failure_status_tbl : Failure.t list list`; every `Failure` constructor is nullary.
   let outer ← nat0
   let _ ← guardP (outer ≤ 1024)
@@ -331,57 +411,123 @@ def localState : P Unit := do
     let inner ← nat0
     let _ ← guardP (inner ≤ 1024)
     forEachN inner (do let _ ← u8; pure ()))
-  let _willSucceed ← boolB
-  pure ()
-where
-  /-- Run a unit parser `n` times. -/
-  forEachN : Nat → P Unit → P Unit
-    | 0, _ => pure ()
-    | n + 1, p => do let _ ← p; forEachN n p
+  let willSucceed ← boolB
+  pure { stackFrame, callStack, txnCommitment, fullTxnCommitment, excess, supplyIncrease,
+         ledger, success, accountUpdateIndex, willSucceed }
+
+/-- `Registers.Stable.V1` — `{ first_pass_ledger; second_pass_ledger; pending_coinbase_stack;
+local_state }`, where the stack is `{ data; state = { init; curr } }` (three field elements). -/
+structure RegistersRaw where
+  /-- `first_pass_ledger`. -/
+  firstPassLedger : Nat
+  /-- `second_pass_ledger`. -/
+  secondPassLedger : Nat
+  /-- `pending_coinbase_stack.data`. -/
+  coinbaseStackData : Nat
+  /-- `pending_coinbase_stack.state.init`. -/
+  coinbaseStackInit : Nat
+  /-- `pending_coinbase_stack.state.curr`. -/
+  coinbaseStackCurr : Nat
+  /-- `local_state`. -/
+  local_ : LocalRaw
+deriving Repr, DecidableEq
 
 /-- `Registers.Stable.V1`. -/
-def registers : P Unit := do
-  let _firstPass ← fpLE
-  let _secondPass ← fpLE
-  let _coinbaseData ← fpLE
-  let _stackInit ← fpLE
-  let _stackCurr ← fpLE
-  localState
+def registers : P RegistersRaw := do
+  let firstPassLedger ← fpLE
+  let secondPassLedger ← fpLE
+  let coinbaseStackData ← fpLE
+  let coinbaseStackInit ← fpLE
+  let coinbaseStackCurr ← fpLE
+  let local_ ← localState
+  pure { firstPassLedger, secondPassLedger, coinbaseStackData, coinbaseStackInit,
+         coinbaseStackCurr, local_ }
 
 /-- `Fee_excess.Stable.V1`. -/
-def feeExcess : P Unit := do
-  let _tokenL ← fpLE
-  let _ ← signedAmount
-  let _tokenR ← fpLE
-  let _ ← signedAmount
-  pure ()
+structure FeeExcessRaw where
+  /-- `fee_token_l`. -/
+  tokenL : Nat
+  /-- `fee_excess_l`. -/
+  feeL : SignedAmt
+  /-- `fee_token_r`. -/
+  tokenR : Nat
+  /-- `fee_excess_r`. -/
+  feeR : SignedAmt
+deriving Repr, DecidableEq
 
-/-- `Mina_state.Blockchain_state.Value.Stable.V2` — walked in full, discarded. It sits between
-`genesis_state_hash` and `consensus_state`, and binprot gives no length to jump it by. -/
-def blockchainState : P Unit := do
-  let _stagedLedgerHash ← fpLE
-  let _auxHash ← byteString 4096
-  let _pendingCoinbaseAux ← byteString 4096
-  let _pendingCoinbaseHash ← fpLE
-  let _genesisLedgerHash ← fpLE
-  let _ ← registers          -- ledger_proof_statement.source
-  let _ ← registers          -- ledger_proof_statement.target
-  let _connectingLeft ← fpLE
-  let _connectingRight ← fpLE
-  let _ ← signedAmount       -- supply_increase
-  let _ ← feeExcess
+/-- `Fee_excess.Stable.V1`. -/
+def feeExcess : P FeeExcessRaw := do
+  let tokenL ← fpLE
+  let feeL ← signedAmount
+  let tokenR ← fpLE
+  let feeR ← signedAmount
+  pure { tokenL, feeL, tokenR, feeR }
+
+/-- `Mina_state.Blockchain_state.Value.Stable.V2` — ⚑ **RETAINED IN FULL.** Until 2026-07-30 this
+was walked and discarded, on the grounds that `select` reads nothing in it. `select` still reads
+nothing in it — but `state_hash` is a hash of ALL of it, so discarding it was exactly why a tip's
+identity could not be re-derived. Every field below is in the `MinaProtoStateBody` preimage.
+
+⚑ `aux_hash` and `pending_coinbase_aux` are RAW BYTES, not field elements: they enter the preimage
+only through `SHA-256(BE(ledger_hash) ‖ aux_hash ‖ pending_coinbase_aux)`
+(`staged_ledger_hash.ml:183-191`). They are the one place a `Fp` is hashed as BIG-endian bytes. -/
+structure BlockchainRaw where
+  /-- `staged_ledger_hash.non_snark.ledger_hash`. -/
+  slhLedgerHash : Nat
+  /-- `staged_ledger_hash.non_snark.aux_hash` — 32 raw bytes. -/
+  slhAuxHash : List Nat
+  /-- `staged_ledger_hash.non_snark.pending_coinbase_aux` — 32 raw bytes. -/
+  slhPendingCoinbaseAux : List Nat
+  /-- `staged_ledger_hash.pending_coinbase_hash`. -/
+  slhPendingCoinbaseHash : Nat
+  /-- `genesis_ledger_hash`. -/
+  genesisLedgerHash : Nat
+  /-- `ledger_proof_statement.source`. -/
+  source : RegistersRaw
+  /-- `ledger_proof_statement.target`. -/
+  target : RegistersRaw
+  /-- `ledger_proof_statement.connecting_ledger_left`. -/
+  connectingLeft : Nat
+  /-- `ledger_proof_statement.connecting_ledger_right`. -/
+  connectingRight : Nat
+  /-- `ledger_proof_statement.supply_increase`. -/
+  supplyIncrease : SignedAmt
+  /-- `ledger_proof_statement.fee_excess`. -/
+  fee : FeeExcessRaw
+  /-- `timestamp`, milliseconds. -/
+  timestamp : Nat
+  /-- `body_reference` — 32 raw bytes (a Blake2b digest of the block body). -/
+  bodyReference : List Nat
+deriving Repr, DecidableEq
+
+/-- `Mina_state.Blockchain_state.Value.Stable.V2`, in BINPROT order. -/
+def blockchainState : P BlockchainRaw := do
+  let slhLedgerHash ← fpLE
+  let slhAuxHash ← byteString 4096
+  let slhPendingCoinbaseAux ← byteString 4096
+  let slhPendingCoinbaseHash ← fpLE
+  let genesisLedgerHash ← fpLE
+  let source ← registers          -- ledger_proof_statement.source
+  let target ← registers          -- ledger_proof_statement.target
+  let connectingLeft ← fpLE
+  let connectingRight ← fpLE
+  let supplyIncrease ← signedAmount
+  let fee ← feeExcess
   -- ⚑ `sok_digest : unit` — OCaml's `bin_write_unit` writes ONE `0x00` byte. It is not free, and
   -- assuming it was is what made this decoder REFUSE a real devnet block: everything after it read
   -- one byte early, and the shift survived twenty canonical field-element checks before surfacing
   -- as a timestamp of 0. (The same fact is why `mina_pickles`'s reader has a `unit` primitive: it
-  -- terminates every OCaml fixed-length `Vector`.)
+  -- terminates every OCaml fixed-length `Vector`.) `Snarked_ledger_state.to_input` DROPS it —
+  -- `sok_digest = _` in the pattern — so it is decoded and never hashed.
   let _ ← unitB
-  let _timestamp ← amountU64
+  let timestamp ← amountU64
   -- ⚑ `body_reference : Consensus.Body_reference.Stable.V1 = Bounded_types.String` — a LENGTH-
   -- PREFIXED byte string, NOT a bare 32-byte digest. It is a Blake2b hash and it looks like a raw
   -- digest, which is exactly why the `Nat0` in front of it is easy to drop.
-  let _bodyReference ← byteString 64
-  pure ()
+  let bodyReference ← byteString 64
+  pure { slhLedgerHash, slhAuxHash, slhPendingCoinbaseAux, slhPendingCoinbaseHash,
+         genesisLedgerHash, source, target, connectingLeft, connectingRight, supplyIncrease,
+         fee, timestamp, bodyReference }
 
 /-- Read exactly `n` `Length`s. -/
 def lengths : Nat → P (List Nat)
@@ -391,13 +537,55 @@ def lengths : Nat → P (List Nat)
       let r ← lengths n
       pure (x :: r)
 
-/-- **`consensusState`** — `Consensus.Data.Consensus_state.Value.Stable.V2`, all fifteen fields, in
-binprot order, DIRECTLY into `MinaChainSelection.ConsensusState`.
+/-- `Consensus.Data.Consensus_state.Value.Stable.V2`, all fifteen fields, RETAINED.
 
-There is no intermediate structure. The eight fields `select_reads_only_eight_fields` names land in
-the eight fields it names; the other seven land in the fields that theorem proves cannot influence
-the verdict — which is what makes decoding them safe as well as necessary. -/
-def consensusState : P ConsensusState := do
+⚑ `slotsPerEpoch` is not a fifteenth field of the record: `curr_global_slot_since_hard_fork` has type
+`Consensus.Global_slot.Stable.V1 = { slot_number : Global_slot_since_hard_fork.t;
+slots_per_epoch : Length.t }` (`consensus/global_slot.ml:22-24`), so the pair is ONE field on the
+wire and `Global_slot.to_input` absorbs BOTH u32s (`global_slot.ml:50-52`). `global_slot_since_genesis`
+is `Mina_numbers.Global_slot_since_genesis` — a bare `u32` behind its variant tag, one item. That
+asymmetry is a trap: a reader who assumes both slots have the same shape either loses a `u32` from
+the preimage or invents one. -/
+structure ConsensusRaw where
+  /-- `blockchain_length`. -/
+  blockchainLength : Nat
+  /-- `epoch_count`. -/
+  epochCount : Nat
+  /-- `min_window_density`. -/
+  minWindowDensity : Nat
+  /-- `sub_window_densities`, exactly `sub_windows_per_window` of them. -/
+  subWindowDensities : List Nat
+  /-- `last_vrf_output` — the 32 RAW truncated-VRF bytes. ⚑ NOT the Blake2b digest: `select`
+  compares the digest, `Body.to_input` absorbs 253 bits of the RAW bytes, and conflating them is a
+  way to hash the wrong preimage. -/
+  lastVrfOutput : List Nat
+  /-- `total_currency`. -/
+  totalCurrency : Nat
+  /-- `curr_global_slot_since_hard_fork.slot_number`. -/
+  currGlobalSlot : Nat
+  /-- `curr_global_slot_since_hard_fork.slots_per_epoch`. -/
+  slotsPerEpoch : Nat
+  /-- `global_slot_since_genesis`. -/
+  globalSlotSinceGenesis : Nat
+  /-- `staking_epoch_data`. -/
+  staking : EpochRaw
+  /-- `next_epoch_data`. -/
+  next : EpochRaw
+  /-- `has_ancestor_in_same_checkpoint_window`. -/
+  hasAncestor : Bool
+  /-- `block_stake_winner`. -/
+  blockStakeWinner : Pk
+  /-- `block_creator`. -/
+  blockCreator : Pk
+  /-- `coinbase_receiver`. -/
+  coinbaseReceiver : Pk
+  /-- `supercharge_coinbase`. -/
+  superchargeCoinbase : Bool
+deriving Repr, DecidableEq
+
+/-- **`consensusStateRaw`** — `Consensus.Data.Consensus_state.Value.Stable.V2` in binprot order,
+every field retained. -/
+def consensusStateRaw : P ConsensusRaw := do
   let blockchainLength ← lengthU32
   let epochCount ← lengthU32
   let minWindowDensity ← lengthU32
@@ -408,8 +596,8 @@ def consensusState : P ConsensusState := do
   let _ ← guardP (n == subWindowsPerWindow)
   let subWindowDensities ← lengths subWindowsPerWindow
   -- `Vrf.Output.Truncated.Stable.V1` — 32 bytes on every real block (`consensus_vrf.ml:164-168`).
-  let vrf ← byteString 64
-  let _ ← guardP (vrf.length == 32)
+  let lastVrfOutput ← byteString 64
+  let _ ← guardP (lastVrfOutput.length == 32)
   let totalCurrency ← amountU64
   let currGlobalSlot ← singleVariant lengthU32
   let slotsPerEpoch ← lengthU32
@@ -418,27 +606,50 @@ def consensusState : P ConsensusState := do
   -- every pair look same-epoch. Refuse instead.
   let _ ← guardP (slotsPerEpoch != 0)
   let globalSlotSinceGenesis ← singleVariant lengthU32
-  let stakingLockCheckpoint ← epochData
-  let nextLockCheckpoint ← epochData
+  let staking ← epochData
+  let next ← epochData
   let hasAncestor ← boolB
-  let _ ← compressedPk    -- block_stake_winner
-  let _ ← compressedPk    -- block_creator
-  let _ ← compressedPk    -- coinbase_receiver
-  let supercharge ← boolB
-  pure { blockchainLength, minWindowDensity, subWindowDensities,
-         -- ⚑ DERIVED, not carried: chain selection compares the DIGEST.
-         lastVrfHash := blake2b256 vrf,
-         currGlobalSlot, slotsPerEpoch, stakingLockCheckpoint, nextLockCheckpoint,
-         epochCount, totalCurrency, globalSlotSinceGenesis,
-         -- Not on the wire in a form `select` reads, and proven not to matter; zeroed rather than
-         -- invented. (`stakingSeed` etc. ARE on the wire and ARE walked above — they are dropped
-         -- here because `select_reads_only_eight_fields` proves the verdict cannot see them.)
-         stakingSeed := 0, stakingStartCheckpoint := 0, stakingEpochLength := 0,
-         stakingLedgerHash := 0, nextSeed := 0, nextStartCheckpoint := 0, nextEpochLength := 0,
-         nextLedgerHash := 0,
-         hasAncestorInSameCheckpointWindow := hasAncestor,
-         blockStakeWinner := 0, blockCreator := 0, coinbaseReceiver := 0,
-         superchargeCoinbase := supercharge }
+  let blockStakeWinner ← compressedPk
+  let blockCreator ← compressedPk
+  let coinbaseReceiver ← compressedPk
+  let superchargeCoinbase ← boolB
+  pure { blockchainLength, epochCount, minWindowDensity, subWindowDensities, lastVrfOutput,
+         totalCurrency, currGlobalSlot, slotsPerEpoch, globalSlotSinceGenesis, staking, next,
+         hasAncestor, blockStakeWinner, blockCreator, coinbaseReceiver, superchargeCoinbase }
+
+/-- **The projection into `MinaChainSelection.ConsensusState`** — the structure
+`select_reads_only_eight_fields`, `beats_not_transitive` and `minaBetterTip_decides` are stated over.
+
+The eight fields that theorem names land in the eight fields it names. The `blake2b256` is applied
+HERE and not at the parse, because the wire's raw bytes are what the HASH preimage needs and the
+digest is what the RULE needs; one decode, two consumers, no second parser.
+
+⚑ The three compressed public keys stay zeroed. `ConsensusState` types them as `Nat` and a
+compressed key is `(x, is_odd)` — filling in `x` alone would put an unfaithful value into a
+structure whose whole point is that `select` cannot see it. The faithful pair lives in
+`ConsensusRaw` and is what `Body.to_input` absorbs. -/
+def ConsensusRaw.toSelection (c : ConsensusRaw) : ConsensusState :=
+  { blockchainLength := c.blockchainLength, minWindowDensity := c.minWindowDensity,
+    subWindowDensities := c.subWindowDensities,
+    -- ⚑ DERIVED, not carried: chain selection compares the DIGEST.
+    lastVrfHash := blake2b256 c.lastVrfOutput,
+    currGlobalSlot := c.currGlobalSlot, slotsPerEpoch := c.slotsPerEpoch,
+    stakingLockCheckpoint := c.staking.lockCheckpoint,
+    nextLockCheckpoint := c.next.lockCheckpoint,
+    epochCount := c.epochCount, totalCurrency := c.totalCurrency,
+    globalSlotSinceGenesis := c.globalSlotSinceGenesis,
+    stakingSeed := c.staking.seed, stakingStartCheckpoint := c.staking.startCheckpoint,
+    stakingEpochLength := c.staking.epochLength, stakingLedgerHash := c.staking.ledgerHash,
+    nextSeed := c.next.seed, nextStartCheckpoint := c.next.startCheckpoint,
+    nextEpochLength := c.next.epochLength, nextLedgerHash := c.next.ledgerHash,
+    hasAncestorInSameCheckpointWindow := c.hasAncestor,
+    blockStakeWinner := 0, blockCreator := 0, coinbaseReceiver := 0,
+    superchargeCoinbase := c.superchargeCoinbase }
+
+/-- **`consensusState`** — the decode, projected. -/
+def consensusState : P ConsensusState := do
+  let c ← consensusStateRaw
+  pure c.toSelection
 
 /-- `Genesis_constants.Protocol.Poly.Stable.V1`. -/
 def carriedConstants : P CarriedConstants := do
@@ -450,7 +661,33 @@ def carriedConstants : P CarriedConstants := do
   let genesisStateTimestamp ← amountU64
   pure { k, slotsPerEpoch, slotsPerSubWindow, gracePeriodSlots, delta, genesisStateTimestamp }
 
-/-- A decoded `Protocol_state.Value.Stable.V2`. -/
+/-- **A decoded `Protocol_state.Value.Stable.V2`, ENTIRE** — every field the wire carries, which is
+exactly every field `state_hash` is a hash of. `Bridge.MinaStateHashDerive` consumes this. -/
+structure ProtocolStateRaw where
+  /-- `previous_state_hash` — the parent LINK, as its numeric field element. -/
+  previousStateHash : Nat
+  /-- `body.genesis_state_hash`. -/
+  genesisStateHash : Nat
+  /-- `body.blockchain_state`. -/
+  blockchain : BlockchainRaw
+  /-- `body.consensus_state`, unprojected. -/
+  consensus : ConsensusRaw
+  /-- `body.constants` — PEER-SUPPLIED. Only ever compared against the pin, never adopted. -/
+  constants : CarriedConstants
+deriving Repr, DecidableEq
+
+/-- **`protocolStateRaw`** — `{ previous_state_hash; body }` with
+`body = { genesis_state_hash; blockchain_state; consensus_state; constants }`. THE parser; every
+other entry point below is a projection of this one, so there is no second reading of any byte. -/
+def protocolStateRaw : P ProtocolStateRaw := do
+  let previousStateHash ← fpLE
+  let genesisStateHash ← fpLE
+  let blockchain ← blockchainState
+  let consensus ← consensusStateRaw
+  let constants ← carriedConstants
+  pure { previousStateHash, genesisStateHash, blockchain, consensus, constants }
+
+/-- The FORK-CHOICE view of a decoded protocol state: what `select` and the head gate consume. -/
 structure ProtocolState where
   /-- `previous_state_hash` — the parent LINK, as its numeric field element. -/
   previousStateHash : Nat
@@ -462,15 +699,15 @@ structure ProtocolState where
   constants : CarriedConstants
 deriving Repr, DecidableEq
 
-/-- **`protocolState`** — `{ previous_state_hash; body }` with
-`body = { genesis_state_hash; blockchain_state; consensus_state; constants }`. -/
+/-- The projection. -/
+def ProtocolStateRaw.view (r : ProtocolStateRaw) : ProtocolState :=
+  { previousStateHash := r.previousStateHash, genesisStateHash := r.genesisStateHash,
+    consensus := r.consensus.toSelection, constants := r.constants }
+
+/-- **`protocolState`** — the parse, projected to the fork-choice view. -/
 def protocolState : P ProtocolState := do
-  let previousStateHash ← fpLE
-  let genesisStateHash ← fpLE
-  let _ ← blockchainState
-  let consensus ← consensusState
-  let constants ← carriedConstants
-  pure { previousStateHash, genesisStateHash, consensus, constants }
+  let r ← protocolStateRaw
+  pure r.view
 
 /-! ## §5 — The entry points, and what they REFUSE. -/
 
@@ -481,6 +718,10 @@ Deliberately a PREFIX decode: on the peer-to-peer wire the protocol state is fol
 proof and then the whole block body, and this file's job ends at the consensus state. The remainder
 is returned rather than ignored so a caller can say how many bytes were accounted for. -/
 def decodeProtocolState (bs : List Nat) : Option (ProtocolState × List Nat) := protocolState bs
+
+/-- **`decodeProtocolStateRaw`** — the same decode, undiscarded. -/
+def decodeProtocolStateRaw (bs : List Nat) : Option (ProtocolStateRaw × List Nat) :=
+  protocolStateRaw bs
 
 /-- **`decodeProtocolStateChecked`** — decode AND apply every structural refusal.
 
@@ -497,9 +738,9 @@ on the DECODE and not only on the block:
 
 The density-count and 32-byte-VRF refusals live in `consensusState` itself, because a wrong count is
 what a mis-ordered decode produces and it must not survive to here. -/
-def decodeProtocolStateChecked (C : Constants) (bs : List Nat) :
-    Option (ProtocolState × List Nat) :=
-  match decodeProtocolState bs with
+def decodeProtocolStateRawChecked (C : Constants) (bs : List Nat) :
+    Option (ProtocolStateRaw × List Nat) :=
+  match decodeProtocolStateRaw bs with
   | none => none
   | some (ps, rest) =>
       if ps.constants.agreesWith C
@@ -507,6 +748,13 @@ def decodeProtocolStateChecked (C : Constants) (bs : List Nat) :
         && ps.consensus.minWindowDensity ≤ C.slotsPerWindow
         && ps.consensus.slotsPerEpoch == C.slotsPerEpoch
       then some (ps, rest) else none
+
+/-- **`decodeProtocolStateChecked`** — the checked decode, projected to the fork-choice view. -/
+def decodeProtocolStateChecked (C : Constants) (bs : List Nat) :
+    Option (ProtocolState × List Nat) :=
+  match decodeProtocolStateRawChecked C bs with
+  | none => none
+  | some (ps, rest) => some (ps.view, rest)
 
 /-! ## §6 — NON-VACUITY: the decoder ACCEPTS a well-formed state and REFUSES each mutation.
 
