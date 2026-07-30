@@ -505,7 +505,7 @@ type Mode = 'none' | 'carry' | 'seal' | 'unsealed';
  *  the deployed two-level commitment is measured in `[4b]` on the real program. */
 function probeShape(c: Ctx, sl: FriSlice) {
   let aux = 0;
-  for (let k = sl.from; k < sl.to; k++) aux += auxLanes(c.w.segs[k]);
+  for (let k = sl.from; k < sl.to; k++) aux += auxLanes(c.w.segs[k], c.w.hash);
   return {
     nLiveIn: c.w.liveIn[sl.from].length,
     nAirRead: sl.readsAirChunks.length * CHUNK,

@@ -29,6 +29,7 @@ import {
   AIR_SLICES,
   SliceIo,
   WalkTwin,
+  assertLanesAreBabyBear,
   auxLanes,
   chunkedCommitment,
   runSegments,
@@ -657,7 +658,7 @@ export function uniformShape(ctx: UniformCtx, sp: UniformSpec) {
   const sl = uniformSlice(plan, sp);
   const CL = L.chunkLanes;
   let aux = 0;
-  for (let k = sl.from; k < sl.to; k++) aux += auxLanes(w.segs[k]);
+  for (let k = sl.from; k < sl.to; k++) aux += auxLanes(w.segs[k], w.hash);
   const readsGlobal = sl.readsFriChunks.filter((c) => c < L.nGlobalChunks);
   const readsQuery = sl.readsFriChunks
     .filter((c) => c >= L.nGlobalChunks)
@@ -719,6 +720,7 @@ const terminalDigest = (acc: Field[], out: Field[], vkRoot: Field): Field =>
 
 export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: UniformOpts) {
   const { w, shape, ft, op, plan } = ctx;
+  assertLanesAreBabyBear(w.hash, `uniform slice ${specName(sp)}`);
   const L = plan.layout;
   const bind = opts.bindCarry !== false;
   const pin = opts.pinVk !== false;

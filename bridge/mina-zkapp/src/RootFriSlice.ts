@@ -17,14 +17,9 @@ import {
   provablePermBounded,
   reduceLane,
 } from './Poseidon2BabyBearW16.js';
-import {
-  BbDigest,
-  DIGEST_ELEMS,
-  compressBB,
-  compressBigInt,
-  condSwap,
-  assertDigestInRange,
-} from './Poseidon2Merkle.js';
+import { BbDigest } from './Poseidon2Merkle.js';
+import { babyBearSuite } from './HashSuites.js';
+import type { MerkleSuite } from './HashSuiteType.js';
 import {
   BbExt,
   EXT_D,
@@ -66,6 +61,8 @@ import {
   RealRootFri,
   Segment,
   SegmentedWalk,
+  WalkHash,
+  assertWalkHashMatchesSuite,
   segmentReads,
 } from './RootFriWalk.js';
 
@@ -180,6 +177,34 @@ export function airLaneValues(base: bigint[][], ext: bigint[][]): bigint[] {
 //    builds, over a lane table rather than an extension one.
 // ===========================================================================
 
+/**
+ * ⚑ THE SECOND THING A PASTA WALK NEEDS, NAMED HERE RATHER THAN LEFT AS A
+ * SILENT WRONGNESS — because this file is where it bites.
+ *
+ * `chunkedCommitment` puts `canonicalLane(l, 2^31 − 1)` on every lane it
+ * commits, and the boundary puts it on every carried slot. That is right for
+ * the deployed walk, whose lane table is BabyBear lanes end to end. It is NOT
+ * right for a Pasta-hashed one: there the four round commitments, the sixteen
+ * commit-phase commitments and the challenger state are NATIVE PASTA ELEMENTS
+ * sharing a lane space with BabyBear opened values, and canonicalising a Pasta
+ * digest to `< p_BabyBear` refuses every honest proof.
+ *
+ * So the lane table stops being homogeneous and grows a per-lane KIND. That is
+ * a real piece of work, it is not the digest width, and it would have been
+ * invisible until a Pasta chain failed to prove. `segmentWalk` refuses to build
+ * a Pasta walk for the transcript's sake; this refuses for this one, so
+ * removing the first blocker cannot silently expose the second.
+ */
+export function assertLanesAreBabyBear(hash: WalkHash, where: string) {
+  if (hash.digestLanes === 8) return;
+  throw new Error(
+    `${where}: the lane table commits every lane as a BabyBear lane (\`canonicalLane\` at ` +
+      `2^31 − 1) and hash '${hash.name}' puts ${hash.digestLanes}-lane NATIVE digests in the same ` +
+      'space. A Pasta walk needs a per-lane kind in `FriLaneTable` before it can be committed — ' +
+      'the digest width is threaded, the lane KIND is not.',
+  );
+}
+
 export function chunkedCommitment(
   nChunks: number,
   chunkLanes: number,
@@ -260,7 +285,15 @@ export function walkTwin(
   friLanes: bigint[],
   airLanes: bigint[],
   real: RealRootFri,
+  /** ⚑ THE HASH, AS THE SUITE ITSELF. Defaulted to the deployed one so every
+   *  existing caller is unchanged; taken as the SUITE rather than a name so the
+   *  twin calls the same `compressBigInt`/`spongeStream` the circuit's suite
+   *  calls and the pair cannot drift into two hashes. */
+  suite: MerkleSuite<any> = babyBearSuite,
 ): WalkTwin {
+  assertWalkHashMatchesSuite(w.hash, suite as any);
+  const D = w.hash.digestLanes;
+  const SS = suite.spongeStream;
   const S = w.slots;
   const K = shape.knobs;
   const lgmh = K.logGlobalMaxHeight;
@@ -335,11 +368,10 @@ export function walkTwin(
       case 'inBlock': {
         const [lo, hi] = ft.blockLanes(s.q, s.round, s.height, s.block);
         const row = friLanes.slice(lo, hi);
-        const prev = s.first ? new Array<bigint>(CHAL_WIDTH).fill(0n) : S.sponge.map((i) => st.get(i)!);
-        const lanes = prev.map((v, j) => (j < row.length ? row[j] : v));
-        const out = permBigInt(lanes);
+        const prev = s.first ? SS.initBigInt() : S.sponge.map((i) => st.get(i)!);
+        const out = SS.absorbBigInt(prev, row);
         if (s.last) {
-          const d = out.slice(0, DIGEST_ELEMS);
+          const d = SS.finishBigInt(out);
           const hi2 = shape.heights.indexOf(s.height);
           setExt(st, s.seeds ? S.cur : S.inj[hi2], d);
         } else S.sponge.forEach((id, i) => st.set(id, out[i]));
@@ -353,9 +385,9 @@ export function walkTwin(
         const sib = real.queries[s.q].inputBatches[s.round].path[s.level].map((x) => BigInt(x));
         a.push(...sib);
         const cur = extOf(st, S.cur);
-        let nxt = dir ? compressBigInt(sib, cur) : compressBigInt(cur, sib);
+        let nxt = dir ? suite.compressBigInt(sib, cur) : suite.compressBigInt(cur, sib);
         if (s.inject !== null)
-          nxt = compressBigInt(nxt, extOf(st, S.inj[shape.heights.indexOf(s.inject)]));
+          nxt = suite.compressBigInt(nxt, extOf(st, S.inj[shape.heights.indexOf(s.inject)]));
         setExt(st, S.cur, nxt);
         break;
       }
@@ -403,9 +435,13 @@ export function walkTwin(
         const folded = extOf(st, S.folded);
         const even = bits[s.r] ? sib : folded;
         const odd = bits[s.r] ? folded : sib;
-        //  the leaf: an 8-element BabyBear row, exactly one sponge block.
-        const out = permBigInt([...even, ...odd, ...new Array(8).fill(0n)]);
-        setExt(st, S.cur, out.slice(0, DIGEST_ELEMS));
+        //  ⚑ THE COMMIT-PHASE LEAF IS `sponge([even, odd])`, EIGHT LANES, and
+        //  it goes through the suite's own sponge rather than a hand-written
+        //  permutation. Under the deployed hash that is one 16-wide block with
+        //  eight zero lanes of padding; under Pasta it is one packed slot. A
+        //  hard-coded `perm([even, odd, 0^8])` is the BabyBear spelling of the
+        //  first and no spelling at all of the second.
+        setExt(st, S.cur, suite.spongeBigInt([...even, ...odd]));
         let x: bigint;
         if (s.r === 0) {
           //  `g_{L+1} ^ reverse_bits_len(index >> 1, L)` at L = lgmh - 1.
@@ -436,7 +472,7 @@ export function walkTwin(
         const sib = real.queries[s.q].commitPhase[s.r].path[s.level].map((x) => BigInt(x));
         a.push(...sib);
         const cur = extOf(st, S.cur);
-        setExt(st, S.cur, dir ? compressBigInt(sib, cur) : compressBigInt(cur, sib));
+        setExt(st, S.cur, dir ? suite.compressBigInt(sib, cur) : suite.compressBigInt(cur, sib));
         break;
       }
       case 'cpRoot':
@@ -508,9 +544,9 @@ function twoAdic(k: number): bigint {
 
 /** How many aux lanes a segment consumes — a compile-time fact, so a slice's
  *  private-input shape is fixed before any witness exists. */
-export function auxLanes(s: Segment): number {
-  if (s.t === 'inLevel') return LANES_PER_DIGEST;
-  if (s.t === 'cpLevel') return LANES_PER_DIGEST;
+export function auxLanes(s: Segment, hash: WalkHash): number {
+  if (s.t === 'inLevel') return hash.digestLanes;
+  if (s.t === 'cpLevel') return hash.digestLanes;
   if (s.t === 'cpLeaf') return EXT_LANES;
   return 0;
 }
@@ -547,7 +583,16 @@ export function runSegments(
   si: number,
   sto: Sto,
   io: SliceIo,
+  /** ⚑ THE HASH THE SEGMENTS ARE RUN AT — the thing this executor hard-coded.
+   *  Defaulted to the deployed suite so every existing caller is unchanged, and
+   *  checked against the walk's own shape so an executor and a lane table can
+   *  never be at two different hashes. */
+  suite: MerkleSuite<any> = babyBearSuite,
 ) {
+  assertWalkHashMatchesSuite(w.hash, suite as any);
+  const D = w.hash.digestLanes;
+  const SS = suite.spongeStream;
+  const Dig = suite.Digest;
   const S = w.slots;
   const K = shape.knobs;
   const lgmh = K.logGlobalMaxHeight;
@@ -576,8 +621,9 @@ export function runSegments(
   };
   const get = (ids: number[]) => new BbExt({ limbs: ids.map((i) => sto.get(i)!) });
   const put = (ids: number[], v: BbExt) => ids.forEach((id, i) => sto.set(id, v.limbs[i]));
-  const getD = (ids: number[]) => new BbDigest({ limbs: ids.map((i) => sto.get(i)!) });
-  const putD = (ids: number[], d: BbDigest) => ids.forEach((id, i) => sto.set(id, d.limbs[i]));
+  const getD = (ids: number[]) => new Dig({ limbs: ids.map((i) => sto.get(i)!) });
+  const putD = (ids: number[], d: { limbs: Field[] }) =>
+    ids.forEach((id, i) => sto.set(id, d.limbs[i]));
 
   /** The 22 index bits of a carried, canonical query-index lane. The split is
    *  FORCED (`assertLowBitsSplit`), so re-splitting a carried index in a later
@@ -694,39 +740,38 @@ export function runSegments(
       case 'inBlock': {
         const [lo, hiL] = ft.blockLanes(s.q, s.round, s.height, s.block);
         const row = Array.from({ length: hiL - lo }, (_, i) => laneFri(lo + i));
-        const bound = permOutputBound(LANE_MAX);
-        const prev = s.first
-          ? Array.from({ length: CHAL_WIDTH }, () => Field(0))
-          : S.sponge.map((i) => sto.get(i)!);
-        const lanes = prev.map((v, j) => (j < row.length ? row[j] : v));
-        const out = provablePermBounded(lanes, LANE_MAX).map((x) => reduceLane(x, bound));
-        if (s.last) {
-          const d = new BbDigest({ limbs: out.slice(0, DIGEST_ELEMS) });
-          putD(s.seeds ? S.cur : S.inj[shape.heights.indexOf(s.height)], d);
-        } else S.sponge.forEach((id, i) => sto.set(id, out[i]));
+        //  ⚑ THE LANES ARE ALREADY CANONICAL. Every one is read out of a
+        //  committed chunk and `chunkedCommitment` has put `canonicalLane` on
+        //  it, which is why `lanesAlreadyChecked` is TRUE here and is a claim
+        //  about the call site rather than an optimisation.
+        const prev = s.first ? SS.init() : S.sponge.map((i) => sto.get(i)!);
+        const out = SS.absorb(prev, row, true);
+        if (s.last)
+          putD(s.seeds ? S.cur : S.inj[shape.heights.indexOf(s.height)], SS.finish(out));
+        else S.sponge.forEach((id, i) => sto.set(id, out[i]));
         break;
       }
       case 'inLevel': {
         const round = shape.rounds[s.round];
         const top = Math.max(...round.matrices.map((m) => m.logHeight));
         const dir = idxBits(s.q)[lgmh - top + s.level];
-        const sib = new BbDigest({ limbs: takeAux(LANES_PER_DIGEST) });
-        assertDigestInRange(sib);
-        const [l, r] = condSwap(getD(S.cur), sib, dir);
-        let cur = compressBB(l, r);
+        const sib = new Dig({ limbs: takeAux(D) });
+        suite.assertInRange(sib);
+        const [l, r] = suite.condSwap(getD(S.cur), sib, dir);
+        let cur = suite.compress(l, r);
         //  ⚑ `MerkleTreeMmcs::verify_batch` over MIXED HEIGHTS: after the
         //  compress, a matrix whose height equals the level's padded height has
         //  its own row digest compressed in. Four of them per input round here,
         //  and a flat depth-22 path would be a different tree.
         if (s.inject !== null)
-          cur = compressBB(cur, getD(S.inj[shape.heights.indexOf(s.inject)]));
+          cur = suite.compress(cur, getD(S.inj[shape.heights.indexOf(s.inject)]));
         putD(S.cur, cur);
         break;
       }
       case 'inRoot': {
-        const cur = getD(S.cur);
-        for (let j = 0; j < DIGEST_ELEMS; j++)
-          canonicalLane(cur.limbs[j], LANE_MAX).assertEquals(laneFri(ft.inputCommit[s.round] + j));
+        const cur = suite.canonical(getD(S.cur));
+        for (let j = 0; j < D; j++)
+          cur.limbs[j].assertEquals(laneFri(ft.inputCommit[s.round] + j));
         break;
       }
       case 'deep': {
@@ -778,10 +823,13 @@ export function runSegments(
           even.push(Provable.if(bits[s.r], sib.limbs[i], folded.limbs[i]));
           odd.push(Provable.if(bits[s.r], folded.limbs[i], sib.limbs[i]));
         }
-        const bound = permOutputBound(LANE_MAX);
-        const lanes = [...even, ...odd, ...Array.from({ length: 8 }, () => Field(0))];
-        const out = provablePermBounded(lanes, LANE_MAX).map((x) => reduceLane(x, bound));
-        putD(S.cur, new BbDigest({ limbs: out.slice(0, DIGEST_ELEMS) }));
+        //  ⚑ `sponge([even, odd])` THROUGH THE SUITE, not a hand-written
+        //  `perm([even, odd, 0^8])`. The eight zero lanes were the deployed
+        //  sponge's padding of a one-block absorb; the suite's own leaf hash is
+        //  the thing that is true at both hashes. `assertExtInRange` has already
+        //  bounded the four sibling lanes and the four folded ones, so the
+        //  lanes are checked.
+        putD(S.cur, suite.sponge([...even, ...odd], true));
         const x = s.r === 0 ? cosetPointFromBits(bits.slice(1), lgmh - 1) : sto.get(S.x)!;
         put(
           S.folded,
@@ -793,16 +841,16 @@ export function runSegments(
       }
       case 'cpLevel': {
         const dir = idxBits(s.q)[s.r + 1 + s.level];
-        const sib = new BbDigest({ limbs: takeAux(LANES_PER_DIGEST) });
-        assertDigestInRange(sib);
-        const [l, r] = condSwap(getD(S.cur), sib, dir);
-        putD(S.cur, compressBB(l, r));
+        const sib = new Dig({ limbs: takeAux(D) });
+        suite.assertInRange(sib);
+        const [l, r] = suite.condSwap(getD(S.cur), sib, dir);
+        putD(S.cur, suite.compress(l, r));
         break;
       }
       case 'cpRoot': {
-        const cur = getD(S.cur);
-        for (let j = 0; j < DIGEST_ELEMS; j++)
-          canonicalLane(cur.limbs[j], LANE_MAX).assertEquals(laneFri(ft.commit[s.r] + j));
+        const cur = suite.canonical(getD(S.cur));
+        for (let j = 0; j < D; j++)
+          cur.limbs[j].assertEquals(laneFri(ft.commit[s.r] + j));
         break;
       }
       case 'cpFold': {
@@ -936,7 +984,7 @@ export function friSliceShape(ctx: FriBraidCtx, si: number) {
   const sl = plan.slices[si];
   const CL = plan.chunkSize;
   let aux = 0;
-  for (let k = sl.from; k < sl.to; k++) aux += auxLanes(w.segs[k]);
+  for (let k = sl.from; k < sl.to; k++) aux += auxLanes(w.segs[k], w.hash);
   return {
     nLiveIn: w.liveIn[sl.from].length,
     nLiveOut: w.liveIn[sl.to].length,
@@ -964,6 +1012,7 @@ export function friSliceShape(ctx: FriBraidCtx, si: number) {
  */
 export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSliceOpts) {
   const { w, shape, ft, op, plan } = ctx;
+  assertLanesAreBabyBear(w.hash, `FRI slice ${si}`);
   const bind = opts.bindCarry !== false;
   const pin = opts.pinVk !== false;
   const sl = plan.slices[si];

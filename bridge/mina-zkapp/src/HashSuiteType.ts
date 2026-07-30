@@ -35,6 +35,25 @@ import type { Bool, Field } from 'o1js';
  *  the lanes to compare two digests, so that is all the interface exposes. */
 export type Digestish = { limbs: Field[] };
 
+/**
+ * The leaf sponge, splittable. See `MerkleSuite.spongeStream` for why this is a
+ * separate object from `sponge` and what the two do not share.
+ */
+export type SpongeStream<D extends Digestish = Digestish> = {
+  /** Field elements the running state occupies — 16 BabyBear lanes, 3 Pasta. */
+  stateLanes: number;
+  /** BabyBear lanes absorbed per permutation — 8 BabyBear, 16 Pasta. */
+  rate: number;
+  init(): Field[];
+  /** Absorb up to `rate` row lanes. `lanesAlreadyChecked` has the same two real
+   *  call sites `sponge`'s does. */
+  absorb(state: Field[], row: Field[], lanesAlreadyChecked?: boolean): Field[];
+  finish(state: Field[]): D;
+  initBigInt(): bigint[];
+  absorbBigInt(state: bigint[], row: bigint[]): bigint[];
+  finishBigInt(state: bigint[]): bigint[];
+};
+
 /** The MMCS half — the hash, the digest, and the Merkle step. */
 export type MerkleSuite<D extends Digestish = Digestish> = {
   /** For error messages and for the fixture's `hash` field to be checked
@@ -77,6 +96,30 @@ export type MerkleSuite<D extends Digestish = Digestish> = {
    * packing/bound arguments claims about numbers nothing forces to be small.
    */
   sponge(row: Field[], lanesAlreadyChecked?: boolean): D;
+  /**
+   * ⚑ THE LEAF SPONGE AS A STREAMING MACHINE, and it is not a convenience.
+   *
+   * `sponge` above takes a whole row, which the SLICED walk cannot: an opened
+   * row at one height of one PCS round is up to 452 base lanes, and the sponge
+   * over it has to be splittable at a slice boundary with the running state
+   * carried across. `RootFriSlice`'s `inBlock` segment is exactly one
+   * `absorb`, and the state that crosses a cut is `stateLanes` field elements.
+   *
+   * ⚑ `stateLanes` AND `rate` ARE THE WALK'S SHAPE, NOT ONLY ITS PRICE. The
+   * BabyBear sponge carries a 16-lane state and eats 8 lanes a permutation; the
+   * Pasta MMCS carries 3 Pasta cells and eats 16. So the number of `inBlock`
+   * segments, the width of the `sponge` slot, and therefore the whole slot
+   * layout are functions of THIS record — which is why `RootFriWalk.WalkHash`
+   * reads them from here rather than restating them.
+   *
+   * ⚠ NOT THE SAME GATE STREAM AS `sponge` FOR BABYBEAR, said out loud. The
+   * one-shot `spongeBB` reduces the untouched capacity lanes lazily against the
+   * previous permutation's bound; the streaming form must reduce all
+   * `stateLanes` eagerly because the state crosses a boundary as bare lanes.
+   * The digests agree; the emitted rows do not, and `poseidon2-merkle-rows`
+   * pins the one-shot form.
+   */
+  spongeStream: SpongeStream<D>;
   /** Canonicalise for comparison against an emitted value. Identity for Pasta. */
   canonical(d: D): D;
   /** `a == b`, lane by lane, at this suite's digest width. */

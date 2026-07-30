@@ -1125,7 +1125,7 @@ async function main() {
       let firstAuxAt = -1;
       let tag: string | null = null;
       for (let k2 = sl.from; k2 < sl.to; k2++) {
-        const a = auxLanes(c.w.segs[k2]);
+        const a = auxLanes(c.w.segs[k2], c.w.hash);
         aux += a;
         if (a > 0 && firstAuxAt < 0) {
           firstAuxAt = k2;

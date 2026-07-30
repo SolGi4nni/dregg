@@ -1,5 +1,5 @@
 import { Bool, Field, Gadgets, Poseidon, Provable, Struct } from 'o1js';
-import type { MerkleSuite } from './HashSuiteType.js';
+import type { MerkleSuite, SpongeStream } from './HashSuiteType.js';
 
 // ---------------------------------------------------------------------------
 // THE PASTA-NATIVE MMCS — the hash half of a `DreggMinaConfig` proof, in
@@ -358,6 +358,53 @@ export function spongePasta(row: Field[], lanesAlreadyChecked = false): PastaDig
   return PastaDigest.from([state[0]]);
 }
 
+/**
+ * The same sponge, SPLITTABLE — one `absorb` is one permutation over one block
+ * of at most `LANES_PER_PERM = 16` BabyBear lanes.
+ *
+ * ⚑ THE STATE THAT CROSSES A SLICE BOUNDARY IS **THREE** PASTA CELLS, against
+ * the BabyBear sponge's sixteen, and the block covers SIXTEEN lanes against
+ * eight. Both numbers reach the walk's shape and not only its price: the slot
+ * layout's `sponge` register is `stateLanes` wide and the `inBlock` segment
+ * count is `ceil(width / rate)`, so a walk built at this suite has half as many
+ * sponge segments carrying a fifth as much state.
+ *
+ * ⚑ AND THE UNWRITTEN RATE SLOT KEEPS ITS VALUE, here as in `spongePasta` — a
+ * trailing block with one slot leaves slot 1 holding the previous
+ * permutation's output. Absorbing zero there is a different hash, and it is the
+ * kind of difference that agrees on an even-width fixture and diverges on the
+ * root's odd-width rows.
+ */
+export const pastaSpongeStream: SpongeStream<PastaDigest> = {
+  stateLanes: PASTA_WIDTH,
+  rate: LANES_PER_PERM,
+  init: () => [Field(0), Field(0), Field(0)],
+  absorb(state, row, lanesAlreadyChecked = true) {
+    if (row.length > LANES_PER_PERM)
+      throw new Error(`sponge block of ${row.length} lanes exceeds rate ${LANES_PER_PERM}`);
+    const slots: Field[] = [];
+    for (let c = 0; c < row.length; c += LIMBS_PER_SLOT)
+      slots.push(packSlot(row.slice(c, c + LIMBS_PER_SLOT), lanesAlreadyChecked));
+    const d0 = slots[0] ?? state[0];
+    const d1 = slots.length > 1 ? slots[1] : state[1];
+    return Poseidon.update([state[0], state[1], state[2]], [d0.sub(state[0]), d1.sub(state[1])]);
+  },
+  finish: (state) => PastaDigest.from([state[0]]),
+  initBigInt: () => [0n, 0n, 0n],
+  absorbBigInt(state, row) {
+    const slots: bigint[] = [];
+    for (let c = 0; c < row.length; c += LIMBS_PER_SLOT)
+      slots.push(packSlotBigInt(row.slice(c, c + LIMBS_PER_SLOT)));
+    const s0 = slots.length > 0 ? slots[0] : state[0];
+    const s1 = slots.length > 1 ? slots[1] : state[1];
+    return Poseidon.update(
+      [Field(state[0]), Field(state[1]), Field(state[2])],
+      [Field(s0).sub(Field(state[0])), Field(s1).sub(Field(state[1]))],
+    ).map((x) => x.toBigInt());
+  },
+  finishBigInt: (state) => [state[0]],
+};
+
 /** Nothing to canonicalise: a Pasta digest is already a canonical `Field`. */
 export function canonicalPastaDigest(d: PastaDigest): PastaDigest {
   return d;
@@ -405,6 +452,7 @@ export const pastaMerkleSuite: MerkleSuite<PastaDigest> = {
   compress: compressPasta,
   condSwap: condSwapPasta,
   sponge: (row, lanesAlreadyChecked = false) => spongePasta(row, lanesAlreadyChecked),
+  spongeStream: pastaSpongeStream,
   canonical: canonicalPastaDigest,
   assertEq: (a, b) => a.limbs[0].assertEquals(b.limbs[0]),
   laneCheckIsFree: true,

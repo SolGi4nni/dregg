@@ -175,8 +175,8 @@ for (const [hashName, hash] of [
   ] as const) {
     if (scope !== 'FRI walk' && !pre) continue;
     const op = planOpenedValues(shape, air);
-    const w = segmentWalk(shape, { price: priceAt(hash), preamble: pre, seal: !!pre });
-    const ft = friLaneTable(shape, op, hash.spongeRate);
+    const w = segmentWalk(shape, { price: priceAt(hash), preamble: pre, seal: !!pre, priceOnly: true });
+    const ft = friLaneTable(shape, op);
     const plan = planFriWalk(w, op, ft, {
       usableRows: PICKLES.usableRowsMpv1,
       chunkLanes: 256,
@@ -491,8 +491,8 @@ console.log('\n[5] the inherited justification — "no 45x cliff", MEASURED rath
 
 {
   const op = planOpenedValues(shape, air);
-  const w = segmentWalk(shape, { price: priceAt(BABYBEAR_HASH) });
-  const ft = friLaneTable(shape, op, BABYBEAR_HASH.spongeRate);
+  const w = segmentWalk(shape, { price: priceAt(BABYBEAR_HASH), priceOnly: true });
+  const ft = friLaneTable(shape, op);
   const budget = PICKLES.friWalkBudget;
   const greedy = planFriWalk(w, op, ft, { usableRows: budget, chunkLanes: 256 });
 

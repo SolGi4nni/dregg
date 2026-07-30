@@ -312,7 +312,10 @@ console.log(
 );
 
 const shapeReal = rootFriShape(REAL);
-const modelOf = (price: any) => segmentWalk(shapeReal, { price: priceAt(price) }).totalRows;
+const modelOf = (price: any) =>
+  //  ⚑ PRICE-ONLY, and now it says so: the segment list is the DEPLOYED hash's
+  //  shape with the other hash's unit prices. See `segmentWalk`'s `priceOnly`.
+  segmentWalk(shapeReal, { price: priceAt(price), priceOnly: true }).totalRows;
 
 const table: { label: string; q: number; total: number; model: number }[] = [];
 for (const r of MEAS) {
@@ -368,7 +371,7 @@ const CLASS: Record<string, string> = {
   cpLeaf: 'fold', cpLevel: 'fold', cpRoot: 'fold', cpFold: 'fold',
 };
 function modelByClass(price: any): Record<string, number> {
-  const w = segmentWalk(shapeReal, { price: priceAt(price) });
+  const w = segmentWalk(shapeReal, { price: priceAt(price), priceOnly: true });
   const out: Record<string, number> = { input: 0, deep: 0, fold: 0, other: 0 };
   for (const seg of w.segs) out[CLASS[(seg as any).t] ?? 'other'] += (seg as any).rows;
   return out;

@@ -323,7 +323,7 @@ function cutProfile(c: Ctx, si: number): CutProfile {
   let firstAuxAt = -1;
   let tag: string | null = null;
   for (let k = sl.from; k < sl.to; k++) {
-    const a = auxLanes(c.w.segs[k]);
+    const a = auxLanes(c.w.segs[k], c.w.hash);
     aux += a;
     if (a > 0 && firstAuxAt < 0) {
       firstAuxAt = k;

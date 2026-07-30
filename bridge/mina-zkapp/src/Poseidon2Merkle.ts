@@ -8,7 +8,7 @@ import {
   provablePermBounded,
   reduceLane,
 } from './Poseidon2BabyBearW16.js';
-import type { MerkleSuite } from './HashSuiteType.js';
+import type { MerkleSuite, SpongeStream } from './HashSuiteType.js';
 
 // ---------------------------------------------------------------------------
 // RUNG 1 — the Poseidon2-w16-BabyBear MERKLE PATH, as an o1js/Kimchi circuit.
@@ -181,6 +181,45 @@ export function spongeBB(row: Field[]): BbDigest {
   return new BbDigest({ limbs: state.slice(0, DIGEST_ELEMS).map((x) => reduceLane(x, stateMax)) });
 }
 
+/**
+ * The same `PaddingFreeSponge`, SPLITTABLE — the form the sliced walk needs,
+ * because an opened row is up to 452 lanes and the sponge over it has to cross
+ * slice boundaries.
+ *
+ * ⚑ THIS IS `RootFriSlice`'s `inBlock` LIFTED OUT OF THE EXECUTOR, GATE FOR
+ * GATE, and that is the whole point: the braid's measured row counts are a
+ * function of this body, so moving it must not change it. The state crosses a
+ * cut as sixteen bare lanes, so all sixteen are reduced eagerly after every
+ * permutation — where the one-shot `spongeBB` above reduces the untouched
+ * capacity lazily. Two gate streams, one digest; `poseidon2-merkle-rows` pins
+ * the one-shot and `root-fri-braid` pins this one.
+ *
+ * ⚑ AND THE ROW LANES ARE NOT RANGE-CHECKED HERE. Every lane an `inBlock`
+ * absorbs is read out of a committed chunk, and `chunkedCommitment` has already
+ * put `canonicalLane` on all of them. Checking again is sound and moves every
+ * measured figure in the arc; `lanesAlreadyChecked` is the parameter that says
+ * which call site a caller is, and the walk is the checked one.
+ */
+export const babyBearSpongeStream: SpongeStream<BbDigest> = {
+  stateLanes: WIDTH,
+  rate: RATE,
+  init: () => Array.from({ length: WIDTH }, () => Field(0)),
+  absorb(state, row, lanesAlreadyChecked = true) {
+    if (row.length > RATE) throw new Error(`sponge block of ${row.length} lanes exceeds rate ${RATE}`);
+    if (!lanesAlreadyChecked) for (const v of row) assertLaneLt2p31(v);
+    const bound = permOutputBound((1n << 31n) - 1n);
+    const lanes = state.map((v, j) => (j < row.length ? row[j] : v));
+    return provablePermBounded(lanes, (1n << 31n) - 1n).map((x) => reduceLane(x, bound));
+  },
+  finish: (state) => new BbDigest({ limbs: state.slice(0, DIGEST_ELEMS) }),
+  initBigInt: () => Array(WIDTH).fill(0n),
+  absorbBigInt(state, row) {
+    const lanes = state.map((v, j) => (j < row.length ? row[j] % P : v));
+    return permBigInt(lanes);
+  },
+  finishBigInt: (state) => state.slice(0, DIGEST_ELEMS),
+};
+
 /** Canonicalise a digest (`< p` per lane) — for comparison against a value the
  *  Rust side emitted, or against a public input. */
 export function canonicalDigest(d: BbDigest): BbDigest {
@@ -253,6 +292,7 @@ export const babyBearMerkleSuite: MerkleSuite<BbDigest> = {
     if (!lanesAlreadyChecked) for (const v of row) assertLaneLt2p31(v);
     return spongeBB(row);
   },
+  spongeStream: babyBearSpongeStream,
   canonical: canonicalDigest,
   assertEq: (a, b) => {
     for (let j = 0; j < DIGEST_ELEMS; j++) a.limbs[j].assertEquals(b.limbs[j]);

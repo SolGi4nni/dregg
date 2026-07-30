@@ -58,10 +58,151 @@ import { BABYBEAR_HASH, HashPrice, LANE_COST, PASTA_HASH } from './CostModel.js'
 // that IS in the boundary.
 // ---------------------------------------------------------------------------
 
+/** ⚑ THE DEPLOYED HASH'S NUMBERS, KEPT AS NAMES BECAUSE ~40 CALL SITES SPELL
+ *  THEM. They are no longer the walk's shape — `WalkHash` below is — and every
+ *  one of these is now the `poseidon2-babybear-w16` ROW of that record. Reading
+ *  one of these where the walk's own hash is meant is the defect this file's
+ *  §1a exists to make impossible. */
 export const LANES_PER_DIGEST = 8;
 export const EXT_LANES = 4;
 export const CHAL_WIDTH = 16;
 export const CHAL_RATE = 8;
+
+// ===========================================================================
+// 1a. THE HASH AS A SHAPE, not only as a price.
+// ===========================================================================
+
+/**
+ * **The structural half of a hash choice.**
+ *
+ * ⚑ WHY THIS IS A SECOND RECORD AND NOT MORE FIELDS ON `WalkPrice`. `WalkPrice`
+ * says what a hash COSTS: swap it and every `rows` figure moves and nothing else
+ * does. This says what SHAPE it MAKES: the digest is 8 lanes or 1, the leaf
+ * sponge eats 8 lanes a permutation or 16 and carries 16 lanes of state or 3.
+ * Those reach the LANE TABLE (a commitment is `digestLanes` lanes, not eight),
+ * the SLOT LAYOUT (the `cur`, `inj` and `sponge` registers), the SEGMENT LIST
+ * (`ceil(width / spongeRate)` sponge blocks), the AUX WIDTHS (a Merkle sibling
+ * is `digestLanes` lanes) and the EXECUTOR. A price table alone cannot move any
+ * of them, which is exactly the gap `priceForSuite` left open and this closes:
+ * pricing is not execution.
+ *
+ * ⚑ AND `transcript` IS A REFUSAL, NOT A FLAG. See `segmentWalk`.
+ */
+export type WalkHash = {
+  /** The `MerkleSuite.name` this describes. */
+  name: string;
+  /** Lanes in one MMCS digest — 8 BabyBear, 1 Pasta. */
+  digestLanes: number;
+  /** Lanes the leaf sponge absorbs per permutation — 8 BabyBear, 16 Pasta. */
+  spongeRate: number;
+  /** Lanes the leaf sponge's running state occupies across a cut — 16, 3. */
+  spongeStateLanes: number;
+  /** Lanes the CHALLENGER's running state occupies across a cut — 16, 3. */
+  chalStateLanes: number;
+  /** Lanes absorbed per challenger permutation — 8 BabyBear, 16 Pasta. */
+  chalAbsorbRate: number;
+  /** Challenges one challenger permutation makes available — 8 BabyBear
+   *  (`sponge[..8]`), 14 Pasta (2 rate cells x 7 squeezed limbs). */
+  chalSqueeze: number;
+  /**
+   * ⚑ WHETHER `segmentWalk` MODELS AND `runSegments` EXECUTES THIS HASH'S
+   * TRANSCRIPT — and today exactly one hash does.
+   *
+   * The Merkle half of a hash swap is a substitution: `compress`, `condSwap`,
+   * a digest width, a sponge rate. The TRANSCRIPT half is a different STATE
+   * MACHINE. `DuplexChallenger<BabyBear, 16, 8>` absorbs and squeezes in one
+   * field; `MultiField32Challenger<BabyBear, PastaFp, _, 3, 2>` PACKS eight
+   * BabyBear lanes into a Pasta cell to absorb, SPLITS a Pasta cell into seven
+   * canonical limbs to squeeze, absorbs a DIGEST natively after flushing the
+   * pending base buffer, adds a LENGTH TAG into the capacity, and pops its
+   * squeeze queue from the BACK. `segmentWalk`'s emitter models the first and
+   * `runSegments` executes it inline; neither knows the second.
+   *
+   * ⚠ AND THERE IS NO ORACLE FOR THE SECOND ONE TODAY, which is why this is a
+   * refusal rather than a lane's afternoon. `RootConsume.rehash` re-commits the
+   * root's MMCS digests under a suite — so the Merkle half of a Pasta walk has
+   * a twin to check against — but it does NOT re-derive the transcript, and
+   * `ROOT_CHALLENGE_STATUS` says the root path CARRIES its challenges. dregg
+   * mints no Pasta-hashed root, so a Pasta preamble written here would have
+   * nothing to be wrong against: it would compile, prove, and be about a
+   * protocol nobody runs. That is the exact shape this directory's own record
+   * says its cheap differentials keep catching, so the walk REFUSES BY NAME
+   * instead.
+   */
+  transcript: 'implemented' | 'unimplemented';
+};
+
+/** The deployed hash's shape — `Poseidon2BabyBear<16>` emulated in Pasta. */
+export const BABYBEAR_WALK_HASH: WalkHash = {
+  name: 'poseidon2-babybear-w16',
+  digestLanes: 8,
+  spongeRate: 8,
+  spongeStateLanes: 16,
+  chalStateLanes: 16,
+  chalAbsorbRate: 8,
+  chalSqueeze: 8,
+  transcript: 'implemented',
+};
+
+/** `DreggMinaConfig`'s shape — kimchi's own Poseidon over Pasta `Fp`. Every
+ *  number here is `PastaMmcs`'/`PastaChallenger`'s, and the two are checked
+ *  against each other by `assertWalkHashMatchesSuite`. */
+export const PASTA_WALK_HASH: WalkHash = {
+  name: 'mina-poseidon-pasta',
+  digestLanes: 1,
+  spongeRate: 16,
+  spongeStateLanes: 3,
+  chalStateLanes: 3,
+  chalAbsorbRate: 16,
+  chalSqueeze: 14,
+  transcript: 'unimplemented',
+};
+
+/** The walk's shape for a hash suite, BY THE SUITE'S OWN NAME — the same
+ *  refusal `priceForSuite` and `suiteByName` make, for the same reason. */
+export function walkHashForSuite(name: string): WalkHash {
+  switch (name) {
+    case 'poseidon2-babybear-w16':
+      return BABYBEAR_WALK_HASH;
+    case 'mina-poseidon-pasta':
+      return PASTA_WALK_HASH;
+    default:
+      throw new Error(
+        `no walk SHAPE for hash suite '${name}' — a proof minted under a config nobody has ` +
+          'measured must be refused by NAME here, not shaped like whichever hash was the default',
+      );
+  }
+}
+
+/**
+ * Require a `WalkHash` and the `MerkleSuite` it claims to describe to agree.
+ *
+ * ⚑ TWO NUMBERINGS OF ONE OBJECT IS THE SHAPE THAT DRIFTS — the same reason
+ * `assertPreambleSealLanes` exists. The suite owns `digestElems` and its sponge
+ * stream owns the rate and the state width; this checks the record repeats them
+ * rather than inventing them, so a hash whose sponge is re-tuned cannot leave a
+ * stale walk shape behind.
+ */
+export function assertWalkHashMatchesSuite(
+  hash: WalkHash,
+  suite: { name: string; digestElems: number; spongeStream: { rate: number; stateLanes: number } },
+) {
+  const mism: string[] = [];
+  if (hash.name !== suite.name) mism.push(`name ${hash.name} vs ${suite.name}`);
+  if (hash.digestLanes !== suite.digestElems)
+    mism.push(`digestLanes ${hash.digestLanes} vs digestElems ${suite.digestElems}`);
+  if (hash.spongeRate !== suite.spongeStream.rate)
+    mism.push(`spongeRate ${hash.spongeRate} vs spongeStream.rate ${suite.spongeStream.rate}`);
+  if (hash.spongeStateLanes !== suite.spongeStream.stateLanes)
+    mism.push(
+      `spongeStateLanes ${hash.spongeStateLanes} vs spongeStream.stateLanes ${suite.spongeStream.stateLanes}`,
+    );
+  if (mism.length)
+    throw new Error(
+      `the walk shape and the hash suite disagree — ${mism.join('; ')}. One object, one set of ` +
+        'numbers; a walk built at a shape its own suite does not have is a walk over a different hash.',
+    );
+}
 
 // ===========================================================================
 // 1. Measured unit prices. Every one of these is a `getRows()` figure from a
@@ -437,22 +578,25 @@ export type FriLaneTable = {
 export function friLaneTable(
   shape: FriShape,
   op: OpenedPlan,
-  /** ⚑ THE SPONGE RATE, because `blockLanes` has to agree with the block
-   *  subdivision `segmentWalk` emitted. Under the deployed Poseidon2-BabyBear
-   *  sponge that is 8 lanes per permutation; the Pasta MMCS packs 16, so a walk
-   *  costed at `PASTA_HASH` has half as many `inBlock` segments and each covers
-   *  twice the lanes. Defaulted so every deployed caller is unchanged. */
-  spongeRate: number = CHAL_RATE,
+  /** ⚑ THE WALK'S HASH, because BOTH the commitment widths and `blockLanes`
+   *  are functions of it. A commitment is `digestLanes` lanes — eight under the
+   *  deployed sponge, ONE under Pasta — and `blockLanes` has to agree with the
+   *  block subdivision `segmentWalk` emitted at the same `spongeRate`. Passing
+   *  the two independently is how a lane table and a segment list drift, so
+   *  they come from one record. Defaulted so every deployed caller is
+   *  unchanged. */
+  hash: WalkHash = BABYBEAR_WALK_HASH,
 ): FriLaneTable {
+  const spongeRate = hash.spongeRate;
   let at = 0;
   const take = (n: number) => {
     const o = at;
     at += n;
     return o;
   };
-  const chalState = take(CHAL_WIDTH);
-  const commit = Array.from({ length: shape.knobs.layers }, () => take(LANES_PER_DIGEST));
-  const inputCommit = shape.rounds.map(() => take(LANES_PER_DIGEST));
+  const chalState = take(hash.chalStateLanes);
+  const commit = Array.from({ length: shape.knobs.layers }, () => take(hash.digestLanes));
+  const inputCommit = shape.rounds.map(() => take(hash.digestLanes));
   const finalPoly = Array.from({ length: shape.knobs.finalPolyLen }, () => take(EXT_LANES));
   const powWitness = take(1);
   const z = shape.rounds.map((r) => r.matrices.map((m) => Array.from({ length: m.numPoints }, () => take(EXT_LANES))));
@@ -608,7 +752,11 @@ export type SlotLayout = {
   names: string[];
 };
 
-export function slotLayout(shape: FriShape, nPermChal = 0): SlotLayout {
+export function slotLayout(
+  shape: FriShape,
+  nPermChal = 0,
+  hash: WalkHash = BABYBEAR_WALK_HASH,
+): SlotLayout {
   const names: string[] = [];
   const take = (label: string, n: number): number[] => {
     const out: number[] = [];
@@ -618,13 +766,13 @@ export function slotLayout(shape: FriShape, nPermChal = 0): SlotLayout {
     }
     return out;
   };
-  const chal = take('chal', CHAL_WIDTH);
+  const chal = take('chal', hash.chalStateLanes);
   const alpha = take('alpha', EXT_LANES);
   const beta = Array.from({ length: shape.knobs.layers }, (_, r) => take(`beta${r}`, EXT_LANES));
   const qidx = take('qidx', shape.knobs.numQueries);
-  const cur = take('cur', LANES_PER_DIGEST);
-  const sponge = take('sponge', CHAL_WIDTH);
-  const inj = shape.heights.map((h) => take(`inj${h}`, LANES_PER_DIGEST));
+  const cur = take('cur', hash.digestLanes);
+  const sponge = take('sponge', hash.spongeStateLanes);
+  const inj = shape.heights.map((h) => take(`inj${h}`, hash.digestLanes));
   const dacc = shape.heights.map((h) => take(`dacc${h}`, EXT_LANES));
   const dpow = shape.heights.map((h) => take(`dpow${h}`, EXT_LANES));
   const ro = shape.heights.map((h) => take(`ro${h}`, EXT_LANES));
@@ -937,7 +1085,11 @@ export function rootPreambleMeta(real: PreambleSource, air: AirColumnIndex): Pre
  * (`challenger/src/lib.rs:141-147`). Absorbing one costs 14 fewer permutations
  * and every challenge after the first.
  */
-export function preambleOps(shape: FriShape, meta: PreambleMeta): PreOp[] {
+export function preambleOps(
+  shape: FriShape,
+  meta: PreambleMeta,
+  hash: WalkHash = BABYBEAR_WALK_HASH,
+): PreOp[] {
   const ops: PreOp[] = [];
   const obs = (a: AbsorbRef) => ops.push({ t: 'observe', a });
   const smp = (s: SampleRef) => ops.push({ t: 'sample', s });
@@ -953,7 +1105,7 @@ export function preambleOps(shape: FriShape, meta: PreambleMeta): PreOp[] {
   };
   const commit = (name: RoundSpec['name']) => {
     const r = roundIx(name);
-    for (let l = 0; l < LANES_PER_DIGEST; l++) obs({ src: 'roundCommit', round: r, lane: l });
+    for (let l = 0; l < hash.digestLanes; l++) obs({ src: 'roundCommit', round: r, lane: l });
   };
 
   const n = meta.instances.length;
@@ -1017,11 +1169,14 @@ export function preambleOps(shape: FriShape, meta: PreambleMeta): PreOp[] {
  * built FROM the walk — so the choice is this or a lane number smuggled through
  * the meta.
  */
-export function preambleZetaLanes(shape: FriShape): number[] {
+export function preambleZetaLanes(
+  shape: FriShape,
+  hash: WalkHash = BABYBEAR_WALK_HASH,
+): number[] {
   let at =
-    CHAL_WIDTH +
-    shape.knobs.layers * LANES_PER_DIGEST +
-    shape.rounds.length * LANES_PER_DIGEST +
+    hash.chalStateLanes +
+    shape.knobs.layers * hash.digestLanes +
+    shape.rounds.length * hash.digestLanes +
     shape.knobs.finalPolyLen * EXT_LANES +
     1;
   const out: number[] = [];
@@ -1034,8 +1189,12 @@ export function preambleZetaLanes(shape: FriShape): number[] {
 }
 
 /** Require the two numberings to agree, lane for lane. */
-export function assertPreambleSealLanes(shape: FriShape, ft: FriLaneTable) {
-  const mine = preambleZetaLanes(shape);
+export function assertPreambleSealLanes(
+  shape: FriShape,
+  ft: FriLaneTable,
+  hash: WalkHash = BABYBEAR_WALK_HASH,
+) {
+  const mine = preambleZetaLanes(shape, hash);
   let i = 0;
   shape.rounds.forEach((r, ri) =>
     r.matrices.forEach((_, mi) => {
@@ -1090,6 +1249,16 @@ export function preambleChallengeCount(meta: PreambleMeta): number {
 
 export type SegmentedWalk = {
   shape: FriShape;
+  /** `'shaped'` — the price and the shape are one hash. `'price-only'` — the
+   *  shape is `hash` and the unit prices are another hash's, i.e. a PROJECTION.
+   *  Carried so a report cannot lose the distinction between the two. */
+  priced: 'shaped' | 'price-only';
+  /** ⚑ THE WALK CARRIES ITS OWN HASH SHAPE. `segmentReads`, `auxLanes`,
+   *  `runSegments` and the uniform planner all need the digest width and the
+   *  sponge state width, and every one of them taking its own parameter is how
+   *  a lane table and an executor come to disagree about how many lanes a
+   *  Merkle sibling is. There is one answer and it travels with the walk. */
+  hash: WalkHash;
   slots: SlotLayout;
   segs: Segment[];
   reads: number[][];
@@ -1119,10 +1288,65 @@ export function roundHeights(round: RoundSpec): number[] {
  */
 export function segmentWalk(
   shape: FriShape,
-  opts: { deepCols?: number; preamble?: PreambleMeta; seal?: boolean; price?: WalkPrice } = {},
+  opts: {
+    deepCols?: number;
+    preamble?: PreambleMeta;
+    seal?: boolean;
+    price?: WalkPrice;
+    /** ⚑ THE WALK'S HASH — its SHAPE, not its price. See `WalkHash`. */
+    hash?: WalkHash;
+    /**
+     * ⚑ NAME THE HYBRID OR BE REFUSED. Pricing a BabyBear-SHAPED walk at Pasta
+     * unit prices is what `MINA-VERIFIES-DREGG-FRI-SIZE` §3.31 reports as
+     * `2.906e6 rows = 54 slices`, and it is a legitimate PROJECTION: the
+     * arithmetic terms are hash-independent and the hash terms are measured, so
+     * the total is a real estimate of what the same statement costs at the other
+     * hash. What it is NOT is a walk over a Pasta-hashed proof — its digests are
+     * still eight lanes, its commitments still occupy eight lanes of the lane
+     * table, and its transcript is still the duplex challenger. Passing a price
+     * whose sponge rate disagrees with the shape without saying `priceOnly` is
+     * refused, because that combination reads as a measurement and is not one.
+     */
+    priceOnly?: boolean;
+  } = {},
 ): SegmentedWalk {
+  const H = opts.hash ?? BABYBEAR_WALK_HASH;
+  //  ⚑ THE REFUSAL, AND IT IS THE POINT OF `WalkHash.transcript`. Everything
+  //  below the transcript — the leaf sponges, the Merkle levels, the DEEP
+  //  quotient, the fold chain — is a substitution this record already carries.
+  //  The transcript is a different state machine, `challengerRun` below
+  //  implements exactly one of them, and there is no oracle for the other. A
+  //  walk that emitted `duplex` segments under a hash whose challenger packs
+  //  and splits would model a protocol nobody runs, and every downstream
+  //  measurement would be a number about it.
+  if (H.transcript !== 'implemented')
+    throw new Error(
+      `\`segmentWalk\` has no transcript model for '${H.name}'. The Merkle half of this hash is ` +
+        'threaded (digest width, sponge rate, slot layout, aux widths, the executor); the ' +
+        'CHALLENGER is not. `MultiField32Challenger` packs eight BabyBear lanes into a Pasta ' +
+        'cell to absorb, splits a cell into seven canonical limbs to squeeze, absorbs a digest ' +
+        'NATIVELY after flushing the pending base buffer, tags the capacity with a length and ' +
+        'pops its queue from the back — none of which `challengerRun` emits. And dregg mints no ' +
+        'Pasta-hashed root, so a model written here would have nothing to be checked against. ' +
+        'Price this walk with `priceForSuite` and measure the consumer with `root-consume-rows`; ' +
+        'building the sliced chain at this hash needs the transcript first.',
+    );
+  const hybrid = !!opts.price && opts.price.spongeRate !== H.spongeRate;
+  if (hybrid && opts.priceOnly !== true)
+    throw new Error(
+      `the price table absorbs ${opts.price!.spongeRate} lanes a sponge permutation and the walk ` +
+        `shape '${H.name}' absorbs ${H.spongeRate}. A walk priced at one hash and SHAPED like ` +
+        'another is a PROJECTION, not a measurement — pass `priceOnly: true` to say so, or pass ' +
+        'a `hash` that matches the price.',
+    );
+  //  ⚑ A PRICE-ONLY WALK KEEPS THE PRICE TABLE'S SPONGE RATE, because the block
+  //  COUNT is the thing the other hash's rate actually changes and the whole
+  //  point of the projection is to carry that. Everything structural — digest
+  //  width, slot layout, lane table — stays this walk's shape, which is why the
+  //  result is labelled and not quoted as a measurement.
+  const spongeRate = hybrid ? opts.price!.spongeRate : H.spongeRate;
   const nPermChal = opts.preamble ? preambleChallengeCount(opts.preamble) : 0;
-  const slots = slotLayout(shape, nPermChal);
+  const slots = slotLayout(shape, nPermChal, H);
   const deepCols = opts.deepCols ?? 128;
   /** ⚑ THE PRICE IS A PARAMETER so the SAME segment list can be costed at a
    *  different hash. `MINA-FACING-TERMINAL-OPTIONS`'s Pasta projection used to
@@ -1153,7 +1377,7 @@ export function segmentWalk(
     body: (io: { observe: (a: AbsorbRef) => void; sample: (s: SampleRef) => void }) => void,
   ) => {
     let inBuf: AbsorbRef[] = [];
-    let outCount = entryBufferLive ? CHAL_RATE : 0;
+    let outCount = entryBufferLive ? H.chalSqueeze : 0;
     let pending: SampleRef[] = [];
     let absorbed: AbsorbRef[] = [];
     let perm = false;
@@ -1180,7 +1404,7 @@ export function segmentWalk(
       if (open) flush();
       absorbed = inBuf;
       inBuf = [];
-      outCount = CHAL_RATE;
+      outCount = H.chalSqueeze;
       perm = true;
       open = true;
     };
@@ -1188,7 +1412,7 @@ export function segmentWalk(
       observe: (a: AbsorbRef) => {
         outCount = 0;
         inBuf.push(a);
-        if (inBuf.length === CHAL_RATE) duplex();
+        if (inBuf.length === H.chalAbsorbRate) duplex();
       },
       sample: (dst: SampleRef) => {
         if (inBuf.length > 0 || outCount === 0) duplex();
@@ -1214,7 +1438,7 @@ export function segmentWalk(
   // `DuplexChallenger::new` — a literal — driven by the root's own commitments,
   // public values, cumulative sums and 2,630 opened values.
   if (opts.preamble) {
-    const ops = preambleOps(shape, opts.preamble);
+    const ops = preambleOps(shape, opts.preamble, H);
     challengerRun(
       'zero',
       false,
@@ -1234,7 +1458,7 @@ export function segmentWalk(
     //  recomputed from the same construction `friLaneTable` uses — asserted
     //  identical by `assertPreambleSealLanes` at the leg, because two
     //  independent numberings of one table is exactly the shape that drifts.
-    const zetaAt = preambleZetaLanes(shape);
+    const zetaAt = preambleZetaLanes(shape, H);
     const air = airColumnIndex();
     const { base } = permChalAssignment(opts.preamble);
     const chalAt: { at: number; chal: number }[] = [];
@@ -1296,7 +1520,7 @@ export function segmentWalk(
     ({ observe, sample }) => {
       for (let l = 0; l < EXT_LANES; l++) sample({ dst: 'alpha', lane: l });
       for (let r = 0; r < K.layers; r++) {
-        for (let j = 0; j < LANES_PER_DIGEST; j++) observe({ src: 'commit', layer: r, lane: j });
+        for (let j = 0; j < H.digestLanes; j++) observe({ src: 'commit', layer: r, lane: j });
         //  commit_pow_bits = 0: `check_witness` returns BEFORE observing.
         for (let l = 0; l < EXT_LANES; l++) sample({ dst: 'beta', layer: r, lane: l });
       }
@@ -1348,9 +1572,9 @@ export function segmentWalk(
       for (const h of hs) {
         const hi = shape.heights.indexOf(h);
         const w = rowWidthAt(round, h);
-        const nb = ceilDiv(w, P.spongeRate);
+        const nb = ceilDiv(w, spongeRate);
         for (let b = 0; b < nb; b++) {
-          const lanes = Math.min(P.spongeRate, w - b * P.spongeRate);
+          const lanes = Math.min(spongeRate, w - b * spongeRate);
           const first = b === 0;
           const last = b === nb - 1;
           const seeds = h === top;
@@ -1514,6 +1738,8 @@ export function segmentWalk(
 
   return {
     shape,
+    hash: H,
+    priced: hybrid ? 'price-only' : 'shaped',
     slots,
     segs,
     reads,
@@ -1574,7 +1800,7 @@ export function segmentReads(
       //  a literal. A slice that re-witnessed it would be starting a fresh
       //  transcript in the middle of one. (This tested `k === 0` until the
       //  preamble landed, and `k === 0` is now the preamble's first segment.)
-      if (s.entry === 'chalState') range(ft.chalState, ft.chalState + CHAL_WIDTH, fri);
+      if (s.entry === 'chalState') range(ft.chalState, ft.chalState + w.hash.chalStateLanes, fri);
       for (const a of s.absorbs) {
         if (a.src === 'commit') fri.push(ft.commit[a.layer] + a.lane);
         else if (a.src === 'finalPoly') fri.push(ft.finalPoly[a.i] + a.lane);
@@ -1603,10 +1829,10 @@ export function segmentReads(
       break;
     }
     case 'inRoot':
-      range(ft.inputCommit[s.round], ft.inputCommit[s.round] + LANES_PER_DIGEST, fri);
+      range(ft.inputCommit[s.round], ft.inputCommit[s.round] + w.hash.digestLanes, fri);
       break;
     case 'cpRoot':
-      range(ft.commit[s.r], ft.commit[s.r] + LANES_PER_DIGEST, fri);
+      range(ft.commit[s.r], ft.commit[s.r] + w.hash.digestLanes, fri);
       break;
     case 'final':
       for (const o of ft.finalPoly) range(o, o + EXT_LANES, fri);
