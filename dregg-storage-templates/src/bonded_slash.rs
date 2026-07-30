@@ -863,8 +863,27 @@ mod tests {
 
         // The escrow/beneficiary must be a live cell on the executing ledger
         // (the executor fails the turn closed otherwise).
-        exec.ensure_cell(Cell::remote_stub_with_id(beneficiary_cell()))
-            .expect("escrow cell placed");
+        // ⚑ THE STUB MUST BE MINTED IN THE ASSET BEING SEIZED.
+        //
+        // `remote_stub_with_id` defaults the stub's `token_id` to `[0u8; 32]`, while the bonded
+        // relay above holds `blake3("default")`. A seizure is a `Transfer`, and a `Transfer` is a
+        // SINGLE-asset move — the executor refuses one whose source and destination hold different
+        // assets, because the kernel's `recTransferBal` rewrites one asset column. So the landing
+        // site existed in a different column from the value landing on it, and every seizure was
+        // refused `cross-asset Transfer rejected`.
+        //
+        // `remote_stub_with_id`'s sibling documents this exactly — "a stub materialized as a landing
+        // site for an incoming transfer therefore has to be minted in the asset being moved, or the
+        // very transfer it exists for is refused as cross-asset. The default `[0u8; 32]` is right
+        // only for a stub standing in for a cell in the all-zero asset." That is the API telling us
+        // which constructor this call wanted.
+        exec.ensure_cell(Cell::remote_stub_with_id_pk_token_balance(
+            beneficiary_cell(),
+            [0u8; 32],
+            token_id,
+            0,
+        ))
+        .expect("escrow cell placed");
 
         (cclerk, exec, relay_id)
     }
