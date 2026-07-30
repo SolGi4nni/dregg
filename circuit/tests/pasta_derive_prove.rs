@@ -79,11 +79,17 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, TableSem, parse_vm_descriptor2, prove_vm_descriptors2_batch,
     verify_vm_descriptors2_batch,
 };
+// ⚑ THE BUILDER IS THE LIBRARY'S, not this file's. Every trace-assembly helper below used to live
+// here, which is exactly why the Mina opening AIR was reachable from no runtime path at all. It
+// now lives in `dregg_circuit::mina_opening_witness` and `dregg_bridge::mina_opening_check` calls
+// the same functions this test does — one builder, no twin to drift.
+use dregg_circuit::mina_opening_witness::{
+    self as opening, DERIVE_CONSTRAINTS, DERIVE_PI_COUNT, DERIVE_WIDTH, HEIGHT, KS, N, NB,
+    OpeningFill, PLANES, W, honest_fill, layout, point_of, schedule_of,
+};
 use dregg_circuit::pasta_windowed_witness::{
-    CBITS, COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, COL_OC_ACC, COL_OC_SRC, COL_SRCX,
-    COL_SRCY, COL_SRCZ, DeriveLayout, NUM_LIMBS, Pt, Q_PASTA, RowSpec, SLICED_PI_COUNT,
-    TRACE_WIDTH, U256, build_trace, canonicity_certificate, derive_scalar, mul_mod_q,
-    put_derive_block, put_on_curve_block, put_on_curve_block_forged, read_point,
+    CBITS, COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, NUM_LIMBS, Pt, Q_PASTA, RowSpec,
+    SLICED_PI_COUNT, U256, build_trace, canonicity_certificate, derive_scalar, read_point,
 };
 use dregg_circuit::refusal::{DEPLOYED_VERIFIER_REFUSAL_MARKERS, must_refuse};
 use sha2::{Digest, Sha256};
@@ -95,21 +101,34 @@ use std::time::Instant;
 // ---------------------------------------------------------------------------------------------
 
 /// The four SCALAR-DERIVED descriptors of the proved cut.
+/// ⚑ THE ARTIFACTS MOVED (2026-07-30) out of `circuit/tests/fixtures/` and into
+/// `metatheory/emitted/mina-opening/` — a fixture path a RUNTIME reads is a smell, and
+/// `dregg_bridge::mina_opening_check` now reads these same bytes. They sit beside the Lean that
+/// emits them (the `include_str!("../../metatheory/…")` precedent `mina_observer.rs` already set)
+/// and deliberately NOT under `circuit/descriptors/`, whose provenance stamp `rglob`s the whole
+/// tree and would drag `MinaWrapSrsG`'s 32,768 literals into the drift gate's hot path.
+/// `scripts/regen-pasta-derive.sh --check` is their drift gate; the sha256s below are the pin.
 const DERIVE: [(&str, &str); 4] = [
     (
-        include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-0-of-10922.json"),
+        include_str!("../../metatheory/emitted/mina-opening/pasta-rcb-sg-derive-0-of-10922.json"),
         "b45b12f9e043d2c6e2b5acc6a623ffc00d05f71a4185ac20083d16113ea5e649",
     ),
     (
-        include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-3640-of-10922.json"),
+        include_str!(
+            "../../metatheory/emitted/mina-opening/pasta-rcb-sg-derive-3640-of-10922.json"
+        ),
         "1ae911d2a38054fba124729eda8d56e6b2fafc139c37b8d07b981bf03e92ebbf",
     ),
     (
-        include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-7281-of-10922.json"),
+        include_str!(
+            "../../metatheory/emitted/mina-opening/pasta-rcb-sg-derive-7281-of-10922.json"
+        ),
         "0c4148a144f7cfe799ce1ba9c5ead81d30907fa2ebbac3b21b615f2ad4477631",
     ),
     (
-        include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-10921-of-10922.json"),
+        include_str!(
+            "../../metatheory/emitted/mina-opening/pasta-rcb-sg-derive-10921-of-10922.json"
+        ),
         "95a94ccb0869dfd6b98970c013557be7a716936c72ede5e9886e9dcb8bbf0d89",
     ),
 ];
@@ -118,7 +137,9 @@ const DERIVE: [(&str, &str); 4] = [
 /// in its manifest. It is what turns the challenge-inconsistency tamper into a MEASUREMENT — the
 /// forged derivation is exhibited PROVING against its own challenges and REFUSED against ours.
 const DERIVE_BLOCK_B: (&str, &str) = (
-    include_str!("fixtures/pasta-sg-derive/pasta-rcb-sg-derive-0-of-10922-blockB.json"),
+    include_str!(
+        "../../metatheory/emitted/mina-opening/pasta-rcb-sg-derive-0-of-10922-blockB.json"
+    ),
     "bbf56051b37d5b73faf90cefc110ceb21a27e4ce4a8982f5166e19d08e2f92fe",
 );
 
@@ -126,30 +147,16 @@ const DERIVE_BLOCK_B: (&str, &str) = (
 /// carry them as data. `manifest_digits_are_the_derived_s_vector` CHECKS this copy against the
 /// descriptor's own digit column rather than trusting it.
 const CHALS_A: (&str, &str) = (
-    include_str!("fixtures/pasta-sg-derive/chals-block0.json"),
+    include_str!("../../metatheory/emitted/mina-opening/chals-block0.json"),
     "69b820d49b2b29d0e17c5569ae174a7a7f4964baf97b5ff51af3d2ac7d8bcaff",
 );
 const CHALS_B: (&str, &str) = (
-    include_str!("fixtures/pasta-sg-derive/chals-block1.json"),
+    include_str!("../../metatheory/emitted/mina-opening/chals-block1.json"),
     "3a8bb88fe2cdea76c039491a341b11849884461d41400656efa59ffc6e8e693a",
 );
 
-/// `PastaMsmBound.WB` / `PastaMsmSliced.LO` / `HI` / `PastaMsmBound.TIDX` / `GIDX`.
-const COL_LO: usize = 525;
-const COL_HI: usize = 526;
-const COL_TIDX: usize = 527;
-const COL_GIDX: usize = 528;
-
-/// The emitted shape (`EmitPastaDerive.lean`'s kernel `#guard`s carry the same numbers).
-const NB: usize = 15;
-const PLANES: usize = 256;
-const W: usize = 3;
-const N: usize = 10922;
-const KS: [usize; 4] = [0, 3640, 7281, 10921];
-const HEIGHT: usize = PLANES * (W + 1);
-const DERIVE_WIDTH: usize = 2131;
-const DERIVE_PI_COUNT: usize = 164;
-const DERIVE_CONSTRAINTS: usize = 1309;
+/// `PastaMsmBound.GIDX` — the absolute generator index thread.
+use dregg_circuit::mina_opening_witness::COL_GIDX;
 
 /// ⚑ The shape `9b88bc06e` proved — the derivation WITHOUT `PastaMsmScalarDerive` §2.7's canonicity
 /// certificate. The certificate is the LAST `CBITS = 255` columns and the LAST `CBITS + 1 = 256`
@@ -171,13 +178,6 @@ const ORIGIN: Pt = Pt {
     z: U256::ZERO,
 };
 
-fn layout() -> DeriveLayout {
-    DeriveLayout {
-        nb: NB,
-        planes: PLANES,
-    }
-}
-
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -197,15 +197,9 @@ fn parse_block_b() -> EffectVmDescriptor2 {
     parse_vm_descriptor2(DERIVE_BLOCK_B.0).expect("the deployed checker must parse block B")
 }
 
-/// Pull the decimal challenge strings out of `{"block":N,"challenges":["…",…]}`. Hand-rolled
-/// because `dregg-circuit` keeps no JSON dependency at the verify floor.
+/// Pull the decimal challenge strings out of `{"block":N,"challenges":["…",…]}`.
 fn parse_chals(json: &str) -> Vec<U256> {
-    let start = json.find("\"challenges\":[").expect("challenges key") + "\"challenges\":[".len();
-    let end = json[start..].find(']').expect("challenges close") + start;
-    json[start..end]
-        .split(',')
-        .map(|s| U256::from_dec(s.trim().trim_matches('"')))
-        .collect()
+    opening::parse_challenges(json).expect("the emitted challenge vector must parse")
 }
 
 fn chals_a() -> Vec<U256> {
@@ -217,126 +211,18 @@ fn chals_b() -> Vec<U256> {
 }
 
 fn manifest_of(desc: &EffectVmDescriptor2) -> &Vec<Vec<u32>> {
-    match &desc.tables[0].sem {
-        TableSem::ExactPublicRows { rows } => rows,
-        other => panic!("expected an exact-public generator table, got {other:?}"),
-    }
+    opening::manifest_of(desc).expect("an exact-public generator table")
 }
 
-fn point_of(row: &[u32]) -> Pt {
-    let mut lx = [0u32; NUM_LIMBS];
-    let mut ly = [0u32; NUM_LIMBS];
-    let mut lz = [0u32; NUM_LIMBS];
-    lx.copy_from_slice(&row[3..3 + NUM_LIMBS]);
-    ly.copy_from_slice(&row[3 + NUM_LIMBS..3 + 2 * NUM_LIMBS]);
-    lz.copy_from_slice(&row[3 + 2 * NUM_LIMBS..3 + 3 * NUM_LIMBS]);
-    Pt {
-        x: U256::from_limbs30(&lx),
-        y: U256::from_limbs30(&ly),
-        z: U256::from_limbs30(&lz),
-    }
-}
-
-/// The schedule the manifest DECLARES: an all-zero manifest row is a doubling row, every other row
-/// is a conditional add of the generator it names under the digit it names.
-fn schedule_of(manifest: &[Vec<u32>]) -> Vec<RowSpec> {
-    manifest
-        .iter()
-        .map(|row| {
-            if row.iter().all(|&v| v == 0) {
-                RowSpec::Double
-            } else {
-                RowSpec::CondAdd {
-                    src: point_of(row),
-                    bit: row[2] == 1,
-                }
-            }
-        })
-        .collect()
-}
-
-/// How a slice's derivation block should be filled.
-#[derive(Clone, Copy)]
-struct Fill<'a> {
-    /// What the `CHc` columns carry — what the verifier pins.
-    wire: &'a [U256],
-    /// What the multiplier / product / digit columns carry — what the prover claims.
-    derived: &'a [U256],
-    /// ⚑ Rewrite the chain's LANDING BLOCK on every row consuming this generator index to the
-    /// NON-CANONICAL representative `s + q`, adjusting the last step's quotient so the emitted
-    /// `fqMulCore` still holds exactly. See `the_decomposition_is_not_canonical_and_the_manifest_
-    /// is_what_catches_it`.
-    noncanonical_at: Option<usize>,
-}
-
-fn honest_fill<'a>(chals: &'a [U256]) -> Fill<'a> {
-    Fill {
-        wire: chals,
-        derived: chals,
-        noncanonical_at: None,
-    }
-}
+/// How a slice's derivation block should be filled — the library's, so this file and the runtime
+/// path fill traces the same way.
+type Fill<'a> = OpeningFill<'a>;
 
 /// Write a 9x30 field element into a row (the witness module's `put_field`, which is private).
 fn put_field_at(row: &mut [BabyBear], base: usize, v: &U256) {
     for l in 0..NUM_LIMBS {
         row[base + l] = BabyBear::new(v.limb30(l));
     }
-}
-
-/// The running product after `n` of the `nb` chain steps, at generator index `idx`.
-fn partial_product(chals: &[U256], idx: usize, n: usize) -> U256 {
-    let nb = chals.len();
-    let mut acc = U256::ONE;
-    for (j, c) in chals.iter().enumerate().take(n) {
-        if (idx >> (nb - 1 - j)) & 1 == 1 {
-            acc = mul_mod_q(&acc, c).0;
-        }
-    }
-    acc
-}
-
-/// Rewrite one row's chain landing block and digits to the representative `s + q`, keeping every
-/// emitted gate of the chain satisfied over ℤ. Returns that representative.
-///
-/// ⚑ THE CERTIFICATE COLUMNS GET THE BEST WITNESS THAT EXISTS, which is the whole point: `q − 1 −
-/// (s + q) = −(s + 1)` is NEGATIVE, so no assignment of 255 boolean places reaches it and
-/// `PastaMsmScalarDerive.canon_forces` proves there is none. What a real prover would write is the
-/// 255-bit truncation `2^255 − (s + 1)`, and that is what goes in — a forgery test whose witness
-/// generator simply gave up would measure nothing.
-fn make_noncanonical(row: &mut [BabyBear], chals: &[U256], gidx: usize) -> U256 {
-    let lay = layout();
-    let nb = chals.len();
-    let prev = partial_product(chals, gidx, nb - 1);
-    let mu = if gidx & 1 == 1 {
-        chals[nb - 1]
-    } else {
-        U256::ONE
-    };
-    let (s, quot) = mul_mod_q(&prev, &mu);
-    assert!(
-        quot != U256::ZERO,
-        "the last step must actually reduce, or `quot − 1` is not a witness"
-    );
-    let (quot2, borrow) = quot.sbb(&U256::ONE);
-    assert!(!borrow);
-    let (s2, carry) = s.adc(&Q_PASTA);
-    assert!(!carry, "s + q must fit 256 bits");
-    put_field_at(row, lay.qu(NUM_LIMBS * (nb - 1)), &quot2);
-    put_field_at(row, lay.pr(NUM_LIMBS * nb), &s2);
-    for p in 0..PLANES {
-        row[lay.sb(p)] = BabyBear::new(s2.bit(PLANES - 1 - p));
-    }
-    // `2^255 − (s + 1)`, the residue of `q − 1 − s2` in the 255-bit budget.
-    let two_255 = U256([0, 0, 0, 1u64 << 63]);
-    let (sp1, c1) = s.adc(&U256::ONE);
-    assert!(!c1);
-    let (trunc, b1) = two_255.sbb(&sp1);
-    assert!(!b1);
-    for p in 0..CBITS {
-        row[lay.cb(p)] = BabyBear::new(trunc.bit(p));
-    }
-    s2
 }
 
 /// The pre-canonicity descriptors: the SAME emitted objects with §2.7's certificate truncated off.
@@ -387,12 +273,8 @@ fn patch_manifest_digits(desc: &mut EffectVmDescriptor2, gidx: usize, s2: &U256)
     moved
 }
 
-/// Widen a 525-column windowed trace to the derived width: the four declaration/index columns, the
-/// two on-curve certificates, and the derivation block.
-///
-/// ⚑ The certificate written is always the BEST ONE THAT EXISTS for the point in the cells: honest
-/// where the point has an inverse, and the `YINV = 0` fallback only where it has none. A forgery
-/// test whose witness generator simply gave up would measure nothing.
+/// Widen a 525-column windowed trace to the derived width — the library's builder, so this file
+/// and `dregg_bridge::mina_opening_check` fill identical traces.
 fn widen_derive(
     trace: Vec<Vec<BabyBear>>,
     lo: usize,
@@ -400,67 +282,11 @@ fn widen_derive(
     fill: Fill<'_>,
     check_digits: bool,
 ) -> Vec<Vec<BabyBear>> {
-    let lay = layout();
-    let mut gidx: usize = 0;
-    trace
-        .into_iter()
-        .enumerate()
-        .map(|(i, mut row)| {
-            assert_eq!(row.len(), TRACE_WIDTH);
-            let dbl = row[COL_DBL].as_u32() == 1;
-            let acc = read_point(&row, COL_ACCX, COL_ACCY, COL_ACCZ);
-            let src = read_point(&row, COL_SRCX, COL_SRCY, COL_SRCZ);
-            row.resize(lay.width(), BabyBear::ZERO);
-            row[COL_LO] = BabyBear::new(lo as u32);
-            row[COL_HI] = BabyBear::new(hi as u32);
-            row[COL_TIDX] = BabyBear::new(i as u32);
-            row[COL_GIDX] = BabyBear::new(gidx as u32);
-            for (base, pt) in [(COL_OC_ACC, acc), (COL_OC_SRC, src)] {
-                if pt.y == U256::ZERO {
-                    put_on_curve_block_forged(&mut row, base, &pt);
-                } else {
-                    put_on_curve_block(&mut row, base, &pt);
-                }
-            }
-            let plane = i / (W + 1);
-            let mut s = put_derive_block(&mut row, &lay, fill.wire, fill.derived, gidx, plane);
-            if fill.noncanonical_at == Some(gidx) {
-                s = make_noncanonical(&mut row, fill.derived, gidx);
-            }
-            // ⚑ THE MANIFEST AND THE DERIVATION AGREE, checked at witness-build time on a
-            // CONDITIONAL-ADD row: the descriptor's declared digit IS the derived scalar's digit
-            // at this row's own plane. This is the belt-and-braces the manifest was kept for; if
-            // the two ever disagreed the instance would have NO satisfying trace at all, and this
-            // assert is what turns that into a legible failure instead of a mysterious refusal.
-            if check_digits && !dbl {
-                assert_eq!(
-                    row[COL_BIT].as_u32(),
-                    s.bit(PLANES - 1 - plane),
-                    "row {i}: the manifest's declared digit is not the derived s-vector's bit"
-                );
-            }
-            gidx = if dbl { lo } else { gidx + 1 };
-            row
-        })
-        .collect()
+    opening::widen_derive(trace, lo, hi, fill, check_digits).expect("the witness must build")
 }
 
 fn public_inputs_of(trace: &[Vec<BabyBear>], lo: usize, hi: usize, wire: &[U256]) -> Vec<BabyBear> {
-    let lay = layout();
-    let last = trace.last().expect("non-empty trace");
-    let mut pis = Vec::with_capacity(lay.pi_count());
-    pis.push(BabyBear::new(lo as u32));
-    pis.push(BabyBear::new(hi as u32));
-    for i in 0..27 {
-        pis.push(last[COL_ACCX + i]);
-    }
-    assert_eq!(pis.len(), SLICED_PI_COUNT);
-    for c in wire {
-        for l in 0..NUM_LIMBS {
-            pis.push(BabyBear::new(c.limb30(l)));
-        }
-    }
-    pis
+    opening::public_inputs_of(trace, lo, hi, wire).expect("public inputs")
 }
 
 /// One slice's trace, starting from `acc0`, with an optional source-point edit.
@@ -472,34 +298,14 @@ fn slice_trace(
     edit: Option<(usize, Pt)>,
     check_digits: bool,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-    let lo = W * k;
-    let hi = lo + W;
-    let mut sched = schedule_of(manifest);
-    if let Some((row, src)) = edit {
-        let bit = match sched[row] {
-            RowSpec::CondAdd { bit, .. } => bit,
-            RowSpec::Double => panic!("the edited row must be a conditional-add row"),
-        };
-        sched[row] = RowSpec::CondAdd { src, bit };
-    }
-    assert_eq!(sched.len(), HEIGHT);
-    let trace = widen_derive(build_trace(acc0, &sched), lo, hi, fill, check_digits);
-    let pis = public_inputs_of(&trace, lo, hi, fill.wire);
-    (trace, pis)
+    opening::slice_trace(manifest, k, acc0, fill, edit, check_digits).expect("the slice must build")
 }
 
-/// All four honest slices of the cut.
+/// All four honest slices of the cut — `build_opening_cut` is what the RUNTIME path calls, so this
+/// test's control and the runtime's witness are the same object.
 fn honest_cut(chals: &[U256]) -> (Vec<Vec<Vec<BabyBear>>>, Vec<Vec<BabyBear>>) {
     let descs = parse_cut();
-    let fill = honest_fill(chals);
-    let mut traces = Vec::new();
-    let mut pis = Vec::new();
-    for (i, k) in KS.iter().enumerate() {
-        let (t, p) = slice_trace(manifest_of(&descs[i]), *k, &Pt::INFINITY, fill, None, true);
-        traces.push(t);
-        pis.push(p);
-    }
-    (traces, pis)
+    opening::build_opening_cut(&descs, chals).expect("the honest cut must build")
 }
 
 fn prove_cut(

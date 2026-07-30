@@ -570,6 +570,16 @@ pub mod refusal;
 /// deployed `descriptor_ir2` prover can run against it.
 pub mod pasta_windowed_witness;
 
+/// WITNESS ASSEMBLY for the LEAN-AUTHORED Mina `⟨s, srs.g⟩` opening-check AIR
+/// (`dregg-pasta-rcb-sg-derive-<k>-of-10922::v1`,
+/// `metatheory/Dregg2/Circuit/Emit/PastaMsmScalarDerive.lean`).
+///
+/// Cells only, same as [`pasta_windowed_witness`] — it parses the emitted descriptor's manifest,
+/// fills a trace and assembles public inputs. It exists because until 2026-07-30 every line of it
+/// lived in a test, so the Mina opening AIR was reachable from no runtime path at all;
+/// `dregg_bridge::mina_opening_check` is the caller that closed that.
+pub mod mina_opening_witness;
+
 // `shielded` moved to `dregg-circuit-prove`.
 
 #[cfg(test)]
