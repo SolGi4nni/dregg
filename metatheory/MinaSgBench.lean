@@ -20,11 +20,11 @@ separate and much larger number (`docs/MINA-CHECKPOINT-CADENCE.md` §5b); do not
 -/
 import Dregg2.Bridge.MinaWrapSgWeld
 
-open Dregg2.Bridge.MinaWrapSg (sVecN sgFold sgWireOk sgVerdict sgFoldAdds)
+open Dregg2.Bridge.MinaWrapSg (sVecN sgWireOk)
 open Dregg2.Bridge.MinaWrapSgWeld (CHALS_W)
 open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.PastaCurveComplete (curveB3 Oproj projEqM)
-open Dregg2.Circuit.Emit.PastaIpaFold (msmHornerM)
+open Dregg2.Circuit.Emit.PastaIpaFold (msmHornerM hornerAdds)
 open Dregg2.Circuit.Emit.MinaWrapSrsG (SRS_G)
 open Dregg2.Circuit.Emit.MinaWrapSgParts (SG)
 
@@ -78,7 +78,7 @@ def main : IO Unit := do
   let ok ← timedMsm 255 scalars gens SG
   let t5 ← IO.monoMsNow
   let msmMs := t5 - t4
-  IO.println s!"  MSM <s, srs.g>  : {secs msmMs} ({msmMs} ms) for {sgFoldAdds 15 255} complete adds"
+  IO.println s!"  MSM <s, srs.g>  : {secs msmMs} ({msmMs} ms) for {hornerAdds 15 255} complete adds"
   IO.println s!"  verdict         : sg == <s, srs.g>  ->  {ok}"
 
   -- ⚑ THE OTHER POLARITY: one generator swapped for another REAL generator. Shape stays valid,
@@ -92,7 +92,7 @@ def main : IO Unit := do
   IO.println s!"  ---"
   IO.println s!"  checkpoint sg leg (5h)      : {secs msmMs}"
   IO.println s!"  + 2 accumulator MSMs (5g)   : {secs (3 * msmMs)} total for the three"
-  IO.println s!"  everything else is ~110 ms (sponges, opening relation, public_comm)"
+  IO.println s!"  everything else is ~0.3 s (sponges, opening relation, public_comm, endo)"
 
   if !ok then
     throw (IO.userError "FAIL: the compiled MSM did NOT reproduce block 539508's opening.sg")

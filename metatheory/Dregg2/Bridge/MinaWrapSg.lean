@@ -177,22 +177,18 @@ that refuses everything. -/
 
 /-! ## §5 — What one checkpoint's `sg` leg costs, in complete adds, at Mina's `k = 15`.
 
-`PastaIpaFold` §4 counts the same numbers for the identities; these count them for the function a
-checkpoint actually calls, so the cadence table in `docs/MINA-CHECKPOINT-CADENCE.md` has an object
-to point at. -/
+⚑ The count is `PastaIpaFold.hornerAdds`, NOT a local restatement of it. A `sgFoldAdds` here would
+have been a second copy of `nbits + 2^k * (nbits/2)` that agrees today — the same twin this file
+exists partly to have removed from `MinaWrapSgCore`. `PastaMsmLayouts` and `PastaMsmAir` already
+cite `hornerAdds` by name; there is one number and one definition of it. -/
 
-/-- Complete adds `sgFold` performs at `2^k` terms and `nbits` bits, at an average Hamming weight
-of `nbits/2`: `nbits` doublings plus one add per set bit. -/
-def sgFoldAdds (k nbits : Nat) : Nat := nbits + 2 ^ k * (nbits / 2)
-
-/-- Complete adds a naive per-term double-and-add ladder performs: two per bit, per term. -/
-def naiveAdds (k nbits : Nat) : Nat := 2 ^ k * (2 * nbits)
-
-#guard sgFoldAdds 15 255 == 4161791
-#guard naiveAdds 15 255 == 16711680
-/- The shared doubling chain is worth ~4×; the generator fold, which saves exactly one scalar
-multiplication out of `2^15`, is worth nothing. -/
-#guard naiveAdds 15 255 / sgFoldAdds 15 255 == 4
+/- The `sg` leg at Mina's wrap SRS: `4,161,791` complete adds, against the `16,711,680` a naive
+per-term ladder pays (two per bit, per term). The shared doubling chain is worth ~4×; the generator
+fold, which saves exactly one scalar multiplication out of `2^15`, is worth nothing. -/
+#guard Dregg2.Circuit.Emit.PastaIpaFold.hornerAdds 15 255 == 4161791
+#guard Dregg2.Circuit.Emit.PastaIpaFold.naiveScalarMuls 15 * (2 * 255) == 16711680
+#guard (Dregg2.Circuit.Emit.PastaIpaFold.naiveScalarMuls 15 * (2 * 255))
+         / Dregg2.Circuit.Emit.PastaIpaFold.hornerAdds 15 255 == 4
 /- Mina's wrap SRS is `k = 15`: 15 challenges, 32,768 generators, 32,768 scalars. -/
 #guard 2 ^ 15 == 32768
 
