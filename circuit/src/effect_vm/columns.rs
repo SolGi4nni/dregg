@@ -198,6 +198,29 @@ pub mod state {
     pub const STATE_COMMIT: usize = 12;
     pub const RESERVED: usize = 13;
     pub const SIZE: usize = 14;
+
+    /// **How many developer field lanes the deployed EffectVM state block carries.**
+    ///
+    /// DERIVED from the block layout (`CAP_ROOT − FIELD_BASE`), never re-typed as a
+    /// literal `8`: the field octet is exactly the span between the last scalar before
+    /// it and the cap-root limb, so a layout move cannot leave this number behind.
+    ///
+    /// It is NOT `dregg_cell::state::STATE_SLOTS` (16), and the gap is real, not a
+    /// stale widening left half-done. A cell holds 16 indexed slots; the EffectVM row
+    /// carries the first EIGHT of them as columns, and `fields[8..STATE_SLOTS]` folds
+    /// into the authority residue (`record_digest` — see `cell_state.rs`'s
+    /// `record_digest` doc and `cell/src/commitment.rs`'s `st.fields[8..STATE_SLOTS]`
+    /// loop) rather than into a state-block column. The Lean that AUTHORS the AIR types
+    /// the bound as `Fin 8`
+    /// (`metatheory/Dregg2/Circuit/Emit/EffectVmEmitSetField.lean::setFieldVmDescriptor`,
+    /// `gOtherFieldsAll`'s `List.range 8`, `RowEncodesSF`'s `∀ i : Fin 8`), and the
+    /// Lean-emitted layout manifest publishes the same octet width
+    /// (`layout_generated::CUSTOM_APP_FIELD_OCTET_LEN`). Both are pinned against this
+    /// constant by `circuit/tests/setfield_air_lane_bound_pin.rs`.
+    ///
+    /// So this is a REAL CEILING on what the deployed AIR can attest, not a literal to
+    /// raise. Raising it without moving the Lean is a wrong proof, not a wider one.
+    pub const NUM_FIELDS: usize = CAP_ROOT - FIELD_BASE;
 }
 
 /// Absolute column indices for state_before.

@@ -7,7 +7,7 @@
 
 use crate::field::BabyBear;
 
-use super::{CellState, pi, split_u64};
+use super::{CellState, pi, split_u64, state};
 
 /// Verify that balance limbs in a CellState are within valid ranges.
 ///
@@ -215,6 +215,17 @@ pub fn verify_slot_caveat_manifest(
     final_fields: &[BabyBear; 8],
     block_height: u64,
 ) -> Result<(), String> {
+    // The AIR's developer-field lane count, DERIVED from the deployed block layout — the
+    // same single source the trace generator and both projection doors read. The five slot
+    // bounds below were each a hard-coded `>= 8`; a half-landed widening leaves that kind of
+    // literal behind one site at a time, which is the whole shape of GitHub #61/#62.
+    // `initial_fields`/`final_fields` are `[BabyBear; 8]` structurally, so the two must agree.
+    let lanes = state::NUM_FIELDS;
+    debug_assert_eq!(
+        lanes,
+        initial_fields.len(),
+        "state::NUM_FIELDS must equal the field-window arrays this verifier indexes"
+    );
     if public_inputs.len() < pi::BASE_COUNT {
         return Err(format!(
             "PI vector too short for slot-caveat manifest: {} < {}",
@@ -234,9 +245,9 @@ pub fn verify_slot_caveat_manifest(
         let base = pi::SLOT_CAVEAT_MANIFEST_BASE + i * pi::SLOT_CAVEAT_ENTRY_SIZE;
         let tag = public_inputs[base].0;
         let slot_idx = public_inputs[base + 1].0 as usize;
-        if slot_idx >= 8 {
+        if slot_idx >= lanes {
             return Err(format!(
-                "slot-caveat[{i}] slot_index {slot_idx} out of range (must be < 8)"
+                "slot-caveat[{i}] slot_index {slot_idx} out of range (must be < {lanes})"
             ));
         }
         let p0 = public_inputs[base + 2];
@@ -438,9 +449,9 @@ pub fn verify_slot_caveat_manifest(
                 // slot. The slot views carry the field-mirrored `LegStatus` code
                 // (Empty=0, Deposited=1, Consumed=2).
                 let leg_b = p0.0 as usize;
-                if leg_b >= 8 {
+                if leg_b >= lanes {
                     return Err(format!(
-                        "slot-caveat[{i}] SettleEscrow leg-B slot_index {leg_b} out of range (must be < 8)"
+                        "slot-caveat[{i}] SettleEscrow leg-B slot_index {leg_b} out of range (must be < {lanes})"
                     ));
                 }
                 let before_a = old_v;
@@ -484,14 +495,14 @@ pub fn verify_slot_caveat_manifest(
                 // full-width check).
                 let due_slot = p0.0 as usize;
                 let amount_slot = p1.0 as usize;
-                if due_slot >= 8 {
+                if due_slot >= lanes {
                     return Err(format!(
-                        "slot-caveat[{i}] DischargeObligation due slot_index {due_slot} out of range (must be < 8)"
+                        "slot-caveat[{i}] DischargeObligation due slot_index {due_slot} out of range (must be < {lanes})"
                     ));
                 }
-                if amount_slot >= 8 {
+                if amount_slot >= lanes {
                     return Err(format!(
-                        "slot-caveat[{i}] DischargeObligation total slot_index {amount_slot} out of range (must be < 8)"
+                        "slot-caveat[{i}] DischargeObligation total slot_index {amount_slot} out of range (must be < {lanes})"
                     ));
                 }
                 let period = p2;
@@ -547,9 +558,9 @@ pub fn verify_slot_caveat_manifest(
                 // verifier-visible 4-byte slot view (`SLOT-CAVEATS-DESIGN.md` §4; the
                 // executor does the full-width check). u128 products avoid overflow.
                 let shares_slot = p0.0 as usize;
-                if shares_slot >= 8 {
+                if shares_slot >= lanes {
                     return Err(format!(
-                        "slot-caveat[{i}] VaultDeposit shares slot_index {shares_slot} out of range (must be < 8)"
+                        "slot-caveat[{i}] VaultDeposit shares slot_index {shares_slot} out of range (must be < {lanes})"
                     ));
                 }
                 let before_assets = old_v.0 as u64;

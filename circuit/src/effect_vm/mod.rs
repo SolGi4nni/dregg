@@ -238,9 +238,10 @@ pub use air::AIR_DESCRIPTOR;
 
 // ---- Re-export trace generation ----
 pub use trace::{
-    EffectVmContext, RotCaveatEntry, SlotCaveatEntry, canonical_id_to_felts_4, effect_selector,
-    encode_net_delta, extract_asset_class, extract_custom_proof_commitments, extract_net_delta,
-    extract_slot_caveat_manifest, generate_effect_vm_trace, generate_effect_vm_trace_ext,
+    EffectVmContext, EffectVmTraceError, RotCaveatEntry, SlotCaveatEntry, canonical_id_to_felts_4,
+    effect_selector, encode_net_delta, extract_asset_class, extract_custom_proof_commitments,
+    extract_net_delta, extract_slot_caveat_manifest, generate_effect_vm_trace,
+    generate_effect_vm_trace_ext, try_generate_effect_vm_trace, try_generate_effect_vm_trace_ext,
 };
 
 // ---- Re-export the LIVE rotated (R=24) trace generator (G1, staged-additive) ----

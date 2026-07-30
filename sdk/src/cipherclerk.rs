@@ -7068,14 +7068,40 @@ impl AgentCipherclerk {
                 "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
             )));
         }
+        // THE AIR'S REAL FIELD-LANE CEILING (GitHub #61/#62, measured 2026-07-30).
+        //
+        // ⚠ THIS GUARD READ `*index > u32::MAX as u64`, and so did its executor-side twin
+        // (`dregg_turn::executor::try_convert_turn_effects_to_vm`). Both were three orders of
+        // magnitude too loose: the deployed EffectVM state block carries
+        // `state::NUM_FIELDS` = 8 developer field columns
+        // (`state::FIELD_BASE..state::CAP_ROOT`), the Lean that authors the descriptor types the
+        // slot as `Fin 8`, and the trace generator refuses anything above it. So every index in
+        // `[8, u32::MAX]` passed this "checked" door and detonated in the prover instead —
+        // committed, receipted, then unprovable. A door that admits what the next stage refuses
+        // is not a check; it is a longer fuse.
+        //
+        // The bound is NOT raised here. `dregg_cell::state::STATE_SLOTS` is 16 and slots 8..15
+        // are legal, committed cell state — they fold into the authority residue
+        // (`record_digest`), which no per-slot setField descriptor writes. Refusing is the
+        // honest answer; widening the AIR is an epoch (see the report attached to #61).
         if let Some(index) = effects.iter().find_map(|effect| match effect {
-            Effect::SetField { cell, index, .. } if cell == cell_id && *index > u32::MAX as u64 => {
+            Effect::SetField { cell, index, .. }
+                if cell == cell_id
+                    && *index >= dregg_circuit::effect_vm::state::NUM_FIELDS as u64 =>
+            {
                 Some(*index)
             }
             _ => None,
         }) {
+            let lanes = dregg_circuit::effect_vm::state::NUM_FIELDS;
             return Err(SdkError::InvalidWitness(format!(
-                "EffectVM cannot prove SetField key {index}: the current AIR index lane is u32"
+                "EffectVM cannot prove SetField key {index}: the deployed AIR carries {lanes} \
+                 developer field lanes (slots 0..{last}). A cell holds STATE_SLOTS = 16 indexed \
+                 slots, so this write is legal state and will commit — it simply has no proof \
+                 lane, because fields[{lanes}..16] fold into the authority residue rather than a \
+                 state-block column. Use slots 0..{last} for anything that must reach the \
+                 attested tier",
+                last = lanes.saturating_sub(1)
             )));
         }
         Ok(Self::convert_effects_to_vm_unchecked(cell_id, effects))
@@ -7084,13 +7110,17 @@ impl AgentCipherclerk {
     /// Compatibility projection for callers that already establish the
     /// EffectVM key domain. Proof producers should use
     /// [`Self::try_convert_effects_to_vm`] and propagate the refusal.
+    ///
+    /// ⚠ Anything reachable from a COMMITTED turn must NOT call this. Every such caller in
+    /// `node::turn_proving` was moved to the checked twin on 2026-07-30 (#61/#62): the
+    /// projection refusal has to be a value the finalized-turn path can carry past its
+    /// durable barrier, not an unwind that skips it.
     pub fn convert_effects_to_vm(
         cell_id: &CellId,
         effects: &[Effect],
     ) -> Vec<dregg_circuit::effect_vm::Effect> {
-        Self::try_convert_effects_to_vm(cell_id, effects).expect(
-            "EffectVM cannot prove SetField keys above u32::MAX; use the classical committed-map lane",
-        )
+        Self::try_convert_effects_to_vm(cell_id, effects)
+            .expect("EffectVM projection refused an effect outside the current AIR domain")
     }
 
     /// Store sovereign cell state in the cipherclerk (agent maintains it).

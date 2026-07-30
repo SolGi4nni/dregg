@@ -16,16 +16,34 @@ use crate::turn::Turn;
 /// does, but it must never be mislabeled as an EffectVM-proven transition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EffectVmProjectionError {
-    WideFieldIndex(u64),
+    /// A `SetField` naming a slot the deployed EffectVM state block has no column for.
+    ///
+    /// ⚠ SUCCESSOR to `WideFieldIndex(u64)`, which refused only `index > u32::MAX` — three
+    /// orders of magnitude above the AIR's actual ceiling of
+    /// `dregg_circuit::effect_vm::state::NUM_FIELDS` (8). Every index in `[8, u32::MAX]` passed
+    /// that door and hit `assert!(field_idx < 8)` in the trace generator instead, AFTER the turn
+    /// had committed and receipted (GitHub #61/#62). The old variant is deleted rather than kept
+    /// alongside: it named a bound nothing enforced, and two shapes that disagree are how this
+    /// drifted in the first place.
+    UnprovableFieldIndex {
+        index: u64,
+        lanes: usize,
+    },
     PqIdentityEffect(&'static str),
 }
 
 impl core::fmt::Display for EffectVmProjectionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::WideFieldIndex(index) => write!(
+            Self::UnprovableFieldIndex { index, lanes } => write!(
                 f,
-                "EffectVM cannot prove SetField key {index}: the current AIR index lane is u32"
+                "EffectVM cannot prove SetField key {index}: the deployed AIR carries {lanes} \
+                 developer field lanes (slots 0..{last}). A cell holds STATE_SLOTS = 16 indexed \
+                 slots, so this write is legal state and will commit — it simply has no proof \
+                 lane, because fields[{lanes}..16] fold into the authority residue \
+                 (`record_digest`) rather than a state-block column. Use slots 0..{last} for \
+                 anything that must reach the attested tier",
+                last = lanes.saturating_sub(1)
             ),
             Self::PqIdentityEffect(effect) => write!(
                 f,
@@ -761,15 +779,25 @@ pub fn try_convert_turn_effects_to_vm(
     fn check_effects(effects: &[Effect], cell_id: &CellId) -> Result<(), EffectVmProjectionError> {
         for effect in effects {
             match effect {
-                // Top-level ONLY, deliberately: this refusal exists because a wide
-                // key would be TRUNCATED into the u32 index lane. An inner effect is
-                // never lowered to a `VmEffect::SetField` (it is hash-bound into
-                // `exercise_hash`), so there is no truncation to refuse and
-                // recursing here would reject provable turns.
+                // Top-level ONLY, deliberately: this refusal exists because the write
+                // would be lowered into a field lane the AIR does not have. An inner
+                // effect is never lowered to a `VmEffect::SetField` (it is hash-bound
+                // into `exercise_hash`), so there is nothing to refuse and recursing
+                // here would reject provable turns.
+                //
+                // THE BOUND IS THE AIR'S, READ FROM THE AIR. `state::NUM_FIELDS` is derived
+                // from the deployed block layout (`CAP_ROOT − FIELD_BASE`) and pinned against
+                // the Lean `Fin 8` the descriptor is authored over
+                // (`circuit/tests/setfield_air_lane_bound_pin.rs`). It is deliberately NOT
+                // `STATE_SLOTS`: the cell holds 16 slots and the AIR carries 8 of them.
                 Effect::SetField { cell, index, .. }
-                    if cell == cell_id && *index > u32::MAX as u64 =>
+                    if cell == cell_id
+                        && *index >= dregg_circuit::effect_vm::state::NUM_FIELDS as u64 =>
                 {
-                    return Err(EffectVmProjectionError::WideFieldIndex(*index));
+                    return Err(EffectVmProjectionError::UnprovableFieldIndex {
+                        index: *index,
+                        lanes: dregg_circuit::effect_vm::state::NUM_FIELDS,
+                    });
                 }
                 Effect::CreateHybridCell { .. } => {
                     return Err(EffectVmProjectionError::PqIdentityEffect(
@@ -895,16 +923,59 @@ mod tests {
         )
     }
 
+    /// The AIR's field-lane count, as the projection door must read it.
+    const LANES: usize = dregg_circuit::effect_vm::state::NUM_FIELDS;
+
+    /// **THE #61 POLE (refusal).** The first slot the deployed AIR has no column for —
+    /// slot 8, the exact index the helm fleet's whisper-payload writes reported
+    /// (`SetField field_idx out of bounds: 8`) — must be refused BY VARIANT here, where
+    /// the caller can route it, and never reach the prover's trace generator.
+    ///
+    /// ANTI-VACUITY: this is not "the projection returns an error somewhere". It asserts
+    /// the exact typed variant carrying the offending index AND the lane count, so a
+    /// refusal that fired for the wrong reason (a PQ verb, an empty projection) fails.
     #[test]
-    fn checked_projection_refuses_a_wide_key_instead_of_truncating_it() {
+    fn checked_projection_refuses_the_first_index_with_no_air_lane() {
         let cell = CellId([0x51; 32]);
-        let wide = u32::MAX as u64 + 1;
-        let turn = turn_with_set_field(cell, wide);
+        let turn = turn_with_set_field(cell, LANES as u64);
 
         assert_eq!(
             try_convert_turn_effects_to_vm(&cell, &turn),
-            Err(EffectVmProjectionError::WideFieldIndex(wide))
+            Err(EffectVmProjectionError::UnprovableFieldIndex {
+                index: LANES as u64,
+                lanes: LANES,
+            }),
+            "slot {LANES} has no state-block column; the door must refuse it BY VARIANT rather \
+             than lower it into a trace generator that panics after the turn has committed"
         );
+    }
+
+    /// The whole band between the AIR's ceiling and the OLD `u32::MAX` guard used to pass
+    /// this door untouched. Every one of `STATE_SLOTS`'s upper half, plus the heap-key band
+    /// above it, must refuse — including `u32::MAX`, which a prior test asserted was
+    /// "the largest AIR-representable key".
+    #[test]
+    fn the_whole_band_the_old_u32_guard_admitted_is_now_refused() {
+        let cell = CellId([0x51; 32]);
+        for index in [
+            LANES as u64,
+            15,                  // the last STATE_SLOTS fixed cell
+            16,                  // the first heap/fields_map key
+            20,                  // `sdk/tests/umem_cohort_staged_gauntlet.rs`'s fixture
+            u32::MAX as u64,     // the OLD guard's "largest representable" key
+            u32::MAX as u64 + 1, // what the OLD guard actually caught
+            dregg_cell::state::REFUSAL_AUDIT_EXT_KEY,
+        ] {
+            let turn = turn_with_set_field(cell, index);
+            assert_eq!(
+                try_convert_turn_effects_to_vm(&cell, &turn),
+                Err(EffectVmProjectionError::UnprovableFieldIndex {
+                    index,
+                    lanes: LANES
+                }),
+                "index {index} must be refused by the checked projection"
+            );
+        }
     }
 
     #[test]
@@ -928,17 +999,47 @@ mod tests {
         );
     }
 
+    /// **THE OTHER POLE (admission).** Every slot the AIR *does* carry must still project —
+    /// otherwise "refuses slot 8" would be satisfiable by refusing everything.
+    ///
+    /// ⚠ REPLACES `checked_projection_keeps_the_largest_air_representable_key`, which asserted
+    /// `u32::MAX` "is provable". It was not: it detonated one stage later. A test that pins a
+    /// wrong bound is worse than no test — it is the drift, notarised.
     #[test]
-    fn checked_projection_keeps_the_largest_air_representable_key() {
+    fn checked_projection_keeps_every_index_the_air_has_a_lane_for() {
         use dregg_circuit::effect_vm::Effect as VmEffect;
 
         let cell = CellId([0x52; 32]);
-        let turn = turn_with_set_field(cell, u32::MAX as u64);
-        let effects = try_convert_turn_effects_to_vm(&cell, &turn).expect("u32 key is provable");
+        for index in 0..LANES as u64 {
+            let turn = turn_with_set_field(cell, index);
+            let effects = try_convert_turn_effects_to_vm(&cell, &turn)
+                .unwrap_or_else(|e| panic!("slot {index} has an AIR lane and must project: {e}"));
+            assert!(
+                matches!(
+                    effects.as_slice(),
+                    [VmEffect::SetField { field_idx, .. }] if u64::from(*field_idx) == index
+                ),
+                "slot {index} must lower to its own field_idx, not a clamped or aliased one"
+            );
+        }
+    }
 
-        assert!(matches!(
-            effects.as_slice(),
-            [VmEffect::SetField { field_idx, .. }] if *field_idx == u32::MAX
-        ));
+    /// The maximum provable slot, named: `NUM_FIELDS − 1`. Pinned separately from the loop
+    /// above so a silent narrowing of `NUM_FIELDS` (which would keep the loop green over a
+    /// shorter range) goes red here against `STATE_SLOTS`.
+    #[test]
+    fn the_provable_ceiling_is_below_the_cells_slot_count_and_the_gap_is_named() {
+        assert!(
+            LANES < dregg_cell::state::STATE_SLOTS,
+            "the AIR carrying at least as many lanes as the cell has slots would make this whole \
+             refusal dead code — re-derive the gap before deleting anything"
+        );
+        let cell = CellId([0x52; 32]);
+        assert!(
+            try_convert_turn_effects_to_vm(&cell, &turn_with_set_field(cell, LANES as u64 - 1))
+                .is_ok(),
+            "slot {} is the last one with a state-block column and MUST project",
+            LANES - 1
+        );
     }
 }

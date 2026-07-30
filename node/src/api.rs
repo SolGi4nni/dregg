@@ -9933,26 +9933,51 @@ mod tests {
         }
     }
 
-    /// **A wide `SetField` key is REFUSED, not truncated.** The old twin lowered the
-    /// canonical u64 key with `as u32` and judged the turn attestable; the pool then
-    /// drove `AgentCipherclerk::convert_effects_to_vm`'s `.expect()` into a panic in
+    /// **A `SetField` key with no AIR lane is REFUSED, not truncated.** The old twin
+    /// lowered the canonical u64 key with `as u32` and judged the turn attestable; the pool
+    /// then drove `AgentCipherclerk::convert_effects_to_vm`'s `.expect()` into a panic in
     /// the blocking worker, AFTER the turn had committed. `index` comes straight off
     /// the wire (`TurnEffectSpec::SetField { index: u64 }`), so this was reachable
     /// from `/api/turns/submit` with one JSON field.
+    ///
+    /// ⚠ WIDENED 2026-07-30 (GitHub #61/#62). This test used to probe only `u32::MAX + 1`,
+    /// because that was the bound BOTH checked projectors carried. The AIR's real ceiling is
+    /// `state::NUM_FIELDS` (8), so the whole band `[8, u32::MAX]` passed this gate, got
+    /// enqueued, and panicked the prove pool — which is what the helm fleet reported
+    /// (`SetField field_idx out of bounds: 8`). The gate is the reason those turns now report
+    /// `Unprovable` with a legible reason instead of sitting `proof_pending` forever.
     #[test]
-    fn a_wide_setfield_key_is_refused_by_the_gate_not_truncated() {
+    fn a_setfield_key_with_no_air_lane_is_refused_by_the_gate_not_truncated() {
         let actor = gate_actor();
-        let wide = Effect::SetField {
-            cell: actor,
-            index: (u32::MAX as u64) + 1,
-            value: dregg_cell::field_from_u64(7),
-        };
-        match super::http_attestation_coverage(&actor, std::slice::from_ref(&wide)) {
-            super::AttestationCoverage::Refused(why) => assert!(
-                why.contains("SetField"),
-                "the refusal must name the wide-key lane: {why}"
-            ),
-            other => panic!("a wide SetField key must be refused, got {other:?}"),
+        let lanes = dregg_circuit::effect_vm::state::NUM_FIELDS as u64;
+        for index in [lanes, lanes + 7, u32::MAX as u64, (u32::MAX as u64) + 1] {
+            let unprovable = Effect::SetField {
+                cell: actor,
+                index,
+                value: dregg_cell::field_from_u64(7),
+            };
+            match super::http_attestation_coverage(&actor, std::slice::from_ref(&unprovable)) {
+                super::AttestationCoverage::Refused(why) => assert!(
+                    why.contains("SetField") && why.contains(&index.to_string()),
+                    "the refusal must name the verb and the offending slot: {why}"
+                ),
+                other => panic!("SetField key {index} must be refused, got {other:?}"),
+            }
+        }
+
+        // The other pole: every slot the AIR DOES carry must still be judged attestable, or
+        // this gate would take the whole field-write traffic class offline.
+        for index in 0..lanes {
+            let provable = Effect::SetField {
+                cell: actor,
+                index,
+                value: dregg_cell::field_from_u64(7),
+            };
+            assert_eq!(
+                observed_gate_class(&actor, &provable),
+                GateClass::Attestable,
+                "slot {index} has an AIR lane and must still enqueue for attestation"
+            );
         }
     }
 

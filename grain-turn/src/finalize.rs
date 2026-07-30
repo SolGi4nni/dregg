@@ -75,7 +75,15 @@ pub fn finalize_grain_turn(record: &GrainTurnRecord) -> Result<Vec<FinalizedTurn
     let actor = record.before_cell.id();
 
     // (1) Project the committed effects onto the actor cell — the executor's own marshaller.
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(&actor, &record.effects);
+    //
+    // ⚑ CHECKED (#61/#62). The grain minter writes `ATTESTATION_SLOT = 8`, which is a legal
+    // fixed cell (`STATE_SLOTS` = 16) with no AIR lane — exactly the band that produced the
+    // reported panic. `apply_run` below already refuses it with a precise message; the
+    // UNCHECKED projector now refuses it FIRST, and unchecked means `.expect`. Take the
+    // checked door so the wall stays a `String` this function's contract promises, not a
+    // panic through `finalize_grain_turn`'s caller.
+    let vm_effects = AgentCipherclerk::try_convert_effects_to_vm(&actor, &record.effects)
+        .map_err(|e| format!("finalize_grain_turn: {e}"))?;
     if vm_effects.is_empty() {
         return Err(
             "finalize_grain_turn: the committed effects project to an EMPTY actor transition \

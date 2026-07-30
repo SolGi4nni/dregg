@@ -10,7 +10,7 @@ use crate::poseidon2::{hash_2_to_1, hash_4_to_1};
 use super::{
     AUX_BASE, CellState, EFFECT_VM_WIDTH, Effect, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
     aux_off, compute_effects_hash, compute_effects_hash_4, fill_balance_limb_bits,
-    fill_reserved_bits, param, pi, sel, split_u64, u64_to_4_limbs_16,
+    fill_reserved_bits, param, pi, sel, split_u64, state, u64_to_4_limbs_16,
 };
 
 /// Compress a 32-byte canonical id (federation id or cell id) into 4 BabyBear
@@ -86,6 +86,9 @@ pub fn effect_selector(effect: &Effect) -> usize {
 ///
 /// # Returns
 /// (trace, public_inputs) suitable for `stark::prove`.
+///
+/// PANICS on a witness outside the AIR's domain — use [`try_generate_effect_vm_trace`]
+/// from anywhere a COMMITTED turn can reach.
 pub fn generate_effect_vm_trace(
     initial_state: &CellState,
     effects: &[Effect],
@@ -101,6 +104,23 @@ pub fn generate_effect_vm_trace(
         ..Default::default()
     };
     generate_effect_vm_trace_ext(initial_state, effects, ctx)
+}
+
+/// The CHECKED default-context trace generator — [`generate_effect_vm_trace`]'s
+/// refusal-returning twin. Every prover entry point a committed turn can reach
+/// (`node::turn_proving`, the async prove pool behind it) goes through this one, so a
+/// witness the AIR cannot carry becomes a typed error at the caller instead of an
+/// unwind that skips whatever the caller was going to do next — which, on the
+/// finalized path, is the durable commit-log write (#62).
+pub fn try_generate_effect_vm_trace(
+    initial_state: &CellState,
+    effects: &[Effect],
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), EffectVmTraceError> {
+    let ctx = EffectVmContext {
+        actor_nonce: initial_state.nonce as u64,
+        ..Default::default()
+    };
+    try_generate_effect_vm_trace_ext(initial_state, effects, ctx)
 }
 
 /// Extra context that goes into the widened PI layout (Stage 1 + 7-γ.0a).
@@ -386,15 +406,101 @@ impl Default for EffectVmContext {
     }
 }
 
+/// A witness the deployed EffectVM AIR cannot carry, reported as a VALUE.
+///
+/// ═══ WHY THIS TYPE EXISTS (GitHub #61 / #62, measured 2026-07-30) ═════════════════
+/// These conditions used to be bare `assert!`s inside the trace generator, and one of
+/// them — `SetField field_idx < 8` — is reachable from a turn the executor has ALREADY
+/// accepted, committed and receipted. `dregg_cell::state::STATE_SLOTS` is 16, so a
+/// write to slot 8..15 is legal cell state; the AIR carries only the first eight as
+/// columns. The result was a prover that died AFTER the commit:
+///
+///   * on the async HTTP path (`node::prove_pool`) `spawn_blocking` catches the panic
+///     and the receipt is left "committed-but-unattested" forever — finality never
+///     reaches the attested tier for that traffic class (#61);
+///   * on the finalized path (`node::blocklace_sync::execute_finalized_turn`, with
+///     `--prove-turns`) the proving leg runs INLINE and the durable commit-log write
+///     is LATER IN THE SAME FUNCTION, so the unwind skips the durable barrier and the
+///     turn is never written to redb (#62).
+///
+/// A panic cannot be routed, logged with the offending index, or turned into a
+/// refusal. A value can. The bound itself is CORRECT and is not raised here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectVmTraceError {
+    /// A `SetField` naming a slot the deployed state block has no column for.
+    /// `lanes` is [`state::NUM_FIELDS`] — derived from the block layout, matching the
+    /// Lean `Fin 8` the descriptor is authored over.
+    FieldIndexOutOfRange { field_idx: u32, lanes: usize },
+    /// An outgoing `Transfer` whose amount exceeds the running balance. The AIR's
+    /// `NET_DELTA = FINAL − INIT` algebra is satisfied just as happily by a modular
+    /// wrap, so the generator refuses to build the trace rather than emit one.
+    TransferUnderflow { amount: u64, running_balance: u64 },
+    /// A `Burn` whose low-30-bit amount exceeds the running balance (same reasoning).
+    BurnUnderflow { amount: u64, running_balance: u64 },
+}
+
+impl core::fmt::Display for EffectVmTraceError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::FieldIndexOutOfRange { field_idx, lanes } => write!(
+                f,
+                "SetField field_idx out of bounds: {field_idx} (must be 0..{last}). The deployed \
+                 EffectVM state block carries {lanes} developer field columns \
+                 (`state::FIELD_BASE..state::CAP_ROOT`), and the AIR is authored over exactly that \
+                 many (Lean `setFieldVmDescriptor (slot : Fin {lanes})`). A cell holds \
+                 STATE_SLOTS = 16 indexed slots; `fields[{lanes}..16]` fold into the authority \
+                 residue (`record_digest`), NOT into a state-block column, so there is no lane to \
+                 write and no proof to make. This is a REFUSAL, not a bound to raise",
+                last = lanes.saturating_sub(1)
+            ),
+            Self::TransferUnderflow {
+                amount,
+                running_balance,
+            } => write!(
+                f,
+                "Transfer underflow: amount {amount} > running balance {running_balance} \
+                 (executor rejects; STARK constraint would wrap in BabyBear)"
+            ),
+            Self::BurnUnderflow {
+                amount,
+                running_balance,
+            } => write!(
+                f,
+                "Burn underflow: amount_lo {amount} > running balance {running_balance}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EffectVmTraceError {}
+
 /// Stage 1 trace generator. Same as [`generate_effect_vm_trace`] but accepts
 /// the widened PI inputs ([`EffectVmContext`]).
-// crypto index loops kept verbatim
-#[allow(clippy::needless_range_loop)]
+///
+/// PANICS on a witness outside the AIR's domain. Any caller that can be reached by a
+/// COMMITTED turn must use [`try_generate_effect_vm_trace_ext`] instead and surface the
+/// refusal — see [`EffectVmTraceError`] for the two live incidents that motivated the
+/// split. This wrapper stays for fixtures, benches and callers that have already
+/// established the domain, mirroring the `convert_turn_effects_to_vm` /
+/// `try_convert_turn_effects_to_vm` pair the executor bridge already uses.
 pub fn generate_effect_vm_trace_ext(
     initial_state: &CellState,
     effects: &[Effect],
     context: EffectVmContext,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    try_generate_effect_vm_trace_ext(initial_state, effects, context)
+        .unwrap_or_else(|reason| panic!("{reason}"))
+}
+
+/// The CHECKED trace generator: every witness-domain condition the AIR cannot express
+/// is returned as an [`EffectVmTraceError`] instead of panicking.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
+pub fn try_generate_effect_vm_trace_ext(
+    initial_state: &CellState,
+    effects: &[Effect],
+    context: EffectVmContext,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), EffectVmTraceError> {
     assert!(!effects.is_empty(), "Need at least one effect");
 
     // ====================================================================
@@ -428,11 +534,16 @@ pub fn generate_effect_vm_trace_ext(
         for effect in effects {
             match effect {
                 Effect::SetField { field_idx, .. } => {
-                    assert!(
-                        *field_idx < 8,
-                        "SetField field_idx out of bounds: {} (must be 0..7)",
-                        field_idx
-                    );
+                    // THE AIR'S REAL CEILING, derived from the deployed block layout — see
+                    // `state::NUM_FIELDS`. A slot at or above it has no column to write, so
+                    // there is nothing to prove; the caller is told WHICH index and HOW MANY
+                    // lanes exist rather than losing its stack.
+                    if (*field_idx as usize) >= state::NUM_FIELDS {
+                        return Err(EffectVmTraceError::FieldIndexOutOfRange {
+                            field_idx: *field_idx,
+                            lanes: state::NUM_FIELDS,
+                        });
+                    }
                 }
 
                 Effect::Transfer {
@@ -440,13 +551,12 @@ pub fn generate_effect_vm_trace_ext(
                 } => {
                     if *direction == 1 {
                         // Outgoing: validate no underflow.
-                        assert!(
-                            *amount <= running_balance,
-                            "Transfer underflow: amount {} > running balance {} \
-                             (executor rejects; STARK constraint would wrap in BabyBear)",
-                            amount,
-                            running_balance
-                        );
+                        if *amount > running_balance {
+                            return Err(EffectVmTraceError::TransferUnderflow {
+                                amount: *amount,
+                                running_balance,
+                            });
+                        }
                         running_balance -= amount;
                     } else {
                         running_balance = running_balance.saturating_add(*amount);
@@ -475,12 +585,12 @@ pub fn generate_effect_vm_trace_ext(
                     // the per-row balance arithmetic.
                     let _ = amount_full;
                     let amt = amount_lo.as_u32() as u64;
-                    assert!(
-                        amt <= running_balance,
-                        "Burn underflow: amount_lo {} > running balance {}",
-                        amt,
-                        running_balance,
-                    );
+                    if amt > running_balance {
+                        return Err(EffectVmTraceError::BurnUnderflow {
+                            amount: amt,
+                            running_balance,
+                        });
+                    }
                     running_balance -= amt;
                 }
                 _ => {}
@@ -559,10 +669,17 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + param::NEW_VALUE] = *value;
 
                 // Store old value at target index in aux[0] for the constraint.
+                //
+                // ⚠ THIS USED TO BE `idx.min(7)`, on BOTH lines. A silent clamp behind an
+                // `assert!` is a wrong-proof waiting for the assert to be relaxed: with the
+                // bound raised to 16 "because STATE_SLOTS is 16", a write to slot 9 would have
+                // proven a write to slot 7 — the exact failure the bound exists to prevent,
+                // with a valid proof attached. The refusal above makes the clamp dead, so it
+                // is GONE rather than left as a trap for the next reader.
                 let idx = *field_idx as usize;
-                row[AUX_BASE] = current_state.fields[idx.min(7)];
+                row[AUX_BASE] = current_state.fields[idx];
 
-                new_state.fields[idx.min(7)] = *value;
+                new_state.fields[idx] = *value;
                 new_state.nonce += 1;
             }
             Effect::GrantCapability { cap_entry, phase_b } => {
@@ -1475,7 +1592,7 @@ pub fn generate_effect_vm_trace_ext(
     }
 
     assert_eq!(public_inputs.len(), pi_len);
-    (trace, public_inputs)
+    Ok((trace, public_inputs))
 }
 
 /// Encode a signed balance delta as (magnitude, sign_bit) for public inputs.

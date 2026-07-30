@@ -107,13 +107,13 @@
 //! the circuit seeds from (Phase A), and the executor DOES thread the consumed
 //! witness (Phase C) — so the leg is a real binding, not a free body-fact wire.
 
+use dregg_circuit::CellState;
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 use dregg_circuit::exact_nullifier_aafi::{
     Digest8, ExactAafiError, ExactAafiWitness, ExactAppendRecord, ExactNullifierAafi,
     ValidatedExactAafiTransition,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::{CellState, generate_effect_vm_trace};
 use dregg_sdk::{
     AgentCipherclerk, CapMembershipExpectation, CapMembershipWitness, FullTurnProof,
     FullTurnVerifyError, FullTurnWitness, prove_full_turn, prove_turn_self_sovereign_rotated,
@@ -700,7 +700,15 @@ fn rotation_witness_for_self_sovereign_impl(
     // (Shape 3: an empty actor projection is a no-op transition the rotated path cannot prove —
     // `convert_effects_to_vm` injects no NoOp, so this is the only empty-guard). A HOMOGENEOUS turn
     // yields ONE run, byte-identical to the prior single rotated leg for the existing fleet.
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(&before_cell.id(), effects);
+    // ⚑ CHECKED PROJECTION (#61/#62). `convert_effects_to_vm` is the `.expect` wrapper; it
+    // PANICS on a `SetField` whose slot the deployed AIR has no lane for, and this function is
+    // reachable from a turn the executor already committed. Refusing here returns `None`, which
+    // is this builder's existing "not rotatable — fall back" answer, and the prover entry point
+    // below carries the same refusal as a typed error.
+    let Ok(vm_effects) = AgentCipherclerk::try_convert_effects_to_vm(&before_cell.id(), effects)
+    else {
+        return None;
+    };
     let all_cohort = !vm_effects.is_empty()
         && vm_effects.iter().all(|e| {
             dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e).is_some()
@@ -836,7 +844,15 @@ fn rotation_witness_for_capability_turn(
     // make a run's per-run rotated prove FAIL closed ⇒ keep the v1 cap leg) AND that the projection is
     // NON-EMPTY (the cross-cell-SetField case projects to an empty actor transition, a no-op the
     // rotated path cannot prove ⇒ v1). A HOMOGENEOUS cap turn yields ONE run, byte-identical to before.
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(&before_cell.id(), effects);
+    // ⚑ CHECKED PROJECTION (#61/#62). `convert_effects_to_vm` is the `.expect` wrapper; it
+    // PANICS on a `SetField` whose slot the deployed AIR has no lane for, and this function is
+    // reachable from a turn the executor already committed. Refusing here returns `None`, which
+    // is this builder's existing "not rotatable — fall back" answer, and the prover entry point
+    // below carries the same refusal as a typed error.
+    let Ok(vm_effects) = AgentCipherclerk::try_convert_effects_to_vm(&before_cell.id(), effects)
+    else {
+        return None;
+    };
     let all_cohort = !vm_effects.is_empty()
         && vm_effects.iter().all(|e| {
             dregg_circuit::effect_vm::trace_rotated::rotated_descriptor_name_for_effect(e).is_some()
@@ -905,7 +921,13 @@ pub fn prove_and_verify_finalized_turn(
     // 1. Marshal the turn's effects onto the actor cell in the Effect-VM
     //    encoding (reuses the cipherclerk's canonical marshaller so the node
     //    proves exactly what the cipherclerk would sign).
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    // ⚑ CHECKED PROJECTION (#61/#62). The unchecked `.expect` wrapper panicked on a `SetField`
+    // whose slot the deployed AIR has no lane for — AFTER the executor had committed and
+    // receipted the turn. On the finalized path the durable commit-log write is downstream of
+    // this call in the SAME function, so the unwind skipped the durable barrier and the turn was
+    // never written to redb. A refusal must be a VALUE the caller can carry past that barrier.
+    let vm_effects = AgentCipherclerk::try_convert_effects_to_vm(agent, effects)
+        .map_err(FullTurnProvingError::Prove)?;
 
     // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED against HEAD; the doc's §1/§8
     // premise that this projector "returns an EMPTY vm_effects" is STALE). The FullTurnProof-path
@@ -954,7 +976,16 @@ pub fn prove_and_verify_finalized_turn(
 
     // 3. Derive the proven post-state commitment from the AIR boundary public
     //    input. The prover cannot forge this without an invalid trace.
-    let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
+    // ⚑ CHECKED (#61/#62). Defence in depth behind the checked projection above: the trace
+    // generator refuses every witness outside the AIR's domain (an out-of-lane `SetField`, a
+    // wrapping transfer/burn underflow) as a VALUE. It used to `assert!`, and this call sits
+    // UPSTREAM of the finalized path's durable commit-log write — an unwind here is exactly how
+    // a node kept receipting turns while its redb file stopped advancing.
+    let (_trace, pi) =
+        dregg_circuit::effect_vm::try_generate_effect_vm_trace(&initial_vm_state, &vm_effects)
+            .map_err(|e| {
+                FullTurnProvingError::Prove(dregg_sdk::SdkError::InvalidWitness(e.to_string()))
+            })?;
 
     // WIDE FLAG-DAY: the trusted 8-felt (~124-bit) commit anchors `verify_full_turn` binds. When a
     // rotation witness is threaded (the wide leg), they are the rotation's `wire_commit_8` before/after
@@ -1212,7 +1243,13 @@ pub fn prove_and_verify_finalized_turn_freshness(
     }
 
     // Same Effect-VM marshalling + pre-state as the self-sovereign path.
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    // ⚑ CHECKED PROJECTION (#61/#62). The unchecked `.expect` wrapper panicked on a `SetField`
+    // whose slot the deployed AIR has no lane for — AFTER the executor had committed and
+    // receipted the turn. On the finalized path the durable commit-log write is downstream of
+    // this call in the SAME function, so the unwind skipped the durable barrier and the turn was
+    // never written to redb. A refusal must be a VALUE the caller can carry past that barrier.
+    let vm_effects = AgentCipherclerk::try_convert_effects_to_vm(agent, effects)
+        .map_err(FullTurnProvingError::Prove)?;
     // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED; see the canonical note in
     // `prove_and_verify_finalized_turn`: the projector injects a NoOp sentinel so `vm_effects` is
     // NEVER empty). The freshness path is a SPEND turn — `NoteSpend` projects UNCONDITIONALLY
@@ -1228,7 +1265,16 @@ pub fn prove_and_verify_finalized_turn_freshness(
          effects={effects:?}, vm_effects={vm_effects:?}"
     );
     let initial_vm_state = CellState::new(pre_balance, pre_nonce as u32);
-    let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
+    // ⚑ CHECKED (#61/#62). Defence in depth behind the checked projection above: the trace
+    // generator refuses every witness outside the AIR's domain (an out-of-lane `SetField`, a
+    // wrapping transfer/burn underflow) as a VALUE. It used to `assert!`, and this call sits
+    // UPSTREAM of the finalized path's durable commit-log write — an unwind here is exactly how
+    // a node kept receipting turns while its redb file stopped advancing.
+    let (_trace, pi) =
+        dregg_circuit::effect_vm::try_generate_effect_vm_trace(&initial_vm_state, &vm_effects)
+            .map_err(|e| {
+                FullTurnProvingError::Prove(dregg_sdk::SdkError::InvalidWitness(e.to_string()))
+            })?;
 
     // FLOW-B ROTATION (C4 close): a single-spend NoteSpend turn now ROTATES — the rotated
     // note-spend descriptor (`noteSpendVmDescriptor2R24`) exposes the spent nullifier at PI[38]
@@ -1543,7 +1589,13 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     // agreement holds by construction; that decode carries the actor's real cap_root. Without a
     // rotation witness the byte-identical `with_capability_root` (zero fields, actor cap root) v1 cap
     // leg runs.
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    // ⚑ CHECKED PROJECTION (#61/#62). The unchecked `.expect` wrapper panicked on a `SetField`
+    // whose slot the deployed AIR has no lane for — AFTER the executor had committed and
+    // receipted the turn. On the finalized path the durable commit-log write is downstream of
+    // this call in the SAME function, so the unwind skipped the durable barrier and the turn was
+    // never written to redb. A refusal must be a VALUE the caller can carry past that barrier.
+    let vm_effects = AgentCipherclerk::try_convert_effects_to_vm(agent, effects)
+        .map_err(FullTurnProvingError::Prove)?;
     // SHAPE-3 INVARIANT (PATH-PRESERVE §1/§7 Phase 0 — CORRECTED; see the canonical note in
     // `prove_and_verify_finalized_turn`: the projector injects a NoOp sentinel so `vm_effects` is
     // NEVER empty). A cap-gated turn whose effects touch ONLY other cells (e.g. a cross-cell
@@ -1567,7 +1619,16 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
             .map_err(FullTurnProvingError::Prove)?,
         None => CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root),
     };
-    let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
+    // ⚑ CHECKED (#61/#62). Defence in depth behind the checked projection above: the trace
+    // generator refuses every witness outside the AIR's domain (an out-of-lane `SetField`, a
+    // wrapping transfer/burn underflow) as a VALUE. It used to `assert!`, and this call sits
+    // UPSTREAM of the finalized path's durable commit-log write — an unwind here is exactly how
+    // a node kept receipting turns while its redb file stopped advancing.
+    let (_trace, pi) =
+        dregg_circuit::effect_vm::try_generate_effect_vm_trace(&initial_vm_state, &vm_effects)
+            .map_err(|e| {
+                FullTurnProvingError::Prove(dregg_sdk::SdkError::InvalidWitness(e.to_string()))
+            })?;
 
     // WIDE FLAG-DAY — THE CAP-OPEN TAIL CLOSED. A capability-gated turn threads `cap_membership`
     // (below), so `prove_cohort_run_chain` routes the run through the CAP-OPEN producer
@@ -1754,7 +1815,9 @@ pub fn mint_and_encode_finalized_turn(
     proven_old_commit: [BabyBear; 8],
     proven_new_commit: [BabyBear; 8],
 ) -> Result<Vec<u8>, String> {
-    let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    // ⚑ CHECKED PROJECTION (#61/#62) — see `prove_and_verify_finalized_turn`.
+    let vm_effects = AgentCipherclerk::try_convert_effects_to_vm(agent, effects)
+        .map_err(|e| format!("mint_and_encode_finalized_turn: {e}"))?;
     let initial_vm_state = match rotation_witness_for_self_sovereign_impl(
         pre_balance,
         pre_nonce,
