@@ -235,7 +235,15 @@ shape that has yielded one-cause fixes five times this week.
 2. ~~`dregg-circuit-prove` 11 + `dreggnet-adventure` 9~~ dispatched — briefed to **DECODE** constraint
    indices rather than debug tests, which is what collapsed `dregg-sdk`'s 20 opaque row-0 panics into
    two causes.
-3. **`dregg-persist` 5 · `starbridge-v2` 4 · `dreggnet-offerings` 4 · `storage-templates` 4 ·
+3. ~~`dregg-persist`~~ dispatched — and it is **13, not the 5 the workspace run reported**, all one
+   family. Traced before handing off: `validate_exact_fnsp_v3_faithful_prefix_in`
+   (`commit_log.rs:457`) requires the exact-v3 and legacy-faithful authorities to describe the SAME
+   append history, and the failing paths write exact-v3 while leaving `NULLIFIERS` /
+   `NULLIFIER_RECORDS_V1` empty. ⚠ Briefed that the deciding question is whether a WRITER went
+   missing or the authority was deliberately RETIRED — opposite fixes — and explicitly NOT to weaken
+   the check, plus the specific anti-vacuity risk here (two empty authorities are trivially equal).
+
+4. **`starbridge-v2` 4 · `starbridge-v2` 4 · `dreggnet-offerings` 4 · `storage-templates` 4 ·
    `dregg-bridge` 4** — the tail, once the big blocks report.
 
 ## Superseded moves
