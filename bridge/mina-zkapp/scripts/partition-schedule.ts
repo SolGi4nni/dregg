@@ -53,7 +53,7 @@ import {
   shapeOf,
   verifyPlan,
   witnessOf,
-  zetaNextOf,
+  zetaPointsOf,
 } from '../src/DreggProofVerify.js';
 import {
   GENESIS_CHALLENGE_DIGEST,
@@ -233,7 +233,7 @@ const OPTS = { openChunkLanes: OPEN_CHUNK_LANES };
  *  argument order is a second implementation of the step interface, and this
  *  repo has a named class for two shapes that agree today. */
 const sideOf = (chain: ReturnType<typeof makeScheduledVerify>, fx: any) =>
-  chainSideOf(chain, fx, SHAPE, { claimOf, witnessOf, runQueryInputAndDeep, zetaNextOf });
+  chainSideOf(chain, fx, SHAPE, { claimOf, witnessOf, runQueryInputAndDeep, zetaPointsOf });
 const deepArgs = deepStepArgs;
 const foldArgs = foldStepArgs;
 

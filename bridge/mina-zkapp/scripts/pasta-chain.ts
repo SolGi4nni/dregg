@@ -11,7 +11,7 @@ import {
   shapeOf,
   suiteOf,
   witnessOf,
-  zetaNextOf,
+  zetaPointsOf,
 } from '../src/DreggProofVerify.js';
 import {
   GENESIS_CHALLENGE_DIGEST,
@@ -143,7 +143,7 @@ const side = (chain: any, fx: any) =>
     claimOf,
     witnessOf,
     runQueryInputAndDeep,
-    zetaNextOf,
+    zetaPointsOf,
   });
 
 // ===========================================================================

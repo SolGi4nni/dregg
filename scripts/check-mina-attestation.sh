@@ -222,6 +222,7 @@ merkle-constraints|0|merkle-constraints
 braid|0|root-fri-braid
 uniform|0|root-fri-uniform
 preamble|0|root-fri-preamble
+consume|0|root-consume-differential
 gate|1|gate
 rows|1|poseidon2-rows
 probe|1|probe
@@ -482,6 +483,7 @@ run_mina_merkle(){ ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATT
     npm run --silent mina-merkle ); }
 run_uniform()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-uniform ); }
 run_preamble()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-preamble ); }
+run_consume()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-consume-differential ); }
 
 # ── the headline run ──────────────────────────────────────────────────────────
 if [ "$MODE" = "headline" ]; then
@@ -644,6 +646,25 @@ if [ "$MODE" = "headline" ]; then
       grep -q '=== ROOT-FRI-PREAMBLE TIER-0 PASS ===' <<<"$pre_out" \
         || die "the preamble leg did not stop at its tier-0 boundary"
     fi
+  fi
+  # ⚑ THE FOUR-ROUND CONSUME DIFFERENTIAL. The merge that made `DreggProofVerify`
+  # take dregg's REAL root — four PCS rounds, five matrix heights — adds four ways
+  # to be silently wrong that a two-round shape does not have, and every one of
+  # them gives a beautiful row count. This leg puts all four to the committed
+  # proof's own round commitments, level by level, in seconds.
+  if leg_at_tier consume; then
+    con_out="$(run_consume "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$con_out"
+    [ "$rc" -eq 0 ] || die "the four-round consume differential exited $rc"
+    n_con="$(printf '%s' "$con_out" | grep -c '✓')"; n_t0=$((n_t0+n_con))
+    grep -q 'reproduce the commitments p3 emitted' <<<"$con_out" \
+      || die "the four-round input phase was never put to the committed proof's own commitments"
+    grep -q "REFUSED at all 76 openings: a FLAT depth-22 path" <<<"$con_out" \
+      || die "the flat-path bend was not refused — the mixed-height injection is not being tested"
+    grep -q 'equal p3' <<<"$con_out" \
+      || die "the four-round DEEP quotient was never compared against p3's reduced openings"
+    grep -q '=== FOUR-ROUND CONSUME DIFFERENTIAL PASS ===' <<<"$con_out" \
+      || die "the consume differential did not print its PASS line"
   fi
   if leg_at_tier walk-plan; then
     wp_out="$(run_walk_plan "$APP" 2>&1)"; rc=$?

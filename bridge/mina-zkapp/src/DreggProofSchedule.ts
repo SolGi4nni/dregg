@@ -15,7 +15,7 @@ import {
   runQueryCommitPhase,
   runQueryInputAndDeep,
   verifyPlan,
-  zetaNextOf,
+  zetaPointsOf,
 } from './DreggProofVerify.js';
 import {
   GENESIS_CHALLENGE_DIGEST,
@@ -348,7 +348,7 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
             openedTrace,
             openedQuotient,
             { ...ch, queryBits: [bits] },
-            zetaNextOf(planWalk, ch.zeta),
+            zetaPointsOf(planWalk, ch.zeta),
             rows,
             inputPaths,
             0,
@@ -482,7 +482,7 @@ export async function chainSideOf(
     claimOf: (fx: any, C: any) => any;
     witnessOf: (fx: any, sh: DreggProofShape) => any[];
     runQueryInputAndDeep: any;
-    zetaNextOf: any;
+    zetaPointsOf: any;
   },
 ) {
   const claim = helpers.claimOf(fx, chain.Claim);
@@ -505,7 +505,7 @@ export async function chainSideOf(
         w[0],
         w[1],
         { ...ch, queryBits: [w[11][q]] },
-        helpers.zetaNextOf(chain.planWalk, ch.zeta),
+        helpers.zetaPointsOf(chain.planWalk, ch.zeta),
         w[3][q],
         w[4][q],
         0,

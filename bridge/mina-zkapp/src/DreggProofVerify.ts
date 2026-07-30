@@ -77,14 +77,43 @@ const LANE_MAX = (1n << 31n) - 1n;
 // ===========================================================================
 
 /** One matrix inside an input-phase batch: its LDE log height, its column count
- *  and how many out-of-domain points it opens at. */
-export type MatrixShape = { logHeight: number; numCols: number; numPoints: number };
+ *  and how many out-of-domain points it opens at.
+ *
+ * ⚑ `pointScales` IS THE FOUR-ROUND WIRING, AND IT REPLACED A `b === 0` SWITCH.
+ * Every out-of-domain point in a `uni-stark`/batch-STARK opening is `ζ · c` for a
+ * CONSTANT `c`: `c = 1` at ζ itself, and `c = g_k` — the two-adic generator of
+ * the instance's own trace domain — at the next-row point. The assembly used to
+ * infer that from the batch index ("batch 0 is the trace, everything else is a
+ * quotient chunk"), which is exactly the mis-wiring `verifyPlan` refused a third
+ * round to avoid. Declaring the scales per matrix makes the wiring a property of
+ * the SHAPE, so a preprocessed or permutation round is ordinary.
+ *
+ * ⚠ AND `c = 1` TWICE IS A REAL SHAPE, NOT A BUG TO DEDUPE. dregg's root has an
+ * instance at `degree_bits = 0` (`expose_claim`), whose next-row point is `ζ·g_0
+ * = ζ`. Its permutation matrix opens at ζ TWICE and the DEEP quotient charges
+ * both — 200 of the permutation round's 512 terms. A wiring that collapsed equal
+ * points would drop 100 of them and still produce a plausible number. */
+export type MatrixShape = {
+  logHeight: number;
+  numCols: number;
+  numPoints: number;
+  /** The constant multiples of ζ this matrix opens at, in `points` order.
+   *  Defaults to `[1n]` / `[1n, g_{traceLogSize}]` — the legacy trace wiring —
+   *  when absent, so the two-round fixture shape is unchanged. */
+  pointScales?: bigint[];
+};
 
-/** One MMCS commitment and the matrices committed under it. All matrices in a
- *  batch share ONE leaf, hashed over their rows concatenated in order —
- *  `MerkleTreeMmcs::verify_batch` hashes `heights_tallest_first` with a STABLE
- *  sort, so equal heights keep the committed order (`merkle-tree/src/mmcs.rs:
- *  1065-1105`). */
+/** One MMCS commitment and the matrices committed under it.
+ *
+ * ⚑ MIXED HEIGHTS ARE THE ROOT'S REAL SHAPE AND THEY ARE NOT A LEAF
+ * CONCATENATION. `MerkleTreeMmcs::verify_batch` sponges the rows of the matrices
+ * at the TALLEST padded height into the leaf, then walks the path — and at each
+ * level whose padded height a shorter matrix names, compresses THAT height's own
+ * row digest into the running root (`merkle-tree/src/mmcs.rs:1065-1105`, the
+ * `peeking_take_while` loop). Equal heights keep committed order, because the
+ * sort is stable. A batch whose matrices are all one height degenerates to the
+ * single sponge + flat path this file did before, which is why the fixture's
+ * gate order does not move. */
 export type BatchShape = { matrices: MatrixShape[]; pathDepth: number };
 
 export type DreggProofShape = {
@@ -240,6 +269,16 @@ export const minaFixtureConstraintsNoSelector: ConstraintEvaluator = (ctx) => {
 /** Total base-field lanes in a batch's MMCS leaf. */
 const batchRowWidth = (b: BatchShape) => b.matrices.reduce((a, m) => a + m.numCols, 0);
 
+/** Where ONE `(batch, matrix, point)`'s claimed evaluations live in the flat
+ *  opened-value list, and which constant multiple of ζ they are claimed at.
+ *
+ *  `offset` indexes the CONCATENATION `[...openedTrace, ...openedQuotient]` —
+ *  which is p3's own observe order, round-major then matrix-major then
+ *  point-major (`two_adic_pcs.rs:780-788`). `openedTrace` is round 0's flat run
+ *  and `openedQuotient` is every later round's, so the two-round fixture's
+ *  meaning of those two names is exactly what it was. */
+export type PointWire = { scaleIndex: number; offset: number; len: number };
+
 /** Everything the compile-time shape implies. Computed ONCE so a shape check
  *  lives in one place and the monolith and the steps cannot disagree about it. */
 export type VerifyPlan = {
@@ -255,6 +294,18 @@ export type VerifyPlan = {
   nQuotientVals: number;
   nOpenedTrace: number;
   nRollIns: number;
+  /** The DISTINCT constant multiples of ζ any matrix opens at, first-encounter
+   *  order, `1n` first. `zetaPointsOf` turns these into extension values ONCE
+   *  per proof, outside the query loop — which is where the fixture's single
+   *  `ζ·g` already lived. */
+  pointScales: bigint[];
+  /** `[batch][matrix][point]`. */
+  wiring: PointWire[][][];
+  /** `nOpenedTrace + nQuotientVals` — the whole opened-value census. */
+  nOpenedValues: number;
+  /** Distinct log heights in each batch, DESCENDING. The mixed-height MMCS
+   *  injection schedule is a function of exactly this. */
+  batchHeights: number[][];
 };
 
 export function verifyPlan(sh: DreggProofShape): VerifyPlan {
@@ -267,18 +318,81 @@ export function verifyPlan(sh: DreggProofShape): VerifyPlan {
     throw new Error('this assembly does not use extra query index bits');
 
   const nBatches = batches.length;
-  // ⚑ THE OPENED-VALUE WIRING BELOW IS TWO-BATCH SPECIFIC and would MIS-WIRE
-  // silently if a third round appeared: batch 0's points are (zeta, trace_local)
-  // and (zeta*g, trace_next); every other batch's matrix `m` takes quotient
-  // chunk `m` at zeta. `coms_to_verify` grows a PREPROCESSED round whenever the
-  // AIR has preprocessed columns (`uni-stark/src/verifier.rs:465-476`), and that
-  // round's points are neither shape. Refuse rather than wire it wrong.
-  if (nBatches !== 2)
-    throw new Error(
-      `${nBatches} input-phase batches: this assembly wires the trace round and the quotient ` +
-        'round only. A preprocessed round needs its own point wiring — see the note here.',
-    );
   const rowWidths = batches.map(batchRowWidth);
+
+  // ⚑ THIS USED TO THROW ON `nBatches !== 2`, AND THE THROW WAS RIGHT FOR THE
+  // CODE IT GUARDED. The opened-value wiring was inferred from the batch index —
+  // batch 0's points were (ζ, trace_local) and (ζ·g, trace_next), every other
+  // batch's matrix `m` took quotient chunk `m` at ζ — so a third round would
+  // have MIS-WIRED silently. `coms_to_verify` grows a preprocessed round
+  // whenever the AIR has preprocessed columns (`uni-stark/src/verifier.rs:
+  // 465-476`) and a batch-STARK grows a permutation round on top, and neither
+  // is either shape. dregg's root has all FOUR.
+  //
+  // The fix is not a wider switch, it is deleting the inference: `pointScales`
+  // says which multiple of ζ each point is at and the offsets below say where
+  // its values live. `defaultScales` reproduces the old inference EXACTLY for a
+  // shape that does not declare them, so the fixture's wiring — and its emitted
+  // gate order — is unchanged to the row.
+  const defaultScales = (b: number, m: MatrixShape): bigint[] => {
+    if (m.pointScales) {
+      if (m.pointScales.length !== m.numPoints)
+        throw new Error(
+          `a matrix in batch ${b} declares ${m.numPoints} points and ${m.pointScales.length} ` +
+            'point scales',
+        );
+      return m.pointScales;
+    }
+    if (b === 0)
+      return m.numPoints === 2 ? [1n, twoAdicGenerator(air.traceLogSize)] : [1n];
+    if (m.numPoints !== 1)
+      throw new Error(
+        `batch ${b} matrix opens at ${m.numPoints} points and declares no \`pointScales\`. ` +
+          'Only the trace round has an inferable next-row point; every other round must say ' +
+          'which multiples of ζ it opens at.',
+      );
+    return [1n];
+  };
+
+  const pointScales: bigint[] = [1n];
+  const wiring: PointWire[][][] = [];
+  let off = 0;
+  let nOpenedTrace = 0;
+  for (let b = 0; b < nBatches; b++) {
+    const perMat: PointWire[][] = [];
+    for (const m of batches[b].matrices) {
+      const scales = defaultScales(b, m);
+      const wires: PointWire[] = [];
+      for (const c of scales) {
+        let si = pointScales.indexOf(c);
+        if (si < 0) si = pointScales.push(c) - 1;
+        wires.push({ scaleIndex: si, offset: off, len: m.numCols });
+        off += m.numCols;
+      }
+      perMat.push(wires);
+    }
+    wiring.push(perMat);
+    if (b === 0) nOpenedTrace = off;
+  }
+  const nOpenedValues = off;
+
+  // ⚑ THE MIXED-HEIGHT SCHEDULE, AS A COMPILE-TIME FACT. A batch whose matrices
+  // are all one height is the flat opening this file did before; a batch at
+  // several heights pays one path with the shorter matrices' row digests
+  // injected at the level their height names.
+  const batchHeights = batches.map((b) =>
+    [...new Set(b.matrices.map((m) => m.logHeight))].sort((x, y) => y - x),
+  );
+  for (let b = 0; b < nBatches; b++) {
+    const top = batchHeights[b][0];
+    if (batchHeights[b].length > 1 && batches[b].pathDepth !== top)
+      throw new Error(
+        `batch ${b} sits at heights [${batchHeights[b]}] and opens with a depth-` +
+          `${batches[b].pathDepth} path. A mixed-height \`verify_batch\` walks the tallest ` +
+          `matrix's own ${top} levels, injecting at the level each shorter height names; a ` +
+          'shorter path would inject at the wrong levels and still produce a digest.',
+      );
+  }
 
   // ⚑ THE ROLL-IN SCHEDULE IS A COMPILE-TIME CONSEQUENCE OF THE HEIGHTS, and
   // `rollInSchedule` recomputes it inside the circuit from the same heights, so
@@ -291,6 +405,17 @@ export function verifyPlan(sh: DreggProofShape): VerifyPlan {
       `the tallest input matrix is at ${heights[0]}, not log_global_max_height ${logGlobalMaxHeight}`,
     );
 
+  // ⚑ THE TWO NAMES ARE NOW DERIVED FROM THE WIRING RATHER THAN FROM THE AIR,
+  // and the assertion is what keeps that from being a redefinition: at the
+  // fixture's shape `nOpenedTrace` is still `hasTraceNext ? 2w : w` and
+  // `nQuotientVals` is still `chunks · D`. At four rounds the AIR-derived form
+  // has no meaning at all — `openedQuotient` carries the quotient, preprocessed
+  // AND permutation rounds — and the wiring-derived one is exact.
+  const airOpenedTrace = air.hasTraceNext ? 2 * air.width : air.width;
+  if (nBatches === 2 && nOpenedTrace !== airOpenedTrace)
+    throw new Error(
+      `round 0 opens ${nOpenedTrace} values and the AIR shape implies ${airOpenedTrace}`,
+    );
   return {
     sh,
     suite: sh.suite ?? babyBearSuite,
@@ -301,9 +426,13 @@ export function verifyPlan(sh: DreggProofShape): VerifyPlan {
     rowWidths,
     totalRow: rowWidths.reduce((a, b) => a + b, 0),
     nTraceCols: air.width,
-    nQuotientVals: air.numQuotientChunks * EXT_D,
-    nOpenedTrace: air.hasTraceNext ? 2 * air.width : air.width,
+    nQuotientVals: nOpenedValues - nOpenedTrace,
+    nOpenedTrace,
     nRollIns: heights.length - 1,
+    pointScales,
+    wiring,
+    nOpenedValues,
+    batchHeights,
   };
 }
 
@@ -507,15 +636,28 @@ export function runQueryInputAndDeep(
   openedTrace: BbExt[],
   openedQuotient: BbExt[],
   ch: StarkChallenges,
-  zetaNext: BbExt,
+  /** The extension values of every distinct `ζ · c` in `plan.pointScales`, in
+   *  that order — `zetaPointsOf`'s output, computed ONCE per proof outside the
+   *  query loop. */
+  zPoints: BbExt[],
   rowsQ: Field[],
   inputPathsQ: Digestish[][],
   g: number,
 ): QueryDeepResult {
-  const { sh, suite, nBatches, rowWidths, nTraceCols, nRollIns } = plan;
-  const { knobs, batches, air, logGlobalMaxHeight } = sh;
+  const { sh, suite, nBatches, rowWidths, nRollIns, wiring, batchHeights } = plan;
+  const { knobs, batches, logGlobalMaxHeight } = sh;
   const { layers, indexBits: nIndexBits } = knobs;
   const bits = ch.queryBits[g];
+  if (zPoints.length !== plan.pointScales.length)
+    throw new Error(
+      `${zPoints.length} opening points for ${plan.pointScales.length} distinct scales`,
+    );
+  //  The whole opened-value list, in p3's observe order. The two arguments keep
+  //  their names because at the fixture's shape they ARE the trace round and the
+  //  quotient round; at four rounds the second is every non-main round, and the
+  //  wiring — not the argument boundary — says which values belong to which
+  //  matrix.
+  const opened = [...openedTrace, ...openedQuotient];
 
   let rowOff = 0;
   const mats: DeepMatrix[][] = [];
@@ -524,55 +666,57 @@ export function runQueryInputAndDeep(
     const leaf = rowsQ.slice(rowOff, rowOff + rowWidths[b]);
     rowOff += rowWidths[b];
 
-    // The MMCS leaf is ONE sponge over every matrix's row in this
-    // batch, concatenated — not one hash per matrix. The row is a fresh
-    // witness, so the suite bounds every lane here: BabyBear packs 8 lanes per
-    // permutation and Pasta 16, but BOTH need `< 2^31` per lane — for BabyBear
-    // to keep `provablePermBounded`'s bound chain meaningful, for Pasta to make
-    // the shifted radix-2^31 pack injective.
-    let cur = suite.sponge(leaf);
+    //  Split the leaf into its matrices' rows FIRST: a mixed-height batch
+    //  sponges them in height groups rather than as one run.
+    const perMat: Field[][] = [];
+    let colOff = 0;
+    for (const m of bs.matrices) {
+      perMat.push(leaf.slice(colOff, colOff + m.numCols));
+      colOff += m.numCols;
+    }
+    const hs = batchHeights[b];
+    const rowsAt = (h: number) =>
+      bs.matrices.flatMap((m, i) => (m.logHeight === h ? perMat[i] : []));
+
+    // The MMCS leaf is ONE sponge over the rows of the matrices at the TALLEST
+    // padded height, concatenated in committed order — not one hash per matrix,
+    // and not one hash over the whole batch when the batch is mixed. The row is
+    // a fresh witness, so the suite bounds every lane here: BabyBear packs 8
+    // lanes per permutation and Pasta 16, but BOTH need `< 2^31` per lane — for
+    // BabyBear to keep `provablePermBounded`'s bound chain meaningful, for Pasta
+    // to make the shifted radix-2^31 pack injective.
+    const top = hs[0];
+    let cur = suite.sponge(rowsAt(top));
     // `open_input` shifts the index by the BATCH's max height, not the
     // matrix's (`fri/src/verifier.rs:576-580`).
-    const batchMax = Math.max(...bs.matrices.map((m) => m.logHeight));
-    const bitsReduced = logGlobalMaxHeight - batchMax;
+    const bitsReduced = logGlobalMaxHeight - top;
     for (let h = 0; h < bs.pathDepth; h++) {
       suite.assertInRange(inputPathsQ[b][h]);
       const [l, r] = suite.condSwap(cur, inputPathsQ[b][h], bits[bitsReduced + h]);
       cur = suite.compress(l, r);
+      // ⚑ THE MIXED-HEIGHT INJECTION. After the compress, `curr_height_padded`
+      // is `2^(top-1-h)`; a matrix whose padded height is exactly that has its
+      // own row digest compressed into the running root. Four of them per round
+      // at dregg's root, none at the fixture. A flat path that skipped these is
+      // a different tree and produces a digest, not an error.
+      const nextH = top - 1 - h;
+      if (hs.includes(nextH)) cur = suite.compress(cur, suite.sponge(rowsAt(nextH)));
     }
     suite.assertEq(cur, claim.inputCommits[b]);
 
-    // Split the leaf back into its matrices for the DEEP quotient, and
-    // attach the claimed evaluations each one opens at.
-    let colOff = 0;
+    // Attach the claimed evaluations each matrix opens at, from the wiring.
     const batchMats: DeepMatrix[] = [];
-    for (const m of bs.matrices) {
-      const openedRow = leaf.slice(colOff, colOff + m.numCols);
-      colOff += m.numCols;
-      const points =
-        b === 0
-          ? // the trace: (zeta, trace_local) and (zeta*g, trace_next)
-            (air.hasTraceNext
-              ? [
-                  { z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) },
-                  { z: zetaNext, psAtZ: openedTrace.slice(nTraceCols, 2 * nTraceCols) },
-                ]
-              : [{ z: ch.zeta, psAtZ: openedTrace.slice(0, nTraceCols) }])
-          : // a quotient chunk: (zeta, that chunk's D values)
-            [
-              {
-                z: ch.zeta,
-                psAtZ: openedQuotient.slice(
-                  batchMats.length * EXT_D,
-                  (batchMats.length + 1) * EXT_D,
-                ),
-              },
-            ];
+    for (let i = 0; i < bs.matrices.length; i++) {
+      const m = bs.matrices[i];
+      const points = wiring[b][i].map((w) => ({
+        z: zPoints[w.scaleIndex],
+        psAtZ: opened.slice(w.offset, w.offset + w.len),
+      }));
       if (points.length !== m.numPoints)
         throw new Error(
           `batch ${b} matrix declares ${m.numPoints} points, the wiring gives ${points.length}`,
         );
-      batchMats.push({ logHeight: m.logHeight, openedRow, points });
+      batchMats.push({ logHeight: m.logHeight, openedRow: perMat[i], points });
     }
     mats.push(batchMats);
   }
@@ -624,8 +768,28 @@ export function runQueryCommitPhase(
   });
 }
 
-/** `zeta_next = zeta * g` on the NATURAL trace domain (`domain.rs:169-171`);
- *  `g` is protocol data, so the scale is free. */
+/**
+ * Every distinct opening point, DERIVED from ζ.
+ *
+ * `zeta_next = zeta * g` on the NATURAL trace domain (`domain.rs:169-171`), and
+ * a batch-STARK has one such `g` per instance because each instance has its own
+ * trace size. `g` is protocol data, so each scale is a constant multiply —
+ * `extScaleConst` returns ζ itself at scale 1 without emitting a gate, so the
+ * count of real multiplies is the number of DISTINCT next-row domains and not
+ * the number of matrices. dregg's root has seven instances at five distinct
+ * `degree_bits`, one of which is 0, so it costs four.
+ *
+ * ⚑ COMPUTED ONCE PER PROOF, OUTSIDE THE QUERY LOOP — which is where the
+ * fixture's single `ζ·g` already was. Moving it inside would be nineteen copies
+ * and would move every recorded row count in this arc.
+ */
+export function zetaPointsOf(plan: VerifyPlan, zeta: BbExt): BbExt[] {
+  return plan.pointScales.map((c) => extScaleConst(zeta, c));
+}
+
+/** The legacy single next-row point — the fixture's `ζ·g`. Kept because the
+ *  scheduled and partitioned chains name it, and defined in terms of the table
+ *  above so the two cannot drift. */
 export function zetaNextOf(plan: VerifyPlan, zeta: BbExt): BbExt {
   return extScaleConst(zeta, twoAdicGenerator(plan.sh.air.traceLogSize));
 }
@@ -655,7 +819,7 @@ export function runQueryWalk(
     if (g < 0 || g >= numQueries)
       throw new Error(`query ${g} is outside the shape's 0..${numQueries - 1}`);
 
-  const zetaNext = zetaNextOf(plan, ch.zeta);
+  const zPoints = zetaPointsOf(plan, ch.zeta);
 
   // ⚑ THE TWO HALVES ARE CALLED, NOT RE-IMPLEMENTED. `DreggProofSchedule` puts a
   // step boundary between them; if this function inlined the same work a second
@@ -670,7 +834,7 @@ export function runQueryWalk(
       openedTrace,
       openedQuotient,
       ch,
-      zetaNext,
+      zPoints,
       rows[q],
       inputPaths[q],
       qs[q],
