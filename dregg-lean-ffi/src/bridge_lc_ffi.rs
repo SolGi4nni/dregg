@@ -939,9 +939,12 @@ mod ffi_mpt_lc {
 // `minaVerifyDecision_depth_witnessed` turns an accept into "the confirmation depth is backed by
 // that many exhibited, parent-linked, Pickles-proved blocks".
 //
-// ⚑ NOT decided by this gate, and not by anything else in the tree: FORK CHOICE. Samasika's chain
-// selection (VRF-weighted density, long-range) is formalized nowhere, so two k-deep proved segments
-// under different anchors are indistinguishable here. This is an anchored-segment verifier.
+// ⚑ NOT decided by THIS gate: FORK CHOICE. It is an anchored-segment verifier, so two k-deep proved
+// segments under different anchors are indistinguishable to it. ⚑ CORRECTED 2026-07-30: the old
+// wording here was "and not by anything else in the tree ... formalized nowhere", and that is no
+// longer true. `verified_mina_better_tip` / `verified_mina_head_advance` (below) run Samasika's
+// `select` over binprot protocol states off the peer-to-peer wire. The scope limit on this gate is
+// real; the claim about the tree was stale.
 //
 // ⚑ THIS EXPORT WAS ABSENT FROM EVERY ARCHIVE UNTIL 2026-07-29, under two successive wrong
 // diagnoses. Neither "the gate is not rooted in `Dregg2.lean`" (it was, line 1536) nor "the

@@ -41,17 +41,24 @@ scalar decision is DEFINITIONALLY `minaVerify` (`rfl`), over which `mina_no_forg
 This gate decides an ANCHORED SEGMENT. It does NOT decide fork choice, so nothing THIS export
 computes distinguishes two `k`-deep proved segments under different anchors. Routing the observer
 through it upgrades it from "trusts an RPC's arithmetic" to "checks an anchored, parent-linked,
-proof-carrying segment"; it does not make dregg a Mina light client.
+proof-carrying segment"; it does not make dregg a Mina light client. What this gate CONTRIBUTES to
+one is the `sg` bit `MinaForkChoiceGate.headAdvance` requires: fork choice presupposes both tips are
+VALID, and `rollHead_fails_closed_without_the_segment` proves an unaccepted segment moves nothing.
 
 ⚑ UPDATED 2026-07-29. Samasika chain selection is no longer unformalized: `Bridge.MinaChainSelection`
 implements `select` / `is_short_range` / the relative minimum window density against the daemon
 (`proof_of_stake.ml:2951,2971,1221`), proves determinism, irreflexivity, asymmetry and
 ties-only-on-equal-keys, PROVES that the rule is not transitive (two 3-cycles), and is differentialed
-against openmina on 57 real-state vectors. It is deliberately NOT exported yet, and the reason is
-concrete: the long-range branch needs `sub_window_densities`, and `subWindowDensities` **is not a
-field of the public GraphQL `ConsensusState`** (measured 2026-07-29 against
-`api.minascan.io/node/devnet`), so the deployed `mina_observer` physically cannot supply the input.
-An export the caller cannot feed is an un-called gate, and this repo has a named class for those.
+against openmina on 57 real-state vectors. ⚑ **UPDATED AGAIN 2026-07-30: it IS exported now.** The 07-29
+note here read "deliberately NOT exported yet, and the reason is concrete: the long-range branch
+needs `sub_window_densities`, and `subWindowDensities` is not a field of the public GraphQL
+`ConsensusState`, so the deployed `mina_observer` physically cannot supply the input." That was a
+DATA-SOURCE blocker and it is closed: `Bridge.MinaBinprot` decodes the binprot
+`Protocol_state.Value` — where the array is an ordinary positional field — and
+`Bridge.MinaForkChoiceGate` exports `dregg_mina_better_tip` / `dregg_mina_head_advance` over it.
+`Bridge.MinaBinprotRealBlock` drives both on 1,544 bytes of a real devnet block pulled over
+`coda/rpcs/0.0.1`. The scope limit on THIS gate is unchanged and real — it decides an anchored
+segment, not fork choice — but it is no longer the tree's limit.
 -/
 import Dregg2.Bridge.LightClientMina
 
