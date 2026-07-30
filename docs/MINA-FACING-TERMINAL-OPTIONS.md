@@ -18,6 +18,13 @@ The answer is **no**, and the reason is not a FRI knob.
 | **the ROOT, hashed with Mina-Poseidon over Pasta** | **Mina-Poseidon (NATIVE)** | **2.9 × 10⁶** | **54** | **none** |
 | **a plonky3-native SHRINK, Pasta-hashed** ⚠ *re-knobbed; 67 at its current knobs* | **Mina-Poseidon (NATIVE)** | **1.6 × 10⁶** | **30** | **none** |
 
+> ⚑ **EVERY ROW OF THIS TABLE IS RE-DERIVED IN §0.2, AND THE ANSWERS MOVED.** The model behind
+> it forced a FLAT height 22 on every matrix and priced a **2,286-term** census; §3.28 of the
+> companion document measured the root at **five** heights and **2,630** terms. Re-pointed at the
+> measurement: **453 → 560** deployed slices and **53 → 80** Pasta slices, in this table's own
+> currency. The table is left as written so the two can be read against each other, which is the
+> whole point of §0.1 being below §0.
+
 **The single biggest lever is not the FRI parameters and not the shrink. It is which hash the
 Mina-facing proof commits with.** `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §0 already states the
 fact this rests on and does not draw the conclusion:
@@ -95,6 +102,63 @@ DEEP quotient is now **88%**. A 3× error in every measured Pasta hash price
 moves the answer 53 → 58 slices. **The answer is no longer sensitive to the hash
 at all**, which retires the hash as a lever and promotes column narrowing
 (§7 step 6) to the next one.
+
+### ⚑ 0.2 RE-DERIVED — the model above was retired by §3.28, and the headline moved
+
+**2026-07-30, later still.** `bridge/mina-zkapp/src/CostModel.ts` + `npm run cost-gate`.
+
+§0.1's re-measurement scaled a *decomposition* term by term. That decomposition was taken at a
+**flat** matrix height of 22 over a **2,286-term** census, and §3.28 of
+`MINA-VERIFIES-DREGG-FRI-SIZE.md` measured the root off its own committed proof:
+
+| | retired model | MEASURED off `real-root-fri.json` |
+|---|---:|---:|
+| DEEP terms per query | 2,286 | **2,630** |
+| committed matrix heights | flat 22 | **22, 21, 16, 9, 6** |
+
+⚑ **The old census is wrong in TWO DIRECTIONS THAT DO NOT CANCEL.** `940·2 + 175·2 + 7·2·4` omits
+the permutation round entirely (64 extension columns × 4 × 2 = **512 terms**) and charges **168
+terms the proof does not have** — `Const`, `Public`, `recompose` and `expose_claim` reference no
+next-row main or preprocessed value, so those matrices are opened at ζ alone. A census that
+multiplies every width by two gets 2,798; the proof says 2,630.
+
+**The re-derivation, and it is not another scaling.** The deployed and Pasta figures below are the
+**same measured segment list** — `RootFriWalk.segmentWalk` over the committed proof — costed at two
+`HashPrice` tables. The arithmetic terms are *shared by construction* (`ARITH_PRICE`), so the delta
+between the columns IS the hash rather than a decomposition adjusted by hand:
+
+| | RETIRED (flat 22, 2,286) | RE-DERIVED (measured) | move |
+|---|---:|---:|---:|
+| deployed rows | 2.46 × 10⁷ | **3.04 × 10⁷** | **+23.4%** |
+| deployed slices @ 54,300 | 453 | **560** | +23.6% |
+| Pasta rows | 2.85 × 10⁶ | **4.29 × 10⁶** | **+50.7%** |
+| **Pasta slices @ 54,300** | **53** | **80** | **+50.9%** |
+
+Once the carry the chain actually pays is priced rather than assumed away, the Pasta walk is **172
+slices**, and **175** with the batch-STARK preamble.
+
+⚑ **WHY THE PASTA FIGURE MOVED THREE TIMES AS FAR AS THE CENSUS DID.** §4 warned that the
+projection *"is sensitive to that number and almost nothing else"*, and that was exactly right: the
+DEEP quotient is **90.9%** of the re-derived Pasta budget, and it is the one term no hash choice
+touches. A 15.0% census correction therefore lands almost undiluted, and the mixed-height geometry
+carries it the rest of the way.
+
+⚑ **AND THE HASH LEVER SURVIVES.** 3.04 × 10⁷ → 4.29 × 10⁶ is still **7.1×** (the retired pair
+said 8.6×). The swap is a smaller win than advertised, for precisely the reason that makes it
+robust: what is left after it is arithmetic, not hashing. **The conclusion of this document is
+unchanged; its arithmetic is not.**
+
+⚠ **PROVENANCE, since this document's own §4 is about that word.** Geometry and segment structure:
+**MEASURED** off the committed proof. Unit prices: **MEASURED** (§3.8/§3.9/§3.13/§3.14 for BabyBear
+and the arithmetic; `npm run mina-merkle` under o1js 2.15.0 for Pasta). The row **totals** are
+therefore **PROJECTED** — measured units times a structural count that has not been emitted at full
+size — and the slice counts inherit that label. `npm run cost-gate` prints all three words beside
+the figures it produces.
+
+⚠ **ONE CONSERVATISM, NAMED.** The Pasta leaf sponge is charged `witnessLane` per lane (leg 13's
+non-amortising 6.5) where `npm run mina-merkle` measured the whole Pasta sponge at **3.69 rows/lane
+all-in**. That over-prices `inBlock`, ~5% of the Pasta budget, so the re-derived Pasta figure is
+high by ~2% rather than low.
 
 ### The artifacts (§7 steps 2 and 3)
 

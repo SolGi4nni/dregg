@@ -282,8 +282,8 @@ export type Program = {
  * `assertGeometryMatchesProof`). The atom row prices below are still §3.19's
  * measured marginals, which were taken at the FLAT geometry — so a figure out of
  * `deployedProgram` is a MEASURED-unit model over a MEASURED shape, and the
- * mismatch between the two is named in `docs/MINA-COST-MODEL-REPOINT.md` rather
- * than smoothed over here. `RootFriWalk.segmentWalk` over the real proof is the
+ * mismatch between the two is named in `docs/MINA-FACING-TERMINAL-OPTIONS.md`
+ * §0.2 rather than smoothed over here. `RootFriWalk.segmentWalk` over the real proof is the
  * instrument that does not have that seam, and it is what the re-derived
  * headline is taken from.
  */
