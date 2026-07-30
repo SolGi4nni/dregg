@@ -30,10 +30,12 @@ import {
 // Mina-Poseidon over Pasta Fp (o1js `Poseidon.hash` == Rust `mina_poseidon_hash`,
 // gold-KAT-pinned by circuit-prove/sketches/mina-pasta-hash-probe).
 //
-// This wires in the real Poseidon Merkle fold that types.ts ships as
-// `CellMerkleWitness.computeRoot` but never put inside a provable method — so a
-// Mina proof genuinely attests that a leaf is committed under a Pasta root the
-// dregg-side hasher produced.
+// This puts the real Poseidon Merkle fold INSIDE a provable method — so a Mina
+// proof genuinely attests that a leaf is committed under a Pasta root the
+// dregg-side hasher produced. (The fold used to exist only as an out-of-circuit
+// `CellMerkleWitness.computeRoot` in `src/types.ts`, wired into no method; that
+// file was DELETED 2026-07-30 with `DreggFederation`, so this is now the only
+// copy and there is nothing left for it to drift against.)
 //
 // ⚑ WHAT THIS IS NOT. The root the gate exercises is a FIXED-LEAF TEST VECTOR
 // emitted by `mina_poseidon_hash` (the dregg-side Rust hasher), not a
@@ -46,7 +48,9 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Mina's account/application Merkle trees are fixed-depth; 32 mirrors o1js
- *  MerkleTree/MerkleMap defaults and the dregg cell tree (types.ts TREE_DEPTH). */
+ *  MerkleTree/MerkleMap defaults. It is also the depth `src/types.ts` used to
+ *  name as `TREE_DEPTH`; that file was deleted 2026-07-30, so this constant is
+ *  the o1js side's only statement of the depth. */
 export const ATTEST_DEPTH = 32;
 
 // ---------------------------------------------------------------------------
@@ -308,6 +312,35 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
  * DreggAttestedGate: a zkApp whose action is gated on a verified dregg
  * membership attestation, and whose anchored root is gated on a verified
  * `DreggAnchorStatement` proof.
+ *
+ * ⚑⚑ THE DEVNET INSTANCE IS NOT THIS CLASS. Recorded 2026-07-30, MEASURED by
+ * compiling. `devnet-deployment.json` names a live zkApp at
+ * `B62qkiRhX1tKdkYSXRHFASHQHj1tPf5VcLzgUhqkL3kuFViX9ckcSaN`, deployed
+ * 2026-07-28 from commit `a8935dca`. These sources have moved past it:
+ *
+ *   zkApp VK, DEPLOYED (the record):  18259224799046289794653728189970443815216123546422294759906737389909903001257
+ *   zkApp VK, THESE SOURCES:          12616435953593241766634176703084488834687829947012977324150733887031268915551
+ *
+ * They differ, so the address does not correspond to this file — the same thing
+ * the `supersedes` block in that record documents happening once before, this
+ * time undocumented until now. The INNER attestation VK is unchanged and still
+ * matches the record exactly (`15990086…292035`), so the drift is in the
+ * contract, not in `DreggMembershipAttestation`.
+ *
+ * ⚑ AND THE DIFFERENCE IS THE PROOF OBLIGATION ITSELF. The deployed method is
+ * `setDreggRoot(newRoot: Field, auth: Signature)` — a BARE FIELD and a relay
+ * signature, NO PROOF ARGUMENT AND NO `.verify()`. `DreggAnchorStatement` did
+ * not exist at that commit. So point (1) below — "setDreggRoot takes a PROOF"
+ * — is true of THIS SOURCE and FALSE OF THE LIVE ANCHOR, which is gated by a
+ * key alone. The deployed version said so in its own docstring ("`setDreggRoot`
+ * is the trusted-relay anchor"); nothing was over-claimed at the time, and what
+ * rotted is that the record and the source drifted apart with no note between
+ * them. `actOnAttestedLeaf` is byte-identical across the two and its inner VK
+ * matches, so the LIVE gate's membership check is exactly what it claims.
+ *
+ * ⚑ WHAT CLOSES THIS: a re-deploy at the current VK, which is ember's call and
+ * an outward-facing act (§ CLAUDE.md). Until it happens, cite the live anchor as
+ * SIGNATURE-ONLY and cite this file as the shape a re-deploy would install.
  *
  * ⚑ WHY THE PLACEHOLDER KEY IS STILL IN STATE AND STILL CHECKED IN CIRCUIT.
  * Under Mina's DEFAULT permissions `editState` is `proof`, and a proof of an

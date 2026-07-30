@@ -20,9 +20,8 @@
 build	PLUMBING. Every gated leg runs `npm run <leg>`, which runs `build` first, so a tsc failure reds every tier. Tier 0 also runs `npx tsc --noEmit` directly.
 typecheck	PLUMBING. The tier-0 gate runs `npx tsc --noEmit` itself rather than through npm, so this alias would be a second name for a check that already reds.
 test	ALIAS for `gate`, which is the tier-1 leg `gate`. Gating both would run the same object twice and let the two names drift apart.
-deploy	NEEDS A FUNDED KEY AND A NETWORK. Deploying a zkApp is an outward-facing irreversible act; a gate must not have the credentials to perform one.
-devnet:fund	NEEDS DEVNET CREDENTIALS AND A FAUCET. Same reason as `deploy`, and it spends.
-devnet:deploy	NEEDS DEVNET CREDENTIALS AND A NETWORK. Same reason as `deploy`.
+devnet:fund	NEEDS DEVNET CREDENTIALS AND A FAUCET. Deploying or funding is an outward-facing irreversible act; a gate must not hold the credentials to perform one, and this one spends.
+devnet:deploy	NEEDS DEVNET CREDENTIALS AND A NETWORK. Deploys `DreggAttestedGate` — an outward-facing irreversible act a gate must not be able to perform.
 devnet:attest	NEEDS DEVNET CREDENTIALS AND A NETWORK. Submits a transaction to a live chain.
 devnet:emit-root	NEEDS DEVNET KEYS. Deliberately ungated and stated so in check-mina-attestation.sh's header; the `merkle` subcommand it wraps IS gated, end to end, by the `probe` leg.
 devnet:tx-status	NEEDS A NETWORK. Reads a live chain, so it cannot have a deterministic verdict.

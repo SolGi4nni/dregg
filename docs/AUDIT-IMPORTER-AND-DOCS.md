@@ -380,7 +380,8 @@ the behaviour the doctrine asks for.
 ### 3.1 CLEAN — the cryptographic core is real and survives adversarial probing
 
 Verified by running, not reading. Proofs are **not** disabled — the only `proofsEnabled:
-false` in the tree is an unrelated test (`test/DreggFederation.test.ts:31`).
+false` in the tree was an unrelated test (`test/DreggFederation.test.ts:31`), and that
+file was **deleted 2026-07-30** with the contract it exercised.
 
 - A genuine `ZkProgram.compile()` producing real Pickles keys (vk hash `3510069…643851`).
 - A genuine proof produced and verified.

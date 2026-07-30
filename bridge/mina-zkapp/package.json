@@ -21,7 +21,6 @@
     "fri-chain": "npm run build && node --max-old-space-size=16384 dist/scripts/fri-chain-rows.js",
     "merkle-constraints": "npm run build && node dist/scripts/merkle-constraints.js",
     "test": "npm run gate",
-    "deploy": "npm run build && node dist/scripts/deploy.js",
     "devnet:fund": "npm run build && node dist/scripts/devnet-fund.js",
     "devnet:deploy": "npm run build && node dist/scripts/devnet-deploy.js",
     "devnet:attest": "npm run build && node dist/scripts/devnet-attest.js",

@@ -21,6 +21,14 @@
     "anchorRootTx": 539535
   },
   "blockProvenance": "Block heights read back from bestChain after the run; the script records hashes only. Both report failureReason=null (applied). Re-checkable with: npm run devnet:tx-status -- <hash>",
+  "sourcesMovedPast": {
+    "recordedAt": "2026-07-30",
+    "currentSourceZkAppVkHash": "12616435953593241766634176703084488834687829947012977324150733887031268915551",
+    "measuredBy": "compiling DreggAttestedGate from the working tree and comparing to zkAppVkHash above; the inner attestationVkHash still matches exactly, so the drift is in the contract, not in DreggMembershipAttestation",
+    "what": "the deployed setDreggRoot is `setDreggRoot(newRoot: Field, auth: Signature)` — a bare field plus a relay signature, with NO proof argument and no `.verify()`. DreggAnchorStatement did not exist at commit a8935dca. The sources now require a verifying DreggAnchorProof whose public input IS the anchored root.",
+    "so": "THE LIVE ANCHOR IS SIGNATURE-ONLY. Cite it that way. The proof obligation described in DreggPoseidonAttestation.ts has never been deployed; installing it is a re-deploy at the new VK, which is ember's call.",
+    "note": "the deployment above is not being edited or retracted — it is an accurate record of what was deployed. This block exists because the previous rotation's `supersedes` documents this exact drift once already, and the second occurrence had no note."
+  },
   "supersedes": {
     "zkAppAddress": "B62qo54w6YftnPHCXTrcEYDcKYwg8CCeW5wiTsW9x8Tp1Hm5BS5xCeD",
     "zkAppVkHash": "5302519670984547173190284200080041659426793795939996099701086393384665512020",

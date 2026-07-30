@@ -141,13 +141,15 @@ are honest about this once you read the accept path:
   confirmations), and decodes the dregg `provenRoot` from the zkApp's app-state Fields. Its own verify
   is **`StructureOnly`-grade** — *"a re-executing validator that trusts the node's canonical chain."*
   Safety rests on the dregg-side verifier; the relay is for **liveness only**.
-- The o1js `DreggVerifier.verifyTransition` (`bridge/mina-zkapp/src/verifier.ts`) asserts only
-  *structural* invariants (roots non-zero, height increasing, roots differ). It does **not** verify a
-  dregg proof — the comment says the verification is "implicit." `DreggFederation.advanceState` gates
-  on the account's `editState: proof` permission, i.e. the o1js method proof — a **trusted-relay**
-  anchor, not a dregg-proof check. Notably `types.ts` ships a real 32-deep Poseidon-Merkle fold
-  (`CellMerkleWitness.computeRoot`) that is **never wired into a method** — the PoC (§6) wires exactly
-  this in.
+- **[DELETED 2026-07-30.]** The o1js `DreggVerifier.verifyTransition` (`src/verifier.ts`) asserted
+  only *structural* invariants (roots non-zero, height increasing, roots differ), consumed no proof
+  object at all, and called that "implicit" verification. `DreggFederation.advanceState` gated on the
+  account's `editState: proof` permission, i.e. the o1js method proof — a **trusted-relay** anchor,
+  not a dregg-proof check. `src/types.ts` shipped a real 32-deep Poseidon-Merkle fold
+  (`CellMerkleWitness.computeRoot`) that was **never wired into a method**. All three files are gone,
+  together with `DreggFederation` itself, `src/bridge-ops.ts`, `scripts/deploy.ts` and
+  `scripts/interact.ts` — see §7's deposit/withdraw row for why. The fold the PoC (§6) wires in now
+  lives only inside `DreggPoseidonAttestation.ts`, in a provable method.
 
 ---
 
@@ -221,8 +223,9 @@ one shared commitment.
 - **Verifier circuit:** `bridge/mina-zkapp/scripts/attestation-poc.mjs` — a **`ZkProgram`**
   `DreggMembershipAttestation` (`publicInput` = the attested Pasta root, `publicOutput` = the
   proven leaf) whose method walks a Poseidon Merkle path and `assertEquals`es the reconstructed root.
-  This is exactly the `CellMerkleWitness.computeRoot` fold that `types.ts` ships but never wired into a
-  method. A `.ts` version is committed beside it: `bridge/mina-zkapp/src/DreggPoseidonAttestation.ts`.
+  This is exactly the `CellMerkleWitness.computeRoot` fold that `src/types.ts` shipped but never wired
+  into a method (that file was deleted 2026-07-30 with `DreggFederation`; the in-circuit fold is now
+  the only copy). A `.ts` version is committed beside it: `bridge/mina-zkapp/src/DreggPoseidonAttestation.ts`.
   **[CORRECTED 2026-07-27]** — that committed `.ts` **does not compile**: `npx tsc --noEmit` gives 3
   errors (`:55`, `:108`, `:111`), because it is written against the o1js **2.x** API while
   `package.json:11` pins `"o1js": "^1.0.0"`. It fails `npm run build`. Describing it as a working
@@ -380,7 +383,7 @@ laundered one.
 | Use-case | What it is | Tractable NOW? |
 |---|---|---|
 | **Cross-chain state read / capability attestation** | a Mina contract gates on "this cell / capability / balance is committed under dregg's root" | **Shape demonstrated, not the use-case** — the §6 attestation proves membership under a **Poseidon KAT root over `[1,2,3,4]`**, in a `ZkProgram`, off-pin; **no cell, capability or balance has ever been attested**. Plus the K6 Merkle-query shape. Trust boundary = §6.2 (a PROOF OBLIGATION on the anchored root's shape, plus a PLACEHOLDER key that is still the only thing making the anchor unforgeable, until Route A). **[CORRECTED 2026-07-27 — this row read "**Yes**".]** |
-| **Proof-carrying deposit/withdraw (shared asset)** | lock MINA → mint a dregg note; burn on dregg → unlock MINA, nullifier-gated | **Partial** — `DreggFederation` deposit/withdraw + nullifier machinery exist and run, but state advance is **trusted-relay** anchored. Trustless mint/unlock needs Route A/B. |
+| **Proof-carrying deposit/withdraw (shared asset)** | lock MINA → mint a dregg note; burn on dregg → unlock MINA, nullifier-gated | **No, and the code that claimed otherwise was DELETED 2026-07-30.** This row read "**Partial** — `DreggFederation` deposit/withdraw + nullifier machinery exist and run". Measured: there was **no nullifier machinery**. `nullifierRoot` was written to `Field(0)` at `init` and never again; `withdraw` asserted only `nullifier != 0`, never read or updated the set, and accepted a `stateRootAtSpend` it never used — **the same nullifier withdrew repeatedly**. Nor did anything lock: the file contained no `AccountUpdate` transfer and no `this.send`, so `deposit` took no MINA and `withdraw` paid none — `totalLocked` was a counter and a `WithdrawalEvent`. `DreggFederation.ts` and its `scripts/deploy.ts` are deleted rather than repaired; the anchor role belongs to `DreggAttestedGate` (deployed) and `DreggHeadAnchor` (written). A real bridge here needs Route A/B **and** a nullifier set that is a set. |
 | **Mina as a dregg light client** (direction 1) | dregg verifies a Mina Kimchi proof + reads a zkApp-state field under the verified root | **Mostly built** in Lean (K5 + K6), modulo the 3 crypto carriers. This is the genuinely novel, mostly-real half. |
 | **Sovereign cell on Mina** | a zkApp whose transitions REQUIRE a dregg authorization proof (`plans/…` Phase 3) | **No** — needs Route B (`.verify()` a real dregg Pickles proof). The product shape is right; the proof path is future. |
 | **Symmetric mutual settlement ("true peers" on Mina)** | each chain verifies the other's proof; asset/message finality both ways | **No on Mina** — today "true peers" is **EVM Groth16/BN254** (`DreggPeerRegistry.sol` `submitPeerFinality`). Mina peers need direction 2 as a real check (Route A/B) to match the direction-1 half. |
