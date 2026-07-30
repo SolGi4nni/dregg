@@ -329,7 +329,23 @@ shape that has yielded one-cause fixes five times this week.
 | `dreggnet-telegram` + `dreggnet-web` | 62 | **32** |
 | `dregg-node` | 7 | **3** |
 
-**~220 test failures closed.** What remains is mostly NOT ordinary breakage:
+⚠ **CORRECTION TO MY OWN TALLY.** "~220 closed" summed per-crate before/after pairs measured at
+different moments, which double-counts. **The honest figure is the workspace-to-workspace delta on the
+same instrument: 182 → 109 unique failures.** Re-measured `--no-fail-fast` after the night's landings.
+The per-crate table below is still true individually; it just does not add up to a workspace delta,
+because several fixes landed after the second sweep started and some crates were measured alone.
+
+**109 remain, and the concentration is now almost entirely other people's:**
+
+| crate | unique | whose |
+|---|---|---|
+| `dreggnet-web` | 24 | mostly **E2**, the Lean-side oracle decline |
+| `dregg-circuit` | 17 | mostly `pasta_*`, the live Mina lane |
+| `dregg-node` | 11 | includes the **E1** consensus regression |
+| `dreggnet-telegram` | 8 | named families, partly other lanes' WIP |
+| `dregg-circuit-prove` | 5 | 3 priced + **2 foreign ratchets incl. LAW #1** |
+| `dreggnet-offerings` 4 · `dregg-bridge` 4 · `starbridge-v2` 3 · `deos-js-runtime` 3 | | untouched tail |
+ What remains is mostly NOT ordinary breakage:
 - **10** are E2, the live oracle-decline outage — a Lean-authored gap in `metatheory/`.
 - **16** were a BUDGET ARTIFACT and are now budgeted; one passes at 700 s against a 180 s kill.
 - **3** cap-write are diagnosed and priced (a producer re-plumb, no Lean/VK work).
