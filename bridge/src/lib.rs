@@ -48,6 +48,12 @@ pub mod midnight_inclusion;
 pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;
+/// ⚑ **The Mina peer-to-peer BYTE SOURCE and the persisted, rolling VERIFIED HEAD.**
+///
+/// Rust's whole job here is I/O: get the raw binprot `Protocol_state.Value` bytes a Mina peer
+/// serves, and hand them to the Lean gates. It deliberately does NOT decode them — see the module
+/// header for why a Rust decoder would be a mirror rather than a source.
+pub mod mina_head;
 /// The **live off-chain Mina observer** for the settlement loop: a real Mina
 /// GraphQL client (`bestChain` for the finality depth + `account(publicKey)` for
 /// the zkApp's settled `provenRoot`) that confirms an outbound dregg→Mina

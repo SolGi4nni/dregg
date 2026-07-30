@@ -46,7 +46,7 @@
 /// The Pallas BASE field modulus `p` — the coordinate field of every commitment in a
 /// **Wrap** proof (`0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001`).
 /// Big-endian, for comparison against a big-endian rendering of the decoded element.
-const PALLAS_BASE_MODULUS_BE: [u8; 32] = [
+pub(crate) const PALLAS_BASE_MODULUS_BE: [u8; 32] = [
     0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x22, 0x46, 0x98, 0xfc, 0x09, 0x4c, 0xf9, 0x1b, 0x99, 0x2d, 0x30, 0xed, 0x00, 0x00, 0x00, 0x01,
 ];
@@ -224,20 +224,20 @@ impl MinaWrapIndexParams {
 // binprot reader — total, canonical, exact-fit
 // ===========================================================================
 
-struct Reader<'a> {
-    b: &'a [u8],
-    i: usize,
+pub(crate) struct Reader<'a> {
+    pub(crate) b: &'a [u8],
+    pub(crate) i: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn err<T>(&self, reason: impl Into<String>) -> Result<T, WrapProofError> {
+    pub(crate) fn err<T>(&self, reason: impl Into<String>) -> Result<T, WrapProofError> {
         Err(WrapProofError {
             at: self.i,
             reason: reason.into(),
         })
     }
 
-    fn take(&mut self, n: usize) -> Result<&'a [u8], WrapProofError> {
+    pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8], WrapProofError> {
         if self.i + n > self.b.len() {
             return self.err(format!(
                 "truncated: need {n} more bytes, {} remain",
@@ -249,12 +249,12 @@ impl<'a> Reader<'a> {
         Ok(s)
     }
 
-    fn u8(&mut self) -> Result<u8, WrapProofError> {
+    pub(crate) fn u8(&mut self) -> Result<u8, WrapProofError> {
         Ok(self.take(1)?[0])
     }
 
     /// binprot `Nat0` (list/array lengths), CANONICAL only.
-    fn nat0(&mut self) -> Result<u64, WrapProofError> {
+    pub(crate) fn nat0(&mut self) -> Result<u64, WrapProofError> {
         let c = self.u8()?;
         match c {
             0x00..=0x7f => Ok(u64::from(c)),
@@ -286,7 +286,7 @@ impl<'a> Reader<'a> {
     /// binprot signed integer, CANONICAL only. `Hex64` limbs are written through this
     /// (`Number<u64>` writes `self.0 as i64`), so a limb with the top bit set arrives
     /// as `0xfc` + 8 bytes and a small limb as a single byte.
-    fn int(&mut self) -> Result<i64, WrapProofError> {
+    pub(crate) fn int(&mut self) -> Result<i64, WrapProofError> {
         let c = self.u8()?;
         match c {
             0x00..=0x7f => Ok(i64::from(c)),
@@ -327,14 +327,14 @@ impl<'a> Reader<'a> {
     /// binprot `unit` — one `0x00` byte. This is what terminates every OCaml
     /// fixed-length `Vector.t` (`PaddedSeq`), so it is load-bearing structure, not
     /// padding: it is what makes a 15-vector distinguishable from a 16-vector.
-    fn unit(&mut self) -> Result<(), WrapProofError> {
+    pub(crate) fn unit(&mut self) -> Result<(), WrapProofError> {
         match self.u8()? {
             0 => Ok(()),
             other => self.err(format!("expected unit 0x00, got 0x{other:02x}")),
         }
     }
 
-    fn bool(&mut self) -> Result<bool, WrapProofError> {
+    pub(crate) fn bool(&mut self) -> Result<bool, WrapProofError> {
         match self.u8()? {
             0 => Ok(false),
             1 => Ok(true),
@@ -346,7 +346,11 @@ impl<'a> Reader<'a> {
     /// RETURNED. Returning the bytes is what lets the chain projection
     /// ([`WrapProofShape::sg`] / [`WrapProofShape::acc0`]) be read out of the same single walk
     /// that already checks them; callers that only need the check discard with `?;`.
-    fn field(&mut self, modulus_be: &[u8; 32], what: &str) -> Result<[u8; 32], WrapProofError> {
+    pub(crate) fn field(
+        &mut self,
+        modulus_be: &[u8; 32],
+        what: &str,
+    ) -> Result<[u8; 32], WrapProofError> {
         let at = self.i;
         let le: [u8; 32] = self.take(32)?.try_into().unwrap();
         // Big-endian compare, most significant byte first. No arithmetic.
@@ -375,14 +379,18 @@ impl<'a> Reader<'a> {
     /// A curve point as two coordinates in `modulus_be`'s field. Curve MEMBERSHIP is
     /// not checked here and must not be: `y² = x³ + 5` is Lean-authored
     /// (`MinaWrapGroupGate` / `MinaWrapSgCore.srs_g_on_curve`).
-    fn point(&mut self, modulus_be: &[u8; 32], what: &str) -> Result<Point, WrapProofError> {
+    pub(crate) fn point(
+        &mut self,
+        modulus_be: &[u8; 32],
+        what: &str,
+    ) -> Result<Point, WrapProofError> {
         let x = self.field(modulus_be, what)?;
         let y = self.field(modulus_be, what)?;
         Ok([x, y])
     }
 
     /// `PaddedSeq<T, N>`: exactly `N` elements followed by the unit terminator.
-    fn pseq<T>(
+    pub(crate) fn pseq<T>(
         &mut self,
         n: usize,
         mut f: impl FnMut(&mut Self) -> Result<T, WrapProofError>,
@@ -396,7 +404,7 @@ impl<'a> Reader<'a> {
     /// `PaddedSeq<T, N>`, KEEPING the elements. Same walk as [`Self::pseq`] — the
     /// terminator is still required — but the values survive, which is what the chain
     /// projection reads.
-    fn pseq_v<T>(
+    pub(crate) fn pseq_v<T>(
         &mut self,
         n: usize,
         mut f: impl FnMut(&mut Self) -> Result<T, WrapProofError>,
@@ -410,7 +418,7 @@ impl<'a> Reader<'a> {
     }
 
     /// `Option<T>`.
-    fn opt<T>(
+    pub(crate) fn opt<T>(
         &mut self,
         mut f: impl FnMut(&mut Self) -> Result<T, WrapProofError>,
     ) -> Result<bool, WrapProofError> {
@@ -426,7 +434,7 @@ impl<'a> Reader<'a> {
 
     /// `ArrayN<T, CAP>`: a `Nat0` length that must not exceed `cap`, then that many
     /// elements.
-    fn arrayn<T>(
+    pub(crate) fn arrayn<T>(
         &mut self,
         cap: u64,
         mut f: impl FnMut(&mut Self) -> Result<T, WrapProofError>,
@@ -512,10 +520,38 @@ pub fn decode_protocol_state_proof(b64url: &str) -> Result<WrapProofShape, WrapP
 
 /// The binprot half of [`decode_protocol_state_proof`], on already-decoded bytes.
 pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError> {
+    let r = &mut Reader { b: bytes, i: 0 };
+    let shape = decode_proof_at(r)?;
+    // EXACT FIT. This check belongs to the STANDALONE entry point — the one whose caller handed
+    // over a slice that is supposed to be exactly one proof (the base64 GraphQL serves). The
+    // resumable `decode_proof_at` cannot make it: on the peer-to-peer wire the proof is followed
+    // by the rest of the header and then the block body, and there demanding exact fit would
+    // refuse every real block.
+    if r.i != bytes.len() {
+        return Err(WrapProofError {
+            at: r.i,
+            reason: format!(
+                "{} trailing byte(s) after a complete Mina_base.Proof.Stable.V2",
+                bytes.len() - r.i
+            ),
+        });
+    }
+    Ok(shape)
+}
+
+/// The same walk, resumable — decode a `Mina_base.Proof.Stable.V2` starting at the reader's
+/// CURRENT position and leave the reader just past it.
+///
+/// This is what lets `mina_binprot` decode a block header off the peer-to-peer wire: in
+/// `Mina_block.Header.Stable.V2` the Wrap proof is the field immediately after
+/// `protocol_state`, so the same reader walks the protocol state and then the proof, and the
+/// proof's LENGTH is discovered by walking it rather than trusted from a framing field. A
+/// header whose proof does not decode is a REFUSAL, at the same resolution
+/// `decode_protocol_state_proof` already applies to the GraphQL-served base64.
+pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, WrapProofError> {
     const FP: &[u8; 32] = &PALLAS_BASE_MODULUS_BE;
     const FQ: &[u8; 32] = &PALLAS_SCALAR_MODULUS_BE;
 
-    let r = &mut Reader { b: bytes, i: 0 };
     let mut checked = 0usize;
 
     // ── statement.proof_state.deferred_values.plonk ────────────────────────────
@@ -723,16 +759,6 @@ pub fn decode_proof_bytes(bytes: &[u8]) -> Result<WrapProofShape, WrapProofError
     // as its `messages_for_next_step_proof.challenge_polynomial_commitments[0]`.
     let sg = r.point(FP, "bulletproof.challenge_polynomial_commitment")?;
     checked += 4;
-
-    if r.i != bytes.len() {
-        return Err(WrapProofError {
-            at: r.i,
-            reason: format!(
-                "{} trailing byte(s) after a complete Mina_base.Proof.Stable.V2",
-                bytes.len() - r.i
-            ),
-        });
-    }
 
     Ok(WrapProofShape {
         prev_challenges,
