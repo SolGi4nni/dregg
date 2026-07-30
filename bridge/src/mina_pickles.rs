@@ -172,6 +172,29 @@ pub struct WrapProofShape {
     /// prechallenges, the FIRST thirty elements of the word-11 preimage (challenges first,
     /// commitment last — the mirror of the step side).
     pub mnw_challenges: [[u128; 15]; 2],
+
+    // ── the ABSORB TAPE: what the phase-1 Fq-sponge and the IPA transcript consume ───────────
+    //
+    // ⚑ Added 2026-07-30, and it is a DISCARD that was removed rather than a decode that was
+    // added: `decode_proof_at` already walked every one of these and checked its canonicality.
+    // Throwing them away is the reason a Wrap proof's own opening challenges were called "not on
+    // the wire" — the CHALLENGES are not, but every coordinate the sponge absorbs to produce them
+    // is, and this decoder read all of them. Five of the six absorbed objects are here; the sixth
+    // is `public_comm`, which genuinely is not on the wire and is
+    // `Dregg2.Bridge.MinaWrapPublicInput.publicCommOf` over the forty public-input words.
+    /// `commitments.w_comm` — the 15 witness-column commitments, absorbed after `public_comm`.
+    pub w_comm_pts: [Point; 15],
+    /// `commitments.z_comm` — absorbed AFTER β and γ are squeezed, so moving it leaves those two
+    /// and moves α′ onward.
+    pub z_comm_pt: Point,
+    /// `commitments.t_comm` — the 7 quotient chunks, absorbed after α′.
+    pub t_comm_pts: [Point; 7],
+    /// `bulletproof.lr` — one `[L, R]` per IPA round, in round order. Only the first
+    /// [`Self::ipa_rounds`] entries are meaningful; the array is sized to the `ArrayN16` bound so
+    /// the shape stays `Copy`.
+    pub lr_pts: [[Point; 2]; 16],
+    /// `bulletproof.delta` — absorbed after every round, so it moves `c′` alone.
+    pub delta_pt: Point,
 }
 
 impl WrapProofShape {
@@ -695,19 +718,24 @@ pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, Wrap
     checked += 1;
 
     // ── proof: Pickles__Wrap_wire_proof.Stable.V1 ──────────────────────────────
-    let mut w_comm = 0usize;
-    r.pseq(15, |r| {
-        w_comm += 1;
-        r.point(FP, "commitments.w_comm")
-    })?;
+    // ⚑ KEPT since 2026-07-30, not walked past. These are four of the six objects the phase-1
+    // Fq-sponge absorbs (`Dregg2.Bridge.MinaWrapChallenges.wrapPhase1Of`), and until this change
+    // the decoder read every one of them, checked its canonicality, and threw it away — which is
+    // why `mina_opening_check.rs` had a challenge vector pinned to one height. The WALK is
+    // unchanged; only the discard is.
+    let w_comm_pts: [Point; 15] = r
+        .pseq_v(15, |r| r.point(FP, "commitments.w_comm"))?
+        .try_into()
+        .expect("pseq_v(15) yields 15");
+    let w_comm = w_comm_pts.len();
     checked += 2 * w_comm;
-    r.point(FP, "commitments.z_comm")?;
+    let z_comm_pt = r.point(FP, "commitments.z_comm")?;
     checked += 2;
-    let mut t_comm = 0usize;
-    r.pseq(7, |r| {
-        t_comm += 1;
-        r.point(FP, "commitments.t_comm")
-    })?;
+    let t_comm_pts: [Point; 7] = r
+        .pseq_v(7, |r| r.point(FP, "commitments.t_comm"))?
+        .try_into()
+        .expect("pseq_v(7) yields 7");
+    let t_comm = t_comm_pts.len();
     checked += 2 * t_comm;
 
     // evaluations: each entry is the (ζ, ζω) PAIR of scalars, not a point.
@@ -745,16 +773,23 @@ pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, Wrap
             "bulletproof.lr length {n} exceeds its ArrayN16 bound"
         ));
     }
-    for _ in 0..n {
-        r.point(FP, "bulletproof.lr.L")?;
-        r.point(FP, "bulletproof.lr.R")?;
+    // ⚑ KEPT: the 15 `(L, R)` pairs are absorbed one round at a time by the opening transcript
+    // (`ipaChallengesOf`), and each round's squeeze IS one of the fifteen challenges the
+    // Lean-authored opening-check AIR pins to its public inputs.
+    let mut lr_pts: [[Point; 2]; 16] = [[[[0u8; 32]; 2]; 2]; 16];
+    for slot in lr_pts.iter_mut().take(n as usize) {
+        let l = r.point(FP, "bulletproof.lr.L")?;
+        let rr = r.point(FP, "bulletproof.lr.R")?;
+        *slot = [l, rr];
         ipa_rounds += 1;
         checked += 4;
     }
     r.field(FQ, "bulletproof.z_1")?;
     r.field(FQ, "bulletproof.z_2")?;
     checked += 2;
-    r.point(FP, "bulletproof.delta")?;
+    // ⚑ KEPT: absorbed AFTER the fifteen rounds, so it moves `c′` and leaves the fifteen alone —
+    // the ordering `MinaWrapChallengesWeld` §3b pins.
+    let delta_pt = r.point(FP, "bulletproof.delta")?;
     // ⚑ `sg` — this proof's own IPA accumulator, the value the CHILD block's proof must carry
     // as its `messages_for_next_step_proof.challenge_polynomial_commitments[0]`.
     let sg = r.point(FP, "bulletproof.challenge_polynomial_commitment")?;
@@ -777,6 +812,11 @@ pub(crate) fn decode_proof_at(r: &mut Reader<'_>) -> Result<WrapProofShape, Wrap
         acc_challenges,
         mnw_comm,
         mnw_challenges,
+        w_comm_pts,
+        z_comm_pt,
+        t_comm_pts,
+        lr_pts,
+        delta_pt,
     })
 }
 

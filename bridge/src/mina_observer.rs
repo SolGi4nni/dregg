@@ -1391,10 +1391,11 @@ impl<R: MinaRpc> MinaObserver<R> {
         //     refuse precisely where it runs out. `acc_comm` IS
         //     `messages_for_next_step_proof.challenge_polynomial_commitments`, i.e. the
         //     derivation's `prev_comm`, and it is kept today because the proof-chain gate reads
-        //     it. `w_comm` / `z_comm` / `t_comm` / `lr` / `delta` are WALKED AND DISCARDED by
-        //     `decode_proof_at` — every one of them is on the wire, none of them survives the
-        //     decode, and that is why the refusal below reads `WireIncomplete` rather than
-        //     something about the transcript. It is a decoder change, not a formalization.
+        //     it. `w_comm` / `z_comm` / `t_comm` / `lr` / `delta` used to be WALKED AND DISCARDED
+        //     by `decode_proof_at`; since 2026-07-30 they SURVIVE the decode, so five of the six
+        //     objects the phase-1 sponge absorbs come straight off the served block. The sixth,
+        //     `public_comm`, genuinely is not on the wire — it is the 40-point Lagrange MSM over
+        //     the public input — and it, with `cip_shifted`, is what the refusal now names.
         let wire = oc::MinaWrapWire {
             vk_digest: oc::WRAP_VK_DIGEST.to_string(),
             endo_r: oc::PALLAS_ENDO_R.to_string(),
@@ -1403,14 +1404,41 @@ impl<R: MinaRpc> MinaObserver<R> {
                 .iter()
                 .flat_map(|p| [decimal_of_le32(&p[0]), decimal_of_le32(&p[1])])
                 .collect(),
-            // ⚑ NOT YET KEPT BY THE DECODER — see above. Left empty rather than filled with a
-            // stand-in: an invented coordinate would produce a complete, well-formed, entirely
-            // wrong challenge vector and nothing downstream could tell.
-            w_comm: Vec::new(),
-            z_comm: Vec::new(),
-            t_comm: Vec::new(),
-            lr_flat: Vec::new(),
-            delta: Vec::new(),
+            w_comm: shape
+                .w_comm_pts
+                .iter()
+                .flat_map(|p| [decimal_of_le32(&p[0]), decimal_of_le32(&p[1])])
+                .collect(),
+            z_comm: vec![
+                decimal_of_le32(&shape.z_comm_pt[0]),
+                decimal_of_le32(&shape.z_comm_pt[1]),
+            ],
+            t_comm: shape
+                .t_comm_pts
+                .iter()
+                .flat_map(|p| [decimal_of_le32(&p[0]), decimal_of_le32(&p[1])])
+                .collect(),
+            // ⚑ FLAT — 60 numbers, and the re-chunking into 15 rounds of 4 happens INSIDE the
+            // archive (`MinaWrapChallenges.absorbedOf`), because a caller that chunks is a caller
+            // that can mis-chunk and a 14-round derivation is a plausible vector for a proof of a
+            // different index. Only the first `ipa_rounds` entries are meaningful.
+            lr_flat: shape
+                .lr_pts
+                .iter()
+                .take(shape.ipa_rounds)
+                .flat_map(|lr| {
+                    [
+                        decimal_of_le32(&lr[0][0]),
+                        decimal_of_le32(&lr[0][1]),
+                        decimal_of_le32(&lr[1][0]),
+                        decimal_of_le32(&lr[1][1]),
+                    ]
+                })
+                .collect(),
+            delta: vec![
+                decimal_of_le32(&shape.delta_pt[0]),
+                decimal_of_le32(&shape.delta_pt[1]),
+            ],
             // ⚑ NOT ON THE WIRE AT ALL, and each has its own named leg:
             // `public_comm` is the 40-point Lagrange MSM over the public input, and `cip_shifted`
             // is the WRAP-side `ft_eval0`'s downstream. `Dregg2.Bridge.MinaWrapFtEval0Weld`
