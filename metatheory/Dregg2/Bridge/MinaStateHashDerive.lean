@@ -101,16 +101,22 @@ gate is `Bridge.MinaStateHashRealBlock`, and the honest form of it needs **no or
 `derive(parent_bytes) = child.previous_state_hash` on a consecutive pair the peer itself served. If
 any of the four order traps or two leaf facts above is wrong, that equation fails.
 
-## Compiled, not kernel
+## Kernel where it can go, compiled where it structurally cannot
 
-`native_decide`/`#guard`-by-execution. A 55-round Poseidon over ~40 elements plus two SHA-256 blocks
-is milliseconds compiled; the same object took a sibling 153 s of kernel reduction.
+Every `theorem` here is kernel `decide`/`rfl`/`simp`; `native_decide` appears nowhere. That was a
+**measurement**, not a preference — the whole real-block derivation reduces in the kernel in 9.2 s
+(§7 has the table, and the reason the table exists). The external reference vectors are `#guard`s,
+because a numeral someone else published is not a thing a kernel can certify.
 -/
 import Dregg2.Bridge.MinaBinprot
 import Dregg2.Circuit.Emit.PastaPoseidon
 
 set_option autoImplicit false
-set_option maxRecDepth 40000
+-- ⚑ MEASURED, not guessed (2026-07-30): the kernel `decide`s below reduce 55-round Kimchi Poseidon
+-- permutations, and `40000` is NOT enough for them — it fails with "maximum recursion depth has been
+-- reached", not with a timeout. `MinaBinprot`'s own §6 vectors DO fit in 40000 and it keeps that
+-- value; this is the Poseidon, not the parser.
+set_option maxRecDepth 1000000
 
 namespace Dregg2.Bridge.MinaStateHashDerive
 
@@ -472,13 +478,43 @@ theorem the_guard_accepts_the_derived_and_refuses_the_rest (bs : List Nat) (h : 
 
 /-- The salts are DISTINCT, so a body hash can never be mistaken for a state hash. (Mina's whole
 domain separation rests on this and it costs one line to say.) -/
-theorem the_two_salts_differ : saltProtoState ≠ saltProtoStateBody := by native_decide
+theorem the_two_salts_differ : saltProtoState ≠ saltProtoStateBody := by decide
 
-/-! ## §7 — axiom hygiene.
+/-! ## §7 — axiom hygiene. ⚑ **EVERY THEOREM IN THIS FILE IS KERNEL.**
 
-The `#guard`s in §2/§3 are the COMPILED evaluator against external reference values. §6 is kernel
-`decide`/`rfl` except `the_two_salts_differ`, which reduces two 55-round permutations and is stated
-as `native_decide` rather than pretended to be cheap. -/
+The `#guard`s in §2/§3 are the COMPILED evaluator against external reference values — that is the
+right instrument for a reference vector, which is a numeral someone else published and which no
+kernel can certify anyway. Every `theorem` is `decide`/`rfl`/`simp`, including
+`the_two_salts_differ`, which reduces two 55-round Kimchi permutations.
+
+⚑ **`native_decide` appears nowhere here, and that was a measurement rather than a preference.**
+Measured 2026-07-30 (`lake env lean`, laptop; ~1.2 s of each figure is process start plus olean
+load):
+
+| kernel `decide` on | wall |
+|---|---|
+| one Kimchi Poseidon permutation | 3.4 s |
+| the 1,544-byte binprot parse | 4.3 s |
+| the whole real-block derivation — parse ‖ 38 fields ‖ 819 chunks ‖ SHA-256 ‖ 26 permutations | **9.2 s** |
+| the two salts differing + the mutation's digest + two identities differing, one file | 17.0 s |
+| every claim converted across this file and `MinaBinprotRealBlock`, one file | 30.0 s |
+
+⚑ One thing that IS a real constraint and is the reason `maxRecDepth` above is not 40000: the
+Poseidon reductions exhaust `40000` and fail with *"maximum recursion depth has been reached"* —
+not a timeout, a limit. `MinaBinprot`'s own vectors fit in 40000 and it keeps that value, so the
+depth is the sponge's, not the parser's.
+
+The neighbouring `MinaStateHashWordGate` header quotes "a 93-element Poseidon under the kernel is
+the 3.5-hour wall §7 measured", and `MinaBinprot` §7 used to assert that the parser is something
+"the kernel will not reduce at these sizes". The second is measured false above; the first is about
+a different object and should not be inherited as a reason. ⚑ This is a **tree-wide** question, not
+this file's: 31 files under `Dregg2/` use `native_decide` as a real tactic, and at least this
+lane's neighbours reached for it on a reason nobody had checked.
+
+⚑ Where the kernel genuinely cannot go — measured, in `Bridge.MinaBinprotRealBlock` — is the
+`String` C-ABI wire. `String.decEq`/`String.mk` do not reduce and the kernel reports getting
+**stuck**, not slow. The rule this file follows, and states rather than assumes:
+**the CHECKER is kernel, the INSTANCE is compiled only where the kernel is structurally blocked.** -/
 
 #assert_axioms the_chunk_boundary_is_254_bits
 #assert_axioms the_first_packed_item_is_most_significant
@@ -488,7 +524,6 @@ as `native_decide` rather than pretended to be cheap. -/
 #assert_axioms the_guard_refuses_when_the_decode_refuses
 #assert_axioms the_guard_is_the_derived_equality
 #assert_axioms the_guard_accepts_the_derived_and_refuses_the_rest
-
-#print axioms the_two_salts_differ
+#assert_axioms the_two_salts_differ
 
 end Dregg2.Bridge.MinaStateHashDerive

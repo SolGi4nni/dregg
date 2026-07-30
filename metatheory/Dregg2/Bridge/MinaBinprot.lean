@@ -809,36 +809,36 @@ def wellformedDecodeCheck : Bool :=
       && rest.isEmpty
   | none => false
 
-theorem consensus_decodes_a_wellformed_state : wellformedDecodeCheck = true := by native_decide
+theorem consensus_decodes_a_wellformed_state : wellformedDecodeCheck = true := by decide
 
 /-- ⚑ **TEN DENSITIES IS A REFUSAL**, not a shorter window. This is what the public GraphQL surface
 can supply (nothing) and what a mis-ordered decode produces. -/
 theorem ten_densities_is_refused :
-    consensusState (sampleConsensusBytes (d11.take 10) 32 7140) = none := by native_decide
+    consensusState (sampleConsensusBytes (d11.take 10) 32 7140) = none := by decide
 
 /-- A VRF output that is not 32 bytes is a REFUSAL — the digest's pre-image length is part of the
 comparison's meaning, not a detail. -/
 theorem a_short_vrf_output_is_refused :
-    consensusState (sampleConsensusBytes d11 31 7140) = none := by native_decide
+    consensusState (sampleConsensusBytes d11 31 7140) = none := by decide
 
 /-- ⚑ **`slots_per_epoch = 0` IS A REFUSAL.** Lean's `Nat` division by zero is `0`, so admitting it
 would silently place every state in epoch 0 and make every pair look same-epoch — the short-range
 branch would then decide every fork. -/
 theorem zero_slots_per_epoch_is_refused :
-    consensusState (sampleConsensusBytes d11 32 0) = none := by native_decide
+    consensusState (sampleConsensusBytes d11 32 0) = none := by decide
 
 /-- ⚑ **A NON-CANONICAL INTEGER WIDTH IS A REFUSAL.** `blockchain_length` written in the 16-bit form
 when it fits in one byte is rejected rather than read as the same number. -/
 theorem a_widened_length_is_refused :
     consensusState ([0xfe, 0x03, 0x00] ++ (sampleConsensusBytes d11 32 7140).drop 3) = none := by
-  native_decide
+  decide
 
 /-- ⚑ **A NON-CANONICAL FIELD ELEMENT IS A REFUSAL.** `p` itself, little-endian, in the staking
 epoch data's `ledger.hash` slot: `x` and `x + p` are one element at the digest and must not have two
 encodings. -/
 theorem a_non_canonical_field_element_is_refused :
     epochData (eFp pallasBaseModulus ++ eInt 9 ++ eFp 2 ++ eFp 3 ++ eFp 4 ++ eInt 11) = none := by
-  native_decide
+  decide
 
 /-- The VRF digest really is the Blake2b of the wire bytes, not the wire bytes. -/
 def vrfDigestCheck : Bool :=
@@ -847,7 +847,7 @@ def vrfDigestCheck : Bool :=
                      && c.lastVrfHash != List.replicate 32 7
   | none => false
 
-theorem the_vrf_digest_is_derived : vrfDigestCheck = true := by native_decide
+theorem the_vrf_digest_is_derived : vrfDigestCheck = true := by decide
 
 /-- ⚑ **THE DECODED STATE FEEDS `select` WITH NO CONVERSION**, and the fork-choice verdict on two
 decoded states is a real verdict: a decoded state does not displace itself, and a decoded state with
@@ -869,7 +869,7 @@ def selectDrivenByDecodeCheck : Bool :=
       && (minaBetterTip mainnet b a 2 1 == false)
   | none => false
 
-theorem a_decoded_state_drives_select : selectDrivenByDecodeCheck = true := by native_decide
+theorem a_decoded_state_drives_select : selectDrivenByDecodeCheck = true := by decide
 
 /-- ⚑ **A PEER CANNOT MOVE THE GRACE PERIOD.** Constants that disagree with the pin are refused
 rather than adopted; `1363 + 77 = 1440` is exactly the wrong `grace_period_end` that both the spec
@@ -887,19 +887,38 @@ theorem the_pin_is_the_daemons_grace_period :
     mainnet.gracePeriodEnd = 2237 ∧ mainnet.slotsPerWindow = 77
     ∧ subWindowsPerWindow = mainnet.subWindowsPerWindow := by decide
 
-/-! ## §7 — axiom hygiene.
+/-! ## §7 — axiom hygiene. ⚑ **EVERYTHING BELOW IS KERNEL.**
 
-⚑ The decode theorems use `native_decide` and therefore carry `Lean.ofReduceBool` — they are
-EXECUTION results, not kernel reductions, and that is stated rather than hidden. The parser uses
-well-founded recursion over a byte list that the kernel will not reduce at these sizes. The
-STRUCTURAL facts (`carried_constants_that_disagree_are_refused`,
-`the_pin_is_the_daemons_grace_period`) are kernel `decide` and carry no such axiom. -/
+This section used to read: *"the decode theorems use `native_decide` … the parser uses well-founded
+recursion over a byte list that the kernel will not reduce at these sizes."*
 
+**That was never measured, and it is false.** Measured 2026-07-30 with `lake env lean`, on the
+laptop, ~1.2 s of each figure being process start plus olean load:
+
+| kernel `decide` on | wall |
+|---|---|
+| all six of §6's decode/refusal vectors | 18.5 s |
+| the two canonicality refusals | 9.8 s |
+| (for scale) the REAL 1,544-byte devnet block's full parse | 4.3 s |
+
+So the parser reduces in the kernel fine, at synthetic *and* at real-block sizes, and every theorem
+in §6 is now `decide`. The reason this mattered is not the eight theorems: it is that a **stated
+reason for reaching past the kernel had never been checked**, and a sibling module copied both the
+tactic and this paragraph on its authority.
+
+⚑ Where `native_decide` IS still required — measured, in `Bridge.MinaBinprotRealBlock` — is the
+`String` C-ABI wire: `String.decEq` and `String.mk` do not reduce, and the kernel reports getting
+*stuck*, not slow. That is a structural wall and it is a different claim from this one. -/
+
+#assert_axioms consensus_decodes_a_wellformed_state
+#assert_axioms ten_densities_is_refused
+#assert_axioms a_short_vrf_output_is_refused
+#assert_axioms zero_slots_per_epoch_is_refused
+#assert_axioms a_widened_length_is_refused
+#assert_axioms a_non_canonical_field_element_is_refused
+#assert_axioms the_vrf_digest_is_derived
+#assert_axioms a_decoded_state_drives_select
 #assert_axioms carried_constants_that_disagree_are_refused
 #assert_axioms the_pin_is_the_daemons_grace_period
-
-#print axioms consensus_decodes_a_wellformed_state
-#print axioms a_decoded_state_drives_select
-#print axioms carried_constants_that_disagree_are_refused
 
 end Dregg2.Bridge.MinaBinprot

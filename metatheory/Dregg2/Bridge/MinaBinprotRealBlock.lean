@@ -31,6 +31,14 @@ Neither was a reasoning error about the record layout — the layout was read co
 daemon AND from openmina's machine-derived types. Both were LEAF ENCODING errors, which is the class
 a structure-level cross-check is blind to. That is the argument for this file existing.
 
+## ⚑ Kernel where it can go, `native_decide` only where it structurally cannot
+
+Every theorem here that does not touch a `String` is kernel `decide` — including the whole
+1,544-byte parse and the whole `state_hash` derivation. That was a MEASUREMENT (2026-07-30), and it
+replaced a paragraph at the foot of this file which asserted the opposite without one. The three
+that remain on `native_decide` drive the `String` C-ABI wire, where the kernel gets **stuck** at
+`String.decEq`, not slow. See the axiom-hygiene section for the table and for the tree-wide note.
+
 ## The ground truth it is checked against
 
 openmina (`~/dev/mina-rust`) decoded the SAME captured response with its own generated types and
@@ -51,7 +59,11 @@ agreement on a verdict would not have been.
 import Dregg2.Bridge.MinaForkChoiceGate
 
 set_option autoImplicit false
-set_option maxRecDepth 40000
+-- ⚑ MEASURED, not guessed (2026-07-30): the kernel `decide`s below reduce 55-round Kimchi Poseidon
+-- permutations, and `40000` is NOT enough for them — it fails with "maximum recursion depth has been
+-- reached", not with a timeout. `MinaBinprot`'s own §6 vectors DO fit in 40000 and it keeps that
+-- value; this is the Poseidon, not the parser.
+set_option maxRecDepth 1000000
 
 namespace Dregg2.Bridge.MinaBinprotRealBlock
 
@@ -168,7 +180,7 @@ def realBlockCheck : Bool :=
   | none => false
 
 /-- ⚑ **THE DECODER READS A REAL MINA BLOCK.** -/
-theorem the_decoder_reads_a_real_devnet_block : realBlockCheck = true := by native_decide
+theorem the_decoder_reads_a_real_devnet_block : realBlockCheck = true := by decide
 
 /-- ⚑ **AND THIS IS THE ARRAY GRAPHQL CANNOT SERVE.** `sub_window_densities` is the input Samasika's
 LONG-RANGE branch reads and the reason `MinaChainSelection` exported nothing for a day: it is not a
@@ -187,8 +199,7 @@ def densitiesCheck : Bool :=
       && (ps.consensus.minWindowDensity == 3)
   | none => false
 
-theorem the_real_window_is_the_array_graphql_cannot_serve : densitiesCheck = true := by
-  native_decide
+theorem the_real_window_is_the_array_graphql_cannot_serve : densitiesCheck = true := by decide
 
 /-- ⚑ **AND THE REAL STATE DRIVES FORK CHOICE.** The decoded tip does not displace itself; a rival at
 the SAME staking lock checkpoint (hence short-range) and one block longer does; and a rival at the
@@ -214,7 +225,7 @@ def forkChoiceOnRealStateCheck : Bool :=
       && (minaBetterTip mainnet rival real 2 1 == true)
   | none => false
 
-theorem the_real_state_drives_fork_choice : forkChoiceOnRealStateCheck = true := by native_decide
+theorem the_real_state_drives_fork_choice : forkChoiceOnRealStateCheck = true := by decide
 
 /-- ⚑ **AND IT IS REFUTABLE.** Truncating the real bytes, and flipping the `sub_window_densities`
 count byte on the real bytes, are both REFUSALS. A decoder that cannot go red on a real block is not
@@ -225,11 +236,11 @@ def refutabilityCheck : Bool :=
   && (decodeProtocolState (devnetBlock540186.set 1074 10) == none)
   && (decodeProtocolState (devnetBlock540186.drop 1) == none)
 
-theorem the_real_block_gate_can_go_red : refutabilityCheck = true := by native_decide
+theorem the_real_block_gate_can_go_red : refutabilityCheck = true := by decide
 
 /-- The count byte really is where the comment says, so `refutabilityCheck` is not passing for an
 unrelated reason. -/
-theorem the_density_count_byte_is_eleven : devnetBlock540186.getD 1074 0 = 11 := by native_decide
+theorem the_density_count_byte_is_eleven : devnetBlock540186.getD 1074 0 = 11 := by decide
 
 
 /-! ## ⚑ THE WHOLE THING, END TO END, ON REAL BYTES.
@@ -276,6 +287,8 @@ def exportedGateOnRealBytes : Bool :=
   && (minaBetterTipGate ("eh=" ++ eh ++ ";ch=" ++ ch ++ ";e=" ++ e ++ ";c=" ++ c) == "1")
   && (minaBetterTipGate ("eh=" ++ ch ++ ";ch=" ++ eh ++ ";e=" ++ c ++ ";c=" ++ e) == "0")
 
+-- ⚑ `native_decide`, and ONLY because this drives the `String` C-ABI wire: the kernel reports
+-- reduction STUCK at `String.decEq`/`String.mk`, not slow (measured). See the hygiene section.
 theorem the_exported_gate_decides_on_real_devnet_bytes : exportedGateOnRealBytes = true := by
   native_decide
 
@@ -309,14 +322,15 @@ def servedHashTamperIsRefused : Bool :=
   && (minaHeadAdvanceGate ("sg=1;fz=0;eh=" ++ eh ++ ";ch=" ++ toString (derived540187 + 1)
       ++ ";e=" ++ e ++ ";c=" ++ c) == "ERR")
 
+-- ⚑ `native_decide`, and ONLY because this drives the `String` C-ABI wire: the kernel reports
+-- reduction STUCK at `String.decEq`/`String.mk`, not slow (measured). See the hygiene section.
 theorem a_served_state_hash_the_bytes_do_not_have_is_refused :
     servedHashTamperIsRefused = true := by native_decide
 
 /-- The two derived identities really are DISTINCT, so the swap above is a genuine swap and not two
 spellings of one number. (`devnetBlock540187` differs from `devnetBlock540186` in one byte of
 `blockchain_length`, which is in the `MinaProtoStateBody` preimage.) -/
-theorem the_one_byte_mutation_moves_the_identity : derived540186 ≠ derived540187 := by
-  native_decide
+theorem the_one_byte_mutation_moves_the_identity : derived540186 ≠ derived540187 := by decide
 
 /-- The undiscarded decode of the same bytes. -/
 def rawBlock540186 : Option MinaBinprot.ProtocolStateRaw :=
@@ -340,7 +354,14 @@ order. And the body hash is pinned separately from the state hash, so a fault in
 distinguishable from a fault in the outer two-element Poseidon.
 
 **The ORDER's actual gate is `Bridge.MinaStateHashRealBlock`**, where the comparand is a field of
-the wire rather than anything either transcription produced. -/
+the wire rather than anything either transcription produced.
+
+⚑ And be precise about what the theorem below certifies, now that it is a kernel `decide` (9.2 s,
+measured): **the kernel certifies OUR side.** It establishes that this file's Lean, reduced by the
+kernel and not by a compiler, produces these five values. The python is not in the kernel's world
+at all — it is where the literals came from. So this is a kernel-certified evaluation of one
+rendering against a pinned numeral, which is exactly what "the transcriptions agree" can mean and
+no more. -/
 def transcriptionsAgree : Bool :=
   match rawBlock540186 with
   | some ps =>
@@ -354,14 +375,12 @@ def transcriptionsAgree : Bool :=
            23150793208165238508010746024646151327500557688103637800887369182027809926508
   | none => false
 
-theorem the_two_transcriptions_agree_on_the_real_block : transcriptionsAgree = true := by
-  native_decide
+theorem the_two_transcriptions_agree_on_the_real_block : transcriptionsAgree = true := by decide
 
 /-- And on the mutation, so the tripwire covers the second fixture too. -/
 theorem the_two_transcriptions_agree_on_the_mutation :
     derived540187 =
-      10661633542888591627435934085864260363960762266439350948948271468094670434467 := by
-  native_decide
+      10661633542888591627435934085864260363960762266439350948948271468094670434467 := by decide
 
 /-- ⚑ **AND THE HEAD ROLLS, ON REAL DEVNET BYTES.** With the anchored-segment gate accepting
 (`sg=1`) the head advances and the finalized height ratchets to `540187 − k = 539897`. With it
@@ -382,24 +401,64 @@ def exportedRollOnRealBytes : Bool :=
   && (minaHeadAdvanceGate ("sg=1;fz=539897;eh=" ++ ch ++ ";ch=" ++ eh ++ ";e=" ++ c ++ ";c=" ++ e)
       == "adv=0;fin=539897")
 
+-- ⚑ `native_decide`, and ONLY because this drives the `String` C-ABI wire: the kernel reports
+-- reduction STUCK at `String.decEq`/`String.mk`, not slow (measured). See the hygiene section.
 theorem the_head_rolls_on_real_devnet_bytes : exportedRollOnRealBytes = true := by native_decide
 
 /-- The finalized height really is `blockchain_length − k` at the pinned `k`, so the number above is
 not a coincidence of the fixture. -/
 theorem the_ratchet_is_length_minus_k : 540187 - mainnet.k = 539897 := by decide
 
-/-! ## axiom hygiene — these are `native_decide` (EXECUTION) results and carry `Lean.ofReduceBool`.
-Stated, not hidden: a 1,544-byte parse is not a kernel reduction. -/
+/-! ## axiom hygiene. ⚑ **THE LINE IS THE `String` WIRE, AND IT WAS MEASURED, NOT ASSUMED.**
 
-#print axioms the_decoder_reads_a_real_devnet_block
-#print axioms the_real_state_drives_fork_choice
-#print axioms the_real_block_gate_can_go_red
+This section used to say *"these are `native_decide` (EXECUTION) results and carry
+`Lean.ofReduceBool`. Stated, not hidden: a 1,544-byte parse is not a kernel reduction."* Two things
+were wrong with that and both were inherited rather than checked:
+
+  * **A 1,544-byte parse IS a kernel reduction** — 4.3 s of one, measured 2026-07-30 with
+    `lake env lean`. Every theorem in this file that does not touch a `String` is now `decide`,
+    including `the_density_count_byte_is_eleven`, which was `native_decide` for an index into a
+    literal list.
+  * **`Lean.ofReduceBool` is not the axiom this toolchain emits.** Lean 4.32 emits a
+    per-declaration `…_native.native_decide.ax_1_1` alongside `propext`. A hygiene note naming the
+    wrong axiom is a note nobody can check against, which is how this one survived.
+
+Measured costs, laptop, ~1.2 s of each being process start plus olean load:
+
+| kernel `decide` on | wall |
+|---|---|
+| `realBlockCheck` ‖ `densitiesCheck` ‖ `forkChoiceOnRealStateCheck` ‖ `refutabilityCheck` ‖ the index | 18.0 s |
+| `transcriptionsAgree` — parse ‖ 38 fields ‖ 819 chunks ‖ SHA-256 ‖ 26 permutations | 9.2 s |
+| the mutation's digest + the two identities differing + the two salts differing, one file | 17.0 s |
+| **every conversion in this file, plus the salts, one file** | **30.0 s** |
+
+⚑ `maxRecDepth` at the head of this file went 40000 → 1000000 for the same measured reason: the
+Poseidon reductions exhaust 40000 and fail with *"maximum recursion depth has been reached"*, which
+is a limit and not a timeout. The five string-free theorems that were already here fit in 40000 —
+so the depth is the sponge's, and `MinaBinprot` correctly keeps the lower value.
+
+⚑ **What is left on `native_decide` is left there because the kernel gets STUCK, not slow.** The
+three below drive the `String` C-ABI wire, and the kernel reports reduction stuck at
+`String.decEq` / `String.mk` after unfolding `instDecidableEqString` — no timeout would help. That
+is a structural wall, and it is the honest reason, unlike the one this section used to give.
+
+⚑ And it is a TREE-WIDE question, not this file's: 31 files under `Dregg2/` use `native_decide` as
+a real tactic. At least this lane's neighbourhood reached for it on a reason nobody had checked. -/
+
+-- KERNEL. No axioms.
+#assert_axioms the_decoder_reads_a_real_devnet_block
+#assert_axioms the_real_window_is_the_array_graphql_cannot_serve
+#assert_axioms the_real_state_drives_fork_choice
+#assert_axioms the_real_block_gate_can_go_red
+#assert_axioms the_density_count_byte_is_eleven
+#assert_axioms the_one_byte_mutation_moves_the_identity
+#assert_axioms the_two_transcriptions_agree_on_the_real_block
+#assert_axioms the_two_transcriptions_agree_on_the_mutation
+#assert_axioms the_ratchet_is_length_minus_k
+
+-- EXECUTION, because the `String` wire will not reduce. Printed, not asserted.
 #print axioms the_exported_gate_decides_on_real_devnet_bytes
 #print axioms a_served_state_hash_the_bytes_do_not_have_is_refused
-#print axioms the_one_byte_mutation_moves_the_identity
-#print axioms the_two_transcriptions_agree_on_the_real_block
-#print axioms the_two_transcriptions_agree_on_the_mutation
 #print axioms the_head_rolls_on_real_devnet_bytes
-#assert_axioms the_ratchet_is_length_minus_k
 
 end Dregg2.Bridge.MinaBinprotRealBlock
