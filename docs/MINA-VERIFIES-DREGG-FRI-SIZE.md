@@ -3006,6 +3006,224 @@ function of the suite is the remaining engineering.
 
 ---
 
+### 3.33 ⚑ THE HASH IS THE WALK'S SHAPE — and the sliced chain's blocker is the TRANSCRIPT, not the digest width
+
+*2026-07-30. `src/RootFriWalk.ts` §1a, `src/HashSuiteType.ts`, `src/Poseidon2Merkle.ts`,
+`src/PastaMmcs.ts`, `src/RootFriSlice.ts`, `src/RootFriUniform.ts`. Commits `557ac33fd`,
+`39d68ee84`. Tier 0 throughout; nothing here compiled a chain.*
+
+§3.32 named the remaining engineering as *"making the slice executor's digest width a function of
+the suite."* That is done. Doing it found that the digest width was not the blocker.
+
+**`WalkHash` is the structural half of a hash choice**, beside `WalkPrice`'s cost half: digest
+lanes, leaf-sponge rate, leaf-sponge state width, challenger state width, challenger absorb rate,
+challenger squeeze count. Those reach the **lane table** (a commitment is `digestLanes` lanes, not
+eight), the **slot layout** (`cur`, `inj`, `sponge`, `chal`), the **segment list**
+(`ceil(w / spongeRate)` sponge blocks), the **aux widths** and the **executor**. A price table can
+move none of them, which is exactly the gap `priceForSuite` left. `SegmentedWalk` now *carries* its
+hash, so `segmentReads`, `auxLanes`, `runSegments` and the uniform planner cannot drift from the
+table they were built against; `assertWalkHashMatchesSuite` requires the record and the suite to
+agree on all four shared numbers.
+
+`MerkleSuite.spongeStream` is new: the leaf sponge as a **streaming** machine, because the sliced
+walk cannot use the whole-row `sponge` — an opened row is up to 452 lanes and the sponge over it
+crosses cuts. `RootFriSlice`'s `inBlock` *was* that machine, hand-written at one hash; it is lifted
+out gate for gate and implemented for both suites. `compressBB` / `condSwap` / `BbDigest` /
+`DIGEST_ELEMS` / `assertDigestInRange` are gone from the executor.
+
+#### ⚑ TWO REFUSALS, AND THEY ARE THE FINDING
+
+**1. `segmentWalk` refuses a hash whose TRANSCRIPT it does not model.** The Merkle half of a hash
+swap is a substitution. The transcript half is a different *state machine*:
+`MultiField32Challenger` packs eight BabyBear lanes into a Pasta cell to absorb, splits a cell into
+seven canonical limbs to squeeze, absorbs a digest **natively** after flushing the pending base
+buffer, tags the capacity with a length, and pops its queue **from the back**. `challengerRun` emits
+none of that.
+
+⚠ **And there is no oracle for it.** `RootConsume.rehash` re-commits the root's MMCS digests under a
+suite — so the Merkle half of a Pasta walk *has* a twin to check against — but it does **not**
+re-derive the transcript, and `ROOT_CHALLENGE_STATUS` says the root path **carries** its challenges.
+dregg mints no Pasta-hashed root. A Pasta preamble written today would compile, prove, and be about
+a protocol nobody runs — which is the exact shape this directory's record says its cheap
+differentials keep catching. So it refuses by name instead.
+
+**2. `assertLanesAreBabyBear` refuses to COMMIT a non-eight-lane walk.** The lane table is committed
+with `canonicalLane(l, 2^31 − 1)` on **every** lane. Under Pasta the four round commitments, the
+sixteen commit-phase commitments and the challenger state are **native Pasta elements** in that same
+space, and canonicalising one to `< p_BabyBear` refuses every honest proof. The lane table needs a
+per-lane **kind**. That would have been invisible until a Pasta chain failed to prove, so removing
+the first blocker cannot silently expose the second.
+
+**`priceOnly` names the hybrid.** Pricing a BabyBear-shaped walk at Pasta unit prices is §3.31's
+`2.906 × 10⁶ rows = 54 slices` and is a legitimate **projection**; passing a price whose sponge rate
+disagrees with the shape without saying so is now refused, and `SegmentedWalk.priced` carries
+`'shaped' | 'price-only'` so a report cannot lose the distinction.
+
+#### ⚑ THE ROW CHANGE NO MODEL FIGURE COULD SEE
+
+`MerkleSuite` has two leaf hashes and the commit-phase leaf reached for the wrong one. Measured with
+`Provable.constraintSystem`, no compile:
+
+| body | rows |
+|---|---:|
+| `cpLeaf`, the inline predecessor | 2,648 |
+| `cpLeaf`, `spongeStream` | **2,648 — identical** |
+| `cpLeaf`, the one-shot `sponge` | 2,616 — **−32** |
+| `inBlock`, inline vs `spongeStream` | 2,666 / **2,666** |
+
+The one-shot BabyBear sponge reduces only the eight lanes it *returns*; the streaming form reduces
+all sixteen, because its state crosses a boundary. So `sponge` would have dropped 32 rows on each of
+the **304** commit-phase leaves — **9,728 emitted rows** — while the model prices a leaf at `P.perm`
+either way and **every tier-0 figure stayed exactly where it was**. A refactor whose only instrument
+is the model, changing the thing the model does not price; the row count would first have moved at
+the compile the coordinator was told to run once.
+
+**Nothing moved on the deployed path**, re-checked at tier 0 after each commit: braid 11,303
+segments / 30,363,795 work rows / 839 slices / cut census 489-330-0-11; uniform 820 / 46 /
+38,133,228; preamble 905 / 131 / 42,245,547 and all eight discriminating polarities. The twin still
+derives p3's own α, all 16 βs and all 19 query indices and reproduces all 76 input openings, all 95
+reduced openings and all 304 fold steps.
+
+---
+
+### 3.34 ⚑ THE COLUMN LEVER, MEASURED — and the number three documents quote for it is 39% low
+
+*2026-07-30. `scripts/deep-column-census.ts`, `npm run deep-columns` — tier 0, 0.2 s, nothing
+compiles. Commit `bb991153c`.*
+
+§3.31 names one lever and prices it at *"2.50 × 10⁶ rows over ~2,342 opened values at ζ = 1,067 rows
+per opened value; halving the root's committed column count is 54 slices → 31."* Three things come
+out different when it is re-derived from the owner rather than quoted.
+
+**1. The unit price is 1,484, not 1,067 (+39%).** From `ARITH_PRICE`, which is the registered owner:
+per column `horner 49 + 4 × witnessLane 6.50 = 75.00`; per close
+`extInverse 88 + 2 × extMul 31 + extAdd 19 = 169`, × 48 (matrix, point) pairs; per query
+`2,630 × 75 + 48 × 169 + 20 = 205,382`; × 19 queries = **3,902,258 rows**. The 1,067 is
+`2.5 × 10⁶ / 2,342`, two literals in `scripts/pasta-root-rows.ts`, and **2,342 is the retired flat
+census** — 2,286 plus the 56 quotient openings counted twice — which `CostModel.RETIRED_FLAT_MODEL`
+already documents as wrong. ⚑ The direction matters: **the lever is bigger than advertised.**
+
+**2. "86% of the budget" is the WORK-ONLY share, and a sliced chain is not work-only.** At the Pasta
+price the walk with the preamble is 4,316,316 work rows with DEEP at **90.4%** — but `planFriWalk`
+at the 50,000-row budget adds **5,165,797 rows of carry**, and carry is **hash-independent**.
+Against work + carry the DEEP share is **41.2%** and the chain is **218 slices**, not 54. A lever
+priced against the work share is priced against the wrong denominator for the only kind of chain
+this directory builds.
+
+**3. The answer is per-INSTANCE, and it is one table.**
+
+| instance | LDE rows | main | quot | prep | perm | total | share |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `poseidon2_perm/baby_bear_d4_w24` | **512** | 904 | 8 | 72 | 88 | **1,072** | **40.8%** |
+| `poseidon2_perm/baby_bear_d4_w16` | 2,097,152 | 600 | 8 | 48 | 56 | 712 | 27.1% |
+| `Alu` | 4,194,304 | 152 | 8 | 118 | 144 | 422 | 16.0% |
+| `expose_claim` | 64 | 100 | 8 | 50 | 200 | 358 | 13.6% |
+| `Const` / `Public` / `recompose` | | 4 | 8 | 2 | 8 | 22 each | 2.5% |
+
+⚑ **A DEEP term is priced per opened value and is INDEPENDENT OF HEIGHT.** One Horner step, four
+witnessed lanes. So an 8-trace-row, 452-column matrix is priced identically to a four-million-row
+one — and after the hash swap, height is what the *Merkle path* costs while width is the *whole
+budget*. **The widest table in the batch is the shortest one**, and it exists as an **isolation**
+device: a second Poseidon2 op-type so the IVC segment-digest sponge shares no chain-state, CTL bus
+or CSE collapse with the FRI challenger's W16 perm. That is a **distinctness** requirement, not a
+width-24 one.
+
+| lever | census | Δ | DEEP rows |
+|---|---:|---:|---:|
+| **baseline** (dregg's committed root) | 2,630 | | 3,902,258 |
+| **A.** merge the w24 op-type into w16 | **1,558** | **−1,072** | 2,348,894 |
+| **A′.** the same instance at W16 widths, not deleted | 2,270 | −360 | 3,389,258 |
+| **B.** `expose_claim` as 25 rows × 1 lane, not 1 × 25 | 2,296 | −334 | 3,426,308 |
+| **C.** `alu_lanes` 4 → 1 | 2,360 | −270 | 3,517,508 |
+| **D.** max constraint degree 3 → 2 | 2,602 | −28 | 3,839,881 |
+| **E.** batch LogUp to one running sum per instance | 2,174 | −456 | 3,252,458 |
+| **A + B + C** | **1,224 (46.5%)** | **−1,406** | **1,872,944** |
+
+**A + B + C is past the halving §3.31 asked for, and none of the three is a hash change, a FRI-knob
+change or an upstream-fork change. All three are dregg-side AIR layout.**
+
+**Where it cannot be cut — with the number, so the question closes rather than hopes:**
+
+- the **quotient round is 56 of 2,630 (2.1%)**; width is `D = 4` per chunk and the chunk count is
+  `2^log2_ceil(maxDegree − 1) = 2`. Best case **28 terms (1.1%)**, and it costs every AIR a degree.
+- the **permutation round is 512 (19.5%)**, forced by 64 LogUp interactions, forced by
+  `permutation_width = contexts.len()`. There is **no batch parameter in p3-lookup** at the pinned
+  rev — lever E is a change to the **upstream fork**, not a knob.
+- **`p2_w16`'s 600 main terms (22.8%)** are the Poseidon2-w16 round schedule itself
+  (`W(1 + 2·HF·(SR+1)) + PR·(SR+1) + 2 = 300`). Narrowing it means changing the hash the root
+  commits with, which **rotates the apex VK**. Not this lane's to turn.
+
+---
+
+### 3.35 ⚑ BUILD REQUEST — the one expensive run, what it costs, and what it produces
+
+**Compile the claim-carrying uniform chain: 131 programs, one process each, into
+`.fullchain/uniform-claim`. Then `npm run head-anchor-pins -- --emit`.**
+
+#### The shape, re-planned and re-priced on the code as it now stands
+
+Reproduced at tier 0 after every commit above (`npm run root-fri-preamble`, `npm run
+root-fri-uniform`, `npm run head-anchor-pins`):
+
+| | |
+|---|---:|
+| walk | 12,677 segments (1,374 preamble + 11,303) |
+| uniform layout | 1,410 head segments, then 19 blocks of 593 |
+| **slice instances** | **905** (88 head + 19 × 43 block) |
+| **distinct programs / keys** | **131** |
+| chain length | 905 uniform + 7 AIR = **912 steps** — the `totalSteps` pin |
+| modelled rows | **42,245,547** (of which the claim is +185, 0.0004%) |
+| per-instance budget | 50,000; mean 46,681 |
+| terminal | `block42`, key-tree leaf 130, `VK_TREE_DEPTH = 7` |
+| claim | 25 lanes, AIR chunks `[17, 18]`, binding head slice 1 |
+| genesis anchor | `0x7393bc8b02186f4b83317f9d622429c3b51bf90e91d883409e60895ae4abbc` |
+
+#### What it costs
+
+The only measured per-slice figures on real bodies of this size class are §3.28's: **48 FRI slices,
+compile 2,621 s and prove 960 s** — **54.6 s to compile, 20.0 s to prove**, per slice, at ~47k rows.
+§3.29's head slice 0 (47,383 rows, with the preamble) **compiled, proved and verified in 115.1 s**.
+
+- **The compile run: 131 × 54.6 s ≈ 7,150 s ≈ 2.0 hours serial**, and it is **embarrassingly
+  parallel** — 131 independent processes, no ordering, `Cache.None`, `--max-old-space-size=16384`
+  each. Wall clock is a function of how many fit in RAM at once.
+- **The proving run is a different object and is NOT this request.** 905 instances, strictly
+  sequential (instance `k+1` consumes instance `k`'s proof). One process per program holding its key
+  and serving its 19 instances gives `131 × 54.6 + 905 × 20.0 ≈ 7.0 hours`; the naive one process
+  per instance gives `905 × 75 s ≈ 18.9 hours`. Either way it is gated on the compile, so the
+  compile is the thing to spend now.
+
+#### What it produces
+
+1. `.fullchain/uniform-claim/key-<name>.json` × **131** — the verification-key list. `head-anchor-pins`
+   refuses a partial directory and says which shape it found; `.fullchain/uniform`'s existing 46 keys
+   are **not** the answer (they are the §3.29 chain: `publicOutput: Field`, no claim, no preamble —
+   §3.30 changed the public output type, so every key changed).
+2. `dregg-chain-pins.json` — `terminalVkHash`, `chainVkRoot`, `totalSteps = 912`, `genesisRoot`.
+   These are the four constants `DreggHeadGate` bakes into its own verification key and refuses to
+   exist without.
+3. The **one currently NOT-ATTRIBUTABLE row in `npm run head-anchor`** — *"dregg's REAL terminal
+   proof is accepted by `advanceHead`"* — becomes runnable. It is the only row in that leg whose
+   reason is an absent artifact rather than a property.
+
+#### What would make us do it again — say it before spending it, not after
+
+- **Any change to a slice's public output type or to the boundary algebra.** §3.30 moved `Field` →
+  `ClaimedBoundary` and every one of the 131 keys changed. There is no partial re-emit.
+- **Any change to the plan's cut points** — the budget, `CLAIM_CHUNK`, `assertHomogeneous`'s
+  grouping, or `UNIFORM_OVERHEAD_ROWS`. `head-anchor-pins` refuses a plan that is not 905 / 131.
+- **Any emitted-row change inside a slice body**, because the plan is budgeted at 50,000 and a body
+  that crosses it re-cuts the chain. §3.33's 9,728-row near-miss is exactly this.
+- **A hash swap**, once the two refusals in §3.33 are cleared. A Pasta-shaped walk has a different
+  lane table, different slot widths and a different segment count, so it is a different 131.
+- **Any of §3.34's column levers landing**, since each re-mints the root and re-shapes the walk.
+
+⚑ **AND WHAT THIS COMPILE DOES NOT BUY, so it is not read as more than it is.** It produces a KEY
+LIST. It does not prove the chain, it does not verify dregg's root on Mina, and it does not wire
+anything to `setDreggRoot` — `placeholderRelay` stands. Every residual in §3.32 is untouched by it.
+
+---
+
 ## 4. DOES IT FIT
 
 ### 4.1 The real per-step budget
