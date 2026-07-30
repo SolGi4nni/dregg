@@ -698,7 +698,7 @@ impl EthPublicInputsV2 {
     }
 
     /// Fail-closed constructor from the real wire envelope
-    /// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`], v3):
+    /// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]):
     /// takes exactly its four public fields. Same validation as [`Self::new`].
     pub fn from_whole_chain_bytes(
         src: &dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes,

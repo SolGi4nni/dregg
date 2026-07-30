@@ -165,7 +165,7 @@ pub fn gnark_public_input_vector(
 /// ```json
 /// {
 ///   "version": 1,                      // GNARK_WITNESS_FORMAT_VERSION
-///   "envelope_version": 3,             // the wire envelope version (v3)
+///   "envelope_version": 6,             // WHOLE_CHAIN_PROOF_ENVELOPE_V1, whatever it is
 ///   "vk_anchor_hex": "…64 hex…",       // the caller-held TRUSTED anchor
 ///   "claimed_vk_fingerprint_hex": "…", // the envelope's untrusted claim (diagnostic only)
 ///   "publics": {

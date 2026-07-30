@@ -14,7 +14,7 @@
 //! 3-column toy AIR minted on the spot at a reduced FRI geometry. It is a fixture: nothing
 //! ever proved anything with it. This one reads
 //! `ugc-dregg/tests/fixtures/whole_history_proof.bin` — the committed 3-turn whole-history
-//! envelope, `WholeChainProofBytes` v5, vk fingerprint
+//! envelope, `WholeChainProofBytes` (whatever WHOLE_CHAIN_PROOF_ENVELOPE_V1 currently is), vk fingerprint
 //! `434f57d2…7ed5` — and emits the SEVEN-instance batch the deployed apex actually carries
 //! (`Const`, `Public`, `Alu`, `poseidon2_perm/baby_bear_d4_w16`,
 //! `poseidon2_perm/baby_bear_d4_w24`, `recompose`, `expose_claim`).
@@ -519,18 +519,18 @@ fn main() {
     let fixture = repo_relative(FIXTURE);
     let bytes = std::fs::read(&fixture)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
-    let env_v5 = WholeChainProofBytes::from_postcard(&bytes)
+    let env = WholeChainProofBytes::from_postcard(&bytes)
         .unwrap_or_else(|e| panic!("the committed envelope does not decode: {e:?}"));
 
     // `WholeChainProofBytes::decode_parts` is private; this is its root-proof half.
-    let root: BatchStarkProof<SC> = postcard::from_bytes(&env_v5.root_proof)
+    let root: BatchStarkProof<SC> = postcard::from_bytes(&env.root_proof)
         .unwrap_or_else(|e| panic!("root BatchStarkProof does not decode: {e}"));
     root.validate()
         .unwrap_or_else(|e| panic!("root BatchStarkProof failed structural validation: {e:?}"));
 
     eprintln!(
         "envelope v{}  vk {}  turns {}  degree_bits {:?}",
-        env_v5.version, env_v5.vk_fingerprint_hex, env_v5.num_turns, root.proof.degree_bits
+        env.version, env.vk_fingerprint_hex, env.num_turns, root.proof.degree_bits
     );
 
     // ---- STEP 1: p3's OWN verifier accepts, with p3's OWN challenges --------
@@ -780,7 +780,7 @@ fn main() {
 
     // ---- emit ---------------------------------------------------------------
     let json = emit(
-        &env_v5,
+        &env,
         &root,
         &airs,
         &pvs,
@@ -820,7 +820,7 @@ fn repo_relative(rel: &str) -> std::path::PathBuf {
 
 #[allow(clippy::too_many_arguments)]
 fn emit(
-    env_v5: &WholeChainProofBytes,
+    env: &WholeChainProofBytes,
     root: &BatchStarkProof<SC>,
     airs: &[CircuitTableAir<SC, D>],
     pvs: &[Vec<F>],
@@ -842,9 +842,9 @@ fn emit(
     write!(
         o,
         r#""vkFingerprint":{},"numTurns":{},"envelopeVersion":{},"#,
-        json_str(&env_v5.vk_fingerprint_hex),
-        env_v5.num_turns,
-        env_v5.version
+        json_str(&env.vk_fingerprint_hex),
+        env.num_turns,
+        env.version
     )
     .unwrap();
     write!(

@@ -248,15 +248,28 @@ leg presented to the wide fold), `TurnProofInvalid`, `RecursionFailed`,
 
 A whole `WholeChainProof` is NOT byte-encodable (its `root.1` is prover-only
 `Rc<CircuitProverData>`); `WholeChainProofBytes`
-(`circuit-prove/src/ivc_turn_chain.rs:1454`,
-`WHOLE_CHAIN_PROOF_ENVELOPE_V1 = 4`, `:1493`) carries the verify-sufficient
-subset (the root `BatchStarkProof`, the binding descriptor proof with its four
-PIs, and the wide publics as canonical `u32` lanes).
-`verify_whole_chain_proof_bytes` (`circuit-prove/src/ivc_turn_chain.rs:1598`) and
-`verify_turn_chain_recursive_from_blobs`
-(`circuit-prove/src/ivc_turn_chain.rs:1629`) run the same teeth on a decoded
+(`circuit-prove/src/ivc_turn_chain.rs`, `WHOLE_CHAIN_PROOF_ENVELOPE_V1 = 6`)
+carries the verify-sufficient subset (the root `BatchStarkProof`, the binding
+descriptor proof with its four PIs, and the wide publics as canonical `u32`
+lanes). `verify_whole_chain_proof_bytes` and
+`verify_turn_chain_recursive_from_blobs` run the same teeth on a decoded
 envelope, fail-closed on a non-decoding envelope (a stale-version envelope is
 refused, `EnvelopeDecode`).
+
+**v6 — the count-lane alias close (2026-07-30).** `num_turns` is a `u32`, not a
+`u64`, and `from_postcard` refuses `num_turns >= BABY_BEAR_MODULUS`. The count
+rides as ONE BabyBear lane, so through v5 a relayer could edit that single field
+to any modular alias (`n + p`, `n + 2^32`, …) — no key, no proving, no witness —
+and the artifact still passed every tooth while reporting the inflated count: a
+measured 2-turn history attested as `num_turns = 6,308,233,219`
+(`circuit-prove/tests/num_turns_alias_probe.rs`,
+`lightclient/tests/num_turns_alias_reaches_attested_history.rs`, and
+`wasm/tests/wasm32_count_gate_is_not_truncated_past.rs` for the 32-bit-`usize`
+target). Every fold entry already refused `>= p`; no verify path did. The
+verifier core (`verify_turn_chain_recursive_from_parts_with_board_window`) and
+the non-funnelling `verify_wide_turn_chain_recursive` now refuse it too. **A v5
+artifact refuses to load; re-emit the envelope from the same fold — no VK
+rotation, no re-proving, no descriptor re-emit.**
 
 ## The light client
 

@@ -29,7 +29,7 @@
 //! ## The object
 //!
 //! `ugc-dregg/tests/fixtures/whole_history_proof.bin` — the committed 3-turn whole-history
-//! envelope, `WholeChainProofBytes` v5 — decoded to a `BatchStarkProof<DreggRecursionConfig>`
+//! envelope, `WholeChainProofBytes` (at WHOLE_CHAIN_PROOF_ENVELOPE_V1) — decoded to a `BatchStarkProof<DreggRecursionConfig>`
 //! and verified under `ir2_leaf_wrap_config()`. The FRI engine is BabyBear /
 //! `BinomialExtensionField<_,4>` / Poseidon2-width-16, `log_blowup = 6`, arity 2, 19 queries,
 //! 16 bits of query grinding, a CONSTANT final polynomial, and `log_global_max_height = 22`.
@@ -576,18 +576,18 @@ fn main() {
     let fixture = repo_relative(FIXTURE);
     let bytes = std::fs::read(&fixture)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
-    let env_v5 = WholeChainProofBytes::from_postcard(&bytes)
+    let env = WholeChainProofBytes::from_postcard(&bytes)
         .unwrap_or_else(|e| panic!("the committed envelope does not decode: {e:?}"));
 
     // `WholeChainProofBytes::decode_parts` is private; this is its root-proof half.
-    let root: BatchStarkProof<SC> = postcard::from_bytes(&env_v5.root_proof)
+    let root: BatchStarkProof<SC> = postcard::from_bytes(&env.root_proof)
         .unwrap_or_else(|e| panic!("root BatchStarkProof does not decode: {e}"));
     root.validate()
         .unwrap_or_else(|e| panic!("root BatchStarkProof failed structural validation: {e:?}"));
 
     eprintln!(
         "envelope v{}  vk {}  turns {}  degree_bits {:?}",
-        env_v5.version, env_v5.vk_fingerprint_hex, env_v5.num_turns, root.proof.degree_bits
+        env.version, env.vk_fingerprint_hex, env.num_turns, root.proof.degree_bits
     );
 
     // ---- SELF-CHECK 1: p3's OWN verifier accepts ---------------------------
@@ -1193,7 +1193,7 @@ fn main() {
 
     // ---- emit ---------------------------------------------------------------
     let json = emit(
-        &env_v5,
+        &env,
         &root,
         &names,
         &coms,
@@ -1256,7 +1256,7 @@ struct Knobs {
 
 #[allow(clippy::too_many_arguments)]
 fn emit(
-    env_v5: &WholeChainProofBytes,
+    env: &WholeChainProofBytes,
     root: &BatchStarkProof<SC>,
     names: &[String],
     coms: &[ComRound],
@@ -1279,9 +1279,9 @@ fn emit(
     write!(
         o,
         r#""vkFingerprint":{},"numTurns":{},"envelopeVersion":{},"#,
-        json_str(&env_v5.vk_fingerprint_hex),
-        env_v5.num_turns,
-        env_v5.version
+        json_str(&env.vk_fingerprint_hex),
+        env.num_turns,
+        env.version
     )
     .unwrap();
     write!(

@@ -502,9 +502,9 @@ fn load_root() -> BatchStarkProof<SC> {
     let fixture = repo_relative(FIXTURE);
     let bytes = std::fs::read(&fixture)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
-    let env_v5 = WholeChainProofBytes::from_postcard(&bytes)
+    let env = WholeChainProofBytes::from_postcard(&bytes)
         .unwrap_or_else(|e| panic!("the committed envelope does not decode: {e:?}"));
-    postcard::from_bytes(&env_v5.root_proof)
+    postcard::from_bytes(&env.root_proof)
         .unwrap_or_else(|e| panic!("root BatchStarkProof does not decode: {e}"))
 }
 

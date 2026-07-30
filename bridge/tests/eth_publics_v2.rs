@@ -131,7 +131,9 @@ fn ethereum_publics_v2_rejects_non_canonical_lane() {
     .expect("p - 1 is canonical");
 }
 
-/// REJECT: num_turns out of u32 range (the envelope carries u64).
+/// REJECT: num_turns out of u32 range. The ENVELOPE can no longer express this (v6 narrowed the
+/// field to `u32`), but `EthPublicInputsV2::new` still takes a `u64` for the non-envelope callers
+/// — raw settlement JSON, the interchain adapter — so the arm stays live and tested here.
 #[test]
 fn ethereum_publics_v2_rejects_num_turns_out_of_u32() {
     for bad in [u64::from(u32::MAX) + 1, u64::MAX] {
@@ -258,7 +260,7 @@ fn ethereum_publics_v2_golden_tail_pinned() {
     );
 }
 
-/// The real wire envelope ([`WholeChainProofBytes`] v3) feeds the constructor
+/// The real wire envelope ([`WholeChainProofBytes`]) feeds the constructor
 /// directly; an envelope with a non-canonical lane or oversized num_turns is
 /// refused at this seam.
 #[test]
