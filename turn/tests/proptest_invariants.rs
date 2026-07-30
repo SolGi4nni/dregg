@@ -853,6 +853,129 @@ fn executor_refuses_a_specific_amplifying_grant_and_admits_its_honest_twin() {
     );
 }
 
+/// ⚑ THE IMPLICIT SELF-CAP, BOTH POLES — the Rust half of GitHub `#55`.
+///
+/// The Lean twin is `Dregg2.Exec.owner_admitted_forger_refused_same_target`
+/// (`metatheory/Dregg2/Exec/AuthTurn.lean`), over the same shape: ONE state with
+/// EVERY c-list empty, the SAME effect, the SAME cap target, varying ONLY `from`.
+///
+/// * POLE 1 — the owner of cell `A` grants over `A` itself with NO prior
+///   capability. `apply_grant_capability` short-circuits the c-list lookup for
+///   `cap.target == *from` (`apply.rs:760`), so this COMMITS. It is the bootstrap
+///   case: without it a capability would be needed to mint the first capability
+///   and there would be no base case at all.
+/// * POLE 2 — a NON-owner submits the identically-shaped grant over `A`. Same
+///   effect, same `cap.target`, different `from`. `cap.target != from` so the
+///   c-list lookup runs, finds nothing, and the grant is REFUSED with a TYPED
+///   `CapabilityNotHeld`. The self-cap short-circuit must not reach this.
+///
+/// Pole 1 first: without it the refusal below is satisfied by a gate that refuses
+/// everything, which is exactly the shape this repo keeps finding.
+///
+/// ⚠ TWO GATES, and only the second is `#55`. A grant crosses (a) the action
+/// target's own DECLARED POLICY `permissions.delegate`, and (b) the capability
+/// gate. Leaving (a) at its `Cell::with_balance` default of
+/// `AuthRequired::Signature` refuses the owner's self-grant with a
+/// `PermissionDenied{action:"Delegate"}` that has nothing to do with the c-list —
+/// measured, this is what the first draft of this test hit. So (a) is opened
+/// explicitly here to ISOLATE (b); a reader chasing a self-grant refusal should
+/// check which of the two fired before reading it as the divergence.
+#[test]
+fn self_cap_admits_the_owners_first_grant_and_still_refuses_a_non_owners() {
+    let (mut ledger, ids) = setup_ledger(3, 1_000);
+    // NO bootstrap caps: every c-list is EMPTY, the faucet-minted world.
+    let (owner, grantee, non_owner) = (ids[0], ids[1], ids[2]);
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    for id in &ids {
+        // Gate (a): each cell's declared delegation POLICY is opened, so the only
+        // thing left deciding is gate (b), the capability lookup this test is about.
+        ledger.get_mut(id).unwrap().permissions.delegate = AuthRequired::None;
+        assert_eq!(
+            ledger.get(id).unwrap().capabilities.iter().count(),
+            0,
+            "the premise of this canary is an EMPTY c-list"
+        );
+    }
+
+    let cap_over_owner = CapabilityRef {
+        target: owner,
+        slot: 0,
+        permissions: AuthRequired::Signature,
+        breadstuff: None,
+        expires_at: None,
+        allowed_effects: None,
+        stored_epoch: None,
+        provenance: [0u8; 32],
+    };
+
+    // ── POLE 1: the owner's FIRST grant over its OWN cell, from an empty c-list.
+    let first = execute_effect(
+        &executor,
+        &mut ledger,
+        owner,
+        Effect::GrantCapability {
+            from: owner,
+            to: grantee,
+            cap: cap_over_owner.clone(),
+        },
+    );
+    assert!(
+        first.is_committed(),
+        "the owner's FIRST self-grant must commit — an explicit self-cap has no base \
+         case, so refusing this leaves no way to mint any capability at all: {first:?}"
+    );
+    assert_eq!(
+        ledger
+            .get(&grantee)
+            .unwrap()
+            .capabilities
+            .lookup_by_target(&owner)
+            .expect("grantee must hold the self-granted cap")
+            .permissions,
+        AuthRequired::Signature,
+        "the requested attenuation of the implicit ⊤ self-cap must be installed FAITHFULLY"
+    );
+
+    // ── POLE 2: the SAME shape from a NON-owner. Only `from` differs.
+    let forged = execute_effect(
+        &executor,
+        &mut ledger,
+        non_owner,
+        Effect::GrantCapability {
+            from: non_owner,
+            to: grantee,
+            cap: cap_over_owner,
+        },
+    );
+    match forged {
+        TurnResult::Rejected { ref reason, .. } => assert!(
+            matches!(
+                reason,
+                TurnError::CapabilityNotHeld { actor, target }
+                    if *actor == non_owner && *target == owner
+            ),
+            "expected CapabilityNotHeld naming the unbacked delegator, got {reason:?}"
+        ),
+        other => panic!(
+            "CAPABILITY FORGERY IS OPEN: a cell holding NOTHING granted a capability over \
+             ANOTHER cell — the self-cap short-circuit widened past the diagonal: {other:?}"
+        ),
+    }
+
+    // The refusal left no trace: the grantee still holds only the owner's honest grant.
+    assert_eq!(
+        ledger
+            .get(&grantee)
+            .unwrap()
+            .capabilities
+            .iter()
+            .filter(|c| c.target == owner)
+            .count(),
+        1,
+        "the refused non-owner grant must not have been installed"
+    );
+}
+
 // ============================================================================
 // Property 2: Balance Conservation
 // ============================================================================

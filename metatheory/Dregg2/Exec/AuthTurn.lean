@@ -740,6 +740,121 @@ theorem recKDelegateOwnedAtten_self_non_amplifying (caps : Caps) (delegator : La
   unfold delegatedAttenCapTo delegatedCapTo; rw [if_pos rfl]
   exact attenuate_confRights_le keep (Cap.node delegator)
 
+/-! ### §6.OWNED.SHARP — the ADMISSION DELTA, characterised exactly (GitHub `#55`).
+
+`recKDelegateOwned_admits_self` and `recKDelegateOwned_cross_gated` say what the completed gate
+admits on each path separately. The question `#55` actually asks is the DELTA one: admitting
+`cap.target == from` must **widen nothing else**. A self-cap admission that also admitted a
+non-owner's identically-shaped grant would be a capability-FORGERY hole, and "it commits on the
+self path" is no evidence at all about the cross path.
+
+So this section states the delta as a theorem in three strengths, weakest to strongest:
+
+  * `recKDelegateOwned_admits_iff` — the SHARP characterisation: the completed gate commits IFF
+    `t = delegator ∨ (the delegator holds a t-conferring cap)`. An `iff`, so it names the admitted
+    set EXACTLY — nothing outside the disjunction is admitted, by construction of the statement.
+  * `recKDelegateOwned_cross_eq` — on EVERY non-self grant the completed gate IS the edge-only gate:
+    not merely the same commit BIT but the same `Option`, hence the same POST-STATE and the same
+    granted cap. The self disjunct is inert off the diagonal `t = delegator`.
+  * `recKDelegateOwned_widens_exactly_self` — the delta, contrapositively: every turn the completed
+    gate admits and the edge-only gate refused is a self-grant. There is no third kind of newly
+    admitted turn.
+
+`recKDelegateOwned_refuses_unbacked_nonowner` is the forgery pole stated positively, and
+`owner_admitted_forger_refused_same_target` asserts BOTH poles by VARIANT over ONE state (`rs0`,
+every cap slot empty): the SAME effect shape and the SAME cap target `0`, differing only in `from`.
+
+⚠ SCOPE. This gate decides the DELEGATOR's authority over the cap target. It does NOT decide who may
+speak as the delegator — the `delegate` wire arm carries no actor. That binding lives outside:
+`gateOK`'s credential leg on the forest node (`FullForestAuth.lean`), and on the Rust side the outer
+`authorize` over `action.target` plus `check_cross_cell_permission(actor, from, Delegate)`
+(`turn/src/executor/apply.rs:739`). Admitting `t = delegator` moves neither. -/
+
+/-- **`recKDelegateOwned_admits_iff` — THE SHARP CHARACTERISATION.** The completed gate commits IFF
+the delegator is granting over its OWN cell (`t = delegator`, the implicit self-cap) OR it already
+holds a `t`-conferring cap (the Granovetter premise). An `iff`: the admitted set is EXACTLY that
+disjunction, so nothing outside it is admitted. This is the statement to read when asking "what did
+admitting the self-grant let in?" — the answer is the left disjunct and nothing else. -/
+theorem recKDelegateOwned_admits_iff (k : RecordKernelState) (delegator recipient t : Label) :
+    (recKDelegateOwned k delegator recipient t).isSome = true
+      ↔ (t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true) := by
+  unfold recKDelegateOwned
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hc]
+    exact ⟨fun _ => hc, fun _ => rfl⟩
+  · rw [if_neg hc]
+    exact ⟨fun h => absurd h (by simp), fun h => absurd h hc⟩
+
+/-- **`recKDelegateOwned_cross_eq` — OFF THE DIAGONAL THE TWO GATES ARE THE SAME FUNCTION.** For
+every `t ≠ delegator` the completed gate and the edge-only `recKDelegate` are EQUAL as `Option`s —
+same commit decision, same post-state, same granted cap (`delegatedCapTo` takes its `heldCapTo`
+branch). So the self disjunct changes NOTHING about any grant over a cell the delegator does not
+own. This is the strongest form of "widens nothing else": not a bit-agreement, a function equality. -/
+theorem recKDelegateOwned_cross_eq (k : RecordKernelState) (delegator recipient t : Label)
+    (hne : t ≠ delegator) :
+    recKDelegateOwned k delegator recipient t = recKDelegate k delegator recipient t := by
+  unfold recKDelegateOwned recKDelegate
+  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos (Or.inr hg), if_pos hg]
+    unfold delegatedCapTo
+    rw [if_neg hne]
+  · rw [if_neg (by rintro (h | h); exacts [hne h, hg h]), if_neg hg]
+
+/-- **`recKDelegateOwned_widens_exactly_self` — THE ADMISSION DELTA.** Every turn the completed gate
+ADMITS that the edge-only gate REFUSED is a self-grant (`t = delegator`). There is no third kind of
+newly-admitted turn: the widening is exactly the diagonal. The contrapositive of
+`recKDelegateOwned_cross_eq`, and the direct answer to "does mirroring the implicit self-cap admit
+anything else?" — no. -/
+theorem recKDelegateOwned_widens_exactly_self (k : RecordKernelState) (delegator recipient t : Label)
+    (hnew : (recKDelegateOwned k delegator recipient t).isSome = true)
+    (hold : (recKDelegate k delegator recipient t).isSome = false) :
+    t = delegator := by
+  by_contra hne
+  rw [recKDelegateOwned_cross_eq k delegator recipient t hne, hold] at hnew
+  simp at hnew
+
+/-- **`recKDelegateOwned_refuses_unbacked_nonowner` — THE FORGERY POLE.** A delegator that is NOT
+the cap target (`t ≠ attacker`) and holds NO `t`-conferring cap is REFUSED outright, `none`. Covers
+both directions of the shape: a non-owner granting over someone else's cell, and an owner granting
+over a cell it does not own. The self disjunct opened neither. -/
+theorem recKDelegateOwned_refuses_unbacked_nonowner (k : RecordKernelState)
+    (attacker recipient t : Label) (hne : t ≠ attacker)
+    (hno : (k.caps attacker).any (fun cap => confersEdgeTo t cap) = false) :
+    recKDelegateOwned k attacker recipient t = none := by
+  have hg : ¬ ((k.caps attacker).any (fun cap => confersEdgeTo t cap) = true) := by
+    rw [hno]; simp
+  unfold recKDelegateOwned
+  rw [if_neg (by rintro (h | h); exacts [hne h, hg h])]
+
+/-- **`recKDelegate_refuses_owner_self_grant` — THE DIVERGENCE, NAMED.** The EDGE-ONLY gate — the one
+the deployed executor runs today (`recCDelegate`, hence `execFullA .delegate`, hence the FFI `{"del":…}`
+arm) — REFUSES an owner's first self-grant from an empty cap slot, while `apply_grant_capability`
+(`turn/src/executor/apply.rs:760`) ADMITS it. `rs0` is the faucet-minted world: every cap slot empty.
+This theorem is the refusal half of GitHub `#55` stated over the object that actually decides. -/
+theorem recKDelegate_refuses_owner_self_grant : recKDelegate rs0 0 1 0 = none := rfl
+
+/-- **`owner_admitted_forger_refused_same_target` — BOTH POLES, BY VARIANT, IN ONE STATEMENT.** Over
+ONE state (`rs0`, every cap slot EMPTY), with the SAME effect shape and the SAME cap target `0`,
+varying ONLY the delegator:
+  * `delegator = 0` (the OWNER of cell `0`) — ADMITTED with no c-list precondition;
+  * `delegator = 1` (a NON-owner, holding nothing) — REFUSED, `none`.
+The completed gate is therefore not a blanket admission of the shape `grant over cell 0`; it admits
+the owner and refuses the forger. Third conjunct: the edge-only gate the executor runs today refuses
+even the OWNER — the divergence `#55` reports. -/
+theorem owner_admitted_forger_refused_same_target :
+    (recKDelegateOwned rs0 0 1 0).isSome = true
+    ∧ recKDelegateOwned rs0 1 2 0 = none
+    ∧ recKDelegate rs0 0 1 0 = none := by
+  refine ⟨recKDelegateOwned_admits_self rs0 0 1, ?_, recKDelegate_refuses_owner_self_grant⟩
+  exact recKDelegateOwned_refuses_unbacked_nonowner rs0 1 2 0 (by decide) rfl
+
+#assert_axioms recKDelegateOwned_admits_iff
+#assert_axioms recKDelegateOwned_cross_eq
+#assert_axioms recKDelegateOwned_widens_exactly_self
+#assert_axioms recKDelegateOwned_refuses_unbacked_nonowner
+#assert_axioms recKDelegate_refuses_owner_self_grant
+#assert_axioms owner_admitted_forger_refused_same_target
+
 #assert_axioms recKDelegateOwned_admits_self
 #assert_axioms recKDelegateOwned_cross_gated
 #assert_axioms confersEdgeTo_delegatedCapTo
