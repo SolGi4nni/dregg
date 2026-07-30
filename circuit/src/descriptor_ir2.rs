@@ -4187,6 +4187,198 @@ where
 }
 
 // ============================================================================
+// `Ir2UniAir` — the SINGLE-TABLE, BUS-FREE descriptor interpreter (uni-stark)
+// ============================================================================
+
+/// **The IR-v2 interpreter for a descriptor that rides plain `p3_uni_stark`.**
+///
+/// [`Ir2Air`] is bounded on `PermutationAirBuilder + InteractionBuilder` because it serves the
+/// multi-table assembly: chip lookups, the memory multiset, the exact-public manifests. The
+/// uni-stark folders (`ProverConstraintFolder` / `VerifierConstraintFolder` / `SymbolicAirBuilder`)
+/// implement neither — they have no permutation trace to speak on — so a descriptor that needs no
+/// bus could not be proven through the uni-stark protocol at all. That gap is why
+/// `circuit/src/bin/mina_stark_fixture.rs` carried a HAND-WRITTEN Rust AIR (law #1 violation,
+/// HORIZONLOG E4). This closes it: the same emitted descriptors, interpreted under the weakest
+/// builder bound p3 has.
+///
+/// ## Two properties this has that [`Ir2Air`] does not, both load-bearing
+///
+/// 1. **It walks `constraints` in LIST ORDER.** `Ir2Air` groups by domain (first-row block,
+///    last-row block, transition block, then every-row) because for a multi-table AIR the order is
+///    immaterial — the accumulator is the prover's and the verifier's alike. It is NOT immaterial
+///    to a FOREIGN verifier: `VerifierConstraintFolder::assert_zero` accumulates
+///    `acc = acc * alpha + C`, so an independent implementation (`bridge/mina-zkapp`'s o1js twin)
+///    must fold in exactly the order the AIR emitted. Walking in list order makes the LEAN
+///    DESCRIPTOR the authority on that order, instead of a Rust traversal's grouping.
+/// 2. **It is fail-closed on every kind it cannot serve.** [`Ir2UniAir::new`] REFUSES a descriptor
+///    that declares tables, hash sites, ranges, or any bus-bearing constraint, rather than
+///    silently dropping them — a dropped lookup is an accepted forgery.
+///
+/// It authors no algebra: every asserted polynomial comes from `eval_expr` over the decoded
+/// descriptor, and the selector comes from the builder's own `is_*_row`. The single `assert_zero`
+/// below is `FilteredAirBuilder::assert_zero`'s own body (`condition * x`), inlined because the
+/// filtered sub-builder cannot be opened per-constraint without re-grouping.
+#[derive(Clone, Debug)]
+pub struct Ir2UniAir {
+    desc: EffectVmDescriptor2,
+}
+
+impl Ir2UniAir {
+    /// Wrap a descriptor for the uni-stark route, or REFUSE it.
+    ///
+    /// # Errors
+    /// Returns the reason the descriptor cannot ride a bus-free single-table protocol: declared
+    /// tables / hash sites / ranges, a bus-bearing or EffectVM-layout-specific constraint kind, or
+    /// a column / public-input index outside the declared widths.
+    pub fn new(desc: EffectVmDescriptor2) -> Result<Self, String> {
+        if !desc.tables.is_empty() {
+            return Err(format!(
+                "{}: declares {} table(s); uni-stark has no bus to serve them",
+                desc.name,
+                desc.tables.len()
+            ));
+        }
+        if !desc.hash_sites.is_empty() || !desc.ranges.is_empty() {
+            return Err(format!(
+                "{}: declares {} hash site(s) + {} range(s); both lower to chip/byte lookups",
+                desc.name,
+                desc.hash_sites.len(),
+                desc.ranges.len()
+            ));
+        }
+        for (i, k) in desc.constraints.iter().enumerate() {
+            let kind = match k {
+                VmConstraint2::Base(VmConstraint::Gate(body)) => {
+                    Self::check_cols(&desc, i, body.max_var())?;
+                    continue;
+                }
+                VmConstraint2::Base(VmConstraint::Boundary { body, .. }) => {
+                    Self::check_cols(&desc, i, body.max_var())?;
+                    continue;
+                }
+                VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) => {
+                    Self::check_cols(&desc, i, Some(*col))?;
+                    if *pi_index >= desc.public_input_count {
+                        return Err(format!(
+                            "{}: constraint {i} reads public input {pi_index}, but only {} are declared",
+                            desc.name, desc.public_input_count
+                        ));
+                    }
+                    continue;
+                }
+                VmConstraint2::WindowGate(w) => {
+                    Self::check_cols(&desc, i, w.body.max_var())?;
+                    continue;
+                }
+                // `Transition { hi, lo }` indexes the EffectVM state-column bases, which a
+                // free-standing width-N descriptor does not have. Refused rather than
+                // reinterpreted against a layout it does not carry.
+                VmConstraint2::Base(VmConstraint::Transition { .. }) => "base.transition",
+                VmConstraint2::Lookup(_) => "lookup",
+                VmConstraint2::MemOp(_) => "mem_op",
+                VmConstraint2::MapOp(_) => "map_op",
+                VmConstraint2::UMemOp(_) => "umem_op",
+                VmConstraint2::ProofBind(_) => "proof_bind",
+            };
+            return Err(format!(
+                "{}: constraint {i} is `{kind}`, which needs the multi-table assembly \
+                 (prove_vm_descriptor2), not the uni-stark route",
+                desc.name
+            ));
+        }
+        Ok(Ir2UniAir { desc })
+    }
+
+    /// The descriptor this AIR interprets.
+    pub fn descriptor(&self) -> &EffectVmDescriptor2 {
+        &self.desc
+    }
+
+    fn check_cols(
+        desc: &EffectVmDescriptor2,
+        i: usize,
+        max_var: Option<usize>,
+    ) -> Result<(), String> {
+        match max_var {
+            Some(c) if c >= desc.trace_width => Err(format!(
+                "{}: constraint {i} reads column {c}, but trace_width is {}",
+                desc.name, desc.trace_width
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2UniAir {
+    fn width(&self) -> usize {
+        self.desc.trace_width
+    }
+
+    fn num_public_values(&self) -> usize {
+        self.desc.public_input_count
+    }
+
+    fn max_constraint_degree(&self) -> Option<usize> {
+        // Inferred from the emitted algebra by p3's own symbolic analysis, exactly as
+        // `Ir2Air::Main` does. A hand-declared bound here would be a second, independently
+        // wrong answer to a question the descriptor already answers.
+        None
+    }
+}
+
+impl<AB> Air<AB> for Ir2UniAir
+where
+    AB: AirBuilder,
+    AB::F: PrimeField32,
+{
+    fn eval(&self, builder: &mut AB) {
+        let (local, next): (Vec<AB::Var>, Vec<AB::Var>) = {
+            let main = builder.main();
+            (main.current_slice().to_vec(), main.next_slice().to_vec())
+        };
+        let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
+
+        for k in &self.desc.constraints {
+            // `(selector, body)`: `None` is the whole domain (no multiplier at all, so the
+            // emitted polynomial is the body itself and a foreign verifier folds `C` unmultiplied).
+            let (sel, body): (Option<AB::Expr>, AB::Expr) = match k {
+                VmConstraint2::Base(VmConstraint::Gate(body)) => {
+                    (Some(builder.is_transition()), body.eval_expr::<AB>(&local))
+                }
+                VmConstraint2::Base(VmConstraint::Boundary { row, body }) => (
+                    Some(match row {
+                        VmRow::First => builder.is_first_row(),
+                        VmRow::Last => builder.is_last_row(),
+                    }),
+                    body.eval_expr::<AB>(&local),
+                ),
+                VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) => (
+                    Some(match row {
+                        VmRow::First => builder.is_first_row(),
+                        VmRow::Last => builder.is_last_row(),
+                    }),
+                    local[*col].into() - pv[*pi_index].clone(),
+                ),
+                VmConstraint2::WindowGate(w) => (
+                    w.on_transition.then(|| builder.is_transition()),
+                    w.body.eval_expr::<AB>(&local, &next),
+                ),
+                // Unreachable: `new` refuses every one of these. Panics rather than skips —
+                // dropping a constraint the descriptor declares is how a forgery gets accepted.
+                other => panic!(
+                    "Ir2UniAir: {} carries a constraint kind `new` should have refused: {other:?}",
+                    self.desc.name
+                ),
+            };
+            builder.assert_zero(match sel {
+                Some(s) => s * body,
+                None => body,
+            });
+        }
+    }
+}
+
+// ============================================================================
 // Witness generation (the restructure: chip rows + lookup tuples from hash sites,
 // memory rows from state accesses, map-op rows from boundary reconciliations)
 // ============================================================================

@@ -41,26 +41,47 @@
 //!
 //! ## What the AIR is, said plainly
 //!
-//! `MinaFixtureAir` is a 3-column, degree-3 AIR — NOT one of dregg's seven root
-//! tables. It is here because the o1js side must evaluate `C_i` itself for the
-//! verifier to be closed rather than PCS-only, and dregg's real AIRs are
-//! uncounted (`docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.14: `N` is the one
-//! quantity nobody has taken). It is chosen to exercise every arm the protocol
-//! arithmetic has: **all three Lagrange selectors**, a **next-row** reference (so
-//! `zeta` and `g*zeta` are both opened and the DEEP quotient runs at two points),
-//! **public values** in the transcript AND in a constraint, and a **degree-3**
-//! constraint so the quotient really splits into more than one chunk and the
-//! Lagrange recomposition is not a no-op.
+//! ⚑ **THE AIR IS AUTHORED IN LEAN** (`metatheory/Dregg2/Circuit/Emit/MinaFixtureEmit.lean`),
+//! emitted to `circuit/descriptors/by-name/mina-fixture.json`, and INTERPRETED
+//! here by [`Ir2UniAir`]. This file constructs no constraint. It did until
+//! 2026-07-30: `impl<AB: AirBuilder> Air<AB> for MinaFixtureAir` was a
+//! hand-written Rust AIR, caught red by `law1_enforcement_gate` and recorded as
+//! HORIZONLOG E4. Emitting it from Lean is the remedy that gate names.
+//!
+//! It is a 3-column, degree-3 AIR — NOT one of dregg's seven root tables. It is
+//! here because the o1js side must evaluate `C_i` itself for the verifier to be
+//! closed rather than PCS-only, and dregg's real AIRs are uncounted
+//! (`docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.14: `N` is the one quantity nobody
+//! has taken). It is chosen to exercise every arm the protocol arithmetic has:
+//! **all three Lagrange selectors**, a **next-row** reference (so `zeta` and
+//! `g*zeta` are both opened and the DEEP quotient runs at two points), **public
+//! values** in the transcript AND in a constraint, and a **degree-3** constraint
+//! so the quotient really splits into more than one chunk and the Lagrange
+//! recomposition is not a no-op.
 //!
 //! Trace, `n = 2^degree_bits` rows, columns `[a, b, c]`:
 //!   * `b_i = a_i^3`
 //!   * `c_0 = pis[0]`, `c_{i+1} = c_i + b_i`, `c_{n-1} = pis[1]`
+//!
+//! Both directions of that shape are PROVED against the emitted descriptor, not
+//! asserted here: `mina_forces_cube` / `mina_forces_first_pi` /
+//! `mina_forces_running_sum` / `mina_forces_last_pi` (a satisfying window has
+//! this shape) and `mina_window_holds_of_shape` (this shape satisfies).
+//!
+//! ⚑ **The emission order is still the folding order**, and it is now the LEAN
+//! LIST's order: `Ir2UniAir` walks `constraints` in list order precisely so the
+//! descriptor — not a Rust traversal — is what
+//! `bridge/mina-zkapp/src/DreggProofVerify.ts::minaFixtureConstraints` has to
+//! agree with. The order is unchanged from the hand-written AIR (C0 whole-domain
+//! cube, C1 first-row PI, C2 transition, C3 last-row PI), so no o1js-side change
+//! and no re-measurement of the 56,927-row ceiling is implied by this rewrite.
 
 use std::env;
 use std::fmt::Write as _;
 
+use dregg_circuit::descriptor_ir2::{Ir2UniAir, parse_vm_descriptor2};
 use dregg_circuit::plonky3_prover::{DreggStarkConfig, create_config_with_fri_full};
-use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+use p3_air::BaseAir;
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16};
 use p3_challenger::{CanObserve, CanSampleBits, DuplexChallenger, FieldChallenger};
 use p3_commit::PolynomialSpace;
@@ -77,55 +98,34 @@ type Chal = DuplexChallenger<BabyBear, Poseidon2BabyBear<16>, 16, 8>;
 const D: usize = 4;
 
 // ===========================================================================
-// The AIR.
+// The AIR — DECODED, not authored.
 // ===========================================================================
 
-struct MinaFixtureAir;
+/// The Lean-authored descriptor, byte-pinned on the Lean side by
+/// `MinaFixtureEmit.lean`'s `#guard emitVmJson2 minaFixtureDesc == "..."` and
+/// re-derived from that module on every `scripts/check-descriptor-drift.sh` run
+/// (it is routed in `metatheory/EmitByName.lean`). Three-sided closure:
+/// Lean-emit ≡ this golden ≡ what `parse_vm_descriptor2` decodes below.
+const FIXTURE_DESCRIPTOR_JSON: &str = include_str!("../../descriptors/by-name/mina-fixture.json");
 
-impl<T: PrimeCharacteristicRing + Sync> BaseAir<T> for MinaFixtureAir {
-    fn width(&self) -> usize {
-        3
-    }
-    fn num_public_values(&self) -> usize {
-        2
-    }
-    fn max_constraint_degree(&self) -> Option<usize> {
-        Some(3)
-    }
-}
-
-impl<AB: AirBuilder> Air<AB> for MinaFixtureAir {
-    fn eval(&self, builder: &mut AB) {
-        let main = builder.main();
-        let local: Vec<AB::Expr> = main.current_slice().iter().map(|v| (*v).into()).collect();
-        let next: Vec<AB::Expr> = main.next_slice().iter().map(|v| (*v).into()).collect();
-        let pis: Vec<AB::Expr> = builder
-            .public_values()
-            .iter()
-            .map(|v| (*v).into())
-            .collect();
-
-        // ⚑ THE EMISSION ORDER IS THE FOLDING ORDER. `VerifierConstraintFolder::
-        // assert_zero` does `acc = acc * alpha + C` (`uni-stark/src/folder.rs`),
-        // so the o1js twin must fold these four in exactly this sequence. A
-        // permuted order is a different accumulator and a different proof.
-
-        // C0 — degree 3, the constraint that forces `n_chunks > 1`.
-        builder
-            .assert_zero(local[1].clone() - local[0].clone() * local[0].clone() * local[0].clone());
-        // C1 — is_first_row.
-        builder
-            .when_first_row()
-            .assert_eq(local[2].clone(), pis[0].clone());
-        // C2 — is_transition, and the only next-row reference.
-        builder
-            .when_transition()
-            .assert_eq(next[2].clone(), local[2].clone() + local[1].clone());
-        // C3 — is_last_row.
-        builder
-            .when_last_row()
-            .assert_eq(local[2].clone(), pis[1].clone());
-    }
+/// Decode the golden into the AIR the prover runs.
+///
+/// The shape assertions are the Rust half of the byte-pin: the Lean side
+/// `#guard`s the same four numbers (`§2a`), so a descriptor swapped underneath
+/// this binary — a different width, a dropped constraint — stops it here rather
+/// than minting a proof of a different AIR that the o1js twin would then be
+/// checked against.
+fn fixture_air() -> Ir2UniAir {
+    let desc = parse_vm_descriptor2(FIXTURE_DESCRIPTOR_JSON)
+        .expect("the byte-pinned mina-fixture descriptor must decode");
+    assert_eq!(
+        desc.name, "dregg-mina-stark-fixture-v1",
+        "descriptor identity"
+    );
+    assert_eq!(desc.trace_width, 3, "descriptor trace width");
+    assert_eq!(desc.public_input_count, 2, "descriptor public-input count");
+    assert_eq!(desc.constraints.len(), 4, "descriptor constraint count");
+    Ir2UniAir::new(desc).expect("the fixture descriptor is bus-free and single-table")
 }
 
 /// The honest trace and its two public values.
@@ -360,7 +360,7 @@ fn main() {
         /* commit_pow_bits   */ 0,
         query_pow_bits,
     );
-    let air = MinaFixtureAir;
+    let air = fixture_air();
     let (matrix, pis) = build_trace(degree_bits, seed);
 
     let proof = prove(&config, &air, matrix, &pis);
@@ -448,7 +448,7 @@ fn emit(
     query_pow_bits: usize,
     tamper: &str,
 ) {
-    let air = MinaFixtureAir;
+    let air = fixture_air();
     // `TwoAdicFriPcs::natural_domain_for_degree` IS `TwoAdicMultiplicativeCoset::
     // new(ONE, log2(degree))` (`two_adic_pcs.rs:376-378`); taking it directly
     // sidesteps the `Pcs<_, Challenger>` inference without changing the object.
@@ -494,13 +494,13 @@ fn emit(
             &proof.opened_values.quotient_chunks,
             rep.zeta,
         );
-        let zeros = vec![EF::ZERO; <MinaFixtureAir as BaseAir<F>>::width(&air)];
+        let zeros = vec![EF::ZERO; <Ir2UniAir as BaseAir<F>>::width(&air)];
         let next = proof
             .opened_values
             .trace_next
             .as_deref()
             .unwrap_or(zeros.as_slice());
-        verify_constraints::<DreggStarkConfig, MinaFixtureAir, ()>(
+        verify_constraints::<DreggStarkConfig, Ir2UniAir, ()>(
             &air,
             &proof.opened_values.trace_local,
             next,
@@ -560,8 +560,8 @@ fn emit(
         o,
         r#""shape":{{"degreeBits":{},"baseDegreeBits":{base_degree_bits},"preprocessedWidth":0,"airWidth":{},"numPublicValues":{},"numQuotientChunks":{n_chunks},"logNumChunks":{log_num_chunks},"layers":{layers},"logGlobalMaxHeight":{log_global_max_height},"traceLdeLogHeight":{},"quotientLdeLogHeight":{},"hasTraceNext":{}}},"#,
         proof.degree_bits,
-        <MinaFixtureAir as BaseAir<F>>::width(&air),
-        <MinaFixtureAir as BaseAir<F>>::num_public_values(&air),
+        <Ir2UniAir as BaseAir<F>>::width(&air),
+        <Ir2UniAir as BaseAir<F>>::num_public_values(&air),
         degree_bits + log_blowup,
         chunk_domains[0].log_size() + log_blowup,
         proof.opened_values.trace_next.is_some(),

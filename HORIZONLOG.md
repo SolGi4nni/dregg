@@ -3,6 +3,47 @@
 ## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
 
 **E4 · ⚑⚑ LAW #1 IS RED ON `main` — A HAND-WRITTEN RUST AIR LANDED TODAY. LIVE.**
+
+> ✅ **FIXED 2026-07-30** — `MinaFixtureAir` is DELETED. The AIR is authored in
+> `metatheory/Dregg2/Circuit/Emit/MinaFixtureEmit.lean`, byte-pinned to
+> `circuit/descriptors/by-name/mina-fixture.json`, routed in `EmitByName.lean` (so the drift gate
+> RE-DERIVES it — verified byte-identical), and interpreted by a new `Ir2UniAir`. The gate is
+> GREEN and no `BASELINE` row moved: `mina_stark_fixture.rs` left the ledger entirely (7 → 0) and
+> `descriptor_ir2.rs` measures 294 against its existing 298 allowance.
+>
+> ⚑ **The gap that FORCED the hand-written AIR was real, and it is what got closed.** `Ir2Air` is
+> bounded on `PermutationAirBuilder + InteractionBuilder`; the uni-stark folders implement
+> neither, so before today a descriptor with no bus could not be proven through the uni-stark
+> protocol AT ALL — there was no Lean-emitted route to the shape the o1js twin verifies. `Ir2UniAir`
+> is that route: same emitted descriptors, weakest builder bound p3 has, fail-closed on every
+> constraint kind it cannot serve.
+>
+> ⚑ **`Ir2UniAir` walks `constraints` in LIST ORDER, where `Ir2Air` groups by domain.** Deliberate:
+> `acc = acc*alpha + C` makes the emission order load-bearing for a FOREIGN verifier, so the Lean
+> list — not a Rust traversal's grouping — is now the authority the o1js side agrees with. The
+> order is unchanged (C0,C1,C2,C3), so **nothing re-emits and no o1js change is implied**; the
+> 56,927-row measurement stands.
+>
+> What is PROVED (not asserted): four forcings — a window satisfying the emitted descriptor HAS
+> the intended shape — plus the converse `mina_window_holds_of_shape`, so the descriptor is
+> neither vacuous nor trivial, plus `mina_refuses_bent_degree` (the `a^3 → a^2` bend the o1js side
+> keeps live). `#assert_axioms` clean.
+>
+> What is MEASURED, not proved: `circuit/tests/mina_fixture_lean_authored.rs` cross-verifies a
+> proof minted under the emitted descriptor against the deleted hand-written AIR **in both
+> directions**, and REQUIRES a permuted fold order to refuse so the equivalence is known to bite.
+> All seven `tamper` bends still refuse. Note the differential is deliberately NOT a syntax
+> comparison: the Lean IR has no subtraction node, so `b - a^3` emits as `b + (-1)·(a·(a·a))` —
+> a different tree, the same polynomial, the same proof.
+>
+> ⚠ **One step is left and it is the operator's:** `circuit/descriptors/PROVENANCE.json` has no
+> `by_name_sha256` row for the new artifact, so `emit_descriptors.py --verify-by-name-routing`
+> reports `UNSTAMPED`. The stamp is ack-gated on purpose (`DREGG_VK_REGEN_ACK` is an attestation
+> that a named operator reviewed the source tree), and it is not an agent's to forge. After this
+> commit the tree is clean, so it needs no `ALLOW_DIRTY`:
+> `DREGG_VK_REGEN_ACK="$(git rev-parse HEAD:metatheory/Dregg2)" scripts/emit-descriptors.sh`.
+> (That routing check was ALREADY red before this change on two `pasta-rcb-windowed-trace-*.txt`
+> files and seven workflow-ghosts — untouched here, and not mine.)
 `law1_enforcement_gate::law1_no_new_rust_authored_constraints` fails:
 > `NEW Rust-authored constraints: circuit/src/bin/mina_stark_fixture.rs (7 sites: 7 symbolic, 0 closure, 0 IR)`
 > `-> EMIT IT FROM LEAN. Do not add it to the baseline.`

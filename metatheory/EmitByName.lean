@@ -53,6 +53,7 @@ import Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan
 import Dregg2.Circuit.Emit.FieldDeltaRangeEmit
 import Dregg2.Circuit.Emit.MerkleMembership4aryEmit
 import Dregg2.Circuit.Emit.MerkleMembershipEmit
+import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
 import Dregg2.Circuit.Emit.PastaMsmWindowed
@@ -114,6 +115,11 @@ Three notes the mechanical reader needs:
 * `NoteSpendingLeafEmit` carries a DECOY: `noteSpendLeafDescFixed` shares `noteSpendLeafDesc`'s
   exact `name` and `trace_width` (149) while emitting different bytes. The deployed artifact is
   `noteSpendLeafDesc`; matching on the header alone would pick the wrong one.
+* `mina-fixture.json` is EMITTED but not DISPATCHED, and never will be: it is not a predicate
+  descriptor. `circuit/src/bin/mina_stark_fixture.rs` `include_str!`s it directly to mint the
+  fixture proof `bridge/mina-zkapp` verifies. It is routed here for the same reason everything
+  else is — so the artifact is RE-DERIVED from `MinaFixtureEmit.lean` on every drift run rather
+  than transcribed once. (It replaced a hand-written Rust AIR; see HORIZONLOG E4.)
 * `dyck-parse.json` is EMITTED but not yet DISPATCHED: `descriptor_by_name.rs` has no arm for it,
   because `circuit/src/dsl/dyck_stack.rs` still hand-builds the IR-v1 `CircuitDescriptor` the Dyck
   prover/tamper suite drives. It is registered here anyway — routing it through this table is what
@@ -184,6 +190,8 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MerkleMembership4aryEmit.membership4aryDesc)
   , ("merkle-membership-depth2.json",
       Dregg2.Circuit.Emit.MerkleMembershipEmit.merkleMembershipDesc)
+  , ("mina-fixture.json",
+      Dregg2.Circuit.Emit.MinaFixtureEmit.minaFixtureDesc)
   , ("note-spend-leaf.json",
       Dregg2.Circuit.Emit.NoteSpendingLeafEmit.noteSpendLeafDesc)
   , ("poseidon2-hash-arity2.json",
@@ -320,7 +328,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 76
+#guard byNameDescriptors.length == 77
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
