@@ -2,6 +2,23 @@
 
 ## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
 
+**E1 · A THREE-NODE COMMITTEE WEDGES PERMANENTLY ON ONE UNDELIVERED BLOCK. LIVE — reproduced twice.**
+Driven on hbox at n=3, `--federation-mode full`, with full node logs. The faucet turn DOES enter the
+DAG at round 5 and **all three nodes author round 5** — then **nobody receives either peer's round-5
+block** (13/14/14 of 15 holdings). `plan_round_block` requires a supermajority of distinct creators at
+your OWN current round, and `supermajority_threshold(3) = 3`: **unanimous lock-step, with no timeout
+and no partial-progress rule.** One undelivered block wedges the committee forever; `latest_height`
+stays 0 on all three.
+⚑ **tau is healthy throughout** — `finalized=9`, `dregg_tau_order` authoritative, the Rust differential
+agreeing on every poll. **This is NOT the ordering rule and not the Lean gate.** It is gossip /
+anti-entropy: `handle_frontier`'s self-healing pull was written for exactly this case and fires on the
+nodes that do not need it, never on the one that does.
+⚠ `three_node_ordering_rule` was verified converging `(1,1,1)` on 2026-06-14 and hard-asserted
+2026-07-17, so this is a **regression inside a ~25-commit window on `blocklace_sync.rs`**. Surfaces as
+`payoff_client_turn`, `three_node_ordering_rule`, `sustained_finality`. Deliberately not attempted by
+the lane that found it rather than guess inside consensus code.
+
+
 **§3.24 left two walls with numbers. One is closed and the other turned out to be worse than a
 wall.** *"The full AIR chain is 7 slices and one process carries 3 (a process-per-slice architecture
 is priced, not built)"*, and *"50,000 compiles, 57,532 does not ... every step count computed against
