@@ -14,9 +14,9 @@ The answer is **no**, and the reason is not a FRI knob.
 |---|---|---:|---:|---|
 | **the ROOT — deployed today** | Poseidon2-BabyBear (foreign, 31-bit) | 2.46 × 10⁷ | **453** | none |
 | the root, `arity 8` + `cap_height 8` + `q 16` | Poseidon2-BabyBear | 1.39 × 10⁷ | **255** | none |
-| a plonky3-native SHRINK of the root | Poseidon2-BabyBear | 9.8 × 10⁶ | **180** | none |
+| a plonky3-native SHRINK of the root ⚠ *re-knobbed; 390 at its current knobs, see §2* | Poseidon2-BabyBear | 9.8 × 10⁶ | **180** | none |
 | **the ROOT, hashed with Mina-Poseidon over Pasta** | **Mina-Poseidon (NATIVE)** | **2.9 × 10⁶** | **54** | **none** |
-| **a plonky3-native SHRINK, Pasta-hashed** | **Mina-Poseidon (NATIVE)** | **1.6 × 10⁶** | **30** | **none** |
+| **a plonky3-native SHRINK, Pasta-hashed** ⚠ *re-knobbed; 67 at its current knobs* | **Mina-Poseidon (NATIVE)** | **1.6 × 10⁶** | **30** | **none** |
 
 **The single biggest lever is not the FRI parameters and not the shrink. It is which hash the
 Mina-facing proof commits with.** `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §0 already states the
@@ -122,22 +122,72 @@ shrink produces**:
 So one recursion pass takes the trace **2^16 → 2^15** and the column census **940 → 520**. That is
 where the shrink's ~1.8× Mina-side win comes from, and it is the *smaller* of the two levers.
 
+### ⚠⚠ THE SHRINK'S BENEFIT IS CONTINGENT ON RE-CHOOSING ITS OUTER KNOBS, and I nearly quoted it without saying so
+
+`DreggOuterConfig` runs at **`log_blowup 3`, arity 2, and 38 queries** — forced by its own soundness
+gate, `3 × 38 + 16 = 130` (`dregg_outer_config.rs:135-138`). The blowup 64 → 8 rebalance that made
+the shrink prove ~8× faster bought that **by doubling the query count**, and **Mina's cost is linear
+in queries.** So:
+
+| shrink, Pasta-hashed | slices | composite |
+|---|---:|---:|
+| at the **current** outer knobs (`lb 3`, arity 2, **q 38**) | **67** | 65 |
+| re-knobbed (`lb 6`, arity 8, q 19) | 35 | 59 |
+| re-knobbed (`lb 6`, arity 8, q 16) | **30** | 59 |
+
+and at BabyBear hashing the same contingency is brutal: the shrink at its **current** knobs is
+**390 slices** against the root's 453 — **essentially no win at all**. My §0 row quoting 180 assumes
+the re-knobbed shape, and that assumption is load-bearing.
+
+⚑ **Re-knobbing is free on the security side, but not for the reason it looks.** The shrink's own
+composite falls 65 → 59, which sounds like a loss and is not: **the chain's composite is
+`min(root, shrink)`**, because forging a root that genuinely satisfies the shrink's circuit is a
+57-bit attack either way. The root binds at **57** in every row of that table. What re-knobbing
+actually spends is the shrink's *prover* time (a larger blowup), which is dregg-side and cheap.
+
+⚑ And the outer config's knobs are **pinned by gnark**, not free: `OUTER_FRI_MAX_LOG_ARITY = 1`
+because *"`friFoldRowArity2` hardcodes the arity-2 fold; the gnark `FriConfig` carries no arity
+field at all"*, and `OUTER_FRI_COMMIT_POW_BITS = 0` by a hardcoded gnark witness
+(`dregg_outer_config.rs:139-158`). **A Mina-facing config is not subject to either** — which is one
+more reason it should be its own config rather than a re-use of the ETH one.
+
 ### ⚠ Is there a fixed point? Not at the BN254 config's knobs — it GROWS
 
-The recursion circuit's dominant table is the ALU carrying the reduced-opening Horner arithmetic,
-which `apex_shrink.rs:137-140` describes as *"~752 opened columns × 19 FRI queries"*. So the
-verifier circuit's size scales roughly as **(queries × opened columns)** of the proof being verified:
+⚑ **First, the honest status: the question has never been run, and the repo forbids it by
+construction.** `dregg_outer_config.rs:200-203` — *"It deliberately does NOT implement
+`FriRecursionConfig`: … **no layer ever verifies an outer proof in-circuit** (gnark verifies it
+natively)."* There is no code path that recursively verifies a shrink proof. What follows is a
+structural computation from the repo's own per-query counts, not a measurement.
 
-- verifying the **root**: 19 queries × ~1,427 lanes ≈ 2.7 × 10⁴ lane-openings ⇒ a 2^15 circuit.
-- verifying the **shrink at `DreggOuterConfig`'s knobs** (38 queries, `lb 3`): 38 × ~967 ≈ 3.7 × 10⁴
-  — **larger than the root**. Recursion at those knobs diverges.
-- verifying a shrink minted at **`lb 6`, 19 queries**: 19 × ~967 ≈ 1.8 × 10⁴ ⇒ ~0.68×, so it does
-  contract, with diminishing returns toward a floor set by the verifier circuit's own irreducible
-  content (the Poseidon2-W16 table alone is 300 columns).
+The verifier circuit's Poseidon2 term is `Q × (input levels + commit levels + leaf sponges)`:
+
+| per query | root (\|D⁰\|=2^22, F=16, 19q, 940 cols) | shrink (\|D⁰\|=2^18, F=15, **38q**, 520 cols) |
+|---|---:|---:|
+| input Merkle levels | 4 × 22 = 88 | 4 × 18 = 72 |
+| commit Merkle levels | Σ(21…6) = 216 | Σ(17…3) = 150 |
+| leaf sponge perms | ~151 | ~84 |
+| **subtotal** | **455** | **306** (0.67×) |
+| **× queries** | × 19 = **8,645** | × 38 = **11,628** |
+
+**⇒ 1.35× MORE permutations. The verifier circuit GROWS.** The per-query work does fall to 0.67×,
+and doubling the query count more than cancels it. The Horner/ALU term moves the same way
+(~0.55× columns × 2× queries ≈ 1.1×).
+
+At `lb 6` / 19 queries it would instead contract to ~0.68×, with diminishing returns toward a floor
+set by the verifier circuit's own irreducible content (the Poseidon2-W16 table alone is 300 columns).
 
 **So "shrink twice" is not free and is not obviously worth it.** The query count of the *outer*
-config is what decides whether recursion contracts, and `DreggOuterConfig`'s 38 queries were chosen
-for the gnark path, not this one. Anything past one pass should be measured, not assumed.
+config is what decides whether recursion contracts, and `DreggOuterConfig`'s 38 were chosen for the
+gnark path. Anything past one pass should be measured, not assumed.
+
+⚠ **And the repo's own size model does not reproduce the one measurement it has.** Both terms above
+predict ~2^13.3 where the measured shrink is **2^15** — short by ~2 bits on each. The `perm_model`
+in `apex_shrink_trace_anatomy.rs:230-253` is a *prover*-cost model (it takes trace heights as input
+and counts outer leaf-sponge permutations; its `LOG_BLOWUP = 6` is also stale against the deployed
+`OUTER_FRI_LOG_BLOWUP = 3`), and `APEX-VERIFIER-AIR-REDUCTION.md:29-71`'s attribution asserts
+"one permutation ≈ one W16-AIR row" while its own permutation count says otherwise. **There is no
+validated circuit-size model in the tree**, so treat every projection in this subsection as
+directional only. The measured `degree_bits` vector is the only thing here that is solid.
 
 ---
 
