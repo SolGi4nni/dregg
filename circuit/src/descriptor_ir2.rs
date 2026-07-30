@@ -2791,6 +2791,98 @@ fn eval_lex_lt_counted<AB>(
     builder.assert_zero(c_dlo);
 }
 
+/// **THE row-local constraint walk — the one place a descriptor's own algebra becomes an AIR.**
+///
+/// Both interpreters call this: [`Ir2Air::Main`] (which then adds its bus interactions) and
+/// [`Ir2UniAir`] (which has no bus). It is bounded on plain [`AirBuilder`] — the WEAKEST bound p3
+/// has — which is the point. `Ir2Air`'s `Air` impl is bounded on
+/// `PermutationAirBuilder + InteractionBuilder` because *some* of what it does speaks on a bus;
+/// carrying that bound on the row-local algebra too meant a bus-free descriptor could not be
+/// interpreted under `p3_uni_stark` at all, and THAT is why `mina_stark_fixture.rs` grew a
+/// hand-written Rust AIR (HORIZONLOG E4). The bound belonged on the bus part, not on this.
+///
+/// ## Why LIST ORDER, and why that changed
+///
+/// This used to be four blocks — a `when_first_row` block, a `when_last_row` block, a
+/// `when_transition` block, then the every-row windowed gates — so the emission order was
+/// `[all first-row, all last-row, all transition, all whole-domain]` regardless of what the
+/// descriptor said. That grouping bought nothing (`FilteredAirBuilder` clones its condition per
+/// assert either way; the selectors are single leaf nodes) and cost something real:
+/// `VerifierConstraintFolder::assert_zero` accumulates `acc = acc * alpha + C`, so the emission
+/// order IS the folding order, and a grouped traversal makes that order an artifact of THIS
+/// FUNCTION rather than of the descriptor. An independent implementation of the verifier —
+/// `bridge/mina-zkapp`'s o1js twin is the one that exists — has to reproduce it exactly.
+///
+/// Walking in list order makes the LEAN DESCRIPTOR the authority. That is the property that lets a
+/// foreign verifier be written against the emitted artifact instead of against a reading of Rust.
+///
+/// Nothing outside pins the old order: the recursive VK's `air_fingerprint` is taken over the
+/// DESCRIPTOR (`recursive_witness_bundle.rs:148`), not over the symbolic constraints; no proof
+/// bytes are checked in; and `get_symbolic_constraints` has no caller in `src/`. Prover and
+/// verifier both come from here, so they moved together.
+fn eval_row_local_constraints<AB>(
+    desc: &EffectVmDescriptor2,
+    builder: &mut AB,
+    local: &[AB::Var],
+    next: &[AB::Var],
+    pv: &[AB::Expr],
+) where
+    AB: AirBuilder,
+    AB::F: PrimeField32,
+{
+    for k in &desc.constraints {
+        // `(selector, body)`. `None` means the WHOLE domain — no multiplier at all, so the
+        // emitted polynomial is the body itself and a foreign verifier folds `C` unmultiplied.
+        let (sel, body): (Option<AB::Expr>, AB::Expr) = match k {
+            // ⚑ `Gate` is asserted on the TRANSITION domain, not every row — so it is VACUOUS on
+            // the last row. That is the deployed semantics and Lean models it exactly
+            // (`VmConstraint.holdsVm .gate` is `True` when `isLast`), which is why every
+            // `RotatedKernelRefinement*` theorem is scoped to an ACTIVE row. A descriptor that
+            // needs a row-local body on the WHOLE domain must emit `windowGate` with
+            // `onTransition := false` instead — that form is live (the Mina fixture's `C0`).
+            VmConstraint2::Base(VmConstraint::Gate(body)) => {
+                (Some(builder.is_transition()), body.eval_expr::<AB>(local))
+            }
+            VmConstraint2::Base(VmConstraint::Transition { hi, lo }) => {
+                let n: AB::Expr = next[EFFECTVM_STATE_BEFORE_BASE + hi].into();
+                let l: AB::Expr = local[EFFECTVM_STATE_AFTER_BASE + lo].into();
+                (Some(builder.is_transition()), n - l)
+            }
+            VmConstraint2::Base(VmConstraint::Boundary { row, body }) => (
+                Some(match row {
+                    VmRow::First => builder.is_first_row(),
+                    VmRow::Last => builder.is_last_row(),
+                }),
+                body.eval_expr::<AB>(local),
+            ),
+            VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) => (
+                Some(match row {
+                    VmRow::First => builder.is_first_row(),
+                    VmRow::Last => builder.is_last_row(),
+                }),
+                local[*col].into() - pv[*pi_index].clone(),
+            ),
+            // The two-row windowed gate. `on_transition` fires only on the transition (the
+            // cumulative-sum arm); otherwise the body vanishes on every row, wrap row included.
+            VmConstraint2::WindowGate(w) => (
+                w.on_transition.then(|| builder.is_transition()),
+                w.body.eval_expr::<AB>(local, next),
+            ),
+            // The bus-bearing kinds carry no row-local algebra — their content is the multiset /
+            // lookup argument, emitted by the caller that HAS a bus.
+            VmConstraint2::Lookup(_)
+            | VmConstraint2::MemOp(_)
+            | VmConstraint2::MapOp(_)
+            | VmConstraint2::UMemOp(_)
+            | VmConstraint2::ProofBind(_) => continue,
+        };
+        builder.assert_zero(match sel {
+            Some(s) => s * body,
+            None => body,
+        });
+    }
+}
+
 impl<AB> Air<AB> for Ir2Air
 where
     AB: AirBuilder + PermutationAirBuilder + InteractionBuilder,
@@ -2806,78 +2898,8 @@ where
             Ir2Air::Main { desc, layout } => {
                 let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
 
-                // -- The embedded v1 forms, on the v1 domains. --
-                {
-                    let mut fb = builder.when_first_row();
-                    for k in &desc.constraints {
-                        if let VmConstraint2::Base(c) = k {
-                            match c {
-                                VmConstraint::PiBinding {
-                                    row: VmRow::First,
-                                    col,
-                                    pi_index,
-                                } => fb.assert_zero(local[*col].into() - pv[*pi_index].clone()),
-                                VmConstraint::Boundary {
-                                    row: VmRow::First,
-                                    body,
-                                } => fb.assert_zero(body.eval_expr::<AB>(&local)),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                {
-                    let mut lb = builder.when_last_row();
-                    for k in &desc.constraints {
-                        if let VmConstraint2::Base(c) = k {
-                            match c {
-                                VmConstraint::PiBinding {
-                                    row: VmRow::Last,
-                                    col,
-                                    pi_index,
-                                } => lb.assert_zero(local[*col].into() - pv[*pi_index].clone()),
-                                VmConstraint::Boundary {
-                                    row: VmRow::Last,
-                                    body,
-                                } => lb.assert_zero(body.eval_expr::<AB>(&local)),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                {
-                    let mut tb = builder.when_transition();
-                    for k in &desc.constraints {
-                        match k {
-                            VmConstraint2::Base(VmConstraint::Gate(body)) => {
-                                tb.assert_zero(body.eval_expr::<AB>(&local))
-                            }
-                            VmConstraint2::Base(VmConstraint::Transition { hi, lo }) => {
-                                let n: AB::Expr = next[EFFECTVM_STATE_BEFORE_BASE + hi].into();
-                                let l: AB::Expr = local[EFFECTVM_STATE_AFTER_BASE + lo].into();
-                                tb.assert_zero(n - l);
-                            }
-                            // The two-row windowed gate (Lean `windowGate`): an `on_transition`
-                            // body reads BOTH rows and fires only on the transition — exactly
-                            // the Rust hand-AIR's `builder.when_transition().assert_zero(..)`
-                            // cumulative-sum arm.
-                            VmConstraint2::WindowGate(w) if w.on_transition => {
-                                tb.assert_zero(w.body.eval_expr::<AB>(&local, &next))
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                // -- Every-row windowed gates (Lean `windowGate` with `on_transition = false`):
-                //    the body vanishes on every row (the wrap row included). None of the shipped
-                //    descriptors emit this form today; it is carried for grammar completeness. --
-                for k in &desc.constraints {
-                    if let VmConstraint2::WindowGate(w) = k
-                        && !w.on_transition
-                    {
-                        builder.assert_zero(w.body.eval_expr::<AB>(&local, &next));
-                    }
-                }
+                // -- The row-local constraints, in DESCRIPTOR LIST ORDER. --
+                eval_row_local_constraints(desc, builder, &local, &next, &pv);
 
                 // -- Chip lookups: each declared tuple queried on the chip bus, every row. --
                 let p2 = LookupBus::new(BUS_P2);
@@ -4338,43 +4360,10 @@ where
         };
         let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
 
-        for k in &self.desc.constraints {
-            // `(selector, body)`: `None` is the whole domain (no multiplier at all, so the
-            // emitted polynomial is the body itself and a foreign verifier folds `C` unmultiplied).
-            let (sel, body): (Option<AB::Expr>, AB::Expr) = match k {
-                VmConstraint2::Base(VmConstraint::Gate(body)) => {
-                    (Some(builder.is_transition()), body.eval_expr::<AB>(&local))
-                }
-                VmConstraint2::Base(VmConstraint::Boundary { row, body }) => (
-                    Some(match row {
-                        VmRow::First => builder.is_first_row(),
-                        VmRow::Last => builder.is_last_row(),
-                    }),
-                    body.eval_expr::<AB>(&local),
-                ),
-                VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) => (
-                    Some(match row {
-                        VmRow::First => builder.is_first_row(),
-                        VmRow::Last => builder.is_last_row(),
-                    }),
-                    local[*col].into() - pv[*pi_index].clone(),
-                ),
-                VmConstraint2::WindowGate(w) => (
-                    w.on_transition.then(|| builder.is_transition()),
-                    w.body.eval_expr::<AB>(&local, &next),
-                ),
-                // Unreachable: `new` refuses every one of these. Panics rather than skips —
-                // dropping a constraint the descriptor declares is how a forgery gets accepted.
-                other => panic!(
-                    "Ir2UniAir: {} carries a constraint kind `new` should have refused: {other:?}",
-                    self.desc.name
-                ),
-            };
-            builder.assert_zero(match sel {
-                Some(s) => s * body,
-                None => body,
-            });
-        }
+        // THE SAME walk `Ir2Air::Main` runs — not a second implementation of it. `Ir2UniAir` is
+        // `Ir2Air::Main` MINUS the bus, and `new` has already refused every descriptor for which
+        // that subtraction would silently drop a constraint, so there is nothing here to skip.
+        eval_row_local_constraints(&self.desc, builder, &local, &next, &pv);
     }
 }
 

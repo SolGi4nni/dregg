@@ -663,7 +663,13 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit/src/delegate_descriptor.rs", 2),
     ("circuit/src/derivation_air.rs", 1),
     ("circuit/src/descriptor_by_name.rs", 1),
-    ("circuit/src/descriptor_ir2.rs", 298),
+    // TIGHTENED 2026-07-30, 298 -> 283. `Ir2Air::Main`'s four grouped constraint blocks
+    // (when_first_row / when_last_row / when_transition / every-row) collapsed into ONE shared
+    // `eval_row_local_constraints` walk with a single `assert_zero`, which `Ir2UniAir` also calls
+    // — so the row-local algebra now has exactly one interpreter instead of two. The row is
+    // re-pinned to the measurement rather than left at its old allowance: 15 sites of unused slack
+    // in a ratchet is 15 hand-authored constraints a later lane can add without the gate noticing.
+    ("circuit/src/descriptor_ir2.rs", 283),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),
