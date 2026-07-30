@@ -133,7 +133,7 @@ def inCols (i : Nat) : List Nat := siteInCols.getD i []
 /-- The digest column of site `i`. -/
 def digCol (i : Nat) : Nat := siteDigestCols.getD i 0
 
-/-- The wiring, pinned. `saCol off = 76 + off`, `auxCol i = 90 + i`: sites 0/1/2 absorb the twelve
+/-! The wiring, pinned. `saCol off = 76 + off`, `auxCol i = 90 + i`: sites 0/1/2 absorb the twelve
 committed after-state cells, site 3 absorbs their three digest columns and the record-digest residue
 (`auxCol 96 = 186`, audit P0-2) and lands on `saCol state.STATE_COMMIT = 88`. -/
 #guard siteInCols == [[76, 77, 78, 79], [80, 81, 82, 83], [84, 85, 86, 87], [98, 99, 100, 186]]
@@ -244,26 +244,15 @@ def digestLaneVars : List Nat := commitBuild.1
 /-- The digest lane variable of site `i`. -/
 def digLane (i : Nat) : Nat := digestLaneVars.getD i 0
 
-/-- The fold appends exactly one lane variable per site, so `digLane` never reads past the end.
-Proved STRUCTURALLY — no permutation is evaluated. -/
-theorem foldl_lane_length (l : List (List Nat)) (st : List Nat × Ctx) :
-    (l.foldl (fun (st : List Nat × Ctx) xs => let (d, c) := h4Gen st.2 xs; (st.1 ++ [d.v], c))
-      st).1.length = st.1.length + l.length := by
-  induction l generalizing st with
-  | nil => simp
-  | cons x xs ih =>
-      simp only [List.foldl_cons, ih, List.length_append, List.length_cons, List.length_nil]
-      omega
+/-! ⚑ **There is deliberately no `digestLaneVars.length = 4` THEOREM here.** Proving it needs
+`(l.foldl step st).1`, and `step` destructures `h4Gen`'s pair — so projecting `.1` forces `whnf`
+through four Poseidon2 permutations and the KERNEL reports "deep recursion detected". Measured, not
+guessed. The fact is pinned instead by `costPinsHold`, which fixes `digestLaneVars` to the four
+literal indices the emission produces and is checked through the compiler. Nothing rests on the
+length: `pinGens` is a four-element literal over `digLane 0..3`, and a short list would only make
+`digLane i` read `0` — a silly circuit the pin check catches, never an unsound one. -/
 
 theorem siteInCols_length : siteInCols.length = 4 := rfl
-
-/-- ⚑ NOTE the proof: this is STRUCTURAL. It must not go through `simp [commitBuild]`, which
-unfolds the fold and evaluates four Poseidon2 permutations inside the elaborator — measured, that
-is a multi-gigabyte detour for a fact about a list's LENGTH. -/
-theorem digestLaneVars_length : digestLaneVars.length = 4 := by
-  have h := foldl_lane_length siteInCols ([], ctxOf cellAssign)
-  simp only [List.length_nil, Nat.zero_add] at h
-  exact h.trans siteInCols_length
 
 /-- The compiler state after the four sites: the witness and the instruction stream. -/
 def siteCtx : Ctx := commitBuild.2
@@ -366,7 +355,10 @@ theorem commit_rows_force_siteHoldsAll (hash : List ℤ → ℤ) (env : VmRowEnv
              , env.loc (auxCol aux_off.STATE_RECORD_DIGEST) ] :=
     (hp 3 (by norm_num)).trans (hcar 3 (by norm_num))
   refine ⟨e0, e1, e2, ?_, trivial⟩
-  rw [e3, ← e0, ← e1, ← e2]
+  show env.loc (saCol state.STATE_COMMIT) = cellCommitOf hash env.loc
+  simp only [cellCommitOf]
+  rw [← e0, ← e1, ← e2]
+  exact e3
 
 /-- **ARROW ONE — the EMITTED Kimchi rows force `cellCommitOf`.** -/
 theorem kimchi_forces_cellCommit (hash : List ℤ → ℤ) (env : VmRowEnv)
@@ -441,7 +433,7 @@ below are statements about `rowsHold`, not about a lookalike predicate. -/
 theorem rowAcceptB_sound (a : Nat → ℤ) (r : KRow) (h : rowAcceptB a r = true) : r.holds a := by
   unfold rowAcceptB at h
   unfold KRow.holds
-  cases hg : r.gate <;> rw [hg] at h ⊢ <;>
+  cases hg : r.gate <;> rw [hg] at h <;>
     first
       | trivial
       | (simp only [Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at h
@@ -524,8 +516,9 @@ theorem tamper_non_preimage_refused (hash : List ℤ → ℤ) (A : Nat → ℤ)
       = hash [ A (auxCol aux_off.STATE_INTER1), A (auxCol aux_off.STATE_INTER2)
              , A (auxCol aux_off.STATE_INTER3), A (auxCol aux_off.STATE_RECORD_DIGEST) ] :=
     (hp 3 (by norm_num)).trans (hcar 3 (by norm_num))
-  rw [e3, e0, e1, e2]
-  rfl
+  simp only [cellCommitOf]
+  rw [← e0, ← e1, ← e2]
+  exact e3
 
 /-- **REFUTABLE — the SUBSTITUTED commitment**, with NO carrier hypothesis at all. A row that
 carries some OTHER cell's commitment in `state_commit` while its own permutation lane computed
@@ -678,7 +671,6 @@ def commitCols : List (String × Nat) :=
 -/
 
 #assert_axioms babybear_forces_cellCommit
-#assert_axioms digestLaneVars_length
 #assert_axioms pins_force
 #assert_axioms commit_rows_force_siteHoldsAll
 #assert_axioms kimchi_forces_cellCommit
@@ -691,6 +683,5 @@ def commitCols : List (String × Nat) :=
 #assert_axioms commitRows_all_modelled
 #assert_axioms routeBRows_all_modelled
 #assert_axioms siteInCols_length
-#assert_axioms foldl_lane_length
 
 end Dregg2.Circuit.Emit.KimchiCellCommit

@@ -77,8 +77,15 @@ const gatesModule = (await import(pathToFileURL(findGatesModule()).href)) as {
   Gates?: RawGates;
 };
 
+const resolved = gatesModule.Gates;
+if (resolved === undefined) {
+  throw new Error(
+    'route-B transcriber: o1js internal gates module exports no `Gates`. ' +
+      'The pin is o1js 2.15.0; refusing rather than emitting a different circuit.'
+  );
+}
 for (const name of ['generic', 'rangeCheck0', 'zero'] as const) {
-  if (typeof gatesModule.Gates?.[name] !== 'function') {
+  if (typeof resolved[name] !== 'function') {
     throw new Error(
       `route-B transcriber: o1js internal gates module has no \`Gates.${name}\`. ` +
         'The pin is o1js 2.15.0; refusing rather than emitting a different circuit.'
@@ -86,7 +93,7 @@ for (const name of ['generic', 'rangeCheck0', 'zero'] as const) {
   }
 }
 
-export const RawGates: RawGates = gatesModule.Gates;
+export const RawGates: RawGates = resolved;
 
 export function assertRawGatesAvailable(): void {
   for (const name of ['generic', 'rangeCheck0', 'zero'] as const) {

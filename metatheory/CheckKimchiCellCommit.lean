@@ -33,6 +33,7 @@ import Dregg2.Circuit.Emit.KimchiCellCommit
 
 open Dregg2.Circuit.Emit.KimchiCellCommit
 open Dregg2.Circuit.Emit.KimchiTarget
+open Dregg2.Circuit.Emit.CommitmentTreeAppendEmit (hash4to1Real)
 
 /-- One named check. -/
 structure Check where
@@ -63,7 +64,8 @@ def main : IO UInt32 := do
   IO.println "== KimchiCellCommit — the GROUP-4 commitment emission, checked =="
   let mut bad := 0
   for c in checks do
-    IO.println s!"[{if c.ok then \"ok  \" else \"FAIL\"}] {c.name}"
+    let tag := if c.ok then "ok  " else "FAIL"
+    IO.println s!"[{tag}] {c.name}"
     if c.detail != "" then IO.println s!"         {c.detail}"
     if !c.ok then bad := bad + 1
   IO.println ""
