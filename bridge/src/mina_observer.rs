@@ -1398,6 +1398,22 @@ impl<R: MinaRpc> MinaObserver<R> {
     /// ⚑ FAIL-CLOSED. If the archive does not export `dregg_mina_lc_verify` this
     /// returns [`ObserveError::VerifiedGateUnavailable`] and confirms nothing. There
     /// is no fallback path.
+    ///
+    /// ## ⚑ NAMED AND NOT DONE: this does **not** call [`Self::prove_opening_check`]
+    ///
+    /// Stated so the absence is a decision on the record rather than an oversight a later reader
+    /// has to guess at. Requiring the `⟨s, srs.g⟩` opening proof here would change **what a
+    /// settlement requires**, and it would do so in a way that is currently unsatisfiable: the
+    /// challenge vector is pinned to the heights whose Fiat–Shamir transcript this tree has run
+    /// (today, one — 539508), because a Wrap proof's opening challenges are not on its wire. Wiring
+    /// it in would therefore refuse every real settlement at every other height.
+    ///
+    /// That makes it an **ember-gated** choice, on two of the four counts `CLAUDE.md` keeps short:
+    /// it is a genuine design fork (does a settlement require this leg, or is the leg a separately
+    /// requestable receipt?), and the enabling work — deriving the challenges per block, which
+    /// means a transcript this side of the Lean kernel — is its own campaign, not a wiring change.
+    /// Until that decision is made, the opening check is a thing dregg can be **asked** for
+    /// ([`Self::prove_opening_check`]), not a thing settlement demands.
     pub fn observe_settlement(
         &self,
         expected_root: &[u8; 32],
