@@ -557,7 +557,7 @@ that broke the homogeneity fails loudly instead of quietly producing a wrong cha
 | slice instances, FRI | 839 | **820** |
 | **distinct programs / compiles / VKs, FRI** | **839** | **46** (3 head + 43 block) |
 | with the AIR half | 846 instances / 846 VKs | **827 instances / 53 VKs** |
-| compile, serial | 839 × 53.6 s = **12.5 h** | 46 compiles — ⏳ *run in flight, figure lands with it* |
+| compile, serial | 839 × 53.6 s = **12.5 h** | **46 compiles, 55.9 min MEASURED** (mean 72.9 s/program) |
 | prove, serial @ 19.7 s | 4.6 h | 4.5 h — **unchanged, as predicted** |
 
 **Second, §5.1's ⚠ was wrong about the direction of the cost.** It expected forcing the cuts onto a
@@ -635,6 +635,14 @@ the walk's own liveness kills `qidx[0..q]` at the start of query `q+1`, so `live
 blockSegs]` is 19 slots shorter than `liveIn[headSegs]`. **Every one of the 19 block-to-block joins
 was broken.** Those joins first occur at instance 46 and the seal at instance 820, so a proof run of
 any affordable length would have been green and wrong.
+
+⚑ **The compile figure is measured, and the absolute is contaminated while the ratio is not.** All
+46 programs were compiled one process each: **46 distinct verification keys** (checked distinct),
+**55.9 min** of compile in total, mean **72.9 s** — against the FRI legs' uncontended **53.6 s**,
+because this box was at load ~47 with two sibling lanes compiling throughout. The comparison is
+taken at *one* rate applied to both sides, so contention cancels: at the measured 72.9 s the deployed
+839-key walk is **17.0 h**; at the uncontended 53.6 s it is 12.5 h and this walk is 41 min. **18.2×
+either way**, and it is a one-time protocol-constant cost rather than a per-proof one.
 
 **Proved, against dregg's committed root proof, one process per slice:**
 
