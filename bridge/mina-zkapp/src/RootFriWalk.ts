@@ -600,12 +600,15 @@ export type Segment =
       close: boolean;
       rows: number;
     }
-  /** The commit-phase row's leaf sponge — exactly one block, 8 lanes. */
+  /** The commit-phase row: reconstruct `[even, odd]` from the running fold value
+   *  and the witnessed sibling, hash the leaf, fold at β, descend the coset
+   *  point. One segment, for the reason the emitter gives. */
   | { t: 'cpLeaf'; q: number; r: number; rows: number }
   | { t: 'cpLevel'; q: number; r: number; level: number; rows: number }
   | { t: 'cpRoot'; q: number; r: number; rows: number }
-  /** `fold_row` at β, the coset descent, and the roll-in scheduled here. */
-  | { t: 'cpFold'; q: number; r: number; rollIn: number | null; rows: number }
+  /** The reduced opening scheduled to roll in after this round's fold. Emitted
+   *  only for the four rounds that have one. */
+  | { t: 'cpFold'; q: number; r: number; rollIn: number; rows: number }
   /** The chain lands on the final polynomial. */
   | { t: 'final'; q: number; rows: number };
 
@@ -660,10 +663,11 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
     let pending: SampleRef[] = [];
     let absorbed: AbsorbRef[] = [];
     const flush = () => {
-      push({ t: 'duplex', absorbs: absorbed, samples: pending, rows: PRICE.perm }, [...slots.chal], [
-        ...slots.chal,
-        ...pending.flatMap(sampleSlots),
-      ]);
+      push(
+        { t: 'duplex', absorbs: absorbed, samples: pending, rows: PRICE.perm },
+        segs.length === 0 ? [] : [...slots.chal],
+        [...slots.chal, ...pending.flatMap(sampleSlots)],
+      );
       absorbed = [];
       pending = [];
     };
@@ -821,9 +825,14 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
       });
     });
     // The reduced openings become the chain's `initial` and its roll-ins.
+    //  ⚑ `mat < 0` marks the segment that PUBLISHES one height's reduced
+    //  opening: the tallest becomes the fold chain's `initial`, the rest its
+    //  roll-ins. `point` carries the height index — `verify_query` REFUSES a
+    //  proof whose first reduced opening is at any height but the global max,
+    //  and this is where that ordering is fixed.
     shape.heights.forEach((h, hi) => {
       push(
-        { t: 'deep', q, round: -1, mat: -1, point: -1, from: 0, to: 0, open: false, close: false, rows: 4 },
+        { t: 'deep', q, round: -1, mat: -1, point: hi, from: 0, to: 0, open: false, close: false, rows: 4 },
         [...slots.dacc[hi]],
         [...(hi === 0 ? slots.folded : slots.ro[hi])],
       );
@@ -832,9 +841,23 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
     // -- the fold chain.
     for (let r = 0; r < K.layers; r++) {
       const depth = lgmh - 1 - r;
-      push({ t: 'cpLeaf', q, r, rows: PRICE.perm + 8 * PRICE.witnessLane }, [...slots.folded, ...idxSlot], [
-        ...slots.cur,
-      ]);
+      //  ⚑ THE ROW, THE LEAF AND THE FOLD ARE ONE SEGMENT, AND THAT IS FORCED.
+      //  `fold_row` consumes the same `[even, odd]` pair the leaf hash commits
+      //  to, and that pair is built from the running fold value and a WITNESSED
+      //  sibling. Split across a cut, the folding half would re-witness the
+      //  sibling and nothing would tie it to the one the leaf hashed — a splice
+      //  that every Merkle check in the walk still passes. So the sibling is
+      //  read once, by one segment, and never crosses.
+      push(
+        {
+          t: 'cpLeaf',
+          q,
+          r,
+          rows: PRICE.perm + EXT_LANES * PRICE.witnessLane + PRICE.foldRow + PRICE.descent,
+        },
+        [...slots.folded, ...slots.beta[r], ...idxSlot, ...(r === 0 ? [] : [slots.x])],
+        [...slots.cur, ...slots.folded, slots.x],
+      );
       for (let lv = 0; lv < depth; lv++)
         push({ t: 'cpLevel', q, r, level: lv, rows: PRICE.merkleLevel }, [...slots.cur, ...idxSlot], [
           ...slots.cur,
@@ -842,23 +865,12 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
       push({ t: 'cpRoot', q, r, rows: 8 }, [...slots.cur], []);
       const rollHeight = shape.heights.indexOf(lgmh - 1 - r);
       const rollIn = rollHeight > 0 ? rollHeight : null;
-      push(
-        {
-          t: 'cpFold',
-          q,
-          r,
-          rollIn,
-          rows: PRICE.foldRow + PRICE.descent + (rollIn === null ? 0 : PRICE.rollIn),
-        },
-        [
-          ...slots.folded,
-          slots.x,
-          ...slots.beta[r],
-          ...idxSlot,
-          ...(rollIn === null ? [] : slots.ro[rollIn]),
-        ],
-        [...slots.folded, slots.x],
-      );
+      if (rollIn !== null)
+        push(
+          { t: 'cpFold', q, r, rollIn, rows: PRICE.rollIn },
+          [...slots.folded, ...slots.beta[r], ...slots.ro[rollIn]],
+          [...slots.folded],
+        );
     }
     push({ t: 'final', q, rows: PRICE.extAdd + 8 }, [...slots.folded, ...idxSlot], []);
   }
@@ -929,7 +941,10 @@ export function segmentReads(
   };
   switch (s.t) {
     case 'duplex':
-      range(ft.chalState, ft.chalState + CHAL_WIDTH, fri);
+      //  ⚑ ONLY the first duplex loads the entering state from the commitment;
+      //  every later one takes it from the carry. A slice that re-witnessed it
+      //  would be starting a fresh transcript in the middle of one.
+      if (k === 0) range(ft.chalState, ft.chalState + CHAL_WIDTH, fri);
       for (const a of s.absorbs) {
         if (a.src === 'commit') fri.push(ft.commit[a.layer] + a.lane);
         else if (a.src === 'finalPoly') fri.push(ft.finalPoly[a.i] + a.lane);
