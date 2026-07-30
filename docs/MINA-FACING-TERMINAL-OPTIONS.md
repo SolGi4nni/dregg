@@ -820,10 +820,32 @@ either way**, and it is a one-time protocol-constant cost rather than a per-proo
 | `head0` | k = **7** (constant) | predecessor **AIR slice 6** under its own key, pinned by the compile-time constant, entering AIR slice 6's own terminal seal |
 | `head1` | k = 8 (constant) | `publicInput` **is** head0's `publicOutput`; predecessor's key proved at **leaf 0 of the carried key tree** |
 | `head2` | k = 9 (constant) | — |
-| **`block0`** | **k = 10, WITNESSED** | **q witnessed and tied to k; the current-query register muxed out of the 19 carried transcript indices; the two-level per-query commitment; the key tree at leaf 2** |
+| **`block0`–`block14`** | **k = 10 … 24, WITNESSED** | **q witnessed and tied to k; the current-query register muxed out of the 19 carried transcript indices; the two-level per-query commitment; the key tree at leaf `pos−1`** |
 
-`head0`'s verification key hash is bit-identical across three independent processes and two working
-directories, so the list the tree is built over is a constant and not an accident of one run.
+**18 instances**, each `publicInput` its predecessor's `publicOutput`, checked end to end by a process
+that compiled nothing. `head0`'s verification key hash is bit-identical across three independent
+processes and two working directories, so the list the tree is built over is a constant and not an
+accident of one run.
+
+**The splice suite, at `block14` (chain step 24), in a process that compiled only that program — 15
+falsifiers, every one REFUSED, and every refusal checked to be a constraint failure rather than a
+harness shape error:**
+
+| | refused |
+|---|---|
+| a boundary unrelated to its predecessor · the carried AIR accumulator bent · an AIR chunk digest it never reads, bent · a **global** FRI chunk digest bent · **another query's opened-row digest** bent · one carried live lane bent · one Merkle sibling bent | 7 |
+| ⚑ `k` **advanced** by one — a SKIP · ⚑ `k` **held back** by one — a DOUBLE-COUNT · ⚑ the same `k` claiming a **different query** · ⚑ **`k+43` with `q+1`, so `k = f(q)` still holds** — this slice replayed one whole query later | 4 |
+| the carried key-list root bent · the predecessor key's path bent · a valid proof of the wrong program under its own key · the right proof under a key it was not made under · ⚑ **a key that IS in this chain's key list, at the WRONG LEAF, with its own valid path** | 5 |
+
+**And the controls, which are what make those refusals attributable:**
+
+- **UNBOUND** accepts a public input unrelated to its predecessor.
+- ⚑ **UNBOUND accepts the position shift** (`k+43`, `q+1`) — so its refusal by the bound program is
+  **the boundary chain pinning the position**, not the walk breaking. The affine tie and the boundary
+  are each shown doing their own half, and neither is credited with the other's work.
+- **UNBOUND but PINNED** still refuses a foreign proof — the refusal there is the **pin**.
+- **UNPINNED accepts** that same foreign proof under its own key — side-loading's named hole is shown
+  **open** on a witnessed-index chain too, and the carried key tree is what closes it.
 
 ⚑ **And the splice suite found a defect in ITSELF, twice, in the same direction.** §3.27's rule for
 where to cut the falsifier table — *"the LAST proved slice that consumes a witnessed sibling"* —
