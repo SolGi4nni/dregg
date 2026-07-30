@@ -508,10 +508,25 @@ fn resolve_cells(c: &StateConstraint, new_state: &CellState) -> Option<Vec<Optio
 /// **`None` = DECLINE.** The branches name TWO OR MORE DISTINCT keys, and `DInput` carries exactly
 /// one `(heapOld, heapNew)` pair in the wire header — see [`build_wire`]. Encoding such a combinator
 /// would evaluate branch 2's atom against branch 1's key: a silently WRONG verdict, in both
-/// directions, which is strictly worse than the fail-closed refusal. Adding the second key is a LEAN
-/// change (a per-branch cell run in `DInput`/`parseBranches`), not a Rust one; until it exists this
-/// shape refuses. Measured 2026-07-30: `dungeon_program.json`'s 576 heap-bearing combinators name
-/// exactly ONE key each, so nothing deployed is on this residual.
+/// directions, which is strictly worse than the fail-closed refusal.
+///
+/// ⚑ **THE RESIDUAL IS LEAN'S, AND IT HAS A PRODUCER.** Carrying two keys needs a per-branch cell
+/// run in `Dregg2.Exec.DeployedConstraint` — `DInput` gains a branch-indexed heap list,
+/// `parseBranches` consumes a `present val present val` pair ahead of each branch run, and
+/// `branchAdmits` takes that branch's own pair instead of the header's. That is a wire-grammar
+/// change with its own `#guard` battery to re-audit, and it is NOT to be worked around here: a Rust
+/// guess at which key a branch means is exactly the drift Law #1 forbids.
+///
+/// Measured 2026-07-30, so the exposure is stated rather than assumed:
+///
+/// * `dungeon_program.json`'s 576 heap-bearing combinators name exactly ONE key each — the whole
+///   Descent/dungeon/campaign surface is clear of this.
+/// * The only other producer of a `SimpleStateConstraint::HeapField` in a combinator is
+///   `spween-dregg/src/compiler.rs`: `ConditionExpr::Or(a, b)` lowers to `AnyOf{[x, y]}`, and each
+///   side can be a `ConditionClause::Has` at a different heap-resident key. So a scene written as
+///   `has(A) or has(B)` over two keys WOULD produce this shape and its gate would refuse. No
+///   checked-in scene does (grep-zero for an `Or` over two `Has` clauses), so it is LATENT, not
+///   live — and it is the reason this decline is worth naming rather than dismissing.
 fn combinator_heap_key(variants: &[SimpleStateConstraint]) -> Option<Option<u64>> {
     let mut found: Option<u64> = None;
     for v in variants {

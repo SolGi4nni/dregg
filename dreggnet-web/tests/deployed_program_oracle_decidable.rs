@@ -48,8 +48,8 @@
 
 use dregg_cell::preconditions::EvalContext;
 use dregg_cell::program::{
-    ConstraintOracle, HeapAtom, SimpleStateConstraint, StateConstraint, TransitionMeta,
-    constraint_in_lean_subset, constraint_oracle_installed,
+    ConstraintOracle, HeapAtom, SimpleStateConstraint, StateConstraint, TransitionGuard,
+    TransitionMeta, constraint_in_lean_subset, constraint_oracle_installed,
 };
 use dregg_cell::state::CellState;
 use dregg_cell::{CellProgram, field_from_u64};
@@ -150,6 +150,47 @@ fn shape_of(c: &StateConstraint) -> String {
             format!("HeapField(key={key},{a})")
         }
         other => kind_of(other),
+    }
+}
+
+/// A COMPACT guard label. `TransitionGuard`'s `Debug` prints each `MethodIs` as a 32-element byte
+/// array, and the Descent's riders carry eight of them — so one declining constraint rendered with
+/// `{guard:?}` is ~2 KB of decimal noise wrapped around the four tokens that matter. A report nobody
+/// can read is not a diagnosis, so method symbols collapse to their first four bytes and a
+/// same-variant run collapses to a count.
+fn guard_label(g: &TransitionGuard) -> String {
+    match g {
+        TransitionGuard::Always => "Always".to_string(),
+        TransitionGuard::MethodIs { method } => format!(
+            "MethodIs({:02x}{:02x}{:02x}{:02x}…)",
+            method[0], method[1], method[2], method[3]
+        ),
+        TransitionGuard::EffectKindIs { mask } => format!("EffectKindIs({mask:#x})"),
+        TransitionGuard::SlotChanged { index } => format!("SlotChanged({index})"),
+        TransitionGuard::AnyOf(cs) | TransitionGuard::AllOf(cs) => {
+            let tag = if matches!(g, TransitionGuard::AnyOf(_)) {
+                "AnyOf"
+            } else {
+                "AllOf"
+            };
+            // Collapse a run of MethodIs children (the rider's eight-verb list) to a count: WHICH
+            // verbs the rider covers is not what a decline is about, and the Descent's every rider
+            // lists all of them.
+            let methods = cs
+                .iter()
+                .filter(|c| matches!(c, TransitionGuard::MethodIs { .. }))
+                .count();
+            let rest: Vec<String> = cs
+                .iter()
+                .filter(|c| !matches!(c, TransitionGuard::MethodIs { .. }))
+                .map(guard_label)
+                .collect();
+            let mut parts = rest;
+            if methods > 0 {
+                parts.push(format!("MethodIs×{methods}"));
+            }
+            format!("{tag}[{}]", parts.join(", "))
+        }
     }
 }
 
@@ -263,6 +304,7 @@ fn the_installed_oracle_decides_every_constraint_the_deployed_descent_installs()
 
     let mut census = Census::default();
     let mut declines: Vec<String> = Vec::new();
+    let mut worst_label = String::new();
 
     for day in 0..DAYS {
         let dep = Deployment::for_day(day);
@@ -272,6 +314,10 @@ fn the_installed_oracle_decides_every_constraint_the_deployed_descent_installs()
             panic!("the descent program is `Cases`; the walk below assumes it");
         };
         for (ci, case) in cases.iter().enumerate() {
+            let label = guard_label(&case.guard);
+            if label.len() > worst_label.len() {
+                worst_label = label;
+            }
             for (k, c) in case.constraints.iter().enumerate() {
                 census.record(c);
                 if !constraint_in_lean_subset(c) {
@@ -286,8 +332,8 @@ fn the_installed_oracle_decides_every_constraint_the_deployed_descent_installs()
                     .is_none()
                 {
                     declines.push(format!(
-                        "day {day} case {ci} (guard {:?}) constraint {k}: {}",
-                        case.guard,
+                        "day {day} case {ci} guard {} constraint {k}: {}",
+                        guard_label(&case.guard),
                         shape_of(c)
                     ));
                 }
@@ -325,6 +371,17 @@ fn the_installed_oracle_decides_every_constraint_the_deployed_descent_installs()
         census.affine_le >= 1,
         "the walk reached no AffineLe (256 emitted) — the arm with a marshalling ENVELOPE, the one \
          shape here that could plausibly decline for a bound rather than a missing case"
+    );
+    // ⚠ THE REPORT MUST STAY READABLE. Measured with `{guard:?}`: one declining constraint rendered
+    // as ~2 KB, because each of a rider's eight `MethodIs` children prints a 32-element decimal byte
+    // array — and 576 of those is a diagnosis nobody reads, which is how the first two rounds of
+    // this outage got closed by guessing instead. `guard_label` collapses them; this pins that it
+    // still does, over the real guards rather than a constructed one.
+    assert!(
+        worst_label.len() <= 160,
+        "the widest deployed guard renders to {} chars ({worst_label}) — the decline report becomes \
+         unreadable past ~160 and an unreadable report is not a diagnosis",
+        worst_label.len()
     );
 
     assert!(
