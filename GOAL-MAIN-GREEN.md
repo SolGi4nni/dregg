@@ -188,6 +188,26 @@ SIXTH straggler of the `977e73b19` anchor switch — which has now had five foun
 ⚠ Briefed hard against inherited diagnoses: **three have been wrong in two days, one of them mine.**
 Run each family, read ITS OWN output.
 
+- ⚑ **`dregg-app-framework` 15 → 0** (`c1607d871`) — **ONE family, 15 of 15**: no `IntentVerifiedGate`
+  registered in the test host, and 14 of them printed the cause verbatim. The fifteenth printed
+  NOTHING, because its assertion was a bare `assert!(matches!(...))` naming only its own source text.
+  ⚑ **AND THE REASON IT WAS INVISIBLE IS A NEW CLASS, now minted.** `verified_settle.rs:395` ships a
+  `#[cfg(test)]` twin that keeps the Rust fold authoritative for `dregg-intent`'s OWN tests, while
+  every downstream crate compiles the `#[cfg(not(test))]` fail-closed sibling. **`dregg-intent` was
+  444/444 while SIX consumer crates could not settle at all** — market, app-framework, tussle,
+  teasting, wire, catalog. A crate's own green is not evidence for its consumers.
+  ✅ **The refusal poles had NOT broken** — I briefed that check and it paid: both died in a setup
+  `unwrap()` and were never reached.
+  ⚑ And disarming the one-shot guard showed the double exit is caught by the VERIFIED LEDGER
+  (`LegRejected` — a drained escrow cannot pay twice), **not admitted**. So the committed one-shot is
+  defence-in-depth over conservation, **weaker than the test names claim**. Two more
+  green-for-the-wrong-reason teeth closed (`matches!(err, NotConserving(_))` accepts `FfiUnavailable`).
+- ✅ **F2 landed** (`7fe3c221a`) — and like F1, the machinery already existed: `StateCommitLeafRegrounded`
+  had ported 3 of 4 legs on 07-25; the unported one was `compressInjective cmb`, the root combiner.
+  ⚠ It added 3 baseline rows against instruction; convention checked out, but **all five such bridges
+  have ZERO consumers four days on** and the port they serve has not started. Recorded as a condition
+  rather than accepted: if the ConePort campaign does not run, delete the rows and the bridges.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
