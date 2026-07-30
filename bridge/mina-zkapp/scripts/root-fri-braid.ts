@@ -542,6 +542,79 @@ async function main() {
   );
 
   // -----------------------------------------------------------------------
+  // [2b] THE WHOLE WALK, OUT OF CIRCUIT, AGAINST P3'S OWN NUMBERS.
+  //
+  // ⚑ THIS IS THE INSTRUMENT THAT CAN SEE A WRONG CONVENTION, AND THE SLICES
+  // CANNOT. A slice run proves the first N cuts of the walk; the first
+  // assertion against a committed Merkle root does not occur until slice ~12,
+  // and the fold chain not until slice ~30. So a mis-ordered mixed-height
+  // injection, a path direction taken from the wrong index bit, or an
+  // `alpha_pow` advanced per matrix instead of per height would all COMPILE AND
+  // PROVE cleanly for as far as any affordable run reaches. The twin runs the
+  // entire 11,270-segment walk in seconds and compares against the numbers p3's
+  // own verifier produced, so every convention is checked before a circuit is.
+  // -----------------------------------------------------------------------
+  console.log('\n[2b] the whole walk, out of circuit, against p3\'s own numbers');
+  {
+    const S = c.w.slots;
+    const eq = (a: bigint[], b: number[] | bigint[]) =>
+      a.length === b.length && a.every((x, i) => x === BigInt(b[i] as any));
+    const alphaGot = S.alpha.map((i) => c.twin.at.get(i)!);
+    if (!eq(alphaGot, c.realFri.friAlpha))
+      fail(`the walk derives FRI α [${alphaGot}] and p3 drew [${c.realFri.friAlpha}]`);
+    for (let r = 0; r < K.layers; r++) {
+      const got = S.beta[r].map((i) => c.twin.at.get(i)!);
+      if (!eq(got, c.realFri.betas[r])) fail(`the walk derives β${r} [${got}] and p3 drew [${c.realFri.betas[r]}]`);
+    }
+    const gotIdx = c.realFri.queries.map((_, q) => c.twin.at.get(S.qidx[q])!);
+    if (!gotIdx.every((v, q) => v === BigInt(idxs[q])))
+      fail(`the walk derives query indices [${gotIdx}] and p3 drew [${idxs}]`);
+    ok(
+      `starting from dregg's OWN challenger state, the walk derives p3's OWN α, all ${K.layers} βs ` +
+        `and all ${K.numQueries} query indices — the transcript is not a re-implementation that ` +
+        'happens to run, it reproduces the numbers the deployed verifier drew',
+    );
+    let roots = 0;
+    let folds = 0;
+    for (const chk of c.twin.checks) {
+      if (chk.kind === 'inputRoot') {
+        const want = c.realFri.inputRounds[chk.round!].commit;
+        if (!eq(chk.got, want))
+          fail(
+            `query ${chk.q} input round ${chk.round} opens to [${chk.got.slice(0, 3)}…] and dregg's ` +
+              `commitment is [${want.slice(0, 3)}…] — the mixed-height opening is wrong`,
+          );
+        roots++;
+      } else if (chk.kind === 'ro') {
+        const want = c.realFri.queries[chk.q].reducedOpenings[chk.i!];
+        if (want.logHeight !== chk.h) fail(`reduced-opening ${chk.i} is at height ${chk.h}, p3 says ${want.logHeight}`);
+        if (!eq(chk.got, want.ro))
+          fail(
+            `query ${chk.q}'s reduced opening at height ${chk.h} is [${chk.got}] and p3's ` +
+              `open_input gives [${want.ro}] — the DEEP quotient disagrees with the deployed one`,
+          );
+      } else if (chk.kind === 'fold') {
+        const want = c.realFri.queries[chk.q].foldedAfterRound[chk.i!];
+        if (!eq(chk.got, want))
+          fail(
+            `query ${chk.q}'s folded value after round ${chk.i} is [${chk.got}] and p3's is ` +
+              `[${want}] — the fold chain diverges at round ${chk.i}`,
+          );
+        folds++;
+      } else if (chk.kind === 'final') {
+        if (!eq(chk.got, c.realFri.finalPoly[0]))
+          fail(`query ${chk.q}'s chain lands on [${chk.got}] and the final polynomial is [${c.realFri.finalPoly[0]}]`);
+      }
+    }
+    ok(
+      `${roots} mixed-height input openings reproduce dregg's OWN four commitments; all ` +
+        `${K.numQueries * c.shape.heights.length} reduced openings reproduce p3's OWN open_input; ` +
+        `${folds} fold steps reproduce p3's OWN chain; all ${K.numQueries} queries land on the ` +
+        'committed final polynomial',
+    );
+  }
+
+  // -----------------------------------------------------------------------
   // [3] The slices.
   // -----------------------------------------------------------------------
   const N = Math.min(LIMIT, c.plan.slices.length);

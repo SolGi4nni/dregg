@@ -55,6 +55,8 @@ import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, terminalSeal } fr
 import {
   CHAL_RATE,
   CHAL_WIDTH,
+  airColumnIndex,
+  dagTableName,
   EXT_LANES,
   FriLaneTable,
   FriPlan,
@@ -103,6 +105,21 @@ import {
 
 const LANE_MAX = (1n << 31n) - 1n;
 const md = (x: bigint) => ((x % P) + P) % P;
+
+/** `e · X^j` in `BinomialExtensionField<BabyBear,4>` — a limb rotation with the
+ *  binomial `W = 11` on the limbs that wrap past degree 3. Three additions a
+ *  column rather than a general extension multiply. */
+export function extShift(e: BbExt, j: number): BbExt {
+  if (j === 0) return e;
+  const out: Field[] = [];
+  for (let i = 0; i < EXT_D; i++)
+    out.push(
+      i >= j
+        ? e.limbs[i - j]
+        : reduceLane(e.limbs[i - j + EXT_D].mul(Field(11n)), 11n * LANE_MAX),
+    );
+  return new BbExt({ limbs: out });
+}
 
 /** The AIR chain's slice count — the step index this chain continues from. */
 export const AIR_SLICES = 7;
@@ -195,11 +212,28 @@ export function chunkDigestsBigInt(lanes: bigint[], nChunks: number, chunkLanes:
 
 export type TwinState = Map<number, bigint>;
 
+/** A value the walk produced that p3's own verifier also produced, so the two
+ *  can be compared. ⚑ This is the instrument a slice run cannot be: the first
+ *  assertion against a committed Merkle root is ~12 slices in and the fold chain
+ *  ~30, so a wrong convention would compile and prove cleanly for as far as any
+ *  affordable run reaches. */
+export type TwinCheck = {
+  kind: 'inputRoot' | 'ro' | 'fold' | 'final';
+  q: number;
+  round?: number;
+  h?: number;
+  i?: number;
+  got: bigint[];
+};
+
 export type WalkTwin = {
   /** Slot values at every segment boundary, restricted to `liveIn[k]`. */
   carry: bigint[][];
   /** The self-authenticating data each segment consumes, as lanes. */
   aux: bigint[][];
+  /** The final slot state — where the derived challenges live. */
+  at: TwinState;
+  checks: TwinCheck[];
 };
 
 const extOf = (st: TwinState, ids: number[]) => ids.map((i) => st.get(i) ?? 0n);
@@ -231,6 +265,8 @@ export function walkTwin(
   const st: TwinState = new Map();
   const carry: bigint[][] = new Array(w.segs.length + 1);
   const aux: bigint[][] = new Array(w.segs.length);
+  const checks: TwinCheck[] = [];
+  const rollAt = (r: number) => shape.heights.indexOf(lgmh - 1 - r) > 0;
   const fzOf = (round: number, mat: number, pt: number, c: number): bigint[] => {
     const r = op.refs[round][mat][pt][c];
     return r.where === 'air'
@@ -260,14 +296,16 @@ export function walkTwin(
                   ? friLanes[ft.powWitness]
                   : BigInt(K.maxLogArity);
         });
-        const out = permBigInt(lanes);
+        const out = s.perm ? permBigInt(lanes) : state;
         S.chal.forEach((id, i) => st.set(id, out[i]));
         const buf = out.slice(0, CHAL_RATE);
         for (const smp of s.samples) {
           const v = md(buf.pop()!);
           if (smp.dst === 'alpha') st.set(S.alpha[smp.lane], v);
           else if (smp.dst === 'beta') st.set(S.beta[smp.layer][smp.lane], v);
-          else if (smp.dst === 'qidx') st.set(S.qidx[smp.query], v);
+          //  ⚑ `sample_bits(k)` is the LOW k bits of the sample, not the sample.
+          else if (smp.dst === 'qidx')
+            st.set(S.qidx[smp.query], v & ((1n << BigInt(K.indexBits)) - 1n));
         }
         break;
       }
@@ -299,11 +337,14 @@ export function walkTwin(
         break;
       }
       case 'inRoot':
+        checks.push({ kind: 'inputRoot', q: s.q, round: s.round, got: extOf(st, S.cur) });
         break;
       case 'deep': {
         if (s.mat < 0) {
           const hi = s.point;
-          setExt(st, hi === 0 ? S.folded : S.ro[hi], extOf(st, S.dacc[hi]));
+          const v = extOf(st, S.dacc[hi]);
+          setExt(st, hi === 0 ? S.folded : S.ro[hi], v);
+          checks.push({ kind: 'ro', q: s.q, h: shape.heights[hi], i: hi, got: v });
           break;
         }
         const m = shape.rounds[s.round].matrices[s.mat];
@@ -376,6 +417,7 @@ export function walkTwin(
         break;
       }
       case 'cpRoot':
+        if (!rollAt(s.r)) checks.push({ kind: 'fold', q: s.q, i: s.r, got: extOf(st, S.folded) });
         break;
       case 'cpFold': {
         const beta = extOf(st, S.beta[s.r]);
@@ -387,15 +429,25 @@ export function walkTwin(
             extMulBigInt(extMulBigInt(beta, beta), extOf(st, S.ro[s.rollIn])),
           ),
         );
+        checks.push({ kind: 'fold', q: s.q, i: s.r, got: extOf(st, S.folded) });
         break;
       }
+      case 'permBind':
+        break;
+      case 'deepInit':
+        shape.heights.forEach((_, hi) => {
+          setExt(st, S.dacc[hi], [0n, 0n, 0n, 0n]);
+          setExt(st, S.dpow[hi], [1n, 0n, 0n, 0n]);
+        });
+        break;
       case 'final':
+        checks.push({ kind: 'final', q: s.q, got: extOf(st, S.folded) });
         break;
     }
     aux[k] = a;
   }
   carry[w.segs.length] = w.liveIn[w.segs.length].map((s) => st.get(s) ?? 0n);
-  return { carry, aux };
+  return { carry, aux, at: st, checks };
 }
 
 function twoAdic(k: number): bigint {
@@ -528,15 +580,36 @@ export function runSegments(
                   : Field(K.maxLogArity); //  a protocol constant, not proof data
         });
         const bound = permOutputBound(LANE_MAX);
-        const out = provablePermBounded(lanes, LANE_MAX).map((x) => reduceLane(x, bound));
+        //  ⚑ `perm === false` is the ENTERING state: no permutation, the output
+        //  buffer is already full. See `segmentWalk`'s header.
+        const out = s.perm
+          ? provablePermBounded(lanes, LANE_MAX).map((x) => reduceLane(x, bound))
+          : lanes.map((x) => canonicalLane(x, LANE_MAX));
         S.chal.forEach((id, i) => sto.set(id, out[i]));
         const buf = out.slice(0, CHAL_RATE);
         for (const smp of s.samples) {
           const v = canonicalLane(buf.pop()!, LANE_MAX);
           if (smp.dst === 'alpha') sto.set(S.alpha[smp.lane], v);
           else if (smp.dst === 'beta') sto.set(S.beta[smp.layer][smp.lane], v);
-          else if (smp.dst === 'qidx') sto.set(S.qidx[smp.query], v);
-          else {
+          else if (smp.dst === 'qidx') {
+            //  ⚑ `sample_bits(k)` returns the LOW k BITS of a canonical sample,
+            //  and the split is the whole of what makes an index unchooseable:
+            //  without the bound on the high part, `hi = (c − lo)·2^-k` always
+            //  exists over Pasta and a prover derives whatever index it likes
+            //  out of a perfectly correct sponge. What is CARRIED onward is the
+            //  recomposition of the forced low bits, so a later slice that
+            //  re-splits it is imposing the same constraint again.
+            const bits = Provable.witness(Provable.Array(Bool, K.indexBits), () => {
+              const x = v.toBigInt();
+              return Array.from({ length: K.indexBits }, (_, i) => Bool(((x >> BigInt(i)) & 1n) === 1n));
+            });
+            const hiB = Provable.witness(Field, () => Field(v.toBigInt() >> BigInt(K.indexBits)));
+            assertLowBitsSplit(v, bits, hiB, K.indexBits);
+            let acc = Field(0);
+            for (let i = 0; i < K.indexBits; i++) acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
+            sto.set(S.qidx[smp.query], acc);
+            bitsMemo.set(smp.query, bits);
+          } else {
             //  ⚑ `check_witness(16, w)`: the witness was ABSORBED above and the
             //  next sample's low 16 bits must be zero. Getting this wrong does
             //  not fail loudly — it shifts every one of the 19 query indices.
@@ -663,6 +736,37 @@ export function runSegments(
       case 'cpFold': {
         const beta = get(S.beta[s.r]);
         put(S.folded, extAdd(get(S.folded), extMul(extMul(beta, beta), get(S.ro[s.rollIn]))));
+        break;
+      }
+      case 'permBind': {
+        //  ⚑ `perm[p][k] = Σ_j f_{4k+j}(ζ)·X^j`. Multiplying by `X^j` is a limb
+        //  rotation with the binomial `W = 11` applied to the wrapped limbs, not
+        //  a general extension multiply — so the bridge costs three additions a
+        //  column and not three multiplies.
+        const pi = shape.rounds.findIndex((r) => r.name === 'permutation');
+        const m = shape.rounds[pi].matrices[s.mat];
+        const cols = op.refs[pi][s.mat][s.point];
+        const t = dagTableName(m.name);
+        const airIx = airColumnIndex();
+        for (let k = s.from; k < s.to; k++) {
+          const e = airIx.byLabel.get(`${t}|perm[${s.point}][${k}]`)!;
+          let acc = BbExt.zero();
+          for (let j = 0; j < EXT_LANES; j++) {
+            const f = extFri(cols[k * EXT_LANES + j].at);
+            assertExtInRange(f);
+            acc = extAdd(acc, extShift(f, j));
+          }
+          const want = extAir(e);
+          for (let l = 0; l < EXT_D; l++)
+            canonicalLane(acc.limbs[l], LANE_MAX).assertEquals(canonicalLane(want.limbs[l], LANE_MAX));
+        }
+        break;
+      }
+      case 'deepInit': {
+        shape.heights.forEach((_, hi) => {
+          put(S.dacc[hi], BbExt.zero());
+          put(S.dpow[hi], BbExt.from([1n, 0n, 0n, 0n]));
+        });
         break;
       }
       case 'final': {

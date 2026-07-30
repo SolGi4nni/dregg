@@ -203,7 +203,23 @@ export type RealRootFri = {
  * why no new height appears in the roll-in schedule.
  */
 export function rootFriShape(real: RealRootFri): FriShape {
-  const knobs = real.knobs;
+  //  ⚑ THE DUMPER EMITS THE KNOBS p3 READS, NOT THE DERIVED ONES, AND A MISSING
+  //  DERIVED KNOB IS SILENT. `indexBits` and `extraQueryIndexBits` are this
+  //  side's names for `log_global_max_height + extra`; left undefined they make
+  //  `Array.from({length: undefined})` an EMPTY array, every path direction
+  //  `undefined`, and every `undefined ? a : b` take the same branch — a walk
+  //  that runs, proves, and is about nothing. It is completed here and asserted,
+  //  rather than read optimistically at each use.
+  const knobs: FriKnobs = {
+    ...DEPLOYED_KNOBS,
+    ...real.knobs,
+    extraQueryIndexBits: real.knobs.extraQueryIndexBits ?? 0,
+    indexBits:
+      real.knobs.indexBits ?? real.knobs.logGlobalMaxHeight + (real.knobs.extraQueryIndexBits ?? 0),
+  };
+  for (const [k, v] of Object.entries(knobs))
+    if (typeof v !== 'number' || !Number.isFinite(v))
+      throw new Error(`FRI knob \`${k}\` is ${v} — the dumped knobs are incomplete`);
   const rounds: RoundSpec[] = real.inputRounds.map((r) => ({
     name: r.kindName as RoundSpec['name'],
     matrices: r.matrices.map((m) => ({
@@ -436,10 +452,19 @@ export function planOpenedValues(shape: FriShape, air: AirColumnIndex): OpenedPl
         const byCol: OpenedRef[] = [];
         for (let c = 0; c < m.width; c++) {
           let label: string | null = null;
+          //  ⚑ THE PERMUTATION ROUND IS NOT DIRECTLY IN THE AIR'S ASSIGNMENT,
+          //  AND ASSUMING IT WAS IS A REAL ERROR THIS LEG MADE AND MEASURED.
+          //  The PCS commits an extension permutation column as FOUR BASE
+          //  columns and opens each of them at ζ, giving four EXTENSION values
+          //  `f_j(ζ)`. The AIR holds ONE extension value, the whole column's
+          //  opening. They are related — `perm[p][k] = Σ_j f_{4k+j}(ζ)·X^j` —
+          //  and they are not equal, so the four components go under
+          //  `friDigest` and `permBind` asserts the recomposition. That check is
+          //  query-INDEPENDENT and is therefore paid ONCE for the whole walk,
+          //  not once per query.
           if (r.name === 'main') label = `main[${p}][${c}]`;
           else if (r.name === 'preprocessed') label = `prep[${p}][${c}]`;
-          else if (r.name === 'permutation') label = `perm[${p}][${Math.floor(c / EXT_LANES)}]`;
-          //  `quotient_chunk` is never in the AIR's assignment.
+          //  `permutation` and `quotient_chunk` are never in the AIR's assignment.
           // The quotient chunks are never in the AIR's assignment.
           const key = label === null ? null : `${t}|${label}`;
           const hit = key === null ? undefined : air.byLabel.get(key);
@@ -562,7 +587,7 @@ export type SampleRef =
 export type Segment =
   /** One challenger permutation, with the lanes it absorbed and the challenges
    *  drawn from its output buffer before the next one. */
-  | { t: 'duplex'; absorbs: AbsorbRef[]; samples: SampleRef[]; rows: number }
+  | { t: 'duplex'; absorbs: AbsorbRef[]; samples: SampleRef[]; perm: boolean; rows: number }
   /** One `PaddingFreeSponge` block over the concatenated opened rows at one
    *  height of one input round. `first` starts the sponge, `last` finishes it
    *  into a digest. */
@@ -609,6 +634,17 @@ export type Segment =
   /** The reduced opening scheduled to roll in after this round's fold. Emitted
    *  only for the four rounds that have one. */
   | { t: 'cpFold'; q: number; r: number; rollIn: number; rows: number }
+  /** Seed one query's DEEP accumulators: `acc = 0` and `alpha_pow = 1` per
+   *  HEIGHT. ⚑ Free in rows and not optional — `alpha_pow` starting at zero
+   *  makes every reduced opening zero, and a chain of zeros folds and closes
+   *  against a final polynomial of zero without complaining. */
+  | { t: 'deepInit'; q: number; rows: number }
+  /** ⚑ THE PERMUTATION ROUND'S BRIDGE TO THE AIR HALF, paid ONCE for the whole
+   *  walk: extension permutation columns `[from, to)` of one (matrix, point) of
+   *  the permutation round, each asserted to be `Σ_j f_{4k+j}(ζ)·X^j` over the
+   *  four base components the PCS opened. Without it those 512 opened values
+   *  are authenticated by the FRI walk and connected to nothing the AIR read. */
+  | { t: 'permBind'; mat: number; point: number; from: number; to: number; rows: number }
   /** The chain lands on the final polynomial. */
   | { t: 'final'; q: number; rows: number };
 
@@ -657,14 +693,26 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
   // ---- the FRI transcript -------------------------------------------------
   // The schedule is `verify_fri`'s, simulated so the duplex boundaries — the
   // only places a cut may fall inside the transcript — are compile-time facts.
+  //
+  // ⚑ THE TRANSCRIPT DOES NOT START EMPTY, AND STARTING IT EMPTY COSTS ONE
+  // PERMUTATION AND THEREFORE EVERY CHALLENGE. `verify_fri` is entered with the
+  // challenger's OUTPUT BUFFER ALREADY FULL — `two_adic_pcs::verify` has just
+  // finished observing every opened evaluation, and the state the dumper
+  // records carries `output_buffer = sponge_state[..8]`. So FRI's own `alpha` is
+  // drawn by POPPING that buffer, with NO permutation, and a simulation that
+  // duplexes first draws α from a state one permutation ahead — and then every
+  // β, the PoW sample and all 19 query indices with it. This was measured, not
+  // reasoned: the first slice to reach the 16-bit grind refused, because the
+  // low bits of a sample from the wrong permutation are not zero.
   {
     let inBuf: AbsorbRef[] = [];
-    let outCount = 0;
+    let outCount = CHAL_RATE;
     let pending: SampleRef[] = [];
     let absorbed: AbsorbRef[] = [];
+    let perm = false;
     const flush = () => {
       push(
-        { t: 'duplex', absorbs: absorbed, samples: pending, rows: PRICE.perm },
+        { t: 'duplex', absorbs: absorbed, samples: pending, perm, rows: perm ? PRICE.perm : 64 },
         segs.length === 0 ? [] : [...slots.chal],
         [...slots.chal, ...pending.flatMap(sampleSlots)],
       );
@@ -677,12 +725,13 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
       if (s.dst === 'pow') return [];
       return [slots.qidx[s.query]];
     };
-    let open = false; //  a duplex has happened and its samples are still open
+    let open = true; //  the ENTERING buffer is live and its samples are open
     const duplex = () => {
       if (open) flush();
       absorbed = inBuf;
       inBuf = [];
       outCount = CHAL_RATE;
+      perm = true;
       open = true;
     };
     const observe = (a: AbsorbRef) => {
@@ -710,6 +759,29 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
     sample({ dst: 'pow' });
     for (let q = 0; q < K.numQueries; q++) sample({ dst: 'qidx', query: q });
     if (open) flush();
+  }
+
+  // ---- the permutation round's bridge to the AIR half, once ---------------
+  {
+    const pi = shape.rounds.findIndex((r) => r.name === 'permutation');
+    if (pi >= 0)
+      shape.rounds[pi].matrices.forEach((m, mi) => {
+        const nk = m.width / EXT_LANES;
+        for (let p = 0; p < m.numPoints; p++)
+          for (let a = 0; a < nk; a += 32)
+            push(
+              {
+                t: 'permBind',
+                mat: mi,
+                point: p,
+                from: a,
+                to: Math.min(a + 32, nk),
+                rows: (Math.min(a + 32, nk) - a) * (3 * PRICE.extAdd + 5 * EXT_LANES * PRICE.witnessLane),
+              },
+              [],
+              [],
+            );
+      });
   }
 
   // ---- the queries --------------------------------------------------------
@@ -787,6 +859,11 @@ export function segmentWalk(shape: FriShape, opts: { deepCols?: number } = {}): 
     //    splits cleanly into descending column ranges with the accumulator
     //    crossing in `dh`; `open` seeds it and `close` computes `1/(z − x)` and
     //    folds it into the height's slot.
+    push(
+      { t: 'deepInit', q, rows: 0 },
+      [],
+      [...shape.heights.flatMap((_, hi) => [...slots.dacc[hi], ...slots.dpow[hi]])],
+    );
     shape.rounds.forEach((round, ri) => {
       round.matrices.forEach((m, mi) => {
         const hi = shape.heights.indexOf(m.logHeight);
@@ -935,6 +1012,7 @@ export function segmentReads(
 ): { air: number[]; fri: number[] } {
   const s = w.segs[k];
   const air: number[] = [];
+  const air2 = air;
   const fri: number[] = [];
   const range = (a: number, b: number, into: number[]) => {
     for (let i = a; i < b; i++) into.push(i);
@@ -965,6 +1043,23 @@ export function segmentReads(
     case 'final':
       for (const o of ft.finalPoly) range(o, o + EXT_LANES, fri);
       break;
+    case 'permBind': {
+      const pi = w.shape.rounds.findIndex((r) => r.name === 'permutation');
+      const m = w.shape.rounds[pi].matrices[s.mat];
+      const cols = op.refs[pi][s.mat][s.point];
+      const t = dagTableName(m.name);
+      const air = airColumnIndex();
+      for (let k = s.from; k < s.to; k++) {
+        const e = air.byLabel.get(`${t}|perm[${s.point}][${k}]`);
+        if (e === undefined) throw new Error(`the AIR legend has no perm[${s.point}][${k}] for ${t}`);
+        range(e * EXT_LANES, (e + 1) * EXT_LANES, air2);
+        for (let j = 0; j < EXT_LANES; j++) {
+          const r = cols[k * EXT_LANES + j];
+          range(r.at, r.at + EXT_LANES, fri);
+        }
+      }
+      break;
+    }
     case 'deep': {
       if (s.mat < 0) break;
       //  f(x): the opened row, always FRI-side.
