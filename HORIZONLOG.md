@@ -48,6 +48,46 @@ complete adds timed at **0 ms**, twice, before the cause was found. Every measur
 4.16 M — **~4.9×, ~7 s per MSM** — and it is algebra needing its own identity theorem, not FFI. And
 `expand_deferred` is still the blocker: a fast `sg` leg does not make `public_comm` derivable.
 
+### ⚑⚑ THE NEXT RUNG, PRICED THE SAME DAY: Lean calling out to Rust is **46 ms**, and the speed is the lesser reason
+
+ember, on the 8.44 µs/add result: *"we can definitely just be calling out to rust from our lean if
+we wanna do real stuff and not fake."* Measured immediately
+(`metatheory/fixtures/pickles-extractors/src/bin/sg_msm_bench.rs`, same block, same `srs.g`,
+reproduces `opening.sg`, refuses the one-generator tamper): arkworks' bucketed `msm_bigint` is
+**~46 ms** (44–56, median of 5) against compiled Lean's 35.1 s and the kernel's ~3.5 h —
+**~760×** and **~274,000×**. Schedule and arithmetic compound: 4.16 M sequential adds → ~0.86 M
+bucketed, and ~256 ns per boxed `Nat` mulmod → tens of ns in Montgomery form.
+
+**The cost table collapses.** Three MSMs = ~140 ms; a checkpoint is well under a second, so a client
+can verify a Wrap proof **every block**. The cadence question dissolves rather than being answered.
+
+**⚑ But the durable point is epistemic, not the clock.** Kernel-vs-compiled is **one definition
+evaluated two ways** — it catches evaluator bugs and nothing else, and both readings share every
+modelling mistake in the definition. The Rust path is a **second implementation**, the code Mina
+runs. That is the discipline the rest of this campaign is built on (o1-labs' own verifier accepts
+the block; the Samasika lane drove openmina's own consensus and found **8 verdict divergences**).
+**Calling out upgrades the check from a re-evaluation to a differential**, and
+`scripts/run-mina-sg-compiled.sh` step (4) runs it **today, with no linking**: Rust prints the point
+it computed, Lean prints the point it was checked against by cross-multiplication, a text match
+closes the chain.
+
+**⚠ And what a green MEANS changes.** A `#guard` that calls Rust is no longer kernel-checked — right
+for an instance check, wrong for a checker theorem. `sgVerdict` stays pure Lean and calls nothing;
+only an instance evaluation may call out, and only as `@[extern] opaque`, which **structurally
+cannot leak into a proof** (no kernel reduction, so no `decide` can consume it) — the property
+`Dregg2.World` already relies on for the clock, network and beacon, where the idiom has only ever
+been used for **effects, never compute**. **HOUSE LAW #1 is untouched**: it governs AIR authorship,
+and no constraint, gadget or `air_accepts` moves.
+
+**The seam is designed and priced, not written.** SRS stays Rust-side (trusted config, not per-block
+data), so the boundary carries 15 challenges and one point — marshalling free rather than 98,304
+bignum conversions; the differential goes in a `lean_exe` via `moreLinkArgs`, not a `#guard`, so no
+`extern_lib` machinery. Left to ember: whether mina-rust/arkworks enters the node's dependency graph
+or stays in the out-of-workspace extractor crate. **That is topology, not a lane decision.**
+
+⚑ **This retires nothing above it.** 359× and ~1,500× are properties of the *pure-Lean* path, and
+the memory one is structural. Both paths stay; the checker runs neither.
+
 ## ⚑⚑⚑⚑ JULY 30 — route B's commitment binding LANDED; three perfectly valid transitions were refused by a real `prove()`; and the row model was found conservative by exactly 560
 
 **E1 · ✅ THE GAP THE ROUTE-B LANE WEIGHTED ABOVE ITS OWN DEMO IS CLOSED.**
