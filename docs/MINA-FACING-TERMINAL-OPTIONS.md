@@ -464,6 +464,19 @@ decomposition whose unit cost is set by the hash. Changing the hash is the re-sl
 **Do not start with the FRI knobs.** They are worth 35% today and 1% after step 5, and changing them
 on the root rotates the apex VK and forces a fresh Groth16 setup for the ETH path (§6).
 
+**In parallel, and independent of all six** — the compile lever (§5.1), which needs nothing from the
+hash work and pays off in the current regime too:
+
+- **A. Price the alignment slack.** Re-run `fri-walk-plan` with the cut offsets constrained to repeat
+  per query; compare the slice count against today's 839. This is a planner change and one run.
+- **B. If the slack is acceptable, make the walk slice uniform** — witness `si` instead of baking it
+  into `friSliceProgramName`/`friSliceShape`, following `makeChainedProofVerify`'s pattern exactly
+  (§3.20 measured the uniformity cost at 11 rows). 846 compiles → ~55, and the VKs become protocol
+  constants rather than a per-proof cost.
+
+A and B are the cheapest real wins in this document and the only ones that need no new field, no new
+config, and no decision from ember.
+
 ---
 
 ## 8. One line on the query count, deliberately not a derivation
