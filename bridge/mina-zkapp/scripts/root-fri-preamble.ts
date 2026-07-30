@@ -22,6 +22,12 @@ import {
   segmentWalk,
 } from '../src/RootFriWalk.js';
 import {
+  assertHomogeneous,
+  planUniform,
+  uniformLaneTable,
+  uniformLayout,
+} from '../src/RootFriUniform.js';
+import {
   AIR_CHUNK_LANES,
   FriBraidCtx,
   airLaneValues,
@@ -36,7 +42,7 @@ import {
 import { dagDigestOfChunkDigests } from '../src/RootAirChain.js';
 
 // ---------------------------------------------------------------------------
-// LEG 19 — THE PREAMBLE: the challenger state entering FRI, DERIVED.
+// LEG 20 — THE PREAMBLE: the challenger state entering FRI, DERIVED.
 //
 // §3.28 closes the braid and names what it does not close: "the challenger state
 // entering FRI is a committed WITNESS (`friDigest` covers it), emitted by the
@@ -444,6 +450,68 @@ function cost(bound: Ctx, unbound: Ctx) {
   return { perms, preRows, dRows };
 }
 
+/**
+ * ⚑ PRICED AGAINST THE CURRENT SHAPE, NOT §3.28's. A sibling landed
+ * `bfdc935a5` while the braid ran: the 839 slices are 43 shapes repeated 19
+ * times, so query-aligned cuts give **820 instances from 46 distinct
+ * programs**. The compile side of §3.28's 17.4-hour figure is stale, and a
+ * preamble priced against it would be stale twice.
+ *
+ * The preamble is entirely HEAD — it is absorbed once, not once per query — so
+ * the 19 query blocks are untouched and every new slice is a head slice.
+ */
+function uniformCost(shape: any, meta: PreambleMeta) {
+  console.log('\n[3b] THE QUERY-ALIGNED PRICE — against `bfdc935a5`, not §3.28\n');
+  const out: { label: string; head: number; block: number; inst: number; prog: number; rows: number }[] = [];
+  for (const [label, mk] of [
+    ['without the preamble', () => segmentWalk(shape)],
+    ['with the preamble', () => segmentWalk(shape, { preamble: meta })],
+  ] as [string, () => SegmentedWalk][]) {
+    //  ⚑ A FRESH `OpenedPlan` PER ITERATION. `friLaneTable` MUTATES `op.refs`
+    //  in place (it re-points the fri refs at absolute lanes), so reusing one
+    //  across two lane tables silently double-applies the offset and the
+    //  homogeneity check then fails at a query-block position for a reason that
+    //  has nothing to do with the preamble. Measured, on the first run.
+    const op2 = planOpenedValues(shape, airColumnIndex());
+    const w2 = mk();
+    const ftD = friLaneTable(shape, op2);
+    const L = uniformLayout(w2, shape, ftD, CHUNK);
+    const ftU = uniformLaneTable(shape, ftD, L);
+    assertHomogeneous(w2, op2, ftU, L);
+    const p = planUniform(w2, op2, ftU, L, { usableRows: BUDGET });
+    console.log(
+      `    ${label.padEnd(22)} head ${String(L.headSegs).padStart(5)} segs → ${String(p.head.length).padStart(3)} slices  ` +
+        `block ${L.blockSegs} segs × ${L.numQueries} → ${p.block.length} each  ` +
+        `⇒ ${fmt(p.totalSlices)} INSTANCES from ${p.distinctPrograms} PROGRAMS  ${fmt(p.totalWork + p.totalCarry)} rows`,
+    );
+    out.push({ label, head: p.head.length, block: p.block.length, inst: p.totalSlices, prog: p.distinctPrograms, rows: p.totalWork + p.totalCarry });
+  }
+  const [a, b] = out;
+  console.log(
+    `    ⇒ delta               +${b.inst - a.inst} instances, +${b.prog - a.prog} distinct programs, ` +
+      `+${fmt(b.rows - a.rows)} rows (${(((b.rows - a.rows) / a.rows) * 100).toFixed(1)}%)`,
+  );
+  ok('the 19 query blocks are UNCHANGED — the preamble is absorbed once, not once per query');
+
+  //  How compressible the new head is, measured rather than asserted.
+  const wp = segmentWalk(shape, { preamble: meta });
+  const nPre = wp.segs.findIndex((x) => x.t === 'preSeal') + 1;
+  const sig = (x: any) =>
+    x.t !== 'duplex' ? x.t : `duplex|${x.perm}|${x.absorbs.map((z: AbsorbRef) => z.src).join(',')}|${x.samples.length}`;
+  const counts = new Map<string, number>();
+  for (let k = 0; k < nPre; k++) counts.set(sig(wp.segs[k]), (counts.get(sig(wp.segs[k])) ?? 0) + 1);
+  const top = [...counts].sort((x, y) => y[1] - x[1])[0];
+  console.log(
+    `\n    ⚑ AND THE NEW HEAD IS ${counts.size} STRUCTURAL SHAPES, NOT ${b.head}. ${fmt(top[1])} of the ` +
+      `${fmt(nPre)} preamble segments (${((top[1] / nPre) * 100).toFixed(1)}%) are ONE shape — a duplex\n` +
+      `      absorbing eight opened values and sampling nothing. Those +${b.prog - a.prog} compiles are the\n` +
+      "      compressible part and are NOT compressed here: `assertHomogeneous` keys on a per-query LANE\n" +
+      '      SHIFT and the absorb block\'s reads are not a shift — they follow `OpenedPlan`, which\n' +
+      '      interleaves AIR-held and FRI-held values. Naming it, not claiming it.',
+  );
+  return out;
+}
+
 // ===========================================================================
 // [4] THE CIRCUIT — the state DERIVED, and the row delta that says so.
 // ===========================================================================
@@ -570,7 +638,7 @@ function forge(ctx: Ctx): { airLanes: bigint[]; friLanes: bigint[]; bentAt: numb
 
 async function main() {
   mkdirSync(WORK, { recursive: true });
-  console.log('\n=== LEG 19 — THE CHALLENGER STATE ENTERING FRI, DERIVED ===');
+  console.log('\n=== LEG 20 — THE CHALLENGER STATE ENTERING FRI, DERIVED ===');
   const bound = context({ bind: true });
   const unbound = context({ bind: false });
   console.log(
@@ -581,6 +649,7 @@ async function main() {
   const ref = differential(bound);
   polarities(bound, ref);
   const c = cost(bound, unbound);
+  uniformCost(bound.shape, bound.meta);
 
   //  The twin's own seal check — the preamble's closing equality, out of circuit.
   const zc = bound.twin.checks.filter((k) => k.kind === 'preSealZeta');
@@ -724,7 +793,55 @@ async function main() {
     console.log('    (set FRIPRE_FORGE=1 to run the three-way accept/refuse table in circuit)');
   }
 
+  ratchet(bound, c);
   console.log(`\n=== ${checks} checks passed ===\n`);
+}
+
+// ===========================================================================
+// THE RATCHET — 2% on rows, EXACT on the permutation count and the shape.
+//
+// ⚑ A SCHEDULE CHANGE THAT LANDS WITHIN 2% OF 3,575,411 STILL FAILS. §3.12's
+// rule: the row budget is an estimate and the permutation count is the protocol,
+// so the second is pinned exactly. The census figures are exact for the same
+// reason — 2,630 opened values and 64 cumulative sums are counts, not prices.
+// ===========================================================================
+
+const RATCHET = {
+  permutations: 1373,
+  openedValues: 2630,
+  cumulativeSums: 64,
+  publicValues: 25,
+  logUpChallenges: 2,
+  preambleSegments: 1374,
+  preambleRows: 3_575_411,
+  deployedSlices: 928,
+  uniformInstances: 905,
+  uniformPrograms: 131,
+};
+
+function ratchet(bound: Ctx, c: { perms: number; preRows: number }) {
+  console.log('\n[6] THE RATCHET\n');
+  const ops = preambleOps(bound.shape, bound.meta);
+  const nPre = bound.w.segs.findIndex((s) => s.t === 'preSeal') + 1;
+  const exact: [string, number, number][] = [
+    ['preamble permutations', c.perms, RATCHET.permutations],
+    ['opened values absorbed', ops.filter((o) => o.t === 'observe' && o.a.src === 'opened').length / 4, RATCHET.openedValues],
+    ['cumulative sums absorbed', ops.filter((o) => o.t === 'observe' && o.a.src === 'cumSum').length / 4, RATCHET.cumulativeSums],
+    ['public values absorbed', ops.filter((o) => o.t === 'observe' && o.a.src === 'publicValue').length, RATCHET.publicValues],
+    ['LogUp challenges sampled', permChalAssignment(bound.meta).total, RATCHET.logUpChallenges],
+    ['preamble segments', nPre, RATCHET.preambleSegments],
+  ];
+  for (const [n, got, want] of exact) {
+    if (got !== want) fail(`${n}: ${fmt(got)}, pinned EXACTLY at ${fmt(want)}`);
+    console.log(`    ${n.padEnd(26)} ${fmt(got).padStart(9)}  exact`);
+  }
+  const banded: [string, number, number][] = [['preamble modelled rows', c.preRows, RATCHET.preambleRows]];
+  for (const [n, got, want] of banded) {
+    const d = Math.abs(got - want) / want;
+    if (d > 0.02) fail(`${n}: ${fmt(got)} is ${(d * 100).toFixed(1)}% from the pinned ${fmt(want)}`);
+    console.log(`    ${n.padEnd(26)} ${fmt(got).padStart(9)}  ±2% of ${fmt(want)}`);
+  }
+  ok('every figure is ratcheted; the counts exactly, the rows at 2%');
 }
 
 main().catch((e) => {

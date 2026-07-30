@@ -2463,15 +2463,169 @@ slice 6**, so the object is ONE key-pinned chain and not two.
 * **that the committed function is low-degree.** That is the FRI soundness argument, and it is
   exactly as undischarged here as everywhere else in this tree. A verifier that runs every query
   correctly still inherits the FRI floor.
-* **that the challenger state entering FRI is the batch-STARK's.** It is a committed WITNESS
-  (`friDigest` covers it), emitted by the Rust side. That is §3.14 residual 1 and it is now the
-  largest thing between this chain and a verifier: binding it means running `BatchTranscript`'s
-  whole observe sequence — `observe_instance_count`, the per-instance bindings, the main and
-  permutation commitments, the global lookup data, the quotient commitment, and the sampling of
-  `α_stark` and `ζ` — in circuit.
+* ~~**that the challenger state entering FRI is the batch-STARK's.**~~ **CLOSED 2026-07-30 —
+  §3.29.** It was a committed WITNESS emitted by the Rust side; it is now derived in circuit from
+  the batch's own commitments, public values, cumulative sums and all 2,630 opened values, and a
+  forged-but-consistent transcript is refused with the refusal attributable to an unsealed control.
+  **1,373 permutations, 3,575,411 rows, +10.8% on the query-aligned walk.**
 * **anything about all inputs.** Every figure here is `getRows()` on a committed circuit and a
   `prove()` that returned; "it proves on a box" is the resolution.
 * **and nothing is wired to `setDreggRoot`.** `placeholderRelay` stays.
+
+### 3.29 ⚑ MEASURED — THE PREAMBLE: the challenger state entering FRI, DERIVED
+
+*2026-07-30. `bridge/mina-zkapp/src/RootFriWalk.ts` (`preambleOps`, the `preSeal` segment),
+`src/RootFriSlice.ts` (the twin and the interpreter), `scripts/root-fri-preamble.ts`
+(`npm run root-fri-preamble`). The script is read off `batch-stark/src/verifier/mod.rs:144,274-300`,
+`batch-stark/src/transcript.rs` and `fri/src/two_adic_pcs.rs:782-788`.*
+
+§3.28 ends by naming its own largest residual: *"the challenger state entering FRI is a committed
+WITNESS … it is now the largest thing between this chain and a verifier."* This is that, closed.
+
+**It is the same shape rung 6 closed one level down.** Before `DeepQuotient` the fold chain started
+from a value the prover chose, and binding it is what turned the walk from *authenticates a number*
+into *authenticates a claim*. A prover who picks the challenger state picks FRI's `α`, all 16 `β`s
+and all 19 query indices, and the 11,303-segment walk then authenticates a transcript nobody forced.
+
+#### What the state is a function of, from p3's own source
+
+| | source |
+|---|---|
+| `observe_instance_count(7)` | `verifier/mod.rs:144` |
+| `observe_instance_binding(ext_db, base_db, width, n_chunks)` × 7 | `:274` |
+| `observe_main(main_commit, public_values)` | `:278` |
+| `observe_preprocessed(prep_widths, prep_commit)` | `:279` |
+| `sample_perm_challenges` — 2 per **bus**, on first encounter | `:289`, `transcript.rs:84-99` |
+| `observe_perm_and_sample_alpha(perm_commit, 64 cumulative sums)` | `:290` |
+| `observe_quotient_commitment` | `:294` |
+| `sample_zeta` | `:300` |
+| all **2,630** opened values, in round / matrix / point order | `two_adic_pcs.rs:782-788` |
+
+**10,993 ops, 1,373 permutations.** The out-of-circuit twin reproduces p3's own `α_stark`, its own
+`ζ`, all 16 sponge lanes and **both buffers** exactly, and the 128 LogUp challenges it draws are the
+ones the AIR half folds with.
+
+⚑ **TWO READINGS THAT WOULD HAVE COMPILED AND PROVED CLEANLY**, and both are in the same function:
+
+1. **The commitment-observe order is NOT the PCS round order.** The transcript absorbs **main,
+   preprocessed, permutation, quotient**; `coms_to_verify` is built **main, quotient, preprocessed,
+   permutation** — and *that* second order is the one the opened values are absorbed in.
+2. **`observe_usize(v)` is FOUR elements, not one.** `observe_base_as_algebra_element::<EF>` lifts
+   to the extension and absorbs `[v, 0, 0, 0]` (`challenger/src/lib.rs:141-147`). Reading it as one
+   costs 14 permutations and every challenge after the first.
+
+Eight discriminating polarities are kept as a live table, and **all eight land on a different
+challenger state.** The last two — opened values in transcript order, and point-major within a round
+— reach the *same* `ζ` and a *different* state, which is correct and is why the table checks the
+state and not only the challenges.
+
+#### What feeds it — and why this is a derivation and not a rehash
+
+**Every non-literal input is already under a commitment the braid carries.** The public values are
+`expose_claim|public[i]` and the 64 cumulative sums are `<table>|perm_value[i]` — both `dagDigest`
+lanes the AIR half reads. The four round commitments are the `ft.inputCommit` lanes the walk's own
+Merkle roots close against. The 2,630 opened values resolve through the same `OpenedPlan` the DEEP
+quotient uses, **1,236 of them literally the AIR chain's own lanes.** There is no fresh witness
+anywhere in the derivation. The batch's *shape* — instance count, degree bits, widths, chunk counts
+— is absorbed as **literals**, so that part of the transcript is not reachable by a prover at all.
+
+#### The teeth, and why they are local
+
+A `preSeal` segment asserts the derived `ζ` **is** the point all 35 committed matrices were opened
+at, and the derived LogUp challenges **are** the AIR chain's `challenge[k]`. Without it a bent input
+produces a perfectly self-consistent *wrong* transcript whose first contradiction is a Merkle root
+~12 slices later — which is exactly the failure mode §3.28 built the twin to avoid.
+
+**The gate, four rows, every refusal a real constraint failure:**
+
+| | slice | |
+|---|---:|---|
+| **BOUND** (seal armed) on the **forged** transcript | 88 | **REFUSED** |
+| **UNSEALED** (seal removed) on the **same forged** transcript | 88 | ACCEPTED |
+| **BOUND** (seal armed) on the **real** transcript | 88 | ACCEPTED |
+| **UNBOUND** — the §3.28 walk — on a **forged challenger state** | 0 | ACCEPTED |
+
+The forgery bends **one** absorbed AIR lane (`expose_claim|public[0]`, +1) and re-derives the whole
+preamble honestly from it: a reachable state, a consistent `ζ`, consistent challenges. Nothing about
+it is malformed. ⚑ **The unsealed control is segment-for-segment and row-for-row identical to the
+bound walk** — only the closing equalities are gone — so the refusal is attributable to the binding
+and not to shape. Row 4 exhibits the residual being closed rather than describing it.
+
+#### The cost
+
+| | |
+|---|---:|
+| preamble segments | **1,374** (1,373 permutations + the seal) |
+| preamble modelled rows | **3,575,411** |
+| 1,315 of those permutations | the opened-value absorb **alone** |
+| the FRI transcript it authorises (§3.12) | 23 permutations — the preamble is **60×** what it authorises |
+
+| at a 50,000-row budget | segments | rows | slices |
+|---|---:|---:|---:|
+| the §3.28 walk | 11,303 | 30,363,795 | 839 |
+| with the preamble | 12,677 | 33,939,206 | 928 |
+
+⚑ **PRICED AGAINST `bfdc935a5`, NOT AGAINST §3.28.** The 839 slices are 43 shapes repeated 19 times,
+so query-aligned cuts give 820 instances from 46 distinct programs; §3.28's compile side was already
+stale when it was written.
+
+| query-aligned | head | block | **instances** | **programs** | rows |
+|---|---:|---:|---:|---:|---:|
+| without the preamble | 36 segs → 3 | 593 × 19 → 43 | **820** | **46** | 38,133,228 |
+| with the preamble | 1,410 segs → 88 | 593 × 19 → 43 | **905** | **131** | 42,245,547 |
+| delta | | | **+85** | **+85** | **+4,112,319 (+10.8%)** |
+
+**The 19 query blocks are untouched** — the preamble is absorbed once, not once per query, so every
+new slice is a head slice and `assertHomogeneous` still passes unchanged.
+
+⚑ **AND THE NEW HEAD IS 13 STRUCTURAL SHAPES, NOT 88.** 1,315 of the 1,374 preamble segments —
+**95.7%** — are one shape: a duplex absorbing eight opened values and sampling nothing. Those +85
+compiles are the compressible part and are **not** compressed here: `assertHomogeneous` keys on a
+per-query *lane shift* and the absorb block's reads are not a shift — they follow `OpenedPlan`,
+which interleaves AIR-held and FRI-held values. That is named, not claimed.
+
+**Proved, in its own process each:** slice 0, segments [0, 16) — **47,383** emitted rows against a
+49,104 model, compiled, proved and verified in 115.1 s; slice 1, segments [16, 31) — **48,969**
+against 49,987. The seal slice 88, segments [1373, 1385) — **53,165** against 48,252.
+
+⚑ **ROW COUNT IS THE ONLY SIGNAL FOR "DERIVED, NOT WITNESSED".** A derived variable is
+indistinguishable from a witness carrying its value to `runAndCheck`, `prove` **and** `getRows()`.
+The unbound walk reaches this state in **zero** rows because it reads it; this one pays 3,575,411
+modelled rows to compute it, and that delta is the claim.
+
+**Ratcheted**: the rows at 2%, and **exactly** on the permutation count, the 2,630 opened values,
+the 64 cumulative sums, the 25 public values, the 2 LogUp challenges and the 1,374 segments — those
+are counts, not prices.
+
+#### What this does NOT close, and what is now the largest gap
+
+⚑ **THE CHAIN VERIFIES A PROOF AND NEVER SAYS WHAT THE PROOF CLAIMS.** Every statement in this
+tower is relative to `dagDigest` and `friDigest` — digests of lane tables the prover supplies. The
+AIR chain's slice 0 enters `stepBoundary(dagDigest, GENESIS_LIVE_DIGEST, 0)`, a genesis constant,
+and the terminal seal is `terminalSeal(dagDigest, digest(acc), 7)`. Nothing in circuit names *which*
+batch-STARK proof this is. A Mina-side verifier handed the whole 905-slice chain learns
+
+> *some* batch of seven AIRs with these column digests has a FRI proof that verifies
+
+and **not**
+
+> dregg's root proof, for chain head H, over N turns, verifies.
+
+**It is the same shape as the two this arc has already closed** — a value the prover chooses, feeding
+everything downstream. First the fold chain's `initial` (§3.15), then the challenger state (here),
+and now the *identity of the proof itself*.
+
+**And the fix is one rung, not a research programme.** The root's claim is already in the lane
+table: `expose_claim`'s **25 public values**, which this preamble now absorbs into the transcript —
+`[digest₈][digest₈][3][digest₈]`, and the artifact's `numTurns` is 3. Closing it means carrying
+those 25 lanes out as a public output of the chain, so the Mina side compares them against the root
+it was told about rather than against nothing. Until then the tower is a verifier for an unnamed
+proof, and `placeholderRelay` staying is the honest consequence rather than an oversight.
+
+Smaller and still open, unchanged by this leg: the **192 LogUp constraints** are not in the DAG
+vocabulary and the `C_i` extraction is a differentially-checked seam rather than a theorem (§3.18);
+**19 queries, not 1**, though `bfdc935a5` makes that a compute residual rather than a structural one;
+and the **FRI soundness floor**, undischarged here as everywhere.
 
 
 ---
