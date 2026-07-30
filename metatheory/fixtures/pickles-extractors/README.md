@@ -223,3 +223,31 @@ Outputs:
    long-range fork rule cannot be evaluated from GraphQL at all; it needs the binprot protocol
    state. `blockHeight`, `epoch`, `slot`, `minWindowDensity`, `lastVrfOutput` and both
    `lockCheckpoint`s are served, so the short-range rule can.
+
+---
+
+## `walk.py` / `deferred.py` / `phaseb.py` / `verify_guards.py` — the `expand_deferred` extractor
+
+These four are the provenance of every fixture in
+`metatheory/Dregg2/Bridge/MinaWrapDeferredWeld.lean`, and they are the falsifier for it. No cargo,
+no network: they read `mina_devnet_block.json` and run in about a second.
+
+* **`walk.py`** — a field-for-field re-walk of `bridge/src/mina_pickles.rs` `decode_proof_at` in
+  Python, KEEPING what that walk discards: `prev_evals` (43 columns × 2 points, the
+  `public_input` pair, `ft_eval1`), `old_bulletproof_challenges`, the four plonk challenges,
+  `sponge_digest_before_evaluations`, `branch_data`. It consumes the base64url proof with **zero
+  trailing bytes**, which is the structural check that the layout is right, and it reports each
+  evaluation array's chunk count (all 1 on this block, so `evals_of_split_evals` is the identity).
+* **`deferred.py`** — the endo lift, the `Fp` roots of unity (arkworks `GENERATOR = 5`), the
+  `Shifted_value.Type1` shift, and the three words that need no sponge:
+  `zeta_to_srs_length`, `zeta_to_domain_size`, `perm`.
+* **`phaseb.py`** — Poseidon over `Fp` (constants read **out of
+  `Dregg2/Circuit/Emit/PastaPoseidon.lean`**, not copied, so there is no second `fp_kimchi` in the
+  tree to drift), the deferred-values `Fr`-sponge, `xi`, `r`, `b`, and the 47-entry
+  `combined_inner_product` fold.
+* **`verify_guards.py`** — evaluates **every** `#guard` of `MinaWrapDeferredWeld` and prints
+  PASS/FAIL per line. Run it before believing the Lean, and after changing either.
+
+⚠ `phaseb.py` SOLVES for the step-side `ft_eval0` from public-input slot 0 rather than deriving it;
+the weld says so at the pin. Deriving it needs the seven Tick coset shifts and
+`Plonk_checks.Scalars.Tick.constant_term`.
