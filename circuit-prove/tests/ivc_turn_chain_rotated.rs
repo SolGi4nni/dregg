@@ -1430,10 +1430,19 @@ fn pinned_leaf_identity_rejects_foreign_child_in_band() {
             None,
             Some(&expose),
         );
+        // ⚑ PRINT THE ERROR. The assertion below only asks IS it an error; the question that
+        // decides whether this test is evidence for horn 1 is WHICH error. A runner
+        // `WitnessConflict` means the honest witness generator declined to write two values into
+        // one `connect`-shared slot — a refusal an adversarial prover simply does not perform. A
+        // FRI/opening failure means the in-circuit preprocessed-trace check is genuinely UNSAT,
+        // which is the claim. Run with `--nocapture` and read this line before citing the test.
+        match &res {
+            Err(e) => println!("[foreign-cap fold] REFUSED WITH: {e:?}"),
+            Ok(_) => println!("[foreign-cap fold] ACCEPTED — the pin did not bite at all"),
+        }
         assert!(
             res.is_err(),
-            "FORK FOLLOW-UP (a) CLOSED: a child pinned to a FOREIGN preprocessed commitment \
-             (a different-circuit leaf identity) MUST be refused in-band (UNSAT), got Ok"
+            "a child pinned to a FOREIGN preprocessed commitment must be refused in-band, got Ok"
         );
     }
 }
