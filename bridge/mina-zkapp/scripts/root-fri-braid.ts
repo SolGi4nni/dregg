@@ -31,6 +31,7 @@ import {
   friBoundaryIn,
   friBoundaryOut,
   friLaneValues,
+  auxLanes,
   friSliceShape,
   makeFriSliceProgram,
   walkTwin,
@@ -56,6 +57,12 @@ const CHUNK = Number(process.env.FRIBRAID_CHUNK ?? 256);
  *  which all of them are proved today — the leg reports the MEASURED rate and
  *  the extrapolation separately, and never quotes the second as the first. */
 const LIMIT = Number(process.env.FRIBRAID_LIMIT ?? 4);
+/** ⚑ OFF BY DEFAULT, for §3.27's reason: reusing a slice's artifacts turns a
+ *  chain into a claim about files on disk. The flag exists so a lane can EXTEND
+ *  a prefix it already proved instead of re-proving it, and [4] still verifies
+ *  every reused proof against its own key and its predecessor's output — so a
+ *  stale artifact is caught rather than trusted. */
+const REUSE = process.env.FRIBRAID_REUSE === '1';
 
 let checks = 0;
 const ok = (m: string) => {
@@ -622,10 +629,18 @@ async function main() {
     `\n[3] ${N} of ${fmt(c.plan.slices.length)} FRI slices, one process each — compile and prove`,
   );
   const metas: any[] = [];
+  let proved = 0;
   for (let si = 0; si < N; si++) {
     const t = Date.now();
+    if (REUSE && existsSync(metaPath(si))) {
+      const m = JSON.parse(readFileSync(metaPath(si), 'utf8'));
+      metas.push(m);
+      console.log(`    fri slice ${String(si).padStart(3)}: REUSED (${fmt(m.rows)} rows)`);
+      continue;
+    }
     const m = await child({ FRIBRAID_PHASE: 'slice', FRIBRAID_SLICE: String(si) }, `slice ${si}`);
     metas.push(m);
+    proved++;
     const sl = c.plan.slices[si];
     console.log(
       `    fri slice ${String(si).padStart(3)}: segments [${fmt(sl.from)},${fmt(sl.to)}) ` +
@@ -677,7 +692,21 @@ async function main() {
   // -----------------------------------------------------------------------
   // [5] The splices, ACROSS the process boundary.
   // -----------------------------------------------------------------------
-  const AT = Math.min(1, N - 1);
+  //  ⚑ SPLICE AT A SLICE THAT CARRIES MERKLE DATA. A transcript-only slice has
+  //  no `aux`, so the `auxBent` attempt cannot fire there and the table would
+  //  quietly report seven of eight — a falsifier that is absent reads exactly
+  //  like one that passed. The cut is chosen to be the LAST proved slice that
+  //  consumes a witnessed sibling.
+  let AT = Math.min(1, N - 1);
+  for (let si = N - 1; si >= 0; si--) {
+    const sl = c.plan.slices[si];
+    let aux = 0;
+    for (let k = sl.from; k < sl.to; k++) aux += auxLanes(c.w.segs[k]);
+    if (aux > 0) {
+      AT = si;
+      break;
+    }
+  }
   console.log(
     `\n[5] the splice is REFUSED at FRI slice ${AT} — in a process that compiled only that slice`,
   );
@@ -701,16 +730,23 @@ async function main() {
     ['foreignProofAndKey', 'AIR slice 5\'s proof with AIR slice 5\'s OWN key — a valid proof of the wrong program'],
     ['rightProofWrongKey', 'the right proof paired with a key it was not made under'],
   ];
+  let attempted = 0;
   for (const [key, label] of SPLICES) {
     const r = sp.results[key];
     if (!r) {
       console.log(`    · ${label}: not attempted at this cut`);
       continue;
     }
+    attempted++;
     if (!r.refused) fail(`${label}: ACCEPTED`);
     if (!isConstraintFailure(r.err)) fail(`${label}: the error is not a constraint failure — ${r.err}`);
     ok(`REFUSED: ${label}`);
   }
+  if (attempted !== SPLICES.length)
+    fail(
+      `${SPLICES.length - attempted} splice(s) were NOT ATTEMPTED at this cut — an absent falsifier ` +
+        'reads exactly like one that passed, and this table is only worth what it fired',
+    );
 
   // -----------------------------------------------------------------------
   // [6] The controls.
@@ -753,6 +789,7 @@ async function main() {
   // [7] Cost, MEASURED, and the extrapolation kept separate from it.
   // -----------------------------------------------------------------------
   console.log('\n[7] cost');
+  console.log(`    ${proved} slices proved in this run, ${N - proved} reused from a prior one`);
   const totC = metas.reduce((a, m) => a + m.compileMs, 0);
   const totP = metas.reduce((a, m) => a + m.proveMs, 0);
   const totR = metas.reduce((a, m) => a + m.rows, 0);
@@ -802,11 +839,11 @@ async function main() {
 /** Recorded on the run that first produced them. A zero prints instead of
  *  comparing. */
 const RATCHET = {
-  segments: 11_270,
-  slices: 835,
+  segments: 11_303,
+  slices: 839,
   deepTerms: 2_630,
-  airBound: 1_748,
-  friLanes: 31_014,
+  airBound: 1_236,
+  friLanes: 33_062,
 };
 
 const phase =
