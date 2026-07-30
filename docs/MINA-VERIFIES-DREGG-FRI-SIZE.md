@@ -3088,7 +3088,7 @@ reduced openings and all 304 fold steps.
 
 ### 3.34 ⚑ THE COLUMN LEVER, MEASURED — and the number three documents quote for it is 39% low
 
-*2026-07-30. `scripts/deep-column-census.ts`, `npm run deep-columns` — tier 0, 0.2 s, nothing
+*2026-07-30. `bridge/mina-zkapp/scripts/deep-column-census.ts`, `npm run deep-columns` — tier 0, 0.2 s, nothing
 compiles. Commit `bb991153c`.*
 
 §3.31 names one lever and prices it at *"2.50 × 10⁶ rows over ~2,342 opened values at ζ = 1,067 rows
@@ -3099,7 +3099,7 @@ out different when it is re-derived from the owner rather than quoted.
 per column `horner 49 + 4 × witnessLane 6.50 = 75.00`; per close
 `extInverse 88 + 2 × extMul 31 + extAdd 19 = 169`, × 48 (matrix, point) pairs; per query
 `2,630 × 75 + 48 × 169 + 20 = 205,382`; × 19 queries = **3,902,258 rows**. The 1,067 is
-`2.5 × 10⁶ / 2,342`, two literals in `scripts/pasta-root-rows.ts`, and **2,342 is the retired flat
+`2.5 × 10⁶ / 2,342`, two literals in `bridge/mina-zkapp/scripts/pasta-root-rows.ts`, and **2,342 is the retired flat
 census** — 2,286 plus the 56 quotient openings counted twice — which `CostModel.RETIRED_FLAT_MODEL`
 already documents as wrong. ⚑ The direction matters: **the lever is bigger than advertised.**
 
