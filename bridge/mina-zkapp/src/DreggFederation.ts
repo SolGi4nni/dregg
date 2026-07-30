@@ -104,16 +104,33 @@ export class DreggFederation extends SmartContract {
   }
 
   /**
-   * Advance the federation's proven state root.
+   * Advance the federation's state root.
    *
-   * This is the core bridge operation. The caller must provide a recursive
-   * proof (verified by o1js's proof system) that the transition from oldRoot
-   * to newRoot is valid. The proof chain is:
+   * ⚠⚠ THIS METHOD VERIFIES NO PROOF. Corrected 2026-07-30 — the previous
+   * docstring claimed "dregg STARK → Kimchi verifier → Pickles wrap → o1js
+   * recursive verify" and ended "if this method executes successfully, the
+   * state transition was cryptographically verified." That was FALSE and had
+   * been false since the file was written. This whole file contains ZERO
+   * occurrences of `.verify(`, `Proof<`, `ZkProgram`, `SelfProof` and
+   * `DynamicProof` — checked by grep, not by reading.
    *
-   *   dregg STARK → Kimchi verifier → Pickles wrap → o1js recursive verify
+   * What `advanceState` ACTUALLY enforces, in full:
+   *   - `currentRoot == oldRoot`  (the caller names the root it is replacing)
+   *   - `newHeight > currentHeight`  (monotonicity)
+   *   - `oldRoot != newRoot`  (non-trivial)
+   * That is a monotonic counter with a signature-free setter. ANY caller may
+   * advance it to ANY root. It carries no cryptographic content whatsoever.
    *
-   * If this method executes successfully, the state transition was
-   * cryptographically verified.
+   * The proof-gated shape this docstring described is real and lives in
+   * `DreggHeadAnchor.ts` — a `DynamicProof` of the 905-step chain plus
+   * `vk.hash.assertEquals(...)`, with the terminal seal pinning chain LENGTH
+   * as well as identity (a key pin alone is NOT sufficient: the uniform walk
+   * emits one program at every query, so a proof of six-of-nineteen queries
+   * carries the identical claim under the identical key). That file is
+   * written, tier-0 green, and NOT yet compiled or deployed.
+   *
+   * ⚑ Until this method consumes such a proof, do not cite it as a bridge.
+   * A name is a claim; this one was writing a cheque the code does not carry.
    */
   @method async advanceState(
     oldRoot: Field,
