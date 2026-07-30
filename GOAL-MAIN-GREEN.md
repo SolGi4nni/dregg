@@ -360,6 +360,14 @@ because several fixes landed after the second sweep started and some crates were
 3. **E1, a consensus regression** — a 3-node committee wedges permanently on one undelivered block;
    gossip/anti-entropy, inside a ~25-commit window.
 
+- **Tail dispatched** (`starbridge-v2` + `dregg-bridge`, 7–8) — ⚑ and the stitcher one is a **real
+  product defect**, already located: `merge_branches` fabricates a conflict on two DISJOINT
+  single-line edits. The test was **de-vacuified on purpose** — its comment records that it used to
+  read `if !st.has_conflict() { assert!(…) }`, so the one outcome it existed to catch skipped the
+  assertion and reported `ok`. Somebody removed that guard and it immediately found the bug it was
+  written for. Briefed explicitly NOT to restore the conditional, and that making everything fold
+  clean would pass the test while destroying the feature.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
