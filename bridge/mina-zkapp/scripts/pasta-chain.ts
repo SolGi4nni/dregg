@@ -132,17 +132,29 @@ if (PHASE === 'control') {
   const B: any = await side(C, fxB);
   const { proof: p0 } = await U.prog.transcript(S.entry, S.claim, S.w[0], S.w[1], S.w[2]);
   const { proof: pd } = await U.prog.deep(p0.publicOutput, p0, Field(0), ...deepStepArgs(S, 0));
-  const cases: [string, any, Field][] = [
-    // The foreign proof's fold witness, under this proof's boundary.
-    ['foreign-fold', { others: B.foldOthers }, S.deepBoundary(0, S.ro[0])],
-    // Query 1's reduced openings handed to query 0's fold.
-    ['intra-query', { ro: S.ro[1] }, S.deepBoundary(0, S.ro[0])],
-    // A boundary that is not any boundary.
-    ['garbage-input', undefined, Field(123456789)],
+  // ⚑ TWO CLASSES, AND SEPARATING THEM IS THE RESULT. A splice can be refused by
+  // the CARRY (the boundary binds a digest the witness does not match) or by the
+  // WALK itself (the FRI fold chain lands somewhere the final polynomial is
+  // not). Only the first class is evidence that the boundary binding works, and
+  // the unbound twin is what tells them apart: it removes the three boundary
+  // assertions and nothing else, so it must ACCEPT a carry refusal and must
+  // still REFUSE a walk refusal.
+  const cases: [string, 'carry' | 'walk', any, Field][] = [
+    // The FOREIGN proof's chunk digests: the fold's own witness is honest, so
+    // the walk has nothing to complain about and only the carry can object.
+    ['foreign-fold', 'carry', { others: B.foldOthers }, S.deepBoundary(0, S.ro[0])],
+    // A boundary that is not any boundary — same reasoning.
+    ['garbage-input', 'carry', undefined, Field(123456789)],
+    // Query 1's reduced openings handed to query 0's fold. This one the FOLD
+    // CHAIN catches on its own: the chain starts from the wrong value and does
+    // not land on `final_poly`. Classified `walk` so the leg reports where the
+    // refusal comes from instead of crediting it to the binding.
+    ['intra-query', 'walk', { ro: S.ro[1] }, S.deepBoundary(0, S.ro[0])],
   ];
+  const kind: Record<string, string> = Object.fromEntries(cases.map(([n2, k]) => [n2, k]));
   const accepted: Record<string, boolean> = {};
   const why: Record<string, string> = {};
-  for (const [name, over, bIn] of cases) {
+  for (const [name, , over, bIn] of cases) {
     try {
       await U.prog.fold(bIn, pd, Field(0), Bool(false), ...foldStepArgs(S, 0, over));
       accepted[name] = true;
@@ -155,7 +167,7 @@ if (PHASE === 'control') {
   // phase to try against the BOUND key.
   writeFileSync(resolve(WORKDIR, 'unbound-step.json'), JSON.stringify(p0.toJSON()));
   writeFileSync(resolve(WORKDIR, 'unbound-vk.json'), JSON.stringify((await U.prog.compile({ cache: NO_CACHE })).verificationKey));
-  console.log('##JSON##' + JSON.stringify({ accepted, why }));
+  console.log('##JSON##' + JSON.stringify({ accepted, why, kind }));
   process.exit(0);
 }
 
@@ -365,13 +377,30 @@ console.log('\n[4] THE CONTROLS — so [3] is attributable');
 t = Date.now();
 const C = childPhase('control');
 console.log(`    (the unbound twin, its own process, ${secs(t)})`);
-for (const [k, v] of Object.entries(C.accepted)) {
-  if (v) ok(`(a) the UNBOUND twin ACCEPTS '${k}' — [3]'s refusal is the CARRY, not the walk`);
-  else
-    fail(
-      `the UNBOUND twin ALSO refused '${k}' (${C.why?.[k] ?? 'no reason'}) — [3]'s refusal is not ` +
-        'attributable to the boundary binding',
-    );
+// ⚑ THE CONTROL SORTS THE REFUSALS, it does not just bless them. A `carry` case
+// must be ACCEPTED by the unbound twin (so [3]'s refusal is the boundary
+// binding); a `walk` case must still be REFUSED (so the leg reports it as the
+// fold chain's own catch and does not credit the binding for it). The first run
+// of this leg asserted every case was `carry` and went RED on the intra-query
+// splice — which was the control doing its job, not a defect.
+for (const [k, v] of Object.entries(C.accepted) as [string, boolean][]) {
+  const cls = C.kind?.[k] ?? 'carry';
+  if (cls === 'carry') {
+    if (v) ok(`(a) CARRY: the UNBOUND twin ACCEPTS '${k}' — [3]'s refusal is the boundary binding, not the walk`);
+    else
+      fail(
+        `the UNBOUND twin ALSO refused the CARRY case '${k}' (${C.why?.[k] ?? 'no reason'}) — [3]'s ` +
+          'refusal is not attributable to the boundary binding',
+      );
+  } else {
+    if (!v)
+      ok(
+        `(a') WALK: the UNBOUND twin ALSO refuses '${k}' (${C.why?.[k] ?? ''}) — that splice is caught ` +
+          'by the FRI fold chain itself, and the binding gets no credit for it',
+      );
+    else
+      fail(`'${k}' was classified as a WALK refusal but the unbound twin ACCEPTED it`);
+  }
 }
 
 t = Date.now();
