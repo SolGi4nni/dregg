@@ -72,6 +72,15 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 
 [dev-dependencies]
 tower = "0.5"
+# THE VERIFIED SETTLEMENT GATE, for the TEST process only. `ring_trade`,
+# `service_promise` and `agent_coordination` all settle through
+# `dregg_intent::verified_settle::settle_ring_wide_verified`, which is FAIL-CLOSED without a
+# registered `IntentVerifiedGate` — an unregistered gate REFUSES an honest, conserving leg rather
+# than falling back to the (deleted) Rust fold. The framework itself stays FFI-free: a HOST installs
+# the gate (`dreggnet_web::install_verified_settlement_gate`, `node/src/lib.rs`), so this edge is
+# dev-only and `tests/support/mod.rs` is the ONE place an app-framework test process installs it.
+dregg-exec-lean = { path = "../exec-lean" }
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 
 [features]
 default = ["server"]

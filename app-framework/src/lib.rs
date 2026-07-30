@@ -119,6 +119,16 @@ pub mod transclude_affordance;
 pub mod vk;
 pub mod webgen;
 
+/// The verified-Lean settlement gate installer, shared with the integration binaries
+/// (`tests/support/mod.rs`) rather than a second copy that could drift. Every lib test that funds,
+/// fulfills, refunds or coordinates a ring calls it: `settle_ring_wide_verified` is FAIL-CLOSED
+/// without a registered `IntentVerifiedGate`. `dregg-exec-lean` is a `[dev-dependencies]` edge
+/// only — the framework itself stays FFI-free and a HOST installs the gate
+/// (`dreggnet_web::install_verified_settlement_gate`, `node/src/lib.rs`).
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
+
 /// Legacy module alias — `cipherclerk` was renamed to `cipherclerk`. This
 /// alias keeps `dregg_app_framework::cipherclerk::...` callers compiling
 /// during the migration. New code should reach for `cipherclerk`.

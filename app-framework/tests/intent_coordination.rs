@@ -24,6 +24,9 @@ use dregg_app_framework::ring_trade::{
     RingParticipant, RingTradeParticipant, Settlement,
 };
 
+mod support;
+use support::install_verified_settlement_gate;
+
 type AssetId = [u8; 32];
 
 const GALLERY_SLOT: AssetId = [0x5Au8; 32];
@@ -215,6 +218,7 @@ fn patron_id() -> CommitmentId {
 
 #[test]
 fn two_apps_coordinate_via_intent_and_settle_atomically() {
+    install_verified_settlement_gate();
     let mut gallery = Gallery {
         id: gallery_id(),
         slots: 1,
@@ -264,6 +268,7 @@ fn two_apps_coordinate_via_intent_and_settle_atomically() {
 
 #[test]
 fn unmatched_intent_refused_atomically_no_state_change() {
+    install_verified_settlement_gate();
     let mut gallery = Gallery {
         id: gallery_id(),
         slots: 1,
@@ -305,6 +310,7 @@ fn unmatched_intent_refused_atomically_no_state_change() {
 
 #[test]
 fn participant_failure_rolls_back_all_legs_no_partial_settlement() {
+    install_verified_settlement_gate();
     let mut gallery = Gallery {
         id: gallery_id(),
         slots: 1,
@@ -328,10 +334,16 @@ fn participant_failure_rolls_back_all_legs_no_partial_settlement() {
     };
 
     // The ring matched + conserved abstractly, but the app refused its leg.
-    assert!(matches!(
-        outcome,
-        Err(CoordinationError::ParticipantFailed { .. })
-    ));
+    // (A bare `assert!(matches!(…))` here printed only its own source text: when the
+    // verified gate was missing this failed with `NotConserving(FfiUnavailable(…))` and
+    // said nothing about it. Name what came back instead.)
+    match &outcome {
+        Err(CoordinationError::ParticipantFailed { .. }) => {}
+        other => panic!(
+            "the app's refusal must surface as ParticipantFailed (a clean, rolled-back \
+             abort); got {other:?}"
+        ),
+    }
 
     // ATOMIC: the gallery's slot debit (applied first) was rolled back. No app
     // is left in a half-settled state.
@@ -357,6 +369,7 @@ fn participant_failure_rolls_back_all_legs_no_partial_settlement() {
 
 #[test]
 fn failed_rollback_reports_unrecoverable_not_clean_abort() {
+    install_verified_settlement_gate();
     let mut gallery = RollbackFailGallery {
         id: gallery_id(),
         slots: 1,
@@ -417,6 +430,7 @@ fn failed_rollback_reports_unrecoverable_not_clean_abort() {
 
 #[test]
 fn verified_gate_rejects_a_non_conserving_ring() {
+    install_verified_settlement_gate();
     use dregg_app_framework::ring_trade::{VerifiedLeg, funded_ledger, settle_ring_verified};
 
     // A funded ledger for a single leg of 100 CREDIT from cell 1 → cell 2.
@@ -428,8 +442,10 @@ fn verified_gate_rejects_a_non_conserving_ring() {
     }];
     let k0 = funded_ledger(&legs);
 
-    // A well-formed single leg settles + conserves.
+    // HONEST POLE: a well-formed single leg settles, and the VALUE moves.
     let post = settle_ring_verified(&k0, &legs).expect("a funded, distinct, in-bounds leg settles");
+    assert_eq!(post.get(0x01, &CREDIT), 0, "sender debited");
+    assert_eq!(post.get(0x02, &CREDIT), 100, "receiver credited");
     assert_eq!(post.total_asset(&CREDIT), 100);
 
     // But a leg that tries to move MORE than the sender holds (under-funded by
@@ -441,6 +457,18 @@ fn verified_gate_rejects_a_non_conserving_ring() {
         amount: 1_000_000, // far beyond the 100 funded
     }];
     let err = settle_ring_verified(&k0, &overspend).unwrap_err();
-    // The leg is rejected (atomicity) — the ring never commits.
-    assert!(format!("{err}").contains("rejected") || format!("{err}").contains("leaked"));
+    // ⚠ NAME THE REASON, do not substring-match a Display. "…contains(\"rejected\")" was
+    // satisfiable only by a real refusal, but the sibling assertion in
+    // `agent_coordination` was not — and an absent gate produces `FfiUnavailable`,
+    // which means the overspend was never JUDGED. Demand leg 0's verified rejection.
+    assert!(
+        matches!(
+            err,
+            dregg_app_framework::ring_trade::VerifiedSettleError::LegRejected { index: 0, .. }
+        ),
+        "the verified executor must REJECT the overspending leg, not merely be absent; got {err:?}"
+    );
+    // And the pre-state is untouched — all-or-nothing, nothing half-settled.
+    assert_eq!(k0.get(0x01, &CREDIT), 100, "sender's funds untouched");
+    assert_eq!(k0.get(0x02, &CREDIT), 0, "receiver got nothing");
 }

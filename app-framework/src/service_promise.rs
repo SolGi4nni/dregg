@@ -753,6 +753,7 @@ pub fn fulfillment_proof(proven: &ProvenReceipt) -> ConditionProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::install_verified_settlement_gate;
 
     fn cid(b: u8) -> CommitmentId {
         CommitmentId([b; 32])
@@ -836,6 +837,7 @@ mod tests {
 
     #[test]
     fn fund_escrows_the_payment_conserved() {
+        install_verified_settlement_gate();
         let (exchange, promise, request, _) = sample();
         let m = exchange.match_one(&promise, &request).unwrap();
         let k0 = exchange.seed_ledger(&m, 100);
@@ -867,6 +869,7 @@ mod tests {
     /// escrow funds and conserves correctly.
     #[test]
     fn full_indexing_avoids_low_byte_collision() {
+        install_verified_settlement_gate();
         let mut c = [0u8; 32];
         c[0] = 0x07;
         c[1] = 0x01;
@@ -935,6 +938,7 @@ mod tests {
         WideLedger,
         ProvenReceipt,
     ) {
+        install_verified_settlement_gate();
         let service = ServiceId::of(CellId::from_bytes([0x5e; 32]), "render-report");
         let service_turn_hash = [0xAB; 32];
         let proven = dregg_turn_prover::mint_transfer_proven_receipt(service_turn_hash, 7);
@@ -964,14 +968,42 @@ mod tests {
     #[test]
     fn committed_state_forbids_refund_after_release() {
         let (exchange, mut escrow, k1, proven) = fund_one();
+        let pay = escrow.matched.payment_asset;
+        let consumer = escrow.matched.consumer.0;
+        let provider = escrow.matched.provider.0;
+        let escrow_acct = exchange.escrow.0;
+
+        // HONEST POLE, in this same process: the verified proof releases the held
+        // payment, and the VALUE really moves escrow -> provider.
+        assert_eq!(k1.get(escrow_acct, &pay), 100, "held before release");
         let proof = fulfillment_proof(&proven);
-        exchange
+        let k2 = exchange
             .fulfill(&mut escrow, &k1, &proof, 10)
             .expect("a verified proof releases");
+        assert_eq!(k2.get(provider, &pay), 100, "provider is paid");
+        assert_eq!(k2.get(escrow_acct, &pay), 0, "escrow drained");
+        assert_eq!(k2.get(consumer, &pay), 0, "consumer already paid in");
+        assert_eq!(k2.total_asset(&pay), 100, "conserved across the release");
 
         // The commitment moved (a light client sees the terminal state).
         let committed = CommittedEscrow::read(&escrow.escrow_cell).expect("binding");
         assert_eq!(committed.status, EscrowStatus::Released);
+
+        // REFUSAL POLE: the live escrow refuses the other exit, and refuses it by
+        // MOVING NOTHING — a refund here would double-spend the released payment.
+        assert_eq!(
+            exchange.refund(&mut escrow, &k2, 51),
+            Err(ServicePromiseError::AlreadySettled),
+            "a released escrow must refuse the refund exit"
+        );
+        assert_eq!(
+            k2.get(provider, &pay),
+            100,
+            "the refused refund moved nothing: provider still holds the payment"
+        );
+        assert_eq!(k2.get(consumer, &pay), 0, "consumer was not re-paid");
+        assert_eq!(k2.get(escrow_acct, &pay), 0);
+        assert_eq!(k2.total_asset(&pay), 100, "no value minted by the refusal");
 
         // RE-EXECUTION view: a validator holding ONLY the committed cell (no
         // orchestrator memory) finds the committed state refuses the refund exit.
@@ -990,13 +1022,48 @@ mod tests {
 
     #[test]
     fn committed_state_forbids_release_after_refund() {
-        let (exchange, mut escrow, k1, _) = fund_one();
-        exchange
+        let (exchange, mut escrow, k1, proven) = fund_one();
+        let pay = escrow.matched.payment_asset;
+        let consumer = escrow.matched.consumer.0;
+        let provider = escrow.matched.provider.0;
+        let escrow_acct = exchange.escrow.0;
+
+        // HONEST POLE, in this same process: the lapsed promise refunds, and the
+        // VALUE really moves escrow -> consumer.
+        assert_eq!(k1.get(escrow_acct, &pay), 100, "held before refund");
+        let k2 = exchange
             .refund(&mut escrow, &k1, 51)
             .expect("lapsed promise refunds");
+        assert_eq!(k2.get(consumer, &pay), 100, "consumer made whole");
+        assert_eq!(k2.get(escrow_acct, &pay), 0, "escrow drained");
+        assert_eq!(k2.get(provider, &pay), 0, "provider got nothing");
+        assert_eq!(k2.total_asset(&pay), 100, "conserved across the refund");
 
         let committed = CommittedEscrow::read(&escrow.escrow_cell).expect("binding");
         assert_eq!(committed.status, EscrowStatus::Refunded);
+
+        // REFUSAL POLE: a genuine, resolving proof presented AFTER the refund is
+        // refused — and moves nothing. (The proof itself is valid: it releases in
+        // `committed_state_forbids_refund_after_release`. What refuses it here is
+        // the taken one-shot, not a bad proof.)
+        let proof = fulfillment_proof(&proven);
+        assert_eq!(
+            exchange.fulfill(&mut escrow, &k2, &proof, 10),
+            Err(ServicePromiseError::AlreadySettled),
+            "a refunded escrow must refuse the release exit"
+        );
+        assert_eq!(
+            k2.get(consumer, &pay),
+            100,
+            "the refused release moved nothing: the consumer still holds the refund"
+        );
+        assert_eq!(
+            k2.get(provider, &pay),
+            0,
+            "provider was not paid twice over"
+        );
+        assert_eq!(k2.get(escrow_acct, &pay), 0);
+        assert_eq!(k2.total_asset(&pay), 100, "no value minted by the refusal");
 
         // RE-EXECUTION view: committed Refunded refuses the release exit.
         let mut replay = escrow.escrow_cell.clone();

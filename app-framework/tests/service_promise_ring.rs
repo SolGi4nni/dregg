@@ -26,6 +26,9 @@ use dregg_intent::exchange::AssetId;
 use dregg_turn::conditional::{ConditionProof, ProvenReceipt};
 use dregg_types::CellId;
 
+mod support;
+use support::install_verified_settlement_gate;
+
 fn cid(b: u8) -> CommitmentId {
     CommitmentId([b; 32])
 }
@@ -46,6 +49,7 @@ const SERVICE_TURN_HASH: [u8; 32] = [0xAB; 32];
 /// A cheap exchange + promise/request whose committed transition endpoints are
 /// arbitrary placeholders — for the refund path, which never verifies a proof.
 fn setup() -> (ServicePromiseExchange, ServicePromise, ServiceRequest) {
+    install_verified_settlement_gate();
     let exchange = ServicePromiseExchange::new(4, 0, cid(ESCROW), vec![]);
     let service = ServiceId::of(CellId::from_bytes([0x5e; 32]), "render-report");
     let promise = ServicePromise {
@@ -77,6 +81,7 @@ fn setup_proven() -> (
     ServiceRequest,
     ProvenReceipt,
 ) {
+    install_verified_settlement_gate();
     let proven = dregg_turn_prover::mint_transfer_proven_receipt(SERVICE_TURN_HASH, 7);
     let exchange = ServicePromiseExchange::new(4, 0, cid(ESCROW), vec![]);
     let service = ServiceId::of(CellId::from_bytes([0x5e; 32]), "render-report");

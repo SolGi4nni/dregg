@@ -468,6 +468,7 @@ fn round_digest(round_id: [u8; 32], fills: &[PromiseFill], moves: &[WideLeg]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::support::install_verified_settlement_gate;
 
     fn cid(b: u8) -> CommitmentId {
         CommitmentId([b; 32])
@@ -502,6 +503,7 @@ mod tests {
     /// needed; only the final settle hit the chain.
     #[test]
     fn two_agents_coordinate_and_settle_atomically() {
+        install_verified_settlement_gate();
         let a = cid(1); // the producer
         let b = cid(2); // the consumer who pipelines against A's promise
         let pay = asset(7);
@@ -567,6 +569,7 @@ mod tests {
     /// against both. One atomic settle commits the whole ring or none of it.
     #[test]
     fn three_agents_parallel_then_one_atomic_settle() {
+        install_verified_settlement_gate();
         let a = cid(1);
         let b = cid(2);
         let c = cid(3);
@@ -638,6 +641,7 @@ mod tests {
     /// fails, nothing settles.
     #[test]
     fn a_broken_promise_rolls_the_whole_round_back() {
+        install_verified_settlement_gate();
         let a = cid(1);
         let b = cid(2);
         let pay = asset(7);
@@ -683,6 +687,7 @@ mod tests {
     /// D too (the BrokenReason cascade), and nothing settles.
     #[test]
     fn broken_promise_propagates_downstream() {
+        install_verified_settlement_gate();
         let a = cid(1);
         let b = cid(2);
         let c = cid(3);
@@ -720,6 +725,7 @@ mod tests {
     /// commits.
     #[test]
     fn non_conserving_round_is_rejected_whole() {
+        install_verified_settlement_gate();
         let a = cid(1);
         let b = cid(2);
         let pay = asset(7);
@@ -739,7 +745,20 @@ mod tests {
         })];
 
         let err = coordinate(round(), legs, &k0).expect_err("overspend cannot conserve");
-        assert!(matches!(err, CoordinationError::NotConserving(_)));
+        // ⚠ NAME THE REASON. `NotConserving(_)` alone is satisfied by
+        // `FfiUnavailable("no verified gate registered")` — i.e. by a host that never
+        // installed the gate and therefore never JUDGED the overspend. This assertion
+        // demands the verified executor actually rejected leg 0.
+        assert!(
+            matches!(
+                err,
+                CoordinationError::NotConserving(VerifiedSettleError::LegRejected { index: 0, .. })
+            ),
+            "the verified executor must REJECT the overspending leg, not merely be absent; got {err:?}"
+        );
+        // And the round moved nothing (no post-ledger exists to move it into).
+        assert_eq!(k0.get(a.0, &pay), 10, "A's balance untouched");
+        assert_eq!(k0.get(b.0, &pay), 0, "B received nothing");
     }
 
     // ── Structural refusals ──
@@ -766,6 +785,7 @@ mod tests {
 
     #[test]
     fn round_hash_is_deterministic() {
+        install_verified_settlement_gate();
         let a = cid(1);
         let mk = || {
             vec![CoordinationLeg::new(a, "x", |_| {
