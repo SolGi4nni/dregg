@@ -300,9 +300,36 @@ def renderChallenges (p1 : Phase1) (ic : IpaChallenges) : String :=
     ++ ";t=" ++ toString ic.t ++ ";c=" ++ toString ic.cPre
     ++ ";ch=" ++ String.intercalate "," (ic.prechals.map toString)
 
-/-- **`minaWrapChallengesGate`** — THE GATE. -/
-def minaWrapChallengesGate (s : String) : String :=
-  match s.splitOn ";" with
+/-- A fully parsed wire — the ten fields, still flat. -/
+structure ChallengeWire where
+  /-- `vk` — the verifier-index digest. ⚑ TRUSTED CONFIG. -/
+  vk : Nat
+  /-- `er` — the Pallas `endo_r`. CONFIG. -/
+  er : Nat
+  /-- `pc` — the 2 accumulator commitments, flat. -/
+  pc : List Nat
+  /-- `pu` — `public_comm`'s (x, y). ⚑ The one argument that is not decodable. -/
+  pu : List Nat
+  /-- `wc` — the 15 witness commitments, flat. -/
+  wc : List Nat
+  /-- `zc` — `z_comm`'s (x, y). -/
+  zc : List Nat
+  /-- `tc` — the 7 `t_comm` chunks, flat. -/
+  tc : List Nat
+  /-- `cs` — `shift_scalar(combined_inner_product)`. ⚑ `expand_deferred`'s output. -/
+  cs : Nat
+  /-- `lr` — the opening's 15 rounds, FLAT (60 numbers). Re-chunked by [`absorbedOf`]. -/
+  lr : List Nat
+  /-- `dl` — `delta`'s (x, y). -/
+  dl : List Nat
+deriving Repr, DecidableEq
+
+/-- **`parseChallengeWire`** — the WHOLE parse, as ONE function of the split parts.
+
+⚑ Factored out for a proof obligation rather than for taste: see
+`challengesGate_is_the_derivation`. -/
+def parseChallengeWire (parts : List String) : Option ChallengeWire :=
+  match parts with
   | [v, e, pc, pu, wc, zc, tc, cs, lr, dl] =>
       match (parseField? "vk" v).bind String.toNat?,
             (parseField? "er" e).bind String.toNat?,
@@ -316,42 +343,64 @@ def minaWrapChallengesGate (s : String) : String :=
             (parseField? "dl" dl).bind parseNats? with
       | some vk, some er, some pcv, some puv, some wcv, some zcv, some tcv,
         some csv, some lrv, some dlv =>
-          match deriveWrapChallenges
-                  { vkDigest := vk, prevComm := pcv, pubComm := puv, wComm := wcv,
-                    zComm := zcv, tComm := tcv, cipShifted := csv,
-                    lr := chunk 4 lrv, delta := dlv, endoR := er } with
-          | some (p1, ic) => renderChallenges p1 ic
-          | none => "ERR"
-      | _, _, _, _, _, _, _, _, _, _ => "ERR"
-  | _ => "ERR"
+          some { vk, er, pc := pcv, pu := puv, wc := wcv, zc := zcv, tc := tcv,
+                 cs := csv, lr := lrv, dl := dlv }
+      | _, _, _, _, _, _, _, _, _, _ => none
+  | _ => none
+
+/-- The absorbed objects a parsed wire describes. ⚑ The flat `lr` is re-chunked HERE, not by the
+caller: a caller that chunks is a caller that can mis-chunk, and `openingWireOk` then refuses a short
+round list rather than deriving fifteen challenges from fourteen rounds. -/
+def absorbedOf (W : ChallengeWire) : WrapAbsorbed :=
+  { vkDigest := W.vk, prevComm := W.pc, pubComm := W.pu, wComm := W.wc, zComm := W.zc,
+    tComm := W.tc, cipShifted := W.cs, lr := chunk 4 W.lr, delta := W.dl, endoR := W.er }
+
+/-- The derivation on a parsed wire, rendered. Nothing else in this file decides. -/
+def renderFromWire (W : ChallengeWire) : String :=
+  match deriveWrapChallenges (absorbedOf W) with
+  | some (p1, ic) => renderChallenges p1 ic
+  | none => "ERR"
+
+/-- **`minaWrapChallengesGate`** — THE GATE. One scrutinee; every refusal is inside the parse or
+inside `deriveWrapChallenges`' shape gate. -/
+def minaWrapChallengesGate (s : String) : String :=
+  match parseChallengeWire (s.splitOn ";") with
+  | some W => renderFromWire W
+  | none => "ERR"
 
 /-- **THE EXPORT.** `@[export dregg_mina_wrap_challenges]`. Rust decodes binprot to numbers and
 hands them over; the ARCHIVE runs the transcript. There is no Rust sponge to drift. -/
 @[export dregg_mina_wrap_challenges]
 def dregg_mina_wrap_challenges (s : String) : String := minaWrapChallengesGate s
 
-/-- The gate string IS the derivation — no second decision on the string path. -/
-theorem challengesGate_is_the_derivation (s : String) (v e pc pu wc zc tc cs lr dl : String)
-    (vk er csv : Nat) (pcv puv wcv zcv tcv lrv dlv : List Nat)
-    (hs : s.splitOn ";" = [v, e, pc, pu, wc, zc, tc, cs, lr, dl])
-    (h1 : (parseField? "vk" v).bind String.toNat? = some vk)
-    (h2 : (parseField? "er" e).bind String.toNat? = some er)
-    (h3 : (parseField? "pc" pc).bind parseNats? = some pcv)
-    (h4 : (parseField? "pu" pu).bind parseNats? = some puv)
-    (h5 : (parseField? "wc" wc).bind parseNats? = some wcv)
-    (h6 : (parseField? "zc" zc).bind parseNats? = some zcv)
-    (h7 : (parseField? "tc" tc).bind parseNats? = some tcv)
-    (h8 : (parseField? "cs" cs).bind String.toNat? = some csv)
-    (h9 : (parseField? "lr" lr).bind parseNats? = some lrv)
-    (h10 : (parseField? "dl" dl).bind parseNats? = some dlv) :
-    minaWrapChallengesGate s =
-      (match deriveWrapChallenges
-               { vkDigest := vk, prevComm := pcv, pubComm := puv, wComm := wcv, zComm := zcv,
-                 tComm := tcv, cipShifted := csv, lr := chunk 4 lrv, delta := dlv, endoR := er } with
-       | some (p1, ic) => renderChallenges p1 ic
-       | none => "ERR") := by
+/-- **The gate string IS `renderFromWire` of the parse** — the string layer adds no arm.
+
+⚑ One scrutinee, one rewrite. A gate that matched on the ten parts and then again on ten parsed
+fields cannot be welded in a rewrite at all: the outer matcher does not iota-reduce, so the inner
+scrutinees stay buried and the second rewrite finds nothing. That is why the parse is a separate
+function, and it is the shape `MinaForkChoiceGate.minaBetterTipGate_eq_decision` uses. -/
+theorem challengesGate_is_the_derivation (s : String) (W : ChallengeWire)
+    (hp : parseChallengeWire (s.splitOn ";") = some W) :
+    minaWrapChallengesGate s = renderFromWire W := by
   unfold minaWrapChallengesGate
-  rw [hs, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10]
+  rw [hp]
+
+/-- …and `renderFromWire` IS `deriveWrapChallenges`, rendered — with the flat `lr` re-chunked HERE
+rather than by a caller, because a caller that chunks is a caller that can mis-chunk.
+
+Chained with the theorem above: the exported symbol runs `deriveWrapChallenges` on
+`absorbedOf` the parse and nothing else, so §3's shape refusals are refusals of the thing Rust
+actually calls. -/
+theorem renderFromWire_is_deriveWrapChallenges (W : ChallengeWire) :
+    renderFromWire W =
+      (match deriveWrapChallenges (absorbedOf W) with
+       | some (p1, ic) => renderChallenges p1 ic
+       | none => "ERR") := rfl
+
+/-- The re-chunking really is the gate's, and it is the `lr` field that feeds it. -/
+theorem absorbedOf_chunks_the_flat_lr (W : ChallengeWire) :
+    (absorbedOf W).lr = chunk 4 W.lr ∧ (absorbedOf W).pubComm = W.pu
+    ∧ (absorbedOf W).cipShifted = W.cs := ⟨rfl, rfl, rfl⟩
 
 /-! ### §4b — the wire REFUSES. Compiled, milliseconds. -/
 
@@ -380,6 +429,8 @@ theorem chunk_is_exact :
 #assert_axioms opening_shape_discriminates
 #assert_axioms chunk_is_exact
 #assert_axioms challengesGate_is_the_derivation
+#assert_axioms renderFromWire_is_deriveWrapChallenges
+#assert_axioms absorbedOf_chunks_the_flat_lr
 
 #print axioms phase1_shape_discriminates
 #print axioms challengesGate_is_the_derivation

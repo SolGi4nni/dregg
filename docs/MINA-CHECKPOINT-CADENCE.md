@@ -1,8 +1,17 @@
 # Verifying Mina at a checkpoint cadence — what it costs, and what a longer one loses
 
-**Status 2026-07-30.** The design and the code are landed and **UNBUILT**; the numbers below are a
-mixture of measurements (marked) and predictions with named falsifiers (also marked). The build
-request that turns the predictions into measurements is at the end.
+**Status 2026-07-30, after the coordinator's first build run.** Build attempt 1 elaborated the three
+Lean modules and **failed on three gate-rendering welds only** — `rewrite` could not find its pattern
+because a two-level `match` does not iota-reduce under `rw`, and Lean inserted `sorryAx` to recover.
+The axiom-hygiene check named those three theorems and **no others**, so the safety theorems below
+(`provisional_never_ratchets`, `runSteps_finalized_monotone`,
+`a_checkpointless_run_finalizes_nothing`) **elaborated clean in that run**. Build attempt 2 is
+pending; the three welds have been restructured to a single-scrutinee shape and the 40-ladder kernel
+`decide` demoted to a `#guard`.
+
+Read the verbs literally. **Elaborated clean** = seen by a build. **States** = written and not yet
+seen by a build. **Predicted** = arithmetic from a measured figure, with the falsifier named. The
+cadence result rests only on measured protocol constants and on the first two.
 
 ---
 
@@ -17,7 +26,8 @@ So a client does not need per-block verification at Mina's 180 s block cadence. 
 **latency and liveness, not safety** — provided nothing a longer cadence leaves unverified can move
 the finalized point.
 
-That proviso is a theorem rather than a convention. `Dregg2.Bridge.MinaCheckpoint`:
+That proviso is a theorem rather than a convention — and these three **elaborated clean** in the
+coordinator's build run. `Dregg2.Bridge.MinaCheckpoint`:
 
 * `provisional_never_ratchets` — a between-checkpoint step is *definitionally* unable to touch the
   verified head;

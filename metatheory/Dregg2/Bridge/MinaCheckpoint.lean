@@ -430,69 +430,124 @@ def decodeSides (parts : List String) : Option Sides :=
       | _, _, _, _, _, _, _, _ => none
   | _ => none
 
-/-- **`minaCheckpointGate`** — THE GATE. -/
-def minaCheckpointGate (s : String) : String :=
-  match s.splitOn ";" with
+/-- A fully parsed wire. ⚑ `checkpoint` is a `Bool`, not the raw `"p"`/`"c"` string: the DECISION
+below must never match on a string, so the mode's refusal happens once, in [`parseMode?`], and the
+rendering is a plain `if`. -/
+structure CheckpointWire where
+  /-- `true` = a CHECKPOINT call, `false` = provisional. -/
+  checkpoint : Bool
+  /-- The Wrap ARITHMETIC verdict. Read only on a checkpoint call. -/
+  wrapOk : Bool
+  /-- The persisted finalized height. -/
+  finalized : Nat
+  /-- The persisted provisional run. -/
+  run : Nat
+  /-- The run cap. -/
+  runCap : Nat
+  /-- The four decoded sides. -/
+  sides : Sides
+
+/-- `md` — the ONLY place a mode string is interpreted. Anything but `"p"`/`"c"` is a refusal. -/
+def parseMode? (s : String) : Option Bool :=
+  if s == "p" then some false else if s == "c" then some true else none
+
+/-- **`parseCheckpointWire`** — the WHOLE parse, as ONE function of the split parts.
+
+⚑ Factored out deliberately, and the reason is a proof obligation rather than taste: a gate whose
+body matches on the parts and then again on six parsed fields cannot be welded to its decision in one
+rewrite — the outer matcher does not iota-reduce and the inner scrutinees stay buried. One scrutinee,
+one rewrite, is the shape `MinaForkChoiceGate.minaBetterTipGate_eq_decision` uses and it is the shape
+that makes `checkpointGate_renders_the_roll` a two-line proof instead of a `sorry`. -/
+def parseCheckpointWire (parts : List String) : Option CheckpointWire :=
+  match parts with
   | m :: w :: z :: n :: r :: rest =>
-      match parseField? "md" m,
+      match (parseField? "md" m).bind parseMode?,
             (parseField? "wk" w).bind parseBit?,
             (parseField? "fz" z).bind String.toNat?,
             (parseField? "rn" n).bind String.toNat?,
             (parseField? "rc" r).bind String.toNat?,
             decodeSides rest with
       | some md, some wk, some fz, some rn, some rc, some S =>
-          if md != "p" && md != "c" then "ERR" else
-          let h : CheckpointHead :=
-            { verified := { cs := S.ver.consensus, hash := S.vh, finalized := fz }
-              tipCs := S.tip.consensus, tipHash := S.th, run := rn }
-          -- ⚑ The cheap verdict is computed HERE, from the decoded parent and candidate, and the
-          -- candidate's own `previous_state_hash`. Rust supplies no `ok` bit: it would be a carrier
-          -- for a decision, and this is where the decision lives.
-          let ok := cheapOk mainnet S.ph S.parent.consensus S.cand.consensus
-                      S.cand.previousStateHash
-          let h' := if md == "p" then provisionalRoll rc h ok S.cand.consensus S.ch
-                    else checkpointRoll h wk ok S.cand.consensus S.ch
-          let moved := if h'.tipHash == h.tipHash && h'.tipCs == h.tipCs then "0" else "1"
-          let adv := if h'.verified == h.verified then "0" else "1"
-          "mv=" ++ moved ++ ";adv=" ++ adv ++ ";fin=" ++ toString h'.verified.finalized
-            ++ ";rn=" ++ toString h'.run
-      | _, _, _, _, _, _ => "ERR"
-  | _ => "ERR"
+          some { checkpoint := md, wrapOk := wk, finalized := fz, run := rn, runCap := rc,
+                 sides := S }
+      | _, _, _, _, _, _ => none
+  | _ => none
+
+/-- The persisted head the wire describes. -/
+def headOf (W : CheckpointWire) : CheckpointHead :=
+  { verified := { cs := W.sides.ver.consensus, hash := W.sides.vh, finalized := W.finalized }
+    tipCs := W.sides.tip.consensus, tipHash := W.sides.th, run := W.run }
+
+/-- ⚑ **THE CHEAP VERDICT, COMPUTED HERE** — from the decoded parent, the decoded candidate and the
+candidate's own `previous_state_hash`. Rust supplies no `ok` bit: a bit Rust computed and handed over
+would be a carrier for a decision, and this is where the decision lives. -/
+def okOf (W : CheckpointWire) : Bool :=
+  cheapOk mainnet W.sides.ph W.sides.parent.consensus W.sides.cand.consensus
+    W.sides.cand.previousStateHash
+
+/-- Render one roll: what moved, what advanced, the new ratchet and the new run. -/
+def renderStep (h h' : CheckpointHead) : String :=
+  "mv=" ++ (if h'.tipHash == h.tipHash && h'.tipCs == h.tipCs then "0" else "1")
+    ++ ";adv=" ++ (if h'.verified == h.verified then "0" else "1")
+    ++ ";fin=" ++ toString h'.verified.finalized ++ ";rn=" ++ toString h'.run
+
+/-- **`renderRoll`** — the decision on a parsed wire. Nothing else in this file decides. -/
+def renderRoll (W : CheckpointWire) : String :=
+  let h := headOf W
+  let ok := okOf W
+  let h' := if W.checkpoint then checkpointRoll h W.wrapOk ok W.sides.cand.consensus W.sides.ch
+            else provisionalRoll W.runCap h ok W.sides.cand.consensus W.sides.ch
+  renderStep h h'
+
+/-- **`minaCheckpointGate`** — THE GATE. One scrutinee; every refusal is inside the parse. -/
+def minaCheckpointGate (s : String) : String :=
+  match parseCheckpointWire (s.splitOn ";") with
+  | some W => renderRoll W
+  | none => "ERR"
 
 /-- **THE EXPORT.** `@[export dregg_mina_checkpoint_advance]` — the C-ABI entry `dregg-lean-ffi`
 splices. Rust hex-encodes four protocol states and a Wrap verdict; the ARCHIVE decides. -/
 @[export dregg_mina_checkpoint_advance]
 def dregg_mina_checkpoint_advance (s : String) : String := minaCheckpointGate s
 
-/-- The gate string IS the roll, by construction — no second decision on the string path.
+/-- **The gate string IS `renderRoll` of the parse** — the string layer adds no arm.
 
 Stated the way `MinaForkChoiceGate.minaBetterTipGate_eq_decision` is: hypothesise the PARSE and
-conclude about the DECISION, rather than trying to reduce 6 KB of hex in a proof term. What it buys
-is that the string layer adds no arm — every `minaCheckpointGate` answer that is not `"ERR"` is a
-rendering of `provisionalRoll`/`checkpointRoll` on the decoded sides, with the cheap verdict
-computed HERE from the decoded parent and never supplied by the caller. -/
-theorem checkpointGate_renders_the_roll (s : String) (md w z n r : String) (rest : List String)
-    (mdv : String) (wk : Bool) (fz rn rc : Nat) (S : Sides)
-    (hs : s.splitOn ";" = md :: w :: z :: n :: r :: rest)
-    (hmd : parseField? "md" md = some mdv)
-    (hwk : (parseField? "wk" w).bind parseBit? = some wk)
-    (hfz : (parseField? "fz" z).bind String.toNat? = some fz)
-    (hrn : (parseField? "rn" n).bind String.toNat? = some rn)
-    (hrc : (parseField? "rc" r).bind String.toNat? = some rc)
-    (hS : decodeSides rest = some S) :
-    minaCheckpointGate s =
-      (if mdv != "p" && mdv != "c" then "ERR" else
-        let h : CheckpointHead :=
-          { verified := { cs := S.ver.consensus, hash := S.vh, finalized := fz }
-            tipCs := S.tip.consensus, tipHash := S.th, run := rn }
-        let ok := cheapOk mainnet S.ph S.parent.consensus S.cand.consensus S.cand.previousStateHash
-        let h' := if mdv == "p" then provisionalRoll rc h ok S.cand.consensus S.ch
-                  else checkpointRoll h wk ok S.cand.consensus S.ch
-        "mv=" ++ (if h'.tipHash == h.tipHash && h'.tipCs == h.tipCs then "0" else "1")
-          ++ ";adv=" ++ (if h'.verified == h.verified then "0" else "1")
-          ++ ";fin=" ++ toString h'.verified.finalized ++ ";rn=" ++ toString h'.run) := by
+conclude about the DECISION, rather than trying to reduce 6 KB of hex in a proof term. -/
+theorem checkpointGate_renders_the_roll (s : String) (W : CheckpointWire)
+    (hp : parseCheckpointWire (s.splitOn ";") = some W) :
+    minaCheckpointGate s = renderRoll W := by
   unfold minaCheckpointGate
-  rw [hs, hmd, hwk, hfz, hrn, hrc, hS]
+  rw [hp]
+
+/-- …and `renderRoll` IS the roll: `checkpointRoll` on a checkpoint call, `provisionalRoll`
+otherwise, over the head the wire describes and the cheap verdict the gate itself computed.
+
+Chained with the theorem above, this says the exported symbol renders `provisionalRoll` /
+`checkpointRoll` and nothing else — so every property §3 states about those two functions is a
+property of the thing Rust actually calls. -/
+theorem renderRoll_is_the_roll (W : CheckpointWire) :
+    renderRoll W = renderStep (headOf W)
+      (if W.checkpoint then
+         checkpointRoll (headOf W) W.wrapOk (okOf W) W.sides.cand.consensus W.sides.ch
+       else
+         provisionalRoll W.runCap (headOf W) (okOf W) W.sides.cand.consensus W.sides.ch) := rfl
+
+/-- ⚑ **THE MODE IS THE ONLY THING THAT SELECTS A TIER**, and it is a `Bool` by the time the
+decision sees it — so no string comparison sits between the wire and the roll. -/
+theorem the_mode_selects_the_tier (W : CheckpointWire) :
+    (W.checkpoint = false → renderRoll W = renderStep (headOf W)
+        (provisionalRoll W.runCap (headOf W) (okOf W) W.sides.cand.consensus W.sides.ch))
+    ∧ (W.checkpoint = true → renderRoll W = renderStep (headOf W)
+        (checkpointRoll (headOf W) W.wrapOk (okOf W) W.sides.cand.consensus W.sides.ch)) := by
+  constructor <;> intro h <;> rw [renderRoll_is_the_roll, h] <;> rfl
+
+/-- `parseMode?` refuses anything but the two modes — the refusal that used to be a `!=` chain
+inside the decision. -/
+theorem parseMode_refuses_everything_else :
+    parseMode? "p" = some false ∧ parseMode? "c" = some true
+    ∧ parseMode? "x" = none ∧ parseMode? "" = none ∧ parseMode? "P" = none := by
+  decide
 
 /-! ### §5b — the wire REFUSES.
 
@@ -530,6 +585,9 @@ state are all `"ERR"` — a refusal, never a verdict computed from what did arri
 #assert_axioms link_discriminates
 #assert_axioms both_tiers_discriminate
 #assert_axioms checkpointGate_renders_the_roll
+#assert_axioms renderRoll_is_the_roll
+#assert_axioms the_mode_selects_the_tier
+#assert_axioms parseMode_refuses_everything_else
 
 #print axioms runSteps_finalized_monotone
 #print axioms provisional_never_ratchets

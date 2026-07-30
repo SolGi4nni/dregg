@@ -73,6 +73,12 @@ mechanical, and `DeferredWords` is the exact interface the next lane fills.
   * `publicCommOf` at the pinned words IS `MinaWrapPublicCommGate.publicComm`, definitionally — so
     parameterising the MSM did not change the object rung 5e proved.
 
+**COMPILED (`#guard`), not kernel — and the split is deliberate:** that moving word 12 moves the
+commitment. That was written `by decide` and FAILED: one 40-ladder MSM is not a kernel proof term at
+this file's option budget, and buying it would cost ~15 s for an INSTANCE. `MinaStateHashWordGate`
+states the rule this follows — *the kernel's job is the CHECKER, the differential's job is the
+INSTANCE* — and rung 5e already carries the kernel-side identity.
+
 **A STATED READING, not a measurement — and the falsifier is named:** that the 34 non-deferred slots
 carry the wire fields this table names, *for slots other than 11 and 12*. This lane did not run the
 extractor. `WIRE_539508` below is projected OUT of `PUBLIC_INPUT` at the slots claimed, so the
@@ -329,23 +335,30 @@ theorem publicInputWords_reads_every_field :
 
 /-! ## §4 — the MSM moves with the words.
 
-`publicCommOf` is 40 × 255-bit RCB ladders; at the kernel unit rung 5e measured (0.19 s/ladder) that
-is ~15 s per instance, which is why exactly ONE tamper is exhibited in the kernel here. The per-block
-path does not run any of this in the kernel — see `Dregg2.Bridge.MinaWrapChallenges`. -/
+`publicCommOf` is 40 × 255-bit RCB ladders. At rung 5e's measured kernel unit (0.19 s/ladder) that is
+~15 s per instance as a PROOF TERM, and the two pins below were written that way and failed; they run
+in the COMPILED evaluator instead, in milliseconds. The per-block path runs none of this in the
+kernel either — see `Dregg2.Bridge.MinaWrapChallenges`. -/
 
 /-- ⚑ **A CHANGED WORD 12 CHANGES THE COMMITMENT.** So the served header is not merely *present* in
 the preimage of slot 12; it reaches the point the transcript absorbs, and therefore every challenge
 that descends from it. This is the one link that makes a re-labelled header falsifiable at all.
 
-⚑ COST, stated: this is ONE 40-ladder instance in the kernel — ~15 s by rung 5e's measured
-0.19 s/ladder unit (`MinaWrapPublicCommGate` paid 159 s for nine of them). Exactly one tamper is
-exhibited here for that reason; the per-block path runs none of this in the kernel. Compared with
-`projEqM` rather than tuple inequality, because these are PROJECTIVE points and `(x, y, 1)` vs
-`(2x, 2y, 2)` is the same point. -/
-theorem the_commitment_moves_with_the_header :
-    projEqM pN (publicCommOf (PUBLIC_INPUT.set 12 (B539508.word12Gold + 1)))
-      PUBLIC_COMM_GOLD = false := by
-  decide
+⚑ **A `#guard`, and the demotion is the point.** This was `by decide` and it FAILED — one 40-ladder
+MSM is not a kernel proof term at this file's option budget, and raising `maxHeartbeats` to buy it
+would be paying ~15 s (rung 5e's measured 0.19 s/ladder × 40) for an INSTANCE. That is precisely the
+split `MinaStateHashWordGate` states in its own header: *the kernel's job is the CHECKER, the
+differential's job is the INSTANCE.* Rung 5e already carries the kernel-side identity
+(`publicComm_reproduces_kimchi`); this is a real-data pin and real-data pins here are compiled.
+
+Compared with `projEqM` rather than tuple inequality, because these are PROJECTIVE points and
+`(x, y, 1)` vs `(2x, 2y, 2)` is the same point. -/
+#guard projEqM pN (publicCommOf (PUBLIC_INPUT.set 12 (B539508.word12Gold + 1)))
+         PUBLIC_COMM_GOLD == false
+
+/-- …and the untampered words DO reproduce the gold, so the `#guard` above is a discrimination and
+not a function that returns `false` on everything. -/
+#guard projEqM pN (publicCommOf PUBLIC_INPUT) PUBLIC_COMM_GOLD == true
 
 /-! ## §5 — THE RESIDUAL, stated so it cannot be mistaken for done.
 
@@ -381,7 +394,6 @@ def expandDeferred (e : WrapEvals) : DeferredWords := …
 #assert_axioms the_tail_is_padding_and_branch_data
 #assert_axioms the_two_zeta_powers_coincide_and_only_they_do
 #assert_axioms publicInputWords_reads_every_field
-#assert_axioms the_commitment_moves_with_the_header
 
 #print axioms the_width_signature_partitions_the_slots
 #print axioms the_header_words_land_where_the_layout_says
