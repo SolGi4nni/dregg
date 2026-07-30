@@ -739,17 +739,40 @@ async function main() {
   //  bent sibling CORRECTLY, and have that accept read as a failed falsifier.
   //  The uniform-walk lane MEASURED it in its own splice suite: at `block7` a
   //  bent sibling was accepted because the first closing root is three cuts on
-  //  at `block9`, and of 43 block positions 25 carry `aux` while only 16 close
-  //  a root.
+  //  at `block9`.
+  //
+  //  ⚑ AND "REQUIRES A CLOSER" IS NOT THE FIX EITHER — that rule still passes a
+  //  bad cut, and the uniform lane measured it being wrong at TWO positions for
+  //  TWO different reasons:
+  //
+  //    * `block7` — NO closer at all after the aux segment. The bend is
+  //      correctly accepted because nothing downstream in the slice closes over
+  //      it.
+  //    * `block9` — HAS a closer, but it closes the PREVIOUS round, before any
+  //      of this slice's own siblings are consumed. The cut looks valid under
+  //      "requires a closer" and still tests nothing about the siblings it
+  //      carries.
+  //
+  //  ⚑ THE CORRECTED RULE: the cut requires a SAME-ROUND closer POSITIONED
+  //  AFTER the first aux segment. Measured on the uniform walk, 25 of 43 block
+  //  positions carry `aux` and only 16 satisfy that — more than a third of the
+  //  positions that LOOK like valid cut points are not.
   //
   //  ⚑ AND BOTH OBVIOUS HANDLINGS ARE WRONG, which is why this is a flag and
   //  not a quick patch: asserting the refusal is a FALSE RED (the bend genuinely
   //  cannot be caught at that cut), and dropping the attempt is an ABSENT
-  //  FALSIFIER READING AS A PASS. The uniform lane's fix is THREE-VALUED — the
-  //  cut must contain a CLOSER, and at an aux-only cut `auxBent` is reported
-  //  NOT ATTRIBUTABLE with its reason rather than asserted or skipped. Whoever
-  //  next edits this table should carry that treatment across; leg 21 (the claim
-  //  carry) touched neither the cut rule nor the splice table and did not.
+  //  FALSIFIER READING AS A PASS. The fix is THREE-VALUED — refused / accepted /
+  //  NOT ATTRIBUTABLE, with the reason — and the third state is the honest one.
+  //  Both of those ACCEPTs were CORRECT BEHAVIOUR BY THE CIRCUIT; the harness
+  //  was wrong about where it could test. That is the distinction to carry: a
+  //  falsifier applied where the closing assertion is absent, or belongs to a
+  //  different round, reads as a pass and proves nothing.
+  //
+  //  Whoever next edits this table should carry that treatment across. Leg 21
+  //  (the claim carry) touched neither the cut rule nor this splice table; its
+  //  own accept/refuse table does not select a cut at all — it PLACES the seal
+  //  and the read it closes over in the same slice body, so the falsifier and
+  //  its closer are co-located by construction rather than by a heuristic.
   let AT = Math.min(1, N - 1);
   for (let si = N - 1; si >= 0; si--) {
     const sl = c.plan.slices[si];
