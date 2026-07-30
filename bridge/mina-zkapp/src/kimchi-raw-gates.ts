@@ -36,8 +36,24 @@ export type GenericCoefficients = {
 
 export type GenericInputs = { left: Field; right: Field; out: Field };
 
+/** The six 12-bit plookup/copy limbs of a `RangeCheck0` row (columns 1..6). */
+export type Rc0Limbs12 = [Field, Field, Field, Field, Field, Field];
+/** The eight 2-bit crumbs of a `RangeCheck0` row (columns 7..14). */
+export type Rc0Limbs2 = [Field, Field, Field, Field, Field, Field, Field, Field];
+
 type RawGates = {
   generic: (c: GenericCoefficients, i: GenericInputs) => void;
+  /** `range_check/gadget.rs:63-69` — one standalone row, `isCompact = false`. The
+   *  GROUP-4 commitment emission needs this because a range check is not a generic
+   *  sub-gate: `RangeCheck0` is its own gate with its own ten bodies, and
+   *  `KimchiTarget.rc0Bodies` transcribes exactly those. */
+  rangeCheck0: (
+    x: Field,
+    xLimbs12: Rc0Limbs12,
+    xLimbs2: Rc0Limbs2,
+    isCompact: boolean
+  ) => void;
+  zero: (a: Field, b: Field, c: Field) => void;
 };
 
 const O1JS_GATES_REL = 'node_modules/o1js/dist/node/lib/provable/gates.js';
@@ -61,17 +77,21 @@ const gatesModule = (await import(pathToFileURL(findGatesModule()).href)) as {
   Gates?: RawGates;
 };
 
-if (typeof gatesModule.Gates?.generic !== 'function') {
-  throw new Error(
-    'route-B transcriber: o1js internal gates module has no `Gates.generic`. ' +
-      'The pin is o1js 2.15.0; refusing rather than emitting a different circuit.'
-  );
+for (const name of ['generic', 'rangeCheck0', 'zero'] as const) {
+  if (typeof gatesModule.Gates?.[name] !== 'function') {
+    throw new Error(
+      `route-B transcriber: o1js internal gates module has no \`Gates.${name}\`. ` +
+        'The pin is o1js 2.15.0; refusing rather than emitting a different circuit.'
+    );
+  }
 }
 
 export const RawGates: RawGates = gatesModule.Gates;
 
 export function assertRawGatesAvailable(): void {
-  if (typeof RawGates.generic !== 'function') {
-    throw new Error('route-B transcriber: raw generic gate unavailable');
+  for (const name of ['generic', 'rangeCheck0', 'zero'] as const) {
+    if (typeof RawGates[name] !== 'function') {
+      throw new Error(`route-B transcriber: raw ${name} gate unavailable`);
+    }
   }
 }
