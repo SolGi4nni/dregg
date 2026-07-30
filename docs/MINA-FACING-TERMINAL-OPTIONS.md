@@ -160,17 +160,178 @@ does not touch — so the challenge field is still the binding constraint.
 same reason read the other way. The ~127-bit conclusion §3 drew is right; the
 input was not.
 
-⚠ **What is not done, and it is the reason none of the row counts above are
+~~⚠ **What is not done, and it is the reason none of the row counts above are
 deployed numbers:** the o1js verifier still hashes Poseidon2-BabyBear
 (`Poseidon2Merkle.ts`). §7 step 5 is untouched. dregg can now MINT a Mina-native
 proof; nothing on Mina consumes one. **A config that nothing consumes is a lever
-built, not pulled.**
+built, not pulled.**~~ **PULLED — §0.2.**
 
 ⚠ And one residual the soundness section names rather than buries: the Pasta ROM
 idealization is named in-tree on the **Pickles** side
 (`PicklesTranscriptBinding`'s `SpongeKeyedROFaithful`). Nothing points it at the
 FRI/MMCS carrier sites the way `Poseidon2RomInstantiation` is pointed at the
 BabyBear ones. An unconnected leg, not a hole.
+
+---
+
+## 0.2 ⚑ THE LEVER IS PULLED — the o1js side CONSUMES a Pasta-hashed proof
+
+**2026-07-30, later still.** §7 **step 5 is done**. The o1js verifier is no
+longer a BabyBear verifier: the hash is a **parameter**, both suites are
+implemented, and a real `DreggMinaConfig` proof is consumed, proved and
+verified. Every number in this section is measured by a script named beside it.
+
+### The shape of the change, which matters more than the Pasta files
+
+The obvious way to verify a second hash is a second copy of the walk with the
+hash calls swapped. That is the failure class this repo keeps paying for — two
+shapes that agree today — and the things that would have been fixed once and
+forgotten once are the DEEP quotient, the roll-in schedule, the transcript
+ORDER and the AIR closing equality. So:
+
+| file | what it is |
+|---|---|
+| `src/HashSuiteType.ts` | the interface. **No runtime imports**, which is structural: `FriQueryStep` needs the Merkle half and `FriChallenger` needs `FriQueryStep`, so a combined record would close that loop. Split into `MerkleSuite` + `HashSuite`. |
+| `src/PastaMmcs.ts` | `PastaDigest` (ONE native `Field`), `compress = Poseidon.hash([l,r])`, the `MultiField32PaddingFreeSponge` leaf hash. |
+| `src/PastaChallenger.ts` | `MultiField32Challenger<BabyBear, PastaFp, _, 3, 2>` in circuit — the hard half. |
+| `src/HashSuites.ts` | the two assembled suites, and `suiteByName`, which **refuses** an unknown hash rather than defaulting. |
+
+`DreggProofVerify`'s query walk, transcript derivation, DEEP quotient, fold
+chain and AIR closing equality are **unchanged** and take a `HashSuite`.
+`FriQueryStep.commitPhaseRound` / `verifyQuery` take one, defaulting to
+BabyBear, so every measured row count in this arc is untouched. The Pasta path
+runs that code.
+
+### The transcript is the hard half, and the squeeze is where a prover attacks
+
+Swapping the Merkle hash replaces one 2,600-row emulated permutation with one
+13-row native gate chain and changes nothing else. The transcript is a
+different **state machine**: it PACKS BabyBear into Pasta to absorb and SPLITS
+Pasta back into BabyBear to squeeze.
+
+`split_pf_to_field_order_limbs(v, 7)` decomposes over the **integers**. In
+circuit the linear relation `v == Σ cᵢ·pⁱ + r·p⁷` holds for a whole **orbit** of
+decompositions — shift by `p_Pasta` and it still satisfies — and each is a
+different challenge set. So the limbs are pinned by the four-part argument
+`chain/gnark/multifield_challenger.go` already makes for the ETH wrap's BN254
+twin: **(a)** every limb canonical `< p_BabyBear` (strictly stronger than the
+deployed lane check), **(b)** `r < 2^38`, **(c)** the recomposition, **(d)** a
+lexicographic bound against the base-`p` digits of `p_Pasta − 1`. Without (d) a
+prover chooses its own FRI query indices out of a perfectly honest sponge.
+
+⚑ **And that is watched, not documented.** `pinSplitHint` takes the hint as an
+ARGUMENT — a function that witnesses its own inputs cannot be shown to refuse a
+dishonest one — so `pasta-hash-differential.ts` CONSTRUCTS the wrapped
+decomposition, shows it satisfies (a)(b)(c) and yields different challenges, and
+requires the circuit to REFUSE it, then to ACCEPT the honest decomposition of
+the same value.
+
+### The differential ran first — `npm run pasta-differential`
+
+Against `pasta-mmcs-emit`, which calls the real p3 objects:
+
+- **every** row width 1..48 × 2 rows: 336 packed rate slots and 96 leaf digests.
+  Not a sample — 1..48 covers every partial-SLOT and partial-BLOCK position
+  three times, and the partial block is where a reader goes wrong (p3 leaves an
+  unwritten rate slot **holding its previous value**, while the challenger's
+  absorb zero-fills and adds a length tag);
+- the two packs are shown to be **different functions**: `reduce_packed_shifted`
+  distinguishes `[1,2]` from `[1,2,0]`, `reduce_packed` **collides** them;
+- 5 leaf indices × depth 12, every node and root; `compress(l,r) ≠ compress(r,l)`.
+
+### Consumed — `npm run pasta-verify`
+
+A proof minted by `circuit-prove/src/bin/mina_pasta_stark_fixture.rs`, which
+`p3_uni_stark::verify` accepts before a byte is emitted.
+
+- the trace commitment is a **254-bit** Pasta element (a BabyBear digest word is
+  always ≤ 31 — a runtime canary, not only a type pin);
+- **the transcript, permutation by permutation.** The emitter records p3's own
+  sponge state after every permutation plus every observe/sample event; the o1js
+  twin matches at each one — 11 and 12 permutations on the honest fixtures and
+  on all **seven bent ones**. Checked first and out of circuit, because a
+  transcript wrong in the fourth permutation compiles, proves, and produces a
+  beautiful row count;
+- **8,445 rows**, compiled, **PROVED and VERIFIED**, with the proven public
+  output being the query indices **p3's own challenger drew**;
+- **seven bends** each refused by a real `prove()`; the AIR closing equality
+  refused three ways (`a²` for `a³`, `C₁`/`C₃` swapped so only the FOLD ORDER
+  moves, `is_transition` dropped) with the PCS-only control ACCEPTING the same
+  proof;
+- a BabyBear fixture **relabelled** as Pasta is refused **by name at shape
+  time**, not as a digest mismatch forty thousand rows in.
+
+**The o1js-side price, one object under two hashes, same AIR, same geometry:**
+
+| | rows |
+|---|---:|
+| BabyBear-hashed walk | **145,323** |
+| Pasta-hashed walk | **8,445** |
+| | **17.2×** |
+
+and the fact that matters more than the ratio: **145,323 does not fit a Pickles
+step** (54,300 usable) and **8,445 does**. At this toy geometry the
+hash-independent DEEP/AIR terms are a far larger share than at the root, so
+17.2× is a **floor** on the collapse.
+
+### The root-geometry total, MEASURED — `npm run pasta-root-rows`
+
+§0.1 re-derived 2.85 × 10⁶ / 53 slices by scaling §3's deployed decomposition by
+measured unit ratios. That is a model with measured inputs. This **builds** the
+root's hash work — every Merkle level, every leaf lane, every absorb and every
+squeeze, at §2.2/§2.3's counts — and asks o1js how many rows it is.
+
+| term | rows | share | source |
+|---|---:|---:|---|
+| Merkle paths + leaf hashing, 19 queries | 1.79 × 10⁵ | 6.1% | **MEASURED** |
+| transcript (absorbs + squeezes) | 3.73 × 10⁴ | 1.3% | **MEASURED** |
+| DEEP quotient | 2.50 × 10⁶ | **86.0%** | §3, hash-independent |
+| AIR evaluation at ζ | 1.90 × 10⁵ | 6.5% | §3, hash-independent |
+| **TOTAL** | **2.906 × 10⁶** | | **54 slices** |
+
+**Against the projected 2.850 × 10⁶ / 53 — +2.0%. The projection held.**
+
+⚑ **And it held despite the model being thin in one place the measurement
+found.** The 53-slice model's Merkle cross-check used `22 + 216 = 238` levels a
+query — **one** input round. §2.2's structural census has **four** (main,
+quotient, preprocessed, permutation, all at depth 22), i.e. `4·22 + 216 = 304`,
+**27.7% more**. It barely moves the answer, and the reason it barely moves it is
+the whole point: after the swap the Merkle term is a rounding error.
+
+Per-query hashing was also built as ONE circuit and cross-checked against the
+unit-price product: **9,395 measured vs 9,605 modelled, 2.2% apart**, and the
+script fails if they ever diverge by more than 10%.
+
+### ⚑ THE SHAPE FLIPPED, AND THE NEXT LEVER HAS A NUMBER
+
+Hashing was **89%** of the deployed budget and is **7.4%** of this one. The DEEP
+quotient was 10% and is **86.0%**.
+
+**A 3× error in every measured Pasta hash price moves the total from 54 slices
+to 61.** The answer is no longer sensitive to the hash at all.
+
+**The next lever is column narrowing**, and it is the only one worth its cost:
+the DEEP quotient is 2.50 × 10⁶ rows over ~2,342 opened values at ζ =
+**1,067 rows per opened value**. Halving the root's committed column count
+halves it: **54 slices → 31**. Nothing hash-shaped or FRI-knob-shaped is worth
+anything like that — §5.1's compile lever and §6's knobs are both now
+second-order.
+
+### Unit prices, re-measured
+
+| | Pasta | deployed BabyBear | |
+|---|---:|---:|---:|
+| one permutation | 12.00–13 | 2,600.5 | ~200× |
+| one Merkle level (swap + hash) | **15.50** | 2,677 | 173× |
+| one leaf-sponge BabyBear lane | **3.69** | 329 | 89× |
+| one challenger BabyBear observe | **3.72** | — | |
+| one challenger sample (the base-\|F\| split) | **14.36** | — | |
+| one NATIVE digest observe | **12.50** | 8 lanes | |
+
+⚠ The permutation reads **12.00** marginal in a chain where one input is already
+derived and **13** standalone; §0.1's 13 is the standalone figure. The Merkle
+level reproduces at 15.50 exactly, and the built walk lands 2.2% from the model,
+so nothing downstream turns on which of the two is quoted.
 
 ---
 
@@ -728,13 +889,20 @@ decomposition whose unit cost is set by the hash. Changing the hash is the re-sl
 3. **`DreggPastaConfig`** — the mechanical twin of `dregg_outer_config.rs` once (2) exists.
 4. **Generalise `shrink_apex_to_outer` over `SC`** — only needed for the shrink variant; the
    Pasta-hashed *root* (54 slices) needs only (2) and (3).
-5. **Re-point the o1js verifier's hash.** `Poseidon2Merkle.ts`'s permutation becomes native
-   `Poseidon.hash`; the FRI walk, coset descent, fold arithmetic and DEEP quotient are unchanged.
-6. **Then, and only then, the column narrowing** (`APEX-VERIFIER-AIR-REDUCTION.md`) — because at
-   that point the DEEP quotient is 85% of what is left and it is priced per column.
+5. ~~**Re-point the o1js verifier's hash.**~~ **DONE — §0.2.** The hash is a
+   PARAMETER (`src/HashSuiteType.ts`), both suites are implemented, and a real
+   `DreggMinaConfig` proof is consumed, PROVED and VERIFIED with seven bends
+   refused. `npm run pasta-differential`, `npm run pasta-verify`,
+   `npm run pasta-root-rows`, `npm run pasta-chain`.
+6. **Then, and only then, the column narrowing** (`APEX-VERIFIER-AIR-REDUCTION.md`) — **and it is
+   now step 1, with a number.** §0.2 measures the DEEP quotient at **86.0%** of a 2.906 × 10⁶-row
+   Mina-side verify, **1,067 rows per opened value at ζ**. Halving the root's committed column count
+   is **54 slices → 31**. A 3× error in every Pasta hash price is worth 7 slices; nothing else on
+   this list is within an order of magnitude of the columns.
 
-**Do not start with the FRI knobs.** They are worth 35% today and 1% after step 5, and changing them
-on the root rotates the apex VK and forces a fresh Groth16 setup for the ETH path (§6).
+**Do not start with the FRI knobs.** They are worth 35% today and 1% after step 5 — **measured, now
+that step 5 has landed** — and changing them on the root rotates the apex VK and forces a fresh
+Groth16 setup for the ETH path (§6).
 
 **In parallel, and independent of all six** — the compile lever (§5.1), which needs nothing from the
 hash work and pays off in the current regime too:
@@ -747,9 +915,9 @@ hash work and pays off in the current regime too:
   anchored in the terminal seal.
 
 A and B were the cheapest real wins in this document and the only ones that needed no new field, no
-new config, and no decision from ember. **The next one on that list is the o1js native-Poseidon
-Merkle probe of §4**, which is still the thing that converts the headline from a projection to a
-measurement.
+new config, and no decision from ember. ~~**The next one on that list is the o1js native-Poseidon
+Merkle probe of §4**~~ — **done (§0.1), and step 5 after it (§0.2).** The headline is a
+measurement: **2.906 × 10⁶ rows, 54 slices.**
 
 ---
 
