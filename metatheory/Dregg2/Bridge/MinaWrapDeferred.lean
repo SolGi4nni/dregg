@@ -102,13 +102,15 @@ open Dregg2.Bridge.MinaWrapPublicInput (DeferredWords)
 `Nat.pow` is exact: `ζ ^ 65536` is a 16.7-million-bit number, and `zeta_to_srs_length` asks for
 exactly that. Every exponentiation below therefore reduces as it goes. -/
 
-/-- `b ^ e % m` by square-and-multiply, structurally recursive on FUEL so the kernel and the
-compiled evaluator both reduce it. 256 bits of fuel covers every exponent in this file. -/
+/-- `b ^ e % m` by square-and-multiply, structurally recursive on FUEL so the KERNEL reduces it —
+a well-founded definition would get stuck in `WellFounded.fix` and the `decide` in §10 would not
+close. The match is on the fuel ALONE for exactly that reason; the `e = 0` exit is an `if`, not a
+second pattern. 256 bits of fuel covers every exponent in this file. -/
 def powModAux (m : Nat) : Nat → Nat → Nat → Nat → Nat
   | 0, _, _, acc => acc
-  | _ + 1, _, 0, acc => acc
   | fuel + 1, b, e, acc =>
-      powModAux m fuel (b * b % m) (e / 2) (if e % 2 = 1 then acc * b % m else acc)
+      if e = 0 then acc
+      else powModAux m fuel (b * b % m) (e / 2) (if e % 2 = 1 then acc * b % m else acc)
 
 /-- `b ^ e % m`. -/
 def powMod (b e m : Nat) : Nat := powModAux m 256 (b % m) e 1
@@ -355,8 +357,12 @@ def expandDeferred (e : WrapEvals) (ftEval0 : Nat) : DeferredWords :=
   let alpha := endoLift e.alphaChal
   let zetaw := zeta * omega % pN
   let fr := frSqueezesOf e
-  let xi := endoLift fr.xiChal
-  let r := endoLift fr.rChal
+  -- ⚑ TWO OBJECTS, ONE NAME UPSTREAM: `fr.xiChal` is the RAW prechallenge and IS public-input
+  -- slot 9; `xiField` is its endo lift and is what the fold multiplies by. Conflating them
+  -- produces a slot-9 word that is a 255-bit field element where a 128-bit challenge belongs —
+  -- which `MinaWrapPublicInput`'s width signature would catch, and nothing else would.
+  let xiField := endoLift fr.xiChal
+  let rField := endoLift fr.rChal
   let bp := e.bpChals.map endoLift
   let old := e.oldChals.map (fun v => v.map endoLift)
   -- `evals` is `[z] ++ selectors(6) ++ w(15) ++ coefficients(15) ++ s(6)`, so `w` starts at 7 and
@@ -364,10 +370,10 @@ def expandDeferred (e : WrapEvals) (ftEval0 : Nat) : DeferredWords :=
   let w := ((e.evals.drop 7).take 15).map Prod.fst
   let s := ((e.evals.drop 37).take 6).map Prod.fst
   let zZetaOmega := (e.evals.getD 0 (0, 0)).2
-  { cip := shiftType1 (cipOf xi r ftEval0 e.ftEval1
+  { cip := shiftType1 (cipOf xiField rField ftEval0 e.ftEval1
              (old.map (fun v => bPolyMod zeta v)) (old.map (fun v => bPolyMod zetaw v))
              e.pubEval e.evals)
-    b := shiftType1 (bOf zeta zetaw r bp)
+    b := shiftType1 (bOf zeta zetaw rField bp)
     zetaToSrsLength := shiftType1 (sqMod pN SRS_LOG2 zeta)
     zetaToDomainSize := shiftType1 (sqMod pN e.domainLog2 zeta)
     perm := shiftType1 (permOf n omega zeta alpha e.betaChal e.gammaChal w s zZetaOmega)
