@@ -1,0 +1,42 @@
+# recorded-constants.tsv — every RECORDED_* figure in this directory, PINNED.
+#
+# ⚑ THIS IS A PERMANENT CONTROL THAT REPLACED FOURTEEN FAULT INJECTIONS. Each of
+# those injections bent one constant and re-ran a whole leg (~2-4 min) to show the
+# ratchet notices — about 45 minutes of a 6.5-hour self-test, to re-derive on
+# demand what this file asserts for free on EVERY headline pass. A control cannot
+# be forgotten or silently unpointed; an injection can, and has been, ten times.
+#
+# ⚠ WHAT THIS DOES NOT SAY, and the reason ONE constant-drift injection is still
+# live (`rows`, in check-mina-attestation.sh): this file proves the recorded
+# figure has not moved. It does NOT prove the leg still COMPARES it to a
+# measurement. The headline`s per-leg `ratchet: ` grep says the ratchet RAN; the
+# surviving injection says the mechanism BITES. The three together are what the
+# fifteen used to say.
+#
+# Columns: file <TAB> constant <TAB> exact right-hand side (no trailing `;`).
+# A RECORDED_* in the tree and not in here is a FAILURE, and so is the reverse.
+# Re-measure, then update the row in the same commit and say what moved.
+scripts/air-eval-rows.ts	RECORDED_PER_INSTANCE	2025
+scripts/air-eval-rows.ts	RECORDED_PER_CONSTRAINT	48
+scripts/dregg-proof-verify.ts	RECORDED_PROVED_ROWS	56_927
+scripts/dregg-proof-verify.ts	RECORDED_DEPLOYED_QUERY	827_887
+scripts/fri-chain-rows.ts	RECORDED_HORNER_ROWS	49
+scripts/fri-chain-rows.ts	RECORDED_FOLD_ROWS	150
+scripts/fri-chain-rows.ts	RECORDED_CAPPED_ROWS	45_186
+scripts/fri-chain-rows.ts	RECORDED_DEPLOYED_ROWS	623_310
+scripts/fri-challenger-rows.ts	RECORDED_TRANSCRIPT_ROWS	62_637
+scripts/fri-challenger-rows.ts	RECORDED_TRANSCRIPT_PERMS	23
+scripts/fri-deep-rows.ts	RECORDED_DEEP_FACTORED	154_523
+scripts/fri-deep-rows.ts	RECORDED_DEEP_PERCOLUMN	287_123
+scripts/fri-deep-rows.ts	RECORDED_JOINT	280_513
+scripts/fri-deep-rows.ts	RECORDED_SEAM	50_409
+scripts/fri-deep-rows.ts	RECORDED_BINDING_DELTA	1_754
+scripts/fri-query-rows.ts	RECORDED_QUERY_ROWS	684_726
+scripts/mina-poseidon-merkle-rows.ts	RECORDED_PERM_ROWS	Number(process.env.MINA_PASTA_PERM_ROWS ?? PASTA_HASH.perm)
+scripts/mina-poseidon-merkle-rows.ts	RECORDED_LEVEL_ROWS	Number(process.env.MINA_PASTA_LEVEL_ROWS ?? PASTA_HASH.merkleLevel)
+scripts/mina-poseidon-merkle-rows.ts	RECORDED_DEPTH22_ROWS	Number(process.env.MINA_PASTA_D22_ROWS ?? 342)
+scripts/partition-schedule.ts	RECORDED_FLAT	34_566
+scripts/poseidon2-babybear-rows.ts	RECORDED_ROWS_PER_PERM	2600.5
+scripts/poseidon2-merkle-rows.ts	RECORDED_ROWS_PER_LEVEL	BABYBEAR_HASH.merkleLevel
+scripts/poseidon2-merkle-rows.ts	RECORDED_DEPTH22_ROWS	58971
+scripts/poseidon2-merkle-rows.ts	RECORDED_SPONGE_BLOCK_ROWS	2632

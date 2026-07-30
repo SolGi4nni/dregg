@@ -153,7 +153,49 @@
 # Rung-2/3/4/6 legs are ~14 of them: 684,726 rows is slow to BUILD, never mind
 # prove, and six ZkProgram compiles run). Needs cargo for legs 3-12; no Lean.
 #
-#   bash scripts/check-mina-attestation.sh
+# ══ TIERS ═════════════════════════════════════════════════════════════════════
+# ⚑ THE CHEAP TIER IS THE DEFAULT, AND ON THIS DIRECTORY'S OWN RECORD IT IS THE
+# BETTER INSTRUMENT — not a compromise. Measured 2026-07-30, this gate was ~19
+# legs / 222+ checks and its `--self-test` was ~6.5 HOURS, 56% of the entire
+# default `local-gates.sh` budget for one directory. In that window the self-test
+# found NOTHING. Every defect the arc actually found was found by a CHEAP
+# EXHAUSTIVE OUT-OF-CIRCUIT DIFFERENTIAL, in seconds:
+#   * the braid twin walks 11,303 segments and found FOUR — a full output buffer
+#     on entry, `sample_bits` taking the low bits, `alpha_pow` starting at one,
+#     an undefined path direction — each of which "would have compiled and proved
+#     cleanly for as far as any affordable run reaches";
+#   * the uniform checker walks 820 boundaries and found ALL NINETEEN
+#     block-to-block joins broken, first observable at instance 46 and sealed at
+#     820, so "any affordable proof run would have been green and wrong";
+#   * the o1js hash probe measured the real unit costs and settled a 200x
+#     question BEFORE any Rust was written.
+# An injection proves the gate CAN fire. It does not find defects. That asymmetry
+# is what the tiering is built on.
+#
+#   --tier 0   DEFAULT. Out-of-circuit differentials, twins, plan/census
+#              reproduction, pins, the injection pre-flight and the npm-script
+#              coverage check. NOTHING COMPILES A CIRCUIT. Target: under a minute.
+#   --tier 1   + compile and prove ONE REPRESENTATIVE INSTANCE PER FAMILY.
+#              Minutes. This is the pre-merge run.
+#   --tier 2   everything: every family member, the full chains, the ceiling
+#              search. Hours. Nightly, or when you touched the thing.
+#   --self-test  the injection suite (implies tier 2 for the legs it runs).
+#   --preflight  PASS 1 of the self-test alone — every injection still MATCHES.
+#                Seconds. Tier 0 runs this; it is also useful by hand.
+#   --manifest   print the tier table as TSV. `check-mina-npm-coverage.sh` reads
+#                it, so the tier assignment has exactly ONE source.
+#
+# ⚑ WHAT A TIER-0 GREEN NO LONGER IMPLIES. Nothing compiled, so no Kimchi circuit
+# was shown to accept or to refuse anything: no Pickles proof was produced or
+# verified, no tamper was refused BY A PROVER, no zkApp consumed anything, no row
+# count was re-measured. What tier 0 does check is every twin against p3's own
+# numbers, every recorded constant against its pin, and that every falsifier in
+# the self-test still points at live code. Tier 1 restores one proving instance
+# per family; tier 2 restores the rest. `docs/MINA-GATE-TIERS.md` has the table.
+#
+#   bash scripts/check-mina-attestation.sh                # tier 0, the everyday run
+#   bash scripts/check-mina-attestation.sh --tier 1       # pre-merge
+#   bash scripts/check-mina-attestation.sh --tier 2       # the old headline
 #   bash scripts/check-mina-attestation.sh --self-test    # prove it can go red
 #   SELFTEST_LEGS="deep air partition schedule" bash scripts/check-mina-attestation.sh --self-test
 set -uo pipefail
@@ -163,6 +205,91 @@ PROBE="$ROOT/circuit-prove/sketches/mina-pasta-hash-probe"
 PINNED_O1JS="2.15.0"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
+
+# ── THE TIER TABLE — the ONE place a leg's tier is declared ───────────────────
+# leg-name | lowest tier that runs it | npm script(s) it invokes
+#
+# ⚑ EVERY LEG MUST BE IN HERE. `leg_at_tier` DIES on a name it does not know, so
+# a lane that adds a leg block and forgets the table gets a hard red rather than
+# a leg that quietly runs in every tier — including the one that is supposed to
+# take under a minute. And `--manifest` prints this table for
+# `scripts/check-mina-npm-coverage.sh`, so "which npm scripts are gated" has one
+# source rather than two that agree today.
+TIER_TABLE="\
+walk-plan|0|fri-walk-plan
+kat|0|kat
+merkle-constraints|0|merkle-constraints
+braid|0|root-fri-braid
+uniform|0|root-fri-uniform
+preamble|0|root-fri-preamble
+gate|1|gate
+rows|1|poseidon2-rows
+probe|1|probe
+chain|1|fri-chain
+verify|1|dregg-verify
+root-air|1|root-air
+air-real|1|root-air-real
+partition|1|partition
+merkle|2|poseidon2-merkle
+fri|2|fri-query
+chal|2|fri-challenger
+deep|2|fri-deep
+air|2|air-eval
+schedule|2|schedule
+emitted|2|emitted-atoms emitted-schedule
+air-chain|2|root-air-chain
+air-ceiling|2|root-air-ceiling
+air-fullchain|2|root-air-fullchain
+cellcommit|1|cellcommit-native
+incnonce|2|incnonce-native
+mina-merkle|2|mina-merkle"
+
+TIER=0
+MODE=headline
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --self-test) MODE=selftest ;;
+    --preflight) MODE=preflight ;;
+    --manifest)  MODE=manifest ;;
+    --tier)      shift; TIER="${1:-}" ;;
+    --tier=*)    TIER="${1#--tier=}" ;;
+    -h|--help)   sed -n '2,60p' "$0"; exit 0 ;;
+    *)           die "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+case "$TIER" in 0|1|2) ;; *) die "--tier must be 0, 1 or 2 (got '$TIER')" ;; esac
+
+if [ "$MODE" = "manifest" ]; then
+  printf 'leg\ttier\tnpm_script\n'
+  while IFS='|' read -r leg t scripts; do
+    [ -n "$leg" ] || continue
+    for s in $scripts; do printf '%s\t%s\t%s\n' "$leg" "$t" "$s"; done
+  done <<<"$TIER_TABLE"
+  exit 0
+fi
+
+# True when this run is at or above the leg's declared tier. DIES on an unknown
+# leg — see the table's ⚑ above.
+leg_at_tier() {
+  local want="$1" line leg t
+  while IFS='|' read -r leg t _; do
+    [ "$leg" = "$want" ] || continue
+    [ "$TIER" -ge "$t" ] && return 0
+    return 1
+  done <<<"$TIER_TABLE"
+  die "leg '$want' is not in TIER_TABLE — add it, or the tiering is a fiction"
+}
+
+# ⚑ THE LEGS INHERIT THE TIER. `src/tier.ts` reads MINA_TIER and stops a leg
+# before its compiles; a leg with no tier-0 half simply is not in tier 0's list.
+# The self-test always runs its legs at 2, because an injection aimed at code a
+# tier-0 run never reaches would stay green and be reported as a rot.
+if [ "$MODE" = "selftest" ] || [ "$MODE" = "preflight" ]; then
+  export MINA_TIER=2
+else
+  export MINA_TIER="$TIER"
+fi
 
 require_toolchain() {
   command -v node  >/dev/null 2>&1 || die "node is not on PATH (this gate does not skip)"
@@ -302,13 +429,198 @@ run_air_ceiling() { # run_air_ceiling <dir>
 run_air_fullchain() { # run_air_fullchain <dir>
   ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-air-fullchain )
 }
+# ── TIER 0: the out-of-circuit legs ───────────────────────────────────────────
+# Each of these compiles NOTHING at MINA_TIER=0. The three walk legs stop at
+# their own tier-0 boundary (`src/tier.ts`); the other three never had a compile.
+run_walk_plan() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent fri-walk-plan ); }
+run_kat()       { ( cd "$1" && npm run --silent kat ); }
+run_mconstr()   { ( cd "$1" && npm run --silent merkle-constraints ); }
+run_braid()     { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-braid ); }
+# ── ROUTE B, the o1js side. `bridge/mina-zkapp/` grew a whole second route —
+# dregg's own transition semantics emitted into Kimchi gates — and until
+# 2026-07-30 not one of its three npm scripts was in any gate.
+run_cellcommit(){ ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent cellcommit-native ); }
+run_incnonce()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent incnonce-native ); }
+run_mina_merkle(){ ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
+    npm run --silent mina-merkle ); }
+run_uniform()   { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-uniform ); }
+run_preamble()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent root-fri-preamble ); }
 
 # ── the headline run ──────────────────────────────────────────────────────────
-if [ "${1:-}" != "--self-test" ]; then
+if [ "$MODE" = "headline" ]; then
   [ -d "$APP" ] || die "$APP does not exist"
   [ -f "$PROBE/Cargo.toml" ] || die "$PROBE does not exist (the dregg-side emitter)"
   require_toolchain
   ensure_o1js "$APP"
+  echo "mina-attestation: TIER $TIER"
+  T_START="$(date +%s)"
+  # Every counter the summary line names, zeroed: at tier 0 and tier 1 most legs
+  # do not run, and an unset counter under `set -u` would abort the summary that
+  # is supposed to say what DID run.
+  n_ok=0 n_probe=0 n_merkle=0 n_fri=0 n_chal=0 n_chain=0 n_deep=0 n_air=0
+  n_verify=0 n_part=0 n_sched=0 n_rair=0 n_emit=0 n_achain=0 n_real=0
+  n_ceil=0 n_fchain=0 n_t0=0
+
+  # ══ TIER 0 ═════════════════════════════════════════════════════════════════
+  # ⚑ THE PINS, FIRST AND FREE. `tsc --noEmit` is here because the original
+  # defect in this directory was that the committed TypeScript DID NOT COMPILE
+  # while a scratch copy was reported working. Everything below reads `dist/`,
+  # which `npm run <leg>` rebuilds — so a type error is caught by every leg. At
+  # tier 0 it is caught in seven seconds instead.
+  echo
+  echo "── tier 0: the pins ───────────────────────────────────────────────────"
+  ( cd "$APP" && npx --no-install tsc --noEmit ) \
+    || die "the committed TypeScript does not typecheck (tsc --noEmit)"
+  echo "  ✓ the committed TypeScript typechecks at the pinned o1js $PINNED_O1JS"
+  n_t0=$((n_t0+1))
+
+  # ⚑ THE FALSIFIERS STILL POINT AT LIVE CODE. This is PASS 1 of the self-test,
+  # promoted out of the 6.5-hour run and into the everyday one. It costs about
+  # two seconds and it is the control for the failure that has actually happened
+  # TEN TIMES ACROSS FOUR LANES: a refactor moves a line, an injection's `sed`
+  # silently matches nothing, and the falsifier stops existing while the gate
+  # stays green. Serially that took ~40 minutes of self-test to surface, and
+  # only if someone ran it. Now it cannot be forgotten.
+  pf_out="$(bash "$0" --preflight 2>&1)"; rc=$?
+  printf '%s\n' "$pf_out" | tail -3
+  [ "$rc" -eq 0 ] || die "the fault-injection pre-flight failed — a falsifier has silently stopped existing"
+  n_t0=$((n_t0+1))
+
+  # ⚑ EVERY npm SCRIPT IS IN A TIER OR IN THE ALLOWLIST WITH A REASON. Measured
+  # 2026-07-30: NINE npm scripts were in no gate at all, including ~7,600 LOC of
+  # that window's FRI work and the whole of Route B's o1js side, and there was no
+  # mechanism that went red when a new one appeared. Lean has
+  # `lean-orphans-allow.txt`; TypeScript had nothing. This is that mechanism, and
+  # it is the thing that keeps tiering honest rather than a way to quietly stop
+  # testing.
+  cov_out="$(bash "$ROOT/scripts/check-mina-npm-coverage.sh" 2>&1)"; rc=$?
+  printf '%s\n' "$cov_out"
+  [ "$rc" -eq 0 ] || die "an npm script is in no tier and in no allowlist"
+  n_t0=$((n_t0+1))
+
+  # ⚑ THE RECORDED FIGURES, PINNED — THE CONTROL THAT REPLACED 14 INJECTIONS.
+  # Fourteen faults in the suite below bent one `RECORDED_*` constant and re-ran a
+  # whole leg (~2-4 min each, ~45 min in total) to show the ratchet notices. This
+  # asserts the same thing for free, on every pass, and it cannot be forgotten or
+  # silently unpointed the way an injection can — which is the failure that has
+  # actually happened ten times across four lanes.
+  # ⚠ What it does NOT say is that the leg still COMPARES the figure to a
+  # measurement. The per-leg `ratchet: ` grep says the ratchet RAN; ONE surviving
+  # constant-drift injection (`rows`) says the mechanism BITES.
+  CONSTS="$APP/recorded-constants.tsv"
+  [ -f "$CONSTS" ] || die "$CONSTS does not exist — the recorded-figure pins are not optional"
+  n_pin=0
+  while IFS=$'\t' read -r cfile cname crhs; do
+    case "$cfile" in ''|\#*) continue ;; esac
+    [ -f "$APP/$cfile" ] || die "recorded-constants.tsv names $cfile, which does not exist"
+    grep -qF "const $cname = $crhs;" "$APP/$cfile" \
+      || die "$cfile's $cname is no longer '$crhs'. Re-measure, then update recorded-constants.tsv in the SAME commit and say what moved."
+    n_pin=$((n_pin+1))
+  done < "$CONSTS"
+  # And the reverse: a new RECORDED_* that nothing pins is a figure nobody holds
+  # to anything, which is how a cited measurement becomes a number.
+  n_found="$(grep -rhoE '^[[:space:]]*(export )?const RECORDED_[A-Z_0-9]+' "$APP/scripts" "$APP/src" \
+    --include='*.ts' | grep -oE 'RECORDED_[A-Z_0-9]+' | sort -u | wc -l | tr -d ' ')"
+  n_pinned_names="$(grep -v '^#' "$CONSTS" | cut -f2 | grep -v '^$' | sort -u | wc -l | tr -d ' ')"
+  [ "$n_found" -eq "$n_pinned_names" ] \
+    || die "$n_found RECORDED_* constants exist and $n_pinned_names are pinned — a recorded figure nobody pins is a number, not a measurement"
+  [ "$n_pin" -ge 20 ] || die "only $n_pin recorded figures pinned; expected >= 20 (the reader is broken)"
+  echo "  ✓ all $n_pin recorded figures are as recorded, and every RECORDED_* in the tree is pinned"
+  n_t0=$((n_t0+1))
+
+  echo
+  echo "── tier 0: the out-of-circuit differentials ───────────────────────────"
+  # ⚑ THE INSTRUMENTS THAT FOUND EVERYTHING. See the header. These three walk the
+  # whole object out of circuit — 11,303 segments, 820 chain boundaries, the
+  # batch-STARK preamble and its polarities — against p3's own numbers, and they
+  # do it in about twenty seconds combined.
+  if leg_at_tier braid; then
+    braid_out="$(run_braid "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$braid_out"
+    [ "$rc" -eq 0 ] || die "the root-FRI braid leg exited $rc"
+    n_braid="$(printf '%s' "$braid_out" | grep -c '✓')"; n_t0=$((n_t0+n_braid))
+    grep -q 'the AIR dump and the FRI dump are the SAME proof at the SAME' <<<"$braid_out" \
+      || die "the two halves were never checked to be over one object"
+    grep -q 'query indices are pairwise distinct' <<<"$braid_out" \
+      || die "the query-index collision check did not run (a substitution falsifier would be a no-op)"
+    grep -q 'the transcript is not a re-implementation that happens to run' <<<"$braid_out" \
+      || die "THE TWIN WALK did not reproduce p3's own alpha/betas/indices — the instrument that found four defects"
+    grep -q "reproduce p3's OWN chain" <<<"$braid_out" \
+      || die "the 11,303-segment fold walk did not run against p3's own numbers"
+    if [ "$TIER" -eq 0 ]; then
+      grep -q '=== ROOT-FRI-BRAID TIER-0 PASS ===' <<<"$braid_out" \
+        || die "the braid leg did not stop at its tier-0 boundary (it should compile nothing)"
+    else
+      grep -q '=== ROOT-FRI-BRAID PASS ===' <<<"$braid_out" || die "the braid leg did not print its PASS line"
+    fi
+  fi
+  if leg_at_tier uniform; then
+    uni_out="$(run_uniform "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$uni_out"
+    [ "$rc" -eq 0 ] || die "the uniform-walk leg exited $rc"
+    n_uni="$(printf '%s' "$uni_out" | grep -c '✓')"; n_t0=$((n_t0+n_uni))
+    grep -q 'STRUCTURALLY IDENTICAL' <<<"$uni_out" \
+      || die "the homogeneity was ASSUMED, not checked — the whole uniform plan rests on it"
+    grep -q 'enters exactly the boundary its' <<<"$uni_out" \
+      || die "THE 820-BOUNDARY WALK did not run — this is the check that found all 19 joins broken"
+    grep -q 'the chain closes on the seal' <<<"$uni_out" \
+      || die "the terminal seal was not reached out of circuit (it is not observable until boundary 820)"
+    if [ "$TIER" -eq 0 ]; then
+      grep -q '=== ROOT-FRI-UNIFORM TIER-0 PASS ===' <<<"$uni_out" \
+        || die "the uniform leg did not stop at its tier-0 boundary"
+    else
+      grep -q '=== ROOT-FRI-UNIFORM PASS ===' <<<"$uni_out" || die "the uniform leg did not print its PASS line"
+    fi
+  fi
+  if leg_at_tier preamble; then
+    pre_out="$(run_preamble "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$pre_out"
+    [ "$rc" -eq 0 ] || die "the FRI-preamble leg exited $rc"
+    n_pre="$(printf '%s' "$pre_out" | grep -c '✓')"; n_t0=$((n_t0+n_pre))
+    grep -q 'THE DIFFERENTIAL' <<<"$pre_out" \
+      || die "the batch-STARK preamble differential did not run"
+    grep -q 'THE DISCRIMINATING POLARITIES' <<<"$pre_out" \
+      || die "the polarity suite did not run — a differential with no falsifier is a coincidence"
+    if [ "$TIER" -eq 0 ]; then
+      grep -q '=== ROOT-FRI-PREAMBLE TIER-0 PASS ===' <<<"$pre_out" \
+        || die "the preamble leg did not stop at its tier-0 boundary"
+    fi
+  fi
+  if leg_at_tier walk-plan; then
+    wp_out="$(run_walk_plan "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$wp_out" | tail -12
+    [ "$rc" -eq 0 ] || die "the FRI walk-plan leg exited $rc"
+    grep -q 'slices per query' <<<"$wp_out" \
+      || die "the walk plan did not report its per-query slice list"
+    n_t0=$((n_t0+1))
+  fi
+  if leg_at_tier kat; then
+    kat_out="$(run_kat "$APP" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] || { printf '%s\n' "$kat_out"; die "the Poseidon KAT leg exited $rc"; }
+    grep -q '=== PASS ===' <<<"$kat_out" \
+      || { printf '%s\n' "$kat_out"; die "the Poseidon KAT did not print its PASS line"; }
+    echo "  ✓ o1js Poseidon reproduces every vector the Rust probe pins"
+    n_t0=$((n_t0+1))
+  fi
+  if leg_at_tier merkle-constraints; then
+    mc_out="$(run_mconstr "$APP" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] || { printf '%s\n' "$mc_out"; die "the merkle-constraints leg exited $rc"; }
+    printf '%s\n' "$mc_out" | tail -4
+    n_t0=$((n_t0+1))
+  fi
+  T_T0=$(( $(date +%s) - T_START ))
+  echo
+  echo "── tier 0 GREEN in ${T_T0}s: $n_t0 out-of-circuit checks, and NOTHING compiled ──"
+  if [ "$TIER" -eq 0 ]; then
+    echo "   NOT RUN at tier 0: every Pickles compile/prove/verify in this directory —"
+    echo "   the zkApp consumption, the tamper refusals, the row ratchets, the splices,"
+    echo "   the chains and the ceiling. \`--tier 1\` proves one instance per family;"
+    echo "   \`--tier 2\` is the old headline. See docs/MINA-GATE-TIERS.md."
+    exit 0
+  fi
+  echo
+
+  if leg_at_tier gate; then
   out="$(run_gate "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || die "the attestation gate exited $rc"
@@ -329,6 +641,9 @@ if [ "${1:-}" != "--self-test" ]; then
     || die "the proof/signature agreement leg did not run"
   grep -q '=== PASS ===' <<<"$out" || die "the gate did not print its PASS line"
 
+  fi
+
+  if leg_at_tier rows; then
   # Leg 2: the Poseidon2-w16-BabyBear row measurement that
   # docs/MINA-VERIFIES-DREGG-FRI-SIZE.md quotes. It checks the circuit against
   # the Lean-pinned KAT of the DEPLOYED permutation, compiles and PROVES one
@@ -342,6 +657,9 @@ if [ "${1:-}" != "--self-test" ]; then
     || die "the Poseidon2 permutation was never actually proved"
   grep -q 'ratchet: ' <<<"$rows_out" || die "the rows/perm ratchet did not run"
 
+  fi
+
+  if leg_at_tier probe; then
   # Leg 3: the DREGG SIDE. `cargo test` in the probe crate, then the `merkle`
   # subcommand that emits the deployed root, cross-checked elementwise against
   # o1js on leaves that cannot have been precomputed. This is the half of the
@@ -358,6 +676,9 @@ if [ "${1:-}" != "--self-test" ]; then
     || die "the cross-check's discriminating polarity did not run"
   grep -q '=== PROBE PASS ===' <<<"$probe_out" || die "the probe leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier merkle; then
   # Leg 4: RUNG 1 — the Merkle OPENING, elementwise against the DEPLOYED p3 MMCS.
   merkle_out="$(run_merkle "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$merkle_out"
@@ -373,6 +694,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$merkle_out" || die "the Merkle rows ratchet did not run"
   grep -q '=== MERKLE PASS ===' <<<"$merkle_out" || die "the Merkle leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier fri; then
   # Leg 5: RUNG 2 — one FRI query at the deployed geometry.
   fri_out="$(run_fri "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$fri_out"
@@ -388,6 +712,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$fri_out" || die "the FRI query rows ratchet did not run"
   grep -q '=== FRI QUERY PASS ===' <<<"$fri_out" || die "the FRI leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier chal; then
   # Leg 6: RUNG 3 — the CHALLENGER. Without this the query walk proves nothing,
   # because a prover picks its own indices.
   chal_out="$(run_chal "$APP" 2>&1)"; rc=$?
@@ -408,6 +735,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$chal_out" || die "the transcript rows ratchet did not run"
   grep -q '=== FRI CHALLENGER PASS ===' <<<"$chal_out" || die "the challenger leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier chain; then
   # Leg 7: RUNG 4 — the 16-layer chain, and the seam that joins it to leg 6.
   chain_out="$(run_chain "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$chain_out"
@@ -427,6 +757,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$chain_out" || die "the chain rows ratchet did not run"
   grep -q '=== FRI CHAIN PASS ===' <<<"$chain_out" || die "the chain leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier deep; then
   # Leg 8: RUNG 6 — the DEEP QUOTIENT. Every rung above starts its fold chain
   # from a WITNESSED value, which means the walk authenticates a number the
   # prover chose. This leg computes it instead, from the MMCS-opened rows, the
@@ -456,6 +789,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$deep_out" || die "the DEEP rows ratchet did not run"
   grep -q '=== FRI DEEP PASS ===' <<<"$deep_out" || die "the DEEP leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier air; then
   # Leg 9: RUNG 7 — the AIR constraint evaluation at zeta. Without it the FRI
   # walk authenticates a low-degree function that encodes nothing in particular.
   air_out="$(run_air "$APP" 2>&1)"; rc=$?
@@ -474,6 +810,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q 'ratchet: ' <<<"$air_out" || die "the AIR rows ratchet did not run"
   grep -q '=== AIR EVAL PASS ===' <<<"$air_out" || die "the AIR leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier verify; then
   # Leg 10: THE ASSEMBLY. Rungs 1-7 are seven objects that each verify a PIECE
   # of a FRI-STARK proof, and every one of them is fed a fixture the MEASUREMENT
   # synthesised. This leg is the one that consumes a proof: `p3_uni_stark::prove`
@@ -510,6 +849,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== DREGG-PROOF-VERIFY PASS ===' <<<"$verify_out" \
     || die "the assembly leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier partition; then
   # Leg 11: THE PARTITION. §3.19 fits ONE step; §4 divides and calls the quotient
   # a step count. This leg is the mechanism under that division — a dregg proof
   # with NO one-step verifier, decided by a chain whose only inter-step carrier is
@@ -550,6 +892,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== PARTITION-CHAIN PASS ===' <<<"$part_out" \
     || die "the partition leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier schedule; then
   # Leg 12: THE SCHEDULER. §3.20 leaves the deployed step count as a BAND because
   # a boundary costs 34,566 rows at a query entry and 762 inside one. This leg
   # places the cuts against the measured carry, replaces the flat
@@ -595,6 +940,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== PARTITION-SCHEDULE PASS ===' <<<"$sched_out" \
     || die "the schedule leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier root-air; then
   # ── §3.22 the ROOT's own AIR, emitted and measured ─────────────────────────
   air_out="$(run_root_air "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$air_out"
@@ -613,6 +961,9 @@ if [ "${1:-}" != "--self-test" ]; then
     || die "the root-AIR ratchet did not run"
   grep -q '=== ROOT-AIR-ROWS PASS ===' <<<"$air_out" || die "the root-air leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier emitted; then
   # ── §3.23 the schedule, re-run over an EMITTED row list ────────────────────
   emit_out="$(run_emitted "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$emit_out"
@@ -628,6 +979,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== EMITTED-SCHEDULE PASS ===' <<<"$emit_out" \
     || die "the emitted-schedule leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier air-chain; then
   # ── §3.24 a chain over an object with NO one-step verifier ─────────────────
   chn_out="$(run_air_chain "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$chn_out"
@@ -645,6 +999,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== ROOT-AIR-CHAIN PASS ===' <<<"$chn_out" \
     || die "the AIR-chain leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier air-real; then
   # ── §3.25 the root's AIR on the root's OWN PROOF ───────────────────────────
   real_out="$(run_air_real "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$real_out"
@@ -662,6 +1019,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== ROOT-AIR-REAL PASS ===' <<<"$real_out" \
     || die "the real-proof leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier air-ceiling; then
   # ── the compile CEILING, measured ──────────────────────────────────────────
   ceil_out="$(run_air_ceiling "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$ceil_out"
@@ -677,6 +1037,9 @@ if [ "${1:-}" != "--self-test" ]; then
   grep -q '=== ROOT-AIR-CEILING PASS ===' <<<"$ceil_out" \
     || die "the ceiling leg did not print its PASS line"
 
+  fi
+
+  if leg_at_tier air-fullchain; then
   # ── the FULL chain, one process per slice ──────────────────────────────────
   fchn_out="$(run_air_fullchain "$APP" 2>&1)"; rc=$?
   printf '%s\n' "$fchn_out"
@@ -701,6 +1064,40 @@ if [ "${1:-}" != "--self-test" ]; then
     || die "the terminal seal was not tied back to p3's own per-instance accumulators"
   grep -q '=== ROOT-AIR-FULLCHAIN PASS ===' <<<"$fchn_out" \
     || die "the full-chain leg did not print its PASS line"
+
+  fi
+
+  # ── ROUTE B, the o1js side ─────────────────────────────────────────────────
+  # dregg's own transition semantics emitted into Kimchi gates, and bound to the
+  # deployed GROUP-4 hash tree. Three npm scripts, ~1,900 LOC, in NO gate at all
+  # until 2026-07-30 — the same orphan shape this whole file exists to close,
+  # regrown inside the directory that closed it.
+  if leg_at_tier cellcommit; then
+    cc_out="$(run_cellcommit "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$cc_out"
+    [ "$rc" -eq 0 ] || die "the Route B cell-commitment leg exited $rc"
+    n_cc="$(printf '%s' "$cc_out" | grep -c '✓')"
+    grep -q 'ROUTE B + GROUP-4 COMMITMENT BINDING' <<<"$cc_out" \
+      || die "the Route B commitment-binding leg did not run"
+    grep -q '== VERDICT ==' <<<"$cc_out" \
+      || die "the Route B leg did not print its verdict — including what a proof of it does NOT say"
+  fi
+  if leg_at_tier incnonce; then
+    ic_out="$(run_incnonce "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$ic_out"
+    [ "$rc" -eq 0 ] || die "the Route B incrementNonce leg exited $rc"
+    grep -q 'honest transition proved and verified; all three tampers refused' <<<"$ic_out" \
+      || die "the Route B transition was not proved, or its tampers were not refused"
+    grep -q 'predicted .* rows from Lean, measured' <<<"$ic_out" \
+      || die "the Lean-predicted row count was not compared against the measured one"
+  fi
+  if leg_at_tier mina-merkle; then
+    mm_out="$(run_mina_merkle "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$mm_out"
+    [ "$rc" -eq 0 ] || die "the Mina-Poseidon Merkle row leg exited $rc"
+    grep -q '=== MINA-POSEIDON MERKLE PASS ===' <<<"$mm_out" \
+      || die "the Mina-Poseidon Merkle leg did not print its PASS line"
+  fi
 
   echo "mina-attestation: $n_ok + $n_probe + $n_merkle + $n_fri + $n_chal + $n_chain + $n_deep + $n_air + $n_verify + $n_part + $n_sched + $n_rair + $n_emit + $n_achain + $n_real + $n_ceil + $n_fchain checks green" \
        "(compile+prove+verify, tamper rejected, zkApp consumed, anchor PROOF-OBLIGATED +" \
@@ -759,7 +1156,10 @@ red=0; green=0
 # run says so in its PASS line so it can never be read as the full one.
 PREFLIGHT=0
 SELFTEST_LEGS="${SELFTEST_LEGS:-}"
+SELFTEST_ALL="${SELFTEST_ALL:-0}"
 skipped=0
+dupskipped=0
+weak=0
 expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air|verify|partition|schedule> <label> <perl-program> <file> [base-dir]
   local leg="$1" label="$2" prog="$3" file="$4" base="${5:-$COPY}"
   if [ ! -f "$base/$file" ]; then
@@ -770,6 +1170,24 @@ expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air
     skipped=$((skipped+1)); return
   fi
   cp "$base/$file" "$WORK/.orig"
+  # ⚑ THE PATTERN MUST MATCH EXACTLY ONCE, AND THAT IS A NEW REQUIREMENT.
+  # `perl -0pi -e 's/A/B/'` without `/g` rewrites the FIRST match. If `A` occurs
+  # twice, the injection disarms whichever site happens to come first — and a
+  # refactor that reorders them silently re-points the falsifier at a different
+  # check while everything stays green. It is the same class as the ten silently
+  # unpointed injections, one step subtler, and it is free to detect: the same
+  # substitution with `/g` returns its own count.
+  local hits
+  hits="$(perl -0ne "\$n = (\$_ =~ ${prog}g); print \$n+0" "$base/$file" 2>/dev/null)" || hits=""
+  if [ -z "$hits" ]; then
+    echo "  ✗ $label: the injection's perl program does not compile"
+    red=$((red+1)); return
+  fi
+  if [ "$hits" -gt 1 ]; then
+    echo "  ✗ $label: the pattern matches $hits sites in $file — it disarms whichever is FIRST," \
+         "so a reorder re-points the falsifier silently. Anchor it to one site."
+    red=$((red+1)); weak=$((weak+1)); return
+  fi
   perl -0pi -e "$prog" "$base/$file"
   if cmp -s "$WORK/.orig" "$base/$file"; then
     echo "  ✗ $label: the fault injection MATCHED NOTHING in $file"
@@ -787,6 +1205,37 @@ expect_red() { # expect_red <leg: gate|rows|probe|merkle|fri|chal|chain|deep|air
     green=$((green+1))
   fi
   cp "$WORK/.orig" "$base/$file"
+}
+
+# ── AN INJECTION THAT A PERMANENT CONTROL ALREADY COVERS ──────────────────────
+# ⚑ A CONTROL CANNOT BE FORGOTTEN OR SILENTLY UNPOINTED; AN INJECTION CAN, AND
+# HAS BEEN, TEN TIMES ACROSS FOUR LANES. So where the leg itself already asserts
+# the same thing on EVERY green pass — its own `REFUSED:`/`UNPINNED:`/`UNBOUND:`
+# triple, or a ratchet that pins a constant — re-deriving it by injection buys
+# nothing and costs the everyday budget. The `air_fullchain` trio alone was ~87
+# minutes, ~22% of the whole self-test, re-proving what leg 19's permanent triple
+# asserts free.
+#
+# These do NOT stop being checked, and that distinction is the whole design:
+#   * PASS 1 still checks the pattern matches exactly once, so the falsifier can
+#     never silently stop existing — which is the failure that actually happened;
+#   * the PERMANENT CONTROL named in the comment runs on every headline pass;
+#   * `SELFTEST_ALL=1` re-runs them, and the PASS line says how many were held.
+expect_red_dup() { # expect_red_dup <leg> <label> <perl-program> <file> [base-dir]
+  if [ "$PREFLIGHT" != "1" ] && [ "$SELFTEST_ALL" != "1" ]; then
+    # Still pattern-checked: borrow PASS 1's behaviour for this one call. A RED
+    # here is kept — a rotted pattern is a rotted pattern whatever tier you are
+    # at — while a green is not counted as a fault that was RUN, because it
+    # was not.
+    local g="$green" r="$red" keep="$PREFLIGHT"
+    PREFLIGHT=1
+    expect_red "$@"
+    PREFLIGHT="$keep"
+    green="$g"
+    [ "$red" -gt "$r" ] && return
+    dupskipped=$((dupskipped+1)); return
+  fi
+  expect_red "$@"
 }
 
 inject_all() {
@@ -826,8 +1275,12 @@ expect_red air_real "the binder reading the NEXT row from the LOCAL one" \
 # budgets. Move the recorded ceiling to §4.1's arithmetic — the value §3.24
 # measured FAILING — and the "still compiles" check must go red, or the recorded
 # budget is a number nobody is holding to anything.
+# ⚑ RE-ANCHORED 2026-07-30, BY THE PRE-FLIGHT TIER 0 NOW RUNS EVERY PASS.
+# `RECORDED` became a multi-line object literal, so the one-line `mpv1: {
+# okBudget: N` pattern matched nothing and this falsifier had silently stopped
+# existing. Anchored on the VALUE instead, which occurs exactly once.
 expect_red air_ceiling "the recorded ceiling moved back to §4.1's arithmetic" \
-  "s/  mpv1: \{ okBudget: \d+/  mpv1: { okBudget: 57532/" \
+  "s/    okBudget: 54_289,/    okBudget: 57532,/" \
   scripts/root-air-ceiling.ts
 # And the other side: a recorded FIRST FAILURE that no longer fails is a ceiling
 # with no falsifier — it would read as clean whatever Pickles did.
@@ -845,18 +1298,18 @@ expect_red air_ceiling "the shape control aimed at two circuits of the SAME mix"
 # `prev.verify(vk)` is perfectly satisfied, and the chain "verifies" while
 # carrying a value nothing in it computed. Disarm the pin and the foreign-proof
 # splice must be ACCEPTED — which is the red.
-expect_red air_fullchain "the side-loaded verification key pin disarmed" \
+expect_red_dup air_fullchain "the side-loaded verification key pin disarmed" \
   "s/        if \(pin\) vk\.hash\.assertEquals\(Field\(pinned\)\);/        if (pin) vk.hash.assertEquals(vk.hash);/" \
   src/RootAirProcessChain.ts
 # The chain link itself, across a process boundary this time.
-expect_red air_fullchain "the cross-process predecessor check disarmed" \
+expect_red_dup air_fullchain "the cross-process predecessor check disarmed" \
   "s/      if \(prevOut\) prevOut\.assertEquals\(bIn\);/      if (prevOut) prevOut.assertEquals(prevOut);/" \
   src/RootAirProcessChain.ts
 # The terminal seal is only verifier-computable because the concatenated fold is
 # Horner: table T's own accumulator enters weighted by alpha^(R - b_T). Weight it
 # by the span's START instead and the identity must fail — otherwise [7] is
 # comparing two things that agree for a reason other than the one it claims.
-expect_red air_fullchain "the terminal recomposition weighted by the span's START" \
+expect_red_dup air_fullchain "the terminal recomposition weighted by the span's START" \
   "s/ePow\(alpha, R - span\.rootTo\)/ePow(alpha, R - span.rootFrom)/" \
   scripts/root-air-fullchain.ts
 expect_red gate "corrupted gold digest" \
@@ -946,8 +1399,8 @@ expect_red merkle "witnessed-lane range checks removed (rows measured for an UNS
 expect_red merkle "the out-of-range fault lane stops being out of range" \
   "s/  const badLane = emSiblings\[0\]\[0\] \+ \(1n << 31n\);/  const badLane = emSiblings[0][0];/" \
   scripts/poseidon2-merkle-rows.ts
-expect_red merkle "rows/level drifts from the figure the doc quotes" \
-  "s/const RECORDED_ROWS_PER_LEVEL = 2677;/const RECORDED_ROWS_PER_LEVEL = 2400;/" \
+expect_red_dup merkle "rows/level drifts from the figure the doc quotes" \
+  "s/const RECORDED_ROWS_PER_LEVEL = BABYBEAR_HASH\.merkleLevel;/const RECORDED_ROWS_PER_LEVEL = 2400;/" \
   scripts/poseidon2-merkle-rows.ts
 
 # ── Leg 5: RUNG 2, the FRI query. The coset-descent sign is the interesting one:
@@ -959,7 +1412,7 @@ expect_red fri "the coset descent drops its sign (wrong on half of all indices)"
 expect_red fri "the extension modulus X^4 - W is wrong" \
   "s/export const EXT_W = 11n;/export const EXT_W = 12n;/" \
   src/FriQueryStep.ts
-expect_red fri "rows/query drifts from the figure the doc quotes" \
+expect_red_dup fri "rows/query drifts from the figure the doc quotes" \
   "s/const RECORDED_QUERY_ROWS = 684_726;/const RECORDED_QUERY_ROWS = 600_000;/" \
   scripts/fri-query-rows.ts
 
@@ -992,15 +1445,15 @@ expect_red chal "a partial absorb zero-fills the unabsorbed rate" \
 # the prover chooses its own query indices out of a perfectly correct sponge,
 # and every other check in this leg stays green.
 expect_red chal "the bit-split's high-part bound removed (the query index becomes witness-CHOSEN)" \
-  "s/  assertLtPow2\(hi, 31 - k\);/  \/* fault *\//" \
+  "s/  assertLtPow2\(hi, 31 - k\);\n  let acc = hi\.mul/  \/* fault *\/\n  let acc = hi.mul/" \
   src/FriChallenger.ts
 expect_red chal "assertLtPow2 made a no-op" \
   "s/  if \(n <= 0\) \{/  if (n >= 0) return;\n  if (n <= 0) {/" \
   src/FriChallenger.ts
-expect_red chal "rows/transcript drifts from the figure the doc quotes" \
+expect_red_dup chal "rows/transcript drifts from the figure the doc quotes" \
   "s/const RECORDED_TRANSCRIPT_ROWS = 62_637;/const RECORDED_TRANSCRIPT_ROWS = 50_000;/" \
   scripts/fri-challenger-rows.ts
-expect_red chal "the transcript's permutation count drifts" \
+expect_red_dup chal "the transcript's permutation count drifts" \
   "s/const RECORDED_TRANSCRIPT_PERMS = 23;/const RECORDED_TRANSCRIPT_PERMS = 22;/" \
   scripts/fri-challenger-rows.ts
 
@@ -1033,7 +1486,7 @@ expect_red chain "the seam walks a witnessed index instead of the derived one" \
 expect_red chain "the seam folds at the wrong round's derived beta" \
   "s/              beta: chal\.betas\[r\],/              beta: chal.betas[(r + 1) % layers],/" \
   src/FriChallenger.ts
-expect_red chain "rows/chain drifts from the figure the doc quotes" \
+expect_red_dup chain "rows/chain drifts from the figure the doc quotes" \
   "s/const RECORDED_DEPLOYED_ROWS = 623_310;/const RECORDED_DEPLOYED_ROWS = 600_000;/" \
   scripts/fri-chain-rows.ts
 
@@ -1059,8 +1512,17 @@ expect_red deep "the DEEP query point reads the UNSHIFTED index" \
 # `alpha_pow` is keyed by HEIGHT. Resetting it per matrix agrees whenever no two
 # matrices share a height; the deployed root has 7 tables at one height, so this
 # is wrong on the real shape and right on any one-matrix test.
-expect_red deep "alpha_pow reset per MATRIX instead of keyed by height" \
-  "s/      let slot = slots\.find\(\(s\) => s\.logHeight === m\.logHeight\);\n      if \(!slot\) \{/      let slot = undefined as any;\n      if (!slot) {/" \
+# ⚑ SPLIT 2026-07-30, BY THE PRE-FLIGHT'S NEW "EXACTLY ONE SITE" RULE. This was
+# ONE pattern matching TWO sites — the bigint twin and the in-circuit walk — and
+# `perl s///` without `/g` rewrites the FIRST. So it disarmed the twin, the
+# CIRCUIT had no falsifier at all, and the suite reported a green for both. Each
+# site now has its own injection, anchored on the slot initialiser that tells
+# them apart.
+expect_red deep "alpha_pow reset per MATRIX in the TWIN (not keyed by height)" \
+  "s/      let slot = slots\.find\(\(s\) => s\.logHeight === m\.logHeight\);\n      if \(!slot\) \{\n        slot = \{ logHeight: m\.logHeight, alphaPow: \[1n, 0n, 0n, 0n\]/      let slot = undefined as any;\n      if (!slot) {\n        slot = { logHeight: m.logHeight, alphaPow: [1n, 0n, 0n, 0n]/" \
+  src/DeepQuotient.ts
+expect_red deep "alpha_pow reset per MATRIX in the CIRCUIT (not keyed by height)" \
+  "s/      let slot = slots\.find\(\(s\) => s\.logHeight === m\.logHeight\);\n      if \(!slot\) \{\n        slot = \{ logHeight: m\.logHeight, alphaPow: extOne\(\)/      let slot = undefined as any;\n      if (!slot) {\n        slot = { logHeight: m.logHeight, alphaPow: extOne()/" \
   src/DeepQuotient.ts
 # ⚑ THE ONE NOTHING ELSE SEES. The extension inverse's product check is what
 # makes `(z - x)^-1` a division rather than a free witness. Every KAT in the leg
@@ -1092,7 +1554,7 @@ expect_red deep "the chain starts from the WRONG reduced opening (the lowest hei
 expect_red deep "the roll-ins are off by one opening (each round gets its predecessor's)" \
   "s/            rollIns: sched\.rounds\.map\(\(r, i\) => \(\{ afterRound: r, value: ro\[i \+ 1\]\.ro \}\)\),/            rollIns: sched.rounds.map((r, i) => ({ afterRound: r, value: ro[i].ro })),/" \
   src/DeepQuotient.ts
-expect_red deep "the BINDING DELTA drifts (a binding that costs nothing is decorative)" \
+expect_red_dup deep "the BINDING DELTA drifts (a binding that costs nothing is decorative)" \
   "s/const RECORDED_BINDING_DELTA = 1_754;/const RECORDED_BINDING_DELTA = 900;/" \
   scripts/fri-deep-rows.ts
 # And the claimed evaluations must be ABSORBED before alpha is sampled. Drop
@@ -1101,7 +1563,7 @@ expect_red deep "the BINDING DELTA drifts (a binding that costs nothing is decor
 expect_red deep "f(z) stops being absorbed into the transcript (alpha stops reacting to it)" \
   "s/  for \(const e of evals\) out\.push\(\.\.\.e\.limbs\);/  \/* fault *\//" \
   src/DeepQuotient.ts
-expect_red deep "rows/DEEP drifts from the figure the doc quotes" \
+expect_red_dup deep "rows/DEEP drifts from the figure the doc quotes" \
   "s/const RECORDED_DEEP_FACTORED = 154_523;/const RECORDED_DEEP_FACTORED = 120_000;/" \
   scripts/fri-deep-rows.ts
 
@@ -1131,7 +1593,7 @@ expect_red air "the closing equality compares the accumulator to ITSELF" \
 expect_red air "the constraint fold stops multiplying by alpha (the order collapses)" \
   "s/  for \(let i = 1; i < constraints\.length; i\+\+\) acc = extAdd\(extMul\(acc, alpha\), constraints\[i\]\);/  for (let i = 1; i < constraints.length; i++) acc = extAdd(acc, constraints[i]);/" \
   src/AirEval.ts
-expect_red air "the per-constraint fold price drifts from the figure the doc quotes" \
+expect_red_dup air "the per-constraint fold price drifts from the figure the doc quotes" \
   "s/const RECORDED_PER_CONSTRAINT = 48;/const RECORDED_PER_CONSTRAINT = 40;/" \
   scripts/air-eval-rows.ts
 
@@ -1172,7 +1634,7 @@ expect_red verify "the transcript observes a wrong instance constant" \
   "s/    c\.observeConstant\(BigInt\(air\.degreeBits\)\);/    c.observeConstant(BigInt(air.degreeBits + 1));/" \
   src/DreggProofVerify.ts
 expect_red verify "every batch opens under the FIRST commitment (the quotient tree is unchecked)" \
-  "s/cur\.limbs\[j\]\.assertEquals\(claim\.inputCommits\[b\]\.limbs\[j\]\);/cur.limbs[j].assertEquals(claim.inputCommits[0].limbs[j]);/" \
+  "s/    suite\.assertEq\(cur, claim\.inputCommits\[b\]\);/    suite.assertEq(cur, claim.inputCommits[0]);/" \
   src/DreggProofVerify.ts
 # ⚑ RE-POINTED IN THE SAME COMMIT THAT MOVED THEIR TARGETS. Splitting
 # `runQueryWalk` into `runQueryInputAndDeep` + `runQueryCommitPhase` (so
@@ -1202,7 +1664,7 @@ expect_red verify "the transcript replay's schedule drifts from p3's" \
 expect_red verify "the multi-geometry falsifier coverage collapses to ONE geometry" \
   "s/  const fx2 = mint\(2, LB, NQ, QPOW, seed\);/  const fx2 = mint(DB, LB, NQ, QPOW, seed);/" \
   scripts/dregg-proof-verify.ts
-expect_red verify "the assembly's row ratchet drifts from the recorded figure" \
+expect_red_dup verify "the assembly's row ratchet drifts from the recorded figure" \
   "s/  const RECORDED_PROVED_ROWS = 56_927;/  const RECORDED_PROVED_ROWS = 50_000;/" \
   scripts/dregg-proof-verify.ts
 
@@ -1222,9 +1684,14 @@ expect_red partition "the head's entry boundary stops being anchored to the same
   src/DreggProofPartition.ts
 # The step INDEX is the slot that forbids double-counting and skipping. Freezing
 # it to a constant leaves every other check passing.
+# ⚑ RE-POINTED 2026-07-30, BY THE PRE-FLIGHT. `stepBoundary` was de-duplicated
+# into `CostModel.chainStepBoundary` (it had had two identical bodies under one
+# name), which moved this line to another file and left the falsifier pointing at
+# nothing. It is a STRONGER fault where it now lives: one definition, so both
+# chain families lose their index slot at once.
 expect_red partition "the step index is dropped from the boundary (every step looks like step 1)" \
-  "s/    typeof stepIndex === 'number' \? Field\(stepIndex\) : stepIndex,/    Field(1),/" \
-  src/DreggProofPartition.ts
+  "s/typeof k === 'number' \? Field\(k\) : k\]\);/Field(1)]);/" \
+  src/CostModel.ts
 # The rootCommitDigest is what binds every step to the SAME dregg proof. Drop the
 # opened evaluations from it and a step can splice openings from another proof
 # while every commitment still matches.
@@ -1244,7 +1711,7 @@ expect_red partition "the query multiplexer stops asserting 1 <= k <= num_querie
 expect_red partition "the chained geometry shrinks back to something that fits one step" \
   "s/\nconst NQ = 3;/\nconst NQ = 1;/" \
   scripts/partition-chain.ts
-expect_red partition "the partition's row ratchet drifts from the recorded figure" \
+expect_red_dup partition "the partition's row ratchet drifts from the recorded figure" \
   "s/\['ONE deployed boundary, full carry', deployedCarry, 34_566\]/['ONE deployed boundary, full carry', deployedCarry, 20_000]/" \
   scripts/partition-chain.ts
 
@@ -1278,7 +1745,7 @@ expect_red schedule "the query multiplexer stops asserting 0 <= q < num_queries"
   src/DreggProofSchedule.ts
 # The scheduler's own numbers have to be falsifiable. The atom model is checked
 # against §3.19's measured deployed total; move a marginal and it must say so.
-expect_red schedule "the atom model's per-column marginal drifts from the measured one" \
+expect_red_dup schedule "the atom model's per-column marginal drifts from the measured one" \
   "s/  deepPerColumnPerQuery: 481,/  deepPerColumnPerQuery: 48,/" \
   src/PartitionSchedule.ts
 # A carry that is not charged makes every schedule free and the answer a lie.
@@ -1296,20 +1763,29 @@ expect_red schedule "the geometry drops back to where the DEEP quotient is const
 }
 
 # PASS 1 — patterns only. Seconds, and it is where a rotted fault shows up.
-echo "self-test pre-flight: checking every fault injection still MATCHES"
-PREFLIGHT=1 red=0 green=0
+# ⚑ TIER 0 RUNS THIS ON EVERY HEADLINE PASS (`--preflight`). It is the control
+# for the failure that has actually happened ten times across four lanes, and it
+# costs about two seconds — so it stopped being something you only learn from a
+# 6.5-hour run somebody remembered to start.
+echo "self-test pre-flight: checking every fault injection still MATCHES exactly one site"
+PREFLIGHT=1 red=0 green=0 weak=0
 inject_all
 if [ "$red" -gt 0 ]; then
-  echo "self-test FAILED in PRE-FLIGHT: $red of $((red+green)) fault injection(s) match nothing."
-  echo "A fault that matches nothing is a falsifier that silently stopped existing."
+  echo "self-test FAILED in PRE-FLIGHT: $red of $((red+green)) fault injection(s) are unusable" \
+       "($weak of them matched MORE THAN ONE site)."
+  echo "A fault that matches nothing is a falsifier that silently stopped existing;"
+  echo "a fault that matches two sites disarms whichever one a reorder puts first."
   exit 1
 fi
-echo "pre-flight PASS: all $green fault injections still match their target"
+echo "pre-flight PASS: all $green fault injections still match their target, each at exactly one site"
+if [ "$MODE" = "preflight" ]; then
+  exit 0
+fi
 echo
 
 # PASS 2 — inject each one and require the gate to go red.
 echo "self-test: injecting faults into $COPY"
-PREFLIGHT=0 red=0 green=0
+PREFLIGHT=0 red=0 green=0 dupskipped=0
 inject_all
 
 echo
@@ -1317,9 +1793,14 @@ if [ "$red" -gt 0 ]; then
   echo "self-test FAILED: $red of $((red+green)) fault(s) did not turn the gate red"
   exit 1
 fi
+held=""
+if [ "$dupskipped" -gt 0 ]; then
+  held=" $dupskipped more are HELD: a permanent control already asserts each of them on every"
+  held="$held headline pass, and their patterns were checked above. SELFTEST_ALL=1 re-runs them."
+fi
 if [ -n "$SELFTEST_LEGS" ]; then
   echo "self-test PASS (SCOPED to legs: $SELFTEST_LEGS): $green injected faults turned the gate red," \
-       "$skipped not run. This is NOT the full self-test; the pre-flight above was."
+       "$skipped not run. This is NOT the full self-test; the pre-flight above was.$held"
 else
-  echo "self-test PASS: all $green injected faults turned the gate red"
+  echo "self-test PASS: all $green injected faults turned the gate red.$held"
 fi

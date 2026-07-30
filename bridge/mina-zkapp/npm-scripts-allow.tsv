@@ -1,0 +1,33 @@
+# npm-scripts-allow.tsv — the npm scripts in this directory that are in NO gate
+# tier, each with the REASON it is not.
+#
+# ⚑ AN ALLOWLIST WITHOUT REASONS IS A LIST OF THINGS NOBODY HAS TO JUSTIFY, and
+# that is how nine ungated scripts accumulated here by 2026-07-30 — ~7,600 LOC of
+# one window's FRI work and the whole of Route B's o1js side, with no mechanism
+# that went red when the tenth appeared. `check-mina-npm-coverage.sh` requires a
+# reason of at least 20 characters, and reds on a row that names a script
+# `package.json` no longer has.
+#
+# The bar for a row here is one of:
+#   (a) it is PLUMBING every gated leg already runs (`build`), or the tier-0 gate
+#       runs directly under another name (`typecheck`), or is an alias (`test`);
+#   (b) it needs CREDENTIALS OR A NETWORK a gate must not have (`devnet:*`);
+#   (c) it is a LIVE LANE'S work-in-progress — and then the row NAMES the lane
+#       and the follow-up, so the allowlist is a to-do list rather than a
+#       hiding place.
+#
+# Columns: script <TAB> reason.
+build	PLUMBING. Every gated leg runs `npm run <leg>`, which runs `build` first, so a tsc failure reds every tier. Tier 0 also runs `npx tsc --noEmit` directly.
+typecheck	PLUMBING. The tier-0 gate runs `npx tsc --noEmit` itself rather than through npm, so this alias would be a second name for a check that already reds.
+test	ALIAS for `gate`, which is the tier-1 leg `gate`. Gating both would run the same object twice and let the two names drift apart.
+deploy	NEEDS A FUNDED KEY AND A NETWORK. Deploying a zkApp is an outward-facing irreversible act; a gate must not have the credentials to perform one.
+devnet:fund	NEEDS DEVNET CREDENTIALS AND A FAUCET. Same reason as `deploy`, and it spends.
+devnet:deploy	NEEDS DEVNET CREDENTIALS AND A NETWORK. Same reason as `deploy`.
+devnet:attest	NEEDS DEVNET CREDENTIALS AND A NETWORK. Submits a transaction to a live chain.
+devnet:emit-root	NEEDS DEVNET KEYS. Deliberately ungated and stated so in check-mina-attestation.sh's header; the `merkle` subcommand it wraps IS gated, end to end, by the `probe` leg.
+devnet:tx-status	NEEDS A NETWORK. Reads a live chain, so it cannot have a deterministic verdict.
+pasta-differential	LIVE LANE 2026-07-30 (the Pasta-consume lane). FOLLOW-UP: gate at tier 0 once its source settles -- it is an out-of-circuit differential and it is exactly the shape tier 0 is for. It measured the real unit costs and settled a 200x question before any Rust was written.
+pasta-root-rows	LIVE LANE 2026-07-30 (the Pasta-consume lane), added within the hour. FOLLOW-UP: gate at tier 2 with the other row measurements once the lane lands.
+pasta-verify	LIVE LANE 2026-07-30 (the Pasta-consume lane). FOLLOW-UP: gate at tier 1 as the Pasta family's representative compile-and-prove instance.
+cost-gate	LIVE LANE 2026-07-30 (the cost-model lane, commit 7e05bf143). FOLLOW-UP: gate at tier 0 -- it is a model check with no compile in it, and it owns the constants `recorded-constants.tsv` pins.
+root-claim-carry	LIVE LANE 2026-07-30, added during this restructure (the script appeared between two runs of the coverage check -- which is the mechanism working). FOLLOW-UP: gate once the lane names its PASS line.
