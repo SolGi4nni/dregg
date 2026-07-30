@@ -700,21 +700,26 @@ theorem sbox_gens_force (a : Nat → R) (x x2 x4 x6 x7 : Nat)
 /-- The linear block, for the same reason: `mat4Gen`'s nine sub-gates force the `MDSMat4` circulant
 row-for-row. Add-only, so the bound never multiplies and no reduction interposes — the whole
 external layer is four of these plus the outer block-sum. -/
-theorem mat4Gen_forces (a : Nat → R) (x0 x1 x2 x3 t01 t23 t0123 t01123 t01233 y0 : Nat)
+theorem mat4Gen_forces (a : Nat → R) (x0 x1 x2 x3 t01 t23 t0123 t01123 y0 : Nat)
     (h01 : (Gen1.lin2 x0 x1 t01 1 1).holds a)
     (h23 : (Gen1.lin2 x2 x3 t23 1 1).holds a)
     (h0123 : (Gen1.lin2 t01 t23 t0123 1 1).holds a)
     (h1 : (Gen1.lin2 t0123 x1 t01123 1 1).holds a)
-    (h3 : (Gen1.lin2 t0123 x3 t01233 1 1).holds a)
     (hy0 : (Gen1.lin2 t01123 t01 y0 1 1).holds a) :
     a y0 = 2 * a x0 + 3 * a x1 + a x2 + a x3 := by
-  have e01 := Gen1.lin2_forces a x0 x1 t01 1 1 h01
-  have e23 := Gen1.lin2_forces a x2 x3 t23 1 1 h23
-  have e0123 := Gen1.lin2_forces a t01 t23 t0123 1 1 h0123
-  have e1 := Gen1.lin2_forces a t0123 x1 t01123 1 1 h1
-  have ey0 := Gen1.lin2_forces a t01123 t01 y0 1 1 hy0
+  -- Normalise each forcing lemma's `((1 : ℤ) : R)` coefficients away FIRST, with the same `simpa`
+  -- `bbAdd_forces` above already uses. Rewriting with the un-normalised forms and clearing the
+  -- casts afterwards leaves the closing tactic to do two jobs at once, and a `push_cast` with
+  -- nothing to push is an error rather than a no-op.
+  have e01 : a t01 = a x0 + a x1 := by simpa using Gen1.lin2_forces a x0 x1 t01 1 1 h01
+  have e23 : a t23 = a x2 + a x3 := by simpa using Gen1.lin2_forces a x2 x3 t23 1 1 h23
+  have e0123 : a t0123 = a t01 + a t23 := by
+    simpa using Gen1.lin2_forces a t01 t23 t0123 1 1 h0123
+  have e1 : a t01123 = a t0123 + a x1 := by
+    simpa using Gen1.lin2_forces a t0123 x1 t01123 1 1 h1
+  have ey0 : a y0 = a t01123 + a t01 := by
+    simpa using Gen1.lin2_forces a t01123 t01 y0 1 1 hy0
   rw [ey0, e1, e0123, e23, e01]
-  push_cast
   ring
 
 end SboxRung
@@ -751,28 +756,47 @@ def opAsGen : KOp → Option Gen1
   | .rc0 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => none
   | .zeroRow => none
 
-/-- One variable holding a lane value, and nothing else — the smallest context an S-box can run in. -/
-def sboxProbe : Ctx := (Ctx.empty.alloc 5).2
+/-- The smallest context an S-box can run in: `Ctx.start`'s pinned zero at `ZERO_VAR`, then one
+variable holding the lane value `5`.
 
-/-- ⚑ **The generator really does emit that multiplication chain**, at the variable indices its own
-allocator hands out. Change `sboxGen`'s shape and this goes red before any row count moves. -/
-#guard ((sboxGen sboxProbe ⟨0, 2 ^ 31⟩).2.ops.toList.take 4).map opAsGen
-  = [some (Gen1.mul 0 0 1), some (Gen1.mul 1 1 2), some (Gen1.mul 2 1 3), some (Gen1.mul 3 0 4)]
+⚑ **IT MUST BE `Ctx.start`, NOT `Ctx.empty`, AND THAT IS THIS SESSION'S OWN BUG.** The probe was
+written against `Ctx.empty.alloc 5` — which puts the LANE at variable `0`. `bbRange64` now reads
+`ZERO_VAR = 0` for the two copy columns of every `RangeCheck0` row, so with that context the
+reduction's range checks evaluated `2⁷⁶·5 + 2⁶⁴·5 + …` against the checked value and could not hold.
+`opsAcceptB` refused, correctly, and the guard below caught it.
 
-/-- Satisfiability at birth, positive polarity: the S-box emission on lane `5` accepts its own
+The emission was never unsatisfiable — `#guard opsAcceptB (emitPerm katInput).2` runs on `Ctx.start`
+and is green. What was wrong was the PROBE, and the reason a stale probe became detectable at all is
+the copy-column fix itself: before it, columns 1 and 2 were fresh zero-valued variables that no
+assignment had to respect, so this probe would have passed and told us nothing. **A guard that starts
+passing after a fix is a guard that was not watching anything before it.** -/
+def sboxProbe : Ctx := (Ctx.start.alloc 5).2
+
+/- ⚑ **The generator really does emit that multiplication chain**, at the variable indices its own
+allocator hands out — with `Ctx.start`'s pin at instruction 0, which is where EVERY emission begins.
+Change `sboxGen`'s shape and this goes red before any row count moves. -/
+#guard ((sboxGen sboxProbe ⟨1, 2 ^ 31⟩).2.ops.toList.take 5).map opAsGen
+  = [some (Gen1.isZero ZERO_VAR),
+     some (Gen1.mul 1 1 2), some (Gen1.mul 2 2 3), some (Gen1.mul 3 2 4), some (Gen1.mul 4 1 5)]
+
+/- Satisfiability at birth, positive polarity: the S-box emission on lane `5` accepts its own
 generated witness, and the witness computes `5⁷ mod p`. A forcing lemma over an unsatisfiable
 circuit is true for free. -/
-#guard opsAcceptB (sboxGen sboxProbe ⟨0, 2 ^ 31⟩).2
+#guard opsAcceptB (sboxGen sboxProbe ⟨1, 2 ^ 31⟩).2
 
-#guard (let (o, c) := sboxGen sboxProbe ⟨0, 2 ^ 31⟩; c.get o.v) = ((5 ^ 7 % P : Nat) : ℤ)
+#guard (let (o, c) := sboxGen sboxProbe ⟨1, 2 ^ 31⟩; c.get o.v) = ((5 ^ 7 % P : Nat) : ℤ)
 
-/-- Negative polarity: the emitted chain REFUSES an assignment that puts anything else in the output.
-`opAcceptB` is evaluated at the generated witness with the final variable moved by one, and the
-`Gen1.mul` that defines it stops vanishing. -/
+/- Both polarities in ONE guard, and that is a repair, not a flourish.
+
+Written as a bare `! opsAcceptB bad` this check PASSES WHEN THE CIRCUIT IS UNSATISFIABLE — which is
+exactly the state the probe was in ten lines ago. A refusal guard is satisfied for free by a circuit
+that refuses everything, so on its own it is the same shape as the vacuity the fail-closed target
+exists to expose. Conjoining the acceptance makes the pair say what it means: this circuit accepts
+its own witness AND rejects the one with the output moved by one. -/
 #guard
-  (let (o, c) := sboxGen sboxProbe ⟨0, 2 ^ 31⟩
+  (let (o, c) := sboxGen sboxProbe ⟨1, 2 ^ 31⟩
    let bad : Ctx := { c with vals := c.vals.set! o.v (c.get o.v + 1) }
-   ! opsAcceptB bad)
+   opsAcceptB c && ! opsAcceptB bad)
 
 /-! ### §5d — ⚑ THE REMAINING BOUND GAP, AS A CHECK RATHER THAN A COMMENT.
 
@@ -803,7 +827,7 @@ def rangeGapCtx : Ctx :=
   let (v, c) := Ctx.start.alloc (((2 ^ 63 - 1 : Nat) : ℤ))
   bbRange64 c ⟨v, 2 ^ 31⟩
 
-/-- ⚑ **THE GAP, ASSERTED.** `2⁶³ − 1` satisfies the row. The enforced bound is at least `2⁶³`
+/- ⚑ **THE GAP, ASSERTED.** `2⁶³ − 1` satisfies the row. The enforced bound is at least `2⁶³`
 where the tracked bound is `2³¹` — 32 bits of daylight, in the operation that is 64% of the
 permutation's cost. -/
 #guard opsAcceptB rangeGapCtx
@@ -881,7 +905,7 @@ def emitJson : String :=
 
 #guard inputVars.length = 16
 #guard outputVars.length = 16
-/-- Every variable the program mentions is inside `[0, nVars)` — what makes `honestVals` the WHOLE
+/- Every variable the program mentions is inside `[0, nVars)` — what makes `honestVals` the WHOLE
 witness and not a prefix of one. -/
 #guard (emitPerm katInput).2.ops.toList.all (fun o =>
   match o with
@@ -889,10 +913,10 @@ witness and not a prefix of one. -/
   | .rc0 v c1 c2 p3 p4 p5 p6 k7 k8 k9 k10 k11 k12 k13 k14 =>
       [v, c1, c2, p3, p4, p5, p6, k7, k8, k9, k10, k11, k12, k13, k14].all (fun i => i < nVars)
   | .zeroRow => true)
-/-- The pinned zero really is pinned, and it really is variable `ZERO_VAR`. -/
+/- The pinned zero really is pinned, and it really is variable `ZERO_VAR`. -/
 #guard (emitPerm katInput).2.get ZERO_VAR = 0
 #guard opAsGen ((emitPerm katInput).2.ops.toList.getD 0 .zeroRow) = some (Gen1.isZero ZERO_VAR)
-/-- The output lanes are NOT `< 2³¹`: the last thing that runs is the add-only external layer with
+/- The output lanes are NOT `< 2³¹`: the last thing that runs is the add-only external layer with
 fan-in 35, so a consumer chaining permutations must reduce before re-feeding. Carried in the artifact
 rather than left to a reader. -/
 #guard outputBounds.all (fun b => 2 ^ 31 < b)
