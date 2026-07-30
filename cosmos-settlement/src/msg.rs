@@ -8,9 +8,18 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 pub struct InstantiateMsg {
     /// The 8 BabyBear lanes of the genesis state root (pinned anchor).
     pub genesis_root: [u32; 8],
-    /// A commitment to the verifying key (hex, 32 bytes). Non-zero. This mirrors
-    /// `verifyingKeyHash` in `DreggSettlement.sol`; the VK itself is baked into
-    /// the verifier (see `vk.rs`).
+    /// The instantiator's DECLARATION of which verifying key this contract
+    /// checks against: 32 bytes of hex, `0x` prefix optional, case-insensitive.
+    ///
+    /// ⚑ It MUST equal `vk::VK_DIGEST` — keccak256 over the canonical
+    /// serialization of the key in `vk.rs` — or instantiation fails with
+    /// `VkDigestMismatch`. It is CONSUMED by that check, never stored; query
+    /// `VerifyingKeyHash` answers from `vk::VK_DIGEST` directly.
+    ///
+    /// Until 2026-07-30 this was checked only for "not all zeros" and then
+    /// written to storage unexamined, which made it a field the caller filled
+    /// in rather than a commitment. Mirrors `DreggSettlement.sol`'s constructor
+    /// argument and Solana `InstructionData::InitSettlement { vk_hash }`.
     pub verifying_key_hash: String,
 }
 

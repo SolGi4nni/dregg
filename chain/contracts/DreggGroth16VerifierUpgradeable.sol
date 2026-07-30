@@ -251,6 +251,74 @@ contract DreggGroth16VerifierUpgradeable is IGroth16VerifierRegistry {
         return _vks[epoch];
     }
 
+    // ── the VK commitment (a FUNCTION OF THE STORED KEY) ──────────────────
+
+    /// Domain tag = the `schema` field of `chain/codegen/dregg_vk.json`. A
+    /// schema bump moves every chain's pin.
+    string internal constant DIGEST_DOMAIN = "dregg-groth16-vk/1";
+
+    /// `IGroth16Verifier25.vkDigest`: the digest of the CURRENT epoch's VK —
+    /// the key a fresh `verifyProof` actually runs the pairing against.
+    ///
+    /// ⚑ This is the self-evidencing half of the VK pin. The key lives in
+    /// STORAGE, so the digest is computed from the very words `_verify` loads:
+    /// there is no second copy to drift. An epoch flip that installs a
+    /// different key MOVES this value in the same transaction that makes the
+    /// new key live — which is the entire property the superseded pin,
+    /// `keccak256("dregg-settlement-vk-dev-setup")`, could not have.
+    function vkDigest() external view returns (bytes32) {
+        return vkDigestAtEpoch(currentEpoch);
+    }
+
+    /// The digest of a TARGETED epoch's stored VK. Reverts `MalformedVerifyingKey`
+    /// for an epoch that was never set, so an unset epoch can never be reported
+    /// as committing to the all-zero key (the Nomad-law default).
+    ///
+    /// Serialization is byte-identical to `DreggSettlementVK.digest()`,
+    /// `solana_settlement::vk_digest::digest_of` and the Cosmos emitted
+    /// constant — all four from `chain/codegen/dregg_vk.json`. G2 words go in
+    /// EIP-197 order (imaginary coordinate first), matching both the storage
+    /// layout the pairing feeds the precompile and the generated verifier's
+    /// `_X_1`/`_X_0` word order.
+    function vkDigestAtEpoch(uint256 epoch) public view returns (bytes32) {
+        if (!_vkSet[epoch]) revert MalformedVerifyingKey("epoch not set");
+        VerifyingKey storage vk = _vks[epoch];
+
+        uint256[] memory w = new uint256[](76);
+        w[0] = vk.alpha.x;
+        w[1] = vk.alpha.y;
+        _g2Words(w, 2, vk.betaNeg);
+        _g2Words(w, 6, vk.gammaNeg);
+        _g2Words(w, 10, vk.deltaNeg);
+        _g2Words(w, 14, vk.pedersenG);
+        _g2Words(w, 18, vk.pedersenGSigma);
+        // ic[0] is the constant term; ic[1..27] are the 26 IC bases.
+        for (uint256 i = 0; i < 27; i++) {
+            w[22 + 2 * i] = vk.ic[i].x;
+            w[23 + 2 * i] = vk.ic[i].y;
+        }
+
+        return keccak256(
+            abi.encodePacked(
+                DIGEST_DOMAIN,
+                uint32(25), // NUM_PUBLIC_INPUTS
+                uint32(26), // NUM_IC_BASES
+                abi.encodePacked(w)
+            )
+        );
+    }
+
+    /// Append a G2 point in the digest's pinned EIP-197 order: x1, x0, y1, y0.
+    function _g2Words(uint256[] memory w, uint256 at, G2Point storage pt)
+        private
+        view
+    {
+        w[at] = pt.x1;
+        w[at + 1] = pt.x0;
+        w[at + 2] = pt.y1;
+        w[at + 3] = pt.y0;
+    }
+
     // ── verification ──────────────────────────────────────────────────────
 
     /// `IGroth16Verifier25` drop-in: verify against the CURRENT epoch's VK.

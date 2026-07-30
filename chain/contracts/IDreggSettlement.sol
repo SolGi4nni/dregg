@@ -45,8 +45,18 @@ interface IDreggSettlement {
     /// The verifier address pinned at construction has no code.
     error VerifierHasNoCode(address verifier);
 
-    /// The expected verifying-key hash pinned at construction is zero.
-    error ZeroVerifyingKeyHash();
+    /// The verifying-key digest declared at construction is not the digest of
+    /// the key the pinned verifier actually runs its pairing against, so the
+    /// deployment is refused.
+    ///
+    /// ⚑ Replaced `error ZeroVerifyingKeyHash()` on 2026-07-30. That check
+    /// (`verifyingKeyHash_ == bytes32(0)`) was the ONLY constraint on the pin,
+    /// and it admitted every non-zero wrong value — the pin was compared to
+    /// nothing else, at construction or at settle. `expected` is
+    /// `verifier.vkDigest()`, recomputed on-chain from the key material; the
+    /// zero case is subsumed (a keccak256 over a 2458-byte preimage is never
+    /// zero, so a zero declaration still reverts, now with a reason).
+    error VerifyingKeyHashMismatch(bytes32 expected, bytes32 given);
 
     /// Lane `laneIndex` (in the pinned 25-lane order) carries `value`,
     /// which is not a canonical BabyBear residue (`value >= 2013265921`).
@@ -144,10 +154,21 @@ interface IDreggSettlement {
     /// Current proven height (cumulative finalized turns; strictly monotone).
     function provenHeight() external view returns (uint64);
 
-    /// keccak256 of the Groth16 verifying key this contract checks against —
-    /// the on-chain commitment to `EthSettlementProof.verifying_key_hash`.
-    /// (The VK itself is baked into the IGroth16Verifier25 implementation;
-    /// this hash lets off-chain tooling cross-check the deployment.)
+    /// The VK COMMITMENT: keccak256 over the canonical serialization of the
+    /// Groth16 verifying key this contract's pairing actually runs against,
+    /// recomputed on-chain from the key material (`IGroth16Verifier25.vkDigest`).
+    ///
+    /// ⚑ REBUILT 2026-07-30. This used to return a `bytes32` the DEPLOYER
+    /// supplied, checked only for `!= 0` and compared to nothing thereafter —
+    /// so "the commitment" committed to whatever was typed. It now reads
+    /// through to the verifier, and the constructor refuses a declaration that
+    /// disagrees with it, so the value is a function of the key on both legs:
+    /// it cannot be chosen, and it cannot go stale across a registry epoch flip.
+    ///
+    /// Byte-identical to Solana `vk::VK_DIGEST` and Cosmos `vk::VK_DIGEST` for
+    /// the same key — all emitted from `chain/codegen/dregg_vk.json` — so
+    /// cross-chain pin equality means "the same key". Under the superseded
+    /// `keccak256("dregg-settlement-vk-dev-setup")` it meant "the same string".
     function verifyingKeyHash() external view returns (bytes32);
 
     // ------------------------------------------------------------------

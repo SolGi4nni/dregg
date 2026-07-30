@@ -72,6 +72,29 @@ fn require_canonical(index: usize, value: u32) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// The canonical rendering of a VK digest: lowercase hex, `0x`-prefixed. Used
+/// for both the query response and the mismatch error, so the value a caller
+/// reads back is the one that was compared, byte for byte.
+pub fn hex_digest(d: &[u8; 32]) -> String {
+    format!("0x{}", hex::encode(d))
+}
+
+/// Parse a declared VK digest: 32 bytes of hex, `0x` prefix optional, case
+/// insensitive. Comparison is over BYTES, not over the string — `"0xCFDA…"`
+/// and `"cfda…"` denote the same key and must not be able to disagree about it.
+fn parse_vk_digest(s: &str) -> Result<[u8; 32], ContractError> {
+    let body = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    let bytes =
+        hex::decode(body).map_err(|e| ContractError::MalformedVkDigest(format!("{s}: {e}")))?;
+    let out: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+        ContractError::MalformedVkDigest(format!("{s}: expected 32 bytes, got {}", bytes.len()))
+    })?;
+    Ok(out)
+}
+
 #[entry_point]
 pub fn instantiate(
     deps: DepsMut,
@@ -79,13 +102,24 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    if msg
-        .verifying_key_hash
-        .trim_start_matches("0x")
-        .trim_matches('0')
-        .is_empty()
-    {
-        return Err(ContractError::ZeroVerifyingKeyHash);
+    // THE VK PIN IS A REFUSAL. `verifying_key_hash` is the instantiator's
+    // DECLARATION of which verifying key this contract is meant to check
+    // against; the only key it CAN check against is `crate::vk`, compiled into
+    // this wasm. If the declaration disagrees, the instance does not come into
+    // existence.
+    //
+    // This replaces a check that the string was not all zeros — which accepted
+    // `"0x1"`, the superseded `keccak256("dregg-settlement-vk-dev-setup")`, and
+    // every other 32 bytes. The value was then never compared to anything: it
+    // was written to `Config` and served back by one query. The Solana
+    // `processor.rs::init` twin (`if vk_hash != vk::VK_DIGEST`) is the shape
+    // being matched here; the EVM `DreggSettlement` constructor now matches it too.
+    let declared = parse_vk_digest(&msg.verifying_key_hash)?;
+    if declared != vk::VK_DIGEST {
+        return Err(ContractError::VkDigestMismatch {
+            expected: hex_digest(&vk::VK_DIGEST),
+            given: hex_digest(&declared),
+        });
     }
     for (i, &lane) in msg.genesis_root.iter().enumerate() {
         require_canonical(i, lane)?;
@@ -95,7 +129,6 @@ pub fn instantiate(
         deps.storage,
         &Config {
             genesis_lanes: msg.genesis_root,
-            verifying_key_hash: msg.verifying_key_hash,
         },
     )?;
     HEAD.save(
@@ -247,11 +280,11 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
             let value = PROVEN_ROOTS.may_load(deps.storage, &root)?.unwrap_or(false);
             to_json_binary(&BoolResponse { value })
         }
-        QueryMsg::VerifyingKeyHash {} => {
-            let cfg = CONFIG.load(deps.storage)?;
-            to_json_binary(&RootResponse {
-                root: cfg.verifying_key_hash,
-            })
-        }
+        // READ-THROUGH, not a stored copy: the digest of the key in `crate::vk`,
+        // which is the only key this wasm can verify against. It cannot go
+        // stale and it cannot have been chosen by the instantiator.
+        QueryMsg::VerifyingKeyHash {} => to_json_binary(&RootResponse {
+            root: hex_digest(&vk::VK_DIGEST),
+        }),
     }
 }

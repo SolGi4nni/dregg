@@ -57,14 +57,25 @@ import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 contract DeploySettlement is Script {
     /// THE VK PIN: keccak256 over the canonical serialization of the verifying key
     /// this stack verifies against (`chain/codegen/gen_verifiers.py`), byte-identical
-    /// to Solana `vk::VK_DIGEST` and Cosmos `vk::VK_DIGEST`. Override with DREGG_VK_HASH.
+    /// to Solana `vk::VK_DIGEST` and Cosmos `vk::VK_DIGEST`.
     ///
     /// ⚑ FLAG DAY 2026-07-28: this was `keccak256("dregg-settlement-vk-dev-setup")` —
     /// a hash of a LABEL, byte-identical under every possible regeneration of the key,
     /// so the artifact whose whole job was to notice a key change could not notice.
+    ///
+    /// ⚑ FLAG DAY 2026-07-30: the `DREGG_VK_HASH` ENV OVERRIDE IS GONE, and the pin
+    /// is no longer a value this script chooses at all — it is READ FROM THE VERIFIER
+    /// being deployed (`adapter.vkDigest()`), which recomputes it from the key
+    /// material. An override could only ever do one of two things now that
+    /// `DreggSettlement`'s constructor compares the declaration against the
+    /// verifier's answer: agree (a no-op) or revert. An operator-typed VK
+    /// commitment is the thing this whole repair exists to remove — the ceremony
+    /// re-pin is mechanical (drop the ceremony VK into `chain/codegen/dregg_vk.json`,
+    /// run `gen_verifiers.py`), so there is nothing left for a human to type.
+    ///
     /// Any already-deployed DreggSettlement pins the old value and must be REDEPLOYED;
     /// there is no setter. See chain/test/DreggSettlementVkPin.t.sol.
-    bytes32 constant DEFAULT_VK_HASH = DreggSettlementVK.VK_DIGEST;
+    bytes32 constant EXPECTED_VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     /// The well-known anvil dev key — used ONLY so a keyless dry-run can
     /// simulate. A real broadcast supplies DEPLOYER_PRIVATE_KEY.
@@ -74,7 +85,6 @@ contract DeploySettlement is Script {
     function run() external {
         // ---- deploy-time constants, parameterized for ember at broadcast ----
         uint256 deployerPk = vm.envOr("DEPLOYER_PRIVATE_KEY", ANVIL_DEV_KEY);
-        bytes32 vkHash = vm.envOr("DREGG_VK_HASH", DEFAULT_VK_HASH);
 
         // The genesis anchor: 8 canonical BabyBear lanes. Default = the fixture's
         // genesis (so the bundled real proof settles in-band on a dry run / demo
@@ -87,8 +97,6 @@ contract DeploySettlement is Script {
         console.log("== dregg settlement deploy (Base-Sepolia, chainId 84532) ==");
         console.log("chainId :", block.chainid);
         console.log("deployer:", deployer);
-        console.log("vkHash  :");
-        console.logBytes32(vkHash);
         console.log("genesis lanes:");
         for (uint256 i = 0; i < 8; i++) console.log("  ", genesisRoot[i]);
 
@@ -99,7 +107,24 @@ contract DeploySettlement is Script {
         // 2. the revert->false adapter wrapping it.
         Groth16Verifier25Adapter adapter =
             new Groth16Verifier25Adapter(address(verifier));
-        // 3. the settlement contract, genesis pinned at construction.
+
+        // THE VK PIN, READ FROM THE VERIFIER — never typed. `vkDigest()`
+        // recomputes it on-chain from the key words, so this cannot name a key
+        // the stack does not verify against.
+        bytes32 vkHash = adapter.vkDigest();
+        console.log("vkHash (from the verifier):");
+        console.logBytes32(vkHash);
+        // Codegen drift guard: the verifier's answer must be the value the
+        // spec emitted into Solana and Cosmos, or this deployment would pin a
+        // key the other two chains do not.
+        require(
+            vkHash == EXPECTED_VK_HASH,
+            "vkDigest() != DreggSettlementVK.VK_DIGEST - regenerate chain/codegen"
+        );
+
+        // 3. the settlement contract, genesis pinned at construction. The
+        //    constructor independently REFUSES a pin that is not the verifier's
+        //    own key digest (IDreggSettlement.VerifyingKeyHashMismatch).
         DreggSettlement settlement = new DreggSettlement(
             IGroth16Verifier25(address(adapter)), vkHash, genesisRoot
         );

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IGroth16Verifier25} from "./IGroth16Verifier25.sol";
+import {DreggSettlementVK} from "./DreggSettlementVK.sol";
 
 /// Adapter from the gnark-GENERATED settlement verifier
 /// (DreggGroth16Verifier25.sol, emitted by chain/gnark
@@ -52,5 +53,27 @@ contract Groth16Verifier25Adapter is IGroth16Verifier25 {
             )
         );
         return ok;
+    }
+
+    /// The digest of the verifying key this adapter's `inner` verifier checks
+    /// against, recomputed on-chain from the key words by
+    /// `DreggSettlementVK.digest()`.
+    ///
+    /// ⚠ NAMED RESIDUAL — READ THIS BEFORE TRUSTING IT ON THE STATIC PATH.
+    /// The gnark-generated `DreggGroth16Verifier25.sol` bakes its VK into
+    /// CONTRACT-PRIVATE `uint256 constant`s, which no other contract can read.
+    /// So this returns the digest of `DreggSettlementVK`'s COPY of those
+    /// words, and the equality of the two copies is established OFF-CHAIN, by
+    /// `chain/codegen/check_consistency.sh` step [2/8] (a name-keyed diff of
+    /// all 76 constants in both files) plus the `gen_verifiers.py --check`
+    /// drift gate in step [1/8]. On-chain, this contract cannot prove that its
+    /// `inner` verifier holds the key it names.
+    ///
+    /// `DreggGroth16VerifierUpgradeable` does NOT have this residual: its key
+    /// lives in STORAGE, so its `vkDigest()` reads the very words its pairing
+    /// consumes. That path's digest is self-evidencing; this one leans on the
+    /// codegen gate. Prefer the registry where the distinction matters.
+    function vkDigest() external pure returns (bytes32) {
+        return DreggSettlementVK.digest();
     }
 }

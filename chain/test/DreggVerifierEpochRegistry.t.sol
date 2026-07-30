@@ -87,6 +87,207 @@ contract DreggVerifierEpochRegistryTest is Test {
         verifier.activateEpoch();
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // ⚑ THE VK COMMITMENT, COMPUTED FROM STORAGE.
+    //
+    // This registry is the one place on the EVM where the pin is fully
+    // self-evidencing: the key lives in STORAGE, so `vkDigestAtEpoch` hashes
+    // the very words `_verify` feeds the precompile. There is no second copy to
+    // drift, and no off-chain gate standing in for the relation.
+    //
+    // The property the superseded pin could not have: TWO DIFFERENT KEYS MUST
+    // PRODUCE TWO DIFFERENT COMMITMENTS. `keccak256("dregg-settlement-vk-dev-
+    // setup")` produced ONE commitment for every key that will ever exist.
+    // ══════════════════════════════════════════════════════════════════
+
+    /// The digest computed from the registry's STORED epoch-0 key equals the
+    /// generated constant every chain pins — an ON-CHAIN cross-check between
+    /// the storage key and `DreggSettlementVK`'s copy of the same key, and
+    /// therefore also against Solana's and Cosmos's emitted `VK_DIGEST`.
+    function test_StorageDerivedDigestEqualsTheCrossChainConstant() public view {
+        assertEq(
+            verifier.vkDigestAtEpoch(0),
+            DreggSettlementVK.VK_DIGEST,
+            "the stored epoch-0 key must digest to the generated constant"
+        );
+        assertEq(
+            verifier.vkDigest(),
+            DreggSettlementVK.VK_DIGEST,
+            "vkDigest() tracks the current epoch"
+        );
+        assertEq(
+            verifier.vkDigest(),
+            0xcfda612f472e998d1f1bad1bf545ec5b39ca99b64db94e46edf2e8d3790a37cc,
+            "byte-identical to solana vk::VK_DIGEST and cosmos vk::VK_DIGEST"
+        );
+    }
+
+    /// An UNSET epoch has no commitment. Fail-closed: reporting the all-zero
+    /// key's digest for an epoch that was never written would be a Nomad-law
+    /// default masquerading as a commitment.
+    function test_UnsetEpochHasNoDigest() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DreggGroth16VerifierUpgradeable.MalformedVerifyingKey.selector,
+                "epoch not set"
+            )
+        );
+        verifier.vkDigestAtEpoch(1);
+    }
+
+    /// ⚑ THE FIRST POLE, AND THE ONE THAT MATTERS: 47 genuinely DIFFERENT
+    /// verifying keys, each really installed in storage by a timelocked epoch
+    /// flip, produce 47 PAIRWISE-DISTINCT commitments — plus epoch 0 = 48.
+    ///
+    /// The old label hash scores 0 of 47 here BY CONSTRUCTION: it never reads
+    /// the key, so all 48 of its values are the same 32 bytes
+    /// (`test_TheOldLabelPinDetectsNoneOfThem` below).
+    ///
+    /// The perturbations are the ones `_validate` admits, which is the honest
+    /// set — a G2 coordinate bit-flip (in-field is all that is checked there),
+    /// and G1 TRANSPOSITIONS (swapping two on-curve points stays on-curve).
+    /// A transposed IC vector is exactly the kind of ceremony-output slip a VK
+    /// commitment exists to catch, and it is invisible to a length or a
+    /// well-formedness check.
+    function test_FortySevenDifferentKeysGiveFortySevenDifferentDigests() public {
+        bytes32[48] memory seen;
+        uint256 n = 0;
+        seen[n++] = verifier.vkDigestAtEpoch(0);
+
+        // (a) every one of the 20 G2 coordinate words, bit-flipped.
+        for (uint256 i = 0; i < 20; i++) {
+            DreggGroth16VerifierUpgradeable.VerifyingKey memory k =
+                verifier.getVerifyingKey(0);
+            _perturbG2Word(k, i);
+            _flip(k);
+            seen[n++] = verifier.vkDigest();
+        }
+
+        // (b) 26 IC transpositions ic[i] <-> ic[i+1]: a different key, every
+        //     point still on-curve, same multiset of points.
+        for (uint256 i = 0; i < 26; i++) {
+            DreggGroth16VerifierUpgradeable.VerifyingKey memory k =
+                verifier.getVerifyingKey(0);
+            (k.ic[i], k.ic[i + 1]) = (k.ic[i + 1], k.ic[i]);
+            _flip(k);
+            seen[n++] = verifier.vkDigest();
+        }
+
+        // (c) alpha <-> ic[0]: both G1, both on-curve, a different key.
+        {
+            DreggGroth16VerifierUpgradeable.VerifyingKey memory k =
+                verifier.getVerifyingKey(0);
+            (k.alpha, k.ic[0]) = (k.ic[0], k.alpha);
+            _flip(k);
+            seen[n++] = verifier.vkDigest();
+        }
+
+        assertEq(n, 48, "epoch 0 plus 47 distinct installed keys");
+        for (uint256 i = 0; i < n; i++) {
+            for (uint256 j = i + 1; j < n; j++) {
+                assertTrue(
+                    seen[i] != seen[j],
+                    "two different verifying keys produced the same commitment"
+                );
+            }
+        }
+    }
+
+    /// The defect, as a passing measurement. Across the same key changes the
+    /// superseded pin is CONSTANT — it detects 0 of them, because the preimage
+    /// contains zero VK bytes.
+    function test_TheOldLabelPinDetectsNoneOfThem() public {
+        bytes32 label = keccak256("dregg-settlement-vk-dev-setup");
+        assertEq(
+            label,
+            0x18f57474785bdd93ff7feb573dfadff69516035997115f2854c93f0f31e1ff76,
+            "the superseded pin, recorded"
+        );
+        bytes32 before = verifier.vkDigest();
+        for (uint256 i = 0; i < 6; i++) {
+            DreggGroth16VerifierUpgradeable.VerifyingKey memory k =
+                verifier.getVerifyingKey(0);
+            _perturbG2Word(k, i);
+            _flip(k);
+            assertTrue(verifier.vkDigest() != before, "the key-derived pin moved");
+            assertEq(
+                keccak256("dregg-settlement-vk-dev-setup"),
+                label,
+                "...and the label hash did not, and never could"
+            );
+        }
+        assertTrue(label != DreggSettlementVK.VK_DIGEST);
+    }
+
+    /// A settlement wired to the registry reports the CURRENT epoch's key
+    /// digest — it follows a flip instead of reporting a stale constructor
+    /// argument. (`_verifyingKeyHash` storage is gone for exactly this reason.)
+    function test_SettlementPinFollowsTheEpochFlip() public {
+        DreggSettlement settlement = new DreggSettlement(
+            IGroth16Verifier25(address(verifier)), VK_HASH, genesisRoot
+        );
+        assertEq(settlement.verifyingKeyHash(), DreggSettlementVK.VK_DIGEST);
+
+        DreggGroth16VerifierUpgradeable.VerifyingKey memory k =
+            verifier.getVerifyingKey(0);
+        k.deltaNeg.x0 = k.deltaNeg.x0 ^ 1;
+        _flip(k);
+
+        assertEq(
+            settlement.verifyingKeyHash(),
+            verifier.vkDigest(),
+            "the settlement's pin must be the key that now verifies"
+        );
+        assertTrue(
+            settlement.verifyingKeyHash() != DreggSettlementVK.VK_DIGEST,
+            "and must NOT still report the key it was deployed against"
+        );
+    }
+
+    /// Deploying against the registry with a pin that is not the current
+    /// epoch's key digest is REFUSED.
+    function test_SettlementRefusesAPinThatIsNotTheRegistrysKey() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IDreggSettlement.VerifyingKeyHashMismatch.selector,
+                DreggSettlementVK.VK_DIGEST,
+                keccak256("dregg-settlement-vk-dev-setup")
+            )
+        );
+        new DreggSettlement(
+            IGroth16Verifier25(address(verifier)),
+            keccak256("dregg-settlement-vk-dev-setup"),
+            genesisRoot
+        );
+    }
+
+    /// Bit-flip G2 coordinate word `i` of the key, in the digest's pinned order
+    /// (betaNeg, gammaNeg, deltaNeg, pedersenG, pedersenGSigma; x1,x0,y1,y0).
+    /// A flipped low bit stays a reduced Fp residue, which is all `_validate`
+    /// checks for G2 — so the flip really installs.
+    function _perturbG2Word(
+        DreggGroth16VerifierUpgradeable.VerifyingKey memory k,
+        uint256 i
+    ) internal pure {
+        uint256 which = i / 4;
+        uint256 word = i % 4;
+        if (which == 0) _bump(k.betaNeg, word);
+        else if (which == 1) _bump(k.gammaNeg, word);
+        else if (which == 2) _bump(k.deltaNeg, word);
+        else if (which == 3) _bump(k.pedersenG, word);
+        else _bump(k.pedersenGSigma, word);
+    }
+
+    function _bump(DreggGroth16VerifierUpgradeable.G2Point memory p, uint256 word)
+        internal
+        pure
+    {
+        if (word == 0) p.x1 = p.x1 ^ 1;
+        else if (word == 1) p.x0 = p.x0 ^ 1;
+        else if (word == 2) p.y1 = p.y1 ^ 1;
+        else p.y0 = p.y0 ^ 1;
+    }
+
     // ── epoch 0 seeded byte-identical: the live proof still verifies ────────
 
     function test_Epoch0SeededAcceptsRealProofViaCurrentEpoch() public view {

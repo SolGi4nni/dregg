@@ -36,4 +36,27 @@ interface IGroth16Verifier25 {
         uint256[2] calldata commitmentPok,
         uint256[25] calldata publicInputs
     ) external view returns (bool);
+
+    /// keccak256 over the canonical serialization of the verifying key THIS
+    /// verifier runs its pairing against — RECOMPUTED FROM THE KEY MATERIAL,
+    /// never a stored assertion about it. The preimage is pinned in
+    /// `solana-settlement/src/vk_digest.rs` and emitted into all three chains
+    /// by `chain/codegen/gen_verifiers.py`:
+    ///
+    ///   keccak256("dregg-groth16-vk/1" || u32be(25) || u32be(26)
+    ///             || alpha(2) || betaNeg,gammaNeg,deltaNeg,pedersenG,
+    ///                pedersenGSigma (4 words each, EIP-197 imaginary-first)
+    ///             || ic[0](2) || ic[1..27](2 each))          // 76 words
+    ///
+    /// ⚑ WHY THIS IS ON THE VERIFIER AND NOT ON THE SETTLEMENT CONTRACT.
+    /// `DreggSettlement` used to take its VK pin as a constructor ARGUMENT
+    /// checked only for `!= bytes32(0)`, so the pin committed to whatever the
+    /// deployer typed rather than to the key the pairing actually uses — three
+    /// live test deployments pinned `keccak256("dregg-settlement-vk-v1")` and
+    /// `keccak256("test-vk")` and the contract accepted both. A commitment the
+    /// committer chooses freely is not a commitment. The key that gates
+    /// acceptance lives HERE, in the verifier, so the digest of it must be
+    /// answerable HERE; `DreggSettlement`'s constructor now REFUSES any pin
+    /// that disagrees with this value.
+    function vkDigest() external view returns (bytes32);
 }

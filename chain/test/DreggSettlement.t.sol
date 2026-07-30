@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// Toggleable mock. In strict mode it also compares the received 25-lane
 /// vector against a pre-set expectation, so the accept test pins the exact
@@ -13,6 +14,20 @@ contract MockGroth16Verifier25 is IGroth16Verifier25 {
     bool public result = true;
     bool public strict;
     uint256[25] public expectedInputs;
+
+    /// The digest this mock claims for its (notional) key. Defaults to the real
+    /// deployed key's digest so a settlement wired to this mock constructs;
+    /// `setVkDigest` lets a test stand in for a verifier holding a DIFFERENT
+    /// key, which is what makes `VerifyingKeyHashMismatch` reachable.
+    bytes32 internal _vkDigest = DreggSettlementVK.VK_DIGEST;
+
+    function setVkDigest(bytes32 d) external {
+        _vkDigest = d;
+    }
+
+    function vkDigest() external view returns (bytes32) {
+        return _vkDigest;
+    }
 
     function setResult(bool r) external {
         result = r;
@@ -52,6 +67,10 @@ contract RevertingVerifier25 is IGroth16Verifier25 {
     ) external pure returns (bool) {
         revert("verifier: boom");
     }
+
+    function vkDigest() external pure returns (bytes32) {
+        return DreggSettlementVK.digest();
+    }
 }
 
 contract DreggSettlementTest is Test {
@@ -59,7 +78,12 @@ contract DreggSettlementTest is Test {
 
     MockGroth16Verifier25 verifier;
     DreggSettlement settlement;
-    bytes32 constant VK_HASH = keccak256("dregg-settlement-vk-v1");
+    /// ⚑ WAS `keccak256("dregg-settlement-vk-v1")` until 2026-07-30 — a hash of
+    /// a LABEL, and this suite's green was itself the measurement that nothing
+    /// checked the pin: the contract took that value, stored it, compared it to
+    /// nothing, and settled. It is now the digest of the key the verifier
+    /// answers with, and the constructor refuses anything else.
+    bytes32 constant VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     // Re-declared for vm.expectEmit (topic hashes match the interface's).
     event Settled(bytes32 indexed oldRoot, bytes32 indexed newRoot, uint64 height);
@@ -342,9 +366,73 @@ contract DreggSettlementTest is Test {
         new DreggSettlement(IGroth16Verifier25(address(0xBEEF)), VK_HASH, mkLanes(1));
     }
 
-    function test_Reject_ZeroVerifyingKeyHash() public {
-        vm.expectRevert(IDreggSettlement.ZeroVerifyingKeyHash.selector);
-        new DreggSettlement(verifier, bytes32(0), mkLanes(1));
+    /// ⚑ THE PIN IS A REFUSAL, NOT A FIELD. Every one of these declarations was
+    /// ACCEPTED before 2026-07-30, when the only constraint was `!= bytes32(0)`
+    /// — including the superseded label hash the whole stack used to pin.
+    function test_Reject_VerifyingKeyHashMismatch() public {
+        bytes32 expected = verifier.vkDigest();
+
+        bytes32[4] memory wrong = [
+            bytes32(0), // the ONLY value the old check caught
+            keccak256("dregg-settlement-vk-dev-setup"), // the superseded cross-chain pin
+            keccak256("dregg-settlement-vk-v1"), // what THIS suite used to pass
+            bytes32(uint256(expected) ^ 1) // the right digest off by one bit
+        ];
+
+        for (uint256 i = 0; i < wrong.length; i++) {
+            assertTrue(wrong[i] != expected, "the foil must actually be wrong");
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IDreggSettlement.VerifyingKeyHashMismatch.selector,
+                    expected,
+                    wrong[i]
+                )
+            );
+            new DreggSettlement(verifier, wrong[i], mkLanes(1));
+        }
+    }
+
+    /// The accept pole, and the reason the refusal is not vacuous: the DECLARED
+    /// digest is checked against what the VERIFIER answers, so a verifier
+    /// holding a different key refuses the very pin that is correct for this one.
+    function test_Reject_PinCorrectForADifferentVerifiersKey() public {
+        MockGroth16Verifier25 other = new MockGroth16Verifier25();
+        bytes32 otherKey = keccak256("a different verifying key entirely");
+        other.setVkDigest(otherKey);
+
+        // VK_HASH is right for `verifier` and wrong for `other`.
+        DreggSettlement ok = new DreggSettlement(verifier, VK_HASH, mkLanes(1));
+        assertEq(ok.verifyingKeyHash(), VK_HASH);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IDreggSettlement.VerifyingKeyHashMismatch.selector, otherKey, VK_HASH
+            )
+        );
+        new DreggSettlement(other, VK_HASH, mkLanes(1));
+
+        // ...and `other`'s own digest is refused by `verifier`, symmetrically.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IDreggSettlement.VerifyingKeyHashMismatch.selector, VK_HASH, otherKey
+            )
+        );
+        new DreggSettlement(verifier, otherKey, mkLanes(1));
+    }
+
+    /// `verifyingKeyHash()` READS THROUGH: it is the verifier's answer, not a
+    /// stored copy that could disagree with it.
+    function test_VerifyingKeyHashReadsThroughToTheVerifier() public {
+        assertEq(settlement.verifyingKeyHash(), verifier.vkDigest());
+        // Move the verifier's key; the settlement's report follows it rather
+        // than reporting a stale constructor argument.
+        bytes32 moved = keccak256("rotated key");
+        verifier.setVkDigest(moved);
+        assertEq(
+            settlement.verifyingKeyHash(),
+            moved,
+            "the pin must track the key that actually verifies"
+        );
     }
 
     // ------------------------------------------------------------------

@@ -6,6 +6,7 @@ import {DreggStateOracle} from "../contracts/DreggStateOracle.sol";
 import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// A verifier that accepts. The state-oracle tests are about what the ORACLE binds,
 /// not about the pairing — `DreggSettlementRealProof.t.sol` exercises the real proof.
@@ -19,6 +20,10 @@ contract AcceptingVerifier is IGroth16Verifier25 {
         uint256[25] calldata
     ) external pure returns (bool) {
         return true;
+    }
+
+    function vkDigest() external pure returns (bytes32) {
+        return DreggSettlementVK.digest();
     }
 }
 
@@ -42,7 +47,12 @@ contract DreggStateOracleTest is Test {
     uint32[8] SPAN1 = [uint32(11), 12, 13, 14, 15, 16, 17, 18];
     uint32[8] SPAN2 = [uint32(21), 22, 23, 24, 25, 26, 27, 28];
 
-    bytes32 constant VK_HASH = keccak256("test-vk");
+    /// ⚑ WAS `keccak256("test-vk")` until 2026-07-30. That this suite was green
+    /// with it is the measurement: the settlement contract took a hash of the
+    /// string "test-vk" as its "verifying-key commitment" and never looked at it
+    /// again. The constructor now refuses any declaration but the verifier's own
+    /// key digest.
+    bytes32 constant VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     function setUp() public {
         AcceptingVerifier v = new AcceptingVerifier();

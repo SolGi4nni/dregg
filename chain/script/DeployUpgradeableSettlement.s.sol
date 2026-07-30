@@ -37,13 +37,17 @@ contract DeployUpgradeableSettlement is Script {
     /// (`chain/codegen/gen_verifiers.py`). ⚑ FLAG DAY 2026-07-28 — replaced
     /// `keccak256("dregg-settlement-vk-dev-setup")`, a hash of a LABEL that could not
     /// move when the key did. Already-deployed settlements pin the old value.
-    bytes32 constant DEFAULT_VK_HASH = DreggSettlementVK.VK_DIGEST;
+    ///
+    /// ⚑ FLAG DAY 2026-07-30 — the `DREGG_VK_HASH` env override is GONE. The pin is
+    /// read from the registry (`registry.vkDigest()`), which computes it from the VK
+    /// IN ITS OWN STORAGE, so it is the digest of the key the pairing will actually
+    /// run against. This constant remains only as a codegen-drift guard.
+    bytes32 constant EXPECTED_VK_HASH = DreggSettlementVK.VK_DIGEST;
     uint256 constant ANVIL_DEV_KEY =
         0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
     function run() external {
         uint256 deployerPk = vm.envOr("DEPLOYER_PRIVATE_KEY", ANVIL_DEV_KEY);
-        bytes32 vkHash = vm.envOr("DREGG_VK_HASH", DEFAULT_VK_HASH);
         uint32[8] memory genesisRoot = _genesisAnchor();
 
         console.log("== dregg UPGRADEABLE-VK settlement deploy ==");
@@ -54,6 +58,16 @@ contract DeployUpgradeableSettlement is Script {
 
         // 1. the storage-VK registry verifier, epoch-0 seeded from the live VK.
         DreggGroth16VerifierUpgradeable registry = new DreggGroth16VerifierUpgradeable();
+
+        // THE VK PIN, COMPUTED FROM THE REGISTRY'S STORED KEY — never typed.
+        bytes32 vkHash = registry.vkDigest();
+        console.log("vkHash (from the registry's epoch-0 storage):");
+        console.logBytes32(vkHash);
+        require(
+            vkHash == EXPECTED_VK_HASH,
+            "vkDigest() != DreggSettlementVK.VK_DIGEST - regenerate chain/codegen"
+        );
+
         // 2. the settlement contract consuming the registry (current epoch).
         DreggSettlement settlement = new DreggSettlement(
             IGroth16Verifier25(address(registry)), vkHash, genesisRoot

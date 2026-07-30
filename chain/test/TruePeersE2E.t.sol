@@ -12,6 +12,7 @@ import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {AcceptingPeerVerifier, RejectingPeerVerifier} from "./DreggPeerRegistry.t.sol";
 import {MockReceiveUln} from "./DreggDVN.t.sol";
 import {MockGroth16Verifier25} from "./DreggSettlement.t.sol";
+import {DreggSettlementVK} from "../contracts/DreggSettlementVK.sol";
 
 /// TRUE PEERS, INTERACTING — the whole cross-chain flow proven as ONE scenario.
 ///
@@ -86,7 +87,9 @@ contract TruePeersE2ETest is Test {
     uint256 constant ETH = 1; // EIP-155 ETH mainnet (the "wrong chain" foil)
 
     bytes32 constant VK_HASH = keccak256("dregg-peer-lightclient-vk-v1");
-    bytes32 constant SETTLEMENT_VK_HASH = keccak256("dregg-settlement-vk-v1");
+    /// ⚑ WAS `keccak256("dregg-settlement-vk-v1")` until 2026-07-30 — a hash of
+    /// a LABEL that `DreggSettlement` accepted because nothing compared the pin.
+    bytes32 constant SETTLEMENT_VK_HASH = DreggSettlementVK.VK_DIGEST;
 
     // A representative Cosmos finalized height.
     uint64 constant H = 19_000_000;

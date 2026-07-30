@@ -15,7 +15,26 @@ contract DreggSettlement is IDreggSettlement {
     /// The pinned Groth16 verifier (VK baked in by gnark-solidity-verifier).
     IGroth16Verifier25 public immutable verifier;
 
-    bytes32 private immutable _verifyingKeyHash;
+    // NO `_verifyingKeyHash` STORAGE — deliberately. ⚑ FLAG DAY 2026-07-30.
+    //
+    // It was `bytes32 private immutable _verifyingKeyHash`, set from a
+    // constructor argument that was checked ONLY for `!= bytes32(0)` and then
+    // consulted by nothing: `settle` never read it, and the pairing at step 4
+    // runs against the key inside `verifier`, which the pin never had to
+    // agree with. So the "VK commitment" committed to whatever the deployer
+    // typed. That is not a weak commitment, it is no commitment — and it was
+    // not hypothetical: three live deployments in this repo's own suite pinned
+    // `keccak256("dregg-settlement-vk-v1")` (DreggSettlement.t.sol,
+    // TruePeersE2E.t.sol) and `keccak256("test-vk")` (DreggStateOracle.t.sol),
+    // and the contract accepted every one.
+    //
+    // Storing it at all was the mistake underneath the label-hash mistake: a
+    // stored copy can disagree with the key, and an `immutable` copy cannot be
+    // corrected when a registry verifier flips its VK epoch. `verifyingKeyHash()`
+    // now READS THROUGH to `verifier.vkDigest()`, so it is the digest of the key
+    // the pairing actually uses, always, with no second copy to go stale. The
+    // constructor argument survives as a fail-closed DEPLOY-TIME assertion (see
+    // below) — it is consumed, never kept.
 
     uint32[8] private _genesisLanes;
     uint32[8] private _provenLanes;
@@ -85,11 +104,29 @@ contract DreggSettlement is IDreggSettlement {
         if (address(verifier_).code.length == 0) {
             revert VerifierHasNoCode(address(verifier_));
         }
-        if (verifyingKeyHash_ == bytes32(0)) {
-            revert ZeroVerifyingKeyHash();
+        // THE VK PIN IS NOW A REFUSAL. `verifyingKeyHash_` is the deployer's
+        // DECLARATION of which verifying key this settlement is meant to check
+        // against; the verifier answers with the digest of the key it actually
+        // runs the pairing over, recomputed on-chain from the key material. If
+        // they disagree the deployment does not come into existence.
+        //
+        // This replaces `if (verifyingKeyHash_ == bytes32(0)) revert
+        // ZeroVerifyingKeyHash();` — a check that admitted every one of the
+        // 2^256 - 1 non-zero wrong answers, including the superseded label hash
+        // `keccak256("dregg-settlement-vk-dev-setup")`. The zero case is
+        // subsumed: `vkDigest()` is a keccak256 of a 2458-byte preimage and is
+        // never bytes32(0), so a zero declaration still reverts — with the
+        // error that says why.
+        //
+        // The EVM twin of Solana `processor.rs::init`'s `if vk_hash !=
+        // vk::VK_DIGEST { return Err(VkDigestMismatch) }`. Cosmos
+        // `instantiate` now refuses the same way. All three chains had the
+        // key-derived VALUE from 2026-07-28; only Solana REFUSED a wrong one.
+        bytes32 expected = verifier_.vkDigest();
+        if (verifyingKeyHash_ != expected) {
+            revert VerifyingKeyHashMismatch(expected, verifyingKeyHash_);
         }
         verifier = verifier_;
-        _verifyingKeyHash = verifyingKeyHash_;
 
         // The genesis anchor is pinned AT DEPLOYMENT, authenticated by the
         // deployer — mirroring `EthBridgeState::new(genesis_root)`
@@ -169,8 +206,12 @@ contract DreggSettlement is IDreggSettlement {
         return _provenHeight;
     }
 
+    /// The digest of the verifying key this contract's pairing actually runs
+    /// against — READ THROUGH to the verifier, not a stored copy. Equal to the
+    /// value declared at construction (the constructor refuses any other), and
+    /// it FOLLOWS a registry verifier's epoch flip instead of going stale.
     function verifyingKeyHash() external view returns (bytes32) {
-        return _verifyingKeyHash;
+        return verifier.vkDigest();
     }
 
     /// keccak256 over the tight 32-byte big-endian packing of the 8 lanes:
