@@ -32,7 +32,7 @@ use dreggnet_offerings::native_descent::{
 use dreggnet_offerings::{Action, Offering, Outcome, RecordVerify, SessionConfig};
 use dreggnet_verified_completion::{CompletionVerifier, VerifiedCompletion};
 use dungeon_on_dregg::collective::Custodian;
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, PROGRAM_JSON, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{PROGRAM_JSON, crowned_line};
 use dungeon_on_dregg::loot::{LootDraw, roll_drop};
 use procgen_dregg::CommittedSeed;
 
@@ -42,27 +42,25 @@ const NATIVE_CHEEVO_DOMAIN: &str = "dreggnet-adventure/native-cheevo/v1";
 const NATIVE_WORLD_SEED_DOMAIN: &str = "dreggnet-adventure/native-world-seed/v1";
 const NATIVE_PROGRAM_ID_DOMAIN: &str = "dreggnet-adventure/native-program-id/v1";
 
-/// The exact eighteen-move crowned line driven by the Lean model's own test battery.
-pub const CROWNED_LINE: [(&str, i64); 18] = [
-    (DELVE, 0),
-    (SMITE, 0),
-    (LOOT, 1),
-    (UNLOCK, 2),
-    (DELVE, 0),
-    (SMITE, 0),
-    (LOOT, 2),
-    (UNLOCK, 3),
-    (DELVE, 0),
-    (SMITE, 0),
-    (SMITE, 0),
-    (LOOT, 3),
-    (UNLOCK, 4),
-    (DELVE, 0),
-    (SMITE, 0),
-    (SMITE, 0),
-    (LOOT, 0),
-    (FLEE, 0),
-];
+/// **The crowned line this session plays** — `dungeon_on_dregg::descent::crowned_line` over the
+/// session's OWN drawn day.
+///
+/// ⚑ This used to be `CROWNED_LINE`, an eighteen-move literal. A hand-written tape is a TWIN of
+/// the game's rules, and it went stale three times without a compile error to show for it: the
+/// day's map stopped being a constant (`homes` / `ghp` are drawn per day, so "one smite then
+/// `loot(2)`" is only true where that floor's guardian has one hit point), `flee` began demanding
+/// `depth == 0` (so the line owes `FLOORS` climbs it did not have), and `unlock` stopped keeping
+/// the key (`custody := HUNG + depth`), which moves what the run banks. Measured 2026-07-29: all
+/// nine of this crate's tests died at `native crowned step 7 was not enabled: loot(2)`.
+///
+/// `crowned_line` derives the tape from the day's own `DayWorld`, and `dungeon-on-dregg`'s
+/// `every_days_crowned_line_banks_the_prize_within_the_light` proves it crowns on every day the
+/// draw can produce — which is a guarantee no literal here can carry. Every other consumer of the
+/// Descent (`dreggnet-offerings`, `dreggnet-game-board`, `discord-bot`) already reads it this way;
+/// this crate was the last holdout.
+pub fn crowned_line_for(session: &NativeDescentSession) -> Vec<(&'static str, i64)> {
+    crowned_line(session.game().day())
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // One identity across party custody, native actor, assets, and guild membership.
@@ -225,12 +223,17 @@ fn offered_action(
 
 /// Drive the exact crowned run through the offering surface.  Every step is submitted
 /// to the Lean-program-backed executor; a disabled or refused step aborts the run.
+///
+/// The tape is [`crowned_line_for`] — the day's own line, never a literal. Returns the number of
+/// steps driven, so a caller can compare it against the turn count the VERIFIER independently
+/// re-derives from replay (`NativeRunFacts::turns`) rather than against a constant.
 pub fn drive_descent_to_win(
     offering: &NativeDescentOffering,
     session: &mut NativeDescentSession,
     actor: &DreggIdentity,
-) -> Result<(), String> {
-    for (index, (turn, arg)) in CROWNED_LINE.iter().copied().enumerate() {
+) -> Result<usize, String> {
+    let line = crowned_line_for(session);
+    for (index, (turn, arg)) in line.iter().copied().enumerate() {
         let action = offered_action(offering, session, turn, arg)?;
         if !action.enabled {
             return Err(format!(
@@ -240,7 +243,7 @@ pub fn drive_descent_to_win(
         }
         match offering.advance(session, action, actor.clone()) {
             Outcome::Landed { ended, .. } => {
-                let should_end = index + 1 == CROWNED_LINE.len();
+                let should_end = index + 1 == line.len();
                 if ended != should_end {
                     return Err(format!(
                         "native crowned step {} had terminal={ended}, expected {should_end}",
@@ -256,7 +259,7 @@ pub fn drive_descent_to_win(
             }
         }
     }
-    Ok(())
+    Ok(line.len())
 }
 
 /// The one portable native run object handed to progression systems.
@@ -1049,11 +1052,19 @@ impl NativeSeason {
 
 pub const RELIC_MATERIAL_KIND: &str = "essence:native-descent";
 
+/// The forge recipe the run's banked loot feeds.
+///
+/// ⚑ **ONE input, because the crowned line brings ONE relic home.** It asked for two back when
+/// turning a key kept it and the line banked `[0, 1, 2, 3]`. `unlock` now sets the key down in the
+/// door it opened (`custody := HUNG + depth`) and `flee` promotes `CARRIED` and only `CARRIED`, so
+/// the reference line banks the prize alone. Asking for a second material would mean rolling a
+/// second "fair drop" for a relic the run never brought back — a manufactured input wearing a
+/// verified draw's provenance. The recipe follows what the run actually banked.
 pub fn descent_relic_recipe() -> dreggnet_craft::Recipe {
     use dreggnet_craft::{GearSlot, GearTemplate, Recipe};
     Recipe::gear(
         "forge:native-descent-relic",
-        &[RELIC_MATERIAL_KIND, RELIC_MATERIAL_KIND],
+        &[RELIC_MATERIAL_KIND],
         GearTemplate {
             slot: GearSlot::Weapon,
             rune: 0xDE5CE7,
@@ -1064,16 +1075,20 @@ pub fn descent_relic_recipe() -> dreggnet_craft::Recipe {
     )
 }
 
+/// One fair drop per relic the crowned settlement actually BANKED — never more.
+///
+/// The count is the run's, not a constant: a draw exists exactly when a relic came home, so the
+/// forged note's provenance replays to a banked object. (It demanded two before `unlock` began
+/// leaving keys in doors; see [`descent_relic_recipe`].)
 fn run_loot_draws(run: &NativeDescentRun) -> Result<Vec<LootDraw>, String> {
     let facts = run.verify_crowned()?;
-    if facts.banked_relics.len() < 2 {
-        return Err("the crowned settlement banked fewer than two forge inputs".to_string());
+    if facts.banked_relics.is_empty() {
+        return Err("the crowned settlement banked no forge input".to_string());
     }
     let seed = CommittedSeed::from_bytes(run.completion_root());
     Ok(facts
         .banked_relics
         .iter()
-        .take(2)
         .map(|relic| {
             roll_drop(
                 &seed,
@@ -1413,8 +1428,8 @@ impl Adventure {
             ));
         }
 
-        // Source two materials through the verified loot tooth, consume them in the forge,
-        // and pass the exact output ledger into the atomic trade.
+        // Source one material per BANKED relic through the verified loot tooth, consume them in
+        // the forge, and pass the exact output ledger into the atomic trade.
         let forged =
             forge_run_loot(&run, hero).map_err(|error| AdventureError::at("craft", error))?;
         let verified_loot_drops = forged.drops.len();
@@ -1494,6 +1509,10 @@ mod tests {
     use dregg_season::CarryForwardPolicy;
     use dreggnet_craft::{CraftForge, RecipeBook};
     use dreggnet_party::{Party, Role};
+    // Verb names for the hand-driven affordance probes below (the crowned tape itself is
+    // `crowned_line_for`, never a literal). Test-only, so they live here — a module-scope `use`
+    // would be genuinely unused in the non-test build and `cargo clippy --fix` would strip it.
+    use dungeon_on_dregg::descent::{ASCEND, DELVE, FLOORS, SMITE, UNLOCK};
 
     fn hero() -> PlayerIdentity {
         PlayerIdentity::new("Aster-native-tank")
@@ -1511,9 +1530,23 @@ mod tests {
     fn crowned_run_is_native_restartable_and_completion_bound() {
         let (offering, session, run) = won();
         let facts = run.verify_crowned().expect("fresh executor replay");
-        assert_eq!(facts.turns, CROWNED_LINE.len());
+        let line = crowned_line_for(&session);
+        // The turn count the VERIFIER re-derives from replay, against the day's own line — two
+        // independent objects, not one constant compared with itself.
+        assert_eq!(facts.turns, line.len());
+        // ⚑ ANTI-VACUITY FOR THE WOUND THIS REPLACED. The deleted eighteen-move literal contained
+        // no climb at all, and `flee` has demanded `depth == 0` since 2026-07-25 — so a tape that
+        // cannot climb cannot bank. A re-introduced literal fails HERE, not four commits later.
+        assert_eq!(
+            line.iter().filter(|(verb, _)| *verb == ASCEND).count(),
+            FLOORS as usize,
+            "the crowned line pays one climb per floor to reach the surface it banks from"
+        );
         assert_eq!(facts.peak_depth, 4);
-        assert_eq!(facts.banked_relics, vec![0, 1, 2, 3]);
+        // ⚑ WHAT THE CROWN IS NOW: the prize, and nothing else. It read `[0, 1, 2, 3]` back when
+        // `unlock` kept the key; the key is set down in the door it opens (`HUNG + depth`) and
+        // `flee` promotes `CARRIED` only, so the reference line wins every way and banks the crown.
+        assert_eq!(facts.banked_relics, vec![0]);
         assert_eq!(run.completion_root(), session.root());
         assert_eq!(
             run.completion.settlement_receipt_hash,
@@ -1571,7 +1604,8 @@ mod tests {
 
     #[test]
     fn quest_refuses_wrong_world_forgery_and_replay() {
-        let (_, _, run) = won();
+        let (_, session, run) = won();
+        let turns = crowned_line_for(&session).len();
         let mut quest = CompletionGatedQuest::post(run.world);
         assert!(quest.turn_in(&run).is_err(), "not started");
         assert!(quest.start().is_err(), "no faction standing");
@@ -1587,13 +1621,14 @@ mod tests {
         assert!(quest.turn_in(&forged).is_err(), "forged completion refused");
         assert!(!quest.is_turned_in(), "failed attempts are anti-ghost");
 
-        assert_eq!(quest.turn_in(&run).expect("honest completion"), 18);
+        assert_eq!(quest.turn_in(&run).expect("honest completion"), turns);
         assert!(quest.turn_in(&run).is_err(), "one completion cannot replay");
     }
 
     #[test]
     fn one_native_completion_drives_cheevo_guild_quest_and_season() {
-        let (_, _, run) = won();
+        let (_, session, run) = won();
+        let turns = crowned_line_for(&session).len();
         let hero = hero();
         let root = run.completion_root();
 
@@ -1617,14 +1652,14 @@ mod tests {
         let who = hero.guild_member();
         assert!(guild.record_clear(&who, &run).is_err(), "nonmember refused");
         guild.admit(&who);
-        assert_eq!(guild.record_clear(&who, &run).expect("member clear"), 18);
+        assert_eq!(guild.record_clear(&who, &run).expect("member clear"), turns);
         assert!(guild.record_clear(&who, &run).is_err(), "replay refused");
         assert_eq!(guild.stats().verified_clears, 1);
 
         let mut quest = CompletionGatedQuest::post(run.world);
         quest.earn_standing();
         quest.start().expect("start");
-        assert_eq!(quest.turn_in(&run).expect("turn in"), 18);
+        assert_eq!(quest.turn_in(&run).expect("turn in"), turns);
 
         let mut season = NativeSeason::genesis(
             7,
@@ -1632,7 +1667,7 @@ mod tests {
             1,
             CarryForwardPolicy::hall_of_fame(3),
         );
-        assert_eq!(season.submit(&run).expect("season entry"), 18);
+        assert_eq!(season.submit(&run).expect("season entry"), turns);
         assert!(season.submit(&run).is_err(), "season replay refused");
         let champions = season.champions(3);
         assert_eq!(champions[0].completion_root, root);
@@ -1690,8 +1725,12 @@ mod tests {
     fn live_loot_path_verifies_drops_and_refuses_a_forgery() {
         let (_, _, run) = won();
         let hero = hero();
+        let banked = run.verify_crowned().expect("crowned replay").banked_relics;
         let forged = forge_run_loot(&run, &hero).expect("live verified loot path");
-        assert_eq!(forged.drops.len(), 2);
+        // ONE fair drop per relic the run actually banked — the count follows the settlement, not
+        // a literal. (It was 2 when the crowned line brought the way-keys home as well.)
+        assert_eq!(forged.drops.len(), banked.len());
+        assert!(!forged.drops.is_empty(), "a crowned run banks the prize");
         for drop in &forged.drops {
             dungeon_on_dregg::loot::reverify_drop(drop).expect("drop re-verifies");
             assert_eq!(drop.run_seed.as_bytes(), &run.completion_root());
@@ -1713,6 +1752,9 @@ mod tests {
     #[test]
     fn public_adventure_runs_end_to_end_on_native_completion() {
         let hero = hero();
+        // The day's own line, resolved independently of the adventure below it.
+        let (_, probe_session, _) = open_descent(&today_seed()).expect("open native");
+        let turns = crowned_line_for(&probe_session).len();
         let report = Adventure::daily(hero.clone())
             .play()
             .expect("full native adventure");
@@ -1723,11 +1765,11 @@ mod tests {
         assert_eq!(report.companion_buff, 2);
         assert!(report.quest_started && report.quest_turned_in);
         assert!(report.run_won && report.banked_relics.contains(&0));
-        assert_eq!(report.turns_to_win, 18);
+        assert_eq!(report.turns_to_win, turns);
         assert!(report.cheevo_earned && report.season_champion);
         assert_eq!(report.guild_clears, 1);
         assert_eq!(report.guild_turns, report.turns_to_win);
-        assert_eq!(report.verified_loot_drops, 2);
+        assert_eq!(report.verified_loot_drops, report.banked_relics.len());
         assert_eq!(report.relic_lineage_len, 3);
         assert_ne!(report.world_root, report.completion_root);
         assert!(
@@ -1737,13 +1779,47 @@ mod tests {
                 .any(|line| line.contains("Lean-native"))
         );
 
-        let party = Party::muster_with_roster([
+        // ⚑ THE HERO IS SEATED BY KEY, AND THE CONSTRUCTOR IS THE POINT. This read
+        // `Party::muster_with_roster` — which since `8b42856d6` ("a seat NAME is not a ballot
+        // key") draws ONE 32-byte custody root from the OS and derives every seat's ballot key
+        // under it. So the Tank's key was fresh entropy the party held and the hero's key was
+        // fresh entropy the PLAYER held, and `assert_eq!` between them was unsatisfiable by
+        // construction — invisible for four days behind the stale crowned tape above it.
+        // `muster_with_custody` is the constructor that carries a player's own public key, and
+        // it is the one `Adventure::play` uses; this asserts the property that loop relies on.
+        let party = Party::muster_with_custody([
+            (Role::Tank, hero.name().to_string(), hero.seat_pk()),
+            (
+                Role::Scout,
+                "s".to_string(),
+                PlayerIdentity::new("s").seat_pk(),
+            ),
+            (
+                Role::Mage,
+                "m".to_string(),
+                PlayerIdentity::new("m").seat_pk(),
+            ),
+            (
+                Role::Healer,
+                "h".to_string(),
+                PlayerIdentity::new("h").seat_pk(),
+            ),
+        ])
+        .expect("hero-seated party");
+        assert_eq!(party.seat(0).electorate_seat().pk, hero.seat_pk());
+        // …and a name-only muster does NOT seat the player: the seat holds a key the party drew,
+        // not one the player holds. The refusal above is a real distinction, not a tautology.
+        let hotseat = Party::muster_with_roster([
             (Role::Tank, hero.name().to_string()),
             (Role::Scout, "s".to_string()),
             (Role::Mage, "m".to_string()),
             (Role::Healer, "h".to_string()),
         ])
-        .expect("hero-seated party");
-        assert_eq!(party.seat(0).electorate_seat().pk, hero.seat_pk());
+        .expect("hotseat party");
+        assert_ne!(
+            hotseat.seat(0).electorate_seat().pk,
+            hero.seat_pk(),
+            "a seat NAME must not reconstruct the player's ballot key"
+        );
     }
 }
