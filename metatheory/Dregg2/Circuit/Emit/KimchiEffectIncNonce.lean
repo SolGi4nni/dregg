@@ -315,6 +315,11 @@ def PALLAS_BASE_MODULUS : Nat :=
 theorem pallas_gt_two_pow_254 : 2 ^ 254 < PALLAS_BASE_MODULUS := by
   norm_num [PALLAS_BASE_MODULUS]
 
+/-- **The whole reason the Kimchi envelope can be weaker.** A residual built from BabyBear-canonical
+cells is bounded by `2013265921`, and the Kimchi field is larger than that by ~2^223. -/
+theorem babybear_lt_pallas : 2013265921 < PALLAS_BASE_MODULUS := by
+  norm_num [PALLAS_BASE_MODULUS]
+
 /-- **The Kimchi-side canonicality envelope** — `IncNonceRowCanon` MINUS the `nonce_before + 1 < p`
 overflow hypothesis. The BabyBear side needs that hypothesis because its residual is read mod
 `2013265921`; the Kimchi side does not, because the same residual is read mod a `> 2^254` prime. -/
@@ -332,23 +337,18 @@ the row on `[0, NV0)` pins every head's value. -/
 theorem head_cols_below_NV0 (off : Nat) (hoff : off < STATE_SIZE) :
     saCol off < NV0 ∧ sbCol off < NV0 ∧ sel.NOOP < NV0 := by
   simp only [saCol, sbCol, NV0, EFFECT_VM_WIDTH, STATE_AFTER_BASE, STATE_BEFORE_BASE,
-    PARAM_BASE, NUM_EFFECTS, NUM_PARAMS, sel.NOOP] at *
+    PARAM_BASE, NUM_EFFECTS, NUM_PARAMS, STATE_SIZE, sel.NOOP] at *
   omega
 
 /-- A ℤ-residual strictly inside `(−p, p)` that vanishes in `ZMod p` is zero. -/
-theorem int_eq_zero_of_zmod_zero {p : Nat} (hp : 0 < p) (x : ℤ)
+theorem int_eq_zero_of_zmod_zero {p : Nat} (x : ℤ)
     (hbound : x.natAbs < p) (hz : ((x : ℤ) : ZMod p) = 0) : x = 0 := by
   have hdvd : (p : ℤ) ∣ x := by
     rwa [ZMod.intCast_zmod_eq_zero_iff_dvd] at hz
-  rcases hdvd with ⟨k, rfl⟩
-  rcases Int.eq_zero_or_natAbs_pos k with hk | hk
-  · simp [hk]
-  · exfalso
-    have : (p : ℤ).natAbs * k.natAbs < p := by
-      simpa [Int.natAbs_mul] using hbound
-    have hpn : (p : ℤ).natAbs = p := Int.natAbs_natCast p
-    rw [hpn] at this
-    nlinarith [this, hk, hp]
+  have hnat : p ∣ x.natAbs := by
+    have h2 := Int.natAbs_dvd_natAbs.mpr hdvd
+    rwa [Int.natAbs_natCast] at h2
+  exact Int.natAbs_eq_zero.mp (Nat.eq_zero_of_dvd_of_lt hnat hbound)
 
 /-- **THE FIELD-ACCURATE FORCING.** An arbitrary Pallas-field assignment satisfying the emitted
 rows, agreeing with the row window on `[0, NV0)`, forces the deployed ℤ intent — under
@@ -359,7 +359,7 @@ theorem kimchi_pallas_forces_intent (env : VmRowEnv)
     (hcanon : KimchiRowCanon env)
     (hr : rowsHold A incNonceKimchiRows) : IncNonceRowIntent env := by
   obtain ⟨hcells, hnoopB⟩ := hcanon
-  have hpos : 0 < PALLAS_BASE_MODULUS := by norm_num [PALLAS_BASE_MODULUS]
+  have hbb : 2013265921 < PALLAS_BASE_MODULUS := babybear_lt_pallas
   -- a head's value over the Pallas assignment is the cast of its ℤ value
   have hforce := kimchi_rows_force_heads A hr
   -- the freeze heads
@@ -376,10 +376,7 @@ theorem kimchi_pallas_forces_intent (env : VmRowEnv)
       ring
     rw [hcast] at hz
     have hb := hcells off hoff
-    have := int_eq_zero_of_zmod_zero hpos _ (by
-      have : (env.loc (saCol off) - env.loc (sbCol off)).natAbs < 2013265921 := by
-        omega
-      omega) hz
+    have := int_eq_zero_of_zmod_zero _ (by omega) hz
     omega
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact hfreeze _ (by norm_num [state.BALANCE_LO, STATE_SIZE]) (by simp [incNonceHeads])
@@ -397,10 +394,9 @@ theorem kimchi_pallas_forces_intent (env : VmRowEnv)
       ring
     rw [hcast] at hz
     have hb := hcells state.NONCE hoffN
-    have := int_eq_zero_of_zmod_zero hpos _ (by
-      have hn01 : 0 ≤ env.loc sel.NOOP ∧ env.loc sel.NOOP ≤ 1 := by
-        rcases hnoopB with h | h <;> rw [h] <;> norm_num
-      omega) hz
+    have hn01 : 0 ≤ env.loc sel.NOOP ∧ env.loc sel.NOOP ≤ 1 := by
+      rcases hnoopB with h | h <;> rw [h] <;> norm_num
+    have := int_eq_zero_of_zmod_zero _ (by omega) hz
     omega
   · exact hfreeze _ (by norm_num [state.CAP_ROOT, STATE_SIZE]) (by simp [incNonceHeads])
   · exact hfreeze _ (by norm_num [state.RESERVED, STATE_SIZE]) (by simp [incNonceHeads])
