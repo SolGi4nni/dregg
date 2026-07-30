@@ -127,10 +127,14 @@ invocation, where a reader sees it.
 
 **Measured, both budgets, 2026-07-30:**
 
-| budget | cut chosen | attributed | the eighth row |
-|---|---|---|---|
-| `FRIBRAID_LIMIT=4` (default, tier 1) | cut 3 | **7 of 8** | `one Merkle sibling bent` — **NOT ATTRIBUTABLE WITHIN BUDGET**, stated with the cut that would buy it |
-| `FRIBRAID_LIMIT=12` (tier 2) | cut 11 | **8 of 8** | `✓ REFUSED: one Merkle sibling bent` |
+| budget | cut chosen | attributed | wall clock | the eighth row |
+|---|---|---|---:|---|
+| `FRIBRAID_LIMIT=4` (default, tier 1) | cut 3 | **7 of 8** | 402 s | `one Merkle sibling bent` — **NOT ATTRIBUTABLE WITHIN BUDGET**, stated with the cut that would buy it |
+| `FRIBRAID_LIMIT=12` (tier 2) | cut 11 | **8 of 8** | 1,131 s | `✓ REFUSED: one Merkle sibling bent` |
+
+(Both green, both re-proved from nothing. The tier-2 figure was measured with a
+tier-0 gate run competing for the same box for part of it, so it is an upper
+bound; 12 slices at the uncontended 49 s/slice would be about 850 s.)
 
 The candidate table the leg prints is itself the evidence for the rule: at
 `LIMIT=12`, **cut 10 carries 96 sibling lanes and still attributes only 7 of 8**,
