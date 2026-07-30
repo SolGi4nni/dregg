@@ -86,7 +86,8 @@ open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.PastaField (pN qN numLimbs limbBits fpValue fpVal acceptB)
 open Dregg2.Circuit.Emit.PastaMsmWindowed (WTrace envOf cw BIT DBL fpVal_as_sum)
 open Dregg2.Circuit.Emit.PastaMsmSliced (sliceLo PI_COUNT sMaxPi)
-open Dregg2.Circuit.Emit.PastaMsmBound (Pt TIDX GIDX bMaxVar termAt planeAt scalarDigit)
+open Dregg2.Circuit.Emit.PastaMsmBound (Pt TIDX GIDX bMaxVar termAt planeAt scalarDigit rowAt
+  tupleOf manifestRow)
 open Dregg2.Circuit.Emit.PastaMsmOnCurve (WOC onCurveRowDesc)
 open Dregg2.Circuit.Emit.PastaMsmScalarBound (sAt sFactors sNat sScalars)
 open Dregg2.Circuit.Emit.MinaWrapOpeningGate (Fq)
@@ -1092,13 +1093,22 @@ theorem derived_row_bit_is_block_svec_bit (a : Assignment) (nb planes idx pl : N
     sBits_are_the_digits a nb planes hsb pl hpl,
     derived_is_sNat a nb planes idx cs hcs h hgidx hwire]
 
-/-- ⚑ **…AND THAT IS THE MANIFEST'S OWN DIGIT FIELD.** `PastaMsmScalarBound.digit_is_block_svec_bit`
-says the emitted manifest's declared digit is `sNat`'s bit; the theorem above says the trace's `BIT`
-is too, with no reference to `PublicLookupBalanced`. The `digit` field of the manifest row is
-therefore derived twice on any satisfying trace — which is what "the manifest's digit column is now
-redundant" means, said as a theorem rather than as a hope. Its OTHER three fields are untouched by
-this: no emitted gate relates a generator INDEX to generator COORDINATES. -/
-theorem derived_row_bit_is_manifest_digit (a : Assignment) (nb planes idx pl N : Nat) (cs : List Fq)
+/-- ⚑ **…AND THAT IS THE MANIFEST'S OWN DIGIT FIELD — AT WHATEVER PLANE THE CALLER NAMES.**
+`PastaMsmScalarBound.digit_is_block_svec_bit` says the emitted manifest's declared digit is `sNat`'s
+bit at plane `pl`; this says the trace's `BIT` is too, with no reference to
+`PublicLookupBalanced`.
+
+⚠ **Read the quantifier before reading this as a redundancy claim.** `pl` here is a PARAMETER
+carried in by `hpidx`, and the manifest's digit field for TRACE ROW `i` is not at an arbitrary
+plane — it is at `PastaMsmBound.planeAt w i`, the row's own. Until `pl` is forced to be that, this
+theorem closes the manifest's INDEX argument (`hgidx`, which `PastaMsmBound.bound_forces_gidx`
+supplies) and leaves its PLANE argument open, which is a strictly weaker statement than "the digit
+field is redundant". §4f is where `pl` is discharged from the emitted plane thread and the
+redundancy claim is made at the trace level; `derived_row_bit_is_manifest_digit` is THERE, not
+here. The manifest's other three fields are untouched by either: no emitted gate relates a
+generator INDEX to generator COORDINATES. -/
+theorem derived_row_bit_is_manifest_digit_at_a_named_plane
+    (a : Assignment) (nb planes idx pl N : Nat) (cs : List Fq)
     (hcs : cs.length = nb) (hidx : idx < N)
     (h : acceptB (deriveRowGates nb planes) a = true)
     (hgidx : a GIDX = (idx : ℤ))
@@ -1107,6 +1117,293 @@ theorem derived_row_bit_is_manifest_digit (a : Assignment) (nb planes idx pl N :
     a BIT = ((scalarDigit (sScalars cs N) planes idx pl : Nat) : ℤ) := by
   rw [Dregg2.Circuit.Emit.PastaMsmScalarBound.digit_is_block_svec_bit cs N planes idx pl hidx]
   exact derived_row_bit_is_block_svec_bit a nb planes idx pl cs hcs h hgidx hwire hdbl hpl hpidx
+
+/-! ### §4e — ⚑⚑ THE WIRE GATES AND THE PLANE THREAD, FORCED.
+
+**Everything above this line is ROW-LOCAL** — it consumes `acceptB (deriveRowGates nb planes) a` on
+ONE assignment, and `acceptB` is `List.all gateBodyEvalZero`, whose `gateBodyEvalZero` returns
+`true` on every constructor that is not `.base (.gate _)`. So `acceptB` **cannot see** a
+`.boundary`, a `.piBinding` or a `.windowGate`: the four objects `deriveWireGates` emits are
+invisible to the denotation §4–§4d is stated in. That is not a defect of `acceptB`; it is why those
+four need their own predicates, exactly as `PastaMsmBound` §4 gives its two index threads
+`BoundWindowAccepted` / `BoundStartAccepted` rather than folding them into `acceptB`.
+
+⚑ **THE DEFECT THIS SECTION REPAIRS, stated plainly.** Before this section `pidxStartGate`,
+`pidxThreadGate`, `chalPinGates` and `chalThreadGates` appeared in exactly ONE theorem in this file
+— `deriveGates_length`, a COUNTING lemma — while `derived_is_sNat` and
+`derived_row_bit_is_block_svec_bit` took their CONTENT as raw hypotheses (`hwire`, `hpidx`). The
+gates were emitted and their forcing was not proved, so the module was assuming what it emitted.
+Both are discharged below, in the sibling's shape: three denotations over the ACTUALLY EMITTED
+list, one per-row forcing lemma per gate, and row inductions whose bound `H` is universally
+quantified and occurs nowhere but as the induction variable. `PastaMsmBound.tidxThread_forces` and
+`tidx_is_the_row_index` are the template and no technique is invented here. -/
+
+/-- The content of the emitted first-row `.boundary` gates of the wire block, in the ℤ model (§6.3:
+the deployed prover reads them mod BabyBear — the inherited K1 residual). -/
+def DeriveStartAccepted (nb : Nat) (T : WTrace) : Prop :=
+  ∀ e : EmittedExpr, VmConstraint2.base (.boundary .first e) ∈ deriveWireGates nb →
+    e.eval (T 0) = 0
+
+/-- The content of the emitted first-row `.piBinding` pins, against the DECLARED public-input
+vector `pv`. ⚑ This is the only predicate in the whole tower that reads `pv` at all: it is where
+"the challenges are on the wire" stops being prose. -/
+def DerivePiAccepted (nb : Nat) (T : WTrace) (pv : Nat → ℤ) : Prop :=
+  ∀ col k : Nat, VmConstraint2.base (.piBinding .first col k) ∈ deriveWireGates nb →
+    T 0 col = pv k
+
+/-- The content of the emitted `windowGate`s of the wire block on the two-row window at row `i`. -/
+def DeriveWindowAccepted (nb : Nat) (T : WTrace) (i : Nat) : Prop :=
+  ∀ wc : WindowConstraint, VmConstraint2.windowGate wc ∈ deriveWireGates nb →
+    wc.body.eval (envOf T i) = 0
+
+/-- The challenge PI pin for flat limb `m` is IN the emitted list. -/
+theorem mem_chalPin (nb m : Nat) (hm : m < numLimbs * nb) :
+    pinPi (CHc nb m) (PI_COUNT + m) ∈ deriveWireGates nb := by
+  simp only [deriveWireGates, List.mem_cons, List.mem_append]
+  exact Or.inr (Or.inr (Or.inl (List.mem_map.mpr ⟨m, List.mem_range.mpr hm, rfl⟩)))
+
+/-- …and so is its thread. -/
+theorem mem_chalThread (nb m : Nat) (hm : m < numLimbs * nb) :
+    cw (.add (.nxt (CHc nb m)) (.mul (.const (-1)) (.loc (CHc nb m)))) ∈ deriveWireGates nb := by
+  simp only [deriveWireGates, List.mem_cons, List.mem_append]
+  exact Or.inr (Or.inr (Or.inr (List.mem_map.mpr ⟨m, List.mem_range.mpr hm, rfl⟩)))
+
+/-- ⚑ **`pidxStart_forces`** — the emitted first-row boundary pins the plane thread's origin. -/
+theorem pidxStart_forces (nb : Nat) (T : WTrace) (h : DeriveStartAccepted nb T) :
+    T 0 PIDX = 0 := by
+  have := h (.var PIDX) (by simp [deriveWireGates, pidxStartGate])
+  simpa [Dregg2.Exec.CircuitEmit.EmittedExpr.eval] using this
+
+/-- ⚑ **`pidxThread_forces`** — the emitted `windowGate` advances the plane index by the NEXT row's
+doubling selector, and by nothing else. -/
+theorem pidxThread_forces (nb : Nat) (T : WTrace) (i : Nat) (h : DeriveWindowAccepted nb T i) :
+    T (i + 1) PIDX = T i PIDX + T (i + 1) DBL := by
+  have hw := h ⟨.add (.nxt PIDX) (.mul (.const (-1)) (.add (.loc PIDX) (.nxt DBL))), true⟩
+    (by simp [deriveWireGates, pidxThreadGate, cw])
+  simp only [WindowExpr.eval, envOf] at hw
+  linarith
+
+/-- ⚑ **`chalPin_forces`** — the emitted `piBinding` pins the FIRST row's challenge limb to its
+declared public input. -/
+theorem chalPin_forces (nb : Nat) (T : WTrace) (pv : Nat → ℤ) (h : DerivePiAccepted nb T pv)
+    (m : Nat) (hm : m < numLimbs * nb) : T 0 (CHc nb m) = pv (PI_COUNT + m) :=
+  h _ _ (mem_chalPin nb m hm)
+
+/-- ⚑ **`chalThread_forces`** — the emitted `windowGate` carries a challenge limb UNCHANGED to the
+next row. This is the gate §2.3 exists for: a first-row pin alone leaves the challenge columns FREE
+on rows 1.., which is the shape that makes a derivation look verified while the prover picks a
+fresh challenge vector per row. -/
+theorem chalThread_forces (nb : Nat) (T : WTrace) (i m : Nat) (hm : m < numLimbs * nb)
+    (h : DeriveWindowAccepted nb T i) :
+    T (i + 1) (CHc nb m) = T i (CHc nb m) := by
+  have hw := h ⟨.add (.nxt (CHc nb m)) (.mul (.const (-1)) (.loc (CHc nb m))), true⟩
+    (mem_chalThread nb m hm)
+  simp only [WindowExpr.eval, envOf] at hw
+  linarith
+
+/-- ⚑⚑ **`chal_is_the_wire`** — the emitted pin plus the emitted threads make EVERY row's challenge
+columns the DECLARED PUBLIC INPUTS', for every row. `H` is universally quantified and occurs only
+as the induction bound: the statement at `planes·(w+1) = 128` is the statement at `1,056,896`. -/
+theorem chal_is_the_wire (nb : Nat) (T : WTrace) (pv : Nat → ℤ) (H : Nat)
+    (h0 : DerivePiAccepted nb T pv) (h : ∀ i, i + 1 < H → DeriveWindowAccepted nb T i) :
+    ∀ i, i < H → ∀ m, m < numLimbs * nb → T i (CHc nb m) = pv (PI_COUNT + m) := by
+  intro i
+  induction i with
+  | zero => intro _ m hm; exact chalPin_forces nb T pv h0 m hm
+  | succ p ih =>
+    intro hp m hm
+    rw [chalThread_forces nb T p m hm (h p hp)]
+    exact ih (by omega) m hm
+
+/-- The field element challenge `j`'s NINE DECLARED PUBLIC INPUTS reconstruct. Read off `pv`; no
+trace column occurs in it. -/
+def piChal (pv : Nat → ℤ) (nb j : Nat) : ℤ :=
+  ((List.range numLimbs).map
+    (fun l => (2 : ℤ) ^ (limbBits * l) * pv (PI_COUNT + (numLimbs * j + l)))).sum
+
+/-- ⚑ **`chalOf_is_piChal`** — a row's challenge VALUE is the public input's value, on every row. -/
+theorem chalOf_is_piChal (nb : Nat) (T : WTrace) (pv : Nat → ℤ) (H : Nat)
+    (h0 : DerivePiAccepted nb T pv) (h : ∀ i, i + 1 < H → DeriveWindowAccepted nb T i)
+    (i : Nat) (hi : i < H) (j : Nat) (hj : j < nb) :
+    chalOf (T i) nb j = piChal pv nb j := by
+  have hw := chal_is_the_wire nb T pv H h0 h i hi
+  rw [chalOf, fpVal_as_sum, piChal]
+  refine congrArg List.sum (List.map_congr_left (fun l hl => ?_))
+  rw [List.mem_range] at hl
+  have hlt : numLimbs * j + l < numLimbs * nb := by
+    simp only [numLimbs] at hl ⊢
+    have : j + 1 ≤ nb := hj
+    nlinarith
+  have hcol : CHc nb (numLimbs * j) + l = CHc nb (numLimbs * j + l) := by
+    simp only [CHc]; omega
+  rw [hcol, hw (numLimbs * j + l) hlt]
+
+/-- ⚑ **The challenge vector the VERIFIER supplies**, as a `List Fq` — `nb` field elements read off
+the DECLARED public inputs, nine slots each starting at `PI_COUNT`. Nothing in the trace names it,
+which is the whole point: it is what a light client HANDS the circuit. -/
+def csOfPi (pv : Nat → ℤ) (nb : Nat) : List Fq :=
+  (List.range nb).map (fun j => ((piChal pv nb j : ℤ) : Fq))
+
+theorem csOfPi_length (pv : Nat → ℤ) (nb : Nat) : (csOfPi pv nb).length = nb := by
+  simp [csOfPi]
+
+theorem csOfPi_getD (pv : Nat → ℤ) (nb j : Nat) (hj : j < nb) :
+    (csOfPi pv nb).getD j 0 = ((piChal pv nb j : ℤ) : Fq) := by
+  have hlen : j < (csOfPi pv nb).length := by rw [csOfPi_length]; exact hj
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hlen, Option.getD_some]
+  simp [csOfPi]
+
+/-- ⚑⚑ **`wire_forces_challenges` — `hwire` DISCHARGED.** Exactly the hypothesis `derived_is_sNat`
+and `derived_row_bit_is_block_svec_bit` used to CARRY, now a CONSEQUENCE of `chalPinGates` and
+`chalThreadGates` — with the challenge list the one the DECLARED PUBLIC INPUTS carry, not one a
+caller names. -/
+theorem wire_forces_challenges (nb : Nat) (T : WTrace) (pv : Nat → ℤ) (H : Nat)
+    (h0 : DerivePiAccepted nb T pv) (h : ∀ i, i + 1 < H → DeriveWindowAccepted nb T i)
+    (i : Nat) (hi : i < H) :
+    ∀ j, j < nb → ((chalOf (T i) nb j : ℤ) : Fq) = (csOfPi pv nb).getD j 0 := by
+  intro j hj
+  rw [chalOf_is_piChal nb T pv H h0 h i hi j hj, csOfPi_getD pv nb j hj]
+
+/-- ⚑ **`pidx_counts_doublings`** — from the emitted origin pin and the emitted step ALONE, with no
+hypothesis about the `DBL` column whatsoever: the plane index a row carries IS the number of
+doubling rows at or below it and above row 0. -/
+theorem pidx_counts_doublings (nb : Nat) (T : WTrace) (H : Nat)
+    (h0 : DeriveStartAccepted nb T) (h : ∀ i, i + 1 < H → DeriveWindowAccepted nb T i) :
+    ∀ i, i < H → T i PIDX = ((List.range i).map (fun r => T (r + 1) DBL)).sum := by
+  intro i
+  induction i with
+  | zero => intro _; simpa using pidxStart_forces nb T h0
+  | succ m ih =>
+    intro hm
+    rw [pidxThread_forces nb T m (h m hm), ih (by omega), List.range_succ, List.map_append]
+    simp
+
+/-- ⚑ **The `DBL` column's PATTERN: `1` exactly on a plane-boundary row.** This is NOT this file's
+gate and this file does not pretend otherwise — it is `PastaMsmBound`'s, forced there by the emitted
+lookup's exact-public balance (`bound_forces_doubling` / `bound_forces_dbl_off`), and it is what
+`PastaMsmWindowed` §6.1 named as the one thing its row induction hypothesised.
+`dblPattern_of_manifest` below composes with that rung so the pattern is DERIVED here too. -/
+def DblPattern (w : Nat) (T : WTrace) (H : Nat) : Prop :=
+  ∀ i, i < H → T i DBL = if i % (w + 1) = 0 then 1 else 0
+
+/-- Under the pattern, the doubling rows in `(0, i]` number exactly `i / (w + 1)`. -/
+theorem count_doublings (w : Nat) (T : WTrace) (H : Nat) (hp : DblPattern w T H) :
+    ∀ i, i < H → ((List.range i).map (fun r => T (r + 1) DBL)).sum = ((i / (w + 1) : Nat) : ℤ) := by
+  have hiff : ∀ m : Nat, ((w + 1) ∣ (m + 1)) ↔ (m + 1) % (w + 1) = 0 := fun m =>
+    ⟨fun hd => by obtain ⟨c, hc⟩ := hd; rw [hc]; exact Nat.mul_mod_right _ _,
+     Nat.dvd_of_mod_eq_zero⟩
+  intro i
+  induction i with
+  | zero => intro _; simp
+  | succ m ih =>
+    intro hm
+    rw [List.range_succ, List.map_append, List.sum_append, ih (by omega)]
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
+    rw [hp (m + 1) hm]
+    by_cases hd : (m + 1) % (w + 1) = 0
+    · rw [if_pos hd, Nat.succ_div, if_pos ((hiff m).mpr hd)]; push_cast; ring
+    · rw [if_neg hd, Nat.succ_div, if_neg (fun hx => hd ((hiff m).mp hx))]; push_cast; ring
+
+/-- ⚑⚑ **`pidx_is_the_plane_index` — `hpidx` DISCHARGED.** The emitted origin pin and the emitted
+step make `PIDX` the row's OWN bit plane, `PastaMsmBound.planeAt w i`, for every row — so the plane
+a row's selector reads is the plane the Horner schedule PUTS that row in, not one the prover picks.
+`H` is universally quantified and occurs only as the induction bound. -/
+theorem pidx_is_the_plane_index (nb w : Nat) (T : WTrace) (H : Nat)
+    (h0 : DeriveStartAccepted nb T) (h : ∀ i, i + 1 < H → DeriveWindowAccepted nb T i)
+    (hp : DblPattern w T H) :
+    ∀ i, i < H → T i PIDX = ((planeAt w i : Nat) : ℤ) := by
+  intro i hi
+  rw [pidx_counts_doublings nb T H h0 h i hi, count_doublings w T H hp i hi, planeAt]
+
+/-- ⚑ **`dblPattern_of_manifest`** — and the `DBL` pattern is not assumed either. `hman` is verbatim
+`PastaMsmBound.row_tuple_is_its_manifest_row`'s CONCLUSION — whose own hypotheses are the emitted
+lookup's exact-public balance, the threaded row index (`tidx_is_the_row_index`) and the `DBL`
+column's booleanity, all forced one rung down — and `bound_forces_doubling` / `bound_forces_dbl_off`
+are that rung's theorems, applied here and not restated. -/
+theorem dblPattern_of_manifest (k w planes : Nat) (gens : List Pt) (scal : List Nat)
+    (t : VmTrace) (H : Nat)
+    (hman : ∀ i, i < H →
+      tupleOf (rowAt t i) = (manifestRow (sliceLo w k) w planes gens scal i).map Int.ofNat)
+    (htidx : ∀ i, i < H → rowAt t i TIDX = (i : ℤ))
+    (hbit : ∀ i, rowAt t i DBL = 0 ∨ rowAt t i DBL = 1) :
+    DblPattern w (fun i => rowAt t i) H := by
+  intro i hi
+  by_cases hb : i % (w + 1) = 0
+  · rw [if_pos hb]
+    exact Dregg2.Circuit.Emit.PastaMsmBound.bound_forces_doubling k w planes gens scal t i
+      (hman i hi) hb (htidx i hi) (hbit i)
+  · rw [if_neg hb]
+    exact Dregg2.Circuit.Emit.PastaMsmBound.bound_forces_dbl_off k w planes gens scal t i
+      (hman i hi) hb (htidx i hi) (hbit i)
+
+/-- A row inside the trace is inside the plane count — the one arithmetic fact the capstone needs
+about the shape, and it is about `planes·(w+1)`, not about any gate. -/
+theorem planeAt_lt (w planes i : Nat) (hi : i < planes * (w + 1)) : planeAt w i < planes := by
+  have h : i < (w + 1) * planes := by rw [Nat.mul_comm]; exact hi
+  simpa [planeAt] using Nat.div_lt_of_lt_mul h
+
+/-! ### §4f — ⚑⚑ THE DELIVERABLE OVER A TRACE: the wire and the plane are FORCED, not named.
+
+§4d's conclusions range over a challenge list `cs` a caller names and a bit plane `pl` a caller
+names. Here both come from the emitted object: the challenges are the DECLARED PUBLIC INPUTS'
+(`csOfPi pv nb`, via `chalPinGates` + `chalThreadGates`) and the plane is the row's own
+(`planeAt w i`, via `pidxStartGate` + `pidxThreadGate` + the `DBL` pattern the rung below forces).
+What remains carried is named in §6.1 and is not this file's to discharge. -/
+
+/-- ⚑⚑ **`derived_row_bit_is_the_wire_svec_bit`** — `derived_row_bit_is_block_svec_bit` with BOTH
+of its carried hypotheses discharged from the emitted wire gates. The conditional-add row's `BIT` is
+the digit, AT THE ROW'S OWN PLANE, of the canonical s-vector entry of the challenge vector THE
+VERIFIER PUT ON THE WIRE. `H` and `i` are universally quantified; there is no row count in any
+bound. -/
+theorem derived_row_bit_is_the_wire_svec_bit
+    (nb w planes idx i H : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (hrow : acceptB (deriveRowGates nb planes) (T i) = true)
+    (hstart : DeriveStartAccepted nb T)
+    (hpi : DerivePiAccepted nb T pv)
+    (hwin : ∀ r, r + 1 < H → DeriveWindowAccepted nb T r)
+    (hdblpat : DblPattern w T H)
+    (hi : i < H)
+    (hgidx : T i GIDX = (idx : ℤ))
+    (hdbl : T i DBL = 0)
+    (hpl : planeAt w i < planes) :
+    T i BIT
+      = ((sNat (csOfPi pv nb) idx / 2 ^ (planes - 1 - planeAt w i) % 2 : Nat) : ℤ) :=
+  derived_row_bit_is_block_svec_bit (T i) nb planes idx (planeAt w i) (csOfPi pv nb)
+    (csOfPi_length pv nb) hrow hgidx
+    (wire_forces_challenges nb T pv H hpi hwin i hi) hdbl hpl
+    (pidx_is_the_plane_index nb w T H hstart hwin hdblpat i hi)
+
+/-- ⚑⚑ **`derived_row_bit_is_manifest_digit` — THE REDUNDANCY CLAIM, at the resolution it actually
+holds.** `PastaMsmBound.manifestRow` declares trace row `i`'s digit as `scalarDigit scal planes
+(lo + termAt w i) (planeAt w i)` — an INDEX argument and a PLANE argument. This theorem reproduces
+BOTH from the emitted derivation: the index through `hgidx` (which `PastaMsmBound.bound_forces_gidx`
+supplies from the same manifest) and the plane through the emitted plane thread. So on a satisfying
+trace the manifest's `digit` field is derived twice and the second copy checks nothing a satisfying
+trace could violate.
+
+⚠ The manifest's other three fields are NOT redundant and this changes nothing about them: **no
+emitted gate in this file relates a generator INDEX to generator COORDINATES.** Delete the manifest
+and the substituted-generator forgery — same row key, same digit, a DIFFERENT real SRS point — has a
+satisfying trace. The manifest stays; what is now one item long is the list of forgeries it is the
+SOLE defence against. -/
+theorem derived_row_bit_is_manifest_digit
+    (nb w planes idx N i H : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (hidx : idx < N)
+    (hrow : acceptB (deriveRowGates nb planes) (T i) = true)
+    (hstart : DeriveStartAccepted nb T)
+    (hpi : DerivePiAccepted nb T pv)
+    (hwin : ∀ r, r + 1 < H → DeriveWindowAccepted nb T r)
+    (hdblpat : DblPattern w T H)
+    (hi : i < H)
+    (hgidx : T i GIDX = (idx : ℤ))
+    (hdbl : T i DBL = 0)
+    (hpl : planeAt w i < planes) :
+    T i BIT
+      = ((scalarDigit (sScalars (csOfPi pv nb) N) planes idx (planeAt w i) : Nat) : ℤ) := by
+  rw [Dregg2.Circuit.Emit.PastaMsmScalarBound.digit_is_block_svec_bit
+        (csOfPi pv nb) N planes idx (planeAt w i) hidx]
+  exact derived_row_bit_is_the_wire_svec_bit nb w planes idx i H T pv hrow hstart hpi hwin
+    hdblpat hi hgidx hdbl hpl
 
 #assert_axioms head_of_map
 #assert_axioms limb_split
@@ -1129,6 +1426,24 @@ theorem derived_row_bit_is_manifest_digit (a : Assignment) (nb planes idx pl N :
 #assert_axioms sAt_as_range_prod
 #assert_axioms derived_is_sNat
 #assert_axioms derived_row_bit_is_block_svec_bit
+#assert_axioms derived_row_bit_is_manifest_digit_at_a_named_plane
+#assert_axioms mem_chalPin
+#assert_axioms mem_chalThread
+#assert_axioms pidxStart_forces
+#assert_axioms pidxThread_forces
+#assert_axioms chalPin_forces
+#assert_axioms chalThread_forces
+#assert_axioms chal_is_the_wire
+#assert_axioms chalOf_is_piChal
+#assert_axioms csOfPi_length
+#assert_axioms csOfPi_getD
+#assert_axioms wire_forces_challenges
+#assert_axioms pidx_counts_doublings
+#assert_axioms count_doublings
+#assert_axioms pidx_is_the_plane_index
+#assert_axioms dblPattern_of_manifest
+#assert_axioms planeAt_lt
+#assert_axioms derived_row_bit_is_the_wire_svec_bit
 #assert_axioms derived_row_bit_is_manifest_digit
 
 /-! ## §5 — ⚑⚑ THE GATES BITE: SATISFIABLE, and a CHALLENGE-INCONSISTENT DIGIT IS REFUSED.
