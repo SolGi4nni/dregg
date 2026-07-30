@@ -18,6 +18,7 @@
 //! - `welded_umem_chain_folds_recursive` — the full in-circuit recursion fold over the welded
 //!   leaves (`prove_welded_umem_turn_chain_recursive_staged`), `#[ignore]` (minutes).
 
+use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
@@ -76,10 +77,17 @@ fn make_welded_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, Ba
         None,
     )
     .expect("welded rotated+umem transfer leg mints + self-verifies");
-    // H0 DEPLOYED-WIDE: the welded leg is WIDE-anchored too — the single-felt rotated roots are
-    // RETIRED to zero, so report the HEAD felt (lane 0) of the GENUINE 8-felt wide anchors.
-    let old_root = leg.wide_old_root8().expect("welded leg is wide-anchored")[0];
-    let new_root = leg.wide_new_root8().expect("welded leg is wide-anchored")[0];
+    // ⚑ THIS LEG IS NARROW, AND SAYING OTHERWISE READ TWO UNRELATED PIs AS AN ANCHOR.
+    // `mint_welded_umem_rotated_participant_leg` welds the umem leg onto the ROTATED member out of
+    // `V3_STAGED_REGISTRY_TSV` (50 PIs on the deployed transfer) — the WIDE twin is
+    // `mint_welded_wide_umem_rotated_participant_leg`, and only IT publishes the 16-felt anchor
+    // tail. The lines here read `wide_old_root8()` / `wide_new_root8()`, which used to answer
+    // `Some(...)` for any leg with >= 16 PIs, so this chained PI 34 against PI 42: measured
+    // 2026-07-29 as `left: BB(0), right: BB(301152428)` on all three tests. The accessors REFUSE a
+    // narrow leg now, and the chain rides the rotated commits the welded fold actually binds
+    // (`turn_anchors8` broadcasts exactly these across the eight lanes for a narrow leg).
+    let old_root = leg.old_root();
+    let new_root = leg.new_root();
     (
         FinalizedTurn::new(DescriptorParticipant::rotated(leg)),
         old_root,
@@ -130,17 +138,15 @@ fn welded_umem_chain_folds_host() {
     let summary = fold_welded_umem_turn_chain_staged(&turns)
         .expect("a continuous 3-turn welded rotated+umem history must fold (host)");
     assert_eq!(summary.num_turns, 3);
-    // H0 DEPLOYED-WIDE: the genuine 8-felt wide anchors off the first/last welded legs.
-    let genesis8 = turns[0]
-        .participant
-        .rotated
-        .wide_old_root8()
-        .expect("first welded leg is wide-anchored");
-    let final8 = turns[turns.len() - 1]
-        .participant
-        .rotated
-        .wide_new_root8()
-        .expect("last welded leg is wide-anchored");
+    // The NARROW welded leg publishes no 8-felt anchor tail; the fold broadcasts its rotated
+    // commit felt across the eight lanes (`turn_anchors8`), and the accessors REFUSE it — asserted
+    // here so a leg that silently became wide-anchored cannot pass this comparison by accident.
+    assert!(
+        turns[0].participant.rotated.wide_old_root8().is_none(),
+        "a welded ROTATED leg is narrow — it must not answer the 8-felt wide anchor accessor"
+    );
+    let genesis8 = [turns[0].participant.rotated.old_root(); 8];
+    let final8 = [turns[turns.len() - 1].participant.rotated.new_root(); 8];
     assert_eq!(summary.genesis_root, genesis8);
     assert_eq!(summary.final_root, final8);
     assert_eq!(
@@ -160,12 +166,8 @@ fn welded_umem_chain_folds_host() {
 fn welded_umem_broken_order_rejected() {
     let (mut turns, _g, _f) = make_welded_chain(1000, 0, 7, 3);
     let (foreign, foreign_old, _foreign_new) = make_welded_turn(500, 50, 3);
-    // H0 DEPLOYED-WIDE: continuity binds the GENUINE 8-felt wide anchor; compare its head felt.
-    let prev_new = turns[0]
-        .participant
-        .rotated
-        .wide_new_root8()
-        .expect("welded leg is wide-anchored")[0];
+    // Continuity binds the broadcast rotated commit for a narrow welded leg; compare that felt.
+    let prev_new = turns[0].participant.rotated.new_root();
     assert_ne!(
         foreign_old, prev_new,
         "the foreign welded turn must NOT continue the chain"
@@ -202,9 +204,10 @@ fn welded_umem_forged_post_commit_refused() {
 
     // FORGE the rotated NEW commitment on the LAST welded leg (so continuity still holds — the
     // forgery is purely the claimed chain head, exactly the lie that would advance the chain to a
-    // state that never happened). H0 DEPLOYED-WIDE: the single-felt rotated NEW-commit PI is RETIRED;
-    // the genuine bound carrier is the 8-felt wide AFTER-commit at the PI tail `[n-8 .. n)` — forge
-    // its HEAD lane.
+    // state that never happened). On this NARROW welded leg the bound carrier IS the single-felt
+    // rotated AFTER commit at `V1_PI_COUNT + 1`; the line below forged `len - 8`, which on a 50-PI
+    // leg is PI 42 — the BEFORE commit — so the "forged post-commit" arm was tampering with the
+    // wrong end of the chain.
     let DescriptorParticipant { rotated } = t1.participant;
     let RotatedParticipantLeg {
         proof,
@@ -212,8 +215,8 @@ fn welded_umem_forged_post_commit_refused() {
         mut public_inputs,
         carrier_witness,
     } = rotated;
-    let pi_wide_new = public_inputs.len() - 8; // head lane of the AFTER 8-felt wide commit
-    public_inputs[pi_wide_new] = n1 + BabyBear::ONE;
+    let pi_rot_new = V1_PI_COUNT + 1; // the rotated AFTER state_commit this member pins
+    public_inputs[pi_rot_new] = n1 + BabyBear::ONE;
     let forged_leg = RotatedParticipantLeg {
         proof,
         descriptor,
@@ -241,17 +244,15 @@ fn welded_umem_chain_folds_recursive() {
     let whole = prove_welded_umem_turn_chain_recursive_staged(&turns)
         .expect("a continuous 3-turn welded history must fold recursively");
     assert_eq!(whole.num_turns, 3);
-    // H0 DEPLOYED-WIDE: the genuine 8-felt wide anchors off the first/last welded legs.
-    let genesis8 = turns[0]
-        .participant
-        .rotated
-        .wide_old_root8()
-        .expect("first welded leg is wide-anchored");
-    let final8 = turns[turns.len() - 1]
-        .participant
-        .rotated
-        .wide_new_root8()
-        .expect("last welded leg is wide-anchored");
+    // The NARROW welded leg publishes no 8-felt anchor tail; the fold broadcasts its rotated
+    // commit felt across the eight lanes (`turn_anchors8`), and the accessors REFUSE it — asserted
+    // here so a leg that silently became wide-anchored cannot pass this comparison by accident.
+    assert!(
+        turns[0].participant.rotated.wide_old_root8().is_none(),
+        "a welded ROTATED leg is narrow — it must not answer the 8-felt wide anchor accessor"
+    );
+    let genesis8 = [turns[0].participant.rotated.old_root(); 8];
+    let final8 = [turns[turns.len() - 1].participant.rotated.new_root(); 8];
     assert_eq!(whole.genesis_root, genesis8);
     assert_eq!(whole.final_root, final8);
     assert_eq!(

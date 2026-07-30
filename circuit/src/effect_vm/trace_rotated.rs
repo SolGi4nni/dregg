@@ -4628,6 +4628,119 @@ pub fn compact_e1_columns(trace: &mut [Vec<BabyBear>], registry_key: &str) -> Re
     Ok(())
 }
 
+/// **THE COMPACTION IMAGE of a LAYOUT column — where a pre-compaction column lands in the
+/// COMMITTED wide member.** `Ok(Some(c))` = the surviving committed column; `Ok(None)` = the S2/E1
+/// kill-set DELETED it, so no committed constraint can reference it.
+///
+/// ⚑ WHY THIS EXISTS, AND WHAT IT IS THE INVERSE OF. Every layout constant in this file
+/// (`CAVEAT_BASE + …`, `AFTER_BASE + …`, `PARAM_BASE + …`) names a column in the ORIGINAL rotated
+/// geometry — the geometry the NARROW `rotation-v3-staged-registry.tsv` still commits. The WIDE
+/// registries are S2- and E1-COMPACTED (`compact_s2_columns` ∘ `compact_e1_columns`, the deletion
+/// the Lean emit performed and this producer mirrors), so a consumer that computes a column from
+/// the constants and then looks it up in a WIDE committed descriptor is comparing two DIFFERENT
+/// coordinate systems. It finds nothing, and — because these lookups are fail-closed — it REFUSES
+/// silently forever instead of reporting a geometry error. Measured 2026-07-29: `dsl_rc_claim_pi_lo`
+/// looked for the DFA route-commitment carrier at raw column 715; the committed wide transfer row
+/// binds it at 501 (715 → −120 across the two S2 carrier bands → 595 → −94 across the three E1
+/// bands → 501), so the Dsl carrier fold arm refused EVERY deployed leg.
+///
+/// The mapping is computed by running the DEPLOYED compaction over a row of column IDENTITIES, so
+/// it cannot drift from the deletion it inverts — a table regen that removes a DIFFERENT band of
+/// the same size renumbers these columns and every caller moves with it. The identity row is sized
+/// past both compactions' length guards and past the queried columns; the image of a surviving
+/// column does not depend on the row's total width, since a deletion only removes columns BELOW it.
+pub fn compacted_columns(
+    registry_key: &str,
+    raw_cols: &[usize],
+) -> Result<Vec<Option<usize>>, String> {
+    use super::e1_compact_generated::E1_COMPACT_TABLE;
+    use super::s2_compact_generated::{S2_COMPACT_TABLE, S2_DELETED_COLS, S2_LANE_SPAN};
+
+    let (_, _, lane_base) = S2_COMPACT_TABLE
+        .iter()
+        .find(|(k, _, _)| *k == registry_key)
+        .ok_or_else(|| format!("compacted_columns: {registry_key} not in S2_COMPACT_TABLE"))?;
+    let (_, e1) = E1_COMPACT_TABLE
+        .iter()
+        .find(|(k, _)| *k == registry_key)
+        .ok_or_else(|| format!("compacted_columns: {registry_key} not in E1_COMPACT_TABLE"))?;
+    let e1_end = e1.iter().map(|&(_, end)| end).max().unwrap_or(0);
+    let width = (lane_base + S2_LANE_SPAN)
+        .max(e1_end + S2_DELETED_COLS)
+        .max(raw_cols.iter().copied().max().unwrap_or(0) + 1)
+        + 1;
+    let mut identity: Vec<Vec<BabyBear>> =
+        vec![(0..width).map(|c| BabyBear::new(c as u32)).collect()];
+    compact_s2_columns(&mut identity, registry_key)?;
+    compact_e1_columns(&mut identity, registry_key)?;
+    Ok(raw_cols
+        .iter()
+        .map(|&raw| {
+            identity[0]
+                .iter()
+                .position(|&v| v == BabyBear::new(raw as u32))
+        })
+        .collect())
+}
+
+/// [`compacted_columns`] for a single column.
+pub fn compacted_column(registry_key: &str, raw_col: usize) -> Result<Option<usize>, String> {
+    Ok(compacted_columns(registry_key, &[raw_col])?[0])
+}
+
+/// The WIDE registry KEY (TSV column 1) whose committed row carries `display_name`
+/// (`EffectVmDescriptor2::name`, TSV column 2) — the key [`compacted_columns`] and the two
+/// compaction passes are keyed by.
+///
+/// ⚑ SEVERAL KEYS SHARE ONE DISPLAY NAME (`attenuateVmDescriptor2R24` and
+/// `revokeCapabilityVmDescriptor2R24` are both `dregg-effectvm-attenuateA-v1-genuine-…`), which is
+/// exactly why this returns the key rather than letting a caller guess: the S2/E1 geometry is
+/// per-KEY, so a display name matching keys with DIFFERENT geometry has no single answer and this
+/// refuses rather than picking one. Where they agree — the case that actually occurs — the answer
+/// is unambiguous whichever key is returned.
+pub fn wide_registry_key_for_descriptor_name(display_name: &str) -> Result<&'static str, String> {
+    use super::e1_compact_generated::E1_COMPACT_TABLE;
+    use super::s2_compact_generated::S2_COMPACT_TABLE;
+    use crate::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
+
+    // Both registries, because a WELDED leg carries the `…-umem-wide-welded-staged` display name
+    // while keying the SAME registry key (and the same S2/E1 geometry — the weld appends columns
+    // ABOVE the compaction, so every committed column below it is unmoved).
+    let keys: Vec<&'static str> = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .chain(WIDE_UMEM_WELD_REGISTRY_TSV.lines())
+        .filter_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            let key = it.next()?;
+            let display = it.next()?;
+            (display == display_name).then_some(key)
+        })
+        .collect();
+    let first = *keys.first().ok_or_else(|| {
+        format!(
+            "wide_registry_key_for_descriptor_name: '{display_name}' is in no WIDE registry row"
+        )
+    })?;
+    let geom = |k: &str| {
+        (
+            S2_COMPACT_TABLE.iter().find(|(n, _, _)| *n == k).copied(),
+            E1_COMPACT_TABLE.iter().find(|(n, _)| *n == k).copied(),
+        )
+    };
+    let (s2_first, e1_first) = geom(first);
+    for k in &keys[1..] {
+        let (s2, e1) = geom(k);
+        if s2 != s2_first || e1 != e1_first {
+            return Err(format!(
+                "wide_registry_key_for_descriptor_name: '{display_name}' names >1 registry key \
+                 ({first}, {k}) with DIFFERENT S2/E1 geometry — the column image is ambiguous; \
+                 resolve the key at the call site"
+            ));
+        }
+    }
+    Ok(first)
+}
+
 pub fn append_wide_carriers(
     trace: &mut [Vec<BabyBear>],
     base_pis: Vec<BabyBear>,

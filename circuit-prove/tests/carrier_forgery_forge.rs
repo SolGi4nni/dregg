@@ -46,6 +46,7 @@
 //! `--ignored` recursion.
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, parse_vm_descriptor2};
+use dregg_circuit::effect_vm::bare_floor_refuse_weld;
 use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
 use dregg_circuit::field::BabyBear;
@@ -143,10 +144,28 @@ fn membership_deployed_exposes_teeth_but_enforces_no_membership() {
     let root_pin = pi_pin(&desc, MEMBERSHIP_CLAIM_PI_LO + 1)
         .expect("authorized_root must be PI-exposed at 51 (the deployed fold-edge leg)");
     let (leaf_col, root_col) = (leaf_pin.1, root_pin.1);
+    // ⚑ THE TEETH ARE THE TOP TWO *PRODUCER-EMITTED* COLUMNS, WHICH IS NO LONGER THE TOP OF THE
+    // TRACE. This read `(trace_width - 2, trace_width - 1)` and measured `(1563, 1564)` against
+    // `(1608, 1609)` on 2026-07-29: the gentian floor-refuse weld appends a per-tag decode block
+    // (`bit`/`inv`/`OR`/`floor`) ABOVE every emitted column of a `…-gentian-deployed-bare-refuse`
+    // member — 45 columns on the two avail-hardened transfer/burn members, 48 on the other 34 —
+    // and those are GATE-internal aux, filled at prove time, carrying no claim PI. Derive the
+    // widen from the member's own committed refuse gates (`refuse_weld_widen`), never a constant:
+    // the two geometries differ, and a fixed 45 silently mis-locates every non-avail member.
+    let refuse_aux = bare_floor_refuse_weld::refuse_weld_widen(&desc);
+    assert!(
+        refuse_aux > 0,
+        "the deployed transfer row is refuse-welded — a zero widen means the weld is GONE, not \
+         that the teeth moved"
+    );
     assert_eq!(
         (leaf_col, root_col),
-        (desc.trace_width - 2, desc.trace_width - 1),
-        "the teeth are the two native columns past the wide carriers (trace_width-2 / -1)"
+        (
+            desc.trace_width - refuse_aux - 2,
+            desc.trace_width - refuse_aux - 1
+        ),
+        "the teeth are the two native columns past the wide carriers, immediately below the \
+         floor-refuse aux block"
     );
 
     // THE FORGE / SELF-VERIFY: no relational constraint (MapOp / Lookup — the only shapes that could

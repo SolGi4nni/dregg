@@ -40,11 +40,12 @@ use dregg_circuit::descriptor_ir2::{
     parse_vm_descriptor2, prove_vm_descriptor2_for_config,
 };
 use dregg_circuit::dsl::deco_payment::{deco_payment_hash_felt, stripe_payment_facts_felts};
+use dregg_circuit::effect_vm::bare_floor_refuse_weld;
 use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
 use dregg_circuit::effect_vm::trace_rotated::{
-    ROT_PI_COUNT, RotatedBlockWitness, empty_caveat_manifest,
-    generate_rotated_effect_vm_descriptor_and_trace_wide, generate_rotated_stripe_mint_wide,
-    transfer_caveat_manifest,
+    ROT_PI_COUNT, RotatedBlockWitness, compact_e1_columns, compact_s2_columns,
+    empty_caveat_manifest, generate_rotated_effect_vm_descriptor_and_trace_wide,
+    generate_rotated_stripe_mint_wide, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
@@ -165,7 +166,7 @@ fn mint_stripe_leg(
         &Default::default(),
     );
 
-    let (trace, dpis) = generate_rotated_stripe_mint_wide(
+    let (mut trace, dpis) = generate_rotated_stripe_mint_wide(
         &st,
         value_full,
         payment_hash,
@@ -174,8 +175,37 @@ fn mint_stripe_leg(
         &empty_caveat_manifest(),
     )
     .expect("deployed Stripe money-in wide trace generates");
+    // ⚑ THE COMMITTED ROW IS COMPACTED AND THE PER-FAMILY PRODUCER IS NOT. `generate_rotated_
+    // stripe_mint_wide` lays the OLD-geometry wide row; the S2 + E1 deletions are applied by the
+    // shared dispatcher (`generate_rotated_effect_vm_descriptor_and_trace_wide`), which this leg
+    // does not go through because it needs the payment-hash pin the generic BridgeMint arm does
+    // not lay. Measured 2026-07-29: `base row width 2607 must equal descriptor trace_width 1601`
+    // — a 2607-wide uncompacted trace proved against the 1601-wide committed member, so BOTH the
+    // honest and the forged pole died before any binding was tested. The two live callers of this
+    // producer (`turn::executor::proof_verify`, `sdk::full_turn_proof`) keep only the PI vector
+    // and DISCARD the trace, which is why the gap surfaced here and only here.
+    compact_s2_columns(&mut trace, "mintVmDescriptor2R24")
+        .expect("S2 compaction of the deployed mint row");
+    compact_e1_columns(&mut trace, "mintVmDescriptor2R24")
+        .expect("E1 compaction of the deployed mint row");
 
     let desc = deployed_wide_descriptor("mintVmDescriptor2R24");
+    // …and then the GENTIAN REFUSE-WELD HEADROOM. The committed row carries a per-tag floor-refuse
+    // decode block (`bit`/`inv`/`OR`/`floor`) that no producer emits: it is the refuse GATE, filled
+    // at prove time by `bare_floor_refuse_weld::fill_refuse_aux` from columns that must ALREADY BE
+    // THERE (`descriptor_ir2` demands `row.len() == trace_width` exactly — it does not grow the
+    // row). The deployed dispatcher's consumers resize for it; this leg must too. The widen is
+    // per-member (48 here, 45 on the two avail-hardened members), so it is asserted against the
+    // descriptor's own committed gates rather than padded blindly to whatever fits.
+    let refuse_aux = bare_floor_refuse_weld::refuse_weld_widen(&desc);
+    assert_eq!(
+        trace[0].len() + refuse_aux,
+        desc.trace_width,
+        "the compacted producer row plus the floor-refuse aux block IS the committed geometry"
+    );
+    for row in trace.iter_mut() {
+        row.resize(desc.trace_width, BabyBear::ZERO);
+    }
     assert_eq!(
         dpis.len(),
         desc.public_input_count,

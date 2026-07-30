@@ -1324,9 +1324,20 @@ impl RotatedParticipantLeg {
     /// **THE WIDE 8-FELT OLD-state commitment** (the BEFORE 8-felt commit at the leg's
     /// PIs `[n-16 .. n-8)` — the ~124-bit faithful anchor a WIDE / wide-welded leg publishes).
     /// `None` for a leg whose PI vector is too short to carry the wide tail (a narrow leg).
+    ///
+    /// ⚑ **THE GUARD WAS `n < 16` AND THE DOC ABOVE WAS FALSE.** Every narrow leg in the corpus
+    /// carries far more than 16 PIs (the rotated prefix is 46, the deployed narrow transfer 50), so
+    /// this returned `Some(...)` for ALL of them — a slice of ordinary rotated PIs, handed back as a
+    /// ~124-bit faithful anchor. It is the SAME discriminator `leg_is_wide_anchored` already used
+    /// (`len >= WIDE_PI_COUNT`), which is why the FOLD was never fooled: `turn_anchors8` asks that
+    /// predicate first and broadcasts the 1-felt rotated root for a narrow leg. Everything that
+    /// called these accessors DIRECTLY was. Measured 2026-07-29 on
+    /// `ivc_turn_chain_rotated_umem_welded`, whose three tests chained a narrow welded leg on
+    /// `wide_old_root8()[0] == 0` (PI 34, not an anchor) against `wide_new_root8()[0]` (PI 42).
+    /// Refusing is the only honest answer: a narrow leg has no 8-felt anchor to return.
     pub fn wide_old_root8(&self) -> Option<[BabyBear; 8]> {
         let n = self.public_inputs.len();
-        if n < 16 {
+        if n < dregg_circuit::effect_vm::trace_rotated::WIDE_PI_COUNT {
             return None;
         }
         self.public_inputs[n - 16..n - 8].try_into().ok()
@@ -1336,7 +1347,7 @@ impl RotatedParticipantLeg {
     /// PIs `[n-8 .. n)` — the ~124-bit faithful anchor). `None` for a narrow leg.
     pub fn wide_new_root8(&self) -> Option<[BabyBear; 8]> {
         let n = self.public_inputs.len();
-        if n < 16 {
+        if n < dregg_circuit::effect_vm::trace_rotated::WIDE_PI_COUNT {
             return None;
         }
         self.public_inputs[n - 8..n].try_into().ok()

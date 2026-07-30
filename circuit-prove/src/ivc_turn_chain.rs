@@ -3191,18 +3191,23 @@ pub const DECO_PAYMENT_HASH_CLAIM_LEN: usize = 1;
 /// [`DFA_RC_LEN`](dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN) slots are contiguous
 /// pins of exactly the rc columns. A descriptor with NO rc pin (the pre-rc corpus) is refused
 /// — the fail-closed law.
+///
+/// ⚑ **AND THE COLUMN IS IN THE COMMITTED MEMBER'S COORDINATES, NOT THE LAYOUT'S.** `CAVEAT_BASE +
+/// C_DFA_RC_OFF` names a column in the ORIGINAL rotated geometry, which is what the NARROW
+/// `rotation-v3-staged-registry.tsv` still commits (transfer pins rc at 715..718). Every WIDE
+/// registry row is S2- and E1-COMPACTED, and on the wide transfer the same carrier is committed at
+/// **501** — 715 loses 120 columns across the two S2 carrier bands and a further 94 across the
+/// three E1 bands. Measured 2026-07-29: this searched 715 against the wide row and found nothing,
+/// so the Dsl carrier fold arm REFUSED EVERY DEPLOYED LEG — fail-closed, and therefore silent: the
+/// arm has been dead, not wrong-answered. [`dsl_rc_carrier_col`] resolves the column in whichever
+/// geometry the descriptor is actually in.
 pub fn dsl_rc_claim_pi_lo(
     desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
 ) -> Result<usize, String> {
     use dregg_circuit::descriptor_ir2::VmConstraint2;
-    use dregg_circuit::effect_vm::trace_rotated::{
-        C_DFA_RC_OFF, CAVEAT_BASE, avail_pad_for_descriptor_name,
-    };
     use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 
-    // The hardened `…-v1-avail` transfer/burn members (the GAP #4 availability weld) shift the
-    // whole rotated caveat region by their avail pad, so the rc carrier column shifts with it.
-    let rc_col0 = CAVEAT_BASE + avail_pad_for_descriptor_name(&desc.name) + C_DFA_RC_OFF;
+    let rc_col0 = dsl_rc_carrier_col(desc)?;
     desc.constraints
         .iter()
         .find_map(|c| match c {
@@ -3218,6 +3223,47 @@ pub fn dsl_rc_claim_pi_lo(
                 "dsl: leg descriptor carries NO rc pin (no last-row PiBinding at the DFA \
                  route-commitment carrier column {rc_col0}) — the pre-rc corpus, or a member \
                  outside the `withDfaRcPins` cohort; refusing to fold (fail-closed)"
+            )
+        })
+}
+
+/// **The DFA route-commitment carrier column IN `desc`'s OWN GEOMETRY** — lane 0 of the 4-felt rc
+/// carrier the `withDfaRcPins` emit binds at row LAST.
+///
+/// The layout constant `CAVEAT_BASE + avail_pad + C_DFA_RC_OFF` is a column in the ORIGINAL rotated
+/// geometry (the hardened `…-v1-avail` transfer/burn members shift the whole caveat region by their
+/// availability pad, so the pad is part of the raw address). A NARROW `rotation-v3-staged-registry`
+/// member commits exactly that geometry. A WIDE member is S2+E1 COMPACTED, so the same carrier is
+/// committed at the deletion's IMAGE of that column, which
+/// [`compacted_column`](dregg_circuit::effect_vm::trace_rotated::compacted_column) computes by
+/// running the DEPLOYED compaction — never by an offset transcribed here.
+///
+/// The geometry is decided by the PI COUNT, which is the same discriminator
+/// [`carrier_claim_pins_admitted`] uses: a wide leg carries at least
+/// [`WIDE_PI_COUNT`](dregg_circuit::effect_vm::trace_rotated::WIDE_PI_COUNT) PIs (the rotated base
+/// + the 4 rc + the 16 anchors), a narrow one cannot. Fails CLOSED — an unresolvable member, or a
+/// raw column the kill-set DELETED, is a refusal, never a guessed column.
+pub fn dsl_rc_carrier_col(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+) -> Result<usize, String> {
+    use dregg_circuit::effect_vm::trace_rotated::{
+        C_DFA_RC_OFF, CAVEAT_BASE, WIDE_PI_COUNT, avail_pad_for_descriptor_name, compacted_column,
+        wide_registry_key_for_descriptor_name,
+    };
+
+    let raw = CAVEAT_BASE + avail_pad_for_descriptor_name(&desc.name) + C_DFA_RC_OFF;
+    if desc.public_input_count < WIDE_PI_COUNT {
+        // A narrow committed member is in the layout's own coordinates.
+        return Ok(raw);
+    }
+    let key = wide_registry_key_for_descriptor_name(&desc.name)
+        .map_err(|e| format!("dsl: rc carrier column for '{}': {e}", desc.name))?;
+    compacted_column(key, raw)
+        .map_err(|e| format!("dsl: rc carrier column for '{}': {e}", desc.name))?
+        .ok_or_else(|| {
+            format!(
+                "dsl: the DFA route-commitment carrier column {raw} was DELETED by {key}'s S2/E1 \
+                 kill-set — the committed member cannot pin it; refusing to fold (fail-closed)"
             )
         })
 }
@@ -4043,16 +4089,16 @@ fn mint_rotated_turn_leaf(
         //     would bind a vacuous claim no predicate gated. Such a turn takes the
         //     re-exec rung (`carrier_witness: None`), never a fabricated fold.
         Some(CarrierWitness::Dsl(bundle)) => {
-            use dregg_circuit::effect_vm::trace_rotated::{
-                C_DFA_RC_OFF, CAVEAT_BASE, DFA_RC_LEN, avail_pad_for_descriptor_name,
-            };
+            use dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN;
             use dregg_circuit::lean_descriptor_air::VmRow;
             let rc_lo = dsl_rc_claim_pi_lo(&leg.descriptor)
                 .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
-            // The rc carrier column shifts by the avail pad on the hardened `…-v1-avail`
-            // transfer/burn members (the caveat region rides past the widened v1 face).
-            let rc_col0 =
-                CAVEAT_BASE + avail_pad_for_descriptor_name(&leg.descriptor.name) + C_DFA_RC_OFF;
+            // ONE resolver for the carrier column (`dsl_rc_carrier_col`): the avail pad on the
+            // hardened `…-v1-avail` members AND the S2/E1 compaction of a WIDE committed row. This
+            // recomputed the RAW column beside a `dsl_rc_claim_pi_lo` that had done the same, so
+            // the two agreed with each other and disagreed with the committed member.
+            let rc_col0 = dsl_rc_carrier_col(&leg.descriptor)
+                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
             carrier_claim_pins_admitted(
                 &leg.descriptor,
                 &leg.public_inputs,
