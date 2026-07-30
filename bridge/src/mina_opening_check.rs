@@ -49,14 +49,46 @@
 //! four adjacent pairs 539795→539799 while `[0..15]` moves — the transaction-SNARK accumulator's
 //! half, exactly as [`crate::mina_pickles::WrapProofShape::acc_comm`] documents for `[1]`.)
 //!
-//! ### So the resolution is PINNED, and that is the fail-closed choice
+//! ### ⚑⚑ THAT MEASUREMENT WAS RIGHT AND ITS CONCLUSION WAS WRONG — corrected 2026-07-30
 //!
-//! [`PINNED_CHALLENGES`] carries the challenge vector for the ONE height whose transcript this
-//! tree has actually run — devnet **539508**, `MinaWrapOpeningGate.CHAL_F`, emitted by
-//! `metatheory/EmitPastaDeriveChals.lean` and sha256-pinned below. Every other height returns
-//! [`MinaOpeningCheckError::ChallengesUnavailable`] and **proves nothing**. That is deliberate:
-//! proving the MSM over a challenge vector nobody derived from the block would be a green badge
-//! for an unbound statement, which is worse than a refusal.
+//! The 0/6 above is real: the challenges are not a wire FIELD. But the paragraph after it —
+//! "That needs the verifier index, the SRS and the 47 commitments — none of which are on the wire,
+//! and the in-kernel cost is 153 s per block" — was wrong twice.
+//!
+//! **The absorbed objects ARE on the wire.** Five of the six — the two accumulator commitments,
+//! the 15 witness commitments, `z_comm`, the seven `t_comm` chunks, the 15 `lr` pairs and `delta`
+//! — were being READ by `decode_proof_at`, CANONICALITY-CHECKED, and thrown away. The discard was
+//! the blocker, not the data; they survive the decode as of 2026-07-30. The verifier-index
+//! *digest* is one `Fp` element of config ([`WRAP_VK_DIGEST`]), not "the verifier index".
+//!
+//! **The 153 s was a KERNEL cost, never the function's.** `Dregg2.Bridge.MinaWrapChallenges` is
+//! the same two sponge schedules as compiled functions of wire arguments, and
+//! `MinaWrapChallengesWeld` states that they reproduce block 539508's own literals through the
+//! C ABI. The kernel's job is the CHECKER; the instance is compiled.
+//!
+//! So the resolution is a **DERIVATION, tried at every height** ([`derive_challenges_for_block`]),
+//! and [`PINNED_CHALLENGES`] is what that derivation is CHECKED AGAINST where both exist. What is
+//! left is named per leg by [`DerivationStage`] rather than reported as a table miss.
+//!
+//! ### ⚑ THE MSM, ROUTED — and the one question that is NOT this file's to answer
+//!
+//! Two of the remaining legs are multi-scalar multiplications: `public_comm` (40 Lagrange points)
+//! and the `⟨s, srs.g⟩` leg itself (`2^15` points). MEASURED at
+//! `metatheory/fixtures/pickles-extractors/src/bin/sg_msm_bench.rs`, built and run: arkworks'
+//! bucketed Pippenger with Montgomery arithmetic reproduces `opening.sg` on the real block in
+//! **~46 ms** and refuses a one-generator tamper — **~760× the compiled-Lean path and ~274,000×
+//! the in-kernel 3.5 h.** Three MSMs is ~140 ms.
+//!
+//! The differential that ties the two runs TODAY, by text: Rust prints its fold, Lean prints `SG`,
+//! and matching `POINT.x`/`POINT.y` closes the chain with **no modular inversion anywhere**.
+//!
+//! ⚑ **The `@[extern] opaque` seam is designed and priced and deliberately NOT WRITTEN HERE.** The
+//! SRS stays Rust-side as trusted config, so the boundary carries 15 challenges and one point —
+//! ~17 field elements. What it costs is that **arkworks enters the node's dependency graph**, and
+//! that is a TOPOLOGY decision about what the verified runtime links, not a correctness one. It is
+//! flagged, not taken. Note also the discipline that constrains the shape if it is taken: an
+//! `@[extern] opaque` **structurally cannot leak into a proof**, whereas a `#guard` that calls
+//! Rust is no longer kernel-checked — right for an instance differential, wrong for a checker.
 //!
 //! What binds the *served* block to that pinned vector is [`MinaObserver::check_header_binding`],
 //! which recomputes public-input words 12 and 11 from the served `stateHash` and the served proof
