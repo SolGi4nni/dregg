@@ -50,6 +50,24 @@ for BOTH lists, so a cross-paired claim is not merely refused, it is **unstateab
 has no proof. §4 then puts the same bounds in the EMITTED OBJECT: the descriptor pins `lo` as a
 literal and publishes `[lo, hi)` and the partial as public inputs.
 
+## ⚑ The 29 emitted `piBinding`s, and what they force — §5c, §5d, §7.6
+
+Until §5c existed this file emitted 29 `piBinding`s and proved only SHAPE facts about them
+(`sMaxPi ≤ piCount`, in-bounds), while §5's two "publishes" theorems were stated on HAND-WRITTEN
+constraints that nothing said were in the emitted list. `acceptB` is `List.all gateBodyEvalZero`
+and returns `true` on every constructor that is not `.base (.gate _)`, so the row-local denotation
+**cannot see a `piBinding` at all** — which is exactly how 29 gates sat un-forcing with every
+theorem green.
+
+§5c states the forcing over the ACTUALLY EMITTED list, and the answer is worth reading before
+citing any of it: `pi_pins_refuse_no_trace` proves **not one of the 29 refuses a trace.** They are
+publication, not checking. What they buy is `wire_is_the_declared_interval` (the declared interval
+is on the wire, so the four-way tiling is checkable off the proofs) and
+`published_partial_is_the_fold` (the 27 published limbs ARE the fold the emitted row template and
+thread force) — the theorem that makes `slices_compose`'s `P k` a value rather than a name. §5d
+exhibits both polarities on a whole trace, including the forgery no other gate here can see: an
+untouched, row-locally accepted trace with a mis-published partial.
+
 ## Axiom hygiene
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); no `sorry`/`admit`/
@@ -348,7 +366,15 @@ def sliceLoGate (lo : Nat) : VmConstraint2 := cgH ((Head.lin 1 LO).addConst (-(l
 def sliceWidthGate (w : Nat) : VmConstraint2 :=
   cgH (((Head.lin 1 HI).append ((Head.lin 1 LO).scale (-1))).addConst (-(w : ℤ)))
 
-/-- `nxt LO − loc LO` — the declared slice cannot change down the trace. -/
+/-- `nxt LO − loc LO` — the declared slice cannot change down the trace.
+
+⚠ **What this gate buys is ONE ROW, and it is not the row an earlier revision of this comment
+claimed.** That revision said "without this a prover could declare slice 0 at the first row, where
+the PI binding looks, and compute slice 3 on every row after it." `sliceLoGate` is a per-row
+`LO − lo = 0` LITERAL, which under the deployed `when_transition()` semantics fires on rows
+`0 … H−2` — so that forgery was never available. `declConst_of_literal` (§5c.4) proves the
+constancy is already implied wherever the literal fires on both rows of the window; what these two
+gates actually force is the LAST row's `LO`/`HI`, which no gate and no public input reads. §7.7. -/
 def loConstGate : VmConstraint2 := cw (.add (.nxt LO) (.mul (.const (-1)) (.loc LO)))
 /-- `nxt HI − loc HI`. -/
 def hiConstGate : VmConstraint2 := cw (.add (.nxt HI) (.mul (.const (-1)) (.loc HI)))
@@ -480,9 +506,12 @@ def DeclWindowAccepted (lo w : Nat) (T : WTrace) (i : Nat) : Prop :=
   ∀ wc : WindowConstraint, VmConstraint2.windowGate wc ∈ sliceDeclGates lo w →
     wc.body.eval (envOf T i) = 0
 
-/-- ⚑ **`sliceDecl_forces_constant`** — the declared slice cannot change down the trace. Without
-this a prover could declare slice 0 at the first row, where the PI binding looks, and compute
-slice 3 on every row after it. -/
+/-- ⚑ **`sliceDecl_forces_constant`** — the declared slice cannot change down the trace.
+
+⚠ Read `loConstGate`'s own doc and §7.7 before citing this as a defence: `sliceLoGate`'s literal
+already pins `LO` on every row the deployed `when_transition()` arm fires on, so what this theorem
+adds over the row-local pins is the LAST row. `declConst_of_literal` (§5c.4) is the statement of
+exactly that. -/
 theorem sliceDecl_forces_constant (lo w : Nat) (T : WTrace) (i : Nat)
     (h : DeclWindowAccepted lo w T i) : DeclConstant T i := by
   constructor
@@ -538,6 +567,425 @@ def declAsg (lo w : Nat) : Assignment :=
 -- REFUTABLE — a bumped bound column is REFUSED, either one.
 #guard acceptB (sliceDeclGates 0 8192) (bumpAt (declAsg 0 8192) LO) == false
 #guard acceptB (sliceDeclGates 0 8192) (bumpAt (declAsg 0 8192) HI) == false
+
+/-! ## §5c — ⚑⚑ THE 29 EMITTED `piBinding`s, AND WHAT THEY FORCE.
+
+**Everything §5 says about the pins is said about a HAND-WRITTEN constraint.**
+`sliceBoundPi_publishes` and `outPi_publishes` take a `.piBinding` as a HYPOTHESIS and unfold
+`holdsVm` on it; neither says the EMITTED list contains that constraint, and both would still be
+true if `sliceDeclGates` emitted no `piBinding` at all. Everything else this file said about the
+29 was SHAPE — `sMaxPi ≤ piCount`, a bound check that is satisfied by a pin binding nothing.
+
+⚑ **And the row-local denotation cannot repair that, structurally.** `acceptB` is
+`List.all gateBodyEvalZero`, and `gateBodyEvalZero` returns `true` on every constructor that is not
+`.base (.gate _)` — so it **cannot see a `.piBinding` at all**. Proving over `acceptB` can never
+reach one. That is precisely why 29 gates could sit emitted, with nothing saying what they force,
+while every theorem in this file stayed green.
+
+This section is `PastaMsmScalarDerive` §4e's shape one rung down, and no technique is invented: a
+denotation over the ACTUALLY EMITTED list, an INVERSION saying which pins that list contains and
+which it does not, the forcing, and a decidable twin §5d exhibits both polarities of.
+
+⚑ **Read §5c.4 for the answer to "what do the 29 force".** `pi_pins_refuse_no_trace` proves they
+refuse NO TRACE — every trace has a satisfying public-input vector — so none of the 29 constrains
+the prover's trace at all. Their whole content is on the WIRE, and that is what a publication gate
+is for; the file now says which of its gates are which, rather than leaving a reader to assume a
+`piBinding` is a check. -/
+
+section WirePins
+
+open Dregg2.Circuit.Emit.PastaMsmWindowed
+  (ACCY ACCZ SRCX SRCY SRCZ BIT rowGates ThreadAccepted threadGates_force
+   windowedRef windowedRows_forces fpVal_as_sum)
+open Dregg2.Circuit.Emit.PastaScalarMul (PtP PointIsZ)
+open Dregg2.Circuit.Emit.PastaField (fpVal numLimbs bumpAt)
+open Dregg2.Circuit.Emit.PastaMsmLayouts (bitAt)
+
+/-! ### §5c.1 — the pins the emitted list ACTUALLY contains. -/
+
+/-- The `(row, column, public-input index)` triples the declaration binds, EXTRACTED from the
+emitted list rather than restated beside it. -/
+def declPins (lo w : Nat) : List (Dregg2.Circuit.Emit.EffectVmEmit.VmRow × Nat × Nat) :=
+  (sliceDeclGates lo w).filterMap (fun c => match c with
+    | .base (.piBinding r col k) => some (r, col, k)
+    | _                          => none)
+
+/-- ⚑ **`declPins_eq`** — the emitted pins, in emission order and at EVERY `(lo, w)`: the two
+declared bounds on the FIRST row, then the 27 accumulator limbs on the LAST. The declaration gates
+contribute none, whatever the slice offset and width are. -/
+theorem declPins_eq (lo w : Nat) :
+    declPins lo w
+      = (.first, LO, PI_LO) :: (.first, HI, PI_HI)
+          :: (List.range 27).map (fun i => (Dregg2.Circuit.Emit.EffectVmEmit.VmRow.last,
+                ACCX + i, PI_OUT + i)) := by
+  simp [declPins, sliceDeclGates, sliceBoundPiGates, outPiGates, sliceLoGate, sliceWidthGate,
+    loConstGate, hiConstGate, cgH, cg, cw, List.filterMap_map]
+
+/-- A pin in the emitted list is a pin in `declPins` — the bridge that makes every inversion below
+a statement about the EMITTED object. -/
+theorem mem_declPins (lo w : Nat) (r : Dregg2.Circuit.Emit.EffectVmEmit.VmRow) (col k : Nat)
+    (h : VmConstraint2.base (.piBinding r col k) ∈ sliceDeclGates lo w) :
+    (r, col, k) ∈ declPins lo w :=
+  List.mem_filterMap.mpr ⟨_, h, rfl⟩
+
+/-- ⚑ **`piFirst_is_a_bound`** — a `.piBinding .first` in the emitted list is one of the two
+DECLARED BOUNDS and nothing else. There is no third first-row pin, at any `(lo, w)`. -/
+theorem piFirst_is_a_bound (lo w col k : Nat)
+    (h : VmConstraint2.base (.piBinding .first col k) ∈ sliceDeclGates lo w) :
+    (col = LO ∧ k = PI_LO) ∨ (col = HI ∧ k = PI_HI) := by
+  have hm := mem_declPins lo w .first col k h
+  rw [declPins_eq] at hm
+  simp only [List.mem_cons, List.mem_map, List.mem_range, Prod.mk.injEq] at hm
+  rcases hm with ⟨-, hc, hk⟩ | ⟨-, hc, hk⟩ | ⟨i, -, hi⟩
+  · exact Or.inl ⟨hc, hk⟩
+  · exact Or.inr ⟨hc, hk⟩
+  · exact absurd hi.1 (by simp)
+
+/-- ⚑ **`piLast_is_an_acc_limb`** — a `.piBinding .last` in the emitted list is one of the 27
+ACCUMULATOR LIMBS, at its own public input. No last-row pin names anything else. -/
+theorem piLast_is_an_acc_limb (lo w col k : Nat)
+    (h : VmConstraint2.base (.piBinding .last col k) ∈ sliceDeclGates lo w) :
+    ∃ i, i < 27 ∧ col = ACCX + i ∧ k = PI_OUT + i := by
+  have hm := mem_declPins lo w .last col k h
+  rw [declPins_eq] at hm
+  simp only [List.mem_cons, List.mem_map, List.mem_range, Prod.mk.injEq] at hm
+  rcases hm with ⟨hr, -, -⟩ | ⟨hr, -, -⟩ | ⟨i, hi, hr, hc, hk⟩
+  · exact absurd hr (by simp)
+  · exact absurd hr (by simp)
+  · exact ⟨i, hi, hc.symm, hk.symm⟩
+
+/-- The declared bound pins are IN the emitted list. -/
+theorem mem_loPi (lo w : Nat) :
+    VmConstraint2.base (.piBinding .first LO PI_LO) ∈ sliceDeclGates lo w := by
+  simp [sliceDeclGates, sliceBoundPiGates]
+
+theorem mem_hiPi (lo w : Nat) :
+    VmConstraint2.base (.piBinding .first HI PI_HI) ∈ sliceDeclGates lo w := by
+  simp [sliceDeclGates, sliceBoundPiGates]
+
+/-- …and so is accumulator limb `i`'s pin, for each of the 27. -/
+theorem mem_outPi (lo w i : Nat) (hi : i < 27) :
+    VmConstraint2.base (.piBinding .last (ACCX + i) (PI_OUT + i)) ∈ sliceDeclGates lo w :=
+  List.mem_append_right _ (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩)
+
+/-- ⚑ **`declPins_indices`** — the emitted pins name public inputs `0, 1, …, 28`: EVERY declared
+public input is bound, and no two pins name the same one. A declared-but-unbound public input is a
+free wire a verifier reads as meaningful; a double-bound one silently equates two columns.
+`slicedRowDesc_pi_indices_in_bounds` checks neither — it only checks no index is too large. -/
+theorem declPins_indices (lo w : Nat) :
+    (declPins lo w).map (fun p => p.2.2) = List.range PI_COUNT := by
+  rw [declPins_eq]; rfl
+
+theorem declPins_length (lo w : Nat) : (declPins lo w).length = PI_COUNT := by
+  rw [declPins_eq]; rfl
+
+theorem declPins_indices_nodup (lo w : Nat) :
+    ((declPins lo w).map (fun p => p.2.2)).Nodup := by
+  rw [declPins_indices]; exact List.nodup_range
+
+/-- …and the COLUMNS the pins name are distinct too, so no two public inputs are two names for one
+cell. -/
+theorem declPins_cols_nodup (lo w : Nat) :
+    ((declPins lo w).map (fun p => p.2.1)).Nodup := by
+  rw [declPins_eq]; decide
+
+/-! ### §5c.2 — the denotation, over the emitted list, at the DEPLOYED row tags. -/
+
+/-- The content of the emitted `.piBinding .first` pins against the DECLARED public-input vector
+`pv`, read at row 0 — where `descriptor_ir2.rs`'s `builder.is_first_row()` selector puts them.
+
+⚠ `pv` is a SEPARATE argument and NOT `envOf`'s `pub` field: `PastaMsmWindowed.envOf` sets
+`pub := T 0`, the trace's first row, while the deployed `envAt` sets `pub := t.pub`. No
+`WindowExpr` reads `pub` at all so the discrepancy is inert for the window gates, but a PI pin is
+exactly the constraint that WOULD read it, so it is given the deployed reading. -/
+def SliceFirstPiAccepted (lo w : Nat) (T : WTrace) (pv : Nat → ℤ) : Prop :=
+  ∀ col k : Nat, VmConstraint2.base (.piBinding .first col k) ∈ sliceDeclGates lo w →
+    T 0 col = pv k
+
+/-- …and of the emitted `.piBinding .last` pins, read at the trace's LAST ROW `L`
+(`builder.is_last_row()`). `L` is an argument rather than a derived `H − 1`, so no theorem below
+carries a row count in a bound. -/
+def SliceLastPiAccepted (lo w L : Nat) (T : WTrace) (pv : Nat → ℤ) : Prop :=
+  ∀ col k : Nat, VmConstraint2.base (.piBinding .last col k) ∈ sliceDeclGates lo w →
+    T L col = pv k
+
+/-- ⚑ **The DECIDABLE twin of the whole declaration** — the literal pins, the constancy windows and
+BOTH families of PI pin, over the same emitted list. This is `acceptB`'s counterpart for the three
+constructors `acceptB` cannot see, and §5d decides it in the kernel, which is what makes the
+tampers there MEASUREMENTS rather than assertions.
+
+⚠ The `match` ends in `_ => true`. That is correct for the three constructors `sliceDeclGates`
+emits today and it is FAIL-OPEN by construction — §7.8. -/
+def sliceDeclAcceptB (lo w L i : Nat) (T : WTrace) (pv : Nat → ℤ) : Bool :=
+  (sliceDeclGates lo w).all (fun c => match c with
+    | .base (.gate e)                 => decide (e.eval (T i) = 0)
+    | .base (.piBinding .first col k) => decide (T 0 col = pv k)
+    | .base (.piBinding .last col k)  => decide (T L col = pv k)
+    | .windowGate wc                  => decide (wc.body.eval (envOf T i) = 0)
+    | _                               => true)
+
+/-- ⚑ **`sliceDeclAccept_forces`** — the decidable twin IMPLIES the row-local denotation, both PI
+predicates and the window predicate, so a kernel `#guard` on it is evidence about the theorems
+below and not about a separate object. -/
+theorem sliceDeclAccept_forces (lo w L i : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (h : sliceDeclAcceptB lo w L i T pv = true) :
+    acceptB (sliceDeclGates lo w) (T i) = true
+      ∧ SliceFirstPiAccepted lo w T pv
+      ∧ SliceLastPiAccepted lo w L T pv
+      ∧ DeclWindowAccepted lo w T i := by
+  rw [sliceDeclAcceptB, List.all_eq_true] at h
+  refine ⟨?_, fun col k hk => of_decide_eq_true (h _ hk),
+             fun col k hk => of_decide_eq_true (h _ hk),
+             fun wc hw => of_decide_eq_true (h _ hw)⟩
+  rw [acceptB, List.all_eq_true]
+  intro c hc
+  have hcc := h c hc
+  cases c with
+  | base b =>
+    cases b with
+    | gate e => simpa [gateBodyEvalZero] using hcc
+    | transition _ _ => rfl
+    | boundary _ _ => rfl
+    | piBinding _ _ _ => rfl
+  | lookup _ => rfl
+  | memOp _ => rfl
+  | mapOp _ => rfl
+  | umemOp _ => rfl
+  | proofBind _ => rfl
+  | windowGate _ => rfl
+
+/-! ### §5c.3 — the forcing: what the 29 put ON THE WIRE. -/
+
+theorem loPi_forces (lo w : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (h : SliceFirstPiAccepted lo w T pv) : T 0 LO = pv PI_LO := h _ _ (mem_loPi lo w)
+
+theorem hiPi_forces (lo w : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (h : SliceFirstPiAccepted lo w T pv) : T 0 HI = pv PI_HI := h _ _ (mem_hiPi lo w)
+
+theorem outPi_forces (lo w L : Nat) (T : WTrace) (pv : Nat → ℤ) (i : Nat) (hi : i < 27)
+    (h : SliceLastPiAccepted lo w L T pv) : T L (ACCX + i) = pv (PI_OUT + i) :=
+  h _ _ (mem_outPi lo w i hi)
+
+/-- ⚑⚑ **`wire_is_the_declared_interval`** — the two emitted bound pins put the DECLARED INTERVAL
+on the wire: public inputs 0 and 1 ARE `lo` and `lo + w`, the literals baked into the emitted gate.
+This is what lets a verifier check `slice_bounds_abut` — that the four declared intervals tile
+`[0, w·n)` — from the PROOF rather than from the prover's word.
+
+⚑ Read the conclusion: it is entirely about `pv`. The TRACE side (`T 0 LO = lo`) comes from
+`sliceLoGate`, a row-local literal that `acceptB` already sees; the pins add nothing to it. §7.6. -/
+theorem wire_is_the_declared_interval (lo w : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (hrow : acceptB (sliceDeclGates lo w) (T 0) = true)
+    (hpi : SliceFirstPiAccepted lo w T pv) :
+    pv PI_LO = (lo : ℤ) ∧ pv PI_HI = (lo : ℤ) + (w : ℤ) := by
+  obtain ⟨hl, hh⟩ := sliceDecl_forces_bounds lo w (T 0) hrow
+  exact ⟨by rw [← loPi_forces lo w T pv hpi, hl], by rw [← hiPi_forces lo w T pv hpi, hh]⟩
+
+/-- The DECLARED PARTIAL as a row-addressed assignment: limb column `ACCX + i` carries public input
+`PI_OUT + i`. Reading the wire through the row's own layout is what lets the three `fpVal` value
+heads be stated on it without re-authoring them. -/
+def piRow (pv : Nat → ℤ) : Assignment := fun c => pv (PI_OUT + (c - ACCX))
+
+/-- ⚑ **`published_partial_is_the_last_row`** — the 27 emitted `.last` pins make the three declared
+value heads on the WIRE equal the LAST ROW's three accumulator value heads. Nothing here is a row
+count: `L` is an argument. -/
+theorem published_partial_is_the_last_row (lo w L : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (h : SliceLastPiAccepted lo w L T pv) :
+    fpVal (piRow pv) ACCX = fpVal (T L) ACCX
+      ∧ fpVal (piRow pv) ACCY = fpVal (T L) ACCY
+      ∧ fpVal (piRow pv) ACCZ = fpVal (T L) ACCZ := by
+  have key : ∀ b : Nat, b + 9 ≤ 27 →
+      fpVal (piRow pv) (ACCX + b) = fpVal (T L) (ACCX + b) := by
+    intro b hb
+    rw [fpVal_as_sum, fpVal_as_sum]
+    refine congrArg List.sum (List.map_congr_left (fun i hi => ?_))
+    rw [List.mem_range] at hi
+    have hlt : b + i < 27 := by simp only [numLimbs] at hi; omega
+    have hcol : ACCX + b + i = ACCX + (b + i) := by omega
+    rw [hcol, outPi_forces lo w L T pv (b + i) hlt h]
+    simp [piRow]
+  refine ⟨key 0 (by norm_num), ?_, ?_⟩
+  · have e : ACCY = ACCX + 9 := by decide
+    rw [e]; exact key 9 (by norm_num)
+  · have e : ACCZ = ACCX + 18 := by decide
+    rw [e]; exact key 18 (by norm_num)
+
+/-- ⚑⚑ **`published_partial_is_the_fold` — THE DELIVERABLE.** The 27 numbers a verifier reads off
+the proof ARE the fold the emitted row template and the emitted thread force. Until this theorem
+existed, `slices_compose`'s `P k` was a value a caller NAMED; here it is the value the emitted
+object puts on the wire.
+
+`L` is universally quantified and occurs only as `windowedRows_forces`' induction bound: the
+statement at `L = 8` is the statement at `L = 1,056,896`.
+
+⚠ What is still carried is `PastaMsmWindowed`'s own — `hsrc`, that a row's `SRC` columns carry the
+point they are supposed to. §7.1 is unchanged by this section: the slice CONTENTS are bound one
+rung up, in `PastaMsmBound`, and not here. -/
+theorem published_partial_is_the_fold (lo w L : Nat) (T : WTrace) (pv : Nat → ℤ)
+    (Sv : Nat → PtP) (acc0 : PtP)
+    (h0 : PointIsZ (T 0) ACCX ACCY ACCZ acc0)
+    (hrows : ∀ i, i < L → acceptB rowGates (T i) = true)
+    (hthr : ∀ i, i < L → ThreadAccepted T i)
+    (hsrc : ∀ i, i < L → PointIsZ (T i) SRCX SRCY SRCZ (Sv i))
+    (hpi : SliceLastPiAccepted lo w L T pv) :
+    PointIsZ (piRow pv) ACCX ACCY ACCZ (windowedRef Sv (fun i => bitAt (T i) BIT) acc0 L) := by
+  obtain ⟨ex, ey, ez⟩ := published_partial_is_the_last_row lo w L T pv hpi
+  obtain ⟨px, py, pz⟩ := windowedRows_forces T Sv acc0 h0 L (fun i hi => hrows i hi)
+    (fun i hi => threadGates_force T i (hthr i hi)) (fun i hi => hsrc i hi)
+  exact ⟨by rw [ex]; exact px, by rw [ey]; exact py, by rw [ez]; exact pz⟩
+
+/-! ### §5c.4 — ⚑⚑ WHAT THE 29 DO NOT DO, PROVED RATHER THAN INSPECTED. -/
+
+/-- The public-input vector a trace's OWN CELLS determine — what an honest prover publishes, and
+what `circuit/tests/pasta_sliced_sg_prove.rs`'s `public_inputs_of` computes. -/
+def piOf (T : WTrace) (L : Nat) : Nat → ℤ := fun k =>
+  if k = PI_LO then T 0 LO
+  else if k = PI_HI then T 0 HI
+  else T L (ACCX + (k - PI_OUT))
+
+/-- ⚑⚑ **`pi_pins_refuse_no_trace` — THE ANSWER TO "WHAT DO THE 29 FORCE".** EVERY trace, honest or
+not, has a public-input vector satisfying all 29 emitted pins — namely the one read off its own
+cells. So the 29 add NOTHING to the trace's solution set: **not one of them refuses a trace.**
+
+That is not a defect and it is not a decoration; it is what a PUBLICATION gate is. The 29 are the
+only reason the values `slices_compose` composes exist on the wire at all, and `wire_is_the_declared
+_interval` / `published_partial_is_the_fold` are what they buy. But a reader who assumes a
+`piBinding` is a CHECK on the prover is wrong, at every one of the 29, and this file said nothing
+either way until now. Contrast `sliceLoGate`, which does refuse traces — §5b's `#guard`s. -/
+theorem pi_pins_refuse_no_trace (lo w L : Nat) (T : WTrace) :
+    SliceFirstPiAccepted lo w T (piOf T L) ∧ SliceLastPiAccepted lo w L T (piOf T L) := by
+  constructor
+  · intro col k hmem
+    rcases piFirst_is_a_bound lo w col k hmem with ⟨hc, hk⟩ | ⟨hc, hk⟩ <;> subst hc <;> subst hk <;>
+      simp [piOf, PI_LO, PI_HI]
+  · intro col k hmem
+    obtain ⟨i, -, hc, hk⟩ := piLast_is_an_acc_limb lo w col k hmem
+    subst hc; subst hk
+    have h1 : ¬ (PI_OUT + i = PI_LO) := by simp only [PI_OUT, PI_LO]; omega
+    have h2 : ¬ (PI_OUT + i = PI_HI) := by simp only [PI_OUT, PI_HI]; omega
+    simp only [piOf, if_neg h1, if_neg h2, Nat.add_sub_cancel_left]
+
+/-- ⚑ **`declConst_of_literal`** — and the two CONSTANCY windows are redundant wherever the
+row-local LITERAL pin fires on both rows of the window. `sliceLoGate` is a per-row `LO − lo = 0`,
+so "a prover could declare slice 0 at the first row and compute slice 3 after it" was never a
+thing the constancy gates were needed for. Under the deployed `when_transition()` semantics the
+literal fires on rows `0 … H−2`, so what `loConstGate`/`hiConstGate` buy is exactly the LAST row's
+`LO`/`HI` — two cells no gate and no public input reads. §7.7. -/
+theorem declConst_of_literal (lo w : Nat) (T : WTrace) (i : Nat)
+    (h0 : acceptB (sliceDeclGates lo w) (T i) = true)
+    (h1 : acceptB (sliceDeclGates lo w) (T (i + 1)) = true) :
+    DeclConstant T i := by
+  obtain ⟨a0, b0⟩ := sliceDecl_forces_bounds lo w (T i) h0
+  obtain ⟨a1, b1⟩ := sliceDecl_forces_bounds lo w (T (i + 1)) h1
+  exact ⟨by rw [a0, a1], by rw [b0, b1]⟩
+
+#assert_axioms declPins_eq
+#assert_axioms mem_declPins
+#assert_axioms piFirst_is_a_bound
+#assert_axioms piLast_is_an_acc_limb
+#assert_axioms mem_loPi
+#assert_axioms mem_hiPi
+#assert_axioms mem_outPi
+#assert_axioms declPins_indices
+#assert_axioms declPins_length
+#assert_axioms declPins_indices_nodup
+#assert_axioms declPins_cols_nodup
+#assert_axioms sliceDeclAccept_forces
+#assert_axioms loPi_forces
+#assert_axioms hiPi_forces
+#assert_axioms outPi_forces
+#assert_axioms wire_is_the_declared_interval
+#assert_axioms published_partial_is_the_last_row
+#assert_axioms published_partial_is_the_fold
+#assert_axioms pi_pins_refuse_no_trace
+#assert_axioms declConst_of_literal
+
+/-! ## §5d — ⚑⚑ THE PINS BITE, ON A WHOLE TRACE, IN BOTH POLARITIES.
+
+§5b exercises the declaration on ONE assignment. The pins are not row-local and `acceptB` cannot
+see them, so they need their own exhibit or §5c is a page of theorems about an object nothing
+satisfies. Both polarities below are decided in the kernel over the ACTUALLY EMITTED
+`sliceDeclGates`, on a FOUR-ROW trace of slice 0 of 4 at the real width `8,192`.
+
+⚑ **The forgery the 27 pins kill is the one no other gate in this descriptor can see:** a prover
+whose trace is entirely honest — every row satisfies the row template, every window satisfies the
+thread, every row carries the declared bounds — and whose PUBLISHED PARTIAL is a different number.
+`slices_compose` composes what is on the wire, so four honest slices publishing four chosen
+partials re-sum to whatever the prover picked. The guard below MEASURES that the row-local
+denotation accepts that trace rather than asserting it. -/
+
+/-- A DECLARATION trace: every row carries the declared bounds, and the accumulator's bottom limb
+carries `v`. Nothing here is an RCB add — §5d is about the DECLARATION and the WIRE, and the row
+template's own satisfiability is `PastaMsmWindowed` §4c's exhibit, not re-authored here. -/
+def declTrace (lo w v : Nat) : WTrace := fun _ => fun c =>
+  if c = LO then (lo : ℤ)
+  else if c = HI then (lo : ℤ) + (w : ℤ)
+  else if c = ACCX then (v : ℤ)
+  else 0
+
+/-- A one-cell perturbation of ONE ROW of a trace. -/
+def bumpTraceAt (T : WTrace) (r c : Nat) : WTrace :=
+  fun i => if i = r then bumpAt (T i) c else T i
+
+-- ⚑ SATISFIABLE, JOINTLY — §5c's hypotheses are INHABITED, which is the thing a forcing theorem is
+-- worthless without. Every window of the honest four-row trace satisfies the literal pins, the
+-- constancy windows AND both PI families, against the public inputs the trace itself determines.
+#guard (List.range 4).all (fun i =>
+  sliceDeclAcceptB 0 8192 3 i (declTrace 0 8192 7) (piOf (declTrace 0 8192 7) 3))
+-- …and at slice 2 of 4, whose emitted descriptor is a textually different object.
+#guard (List.range 4).all (fun i =>
+  sliceDeclAcceptB 16384 8192 3 i (declTrace 16384 8192 7) (piOf (declTrace 16384 8192 7) 3))
+
+-- ⚑⚑ THE MEASUREMENT — **THE MIS-PUBLISHED PARTIAL.** The trace is UNTOUCHED and every row of it
+-- is accepted by the row-local denotation, which is where every theorem in this file lived before
+-- §5c…
+#guard (List.range 4).all (fun i => acceptB (sliceDeclGates 0 8192) (declTrace 0 8192 7 i))
+-- …and the emitted `.last` pins REFUSE the wire that claims a different partial. This is the whole
+-- content of the 27, and nothing else in this descriptor can see the forgery.
+#guard ! sliceDeclAcceptB 0 8192 3 0 (declTrace 0 8192 7) (piOf (declTrace 0 8192 9) 3)
+-- ⚑ …AND THE FORGED WIRE IS NOT MALFORMED: the same public inputs, against the trace that really
+-- computes them, are ACCEPTED. So what refuses above is the BINDING to this trace, not a
+-- malformity — the polarity `PastaMsmScalarDerive` §5d establishes for the challenge pins.
+#guard (List.range 4).all (fun i =>
+  sliceDeclAcceptB 0 8192 3 i (declTrace 0 8192 9) (piOf (declTrace 0 8192 9) 3))
+
+-- ⚑ REFUTABLE — the MOVED partial: the last row's published limb bumped. Row-locally accepted on
+-- every row (the declaration gates read `LO`/`HI` and nothing else), refused by the pin.
+#guard (List.range 4).all (fun i =>
+  acceptB (sliceDeclGates 0 8192) (bumpTraceAt (declTrace 0 8192 7) 3 ACCX i))
+#guard ! sliceDeclAcceptB 0 8192 3 0 (bumpTraceAt (declTrace 0 8192 7) 3 ACCX)
+          (piOf (declTrace 0 8192 7) 3)
+
+-- ⚑ REFUTABLE — the MIS-PUBLISHED BOUND: slice 0's trace with slice 2's interval on the wire.
+-- This is the pin that makes the four-way tiling check readable off the proofs.
+#guard ! sliceDeclAcceptB 0 8192 3 0 (declTrace 0 8192 7) (piOf (declTrace 16384 8192 7) 3)
+
+-- ⚑ THE REACH, measured rather than asserted. The 29 pins reach exactly TWO rows — the first and
+-- the last. A NON-last row's accumulator is pinned by none of them: bumping row 1's `ACCX` leaves
+-- the whole declaration ACCEPTING. That cell is the accumulator THREAD's to force, and saying so
+-- is the difference between the pins being understood and being assumed.
+#guard sliceDeclAcceptB 0 8192 3 0 (bumpTraceAt (declTrace 0 8192 7) 1 ACCX)
+         (piOf (declTrace 0 8192 7) 3)
+
+-- ⚑ …and the same measurement from the other side: every trace has a satisfying wire
+-- (`pi_pins_refuse_no_trace`), so a trace with an arbitrary cell moved is still accepted once the
+-- wire follows it. The 29 refuse no trace; they pin what the verifier reads.
+#guard (List.range 4).all (fun i =>
+  sliceDeclAcceptB 0 8192 3 i (bumpTraceAt (declTrace 0 8192 7) 3 ACCX)
+    (piOf (bumpTraceAt (declTrace 0 8192 7) 3 ACCX) 3))
+
+-- ⚑ The emitted pin INVENTORY, in the kernel: 29 pins, naming public inputs `0..28` exactly once
+-- each, on the two declaration columns and the 27 accumulator limbs `442..468`.
+#guard (declPins 0 8192).length == 29
+#guard (declPins 0 8192).map (fun p => p.2.2) == List.range 29
+#guard (declPins 0 8192).map (fun p => p.2.1) == 525 :: 526 :: (List.range 27).map (442 + ·)
+#guard ((declPins 0 8192).filter (fun p => p.1 == .first)).length == 2
+#guard ((declPins 0 8192).filter (fun p => p.1 == .last)).length == 27
+-- …and the whole emitted descriptor carries no OTHER pin: 78 constraints, 29 of them `piBinding`s.
+#guard ((slicedRowDesc 4 0 8192).constraints.filterMap (fun c => match c with
+          | .base (.piBinding _ _ k) => some k
+          | _                        => none)) == List.range 29
+
+end WirePins
 
 /-! ## §6 — THE FOUR-WAY CUT AT THE REAL NUMBERS.
 
@@ -641,6 +1089,59 @@ theorem real_cut_composes {M : Type} [AddCommGroup M] (as : List Nat) (ps : List
 
 5. **P10 is untouched.** Cutting an opening check into four does not make it sound; that a prover
    passing it must KNOW an opening is the IPA extraction argument, and no rung here moves it.
+
+6. ⚑⚑ **THE 29 `piBinding`s REFUSE NO TRACE, and that is a theorem** (`pi_pins_refuse_no_trace`,
+   §5c.4) rather than an inspection. Every trace has a public-input vector satisfying all 29 — the
+   one read off its own cells — so not one of the 29 constrains the prover's trace. They are
+   PUBLICATION, not checking: `wire_is_the_declared_interval` and `published_partial_is_the_fold`
+   are what they buy, and they are the only reason `slices_compose`'s `P k` denotes a value a
+   verifier can read. A reader who takes a `piBinding` for a check on the prover is wrong at every
+   one of the 29, and until §5c this file said nothing either way — it proved only `sMaxPi ≤
+   piCount`, a bound check a pin binding nothing satisfies.
+
+   The 29 split 2 / 27 and the halves are not alike:
+
+   * the **2 bound pins** publish what the descriptor's own literal ALREADY says. A verifier
+     holding the descriptor knows `lo` before it reads a public input; what the pins buy is that
+     the PI vector agrees with the literal, so the four-way tiling check (`slice_bounds_abut`) can
+     be run on the PI vectors alone. Their trace side is `sliceLoGate`'s, entirely.
+   * the **27 accumulator pins** are the only gates in this descriptor that read the accumulator's
+     final value at all. Delete them and four honest slices publish four chosen partials, and
+     `slices_compose` composes the chosen ones. §5d exhibits exactly that forgery: an untouched,
+     row-locally accepted trace with a mis-published partial.
+
+7. ⚑ **`loConstGate` / `hiConstGate` force two cells nothing reads.** `sliceLoGate` is a per-row
+   LITERAL, so under the deployed `when_transition()` arm `LO = lo` already holds on rows
+   `0 … H−2`; `declConst_of_literal` proves the constancy windows are implied wherever the literal
+   fires on both rows of a window. What the two windows add is the LAST row's `LO`/`HI` — and the
+   `.first` pins read row 0, no gate in `PastaMsmSliced` reads `LO` again, and `PastaMsmBound`
+   builds its manifest from the Nat literal `sliceLo w k`, never from the column. So the two gates
+   are emitted weight.
+
+   **They are not deleted here and the reason is scope, not doubt.** Dropping them re-emits four
+   descriptors, moves the constraint count `78 → 76`, and breaks the pinned sha256s and the `78`
+   assertions in `PastaMsmBound` / `PastaMsmOnCurve` / `PastaMsmScalarDerive` and in four Rust
+   test files, while two sibling lanes are live in that tree. Named as debt, with the theorem that
+   makes the claim checkable rather than a reading.
+
+8. ⚠ **`sliceDeclAcceptB`'s `match` ends in `_ => true`, which is FAIL-OPEN by construction.** It
+   is correct for the three constructors `sliceDeclGates` emits today, and a fourth added to that
+   list would be silently accepted by every `#guard` in §5d while `sliceDeclAccept_forces` kept
+   proving four predicates that no longer cover the emitted object. **Any addition to
+   `sliceDeclGates` must extend `sliceDeclAcceptB`'s match and the predicates in the same commit.**
+
+   The same shape is live in `sMaxVar` and `sMaxPi`, whose `_ => 0` arms report a bound of zero for
+   any constructor they do not name — and that is not hypothetical: `PastaMsmWindowed.cMaxVar` had
+   exactly this hole for `.piBinding` (§4b), and `PastaMsmBound` had to add `bMaxVar` for
+   `.lookup`. Three instances of one class, in one tower.
+
+9. ⚑ **The published partial is a PROJECTIVE REPRESENTATIVE, not a point.** The 27 pins publish
+   `(X : Y : Z)` limbs; `(λ²X : λ³Y : λZ)` is the same partial and a different public-input vector,
+   and no emitted gate normalises `Z` or pins it to 1. So two honest provers of the same slice
+   publish different PI vectors, and EQUALITY of published partials is not equality of partials.
+   A consumer must compare projectively — `circuit/tests/pasta_sliced_sg_prove.rs` does (`proj_eq`)
+   — and `slices_compose`'s `P k` is the point the representative denotes, which
+   `published_partial_is_the_fold` states in `ZMod p` via `PointIsZ` rather than on limbs.
 -/
 
 end Dregg2.Circuit.Emit.PastaMsmSliced
