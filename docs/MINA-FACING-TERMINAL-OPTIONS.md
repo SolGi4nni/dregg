@@ -162,8 +162,20 @@ which no hash choice and no FRI knob touches. It is priced per **(matrix, point,
 the next lever after this one is `APEX-VERIFIER-AIR-REDUCTION.md`'s **column narrowing**, exactly as
 `MINA-VERIFIES-DREGG-FRI-SIZE.md` §5.2 predicted — but arriving three levers earlier than expected.
 
-This also means the FRI knobs stop mattering: at Pasta hashing, `arity 8` + `cap_height 8` together
-are worth only 16% (2.92 × 10⁶ → 2.47 × 10⁶), where at BabyBear hashing they are worth 35%.
+⚑ **And the FRI knobs stop mattering almost entirely.** Isolated from the query count, `arity 8` +
+`cap_height 8` together are worth:
+
+| | BabyBear-hashed | Pasta-hashed |
+|---|---:|---:|
+| `q 19`, arity 2, `cap 0` | 24,574,325 (453 slices) | 2,923,071 (54) |
+| `q 19`, **arity 8 + cap 8** | 15,935,540 (293) | 2,893,934 (53) |
+| worth | **−35.2%** | **−1.0%** |
+
+Both knobs exist to shorten Merkle paths, and after the hash swap Merkle paths are 0.6% of the
+budget. **The single most-recommended FRI change in `MINA-VERIFIES-DREGG-FRI-SIZE.md` §5.1 — the
+arity flip, called there *"the single largest avoidable cost in this whole document"* — is worth one
+percent once the hash is native.** It is still worth taking on the dregg side for its own reasons;
+it is no longer a Mina argument.
 
 ### What it costs to build
 
