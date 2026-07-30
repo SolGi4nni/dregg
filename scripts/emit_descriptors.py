@@ -136,7 +136,6 @@ EMITTERS = [
     "EmitUMemCohort.lean",                   # ADDITIVE/STAGED: the umem-form per-effect cohort registry
     "EmitUMemCohortMulti.lean",              # ADDITIVE/STAGED: the MULTI-DOMAIN umem-form cohort registry
     "EmitWideUMemWeldRegistryProbe.lean",    # ADDITIVE/STAGED: the WIDE+umem welded registry (covers wide V3)
-    "EmitRotationV3SetFieldValue8.lean",     # ADDITIVE/STAGED: the setField VALUE8 epoch (8 written-slot members)
     "EmitLayoutManifest.lean",               # the rotated COLUMN LAYOUT, exported from Lean AS RUST
     "EmitByName.lean",                       # the by-name/ dispatch surface descriptor_by_name() serves
     "EmitCertF.lean",                        # the ring-3 Cert-F IR2 descriptor (cert_f_air.rs include_str!s it)
@@ -2222,12 +2221,6 @@ CROSS_CELL_CONSERVATION_FILE = "dregg-cross-cell-conservation-v2.json"
 UMEM_COHORT_TSV = "umem-cohort-v1-staged-registry.tsv"
 UMEM_COHORT_MULTI_TSV = "umem-cohort-multidomain-v1-staged-registry.tsv"
 WIDE_UMEM_WELD_REGISTRY_TSV = "rotation-wide-umem-welded-registry-staged.tsv"
-# ADDITIVE / STAGED: the setField VALUE8 epoch — the 8 written-slot value8 members
-# (`EmitRotationV3SetFieldValue8.lean`, Lean `v3RegistrySetFieldValue8`). Beside the deployed
-# `rotation-v3-staged-registry.tsv`; the live TSV / FP / VK are untouched.
-SETFIELD_VALUE8_TSV = "rotation-v3-setfield-value8-staged-registry.tsv"
-
-
 def split_member_tsv(stdout: str, written, filename: str):
     """A registry emitter that prints one `key\tname\tjson` line per member (`IO.println`,
     trailing newline). The checked-in artifact is the non-empty lines joined with a trailing
@@ -2552,8 +2545,6 @@ def main():
             split_member_tsv(out, written, UMEM_COHORT_TSV)
         elif lean.endswith("EmitWideUMemWeldRegistryProbe.lean"):
             split_member_tsv(out, written, WIDE_UMEM_WELD_REGISTRY_TSV)
-        elif lean.endswith("EmitRotationV3SetFieldValue8.lean"):
-            split_member_tsv(out, written, SETFIELD_VALUE8_TSV)
         elif lean.endswith("EmitByName.lean"):
             split_by_name(out, written)
         elif lean.endswith("EmitCertFMarket4.lean"):

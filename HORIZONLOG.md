@@ -935,7 +935,42 @@ credited.** The tooth exists and fires in Lean: `Dregg2/Bignum/LedgerBalance.lea
 elsewhere (`EffectVmEmitRotationV3.lean:4927`) and is multiplexed by four other members.
 
 **A9 · THE CROSS-CHAIN "VK COMMITMENT" IS A HASH OF A LABEL STRING — AND IT IS NEVER COMPARED TO
-ANYTHING. LIVE.** The preimage contains zero VK bytes on all three chains:
+ANYTHING. FIXED IN TWO HALVES: the VALUE 2026-07-28, the COMPARISON 2026-07-30.**
+> ✅ **VALUE — FIXED 2026-07-28** (`fee3426e3`): the pin became keccak256 over a 2458-byte
+> canonical serialization of the ACTUAL key, emitted from one spec into all three chains. This
+> entry was never annotated, so the record still read LIVE two days later.
+>
+> ⚑ **COMPARISON — THE SECOND CLAUSE WAS STILL LIVE, AND THE FIRST FIX IS WHY IT WAS INVISIBLE.**
+> Fixing the VALUE made all three pins *correct* while leaving them *inert* on two of the three,
+> and a correct-looking constant is much harder to doubt than a label. Measured at HEAD 07-30:
+> EVM `DreggSettlement`'s constructor checked its pin argument only for `!= bytes32(0)` and
+> `settle` never read the field; Cosmos `instantiate` checked only that the string was not all
+> zeros, stored it, and served it back from one query. **Both accepted the superseded label hash,
+> measured** (`expected VkDigestMismatch … got Ok(())`). Only Solana `init` compared anything.
+> The repo's own suite was the standing proof: three live EVM deployments pinned
+> `keccak256("dregg-settlement-vk-v1")` and `keccak256("test-vk")` and were green.
+>
+> ⚑ The deeper error was **storing** the pin. A stored copy can disagree with the key and cannot
+> follow a registry epoch flip. EVM now has `IGroth16Verifier25.vkDigest()` — recomputed ON-CHAIN
+> from the key material — the constructor REFUSES a declaration that disagrees with it, and
+> `verifyingKeyHash()` READS THROUGH; `_verifyingKeyHash` storage and Cosmos
+> `Config.verifying_key_hash` are both DELETED. `DREGG_VK_HASH` is gone: the deploy scripts read
+> the pin from the verifier, so no operator types a VK commitment anywhere.
+>
+> ⚠ **The pin is a DEPLOYMENT-TIME refusal, not an acceptance gate, and cannot be one** — on all
+> three chains the key that decides a proof is compiled into the verifier, not read from the pin.
+> What it buys is that a deployment cannot come into existence naming a key it does not check
+> against. Proof: 47 different keys really installed in registry STORAGE → 48 pairwise-distinct
+> on-chain digests; the label hash detects 0 of them.
+>
+> ⚠ **SAME CLASS, STILL LIVE NEXT DOOR:** `DreggPeerRegistry.sol:74` is the identical shape —
+> `_verifyingKeyHash` checked `!= 0`, never consulted by `submitPeerFinality`, every deployment
+> pinning `keccak256("dregg-peer-lightclient-vk-v1")`, another LABEL. NOT fixed here on purpose:
+> `IPeerLightClientVerifier` has **only test implementations** and that key is absent from
+> `chain/codegen/dregg_vk.json`, so a sound pin needs the peer VK added to the spec first.
+> Hashing something convenient to make the constants match would be the original defect again.
+
+The preimage contains zero VK bytes on all three chains:
 `solana-settlement/src/lib.rs:60` `keccak::hashv(&[b"dregg-settlement-vk-dev-setup"])`;
 `chain/script/DeploySettlement.s.sol:59` `keccak256("dregg-settlement-vk-dev-setup")`;
 `cosmos-settlement/tests/settlement.rs:89` the same string. **A VK regeneration leaves both pins
@@ -1185,6 +1220,37 @@ That residual is now the whole of B3.
 
 **B4 · THE PROTOCOL CANNOT EXPRESS AN HONEST 32-BYTE FIELD WRITE, AND THE FIX IS BUILT AND PARKED.
 LIVE — the cheapest real win on this list.**
+> ✅ **FIXED 2026-07-30 — but the entry's own mechanism was WRONG, and that is the durable finding.**
+> "The work is done; the epoch re-point is not" was true of an artifact **nothing could adopt.** The
+> parked `V3_SETFIELD_VALUE8_STAGED_REGISTRY_TSV` wrapped the **1-felt** `V3_STAGED_REGISTRY_TSV`
+> member, and the 1-felt leg was **RETIRED from the light-client verifier on 2026-07-19**
+> (`0ffb1918e`) — five days after the artifact was parked (`6371e12f2`, 07-14) and a month after the
+> wide flip (`9dc9151b3`, 06-19). `verify_effect_vm_rotated_inner` iterates `WIDE_REGISTRY_STAGED_TSV`
+> + `WIDE_UMEM_WELD_REGISTRY_TSV` **only**; a 1-felt leg "verifies under NO accepted registry here and
+> is REJECTED". So the claim *"every live path still uses `V3_STAGED_REGISTRY_TSV`"* named the
+> **producer entry points that the chained live path no longer routes through**, and "re-point the
+> producer at the committed member" would have minted legs no deployed verifier accepts. B4 was NOT
+> the cap-open shape (route onto an already-committed member, no re-emit). ⚑ **Cost, paid, not
+> deferred:** the wound was in the SHARED Lean face, so the repair is one line in `v3RegistryBare` —
+> `withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))` in place of the
+> freeze-ALL `v3OfFrozen` — which every derived registry inherits. **ALL THREE deployed registry
+> fingerprints rotated ⇒ a new VK epoch** (`dregg-epoch::registry_fp`; a pre-flip binary now gets
+> `RegistryFpMismatch`). The parallel `v3RegistrySetFieldValue8` set, its emitter and its TSV are
+> DELETED — two shapes that agreed today would disagree later. Deployed setField: `traceWidth` 1692
+> (unmoved), `piCount` 50→**57** (1-felt) and 66→**73** (both wide twins). ⚑ **A gate lost its teeth
+> and it is named:** `setfield_encoder_window_gate` caught the LE-into-`0..8` `pack_u64` zoo *because
+> the prover refused a frozen lane*. Every lane is writable now, so that detector is gone; the
+> type-directed encoder walk is load-bearing. ⚠ **Two residuals, both named, neither closed here:**
+> (1) the on-chain `DreggGroth16VerifierUpgradeable` epoch-VK add — `chain/`, `cosmos-settlement/`
+> and `solana-settlement/` are a live lane's files; (2) **the AIR can express the write and the
+> Lean-shadow EXEC wire still cannot** — `exec-lean/src/lean_shadow.rs:2550`
+> `field_fits_wire_carrier` requires `field[0..24] == 0`, so a genuine 32-byte write is *ineligible
+> for the verified shadow* and falls back to the Rust executor. Fail-closed, not a forge, but it
+> means the honest large write is now provable and still **not Lean-executed**. Unchanged: each
+> published lane is a `field_limbs8` u32-mod-p projection, so the PIs determine the 32-byte value
+> only up to that encoder's known non-injectivity (felt-width campaign); lane 0 is still the ~31-bit
+> fold.
+
 `circuit/tests/setfield_completion_lane_forge.rs:286`
 `honest_large_value_setfield_fails_the_deployed_freeze` drives it: the written field's high 224 bits
 are frozen to the pre-state, so only lane-0 values are writable. `setFieldValue8` is **complete on the
@@ -1194,6 +1260,12 @@ Lean side** (`EffectVmEmitRotationV3.lean:5751`; registry `EffectVmEmitRotationV
 four teeth (`circuit/tests/setfield_value8_epoch_flip.rs`) — and **no Rust producer references it.**
 Every live path still uses `V3_STAGED_REGISTRY_TSV` (`sdk/src/full_turn_proof.rs:1078, 1106, 1426,
 1447, 2093, 2125, 2663`). The work is done; the epoch re-point is not.
+
+**The wound had already cost real product work, in two crates, silently.** `deos-js-core::pack_u64`
+and `starbridge-web-surface::pack_coord` were both *rewritten to fit lane 0* — the comments say so —
+because a write outside bytes `28..32` "made EVERY board move unprovable". That is the shape of this
+class: the protocol's inability to express a value did not surface as an error, it surfaced as
+encoders quietly contorted around it.
 
 **B5 · THE SOLO FINALIZATION ARM STILL FINALIZES ANY CREATOR. FIXED 2026-07-28, and its own comment says so.**
 > ✅ **FIXED 2026-07-28** (`8f275b661`) — the arm consulted NO rule at all. The bootstrap tension its comment cited was resolvable, not a trade: `ML-DSA.KeyGen` is deterministic in the seed and the boot path ALREADY derives the node's own hybrid id before any roster is committed, so `projected ∪ {self_hybrid}` names exactly one key and widens nothing. It could NOT simply call `tauOrder` — checked: a fresh solo lace finalizes nothing under it, so routing solo there would brick cold start. Cold start driven on the real binary through a `from_checkpoint_trusted` restart. ⚑ Separate live wound found and dispatched: `execute_finalized_membership` passes the HYBRID id to a `participants` map keyed by ed25519, so **no membership vote has ever counted on the live path**.

@@ -174,8 +174,23 @@ fn le_prefix_encoding(v: u64) -> [u8; 32] {
     fe
 }
 
+/// **⚑ CONVERTED BY THE VALUE8 EPOCH, AND IT COST THIS FILE A DETECTOR.** This was
+/// `canonical_be_encoding_proves_where_le_prefix_encoding_is_unsat`, and its (b) half asserted that a
+/// `pack_u64`-style LITTLE-endian-into-`0..8` encoding was **UNSAT** — because the deployed
+/// freeze-ALL wrap pinned the written slot's completion lanes, so lighting one made the turn
+/// unprovable. That is how the LE-prefix encoder zoo was originally caught: the PROVER was
+/// accidentally acting as a lane-discipline gate.
+///
+/// The deployed member is now freeze-EXCEPT + the 7 published completion pins, so the whole 32-byte
+/// value is writable and the LE-prefix encoding **PROVES**. Say it plainly: **the prover no longer
+/// refuses an encoder that writes on the wrong lane.** It is now purely a codec bug — `pack_u64`
+/// LE-into-`0..8` paired with `unpack_u64` BE-from-`24..32` still reads back garbage — and the only
+/// remaining detectors are the round-trip tooth
+/// (`the_canonical_pair_round_trips_through_the_writable_window`) and the type-directed walk
+/// (`every_setfield_encoder_writes_inside_the_u64_lane`), which is therefore now LOAD-BEARING rather
+/// than belt-and-suspenders.
 #[test]
-fn canonical_be_encoding_proves_where_le_prefix_encoding_is_unsat() {
+fn canonical_and_le_prefix_encodings_both_prove_but_only_one_round_trips() {
     // The SAME logical value, encoded two ways.
     const V: u64 = 1;
 
@@ -203,27 +218,43 @@ fn canonical_be_encoding_proves_where_le_prefix_encoding_is_unsat() {
          descriptor. If this fails the fixture is wrong, not the encoder."
     );
 
-    // ---- (b) the `pack_u64` zoo's encoding: little-endian into 0..8, so `1` lands in byte 0 =
-    //          frozen lane 2. The value is NOT truncated — the turn cannot prove at all.
+    // ---- (b) the `pack_u64` zoo's encoding: little-endian into 0..8, so `1` lands in byte 0 = a
+    //          HIGH completion lane. Under the VALUE8 epoch this is a perfectly provable 32-byte
+    //          write: the lane is FREED and PUBLISHED (PIs 46..=52), not frozen.
     let le = le_prefix_encoding(V);
     assert_eq!(le[0], 1, "LE-prefix encoding puts the low byte at 0");
     let bad = build_setfield(le);
-    // Non-vacuity: the LE encoding genuinely lit a FROZEN completion lane.
+    // Non-vacuity: the LE encoding genuinely lights a high completion lane (not a lane-0 value).
     let lit = (0..7).any(|k| bad.trace[0][AFTER_BASE + COMPLETION_BASE + k] != BabyBear::ZERO);
     assert!(
         lit,
-        "the LE-prefix encoding must move ≥1 frozen completion lane off zero (else this tooth \
-         proves nothing)"
+        "the LE-prefix encoding must move ≥1 completion lane off zero (else this tooth proves \
+         nothing)"
     );
     assert!(
-        !accepts(&bad),
-        "THE BUG: a `pack_u64`-style little-endian-into-0..8 setField({V}) must be UNSAT on the \
-         deployed freeze-ALL descriptor. If it ACCEPTS, the completion freeze is absent."
+        accepts(&bad),
+        "the VALUE8 epoch makes the WHOLE 32-byte value writable, so a high-lane encoding must \
+         PROVE. If this is refused, the deployed member reverted to freeze-ALL."
+    );
+
+    // ⚑ AND THIS IS WHY THE PROVER IS NO LONGER THE GATE: both encodings prove, but only the
+    // canonical one round-trips. `unpack_u64`/`field_to_u64` reads BE from `24..32`, so the
+    // LE-prefix write reads back as a different number — silently, at every call site.
+    assert_eq!(
+        dregg_cell::field_to_u64(&canon),
+        V,
+        "the canonical pair round-trips"
+    );
+    assert_ne!(
+        dregg_cell::field_to_u64(&le),
+        V,
+        "the LE-prefix write does NOT round-trip through the canonical decoder — still a bug, just \
+         no longer one the prover refuses"
     );
 
     eprintln!(
-        "REPRODUCED: setField({V}) PROVES under canonical BE→24..32 and is REFUSED under \
-         pack_u64-style LE→0..8. Writable window = bytes 28..32 only."
+        "VALUE8: setField({V}) proves under BOTH canonical BE→24..32 and pack_u64-style LE→0..8; \
+         only the canonical pair round-trips. The lane gate is now STATIC, not proof-enforced."
     );
 }
 
@@ -252,12 +283,18 @@ fn the_canonical_pair_round_trips_through_the_writable_window() {
             "canonical encode/decode must round-trip {v}"
         );
     }
-    // The documented ceiling: at 2^32 the encoder reaches byte 24..28 = FROZEN lane 1. This is the
-    // value8 epoch's boundary, pinned here so widening it is a deliberate act.
+    // At 2^32 the canonical encoder reaches byte 24..28 = completion lane 1. Under the VALUE8 epoch
+    // that lane is writable and PUBLISHED, so this is no longer a PROVABILITY ceiling — only a
+    // statement about where `field_from_u64` puts its bytes. Pinned so a layout move is deliberate.
     let over = field_from_u64(1u64 << 32);
     assert!(
         over[..28].iter().any(|&b| b != 0),
-        "at 2^32 the canonical encoder necessarily leaves the writable window — the value8 ceiling"
+        "at 2^32 the canonical encoder necessarily leaves the low lane (VALUE8 publishes it)"
+    );
+    assert_eq!(
+        dregg_cell::field_to_u64(&over),
+        1u64 << 32,
+        "and it still round-trips — the u64 lane is bytes 24..32, both halves"
     );
 }
 
@@ -325,14 +362,28 @@ const REGISTERED_NON_SETFIELD_ENCODERS: &[(&str, &str, &str)] = &[
     (
         "cell/src/blueprint.rs",
         "dkg_params_field",
-        "packs TWO u64s (`n` at bytes 8..16, `t` at 24..32), so it CANNOT fit the u64 lane — closing \
-         it is value8-epoch work. It IS a written setField value (node/src/dkg_service.rs:641, the \
-         live `dkg_open` route), and it survives only on two INCIDENTAL properties of today's \
-         wiring: (1) `run_signed_turn` (node/src/trustline_service.rs:521) calls `executor.execute` \
-         and never enqueues the prove pool, and (2) the write is CROSS-CELL (agent = operator, \
-         target = ceremony), which `sdk/src/cipherclerk.rs:6868` drops from the actor projection so \
-         no proof is minted. Move the DKG route onto the prove pool, or make the ceremony cell its \
-         own turn's agent, and `dkg_open` goes UNSAT. Neither property is an invariant.",
+        "packs TWO u64s (`n` at bytes 8..16, `t` at 24..32), so it CANNOT fit the u64 lane. ⚑ THE \
+         VALUE8 EPOCH CLOSED THE PROVABILITY HALF OF THIS ROW: the deployed setField member no \
+         longer freezes the written slot's high lanes (it publishes them as PIs 46..=52), so this \
+         write PROVES now — the row used to end 'closing it is value8-epoch work' and that work is \
+         done. It stays registered because the residual is REAL and different: `dkg_params_field` \
+         has no `field_to_u64` inverse, so it is a bespoke two-u64 codec that the canonical pair \
+         cannot round-trip. It IS a written setField value (node/src/dkg_service.rs:641, the live \
+         `dkg_open` route); the two INCIDENTAL wiring properties that used to keep it off the \
+         prover (`run_signed_turn` never enqueues the prove pool; the write is CROSS-CELL and \
+         `sdk/src/cipherclerk.rs:6868` drops it from the actor projection) are no longer \
+         load-bearing for provability.",
+    ),
+    (
+        "bridge/src/mina_observer.rs",
+        "mock_fe",
+        "⚠ RED AT HEAD BEFORE THIS EPOCH, NOT CAUSED BY IT — `mock_fe` landed 2026-07-29 \
+         (`7fd896f22`) and this gate has been failing on it since. It builds a PASTA field element \
+         for the Mina observer's test fixtures (little-endian scalar + a `< 2^254` clamp byte); it \
+         is a foreign-curve scalar and never reaches a cell `fields[]` slot, so it is registered \
+         rather than rewritten. The type-directed walk caught it by SHAPE, which is the walk \
+         working — and now that the prover no longer refuses wrong-lane writes, that walk is the \
+         only detector left, so it must be green to be useful.",
     ),
     (
         "cell/src/state.rs",
@@ -634,12 +685,15 @@ fn every_setfield_encoder_writes_inside_the_u64_lane() {
     assert!(
         offenders.is_empty(),
         "{} field-element encoder(s) write BELOW byte {U64_LANE_START}. A cell `fields[]` slot is \
-         definitionally a u64 lane (big-endian bytes 24..32); the deployed \
-         `setFieldVmDescriptor2-*R24` FREEZES a written slot's completion lanes, so a scalar \
-         placed below byte 24 does not truncate — the turn cannot prove at all. Use \
-         `dregg_cell::field_from_u64` / `dregg_cell::field_to_u64` (and move the paired DECODER \
-         with it), or add a row to REGISTERED_NON_SETFIELD_ENCODERS explaining why this value \
-         never reaches a `fields[]` slot:\n  {}",
+         definitionally a u64 lane (big-endian bytes 24..32), and the paired decoder \
+         (`field_to_u64`) reads exactly that lane — so a scalar placed below byte 24 reads back as \
+         a DIFFERENT NUMBER. ⚑ This gate is now the ONLY detector: before the setField VALUE8 epoch \
+         the deployed `setFieldVmDescriptor2-*R24` FROZE the written slot's completion lanes, so a \
+         low-byte write could not prove at all and the prover caught the whole class for free. The \
+         lanes are freed and published now; a wrong-lane encoder proves happily and corrupts \
+         silently. Use `dregg_cell::field_from_u64` / `dregg_cell::field_to_u64` (and move the \
+         paired DECODER with it), or add a row to REGISTERED_NON_SETFIELD_ENCODERS explaining why \
+         this value never reaches a `fields[]` slot:\n  {}",
         offenders.len(),
         offenders.join("\n  ")
     );

@@ -52,55 +52,54 @@ fn keystone_deployment_ledger() -> Vec<(&'static str, &'static str, Deploy)> {
             Deployed("setFieldVmDescriptor2-{slot}R24 (shared rotateV3 core)"),
         ),
         // ── setField: the REFINEMENT stack — stated at `Satisfied2 (setFieldV3 slot)` =
-        //    v3OfFrozenSetField (freeze-EXCEPT), which is in NO registry. DANGEROUS (grounding +
-        //    completeness): deployed setField rides v3OfFrozen (freeze-ALL) whose refinement is the
-        //    ASSUMED EffectDecodeBridge, not these teeth; and freeze-ALL rejects honest large writes.
+        //    v3OfFrozenSetField (freeze-EXCEPT). ⚑ DEPLOYED as of the VALUE8 epoch: `v3RegistryBare`
+        //    now emits `withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3
+        //    slot))`, so these keystones are about the descriptor that SHIPS. They were orphans for
+        //    exactly one reason — the deployed member rode `v3OfFrozen` (freeze-ALL), which also
+        //    rejected every honest 32-byte write. The completion pins are an appended `.piBinding`
+        //    cohort, peeled by `satisfied2_of_withSetFieldCompletionPins`, so each rung lifts to the
+        //    deployed member unchanged.
         (
             "setField_value_forced @ RotatedKernelRefinementSetField.lean:204",
             "setFieldV3 = v3OfFrozenSetField (EffectVmEmitRotationV3.lean:3143/3164)",
-            OrphanAllowlisted(
-                "v3OfFrozenSetField in no registry; deployed ships v3OfFrozen (RotationV3:5364). Soundness-safe (freeze binds harder) but refinement rides assumed EffectDecodeBridge. deploy: swap registry wrap to freeze-EXCEPT + VALUE8 lane weld (VK-affecting, gated)",
-            ),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8: freeze-EXCEPT + completion pins)"),
         ),
         (
             "setField_descriptorRefines @ RotatedKernelRefinementSetField.lean:238",
             "setFieldV3 = v3OfFrozenSetField",
-            OrphanAllowlisted(
-                "undeployed variant; deployed refinement is assumed EffectDecodeBridge (CircuitSoundnessAssembled.lean:68). deploy: VALUE8 setField weld",
-            ),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8 epoch)"),
         ),
         (
             "setField_descriptorRefines_fullActionStep @ RotatedKernelRefinementSetField.lean:254",
             "setFieldV3 = v3OfFrozenSetField",
-            OrphanAllowlisted(
-                "undeployed variant; see setField_descriptorRefines. deploy: VALUE8 setField weld",
-            ),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8 epoch)"),
         ),
         (
             "descriptorRefines_rejects_wrong_value @ RotatedKernelRefinementSetField.lean:274",
             "setFieldV3 = v3OfFrozenSetField",
-            OrphanAllowlisted("undeployed variant. deploy: VALUE8 setField weld"),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8 epoch)"),
         ),
         (
             "descriptorRefines_rejects_moved_bystander @ RotatedKernelRefinementSetField.lean:287",
             "setFieldV3 = v3OfFrozenSetField",
-            OrphanAllowlisted("undeployed variant. deploy: VALUE8 setField weld"),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8 epoch)"),
         ),
         (
             "rotated_row_cellSpec @ RotatedKernelRefinementSetField.lean:122",
             "setFieldV3 = v3OfFrozenSetField",
-            OrphanAllowlisted("undeployed variant. deploy: VALUE8 setField weld"),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8 epoch)"),
         ),
         (
             "rotated_row_gates @ RotatedKernelRefinementSetField.lean:91",
             "setFieldV3 = v3OfFrozenSetField (via rotV3FrozenSetField_sound_v1)",
-            OrphanAllowlisted("undeployed variant. deploy: VALUE8 setField weld"),
+            Deployed("setFieldVmDescriptor2-{slot}R24 (VALUE8 epoch)"),
         ),
         (
             "setField_descriptorComplete @ CircuitCompletenessValue.lean:446",
             "setFieldV3 = v3OfFrozenSetField",
-            OrphanAllowlisted(
-                "completeness proven for freeze-EXCEPT; deployed freeze-ALL REJECTS honest large-value writes so completeness does NOT transfer. deploy: VALUE8 setField weld (buys faithful large writes)",
+            Deployed(
+                "setFieldVmDescriptor2-{slot}R24 — completeness NOW TRANSFERS: the deployed member is \
+                 freeze-EXCEPT, so an honest large-value write proves (setfield_value8_epoch_flip)",
             ),
         ),
         // ── dedicated accumulator roots: 8-felt keystones stated about `effAccumWriteV3`
@@ -159,13 +158,19 @@ fn every_keystone_descriptor_is_deployed_or_allowlisted() {
 fn dangerous_families_are_flagged() {
     let ledger = keystone_deployment_ledger();
 
-    let setfield_refinement_orphan = ledger.iter().any(|(k, _, s)| {
-        k.contains("setField_descriptorRefines @") && matches!(s, Deploy::OrphanAllowlisted(_))
+    // ⚑ RATCHET, FLIPPED BY THE VALUE8 EPOCH (ORPHAN-SWEEP §5.2 CLOSED). This used to require the
+    // setField refinement stack to stay flagged ORPHAN. `v3RegistryBare` now emits `setFieldV3`
+    // (freeze-EXCEPT + the 7 published completion pins), so the stack is about the DEPLOYED
+    // descriptor and the gate now bites the other way: re-orphaning it would mean the deployed
+    // member went back to `v3OfFrozen`, which is the wound (no honest 32-byte write can prove).
+    let setfield_refinement_deployed = ledger.iter().any(|(k, _, s)| {
+        k.contains("setField_descriptorRefines @") && matches!(s, Deploy::Deployed(_))
     });
     assert!(
-        setfield_refinement_orphan,
-        "setField refinement stack must remain flagged as orphan until the VALUE8 weld deploys \
-         v3OfFrozenSetField (ORPHAN-SWEEP §5.2)"
+        setfield_refinement_deployed,
+        "the setField refinement stack must stay DEPLOYED: `v3RegistryBare` ships `setFieldV3` \
+         (freeze-EXCEPT + VALUE8 completion pins). If this is an orphan again the deployed member \
+         reverted to freeze-ALL and the protocol cannot express an honest 32-byte field write."
     );
 
     let accumulator_orphan = ledger.iter().any(|(k, _, s)| {

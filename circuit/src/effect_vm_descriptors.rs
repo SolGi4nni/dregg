@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "292e82866fac1fc03d47bb30f454b96fd524988353eb0840ef62c86ddf4ceade";
+    "7ddec1e24a2c51d8e8e6429ff7878cb9adcace97f96b8a0a5a7efec0b5ce9146";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1218,7 +1218,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "56cc50f70a2d56dfa0f12703fe1342f6f3353099795683b48034cec1eed0e37c";
+    "1162d9d3dd200661bff240f83ffaf147f15bf3eb2175659aa6931dd4dc182195";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1244,37 +1244,89 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "db357a13481536bd703dc8ac47f8258a9c12242d154955de5cf265fc41aae6f9";
+    "eb804baeb6037501e61be3aa3a11b93d36320b6eae90919e4ff3426f64249e81";
 
-/// **THE LEAN-EMITTED setField VALUE8 EPOCH (STAGED, VK-AFFECTING BUT NON-DESTRUCTIVE).** The 8
-/// written-slot value8 members (`setFieldValue8VmDescriptor2-{slot}R24`) that swap the deployed
-/// setField's freeze-ALL wrap for freeze-EXCEPT + the VALUE8 completion-lane pins, emitted from the
-/// verified Lean `EffectVmEmitRotationV3Refused.v3RegistrySetFieldValue8` (driver
-/// `metatheory/EmitRotationV3SetFieldValue8.lean`). Each member is `withDfaRcPins
-/// (withSetFieldCompletionPins slot (gentianDeployedBareRefuse (withSelectorGate SEL_SET_FIELD
-/// (setFieldV3 slot))))` — DROP-IN geometry with the deployed `setFieldVmDescriptor2-{slot}R24`
-/// (`trace_width = 1692`; the live fixed-width setField trace verifies against it unchanged), with 7
-/// EXTRA PIs (`piCount = 57` vs the deployed 50): the written slot's 7 freed completion lanes (in-block
-/// after offsets `113 + 7·slot .. +6`, absolute cols `540 + 7·slot .. +6`) published as TAIL PIs 46..52,
-/// rc riding 53..56. Each descriptor-i pins a DISJOINT column set (`540 + 7·i`), so a slot-i proof binds
-/// UNIQUELY under descriptor-i (a slot-j descriptor pins slot-j's frozen completion lanes to the same PI
-/// slots, which the slot-i trace violates → rejected).
+/// The number of written-slot completion lanes the deployed setField members publish (the VALUE8
+/// weld — the high 224 bits of the written 32-byte field value, `field_limbs8` lanes 1..=7).
+pub const SETFIELD_VALUE8_PI_LEN: usize = 7;
+
+/// The PI slot the deployed setField members' VALUE8 completion pins start at: immediately past the
+/// 46-PI rotated prefix, BEFORE the 4 dsl rc pins (Lean `withDfaRcPins (gentianDeployedBareRefuse
+/// (withSetFieldCompletionPins slot …))` — rc rides outermost, so the value8 block is interior).
+pub const SETFIELD_VALUE8_PI_BASE: usize = 46;
+
+/// The IN-BLOCK offset of `fields[0]`'s first completion lane, so `fields[slot]`'s freed lanes are
+/// `SETFIELD_VALUE8_LANE_BASE + 7·slot ..= +6` (Lean `setFieldCompletionBase`). ⚠ 113, not 112 — the
+/// REVOKED-ROOT flag-day shifted the fields completion octet by one limb (`cell/src/commitment.rs`
+/// is the authority); a base one lane low aims at the neighbouring slot.
+pub const SETFIELD_VALUE8_LANE_BASE: usize = 113;
+
+/// **THE setField VALUE8 PRODUCER SPLICE — the witness half of the deployed VALUE8 weld.**
 ///
-/// This CLOSES the R1 large-value completeness seam (`setfield_completion_lane_forge::
-/// honest_large_value_setfield_fails_the_deployed_freeze`: an honest `FieldElement = [u8;32]` with
-/// nonzero high bytes now PROVES — its high 224 bits ride the freed lanes) AND binds them into the
-/// light-client PI view (the ORPHAN-SWEEP §5.2 VALUE8 residual; `keystone_descriptor_deployment_gate.rs`).
-/// SOUNDNESS PRESERVED: the completion lanes are no longer an unconstrained free felt — a forge that
-/// moves them off the published PI is UNSAT (Lean `withSetFieldCompletionPins_rejects_forged_pi`).
+/// The deployed `setFieldVmDescriptor2-{slot}R24` (Lean `v3RegistryBare`, freeze-EXCEPT +
+/// `withSetFieldCompletionPins slot`) publishes the WRITTEN slot's 7 freed completion lanes as PIs
+/// `46..=52`, so the light client reads the written field's high 224 bits off the PI vector. The
+/// rotated generators build the 46-PI prefix + the 4 rc pins and know nothing about the per-member
+/// tail, so this splices the 7 value8 PIs into position for a setField member.
 ///
-/// STAGED / ADDITIVE: a NEW set BESIDE the deployed [`V3_STAGED_REGISTRY_TSV`]; the live registry / FP /
-/// VK are byte-untouched, and this TSV is NOT in the SDK live-verifier collect set. Adoption is a
-/// controlled epoch re-point (the on-chain `DreggGroth16VerifierUpgradeable` gains the new epoch VK,
-/// old epochs stay verifiable; producers re-point setField routing to these keys).
-pub const V3_SETFIELD_VALUE8_STAGED_REGISTRY_TSV: &str =
-    include_str!("../descriptors/rotation-v3-setfield-value8-staged-registry.tsv");
-pub const V3_SETFIELD_VALUE8_STAGED_REGISTRY_FP: &str =
-    "2bd6bb0bcd646a50f665f0fd738ba36de208ba718b22926261431d03a62ac322";
+/// It is **descriptor-driven, not column-arithmetic**: each spliced value is read out of the trace at
+/// the column the descriptor's OWN `.piBinding .last` constraint names for that PI slot. That is what
+/// makes it correct on BOTH the 1-felt member (`piCount 57`) and the S2/E1-**compacted** wide members
+/// (`piCount 73`), whose completion columns are remapped by the compaction — no producer-side copy of
+/// the layout exists to drift.
+///
+/// A no-op unless the descriptor genuinely wants exactly [`SETFIELD_VALUE8_PI_LEN`] more PIs than the
+/// generator produced. Fails CLOSED (`Err`) if the descriptor wants them but does not pin them — a
+/// silently short PI vector would be an UNSAT proof at best and an unbound high-224-bit field at worst.
+pub fn splice_setfield_value8_pis(
+    desc: &crate::descriptor_ir2::EffectVmDescriptor2,
+    trace: &[Vec<crate::field::BabyBear>],
+    dpis: Vec<crate::field::BabyBear>,
+) -> Result<Vec<crate::field::BabyBear>, String> {
+    use crate::descriptor_ir2::VmConstraint2;
+    use crate::lean_descriptor_air::{VmConstraint, VmRow};
+    if desc.public_input_count != dpis.len() + SETFIELD_VALUE8_PI_LEN
+        || dpis.len() < SETFIELD_VALUE8_PI_BASE
+    {
+        return Ok(dpis);
+    }
+    let Some(last) = trace.last() else {
+        return Err("setField VALUE8 splice: empty trace".to_string());
+    };
+    let pin_col = |pi: usize| -> Option<usize> {
+        desc.constraints.iter().find_map(|c| match c {
+            VmConstraint2::Base(VmConstraint::PiBinding {
+                row: VmRow::Last,
+                col,
+                pi_index,
+            }) if *pi_index == pi => Some(*col),
+            _ => None,
+        })
+    };
+    let mut out = dpis[..SETFIELD_VALUE8_PI_BASE].to_vec();
+    for k in 0..SETFIELD_VALUE8_PI_LEN {
+        let pi = SETFIELD_VALUE8_PI_BASE + k;
+        let col = pin_col(pi).ok_or_else(|| {
+            format!(
+                "setField VALUE8 splice: '{}' declares {} PIs (7 past the generator's {}) but pins \
+                 no last-row column at PI {pi} — refusing to publish an unbound completion lane",
+                desc.name,
+                desc.public_input_count,
+                dpis.len()
+            )
+        })?;
+        let v = *last.get(col).ok_or_else(|| {
+            format!(
+                "setField VALUE8 splice: '{}' pins PI {pi} at column {col}, past the trace width {}",
+                desc.name,
+                last.len()
+            )
+        })?;
+        out.push(v);
+    }
+    out.extend_from_slice(&dpis[SETFIELD_VALUE8_PI_BASE..]);
+    Ok(out)
+}
 
 // ============================================================================
 // THE WIDE-CARRIER GEOMETRY VERSION BOUNDARY (the flag-day rotation, v2).
@@ -3352,6 +3404,42 @@ mod tests {
                     Ok(CUSTOM_COMMIT_VERSION),
                     "the committed custom member must classify as faithful carrier v3"
                 );
+            } else if key.starts_with("setFieldVmDescriptor2-") {
+                // THE VALUE8 EPOCH: the 8 static-slot setField members publish the written slot's 7
+                // freed completion lanes (the high 224 bits of the 32-byte value) as PIs 46..=52,
+                // ahead of the rc tail. Before the flip these were bare 46-PI members and the freeze
+                // made an honest 32-byte write unprovable. (`setFieldDynVmDescriptor2R24` is a
+                // different member and stays bare — it carries no completion weld.)
+                assert_eq!(
+                    base_pi_count,
+                    46 + SETFIELD_VALUE8_PI_LEN,
+                    "{key}: the deployed setField member carries the rotated 46-PI + the 7 VALUE8 \
+                     completion pins"
+                );
+                // The 7 extras are EXACTLY the value8 completion block: contiguous PI slots
+                // 46..=52 over 7 distinct columns. (They are `.last`-row pins, unlike the
+                // note-spend/record fifth pin, but this walk collects by pi_index.)
+                let mut extra: Vec<(usize, usize)> = nullifier_pins.clone();
+                extra.sort_by_key(|(_, pi)| *pi);
+                assert_eq!(
+                    extra.len(),
+                    SETFIELD_VALUE8_PI_LEN,
+                    "{key}: exactly the 7 VALUE8 completion pins ride past the rotated prefix"
+                );
+                for (k, (_, pi)) in extra.iter().enumerate() {
+                    assert_eq!(
+                        *pi,
+                        SETFIELD_VALUE8_PI_BASE + k,
+                        "{key}: the value8 block is contiguous at PIs 46..=52"
+                    );
+                }
+                let cols: std::collections::BTreeSet<usize> =
+                    extra.iter().map(|(c, _)| *c).collect();
+                assert_eq!(
+                    cols.len(),
+                    SETFIELD_VALUE8_PI_LEN,
+                    "{key}: the 7 value8 pins name 7 DISTINCT completion columns"
+                );
             } else {
                 assert_eq!(
                     base_pi_count, 46,
@@ -3730,40 +3818,87 @@ mod tests {
         );
     }
 
-    /// The setField VALUE8 staged epoch is 8 written-slot members (drop-in geometry with the deployed
-    /// setField: `trace_width == 1692`, `piCount == 57` = deployed 50 + the 7 value8 completion pins),
-    /// name-distinct from the live `setFieldVmDescriptor2-*`, and byte-pinned to its committed FP.
+    /// **THE VALUE8 EPOCH IS THE DEPLOYED SHAPE, IN ALL THREE LIVE REGISTRIES.** Each of the 8
+    /// `setFieldVmDescriptor2-{slot}R24` members must carry the written slot's 7 completion-lane pins
+    /// as PIs 46..=52 (with the 4 rc pins riding behind them), pinned at a slot-DISJOINT column set,
+    /// on the 1-felt member AND on both wide members. Before the flip these members were the
+    /// freeze-ALL wrap: `piCount == 50 / 66`, no completion pins, and an honest 32-byte field write
+    /// (any nonzero byte outside `28..32`) could not prove at all.
     #[test]
-    fn setfield_value8_staged_epoch_is_drop_in_and_byte_pinned() {
-        let mut n = 0usize;
-        for line in V3_SETFIELD_VALUE8_STAGED_REGISTRY_TSV.lines() {
-            let mut it = line.splitn(3, '\t');
-            let key = it.next().unwrap();
-            let _name = it.next().unwrap();
-            let json = it.next().unwrap();
-            assert!(
-                key.starts_with("setFieldValue8VmDescriptor2-"),
-                "value8 keys are name-distinct from the live setField members: {key}"
-            );
-            let d = crate::descriptor_ir2::parse_vm_descriptor2(json).expect("value8 parses");
-            assert_eq!(
-                d.trace_width, 1692,
-                "{key}: DROP-IN geometry with the deployed setField"
-            );
-            assert_eq!(
-                d.public_input_count, 57,
-                "{key}: 46 prefix + 7 value8 + 4 rc"
-            );
-            n += 1;
+    fn deployed_setfield_members_publish_the_value8_completion_lanes() {
+        use crate::descriptor_ir2::VmConstraint2;
+        use crate::lean_descriptor_air::{VmConstraint, VmRow};
+        use std::collections::BTreeSet;
+
+        for (label, tsv, want_pi) in [
+            ("v3-1felt", V3_STAGED_REGISTRY_TSV, 57usize),
+            ("wide", WIDE_REGISTRY_STAGED_TSV, 73),
+            ("wide-umem-welded", WIDE_UMEM_WELD_REGISTRY_TSV, 73),
+        ] {
+            let mut seen = 0usize;
+            let mut per_slot_cols: Vec<BTreeSet<usize>> = Vec::new();
+            for line in tsv.lines() {
+                let mut it = line.splitn(3, '\t');
+                let key = it.next().unwrap_or_default();
+                if !key.starts_with("setFieldVmDescriptor2-") {
+                    continue;
+                }
+                let _name = it.next();
+                let json = it.next().expect("registry line carries json");
+                let d = crate::descriptor_ir2::parse_vm_descriptor2(json)
+                    .unwrap_or_else(|e| panic!("{label}/{key} parses: {e}"));
+                assert_eq!(
+                    d.public_input_count, want_pi,
+                    "{label}/{key}: the VALUE8 epoch publishes 7 completion PIs \
+                     (46..=52) ahead of the rc tail"
+                );
+                let mut cols = BTreeSet::new();
+                for k in 0..SETFIELD_VALUE8_PI_LEN {
+                    let pi = SETFIELD_VALUE8_PI_BASE + k;
+                    let col = d
+                        .constraints
+                        .iter()
+                        .find_map(|c| match c {
+                            VmConstraint2::Base(VmConstraint::PiBinding {
+                                row: VmRow::Last,
+                                col,
+                                pi_index,
+                            }) if *pi_index == pi => Some(*col),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{label}/{key}: PI {pi} is declared but pinned to NO last-row \
+                                 column — the written slot's high bytes would be unbound"
+                            )
+                        });
+                    assert!(
+                        col < d.trace_width,
+                        "{label}/{key}: PI {pi} pin column {col} past trace_width {}",
+                        d.trace_width
+                    );
+                    cols.insert(col);
+                }
+                assert_eq!(
+                    cols.len(),
+                    SETFIELD_VALUE8_PI_LEN,
+                    "{label}/{key}: 7 distinct columns"
+                );
+                per_slot_cols.push(cols);
+                seen += 1;
+            }
+            assert_eq!(seen, 8, "{label}: the 8 written-slot setField members");
+            // UNIQUE BINDING: slot i and slot j pin DISJOINT column sets, so a slot-i proof cannot
+            // verify under descriptor-j (the census R1 "selector binding ambiguous" close).
+            for i in 0..per_slot_cols.len() {
+                for j in (i + 1)..per_slot_cols.len() {
+                    assert!(
+                        per_slot_cols[i].is_disjoint(&per_slot_cols[j]),
+                        "{label}: setField slots {i}/{j} share a value8 pin column"
+                    );
+                }
+            }
         }
-        assert_eq!(n, 8, "the value8 epoch is the 8 written slots");
-        assert_eq!(
-            sha256_hex(V3_SETFIELD_VALUE8_STAGED_REGISTRY_TSV.as_bytes()),
-            V3_SETFIELD_VALUE8_STAGED_REGISTRY_FP,
-            "the setField VALUE8 staged TSV drifted from its committed fingerprint — regenerate via \
-             `lake env lean --run EmitRotationV3SetFieldValue8.lean` and update \
-             V3_SETFIELD_VALUE8_STAGED_REGISTRY_FP"
-        );
     }
 
     /// The widened-entry codec teeth: round-trip + FAIL-CLOSED decode. A forged

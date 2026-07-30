@@ -175,39 +175,58 @@ fn v3_coverage_ledger() -> Vec<(&'static str, Cov)> {
                 "producer_descriptor_coverage_gate::cell_destroy_v3_producer_descriptor_roundtrip (THIS file — R3 probe)",
             ),
         ),
-        // ── setField 0..7 — PARTIAL (NAMED seam): the V1 setField producer does not yet fill the
-        //    written-slot value8; the vk_epoch_value setField roundtrip is #[ignore]d behind it.
+        // ── setField 0..7 — COVERED as of the VALUE8 epoch. The producer now fills AND publishes the
+        //    written-slot value8 block (the 7 freed completion lanes, PIs 46..=52), so an honest
+        //    32-byte write proves + verifies against the deployed member on BOTH the 1-felt and the
+        //    live wide route. This was a PARTIAL for exactly as long as the deployed member rode the
+        //    freeze-ALL wrap, i.e. for as long as the protocol could not express such a write.
         (
             "setFieldVmDescriptor2-0R24",
-            Partial("v13 setField written-slot value8 completion seam (vk_epoch_value #[ignore])"),
+            Covered(
+                "setfield_value8_epoch_flip::{honest_large_value_setfield_proves_under_value8, deployed_wide_member_accepts_the_honest_large_write}",
+            ),
         ),
         (
             "setFieldVmDescriptor2-1R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         (
             "setFieldVmDescriptor2-2R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         (
             "setFieldVmDescriptor2-3R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         (
             "setFieldVmDescriptor2-4R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         (
             "setFieldVmDescriptor2-5R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         (
             "setFieldVmDescriptor2-6R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         (
             "setFieldVmDescriptor2-7R24",
-            Partial("v13 setField value8 seam"),
+            Covered(
+                "setfield_value8_epoch_flip (slot_i_value8_proof_binds_uniquely covers every slot)",
+            ),
         ),
         // ── heapWrite — PARTIAL: structural-only on V3 (heap_write_deployed_root_forced parses +
         //    checks the `.write` map_op; no prove+verify roundtrip against the committed V3 descriptor).

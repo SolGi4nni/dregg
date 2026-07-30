@@ -1,9 +1,9 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "8d65c83779edbc0b3dfb402fe5a5af4164d45f5f",
-  "repo_head": "90c6ee586965e35a765e22daf5a43896f13a3725",
-  "source_dirty": false,
+  "dregg2_tree_hash": "c65da7c7c5efd10c29c54d1051e38aec315325d9",
+  "repo_head": "b1d3b138151e0f95eb89b5841840b584b510b0bb",
+  "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",
@@ -16,13 +16,12 @@
     "EmitUMemCohort.lean",
     "EmitUMemCohortMulti.lean",
     "EmitWideUMemWeldRegistryProbe.lean",
-    "EmitRotationV3SetFieldValue8.lean",
     "EmitLayoutManifest.lean",
     "EmitByName.lean",
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-07-30T15:45:19Z",
+  "generated_utc": "2026-07-30T18:00:54Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -94,11 +93,10 @@
     "dregg-effectvm-transfer-v1.json": "b56667151f2c531aadc17cc7d9f46c7813716df25302c78f9274069dd2a63166",
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
-    "rotation-v3-setfield-value8-staged-registry.tsv": "2bd6bb0bcd646a50f665f0fd738ba36de208ba718b22926261431d03a62ac322",
-    "rotation-v3-staged-registry.tsv": "292e82866fac1fc03d47bb30f454b96fd524988353eb0840ef62c86ddf4ceade",
-    "rotation-wide-registry-staged.tsv": "56cc50f70a2d56dfa0f12703fe1342f6f3353099795683b48034cec1eed0e37c",
+    "rotation-v3-staged-registry.tsv": "7ddec1e24a2c51d8e8e6429ff7878cb9adcace97f96b8a0a5a7efec0b5ce9146",
+    "rotation-wide-registry-staged.tsv": "1162d9d3dd200661bff240f83ffaf147f15bf3eb2175659aa6931dd4dc182195",
     "rotation-wide-transfer-staged.tsv": "32d022303cdfe5c30a46cba00f3c8d0dd08e6eb6fab6975e4f49ccaa35a1a572",
-    "rotation-wide-umem-welded-registry-staged.tsv": "db357a13481536bd703dc8ac47f8258a9c12242d154955de5cf265fc41aae6f9",
+    "rotation-wide-umem-welded-registry-staged.tsv": "eb804baeb6037501e61be3aa3a11b93d36320b6eae90919e4ff3426f64249e81",
     "umem-cohort-multidomain-v1-staged-registry.tsv": "89574dbb90269e908911a7f920be691af7e24a6dc4802e5da035feec44867775",
     "umem-cohort-v1-staged-registry.tsv": "97a4d13edb173a831b81c4cb3cab84c2ee03baf2a45593d000dfa239d6bf4cfb"
   },
@@ -185,7 +183,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "a30d058fc3c32590d19fd45f825f0a2d5ca987efd6d93cf635f4d9a3ec9ca925",
     "circuit/src/cap_reshape_descriptor.rs": "dde91b8af93dada783dbb4851108e779e4b285e46d6aa60171aaf44ad857a128",
-    "circuit/src/effect_vm_descriptors.rs": "28d00b55cb4c859ac5d226e2efa98b02ed4e30af97083028509454a8e50a312f",
+    "circuit/src/effect_vm_descriptors.rs": "7565d30f042901e1b463190c999d0d1d224449f88a323657d9822e17d08177fb",
     "circuit/src/lean_descriptor_air.rs": "de4caf0447da34707187d69ba851c71aa37044ff177f30a1a42f58bdf61a1316"
   }
 }

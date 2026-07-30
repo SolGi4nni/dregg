@@ -5641,9 +5641,12 @@ UNSAT — the `_rejects_forged_pi` tooth), and (b) a slot-i proof publishes slot
 these PIs, so it verifies UNIQUELY under descriptor-i (a slot-j descriptor pins slot-j's frozen
 completion lanes to the SAME PI slots, which the slot-i trace violates). Structurally identical to
 `withAfterOctetPins` (7-lane variant) — additive, no site / range / mem-op / map-op touched, so every
-existing setField forcing keystone lifts by `List.mem_append_left` (the peel below). NON-DESTRUCTIVE:
-this is a NEW staged registry (`v3RegistrySetFieldValue8`); the live `v3RegistryBare` setField members
-are byte-untouched, so the deployed VK is unchanged (adoption is a controlled epoch re-point). -/
+existing setField forcing keystone lifts by `List.mem_append_left` (the peel below).
+
+⚑ THIS IS THE DEPLOYED SHAPE, NOT A STAGING SET. `v3RegistryBare`'s setField members ARE
+`withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))`, so the 1-felt
+registry, both wide registries and the umem weld all carry it. The parallel
+`v3RegistrySetFieldValue8` staging registry that once sat beside the live wire is DELETED. -/
 
 /-- In-block base of the written slot's first freed completion lane (the `fieldsCompletionFreezesExcept`
 un-frozen range `113 + 7·slot .. 119 + 7·slot`). -/
@@ -5745,24 +5748,30 @@ theorem withSetFieldCompletionPins_rejects_forged_pi (hash : List ℤ → ℤ) (
 #assert_axioms withSetFieldCompletionPins_publishes
 #assert_axioms withSetFieldCompletionPins_rejects_forged_pi
 
-/-- **`setFieldValue8V3 slot`** — the freeze-EXCEPT setField (`setFieldV3 slot`) WITH the 7 written-slot
-completion-lane PIs. Closes the R1 completeness seam (an honest large-value write proves — its high
-bytes ride the freed lanes) AND binds them into the light-client PI view (the VALUE8 weld). -/
-def setFieldValue8V3 (slot : Fin 8) : EffectVmDescriptor2 :=
-  withSetFieldCompletionPins slot (setFieldV3 slot)
-
--- The freeze-EXCEPT setField carries the same 46-PI rotated prefix as the deployed freeze-ALL member;
--- the VALUE8 weld appends 7, so the bare value8 member is 53 PIs (57 after the uniform rc wrap).
+-- ⚑ `setFieldValue8V3` is DELETED. It was the freeze-EXCEPT setField + the completion pins WITHOUT
+-- the selector gate — a near-twin of what `v3RegistryBare` now actually deploys
+-- (`withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))`). Two shapes
+-- that agree today are two shapes that disagree later, and a name carrying "Value8" that is NOT the
+-- deployed value8 member is the worse half of the pair. Its witnesses are restated below on the
+-- DEPLOYED wrap, so nothing is lost.
+--
+-- The freeze-EXCEPT setField carries the same 46-PI rotated prefix as the old freeze-ALL member; the
+-- VALUE8 weld appends 7, so the deployed bare member is 53 PIs (57 after the uniform rc wrap).
 #guard (setFieldV3 0).piCount == 46
-#guard (setFieldValue8V3 0).piCount == 53
-#guard (setFieldValue8V3 7).piCount == 53
+#guard (withSetFieldCompletionPins 0 (withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD
+  (setFieldV3 0))).piCount == 53
+#guard (withSetFieldCompletionPins 7 (withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD
+  (setFieldV3 7))).piCount == 53
 -- Additive: width / tables / sites / ranges are the freeze-EXCEPT member's (the pins add no column).
-#guard (setFieldValue8V3 3).traceWidth == (setFieldV3 3).traceWidth
-#guard (setFieldValue8V3 3).tables.length == (setFieldV3 3).tables.length
-#guard (setFieldValue8V3 3).hashSites.length == 0 && (setFieldValue8V3 3).ranges.length == 0
+#guard (withSetFieldCompletionPins 3 (setFieldV3 3)).traceWidth == (setFieldV3 3).traceWidth
+#guard (withSetFieldCompletionPins 3 (setFieldV3 3)).tables.length == (setFieldV3 3).tables.length
+#guard (withSetFieldCompletionPins 3 (setFieldV3 3)).hashSites.length == 0
+  && (withSetFieldCompletionPins 3 (setFieldV3 3)).ranges.length == 0
 -- The pins are `.piBinding`s: no mem-op / map-op is added past the freeze-EXCEPT member's.
-#guard (memOpsOf (setFieldValue8V3 5)).length == (memOpsOf (setFieldV3 5)).length
-#guard (mapOpsOf (setFieldValue8V3 5)).length == (mapOpsOf (setFieldV3 5)).length
+#guard (memOpsOf (withSetFieldCompletionPins 5 (setFieldV3 5))).length
+  == (memOpsOf (setFieldV3 5)).length
+#guard (mapOpsOf (withSetFieldCompletionPins 5 (setFieldV3 5))).length
+  == (mapOpsOf (setFieldV3 5)).length
 
 /-! ### The DSL rc-EMIT (`withDfaRcPins`) — the `Witnessed{Dfa}` route-commitment PI exposure.
 
@@ -6064,9 +6073,18 @@ def v3RegistryBare : List (String × EffectVmDescriptor2) :=
   , ("receiptArchiveVmDescriptor2R24", receiptArchiveV3)
   , ("cellUnsealVmDescriptor2R24", cellUnsealV3)
   , ("emitEventVmDescriptor2R24", v3OfFrozen EffectVmEmitEmitEvent.emitEventVmDescriptor) ]
+    -- THE VALUE8 EPOCH (the deployed setField members, was the freeze-ALL `v3OfFrozen`). The
+    -- freeze-ALL wrap froze ALL 56 fields completion lanes BEFORE↔AFTER — including the WRITTEN
+    -- slot's — so a `FieldElement = [u8;32]` with any nonzero byte outside `28..32` could not
+    -- prove: the protocol could not express an honest 32-byte field write. `setFieldV3 slot`
+    -- (freeze-EXCEPT) frees exactly the written slot's 7 completion lanes and
+    -- `withSetFieldCompletionPins slot` PUBLISHES them as 7 tail PIs, so the high 224 bits are
+    -- BOUND (a lane forged off its published PI is UNSAT — `withSetFieldCompletionPins_rejects_forged_pi`)
+    -- rather than frozen. The other seven slots stay fully frozen.
   ++ (List.finRange 8).map fun slot =>
       (s!"setFieldVmDescriptor2-{slot.val}R24",
-        withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD (v3OfFrozen (setFieldTickFace slot)))
+        withSetFieldCompletionPins slot
+          (withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD (setFieldV3 slot)))
 
 /-- **`v3Registry`** — the DEPLOYED full cohort: every `v3RegistryBare` member wrapped OUTERMOST
 through `withDfaRcPins` (the dsl rc-EMIT — a `Witnessed{Dfa}` caveat is a PRECONDITION any

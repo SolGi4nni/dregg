@@ -10,6 +10,18 @@ This sweep asks the mirror question: **is every proven descriptor / keystone act
 are green and axiom-clean but describe a descriptor the light client never runs (deployed setField
 uses `v3OfFrozen`). That was a *class*, not a one-off. Below is the class, swept.
 
+> ✅ **§5.2 CLOSED 2026-07-30 — the setField exemplar is DEPLOYED.** `v3RegistryBare` now emits
+> `withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))`, so the whole
+> setField refinement stack (8 `#assert_axioms` + `setField_descriptorComplete`) is about the member
+> that ships, in the 1-felt registry and both wide registries. The freeze-ALL `v3OfFrozen` wrap is
+> gone from setField and with it the large-write completeness gap: an honest 32-byte
+> `FieldElement` now proves, its high 224 bits published as PIs 46..=52. **All three registry
+> fingerprints rotated (a new VK epoch)**, and the parallel `v3RegistrySetFieldValue8` staging set is
+> deleted. The rows below are the pre-flip census and are kept as the record; the gate that enforces
+> the new state is `circuit/tests/keystone_descriptor_deployment_gate.rs`, whose ratchet now bites
+> the other way (re-orphaning the stack fails it). The **dedicated-accumulator** family (§5.1) is
+> UNCHANGED and still DANGEROUS.
+
 ---
 
 ## 0. What "DEPLOYED" means here

@@ -1591,8 +1591,10 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             "the graduated rotated width + the gentian refuse extent"
         );
         assert_eq!(
-            desc.public_input_count, 50,
-            "setField is a 46-PI cohort member"
+            desc.public_input_count, 57,
+            "setField is a 46-PI cohort member + the 7 VALUE8 completion pins (46..=52) + 4 rc; it \
+             was 50 while the member rode the freeze-ALL wrap that made an honest 32-byte write \
+             unprovable"
         );
 
         // A real setField turn: the field write ticks the nonce (before 5 → after 6); the

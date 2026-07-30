@@ -239,18 +239,23 @@ mod tests {
             local_manifest().registry_fp,
             format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}")
         );
-        // And the deployed values are the sha256 hexes we expect at this HEAD
-        // (the S2-compacted wide regen `329de7420`), so a silent fingerprint
-        // drift is caught here. (The manifest previously pinned the bare
-        // 1-felt V3 FP — and this test's stale pin proved that gate never
-        // re-armed after a bare regen; the wide pins are the deployed truth.)
+        // And the deployed values are the sha256 hexes we expect at this HEAD, so a silent
+        // fingerprint drift is caught here. (The manifest previously pinned the bare 1-felt V3 FP —
+        // and this test's stale pin proved that gate never re-armed after a bare regen; the wide
+        // pins are the deployed truth.)
+        //
+        // ⚑ ROTATED BY THE setField VALUE8 EPOCH. The deployed `setFieldVmDescriptor2-{slot}R24`
+        // members moved from the freeze-ALL wrap to freeze-EXCEPT + the 7 published completion-lane
+        // pins (Lean `v3RegistryBare`), so ALL THREE registry fingerprints moved and this is a NEW
+        // VK-EPOCH: a binary built before the flip reports `RegistryFpMismatch` against one built
+        // after, which is exactly the intended fail-closed handshake.
         assert_eq!(
             WIDE_REGISTRY_STAGED_FP,
-            "32fdf108c0e2ba97c95ee4f44db29965f24638baef1a0c184cbc8484461e4951"
+            "1162d9d3dd200661bff240f83ffaf147f15bf3eb2175659aa6931dd4dc182195"
         );
         assert_eq!(
             WIDE_UMEM_WELD_REGISTRY_FP,
-            "02d5d73b2df36eed2c025266b93b7ae2669c8f66829dcd7d77ba33cea6363049"
+            "eb804baeb6037501e61be3aa3a11b93d36320b6eae90919e4ff3426f64249e81"
         );
     }
 

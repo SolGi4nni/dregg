@@ -59,13 +59,19 @@ pub type Slot = usize;
 ///
 /// ⚠ THE LANE: this delegates to `dregg_cell::field_from_u64` (big-endian into bytes `24..32`),
 /// the u64 lane the verified kernel defines a `fields[]` slot to BE. It used to write
-/// little-endian into bytes `0..8`, which is the OPPOSITE end of the value, and that made every
-/// nonzero write UNPROVABLE: the deployed `setFieldVmDescriptor2-{slot}R24` freezes a written
-/// slot's 7 completion lanes BEFORE↔AFTER, so only bytes `28..32` of a field value may change on
-/// a setField turn (`circuit/src/effect_vm/helpers.rs:133` `field_limbs8`). A `0..8` write lit a
-/// FROZEN lane, so `pack_u64(1)` did not truncate — it failed to prove at all, and the Lean
-/// producer's `field_fits_wire_carrier` (`exec-lean/src/lean_shadow.rs:2499`, "bytes `0..24` must
-/// be zero") bailed the turn as ineligible. Gate: `circuit/tests/setfield_encoder_window_gate.rs`.
+/// little-endian into bytes `0..8`, which is the OPPOSITE end of the value.
+///
+/// ⚑ WHY THAT USED TO BE FATAL, AND WHAT IT IS NOW. The deployed `setFieldVmDescriptor2-{slot}R24`
+/// used to FREEZE the written slot's 7 completion lanes BEFORE↔AFTER, so only bytes `28..32` of a
+/// field value could change on a setField turn — a `0..8` write lit a frozen lane and `pack_u64(1)`
+/// did not truncate, it failed to PROVE at all. The VALUE8 epoch retired that freeze (the lanes are
+/// freed and PUBLISHED as PIs 46..=52), so the whole 32-byte value is writable and a wrong-lane
+/// encoder no longer fails loudly. It is still a **codec bug** — `unpack_u64` reads BE from `24..32`,
+/// so an LE-into-`0..8` write reads back as a different number — and the detector is now static, not
+/// proof-enforced: `circuit/tests/setfield_encoder_window_gate.rs`, whose type-directed walk
+/// (`every_setfield_encoder_writes_inside_the_u64_lane`) is the load-bearing gate. The Lean
+/// producer's `field_fits_wire_carrier` (`exec-lean/src/lean_shadow.rs:2499`, "bytes `0..24` must be
+/// zero") is a SEPARATE, still-live eligibility bound.
 pub fn pack_u64(v: u64) -> FieldElement {
     dregg_cell::field_from_u64(v)
 }

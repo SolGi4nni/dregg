@@ -7,22 +7,27 @@
 //! arbitrary high-224-bit field value.
 //!
 //! THIS PROBE ATTACKS THAT CLAIM against the ACTUAL DEPLOYED descriptor
-//! (`setFieldVmDescriptor2-{slot}R24` in `V3_STAGED_REGISTRY_TSV`), which the Lean `v3RegistryBare`
-//! emits as `withSelectorGate SEL_SET_FIELD (v3OfFrozen (setFieldTickFace slot))` — the freeze-ALL
-//! variant (`fieldsCompletionFreezes` = all 56 completion lanes BEFORE↔AFTER), NOT the "except"
-//! variant `setFieldV3 = v3OfFrozenSetField` the census grounded on (which is defined + carries
-//! keystones but is NOT wired into the deployed registry).
+//! (`setFieldVmDescriptor2-{slot}R24` in `V3_STAGED_REGISTRY_TSV`).
 //!
-//! Two teeth:
-//!   * `honest_small_value_setfield_proves_and_verifies` — a setField whose value has ZERO high
-//!     bytes (completion lanes 0 before AND after) proves + verifies (the freeze `0==0` holds).
+//! ⚑ THE VERDICT SURVIVED THE VALUE8 EPOCH BUT THE GATE THAT DELIVERS IT CHANGED. The deployed
+//! member USED to be `withSelectorGate SEL_SET_FIELD (v3OfFrozen (setFieldTickFace slot))` —
+//! freeze-ALL, all 56 completion lanes pinned BEFORE↔AFTER. That refused the census R1 forge, but it
+//! ALSO refused every honest 32-byte write whose value had a nonzero byte outside `28..32`. The Lean
+//! `v3RegistryBare` now emits `withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD
+//! (setFieldV3 slot))` — freeze-EXCEPT (the written slot's 7 lanes are FREED) plus 7 `.piBinding
+//! .last` PINS publishing exactly those lanes as PIs 46..=52. The high 224 bits are now bound BY
+//! PUBLICATION rather than by being frozen shut: the light client reads them, and a lane moved off
+//! its published PI has no satisfying assignment.
+//!
+//! Three teeth:
+//!   * `honest_small_value_setfield_proves_and_verifies` — a lane-0-only value proves + verifies.
+//!   * `honest_large_value_setfield_proves_on_the_deployed_member` — ⚑ CONVERTED (see its doc): it
+//!     used to assert the REFUSAL, and its whole job was to document the wound.
 //!   * `forged_written_slot_completion_lanes_is_unsat` — a forge that sets the written slot's
 //!     completion lanes 1..7 to arbitrary nonzero (≠ the honest/pre-state 0) while keeping lane 0
 //!     honest, recomputes the downstream commitment so NEW_COMMIT genuinely absorbs the forged high
 //!     bytes (the wire view), and patches the post-state dpis — is UNSAT through prove/verify ALONE.
-//!     If it ACCEPTS, the census R1 forge is LIVE. If it is UNSAT, the deployed freeze BINDS the
-//!     written slot's completion lanes (to the pre-state) and the R1 silent-forge is closed on the
-//!     deployed wire (though at the cost of the honest large-value write, a completeness seam).
+//!     If it ACCEPTS, the census R1 forge is LIVE.
 
 use dregg_cell::{Cell, Ledger};
 use dregg_circuit::descriptor_ir2::{
@@ -276,31 +281,53 @@ fn build_honest_large() -> Honest {
     }
 }
 
-/// **THE REAL RESIDUAL (a completeness seam, NOT a soundness forge).** An honest setField whose
-/// written value has NONZERO high bytes CANNOT prove against the deployed freeze-ALL descriptor: the
-/// completion freeze `before(0) == after(≠0)` rejects it. The written field's high 224 bits are
-/// FROZEN to the pre-state, so only ≤lane-0 values are writable — a completeness limitation. The
-/// proper close is the VALUE8 weld (force the written slot's 7 completion lanes to the declared
-/// value8 params, replacing the freeze), which is VK-affecting and gated (ember-decision).
+/// **⚑ THIS TEST WAS CONVERTED, AND ITS OLD JOB WAS TO DOCUMENT A LIMITATION.** It used to be
+/// `honest_large_value_setfield_fails_the_deployed_freeze` and it ASSERTED THE REFUSAL: an honest
+/// `setField` whose 32-byte value had any nonzero byte outside `28..32` could not prove, because the
+/// deployed freeze-ALL wrap pinned the written slot's 7 completion lanes BEFORE↔AFTER. That is the
+/// whole of "the protocol cannot express an honest 32-byte field write", and it was a *passing test*
+/// — a green tooth whose green meant the wound was intact.
+///
+/// The deployed members are now the VALUE8 shape (Lean `v3RegistryBare`: freeze-EXCEPT +
+/// `withSetFieldCompletionPins slot`), so the assertion is INVERTED: the honest large write must
+/// PROVE and VERIFY, with its high 224 bits published as PIs 46..=52. A refusal here is the wound
+/// returning.
 #[test]
-fn honest_large_value_setfield_fails_the_deployed_freeze() {
+fn honest_large_value_setfield_proves_on_the_deployed_member() {
     let h = build_honest_large();
-    // At least one written-slot completion lane is nonzero on the active row (non-vacuity).
+    // At least one written-slot completion lane is nonzero on the active row (non-vacuity): if the
+    // value fits in lane 0 this test proves nothing.
     let any_nonzero =
         (0..7).any(|k| h.trace[0][AFTER_BASE + COMPLETION_BASE + k] != BabyBear::ZERO);
     assert!(
         any_nonzero,
         "the large value must move ≥1 written-slot completion lane off zero"
     );
+    // The generator publishes the 7 freed lanes as PIs 46..=52, ahead of the 4 rc pins.
+    assert_eq!(
+        h.dpis.len(),
+        57,
+        "the deployed setField member is 57 PIs (46 prefix + 7 value8 + 4 rc)"
+    );
+    let last = h.trace.last().expect("non-empty trace");
+    for k in 0..7 {
+        assert_eq!(
+            h.dpis[46 + k],
+            last[AFTER_BASE + COMPLETION_BASE + k],
+            "PI {} must publish the written slot's completion lane {k}",
+            46 + k
+        );
+    }
     assert!(
-        refused(&h, &h.trace, &h.dpis),
-        "the deployed freeze-ALL setField descriptor must REJECT an honest large-value write \
-         (before==after freeze violated on the written slot's completion lanes) — the completeness \
-         seam. If this proves, the freeze is absent."
+        !refused(&h, &h.trace, &h.dpis),
+        "an HONEST large-value setField (a real 32-byte FieldElement with nonzero high bytes) MUST \
+         prove + verify against the DEPLOYED descriptor — the high 224 bits ride the freed \
+         completion lanes and are PUBLISHED as PIs 46..=52. If this is refused, the freeze-ALL wrap \
+         is back and the protocol cannot express an honest 32-byte field write."
     );
     eprintln!(
-        "R1 RESIDUAL: an honest large-value setField FAILS the deployed freeze — the written field's \
-         high bytes are frozen to the pre-state (completeness seam, not a soundness forge)."
+        "R1 CLOSED: an honest large-value setField PROVES on the deployed member; its high 224 bits \
+         are published, not frozen."
     );
 }
 
@@ -354,8 +381,9 @@ fn forged_written_slot_completion_lanes_is_unsat() {
     if unsat {
         eprintln!(
             "R1 VERDICT: the written-slot completion-lane forge is UNSAT on the deployed descriptor \
-             — the freeze-ALL setField descriptor BINDS the written slot's completion lanes \
-             (before==after). The census R1 silent-forge does NOT reproduce on the deployed wire."
+             — under the VALUE8 epoch the binding gate is the PIN (`.piBinding .last` on each freed \
+             lane, PIs 46..=52) rather than the old BEFORE↔AFTER freeze: the forged lanes differ \
+             from the honest published value8, so there is no satisfying assignment."
         );
     } else {
         eprintln!(

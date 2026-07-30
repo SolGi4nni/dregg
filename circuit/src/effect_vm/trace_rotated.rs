@@ -814,6 +814,33 @@ fn generate_rotated_effect_vm_trace_avail_core(
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
     }
 
+    // THE setField VALUE8 TAIL (PIs 46..=52) — the written slot's 7 freed completion lanes, i.e. the
+    // HIGH 224 BITS of the written 32-byte field value. The deployed `setFieldVmDescriptor2-{slot}R24`
+    // is freeze-EXCEPT + `withSetFieldCompletionPins slot` (Lean `v3RegistryBare`): those lanes are no
+    // longer frozen to the pre-state — which is what made an honest `[u8;32]` write with any nonzero
+    // byte outside `28..32` UNPROVABLE — but PUBLISHED, so a light client reads them off the PI vector
+    // and a lane forged off its published PI is UNSAT (`withSetFieldCompletionPins_rejects_forged_pi`).
+    // Same shape as the NoteSpend / NoteCreate arms above; the pins are `.last`, so they read the LAST
+    // row, and they ride BEFORE the rc tail (rc is `withDfaRcPins`, the outermost wrap).
+    // ⚠ STATIC SLOTS ONLY. `field_idx >= 8` is the setFieldDyn family — a DISTINCT member
+    // (`setFieldDynVmDescriptor2R24`, its own V1Face geometry + mem-boundary witness) that carries
+    // no completion-lane weld and still wants the bare `ROT_PI_COUNT + rc` shape.
+    if let Some(Effect::SetField { field_idx, .. }) = effects.first()
+        && (*field_idx as usize) < 8
+    {
+        let slot = *field_idx as usize;
+        let base = after_base
+            + crate::effect_vm_descriptors::SETFIELD_VALUE8_LANE_BASE
+            + crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN * slot;
+        for k in 0..crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN {
+            dpis.push(last[base + k]);
+        }
+        debug_assert_eq!(
+            dpis.len(),
+            ROT_PI_COUNT + crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN
+        );
+    }
+
     // THE DSL rc-EMIT TAIL (the `Witnessed{Dfa}` route-commitment exposure). EVERY deployed cohort
     // member is wrapped OUTERMOST through Lean `withDfaRcPins`, publishing the caveat-region DFA
     // route-commitment carrier (cols `CAVEAT_BASE + C_DFA_RC_OFF ..+4`, filled by `fill_caveat`
@@ -4841,12 +4868,24 @@ pub fn generate_rotated_transfer_shape_wide_avail(
         after_w,
         caveat,
     )?;
-    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
+    // The bare transfer-shape cohort carries `ROT_PI_COUNT + DFA_RC_LEN`; the setField family
+    // additionally carries the VALUE8 completion block (the written slot's 7 published high-byte
+    // lanes, PIs 46..=52, ahead of the rc tail — Lean `withSetFieldCompletionPins`). Both shapes take
+    // the SAME wide append (the 16 anchors land at the end either way); anything else is a
+    // grow-gate/record member that must not be widened here.
+    let value8 = if matches!(effects.first(), Some(Effect::SetField { field_idx, .. }) if (*field_idx as usize) < 8)
+    {
+        crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN
+    } else {
+        0
+    };
+    if base_pis.len() != ROT_PI_COUNT + value8 + DFA_RC_LEN {
         return Err(format!(
             "transfer-shape wide generator: base PI vector {} != {} (this wrapper is for the bare \
-             transfer-shape cohort + the 4 dsl rc PIs — a grow-gate/record member carries an extra PI)",
+             transfer-shape cohort + the 4 dsl rc PIs, plus the setField VALUE8 block — a \
+             grow-gate/record member carries an extra PI)",
             base_pis.len(),
-            ROT_PI_COUNT + DFA_RC_LEN
+            ROT_PI_COUNT + value8 + DFA_RC_LEN
         ));
     }
     let dpis =
@@ -5914,8 +5953,22 @@ pub fn generate_rotated_set_field_dyn_base(
         field_idx: slot,
         value: slot_felt,
     };
-    let (mut trace, base_pis) =
+    let (mut trace, mut base_pis) =
         generate_rotated_effect_vm_trace(initial_state, &[lead], before_w, after_w, caveat)?;
+    // ⚠ DROP THE VALUE8 BLOCK. The synthetic in-bounds `SetField { field_idx: slot }` above is a
+    // borrowed vehicle for the shared rotated machinery, NOT a static-slot write: the deployed
+    // member here is `setFieldDynVmDescriptor2R24`, which carries no completion-lane weld and wants
+    // the bare `ROT_PI_COUNT + rc` shape. The base generator publishes the 7 value8 completion PIs
+    // for a static-slot setField (Lean `withSetFieldCompletionPins`), so strip them back out —
+    // exactly as the supplyMint arm lifts the rc pins its unwrapped member does not carry.
+    if base_pis.len()
+        == ROT_PI_COUNT + crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN + DFA_RC_LEN
+    {
+        base_pis.drain(
+            ROT_PI_COUNT..ROT_PI_COUNT + crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN,
+        );
+    }
+    let base_pis = base_pis;
     if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
             "setFieldDyn base generator: expected the rotated vector + the 4 dsl rc PIs, got {} \
