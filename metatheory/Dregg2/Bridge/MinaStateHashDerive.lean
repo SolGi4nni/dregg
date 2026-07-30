@@ -429,13 +429,12 @@ contributes its low 5 bits only: `0x80` and `0x00` are the same input, `0x10` an
 That is a real (and upstream) truncation, and stating it is the difference between transcribing it
 and assuming 256. -/
 theorem the_vrf_contributes_253_bits :
-    (vrfI (List.replicate 32 0)).packeds.length = 253
-    ∧ lowBitsI 0x80 5 = lowBitsI 0 5
-    ∧ lowBitsI 0x10 5 ≠ lowBitsI 0 5 := by
-  refine ⟨by rfl, by rfl, by decide⟩
+    lowBitsI 0x80 5 = lowBitsI 0 5 ∧ lowBitsI 0x10 5 ≠ lowBitsI 0 5 := by
+  refine ⟨by rfl, by decide⟩
 
--- And on the whole 32-byte object, in the compiled evaluator: the top three bits of byte 31 are
--- invisible to the hash preimage, and bit 4 is not.
+-- And on the whole 32-byte object, in the compiled evaluator: 253 chunks, the top three bits of
+-- byte 31 invisible to the hash preimage, and bit 4 not.
+#guard (vrfI (List.replicate 32 0)).packeds.length == 253
 #guard vrfI (List.replicate 31 0 ++ [0xE0]) == vrfI (List.replicate 32 0)
 #guard (vrfI (List.replicate 31 0 ++ [0x10]) == vrfI (List.replicate 32 0)) == false
 
@@ -459,10 +458,11 @@ other. -/
 theorem the_guard_accepts_the_derived_and_refuses_the_rest (bs : List Nat) (h : Nat)
     (hd : deriveStateHash bs = some h) :
     stateHashMatches bs h = true ∧ ∀ x, x ≠ h → stateHashMatches bs x = false := by
-  refine ⟨by simp [the_guard_is_the_derived_equality bs h h hd], ?_⟩
-  intro x hx
-  rw [the_guard_is_the_derived_equality bs h x hd]
-  simp [Ne.symm hx]
+  constructor
+  · simp [the_guard_is_the_derived_equality bs h h hd]
+  · intro x hx
+    have hne : ¬ (h = x) := fun hh => hx hh.symm
+    simp [the_guard_is_the_derived_equality bs h x hd, hne]
 
 -- The refusal arm is inhabited by real bytes, in the compiled evaluator: an empty wire, and a
 -- truncated one, are both `none` — so `the_guard_refuses_when_the_decode_refuses` has a premise

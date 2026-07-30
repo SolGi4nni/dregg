@@ -318,6 +318,51 @@ spellings of one number. (`devnetBlock540187` differs from `devnetBlock540186` i
 theorem the_one_byte_mutation_moves_the_identity : derived540186 ≠ derived540187 := by
   native_decide
 
+/-- The undiscarded decode of the same bytes. -/
+def rawBlock540186 : Option MinaBinprot.ProtocolStateRaw :=
+  (decodeProtocolStateRaw devnetBlock540186).map Prod.fst
+
+/-- ⚑ **A TYPO TRIPWIRE, AND NOT ONE INCH MORE THAN THAT.**
+
+The four numerals below came from a SECOND transcription of the same reading of the same two sources
+(`bridge/tools/`-adjacent scratch python, 2026-07-30). It is the same author reading the same daemon
+and the same openmina, so it is **not independent and it does not validate the ORDER** — if the
+reading is wrong, both are wrong together, which is exactly how a previous lane's python "confirmed"
+a bug it shared. Saying otherwise would be the failure this repo has a memory entry about.
+
+What it DOES catch, and what nothing else here catches cheaply, is a SLIP: one of ~38 field
+elements or ~819 packed chunks transposed, dropped or mis-widthed between the two renderings. That
+is a likely error and this makes it a red build instead of a silent wrong hash.
+
+The shape numbers are pinned alongside the digests deliberately: a wrong element COUNT localises the
+fault to the assembly, while equal counts with a different digest localises it to a value or an
+order. And the body hash is pinned separately from the state hash, so a fault in `Body.to_input` is
+distinguishable from a fault in the outer two-element Poseidon.
+
+**The ORDER's actual gate is `Bridge.MinaStateHashRealBlock`**, where the comparand is a field of
+the wire rather than anything either transcription produced. -/
+def transcriptionsAgree : Bool :=
+  match rawBlock540186 with
+  | some ps =>
+      -- 38 field elements + 819 packed chunks (2,381 bits) → 11 packed field elements → 49 inputs.
+      (MinaStateHashDerive.bodyI ps).fields.length == 38
+      && (MinaStateHashDerive.bodyI ps).packeds.length == 819
+      && (MinaStateHashDerive.packToFields (MinaStateHashDerive.bodyI ps)).length == 49
+      && MinaStateHashDerive.stateBodyHash ps ==
+           5280146739510509789611000995186941630103480228415681423982835903662336212379
+      && MinaStateHashDerive.stateHash ps ==
+           23150793208165238508010746024646151327500557688103637800887369182027809926508
+  | none => false
+
+theorem the_two_transcriptions_agree_on_the_real_block : transcriptionsAgree = true := by
+  native_decide
+
+/-- And on the mutation, so the tripwire covers the second fixture too. -/
+theorem the_two_transcriptions_agree_on_the_mutation :
+    derived540187 =
+      10661633542888591627435934085864260363960762266439350948948271468094670434467 := by
+  native_decide
+
 /-- ⚑ **AND THE HEAD ROLLS, ON REAL DEVNET BYTES.** With the anchored-segment gate accepting
 (`sg=1`) the head advances and the finalized height ratchets to `540187 − k = 539897`. With it
 REFUSING (`sg=0`) — which is what an unavailable source supplies — nothing advances and the
@@ -352,6 +397,8 @@ Stated, not hidden: a 1,544-byte parse is not a kernel reduction. -/
 #print axioms the_exported_gate_decides_on_real_devnet_bytes
 #print axioms a_served_state_hash_the_bytes_do_not_have_is_refused
 #print axioms the_one_byte_mutation_moves_the_identity
+#print axioms the_two_transcriptions_agree_on_the_real_block
+#print axioms the_two_transcriptions_agree_on_the_mutation
 #print axioms the_head_rolls_on_real_devnet_bytes
 #assert_axioms the_ratchet_is_length_minus_k
 
