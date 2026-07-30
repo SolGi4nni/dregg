@@ -102,6 +102,8 @@ closed. `every_offering_paints`'s ship-list assertion caught it **exactly as its
 
 
 **E1 · A THREE-NODE COMMITTEE WEDGES PERMANENTLY ON ONE UNDELIVERED BLOCK. LIVE — reproduced twice.**
+> ✅ **CLOSED 2026-07-30** (`e17c7313d`) — and the mechanism was NONE of the four I briefed. The block is sent, accepted, handed to the subscriber, **and never dequeued**: `delivered=1 ×338` against `funnel RECV ×160`. One task, one unbounded channel, awaiting each handler in turn — arrival beat service and the channel absorbed it, so **a permanently-behind funnel reads from outside as a permanent wedge with no error anywhere.** ⚑ Root: `9f5920bda` rebased `Block::creator` onto the hybrid id and left `push_new_blocks` reading `tips().get(&self_key)` — the ed25519 half against a `creator`-keyed map, so **every eager push was a silent no-op**; a SEVENTH consumer of that class. Amplifiers: 77–82% of outbound gossip was `Prune` frames that no-op on BOTH ends, and vote handlers held the funnel 1155–1910 ms doing hybrid verify synchronously. ⚠ Unanimous lock-step at n=3 is CORRECT (`f=0`) and was NOT weakened. ⚠ The self-healing pull did NOT misfire — its response queued behind the backlog. Post-fix `latest_height = 1` on all three, round 5 → 11; absent-peer and equivocation refusals both still bite.
+
 Driven on hbox at n=3, `--federation-mode full`, with full node logs. The faucet turn DOES enter the
 DAG at round 5 and **all three nodes author round 5** — then **nobody receives either peer's round-5
 block** (13/14/14 of 15 holdings). `plan_round_block` requires a supermajority of distinct creators at

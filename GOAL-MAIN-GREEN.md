@@ -455,6 +455,22 @@ Three analysis-first lanes on the three genuinely hard remainders:
   reader on one lane, not the canonical codec. Checked rather than assumed, since the same-looking
   pattern was a real bug twice tonight.
 
+- ✅ **E1 CLOSED** (`e17c7313d`) — **the mechanism was none of the four options I briefed.** The block is
+  sent, accepted, handed to the subscriber, **and never dequeued**: one task on one unbounded channel,
+  awaiting each handler in turn, so arrival beat service and the backlog grew monotonically. **A
+  permanently-behind funnel reads from outside as a permanent wedge, with no error anywhere.**
+  ⚑ Root cause is a **SEVENTH `block.creator` consumer**: `9f5920bda` rebased it onto the hybrid id and
+  left `push_new_blocks` looking up the ed25519 half in a `creator`-keyed map, so **every authored
+  block's eager push was a silent no-op.** That commit's own message even says it "still projects some
+  participant paths through the ed25519 identity" — and names a different seam.
+  ⚠ Two of my framings were wrong: **unanimous lock-step at n=3 is CORRECT** (`f = 0`, so zero omission
+  tolerance is what BFT says) and was not weakened; and **the self-healing pull did not misfire** — it
+  fires on the right node, its RESPONSE queued behind the backlog. Fourth wrong inherited diagnosis.
+  ⚑ Also fixed: `catchup.rs`'s silent ingest-refusal arm was a bare `{}` — **the one place a consensus
+  block could vanish without trace, and it cost this investigation a day.**
+  Post-fix all three nodes reach `latest_height 1`, round 5 → 11; absent-peer stays at 0 for 45 s and
+  four equivocation refusals still bite, so liveness was not bought by accepting less.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
