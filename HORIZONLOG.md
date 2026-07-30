@@ -2,6 +2,34 @@
 
 ## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
 
+**E2 · `dreggnet-web-server` REFUSES EVERY DESCENT MOVE ON A BOX. LIVE OUTAGE — measured.**
+`d0e10d0bc` added `HeapAtom::AllowedTransitions` to `dregg-cell` without the matching
+`exec-lean/src/constraint_oracle.rs` arm, so the oracle DECLINES that atom — and
+`dungeon_program.json` uses `allowedTransitions` **576 times**.
+⚑ **The in-flight note at that site says "Debug (every test build in this repo) takes `eval.rs`'s
+guest-path evaluator and plays." That is FALSE for `dreggnet-web`.** `eval.rs`'s
+oracle-installed-but-declined disposition is deliberately NOT release-gated, and
+`verified_settlement.rs:117` registers the constraint oracle **unconditionally** — where
+`dregg-sdk`'s installer deliberately does not. So any process building a `catalog_router` — every
+web test, **and `dreggnet-web-server` at boot** — fails closed on every Descent / campaign /
+programmed-cell move:
+> *this world cannot judge a move on this server: the verified rule-checker it needs is not
+> installed, so it refuses every move rather than guess at one.*
+That is 12 of `dreggnet-web`'s reds and, on a deployed box, **the flagship game**. The fix is
+Lean-authored — a `DHeapAtom` arm plus a `parseHeapAtom` token in `metatheory/` — and two Rust lanes
+have now correctly declined to paper over it in Rust.
+
+**E3 · THE FLAGSHIP WAS SILENTLY UNPLAYABLE ON TELEGRAM. FIXED 2026-07-29 (`4de836675`).**
+The dungeon surface rendered **4,719 characters** against Telegram's 4,096 ceiling (automatafl
+4,429), so `present` refused, nothing was painted, and every later `collect` found no affordance —
+surfacing as ~22 apparently unrelated test failures. ⚑ **2,009 of those 4,705 characters were three
+`disclosure` strings the companion guide prints again VERBATIM in the same chat**, now elided by
+whole-string equality against the same descriptor list that builds those pages. Oversized surfaces
+split tail-first into a companion slot; the head names the move; a surface with no seam still fails
+closed. `every_offering_paints`'s ship-list assertion caught it **exactly as its author predicted in
+`ea3fa5792`**.
+
+
 **E1 · A THREE-NODE COMMITTEE WEDGES PERMANENTLY ON ONE UNDELIVERED BLOCK. LIVE — reproduced twice.**
 Driven on hbox at n=3, `--federation-mode full`, with full node logs. The faucet turn DOES enter the
 DAG at round 5 and **all three nodes author round 5** — then **nobody receives either peer's round-5
