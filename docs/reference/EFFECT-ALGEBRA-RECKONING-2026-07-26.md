@@ -624,7 +624,7 @@ proved by tests:
 So: **the deployed protocol cannot express an honest 32-byte field write.** That is not a subtle
 soundness risk; it is a stated functional limit. The fix is authored and staged —
 `withSetFieldCompletionPins slot (setFieldV3 slot)` (`EffectVmEmitRotationV3.lean:5656`), emitted by
-`metatheory/EmitRotationV3SetFieldValue8.lean`, bumping `piCount` 46 → 53, with the positive tooth
+bumping `piCount` 46 → 53, with the positive tooth
 `honest_large_value_setfield_proves_under_value8`
 (`circuit/tests/setfield_value8_epoch_flip.rs:164`). **Not deployed** — additive, beside
 `v3RegistryBare`, VK byte-untouched.
@@ -858,7 +858,7 @@ false of the deployed executor whenever an action mixes a permission effect with
 **P2.1 — ⚑EMIT Deploy the staged `setFieldValue8`.** *Lean-authored, already written.* The R1
 large-value completeness seam is closed on disk and not deployed:
 `withSetFieldCompletionPins` (`EffectVmEmitRotationV3.lean:5656`), emitted by
-`metatheory/EmitRotationV3SetFieldValue8.lean`, `piCount` 46→53, positive tooth at
+`piCount` 46→53, positive tooth at
 `circuit/tests/setfield_value8_epoch_flip.rs:164`. Additive beside `v3RegistryBare`; old epochs stay
 verifiable. **This is the cheapest real win in the document** — the work is done. ⚑ VK epoch,
 re-emit, archived-run check.

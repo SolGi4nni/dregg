@@ -92,8 +92,7 @@ same way as item 3 — check it against the re-genesis already in flight (`HORIZ
 ## 3. Deploying the staged `setFieldValue8` — EMIT-changing
 
 *"The protocol currently cannot express an honest 32-byte field write."* The Lean is
-written (`metatheory/EmitRotationV3SetFieldValue8.lean`,
-`Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean` + `…Refused.lean`; the plan entry is
+written (`Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean` + `…Refused.lean`; the plan entry is
 `docs/reference/EFFECT-ALGEBRA-RECKONING-2026-07-26.md` §P2.1, Tier 2 "the emit-changing
 repairs"). The deployed registry rows are the 8
 `setFieldValue8VmDescriptor2-{slot}R24` members (`HORIZONLOG.md:995`).
