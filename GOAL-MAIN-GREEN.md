@@ -394,7 +394,7 @@ Three analysis-first lanes on the three genuinely hard remainders:
   asserts bare `is_err()` on a route that errors for every input, and the other **has never reached
   its forge**, so the family's ~124-bit binding tooth has never been exercised.
 
-- ✅ **E2 CLOSED END TO END — the live outage is gone.** Lean arm (`4e0a05fac`) + `HAT` encoder arm
+- ⚠ **E2 REOPENED — I claimed a closure I had not measured.** Lean arm (`4e0a05fac`) + `HAT` encoder arm
   (`6e27f4983`), `dregg-exec-lean` + `dregg-cell` **979/979**.
   ⚑ **A tooth brokered the handoff.** It pinned the decline and carried its own retirement instruction
   in the assertion message — *"THE RUST ENCODER ARM HAS LANDED, this decline is stale"*. The arm landed,
@@ -421,6 +421,22 @@ Three analysis-first lanes on the three genuinely hard remainders:
   `grep Summary`, so the log was 111 bytes, and then grepped THAT for oracle-decline messages and read
   the zero as evidence the E2 family had lifted. **A reader that scans nothing reports nothing** — the
   exact trap this repo keeps finding. Re-running with full output.
+
+- ⚠ **E2 is NOT closed, and the correction is mine.** The Lean arm and the `HAT` encoder arm are real
+  (`dregg-exec-lean` + `dregg-cell` **979/979** on the same archive), but `dreggnet-web` still measures
+  **407/434 with 24 failed** and the pages still render the decline. Ruled out by measurement: the
+  atom, `AnyOf`, and a stale archive. Dispatched probe-first — walk the REAL program through the
+  encoder and name every constraint that returns `None`.
+  ⚑ **Two of my own greps were worthless and both are on the record**: one over a log a pipeline had
+  cut to 111 bytes, and one that counted the refusal COPY INSIDE RENDERED HTML as live refusals.
+  Grep the right artifact, and check its size first.
+- ✅ **cap-write 3 → 6 passed** (`6e3fe9909`) — the orchestration promoted into `dregg-circuit`, and it
+  corrected my brief twice: the after-spine fills were already `pub` (what was missing was routing),
+  and attenuate's destination is `attenuateCapOpenEff` (2021/2028), not a `WriteCapOpen` key.
+  ⚑ Two structural wins: the producer **takes the witness off the rebuilt tree**, so a fabricated
+  membership path is unrepresentable; and the dispatcher **resolves the member name BEFORE the registry
+  lookup**, so descriptor and trace cannot disagree — the exact wound behind three separate reds.
+  Both vacuous teeth made real, incl. one that had "passed" in 0.020 s **without ever proving**.
 
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
