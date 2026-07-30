@@ -23,7 +23,7 @@
 //! `dreggnet-web-server`'s `verified_settlement.rs` actually calls) **still declines this atom**,
 //! for a DIFFERENT reason than before: not because the verified decider cannot answer, but because
 //! the Rust-side encoder has not yet been taught the `HAT` token that would let it ask. The
-//! [`the_transition_table_atom_is_not_yet_on_the_rust_encoder`] test below pins that this is exactly
+//! [`the_transition_table_decides_both_poles_through_the_rust_encoder`] test below pins that this is exactly
 //! what remains, so THE OUTAGE DOES NOT LIFT FROM THE LEAN ARM ALONE. Closing it needs one
 //! mechanical arm in `encode_heap_atom`:
 //!
@@ -150,7 +150,7 @@ fn the_lean_arm_decides_both_poles_and_the_absent_vs_present_zero_discrimination
 /// atom before any wire is built. This is a DIFFERENT failure than the one this file used to pin —
 /// re-verify this test's premise (the Rust encoder arm) before treating the outage as closed.
 #[test]
-fn the_transition_table_atom_is_not_yet_on_the_rust_encoder() {
+fn the_transition_table_decides_both_poles_through_the_rust_encoder() {
     if !dregg_lean_ffi::demand_lean(
         dregg_lean_ffi::constraint_admits_available(),
         "dregg_constraint_admits export (the heap transition-table Rust-encoder measurement)",
@@ -180,8 +180,15 @@ fn the_transition_table_atom_is_not_yet_on_the_rust_encoder() {
         "the control must be able to answer NO, or `Some(Ok(()))` above is not evidence"
     );
 
-    // ── THE REMAINING GAP. The transition table over the SAME key and the SAME states: still no
-    // answer, because `encode_heap_atom` still returns `None` for this variant.
+    // ── ⚑ THE GAP IS CLOSED, AND THIS TEST TOLD US SO BY GOING RED.
+    //
+    // It used to assert `None` here and carried its own retirement instruction: "THE RUST ENCODER ARM
+    // HAS LANDED — this decline is stale." The arm landed, this went red on exactly that assertion,
+    // and the message named the next step. A tooth designed to fail when a gap closes is the only
+    // kind that reports its own completion, and this one did.
+    //
+    // So it now asserts through the FULL PIPELINE — `cell::HeapAtom` → `encode_heap_atom`'s `HAT`
+    // → `parseHeapAtom` → `DHeapAtom.allowedTransitions` — rather than the decline.
     let table = SC::HeapField {
         key: RELIC_KEY,
         atom: HeapAtom::AllowedTransitions {
@@ -190,11 +197,16 @@ fn the_transition_table_atom_is_not_yet_on_the_rust_encoder() {
     };
     assert_eq!(
         ask(&table, &new, &old),
-        None,
-        "⚑ THE RUST ENCODER ARM HAS LANDED — `encode_heap_atom` can now emit `HAT`, so this decline \
-         is stale. Delete this test and add the atom to `constraint_oracle_differential.rs`'s \
-         corpus, where both poles are held against the Lean evaluator through the full pipeline."
+        Some(Ok(())),
+        "the listed custody hop 8 -> 13 must be ADMITTED through the full Rust-encoder pipeline"
     );
-    // An honest hop and a forbidden one decline IDENTICALLY: the encoder is not half-deciding.
-    assert_eq!(ask(&table, &heap(99), &old), None);
+    // ⚠ AND THE POLE THAT MAKES THE ABOVE MEAN SOMETHING: an unlisted destination over the SAME key
+    // and the SAME table must be REFUSED, not declined. Before the arm both answered `None`
+    // identically — which is why "declines identically" was the honest thing to assert then and is
+    // the wrong thing to assert now.
+    assert_eq!(
+        ask(&table, &heap(99), &old),
+        Some(Err(())),
+        "an unlisted destination must be REFUSED by the table, not declined by the encoder"
+    );
 }

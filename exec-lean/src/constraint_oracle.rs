@@ -627,26 +627,42 @@ fn encode_heap_atom(a: &HeapAtom) -> Option<String> {
         HeapAtom::StrictMonotonic => "HSMON".to_string(),
         HeapAtom::DeltaBounded { d } => format!("HDB {d}"),
         HeapAtom::DeltaEquals { d } => format!("HDE {d}"),
-        // ⚠ DECLINE, LOUDLY AND ON PURPOSE — the wire has no token for this atom yet.
+        // ⚑ THE TOKEN EXISTS NOW. This arm used to DECLINE, loudly and on purpose, because
+        // `DHeapAtom` had eleven arms and no transition table — so there was no encoding the
+        // verified decider would read correctly, and inventing one would have been a Rust-authored
+        // constraint wearing a Lean tag.
         //
-        // `HeapAtom::AllowedTransitions` is the deployed twin of the Lean-authored
-        // `Dregg2.Games.Dungeon.Prog.HeapAtom.allowedTransitions` (the descent's per-relic custody
-        // hop table). Lean's own lowering sends it to the NAME-keyed
-        // `Dregg2.Exec.StateConstraint.allowedTransitions`, which the deployed wire narrows to a
-        // REGISTER index: `Dregg2/Exec/DeployedConstraint.lean`'s `allowedTransitions (index : Nat)`
-        // answers `.badIndex` for any `idx ≥ stateSlots`, and its heap vocabulary `DHeapAtom` has
-        // eleven arms — exactly `cell::HeapAtom`'s previous eleven — and no transition table.
+        // `Exec/DeployedConstraint.lean` now carries `DHeapAtom.allowedTransitions` as a 12th arm
+        // with a `HAT` token, and its wire round-trip is PROVED over every
+        // `allowed : List (Nat × Nat)` (`parseHeapAtom_renderHeapAllowedTransitions`) rather than
+        // checked on a corpus. So this encodes to the shape that theorem quantifies over.
         //
-        // So there is no encoding that the verified decider would read correctly, and inventing one
-        // here would be a Rust-authored constraint wearing a Lean tag. `None` routes to
-        // `ConstraintOracleUnavailable`, i.e. FAIL CLOSED on a native release build — the correct
-        // disposition for a Lean-subset constraint the verified evaluator did not decide.
+        // ⚠ u64 LANES, DECIMAL — deliberately NOT `hex32` like the sibling `HEQ`/`HGE`/`HLE` arms
+        // above, and NOT the REGISTER `AT` tag's hex full-field convention. `HeapAtom::AllowedTransitions`
+        // carries `Vec<(u64, u64)>`, the Lean arm reads `List (Nat × Nat)` against `low64`, and two
+        // atoms that look alike here encode differently. Mirrors `HMEM`'s decimal `encode_u64_list`,
+        // pair-flattened, and inherits its `MAX_LIST` bound the same way — a table over the cap
+        // declines rather than truncating.
         //
-        // What it costs, stated where it is paid: on a native RELEASE build the Descent's custody
-        // teeth refuse. Debug (every test build in this repo) takes `eval.rs`'s guest-path evaluator
-        // and plays. Closing it is a `DHeapAtom` arm + a `parseHeapAtom` token, in `metatheory/`.
-        // `cell/tests/heap_allowed_transitions_lean_sourced.rs` measures the gap from the Rust side.
-        HeapAtom::AllowedTransitions { .. } => return None,
+        // What this closes: `dungeon_program.json` uses `allowedTransitions` **576 times**, and
+        // `dreggnet-web`'s `install_verified_settlement_gate` registers this oracle
+        // UNCONDITIONALLY — including debug, where `dregg-sdk`'s installer deliberately does not.
+        // With the atom declined, `eval.rs`'s oracle-installed-but-declined disposition is not
+        // release-gated, so every Descent, dungeon and campaign move refused on a deployed box
+        // (HORIZONLOG E2, a live outage).
+        HeapAtom::AllowedTransitions { allowed } => {
+            if allowed.len() > MAX_LIST {
+                return None;
+            }
+            let mut out = format!("HAT {}", allowed.len());
+            for (old, new) in allowed {
+                out.push(' ');
+                out.push_str(&old.to_string());
+                out.push(' ');
+                out.push_str(&new.to_string());
+            }
+            out
+        }
     })
 }
 
