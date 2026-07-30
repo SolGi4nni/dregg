@@ -1,5 +1,5 @@
 import { Bool, Field, Poseidon, Provable, SelfProof, ZkProgram } from 'o1js';
-import { BbDigest } from './Poseidon2Merkle.js';
+
 import { BbExt } from './FriQueryStep.js';
 import {
   ClaimValue,
@@ -336,9 +336,9 @@ export function makeChainedProofVerify(sh: DreggProofShape, opts: ChainOpts = {}
     Provable.Array(BbExt, layers), //                      carried betas
     Provable.Array(Provable.Array(Bool, nIndexBits), numQueries), // carried indices
     Provable.Array(Provable.Array(Field, totalRow), 1), //           this step's rows
-    Provable.Array(Provable.Array(Provable.Array(BbDigest, maxInputDepth), nBatches), 1),
+    Provable.Array(Provable.Array(Provable.Array(planWalk.suite.Digest, maxInputDepth), nBatches), 1),
     Provable.Array(Provable.Array(BbExt, layers), 1),
-    Provable.Array(Provable.Array(Provable.Array(BbDigest, maxCommitDepth), layers), 1),
+    Provable.Array(Provable.Array(Provable.Array(planWalk.suite.Digest, maxCommitDepth), layers), 1),
   ];
 
   function makeWalk(bindThis: boolean) {

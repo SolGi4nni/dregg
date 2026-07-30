@@ -65,6 +65,9 @@ import {
   partitionTerminalSeal,
 } from '../src/DreggProofPartition.js';
 import {
+  chainSideOf,
+  deepStepArgs,
+  foldStepArgs,
   makeScheduledVerify,
   rcdOfDigests,
   scheduleSideOf,
@@ -224,75 +227,15 @@ const SHAPE = shapeOf(fxA, { constraints: minaFixtureConstraints });
 const WALK_PLAN = verifyPlan({ ...SHAPE, deriveChallenges: false, constraints: undefined });
 const OPTS = { openChunkLanes: OPEN_CHUNK_LANES };
 
-/** Everything the harness needs about one fixture, computed with the SAME
- *  functions the circuit calls. There is no second implementation of the
- *  boundary, of the chunking, or of the reduced openings anywhere in this leg. */
-async function sideOf(chain: ReturnType<typeof makeScheduledVerify>, fx: any) {
-  const claim = claimOf(fx, chain.Claim);
-  const w = witnessOf(fx, SHAPE);
-  const ch = { alphaStark: w[7], zeta: w[8], friAlpha: w[9], betas: w[10], queryBits: w[11] };
-  const s = scheduleSideOf(chain, claim, w[0], w[1], w[2], ch);
-  // ⚑ THE REDUCED OPENINGS ARE COMPUTED BY THE CIRCUIT'S OWN FUNCTION. The fold
-  // half needs them as an input, so a harness that computed them a second way
-  // would be a second verifier — and this way the input-phase Merkle openings
-  // are checked here for free, before any step is proved. It runs inside
-  // `Provable.runAndCheck` because the range checks are lookup gates and a lane
-  // check outside a circuit context is not a check at all: `Snarky.gates` is
-  // undefined there, which is how this was found rather than assumed.
-  const ro: BbExt[][] = [];
-  for (let q = 0; q < NQ; q++) {
-    let limbs: bigint[][] = [];
-    await Provable.runAndCheck(() => {
-      const deep = runQueryInputAndDeep(
-        WALK_PLAN,
-        { inputCommits: claim.inputCommits, commitPhaseCommits: [], finalPoly: [], publicValues: [] },
-        w[0],
-        w[1],
-        { ...ch, queryBits: [w[11][q]] },
-        zetaNextOf(WALK_PLAN, ch.zeta),
-        w[3][q],
-        w[4][q],
-        0,
-      );
-      Provable.asProver(() => {
-        limbs = deep.ro.map((r: any) => r.ro.limbs.map((l: Field) => l.toBigInt()));
-      });
-    });
-    if (limbs.length === 0) fail('the reduced openings came back empty from runAndCheck');
-    ro.push(limbs.map((l) => BbExt.from(l)));
-  }
-  return { claim, w, ch, ro, ...s };
-}
-
-/** A `deep` step's arguments for query `q`. */
-const deepArgs = (S: any, q: number) => [
-  S.claim.inputCommits,
-  S.w[0],
-  S.w[1],
-  S.deepOthers,
-  S.w[7],
-  S.w[8],
-  S.w[9],
-  S.w[10],
-  S.w[11],
-  S.w[3][q],
-  S.w[4][q],
-];
-/** A `fold` step's arguments for query `q`. `roFrom` defaults to query `q`'s own
- *  reduced openings — the intra-query splice is what happens when it does not. */
-const foldArgs = (S: any, q: number, over?: { ro?: BbExt[]; alphaStark?: any; others?: Field[] }) => [
-  S.claim.commitPhaseCommits,
-  S.claim.finalPoly,
-  over?.others ?? S.foldOthers,
-  over?.alphaStark ?? S.w[7],
-  S.w[8],
-  S.w[9],
-  S.w[10],
-  S.w[11],
-  over?.ro ?? S.ro[q],
-  S.w[5][q],
-  S.w[6][q],
-];
+/** ⚑ THESE THREE MOVED TO `DreggProofSchedule.ts` (`chainSideOf`,
+ *  `deepStepArgs`, `foldStepArgs`) so the Pasta chain driver
+ *  (`scripts/pasta-chain.ts`) uses the SAME ones. A per-script copy of the step
+ *  argument order is a second implementation of the step interface, and this
+ *  repo has a named class for two shapes that agree today. */
+const sideOf = (chain: ReturnType<typeof makeScheduledVerify>, fx: any) =>
+  chainSideOf(chain, fx, SHAPE, { claimOf, witnessOf, runQueryInputAndDeep, zetaNextOf });
+const deepArgs = deepStepArgs;
+const foldArgs = foldStepArgs;
 
 // ===========================================================================
 // PHASE `rows` — every `analyzeMethods` measurement, in its own process.

@@ -1,6 +1,6 @@
 import { Bool, Field, Poseidon, Provable, SelfProof, ZkProgram } from 'o1js';
 import { assertLaneLt2p31 } from './Poseidon2BabyBearW16.js';
-import { BbDigest } from './Poseidon2Merkle.js';
+import type { Digestish } from './HashSuiteType.js';
 import { BbExt, assertExtInRange } from './FriQueryStep.js';
 import {
   ClaimValue,
@@ -288,19 +288,19 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
         privateInputs: [
           SelfProof,
           Field, //                                              q
-          Provable.Array(BbDigest, nBatches), //                 the `input` chunk
+          Provable.Array(planWalk.suite.Digest, nBatches), //    the `input` chunk
           Provable.Array(BbExt, nOpenedTrace), //                the `open*` chunks
           Provable.Array(BbExt, nQuotientVals),
           Provable.Array(Field, nDeepOther), //                  every other chunk's DIGEST
           ...challengeArgs,
           Provable.Array(Field, totalRow), //                    this query's opened rows
-          Provable.Array(Provable.Array(BbDigest, maxInputDepth), nBatches),
+          Provable.Array(Provable.Array(planWalk.suite.Digest, maxInputDepth), nBatches),
         ] as any,
         async method(
           bIn: Field,
           prev: SelfProof<Field, Field>,
           q: Field,
-          inputCommits: BbDigest[],
+          inputCommits: Digestish[],
           openedTrace: BbExt[],
           openedQuotient: BbExt[],
           otherDigests: Field[],
@@ -308,10 +308,14 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
         ) {
           const ch = chOf(a);
           const rows: Field[] = a[5];
-          const inputPaths: BbDigest[][] = a[6];
+          const inputPaths: Digestish[][] = a[6];
           for (const e of openedTrace) assertExtInRange(e);
           for (const e of openedQuotient) assertExtInRange(e);
-          for (const d of inputCommits) for (const l of d.limbs) assertLaneLt2p31(l);
+          // ⚑ NOT A LANE CHECK. A BabyBear digest is 8 lanes that must each be
+          // bounded `< 2^31`; a Pasta digest is ONE native `Field` and asserting
+          // `< 2^31` on it would REFUSE every honest proof. The suite knows
+          // which, and that is why this goes through it.
+          for (const d of inputCommits) planWalk.suite.assertInRange(d);
 
           const openAll: Field[] = [];
           for (const e of openedTrace) openAll.push(...e.limbs);
@@ -367,20 +371,20 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
           SelfProof,
           Field, //                                              q
           Bool, //                                               isLast
-          Provable.Array(BbDigest, layers), //   the `fold` chunk: commit-phase...
+          Provable.Array(planWalk.suite.Digest, layers), // the `fold` chunk: commit-phase...
           Provable.Array(BbExt, finalPolyLen), //                ... and final_poly
           Provable.Array(Field, nFoldOther), //                  every other chunk's DIGEST
           ...challengeArgs,
           Provable.Array(BbExt, nRollIns + 1), //  what the DEEP half handed over
           Provable.Array(BbExt, layers), //                      siblings
-          Provable.Array(Provable.Array(BbDigest, maxCommitDepth), layers),
+          Provable.Array(Provable.Array(planWalk.suite.Digest, maxCommitDepth), layers),
         ] as any,
         async method(
           bIn: Field,
           prev: SelfProof<Field, Field>,
           q: Field,
           isLast: Bool,
-          commitPhaseCommits: BbDigest[],
+          commitPhaseCommits: Digestish[],
           finalPoly: BbExt[],
           otherDigests: Field[],
           ...a: any[]
@@ -388,8 +392,8 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
           const ch = chOf(a);
           const ro: BbExt[] = a[5];
           const siblings: BbExt[] = a[6];
-          const commitPaths: BbDigest[][] = a[7];
-          for (const d of commitPhaseCommits) for (const l of d.limbs) assertLaneLt2p31(l);
+          const commitPaths: Digestish[][] = a[7];
+          for (const d of commitPhaseCommits) planWalk.suite.assertInRange(d);
           for (const e of finalPoly) assertExtInRange(e);
           for (const e of ro) assertExtInRange(e);
 
@@ -461,6 +465,96 @@ export function makeScheduledVerify(sh: DreggProofShape, opts: ScheduleOpts = {}
 // The out-of-circuit side — the SAME functions on constants, so the harness and
 // the circuit compute the boundary in one place.
 // ===========================================================================
+
+/**
+ * ⚑ ONE HARNESS FOR BOTH HASHES, and it is here rather than in a driver script
+ * for the same reason `HashSuite` exists: `partition-schedule.ts` (BabyBear) and
+ * `pasta-chain.ts` (Pasta) drive the SAME chain, and a per-script copy of the
+ * argument order is a second implementation of the step interface that would
+ * agree today. Every element below is read out of the shape or computed by the
+ * circuit's OWN functions.
+ */
+export async function chainSideOf(
+  chain: ReturnType<typeof makeScheduledVerify>,
+  fx: any,
+  sh: DreggProofShape,
+  helpers: {
+    claimOf: (fx: any, C: any) => any;
+    witnessOf: (fx: any, sh: DreggProofShape) => any[];
+    runQueryInputAndDeep: any;
+    zetaNextOf: any;
+  },
+) {
+  const claim = helpers.claimOf(fx, chain.Claim);
+  const w = helpers.witnessOf(fx, sh);
+  const ch = { alphaStark: w[7], zeta: w[8], friAlpha: w[9], betas: w[10], queryBits: w[11] };
+  const s = scheduleSideOf(chain, claim, w[0], w[1], w[2], ch);
+  // ⚑ THE REDUCED OPENINGS ARE COMPUTED BY THE CIRCUIT'S OWN FUNCTION. The fold
+  // half needs them as an input, so a harness that computed them a second way
+  // would be a second verifier — and this way the input-phase Merkle openings
+  // are checked here for free, before any step is proved. It runs inside
+  // `Provable.runAndCheck` because the range checks are lookup gates and a lane
+  // check outside a circuit context is not a check at all.
+  const ro: BbExt[][] = [];
+  for (let q = 0; q < chain.numQueries; q++) {
+    let limbs: bigint[][] = [];
+    await Provable.runAndCheck(() => {
+      const deep = helpers.runQueryInputAndDeep(
+        chain.planWalk,
+        { inputCommits: claim.inputCommits, commitPhaseCommits: [], finalPoly: [], publicValues: [] },
+        w[0],
+        w[1],
+        { ...ch, queryBits: [w[11][q]] },
+        helpers.zetaNextOf(chain.planWalk, ch.zeta),
+        w[3][q],
+        w[4][q],
+        0,
+      );
+      Provable.asProver(() => {
+        limbs = deep.ro.map((r: any) => r.ro.limbs.map((l: Field) => l.toBigInt()));
+      });
+    });
+    if (limbs.length === 0)
+      throw new Error('the reduced openings came back empty from runAndCheck');
+    ro.push(limbs.map((l) => BbExt.from(l)));
+  }
+  return { claim, w, ch, ro, ...s };
+}
+
+/** A `deep` step's arguments for query `q`, in method-declaration order. */
+export const deepStepArgs = (S: any, q: number) => [
+  S.claim.inputCommits,
+  S.w[0],
+  S.w[1],
+  S.deepOthers,
+  S.w[7],
+  S.w[8],
+  S.w[9],
+  S.w[10],
+  S.w[11],
+  S.w[3][q],
+  S.w[4][q],
+];
+
+/** A `fold` step's arguments for query `q`. `over.ro` defaults to query `q`'s own
+ *  reduced openings — the intra-query splice is what happens when it does not. */
+export const foldStepArgs = (
+  S: any,
+  q: number,
+  over?: { ro?: BbExt[]; alphaStark?: any; others?: Field[] },
+) => [
+  S.claim.commitPhaseCommits,
+  S.claim.finalPoly,
+  over?.others ?? S.foldOthers,
+  over?.alphaStark ?? S.w[7],
+  S.w[8],
+  S.w[9],
+  S.w[10],
+  S.w[11],
+  over?.ro ?? S.ro[q],
+  S.w[5][q],
+  S.w[6][q],
+];
 
 /** Everything a harness needs to drive one scheduled chain over one proof. */
 export function scheduleSideOf(
