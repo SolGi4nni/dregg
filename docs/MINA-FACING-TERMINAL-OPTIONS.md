@@ -24,6 +24,36 @@ The answer is **no**, and the reason is not a FRI knob.
 > measurement: **453 → 560** deployed slices and **53 → 80** Pasta slices, in this table's own
 > currency. The table is left as written so the two can be read against each other, which is the
 > whole point of §0.1 being below §0.
+>
+> ⚑⚑ **AND ON 2026-07-30 THE ROW STOPPED BEING A PROJECTION.** Every figure above — including
+> the re-derivation — is a measured unit price times a structural count, and until this date the
+> proof any o1js circuit had actually *consumed* was a **two-round fixture**, because
+> `DreggProofVerify.verifyPlan` threw on `nBatches !== 2` and dregg's root has **four** PCS
+> rounds. The consumer now takes the root's real shape (four rounds, five heights, the
+> mixed-height MMCS injection schedule, the 2,630-term census) at **either** hash, and
+> `npm run root-consume-rows` reads it with `getRows()`:
+>
+> | | deployed hash | Pasta hash |
+> |---|---:|---:|
+> | input phase, one query | 759,797 | **4,171** |
+> | DEEP quotient, one query | 161,312 | **161,313** |
+> | fold chain, one query | 615,929 | **6,258** |
+> | ×19 queries + the once-per-proof term | 29,234,449 | **3,293,825** |
+> | **slices @ 54,300** | **539** | **61** |
+>
+> So the Pasta answer is **61 slices, MEASURED** — against 54 projected here and 80 projected by
+> `cost-model-gate`. The disagreement is attributed by segment class rather than left as a
+> percentage: the **input** term is −65.7% (the `witnessLane` conservatism the cost gate names)
+> and the **DEEP** term — ~90% of the Pasta budget — is −21.5%, which it does *not* name. The
+> gate sizes its own margin at "~2%"; end to end it is 23%, in the safe direction.
+>
+> ⚠ Two scope facts belong with the number. The root's challenges are **carried** here, not
+> derived — §3.14's residual 1, the one the braid and the uniform walk already carry — so the
+> batch-STARK preamble is outside this measurement, as it is outside the model's "FRI walk" row.
+> And the Pasta column is a **re-hash**: the rows, heights, indices, census and opening points are
+> dregg's committed root's, while the MMCS digests are re-committed over a sparse tree of the 19
+> opened leaves, because a Pasta-hashed root is a re-mint (`DreggMinaConfig`) and not a re-read.
+> Cost is a function of the former. The BabyBear column is the committed object outright.
 
 **The single biggest lever is not the FRI parameters and not the shrink. It is which hash the
 Mina-facing proof commits with.** `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` §0 already states the

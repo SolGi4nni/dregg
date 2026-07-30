@@ -48,18 +48,40 @@ Nothing in it compiles a circuit.
 | `root-fri-braid` @0 | 1–3 s | the 11,303-segment walk against p3's own α, βs and query indices |
 | `root-fri-uniform` @0 | 6–13 s | the homogeneity, the plan, **all 820 chain boundaries** |
 | `root-fri-preamble` @0 | 1–4 s | the batch-STARK preamble differential and its discriminating polarities |
+| `root-consume-differential` | **4.7 s** | the FOUR-ROUND consume against dregg's committed root: 76 mixed-height openings, 1,672 Merkle levels, 95 reduced openings and 304 commit-phase openings against p3's own, plus five bends (four refused, one three-valued NOT ATTRIBUTABLE) |
 | `fri-walk-plan`, `kat`, `merkle-constraints` | ~5 s | the cut list, the Poseidon vectors, the hashing-row extrapolation |
 
-Measured on an idle box: **25 s**. Measured while a tier-1 run competed for the
-same machine: **39 s**. Against the 3000-second budget the row used to carry.
+Measured on an idle box: **25 s**, and **34 s** once
+`root-consume-differential` landed (2026-07-30) — that leg is 4.7 s of it,
+timed on its own. Measured while a tier-1 run competed for the same machine:
+**39 s**. Against the 3000-second budget the row used to carry.
+
+⚑ The new leg is exactly what tier 0 is for, and it earned its place the way the
+table above says legs do: extending the consumer from two PCS rounds to four adds
+four ways to be silently wrong — which matrices seed the leaf, at which level a
+shorter one is injected, which way that injection compresses, and which index bits
+a level consumes — and **every one of them compiles, proves, and gives a beautiful
+row count**. All four are put to the committed proof's own round commitments here,
+before anything is built.
 
 ### Tier 1 — pre-merge. One representative instance per family, compiled and proved.
 
 `gate` (the zkApp), `poseidon2-rows` (the hash), `probe` (the Rust emitting
 side), `fri-chain` (the FRI family — the leg that *found* the coset-descent bug),
 `dregg-verify` (the assembly), `root-air` + `root-air-real` (the root's own AIR),
-`partition` (the chain family), `cellcommit-native` (Route B), and the three walk
-legs at their full selves.
+`partition` (the chain family), `cellcommit-native` (Route B),
+`root-consume-rows` (the real root consumed and PROVED at the Pasta hash — and
+the falsifier for the lookup-table defect, below), and the three walk legs at
+their full selves.
+
+⚑ **`root-consume-rows` carries a falsifier for a defect the tiering itself
+cannot see.** A `ZkProgram` of Pasta lane checks alone compiles, analyses and
+passes `runAndCheck`, then dies in `prove()` with *"the lookup failed to find a
+match in the table"* — kimchi installs the 12-bit table only for a circuit that
+also carries a `RangeCheck0`, and the deployed BabyBear hash had been supplying
+one for every Pasta circuit in the tree. The leg proves the anchored body and
+**requires the bare one to fail with that exact error**, which is why the anchor
+is at tier 1 and not merely present.
 
 ✅ **The tier-1/tier-2 red closed 2026-07-30** (was: `root-fri-braid` [5] exiting
 1 with `1 splice(s) were NOT ATTEMPTED at this cut`). Nothing was wrong with the

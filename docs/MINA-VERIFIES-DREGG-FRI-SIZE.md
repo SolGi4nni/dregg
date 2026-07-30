@@ -2843,7 +2843,12 @@ this budget and is **7.4%**; the DEEP quotient was 10% and is **86.0%**.
 | the compile lever (§5.1) | 839 → 46 keys, the cheapest real win | still real, still orthogonal, and now **second-order against the columns** |
 | **column narrowing** | "then, and only then" | ⚑ **THE LEVER.** 2.50 × 10⁶ rows over ~2,342 opened values at ζ = **1,067 rows per opened value**. Halving the root's committed column count is **54 slices → 31.** |
 
-#### ⚑ THE LARGEST REMAINING GAP, and it is not a soundness one
+#### ⚑ THE LARGEST REMAINING GAP — ✅ CLOSED ON THE CONSUMER SIDE, 2026-07-30
+
+*See §3.32. `verifyPlan`'s `nBatches !== 2` throw is gone, the consumer takes
+dregg's committed four-round root at either hash, and the answer is MEASURED at
+**61 Pasta slices** rather than projected at 54. The paragraphs below are the gap
+as it stood; the half that is still open is named at the end of §3.32.*
 
 **The two halves of "Mina verifies dregg" are each missing what the other has.**
 
@@ -2864,6 +2869,105 @@ the walk at the root's shape does not consume a proof and does not hash natively
 **Neither half is both, and closing it is engineering rather than research:**
 `RootFriSlice` takes the same `HashSuite` parameter `commitPhaseRound` already
 takes, and `verifyPlan`'s two-batch refusal becomes per-round point wiring.
+
+### 3.32 ⚑ THE CONSUMER TAKES THE REAL ROOT — four rounds, five heights, both hashes, MEASURED
+
+*2026-07-30. `src/RootConsume.ts`, `src/DreggProofVerify.ts`;
+`npm run root-consume-differential` (tier 0, 4.7 s) and `npm run root-consume-rows`
+(tier 1). Commits `a78740745`, `2fa1234a8`.*
+
+`verifyPlan` no longer refuses a third PCS round. The wiring that made the
+refusal correct — *"batch 0 is the trace, everything else is a quotient chunk"* —
+is deleted rather than widened: `MatrixShape.pointScales` declares the constant
+multiples of ζ each matrix opens at, and `runQueryInputAndDeep` implements
+`MerkleTreeMmcs::verify_batch` over **mixed heights**, sponging the tallest
+matrices' rows into the leaf and compressing each shorter matrix's row digest in
+at the level its padded height names. A single-height batch degenerates to the
+flat path the two-round fixture always walked, which is why **no measured
+BabyBear row count moves** (`npm run schedule` 14/14 recorded figures unchanged;
+`dregg-verify` 56,927 / 827,887 unchanged).
+
+**THE OUT-OF-CIRCUIT DIFFERENTIAL RAN FIRST**, as everything that has found a
+defect in this arc did. On `.fullchain/real-root-fri.json`, in 4.7 seconds,
+nothing compiled: 4 rounds, 35 matrices, heights [22, 21, 16, 9, 6], census
+**2,630**; all **76** input-phase openings (19 queries × 4 rounds, 1,672 Merkle
+levels, 76 leaf sponges + 304 injected sponges) reproduce the commitments p3
+emitted; all 95 reduced openings and all 304 commit-phase openings reproduce
+p3's; the roll-in schedule DERIVED from the heights is the emitted [0, 5, 12, 15].
+
+Four bends, each **REFUSED at all 76 openings**: no injection at all (the
+two-round reading); the injection compressed the other way round; every injection
+one level late; the leaf sponged over the whole batch row. A fifth — the level's
+index bits taken from the global max height — is **NOT ATTRIBUTABLE**, with its
+reason: every round tops out at the global max height, so the bend is a no-op.
+
+⚑ **And the instance that opens at ζ TWICE.** Instance 6 sits at `degree_bits =
+0`, so its next-row point is `ζ·g_0 = ζ`. Its permutation matrix opens at ζ twice
+and both points are wired to distinct opened-value runs; a wiring that deduped
+equal points would drop **100 DEEP terms** and still produce a number.
+
+#### The measurement
+
+| | deployed hash | Pasta hash |
+|---|---:|---:|
+| input phase, one query | 759,797 | **4,171** |
+| DEEP quotient, one query | 161,312 | **161,313** |
+| fold chain, one query | 615,929 | **6,258** |
+| ×19 + the once-per-proof term | 29,234,449 | **3,293,825** |
+| **slices @ 54,300** | **539** | **61** |
+
+**8.9× measured**, at the root's real geometry; the input phase alone is 182×.
+The DEEP quotient agrees to **one row** between the hashes, which is what "no
+hash choice touches it" means once it is measured. And the disagreement with the
+projection is attributed by segment class rather than reported as a mood: the
+**input** term is −65.7% (the `witnessLane` conservatism `cost-model-gate`
+names), the **DEEP** term −21.5% (which it does not). The gate sizes its own
+margin at "~2%"; end to end it is **23%**, in the safe direction.
+
+**PROVED on the real object**: the four-round Pasta input phase over 7 of the 19
+real queries, 48,224 rows = 88.8% of the measured ceiling, compiled 25.8 s,
+proved 11.2 s, verified, public output the 7 DERIVED query indices. Three bends
+refused — a bent opened row lane, a bent path sibling **at an injection level**,
+and query 0 re-declaring itself as query 1 — with the honest object still proving
+after all three.
+
+#### ⚑ A DEFECT NOTHING COULD HAVE FOUND BEFORE THIS MERGE
+
+A `ZkProgram` whose whole body is eight `assertLt2p31` calls on honest in-range
+lanes **compiles, analyses (21 rows), passes `runAndCheck`** — and dies in
+`prove()`:
+
+```
+Error: the lookup failed to find a match in the table: row=16
+```
+
+kimchi installs the fixed 12-bit table only for a circuit that also carries a
+`RangeCheck0`, and `Gadgets.rangeCheck3x12` emits none. Every Pasta circuit in
+this tree also ran BabyBear extension arithmetic, whose `quotientTimesP` calls
+`rangeCheck64` — so **the deployed hash was installing the Mina-native hash's
+lookup table**, and the dependency was invisible for exactly as long as nobody
+built a Pasta-only body. The four-round merge is the first thing that can: a
+Pickles step holding only mixed-height MMCS openings has no BabyBear arithmetic
+in it at all.
+
+The fix is `MerkleSuite.anchorLookupTable` — absent for BabyBear, one
+`RangeCheck0` for Pasta — and the falsifier is `root-consume-rows` [4], which
+proves the anchored body and **requires the bare one to fail with that exact
+error**, so the anchor cannot become a dead no-op.
+
+#### What is still missing from which half
+
+`RootFriWalk.priceForSuite` closes the pricing half: the real-geometry model can
+now be costed at either hash, importing `CostModel`'s constants rather than
+re-deriving them, and refusing an unknown suite by name.
+
+⚠ **Pricing is not execution, and this is the open item.** `RootFriSlice`'s
+segment executor still calls `compressBB` / `condSwap` directly and its state
+slots are eight lanes wide (`LANES_PER_DIGEST`), so the **sliced** chain — the
+braid and the uniform walk — runs the deployed hash whatever `priceForSuite`
+returns. The path that is both four-round and hash-agnostic is the **consumer**,
+and that is what §3.32 measures. Making the slice executor's digest width a
+function of the suite is the remaining engineering.
 
 #### The other residuals, unchanged by this work and named so they are not read as closed
 
