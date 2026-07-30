@@ -4233,12 +4233,19 @@ async fn post_submit_signed_turn(
     // destination-not-found — wedging cross-node commit (the exact faucet full-mode
     // hazard). Both regimes execute IN PLACE under this exclusive write lock, with
     // the IDENTICAL provisioning the finalized path applies; the difference is the
-    // FATE of the mutation (resolved just below):
-    //  * MULTI-PARTY rolls the journal back so the authoritative ledger ends
-    //    UNTOUCHED (the in-place run only built the HTTP receipt) — the O(touched)
-    //    stand-in for the old full SCRATCH CLONE, byte-identical outcome.
-    //  * SOLO (n=1) has no finalization pass, so it keeps the in-place commit
-    //    authoritatively (rolled back only if the receipt-chain append fails).
+    // FATE of the mutation (resolved just below), and it is THE SAME AT EVERY COMMITTEE
+    // SIZE: the journal is rolled back and the authoritative ledger ends UNTOUCHED. The
+    // in-place run only builds the HTTP receipt — the O(touched) stand-in for the old
+    // full SCRATCH CLONE, byte-identical outcome.
+    //
+    // ⚑ THIS PARAGRAPH USED TO CARRY A SECOND BULLET SAYING "SOLO (n=1) has no
+    // finalization pass, so it keeps the in-place commit authoritatively", AND THE CODE
+    // BELOW HAS NOT DONE THAT SINCE `5f0999ab9` (2026-07-21) — `rollback_restore_point()`
+    // at the end of this block is unconditional, with its own comment saying so. A reader
+    // trusting the older bullet concludes that a solo `POST /turns/submit` mutates state,
+    // which is how `relay_slash_submit`'s weld test came to POST an envelope and then
+    // assert on `state.ledger`: it was red for nine days and its message ("bond
+    // decremented by the seizure") named the cell program, which was never at fault.
     // The actor cell is already the signer's canonical account here: the claim
     // above ran inside this same restore point and validation could not have
     // passed otherwise. Only the Transfer destinations remain.
@@ -12115,6 +12122,17 @@ mod tests {
 
     /// `build_effect` maps each spec variant to the right `Effect`, resolving
     /// the cell default against the action target.
+    ///
+    /// ⚑ THE SetField READ SIDE IS `dregg_cell::field_to_u64`, NOT
+    /// `u64::from_le_bytes(value[..8])`. This test pinned the little-endian
+    /// `0..8` decode that `parse_field_element`'s scalar branch stopped
+    /// producing when it moved onto the canonical big-endian `24..32` lane —
+    /// the SAME stale pin its sibling `parse_field_element_handles_hex_and_scalar`
+    /// had already been repaired for, and the same reason: a `0..8` write lands
+    /// in the high lanes the deployed `setFieldVmDescriptor2-{slot}R24` FREEZES,
+    /// so a value this assertion accepted could not prove at all. Asserting the
+    /// frozen prefix (bytes `0..24`) is clear is the property the descriptor
+    /// actually requires, so a future re-drift to little-endian reds here.
     #[test]
     fn build_effect_resolves_cell_defaults() {
         let target = CellId([0x42; 32]);
@@ -12133,7 +12151,15 @@ mod tests {
             dregg_turn::Effect::SetField { cell, index, value } => {
                 assert_eq!(cell, target, "absent cell defaults to action target");
                 assert_eq!(index, 4);
-                assert_eq!(u64::from_le_bytes(value[..8].try_into().unwrap()), 9);
+                assert_eq!(
+                    dregg_cell::field_to_u64(&value),
+                    9,
+                    "the scalar rides the canonical u64 lane (big-endian bytes 24..32)"
+                );
+                assert!(
+                    value[..24].iter().all(|b| *b == 0),
+                    "a scalar must leave the frozen prefix clear or the setField cannot prove"
+                );
             }
             other => panic!("expected SetField, got {other:?}"),
         }

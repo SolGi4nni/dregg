@@ -418,6 +418,32 @@ mod tests {
             "the route executed exactly the prepared turn"
         );
 
+        // ⚑ ADMISSION IS NOT APPLICATION, AND THIS TEST USED TO CONFLATE THEM.
+        // `POST /turns/submit` executes against an UNDO JOURNAL purely to build the receipt for the
+        // HTTP response and then rolls the ledger back — at EVERY committee size, n=1 included
+        // (`api.rs`, "This ingress run is admission staging only … so roll it back
+        // unconditionally", landed `5f0999ab9` 2026-07-21). Consensus finalization is the sole
+        // authoritative application. So the `accepted: true` above is the pipeline's real
+        // guarantee, and reading `state.ledger` here found the bond at its seeded 10_000 — not
+        // because the cell program refused (the intake module's weld test proves it does not) but
+        // because nothing had applied anything yet. Drive the authoritative half, the same
+        // `execute_finalized_turn` a finalized block reaches, and assert the LANDING on its far
+        // side. The router this test builds installs no blocklace handle, so the `submit_turn`
+        // the handler spawns has nowhere to go; this stands in for that block.
+        let outcome = crate::blocklace_sync::finalize_admitted_turn_for_test(
+            &state,
+            dregg_blocklace::finality::BlockId([0x5Au8; 32]),
+            &prepared.envelope,
+        )
+        .await;
+        assert!(
+            matches!(
+                outcome,
+                crate::execution_cursor::FinalizedExecutionOutcome::Committed { .. }
+            ),
+            "the admitted slash turn must COMMIT through finalization; got {outcome:?}"
+        );
+
         // THE LANDING: the relay cell's bond/dispute slots advanced on the
         // node's authoritative ledger — the executor-enforced cell-program
         // transition, reached through the submit pipeline.

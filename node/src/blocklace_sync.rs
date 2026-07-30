@@ -7328,6 +7328,40 @@ async fn execute_finalized_turn(
         return outcome;
     }
 
+    // ⚑ AND THE EXEMPTION ABOVE HAD NO EFFECT, BECAUSE THE EXECUTOR RE-DECIDES IT.
+    //
+    // `configure_turn_executor` seeds `TurnExecutor::last_receipt_hash` from the WHOLE durable
+    // receipt log (`executor_state_admission::restore_executor_receipt_heads`), so when the crash
+    // image this branch exists for is present — the ingress receipt for THIS turn durable, the
+    // ledger mutation lost — the executor's seeded head for `agent` is the receipt we just found,
+    // i.e. one link PAST the turn we are about to re-execute. `check_previous_receipt_hash` then
+    // refuses with `ReceiptChainMismatch { expected: Some(<the staged receipt>), got: None }`, the
+    // turn comes back `Rejected`, no attested root is written, and `latest_height` stays 0 — the
+    // exact symptom `solo_finalization_recovers_receipt_durable_ledger_absent_crash` reports.
+    // The `staged_solo_receipt` check above passed and then decided nothing.
+    //
+    // Rewind the seeded head to the staged receipt's OWN predecessor, so the re-execution sees the
+    // identical chain state the original ingress saw and can reproduce the identical receipt. This
+    // relaxes ONLY the chain-continuity leg, and only for a turn whose receipt is already in this
+    // node's log at this exact `turn_hash`: the anti-replay authority is the actor cell's NONCE in
+    // the authoritative ledger, which is untouched here. A genuine replay of an already-APPLIED
+    // turn still meets a bumped nonce and is refused `NonceReplay`; only the crash image (ledger
+    // pre-turn, receipt durable) proceeds, which is precisely the case this arm names.
+    if let Some((_, staged)) = staged_solo_receipt.as_ref() {
+        let mut heads = executor
+            .last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match staged.previous_receipt_hash {
+            Some(prev) => {
+                heads.insert(agent, prev);
+            }
+            None => {
+                heads.remove(&agent);
+            }
+        }
+    }
+
     // boundary-P1 (bug 1): plumb the NODE-fed admission context onto the per-turn executor so the
     // verified Lean shadow's clock / chain-head / budget legs are decided by THIS node's own state
     // (not the turn). `TurnExecutor::execute` reads these (`get_last_receipt_hash` / `budget_gate`
@@ -9105,6 +9139,28 @@ fn decode_blocklace_witnessed_receipt_artifact(
             format!("DWR1 decode failed ({dwr1_err}); legacy decode failed ({legacy_err})")
         })
     })
+}
+
+/// Drive the SOLE AUTHORITATIVE APPLICATION of one already-admitted `SignedTurn`, for a test in
+/// another module of this crate.
+///
+/// ⚑ WHY THIS EXISTS. `POST /turns/submit` is ADMISSION STAGING at every committee size, n=1
+/// included: `api.rs` arms an undo journal, executes to build the receipt for the HTTP response,
+/// and then rolls the ledger back UNCONDITIONALLY. Consensus finalization — this function's
+/// `execute_finalized_turn` — is the only thing that mutates authoritative state. A test that
+/// POSTs an envelope and then reads `state.ledger` therefore observes NOTHING, no matter how
+/// correct the turn is, and its failure looks like an executor or cell-program defect rather than
+/// a missing half of the pipeline. `relay_slash_submit`'s weld test read exactly that way for nine
+/// days. Rather than each caller reconstructing a `BlocklaceHandle`, there is ONE entry.
+#[cfg(test)]
+pub(crate) async fn finalize_admitted_turn_for_test(
+    state: &NodeState,
+    block_id: BlockId,
+    turn_data: &[u8],
+) -> crate::execution_cursor::FinalizedExecutionOutcome {
+    let self_key = { state.read().await.cclerk.public_key().0 };
+    let handle = tests::test_handle_with_committee(self_key, vec![self_key]).await;
+    execute_finalized_turn(state, &handle, block_id, turn_data, None, None, 0).await
 }
 
 #[cfg(test)]
@@ -12103,6 +12159,12 @@ mod tests {
     /// and reds this test.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn solo_finalization_recovers_receipt_durable_ledger_absent_crash() {
+        // The finalized executor reports WHY it refused only through `warn!`
+        // ("finalized turn rejected; …  reason = …"); the returned outcome keeps
+        // the coarse durable code. A lib-test binary installs no subscriber, so
+        // that reason was unreachable without re-running the whole node. nextest
+        // captures this and prints it only on failure.
+        let _ = tracing_subscriber::fmt::try_init();
         let _ = rustls::crypto::ring::default_provider().install_default();
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
@@ -12131,25 +12193,43 @@ mod tests {
         let dest = dregg_cell::CellId::derive_raw(&dest_pk, &default_token);
         {
             let mut s = state.write().await;
+            // ⚑ A USER'S PQ IDENTITY LIVES IN ITS OWN CELL. The hybrid admission predicate anchors
+            // the ML-DSA key an envelope carries in the ACTING CELL's own identity commitment
+            // (`with_hybrid_balance`), which is the only place a spender's PQ half is authoritative.
+            // While this fixture had the sender enrolled as the sole VALIDATOR, the roster stood in
+            // for that commitment; with the committee corrected to the node, a bare
+            // `with_balance` sender is refused "required post-quantum target-cell identity is not
+            // committed in the live cell" — correctly, and at ingress rather than at finalization.
             s.ledger
-                .insert_cell(dregg_cell::Cell::with_balance(
-                    sender_pk,
-                    default_token,
-                    1_000_000,
-                ))
+                .insert_cell(
+                    dregg_cell::Cell::with_hybrid_balance(
+                        sender_pk,
+                        &sender_cclerk.ml_dsa_public_bytes(),
+                        default_token,
+                        1_000_000,
+                    )
+                    .expect("canonical ML-DSA-65 sender identity"),
+                )
                 .expect("fund sender");
             s.ledger
                 .insert_cell(dregg_cell::Cell::with_balance(dest_pk, default_token, 0))
                 .expect("seed destination");
-            let pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
-                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender_seed)
-                    .public_bytes()
-                    .try_into()
-                    .expect("fixed-size ML-DSA public key");
-            s.set_federation_keys_hybrid(
-                vec![sender_cclerk.public_key()],
-                vec![dregg_federation::frost::MlDsaPublicKey(pq)],
+            // ⚑ THE COMMITTEE IS THIS NODE, NOT THE SENDER. This fixture used to install the
+            // SENDER's keypair as the sole validator — a committee the node itself is not a member
+            // of. The node then signs its own faithful note-root envelope and attested root with
+            // `cclerk.gossip_signing_key()`, and `execute_finalized_turn` only stamps that
+            // signature when `federation_keys.contains(&local_pk)`; with a foreign committee the
+            // root went out with EMPTY `quorum_signatures` and `PersistentStore` correctly refused
+            // the durable commit — `Integrity("faithful note-root attestation has no valid author
+            // signature")` — so nothing was ever written and `latest_height` stayed 0. That is the
+            // class `node/src/init.rs`'s header already names: "the key and the committee have to
+            // be minted together or they do not match". A SOLO node's committee IS its own key;
+            // the sender is a USER, and a user has never needed to be a validator to spend.
+            let self_pk = s.cclerk.public_key();
+            let (self_ml_dsa, _) = dregg_federation::frost::MlDsaSigningKey::from_seed(
+                &s.cclerk.gossip_signing_key().to_bytes(),
             );
+            s.set_federation_keys_hybrid(vec![self_pk], vec![self_ml_dsa]);
         }
 
         // The federation id the EXECUTOR verifies action signatures against, read after the
@@ -12225,7 +12305,18 @@ mod tests {
         let self_key = [0x9Au8; 32];
         let handle = test_handle_with_committee(self_key, vec![self_key]).await;
         let block_id = BlockId([0x22u8; 32]);
-        execute_finalized_turn(&state, &handle, block_id, &turn_data, None, None, 0).await;
+        let outcome =
+            execute_finalized_turn(&state, &handle, block_id, &turn_data, None, None, 0).await;
+        // ⚑ ASSERT THE OUTCOME, NOT ONLY ITS SHADOW. This return value — the one thing that
+        // NAMES why a finalized turn did not commit (`DeterministicallyRejected { reason_code }`,
+        // `FatalIntegrity { error }`) — was discarded, so every failure of this test arrived as a
+        // bare `attested height 0 != 1` and the reason was reachable only by re-running the node
+        // under a tracing subscriber. Demanding `Committed` here makes the diagnosis the failure
+        // message.
+        assert!(
+            matches!(outcome, FinalizedExecutionOutcome::Committed { .. }),
+            "the crash-image finalization must COMMIT the already-receipted turn; got {outcome:?}"
+        );
 
         // (a) THE FIX: the turn genuinely finalizes — attested height advances 0 -> 1.
         let height_after = {
@@ -12288,36 +12379,30 @@ mod tests {
         {
             let mut s = state.write().await;
             s.ledger
-                .insert_cell(dregg_cell::Cell::with_balance(
-                    sender2_pk,
-                    default_token,
-                    1_000_000,
-                ))
+                .insert_cell(
+                    dregg_cell::Cell::with_hybrid_balance(
+                        sender2_pk,
+                        &sender2_cclerk.ml_dsa_public_bytes(),
+                        default_token,
+                        1_000_000,
+                    )
+                    .expect("canonical ML-DSA-65 sender2 identity"),
+                )
                 .expect("fund sender2");
-            let pq1: [u8; dregg_pq::ML_DSA_PK_LEN] =
-                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender_seed)
-                    .public_bytes()
-                    .try_into()
-                    .expect("fixed-size ML-DSA public key");
-            let pq2: [u8; dregg_pq::ML_DSA_PK_LEN] =
-                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender2_seed)
-                    .public_bytes()
-                    .try_into()
-                    .expect("fixed-size ML-DSA public key");
-            s.set_federation_keys_hybrid(
-                vec![sender_cclerk.public_key(), sender2_cclerk.public_key()],
-                vec![
-                    dregg_federation::frost::MlDsaPublicKey(pq1),
-                    dregg_federation::frost::MlDsaPublicKey(pq2),
-                ],
-            );
         }
-        // The committee just changed (two members now), so the executor's federation id changed
-        // with it — re-read it rather than reusing the one-member id above.
+        // The committee is UNCHANGED (this node, alone) — funding a second USER does not enroll a
+        // validator. This block used to widen the committee to {sender, sender2}, which is the same
+        // "the node is not in its own committee" defect as the first install and would have failed
+        // the second durable commit for the same reason. Re-read the id anyway so the fixture keeps
+        // signing against whatever `federation_id_for_executor` reports rather than a cached value.
         let federation_id2 = {
             let s = state.read().await;
             crate::executor_setup::federation_id_for_executor(&s)
         };
+        assert_eq!(
+            federation_id2, federation_id,
+            "funding a user must not rotate the solo committee's federation id"
+        );
         let signed2 =
             signed_transfer_turn(&sender2_cclerk, sender2, dest, 1_000, 0, &federation_id2);
         let turn_data2 = postcard::to_stdvec(&signed2).expect("encode signed turn 2");
@@ -12591,7 +12676,7 @@ mod tests {
     /// Build a minimal real [`BlocklaceHandle`] over a live gossip network for a
     /// committee of `participants`, so `handle_peer_addrs` can be exercised
     /// end-to-end (it learns into the REAL gossip topic peer set).
-    async fn test_handle_with_committee(
+    pub(crate) async fn test_handle_with_committee(
         self_key: [u8; 32],
         participants: Vec<[u8; 32]>,
     ) -> BlocklaceHandle {
