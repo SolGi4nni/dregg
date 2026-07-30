@@ -45,8 +45,8 @@ use dregg_app_framework::TurnReceipt;
 pub use dreggnet_asset::AssetId;
 use dungeon_on_dregg::descent::{
     ASCEND, BANKED, BREATH, BankedRelicMint, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, HARMCAP,
-    LOOT, LUNGE, PROGRAM_JSON, RELICS, SMITE, Sim, UNLOCK, day_index, day_seed_from_deploy_seed,
-    day_world,
+    LOOT, LUNGE, PROGRAM_JSON, RELICS, SMITE, Sim, TAKE, UNLOCK, day_index,
+    day_seed_from_deploy_seed, day_world,
 };
 /// **The world's presentation constants**, re-exported so a FRONTEND can size a light bar or a
 /// carry meter against the same Lean-sourced numbers this surface does, without its own dependency
@@ -181,6 +181,11 @@ pub enum NativeDescentMove {
     Loot {
         relic: u64,
     },
+    /// **Lift a hung key back out of the door it was turned in.** `Loot` minus the guardian,
+    /// one zone over — and the only way a key that was spent on a way ever comes home.
+    Take {
+        relic: u64,
+    },
     Flee,
 }
 
@@ -202,6 +207,12 @@ impl NativeDescentMove {
                 relic: u64::try_from(action.arg)
                     .expect("the matched native relic argument is non-negative"),
             }),
+            // Only the three way-keys can hang, so only they are addressable — a `take` naming
+            // the crown or a treasure is the stale-control refusal below, not a turn.
+            (TAKE, 1..=3) => Ok(Self::Take {
+                relic: u64::try_from(action.arg)
+                    .expect("the matched native relic argument is non-negative"),
+            }),
             (FLEE, 0) => Ok(Self::Flee),
             // ⚑ BOTH ARMS ARE THE STALE-CONTROL CONDITION, and both used to `{verb:?}` a raw wire
             // string at the reader (a `Debug` dump, quotes and escapes included, of a value that was
@@ -209,7 +220,12 @@ impl NativeDescentMove {
             // offer, and a verb this build does not know at all, are the same thing from the reader's
             // side: the control they used is not one the live Descent offers. One shared sentence,
             // from `crate::refusal` — the same one tug, the web, Telegram and Discord say.
-            (verb, _) if matches!(verb, DELVE | ASCEND | UNLOCK | SMITE | LUNGE | LOOT | FLEE) => {
+            (verb, _)
+                if matches!(
+                    verb,
+                    DELVE | ASCEND | UNLOCK | SMITE | LUNGE | LOOT | TAKE | FLEE
+                ) =>
+            {
                 Err(stale_control_refresh())
             }
             _ => Err(stale_control_refresh()),
@@ -230,6 +246,14 @@ impl NativeDescentMove {
                     )
                 })?;
                 game.loot(relic)
+            }
+            Self::Take { relic } => {
+                let relic = usize::try_from(relic).map_err(|_| {
+                    WorldError::Refused(
+                        "relic index exceeds the native executor address space".to_string(),
+                    )
+                })?;
+                game.take(relic)
             }
             Self::Flee => game.flee(),
         }
@@ -262,6 +286,12 @@ impl NativeDescentMove {
             // …and the same discipline for the climb: tag 6, nothing below it moves.
             Self::Ascend => {
                 hasher.update(&[6]);
+            }
+            // …and for the lift: tag 7. Every tag 0–6 keeps its byte, so no existing run's
+            // move-tape hash changes because `take` arrived.
+            Self::Take { relic } => {
+                hasher.update(&[7]);
+                hasher.update(&relic.to_be_bytes());
             }
         }
     }
@@ -976,6 +1006,25 @@ impl NativeDescentOffering {
                 LOOT,
                 i64::try_from(relic).expect("the fixed native relic set fits the action wire"),
                 sim.loot(relic).is_ok(),
+            )
+        }));
+        // ⚑ THE VERB WITHOUT WHICH A TURNED KEY IS GONE FOREVER. `unlock` sets the key down in
+        // the door it opened (custody `HUNG + depth`), and `flee` promotes `CARRIED` and only
+        // `CARRIED` — so until this affordance existed, every frontend let a player spend a key
+        // and gave them no way on any surface to pick it back up, while the deployed program had
+        // carried a `take` case for it the whole time. Only the three way-keys can hang, so only
+        // they get the control; the mover decides `enabled`, exactly as it does for every row
+        // above.
+        actions.extend((1..FLOORS as usize).map(|relic| {
+            Action::new(
+                format!(
+                    "{GLYPH_KEY} Lift the {} back out of its door{}",
+                    relic_label(relic),
+                    light_cost(LIGHT_TAKE)
+                ),
+                TAKE,
+                i64::try_from(relic).expect("the fixed native relic set fits the action wire"),
+                sim.take(relic).is_ok(),
             )
         }));
         // Every frontend consumes this one list directly. Keep the complete action vocabulary —
@@ -2688,6 +2737,10 @@ const LIGHT_UNLOCK: u64 = 1;
 const LIGHT_SMITE: u64 = 2;
 const LIGHT_LUNGE: u64 = 1;
 const LIGHT_LOOT: u64 = 1;
+/// Lifting a hung key back out of its door — `loot`'s price exactly, with no guardian to
+/// fell first. Same number, different verb, and the sameness is the point: the game charges
+/// for the carry slot, not for the fight.
+const LIGHT_TAKE: u64 = 1;
 pub const LIGHT_FLEE: u64 = 1;
 
 /// `"… · 2 light"` — the cost tail every affordance label carries.

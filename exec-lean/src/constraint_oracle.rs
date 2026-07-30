@@ -627,6 +627,26 @@ fn encode_heap_atom(a: &HeapAtom) -> Option<String> {
         HeapAtom::StrictMonotonic => "HSMON".to_string(),
         HeapAtom::DeltaBounded { d } => format!("HDB {d}"),
         HeapAtom::DeltaEquals { d } => format!("HDE {d}"),
+        // ⚠ DECLINE, LOUDLY AND ON PURPOSE — the wire has no token for this atom yet.
+        //
+        // `HeapAtom::AllowedTransitions` is the deployed twin of the Lean-authored
+        // `Dregg2.Games.Dungeon.Prog.HeapAtom.allowedTransitions` (the descent's per-relic custody
+        // hop table). Lean's own lowering sends it to the NAME-keyed
+        // `Dregg2.Exec.StateConstraint.allowedTransitions`, which the deployed wire narrows to a
+        // REGISTER index: `Dregg2/Exec/DeployedConstraint.lean`'s `allowedTransitions (index : Nat)`
+        // answers `.badIndex` for any `idx ≥ stateSlots`, and its heap vocabulary `DHeapAtom` has
+        // eleven arms — exactly `cell::HeapAtom`'s previous eleven — and no transition table.
+        //
+        // So there is no encoding that the verified decider would read correctly, and inventing one
+        // here would be a Rust-authored constraint wearing a Lean tag. `None` routes to
+        // `ConstraintOracleUnavailable`, i.e. FAIL CLOSED on a native release build — the correct
+        // disposition for a Lean-subset constraint the verified evaluator did not decide.
+        //
+        // What it costs, stated where it is paid: on a native RELEASE build the Descent's custody
+        // teeth refuse. Debug (every test build in this repo) takes `eval.rs`'s guest-path evaluator
+        // and plays. Closing it is a `DHeapAtom` arm + a `parseHeapAtom` token, in `metatheory/`.
+        // `cell/tests/heap_allowed_transitions_lean_sourced.rs` measures the gap from the Rust side.
+        HeapAtom::AllowedTransitions { .. } => return None,
     })
 }
 

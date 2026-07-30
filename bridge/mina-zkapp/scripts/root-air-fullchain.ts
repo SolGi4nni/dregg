@@ -815,9 +815,9 @@ async function main() {
   console.log(`\n=== ROOT-AIR-FULLCHAIN PASS === ${checks} checks, ${secs(T0)}\n`);
 }
 
-/** ⚑ Recorded on the run that first produced them. A zero means "not yet
- *  recorded" and prints instead of comparing. */
-const RATCHET = { slices: 0, nodes: 0, constraints: 0, maxRows: 0, vks: 0, splices: 0 };
+/** ⚑ Recorded on the run that first produced them, at `BUDGET_PROVED`. A zero
+ *  means "not yet recorded" and prints instead of comparing. */
+const RATCHET = { slices: 7, nodes: 10_417, constraints: 1_093, maxRows: 51_136, vks: 7, splices: 7 };
 
 const phase =
   PHASE === 'slice'

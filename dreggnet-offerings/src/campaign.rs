@@ -29,7 +29,7 @@
 
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
-use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, LOOT, LUNGE, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, LOOT, LUNGE, SMITE, TAKE, UNLOCK};
 use dungeon_on_dregg::overworld::{RegionCell, RegionMap, TravelGate, deepening_ways};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
@@ -1132,6 +1132,11 @@ fn parse_native_move(action: &Action) -> Result<NativeDescentMove, String> {
             relic: u64::try_from(relic)
                 .expect("the matched campaign relic argument is non-negative"),
         }),
+        // Only the three way-keys can hang in a door, so only they are addressable.
+        (TAKE, relic @ 1..=3) => Ok(NativeDescentMove::Take {
+            relic: u64::try_from(relic)
+                .expect("the matched campaign relic argument is non-negative"),
+        }),
         (FLEE, 0) => Ok(NativeDescentMove::Flee),
         (turn, arg) => Err(format!("`{turn}({arg})` is not a native campaign move")),
     }
@@ -1152,6 +1157,12 @@ fn action_for_native_move(command: NativeDescentMove) -> Result<Action, String> 
         NativeDescentMove::Loot { relic } => Action::new(
             "replay loot",
             LOOT,
+            i64::try_from(relic).map_err(|_| "relic index exceeds the action wire")?,
+            true,
+        ),
+        NativeDescentMove::Take { relic } => Action::new(
+            "replay take",
+            TAKE,
             i64::try_from(relic).map_err(|_| "relic index exceeds the action wire")?,
             true,
         ),
@@ -1272,6 +1283,12 @@ fn hash_command(hasher: &mut blake3::Hasher, command: &DescentCampaignMove) {
                 // …and tag 6 for the climb, on the same discipline.
                 NativeDescentMove::Ascend => {
                     hasher.update(&[6]);
+                }
+                // …and tag 7 for the lift. Tags 0-6 keep their bytes, so no stored campaign's
+                // command hash moves because `take` arrived.
+                NativeDescentMove::Take { relic } => {
+                    hasher.update(&[7]);
+                    hasher.update(&relic.to_be_bytes());
                 }
             }
         }

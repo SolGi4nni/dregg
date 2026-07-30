@@ -8,7 +8,9 @@ use std::collections::BTreeSet;
 
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::descent::{ASCEND, DELVE, FLEE, FLOORS, LOOT, LUNGE, RELICS, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{
+    ASCEND, DELVE, FLEE, FLOORS, LOOT, LUNGE, RELICS, SMITE, TAKE, UNLOCK,
+};
 
 /// **The complete anti-ghost vocabulary** — every verb the native Descent wire speaks, expanded
 /// over its whole argument domain, locked entries included.
@@ -25,6 +27,11 @@ fn complete_vocabulary() -> BTreeSet<(&'static str, i64)> {
         .into_iter()
         .chain((2..=FLOORS).map(|way| (UNLOCK, way as i64)))
         .chain((0..RELICS).map(|relic| (LOOT, relic as i64)))
+        // ⚑ AND THE LIFT. Only the three WAY-KEYS can hang in a door (`unlock` is the only
+        // verb that writes a `HUNG + d` code, and it writes it over `keyFor w`), so the
+        // catalogue offers `take` over exactly those three and no others — a `take` naming the
+        // crown or a treasure is a stale control, not a locked affordance.
+        .chain((1..FLOORS).map(|relic| (TAKE, relic as i64)))
         .collect()
 }
 

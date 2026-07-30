@@ -11,7 +11,7 @@ use dreggnet_offerings::native_descent::{
 };
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
 use dungeon_on_dregg::descent::{
-    ASCEND, BANKED, DELVE, FLEE, FLOORS, LOOT, LUNGE, RELICS, SMITE, UNLOCK, crowned_line,
+    ASCEND, BANKED, DELVE, FLEE, FLOORS, LOOT, LUNGE, RELICS, SMITE, TAKE, UNLOCK, crowned_line,
 };
 
 fn actor(name: &str) -> DreggIdentity {
@@ -33,6 +33,11 @@ fn complete_vocabulary() -> BTreeSet<(&'static str, i64)> {
         .into_iter()
         .chain((2..=FLOORS).map(|way| (UNLOCK, way as i64)))
         .chain((0..RELICS).map(|relic| (LOOT, relic as i64)))
+        // ⚑ AND THE LIFT. Only the three WAY-KEYS can hang in a door (`unlock` is the only
+        // verb that writes a `HUNG + d` code, and it writes it over `keyFor w`), so the
+        // catalogue offers `take` over exactly those three and no others — a `take` naming the
+        // crown or a treasure is a stale control, not a locked affordance.
+        .chain((1..FLOORS).map(|relic| (TAKE, relic as i64)))
         .collect()
 }
 
@@ -154,14 +159,21 @@ fn complete_crowned_run_banks_on_a_real_terminal_receipt() {
     let completion = session.completion().expect("flee settles the run");
     assert_eq!(completion.revision, line.len() as u64);
     assert_eq!(completion.actor, alice);
-    // ⚑ WHAT THE CROWN IS, on every day: the prize (relic 0) and all three way-keys (relics
-    // 1..FLOORS) banked, and the four treasures deliberately left lying — at the bottom the pack
-    // holds exactly `CAP - FLOORS`, so a treasure would price the crown out of reach. That is a
-    // property of the crowned line itself, not of any one drawn map, so it stays pinned exactly.
-    assert_eq!(completion.banked_relics, (0..FLOORS).collect::<Vec<u64>>());
+    // ⚑ WHAT THE CROWN IS, on every day: the prize (relic 0) banked, and NOTHING ELSE. The
+    // reference crowned line turns each way-key and walks past it — `unlock` sets the key down
+    // in the door it opened (`HUNG + depth`) and `flee` promotes `CARRIED` and only `CARRIED`,
+    // so the keys are won, replay to the mint, and bank nothing. Bringing them home is the
+    // `take` line: one extra breath per key, on the climb, which this line does not play. This
+    // read `0..FLOORS` back when turning a key kept it.
+    assert_eq!(completion.banked_relics, vec![0u64]);
     assert!(completion.crowned);
-    for relic in 0..FLOORS as usize {
-        assert_eq!(session.game().sim().custody[relic], BANKED);
+    assert_eq!(session.game().sim().custody[0], BANKED);
+    for relic in 1..FLOORS as usize {
+        assert_ne!(
+            session.game().sim().custody[relic],
+            BANKED,
+            "way-key {relic} hangs in its door; it did not come home"
+        );
     }
     assert_ne!(completion.settlement_receipt_hash, [0; 32]);
 

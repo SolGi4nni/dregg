@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "envelope_version": 3,
+  "envelope_version": 5,
   "vk_anchor_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
   "claimed_vk_fingerprint_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
   "publics": {

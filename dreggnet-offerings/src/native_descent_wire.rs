@@ -406,6 +406,10 @@ fn move_wire(command: NativeDescentMove) -> (&'static str, i64) {
             "loot",
             i64::try_from(relic).expect("native relic index fits the action wire"),
         ),
+        NativeDescentMove::Take { relic } => (
+            "take",
+            i64::try_from(relic).expect("native relic index fits the action wire"),
+        ),
         NativeDescentMove::Flee => ("flee", 0),
     }
 }

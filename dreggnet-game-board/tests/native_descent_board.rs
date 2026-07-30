@@ -140,9 +140,11 @@ fn exact_native_replay_ranks_crown_relics_depth_and_turns() {
         "a crowned settlement outranks a short retreat"
     );
     assert!(crown.standing.crowned);
-    // Day-independent, and the whole content of "crowned": the prize (relic 0) plus all three
-    // way-keys are banked, and the run stood on the deepest floor.
-    assert_eq!(crown.standing.banked_relics, vec![0, 1, 2, 3]);
+    // Day-independent, and the whole content of "crowned": THE PRIZE (relic 0) is banked and the
+    // run stood on the deepest floor. It read `[0, 1, 2, 3]` back when turning a key kept it —
+    // `unlock` now sets the key down in the door it opened (`HUNG + depth`) and `flee` promotes
+    // `CARRIED` and only `CARRIED`, so the reference crowned line brings home the prize alone.
+    assert_eq!(crown.standing.banked_relics, vec![0]);
     assert_eq!(crown.standing.peak_depth, FLOORS);
     assert_eq!(crown.standing.turns, crowned.len());
     assert!(

@@ -8262,6 +8262,8 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "deos-view",
+ "dregg-exec-lean",
+ "dregg-lean-ffi",
  "dregg-persist",
  "dregg-sdk",
  "dreggnet-audit",
