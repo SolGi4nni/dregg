@@ -57,6 +57,10 @@ pub mod joint_turn_recursive;
 pub mod lean_lookup_air;
 pub mod membership_leaf_adapter;
 pub mod merge_pool;
+/// The Pasta half of `dregg_circuit::mina_fixture_emit`: `DreggMinaConfig` as a
+/// fixture hash suite, plus the CHECKED `MultiField32Challenger` replica whose
+/// per-permutation sponge states the Pasta fixture publishes.
+pub mod mina_pasta_fixture_suite;
 pub mod mpt_holding_leaf;
 pub mod note_spend_leaf_adapter;
 pub mod packed_interleaved_merkle;
