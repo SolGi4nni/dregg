@@ -319,7 +319,26 @@ decomposition whose unit cost is set by the hash. Changing the hash is the re-sl
 
 ---
 
-## 7. One line on the query count, deliberately not a derivation
+## 7. What to do next, in order
+
+1. **The o1js native-Poseidon Merkle probe** (§4). Small, and it converts the headline from a
+   projection to a measurement. Nothing below is worth starting until this reads.
+2. **`p3-pasta`** — a `PrimeField` newtype over `mina_curves::pasta::Fp` plus a
+   `CryptographicPermutation<[Fp; 3]>` over `mina-poseidon`. `p3-bn254` is the template.
+3. **`DreggPastaConfig`** — the mechanical twin of `dregg_outer_config.rs` once (2) exists.
+4. **Generalise `shrink_apex_to_outer` over `SC`** — only needed for the shrink variant; the
+   Pasta-hashed *root* (54 slices) needs only (2) and (3).
+5. **Re-point the o1js verifier's hash.** `Poseidon2Merkle.ts`'s permutation becomes native
+   `Poseidon.hash`; the FRI walk, coset descent, fold arithmetic and DEEP quotient are unchanged.
+6. **Then, and only then, the column narrowing** (`APEX-VERIFIER-AIR-REDUCTION.md`) — because at
+   that point the DEEP quotient is 85% of what is left and it is priced per column.
+
+**Do not start with the FRI knobs.** They are worth 35% today and 1% after step 5, and changing them
+on the root rotates the apex VK and forces a fresh Groth16 setup for the ETH path (§6).
+
+---
+
+## 8. One line on the query count, deliberately not a derivation
 
 The deployed 19 queries sit well above what the FRI ledger's binding term needs, so a lower count is
 arithmetically available. **I am not proposing it.** The ledger is an informal reading that is
