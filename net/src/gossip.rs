@@ -758,6 +758,7 @@ impl TopicState {
     }
 
     /// Demote a peer from the eager spanning-tree set to lazy (IHave-only).
+    /// Returns whether the demotion actually happened.
     ///
     /// SMALL-N FLOOR: never demote if it would drop the eager set below
     /// `min(total_peers, DEFAULT_EAGER_DEGREE)`. Plumtree prunes an eager link on
@@ -771,16 +772,33 @@ impl TopicState {
     /// WITHOUT an id-keyed pull (e.g. a finalization vote) is then never delivered
     /// to that peer at all. Holding a floor of eager peers keeps full-payload
     /// dissemination alive at small N, where there is no redundant path to thin.
-    fn demote_to_lazy(&mut self, addr: &SocketAddr) {
+    ///
+    /// ⚑ THE RETURN VALUE IS LOAD-BEARING — see the caller in the `FullMessage`
+    /// duplicate arm. The floor makes the demotion a NO-OP at small N, and the
+    /// caller used to emit an outbound `Prune` **regardless**, once per duplicate,
+    /// forever. Duplicates are STRUCTURAL here: `publish_eager` deliberately sends
+    /// the full payload to every peer over every live link, and each receiver then
+    /// Plumtree-re-forwards it, so at n=3 every message arrives 2-3 times. Measured
+    /// on hbox at n=3: 1118-1853 Prunes per node per 40 s against 316-389 real
+    /// EagerPushes — **77-82% of all outbound gossip work was Prune frames the
+    /// floor had already decided against**, all queued on the ONE serial
+    /// `forward_loop` that block delivery also uses. The receiving side of `Prune`
+    /// calls this same function, so those frames were a no-op on BOTH ends.
+    fn demote_to_lazy(&mut self, addr: &SocketAddr) -> bool {
         let total_peers = self.peer_states.len();
         let eager_count = self.peer_states.values().filter(|s| s.eager).count();
         let floor = total_peers.min(DEFAULT_EAGER_DEGREE);
         if eager_count <= floor {
             // Keeping this peer eager preserves the small-N full-payload path.
-            return;
+            return false;
         }
-        if let Some(state) = self.peer_states.get_mut(addr) {
-            state.eager = false;
+        match self.peer_states.get_mut(addr) {
+            Some(state) if state.eager => {
+                state.eager = false;
+                true
+            }
+            // Already lazy (or unknown): nothing changed, so nothing to announce.
+            _ => false,
         }
     }
 
@@ -2242,12 +2260,27 @@ impl GossipNetwork {
 
                     if s.seen.contains(&msg_hash) {
                         if let Some(topic_state) = s.topics.get_mut(&topic_id) {
-                            let is_eager = topic_state
-                                .peer_states
-                                .get(&remote_addr)
-                                .is_some_and(|ps| ps.eager);
-                            if is_eager {
-                                topic_state.demote_to_lazy(&remote_addr);
+                            // ANNOUNCE THE PRUNE ONLY IF WE ACTUALLY DEMOTED. The
+                            // small-N eager floor (see `demote_to_lazy`) refuses the
+                            // demotion whenever thinning the tree would starve
+                            // full-payload dissemination — and at n=3 it refuses
+                            // EVERY time, because duplicates are structural here
+                            // (`publish_eager` fans the full payload out to every
+                            // peer over every live link, and each receiver
+                            // re-forwards it). Emitting the Prune anyway asked the
+                            // peer to stop eagerly forwarding to us while we went on
+                            // wanting exactly that, and it cost a padded 4 KiB frame
+                            // on a fresh QUIC stream per duplicate: measured at n=3,
+                            // 77-82% of all outbound gossip work, queued ahead of the
+                            // frontier deltas that carry the round cohort, on the one
+                            // serial `forward_loop`. That queue ran 7.1 s behind and
+                            // then stalled, the cohort never completed, and with
+                            // `supermajority_threshold(3) == 3` the committee wedged
+                            // forever. A Prune we have decided not to honour locally
+                            // carries no spanning-tree information; at n > eager
+                            // degree the demotion succeeds and the Prune is sent
+                            // exactly as before.
+                            if topic_state.demote_to_lazy(&remote_addr) {
                                 let _ = outgoing_tx.send(OutgoingGossip::Prune {
                                     topic_id,
                                     target: remote_addr,
@@ -2402,8 +2435,19 @@ impl GossipNetwork {
             GossipEnvelope::Prune { topic_id } => {
                 let mut s = state.write().await;
                 if let Some(topic_state) = s.topics.get_mut(&topic_id) {
-                    topic_state.demote_to_lazy(&remote_addr);
-                    debug!("Pruned peer {} to lazy for topic", remote_addr);
+                    // Log only a demotion that HAPPENED. The small-N eager floor
+                    // refuses it at a 3-node committee, and the old unconditional
+                    // "Pruned peer" line made a refused demotion read like a
+                    // completed one — 1329 of them in one 40 s n=3 run, which is
+                    // how the prune storm hid in plain sight in the debug log.
+                    if topic_state.demote_to_lazy(&remote_addr) {
+                        debug!("Pruned peer {} to lazy for topic", remote_addr);
+                    } else {
+                        trace!(
+                            "Prune from {} declined: the small-N eager floor keeps it eager",
+                            remote_addr
+                        );
+                    }
                 }
             }
 
@@ -3139,7 +3183,7 @@ mod tests {
         assert!(ts.eager_peers().contains(&a4));
         assert!(!ts.lazy_peers().contains(&a4));
 
-        ts.demote_to_lazy(&a1);
+        assert!(ts.demote_to_lazy(&a1));
         assert!(ts.lazy_peers().contains(&a1));
         assert!(!ts.eager_peers().contains(&a1));
     }
@@ -3419,7 +3463,10 @@ mod tests {
         let target = addrs[0];
         assert!(ts.eager_peers().contains(&target));
 
-        ts.demote_to_lazy(&target);
+        assert!(
+            ts.demote_to_lazy(&target),
+            "above the floor the demotion happens, so the caller MAY announce a Prune"
+        );
 
         assert!(!ts.eager_peers().contains(&target));
         assert!(ts.lazy_peers().contains(&target));
@@ -3438,11 +3485,83 @@ mod tests {
         ts.add_peer(only);
         assert!(ts.eager_peers().contains(&only));
 
-        ts.demote_to_lazy(&only); // floor = min(1, DEFAULT_EAGER_DEGREE) = 1
+        // floor = min(1, DEFAULT_EAGER_DEGREE) = 1. The refusal is REPORTED, so the
+        // caller does not announce a Prune it has just declined to honour.
+        assert!(!ts.demote_to_lazy(&only));
 
         // Still eager — the floor refused to drop the only peer.
         assert!(ts.eager_peers().contains(&only));
         assert!(!ts.lazy_peers().contains(&only));
+    }
+
+    /// THE PRUNE-STORM FALSIFIER, BOTH DIRECTIONS.
+    ///
+    /// `demote_to_lazy`'s return value is what gates the outbound `Prune` in the
+    /// `FullMessage` duplicate arm, so it is the whole protocol content of "should
+    /// this duplicate announce a prune". Pinned in both directions:
+    ///
+    ///  * ABOVE the small-N eager floor there IS a redundant path to thin, the
+    ///    demotion happens, and a Prune IS announced — Plumtree unchanged.
+    ///  * AT the floor (the n=3 committee shape, where `publish_eager`'s
+    ///    fan-out-to-every-link makes duplicates structural and unavoidable) the
+    ///    demotion is refused to keep full-payload dissemination alive, so NO Prune
+    ///    is announced. That is the storm: measured on hbox at n=3, 77-82% of all
+    ///    outbound gossip work was Prune frames the floor had already declined, on
+    ///    the same serial `forward_loop` the round cohort's frontier deltas use.
+    ///
+    /// A duplicate must NEVER be able to announce a prune the floor refused, and a
+    /// genuinely redundant eager link must still be prunable — both are asserted.
+    #[test]
+    fn duplicate_announces_a_prune_only_when_the_demotion_actually_happened() {
+        // ── Direction 1: real headroom ⇒ demote succeeds ⇒ announce the Prune ──
+        let mut ts = TopicState::new();
+        let mut addrs: Vec<SocketAddr> = Vec::new();
+        for i in 0..(DEFAULT_EAGER_DEGREE + 2) {
+            let a: SocketAddr = format!("127.0.0.1:{}", 7000 + i).parse().unwrap();
+            ts.add_peer(a);
+            addrs.push(a);
+        }
+        for a in &addrs {
+            ts.promote_to_eager(a);
+        }
+        assert!(
+            ts.demote_to_lazy(&addrs[0]),
+            "above the eager floor a duplicate MUST be able to thin the tree"
+        );
+        assert!(!ts.eager_peers().contains(&addrs[0]));
+
+        // A SECOND duplicate from the now-lazy peer changes nothing, so it must not
+        // announce again — this is what turned one prune into an endless stream.
+        assert!(
+            !ts.demote_to_lazy(&addrs[0]),
+            "re-pruning an already-lazy peer changes nothing and must not announce"
+        );
+
+        // ── Direction 2: at the floor ⇒ demote refused ⇒ NO Prune, still eager ──
+        // The n=3 committee shape: every peer eager, eager_count == floor.
+        let mut small = TopicState::new();
+        let peers: Vec<SocketAddr> = (0..DEFAULT_EAGER_DEGREE)
+            .map(|i| {
+                format!("127.0.0.1:{}", 8000 + i)
+                    .parse::<SocketAddr>()
+                    .unwrap()
+            })
+            .collect();
+        for a in &peers {
+            small.add_peer(*a);
+        }
+        assert_eq!(small.eager_peers().len(), DEFAULT_EAGER_DEGREE);
+        for _ in 0..50 {
+            assert!(
+                !small.demote_to_lazy(&peers[0]),
+                "at the small-N floor NO duplicate may announce a prune — 50 duplicates \
+                 in a row must produce ZERO announcements, or the storm is back"
+            );
+        }
+        assert!(
+            small.eager_peers().contains(&peers[0]),
+            "the floor must keep the peer eager so full payloads keep flowing"
+        );
     }
 
     #[test]

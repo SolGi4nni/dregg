@@ -325,6 +325,18 @@ pub struct ApplyOutcome {
     pub pull_roots: Vec<BlockId>,
     /// Equivocation proofs encountered (creator should be evicted).
     pub equivocations: Vec<dregg_blocklace::finality::EquivocationProof>,
+    /// Blocks REFUSED on a deterministic policy/signature ground and dropped
+    /// permanently — `(block_id, reason)`. These are neither inserted nor buffered
+    /// nor re-pulled, which at `supermajority_threshold(n) == n` (n ≤ 3) halts the
+    /// committee forever, so the caller MUST surface them rather than let them
+    /// vanish. Empty on a healthy ingest.
+    pub refused: Vec<(BlockId, String)>,
+}
+
+/// First four bytes of a 32-byte id, hex — enough to correlate a refusal with the
+/// producing node's own log line without dumping the whole hash.
+fn hex4(bytes: &[u8; 32]) -> String {
+    bytes[..4].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Insert `blocks` into `lace`, staging orphans in `buffer`, cascading releases.
@@ -348,6 +360,7 @@ pub fn apply_with_buffering(
     let mut inserted: Vec<Block> = Vec::new();
     let mut pull_roots: HashSet<BlockId> = HashSet::new();
     let mut equivocations = Vec::new();
+    let mut refused: Vec<(BlockId, String)> = Vec::new();
 
     // The lace keyset, seeded ONCE and maintained incrementally: every accepted
     // block (Ok or Equivocation-evidence) is inserted below, so `present` always
@@ -419,21 +432,7 @@ pub fn apply_with_buffering(
                     queue.push_back(r);
                 }
             }
-            Err(BlockError::InvalidSignature { .. })
-            | Err(BlockError::UnsignedPq { .. })
-            | Err(BlockError::BadPqSignature { .. })
-            | Err(BlockError::UnenrolledCreator { .. })
-            | Err(BlockError::ConsensusTimePolicyMissing)
-            | Err(BlockError::LegacyTurnAfterConsensusTimeCutover)
-            | Err(BlockError::ConsensusTimedTurnOversize)
-            | Err(BlockError::ConsensusGenesisTimeMismatch { .. })
-            | Err(BlockError::ConsensusTimeRegression { .. })
-            | Err(BlockError::ConsensusTimeForwardBound { .. })
-            | Err(BlockError::ConsensusTimeBoundOverflow)
-            | Err(BlockError::ConsensusTimePolicyReplacement)
-            | Err(BlockError::ConsensusTimeFlagDayRequiresEmptyLace)
-            | Err(BlockError::ConsensusTimeFrontierMissing { .. })
-            | Err(BlockError::ConsensusTimeRestoreNotCausallyClosed) => {
+            Err(other) => {
                 // Drop forged / unpinnable blocks (A1 + GAP #1b: BOTH signature
                 // halves are the gate). A bad ed25519 half, a missing/forged
                 // post-quantum half, or a creator with no enrolled ML-DSA key
@@ -444,6 +443,25 @@ pub fn apply_with_buffering(
                 // payload/policy observations, never missing-history retries;
                 // buffering or pulling them would turn a stable refusal into a
                 // hot operational loop.
+                //
+                // ⚑ SAY IT OUT LOUD. This arm used to be a bare `{}` — a silent,
+                // permanent, unlogged drop of a consensus block, and it is the one
+                // place on the ingest path where a block can vanish with no trace.
+                // It cost a full day of the n=3 committee-wedge investigation: with
+                // nothing emitted here, "the peer never sent it", "the wire dropped
+                // it" and "we refused it" are indistinguishable from the outside.
+                // `warn!`, not `debug!`: at n=3 a single refused block halts the
+                // committee forever, because `supermajority_threshold(3) == 3` means
+                // the round cohort can never complete without it.
+                tracing::warn!(
+                    creator = %hex4(&block_clone.creator),
+                    seq = block_clone.seq,
+                    block = %hex4(&block_id.0),
+                    error = %other,
+                    "consensus block REFUSED on ingest and dropped permanently \
+                     (deterministic policy/signature refusal — never buffered, never re-pulled)"
+                );
+                refused.push((block_id, other.to_string()));
             }
         }
     }
@@ -472,6 +490,7 @@ pub fn apply_with_buffering(
         inserted,
         pull_roots,
         equivocations,
+        refused,
     }
 }
 

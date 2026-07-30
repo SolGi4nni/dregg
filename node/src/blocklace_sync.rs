@@ -1059,13 +1059,36 @@ impl BlocklaceHandle {
     /// Broadcasts all blocks from our local blocklace that peers may not have.
     /// In practice, since we broadcast on a topic, all subscribed peers see it.
     /// The protocol is quiescent: this is only called when we create a new block.
+    ///
+    /// ⚑ `lace.tips()` IS KEYED BY `Block::creator`, WHICH IS THE HYBRID ID
+    /// `H(ed25519 ‖ ml_dsa)` — NOT `self.self_key`, which is the ed25519 verify
+    /// key (`run_blocklace_sync_with_policy` derives it as
+    /// `signing_key.verifying_key()`). This function read `tips().get(&self_key)`
+    /// from 2026-05-23 until 2026-07-30, and `9f5920bda` (2026-07-09) re-based
+    /// `Block::creator` onto the hybrid id — after which the lookup could NEVER
+    /// match and **every authored block's one-shot eager push was a silent
+    /// no-op.** Block dissemination then depended entirely on the periodic
+    /// frontier-reconciliation delta, which shares one serial `forward_loop`
+    /// with the Plumtree prune traffic; measured on hbox at n=3, that queue ran
+    /// 7.1 s behind and stalled outright, so the round cohort never completed
+    /// and — with `supermajority_threshold(3) == 3` — the committee wedged
+    /// permanently at the first round. Same class as the six `block.creator`
+    /// consumers the finality-gate work found reading it as ed25519.
     async fn push_new_blocks(&self) {
         let lace = self.lace.read().await;
 
-        // Get our latest block (just the one we created).
-        let our_tip = match lace.tips().get(&self.self_key) {
+        // Get our latest block (just the one we created). Keyed by our HYBRID
+        // creator id, the value `Block::new` actually stamps.
+        let our_tip = match lace.tips().get(&lace.self_creator()) {
             Some(tip) => *tip,
-            None => return,
+            None => {
+                debug!(
+                    self_creator = %dregg_types::hex_encode(&lace.self_creator()[..4]),
+                    tips = lace.tips().len(),
+                    "push_new_blocks: no tip for our own creator id — nothing authored yet"
+                );
+                return;
+            }
         };
 
         // Send the block (and its immediate context) to peers.
@@ -3620,34 +3643,47 @@ pub(crate) async fn run_blocklace_sync_with_policy(
     let state_for_receiver = state.clone();
     tokio::spawn(async move {
         loop {
-            match blocklace_stream.recv().await {
-                Some(GossipEvent::Message { from, message }) => {
-                    handle_blocklace_message(
+            // ⚑ DRAIN-AND-SCHEDULE, NOT ONE-AT-A-TIME. See
+            // `drain_and_schedule_blocklace_batch` for the measurement that forced
+            // this: the old loop awaited `handle_blocklace_message` per message on a
+            // SINGLE consumer of an UNBOUNDED channel, and at n=3 the arrival rate
+            // exceeded the service rate — 338 messages delivered into the channel
+            // against 160 ever pulled out in one 40 s run. The blocks the round
+            // cohort needed were IN the queue and never reached `handle_push`.
+            let first = match blocklace_stream.recv().await {
+                Some(ev) => ev,
+                None => {
+                    warn!("blocklace gossip stream ended");
+                    break;
+                }
+            };
+            match first {
+                GossipEvent::Message { .. } => {
+                    let mut batch = vec![first];
+                    // Take everything already queued behind it (bounded), so the
+                    // scheduler below sees the whole backlog and can coalesce it.
+                    while batch.len() < MAX_GOSSIP_DRAIN_BATCH {
+                        match blocklace_stream.try_recv() {
+                            Some(ev) => batch.push(ev),
+                            None => break,
+                        }
+                    }
+                    drain_and_schedule_blocklace_batch(
                         &handle_for_receiver,
                         &state_for_receiver,
-                        from,
-                        message,
+                        batch,
                     )
                     .await;
                 }
-                Some(GossipEvent::PeerJoined(addr)) => {
+                GossipEvent::PeerJoined(addr) => {
                     info!(peer = %addr, "peer joined blocklace topic");
-                    // When a new peer joins, send our frontier (with any held
-                    // votes piggybacked) for efficient catch-up.
                     handle_for_receiver.send_frontier().await;
-                    // …and share the committee addresses we have verified, so a
-                    // peer that connected to us with only a partial peer list
-                    // immediately learns the rest of the mesh (gossip-of-peers).
                     handle_for_receiver
                         .share_peer_addrs(&state_for_receiver)
                         .await;
                 }
-                Some(GossipEvent::PeerLeft(addr)) => {
+                GossipEvent::PeerLeft(addr) => {
                     info!(peer = %addr, "peer left blocklace topic");
-                }
-                None => {
-                    warn!("blocklace gossip stream ended");
-                    break;
                 }
             }
         }
@@ -3733,6 +3769,175 @@ pub(crate) async fn run_blocklace_sync_with_policy(
 }
 
 // ─── Message Handling ───────────────────────────────────────────────────────
+
+/// Upper bound on how many already-queued gossip events one scheduling pass takes
+/// out of the funnel channel. Generous — the point is to see the whole backlog so it
+/// can be coalesced, not to ration work — but bounded so a sustained burst cannot
+/// keep the loop from ever returning to `recv().await`.
+const MAX_GOSSIP_DRAIN_BATCH: usize = 512;
+
+/// ⚑ THE ANTI-ENTROPY CHANNEL MUST NOT BE ABLE TO STARVE ITSELF.
+///
+/// The blocklace funnel is ONE task consuming ONE unbounded channel, and it `await`s
+/// each message's handler in turn. `handle_frontier` is by far the most expensive
+/// handler — it takes `lace.read()`, walks `causal_past_union` over the whole
+/// history, builds a causally-closed delta, and then broadcasts that delta, which
+/// takes the gossip layer's `state.write()` in contention with every inbound stream
+/// handler. And Frontiers are the most FREQUENT message: every node emits one per
+/// cadence tick to every peer, and each is re-forwarded.
+///
+/// Measured on hbox at n=3 (2026-07-30), one 40 s run, node-0: **338 messages
+/// delivered into the funnel channel, 160 ever pulled out.** The arrival rate simply
+/// exceeded the service rate, the unbounded channel absorbed the difference, and the
+/// backlog grew monotonically. The round-5 cohort blocks were IN that queue — they
+/// had been sent, accepted by the gossip layer, and handed to the subscriber — and
+/// they never reached `handle_push`. With `supermajority_threshold(3) == 3` the
+/// committee cannot advance a round until every creator's block for the current
+/// round has landed, so a funnel that is permanently behind reads from the outside
+/// as a permanent wedge: `dag_height` frozen at 5, `latest_height` 0, forever, with
+/// no error anywhere. It is not a rule failure and not a transport failure; it is a
+/// SCHEDULING failure inside the receiver.
+///
+/// The fix is scheduling, not rationing, and it rests on two facts about the
+/// protocol:
+///
+///  * **A Frontier is a state ANNOUNCEMENT, not an event.** Its own wire doc says it
+///    is "a catch-up PING, not content to deduplicate". Processing the newest
+///    frontier from a peer subsumes every older one from that peer — the older one
+///    describes a strictly earlier view of the same lace. So a backlog of frontiers
+///    from one peer coalesces to its LAST element with **zero** information loss.
+///  * **Blocks are what liveness depends on; frontiers only ask for them.** A
+///    `Push`/`PullResponse` carries the round cohort. A `Pull` unblocks a peer's
+///    cohort. A `FinalizationVote` carries quorum agreement. None of those are
+///    reconstructible from a later message, so all of them are processed in arrival
+///    order, ahead of any frontier.
+///
+/// So: take the whole queued backlog, run every block-, pull- and vote-bearing
+/// message first in arrival order, then at most ONE frontier per peer. Under load
+/// the expensive-and-redundant class collapses and the liveness-critical class
+/// overtakes it; when there is no backlog this is exactly the old behaviour (a batch
+/// of one).
+///
+/// This also cuts the OUTBOUND load, because each coalesced-away frontier would have
+/// produced its own delta broadcast to every peer.
+async fn drain_and_schedule_blocklace_batch(
+    handle: &BlocklaceHandle,
+    state: &NodeState,
+    batch: Vec<GossipEvent>,
+) {
+    // Liveness-critical, arrival-ordered: blocks and pull requests.
+    let mut urgent: Vec<(SocketAddr, BlocklaceGossipMessage)> = Vec::new();
+    // Finalization votes, DEDUPED by (block_id, voter) within the batch and run
+    // LAST. See the vote block below for the measurement.
+    let mut votes: Vec<(SocketAddr, BlocklaceGossipMessage)> = Vec::new();
+    let mut vote_keys: std::collections::HashSet<(BlockId, [u8; 32])> =
+        std::collections::HashSet::new();
+    let mut votes_deduped = 0usize;
+    // At most one frontier per peer — the newest wins. `Vec` rather than a map so
+    // the *relative* order of distinct peers stays the arrival order.
+    let mut latest_frontier: Vec<(SocketAddr, BlocklaceGossipMessage)> = Vec::new();
+    // Non-`PublishTurn` peer messages (the co-turn vocabulary) keep the old path.
+    let mut passthrough: Vec<(SocketAddr, PeerMessage)> = Vec::new();
+
+    let mut coalesced = 0usize;
+    for event in batch {
+        let GossipEvent::Message { from, message } = event else {
+            // `PeerJoined`/`PeerLeft` cannot appear here: the caller only batches
+            // `Message` events (it handles the others on the spot).
+            continue;
+        };
+        let PeerMessage::PublishTurn { ref turn_data, .. } = message else {
+            passthrough.push((from, message));
+            continue;
+        };
+        let gossip_msg: BlocklaceGossipMessage = match postcard::from_bytes(turn_data) {
+            Ok(m) => m,
+            Err(e) => {
+                debug!(from = %from, error = %e, "failed to decode blocklace gossip message");
+                continue;
+            }
+        };
+        if matches!(gossip_msg, BlocklaceGossipMessage::Frontier { .. }) {
+            match latest_frontier.iter_mut().find(|(a, _)| *a == from) {
+                Some(slot) => {
+                    // A newer announcement from this peer supersedes the staged one.
+                    // ⚠ The superseded frontier's piggybacked VOTES are not lost:
+                    // `frontier_votes` re-attaches every vote still inside its
+                    // re-emit budget to EVERY outgoing frontier, so the newest
+                    // frontier from a peer carries a superset of the older one's
+                    // votes. Coalescing therefore drops no vote that is still live.
+                    slot.1 = gossip_msg;
+                    coalesced += 1;
+                }
+                None => latest_frontier.push((from, gossip_msg)),
+            }
+        } else if let BlocklaceGossipMessage::FinalizationVote(ref v) = gossip_msg {
+            // ⚑ THE MOST EXPENSIVE HANDLER ON THE FUNNEL, AND THE MOST REDUNDANT.
+            // Verifying one vote is a HYBRID check — ed25519 AND ML-DSA-65 (FIPS
+            // 204) over the same message — and it runs synchronously on this single
+            // consumer. Measured on hbox at n=3 (2026-07-30): 1155-1910 ms PER VOTE,
+            // 25 slow + 6 over the one-second stall threshold in a single 60 s run,
+            // which is why `handle_blocklace_gossip` now times and names its
+            // handlers. Every round-cohort block queued behind such a vote waited
+            // that long, and at `supermajority_threshold(3) == 3` a late cohort is a
+            // stalled committee.
+            //
+            // And the volume is almost entirely RE-EMITS: `reemit_pending_votes`
+            // re-broadcasts every pending vote each cadence tick for
+            // `VOTE_REEMIT_SWEEPS` (30) sweeps, AND `frontier_votes` piggybacks the
+            // same set onto every outgoing frontier — each copy byte-unique via a
+            // fresh transport `nonce` (deliberately, so the gossip `seen` cache
+            // cannot collapse it). So the funnel sees the same (block, voter) vote
+            // dozens of times and pays a full hybrid verify for every copy.
+            //
+            // Within one drained batch a repeat is worth NOTHING: the collector
+            // counts DISTINCT signers per block, so the second copy of a
+            // (block_id, voter) pair cannot change any tally. Dedupe on that key and
+            // run the survivors LAST, behind every block. This drops no vote a
+            // quorum needs — a vote from a different voter, or for a different block,
+            // has a different key and is kept, and a genuinely new copy arriving in a
+            // later batch is processed then. Nothing about VERIFICATION is relaxed:
+            // every surviving vote goes through the identical hybrid check.
+            if vote_keys.insert((v.block_id, v.voter)) {
+                votes.push((from, gossip_msg));
+            } else {
+                votes_deduped += 1;
+            }
+        } else {
+            urgent.push((from, gossip_msg));
+        }
+    }
+
+    if coalesced > 0 || votes_deduped > 0 {
+        debug!(
+            urgent = urgent.len(),
+            votes = votes.len(),
+            frontiers = latest_frontier.len(),
+            coalesced,
+            votes_deduped,
+            "blocklace funnel: backlog scheduled (blocks first, then votes, one frontier per peer)"
+        );
+    }
+
+    // 1. Blocks and pull requests — arrival order, ahead of everything else. These
+    //    carry the round cohort; nothing else can reconstruct them.
+    for (from, msg) in urgent {
+        handle_blocklace_gossip(handle, state, from, msg).await;
+    }
+    // 2. The co-turn vocabulary.
+    for (from, message) in passthrough {
+        handle_blocklace_message(handle, state, from, message).await;
+    }
+    // 3. One frontier per peer, newest.
+    for (from, msg) in latest_frontier {
+        handle_blocklace_gossip(handle, state, from, msg).await;
+    }
+    // 4. Votes last: a quorum that crosses one batch later still finalizes, but a
+    //    cohort block that arrives one batch later stalls the round.
+    for (from, msg) in votes {
+        handle_blocklace_gossip(handle, state, from, msg).await;
+    }
+}
 
 /// Process an incoming blocklace gossip message.
 async fn handle_blocklace_message(
@@ -3848,6 +4053,61 @@ async fn handle_blocklace_message(
         }
     };
 
+    handle_blocklace_gossip(handle, state, from, gossip_msg).await;
+}
+
+/// Dispatch one ALREADY-DECODED blocklace gossip message. Split out of
+/// [`handle_blocklace_message`] so [`drain_and_schedule_blocklace_batch`] can inspect
+/// the message class (frontier vs block-bearing) to schedule the backlog without
+/// decoding twice.
+async fn handle_blocklace_gossip(
+    handle: &BlocklaceHandle,
+    state: &NodeState,
+    from: SocketAddr,
+    gossip_msg: BlocklaceGossipMessage,
+) {
+    // ⚑ NAME THE HANDLER THAT STALLED THE FUNNEL. This is a SINGLE-CONSUMER queue:
+    // one slow handler delays every message behind it, including the round-cohort
+    // blocks that `supermajority_threshold(n) == n` makes liveness-critical. When
+    // that happened there was nothing in the log to say WHICH handler, only a
+    // committee that had stopped — so the stall is timed and named at source.
+    let started = std::time::Instant::now();
+    let kind = match &gossip_msg {
+        BlocklaceGossipMessage::Push(b) => format!("Push[{}]", b.len()),
+        BlocklaceGossipMessage::Pull(ids) => format!("Pull[{}]", ids.len()),
+        BlocklaceGossipMessage::PullResponse(b) => format!("PullResponse[{}]", b.len()),
+        BlocklaceGossipMessage::Frontier { tips, votes, .. } => {
+            format!("Frontier[tips={} votes={}]", tips.len(), votes.len())
+        }
+        BlocklaceGossipMessage::CheckpointAvailable { .. } => "CheckpointAvailable".to_string(),
+        BlocklaceGossipMessage::PeerAddrs(a) => format!("PeerAddrs[{}]", a.len()),
+        BlocklaceGossipMessage::FinalizationVote(_) => "FinalizationVote".to_string(),
+    };
+    handle_blocklace_gossip_inner(handle, state, from, gossip_msg).await;
+    let took = started.elapsed();
+    if took >= FUNNEL_STALL_WARN {
+        warn!(
+            from = %from, kind = %kind, ms = took.as_millis() as u64,
+            "blocklace funnel: handler STALLED the single-consumer queue — every message \
+             behind it, including round-cohort blocks, waited this long"
+        );
+    } else if took >= FUNNEL_SLOW_DEBUG {
+        debug!(from = %from, kind = %kind, ms = took.as_millis() as u64, "blocklace funnel: slow handler");
+    }
+}
+
+/// How long one funnel handler may take before it is merely noted…
+const FUNNEL_SLOW_DEBUG: Duration = Duration::from_millis(250);
+/// …and before it is a warning. At a 1 s block cadence, a handler holding the
+/// single-consumer funnel for a full second is already delaying the next round.
+const FUNNEL_STALL_WARN: Duration = Duration::from_millis(1_000);
+
+async fn handle_blocklace_gossip_inner(
+    handle: &BlocklaceHandle,
+    state: &NodeState,
+    from: SocketAddr,
+    gossip_msg: BlocklaceGossipMessage,
+) {
     match gossip_msg {
         BlocklaceGossipMessage::Push(blocks) => {
             handle_push(handle, state, from, blocks).await;
@@ -4273,6 +4533,37 @@ async fn handle_push(
         for proof in &outcome.equivocations {
             crate::equivocation_court_service::slash_from_proof(state, proof).await;
         }
+    }
+
+    // A DETERMINISTIC INGEST REFUSAL IS A LIVENESS EVENT, NOT A FOOTNOTE. At
+    // `supermajority_threshold(n) == n` (every n ≤ 3) the round cohort cannot
+    // complete without this block, and the refusal path deliberately neither
+    // buffers nor re-pulls it — so one refused block halts the committee for good.
+    // `error!`, and it names the reason: the arm this reads from was a silent `{}`
+    // until 2026-07-30, which made "we refused it" indistinguishable from "the wire
+    // lost it" for the whole n=3 wedge investigation.
+    if !outcome.refused.is_empty() {
+        let reasons: Vec<String> = outcome
+            .refused
+            .iter()
+            .map(|(id, why)| {
+                format!(
+                    "{}: {why}",
+                    id.0[..4]
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                )
+            })
+            .collect();
+        error!(
+            from = %from,
+            refused = outcome.refused.len(),
+            total_received = block_count,
+            reasons = ?reasons,
+            "peer consensus blocks REFUSED on ingest and dropped permanently — at \
+             supermajority == n this stalls round advancement until the creator re-authors"
+        );
     }
 
     let inserted = outcome.inserted.len();
