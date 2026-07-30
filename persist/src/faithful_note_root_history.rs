@@ -1213,6 +1213,10 @@ mod tests {
 
     impl HybridSigner {
         fn new(seed: u8) -> Self {
+            // ML-DSA-65 KeyGen goes through `dregg-pq`, which `process::abort()`s when no verified
+            // core is installed — the same install `FaithfulSigner::new` performs in `commit_log`.
+            // Without it these four tests SIGABRT'd before reaching a single assertion.
+            dregg_pq_testkit::install_or_panic();
             let bytes = [seed; 32];
             let ed = dregg_types::SigningKey::from_bytes(&bytes);
             let ed_pk = ed.public_key();

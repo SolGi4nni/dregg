@@ -671,6 +671,12 @@ fn hybrid_quorum_fixture() -> (
     use dregg_federation::frost::MlDsaSigningKey;
     use dregg_types::{SigningKey, sign};
 
+    // The ML-DSA-65 derivations below go through `dregg-pq`, which aborts the process with no
+    // verified core installed — see `FaithfulNoteRootEnvelopeV1::verify_hybrid`. This is the same
+    // install `committee_node_restarts_cleanly_with_finalization_quorum` already performs; the
+    // four tests built on THIS fixture never did, so they SIGABRT'd before their first assertion.
+    dregg_pq_testkit::install_or_panic();
+
     let sks: Vec<SigningKey> = (1u8..=3)
         .map(|s| SigningKey::from_bytes(&[s; 32]))
         .collect();

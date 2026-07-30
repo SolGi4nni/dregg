@@ -631,6 +631,13 @@ impl PersistentStore {
     /// This closes store-level cross-executor races.  It deliberately does not make v3 live; the
     /// finalized-turn route uses the crate-private consuming helper below instead of this separate
     /// transaction convenience API.
+    ///
+    /// The faithful nullifier row and rolling-bridge advance that PRODUCTION writes beside every
+    /// exact append share this transaction, via
+    /// [`crate::commit_log::stage_faithful_counterpart_of_exact_append_in`].  Without them this
+    /// test-only seam durably wrote a one-authority image that `PersistentStore::open` refuses
+    /// with "exact FNSP-v3 authority diverges from faithful nullifier records" — write-accepts /
+    /// open-refuses, which is a bricked data directory, not a test detail.
     #[cfg(test)]
     pub(crate) fn compare_and_commit_exact_fnsp_v3_append(
         &self,
@@ -638,6 +645,10 @@ impl PersistentStore {
     ) -> StoreResult<ExactFnspV3StateHeadV1> {
         let write = self.db.begin_write()?;
         let (write, successor) = compare_and_commit_exact_fnsp_v3_append_in(write, candidate)?;
+        crate::commit_log::stage_faithful_counterpart_of_exact_append_in(
+            &write,
+            candidate.append_record(),
+        )?;
         write.commit()?;
         Ok(successor)
     }

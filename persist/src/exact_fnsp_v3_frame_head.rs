@@ -1215,14 +1215,32 @@ pub(crate) fn stage_exact_fnsp_v3_frame_with_activation_in(
     Ok((write, frame))
 }
 
-/// Compatibility seam for already-installed epochs. Production finalized-turn callers should use
-/// [`stage_exact_fnsp_v3_frame_with_activation_in`] and pass their optional first-frame candidate.
+/// TEST-ONLY seam for already-installed epochs: one frame plus the FULL paired append.
+///
+/// Every production finalized-turn caller goes through
+/// [`stage_exact_fnsp_v3_frame_with_activation_in`] from `commit_finalized_turn_welded`, which
+/// stages the faithful nullifier rows and the rolling bridge advance in the same writer.  This
+/// wrapper had no such caller — it was labelled a "compatibility seam" while every call site was a
+/// test — and it advanced the exact authority ALONE, so a test that reopened its store hit the
+/// boot audit's "exact N records, faithful 0".  It now stages the same faithful counterpart a
+/// finalized turn does, and the `#[cfg(test)]` gate makes "production uses the activation form"
+/// structural instead of advisory.
+///
+/// A test whose SUBJECT is a one-sided authority calls the underlying seams by name — see
+/// `initialize_unaudited_exact_fnsp_v3_state` and
+/// `exact_fnsp_v3_prefix_gate_refuses_empty_mismatched_and_reordered_authorities`.
+#[cfg(test)]
 pub(crate) fn stage_exact_fnsp_v3_frame_in(
     write: WriteTransaction,
     exact: ExactFnspV3StateCasV1,
     frame: UntrustedExactFnspV3FrameV1,
 ) -> StoreResult<(WriteTransaction, UntrustedExactFnspV3FrameV1)> {
-    stage_exact_fnsp_v3_frame_with_activation_in(write, exact, None, frame)
+    let (write, frame) = stage_exact_fnsp_v3_frame_with_activation_in(write, exact, None, frame)?;
+    crate::commit_log::stage_faithful_counterpart_of_exact_append_in(
+        &write,
+        exact.append_record(),
+    )?;
+    Ok((write, frame))
 }
 
 pub(crate) fn verify_replayed_exact_fnsp_v3_frame_with_activation_in(
@@ -2251,6 +2269,85 @@ pub(crate) fn exact_fnsp_v3_test_first_frame_bundle(
     (activation, frame, encoded_receipt)
 }
 
+/// Build the Nth executor-signed exact frame for a PRODUCTION finalized-turn commit.
+///
+/// Two differences from [`exact_fnsp_v3_test_first_frame_bundle`], both load-bearing:
+///
+/// * it does NOT append the receipt row.  The production entry
+///   `commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame` owns that append, so a
+///   caller that pre-appended would leave the receipt log one row longer than the commit expects;
+/// * it takes an existing activation plus the exact/player predecessors, so a test can build a
+///   chain of frames rather than only the first one.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn exact_fnsp_v3_test_frame(
+    receipt_log_index: u64,
+    activation: &UntrustedExactFnspV3ActivationV1,
+    exact: ExactFnspV3StateCasV1,
+    key: &dregg_types::SigningKey,
+    receipt: &TurnReceipt,
+    exact_predecessor: Option<&UntrustedExactFnspV3FrameV1>,
+    player_predecessor: Option<(u64, [u8; 32])>,
+) -> UntrustedExactFnspV3FrameV1 {
+    let predecessor = exact_predecessor.map_or(
+        ExactFnspV3DurableReceiptLinkV1::EpochActivation(activation.activation_hash),
+        |previous| ExactFnspV3DurableReceiptLinkV1::ExactFrame(previous.frame_hash),
+    );
+    let unsigned = UntrustedExactFnspV3FrameV1 {
+        sequence: exact.expected().generation(),
+        epoch: activation.epoch,
+        receipt_log_index,
+        predecessor,
+        activation_hash: activation.activation_hash,
+        frame_hash: [0; 32],
+        predecessor_receipt_index: player_predecessor.map(|(index, _)| index),
+        predecessor_receipt_hash: player_predecessor.map(|(_, hash)| hash),
+        agent: receipt.agent.0,
+        federation_id: activation.federation_id,
+        turn_hash: receipt.turn_hash,
+        forest_hash: receipt.forest_hash,
+        full_receipt_hash: receipt.receipt_hash(),
+        full_pre_state_hash: receipt.pre_state_hash,
+        full_post_state_hash: receipt.post_state_hash,
+        exact_before: exact.expected(),
+        exact_after: exact.successor(),
+        proof_outer_before: [0; 32],
+        proof_outer_after: [0; 32],
+        accepted_statement_digest: [0xa3; 32],
+        signed_spending_proof_digest: [0xa4; 32],
+        executor_public_key: activation.executor_public_key,
+        executor_signature: Signature([0; 64]),
+    };
+    let frame_hash = unsigned.compute_frame_hash();
+    let mut message = Vec::from(FRAME_SIGNATURE_DOMAIN);
+    message.extend_from_slice(&frame_hash);
+    UntrustedExactFnspV3FrameV1::authenticate_devnet_executor(
+        activation.epoch,
+        receipt_log_index,
+        predecessor,
+        activation.activation_hash,
+        frame_hash,
+        player_predecessor.map(|(index, _)| index),
+        player_predecessor.map(|(_, hash)| hash),
+        receipt.agent.0,
+        activation.federation_id,
+        receipt.turn_hash,
+        receipt.forest_hash,
+        receipt.receipt_hash(),
+        receipt.pre_state_hash,
+        receipt.post_state_hash,
+        exact.expected(),
+        exact.successor(),
+        [0; 32],
+        [0; 32],
+        [0xa3; 32],
+        [0xa4; 32],
+        activation.executor_public_key,
+        dregg_types::sign(key, &message),
+    )
+    .expect("test frame")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2504,6 +2601,12 @@ mod tests {
         );
     }
 
+    /// Restart is asserted over a store built by the PRODUCTION finalized-turn entry.
+    ///
+    /// `stage_exact_fnsp_v3_frame_in` advances the exact authority and the frame tables alone; the
+    /// two boot audits additionally require the faithful nullifier rows plus rolling bridge and a
+    /// 1:1 FRC1 semantic core, so a store built through the narrow seam CANNOT reopen.  Building it
+    /// the way a finalized turn does is what makes the reopen assertion mean anything.
     #[test]
     fn activation_frame_and_head_restart_as_one_validated_chain() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -2511,33 +2614,20 @@ mod tests {
         let expected_hash;
         {
             let store = PersistentStore::open(&path).expect("store");
-            let initial = store
-                .initialize_exact_fnsp_v3_state(std::iter::empty())
-                .expect("genesis");
-            let (key, public) = generate_keypair();
-            let activation = activation_candidate(initial, &key, public);
-            store
-                .install_exact_fnsp_v3_activation(activation.clone())
-                .expect("persist activation");
-            let exact = store
-                .prepare_exact_fnsp_v3_append([0x31; 32], 31)
-                .expect("prepare");
-            let frame = frame_candidate(
+            let activation = crate::commit_log::tests::install_test_exact_frame_activation(&store);
+            let frame = crate::commit_log::tests::commit_test_exact_frame_turn(
                 &store,
                 &activation,
-                exact,
-                &key,
+                0,
                 [0xA1; 32],
+                crate::FinalizedNullifierRecord {
+                    nullifier: [0x31; 32],
+                    value: 31,
+                },
                 None,
                 None,
-                0x41,
             );
             expected_hash = frame.frame_hash();
-            let write = store.db.begin_write().expect("writer");
-            let (write, staged) =
-                stage_exact_fnsp_v3_frame_in(write, exact, frame).expect("stage exact and frame");
-            assert_eq!(staged.frame_hash(), expected_hash);
-            write.commit().expect("atomic commit");
         }
 
         let reopened = PersistentStore::open(&path).expect("reopen");
@@ -2557,6 +2647,23 @@ mod tests {
                 .exact_fnsp_v3_state_head()
                 .expect("exact load")
                 .expect("exact head")
+        );
+
+        // ANTI-VACUITY: the boot audit compares two authorities, and an equality between two EMPTY
+        // authorities is free.  Both must actually carry the committed append.
+        assert_eq!(
+            reopened
+                .faithful_nullifier_record_count()
+                .expect("faithful count"),
+            1
+        );
+        assert_eq!(
+            reopened
+                .exact_fnsp_v3_append_records()
+                .expect("exact records")
+                .expect("exact authority")
+                .len(),
+            1
         );
     }
 
@@ -2849,6 +2956,24 @@ mod tests {
         );
     }
 
+    /// Two exact frames, with ordinary same-player and cross-player receipts interleaved between
+    /// them, survive a real restart.  Both frames are committed as PRODUCTION finalized turns —
+    /// the boot audits require each frame's faithful rows, bridge advance and FRC1 core.
+    ///
+    /// ⚠ The second frame is BOB's, not Alice's, and that is forced rather than incidental.  A
+    /// frame's `predecessor_receipt_(index, hash)` is read by two durable authorities with
+    /// different expectations:
+    ///
+    /// * `validate_frame_receipt` (boot/full audit) requires it to equal the receipt log's
+    ///   per-agent predecessor — `latest_by_agent`, which ORDINARY receipts advance;
+    /// * `stage_fresh_finalized_receipt_core_in` requires it to equal the agent's durable FRC1
+    ///   semantic head — which only FRAMES advance.
+    ///
+    /// Those coincide only while an agent appends no ordinary receipt between two of its frames.
+    /// Alice-frame → Alice-ordinary → Alice-frame is therefore unsatisfiable in production today
+    /// ("finalized FRC1: successor does not extend the durable semantic head"), so asserting it
+    /// here would assert something no finalized turn can reach.  It is reported as a defect of the
+    /// FRC1 predecessor conflation, not papered over here.
     #[test]
     fn recovery_accepts_ordinary_and_cross_player_receipt_interleaving() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -2856,35 +2981,27 @@ mod tests {
         let expected_head;
         {
             let store = PersistentStore::open(&path).expect("store");
-            let initial = store
-                .initialize_exact_fnsp_v3_state(std::iter::empty())
-                .expect("genesis");
-            let (key, public) = generate_keypair();
-            let activation = activation_candidate(initial, &key, public);
-            store
-                .install_exact_fnsp_v3_activation(activation.clone())
-                .expect("activation");
+            let activation = crate::commit_log::tests::install_test_exact_frame_activation(&store);
+            let key =
+                SigningKey::from_bytes(&[crate::commit_log::tests::TEST_EXACT_FRAME_SEED; 32]);
 
-            let exact1 = store
-                .prepare_exact_fnsp_v3_append([0xA8; 32], 108)
-                .expect("exact one");
-            let frame1 = frame_candidate(
+            let frame1 = crate::commit_log::tests::commit_test_exact_frame_turn(
                 &store,
                 &activation,
-                exact1,
-                &key,
+                0,
                 [0xA1; 32],
+                crate::FinalizedNullifierRecord {
+                    nullifier: [0xA8; 32],
+                    value: 108,
+                },
                 None,
                 None,
-                0xA8,
             );
             let alice_exact_receipt = frame1.full_receipt_hash();
-            let write = store.db.begin_write().expect("first writer");
-            let (write, frame1) =
-                stage_exact_fnsp_v3_frame_in(write, exact1, frame1).expect("first frame");
-            write.commit().expect("commit first");
 
-            let (alice_ordinary_index, alice_ordinary_hash) = append_ordinary_receipt(
+            // Alice's own ordinary receipt lands after her frame (same-player interleave), then
+            // Bob's (cross-player interleave), and Bob's frame extends Bob's ordinary receipt.
+            append_ordinary_receipt(
                 &store,
                 &activation,
                 &key,
@@ -2892,27 +3009,23 @@ mod tests {
                 Some(alice_exact_receipt),
                 0xA9,
             );
-            append_ordinary_receipt(&store, &activation, &key, [0xB2; 32], None, 0xAA);
+            let (bob_ordinary_index, bob_ordinary_hash) =
+                append_ordinary_receipt(&store, &activation, &key, [0xB2; 32], None, 0xAA);
 
-            let exact2 = store
-                .prepare_exact_fnsp_v3_append([0xAB; 32], 109)
-                .expect("exact two");
-            let frame2 = frame_candidate(
+            let frame2 = crate::commit_log::tests::commit_test_exact_frame_turn(
                 &store,
                 &activation,
-                exact2,
-                &key,
-                [0xA1; 32],
-                Some((alice_ordinary_index, alice_ordinary_hash)),
+                1,
+                [0xB2; 32],
+                crate::FinalizedNullifierRecord {
+                    nullifier: [0xAB; 32],
+                    value: 109,
+                },
                 Some(&frame1),
-                0xAB,
+                Some((bob_ordinary_index, bob_ordinary_hash)),
             );
             assert_eq!(frame2.receipt_log_index(), 3);
             expected_head = frame2.frame_hash();
-            let write = store.db.begin_write().expect("second writer");
-            let (write, _) =
-                stage_exact_fnsp_v3_frame_in(write, exact2, frame2).expect("second frame");
-            write.commit().expect("commit second");
         }
 
         let reopened = PersistentStore::open(&path).expect("interleaved recovery");
@@ -2924,6 +3037,23 @@ mod tests {
                 .expect("frame")
                 .frame_hash(),
             expected_head
+        );
+
+        // ANTI-VACUITY: both authorities carry BOTH appends, so the boot equality is not the
+        // free one between two empty histories.
+        assert_eq!(
+            reopened
+                .faithful_nullifier_record_count()
+                .expect("faithful count"),
+            2
+        );
+        assert_eq!(
+            reopened
+                .exact_fnsp_v3_append_records()
+                .expect("exact records")
+                .expect("exact authority")
+                .len(),
+            2
         );
     }
 
@@ -3021,16 +3151,10 @@ mod tests {
         let path = directory.path().join("exact-online-boundary.redb");
         let exact_agent = [3u8; 32];
         let exact_receipt_hash;
-        let (key, public) = generate_keypair();
+        let key = SigningKey::from_bytes(&[crate::commit_log::tests::TEST_EXACT_FRAME_SEED; 32]);
         {
             let store = PersistentStore::open(&path).expect("store");
-            let initial = store
-                .initialize_exact_fnsp_v3_state(std::iter::empty())
-                .expect("exact genesis");
-            let activation = activation_candidate(initial, &key, public);
-            store
-                .install_exact_fnsp_v3_activation(activation.clone())
-                .expect("activation");
+            let activation = crate::commit_log::tests::install_test_exact_frame_activation(&store);
 
             let mut player_heads = HashMap::new();
             for tag in 1u8..=128 {
@@ -3039,25 +3163,20 @@ mod tests {
                 let head = append_ordinary_receipt(&store, &activation, &key, agent, previous, tag);
                 player_heads.insert(agent, head);
             }
-            let exact = store
-                .prepare_exact_fnsp_v3_append([0xD1; 32], 209)
-                .expect("exact append");
-            let frame = frame_candidate(
+            let frame = crate::commit_log::tests::commit_test_exact_frame_turn(
                 &store,
                 &activation,
-                exact,
-                &key,
+                0,
                 exact_agent,
-                player_heads.get(&exact_agent).copied(),
+                crate::FinalizedNullifierRecord {
+                    nullifier: [0xD1; 32],
+                    value: 209,
+                },
                 None,
-                0xD1,
+                player_heads.get(&exact_agent).copied(),
             );
             exact_receipt_hash = frame.full_receipt_hash();
             let expected_frame_hash = frame.frame_hash();
-            let write = store.db.begin_write().expect("writer");
-            let (write, _) = stage_exact_fnsp_v3_frame_in(write, exact, frame)
-                .expect("online writer over large receipt table");
-            write.commit().expect("commit exact frame");
 
             let (live_activation, live_head) = store
                 .exact_fnsp_v3_live_authority()
@@ -3098,6 +3217,23 @@ mod tests {
             0xD2,
         );
         assert_eq!(result.0, 129);
+
+        // ANTI-VACUITY: the one exact append is present on BOTH authorities after the rebuild,
+        // so the boot equality that let this store reopen was not the empty-vs-empty one.
+        assert_eq!(
+            reopened
+                .faithful_nullifier_record_count()
+                .expect("faithful count"),
+            1
+        );
+        assert_eq!(
+            reopened
+                .exact_fnsp_v3_append_records()
+                .expect("exact records")
+                .expect("exact authority")
+                .len(),
+            1
+        );
     }
 
     #[test]

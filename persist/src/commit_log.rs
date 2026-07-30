@@ -469,6 +469,49 @@ pub(crate) fn validate_exact_fnsp_v3_faithful_prefix_in(
     crate::exact_fnsp_v3_faithful_bridge::install_after_full_audit_in(write, &legacy)
 }
 
+/// Stage the faithful half of one exact FNSP-v3 append inside the caller's writer.
+///
+/// PRODUCTION never appends to one authority alone. [`PersistentStore::commit_finalized_turn_welded`]
+/// writes the faithful presence/record rows (`append_fresh_nullifiers_in`), the exact append, and
+/// the rolling bridge advance in ONE transaction, and refuses outright when only one of the two
+/// bridge projections is staged. The two narrower exact-append seams —
+/// [`PersistentStore::compare_and_commit_exact_fnsp_v3_append`] and
+/// [`crate::exact_fnsp_v3_frame_head::stage_exact_fnsp_v3_frame_in`] — are test-only and carry no
+/// faithful half of their own, so without this they durably write an image
+/// `PersistentStore::open` refuses: the same write-accepts / open-refuses trap
+/// `initialize_exact_fnsp_v3_state` used to be before `aa09acec7`.
+///
+/// It calls the production row writer and the production seal advance, and re-derives the faithful
+/// leg by READING BACK the durable faithful tables rather than echoing the exact record, so
+/// `stage_matching_append_in` still compares two independently reconstructed records. That keeps
+/// this a thin harness seam over the production authorities, not a second implementation of them.
+///
+/// Call it AFTER the exact append is staged in the same writer: the bridge advance validates both
+/// durable successor counts.
+#[cfg(test)]
+pub(crate) fn stage_faithful_counterpart_of_exact_append_in(
+    write: &redb::WriteTransaction,
+    exact: dregg_circuit::exact_nullifier_aafi::ExactAppendRecord,
+) -> Result<()> {
+    append_fresh_nullifiers_in(
+        write,
+        &[FinalizedNullifierRecord {
+            nullifier: exact.raw,
+            value: exact.value,
+        }],
+        exact.seq,
+    )?;
+    let faithful = durable_faithful_exact_append_records_in(write)?
+        .last()
+        .copied()
+        .ok_or_else(|| {
+            StoreError::Integrity(
+                "faithful counterpart row is absent immediately after it was staged".to_string(),
+            )
+        })?;
+    crate::exact_fnsp_v3_faithful_bridge::stage_matching_append_in(write, faithful, exact)
+}
+
 fn require_attested_nullifier_root(
     faithful: &FinalizedFaithfulRootWeld<'_>,
     set: &dregg_cell::nullifier_set::NullifierSet,
@@ -3097,7 +3140,9 @@ fn hex32(b: &[u8; 32]) -> String {
 // =============================================================================
 
 #[cfg(test)]
-mod tests {
+// `pub(crate)` so sibling modules' tests can build their stores through the PRODUCTION
+// finalized-turn apparatus that lives here — see `commit_test_exact_frame_turn`.
+pub(crate) mod tests {
     use super::*;
     use crate::PersistentStore;
     use dregg_cell::Cell;
@@ -3295,6 +3340,158 @@ mod tests {
             postcard::to_stdvec(&receipt).expect("canonical receipt encoding"),
             hash,
         )
+    }
+
+    /// Seed shared by the exact-epoch executor AND the faithful hybrid author in
+    /// [`commit_test_exact_frame_turn`].
+    ///
+    /// They cannot be two different keys: `audit_finalized_receipt_cores_v1_on_open`
+    /// reauthenticates the durable faithful envelope against the FRAME's executor public key.
+    pub(crate) const TEST_EXACT_FRAME_SEED: u8 = 0xe7;
+
+    /// Install the activation [`commit_test_exact_frame_turn`] commits its frames under.
+    ///
+    /// Its federation is the faithful one, so the frame, the receipt authority and the faithful
+    /// note-root edge all name a single federation, as they do in production.
+    pub(crate) fn install_test_exact_frame_activation(
+        store: &PersistentStore,
+    ) -> crate::UntrustedExactFnspV3ActivationV1 {
+        let initial = store
+            .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
+            .expect("exact prefix from faithful nullifiers");
+        let key = dregg_types::SigningKey::from_bytes(&[TEST_EXACT_FRAME_SEED; 32]);
+        let public = key.public_key();
+        let epoch = dregg_turn::ExactFnspV3ReceiptEpochV1::prepare(
+            dregg_turn::ExactFnspV3ReceiptEpoch::new(7).expect("nonzero epoch"),
+            faithful_context().1,
+            public.0,
+            0,
+            None,
+            dregg_turn::ExactFnspV3StatePoint::new(initial.root(), initial.count())
+                .expect("exact point"),
+        )
+        .expect("activation epoch");
+        let signature = dregg_types::sign(
+            &key,
+            &crate::UntrustedExactFnspV3ActivationV1::signature_message(epoch.activation_hash()),
+        );
+        let activation = crate::UntrustedExactFnspV3ActivationV1::authenticate_devnet_executor(
+            epoch.epoch().get(),
+            initial,
+            epoch.federation_id(),
+            epoch.receipt_cutover_next_index(),
+            epoch.receipt_cutover_tail_hash(),
+            epoch.activation_hash(),
+            public.0,
+            signature,
+        )
+        .expect("signed activation");
+        store
+            .install_exact_fnsp_v3_activation(activation.clone())
+            .expect("install exact frame activation");
+        activation
+    }
+
+    /// Commit ONE finalized turn carrying an exact FNSP-v3 frame, through the PRODUCTION entry.
+    ///
+    /// `PersistentStore::open` runs TWO independent boot audits over an exact-frame image, and a
+    /// frame satisfies both only as part of a complete finalized turn:
+    ///
+    /// * `audit_exact_fnsp_v3_faithful_bridge_on_open` requires the faithful nullifier rows and the
+    ///   rolling faithful/exact bridge to advance with every exact append;
+    /// * `audit_finalized_receipt_cores_v1_on_open` requires a 1:1 FRC1 semantic core that
+    ///   REDERIVES at open from the durable commit record, receipt row, faithful note-root envelope
+    ///   and attested root.
+    ///
+    /// No narrower seam produces that image — `stage_exact_fnsp_v3_frame_in` advances the exact
+    /// authority and the frame tables alone — so any test that REOPENS its store must build its
+    /// frames here.  Tests that never reopen may keep using the narrow seam.
+    pub(crate) fn commit_test_exact_frame_turn(
+        store: &PersistentStore,
+        activation: &crate::UntrustedExactFnspV3ActivationV1,
+        ordinal: u64,
+        agent: [u8; 32],
+        spend: FinalizedNullifierRecord,
+        exact_predecessor: Option<&crate::UntrustedExactFnspV3FrameV1>,
+        player_predecessor: Option<(u64, [u8; 32])>,
+    ) -> crate::UntrustedExactFnspV3FrameV1 {
+        let key = dregg_types::SigningKey::from_bytes(&[TEST_EXACT_FRAME_SEED; 32]);
+        let signer = FaithfulSigner::new(TEST_EXACT_FRAME_SEED);
+        let exact = store
+            .prepare_exact_fnsp_v3_append(spend.nullifier, spend.value)
+            .expect("exact append candidate");
+
+        let block_id = [0xc0u8.wrapping_add(ordinal as u8); 32];
+        let mut commit = faithful_commit_record(ordinal, block_id);
+        commit.creator = agent;
+
+        let mut receipt = dregg_turn::TurnReceipt {
+            turn_hash: commit.turn_hash,
+            forest_hash: [0xe9; 32],
+            pre_state_hash: [0xea; 32],
+            post_state_hash: [0xeb; 32],
+            timestamp: 1_700_000_000,
+            agent: dregg_cell::CellId(agent),
+            federation_id: activation.federation_id(),
+            finality: dregg_turn::Finality::Final,
+            previous_receipt_hash: player_predecessor.map(|(_, hash)| hash),
+            ..Default::default()
+        };
+        receipt.executor_signature = Some(
+            dregg_types::sign(&key, &receipt.canonical_executor_signed_message())
+                .0
+                .to_vec(),
+        );
+        let encoded_receipt = postcard::to_stdvec(&receipt).expect("canonical receipt encoding");
+        commit.receipt_hash = receipt.receipt_hash();
+
+        let receipt_index = store.receipt_chain_len().expect("receipt len");
+        let frame = crate::exact_fnsp_v3_frame_head::exact_fnsp_v3_test_frame(
+            receipt_index,
+            activation,
+            exact,
+            &key,
+            &receipt,
+            exact_predecessor,
+            player_predecessor,
+        );
+
+        // `initial_anchor` seeds a FRESH faithful segment and is then compared against the
+        // segment's INSTALLED anchor forever after — not against the moving head — so only the
+        // first turn may supply it.
+        let fresh_segment = store
+            .faithful_note_root_head()
+            .expect("faithful head")
+            .is_none();
+        let (anchor, edge) = plan_test_edge(store, commit.height, block_id, &[]);
+        let envelope = signer.sign_edge(edge.clone());
+        let successor = store
+            .plan_faithful_nullifier_successor(std::slice::from_ref(&spend))
+            .expect("faithful nullifier successor");
+        let attested = test_attested_with_nullifier_root(&signer, &commit, &edge, successor);
+        let statements = test_finalized_spend_inputs(store, &anchor, std::slice::from_ref(&spend));
+        store
+            .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+                ordinal,
+                &commit,
+                receipt_index,
+                &encoded_receipt,
+                FinalizedFaithfulRootWeld {
+                    initial_anchor: fresh_segment.then_some(&anchor),
+                    envelope: &envelope,
+                    author_committee: std::slice::from_ref(&signer.ed_pk),
+                    author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                    attested_root: &attested,
+                    spent_nullifiers: std::slice::from_ref(&spend),
+                    finalized_spends: &statements,
+                },
+                exact,
+                frame.clone(),
+                None,
+                &crate::FinalizedExecutorConsensusState::default(),
+            )
+            .expect("production exact-frame finalized turn");
+        frame
     }
 
     fn install_test_exact_activation(
@@ -5437,6 +5634,81 @@ mod tests {
         assert!(
             PersistentStore::open(&path).is_err(),
             "restart audit must refuse one semantic id indexed at two receipt coordinates"
+        );
+    }
+
+    /// BOTH poles of the faithful/exact boot gate, in ONE process and over ONE store.
+    ///
+    /// The gate is an equality between two authorities, and an equality between two EMPTY
+    /// authorities holds for free — so the admitting pole asserts that records actually exist on
+    /// both sides.  The refusing pole then advances the exact authority ALONE in the same live
+    /// store and requires the gate to refuse by variant.
+    #[test]
+    fn faithful_exact_boot_gate_admits_the_honest_image_and_refuses_one_sided_growth() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("both-poles.redb");
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let activation = install_test_exact_frame_activation(&store);
+            commit_test_exact_frame_turn(
+                &store,
+                &activation,
+                0,
+                [0xA1; 32],
+                FinalizedNullifierRecord {
+                    nullifier: [0x66; 32],
+                    value: 66,
+                },
+                None,
+                None,
+            );
+        }
+
+        // POLE 1 — the honest production image REOPENS, and the equality that let it through is
+        // between two NON-EMPTY histories.
+        let reopened = PersistentStore::open(&path).expect("honest production image reopens");
+        assert_eq!(reopened.faithful_nullifier_record_count().unwrap(), 1);
+        assert_eq!(
+            reopened
+                .exact_fnsp_v3_append_records()
+                .unwrap()
+                .expect("exact authority")
+                .len(),
+            1
+        );
+        let write = reopened.db.begin_write().unwrap();
+        validate_exact_fnsp_v3_faithful_prefix_in(&write)
+            .expect("both authorities describe the same append history");
+        write.abort().unwrap();
+
+        // POLE 2 — advance the EXACT authority alone in that same store.  This is precisely what
+        // a narrow exact-append seam used to leave behind durably, and the gate must refuse it.
+        let candidate = reopened
+            .prepare_exact_fnsp_v3_append([0x67; 32], 67)
+            .unwrap();
+        let write = reopened.db.begin_write().unwrap();
+        let (write, _) = crate::exact_fnsp_v3_state::compare_and_commit_exact_fnsp_v3_append_in(
+            write, candidate,
+        )
+        .unwrap();
+        let refusal = validate_exact_fnsp_v3_faithful_prefix_in(&write);
+        assert!(
+            matches!(refusal, Err(StoreError::Integrity(ref message)) if message.contains("diverges")),
+            "one-sided exact growth must be refused, got {refusal:?}"
+        );
+        write.abort().unwrap();
+
+        // The refused transaction mutated nothing, so the honest store still opens.
+        drop(reopened);
+        let again = PersistentStore::open(&path).expect("refusal left the honest image intact");
+        assert_eq!(again.faithful_nullifier_record_count().unwrap(), 1);
+        assert_eq!(
+            again
+                .exact_fnsp_v3_append_records()
+                .unwrap()
+                .expect("exact authority")
+                .len(),
+            1
         );
     }
 
