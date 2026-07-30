@@ -6212,42 +6212,424 @@ pub fn generate_rotated_custom_wide(
     Ok((trace, dpis))
 }
 
-/// **THE CAP-WRITE WIDE producer witness (the cap-open weld for the WIDE leg).** A cap-WRITE family
-/// lead (attenuate / revokeCapability) advances its AFTER cap-root through an in-circuit cap-tree
-/// `map_op` write the bare transfer-shape route leaves UNSAT; this carries the witness that write
-/// needs: the cell's FULL c-list (`clist_leaves`, the openable sorted-Poseidon2 accumulator the BEFORE
-/// cap-root IS the root of), the consumed/written anchor key (`anchor_key` = the slot's `slot_hash[0]`),
-/// and the op-specific `inserted` `(key, value)` payload (an `Update`/attenuate writes the narrowed
-/// KEEP_MASK as the value; a `Remove`/revokeCapability takes `None`). Threaded through
-/// [`generate_rotated_cap_write_base`] — a wrong post-root / a c-list missing the key is UNSAT (fails
-/// closed, never a fabricated post-cap-root).
+/// **THE CAP-WRITE WIDE producer witness (the cap-open WRITE route's c-list).** A cap-WRITE family
+/// lead (attenuate / revokeCapability / a witnessed grant) advances its AFTER cap-root through an
+/// in-circuit cap-tree write that only the `…WriteCapOpen…` / `attenuateCapOpenEff` members bind; this
+/// carries what that write needs: the holder's FULL **7-field** c-list (`cap_leaves` + the
+/// `cap_tombstones` whose positions are retained with a ZERO digest — the openable
+/// [`CanonicalCapTree`](crate::cap_root::CanonicalCapTree) the BEFORE cap-root IS the root of), the
+/// consumed cap's `anchor_key` (`slot_hash`), and the op-specific `inserted` `(key, value)` payload
+/// (`Update`/attenuate writes the narrowed KEEP_MASK as the value and ignores the key; `Remove`/
+/// revokeCapability takes `None`; `Insert` takes the FRESH conferred edge).
+///
+/// ⚑ **THIS USED TO BE A 2-FIELD `HeapLeaf` c-list, and that was the defect.** The old shape fed
+/// [`generate_rotated_cap_write_base`] — the arity-2 `map_op` bridge — and `30ff508fe` replaced the
+/// cap-tree `map_op` with a Merkle SPINE: **every** cap member in **all three** registries now declares
+/// `map_ops == 0`, so supplying a witness heap is refused outright ("descriptor declares no map ops but
+/// witness heaps were supplied"). The cap-open READ crown needs the 7 leaf fields anyway (the
+/// `targetBind` / `effBitGateFor` / decoded-tier gates read them), which a `(key, value)` pair cannot
+/// carry. The producer now REBUILDS the tree and takes the shape-matched witness off it
+/// ([`generate_rotated_cap_write_capopen_wide`]) — so a fabricated membership path is not even
+/// representable, let alone provable.
 pub struct CapWriteWideWitness {
-    /// The cell's full c-list (the BEFORE cap-root is the root of this sorted-Poseidon2 tree).
-    pub clist_leaves: Vec<crate::heap_root::HeapLeaf>,
-    /// The written/anchor key (the consumed cap's `slot_hash[0]`). MUST be present in `clist_leaves`.
+    /// The holder's FULL 7-field c-list (the BEFORE cap-root is this sorted cap-tree's root).
+    pub cap_leaves: Vec<crate::cap_root::CapLeaf>,
+    /// The TOMBSTONED slot keys (revoked positions: sort key retained, digest forced to
+    /// [`CAP_ZERO8`](crate::cap_root::CAP_ZERO8)), so a c-list carrying earlier revocations rebuilds
+    /// the genuine committed root rather than a compacted one.
+    pub cap_tombstones: Vec<BabyBear>,
+    /// The consumed cap's `slot_hash`: the UPDATEd / REMOVEd key, or the INSERT's held-authority
+    /// ANCHOR. MUST be live in `cap_leaves` (else the witness builders fail closed).
     pub anchor_key: BabyBear,
-    /// The op-specific insert payload: `(key, value)` for `Update` (value = KEEP_MASK) — `None` for
-    /// `Remove`.
+    /// The op payload: `(fresh_key, conferred_value)` for `Insert`, `(_ignored, KEEP_MASK)` for
+    /// `Update`, `None` for `Remove`.
     pub inserted: Option<(BabyBear, BabyBear)>,
+    /// ⚠ **THE ADVERSARIAL POLE — honest producers pass `None`.** When `Some(root8)`, THIS value is
+    /// written into the committed AFTER cap-root group instead of the genuine fold: it is the prover's
+    /// CLAIM, not a computation the producer trusts. The in-circuit spine PINS that group to the fold
+    /// (`CapOpenEmit.removeTombstoneConstraints` for REMOVE, `effCapOpenWriteV3_forces_write8` for
+    /// UPDATE/INSERT), so a claim that is not the fold is **UNSAT at the prover** — no proof exists to
+    /// hand a ledgerless light client. Exactly the asymmetry
+    /// [`apply_rotated_cap_remove_after_spine`]'s `after_root8` documents, lifted to the wide+welded
+    /// leg so the tooth can be exercised through the ONE mint route rather than a re-implemented twin.
+    pub claimed_post_cap_root8: Option<[BabyBear; CAP_OPEN_DIGEST_W]>,
 }
 
-/// **THE CAP-WRITE WIDE plan for a lead effect.** `Some((op, needs_freeze_patch))` for the cap-WRITE
-/// family whose AFTER cap-root the bare wide transfer-shape route cannot satisfy:
-///   * `AttenuateCapability` → `(Some(Update), false)` — in-place UPDATE-AT-KEY (read held mask, write
-///     the narrowed KEEP_MASK). The map_op WRITE base rides the nonce-TICK face (the v1 cap-root advance
-///     is the genuine in-trace transition), so NO freeze patch — exactly as the live cap-open path skips
-///     the patch when a write witness is threaded.
-///   * `RevokeCapability` → `(Some(Remove), false)` — ZERO-value REMOVE of the held slot, same tick face.
-///   * `GrantCapability` → `(None, true)` — the authority-only grant base FREEZES the cap-root
-///     (pass-through, no map_op write), and rides the nonce-FREEZE face the bare transfer-shape route
-///     (nonce-TICK) mis-shapes — so the freeze patch IS applied, but no cap-tree write witness.
-///     `None` for every other lead (the nonce-TICK passthrough cap bases revokeDelegation / introduce ride
-///     the transfer-shape route directly; the value/field/grow-gate/record families have their own arms).
-fn cap_write_wide_plan(effect: &Effect) -> Option<(Option<CapTreeWriteOp>, bool)> {
+/// **THE CAP-OPEN *WRITE* ROUTE for a cap-WRITE lead** — the committed member the light-client wire
+/// DEMANDS, its cap-tree write shape, and the crown facet bit the wrapper binds.
+///
+/// ⚑ **WHY THE BARE MEMBER IS NOT A DESTINATION.** `rotated_descriptor_name_for_effect` resolves
+/// `attenuateVmDescriptor2R24` / `revokeCapabilityVmDescriptor2R24` / `grantCapVmDescriptor2R24` for
+/// these leads, and all three are on the light-client deny-list
+/// (`dregg_sdk::full_turn_proof::is_forbidden_plain_cap_descriptor`): a cap effect proven WITHOUT the
+/// in-circuit membership crown launders host-trusted authority, so such a leg self-verifies and the
+/// WIRE refuses it. The write-bearing cap-open wrappers are the wire-ACCEPTED members
+/// (`DescriptorAuthorityClass::CrownedWriteRoute`), and they are already committed — byte-for-byte — in
+/// `V3_STAGED_REGISTRY_TSV`, [`WIDE_REGISTRY_STAGED_TSV`](crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV)
+/// and [`WIDE_UMEM_WELD_REGISTRY_TSV`](crate::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV).
+/// Nothing re-emits and no VK rotates to take this route.
+///
+/// SCOPE: exactly the three leads the wide dispatcher's cap-WRITE arm lays a base trace for. The other
+/// write-bearing wrappers (`introduceWriteCapOpen` / `revokeDelegationWriteCapOpen` /
+/// `refreshDelegationWriteCapOpen` / `spawnWriteCapOpen`) are reached by their OWN dispatcher arms (the
+/// revoked-set grow-gate, the accounts birth leg, …) whose base traces differ; routing them here would
+/// pair a WriteCapOpen descriptor with a foreign trace. They stay named tails until their arm threads
+/// this route explicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CapWriteCapOpenRoute {
+    /// The committed registry key (the SAME key in all three registries).
+    pub key: &'static str,
+    /// The cap-tree write shape the member's after-spine forces.
+    pub op: CapTreeWriteOp,
+    /// The crown facet bit the wrapper's `effBitGateFor` pins (the deployed `cell/facet.rs`
+    /// `EFFECT_<kind> = 1 << n`). The opened leaf must PERMIT it or the producer fails closed.
+    pub crown_eff_bit: u32,
+}
+
+// The deployed `cell/facet.rs` effect-kind bits the WRITE wrappers bind. These DIFFER from the
+// authority-only twins' for the grant family: `delegateWriteCapOpen` binds DELEGATION_OPS (1<<16)
+// while `grantCapCapOpen` binds GRANT_CAPABILITY (1<<2) — a delegate IS a delegation op.
+/// `EFFECT_TRANSFER` (`1 << 1`) — the crown facet `attenuateCapOpenEff` binds (== [`WRITE_MASK_LO`]).
+const CAP_WRITE_EFFECT_TRANSFER: u32 = 1 << 1;
+/// `EFFECT_REVOKE_CAPABILITY` (`1 << 3`) — the crown facet `revokeCapabilityWriteCapOpen` binds.
+const CAP_WRITE_EFFECT_REVOKE_CAPABILITY: u32 = 1 << 3;
+/// `EFFECT_DELEGATION_OPS` (`1 << 16`) — the crown facet `delegateWriteCapOpen` binds.
+const CAP_WRITE_EFFECT_DELEGATION_OPS: u32 = 1 << 16;
+
+/// Resolve the [`CapWriteCapOpenRoute`] for a lead effect. `None` ⇒ this lead has no cap-open WRITE
+/// route wired through the wide dispatcher's cap-WRITE arm.
+///
+/// The three rows mirror `dregg_sdk::full_turn_proof::cap_open_route_for_run`'s `write` field
+/// member-for-member (key, op and crown bit), so the IVC leg and the live SDK cap-open leg prove the
+/// SAME committed member for the same effect.
+pub fn cap_write_capopen_route(effect: &Effect) -> Option<CapWriteCapOpenRoute> {
     match effect {
-        Effect::AttenuateCapability { .. } => Some((Some(CapTreeWriteOp::Update), false)),
-        Effect::RevokeCapability { .. } => Some((Some(CapTreeWriteOp::Remove), false)),
-        Effect::GrantCapability { .. } => Some((None, true)),
+        // The in-place UPDATE-AT-KEY: the READ opens the held leaf against BEFORE, the 143-column
+        // after-spine re-opens it with `mask_lo := KEEP_MASK` against AFTER. This member carries the
+        // Update DIRECTLY (there is no separate `attenuateWriteCapOpen` key).
+        Effect::AttenuateCapability { .. } => Some(CapWriteCapOpenRoute {
+            key: "attenuateCapOpenEffVmDescriptor2R24",
+            op: CapTreeWriteOp::Update,
+            crown_eff_bit: CAP_WRITE_EFFECT_TRANSFER,
+        }),
+        // The TOMBSTONE remove: the AFTER group is pinned to `CAP_ZERO8` folded up the removed leaf's
+        // own path, so a fabricated post-remove root is UNSAT at the prover.
+        Effect::RevokeCapability { .. } => Some(CapWriteCapOpenRoute {
+            key: "revokeCapabilityWriteCapOpenVmDescriptor2R24",
+            op: CapTreeWriteOp::Remove,
+            crown_eff_bit: CAP_WRITE_EFFECT_REVOKE_CAPABILITY,
+        }),
+        // The fresh-edge INSERT (the cross-vat grant). Reached ONLY when a c-list witness is threaded;
+        // a witnessless grant keeps the authority-only freeze base (see `cap_write_wide_plan`).
+        Effect::GrantCapability { .. } => Some(CapWriteCapOpenRoute {
+            key: "delegateWriteCapOpenVmDescriptor2R24",
+            op: CapTreeWriteOp::Insert,
+            crown_eff_bit: CAP_WRITE_EFFECT_DELEGATION_OPS,
+        }),
+        _ => None,
+    }
+}
+
+/// **THE PROMOTED CAP-OPEN *WRITE* WIDE PRODUCER — the write-spine trace producer, in `dregg-circuit`.**
+/// Given a `ROT_WIDTH`-wide rotated base trace for a cap-WRITE lead plus its base PI vector, lay the
+/// full committed shape of the member `route.key` names and return the WIDE PI vector:
+///
+///   1. rebuild the holder's openable [`CanonicalCapTree`](crate::cap_root::CanonicalCapTree) from the
+///      7-field c-list + tombstones — the BEFORE cap-root IS its root;
+///   2. take the SHAPE-MATCHED witness off THAT tree (`membership_witness` for UPDATE, `remove_witness`
+///      for REMOVE, `insert_witness` for INSERT) — a key that is absent, already-ghosted or
+///      sentinel-colliding fails closed here, so no membership path is ever fabricated;
+///   3. lift it to the cap-open READ crown ([`CapOpenWitness::from_membership_for`], which refuses a
+///      leaf whose facet does not PERMIT `route.crown_eff_bit`) and widen ([`widen_to_cap_open`]);
+///   4. lay the member's AFTER-SPINE + the wide carriers through the EXISTING per-shape producers
+///      ([`generate_rotated_cap_attenuate_after_spine_wide`] /
+///      [`generate_rotated_cap_remove_after_spine_wide`] /
+///      [`generate_rotated_cap_insert_after_spine_wide`]).
+///
+/// The rc tail is lifted first: the cap-open family was never `withDfaRcPins`-wrapped in the Lean emit
+/// (the committed wide members carry `46 + 16 = 62` PIs, not `46 + 4 + 16 = 66`), exactly as the live
+/// SDK cap-open leg builder lifts it.
+///
+/// **NO map heaps, and that is the point.** The faithful 8-felt cap-tree write is forced by the
+/// descriptor's own depth-16 `node8` fold, not by a map table — `map_ops == 0` on every one of these
+/// members. The caller supplies an EMPTY `map_heaps`.
+///
+/// ⚑ **LAW #1.** This fills COLUMNS only. Every constraint is the Lean-emitted descriptor's
+/// (`metatheory/Dregg2/Circuit/Emit/{CapOpenEmit,CapInsertEmit,CapRemoveEmit}.lean`); no constraint,
+/// gadget or descriptor is authored here, and nothing re-emits or rotates a VK to take this route.
+///
+/// ⚠ **NO `patch_attenuate_base_for_cap_open`.** Every write-bearing wrapper rides the nonce-TICK face
+/// (`(col78 − col56) == 1 − sel[NOOP]`); the patch FREEZES the nonce against that gate. The bare
+/// generator already ticks it, and the deployed SDK leg skips the patch for exactly this reason.
+pub fn generate_rotated_cap_write_capopen_wide(
+    trace: &mut Vec<Vec<BabyBear>>,
+    base_pis: Vec<BabyBear>,
+    route: &CapWriteCapOpenRoute,
+    w: &CapWriteWideWitness,
+) -> Result<Vec<BabyBear>, String> {
+    use crate::cap_root::{CAP_TREE_DEPTH, CanonicalCapTree, CapLeaf};
+
+    if trace.is_empty() {
+        return Err("cap-open write wide: empty base trace".into());
+    }
+    if trace[0].len() != ROT_WIDTH {
+        return Err(format!(
+            "cap-open write wide: base trace width {} != {ROT_WIDTH} (call on the bare rotated base, \
+             before widen_to_cap_open)",
+            trace[0].len()
+        ));
+    }
+    // THE CAP-OPEN rc STRIP: the committed cap-open members carry the UNWRAPPED base (46 PIs); the
+    // bare generators append the 4 dsl rc pins unconditionally.
+    let mut base_pis = base_pis;
+    if base_pis.len() < DFA_RC_LEN {
+        return Err(format!(
+            "cap-open write wide: base PI vector {} shorter than the dsl rc tail {DFA_RC_LEN}",
+            base_pis.len()
+        ));
+    }
+    base_pis.truncate(base_pis.len() - DFA_RC_LEN);
+
+    let tree = CanonicalCapTree::new_with_tombstones(
+        w.cap_leaves.clone(),
+        &w.cap_tombstones,
+        CAP_TREE_DEPTH,
+    );
+    let key = route.key;
+
+    match route.op {
+        CapTreeWriteOp::Update => {
+            let (_ignored_key, keep_mask) = w.inserted.ok_or_else(|| {
+                format!(
+                    "cap-open write wide ({key}): the UPDATE-AT-KEY route needs `inserted = Some((_, \
+                     KEEP_MASK))` — the narrowed mask the after-spine rebinds the held leaf to"
+                )
+            })?;
+            let mw = tree.membership_witness(w.anchor_key).ok_or_else(|| {
+                format!(
+                    "cap-open write wide ({key}): the held key {} is NOT live in the supplied 7-field \
+                     c-list — the held-authority READ has no membership witness and the turn is \
+                     refused (no fabricated post-cap-root)",
+                    w.anchor_key.as_u32()
+                )
+            })?;
+            // THE SUBMASK NON-AMPLIFICATION, producer side: the after-spine writes `KEEP_MASK` into
+            // col 73 and the held leaf's own `mask_lo` into col 72, and the member's surviving
+            // `submaskLookup` forces `KEEP ⊑ HELD`. An amplifying narrow is UNSAT in-circuit; say so
+            // here rather than emitting a trace whose only defect is an opaque lookup miss.
+            let held = mw.leaf.mask_lo.as_u32();
+            let keep = keep_mask.as_u32();
+            if keep & held != keep {
+                return Err(format!(
+                    "cap-open write wide ({key}): the narrowed KEEP_MASK {keep:#x} is NOT a submask of \
+                     the held leaf's committed mask_lo {held:#x} — an attenuate that AMPLIFIES is UNSAT \
+                     in-circuit (the `granted ⊑ held` non-amplification lookup)"
+                ));
+            }
+            let open = CapOpenWitness::from_membership_for(
+                &mw.leaf,
+                &mw.siblings,
+                &mw.directions,
+                route.crown_eff_bit,
+            )
+            .map_err(|e| format!("cap-open write wide ({key}): {e}"))?;
+            if open.cap_root != tree.root() {
+                return Err(format!(
+                    "cap-open write wide ({key}): the held leaf's membership path does not recompose \
+                     the rebuilt c-list root (the supplied c-list is not the holder's pre-state)"
+                ));
+            }
+            widen_to_cap_open(trace, &open)
+                .map_err(|e| format!("cap-open write wide ({key}): READ crown widen: {e}"))?;
+            // The NARROW after-spine first, so the adversarial re-stamp lands BEFORE the wide carriers
+            // re-absorb the limbs — a claimed post-root then rides an INTERNALLY CONSISTENT trace whose
+            // published ~124-bit anchors agree with the lie, and whose only defect is the write itself.
+            generate_rotated_cap_attenuate_after_spine(
+                trace,
+                &open,
+                mw.leaf.slot_hash,
+                mw.leaf.mask_lo,
+                keep_mask,
+            )
+            .map_err(|e| format!("cap-open write wide ({key}): UPDATE after-spine: {e}"))?;
+            restamp_claimed_post_cap_root(trace, w.claimed_post_cap_root8, key)?;
+            Ok(append_wide_carriers(
+                trace,
+                base_pis,
+                CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN,
+            ))
+        }
+        CapTreeWriteOp::Remove => {
+            if w.inserted.is_some() {
+                return Err(format!(
+                    "cap-open write wide ({key}): the TOMBSTONE remove takes no insert payload — it \
+                     collapses the removed position to CAP_ZERO8 and confers nothing"
+                ));
+            }
+            let rmw = tree.remove_witness(w.anchor_key).ok_or_else(|| {
+                format!(
+                    "cap-open write wide ({key}): the revoked key {} is NOT live in the supplied \
+                     7-field c-list (absent, sentinel, or already tombstoned) — the remove has no \
+                     declared membership and the turn is refused (no fabricated post-cap-root)",
+                    w.anchor_key.as_u32()
+                )
+            })?;
+            let open = CapOpenWitness::from_membership_for(
+                &rmw.removed,
+                &rmw.siblings,
+                &rmw.directions,
+                route.crown_eff_bit,
+            )
+            .map_err(|e| format!("cap-open write wide ({key}): {e}"))?;
+            if open.cap_root != rmw.old_root {
+                return Err(format!(
+                    "cap-open write wide ({key}): the removed leaf's membership path does not \
+                     recompose the rebuilt c-list root (the supplied c-list is not the holder's \
+                     pre-state)"
+                ));
+            }
+            if rmw.new_root == rmw.old_root {
+                return Err(format!(
+                    "cap-open write wide ({key}): the tombstone fold did not MOVE the cap-root — a \
+                     remove that leaves the root fixed would make the write tooth vacuous"
+                ));
+            }
+            widen_to_cap_open(trace, &open)
+                .map_err(|e| format!("cap-open write wide ({key}): READ crown widen: {e}"))?;
+            // `after_root8` is the value written into the committed AFTER group: the prover's CLAIM.
+            // The tombstone spine's 8 `rootPinGate`s force it to the zero-fold, so a fabrication is
+            // UNSAT at the prover.
+            let claimed = w.claimed_post_cap_root8.unwrap_or(rmw.new_root);
+            let dpis = generate_rotated_cap_remove_after_spine_wide(
+                trace,
+                base_pis,
+                open.cap_root,
+                claimed,
+                rmw.removed.slot_hash,
+                rmw.removed.mask_lo,
+                &rmw.siblings,
+                &rmw.directions,
+            )
+            .map_err(|e| format!("cap-open write wide ({key}): REMOVE tombstone spine: {e}"))?;
+            Ok(dpis)
+        }
+        CapTreeWriteOp::Insert => {
+            let (fresh_key, conferred) = w.inserted.ok_or_else(|| {
+                format!(
+                    "cap-open write wide ({key}): the INSERT route needs `inserted = Some((fresh_key, \
+                     conferred_value))` — the edge the turn grafts into the cap-tree"
+                )
+            })?;
+            if fresh_key == w.anchor_key {
+                return Err(format!(
+                    "cap-open write wide ({key}): the inserted key {} EQUALS the held-authority anchor \
+                     — the anchor must be PRESENT and the fresh key ABSENT, so they must be distinct",
+                    fresh_key.as_u32()
+                ));
+            }
+            let anchor = tree
+                .membership_witness(w.anchor_key)
+                .ok_or_else(|| {
+                    format!(
+                        "cap-open write wide ({key}): the held-authority anchor {} is NOT live in the \
+                         supplied 7-field c-list — the delegator cannot exhibit the right it confers \
+                         (no fabricated post-cap-root)",
+                        w.anchor_key.as_u32()
+                    )
+                })?
+                .leaf;
+            // The conferred edge rides the anchor's own target/tier/mask/expiry (a delegation confers
+            // the HELD edge, so the crown facet the wrapper binds on the spliced leaf is permitted
+            // exactly when the anchor permits it); the conferred payload datum rides `breadstuff`.
+            let spliced = CapLeaf {
+                slot_hash: fresh_key,
+                breadstuff: conferred,
+                ..anchor
+            };
+            let iw = tree.insert_witness(spliced).ok_or_else(|| {
+                format!(
+                    "cap-open write wide ({key}): the sorted INSERT of the fresh key {} was refused \
+                     (already present, tombstoned, or sentinel-colliding) — fail closed, no \
+                     fabricated after-root",
+                    fresh_key.as_u32()
+                )
+            })?;
+            let open = CapOpenWitness::from_membership_for(
+                &spliced,
+                &iw.siblings,
+                &iw.directions,
+                route.crown_eff_bit,
+            )
+            .map_err(|e| format!("cap-open write wide ({key}): the spliced leaf: {e}"))?;
+            widen_to_cap_open(trace, &open)
+                .map_err(|e| format!("cap-open write wide ({key}): READ crown widen: {e}"))?;
+            let claimed = w.claimed_post_cap_root8.unwrap_or(iw.new_root);
+            let dpis = generate_rotated_cap_insert_after_spine_wide(
+                trace,
+                base_pis,
+                iw.old_root,
+                claimed,
+                fresh_key,
+                conferred,
+                anchor.mask_lo,
+                anchor.slot_hash,
+                anchor.mask_lo,
+            )
+            .map_err(|e| format!("cap-open write wide ({key}): INSERT after-spine: {e}"))?;
+            Ok(dpis)
+        }
+    }
+}
+
+/// The UPDATE arm's adversarial pole. The attenuate after-spine COMPUTES the AFTER group from the
+/// re-opened leaf, so a claimed post-root cannot be threaded through it as a parameter (unlike the
+/// REMOVE/INSERT spines, whose `after_root8` IS the claim). Re-stamp the committed AFTER cap-root
+/// group with the claim and recompute both rotated block commits, BEFORE the wide carriers are
+/// appended — the published ~124-bit anchors then agree with the claim, so the trace is INTERNALLY
+/// CONSISTENT and its ONLY defect is that the AFTER group is not the after-spine's fold. The spine's
+/// own `rootPin`s have nothing to match: **UNSAT at the prover**.
+fn restamp_claimed_post_cap_root(
+    trace: &mut [Vec<BabyBear>],
+    claimed: Option<[BabyBear; CAP_OPEN_DIGEST_W]>,
+    key: &str,
+) -> Result<(), String> {
+    let Some(claimed) = claimed else {
+        return Ok(());
+    };
+    if trace.is_empty() {
+        return Err(format!("cap-open write wide ({key}): empty trace"));
+    }
+    for row in trace.iter_mut() {
+        for lane in 0..CAP_OPEN_DIGEST_W {
+            row[cap_root_group_col(AFTER_BASE, lane)] = claimed[lane];
+        }
+        recompute_block_commit(row, BEFORE_BASE);
+        recompute_block_commit(row, AFTER_BASE);
+    }
+    Ok(())
+}
+
+/// **THE CAP-WRITE WIDE plan for a WITNESSLESS cap-WRITE lead.** `Some((needs_write_witness,
+/// needs_freeze_patch))` for the cap-WRITE family the bare wide transfer-shape route cannot satisfy.
+/// This arm is reached ONLY when no [`CapWriteWideWitness`] was threaded — a witnessed lead takes
+/// [`cap_write_capopen_route`] and the committed cap-open WRITE member instead:
+///   * `AttenuateCapability` / `RevokeCapability` → `(true, false)`. Their AFTER cap-root is an
+///     in-circuit cap-tree write that ONLY the cap-open WRITE members bind; the bare member is both
+///     UNSAT on the write and light-client FORBIDDEN. Without the holder's c-list there is nothing to
+///     open, so the turn FAILS CLOSED (never a fabricated post-cap-root).
+///   * `GrantCapability` → `(false, true)` — the authority-only grant base FREEZES the cap-root
+///     (pass-through, no write) and rides the nonce-FREEZE face the bare transfer-shape route
+///     (nonce-TICK) mis-shapes, so the freeze patch IS applied and no witness is needed.
+///     ⚠ NAMED RESIDUAL: the member this mints (`grantCapVmDescriptor2R24`) is itself on the
+///     light-client deny-list, so the leg self-verifies and the WIRE refuses it. Threading a c-list
+///     witness takes the wire-accepted `delegateWriteCapOpen` INSERT route instead.
+///
+/// `None` for every other lead (the nonce-TICK passthrough cap bases revokeDelegation / introduce ride
+/// their own arms; the value/field/grow-gate/record families have theirs).
+fn cap_write_wide_plan(effect: &Effect) -> Option<(bool, bool)> {
+    match effect {
+        Effect::AttenuateCapability { .. } | Effect::RevokeCapability { .. } => Some((true, false)),
+        Effect::GrantCapability { .. } => Some((false, true)),
         _ => None,
     }
 }
@@ -6266,9 +6648,11 @@ fn cap_write_wide_plan(effect: &Effect) -> Option<(Option<CapTreeWriteOp>, bool)
 /// `before`/`after` are the rotated block witnesses; `caveat` the turn manifest; `before_nullifiers`
 /// the note-spend grow-gate's BEFORE nullifier set (`None` for non-spend leads); `refusal_fields`
 /// the refusal `fields_root` write witness (`Some` REQUIRED for a `Refusal` lead — the honest refusal
-/// is UNSAT without it); `cap_write` the cap-tree write witness (`Some` REQUIRED for a cap-WRITE lead
-/// whose base carries an in-circuit cap-tree `map_op` write — attenuate / revokeCapability — the
-/// honest cap-write is UNSAT without it); `membership_teeth` the producer-honest
+/// is UNSAT without it); `cap_write` the cap-tree write witness — `Some` REQUIRED for a cap-WRITE lead
+/// (attenuate / revokeCapability), which then RESOLVES A DIFFERENT MEMBER: the committed cap-open WRITE
+/// wrapper [`cap_write_capopen_route`] names, not the bare `…VmDescriptor2R24` the effect→name resolver
+/// returns (see that route's doc — the bare cap members are light-client FORBIDDEN); `membership_teeth`
+/// the producer-honest
 /// `(sender_leaf, authorized_root)` pair for the committed transfer row's membership-teeth tail
 /// (`None` = the ZERO no-caveat sentinel — see the registry-tail block below). Fails closed
 /// (`Err`) on an empty / heterogeneous / non-cohort slice.
@@ -6333,16 +6717,27 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
     let lead = effects
         .first()
         .ok_or_else(|| "wide rotated prover: empty turn".to_string())?;
-    let name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
+    let base_name = rotated_descriptor_name_for_effect(lead).ok_or_else(|| {
         format!("wide rotated prover: effect {lead:?} is not in the rotated cohort")
     })?;
     if effects.len() > 1 {
         for e in &effects[1..] {
-            if rotated_descriptor_name_for_effect(e) != Some(name) {
+            if rotated_descriptor_name_for_effect(e) != Some(base_name) {
                 return Err("wide rotated prover: heterogeneous multi-effect turn".into());
             }
         }
     }
+    // ⚑ THE CAP-OPEN *WRITE* REROUTE. A cap-WRITE lead carrying the holder's c-list does NOT prove
+    // the bare `…VmDescriptor2R24` this resolver names: that member is light-client FORBIDDEN (it
+    // launders host-trusted authority) AND it declares `map_ops == 0` since the Merkle-spine flag day,
+    // so the write it is supposed to bind is bound by nothing. The witnessed route is the committed
+    // cap-open WRITE wrapper — resolved HERE, before the registry lookup, so descriptor and trace
+    // cannot disagree (the arm below is the ONLY producer for these keys).
+    let cap_write_route = match (cap_write_capopen_route(lead), cap_write) {
+        (Some(route), Some(_)) => Some(route),
+        _ => None,
+    };
+    let name = cap_write_route.map_or(base_name, |r| r.key);
     // Resolve the WIDE descriptor JSON for that registry key.
     let json = WIDE_REGISTRY_STAGED_TSV
         .lines()
@@ -6485,48 +6880,52 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
         generate_rotated_custom_wide(initial_state, effects, before, after, caveat)
             .map(|(t, d)| (t, d, vec![]))
             .map_err(|e| format!("wide custom generation: {e}"))?
-    } else if let Some((op_opt, needs_patch)) = cap_write_wide_plan(lead) {
-        // THE CAP-WRITE FAMILY (the cap-open weld for the WIDE leg): the nonce-FREEZE attenuate-family
-        // bases. Their AFTER cap-root is an in-circuit cap-tree `map_op` write (attenuate/revokeCapability)
-        // OR a frozen pass-through (grantCap — authority-only, no write), and they ride the nonce-FREEZE
-        // face — neither of which the bare transfer-shape route satisfies (the map_op is UNSAT, the nonce
-        // gate is FREEZE not TICK), so a cap-WRITE lead FAILS CLOSED there. Here we lay the genuine base
-        // trace, apply the nonce-FREEZE patch the base descriptor expects, thread the cap-tree write
-        // witness (when the base carries a map_op), and append the 8-felt wide carriers (the SAME additive
-        // append the value cohort rides — the ~124-bit anchors are preserved). A cap-WRITE lead with a
-        // map_op but no `cap_write` witness fails closed (the cap-open weld never fabricates a post-root).
+    } else if let Some(route) = cap_write_route {
+        // ⚑ THE CAP-OPEN *WRITE* ARM — the witnessed cap-WRITE family, on the committed member the
+        // light-client wire ACCEPTS. `name` above already resolved to `route.key`, so this lays the
+        // matching shape: the genuine rotated base (nonce-TICK — NO freeze patch, every write wrapper
+        // rides the tick face), the cap-open READ crown off the REBUILT c-list tree, the member's
+        // after-spine, and the 8-felt wide carriers. NO map heaps: these members declare `map_ops == 0`
+        // and the write is forced by the descriptor's own depth-16 `node8` fold.
+        let w = cap_write.ok_or_else(|| {
+            "wide cap-write prover: the cap-open WRITE route was resolved without a witness"
+                .to_string()
+        })?;
         let (mut t, base_pis) =
             generate_rotated_effect_vm_trace(initial_state, effects, before, after, caveat)
                 .map_err(|e| format!("wide cap-write base trace: {e}"))?;
-        let mut d = if needs_patch {
+        let d = generate_rotated_cap_write_capopen_wide(&mut t, base_pis, &route, w)?;
+        (t, d, Vec::new())
+    } else if let Some((needs_write_witness, needs_patch)) = cap_write_wide_plan(lead) {
+        // THE WITNESSLESS cap-WRITE FAMILY. attenuate / revokeCapability FAIL CLOSED here: their AFTER
+        // cap-root is an in-circuit cap-tree write, the bare member both leaves it unbound (`map_ops ==
+        // 0` since the Merkle-spine flag day) and is light-client FORBIDDEN, and without the holder's
+        // c-list there is no membership to open. grantCap's authority-only base carries no write, so it
+        // rides the nonce-FREEZE patch + the bare wide carriers (⚠ on a member the wire still refuses —
+        // thread a c-list to take the `delegateWriteCapOpen` INSERT route).
+        if needs_write_witness {
+            return Err(format!(
+                "wide cap-write prover: effect {lead:?} performs an in-circuit cap-tree write, but no \
+                 CapWriteWideWitness (the holder's 7-field c-list + the consumed cap's slot_hash) was \
+                 threaded. The honest route is the committed cap-open WRITE member '{}' — resolve it by \
+                 threading the witness. FAILS CLOSED: the bare member '{base_name}' neither binds the \
+                 post-cap-root (it declares no map ops and carries no cap-open spine) nor rides the \
+                 light-client wire (it is a forbidden plain cap descriptor), so there is no fabricated \
+                 post-cap-root to publish.",
+                cap_write_capopen_route(lead).map_or("<none>", |r| r.key)
+            ));
+        }
+        let (mut t, base_pis) =
+            generate_rotated_effect_vm_trace(initial_state, effects, before, after, caveat)
+                .map_err(|e| format!("wide cap-write base trace: {e}"))?;
+        let d = if needs_patch {
             patch_attenuate_base_for_cap_open(&mut t, &base_pis)
                 .map_err(|e| format!("wide cap-write nonce-freeze patch: {e}"))?
         } else {
             base_pis
         };
-        let heaps = match op_opt {
-            Some(op) => {
-                let w = cap_write.ok_or_else(|| {
-                    format!(
-                        "wide cap-write prover: effect {lead:?} carries an in-circuit cap-tree map_op \
-                         write but no CapWriteWideWitness (c-list + anchor key) was threaded — fails \
-                         closed (the route is the cap-open weld, never a fabricated post-cap-root)"
-                    )
-                })?;
-                generate_rotated_cap_write_base(
-                    &mut t,
-                    &mut d,
-                    op,
-                    &w.clist_leaves,
-                    w.anchor_key,
-                    w.inserted,
-                )
-                .map_err(|e| format!("wide cap-write map_op witness: {e}"))?
-            }
-            None => Vec::new(),
-        };
         let d = append_wide_carriers(&mut t, d, GRAD_ROT_WIDTH);
-        (t, d, heaps)
+        (t, d, Vec::new())
     } else if matches!(lead, Effect::Mint { .. }) {
         // supplyMint (`sel::MINT` → `supplyMintVmDescriptor2R24`): the committed row is UNWRAPPED
         // (62 = 46 base + 16 anchors — the Lean `supplyMintV3` was never rc-wrapped, exactly like
