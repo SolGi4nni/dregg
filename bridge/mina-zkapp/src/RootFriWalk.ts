@@ -1,6 +1,7 @@
 import { BbExt } from './FriQueryStep.js';
 import { DEPLOYED_KNOBS, FriKnobs } from './FriChallenger.js';
 import { rootAirDag } from './RootAirDag.js';
+import { BABYBEAR_HASH, HashPrice, LANE_COST } from './CostModel.js';
 
 // ---------------------------------------------------------------------------
 // THE ROOT'S FRI WALK AS A SEGMENT LIST — the object the AIR chain's terminal
@@ -67,35 +68,68 @@ export const CHAL_RATE = 8;
 //    committed leg, not an estimate; the § is where it was taken.
 // ===========================================================================
 
-export const PRICE = {
-  /** One Poseidon2-w16-BabyBear permutation (§3.8, measured 2,600.5). */
-  perm: 2601,
-  /** One Merkle level: `condSwap` + `compress` + the sibling's 8 range checks
-   *  (§3.9, measured 2,677). */
-  merkleLevel: 2677,
-  /** A mixed-height INJECTION: `compress(root, digestOfRowsAtThisHeight)`. No
-   *  `condSwap` and no witnessed sibling — both operands are computed. */
-  merkleInject: 2601,
-  /** One extension Horner step `acc ← acc·α + v` (§3.14, measured 49). */
+/**
+ * The unit prices a walk is costed at.
+ *
+ * ⚑ THE HASH TERMS ARE A PARAMETER AND THE ARITHMETIC TERMS ARE NOT, and that
+ * split IS `MINA-FACING-TERMINAL-OPTIONS`'s whole thesis: `perm`,
+ * `merkleLevel`, `merkleInject` and `spongeRate` are properties of WHICH HASH
+ * the proof commits with; `horner`, `foldRow`, `rollIn`, `extMul`, `extAdd`,
+ * `extInverse`, `descent` and `witnessLane` are BabyBear extension arithmetic
+ * and range checks, which no hash choice touches.
+ *
+ * ⚑ EVERY FIGURE IS OWNED BY `src/CostModel.ts` OR CITED TO ITS LEG HERE. The
+ * hash and lane prices are imported rather than restated — they were restated
+ * in four places and disagreed in three of them.
+ */
+export type WalkPrice = {
+  perm: number;
+  merkleLevel: number;
+  merkleInject: number;
+  spongeRate: number;
+  horner: number;
+  foldRow: number;
+  rollIn: number;
+  extMul: number;
+  extAdd: number;
+  extInverse: number;
+  witnessLane: number;
+  descent: number;
+};
+
+/** The arithmetic half — hash-independent, so it is shared by every price
+ *  table a walk can be costed at. */
+export const ARITH_PRICE = {
+  /** One extension Horner step `acc ← acc·α + v` (§3.14, MEASURED 49). */
   horner: 49,
-  /** One arity-2 `fold_row` (§3.14, measured 150). */
+  /** One arity-2 `fold_row` (§3.14, MEASURED 150). */
   foldRow: 150,
-  /** One reduced-opening roll-in: `folded += β² · ro` (§3.13, measured 88). */
+  /** One reduced-opening roll-in: `folded += β² · ro` (§3.13, MEASURED 88). */
   rollIn: 88,
   extMul: 31,
   extAdd: 19,
   /** `extInverse`: witness 4 lanes, one `extMul`, four canonical comparisons. */
   extInverse: 88,
-  /** EMITTED rows to witness and range-check ONE carried lane. §3.20 measured
-   *  the deployed carry linear at 3.75 rows/lane over a 100× range; the AIR
-   *  chain's own model charges 26 rows per 4-lane extension value, i.e. 6.5.
-   *  The higher of the two is used, because a cut that fits at 6.5 also fits at
-   *  3.75 and the failure mode of the other direction is a circuit that does
-   *  not compile. */
-  witnessLane: 6.5,
+  /** EMITTED rows to witness and range-check ONE carried lane — a RANGE CHECK,
+   *  and therefore hash-independent. Owned by `CostModel.LANE_COST`, which also
+   *  carries the reconciliation against §3.20's two bulk slopes. */
+  witnessLane: LANE_COST.witnessPerLane,
   /** The coset descent `x ← ±x²`. */
   descent: 20,
 } as const;
+
+/** Price a walk at a given hash. */
+export const priceAt = (h: HashPrice): WalkPrice => ({
+  perm: h.perm,
+  merkleLevel: h.merkleLevel,
+  merkleInject: h.merkleInject,
+  spongeRate: h.spongeRate,
+  ...ARITH_PRICE,
+});
+
+/** The DEPLOYED price table — the root as it commits today, Poseidon2 over
+ *  BabyBear, emulated in a Pasta circuit. */
+export const PRICE: WalkPrice = priceAt(BABYBEAR_HASH);
 
 // ===========================================================================
 // 2. The shape — the root's PCS rounds, read off the committed proof.
@@ -362,7 +396,16 @@ export type FriLaneTable = {
   perQueryRowLanes: number;
 };
 
-export function friLaneTable(shape: FriShape, op: OpenedPlan): FriLaneTable {
+export function friLaneTable(
+  shape: FriShape,
+  op: OpenedPlan,
+  /** ⚑ THE SPONGE RATE, because `blockLanes` has to agree with the block
+   *  subdivision `segmentWalk` emitted. Under the deployed Poseidon2-BabyBear
+   *  sponge that is 8 lanes per permutation; the Pasta MMCS packs 16, so a walk
+   *  costed at `PASTA_HASH` has half as many `inBlock` segments and each covers
+   *  twice the lanes. Defaulted so every deployed caller is unchanged. */
+  spongeRate: number = CHAL_RATE,
+): FriLaneTable {
   let at = 0;
   const take = (n: number) => {
     const o = at;
@@ -411,8 +454,8 @@ export function friLaneTable(shape: FriShape, op: OpenedPlan): FriLaneTable {
     const mats = roundOrder[ri].filter((mi) => round.matrices[mi].logHeight === height);
     const start = fx[q][ri][mats[0]];
     const w = mats.reduce((a, mi) => a + round.matrices[mi].width, 0);
-    const a = start + block * CHAL_RATE;
-    return [a, Math.min(a + CHAL_RATE, start + w)];
+    const a = start + block * spongeRate;
+    return [a, Math.min(a + spongeRate, start + w)];
   };
 
   return {
@@ -1038,11 +1081,18 @@ export function roundHeights(round: RoundSpec): number[] {
  */
 export function segmentWalk(
   shape: FriShape,
-  opts: { deepCols?: number; preamble?: PreambleMeta; seal?: boolean } = {},
+  opts: { deepCols?: number; preamble?: PreambleMeta; seal?: boolean; price?: WalkPrice } = {},
 ): SegmentedWalk {
   const nPermChal = opts.preamble ? preambleChallengeCount(opts.preamble) : 0;
   const slots = slotLayout(shape, nPermChal);
   const deepCols = opts.deepCols ?? 128;
+  /** ⚑ THE PRICE IS A PARAMETER so the SAME segment list can be costed at a
+   *  different hash. `MINA-FACING-TERMINAL-OPTIONS`'s Pasta projection used to
+   *  be a hand-scaled decomposition of a retired flat-height model; costing this
+   *  walk at `priceAt(PASTA_HASH)` re-derives it from the real geometry
+   *  instead, with the arithmetic terms provably untouched because they live in
+   *  `ARITH_PRICE` and are shared by both tables. */
+  const P = opts.price ?? PRICE;
   const K = shape.knobs;
   const segs: Segment[] = [];
   const reads: number[][] = [];
@@ -1077,7 +1127,7 @@ export function segmentWalk(
           absorbs: absorbed,
           samples: pending,
           perm,
-          rows: perm ? PRICE.perm : 64,
+          rows: perm ? P.perm : 64,
           entry: firstEntry,
         },
         segs.length === 0 ? [] : [...slots.chal],
@@ -1169,7 +1219,7 @@ export function segmentWalk(
         zetaAt,
         chalAt,
         armed: opts.seal !== false,
-        rows: (zetaAt.length + chalAt.length) * EXT_LANES * PRICE.witnessLane,
+        rows: (zetaAt.length + chalAt.length) * EXT_LANES * P.witnessLane,
       },
       [...slots.zetaS, ...slots.permChal.flat()],
       [],
@@ -1238,7 +1288,7 @@ export function segmentWalk(
                 point: p,
                 from: a,
                 to: Math.min(a + 32, nk),
-                rows: (Math.min(a + 32, nk) - a) * (3 * PRICE.extAdd + 5 * EXT_LANES * PRICE.witnessLane),
+                rows: (Math.min(a + 32, nk) - a) * (3 * P.extAdd + 5 * EXT_LANES * P.witnessLane),
               },
               [],
               [],
@@ -1260,9 +1310,9 @@ export function segmentWalk(
       for (const h of hs) {
         const hi = shape.heights.indexOf(h);
         const w = rowWidthAt(round, h);
-        const nb = ceilDiv(w, CHAL_RATE);
+        const nb = ceilDiv(w, P.spongeRate);
         for (let b = 0; b < nb; b++) {
-          const lanes = Math.min(CHAL_RATE, w - b * CHAL_RATE);
+          const lanes = Math.min(P.spongeRate, w - b * P.spongeRate);
           const first = b === 0;
           const last = b === nb - 1;
           const seeds = h === top;
@@ -1277,7 +1327,7 @@ export function segmentWalk(
               first,
               last,
               seeds,
-              rows: PRICE.perm + lanes * PRICE.witnessLane,
+              rows: P.perm + lanes * P.witnessLane,
             },
             first ? [] : [...slots.sponge],
             last ? [...(seeds ? slots.cur : slots.inj[hi])] : [...slots.sponge],
@@ -1297,7 +1347,7 @@ export function segmentWalk(
             round: ri,
             level: lv,
             inject,
-            rows: PRICE.merkleLevel + (inject === null ? 0 : PRICE.merkleInject),
+            rows: P.merkleLevel + (inject === null ? 0 : P.merkleInject),
           },
           [
             ...slots.cur,
@@ -1348,8 +1398,8 @@ export function segmentWalk(
                 open,
                 close,
                 rows:
-                  (close ? PRICE.extInverse + 2 * PRICE.extMul + PRICE.extAdd : 0) +
-                  (b - a) * (PRICE.horner + EXT_LANES * PRICE.witnessLane),
+                  (close ? P.extInverse + 2 * P.extMul + P.extAdd : 0) +
+                  (b - a) * (P.horner + EXT_LANES * P.witnessLane),
               },
               [
                 ...slots.alpha,
@@ -1392,13 +1442,13 @@ export function segmentWalk(
           t: 'cpLeaf',
           q,
           r,
-          rows: PRICE.perm + EXT_LANES * PRICE.witnessLane + PRICE.foldRow + PRICE.descent,
+          rows: P.perm + EXT_LANES * P.witnessLane + P.foldRow + P.descent,
         },
         [...slots.folded, ...slots.beta[r], ...idxSlot, ...(r === 0 ? [] : [slots.x])],
         [...slots.cur, ...slots.folded, slots.x],
       );
       for (let lv = 0; lv < depth; lv++)
-        push({ t: 'cpLevel', q, r, level: lv, rows: PRICE.merkleLevel }, [...slots.cur, ...idxSlot], [
+        push({ t: 'cpLevel', q, r, level: lv, rows: P.merkleLevel }, [...slots.cur, ...idxSlot], [
           ...slots.cur,
         ]);
       push({ t: 'cpRoot', q, r, rows: 8 }, [...slots.cur], []);
@@ -1406,12 +1456,12 @@ export function segmentWalk(
       const rollIn = rollHeight > 0 ? rollHeight : null;
       if (rollIn !== null)
         push(
-          { t: 'cpFold', q, r, rollIn, rows: PRICE.rollIn },
+          { t: 'cpFold', q, r, rollIn, rows: P.rollIn },
           [...slots.folded, ...slots.beta[r], ...slots.ro[rollIn]],
           [...slots.folded],
         );
     }
-    push({ t: 'final', q, rows: PRICE.extAdd + 8 }, [...slots.folded, ...idxSlot], []);
+    push({ t: 'final', q, rows: P.extAdd + 8 }, [...slots.folded, ...idxSlot], []);
   }
 
   // ---- liveness, backwards ------------------------------------------------
