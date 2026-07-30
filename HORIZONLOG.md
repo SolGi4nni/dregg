@@ -8,8 +8,18 @@
 > `metatheory/Dregg2/Circuit/Emit/MinaFixtureEmit.lean`, byte-pinned to
 > `circuit/descriptors/by-name/mina-fixture.json`, routed in `EmitByName.lean` (so the drift gate
 > RE-DERIVES it — verified byte-identical), and interpreted by a new `Ir2UniAir`. The gate is
-> GREEN and no `BASELINE` row moved: `mina_stark_fixture.rs` left the ledger entirely (7 → 0) and
-> `descriptor_ir2.rs` measures 294 against its existing 298 allowance.
+> GREEN and the ledger SHRANK: `mina_stark_fixture.rs` left it entirely (7 → 0), and the
+> follow-up `578c5d59f` took `descriptor_ir2.rs` 294 → 283 by collapsing `Ir2Air`'s four grouped
+> constraint blocks into the one shared walk `Ir2UniAir` also calls — its row re-pinned 298 → 283
+> rather than left at an allowance with 15 sites of slack in it.
+>
+> ⚑ **The follow-up is the part worth reading.** The first fix removed the Rust AIR but reproduced
+> the defect underneath: `Ir2UniAir` landed as a SIBLING of `Ir2Air`, two traversals over one
+> grammar in two orders. The root cause is a MISPLACED TRAIT BOUND — `Air for Ir2Air` is bounded
+> on `PermutationAirBuilder + InteractionBuilder` because *some* of it speaks on a bus, but the
+> bound sat on the impl and so applied to the row-local algebra too, which needs no bus. That is
+> why a bus-free descriptor could not ride `p3_uni_stark`, and therefore why the hand-written Rust
+> AIR existed at all. **The Rust AIR was a symptom of a trait bound in the wrong place.**
 >
 > ⚑ **The gap that FORCED the hand-written AIR was real, and it is what got closed.** `Ir2Air` is
 > bounded on `PermutationAirBuilder + InteractionBuilder`; the uni-stark folders implement
