@@ -1,0 +1,58 @@
+# prose-claims-allow.tsv — the exemption ratchet for `scripts/check-prose-claims.py`.
+#
+# FOUR TAB-separated fields:
+#
+#     path <TAB> rule <TAB> the claim text, escaped to one line <TAB> why it stays
+#
+# Keyed by the TEXT, not a line number: lanes move lines all day and a line-number key
+# rots into a blanket ignore inside a day. ⚑ A row whose text no longer appears at that
+# path FAILS the gate — repairing a doc RETIRES its exemption rather than leaving a
+# permission slip behind. A reason under 20 characters FAILS: "ok" and "fine" are not
+# reasons, and an exemption nobody had to justify is a mute with extra steps.
+#
+# ── TWO KINDS OF ROW, AND THE DIFFERENCE MATTERS ──────────────────────────────────
+#
+# EXEMPTION   the claim is FINE AS WRITTEN and the scanner is imprecise here. The reason
+#             says why the sentence is true. There are currently ZERO of these, and that
+#             is the state to keep the file in.
+#
+# HARVEST     the claim is FALSE and this gate found it. The reason begins `HARVEST
+#             <date>:` and names the correction. It is baselined so the gate is green on
+#             arrival and reds on the NEXT one — the same shape as
+#             `scripts/mirror-gates/baseline.txt`, for the same reason: a gate whose
+#             first run is a wall of true findings gets switched off before it has ever
+#             caught anything.
+#
+#             ⚠ HARVEST rows are CAPPED. `HARVEST_CEILING` in the checker is a number in
+#             reviewed code, currently 12; a thirteenth harvest row FAILS until a repair
+#             lowers it. Baselining is therefore a one-way door: a row can be retired,
+#             but not added without editing the ceiling in a visible diff.
+#
+# ── THE 2026-07-30 HARVEST ────────────────────────────────────────────────────────
+# Twelve modules under `metatheory/Dregg2/` say in their own headers that the `Dregg2`
+# root does not import them. It does. Eight are DIRECT `import` lines in
+# `metatheory/Dregg2.lean`; four arrive transitively through a module the root imports.
+# The sentence is load-bearing in this tree — it is how a reader decides whether a
+# module's `#assert_axioms`/`#guard` KATs run in any CI target at all — so a stale one
+# reads as "these checks are dark" about checks that are live, or invites a second
+# rooting of a module already rooted.
+#
+# ⚑ These are NOT repaired here, on purpose. The Mina/FRI lane is live on several of the
+# twelve (two touched within hours of this file being written) and a prose edit landing
+# under a sibling's feet is how a shared tree loses work. They are recorded, dated and
+# routed; each row names the one-line correction its owner should make.
+#
+# path	rule	claim text	reason
+
+metatheory/Dregg2/Bridge/MinaCheckpoint.lean	R3	rooted in `Dregg2/FFI.lean`	HARVEST 2026-07-30: TRANSITIVE. The sentence is self-consistent (its next clause names the FFI routing) but "NOT imported by the `Dregg2` root" is the phrase a reader greps to decide whether a module is in the root build, and this one is. Correction: say it is reached by the root THROUGH `Dregg2/FFI.lean`.
+metatheory/Dregg2/Circuit/Emit/KimchiPoseidonGate.lean	R3	Imports `KimchiVerify`; NOT imported by the `Dregg2` root.	HARVEST 2026-07-30: DIRECT and FALSE. `metatheory/Dregg2.lean` imports this module by name, and that import's own annotation records that this header line predates the rooting (written under the 2026-07-25 truncation). Correction: delete the clause; the KATs run.
+metatheory/Dregg2/Circuit/Emit/KimchiRealProofGate.lean	R3	Imports `KimchiVerify`; NOT imported by the `Dregg2` root.	HARVEST 2026-07-30: DIRECT and FALSE. Imported at `metatheory/Dregg2.lean:1562`, whose annotation explicitly says seven modules' KATs "ran in NO CI target" because of exactly this stale sentence. Correction: delete the clause.
+metatheory/Dregg2/Circuit/Emit/MinaWrapAggregationGate.lean	R3	NOT imported by the `Dregg2`	HARVEST 2026-07-30: DIRECT and FALSE. `metatheory/Dregg2.lean` imports this module. Correction: the header should say it IS rooted, so a reader does not root it twice or read its `by decide` KATs as dark.
+metatheory/Dregg2/Circuit/Emit/MinaWrapOpeningWeld.lean	R3	NOT imported by the `Dregg2` root. Import line:	HARVEST 2026-07-30: DIRECT and FALSE, and doubly odd — the claim is followed by an "Import line:" recipe inviting a reader to add an import the root already has. Correction: delete both the claim and the invitation.
+metatheory/Dregg2/Circuit/Emit/MinaWrapPublicInputFromHeader.lean	R3	NOT imported by the `Dregg2` root, per house practice for gates.	HARVEST 2026-07-30: DIRECT and FALSE. The "per house practice for gates" rationale describes a decision that was reversed when the module was rooted. Correction: delete the sentence.
+metatheory/Dregg2/Circuit/Emit/PastaIpaDeferral.lean	R3	NOT imported by the `Dregg2` root, per house	HARVEST 2026-07-30: TRANSITIVE, through `PicklesRecursion` — which the same sentence names as its own importer. Correction: say it reaches the root transitively, since "not imported by the root" is the phrase that decides whether its checks run.
+metatheory/Dregg2/Circuit/Emit/PastaMsmLayouts.lean	R3	NOT imported by the `Dregg2` root, per house practice for gates.	HARVEST 2026-07-30: DIRECT and FALSE. `metatheory/Dregg2.lean` imports this module by name. Correction: delete the sentence and the "Import line:" recipe under it.
+metatheory/Dregg2/Circuit/Emit/PastaPoseidon.lean	R3	NOT imported by the `Dregg2` root (built directly as	HARVEST 2026-07-30: TRANSITIVE, pulled in by the `KimchiRealProofGate` DAG that `metatheory/Dregg2.lean:1562` roots on purpose. Correction: the parenthetical "(built directly as ...)" is the part that is now wrong.
+metatheory/Dregg2/Circuit/FriFoldConsistencyDichotomy.lean	R3	NOT imported by `Dregg2.lean` — it needs one	HARVEST 2026-07-30: DIRECT and FALSE. `metatheory/Dregg2.lean:1428` carries exactly the import this line asks for. ⚑ The memory index still records this 974-line module as "imported by nothing" on the strength of this sentence, which is what a stale structural claim costs downstream.
+metatheory/Dregg2/Circuit/FriPositiveRadiusSchedule.lean	R3	NOT imported by `Dregg2.lean` — it needs one	HARVEST 2026-07-30: TRANSITIVE. The root reaches it through a sibling FRI module, so the "it needs one import" instruction would add a redundant edge. Correction: state the transitive route.
+metatheory/Dregg2/Crypto/InjectionGuardCircuit.lean	R3	This module is not imported from `metath	HARVEST 2026-07-30: DIRECT and FALSE. Imported at `metatheory/Dregg2.lean:1496`. The claim sits under a heading reading "(not in the root build)", so the heading is wrong as well as the sentence.

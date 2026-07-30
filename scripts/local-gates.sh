@@ -348,6 +348,36 @@ GATES=(
   # assertion, which passes just as happily when the reader is broken.
   "mina-npm-coverage|120|bash scripts/check-mina-npm-coverage.sh"
   "mina-npm-coverage-red|120|bash scripts/check-mina-npm-coverage.sh --self-test"
+  # A CLAIM THE CODE DOES NOT CARRY. Every row above this one checks an ARTIFACT — a
+  # target, a manifest, a fence, a caller, a row. None of them reads PROSE, and prose was
+  # the carrier of six separate wounds on 2026-07-30 alone, every one found by a person
+  # and none by a check. The worst was `DreggFederation.advanceState`, documented "the
+  # state transition was cryptographically verified" on a file with ZERO occurrences of
+  # `.verify(`, `Proof<`, `ZkProgram`, `SelfProof` and `DynamicProof` — a monotonic
+  # counter with a signature-free setter — beside a class doc saying `nullifierRoot`
+  # "prevents double-withdrawal" over a field set to `Field(0)` at init and never read
+  # again. ⚑ That doc was hiding a LIVE HOLE, not overstating a weak one.
+  # ⚠ IT CATCHES TWO OF THE SIX AND SAYS SO IN ITS OWN HEADER. The other four need a
+  # reader, and the `-historical` row below is what keeps that number a MEASUREMENT: it
+  # replays all six from git as they were BEFORE repair and FAILS if the score and the
+  # design disagree — so narrowing a rule to go green somewhere else reds here.
+  # ⚠ AND IT IS TUNED AGAINST CRYING WOLF, which is the failure mode that kills an
+  # instrument like this. Scoped to a declaration's body R1 reported 34 honest sites;
+  # file-scoped it reports zero. "blocks"/"stops" are not protective verbs here because
+  # "block" is a noun on nearly every line of this tree that contains it. A NEGATED claim
+  # is a disclaimer and a QUOTED one is a report, and both were caught firing by the
+  # self-test. The contradicting-comments rule (specimen 3) was prototyped, MEASURED at
+  # 1,589,852 pairs, and REJECTED — `--contradiction-probe` keeps it runnable so the
+  # verdict stays checkable.
+  # ~25s, no cargo, no node, no Lean toolchain. The `-red` row is not optional: the
+  # headline is a NEGATIVE assertion and it drives four disease shapes, four honest
+  # shapes that must stay quiet, R3 against synthetic import graphs, the allowlist's own
+  # discipline, and six blindness FLOORS — including `Lean import edges`, which exists
+  # because a 64 KB header slice silently zeroed R3's whole harvest during development
+  # and the run still printed OK.
+  "prose-claims|300|python3 scripts/check-prose-claims.py"
+  "prose-claims-red|180|python3 scripts/check-prose-claims.py --self-test"
+  "prose-claims-historical|180|python3 scripts/check-prose-claims.py --historical"
 )
 # Expensive — only under --all, each with the reason it is not in the cheap set.
 GATES_ALL=(
