@@ -282,6 +282,28 @@ Mina settlement should cost per dregg root, not whether it can happen at all.
 That said, the gap between **453 slices** and **30** is the difference between "a batch job" and
 "a thing a relayer runs on every root", and the lever costs no trusted setup and no soundness.
 
+At the measured **234 s per slice** (171 s compile + 63 s prove), taken as a flat per-slice cost:
+
+| | slices | serial | 7-way | 16-way |
+|---|---:|---:|---:|---:|
+| root, deployed | 453 | 29 h | **4.2 h** | 1.8 h |
+| root + `arity 8` + `cap 8` + `q 16` | 255 | 17 h | 2.4 h | 1.0 h |
+| BabyBear-hashed shrink | 180 | 12 h | 1.7 h | 0.7 h |
+| **Pasta-hashed root** | **54** | 3.5 h | **30 min** | 13 min |
+| **Pasta-hashed shrink** | **30** | 2.0 h | **17 min** | 7 min |
+
+### ⚑ And the boundary carry stops mattering too
+
+A step boundary was measured at **34,566 rows** under a flat `rootCommitDigest` and **1,402** under
+the chunked one (§3.20/§3.21) — the 2.00× the scheduler found. At 453 slices that chunked carry is
+453 × 1,402 ≈ 6.4 × 10⁵ rows ≈ **12 extra slices**, which is exactly why the honest deployed figure
+is "~460" and not 453. At 30 slices it is 4.2 × 10⁴ ≈ **0.8 of one slice**.
+
+So the chunked-commitment win — a genuinely clever structural fix, and the largest one found so far
+— is worth 12 slices in the regime it was built for and **under one** in the Pasta regime. Both of
+the scheduler's levers (placement 1.66×, commitment shape 2.00×) are optimisations *within* a
+decomposition whose unit cost is set by the hash. Changing the hash is the re-slicing.
+
 ---
 
 ## 6. Ember-gated — named, not done
