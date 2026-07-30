@@ -398,9 +398,17 @@ So **39 of 40 are computable from bytes a peer serves**, and the fortieth is com
 same bytes plus kimchi's `ft_eval0`, which is a computation and not a source.
 
 ⚑ And that makes `public_comm` reachable: `MinaWrapChallenges.WrapAbsorbed.pubComm` is
-`MinaWrapPublicInput.publicCommOf` over these forty words, so the last non-decodable argument of
-the per-block challenge derivation is now a function of the wire, modulo the same one scalar. The
-`ChallengesUnavailable` refusal in `bridge/src/mina_opening_check.rs` is scoped to `ft_eval0`. -/
+`MinaWrapPublicInput.publicCommOf` over these forty words, so it is a function of the wire modulo
+the one scalar above.
+
+⚠ **But it is not the only non-decodable argument, and `MinaWrapChallengesWeld` says so:
+`cipShifted` is the other.** That one is the WRAP proof's OWN `combined_inner_product` — a
+different object in a different field from slot 0's, computed by the Wrap verifier over the Wrap
+proof's own evaluations, which `decode_proof_at` also walks. `MinaRealBlockGate` §4 reproduces it
+on this block with `KimchiVerify.cipR`, carrying the WRAP-side `LCT`. So after this file the
+per-block path's residual is **two `ft_eval0`s** — the Step one (this file's `FT_EVAL0`, for
+`public_comm`) and the Wrap one (for `cipShifted`) — and nothing else. Both are the same species of
+computation and both want a linearization constant term this tree carries rather than derives. -/
 
 /- The forty words this file assembles ARE the pinned public input, so `publicCommOf` at them is
 `PUBLIC_COMM_GOLD` by `MinaWrapPublicInput`'s own §4 pin. Stated as the list equality, because that
