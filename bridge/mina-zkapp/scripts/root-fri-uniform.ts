@@ -832,6 +832,52 @@ async function main() {
   );
 
   // -----------------------------------------------------------------------
+  // [3b] THE WHOLE CHAIN'S BOUNDARY ARITHMETIC, OUT OF CIRCUIT.
+  //
+  // ⚑ THIS IS THE INSTRUMENT A PARTIAL PROOF RUN CANNOT BE, and it is the same
+  // argument §3.27's twin makes. A run proves a prefix; the joins this leg
+  // actually changes — a block's LAST position handing on to the NEXT query's
+  // position 0, and the current-query register moving with it — do not occur
+  // until instance 46, and the terminal seal not until 820. Running every
+  // boundary here costs seconds and checks all 820.
+  // -----------------------------------------------------------------------
+  console.log('\n[3b] all 820 boundaries, out of circuit — every join, not the ones a run reaches');
+  {
+    const order = chainOrder(c);
+    const root = keyList(c).root;
+    let prevOut = terminalSeal(
+      c.dagDigest,
+      digestOfLanes(c.acc.map((x) => Field(x))),
+      AIR_SLICES,
+    ).toString();
+    for (const { sp, q, k } of order) {
+      const bIn = uniformBoundaryIn(c, c.twin, sp, q, c.dagDigest, c.friCommit, c.acc, root);
+      if (bIn.toString() !== prevOut)
+        fail(
+          `${specName(sp)} at q${q} (step ${k}) enters a boundary its predecessor did not emit — ` +
+            'the uniform chain does not join',
+        );
+      prevOut = uniformBoundaryOut(c, c.twin, sp, q, c.friCommit, c.acc, root).toString();
+    }
+    const finalOut = order[order.length - 1];
+    const seal = uniformBoundaryOut(
+      c,
+      c.twin,
+      finalOut.sp,
+      finalOut.q,
+      c.friCommit,
+      c.acc,
+      root,
+    ).toString();
+    if (seal !== prevOut) fail('the terminal seal is not what the last slice emits');
+    ok(
+      `every one of ${fmt(order.length)} slice instances enters exactly the boundary its ` +
+        'predecessor emits, across all 19 query blocks and both joins the deployed chain does not ' +
+        'have — the current-query register moves with the block, and the chain closes on the seal',
+    );
+  }
+
+  // -----------------------------------------------------------------------
   // [4] The uniformity cost, MEASURED.
   // -----------------------------------------------------------------------
   console.log('\n[4] what uniformity costs, measured on the real shape by building the same cut twice');
@@ -1033,12 +1079,12 @@ async function main() {
 const RATCHET = {
   headSegs: 36,
   blockSegs: 593,
-  headSlices: 0,
-  blockSlices: 0,
-  totalSlices: 0,
-  distinctPrograms: 0,
+  headSlices: 3,
+  blockSlices: 43,
+  totalSlices: 820,
+  distinctPrograms: 46,
   deployedSlices: 839,
-  friChunks: 0,
+  friChunks: 138,
 };
 
 const phase =

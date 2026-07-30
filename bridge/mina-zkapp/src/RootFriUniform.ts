@@ -405,6 +405,19 @@ export function planUniform(
     opts.usableRows,
     flat,
   );
+  //  ⚑ A BLOCK IS A RING AND ITS TWO ENDS MUST CARRY THE SAME SLOT LIST. The
+  //  walk's own liveness disagrees: at the start of query q+1's block the
+  //  transcript slots `qidx[0..q]` are dead, so `liveIn[headSegs + blockSegs]`
+  //  is 19 slots SHORTER than `liveIn[headSegs]` and the last position would
+  //  emit a carry the next position cannot read. The block therefore exits on
+  //  the set it ENTERS on — an over-carry of the dead transcript indices, which
+  //  is exactly where the current-query register lives.
+  //
+  //  This is a real join and no partial proof run reaches it; `[3b]` does.
+  const entry = w.liveIn[L.headSegs];
+  const last = block[block.length - 1];
+  last.carryRows += (entry.length - last.liveOut.length) * PRICE.witnessLane;
+  last.liveOut = entry;
   const sum = (xs: FriSlice[], f: (s: FriSlice) => number) => xs.reduce((a, s) => a + f(s), 0);
   return {
     head,
@@ -864,7 +877,7 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
             friOther: [],
             aux: aux.slice(0, sh.nAux),
           } as SliceIo);
-          const out = w.liveIn[sh.sl.to].map((slot) => {
+          const out = sh.sl.liveOut.map((slot) => {
             const v = sto.get(slot);
             if (v === undefined)
               throw new Error(
@@ -922,7 +935,7 @@ export function carriedLanes(
   const [gFrom, gTo] = globalRange(plan, sp, q);
   //  The SLOT LIST is query 0's — that is what the one circuit reads. The
   //  VALUES are query `q`'s, read at the corresponding global position.
-  const slots = end === 'in' ? w.liveIn[sl.from] : w.liveIn[sl.to];
+  const slots = end === 'in' ? sl.liveIn : sl.liveOut;
   const at = end === 'in' ? gFrom : gTo;
   const byId = new Map<number, bigint>();
   w.liveIn[at].forEach((slot, i) => byId.set(slot, twin.carry[at][i]));
