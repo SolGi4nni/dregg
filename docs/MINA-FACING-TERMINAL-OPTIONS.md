@@ -638,7 +638,7 @@ any affordable length would have been green and wrong.
 
 **Proved, against dregg's committed root proof, one process per slice:**
 
-| | | |
+| slice | step index | what it establishes |
 |---|---|---|
 | `head0` | k = **7** (constant) | predecessor **AIR slice 6** under its own key, pinned by the compile-time constant, entering AIR slice 6's own terminal seal |
 | `head1` | k = 8 (constant) | `publicInput` **is** head0's `publicOutput`; predecessor's key proved at **leaf 0 of the carried key tree** |
