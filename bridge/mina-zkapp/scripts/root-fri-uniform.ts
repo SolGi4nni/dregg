@@ -12,6 +12,7 @@ import {
   unifiedDag,
 } from '../src/RootAirDag.js';
 import { dagDigestOfChunkDigests, digestOfLanes, terminalSeal } from '../src/RootAirChain.js';
+import { atTier, belowTier, tierStop } from '../src/tier.js';
 import {
   RealRootFri,
   airColumnIndex,
@@ -832,6 +833,9 @@ async function main() {
   // [3] The chain's arithmetic, before anything compiles.
   // -----------------------------------------------------------------------
   console.log('\n[3] the seal AIR slice 6 emitted, recomputed from the uniform FRI side');
+  //  ⚑ NEEDS AN ARTIFACT ONLY A TIER-2 RUN MINTS (see root-fri-braid.ts [2]).
+  //  Stated, not skipped: the tier-0 PASS line names it.
+  if (atTier(1) || existsSync(airProof())) {
   if (!existsSync(airProof())) fail(`${airProof()} is missing — the AIR half has not been proved`);
   const air6 = JSON.parse(readFileSync(airProof(), 'utf8'));
   const want = terminalSeal(c.dagDigest, digestOfLanes(c.acc.map((x) => Field(x))), AIR_SLICES);
@@ -844,6 +848,11 @@ async function main() {
     'the uniform chain enters at AIR slice 6\'s OWN terminal seal, recomputed from the AIR column ' +
       'chunks it loads — the braid and its compile-time key pin are untouched by any of this',
   );
+  } else {
+    console.log(
+      `    NOT CHECKED at MINA_TIER=0: ${airProof()} is absent (a tier-2 artifact, gitignored).`,
+    );
+  }
   console.log(
     `    the chain closes at step ${fmt(totalSteps(c.plan))} = ${AIR_SLICES} AIR + ` +
       `${fmt(c.plan.totalSlices)} FRI`,
@@ -897,6 +906,24 @@ async function main() {
 
   // -----------------------------------------------------------------------
   // [4] The uniformity cost, MEASURED.
+  // ── THE TIER-0 STOP ───────────────────────────────────────────────────────
+  //  ⚑ [3b] IS THE INSTRUMENT, AND IT HAS ALREADY RUN. It walked all 820
+  //  boundaries in seconds; that is where all 19 block-to-block joins were
+  //  found broken — first observable at instance 46, sealed at 820, so any
+  //  affordable proof run below would have been green and wrong. Everything
+  //  from [4] on spawns child processes that compile Kimchi circuits.
+  if (belowTier(1)) {
+    tierStop(
+      'ROOT-FRI-UNIFORM',
+      checks,
+      secs(T0),
+      '[4] the uniformity cost measured by building the same cut twice, [5] the distinct programs ' +
+        'compiled one process each, [6] the slice proofs, [7] the splices, [8] the controls, ' +
+        '[9] the ratchet — MINA_TIER=1 or 2 runs them',
+    );
+    return;
+  }
+
   // -----------------------------------------------------------------------
   console.log('\n[4] what uniformity costs, measured on the real shape by building the same cut twice');
   const probes: UniformSpec[] = [
