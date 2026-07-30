@@ -16,7 +16,7 @@ Dated 2026-07-30. Every figure below is either **MEASURED** in this session (mar
 | what it establishes | *dregg's chain says this* | *this transition is VALID* |
 | membership in dregg's chain | **YES** — the proof binds to a committed root | **NO.** Nothing. |
 | soundness floor inherited | Kimchi/IPA **plus** dregg's undischarged FRI/STARK floor | Kimchi/IPA **only** |
-| coverage of dregg's semantics | all 1,093 root-AIR constraints, by construction | only what has been re-emitted — **today, 13 gates of one effect** |
+| coverage of dregg's semantics | all 1,093 root-AIR constraints, by construction | only what has been re-emitted — **today, 14 of one effect's 35 constraints** |
 | cost | ~2.86 × 10⁷ rows, 521–596 Pickles steps (MEASURED marginals, `MINA-VERIFIES-DREGG-FRI-SIZE.md` §3.8/§4) | ~1.05 × 10⁴ rows per effect row (PROJECTED, §3 below) |
 | fits in one Pickles step | **no** — needs a ~520-step chain | **yes** — ~5 effect rows per step |
 
@@ -36,11 +36,12 @@ So B is not a cheap A. It is a different assertion that happens to cost less.
 row, emitted to Kimchi from the same Lean source the BabyBear descriptor descends from.
 
 ```
-incNonceHeads : List Head                 -- THE ONE SOURCE, 13 polynomial heads
-   |                                   |
+incNonceHeadsBound : List Head            -- THE ONE SOURCE, 14 polynomial heads
+   |                                   |    (13 row gates + the selector binding)
    | headToExpr                        | lowerHeadGens ; packGen
    v                                   v
-incNonceRowGates (deployed BabyBear)   incNonceKimchiRows (27 Kimchi Generic rows)
+incNonceRowGates                       incNonceKimchiRows (30 Kimchi Generic rows)
+  ++ selectorGates 53 (deployed)
    |                                   |
    | incNonceVm_faithful               | kimchi_rows_force_heads
    |   (needs IncNonceRowCanon)        |   (arbitrary CommRing, no envelope over Z)
@@ -59,6 +60,14 @@ The three theorems that make this a weld rather than a differential:
   source head vanish, at arbitrary `CommRing`, stated over the ACTUAL emitted list.
 * **`two_emissions_one_def`** — both arrows land on `CellIncNonceSpec pre post`.
 
+And the head that makes the claim be about `incrementNonceA` rather than about a shape:
+**`selectorBindHead`**, welded by `selectorBindHead_denotes` to the deployed
+`selectorGateBody 53` (which `selectorGate_in_descriptor` shows really is in
+`incrementNonceVmDescriptor.constraints`). `kimchi_forces_selector` then proves the emitted
+circuit forces `sel[53] = 1` on a non-NoOp row. Over ℤ that needs no primality argument at all,
+where the BabyBear reading of the same gate (`selectorGate_holds_iff`) must invoke that
+`2013265921` is prime to split the product — one more place the Kimchi obligation is lighter.
+
 Plus, at the deployed field: **`kimchi_pallas_forces_cellSpec`** over `ZMod` at the Pallas
 base modulus, under `KimchiRowCanon` — which the o1js circuit *discharges* with
 `Gadgets.rangeCheck32` rather than assumes.
@@ -75,33 +84,35 @@ row that moves value or freezes the nonce — the general statement, not a sampl
 `cd bridge/mina-zkapp && npm run incnonce-native`, o1js 2.15.0, Node 26.4.0, this laptop.
 
 ```
-witness weld vs Lean satAssign          : AGREES on all 40 intermediates
+witness weld vs Lean satAssign          : AGREES on all 45 intermediates
 driver row vs Lean goodIncNonceRow      : IDENTICAL
 
-solver goodIncNonceRow       : SATISFIED
-solver badIncNonceRow        : VIOLATED at sub-gates [3]     <- the bal_lo freeze head's isZero
-solver staleNonceIncNonceRow : VIOLATED at sub-gates [12]    <- the nonce tick head's isZero
+solver goodIncNonceRow             : SATISFIED
+solver badIncNonceRow              : VIOLATED at sub-gates [3]   <- the bal_lo freeze head's isZero
+solver staleNonceIncNonceRow       : VIOLATED at sub-gates [12]  <- the nonce tick head's isZero
+solver wrong selector (col 53 = 0) : VIOLATED at sub-gates [58]  <- the selector head's isZero
 
-core rows (transcribed sub-gates only)  : 27
-core gate histogram                     : {"Generic":27}
-full method rows                        : 248
-compile                                 : 12.38s  (0.74s warm)
-prove  (goodIncNonceRow)                : 15.39s
-verify                                  : true in 0.65s
+core rows (transcribed sub-gates only)  : 30
+core gate histogram                     : {"Generic":30}
+full method rows                        : 263
+compile                                 : 6.40s
+prove  (goodIncNonceRow)                : 4.12s
+verify                                  : true in 0.35s
 tamper badIncNonceRow                   : REFUSED
 tamper staleNonceIncNonceRow            : REFUSED
+tamper wrong selector (right shape)     : REFUSED
 re-pointed public input verifies        : false
 ```
 
-**27 predicted, 27 measured.** `packGen_length` says `ceil(53/2) = 27` and snarky's own
-constraint system reports 27 `Generic` gates. Two compilers that were not told each other's
+**30 predicted, 30 measured.** `packGen_length` says `ceil(59/2) = 30` and snarky's own
+constraint system reports 30 `Generic` gates. Two compilers that were not told each other's
 answer agree on the row count.
 
-The 248-row full method decomposes (by subtraction from the measurement): 27 emitted core +
-52 for 26 `rangeCheck32` (2 rows each) + 28 equality bindings + ~141 for the Mina-Poseidon
-claim digest (26 fields ⇒ 13 permutations at ~11 rows). So **the semantic core is 11% of
+The 263-row full method decomposes (by subtraction from the measurement): 30 emitted core +
+52 for 26 `rangeCheck32` (2 rows each) + 29 equality bindings + ~152 for the Mina-Poseidon
+claim digest (27 fields ⇒ 14 permutations at ~11 rows). So **the semantic core is 11% of
 the deployed circuit** and the rest is binding and canonicality — which is the usual shape
-and worth knowing before extrapolating from 27.
+and worth knowing before extrapolating from 30.
 
 ---
 
@@ -113,7 +124,7 @@ The marginals, all measured:
 |---|---|---|
 | Poseidon2-BabyBear w16 permutation | **2,600.5** | `npm run poseidon2-rows`, re-measured today; 2,602 as a ZkProgram method |
 | `hash_4_to_1` | **1 permutation** | `circuit/src/poseidon2.rs:349-362` — one `permute()`, no absorb loop |
-| 13 per-row gates of one effect | **27** | §2 |
+| 14 gates of one effect (13 row + selector) | **30** | §2 |
 | `rangeCheck32` | **2** | measured, `MINA-VERIFIES-DREGG-FRI-SIZE.md` §o1js-2.15 note |
 
 One EffectVM row of `incrementNonce` (`incrementNonceVmDescriptor`) is **35 constraints**
@@ -122,8 +133,8 @@ sites**, **2 range checks**.
 
 | component | rows | basis |
 |---|---|---|
-| per-row gates | 27 | MEASURED |
-| transition + boundary + selector (22 gates) | ~44 | PROJECTED at the measured 2.08 rows/gate |
+| per-row gates + selector binding (14) | 30 | MEASURED |
+| transition + boundary (21 gates) | ~45 | PROJECTED at the measured ~2.1 rows/gate |
 | canonicality range checks (26 cells) | 52 | MEASURED marginal |
 | **`state_commit` — 4 × `hash_4_to_1`** | **10,402** | MEASURED marginal × 4 |
 | **total per effect row** | **≈ 1.05 × 10⁴** | |
@@ -153,19 +164,21 @@ Consequences:
 This section is worth more than the demo. Every item is a real gap in what landed, not a
 future-work wish.
 
-### 4.1 The Kimchi emission covers 13 of the descriptor's 35 constraints
+### 4.1 The Kimchi emission covers 14 of the descriptor's 35 constraints
 
-`incNonceHeads` denotes `incNonceRowGates` — the **per-row gates**. The deployed
+`incNonceHeadsBound` denotes `incNonceRowGates ++ selectorGates 53`. The deployed
 `incrementNonceVmDescriptor.constraints` also carries `transitionAll` (14),
-`boundaryFirstPins` (4), `boundaryLastPins` (3) and `selectorGates 53` (1). None of those
-are emitted to Kimchi.
+`boundaryFirstPins` (4) and `boundaryLastPins` (3). Those 21 are not emitted to Kimchi.
 
-The sharpest consequence: **the Kimchi circuit never checks that this is an
-`incrementNonce` row.** `selectorGates 53` is what binds the descriptor to its own effect
-on the BabyBear side. Route B's circuit checks the *shape* — economic block frozen, nonce
-ticked — and any other effect with that shape would satisfy it identically. That is fine
-as far as `CellIncNonceSpec` goes (which is a statement about `(pre, post)`, not about a
-selector) and it is NOT fine if anyone reads the proof as "an incrementNonce happened".
+`transitionAll` is cross-row (`next[sb+hi] = this[sa+lo]`) and this emission is single-row,
+so **the Kimchi circuit checks one row in isolation and nothing chains it to a neighbour.**
+A sequence of individually-valid rows is not thereby a valid trace. The boundary PI pins are
+what tie a row's nonce to `PI[ACTOR_NONCE]`, also absent.
+
+⚑ *Was worse, and is now fixed:* until `selectorBindHead` landed this section also read "the
+circuit never checks that this is an `incrementNonce` row" — it checked the SHAPE and any
+effect with that shape passed. `selectorGates 53` is now emitted, `kimchi_forces_selector` is
+the theorem, and `tamper wrong selector` in §2 is the exhibit.
 
 ### 4.2 The commitment binding is absent — this is the big one
 
@@ -174,22 +187,22 @@ selector) and it is NOT fine if anyone reads the proof as "an incrementNonce hap
 two *bare* 13-tuples of field elements. It does not prove they are the pre-image of any
 commitment, and therefore does not prove they are a dregg cell at all.
 
-This is exactly where §3 says all the cost is (10,402 of 10,534 rows), so the cheap number
-in §3 is a number for the *complete* thing while what actually ran is the 27-row core.
+This is exactly where §3 says all the cost is (10,402 of ~10,530 rows), so the cheap number
+in §3 is a number for the *complete* thing while what actually ran is the 30-row core.
 Both are stated; do not read one for the other.
 
 Until the hash sites land, "route B checks a dregg transition" should be read as "route B
 checks a dregg transition's ARITHMETIC".
 
-### 4.3 The Lean forcing lemma covers 27 of the 248 deployed rows
+### 4.3 The Lean forcing lemma covers 30 of the 263 deployed rows
 
-The theorem is about `incNonceKimchiRows`. The compiled circuit is 248 rows: the 27, plus
+The theorem is about `incNonceKimchiRows`. The compiled circuit is 263 rows: the 30, plus
 `rangeCheck32`s, plus column bindings, plus a Mina-Poseidon digest — all emitted by o1js,
 none of them in the Lean model.
 
 Soundness survives this trivially (a satisfying assignment for 248 rows satisfies the 27,
 so the forcing applies), and that argument is stated here rather than proved. What does
-NOT survive automatically is *completeness*: the extra 221 rows could in principle make
+NOT survive automatically is *completeness*: the extra 233 rows could in principle make
 honest transitions unprovable. They do not — §2 proved one — but that is an exhibit, not a
 theorem.
 
@@ -204,12 +217,12 @@ sub-list the compiler emitted.
 `kimchi-raw-gates.ts` deep-imports `Gates.generic` past o1js's `exports` map, because the
 supported alternative (writing `Field` arithmetic and letting o1js lower it) would make the
 measured row count o1js's compiler's decision rather than the Lean lowering's — and then
-comparing it to 27 would mean nothing. Pinned at 2.15.0; the resolver **refuses** rather
+comparing it to 30 would mean nothing. Pinned at 2.15.0; the resolver **refuses** rather
 than falling back. Named seam.
 
 ### 4.5 `lowerHeadsGens` has no freshness theorem
 
-Chaining the lowering across 13 heads threads a watermark. `lowerHead_sound` needs no
+Chaining the lowering across 14 heads threads a watermark. `lowerHead_sound` needs no
 freshness (each sub-gate forces its output from its inputs), so **soundness is unaffected**
 by a watermark bug. Completeness is not: overlapping watermarks would make honest
 instances unsatisfiable. `incNonceKimchiRows_satisfiable` rules that out for this
@@ -218,7 +231,7 @@ instance, by exhibit. There is no general lemma.
 ### 4.6 The TypeScript witness solver is an independent implementation
 
 It reads only the emitted coefficients and never learns which dregg gate anything came
-from. It is welded to Lean's own witness (`honestFresh`, all 40 intermediates checked
+from. It is welded to Lean's own witness (`honestFresh`, all 45 intermediates checked
 before any measurement runs). A solver bug is a liveness failure, not a soundness one —
 the emitted gates are the authority either way.
 
@@ -249,15 +262,15 @@ mismatch between the two forcing lemmas.
 
 **Are the two emissions provably the same semantics?**
 
-For the thirteen per-row gates of `incrementNonceA`: **yes, and it is a theorem, not a
-test.** One `def`-generated `List Head`; a denotational identity to the deployed BabyBear
-gate bodies at every assignment; a forcing lemma on each side; both landing on one Lean
-`def`. That is a stronger tie than route A's own extraction seam
+For the thirteen per-row gates of `incrementNonceA` plus its selector binding: **yes, and it
+is a theorem, not a test.** One `def`-generated `List Head`; a denotational identity to the
+deployed BabyBear gate bodies at every assignment; a forcing lemma on each side; both landing
+on one Lean `def`. That is a stronger tie than route A's own extraction seam
 (`to_dag`/`to_dag_full`, which is checked differentially and whose header says so).
 
-For the rest of the descriptor — the selector, the transition continuity, the boundary
-pins, and above all the commitment sites — **there is no second emission at all yet**, so
-the question does not arise there and must not be answered by extension.
+For the rest of the descriptor — the transition continuity, the boundary pins, and above all
+the commitment sites — **there is no second emission at all yet**, so the question does not
+arise there and must not be answered by extension.
 
 **What does B establish that A does not?**
 
@@ -277,7 +290,7 @@ the question does not arise there and must not be answered by extension.
   transition that never happened passes B and fails A.
 * **Coverage.** A verifies a proof about all 1,093 constraints of dregg's seven root
   tables, whatever they say, without anyone re-emitting them. B covers exactly what has
-  been re-emitted — 13 gates of 35, of one effect out of ~54 — and every extension is
+  been re-emitted — 14 constraints of 35, of one effect out of 54 — and every extension is
   fresh work with a fresh chance to diverge.
 * **Independence from the re-emission itself.** A cannot drift from dregg's semantics,
   because it does not restate them. B is a second statement of the same thing, and

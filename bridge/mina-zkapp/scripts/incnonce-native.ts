@@ -27,6 +27,11 @@ import {
 //   goodIncNonceRow          bal_lo 100 -> 100, nonce 5 -> 6        MUST prove
 //   badIncNonceRow           post bal_lo minted to 999              MUST refuse
 //   staleNonceIncNonceRow    post nonce held at 5                   MUST refuse
+//   wrong selector           the right SHAPE, col 53 = 0            MUST refuse
+//
+// The last one is what `selectorBindHead` bought: without it the circuit checks
+// the shape "economic block frozen, nonce ticked" and ANY effect with that shape
+// satisfies it. With it, the proof is about `incrementNonceA`.
 // ---------------------------------------------------------------------------
 
 function block(balLo: bigint, balHi: bigint, nonce: bigint): bigint[] {
@@ -36,16 +41,23 @@ function block(balLo: bigint, balHi: bigint, nonce: bigint): bigint[] {
 }
 
 /** `EffectVmEmitIncrementNonce.goodIncNonceRow` — the honest row. */
-const GOOD: RowSpec = { preBlock: block(100n, 0n, 5n), postBlock: block(100n, 0n, 6n) };
+const GOOD: RowSpec = {
+  preBlock: block(100n, 0n, 5n),
+  postBlock: block(100n, 0n, 6n),
+  selectorSet: 1n,
+};
 /** `badIncNonceRow` — post-balance minted to 999. */
-const MINTED: RowSpec = { preBlock: block(100n, 0n, 5n), postBlock: block(999n, 0n, 6n) };
+const MINTED: RowSpec = { ...GOOD, postBlock: block(999n, 0n, 6n) };
 /** `staleNonceIncNonceRow` — the nonce does not tick. */
-const STALE: RowSpec = { preBlock: block(100n, 0n, 5n), postBlock: block(100n, 0n, 5n) };
+const STALE: RowSpec = { ...GOOD, postBlock: block(100n, 0n, 5n) };
+/** The right SHAPE under someone else's selector — what `selectorBindHead` exists to refuse. */
+const WRONG_SELECTOR: RowSpec = { ...GOOD, selectorSet: 0n };
 
 function toRow(spec: RowSpec): IncNonceRow {
   return new IncNonceRow({
     preBlock: spec.preBlock.map((x) => Field(x)),
     postBlock: spec.postBlock.map((x) => Field(x)),
+    selectorSet: Field(spec.selectorSet),
   });
 }
 
@@ -96,11 +108,12 @@ for (const [name, spec, expectValid] of [
   ['goodIncNonceRow', GOOD, true],
   ['badIncNonceRow', MINTED, false],
   ['staleNonceIncNonceRow', STALE, false],
+  ['wrong selector (col 53 = 0)', WRONG_SELECTOR, false],
 ] as const) {
   const { violated } = solveWitness(EMITTED, baseAssignment(EMITTED, spec));
   const ok = violated.length === 0;
   console.log(
-    `solver ${name.padEnd(22)}: ${ok ? 'SATISFIED' : `VIOLATED at sub-gates [${violated}]`}` +
+    `solver ${name.padEnd(28)}: ${ok ? 'SATISFIED' : `VIOLATED at sub-gates [${violated}]`}` +
       `${ok === expectValid ? '' : '   <-- UNEXPECTED'}`
   );
   if (ok !== expectValid) {
@@ -158,6 +171,7 @@ console.log('');
 for (const [name, spec] of [
   ['badIncNonceRow (post bal_lo = 999)', MINTED],
   ['staleNonceIncNonceRow (nonce frozen)', STALE],
+  ['wrong selector (right shape, col 53 = 0)', WRONG_SELECTOR],
 ] as const) {
   let refused = false;
   let why = '';
@@ -167,7 +181,7 @@ for (const [name, spec] of [
     refused = true;
     why = (e as Error).message.split('\n')[0].slice(0, 120);
   }
-  console.log(`tamper ${name.padEnd(38)}: ${refused ? `REFUSED (${why})` : 'ACCEPTED  <-- HOLE'}`);
+  console.log(`tamper ${name.padEnd(42)}: ${refused ? `REFUSED (${why})` : 'ACCEPTED  <-- HOLE'}`);
   if (!refused) {
     throw new Error(`the emitted circuit ACCEPTED an invalid transition: ${name}`);
   }
@@ -191,7 +205,7 @@ console.log(`re-pointed public input verifies       : ${forgeVerified}${forgeVer
 if (forgeVerified) throw new Error('a proof verified against a public input it does not prove');
 
 console.log('');
-console.log('== route B: honest transition proved and verified; both tampers refused ==');
+console.log('== route B: honest transition proved and verified; all three tampers refused ==');
 console.log(
   `== predicted ${EMITTED.kimchiRows} rows from Lean, measured ${coreCs.rows} for the core ==`
 );

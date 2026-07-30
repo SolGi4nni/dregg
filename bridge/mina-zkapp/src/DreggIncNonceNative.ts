@@ -252,15 +252,18 @@ function blockCols(side: 'sb' | 'sa'): number[] {
 export const PRE_COLS = blockCols('sb');
 export const POST_COLS = blockCols('sa');
 
-/** The full EffectVM row a caller supplies, as a sparse column map. */
-export type RowSpec = { preBlock: bigint[]; postBlock: bigint[] };
+/** The full EffectVM row a caller supplies, as a sparse column map. `selectorSet` is the value of
+ *  the `incrementNonce` selector column (53) — the emitted `selectorBindHead` forces it to `1` on
+ *  a non-NoOp row, so a row claiming another effect is REFUSED rather than silently accepted for
+ *  having the right shape. */
+export type RowSpec = { preBlock: bigint[]; postBlock: bigint[]; selectorSet: bigint };
 
 /** Materialise the base (column) part of the assignment from a `RowSpec`. */
 export function baseAssignment(prog: EmittedProgram, row: RowSpec): bigint[] {
   const base = new Array<bigint>(prog.firstFreshVar).fill(0n);
   PRE_COLS.forEach((c, i) => (base[c] = row.preBlock[i] ?? 0n));
   POST_COLS.forEach((c, i) => (base[c] = row.postBlock[i] ?? 0n));
-  base[C.selIncrementNonce] = 1n;
+  base[C.selIncrementNonce] = row.selectorSet;
   base[C.selNoop] = 0n;
   return base;
 }
@@ -295,12 +298,14 @@ export function claimDigest(row: RowSpec): Field {
   return Poseidon.hash([
     ...row.preBlock.map((x) => Field(x)),
     ...row.postBlock.map((x) => Field(x)),
+    Field(row.selectorSet),
   ]);
 }
 
 export class IncNonceRow extends Struct({
   preBlock: Provable.Array(Field, 13),
   postBlock: Provable.Array(Field, 13),
+  selectorSet: Field,
 }) {}
 
 /** Rows of the SEMANTIC CORE alone — the transcribed sub-gates and nothing else.
@@ -320,7 +325,7 @@ export const DreggIncNonceNative = ZkProgram({
       privateInputs: [IncNonceRow],
       async method(claim: Field, row: IncNonceRow) {
         // (a) the claim names THIS row.
-        Poseidon.hash([...row.preBlock, ...row.postBlock]).assertEquals(claim);
+        Poseidon.hash([...row.preBlock, ...row.postBlock, row.selectorSet]).assertEquals(claim);
 
         // (b) the emitted program, replayed. `vars` is the whole assignment;
         // the state-block columns are wired to the row the claim just pinned.
@@ -328,13 +333,15 @@ export const DreggIncNonceNative = ZkProgram({
           const base = new Array<bigint>(EMITTED.firstFreshVar).fill(0n);
           PRE_COLS.forEach((c, i) => (base[c] = row.preBlock[i].toBigInt()));
           POST_COLS.forEach((c, i) => (base[c] = row.postBlock[i].toBigInt()));
-          base[C.selIncrementNonce] = 1n;
+          base[C.selIncrementNonce] = row.selectorSet.toBigInt();
           base[C.selNoop] = 0n;
           return solveWitness(EMITTED, base).w;
         });
 
         PRE_COLS.forEach((c, i) => vars[c].assertEquals(row.preBlock[i]));
         POST_COLS.forEach((c, i) => vars[c].assertEquals(row.postBlock[i]));
+        // The claimed effect selector is the one the emitted `selectorBindHead` reads.
+        vars[C.selIncrementNonce].assertEquals(row.selectorSet);
         // `s_noop = 0` — the non-NoOp hypothesis `intent_to_cellSpec` carries.
         vars[C.selNoop].assertEquals(Field(0));
 

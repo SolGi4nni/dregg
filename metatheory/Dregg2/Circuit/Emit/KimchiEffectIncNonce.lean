@@ -36,14 +36,26 @@ tests — two lowerings of one source, with refinement proved on each side.
 ## The four rungs
 
   1. **§1 `incNonceHeads`** — the one source. Thirteen polynomial heads: eleven economic
-     passthroughs, the reserved passthrough, and the nonce tick.
+     passthroughs, the reserved passthrough, and the nonce tick. Plus `selectorBindHead`, the
+     fourteenth, which is what makes the circuit about `incrementNonceA` and not merely about the
+     SHAPE "economic block frozen, nonce ticked"; `incNonceHeadsBound` is what is emitted.
   2. **§2 the WELD** — `heads_denote_deployed_gates`: head-for-head, `evalH` of the source equals
      `EmittedExpr.eval` of the gate body the DEPLOYED descriptor
      (`EffectVmEmitIncrementNonce.incNonceRowGates`) already carries. The source is not a third
-     copy; it denotes the deployed list.
+     copy; it denotes the deployed list. **§2a** does the same for the selector head against the
+     deployed `selectorGate 53`, which `selectorGate_in_descriptor` shows really is in the
+     descriptor.
   3. **§4 the KIMCHI emission** — `incNonceKimchiRows`, `packGen`-packed, with
      `kimchi_rows_force_heads` at arbitrary `CommRing` over the ACTUAL emitted list.
-  4. **§5 the apex** — `two_emissions_one_def`: both arrows land on `CellIncNonceSpec`.
+  4. **§5 the apex** — `two_emissions_one_def`: both arrows land on `CellIncNonceSpec`; plus
+     `kimchi_forces_selector`, which refuses a row carrying any other effect's selector.
+
+⚑ **This covers 14 of the deployed descriptor's 35 constraints.** The 21 not emitted are
+`transitionAll` (14, cross-row continuity — this emission is single-row), the 7 boundary PI pins,
+and — the one that matters — **the 4 GROUP-4 hash sites binding the after-state into
+`state_commit`.** Without those, the circuit relates two bare 13-tuples and does NOT prove they
+are the pre-image of any commitment, i.e. that they are a dregg cell at all. See
+`docs/MINA-DREGG-SEMANTICS-NATIVE.md` §4.2; it is where all the cost lives too.
 
 ## ⚑ WHERE THE TWO SIDES ARE NOT SYMMETRIC, stated rather than smoothed
 
@@ -111,11 +123,39 @@ def incNonceHeads : List Head :=
 theorem incNonceHeads_length : incNonceHeads.length = 13 := by
   simp [incNonceHeads]
 
+/-- **The SELECTOR-BINDING head** — `(1 − s_noop)·(1 − s_incrementNonce)`, expanded.
+
+This is the gate that makes the circuit about `incrementNonceA` RATHER THAN about the shape
+"economic block frozen, nonce ticked". Without it, any effect with the same shape satisfies the
+same rows and a proof would say less than its name. `EffectVmEmit.selectorGateBody` is the
+deployed body; §2a welds this head to it.
+
+Degree 2, so the lowering pays one multiplication sub-gate — the first non-linear head here. -/
+def selectorBindHead : Head :=
+  ⟨[(-1, [sel.NOOP]), (-1, [SEL_INCREMENT_NONCE]), (1, [sel.NOOP, SEL_INCREMENT_NONCE])], 1⟩
+
+/-- **What the Kimchi side actually emits**: the thirteen row heads PLUS the selector binding.
+Kept distinct from `incNonceHeads` so §2's denotational weld stays a statement about the
+thirteen gates `incNonceRowGates` carries, and §2a is a separate weld to `selectorGate 53`. -/
+def incNonceHeadsBound : List Head := incNonceHeads ++ [selectorBindHead]
+
+theorem incNonceHeadsBound_length : incNonceHeadsBound.length = 14 := by
+  simp [incNonceHeadsBound, incNonceHeads]
+
+theorem mem_bound {h : Head} (hm : h ∈ incNonceHeads) : h ∈ incNonceHeadsBound := by
+  simp [incNonceHeadsBound, hm]
+
 /-! ### §1a — what a head MEANS, over ℤ. -/
 
 @[simp] theorem evalH_freezeHead (a : Assignment) (off : Nat) :
     evalH (freezeHead off) a = a (saCol off) - a (sbCol off) := by
   simp only [freezeHead, evalH, evalTerm, List.map_cons, List.map_nil, List.sum_cons,
+    List.sum_nil, List.prod_cons, List.prod_nil]
+  ring
+
+@[simp] theorem evalH_selectorBindHead (a : Assignment) :
+    evalH selectorBindHead a = (1 - a sel.NOOP) * (1 - a SEL_INCREMENT_NONCE) := by
+  simp only [selectorBindHead, evalH, evalTerm, List.map_cons, List.map_nil, List.sum_cons,
     List.sum_nil, List.prod_cons, List.prod_nil]
   ring
 
@@ -161,6 +201,24 @@ theorem heads_denote_deployed_gates (a : Assignment) :
   simp only [incNonceHeads, incNonceGateBodies, List.map_append, List.map_cons, List.map_nil,
     List.map_map, Function.comp_def, freezeHead_denotes, nonceTickHead_denotes,
     gBalLoFreeze, gBalHi, gCapPass, gResPass, gFieldPass]
+
+/-! ### §2a — the SELECTOR weld, to the deployed `selectorGate 53`.
+
+`selectorGates 53` is a segment of `incrementNonceVmDescriptor.constraints`, so this is a second
+head welded to a second piece of the DEPLOYED descriptor — not a gate invented for the Kimchi
+side. With it, §5's `kimchi_forces_selector` makes the emitted circuit refuse a row that is not
+an `incrementNonce` row. -/
+
+theorem selectorBindHead_denotes (a : Assignment) :
+    evalH selectorBindHead a = (selectorGateBody SEL_INCREMENT_NONCE).eval a := by
+  simp only [evalH_selectorBindHead, selectorGateBody, EmittedExpr.eval]
+  ring
+
+/-- The deployed descriptor really does carry this gate. -/
+theorem selectorGate_in_descriptor :
+    selectorGate SEL_INCREMENT_NONCE ∈ incrementNonceVmDescriptor.constraints := by
+  simp only [incrementNonceVmDescriptor, List.mem_append, selectorGates, List.mem_singleton]
+  exact Or.inr rfl
 
 /-! ## §3 — THE SHARED MEANING: the heads vanish IFF the row realises the intent.
 
@@ -212,18 +270,19 @@ def lowerHeadsGens : List Head → Nat → List Gen1
   | h :: rest, nv => lowerHeadGens h nv ++ lowerHeadsGens rest (lowerHeadWm h nv)
 
 /-- **The emitted sub-gate program** for the `incrementNonceA` row. -/
-def incNonceGens : List Gen1 := lowerHeadsGens incNonceHeads NV0
+def incNonceGens : List Gen1 := lowerHeadsGens incNonceHeadsBound NV0
 
 /-- **The emitted Kimchi circuit** — `GateType::Generic` rows, two sub-gates each. -/
 def incNonceKimchiRows : List KRow := packGen incNonceGens
 
-/-- Twelve freeze heads at four sub-gates each, plus the nonce tick at five. -/
-theorem incNonceGens_length : incNonceGens.length = 53 := by
-  simp only [incNonceGens, incNonceHeads, NV0]
+/-- Twelve freeze heads at four sub-gates each, the nonce tick at five, the selector binding at
+six (it is the only head with a product term, hence the only multiplication). -/
+theorem incNonceGens_length : incNonceGens.length = 59 := by
+  simp only [incNonceGens, incNonceHeadsBound, incNonceHeads, NV0]
   rfl
 
-/-- **The row count is a theorem, not a measurement.** `⌈53/2⌉ = 27`. -/
-theorem incNonceKimchiRows_length : incNonceKimchiRows.length = 27 := by
+/-- **The row count is a theorem, not a measurement.** `⌈59/2⌉ = 30`. -/
+theorem incNonceKimchiRows_length : incNonceKimchiRows.length = 30 := by
   rw [incNonceKimchiRows, packGen_length, incNonceGens_length]
 
 /-- Every emitted row carries a MODELLED gate, so nothing below is discharged by
@@ -255,9 +314,14 @@ theorem lowerHeadsGens_sound {R : Type} [CommRing R] (a : Nat → R) :
 
 /-- **SEMANTICS PRESERVATION, over the ACTUAL emitted rows, at arbitrary `CommRing`.** Any
 assignment satisfying every emitted Kimchi row makes every source head vanish. -/
+theorem kimchi_rows_force_bound {R : Type} [CommRing R] (a : Nat → R)
+    (hr : rowsHold a incNonceKimchiRows) : ∀ h ∈ incNonceHeadsBound, headEvalR a h = 0 :=
+  lowerHeadsGens_sound a incNonceHeadsBound NV0 ((packGen_holds_iff a _).mp hr)
+
+/-- The same, restricted to the thirteen ROW heads — the form every downstream rung uses. -/
 theorem kimchi_rows_force_heads {R : Type} [CommRing R] (a : Nat → R)
     (hr : rowsHold a incNonceKimchiRows) : ∀ h ∈ incNonceHeads, headEvalR a h = 0 :=
-  lowerHeadsGens_sound a incNonceHeads NV0 ((packGen_holds_iff a _).mp hr)
+  fun h hm => kimchi_rows_force_bound a hr h (mem_bound hm)
 
 /-! ## §5 — THE APEX: both emissions force the SAME Lean `def`. -/
 
@@ -269,6 +333,20 @@ theorem kimchi_forces_intent (env : VmRowEnv)
   intro h hm
   have hz := kimchi_rows_force_heads (R := ℤ) env.loc hr h hm
   rwa [headEvalR_int] at hz
+
+/-- **THE EMITTED CIRCUIT REFUSES A ROW THAT IS NOT AN `incrementNonce` ROW.**
+
+Over ℤ this needs no primality argument at all — `(1 − 0)·(1 − s) = 0` is `s = 1` outright, where
+the BabyBear reading of the same gate (`selectorGate_holds_iff`) has to invoke that `2013265921`
+is prime to split the product. Another place the Kimchi side's obligation is the lighter one. -/
+theorem kimchi_forces_selector (a : Assignment)
+    (hr : rowsHold a incNonceKimchiRows) (hnoop : a sel.NOOP = 0) :
+    a SEL_INCREMENT_NONCE = 1 := by
+  have hz := kimchi_rows_force_bound (R := ℤ) a hr selectorBindHead
+    (by simp [incNonceHeadsBound])
+  rw [headEvalR_int] at hz
+  simp only [evalH_selectorBindHead, hnoop] at hz
+  omega
 
 /-- **ARROW ONE — the Kimchi emission forces `CellIncNonceSpec`.** -/
 theorem kimchi_forces_cellSpec (env : VmRowEnv) (pre post : CellState)
@@ -433,12 +511,16 @@ theorem kimchi_pallas_forces_cellSpec (env : VmRowEnv) (pre post : CellState)
 
 /-- The honest witness: `goodIncNonceRow` on the real columns, and the lowering's intermediates
 above `NV0`. `freezeHead`'s three intermediates are `(0, v, 0)`; the nonce tick's four are
-`(−1, nonce_after, 0, 0)`. Every other fresh slot is zero because every other frozen cell is. -/
+`(−1, nonce_after, 0, 0)`; the selector binding's five are `(1, 1, 0, 0, 0)` at a row where the
+NoOp selector is `0` and `sel[53]` is `1`. Every other fresh slot is zero because every other
+frozen cell is. -/
 def satAssign : Assignment := fun v =>
   if v < NV0 then goodIncNonceRow.loc v
   else if v = 189 then 100
   else if v = 194 then -1
   else if v = 195 then 5
+  else if v = 228 then 1
+  else if v = 229 then 1
   else 0
 
 /-- **SATISFIABLE AT BIRTH (sub-gates).** -/
@@ -548,7 +630,7 @@ def honestBaseNonzero : List (Nat × ℤ) :=
 solver is an INDEPENDENT implementation (it reads only the emitted coefficients); comparing its
 output against this list is what keeps it from being a third opinion. -/
 def honestFresh : List (Nat × ℤ) :=
-  (List.range 40).map (fun k => (NV0 + k, satAssign (NV0 + k)))
+  (List.range 45).map (fun k => (NV0 + k, satAssign (NV0 + k)))
 
 /-- A named column of the EffectVM row the emitted program reads. -/
 def namedCols : List (String × Nat) :=
@@ -582,19 +664,24 @@ def emitJson : String :=
 /-! ## §9 — tripwires. -/
 
 #guard incNonceHeads.length == 13
-#guard incNonceGens.length == 53
-#guard incNonceKimchiRows.length == 27
+#guard incNonceGens.length == 59
+#guard incNonceKimchiRows.length == 30
 #guard incNonceGateBodies.length == 13
 #guard NV0 == 188
--- Every variable the emitted program mentions lies inside `[0, NV0 + 40)`, which is what makes
--- `honestFresh`'s 40 entries the WHOLE intermediate vector and not a prefix of one.
-#guard incNonceGens.all (fun g => g.l < 228 && g.r < 228 && g.o < 228)
-#guard honestFresh.length == 40
+-- Every variable the emitted program mentions lies inside `[0, NV0 + 45)`, which is what makes
+-- `honestFresh`'s 45 entries the WHOLE intermediate vector and not a prefix of one.
+#guard incNonceGens.all (fun g => g.l < 233 && g.r < 233 && g.o < 233)
+#guard honestFresh.length == 45
+#guard incNonceHeadsBound.length == 14
 
 #assert_axioms heads_denote_deployed_gates
 #assert_axioms incNonceRowGates_eq
 #assert_axioms heads_zero_iff_intent
 #assert_axioms kimchi_rows_force_heads
+#assert_axioms kimchi_rows_force_bound
+#assert_axioms kimchi_forces_selector
+#assert_axioms selectorBindHead_denotes
+#assert_axioms selectorGate_in_descriptor
 #assert_axioms kimchi_forces_cellSpec
 #assert_axioms babybear_forces_cellSpec
 #assert_axioms two_emissions_one_def
