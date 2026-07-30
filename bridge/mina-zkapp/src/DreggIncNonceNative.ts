@@ -60,6 +60,14 @@ export type EmittedProgram = {
   subGates: number;
   kimchiRows: number;
   cols: Record<string, number>;
+  /** `goodIncNonceRow`'s nonzero columns — the row Lean PROVED the emitted circuit accepts
+   *  (`incNonceKimchiRows_satisfiable`). The driver builds its base from this, not from a
+   *  retyped copy. */
+  honestBase: [number, number][];
+  /** `satAssign` above `firstFreshVar` — Lean's own intermediates at that row. The TypeScript
+   *  witness solver is an independent implementation; agreeing with this list is what keeps it
+   *  from being a third opinion. */
+  honestFresh: [number, number][];
   gens: EmittedGen[];
 };
 
@@ -255,6 +263,32 @@ export function baseAssignment(prog: EmittedProgram, row: RowSpec): bigint[] {
   base[C.selIncrementNonce] = 1n;
   base[C.selNoop] = 0n;
   return base;
+}
+
+/**
+ * **The witness weld.** Rebuild the honest witness from Lean's own base row and check it against
+ * Lean's own `satAssign`. The solver reads only the emitted coefficients, so if it disagrees the
+ * TypeScript is telling a different story about the same circuit and we want to know THAT, not a
+ * downstream proof failure.
+ *
+ * Note the failure mode this guards is LIVENESS, not soundness: a wrong witness makes an honest
+ * transition unprovable, it cannot make an invalid one provable — the emitted gates are the
+ * authority either way. But an unprovable honest instance is exactly how a route gets quietly
+ * written off as too expensive.
+ */
+export function checkWitnessWeld(prog: EmittedProgram): { checked: number; mismatches: string[] } {
+  const base = new Array<bigint>(prog.firstFreshVar).fill(0n);
+  for (const [col, v] of prog.honestBase) base[col] = BigInt(v);
+  const { w, violated } = solveWitness(prog, base);
+  const mismatches: string[] = [];
+  if (violated.length > 0) {
+    mismatches.push(`Lean's honest row VIOLATES sub-gates [${violated}] under the TS solver`);
+  }
+  for (const [idx, v] of prog.honestFresh) {
+    const want = fmod(BigInt(v));
+    if (w[idx] !== want) mismatches.push(`w[${idx}] = ${w[idx]}, Lean says ${want}`);
+  }
+  return { checked: prog.honestFresh.length, mismatches };
 }
 
 export function claimDigest(row: RowSpec): Field {

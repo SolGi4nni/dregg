@@ -6,6 +6,7 @@ import {
   PRE_COLS,
   POST_COLS,
   baseAssignment,
+  checkWitnessWeld,
   claimDigest,
   solveWitness,
   witnessAndReplay,
@@ -60,7 +61,36 @@ console.log(`predicted rows     : ${EMITTED.kimchiRows}   (KimchiEffectIncNonce.
 console.log('');
 
 // ---------------------------------------------------------------------------
-// 0. The witness solver agrees with Lean about which rows are valid.
+// 0a. The TS witness solver reproduces LEAN'S OWN witness, variable for variable.
+// ---------------------------------------------------------------------------
+const weld = checkWitnessWeld(EMITTED);
+console.log(
+  `witness weld vs Lean satAssign          : ${
+    weld.mismatches.length === 0 ? `AGREES on all ${weld.checked} intermediates` : 'MISMATCH'
+  }`
+);
+for (const m of weld.mismatches) console.log(`  ${m}`);
+if (weld.mismatches.length > 0) {
+  throw new Error('the TypeScript witness solver disagrees with Lean about the honest witness');
+}
+
+// And the driver's own hand-written honest row must be Lean's row.
+{
+  const mine = baseAssignment(EMITTED, GOOD);
+  const theirs = new Array<bigint>(EMITTED.firstFreshVar).fill(0n);
+  for (const [c, v] of EMITTED.honestBase) theirs[c] = BigInt(v);
+  const diff = mine.map((x, i) => (x === theirs[i] ? null : i)).filter((i) => i !== null);
+  console.log(
+    `driver row vs Lean goodIncNonceRow      : ${
+      diff.length === 0 ? 'IDENTICAL' : `DIFFERS at columns [${diff}]`
+    }`
+  );
+  if (diff.length !== 0) throw new Error('the driver is not exercising the row Lean proved about');
+}
+console.log('');
+
+// ---------------------------------------------------------------------------
+// 0b. The witness solver agrees with Lean about which rows are valid.
 // ---------------------------------------------------------------------------
 for (const [name, spec, expectValid] of [
   ['goodIncNonceRow', GOOD, true],

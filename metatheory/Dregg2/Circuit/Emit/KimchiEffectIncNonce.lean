@@ -538,6 +538,18 @@ private def joinWith (sep : String) : List String → String
   | [x] => x
   | x :: xs => x ++ sep ++ joinWith sep xs
 
+/-- The honest row's NONZERO columns, straight off `goodIncNonceRow` — so the o1js driver builds
+its base assignment from the row LEAN proved satisfying, not from one a reader retyped. -/
+def honestBaseNonzero : List (Nat × ℤ) :=
+  ((List.range NV0).filter (fun v => goodIncNonceRow.loc v ≠ 0)).map
+    (fun v => (v, goodIncNonceRow.loc v))
+
+/-- The lowering's intermediates at the honest row, i.e. `satAssign` above `NV0`. The o1js witness
+solver is an INDEPENDENT implementation (it reads only the emitted coefficients); comparing its
+output against this list is what keeps it from being a third opinion. -/
+def honestFresh : List (Nat × ℤ) :=
+  (List.range 40).map (fun k => (NV0 + k, satAssign (NV0 + k)))
+
 /-- A named column of the EffectVM row the emitted program reads. -/
 def namedCols : List (String × Nat) :=
   [ ("selNoop", sel.NOOP)
@@ -559,7 +571,11 @@ def emitJson : String :=
     ++ ",\"kimchiRows\":" ++ toString incNonceKimchiRows.length
     ++ ",\"cols\":{"
     ++ joinWith "," (namedCols.map (fun p => "\"" ++ p.1 ++ "\":" ++ toString p.2))
-    ++ "},\"gens\":["
+    ++ "},\"honestBase\":["
+    ++ joinWith "," (honestBaseNonzero.map (fun p => "[" ++ toString p.1 ++ "," ++ i2s p.2 ++ "]"))
+    ++ "],\"honestFresh\":["
+    ++ joinWith "," (honestFresh.map (fun p => "[" ++ toString p.1 ++ "," ++ i2s p.2 ++ "]"))
+    ++ "],\"gens\":["
     ++ joinWith "," (incNonceGens.map genJson)
     ++ "]}"
 
@@ -570,6 +586,10 @@ def emitJson : String :=
 #guard incNonceKimchiRows.length == 27
 #guard incNonceGateBodies.length == 13
 #guard NV0 == 188
+-- Every variable the emitted program mentions lies inside `[0, NV0 + 40)`, which is what makes
+-- `honestFresh`'s 40 entries the WHOLE intermediate vector and not a prefix of one.
+#guard incNonceGens.all (fun g => g.l < 228 && g.r < 228 && g.o < 228)
+#guard honestFresh.length == 40
 
 #assert_axioms heads_denote_deployed_gates
 #assert_axioms incNonceRowGates_eq
