@@ -497,6 +497,17 @@ Three analysis-first lanes on the three genuinely hard remainders:
   ⚠ A residual that genuinely IS Lean's is named and not papered over: heap branches at two DIFFERENT
   keys still decline, with zero deployed instances but a real producer in `spween-dregg`.
 
+- **Frontend remainder dispatched** — the tug `STALE-CONTROL` cluster (4 web + 2 telegram, one shared
+  cause), three automatafl-diagonal, and the singletons. Measured before handing off: two tug tests
+  die at `assert!(body.contains("Turn committed"))` with the surface RENDERING correctly — `<h1>Multiway-Tug`,
+  seat rows, `0 influence · 0 lanes` — so **the page works and the turn does not.**
+  ⚑ Briefed on the sharpest fork: `STALE-CONTROL` may be a **correct refusal rendered as a stale-control
+  page**, which is the shape already found on the signed game route (a replayed counter answered `409
+  "page out of date"` instead of `403`, because every `HostError` becomes a string). Genuinely-stale and
+  mis-reported need opposite fixes, and the second hides a working gate.
+  ⚠ And briefed with my own two measurement errors as cautionary: assert on OUTCOMES, not rendered
+  copy, and check the artifact is what you think it is.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
