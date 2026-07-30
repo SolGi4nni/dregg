@@ -46,8 +46,13 @@ the SUBJECTS of the theorems above so the shape cannot be reintroduced silently.
 `FriVerifier.batchTablesCheck` (`:803-808`) matches `| ood :: _` and never wanted a singleton, so the
 repair is entirely bundle/hypothesis side:
 
-  * `FriLdtExtractCons` (§3) — the `∀ d` bundle with `oodPoint = ood :: oodRest`; implied by the
-    landed `FriLdtExtract` (`friLdtExtract_imp_cons`, a real implication).
+  * `FriLdtExtractCons` (§3) — the `∀ d` bundle with `oodPoint = ood :: oodRest`, and (⛑ 2026-07-30)
+    with the PER-RUN opening residual `¬ OpeningColl` as a conjunct. ⚑ The transport out of the
+    landed `FriLdtExtract` (`friLdtExtract_imp_cons`) is DELETED with that conjunct: the landed
+    bundle never carried the residual, and the only way to restore the implication is to assume the
+    residual at every opening reaching a common root, i.e. the global Merkle-binding floor in
+    disguise. The landed bundle is one this module PROVES empties `verifyBatch` at the deployed
+    arguments, so what the deletion removes is a transport out of nothing (§3).
   * `hood_of_oodColumnLayout_cons`, `algoStarkSound_of_memoryLegs_cons`,
     `algoStarkSound_of_memoryFree_cons`, `algoStarkSound_transferV3_ofBusModels_cons` (§4) — the
     general assembler re-derived at the corrected shape. Every other input (`BusModelFamily`,
@@ -235,7 +240,20 @@ theorem landed_bundle_conjunct_refuted_on_an_accepting_run :
 `AlgoStarkSoundGeneral.FriLdtExtract` (seven modules consume that one; it is not edited). Identical
 field-for-field except the OOD conjunct is `oodPoint = ood :: oodRest` — the shape
 `FriVerifier.batchTablesCheck` actually matches (`| ood :: _`, `FriVerifier.lean:805`) and the shape
-the bundle's own antecedent forces (§1). -/
+the bundle's own antecedent forces (§1).
+
+⛑ **CUT OVER 2026-07-30 — the PER-RUN OPENING RESIDUAL is now a conjunct of this bundle.** The
+`∀ d` lane was the last one buying its Merkle-opening binding with `Poseidon2SpongeCR`, which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear parameters —
+so every assembler downstream of it was vacuous at deployment. The sibling BARE-verifier bundle
+`FriLdtExtractDeployed.FriLdtExtractV3Cons` carries `¬ OpeningColl` at exactly this position
+(`:340`) and has done since 2026-07-28; this is that same conjunct, at the same witnesses, on the
+`∀ d` bundle. ⚑ It is stated at the `idx`/`siblings`/`topen`/`vCommitted` THIS run's extraction
+EXHIBITS, never universally: a `∀ p q, ¬ IsSpongeColl hash (p, q)` side condition is DEFINITIONALLY
+the refuted floor, and a `∀ idx siblings vCommitted` one is refuted by the same pigeonhole (a
+field-bounded sponge collides SOMEWHERE, and the ∀-form ranges over exactly that pair).
+`consResidual_iff_opening_functional` below says what the conjunct actually asks of a run: that the
+run did not equivocate at its own extracted opening. -/
 def FriLdtExtractCons
     (sponge : List ℤ → ℤ)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
@@ -253,6 +271,7 @@ def FriLdtExtractCons
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (oodBatchResidual d (tr pi π) ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -262,22 +281,42 @@ def FriLdtExtractCons
                 - vanishingPoly (tr pi π) * qp c)) ∧
       tracePublishedCommit (tr pi π) = pi.toPublished
 
-/-- `FriLdtExtract ⟹ FriLdtExtractCons`, by `[ood] = ood :: []`. A real implication: no
-contradiction is used, and it holds for every instantiation, including ones where both sides are
-inhabited. -/
-theorem friLdtExtract_imp_cons
-    (sponge : List ℤ → ℤ)
-    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
-    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
-    (initState : List ℤ) (logN : Nat) (view : ProofView)
-    (tr : BatchPublicInputs → BatchProof → VmTrace) (d : EffectVmDescriptor2)
-    (h : FriLdtExtract sponge perm RATE toNat params vk core A initState logN view tr d) :
-    FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d := by
-  intro pi π hacc
-  obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc
-  exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, [], idx, siblings,
-    hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+/-- **WHAT THE ADDED CONJUNCT ASKS — and it is not a hash assumption.** At any pair of values that
+recompute to the SAME committed root at the same index over the same sibling path, `¬ OpeningColl`
+is EQUIVALENT to the two values being equal. So the bundle's new conjunct says exactly "this run did
+not equivocate at its own extracted opening": an honest prover, who publishes one value per
+committed slot, discharges it outright (`OodCommitmentBinding.openingColl_self_false`, no hypothesis
+on the sponge at all), and a prover who does equivocate has HANDED OVER the collision
+(`opening_equivocation_exhibits_coll`). Both poles are already proved upstream —
+`openingColl_self_false` (dischargeable) and `openingColl_of_constant_sponge` (refutable, so the
+conjunct is not `True` in disguise). -/
+theorem consResidual_iff_opening_functional (sponge : List ℤ → ℤ)
+    {root : ℤ} {idx : Nat} {siblings : List ℤ} {vCommitted vOpened : ℤ}
+    (hCommitted : merkleRecomputeZ sponge idx vCommitted siblings = root)
+    (hOpened : merkleRecomputeZ sponge idx vOpened siblings = root) :
+    ¬ OpeningColl sponge idx vOpened vCommitted siblings ↔ vOpened = vCommitted := by
+  constructor
+  · intro hno
+    exact Dregg2.Circuit.OodCommitmentBinding.commitmentOpening_binds_of_noColl sponge hno
+      hCommitted hOpened
+  · rintro rfl
+    exact Dregg2.Circuit.OodCommitmentBinding.openingColl_self_false sponge idx vOpened siblings
+
+/-! ⚑ **DELETED 2026-07-30 — `friLdtExtract_imp_cons`** (`FriLdtExtract ⟹ FriLdtExtractCons`).
+
+The corrected `∀ d` bundle now carries the PER-RUN opening residual `¬ OpeningColl` (above), and the
+LANDED singleton-shaped `FriLdtExtract` never carried it, so the implication is no longer provable.
+It could only be restored by assuming the residual at EVERY opening reaching a common root, which is
+the global Merkle-binding floor in disguise — the exact move this repair exists to stop. This is the
+same deletion, for the same reason, that the BARE-verifier lane took on 2026-07-28
+(`FriLdtExtractDeployed`'s `⚑ DELETED — friLdtExtractV3_imp_cons` note).
+
+WHAT WAS LOST, precisely: a free transport out of `FriLdtExtract` — a premise THIS MODULE PROVES
+makes `CircuitSoundness.verifyBatch` reject EVERY input at the deployed arguments
+(`friLdtExtract_makes_verifyBatch_reject_everything`, §2). It transported nothing, because there is
+nothing on the far side of an empty premise to transport. Every "nothing is lost, compose
+`friLdtExtract_imp_cons`" line in the fanout/kernel module headers is corrected in this same commit.
+-/
 
 /-! ## §4 — SITE 1, the assembler RE-DERIVED at the corrected shape. -/
 
@@ -315,10 +354,18 @@ theorem hood_of_oodColumnLayout_cons
 
 /-- **`algoStarkSound_of_memoryLegs_cons` — the `∀ d` assembler from the CORRECTED bundle.**
 The exact statement of `AlgoStarkSoundGeneral.algoStarkSound_of_memoryLegs` with `FriLdtExtract`
-replaced by `FriLdtExtractCons`. Every other input is the landed one, reused unchanged. -/
+replaced by `FriLdtExtractCons`. Every other input is the landed one, reused unchanged.
+
+⛑ **CUT OVER 2026-07-30 — the `Poseidon2SpongeCR sponge` binder is GONE.** It was here for exactly
+one thing: to discharge the OOD modeler's per-instance `¬ OpeningColl` residual by the inline bridge
+`openingColl_refutes_poseidon2CR`. `FriLdtExtractCons` now SUPPLIES that residual at the very
+witnesses its own extraction produces, so the assembler reads it off the bundle instead of buying it
+with a hypothesis this tree proves false. Conclusion unchanged; hypothesis strictly weaker in the
+only sense that matters — the old one is unsatisfiable at deployed BabyBear parameters and this one
+is discharged by any run that does not equivocate at its own opening. -/
 theorem algoStarkSound_of_memoryLegs_cons {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -334,7 +381,7 @@ theorem algoStarkSound_of_memoryLegs_cons {F : Type*} [Field F] [DecidableEq F]
     perm RATE toNat params vk (fullChecks core A toNat params.powBits) initState logN view
     (fun pi π hacc => by
       obtain ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-        hcap, hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ :=
+        hcap, hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ :=
         hfri pi π hacc
       obtain ⟨minit, mfin, maddrs, hrest, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF⟩ :=
         hlegs pi π hacc
@@ -343,11 +390,11 @@ theorem algoStarkSound_of_memoryLegs_cons {F : Type*} [Field F] [DecidableEq F]
           (hood_of_oodColumnLayout_cons d sponge perm RATE toNat params vk core A initState
             logN (view pi π).1 (view pi π).2 hacc (tr pi π) ζ Λ qp topen ood vCommitted root
             oodRest idx siblings hoodPt hmem hCommitted hOpened
-            -- ⚠ NOT PORTED IN THIS PASS: `FriLdtExtractCons` (the ∀-d bundle of §3) does not carry
-            -- the per-run opening residual, so this assembler still buys it with the REFUTED global
-            -- floor. Grandfathered, not new; the port is one conjunct on that bundle.
-            (fun hc => openingColl_refutes_poseidon2CR sponge idx topen.constraintEval vCommitted
-              siblings hc hCR)
+            -- ⛑ PORTED 2026-07-30: the per-run opening residual comes OFF THE BUNDLE, at the
+            -- witnesses the bundle's own extraction named. The inline
+            -- `openingColl_refutes_poseidon2CR … hCR` bridge that stood here is gone, and with it
+            -- the floor binder.
+            hnoOpen
             hlayout hLam)
           hnonexc
       have harm : ∀ i < (tr pi π).rows.length, ∀ c ∈ d.constraints, ¬ isArith c →
@@ -368,7 +415,7 @@ the exact statement of `AlgoStarkSoundGeneral.algoStarkSound_of_memoryFree` over
 `FriLdtExtractCons`. -/
 theorem algoStarkSound_of_memoryFree_cons {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -381,7 +428,7 @@ theorem algoStarkSound_of_memoryFree_cons {F : Type*} [Field F] [DecidableEq F]
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryLegs_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryLegs_cons d sponge hash fp embed perm RATE toNat params vk core A
     initState logN view tr hsites hranges hfri hbusF
     (memoryLegs_of_lookupShape hash perm RATE toNat params vk core A initState logN view tr d
       hshape hmemfree)
@@ -389,7 +436,7 @@ theorem algoStarkSound_of_memoryFree_cons {F : Type*} [Field F] [DecidableEq F]
 /-- **The corrected assembler AT the deployed `transferV3`** — the statement of
 `AlgoStarkSoundGeneral.algoStarkSound_transferV3_ofBusModels` over the corrected bundle. -/
 theorem algoStarkSound_transferV3_ofBusModels_cons {F : Type*} [Field F] [DecidableEq F]
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -402,7 +449,7 @@ theorem algoStarkSound_transferV3_ofBusModels_cons {F : Type*} [Field F] [Decida
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => transferV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryFree_cons transferV3 sponge hCR hash fp embed perm RATE toNat params vk
+  algoStarkSound_of_memoryFree_cons transferV3 sponge hash fp embed perm RATE toNat params vk
     core A initState logN view tr
     Dregg2.Circuit.AirLegsDischarged.hbus_is_lookup
     Dregg2.Circuit.AirLegsDischarged.transferV3_hashSites
@@ -428,6 +475,7 @@ def FriLdtExtractConsNoOodShape
       topen ∈ (view pi π).1.tableOpenings ∧
       merkleRecomputeZ sponge idx vCommitted siblings = root ∧
       merkleRecomputeZ sponge idx topen.constraintEval siblings = root ∧
+      ¬ OpeningColl sponge idx topen.constraintEval vCommitted siblings ∧
       (oodBatchResidual d (tr pi π) ζ qp).eval Λ
         = ((vCommitted : ℤ) : BabyBear)
             - ((A.mul topen.vanishingAtZeta topen.quotientAtZeta : ℤ) : BabyBear) ∧
@@ -454,17 +502,18 @@ theorem friLdtExtractCons_iff_noOodShape
   constructor
   · intro h pi π hacc
     obtain ⟨ζ, Λ, qp, topen, _ood, vCommitted, root, _oodRest, idx, siblings,
-      hcap, _hoodPt, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc
+      hcap, _hoodPt, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ :=
+      h pi π hacc
     exact ⟨ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+      hcap, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
   · intro h pi π hacc
     obtain ⟨ood, oodRest, hcons⟩ :=
       acceptsFull_gives_cons_shape perm RATE toNat params vk core A initState logN
         (view pi π).1 (view pi π).2 hacc
     obtain ⟨ζ, Λ, qp, topen, vCommitted, root, idx, siblings,
-      hcap, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc
+      hcap, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩ := h pi π hacc
     exact ⟨ζ, Λ, qp, topen, ood, vCommitted, root, oodRest, idx, siblings,
-      hcap, hcons, hmem, hCommitted, hOpened, hlayout, hLam, hnonexc, hPub⟩
+      hcap, hcons, hmem, hCommitted, hOpened, hnoOpen, hlayout, hLam, hnonexc, hPub⟩
 
 /-- **THE CONCRETE INHABITABILITY WITNESS.** On a run the bundle's own antecedent (the bare
 `verifyAlgo` at `fullChecks`) really ACCEPTS — obtained from the `decide`-backed accepting pole of
@@ -836,7 +885,7 @@ theorem friLdtExtractV3Cons_false_of_accepting_run_without_tableOpenings
 #assert_axioms friLdtExtract_makes_deployed_verifier_accept_nothing
 #assert_axioms friLdtExtract_makes_verifyBatch_reject_everything
 #assert_axioms landed_bundle_conjunct_refuted_on_an_accepting_run
-#assert_axioms friLdtExtract_imp_cons
+#assert_axioms consResidual_iff_opening_functional
 #assert_axioms hood_of_oodColumnLayout_cons
 #assert_axioms algoStarkSound_of_memoryLegs_cons
 #assert_axioms algoStarkSound_of_memoryFree_cons
