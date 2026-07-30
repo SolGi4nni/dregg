@@ -292,6 +292,25 @@ shape that has yielded one-cause fixes five times this week.
   stale binary**. One lane reported a false red this way. Tell: **a panic line offset by exactly the
   mutation's delta.**
 
+- ✅ **telegram + web 62 → 31** (`4de836675`) — and behind them a **product outage**: the dungeon
+  rendered 4,719 chars against Telegram's 4,096 ceiling, so `present` refused and **the flagship was
+  silently unplayable there**, surfacing as ~22 unrelated-looking failures. ⚑ 2,009 of those
+  characters were disclosures the companion guide printed again verbatim in the same chat.
+  ⚑ **A refusal was reporting itself as something else**: a replayed counter is answered
+  `409 "page out of date"` instead of `403 stale replay counter`, because every `HostError` is mapped
+  to a string — **and the obvious fix (expect 409) would have left the consumed-counter ledger
+  asserted by NOTHING.** Isolated by DIFFERENCE instead: same head, generation, action and signer,
+  only the counter differs.
+- ⚑ **E2 recorded: `dreggnet-web-server` REFUSES EVERY DESCENT MOVE on a deployed box.** The oracle
+  declines `HeapAtom::AllowedTransitions`, which `dungeon_program.json` uses **576 times**, and
+  `verified_settlement.rs:117` registers that oracle UNCONDITIONALLY where `dregg-sdk` deliberately
+  does not. ⚠ **The note at the site says debug "takes the guest-path evaluator and plays" — false
+  for this crate.** Fix is Lean-authored; two Rust lanes have now correctly declined to paper it over.
+- ⚠ **The 182 is partly a BUDGET ARTIFACT** (`.config/nextest.toml`) — 16+ real multi-minute proving
+  tests had no budget row and are red on ANY box. Measured: one passes at **700.38 s**, 3.9× the kill.
+  The lane that first called them load-dependent **corrected itself with a measurement**, which is the
+  right shape.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
