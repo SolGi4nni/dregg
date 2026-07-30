@@ -2480,7 +2480,7 @@ slice 6**, so the object is ONE key-pinned chain and not two.
 ### 3.29 ⚑ MEASURED — THE PREAMBLE: the challenger state entering FRI, DERIVED
 
 *2026-07-30. `bridge/mina-zkapp/src/RootFriWalk.ts` (`preambleOps`, the `preSeal` segment),
-`src/RootFriSlice.ts` (the twin and the interpreter), `scripts/root-fri-preamble.ts`
+`src/RootFriSlice.ts` (the twin and the interpreter), `bridge/mina-zkapp/scripts/root-fri-preamble.ts`
 (`npm run root-fri-preamble`). The script is read off `batch-stark/src/verifier/mod.rs:144,274-300`,
 `batch-stark/src/transcript.rs` and `fri/src/two_adic_pcs.rs:782-788`.*
 
@@ -2496,7 +2496,7 @@ and all 19 query indices, and the 11,303-segment walk then authenticates a trans
 
 | | source |
 |---|---|
-| `observe_instance_count(7)` | `verifier/mod.rs:144` |
+| `observe_instance_count(7)` | Plonky3 upstream — the verifier module, mod.rs line 144 (not a path in this repo) |
 | `observe_instance_binding(ext_db, base_db, width, n_chunks)` × 7 | `:274` |
 | `observe_main(main_commit, public_values)` | `:278` |
 | `observe_preprocessed(prep_widths, prep_commit)` | `:279` |
@@ -2641,7 +2641,7 @@ and the **FRI soundness floor**, undischarged here as everywhere.
 ### 3.30 ⚑ MEASURED — THE CLAIM: the chain says WHICH proof it verified
 
 *2026-07-30. `bridge/mina-zkapp/src/RootClaim.ts`, the `claim` option on
-`src/RootFriUniform.ts`'s `makeUniformSliceProgram`, `scripts/root-claim-carry.ts`
+`src/RootFriUniform.ts`'s `makeUniformSliceProgram`, `bridge/mina-zkapp/scripts/root-claim-carry.ts`
 (`npm run root-claim-carry`). The layout is mirrored from
 `circuit-prove/src/ivc_turn_chain.rs:268-278,343-368` and the Rust host's own segment tooth at
 `:3096-3115`.*
