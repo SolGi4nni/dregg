@@ -18,7 +18,8 @@ the emitted list still has it as a PREFIX.
 per-block AVERAGE and does not shrink the single indivisible object. Cut in TWO it misses by
 `16,512` rows; cut in THREE it clears but `3 ∤ 32768`, so the slices are ragged and
 `PastaIpaFold.chunk_length` does not apply. **FOUR divides and clears**: `8,192` generators,
-`1,056,896` rows, `50.4%` of the ceiling (§6).
+`1,056,896` rows — `50.4%` of the RAW rows and, once the trace is padded to a power of two,
+**100% of the committed `2^21` domain** (§6, §7.4). The cut that leaves real headroom is EIGHT.
 
 The deployed prover carries several AIR instances per proof and derives each one's `degree_bits`
 from its own trace HEIGHT (`p3_batch_stark`'s `ProverData::from_instances`), so four instances
@@ -559,7 +560,8 @@ def sliceRows (w : Nat) : Nat := PLANES * (w + 1) + w
 
 -- The cut divides.
 #guard SLICES * SLICE_W == WRAP_SRS
--- ⚑ …and it CLEARS the ceiling, at 50.4%.
+-- ⚑ …and it clears the ceiling IN RAW ROWS, at 50.4% — which is NOT headroom; see the padded
+-- guards below, where the same 1,056,896 fills the committed 2^21 domain exactly.
 #guard sliceRows SLICE_W == 1056896
 #guard sliceRows SLICE_W < MAX_ROWS
 #guard 100 * sliceRows SLICE_W < 51 * MAX_ROWS

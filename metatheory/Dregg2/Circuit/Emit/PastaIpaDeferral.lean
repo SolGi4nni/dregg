@@ -574,7 +574,15 @@ full — so no `2^15`-element equality is ever `decide`d and no slice is ragged.
 **How many slices, measured rather than guessed.** TWO misses the ceiling by 16,512 rows — that is
 how close a halving comes and it is still a miss. THREE clears it, but `3 ∤ 32768`, so a three-way
 cut is ragged and `chunk_length` does not apply. **FOUR is the cut**: 8,192 generators per slice,
-1,056,896 rows, 50.4% of the ceiling. -/
+1,056,896 rows.
+
+⚑ **AND "50.4% OF THE CEILING" IS THE WRONG READING OF THAT NUMBER — it is 50.4% of the RAW rows
+and 100% of the COMMITTED domain.** A STARK trace height is a POWER OF TWO, so the honest
+per-instance height is the PADDED one, and `1,056,896` pads to `2^21` — exactly the ceiling.
+Clearing the ceiling in raw rows is therefore NOT headroom. The cut that DOES leave headroom once
+padding is priced is **EIGHT** (4,096 generators, 528,512 rows, padding to `2^20`), and eight
+divides 32,768 as cleanly as four does. `PastaMsmSliced` §7.4 carries the same correction; it is
+guarded here too, because this is the file that computes the number. -/
 
 /-- Rows one contiguous slice of `c` generators costs. -/
 def chunkRows (c : Nat) : Nat := rows c 128
@@ -595,6 +603,16 @@ def chunkRows (c : Nat) : Nat := rows c 128
 #guard chunkRows 8192 < MAX_ROWS
 #guard 100 * chunkRows 8192 < 51 * MAX_ROWS
 #guard 100 * chunkRows 8192 > 50 * MAX_ROWS
+-- ⚑ …AND THE PADDED READING, GUARDED, so "50.4%" cannot be read as headroom in the one file that
+-- computes it. `1,056,896` sits in `(2^20, 2^21]`, so its committed domain IS the ceiling: the
+-- four-way cut clears in RAW rows and fills the domain exactly.
+#guard 1048576 < chunkRows 8192 && chunkRows 8192 <= MAX_ROWS
+#guard 2 * 1048576 == MAX_ROWS
+-- ⚑ EIGHT is the cut that leaves headroom once padding is priced: 528,512 rows, padding to 2^20.
+#guard WRAP_SRS / 8 == 4096
+#guard 8 * 4096 == WRAP_SRS
+#guard chunkRows 4096 == 528512
+#guard 524288 < chunkRows 4096 && chunkRows 4096 <= 1048576
 -- The four slices reproduce the whole discharge's group cost, to within the per-slice accumulator
 -- seeds the cut introduces (`128 · 3` extra plane-adds, one set per extra slice).
 #guard 4 * chunkRows 8192 == 4227584
