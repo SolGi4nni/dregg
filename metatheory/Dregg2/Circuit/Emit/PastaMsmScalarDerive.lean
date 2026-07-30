@@ -190,7 +190,12 @@ theorem WD_eq (nb planes : Nat) : WD nb planes = WOC + (265 + 37 * nb + 2 * plan
 `DBL` is 1 exactly on a plane-boundary row (`PastaMsmBound.bound_forces_doubling` /
 `bound_forces_dbl_off`), so counting the doubling rows at or before row `i` counts the planes. The
 thread reads the NEXT row's `DBL`, which is what makes `PIDX` agree with `planeAt` on the boundary
-row itself rather than one row late. -/
+row itself rather than one row late.
+
+⚑ **§4e proves this paragraph rather than asserting it:** `pidx_counts_doublings` (the count, from
+these two gates alone and no `DBL` hypothesis) and `pidx_is_the_plane_index` (`PIDX = planeAt w i`,
+under the pattern the rung below forces). Until §4e existed, both gates appeared in exactly one
+theorem in this file and that theorem was `deriveGates_length`. -/
 
 /-- `PIDX = 0` on the FIRST row. -/
 def pidxStartGate : VmConstraint2 := .base (.boundary .first (.var PIDX))
@@ -223,7 +228,12 @@ def chalPinGates (nb : Nat) : List VmConstraint2 :=
 
 /-- …and the threads that carry them to every other row. A first-row pin ALONE would leave the
 challenge columns FREE on rows 1.., which is exactly the shape that makes a derivation look
-verified while a prover picks a fresh challenge vector per row. -/
+verified while a prover picks a fresh challenge vector per row.
+
+⚑ **That sentence is now a theorem and a measurement, not a warning.** `chal_is_the_wire` (§4e)
+proves the pin plus these threads put the declared public inputs on EVERY row, and §5d's
+`katSwapRow1` exhibits the forgery: a row deriving completely and consistently against a different
+block's challenges, which `acceptB (deriveRowGates 2 4)` ACCEPTS and these threads REFUSE. -/
 def chalThreadGates (nb : Nat) : List VmConstraint2 :=
   (List.range (numLimbs * nb)).map (fun m =>
     cw (.add (.nxt (CHc nb m)) (.mul (.const (-1)) (.loc (CHc nb m)))))
@@ -609,12 +619,12 @@ theorem sum_indicator (f : Nat → ℤ) (n pl : Nat) (hpl : pl < n) :
 `pl`-th digit of the derived scalar's witnessed decomposition. `nb`, `planes` and `pl` are
 universally quantified and occur in no bound.
 
-⚠ **Named residual, not smuggled:** the selector's SHAPE (`SEc` is the indicator at `pl`) is a
-HYPOTHESIS here. The emitted `selOneGate`/`selIdxGate` plus the selector booleanity DO force it —
-boolean columns summing to 1 have exactly one 1, and `Σ p·SEc p = PIDX` says which — but that
-"exactly one" argument is not discharged in this file. §5 exhibits the tamper (`SEc` bumped, `PIDX`
-bumped) being refused over the emitted gates, so the gates are known live; the missing piece is the
-proof, not the constraint. -/
+⚠ **The selector's SHAPE (`SEc` is the indicator at `pl`) is a HYPOTHESIS in THIS lemma, and it is
+DISCHARGED in the next section** — `sel_shape_forced` proves it from the emitted `selOneGate`,
+`selIdxGate` and the selector booleanity, and `sel_forces_closed` is this lemma with it gone. Use
+`sel_forces_closed`. (An earlier revision of this paragraph said the "exactly one" argument "is not
+discharged in this file"; §4c discharged it and the sentence outlived its referent.) §5 exhibits
+the tamper (`SEc` bumped, `PIDX` bumped) being refused over the emitted gates. -/
 theorem sel_forces (a : Assignment) (nb planes pl : Nat)
     (h : acceptB (selGates nb planes) a = true)
     (hdbl : a DBL = 0) (hpl : pl < planes)
@@ -1032,11 +1042,20 @@ the `SBc ↔ scalarDigit` bridge "cannot be written as stated". With §2.7's cer
 this is it: the chain's landing value IS `sNat cs idx` — the `Nat` the manifest carries, the `.val`
 of the block's own s-vector entry (`sNat_is_svec_entry`).
 
-Nothing here is a hypothesis about the prover's choices. `hgidx` names the absolute generator index
-the row consumes (a value `PastaMsmBound.bound_forces_gidx` already forces onto the row) and `hwire`
-says the PI-bound challenge limbs reconstruct `cs` — the two facts the VERIFIER supplies. The index
-digits, the selected multipliers, the running product, the decomposition and its canonicity are all
-FORCED from the emitted gates. -/
+The index digits, the selected multipliers, the running product, the decomposition and its
+canonicity are all FORCED from the emitted row-local gates. Two hypotheses remain and they are NOT
+the same kind of thing:
+
+  * `hgidx` names the absolute generator index the row consumes — a value
+    `PastaMsmBound.bound_forces_gidx` forces onto the row one rung down, from ITS emitted lookup.
+  * `hwire` says this row's challenge limbs reconstruct `cs`. ⚠ **An earlier revision of this
+    paragraph called both "the two facts the VERIFIER supplies". That was wrong about `hwire`, and
+    the error is exactly the one this file was emitting gates to prevent:** `chalPinGates` and
+    `chalThreadGates` are EMITTED HERE and are supposed to force it, and until §4e nothing proved
+    they did — so a prover could pick a fresh challenge vector per row and no theorem in this file
+    could see it (§5d now exhibits precisely that forgery, accepted row-locally and refused by the
+    thread). `wire_forces_challenges` discharges `hwire`; use §4f's capstone, which carries neither
+    it nor `hpidx`. -/
 theorem derived_is_sNat (a : Assignment) (nb planes idx : Nat) (cs : List Fq)
     (hcs : cs.length = nb)
     (h : acceptB (deriveRowGates nb planes) a = true)
@@ -1167,13 +1186,26 @@ def DeriveStartAccepted (nb : Nat) (T : WTrace) : Prop :=
     e.eval (T 0) = 0
 
 /-- The content of the emitted first-row `.piBinding` pins, against the DECLARED public-input
-vector `pv`. ⚑ This is the only predicate in the whole tower that reads `pv` at all: it is where
-"the challenges are on the wire" stops being prose. -/
+vector `pv`. ⚑ **This is the only predicate in the Pasta MSM tower that reads a public input at
+all** — it is where "the challenges are on the wire" stops being prose.
+
+⚠ **And that is a finding about a SIBLING, recorded here because nothing else records it.**
+`PastaMsmSliced` emits 29 `piBinding`s (`LO`/`HI` on the first row, the 27 accumulator limbs on the
+last) and proves only SHAPE facts about them — `sMaxPi`, that each names a declared public input.
+No theorem there says what those 29 pins FORCE, which is the same defect §4e repairs here, one rung
+down and still open. It is not this rung's to fix; it is named so it is named somewhere. -/
 def DerivePiAccepted (nb : Nat) (T : WTrace) (pv : Nat → ℤ) : Prop :=
   ∀ col k : Nat, VmConstraint2.base (.piBinding .first col k) ∈ deriveWireGates nb →
     T 0 col = pv k
 
-/-- The content of the emitted `windowGate`s of the wire block on the two-row window at row `i`. -/
+/-- The content of the emitted `windowGate`s of the wire block on the two-row window at row `i`.
+
+⚑ **Why every consumer below asks for this only at `i + 1 < H` and never at `i = H − 1`.** `cw` sets
+`onTransition := true`, and `WindowConstraint.holdsAt env isLast` is then `isLast = false → body ≡
+0` — the deployed `when_transition()` arm. The thread does NOT fire on the last row, where `nxt`
+is the wrap/pad row. Requiring the predicate on `i + 1 < H` is exactly what an accepting trace of
+height `H` supplies, and asking for it at `H − 1` would be asking for something the deployed AIR
+does not check. -/
 def DeriveWindowAccepted (nb : Nat) (T : WTrace) (i : Nat) : Prop :=
   ∀ wc : WindowConstraint, VmConstraint2.windowGate wc ∈ deriveWireGates nb →
     wc.body.eval (envOf T i) = 0
@@ -1402,7 +1434,15 @@ What remains carried is named in §6.1 and is not this file's to discharge. -/
 of its carried hypotheses discharged from the emitted wire gates. The conditional-add row's `BIT` is
 the digit, AT THE ROW'S OWN PLANE, of the canonical s-vector entry of the challenge vector THE
 VERIFIER PUT ON THE WIRE. `H` and `i` are universally quantified; there is no row count in any
-bound. -/
+bound.
+
+`hcond` is "row `i` is a conditional-add row" said as a fact about WHERE the row sits in the Horner
+schedule (`i % (w + 1) ≠ 0`) rather than about a column a prover fills; `hdbl : T i DBL = 0` falls
+out of it and the pattern. `hpl` is arithmetic — `planeAt_lt` supplies it from `i < planes·(w+1)`.
+
+⚑ **The hypotheses are INHABITED** — §5d exhibits an eight-row trace satisfying `hrow` on every row
+and `hstart`/`hpi`/`hwin`/`hdblpat` on every window, decided in the kernel. Without that this
+theorem could be true because nothing satisfies it. -/
 theorem derived_row_bit_is_the_wire_svec_bit
     (nb w planes idx i H : Nat) (T : WTrace) (pv : Nat → ℤ)
     (hrow : acceptB (deriveRowGates nb planes) (T i) = true)
