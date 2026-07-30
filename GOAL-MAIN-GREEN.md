@@ -438,6 +438,23 @@ Three analysis-first lanes on the three genuinely hard remainders:
   lookup**, so descriptor and trace cannot disagree — the exact wound behind three separate reds.
   Both vacuous teeth made real, incl. one that had "passed" in 0.020 s **without ever proving**.
 
+- ✅ **`deos-js-runtime` 25 → 28/28** (`dfdf4aa4c`) — three **security refusals** were reading a lane
+  nobody writes. All asserted `get_field(0).map(|fe| fe[0])`, but `pack_u64` is
+  `dregg_cell::field_from_u64` (canonical), which does not put the value in lane 0 — so a field seeded
+  to 123 read back as **0**.
+  ⚑ **The codec's own doc says exactly this at the definition** — *"the pair must stay on the same lane
+  or every stored value reads back as garbage"*. Fourth artifact this week naming its own defect in
+  advance and going unread.
+  ⚑ **And the danger was the reverse of a normal fixture bug**: an always-zero read would have kept
+  PASSING after a real breach, because a breach writes the canonical lane. These failed only because
+  the fixture happens to seed a non-zero value — **had the seed been 0, all three would be green and
+  blind.** Red-proved non-vacuous: seeding 999 now reports `Some(999)` where any seed used to report 0.
+- **Swept for the same shape and it is clean.** No other `fe[0]` field reads in the tree. The five
+  `from_le_bytes([..8])` sites are **self-paired private conventions** (`doc_heap.rs` writes
+  `to_le_bytes` at `:111` and reads at `:126`; `dregg-umem` likewise at `:167`/`:227`) — writer and
+  reader on one lane, not the canonical codec. Checked rather than assumed, since the same-looking
+  pattern was a real bug twice tonight.
+
 ## Next 3 moves
 1. ~~`dreggnet-telegram` 34 + `dreggnet-web` 28~~ dispatched — 62 of the 182, two crates never opened.
    Briefed with the `#[cfg(test)]`-twin suspect FIRST, and warned not to assume it.
