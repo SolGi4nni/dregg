@@ -180,6 +180,21 @@ pub(super) async fn tool_compress_history(params: &Value, state: &NodeState) -> 
                 map.insert("cell_id".into(), serde_json::json!(cell_id_hex));
                 // "valid" is stated ONLY here: the fold succeeded AND the byte
                 // envelope re-verified through the light-client teeth above.
+                //
+                // ⚑ SCOPED 2026-07-30 — read this before quoting the field. This
+                // path SELF-ANCHORS: `vk` is recomputed from the fold we just
+                // produced, so tooth 1 (the VK pin) compares a value against
+                // itself and CANNOT FAIL. What "valid" reports is a
+                // self-consistency check — the root batch proof verifies and the
+                // root's exposed segment matches the carried claim (teeth 2/3/4,
+                // which do real work and would catch a broken fold). It is NOT
+                // the light-client check, because the light-client check is
+                // defined by the anchor being CONFIGURATION the verifier held
+                // beforehand. A consumer of this tool (an agent reading the JSON)
+                // learns "this node folded its own retained turns and the fold is
+                // internally consistent", not "an independent party verified this
+                // history". The `vk_fingerprint` field is what a real verifier
+                // would need to have already trusted.
                 map.insert("verification".into(), serde_json::json!("valid"));
             }
             McpToolResult::json(&summary)

@@ -303,9 +303,22 @@ a light client is five guarantees plus the running entry:
   was fresh (an in-circuit sorted-tree non-membership opening), revocation takes
   effect at finality, and a stored capability cannot outlive its grantor's
   revocation (the retrieval-epoch rule).
-- **E — Unfoolability.** A light client checking only the aggregate root learns
-  A–D for the *entire* history, re-witnessing nothing; a tampered or reordered
-  aggregate cannot bind.
+- **E — Unfoolability.** A light client checking only the aggregate root learns,
+  for the *entire* history and re-witnessing nothing, that every turn executed
+  correctly, that the order is the finalized one, and that the final root is a
+  genuine fold; a tampered or reordered aggregate cannot bind, and the attested
+  history conserves (`attested_history_conserves`).
+  *Scoped 2026-07-30.* This bullet used to read "learns **A–D** for the *entire*
+  history". That over-reached in two directions and both are worth stating.
+  Against the Lean case: §E of [docs/ASSURANCE.md](docs/ASSURANCE.md) establishes
+  correct-execution, ordering, genuine-fold and conservation — it does not carry A
+  or D. Against the **deployed** light client (`dregg-lightclient`): the folded
+  leaf is the EffectVM constraint set, and a `FinalizedTurn` carries no capability
+  chain, no nullifier and no revocation epoch, so authority and freshness are not
+  merely unproven there — they are **not inputs to the fold**. A light client also
+  does not learn that a history was *finalized* rather than a well-formed fork
+  unless it separately checks a committee certificate against a validator set it
+  already trusts.
 - **R — The running entry.** A∧B∧C hold over `execFullForestG` *itself* — the
   exact gated function the deployed node invokes — not just an abstract model.
   The composed apex `deployed_system_secure` conjoins all five over one committed

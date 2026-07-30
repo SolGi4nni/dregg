@@ -47,10 +47,29 @@ export class StateTransitionInput extends Struct({
  * The base case (`verifyTransition`) accepts a single transition. The
  * recursive case (`verifyChain`) chains a previous proof with a new step.
  *
- * In production, the private inputs would include the actual Pickles proof
- * from the Rust side. Here, the verification is implicit: if the o1js
- * prover can produce a valid proof for this program, the underlying STARK
- * was valid (because the Pickles wrapping ensures it).
+ * ⚠⚠ STEPS 2–4 ABOVE DESCRIBE A PIPELINE THAT DOES NOT EXIST HERE, AND THE
+ * INFERENCE BELOW THEM WAS INVALID. Corrected 2026-07-30. The removed text read:
+ * "In production, the private inputs would include the actual Pickles proof from
+ * the Rust side. Here, the verification is implicit: if the o1js prover can
+ * produce a valid proof for this program, the underlying STARK was valid
+ * (because the Pickles wrapping ensures it)."
+ *
+ * There is no Pickles wrapping in this file or anything it reaches, so the
+ * parenthetical premise is false and the conditional it licenses is empty.
+ * `verifyTransition` declares `privateInputs: []` — it consumes NO proof object
+ * — and its entire constraint set is the five inequalities in its body. Any
+ * party can produce a `DreggVerifier` proof for ANY four field elements. The
+ * STARK→Kimchi→Pickles route this comment describes was REMOVED
+ * (`bridge/src/mina.rs` header: its pickles step never verified the Kimchi proof
+ * in-circuit, so the recursion was vacuous scaffolding).
+ *
+ * `verifyChain`'s `previousProof.verify()` IS a genuine `SelfProof` verify, so
+ * the recursion mechanism works — but it chains base proofs with zero dregg
+ * content, which makes the aggregate claim ("a single proof can attest to an
+ * arbitrarily long sequence of state transitions") an attestation about nothing.
+ *
+ * `DreggVerifier` / `DreggStateProof` / `compileVerifier` have no importer
+ * outside this file. The proof-gated shape lives in `DreggHeadAnchor.ts`.
  */
 export const DreggVerifier = ZkProgram({
   name: 'dregg-state-verifier',

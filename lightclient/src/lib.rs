@@ -45,19 +45,24 @@
 //! What remains NAMED, not discharged (the honest floor): `recursive_sound` — the recursion fork's
 //! FRI/STARK engine soundness. This is the SAME standard assumption every recursive STARK chain
 //! carries (Mina/Plonky3-style: FRI soundness, like collision-resistance for a hash) — it is NOT a
-//! dregg-specific gap and is not provable in Lean. The two precisely-scoped fork follow-ups that
-//! once sat ALONGSIDE it are now DISCHARGED (in-band, in `circuit-prove/src/ivc_turn_chain.rs`'s
-//! `aggregate_tree`), so recursion soundness rests on `recursive_sound` ALONE:
+//! dregg-specific gap and is not provable in Lean. Of the two precisely-scoped fork follow-ups that
+//! once sat ALONGSIDE it, (b) is discharged and (a) is ⚑ OPEN:
 //!
-//! - (a) **leaf-circuit identity pinned in-band — CLOSED.** Every child of the K-fold tree (each
-//!   descriptor leaf and each interior aggregation node) is folded through the fork's
-//!   `into_recursion_input_pinned`: the child's own preprocessed commitment (its VK-identity core,
-//!   the Merkle cap binding its static op-list) is baked as a CONSTANT the parent aggregation
-//!   circuit `connect`s its child-commitment targets to. A foreign-circuit child is refused either
-//!   way — keep the honest constant and the foreign child's in-circuit preprocessed-trace FRI check
-//!   is UNSAT; bake the foreign commitment and the ROOT VK fingerprint (tooth 1) stops matching the
-//!   honest anchor. The pinned constants live in every node's op-list up to the root, so the root VK
-//!   pin TRANSITIVELY certifies the whole tree's leaf identity (no same-shape argument left).
+//! - (a) **leaf-circuit identity — ⚑ OPEN; the "CLOSED" label here is RETRACTED (2026-07-30).**
+//!   Every child of the K-fold tree is folded through the fork's `into_recursion_input_pinned`,
+//!   baking the child's own preprocessed commitment as a CONSTANT the parent `connect`s its
+//!   child-commitment targets to — but a `define_const` is not a pin. MEASURED twice on `main`:
+//!   `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) shows two circuits differing ONLY in an
+//!   `alloc_const` value both verify under ONE `recursion_vk_fingerprint`, so an anchor extracted
+//!   from one accepts the other; `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`) shows
+//!   that baking a perturbed cap on the deployed fold path does not move the parent's VK core at
+//!   all, while the positive control (dropping the pin) does. A const's VALUE lives in `ConstAir`'s
+//!   constraint-free MAIN trace; only `[ext_mult, out_idx]` is preprocessed. So a prover may
+//!   substitute any circuit with a matching table manifest that does NO descriptor verification and
+//!   the parent re-verifies it — the root VK pin does NOT transitively certify the tree's leaf
+//!   identity, and this light client's guarantee is correspondingly weaker than the sentence it
+//!   replaced. The full measurement, the two-horn analysis, the designed repair ("the exposed VK
+//!   spine") and its flag day are in `circuit-prove/src/ivc_turn_chain.rs`'s module docs.
 //! - (b) **leaf public values re-exposed at the root — CLOSED.** Each child is fed with its GENUINE
 //!   per-table public inputs threaded up (`into_recursion_input_pinned` calls
 //!   `genuine_table_public_inputs`, not the empty-vector legacy path), so a child's exposed segment
@@ -127,9 +132,53 @@ use ed25519_dalek::{Signature, VerifyingKey};
 
 /// The whole-history attestation a light client obtains from ONE verified aggregate — the Rust mirror
 /// of `Dregg2.Circuit.RecursiveAggregation.AggregateAttests`. It carries ONLY public commitments; the
-/// per-turn states and proofs are NOT here (the light client never saw them). Holding an
-/// `AttestedHistory` means: *every one of `num_turns` finalized turns executed correctly, in order,
-/// from `genesis_root` to `final_root`, and `chain_digest` commits to that exact ordered history.*
+/// per-turn states and proofs are NOT here (the light client never saw them).
+///
+/// # What holding one means — SCOPED 2026-07-30
+///
+/// The previous sentence here read: *"Holding an `AttestedHistory` means: every one of `num_turns`
+/// finalized turns executed correctly, in order, from `genesis_root` to `final_root`, and
+/// `chain_digest` commits to that exact ordered history."* Each clause of that is defensible about
+/// the object tooth 4 pins, and every one of them is read at the consumer boundary as more than it
+/// is. The scoped statement:
+///
+/// **SUPPORTED.** IF `verify_history` returned this value THEN, under `recursive_sound`: one
+/// aggregate verified against the caller's configured VK anchor; its root exposed a segment equal,
+/// lane for lane, to the five/seven fields below; that segment was built by the aggregation tree
+/// from `num_turns` `EffectVmDescriptorAir` leaves each verified in-circuit; consecutive leaves
+/// agreed on the linking commit; and `chain_digest` is the ordered Poseidon2 fold of the
+/// `(old, new)` pairs.
+///
+/// **NOT SUPPORTED — four things a reader takes from "executed correctly, finalized":**
+///
+/// 1. **Not authorized, not conserved, not fresh, not un-revoked.** The folded leaf is the EffectVM
+///    constraint set — state-commit hash sites, transition continuity, `OLD/NEW_COMMIT` PI bindings,
+///    range checks. A [`dregg_circuit_prove::ivc_turn_chain::FinalizedTurn`] holds ONE
+///    `DescriptorParticipant` and nothing else: no capability chain, no token, no nullifier, no
+///    revocation epoch, no signature. Those objects are inputs to the *composed full-turn* STARK
+///    (`dregg_sdk::prove_full_turn`), a DIFFERENT artifact this fold does not consume. They have no
+///    input here, so they cannot be conclusions here.
+/// 2. **Not finalized.** `verify_history` runs no finality leg. A prover that honestly executes a
+///    FORK the network never finalized produces an aggregate that passes every tooth. Finality is
+///    [`verify_finalized_history`], and it needs a committee the caller holds as configuration.
+/// 3. **Not from THE genesis.** `genesis_root` is whatever the prover folded from. Only
+///    `verify_finalized_history`'s `expected_genesis: Some(g)` anchors it; `verify_history` has no
+///    such parameter at all, so a history folded from a fabricated or midpoint genesis — hiding an
+///    arbitrary prefix — is accepted here.
+/// 4. **`chain_digest` does not identify the history.** It commits to the ordered `(old, new)` root
+///    sequence and to nothing else — not which turns, which effects, which actors. Two entirely
+///    different histories that pass through the same roots have the SAME digest.
+///
+/// # ⚑ This type is NOT evidence
+///
+/// Every field is `pub` and there is no private witness field, so a value of this type is
+/// constructible anywhere by struct literal — no proof, no anchor, no verification. The same is true
+/// of [`FinalizedAttestation`], and `bridge::interchain_adapter` reads `quorum_signers` off one to
+/// decide a mint (it names the provenance assumption). **Accepting an `AttestedHistory` as a
+/// parameter is accepting a caller's assertion.** Only the RETURN of [`verify_history`] /
+/// [`verify_history_bytes`] / [`verify_finalized_history`] carries the meaning above; a value that
+/// arrived any other way carries none of it, and [`fold_and_attest`] returns one that was checked
+/// against an anchor read off its own artifact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestedHistory {
     /// The 8-felt (~124-bit faithful) genesis state anchor the attested history starts from

@@ -49,14 +49,38 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 /// The whole-history attestation a light client obtains — the JS view of
-/// `dregg_lightclient::AttestedHistory`. Holding it means: *every one of
-/// `num_turns` finalized turns executed correctly, in order, from `genesis_root`
-/// to `final_root`, and `chain_digest` commits to that exact ordered history* —
-/// and the tab re-executed nothing.
+/// `dregg_lightclient::AttestedHistory`.
+///
+/// **What `attested: true` means, exactly.** Corrected 2026-07-30. The previous
+/// text read: "Holding it means: *every one of `num_turns` finalized turns
+/// executed correctly, in order, from `genesis_root` to `final_root`, and
+/// `chain_digest` commits to that exact ordered history* — and the tab
+/// re-executed nothing." Two words in that outran the code:
+///
+/// - **"finalized"** — this same struct is returned by [`verify_devnet_history`],
+///   which runs NO finality leg at all. A correctly-proven fork the network never
+///   finalized yields `attested: true` there. Only
+///   [`verify_finalized_devnet_history`] checks a committee quorum, and IT RETURNS
+///   THE SAME TYPE with no field distinguishing the two — the difference lives
+///   only in the prose of `named_floor`, which no JS consumer can branch on. A UI
+///   that tests `view.attested === true` cannot tell whether finality was checked.
+/// - **"executed correctly"** — the folded leaves are `EffectVmDescriptorAir`
+///   proofs (state-commit hash sites, transition continuity, `OLD/NEW_COMMIT` PI
+///   bindings, range checks). They are NOT the composed full-turn STARK, and no
+///   capability chain, nullifier, or revocation epoch is an input to the fold at
+///   all — `FinalizedTurn` carries one `DescriptorParticipant` and nothing else.
+///   So authorization, freshness and non-revocation are OUTSIDE this verdict.
+///
+/// What IS supported: the aggregate verified under the caller's configured VK
+/// anchor, and the four values below are the root's own exposed segment (tooth 4
+/// compares them for exact equality against it), so they are not bare fields.
 #[derive(Clone, Debug, Serialize)]
 pub struct AttestedHistoryView {
     /// Whether the aggregate verified (the headline). On a real verify failure
     /// this is the engine REJECTING the proof — no attestation granted.
+    ///
+    /// ⚑ This bit does NOT say which legs ran: see the struct doc. It is `true`
+    /// for a legs-1+2-only verify and for a legs-1+2+3 verify alike.
     pub attested: bool,
     /// The 8-felt (~124-bit faithful) genesis state anchor (decimal felts).
     pub genesis_root: Vec<u32>,
@@ -220,10 +244,24 @@ pub fn verify_history_against_anchor(
 ///   the anchor from the proof bytes during the real verify. (Carrying it lets the
 ///   client give a precise "your config anchor ≠ the one this aggregate was built
 ///   for" diagnostic without trusting it.)
-/// - `genesis_root` / `final_root` / `num_turns` / `chain_digest` are the carried
-///   public commitments — the same four the recursion verify re-attests against the
-///   binding proof (a relabeled value is refused at tooth 2).
-/// - `version` pins the OUTER envelope format.
+/// - `genesis_root` / `final_root` / `num_turns` / `chain_digest` are **DISPLAY
+///   HINTS ONLY, and are NEVER CHECKED**. Corrected 2026-07-30; the previous text
+///   read: "the carried public commitments — the same four the recursion verify
+///   re-attests against the binding proof (a relabeled value is refused at tooth
+///   2)." That was false of THESE fields. The verify path
+///   ([`verify_devnet_history`] step 5, [`verify_finalized_devnet_history`] step
+///   4) passes only `proof_bytes_b64` to `verify_history_bytes`; the four fields
+///   above are never an argument to anything. The values tooth 2 re-attests are
+///   the INNER `WholeChainProofBytes` publics, which are a different copy — and
+///   the two copies are never compared. So a producer may set these four to
+///   anything; on SUCCESS the returned view carries the inner (verified) values
+///   and the outer ones are silently discarded, and on REFUSAL the view carries
+///   these UNVERIFIED ones (see the `finalized_refusal` / mismatch arms below).
+///   **Any consumer that reads this JSON directly — an indexer, a relay, a
+///   summary rendered before verifying — is reading unbound producer input.**
+/// - `version` pins the OUTER envelope format. Note it is independent of the
+///   INNER `WholeChainProofBytes::version`, which is the one that actually
+///   fail-closes a layout change.
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct ExternalHistoryEnvelope {
     /// Envelope format version (current: 1).

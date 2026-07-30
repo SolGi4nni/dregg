@@ -33,11 +33,42 @@
 //! that takes (the serialized proof, the trust-anchor VK, the claimed range
 //! bounds) and, if the proof verifies against the anchor, RETURNS the attested
 //! range as rows — `(ordinal, prev_root, ledger_root)` for each turn the range
-//! covers, every row tagged `proof_attested = true`. A consumer JOINs that
-//! against `dregg.turns` to learn "these ordinals are not merely chain-consistent
-//! (the structural tooth) but PROOF-attested (every turn executed correctly,
-//! verified in-circuit)". One proof attests a whole window; the SRF explodes the
-//! window into rows so SQL can use it.
+//! covers, every row tagged `proof_attested = true`.
+//!
+//! ## ⚑ WHAT `proof_attested = true` ON A ROW DOES NOT MEAN
+//!
+//! Corrected 2026-07-30. The paragraph above used to continue: "A consumer JOINs
+//! that against `dregg.turns` to learn 'these ordinals are not merely
+//! chain-consistent (the structural tooth) but PROOF-attested (every turn
+//! executed correctly, verified in-circuit)'." That sentence attributes to each
+//! ROW a property the proof does not carry, and a consumer reading a SQL column
+//! named `proof_attested` will read it exactly that way.
+//!
+//! **The proof binds no ordinal.** Its publics are `(genesis_root, final_root,
+//! num_turns, chain_digest)` — a root PAIR and a COUNT. It says nothing about
+//! where in `dregg.turns` that window sits.
+//!
+//! Consequently, for the rows this SRF emits:
+//!
+//! * `ordinal` is CARRIED from the caller's `lo`/`hi` request, not from the proof.
+//! * `prev_root` / `ledger_root` are read out of `dregg.turns` and RE-TAGGED
+//!   (see [`attested_rows`], whose own doc says so). They are database rows, not
+//!   proof outputs.
+//! * The only tooth relating the two is [`RangeAttestation::check_window`], and
+//!   it checks a SPAN, not a position: `hi - lo + 1 <= proof.num_turns`. **A
+//!   genuine proof of turns [500, 600] therefore attests a claimed [0, 100] just
+//!   as well** — same span, and nothing anchors `lo`.
+//!
+//! What a verified proof DOES support: "some window of `num_turns` turns ran from
+//! `genesis_root` to `final_root`, and this database's rows for the requested span
+//! exist." Binding that window to concrete ordinals needs the S2 producer to write
+//! `dregg.turn_proofs(lo, hi, …)` and the SRF to check `dregg.turns[lo].prev_root
+//! == proof.genesis_root` and `dregg.turns[hi].ledger_root == proof.final_root`.
+//! Until it does, a consumer should treat the column as "a proof for a window of
+//! this size verified", not as a per-ordinal fact.
+//!
+//! One proof attests a whole window; the SRF explodes the window into rows so SQL
+//! can use it.
 //!
 //! # The proof boundary, and which build crosses it
 //!
@@ -297,10 +328,23 @@ pub struct SerializedWholeChainProof {
     /// Postcard bytes of `WholeChainProof.binding_proof` — the chain-binding
     /// uni-STARK `Proof`. Tooth 2 verifies the carried publics AS its public inputs.
     pub binding_proof: Vec<u8>,
-    /// The genesis root the chain starts from (the `BabyBear` packed little-endian
-    /// into 32 bytes — a `BabyBear` is one field element; the high bytes are zero).
+    /// The genesis root the chain starts from — **ONE `BabyBear`, i.e. ~31 bits**,
+    /// packed little-endian into 32 bytes (a `BabyBear` is one field element; the
+    /// high 28 bytes are zero).
+    ///
+    /// ⚑ **This transport cannot carry the wide anchor, and the verify path hides
+    /// that.** The circuit widened the state endpoints to `SEG_ANCHOR_WIDTH` = 8
+    /// felts (~124 bits) under the FAITHFUL-FLOOR lift; this type still holds one.
+    /// The `tier-c` leg therefore BROADCASTS the single felt across all eight lanes
+    /// (`[le32(&transport.genesis_root); 8]`) before calling the circuit verifier.
+    /// That reproduces exactly what a narrow-leg root exposes, so it verifies — and
+    /// it is **indistinguishable at the verifier** from a genuine ~124-bit anchor,
+    /// because both arrive as eight equal lanes. A SQL consumer reading this column
+    /// is reading a ~31-bit state commitment, whatever the circuit's width says.
+    /// (Widening the transport is the named pg-dregg follow-up; it is a
+    /// `WHOLE_CHAIN_PROOF_TRANSPORT_V1` bump, not a re-proof.)
     pub genesis_root: [u8; 32],
-    /// The final root the chain reaches.
+    /// The final root the chain reaches. Same width caveat as `genesis_root` above.
     pub final_root: [u8; 32],
     /// The multi-felt Poseidon2 ordered-history digest (codex #3): `WHOLE_CHAIN_DIGEST_LANES`
     /// `BabyBear` lanes, each packed little-endian into 32 bytes.

@@ -110,8 +110,8 @@
       <div class="step__d">The real <code>k</code>-turn aggregate below was folded natively by the producer: the expensive step, done once. Each leaf is a real EffectVM proof verified in-circuit; the recursion binds the chain.</div></div>
     <div class="step"><div class="step__n">verify · in your tab</div><div class="step__t">Check cheaply</div>
       <div class="step__d">Your tab runs the real recursion verify over the wire proof, independent of how many turns the history holds. Verification is the light step, and it runs client-side in WebAssembly.</div></div>
-    <div class="step"><div class="step__n">anchor · your config</div><div class="step__t">Trust nothing but your anchor</div>
-      <div class="step__d">The trust anchor is configuration you hold separately, never read off the proof under verification. A proof built for a different circuit cannot pass your anchor.</div></div>
+    <div class="step"><div class="step__n">anchor · your config</div><div class="step__t">The anchor is a separate input</div>
+      <div class="step__d">The verifier takes the trust anchor as an argument, never off the proof under verification: a proof built for a different circuit cannot pass it. <strong>On this page, though, the anchor is served to you by us</strong> — it arrives in the same <code>history.json</code> as the proof. So what you are watching is a consistency check, not a trust decision. A real client holds its anchor from genesis/checkpoint configuration.</div></div>
   </div>
 
   <!-- Panel 1: verify the real baked aggregate in-tab -->
@@ -134,9 +134,15 @@
   <section class="panel">
     <h2>2 · Check it against your own anchor</h2>
     <p class="hint">
-      The anchor is <em>your</em> config: a separate input, never taken from the artifact. Verify against the
-      correct anchor and it attests; tamper one hex digit and it is refused outright. "You did not trust the
-      producer, you checked it against your own anchor."
+      The anchor is a <em>separate input</em> to the verifier, never taken from the proof it is checking.
+      Verify against the correct anchor and it attests; tamper one hex digit and it is refused outright.
+      <br><br>
+      <strong>Being straight about what this demo does and does not show.</strong> The anchor pre-filled below
+      was fetched from <code>./history.json</code> — the same file, from the same server, as the proof. So this
+      panel demonstrates that the verifier really does <em>enforce</em> the anchor, which is a genuine property
+      of the code. It does not demonstrate that you avoided trusting us: we handed you both halves. Anchor
+      discipline becomes real when the anchor reaches you out of band — from genesis or a checkpoint you already
+      trusted — and stays fixed while proofs come and go. Paste your own value below if you have one.
     </p>
     <div class="controls">
       <div class="field wide"><label for="anchor2">config VK anchor (64 hex chars)</label>
@@ -151,9 +157,19 @@
   </section>
 
   <p class="lc-lede" style="font-size:0.84rem;color:var(--fg-muted)">
-    Named floor: the verification carries the recursion engine's FRI soundness. The verification <em>is</em> the
-    trust: if the aggregate verifies under a sound engine, the whole history is attested. This is the executable
-    counterpart of the Lean theorem <code>light_client_verifies_whole_history</code>.
+    Named floor: the verification carries the recursion engine's FRI soundness. If the aggregate verifies under a
+    sound engine, the whole history is attested. This is the executable counterpart of the Lean theorem
+    <code>light_client_verifies_whole_history</code>.
+  </p>
+  <p class="lc-lede" style="font-size:0.84rem;color:var(--fg-muted)">
+    <strong>And what it does not say.</strong> Three things this page's ✓ is silent about, stated here rather than
+    left for you to discover. (1) <em>Finalized is not checked.</em> The baked aggregate carries no committee
+    certificate, so a correct-looking history and one the network never finalized are indistinguishable here; the
+    finality leg is a separate entry point. (2) <em>The leaves are execution, not authorization.</em> Each folded
+    leaf is the EffectVM constraint set — state commitments, transition continuity, range checks. No capability
+    chain, nullifier, or revocation record is an input to the fold, so "authorized", "conserved" and "not
+    replayed" are outside this verdict. (3) <em>The chain digest commits to the root sequence only</em> — two
+    entirely different histories that pass through the same roots share it.
   </p>
 
   <p class="lc-back"><a href="../">&larr; back to dregg / deos</a></p>

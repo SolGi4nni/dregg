@@ -20,25 +20,54 @@ import { DepositEvent, WithdrawalEvent, StateAdvanceEvent } from './types.js';
 /**
  * DreggFederation: the on-chain presence of a dregg federation on Mina.
  *
- * This smart contract serves as the trust anchor for dregg<->Mina bridging.
- * It stores the federation's proven state root, which can only advance via
- * recursive proof verification. Any Mina contract can query this to verify
- * dregg state claims.
+ * ⚠⚠ THIS CONTRACT VERIFIES NO PROOF AND AUTHENTICATES NO CALLER. Corrected
+ * 2026-07-30, the same sweep that corrected `advanceState` below. The previous
+ * text of this block read:
+ *
+ *   "It stores the federation's proven state root, which can only advance via
+ *    recursive proof verification."
+ *   "- provenHeight: latest block height with a verified proof"
+ *   "- nullifierRoot: Merkle root of spent nullifiers (prevents double-withdrawal)"
+ *   "Security model:
+ *    - State advances require recursive proof (STARK→Kimchi→Pickles→o1js)
+ *    - Withdrawals require a valid nullifier + state root proof
+ *    - Relay authority can be rotated via governance proof"
+ *
+ * Every one of those lines was false, and each names a mechanism that is
+ * ABSENT from this file rather than merely weak. This file contains ZERO
+ * occurrences of `.verify(`, `Proof<`, `ZkProgram`, `SelfProof`, `DynamicProof`
+ * — read, not inferred. Specifically:
+ *
+ * - `advanceState` verifies no proof and checks no signature (see its own
+ *   corrected docstring). ANY caller may set the root to ANY value.
+ * - `nullifierRoot` is set to `Field(0)` in `init` and NEVER WRITTEN AGAIN.
+ *   `withdraw` asserts only `nullifier != 0`; it never reads or updates the
+ *   nullifier set, so THE SAME NULLIFIER WITHDRAWS REPEATEDLY. Its
+ *   `stateRootAtSpend` parameter is accepted and never used. This is a live
+ *   double-withdrawal hole, not a documentation defect — recorded here because
+ *   the doc was what hid it.
+ * - `relayAuthority` is set once in `init` and there is NO ROTATION METHOD.
+ *   The "governance proof" line described a method that does not exist.
+ * - `provenHeight` is a monotonic counter any caller advances; nothing about
+ *   it is "proven".
+ *
+ * The proof-gated shape these lines described is real and lives in
+ * `DreggHeadAnchor.ts` (a `DynamicProof` of the folded chain plus
+ * `vk.hash.assertEquals`), which is written but NOT compiled or deployed.
  *
  * State layout (8 Field slots available in o1js):
- * - stateRoot: Poseidon hash of the federation's cell state tree
- * - provenHeight: latest block height with a verified proof
+ * - stateRoot: a Field any caller may set via `advanceState`
+ * - provenHeight: a monotonic counter (the name is aspirational)
  * - federationId: hash of the federation's constitution document
  * - totalLocked: total MINA value locked for bridging
- * - nullifierRoot: Merkle root of spent nullifiers (prevents double-withdrawal)
- * - relayAuthority: public key hash of the authorized relay
+ * - nullifierRoot: written once to 0 at init and never again (INERT)
+ * - relayAuthority: public key hash recorded at init; never read, never rotated
  * - (2 slots reserved for future use)
  *
- * Security model:
- * - State advances require recursive proof (STARK→Kimchi→Pickles→o1js)
- * - Deposits are permissionless (anyone can lock tokens)
- * - Withdrawals require a valid nullifier + state root proof
- * - Relay authority can be rotated via governance proof
+ * What is actually enforced:
+ * - Deposits are permissionless (anyone can lock tokens) — as described.
+ * - `withdraw` enforces `amount > 0`, `nullifier != 0`, and that `totalLocked`
+ *   does not underflow. Nothing else.
  */
 export class DreggFederation extends SmartContract {
   /** The proven dregg state root (Poseidon commitment to all cell state) */
@@ -182,8 +211,15 @@ export class DreggFederation extends SmartContract {
     // Verify the leaf is non-trivial
     leafHash.assertNotEquals(Field(0));
 
-    // If execution reaches here: cellId with leafHash is proven to exist
-    // in the federation's state tree at the current proven height.
+    // ⚠⚠ NOTHING ABOUT MEMBERSHIP IS PROVEN HERE. Corrected 2026-07-30. The
+    // previous comment read: "If execution reaches here: cellId with leafHash
+    // is proven to exist in the federation's state tree at the current proven
+    // height." That was false. `cellId` is accepted and NEVER USED; there is no
+    // witness path, no sibling list, no Merkle fold, no hash of `leafHash` into
+    // anything. The two constraints above reduce to "the caller correctly
+    // copied the current stateRoot" and "leafHash != 0" — which any caller can
+    // satisfy for any cellId and any leafHash. A real membership check needs a
+    // `MerkleWitness` argument and `witness.calculateRoot(leafHash)`.
   }
 
   /**
@@ -280,8 +316,17 @@ export class DreggFederation extends SmartContract {
       attestationRoot,
     ]);
 
-    // If we reach here, the capability is attested
-    // Other contracts can compose with this method
+    // ⚠⚠ NO CAPABILITY IS ATTESTED HERE. Corrected 2026-07-30. The previous
+    // comment read: "If we reach here, the capability is attested / Other
+    // contracts can compose with this method." That was false, and it is the
+    // most dangerous of this file's claims because it invites composition.
+    // `expectedHash` is computed and then compared to NOTHING — it is only
+    // asserted non-zero, which a Poseidon output essentially always is. It is
+    // never checked against `stateRoot`, against any committed attestation set,
+    // or against any value the federation ever wrote. This method therefore
+    // succeeds for an ARBITRARY `capabilityHash` held by an ARBITRARY `holder`,
+    // provided only that the caller echoes back the current root. Do not
+    // compose with it.
     expectedHash.assertNotEquals(Field(0));
   }
 }

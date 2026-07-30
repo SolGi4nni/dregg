@@ -55,9 +55,23 @@ machine-checked minimality. The SDK surfaces these as typed verb builders
 Every turn leaves a receipt that binds the *whole* post-state. Tampering a field
 the effect did not legitimately write makes the turn unprovable — the *anti-ghost*
 property (`sdk/src/receipt.rs`). A receipt is born proofless; the STARK is
-additive attestation, attached lazily. A light client holding one root learns the
-whole history was authorized, conservative, fresh, and correctly committed —
-re-executing nothing.
+additive attestation, attached lazily.
+
+> **Corrected 2026-07-30.** This paragraph used to end: "A light client holding
+> one root learns the whole history was authorized, conservative, fresh, and
+> correctly committed — re-executing nothing." That conflated two different
+> artifacts. **Authorized / conservative / fresh / non-revoked are legs of the
+> per-turn composed full-turn STARK** (`prove_full_turn`, below). The
+> **whole-history light client** folds a different leaf — `EffectVmDescriptorAir`
+> (state-commit hash sites, transition continuity, `OLD/NEW_COMMIT` bindings,
+> range checks) — and `FinalizedTurn` carries no capability chain, no nullifier,
+> and no revocation epoch, so those properties have **no input to the fold**. A
+> light client learns: this aggregate verified under my anchor; the history ran
+> `num_turns` turns from `genesis_root` to `final_root`; `chain_digest` commits to
+> that ordered `(old, new)` root sequence. It does **not** learn who was
+> authorized, that value was conserved, or that nothing was replayed. It also
+> does not learn that the history was *finalized* unless it additionally checks a
+> committee certificate (`verify_finalized_history`).
 
 ## Your first app, end-to-end (Rust)
 
