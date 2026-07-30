@@ -398,27 +398,103 @@ only place the homogeneity is named at all is `root-air-chain.ts:33-40`, and it 
 DIFFERENT programs … their chains are ONE circuit invoked N times, **because 19 query walks are the
 same shape**"*). The observation is written down and the consequence is not drawn.
 
-| | today | query-aligned cuts |
-|---|---:|---:|
-| slice instances | 846 | 846 |
-| **distinct shapes / compiles / VKs** | **846** | **≈ 55** (45 query + 3 transcript + 7 AIR) |
-| compile, serial @ 53.6 s | **12.6 h** | **49 min** |
-| prove, serial @ 19.7 s | 4.6 h | 4.6 h |
-
 And the win is bigger than 15×, because **a VK for a fixed program is a protocol constant emitted
 once** — the exact argument §3.24/§3.27 already makes for the AIR slice keys. Compile leaves the
 per-proof path entirely and the marginal cost of verifying a root becomes **prove-only**, fully
 parallel across the 19 queries.
 
-⚠ **The cost, and it is not measured anywhere:** the 45 per-query shapes must be *identical*, so the
-cuts must be forced onto a common offset grid. Measured carry per slice currently ranges
-**4,940 to 32,318** rows against a 50,000-row budget, so aligning them wastes slack. **How much
-slack is the first thing to price**, and it is a cheap measurement — re-run the planner with the cut
-offsets constrained to repeat per query and compare the slice count.
-
 **This composes with the hash swap rather than competing with it.** At the Pasta-hashed shrink's
 ~30 slices over 19 queries the walk is ~1.5 slices per query, so the distinct-shape count falls to a
 handful and compile stops being a line item at all.
+
+### 5.1a ⚑ DRAWN — and the estimates above were close but wrong in three places
+
+`src/RootFriUniform.ts` + `scripts/root-fri-uniform.ts` (leg 19) build it. Everything in this
+subsection is **measured on the root's real geometry**, not projected.
+
+**First, the homogeneity is EXACT, and it is now a check rather than an observation.** The walk is
+**36 head segments** (22 `duplex` + 14 `permBind`, 78,621 modelled rows) followed by **19 query
+blocks of 593 segments each**. `assertHomogeneous` compares every block against query 0 field by
+field, compares modelled rows exactly (**1,593,956.5 each, identical**), and compares committed lane
+reads after the 1,427-lane per-query shift. **Zero mismatches**, and it *throws* — a geometry change
+that broke the homogeneity fails loudly instead of quietly producing a wrong chain.
+
+| | deployed | query-aligned, measured |
+|---|---:|---:|
+| slice instances, FRI | 839 | **820** |
+| **distinct programs / compiles / VKs, FRI** | **839** | **46** (3 head + 43 block) |
+| with the AIR half | 846 instances / 846 VKs | **827 instances / 53 VKs** |
+| compile, serial | 839 × 53.6 s = **12.5 h** | 46 compiles — ⏳ *run in flight, figure lands with it* |
+| prove, serial @ 19.7 s | 4.6 h | 4.5 h — **unchanged, as predicted** |
+
+**Second, §5.1's ⚠ was wrong about the direction of the cost.** It expected forcing the cuts onto a
+repeated grid to *waste* slack. Priced apart, and both halves matter:
+
+- **the alignment alone costs +38 instances (+4.5%)** — 877 against 839, at the deployed one-level
+  commitment. That is the real price of the grid, and §5.1 was right that it is not free.
+- **the commitment shape it ENABLES gives 57 back.** Chunk-aligning each query's opened rows
+  (33,062 lanes → 35,328; 130 chunks → 138) lets `friDigest` become two-level —
+  `H(g_0…g_23, qd_0…qd_18)` with `qd_q = H(6 chunks)` — so a slice witnesses **75 chunk digests
+  instead of 156**. At 26 modelled rows a digest that is ~2,100 rows of carry returned per slice.
+- **net: 820 against 839, −2.3%.** The alignment slack is real and is more than paid for.
+
+**Third, "witness `si`" is not the whole change, and the part that was invisible is a RING.** The
+deployed chain pins `vk.hash.assertEquals(Field(prevKeyHash))` — a compile-time constant, which
+works because slice *i* is compiled after slice *i−1*: a **path**. A uniform block is a **ring**:
+position 0's predecessor is the head's last slice at `q = 0` and the block's **last** position after
+that. A ring of compile-time constants has no fixed point — position 0 would need the last
+position's key, which needs position 0's. So the key list becomes a **Merkle root carried in the
+chain**, each slice proves its predecessor's `vk.hash` at a **fixed leaf index** under it, and the
+root is anchored where the verifier already looks: **the terminal seal carries it**, and the verifier
+recomputes the seal from the protocol's own key list. The admissible key at each position is still
+**exactly one**, and side-loading's named hole stays closed — shown by a control, below.
+
+**What is witnessed, and what forces it.** Three things, and the third is strictly stronger than
+§3.20's:
+
+- **`k`, the step index.** Constant on the head slices (the induction base); a private input on a
+  block slice, which asserts `stepBoundary(friCommit, carry, k) == publicInput` **and**
+  `predecessor.publicOutput == publicInput` while the predecessor emitted `…, k_prev + 1`. So
+  `k = k_prev + 1` by collision resistance, inductively. `makeChainedProofVerify`'s argument verbatim.
+- **`q`, the query.** Not independently witnessed-and-hoped: `k == 10 + q·43 + pos` with `pos` a
+  compile-time constant, plus a one-hot over the 19 queries that range-checks `q`. Since
+  `0 ≤ pos, pos' < 43`, `k − 10 − pos ≡ k − 10 − pos' ≡ 0 (mod 43)` forces `pos = pos'` — **the
+  program admissible at step `k` is unique**, and so is `q`.
+- **the terminal bit is not a witness at all.** The block's last position seals exactly when
+  `q == 18`, and `q` is pinned by `k`. §3.20 had to witness `isLast` and argue that neither setting
+  passes; here there is nothing to set.
+
+**And the current-query register, which §5.1 did not anticipate needing.** One circuit reads slot
+`qidx[0]`; a block opens by selecting **its own** transcript index out of the 19 carried ones on the
+same one-hot. Without it a uniform chain would walk the same query nineteen times while every
+boundary matched.
+
+**The uniformity cost, measured by building the same cut three times in one process:**
+
+| position | deployed shape | + carried key tree | + witnessed `k`, `q` | total |
+|---|---:|---:|---:|---:|
+| `head1` | 50,026 | +84 | +75 | 50,185 (**0.32%**) |
+| `block0` | 46,206 | +84 | +120 | 46,410 (**0.44%**) |
+| `block1` | 46,434 | +84 | +75 | 46,593 (**0.34%**) |
+| `block42` | 11,951 | +84 | +77 | 12,112 (**1.35%**) |
+
+**≤ 204 rows a slice.** §3.20's 11 rows does not transfer and was not assumed to: that construction
+had no 19-way one-hot, no register multiplexer and no ring to break. The three components are
+reported separately so the ring-breaking and the index-witnessing are never quoted as each other.
+
+⚑ **The instrument that made this safe to build, and it found a real defect on its first run.**
+`[3b]` walks **all 820 instances out of circuit** and asserts each enters exactly the boundary its
+predecessor emits, then that the last emits the terminal seal. It costs seconds. It immediately
+failed at `block0 q=1`, chain step 53 — a block's two ends carried *different slot lists*, because
+the walk's own liveness kills `qidx[0..q]` at the start of query `q+1`, so `liveIn[headSegs +
+blockSegs]` is 19 slots shorter than `liveIn[headSegs]`. **Every one of the 19 block-to-block joins
+was broken.** Those joins first occur at instance 46 and the seal at instance 820, so a proof run of
+any affordable length would have been green and wrong.
+
+⚑ **What re-emits.** The FRI lane table is chunk-aligned per query and `friDigest` is two-level, so
+**every boundary in this chain is a different field element from the deployed one's**. Nothing holds
+the old shape — the deployed FRI slice artifacts are a leg's measurements, not state — but the two
+chains cannot be mixed, and `RootFriSlice.makeFriSliceProgram` is now the **superseded** path.
 
 ### ⚑ And the boundary carry stops mattering too
 
@@ -467,15 +543,17 @@ on the root rotates the apex VK and forces a fresh Groth16 setup for the ETH pat
 **In parallel, and independent of all six** — the compile lever (§5.1), which needs nothing from the
 hash work and pays off in the current regime too:
 
-- **A. Price the alignment slack.** Re-run `fri-walk-plan` with the cut offsets constrained to repeat
-  per query; compare the slice count against today's 839. This is a planner change and one run.
-- **B. If the slack is acceptable, make the walk slice uniform** — witness `si` instead of baking it
-  into `friSliceProgramName`/`friSliceShape`, following `makeChainedProofVerify`'s pattern exactly
-  (§3.20 measured the uniformity cost at 11 rows). 846 compiles → ~55, and the VKs become protocol
-  constants rather than a per-proof cost.
+- ~~**A. Price the alignment slack.**~~ **DONE — §5.1a.** +4.5% on its own, and the commitment shape
+  it enables gives more than that back: **820 instances against 839.**
+- ~~**B. Make the walk slice uniform.**~~ **DONE — §5.1a.** `src/RootFriUniform.ts`,
+  `scripts/root-fri-uniform.ts`. **839 FRI verification keys → 46**, uniformity cost ≤ 204 rows a
+  slice, and the ring that a compile-time key pin cannot close is closed by a carried key tree
+  anchored in the terminal seal.
 
-A and B are the cheapest real wins in this document and the only ones that need no new field, no new
-config, and no decision from ember.
+A and B were the cheapest real wins in this document and the only ones that needed no new field, no
+new config, and no decision from ember. **The next one on that list is the o1js native-Poseidon
+Merkle probe of §4**, which is still the thing that converts the headline from a projection to a
+measurement.
 
 ---
 

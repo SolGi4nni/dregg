@@ -25,6 +25,7 @@ import {
   AIR_CHUNK_LANES,
   AIR_SLICES,
   airLaneValues,
+  auxLanes,
   chunkDigestsBigInt,
   friLaneValues,
   walkTwin,
@@ -1043,6 +1044,123 @@ async function main() {
         `    ⚠ no program was proved at two queries in this run — reaching a block's position 0 at ` +
           `q=1 needs ${c.plan.head.length + c.plan.block.length + 1} instances`,
       );
+
+    // ---------------------------------------------------------------------
+    // [7b] The splices, ACROSS the process boundary.
+    //
+    // ⚑ SPLICE AT A SLICE THAT CARRIES MERKLE DATA and whose predecessor is
+    // proved. A transcript-only slice has no `aux`, so the `auxBent` attempt
+    // cannot fire there and the table would quietly report one short — a
+    // falsifier that is absent reads exactly like one that passed.
+    // ---------------------------------------------------------------------
+    let at: Instance | null = null;
+    for (let i = nProve - 1; i >= 1; i--) {
+      const { sp, q } = order[i];
+      const sl = uniformSlice(c.plan, sp);
+      let aux = 0;
+      for (let k2 = sl.from; k2 < sl.to; k2++) aux += auxLanes(c.w.segs[k2]);
+      if (aux > 0) {
+        at = order[i];
+        break;
+      }
+    }
+    if (at === null) {
+      console.log('\n[7b] no proved slice carries Merkle data yet — the splice table is not run');
+    } else {
+      const env = {
+        UNIFORM_KIND: at.sp.kind,
+        UNIFORM_POS: String(at.sp.pos),
+        UNIFORM_Q: String(at.q),
+      };
+      console.log(
+        `\n[7b] the splice is REFUSED at ${specName(at.sp)} q${at.q} (chain step ${at.k}) — in a ` +
+          'process that compiled only that program',
+      );
+      const sp2 = await child({ ...env, UNIFORM_PHASE: 'splice' }, 'splice');
+      const declared = readVk(keyPath(at.sp)).hash;
+      if (sp2.vkHash !== declared)
+        fail(
+          `${specName(at.sp)} compiled to a DIFFERENT verification key in a second process — the ` +
+            'circuit is not reproducible, and a key tree over it means nothing',
+        );
+      ok(
+        `${specName(at.sp)} compiles to the SAME verification key in a second, independent ` +
+          'process — the key list is a constant, not an accident of one run',
+      );
+      const SPLICES: [string, string][] = [
+        ['unrelatedInput', 'a boundary with no relation to its predecessor'],
+        ['accBent', "the carried AIR ACCUMULATOR bent — the AIR half's own result"],
+        ['airDigestBent', 'a digest of an AIR column chunk this slice never reads, bent'],
+        ['friGlobalDigestBent', 'a digest of a GLOBAL FRI lane chunk this slice never reads, bent'],
+        ['otherQueryDigestBent', "ANOTHER QUERY's opened-row digest bent — the two-level commitment"],
+        ['carryBent', 'one carried live lane bent'],
+        ['auxBent', 'one Merkle sibling bent'],
+        ['stepIndexSkipped', '⚑ the witnessed step index k ADVANCED by one — a SKIP'],
+        ['stepIndexRepeated', '⚑ the witnessed step index k HELD BACK by one — a DOUBLE-COUNT'],
+        ['queryDoubleCounted', '⚑ the same k claiming a DIFFERENT query — the same block walked twice'],
+        ['vkRootBent', 'the carried key-list root bent'],
+        ['vkPathBent', "the predecessor key's path bent"],
+        ['foreignProofAndKey', "the AIR chain's slice 5 proof with its OWN key — a valid proof of the wrong program"],
+        ['rightProofWrongKey', 'the right proof paired with a key it was not made under'],
+        ['inListWrongLeaf', "⚑ a key that IS in this chain's key list, at the WRONG LEAF, with its own path"],
+      ];
+      let attempted = 0;
+      for (const [key, label] of SPLICES) {
+        const r = sp2.results[key];
+        if (!r) {
+          console.log(`    · ${label}: not attempted at this cut`);
+          continue;
+        }
+        attempted++;
+        if (!r.refused) fail(`${label}: ACCEPTED`);
+        if (!isConstraintFailure(r.err))
+          fail(`${label}: the error is not a constraint failure — ${r.err}`);
+        ok(`REFUSED: ${label}`);
+      }
+      if (attempted < SPLICES.length - 1)
+        fail(
+          `${SPLICES.length - attempted} splice(s) were NOT ATTEMPTED at this cut — an absent ` +
+            'falsifier reads exactly like one that passed',
+        );
+
+      // -------------------------------------------------------------------
+      // [7c] The controls — the same slice with ONE binding removed.
+      // -------------------------------------------------------------------
+      console.log('\n[7c] the controls — the same slice with ONE binding removed');
+      const ctl = await child(
+        { ...env, UNIFORM_PHASE: 'control', UNIFORM_PIN: '1' },
+        'control (unbound, pinned)',
+      );
+      if (!ctl.results.unrelatedInput)
+        fail(
+          'the UNBOUND control REFUSED a public input unrelated to its predecessor — the control ' +
+            'is not testing the binding, and the refusals above are consistent with "the bend ' +
+            'broke the work"',
+        );
+      ok('UNBOUND: a public input with no relation to its predecessor is ACCEPTED');
+      if (!ctl.results.stepIndexSkipped)
+        fail('the UNBOUND control REFUSED a skipped step index — then the boundary is not what pins k');
+      ok(
+        '⚑ UNBOUND: a SKIPPED step index is ACCEPTED — so the refusal above is the boundary chain ' +
+          'pinning k inductively, and not the walk breaking',
+      );
+      if (ctl.results.foreignProofAndKey)
+        fail('the UNBOUND-but-PINNED control ACCEPTED a foreign proof — the pin is not what refuses it');
+      ok('UNBOUND but PINNED: a foreign proof under its own key is still REFUSED — the refusal is the PIN');
+      const ctl2 = await child(
+        { ...env, UNIFORM_PHASE: 'control', UNIFORM_PIN: '0' },
+        'control (unbound, unpinned)',
+      );
+      if (!ctl2.results.foreignProofAndKey)
+        fail(
+          'the UNPINNED control REFUSED a foreign proof under its own key — then the pin is not ' +
+            "what the refusal above is attributable to, and side-loading's named hole is not shown open",
+        );
+      ok(
+        'UNPINNED: the same foreign proof under its own key is ACCEPTED — the hole side-loading ' +
+          'opens is REAL on a witnessed-index chain too, and the carried key tree closes it',
+      );
+    }
   } else {
     console.log('\n[6] no instances proved in this run (UNIFORM_PROVE=0)');
   }
