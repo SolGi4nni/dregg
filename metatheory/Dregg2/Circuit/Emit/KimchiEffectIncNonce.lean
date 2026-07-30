@@ -1,0 +1,582 @@
+/-
+# Dregg2.Circuit.Emit.KimchiEffectIncNonce — ONE Lean source, TWO emissions: the BabyBear
+EffectVM row of `incrementNonceA`, and a Kimchi circuit for the SAME transition.
+
+## ⚑ SAY THE SUBSTRATE OUT LOUD
+
+This is **Lean-authored AIR on BOTH targets.** `incNonceHeads` is a `def`-generator producing a
+`List AirBuilder.Head`; the BabyBear side lowers it through `headToExpr` (the deployed
+`EmittedExpr` gate vocabulary) and the Kimchi side lowers it through `KimchiLower.lowerHeadGens`
+(the deployed `GateType::Generic` sub-gate vocabulary). Neither Rust nor TypeScript authors a
+constraint anywhere on this path: the o1js consumer is a TRANSCRIBER of the `Gen1` list this file
+emits, driven entirely by the emitted coefficients.
+
+## ⚑ WHAT THIS IS, AND HOW IT DIFFERS FROM THE VERIFIER ROUTE
+
+`KimchiLower`'s header scopes the whole compiler to **route A** — a Kimchi circuit that VERIFIES a
+dregg STARK proof, in which `lowerHead` is the verifier's `AIR.evalAtZeta` rung, invoked at the
+opened points only. That framing is correct for that route and this file does not weaken it.
+
+This file is **route B**: dregg's own semantics re-emitted into Kimchi, so Mina can check a dregg
+state transition NATIVELY, with no FRI proof consumed. The two routes prove different things and
+the difference is not cosmetic:
+
+  * **A** establishes *dregg's chain says this*. It consumes a proof, so it inherits dregg's whole
+    accumulator/commitment structure — and it inherits the undischarged FRI/STARK soundness floor.
+  * **B** establishes *this transition is VALID under dregg's semantics*. It consumes no proof, so
+    there is nothing to be unsound about beyond Kimchi itself — and it says **nothing whatever
+    about whether dregg's chain contains the transition.** B is a semantics checker, not a
+    membership checker. Anyone can present a well-formed transition that never happened.
+
+Route B's honest question is "are these still the same semantics?", and §2/§5 are the answer:
+BOTH emissions descend from `incNonceHeads`, and each has a forcing lemma landing on the SAME
+Lean `def` (`EffectVmEmitIncrementNonce.CellIncNonceSpec`). Not two implementations agreeing on
+tests — two lowerings of one source, with refinement proved on each side.
+
+## The four rungs
+
+  1. **§1 `incNonceHeads`** — the one source. Thirteen polynomial heads: eleven economic
+     passthroughs, the reserved passthrough, and the nonce tick.
+  2. **§2 the WELD** — `heads_denote_deployed_gates`: head-for-head, `evalH` of the source equals
+     `EmittedExpr.eval` of the gate body the DEPLOYED descriptor
+     (`EffectVmEmitIncrementNonce.incNonceRowGates`) already carries. The source is not a third
+     copy; it denotes the deployed list.
+  3. **§4 the KIMCHI emission** — `incNonceKimchiRows`, `packGen`-packed, with
+     `kimchi_rows_force_heads` at arbitrary `CommRing` over the ACTUAL emitted list.
+  4. **§5 the apex** — `two_emissions_one_def`: both arrows land on `CellIncNonceSpec`.
+
+## ⚑ WHERE THE TWO SIDES ARE NOT SYMMETRIC, stated rather than smoothed
+
+`incNonceVm_faithful` (BabyBear) reads its gates through `holdsVm`, which is `≡ 0 [ZMOD 2013265921]`,
+so it needs the full `IncNonceRowCanon` envelope INCLUDING `nonce_before + 1 < p`. The Kimchi side
+over ℤ needs no envelope at all, and over the Pallas base field needs `KimchiRowCanon`, which is
+`IncNonceRowCanon` MINUS the overflow hypothesis — because the residual a BabyBear-canonical row
+produces is bounded by `2^31 + 2`, and the Kimchi field is `> 2^254`. `kimchiRowCanon_of_incNonceRowCanon`
+proves the implication and `kimchi_envelope_strictly_weaker` exhibits a row satisfying the Kimchi
+envelope and not the BabyBear one. **The weaker forcing lemma is the BabyBear one**, which is the
+opposite of the direction one would fear.
+
+## Anti-vacuity, at birth
+
+`incNonceKimchiRows_satisfiable` exhibits a concrete assignment satisfying every emitted row (the
+honest row `goodIncNonceRow`, bal 100→100, nonce 5→6). `tamper_moved_balance_refused` /
+`tamper_frozen_nonce_refused` prove the emitted circuit has NO satisfying assignment over a row
+that moves value or freezes the nonce — the general statement, not a sampled one. Every emitted row
+is a MODELLED gate (`incNonceRows_all_modelled`), so `KimchiTarget`'s fail-closed `False` is not
+what discharges anything here.
+
+## Axiom hygiene
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; no `sorry`/`native_decide`.
+NEW file. Imports read-only.
+-/
+import Dregg2.Circuit.Emit.KimchiLower
+import Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce
+
+namespace Dregg2.Circuit.Emit.KimchiEffectIncNonce
+
+open Dregg2.Circuit (Assignment)
+open Dregg2.Circuit.Emit.AirBuilder (Head evalH evalTerm headToExpr headToExpr_eval)
+open Dregg2.Circuit.Emit.KimchiTarget
+open Dregg2.Circuit.Emit.KimchiLower
+open Dregg2.Circuit.Emit.EffectVmEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer
+  (eSA eSB eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce
+open Dregg2.Exec.CircuitEmit (EmittedExpr)
+
+set_option autoImplicit false
+
+/-! ## §1 — THE ONE SOURCE.
+
+Thirteen polynomial heads. Both emissions descend from this list and nothing else. -/
+
+/-- A state-block FREEZE head: `state_after[off] − state_before[off]`. -/
+def freezeHead (off : Nat) : Head := ⟨[(1, [saCol off]), (-1, [sbCol off])], 0⟩
+
+/-- The nonce TICK head: `state_after[NONCE] − state_before[NONCE] − (1 − s_noop)`, written out as
+`+1·sa − 1·sb + 1·s_noop − 1`. This is the runtime convention (`air.rs`'s global nonce gate): the
+counter advances on every non-NoOp row. -/
+def nonceTickHead : Head :=
+  ⟨[(1, [saCol state.NONCE]), (-1, [sbCol state.NONCE]), (1, [sel.NOOP])], -1⟩
+
+/-- **THE SOURCE.** The `incrementNonceA` EffectVM row: the whole economic state block frozen,
+the nonce ticked. Ordered exactly as `EffectVmEmitIncrementNonce.incNonceRowGates`. -/
+def incNonceHeads : List Head :=
+  [ freezeHead state.BALANCE_LO, freezeHead state.BALANCE_HI, nonceTickHead
+  , freezeHead state.CAP_ROOT, freezeHead state.RESERVED ]
+  ++ (List.range 8).map (fun i => freezeHead (state.FIELD_BASE + i))
+
+/-- Thirteen heads: five named plus the eight generic fields. -/
+theorem incNonceHeads_length : incNonceHeads.length = 13 := by
+  simp [incNonceHeads]
+
+/-! ### §1a — what a head MEANS, over ℤ. -/
+
+@[simp] theorem evalH_freezeHead (a : Assignment) (off : Nat) :
+    evalH (freezeHead off) a = a (saCol off) - a (sbCol off) := by
+  simp only [freezeHead, evalH, evalTerm, List.map_cons, List.map_nil, List.sum_cons,
+    List.sum_nil, List.prod_cons, List.prod_nil]
+  ring
+
+@[simp] theorem evalH_nonceTickHead (a : Assignment) :
+    evalH nonceTickHead a
+      = a (saCol state.NONCE) - a (sbCol state.NONCE) - (1 - a sel.NOOP) := by
+  simp only [nonceTickHead, evalH, evalTerm, List.map_cons, List.map_nil, List.sum_cons,
+    List.sum_nil, List.prod_cons, List.prod_nil]
+  ring
+
+/-! ## §2 — THE WELD: the source DENOTES the deployed BabyBear gate list.
+
+`EffectVmEmitIncrementNonce.incNonceRowGates` is the gate list the running descriptor carries and
+that `incNonceVm_faithful` reasons about. If `incNonceHeads` were a re-authoring of it, this whole
+file would be a differential test wearing a proof's clothes. It is not: the two lists are proved
+head-for-head EQUAL AS DENOTATIONS, at every assignment. -/
+
+/-- The deployed gate BODIES, in the deployed order. -/
+def incNonceGateBodies : List EmittedExpr :=
+  [gBalLoFreeze, gBalHi, gNonce, gCapPass, gResPass] ++ (List.range 8).map gFieldPass
+
+/-- The deployed constraint list IS those bodies, wrapped. -/
+theorem incNonceRowGates_eq :
+    incNonceRowGates = incNonceGateBodies.map VmConstraint.gate := by
+  simp only [incNonceRowGates, incNonceGateBodies, gFieldPassAll, List.map_append,
+    List.map_cons, List.map_nil, List.map_map, Function.comp_def]
+
+theorem freezeHead_denotes (a : Assignment) (off : Nat) :
+    evalH (freezeHead off) a = (eSub (eSA off) (eSB off)).eval a := by
+  simp only [evalH_freezeHead, eSub, eSA, eSB, EmittedExpr.eval]
+  ring
+
+theorem nonceTickHead_denotes (a : Assignment) :
+    evalH nonceTickHead a = gNonce.eval a := by
+  simp only [evalH_nonceTickHead, gNonce, eSub, eSA, eSB, eSelNoop, EmittedExpr.eval]
+  ring
+
+/-- **THE WELD.** Head-for-head, the source's value is the deployed gate body's value — at EVERY
+assignment, so this is a denotational identity and not a sampled agreement. -/
+theorem heads_denote_deployed_gates (a : Assignment) :
+    incNonceHeads.map (fun h => evalH h a)
+      = incNonceGateBodies.map (fun e => e.eval a) := by
+  simp only [incNonceHeads, incNonceGateBodies, List.map_append, List.map_cons, List.map_nil,
+    List.map_map, Function.comp_def, freezeHead_denotes, nonceTickHead_denotes,
+    gBalLoFreeze, gBalHi, gCapPass, gResPass, gFieldPass]
+
+/-! ## §3 — THE SHARED MEANING: the heads vanish IFF the row realises the intent.
+
+Over ℤ, with no canonicality envelope. `IncNonceRowIntent` is the deployed intent predicate that
+`incNonceVm_faithful` names on the BabyBear side and `intent_to_cellSpec` consumes. -/
+
+theorem heads_zero_iff_intent (env : VmRowEnv) :
+    (∀ h ∈ incNonceHeads, evalH h env.loc = 0) ↔ IncNonceRowIntent env := by
+  constructor
+  · intro h
+    have hLo := h (freezeHead state.BALANCE_LO) (by simp [incNonceHeads])
+    have hHi := h (freezeHead state.BALANCE_HI) (by simp [incNonceHeads])
+    have hN := h nonceTickHead (by simp [incNonceHeads])
+    have hCap := h (freezeHead state.CAP_ROOT) (by simp [incNonceHeads])
+    have hRes := h (freezeHead state.RESERVED) (by simp [incNonceHeads])
+    simp only [evalH_freezeHead, evalH_nonceTickHead] at hLo hHi hN hCap hRes
+    refine ⟨by omega, by omega, by omega, by omega, by omega, ?_⟩
+    intro i hi
+    have hF := h (freezeHead (state.FIELD_BASE + i)) (by
+      simp only [incNonceHeads, List.mem_append, List.mem_map, List.mem_range]
+      exact Or.inr ⟨i, hi, rfl⟩)
+    simp only [evalH_freezeHead] at hF
+    omega
+  · rintro ⟨hLo, hHi, hN, hCap, hRes, hF⟩ h hm
+    simp only [incNonceHeads, List.mem_append, List.mem_cons, List.not_mem_nil, or_false,
+      List.mem_map, List.mem_range] at hm
+    rcases hm with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
+    · simp only [evalH_freezeHead]; omega
+    · simp only [evalH_freezeHead]; omega
+    · simp only [evalH_nonceTickHead]; omega
+    · simp only [evalH_freezeHead]; omega
+    · simp only [evalH_freezeHead]; omega
+    · simp only [evalH_freezeHead]; have := hF i hi; omega
+
+/-! ## §4 — THE KIMCHI EMISSION.
+
+`lowerHeadGens` is `KimchiLower`'s straight-line lowering; `lowerHeadsGens` chains it across a list
+of heads, threading the freshness watermark so no head's intermediates collide with another's.
+`packGen` is the two-sub-gates-per-row backend whose meaning-preservation is
+`packGen_holds_iff`. -/
+
+/-- The first fresh variable index — past the whole EffectVM row (`EFFECT_VM_WIDTH = 188`), so no
+intermediate can alias a real column. -/
+def NV0 : Nat := EFFECT_VM_WIDTH
+
+/-- Lower a LIST of heads, threading the watermark. -/
+def lowerHeadsGens : List Head → Nat → List Gen1
+  | [], _ => []
+  | h :: rest, nv => lowerHeadGens h nv ++ lowerHeadsGens rest (lowerHeadWm h nv)
+
+/-- **The emitted sub-gate program** for the `incrementNonceA` row. -/
+def incNonceGens : List Gen1 := lowerHeadsGens incNonceHeads NV0
+
+/-- **The emitted Kimchi circuit** — `GateType::Generic` rows, two sub-gates each. -/
+def incNonceKimchiRows : List KRow := packGen incNonceGens
+
+/-- Twelve freeze heads at four sub-gates each, plus the nonce tick at five. -/
+theorem incNonceGens_length : incNonceGens.length = 53 := by
+  simp only [incNonceGens, incNonceHeads, NV0]
+  rfl
+
+/-- **The row count is a theorem, not a measurement.** `⌈53/2⌉ = 27`. -/
+theorem incNonceKimchiRows_length : incNonceKimchiRows.length = 27 := by
+  rw [incNonceKimchiRows, packGen_length, incNonceGens_length]
+
+/-- Every emitted row carries a MODELLED gate, so nothing below is discharged by
+`KimchiTarget`'s fail-closed `False`. -/
+theorem incNonceRows_all_modelled :
+    ∀ r ∈ incNonceKimchiRows, r.gate.modelled = true :=
+  packGen_all_modelled _
+
+/-! ### §4a — soundness of the chained lowering. -/
+
+/-- `lowerHead_sound` restated at the SUB-GATE level, which is what chains. -/
+theorem lowerHeadGens_sound {R : Type} [CommRing R] (a : Nat → R) (h : Head) (nv : Nat)
+    (hg : gensHold a (lowerHeadGens h nv)) : headEvalR a h = 0 :=
+  lowerHead_sound a h nv ((packGen_holds_iff a _).mpr hg)
+
+theorem lowerHeadsGens_sound {R : Type} [CommRing R] (a : Nat → R) :
+    ∀ (hs : List Head) (nv : Nat), gensHold a (lowerHeadsGens hs nv) →
+      ∀ h ∈ hs, headEvalR a h = 0 := by
+  intro hs
+  induction hs with
+  | nil => intro _ _ h hm; cases hm
+  | cons x xs ih =>
+    intro nv hg h hm
+    simp only [lowerHeadsGens] at hg
+    obtain ⟨hg1, hg2⟩ := gensHold_append hg
+    rcases List.mem_cons.1 hm with rfl | hm2
+    · exact lowerHeadGens_sound a _ _ hg1
+    · exact ih _ hg2 h hm2
+
+/-- **SEMANTICS PRESERVATION, over the ACTUAL emitted rows, at arbitrary `CommRing`.** Any
+assignment satisfying every emitted Kimchi row makes every source head vanish. -/
+theorem kimchi_rows_force_heads {R : Type} [CommRing R] (a : Nat → R)
+    (hr : rowsHold a incNonceKimchiRows) : ∀ h ∈ incNonceHeads, headEvalR a h = 0 :=
+  lowerHeadsGens_sound a incNonceHeads NV0 ((packGen_holds_iff a _).mp hr)
+
+/-! ## §5 — THE APEX: both emissions force the SAME Lean `def`. -/
+
+/-- The Kimchi rows force the deployed intent predicate. Over ℤ this needs NO canonicality
+envelope — contrast the BabyBear side, which reads its gates mod `2013265921`. -/
+theorem kimchi_forces_intent (env : VmRowEnv)
+    (hr : rowsHold env.loc incNonceKimchiRows) : IncNonceRowIntent env := by
+  refine (heads_zero_iff_intent env).mp ?_
+  intro h hm
+  have hz := kimchi_rows_force_heads (R := ℤ) env.loc hr h hm
+  rwa [headEvalR_int] at hz
+
+/-- **ARROW ONE — the Kimchi emission forces `CellIncNonceSpec`.** -/
+theorem kimchi_forces_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesIncNonce env pre post)
+    (hr : rowsHold env.loc incNonceKimchiRows) : CellIncNonceSpec pre post :=
+  intent_to_cellSpec env pre post hnoop henc (kimchi_forces_intent env hr)
+
+/-- **ARROW TWO — the deployed BabyBear descriptor forces `CellIncNonceSpec`.** This is
+`incNonceVm_faithful` (which is about the DEPLOYED `incNonceRowGates`) composed with
+`intent_to_cellSpec`; nothing new is proved here, it is restated so the two arrows sit side by
+side and the shared target is visible. -/
+theorem babybear_forces_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0) (hcanon : IncNonceRowCanon env)
+    (henc : RowEncodesIncNonce env pre post)
+    (hg : ∀ c ∈ incNonceRowGates, c.holdsVm env false false) : CellIncNonceSpec pre post :=
+  intent_to_cellSpec env pre post hnoop henc ((incNonceVm_faithful env hcanon).mp hg)
+
+/-- **THE DELIVERABLE — TWO EMISSIONS, ONE `def`.**
+
+The Kimchi circuit `incNonceKimchiRows` and the deployed BabyBear gate list `incNonceRowGates`
+both FORCE `EffectVmEmitIncrementNonce.CellIncNonceSpec pre post` — the same Lean `def`, at the
+same encoded `(pre, post)`. Together with §2's `heads_denote_deployed_gates` (the two lowerings
+descend from ONE source list of heads, and that source denotes the deployed gate bodies), this is
+the "are these still the same semantics?" question answered with a theorem rather than a test. -/
+theorem two_emissions_one_def (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesIncNonce env pre post) :
+    (rowsHold env.loc incNonceKimchiRows → CellIncNonceSpec pre post)
+    ∧ (IncNonceRowCanon env →
+        (∀ c ∈ incNonceRowGates, c.holdsVm env false false) → CellIncNonceSpec pre post) :=
+  ⟨fun hr => kimchi_forces_cellSpec env pre post hnoop henc hr,
+   fun hcanon hg => babybear_forces_cellSpec env pre post hnoop hcanon henc hg⟩
+
+/-! ## §6 — THE FIELD-ACCURATE KIMCHI STATEMENT.
+
+§5 reads the emitted rows over ℤ. The deployed Kimchi circuit runs over the **Pallas base field**
+(o1js's `Field`), so the honest statement quantifies an arbitrary `ZMod p`-valued assignment and
+recovers the ℤ intent from a canonicality envelope — exactly the shape `IncNonceRowCanon` has on
+the BabyBear side, and STRICTLY WEAKER, because the residual is `< 2^31 + 2` and `p > 2^254`. -/
+
+/-- The Pallas base field modulus — o1js's `Field` (`2^254 + 45560315531419706090280762371685220353`). -/
+def PALLAS_BASE_MODULUS : Nat :=
+  28948022309329048855892746252171976963363056481941560715954676764349967630337
+
+theorem pallas_gt_two_pow_254 : 2 ^ 254 < PALLAS_BASE_MODULUS := by
+  norm_num [PALLAS_BASE_MODULUS]
+
+/-- **The Kimchi-side canonicality envelope** — `IncNonceRowCanon` MINUS the `nonce_before + 1 < p`
+overflow hypothesis. The BabyBear side needs that hypothesis because its residual is read mod
+`2013265921`; the Kimchi side does not, because the same residual is read mod a `> 2^254` prime. -/
+def KimchiRowCanon (env : VmRowEnv) : Prop :=
+  (∀ off, off < STATE_SIZE →
+      (0 ≤ env.loc (sbCol off) ∧ env.loc (sbCol off) < 2013265921)
+      ∧ (0 ≤ env.loc (saCol off) ∧ env.loc (saCol off) < 2013265921))
+  ∧ (env.loc sel.NOOP = 0 ∨ env.loc sel.NOOP = 1)
+
+theorem kimchiRowCanon_of_incNonceRowCanon (env : VmRowEnv) (h : IncNonceRowCanon env) :
+    KimchiRowCanon env := ⟨h.1, h.2.1⟩
+
+/-- The columns any source head reads all live below `NV0`, so a Kimchi assignment that agrees with
+the row on `[0, NV0)` pins every head's value. -/
+theorem head_cols_below_NV0 (off : Nat) (hoff : off < STATE_SIZE) :
+    saCol off < NV0 ∧ sbCol off < NV0 ∧ sel.NOOP < NV0 := by
+  simp only [saCol, sbCol, NV0, EFFECT_VM_WIDTH, STATE_AFTER_BASE, STATE_BEFORE_BASE,
+    PARAM_BASE, NUM_EFFECTS, NUM_PARAMS, sel.NOOP] at *
+  omega
+
+/-- A ℤ-residual strictly inside `(−p, p)` that vanishes in `ZMod p` is zero. -/
+theorem int_eq_zero_of_zmod_zero {p : Nat} (hp : 0 < p) (x : ℤ)
+    (hbound : x.natAbs < p) (hz : ((x : ℤ) : ZMod p) = 0) : x = 0 := by
+  have hdvd : (p : ℤ) ∣ x := by
+    rwa [ZMod.intCast_zmod_eq_zero_iff_dvd] at hz
+  rcases hdvd with ⟨k, rfl⟩
+  rcases Int.eq_zero_or_natAbs_pos k with hk | hk
+  · simp [hk]
+  · exfalso
+    have : (p : ℤ).natAbs * k.natAbs < p := by
+      simpa [Int.natAbs_mul] using hbound
+    have hpn : (p : ℤ).natAbs = p := Int.natAbs_natCast p
+    rw [hpn] at this
+    nlinarith [this, hk, hp]
+
+/-- **THE FIELD-ACCURATE FORCING.** An arbitrary Pallas-field assignment satisfying the emitted
+rows, agreeing with the row window on `[0, NV0)`, forces the deployed ℤ intent — under
+`KimchiRowCanon` only. -/
+theorem kimchi_pallas_forces_intent (env : VmRowEnv)
+    (A : Nat → ZMod PALLAS_BASE_MODULUS)
+    (hcol : ∀ v, v < NV0 → A v = ((env.loc v : ℤ) : ZMod PALLAS_BASE_MODULUS))
+    (hcanon : KimchiRowCanon env)
+    (hr : rowsHold A incNonceKimchiRows) : IncNonceRowIntent env := by
+  obtain ⟨hcells, hnoopB⟩ := hcanon
+  have hpos : 0 < PALLAS_BASE_MODULUS := by norm_num [PALLAS_BASE_MODULUS]
+  -- a head's value over the Pallas assignment is the cast of its ℤ value
+  have hforce := kimchi_rows_force_heads A hr
+  -- the freeze heads
+  have hfreeze : ∀ off, off < STATE_SIZE → freezeHead off ∈ incNonceHeads →
+      env.loc (saCol off) = env.loc (sbCol off) := by
+    intro off hoff hmem
+    have hz := hforce _ hmem
+    have hcast : headEvalR A (freezeHead off)
+        = ((env.loc (saCol off) - env.loc (sbCol off) : ℤ) : ZMod PALLAS_BASE_MODULUS) := by
+      obtain ⟨hsa, hsb, _⟩ := head_cols_below_NV0 off hoff
+      simp only [headEvalR, freezeHead, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
+        List.prod_cons, List.prod_nil, hcol _ hsa, hcol _ hsb]
+      push_cast
+      ring
+    rw [hcast] at hz
+    have hb := hcells off hoff
+    have := int_eq_zero_of_zmod_zero hpos _ (by
+      have : (env.loc (saCol off) - env.loc (sbCol off)).natAbs < 2013265921 := by
+        omega
+      omega) hz
+    omega
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact hfreeze _ (by norm_num [state.BALANCE_LO, STATE_SIZE]) (by simp [incNonceHeads])
+  · exact hfreeze _ (by norm_num [state.BALANCE_HI, STATE_SIZE]) (by simp [incNonceHeads])
+  · -- the nonce tick
+    have hz := hforce nonceTickHead (by simp [incNonceHeads])
+    have hoffN : state.NONCE < STATE_SIZE := by norm_num [state.NONCE, STATE_SIZE]
+    obtain ⟨hsa, hsb, hnoopLt⟩ := head_cols_below_NV0 state.NONCE hoffN
+    have hcast : headEvalR A nonceTickHead
+        = ((env.loc (saCol state.NONCE) - env.loc (sbCol state.NONCE)
+              - (1 - env.loc sel.NOOP) : ℤ) : ZMod PALLAS_BASE_MODULUS) := by
+      simp only [headEvalR, nonceTickHead, List.map_cons, List.map_nil, List.sum_cons,
+        List.sum_nil, List.prod_cons, List.prod_nil, hcol _ hsa, hcol _ hsb, hcol _ hnoopLt]
+      push_cast
+      ring
+    rw [hcast] at hz
+    have hb := hcells state.NONCE hoffN
+    have := int_eq_zero_of_zmod_zero hpos _ (by
+      have hn01 : 0 ≤ env.loc sel.NOOP ∧ env.loc sel.NOOP ≤ 1 := by
+        rcases hnoopB with h | h <;> rw [h] <;> norm_num
+      omega) hz
+    omega
+  · exact hfreeze _ (by norm_num [state.CAP_ROOT, STATE_SIZE]) (by simp [incNonceHeads])
+  · exact hfreeze _ (by norm_num [state.RESERVED, STATE_SIZE]) (by simp [incNonceHeads])
+  · intro i hi
+    refine hfreeze _ (by simp only [state.FIELD_BASE, STATE_SIZE]; omega) ?_
+    simp only [incNonceHeads, List.mem_append, List.mem_map, List.mem_range]
+    exact Or.inr ⟨i, hi, rfl⟩
+
+/-- **ARROW ONE, at the deployed field.** -/
+theorem kimchi_pallas_forces_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (A : Nat → ZMod PALLAS_BASE_MODULUS)
+    (hcol : ∀ v, v < NV0 → A v = ((env.loc v : ℤ) : ZMod PALLAS_BASE_MODULUS))
+    (hnoop : env.loc sel.NOOP = 0) (hcanon : KimchiRowCanon env)
+    (henc : RowEncodesIncNonce env pre post)
+    (hr : rowsHold A incNonceKimchiRows) : CellIncNonceSpec pre post :=
+  intent_to_cellSpec env pre post hnoop henc
+    (kimchi_pallas_forces_intent env A hcol hcanon hr)
+
+/-! ## §7 — ANTI-VACUITY: satisfiable at birth, and refutable. -/
+
+/-- The honest witness: `goodIncNonceRow` on the real columns, and the lowering's intermediates
+above `NV0`. `freezeHead`'s three intermediates are `(0, v, 0)`; the nonce tick's four are
+`(−1, nonce_after, 0, 0)`. Every other fresh slot is zero because every other frozen cell is. -/
+def satAssign : Assignment := fun v =>
+  if v < NV0 then goodIncNonceRow.loc v
+  else if v = 189 then 100
+  else if v = 194 then -1
+  else if v = 195 then 5
+  else 0
+
+/-- **SATISFIABLE AT BIRTH (sub-gates).** -/
+theorem incNonceGens_satisfied : gensHold satAssign incNonceGens := by
+  have h : ∀ g ∈ incNonceGens, Gen1.body satAssign g = 0 := by decide
+  intro g hg
+  exact h g hg
+
+/-- **SATISFIABLE AT BIRTH (rows).** The emitted Kimchi circuit ACCEPTS the honest
+increment-nonce row — so nothing above is true because nothing satisfies it. -/
+theorem incNonceKimchiRows_satisfiable : rowsHold satAssign incNonceKimchiRows :=
+  (packGen_holds_iff satAssign incNonceGens).mpr incNonceGens_satisfied
+
+/-- **REFUTABLE — moved value.** No assignment whatever satisfies the emitted circuit over a row
+whose post-balance differs from its pre-balance. This is the GENERAL statement: not "this forged
+row is rejected", but "the emitted circuit has no satisfying assignment over ANY such row". -/
+theorem tamper_moved_balance_refused (a : Assignment)
+    (hwrong : a (saCol state.BALANCE_LO) ≠ a (sbCol state.BALANCE_LO)) :
+    ¬ rowsHold a incNonceKimchiRows := by
+  intro hr
+  have hz := kimchi_rows_force_heads (R := ℤ) a hr (freezeHead state.BALANCE_LO)
+    (by simp [incNonceHeads])
+  rw [headEvalR_int] at hz
+  simp only [evalH_freezeHead] at hz
+  exact hwrong (by omega)
+
+/-- **REFUTABLE — frozen nonce.** A row that does not tick the nonce is UNSAT. -/
+theorem tamper_frozen_nonce_refused (a : Assignment)
+    (hwrong : a (saCol state.NONCE) ≠ a (sbCol state.NONCE) + (1 - a sel.NOOP)) :
+    ¬ rowsHold a incNonceKimchiRows := by
+  intro hr
+  have hz := kimchi_rows_force_heads (R := ℤ) a hr nonceTickHead (by simp [incNonceHeads])
+  rw [headEvalR_int] at hz
+  simp only [evalH_nonceTickHead] at hz
+  exact hwrong (by omega)
+
+/-- The deployed forged row (`badIncNonceRow`, post-`bal_lo` minted to 999) is UNSAT under the
+Kimchi emission — the same instance `badIncNonceRow_rejected` refutes on the BabyBear side. -/
+theorem badIncNonceRow_kimchi_unsat : ¬ rowsHold badIncNonceRow.loc incNonceKimchiRows := by
+  apply tamper_moved_balance_refused
+  simp only [badIncNonceRow, goodIncNonceRow, sbCol, saCol, SEL_INCREMENT_NONCE,
+    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+    state.BALANCE_LO, state.NONCE]
+  norm_num
+
+/-- The deployed frozen-nonce row is UNSAT under the Kimchi emission. -/
+theorem staleNonceIncNonceRow_kimchi_unsat :
+    ¬ rowsHold staleNonceIncNonceRow.loc incNonceKimchiRows := by
+  apply tamper_frozen_nonce_refused
+  simp only [staleNonceIncNonceRow, goodIncNonceRow, sel.NOOP, sbCol, saCol, SEL_INCREMENT_NONCE,
+    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+    state.BALANCE_LO, state.NONCE]
+  norm_num
+
+/-- **The Kimchi envelope is STRICTLY weaker.** A row whose pre-nonce sits at `p − 1` satisfies
+`KimchiRowCanon` and NOT `IncNonceRowCanon`: the BabyBear reading needs the tick to stay in-field,
+the Pallas reading does not. -/
+def highNonceRow : VmRowEnv where
+  loc := fun v => if v = sbCol state.NONCE then 2013265920 else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
+
+theorem kimchi_envelope_strictly_weaker :
+    KimchiRowCanon highNonceRow ∧ ¬ IncNonceRowCanon highNonceRow := by
+  constructor
+  · refine ⟨?_, Or.inl ?_⟩
+    · intro off hoff
+      have hall : ∀ v, 0 ≤ highNonceRow.loc v ∧ highNonceRow.loc v < 2013265921 := by
+        intro v; simp only [highNonceRow]; split_ifs <;> norm_num
+      exact ⟨hall _, hall _⟩
+    · show highNonceRow.loc 0 = 0
+      simp only [highNonceRow, sbCol, STATE_BEFORE_BASE, NUM_EFFECTS, state.NONCE]
+      norm_num
+  · rintro ⟨-, -, hovf⟩
+    revert hovf
+    show ¬ (highNonceRow.loc (sbCol state.NONCE) + 1 < 2013265921)
+    simp only [highNonceRow]
+    norm_num
+
+/-! ## §8 — THE EMITTED ARTIFACT.
+
+The o1js consumer must not re-author anything, so it reads THIS: the sub-gate list, verbatim, with
+the coefficients the lowering produced. `Gates.generic` in o1js takes exactly
+`c_l·l + c_r·r + c_o·o + c_m·l·r + c_c = 0`, which is `Gen1.body`, so the TypeScript side is a
+transcription loop over this array and contains no dregg semantics at all. -/
+
+private def i2s (z : ℤ) : String := toString z
+
+/-- One sub-gate as JSON. -/
+def genJson (g : Gen1) : String :=
+  "{\"l\":" ++ toString g.l ++ ",\"r\":" ++ toString g.r ++ ",\"o\":" ++ toString g.o
+    ++ ",\"cl\":" ++ i2s g.cl ++ ",\"cr\":" ++ i2s g.cr ++ ",\"co\":" ++ i2s g.co
+    ++ ",\"cm\":" ++ i2s g.cm ++ ",\"cc\":" ++ i2s g.cc ++ "}"
+
+private def joinWith (sep : String) : List String → String
+  | [] => ""
+  | [x] => x
+  | x :: xs => x ++ sep ++ joinWith sep xs
+
+/-- A named column of the EffectVM row the emitted program reads. -/
+def namedCols : List (String × Nat) :=
+  [ ("selNoop", sel.NOOP)
+  , ("selIncrementNonce", SEL_INCREMENT_NONCE)
+  , ("sbBalanceLo", sbCol state.BALANCE_LO), ("saBalanceLo", saCol state.BALANCE_LO)
+  , ("sbBalanceHi", sbCol state.BALANCE_HI), ("saBalanceHi", saCol state.BALANCE_HI)
+  , ("sbNonce", sbCol state.NONCE), ("saNonce", saCol state.NONCE)
+  , ("sbCapRoot", sbCol state.CAP_ROOT), ("saCapRoot", saCol state.CAP_ROOT)
+  , ("sbReserved", sbCol state.RESERVED), ("saReserved", saCol state.RESERVED)
+  , ("sbFieldBase", sbCol state.FIELD_BASE), ("saFieldBase", saCol state.FIELD_BASE) ]
+
+/-- **THE ARTIFACT.** Everything the o1js side needs, and nothing it could reinterpret. -/
+def emitJson : String :=
+  "{\"air\":\"" ++ incNonceVmAirName ++ "-kimchi-b\""
+    ++ ",\"source\":\"Dregg2.Circuit.Emit.KimchiEffectIncNonce.incNonceHeads\""
+    ++ ",\"rowWidth\":" ++ toString EFFECT_VM_WIDTH
+    ++ ",\"firstFreshVar\":" ++ toString NV0
+    ++ ",\"subGates\":" ++ toString incNonceGens.length
+    ++ ",\"kimchiRows\":" ++ toString incNonceKimchiRows.length
+    ++ ",\"cols\":{"
+    ++ joinWith "," (namedCols.map (fun p => "\"" ++ p.1 ++ "\":" ++ toString p.2))
+    ++ "},\"gens\":["
+    ++ joinWith "," (incNonceGens.map genJson)
+    ++ "]}"
+
+/-! ## §9 — tripwires. -/
+
+#guard incNonceHeads.length == 13
+#guard incNonceGens.length == 53
+#guard incNonceKimchiRows.length == 27
+#guard incNonceGateBodies.length == 13
+#guard NV0 == 188
+
+#assert_axioms heads_denote_deployed_gates
+#assert_axioms incNonceRowGates_eq
+#assert_axioms heads_zero_iff_intent
+#assert_axioms kimchi_rows_force_heads
+#assert_axioms kimchi_forces_cellSpec
+#assert_axioms babybear_forces_cellSpec
+#assert_axioms two_emissions_one_def
+#assert_axioms kimchi_pallas_forces_intent
+#assert_axioms kimchi_pallas_forces_cellSpec
+#assert_axioms incNonceKimchiRows_satisfiable
+#assert_axioms tamper_moved_balance_refused
+#assert_axioms tamper_frozen_nonce_refused
+#assert_axioms badIncNonceRow_kimchi_unsat
+#assert_axioms staleNonceIncNonceRow_kimchi_unsat
+#assert_axioms kimchi_envelope_strictly_weaker
+#assert_axioms incNonceKimchiRows_length
+#assert_axioms incNonceRows_all_modelled
+
+end Dregg2.Circuit.Emit.KimchiEffectIncNonce
