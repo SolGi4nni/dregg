@@ -35,7 +35,7 @@ import { PICKLES } from '../src/CostModel.js';
 //   npm run pasta-chain
 //
 // ⚑ WHY A CHAIN AT ALL. One `DreggProofVerify` program verifies a whole dregg
-// proof in one Kimchi step, and at the root's geometry it does not fit: 2.906 x
+// proof in one Kimchi step, and at the root's geometry it does not fit: 3.294 x
 // 10^6 measured rows against 54,300 usable, so the verifier has to SPLIT. This
 // runs the split — the transcript step, then two steps per query cut at the
 // DEEP/fold seam — over a proof `DreggMinaConfig` minted, and shows the chain's
@@ -452,8 +452,11 @@ check(V.boundHash !== V.unboundHash, `and the two keys really differ (${V.boundH
 console.log('\n[5] WHAT THE CHAIN COSTS, at the root geometry');
 console.log(
   `    at the fixture: ${1 + 2 * NQ} steps, widest ${n(widest)} rows.\n` +
-    `    at the ROOT geometry the measured Mina-side total is 2.906e6 rows = ` +
-    `${Math.ceil(2.906e6 / PICKLES.usableRowsMpv1)} slices (scripts/pasta-root-rows.ts), against 2.46e7 / 453 deployed.`,
+    `    at the ROOT geometry the Mina-side total is MEASURED at 3.294e6 rows = ` +
+    `${Math.ceil(3.294e6 / PICKLES.usableRowsMpv1)} slices (npm run root-consume-rows, four PCS rounds ` +
+    `on dregg's committed root), against 2.923e7 / 539 deployed.\n` +
+    `    ⚠ the 2.906e6 / 54 this line used to quote was a PROJECTION — a measured unit price times a ` +
+    `structural count over a two-round shape — and it said "measured".`,
 );
 
 if (failures > 0) {
