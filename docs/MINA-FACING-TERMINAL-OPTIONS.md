@@ -43,6 +43,137 @@ so tripling the hash price moves the answer by under 2%.
 
 ---
 
+## 0.1 ⚑ MEASURED SINCE — the probe ran, the config exists, and the headline held
+
+**2026-07-30, later the same day.** §7's ordered plan was executed through step
+3. Everything below is a measurement or a landed artifact; the paragraphs above
+it are left as written so the projection and its check can be read against each
+other.
+
+### The probe (§4's named probe, §7 step 1) — `bridge/mina-zkapp/scripts/mina-poseidon-merkle-rows.ts`, `npm run mina-merkle`
+
+| | this document ASSUMED | MEASURED (o1js 2.15.0) | vs deployed BabyBear |
+|---|---:|---:|---:|
+| one native Poseidon permutation | 11 (cited `POS_ROWS_PER_HASH`) | **13** | 2,600.5 → **200×** |
+| one Merkle level (swap + hash) | ~15 (derived) | **15.5** | 2,677 → **173×** |
+| one depth-22 opening | — | **342** | 58,971 → **172×** |
+| one leaf-sponge BabyBear LANE | — | **3.69** | 329 → **89×** |
+
+The cited **11** is kimchi's Poseidon *gate chain*; o1js charges 2 more rows for
+the generic rows around it. The derived **15 rows/level** was right to 3% for
+the wrong reason — the conditional swap is ~2.5 rows, not ~4.
+
+The lane figure was never estimated here at all, and it is the second-biggest
+hash term: the Pasta MMCS packs **16 BabyBear lanes per permutation** (8 shifted
+radix-2^31 limbs × rate 2) against the deployed sponge's **8**. Half the
+permutations *and* each 200× cheaper. Most of the residual 3.69 is the per-lane
+range check, which is hash-independent and does not shrink.
+
+### The re-measurement (§7 step 4's deliverable)
+
+Each hash term scaled by its own measured unit ratio; the non-hash terms
+unchanged (they are BabyBear extension arithmetic, which no hash choice touches):
+
+| term | deployed | Pasta | ratio |
+|---|---:|---:|---:|
+| Merkle paths | 1.23 × 10⁷ | 7.12 × 10⁴ | 0.0058 |
+| leaf hash + lane range checks | 6.50 × 10⁶ | 7.29 × 10⁴ | 0.0112 |
+| challenger observe | 2.50 × 10⁶ | 1.25 × 10⁴ | 0.0050 |
+| DEEP quotient | 2.50 × 10⁶ | 2.50 × 10⁶ | unchanged |
+| AIR evaluation at ζ | 1.90 × 10⁵ | 1.90 × 10⁵ | unchanged |
+| **total** | **2.40 × 10⁷** | **2.85 × 10⁶** | |
+| **slices @ 54,300** | **442** | **53** | |
+
+**53 against §0's projected 54 — 2.6% under. The projection held.** The Merkle
+term is computed two independent ways (scaled, and directly from 238 levels ×
+19 queries × 15.5) and the two land 1.6% apart; the script fails if they ever
+diverge by more than 10%.
+
+§3's prediction that the *shape* flips is confirmed and is sharper than written:
+hashing was **89%** of the deployed budget and is **5.5%** of this one, and the
+DEEP quotient is now **88%**. A 3× error in every measured Pasta hash price
+moves the answer 53 → 58 slices. **The answer is no longer sensitive to the hash
+at all**, which retires the hash as a lever and promotes column narrowing
+(§7 step 6) to the next one.
+
+### The artifacts (§7 steps 2 and 3)
+
+- **`circuit-prove/p3-pasta`** (package `dregg-p3-pasta`) — Pasta `Fp` as a p3
+  `PrimeField` plus kimchi's Poseidon as a p3 `CryptographicPermutation`.
+  `p3-bn254` was the template. It delegates arithmetic to
+  `mina_curves::pasta::Fp` rather than re-rolling Montgomery, because the Mina
+  side of the bridge is *defined* over that type.
+- **`circuit-prove/src/dregg_mina_config.rs`** — `DreggMinaConfig`, the twin of
+  `dregg_outer_config.rs`. ⚑ Its FRI knobs are the ETH wrap's **element for
+  element**, deliberately: the ledger reading is then the already-modeled
+  `FriLedgerSound.ethWrapOuterConfig` and **the hash field is the only change**.
+  It is an eighth row in `tests/fri_params_soundness_budget.rs`.
+- **`circuit-prove/src/apex_shrink.rs`** — the outer role is now generic over
+  `OuterShrinkConfig`, a trait bound that *is* §2's soundness paragraph: a
+  config not sharing `Val = BabyBear` / `Challenge = EF4` cannot be named in
+  that position. A third destination chain is a config, not a change there.
+
+### One real terminal proof, and the dregg-side price MEASURED
+
+`circuit-prove/tests/mina_terminal_tooth.rs` folds the real 2-turn rotated
+chain, terminates the apex under `DreggMinaConfig`, verifies it, refuses a
+tampered opening, and shrinks the **same apex** under `DreggOuterConfig`
+alongside for the comparison:
+
+| | Mina-Poseidon terminal | Poseidon2-BN254 shrink | ratio |
+|---|---:|---:|---:|
+| prove | **280.0 s** | 179.7 s | **1.56×** |
+| verify | 243.9 ms | 234.6 ms | 1.04× |
+| proof bytes | 430,510 | 430,566 | 1.000× |
+| `degree_bits` | `[9, 9, 15, 14, 15]` | `[9, 9, 15, 14, 15]` | identical |
+
+§3's estimate — "~2× the S-boxes … expect ~150–200 s against the BN254 shrink's
+~95 s" — was right about the *ratio* and this box is slower than the one that
+measured 95 s. **1.56×, not 2×**: the prove is dominated by the blowup LDE, so
+kimchi's 55 full rounds are diluted rather than doubling anything.
+
+⚑ The two terminals share `degree_bits`, instance count and extension degree,
+and the proof sizes agree to four digits — the hash swap really does change only
+*what the commitment is computed in*. The test asserts that, and separately
+asserts the two committed roots **differ**, which is the thing types cannot say:
+that the swap reached the commitment instead of silently no-opping.
+
+### The soundness answer, and one correction
+
+The commitment-collision bar, by `RomQueryFloor.birthday_bound` at the real
+field orders (`circuit-prove/p3-pasta/tests/commitment_birthday_bar.rs`):
+
+| | digest space | bar |
+|---|---:|---:|
+| deployed BabyBear MMCS `[BabyBear; 8]` | 2^247.26 | Q ≈ **2^123.63** |
+| ETH terminal `[Bn254; 1]` | 2^253.60 | Q ≈ **2^126.80** |
+| **Mina terminal `[PastaFp; 1]`** | **2^254.00** | Q ≈ **2^127.00** |
+
+The swap **raises** the bar: +3.37 bits on the deployed MMCS, +0.20 on the ETH
+terminal. The sponge capacity moves the same way (2^247.26 → 2^254.00) and the
+Mina digest is exactly the capacity, not a truncation. What does **not** move:
+every FRI/DEEP bound is denominated in `EF4 = 2^123.63`, which the hash swap
+does not touch — so the challenge field is still the binding constraint.
+
+⚠ **§3 says "Pasta Fp is 254.6 bits". It is 254.000** — `p` is `2^254` plus a
+190-bit tail, so `log2(p)` is 254 to seventeen places; BN254 is 2^253.60 for the
+same reason read the other way. The ~127-bit conclusion §3 drew is right; the
+input was not.
+
+⚠ **What is not done, and it is the reason none of the row counts above are
+deployed numbers:** the o1js verifier still hashes Poseidon2-BabyBear
+(`Poseidon2Merkle.ts`). §7 step 5 is untouched. dregg can now MINT a Mina-native
+proof; nothing on Mina consumes one. **A config that nothing consumes is a lever
+built, not pulled.**
+
+⚠ And one residual the soundness section names rather than buries: the Pasta ROM
+idealization is named in-tree on the **Pickles** side
+(`PicklesTranscriptBinding`'s `SpongeKeyedROFaithful`). Nothing points it at the
+FRI/MMCS carrier sites the way `Poseidon2RomInstantiation` is pointed at the
+BabyBear ones. An unconnected leg, not a hole.
+
+---
+
 ## 1. Why the existing BN254 shrink is not the answer
 
 `circuit-prove/src/apex_shrink_gnark_export.rs` is the shrink that exists. **Pointing Mina at it
