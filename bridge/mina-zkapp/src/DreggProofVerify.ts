@@ -583,6 +583,22 @@ export function assertAirClosing(
   const { sh, nTraceCols } = plan;
   const { air } = sh;
   if (!sh.constraints) return;
+  // ⚑ THE TWO-ROUND REFUSAL THAT SURVIVED THE FOUR-ROUND MERGE, AND MUST.
+  // `verifyPlan` no longer refuses a third PCS round because the OPENING wiring
+  // stopped being inferred from the batch index. This function's wiring still
+  // is: `openedQuotient` is read as `numQuotientChunks` consecutive chunks, and
+  // at four rounds it carries the preprocessed and permutation rounds too. The
+  // root supplies no `constraints` — its AIR closing equality is `RootAirChain`'s
+  // seven slices over 1,093 constraints — so this is unreachable today, and it
+  // refuses rather than folding a permutation column as a quotient chunk if a
+  // caller ever does supply one.
+  if (plan.nBatches !== 2)
+    throw new Error(
+      `the AIR closing equality is wired for the two-round uni-stark shape and this proof has ` +
+        `${plan.nBatches} PCS rounds. \`openedQuotient\` would be read as ${air.numQuotientChunks} ` +
+        'quotient chunks while it actually carries the later rounds as well. A batch-STARK closes ' +
+        'its AIR per instance — see `RootAirChain` — and that is not this function.',
+    );
   const sels = selectorsAtPoint(ch.zeta, air.traceLogSize, 1n, air.subgroupGenInv);
   const traceLocal = openedTrace.slice(0, nTraceCols);
   const traceNext = air.hasTraceNext
