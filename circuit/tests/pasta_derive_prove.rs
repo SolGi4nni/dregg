@@ -27,11 +27,30 @@
 //!   Σ_p 2^(planes−1−p) · SB p = PR nb                          (a bit decomposition)
 //!   PR nb + Σ_{p<255} 2^p · CB p = q − 1                       (⚑ and it is the CANONICAL one)
 //!   (1 − DBL) · (BIT − Σ_p SE p · SB p) = 0                    (the row's plane reads its digit)
+//!   CH m = pi[29+m] on row 0,   nxt CH m = loc CH m            (the wire, on EVERY row)
+//!   PIDX = 0 on row 0,          nxt PIDX = loc PIDX + nxt DBL  (the plane, on EVERY row)
 //! ```
 //!
 //! so `s_GIDX = ∏_j c_j^{bit_j(GIDX)}` is a value the AIR COMPUTES from the wire, and the row's
 //! conditional-add bit is its digit. What the verifier now hands the circuit is the challenge
 //! vector; what the circuit produces is the scalar. That is the thing this file proves.
+//!
+//! ⚑ **CORRECTED 2026-07-30 — the last two lines were EMITTED and NOT FORCED when this comment
+//! first claimed they were.** `pidxStartGate`, `pidxThreadGate`, `chalPinGates` and
+//! `chalThreadGates` appeared in exactly one Lean theorem — `deriveGates_length`, a COUNTING lemma
+//! — while `derived_is_sNat` and `derived_row_bit_is_block_svec_bit` took their content as raw
+//! hypotheses (`hwire`, `hpidx`). This comment asserted the stronger reading, which is exactly how
+//! a wrong reading propagates. `PastaMsmScalarDerive` §4e now discharges both
+//! (`wire_forces_challenges`, `pidx_is_the_plane_index`, both row-count-independent, in
+//! `PastaMsmBound.tidxThread_forces` / `tidx_is_the_row_index`'s shape), §4f is the trace-level
+//! capstone that carries neither, and §5d exhibits the forgery the challenge thread kills: a row
+//! deriving consistently against a DIFFERENT block's challenges, which the row-local denotation
+//! ACCEPTS and the emitted thread REFUSES. The list above is now true as written.
+//!
+//! ⚠ What is still **not** forced, and what this file must not be read as testing: nothing in the
+//! descriptor says the public inputs at slots 29..163 ARE the block's IPA transcript challenges.
+//! The gates bind every trace row to whatever `pi` carries; that `pi` is the block's is the light
+//! client's own check. `PastaMsmScalarDerive` §6.2 is where that residual is named.
 //!
 //! ## ⚑⚑ WHAT THE CANONICITY LINE ADDS, and what it retires
 //!
