@@ -2426,13 +2426,24 @@ query, end to end, braided to the AIR half**, plus the transcript and the permut
 the other eighteen share.
 
 **The splice is refused, and every refusal is attributable.** Eight attempts in a process that
-compiled only the spliced slice, against a predecessor proof another process made — and the cut is
-chosen to be one that carries Merkle data, so the sibling bend can actually fire:
+compiled only the spliced slice, against a predecessor proof another process made — at a cut the leg
+**chooses and prints**:
 
 a boundary unrelated to its predecessor · **the carried AIR accumulator bent** · a digest of an AIR
 column chunk the slice never reads, bent · the same for a FRI lane chunk · a carried live lane bent ·
 a Merkle sibling bent · **AIR slice 5's proof under AIR slice 5's own key** · the right proof under a
 key it was not made under.
+
+⚑ **"A cut that carries Merkle data" is NOT enough, and that was the rule this table used to state.**
+What refuses a *bent* sibling is the assertion that CLOSES over it — the `cur == commitment` of that
+sibling's own round — and it can be several cuts later. Corrected 2026-07-30: a cut can attribute the
+bend iff it contains a closer for the **same** round or fold layer as its **first** aux-consuming
+segment, **positioned after** it. Censused over the plan: **489 of 839 cuts carry a sibling and only
+330 can attribute a bend in it.** The 48-slice run above lands on cut 47, which closes `cpRoot L15`,
+so its sibling row did fire — but an 11-slice run lands on cut 10, which carries **96** sibling lanes
+and closes nothing, where an accept is correct behaviour by the circuit. `[5]` is therefore
+three-valued (refused / accepted / **NOT ATTRIBUTABLE**, with the reason) and floors the attributed
+count, and `[2c]` publishes the census at tier 0. See `docs/MINA-GATE-TIERS.md`.
 
 And the controls, which are what make those refusals mean anything. The same slice with the
 boundary assertions removed **accepts** a public input unrelated to its predecessor and **accepts** a
