@@ -173,6 +173,21 @@ N divergences. And both were warned that inherited diagnoses in this repo have b
   restated**, which is why the two `ApexPremiseVacuity` rows legitimately hold baselines and this
   did not.
 
+## ⚑ LIVE SUITE — first real workspace numbers (2026-07-29 evening, `--no-fail-fast`)
+The full-workspace run is finally EXECUTING rather than dying at link (disk + two test-target build
+breaks fixed). At 1,875 of 18,336 reported: **20 failures, and 15 of them are in ONE crate nobody had
+looked at — `dregg-app-framework`** (escrow / coordination / settlement). The other 5 are a
+`deos-js*` / `deos-view` family.
+
+`fund_escrows_the_payment_conserved` dies at `service_promise.rs:844` on
+`exchange.fund(..).expect("fund must settle")` — **`fund` refuses.** Dispatched to hbox (local cargo
+lock is held by the suite) with the four candidate causes ranked but **explicitly not asserted**:
+gate-not-registered, the `b1a370194` teleport closure, `47f4d5b7a`'s `AssetClassCollision`, or a
+SIXTH straggler of the `977e73b19` anchor switch — which has now had five found in separate crates.
+
+⚠ Briefed hard against inherited diagnoses: **three have been wrong in two days, one of them mine.**
+Run each family, read ITS OWN output.
+
 ## Next 3 moves
 1. **Lean catalog drift** dispatched — `EffectKind` has no `.mint`, colors `.burn` opposite to the
    executor, and cites a Rust function deleted today. ⚠ Briefed NOT to assume the executor is right.
