@@ -15,9 +15,11 @@ friLdtExtract_makes_verifyBatch_reject_everything` proves that premise forces
 `CircuitSoundness.verifyBatch` to reject EVERY input, so all ten statements below were vacuously
 true. They now take `ApexOodLaneRepair.FriLdtExtractCons` (`oodPoint = ood :: oodRest`, the shape
 `FriVerifier.batchTablesCheck` actually matches at `FriVerifier.lean:805`) and route through
-`algoStarkSound_of_memoryLegs_cons`. Nothing is lost: `friLdtExtract_imp_cons` sends the old
-premise into the new one, so every statement here is now STRICTLY STRONGER than the one it
-replaced. Nothing is silently re-emptied: §7 instantiates the `_iff_noOodShape` receipt at each
+`algoStarkSound_of_memoryLegs_cons`. ⚑ 2026-07-30: the line that stood here — "nothing is lost,
+`friLdtExtract_imp_cons` sends the old premise into the new one" — is FALSE now and is corrected
+rather than left. That implication is DELETED: `FriLdtExtractCons` gained the per-run opening
+residual `¬ OpeningColl` and the landed bundle never carried it. Nothing is lost anyway, because
+the old premise is one this tree PROVES makes `verifyBatch` reject every input. Nothing is silently re-emptied: §7 instantiates the `_iff_noOodShape` receipt at each
 of the eight deployed descriptors — the corrected premise is EQUIVALENT to itself with the OOD
 conjunct deleted, so the repair contributes exactly zero strength and cannot be the reason any
 premise is empty. What it does NOT establish is satisfiability of the remaining conjuncts (the
@@ -30,10 +32,14 @@ bundle is exhibited anywhere.
 
 Per effect, the residual `Prop` hypotheses of `algoStarkSound_<effect>` are EXACTLY
 
-  1. `Poseidon2SpongeCR sponge` + `Poseidon2SpongeCR hash` — the ONE shared commitment-binding
-     hash floor, instantiated at the FRI-commitment sponge and at the constraint-semantics hash
-     (in deployment both are the same Poseidon2 sponge; stated separately for generality, no new
-     crypto is assumed);
+  1. `Poseidon2SpongeCR hash` — the constraint-semantics hash floor, still carried by the map-op
+     arm (`mapOpsArm_of_modeler` APPLIES it, so it is an ENDPOINT, not a threader).
+     ⛑ 2026-07-30: the FRI-commitment instance `Poseidon2SpongeCR sponge` is GONE from every
+     statement in this file — `ApexOodLaneRepair.FriLdtExtractCons` now carries the one per-run
+     Merkle-opening residual that binder used to buy. The `hash` instance is NOT ported and these
+     theorems REMAIN floor carriers on its account; that is the honest state, named rather than
+     rounded off, and it is the control for the sponge-side port (if these cleared too, the gate
+     would have stopped measuring rather than the tree improved);
   2. `FriLdtExtractCons … <descriptor>` — the ∀-d FRI-LDT-@-deployed extraction bundle at the
      CORRECTED cons-shaped OOD point (`ApexOodLaneRepair`; see the migration note above);
   3. `BusModelFamily … <descriptor>` — the per-used-table LogUp bus models;
@@ -260,12 +266,12 @@ MIGRATED (2026-07-25) off `AlgoStarkSoundGeneral.algoStarkSound_of_memoryLegs`/`
 whose OOD conjunct `oodPoint = [ood]` is REFUTED on accepting runs
 (`ApexOodLaneRepair.friLdtExtract_makes_verifyBatch_reject_everything`); the FRI premise is now
 `FriLdtExtractCons` at the `ood :: oodRest` shape `FriVerifier.batchTablesCheck` matches. The
-premise is WEAKER (`ApexOodLaneRepair.friLdtExtract_imp_cons`), so this statement is STRONGER than
-the one it replaces, and its OOD conjunct is implied by its own antecedent
+premise is the corrected bundle (the transport `friLdtExtract_imp_cons` is DELETED as of 2026-07-30
+along with the residual it could not supply), and its OOD conjunct is implied by its own antecedent
 (`fanout_correctedPremise_adds_no_strength` below). -/
 theorem algoStarkSound_of_mapShape {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
@@ -281,7 +287,7 @@ theorem algoStarkSound_of_mapShape {F : Type*} [Field F] [DecidableEq F]
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryLegs_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryLegs_cons d sponge hash fp embed perm RATE toNat params vk core A
     initState logN view tr hsites hranges hfri hbusF
     (memoryLegs_of_mapShape hash hCRh perm RATE toNat params vk core A initState logN view tr d
       hshape hrec hasm)
@@ -386,7 +392,7 @@ variable (tr : BatchPublicInputs → BatchProof → VmTrace)
 /-- **NoteSpend** — STARK-soundness at the deployed `noteSpendV3` (nullifier freshness `.absent`
 + set-insert `.insert` on limb 26). Residual = the five named bundles of the header. -/
 theorem algoStarkSound_noteSpend
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       noteSpendV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -397,13 +403,13 @@ theorem algoStarkSound_noteSpend
       noteSpendV3) :
     AlgoStarkSound hash (fun _ => noteSpendV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape noteSpendV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape noteSpendV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr noteSpendV3_shape rfl rfl hfri hbusF hrec hasm
 
 /-- **NoteCreate** — STARK-soundness at the deployed `noteCreateV3` (commitments `.insert`,
 limb 27; append-only, no freshness tooth). -/
 theorem algoStarkSound_noteCreate
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       noteCreateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -414,13 +420,13 @@ theorem algoStarkSound_noteCreate
       noteCreateV3) :
     AlgoStarkSound hash (fun _ => noteCreateV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape noteCreateV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape noteCreateV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr noteCreateV3_shape rfl rfl hfri hbusF hrec hasm
 
 /-- **CreateCell** — STARK-soundness at the deployed `createCellV3` (accounts freshness +
 insert, limb 0). -/
 theorem algoStarkSound_createCell
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       createCellV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -431,13 +437,13 @@ theorem algoStarkSound_createCell
       createCellV3) :
     AlgoStarkSound hash (fun _ => createCellV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape createCellV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape createCellV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr createCellV3_shape rfl rfl hfri hbusF hrec hasm
 
 /-- **CreateCellFromFactory** — STARK-soundness at the deployed `factoryV3` (accounts pair keyed
 on the derived child VK). -/
 theorem algoStarkSound_createCellFromFactory
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       factoryV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -448,13 +454,13 @@ theorem algoStarkSound_createCellFromFactory
       factoryV3) :
     AlgoStarkSound hash (fun _ => factoryV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape factoryV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape factoryV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr factoryV3_shape rfl rfl hfri hbusF hrec hasm
 
 /-- **Spawn** — STARK-soundness at the deployed `spawnV3` (accounts pair, spawn selector; the
 cap-handoff rides `spawnWriteV3`'s constraint wrap, not a map op — see below). -/
 theorem algoStarkSound_spawn
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       spawnV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -465,14 +471,14 @@ theorem algoStarkSound_spawn
       spawnV3) :
     AlgoStarkSound hash (fun _ => spawnV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape spawnV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape spawnV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr spawnV3_shape rfl rfl hfri hbusF hrec hasm
 
 /-- **Spawn (cap-write deployment variant)** — STARK-soundness at `spawnWriteV3` (the cap-write
 rotation rebase carrying the SAME accounts map-op pair; the cap-tree insert is an arith/lookup
 constraint wrap, so the memory legs are identical in shape). -/
 theorem algoStarkSound_spawnWrite
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       spawnWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -483,13 +489,13 @@ theorem algoStarkSound_spawnWrite
       spawnWriteV3) :
     AlgoStarkSound hash (fun _ => spawnWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape spawnWriteV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape spawnWriteV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr spawnWriteV3_shape rfl rfl hfri hbusF hrec hasm
 
 /-- **Refusal** — STARK-soundness at the deployed `refusalFieldsWriteV3` (audit-slot `.write` on
 limb 36 at the differential-pinned constant key). -/
 theorem algoStarkSound_refusal
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       refusalFieldsWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -500,14 +506,14 @@ theorem algoStarkSound_refusal
       refusalFieldsWriteV3) :
     AlgoStarkSound hash (fun _ => refusalFieldsWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape refusalFieldsWriteV3 sponge hCR hash hCRh fp embed perm RATE toNat
+  algoStarkSound_of_mapShape refusalFieldsWriteV3 sponge hash hCRh fp embed perm RATE toNat
     params vk core A initState logN view tr refusalFieldsWriteV3_shape rfl rfl hfri hbusF
     hrec hasm
 
 /-- **HeapWrite** — STARK-soundness at the deployed `heapWriteV3` (the always-firing sorted-heap
 splice `.write` on the rotated heap-root limbs). -/
 theorem algoStarkSound_heapWrite
-    (hCR : Poseidon2SpongeCR sponge) (hCRh : Poseidon2SpongeCR hash)
+    (hCRh : Poseidon2SpongeCR hash)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       heapWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -518,7 +524,7 @@ theorem algoStarkSound_heapWrite
       heapWriteV3) :
     AlgoStarkSound hash (fun _ => heapWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape heapWriteV3 sponge hCR hash hCRh fp embed perm RATE toNat params
+  algoStarkSound_of_mapShape heapWriteV3 sponge hash hCRh fp embed perm RATE toNat params
     vk core A initState logN view tr heapWriteV3_shape rfl rfl hfri hbusF hrec hasm
 
 end Instances
@@ -580,7 +586,7 @@ still have is inherited ENTIRELY from the FRI-LDT / Merkle / Fiat–Shamir conju
 floor) and NONE of it from the OOD repair. -/
 theorem algoStarkSound_of_mapShape_noOodShape {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
@@ -597,7 +603,7 @@ theorem algoStarkSound_of_mapShape_noOodShape {F : Type*} [Field F] [DecidableEq
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_mapShape d sponge hCR hash hCRh fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_mapShape d sponge hash hCRh fp embed perm RATE toNat params vk core A
     initState logN view tr hshape hsites hranges
     ((friLdtExtractCons_iff_noOodShape sponge perm RATE toNat params vk core A initState logN
       view tr d).mpr hfri) hbusF hrec hasm

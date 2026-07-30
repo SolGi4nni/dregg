@@ -9,9 +9,12 @@ on `param[SLOT]`), so no `Nodup` hypothesis is available anywhere on the bus's l
 
 Per effect, the residual `Prop` hypotheses of `algoStarkSound_setFieldDyn` are EXACTLY
 
-  1. `Poseidon2SpongeCR sponge` — the ONE shared commitment-binding hash floor (NOTE: unlike the
-     7 mapOp effects, SetFieldDyn needs NO second CR instance — its memory argument is Blum's
-     multiset balance, zero hashing);
+  1. ⛑ **NOTHING.** `Poseidon2SpongeCR sponge` stood here — the ONE shared commitment-binding hash
+     floor (unlike the 7 mapOp effects, SetFieldDyn needs no second CR instance: its memory
+     argument is Blum's multiset balance, zero hashing) — and it is GONE as of 2026-07-30. It was
+     never used in this file; it was threaded into the general assembler, which spent it on ONE
+     per-instance Merkle-opening residual that `ApexOodLaneRepair.FriLdtExtractCons` now carries.
+     Every statement below is therefore off the refuted floor entirely;
   2. `FriLdtExtractCons … <descriptor>` — the ∀-d FRI-LDT-@-deployed extraction bundle at the
      CORRECTED OOD shape (`ApexOodLaneRepair`; see ★ THE OOD CUTOVER below and §9 — this slot used
      to be the singleton-OOD `AlgoStarkSoundGeneral.FriLdtExtract`, which is PROVED empty);
@@ -48,8 +51,9 @@ shape `FriVerifier.batchTablesCheck` actually matches) through
 it is consumed only inside the general assembler's `hood` modeler, which
 `ApexOodLaneRepair.hood_of_oodColumnLayout_cons` re-derives at the cons shape — so the migration was
 mechanical. NO deprecated twin is kept (a twin would be a silent duplicate of a statement proved
-empty); a consumer holding the old bundle composes the real implication
-`ApexOodLaneRepair.friLdtExtract_imp_cons`. §9 discharges the non-emptiness obligation and states,
+empty). ⚑ 2026-07-30: the transport `friLdtExtract_imp_cons` a consumer holding the old bundle was
+told to compose is DELETED — the corrected bundle now carries the per-run opening residual and the
+landed one never did. §9 discharges the non-emptiness obligation and states,
 as a THEOREM, the one residual the corrected bundle still inherits (`topen ∈ tableOpenings`).
 
 ## ★ THE MULTISET-EQUALITY SZ EXTENSION (the real content of this file)
@@ -639,11 +643,12 @@ theorem memoryLegs_of_memShape {F : Type*} [Field F] [DecidableEq F]
 `AlgoStarkSoundGeneral.FriLdtExtract` this used to take is PROVED to force
 `CircuitSoundness.verifyBatch` to reject EVERY triple at the deployed arguments
 (`deleted_setFieldDyn_premise_was_empty`), so both instances below were vacuously true. A consumer
-still holding the old bundle composes `ApexOodLaneRepair.friLdtExtract_imp_cons`; no twin is kept. -/
+still holding the old bundle has nothing to compose: `friLdtExtract_imp_cons` is DELETED
+(2026-07-30). No twin is kept. -/
 theorem algoStarkSound_of_memShape {F : Type*} [Field F] [DecidableEq F]
     (p : ℕ) [CharP F p]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F) (fpMem : MemoryChecking.Entry ℤ ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
@@ -660,7 +665,7 @@ theorem algoStarkSound_of_memShape {F : Type*} [Field F] [DecidableEq F]
     (hasm : MemTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryLegs_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryLegs_cons d sponge hash fp embed perm RATE toNat params vk core A
     initState logN view tr hsites hranges hfri hbusF
     (memoryLegs_of_memShape p fpMem hash perm RATE toNat params vk core A initState logN view
       tr d hshape hlegs hasm)
@@ -699,7 +704,6 @@ rotated `setFieldDynV3` (the Blum write→read transport pair on the dynamic add
 `param[SLOT]`). Residual = the named bundles of the header; `MemCheck` on the genuinely
 repeated-address 2-op log is DERIVED via the multiset-equality SZ extension, not carried. -/
 theorem algoStarkSound_setFieldDyn
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       setFieldDynV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -710,14 +714,13 @@ theorem algoStarkSound_setFieldDyn
       setFieldDynV3) :
     AlgoStarkSound hash (fun _ => setFieldDynV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memShape p setFieldDynV3 sponge hCR hash fp embed fpMem perm RATE toNat
+  algoStarkSound_of_memShape p setFieldDynV3 sponge hash fp embed fpMem perm RATE toNat
     params vk core A initState logN view tr setFieldDynV3_shape rfl rfl hfri hbusF hlegs hasm
 
 /-- **SetFieldDyn (LIVE fields-root-welded deployment variant)** — STARK-soundness at
 `setFieldDynForcedV3` (registry slot `setFieldDynVmDescriptor2R24`): the wave-3 in-circuit
 fields-root weld rides the graduated base; the memory legs are identical in shape. -/
 theorem algoStarkSound_setFieldDynForced
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
       setFieldDynForcedV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -728,7 +731,7 @@ theorem algoStarkSound_setFieldDynForced
       setFieldDynForcedV3) :
     AlgoStarkSound hash (fun _ => setFieldDynForcedV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memShape p setFieldDynForcedV3 sponge hCR hash fp embed fpMem perm RATE
+  algoStarkSound_of_memShape p setFieldDynForcedV3 sponge hash fp embed fpMem perm RATE
     toNat params vk core A initState logN view tr setFieldDynForcedV3_shape rfl rfl hfri hbusF
     hlegs hasm
 
@@ -913,7 +916,7 @@ neither the deleted singleton nor the installed cons shape is load-bearing anywh
 theorem algoStarkSound_of_memShape_noOodShape {F : Type*} [Field F] [DecidableEq F]
     (p : ℕ) [CharP F p]
     (d : EffectVmDescriptor2)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F) (fpMem : MemoryChecking.Entry ℤ ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
@@ -931,7 +934,7 @@ theorem algoStarkSound_of_memShape_noOodShape {F : Type*} [Field F] [DecidableEq
     (hasm : MemTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memShape p d sponge hCR hash fp embed fpMem perm RATE toNat params vk core A
+  algoStarkSound_of_memShape p d sponge hash fp embed fpMem perm RATE toNat params vk core A
     initState logN view tr hshape hsites hranges
     ((setFieldFanout_premise_adds_no_strength sponge perm RATE toNat params vk core A initState
       logN view tr d).mpr hfri)

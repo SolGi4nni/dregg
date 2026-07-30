@@ -9,7 +9,17 @@ invocation of the CORRECTED general assembler
 Per mem-free effect `E` with deployed descriptor `dE`, `algoStarkSound_<E>` proves the full
 `AlgoStarkSound hash (fun _ => dE) …` from EXACTLY the named floor
 
-  { `Poseidon2SpongeCR sponge`, `FriLdtExtractCons … dE`, `BusModelFamily … dE` } + `MemMapFree`
+  { `FriLdtExtractCons … dE`, `BusModelFamily … dE` } + `MemMapFree`
+
+⛑ **CUT OVER 2026-07-30 — `Poseidon2SpongeCR sponge` IS NO LONGER IN THAT SET.** It was in it, on
+every one of these statements, and `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES it
+false at deployed BabyBear parameters, so the whole fan-out was vacuous at deployment for that
+reason as well as the OOD one below. The floor was never used HERE — every instance merely threaded
+it into the general assembler, which spent it on ONE per-instance Merkle-opening residual.
+`ApexOodLaneRepair.FriLdtExtractCons` now carries that residual (`¬ OpeningColl`, at the witnesses
+its own extraction names), so the binder is gone from every statement in this file and from the
+assembler. Conclusions are unchanged; the residual moved from an unsatisfiable global hypothesis
+into the bundle that already had the witnesses it is about.
 
 (the same residual as the lever's `algoStarkSound_transferV3_ofBusModels_cons` — the two
 aux-table-emptiness assembly facts `FriLdtExtractV3` carries verbatim ride as `MemMapFree`).
@@ -31,10 +41,13 @@ The 26 singleton-premised statements are DELETED — not deprecated in place, no
 name now carries the corrected premise `ApexOodLaneRepair.FriLdtExtractCons … dE`
 (`oodPoint = ood :: oodRest`, the shape `FriVerifier.batchTablesCheck` actually matches at
 `FriVerifier.lean:803-808`), assembled through `ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons`.
-Nothing is lost for a consumer holding the old bundle: `ApexOodLaneRepair.friLdtExtract_imp_cons` is
-a real ∀-d implication `FriLdtExtract → FriLdtExtractCons`, so every old application still elaborates
-after one `friLdtExtract_imp_cons` — which is why no deprecated twin is kept here (a twin would be a
-silent duplicate of a statement we proved empty).
+⚑ 2026-07-30: the line that stood here — "nothing is lost for a consumer holding the old bundle,
+`friLdtExtract_imp_cons` is a real ∀-d implication" — is now FALSE and is corrected rather than
+left. That implication is DELETED, because `FriLdtExtractCons` now carries the per-run opening
+residual and the landed bundle never did. What a consumer holding the old bundle actually holds is
+a premise proved to make `verifyBatch` reject every input at the deployed arguments, so there was
+never anything on the far side of it to transport. No deprecated twin is kept here either way (a
+twin would be a silent duplicate of a statement we proved empty).
 
 The migration was MECHANICAL because the singleton was load-bearing NOWHERE in this file: each
 `algoStarkSound_<E>` is one `algoStarkSound_memFree_apply` and the bundle's `ood` is never destructed
@@ -337,17 +350,19 @@ theorem bridgeMint_sideConditions : MemFreeSideConditions mintV3BridgeHash :=
 
 /-- **`algoStarkSound_memFree_apply`** — the general assembler consumed through the per-effect
 side-condition package: for any `d` with `MemFreeSideConditions d`, the full `AlgoStarkSound` at
-the registry slice `fun _ => d` from EXACTLY {`Poseidon2SpongeCR`, `FriLdtExtractCons … d`,
-`BusModelFamily … d`} + `MemMapFree`. Nothing per-effect remains but the package.
+the registry slice `fun _ => d` from EXACTLY {`FriLdtExtractCons … d`, `BusModelFamily … d`}
++ `MemMapFree`. Nothing per-effect remains but the package. ⛑ 2026-07-30: `Poseidon2SpongeCR` left
+that set — the assembler reads its one Merkle-opening residual off the bundle now.
 
 ★ CUTOVER: the FRI slot is the CORRECTED cons-shaped bundle (`oodPoint = ood :: oodRest`) and the
 assembler is `ApexOodLaneRepair.algoStarkSound_of_memoryFree_cons`. The singleton-shaped
 `AlgoStarkSoundGeneral.FriLdtExtract` this used to take is PROVED to empty `verifyBatch` at the
-deployed arguments (`deleted_mint_premise_was_empty`, §6). A consumer still holding the old bundle
-composes `ApexOodLaneRepair.friLdtExtract_imp_cons` — no twin is kept. -/
+deployed arguments (`deleted_mint_premise_was_empty`, §6). No twin is kept; and the transport out of
+that empty bundle (`friLdtExtract_imp_cons`) is itself DELETED as of 2026-07-30, because the
+corrected bundle now carries content the landed one never had. -/
 theorem algoStarkSound_memFree_apply {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2) (hside : MemFreeSideConditions d)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -358,13 +373,14 @@ theorem algoStarkSound_memFree_apply {F : Type*} [Field F] [DecidableEq F]
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_of_memoryFree_cons d sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_of_memoryFree_cons d sponge hash fp embed perm RATE toNat params vk core A
     initState logN view tr hside.2 hside.1.1 hside.1.2 hfri hbusF hmemfree
 
 /-! ## §4 — ★ THE FAN-OUT: `algoStarkSound_<effect>` per mem-free effect.
 
 Each is ONE `algoStarkSound_memFree_apply` at its descriptor; the residual of EVERY instance is
-EXACTLY {`Poseidon2SpongeCR sponge`, `FriLdtExtractCons … d`, `BusModelFamily … d`, `MemMapFree`}
+EXACTLY {`FriLdtExtractCons … d`, `BusModelFamily … d`, `MemMapFree`} — ⛑ `Poseidon2SpongeCR sponge`
+WAS in that set on every one of them and is GONE (2026-07-30)
 — the named floor, identical to `ApexOodLaneRepair.algoStarkSound_transferV3_ofBusModels_cons`.
 NO instance carries the singleton-OOD `AlgoStarkSoundGeneral.FriLdtExtract` any more (§6). -/
 
@@ -378,18 +394,16 @@ variable {F : Type*} [Field F] [DecidableEq F]
   (tr : BatchPublicInputs → BatchProof → VmTrace)
 
 theorem algoStarkSound_mint
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr mintV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         mintV3)
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => mintV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply mintV3 mint_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply mintV3 mint_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_bridgeMint
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         mintV3BridgeHash)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -397,11 +411,10 @@ theorem algoStarkSound_bridgeMint
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => mintV3BridgeHash) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply mintV3BridgeHash bridgeMint_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply mintV3BridgeHash bridgeMint_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_supplyMint
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         supplyMintV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -409,22 +422,20 @@ theorem algoStarkSound_supplyMint
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => supplyMintV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply supplyMintV3 supplyMint_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply supplyMintV3 supplyMint_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_burn
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr burnV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
         burnV3)
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => burnV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply burnV3 burn_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply burnV3 burn_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_incrementNonce
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         incrementNonceV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -432,11 +443,10 @@ theorem algoStarkSound_incrementNonce
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => incrementNonceV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply incrementNonceV3 incrementNonce_sideConditions sponge hCR hash
+  algoStarkSound_memFree_apply incrementNonceV3 incrementNonce_sideConditions sponge hash
     fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_emitEvent
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         emitEventV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -444,11 +454,10 @@ theorem algoStarkSound_emitEvent
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => emitEventV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply emitEventV3 emitEvent_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply emitEventV3 emitEvent_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_exercise
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         exerciseV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -456,11 +465,10 @@ theorem algoStarkSound_exercise
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => exerciseV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply exerciseV3 exercise_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply exerciseV3 exercise_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_pipelinedSend
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         pipelinedSendV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -468,11 +476,10 @@ theorem algoStarkSound_pipelinedSend
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => pipelinedSendV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply pipelinedSendV3 pipelinedSend_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply pipelinedSendV3 pipelinedSend_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_delegate
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         delegateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -480,11 +487,10 @@ theorem algoStarkSound_delegate
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => delegateV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply delegateV3 delegate_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply delegateV3 delegate_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_delegateAtten
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         delegateAttenV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -492,11 +498,10 @@ theorem algoStarkSound_delegateAtten
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => delegateAttenV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply delegateAttenV3 delegateAtten_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply delegateAttenV3 delegateAtten_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_attenuate
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         attenuateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -504,11 +509,10 @@ theorem algoStarkSound_attenuate
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => attenuateV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply attenuateV3 attenuate_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply attenuateV3 attenuate_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_grantCap
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         grantCapWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -516,11 +520,10 @@ theorem algoStarkSound_grantCap
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => grantCapWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply grantCapWriteV3 grantCap_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply grantCapWriteV3 grantCap_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_introduce
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         introduceWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -528,11 +531,10 @@ theorem algoStarkSound_introduce
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => introduceWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply introduceWriteV3 introduce_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply introduceWriteV3 introduce_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_revokeCapability
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         revokeCapabilityV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -540,11 +542,10 @@ theorem algoStarkSound_revokeCapability
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => revokeCapabilityV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply revokeCapabilityV3 revokeCapability_sideConditions sponge hCR
+  algoStarkSound_memFree_apply revokeCapabilityV3 revokeCapability_sideConditions sponge
     hash fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_revokeDelegation
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         revokeDelegationWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -553,11 +554,10 @@ theorem algoStarkSound_revokeDelegation
     AlgoStarkSound hash (fun _ => revokeDelegationWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
   algoStarkSound_memFree_apply revokeDelegationWriteV3 revokeDelegation_sideConditions sponge
-    hCR hash fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF
+    hash fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF
     hmemfree
 
 theorem algoStarkSound_refreshDelegation
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         refreshDelegationWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -566,11 +566,10 @@ theorem algoStarkSound_refreshDelegation
     AlgoStarkSound hash (fun _ => refreshDelegationWriteV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
   algoStarkSound_memFree_apply refreshDelegationWriteV3 refreshDelegation_sideConditions sponge
-    hCR hash fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF
+    hash fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF
     hmemfree
 
 theorem algoStarkSound_makeSovereign
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         makeSovereignV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -578,11 +577,10 @@ theorem algoStarkSound_makeSovereign
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => makeSovereignV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply makeSovereignV3 makeSovereign_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply makeSovereignV3 makeSovereign_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_setPermissions
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         setPermsV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -590,11 +588,10 @@ theorem algoStarkSound_setPermissions
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => setPermsV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply setPermsV3 setPermissions_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply setPermsV3 setPermissions_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_setVK
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         setVKV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -602,11 +599,10 @@ theorem algoStarkSound_setVK
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => setVKV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply setVKV3 setVK_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply setVKV3 setVK_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_setProgram
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         setProgramV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -614,11 +610,10 @@ theorem algoStarkSound_setProgram
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => setProgramV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply setProgramV3 setProgram_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply setProgramV3 setProgram_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_cellSeal
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         cellSealV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -626,11 +621,10 @@ theorem algoStarkSound_cellSeal
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => cellSealV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply cellSealV3 cellSeal_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply cellSealV3 cellSeal_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_cellUnseal
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         cellUnsealV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -638,11 +632,10 @@ theorem algoStarkSound_cellUnseal
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => cellUnsealV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply cellUnsealV3 cellUnseal_sideConditions sponge hCR hash fp embed
+  algoStarkSound_memFree_apply cellUnsealV3 cellUnseal_sideConditions sponge hash fp embed
     perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_cellDestroy
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         cellDestroyV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -650,11 +643,10 @@ theorem algoStarkSound_cellDestroy
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => cellDestroyV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply cellDestroyV3 cellDestroy_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply cellDestroyV3 cellDestroy_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_receiptArchive
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         receiptArchiveV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -662,11 +654,10 @@ theorem algoStarkSound_receiptArchive
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => receiptArchiveV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply receiptArchiveV3 receiptArchive_sideConditions sponge hCR hash
+  algoStarkSound_memFree_apply receiptArchiveV3 receiptArchive_sideConditions sponge hash
     fp embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 theorem algoStarkSound_transferFee
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         transferFeeV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -674,12 +665,11 @@ theorem algoStarkSound_transferFee
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => transferFeeV3) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply transferFeeV3 transferFee_sideConditions sponge hCR hash fp
+  algoStarkSound_memFree_apply transferFeeV3 transferFee_sideConditions sponge hash fp
     embed perm RATE toNat params vk core A initState logN view tr hfri hbusF hmemfree
 
 /-- The eight STATIC per-slot setField members in one parametric instance (`slot : Fin 8`). -/
 theorem algoStarkSound_setFieldStatic (slot : Fin 8)
-    (hCR : Poseidon2SpongeCR sponge)
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr
         (setFieldStaticV3 slot))
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
@@ -688,7 +678,7 @@ theorem algoStarkSound_setFieldStatic (slot : Fin 8)
     AlgoStarkSound hash (fun _ => setFieldStaticV3 slot) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
   algoStarkSound_memFree_apply (setFieldStaticV3 slot) (setFieldStatic_sideConditions slot)
-    sponge hCR hash fp embed perm RATE toNat params vk core A initState logN view tr
+    sponge hash fp embed perm RATE toNat params vk core A initState logN view tr
     hfri hbusF hmemfree
 
 end FanOut
@@ -768,7 +758,7 @@ for another" — a premise cannot be emptied by a conjunct it does not contain. 
 premise is inhabited; that is the separate, still-open question the caveat below records. -/
 theorem algoStarkSound_memFree_apply_noOodShape {F : Type*} [Field F] [DecidableEq F]
     (d : EffectVmDescriptor2) (hside : MemFreeSideConditions d)
-    (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
+    (sponge : List ℤ → ℤ)
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -780,7 +770,7 @@ theorem algoStarkSound_memFree_apply_noOodShape {F : Type*} [Field F] [Decidable
     (hmemfree : MemMapFree perm RATE toNat params vk core A initState logN view tr) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_memFree_apply d hside sponge hCR hash fp embed perm RATE toNat params vk core A
+  algoStarkSound_memFree_apply d hside sponge hash fp embed perm RATE toNat params vk core A
     initState logN view tr
     ((memFreeFanout_premise_adds_no_strength sponge perm RATE toNat params vk core A initState
       logN view tr d).mpr hfri)
