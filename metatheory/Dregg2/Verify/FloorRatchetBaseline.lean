@@ -1491,6 +1491,33 @@ to be built on a hypothesis this tree PROVES FALSE at deployed BabyBear paramete
 that it is knowingly VACUOUS. Say why in the commit message. The next shrink-emit folds
 surviving entries into the chunks above and drops the ones that got ported. -/
 def manual : Array String := #[
+  -- ⚑⚑ RAISE OF 2026-07-31, +5 — THE rc FOLD. Direction (b), and deliberately so.
+  --
+  -- These five are the EXTENSION of five entries already in the chunks below, over four extra
+  -- felts, on the SAME single named floor:
+  --
+  --   `caveatCommitRc` is `caveatCommit` chained over the caveat region's 4-felt DFA
+  --   route-commitment carrier (`chunk31 [rc0,rc1,rc2,rc3] = [[rc0,rc1,rc2],[rc3]]`). Its binding
+  --   theorem is `chainFrom_inj` + `caveatCommit_binds` and nothing else, and BOTH of those are
+  --   already recorded here (`…EffectVmEmitRotationCaveat.caveatCommit_binds`,
+  --   `…EffectVmEmitRotationR.chainFrom_inj`). `rotV3_caveat_binds_manifest_and_rc` is the
+  --   descriptor-level restatement of the caveat leg of `rotV3_binds_published`, ALSO already
+  --   recorded, and `rotV3_moved_rc_moves_the_published_caveat_commit` is its contrapositive.
+  --
+  -- ⚠ SO THE HONEST STATEMENT OF THEIR STATUS: at deployed BabyBear parameters
+  -- `Poseidon2SpongeCR` is refuted, so like every other Merkle–Damgård binding in this file they
+  -- are vacuous AT DEPLOYMENT. What they add is not assurance under a floor this tree believes;
+  -- it is that the DFA route commitment is now inside the object that binding is ABOUT, where
+  -- before it sat outside every binding and the pins on it refused nothing at ANY parameters.
+  -- That improvement is unconditional and does not need the floor. Porting to the
+  -- `_or_collides` + total-extractor idiom is the right eventual move and belongs with a port of
+  -- `caveatCommit_binds` itself — porting the extension while its base keeps the floor would buy
+  -- nothing and split one chain across two idioms.
+  "Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat.caveatCommitRc_binds",
+  "Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat.caveatCommitRc_binds_manifest",
+  "Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat.caveatCommitRc_binds_rc",
+  "Dregg2.Circuit.Emit.EffectVmEmitRotationV3.rotV3_caveat_binds_manifest_and_rc",
+  "Dregg2.Circuit.Emit.EffectVmEmitRotationV3.rotV3_moved_rc_moves_the_published_caveat_commit",
   -- ⚑⚑ RAISE OF 2026-07-28 (second), +2 — THE TWO CANARIES OF `WholeImageFoldRealization`.
   --
   -- That module repoints the whole-image (no-extra-cells) cone off the arity-2 `mapRoot` and onto

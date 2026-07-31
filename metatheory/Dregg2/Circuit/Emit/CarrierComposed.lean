@@ -237,14 +237,14 @@ def makeSovereignV3DeployedWide : EffectVmDescriptor2 :=
   withSovereignKeyCommit (wideAppend makeSovereignV3Pinned MS_WIDE_BB (MS_WIDE_BB + B_SPAN))
     SOVEREIGN_KEY_COMMIT_COL
 
--- Geometry: narrow 62 PIs / width +32; wide 78 PIs / 1691+992+32 = 2715 wide, teeth ahead of anchors.
+-- Geometry: narrow 62 PIs / width +32; wide 78 PIs / 1707+992+32 = 2731 wide, teeth ahead of anchors.
 #guard makeSovereignV3.piCount == 54
 #guard makeSovereignV3Pinned.piCount == 62
 #guard makeSovereignV3Deployed.piCount == 62
 #guard makeSovereignV3Deployed.traceWidth == makeSovereignV3.traceWidth + 32
 #guard makeSovereignV3DeployedWide.piCount == 78
 #guard makeSovereignV3DeployedWide.traceWidth == makeSovereignV3.traceWidth + wideAppendixSpan + 32
-#guard makeSovereignV3.traceWidth == 1691
+#guard makeSovereignV3.traceWidth == 1707
 #guard MS_WIDE_BB == 188
 
 /-- **THE FULL PEEL — `Satisfied2 makeSovereignV3Deployed ⟹ Satisfied2 makeSovereignV3`** (gate →
@@ -482,37 +482,38 @@ theorem withMembershipTeethPinsAt_constraints (teethCol : Nat) (g : EffectVmDesc
       = g.constraints ++ (List.range 2).map (fun j =>
           VmConstraint2.base (.piBinding .first (teethCol + j) (g.piCount + j))) := rfl
 
-/-- The WIDE membership teeth columns: PAST the wide carriers (`1691 + 992 = 2683..2684` — the
-producer lays the host at 1691, `append_wide_carriers` the 992 carrier columns at 1691..2682, and
+/-- The WIDE membership teeth columns: PAST the wide carriers (`1707 + 992 = 2699..2700` — the
+producer lays the host at 1707, `append_wide_carriers` the 992 carrier columns at 1707..2698, and
 the teeth ride the END, exactly the `membership_binding_deployed_tooth.rs` twin geometry).
 Pinned by the `#guard` below to the DERIVED `transferV3.traceWidth + wideAppendixSpan` (the
-numeral form keeps the downstream `omega` disequalities decidable). -/
-def MEMBERSHIP_TEETH_COL_WIDE : Nat := 2683
+numeral form keeps the downstream `omega` disequalities decidable). ⚑ 2683 → 2699 at the rc-FOLD
+flag day (`C_SPAN` 43 → 45 plus the two new appendix sites' 14 graduated lane columns). -/
+def MEMBERSHIP_TEETH_COL_WIDE : Nat := 2699
 
 #guard MEMBERSHIP_TEETH_COL_WIDE == transferV3.traceWidth + wideAppendixSpan
 
 /-- **`transferV3MembershipWide`** — the WIDE deployed membership-teeth transfer member (the
 `WIDE_REGISTRY_STAGED_TSV` row under the live key `transferVmDescriptor2R24`): teeth PIs 50..51
-strictly AHEAD of the 16 wide anchors (52..67); the wide carriers at the HOST width 1691 (the
-producer's `append_wide_carriers` base — UNSHIFTED); the teeth COLUMNS past them (2683..2684);
+strictly AHEAD of the 16 wide anchors (52..67); the wide carriers at the HOST width 1707 (the
+producer's `append_wide_carriers` base — UNSHIFTED); the teeth COLUMNS past them (2699..2700);
 `traceWidth` bumped +2 to cover them. -/
 def transferV3MembershipWide : EffectVmDescriptor2 :=
   let w := wideAppend (withMembershipTeethPinsAt MEMBERSHIP_TEETH_COL_WIDE (withDfaRcPins transferV3))
     TR_WIDE_BB (TR_WIDE_BB + B_SPAN)
   { w with traceWidth := w.traceWidth + 2 }
 
--- Geometry: narrow 52 PIs / width 1693; wide 68 PIs / 2685 wide (carriers 1691.., teeth 2683..2684).
+-- Geometry: narrow 52 PIs / width 1709; wide 68 PIs / 2701 wide (carriers 1707.., teeth 2699..2700).
 #guard transferV3.piCount == 46
 #guard transferV3Membership.piCount == 52
 #guard transferV3Membership.traceWidth == transferV3.traceWidth + 2
-#guard transferV3.traceWidth == 1691
+#guard transferV3.traceWidth == 1707
 #guard transferV3MembershipWide.piCount == 68
 #guard transferV3MembershipWide.traceWidth == transferV3.traceWidth + wideAppendixSpan + 2
 
 /-- **THE DEPLOYED MEMBERSHIP EXPOSURE KEYSTONE (wide — the `WIDE_REGISTRY_STAGED_TSV` member the
 fold tooth proves).** On any `Satisfied2` witness of the wide member, each published teeth PI
 (50..51) is CONGRUENT (mod the BabyBear prime — the field-faithful pin denotation) to its teeth
-column (2683..2684) on the first row — the exposure the fold arm's admission gate
+column (2699..2700) on the first row — the exposure the fold arm's admission gate
 (`carrier_claim_pins_admitted`) requires: a genuine `PiBinding` at every claim
 slot. (The BINDING of the claimed tuple is the FOLD edge — `MembershipBackingAttack` §A/§A′
 stand as deployed-AIR facts; see the §5 module doc.) -/

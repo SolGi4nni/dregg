@@ -269,14 +269,18 @@ def REFUSE_STRIDE : Nat := 16
 blocks contributes `1 + (rotatedNumPreLimbs − 4)/3` chain-absorption sites, plus the 16
 caveat-region + v1-face sites. DERIVED from the ONE verified limb count, never carried. -/
 def N_ROT_SITES : Nat :=
-  2 * (1 + (Dregg2.Circuit.Emit.rotatedNumPreLimbs - 4) / 3) + 16
+  (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.rotV3Appendix EFFECT_VM_WIDTH).length + 4
 
 /-- GRAD_ROT_WIDTH — the GRADUATED rotated trace width (Rust twin `trace_rotated::GRAD_ROT_WIDTH`),
 an EXPRESSION over the named constants rather than a hand-carried literal: the un-graduated rotated
 width `EFFECT_VM_WIDTH + APPENDIX_SPAN` (Rust `ROT_WIDTH`) plus the `CHIP_OUT_LANES − 1 = 7` appended
 lane columns Phase B-GATE lays per chip site.
 ⚑ FLAG DAY (`rotatedNumPreLimbs` 178 → 184): `APPENDIX_SPAN` 521 → 537 and `N_ROT_SITES` 134 → 138,
-so `709 + 7·134 = 1647` becomes `725 + 7·138 = 1691`. -/
+so `709 + 7·134 = 1647` becomes `725 + 7·138 = 1691`.
+⚑ FLAG DAY (rc FOLD): `C_SPAN` 43 → 45 (`APPENDIX_SPAN` 537 → 539) and the caveat region gains the
+two rc-absorbing chip sites (`N_ROT_SITES` 138 → 140), so `1691` becomes `727 + 7·140 = 1707`.
+`N_ROT_SITES` is no longer hand arithmetic: it READS `rotV3Appendix`, plus the four sites a graduated
+v1 face contributes — the site count and the emitted geometry can no longer disagree. -/
 def GRAD_ROT_WIDTH : Nat :=
   (EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.APPENDIX_SPAN)
     + (CHIP_OUT_LANES - 1) * N_ROT_SITES
@@ -288,10 +292,10 @@ base (else they alias the after-block chain carriers). -/
 def CAVEAT_BASE : Nat :=
   EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.CAVEAT_REGION_OFF
 
--- The derived widths PINNED at the 184-limb geometry (was 134 / 1647 / 666).
-#guard N_ROT_SITES == 138
-#guard GRAD_ROT_WIDTH == 1691
-#guard CAVEAT_BASE == 682
+-- The derived widths PINNED at the 184-limb + rc-FOLD geometry (was 138 / 1691 / 682).
+#guard N_ROT_SITES == 140
+#guard GRAD_ROT_WIDTH == 1707
+#guard CAVEAT_BASE == 682     -- UNMOVED: the rc fold grows the region's TAIL, not its base
 
 /-- The deployed caveat count column. -/
 def ccDep : Nat := CAVEAT_BASE
@@ -300,10 +304,10 @@ def ebDep (k : Nat) : Nat := CAVEAT_BASE + 1 + 7 * k
 /-- The per-block disjoint decode-aux columns at a PER-MEMBER aux base (Rust twins
 `bit_col`/`inv_col`/`or_col`/`floor_col`, recovered by `refuse_aux_base`). The aux base is the member's
 OWN `traceWidth` (§HETEROGENEOUS GEOMETRY): a standard graduated member bases its refuse at
-`GRAD_ROT_WIDTH = 1691` (its own width); a DISTINCT V1Face member — `setFieldDyn` / `custom`, four fewer
-chip sites — bases its refuse at ITS width (`setFieldDyn` 1663 = 1691 − 4·7; `custom` 1671, the same
-1663 plus its 8 commit/VK teeth), so the block always rides the member's OWN free headroom (never the
-fixed 1691 that would leave a 28-column dead gap on a 1663-wide member). -/
+`GRAD_ROT_WIDTH = 1707` (its own width); a DISTINCT V1Face member — `setFieldDyn` / `custom`, four fewer
+chip sites — bases its refuse at ITS width (`setFieldDyn` 1679 = 1707 − 4·7; `custom` 1687, the same
+1679 plus its 8 commit/VK teeth), so the block always rides the member's OWN free headroom (never the
+fixed 1707 that would leave a 28-column dead gap on a 1679-wide member). -/
 def bcDep (auxBase b k : Nat) : Nat := auxBase + b * REFUSE_STRIDE + k
 def icDep (auxBase b k : Nat) : Nat := auxBase + b * REFUSE_STRIDE + 4 + k
 def ocDep (auxBase b j : Nat) : Nat := auxBase + b * REFUSE_STRIDE + 8 + j
@@ -324,9 +328,9 @@ def deployedRefuseGates (auxBase : Nat) : List VmConstraint2 :=
 
 /-- **`gentianDeployedBareRefuse d`** — an arbitrary deployed bare cohort member `d` welded with the
 three-block deployed refuse over its OWN geometry AND widened to cover the aux block. The aux base is
-`d.traceWidth`, so the blocks ride the free headroom ABOVE the member's own data — a standard `1691`
-member widens to `1736` (byte-identical to the pre-heterogeneous weld), a distinct-geometry `1663`
-member (`setFieldDyn` / `custom`) widens to `1708` over ITS 1663 base. The flag-day maps this over the
+`d.traceWidth`, so the blocks ride the free headroom ABOVE the member's own data — a standard `1707`
+member widens to `1752` (byte-identical to the pre-heterogeneous weld), a distinct-geometry `1679`
+member (`setFieldDyn` / `custom`) widens to `1724` over ITS 1679 base. The flag-day maps this over the
 whole `v3RegistryBare` cohort. The soundness keystones below take the aux base parametrically, so the
 per-member base is transparent to them (it only enlarges the AIR `main` arity to host the free aux
 columns). -/
@@ -505,11 +509,11 @@ section Witnesses
 #guard ebDep 1 == 690
 #guard ebDep 2 == 697
 #guard ebDep 3 == 704
--- STANDARD geometry (auxBase = GRAD_ROT_WIDTH = 1691): the three aux blocks are DISJOINT (no
--- bit/inv/or/floor column aliases across blocks). Floor cols 1703/1719/1735, separated by REFUSE_STRIDE.
-#guard fcDep GRAD_ROT_WIDTH 0 == 1703
-#guard fcDep GRAD_ROT_WIDTH 1 == 1719
-#guard fcDep GRAD_ROT_WIDTH 2 == 1735
+-- STANDARD geometry (auxBase = GRAD_ROT_WIDTH = 1707): the three aux blocks are DISJOINT (no
+-- bit/inv/or/floor column aliases across blocks). Floor cols 1719/1735/1751, separated by REFUSE_STRIDE.
+#guard fcDep GRAD_ROT_WIDTH 0 == 1719
+#guard fcDep GRAD_ROT_WIDTH 1 == 1735
+#guard fcDep GRAD_ROT_WIDTH 2 == 1751
 #guard ([ bcDep GRAD_ROT_WIDTH 0 0, bcDep GRAD_ROT_WIDTH 0 1, bcDep GRAD_ROT_WIDTH 0 2,
           bcDep GRAD_ROT_WIDTH 0 3, icDep GRAD_ROT_WIDTH 0 0, icDep GRAD_ROT_WIDTH 0 1,
           icDep GRAD_ROT_WIDTH 0 2, icDep GRAD_ROT_WIDTH 0 3,
@@ -524,27 +528,27 @@ section Witnesses
           ocDep GRAD_ROT_WIDTH 2 0, ocDep GRAD_ROT_WIDTH 2 1, ocDep GRAD_ROT_WIDTH 2 2, fcDep GRAD_ROT_WIDTH 2 ]).dedup.length == 36
 -- The aux blocks start PAST the graduated rotated width (the traceWidth widening the flag-day pays).
 #guard fcDep GRAD_ROT_WIDTH 2 ≥ GRAD_ROT_WIDTH
-#guard fcDep GRAD_ROT_WIDTH 2 + 1 == 1736
+#guard fcDep GRAD_ROT_WIDTH 2 + 1 == 1752
 -- The three-block weld adds 3 × 13 = 39 gates (each block: 8 is-zero + 3 fold-into + 1 refuse = 13).
 #guard (deployedRefuseGates GRAD_ROT_WIDTH).length == 39
--- DISTINCT V1Face geometry (auxBase = 1663 = GRAD_ROT_WIDTH − 4 chip sites·7): setFieldDyn / custom
--- base their refuse at 1663 (floor cols 1675/1691/1707) and widen to 1708 over their OWN base — NOT
--- the fixed 1691 that would over-widen to 1736 and strand a 28-column dead gap.
-#guard fcDep (GRAD_ROT_WIDTH - 28) 0 == 1675
-#guard fcDep (GRAD_ROT_WIDTH - 28) 2 == 1707
-#guard fcDep (GRAD_ROT_WIDTH - 28) 2 + 1 == 1708
+-- DISTINCT V1Face geometry (auxBase = 1679 = GRAD_ROT_WIDTH − 4 chip sites·7): setFieldDyn / custom
+-- base their refuse at 1679 (floor cols 1691/1707/1723) and widen to 1724 over their OWN base — NOT
+-- the fixed 1707 that would over-widen to 1752 and strand a 28-column dead gap.
+#guard fcDep (GRAD_ROT_WIDTH - 28) 0 == 1691
+#guard fcDep (GRAD_ROT_WIDTH - 28) 2 == 1723
+#guard fcDep (GRAD_ROT_WIDTH - 28) 2 + 1 == 1724
 private def toyBare : EffectVmDescriptor2 :=
   { name := "toy", traceWidth := GRAD_ROT_WIDTH, piCount := 46, tables := [], constraints := [],
     hashSites := [], ranges := [] }
--- Standard member: widens 1691 → 1736 (byte-identical to the pre-heterogeneous weld at the new geometry).
-#guard (gentianDeployedBareRefuse toyBare).traceWidth == 1736
+-- Standard member: widens 1707 → 1752 (byte-identical to the pre-heterogeneous weld at the new geometry).
+#guard (gentianDeployedBareRefuse toyBare).traceWidth == 1752
 #guard (gentianDeployedBareRefuse toyBare).constraints.length == 39
 #guard (gentianDeployedBareRefuse toyBare).piCount == 46
 private def toyDistinct : EffectVmDescriptor2 :=
   { name := "toy-distinct", traceWidth := GRAD_ROT_WIDTH - 28, piCount := 46, tables := [],
     constraints := [], hashSites := [], ranges := [] }
--- Distinct-geometry member: widens 1663 → 1708 over its OWN 1663 base (per-member geometry respected).
-#guard (gentianDeployedBareRefuse toyDistinct).traceWidth == 1708
+-- Distinct-geometry member: widens 1679 → 1724 over its OWN 1679 base (per-member geometry respected).
+#guard (gentianDeployedBareRefuse toyDistinct).traceWidth == 1724
 #guard (gentianDeployedBareRefuse toyDistinct).constraints.length == 39
 #guard (refuseGatesAt (tagSettleEscrow : ℤ) ebDep (bcDep GRAD_ROT_WIDTH 0) (icDep GRAD_ROT_WIDTH 0)
   (ocDep GRAD_ROT_WIDTH 0) (fcDep GRAD_ROT_WIDTH 0)).length == 13

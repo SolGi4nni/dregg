@@ -296,6 +296,93 @@ def demoManifest : RotCaveatManifest :=
 #guard demoManifest.e1.operand? == some ⟨.heap, 123456789⟩
 #guard (RotCaveatEntry.mk 2 7 123456789 50 0 0 0).operand? == none
 
+/-! ## §3b — the caveat commitment EXTENDED over the DFA route-commitment carrier.
+
+The deployed caveat region carries, past the 29 manifest felts, a 4-felt **DFA route-commitment**
+(`EffectVmEmitRotationV3.C_RC_OFF` — `custom_proof_pi_commitment(DfaProofWire.public_inputs)` on a
+`Witnessed{Dfa}`-gated turn, the zero sentinel otherwise). It used to ride BESIDE the commitment:
+the `caveatCommit` fold stopped at the manifest, so no equation of the descriptor related the rc
+columns to anything and the `withDfaRcPins` pins were `local[c] == pi[k]` with the prover choosing
+BOTH sides. `UnforcedPiPins.dropUnforcedPins` correctly deleted them (they were four of the 159),
+and the `CarrierWitness::Dsl` fold — which locates its slot BY that pin — then refused every
+deployed leg. Restoring the pins by exempting them from the subtraction would re-add the lie; the
+fix is to make the columns **actually forced**, which is what this section does.
+
+`caveatCommitRc` extends the chain by the rc felts under the SAME `chunk31` arity-{2,4}
+discipline: 4 fresh limbs chunk to `[[rc0, rc1, rc2], [rc3]]`, i.e. one (digest+3) site and one
+(digest+1) site — never arity 3. So the rc carrier is read by two CHIP SITES, which graduate to
+lookup constraints; the columns are then in `UnforcedPiPins.forcedCols` because a NON-pin
+constraint with a row denotation reads them, not because something declared them.
+
+⚑ `caveatCommit` and `caveatCommit_binds` are UNCHANGED. Every downstream carrier gadget whose
+premise is `caveatCommit hash rowManifest = caveatCommit hash committedManifest`
+(`Deos.CarrierBoundFloorGadget`, `Deos.CapacityCarrier`, `Deos.BareCohortFloorRefuse*`,
+`Emit.AvailWire/WideMembers`) keeps its statement verbatim; the deployed PI pin now discharges it
+through `caveatCommitRc_binds`'s FIRST leg instead of directly. -/
+
+/-- **`caveatCommitRc`** — the caveat commitment the deployed region actually pins: the 29-limb
+manifest fold, then the DFA route-commitment felts absorbed by the same `chunk31` chunking. -/
+def caveatCommitRc (hash : List ℤ → ℤ) (m : RotCaveatManifest) (rc : List ℤ) : ℤ :=
+  chainFrom hash (caveatCommit hash m) (chunk31 rc)
+
+/-- **THE rc BINDING KEYSTONE** — equal extended caveat commits force equal manifests AND equal
+route-commitment carriers. This is the tooth the bare `withDfaRcPins` never had: an adversary who
+moves the rc carrier AND its published PIs together (the move-both attack the pin-only emit could
+not catch) moves THIS commitment, so the leg no longer matches the caveat-commit PI a verifier
+reconstructs from the turn's own witnessed predicates ⇒ UNSAT. Under the ONE CR floor. -/
+theorem caveatCommitRc_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {m m' : RotCaveatManifest} {rc rc' : List ℤ} (hlen : rc.length = rc'.length)
+    (h : caveatCommitRc hash m rc = caveatCommitRc hash m' rc') : m = m' ∧ rc = rc' := by
+  unfold caveatCommitRc at h
+  obtain ⟨hhead, hchunks⟩ := chainFrom_inj hash hCR
+    (by rw [chunk31_length, chunk31_length, hlen]) h
+  refine ⟨caveatCommit_binds hash hCR hhead, ?_⟩
+  have := congrArg List.flatten hchunks
+  rwa [chunk31_flatten, chunk31_flatten] at this
+
+/-- The manifest leg alone (what every landed carrier gadget's `hbind` premise wants). -/
+theorem caveatCommitRc_binds_manifest (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {m m' : RotCaveatManifest} {rc rc' : List ℤ} (hlen : rc.length = rc'.length)
+    (h : caveatCommitRc hash m rc = caveatCommitRc hash m' rc') : m = m' :=
+  (caveatCommitRc_binds hash hCR hlen h).1
+
+/-- The rc leg alone — the DSL/Dfa fold's half: the published route commitment is the trace's. -/
+theorem caveatCommitRc_binds_rc (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {m m' : RotCaveatManifest} {rc rc' : List ℤ} (hlen : rc.length = rc'.length)
+    (h : caveatCommitRc hash m rc = caveatCommitRc hash m' rc') : rc = rc' :=
+  (caveatCommitRc_binds hash hCR hlen h).2
+
+/-- The 4-felt carrier chunks to ONE (digest+3) site and ONE (digest+1) site — arity ∈ {2,4},
+never the chip-refused 3. This is the site count the emitted region grows by. -/
+theorem chunk31_rc_arities (a b c d : ℤ) : chunk31 [a, b, c, d] = [[a, b, c], [d]] := rfl
+
+#assert_axioms caveatCommitRc_binds
+#assert_axioms caveatCommitRc_binds_manifest
+#assert_axioms caveatCommitRc_binds_rc
+
+-- NON-VACUITY of the rc leg, both polarities (Horner toy sponge; deployment = the audited p3
+-- Poseidon2 under the same CR floor). ⚑ THE MOVE-BOTH ADVERSARY, executable: perturbing the
+-- route-commitment carrier — with the manifest held FIXED, which is exactly what "move the
+-- carrier and its PIs together" does — MOVES the pinned commitment. Under the bare pin-only emit
+-- this pair was INDISTINGUISHABLE (the fold stopped at the manifest, so both sides were the same
+-- felt); that indistinguishability was the hole.
+#guard caveatCommitRc refSponge demoManifest [1, 2, 3, 4]
+  != caveatCommitRc refSponge demoManifest [2, 2, 3, 4]
+#guard caveatCommitRc refSponge demoManifest [1, 2, 3, 4]
+  != caveatCommitRc refSponge demoManifest [1, 2, 3, 5]
+-- The ZERO SENTINEL (a turn with no Dfa caveat) is distinguishable from every real rc...
+#guard caveatCommitRc refSponge demoManifest [0, 0, 0, 0]
+  != caveatCommitRc refSponge demoManifest [1, 2, 3, 4]
+-- ...the manifest is still bound with the rc held fixed...
+#guard caveatCommitRc refSponge demoManifest [1, 2, 3, 4]
+  != caveatCommitRc refSponge { demoManifest with count := 1 } [1, 2, 3, 4]
+-- ...and the honest recompute is stable (the positive polarity).
+#guard caveatCommitRc refSponge demoManifest [1, 2, 3, 4]
+  == caveatCommitRc refSponge demoManifest [1, 2, 3, 4]
+-- The extension is a genuine EXTENSION: it is NOT the manifest commit wearing a new name.
+#guard caveatCommitRc refSponge demoManifest [0, 0, 0, 0]
+  != caveatCommit refSponge demoManifest
+
 /-! ## §4 — the staged probe at the CONFIRMED R=24: the rotated block + the caveat manifest.
 
 Column layout (the Rust twin is `columns.rs::rotation::caveat`):

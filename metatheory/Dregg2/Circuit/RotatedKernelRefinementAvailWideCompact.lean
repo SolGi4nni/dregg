@@ -6,7 +6,7 @@ restated over the DEPLOYED S2-COMPACTED wide member (Epoch 1), through the maste
 
 Epoch 1 deleted the S2 dead stratum (the two rotated 1-felt Merkle–Damgård chains) from every
 wide registry member: the deployed `transferVmDescriptor2R24` row is now
-`compactS2 transferAvailWideRefused 198 763` (`EmitWideRegistryProbe` emits exactly this value;
+`compactS2 transferAvailWideRefused 198 765` (`EmitWideRegistryProbe` emits exactly this value;
 the `s2compact` companion line pins the geometry pair). This module is the CROWN COROLLARY of
 the bridge (`RotWideCompactS2.compactS2_expand`): a `Satisfied2` witness of the DEPLOYED compact
 row expands to a witness of the pre-compact member, and the whole availability keystone chain
@@ -49,13 +49,13 @@ at its emitted geometry (bb = 198 — the avail face width; lane base 763). BYTE
 `EmitWideRegistryProbe` emits `emitVmJson2` of exactly this value under the
 `transferVmDescriptor2R24` key. -/
 def transferWideDeployedC : EffectVmDescriptor2 :=
-  compactS2 transferAvailWideRefused 198 763
+  compactS2 transferAvailWideRefused 198 765
 
 /-- The emit gate, kernel-checked: the deployed transfer row's S2 stratum is EXACTLY the
 expected dead pair of chains and nothing surviving touches a deleted column. (The same
 decidable bundle the emit driver enforces; a falsifying member would refuse to emit AND
 refuse to elaborate here.) -/
-theorem transferWide_compactOk : compactOk transferAvailWideRefused 198 763 = true := by
+theorem transferWide_compactOk : compactOk transferAvailWideRefused 198 765 = true := by
   decide +kernel
 
 /-- Non-poseidon2 tables are untouched by the expansion (the range/memory/map tables the
@@ -83,7 +83,7 @@ theorem RotTableSideW_expand {permOut : List ℤ → List ℤ} {hash : List ℤ 
       exact hside.rangesWide b hb }
 
 /-- `planOk` for the deployed transfer geometry (a projection of `compactOk`, decided once). -/
-theorem transferWide_planOk : planOk (s2Plan 198 763) = true := by decide +kernel
+theorem transferWide_planOk : planOk (s2Plan 198 765) = true := by decide +kernel
 
 /-- **THE CROWN COROLLARY** — the availability + exact-debit forcing, over the DEPLOYED
 S2-compacted wide transfer row. A satisfying witness of `transferWideDeployedC` EXPANDS
@@ -97,16 +97,16 @@ theorem availability_and_exact_move_forced_deployedCompact (hash : List ℤ → 
     (hside : RotTableSideW permOut hash t)
     (hsat : Satisfied2 hash transferWideDeployedC minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
-    (henc : rotatedEncodesAvail hash minit mfin maddrs (expandTrace permOut 198 763 t)
+    (henc : rotatedEncodesAvail hash minit mfin maddrs (expandTrace permOut 198 765 t)
       pre post tr a) :
     tr.amt ≤ pre.kernel.bal tr.src a
     ∧ post.kernel.bal tr.src a = pre.kernel.bal tr.src a - tr.amt := by
   have hsatX : Satisfied2 hash transferAvailWideRefused minit mfin maddrs
-      (expandTrace permOut 198 763 t) :=
-    compactS2_expand permOut hash hperm transferAvailWideRefused 198 763
+      (expandTrace permOut 198 765 t) :=
+    compactS2_expand permOut hash hperm transferAvailWideRefused 198 765
       minit mfin maddrs t transferWide_compactOk hsat
   exact Dregg2.Circuit.RotatedKernelRefinementAvailWide.availability_and_exact_move_forced_refusedWide
-    hash (RotTableSideW_expand 198 763 transferWide_planOk hside) hsatX pre post tr a henc
+    hash (RotTableSideW_expand 198 765 transferWide_planOk hside) hsatX pre post tr a henc
 
 /-- The over-debit tooth on the deployed compact row (the audit forgery class is UNSAT). -/
 theorem deployedCompact_rejects_overdebit (hash : List ℤ → ℤ) {permOut : List ℤ → List ℤ}
@@ -115,7 +115,7 @@ theorem deployedCompact_rejects_overdebit (hash : List ℤ → ℤ) {permOut : L
     (hside : RotTableSideW permOut hash t)
     (hsat : Satisfied2 hash transferWideDeployedC minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
-    (henc : rotatedEncodesAvail hash minit mfin maddrs (expandTrace permOut 198 763 t)
+    (henc : rotatedEncodesAvail hash minit mfin maddrs (expandTrace permOut 198 765 t)
       pre post tr a)
     (hforge : pre.kernel.bal tr.src a < tr.amt) : False := by
   have h := (availability_and_exact_move_forced_deployedCompact hash hperm hside hsat

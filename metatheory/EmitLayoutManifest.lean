@@ -97,12 +97,18 @@ def items : List Item :=
       doc := "column offset from a member's face to its AFTER block (= B_SPAN)" }
   , { name := "C_SPAN", value := C_SPAN,
       doc := "the caveat region's span" }
-  , { name := "C_COMMIT", value := C_COMMIT,
-      doc := "the caveat commitment carrier, in-region" }
+  , { name := "C_MANIFEST_COMMIT", value := C_MANIFEST_COMMIT,
+      doc := "the 29-limb MANIFEST fold's carrier, in-region — an INTERMEDIATE of the chain, not the published commitment" }
   , { name := "C_RC_OFF", value := C_RC_OFF,
-      doc := "the DFA route-commitment (rc) carrier, in-region" }
+      doc := "the DFA route-commitment (rc) carrier, in-region — ABSORBED into the published caveat commitment (the rc FOLD), which is what forces these columns" }
+  , { name := "C_RC_CARRIER", value := C_RC_CARRIER,
+      doc := "the rc extension's first carrier: hash [manifest commit, rc0, rc1, rc2]" }
+  , { name := "C_COMMIT", value := C_COMMIT,
+      doc := "the PUBLISHED caveat commitment carrier, in-region — caveatCommitRc over the manifest AND the rc carrier; the column rotPins binds to PI piBase+3" }
   , { name := "APPENDIX_SPAN", value := APPENDIX_SPAN,
       doc := "2*B_SPAN + C_SPAN — the rotated appendix appended to the v1 face" }
+  , { name := "ROT_APPENDIX_SITES", value := (rotV3Appendix EFFECT_VM_WIDTH).length,
+      doc := "poseidon2-chip SITES the rotated appendix contributes (2 blocks + the caveat region incl. the rc fold). Graduation appends 7 lane columns per site, so this is the multiplier the Rust host width uses — it was a hand-carried arithmetic literal in trace_rotated.rs and it drifted." }
     -- the committed base limbs (pre-iroot)
   , { name := "B_RECORD_DIGEST", value := B_RECORD_DIGEST,
       doc := "committed record/authority digest limb" }

@@ -16,6 +16,15 @@ pin a column that NOTHING else in the member references at all**, and a further 
 that is referenced only on a DIFFERENT row than the pin fires on (the `.transition` continuity
 chain: the first row's before-commit, the last row's after-commit). 215 published slots in all.
 
+⚑ **A CENSUS IS A MEASUREMENT, NOT A VERDICT ON THE PIN.** 144 of the 159 this module deleted from
+`v3Registry` were the `withDfaRcPins` DFA route-commitment quartet, and deleting them took the
+`CarrierWitness::Dsl` fold arm down with them (`ivc_turn_chain::dsl_rc_claim_pi_lo` locates the rc
+slot BY the pin and fails closed). The deletion was still RIGHT: the carrier was read by nothing,
+so the pin bound nothing. The repair was to make the columns FORCED — the rc carrier is now folded
+into the published caveat commitment (`EffectVmEmitRotationCaveat.caveatCommitRc`,
+`EffectVmEmitRotationV3.caveatV3SitesAt`'s two new sites) — after which the SAME unchanged
+subtraction keeps the pins. **Never exempt a pin from this census to bring one back.**
+
 ## What this module is
 
 The library twin of `RotWideCompactE1`'s DERIVED kill-set, one level up: `RotWideCompactE1` deletes
@@ -549,26 +558,39 @@ def registryUnforcedCount (R : List (String × EffectVmDescriptor2)) : Nat :=
 
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
 
--- MEASURED 2026-07-30 on `v3Registry` (36 members): 607 pins, of which **159 bind nothing**.
+-- MEASURED 2026-07-31 on `v3Registry` (36 members), AFTER the rc FOLD: 607 pins, of which **15
+-- bind nothing**. It was 159 on 2026-07-30; the 144 that left the census are the `withDfaRcPins`
+-- DFA route-commitment quartet on each of the 36 members, and they left it by becoming FORCED —
+-- `EffectVmEmitRotationV3.caveatV3SitesAt` now absorbs the carrier into the PUBLISHED caveat
+-- commitment, so a chip site reads those columns. NOT by an exemption: `dropUnforcedPins` is
+-- unchanged and still drops every pin whose column no non-pin constraint reads.
 #guard v3Registry.length == 36
 #guard registryPinCount v3Registry == 607
-#guard registryUnforcedCount v3Registry == 159
+#guard registryUnforcedCount v3Registry == 15
 
--- The classes, per member. 4 apiece is the `withDfaRcPins` DFA route-commitment quartet — a
--- carrier the producer fills with zeros on any turn that has no Dfa caveat, published as 4 tail
--- PIs and read by nothing. `custom` carries 18: the quartet plus the 14 limbs of the 8-felt
--- program-VK / proof-commitment octets that `proofBind` does NOT reach (it binds limb 0 of each).
+-- The classes, per member. `transfer` is now **0** — its only unforced pins WERE the rc quartet.
+-- `custom` carries 14: the limbs of the 8-felt program-VK / proof-commitment octets that
+-- `proofBind` does NOT reach (it binds limb 0 of each). `mint` carries 1.
 #guard ((v3Registry.lookup "transferVmDescriptor2R24").map (fun M => (unforcedPins M).length))
-  == some 4
+  == some 0
 #guard ((v3Registry.lookup "customVmDescriptor2R24").map (fun M => (unforcedPins M).length))
-  == some 18
+  == some 14
 #guard ((v3Registry.lookup "mintVmDescriptor2R24").map (fun M => (unforcedPins M).length))
-  == some 5
+  == some 1
+-- ...and NO other member has an unforced pin left at all.
+#guard (v3Registry.filter (fun p => (unforcedPins p.2).length != 0)).map (·.1)
+  == ["mintVmDescriptor2R24", "customVmDescriptor2R24"]
 
 -- THE SUBTRACTION, executed on the registry object: zero unforced pins survive.
 #guard registryUnforcedCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 0
--- and it costs exactly the 159 pins, no others.
-#guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 607 - 159
+-- and it costs exactly the 15 pins, no others.
+#guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 607 - 15
+-- ⚑ THE rc-FOLD DELTA, arithmetic and machine-checked: the emit now KEEPS 592 pins where it kept
+-- 448 before (`607 - 159`), and the difference is EXACTLY four per member — the rc quartet, on all
+-- 36. This is the line that would go red if a future edit restored the pins by exempting them
+-- instead of by forcing their columns: an exemption would change `unforcedPins`, not this delta.
+#guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2)))
+  - (607 - 159) == 4 * v3Registry.length
 
 #assert_axioms dropUnforcedPins_mem
 #assert_axioms filter_nonpin_dropUnforcedPins

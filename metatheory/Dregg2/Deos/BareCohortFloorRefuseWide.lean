@@ -7,7 +7,7 @@ so the capacity-floor refuse must ride the WIDE bare cohort, not only the V3 1-f
 cohort at aux columns `GRAD_ROT_WIDTH + b·REFUSE_STRIDE + …` (1703/1719/1735) — FREE headroom past the
 1691-wide graduated rotation. But the DEPLOYED light client (`verify_effect_vm_rotated_with_cutover`,
 `verify_one_cohort_run`) resolves the WIDE registry (`WIDE_REGISTRY_STAGED_TSV`, width `WIDE_WIDTH` =
-2683) and the WELDED twin (`WIDE_UMEM_WELD_REGISTRY_TSV`), NOT the V3 1-felt cohort. On a wide member
+2699) and the WELDED twin (`WIDE_UMEM_WELD_REGISTRY_TSV`), NOT the V3 1-felt cohort. On a wide member
 the V3 aux band (1691+) is OCCUPIED by the two 62×8 BEFORE/AFTER wide carriers (`wideAppend` bases them
 at the host width and runs to `w + wideAppendixSpan = w + 992`), so the V3 refuse cannot ride there.
 
@@ -51,12 +51,12 @@ set_option autoImplicit false
 WIDE_CARRIER_APPENDIX`): the graduated rotated width plus the two `wideNumCarriers × 8` wide-carrier
 blocks. DERIVED from the two named constants, never carried — the `2493` this file used to spell out
 was the RETIRED `1581 + 912` (169-limb / 57-carrier) shape, two flag days behind. At the 184-limb
-geometry: `1691 + 992 = 2683`. -/
+geometry: `1707 + 992 = 2699`. -/
 def WIDE_WIDTH : Nat :=
   Dregg2.Deos.BareCohortFloorRefuseDeployed.GRAD_ROT_WIDTH
     + Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppendixSpan
 
-#guard WIDE_WIDTH == 2683
+#guard WIDE_WIDTH == 2699
 
 /-! ## §1 — the WIDE aux column layout (aux base = the member's OWN width, past the wide carriers). -/
 

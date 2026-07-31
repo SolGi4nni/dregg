@@ -264,7 +264,12 @@ theorem transferV3_columnLayout_law (t : VmTrace) (ζ : BabyBear)
 -- absorption sites per block, which are lookups and so do NOT enter the arithmetic layout. MEASURED
 -- by `#eval` against the deployed descriptor, not derived — and the delta being 8-and-only-8 is
 -- itself the check that the nonet reached this member exactly once per slot.
-#guard transferV3.constraints.length == 295
+--
+-- ⚑ 295 -> 297 at the rc-FOLD flag day: the caveat region gained the TWO chip sites that absorb the
+-- DFA route-commitment carrier into the published caveat commitment. Both are LOOKUPS, so the
+-- arithmetic layout is UNCHANGED at 155 — which is itself the check that the fold added absorption
+-- and not a new algebraic gate.
+#guard transferV3.constraints.length == 297
 #guard (oodArithList transferV3).length == 155
 #guard (oodArithList transferV3).length < transferV3.constraints.length
 

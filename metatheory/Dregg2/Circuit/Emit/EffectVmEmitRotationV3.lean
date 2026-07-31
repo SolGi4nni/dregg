@@ -131,7 +131,7 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmitV2
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR
 open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
-  (RotCaveatManifest caveatCommit caveatCommit_binds)
+  (RotCaveatManifest caveatCommit caveatCommit_binds caveatCommitRc caveatCommitRc_binds)
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eqToModEq gate_modEq_iff not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
@@ -150,7 +150,7 @@ open Dregg2.Circuit.DeployedFieldsTree (Fields8Scheme)
 
 set_option linter.unusedVariables false
 set_option autoImplicit false
--- The rotated appendix is 134 sites; the `rfl` reductions
+-- The rotated appendix is 136 sites; the `rfl` reductions
 -- over the widened `rotateV3` structure need more kernel recursion depth.
 set_option maxRecDepth 16000
 
@@ -220,19 +220,35 @@ def B_COMMITMENTS_ROOT : Nat := layoutGroupCol .commitments 0
 nullifier_root · commitments_root · heap_root · lifecycle · **epoch** · committed_height). The forced
 limb for `revokeDelegation`'s parent-epoch BUMP (the §14.EPOCH write-gate). -/
 def B_EPOCH : Nat := 30
-/-- The caveat region span: 29 manifest felts + 9 chain carriers + 1 commit + the 4-felt
-DFA route-commitment carrier (the dsl rc-EMIT — `C_RC_OFF`). -/
-def C_SPAN : Nat := 43
-/-- caveat-commit offset inside the caveat region. -/
-def C_COMMIT : Nat := 38
-/-- In-region base of the 4-felt DFA ROUTE-COMMITMENT carrier (offsets 39..42, PAST the caveat
-commit at 38 — the `caveatCommit` fold over the 29 manifest felts is untouched). Carries
-`custom_proof_pi_commitment(DfaProofWire.public_inputs)` — the 4-felt fold-bound anchor of a
-`Witnessed{Dfa}` caveat's DSL-circuit STARK (the SAME derivation as the custom carrier's
-`custom_proof_commitment`, term-for-term) — on a Dfa-gated turn, ZERO on every other turn (the
-absent sentinel; the region is producer-filled uniformly on every row). Rust twin
-`trace_rotated::C_DFA_RC_OFF`. Published as 4 TAIL PIs by `withDfaRcPins`. -/
+/-- The caveat region span: 29 manifest felts + 9 manifest-chain carriers + 1 manifest commit +
+the 4-felt DFA route-commitment carrier (the dsl rc-EMIT — `C_RC_OFF`) + the 2 carriers that
+absorb it + the FINAL caveat commit. ⚑ 43 → 45 at the rc-FOLD flag day. -/
+def C_SPAN : Nat := 45
+/-- The 29-limb MANIFEST fold's carrier, inside the caveat region — the `caveatCommit` digest.
+⚑ This is an INTERMEDIATE now: it is the accumulator the rc extension chains off, not the
+published caveat commitment. What is pinned to PI is `C_COMMIT` (45-span flag day). -/
+def C_MANIFEST_COMMIT : Nat := 38
+/-- In-region base of the 4-felt DFA ROUTE-COMMITMENT carrier (offsets 39..42, past the MANIFEST
+fold's carrier at 38). Carries `custom_proof_pi_commitment(DfaProofWire.public_inputs)` — the
+4-felt fold-bound anchor of a `Witnessed{Dfa}` caveat's DSL-circuit STARK (the SAME derivation as
+the custom carrier's `custom_proof_commitment`, term-for-term) — on a Dfa-gated turn, ZERO on every
+other turn (the absent sentinel; the region is producer-filled uniformly on every row). Rust twin
+`trace_rotated::C_DFA_RC_OFF`. Published as 4 TAIL PIs by `withDfaRcPins`.
+
+⚑ **The rc-FOLD flag day.** These four columns used to be read by NOTHING: the `caveatCommit` fold
+stopped at the manifest and the `withDfaRcPins` pins were `local[c] == pi[k]` with the prover
+choosing both sides, so `UnforcedPiPins.dropUnforcedPins` deleted them (correctly — they were 144
+of the 159) and the `CarrierWitness::Dsl` fold, which locates its slot BY that pin, refused every
+deployed leg. They are now ABSORBED (`caveatV3SitesAt`'s two new sites → `caveatCommitRc`), so a
+non-pin constraint with a row denotation reads them, they are in `UnforcedPiPins.forcedCols`, and
+the pins survive the subtraction ON THEIR OWN MERITS. -/
 def C_RC_OFF : Nat := 39
+/-- The rc extension's FIRST carrier: `hash [manifest commit, rc0, rc1, rc2]` (arity 4). -/
+def C_RC_CARRIER : Nat := 43
+/-- **The published caveat commitment** — `hash [rc carrier, rc3]` (arity 2), i.e.
+`caveatCommitRc` of the row's manifest AND its route-commitment carrier. THIS is the column
+`rotPins` pins to PI `piBase + 3`. ⚑ 38 → 44 at the rc-FOLD flag day. -/
+def C_COMMIT : Nat := 44
 /-- The whole appendix width: two rotated blocks plus the caveat region. -/
 def APPENDIX_SPAN : Nat := 2 * B_SPAN + C_SPAN
 
@@ -257,11 +273,13 @@ def CAVEAT_REGION_OFF : Nat := 2 * B_SPAN
 #guard B_SPAN == B_IROOT + 63        -- 184 pre-iroot + iroot + state_commit + 61 chain carriers = 247
 #guard B_SPAN == 247
 #guard APPENDIX_SPAN == 2 * B_SPAN + C_SPAN
-#guard APPENDIX_SPAN == 537          -- 2·247 + 43 (was 521)
+#guard APPENDIX_SPAN == 539          -- 2·247 + 45 (was 537 at C_SPAN 43)
 #guard CAVEAT_REGION_OFF == 2 * B_SPAN
 #guard CAVEAT_REGION_OFF == 494      -- was 478
-#guard C_RC_OFF == C_COMMIT + 1      -- the DFA rc carrier rides PAST the caveat commit
-#guard C_SPAN == C_RC_OFF + 4        -- 4 rc felts close the region
+#guard C_RC_OFF == C_MANIFEST_COMMIT + 1  -- the rc carrier rides PAST the manifest fold's digest
+#guard C_RC_CARRIER == C_RC_OFF + 4       -- ...and the two absorbing carriers ride past IT
+#guard C_COMMIT == C_RC_CARRIER + 1       -- the FINAL digest is the published caveat commitment
+#guard C_SPAN == C_COMMIT + 1             -- which closes the region
 
 /-- The pre-iroot limb list of a block at `base` — all `rotatedNumPreLimbs = 184` of them, in the
 verified `rotated184` tiling order: cells_root · r0..r23 · cap_root · nullifier_root ·
@@ -322,6 +340,14 @@ def manifestAt (base : Nat) (a : Assignment) : RotCaveatManifest :=
            a (base + 20), a (base + 21)⟩
   , e3 := ⟨a (base + 22), a (base + 23), a (base + 24), a (base + 25), a (base + 26),
            a (base + 27), a (base + 28)⟩ }
+
+/-- Read the 4-felt DFA ROUTE-COMMITMENT carrier off a row at region base `base` (positional).
+The list `caveatCommitRc` absorbs — so the columns the `withDfaRcPins` pins publish are exactly
+the ones the published caveat commitment folds. -/
+def rcAt (base : Nat) (a : Assignment) : List ℤ :=
+  [a (base + C_RC_OFF), a (base + C_RC_OFF + 1), a (base + C_RC_OFF + 2), a (base + C_RC_OFF + 3)]
+
+theorem rcAt_length (base : Nat) (a : Assignment) : (rcAt base a).length = 4 := rfl
 
 /-! ## §2 — the col-chained sites (position-independent; graduate to the probe's bytes). -/
 
@@ -396,9 +422,13 @@ def rotV3SitesAt (base : Nat) : List VmHashSite :=
   , ⟨base + 246, [.col (base + 245), .col (base + 181), .col (base + 182), .col (base + 183)], 4⟩
   , ⟨base + 185, [.col (base + 246), .col (base + 184)], 2⟩ ]
 
-/-- The 10 chained caveat sites at region base `base` (the `caveatSites` shape, positional):
+/-- The 12 chained caveat sites at region base `base` (the `caveatSites` shape, positional):
 4-wide head over `[count, e0.tag, e0.dom, e0.key]`, eight (carrier+3) body groups, the
-(carrier+1) tail onto the caveat-commit carrier. -/
+(carrier+1) tail onto the MANIFEST-commit carrier — then the rc EXTENSION, two further sites
+absorbing the 4-felt DFA route-commitment carrier onto the PUBLISHED caveat commit
+(`chunk31 [rc0,rc1,rc2,rc3] = [[rc0,rc1,rc2],[rc3]]`, so arity 4 then arity 2 — never the
+chip-refused 3). ⚑ THE rc-FOLD FLAG DAY: the last two sites are new, and they are what makes the
+rc columns FORCED rather than merely published. -/
 def caveatV3SitesAt (base : Nat) : List VmHashSite :=
   [ ⟨base + 29, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
   , ⟨base + 30, [.col (base + 29), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
@@ -409,7 +439,10 @@ def caveatV3SitesAt (base : Nat) : List VmHashSite :=
   , ⟨base + 35, [.col (base + 34), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
   , ⟨base + 36, [.col (base + 35), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
   , ⟨base + 37, [.col (base + 36), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
-  , ⟨base + 38, [.col (base + 37), .col (base + 28)], 2⟩ ]
+  , ⟨base + 38, [.col (base + 37), .col (base + 28)], 2⟩
+  -- THE rc EXTENSION (the two sites that force the DFA route-commitment carrier):
+  , ⟨base + 43, [.col (base + 38), .col (base + 39), .col (base + 40), .col (base + 41)], 4⟩
+  , ⟨base + 44, [.col (base + 43), .col (base + 42)], 2⟩ ]
 
 /-- The whole appendix site group for a descriptor of width `w`. The AFTER block rides at
 `w + B_SPAN`; the caveat region at `w + CAVEAT_REGION_OFF` (`= 2·B_SPAN`). ⚑ Both offsets are the
@@ -421,7 +454,30 @@ def rotV3Appendix (w : Nat) : List VmHashSite :=
 -- Arity discipline: every appendix site is arity 4 or 2 (the chip refuses 3) — checked at
 -- a concrete base; the literal arities are base-independent.
 #guard (rotV3Appendix 186).all fun s => s.arity == 4 || s.arity == 2
-#guard (rotV3Appendix 186).length == 134  -- 62 (before) + 62 (after) + 10 (caveat)
+#guard (rotV3Appendix 186).length == 136  -- 62 (before) + 62 (after) + 12 (caveat: 10 + the rc pair)
+-- Every caveat-region site's carrier column lands INSIDE the region (`< C_SPAN`), and the two new
+-- ones land exactly on `C_RC_CARRIER` / `C_COMMIT` — the emit cannot drift off the named offsets.
+#guard (caveatV3SitesAt 0).map (·.digestCol) == [29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 43, 44]
+#guard (caveatV3SitesAt 0).all fun s => s.digestCol < C_SPAN
+
+/-- The columns the caveat-region sites READ (their `.col` inputs) — the emit-level surface
+`UnforcedPiPins.forcedCols` sums for this region. -/
+def caveatV3SiteReads (base : Nat) : List Nat :=
+  (caveatV3SitesAt base).flatMap fun s =>
+    s.inputs.filterMap fun i => match i with | .col c => some c | _ => none
+
+-- ⚑ **THE ANTI-VACUITY GUARD.** All FOUR DFA route-commitment columns are READ by a caveat-region
+-- chip site. This is the whole repair in one executable line: before the rc FOLD this list
+-- contained the 29 manifest limbs and the nine carriers and NOTHING at 39..42, which is why
+-- `dropUnforcedPins` was right to delete the pins on them. A member's `forcedCols` contains this
+-- surface, so the pins now survive the subtraction on their own merits.
+#guard (List.range 4).all fun k => (caveatV3SiteReads 0).contains (C_RC_OFF + k)
+#guard (caveatV3SiteReads 0).contains C_MANIFEST_COMMIT   -- ...and the manifest fold feeds it
+#guard (caveatV3SiteReads 0).contains C_RC_CARRIER        -- ...and the first rc carrier feeds the commit
+-- The commitment itself is a DIGEST, never an input (a chain ends there).
+#guard !(caveatV3SiteReads 0).contains C_COMMIT
+-- Every manifest limb is still read (the rc extension ADDED, it displaced nothing).
+#guard (List.range 29).all fun k => (caveatV3SiteReads 0).contains k
 
 -- **THE BYTE-IDENTITY TRIPWIRE** (v14, 184-limb shape): the col-chained 62-site block at base 0
 -- graduates to the EXACT wire JSON of its DIGEST-chained twin (the running accumulator referenced
@@ -682,7 +738,7 @@ theorem caveatV3SitesAt_colOnly (base : Nat) :
     ∀ s ∈ caveatV3SitesAt base, colOnly s = true := by
   intro s hs
   simp only [caveatV3SitesAt, List.mem_cons, List.not_mem_nil, or_false] at hs
-  rcases hs with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
+  rcases hs with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
 
 set_option maxHeartbeats 6400000 in
 /-- **The block pin, parametric in `base`** (v14): the sixty-two col-chained site equations compose
@@ -946,11 +1002,12 @@ theorem rotV3SitesAt_pin (hash : List ℤ → ℤ) (env : VmRowEnv) (base : Nat)
   rfl
 
 set_option maxHeartbeats 6400000 in
-/-- **The caveat pin, parametric in `base`**: the ten col-chained caveat site equations
-compose into the chained caveat commitment of the row's OWN manifest block. -/
+/-- **The caveat MANIFEST pin, parametric in `base`**: the ten col-chained manifest site equations
+compose into the chained caveat commitment of the row's OWN manifest block. (The published
+commitment is the rc EXTENSION of this — `caveatV3SitesAt_pin_rc` below.) -/
 theorem caveatV3SitesAt_pin (hash : List ℤ → ℤ) (env : VmRowEnv) (base : Nat)
     (h : ∀ s ∈ caveatV3SitesAt base, env.loc s.digestCol = hash (s.resolvedInputs env [])) :
-    env.loc (base + C_COMMIT) = caveatCommit hash (manifestAt base env.loc) := by
+    env.loc (base + C_MANIFEST_COMMIT) = caveatCommit hash (manifestAt base env.loc) := by
   show env.loc (base + 38) = caveatCommit hash (manifestAt base env.loc)
   have h0 : env.loc (base + 29) = hash [env.loc (base + 0), env.loc (base + 1),
       env.loc (base + 2), env.loc (base + 3)] := by
@@ -1003,9 +1060,43 @@ theorem caveatV3SitesAt_pin (hash : List ℤ → ℤ) (env : VmRowEnv) (base : N
   rw [h9, h8, h7, h6, h5, h4, h3, h2, h1, h0]
   rfl
 
+set_option maxHeartbeats 6400000 in
+/-- **THE PUBLISHED CAVEAT PIN, parametric in `base`** — the column `rotPins` pins to PI
+`piBase + 3` carries `caveatCommitRc` of the row's OWN manifest block AND its OWN DFA
+route-commitment carrier. Two further site equations past the manifest fold, in the same
+`chunk31` arity-{2,4} discipline.
+
+⚑ This is the theorem that makes the rc carrier a BOUND datum rather than a published one. The
+`withDfaRcPins` pins publish columns `base + C_RC_OFF + k`; those same four columns are read HERE
+by two chip sites onto the pinned commitment, so an adversary who rewrites the carrier AND the
+four PIs it publishes still moves `env.loc (base + C_COMMIT)` — and that column is pinned to a PI
+a verifier reconstructs from the turn's own witnessed predicates. -/
+theorem caveatV3SitesAt_pin_rc (hash : List ℤ → ℤ) (env : VmRowEnv) (base : Nat)
+    (h : ∀ s ∈ caveatV3SitesAt base, env.loc s.digestCol = hash (s.resolvedInputs env [])) :
+    env.loc (base + C_COMMIT)
+      = caveatCommitRc hash (manifestAt base env.loc) (rcAt base env.loc) := by
+  have hman := caveatV3SitesAt_pin hash env base h
+  show env.loc (base + 44) = caveatCommitRc hash (manifestAt base env.loc) (rcAt base env.loc)
+  have h10 : env.loc (base + 43) = hash [env.loc (base + 38), env.loc (base + 39),
+      env.loc (base + 40), env.loc (base + 41)] := by
+    simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
+      h ⟨base + 43, [.col (base + 38), .col (base + 39), .col (base + 40),
+        .col (base + 41)], 4⟩ (by simp [caveatV3SitesAt])
+  have h11 : env.loc (base + 44) = hash [env.loc (base + 43), env.loc (base + 42)] := by
+    simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
+      h ⟨base + 44, [.col (base + 43), .col (base + 42)], 2⟩ (by simp [caveatV3SitesAt])
+  show env.loc (base + 44)
+    = chainFrom hash (caveatCommit hash (manifestAt base env.loc)) (chunk31 (rcAt base env.loc))
+  rw [h11, h10, ← hman]
+  show _ = chainFrom hash (env.loc (base + C_MANIFEST_COMMIT))
+    (chunk31 [env.loc (base + C_RC_OFF), env.loc (base + C_RC_OFF + 1),
+      env.loc (base + C_RC_OFF + 2), env.loc (base + C_RC_OFF + 3)])
+  rfl
+
 #assert_axioms go_colOnly_mem
 #assert_axioms rotV3SitesAt_pin
 #assert_axioms caveatV3SitesAt_pin
+#assert_axioms caveatV3SitesAt_pin_rc
 
 /-- **The v1 survival keystone**: a row satisfying the rotated descriptor satisfies the
 ORIGINAL descriptor — every existing per-effect faithfulness / anti-ghost / full-state
@@ -1030,7 +1121,8 @@ theorem rotateV3_pins_commits (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
       = wireCommitR hash (preLimbsAt (d.traceWidth + B_SPAN) env.loc)
           (env.loc (d.traceWidth + B_SPAN + B_IROOT))
     ∧ env.loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
-      = caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) env.loc) := by
+      = caveatCommitRc hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) env.loc)
+          (rcAt (d.traceWidth + CAVEAT_REGION_OFF) env.loc) := by
   have hsites := h.2.1
   have heq := go_colOnly_mem hash env [] _ hsites
   have hmem : ∀ s ∈ rotV3Appendix d.traceWidth, s ∈ (rotateV3 d).hashSites :=
@@ -1042,7 +1134,7 @@ theorem rotateV3_pins_commits (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
   · exact rotV3SitesAt_pin hash env (d.traceWidth + B_SPAN) fun s hs =>
       heq s (hmem s (List.mem_append_left _ (List.mem_append_right _ hs)))
         (rotV3SitesAt_colOnly _ s hs)
-  · exact caveatV3SitesAt_pin hash env (d.traceWidth + CAVEAT_REGION_OFF) fun s hs =>
+  · exact caveatV3SitesAt_pin_rc hash env (d.traceWidth + CAVEAT_REGION_OFF) fun s hs =>
       heq s (hmem s (List.mem_append_right _ hs)) (caveatV3SitesAt_colOnly _ s hs)
 
 /-- A weld of the rotated descriptor holds on every satisfying TRANSITION row (`isLast = false`).
@@ -1189,7 +1281,8 @@ theorem rotV3_pins (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ) (
       = wireCommitR hash (preLimbsAt (d.traceWidth + B_SPAN) (envAt t i).loc)
           ((envAt t i).loc (d.traceWidth + B_SPAN + B_IROOT))
     ∧ (envAt t i).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
-      = caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t i).loc) :=
+      = caveatCommitRc hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t i).loc)
+          (rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t i).loc) :=
   rotateV3_pins_commits hash d _ _ _
     (satisfied2Faithful_satisfiedVm permOut hash (rotateV3 d) minit mfin maddrs t
       (graduable_rotateV3 hgrad) hf i hi)
@@ -1225,14 +1318,95 @@ theorem rotV3_publishes (permOut : List ℤ → List ℤ) (hash : List ℤ → �
   simp only [VmConstraint.holdsVm] at h0 h1 h2 h3
   exact ⟨h0, fun hl => ⟨h1 hl, h2 hl, h3 hl⟩⟩
 
+/-- **THE rc TOOTH — the caveat leg, stated alone.** Two last-row `Satisfied2` witnesses of the
+same cohort member that publish the SAME caveat commit (PI `piCount + 3`) agree on the WHOLE
+caveat manifest AND on the 4-felt DFA route-commitment carrier.
+
+This is the statement the pin-only emit could not make. `withDfaRcPins` alone gave
+`loc(rc col) ≡ pub(rc slot)`, which an adversary satisfies by moving BOTH sides; nothing tied
+either side to a value a verifier holds. With the carrier folded into the pinned commitment, the
+rc is forced by the SAME published felt the manifest is. -/
+theorem rotV3_caveat_binds_manifest_and_rc (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (d : EffectVmDescriptor)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
+    (hgrad : graduable d = true)
+    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
+    (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
+    (hpubCav : (envAt t k).pub (d.piCount + 3) = (envAt t' l).pub (d.piCount + 3))
+    (hcCanonCav : 0 ≤ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        ∧ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) < 2013265921)
+    (hcCanonCav' : 0 ≤ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        ∧ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) < 2013265921) :
+    manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
+        = manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc
+    ∧ rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
+        = rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc := by
+  have hp := rotV3_pins permOut hash d minit mfin maddrs t hgrad hf
+  have hp' := rotV3_pins permOut hash d minit' mfin' maddrs' t' hgrad hf'
+  obtain ⟨-, -, hk1⟩ := (rotV3_publishes permOut hash d minit mfin maddrs t hgrad hf k hk).2 hlast
+  obtain ⟨-, -, hk2⟩ :=
+    (rotV3_publishes permOut hash d minit' mfin' maddrs' t' hgrad hf' l hl).2 hlast'
+  have hccEq : (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+      = (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) :=
+    canon_eq_of_modEq hcCanonCav hcCanonCav'
+      (calc (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+            ≡ (envAt t k).pub (d.piCount + 3) [ZMOD 2013265921] := hk1
+        _ = (envAt t' l).pub (d.piCount + 3) := hpubCav
+        _ ≡ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) [ZMOD 2013265921] :=
+            hk2.symm)
+  have hcc : caveatCommitRc hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc)
+        (rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc)
+      = caveatCommitRc hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc)
+        (rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc) := by
+    rw [← (hp k hk).2.2, ← (hp' l hl).2.2]
+    show (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+      = (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+    exact hccEq
+  exact caveatCommitRc_binds hash hCR (by rw [rcAt_length, rcAt_length]) hcc
+
+/-- **THE MOVE-BOTH REFUSAL, contrapositive.** A leg whose route-commitment carrier DIFFERS from
+the honest one publishes a DIFFERENT caveat commit — no matter what it does to the four PI slots
+`withDfaRcPins` publishes, because those pins are not what binds the carrier any more. Against a
+caveat commit the verifier reconstructs from the turn's OWN witnessed predicates
+(`proof_verify.rs`: PI `piCount + 3` is witness-INDEPENDENT and re-derived, and `caveat.dfa_rc` is
+recomputed from the turn's Dfa blobs), such a leg is UNSAT. -/
+theorem rotV3_moved_rc_moves_the_published_caveat_commit (permOut : List ℤ → List ℤ)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (d : EffectVmDescriptor)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
+    (hgrad : graduable d = true)
+    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
+    (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
+    (hcCanonCav : 0 ≤ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        ∧ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) < 2013265921)
+    (hcCanonCav' : 0 ≤ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        ∧ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) < 2013265921)
+    (hrc : rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
+        ≠ rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc) :
+    (envAt t k).pub (d.piCount + 3) ≠ (envAt t' l).pub (d.piCount + 3) := fun hpubCav =>
+  hrc (rotV3_caveat_binds_manifest_and_rc permOut hash hCR d minit mfin maddrs t
+    minit' mfin' maddrs' t' hgrad hf hf' k l hk hl hlast hlast' hpubCav
+    hcCanonCav hcCanonCav').2
+
 set_option maxHeartbeats 1600000 in
 /-- **THE END-TO-END KEYSTONE — once, for all 26.** Two `Satisfied2` witnesses of ANY cohort
 member's rotated graduation publishing the SAME rotated OLD commit, the SAME rotated NEW
 commit, and the SAME caveat commit agree on the WHOLE rotated before block, the WHOLE after
 block (all 24 registers — balance/nonce included by the welds — every map root, lifecycle,
-epoch, height), BOTH iroots, the published height, AND the WHOLE caveat manifest (every
-entry's type tag, DOMAIN TAG, KEY, params) — under the ONE CR floor, via the PARAMETRIC
-`wireCommitR_binds` / `caveatCommit_binds`. -/
+epoch, height), BOTH iroots, the published height, the WHOLE caveat manifest (every
+entry's type tag, DOMAIN TAG, KEY, params) **AND the 4-felt DFA ROUTE-COMMITMENT CARRIER** —
+under the ONE CR floor, via the PARAMETRIC `wireCommitR_binds` / `caveatCommitRc_binds`.
+
+⚑ The rc conjunct is the rc-FOLD flag day's payload. Before it, the route commitment was outside
+every binding: two witnesses could publish the same caveat commit and carry DIFFERENT rc, so the
+`withDfaRcPins` PI exposure attested nothing a light client could use. -/
 theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash)
     (d : EffectVmDescriptor)
@@ -1272,8 +1446,10 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
         = preLimbsAt (d.traceWidth + B_SPAN) (envAt t' l).loc
       ∧ (envAt t k).loc (d.traceWidth + B_SPAN + B_IROOT) = (envAt t' l).loc (d.traceWidth + B_SPAN + B_IROOT)
       ∧ (envAt t k).pub (d.piCount + 2) = (envAt t' l).pub (d.piCount + 2))
-    ∧ manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
-        = manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc := by
+    ∧ (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
+        = manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc
+      ∧ rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
+        = rcAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc) := by
   have hp := rotV3_pins permOut hash d minit mfin maddrs t hgrad hf
   have hp' := rotV3_pins permOut hash d minit' mfin' maddrs' t' hgrad hf'
   have hq := rotV3_publishes permOut hash d minit mfin maddrs t hgrad hf
@@ -1332,27 +1508,16 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
             ≡ (envAt t k).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT) [ZMOD 2013265921] := hh.symm
         _ = (envAt t' l).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT) := hHtEq
         _ ≡ (envAt t' l).pub (d.piCount + 2) [ZMOD 2013265921] := hh')
-  · -- the caveat manifest, via the last-row pin
-    obtain ⟨-, -, hk1⟩ := (hq k hk).2 hlast
-    obtain ⟨-, -, hk2⟩ := (hq' l hl).2 hlast'
-    have hccEq : (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) :=
-      canon_eq_of_modEq hcCanonCav hcCanonCav'
-        (calc (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
-              ≡ (envAt t k).pub (d.piCount + 3) [ZMOD 2013265921] := hk1
-          _ = (envAt t' l).pub (d.piCount + 3) := hpubCav
-          _ ≡ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) [ZMOD 2013265921] := hk2.symm)
-    have hcc : caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc)
-        = caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc) := by
-      rw [← (hp k hk).2.2, ← (hp' l hl).2.2]
-      show (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
-      exact hccEq
-    exact caveatCommit_binds hash hCR hcc
+  · -- the caveat manifest AND the route-commitment carrier, via the last-row pin
+    exact rotV3_caveat_binds_manifest_and_rc permOut hash hCR d minit mfin maddrs t
+      minit' mfin' maddrs' t' hgrad hf hf' k l hk hl hlast hlast' hpubCav
+      hcCanonCav hcCanonCav'
 
 #assert_axioms rotV3_sound_v1
 #assert_axioms rotV3_pins
 #assert_axioms rotV3_publishes
+#assert_axioms rotV3_caveat_binds_manifest_and_rc
+#assert_axioms rotV3_moved_rc_moves_the_published_caveat_commit
 #assert_axioms rotV3_binds_published
 
 /-! ## §5 — the v3 registry: all 27 v2-cohort members (+ the 8 widened), rotated. -/
@@ -2291,8 +2456,10 @@ def customV3 : EffectVmDescriptor2 :=
 -- member geometry (host 1671 = 1663 + 4 commit teeth + 4 VK teeth).
 -- ⚑ FLAG DAY 178 → 184: 1619 → 1663. `+16` from `APPENDIX_SPAN` (two blocks × 8 columns) and `+28`
 -- from graduation (the appendix gained 4 sites × 7 lane columns). The Rust twin MUST be re-pinned.
-#guard CUSTOM_COMMIT_TEETH_COL == 1663
-#guard CUSTOM_VK_TEETH_COL == 1667
+-- ⚑ FLAG DAY rc-FOLD: 1663 → 1679. `+2` from `C_SPAN` (43 → 45, the two rc-absorbing carriers) and
+-- `+14` from graduation (the appendix gained 2 sites × 7 lane columns). Re-pin the Rust twin again.
+#guard CUSTOM_COMMIT_TEETH_COL == 1679
+#guard CUSTOM_VK_TEETH_COL == 1683
 #guard customV3.traceWidth == CUSTOM_COMMIT_TEETH_COL + 8
 
 /-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).
@@ -5932,17 +6099,35 @@ re-proven DSL leaf (`circuit-prove::dsl_leaf_adapter`) to the deployed leg — t
 piece (`dsl_leaf_adapter.rs` module doc; the Lean refutation is `Dregg2.Circuit.DslBackingAttack`).
 
 The emit: the caveat region carries a 4-felt DFA ROUTE-COMMITMENT carrier at `C_RC_OFF` (offsets
-39..42, past the caveat commit at 38 — the `caveatCommit` fold over the 29 manifest felts is
-UNTOUCHED). The producer fills it with `custom_proof_pi_commitment(DfaProofWire.public_inputs)` —
-the SAME derivation the custom carrier's `custom_proof_commitment` binds, term-for-term — on a
-Dfa-gated turn, ZERO otherwise (the absent sentinel: a turn WITHOUT a Dfa caveat publishes zeros
-and still proves — the pins are plain PI bindings, satisfiable at any uniformly-filled value; the
+39..42, past the MANIFEST fold's carrier at 38). The producer fills it with
+`custom_proof_pi_commitment(DfaProofWire.public_inputs)` — the SAME derivation the custom carrier's
+`custom_proof_commitment` binds, term-for-term — on a Dfa-gated turn, ZERO otherwise (the absent
+sentinel: a turn WITHOUT a Dfa caveat publishes zeros and still proves; the
 executor/verifier anchors the published value, real-or-zero, off the turn's own witnessed
 predicates). `withDfaRcPins` publishes the carrier as 4 TAIL PIs (`g.piCount + k`), the Dfa twin of
 `customPiExposure` — applied to EVERY `v3Registry` member (the caveat is a precondition, not an
 effect: any cap-authorized turn can carry it), so the per-turn FOLD can `connect` the DSL sub-proof
 leaf's in-circuit PI-commitment to the deployed leg at these slots (the dual-expose the fold lane
-mints). -/
+mints).
+
+⚑ **THE rc-FOLD FLAG DAY, and what it repairs.** These pins used to be the WHOLE emit, and the
+doc here used to say — correctly — that they are "satisfiable at any uniformly-filled value". That
+is precisely `UnforcedPiPins`'s definition of an unforced pin: the carrier was read by NO other
+constraint, so the prover chose the column AND the published slot, and a real adversary moves
+both. `dropUnforcedPins` deleted all 144 of them (4 per member) as part of the 159 — the right
+call on the emit as it stood, and it took the `CarrierWitness::Dsl` fold arm down with it
+(`ivc_turn_chain::dsl_rc_claim_pi_lo` locates the rc slot BY the pin and fails closed).
+
+The repair is NOT to exempt the pins from the subtraction, and NOT to teach the fold to accept an
+unpinned slot: it is to make the columns genuinely FORCED. `caveatV3SitesAt` now absorbs the
+carrier into the PUBLISHED caveat commitment (`caveatCommitRc`, two further chip sites), so:
+
+  * the four columns are read by NON-pin constraints with a row denotation (chip lookups after
+    graduation) ⇒ they are in `UnforcedPiPins.forcedCols` ⇒ the pins survive the subtraction on
+    their own merits, with the subtraction itself unchanged;
+  * `rotV3_caveat_binds_manifest_and_rc` / `rotV3_moved_rc_moves_the_published_caveat_commit`:
+    an adversary that moves the carrier AND every PI these pins publish still moves PI
+    `piCount + 3`, which the verifier reconstructs from the turn's own witnessed predicates. -/
 
 -- `CAVEAT_REGION_OFF` (= `2 * B_SPAN`) is defined with the other span constants in §1, so the whole
 -- file can name it; it used to be minted HERE, ~5700 lines after the first `+ 478` that meant it.
@@ -6025,8 +6210,35 @@ theorem withDfaRcPins_publishes (hash : List ℤ → ℤ) (g : EffectVmDescripto
   simp only [VmConstraint2.holdsAt, hlastt, holdsVm_piLast_true] at h
   exact h
 
+/-- **THE PIN/FOLD TIE (the anti-vacuity statement).** The four columns `withDfaRcPins` publishes
+are LITERALLY the list `caveatCommitRc` absorbs — by `rfl`, not by a naming convention. If the
+region layout ever moves one without the other, THIS breaks. -/
+theorem withDfaRcPins_pins_the_folded_columns (base : Nat) (a : Assignment) :
+    (List.range 4).map (fun k => a (base + (C_RC_OFF + k))) = rcAt base a := rfl
+
+/-- **EVERY PUBLISHED rc SLOT IS A FOLDED COLUMN.** On the LAST row of a `Satisfied2` witness of
+the wrapped member, published PI `g.piCount + k` equals entry `k` of the very list the PUBLISHED
+caveat commitment absorbs. The pin no longer sits BESIDE the fold; it sits ON it — which is why
+the pin now survives `dropUnforcedPins` and why the move-both adversary is refused. -/
+theorem withDfaRcPins_publishes_a_folded_column (hash : List ℤ → ℤ) (g : EffectVmDescriptor2)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash (withDfaRcPins g) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 = t.rows.length) :
+    ∀ k : Fin 4,
+      (rcAt (EFFECT_VM_WIDTH + CAVEAT_REGION_OFF) (envAt t i).loc).getD k.val 0
+        ≡ (envAt t i).pub (g.piCount + k.val) [ZMOD 2013265921] := by
+  intro k
+  have h := withDfaRcPins_publishes hash g minit mfin maddrs t hsat i hi hlast k
+  have hget : (rcAt (EFFECT_VM_WIDTH + CAVEAT_REGION_OFF) (envAt t i).loc).getD k.val 0
+      = (envAt t i).loc (EFFECT_VM_WIDTH + CAVEAT_REGION_OFF + (C_RC_OFF + k.val)) := by
+    fin_cases k <;> rfl
+  rw [hget]
+  exact h
+
 #assert_axioms satisfied2_of_withDfaRcPins
 #assert_axioms withDfaRcPins_publishes
+#assert_axioms withDfaRcPins_pins_the_folded_columns
+#assert_axioms withDfaRcPins_publishes_a_folded_column
 
 /-- **`factoryV3Carriers`** — the deployed `factoryVmDescriptor2R24` WITH the two direct carrier-octet
 pin cohorts TAIL-appended after PI 46: the `child_vk8` octet (limbs 89..=96, PI 47..54 — factory's
@@ -6274,9 +6486,10 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
     && (d.traceWidth - (EFFECT_VM_WIDTH + APPENDIX_SPAN) - teeth) % (CHIP_OUT_LANES - 1) == 0
 #guard v3Registry.all fun (_, d) => d.tables.length == 5
 #guard v3Registry.all fun (_, d) => d.hashSites.length == 0 && d.ranges.length == 0
--- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 134 chip sites (v14).
+-- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 136 chip sites
+-- (v14 + the rc-FOLD pair).
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).constraints.length
-        == transferVmDescriptor2.constraints.length + 24 + 4 + 134
+        == transferVmDescriptor2.constraints.length + 24 + 4 + 136
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).piCount == 42 + 4
 -- The graduation side conditions hold on every v1-faced member (per-instance witnesses of
 -- the parametric `graduable_rotateV3`; attenuate/setFieldDyn ride `v3OfWith` over faces

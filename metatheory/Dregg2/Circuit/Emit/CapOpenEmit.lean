@@ -1698,9 +1698,9 @@ theorem v3RegistryCapOpenDep_length : v3RegistryCapOpenDep.length = 45 := by
 #guard v3RegistryCapOpenDep.length == 45
 -- the deployed registry is name-stable with the bare registry (a NAME-stable weld).
 #guard v3RegistryCapOpenDep.map (·.1) == v3RegistryCapOpen.map (·.1)
--- position 0 (transfer) now carries the welded (width-1736) descriptor.
+-- position 0 (transfer) now carries the welded (width-1752) descriptor.
 #guard (v3RegistryCapOpenDep[0]?.map (·.1)) == some "transferVmDescriptor2R24"
-#guard (v3RegistryCapOpenDep[0]?.map (·.2.traceWidth)) == some 1736
+#guard (v3RegistryCapOpenDep[0]?.map (·.2.traceWidth)) == some 1752
 -- the cap-open tail is untouched (the deployed prover's authority route).
 #guard (v3RegistryCapOpenDep[43]?.map (·.1)) == some "attenuateCapOpenEffVmDescriptor2R24"
 

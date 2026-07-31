@@ -321,16 +321,16 @@ section Witnesses
 -- witness pad shifts the cap-open appendix (and the TB columns) uniformly. DERIVATION at the
 -- 184-limb geometry: `(EFFECT_VM_WIDTH + AVAIL_PAD) + APPENDIX_SPAN + 7·N_ROT_SITES`
 -- `= 198 + 537 + 7·138 = 1701` (was `198 + 521 + 7·134 = 1657`).
-#guard transferV3Avail.traceWidth == 1701
+#guard transferV3Avail.traceWidth == 1717
 #guard transferCapOpenEffV3Avail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
 -- `CAP_OPEN_SPAN = 329` is limb-count INDEPENDENT (7 + 8 + 16·17 + 8 + 2 + 32), so the cap-open
 -- widths move exactly with the base: 1701 + 329 (was 1657 + 329 = 1986).
-#guard transferCapOpenEffV3Avail.traceWidth == 2030
+#guard transferCapOpenEffV3Avail.traceWidth == 2046
 -- ⚑ 2026-07-30: the TB weld adds NO column any more. The `actor`/`dst` columns it used to append
 -- were read by nothing, so their pins published prover-chosen felts (`UnforcedPiPins`); both are
 -- deleted, leaving the `src` pin, which lands on a column `targetBindGate` reads.
 #guard transferCapOpenEffV3TBAvail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
-#guard transferCapOpenEffV3TBAvail.traceWidth == 2030
+#guard transferCapOpenEffV3TBAvail.traceWidth == 2046
 -- PI shape unchanged: 46 (42 v1 + 4 rotated commit pins); TB adds the ONE turn-identity pin.
 #guard transferCapOpenEffV3Avail.piCount == 46
 #guard transferCapOpenEffV3TBAvail.piCount == 47

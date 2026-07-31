@@ -22,7 +22,7 @@ closed the 1-felt wire. This module builds the wide fee AVAIL member the emissio
     face base `FEE_AVAIL_BB = FEE_AVAIL_WIDTH = 204`. NO capacity-floor refuse and NO membership
     teeth (the fee key is registry tail position 44, not a bare cohort route — the deployed
     fee member's wrapper shape, mirrored wrapper-for-wrapper). PI layout UNCHANGED at 67
-    (46 base + fee pin 46 + rc 47..50 + 16 wide anchors); width 2683 → 2699 (+16 fee avail pad).
+    (46 base + fee pin 46 + rc 47..50 + 16 wide anchors); width 2699 → 2715 (+16 fee avail pad).
 
 ## THE FEE-PINNED COLLAPSE KEYSTONE (`wideEmbeddedFee_sound_v1`)
 
@@ -159,7 +159,7 @@ def FEE_AVAIL_BB : Nat := FEE_AVAIL_WIDTH
 #guard FEE_AVAIL_BB == transferFeeVmDescriptorAvail.traceWidth
 #guard FEE_AVAIL_BB == 204
 #guard transferFeeAvailV3W.piCount == 47
-#guard transferFeeAvailV3W.traceWidth == 1707
+#guard transferFeeAvailV3W.traceWidth == 1723
 #guard graduableWide transferFeeVmDescriptorAvail
 -- the Rust avail-pad key (TRANSFER_FEE_AVAIL_PAD = 16) survives every wrapper
 #guard transferFeeAvailV3W.name.startsWith "dregg-effectvm-transfer-v1-fee-avail"
@@ -175,9 +175,9 @@ def transferFeeAvailWide : EffectVmDescriptor2 :=
   wideAppend transferFeeV3AvailWire FEE_AVAIL_BB (FEE_AVAIL_BB + B_SPAN)
 
 -- Geometry pins: the avail fee member mirrors the bare wide fee member (+16 pad): 67 PIs,
--- width 2699 (= 1707 + wideAppendixSpan 992).
+-- width 2715 (= 1723 + wideAppendixSpan 992).
 #guard transferFeeAvailWide.piCount == 67
-#guard transferFeeAvailWide.traceWidth == 2699
+#guard transferFeeAvailWide.traceWidth == 2715
 #guard transferFeeAvailWide.traceWidth == transferFeeAvailV3W.traceWidth + wideAppendixSpan
 #guard transferFeeAvailWide.name == "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged"
 -- The bare wide fee twin for reference: the SAME 67-PI layout, fee-avail-shifted columns.

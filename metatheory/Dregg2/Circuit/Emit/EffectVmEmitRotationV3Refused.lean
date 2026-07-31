@@ -81,7 +81,7 @@ DEPLOYED members (and every registry derived from them: `v3RegistryRefused`, `v3
 twin beside it would be two shapes that agree today and disagree later.
 
 The deployed setField member is therefore `withDfaRcPins (gentianDeployedBareRefuse
-(withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))))`: `traceWidth = 1736`
+(withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))))`: `traceWidth = 1752`
 (the pins add no column; the width moved with the 178 → 184 ninth-lane flag day) and `piCount = 58`
 (46 rotated prefix + **8** value8 lanes + 4 rc — ⚑ the NINTH `fields[slot]` lane is published too,
 so the setField PI count moved 57 → 58 and every setField VK rotates). The
@@ -96,8 +96,8 @@ def deployedSetFieldMembers : List (String × EffectVmDescriptor2) :=
 
 #guard deployedSetFieldMembers.length == 8
 -- WIDTH IS UNMOVED by the value8 weld (the pins add no column); it moves only with the rotated
--- geometry itself (178 → 184 took it 1692 → 1736).
-#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1736
+-- geometry itself (178 → 184 took it 1692 → 1736; the rc FOLD 1736 → 1752).
+#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1752
 -- PI LAYOUT: 46 rotated prefix + 8 value8 completion pins (46..53) + 4 rc pins (54..57) = 58.
 #guard deployedSetFieldMembers.all fun (k, d) =>
   d.piCount == 58 && !d.name.isEmpty && !d.constraints.isEmpty

@@ -27,8 +27,8 @@ That is the (c) rung; `CustomApex` / `CustomCarrierAttack` / `CustomLeafEncoding
   * the committed bytes contain EXACTLY ONE `proof_bind` op, and its JSON is EXACTLY
     `{"t":"proof_bind","guard":{"t":"var","v":8},"commit":{"t":"var","v":72},"vk":{"t":"var","v":68}}`.
   * the committed bytes mention NO commitment / VK column (72..75, `CUSTOM_COMMIT_TEETH_COL`+0..3,
-    68..71, `CUSTOM_VK_TEETH_COL`+0..3 — 1663..1666 / 1667..1670 at the 184-limb geometry, was
-    1619..1622 / 1623..1626) inside any `gate` body — the eight `pi_binding` pins and the one
+    68..71, `CUSTOM_VK_TEETH_COL`+0..3 — 1679..1682 / 1683..1686 at the 184-limb + rc-FOLD
+    geometry, was 1663..1666 / 1667..1670, was 1619..1622 / 1623..1626) inside any `gate` body — the eight `pi_binding` pins and the one
     vacuous `proof_bind` are the only constraints that name them.
 
 Theorems (over the values the pins tie to those bytes):
@@ -140,7 +140,7 @@ def CUSTOM_V3_DEPLOYED_PROOF_BIND_JSON : String :=
 /-! ### §3b — the commitment / VK columns are READ BY NOTHING in the deployed bytes.
 
 The eight commitment limbs (`custom_proof_commitment` = cols 72..75 low + `CUSTOM_COMMIT_TEETH_COL`
-+0..3 high = 1663..1666) and the eight VK limbs (`custom_program_vk_hash` = cols 68..71 low +
++0..3 high = 1679..1682) and the eight VK limbs (`custom_program_vk_hash` = cols 68..71 low +
 `CUSTOM_VK_TEETH_COL`+0..3 high = 1667..1670) are the columns the
 `proof_bind` op names and the sixteen `customPiExposure` pins publish. The question the vacuity
 theorem below turns on is whether ANY OTHER constraint in the shipped descriptor reads them — a
@@ -158,9 +158,10 @@ def customBindingCols : List Nat :=
   , CUSTOM_VK_TEETH_COL, CUSTOM_VK_TEETH_COL + 1
   , CUSTOM_VK_TEETH_COL + 2, CUSTOM_VK_TEETH_COL + 3 ]
 
--- The concrete deployed column indices at the 184-limb geometry (were 1619..1626).
+-- The concrete deployed column indices at the 184-limb + rc-FOLD geometry (were 1663..1670 at the
+-- 184-limb geometry, 1619..1626 before it).
 #guard customBindingCols
-  == [68, 69, 70, 71, 72, 73, 74, 75, 1663, 1664, 1665, 1666, 1667, 1668, 1669, 1670]
+  == [68, 69, 70, 71, 72, 73, 74, 75, 1679, 1680, 1681, 1682, 1683, 1684, 1685, 1686]
 
 /-- Does an `EmittedExpr` read any of the custom binding columns? -/
 def readsBindingCol : EmittedExpr → Bool
@@ -203,7 +204,7 @@ def constrainsBindingCol : VmConstraint2 → Bool
 -- commitment column IS detected, and one reading an unrelated column is NOT.
 #guard constrainsBindingCol (.base (.gate (.var 72))) == true
 #guard constrainsBindingCol (.base (.gate (.var 71))) == true
-#guard constrainsBindingCol (.base (.gate (.var 1663))) == true
+#guard constrainsBindingCol (.base (.gate (.var 1679))) == true
 #guard constrainsBindingCol (.base (.gate (.var 54))) == false
 #guard constrainsBindingCol (.windowGate ⟨.nxt 72, true⟩) == true
 

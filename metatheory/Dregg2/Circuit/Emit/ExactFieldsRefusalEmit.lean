@@ -44,9 +44,10 @@ def FLN2 : Int := 0x464c4e32
 `refusalV3.traceWidth = (188 + APPENDIX_SPAN) + 7·(4 + |rotV3Appendix|)`. The literal is kept so the
 whole column ladder below stays `rfl`-shaped, but the `#guard` under the ladder now WELDS it to that
 host width: at the 178 → 184 ninth-lane flag day this moved 1647 → 1691 (`APPENDIX_SPAN` 521 → 537
-and four more appendix sites, `+16 + 28 = +44`), and the guard goes RED rather than silent if the
-host moves again. -/
-def BEFORE_BASE : Nat := 1691
+and four more appendix sites, `+16 + 28 = +44`), and at the rc-FOLD flag day 1691 → 1707
+(`APPENDIX_SPAN` 537 → 539 and two more appendix sites, `+2 + 14 = +16`). The guard went RED rather
+than silent both times — which is the whole reason the literal is allowed to exist. -/
+def BEFORE_BASE : Nat := 1707
 def OCC_COL : Nat := BEFORE_BASE
 def OLD_VALUE_BASE : Nat := OCC_COL + 1
 def OLD_LEAF_STATE_BASE : Nat := OLD_VALUE_BASE + VALUE_LIMBS
@@ -70,11 +71,11 @@ def TRACE_WIDTH : Nat := COUNT_COL + 1
 def AUDIT_PI_BASE : Nat := 54
 def AUDIT_PI_COUNT : Nat := 16
 
-#guard BEFORE_BASE == 1691
+#guard BEFORE_BASE == 1707
 #guard BEFORE_BASE == refusalV3.traceWidth   -- ⚑ the reality gate: no independent literal
-#guard AFTER_BASE == 1949
-#guard ACTIVE_COL == 2197
-#guard TRACE_WIDTH == 2199
+#guard AFTER_BASE == 1965
+#guard ACTIVE_COL == 2213
+#guard TRACE_WIDTH == 2215
 #guard AUDIT_PI_BASE == 46 + 8
 
 def ev (c : Nat) : EmittedExpr := .var c

@@ -393,11 +393,11 @@ section Witnesses
 #guard (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail).tables.length == 6
 #guard (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail).tables.length == 6
 -- The wire members: piCount 50 (42 v1 + 4 rotated commit pins + 4 rc), the avail-shifted widths
--- (transfer: graduated 1701 + 45 refuse = 1746; burn: 1699 + 45 = 1744), name-marked `-v1-avail`.
+-- (transfer: graduated 1717 + 45 refuse = 1762; burn: 1715 + 45 = 1760), name-marked `-v1-avail`.
 #guard transferV3AvailWire.piCount == 50
 #guard burnV3AvailWire.piCount == 50
-#guard transferV3AvailWire.traceWidth == 1746
-#guard burnV3AvailWire.traceWidth == 1744
+#guard transferV3AvailWire.traceWidth == 1762
+#guard burnV3AvailWire.traceWidth == 1760
 #guard transferV3AvailWire.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 #guard burnV3AvailWire.name

@@ -19,7 +19,7 @@ builds the two wide-transfer AVAIL members the emission retargets to:
     `v3OfFrozenWide transferVmDescriptorAvail`, with the rc pins at the AVAIL-shifted caveat rc
     carrier (`withDfaRcPinsAt AVAIL_WIDTH` — the fixed-geometry `withDfaRcPins` would read the
     WRONG columns on the widened face) and the membership teeth columns past the avail wide
-    carriers (`2693..2694`, teeth PIs 50..51 UNCHANGED — same slots as the bare member, so the
+    carriers (`2709..2710`, teeth PIs 50..51 UNCHANGED — same slots as the bare member, so the
     fold-arm PI convention `MEMBERSHIP_CLAIM_PI_LO = 50` survives);
   * **`transferCapOpenTBAvailWide`** — the live-only `transferCapOpenTBVmDescriptor2R24` host:
     `effCapOpenV3TB` (fully parametric in its base) over the same hardened rotated face,
@@ -175,15 +175,15 @@ def TR_AVAIL_BB : Nat := AVAIL_WIDTH
 
 #guard TR_AVAIL_BB == transferVmDescriptorAvail.traceWidth
 #guard transferAvailV3W.piCount == 46
-#guard transferAvailV3W.traceWidth == 1701
+#guard transferAvailV3W.traceWidth == 1717
 #guard graduableWide transferVmDescriptorAvail
 -- the Rust avail-pad key survives every wrapper (all append-only on the name)
 #guard transferAvailV3W.name.startsWith "dregg-effectvm-transfer-v1-avail"
 
 /-- The AVAIL wide membership teeth columns: past the avail wide carriers
-(`1701 + 992 = 2693..2694` — the avail mirror of `MEMBERSHIP_TEETH_COL_WIDE = 2683`). The teeth
+(`1717 + 992 = 2709..2710` — the avail mirror of `MEMBERSHIP_TEETH_COL_WIDE = 2699`). The teeth
 PI slots are UNCHANGED (50..51 — the avail rotated face publishes the same 46 + 4 rc PIs). -/
-def MEMBERSHIP_TEETH_COL_AVAIL_WIDE : Nat := 2693
+def MEMBERSHIP_TEETH_COL_AVAIL_WIDE : Nat := 2709
 
 #guard MEMBERSHIP_TEETH_COL_AVAIL_WIDE == transferAvailV3W.traceWidth + wideAppendixSpan
 
@@ -227,18 +227,18 @@ umem-welded twin welds (refuse-first, the runtime producer's composition). -/
 def transferAvailWideRefused : EffectVmDescriptor2 :=
   gentianDeployedBareRefuseAt (cavBaseOf AVAIL_WIDTH) transferV3MembershipAvailWide
 
--- Geometry pins: the avail crown mirrors the bare crown (+10 pad): 68 PIs, width 2695 (+2 teeth);
+-- Geometry pins: the avail crown mirrors the bare crown (+10 pad): 68 PIs, width 2711 (+2 teeth);
 -- the TB member 65 PIs, width 3024; the refused crown +45 aux columns.
 #guard transferV3MembershipAvailWide.piCount == 68
-#guard transferV3MembershipAvailWide.traceWidth == 2695
+#guard transferV3MembershipAvailWide.traceWidth == 2711
 #guard transferV3MembershipAvailWide.name == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged"
--- ⚑ 2026-07-30: TB piCount 65 → 63 and width 3024 → 3022, the two unforced `actor`/`dst`
+-- ⚑ 2026-07-30: TB piCount 65 → 63 and width 3024 → 3038, the two unforced `actor`/`dst`
 -- publications deleted (`UnforcedPiPins`); the convergence re-emit rotates the wide registry FP.
 #guard transferCapOpenTBAvailWide.piCount == 63
-#guard transferCapOpenTBAvailWide.traceWidth == 3022
+#guard transferCapOpenTBAvailWide.traceWidth == 3038
 #guard transferCapOpenTBAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb"
-#guard transferAvailWideRefused.traceWidth == 2695 + 45
+#guard transferAvailWideRefused.traceWidth == 2711 + 45
 #guard transferAvailWideRefused.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare crown twin for reference: same PI layout, avail-shifted columns.
@@ -491,7 +491,7 @@ on the wide/welded leg after the bare + narrow-wire closes. The retarget mirrors
 member-for-member, MINUS the membership teeth (burn's crown host is the plain cohort wide
 member): the hardened face `v3OfFrozenWide burnVmDescriptorAvail`, rc pins at the avail-shifted
 carrier (`withDfaRcPinsAt 196`), `wideAppend` at the burn AVAIL face base — PI count UNCHANGED at
-66, width 2683 → 2691 (+8 avail pad; burn is debit-only, no credit-carry twin). -/
+66, width 2699 → 2707 (+8 avail pad; burn is debit-only, no credit-carry twin). -/
 
 /-- The hardened rotated graduated burn face — the SAME term as
 `RotatedKernelRefinementMintBurnAvail.burnV3Avail` (`v3OfFrozenWide burnVmDescriptorAvail`),
@@ -507,7 +507,7 @@ def BU_AVAIL_BB : Nat := Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH
 #guard BU_AVAIL_BB == Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.traceWidth
 #guard BU_AVAIL_BB == 196
 #guard burnAvailV3W.piCount == 46
-#guard burnAvailV3W.traceWidth == 1699
+#guard burnAvailV3W.traceWidth == 1715
 #guard graduableWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
 -- the Rust avail-pad key survives every wrapper (all append-only on the name)
 #guard burnAvailV3W.name.startsWith "dregg-effectvm-burn-v1-avail"
@@ -529,12 +529,12 @@ def burnAvailWideRefused : EffectVmDescriptor2 :=
   gentianDeployedBareRefuseAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide
 
 -- Geometry pins: the avail crown mirrors the bare wide burn (+8 pad): 66 PIs (46 + 4 rc + 16
--- wide anchors), width 2691; the refused crown +45 aux columns.
+-- wide anchors), width 2707; the refused crown +45 aux columns.
 #guard burnV3AvailWide.piCount == 66
-#guard burnV3AvailWide.traceWidth == 2691
+#guard burnV3AvailWide.traceWidth == 2707
 #guard burnV3AvailWide.name == "dregg-effectvm-burn-v1-avail-rot24-v3-staged"
 #guard burnAvailWideRefused.piCount == 66
-#guard burnAvailWideRefused.traceWidth == 2691 + 45
+#guard burnAvailWideRefused.traceWidth == 2707 + 45
 #guard burnAvailWideRefused.name
   == "dregg-effectvm-burn-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare wide burn twin for reference: SAME 66-PI layout, avail-shifted columns.
@@ -745,7 +745,7 @@ def transferCapOpenEffAvailWide : EffectVmDescriptor2 :=
 -- Geometry pins: the EFF member is the narrow avail cap-open (width 2030, 46 PIs) + the wide
 -- appendix (+992 columns, +16 PIs). The Rust `avail_pad_for_descriptor_name` prefix survives.
 #guard transferCapOpenEffAvailWide.piCount == 62
-#guard transferCapOpenEffAvailWide.traceWidth == 3022
+#guard transferCapOpenEffAvailWide.traceWidth == 3038
 #guard transferCapOpenEffAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff"
 
