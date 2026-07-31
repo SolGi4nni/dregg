@@ -244,18 +244,27 @@ mod tests {
         // and this test's stale pin proved that gate never re-armed after a bare regen; the wide
         // pins are the deployed truth.)
         //
-        // ⚑ ROTATED BY THE setField VALUE8 EPOCH. The deployed `setFieldVmDescriptor2-{slot}R24`
-        // members moved from the freeze-ALL wrap to freeze-EXCEPT + the 7 published completion-lane
-        // pins (Lean `v3RegistryBare`), so ALL THREE registry fingerprints moved and this is a NEW
-        // VK-EPOCH: a binary built before the flip reports `RegistryFpMismatch` against one built
-        // after, which is exactly the intended fail-closed handshake.
+        // ⚑ ROTATED BY THE LAST-ROW ANCHOR FORGE CLOSURE (2026-07-30), superseding the setField
+        // VALUE8 epoch's pins. Every row-local constraint body in all 174 deployed members moved
+        // from the transition-domain `gate` to the WHOLE-domain `windowGate { on_transition:
+        // false }` (Lean `Dregg2.Circuit.Emit.LastRowFrameHardening.hardenLastRow`), so the LAST
+        // row — the row every member pins its published 8-felt AFTER anchor on, the value
+        // `ivc_turn_chain` folds as the turn's endpoint — carries algebra instead of nothing.
+        // Before it, a prover published an endpoint of its own choosing for the cost of one honest
+        // proving run (MEASURED: `circuit/tests/last_row_anchor_forge.rs`).
+        //
+        // ALL THREE registry fingerprints moved, so this is a NEW VK-EPOCH and a FLAG DAY, not a
+        // migration: a binary built before the flip reports `RegistryFpMismatch` against one built
+        // after — the old shape REFUSES TO LOAD rather than reinterpreting, which is the intended
+        // fail-closed handshake. Every verifier, light client and relayer must be rebuilt. No
+        // geometry widened (widths and PI counts are unchanged), so this is NOT a re-genesis.
         assert_eq!(
             WIDE_REGISTRY_STAGED_FP,
-            "1162d9d3dd200661bff240f83ffaf147f15bf3eb2175659aa6931dd4dc182195"
+            "0c6c402d332b16171b0511ce2df506cc8639c411099dfbc052a0ef828f7135dd"
         );
         assert_eq!(
             WIDE_UMEM_WELD_REGISTRY_FP,
-            "eb804baeb6037501e61be3aa3a11b93d36320b6eae90919e4ff3426f64249e81"
+            "a028e25fee2e9c05c941fb4592a7e003ed197fdd3a32996b2e94180d130cc3a5"
         );
     }
 
