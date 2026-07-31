@@ -1,4 +1,26 @@
-//! **FALSIFICATION PROBE — is a `define_const` a PIN?**
+//! **FALSIFICATION PROBE — is a `define_const` a PIN?**  ⚑ **ANSWER FLIPPED 2026-07-30: YES.**
+//!
+//! ## ⚑ THIS FILE'S ASSERTIONS WERE INVERTED, DELIBERATELY, BECAUSE THE SUBSTRATE CHANGED
+//!
+//! Everything below the divider was TRUE as measured at `63ffb1a08` and is FALSE now. The
+//! change is fork commit `fc3c6df` (`emberian/plonky3-recursion`, pinned in the root
+//! `Cargo.toml`): `ConstAir`'s preprocessed row went from `[ext_mult, out_idx]` to
+//! `[ext_mult, out_idx, value[0..D]]`, and its `eval` gained `D` degree-1 constraints
+//! `main.value[i] == prep.value[i]`. A constant's value is now part of the preprocessed
+//! commitment, so it is part of the VK fingerprint that hashes it.
+//!
+//! MEASURED at the new rev, on the two-op lever-(a) shape this file builds:
+//!
+//! ```text
+//!   k=7  vk=b2c625d110375f77bf987da91a0a74f088fc84f5e842d732662fbf63a17d3b80
+//!   k=9  vk=a1b0c13065b5ee238effc07a57cf6021053a0d20bf797c6be2c5f70133f41bcb
+//! ```
+//!
+//! The assertions were flipped by writing the opposite claim and re-running, NOT by
+//! reshaping the probe until it passed: the circuit construction, the proving path, the
+//! `verify_all_tables` calls and the proof-bytes-differ guard are all byte-unchanged.
+//!
+//! ---
 //!
 //! `recursion/src/verifier/batch_stark.rs::pin_preprocessed_commit` (lever (a)) pins a
 //! child proof's VK identity by
@@ -97,8 +119,12 @@ fn prove_lever_a_shape(k: u32) -> (BatchStarkProof<DreggRecursionConfig>, Recurs
 /// **THE MEASUREMENT.** Two circuits that differ ONLY in the pinned constant. If their VK
 /// fingerprints agree and both proofs verify, then an anchor extracted from one accepts
 /// the other — `alloc_const` + `connect` is not a pin.
+///
+/// ⚑ They no longer agree. The verdict line below now asserts the SEPARATION, so it goes
+/// red the moment anything puts a constant's value back outside the preprocessed
+/// commitment. The probe's construction is unchanged; only the claim is.
 #[test]
-fn define_const_value_is_not_in_the_vk_fingerprint() {
+fn define_const_value_is_in_the_vk_fingerprint() {
     let (proof7, vk7, ok7) = prove_lever_a_shape(7);
     let (proof9, vk9, ok9) = prove_lever_a_shape(9);
 
@@ -113,8 +139,9 @@ fn define_const_value_is_not_in_the_vk_fingerprint() {
     assert!(ok7, "the k=7 proof must verify under its own prover");
     assert!(ok9, "the k=9 proof must verify under its own prover");
 
-    // The proofs themselves DIFFER (different main-trace commitments) — this is what makes
-    // an identical fingerprint meaningful rather than an artifact of proving the same thing.
+    // The proofs themselves DIFFER — kept from the original probe, where it was what made an
+    // IDENTICAL fingerprint meaningful. It still earns its keep in the other direction: it
+    // says the two runs really did prove two different things.
     let b7 = postcard::to_allocvec(&proof7).expect("proof postcards");
     let b9 = postcard::to_allocvec(&proof9).expect("proof postcards");
     println!(
@@ -128,19 +155,22 @@ fn define_const_value_is_not_in_the_vk_fingerprint() {
         "the two proofs must be DIFFERENT artifacts (else the probe measured nothing)"
     );
 
-    // THE VERDICT LINE. Written as the audit's prediction so a REFUTATION is loud.
-    assert_eq!(
+    // THE VERDICT LINE, INVERTED at fork rev `fc3c6df`. It now states the close, so it goes
+    // red if a constant's value ever stops reaching the preprocessed commitment again.
+    assert_ne!(
         vk7, vk9,
-        "REFUTED: the two constants minted DIFFERENT VK fingerprints — `alloc_const` DOES \
-         reach circuit identity, and the audit's central premise is wrong"
+        "THE CLOSE FAILED: two circuits differing ONLY in a constant minted the SAME VK \
+         fingerprint, so `alloc_const` pins nothing and an anchor extracted from one accepts \
+         the other. Re-read `ConstAir`'s preprocessed layout: the value must be in it."
     );
 
-    // And the forgery statement, spelled out: a light client anchored on the k=7 circuit
-    // accepts the k=9 proof, whose "pinned" constant is a value the anchor never saw.
-    assert_eq!(
+    // And the forgery statement, spelled out and likewise inverted: a light client anchored
+    // on the k=7 circuit REFUSES the k=9 proof, because the constant it "pins" is now part of
+    // the identity the anchor names.
+    assert_ne!(
         recursion_vk_fingerprint(&proof9),
         vk7,
-        "the k=9 proof presents the k=7 anchor"
+        "THE CLOSE FAILED: the k=9 proof still presents the k=7 anchor"
     );
 }
 

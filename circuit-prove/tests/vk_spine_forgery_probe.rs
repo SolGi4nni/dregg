@@ -28,9 +28,28 @@
 //!   substituted child  ⇒  whole_chain_anchor        DIFFERS     (the close)
 //! ```
 //!
-//! `vk_pin_lever_a_probe.rs` is left with its assertions UNCHANGED, because what it measures is
-//! still true and is precisely the reason the spine exists. It is not edited to match a nicer
-//! outcome.
+//! ## ⚑ THE RESIDUAL THIS PROBE NAMED IS CLOSED (2026-07-30) — PAIR A IS INVERTED
+//!
+//! This file's PAIR A asserted that a CONST-SWAPPED child leaves the cap, the spine and the
+//! anchor unmoved, and called that the residual the spine does not reach. That is now FALSE, by
+//! fork commit `fc3c6df` (`emberian/plonky3-recursion`): `ConstAir`'s preprocessed row went from
+//! `[ext_mult, out_idx]` to `[ext_mult, out_idx, value[0..D]]` with `D` degree-1 constraints
+//! `main.value[i] == prep.value[i]`. A constant's value is preprocessed data now, so it reaches
+//! the cap, the spine and the anchor.
+//!
+//! The three PAIR A assertions below were flipped to `assert_ne!` by writing the opposite claim
+//! and re-running. Nothing else in the file moved: the three `Program` variants, the proving
+//! path, `combine_spine_host` and the `anchor` closure are byte-unchanged.
+//!
+//! ⚑ Note what ALSO changed, and it is a strengthening the original doc above forbade itself:
+//! `recursion_vk_fingerprint` NOW separates two children differing only in a constant, because it
+//! hashes `preprocessed_commitment`. That does not break content-independence — a constant is
+//! fixed by the circuit, whereas a PUBLIC INPUT is per-execution and stays out (`PublicAir`'s
+//! preprocessed row was deliberately NOT changed). One anchor still serves many histories over
+//! one circuit; it no longer serves two different circuits.
+//!
+//! `vk_pin_lever_a_probe.rs` is inverted in the same change and for the same reason — including
+//! its second horn, which now holds: baking a foreign cap DOES move the parent's VK core.
 //!
 //! ## What is cheap here and what is not
 //!
@@ -177,13 +196,14 @@ fn combine_spine_host(
     seg_poseidon_commit_host(&inputs)
 }
 
-/// **THE MEASUREMENT — two pairs, and they do NOT agree.**
+/// **THE MEASUREMENT — two pairs, and they now AGREE.**
 ///
 /// PAIR B (op-list differs: a child that CHECKS vs one that checks nothing) is the close.
-/// PAIR A (op-list identical, constant VALUE differs) is the residual this probe DISCOVERED and
-/// the spine does NOT close. Both are asserted, so neither can quietly rot.
+/// PAIR A (op-list identical, constant VALUE differs) is the residual this probe DISCOVERED,
+/// and it is closed as of fork rev `fc3c6df`. Both are asserted, so neither can quietly rot —
+/// and PAIR A now goes RED if a constant's value ever leaves the preprocessed commitment again.
 #[test]
-fn the_spine_binds_a_childs_program_but_not_its_constants() {
+fn the_spine_binds_a_childs_program_and_its_constants() {
     let checker7 = prove_child(7, Program::Check);
     let checker9 = prove_child(9, Program::Check);
     let nocheck7 = prove_child(7, Program::NoCheck);
@@ -205,25 +225,30 @@ fn the_spine_binds_a_childs_program_but_not_its_constants() {
     assert_eq!(cap_c7.len(), VK_CAP_TARGET_LEN);
 
     // ---------------------------------------------------------------------------------------
-    // PAIR A — SAME op-list, DIFFERENT constant value. ⚑ THE RESIDUAL.
+    // PAIR A — SAME op-list, DIFFERENT constant value. ⚑ THE RESIDUAL, NOW CLOSED.
     //
-    // A constant's VALUE lives in `ConstAir`'s constraint-free MAIN trace; its PREPROCESSED row is
-    // `[ext_mult, out_idx]`. Two circuits differing only in a constant therefore have IDENTICAL
-    // preprocessed traces, hence an IDENTICAL cap — so the spine, which absorbs the cap, cannot
-    // separate them either. This is the SAME hole this lane started from, one level down: the
-    // spine moved it from "which circuit" to "which constants inside a fixed circuit". Reaching it
-    // needs const values in the preprocessed trace, i.e. an AIR change — which is NOT ours to
-    // hand-write in Rust.
+    // A constant's VALUE used to live ONLY in `ConstAir`'s constraint-free MAIN trace, with
+    // `[ext_mult, out_idx]` as the whole preprocessed row. Two circuits differing only in a
+    // constant therefore had IDENTICAL preprocessed traces, hence an IDENTICAL cap — so the
+    // spine, which absorbs the cap, could not separate them either. That was the SAME hole this
+    // lane started from, one level down: the spine had moved it from "which circuit" to "which
+    // constants inside a fixed circuit".
+    //
+    // Fork rev `fc3c6df` put the value in the preprocessed row (`[ext_mult, out_idx,
+    // value[0..D]]`) and constrained `main.value == prep.value`. So the cap separates them, the
+    // fingerprint that hashes the cap separates them, and the spine and anchor follow.
     // ---------------------------------------------------------------------------------------
-    assert_eq!(
+    assert_ne!(
         fp_c7, fp_c9,
-        "premise moved: the two constants no longer share a fingerprint"
+        "THE CLOSE FAILED: two circuits differing only in a constant still share one VK \
+         fingerprint. `recursion_vk_fingerprint` hashes `preprocessed_commitment`, so this means \
+         the constant is not in the preprocessed trace — re-read `ConstAir`."
     );
-    assert_eq!(
+    assert_ne!(
         cap_c7, cap_c9,
-        "UNEXPECTED — and it would be GOOD news: the cap now separates two circuits differing \
-         only in a constant, which would mean const values reach the preprocessed trace and the \
-         residual named here is closed. Re-read `ConstAir` before believing it."
+        "THE CLOSE FAILED at the cap: two circuits differing only in a constant present ONE \
+         preprocessed cap, so the spine that absorbs the cap cannot separate them and a \
+         const-swapped child rides the honest anchor."
     );
 
     // ---------------------------------------------------------------------------------------
@@ -301,15 +326,20 @@ fn the_spine_binds_a_childs_program_but_not_its_constants() {
          unmoved, so tooth (1) accepts the forgery"
     );
 
-    // And the residual, restated at the anchor so it is measured, not merely asserted about caps:
-    // swapping a constant inside a child leaves the anchor unmoved.
+    // And the closed residual, restated at the anchor so it is measured rather than merely
+    // asserted about caps: swapping a constant inside a child MOVES the anchor.
+    //
+    // ⚑ The root fingerprint is deliberately held at `fp_c7` on BOTH sides. Holding it fixed is
+    // the conservative form of the claim: the anchor moves through the SPINE alone, not because
+    // the fingerprint happens to move too.
     let spine_const_swap = combine_spine_host(&cap_c9, &leaf_seed, &cap_c7, &leaf_seed);
     let a_const_swap = anchor(&fp_c7.0, &spine_const_swap);
     println!("anchor const-swapped child = {}", hex(&a_const_swap));
-    assert_eq!(
+    assert_ne!(
         a_honest, a_const_swap,
-        "UNEXPECTED — and GOOD news: swapping a child's CONSTANT moved the anchor, so the named \
-         residual is closed. Verify against `ConstAir` before relying on it."
+        "THE CLOSE FAILED at the anchor: swapping a child's CONSTANT left the caller-held anchor \
+         unmoved, so a prover can still zero a coefficient inside a folded child and keep the \
+         anchor. This is the residual this probe was written to name."
     );
 }
 

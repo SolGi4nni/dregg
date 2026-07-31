@@ -307,14 +307,24 @@ p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd73
 p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 
-## Plonky3-recursion fork — rev 0a4a554 (`update-plonky3-rev` tip: the GPU recursion prove
-## path; `RecursionOutput` carries `Option<Rc<CircuitProverData>>`; descends from 993efec's
-## deterministic verifier op-list). PURE git deps, no `[patch]`, no sibling checkout —
-## a fresh clone and CI resolve this identically.
-p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
-p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
-p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
-p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
+## Plonky3-recursion fork — rev fc3c6df (`update-plonky3-rev` tip). PURE git deps, no
+## `[patch]`, no sibling checkout — a fresh clone and CI resolve this identically.
+##
+## fc3c6df: a constant's VALUE is now a PREPROCESSED column of `ConstAir`
+## (`[ext_mult, out_idx, value[0..D]]`, was `[ext_mult, out_idx]`) with D degree-1
+## constraints `main.value == prep.value`. Before it, the value lived only in the
+## constraint-free main trace, so two circuits differing ONLY in a constant had identical
+## preprocessed commitments — identical VK cap, identical vk-spine, identical
+## whole-chain anchor. ⚑ FLAG DAY: every preprocessed commitment moves, so every
+## `RecursionVk` and every anchor derived from one changes. Joins the spine's staged
+## rotation (`e1d8ab9bc`) rather than adding a second one.
+## 4aead01: child VK cap targets surfaced to the expose hooks (the spine's substrate).
+## 0a4a554: GPU recursion prove path; `RecursionOutput` carries
+## `Option<Rc<CircuitProverData>>`. Descends from 993efec's deterministic verifier op-list.
+p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc3c6df" }
+p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc3c6df" }
+p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc3c6df" }
+p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "fc3c6df" }
 
 ## Crates.io
 ## --- TEMP LOCAL DSU-FIX ITERATION PATCH (REMOVE before CI-correct rev bump) ---

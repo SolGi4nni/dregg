@@ -34,6 +34,35 @@
 //!
 //! `recursion_vk_fingerprint` hashes shape + `preprocessed.commitment`, so equal shape and
 //! equal commitment IS an equal fingerprint.
+//!
+//! ## ⚑ BOTH ASSERTIONS INVERTED 2026-07-30 — THE OLDER COMMENT WINS, AFTER A SUBSTRATE FIX
+//!
+//! Measured at `bb42f9800`, the audit was right on both counts. It is now wrong on both, because
+//! the substrate its premise rested on changed: fork commit `fc3c6df`
+//! (`emberian/plonky3-recursion`) moved a constant's VALUE into `ConstAir`'s preprocessed row
+//! (`[ext_mult, out_idx, value[0..D]]`, was `[ext_mult, out_idx]`) and added `D` degree-1
+//! constraints `main.value[i] == prep.value[i]`.
+//!
+//! Since lever (a) bakes the expected cap as `alloc_const` values, those values are now
+//! preprocessed columns of the PARENT, so the parent's preprocessed commitment depends on WHICH
+//! cap was baked. MEASURED at the new rev, and note what is IDENTICAL in it:
+//!
+//! ```text
+//!   [honest  cap] parent prep cap = [[1233588605, 1402159262, 830122016, 730413766, …]]
+//!   [foreign cap] parent prep cap = [[1128576629, 1286127648, 223558623, 1010029691, …]]
+//!   both: instances (width, degree_bits) = [(6,7), (2,6), (59,13), (24,11), (2,12)]
+//!   both: public_flat_len = 51
+//! ```
+//!
+//! Every SHAPE field `recursion_vk_fingerprint` hashes is the same on both sides; only the
+//! preprocessed commitment differs. So this is the separation happening through the commitment
+//! itself rather than through a row count — the distinction `vk_spine_forgery_probe.rs` flagged
+//! as undemonstrated in its three-op miniature.
+//!
+//! The `(6, 7)` first instance is the Const table at its new width: `2 + D` with `D = 4`.
+//!
+//! Both assertions were flipped by writing the opposite claim and re-running. The circuits, the
+//! `build_next_layer_prep` call and the no-pin control are byte-unchanged.
 
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, create_recursion_backend, create_recursion_config,
@@ -126,8 +155,11 @@ fn cap_lanes(c: &Commit) -> Vec<[P3BabyBear; DIGEST_ELEMS]> {
 /// **(A)** The deployed pin reads the expected cap OFF THE CHILD. Measure whether two
 /// children that differ ONLY in a `define_const` value present the same cap — i.e. whether
 /// that pin can discriminate them at all.
+///
+/// ⚑ It can, as of fork rev `fc3c6df`. The assertion asserts the separation, so it goes red if
+/// const values ever leave the preprocessed trace again.
 #[test]
-fn two_children_differing_only_in_a_const_present_one_vk_cap() {
+fn two_children_differing_only_in_a_const_present_two_vk_caps() {
     let child7 = prove_lever_a_shape(7);
     let child9 = prove_lever_a_shape(9);
     let cap7 = cap_of(&child7);
@@ -139,11 +171,12 @@ fn two_children_differing_only_in_a_const_present_one_vk_cap() {
         "child fingerprints equal: {}",
         recursion_vk_fingerprint(&child7) == recursion_vk_fingerprint(&child9)
     );
-    assert_eq!(
+    assert_ne!(
         cap_lanes(&cap7),
         cap_lanes(&cap9),
-        "REFUTED: the two children present DIFFERENT VK caps — the pin CAN discriminate a \
-         const-level lie and the audit's premise is wrong"
+        "THE CLOSE FAILED: two children differing ONLY in a `define_const` value present ONE VK \
+         cap, so the deployed pin — which reads the expected cap off the child — cannot \
+         discriminate a const-level lie at all."
     );
 }
 
@@ -153,8 +186,12 @@ fn two_children_differing_only_in_a_const_present_one_vk_cap() {
 ///
 /// The disputed sentence predicts these DIFFER ("the parent op-list changes, so the ROOT
 /// preprocessed commitment changes"). The audit predicts they are identical.
+///
+/// ⚑ The disputed sentence WINS as of fork rev `fc3c6df` — the baked cap is `alloc_const`
+/// material and const values are now preprocessed columns. It did NOT win at `bb42f9800`; the
+/// sentence was true of a substrate that did not yet exist.
 #[test]
-fn baking_a_different_cap_does_not_move_the_parent_vk_core() {
+fn baking_a_different_cap_moves_the_parent_vk_core() {
     let child = prove_lever_a_shape(7);
     let honest = cap_of(&child);
     let mut roots = cap_lanes(&honest);
@@ -244,9 +281,10 @@ fn baking_a_different_cap_does_not_move_the_parent_vk_core() {
          VALUE means nothing"
     );
 
-    assert_eq!(
+    assert_ne!(
         honest_r, foreign_r,
-        "REFUTED: baking a different cap MOVED the parent's VK core — \
-         `ivc_turn_chain.rs:171-183`'s second horn holds and the audit is wrong"
+        "HORN 2 REOPENED: baking a DIFFERENT cap left the parent's VK core untouched, so lever \
+         (a) pins nothing that reaches the root fingerprint and a foreign child is invisible to \
+         verify tooth (1). This held at `bb42f9800` and must not hold again."
     );
 }
