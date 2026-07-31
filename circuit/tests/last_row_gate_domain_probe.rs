@@ -1,10 +1,21 @@
-//! Scratch measurement: do the deployed `Gate` bodies HOLD on the honest last row?
+//! Do the deployed row-local bodies HOLD on the honest last row, and do they CATCH the forge?
 //!
-//! Read-only. Evaluates every `VmConstraint::Gate` body of the deployed wide transfer member on
+//! Read-only. Evaluates every row-local constraint body of the deployed wide transfer member on
 //! every row of an HONEST trace, and separately on the FORGED last row, and reports which rows /
-//! which gates are non-zero. This is the satisfiability question the whole-domain repair turns on:
-//! if the honest last row already satisfies every gate body, lifting the gates off the transition
-//! domain costs the honest prover nothing and refuses the forge.
+//! which bodies are non-zero.
+//!
+//! This is the measurement that CHOSE the repair. Before the flag day it showed: the honest trace
+//! violates ZERO bodies on all 64 rows (so lifting the gates off the transition domain costs the
+//! honest prover nothing), the honest last row is BYTE-IDENTICAL to the row before it, and the
+//! forge's residue on the last row is the SAME `{0, 46, 47}` as on the transition-covered row — so
+//! the vacuity was the `is_transition()` MULTIPLIER, not missing algebra. It also refuted candidate
+//! 3 (force a trailing inert row): the trace already has 63 of them.
+//!
+//! ⚑ Bodies are read through `descriptor_ir2::row_local_body`, NOT by matching
+//! `VmConstraint::Gate`. After the hardening the deployed members carry ZERO transition-domain
+//! `Gate`s — a kind-matching probe would have gone silently vacuous at exactly the moment the
+//! repair it justified landed, and reported green. Every count here is asserted non-zero for the
+//! same reason.
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
@@ -184,18 +195,30 @@ fn air_trace(desc: &EffectVmDescriptor2, base: &[Vec<BabyBear>]) -> Vec<Vec<Baby
     t
 }
 
-/// Indices (into `desc.constraints`) of every `Gate` whose body is non-zero on `row`.
+/// Indices (into `desc.constraints`) of every ROW-LOCAL body that is non-zero on `row`.
+///
+/// Reads the body through `descriptor_ir2::row_local_body`, so it finds the body whether the
+/// emitter carries it as a transition-domain `Gate` or (after the last-row hardening flag day) as a
+/// whole-domain `windowGate`. Matching the KIND here would have made this probe go silently
+/// vacuous the moment the repair it was written to justify actually landed.
 fn violated_gates(desc: &EffectVmDescriptor2, row: &[BabyBear]) -> Vec<usize> {
     desc.constraints
         .iter()
         .enumerate()
-        .filter_map(|(i, k)| match k {
-            VmConstraint2::Base(VmConstraint::Gate(b)) => {
-                (eval_lean_expr(b, row) != BabyBear::ZERO).then_some(i)
-            }
-            _ => None,
+        .filter_map(|(i, k)| {
+            let b = dregg_circuit::descriptor_ir2::row_local_body(k)?;
+            (eval_lean_expr(&b, row) != BabyBear::ZERO).then_some(i)
         })
         .collect()
+}
+
+/// How many row-local bodies the member carries at all — asserted non-zero everywhere below so a
+/// "nothing was violated" reading can never be a "nothing was looked at" reading.
+fn row_local_body_count(desc: &EffectVmDescriptor2) -> usize {
+    desc.constraints
+        .iter()
+        .filter(|k| dregg_circuit::descriptor_ir2::row_local_body(k).is_some())
+        .count()
 }
 
 #[test]
@@ -203,11 +226,12 @@ fn honest_last_row_already_satisfies_every_gate_body() {
     let (desc, base, _pis, _heaps, _mb) = honest_wide_transfer();
     let trace = air_trace(&desc, &base);
     let n = trace.len();
-    let n_gates = desc
-        .constraints
-        .iter()
-        .filter(|k| matches!(k, VmConstraint2::Base(VmConstraint::Gate(_))))
-        .count();
+    let n_gates = row_local_body_count(&desc);
+    assert!(
+        n_gates > 0,
+        "this probe measures ROW-LOCAL BODIES; a member with none would make every assertion below \
+         vacuous"
+    );
     eprintln!(
         "member {} — width {}, rows {n}, gates {n_gates}",
         desc.name, desc.trace_width
@@ -260,9 +284,10 @@ fn the_forged_last_row_violates_gate_bodies() {
     }
     rehash_row(&sites, &mut t[n - 1]);
 
+    assert!(row_local_body_count(&desc) > 0, "non-vacuity");
     let v = violated_gates(&desc, &t[n - 1]);
     eprintln!(
-        "FORGED last row: {} gate bodies are non-zero: {:?}",
+        "FORGED last row: {} row-local bodies are non-zero: {:?}",
         v.len(),
         &v[..v.len().min(20)]
     );
@@ -298,11 +323,11 @@ fn which_gates_reference_the_after_balance_column() {
         }
     }
     for (i, k) in desc.constraints.iter().enumerate() {
-        let VmConstraint2::Base(VmConstraint::Gate(b)) = k else {
+        let Some(b) = dregg_circuit::descriptor_ir2::row_local_body(k) else {
             continue;
         };
         let mut v = Vec::new();
-        vars(b, &mut v);
+        vars(&b, &mut v);
         if v.contains(&after_bal) {
             eprintln!(
                 "gate #{i} touches AFTER balance; also BEFORE balance: {}\n   {b:?}",
