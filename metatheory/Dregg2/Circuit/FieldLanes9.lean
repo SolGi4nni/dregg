@@ -511,4 +511,265 @@ lane 8 splits them — and `fieldToLanes9_injective` says so for every pair, not
 #guard lanesOf (fromU64 1) ≠ lanesOf (fromU64 (1 + 2013265921))
 #guard fieldToLanes9 (fromU64 (1 + 2013265921)) 8 = 16777216
 
+/-! ## §CANONICITY — THE IMAGE, AND THE THREE CONDITIONS AN AIR MUST FORCE
+
+⚑ **EVERYTHING ABOVE IS ABOUT THE ENCODER'S DOMAIN, AND A PROVER DOES NOT START FROM A VALUE.**
+`fieldToLanes9_injective` quantifies over 32-byte VALUES: two distinct ones never share a lane
+vector. An adversarial prover never applies the encoder — it writes nine committed columns directly,
+and NOTHING in the deployed AIR forces those columns into the encoder's image. Audited 2026-07-31
+across all 186 members of the emitted registries (`circuit/descriptors/*.tsv`): every `"ranges"` is
+`[]`, and the only `range`-sem lookups in the tree target columns 76/77/89 (the v1-state balance
+limbs and the fee) and 188..201 (the automatafl 15-bit teeth). **There is not one range lookup on
+any rotated block column, and none on the fields lanes.** So `< 2^28` is a PRODUCER invariant, which
+establishes nothing for the party relying on the proof.
+
+This section says exactly what the AIR must force instead, and — the part that matters — proves that
+**the seven `< 2^28` lookups are NECESSARY BUT NOT SUFFICIENT.**
+
+`Canonical9` has THREE legs, and only the first is a range check:
+
+1. `FreeLanesRanged` — lanes `2..8` are genuine base-`2^28` digits. *Seven range lookups.*
+2. `PinnedLanesField` — lanes 0/1 are BabyBear elements. *Free: a committed column is one.*
+3. `NoWrap` — `decLo`/`decHi` (the pinned lanes with their `mod p` quotient restored from the carry
+   digit) stay below `2^32`. **This one is not a range check on any lane** — it is a joint condition
+   on lane 0, lane 1 and lane 8's top nibble, and it is where `forgedLanes` below lives.
+
+`canonical9_iff_in_image` proves the three together are EXACTLY the image — not a superset that
+merely contains it. -/
+
+/-- Leg 1: the seven free lanes are genuine base-`2^28` digits. This is what a `< 2^28` range lookup
+on each of `fieldLaneCol slot 2 .. fieldLaneCol slot 8` buys, and **on its own it is not
+canonicity** (`forgedLanes` satisfies it). -/
+def FreeLanesRanged (L : Lanes9) : Prop := ∀ i : Fin 9, 2 ≤ i.1 → L i < CH
+
+/-- Leg 2: the pinned pair are BabyBear elements — free, since a committed column is one. -/
+def PinnedLanesField (L : Lanes9) : Prop := L 0 < P ∧ L 1 < P
+
+/-- **Leg 3 — THE ONE A RANGE CHECK CANNOT EXPRESS.** The decoder restores each pinned lane's
+discarded quotient (`decLo = L 0 + (c % 4)·p`, `decHi = L 1 + (c / 4)·p`, `c` = lane 8's top nibble)
+and then reads the result as a `u32`. If that sum reaches `2^32` the `u32` view WRAPS and the decode
+silently reports a different word than the one the lanes name — which is precisely the alias
+`forgedLanes` exhibits. Honest inputs satisfy this by construction (`loWord`/`hiWord` are `u32`s);
+an adversarial witness does not. -/
+def NoWrap (L : Lanes9) : Prop := decLo L < 4294967296 ∧ decHi L < 4294967296
+
+/-- **THE AIR OBLIGATION.** A committed fields nonet is admissible iff it satisfies all three. -/
+def Canonical9 (L : Lanes9) : Prop := FreeLanesRanged L ∧ PinnedLanesField L ∧ NoWrap L
+
+instance (L : Lanes9) : Decidable (FreeLanesRanged L) := by unfold FreeLanesRanged; infer_instance
+instance (L : Lanes9) : Decidable (PinnedLanesField L) := by unfold PinnedLanesField; infer_instance
+instance (L : Lanes9) : Decidable (NoWrap L) := by unfold NoWrap; infer_instance
+instance (L : Lanes9) : Decidable (Canonical9 L) := by unfold Canonical9; infer_instance
+
+theorem laneList_lt_of_ranged {L : Lanes9} (h : FreeLanesRanged L) :
+    ∀ x ∈ laneList L, x < CH := by
+  intro x hx
+  simp only [laneList, List.mem_cons, List.not_mem_nil, or_false] at hx
+  rcases hx with h'|h'|h'|h'|h'|h'|h' <;> subst h' <;> exact h _ (by decide)
+
+theorem laneList_length (L : Lanes9) : (laneList L).length = 7 := by simp [laneList]
+
+theorem decWord_lt {L : Lanes9} (h : FreeLanesRanged L) : decWord L < CH ^ 7 := by
+  have := ofDigits_lt CH (by decide) (laneList L) (laneList_lt_of_ranged h)
+  rwa [laneList_length] at this
+
+/-- Under leg 1 the seven lanes ARE the base-`2^28` digits of what they recompose to — so the
+decoder's `decWord`/`decDigits` read back exactly what an encoder would have written. -/
+theorem digitsN_decWord {L : Lanes9} (h : FreeLanesRanged L) :
+    digitsN CH 7 (decWord L) = laneList L := by
+  have := digitsN_ofDigits CH (by decide) (laneList L) (laneList_lt_of_ranged h)
+  rwa [laneList_length] at this
+
+theorem ofDigits_decDigits {L : Lanes9} (h : FreeLanesRanged L) :
+    ofDigits 256 (decDigits L) = decWord L := by
+  refine ofDigits_digitsN 256 (by norm_num) 25 (decWord L) ?_
+  have h1 := decWord_lt h
+  have h2 : CH ^ 7 ≤ 256 ^ 25 := by norm_num [CH]
+  omega
+
+theorem decDigits_length (L : Lanes9) : (decDigits L).length = 25 := digitsN_length _ _ _
+
+theorem decDigits_getD_lt (L : Lanes9) (j : Nat) (hj : j < 25) :
+    (decDigits L).getD j 0 < 256 := by
+  rw [List.getD_eq_getElem _ _ (by rw [decDigits_length]; omega)]
+  exact digitsN_lt 256 (by norm_num) 25 (decWord L) _ (List.getElem_mem _)
+
+/-- Two 25-digit base-256 expansions agreeing at every position are the same list. -/
+theorem decDigits_ext {L L' : Lanes9}
+    (h : ∀ j < 25, (decDigits L).getD j 0 = (decDigits L').getD j 0) :
+    decDigits L = decDigits L' := by
+  refine List.ext_getElem (by rw [decDigits_length, decDigits_length]) ?_
+  intro n h1 h2
+  have hn : n < 25 := by rw [decDigits_length] at h1; exact h1
+  have := h n hn
+  rwa [List.getD_eq_getElem _ _ h1, List.getD_eq_getElem _ _ h2] at this
+
+/-- **COMPLETENESS POLE.** Every honest 32-byte value's lane vector satisfies all three legs — so
+adding the obligation to the AIR refuses no honest witness. -/
+theorem canonical_fieldToLanes9 (b : Bytes32) : Canonical9 (fieldToLanes9 b) := by
+  refine ⟨?_, ⟨?_, ?_⟩, ?_, ?_⟩
+  · intro i hi
+    have hne0 : i.1 ≠ 0 := by omega
+    have hne1 : i.1 ≠ 1 := by omega
+    simp only [fieldToLanes9, hne0, hne1, if_false]
+    rcases Nat.lt_or_ge (i.1 - 2) (chunks7 b).length with hlt | hge
+    · rw [List.getD_eq_getElem _ _ hlt]
+      exact chunks7_lt_CH b _ (List.getElem_mem hlt)
+    · rw [List.getD_eq_default _ _ hge]; decide
+  · have : fieldToLanes9 b 0 = loWord b % P := by simp [fieldToLanes9]
+    rw [this]; exact Nat.mod_lt _ (by decide)
+  · have : fieldToLanes9 b 1 = hiWord b % P := by simp [fieldToLanes9]
+    rw [this]; exact Nat.mod_lt _ (by decide)
+  · rw [decLo_encode b]; exact loWord_lt b
+  · rw [decHi_encode b]; exact hiWord_lt b
+
+/-- **SOUNDNESS POLE.** On canonical vectors the total decoder is INJECTIVE: two admissible lane
+vectors that decode to the same 32 bytes ARE the same vector. This is the property the encoder's own
+injectivity does not give — that one quantifies over values, this one over committed columns — and
+it is what an off-image witness breaks. -/
+theorem lanes9ToField_injOn_canonical {L L' : Lanes9}
+    (hL : Canonical9 L) (hL' : Canonical9 L')
+    (h : lanes9ToField L = lanes9ToField L') : L = L' := by
+  obtain ⟨hR, ⟨hP0, hP1⟩, hLo, hHi⟩ := hL
+  obtain ⟨hR', ⟨hP0', hP1'⟩, hLo', hHi'⟩ := hL'
+  have hbyte : ∀ j : Fin 32, (lanes9ToField L j).1 = (lanes9ToField L' j).1 := by
+    intro j; rw [h]
+  -- the 24 low bytes are the low 24 digits, verbatim
+  have hdig : ∀ j < 24, (decDigits L).getD j 0 = (decDigits L').getD j 0 := by
+    intro j hj
+    have hb := hbyte ⟨j, by omega⟩
+    simp only [lanes9ToField, hj, if_true] at hb
+    have h1 := decDigits_getD_lt L j (by omega)
+    have h2 := decDigits_getD_lt L' j (by omega)
+    omega
+  -- bytes 24..27 pin `decHi`, and `NoWrap` is what makes the `u32` view faithful
+  have hhi : decHi L = decHi L' := by
+    have b24 := hbyte ⟨24, by omega⟩
+    have b25 := hbyte ⟨25, by omega⟩
+    have b26 := hbyte ⟨26, by omega⟩
+    have b27 := hbyte ⟨27, by omega⟩
+    simp only [lanes9ToField] at b24 b25 b26 b27
+    norm_num at b24 b25 b26 b27
+    omega
+  have hlo : decLo L = decLo L' := by
+    have b28 := hbyte ⟨28, by omega⟩
+    have b29 := hbyte ⟨29, by omega⟩
+    have b30 := hbyte ⟨30, by omega⟩
+    have b31 := hbyte ⟨31, by omega⟩
+    simp only [lanes9ToField] at b28 b29 b30 b31
+    norm_num at b28 b29 b30 b31
+    omega
+  -- a pinned lane below `p` splits its word uniquely into residue and quotient
+  have hsplit0 : L 0 = L' 0 ∧ decCarry L % 4 = decCarry L' % 4 := by
+    have e : L 0 + (decCarry L % 4) * P = L' 0 + (decCarry L' % 4) * P := by
+      simpa [decLo] using hlo
+    have q1 : decCarry L % 4 < 4 := Nat.mod_lt _ (by decide)
+    have q2 : decCarry L' % 4 < 4 := Nat.mod_lt _ (by decide)
+    simp only [P] at e hP0 hP0'
+    omega
+  have hsplit1 : L 1 = L' 1 ∧ decCarry L / 4 = decCarry L' / 4 := by
+    have e : L 1 + (decCarry L / 4) * P = L' 1 + (decCarry L' / 4) * P := by
+      simpa [decHi] using hhi
+    have q1 : decCarry L / 4 < 64 := by
+      have := decDigits_getD_lt L 24 (by omega); simp only [decCarry]; omega
+    have q2 : decCarry L' / 4 < 64 := by
+      have := decDigits_getD_lt L' 24 (by omega); simp only [decCarry]; omega
+    simp only [P] at e hP1 hP1'
+    omega
+  have hcarry : decCarry L = decCarry L' := by
+    have h1 := hsplit0.2
+    have h2 := hsplit1.2
+    omega
+  have hall : decDigits L = decDigits L' := by
+    refine decDigits_ext ?_
+    intro j hj
+    rcases Nat.lt_or_ge j 24 with hj' | hj'
+    · exact hdig j hj'
+    · have : j = 24 := by omega
+      subst this
+      simpa [decCarry] using hcarry
+  have hword : decWord L = decWord L' := by
+    rw [← ofDigits_decDigits hR, ← ofDigits_decDigits hR', hall]
+  have hlanes : laneList L = laneList L' := by
+    rw [← digitsN_decWord hR, ← digitsN_decWord hR', hword]
+  funext i
+  have h0 := hsplit0.1
+  have h1 := hsplit1.1
+  simp only [laneList, List.cons.injEq] at hlanes
+  obtain ⟨e2, e3, e4, e5, e6, e7, e8, -⟩ := hlanes
+  fin_cases i <;> assumption
+
+/-- **THE IMAGE CHARACTERIZATION.** `Canonical9` is EXACTLY the encoder's image — not a superset
+that happens to contain it. So an AIR that forces these three legs admits every honest witness and
+NO off-image one, and there is no fourth condition left unstated. -/
+theorem canonical9_iff_in_image (L : Lanes9) :
+    Canonical9 L ↔ ∃ b : Bytes32, fieldToLanes9 b = L := by
+  constructor
+  · intro hL
+    refine ⟨lanes9ToField L, ?_⟩
+    exact lanes9ToField_injOn_canonical (canonical_fieldToLanes9 _) hL
+      (lanes9ToField_fieldToLanes9 _)
+  · rintro ⟨b, rfl⟩
+    exact canonical_fieldToLanes9 b
+
+#assert_axioms canonical_fieldToLanes9
+#assert_axioms lanes9ToField_injOn_canonical
+#assert_axioms canonical9_iff_in_image
+
+/-! ### ⚑ THE EXHIBIT — why "7 × `< 2^28` lookups per field" is NOT the fix.
+
+The named repair for this residual was *"7 × `< 2^28` lookups per field"*. It is necessary and it is
+**not sufficient**, and the counterexample is one lane wide.
+
+Take the honest value `v = 1744830467` (`fromU64 v`, i.e. `0x68000003` in bytes `28..32`, zero
+elsewhere). It is below `p`, so its nonet is `[v, 0, 0, 0, 0, 0, 0, 0, 0]` — lane 0 carries the raw
+value and every free lane is empty.
+
+Now `forgedLanes = [0, …, 0, 3·2^24]`. Its ONLY nonzero lane is lane 8, at `50331648 < 2^28`, so it
+passes all seven range lookups and every lane is a BabyBear element. Its carry digit is `3`, so the
+decoder restores `decLo = 0 + 3p = 6039797763` — which EXCEEDS `2^32`, wraps in the `u32` view to
+exactly `1744830467`, and the vector decodes byte-for-byte to `fromU64 1744830467`.
+
+⚑ **The bite is not "two vectors decode alike"; it is that the AIR's own two readers disagree.**
+Lane 0 is welded (`colEq (base+4+slot) (stateBase + FIELD_BASE + slot)`) to the v1 face column the
+kernel semantics reads — `gFieldWriteP1` against `param1`, `field_to_u64`, every escrow / discharge /
+vault weld. In the forged witness that column reads **0**. The committed nonet decodes to
+**1744830467**. One accepted proof, two contradictory answers to "what is `fields[slot]`". -/
+
+/-- The off-image vector: `3 · 2^24` in lane 8, nothing else. -/
+def forgedLanes : Lanes9 := ![0, 0, 0, 0, 0, 0, 0, 0, 50331648]
+
+/-- The honest nonet of `fromU64 1744830467`, for the pair. -/
+def honestLanes : Lanes9 := fieldToLanes9 (fromU64 1744830467)
+
+#guard lanesOf (fromU64 1744830467) = [1744830467, 0, 0, 0, 0, 0, 0, 0, 0]
+#guard bytesOf (lanes9ToField forgedLanes) = bytesOf (fromU64 1744830467)
+#guard decLo forgedLanes = 6039797763   -- ≥ 2^32: the wrap, in one number
+
+/-- **THE REFUTATION OF THE NAMED FIX.** `forgedLanes` satisfies legs 1 and 2 — the seven `< 2^28`
+range lookups and lane-field-ness — is NOT the honest vector, decodes to the honest value anyway,
+and fails ONLY `NoWrap`. So an AIR carrying just the seven lookups still admits it. -/
+theorem free_lane_ranges_alone_do_not_force_the_image :
+    FreeLanesRanged forgedLanes
+    ∧ PinnedLanesField forgedLanes
+    ∧ forgedLanes ≠ honestLanes
+    ∧ lanes9ToField forgedLanes = lanes9ToField honestLanes
+    ∧ ¬ NoWrap forgedLanes
+    ∧ ¬ Canonical9 forgedLanes := by
+  refine ⟨by decide, by decide, by decide, ?_, by decide, by decide⟩
+  show lanes9ToField forgedLanes = lanes9ToField (fieldToLanes9 (fromU64 1744830467))
+  rw [lanes9ToField_fieldToLanes9]
+  decide
+
+/-- **THE BITE, AS TWO NUMBERS.** The welded v1 face reads lane 0; the decode reads the nonet. In
+`forgedLanes` those are `0` and `1744830467`, in the same accepted witness. -/
+theorem the_welded_face_and_the_decode_disagree :
+    forgedLanes 0 = 0
+    ∧ honestLanes 0 = 1744830467
+    ∧ lanes9ToField forgedLanes = fromU64 1744830467 := by
+  refine ⟨by decide, by decide, by decide⟩
+
+#assert_axioms free_lane_ranges_alone_do_not_force_the_image
+#assert_axioms the_welded_face_and_the_decode_disagree
+
 end Dregg2.Circuit.FieldLanes9

@@ -299,13 +299,39 @@ impl PersistentStore {
     ///
     /// ⚠ **NAMED RESIDUAL — the `< 2^28` free-lane property is a PRODUCER invariant, not an AIR one.**
     /// There is not one range lookup on any rotated block column in any deployed member, so nothing
-    /// in-circuit forces a witness's fields lanes into the encoder's IMAGE. Honest resolution: two
-    /// distinct field values can never share a lane vector (that is the injectivity, and it holds),
-    /// but an off-image lane vector is admissible in-AIR and `field_from_lanes9` is total and
-    /// many-to-one off-image — so a consumer that DECODES committed lanes back to bytes can be shown
-    /// an off-image vector that decodes to an honest value the anchor does not agree with. Closing it
-    /// is 7 × `< 2^28` lookups per field (or the `Pack8Plan`-style canonicity gate), which does not
-    /// exist today.
+    /// in-circuit forces a witness's fields lanes into the encoder's IMAGE. **A producer invariant
+    /// establishes nothing for the party relying on the proof**: `fieldToLanes9_injective` quantifies
+    /// over 32-byte VALUES, and an adversarial prover never applies the encoder — it writes nine
+    /// committed columns directly, and off-image vectors are admissible in-AIR. RE-MEASURED 2026-07-31
+    /// over all 186 emitted members and pinned by `circuit/tests/field_lanes9_canonicity_gate.rs`
+    /// (which also RED-PROOFS its own reader against a planted lane lookup).
+    ///
+    /// ⚑ **AND THE REPAIR PRICED HERE — "7 × `< 2^28` lookups per field" — DOES NOT CLOSE IT.**
+    /// Those seven are necessary and NOT sufficient, and the counterexample is one lane wide:
+    /// `[0,0,0,0,0,0,0,0,3·2^24]` has every free lane below `2^28`, so all seven lookups accept it,
+    /// yet its carry digit `3` makes the decoder restore `decLo = 0 + 3p = 6039797763`, which exceeds
+    /// `2^32`, wraps in the `u32` view, and decodes byte-for-byte to `field_from_u64(1744830467)`.
+    /// **In that witness the welded v1 face column reads 0 while the committed nonet decodes to
+    /// 1744830467** — one accepted proof, two contradictory answers to "what is `fields[slot]`".
+    ///
+    /// The AIR obligation that IS sufficient is `Dregg2.Circuit.FieldLanes9.Canonical9`, three legs,
+    /// proved EXACTLY the encoder's image by `canonical9_iff_in_image` (with `canonical_fieldToLanes9`
+    /// the completeness pole and `lanes9ToField_injOn_canonical` the soundness one, all
+    /// `#assert_axioms`-clean):
+    ///
+    /// 1. `FreeLanesRanged` — lanes 2..8 below `2^28`. **Seven range lookups per field.**
+    /// 2. `PinnedLanesField` — lanes 0/1 are BabyBear elements. Free; a column is one.
+    /// 3. `NoWrap` — `decLo`/`decHi` below `2^32`. **Not a range check on any lane**: a joint
+    ///    condition on lane 0, lane 1 and lane 8's top nibble, and the leg the exhibit breaks.
+    ///
+    /// Emitting leg 3 needs seven aux columns per (block, slot) past the appendix — `r`, `q0`, `q1`,
+    /// `v0`, `v0b`, `v1`, `v1b` — with `L8 = (q0 + 4·q1)·2^24 + r`, `q·(q−1)·(q−2) = 0`,
+    /// `v = q(q−1)/2 · L`, `vb = v + 2·q(q−1)/2`, and range lookups `r < 2^24`, `v,vb < 2^28`.
+    /// That is `112` aux columns (a multiple of 7, so the registry's width discipline survives),
+    /// `112` gates and `192` lookups per member across 174 members: a descriptor re-emit and a VK
+    /// rotation, NOT a re-genesis — the committed geometry and every anchor stay put, only the AIR
+    /// gets stricter. It also needs `WIDE_RANGE_WIDTHS` / `CUSTOM_RANGE_WIDTHS` extended with 24 and
+    /// 28. **That work is not done**; nothing above it is.
     pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 14;
 
     /// Open a persistent store backed by a file on disk.
