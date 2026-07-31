@@ -3247,6 +3247,43 @@ compile 2,621 s and prove 960 s** — **54.6 s to compile, 20.0 s to prove**, pe
   per instance gives `905 × 75 s ≈ 18.9 hours`. Either way it is gated on the compile, so the
   compile is the thing to spend now.
 
+#### ✅ RUN, 2026-07-31 — the ring exists and the pin file names a chain that was actually built
+
+`npm run uniform-claim-keys` on hbox, `O1JS_BACKEND=native`, one process per program, `Cache.None`:
+**131 of 131 keys compiled, all distinct, 48.7 min serial at 22.3 s/program.** Bodies span
+**12,124 … 55,999 emitted rows (mean 47,358)** against the Kimchi step domain of 65,532 — the widest
+is 85% of the wall, so the plan's 50,000-row budget holds with the depth-8 path in it.
+
+`HEAD_KEYS=.fullchain/uniform-claim npm run head-anchor-pins -- --emit` **accepts**:
+
+| pin | value |
+|---|---|
+| `chainVkRoot` | `2181302784962672221753237732631721398886064079285072023793161338699543976383` |
+| `terminalVkHash` | `15991944734654297390213381609264424569016725960426747879458835938008999929637` (`block42`, leaf 130) |
+| `totalSteps` | `912` |
+| `genesisRoot` | `0x7393bc8b02186f4b83317f9d622429c3b51bf90e91d883409e60895ae4abbc` |
+| `terminalSeal` | `27165075213653882294359949303050151244223214827361152428527718638571771957836` |
+
+**Three independent things were checked rather than assumed:**
+
+1. **The ring is platform- and backend-independent.** head0's `hash` *and* its 2,396-byte `data`
+   blob are byte-identical between darwin-arm64/wasm and linux-x64/native. The pins are not
+   box-specific and the mac can deploy what hbox compiled.
+2. **`334550ba7` (the hash suite reaching the executor) is VK-preserving on the BabyBear path.**
+   That commit landed mid-run and its stated evidence was `fri-walk-plan` — a *plan-level* row count,
+   which cannot speak to the emitted circuit, and it adds `suite.anchorLookupTable?.()` per body and
+   makes canonicalisation conditional. Measured directly instead: head0 recompiled at that commit
+   gives the identical VK hash and identical 49,787 rows, and `head-anchor-pins` at HEAD reproduces
+   every pin above from the ring compiled before it.
+3. **Both new gates were falsified.** The driver's resume skip goes red on a bent `plan`, a bent
+   `vkTreeDepth` and a stripped shape, naming the field; the emitter's ring check goes red on a bent
+   `plan.budget`, a bent `leaf` and a missing shape.
+
+⚠ **What this ring is NOT.** It is the **BabyBear** chain. §3.34's Pasta-native commitment lever
+(8.8×, 539 → 61 slices) would make it a different and smaller 131, and the plan ratchet refuses
+rather than silently reusing: a Pasta walk moves `nAux` (a direct function of the hash suite) and the
+chunk widths, both of which are in every key file's recorded shape.
+
 #### What it produces
 
 1. `.fullchain/uniform-claim/key-<name>.json` × **131** — the verification-key list. `head-anchor-pins`
