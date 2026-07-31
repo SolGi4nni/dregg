@@ -244,7 +244,8 @@ air-ceiling|2|root-air-ceiling
 air-fullchain|2|root-air-fullchain
 cellcommit|1|cellcommit-native
 incnonce|2|incnonce-native
-mina-merkle|2|mina-merkle"
+mina-merkle|2|mina-merkle
+cell-fact|0|cell-fact"
 
 TIER=0
 MODE=headline
@@ -479,6 +480,7 @@ run_braid() {
 # dregg's own transition semantics emitted into Kimchi gates — and until
 # 2026-07-30 not one of its three npm scripts was in any gate.
 run_cellcommit(){ ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent cellcommit-native ); }
+run_cell_fact() { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent cell-fact ); }
 run_incnonce()  { ( cd "$1" && DREGG_REPO_ROOT="$ROOT" npm run --silent incnonce-native ); }
 run_mina_merkle(){ ( cd "$1" && DREGG_PROBE_DIR="${PROBE_DIR:-$PROBE}" DREGG_ATTEST_GIT_DIR="$ROOT" \
     npm run --silent mina-merkle ); }
@@ -703,6 +705,22 @@ if [ "$MODE" = "headline" ]; then
     grep -q '=== PASS ===' <<<"$kat_out" \
       || { printf '%s\n' "$kat_out"; die "the Poseidon KAT did not print its PASS line"; }
     echo "  ✓ o1js Poseidon reproduces every vector the Rust probe pins"
+    n_t0=$((n_t0+1))
+  fi
+  # ── THE SEMANTIC RUNG ──────────────────────────────────────────────────────
+  # Gated at tier 0, where its out-of-circuit half lives: it recomputes
+  # `cellCommitOf` over the Lean-emitted cell and reds the moment the emission
+  # and the o1js transcription of that Lean `def` disagree. Its tier-1 and
+  # tier-2 halves (the statement, the four tamper refusals, the zkApp
+  # `actOnCellFact` leg) run when the caller asks for them.
+  if leg_at_tier cell-fact; then
+    cf_out="$(run_cell_fact "$APP" 2>&1)"; rc=$?
+    printf '%s\n' "$cf_out"
+    [ "$rc" -eq 0 ] || die "the cell-fact semantic leg exited $rc"
+    grep -q 'reproduces the LEAN-emitted honestCommit' <<<"$cf_out" \
+      || die "the cell-fact leg did not check its cellCommitOf against the Lean emission"
+    grep -q 'anchors to a DIFFERENT root' <<<"$cf_out" \
+      || die "the cell-fact leg did not exhibit its binding control"
     n_t0=$((n_t0+1))
   fi
   if leg_at_tier merkle-constraints; then
