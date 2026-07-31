@@ -39,7 +39,7 @@
 //!
 //! The welded descriptor IS now emitted from Lean (`Dregg2.Deos.DischargeSatDescriptor.
 //! dischargeSatVmDescriptor2R24`, v12 offsets through the canonical constants; exercise fixture
-//! `circuit/tests/fixtures/discharge-sat-v3-staged.json`) and the producer aux-fill is EXPORTED
+//! the `dischargeSatVmDescriptor2R24` row of `rotation-v3-staged-registry.tsv`) and the producer aux-fill is EXPORTED
 //! below ([`fill_discharge_aux`]); `gentian_discharge_vault_prove.rs` proves real STARKs against it
 //! (honest settle proves+verifies; early / cursor-not-advanced / wrong-amount REFUSED). What still
 //! rides the ONE big-bang descriptor regen: the `rotation-v3-staged-registry.tsv` row + the

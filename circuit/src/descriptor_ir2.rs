@@ -4617,6 +4617,37 @@ fn fill_decomp(
     }
 }
 
+/// [`fill_decomp`] written AT AN EXPLICIT COLUMN rather than appended.
+///
+/// The two produce identical bytes; what differs is who decides WHERE they land. `fill_decomp`'s
+/// push form is correct for the auxiliary TABLE rows (memory/boundary), whose blocks are both
+/// allocated and filled in one pass, so push order IS the layout. It is NOT correct for the MAIN
+/// trace, whose blocks are allocated interleaved with the submask blocks in constraint order —
+/// see [`fill_main_layout_row`] for the failure that made the distinction load-bearing.
+fn fill_decomp_at(
+    val: u32,
+    bits: usize,
+    out: &mut [BabyBear],
+    at: usize,
+    hist: &mut [u64; BYTE_TABLE_HEIGHT],
+) {
+    let (n, top_bits) = limb_geom(bits);
+    let partial = top_bits < LIMB_BITS;
+    for i in 0..n {
+        let byte = (val >> (i * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
+        out[at + i] = BabyBear::new(byte);
+        if !(i == n - 1 && partial) {
+            hist[byte as usize] += 1;
+        }
+    }
+    if partial {
+        let top = (val >> ((n - 1) * LIMB_BITS)) & ((1 << LIMB_BITS) - 1);
+        for b in 0..top_bits {
+            out[at + n + b] = BabyBear::new((top >> b) & 1);
+        }
+    }
+}
+
 /// **THE SINGLE SOURCE FOR THE MAIN-TRACE LAYOUT FILL.** Complete one `desc.trace_width` base
 /// row to the full `layout.width` by appending the aux columns the `MainLayout` reserved: the
 /// per-range byte-limb blocks (`fill_decomp`) and the per-submask keep/held bit blocks.
@@ -4634,6 +4665,25 @@ fn fill_decomp(
 /// `Err` is the prover's OWN refusal: a value with NO honest layout completion (a range wire
 /// outside `2^bits`, a submask operand outside `2^SUBMASK_BITS`, or an amplified submask under
 /// `check_submask`). Such a base row is unprovable, so the oracle reports it as a reject.
+///
+/// ⚑ **EVERY BLOCK IS WRITTEN AT ITS DECLARED COLUMN — `rb.limb0` / `sb.keep0` / `sb.held0` —
+/// NEVER BY PUSH ORDER, AND THAT IS A BUG FIX, NOT A STYLE CHOICE (2026-07-31).**
+///
+/// `MainLayout::build` allocates aux blocks in ONE pass over `desc.constraints`, so ranges and
+/// submasks are INTERLEAVED in constraint order. This filler used to append them in TWO passes —
+/// every range, then every submask. The two agree only while no range lookup follows a submask
+/// lookup, which was true of every deployed member until the fields-canonicity emit appended 192
+/// range lookups to all of them. In the three members whose `submaskLookup` is constraint 0
+/// (`attenuateVmDescriptor2R24`, `attenuateCapOpenEffVmDescriptor2R24`,
+/// `delegateAttenWriteCapOpenVmDescriptor2R24`) every canon9 limb block was then filled
+/// `2·SUBMASK_BITS = 60` columns BELOW where the AIR reads it, and the submask's own bits landed
+/// 60·(nothing) above — so an HONEST cap-write trace went UNSAT.
+///
+/// It read as a canonicity refusal and it was not one: the diagnosis is that the failures were
+/// `recomposed − value` on blocks whose value was ZERO, which no range check can produce. Writing
+/// at the declared column makes the filler's order irrelevant, so the next emit that reorders
+/// lookups cannot resurrect this. The AIR and the VK are UNTOUCHED — the allocator, which defines
+/// both, is the authority here and the filler was the one that had drifted.
 fn fill_main_layout_row(
     base_row: &[BabyBear],
     layout: &MainLayout,
@@ -4642,6 +4692,9 @@ fn fill_main_layout_row(
     check_submask: bool,
 ) -> Result<Vec<BabyBear>, String> {
     let mut row = base_row.to_vec();
+    if row.len() < layout.width {
+        row.resize(layout.width, BabyBear::ZERO);
+    }
     for rb in &layout.ranges {
         let v = base_row[rb.wire].as_u32();
         if (v as u64) >= (1u64 << rb.bits) {
@@ -4650,7 +4703,7 @@ fn fill_main_layout_row(
                 rb.wire, rb.bits
             ));
         }
-        fill_decomp(v, rb.bits, &mut row, hist);
+        fill_decomp_at(v, rb.bits, &mut row, rb.limb0, hist);
     }
     for sb in &layout.submasks {
         let keep = eval_c(&sb.keep, base_row).as_u32();
@@ -4666,10 +4719,8 @@ fn fill_main_layout_row(
             ));
         }
         for i in 0..SUBMASK_BITS {
-            row.push(BabyBear::new((keep >> i) & 1));
-        }
-        for i in 0..SUBMASK_BITS {
-            row.push(BabyBear::new((held >> i) & 1));
+            row[sb.keep0 + i] = BabyBear::new((keep >> i) & 1);
+            row[sb.held0 + i] = BabyBear::new((held >> i) & 1);
         }
     }
     debug_assert_eq!(row.len(), layout.width);

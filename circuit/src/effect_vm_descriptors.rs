@@ -1172,7 +1172,7 @@ fn weld_umem_into_descriptor_with_suffix(
     });
     // The single welded universal-memory WRITE op over the appended 7 columns — byte-for-byte the
     // cohort `umemOp` (`circuit/descriptors/umem-cohort-v1-staged-registry.tsv`), offset to `base`.
-    welded.constraints.push(VmConstraint2::UMemOp(UMemOpSpec {
+    let op = VmConstraint2::UMemOp(UMemOpSpec {
         guard: LeanExpr::Var(base + 6),
         domain,
         key: LeanExpr::Var(base),
@@ -1182,7 +1182,40 @@ fn weld_umem_into_descriptor_with_suffix(
         prev_value: LeanExpr::Var(base + 4),
         prev_serial: LeanExpr::Var(base + 5),
         kind: MemKind::Write,
-    }));
+    });
+    // ⚑ SPLICED BEFORE THE TRAILING FIELDS-CANONICITY BLOCK, NOT APPENDED (2026-07-31).
+    //
+    // `EmitWideUMemWeldRegistryProbe.lean` applies `fieldsCanonical9Wire` to the ALREADY-welded
+    // member, so on the wire the canonicity block is OUTERMOST and the `umemOp` sits at the
+    // boundary between the host constraints and it. A bare `push` puts the op AFTER the canonicity
+    // block and the two descriptors then differ by a permutation — which is not cosmetic:
+    // `MainLayout::build` walks the constraint list in order to assign every range/submask aux
+    // column, so a reordered list is a DIFFERENT AIR and a different VK. The parity tooth
+    // (`wide_umem_weld_registry_parity_and_no_narrowing`) is what caught it; it compares the two
+    // byte-for-byte precisely so a runtime weld can never quietly prove against a shape the emit
+    // did not commit.
+    //
+    // The split point is DERIVED from the emit's own shape rather than transcribed:
+    // `canon9ConstraintsAt` is `2 blocks × 8 slots × (7 gates + 12 lookups)`, appended last and
+    // never reordered by `hardenLastRow` / `dropUnforcedPins` (both are order-preserving, and the
+    // latter removes only `piBinding`s, of which the block has none).
+    const CANON9_PER_SLOT_CONSTRAINTS: usize = 7 + 12;
+    const CANON9_CONSTRAINTS: usize = 2 * 8 * CANON9_PER_SLOT_CONSTRAINTS;
+    let split = welded
+        .constraints
+        .len()
+        .checked_sub(CANON9_CONSTRAINTS)
+        .expect("a canonicity-welded member carries at least its 304 canon9 constraints");
+    debug_assert!(
+        matches!(welded.constraints[split], VmConstraint2::WindowGate(_))
+            && matches!(
+                welded.constraints[welded.constraints.len() - 1],
+                VmConstraint2::Lookup(_)
+            ),
+        "the trailing {CANON9_CONSTRAINTS} constraints must be the canonicity block (a row-local \
+         gate first, a range lookup last); if the emit changed shape, move this split with it"
+    );
+    welded.constraints.insert(split, op);
     welded
 }
 
@@ -3040,8 +3073,13 @@ mod tests {
                 // committed registry TSV) and strip back to the graduated base for the lane check.
                 let expected = if key == "dischargeSatVmDescriptor2R24" {
                     // 1720 -> 1764 at the nine-lane epoch, 1764 -> 1780 at the rc FOLD:
-                    // GRAD_ROT_WIDTH(1707) + the cursor/total/due + G5 free-param bind columns.
-                    1780
+                    // GRAD_ROT_WIDTH + the cursor/total/due + G5 free-param bind columns.
+                    // ⚑ 1780 -> 1892 at the FIELDS-CANONICITY emit: the satisfaction-gate span is
+                    // UNCHANGED (73 columns past the graduated base, and it must be — the wrap adds
+                    // no gadget); the whole +112 is `GRAD_ROT_WIDTH` 1707 -> 1819 carrying the
+                    // canonicity aux region through `APPENDIX_SPAN` 539 -> 651, with `N_ROT_SITES`
+                    // unmoved (`fieldsCanonical9At_hashSites`). 1819 + 73 = 1892.
+                    1892
                 } else {
                     // GRAD_ROT_WIDTH + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns.
                     // Re-pinned 2121 → 2185 from the emitted TSV: the satisfaction-gadget span grew
@@ -3050,7 +3088,11 @@ mod tests {
                     // whenever the gadget changes — it does not derive itself. Re-read again
                     // 2185 -> 2229 at the nine-lane epoch, 2229 -> 2245 at the rc FOLD (both members
                     // ride GRAD_ROT_WIDTH, so both moved by the same +16).
-                    2245
+                    // ⚑ 2245 -> 2357 at the FIELDS-CANONICITY emit, the SAME +112 as discharge and
+                    // for the same reason: 1819 + 538 (the unchanged satisfaction span). That both
+                    // members moved by exactly the base's delta is the check — a satisfaction gadget
+                    // that had ALSO grown would show up as a member-specific residue here.
+                    2357
                 };
                 assert_eq!(
                     d.trace_width, expected,
@@ -3773,57 +3815,78 @@ mod tests {
         // split falls exactly on "which members E1 had reached" is the cross-check that the fold
         // reached every member's carrier, not just the ones whose pins came back (heapWrite and
         // supplyMint are rc-EXEMPT: no pins, but the columns are live all the same).
+        //
+        // ⚑ FLAG DAY 2026-07-31 (the FIELDS-CANONICITY emit, `Emit/FieldsCanonicity9Emit.lean`):
+        // **+112 on ALL FIFTY-SEVEN members, with a delta spread of ZERO** — and the uniformity is
+        // the whole check, so it is DERIVED here rather than transcribed off the TSV:
+        //
+        //   APPENDIX_SPAN  539 → 651   (+CANON9_SPAN = 2 blocks × 8 slots × CANON9_PER_SLOT = 112)
+        //   ROT_WIDTH      = EFFECT_VM_WIDTH + APPENDIX_SPAN                        → +112
+        //   GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES                              → +112
+        //
+        // The middle step is the one that had to be checked rather than assumed: graduation
+        // appends `7·N_ROT_SITES` lane columns, so a wrap that added a HASH SITE would multiply
+        // its own growth by 7 and the spread would not be flat. `fieldsCanonical9At_hashSites`
+        // proves it adds none (it is `traceWidth`-, `piCount`-, `tables`-, `hashSites`- and
+        // `ranges`-invariant — it appends CONSTRAINTS into columns `rotateV3` had already
+        // allocated), so the appendix growth passes through the graduation 1:1 and lands
+        // unchanged on every member. Nothing below the region moved, so neither compaction's
+        // geometry changed: S2's two carrier bands and each member's E1 kill-set are byte-
+        // identical, and the region rides ABOVE both, which is why the deltas do not fan out the
+        // way the rc FOLD's +16/+20 split did. Cross-check on the narrow side, where the same
+        // arithmetic must hold with no compaction at all: `GRAD_ROT_WIDTH(1819) + REFUSE_AUX_SPAN
+        // (45) = 1864`, the committed narrow `mint`/`revoke`/`setField-*` width (was 1752).
         const WIDE_MEMBER_GEOMETRY: [(&str, usize); 57] = [
-            ("transferVmDescriptor2R24", 1670),
-            ("burnVmDescriptor2R24", 1666),
-            ("mintVmDescriptor2R24", 1661),
-            ("noteSpendVmDescriptor2R24", 1952),
-            ("noteCreateVmDescriptor2R24", 1952),
-            ("cellSealVmDescriptor2R24", 1661),
-            ("cellDestroyVmDescriptor2R24", 1661),
-            ("refusalVmDescriptor2R24", 2169),
-            ("setPermsVmDescriptor2R24", 1661),
-            ("setVKVmDescriptor2R24", 1661),
-            ("exerciseVmDescriptor2R24", 1661),
-            ("pipelinedSendVmDescriptor2R24", 1661),
-            ("refreshVmDescriptor2R24", 1661),
-            ("incrementNonceVmDescriptor2R24", 1661),
-            ("revokeVmDescriptor2R24", 1661),
-            ("introduceVmDescriptor2R24", 1661),
-            ("attenuateVmDescriptor2R24", 1661),
-            ("revokeCapabilityVmDescriptor2R24", 1661),
-            ("customVmDescriptor2R24", 1637),
-            ("setFieldDynVmDescriptor2R24", 1629),
-            ("grantCapVmDescriptor2R24", 1661),
-            ("makeSovereignVmDescriptor2R24", 1697),
-            ("createCellVmDescriptor2R24", 1952),
-            ("factoryVmDescriptor2R24", 1661),
-            ("spawnVmDescriptor2R24", 1661),
-            ("receiptArchiveVmDescriptor2R24", 1661),
-            ("cellUnsealVmDescriptor2R24", 1661),
-            ("emitEventVmDescriptor2R24", 1661),
-            ("setFieldVmDescriptor2-0R24", 1661),
-            ("setFieldVmDescriptor2-1R24", 1661),
-            ("setFieldVmDescriptor2-2R24", 1661),
-            ("setFieldVmDescriptor2-3R24", 1661),
-            ("setFieldVmDescriptor2-4R24", 1661),
-            ("setFieldVmDescriptor2-5R24", 1661),
-            ("setFieldVmDescriptor2-6R24", 1661),
-            ("setFieldVmDescriptor2-7R24", 1661),
-            ("delegateCapOpenVmDescriptor2R24", 1942),
-            ("introduceCapOpenVmDescriptor2R24", 1942),
-            ("grantCapCapOpenVmDescriptor2R24", 1942),
-            ("revokeCapOpenVmDescriptor2R24", 1942),
-            ("refreshDelegationCapOpenVmDescriptor2R24", 1942),
-            ("revokeCapabilityCapOpenVmDescriptor2R24", 1942),
-            ("transferCapOpenEffVmDescriptor2R24", 1952),
-            ("attenuateCapOpenEffVmDescriptor2R24", 2085),
-            ("transferFeeVmDescriptor2R24", 1629),
-            ("transferCapOpenTBVmDescriptor2R24", 1952),
-            ("heapWriteVmDescriptor2R24", 2019),
-            ("delegateWriteCapOpenVmDescriptor2R24", 1942),
-            ("introduceWriteCapOpenVmDescriptor2R24", 1942),
-            ("delegateAttenWriteCapOpenVmDescriptor2R24", 1942),
+            ("transferVmDescriptor2R24", 1782),
+            ("burnVmDescriptor2R24", 1778),
+            ("mintVmDescriptor2R24", 1773),
+            ("noteSpendVmDescriptor2R24", 2064),
+            ("noteCreateVmDescriptor2R24", 2064),
+            ("cellSealVmDescriptor2R24", 1773),
+            ("cellDestroyVmDescriptor2R24", 1773),
+            ("refusalVmDescriptor2R24", 2281),
+            ("setPermsVmDescriptor2R24", 1773),
+            ("setVKVmDescriptor2R24", 1773),
+            ("exerciseVmDescriptor2R24", 1773),
+            ("pipelinedSendVmDescriptor2R24", 1773),
+            ("refreshVmDescriptor2R24", 1773),
+            ("incrementNonceVmDescriptor2R24", 1773),
+            ("revokeVmDescriptor2R24", 1773),
+            ("introduceVmDescriptor2R24", 1773),
+            ("attenuateVmDescriptor2R24", 1773),
+            ("revokeCapabilityVmDescriptor2R24", 1773),
+            ("customVmDescriptor2R24", 1749),
+            ("setFieldDynVmDescriptor2R24", 1741),
+            ("grantCapVmDescriptor2R24", 1773),
+            ("makeSovereignVmDescriptor2R24", 1809),
+            ("createCellVmDescriptor2R24", 2064),
+            ("factoryVmDescriptor2R24", 1773),
+            ("spawnVmDescriptor2R24", 1773),
+            ("receiptArchiveVmDescriptor2R24", 1773),
+            ("cellUnsealVmDescriptor2R24", 1773),
+            ("emitEventVmDescriptor2R24", 1773),
+            ("setFieldVmDescriptor2-0R24", 1773),
+            ("setFieldVmDescriptor2-1R24", 1773),
+            ("setFieldVmDescriptor2-2R24", 1773),
+            ("setFieldVmDescriptor2-3R24", 1773),
+            ("setFieldVmDescriptor2-4R24", 1773),
+            ("setFieldVmDescriptor2-5R24", 1773),
+            ("setFieldVmDescriptor2-6R24", 1773),
+            ("setFieldVmDescriptor2-7R24", 1773),
+            ("delegateCapOpenVmDescriptor2R24", 2054),
+            ("introduceCapOpenVmDescriptor2R24", 2054),
+            ("grantCapCapOpenVmDescriptor2R24", 2054),
+            ("revokeCapOpenVmDescriptor2R24", 2054),
+            ("refreshDelegationCapOpenVmDescriptor2R24", 2054),
+            ("revokeCapabilityCapOpenVmDescriptor2R24", 2054),
+            ("transferCapOpenEffVmDescriptor2R24", 2064),
+            ("attenuateCapOpenEffVmDescriptor2R24", 2197),
+            ("transferFeeVmDescriptor2R24", 1741),
+            ("transferCapOpenTBVmDescriptor2R24", 2064),
+            ("heapWriteVmDescriptor2R24", 2131),
+            ("delegateWriteCapOpenVmDescriptor2R24", 2054),
+            ("introduceWriteCapOpenVmDescriptor2R24", 2054),
+            ("delegateAttenWriteCapOpenVmDescriptor2R24", 2054),
             // ⚑ FLAG DAY 2026-07-28: 1878 → 2014. The two REMOVE write twins gained the TOMBSTONE
             // after-spine (Lean `CapOpenEmit.removeTombstoneConstraints`), so their NARROW host is
             // now `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119, the same as the UPDATE twin.
@@ -3834,13 +3897,13 @@ mod tests {
             // leaves its 7 leaf-field columns unread — and the E1 dead-column scan strips exactly
             // that run (`e1_compact_generated.rs` gained `(1016, 1023)` on both members). The narrow
             // widths coincide because the narrow member is not compacted; the wide ones do not.
-            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2078),
-            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2078),
-            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2085),
-            ("spawnWriteCapOpenVmDescriptor2R24", 1942),
-            ("spawnCapOpenVmDescriptor2R24", 1942),
-            ("exerciseCapOpenVmDescriptor2R24", 1942),
-            ("supplyMintVmDescriptor2R24", 1613),
+            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2190),
+            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2190),
+            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2197),
+            ("spawnWriteCapOpenVmDescriptor2R24", 2054),
+            ("spawnCapOpenVmDescriptor2R24", 2054),
+            ("exerciseCapOpenVmDescriptor2R24", 2054),
+            ("supplyMintVmDescriptor2R24", 1725),
         ];
 
         let mut n = 0usize;

@@ -117,7 +117,9 @@ to confirm honest proofs survive and the teeth still bite.
   residual now 2^30−1 < p ⟹ the mod-p→ℤ lift is SOUND (was unsound at 16 bits — the gap).
 - LEAN PROOF: VaultSatDescriptor's conservation is now PROVABLE (the 15-bit range checks DERIVE the residual bound;
   no assumed reconExact). Completion lane in flight — will go from RED to GREEN, the proof that the fix works.
-- REMAINING (scoped, staged-epoch): the staged descriptor fixture `circuit/tests/fixtures/vault-sat-v3-staged.json`
-  (Lean-emitted, include_str!'d by gentian_discharge_vault_prove.rs) is now stale (range_specs emit 15 not 16) and
-  needs re-emission. This belongs with the tag-19 VK epoch regeneration (the vault "rides the big-bang flip", not
+- REMAINING (scoped, staged-epoch): the staged descriptor (`vaultSatVmDescriptor2R24`, the row of
+  `circuit/descriptors/rotation-v3-staged-registry.tsv` that `gentian_discharge_vault_prove.rs` reads) is stale
+  (range_specs emit 15 not 16) and needs re-emission. ⚑ 2026-07-31: this used to name the
+  `circuit/tests/fixtures/vault-sat-v3-staged.json` COPY, which is now DELETED — it had drifted 112 columns and
+  304 constraints behind the registry row. This belongs with the tag-19 VK epoch regeneration (the vault "rides the big-bang flip", not
   live). Not a blocker on the soundness fix — the gap is closed at the source.

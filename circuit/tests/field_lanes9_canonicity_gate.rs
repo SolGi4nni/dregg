@@ -700,3 +700,408 @@ fn the_census_reader_detects_a_planted_lane_range_lookup() {
          meaningless. Fix the reader — do not relax the assertion.\n"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// BOTH POLES, THROUGH THE DEPLOYED PROVER, IN ONE RUN
+//
+// Everything above this line is about the emitted BYTES: the encoder's image, the exhibit,
+// and a census of which columns the committed constraints name. None of it runs a prover.
+// The sentence the epoch actually needs is the pair
+//
+//   (a) an honest 32-byte field write PROVES and VERIFIES against the deployed member with
+//       the canonicity constraints live — the COMPLETENESS pole; and
+//   (b) the forged nonet is UNSAT against that SAME member — the SOUNDNESS pole,
+//
+// and (a) is the one a census cannot reach. A canonicity gate that refuses honest turns is
+// worse than no gate, and "the columns are named by 192 lookups" is exactly as compatible
+// with that outcome as with the right one.
+//
+// ⚑ THE WITNESS IS CHOSEN SO THE GADGET IS NOT VACUOUS ON IT. `2·v = q(q−1)·L` and
+// `vb = v + q(q−1)` impose NOTHING when `q ∈ {0,1}` — the selector is dead and `v = vb = 0`
+// whatever lane 0 holds. Only `q = 2` makes them bite, and it bites HARD: it forces
+// `L < 2^28 − 2`, with no slack in either direction. Every pre-existing honest-large fixture
+// in this tree (`setfield_value8_epoch_flip::honest_large_fixture` writes `1000` into
+// `b[28..32]`) has `q0 = q1 = 0`, so a green under it says nothing at all about the `v` gates.
+// The fixture below puts `0xFFFFFFFF` in BOTH pinned windows, which is `q0 = q1 = 2` — both
+// selectors LIVE, both `vb` landing at `2^28 − 1`, one below the lookup bound.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/// The field slot the prove-throughs write (the deployed per-slot member is
+/// `setFieldVmDescriptor2-{PROVE_SLOT}R24`).
+const PROVE_SLOT: usize = 3;
+
+/// **THE MAXIMAL HONEST 32-BYTE FIELD VALUE for this gadget.** `b[24..28] = b[28..32] =
+/// 0xFFFFFFFF`, so BOTH pinned windows exceed `2p = 4026531842` and both quotients are `2` —
+/// the only quotient at which the `v`/`vb` gates constrain anything. `b[21..24]` are nonzero so
+/// the carry-digit remainder `r` is not the degenerate zero, and `b[0..21]` carry a pattern so
+/// the seven free lanes are genuinely occupied.
+fn maximal_carry_value() -> [u8; 32] {
+    let mut b = [0u8; 32];
+    for (i, x) in b[..21].iter_mut().enumerate() {
+        *x = (0xA0 + i) as u8;
+    }
+    b[21] = 0x11;
+    b[22] = 0x22;
+    b[23] = 0x33;
+    b[24..28].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+    b[28..32].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+    b
+}
+
+/// The seven aux values the deployed producer must have written for `(blk, slot)`, derived here
+/// from the nonet ALONE — an independent transcription of
+/// `Emit/FieldsCanonicity9Emit.gadgetBodies`, not a call into the producer's own fill. If the two
+/// ever disagree, one of them is wrong and this says which columns.
+fn expected_aux(lanes: &[BabyBear; 9]) -> [u64; 7] {
+    let l0 = lanes[0].as_u32() as u64;
+    let l1 = lanes[1].as_u32() as u64;
+    let l8 = lanes[8].as_u32() as u64;
+    let c = l8 >> 24;
+    let (q0, q1) = (c % 4, c / 4);
+    let (t0, t1) = (u64::from(q0 == 2), u64::from(q1 == 2));
+    [
+        l8 & 0x00ff_ffff,
+        q0,
+        q1,
+        t0 * l0,
+        t0 * l0 + 2 * t0,
+        t1 * l1,
+        t1 * l1 + 2 * t1,
+    ]
+}
+
+/// The fixture's nonet really does drive the gadget's ONLY live arm. Cheap, no prover — so a
+/// regression in the fixture is caught here rather than showing up as a mysteriously easy green
+/// in the prove-through below.
+#[test]
+fn the_prove_through_fixture_drives_the_live_arm_of_the_gadget() {
+    let lanes = field_limbs9(&maximal_carry_value());
+    let aux = expected_aux(&lanes);
+    assert_eq!(
+        aux[1], 2,
+        "q0 must be 2 — the only quotient the `v` gates bite at"
+    );
+    assert_eq!(aux[2], 2, "q1 must be 2");
+    assert_ne!(
+        aux[0], 0,
+        "the carry remainder `r` must not be the degenerate zero"
+    );
+    // `v0 = L0` and `v0b = L0 + 2` must BOTH fit the 28-bit lookups — this is the tight fit the
+    // Lean records as "no slack in either direction" (`L < 2^28 − 2 = 2^32 − 2p`).
+    assert!(aux[3] < CH && aux[4] < CH, "v0/v0b must fit 2^28: {aux:?}");
+    assert!(aux[5] < CH && aux[6] < CH, "v1/v1b must fit 2^28: {aux:?}");
+    assert_eq!(
+        aux[4],
+        CH - 1,
+        "the fixture is MAXIMAL: v0b is one below the bound, so a gadget off by one in either \
+         direction refuses it"
+    );
+    assert!(
+        canonical9(&lanes),
+        "an honest encoding is canonical by construction"
+    );
+}
+
+/// The deployed per-slot setField member, from the COMMITTED narrow registry.
+fn deployed_setfield_member(slot: usize) -> EffectVmDescriptor2 {
+    let key = format!("setFieldVmDescriptor2-{slot}R24");
+    let json = dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() != Some(key.as_str()) {
+                return None;
+            }
+            let _ = it.next();
+            it.next()
+        })
+        .unwrap_or_else(|| panic!("{key} not in V3_STAGED_REGISTRY_TSV"));
+    dregg_circuit::descriptor_ir2::parse_vm_descriptor2(json).expect("deployed member parses")
+}
+
+/// The honest narrow trace + PI vector for a `setField(PROVE_SLOT, value)` turn, built through the
+/// LIVE producer.
+///
+/// ⚠ The v1 face value is `field_limbs9(&value)[0]` — the DEPLOYED projector, byte-identically what
+/// `turn::executor::effect_vm_bridge::field_element_to_bb` and `sdk::cipherclerk`'s twin emit. The
+/// older fixtures in this tree pass `fold_bytes32_to_bb` there instead, which makes the welded lane
+/// 0 disagree with the nonet the cell encodes — harmless while the carry digit is 0 (the `v` gates
+/// are dead), and exactly the incoherence the gadget is here to refuse once it is not.
+fn honest_setfield_trace(value: [u8; 32]) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    use dregg_cell::{Cell, Ledger};
+    use dregg_circuit::effect_vm::trace_rotated::{
+        RotatedBlockWitness, empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    };
+    use dregg_circuit::effect_vm::{CellState, Effect};
+    use dregg_turn::rotation_witness as rw;
+
+    let balance: i64 = 50_000;
+    let mut pk = [0u8; 32];
+    pk[0] = 7;
+    let before_cell = Cell::with_balance(pk, [0u8; 32], balance);
+    let mut after_cell = before_cell.clone();
+    assert!(after_cell.state.set_field(PROVE_SLOT, value), "set_field");
+
+    let mut ledger = Ledger::new();
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let z8 = dregg_circuit::heap_root::empty_heap_root_8();
+    let rvk = dregg_turn::rotation_witness::empty_revoked_root_8();
+    let rlog = vec![[3u8; 32]];
+    let bridge = |w: &rw::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("pre-iroot limbs")
+    };
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &z8,
+        &z8,
+        &rvk,
+        &rlog,
+        &Default::default(),
+    );
+    let after_w = rw::produce(
+        &after_cell,
+        &ledger,
+        &z8,
+        &z8,
+        &rvk,
+        &rlog,
+        &Default::default(),
+    );
+
+    generate_rotated_effect_vm_trace(
+        &CellState::new(balance as u64, 0),
+        &[Effect::SetField {
+            field_idx: PROVE_SLOT as u32,
+            value: field_limbs9(&value)[0],
+        }],
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &empty_caveat_manifest(),
+    )
+    .expect("the live rotated producer must emit an honest setField trace")
+}
+
+fn proves_and_verifies(
+    d: &EffectVmDescriptor2,
+    trace: &[Vec<BabyBear>],
+    dpis: &[BabyBear],
+) -> Result<(), String> {
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
+    };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let proof = prove_vm_descriptor2(d, trace, dpis, &MemBoundaryWitness::default(), &[])?;
+        verify_vm_descriptor2(d, &proof, dpis)
+    })) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(format!("{e:?}")),
+        Err(_) => Err("panicked".into()),
+    }
+}
+
+/// Every column any row-local body or lookup of this constraint names.
+fn constraint_columns(c: &VmConstraint2) -> Vec<usize> {
+    fn walk(e: &dregg_circuit::lean_descriptor_air::LeanExpr, out: &mut Vec<usize>) {
+        use dregg_circuit::lean_descriptor_air::LeanExpr as E;
+        match e {
+            E::Var(v) => out.push(*v),
+            E::Const(_) => {}
+            E::Add(a, b) | E::Mul(a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(body) = dregg_circuit::descriptor_ir2::row_local_body(c) {
+        walk(&body, &mut out);
+    }
+    if let VmConstraint2::Lookup(l) = c {
+        for t in &l.tuple {
+            walk(t, &mut out);
+        }
+    }
+    out
+}
+
+/// The 112 canonicity AUX columns of a member whose rotated appendix is based at `before_base`
+/// (`Emit/FieldsCanonicity9Emit.auxColsAt`). NOT the lane columns — those are committed limbs.
+fn canon9_aux_columns(before_base: usize) -> std::ops::Range<usize> {
+    use dregg_circuit::effect_vm::layout_generated::{CANON9_REGION_OFF, CANON9_SPAN};
+    before_base + CANON9_REGION_OFF..before_base + CANON9_REGION_OFF + CANON9_SPAN
+}
+
+/// ⚑ **BOTH POLES, ONE RUN, THROUGH `prove_vm_descriptor2` + `verify_vm_descriptor2` AGAINST THE
+/// COMMITTED `setFieldVmDescriptor2-3R24` BYTES.**
+///
+/// 1. **COMPLETENESS.** An honest 32-byte field write whose nonet drives the gadget's only live arm
+///    (`q0 = q1 = 2`, both `vb` one below the 28-bit bound) PROVES and VERIFIES. This is the claim a
+///    census cannot make and the one a canonicity gate can most easily break.
+/// 2. **THE AUX IS FILLED.** The seven producer columns per `(block, slot)` carry exactly the values
+///    an independent transcription of `gadgetBodies` derives from the nonet — checked on BOTH blocks
+///    and all sixteen slots, so a producer that filled only the written one would fail here.
+/// 3. **THE AUX IS READ** (anti-vacuity, by variant). Zeroing ONLY the written slot's seven AFTER
+///    aux columns — nothing else — makes the same member UNSAT. Without this leg a green (1) is
+///    equally consistent with 112 columns nobody looks at.
+/// 4. **SOUNDNESS.** The forged nonet (`FORGED`, lane 8 = `3·2^24`) is UNSAT at the prover, with the
+///    rotated commitment RECOMPUTED and every moved PI re-read — so the refusal cannot be the stale
+///    commitment or a stale pin.
+/// 5. **THE CONTROL THAT MAKES (4) MEAN CANONICITY.** The identical forged trace and PI vector PROVE
+///    against the same member with the 192 aux-reading constraints deleted in value — the 112
+///    free-lane `< 2^28` lookups still present and still satisfied. That is
+///    `free_lane_ranges_alone_do_not_force_the_image` at the prover instead of in the model.
+#[test]
+fn both_poles_through_the_deployed_prover() {
+    use dregg_circuit::effect_vm::layout_generated::{CANON9_PER_SLOT, CANON9_REGION_OFF};
+    use dregg_circuit::effect_vm::trace_rotated::{
+        AFTER_BASE, BEFORE_BASE, V1_PI_COUNT, recompute_after_blocks_for_test,
+    };
+
+    let value = maximal_carry_value();
+    let desc = deployed_setfield_member(PROVE_SLOT);
+    let (mut trace, mut dpis) = honest_setfield_trace(value);
+    assert_eq!(
+        dpis.len(),
+        desc.public_input_count,
+        "the live producer emits the committed member's PI shape"
+    );
+
+    // ── (2) THE AUX IS FILLED — both blocks, all sixteen slots, against an independent derivation.
+    let aux_of = |t: &[Vec<BabyBear>], blk: usize, slot: usize| -> [u64; 7] {
+        let a =
+            BEFORE_BASE + CANON9_REGION_OFF + blk * (8 * CANON9_PER_SLOT) + slot * CANON9_PER_SLOT;
+        core::array::from_fn(|k| t[0][a + k].as_u32() as u64)
+    };
+    let lanes_of_block = |t: &[Vec<BabyBear>], blk: usize, slot: usize| -> [BabyBear; 9] {
+        let bb = if blk == 0 { BEFORE_BASE } else { AFTER_BASE };
+        core::array::from_fn(|lane| t[0][bb + ROTATED_FIELD_LANE_COL[slot][lane]])
+    };
+    for blk in 0..2 {
+        for slot in 0..8 {
+            assert_eq!(
+                aux_of(&trace, blk, slot),
+                expected_aux(&lanes_of_block(&trace, blk, slot)),
+                "\nthe producer's canonicity aux for (block {blk}, slot {slot}) is not the gadget's \
+                 own derivation from that block's nonet. Fix the PRODUCER — a canonicity gate that \
+                 refuses honest turns is worse than no gate, and relaxing the constraint to match a \
+                 wrong fill would undo the epoch.\n"
+            );
+        }
+    }
+    // …and the written slot's AFTER aux is the LIVE arm (not sixteen copies of the dead one).
+    let written = aux_of(&trace, 1, PROVE_SLOT);
+    assert_eq!(
+        (written[1], written[2]),
+        (2, 2),
+        "q0/q1 live on the written slot"
+    );
+    assert_eq!(
+        aux_of(&trace, 0, PROVE_SLOT)[1],
+        0,
+        "the pre-state slot is empty, q0 = 0"
+    );
+
+    // ── (1) THE COMPLETENESS POLE.
+    proves_and_verifies(&desc, &trace, &dpis).unwrap_or_else(|e| {
+        panic!(
+            "\n⚑ AN HONEST 32-BYTE FIELD WRITE IS UNSAT ON THE DEPLOYED MEMBER: {e}\n\n\
+             This is the failure mode the fields-canonicity epoch must not have. Do NOT widen or \
+             drop a canonicity constraint to make it pass — find the producer path that did not \
+             fill its aux (`trace_rotated::fill_block` is the only writer of a nonet lane, and it \
+             lays the aux itself) and fix it there.\n"
+        )
+    });
+    eprintln!(
+        "CANON9 COMPLETENESS: an honest 32-byte write at q0=q1=2 (v0b = 2^28 − 1, one below the \
+         bound) PROVES + VERIFIES on the deployed setFieldVmDescriptor2-{PROVE_SLOT}R24."
+    );
+
+    // ── (3) THE AUX IS READ — zero the written slot's seven AFTER columns and nothing else.
+    {
+        let a =
+            BEFORE_BASE + CANON9_REGION_OFF + 8 * CANON9_PER_SLOT + PROVE_SLOT * CANON9_PER_SLOT;
+        let mut t = trace.clone();
+        for row in t.iter_mut() {
+            for k in 0..CANON9_PER_SLOT {
+                row[a + k] = BabyBear::ZERO;
+            }
+        }
+        assert!(
+            proves_and_verifies(&desc, &t, &dpis).is_err(),
+            "\nZEROING the written slot's seven canonicity aux columns left the member SATISFIABLE. \
+             Those columns are then read by nothing, the 192 lookups the census counts are decoration, \
+             and the completeness green above is vacuous.\n"
+        );
+    }
+
+    // ── (4) THE SOUNDNESS POLE — the forged nonet, with every dependent value re-derived.
+    let lane8_col = AFTER_BASE + ROTATED_FIELD_LANE_COL[PROVE_SLOT][8];
+    for row in trace.iter_mut() {
+        row[lane8_col] = BabyBear::new(FORGED[8]);
+        // The forger's BEST aux: exactly what the producer's own derivation yields for this lane 8.
+        // `c = 3` ⇒ `r = 0`, `q0 = 3`, `q1 = 0`, both selectors dead. Every range lookup passes and
+        // the split gate `L8 = (q0 + 4·q1)·2^24 + r` is SATISFIED. What has no witness is
+        // `q0(q0−1)(q0−2) = 0`, which is 6.
+        let a =
+            BEFORE_BASE + CANON9_REGION_OFF + 8 * CANON9_PER_SLOT + PROVE_SLOT * CANON9_PER_SLOT;
+        let forged_lanes: [BabyBear; 9] =
+            core::array::from_fn(|lane| row[AFTER_BASE + ROTATED_FIELD_LANE_COL[PROVE_SLOT][lane]]);
+        let forged_aux = expected_aux(&forged_lanes);
+        for (k, v) in forged_aux.iter().enumerate() {
+            row[a + k] = BabyBear::new(*v as u32);
+        }
+    }
+    // The rotated AFTER commitment absorbs lane 8, so re-chain it and re-read every PI it moved:
+    // the rotated NEW commit and the written slot's ninth value8 pin. Without this the refusal
+    // below would be the commitment's, not canonicity's.
+    recompute_after_blocks_for_test(&mut trace);
+    let last = trace.len() - 1;
+    dpis[V1_PI_COUNT + 1] = trace[last][AFTER_BASE + B_STATE_COMMIT];
+    for lane in 1..=8usize {
+        dpis[46 + lane - 1] = trace[last][AFTER_BASE + ROTATED_FIELD_LANE_COL[PROVE_SLOT][lane]];
+    }
+    let forged_verdict = proves_and_verifies(&desc, &trace, &dpis);
+    assert!(
+        forged_verdict.is_err(),
+        "\n⚑ THE FORGED NONET PROVED. Lane 8 = 3·2^24 makes the welded v1 face read {} while the \
+         committed nonet decodes to {} — one accepted proof, two answers to \"what is fields[{}]\". \
+         `canon9_rejects_the_forged_nonet` says this member has no witness; it just found one.\n",
+        trace[last][AFTER_BASE + ROTATED_FIELD_LANE_COL[PROVE_SLOT][0]].as_u32(),
+        HONEST_VALUE,
+        PROVE_SLOT
+    );
+    eprintln!(
+        "CANON9 SOUNDNESS: the forged nonet is UNSAT at the deployed prover ({forged_verdict:?})."
+    );
+
+    // ── (5) THE CONTROL — the same bytes prove once the 192 aux-reading constraints are gone.
+    {
+        let aux_cols = canon9_aux_columns(BEFORE_BASE);
+        let mut stripped = desc.clone();
+        let before = stripped.constraints.len();
+        stripped
+            .constraints
+            .retain(|c| !constraint_columns(c).iter().any(|v| aux_cols.contains(v)));
+        let removed = before - stripped.constraints.len();
+        assert_eq!(
+            removed,
+            16 * (7 + 5),
+            "the strip must remove exactly the 7 gates + 5 aux lookups per (block, slot) = 192; it \
+             removed {removed}. The 112 free-lane `< 2^28` lookups name LANE columns, not aux \
+             columns, and must SURVIVE — they are what the control keeps satisfied."
+        );
+        proves_and_verifies(&stripped, &trace, &dpis).unwrap_or_else(|e| {
+            panic!(
+                "\nthe forged trace is refused even WITHOUT the canonicity gadget ({e}), so leg (4) \
+                 was measuring something else — a stale commitment, a stale pin, or a free-lane \
+                 lookup. Re-derive whatever moved before reading (4) as a canonicity result.\n"
+            )
+        });
+        eprintln!(
+            "CANON9 CONTROL: with the {removed} aux-reading constraints deleted the IDENTICAL forged \
+             trace PROVES — the 112 free-lane range lookups alone do not force the image, at the \
+             prover and not only in the model."
+        );
+    }
+}

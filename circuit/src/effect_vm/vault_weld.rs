@@ -41,7 +41,7 @@
 //!
 //! The welded descriptor IS now emitted from Lean (`Dregg2.Deos.VaultSatDescriptor.
 //! vaultSatVmDescriptor2R24`, v12 offsets through the canonical constants; exercise fixture
-//! `circuit/tests/fixtures/vault-sat-v3-staged.json`) and the producer aux-fill is EXPORTED below
+//! the `vaultSatVmDescriptor2R24` row of `rotation-v3-staged-registry.tsv`) and the producer aux-fill is EXPORTED below
 //! ([`fill_vault_aux`]); `gentian_discharge_vault_prove.rs` proves real STARKs against it (honest
 //! fair-mint deposit proves+verifies; zero-mint inflation / over-mint dilution / no-deposit
 //! REFUSED). What still rides the ONE big-bang descriptor regen: the

@@ -5,9 +5,10 @@
 //! The escrow (tag 17) weld is the done template: `settleEscrowSatVmDescriptor2R24` emitted into the
 //! staged registry + a genuine producer + `gentian_carrier_floor_prove` real STARKs. This file makes
 //! tags 18/19 match that doneness MINUS the registry row: it parses the Lean-emitted v12
-//! descriptors DIRECTLY from the checked-in fixtures (`tests/fixtures/{discharge,vault}-sat-v3-staged.json`,
-//! the byte output of `metatheory/EmitDischargeVaultSat.lean` over
-//! `Dregg2.Deos.{DischargeSatDescriptor,VaultSatDescriptor}`), welds the corresponding floor-decode
+//! descriptors DIRECTLY out of the committed `rotation-v3-staged-registry.tsv` (the byte output of
+//! `metatheory/EmitRotationV3.lean` over `Dregg2.Deos.{DischargeSatDescriptor,VaultSatDescriptor}`;
+//! the two `tests/fixtures/*-sat-v3-staged.json` COPIES are DELETED — see `staged_json` below for
+//! what they cost), welds the corresponding floor-decode
 //! gates (`discharge_weld::discharge_floor_gates` / `vault_weld::vault_floor_gates`) on top — the
 //! exact gentian pattern — and drives real `--release` STARKs through the genuine rotated
 //! settle-carrier producer + the EXPORTED production aux-fills
@@ -28,9 +29,10 @@
 //!
 //! ## STAGED — what still rides the BIG-BANG regen (the named riders)
 //!
-//!  * the `rotation-v3-staged-registry.tsv` rows for `dischargeSatVmDescriptor2R24` /
-//!    `vaultSatVmDescriptor2R24` (+ the `EmitRotationV3.lean` emit lines) and the drift-gate FP pins
-//!    in `effect_vm_descriptors.rs`;
+//!  * ⚑ NO LONGER A RIDER: the `rotation-v3-staged-registry.tsv` rows for
+//!    `dischargeSatVmDescriptor2R24` / `vaultSatVmDescriptor2R24` and their `EmitRotationV3.lean`
+//!    emit lines have LANDED (that is what this file now reads). The drift-gate FP pins in
+//!    `effect_vm_descriptors.rs` still ride the regen;
 //!  * the caveat-manifest COVERAGE tie (routing a declared-18/19 turn through these descriptors,
 //!    `rotated_descriptor_name_for_declared_*`);
 //!  * the welded VK commit + live admission (the descriptor/registry big-bang). NOTE: the
@@ -70,9 +72,40 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
 use dregg_turn::rotation_witness as rw;
 
-// The Lean-emitted v12 staged descriptors (see the module header; regen-riders NAMED there).
-const DISCHARGE_JSON: &str = include_str!("fixtures/discharge-sat-v3-staged.json");
-const VAULT_JSON: &str = include_str!("fixtures/vault-sat-v3-staged.json");
+// ⚑ THE LEAN-EMITTED STAGED DESCRIPTORS, READ FROM THE COMMITTED REGISTRY — NOT FROM A FIXTURE
+// COPY (2026-07-31).
+//
+// These were `include_str!("fixtures/{discharge,vault}-sat-v3-staged.json")`: a second copy of two
+// members that are ALSO rows of `rotation-v3-staged-registry.tsv` (the `EmitRotationV3.lean` emit
+// lines landed while the header above still called them regen-riders). Two shapes that agree today
+// are two shapes that will disagree later, and these did: the fields-canonicity re-emit moved the
+// registry rows to 1892 / 2357 columns and 570 / 1056 constraints while the fixtures stayed at
+// 1780 / 2245 and 266 / 752 — so the DRIFT TOOTH below, whose entire job is to catch descriptor
+// drift, was itself reading a descriptor three flag-days dead, and thirteen tests went red against
+// a file no emit writes.
+//
+// The fixtures are DELETED rather than re-copied. The registry is the emit's own byte output and
+// the thing every other member is checked against; a private copy of two of them buys nothing and
+// costs exactly this.
+fn staged_json(key: &str) -> &'static str {
+    dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() != Some(key) {
+                return None;
+            }
+            let _ = it.next();
+            it.next()
+        })
+        .unwrap_or_else(|| panic!("{key} is not a row of V3_STAGED_REGISTRY_TSV"))
+}
+fn discharge_json() -> &'static str {
+    staged_json("dischargeSatVmDescriptor2R24")
+}
+fn vault_json() -> &'static str {
+    staged_json("vaultSatVmDescriptor2R24")
+}
 
 // Slots: discharge cur/tot/due = fields 0/1/2; vault asset/share = fields 0/1 (the emitted defs).
 const CUR: usize = 0;
@@ -184,19 +217,27 @@ fn accepts(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], dpis: &[BabyBear
     }
 }
 
-/// Extract the selector-gated gate bodies (`mul(var sel_col, _)`) from a constraint list.
-fn sel_gated_bodies(
-    constraints: &[dregg_circuit::descriptor_ir2::VmConstraint2],
-) -> Vec<&LeanExpr> {
-    use dregg_circuit::descriptor_ir2::VmConstraint2;
+/// Extract the selector-gated row-local bodies (`mul(var sel_col, _)`) from a constraint list.
+///
+/// ⚑ **THROUGH `row_local_body`, NEVER BY MATCHING `VmConstraint::Gate` (2026-07-31).** This read
+/// the `Gate` variant directly, which is matching a KIND where the meaning is a BODY: the last-row
+/// hardening flag day moved every deployed row-local body from `gate` (transition domain) to
+/// `window_gate` (whole domain), so against a HARDENED member this returned the empty list and the
+/// drift tooth below compared `[] == [the Rust builders' 33 gates]`. It only stayed green because
+/// the file was reading a pre-hardening FIXTURE COPY; pointing it at the committed registry — where
+/// the emit actually writes — is what made the blindness visible. `descriptor_ir2::row_local_body`
+/// is the one decoder for this and the next domain move edits it alone.
+fn sel_gated_bodies(constraints: &[dregg_circuit::descriptor_ir2::VmConstraint2]) -> Vec<LeanExpr> {
     constraints
         .iter()
-        .filter_map(|c| match c {
-            VmConstraint2::Base(VmConstraint::Gate(body)) => match body {
-                LeanExpr::Mul(l, _) if **l == LeanExpr::Var(DISCHARGE_SEL_COL) => Some(body),
+        .filter_map(|c| {
+            let body = dregg_circuit::descriptor_ir2::row_local_body(c)?;
+            match body.as_ref() {
+                LeanExpr::Mul(l, _) if **l == LeanExpr::Var(DISCHARGE_SEL_COL) => {
+                    Some(body.into_owned())
+                }
                 _ => None,
-            },
-            _ => None,
+            }
         })
         .collect()
 }
@@ -206,7 +247,8 @@ fn sel_gated_bodies(
 // ----------------------------------------------------------------------------------------------------
 
 fn discharge_descriptor() -> EffectVmDescriptor2 {
-    let mut desc = parse_vm_descriptor2(DISCHARGE_JSON).expect("Lean-emitted discharge descriptor");
+    let mut desc =
+        parse_vm_descriptor2(discharge_json()).expect("Lean-emitted discharge descriptor");
     assert_eq!(
         desc.public_input_count, 47,
         "rotated 46 + the selector slot"
@@ -222,7 +264,7 @@ fn discharge_descriptor() -> EffectVmDescriptor2 {
 }
 
 fn vault_descriptor() -> EffectVmDescriptor2 {
-    let mut desc = parse_vm_descriptor2(VAULT_JSON).expect("Lean-emitted vault descriptor");
+    let mut desc = parse_vm_descriptor2(vault_json()).expect("Lean-emitted vault descriptor");
     assert_eq!(
         desc.public_input_count, 47,
         "rotated 46 + the selector slot"
@@ -312,7 +354,7 @@ fn vault_trace(
 
 #[test]
 fn lean_emitted_discharge_descriptor_matches_rust_builders() {
-    let desc = parse_vm_descriptor2(DISCHARGE_JSON).expect("parses");
+    let desc = parse_vm_descriptor2(discharge_json()).expect("parses");
     let emitted = sel_gated_bodies(&desc.constraints);
     let built = discharge_satisfaction_gates(CUR, TOT, DUE);
     let built_bodies = sel_gated_bodies(&built);
@@ -330,7 +372,7 @@ fn lean_emitted_discharge_descriptor_matches_rust_builders() {
 
 #[test]
 fn lean_emitted_vault_descriptor_matches_rust_builders() {
-    let desc = parse_vm_descriptor2(VAULT_JSON).expect("parses");
+    let desc = parse_vm_descriptor2(vault_json()).expect("parses");
     // VAULT_SEL_COL == DISCHARGE_SEL_COL (the shared free param slot) — one extractor serves both.
     assert_eq!(VAULT_SEL_COL, DISCHARGE_SEL_COL);
     let emitted = sel_gated_bodies(&desc.constraints);

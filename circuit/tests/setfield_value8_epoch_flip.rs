@@ -178,13 +178,29 @@ fn honest_large_value_setfield_proves_under_value8() {
     //
     // Kept as a LITERAL on purpose: the other side is a committed descriptor byte, so re-typing it each
     // epoch IS the review. Verified against the emitted artifact rather than the failure message —
-    // every setField member in both registries reads `trace_width: 1752`, so this is a consistent
+    // every setField member in both registries reads the same width, so this is a consistent
     // emit, not a partial one. ⚑ 1736 → 1752 at the rc-FOLD flag day (+2 caveat-region carriers,
     // +14 graduated lanes for the two chip sites that absorb the DFA route commitment).
+    //
+    // ⚑ 1752 → 1864 AT THE FIELDS-CANONICITY FLAG DAY (2026-07-31), and the +112 is DERIVED, not
+    // read back off the registry:
+    //
+    //   CANON9_SPAN   = 2 blocks × 8 slots × CANON9_PER_SLOT(7) = 112   -- the aux region
+    //   APPENDIX_SPAN = 2·B_SPAN + C_SPAN + CANON9_SPAN: 539 → 651      -- +112
+    //   ROT_WIDTH     = EFFECT_VM_WIDTH(188) + APPENDIX_SPAN = 839
+    //   GRAD_ROT_WIDTH= ROT_WIDTH + 7·N_ROT_SITES(140)        = 1819
+    //   trace_width   = GRAD_ROT_WIDTH + REFUSE_AUX_SPAN(45)  = 1864
+    //
+    // The middle line is the one to check rather than assume: graduation multiplies SITES by 7, so
+    // a wrap that added a hash site would not land +112. `fieldsCanonical9At_hashSites` proves this
+    // one adds none — it appends constraints into columns `rotateV3` had already allocated — so the
+    // appendix growth passes through the graduation 1:1. Same +112 on all 57 wide members
+    // (`effect_vm_descriptors::WIDE_MEMBER_GEOMETRY`), with a delta spread of zero.
     assert_eq!(
-        desc.trace_width, 1752,
+        desc.trace_width, 1864,
         "the NINE-LANE weld adds one column per slot (1692 → 1736); the rc FOLD adds the caveat \
-         region's two absorbing carriers and their lanes (1736 → 1752)"
+         region's two absorbing carriers and their lanes (1736 → 1752); the FIELDS-CANONICITY emit \
+         adds the 112-column aux region past the caveat region (1752 → 1864)"
     );
     // 57 → 58: the ninth lane publishes one more PI. `46 prefix + 8 value8 + 4 rc`, and the emitted
     // descriptor carries pi_binding indices 46..=53 on columns [569..575, 614] — the seventh contiguous

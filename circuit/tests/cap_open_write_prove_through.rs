@@ -826,10 +826,36 @@ fn remove_write_twins_bind_the_post_remove_cap_root() {
         // 2026-07-28, and it means the assertion above can never rot into a vacuous green: strip
         // the tooth and the green goes away.
         let mut stripped = desc.clone();
-        let n = stripped.constraints.len();
+        // ⚑ THE TAIL IS NO LONGER THE END OF THE LIST (2026-07-31). The fields-canonicity emit
+        // (`Emit/FieldsCanonicity9Emit.fieldsCanonical9Wire`) is applied OUTERMOST to every member,
+        // appending `2 blocks × 8 slots × (7 gates + 12 lookups) = 304` constraints past everything
+        // this block indexes. `n - 1` is now a canon9 range lookup, not the selector gate, so the
+        // shape assertions below fired and the red-proof could not run — the SAME failure mode the
+        // ⚑ note below records, one flag day later and from the other end: a guard that cannot
+        // execute. The anchor is the END OF THE HOST BLOCK, derived from the emit's own shape
+        // rather than transcribed, and it is asserted (the constraint at `host_end` must be the
+        // first canonicity gate, i.e. a row-local body) so a further outermost wrap fails loudly
+        // instead of stripping 32 constraints from the middle of somebody else's block.
+        const CANON9_CONSTRAINTS: usize = 2 * 8 * (7 + 12);
+        let n = stripped
+            .constraints
+            .len()
+            .checked_sub(CANON9_CONSTRAINTS)
+            .unwrap_or_else(|| {
+                panic!(
+                    "[{key}] the committed member must carry the {CANON9_CONSTRAINTS}-constraint \
+                     fields-canonicity block appended past its host"
+                )
+            });
         assert!(
             n > 33,
             "[{key}] the committed remove twin must carry the tombstone spine + selector"
+        );
+        assert!(
+            dregg_circuit::descriptor_ir2::row_local_body(&stripped.constraints[n]).is_some(),
+            "[{key}] constraint {n} must be the FIRST canonicity gate (the carry-digit split); if \
+             it is not, something else was appended outermost and the strip below would cut the \
+             wrong 32 constraints"
         );
         // The committed tail is: … 8 BEFORE welds, 16 node lookups, 8 root pins, 8 zero pins,
         // 1 selector gate (`withSelectorGate` appends exactly one row-local gate). Assert that

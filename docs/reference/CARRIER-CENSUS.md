@@ -468,8 +468,10 @@ Full analysis: `docs/reference/VAULT-CARRY-WRAP-INVESTIGATION.md`. Every load-be
 DECISION (honest state): VaultSatDescriptor.lean STAYS RED. Tightening only the Lean to CARRY_BITS=15 would make the
 model claim a conservation the deployed circuit does NOT enforce — the anti-toy sin. The red file IS the faithful
 state. FIX = `CARRY_BITS 16→15` in BOTH twins (vault_weld.rs:76 + VaultSatDescriptor.lean:76) — provably faithful
-(honest carries fit 15 bits for operands in [0,2^30)), restoring R_B ∈ (−p,p) — PLUS regen the staged VK / fixture
-(`vault-sat-v3-staged.json`) / producer aux-fill / drift-gate FP pin. This touches deployed circuit logic + the
+(honest carries fit 15 bits for operands in [0,2^30)), restoring R_B ∈ (−p,p) — PLUS regen the staged VK / the
+`vaultSatVmDescriptor2R24` row of `rotation-v3-staged-registry.tsv` / producer aux-fill / drift-gate FP pin.
+(⚑ 2026-07-31: the `circuit/tests/fixtures/vault-sat-v3-staged.json` COPY this line used to name is DELETED —
+it had drifted three flag days behind the registry row and took thirteen tests red with it.) This touches deployed circuit logic + the
 staged VK epoch ⟹ EMBER-GATED. The mod-p migration EARNED this: the field-faithful denotation refused to prove a
 conservation the ℤ model had silently faked, exposing a real staged vulnerability. This is the campaign working.
 

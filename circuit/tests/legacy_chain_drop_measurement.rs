@@ -57,23 +57,36 @@ const BASELINE_PROVER_MS: f64 = 637.9;
 ///   178-limb:  1702 + 960 + 2 = 2664   (the recorded [M] baseline, reproduced exactly)
 ///   184-limb:  1746 + 992 + 2 = 2740
 ///   rc FOLD:   1762 + 992 + 2 = 2756
+///   CANON9:    1874 + 992 + 2 = 2868
 /// ```
 ///
 /// The +76 (178 → 184) is `44` on the narrow member (`2·ΔB_SPAN + 7·ΔN_ROT_SITES = 16 + 28`) plus
 /// `32` on the carrier appendix (`2 · 8 · ΔWIDE_NUM_CARRIERS = 2·8·2`). The further +16 (rc FOLD)
 /// is entirely on the narrow member: `ΔC_SPAN(2) + 7·ΔN_ROT_SITES(2) = 2 + 14`, the two carriers
 /// the caveat fold's rc extension needs plus their graduated chip lanes; the carrier appendix does
-/// not move. Cross-check that this is the right baseline and not a fitted number:
-/// `2756 − S2_DELETED_COLS(992) − e1_drop(94) = 1670`, which is the committed
+/// not move.
+///
+/// ⚑ The further +112 (FIELDS-CANONICITY, 2026-07-31) is ALSO entirely on the narrow member, and
+/// for the OPPOSITE reason to the rc fold's: `ΔAPPENDIX_SPAN = CANON9_SPAN = 2 blocks · 8 slots ·
+/// 7 aux = 112` with `ΔN_ROT_SITES = 0`. `fieldsCanonical9At_hashSites` proves the wrap adds no
+/// hash site — it appends constraints into columns `rotateV3` had already allocated — so nothing
+/// is multiplied by 7 here. And `WIDE_NUM_CARRIERS` is a function of `NUM_PRE_LIMBS`, which did
+/// not move, so the carrier appendix stays at 992: the aux region rides PAST the limbs and the
+/// absorption chain never sees it.
+///
+/// Cross-check that this is the right baseline and not a fitted number:
+/// `2868 − S2_DELETED_COLS(992) − e1_drop(94) = 1782`, which is the committed
 /// `transferVmDescriptor2R24` wide width, and the assertion below computes exactly that
 /// subtraction from live constants.
 ///
-/// **The deletion's CLAIM is unchanged.** It removed `960 + 94 = 1054` of 2664 columns (−39.6%);
-/// then `992 + 94 = 1086` of 2740 (−39.6%); now `992 + 94 = 1086` of 2756 (−39.4%). The S2 band
-/// grows with the limb count, not with the caveat region, so the rc fold's +16 lands entirely on
-/// the SURVIVING side — which is the honest reading: the fold adds bound columns, and bound
-/// columns are exactly what a dead-stratum deletion must not touch.
-const BASELINE_WIDTH: usize = 2756;
+/// **The deletion's CLAIM is unchanged, and the RATIO is WEAKENING — which is the honest way to
+/// report it.** It removed `960 + 94 = 1054` of 2664 columns (−39.6%); then `992 + 94 = 1086` of
+/// 2740 (−39.6%); then of 2756 (−39.4%); now `992 + 94 = 1086` of 2868 (−37.9%). The S2 band grows
+/// with the LIMB COUNT, not with the caveat region and not with the canonicity aux, so both the rc
+/// fold's +16 and canon9's +112 land entirely on the SURVIVING side. That is not a regression: a
+/// dead-stratum deletion must not touch bound columns, and every one of those 128 is read by a
+/// constraint.
+const BASELINE_WIDTH: usize = 2868;
 
 fn open_permissions() -> Permissions {
     Permissions {

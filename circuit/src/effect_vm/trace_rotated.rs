@@ -642,12 +642,11 @@ fn generate_rotated_effect_vm_trace_avail_core(
         if avail_pad > 0 {
             fill_avail_aux_row(row, &effects[0], avail_pad, fee_for_weld)?;
         }
-        fill_block(row, before_base, STATE_BEFORE_BASE, before_w);
-        fill_block(row, after_base, STATE_AFTER_BASE, after_w);
+        // ⚑ Each `fill_block` also lays ITS OWN block's fields-canonicity aux (`fill_canon9_block`,
+        // 2026-07-31) — the aux reads the nonet lanes `fill_block` writes, so the two are one act.
+        fill_block(row, before_base, 0, STATE_BEFORE_BASE, before_w);
+        fill_block(row, before_base, 1, STATE_AFTER_BASE, after_w);
         fill_caveat(row, caveat_base, caveat);
-        // ⚑ THE FIELDS-CANONICITY AUX (2026-07-31). Must run AFTER both `fill_block` calls: it
-        // reads the nonet lanes those just laid.
-        fill_canon9(row, before_base);
     }
 
     // THE LIFECYCLE-PAYLOAD HASH GATE declared column (cellSeal / cellDestroy / receiptArchive — the
@@ -1033,7 +1032,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee_avail(
         // OLD_COMMIT state).
         if !is_transfer_row {
             debit_v1_block_balance(&mut trace[r], STATE_BEFORE_BASE, fee, record_digest, None);
-            fill_block(&mut trace[r], before_base, STATE_BEFORE_BASE, before_w);
+            fill_block(&mut trace[r], before_base, 0, STATE_BEFORE_BASE, before_w);
         }
         // AFTER block: debit on EVERY row (row 0's post-transfer after, and the NoOp carry-forward).
         // The AFTER block's GROUP-4 intermediates ARE published (cols 98/99/100), so thread them.
@@ -1050,7 +1049,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee_avail(
             record_digest,
             Some(inters),
         );
-        fill_block(&mut trace[r], after_base, STATE_AFTER_BASE, after_w);
+        fill_block(&mut trace[r], before_base, 1, STATE_AFTER_BASE, after_w);
         // The fee rides the RESERVED limb on EVERY row, in BOTH the after-block (col 89 — read by the
         // bal-lo fee gate and the last-row PI-38 pin) AND the before-block (col 67). The fee descriptor
         // DROPS the RESERVED passthrough GATE but KEEPS the RESERVED cross-row CONTINUITY transition
@@ -1350,8 +1349,14 @@ fn settle_carrier_trace(
         // Re-weld both rotated blocks from the modified v1 fields, re-chaining `wireCommitR` →
         // rotated STATE_COMMIT (`fill_block` overrides the welded field limbs r3..r10 from the v1
         // block, so the rotated field columns the welded gates read carry the flipped status).
-        fill_block(&mut trace[r], BEFORE_BASE, STATE_BEFORE_BASE, before_w);
-        fill_block(&mut trace[r], AFTER_BASE, STATE_AFTER_BASE, after_w);
+        // ⚑ THE LANE-0 RE-WELD IS A CANONICITY INPUT. The leg-STATUS flip above moved this row's v1
+        // `fields[leg_a]`/`fields[leg_b]`, and `fill_block` welds those into rotated lane 0 — an
+        // input to the `2·v = q(q−1)·L0` gate. Before `fill_block` carried `fill_canon9_block`, the
+        // aux here kept the PRE-flip lane 0 and the member was UNSAT for any pre-state whose lane 8
+        // carried carry digit 2. Today's carrier statuses are small (lane 8 = 0 ⇒ the selector is
+        // dead ⇒ the stale value was still 0), which is why nothing had failed yet.
+        fill_block(&mut trace[r], BEFORE_BASE, 0, STATE_BEFORE_BASE, before_w);
+        fill_block(&mut trace[r], BEFORE_BASE, 1, STATE_AFTER_BASE, after_w);
 
         // The capacity selector (col 70): ON on the settle row, OFF on padding.
         trace[r][PARAM_BASE + 2] = if is_settle_row {
@@ -2680,13 +2685,24 @@ fn new_cell_key_param_col(lead: Option<&Effect>) -> Option<usize> {
     }
 }
 
-/// Fill one rotated block (BEFORE or AFTER) at `base` for ONE row. The WELDED limbs
+/// Fill rotated block `blk` (`0` = BEFORE, `1` = AFTER) of the appendix based at `before_base`,
+/// for ONE row. The WELDED limbs
 /// (r0↔balance_lo, r1↔nonce, r2↔balance_hi, r3..r10↔fields, cap_root) are copied from THAT
 /// row's own v1 state block at `state_base` (so the weld gates hold on EVERY row, including
 /// the NoOp padding rows whose v1 state block differs from the active row); the WITNESS-
 /// CARRIED limbs (cells_root, the map roots, lifecycle, epoch, committed_height, iroot,
 /// r11..r23) come from the per-turn producer witness `w` (turn-invariant). Then the genuine
 /// chained `wireCommitR` digests are computed on this row's own limbs.
+///
+/// ⚑ **AND THEN THIS BLOCK'S FIELDS-CANONICITY AUX IS RE-LAID** ([`fill_canon9_block`]) — the
+/// pairing is INSIDE this function on purpose. This routine is the ONLY writer of a fields nonet
+/// lane anywhere in the tree (lanes 1..8 arrive with the `pre_limbs` copy, lane 0 with the weld
+/// two lines down), and every one of those lanes is an input to the canonicity gadget. A caller
+/// that re-runs `fill_block` after mutating v1 state — the fee producer's post-fee surgery, the
+/// settle carrier's leg-STATUS flip — moves lane 0 and would leave a STALE aux behind, i.e. an
+/// HONEST turn going UNSAT with no hint as to why. Taking `(before_base, blk)` instead of an
+/// absolute `base` is what lets the aux be located from inside here, so the pairing cannot be
+/// forgotten at a call site rather than merely remembered at three of them.
 ///
 /// The carrier-material octets (`B_CHILD_VK_OCTET` 89..=96 · `B_CONTRACT_HASH_OCTET` 97..=104 ·
 /// `B_PUBKEY_OCTET` 105..=112) ride the `pre_limbs` COPY above — the trace is the third producer of
@@ -2698,7 +2714,15 @@ fn new_cell_key_param_col(lead: Option<&Effect>) -> Option<usize> {
 ///
 /// The chained-absorption logic is byte-identical to `descriptor_ir2::rotation_probe_trace_r`,
 /// the producer's `wire_commit`, and the Lean `wireCommitR`.
-fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedBlockWitness) {
+fn fill_block(
+    row: &mut [BabyBear],
+    before_base: usize,
+    blk: usize,
+    state_base: usize,
+    w: &RotatedBlockWitness,
+) {
+    debug_assert!(blk < 2, "a rotated appendix carries exactly two blocks");
+    let base = before_base + blk * B_SPAN;
     // witness-carried limbs from the producer (turn-invariant).
     row[base..base + NUM_PRE_LIMBS].copy_from_slice(&w.pre_limbs[..NUM_PRE_LIMBS]);
     // welded limbs OVERRIDE from this row's own v1 state block (per-row truth) —
@@ -2734,11 +2758,20 @@ fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedB
     // the iroot rides its own arity-2 final site → state_commit.
     let commit = hash_many(&[d, row[base + B_IROOT]]);
     row[base + B_STATE_COMMIT] = commit;
+    // ⚑ THE FIELDS-CANONICITY AUX FOR THIS BLOCK — laid here, not at the call site (see above).
+    fill_canon9_block(row, before_base, blk);
 }
 
-/// **Fill the FIELDS-CANONICITY aux region** — the seven witness columns per `(block, slot)` that
-/// make `Canonical9`'s third leg (`NoWrap`) expressible in-AIR. Lean twin:
-/// `Dregg2.Circuit.Emit.FieldsCanonicity9Emit.canon9ConstraintsAt`.
+/// **Fill ONE rotated block's FIELDS-CANONICITY aux** — the seven witness columns per
+/// `(block, slot)` that make `Canonical9`'s third leg (`NoWrap`) expressible in-AIR. Lean twin:
+/// `Dregg2.Circuit.Emit.FieldsCanonicity9Emit.canon9ConstraintsAt` (this is its `blk` slice;
+/// `auxColAt w blk slot k = w + CANON9_REGION_OFF + blk·56 + slot·7 + k`, and 56 is
+/// `8 · CANON9_PER_SLOT`).
+///
+/// ⚑ **ONLY [`fill_block`] CALLS THIS, AND THAT IS THE POINT** — a block's aux is a function of
+/// that block's nonet lanes and nothing else, and `fill_block` is the only writer of those lanes,
+/// so laying the aux as `fill_block`'s last act makes the two impossible to separate. Do not add a
+/// second call site; add the `fill_block` the trace was missing.
 ///
 /// The gadget, per slot, reads lanes 0/1/8 of that slot's committed nonet and writes
 /// `r, q0, q1, v0, v0b, v1, v1b`:
@@ -2762,30 +2795,28 @@ fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedB
 /// A dishonest lane (lane 8 ≥ 2^28, or lane 0 ≥ 2^28 while its quotient is 2) makes some aux value
 /// exceed its declared width; `descriptor_ir2::fill_main_layout_row` then refuses the row rather
 /// than emitting an unprovable trace. That refusal IS the completeness pole's tooth.
-fn fill_canon9(row: &mut [BabyBear], before_base: usize) {
-    let canon_base = before_base + CANON9_REGION_OFF;
-    for blk in 0..2usize {
-        let bb = before_base + blk * B_SPAN;
-        for slot in 0..8usize {
-            let l0 = row[bb + ROTATED_FIELD_LANE_COL[slot][0]].as_u32() as u64;
-            let l1 = row[bb + ROTATED_FIELD_LANE_COL[slot][1]].as_u32() as u64;
-            let l8 = row[bb + ROTATED_FIELD_LANE_COL[slot][8]].as_u32() as u64;
-            let c = l8 >> 24;
-            let r = l8 & 0x00ff_ffff;
-            let q0 = c % 4;
-            let q1 = c / 4;
-            // `q(q−1)/2` — 1 exactly at q == 2, which is the only quotient that can wrap.
-            let t0 = u64::from(q0 == 2);
-            let t1 = u64::from(q1 == 2);
-            let a = canon_base + blk * (8 * CANON9_PER_SLOT) + slot * CANON9_PER_SLOT;
-            row[a] = BabyBear::new(r as u32);
-            row[a + 1] = BabyBear::new(q0 as u32);
-            row[a + 2] = BabyBear::new(q1 as u32);
-            row[a + 3] = BabyBear::new((t0 * l0) as u32);
-            row[a + 4] = BabyBear::new((t0 * l0 + 2 * t0) as u32);
-            row[a + 5] = BabyBear::new((t1 * l1) as u32);
-            row[a + 6] = BabyBear::new((t1 * l1 + 2 * t1) as u32);
-        }
+fn fill_canon9_block(row: &mut [BabyBear], before_base: usize, blk: usize) {
+    let canon_base = before_base + CANON9_REGION_OFF + blk * (8 * CANON9_PER_SLOT);
+    let bb = before_base + blk * B_SPAN;
+    for slot in 0..8usize {
+        let l0 = row[bb + ROTATED_FIELD_LANE_COL[slot][0]].as_u32() as u64;
+        let l1 = row[bb + ROTATED_FIELD_LANE_COL[slot][1]].as_u32() as u64;
+        let l8 = row[bb + ROTATED_FIELD_LANE_COL[slot][8]].as_u32() as u64;
+        let c = l8 >> 24;
+        let r = l8 & 0x00ff_ffff;
+        let q0 = c % 4;
+        let q1 = c / 4;
+        // `q(q−1)/2` — 1 exactly at q == 2, which is the only quotient that can wrap.
+        let t0 = u64::from(q0 == 2);
+        let t1 = u64::from(q1 == 2);
+        let a = canon_base + slot * CANON9_PER_SLOT;
+        row[a] = BabyBear::new(r as u32);
+        row[a + 1] = BabyBear::new(q0 as u32);
+        row[a + 2] = BabyBear::new(q1 as u32);
+        row[a + 3] = BabyBear::new((t0 * l0) as u32);
+        row[a + 4] = BabyBear::new((t0 * l0 + 2 * t0) as u32);
+        row[a + 5] = BabyBear::new((t1 * l1) as u32);
+        row[a + 6] = BabyBear::new((t1 * l1 + 2 * t1) as u32);
     }
 }
 

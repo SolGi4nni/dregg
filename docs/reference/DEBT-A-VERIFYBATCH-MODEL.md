@@ -145,8 +145,9 @@ Poseidon2 `#guard`s have (validation, not a `∀`-theorem). Concretely:
    `merkle_air.rs:139`, `dsl/dsl_p3_air.rs:796`) — ACCEPT cases plus REJECT cases (tampered
    quotient, forged Merkle path, wrong query count, bad PoW) — fed through BOTH the Rust
    `verify_batch` and the `@[export]`-ed `verifyBatchModel`; assert equal verdicts. Put the
-   corpus under `circuit/tests/fixtures/` (alongside `discharge-sat-v3-staged.json`) or
-   `dregg-lean-ffi/goldens/`.
+   corpus under `circuit/tests/fixtures/` or `dregg-lean-ffi/goldens/`. (⚠ Not a copy of anything the
+   emit already writes — `discharge-sat-v3-staged.json`, which this line used to name as the example,
+   was exactly that and was deleted on 2026-07-31 after drifting off its registry row.)
 
 **Honest residual after the corpus:** exactly `leanc` (trust the Lean→C compilation of the
 exported model) + the corpus's coverage (a differential over a finite sample, not a `∀`-proof) +
