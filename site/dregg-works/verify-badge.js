@@ -1,19 +1,47 @@
 /* ============================================================================
- * dregg.works — the trustless-host verify badge.
+ * dregg.works — the served-bytes-vs-commitment badge.
  *
  * Drop this one self-contained script onto any page served by
- * `<name>.dregg.works` and every visitor can prove, in their own browser, that
- * the bytes they received are exactly the bytes committed on-chain to the
- * publisher's cell. The host cannot tamper: it does not hold the commitment, and
- * it cannot forge a blake3 preimage.
+ * `<name>.dregg.works` and a visitor's own browser re-hashes the bytes it
+ * received and compares them against a slot-0 commitment read from a node API.
+ * The blake3 is real and runs locally; the host cannot forge a preimage.
  *
- * WHAT IT DOES (entirely client-side, no trust in the serving host):
+ * ⚑ WHAT THE HOST STILL CHOOSES — READ THIS BEFORE BELIEVING A ✓.
+ * ---------------------------------------------------------------------------
+ * MEASURED 2026-07-30. The check has an ORACLE with two halves — WHICH CELL is
+ * authoritative, and WHICH NODE answers for it — and through the version before
+ * this one BOTH halves were read from the page under verification (`data-cell` /
+ * `data-node` / `meta dregg:*` / `window.__DREGG__`). A hostile host serves
+ * arbitrary bytes, then points `data-cell` at a cell IT published holding
+ * `blake3(those bytes)`, or points `data-node` at a server it runs — and the
+ * badge painted a green "✓ verified on-chain" over the sentence
+ * "You did not trust the host." You did. The host picked what it was checked
+ * against. (`docs/VISITOR-VERIFY-WELD.md` already named this: "page-supplied
+ * cell ids are not merely strippable — they are swappable ... verify-badge.js is
+ * defeated this way *even when present*.")
+ *
+ * So this script now grades its own verdict by WHERE THE ORACLE CAME FROM:
+ *
+ *   TRUST DECISION   both halves came from the VISITOR'S OWN URL —
+ *                    `?dregg-cell=<64 hex>&dregg-node=<https://…>` — values the
+ *                    serving host did not put there and cannot edit. Only this
+ *                    path is ever labelled "verified", and it is the only path
+ *                    that sets `window.__DREGG_VERIFY__.verdict = "verified"`.
+ *   CONSISTENCY CHECK either half came from the page. The bytes really do hash
+ *                    to the commitment that oracle published — a genuine fact
+ *                    about the two, and NOT evidence that you avoided trusting
+ *                    the host, because the host chose the oracle. Painted amber,
+ *                    labelled, never green, and `verdict` is left ABSENT so a
+ *                    consumer testing `=== "verified"` gets `undefined` rather
+ *                    than a weaker string that skims as a pass.
+ *   REFUSED          served bytes ≠ the commitment, or the page declares a cell
+ *                    other than the one the visitor asked for.
+ *
+ * WHAT IT DOES (entirely client-side), in order:
  *   1. re-fetches THIS page's own bytes  -> blake3(bytes)  (the served body)
  *   2. fetches the cell's slot-0 commitment from the node API
  *        GET <node>/api/cell/<cell>  ->  json.fields[0]   (the committed hash)
- *   3. compares.  ✓ match = these exact bytes are the published, on-chain bytes.
- *                 ✗ mismatch = the host served something the publisher never
- *                   committed — refuse to trust it.
+ *   3. compares, and labels the verdict with the oracle's provenance.
  *
  * THE SELF-CERTIFYING LOOP (why blake3(served) == commitment):
  *   The publisher includes THIS snippet in the page, then commits
@@ -22,19 +50,18 @@
  *   convention — see portal/src/drive-actions.mjs). The host serves that exact
  *   file. The badge re-hashes that exact file. The loop closes on itself.
  *
- * HOW IT HOOKS (the serving host / publisher supplies the cell; the node is
- * defaulted but overridable):
- *   Cheapest: data-attributes on the script tag —
+ * HOW IT HOOKS
+ *   The VISITOR'S half (the only half that makes a ✓ a trust decision) is the
+ *   URL query string, which the serving host does not author:
+ *     https://mysite.dregg.works/?dregg-cell=<64-hex>&dregg-node=https://<a-node>
+ *   The PAGE'S half is the publisher's convenience default, and is what makes a
+ *   verdict a consistency check:
  *     <script src="/verify-badge.js"
  *             data-cell="<64-hex cell id>"
  *             data-node="https://<a-node>"        (optional; the cell-lookup API base)
  *             data-name="mysite"></script>        (optional, for the label)
- *   Or meta tags:
- *     <meta name="dregg:cell" content="<64-hex cell id>">
- *     <meta name="dregg:node" content="https://<a-node>">
- *     <meta name="dregg:name" content="mysite">
- *   Or a global the host injects before this script:
- *     <script>window.__DREGG__ = { cell:"...", node:"https://...", name:"..." }</script>
+ *   Or meta tags (`<meta name="dregg:cell|node|name" content="…">`), or a global
+ *   the host injects before this script (`window.__DREGG__ = {cell,node,name}`).
  *
  *   There is deliberately NO built-in node endpoint: no public devnet is
  *   currently anchored, so when no node is supplied the badge still re-hashes
@@ -42,11 +69,12 @@
  *   live chain is unavailable — it never invents an endpoint and never
  *   upgrades an uncheckable page to a pass.
  *
- *   Because the serving host for *.dregg.works is untrusted infrastructure that
- *   lives OUTSIDE this repo, the badge takes nothing on faith from it: the cell
- *   id is content-addressed (unforgeable), and the commitment is fetched from a
- *   node the visitor can point anywhere (data-node) and cross-check. The host
- *   merely ships bytes; it is never asked to be believed.
+ *   The cell id being content-addressed makes it UNFORGEABLE, not TRUSTWORTHY:
+ *   it binds bytes to a cell, never a cell to a hostname. Binding `mysite` to
+ *   ONE cell needs an out-of-band name→cell registry the visitor holds (the
+ *   extension leg of `docs/VISITOR-VERIFY-WELD.md`, plan item 3), which does not
+ *   exist yet. Until it does, `?dregg-cell=` IS the out-of-band channel: a link
+ *   you got from somewhere other than the host you are checking.
  *
  * No build step, no dependencies, no external resources. The blake3 below is a
  * standalone implementation verified byte-for-byte against @noble/hashes across
@@ -135,10 +163,17 @@
   }
 
   /* ---------- config: where the cell id + node API come from ---------- */
-  // The cell-lookup node comes ONLY from explicit configuration (data-node /
-  // meta dregg:node / window.__DREGG__.node). No endpoint is hardcoded — no
-  // public devnet is currently anchored — so an unconfigured badge reports
-  // that honestly instead of querying a dead host.
+  // ⚑ TWO SOURCES, GRADED, NEVER MERGED SILENTLY.
+  //   * the VISITOR'S URL (`?dregg-cell=` / `?dregg-node=`) — the serving host
+  //     does not author the query string of the link you followed, so an oracle
+  //     from here is one the party under test does not control;
+  //   * the PAGE (data-* / meta dregg:* / window.__DREGG__) — authored by the
+  //     very host whose bytes are being checked.
+  // No endpoint is hardcoded — no public devnet is currently anchored — so an
+  // unconfigured badge reports that honestly instead of querying a dead host.
+  function normCell(s) { return String(s || "").trim().toLowerCase().replace(/^0x/, ""); }
+  function normNode(s) { return String(s || "").trim().replace(/\/+$/, ""); }
+
   function readConfig() {
     var cfg = (window.__DREGG__ && typeof window.__DREGG__ === "object") ? window.__DREGG__ : {};
     var self = document.currentScript || (function () {
@@ -148,10 +183,57 @@
     })();
     function meta(n) { var m = document.querySelector('meta[name="dregg:' + n + '"]'); return m && m.content; }
     function data(n) { return self && self.dataset ? self.dataset[n] : null; }
+
+    var q;
+    try { q = new URLSearchParams(location.search); } catch (e) { q = null; }
+    var urlCell = normCell(q && q.get("dregg-cell"));
+    var urlNode = normNode(q && q.get("dregg-node"));
+    if (!/^[0-9a-f]{64}$/.test(urlCell)) urlCell = "";   // a malformed override is IGNORED, never coerced
+
+    var pageCell = normCell(data("cell") || meta("cell") || cfg.cell);
+    var pageNode = normNode(data("node") || meta("node") || cfg.node);
+
     return {
-      cell: (data("cell") || meta("cell") || cfg.cell || "").trim().toLowerCase().replace(/^0x/, ""),
-      node: (data("node") || meta("node") || cfg.node || "").trim().replace(/\/+$/, ""),
-      name: (data("name") || meta("name") || cfg.name || "").trim(),
+      cell: urlCell || pageCell,
+      node: urlNode || pageNode,
+      name: String(data("name") || meta("name") || cfg.name || "").trim(),
+      // Kept SEPARATELY so a verdict can say which half came from where, and so
+      // the two can be COMPARED: a page declaring a cell other than the one the
+      // visitor asked for is a refusal, not a silent override.
+      urlCell: urlCell,
+      urlNode: urlNode,
+      pageCell: pageCell,
+      pageNode: pageNode,
+    };
+  }
+
+  /* ---------- the oracle's provenance — printed on EVERY verdict ---------- */
+  // `own` is true only when BOTH halves of the oracle came from the visitor's
+  // own URL. That is the sole condition under which a match is a statement about
+  // the HOST rather than a statement about the host's own bookkeeping.
+  function provenanceOf(cfg) {
+    var cellFromYou = !!cfg.urlCell, nodeFromYou = !!cfg.urlNode;
+    if (cellFromYou && nodeFromYou) {
+      return {
+        own: true,
+        short: "oracle: YOUR URL (both halves)",
+        label: "oracle provenance: BOTH halves came from your own <code>?dregg-cell=</code> and " +
+          "<code>?dregg-node=</code> — values this host did not put here and cannot edit. " +
+          "This is a trust decision.",
+      };
+    }
+    var chose = !cellFromYou && !nodeFromYou
+      ? "the cell id AND the node"
+      : (!cellFromYou ? "the cell id" : "the node");
+    return {
+      own: false,
+      short: "oracle: this page chose " + (!cellFromYou && !nodeFromYou ? "both halves" : chose),
+      label: "oracle provenance: THIS PAGE supplied " + chose + ". The bytes really do hash to the " +
+        "commitment that oracle published — but the party under test picked the oracle, so this is a " +
+        "<strong>consistency check, not a trust decision</strong>. A host serving arbitrary bytes can " +
+        "publish a cell holding their hash, or name a node it runs, and reach this same state. " +
+        "Append <code>?dregg-cell=&lt;64 hex&gt;&amp;dregg-node=&lt;https://a-node&gt;</code> — from a link " +
+        "you did not get from this host — to make it one.",
     };
   }
 
@@ -169,6 +251,9 @@
       '.dw-vbadge .mk{font-weight:800}' +
       '.dw-vbadge.checking{color:#c49245}' +
       '.dw-vbadge.ok{color:#7aab6f;border-color:rgba(122,171,111,.55)}' +
+      // A consistency check gets its OWN colour. It is not a pass and it is not a
+      // failure, and painting it with either one is the whole defect.
+      '.dw-vbadge.consistent{color:#c49245;border-color:rgba(196,146,69,.6)}' +
       '.dw-vbadge.bad{color:#d9663f;border-color:rgba(217,102,63,.65)}' +
       '.dw-vbadge .spin{width:8px;height:8px;border-radius:50%;background:#c49245;animation:dwspin 1s ease-in-out infinite}' +
       '@keyframes dwspin{0%,100%{opacity:.3}50%{opacity:1}}' +
@@ -181,7 +266,10 @@
       '.dw-panel h4{margin:0 0 8px;font:700 14px/1.3 "Iowan Old Style",Palatino,Georgia,serif;color:#f5f0e8}' +
       '.dw-panel .row{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11px;word-break:break-all;margin:6px 0;color:#a89e8e}' +
       '.dw-panel .row b{color:#7a7265;font-weight:600;display:block;text-transform:uppercase;letter-spacing:.05em;font-size:9.5px;margin-bottom:1px}' +
-      '.dw-panel .ok{color:#7aab6f}.dw-panel .bad{color:#d9663f}' +
+      '.dw-panel .ok{color:#7aab6f}.dw-panel .bad{color:#d9663f}.dw-panel .warn{color:#c49245}' +
+      '.dw-panel .prov{margin-top:9px;padding:8px 10px;border-radius:7px;font-size:11.5px;line-height:1.5;' +
+      'border:1px solid rgba(228,221,208,.12);background:rgba(228,221,208,.035);color:#9a9184}' +
+      '.dw-panel .prov code{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:10.5px;color:#c49245}' +
       '.dw-panel a{color:#7aab6f;text-decoration:none}.dw-panel a:hover{color:#c49245}' +
       '.dw-panel .note{margin-top:10px;padding-top:10px;border-top:1px solid rgba(228,221,208,.1);font-size:11.5px;color:#7a7265;line-height:1.55}';
     var st = document.createElement("style");
@@ -193,26 +281,60 @@
 
   function run() {
     var cfg = readConfig();
+    var prov = provenanceOf(cfg);
     injectStyle();
-    var badge = el("div", "dw-vbadge checking", '<span class="spin"></span> verifying on-chain…');
+    var badge = el("div", "dw-vbadge checking", '<span class="spin"></span> checking served bytes…');
     var panel = el("div", "dw-panel");
     document.body.appendChild(badge);
     document.body.appendChild(panel);
     badge.addEventListener("click", function () { panel.classList.toggle("show"); });
 
+    // ⚑ THE MACHINE-READABLE VERDICT. `verdict` is written in EXACTLY ONE place
+    // (`set("ok", …)`, reachable only from the visitor-supplied-oracle branch) and
+    // is ABSENT otherwise, so a consumer testing `=== "verified"` gets `undefined`
+    // for a consistency check rather than a weaker string that reads as partial
+    // success. `oracle_from_visitor` is the branchable bit underneath it.
+    window.__DREGG_VERIFY__ = {
+      state: "checking",
+      oracle_from_visitor: prov.own,
+      cell: cfg.cell || null,
+      node: cfg.node || null,
+      cell_source: cfg.urlCell ? "visitor-url" : (cfg.pageCell ? "page" : null),
+      node_source: cfg.urlNode ? "visitor-url" : (cfg.pageNode ? "page" : null),
+    };
+
     function set(state, label, panelHtml) {
       badge.className = "dw-vbadge " + state;
-      badge.innerHTML = (state === "checking" ? '<span class="spin"></span> ' : '<span class="mk">' + (state === "ok" ? "✓" : "✕") + '</span> ') + label;
+      var mark = state === "ok" ? "✓" : (state === "consistent" ? "≡" : "✕");
+      badge.innerHTML = (state === "checking" ? '<span class="spin"></span> ' : '<span class="mk">' + mark + '</span> ') + label;
       panel.innerHTML = panelHtml;
+      window.__DREGG_VERIFY__.state = state;
+      // THE ONE PLACE THE SUCCESS WORD IS WRITTEN.
+      if (state === "ok") window.__DREGG_VERIFY__.verdict = "verified";
+      else delete window.__DREGG_VERIFY__.verdict;
+    }
+
+    // The visitor named a cell and the page claims a different one. That is not an
+    // override to resolve silently — it is the page disagreeing with the link you
+    // followed about which cell speaks for it, and it is refused on the spot.
+    if (cfg.urlCell && cfg.pageCell && cfg.urlCell !== cfg.pageCell) {
+      set("bad", "cell mismatch — refused",
+        '<h4 class="bad">✕ this page declares a different cell than you asked for</h4>' +
+        '<div class="row"><b>the cell you named (?dregg-cell)</b>' + cfg.urlCell + '</div>' +
+        '<div class="row"><b>the cell this page declares</b>' + cfg.pageCell + '</div>' +
+        '<div class="note">Nothing was checked. A page that answers to a cell other than the one your ' +
+        'link names is not the page your link named — no hash comparison can repair that, so none was run.</div>');
+      return;
     }
 
     if (!cfg.cell || cfg.cell.length !== 64) {
-      set("bad", "verify unconfigured",
-        '<h4>verify badge not configured</h4>' +
-        '<div class="note">This page did not declare its on-chain cell. The publisher must add ' +
-        '<span class="row">data-cell / meta dregg:cell</span> (the 64-hex cell id) so visitors can verify ' +
-        'the served bytes, and <span class="row">data-node / meta dregg:node</span> to name the node API ' +
-        'base — there is no default node, and no public devnet is currently anchored.</div>');
+      set("bad", "unchecked — no cell",
+        '<h4>no cell to check against</h4>' +
+        '<div class="note">Neither your URL nor this page named an on-chain cell, so nothing was compared. ' +
+        'A visitor supplies one with <span class="row">?dregg-cell=&lt;64 hex&gt;</span>; a publisher supplies ' +
+        'the convenience default with <span class="row">data-cell / meta dregg:cell</span>. Naming the node ' +
+        'API base is the other half (<span class="row">?dregg-node= / data-node / meta dregg:node</span>) — ' +
+        'there is no default node, and no public devnet is currently anchored.</div>');
       return;
     }
 
@@ -233,10 +355,10 @@
         set("bad", "unverified — no node",
           '<h4>no node configured — on-chain check unavailable</h4>' +
           '<div class="row"><b>served bytes — blake3 (computed locally)</b>' + served + '</div>' +
-          '<div class="row"><b>declared cell</b>' + cfg.cell + '</div>' +
-          '<div class="note">No public devnet is currently anchored and this page names no node API ' +
-          '(<span class="row">data-node / meta dregg:node / window.__DREGG__.node</span>), so the served ' +
-          'bytes cannot be compared against an on-chain commitment. A missing check is never a pass — ' +
+          '<div class="row"><b>cell named (' + (cfg.urlCell ? "your URL" : "this page") + ')</b>' + cfg.cell + '</div>' +
+          '<div class="note">No public devnet is currently anchored and neither your URL nor this page names a ' +
+          'node API (<span class="row">?dregg-node= / data-node / meta dregg:node / window.__DREGG__.node</span>), ' +
+          'so the served bytes were compared against nothing. A missing check is never a pass — ' +
           'treat this page as unverified.</div>');
       }).catch(function (err) {
         set("bad", "verify failed",
@@ -261,19 +383,35 @@
       var match = committed && served === committed;
       var rows =
         '<div class="row"><b>served bytes — blake3</b>' + served + '</div>' +
-        '<div class="row"><b>committed on-chain (cell slot 0)</b>' + (committed || "(empty)") + '</div>' +
-        '<div class="row"><b>cell</b><a href="' + (cfg.node || "") + '/api/cell/' + cfg.cell + '" target="_blank" rel="noopener">' + cfg.cell + '</a></div>';
-      if (match) {
-        set("ok", "verified on-chain",
-          '<h4 class="ok">✓ these exact bytes are committed on-chain</h4>' + rows +
-          '<div class="note">You did not trust the host. Your browser re-hashed the bytes it received and ' +
-          'matched them against the commitment in cell slot&nbsp;0, fetched from the node. ' +
+        '<div class="row"><b>committed (cell slot 0, per the node below)</b>' + (committed || "(empty)") + '</div>' +
+        '<div class="row"><b>cell — from ' + (cfg.urlCell ? "YOUR ?dregg-cell=" : "THIS PAGE") + '</b>' +
+        '<a href="' + (cfg.node || "") + '/api/cell/' + cfg.cell + '" target="_blank" rel="noopener">' + cfg.cell + '</a></div>' +
+        '<div class="row"><b>node — from ' + (cfg.urlNode ? "YOUR ?dregg-node=" : "THIS PAGE") + '</b>' + cfg.node + '</div>';
+      // ⚑ THE PROVENANCE RIDES ON EVERY VERDICT, including the refusals: a reader
+      // must never have to go looking for which oracle produced the answer.
+      var provBox = '<div class="prov">' + prov.label + '</div>';
+      if (match && prov.own) {
+        // The ONLY green. Both halves of the oracle came from the visitor.
+        set("ok", "verified — your oracle",
+          '<h4 class="ok">✓ these exact bytes are the ones committed at the cell YOU named</h4>' + rows +
+          provBox +
+          '<div class="note">Your browser re-hashed the bytes it received and matched them against slot&nbsp;0 ' +
+          'of a cell you named, read from a node you named. This host was not asked to be believed about ' +
+          'anything. <a href="/light-client/" target="_blank" rel="noopener">how this works →</a></div>');
+      } else if (match) {
+        set("consistent", "consistent — host-supplied oracle",
+          '<h4 class="warn">≡ the served bytes match the commitment THIS PAGE pointed at</h4>' + rows +
+          provBox +
+          '<div class="note">This is a real comparison and it held — but it is not the trustless claim. ' +
+          'The host chose which cell and/or which node is authoritative, so a host serving forged bytes ' +
+          'reaches this same state by pointing the check at an oracle that commits them. ' +
           '<a href="/light-client/" target="_blank" rel="noopener">how this works →</a></div>');
       } else {
         set("bad", "bytes do not match",
-          '<h4 class="bad">✕ served bytes do not match the on-chain commitment</h4>' + rows +
-          '<div class="note">The host served bytes the publisher never committed. Do not trust this page — ' +
-          'the commitment is on-chain and this is not it.</div>');
+          '<h4 class="bad">✕ served bytes do not match the commitment</h4>' + rows +
+          provBox +
+          '<div class="note">The bytes you received are not the bytes committed at this cell. Do not trust ' +
+          'this page.</div>');
       }
     }).catch(function (err) {
       set("bad", "verify failed",

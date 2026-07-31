@@ -2,21 +2,24 @@
  * dregg — transclusion for the open web.
  *
  * Drop this one self-contained script onto ANY web page and it turns marked
- * elements into VERIFIED transcluded quotes: the displayed bytes are checked, in
- * the visitor's own browser, against the on-chain commitment of the source cell
- * they claim to quote. The serving host is never trusted; the quoting page is
- * never believed. This is the span-level generalization of the whole-page
- * ./verify-badge.js (same trust story, same standalone blake3).
+ * elements into checked transcluded quotes: the displayed bytes are hashed, in
+ * the visitor's own browser, and compared against the on-chain commitment of the
+ * source cell they claim to quote. The host that SERVES the quoted bytes is
+ * never trusted — it cannot forge a blake3 preimage. The host that answers for
+ * the COMMITMENT is trusted exactly as far as who chose it, which every verdict
+ * now says out loud (see the next block). This is the span-level generalization
+ * of the whole-page ./verify-badge.js (same trust story, same standalone blake3).
  *
  * WHAT IT DOES (entirely client-side), per marked element:
  *   1. parses the source ref        -> dregg://<cell>  (+ optional byte range)
  *   2. fetches the source DOCUMENT's bytes from an untrusted host (`cite` /
  *      `data-src`)                  -> blake3(bytes)   (the served body)
- *   3. fetches the cell's slot-0 commitment from a node API the VISITOR can
- *      point anywhere:  GET <node>/api/cell/<cell> -> json.fields[0]
+ *   3. fetches the cell's slot-0 commitment from a node API — the VISITOR'S
+ *      `?dregg-node=` when present, else the quoting page's:
+ *        GET <node>/api/cell/<cell> -> json.fields[0]
  *   4. compares. ONLY on a match does it slice the quoted byte range out of the
- *      verified bytes and paint the span as a verified transclusion, with its
- *      citation (source ref, range, hash, node link) attached.
+ *      matched bytes and paint the span, with its citation (source ref, range,
+ *      hash, node link, and WHO CHOSE THE NODE) attached.
  *
  * THE HONEST FALLBACK (the load-bearing part):
  *   - hash mismatch      -> REFUSED chrome. The fetched bytes are NEVER shown;
@@ -31,15 +34,38 @@
  *                           script owns ALL "verified" chrome; absent script,
  *                           absent claim).
  *
+ * ⚑ WHAT THE QUOTING PAGE STILL CHOOSES — the honest bound on a ✓.
+ *   MEASURED 2026-07-30. The comparison is real, but it has an ORACLE: the node
+ *   that answers "what does cell X commit?". Through the version before this one
+ *   that node came ONLY from the quoting page (`data-node` on the element, the
+ *   script tag, `meta dregg:node`, `window.__DREGG__.node`) — the same party
+ *   whose quote is under test — while the header claimed "a node API the VISITOR
+ *   can point anywhere". A hostile quoting page names a node it runs, that node
+ *   answers with blake3(whatever bytes it wants shown), and the span painted a
+ *   green "✓ verified transclusion".
+ *
+ *   So: `?dregg-node=<https://a-node>` in the VISITOR'S OWN URL now overrides
+ *   every page-supplied node, and the citation on every verdict says which node
+ *   answered and who chose it. A page-chosen node yields "≡ consistent (page's
+ *   own node)" — amber, never the green word — because the bytes agreeing with
+ *   an oracle the quoting page picked is a fact about that page's bookkeeping,
+ *   not about the quote. The forgery refusal is unaffected and still fires.
+ *
+ *   The CELL is not graded this way, and deliberately: an element saying
+ *   `dregg://<cell>` is the page's CITATION — its claim about what it quotes —
+ *   and checking that claim is exactly this script's job. What the reader must
+ *   not have hidden from them is who vouched for the answer.
+ *
  * WHY THE QUOTE IS UNFORGEABLE (and what a backlink means here):
  *   The cell id is content-addressed and the slot-0 commitment is on-chain, so
- *   the quoting page cannot invent a source: either blake3(served bytes) equals
- *   the commitment the federation attested, or the span refuses. The FORWARD
- *   direction (this script) pins WHAT was quoted; the REVERSE direction — "who
- *   quotes this cell", each observation pinned to a receipt + content
- *   commitment — is the Backlinks registry demonstrated live at /transclusion/
- *   (wasm/src/bindings_transclusion.rs `transclusion_backlinks`). Two halves of
- *   Nelson's two-way link, both facts, neither an index anyone hand-maintains.
+ *   the quoting page cannot invent a source *given an honest node*: either
+ *   blake3(served bytes) equals the commitment the federation attested, or the
+ *   span refuses. The FORWARD direction (this script) pins WHAT was quoted; the
+ *   REVERSE direction — "who quotes this cell", each observation pinned to a
+ *   receipt + content commitment — is the Backlinks registry demonstrated live
+ *   at /transclusion/ (wasm/src/bindings_transclusion.rs
+ *   `transclusion_backlinks`). Two halves of Nelson's two-way link, both facts,
+ *   neither an index anyone hand-maintains.
  *
  * HOW TO MARK AN ELEMENT (blockquote, span, div — anything):
  *   <blockquote data-dregg="dregg://<64-hex cell id>#b=120-240"
@@ -152,12 +178,24 @@
     return s;
   }
 
-  /* ---------- config: the page-wide node (no built-in default) ---------- */
-  // The cell-lookup node comes ONLY from explicit configuration: per element
-  // (data-node) or page-wide (script data-node / meta dregg:node /
-  // window.__DREGG__.node). No endpoint is hardcoded — no public devnet is
-  // currently anchored — so with nothing configured, every element paints the
-  // honest UNVERIFIED state instead of querying a dead host.
+  /* ---------- config: the commitment oracle, graded by who chose it ---------- */
+  // Two sources, kept apart so a verdict can name which one answered:
+  //   * the VISITOR'S URL (`?dregg-node=`) — the quoting page does not author the
+  //     query string of the link its reader followed. This one WINS over every
+  //     page-supplied value, including a per-element `data-node`.
+  //   * the PAGE (element data-node, script data-node, meta dregg:node,
+  //     window.__DREGG__.node) — chosen by the party whose quote is under test.
+  // No endpoint is hardcoded — no public devnet is currently anchored — so with
+  // nothing configured, every element paints the honest UNVERIFIED state instead
+  // of querying a dead host.
+  function normNode(s) { return String(s || "").trim().replace(/\/+$/, ""); }
+
+  function visitorNode() {
+    var q;
+    try { q = new URLSearchParams(location.search); } catch (e) { return ""; }
+    return normNode(q.get("dregg-node"));
+  }
+
   function pageNode() {
     var cfg = (window.__DREGG__ && typeof window.__DREGG__ === "object") ? window.__DREGG__ : {};
     var self = document.currentScript || (function () {
@@ -167,7 +205,7 @@
     })();
     function meta(n) { var m = document.querySelector('meta[name="dregg:' + n + '"]'); return m && m.content; }
     var scriptNode = self && self.dataset ? self.dataset.node : null;
-    return (scriptNode || meta("node") || cfg.node || "").trim().replace(/\/+$/, "");
+    return normNode(scriptNode || meta("node") || cfg.node);
   }
 
   /* ---------- parsing the source ref off an element ---------- */
@@ -202,6 +240,9 @@
       '.dt-q.dt-pending,.dt-q.dt-unverified{filter:grayscale(1) brightness(.62)}' +
       '.dt-q.dt-pending>.dt-body,.dt-q.dt-unverified>.dt-body{font-style:italic;opacity:.8}' +
       '.dt-q.dt-verified{border-left-color:#7aab6f;filter:none}' +
+      // The page-chose-the-oracle state: the bytes ARE shown (they matched), the
+      // border is amber, and the citation says who vouched. Never green.
+      '.dt-q.dt-consistent{border-left-color:#c49245;filter:none}' +
       '.dt-q.dt-refused{border-left-color:#d9663f;filter:grayscale(.4) brightness(.75)}' +
       '.dt-q.dt-refused>.dt-body{text-decoration:line-through;opacity:.7}' +
       '.dt-cite{display:block;margin-top:.45em;' +
@@ -247,28 +288,40 @@
     bodyEl(el); // wrap the fallback text
     citeEl(el).textContent = "verifying transclusion…";
   }
-  function paintVerified(el, ref, text, servedHash, node) {
+  // ⚑ ONE PAINTER FOR BOTH POSITIVE OUTCOMES, so the grading can never drift apart.
+  // `yours` = the commitment oracle came from the reader's own `?dregg-node=`.
+  // The green class and the word "verified" are written HERE and only here, and
+  // only under `yours`; a page-chosen node paints the amber `dt-consistent` state
+  // whose text says who picked the oracle. Both show the quoted bytes — they DID
+  // match the commitment that node published, and hiding them would misreport a
+  // real comparison as a failure.
+  function paintMatched(el, ref, text, servedHash, node, yours) {
     var body = bodyEl(el);
     body.textContent = text; // TEXT, never markup — the source does not script this page
-    el.classList.remove("dt-pending", "dt-unverified", "dt-refused");
-    el.classList.add("dt-verified");
+    el.classList.remove("dt-pending", "dt-unverified", "dt-refused", "dt-verified", "dt-consistent");
+    el.classList.add(yours ? "dt-verified" : "dt-consistent");
     var c = citeEl(el);
     c.innerHTML = "";
-    var ok = document.createElement("span");
-    ok.className = "dt-ok"; ok.textContent = "✓ verified transclusion";
+    var mark = document.createElement("span");
+    mark.className = yours ? "dt-ok" : "dt-dim";
+    mark.textContent = yours ? "✓ verified transclusion" : "≡ consistent with the page's own node";
     var a = document.createElement("a");
     a.href = node + "/api/cell/" + ref.cell; a.target = "_blank"; a.rel = "noopener";
     a.textContent = "dregg://" + shortHex(ref.cell);
-    c.appendChild(ok);
+    c.appendChild(mark);
     c.appendChild(document.createTextNode(" · "));
     c.appendChild(a);
     c.appendChild(document.createTextNode(
-      " · " + rangeLabel(ref) + " · blake3 " + shortHex(servedHash) +
-      " · matched the on-chain commitment in your browser"));
+      " · " + rangeLabel(ref) + " · blake3 " + shortHex(servedHash) + " · " +
+      (yours
+        ? "matched the commitment served by the node YOU named (?dregg-node=), in your browser"
+        : "matched the commitment served by " + node + " — a node THIS PAGE named, so this is a " +
+          "consistency check, not a trust decision. Append ?dregg-node=<a node you chose> to this " +
+          "URL to make it one.")));
   }
-  function paintRefused(el, ref, servedHash, committedHash) {
+  function paintRefused(el, ref, servedHash, committedHash, node, yours) {
     // The forged bytes are NEVER shown: the author's fallback stays, struck.
-    el.classList.remove("dt-pending", "dt-verified", "dt-unverified");
+    el.classList.remove("dt-pending", "dt-verified", "dt-consistent", "dt-unverified");
     el.classList.add("dt-refused");
     var c = citeEl(el);
     c.innerHTML = "";
@@ -277,11 +330,12 @@
     c.appendChild(bad);
     c.appendChild(document.createTextNode(
       " · served blake3 " + shortHex(servedHash) + " ≠ committed " + shortHex(committedHash) +
-      " (cell " + shortHex(ref.cell) + ") · the host served bytes the publisher never committed; " +
-      "they were not rendered."));
+      " (cell " + shortHex(ref.cell) + ", per " + node + " — a node " +
+      (yours ? "YOU named" : "THIS PAGE named") + ") · the source host served bytes that node says " +
+      "were never committed; they were not rendered."));
   }
   function paintUnverified(el, reason) {
-    el.classList.remove("dt-pending", "dt-verified", "dt-refused");
+    el.classList.remove("dt-pending", "dt-verified", "dt-consistent", "dt-refused");
     el.classList.add("dt-q", "dt-unverified");
     bodyEl(el);
     var c = citeEl(el);
@@ -307,11 +361,15 @@
       paintUnverified(el, "no source bytes named (set cite= or data-src= to the committed document's URL)");
       return Promise.resolve();
     }
-    var elNode = (el.getAttribute("data-node") || node || "").trim().replace(/\/+$/, "");
+    // ⚑ THE READER'S `?dregg-node=` OUTRANKS EVERY PAGE-SUPPLIED VALUE, including a
+    // per-element `data-node` — otherwise the party under test could opt out of the
+    // reader's oracle one attribute at a time.
+    var yours = !!node.visitor;
+    var elNode = yours ? node.visitor : normNode(el.getAttribute("data-node") || node.page);
     if (!elNode) {
       paintUnverified(el, "no node configured — no public devnet is currently anchored, so " +
-        "verification against a live chain is unavailable (set data-node / meta dregg:node / " +
-        "window.__DREGG__.node to a node API base)");
+        "verification against a live chain is unavailable (a reader sets ?dregg-node=<base> in " +
+        "this URL; a publisher sets data-node / meta dregg:node / window.__DREGG__.node)");
       return Promise.resolve();
     }
     return Promise.all([
@@ -331,15 +389,16 @@
       var committed = ((detail.fields && detail.fields[0]) || "").toLowerCase();
       if (!committed) throw new Error("cell has no slot-0 content commitment");
       if (served !== committed) {
-        paintRefused(el, ref, served, committed);
+        paintRefused(el, ref, served, committed, elNode, yours);
         return;
       }
-      // VERIFIED: only now do the bytes become content. Slice the quoted range
-      // out of the verified document and paint it, with the citation attached.
+      // MATCHED: only now do the bytes become content. Slice the quoted range out
+      // of the matched document and paint it, with the citation attached — graded
+      // by whether the oracle that vouched for the commitment was the reader's.
       var lo = ref.start == null ? 0 : Math.min(ref.start, bytes.length);
       var hi = ref.end == null ? bytes.length : Math.min(ref.end, bytes.length);
       var text = new TextDecoder("utf-8").decode(bytes.subarray(lo, hi));
-      paintVerified(el, ref, text, served, elNode);
+      paintMatched(el, ref, text, served, elNode, yours);
     }).catch(function (err) {
       paintUnverified(el, String(err && err.message || err));
     });
@@ -347,11 +406,14 @@
 
   /* ---------- scan + a rescan hook for dynamically added quotes ---------- */
   function run() {
-    var node = pageNode();
+    var node = { visitor: visitorNode(), page: pageNode() };
     var els = document.querySelectorAll("[data-dregg],[data-dregg-cell]");
     for (var i = 0; i < els.length; i++) verifyOne(els[i], node);
   }
-  window.dreggTransclude = { rescan: run, version: 1 };
+  // `version: 2` — v1 resolved the oracle from the quoting page only, and painted
+  // one green state for both provenances. A consumer keying on `version` sees the
+  // grading change rather than inheriting the old meaning of `.dt-verified`.
+  window.dreggTransclude = { rescan: run, version: 2 };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run);
   else run();
