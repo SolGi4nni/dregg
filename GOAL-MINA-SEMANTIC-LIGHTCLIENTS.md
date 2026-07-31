@@ -211,3 +211,42 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   (`== 0` honest, `== 6` on a row firing `sel::TRANSFER` while declaring tag 7) — so a gate accepting
   everything fails one and a gate refusing everything fails the other. **Neither can go vacuous
   while the other holds.**
+- 23:2x ⚑ **THRUST E — THE DEPLOY PATH IS SCRIPTED, AND ONE DIRECTION IS ALREADY GREEN END TO END.**
+  Two commands, `bridge/demo/{mina-verifies-dregg,dregg-verifies-mina}.sh`, runbook at
+  `docs/ops/DEMO-MINA-BOTH-DIRECTIONS.md`. **Nothing deployed** — `--broadcast` is ember's.
+  - **`dregg-verifies-mina.sh` — 7/7 PASS, MEASURED locally, ~2 min.** Live wire: **74,313 bytes of
+    `Protocol_state.Value`** off a devnet seed's own p2p stack (pnet/Noise XX/yamux/`coda/rpcs`
+    `get_best_tip`), no credential — the chain-id PSK is a public constant. Transcription:
+    `state_hash(540186)` reproduced offline from the block's own 38 field elements / 819 packed
+    chunks. The link: **540221 → 540222 MATCH** — `derive_state_hash(N)` equals block `N+1`'s
+    `previous_state_hash`, both off the wire, **so no server is asked anything: the child block is
+    the answer key.** `mina_head` 11 passed. Opening check: **proved and verified on real devnet
+    block 539508, 15.9 s** wall.
+  - **`mina-verifies-dregg.sh`** — tier-0 green (12 checks, 1.2 s); the deploy path green on hbox in
+    **55.2 s**; steps 3–4 print `BLOCKED` naming the absent artifact, never a substitute.
+  - ⚑ **`O1JS_BACKEND=native` CONFIRMED ON HBOX, and the VK is BIT-IDENTICAL** —
+    `27652208543664583115415713498762761134774266267581842433036791062173037487108` both ways.
+    compile 9.05→**2.22 s**, prove 7.09→**3.81 s**, verify 0.57→**0.17 s**. `npm ci` lands
+    `@o1js/native-linux-x64` with no extra step. **The bit-identity is the load-bearing half**: a
+    zkApp's address is a function of its VK, so a disagreement would have been a silent flag day.
+  - ⚑ **BLOCKING SIN FOUND — `head-anchor` at `MINA_TIER=1` is RED, and its vk-pin row is a green
+    over a FALSE PREMISE.** (a) `DreggTerminalProof.maxProofsVerified` is **1** (right — the real
+    terminal program verifies its predecessor) while the harness's stand-in has no proof input and
+    is **0**; Pickles says so as `prevs_verified`, and the HONEST ACCEPT dies there. Give the
+    producer a `SelfProof` method and **the same gate ACCEPTS** — head → H, turns = 3, 6.2 s.
+    **The gate was never what was failing.** (b) the harness prints `(vk hashes differ: FALSE)` and
+    then reads the next row as evidence about the vk pin — but two `ZkProgram`s differing **only in
+    NAME** compile to **the same verification key** (measured), so the pin compares two equal fields
+    and passes. That row was refused by (a). **A "different program" row needs a different CONSTRAINT
+    SYSTEM.** Both measured in `scripts/head-gate-rehearsal.ts`, which is written around them.
+  - ⚑ **BLOCKING SIN — the seal preimage is emitted by nothing.** `advanceHead` needs `friCommit`
+    and `accOutDigest`; they are **not recoverable from the proof** (the terminal seal is a hash of
+    them) and `root-fri-uniform.ts`'s per-instance meta does not record them though its `context()`
+    holds both. The 905-instance prove must write `.fullchain/terminal-handoff.json` or the terminal
+    proof cannot be presented. Shape stated in `devnet-head-advance.ts`; env overrides accepted.
+  - ⚑ **ONE KEY THAT DOES NOT EXIST, AND I DID NOT MINT IT.** The deployed zkApp address holds
+    `DreggAttestedGate`; `DreggHeadGate` pins its chain in its VK and therefore in its address, so it
+    needs a fresh throwaway pair. `devnet-head-deploy.ts` **refuses** and prints the one command.
+  - **ANSWER TO THE GATE QUESTION**: when the chain is ready, **two commands, ~10 minutes**, most of
+    it Mina block time and none of it a rebuild. Direction 2 alone is **under two minutes and is
+    ready now**.

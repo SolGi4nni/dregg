@@ -27,10 +27,11 @@ ember passes `--broadcast`.
 |---|---|---|
 | Mina devnet GraphQL | ✅ live | `api.minascan.io/node/devnet/v1/graphql`, `SYNCED`, height **540265** |
 | devnet deployer balance | ✅ funded | **294.6 MINA**, nonce 11 — no faucet round trip needed |
-| devnet p2p seeds | ✅ reachable | `get_best_tip` returned **48,075 bytes** of `Protocol_state.Value` in **1.2 s** |
+| devnet p2p seeds | ✅ reachable | `get_best_tip` returned **48,075** then **74,313 bytes** of `Protocol_state.Value` in ~1–2 s (size varies with the block) |
 | hbox | ✅ ready | 24 c / 123 G, node **v20.16.0**, `linux-x64`, `npm ci` clean in 51 s |
 | `@o1js/native-linux-x64` | ✅ installs | lands from `package-lock.json` via `npm ci`; no extra step |
 | `O1JS_BACKEND=native` on hbox | ✅ **and the VK is bit-identical** | see the table below |
+| `dregg-verifies-mina.sh` | ✅ **7/7 PASS** | full run, local, ~2 min including a release build; see §1.3 |
 | `head-anchor` tier-0 | ✅ green | 12 out-of-circuit checks, **1.2 s** (local) |
 | `head-gate-rehearsal` | ✅ green | 7 checks, **55.2 s** on hbox with the native backend |
 | `head-anchor` tier-1 | ❌ **RED** | its accept row fails — **the harness, not the gate**; see §4 |
@@ -123,6 +124,36 @@ demonstration.
 default `--out` **overwrites a tracked Lean source file**
 (`metatheory/Dregg2/Bridge/MinaStateHashRealBlock.lean`). The script points it at
 its own log directory.
+
+### 1.3 The measured transcript (local, 2026-07-30)
+
+```
+PASS  python3 3.14.6 with cryptography 49.0.0
+PASS  Lean archive present (149M) — the decode and the selection rule are the VERIFIED ones
+PASS  74313 bytes of Protocol_state.Value from a live devnet seed (peer 12200c1f124de82a…)
+PASS  state-hash transcription reproduces the pinned block
+        [state_hash(540186) = 231507932081652385080107460246461513275005576881036378008873691820278099265
+        08]
+PASS  CONSECUTIVE PAIR: 540221 -> 540222 (protocol states 1544 and 1544 bytes) — MATCH
+PASS  mina_head — test result: ok. 11 passed; 0 failed
+PASS  opening check proved and verified on a real devnet block
+```
+
+Step 5's own line, which is the one worth quoting:
+
+```
+block 539508 | 4 slices x 1024 x 2131 = 8728576 cells | descriptors 5768911 B
+resolve 60.8ms | witness 206.4ms | prove 15.36s | verify 263.3ms | proof 1120987 B
+observer wall clock: 15.93s
+descriptors (LEAN-AUTHORED, sha-pinned):
+  dregg-pasta-rcb-sg-derive-{0,3640,7281,10921}-of-10922::v1
+⚑ scope: 12 of 32,768 SRS generators are bound; this is ONE leg of the IPA
+  verifier's two statements; the FRI/STARK floor and P10 are undischarged.
+```
+
+That last line is the example's own, printed on every run. It is not a caveat
+added here — the leg reports its own scope, which is why this runbook does not
+have to.
 
 ---
 
