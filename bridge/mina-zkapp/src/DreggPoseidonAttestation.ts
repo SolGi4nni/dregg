@@ -14,6 +14,10 @@ import {
   type DeployArgs,
 } from 'o1js';
 import {
+  DreggCellFact,
+  makeDreggCellFactProgram,
+} from './DreggCellFact.js';
+import {
   BbDigest,
   foldOpening,
   sparsePathBigInt,
@@ -309,6 +313,35 @@ export function vouchOfBbRoot(bbRoot: bigint[] | Field[]): Field {
 }
 
 /**
+ * The BabyBear MMCS depth the cell-fact statement opens under.
+ *
+ * ⚑ IT IS `ANCHOR_MERKLE_DEPTH`, AND THAT IS LOAD-BEARING, NOT TIDINESS. At the
+ * same height, the BabyBear leaf `DreggAnchorStatement.proveAnchorShape` opens
+ * IS the dregg cell's MMCS leaf, and the two statements meet at a value rather
+ * than at a coincidence: one anchor proof and one cell-fact proof can be built
+ * from ONE opening. At different heights `actOnCellFact` could only ever be
+ * shown REFUSING, because no cell fact would share a root with any anchor this
+ * contract accepts — a leg that can only go red is not a gate.
+ *
+ * ⚑ And the height itself is still arbitrary, in the way `ANCHOR_MERKLE_DEPTH`
+ * says: dregg emits no live BabyBear-Poseidon2 commitment over cell state
+ * today, so there is no deployed tree to match.
+ */
+export const CELL_FACT_BB_DEPTH = ANCHOR_MERKLE_DEPTH;
+
+/**
+ * **The cell-fact statement** — `DreggCellFact.makeDreggCellFactProgram` at the
+ * anchored tree's own depth, so a root set by `setDreggRoot` is openable by it.
+ */
+export const DreggCellFactStatement = makeDreggCellFactProgram(
+  CELL_FACT_BB_DEPTH,
+  ATTEST_DEPTH,
+);
+
+/** The proof type `actOnCellFact` consumes. */
+export class DreggCellFactProof extends ZkProgram.Proof(DreggCellFactStatement) {}
+
+/**
  * DreggAttestedGate: a zkApp whose action is gated on a verified dregg
  * membership attestation, and whose anchored root is gated on a verified
  * `DreggAnchorStatement` proof.
@@ -442,6 +475,11 @@ export class DreggAttestedGate extends SmartContract {
   @state(Field) dreggRoot = State<Field>();
   /** The last leaf a proof successfully opened under `dreggRoot`. */
   @state(Field) lastAttestedLeaf = State<Field>();
+  /** The last dregg CELL FACT this gate acted on, as `DreggCellFact.digest()`.
+   *  A separate slot from `lastAttestedLeaf` deliberately: a leaf and a decoded
+   *  cell are different kinds of claim and collapsing them into one slot would
+   *  make an observer unable to tell which one the gate last checked. */
+  @state(Field) lastCellFact = State<Field>();
   /** ⚑ A PLACEHOLDER, NOT AN AUTHORIZATION DESIGN. The key whose signature
    *  `setDreggRoot` currently also requires, because the anchor's PROOF
    *  obligation is a shape constraint and cannot yet stand alone. A `PublicKey`
@@ -533,6 +571,46 @@ export class DreggAttestedGate extends SmartContract {
     const leaf = proof.publicOutput;
     leaf.assertNotEquals(Field(0));
     this.lastAttestedLeaf.set(leaf);
+  }
+
+  /**
+   * Act on WHAT A DREGG CELL SAYS, not on a leaf's bytes.
+   *
+   * ⚑ THIS IS THE DIFFERENCE FROM `actOnAttestedLeaf`, in one line: that method
+   * receives a `Field` and can only record it, because a field element has no
+   * meaning — it could be a balance, a nonce, or padding. This one receives a
+   * `DreggCellFact`, whose components the circuit forced to be the pre-image of
+   * a committed dregg cell under `cellCommitOf`, and so it can REQUIRE a
+   * balance. `balanceFloor` is the requirement; the transaction fails if
+   * dregg's cell does not meet it.
+   *
+   * Three checks, and the third is the one that makes it about dregg:
+   *
+   *   1. the proof verifies;
+   *   2. its public input is THIS gate's anchored root — so the cell was read
+   *      out of the head this client holds, not out of a root the caller chose;
+   *   3. `balanceFloor ≤ fact.balanceLo`, an assertion about a NAMED column of
+   *      dregg's EffectVM state block.
+   *
+   * ⚑ AND WHAT IT STILL INHERITS. The anchored root is installed by
+   * `setDreggRoot`, which is gated on `placeholderAuth` — a relay key. So this
+   * method's conclusion is conditional on that key: "the relay anchored a root,
+   * and under that root a cell with this balance is committed". The proof
+   * closes the second clause completely and the first not at all. Deleting the
+   * key is `PLACEHOLDER_CUTOVER`'s job in `DreggHeadAnchor`, not this method's.
+   */
+  @method async actOnCellFact(proof: DreggCellFactProof, balanceFloor: Field) {
+    proof.verify();
+    const root = this.dreggRoot.getAndRequireEquals();
+    proof.publicInput.assertEquals(root);
+
+    const fact = proof.publicOutput;
+    // A balance limb is a BabyBear lane, so both sides are `< 2^31` and the
+    // comparison cannot wrap in the Pasta field.
+    balanceFloor.assertLessThanOrEqual(fact.balanceLo);
+    fact.stateCommit.assertNotEquals(Field(0));
+
+    this.lastCellFact.set(fact.digest());
   }
 }
 
