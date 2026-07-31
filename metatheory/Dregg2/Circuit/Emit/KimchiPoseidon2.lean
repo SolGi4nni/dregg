@@ -849,10 +849,17 @@ sixteen input lanes and solves for the rest. -/
 
 private def i2s (z : ℤ) : String := toString z
 
-private def joinS (sep : String) : List String → String
-  | [] => ""
-  | [x] => x
-  | x :: xs => x ++ sep ++ joinS sep xs
+/-- ⚑ WAS A HAND-ROLLED NON-TAIL-RECURSIVE JOIN, and it made this emitter unrunnable.
+`joinS sep (x :: xs) = x ++ sep ++ joinS sep xs` puts the recursive call *inside* `++`, so every list
+element is an interpreter stack frame: `lake env lean --run EmitKimchiPoseidon2.lean` died with
+`deep recursion was detected at 'interpreter'` and a stacktrace that was 30 frames of `joinS`. It was
+also **quadratic** — each level rebuilds the whole prefix.
+
+`String.intercalate` is tail-recursive and linear, agrees on all three cases (`[] ↦ ""`, `[x] ↦ x`,
+`x :: xs ↦ x ++ sep ++ …`), and **45 files in this tree already use it**; exactly two hand-rolled a
+join, and this was the one that crashed. -/
+private abbrev joinS (sep : String) (xs : List String) : String :=
+  String.intercalate sep xs
 
 /-- One instruction as JSON. `g` is a generic sub-gate, `r` a standalone 64-bit `RangeCheck0` with
 its fifteen columns in `rc0Places` order, `z` a companion `Zero` row. -/
