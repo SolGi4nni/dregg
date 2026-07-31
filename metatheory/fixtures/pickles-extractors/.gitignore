@@ -1,2 +1,12 @@
 target/
 out/
+
+# ⚑ EXCEPTION — `out/srs_fold_gold.json` IS TRACKED, and must stay so.
+#
+# `src/bin/sg_msm_bench.rs:35` does `include_str!("../../out/srs_fold_gold.json")`. An `include_str!`
+# of an IGNORED path compiles on the machine that generated it and on no other — a fresh clone fails
+# at compile time, not at run time, and the error names a missing file nobody can produce without
+# knowing which extractor writes it.
+#
+# Found 2026-07-31 by `emit_descriptors.py --verify-by-name-routing`, which flagged it INCLUDE-UNTRACKED.
+!out/srs_fold_gold.json
