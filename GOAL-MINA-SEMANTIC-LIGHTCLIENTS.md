@@ -250,3 +250,24 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   - **ANSWER TO THE GATE QUESTION**: when the chain is ready, **two commands, ~10 minutes**, most of
     it Mina block time and none of it a rebuild. Direction 2 alone is **under two minutes and is
     ready now**.
+- 22:35 ⚑ **VK SPINE LANDED — child-circuit identity is bound through the root** (`e1d8ab9bc`,
+  `84eac660e`; fork `emberian/plonky3-recursion@4aead01`, rev bumped). **AIR-free by construction**:
+  no `eval()` edited, no constraint content authored in Rust — a fork trait method returning
+  ALREADY-ALLOCATED targets, two widened hook signatures, and `connect` /
+  `expose_as_public_output` / the deployed `BABY_BEAR_D4_W24` sponge on the dregg side.
+  Every fold node exposes `vk_spine = commit(L.cap ‖ L.spine ‖ R.cap ‖ R.spine)`; tooth (1) now
+  compares `whole_chain_anchor` = `blake3(tag ‖ vk_fingerprint ‖ root spine)` instead of the bare
+  shape fingerprint. Wide family carried too. **MEASURED**: a child that verifies NOTHING, and one
+  wired to check the WRONG input, both move the anchor (`65fc32cd…` → `cd0c6c62…`) and are refused.
+  ⚠ **RESIDUAL, found by my own probe and NOT closed: a child's CONSTANT VALUES are not bound** —
+  `ConstAir` keeps a const's value in its constraint-free MAIN trace, so a const-swapped child has
+  an identical cap, spine and anchor (`65fc32cd…` unchanged). That is the original hole one level
+  down, it is a **SIN** under this goal, and reaching it needs const values in the PREPROCESSED
+  trace — an AIR change, i.e. **Lean-authored or ember's call, not Rust**.
+  ⚑ **Flag day STAGED, NOT FIRED** per the convergence order: nothing re-emitted here. Needs, at
+  convergence — every `RecursionVk`; `ugc-dregg/tests/fixtures/whole_history_{proof.bin,anchor.hex}`;
+  the three checked-in anchor copies (`portal/dist/history.json`, `site/light-client/history.json`,
+  `site/dist/light-client/history.json`); `root_fri_instance.rs`'s `EXPECTED_DEGREE_BITS`; the Mina
+  pins in `bridge/mina-zkapp/scripts/root-air-{real,fullchain}.ts`. **No envelope bump needed** —
+  the anchor stays one 32-byte `RecursionVk`, so v6 stands and I do not collide with the
+  `num_turns` lane. Every pre-spine artifact now refuses to fold at `exposed_board_window`.
