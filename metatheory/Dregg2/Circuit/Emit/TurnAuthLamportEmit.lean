@@ -344,6 +344,11 @@ theorem map_var_eval (a : Assignment) (cols : List Nat) :
 theorem gcols_length (g : Fin W → Nat) : (gcols g).length = W := by
   simp [gcols]
 
+/-- A group's VALUES read lane-by-lane over `Fin W` (the shape lane-wise congruence needs). -/
+theorem gval_eq (a : Assignment) (g : Fin W → Nat) :
+    gval a g = (List.finRange W).map (fun j => a (g j)) := by
+  simp [gval, gcols, List.map_map, Function.comp_def]
+
 /-! ## §5 — the wide-lookup forcing lever (the deployed chip, at full 8-felt squeeze width). -/
 
 /-- The `Lookup` a `wideHash` wraps. -/
@@ -425,16 +430,18 @@ theorem select_lane (w nb : Nat) (env : VmRowEnv) (hcanon : AuthRowCanon env)
       List.prod_cons, List.prod_nil]
     ring
   rcases hm with h0 | h1
-  · rw [h0] at hev ⊢
-    have : env.loc (sigHG w nb k j) - env.loc (pk0G w nb k j) ≡ 0 [ZMOD 2013265921] := by
-      rw [← hev]; simpa using hg
-    simp only [if_neg (by norm_num : ¬ (0 : ℤ) = 1)]
-    exact diffExact (hcanon.cells _) (hcanon.cells _) this
-  · rw [h1] at hev ⊢
-    have : env.loc (sigHG w nb k j) - env.loc (pk1G w nb k j) ≡ 0 [ZMOD 2013265921] := by
-      rw [← hev]; convert hg using 1; ring
-    simp only [if_pos rfl]
-    exact diffExact (hcanon.cells _) (hcanon.cells _) this
+  · have hbr : (if env.loc (mCol w nb k) = 1 then env.loc (pk1G w nb k j)
+        else env.loc (pk0G w nb k j)) = env.loc (pk0G w nb k j) := by rw [h0]; norm_num
+    have hev' : evalH (selectHead w nb k j) env.loc
+        = env.loc (sigHG w nb k j) - env.loc (pk0G w nb k j) := by rw [hev, h0]; ring
+    rw [hbr]
+    exact diffExact (hcanon.cells _) (hcanon.cells _) (by rw [← hev']; exact hg)
+  · have hbr : (if env.loc (mCol w nb k) = 1 then env.loc (pk1G w nb k j)
+        else env.loc (pk0G w nb k j)) = env.loc (pk1G w nb k j) := by rw [h1]; norm_num
+    have hev' : evalH (selectHead w nb k j) env.loc
+        = env.loc (sigHG w nb k j) - env.loc (pk1G w nb k j) := by rw [hev, h1]; ring
+    rw [hbr]
+    exact diffExact (hcanon.cells _) (hcanon.cells _) (by rw [← hev']; exact hg)
 
 /-- **`lamport_verify_forced` — THE KEYSTONE.** A witness satisfying the gadget's constraints on an
 active row FORCES, at every one of the `ELL nb` bit positions, that the deployed Poseidon2 of the
@@ -453,29 +460,202 @@ theorem lamport_verify_forced (permOut : List ℤ → List ℤ)
   have hlk := wideHash_forces permOut tf env hChip _ _
     (by rw [gcols_length]; decide) (hcore.sigHashed k.val k.isLt)
   -- the select gate, lane by lane: the digest block IS the selected public-key block.
+  have hpk : pkOf env w nb k (msgOf env w nb k)
+      = (List.finRange W).map (fun j =>
+          if env.loc (mCol w nb k.val) = 1 then env.loc (pk1G w nb k.val j)
+          else env.loc (pk0G w nb k.val j)) := by
+    unfold pkOf msgOf
+    by_cases hb : env.loc (mCol w nb k.val) = 1 <;> simp [hb, gval_eq]
   have hsel : gval env.loc (sigHG w nb k.val) = pkOf env w nb k (msgOf env w nb k) := by
-    unfold gval pkOf msgOf
-    by_cases hb : env.loc (mCol w nb k.val) = 1
-    · simp only [hb, decide_eq_true_eq, if_pos rfl]
-      refine List.map_congr_left ?_
-      intro j _
-      have := select_lane w nb env hcanon k.val j (hcore.msgBool k.val k.isLt)
-        (hcore.selectZero k.val k.isLt j)
-      simpa [hb] using this
-    · simp only [hb, decide_eq_false_iff_not, if_neg hb, Bool.false_eq_true, if_false]
-      refine List.map_congr_left ?_
-      intro j _
-      have := select_lane w nb env hcanon k.val j (hcore.msgBool k.val k.isLt)
-        (hcore.selectZero k.val k.isLt j)
-      simpa [hb] using this
+    rw [gval_eq, hpk]
+    refine List.map_congr_left ?_
+    intro j _
+    exact select_lane w nb env hcanon k.val j (hcore.msgBool k.val k.isLt)
+      (hcore.selectZero k.val k.isLt j)
   -- compose: permOut (sig k) = digest block = pk k (m k).
-  unfold sigOf gval
-  rw [← hlk] at *
+  have hlk' : gval env.loc (sigHG w nb k.val) = permOut (gval env.loc (sigG w nb k.val)) := hlk
+  show permOut (gval env.loc (sigG w nb k.val)) = pkOf env w nb k (msgOf env w nb k)
+  rw [← hlk']
   exact hsel
 
 #assert_axioms diffExact
 #assert_axioms wideHash_forces
 #assert_axioms select_lane
 #assert_axioms lamport_verify_forced
+
+/-! ## §8 — the DESCRIPTOR, and `AuthCore` DISCHARGED from `Satisfied2`.
+
+Nothing above is carried: `withTurnAuth` widens any base descriptor by the gadget, and
+`authCore_of_satisfied` derives every `AuthCore` field from the deployed denotation on row 0. -/
+
+/-- The 1-bit range teeth on the message bits. These give ℤ-level booleanity from the DEPLOYED range
+table, so the mod-`p` boolean gate never has to be lifted by primality. -/
+def authRanges (w nb : Nat) : List Dregg2.Circuit.Emit.EffectVmEmit.VmRange :=
+  (List.range (ELL nb)).map (fun k => ⟨mCol w nb k, 1⟩)
+
+/-- **`withTurnAuth base nb turnIn`** — `base` widened by the in-AIR authorization gadget: `+
+AUTH_SPAN nb` columns, `+8` public inputs (the published authority root), the gadget's constraints
+appended, and the message-bit range teeth. -/
+def withTurnAuth (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat) : EffectVmDescriptor2 :=
+  { base with
+    traceWidth  := base.traceWidth + AUTH_SPAN nb
+    piCount     := base.piCount + W
+    constraints := base.constraints
+      ++ lamportAuthConstraints base.traceWidth nb base.piCount turnIn
+    ranges      := base.ranges ++ authRanges base.traceWidth nb }
+
+/-- Every base constraint survives the widening (so every existing keystone lifts verbatim). -/
+theorem withTurnAuth_base_constraints (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (c : VmConstraint2) (hc : c ∈ base.constraints) :
+    c ∈ (withTurnAuth base nb turnIn).constraints :=
+  List.mem_append_left _ hc
+
+/-- Every gadget constraint is in the widened descriptor. -/
+theorem withTurnAuth_auth_constraints (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (c : VmConstraint2)
+    (hc : c ∈ lamportAuthConstraints base.traceWidth nb base.piCount turnIn) :
+    c ∈ (withTurnAuth base nb turnIn).constraints :=
+  List.mem_append_right _ hc
+
+/-! ### Membership of each generated block in the gadget's constraint list. -/
+
+theorem mem_sigLookups (w nb k : Nat) (hk : k < ELL nb) :
+    wideHash (gcols (sigG w nb k)) (gcols (sigHG w nb k)) ∈ sigLookups w nb :=
+  List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
+
+theorem mem_selectGates (w nb k : Nat) (hk : k < ELL nb) (j : Fin W) :
+    cgH (selectHead w nb k j) ∈ selectGates w nb :=
+  List.mem_flatMap.mpr ⟨k, List.mem_range.mpr hk,
+    List.mem_map.mpr ⟨j, List.mem_finRange j, rfl⟩⟩
+
+theorem mem_pairLookups (w nb k : Nat) (hk : k < ELL nb) :
+    wideHash (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k))
+      ∈ pairLookups w nb :=
+  List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
+
+theorem mem_accLookups (w nb k : Nat) (hk1 : 1 ≤ k) (hk : k < ELL nb) :
+    wideHash (foldIns w nb k) (gcols (accG w nb k)) ∈ accLookups w nb :=
+  List.mem_map.mpr ⟨k - 1, List.mem_range.mpr (by omega), by
+    have : k - 1 + 1 = k := by omega
+    rw [this]⟩
+
+theorem mem_authRootPins (w nb pcBase : Nat) (j : Fin W) :
+    (VmConstraint2.base (.piBinding VmRow.first (accG w nb (ELL nb - 1) j) (pcBase + j.val)))
+      ∈ authRootPins w nb pcBase :=
+  List.mem_map.mpr ⟨j, List.mem_finRange j, rfl⟩
+
+theorem mem_msgReconGates (w nb q : Nat) (hq : q < nb) :
+    cgH (reconHead w nb q) ∈ msgReconGates w nb :=
+  List.mem_map.mpr ⟨q, List.mem_range.mpr hq, rfl⟩
+
+/-! ### Lifting each block into `lamportAuthConstraints` (nine left-associated appends). -/
+
+theorem auth_mem_sig (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
+    wideHash (gcols (sigG w nb k)) (gcols (sigHG w nb k))
+      ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (mem_sigLookups w nb k hk))))))))
+
+theorem auth_mem_select (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb)
+    (j : Fin W) : cgH (selectHead w nb k j) ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_selectGates w nb k hk j))))))))
+
+theorem auth_mem_pair (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
+    wideHash (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k))
+      ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inl (.inl (.inl (.inr (mem_pairLookups w nb k hk))))))
+
+theorem auth_mem_acc (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk1 : 1 ≤ k)
+    (hk : k < ELL nb) :
+    wideHash (foldIns w nb k) (gcols (accG w nb k))
+      ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inl (.inl (.inr (mem_accLookups w nb k hk1 hk)))))
+
+theorem auth_mem_root (w nb pcBase : Nat) (turnIn : List Nat) (j : Fin W) :
+    (VmConstraint2.base (.piBinding VmRow.first (accG w nb (ELL nb - 1) j) (pcBase + j.val)))
+      ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inl (.inr (mem_authRootPins w nb pcBase j))))
+
+theorem auth_mem_turn (w nb pcBase : Nat) (turnIn : List Nat) :
+    turnDigestLookup w nb turnIn ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inr (by simp)))
+
+theorem auth_mem_recon (w nb pcBase : Nat) (turnIn : List Nat) (q : Nat) (hq : q < nb) :
+    cgH (reconHead w nb q) ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inr (mem_msgReconGates w nb q hq))
+
+/-- **`authCore_of_satisfied` — `AuthCore` is DERIVED, not carried.** On row 0 of any real (≥2-row)
+trace satisfying the widened descriptor, every gadget constraint bites: `isFirst = true` (the
+authority-root PI pins fire) and `isLast = false` (the gates are on their active domain). -/
+theorem authCore_of_satisfied (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
+    (hlen : 2 ≤ t.rows.length) :
+    AuthCore t.tf base.traceWidth nb base.piCount turnIn (envAt t 0) := by
+  have hi : 0 < t.rows.length := by omega
+  have hnotlast : ((0 : Nat) + 1 == t.rows.length) = false := by
+    simp only [beq_eq_false_iff_ne]; omega
+  have hrow := fun c hc => hsat.rowConstraints 0 hi c
+    (withTurnAuth_auth_constraints base nb turnIn c hc)
+  set w := base.traceWidth
+  set pc := base.piCount
+  refine { sigHashed := ?_, selectZero := ?_, msgBool := ?_, pairHashed := ?_
+         , accHashed := ?_, rootPinned := ?_, turnHashed := ?_, reconZero := ?_ }
+  · intro k hk
+    have h := hrow _ (auth_mem_sig w nb pc turnIn k hk)
+    exact h
+  · intro k hk j
+    have h := hrow _ (auth_mem_select w nb pc turnIn k hk j)
+    simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
+    rwa [headToExpr_eval] at h
+  · intro k hk
+    have hmem : (⟨mCol w nb k, 1⟩ : Dregg2.Circuit.Emit.EffectVmEmit.VmRange)
+        ∈ (withTurnAuth base nb turnIn).ranges :=
+      List.mem_append_right _ (List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩)
+    have h := hsat.rowRanges 0 hi _ hmem
+    simp only [Dregg2.Circuit.Emit.EffectVmEmit.VmRange.holds] at h
+    omega
+  · intro k hk
+    exact hrow _ (auth_mem_pair w nb pc turnIn k hk)
+  · intro k hk1 hk
+    exact hrow _ (auth_mem_acc w nb pc turnIn k hk1 hk)
+  · intro j
+    have h := hrow _ (auth_mem_root w nb pc turnIn j)
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
+    exact h rfl
+  · exact hrow _ (auth_mem_turn w nb pc turnIn)
+  · intro q hq
+    have h := hrow _ (auth_mem_recon w nb pc turnIn q hq)
+    simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
+    rwa [headToExpr_eval] at h
+
+#assert_axioms authCore_of_satisfied
+
+/-- **`turn_auth_forced` — the whole rung, from the DEPLOYED denotation.** A `Satisfied2` witness of
+any descriptor widened by `withTurnAuth` carries, at every one of the `ELL nb` bit positions, a
+Poseidon2 preimage of the public-key entry for that bit — i.e. `HashSig.verify`. No carried
+hypothesis but the canonicality envelope (which is what a BabyBear trace IS) and the chip's own
+soundness (the lever the cap crown already rides). -/
+theorem turn_auth_forced (permOut : List ℤ → List ℤ) (base : EffectVmDescriptor2) (nb : Nat)
+    (turnIn : List Nat) (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hChip : ChipTableSoundN permOut (t.tf TableId.poseidon2))
+    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
+    (hlen : 2 ≤ t.rows.length)
+    (hcanon : AuthRowCanon (envAt t 0)) :
+    Dregg2.Crypto.HashSig.verify permOut
+      (pkOf (envAt t 0) base.traceWidth nb)
+      (msgOf (envAt t 0) base.traceWidth nb)
+      (sigOf (envAt t 0) base.traceWidth nb) :=
+  lamport_verify_forced permOut t.tf base.traceWidth nb base.piCount turnIn (envAt t 0) hChip
+    (authCore_of_satisfied base nb turnIn hash minit mfin maddrs t hsat hlen) hcanon
+
+#assert_axioms turn_auth_forced
 
 end Dregg2.Circuit.Emit.TurnAuthLamportEmit
