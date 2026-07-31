@@ -55,7 +55,10 @@
     "head-anchor": "npm run build && node --max-old-space-size=16384 dist/scripts/head-anchor.js",
     "head-anchor-pins": "npm run build && node --max-old-space-size=16384 dist/scripts/head-anchor-pins.js",
     "deep-columns": "npm run build && node --max-old-space-size=16384 dist/scripts/deep-column-census.js",
-    "backend-probe": "npm run build && node --max-old-space-size=16384 dist/scripts/backend-probe.js"
+    "backend-probe": "npm run build && node --max-old-space-size=16384 dist/scripts/backend-probe.js",
+    "head-gate-rehearsal": "npm run build && node --max-old-space-size=16384 dist/scripts/head-gate-rehearsal.js",
+    "devnet:head-deploy": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-deploy.js",
+    "devnet:head-advance": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-advance.js"
   },
   "dependencies": {
     "o1js": "2.15.0"
