@@ -383,6 +383,12 @@ GATES=(
   # discipline, and six blindness FLOORS — including `Lean import edges`, which exists
   # because a 64 KB header slice silently zeroed R3's whole harvest during development
   # and the run still printed OK.
+  # ⚑ EXECUTED, NOT GREPPED. Loads the real published verify-badge.js into a DOM +
+  # fetch harness and plays the hostile host (forged bytes + a page-named node that
+  # commits them). The `-red` row reinstates the defect in an in-memory copy and FAILS
+  # if the gate stays green — the tree is never mutated.
+  "verdict-provenance|120|node scripts/check-verdict-provenance.mjs"
+  "verdict-provenance-red|120|node scripts/check-verdict-provenance.mjs --self-test"
   "prose-claims|300|python3 scripts/check-prose-claims.py"
   "prose-claims-red|180|python3 scripts/check-prose-claims.py --self-test"
   "prose-claims-historical|180|python3 scripts/check-prose-claims.py --historical"
