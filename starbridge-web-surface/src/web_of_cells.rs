@@ -300,6 +300,11 @@ impl OriginChrome {
 /// committed URL), and `fetch`es a `dregg://` ref into an [`AttestedResource`] the
 /// client verifies, with the [`OriginChrome`] drawn from the ledger. The ledger
 /// is REAL `dregg_cell` state; the attestation is REAL `dregg_types` primitives.
+///
+/// Two publish doors, one body: [`Self::publish`] derives a fresh origin cell from
+/// a `u8` seed; [`Self::publish_as`] publishes the cell id the CALLER already holds
+/// (a live desktop/agent/document cell, born in another ledger). They share
+/// [`Self::commit_published_content`] verbatim so they cannot drift.
 pub struct WebOfCells {
     ledger: Ledger,
     /// A monotone height for the federation's attestation period (each publish
@@ -372,15 +377,14 @@ impl WebOfCells {
         self.height
     }
 
-    /// Seed an origin cell with permissive permissions (so a publish's `set_field`
-    /// is authorized), returning its [`CellId`]. The deterministic key derivation
-    /// mirrors the firmament's `seed_surface` so origins are addressable by seed.
-    fn seed_origin(&mut self, seed: u8) -> CellId {
-        let mut pk = [0u8; 32];
-        pk[0] = seed;
-        pk[31] = seed.wrapping_mul(11);
-        let mut cell = Cell::with_balance(pk, [0u8; 32], 10_000);
-        cell.permissions = Permissions {
+    /// The permissions an origin cell on this surface carries: permissive, so a
+    /// publish's `set_field` is authorized. ONE definition, shared by both the
+    /// seeded origin ([`Self::seed_origin`]) and the caller-supplied landing site
+    /// ([`Self::ensure_origin`]) — so the two publish doors present the SAME rights
+    /// lineage in [`OriginChrome`], and a reader cannot tell which door was used by
+    /// the badge (they are the same kind of origin).
+    fn surface_permissions() -> Permissions {
+        Permissions {
             send: AuthRequired::None,
             receive: AuthRequired::None,
             set_state: AuthRequired::None,
@@ -389,10 +393,91 @@ impl WebOfCells {
             increment_nonce: AuthRequired::None,
             delegate: AuthRequired::None,
             access: AuthRequired::None,
-        };
+        }
+    }
+
+    /// Seed an origin cell with permissive permissions (so a publish's `set_field`
+    /// is authorized), returning its [`CellId`]. The deterministic key derivation
+    /// mirrors the firmament's `seed_surface` so origins are addressable by seed.
+    fn seed_origin(&mut self, seed: u8) -> CellId {
+        let mut pk = [0u8; 32];
+        pk[0] = seed;
+        pk[31] = seed.wrapping_mul(11);
+        let mut cell = Cell::with_balance(pk, [0u8; 32], 10_000);
+        cell.permissions = Self::surface_permissions();
         let id = cell.id();
         self.ledger.insert_cell(cell).expect("seed origin cell");
         id
+    }
+
+    /// Make `cell` — an id the CALLER already holds — resolvable on this surface,
+    /// **without inventing one**. If the ledger already carries that exact cell
+    /// (a prior publish), it is left completely alone; otherwise a landing site is
+    /// installed under EXACTLY that id.
+    ///
+    /// The landing site is [`dregg_cell::Cell::remote_stub_with_id`] — the cell
+    /// crate's own documented "we know the id but not the pre-image" constructor,
+    /// which is precisely this situation: the canonical cell (a desktop world cell,
+    /// an agent cell, a document cell) lives in ANOTHER ledger, and this surface
+    /// only ever sees its content-addressed id. Deriving a cell from a placeholder
+    /// pubkey instead (what [`Self::seed_origin`] does) would produce a DIFFERENT
+    /// id, which is exactly the blocker this door exists to remove.
+    ///
+    /// **What the stub is and is not** (`cell/src/cell.rs`'s own soundness note):
+    /// its public key is zeros, so it cannot sign and `verify_id_integrity()` fails
+    /// on it BY DESIGN — it is a serving landing site for a cell whose authority
+    /// lives elsewhere, never a claim to be that cell's canonical state. The
+    /// `dregg://` chain does not rest on it: what a fetch verifies is the content
+    /// commitment in slot 0, the serve receipt over it, and the federation's
+    /// quorum-signed root — none of which reads the stub's pubkey.
+    fn ensure_origin(&mut self, cell: CellId) {
+        if self.ledger.get(&cell).is_some() {
+            return;
+        }
+        let mut landing = Cell::remote_stub_with_id(cell);
+        landing.permissions = Self::surface_permissions();
+        self.ledger
+            .insert_cell(landing)
+            .expect("an origin id absent from the ledger is a fresh slot");
+    }
+
+    /// The commit/finalize body BOTH publish doors run — the single definition of
+    /// "this origin cell now publishes these bytes at this URL".
+    ///
+    /// [`Self::publish`] and [`Self::publish_as`] differ in exactly ONE thing: where
+    /// the origin cell id comes from (derived from a `u8` seed vs. handed in by the
+    /// caller). Everything downstream of that — the content commitment written into
+    /// real cell state, the committed-URL binding, the node's out-of-band byte
+    /// store, the federation height advance — happens HERE, once, so the two doors
+    /// cannot drift apart.
+    ///
+    /// Requires `cell_id` to already be in the ledger (both callers guarantee it).
+    fn commit_published_content(
+        &mut self,
+        cell_id: CellId,
+        content: &[u8],
+        committed_url: &str,
+    ) -> DreggUri {
+        let content_hash = *blake3::hash(content).as_bytes();
+
+        // Commit the content hash into the origin cell's state (slot 0) — a real
+        // cell-state write, the genuine "the origin committed this content".
+        let cell = self
+            .ledger
+            .get_mut(&cell_id)
+            .expect("the origin cell is in the ledger");
+        cell.state.set_field(CONTENT_COMMITMENT_SLOT, content_hash);
+        // Bind the committed URL to the cell (the trusted-chrome source). We store
+        // it in the cell's extended field map keyed by a stable domain tag so the
+        // chrome reads it from state, not from the page. (A simple, real
+        // cell-state binding; the production path binds libservo's
+        // notify_url_changed value the same way.)
+        self.bind_url(&cell_id, committed_url);
+        // The content bytes live with the node, keyed by the origin cell.
+        self.replace_bytes(&cell_id, content.to_vec());
+
+        self.height += 1;
+        DreggUri::new(cell_id)
     }
 
     /// **Publish** a `dregg://` page: commit `content`'s hash into a fresh origin
@@ -406,23 +491,40 @@ impl WebOfCells {
     /// out-of-band, exactly as a real serve ships bytes + a state commitment).
     pub fn publish(&mut self, seed: u8, content: &[u8], committed_url: &str) -> DreggUri {
         let cell_id = self.seed_origin(seed);
-        let content_hash = *blake3::hash(content).as_bytes();
+        self.commit_published_content(cell_id, content, committed_url)
+    }
 
-        // Commit the content hash into the origin cell's state (slot 0) — a real
-        // cell-state write, the genuine "the origin committed this content".
-        let cell = self.ledger.get_mut(&cell_id).expect("just-seeded origin");
-        cell.state.set_field(CONTENT_COMMITMENT_SLOT, content_hash);
-        // Bind the committed URL to the cell (the trusted-chrome source). We store
-        // it in the cell's extended field map keyed by a stable domain tag so the
-        // chrome reads it from state, not from the page. (A simple, real
-        // cell-state binding; the production path binds libservo's
-        // notify_url_changed value the same way.)
-        self.bind_url(&cell_id, committed_url);
-        // The content bytes live with the node, keyed by the origin cell.
-        self.store_bytes(&cell_id, content.to_vec());
-
-        self.height += 1;
-        DreggUri::new(cell_id)
+    /// **Publish AS an existing cell** — commit `content`'s hash into the state of
+    /// the cell the CALLER already holds, rather than one derived from a seed.
+    ///
+    /// This is [`Self::publish`]'s only structural sibling: identical commit and
+    /// finalize body (they share [`Self::commit_published_content`] verbatim),
+    /// differing solely in where the origin cell id comes from. `publish` derives
+    /// its origin from a `u8` seed and can therefore only ever address the 256 cells
+    /// in its own derivation family; `publish_as` publishes the id it is given.
+    ///
+    /// **Why it exists.** A live cell — a desktop world anchor, an agent cell, a
+    /// document cell — is born in another ledger and has a content-addressed id
+    /// nothing here can re-derive. Without this door there was NO way to obtain a
+    /// [`DreggUri`] denoting such a cell, so every consumer of the `dregg://` quote
+    /// path (a whole-cell transclusion, a paste-a-link embed, the desktop's
+    /// transclude gesture) was structurally uncallable against real state: the quote
+    /// primitives take a `DreggUri`, and no constructor could produce one for a cell
+    /// the caller held. This is that constructor.
+    ///
+    /// If `cell` is not yet on this surface, a landing site is installed for it
+    /// ([`Self::ensure_origin`]); if it IS already here, its cell is left untouched
+    /// and only the published content/URL are re-committed. Advancing an
+    /// already-published origin so the CITED RECEIPT visibly moves (the "the source
+    /// finalized a new height" signal a live quote reads) is [`Self::amend`]'s job —
+    /// it bumps the nonce, which this does not.
+    ///
+    /// Publishing a cell here says only "this surface serves these bytes for this
+    /// id, and the federation attests it". It confers no authority over the
+    /// canonical cell and makes no claim about its state elsewhere.
+    pub fn publish_as(&mut self, cell: CellId, content: &[u8], committed_url: &str) -> DreggUri {
+        self.ensure_origin(cell);
+        self.commit_published_content(cell, content, committed_url)
     }
 
     /// **Amend** an already-published `dregg://` page: advance the SAME origin cell's
@@ -596,11 +698,13 @@ impl WebOfCells {
     // ── node-side content + URL byte stores (the bytes a serve ships out-of-band,
     //    keyed by the origin cell — a real serve holds these beside its ledger). ──
 
-    fn store_bytes(&mut self, cell: &CellId, bytes: Vec<u8>) {
-        self.bytes_store.push((*cell, bytes));
-    }
-    /// Replace the node's stored bytes for an existing origin cell (the amend path) —
-    /// `served_bytes` then returns the NEW content. Falls back to a store if absent.
+    /// Set the node's stored bytes for an origin cell — the ONE write path
+    /// ([`Self::publish`], [`Self::publish_as`], [`Self::amend`] all land here).
+    /// Replace-or-push, never blind-append: `served_bytes` reads the FIRST match, so
+    /// an appended second entry for the same cell would serve bytes the origin no
+    /// longer commits (a `ContentDoesNotMatchCommitment` at every later fetch).
+    /// A seeded `publish` origin is always a fresh cell, so for it this is exactly
+    /// the push it always did.
     fn replace_bytes(&mut self, cell: &CellId, bytes: Vec<u8>) {
         match self.bytes_store.iter_mut().find(|(c, _)| c == cell) {
             Some(entry) => entry.1 = bytes,
@@ -613,8 +717,16 @@ impl WebOfCells {
             .find(|(c, _)| c == cell)
             .map(|(_, b)| b.clone())
     }
+    /// Bind (or re-bind) the committed URL the trusted chrome reads for an origin
+    /// cell. Replace-or-push for the same reason [`Self::replace_bytes`] is: the
+    /// lookup takes the FIRST match, so appending would pin the chrome to a stale
+    /// URL forever. Behaviourally identical for a seeded `publish` (fresh cell ⇒ no
+    /// prior entry).
     fn bind_url(&mut self, cell: &CellId, url: &str) {
-        self.url_store.push((*cell, url.to_string()));
+        match self.url_store.iter_mut().find(|(c, _)| c == cell) {
+            Some(entry) => entry.1 = url.to_string(),
+            None => self.url_store.push((*cell, url.to_string())),
+        }
     }
     fn committed_url(&self, cell: &CellId) -> Option<String> {
         self.url_store
