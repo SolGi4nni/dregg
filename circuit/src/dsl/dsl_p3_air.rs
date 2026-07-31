@@ -35,6 +35,16 @@
 //! | `Transition{n,l}`       | `next[n] - local[l]`                      | `when_transition().assert_zero(n' - l)`  |
 //! | `Polynomial{terms}`     | `Σ coeff·Π local[ci]`                     | `assert_zero(Σ coeff·Π ci)`              |
 //! | `Gated{s,inner}`        | `local[s]·inner`                          | `assert_zero(s·inner)`                   |
+//!
+//! ⚠ That `Gated` row holds ONLY for an algebraic `inner`. A hash form wrapped in
+//! `Gated`/`InvertedGated`/`Squared` has NO faithful row here: `is_hash` matches
+//! only top-level forms, so a wrapped hash was allocated no Poseidon2 aux block and
+//! folded through `eval_expr` to `AB::Expr::ZERO`, emitting `assert_zero(s · 0)` —
+//! satisfied by EVERY assignment, selector on or off. Not gated off: **erased.**
+//! Measured 2026-07-30 on the deployed shielded-spend descriptor, whose nullifier
+//! binding C4 was exactly that shape. `try_from_dsl` now REFUSES such a descriptor
+//! ([`DslP3Error::ErasedConstraint`]) and a standing count of allocated aux blocks
+//! against contained hash forms backs the refusal up form-agnostically.
 //! | `InvertedGated{s,inner}`| `(1-local[s])·inner`                      | `assert_zero((1-s)·inner)`               |
 //! | `Squared{inner}`        | `inner²`                                  | `assert_zero(inner²)`                    |
 //! | `ConditionalNonzero`    | `s·(v·inv - 1)`                           | `assert_zero(s·(v·inv - 1))`             |
@@ -114,6 +124,31 @@ impl DslP3Air {
         for (i, c) in dsl.descriptor.constraints.iter().enumerate() {
             check_algebraic(c, i)?;
         }
+        // THE STANDING CONTROL (runs on every prove AND every verify, not an
+        // injection anyone has to remember to fire): the number of Poseidon2 aux
+        // blocks this AIR ALLOCATES must equal the number of hash forms the
+        // descriptor CONTAINS. `is_hash` is deliberately shallow because it drives
+        // allocation; `hash_forms_deep` counts the same forms wherever they sit. A
+        // mismatch means a hash form exists that gets no aux block — i.e. a
+        // constraint that would lower to nothing. Refuse instead of emitting it.
+        //
+        // `check_algebraic` above already rejects every shape that can cause this
+        // today; this counter is the form-agnostic backstop, so a NEW wrapper form
+        // added to `ConstraintExpr` reds here rather than silently erasing.
+        let allocated = hash_count(dsl);
+        let contained: usize = dsl.descriptor.constraints.iter().map(hash_forms_deep).sum();
+        if allocated != contained {
+            return Err(DslP3Error::ErasedConstraint {
+                index: dsl
+                    .descriptor
+                    .constraints
+                    .iter()
+                    .position(|c| hash_forms_deep(c) != usize::from(is_hash(c)))
+                    .unwrap_or(0),
+                detail: "a hash form is nested inside a wrapper, so it would receive no \
+                         Poseidon2 aux block and lower to assert_zero(0)",
+            });
+        }
         Ok(Self {
             descriptor: dsl.descriptor.clone(),
             base_width: dsl.descriptor.trace_width,
@@ -130,6 +165,16 @@ pub enum DslP3Error {
     /// arithmetization in this module (hash / merkle / lookup). Route such a
     /// circuit through the dedicated arithmetized AIRs instead.
     NonAlgebraicConstraint { index: usize, form: &'static str },
+    /// The descriptor contains a constraint that this module would emit as a
+    /// TRIVIALLY-SATISFIED expression — a hash form nested inside a
+    /// `Gated`/`InvertedGated`/`Squared` wrapper, which gets no Poseidon2 aux block
+    /// and folds through `eval_expr` to `assert_zero(selector · 0)`.
+    ///
+    /// ⚑ This is a REFUSAL, not a gate-off. Before 2026-07-30 the same descriptor
+    /// lowered silently and the wrapped constraint was ERASED: satisfied by every
+    /// assignment, including with the selector set to 1. A constraint form this
+    /// module cannot emit must be an error, never a no-op.
+    ErasedConstraint { index: usize, detail: &'static str },
     /// The real Plonky3 verifier rejected the proof.
     VerificationFailed { reason: String },
 }
@@ -140,6 +185,12 @@ impl core::fmt::Display for DslP3Error {
             DslP3Error::NonAlgebraicConstraint { index, form } => write!(
                 f,
                 "constraint {index} is non-algebraic ({form}); use the arithmetized p3 AIR for it"
+            ),
+            DslP3Error::ErasedConstraint { index, detail } => write!(
+                f,
+                "constraint {index} would be ERASED by this lowering ({detail}); \
+                 emit the hash ungated, or route the descriptor through the IR2 \
+                 chip-lookup lowering, which honours selector-muxed hash sites"
             ),
             DslP3Error::VerificationFailed { reason } => {
                 write!(f, "p3 verification failed: {reason}")
@@ -160,6 +211,37 @@ impl std::error::Error for DslP3Error {}
 /// (`lean_lookup_air`); both are surfaced as errors rather than silently
 /// dropped.
 fn check_algebraic(c: &ConstraintExpr, index: usize) -> Result<(), DslP3Error> {
+    check_algebraic_inner(c, index, false)
+}
+
+/// `wrapped` is true once we have descended through a `Gated`/`InvertedGated`/
+/// `Squared`. A hash form found there is REFUSED (2026-07-30): it would receive no
+/// Poseidon2 aux block and `eval_expr` returns `AB::Expr::ZERO` for every hash form,
+/// so the emitted constraint would be `assert_zero(selector · 0)` — satisfied by
+/// every assignment. That is erasure, not gating, and it silently deleted the
+/// shielded-spend nullifier binding (C4) from the deployed hiding verifier.
+///
+/// ⚑ SUBSTRATE: this is a refusal in a LOWERING. It authors no constraint — the
+/// repair for a descriptor that trips it is to emit the hash ungated (into a column
+/// carried on every row) or to route the descriptor through the IR2 chip-lookup
+/// lowering, which does honour selector-muxed hash sites. The Lean algebraic
+/// emitter cannot express this shape at all: `Dregg2.Exec.CircuitEmit`'s
+/// `EmittedConstraintA` has `gated`/`invertedGated`/`squared` but NO hash
+/// constructor — the hash forms live in the separate `EmittedConstraintM` /
+/// `HashForm` inductives. A nested hash is therefore only reachable from a
+/// Rust-authored descriptor.
+fn check_algebraic_inner(
+    c: &ConstraintExpr,
+    index: usize,
+    wrapped: bool,
+) -> Result<(), DslP3Error> {
+    if wrapped && is_hash(c) {
+        return Err(DslP3Error::ErasedConstraint {
+            index,
+            detail: "a Hash/Hash2to1/Hash4to1/Hash3Cap/MerkleHash8 nested inside a \
+                     Gated/InvertedGated/Squared wrapper",
+        });
+    }
     match c {
         ConstraintExpr::Equality { .. }
         | ConstraintExpr::Multiplication { .. }
@@ -176,7 +258,7 @@ fn check_algebraic(c: &ConstraintExpr, index: usize) -> Result<(), DslP3Error> {
         | ConstraintExpr::MerkleHash8 { .. } => Ok(()),
         ConstraintExpr::Gated { inner, .. }
         | ConstraintExpr::InvertedGated { inner, .. }
-        | ConstraintExpr::Squared { inner } => check_algebraic(inner, index),
+        | ConstraintExpr::Squared { inner } => check_algebraic_inner(inner, index, true),
         ConstraintExpr::MerkleHash { .. } => Err(DslP3Error::NonAlgebraicConstraint {
             index,
             form: "MerkleHash (use the Lean-emitted IR2 descriptor for position-indexed Merkle hashing)",
@@ -222,6 +304,27 @@ fn is_hash(c: &ConstraintExpr) -> bool {
             | ConstraintExpr::Hash3Cap { .. }
             | ConstraintExpr::MerkleHash8 { .. }
     )
+}
+
+/// Number of hash forms in a constraint TREE, including any nested under a
+/// `Gated`/`InvertedGated`/`Squared` wrapper — the forms [`is_hash`] does NOT see
+/// because it is deliberately shallow (it drives aux-block ALLOCATION, and only a
+/// top-level hash gets one).
+///
+/// The gap between this and [`is_hash`] IS the erasure: a nested hash is counted
+/// here, not there, so `contained != allocated` and [`DslP3Air::try_from_dsl`]
+/// refuses. Keep this recursive over every wrapper form `ConstraintExpr` ever
+/// gains — that is what makes the control form-agnostic.
+fn hash_forms_deep(c: &ConstraintExpr) -> usize {
+    if is_hash(c) {
+        return 1;
+    }
+    match c {
+        ConstraintExpr::Gated { inner, .. }
+        | ConstraintExpr::InvertedGated { inner, .. }
+        | ConstraintExpr::Squared { inner } => hash_forms_deep(inner),
+        _ => 0,
+    }
 }
 
 /// Number of Poseidon2 hash constraints in a descriptor (= number of aux blocks).
@@ -509,7 +612,18 @@ fn eval_expr<AB: AirBuilder>(c: &ConstraintExpr, local: &[AB::Var], next: &[AB::
             }
             product
         }
-        // Unreachable here: hash forms are emitted as Poseidon2 aux blocks, not eval_expr terms.
+        // ⚑ FAIL CLOSED, not silently zero (2026-07-30). These arms returned
+        // `AB::Expr::ZERO`, and that value was NOT unreachable: a hash nested under
+        // `Gated`/`InvertedGated`/`Squared` folded straight through here, so the
+        // emitted constraint was `assert_zero(selector · 0)` — trivially true for
+        // every assignment. That erased the shielded-spend nullifier binding from
+        // the deployed verifier.
+        //
+        // Every one of these forms is now REFUSED at `check_algebraic` at ANY depth
+        // (top-level hashes are emitted as Poseidon2 aux blocks in `eval` before the
+        // catch-all ever calls this function), so reaching here is a lowering bug,
+        // not an input. Abort loudly rather than emit a satisfied-by-everything
+        // constraint.
         ConstraintExpr::Hash { .. }
         | ConstraintExpr::Hash2to1 { .. }
         | ConstraintExpr::Hash4to1 { .. }
@@ -519,7 +633,10 @@ fn eval_expr<AB: AirBuilder>(c: &ConstraintExpr, local: &[AB::Var], next: &[AB::
         | ConstraintExpr::Lookup { .. }
         | ConstraintExpr::ChainedHash2to1 { .. }
         | ConstraintExpr::SeedHash2to1 { .. }
-        | ConstraintExpr::TableFunction { .. } => AB::Expr::ZERO,
+        | ConstraintExpr::TableFunction { .. } => unreachable!(
+            "a non-algebraic form reached eval_expr; try_from_dsl must have refused it \
+             (DslP3Error::ErasedConstraint / NonAlgebraicConstraint)"
+        ),
     }
 }
 

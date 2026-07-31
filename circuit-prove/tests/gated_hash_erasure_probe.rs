@@ -1,44 +1,54 @@
-//! PROBE — `Gated{Hash}` on the `DslP3Air` path is not gated off, it is ERASED.
+//! PROBE — `Gated{Hash}` on the `DslP3Air` path was not gated off, it was ERASED.
 //!
 //! ## The mechanism (read at `circuit/src/dsl/dsl_p3_air.rs`, then measured here)
 //!
-//! `DslP3Air::eval` dispatches hash constraints on `is_hash(c)`, and `is_hash`
-//! matches only TOP-LEVEL hash forms (`dsl_p3_air.rs:216-225`). A `Hash` wrapped in
-//! `Gated`/`InvertedGated`/`Squared` therefore:
-//!   1. is not counted by `hash_count`, so it gets NO Poseidon2 aux block;
-//!   2. is not extended into the trace by `extend_trace_with_hash_aux` (same filter);
-//!   3. falls to the catch-all `c => builder.assert_zero(eval_expr(c))` (`:609-612`),
-//!      and `eval_expr` returns `AB::Expr::ZERO` for EVERY hash form (`:512-522`).
+//! `DslP3Air::eval` dispatches hash constraints on `is_hash(c)`, and `is_hash` matched
+//! only TOP-LEVEL hash forms. A `Hash` wrapped in `Gated`/`InvertedGated`/`Squared`
+//! therefore:
+//!   1. was not counted by `hash_count`, so it got NO Poseidon2 aux block;
+//!   2. was not extended into the trace by `extend_trace_with_hash_aux` (same filter);
+//!   3. fell to the catch-all `c => builder.assert_zero(eval_expr(c))`, and `eval_expr`
+//!      returned `AB::Expr::ZERO` for EVERY hash form.
 //!
-//! So the emitted constraint is `assert_zero(selector · 0)` — satisfied by every
-//! assignment, including `selector = 1`. `check_algebraic` recurses through the
-//! wrapper (`:177-179`) and returns `Ok`, so nothing refuses.
+//! So the emitted constraint was `assert_zero(selector · 0)` — satisfied by every
+//! assignment, including `selector = 1`. `check_algebraic` recursed through the wrapper
+//! and returned `Ok`, so nothing refused.
 //!
-//! ⚑ Both probes below are GREEN-MEANS-BROKEN. A pass is the failure signal: it is
-//! a shielded spend of a note the prover never owned, under a nullifier of their
-//! choosing, accepted by the deployed hiding verifier. They are written as
-//! assertions of the measured reality so the file is a standing record; when the
-//! p3 lowering is repaired they must be inverted, not deleted.
+//! ## MEASURED 2026-07-30 at `814cccbc4`, BEFORE the repair: 3 passed, 0 failed
 //!
-//! ## MEASURED 2026-07-30 at this commit (`cargo test -p dregg-circuit-prove --test
-//! gated_hash_erasure_probe`): **3 passed, 0 failed** — i.e. all three holes are real.
+//! The three probes below were written to assert the hole and all three passed — green
+//! was the failure signal:
 //!
-//! - `probe_a` — deleting C4 leaves the p3 AIR bit-identical in width, and the tamper
-//!   `forged_nullifier_fails` performs is rejected identically with and without C4.
-//!   C4 costs zero columns and zero constraints on this lowering.
+//! - `probe_a` — deleting C4 left the p3 AIR bit-identical in width, and the tamper
+//!   `forged_nullifier_fails` performed was rejected identically with and without C4.
+//!   C4 cost zero columns and zero constraints on that lowering.
 //! - `probe_b1` — an ARBITRARY row-0 nullifier proved and verified with `is_leaf = 1`,
 //!   i.e. with C4's selector LIVE. That isolates ERASURE from gate-off.
-//! - `probe_b2` — a foreign leaf the prover has no preimage for, under a nullifier of
+//! - `probe_b2` — a foreign leaf the prover had no preimage for, under a nullifier of
 //!   their choosing, with a well-formed 3-entry PI vector: **proved and verified on the
-//!   deployed hiding verifier.**
+//!   deployed hiding verifier.** A shielded spend of a note the prover never owned.
+//!
+//! ## What they assert NOW
+//!
+//! The same three attacks, inverted: each must be REFUSED. Inverted rather than
+//! deleted, so the file is the standing adversarial regression for both defects — the
+//! erased hash binding (C4) and the unpinned value-theft selector (`is_leaf`). The
+//! form-agnostic half of the repair (a lowering that refuses to emit nothing) has its
+//! own control at `circuit/tests/p3_lowering_emits_every_hash.rs`.
+//!
+//! ⚠ STILL OPEN, deliberately not attempted here: the spending key is CARRIED, not
+//! BOUND. `KEY0..3` appear in C4 and nowhere else, `OWNER` in C6a and nowhere else, and
+//! no constraint relates them — so a fresh key per spend yields a fresh nullifier for
+//! the SAME note and a nullifier SET cannot detect the replay. That survives a fully
+//! repaired C4 and needs an in-AIR owner derivation no shielded descriptor emits.
 
 use dregg_circuit::dsl::circuit::{ConstraintExpr, DslCircuit};
 use dregg_circuit::dsl::dsl_p3_air::{DslP3Air, prove_dsl_zk, verify_dsl_zk};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit_prove::shielded::spend_circuit::{
-    ShieldedSpendWitness, col, generate_shielded_spend_trace, pi, shielded_spend_circuit,
-    shielded_spend_descriptor,
+    PUBLIC_INPUT_COUNT, ShieldedSpendWitness, col, generate_shielded_spend_trace, pi,
+    shielded_spend_circuit, shielded_spend_descriptor,
 };
 
 fn test_witness(depth: usize) -> ShieldedSpendWitness {
@@ -68,77 +78,6 @@ fn test_witness(depth: usize) -> ShieldedSpendWitness {
     }
 }
 
-/// PROBE (a) — **C4 is dead weight on the p3 path.**
-///
-/// The structural half of the delete-C4 experiment, without editing the source:
-/// build the descriptor, strip the `Gated{IS_LEAF, Hash{NULLIFIER, ..}}` push, and
-/// show the two descriptors produce the SAME p3 AIR shape — same width, same
-/// number of Poseidon2 aux blocks, same trace extension. If C4 contributed any
-/// constraint to this lowering, the widths would differ by `POSEIDON2_PERM_AUX_COLS`.
-///
-/// Measured: identical. C4 costs zero columns and zero constraints on `DslP3Air`.
-#[test]
-fn probe_a_c4_contributes_nothing_to_the_p3_air() {
-    let with_c4 = shielded_spend_descriptor();
-
-    // The C4 push, located structurally (a `Gated` whose inner is a `Hash`).
-    let c4_positions: Vec<usize> = with_c4
-        .constraints
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| {
-            matches!(c, ConstraintExpr::Gated { inner, .. }
-                if matches!(**inner, ConstraintExpr::Hash { .. }))
-        })
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(
-        c4_positions.len(),
-        1,
-        "the shielded-spend descriptor should carry exactly one Gated{{Hash}} (C4)"
-    );
-
-    let mut without_c4 = with_c4.clone();
-    without_c4.constraints.remove(c4_positions[0]);
-
-    let air_with = DslP3Air::try_from_dsl(&DslCircuit::new(with_c4.clone()))
-        .expect("descriptor with C4 must lower");
-    let air_without = DslP3Air::try_from_dsl(&DslCircuit::new(without_c4.clone()))
-        .expect("descriptor without C4 must lower");
-
-    let w_with = <DslP3Air as p3_air::BaseAir<p3_baby_bear::BabyBear>>::width(&air_with);
-    let w_without = <DslP3Air as p3_air::BaseAir<p3_baby_bear::BabyBear>>::width(&air_without);
-
-    assert_eq!(
-        w_with, w_without,
-        "GREEN IS THE FAILURE SIGNAL: deleting C4 does not change the p3 AIR width, \
-         so C4 allocates no Poseidon2 aux block — it is erased, not gated"
-    );
-
-    // And the honest trace proves against BOTH airs with the SAME public inputs.
-    let w = test_witness(4);
-    let (trace, pis) = generate_shielded_spend_trace(&w);
-    let c_with = DslCircuit::new(with_c4);
-    let c_without = DslCircuit::new(without_c4);
-    let p1 = prove_dsl_zk(&c_with, &trace, &pis).expect("honest trace proves with C4");
-    verify_dsl_zk(&c_with, &p1, &pis).expect("verifies with C4");
-    let p2 = prove_dsl_zk(&c_without, &trace, &pis).expect("honest trace proves without C4");
-    verify_dsl_zk(&c_without, &p2, &pis).expect("verifies without C4");
-
-    // And the in-test form of "delete C4, the suite stays green": the tamper
-    // `forged_nullifier_fails` performs (bump the row-0 nullifier cell, leave the PI)
-    // is rejected IDENTICALLY with and without C4, because only the row-0 boundary
-    // bites. That test therefore cannot detect the loss of C4.
-    let mut tampered = trace.clone();
-    tampered[0][col::NULLIFIER] = tampered[0][col::NULLIFIER] + BabyBear::ONE;
-    let rejects_with = proving_rejects(&c_with, &tampered, &pis);
-    let rejects_without = proving_rejects(&c_without, &tampered, &pis);
-    assert!(
-        rejects_with && rejects_without,
-        "the boundary rejects in both worlds — so `forged_nullifier_fails` stays green with C4 deleted"
-    );
-}
-
 /// A bad trace makes the self-verifying prover EITHER return `Err` OR (in a debug
 /// build) panic in p3's `check_constraints` debug assertion. Both are "rejected".
 fn proving_rejects(circuit: &DslCircuit, trace: &[Vec<BabyBear>], pis: &[BabyBear]) -> bool {
@@ -148,20 +87,84 @@ fn proving_rejects(circuit: &DslCircuit, trace: &[Vec<BabyBear>], pis: &[BabyBea
     !matches!(r, Ok(Ok(_)))
 }
 
-/// PROBE (b.1) — **the nullifier is free even with the gate ON.**
+/// PROBE (a), INVERTED — **C4 must cost something.**
 ///
-/// Honest depth-4 trace, `is_leaf = 1` on row 0 exactly as the honest generator
-/// writes it (so C4's selector is LIVE), and the row-0 `NULLIFIER` cell replaced
-/// with an arbitrary felt. `pi[0]` is set to the same felt so the row-0 boundary
-/// still holds. Everything else is untouched and honest.
-///
-/// If C4 were enforced, `is_leaf · (hash_fact(current, key) − nullifier) = 0` with
-/// `is_leaf = 1` would force the honest nullifier and this must be REJECTED.
-///
-/// ⚑ Predicted and measured: it PROVES. That isolates defect 1 — erasure — from
-/// defect 2 (the unpinned selector), because the selector is 1 here.
+/// Two claims, both of which were FALSE before the repair:
+///   1. the descriptor carries NO `Gated{Hash}` at all (that shape is now refused
+///      outright by `try_from_dsl`, so its presence would take the whole circuit red);
+///   2. deleting C4 changes the p3 AIR — it must cost one Poseidon2 aux block. Equal
+///      widths mean C4 emits nothing, which is exactly the erasure that shipped.
 #[test]
-fn probe_b1_arbitrary_nullifier_proves_with_is_leaf_one() {
+fn probe_a_c4_costs_a_real_aux_block() {
+    let full = shielded_spend_descriptor();
+
+    let wrapped: Vec<usize> = full
+        .constraints
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| {
+            matches!(
+                c,
+                ConstraintExpr::Gated { .. }
+                    | ConstraintExpr::InvertedGated { .. }
+                    | ConstraintExpr::Squared { .. }
+            ) && contains_hash(c)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        wrapped.is_empty(),
+        "the shielded-spend descriptor must carry NO wrapped hash (found at {wrapped:?}); \
+         a wrapped hash is erased on the DslP3Air path"
+    );
+
+    let idx = full
+        .constraints
+        .iter()
+        .position(|c| {
+            matches!(c, ConstraintExpr::Hash { output_col, .. } if *output_col == col::NULLIFIER)
+        })
+        .expect("C4 must be a top-level Hash into col::NULLIFIER");
+    let mut without_c4 = full.clone();
+    without_c4.constraints.remove(idx);
+
+    let air_with = DslP3Air::try_from_dsl(&DslCircuit::new(full)).expect("descriptor must lower");
+    let air_without =
+        DslP3Air::try_from_dsl(&DslCircuit::new(without_c4)).expect("stripped must lower");
+    let w_with = <DslP3Air as p3_air::BaseAir<p3_baby_bear::BabyBear>>::width(&air_with);
+    let w_without = <DslP3Air as p3_air::BaseAir<p3_baby_bear::BabyBear>>::width(&air_without);
+
+    assert!(
+        w_with > w_without,
+        "C4 must allocate a Poseidon2 aux block ({w_with} vs {w_without}); equal widths \
+         are the erasure signature"
+    );
+}
+
+fn contains_hash(c: &ConstraintExpr) -> bool {
+    match c {
+        ConstraintExpr::Hash { .. }
+        | ConstraintExpr::Hash2to1 { .. }
+        | ConstraintExpr::Hash4to1 { .. }
+        | ConstraintExpr::Hash3Cap { .. }
+        | ConstraintExpr::MerkleHash8 { .. } => true,
+        ConstraintExpr::Gated { inner, .. }
+        | ConstraintExpr::InvertedGated { inner, .. }
+        | ConstraintExpr::Squared { inner } => contains_hash(inner),
+        _ => false,
+    }
+}
+
+/// PROBE (b.1), INVERTED — **an arbitrary nullifier must be refused.**
+///
+/// Honest depth-4 trace; the `NULLIFIER` cell replaced on every row with an arbitrary
+/// felt, and `pi[0]` moved to match so the row-0 boundary HOLDS. Everything else is
+/// honest, so C4 is the only constraint left that can refuse.
+///
+/// Measured before the repair: this PROVED and VERIFIED, with `is_leaf = 1` — i.e. with
+/// C4's selector live. That is what distinguishes erasure from a gate that is off.
+#[test]
+fn probe_b1_arbitrary_nullifier_is_refused() {
     let circuit = shielded_spend_circuit();
     let w = test_witness(4);
     let (mut trace, mut pis) = generate_shielded_spend_trace(&w);
@@ -169,56 +172,46 @@ fn probe_b1_arbitrary_nullifier_proves_with_is_leaf_one() {
     assert_eq!(
         trace[0][col::IS_LEAF],
         BabyBear::ONE,
-        "the honest generator arms C4's selector on row 0"
+        "row 0 carries the armed selector"
     );
 
     let chosen = BabyBear::new(0x0BADF00D % dregg_circuit::field::BABYBEAR_P);
-    assert_ne!(
-        chosen,
-        w.nullifier(),
-        "the chosen nullifier must differ from the bound one"
-    );
-    trace[0][col::NULLIFIER] = chosen;
+    assert_ne!(chosen, w.nullifier());
+    for row in trace.iter_mut() {
+        row[col::NULLIFIER] = chosen;
+    }
     pis[pi::NULLIFIER] = chosen;
 
-    let proof = prove_dsl_zk(&circuit, &trace, &pis).expect(
-        "GREEN IS THE FAILURE SIGNAL: an arbitrary nullifier proved with is_leaf = 1, \
-         so C4 is erased on the DslP3Air path",
+    assert!(
+        proving_rejects(&circuit, &trace, &pis),
+        "a nullifier the prover chose must NOT prove — C4 binds it to \
+         hash_fact(leaf_commit, key)"
     );
-    verify_dsl_zk(&circuit, &proof, &pis)
-        .expect("and the deployed hiding verifier accepts the forged nullifier");
 }
 
-/// PROBE (b.2) — **the full forgery: a foreign leaf under a chosen nullifier.**
+/// PROBE (b.2), INVERTED — **the full forgery must be refused.**
 ///
-/// A shielded spend of a note the prover never owned, under a nullifier of their
-/// choosing, accepted by the deployed hiding verifier:
+/// The attack, unchanged from the measurement:
+/// - `is_leaf = 0` on EVERY row, which used to disarm C6b (the value-theft tooth) on
+///   all three lowerings because the selector was pinned to nothing;
+/// - `trace[0][CURRENT]` set to a FOREIGN leaf the prover has no preimage for, with the
+///   Merkle chain and root recomputed forward so C3 and C5 still hold;
+/// - `trace[0][NULLIFIER]` set to an arbitrary felt;
+/// - a WELL-FORMED 3-entry PI vector, so a rejection is attributable to a constraint.
 ///
-/// - `is_leaf = 0` on EVERY row (only `Binary{is_leaf}` constrains it; no
-///   `BoundaryDef::Fixed{First, IS_LEAF, 1}` exists) — this disarms C6b, the
-///   value-theft tooth, on all three lowerings;
-/// - `trace[0][CURRENT]` set to a FOREIGN leaf the prover has no preimage for, with
-///   the Merkle chain and root recomputed forward so C3 and C5 still hold;
-/// - `trace[0][NULLIFIER]` set to an arbitrary felt (C4 erased on p3 regardless of
-///   the selector);
-/// - PIs `[chosen felt, recomputed root, honest value_binding]`.
-///
-/// ⚑ Predicted and measured: proves and verifies.
+/// Measured before the repair: proved AND verified on the deployed hiding verifier.
 #[test]
-fn probe_b2_foreign_leaf_chosen_nullifier_proves_and_verifies() {
+fn probe_b2_foreign_leaf_chosen_nullifier_is_refused() {
     let circuit = shielded_spend_circuit();
     let w = test_witness(4);
     let (trace, honest_pis) = generate_shielded_spend_trace(&w);
 
-    // A leaf the prover never created and has no preimage for.
     let foreign_leaf = w.leaf_commitment() + BabyBear::new(0xDEAD);
 
     let mut attack = trace.clone();
-    // Disarm the value-theft tooth: is_leaf is pinned to nothing.
     for row in attack.iter_mut() {
         row[col::IS_LEAF] = BabyBear::ZERO;
     }
-    // Re-chain the whole membership path forward from the foreign leaf.
     let mut cur = foreign_leaf;
     for row in attack.iter_mut() {
         let parent = hash_fact(
@@ -234,23 +227,22 @@ fn probe_b2_foreign_leaf_chosen_nullifier_proves_and_verifies() {
         row[col::PARENT] = parent;
         cur = parent;
     }
-    // A nullifier of the prover's choosing — unrelated to any key or leaf.
     let chosen_nullifier = BabyBear::new(0x00C0FFEE % dregg_circuit::field::BABYBEAR_P);
-    attack[0][col::NULLIFIER] = chosen_nullifier;
+    for row in attack.iter_mut() {
+        row[col::NULLIFIER] = chosen_nullifier;
+    }
 
     let forged_root = attack.last().unwrap()[col::PARENT];
     let attack_pis = vec![chosen_nullifier, forged_root, honest_pis[pi::VALUE_BINDING]];
-    assert_eq!(
-        attack_pis.len(),
-        dregg_circuit_prove::shielded::spend_circuit::PUBLIC_INPUT_COUNT,
-        "the PI vector must be well-formed (3 entries), so a rejection could only be \
-         attributed to a constraint"
+    assert_eq!(attack_pis.len(), PUBLIC_INPUT_COUNT);
+
+    assert!(
+        proving_rejects(&circuit, &attack, &attack_pis),
+        "a shielded spend of a note the prover never owned, under a nullifier of their \
+         choosing, must NOT prove"
     );
 
-    let proof = prove_dsl_zk(&circuit, &attack, &attack_pis).expect(
-        "GREEN IS THE FAILURE SIGNAL: a shielded spend of a note the prover never \
-         owned, under a nullifier of their choosing, produced a proof",
-    );
-    verify_dsl_zk(&circuit, &proof, &attack_pis)
-        .expect("and the DEPLOYED hiding verifier accepted it");
+    // And the honest witness still does prove — the refusal is not blanket.
+    let proof = prove_dsl_zk(&circuit, &trace, &honest_pis).expect("honest spend must prove");
+    verify_dsl_zk(&circuit, &proof, &honest_pis).expect("and verify");
 }

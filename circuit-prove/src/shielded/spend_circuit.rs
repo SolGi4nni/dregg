@@ -27,57 +27,62 @@
 //!   `merkle_root` — `parent = hash_fact(current, [sib0,sib1,sib2,position])` per
 //!   level, chained by `next.current == local.parent`, last row's `current`
 //!   pinned to `merkle_root`;
-//! - **(c) nullifier:** ⚠ **THIS CLAIM IS FALSE ON THE DEPLOYED PATH — see the
-//!   2026-07-30 correction below.**
+//! - **(c) nullifier:** `nullifier = hash_fact(leaf_commitment, key[0..4])`, bound
+//!   UNGATED on every row (C4) and pinned to the published `nullifier` PI on row 0.
+//!   ⚠ This binds the nullifier to the note; it does **not** by itself refuse a
+//!   double-spend — see residual (3) below.
 //!
-//! ⚠⚠ **CORRECTION 2026-07-30 (measured by reading the lowering, not run).** The text
-//! this replaced read:
+//! ⚠⚠ **HISTORY 2026-07-30 — two defects found and REPAIRED in this commit; one
+//! remains open.** What the three were:
 //!
-//! > **(c) nullifier:** `nullifier = hash_fact(leaf_commitment, key[0..4])`, bound on
-//! > row 0 and pinned to the published `nullifier` PI. Reusing a note (same
-//! > commitment+key) yields the same nullifier → the chain's nullifier set rejects the
-//! > double-spend.
-//!
-//! Three separate reasons it does not hold of the object this module actually proves:
-//!
-//! 1. **C4 is not enforced on the `DslP3Air` path at all** — not gated off, ERASED. C4
-//!    is `Gated{is_leaf, Hash{..}}`. `dsl_p3_air::is_hash` matches only TOP-LEVEL hash
-//!    forms, so a wrapped `Hash` gets no Poseidon2 aux block and is not counted by
-//!    `hash_count`; it falls to the `c => builder.assert_zero(eval_expr(c))` arm, and
-//!    `eval_expr` returns `AB::Expr::ZERO` for every hash form
-//!    (`dsl_p3_air.rs:512-522`). The emitted constraint is therefore
-//!    `assert_zero(is_leaf · 0)` — trivially true for EVERY assignment, including
-//!    `is_leaf = 1`. `col::NULLIFIER` is a free cell whose only remaining tie is the
-//!    row-0 `PiBinding` to `pi[0]`, i.e. it equals whatever the prover publishes.
-//!    This module's own §"IMPLEMENTATION NOTE" states the rule ("a gated Hash is NOT
-//!    enforced on this path") three paragraphs above the constraint that breaks it; the
-//!    note explains why C6a/C6b were split and was never applied to C4.
-//!    `verify_stark_side` (`transfer.rs:148-172`) verifies through exactly this path.
-//! 2. **`is_leaf` is pinned to nothing.** The only constraint on it is
-//!    `Binary{is_leaf}`, and `boundaries` contains three `PiBinding`s and no
-//!    `BoundaryDef::Fixed{First, IS_LEAF, 1}`. A prover setting `is_leaf = 0` on every
-//!    row also discharges **C6b** (the value-theft tooth), on ALL THREE lowerings of
-//!    this descriptor — including the ones that DO honour gated hashes
-//!    (`dsl/circuit.rs::evaluate_with_tables`, `shielded_spend_leaf_adapter.rs`'s
-//!    `SiteSel::When`). With `is_leaf = 0`, row 0's `current` is free again and the
-//!    "spender can only spend a note whose preimage they know" property is gone.
-//! 3. **"same commitment+key" is a premise the adversary chooses.** `col::KEY0..KEY3`
-//!    appear in C4 and NOWHERE else, and `col::OWNER` appears in C6a and nowhere else.
-//!    No constraint relates the two. So even with C4 fully enforced, one note yields as
-//!    many distinct nullifiers as the prover has keys, and a nullifier SET cannot
-//!    detect the replay. The same gap is in the Lean re-authoring
+//! 1. **C4 was ERASED on the `DslP3Air` path** — not gated off, erased. C4 read
+//!    `Gated{is_leaf, Hash{..}}`, and `dsl_p3_air::is_hash` matched only TOP-LEVEL
+//!    hash forms, so a wrapped `Hash` got no Poseidon2 aux block, was not counted by
+//!    `hash_count`, and fell to the `c => builder.assert_zero(eval_expr(c))` arm —
+//!    where `eval_expr` returned `AB::Expr::ZERO` for every hash form. The emitted
+//!    constraint was `assert_zero(is_leaf · 0)`: satisfied by EVERY assignment,
+//!    including `is_leaf = 1`. `col::NULLIFIER` was a free cell whose only tie was
+//!    the row-0 `PiBinding` to `pi[0]` — i.e. it equalled whatever the prover chose to
+//!    publish. `verify_stark_side` (`transfer.rs`) verifies through exactly that path.
+//!    This module's own §"IMPLEMENTATION NOTE" stated the rule three paragraphs above
+//!    the constraint that broke it; it explains why C6a/C6b were split and was never
+//!    applied to C4. **REPAIRED:** C4 is now an ungated per-row `Hash` over
+//!    `col::LEAF_COMMIT`, and `DslP3Air::try_from_dsl` now REFUSES any descriptor with
+//!    a nested hash (`DslP3Error::ErasedConstraint`) instead of erasing it.
+//! 2. **`is_leaf` was pinned to nothing.** Its only constraint was `Binary{is_leaf}`,
+//!    and `boundaries` held three `PiBinding`s and no `Fixed{First, IS_LEAF, 1}`. A
+//!    prover setting `is_leaf = 0` on every row also discharged **C6b** (the
+//!    value-theft tooth) on ALL THREE lowerings, including the two that DO honour
+//!    gated hashes (`dsl/circuit.rs::evaluate_with_tables`,
+//!    `shielded_spend_leaf_adapter.rs`'s `SiteSel::When`), so row 0's `current` was a
+//!    free cell. **REPAIRED:** `BoundaryDef::Fixed{First, IS_LEAF, 1}` now arms C6b.
+//! 3. ⚠ **STILL OPEN — the spending key is CARRIED, not BOUND.** `col::KEY0..KEY3`
+//!    appear in C4 and nowhere else; `col::OWNER` appears in C6a and nowhere else; no
+//!    constraint relates the two. A fresh key per spend therefore yields a fresh
+//!    nullifier for the SAME note, so a nullifier SET cannot detect the replay — a
+//!    double-spend survives a fully repaired C4. Closing it needs an **in-AIR owner
+//!    derivation** (`owner == KDF(spending_key)` inside the circuit), which no
+//!    shielded descriptor emits today. The same gap is in the Lean re-authoring
 //!    (`Emit/ShieldedSpendDescriptor.lean` `lkNullifier`), and
 //!    `ShieldedSpendPortResidual.emitted_nullifier_determined` carries `hk0..hk3`
 //!    ("SAME key") as HYPOTHESES — it proves replay determinism, not double-spend
-//!    refusal.
+//!    refusal. NOT attempted here; named so it is findable.
 //!
-//! What (c) supports as written today: `pi[0]` is a felt the prover published. Nothing
-//! more. The Lean-authored replacement `dregg-shielded-spend-pinned-root::v1` fixes (1)
-//! and (2) — its `lkNullifier` is ungated per-row and it deletes `is_leaf` for IR2 row
-//! boundaries — but as of this date NO Rust source references that descriptor and it is
-//! absent from `descriptor_by_name`'s `STATIC_GOLDENS`; it exists only as
-//! `circuit/descriptors/by-name/dregg-shielded-spend-pinned-root-v1.json`. (3) is open
-//! in both.
+//! The Lean-authored replacement `dregg-shielded-spend-pinned-root::v1` fixes (1) and
+//! (2) structurally (its `lkNullifier` is ungated per-row and it deletes `is_leaf` for
+//! IR2 row boundaries), but no Rust source references that descriptor and it is absent
+//! from `descriptor_by_name`'s `STATIC_GOLDENS`; it exists only as
+//! `circuit/descriptors/by-name/dregg-shielded-spend-pinned-root-v1.json`. Routing this
+//! module onto it remains the real cutover; the repairs above make THIS descriptor
+//! honest in the meantime. (3) is open in both.
+//!
+//! ⚑ **FLAG DAY.** The descriptor and the trace both changed shape: C4 moved from a
+//! gated row-0 hash over `CURRENT` to an ungated per-row hash over `LEAF_COMMIT`, a
+//! `Fixed{First, IS_LEAF, 1}` boundary was added, and
+//! `generate_shielded_spend_trace` now carries `NULLIFIER`/`KEY0..3` on every row
+//! instead of row 0 only. Every previously produced shielded-spend proof no longer
+//! verifies, and any recorded VK for `dregg-shielded-spend-v1` must be re-emitted.
+//! Nothing holds an old one: greenfield, no persisted shielded proofs.
 //!
 //! The leaf commitment, key, and path live only in the witness; the hiding PCS
 //! makes the proof's openings reveal nothing about them. *Owner/leaf is blind.*
@@ -147,6 +152,14 @@ pub mod col {
     // everywhere), and the leaf row pins `current == LEAF_COMMIT` via a
     // `Gated{is_leaf, Equality}` (a degree-1 algebraic constraint, which IS
     // enforced under gating).
+    //
+    // ⚑ 2026-07-30: this note was correct and was NEVER APPLIED TO C4, three
+    // paragraphs below, which stayed a `Gated{Hash}` and was erased on the deployed
+    // verifier for as long as it existed. C4 now follows the same recipe. And the
+    // rule the note states is no longer a convention a reader must remember:
+    // `DslP3Air::try_from_dsl` REFUSES a nested hash outright
+    // (`DslP3Error::ErasedConstraint`), so a descriptor that ignores this note fails
+    // to lower instead of lowering to nothing.
     /// Note value, bound into the leaf commitment (C6). Hidden, carried on all rows.
     pub const VALUE: usize = 12;
     /// Note asset type, bound into the leaf commitment (C6). Hidden, all rows.
@@ -222,14 +235,14 @@ pub const PUBLIC_INPUT_COUNT: usize = 3;
 /// - C2: position validity `pos*(pos-1)*(pos-2)*(pos-3) == 0` (degree 4).
 /// - C3: Merkle hash binding `parent == hash_fact(current,[sib0,sib1,sib2,pos])`
 ///   (every row; padding rows satisfy it by forward-chaining).
-/// - C4: ⚠ **NOT ENFORCED ON THE DEPLOYED `DslP3Air` PATH (2026-07-30).** The text
-///   read "nullifier binding on the leaf row (gated by `is_leaf`):
-///   `nullifier == hash_fact(current,[key0,key1,key2,key3])`". A `Gated{Hash}` lowers to
-///   `assert_zero(selector · 0)` in `dsl_p3_air::eval_expr` — see the module-header
-///   correction. `col::NULLIFIER` is free; only the row-0 `PiBinding` to `pi[0]` remains,
-///   which the prover satisfies on both sides. Additionally, `is_leaf` is pinned to
-///   nothing, so this constraint is discharged by `is_leaf = 0` even on the lowerings
-///   that DO honour gated hashes.
+/// - C4: nullifier binding, **ungated, every row** (repaired 2026-07-30):
+///   `nullifier == hash_fact(leaf_commit,[key0,key1,key2,key3])`. It reads
+///   `col::LEAF_COMMIT` (constant on every row, C6a) rather than `col::CURRENT`
+///   (which climbs the path), so an ungated per-row Poseidon2 aux block enforces it
+///   on the `DslP3Air` path. It previously read
+///   `Gated{is_leaf, Hash{NULLIFIER,[CURRENT,key0..3]}}`, which that lowering ERASED
+///   — see the module-header correction and
+///   `circuit-prove/tests/gated_hash_erasure_probe.rs` for the measurement.
 /// - C5: chain continuity `next.current == local.parent` (Transition; the
 ///   forward-chained padding satisfies it on every checked row).
 /// - C6a: leaf-commitment recompute (ungated Hash, every row):
@@ -249,6 +262,8 @@ pub const PUBLIC_INPUT_COUNT: usize = 3;
 ///
 /// Boundaries:
 /// - Row 0: `nullifier == pi[0]`.
+/// - Row 0: `is_leaf == 1` (Fixed) — arms C6b. Added 2026-07-30; without it a
+///   prover set `is_leaf = 0` everywhere and `current[0]` was a free cell again.
 /// - Last row: `current == pi[1]` (merkle_root). The padding's last row carries
 ///   the root in `current` (= the last real level's parent), so the bound holds.
 /// - Row 0: `value_binding == pi[2]` (carried constant on every row).
@@ -292,13 +307,26 @@ pub fn shielded_spend_descriptor() -> CircuitDescriptor {
         input_cols: vec![col::CURRENT, col::SIB0, col::SIB1, col::SIB2, col::POSITION],
     });
 
-    // C4: nullifier binding on the leaf row (gated by is_leaf).
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_LEAF,
-        inner: Box::new(ConstraintExpr::Hash {
-            output_col: col::NULLIFIER,
-            input_cols: vec![col::CURRENT, col::KEY0, col::KEY1, col::KEY2, col::KEY3],
-        }),
+    // C4: nullifier binding — UNGATED, over LEAF_COMMIT rather than CURRENT.
+    //
+    // ⚑ REPAIRED 2026-07-30 (flag day; see the module header). This read
+    //   Gated{is_leaf, Hash{NULLIFIER, [CURRENT, KEY0..3]}}
+    // and a `Gated{Hash}` is ERASED on the `DslP3Air` path — no Poseidon2 aux block,
+    // folded to `assert_zero(is_leaf · 0)`, satisfied by every assignment. Measured:
+    // an arbitrary nullifier proved and verified with `is_leaf = 1`.
+    //
+    // The repair is the one this file's own IMPLEMENTATION NOTE (above `col::VALUE`)
+    // already prescribed for C6a/C6b and never applied here: emit the hash UNGATED so
+    // its aux block fires on every row, over a column carried CONSTANT on every row.
+    // `CURRENT` is not such a column (it climbs the Merkle path), but `LEAF_COMMIT`
+    // is — and on an honest trace `current[leaf] == leaf_commit` (C6b), so the bound
+    // value is unchanged: `hash_fact(leaf_commitment, key[0..4])`, exactly what
+    // `ShieldedSpendWitness::nullifier()` computes.
+    //
+    // Being ungated, this also survives the `is_leaf = 0` disarm that discharges C6b.
+    constraints.push(ConstraintExpr::Hash {
+        output_col: col::NULLIFIER,
+        input_cols: vec![col::LEAF_COMMIT, col::KEY0, col::KEY1, col::KEY2, col::KEY3],
     });
 
     // C5: chain continuity (Transition; forward-chained padding satisfies it).
@@ -318,19 +346,17 @@ pub fn shielded_spend_descriptor() -> CircuitDescriptor {
     // C6b: pin the leaf to that commitment (gated by is_leaf — a degree-1
     // Equality, enforced under gating).
     //
-    // ⚠ CORRECTION 2026-07-30 (measured by reading). The rest of this comment read:
-    //   "THE VALUE-THEFT TOOTH: `current` is no longer a free cell; it must equal
-    //    hash_fact(value,[asset,owner,randomness]), so a spender can only spend a leaf
-    //    whose full preimage they know (their own note), not an arbitrary commitment
-    //    observed in the public tree."
-    // The tooth is real but UNARMED: `is_leaf` carries only `Binary{is_leaf}` and no
-    // `BoundaryDef::Fixed{First, IS_LEAF, 1}` (see `boundaries` below — three PiBindings,
-    // none on IS_LEAF). A prover setting `is_leaf = 0` on every row makes this Equality
-    // `0 · (current − leaf_commit)`, restoring `current` as a free cell. The claimed
-    // property is therefore a property of the HONEST trace generator
-    // (`generate_shielded_spend_trace`, which writes `is_leaf = 1` on row 0), not of the
-    // constraint system. The tooth arms if this descriptor gains a first-row Fixed
-    // boundary on IS_LEAF — that repair is NOT made here (report-only lane).
+    // THE VALUE-THEFT TOOTH, now ARMED (2026-07-30): `current` on the leaf row must
+    // equal `hash_fact(value,[asset,owner,randomness])`, so a spender can only spend a
+    // leaf whose full preimage they know (their own note), not an arbitrary commitment
+    // observed in the public tree.
+    //
+    // ⚑ Between its introduction and 2026-07-30 the tooth was real but UNARMED:
+    // `is_leaf` carried only `Binary{is_leaf}` and no boundary, so a prover setting
+    // `is_leaf = 0` on every row made this Equality `0 · (current − leaf_commit)` and
+    // `current` became a free cell again. The claimed property was a property of the
+    // HONEST trace generator, not of the constraint system. `boundaries` below now
+    // carries `Fixed{First, IS_LEAF, 1}`, which is what arms it.
     constraints.push(ConstraintExpr::Gated {
         selector_col: col::IS_LEAF,
         inner: Box::new(ConstraintExpr::Equality {
@@ -368,6 +394,22 @@ pub fn shielded_spend_descriptor() -> CircuitDescriptor {
             row: BoundaryRow::First,
             col: col::NULLIFIER,
             pi_index: pi::NULLIFIER,
+        },
+        // ⚑ ARMS C6b (added 2026-07-30). Before this, `is_leaf` carried only
+        // `Binary{is_leaf}` and no boundary at all, so a prover setting `is_leaf = 0`
+        // on every row turned C6b into `0 · (current − leaf_commit)` and `current[0]`
+        // became a free cell again — the value-theft hole, open on ALL THREE
+        // lowerings, including the two that honour gated hashes. Measured: a foreign
+        // leaf with the chain recomputed forward proved and verified.
+        //
+        // Pinning row 0 to 1 arms C6b exactly where the leaf lives. A prover cannot
+        // dodge it by setting `is_leaf = 1` on a later row either: C6b would then
+        // demand `current[k] == leaf_commit` for k > 0, which the Merkle chain makes
+        // unsatisfiable.
+        BoundaryDef::Fixed {
+            row: BoundaryRow::First,
+            col: col::IS_LEAF,
+            value: BabyBear::ONE,
         },
         // The root is the LAST row's PARENT (the membership.rs convention): with
         // forward-chained padding the last row folds the running hash one more
@@ -627,13 +669,18 @@ pub fn generate_shielded_spend_trace(
         row[col::LEAF_COMMIT] = leaf_commit;
         // Value-binding (C7), constant on every row; pads stay zero.
         row[col::VALUE_BINDING] = value_binding;
+        // Nullifier + key limbs, constant on EVERY row (C4 is ungated as of
+        // 2026-07-30, so its Poseidon2 aux block fires per-row over the constant
+        // LEAF_COMMIT / KEY cells). Previously these were written on row 0 only,
+        // which is what a gated C4 needed — and that gating is what erased it.
+        row[col::NULLIFIER] = nullifier;
+        row[col::KEY0] = witness.key[0];
+        row[col::KEY1] = witness.key[1];
+        row[col::KEY2] = witness.key[2];
+        row[col::KEY3] = witness.key[3];
         if i == 0 {
+            // C6b's selector, now PINNED by a first-row Fixed boundary.
             row[col::IS_LEAF] = BabyBear::ONE;
-            row[col::NULLIFIER] = nullifier;
-            row[col::KEY0] = witness.key[0];
-            row[col::KEY1] = witness.key[1];
-            row[col::KEY2] = witness.key[2];
-            row[col::KEY3] = witness.key[3];
         }
         trace.push(row);
         current = parent;
@@ -669,6 +716,14 @@ pub fn generate_shielded_spend_trace(
         row[col::LEAF_COMMIT] = leaf_commit;
         // Value-binding (C7) carried on padding rows too (constant); pads zero.
         row[col::VALUE_BINDING] = value_binding;
+        // Nullifier + keys carried on padding rows too — C4 is ungated, so its
+        // per-row hash binding must hold here as well. `is_leaf` stays 0 (C6b fires
+        // only on row 0, where the Fixed boundary pins the selector to 1).
+        row[col::NULLIFIER] = nullifier;
+        row[col::KEY0] = witness.key[0];
+        row[col::KEY1] = witness.key[1];
+        row[col::KEY2] = witness.key[2];
+        row[col::KEY3] = witness.key[3];
         trace.push(row);
     }
 
@@ -764,27 +819,83 @@ mod tests {
         );
     }
 
-    /// The nullifier binding bites: a trace whose row-0 nullifier disagrees with
-    /// `hash_fact(leaf, key)` cannot prove.
+    /// THE NULLIFIER BINDING (C4) BITES — and this test is written so that ONLY C4
+    /// can make it bite.
+    ///
+    /// ⚠ CORRECTED 2026-07-30. It previously bumped the row-0 nullifier cell and left
+    /// the PI alone, then claimed "BOTH the C4 binding AND the row-0 boundary fail".
+    /// Only the BOUNDARY failed. C4 was a `Gated{Hash}`, erased on this path, so the
+    /// test passed for a reason other than the one it named and could not detect the
+    /// loss of C4 at all — deleting C4 from the descriptor left it green (measured:
+    /// `circuit-prove/tests/gated_hash_erasure_probe.rs::probe_a`).
+    ///
+    /// The corrected instance moves the published PI to MATCH the tampered cell, so
+    /// the row-0 boundary is satisfied and every other constraint is honest. The only
+    /// thing left that can refuse is C4 itself.
     #[test]
     fn forged_nullifier_fails() {
         let circuit = shielded_spend_circuit();
         let w = test_witness(4);
-        let (mut trace, pis) = generate_shielded_spend_trace(&w);
-        // Tamper ONLY the row-0 nullifier cell (leave the PI).
-        //
-        // ⚠ CORRECTION 2026-07-30: the rest of this comment read "Now BOTH the C4
-        // binding (`nullifier == hash_fact(current,key)`) AND the row-0 boundary
-        // (`nullifier == pi[0]`) fail". Only the BOUNDARY fails. C4 is a `Gated{Hash}`
-        // and is erased on this path (module header), so this test passes for a reason
-        // other than the one it names and CANNOT detect the loss of C4 — deleting C4
-        // from `shielded_spend_descriptor()` leaves it green. A test that would bite:
-        // recompute the PI from the tampered cell so the boundary holds, and require
-        // rejection; that instance is expected to PROVE today.
-        trace[0][col::NULLIFIER] = trace[0][col::NULLIFIER] + BabyBear::ONE;
+        let (mut trace, mut pis) = generate_shielded_spend_trace(&w);
+
+        let chosen = w.nullifier() + BabyBear::ONE;
+        // C4 is ungated and per-row, so the tamper must be on every row for the trace
+        // to be internally consistent everywhere EXCEPT at the hash binding — which
+        // is precisely the constraint under test.
+        for row in trace.iter_mut() {
+            row[col::NULLIFIER] = chosen;
+        }
+        // Publish the tampered value, so the row-0 PiBinding boundary HOLDS.
+        pis[pi::NULLIFIER] = chosen;
+
         assert!(
             proving_rejects(&circuit, &trace, &pis),
-            "a forged-nullifier trace must NOT produce a verifying hiding proof"
+            "a nullifier that is not hash_fact(leaf_commit, key) must NOT prove — C4 bites, \
+             and with the PI moved to match, C4 is the ONLY constraint that can refuse"
+        );
+
+        // And the tooth is not a tautology: the SAME trace with the honest nullifier
+        // restored proves and verifies.
+        for row in trace.iter_mut() {
+            row[col::NULLIFIER] = w.nullifier();
+        }
+        pis[pi::NULLIFIER] = w.nullifier();
+        let proof = prove_dsl_zk(&circuit, &trace, &pis).expect("the honest nullifier must prove");
+        verify_dsl_zk(&circuit, &proof, &pis).expect("and must verify");
+    }
+
+    /// C4 IS ACTUALLY EMITTED — the standing regression for the erasure class.
+    ///
+    /// Deleting C4 from the descriptor must make a MEASURABLE difference to the p3
+    /// AIR. It did not, for as long as C4 was a `Gated{Hash}`: the AIR width was
+    /// bit-identical with and without it, because a wrapped hash is allocated no
+    /// Poseidon2 aux block. This is the cheap invariant that catches a regression to
+    /// that shape in this specific descriptor.
+    #[test]
+    fn deleting_c4_changes_the_p3_air() {
+        use dregg_circuit::dsl::dsl_p3_air::DslP3Air;
+
+        let full = shielded_spend_descriptor();
+        let mut without_c4 = full.clone();
+        // C4 is the ungated Hash whose output is col::NULLIFIER.
+        let idx = full
+            .constraints
+            .iter()
+            .position(|c| {
+                matches!(c, ConstraintExpr::Hash { output_col, .. } if *output_col == col::NULLIFIER)
+            })
+            .expect("C4 must be a top-level (ungated) Hash into col::NULLIFIER");
+        without_c4.constraints.remove(idx);
+
+        let a = DslP3Air::try_from_dsl(&DslCircuit::new(full)).expect("full descriptor lowers");
+        let b = DslP3Air::try_from_dsl(&DslCircuit::new(without_c4))
+            .expect("stripped descriptor lowers");
+        let wa = <DslP3Air as p3_air::BaseAir<p3_baby_bear::BabyBear>>::width(&a);
+        let wb = <DslP3Air as p3_air::BaseAir<p3_baby_bear::BabyBear>>::width(&b);
+        assert!(
+            wa > wb,
+            "C4 must cost a Poseidon2 aux block ({wa} vs {wb}); equal widths mean it is \
+             emitting nothing, which is exactly the erasure this descriptor shipped with"
         );
     }
 
@@ -839,22 +950,42 @@ mod tests {
             attack[i][col::PARENT] = parent;
             cur = parent;
         }
-        let null_attack = hash_fact(foreign_leaf, &w.key);
-        attack[0][col::NULLIFIER] = null_attack;
+        // ⚠ CORRECTED 2026-07-30. This built `vec![null_attack, root_attack]` — TWO
+        // entries against `PUBLIC_INPUT_COUNT == 3`, and the circuit reads
+        // `public_values[2]` for the C7b value_binding boundary. The rejection was
+        // therefore attributable to a MALFORMED PI VECTOR, not to C6, so the tooth was
+        // UNEXERCISED and the assertion message was unsupported by the instance.
+        //
+        // The nullifier is NOT rebuilt from the foreign leaf: C4 now binds
+        // `nullifier == hash_fact(leaf_commit, key)`, and the attacker leaves their own
+        // preimage in place, so the honest nullifier is what a consistent trace carries.
         let root_attack = attack.last().unwrap()[col::PARENT];
-        // ⚠ CORRECTION 2026-07-30: this vector has TWO entries against
-        // `PUBLIC_INPUT_COUNT == 3` — the circuit reads `public_values[2]` for the C7b
-        // value_binding boundary. The rejection below is therefore attributable to a
-        // malformed PI vector, not to C6, so the assertion's message ("C6 bites") is
-        // unsupported by this instance and the tooth is UNEXERCISED. Separately, the
-        // attack as written keeps `is_leaf = 1`; the actual cheap attack sets it to 0,
-        // which disarms C6b outright (see the C6b correction above). Left unrepaired
-        // deliberately — this is a report-only lane.
-        let attack_pis = vec![null_attack, root_attack];
+        let attack_pis = vec![w.nullifier(), root_attack, w.value_binding()];
+        assert_eq!(
+            attack_pis.len(),
+            PUBLIC_INPUT_COUNT,
+            "the PI vector must be WELL-FORMED, or the rejection proves nothing about C6"
+        );
 
         assert!(
             proving_rejects(&circuit, &attack, &attack_pis),
-            "a substituted free leaf (value-theft attack) must NOT prove — C6 bites"
+            "a substituted free leaf (value-theft attack) must NOT prove — C6b bites"
+        );
+
+        // THE CHEAP ATTACK, and the reason C6b needed a pinned selector: the same
+        // substitution with `is_leaf = 0` on every row. Until 2026-07-30 that turned
+        // C6b into `0 · (current − leaf_commit)` and the whole thing proved and
+        // verified on the deployed hiding verifier (measured:
+        // `circuit-prove/tests/gated_hash_erasure_probe.rs::probe_b2`). The
+        // `Fixed{First, IS_LEAF, 1}` boundary is what refuses it now.
+        let mut disarmed = attack.clone();
+        for row in disarmed.iter_mut() {
+            row[col::IS_LEAF] = BabyBear::ZERO;
+        }
+        assert!(
+            proving_rejects(&circuit, &disarmed, &attack_pis),
+            "setting is_leaf = 0 must NOT disarm the value-theft tooth — the first-row \
+             Fixed boundary pins the selector"
         );
     }
 
