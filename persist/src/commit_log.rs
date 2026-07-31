@@ -998,6 +998,50 @@ impl PersistentStore {
         self.commit_finalized_turn_with_burns(expected_ordinal, record, &[])
     }
 
+    /// [`Self::commit_finalized_turn`] PLUS arbitrary config blobs written to
+    /// `METADATA_BYTES` in the SAME redb transaction — the same-transaction
+    /// CONFIG weld, the general form of the note/burn/receipt welds above.
+    ///
+    /// # Why this exists
+    ///
+    /// A caller that must persist a blob ALONGSIDE a commit record had only
+    /// [`PersistentStore::set_config`], which opens and commits its OWN write
+    /// transaction. Two transactions is two commit-boundary fsyncs for one
+    /// logical commit, and on this repo's own durable-World path that was the
+    /// entire per-turn cost once the O(N) ledger root was made incremental:
+    /// ~10.3 ms per turn, of which ~5 ms was a second fsync of a few hundred
+    /// bytes (measured, debug, APFS).
+    ///
+    /// It also closes a (small) tear: `starbridge_v2::persistence`'s dual-write
+    /// stores the replayable input `Turn` under the ordinal the commit is ABOUT
+    /// to take and then commits the record. A crash between the two left a turn
+    /// blob for an ordinal with no record — harmless there because recovery reads
+    /// blobs only below the durable cursor, but it is a window that does not need
+    /// to exist. Welded, the blob and the record land together or not at all.
+    ///
+    /// On an IDEMPOTENT REPLAY of an already-committed turn the blobs are NOT
+    /// rewritten, exactly as the welded notes/burns are not: the original commit
+    /// wrote them.
+    pub fn commit_finalized_turn_with_config(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        config_blobs: &[(&str, &[u8])],
+    ) -> Result<u64> {
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            config_blobs,
+        )
+        .map(|outcome| outcome.outcome.ordinal)
+    }
+
     /// [`Self::commit_finalized_turn`] PLUS note commitments appended to the
     /// Poseidon2 note-tree table in the SAME redb transaction — the
     /// same-transaction NOTE weld.
@@ -1039,6 +1083,7 @@ impl PersistentStore {
             None,
             None,
             None,
+            &[],
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1063,6 +1108,7 @@ impl PersistentStore {
             None,
             None,
             Some(executor_state),
+            &[],
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1096,6 +1142,7 @@ impl PersistentStore {
             None,
             None,
             None,
+            &[],
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1391,6 +1438,7 @@ impl PersistentStore {
                 frame,
             }),
             Some(executor_state),
+            &[],
         )?;
         let committed_head = welded.committed_head.ok_or_else(|| {
             StoreError::Integrity(
@@ -1450,6 +1498,7 @@ impl PersistentStore {
             Some(faithful),
             exact_fnsp_v3,
             executor_state,
+            &[],
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1480,6 +1529,7 @@ impl PersistentStore {
             None,
             None,
             None,
+            &[],
         )
         .map(|outcome| outcome.outcome.ordinal)
     }
@@ -1500,6 +1550,7 @@ impl PersistentStore {
         faithful: Option<FinalizedFaithfulRootWeld<'_>>,
         exact_fnsp_v3: Option<ExactFnspV3Weld>,
         executor_state: Option<&crate::FinalizedExecutorConsensusState>,
+        config_blobs: &[(&str, &[u8])],
     ) -> Result<WeldedCommitOutcome> {
         let write_txn = self.db.begin_write()?;
         // Store-open/bootstrap established full faithful/exact history equality. The rolling
@@ -2004,6 +2055,17 @@ impl PersistentStore {
                     "exact finalized turn did not stage both faithful/exact bridge projections"
                         .to_string(),
                 ));
+            }
+        }
+        // The caller's config blobs, in THIS transaction (the same
+        // together-or-not-at-all boundary as the commit record, and the same
+        // single fsync). Opened in its own scope so no later helper can find the
+        // table handle still live. Empty for every caller that has nothing to
+        // weld — byte-identical to not passing it.
+        if !config_blobs.is_empty() {
+            let mut cfg = write_txn.open_table(tables::METADATA_BYTES)?;
+            for (key, value) in config_blobs {
+                cfg.insert(*key, *value)?;
             }
         }
         write_txn.commit()?;

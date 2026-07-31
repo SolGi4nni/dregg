@@ -527,9 +527,15 @@ impl WorldPersist {
             touched_cells,
             removed,
         };
-        // Persist the input turn FIRST (under the ordinal this commit will take),
-        // so that if the commit txn lands, the turn is already durable; if the
-        // turn write fails we abort before advancing the cursor (fail-closed).
+        // The input turn rides IN THE SAME redb transaction as the commit record
+        // (the same-transaction CONFIG weld). It used to be a separate
+        // `set_config` call, which meant a second `begin_write`/`commit` — a
+        // SECOND commit-boundary fsync per turn, and once the ledger root became
+        // incremental that second fsync was about half of the entire durable cost
+        // of a turn (measured: ~10.3 ms/commit, two fsyncs, debug/APFS). Welding
+        // also removes the window where a crash between the two writes left a turn
+        // blob for an ordinal with no record.
+        //
         // The receipt's wall-clock rides WITH the turn: the ledger root commits to
         // it (see `DurableTurn`), so a reopen that cannot read it cannot replay.
         let durable = DurableTurn {
@@ -538,8 +544,12 @@ impl WorldPersist {
         };
         let bytes =
             postcard::to_stdvec(&durable).map_err(|e| StoreError::Serialization(e.to_string()))?;
-        self.store.set_config(&turn_key(self.cursor), &bytes)?;
-        let assigned = self.store.commit_finalized_turn(self.cursor, &record)?;
+        let key = turn_key(self.cursor);
+        let assigned = self.store.commit_finalized_turn_with_config(
+            self.cursor,
+            &record,
+            &[(key.as_str(), bytes.as_slice())],
+        )?;
         self.cursor = assigned + 1;
         Ok(())
     }
