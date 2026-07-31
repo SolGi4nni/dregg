@@ -79,3 +79,14 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
 ## DONE-LOG
 - 21:44 goal adopted; state inventoried from six audits + four confirmed-and-measured exploits.
 - 21:50 `dregg-cell` compiles again (the `tcb_ok`→`TcbStatus` blocker landed); doctrine suite unblocked.
+- 22:15 ⚑ **VALUE8 consumer re-point LANDED** — `AlgoStarkSoundKernel` green (was 6 errors + 2
+  hygiene cascades). The "heartbeat timeout" was a **FALSE DEFEQ**: `Rfix 5` piCount 57 vs the
+  pre-VALUE8 member at 50, and `isDefEq` burned the whole budget unfolding two 304-entry lists
+  before reaching the field that differed. **Root-build adjudication unblocked for every lane.**
+- 22:15 ⚑ **`Gated{Hash}` erasure CLOSED** — 1 of 12 sites was reachable and it was the deployed
+  shielded spend; **probe measured a spend of a note the prover never owned, proved AND verified**.
+  Now `try_from_dsl` refuses (`ErasedConstraint`) and `eval_expr`'s hash `ZERO` → `unreachable!()`
+  — *"that ZERO was never actually unreachable; it WAS the erasure."* Plus `is_leaf` pinned.
+  ⚠ Residual named by that lane: **the spending key is carried, not bound** — a fresh key per spend
+  yields a fresh nullifier for the same note, so a double-spend survives a fully repaired C4.
+  **That is a SIN under this goal and belongs to the authorization lane.**
