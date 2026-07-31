@@ -1,6 +1,39 @@
 # HORIZONLOG — the named-follow-up burn-down
 
 ## ⚑⚑⚑⚑ JULY 30 — the wave CLOCK was outside the committee: three outsider blocks reordered an honest total order, and a fourth fork mechanism fell out of measuring it
+**F1 · ⚑ THE NINE-LANE RE-EMIT IS STAGED AND BLOCKED ON TWO FOREIGN FILES. READY.**
+`5326fbe7f` landed the Lean: `fieldToLanes9_injective` with a TOTAL decoder and a machine-checked left
+inverse — injectivity as a THEOREM, not a hash bound — plus `nine_lanes_is_the_minimum`
+(`P^8 < 2^256 ≤ P^9`) and the 184 geometry (`rotated184_complete`, slot `j`'s ninth lane at column
+`176 + j`, nothing shifted).
+
+**The re-emit cannot run yet, and the refusal is correct.** `scripts/emit_descriptors.py` requires
+`DREGG_VK_REGEN_ACK=$(git rev-parse HEAD:metatheory/Dregg2)` and **refuses a dirty source tree**,
+because artifacts minted from uncommitted `metatheory/` would be UNREVIEWABLE and would record
+`source_dirty=true`. Exactly two files block it, both other lanes' in-flight work:
+
+    M metatheory/Dregg2/Circuit/AlgoStarkSoundKernel.lean   (a deterministic isDefEq heartbeat timeout, mid-fix)
+    M metatheory/Dregg2/Circuit/Emit/TurnAuthLamportEmit.lean
+
+**The moment those land, run:**
+
+    DREGG_VK_REGEN_ACK=$(git rev-parse HEAD:metatheory/Dregg2) python3 scripts/emit_descriptors.py
+
+It regenerates `layout_generated.rs`, the three registries and `CustomDeployedBytePin`'s 110 KB golden,
+and writes the `VK-REGEN-LOG` row. ⚠ Then `trace_rotated.rs`'s `assert!(NUM_PRE_LIMBS == 178)` fails the
+build **by design** — move it to 184/62/61.
+
+⚠ **A prior re-emit appended NO `VK-REGEN-LOG` row**, and that log is supposed to be append-only. Worth
+a look at how it was run.
+
+⚑ **AND THE A2/A3 PRESCRIPTION FROM THE PLAN IS A REGRESSION AS WRITTEN.**
+`MapOpWideKeyGate.halfWideLeaf_forges_absence_of_present` proves — every hash, no CR hypothesis — that
+widening the map-op address while the pointer stays lane-0 gives two leaves the same digest and lets a
+fabricated bracket contain a key the chain PRESENTS: **a non-membership forgery, worse than today's
+aliasing.** The schema is the arity-17 leaf `addr8 ‖ value ‖ next8` or nothing. Its Lean is built
+across five `#assert_axioms`-clean modules; the residual is descriptor registration plus the Rust chip
+row.
+
 
 `9c82117a4` closed B6's ratifier half and left one residual, explicitly: *"the rounds leak is still
 live … that is wave TIMING."* **It is not timing.** `computeRounds` / `compute_rounds` maxed over
@@ -396,7 +429,7 @@ the memory one is structural. Both paths stay; the checker runs neither.
 
 ## ⚑⚑⚑⚑ JULY 30 — route B's commitment binding LANDED; three perfectly valid transitions were refused by a real `prove()`; and the row model was found conservative by exactly 560
 
-**E1 · ✅ THE GAP THE ROUTE-B LANE WEIGHTED ABOVE ITS OWN DEMO IS CLOSED.**
+**E1a (E1) · ✅ THE GAP THE ROUTE-B LANE WEIGHTED ABOVE ITS OWN DEMO IS CLOSED.**
 
 > Its words: *"The commitment binding is ABSENT. The 4 GROUP-4 hash sites are not emitted, so the
 > circuit relates two bare 13-tuples and does not prove they are the pre-image of any commitment —
@@ -431,7 +464,7 @@ the memory one is structural. Both paths stay; the checker runs neither.
 > is the general form: NO assignment whatever satisfies the emitted circuit while carrying a
 > `state_commit` that is not `cellCommitOf hash` of its own after-state.
 
-**E2 · ⚑ THE ROW MODEL IS CONSERVATIVE BY EXACTLY 560, AND THE CAUSE IS ONE LINE.**
+**E2a (E2) · ⚑ THE ROW MODEL IS CONSERVATIVE BY EXACTLY 560, AND THE CAUSE IS ONE LINE.**
 
 > Lean says 10,570; snarky says **10,010**. Not a modelling error and not a coincidence: the
 > emission is 11,188 generic sub-gates and 4,416 range checks, and `⌈11188/2⌉ + 4416 = 10,010` —
@@ -447,7 +480,7 @@ the memory one is structural. Both paths stay; the checker runs neither.
 > 98.8%); **6 effect rows per Pickles step**, not the ~5 projected (`65536/10040 = 6.5`, and 5.4
 > on the usable ~55,000 — "5 to 6", 6 the ceiling).
 
-**E3 · ⚑ `#guard` IS NOT A FREE INSTRUMENT AT THIS SIZE — 20 GB, AND A KERNEL "DEEP RECURSION".**
+**E3a (E3) · ⚑ `#guard` IS NOT A FREE INSTRUMENT AT THIS SIZE — 20 GB, AND A KERNEL "DEEP RECURSION".**
 
 > The emitted object is 15,604 instructions / 76,489 witness values / 10,570 rows. `#guard`
 > evaluates at ELABORATION time through `whnf`, which materialises the whole `List KRow` as an
@@ -464,7 +497,7 @@ the memory one is structural. Both paths stay; the checker runs neither.
 > — and `EmitKimchiCellCommit` refuses to write an artifact unless the same `emissionChecksHold`
 > is true, so the o1js side cannot consume a broken emission. `scripts/check-kimchi-cellcommit.sh`.
 
-**E4 · ⚑ THE ONE UNDISCHARGED LEG IS NOT MERELY UNPROVED — IT NEEDS TWO REPAIRS FIRST. Open.**
+**E4a (E4) · ⚑ THE ONE UNDISCHARGED LEG IS NOT MERELY UNPROVED — IT NEEDS TWO REPAIRS FIRST. Open.**
 
 > `DigestCarrier` is `KimchiPoseidon2`'s own first remainder (`permGen_forces`), and wiring it up
 > surfaced why it cannot simply be proved at the emitted object:
@@ -494,7 +527,7 @@ the memory one is structural. Both paths stay; the checker runs neither.
 
 ## ⚑⚑⚑⚑ JULY 29 — the root's AIR is proved as a SEVEN-slice chain, one process each, on dregg's committed root proof — and §4.1's "usable rows" names something that does not exist
 
-**E4 · ⚑⚑ LAW #1 IS RED ON `main` — A HAND-WRITTEN RUST AIR LANDED TODAY. LIVE.**
+**E4b (E4) · ⚑⚑ LAW #1 IS RED ON `main` — A HAND-WRITTEN RUST AIR LANDED TODAY. FIXED.**
 
 > ✅ **FIXED 2026-07-30** — `MinaFixtureAir` is DELETED. The AIR is authored in
 > `metatheory/Dregg2/Circuit/Emit/MinaFixtureEmit.lean`, byte-pinned to
@@ -572,7 +605,7 @@ artifact.
 `fhegg-fhe/src/private_book_canonical_backend.rs` (3 sites, `70f24bc09`, 07-22).
 
 
-**E2 · `dreggnet-web-server` REFUSES EVERY DESCENT MOVE ON A BOX. LIVE OUTAGE — measured.**
+**E2b (E2) · `dreggnet-web-server` REFUSES EVERY DESCENT MOVE ON A BOX. CLOSED OUTAGE — measured.**
 > ✅ **CLOSED 2026-07-30, MEASURED** (`38d43025d` + `4dd28b6d6`, after `4e0a05fac` + `6e27f4983`).
 > `dreggnet-web` **434 run / 24 failed → 439 run / 16 failed, 0 timed out**, and **zero of the 16
 > remaining carry a live oracle refusal.** ⚑ The cause was **neither** thing I chased: not the `HAT`
@@ -610,7 +643,7 @@ That is 12 of `dreggnet-web`'s reds and, on a deployed box, **the flagship game*
 Lean-authored — a `DHeapAtom` arm plus a `parseHeapAtom` token in `metatheory/` — and two Rust lanes
 have now correctly declined to paper over it in Rust.
 
-**E3 · THE FLAGSHIP WAS SILENTLY UNPLAYABLE ON TELEGRAM. FIXED 2026-07-29 (`4de836675`).**
+**E3b (E3) · THE FLAGSHIP WAS SILENTLY UNPLAYABLE ON TELEGRAM. FIXED 2026-07-29 (`4de836675`).**
 The dungeon surface rendered **4,719 characters** against Telegram's 4,096 ceiling (automatafl
 4,429), so `present` refused, nothing was painted, and every later `collect` found no affordance —
 surfacing as ~22 apparently unrelated test failures. ⚑ **2,009 of those 4,705 characters were three
@@ -621,7 +654,7 @@ closed. `every_offering_paints`'s ship-list assertion caught it **exactly as its
 `ea3fa5792`**.
 
 
-**E1 · A THREE-NODE COMMITTEE WEDGES PERMANENTLY ON ONE UNDELIVERED BLOCK. LIVE — reproduced twice.**
+**E1b (E1) · A THREE-NODE COMMITTEE WEDGES PERMANENTLY ON ONE UNDELIVERED BLOCK. CLOSED — reproduced twice.**
 > ✅ **CLOSED 2026-07-30** (`e17c7313d`) — and the mechanism was NONE of the four I briefed. The block is sent, accepted, handed to the subscriber, **and never dequeued**: `delivered=1 ×338` against `funnel RECV ×160`. One task, one unbounded channel, awaiting each handler in turn — arrival beat service and the channel absorbed it, so **a permanently-behind funnel reads from outside as a permanent wedge with no error anywhere.** ⚑ Root: `9f5920bda` rebased `Block::creator` onto the hybrid id and left `push_new_blocks` reading `tips().get(&self_key)` — the ed25519 half against a `creator`-keyed map, so **every eager push was a silent no-op**; a SEVENTH consumer of that class. Amplifiers: 77–82% of outbound gossip was `Prune` frames that no-op on BOTH ends, and vote handlers held the funnel 1155–1910 ms doing hybrid verify synchronously. ⚠ Unanimous lock-step at n=3 is CORRECT (`f=0`) and was NOT weakened. ⚠ The self-healing pull did NOT misfire — its response queued behind the backlog. Post-fix `latest_height = 1` on all three, round 5 → 11; absent-peer and equivocation refusals both still bite.
 
 Driven on hbox at n=3, `--federation-mode full`, with full node logs. The faucet turn DOES enter the
@@ -1233,7 +1266,7 @@ false SDK sentence at
 `…_after_root_is_map_op_defined_only` is now `…_after_root_is_tombstone_spine_bound` and asserts all
 16 welds (8 BEFORE + 8 AFTER).
 
-**A2 · THE EFFECT-VM PROOF IS CONSULTED AFTER THE TURN HAS COMMITTED, CHAINED AND GOSSIPED — AND IT
+**A2 · THE EFFECT-VM PROOF IS CONSULTED AFTER THE TURN HAS COMMITTED, CHAINED AND GOSSIPED — AND IT — FIXED.**
 > ✅ **FIXED 2026-07-28** (861bb3b33) — five MCP tools could not commit; `require_effect_vm_proof` deleted, every path routed onto the Lean-emitted rotated descriptor via the same seam HTTP uses
 
 CAN NEVER SUCCEED. LIVE.** `require_effect_vm_proof` is `node/src/mcp/proof.rs:377-392`, one
@@ -1328,7 +1361,7 @@ credited.** The tooth exists and fires in Lean: `Dregg2/Bignum/LedgerBalance.lea
 `accumulatorLeaf_aliases_at_2_30`. Worse: that param slot is described as "a SPARE param slot"
 elsewhere (`EffectVmEmitRotationV3.lean:4927`) and is multiplexed by four other members.
 
-**A9 · THE CROSS-CHAIN "VK COMMITMENT" IS A HASH OF A LABEL STRING — AND IT IS NEVER COMPARED TO
+**A9 · THE CROSS-CHAIN "VK COMMITMENT" IS A HASH OF A LABEL STRING — AND IT IS NEVER COMPARED TO — FIXED.**
 ANYTHING. FIXED IN TWO HALVES: the VALUE 2026-07-28, the COMPARISON 2026-07-30.**
 > ✅ **VALUE — FIXED 2026-07-28** (`fee3426e3`): the pin became keccak256 over a 2458-byte
 > canonical serialization of the ACTUAL key, emitted from one spec into all three chains. This
@@ -1612,7 +1645,7 @@ object **no production path constructs**. The arm is reachable (`sovereign_bindi
 proves both poles on a genuine `makeSovereign` leg), and nothing in the deployed system takes it.
 That residual is now the whole of B3.
 
-**B4 · THE PROTOCOL CANNOT EXPRESS AN HONEST 32-BYTE FIELD WRITE, AND THE FIX IS BUILT AND PARKED.
+**B4 · THE PROTOCOL CANNOT EXPRESS AN HONEST 32-BYTE FIELD WRITE, AND THE FIX IS BUILT AND PARKED. — FIXED.**
 LIVE — the cheapest real win on this list.**
 > ✅ **FIXED 2026-07-30 — but the entry's own mechanism was WRONG, and that is the durable finding.**
 > "The work is done; the epoch re-point is not" was true of an artifact **nothing could adopt.** The
@@ -1673,7 +1706,7 @@ names the reachable path — a federation shrunk to n=1, **or a restart through
 with no signature, roster or closure check** (verified: `:2130-2134` is a bare deserialize-and-insert
 loop).
 
-**B6 · A NON-PARTICIPANT'S BLOCK STILL COUNTS TOWARD A SUPERMAJORITY, AND IT IS STRONGER THAN THE DOC
+**B6 · A NON-PARTICIPANT'S BLOCK STILL COUNTS TOWARD A SUPERMAJORITY, AND IT IS STRONGER THAN THE DOC — FIXED.**
 ADMITS. BOTH HALVES FIXED.**
 > ✅ **RATIFIER HALF FIXED 2026-07-30** (`9c82117a4`) — `ratifiesEnrolled`, threshold untouched.
 > ✅ **ROUNDS HALF FIXED 2026-07-30** (this entry, top of file) — `computeRounds` takes the
@@ -1722,7 +1755,7 @@ MEASURED green root is `e0160d116`, **39 commits back.** The two cheap proxies p
 `check-floor-baseline-preflight.sh --all-changed` exit 0 (24 floor names, 2062 baseline entries) and
 `metatheory/scripts/floor_ratchet_check.sh --presence` exit 0.
 
-**C2 · THE ADVERSARIAL SUITE RUNS NIGHTLY OR NEVER. LIVE, both halves.**
+**C2 · THE ADVERSARIAL SUITE RUNS NIGHTLY OR NEVER. FIXED, both halves.**
 > ✅ **HALF FIXED 2026-07-28** — the verdict now runs in the cheap local set (`check-nightly-verdict.sh`), which is the path work actually takes; `armed-teeth`'s own `nightly-verdict` mirror was correct but fired only on `pull_request` while work lands on `main` directly. ⚑ **It went RED immediately and the cause is not code**: two consecutive nightlies died in ~57s at `actions/checkout` — *"This repository exceeded its LFS budget"*. The suite has not run for at least two nights. **The budget is ember's.** Still live: `test-gauntlet.sh` is invoked by nothing, and 27 `[[test]]` targets behind unenabled `required-features` print nothing.
 
 `.github/workflows/armed-teeth.yml:116-124` triggers on `schedule` (`cron: '0 5 * * *'`),
@@ -1883,7 +1916,7 @@ one `SetField`. **None contains an `Effect::Transfer`.** The one builder that do
 value-less one (`discord-bot/src/commands/bounty.rs:298`) and renders success at `:311`; `:337` labels
 the cell balance **"Escrowed"**, a balance `build_post_action` never funds either.
 
-**D4 · A ZK SUPERVISOR POLLS A QUEUE ONLY TESTS CAN FILL. WIRED — and the headline's verb was wrong.**
+**D4 · A ZK SUPERVISOR POLLS A QUEUE ONLY TESTS CAN FILL. WIRED — and the headline's verb was wrong. — FIXED.**
 > ✅ **FIXED 2026-07-28** (`d0b7635fd`) — WIRED, not retired. Sharper than recorded: the only route to a queue, `private_sealed_ingress`, had exactly ONE non-test caller and it is the DRAIN, so **no production code could obtain a queue handle**. ⚑ And the premise's verb was wrong — it does NOT prove per tick (`next_pending()` runs first and breaks on `None`); measured at **~0.19 % of one core** at the shipped 250 ms poll. The E2E test had been STANDING IN for the caller, which is why it stayed green. `settle_and_capture` DELETED, not reworded: it claimed to be the one path from private ingress to real cryptography while never touching ingress, clearing an auction with no durable record of who bid.
 
 > ✅ **WIRED 2026-07-28** — census reconfirmed at HEAD (0 production / 11 test callers of `submit`;
@@ -1919,7 +1952,7 @@ ingress to real cryptography, sole caller a test.
 routed exactly this to ember. ⚠ Second half also live: the three blocklace-observation methods still
 have **no caller outside their own file.**
 
-**D6 · `dregg-intent`'s TWO ROUTING TESTS CAN NEVER PASS IN THEIR OWN CRATE, AND THE THIRD IS A
+**D6 · `dregg-intent`'s TWO ROUTING TESTS CAN NEVER PASS IN THEIR OWN CRATE, AND THE THIRD IS A — FIXED.**
 DIFFERENT WOUND. FIXED 2026-07-29.**
 > ✅ **FIXED 2026-07-29** — `dregg-exec-lean` is now a `[dev-dependencies]` entry of `dregg-intent`
 > (cargo permits the cycle) and every test that drives `route` calls `register_distributed_gates()`,
@@ -1945,7 +1978,7 @@ fixture whose two cells hold different asset columns against a kernel that now r
 
 ### E. THE RECORD ITSELF
 
-**E1 · SIX FINDING/HANDOFF DOCS ARE REFERENCED BY NOTHING, AND TWO ARE GROUNDED 7,341 COMMITS BACK.**
+**E1c (E1) · SIX FINDING/HANDOFF DOCS ARE REFERENCED BY NOTHING, AND TWO ARE GROUNDED 7,341 COMMITS BACK.**
 `docs/FINDING-checkpoint-pipeline-unwired.md` (*"the qc-bearing `Checkpoint` object it depends on is
 never produced"*), `docs/FINDING-federation-wide-settlement.md`,
 `docs/HANDOFF-automata-arithmetization-lane.md`, `docs/HANDOFF-committee-restart-fix.md`,
