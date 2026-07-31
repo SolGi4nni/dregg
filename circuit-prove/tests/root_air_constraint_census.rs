@@ -1652,9 +1652,14 @@ fn dag_source_language_census() {
     );
     println!("the FLAT form's multiplies alone: {flat_rows} rows");
 
+    // ⚑ RE-PRICED 901 -> 905 at fork rev `fc3c6df`, and the +4 is attributable: `ConstAir::eval`
+    // gained exactly `D` = 4 degree-1 constraints `main.value[i] == prep.value[i]`, binding a
+    // constant's value to its new preprocessed column so a const-swapped child cannot ride an
+    // honest anchor. A re-price, not a weakening — the count went UP, and if it ever goes back
+    // DOWN by 4 the binding has been removed.
     assert_eq!(
-        r, 901,
-        "the root count is the census's 901 base constraints"
+        r, 905,
+        "the root count is the census's 905 base constraints"
     );
     assert_eq!(
         k.iter().sum::<usize>(),
@@ -1958,13 +1963,19 @@ fn emit_root_air_dag_json() {
         kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6], kinds[7]
     );
 
-    // ⚑ THE COUNTS ARE PINNED. §3.17 measured N = 1,093 = 901 base + 192 ext by a completely
+    // ⚑ THE COUNTS ARE PINNED. §3.17 measured N = 901 base + 192 ext by a completely
     // different route (`census`, which never builds a DAG). If the extractor ever drops or
     // duplicates a root this reds here, and a Mina-side verifier built on a short constraint list
     // would otherwise be silently weaker than the deployed one.
-    assert_eq!(tot_base, 901, "the base root count is the census's 901");
+    //
+    // ⚑ RE-PRICED base 901 -> 905, N 1093 -> 1097 at fork rev `fc3c6df`. The +4 is exactly `D`:
+    // `ConstAir::eval` gained `D` = 4 degree-1 constraints `main.value[i] == prep.value[i]`,
+    // putting a constant's value inside the preprocessed commitment so a const-swapped child moves
+    // the anchor. The ext count is untouched (the new constraints are base-field). A re-price
+    // upward; a future drop of 4 here means the binding was removed.
+    assert_eq!(tot_base, 905, "the base root count is the census's 905");
     assert_eq!(tot_ext, 192, "the ext root count is the census's 192");
-    assert_eq!(tot_base + tot_ext, 1093, "N is the census's 1,093");
+    assert_eq!(tot_base + tot_ext, 1097, "N is the census's 1,097");
     assert_eq!(
         kinds.iter().sum::<usize>(),
         tot_nodes,
