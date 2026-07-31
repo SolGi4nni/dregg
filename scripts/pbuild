@@ -222,12 +222,31 @@ PBUILD_CMD_DESC="$*"
 PBUILD_PHASE=guard
 # Set by the run phase when the remote reports the build was killed for memory.
 PBUILD_ENVFAULT=""
+# ---- THE THIRD WAY TO DEFEAT THIS LINE (2026-07-31) ----------------------------
+# Measured: `pbuild` printed `VERDICT outcome=PASS status=0` about a build that HAD NOT
+# FINISHED. The harness killed the local process; this EXIT trap fired, `$?` happened to be
+# 0 from the last completed command, and the trap certified a PASS — while the remote work
+# detached and kept running for another 25 minutes. It was caught only because someone
+# checked an artifact's SIZE and found the log did not exist.
+#
+# The file already documents two ways (a remote pipe, `timeout`). This is a third, and it is
+# worse than both, because neither the exit status nor the output looks wrong.
+#
+# The fix is to stop inferring completion from `$?`. `PBUILD_RAN` is set on exactly one line
+# — immediately after the remote command RETURNS — so an EXIT that arrives without it did not
+# measure anything, whatever `$?` says. A verdict is now only PASS/FAIL if the run completed.
+PBUILD_RAN=""
 _pbuild_verdict() {
   _pb_status=$?
   if [ "$PBUILD_PHASE" = guard ]; then
     _pb_outcome=REFUSED
   elif [ -n "$PBUILD_ENVFAULT" ]; then
     _pb_outcome=ENVFAULT
+  elif [ -z "$PBUILD_RAN" ]; then
+    # Entered the run phase and left it without the remote command returning: killed by a
+    # signal, or an early `exit` on a path that did not run the build. NOT a measurement.
+    _pb_outcome=INCOMPLETE
+    [ "$_pb_status" -eq 0 ] && _pb_status=70
   elif [ "$_pb_status" -eq 0 ]; then
     _pb_outcome=PASS
   else
@@ -238,6 +257,10 @@ _pbuild_verdict() {
   return "$_pb_status"
 }
 trap _pbuild_verdict EXIT
+# A signal death must be visibly a signal death, not an anonymous EXIT with a stale `$?`.
+trap 'PBUILD_ENVFAULT="killed by SIGINT"; exit 130' INT
+trap 'PBUILD_ENVFAULT="killed by SIGTERM"; exit 143' TERM
+trap 'PBUILD_ENVFAULT="lost the terminal (SIGHUP)"; exit 129' HUP
 
 # ---- GUARD: a pipe inside the remote command makes the VERDICT LIE --------------
 # The hazard is documented at the top of this file (§"TWO WAYS TO DEFEAT THIS LINE" #1).
@@ -1293,6 +1316,9 @@ fi
 
 # A nonzero status is the moment — and the only moment — worth asking the box whether
 # it did this. See the ENVFAULT block at the top for why this is not a nicety.
+# ⚑ THE ONE LINE THAT MAKES THE VERDICT HONEST. Both ssh branches have returned; whatever
+# happens after this, the build was actually MEASURED. An EXIT without this is INCOMPLETE.
+PBUILD_RAN=1
 if [ "$_pb_run_status" -ne 0 ]; then
   if _pb_disk_lines="$(_pbuild_enospc_evidence)"; then
     PBUILD_ENVFAULT=1

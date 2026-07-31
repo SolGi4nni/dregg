@@ -317,6 +317,7 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 [[profile.default.overrides]]
 filter = '''package(dregg-circuit-prove) and (
   test(/caveat_admission_leaf_adapter/) or test(/blinded_membership_leaf_adapter/)
+  or test(/solvency_leaf_adapter/)
   or test(/shielded_ring_clearing_nleg_air/) or test(/shielded_ring_clearing_air/)
   or test(/presentation_leaf_adapter/) or test(/factory_leaf_adapter/)
   or test(/hatchery_leaf_adapter/) or test(/shielded_spend_leaf_adapter/)
