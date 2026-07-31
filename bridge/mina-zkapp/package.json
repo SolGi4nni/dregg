@@ -54,7 +54,8 @@
     "root-consume-rows": "npm run build && node --max-old-space-size=16384 dist/scripts/root-consume-rows.js",
     "head-anchor": "npm run build && node --max-old-space-size=16384 dist/scripts/head-anchor.js",
     "head-anchor-pins": "npm run build && node --max-old-space-size=16384 dist/scripts/head-anchor-pins.js",
-    "deep-columns": "npm run build && node --max-old-space-size=16384 dist/scripts/deep-column-census.js"
+    "deep-columns": "npm run build && node --max-old-space-size=16384 dist/scripts/deep-column-census.js",
+    "backend-probe": "npm run build && node --max-old-space-size=16384 dist/scripts/backend-probe.js"
   },
   "dependencies": {
     "o1js": "2.15.0"
