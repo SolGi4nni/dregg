@@ -60,6 +60,8 @@
     "cell-fact": "npm run build && node --max-old-space-size=16384 dist/scripts/cell-fact-gate.js",
     "backend-probe": "npm run build && node --max-old-space-size=16384 dist/scripts/backend-probe.js",
     "head-gate-rehearsal": "npm run build && node --max-old-space-size=16384 dist/scripts/head-gate-rehearsal.js",
+    "fold-mu": "npm run build && node --max-old-space-size=16384 dist/scripts/fold-mu.js",
+    "fold-tree": "npm run build && node --max-old-space-size=16384 dist/scripts/fold-tree.js",
     "devnet:head-deploy": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-deploy.js",
     "devnet:head-advance": "npm run build && node --max-old-space-size=16384 dist/scripts/devnet-head-advance.js"
   },
