@@ -13,6 +13,7 @@ import {
   ANCHOR_MERKLE_DEPTH,
   DreggAnchorStatement,
   DreggAttestedGate,
+  DreggCellFactStatement,
   DreggMembershipAttestation,
   anchorLeavesFromSeed,
   proveAnchor,
@@ -78,6 +79,16 @@ async function main() {
   const anchorVk = (await DreggAnchorStatement.compile()).verificationKey;
   console.log(`  compiled DreggAnchorStatement (depth ${ANCHOR_MERKLE_DEPTH}) in ${secs(t)}`);
   console.log(`    anchor obligation VK hash: ${anchorVk.hash.toString()}`);
+
+  // ⚑ The cell-fact statement is a DEPENDENCY of the gate's own VK since
+  // `actOnCellFact` landed — o1js refuses `DreggAttestedGate.compile()` without it
+  // ("cannot find compilation output for dregg-cell-fact-d4-p32"). It must be
+  // compiled BEFORE the gate, exactly like the attestation and anchor statements
+  // above, or the gate's VK cannot be derived at all.
+  t = Date.now();
+  const cellFactVk = (await DreggCellFactStatement.compile()).verificationKey;
+  console.log(`  compiled DreggCellFactStatement in ${secs(t)}`);
+  console.log(`    cell-fact VK hash: ${cellFactVk.hash.toString()}`);
 
   t = Date.now();
   const gateVk = (await DreggAttestedGate.compile()).verificationKey;

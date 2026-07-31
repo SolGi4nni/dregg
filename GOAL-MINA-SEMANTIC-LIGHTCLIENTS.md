@@ -853,3 +853,29 @@ openmina is what to link when it leaves `bridge/tools/`.
 The Mina-side deploy needs **one fresh zkApp keypair**. The deploy script refuses to mint one and
 prints the exact command — correct, per the standing rule that key material and custody are ember's.
 The deployed address `B62qkiRhX1tK…` holds `DreggAttestedGate`; a new contract needs its own account.
+
+## 09:05 — ✅ DEPLOYED TO MINA DEVNET, FROM HBOX
+
+**New zkApp account: `B62qq8d7J9MmKroYmHiuAJ7LW38MxXq5ytdmGEM4Sxn6pGYA8X9Y5jK`** — deployed in 404 s
+from hbox, `O1JS_BACKEND=native`. Anchor tx `5JuscCsjT9NxtoVBmZ5AAP8VMs13Fcqka9JT5pWsTqKWTredoKtY`.
+
+Four circuits compiled, and the semantic one is now part of the gate's own VK:
+- attestation VK `15990086229449428195652199478086393224646730752932942884262475971185394292035`
+- anchor obligation VK `10130610820071422621356274859911118679752936161191302426443393614469750935103`
+- ⚑ **cell-fact VK `9997308016474083171937915716298629394339756839892308941866801018480480024150`**
+- **zkApp VK `26364647474017812067523418382737420467008306395717411975730107437954374444742`**
+
+**Three real obstacles, all fixed rather than worked around:**
+1. `tsx` does not honour `useDefineForClassFields: false` → decorator crash. The repo's own
+   `npm run devnet:deploy` (tsc → `dist/`) is the supported path.
+2. **hbox had MINTED ITS OWN devnet keys** (unfunded) because `devnet-common.ts` falls back to
+   `PrivateKey.random()` when the file is absent. Copied ember's existing funded throwaway keys
+   over instead of funding a stranger's account.
+3. ⚑ **`setDreggRoot: not signed by the PLACEHOLDER relay key`** on the OLD address — that is the
+   **source/record VK drift** measured last night: the live contract at `B62qkiRhX1tK…` was deployed
+   from `a8935dca`, where `setDreggRoot(newRoot: Field, auth: Signature)` took a bare field and a
+   signature and `DreggAnchorStatement` did not exist. The current source cannot drive it.
+   **Resolved by deploying fresh at a new address, keeping ember's original key file untouched and
+   recording the superseded address in the new one.**
+4. The gate's VK now **depends on** `dregg-cell-fact-d4-p32`, so the deploy script had to compile it
+   before `DreggAttestedGate` — o1js refuses otherwise. Fixed in `scripts/devnet-deploy.ts`.
