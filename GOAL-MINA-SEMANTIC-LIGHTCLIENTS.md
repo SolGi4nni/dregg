@@ -1695,3 +1695,25 @@ final poly) on the FRI/MMCS floor; it does NOT re-evaluate the apex-verifier AIR
 claim's binding to the committed trace is the shrink's own `ExposeClaimAir` quotient identity (Rust
 side); here it rides as a transcript-observed public value of a **commitment-bound** proof. Run:
 `MINA_SHRINK_FIXTURE=… MINA_WRAP_DOMAIN=2 MINA_NUM_CHUNKS=4 O1JS_BACKEND=native npm run mina-shrink-verify`.
+
+## ✅ 07-31 — o1js VERIFIES the native-Pasta SHRINK TERMINAL, and it BINDS (`789de42e7`)
+The SOUND step-3 object (not the re-mint). Measured on hbox, `O1JS_BACKEND=native`, on a REAL minted
+`shrink_apex_to_outer(apex, DreggMinaConfig)` terminal:
+- **ACCEPT**: `verify=true`, prove 58.6s, compile 43s, 151,966 rows/query. Public output ChainClaim
+  genesisRoot→finalRoot, **numTurns=2** (the real 2-turn transfer chain's G→H).
+- ⚑ **TAMPER REFUSED THROUGH THE COMMITMENT** (binds, NOT a re-mint): flip one committed input-row
+  lane → `Constraint unsatisfied` at `assertEq(recomputedRoot, realCommit)`. Recomputed Pasta root
+  checked against dregg's OWN emitted root, not `f(openings)` — the property the 199-instance re-mint
+  chain lacked. The lane caught its OWN first tamper being vacuous ("no prover found" on an uncompiled
+  program) and fixed it to prove the tampered witness on the compiled program.
+- Rust mint: apex fold 65s, Mina shrink prove 21s. `MinaShrinkVerify.ts` reuses `RootConsume`'s
+  `rootShapeOf`/`rootValues` (pasta suite, REAL digests, NO re-hash) + `DreggProofVerify`'s FRI walk.
+
+⚑ **HONEST STRUCTURE — and it's the JS ceiling ember flagged, MEASURED**: o1js `compile()` serializes
+the gate list to a napi string that OVERFLOWS above ~a few hundred K gates (1 query=152K compiles;
+8q≈1.1M → napi `Failed to convert rust String`). The full 38-query circuit is ~5.8M gates and CANNOT
+be one o1js program — **which is exactly why the deployed root verifier is ~500 Pickles steps**
+(`DreggProofPartition`). So this program verifies ONE query batch; full-soundness = ×38, the same
+partition the root uses. **A batch-STARK verifier is intrinsically a partition chain — not a
+containment.** ⇒ This is the hard evidence for [[project-pickles-in-lean-epoch]] and the pure-Rust
+prover: the napi string wall is the JS tax as a HARD CEILING; Rust has no such wall.
