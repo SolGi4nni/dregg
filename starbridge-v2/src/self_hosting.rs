@@ -44,33 +44,9 @@ use crate::dock::surface::CockpitSurface;
 use crate::dock::terminal_surface::TerminalPane;
 use crate::world::World;
 
-/// Self-contained GitHub-dark palette (the dock's `theme` is private to the dock;
-/// this mirrors the same values the showcase uses, without reaching into a
-/// sibling-owned module). `gpui::rgb` isn't `const` in this rev → functions.
-mod theme {
-    use gpui::{rgb, Hsla};
-    pub fn bg() -> Hsla {
-        rgb(0x0e1116).into()
-    }
-    pub fn panel() -> Hsla {
-        rgb(0x161b22).into()
-    }
-    pub fn panel_hi() -> Hsla {
-        rgb(0x1f2630).into()
-    }
-    pub fn border() -> Hsla {
-        rgb(0x2b3340).into()
-    }
-    pub fn text() -> Hsla {
-        rgb(0xd7dee8).into()
-    }
-    pub fn muted() -> Hsla {
-        rgb(0x7d8794).into()
-    }
-    pub fn accent() -> Hsla {
-        rgb(0x6cb6ff).into()
-    }
-}
+/// The palette is [`crate::views::theme`] — this file used to hold its own
+/// transcription of the GitHub-dark hexes.
+use crate::views::theme;
 
 /// The seed project the firmament editor opens onto — file-cells installed on the
 /// LIVE cockpit `World`. The first entry is opened in the buffer; saving it fires

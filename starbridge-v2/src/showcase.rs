@@ -45,34 +45,14 @@ use crate::dock::surface::CockpitSurface;
 use crate::dock::terminal_surface::TerminalPane;
 use crate::world::World;
 
-/// The showcase palette — a self-contained mirror of the dock's GitHub-dark
-/// values (the dock's `theme` module is private to the dock; this keeps the
-/// showcase from reaching into a sibling-owned module). `gpui::rgb` isn't `const`
-/// in this rev, so these are functions returning `Hsla`.
-mod theme {
-    use gpui::{rgb, Hsla};
-    pub fn bg() -> Hsla {
-        rgb(0x0e1116).into()
-    }
-    pub fn panel() -> Hsla {
-        rgb(0x161b22).into()
-    }
-    pub fn panel_hi() -> Hsla {
-        rgb(0x1f2630).into()
-    }
-    pub fn border() -> Hsla {
-        rgb(0x2b3340).into()
-    }
-    pub fn text() -> Hsla {
-        rgb(0xd7dee8).into()
-    }
-    pub fn muted() -> Hsla {
-        rgb(0x7d8794).into()
-    }
-    pub fn accent() -> Hsla {
-        rgb(0x6cb6ff).into()
-    }
-}
+/// The palette is [`crate::views::theme`] — this file used to hold its own
+/// transcription of the GitHub-dark hexes, and the capability-facet colours
+/// below used to be five more literals on top of it.
+use crate::views::theme;
+
+use crate::views::theme::facet::{
+    auth as rgb_auth, avail as rgb_avail, know as rgb_know, ok as rgb_ok, value as rgb_value,
+};
 
 /// A read-off-the-real-image summary of the cell world, computed once at build
 /// time from the seeded `demo_world` ledger. Every figure is a fact of the live
@@ -370,7 +350,7 @@ impl ShowcaseView {
                             .py_1()
                             .rounded_md()
                             .bg(theme::accent())
-                            .text_color(gpui::rgb(0x0e1116))
+                            .text_color(theme::bg())
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("▶ rehydrate"),
@@ -613,21 +593,8 @@ fn dock_strip() -> impl IntoElement {
     row
 }
 
-fn rgb_ok() -> gpui::Hsla {
-    gpui::rgb(0x57d97f).into()
-}
-fn rgb_value() -> gpui::Hsla {
-    gpui::rgb(0xf2c14e).into()
-}
-fn rgb_auth() -> gpui::Hsla {
-    gpui::rgb(0xff8b6b).into()
-}
-fn rgb_avail() -> gpui::Hsla {
-    gpui::rgb(0x6cb6ff).into()
-}
-fn rgb_know() -> gpui::Hsla {
-    gpui::rgb(0xc792ea).into()
-}
+// The five capability-facet colours are `views::theme::facet`, imported at the
+// top of this file under these same names.
 
 /// The seeded editor document: successive on-ledger revisions of a small,
 /// real-looking Rust slice (the LAST is shown; the priors make the patch count

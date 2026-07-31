@@ -61,37 +61,12 @@ use crate::session::Session;
 use crate::wonder::WonderRoom;
 use crate::world::World;
 
-/// The guest palette — a self-contained mirror of the dock's GitHub-dark values
-/// (the dock's `theme` module is private to the dock; this keeps the guest view
-/// from reaching into a sibling-owned module, exactly as `showcase` does).
-mod theme {
-    use gpui::{rgb, Hsla};
-    pub fn bg() -> Hsla {
-        rgb(0x0e1116).into()
-    }
-    pub fn panel() -> Hsla {
-        rgb(0x161b22).into()
-    }
-    pub fn panel_hi() -> Hsla {
-        rgb(0x1f2630).into()
-    }
-    pub fn border() -> Hsla {
-        rgb(0x2b3340).into()
-    }
-    pub fn text() -> Hsla {
-        rgb(0xd7dee8).into()
-    }
-    pub fn muted() -> Hsla {
-        rgb(0x7d8794).into()
-    }
-    pub fn accent() -> Hsla {
-        rgb(0x6cb6ff).into()
-    }
-}
+/// The guest palette is [`crate::views::theme`] — the ONE place the cockpit's
+/// GitHub-dark hexes are written. This file used to hold its own transcription
+/// of them; see `views::theme` for why it does not any more.
+use crate::views::theme;
 
-fn rgb_ok() -> gpui::Hsla {
-    gpui::rgb(0x57d97f).into()
-}
+use crate::views::theme::facet::ok as rgb_ok;
 
 /// Whether a rolodex gadget is actually POSSESSED — the MUD's "you picked it up =
 /// you hold the cap". Decided by the live session c-list ([`Session::reaches`]),
@@ -764,7 +739,7 @@ impl GuestView {
             .inset_0()
             .flex()
             .justify_end()
-            .bg(gpui::rgba(0x0e111688))
+            .bg(theme::scrim())
             .child(panel)
     }
 }

@@ -1062,41 +1062,13 @@ fn short(bytes: &[u8]) -> String {
 
 // --- the gpui panel (only under the gpui-ui build) --------------------------
 //
-// Self-contained: it does not depend on the binary crate's `views` module
-// (which is private to the binary), so the library stays swarm-safe. The main
-// loop calls `replay_panel(&model)` and places the returned element.
-
-#[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
-mod palette {
-    use gpui::{rgb, Hsla};
-    pub fn panel() -> Hsla {
-        rgb(0x161b22).into()
-    }
-    pub fn panel_hi() -> Hsla {
-        rgb(0x1f2630).into()
-    }
-    pub fn border() -> Hsla {
-        rgb(0x2b3340).into()
-    }
-    pub fn text() -> Hsla {
-        rgb(0xd7dee8).into()
-    }
-    pub fn muted() -> Hsla {
-        rgb(0x7d8794).into()
-    }
-    pub fn accent() -> Hsla {
-        rgb(0x6cb6ff).into()
-    }
-    pub fn good() -> Hsla {
-        rgb(0x57d977).into()
-    }
-    pub fn warn() -> Hsla {
-        rgb(0xe3b341).into()
-    }
-    pub fn bad() -> Hsla {
-        rgb(0xe5534b).into()
-    }
-}
+// The palette is `crate::views::theme`. This block used to hold its own copy of
+// the nine hexes, on the note that "it does not depend on the binary crate's
+// `views` module (which is private to the binary), so the library stays
+// swarm-safe" — but `views` is `pub mod views` in THIS crate's `lib.rs`, under
+// the same `any(gpui-ui, gpui-web)` cfg the panel below is under. There was no
+// binary-crate boundary to stay clear of. The main loop calls
+// `replay_panel(&model)` and places the returned element.
 
 /// Render the replay / time-travel panel from a [`ReplayPanelModel`].
 ///
@@ -1108,8 +1080,8 @@ mod palette {
 /// `Context<Cockpit>` type.
 #[cfg(any(feature = "gpui-ui", feature = "gpui-web"))]
 pub fn replay_panel(model: &ReplayPanelModel) -> impl gpui::IntoElement {
+    use crate::views::theme as p;
     use gpui::{div, px, ParentElement, Styled};
-    use palette as p;
 
     let mut col = div().flex().flex_col().gap_1().p_3().size_full();
 

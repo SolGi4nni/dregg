@@ -1,33 +1,15 @@
-//! The dock module's self-contained palette.
+//! The dock's palette — **a re-export of [`crate::views::theme`], not a copy.**
 //!
-//! Kept SELF-CONTAINED (not `crate::views::theme`) so the module compiles
-//! independent of where it is mounted (lib vs bin). The values mirror the
-//! cockpit's `views::theme` palette; on integration the cockpit can swap these
-//! to share one source of truth, but the dock does not depend on it.
+//! It used to be a self-contained transcription, on the rationale that "the module
+//! compiles independent of where it is mounted (lib vs bin)". That rationale was
+//! stale: `dock::theme` is declared under `#[cfg(any(gpui-ui, gpui-web))]` in
+//! `dock/mod.rs` and `views` is declared under the SAME cfg in `lib.rs`, so there
+//! has never been a configuration in which one exists and the other does not. The
+//! gpui-free `process-pd` path reaches `dock::migrate`, which does not touch this
+//! module.
 //!
-//! `gpui::rgb` is not `const` in this gpui rev, so these are functions returning
-//! `Hsla` (accepted by `bg`/`text_color`/`border_color` via `Into`).
+//! What the self-containment actually bought was a second place to hand-type the
+//! panel hex. See the drift the fold turned up, documented on
+//! `views::theme::good_mint`.
 
-use gpui::{rgb, Hsla};
-
-pub fn bg() -> Hsla {
-    rgb(0x0e1116).into()
-}
-pub fn panel() -> Hsla {
-    rgb(0x161b22).into()
-}
-pub fn panel_hi() -> Hsla {
-    rgb(0x1f2630).into()
-}
-pub fn border() -> Hsla {
-    rgb(0x2b3340).into()
-}
-pub fn text() -> Hsla {
-    rgb(0xd7dee8).into()
-}
-pub fn muted() -> Hsla {
-    rgb(0x7d8794).into()
-}
-pub fn accent() -> Hsla {
-    rgb(0x6cb6ff).into()
-}
+pub use crate::views::theme::{accent, bg, border, muted, panel, panel_hi, text};

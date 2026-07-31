@@ -4797,14 +4797,15 @@ impl gpui::Render for AppStoreView {
         _window: &mut gpui::Window,
         _cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        use gpui::{div, px, rgb, FontWeight, ParentElement, Styled};
-        let bg = rgb(0x0e1116);
-        let panel = rgb(0x161b22);
-        let panel_hi = rgb(0x1f2630);
-        let border = rgb(0x2b3340);
-        let text = rgb(0xd7dee8);
-        let muted = rgb(0x7d8794);
-        let accent = rgb(0x6cb6ff);
+        use gpui::{div, px, FontWeight, ParentElement, Styled};
+        use starbridge_v2::views::theme;
+        let bg = theme::bg();
+        let panel = theme::panel();
+        let panel_hi = theme::panel_hi();
+        let border = theme::border();
+        let text = theme::text();
+        let muted = theme::muted();
+        let accent = theme::accent();
 
         let header = div()
             .flex()
@@ -4924,12 +4925,13 @@ impl gpui::Render for AppsRowView {
         _window: &mut gpui::Window,
         _cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        use gpui::{div, rgb, FontWeight, ParentElement, Styled};
-        let bg = rgb(0x0e1116);
-        let panel = rgb(0x161b22);
-        let border = rgb(0x2b3340);
-        let text = rgb(0xd7dee8);
-        let muted = rgb(0x7d8794);
+        use gpui::{div, FontWeight, ParentElement, Styled};
+        use starbridge_v2::views::theme;
+        let bg = theme::bg();
+        let panel = theme::panel();
+        let border = theme::border();
+        let text = theme::text();
+        let muted = theme::muted();
 
         let header = div()
             .flex()

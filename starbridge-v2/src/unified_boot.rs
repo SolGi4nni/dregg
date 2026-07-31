@@ -43,36 +43,17 @@ use crate::dock::terminal_surface::TerminalPane;
 use crate::reflect::{Field, FieldValue, Inspectable, ObjectKind};
 use crate::world::World;
 
-mod theme {
-    use gpui::{rgb, Hsla};
-    pub fn bg() -> Hsla {
-        rgb(0x0e1116).into()
-    }
-    pub fn panel() -> Hsla {
-        rgb(0x161b22).into()
-    }
-    pub fn panel_hi() -> Hsla {
-        rgb(0x1f2630).into()
-    }
-    pub fn border() -> Hsla {
-        rgb(0x2b3340).into()
-    }
-    pub fn text() -> Hsla {
-        rgb(0xd7dee8).into()
-    }
-    pub fn muted() -> Hsla {
-        rgb(0x7d8794).into()
-    }
-    pub fn accent() -> Hsla {
-        rgb(0x6cb6ff).into()
-    }
-    pub fn good() -> Hsla {
-        rgb(0x5bd18b).into()
-    }
-    pub fn warn() -> Hsla {
-        rgb(0xe3b341).into()
-    }
-}
+/// The palette is [`crate::views::theme`] — this file used to hold its own
+/// transcription of the hexes.
+///
+/// ⚠ And that transcription had DRIFTED: its `good()` was a visibly MINTIER green
+/// than every sibling copy's — rgb(91,209,139) against rgb(87,217,119). The fold
+/// preserves this surface's green bit-exact by reading
+/// `views::theme::good_mint`, which carries the hex, the delta, and the choice
+/// between the two greens, all in one place.
+use crate::views::theme;
+
+use crate::views::theme::good_mint as good;
 
 /// The seed project the firmament editor opens onto, installed on the LOCAL
 /// cockpit `World`. A save here is a receipted turn on THAT ledger.
@@ -735,16 +716,12 @@ impl UnifiedBootView {
                         .items_center()
                         .child(pill(
                             if st.healthy { "healthy" } else { "DOWN" },
-                            if st.healthy {
-                                theme::good()
-                            } else {
-                                theme::warn()
-                            },
+                            if st.healthy { good() } else { theme::warn() },
                         ))
                         .child(pill(
                             &format!("producer {}", st.state_producer),
                             if st.lean_producer {
-                                theme::good()
+                                good()
                             } else {
                                 theme::warn()
                             },
@@ -955,12 +932,9 @@ fn field_display(v: &FieldValue) -> (String, gpui::Hsla) {
             if *b < 0 { theme::warn() } else { theme::text() },
         ),
         FieldValue::Count(c) => (c.to_string(), theme::text()),
-        FieldValue::Bool(b) => (
-            b.to_string(),
-            if *b { theme::good() } else { theme::muted() },
-        ),
+        FieldValue::Bool(b) => (b.to_string(), if *b { good() } else { theme::muted() }),
         FieldValue::Id(id) => (crate::reflect::short_hex(id), theme::accent()),
-        FieldValue::Hash(h) => (crate::reflect::short_hex(h), theme::good()),
+        FieldValue::Hash(h) => (crate::reflect::short_hex(h), good()),
         FieldValue::CapEdge { target, slot } => (
             format!("→ {} (slot {slot})", crate::reflect::short_hex(target)),
             theme::accent(),
