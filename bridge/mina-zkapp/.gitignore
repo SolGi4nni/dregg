@@ -9,6 +9,15 @@ dist*/
 # source of truth for a number the leg exists to take.
 .atoms/
 
+# The TERMINAL SEAL PREIMAGE (`npm run head-anchor-pins -- --emit`) — the
+# `friCommit`/`accOutDigest` a `DreggHeadGate` caller exhibits. A MEASUREMENT of
+# whichever chain `.fullchain/` currently holds, and it rotates with every
+# re-emit of the descriptors. A committed copy would be a second source of truth
+# for two fields that look authoritative and go stale silently, which is the one
+# way this artifact can hurt: the run that regenerates it is a single command and
+# it records that command in itself.
+dregg-chain-seal.json
+
 # The process-per-slice chain's boundary artifacts (`npm run root-air-fullchain`)
 # — proofs, verification keys and feature flags handed between processes. They
 # are the RUN, not a source; the leg clears and re-mints them unless

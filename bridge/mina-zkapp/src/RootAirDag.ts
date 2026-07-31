@@ -260,6 +260,75 @@ export function foldRootsP3BigInt(alpha: bigint[], roots: bigint[][]): bigint[] 
   return acc;
 }
 
+const ePow = (a: bigint[], n: number) => {
+  let r = [1n, 0n, 0n, 0n];
+  for (let i = 0; i < n; i++) r = eMul(r, a);
+  return r;
+};
+
+/**
+ * **THE BINDER, FOR THE WHOLE DAG.** Resolve every table's column legend
+ * against the real proof's instances, in the SAME table order `unifiedDag`
+ * concatenates them.
+ *
+ * ⚑ EXPORTED BECAUSE IT WAS COPIED. `root-fri-uniform.ts`, `root-air-fullchain
+ * .ts` and `root-claim-carry.ts` each grew a local `realColumns`, and the two
+ * things every caller then computes from it — the lane values and the AIR
+ * ACCUMULATOR — are the preimage of a seal a Mina light client compares against.
+ * Two sides computing "the same" message differently is the drift this tree has
+ * already paid for twice.
+ */
+export function realRootColumns(real: RealRootAir): {
+  pairs: [DagTable, RealInstance][];
+  base: bigint[][];
+  ext: bigint[][];
+  alpha: bigint[];
+} {
+  const d = rootAirDag();
+  const byName: Record<string, RealInstance> = {};
+  for (const i of real.instances)
+    byName[i.table.replace('poseidon2_perm/baby_bear_d4_', 'poseidon2_')] = i;
+  const pairs: [DagTable, RealInstance][] = d.tables.map((t) => {
+    const i = byName[t.name] ?? byName[t.name.toLowerCase()];
+    if (!i)
+      throw new Error(
+        `no real instance for table ${t.name} (have ${Object.keys(byName).join(', ')}) — the ` +
+          'artifact and the emitted DAG are not the same AIR',
+      );
+    return [t, i];
+  });
+  const base: bigint[][] = [];
+  const ext: bigint[][] = [];
+  for (const [t, inst] of pairs) {
+    const b = bindRealInstance(t, inst);
+    base.push(...b.base);
+    ext.push(...b.ext);
+  }
+  return { pairs, base, ext, alpha: real.challenges.alpha.map((x) => BigInt(x)) };
+}
+
+/**
+ * **THE AIR ACCUMULATOR THE WHOLE CHAIN CARRIES**, as four BabyBear limbs:
+ * each instance's own p3 accumulator, lifted by `alpha^(R - rootTo)` so the
+ * per-instance folds compose into the unified DAG's single fold.
+ *
+ * ⚑ THIS IS HALF OF THE SEAL PREIMAGE. `DreggHeadGate` recomputes
+ * `airTerminalSeal(friCommit, Poseidon(accOutDigest, chainVkRoot), totalSteps)`
+ * and `accOutDigest` is `digestOfLanes([...acc, ...liveOut])` — so a caller who
+ * cannot produce THIS cannot present an advance at all.
+ */
+export function rootAirAccumulator(real: RealRootAir): bigint[] {
+  const { pairs, alpha } = realRootColumns(real);
+  const u = unifiedDag(rootAirDag());
+  const R = u.roots.length;
+  let acc = [0n, 0n, 0n, 0n];
+  u.tableSpans.forEach((span, i) => {
+    const p3 = pairs[i][1].accumulator.map((x) => BigInt(x));
+    acc = eAdd(acc, eMul(p3, ePow(alpha, R - span.rootTo)));
+  });
+  return acc;
+}
+
 // ===========================================================================
 // 3. The KAT's assignment stream — the SPEC, reimplemented.
 // ===========================================================================

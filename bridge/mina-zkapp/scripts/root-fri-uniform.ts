@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { Cache, FeatureFlags, Field, Poseidon, VerificationKey, verify } from 'o1js';
 import { BbExt } from '../src/FriQueryStep.js';
 import {
@@ -35,6 +35,7 @@ import {
   UniformCtx,
   UniformSpec,
   assertHomogeneous,
+  assertOpensTerminalSeal,
   auxOf,
   carriedLanes,
   leafOf,
@@ -44,6 +45,7 @@ import {
   prevLeaf,
   specName,
   stepIndexOf,
+  terminalSealPreimage,
   totalSteps,
   uniformBoundaryIn,
   uniformBoundaryOut,
@@ -901,6 +903,55 @@ async function main() {
       `every one of ${fmt(order.length)} slice instances enters exactly the boundary its ` +
         'predecessor emits, across all 19 query blocks and both joins the deployed chain does not ' +
         'have — the current-query register moves with the block, and the chain closes on the seal',
+    );
+
+    //  ⚑ AND THE SEAL'S PREIMAGE IS WRITTEN DOWN, because it dies with this
+    //  process otherwise. `DreggHeadGate.advanceHead(terminal, vk, friCommit,
+    //  accOutDigest)` recomputes `airTerminalSeal(friCommit,
+    //  Poseidon(accOutDigest, chainVkRoot), totalSteps)` and compares it against
+    //  the proof's boundary — and NEITHER field is recoverable from the proof,
+    //  because the boundary IS a hash of them. This context has both and until
+    //  now recorded neither, so an advance could not be presented AT ALL,
+    //  whatever the verification keys said.
+    //
+    //  ⚑ REGENERABLE. Re-running this leg at any tier rewrites it; nothing is
+    //  hand-copied and the file records the command.
+    const pre = terminalSealPreimage(c, c.twin, c.friCommit, c.acc);
+    assertOpensTerminalSeal(c, c.twin, pre, c.acc, root);
+    mkdirSync(UWORK, { recursive: true });
+    writeFileSync(
+      U('terminal-seal-preimage.json'),
+      JSON.stringify(
+        {
+          label: `root-fri uniform chain (${order.length} instances / ${programList(c).length} programs)`,
+          friCommit: pre.friCommit.toString(),
+          accOutDigest: pre.accOutDigest.toString(),
+          totalSteps: pre.totalSteps,
+          terminalProgram: pre.terminalProgram,
+          terminalQuery: pre.terminalQuery,
+          nLiveOut: pre.nLiveOut,
+          dagDigest: c.dagDigest.toString(),
+          friDigest: c.friDigest.toString(),
+          accLimbs: c.acc.map((x) => x.toString()),
+          //  ⚑ THE ROOT THIS RUN'S KEYS GIVE, and how many of them exist. A
+          //  chain whose keys are not all on disk has a vkTreeRoot with zero
+          //  leaves in it — recorded so a reader cannot mistake a partial run's
+          //  root for the protocol's.
+          chainVkRoot: root.toString(),
+          keysKnown: keyList(c).known,
+          keysTotal: programList(c).length,
+          terminalSeal: seal,
+          regenerate: 'npm run root-fri-uniform',
+          emittedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+    ok(
+      `the seal PREIMAGE is on disk (${relative(process.cwd(), U('terminal-seal-preimage.json'))}) — ` +
+        'friCommit and accOutDigest are not recoverable from the proof, so without this an advance ' +
+        'cannot be presented at all',
     );
   }
 

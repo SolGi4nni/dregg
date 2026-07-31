@@ -1085,6 +1085,105 @@ export function uniformBoundaryOut(
     : stepBoundary(friCommit, carriedDigest(out, a, vkRoot), Field(stepIndexOf(p, sp, q) + 1));
 }
 
+// ===========================================================================
+// THE SEAL PREIMAGE — the two fields a `DreggHeadGate` caller must exhibit.
+// ===========================================================================
+
+/** The chain's TERMINAL position: the last position of the last query block. */
+export const terminalSpecOf = (p: UniformPlan): UniformSpec => ({
+  kind: 'block',
+  pos: p.block.length - 1,
+});
+
+/**
+ * **THE SEAL PREIMAGE.** `DreggHeadGate.advanceHead` takes `(friCommit,
+ * accOutDigest)` and recomputes `airTerminalSeal(friCommit,
+ * Poseidon(accOutDigest, chainVkRoot), totalSteps)`, comparing it against the
+ * terminal proof's own `boundary`. Neither field is recoverable FROM the proof
+ * — the boundary is a hash of them — so an advance that does not carry them
+ * cannot be presented at all, whatever the verification keys say.
+ *
+ * ⚑ AND THIS IS THE `uniformBoundaryOut` TERMINAL BRANCH, FACTORED, NOT A
+ * SECOND SPELLING OF IT. `uniformBoundaryOut` at the terminal position emits
+ * `airTerminalSeal(friCommit, terminalDigest(acc, out, vkRoot), totalSteps)`
+ * with `terminalDigest(acc, out, vkRoot) = Poseidon(digestOfLanes([...acc,
+ * ...out]), vkRoot)` — so `accOutDigest = digestOfLanes([...acc, ...liveOut])`
+ * exactly, and `DreggHeadAnchor.accOutDigestOf` is that same function. An
+ * emitter is expected to CHECK the round trip against `uniformBoundaryOut`
+ * rather than trust this comment; `assertOpensTerminalSeal` below is that check.
+ *
+ * ⚑ WHY THE GATE'S SEAL IS FOUR FIELDS AND A STEP BOUNDARY IS THREE. The last
+ * block position emits `Provable.if(isQ[Q-1], seal, step)` — ONE program, ONE
+ * verification key, at every query — so a proof of that program at q = 5 is a
+ * chain that walked six of nineteen queries carrying the identical claim. The
+ * tagged seal drags `chainVkRoot` (the whole key ring) and `totalSteps` (the
+ * chain's LENGTH) into the compared field, which is what makes the six-of-
+ * nineteen proof unusable under the identical key. Weakening it to make
+ * presentation easier would give that proof back.
+ */
+export type TerminalSealPreimage = {
+  friCommit: Field;
+  accOutDigest: Field;
+  totalSteps: number;
+  /** Recorded so a reader can see WHICH position the `liveOut` was taken at. */
+  terminalProgram: string;
+  terminalQuery: number;
+  nLiveOut: number;
+};
+
+export function terminalSealPreimage(
+  ctx: UniformCtx,
+  twin: WalkTwin,
+  friCommit: Field,
+  acc: bigint[],
+): TerminalSealPreimage {
+  const p = ctx.plan;
+  const sp = terminalSpecOf(p);
+  const q = p.layout.numQueries - 1;
+  const out = carriedLanes(ctx, twin, sp, q, 'out').map((x) => Field(x));
+  return {
+    friCommit,
+    accOutDigest: digestOfLanes([...acc.map((x) => Field(x)), ...out]),
+    totalSteps: totalSteps(p),
+    terminalProgram: specName(sp),
+    terminalQuery: q,
+    nLiveOut: out.length,
+  };
+}
+
+/**
+ * ⚑ THE ROUND TRIP, AS A REFUSAL. An emitted preimage that does not open the
+ * chain's own terminal boundary is worse than no preimage: it is an artifact an
+ * operator would carry to Devnet and watch fail at the one assertion the whole
+ * gate is built around. So the emitter proves it opens the seal before it writes
+ * anything, against `uniformBoundaryOut` — the function the CHAIN emits with.
+ */
+export function assertOpensTerminalSeal(
+  ctx: UniformCtx,
+  twin: WalkTwin,
+  pre: TerminalSealPreimage,
+  acc: bigint[],
+  vkRoot: Field,
+): Field {
+  const p = ctx.plan;
+  const sp = terminalSpecOf(p);
+  const q = p.layout.numQueries - 1;
+  const chainSaid = uniformBoundaryOut(ctx, twin, sp, q, pre.friCommit, acc, vkRoot);
+  const fromPreimage = airTerminalSeal(
+    pre.friCommit,
+    Poseidon.hash([pre.accOutDigest, vkRoot]),
+    Field(pre.totalSteps),
+  );
+  if (chainSaid.toBigInt() !== fromPreimage.toBigInt())
+    throw new Error(
+      'the emitted seal preimage does NOT open the chain\'s own terminal boundary: the chain emits ' +
+        `${chainSaid.toBigInt()} and (friCommit, accOutDigest, totalSteps) recompute to ` +
+        `${fromPreimage.toBigInt()}. An operator carrying this artifact would fail at the one ` +
+        'assertion `DreggHeadGate` is built around.',
+    );
+  return chainSaid;
+}
+
 /** The aux lanes a slice instance consumes, in segment order. */
 export function auxOf(ctx: UniformCtx, twin: WalkTwin, sp: UniformSpec, q: number): bigint[] {
   const [gFrom, gTo] = globalRange(ctx.plan, sp, q);
