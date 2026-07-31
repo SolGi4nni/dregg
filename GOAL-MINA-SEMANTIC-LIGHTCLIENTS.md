@@ -383,3 +383,28 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   can neither learn from it nor be lied to by it. **The danger is a consumer that believes one
   attested**, and after this pass the two categories are distinguishable by inspection rather than
   by audit.
+- 23:0x ⚑⚑ **APEX ARITY (OPEN #6) — A1 + the ∃-HOIST LANDED TOGETHER.** The map-op denotation
+  (`DescriptorIR2.opensTo`/`writesTo` → `MapOp.holdsAt` → `Satisfied2` → every `AlgoStarkSound*`)
+  now IS the deployed arity-3 indexed-Merkle commitment. **The apex premise is INHABITED at deployed
+  parameters** — `deployed_opensTo_inhabited` / `deployed_writesTo_inhabited_with_growth`: depth 16,
+  ONE live leaf in a 2^16 tree (the occupancy `CanonicalHeapTree::new` builds), `SENTINEL_MAX`,
+  **arbitrary hash, no floor**. Before this it was not merely unproved there, it was REFUTED.
+  ⚑ The blocker nobody had priced: `MapLeafSchema`/`padImtSchema`/`padImtTeeth` all lived
+  **downstream** of `DescriptorIR2`, so the schema core had to move upstream first
+  (`Dregg2/Circuit/DeployedMapDenotation.lean`).
+  ⚑ **The ∃-hoist is what de-vacuums, and it had to land in the same commit**: the schema's
+  existential teeth need `Good ⊇ Function.Injective hash` = the refuted floor under another name, so
+  arity alone would have re-based the same vacuous theorems. `openHeapS`/`OpenResidS` name the
+  residual at the heaps the two openings supply; the binding has **no hypothesis on `hash`**.
+  **DRIFT GUARD CUT AND LANDED** (`MapOp.holdsAt` clean of `Heap.leafOf`/`mapRoot`/`opensToMerkle`,
+  854 consts, with positive controls). **CARRIERS FELL, DID NOT MOVE: 18 removed, 0 added** (ratchet
+  preflight green on every commit). 2 of 3 predicted refutations died as required
+  (`mapOpHoldsAt_unsat_at_imtRoot`, `topGap_mapOpHoldsAt_false` → `retired*`); the 3rd was never
+  coupled to the denotation. 3 separations intact.
+  ⚠ **`mapOp_holds_of_mapReconcile` is DELETED** — the arity-2 gate model provably cannot produce the
+  arity-3 denotation; the `.mapOp` arm is a MODELLER now, as the LogUp arm always was.
+  ⚠ **RUST-SIDE, and one is LIVE**: the AAFI producer commits a **sorted** BEFORE tree and an
+  **append-order** AFTER root (`fold_append_order_8`) — turn N's after-root ≠ turn N+1's before-root
+  whenever the inserted key is not the current maximum. Producer-only fix, no VK rotation, state
+  re-genesis. (op=3 emits from ZERO descriptors; zero padding needs a domain-separated digest = VK
+  rotation + full re-emit.)
