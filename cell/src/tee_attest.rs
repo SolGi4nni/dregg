@@ -70,6 +70,52 @@ impl TeeQuoteKind {
     }
 }
 
+/// **What a TCB policy decided about a report — including "nothing did".**
+///
+/// ⚑ MEASURED 2026-07-30. This used to be a bare `tcb_ok: bool`, and
+/// `tee_verify::verify_nitro_core` set it to a hardcoded `true` for every AWS Nitro
+/// attestation document, with the reason in a trailing comment. A caller reading
+/// `claims.tcb_ok` — including the fail-closed `attested_data` gate, whose whole job is
+/// to refuse a down-level TCB — was told a policy had passed when no policy had run. A
+/// disclosure in a comment is not a value a caller can branch on; this enum is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcbStatus {
+    /// A TCB policy RAN and this report met it (SNP: `REPORTED_TCB` at or above the pinned
+    /// minimum; TDX: the quote's DCAP status is in the verifier's accepted set).
+    MetPolicy,
+    /// A TCB policy RAN and this report is BELOW it — a genuine quote from a down-level
+    /// (potentially vulnerable) TCB. Refused.
+    BelowPolicy,
+    /// ⚑ **NO POLICY RAN**, because this platform's attestation carries no TCB rung to gate
+    /// on. AWS Nitro is the case: its trust is a valid certificate chain to the pinned root
+    /// plus the PCR measurement, and the document exposes no microcode/firmware version a
+    /// minimum could be compared against. This is **not a pass**. A caller that needs a TCB
+    /// decision must treat it as an absent one and decide explicitly — see
+    /// `tee_verify::attested_data`, which admits it only because the enclave-identity pin
+    /// (`expected_measurement`) is doing the whole job on that platform, and says so.
+    NoPolicyOnPlatform,
+}
+
+impl TcbStatus {
+    /// Whether a fail-closed gate must REFUSE on this status. Only [`TcbStatus::BelowPolicy`]
+    /// is a refusal: a platform with no TCB rung cannot fail one. Deliberately NOT named
+    /// `is_ok` — there is no arm of this enum that means "a TCB policy vouched for this
+    /// report" *and* is reachable on every platform, which is exactly the fact the old
+    /// boolean erased.
+    pub fn is_refusal(self) -> bool {
+        matches!(self, TcbStatus::BelowPolicy)
+    }
+
+    /// The stable machine-readable token, for a surface that reports what it checked.
+    pub fn token(self) -> &'static str {
+        match self {
+            TcbStatus::MetPolicy => "met-pinned-minimum",
+            TcbStatus::BelowPolicy => "below-pinned-minimum",
+            TcbStatus::NoPolicyOnPlatform => "no-tcb-rung-on-this-platform",
+        }
+    }
+}
+
 /// The claims a genuine, vendor-cert-chain-verified TEE report yields. The injected
 /// [`TeeAttestationVerifier`] is responsible for having proven the report authentic
 /// (vendor signature + cert chain to the hardware root) BEFORE returning these — a
@@ -83,10 +129,10 @@ pub struct TeeReportClaims {
     /// turn/session commitment the predicate's input points at, or the quote is stale
     /// (replayed) or unbound.
     pub report_data: [u8; 32],
-    /// Whether the report's TCB (microcode/firmware version) meets the verifier's
-    /// pinned-minimum policy. `false` = a genuine quote from a down-level (potentially
-    /// vulnerable) TCB — rejected.
-    pub tcb_ok: bool,
+    /// What a TCB policy decided — **or that none ran**. See [`TcbStatus`]; the old
+    /// `tcb_ok: bool` is GONE so every consumer breaks loudly rather than reading a
+    /// hardcoded `true` as a check that happened.
+    pub tcb: TcbStatus,
 }
 
 /// The injected crypto seam. The host installs a real implementation (SEV-SNP / DCAP /
@@ -257,10 +303,15 @@ impl WitnessedPredicateVerifier for TeeWitnessedPredicateVerifier {
             });
         }
 
-        if !claims.tcb_ok {
+        // ⚑ ONLY `BelowPolicy` refuses. `NoPolicyOnPlatform` (AWS Nitro, which exposes no
+        // TCB rung) is admitted on the strength of the measurement pin checked above and
+        // the vendor chain the verifier already proved — NOT because a TCB policy passed.
+        // The old `if !claims.tcb_ok` could never fire for Nitro because the verifier
+        // hardcoded `true`; the distinction is now in the type instead of in a comment.
+        if claims.tcb.is_refusal() {
             return Err(WitnessedPredicateError::Rejected {
                 kind_name: "tee-attestation",
-                reason: "TEE TCB below the pinned-minimum policy".to_string(),
+                reason: format!("TEE TCB policy: {}", claims.tcb.token()),
             });
         }
 
@@ -313,7 +364,7 @@ mod tests {
         let v = TeeWitnessedPredicateVerifier::with_verifier(Arc::new(MockTee(TeeReportClaims {
             measurement: M,
             report_data: RD,
-            tcb_ok: true,
+            tcb: TcbStatus::MetPolicy,
         })));
         assert!(v.verify(&M, &PredicateInput::Slot(&RD), &proof()).is_ok());
     }
@@ -323,7 +374,7 @@ mod tests {
         let v = TeeWitnessedPredicateVerifier::with_verifier(Arc::new(MockTee(TeeReportClaims {
             measurement: [1u8; 32], // not M
             report_data: RD,
-            tcb_ok: true,
+            tcb: TcbStatus::MetPolicy,
         })));
         assert!(v.verify(&M, &PredicateInput::Slot(&RD), &proof()).is_err());
     }
@@ -333,7 +384,7 @@ mod tests {
         let v = TeeWitnessedPredicateVerifier::with_verifier(Arc::new(MockTee(TeeReportClaims {
             measurement: M,
             report_data: [2u8; 32], // not the committed RD
-            tcb_ok: true,
+            tcb: TcbStatus::MetPolicy,
         })));
         // input pins RD, but the quote bound something else -> replayed/unbound.
         assert!(v.verify(&M, &PredicateInput::Slot(&RD), &proof()).is_err());
@@ -344,9 +395,43 @@ mod tests {
         let v = TeeWitnessedPredicateVerifier::with_verifier(Arc::new(MockTee(TeeReportClaims {
             measurement: M,
             report_data: RD,
-            tcb_ok: false,
+            tcb: TcbStatus::BelowPolicy,
         })));
         assert!(v.verify(&M, &PredicateInput::Slot(&RD), &proof()).is_err());
+    }
+
+    /// ⚑ **A PLATFORM WITH NO TCB RUNG IS ADMITTED, AND THE REFUSAL SAYS WHICH ARM FIRED.**
+    ///
+    /// The two facts this pins, which the old `tcb_ok: bool` could not express:
+    /// `NoPolicyOnPlatform` is NOT a refusal (Nitro would otherwise be unusable), and it is
+    /// NOT `MetPolicy` either — a caller can tell them apart, which is the whole point of
+    /// the migration. Before this, `tee_verify::verify_nitro_core` hardcoded `tcb_ok: true`
+    /// and every reader was told a policy had passed.
+    #[test]
+    fn a_platform_with_no_tcb_rung_is_admitted_but_never_reported_as_a_policy_pass() {
+        let v = TeeWitnessedPredicateVerifier::with_verifier(Arc::new(MockTee(TeeReportClaims {
+            measurement: M,
+            report_data: RD,
+            tcb: TcbStatus::NoPolicyOnPlatform,
+        })));
+        assert!(
+            v.verify(&M, &PredicateInput::Slot(&RD), &proof()).is_ok(),
+            "a platform that carries no TCB rung cannot fail a TCB policy, so the gate must \
+             not refuse it — the measurement pin is what is doing the work there"
+        );
+        assert_ne!(
+            TcbStatus::NoPolicyOnPlatform,
+            TcbStatus::MetPolicy,
+            "the two must be DISTINGUISHABLE by a caller; collapsing them back to one \
+             boolean is exactly the defect this enum replaced"
+        );
+        assert!(!TcbStatus::NoPolicyOnPlatform.is_refusal());
+        assert!(TcbStatus::BelowPolicy.is_refusal());
+        assert_eq!(
+            TcbStatus::NoPolicyOnPlatform.token(),
+            "no-tcb-rung-on-this-platform",
+            "a surface reporting what it checked must be able to print the absence"
+        );
     }
 
     #[test]
@@ -360,7 +445,7 @@ mod tests {
         let v = TeeWitnessedPredicateVerifier::with_verifier(Arc::new(MockTee(TeeReportClaims {
             measurement: M,
             report_data: RD,
-            tcb_ok: true,
+            tcb: TcbStatus::MetPolicy,
         })));
         assert!(v.verify(&M, &PredicateInput::Slot(&RD), &[]).is_err());
     }

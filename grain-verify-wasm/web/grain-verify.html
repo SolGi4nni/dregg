@@ -515,13 +515,45 @@ $("go").addEventListener("click", () => {
   renderVerdict(r);
 });
 
+// ⚑ MEASURED 2026-07-30. This headline used to read
+//     "✓ PASS — re-witnessed, untampered under the pinned signer"
+// for EVERY pass — identical for a bare R0 run and for R0+R1+R2 — while the Rust
+// side already returned `renter_anchored`, `anti_rewrite_anti_truncation` and
+// `r2_linked` as separate, branchable fields. A renter who supplied nothing but a
+// signer got the same green sentence as one who supplied a countersigned
+// checkpoint AND the executor's turn manifest, and R0's own caveat (the host holds
+// the receipt key; a host that forges a self-consistent chain passes it) was
+// nowhere near the verdict. The rungs are now IN the headline, and the ones that
+// did not run are named as not-run rather than left to the panel above.
+function rungsOf(r) {
+  const ran = ["R0"];
+  if (r.renter_anchored && r.anti_rewrite_anti_truncation) ran.push("R1");
+  if (r.r2_linked != null) ran.push("R2");
+  const missing = ["R1", "R2"].filter((x) => ran.indexOf(x) < 0);
+  return { ran: ran, missing: missing, headline: ran.join("+") };
+}
+
 function renderVerdict(r) {
   const box = $("verdict");
   box.className = "show";
   if (r.ok) {
+    const g = rungsOf(r);
+    // The strongest thing this pass licenses, and NOTHING stronger. R0 alone is
+    // explicitly not host-independent; that is the sentence the old headline hid.
+    const licence = g.ran.indexOf("R1") >= 0
+      ? "the host neither rewrote nor truncated this history relative to a checkpoint YOU countersigned"
+      : "self-consistent under the signer you pinned — <strong>a host holding that receipt key can " +
+        "forge a chain that passes this rung</strong>";
+    const notRun = g.missing.length
+      ? `<p style="margin:6px 0 0" class="mode">NOT run on this attestation: ${esc(g.missing.join(", "))}` +
+        (g.missing.indexOf("R1") >= 0 ? " (supply your renter pubkey + genesis nonce)" : "") +
+        (g.missing.indexOf("R2") >= 0 ? " (supply the executor's committed-turn manifest)" : "") +
+        ` · R3 (whole-history STARK / execution integrity) is not welded on any path.</p>`
+      : `<p style="margin:6px 0 0" class="mode">R3 (whole-history STARK / execution integrity) is not welded on any path.</p>`;
     box.innerHTML = `<div class="card pass">
-      <div class="badge">✓ PASS — re-witnessed, untampered under the pinned signer</div>
+      <div class="badge">✓ PASS (${esc(g.headline)}) — ${licence}</div>
       <p style="margin:8px 0 0">${esc(r.summary || "")}</p>
+      ${notRun}
       <dl class="grid">
         <dt>agent</dt><dd>${esc(r.agent)}</dd>
         <dt>actions</dt><dd>${esc(r.actions)} (signed + ordered)</dd>

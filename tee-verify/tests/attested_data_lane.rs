@@ -53,7 +53,15 @@ fn real_nitro_attestation_over_a_payload_mints_an_attested_fact() {
     assert_eq!(fact.measurement, pinned_measurement());
     assert_eq!(fact.report_data, BOUND);
     assert_eq!(fact.payload, BOUND.to_vec());
-    assert!(fact.tcb_ok);
+    // ⚑ THE HONEST NITRO ASSERTION. This used to be `assert!(fact.tcb_ok)` and passed on a
+    // value `verify_nitro_core` hardcoded. A Nitro document exposes no TCB rung, so the fact
+    // reports the ABSENCE of a policy decision — and the test asserts the absence, which is
+    // what the code actually establishes.
+    assert_eq!(
+        fact.tcb,
+        dregg_cell::tee_attest::TcbStatus::NoPolicyOnPlatform,
+        "a Nitro fact must report that NO TCB policy ran, never that one passed"
+    );
 }
 
 #[test]

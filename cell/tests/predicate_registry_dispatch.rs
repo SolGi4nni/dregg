@@ -71,7 +71,7 @@ fn registry_resolves_custom_tee_verifier_by_vk_hash() {
     let registry = registry_with_tee(TeeReportClaims {
         measurement: MEASUREMENT,
         report_data: REPORT_DATA,
-        tcb_ok: true,
+        tcb: dregg_cell::tee_attest::TcbStatus::MetPolicy,
     });
 
     let kind = WitnessedPredicateKind::Custom {
@@ -103,7 +103,7 @@ fn tee_fact_accepted_through_registry_dispatch() {
     let registry = registry_with_tee(TeeReportClaims {
         measurement: MEASUREMENT,
         report_data: REPORT_DATA,
-        tcb_ok: true,
+        tcb: dregg_cell::tee_attest::TcbStatus::MetPolicy,
     });
 
     // The fact as the executor would carry it: Custom{tee vk}, commitment =
@@ -134,7 +134,7 @@ fn tee_fact_wrong_measurement_rejected_through_registry_dispatch() {
     let registry = registry_with_tee(TeeReportClaims {
         measurement: MEASUREMENT,
         report_data: REPORT_DATA,
-        tcb_ok: true,
+        tcb: dregg_cell::tee_attest::TcbStatus::MetPolicy,
     });
 
     // ... but the fact pins a DIFFERENT expected binary as its commitment.
@@ -160,7 +160,7 @@ fn wrong_measurement_rejected_via_resolved_verifier() {
     let registry = registry_with_tee(TeeReportClaims {
         measurement: MEASUREMENT,
         report_data: REPORT_DATA,
-        tcb_ok: true,
+        tcb: dregg_cell::tee_attest::TcbStatus::MetPolicy,
     });
 
     let wp = tee_attestation_predicate([1u8; 32], REPORT_DATA_SLOT);

@@ -352,7 +352,10 @@ code,.mono{font-family:var(--mono);}
 .frow .fk{color:var(--fg-dim);font-size:.85rem;}
 .frow .fv{font-family:var(--mono);font-size:.85rem;color:var(--fg);font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:.4rem;word-break:break-all;text-align:right;}
 .fv-mark{flex:none;width:17px;height:17px;border-radius:5px;display:inline-grid;place-items:center;font-size:.62rem;font-weight:800;border:1px solid var(--line-2);color:var(--muted);}
-.fv-mark.ok{background:var(--mint-soft);border-color:var(--mint-line);color:var(--mint);}
+/* ⚑ `.ok` is GONE, deliberately. A per-slot opening checks against a heap root the same
+   server sent, so it cannot go false for a hostile server — it never earned the mint tick.
+   `.opened` is the honest state and is amber. A consumer keying on `.fv-mark.ok` breaks. */
+.fv-mark.opened{background:rgba(210,153,34,.14);border-color:rgba(210,153,34,.55);color:#d29922;}
 .fv-mark.no{background:var(--coral-soft);border-color:var(--coral);color:var(--coral);}
 
 /* legacy deos-* hooks kept working by cell.html boot() (mapped to new look) */
@@ -361,7 +364,7 @@ code,.mono{font-family:var(--mono);}
 .deos-card{display:contents;}
 .deos-vstack{display:contents;}
 .deos-bind.deos-field-unverified{color:var(--muted);}
-.deos-bind.deos-field-verified{color:var(--mint);}
+.deos-bind.deos-field-opened{color:#d29922;border-bottom:1px dashed #d29922;}
 .deos-bind.deos-field-refused{color:var(--coral);}
 
 /* ============================================================================

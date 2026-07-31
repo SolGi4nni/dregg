@@ -26,8 +26,16 @@
 //! 3. **payload binding** — `binding.commit(P)` must equal the attestation's
 //!    `report_data`. So the fact is *this enclave bound THIS payload*, not a replayed or
 //!    swapped one. A tampered / wrong payload → [`AttestedError::Unbound`].
-//! 4. **TCB policy** — `claims.tcb_ok` (SNP down-level microcode fails; Nitro trust is a
-//!    valid chain, always `true`). A down-level TCB → [`AttestedError::TcbBelowPolicy`].
+//! 4. **TCB policy — WHERE ONE EXISTS.** `claims.tcb` is a
+//!    [`TcbStatus`](dregg_cell::tee_attest::TcbStatus), not a boolean. SNP compares
+//!    `REPORTED_TCB` against a pinned minimum and TDX checks the DCAP status against an
+//!    accepted set, so both yield a real `MetPolicy`/`BelowPolicy`; `BelowPolicy` →
+//!    [`AttestedError::TcbBelowPolicy`]. ⚑ **AWS Nitro yields `NoPolicyOnPlatform` and is
+//!    ADMITTED**: its documents carry no microcode/firmware version, so there is no rung to
+//!    pin, and on that platform the enclave-identity check in step 2 is doing the whole job.
+//!    Until 2026-07-30 this arm reported a hardcoded `tcb_ok: true` and every consumer read
+//!    an absent check as a passed one. A Nitro fact is therefore weaker than an SNP one in a
+//!    named, branchable way — `fact.tcb` says which.
 //!
 //! The result is checkable offline by anyone holding the attestation bytes and the
 //! pinned root — no live server, no trusted feed operator.
@@ -37,6 +45,9 @@
 //! An [`AttestedFact`] carries [`TrustGrade::Attested`]. You still trust:
 //!
 //! - **the HW vendor's attestation root** (AWS Nitro G1 / AMD ARK) — not trustless;
+//! - **on Nitro, the absence of any TCB floor** — `fact.tcb == NoPolicyOnPlatform`. A
+//!   down-level Nitro hypervisor is not something this lane can refuse, because the
+//!   document does not say;
 //! - **the side-channel residual** — a genuine enclave can still leak via timing / power
 //!   / speculative channels; attestation proves *code identity + binding*, not that the
 //!   measured code is side-channel-free;
@@ -76,7 +87,7 @@
 //! a ZK witness — the day the mark moves from ATTESTED to PROVED. That weld is future work;
 //! this lane delivers the ATTESTED rung it composes on.
 
-use dregg_cell::tee_attest::{TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
+use dregg_cell::tee_attest::{TcbStatus, TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
 use sha2::{Digest, Sha256};
 
 /// Domain-separation tag for the [`PayloadBinding::Sha256`] commitment, so an
@@ -168,8 +179,11 @@ pub struct AttestedFact {
     pub payload: Vec<u8>,
     /// The commitment the enclave bound (`= binding.commit(payload) = claims.report_data`).
     pub report_data: [u8; 32],
-    /// Whether the report's TCB met the verifier's pinned-minimum policy.
-    pub tcb_ok: bool,
+    /// ⚑ **WHAT A TCB POLICY DECIDED — OR THAT NONE RAN.** Was `tcb_ok: bool`, which every
+    /// AWS Nitro fact carried as a hardcoded `true`. A consumer of this fact must be able to
+    /// tell "a pinned minimum was met" from "this platform has no rung to pin", and
+    /// [`TcbStatus`] is that distinction.
+    pub tcb: TcbStatus,
     /// The trust grade this fact carries — always [`TrustGrade::Attested`].
     pub grade: TrustGrade,
 }
@@ -238,8 +252,12 @@ pub fn attest_data<V: TeeAttestationVerifier + ?Sized>(
         return Err(AttestedError::Unbound);
     }
 
-    // 4. TCB policy.
-    if !claims.tcb_ok {
+    // 4. TCB policy — and ⚑ ONLY a policy that RAN AND FAILED refuses. A platform with no
+    //    TCB rung (AWS Nitro) cannot fail one; the fact carries
+    //    `TcbStatus::NoPolicyOnPlatform` and the consumer decides. Admitting it here is a
+    //    real, named weakening relative to SNP/TDX, and it is stated in the fact rather
+    //    than laundered into a `true`.
+    if claims.tcb.is_refusal() {
         return Err(AttestedError::TcbBelowPolicy);
     }
 
@@ -248,7 +266,7 @@ pub fn attest_data<V: TeeAttestationVerifier + ?Sized>(
         measurement: claims.measurement,
         payload: input.payload.to_vec(),
         report_data: claims.report_data,
-        tcb_ok: claims.tcb_ok,
+        tcb: claims.tcb,
         grade: TrustGrade::Attested,
     })
 }
@@ -280,11 +298,11 @@ mod tests {
 
     const MEAS: [u8; 32] = [7u8; 32];
 
-    fn mock_over(payload: &[u8], binding: PayloadBinding, tcb_ok: bool) -> MockTee {
+    fn mock_over(payload: &[u8], binding: PayloadBinding, tcb: TcbStatus) -> MockTee {
         MockTee(TeeReportClaims {
             measurement: MEAS,
             report_data: binding.commit(payload).unwrap(),
-            tcb_ok,
+            tcb,
         })
     }
 
@@ -292,7 +310,7 @@ mod tests {
     fn sha256_binding_over_a_price_payload_mints_the_fact() {
         // A realistic variable-length feed value.
         let price = br#"{"sym":"BTC-USD","px":"65012.50","t":1700000000}"#;
-        let v = mock_over(price, PayloadBinding::Sha256, true);
+        let v = mock_over(price, PayloadBinding::Sha256, TcbStatus::MetPolicy);
         let fact = attest_data(
             &v,
             &AttestedDataInput {
@@ -318,7 +336,7 @@ mod tests {
         // same attestation → the recomputed commitment disagrees with report_data.
         let honest = br#"{"sym":"BTC-USD","px":"65012.50"}"#;
         let tampered = br#"{"sym":"BTC-USD","px":"99999.99"}"#;
-        let v = mock_over(honest, PayloadBinding::Sha256, true);
+        let v = mock_over(honest, PayloadBinding::Sha256, TcbStatus::MetPolicy);
         let err = attest_data(
             &v,
             &AttestedDataInput {
@@ -336,7 +354,7 @@ mod tests {
     #[test]
     fn wrong_enclave_measurement_is_refused() {
         let payload = b"security-flag:LISTED";
-        let v = mock_over(payload, PayloadBinding::Sha256, true);
+        let v = mock_over(payload, PayloadBinding::Sha256, TcbStatus::MetPolicy);
         let err = attest_data(
             &v,
             &AttestedDataInput {
@@ -367,10 +385,55 @@ mod tests {
         assert!(matches!(err, AttestedError::Attestation(_)));
     }
 
+    /// ⚑ **THE PERMANENT CONTROL for the hardcoded-`tcb_ok` defect.**
+    ///
+    /// Measured 2026-07-30: `verify_nitro_core` returned `tcb_ok: true` for every Nitro
+    /// report, so this lane's step-4 gate — whose whole job is refusing a down-level TCB —
+    /// could not fire on that platform, and every minted `AttestedFact` carried a `tcb_ok`
+    /// that read as a passed check. This asserts the three facts that repair depends on:
+    /// a no-rung platform is ADMITTED (else Nitro is unusable), the minted fact reports the
+    /// ABSENCE rather than a pass, and the absence is DISTINGUISHABLE from a pass.
+    ///
+    /// Collapse `TcbStatus` back to a boolean, or map Nitro's arm to `MetPolicy`, and this
+    /// goes red.
+    #[test]
+    fn a_no_tcb_rung_platform_mints_a_fact_that_reports_the_ABSENCE_not_a_pass() {
+        let payload = b"mark:AAPL:230.10";
+        let v = mock_over(
+            payload,
+            PayloadBinding::Sha256,
+            TcbStatus::NoPolicyOnPlatform,
+        );
+        let fact = attest_data(
+            &v,
+            &AttestedDataInput {
+                kind: TeeQuoteKind::AwsNitro,
+                attestation: b"opaque",
+                payload,
+                binding: PayloadBinding::Sha256,
+                expected_measurement: MEAS,
+            },
+        )
+        .expect("a platform with no TCB rung cannot FAIL a TCB policy, so the lane admits it");
+        assert_eq!(
+            fact.tcb,
+            TcbStatus::NoPolicyOnPlatform,
+            "the minted fact must carry the ABSENCE of a TCB decision, not a pass — this is \
+             the field a consumer reads to learn that nothing gated the firmware"
+        );
+        assert_ne!(
+            fact.tcb,
+            TcbStatus::MetPolicy,
+            "a fact from a platform with no TCB rung must never be indistinguishable from one \
+             whose report met a pinned minimum. That indistinguishability WAS the defect."
+        );
+        assert_eq!(fact.tcb.token(), "no-tcb-rung-on-this-platform");
+    }
+
     #[test]
     fn down_level_tcb_is_refused() {
         let payload = b"mark:AAPL:230.10";
-        let v = mock_over(payload, PayloadBinding::Sha256, false);
+        let v = mock_over(payload, PayloadBinding::Sha256, TcbStatus::BelowPolicy);
         let err = attest_data(
             &v,
             &AttestedDataInput {
@@ -388,7 +451,7 @@ mod tests {
     #[test]
     fn raw32_binding_requires_and_binds_a_32_byte_commitment() {
         let digest = [0xABu8; 32];
-        let v = mock_over(&digest, PayloadBinding::Raw32, true);
+        let v = mock_over(&digest, PayloadBinding::Raw32, TcbStatus::MetPolicy);
         let fact = attest_data(
             &v,
             &AttestedDataInput {

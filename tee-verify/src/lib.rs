@@ -19,6 +19,15 @@
 //! 4. extracts `measurement = SHA-256(PCR0‖PCR1‖PCR2)` and
 //!    `report_data = user_data`.
 //!
+//! ⚑ **NITRO HAS NO TCB RUNG, AND THE CLAIMS NOW SAY SO.** An attestation document exposes
+//! no microcode/firmware version, so there is nothing for a pinned minimum to compare
+//! against; [`verify_nitro_core`] returns
+//! [`TcbStatus::NoPolicyOnPlatform`](dregg_cell::tee_attest::TcbStatus::NoPolicyOnPlatform)
+//! rather than the hardcoded `tcb_ok: true` it returned until 2026-07-30. On this platform
+//! the enclave-identity pin (`expected_measurement`) is doing the whole job that a TCB
+//! policy does elsewhere — a caller relying on a TCB decision must know it is absent, and
+//! a comment could not tell it.
+//!
 //! Freshness (is the doc *recent*) is enforced only in the trait entry point
 //! against wall-clock now; the crypto core uses the doc's timestamp so a captured
 //! fixture verifies deterministically forever.
@@ -36,7 +45,7 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dregg_cell::tee_attest::{TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
+use dregg_cell::tee_attest::{TcbStatus, TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
 use serde::Deserialize;
 use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
@@ -194,7 +203,14 @@ pub fn verify_nitro_core(report: &[u8]) -> Result<(TeeReportClaims, u64), String
     let claims = TeeReportClaims {
         measurement: fold_pcrs(&doc.pcrs)?,
         report_data: extract_report_data(&doc)?,
-        tcb_ok: true, // Nitro trust = a valid chain to the pinned root (no SNP-style TCB rung).
+        // ⚑ MEASURED 2026-07-30. This was `tcb_ok: true` with this same reason in a trailing
+        // comment — a hardcoded pass on a field whose entire purpose is to report a policy
+        // decision, read by the fail-closed `attested_data` gate as though a policy had run.
+        // A Nitro attestation document carries NO microcode/firmware version: its trust is
+        // the certificate chain to the pinned root (verified above) plus the PCR measurement
+        // (the caller's `expected_measurement` pin). There is no rung to gate on, so the
+        // honest value is the ABSENCE, not a pass — and a caller can now branch on it.
+        tcb: TcbStatus::NoPolicyOnPlatform,
     };
     Ok((claims, doc.timestamp))
 }

@@ -105,7 +105,7 @@ impl TeeAttestationVerifier for TestHostSnpVerifier {
         Ok(TeeReportClaims {
             measurement,
             report_data,
-            tcb_ok: true,
+            tcb: dregg_cell::tee_attest::TcbStatus::MetPolicy,
         })
     }
 }

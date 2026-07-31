@@ -331,7 +331,7 @@ impl std::error::Error for MarkError {}
 mod tests {
     use super::*;
     use crate::attested_data::PayloadBinding;
-    use dregg_cell::tee_attest::TeeReportClaims;
+    use dregg_cell::tee_attest::{TcbStatus, TeeReportClaims};
 
     // The same injected-verifier test double the attested_data unit tests use: fixed claims for
     // any report, so the GradedMark decode/refusal logic is exercised without real crypto. The
@@ -360,7 +360,7 @@ mod tests {
         MockTee(TeeReportClaims {
             measurement: MEAS,
             report_data: PayloadBinding::Sha256.commit(payload).unwrap(),
-            tcb_ok: true,
+            tcb: TcbStatus::MetPolicy,
         })
     }
 

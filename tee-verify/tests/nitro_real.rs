@@ -15,7 +15,12 @@ fn verifies_real_live_nitro_doc_and_extracts_bound_report_data() {
         claims.report_data, [0xABu8; 32],
         "report_data must equal the commitment the enclave bound"
     );
-    assert!(claims.tcb_ok);
+    assert_eq!(
+        claims.tcb,
+        dregg_cell::tee_attest::TcbStatus::NoPolicyOnPlatform,
+        "a real Nitro doc carries no microcode/firmware version, so no TCB policy can have \
+         run — the claims must say so rather than report a pass"
+    );
     assert!(ts_ms > 1_700_000_000_000, "doc timestamp looks real (ms)");
     println!(
         "OK real Nitro doc: measurement={} report_data={} ts_ms={}",

@@ -61,7 +61,7 @@
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dregg_cell::tee_attest::{TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
+use dregg_cell::tee_attest::{TcbStatus, TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
 use sha2::{Digest, Sha256};
 
 use dcap_qvl::quote::Quote;
@@ -127,12 +127,18 @@ impl TdxVerifiedReport {
         r
     }
 
-    /// Fold to the trait's [`TeeReportClaims`].
+    /// Fold to the trait's [`TeeReportClaims`]. TDX genuinely HAS a TCB rung (the DCAP
+    /// status against `accepted_statuses`), so this maps to a real `MetPolicy`/`BelowPolicy`
+    /// decision — unlike Nitro, which reports [`TcbStatus::NoPolicyOnPlatform`].
     pub fn to_claims(&self) -> TeeReportClaims {
         TeeReportClaims {
             measurement: self.measurement,
             report_data: self.report_data_32(),
-            tcb_ok: self.tcb_ok,
+            tcb: if self.tcb_ok {
+                TcbStatus::MetPolicy
+            } else {
+                TcbStatus::BelowPolicy
+            },
         }
     }
 }
@@ -455,7 +461,7 @@ impl TdxVerifier {
     /// then binds the result to the caller's fresh `nonce_hex` (64-char hex string) + the
     /// instance `e2e_pubkey_b64` (the base64 pubkey string from discovery), killing replay,
     /// and to the expected registry `expected` measurements. Returns the folded
-    /// [`TeeReportClaims`] (`tcb_ok` rides in the claims; the weld enforces it).
+    /// [`TeeReportClaims`] (the TCB decision rides in `claims.tcb`; the weld enforces it).
     pub fn verify_chutes_tdx(
         &self,
         quote: &[u8],
@@ -889,7 +895,7 @@ mod tests {
             .expect("matching binding accepts");
         assert_eq!(claims.report_data, rep.report_data_32());
         assert_eq!(claims.measurement, rep.measurement);
-        assert!(claims.tcb_ok);
+        assert_eq!(claims.tcb, TcbStatus::MetPolicy);
 
         // Tampered nonce (different valid 64-hex) → reject (the replay-kill: a captured quote
         // bound the OLD nonce, so a new request's nonce does not match).

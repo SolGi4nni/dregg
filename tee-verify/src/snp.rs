@@ -32,7 +32,7 @@
 //! its per-chip VCEK captured from EPYC-SNP hardware (the report-body fixture) — the ROOT
 //! trust is now real, not a seam.
 
-use dregg_cell::tee_attest::{TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
+use dregg_cell::tee_attest::{TcbStatus, TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
 use p384::ecdsa::signature::Verifier;
 use p384::ecdsa::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -83,7 +83,7 @@ const P384_SCALAR_LEN: usize = 48;
 const SIG_ALGO_ECDSA_P384_SHA384: u32 = 1;
 
 /// A parsed AMD SEV-SNP `TCB_VERSION` (8 bytes: bootloader, tee, [reserved×4], snp,
-/// microcode). Compared component-wise against a pinned minimum for `tcb_ok`.
+/// microcode). Compared component-wise against a pinned minimum for `claims.tcb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TcbVersion {
     pub bootloader: u8,
@@ -253,7 +253,7 @@ pub fn verify_snp_signature(report: &SnpReport, vcek_vk: &VerifyingKey) -> Resul
 /// installs a trust anchor (and can therefore ACCEPT a report) takes an explicit
 /// `min_tcb` [`TcbVersion`]: a genuine report whose `REPORTED_TCB` is below it (a
 /// down-level / vulnerable-microcode chip) verifies its vendor chain but yields
-/// `tcb_ok = false`, which the [`crate::attested_data`] weld / `cell` `tee_attest.rs`
+/// `TcbStatus::BelowPolicy`, which the [`crate::attested_data`] weld / `cell` `tee_attest.rs`
 /// gate turns into a refusal. There is no all-zeros default that would silently accept
 /// every TCB — the down-level protection is ON by default, mirroring TDX's strict
 /// `{"UpToDate"}` posture ([`crate::tdx::DEFAULT_ACCEPTED_STATUS`]). It is structurally
@@ -262,7 +262,7 @@ pub fn verify_snp_signature(report: &SnpReport, vcek_vk: &VerifyingKey) -> Resul
 pub struct SnpVerifier {
     /// Pinned AMD roots. `None` = fail-closed (reject every report).
     trust: Option<SnpTrust>,
-    /// Minimum acceptable `REPORTED_TCB`; a report below it yields `tcb_ok = false`. Set
+    /// Minimum acceptable `REPORTED_TCB`; a report below it yields `TcbStatus::BelowPolicy`. Set
     /// once at construction by every root-pinning constructor — never defaulted to zeros
     /// for a verifier that can accept a report (see the type-level note).
     min_tcb: TcbVersion,
@@ -286,7 +286,7 @@ impl SnpVerifier {
     /// Install the pinned AMD roots (self-signed ARK DER + ASK DER) — the real chain —
     /// with the required minimum `REPORTED_TCB` floor. A genuine report below `min_tcb`
     /// (a down-level / vulnerable-microcode chip) verifies its chain but yields
-    /// `tcb_ok = false`.
+    /// `TcbStatus::BelowPolicy`.
     pub fn with_pinned_roots(
         ark_der: Vec<u8>,
         ask_der: Vec<u8>,
@@ -365,10 +365,18 @@ impl TeeAttestationVerifier for SnpVerifier {
         let vcek_vk = verify_snp_cert_chain(vcek_der, trust)?;
         verify_snp_signature(&report, &vcek_vk)?;
 
+        // SNP genuinely HAS a TCB rung: `REPORTED_TCB` compared component-wise against the
+        // pinned minimum. A real policy runs here, so this is `MetPolicy`/`BelowPolicy` and
+        // never `NoPolicyOnPlatform` — that arm is Nitro's, and the two must stay
+        // distinguishable.
         Ok(TeeReportClaims {
             measurement: report.folded_measurement(),
             report_data: report.report_data_32(),
-            tcb_ok: report.reported_tcb.meets(&self.min_tcb),
+            tcb: if report.reported_tcb.meets(&self.min_tcb) {
+                TcbStatus::MetPolicy
+            } else {
+                TcbStatus::BelowPolicy
+            },
         })
     }
 }
@@ -622,7 +630,7 @@ mod tests {
         let mut proof = signed_report(&pki.vcek_signer);
         proof.extend_from_slice(&pki.vcek_der); // report(1184) || vcek_der
                                                 // Floor = the synthetic report's own REPORTED_TCB, so the genuine chain accepts
-                                                // AND reports tcb_ok (an at-floor chip is trusted).
+                                                // AND reports MetPolicy (an at-floor chip is trusted).
         let floor = TcbVersion {
             bootloader: 3,
             tee: 1,
@@ -635,7 +643,7 @@ mod tests {
             .expect("full pipeline accepts");
         assert_eq!(claims.report_data[0], 0x00);
         assert_eq!(claims.report_data[31], 0x1F);
-        assert!(claims.tcb_ok, "at-floor TCB is trusted");
+        assert_eq!(claims.tcb, TcbStatus::MetPolicy, "at-floor TCB is trusted");
     }
 
     #[test]
@@ -745,8 +753,8 @@ mod tests {
     /// A genuine SEV-SNP report — real VCEK ← ASK ← pinned-ARK chain, real body
     /// signature — whose `REPORTED_TCB` is BELOW the pinned floor is a bona-fide quote
     /// from a DOWN-LEVEL / vulnerable-microcode chip. Before the fix (`min_tcb` defaulting
-    /// to all-zeros) it passed with `tcb_ok = true`; now it MUST yield `tcb_ok = false`,
-    /// which the cell weld's `if !claims.tcb_ok` gate turns into a refusal. An at/above
+    /// to all-zeros) it passed as a TCB policy pass; now it MUST yield `TcbStatus::BelowPolicy`,
+    /// which the cell weld's `claims.tcb.is_refusal()` gate turns into a refusal. An at/above
     /// floor report is accepted. There is no constructor that accepts a report without a
     /// stated floor, so the all-zeros footgun cannot be reintroduced by forgetting a
     /// builder call.
@@ -769,8 +777,8 @@ mod tests {
             microcode: 71,
         };
         assert!(
-            !claims_for_reported_tcb(&pki, down_microcode, floor).tcb_ok,
-            "a genuine but down-level-microcode chip must yield tcb_ok=false (the cell weld refuses it)"
+            claims_for_reported_tcb(&pki, down_microcode, floor).tcb == TcbStatus::BelowPolicy,
+            "a genuine but down-level-microcode chip must yield TcbStatus::BelowPolicy (the cell weld refuses it)"
         );
 
         // A different component below the floor (bootloader 2 < 3) — also refused.
@@ -781,14 +789,14 @@ mod tests {
             microcode: 72,
         };
         assert!(
-            !claims_for_reported_tcb(&pki, down_bootloader, floor).tcb_ok,
-            "a down-level bootloader rung must also yield tcb_ok=false"
+            claims_for_reported_tcb(&pki, down_bootloader, floor).tcb == TcbStatus::BelowPolicy,
+            "a down-level bootloader rung must also yield TcbStatus::BelowPolicy"
         );
 
         // (2) Exactly AT the floor — trusted.
         assert!(
-            claims_for_reported_tcb(&pki, floor, floor).tcb_ok,
-            "a report AT the pinned floor must be tcb_ok"
+            claims_for_reported_tcb(&pki, floor, floor).tcb == TcbStatus::MetPolicy,
+            "a report AT the pinned floor must be MetPolicy"
         );
 
         // (3) ABOVE the floor on every component — trusted.
@@ -799,8 +807,8 @@ mod tests {
             microcode: 80,
         };
         assert!(
-            claims_for_reported_tcb(&pki, above, floor).tcb_ok,
-            "a report above the pinned floor must be tcb_ok"
+            claims_for_reported_tcb(&pki, above, floor).tcb == TcbStatus::MetPolicy,
+            "a report above the pinned floor must be MetPolicy"
         );
     }
 }

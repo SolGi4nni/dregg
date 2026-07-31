@@ -1594,21 +1594,26 @@ fn openings_json(openings: &[Option<HeapSlotOpening>]) -> String {
 ///   floor `recursive_sound` (FRI/STARK engine soundness, surfaced not hidden). A
 ///   tampered proof, a relabeled public, or a foreign circuit is REFUSED. This is
 ///   exactly `light_client_verifies_whole_history`, run in wasm32.
-/// - **SERVED-PLAIN, now closed per-field (when `openings` are carried):** each painted
-///   `bind` VALUE is bound to the committed cell state by a per-slot sparse-Merkle
-///   OPENING against the cell's umem heap `root` ([`HeapSlotOpening`]), verified tab-side
-///   by the wasm `verify_slot_opening` — the executable counterpart of Lean's
-///   `Heap.root_binds_get` (equal roots ⇒ equal value at every slot). A field whose
-///   opening checks flips from `deos-field-unverified` to verified; a tampered value
-///   moves the recomputed root and is REFUSED, never laundered. So the trustless claim
-///   now covers the field VALUES, not only the commitment.
-/// - **THE RESIDUAL (named, not hidden):** an opening binds a value to the cell's HEAP
-///   ROOT. The heap root is one limb of the cell-state commitment that the faithful
-///   8-felt `final_root` folds, so it BINDS to the verified anchor — but re-deriving
-///   `final_root` from the heap root in-tab (recomputing the whole cell-state commitment
-///   from its limbs) is a further rung, not done here. What is proven: each shown field
-///   value equals the value committed at its slot in the cell heap whose `root` the
-///   opening pins. A bind carrying NO opening stays the server's plain rendering.
+/// - **SERVED-PLAIN, per-field OPENING (when `openings` are carried) — ⚑ NOT a verification:**
+///   each painted `bind` VALUE is checked against a per-slot sparse-Merkle OPENING
+///   ([`HeapSlotOpening`]) by the wasm `verify_slot_opening` — the executable counterpart of
+///   Lean's `Heap.root_binds_get` (equal roots ⇒ equal value at every slot). That gadget is
+///   real. **The root it opens against is not.** `openings[i].root` arrives in the SAME
+///   server-authored island as the values, and nothing in the light-client verify above
+///   touches it, so a server minting its own tree produces a consistent opening for every
+///   value it wants shown and every field goes green. ⚑ MEASURED 2026-07-30: this badge
+///   **cannot go false for a hostile server**, which is why it no longer wears the word.
+///   A field whose opening checks flips from `deos-field-unverified` to `deos-field-opened`
+///   (amber, glyph `⚭`, renamed from `deos-field-verified` — consumers of the old class
+///   break loudly); an opening that does not check is REFUSED, never laundered. A bind
+///   carrying NO opening stays the server's plain rendering.
+/// - **THE RESIDUAL, restated because the sentence above used to overclaim it:** an opening
+///   binds a value to a heap root. The heap root IS one limb of the cell-state commitment the
+///   faithful 8-felt `final_root` folds — so the binding EXISTS in the design — but
+///   re-deriving `final_root` from the heap root in-tab is a further rung and **is not done
+///   here**, which means the served root is unconstrained in practice. Until that rung lands,
+///   what this proves is: each shown value is the value at its slot in *whatever tree the
+///   server drew*, which is a self-consistency property of the server's own bookkeeping.
 ///
 /// `openings[i]` is the heap opening for the `i`-th `bind` in tree-walk order (`None` =
 /// no opening carried, that field stays plain). `pkg_url` is the ES-module URL of the
@@ -1709,8 +1714,8 @@ function deosVerifyFields() {{\n\
     let good = false;\n\
     try {{ good = verify_slot_opening(o.root, o.coll, o.key, o.value, o.next, o.sibs, o.dirs); }} catch (e) {{ good = false; }}\n\
     span.classList.remove('deos-field-unverified');\n\
-    span.classList.add(good ? 'deos-field-verified' : 'deos-field-refused');\n\
-    span.title = good ? 'the opening checks against the heap root THIS PAGE supplied \\u2014 not yet tied to the verified final_root' : 'field value REFUSED: opening did not check';\n\
+    span.classList.add(good ? 'deos-field-opened' : 'deos-field-refused');\n\
+    span.title = good ? 'OPENED, not verified: this value is consistent with a heap root THIS PAGE supplied, and that root is tied to nothing the light client checked. A server minting its own tree opens any value it likes.' : 'field value REFUSED: the opening did not check against the root this page supplied';\n\
     if (good) ok++;\n\
   }});\n\
   return {{ ok: ok, total: total }};\n\
@@ -1732,7 +1737,7 @@ async function boot() {{\n\
       const fields = deosVerifyFields();   // bind each painted field value to the committed heap\n\
       let fieldNote = '';\n\
       if (fields && fields.total > 0) {{\n\
-        fieldNote = '<br>field values: ' + fields.ok + '/' + fields.total + ' opened against the <code>heap_root</code> THIS PAGE SUPPLIED \\u2014 that root is not yet tied to the light-client-verified <code>final_root</code>, so a server minting its own tree can produce a consistent opening for any value. Binding <code>heap_root</code> into <code>final_root</code> is the named, OPEN residual';\n\
+        fieldNote = '<br>field values: ' + fields.ok + '/' + fields.total + ' OPENED (not verified) against the <code>heap_root</code> THIS PAGE SUPPLIED \\u2014 that root is tied to nothing the verify above checked, so a hostile server mints its own tree and this counter still reads ' + fields.total + '/' + fields.total + '. It CANNOT go false for a server that is lying, which is why the field marks are amber and say <em>opened</em>. Binding <code>heap_root</code> into the light-client-verified <code>final_root</code> is the named, OPEN residual';\n\
       }}\n\
       detail.innerHTML = 'This page reflects a genuine verified cell. The recursive STARK aggregate over its whole finalized history verified in this tab, re-witnessing nothing, ' +\n\
         '{mode_note}.<br>commitment <code>final_root</code> = [' + fr + ']<br>engine: ' + verdict.engine + fieldNote + '<br><span class=\\\"deos-floor\\\">' + verdict.named_floor + '</span>';\n\
@@ -1830,8 +1835,13 @@ const TRUSTLESS_CSS: &str = "
 .deos-card.deos-unverified{opacity:.62;filter:grayscale(.4);border-style:dashed;transition:opacity .25s,filter .25s,border-color .25s;}
 .deos-card.deos-verified{opacity:1;filter:none;border-color:#3fb950;border-style:solid;transition:opacity .25s,filter .25s,border-color .25s;}
 .deos-bind.deos-field-unverified{border-bottom:1px dashed var(--muted);opacity:.8;}
-.deos-bind.deos-field-verified{border-bottom:1px solid #3fb950;color:#3fb950;}
-.deos-bind.deos-field-verified::after{content:'\\2713';font-size:.7em;margin-left:.2em;vertical-align:super;opacity:.8;}
+/* ⚑ NOT GREEN, AND NOT A CHECK MARK. A per-field opening against a root the same server
+   supplied cannot go false for a hostile server, so it does not get the vocabulary of a
+   verification. Amber, and a link glyph rather than a tick: the value is TIED to a root,
+   and that root is tied to nothing. Renamed from `deos-field-verified` on 2026-07-30 so
+   every consumer of the old class breaks loudly instead of inheriting the old meaning. */
+.deos-bind.deos-field-opened{border-bottom:1px dashed #d29922;color:#d29922;}
+.deos-bind.deos-field-opened::after{content:'\\26AD';font-size:.7em;margin-left:.2em;vertical-align:super;opacity:.8;}
 .deos-bind.deos-field-refused{border-bottom:1px solid #f85149;color:#f85149;}
 .deos-bind.deos-field-refused::after{content:'\\2717';font-size:.7em;margin-left:.2em;vertical-align:super;}
 ";
@@ -2265,7 +2275,12 @@ mod trustless_tests {
         assert!(doc.contains("\"next\":2013265920"));
         assert!(doc.contains("o.value, o.next, o.sibs"));
         // The field flips from unverified to verified/refused on its opening.
-        assert!(doc.contains("deos-field-unverified") && doc.contains("deos-field-verified"));
+        assert!(doc.contains("deos-field-unverified") && doc.contains("deos-field-opened"));
+        assert!(
+            !doc.contains("deos-field-verified"),
+            "a per-field OPENING against a server-supplied heap root is not a verification, and \
+             the class a consumer branches on must not say it is"
+        );
         assert!(doc.contains("deosVerifyFields"));
     }
 

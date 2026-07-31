@@ -134,11 +134,15 @@ function verifyFields(){
     var mark=document.querySelector('.fv-mark[data-fv="'+o.i+'"]');
     if(!span) return; total++;
     var good=false; try{ good=M.verify_slot_opening(o.root,o.coll,o.key,o.value,o.sibs,o.dirs); }catch(e){ good=false; }
-    span.classList.add(good?"deos-field-verified":"deos-field-refused");
-    if(mark){ mark.className="fv-mark "+(good?"ok":"no"); mark.textContent=good?"✓":"✗"; }
+    // ⚑ OPENED, NOT VERIFIED. The root these openings check against comes from the same
+    // server response as the values, and nothing the light client ran touches it, so this
+    // mark CANNOT go false for a hostile server. It gets amber and the word "opened".
+    span.classList.add(good?"deos-field-opened":"deos-field-refused");
+    span.title=good?"opened against a heap root THIS SERVER supplied — not tied to anything the light client verified":"REFUSED: the opening did not check";
+    if(mark){ mark.className="fv-mark "+(good?"opened":"no"); mark.textContent=good?"⚭":"✗"; }
     if(good) ok++;
   });
-  if(total>0){ var lg=$("fields-legend"); if(lg) lg.textContent=ok+"/"+total+" bound by heap openings"; }
+  if(total>0){ var lg=$("fields-legend"); if(lg) lg.textContent=ok+"/"+total+" opened against a SERVER-SUPPLIED heap root (not verified)"; }
   return {ok:ok,total:total};
 }
 
