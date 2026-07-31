@@ -2411,13 +2411,63 @@ impl TurnExecutor {
             // now produces a non-zero high limb that the AIR boundary
             // constraint pins, so two amounts differing above bit 30 can no
             // longer share a proof.
+            //
+            // ⚠ THE CONTRACT THAT STOOD ON THE `hi` LINE — "fits in u32 since v < 2^64" — WAS
+            // FALSE, and is the same false contract `split_u64` carried. `v >> 30` reaches 2^34,
+            // so `as u32` truncates bits 62..64 and `v`/`v + 2^62` share BOTH limbs; `BabyBear::new`
+            // then aliases again at a period of `p · 2^30`. This function is therefore faithful
+            // ONLY on `[0, p · 2^30)`, and `verify_portable_note` REFUSES anything outside that
+            // window by variant (`BridgeError::ValueNotFaithfullyBound`) before this closure is
+            // ever reached — see `dregg_circuit::dsl::note_spending::NOTE_SPEND_VALUE_BOUND`.
             fn u64_to_limbs(v: u64) -> (BabyBear, BabyBear) {
+                debug_assert!(
+                    dregg_circuit::dsl::note_spending::note_spend_value_is_faithfully_bound(v),
+                    "value {v} is outside the faithfully-bound window — verify_portable_note must \
+                     have refused it before this encoder ran"
+                );
                 let lo = (v & ((1u64 << 30) - 1)) as u32;
-                let hi = (v >> 30) as u32; // fits in u32 since v < 2^64
+                let hi = (v >> 30) as u32; // bits 30..62 ONLY — see the window note above
                 (BabyBear::new(lo), BabyBear::new(hi))
             }
 
-            let nullifier_bb = compress(nullifier);
+            // THE NULLIFIER IS NOT COMPRESSED — IT IS DECODED.
+            //
+            // The claim tuple's `pi[0]` is ONE felt, and the 32-byte nullifier is that felt
+            // widened: `dregg_cell::Note::nullifier` builds it as `felt_to_bytes32(hash_many(…))`
+            // — four little-endian bytes then twenty-eight zeros. Recovering it with
+            // `compress` (Poseidon2 of the mod-`p`-reduced chunks) was wrong twice over: it is
+            // not that encoding's inverse (so no note-derived nullifier could EVER satisfy the
+            // `pi[0]` pin — this accept path was unreachable), and it is not injective (every
+            // 4-byte chunk has ≥ 2 preimages, so one nullifier had 4374–6561 byte-siblings with
+            // the same claim felt — each a FRESH key in the raw-byte-keyed `BridgedNullifierSet`,
+            // and the SAME proof verified for all of them).
+            //
+            // `verify_portable_note` refuses a non-canonical nullifier by variant
+            // (`BridgeError::NullifierNotCanonical`) before this closure runs; the `ok_or_else`
+            // is the fail-closed echo of that gate, never a second policy.
+            let nullifier_bb = dregg_circuit::dsl::note_spending::note_spend_nullifier_felt(
+                nullifier,
+            )
+            .ok_or_else(|| {
+                "bridge nullifier is not the canonical encoding of a claim-tuple nullifier felt \
+                 (bytes 0..4 little-endian < p, bytes 4..32 zero) — verify_portable_note must \
+                 have refused it before this decoder ran"
+                    .to_string()
+            })?;
+            // `root` and `destination_federation` stay COMPRESSED, and that is not an oversight:
+            // both are pinned at full 32-byte fidelity by `verify_portable_note` itself — the
+            // source root by the trusted-set equality (merkle_root ‖ height ‖ note_tree_root) and
+            // the destination by the `!= local_federation_id` refusal — so no byte-sibling of
+            // either is ever reachable here. The nullifier had no such backstop, which is exactly
+            // why it, and only it, was the replay hole.
+            //
+            // ⚠ NAMED RESIDUAL, not closed by this lane: `compress(root)` is also not the honest
+            // inverse of anything — the AIR's `pi[1]` is a ONE-FELT in-AIR Merkle chain output
+            // while `AttestedRoot::note_tree_root` is an 8-lane digest — so the byte↔felt
+            // correspondence on the root leg is still incoherent, and the recursion fold's
+            // mint-hash `connect` (which recomputes over `pi[0..6]`) cannot succeed on a real
+            // bridge turn until that leg is repaired too. It is an availability divergence, not a
+            // replay hole: the trusted-set equality admits exactly one byte string.
             let root_bb = compress(root);
             let dest_bb = compress(dest_federation);
             let (value_lo, value_hi) = u64_to_limbs(value);
@@ -5172,6 +5222,93 @@ mod note_spend_descriptor_flip_tests {
         );
     }
 
+    /// **THE DUPLICATE-BRIDGE-MINT EXHIBIT, AGAINST THE REAL VERIFIER.**
+    ///
+    /// The bridge boundary had TWO keyings of one thing at two fidelities: the proof pinned
+    /// `compress(nullifier)`, the replay set keyed the RAW BYTES. This tooth drives a REAL
+    /// note-spend proof through the REAL `verify_note_spend_descriptor2` and pins all three
+    /// facts that make that a hole, plus the close:
+    ///
+    ///  1. the OLD derivation is not the honest encoding's inverse — so the ACCEPT side of
+    ///     `apply_bridge_mint` was unreachable for any note-derived nullifier;
+    ///  2. the OLD derivation cannot distinguish a byte-sibling — the SAME proof verified for it;
+    ///  3. the NEW canonical decode recovers exactly the claim felt the AIR pins, and refuses the
+    ///     sibling outright.
+    #[test]
+    fn the_bridge_nullifier_keying_is_the_claim_felt_not_a_compression() {
+        use dregg_circuit::dsl::note_spending::note_spend_nullifier_felt;
+        use dregg_circuit::effect_vm::bytes32_to_8_limbs;
+
+        let w = make_witness(0x11);
+        let (pis, blob) = prove_blob(&w);
+        let (null, root, value_lo, asset, dest, value_hi) =
+            (pis[0], pis[1], pis[2], pis[3], pis[4], pis[5]);
+        let verify = |n, bytes: &[u8]| {
+            super::verify_note_spend_descriptor2(n, root, value_lo, value_hi, asset, dest, bytes)
+        };
+
+        // The 32-byte nullifier an honest note publishes for THIS claim felt is
+        // `felt_to_bytes32(f)` — that is literally what `dregg_cell::Note::nullifier` returns.
+        let honest_bytes = dregg_cell::felt_to_bytes32(null);
+        assert_eq!(
+            note_spend_nullifier_felt(&honest_bytes),
+            Some(null),
+            "the canonical decode recovers the claim felt exactly — a bijection, not a hash"
+        );
+
+        // POLE 1 — the REAL verifier ACCEPTS the felt those bytes decode to. Non-vacuous: the
+        // accept path is genuinely reached with a real proof.
+        assert!(
+            verify(note_spend_nullifier_felt(&honest_bytes).unwrap(), &blob).is_ok(),
+            "the canonical decode of the honest nullifier bytes must satisfy the pi[0] pin"
+        );
+
+        // (1) The OLD derivation hands the verifier a felt no note-spend proof produces. This is
+        //     why the honest bridge-mint accept was DEAD, not merely aliased.
+        let old = dregg_circuit::poseidon2::hash_many(&bytes32_to_8_limbs(&honest_bytes));
+        assert_ne!(
+            old, null,
+            "hash_many(bytes32_to_8_limbs(felt_to_bytes32(f))) is a Poseidon2 image, never f"
+        );
+        assert!(
+            verify(old, &blob).is_err(),
+            "…so the old derivation could never satisfy the pi[0] pin for a real note"
+        );
+
+        // (2) The OLD derivation cannot distinguish the sibling that is ONE ADDITION away: `p`
+        //     added to any 4-byte chunk survives the mod-`p` reduction unchanged.
+        let p = dregg_circuit::field::BABYBEAR_P as u64;
+        for chunk in 0..8usize {
+            let mut sib = honest_bytes;
+            let v = u32::from_le_bytes([
+                sib[chunk * 4],
+                sib[chunk * 4 + 1],
+                sib[chunk * 4 + 2],
+                sib[chunk * 4 + 3],
+            ]) as u64;
+            assert!(
+                v + p < 1u64 << 32,
+                "every chunk of a canonical nullifier aliases"
+            );
+            sib[chunk * 4..chunk * 4 + 4].copy_from_slice(&((v + p) as u32).to_le_bytes());
+
+            assert_ne!(sib, honest_bytes, "a DIFFERENT 32-byte replay key…");
+            assert_eq!(
+                dregg_circuit::poseidon2::hash_many(&bytes32_to_8_limbs(&sib)),
+                old,
+                "…that the OLD derivation mapped to the SAME claim felt — the same proof verified"
+            );
+
+            // POLE 2 — the NEW decode REFUSES it. No felt is produced at all, so there is nothing
+            // for the verifier to accept and nothing for the replay set to key freshly.
+            assert_eq!(
+                note_spend_nullifier_felt(&sib),
+                None,
+                "chunk {chunk}'s +p sibling must be refused, not reinterpreted"
+            );
+        }
+    }
+
     /// A proof for witness A must NOT verify against witness B's claim tuple —
     /// the descriptor binds the WHOLE identity, not just a shape.
     #[test]
@@ -5185,6 +5322,195 @@ mod note_spend_descriptor_flip_tests {
         assert!(
             r.is_err(),
             "note A's proof must be REJECTED against note B's claim tuple"
+        );
+    }
+}
+
+// ─── The duplicate-bridge-mint close: the EXECUTOR arm + the CONSERVATION arm ───
+//
+// `apply_bridge_mint` is the site where the two keyings met: it verified against
+// a LOSSY projection of the nullifier and then consumed the RAW BYTES in
+// `BridgedNullifierSet`. These teeth drive the real method and the real
+// `finalize.rs` conservation collector.
+#[cfg(test)]
+mod bridge_mint_duplicate_close_tests {
+    use super::*;
+    use dregg_cell_crypto::note_bridge::BridgeError;
+    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+    use std::collections::HashMap;
+
+    const LOCAL_FED: [u8; 32] = [0xFE; 32];
+
+    fn canonical_nullifier(felt: u32) -> [u8; 32] {
+        dregg_cell::felt_to_bytes32(BabyBear::new(felt))
+    }
+
+    /// The byte-sibling ONE ADDITION away: `p` added to chunk 0. Identical under the derivation
+    /// `verify_stark` used to perform, a fresh key to the byte-keyed replay set.
+    fn one_addition_sibling(n: &[u8; 32]) -> [u8; 32] {
+        let mut out = *n;
+        let v = u32::from_le_bytes([out[0], out[1], out[2], out[3]]) as u64;
+        out[0..4].copy_from_slice(&((v + BABYBEAR_P as u64) as u32).to_le_bytes());
+        out
+    }
+
+    fn attested() -> dregg_types::AttestedRoot {
+        dregg_types::AttestedRoot {
+            merkle_root: [42u8; 32],
+            note_tree_root: Some([0xAA; 32]),
+            nullifier_set_root: None,
+            height: 42,
+            timestamp: 1042,
+            blocklace_block_id: None,
+            finality_round: None,
+            quorum_signatures: vec![],
+            threshold_qc: None,
+            threshold: 0,
+            federation_id: dregg_types::FederationId::PLACEHOLDER,
+            receipt_stream_root: None,
+            hybrid_quorum: Vec::new(),
+        }
+    }
+
+    fn proof_with(nullifier: [u8; 32], value: u64) -> PortableNoteProof {
+        PortableNoteProof {
+            nullifier,
+            destination_federation: LOCAL_FED,
+            source_root: attested(),
+            spending_proof: vec![1, 2, 3, 4],
+            destination_commitment: dregg_cell::NoteCommitment([0xBB; 32]),
+            value,
+            asset_type: 1,
+        }
+    }
+
+    fn executor() -> TurnExecutor {
+        let mut ex = TurnExecutor::new(ComputronCosts::default());
+        ex.set_local_federation_id(LOCAL_FED);
+        ex.set_trusted_federation_roots(vec![attested()]);
+        ex
+    }
+
+    /// **THE EXECUTOR ARM, BY VARIANT.** The aliased nullifier is refused at the admission gate
+    /// with the SPECIFIC `BridgeError::NullifierNotCanonical` — asserted against that variant's own
+    /// `Display`, not a hand-typed substring — and NOTHING moves: the bridged-nullifier set is
+    /// untouched and the journal records no insertion, so there is no burn to roll back either.
+    ///
+    /// The honest canonical nullifier reaches a DIFFERENT refusal (the STARK leg), which is what
+    /// makes this non-vacuous: the gate discriminates, it does not refuse every bridge mint.
+    #[test]
+    fn an_aliased_bridge_mint_is_refused_by_variant_and_moves_no_state() {
+        let honest = canonical_nullifier(0xD0);
+        let aliased = one_addition_sibling(&honest);
+        assert_ne!(aliased, honest);
+
+        let ex = executor();
+        let mut journal = LedgerJournal::new();
+        let err = ex
+            .apply_bridge_mint(&[0], &mut journal, &proof_with(aliased, 500))
+            .expect_err("an aliased bridge nullifier must not mint");
+        let (TurnError::BridgeMintFailed { reason }, path) = (err.0, err.1) else {
+            panic!("a refused bridge mint must be TurnError::BridgeMintFailed");
+        };
+        assert_eq!(
+            reason,
+            BridgeError::NullifierNotCanonical { nullifier: aliased }.to_string(),
+            "the refusal must be the canonicality variant itself, not an incidental failure"
+        );
+        assert_eq!(path, vec![0]);
+        assert!(
+            ex.bridged_nullifiers.lock().unwrap().is_empty(),
+            "a refused mint consumes no nullifier — the set is untouched"
+        );
+        assert!(
+            journal.entries().is_empty(),
+            "…and journals nothing, so there is no burn to roll back"
+        );
+
+        // NON-VACUITY: the honest canonical nullifier gets PAST the canonicality gate and is
+        // refused by something else entirely — the STARK leg. (That leg cannot currently accept
+        // end to end: `verify_stark` still COMPRESSES `note_tree_root`, while the AIR's pi[1] is a
+        // one-felt in-AIR Merkle chain output and `AttestedRoot::note_tree_root` is an 8-lane
+        // digest. That root-leg incoherence is a NAMED RESIDUAL of this lane, and it is an
+        // availability divergence, not a replay hole — the trusted-set equality admits exactly one
+        // byte string for the root, so no byte-sibling of it is ever reachable.)
+        let mut journal2 = LedgerJournal::new();
+        let honest_err = ex
+            .apply_bridge_mint(&[0], &mut journal2, &proof_with(honest, 500))
+            .expect_err("the root leg still refuses; see the residual above");
+        let TurnError::BridgeMintFailed {
+            reason: honest_reason,
+        } = honest_err.0
+        else {
+            panic!("expected BridgeMintFailed");
+        };
+        assert_ne!(
+            honest_reason,
+            BridgeError::NullifierNotCanonical { nullifier: honest }.to_string(),
+            "the canonical nullifier must NOT be refused by the canonicality gate — a gate that \
+             refused everything would satisfy the assertion above for the wrong reason"
+        );
+    }
+
+    /// **THE CONSERVATION ARM.** `finalize.rs`'s per-asset ledger adds `portable_proof.value` for
+    /// EVERY `BridgeMint` in the call forest, at full u64 width, with no notion that two proofs
+    /// might be one note. That is the amplifier that turned a duplicate into free value — measured
+    /// here through the real collector — and the close removes its input: the second, aliased mint
+    /// can never be applied, so no turn carrying it ever commits and its 500 never lands.
+    #[test]
+    fn the_conservation_ledger_double_counts_a_duplicate_that_can_no_longer_be_admitted() {
+        let honest = canonical_nullifier(0xD0);
+        let aliased = one_addition_sibling(&honest);
+
+        // (1) THE AMPLIFIER, MEASURED. Both mints are the SAME note; the ledger counts both.
+        let mut inputs: HashMap<u64, u64> = HashMap::new();
+        let mut outputs: HashMap<u64, u64> = HashMap::new();
+        TurnExecutor::collect_note_effects_from_effect(
+            &Effect::BridgeMint {
+                portable_proof: proof_with(honest, 500),
+            },
+            &mut inputs,
+            &mut outputs,
+        )
+        .expect("conservation collection must not overflow");
+        assert_eq!(
+            inputs.get(&1).copied(),
+            Some(500),
+            "one admitted mint contributes its value ONCE, at full width — the value round-trips"
+        );
+
+        TurnExecutor::collect_note_effects_from_effect(
+            &Effect::BridgeMint {
+                portable_proof: proof_with(aliased, 500),
+            },
+            &mut inputs,
+            &mut outputs,
+        )
+        .expect("conservation collection must not overflow");
+        assert_eq!(
+            inputs.get(&1).copied(),
+            Some(1000),
+            "the ledger cannot tell the sibling from the original — a second admitted mint of ONE \
+             note contributes 500 again. This is why the duplicate was free value."
+        );
+
+        // (2) …AND ITS INPUT IS GONE. The aliased mint is refused before application, so a turn
+        //     carrying it cannot commit and that second 500 is never counted by a committed turn.
+        let ex = executor();
+        let mut journal = LedgerJournal::new();
+        let err = ex
+            .apply_bridge_mint(&[0], &mut journal, &proof_with(aliased, 500))
+            .expect_err("the aliased duplicate must never be applied");
+        assert_eq!(
+            match err.0 {
+                TurnError::BridgeMintFailed { reason } => reason,
+                other => panic!("expected BridgeMintFailed, got {other:?}"),
+            },
+            BridgeError::NullifierNotCanonical { nullifier: aliased }.to_string(),
+        );
+        assert!(
+            ex.bridged_nullifiers.lock().unwrap().is_empty(),
+            "and nothing was consumed, so the honest note can still be bridged exactly once"
         );
     }
 }

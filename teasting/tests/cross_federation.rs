@@ -348,7 +348,9 @@ fn test_note_bridge_between_federations() {
     let fed_b_id: [u8; 32] = [0xBB; 32];
 
     // --- Step 3: Alice creates a note in Fed A and initiates a bridge ---
-    let nullifier = Nullifier([0xA1; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0xA1),
+    ));
     let spending_proof_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
     let destination_commitment = NoteCommitment([0xCC; 32]);
     let value = 1000u64;

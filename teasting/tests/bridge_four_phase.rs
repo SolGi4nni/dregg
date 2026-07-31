@@ -113,7 +113,9 @@ fn make_strict_verifier(
 #[test]
 fn four_phase_lock_witness_mint_finalize_happy_path() {
     // ---- Setup: Alice has a note in Fed A, wants to bridge to Fed B ----
-    let nullifier = Nullifier([0x10; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x10),
+    ));
     let dest_commitment = NoteCommitment([0x20; 32]);
     let source_root = fed_a_attested_root();
     let note_tree_root = source_root.note_tree_root.unwrap();
@@ -230,7 +232,9 @@ fn four_phase_lock_witness_mint_finalize_happy_path() {
 
 #[test]
 fn four_phase_lock_refund_alt_path() {
-    let nullifier = Nullifier([0x11; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x11),
+    ));
     let value = 500u64;
     let asset_type = 1u64;
     let timeout_height = 50u64;
@@ -359,7 +363,9 @@ fn replay_protection_refund_then_finalize_rejected() {
 
 #[test]
 fn tamper_destination_federation_rejected() {
-    let nullifier = Nullifier([0x14; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x14),
+    ));
     let source_root = fed_a_attested_root();
     let proof = create_portable_note(
         nullifier,
@@ -386,7 +392,9 @@ fn tamper_value_rejected() {
     // The prover bound value=500 into the STARK trace; the attacker inflates the
     // portable proof's declared value to 5000. The verifier closure (mirroring
     // `verify_note_spend_dsl_with_destination`) rejects on PI mismatch.
-    let nullifier = Nullifier([0x15; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x15),
+    ));
     let source_root = fed_a_attested_root();
     let note_tree_root = source_root.note_tree_root.unwrap();
     let mut proof = create_portable_note(
@@ -428,7 +436,9 @@ fn tamper_recipient_rejected() {
     //       The strict verifier embeds the original spending_proof bytes;
     //       any tampering produces an unequal byte slice and the verifier
     //       rejects.
-    let nullifier = Nullifier([0x16; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x16),
+    ));
     let source_root = fed_a_attested_root();
     let note_tree_root = source_root.note_tree_root.unwrap();
 
@@ -483,7 +493,9 @@ fn tamper_recipient_rejected() {
 fn double_mint_rejected() {
     // The destination federation's BridgedNullifierSet rejects the second
     // mint of the same nullifier even if the proof itself is otherwise valid.
-    let nullifier = Nullifier([0x17; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x17),
+    ));
     let source_root = fed_a_attested_root();
     let proof = create_portable_note(
         nullifier,
@@ -540,7 +552,7 @@ use dregg_circuit::bridge_action_witness::BridgeActionWitness;
 #[allow(dead_code)]
 fn make_action_witness() -> BridgeActionWitness {
     BridgeActionWitness {
-        nullifier: [0x10; 32],
+        nullifier: dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0x10)),
         recipient: [0x20; 32],
         destination_federation: FED_B,
         // Amount above 2^30 to exercise high-bit binding (closes the 30-bit

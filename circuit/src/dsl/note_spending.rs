@@ -817,6 +817,89 @@ pub const fn note_spend_value_is_faithfully_bound(value: u64) -> bool {
     value < NOTE_SPEND_VALUE_BOUND
 }
 
+/// **THE ONE BYTE↔FELT CORRESPONDENCE FOR THE NULLIFIER SLOT.** Whether a 32-byte bridge
+/// nullifier is the canonical encoding of a claim-tuple nullifier felt: bytes `0..4` are the
+/// felt's little-endian `u32` and are `< p`; bytes `4..32` are ZERO.
+///
+/// This is exactly the image of `dregg_cell::felt_to_bytes32`, which is how every nullifier in
+/// this system is actually built (`dregg_cell::Note::nullifier` = `felt_to_bytes32(hash_many(…))`).
+/// `dregg-circuit` cannot name that function — `dregg-cell` depends on THIS crate, not the other
+/// way round — so the predicate is restated here and pinned against it by
+/// `cell-crypto`'s `the_bridge_nullifier_codec_is_the_felt_to_bytes32_inverse`.
+///
+/// ## Why a REFUSAL and not a reinterpretation
+///
+/// The note-spend claim tuple's nullifier is **one BabyBear** (`pi[0]`, welded by the emitted
+/// descriptor's `piBinding first col 14 → pi 0` to the in-AIR two-step `hash_fact` derivation).
+/// The 32-byte `PortableNoteProof::nullifier` is not a second object — it is that felt, widened.
+///
+/// The executor used to recover the claim felt with `hash_many(bytes32_to_8_limbs(bytes))`. That
+/// map is wrong in two independent ways:
+///
+///  * **It is not the honest encoding's inverse.** `hash_many(bytes32_to_8_limbs(felt_to_bytes32
+///    (f)))` is a Poseidon2 image, never `f`, so no note-derived nullifier could ever satisfy the
+///    `pi[0]` pin — the ACCEPT side of `apply_bridge_mint` was unreachable.
+///  * **It is not injective.** `bytes32_to_8_limbs` reduces each 4-byte little-endian chunk mod
+///    `p`, and `r + p < 2p < 2^32` holds for EVERY residue, so every chunk has ≥ 2 preimages (3
+///    whenever `r < 2^32 − 2p = 268435454`). The canonical encoding's 28 zero bytes are seven
+///    such chunks with THREE preimages each, so ONE legitimate nullifier had `3^7 · 2 = 4374`
+///    byte-siblings with an identical image (`3^8 = 6561` when the felt lane is itself below
+///    `2^32 − 2p`) — and `BridgedNullifierSet` keys RAW BYTES, so each sibling was a fresh replay
+///    key against the SAME proof. That is `2^12.1`–`2^12.7` free re-mints per note, at `O(1)`.
+///
+/// Decoding instead makes the correspondence a **bijection on the admitted domain** — the same
+/// shape [`NOTE_SPEND_VALUE_BOUND`] gives the value slot. Two byte strings can no longer name one
+/// felt, so keying the replay set on bytes and pinning the proof on the felt are the SAME keying.
+/// Non-canonical bytes are REFUSED, never reinterpreted; reinterpreting is what created the alias.
+///
+/// ⚠ **This does not widen the nullifier.** The claim tuple binds ~30.9 bits and still does; two
+/// DIFFERENT notes whose `hash_many` nullifiers collide remain a `2^15.5` birthday / `2^31`
+/// second-preimage grind. That is the separate nullifier-WIDTH wound named at
+/// [`NOTE_SPEND_VALUE_BOUND`], and it needs a PI widening in the Lean-authored
+/// `note-spend-leaf::dregg-note-spending-dsl-v3` descriptor. It is NOT closed here and must not
+/// be described as closed.
+#[inline]
+pub const fn note_spend_nullifier_is_canonical(nullifier: &[u8; 32]) -> bool {
+    let mut i = 4;
+    while i < 32 {
+        if nullifier[i] != 0 {
+            return false;
+        }
+        i += 1;
+    }
+    u32::from_le_bytes([nullifier[0], nullifier[1], nullifier[2], nullifier[3]])
+        < crate::field::BABYBEAR_P
+}
+
+/// The claim-tuple nullifier felt a 32-byte bridge nullifier encodes, or `None` when the bytes
+/// are not canonical ([`note_spend_nullifier_is_canonical`]).
+///
+/// `None` is a REFUSAL, not a fallback: the caller must reject the mint. Every boundary that
+/// turns bridge nullifier bytes into the `pi[0]` claim must go through here — that is what makes
+/// it "one keying".
+#[inline]
+pub fn note_spend_nullifier_felt(nullifier: &[u8; 32]) -> Option<BabyBear> {
+    if !note_spend_nullifier_is_canonical(nullifier) {
+        return None;
+    }
+    Some(BabyBear::new(u32::from_le_bytes([
+        nullifier[0],
+        nullifier[1],
+        nullifier[2],
+        nullifier[3],
+    ])))
+}
+
+/// ⚠ **NAMED RESIDUAL — the nullifier leg here is still COMPRESSED.** `apply_bridge_mint`'s
+/// verifier now DECODES the nullifier ([`note_spend_nullifier_felt`]), so the felt this projector
+/// puts into the mint identity is NOT the felt the claim tuple pins. That divergence predates the
+/// decode and is not repaired by it: the ROOT leg has the same shape (the AIR's `pi[1]` is a
+/// one-felt in-AIR Merkle chain output while `AttestedRoot::note_tree_root` is an 8-lane digest),
+/// so the recursion fold's mint-hash `connect` cannot succeed on a real bridge turn either way,
+/// and moving one leg alone would change nothing. It is NOT a replay hole after the decode: a
+/// non-canonical nullifier is refused at admission, so no aliased byte string reaches this
+/// projector on any turn that can be applied. Repairing the mint identity end-to-end is the
+/// mint-identity/fold lane's work, and it is a descriptor re-emit + VK rotation.
 pub fn bridge_mint_hash_felt(
     nullifier: &[u8; 32],
     note_tree_root: &[u8; 32],

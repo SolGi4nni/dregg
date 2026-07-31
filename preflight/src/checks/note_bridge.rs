@@ -214,7 +214,9 @@ fn check_bridged_nullifier_set_rejects_double_mint() -> Result<(), String> {
 }
 
 fn check_portable_note_rejects_untrusted_destination() -> Result<(), String> {
-    let nullifier = Nullifier([0x44; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x44),
+    ));
     let proof = create_portable_note(
         nullifier,
         vec![1, 2, 3],

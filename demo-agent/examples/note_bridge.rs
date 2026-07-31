@@ -288,7 +288,7 @@ fn main() {
     // Create a proof from a federation that B doesn't trust.
     let evil_root = mock_attested_root("federation-evil", 666);
     let evil_proof = PortableNoteProof {
-        nullifier: [0xEE; 32],
+        nullifier: dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0xEE)),
         destination_federation: fed_b_identity,
         source_root: evil_root,
         spending_proof: b"valid-stark-proof-evil".to_vec(),
@@ -321,7 +321,7 @@ fn main() {
 
     // Create a proof with invalid STARK bytes.
     let bad_proof = PortableNoteProof {
-        nullifier: [0xFF; 32],
+        nullifier: dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0xFF)),
         destination_federation: fed_b_identity,
         source_root: fed_a_root.clone(),
         spending_proof: b"garbage-not-a-real-proof".to_vec(),

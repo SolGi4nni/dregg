@@ -50,7 +50,7 @@ fn attested_root(merkle: [u8; 32], note_tree: Option<[u8; 32]>, height: u64) -> 
 
 #[test]
 fn locked_nullifier_cannot_be_relocked_to_different_destination() {
-    let nullifier_bytes = [0x21; 32];
+    let nullifier_bytes = dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0x21));
     let mut pending = PendingBridgeSet::new();
 
     // Lock nullifier with FED_B as destination.
@@ -184,7 +184,9 @@ fn bridge_id_distinguishes_different_source_federations() {
 
 #[test]
 fn portable_note_rejects_against_untrusted_root() {
-    let nullifier = Nullifier([0x50; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x50),
+    ));
     let honest_root = attested_root(FED_A, Some([0x88; 32]), 1);
     let proof = create_portable_note(
         nullifier,
@@ -212,7 +214,9 @@ fn portable_note_rejects_against_untrusted_root() {
 
 #[test]
 fn portable_note_rejects_against_empty_trusted_roots() {
-    let nullifier = Nullifier([0x51; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x51),
+    ));
     let root = attested_root(FED_A, Some([0x88; 32]), 1);
     let proof = create_portable_note(
         nullifier,
@@ -294,7 +298,9 @@ fn phase_log_rejects_skip_from_locked_to_finalized_without_witness() {
 
 #[test]
 fn same_nullifier_presented_at_two_destinations_each_rejects_second_locally() {
-    let nullifier = Nullifier([0x80; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0x80),
+    ));
     let source_root = attested_root(FED_A, Some([0x88; 32]), 1);
     let proof_b = create_portable_note(
         nullifier,
@@ -348,7 +354,7 @@ fn same_nullifier_presented_at_two_destinations_each_rejects_second_locally() {
 
 #[test]
 fn refund_releases_pending_set_for_re_lock() {
-    let nullifier = [0x85; 32];
+    let nullifier = dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0x85));
     let timeout_height = 10;
     let mut pending = PendingBridgeSet::new();
 
@@ -432,7 +438,7 @@ fn cross_federation_transfer_binds_transfer_id_and_bridge_id_jointly() {
     let to = CellId([0xB0; 32]);
     let amount = 777;
     let actor_nonce = 42;
-    let lock_nullifier = [0x91; 32];
+    let lock_nullifier = dregg_cell::felt_to_bytes32(dregg_circuit::field::BabyBear::new(0x91));
     let bridge_nonce = 7;
 
     let transfer_id = derive_transfer_id(&from, &to, amount, actor_nonce);
@@ -552,7 +558,9 @@ fn portable_note_carries_every_public_input_for_verifier_closure() {
     // exposes nullifier, source merkle_root, destination_federation,
     // value, asset_type, and proof bytes — exactly what the
     // verify_stark closure consumes.
-    let nullifier = Nullifier([0xA1; 32]);
+    let nullifier = Nullifier(dregg_cell::felt_to_bytes32(
+        dregg_circuit::field::BabyBear::new(0xA1),
+    ));
     let root = attested_root(FED_A, Some([0x88; 32]), 1);
     let proof = create_portable_note(
         nullifier,
