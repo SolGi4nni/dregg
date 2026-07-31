@@ -545,11 +545,25 @@ impl WorldPersist {
         let bytes =
             postcard::to_stdvec(&durable).map_err(|e| StoreError::Serialization(e.to_string()))?;
         let key = turn_key(self.cursor);
-        let assigned = self.store.commit_finalized_turn_with_config(
+        let assigned = match self.store.commit_finalized_turn_with_config(
             self.cursor,
             &record,
             &[(key.as_str(), bytes.as_slice())],
-        )?;
+        ) {
+            Ok(assigned) => assigned,
+            Err(e) => {
+                // The leaf cache was advanced to this turn's post-state above, but
+                // the turn did NOT land: the caller (`World::commit_turn`) unwinds
+                // its ledger to the pre-turn snapshot, so the cache now describes a
+                // ledger that no longer exists. Drop it — the next commit re-primes
+                // from whatever the ledger actually is. (Today that caller also
+                // drops the whole store on this path, so the cache dies anyway;
+                // this makes the invariant local instead of a cross-file
+                // assumption someone else has to keep.)
+                self.invalidate_leaf_cache();
+                return Err(e);
+            }
+        };
         self.cursor = assigned + 1;
         Ok(())
     }
