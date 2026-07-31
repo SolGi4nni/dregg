@@ -105,3 +105,22 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   `RecursionVk`, so the order is **spine → re-bake once → 131 compile → 905 prove → deploy**.
   Re-baking now burns a real proving run on a shape about to change.
   ⚠ `circuit-prove` is red mid-cutover (expose-hook arity 2→3) — that IS the spine lane working.
+- 22:40 **AUTHORIZATION-IN-AIR: mechanism CHOSEN, on soundness.** The requirement decides it: the
+  PROVER must be unable to forge, and the prover is the host, not the owner. That refutes the cheap
+  candidates rather than pricing them. A preimage/MAC/hash-ratchet authenticator is **refuted** —
+  whatever the AIR forces the prover to know, the prover knows, and can re-use for a different turn;
+  authority the prover can mint is not authority. A nonce/receipt chain answers "is this turn NEXT",
+  never "did anyone authorize the first one". The cap-open crown alone is **refuted** — a Merkle path
+  is PUBLIC data, so membership proves the cap exists and what it permits, never who invoked it (the
+  crown is kept for *which cap*; it cannot supply *who*). So: an **in-AIR signature verification**,
+  the one primitive where signing is separable from proving.
+  ⚑ **The scheme is a hash-based one-time signature over the deployed Poseidon2 chip, NOT ed25519** —
+  also on soundness, not cost: (1) ed25519-in-AIR is non-native `Fq = 2²⁵⁵−19` arithmetic whose gate
+  cross-sums reach `~2⁵⁴⁰` and OVERFLOW BabyBear, so the gates are read over ℤ — the residual
+  `Ed25519Gadget` names about itself — and that gap would sit at the root of authority; (2) ed25519 is
+  classical, and binding authorization to ECDLP inside a PQ-oriented STARK makes authorization the
+  weakest link in its own proof; (3) a hash-based signature adds **no new hardness carrier** — same
+  Poseidon2 the cap tree, state commitment and FRI already ride. Native field, native chip, native
+  floor. (~3 orders of magnitude cheaper than the ~10⁷-gate ed25519 verify is a CONSEQUENCE, not the
+  reason.) One-time is the right granularity — a turn is a one-shot act; the many-time lift is the
+  depth-16 crown indexed by turn sequence.
