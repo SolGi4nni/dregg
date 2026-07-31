@@ -131,6 +131,16 @@ pub fn light_client_demo(k: usize, step: u64) -> Result<JsValue, JsError> {
     // aggregate against it — re-witnessing nothing).
     let (_agg, attested) = fold_demo_chain(k, step)?;
 
+    // ⚑ MEASURED 2026-07-30: `aggregate_attested: true` here is a BARE TRUE. There is no
+    // conditional anywhere between `fold_demo_chain` and this literal, and the anchor was
+    // minted from the fold this same call produced — the exact shape `dregg_compress_history`
+    // was repaired for in `f3331d864`. The flag is structurally incapable of being false.
+    //
+    // It stays `true` because that is honest for a self-anchored demo — the fold really did
+    // happen — but `named_floor` now leads with WHAT THE BIT IS WORTH, because this function
+    // returns the SAME `AttestedHistoryView` type the genuinely-anchored `verify_devnet_history`
+    // and `verify_finalized_history` return, and a consumer holding the returned object cannot
+    // otherwise tell a demo verdict from a real one.
     let view = AttestedHistoryView {
         aggregate_attested: true,
         finality_attested: false,
@@ -138,9 +148,16 @@ pub fn light_client_demo(k: usize, step: u64) -> Result<JsValue, JsError> {
         final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
         chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
         num_turns: attested.num_turns,
-        engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
-        named_floor: "named floor: recursive_sound (FRI engine soundness) + the two \
-                      ivc_turn_chain fork follow-ups — the verification IS the trust"
+        engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM · SELF-ANCHORED DEMO"
+            .to_string(),
+        named_floor: "⚑ SELF-ANCHORED DEMO — `aggregate_attested` is unconditional here. This \
+                      call FOLDED the chain and then minted the VK anchor from its own fold, so \
+                      the anchor pin (the tooth whose whole purpose is that the anchor was held \
+                      BEFOREHAND) compared a value with itself and could not fail. It \
+                      demonstrates that the pipeline runs end-to-end; it is NOT evidence about \
+                      any history you were given. For that, call `verify_devnet_history` with an \
+                      anchor you hold. Underneath: recursive_sound (FRI engine soundness) + the \
+                      two ivc_turn_chain fork follow-ups."
             .to_string(),
     };
     serde_wasm_bindgen::to_value(&view).map_err(|e| JsError::from(e))

@@ -677,7 +677,9 @@ pub(super) fn tool_definitions_raw() -> Vec<McpToolDef> {
             title: None,
             output_schema: None,
             annotations: None,
-            description: "Initiate P2P state exchange with another sovereign cell, producing a STARK proof of the transition",
+            // ⚑ MEASURED 2026-07-30: the handler contacts NO peer and produces NO proof. An
+            // agent plans from this string, so it must describe the handler, not the design.
+            description: "Build and sign a LOCAL peer-exchange transition object for another                           sovereign cell. Contacts no peer, receives nothing, and produces NO                           proof — the peer is registered under a placeholder zero commitment.                           Returns `built_local_transition`, never an `exchanged` verdict.",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

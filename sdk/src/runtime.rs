@@ -1648,6 +1648,9 @@ impl AgentRuntime {
         let issuer_key = *token.issuer_key();
         // Carry the parent's effect-mask authority projection forward (monotone — the
         // sub-agent's `granted` can never exceed the parent's `held`).
+        // ⚑ The parent's `verified` bit is INHERITED, never asserted: attenuation narrows
+        // authority and cannot manufacture a verification the parent never had. Until
+        // 2026-07-30 `new_attenuated` hardcoded `verified: true` here.
         let delegated_token = HeldToken::new_attenuated(
             delegated_label.clone(),
             token.service().to_string(),
@@ -1655,6 +1658,7 @@ impl AgentRuntime {
             token_id.clone(),
             issuer_key,
             token.narrowed_authority(),
+            token.is_verified(),
         );
 
         // Pass through the issuer_key as the proof_key for the sub-agent's delegation.

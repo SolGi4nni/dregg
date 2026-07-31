@@ -40,7 +40,7 @@ pub(super) async fn tool_peer_exchange(params: &Value, state: &NodeState) -> Mcp
     // Create a peer exchange instance and generate a state transition.
     let signing_key = s.cclerk.gossip_signing_key().to_bytes();
     let mut exchange = dregg_cell_crypto::PeerExchange::new(cell_id, signing_key);
-    exchange.register_peer(peer_cell_id, [0u8; 32]); // Initial peer commitment.
+    exchange.register_peer(peer_cell_id, [0u8; 32]); // PLACEHOLDER peer commitment — see below.
 
     // Use a zero old_commitment (first exchange) and a zero effects_hash.
     let old_commitment = [0u8; 32];
@@ -49,13 +49,30 @@ pub(super) async fn tool_peer_exchange(params: &Value, state: &NodeState) -> Mcp
     let transition = exchange.create_transition(old_commitment, new_commitment, effects_hash);
     let transition_hash = blake3::hash(&postcard::to_stdvec(&transition).unwrap_or_default());
 
+    // ⚑ MEASURED 2026-07-30. This returned `"exchanged": true` — a key that CANNOT be false,
+    // because nothing above it can fail. NO PEER IS CONTACTED. The peer is registered with a
+    // placeholder zero commitment, `old_commitment` is hardcoded zero, `effects_hash` is a
+    // constant, and no proof of any kind is produced — while `tools_def` advertised
+    // "producing a STARK proof of the transition". An agent plans from `tools/list` and then
+    // reads a boolean that reads as a completed exchange.
+    //
+    // The success word is GONE, and the key with it, so a caller testing `exchanged === true`
+    // gets `undefined` rather than a weaker string. What the call actually does is reported:
+    // it BUILDS AND SIGNS a local transition object. That is a real artifact and it is worth
+    // returning; it is not an exchange and it is not a proof.
     McpToolResult::json(&serde_json::json!({
-        "exchanged": true,
+        "built_local_transition": true,
+        "peer_contacted": false,
+        "proof": serde_json::Value::Null,
         "cell_id": cell_id_hex,
         "peer_cell_id": peer_cell_id_hex,
         "new_commitment": new_commitment_hex,
         "transition_hash": hex_encode(transition_hash.as_bytes()),
         "sequence": transition.sequence,
+        "scope": "This node built and signed a local peer-exchange transition object. It did \
+                  NOT contact the peer, did not receive anything from it, registered the peer \
+                  under a PLACEHOLDER zero commitment, and produced NO proof. Nothing here is \
+                  evidence that an exchange occurred.",
     }))
 }
 

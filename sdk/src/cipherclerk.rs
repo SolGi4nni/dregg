@@ -529,7 +529,12 @@ impl HeldToken {
     /// federation membership proofs. They can be further attenuated, presented for
     /// verification, and generate ZK proofs, but cannot mint new root tokens.
     ///
-    /// Attenuated tokens created locally (from a verified parent) are marked as verified.
+    /// ⚑ **`verified` IS INHERITED FROM THE PARENT, NOT ASSERTED.** Measured 2026-07-30: this
+    /// constructor set `verified: true` unconditionally with the comment "Locally-attenuated
+    /// from a verified parent" — a PRECONDITION it never checked. An attenuation of an
+    /// UNVERIFIED token came out marked verified, and `is_verified()` reported it. The
+    /// parent's bit is now a parameter, so the claim in that comment is the caller's to
+    /// supply and the type cannot forget to ask.
     ///
     /// `narrowed_authority` is the parent's effect-mask projection narrowed by this
     /// attenuation (the SDK-side `granted ⊆ held`); `None` carries forward an unrestricted
@@ -541,6 +546,7 @@ impl HeldToken {
         id: String,
         issuer_key: [u8; 32],
         narrowed_authority: Option<dregg_cell::EffectMask>,
+        parent_verified: bool,
     ) -> Self {
         Self {
             label,
@@ -549,7 +555,9 @@ impl HeldToken {
             root_key: [0u8; 32],
             issuer_key,
             id,
-            verified: true, // Locally-attenuated from a verified parent
+            // Attenuation NARROWS authority; it cannot manufacture verification a parent
+            // never had. A child of an unverified token is unverified.
+            verified: parent_verified,
             membership_proof: None,
             caveat_chain_hash: None,
             delegation_binding: None,
@@ -1625,6 +1633,7 @@ impl AgentCipherclerk {
             id,
             issuer_key,
             token.narrowed_authority,
+            token.verified,
         );
 
         self.tokens.push(held.clone());

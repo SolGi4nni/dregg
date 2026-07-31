@@ -115,8 +115,14 @@ async fn check_producer(cfg: &Config) -> Check {
             };
             Check {
                 name: "producer".to_string(),
-                // Informational: reaching the surface is the pass condition.
-                passed: true,
+                // ⚑ MEASURED 2026-07-30: this was a bare `passed: true` on any successful
+                // fetch, so a node with the Lean producer OFF printed a green pass beside
+                // the sentence "Lean producer off". The comment saying it was informational
+                // was correct and was not on the terminal. The green now tracks the
+                // sentence: the Lean producer being ON is the pass condition, and a node
+                // that answered but is on the legacy Rust producer reads as not-passing —
+                // which is what its own detail line has always said.
+                passed: lean,
                 detail,
             }
         }
