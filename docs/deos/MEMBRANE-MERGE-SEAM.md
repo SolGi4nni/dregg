@@ -31,7 +31,7 @@ rehydrates via `World::new()` + `genesis_install`; it does not call `persist::sh
 
 | Seam piece | Grounded in | Type / function |
 |---|---|---|
-| The fork | `starbridge-v2/src/world.rs` | `World::fork(&self) -> World` — deep-clone ledger, SAME verified executor; a fork turn yields a byte-identical receipt |
+| The fork | `starbridge-v2/src/world/` | `World::fork(&self) -> World` — deep-clone ledger, SAME verified executor; a fork turn yields a byte-identical receipt |
 | The snapshot | `persist/src/snapshot.rs` | `Snapshot { checkpoint ⊕ overlay, claimed_root: [u8;32] }`; `ship_snapshot(from_height)`, `apply_snapshot_verified(snap, trusted_root)` (fail-closed on root mismatch) |
 | The root (anti-substitution tooth) | `world.rs` / `cell/src/ledger.rs` | `World::state_root() -> [u8;32]`, `Ledger::root()` (sorted-Poseidon2/BLAKE3 over canonical cells) |
 | The frustum (cap-bounded subgraph) | `cell/src/{cell,ledger}.rs` | `Ledger::iter()` closure over each `Cell::capabilities` (the c-list), depth- + authority-bounded |

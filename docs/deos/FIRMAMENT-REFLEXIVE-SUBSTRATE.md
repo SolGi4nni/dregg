@@ -4,7 +4,7 @@
 > This began as a design doc; the body below is preserved as the design rationale. State at HEAD:
 > **Task B (Suspend) is DONE** — `World{ suspended, pending }`, the `commit_turn` pre-check,
 > `CommitOutcome::Queued`, the `TurnQueued` event, `pub enum ResumeMode { Drain, Modified(..) }`,
-> and `suspend()`/`resume()`/`resume_drain()` all live in `starbridge-v2/src/world.rs`.
+> and `suspend()`/`resume()`/`resume_drain()` all live in `starbridge-v2/src/world/`.
 > **Task C (the cap-stratified tower) is DONE** — `FocusTarget` carries the
 > `DebugFrame(MetaLevelId)`/`World`/`Cockpit` arms (`starbridge-v2/src/presentable.rs`), and
 > `MetaLevelId`/`MetaDebugView`/`MetaStack` are implemented (`starbridge-v2/src/meta_debug.rs`).
@@ -246,7 +246,7 @@ a mirror over whom, who lands receipts) is independent of how the projection
 ## 3. THE SUSPEND PRIMITIVE
 
 *(BUILT — the gate, queue, `CommitOutcome::Queued`, `ResumeMode`, and `suspend`/`resume`/`resume_drain`
-live in `starbridge-v2/src/world.rs`. The design below is the rationale; the code blocks show the shape
+live in `starbridge-v2/src/world/`. The design below is the rationale; the code blocks show the shape
 that shipped, `Modified(Vec<Turn>)` in place of the sketch's `ConditionalBatch`.)*
 
 ### 3.1 Suspend ≠ Snapshot
@@ -533,7 +533,7 @@ between the two is named in §6.
   narrows on both axes through the *existing* `is_attenuation` meet. *Verify:* a
   `Live` mirror attenuates to `ReadState`/`Structure`; a `Structure` mirror
   refuses to widen — the `surface.rs:321-328` read-only-mirror test generalized.
-- **Task B — the Suspend gate. [DONE — `starbridge-v2/src/world.rs`.]** `World{ suspended, pending }`, the
+- **Task B — the Suspend gate. [DONE — `starbridge-v2/src/world/`.]** `World{ suspended, pending }`, the
   `commit_turn` pre-check, the `CommitOutcome::Queued` arm, the `TurnQueued`
   event, and `suspend()` / `resume(ResumeMode)` with `ResumeMode::{Drain,
   Modified(..)}` draining the pending queue in arrival order — all landed

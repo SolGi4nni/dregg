@@ -224,7 +224,7 @@ sibling lane is editing — slice 0 must not touch it.
 
 ### 2.5 Why it stays in starbridge-v2 (not `turn`/`cell`)
 
-`World` lives in `starbridge-v2/src/world.rs` and wraps `dregg_turn::executor::TurnExecutor`
+`World` lives in `starbridge-v2/src/world/` and wraps `dregg_turn::executor::TurnExecutor`
 over a `dregg_cell::Ledger`. The primitive is World-shaped, so it cannot descend into
 `turn`/`cell` without moving `World` itself (a far larger, separate refactor). The honest
 minimal home is a new starbridge-v2 module at `embedded-executor`. A future `dregg-branch-

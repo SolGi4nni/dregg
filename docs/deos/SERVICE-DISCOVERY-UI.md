@@ -145,7 +145,7 @@ with its label, kind, `interface_id` (short-hex), method count, and an
 `discover` call. A "local ⇄ federation" toggle scopes the source.
 
 > Backend: `ServiceDirectory::discover(world, filter)` — scans `World::ledger()`
-> (`starbridge-v2/src/world.rs:525`), derives each cell's
+> (`starbridge-v2/src/world/`), derives each cell's
 > `InterfaceDescriptor::derive_replayable`, and presents the
 > interface-publishing cells. Federation scope ahead: `MetaDirectory` +
 > `discovery.json`.

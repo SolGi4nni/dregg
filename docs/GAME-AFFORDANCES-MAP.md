@@ -108,8 +108,10 @@ slot index, or heap key.** Driven: `dregg-schema/tests/allocator.rs`, `dregg-sch
 `read_heap(key)`. 16 state slots (`compiler.rs:134`). Also the spween narrative-choice DSL, its
 scene→`CellProgram` compiler, replay `verify`/`verify_chain_linkage`, the `Driver`, and the
 collective-vote branch loop (§6). The underlying executor (`turn/`, crate `dregg-turn`) is the
-legacy dregg1 Rust executor, load-bearing, mid-swap to a verified Lean executor behind a
-differential shadow (`DREGG_LEAN_SHADOW=1`) — you don't touch it.
+legacy dregg1 Rust executor, load-bearing, and DEMOTED: on the covered set the verified Lean
+producer (`produce_via_lean`, default-ON via `DREGG_LEAN_PRODUCER`) installs the authoritative
+verdict over it — you don't touch it. (The old `DREGG_LEAN_SHADOW=1` differential named here was
+set by nothing and was deleted 2026-07-30.)
 
 ### `game-turn-slice` — the teeth→circuit compiler (driven)
 Bridges the two-language gap between executor teeth and the recursion-foldable circuit DSL.

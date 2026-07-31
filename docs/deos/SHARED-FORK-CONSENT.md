@@ -36,7 +36,7 @@ Chat moves the envelopes; we type what is inside them.
 ## The model — a fork is a confined sub-world with a graduated cap-graph
 
 A **shared fork** is a `World::fork()` (a deep-cloned ledger + the SAME verified
-executor; `starbridge-v2/src/world.rs:581`) handed to **another principal**,
+executor; `starbridge-v2/src/world/`) handed to **another principal**,
 confined so the recipient *cannot escape it* (firmament confinement;
 `sel4/dregg-firmament/src/sandbox.rs`), and whose **culled, cap-bounded subgraph**
 of MY authority is partitioned into three tiers:

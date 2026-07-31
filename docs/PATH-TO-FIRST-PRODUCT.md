@@ -176,7 +176,7 @@ locks, the treasury counting foreign holdings. Current resolution:
 - **`commit_turn` no-rollback: open.** `CORE-AUDIT.md` finding 2 stands at HEAD: in the
   cockpit World, a turn is fully applied in RAM (ledger, chain head, history, height)
   *before* the durable `dual_write`, and a durable-write failure returns
-  `CommitOutcome::Rejected` with zero rollback (`starbridge-v2/src/world.rs:1218`) —
+  `CommitOutcome::Rejected` with zero rollback (`starbridge-v2/src/world/` (was `world.rs:…` before `4ff3d234f` split it into a directory)) —
   a caller that trusts "Rejected = nothing happened" can double-apply. Finding 1 of the
   same audit (incomplete overlay change-set) is fixed — the write-set now unions the
   executor journal (`world.rs:1186-1200`, citing the finding in-code).

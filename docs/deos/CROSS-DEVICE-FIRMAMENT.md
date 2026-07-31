@@ -57,7 +57,7 @@ fixed.**
 ### 1.1 The image is a cell graph, not a disk
 
 deos's state is not a filesystem image; it is a **graph of sovereign cells** — the
-`World` the desktop embeds (`starbridge-v2/src/world.rs:71-123`: the engine
+`World` the desktop embeds (`starbridge-v2/src/world/`: the engine
 ledger, the receipts provenance log, the dynamics stream, the replayable
 `History`). Each cell is content-addressed (`CellId`), conserves value
 (BALANCE_SUM = 0 across the four substances), and carries its own receipt chain.
@@ -312,7 +312,7 @@ substrate:
 
 1. **Persist the image** (the prerequisite, now **BUILT**). `dregg-persist`'s redb
    commit log is wired into the `World`: `world.rs` carries a
-   `persist: Option<WorldPersist>` (`starbridge-v2/src/world.rs`) that dual-writes
+   `persist: Option<WorldPersist>` (`starbridge-v2/src/world/`) that dual-writes
    each turn into the redb commit log + input-turn table, and `World::open` /
    `World::open_recovering` restore durably via checkpoint⊕overlay with fail-closed
    convergence on the canonical root (see `docs/reference/persist.md`,

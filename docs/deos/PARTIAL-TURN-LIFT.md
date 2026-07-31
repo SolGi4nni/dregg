@@ -27,7 +27,7 @@ The promise-pipelining substrate is built and proven; the lift WIRES it, it does
   (fail-closed). Determination is EAGER, witness is LAZY.
 - **`captp::pipeline`** — promise pipelining drained through the verified kernel executor;
   no-amplification + break-cascade over the executable drain.
-- **`World` suspend gate** (`starbridge-v2/src/world.rs`) — `suspend()` / `resume(ResumeMode)`
+- **`World` suspend gate** (`starbridge-v2/src/world/`) — `suspend()` / `resume(ResumeMode)`
   / `pending: VecDeque<Turn>`. A turn submitted while suspended STAGES into `pending` (the
   continuation) and commits on `resume(Drain)`.
 
@@ -144,7 +144,7 @@ world;`), with a comment citing this document. It carries no new dependencies (`
 require it).
 
 The cockpit cutover is the NAMED residual: `World::pending` is a flat `VecDeque<Turn>`
-(`starbridge-v2/src/world.rs:185`), so the suspended continuation cannot yet carry a held
+(`starbridge-v2/src/world/`), so the suspended continuation cannot yet carry a held
 promise. The follow-on replaces the flat queue with a continuation that may carry a
 `HeldPromise` — fill at resume, drain only when READY — a shared-`world.rs` edit sequenced by
 the main loop.

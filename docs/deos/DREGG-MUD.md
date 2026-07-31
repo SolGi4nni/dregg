@@ -33,7 +33,7 @@ up an item, the other cannot dupe it.*
 | **affordance (lever, button, "look")** | a cell-declared, cap-gated effect-template; firing = a verified turn | `starbridge-v2/src/affordance.rs:62` (`CellAffordance`), `:99` (`authorized_for`) |
 | **pick up / drop / give** | `Effect::GrantCapability` / `RevokeCapability` (a real attenuated grant) | `turn/src/action.rs` (`GrantCapability`/`RevokeCapability`), powerbox `starbridge-v2/src/powerbox.rs` |
 | **trade / pay** | `Effect::Transfer` / `NoteSpend`+`NoteCreate` under Σδ=0 | `turn/src/action.rs` (`Transfer`/`NoteSpend`/`NoteCreate`), conservation in the executor |
-| **act (any verb)** | a `Turn` the executor admits iff `required ⊆ held`, leaving a `TurnReceipt` | `turn/src/turn.rs` (`Turn`/`TurnReceipt`), `starbridge-v2/src/world.rs:989` (`commit_turn`) |
+| **act (any verb)** | a `Turn` the executor admits iff `required ⊆ held`, leaving a `TurnReceipt` | `turn/src/turn.rs` (`Turn`/`TurnReceipt`), `starbridge-v2/src/world/` (`commit_turn`) |
 | **say / emote / shout** | a pub/sub to the room's inbox on the data plane (a no-value turn, Σδ=0 trivially) | `captp/src/data_plane.rs:366` (`Bus`: `publish`/`subscribe`/`enqueue`/`drain`) |
 | **the shared world** | a forkable, rehydratable, stitchable cap-bounded membrane | `starbridge-v2/src/shared_fork.rs`, `deos-matrix/src/membrane.rs`, `World::fork` `world.rs:632` |
 | **presence / "who is here"** | Matrix membership + typing/presence over the room cell | `deos-matrix/` (room↔cell `cell.rs`, presence `client.rs`) |
