@@ -151,20 +151,23 @@ pub fn lifecycle_felt(lc: &CellLifecycle) -> BabyBear {
             reason_hash,
             sealed_at,
         } => lifecycle_payload_felt(1, reason_hash, *sealed_at),
+        // Migrated keeps a richer payload (to + attestation + height) and is distinct from
+        // the light-client movers this gate forces — so it folds through the SINGLE
+        // canonical definition `dregg_circuit::poseidon2::lifecycle_migrated_felt` rather
+        // than a second hand-written sponge here. That composition is FAITHFUL (16×u16
+        // limbs, nothing reduces): `attestation` is a caller-chosen 32-byte blob and this
+        // limb is its only binding on the v9 anchor, so the `bytes32_to_8_limbs` lanes it
+        // used to ride — where `v` and `v + p` are one addition apart and identical —
+        // were the whole of it.
         CellLifecycle::Migrated {
             to,
             attestation,
             migrated_at,
-        } => {
-            // Migrated keeps a richer payload (to + attestation) — fold its two 32-byte hashes via
-            // the same felt-domain sponge, distinct from the light-client movers this gate forces.
-            let mut inputs: Vec<BabyBear> = Vec::with_capacity(18);
-            inputs.push(BabyBear::new(2));
-            inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(to.as_bytes()));
-            inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(attestation));
-            inputs.push(BabyBear::new((*migrated_at & 0x7FFF_FFFF) as u32));
-            dregg_circuit::poseidon2::hash_many(&inputs)
-        }
+        } => dregg_circuit::poseidon2::lifecycle_migrated_felt(
+            to.as_bytes(),
+            attestation,
+            *migrated_at,
+        ),
         CellLifecycle::Destroyed {
             death_certificate_hash,
             destroyed_at,

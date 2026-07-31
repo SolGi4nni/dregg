@@ -1548,11 +1548,19 @@ pub enum Effect {
     ///
     /// * `cell` — the sovereign cell whose committed root this transition advances
     ///   (must equal the proof-carrying turn's `execution_proof_cell`).
-    /// * `program_vk_hash` — the 32-byte custom-program identity (the registry
-    ///   dispatch key). Projected to the `VmEffect::Custom.program_vk_hash` 8-felt
-    ///   PI via `dregg_circuit::effect_vm::bytes32_to_8_limbs` — the SAME encoding
-    ///   `enforce_custom_proof_entry_binding` uses, so the wire sub-proof's
-    ///   `vk_hash` and the in-circuit committed VK agree.
+    /// * `program_vk_hash` — the 32-byte custom-program identity. It is absorbed
+    ///   BYTE-EXACTLY into [`Effect::hash`] (hence `effects_hash`, the executor
+    ///   signature and the receipt), and projected to the
+    ///   `VmEffect::Custom.program_vk_hash` 8-felt PI via
+    ///   `dregg_circuit::effect_vm::bytes32_to_8_limbs`.
+    ///
+    ///   ⚠ **It is NOT the registry dispatch key.** The executor dispatches on the
+    ///   WIRE sub-proof's `vk_hash`. The two are forced equal, byte-exactly and
+    ///   unconditionally, by
+    ///   `executor::proof_verify::TurnExecutor::enforce_custom_proof_program_identity`.
+    ///   That weld — not the 8-felt projection — is what makes the record and the
+    ///   verifier that ran name one program: the projection is `u32 % p` per 4-byte
+    ///   chunk and `2p < 2^32`, so it cannot separate `A` from `A + p·2^{32k}`.
     /// * `proof_commitment` — the 32-byte carrier
     ///   (`dregg_cell::commitment::felt8_to_bytes32`) of the 8-felt
     ///   `custom_proof_pi_commitment(public_inputs)` the Custom row PUBLISHES and

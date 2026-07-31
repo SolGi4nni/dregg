@@ -10,6 +10,18 @@ fn felts_dbg(v: &[dregg_circuit::field::BabyBear]) -> String {
     format!("{:?}", v.iter().map(|f| f.0).collect::<Vec<_>>())
 }
 
+/// Render 32 bytes as lowercase hex for a refusal message. Used where the refusal is
+/// ABOUT the bytes (the program-identity weld), so the message shows the aliasing pair
+/// rather than the lanes that could not tell them apart.
+fn hex32(b: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for byte in b {
+        use core::fmt::Write;
+        let _ = write!(s, "{byte:02x}");
+    }
+    s
+}
+
 /// One leg of a multi-cohort sovereign turn's proof chain (the WHOLE-TURN FOREST wire, foolable
 /// gap #2). A turn is N maximal homogeneous cohort runs; each run is proven as its OWN rotated
 /// `Ir2BatchProof` leg, carrying its pre/post 8-felt commit so the verifier can chain them
@@ -278,10 +290,17 @@ impl TurnExecutor {
             )
         })?;
 
+        // THE PROGRAM-IDENTITY WELD — unconditional, byte-exact, and BEFORE the
+        // app-write face (which only ever reached it for a verifier that opted in) and
+        // before any registry dispatch, so a record/dispatch divergence costs no STARK
+        // parse: the same exhaustion posture as the proof-count cap.
+        let customs = Self::collect_custom_rows(turn, cell_id);
+        Self::enforce_custom_proof_program_identity(proofs, &customs)?;
+
         // The app-write face is structural and cheap. Refuse malformed
         // Custom→SetField compositions before parsing or verifying any custom
         // STARK, preserving the same exhaustion posture as the proof-count cap.
-        Self::enforce_custom_app_write_bindings(turn, cell_id, registry)?;
+        Self::enforce_custom_app_write_bindings(proofs, cell_id, registry, &customs)?;
 
         for (i, proof) in proofs.iter().enumerate() {
             // Registry dispatch: VkHashNotRegistered (fail-closed), ProofMissing
@@ -302,33 +321,21 @@ impl TurnExecutor {
         Ok(())
     }
 
-    /// Enforce verifier-declared bounded app writes as a composition of the
-    /// existing proof-binding `Custom` carrier with ordinary `SetField` verbs.
+    /// Collect this cell's [`Effect::Custom`] rows in the exact pre-order DFS /
+    /// within-action order [`convert_turn_effects_to_vm`] uses, each paired with the tail
+    /// slice that follows it INSIDE its own action (so an adjacency face cannot flatten
+    /// across an action boundary).
     ///
-    /// This deliberately does not invent state-transition semantics for the
-    /// Custom row. Instead, for an opt-in verifier it requires the paired Custom
-    /// effect to be immediately followed (inside the same action) by a contiguous
-    /// run of canonical scalar field writes equal to the proof's published app
-    /// PIs. The outer EffectVM proof attests those SetFields and the final root;
-    /// the existing custom-proof weld attests the proof/VK/PI commitment. Their
-    /// checked equality is the atomic app-write face.
-    fn enforce_custom_app_write_bindings(
-        turn: &Turn,
+    /// The i-th entry is the row the i-th wire sub-proof belongs to: the pairing is
+    /// positional and total, and it is the SAME walk (same `cell == cell_id` guard) the
+    /// EffectVM projection performs, so `len()` here is the in-circuit committed Custom
+    /// count that [`Self::enforce_custom_proof_count_committed`] later re-derives from a
+    /// VERIFIED proof.
+    fn collect_custom_rows<'a>(
+        turn: &'a Turn,
         cell_id: &CellId,
-        registry: &dregg_cell::CustomEffectRegistry,
-    ) -> Result<(), TurnError> {
-        use dregg_circuit::effect_vm::layout_generated::CUSTOM_APP_FIELD_OCTET_LEN;
-        use dregg_circuit::field::BABYBEAR_P;
-
-        let proofs = match &turn.custom_program_proofs {
-            Some(p) if !p.is_empty() => p,
-            _ => return Ok(()),
-        };
-
-        // Pair proofs with Custom rows in the exact pre-order DFS / within-action
-        // order used by convert_turn_effects_to_vm. Keep the tail slice so the
-        // face can require adjacency without flattening across an action boundary.
-        fn collect_customs<'a>(
+    ) -> Vec<(&'a Effect, &'a [Effect])> {
+        fn walk<'a>(
             tree: &'a crate::forest::CallTree,
             cell_id: &CellId,
             out: &mut Vec<(&'a Effect, &'a [Effect])>,
@@ -339,14 +346,108 @@ impl TurnExecutor {
                 }
             }
             for child in &tree.children {
-                collect_customs(child, cell_id, out);
+                walk(child, cell_id, out);
             }
         }
 
-        let mut customs = Vec::new();
+        let mut out = Vec::new();
         for root in &turn.call_forest.roots {
-            collect_customs(root, cell_id, &mut customs);
+            walk(root, cell_id, &mut out);
         }
+        out
+    }
+
+    /// **THE PROGRAM-IDENTITY WELD** — the attested record and the dispatched verifier
+    /// must name the SAME 32 bytes, checked BYTE-EXACTLY and UNCONDITIONALLY.
+    ///
+    /// ## The gap this closes
+    ///
+    /// Registry dispatch keys on the WIRE's `proof.vk_hash`
+    /// ([`Self::enforce_custom_effect_proofs`]'s `registry.verify(&proof.vk_hash, …)`),
+    /// while the attested record — the `Effect::Custom` row the turn's `effects_hash`
+    /// covers, the executor signs, the receipt carries and the EffectVM trace commits —
+    /// carries its own `program_vk_hash`. Nothing forced them to be the same value.
+    ///
+    /// The one byte-exact comparison of the two lived INSIDE
+    /// [`Self::enforce_custom_app_write_bindings`], reachable only after
+    /// `verifier.app_write_binding()` returned `Some`. That method's trait default is
+    /// `None` (`dregg_cell::CustomEffectVerifier::app_write_binding`), and three of the
+    /// four non-test verifier impls in this repo take the default — so for them the
+    /// comparison was `continue`d past entirely.
+    ///
+    /// Everything downstream sees the record's value only through
+    /// `bytes32_to_8_limbs` — a per-4-byte-chunk `u32 % p` projection
+    /// (`circuit/src/effect_vm/helpers.rs`). Since `2p = 4026531842 < 2^32`, EVERY chunk
+    /// has a sibling one addition away with an identical lane, so a lane-level check
+    /// (the committed-PI comparison in [`Self::enforce_custom_proof_entry_binding`])
+    /// cannot separate `A` from `A + p·2^{32k}` at all. The bytes are what must be
+    /// compared, and both sides are held here as raw `[u8; 32]`.
+    ///
+    /// ## Fail-closed contract
+    ///
+    /// * a wire sub-proof with no paired `Effect::Custom` row (or a row with no
+    ///   sub-proof) is a [`TurnError::CustomProofCountMismatch`] — the SAME count
+    ///   [`Self::enforce_custom_proof_count_committed`] re-derives after the outer proof
+    ///   verifies, refused here at admission before any STARK is parsed;
+    /// * a paired row whose `program_vk_hash` differs from the dispatched `vk_hash` in
+    ///   any byte is a [`TurnError::CustomProgramIdentityMismatch`].
+    ///
+    /// A turn carrying no custom sub-proofs never reaches this (the caller returns early),
+    /// which is the overwhelmingly common case and is byte-identical to the prior path.
+    fn enforce_custom_proof_program_identity(
+        proofs: &[crate::turn::CustomProgramProof],
+        customs: &[(&Effect, &[Effect])],
+    ) -> Result<(), TurnError> {
+        if proofs.len() != customs.len() {
+            return Err(TurnError::CustomProofCountMismatch {
+                wire: proofs.len(),
+                committed: customs.len(),
+            });
+        }
+        for (i, proof) in proofs.iter().enumerate() {
+            let Effect::Custom {
+                program_vk_hash, ..
+            } = customs[i].0
+            else {
+                unreachable!("collect_custom_rows stores only Custom effects");
+            };
+            if program_vk_hash != &proof.vk_hash {
+                return Err(TurnError::CustomProgramIdentityMismatch {
+                    index: i,
+                    committed: hex32(program_vk_hash),
+                    dispatched: hex32(&proof.vk_hash),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Enforce verifier-declared bounded app writes as a composition of the
+    /// existing proof-binding `Custom` carrier with ordinary `SetField` verbs.
+    ///
+    /// This deliberately does not invent state-transition semantics for the
+    /// Custom row. Instead, for an opt-in verifier it requires the paired Custom
+    /// effect to be immediately followed (inside the same action) by a contiguous
+    /// run of canonical scalar field writes equal to the proof's published app
+    /// PIs. The outer EffectVM proof attests those SetFields and the final root;
+    /// the existing custom-proof weld attests the proof/VK/PI commitment. Their
+    /// checked equality is the atomic app-write face.
+    ///
+    /// **Precondition (not re-checked here).** `customs` is
+    /// [`Self::collect_custom_rows`]'s positional pairing and
+    /// [`Self::enforce_custom_proof_program_identity`] has already established, for EVERY
+    /// sub-proof, that a paired row exists, targets `cell_id`, and names the dispatched
+    /// `vk_hash` byte-exactly. Those three checks used to live inside THIS loop, below
+    /// the `app_write_binding()` opt-in — which is precisely why a verifier taking the
+    /// trait default skipped them. They are unconditional now and must stay outside.
+    fn enforce_custom_app_write_bindings(
+        proofs: &[crate::turn::CustomProgramProof],
+        cell_id: &CellId,
+        registry: &dregg_cell::CustomEffectRegistry,
+        customs: &[(&Effect, &[Effect])],
+    ) -> Result<(), TurnError> {
+        use dregg_circuit::effect_vm::layout_generated::CUSTOM_APP_FIELD_OCTET_LEN;
+        use dregg_circuit::field::BABYBEAR_P;
 
         let mismatch = |index, reason| TurnError::CustomAppWriteBindingMismatch { index, reason };
 
@@ -390,33 +491,12 @@ impl TurnExecutor {
                 ));
             }
 
-            let Some((custom, following)) = customs.get(i) else {
-                return Err(mismatch(
-                    i,
-                    "no paired Custom effect for this proof in canonical DFS order".to_string(),
-                ));
-            };
-            let (custom_cell, committed_vk) = match custom {
-                Effect::Custom {
-                    cell,
-                    program_vk_hash,
-                    ..
-                } => (cell, program_vk_hash),
-                _ => unreachable!("collector stores only Custom effects"),
-            };
-            if custom_cell != cell_id {
-                return Err(mismatch(
-                    i,
-                    format!("paired Custom targets {custom_cell}, expected {cell_id}"),
-                ));
-            }
-            if committed_vk != &proof.vk_hash {
-                return Err(mismatch(
-                    i,
-                    "paired Custom program_vk_hash differs from the dispatched proof vk_hash"
-                        .to_string(),
-                ));
-            }
+            // Pairing, the target cell and the program identity are all established
+            // UNCONDITIONALLY by `enforce_custom_proof_program_identity` +
+            // `collect_custom_rows` (which filters on `cell_id`) before this face runs.
+            // They are deliberately NOT re-checked here: they used to live only inside
+            // this opt-in loop, which is exactly why an opted-out verifier skipped them.
+            let (_, following) = &customs[i];
 
             for j in 0..binding.app_root_len {
                 let raw_pi = proof.public_inputs[binding.app_root_pi_offset + j];
@@ -598,6 +678,23 @@ impl TurnExecutor {
     ///    prefix IS this cell's roots.
     ///
     /// Requires the WIDE `pi::` layout vector (the bundle path's reconstruction).
+    ///
+    /// ⚠ **TWO THINGS THIS DOES NOT DO, measured 2026-07-30.**
+    ///
+    /// 1. **It has NO production caller.** The deployed sovereign path is
+    ///    `verify_and_commit_proof` → `enforce_custom_effect_proofs` →
+    ///    `verify_and_commit_proof_rotated` (which reconstructs a 38-PI descriptor
+    ///    vector, not the WIDE `pi::` one) → `enforce_custom_proof_count_committed`.
+    ///    Nothing in that chain calls this; the only call sites are this module's tests.
+    ///    Do not cite it as a live check.
+    /// 2. **Leg 1 cannot be byte-exact and is not a program-identity check.** The
+    ///    committed PI carries `bytes32_to_8_limbs(program_vk_hash)` — eight `u32 % p`
+    ///    lanes — so `wire_vk != committed_vk` is a LANE comparison, blind to every
+    ///    `A` vs `A + p·2^{32k}` sibling by construction (`2p < 2^32`, so such a sibling
+    ///    exists for 53.1% of 4-byte chunks and costs one addition). The byte-exact
+    ///    record↔dispatch identity is
+    ///    [`Self::enforce_custom_proof_program_identity`], which runs unconditionally at
+    ///    admission and compares the raw 32 bytes both sides actually hold.
     pub(super) fn enforce_custom_proof_entry_binding(
         turn: &Turn,
         public_inputs: &[dregg_circuit::field::BabyBear],
@@ -3401,6 +3498,24 @@ mod custom_effect_dispatch_tests {
         }
     }
 
+    /// Give a turn the `Effect::Custom` rows its wire sub-proofs must be paired with.
+    ///
+    /// A real proof-carrying turn ALWAYS carries them — `enforce_custom_proof_count_committed`
+    /// refuses a turn whose wire vec and in-circuit committed Custom count disagree — and the
+    /// unconditional program-identity weld now says so at ADMISSION rather than after the
+    /// outer EffectVM proof has verified. Fixtures that carried sub-proofs against an
+    /// effect-less forest were describing a turn the full path already rejected.
+    fn with_custom_rows(turn: &mut Turn, vk: [u8; 32], count: usize) {
+        let cell = turn.agent;
+        turn.call_forest.roots[0].action.effects = (0..count)
+            .map(|_| Effect::Custom {
+                cell,
+                program_vk_hash: vk,
+                proof_commitment: [0xCC; 32],
+            })
+            .collect();
+    }
+
     fn air_fp() -> [u8; 32] {
         [0xA1; 32]
     }
@@ -3687,10 +3802,18 @@ mod custom_effect_dispatch_tests {
             unreachable!()
         };
         *program_vk_hash = [0xEE; 32];
-        assert_app_write_refusal(
-            executor
-                .enforce_custom_effect_proofs(&wrong_program, &cell, &Ledger::new())
-                .expect_err("the Custom carrier and dispatched proof must name one verifier"),
+        // The record/dispatch identity is no longer part of the app-write face — it is
+        // the unconditional `enforce_custom_proof_program_identity` weld, and this
+        // opted-IN verifier is refused by the SAME check an opted-out one now is.
+        let err = executor
+            .enforce_custom_effect_proofs(&wrong_program, &cell, &Ledger::new())
+            .expect_err("the Custom carrier and dispatched proof must name one verifier");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProgramIdentityMismatch { index: 0, .. }
+            ),
+            "expected the typed program-identity refusal, got {err:?}"
         );
     }
 
@@ -3746,6 +3869,7 @@ mod custom_effect_dispatch_tests {
             proof_bytes: b"a-genuine-proof".to_vec(),
             public_inputs: vec![1, 2, 3],
         }]);
+        with_custom_rows(&mut turn, vk_hash, 1);
         ex.enforce_custom_effect_proofs(&turn, &turn.agent, &Ledger::new())
             .expect("conforming custom effect must pass");
     }
@@ -3803,6 +3927,7 @@ mod custom_effect_dispatch_tests {
             proof_bytes: vec![0x42, 0x00, 0x01],
             public_inputs: vec![],
         }]);
+        with_custom_rows(&mut good, vk, 1);
         ex.enforce_custom_effect_proofs(&good, &good.agent, &Ledger::new())
             .expect("conforming proof accepted");
 
@@ -3813,6 +3938,7 @@ mod custom_effect_dispatch_tests {
             proof_bytes: vec![0x00, 0x01],
             public_inputs: vec![],
         }]);
+        with_custom_rows(&mut bad, vk, 1);
         let err = ex
             .enforce_custom_effect_proofs(&bad, &bad.agent, &Ledger::new())
             .expect_err("non-conforming custom effect must be rejected");
@@ -3834,6 +3960,9 @@ mod custom_effect_dispatch_tests {
             proof_bytes: b"some-proof".to_vec(),
             public_inputs: vec![],
         }]);
+        // The record names the SAME unregistered program: the identity weld passes and
+        // the refusal is genuinely the registry's, not a pairing artifact.
+        with_custom_rows(&mut turn, [0xEE; 32], 1);
         let err = ex
             .enforce_custom_effect_proofs(&turn, &turn.agent, &Ledger::new())
             .expect_err("unregistered vk_hash must fail closed");
@@ -3874,6 +4003,7 @@ mod custom_effect_dispatch_tests {
             proof_bytes: vec![],
             public_inputs: vec![],
         }]);
+        with_custom_rows(&mut turn, vk_hash, 1);
         let err = ex
             .enforce_custom_effect_proofs(&turn, &turn.agent, &Ledger::new())
             .expect_err("empty proof bytes must be refused");
@@ -3982,6 +4112,7 @@ mod custom_effect_dispatch_tests {
         };
         // Exactly the default cap of 4.
         turn.custom_program_proofs = Some(vec![valid; 4]);
+        with_custom_rows(&mut turn, vk_hash, 4);
         ex.enforce_custom_effect_proofs(&turn, &turn.agent, &Ledger::new())
             .expect("a turn at the cap must pass");
         assert_eq!(
@@ -4030,6 +4161,165 @@ mod custom_effect_dispatch_tests {
         let turn = empty_turn(cell_id(10));
         ex.enforce_custom_proof_count_committed(&turn.agent, &turn)
             .expect("wire 0 == committed 0 must pass");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // THE PROGRAM-IDENTITY WELD (census A4) — the attested record and the
+    // dispatched verifier name the same 32 bytes, unconditionally.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// A 32-byte sibling of `b` that `bytes32_to_8_limbs` CANNOT tell apart: chunk 0 is
+    /// re-encoded as `v + p`. Well-defined for `v < 2^32 - p`, which the callers pick.
+    fn lane_alias_of(b: &[u8; 32]) -> [u8; 32] {
+        let v = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        let aliased = v
+            .checked_add(dregg_circuit::field::BABYBEAR_P)
+            .expect("caller must pick a chunk-0 value with a u32 sibling");
+        let mut out = *b;
+        out[..4].copy_from_slice(&aliased.to_le_bytes());
+        out
+    }
+
+    /// **THE REACHABILITY PIN.** `app_write_binding()` is a trait DEFAULT returning
+    /// `None`, so the byte-exact `program_vk_hash == vk_hash` comparison that used to
+    /// live under it was `continue`d past for every verifier that did not opt in. This
+    /// pins the default itself — the finding is about the default, not about one impl.
+    #[test]
+    fn app_write_binding_defaults_to_none_which_is_what_skipped_the_tooth() {
+        let stub = StubCustomEffectVerifier::new([0x01; 32], "stub");
+        assert!(
+            stub.app_write_binding().is_none(),
+            "the trait default must be None — that default IS the skipped-tooth path"
+        );
+        let counting = CountingVerifier {
+            vk: [0x02; 32],
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        assert!(counting.app_write_binding().is_none());
+    }
+
+    /// **BOTH POLES, ONE PROCESS.** A sub-proof dispatched under `vk_hash = B` while its
+    /// paired `Effect::Custom` row attests `program_vk_hash = A`, where `A` and `B` are a
+    /// constructed `bytes32_to_8_limbs` alias pair (one addition apart, byte-distinct,
+    /// lane-identical) and the registered verifier declares NO app-write binding — the
+    /// exact configuration in which the only byte-exact comparison was skipped.
+    ///
+    /// Pole 1: REFUSED, with the typed `CustomProgramIdentityMismatch` naming both hexes,
+    /// and refused BEFORE the verifier ran (`calls == 0`).
+    /// Pole 2: the same turn with an honest record still dispatches and verifies
+    /// (`calls == 1`) in the same process, so the refusal is not a blanket break.
+    #[test]
+    fn lane_aliased_vk_hash_is_refused_byte_exactly_and_the_honest_pair_still_dispatches() {
+        use dregg_circuit::effect_vm::bytes32_to_8_limbs;
+
+        let mut record_vk = [0u8; 32];
+        record_vk[..4].copy_from_slice(&1u32.to_le_bytes());
+        record_vk[8] = 0x5A;
+        let wire_vk = lane_alias_of(&record_vk);
+
+        // The alias is REAL: distinct bytes, identical lanes. Without this the refusal
+        // below could be explained by an ordinary mismatch the lane check would also see.
+        assert_ne!(record_vk, wire_vk, "the pair must be byte-distinct");
+        assert_eq!(
+            bytes32_to_8_limbs(&record_vk),
+            bytes32_to_8_limbs(&wire_vk),
+            "the pair must be indistinguishable to every lane-level check, including \
+             the committed PI comparison in enforce_custom_proof_entry_binding"
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut reg = CustomEffectRegistry::empty();
+        // Registered under the WIRE value — registry dispatch keys on `proof.vk_hash`.
+        // `register_without_bytes` because an alias is by construction not the v2 hash of
+        // any canonical bytes; the verifier takes the DEFAULT (no app-write binding).
+        reg.register_without_bytes(Arc::new(CountingVerifier {
+            vk: wire_vk,
+            calls: calls.clone(),
+        }));
+        let ex = executor_with(reg);
+
+        let cell = cell_id(0xB1);
+        let mut forged = empty_turn(cell);
+        forged.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash: wire_vk,
+            proof_bytes: b"a-valid-sub-proof".to_vec(),
+            public_inputs: vec![],
+        }]);
+        with_custom_rows(&mut forged, record_vk, 1);
+
+        let err = ex
+            .enforce_custom_effect_proofs(&forged, &cell, &Ledger::new())
+            .expect_err(
+                "a record naming a lane-aliased sibling of the dispatched program \
+                         must be refused",
+            );
+        match &err {
+            TurnError::CustomProgramIdentityMismatch {
+                index,
+                committed,
+                dispatched,
+            } => {
+                assert_eq!(*index, 0);
+                assert_eq!(committed, &hex32(&record_vk));
+                assert_eq!(dispatched, &hex32(&wire_vk));
+                assert_ne!(
+                    committed, dispatched,
+                    "the refusal must name two different byte strings"
+                );
+            }
+            other => panic!("expected CustomProgramIdentityMismatch, got {other:?}"),
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the identity weld must refuse BEFORE the registry dispatches a STARK verify"
+        );
+
+        // POLE 2 — same executor, same registry, same process: an honest record whose
+        // `program_vk_hash` IS the dispatched program still passes and still verifies.
+        let mut honest = empty_turn(cell);
+        honest.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash: wire_vk,
+            proof_bytes: b"a-valid-sub-proof".to_vec(),
+            public_inputs: vec![],
+        }]);
+        with_custom_rows(&mut honest, wire_vk, 1);
+        ex.enforce_custom_effect_proofs(&honest, &cell, &Ledger::new())
+            .expect("the honest record/dispatch pair must still be admitted");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the honest path must reach the registered verifier"
+        );
+    }
+
+    /// A wire sub-proof with no paired `Effect::Custom` row is refused at ADMISSION with
+    /// the typed count mismatch, rather than passing the dispatch gate and being caught
+    /// only after the outer EffectVM proof has verified.
+    #[test]
+    fn unpaired_sub_proof_is_refused_at_admission() {
+        let (reg, vk_hash) = registry_with_stub(b"unpaired-program");
+        let ex = executor_with(reg);
+        let mut turn = empty_turn(cell_id(0xB2));
+        turn.custom_program_proofs = Some(vec![CustomProgramProof {
+            vk_hash,
+            proof_bytes: b"a-valid-sub-proof".to_vec(),
+            public_inputs: vec![],
+        }]);
+        // No `with_custom_rows`: the forest declares nothing.
+        let err = ex
+            .enforce_custom_effect_proofs(&turn, &turn.agent, &Ledger::new())
+            .expect_err("a sub-proof with no Custom row to attest it must be refused");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofCountMismatch {
+                    wire: 1,
+                    committed: 0
+                }
+            ),
+            "expected CustomProofCountMismatch {{ wire: 1, committed: 0 }}, got {err:?}"
+        );
     }
 }
 

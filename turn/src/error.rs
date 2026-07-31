@@ -683,6 +683,35 @@ pub enum TurnError {
         /// The true signed delta, as the executor computed it.
         delta: i64,
     },
+
+    /// **THE ATTESTED RECORD AND THE DISPATCHED VERIFIER NAME DIFFERENT PROGRAMS.**
+    /// The 32-byte `program_vk_hash` carried by the paired
+    /// [`Effect::Custom`](crate::action::Effect::Custom) row — the value the turn's
+    /// `effects_hash`, the executor signature and the receipt all attest — is not the
+    /// 32-byte `vk_hash` the executor dispatched the sub-proof under
+    /// (`CustomEffectRegistry::verify` keys on the WIRE value).
+    ///
+    /// This is refused BYTE-EXACTLY and UNCONDITIONALLY. The only prior comparison of
+    /// these two 32-byte values lived inside the bounded app-write face, which
+    /// `continue`s past any verifier that declares no `app_write_binding()` — the trait
+    /// DEFAULT. Everything downstream sees the pair only through
+    /// `bytes32_to_8_limbs`, a `u32 % p` lane projection: `2p < 2^32`, so every 4-byte
+    /// chunk has a sibling one addition away with an identical lane, and a record naming
+    /// program A could be committed while program B's verifier ran.
+    ///
+    /// `committed` is the record's `program_vk_hash` (hex), `dispatched` the wire's
+    /// `vk_hash` (hex); `index` is the sub-proof's canonical DFS position.
+    ///
+    /// ⚠ APPENDED AT THE END ON PURPOSE — same postcard variant-index reason as
+    /// `AssetClassCollision` above.
+    CustomProgramIdentityMismatch {
+        /// The custom sub-proof's canonical DFS position.
+        index: usize,
+        /// Lowercase hex of the paired `Effect::Custom`'s `program_vk_hash`.
+        committed: String,
+        /// Lowercase hex of the wire sub-proof's dispatched `vk_hash`.
+        dispatched: String,
+    },
 }
 
 /// Operational classification of a refusal, for the security observability
@@ -1356,6 +1385,18 @@ impl core::fmt::Display for TurnError {
                     f,
                     "custom-effect sub-proof #{index} violates its bounded app-write binding: \
                      {reason}; rejected before the sovereign commitment advances"
+                )
+            }
+            TurnError::CustomProgramIdentityMismatch {
+                index,
+                committed,
+                dispatched,
+            } => {
+                write!(
+                    f,
+                    "custom-effect sub-proof #{index} dispatches vk_hash {dispatched} but its \
+                     paired Effect::Custom row attests program_vk_hash {committed} — the record \
+                     names a different program than the verifier that ran"
                 )
             }
         }

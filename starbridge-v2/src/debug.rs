@@ -355,6 +355,11 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         | CustomProofCountMismatch { .. }
         | CustomProofStateBindingMismatch { .. }
         | CustomAppWriteBindingMismatch { .. }
+        // The attested `Effect::Custom` row and the dispatched sub-proof named different
+        // 32-byte programs. A Proof-family refusal like its siblings: what failed is the
+        // binding between the record and the verifier that ran, not the cell's authority.
+        // It names no cell because the defect is a property of the PAIR.
+        | CustomProgramIdentityMismatch { .. }
         | CustomEffectRequiresProofCarryingTurn { .. } => (GuardKind::Proof, vec![]),
         SovereignWitnessRequired { cell }
         | SovereignCommitmentMismatch { cell, .. }

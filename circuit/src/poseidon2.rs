@@ -587,14 +587,79 @@ pub fn hash_bytes(data: &[u8]) -> BabyBear {
 /// inputs (the SNARK-hostile divergence the refusal `fields_root` openable fix hit). This felt-domain
 /// composition is recomputable by a Poseidon2 chip-lookup chain over `[disc] ++ payload_8 ++ [at]`, so
 /// the committed limb-29 binding is verifiable WITHOUT re-deriving the cell. `Live` carries no payload
-/// (the bare `disc` felt). The `Migrated` arm keeps its richer payload (the migration `to`/attestation
-/// fields fold via `bytes32_to_8_limbs` of `to.as_bytes()` and the attestation), distinct from the
-/// light-client movers (cellSeal/cellDestroy/receiptArchive) this gate forces.
+/// (the bare `disc` felt). The `Migrated` arm keeps its richer payload and lives in
+/// [`lifecycle_migrated_felt`] — distinct from the light-client movers
+/// (cellSeal/cellDestroy/receiptArchive) this gate forces, and faithfully encoded because nothing
+/// else binds its caller-chosen `attestation`.
+///
+/// ⚠ The 8 lanes here are `bytes32_to_8_limbs` of a value the in-circuit gate ALSO holds as those
+/// same 8 lanes (`h8(reason)`, PI-bound through `effects_hash`), so this preimage is the light
+/// client's view by construction and changing it would be a constraint change, not a Rust one.
+/// What it costs is stated where it is paid: the lanes are a `u32 % p` projection, so two payload
+/// hashes differing by `p` in a 4-byte chunk commit identically here — acceptable only because
+/// these payloads ARE hash images (`reason_hash` / `death_certificate_hash` / `checkpoint_hash`),
+/// which the `Migrated` attestation is not.
 pub fn lifecycle_payload_felt(disc: u8, payload_hash: &[u8; 32], at: u64) -> BabyBear {
     let mut inputs: Vec<BabyBear> = Vec::with_capacity(10);
     inputs.push(BabyBear::new(disc as u32));
     inputs.extend_from_slice(&crate::effect_vm::bytes32_to_8_limbs(payload_hash));
     inputs.push(BabyBear::new((at & 0x7FFF_FFFF) as u32));
+    hash_many(&inputs)
+}
+
+/// **THE canonical felt-domain MIGRATED-LIFECYCLE hash** — the `CellLifecycle::Migrated`
+/// arm of the committed lifecycle limb (`B_LIFECYCLE = 29`), the ONE definition both
+/// twins fold (`dregg_cell::commitment::v9_lifecycle_felt` and
+/// `dregg_turn::rotation_witness::lifecycle_felt`). Migrated carries a richer payload
+/// (destination id + acceptance attestation + height) than
+/// [`lifecycle_payload_felt`]'s single 32-byte hash, and — unlike the cellSeal /
+/// cellDestroy / receiptArchive movers — it is under NO in-circuit gate
+/// (`EffectVmEmitRotationV3.lifecyclePayloadHashGate` is layered onto those three
+/// descriptors only), so this composition is free to be the faithful one.
+///
+/// ## Why the preimage is 16×u16, not 8×`bytes32_to_8_limbs`
+///
+/// `attestation` is an **opaque 32-byte blob supplied by the caller** — unlike `to`
+/// (a derived cell id) it is not a hash image the migrator cannot choose, and unlike
+/// `reason_hash` / `death_certificate_hash` it is not recomputed in-circuit from a
+/// PI-bound effect param. This limb is therefore its ONLY binding on the v9 anchor
+/// a receipt-only client sees.
+///
+/// The prior preimage ran both 32-byte values through
+/// [`crate::effect_vm::bytes32_to_8_limbs`], a per-4-byte-chunk `u32 % p` projection.
+/// `2p = 4026531842 < 2^32`, so for 53.1% of chunk values `v` and `v + p` are DISTINCT
+/// bytes with an IDENTICAL lane: a second attestation with a byte-identical preimage,
+/// hence a byte-identical committed limb, constructed by one addition and no grind.
+///
+/// Sixteen little-endian `u16` limbs per 32-byte value (`exact_nullifier_aafi::raw_to_u16_le`,
+/// the codec `openable_fields_root::EXACT_FIELDS_VALUE_LIMBS`, `dregg_codec::Limbs16` and
+/// `cell::commitment_set::exact_commitment_leaf8` already use) are each `< 2^16 ≪ p`, so
+/// NOTHING reduces and the preimage determines all 32 bytes exactly. `migrated_at` rides
+/// four u16 limbs for the same reason — the previous `at & 0x7FFF_FFFF` aliased every pair
+/// of heights differing by `2^31`.
+///
+/// ⚠ **The residual, stated plainly:** the OUTPUT is still ONE BabyBear felt. Making the
+/// preimage injective converts an O(1) constructed alias into a Poseidon2 collision on a
+/// ~31-bit image; it does NOT make the committed limb injective, and cannot — that is the
+/// felt-width class (`docs/FINDING-state-field-truncation.md`), not this one.
+///
+/// Preimage length is 37, so `hash_many`'s length-in-capacity domain separation keeps this
+/// disjoint from every [`lifecycle_payload_felt`] preimage (length 10).
+pub fn lifecycle_migrated_felt(to: &[u8; 32], attestation: &[u8; 32], at: u64) -> BabyBear {
+    use crate::exact_nullifier_aafi::{raw_to_u16_le, u64_to_u16_le};
+    let mut inputs: Vec<BabyBear> = Vec::with_capacity(37);
+    // The Migrated discriminant (`CellLifecycle::discriminant()` = 2).
+    inputs.push(BabyBear::new(2));
+    for limb in raw_to_u16_le(*to) {
+        inputs.push(BabyBear::new(u32::from(limb)));
+    }
+    for limb in raw_to_u16_le(*attestation) {
+        inputs.push(BabyBear::new(u32::from(limb)));
+    }
+    for limb in u64_to_u16_le(at) {
+        inputs.push(BabyBear::new(u32::from(limb)));
+    }
+    debug_assert_eq!(inputs.len(), 37);
     hash_many(&inputs)
 }
 

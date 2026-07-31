@@ -869,7 +869,6 @@ pub struct RotationCarrierMaterial {
 /// `rotation_witness::lifecycle_felt` and the v8 `hash_lifecycle_into` anti-omission tooth.
 fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::field::BabyBear {
     use crate::lifecycle::CellLifecycle;
-    use dregg_circuit::field::BabyBear;
     use dregg_circuit::poseidon2::lifecycle_payload_felt;
     // FELT-DOMAIN composition (see `dregg_circuit::poseidon2::lifecycle_payload_felt`): the
     // in-circuit lifecycle-payload hash gate recomputes this from the light-client-known inputs.
@@ -880,18 +879,19 @@ fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::fie
             reason_hash,
             sealed_at,
         } => lifecycle_payload_felt(1, reason_hash, *sealed_at),
+        // Migrated keeps the richer payload (`to` + `attestation` + height) and is under
+        // NO in-circuit payload gate, so it folds through the SINGLE canonical definition
+        // `dregg_circuit::poseidon2::lifecycle_migrated_felt` (a faithful 16×u16 preimage
+        // — `attestation` is caller-chosen and this limb is its only v9 binding).
         CellLifecycle::Migrated {
             to,
             attestation,
             migrated_at,
-        } => {
-            let mut inputs: Vec<BabyBear> = Vec::with_capacity(18);
-            inputs.push(BabyBear::new(2));
-            inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(to.as_bytes()));
-            inputs.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(attestation));
-            inputs.push(BabyBear::new((*migrated_at & 0x7FFF_FFFF) as u32));
-            dregg_circuit::poseidon2::hash_many(&inputs)
-        }
+        } => dregg_circuit::poseidon2::lifecycle_migrated_felt(
+            to.as_bytes(),
+            attestation,
+            *migrated_at,
+        ),
         CellLifecycle::Destroyed {
             death_certificate_hash,
             destroyed_at,
