@@ -38,8 +38,17 @@ pub const C_RC_CARRIER: usize = 43;
 /// the PUBLISHED caveat commitment carrier, in-region — caveatCommitRc over the manifest AND the rc carrier; the column rotPins binds to PI piBase+3
 pub const C_COMMIT: usize = 44;
 
-/// 2*B_SPAN + C_SPAN — the rotated appendix appended to the v1 face
-pub const APPENDIX_SPAN: usize = 539;
+/// in-appendix base of the FIELDS-CANONICITY region (= 2*B_SPAN + C_SPAN, past both blocks and the caveat region). Its 7 aux columns per (block, slot) are what makes Canonical9's NoWrap leg expressible; the producer MUST fill them or every honest turn is UNSAT.
+pub const CANON9_REGION_OFF: usize = 539;
+
+/// aux columns one (block, slot) canonicity gadget uses, in order: r, q0, q1, v0, v0b, v1, v1b
+pub const CANON9_PER_SLOT: usize = 7;
+
+/// the fields-canonicity region's span (2 blocks * 8 slots * 7 aux columns)
+pub const CANON9_SPAN: usize = 112;
+
+/// 2*B_SPAN + C_SPAN + CANON9_SPAN — the rotated appendix appended to the v1 face
+pub const APPENDIX_SPAN: usize = 651;
 
 /// poseidon2-chip SITES the rotated appendix contributes (2 blocks + the caveat region incl. the rc fold). Graduation appends 7 lane columns per site, so this is the multiplier the Rust host width uses — it was a hand-carried arithmetic literal in trace_rotated.rs and it drifted.
 pub const ROT_APPENDIX_SITES: usize = 136;

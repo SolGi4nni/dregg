@@ -305,11 +305,16 @@ pub const TID_P2_STATE16: usize = 9;
 pub const RANGE_W_TID_WIRE_BASE: usize = 64 + TID_CUSTOM_SUBMASK; // 69
 
 /// The non-`BAL_LIMB_BITS` range widths the wide graduation admits: the availability weld's
-/// 15-bit borrow limbs and the faithful note-spend descriptor's canonical u16 lanes. A `.custom`
-/// range wire id whose
+/// 15-bit borrow limbs, the faithful note-spend descriptor's canonical u16 lanes, and — 2026-07-31
+/// — the FIELDS-CANONICITY weld's two widths (`Dregg2.Circuit.Emit.FieldsCanonicity9Emit`): 24 for
+/// the carry-digit remainder `r` in `L8 = (q0 + 4·q1)·2^24 + r`, and 28 for the seven free fields
+/// lanes plus the four `v`/`vb` selector columns that express `Canonical9`'s `NoWrap` leg. Both are
+/// exact multiples of `LIMB_BITS`, so each is a pure nibble decomposition with no partial top limb
+/// (`decomp_cols(24) = 6`, `decomp_cols(28) = 7`) against the SAME 16-row byte table — no new table,
+/// no new AIR instance. A `.custom` range wire id whose
 /// decoded width (`tid − RANGE_W_TID_WIRE_BASE`) is not one of these is NOT a range table — the
 /// caller fails closed on it (an unrealized custom table, exactly as before).
-pub const CUSTOM_RANGE_WIDTHS: [usize; 2] = [15, 16];
+pub const CUSTOM_RANGE_WIDTHS: [usize; 4] = [15, 16, 24, 28];
 
 /// The nullifier domain's wire code (`DescriptorIR2.domainCode .nullifiers`). The universal
 /// memory table enforces the INSERT-ONLY discipline on this domain in-circuit (a write

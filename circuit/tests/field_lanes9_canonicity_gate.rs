@@ -37,7 +37,9 @@
 //! This file is the Rust twin of that section: the same predicate, the same exhibit, run
 //! against the DEPLOYED `field_limbs9` / `field_from_lanes9` rather than the Lean model.
 
-use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, TableSem, VmConstraint2};
+use dregg_circuit::descriptor_ir2::{
+    CUSTOM_RANGE_WIDTHS, EffectVmDescriptor2, RANGE_W_TID_WIRE_BASE, TableSem, VmConstraint2,
+};
 use dregg_circuit::effect_vm::layout_generated::{B_SPAN, B_STATE_COMMIT, ROTATED_FIELD_LANE_COL};
 use dregg_circuit::effect_vm::{field_from_lanes9, field_limbs9};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
@@ -357,6 +359,14 @@ fn parse_vm_descriptor2_or_panic(path: &str, key: &str, json: &str) -> EffectVmD
 }
 
 /// Every column a `range`-semantics lookup targets in this member, with its declared width.
+///
+/// ⚑ **THE READER MUST CARRY THE WIDTH-TAGGED FALLBACK OR IT IS BLIND.** A range lookup does not
+/// need a `tables` entry: `descriptor_ir2::MainLayout::build` recovers `bits` from the wire id
+/// itself (`tid − RANGE_W_TID_WIRE_BASE`, the inverse of Lean's `rangeTidW`) whenever the width is
+/// in [`CUSTOM_RANGE_WIDTHS`], and the deployed availability weld has always relied on exactly that.
+/// The fields-canonicity emit rides the same path at widths 24 and 28. A `tables`-only reader
+/// reports ZERO canonicity lookups and every census over it is vacuously "clean" — measured on
+/// 2026-07-31, when the emit had landed and this file still read green.
 fn range_checked_columns(d: &EffectVmDescriptor2) -> Vec<(usize, usize)> {
     d.constraints
         .iter()
@@ -369,6 +379,11 @@ fn range_checked_columns(d: &EffectVmDescriptor2) -> Vec<(usize, usize)> {
                     .and_then(|t| match t.sem {
                         TableSem::Range { bits } => Some(bits),
                         _ => None,
+                    })
+                    .or_else(|| {
+                        l.table
+                            .checked_sub(RANGE_W_TID_WIRE_BASE)
+                            .filter(|bits| CUSTOM_RANGE_WIDTHS.contains(bits))
                     })?;
                 match l.tuple.as_slice() {
                     [dregg_circuit::lean_descriptor_air::LeanExpr::Var(w)] => Some((*w, bits)),
@@ -433,30 +448,30 @@ fn rotated_fields_lane_columns(before_base: usize) -> Vec<usize> {
     cols
 }
 
-/// **THE MEASUREMENT.** Not one range lookup in any deployed member lands on a fields-lane
-/// column of either rotated block. That is the wound, read off the emitted bytes.
+/// **THE MEASUREMENT, INVERTED — the emit LANDED (2026-07-31).**
 ///
-/// Two readings, because the three registries are not one geometry. The 1-felt
-/// `rotation-v3-staged-registry.tsv` members carry the rotated blocks at their emitted
-/// column indices, so those get the EXACT check against `ROTATED_FIELD_LANE_COL`. The two
-/// wide registries are E1/S2-COMPACTED — dead columns are deleted and the survivors
-/// renumbered — so a lane column there is at a remapped index this file cannot name. For
-/// those the reading is a COUNT, and it is just as decisive: forcing `Canonical9` on eight
-/// fields in two blocks needs at least `2 × 8 × 7 = 112` range lookups per member, and no
-/// deployed member carries more than a handful.
+/// This test used to assert the wound: *not one range lookup in any deployed member lands on a
+/// fields-lane column of either rotated block.* Its own doc comment said to INVERT it rather than
+/// delete it when `Dregg2.Circuit.Emit.FieldsCanonicity9Emit` landed, so that a landed fix would not
+/// read as a red test and invite someone to delete the gate instead of the stale expectation. This
+/// is that inversion, and the assertions are now the mirror of what they were:
 ///
-/// ⚑ **WHEN THE CANONICITY EMIT LANDS, THIS TEST MUST BE INVERTED IN THE SAME COMMIT** — the
-/// count below becomes `16 × 7` free-lane lookups per rotated member (plus the `NoWrap`
-/// block's own aux lookups) and the assertion becomes "every fields lane of both blocks is
-/// range-checked". Leaving it as-is would turn a landed fix into a red test and invite
-/// someone to delete the gate instead of the stale expectation.
+///   * EVERY fields lane 2..8 of BOTH rotated blocks is range-checked at 28 bits — `2 × 8 × 7 = 112`
+///     lane lookups per member. Lanes 0 and 1 are deliberately NOT range-checked: they are the
+///     pinned kernel u64 pair, and `PinnedLanesField` is free (a committed column IS a BabyBear
+///     element). A lookup on them would be noise, not canonicity.
+///   * The `NoWrap` leg's own lookups are present too — `16 × (1 × 24-bit + 4 × 28-bit) = 80` more —
+///     because seven `< 2^28` lookups per field are NECESSARY AND NOT SUFFICIENT
+///     (`the_off_image_exhibit_passes_all_seven_free_lane_range_checks`, still green above). A
+///     member carrying only the 112 would still admit the forgery.
+///   * So the per-member floor is `112 + 80 = 192` canonicity lookups, and the old
+///     `max_range_lookups < 16` ceiling becomes a FLOOR.
 #[test]
-fn no_deployed_member_range_checks_any_rotated_fields_lane() {
+fn every_deployed_member_range_checks_every_rotated_fields_lane() {
     let mut rotated_members = 0usize;
-    let mut covered = 0usize;
     let mut all_targets: std::collections::BTreeSet<(usize, usize)> = Default::default();
-    let mut max_range_lookups = 0usize;
-    let mut worst = String::new();
+    let mut min_range_lookups = usize::MAX;
+    let mut leanest = String::new();
     let all = members();
     let total_members = all.len();
 
@@ -465,32 +480,83 @@ fn no_deployed_member_range_checks_any_rotated_fields_lane() {
             all_targets.insert(t);
         }
         let n = range_checked_columns(&d).len();
-        if n > max_range_lookups {
-            max_range_lookups = n;
-            worst = label.clone();
+        if n < min_range_lookups {
+            min_range_lookups = n;
+            leanest = label.clone();
         }
         let Some(base) = rotated_before_base(&d) else {
             continue;
         };
         rotated_members += 1;
-        let lanes: std::collections::BTreeSet<usize> =
-            rotated_fields_lane_columns(base).into_iter().collect();
-        let ranged: std::collections::BTreeSet<usize> = range_checked_columns(&d)
-            .into_iter()
-            .map(|(c, _)| c)
-            .collect();
-        let hit: Vec<usize> = lanes.intersection(&ranged).copied().collect();
-        covered += hit.len();
+
+        // The FREE lanes (2..8) of both blocks must ALL be covered, at exactly 28 bits.
+        let ranged: std::collections::BTreeMap<usize, usize> =
+            range_checked_columns(&d).into_iter().collect();
+        let mut missing: Vec<usize> = Vec::new();
+        let mut wrong_width: Vec<(usize, usize)> = Vec::new();
+        for block in [base, base + B_SPAN] {
+            for slot in ROTATED_FIELD_LANE_COL.iter() {
+                for lane in slot.iter().skip(2) {
+                    match ranged.get(&(block + lane)) {
+                        None => missing.push(block + lane),
+                        Some(28) => {}
+                        Some(bits) => wrong_width.push((block + lane, *bits)),
+                    }
+                }
+            }
+        }
         assert!(
-            hit.is_empty(),
-            "\n{label}: {} fields-lane column(s) ARE range-checked: {hit:?}\n\n\
-             That is GOOD NEWS and this assertion is now stale. The canonicity emit has \
-             landed (or partly landed). Invert this test rather than deleting it: assert \
-             that ALL {} lane columns of both blocks are covered, and that the `NoWrap` \
-             leg's aux gates are present too — seven range lookups per field are NECESSARY \
-             AND NOT SUFFICIENT (`the_off_image_exhibit_passes_all_seven_free_lane_range_checks`).\n",
-            hit.len(),
-            lanes.len()
+            missing.is_empty(),
+            "\n{label}: {} free fields-lane column(s) carry NO range lookup: {missing:?}\n\n\
+             `Canonical9`'s first leg is not forced on those lanes, so the committed nonet is not \
+             pinned into the encoder's image and `< 2^28` is back to being a producer invariant. \
+             Re-emit against `FieldsCanonicity9Emit` — do NOT relax this assertion.\n",
+            missing.len()
+        );
+        assert!(
+            wrong_width.is_empty(),
+            "\n{label}: fields-lane column(s) range-checked at the WRONG width: {wrong_width:?}\n\n\
+             The free lanes are base-`2^28` digits. A wider lookup admits a non-digit; a narrower \
+             one refuses honest values. Both are wrong.\n"
+        );
+
+        // …and lanes 0/1 are deliberately UNCHECKED (leg 2 is free in-AIR).
+        for block in [base, base + B_SPAN] {
+            for slot in ROTATED_FIELD_LANE_COL.iter() {
+                for lane in slot.iter().take(2) {
+                    assert!(
+                        !ranged.contains_key(&(block + lane)),
+                        "{label}: pinned lane column {} is range-checked — `PinnedLanesField` is \
+                         free (a committed column is a BabyBear element); a lookup there is cost \
+                         without content, and if it is NARROWER than `p` it REFUSES honest values",
+                        block + lane
+                    );
+                }
+            }
+        }
+
+        // The `NoWrap` leg's aux lookups: 16 at 24 bits, and 80 at 28 bits past the 112 lanes.
+        let at24 = range_checked_columns(&d)
+            .into_iter()
+            .filter(|(_, b)| *b == 24)
+            .count();
+        let at28 = range_checked_columns(&d)
+            .into_iter()
+            .filter(|(_, b)| *b == 28)
+            .count();
+        assert_eq!(
+            at24, 16,
+            "\n{label}: {at24} 24-bit range lookups, expected 16 — one `r < 2^24` per (block, slot) \
+             for the carry-digit split `L8 = (q0 + 4·q1)·2^24 + r`. Without it the split is \
+             unforced and lane 8's top nibble is not the decoder's carry digit.\n"
+        );
+        assert_eq!(
+            at28,
+            112 + 64,
+            "\n{label}: {at28} 28-bit range lookups, expected 176 = 112 free lanes + 64 `NoWrap` \
+             selector columns (`v0, v0b, v1, v1b` per block-slot). Seven lookups per field are \
+             NECESSARY AND NOT SUFFICIENT — see \
+             `the_off_image_exhibit_passes_all_seven_free_lane_range_checks`.\n"
         );
     }
 
@@ -499,41 +565,27 @@ fn no_deployed_member_range_checks_any_rotated_fields_lane() {
         "the census only recognised {rotated_members} rotated members of {total_members} — the \
          base derivation is failing and the exact measurement would be vacuously clean"
     );
-    assert_eq!(
-        covered, 0,
-        "internal: the per-member assertion above should have fired first"
-    );
 
-    // THE COUNT, over every member including the compacted wide ones. `Canonical9` on eight
-    // fields in two blocks is 112 free-lane lookups per member at minimum; the deployed
-    // maximum is the transfer family's balance/fee teeth.
+    // THE COUNT, over every member including the compacted wide ones — now a FLOOR, not a ceiling.
+    // `Canonical9` on eight fields in two blocks is 192 lookups per member at minimum.
     assert!(
-        max_range_lookups < 16,
-        "\n{worst} carries {max_range_lookups} range lookups — far more than the balance/fee \
-         teeth. Either the canonicity emit has landed (invert this test, see the doc comment) \
-         or a new range family arrived that this census should name.\n"
+        min_range_lookups >= 192,
+        "\n{leanest} carries only {min_range_lookups} range lookups — below the 192 the \
+         fields-canonicity weld puts on every rotated member (112 free lanes + 16 `r` + 64 \
+         `v`/`vb`). Either a member escaped the emit or the reader lost the width-tagged fallback.\n"
     );
 
-    // ANTI-VACUITY: the reader DOES find the range lookups that exist. A parser that
-    // silently matched nothing would report the same clean result.
+    // ANTI-VACUITY: the reader DOES find the range lookups that exist, including the ones that
+    // predate this weld. A parser that silently matched nothing would report the same clean result.
     let cols: std::collections::BTreeSet<usize> = all_targets.iter().map(|(c, _)| *c).collect();
     assert!(
-        !cols.is_empty(),
-        "the range-lookup reader found NO range lookups anywhere in three registries — it is \
-         broken, and every 'no fields lane is range-checked' result above is vacuous"
-    );
-    assert!(
         cols.contains(&76) && cols.contains(&77),
-        "the reader must find the deployed balance-limb range teeth (columns 76/77); it found \
-         {cols:?}"
+        "the reader must still find the deployed balance-limb range teeth (columns 76/77)"
     );
-    // Every target sits in the v1 state block or the automatafl face — none in a rotated
-    // appendix, which begins at column 188 at the earliest and is ≥ 1000 on every deployed
-    // rotated member.
+    let widths: std::collections::BTreeSet<usize> = all_targets.iter().map(|(_, b)| *b).collect();
     assert!(
-        cols.iter().all(|c| *c < 256),
-        "a range lookup landed above the v1 face at {cols:?} — re-derive whether it is in a \
-         rotated block before trusting the clean result above"
+        widths.contains(&24) && widths.contains(&28),
+        "the reader must find BOTH canonicity widths; it found {widths:?}"
     );
 }
 
@@ -604,7 +656,9 @@ fn the_census_reader_detects_a_planted_lane_range_lookup() {
         .expect("no member with a derivable rotated base");
     let base = rotated_before_base(&d).expect("checked");
 
-    // The control: unmutated, the member reports no covered lane.
+    // The control: unmutated, the member covers exactly the 112 FREE lanes and NOT the pinned
+    // pair. (Before the canonicity emit this leg read "no covered lane"; it is inverted with the
+    // census above, and the property it guards — the reader is not blind — is unchanged.)
     let lanes: std::collections::BTreeSet<usize> =
         rotated_fields_lane_columns(base).into_iter().collect();
     let before: Vec<usize> = range_checked_columns(&d)
@@ -612,14 +666,16 @@ fn the_census_reader_detects_a_planted_lane_range_lookup() {
         .map(|(c, _)| c)
         .filter(|c| lanes.contains(c))
         .collect();
-    assert!(
-        before.is_empty(),
-        "{label}: the control leg must start clean, found {before:?}"
+    assert_eq!(
+        before.len(),
+        112,
+        "{label}: the control leg must see exactly the 112 free-lane lookups, found {}",
+        before.len()
     );
 
-    // The mutation: ONE lookup, on the AFTER block's slot-3 ninth lane (column
-    // `after_base + 179`), into the member's own declared range table.
-    let planted = base + B_SPAN + ROTATED_FIELD_LANE_COL[3][8];
+    // The mutation: ONE lookup on a PINNED lane column (the AFTER block's slot-3 lane 0), which
+    // the emit deliberately never range-checks — so a reader that missed it would be blind.
+    let planted = base + B_SPAN + ROTATED_FIELD_LANE_COL[3][0];
     let range_tid = d
         .tables
         .iter()
@@ -634,7 +690,7 @@ fn the_census_reader_detects_a_planted_lane_range_lookup() {
     let after: Vec<usize> = range_checked_columns(&d)
         .into_iter()
         .map(|(c, _)| c)
-        .filter(|c| lanes.contains(c))
+        .filter(|c| lanes.contains(c) && !before.contains(c))
         .collect();
     assert_eq!(
         after,

@@ -645,6 +645,9 @@ fn generate_rotated_effect_vm_trace_avail_core(
         fill_block(row, before_base, STATE_BEFORE_BASE, before_w);
         fill_block(row, after_base, STATE_AFTER_BASE, after_w);
         fill_caveat(row, caveat_base, caveat);
+        // ⚑ THE FIELDS-CANONICITY AUX (2026-07-31). Must run AFTER both `fill_block` calls: it
+        // reads the nonet lanes those just laid.
+        fill_canon9(row, before_base);
     }
 
     // THE LIFECYCLE-PAYLOAD HASH GATE declared column (cellSeal / cellDestroy / receiptArchive — the
@@ -2733,6 +2736,59 @@ fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedB
     row[base + B_STATE_COMMIT] = commit;
 }
 
+/// **Fill the FIELDS-CANONICITY aux region** — the seven witness columns per `(block, slot)` that
+/// make `Canonical9`'s third leg (`NoWrap`) expressible in-AIR. Lean twin:
+/// `Dregg2.Circuit.Emit.FieldsCanonicity9Emit.canon9ConstraintsAt`.
+///
+/// The gadget, per slot, reads lanes 0/1/8 of that slot's committed nonet and writes
+/// `r, q0, q1, v0, v0b, v1, v1b`:
+///
+/// ```text
+///   c  = L8 >> 24         r  = L8 & 0xFFFFFF        (the carry digit, split off lane 8)
+///   q0 = c % 4            q1 = c / 4                (the two restored `mod p` quotients)
+///   t  = 1 iff q == 2                               (the selector `q(q−1)/2`)
+///   v  = t·L              vb = v + 2·t
+/// ```
+///
+/// ⚑ **THIS IS NOT OPTIONAL PLUMBING.** These columns are read by seven gates and five lookups per
+/// slot. Leave them zero and `L8 = (q0 + 4·q1)·2^24 + r` fails on every row where lane 8 is
+/// nonzero, i.e. on every field value that reaches past `b[24..32]` — an honest turn, UNSAT.
+///
+/// ⚑ **AND IT RUNS BEFORE COMPACTION.** The wide members are S2/E1-compacted (dead columns deleted,
+/// survivors renumbered) by `compact_s2_columns` / `compact_e1_columns` AFTER the row is laid, so
+/// filling here — at the uncompacted geometry, the same place `fill_block` and `fill_caveat` work —
+/// is the only place the `ROTATED_FIELD_LANE_COL` indices mean what they say.
+///
+/// A dishonest lane (lane 8 ≥ 2^28, or lane 0 ≥ 2^28 while its quotient is 2) makes some aux value
+/// exceed its declared width; `descriptor_ir2::fill_main_layout_row` then refuses the row rather
+/// than emitting an unprovable trace. That refusal IS the completeness pole's tooth.
+fn fill_canon9(row: &mut [BabyBear], before_base: usize) {
+    let canon_base = before_base + CANON9_REGION_OFF;
+    for blk in 0..2usize {
+        let bb = before_base + blk * B_SPAN;
+        for slot in 0..8usize {
+            let l0 = row[bb + ROTATED_FIELD_LANE_COL[slot][0]].as_u32() as u64;
+            let l1 = row[bb + ROTATED_FIELD_LANE_COL[slot][1]].as_u32() as u64;
+            let l8 = row[bb + ROTATED_FIELD_LANE_COL[slot][8]].as_u32() as u64;
+            let c = l8 >> 24;
+            let r = l8 & 0x00ff_ffff;
+            let q0 = c % 4;
+            let q1 = c / 4;
+            // `q(q−1)/2` — 1 exactly at q == 2, which is the only quotient that can wrap.
+            let t0 = u64::from(q0 == 2);
+            let t1 = u64::from(q1 == 2);
+            let a = canon_base + blk * (8 * CANON9_PER_SLOT) + slot * CANON9_PER_SLOT;
+            row[a] = BabyBear::new(r as u32);
+            row[a + 1] = BabyBear::new(q0 as u32);
+            row[a + 2] = BabyBear::new(q1 as u32);
+            row[a + 3] = BabyBear::new((t0 * l0) as u32);
+            row[a + 4] = BabyBear::new((t0 * l0 + 2 * t0) as u32);
+            row[a + 5] = BabyBear::new((t1 * l1) as u32);
+            row[a + 6] = BabyBear::new((t1 * l1 + 2 * t1) as u32);
+        }
+    }
+}
+
 /// Fill the widened-caveat region at `base` (29-felt manifest + 9 chain + manifest commit + the
 /// 4-felt DFA route-commitment carrier + its 2 absorbing carriers + the PUBLISHED commit) from the
 /// turn's manifest. The chained commitment is genuine (Lean
@@ -3137,16 +3193,16 @@ pub const CAP_OPEN_TB_PI_COUNT: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
 // relations; see the `NUM_PRE_LIMBS`-derived wide block below.)
 const _: () = {
     assert!(
-        CAP_OPEN_BASE == 1707,
-        "cap-open rides the graduated rotated base (1647 -> 1691 nine-lane -> 1707 dsl-rc carrier)"
+        CAP_OPEN_BASE == 1819,
+        "cap-open rides the graduated rotated base (1647 -> 1691 nine-lane -> 1707 dsl-rc carrier -> 1819 fields-canonicity)"
     );
     assert!(
         CAP_OPEN_SPAN == 329,
         "Phase H-CAP-8 native 8-felt membership span"
     );
     assert!(
-        CAP_OPEN_WIDTH == 2036,
-        "cap-open READ host width = 1707 + 329"
+        CAP_OPEN_WIDTH == 2148,
+        "cap-open READ host width = 1819 + 329"
     );
     assert!(
         CAP_OPEN_AFTER_SPINE_SPAN == 143,
@@ -3158,7 +3214,7 @@ const _: () = {
     // above dangling over an assertion about something else. It is the only line in this block that
     // ties the Rust constants to a committed descriptor byte, so losing it lost the whole point.
     assert!(
-        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2179,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2291,
         "cap-WRITE narrow width"
     );
     // The TB PI geometry. `CAP_OPEN_TB_WIDTH` gets NO pin here on purpose: it is now *defined* as
