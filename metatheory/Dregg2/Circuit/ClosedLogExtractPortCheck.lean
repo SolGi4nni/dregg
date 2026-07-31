@@ -257,24 +257,33 @@ example (S : CommitSurface) (hash : List ℤ → ℤ)
   fun _hCR => hc
 
 /-
-⚑ THE THIRD KEYSTONE, `CircuitSoundness.descriptorRefines`, IS NOT PORTED — stated precisely so the
-next lane inherits a measurement rather than a guess.
+⚑ THE THIRD KEYSTONE, `CircuitSoundness.descriptorRefines` — ⛑ PORTED ON THE APEX PATH 2026-07-31
+(`Dregg2.Circuit.ApexFloorFree`), still unported at the def itself. The paragraph that stood here was
+half right and the wrong half is worth keeping visible, because it is why this took an extra six days:
 
-Its antecedent is NOT dead the way these two were. `descriptorRefines` is the SOUNDNESS direction: a
-rung must read a kernel back out of a published commitment, and that is exactly the step a hash
-collision defeats, so the floor is doing real work in at least some rungs. Two further facts bound the
-next attempt:
+> "Its antecedent is NOT dead the way these two were … The rungs are discharged by TERM APPLICATION,
+>  not by `intro`, so 'is the antecedent used?' is not a grep — it needs elaborated-term analysis."
 
-  * `DescriptorRefinesShirkRefuted` PROVES the def vacuous at deployed BabyBear
-    (`descriptorRefines_vacuous_babyBear`), and proves the `DescriptorRefinesReduce` twin
-    `descriptorRefinesR` vacuous TOO — so `descriptorRefinesR` is not a port target, it is the same
-    hole with a different name.
-  * The rungs are discharged by TERM APPLICATION, not by `intro`, so "is the antecedent used?" is not
-    a grep — it needs elaborated-term analysis. `Tools/ConePort` already does exactly that analysis
-    (floor binders by constant identity, floor-flow walk of the proof term) and is the right
-    instrument to point at the `descriptorRefines` cone before any editing starts.
+TRUE of the tree at large; FALSE of the APEX, and the counter-evidence was already sitting in
+`ClosureAll` in plain sight. `effectDecodeBridge_of_closedLogExtract` — the only `descriptorRefines`
+producer the closed apex chain uses — opens `intro _hCR minit mfin maddrs t pc pre post hsat hdec` and
+never mentions `_hCR` again, precisely because `ClosedLogExtract` had ALREADY been ported off the floor
+(§1 above, 2026-07-25). `ClosureReadoutsRealizable.lightclient_unfoolable_live` then inlined the same
+derivation with NO CR binder at all and went through. So on the apex path the antecedent was dead, by
+`intro`, and it WAS a grep.
 
-What this module can say today is only that the OTHER two gates are shut and stay shut.
+What the old paragraph got right stands: `descriptorRefinesR` is not a port target
+(`DescriptorRefinesShirkRefuted` proves the twin exactly as vacuous), and porting the DEF in place is
+still a real cascade — ~15 consumers thread `∀ e, descriptorRefines …` as a hypothesis.
+
+`ApexFloorFree` ports the apex instead of the def, and in doing so had to answer the harder question
+the def-level framing hid: `descriptorRefines` is stated at `S : CommitSurface`, which
+`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes at EVERY parameter, so no statement
+about it can even HAVE a refutability pole. `ApexFloorFree.descriptorRefinesFree` is stated at a bare
+`CommitMap` and is REFUTED at `fun _ _ => False` for every hash and every descriptor
+(`descriptorRefinesFree_false_at_False_kstep`) — the acceptance test `DescriptorRefinesShirkRefuted`
+set and which both existing forms fail. The remaining unported endpoints are pinned as the negative
+control of `OpeningResidualCutoverCheck` §2.
 -/
 
 /-! ## §6 — axiom hygiene. -/

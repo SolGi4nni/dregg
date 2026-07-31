@@ -84,13 +84,21 @@ is `lightclient_unfoolable`'s body verbatim, with `hrefines pi.effect` replaced 
 
 /-- **`lightclient_unfoolable_one` — the single-effect closed apex.** Same conclusion as
 `lightclient_unfoolable`, but the per-effect refinement obligation is carried at EXACTLY the published
-effect `pi.effect` (one rung, parametric in `pi.effect`) — not as a `∀ e` family. -/
+effect `pi.effect` (one rung, parametric in `pi.effect`) — not as a `∀ e` family.
+
+⛑ **`Poseidon2SpongeCR hash` SHED (2026-07-31)**, together with the `descriptorRefines` rung it
+existed to feed. The rung is now `ApexFloorFree.descriptorRefinesFree` at `S.commit`: the refuted
+antecedent is gone, and the PUBLICATION LINK (`tracePublishedCommit t = pc`) that this proof already
+had in hand from `StarkSound.extract` — and used to throw away — is now handed to the rung. That makes
+the carried obligation strictly WEAKER, hence this theorem strictly STRONGER, on top of losing a false
+hypothesis. -/
 theorem lightclient_unfoolable_one
     (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
+    [StarkSound hash R]
     (kstep : EffectIdx → RecChainedState → RecChainedState → Prop)
     (pi : BatchPublicInputs)
-    (hrefine : descriptorRefines S hash (R pi.effect) (kstep pi.effect))
+    (hrefine : Dregg2.Circuit.ApexFloorFree.descriptorRefinesFree S.commit hash (R pi.effect)
+      (kstep pi.effect))
     (π : BatchProof)
     (hwitdec : WitnessDecodes hash R S pi)
     (hacc : verifyBatch (vkOfRegistry R) pi π = Verdict.accept) :
@@ -99,20 +107,14 @@ theorem lightclient_unfoolable_one
       kstep pi.effect pre post ∧
       pi.pre = S.commit pre.kernel pi.turn ∧
       pi.post = S.commit post.kernel pi.turn := by
-  -- (1) strengthened STARK soundness extracts a Satisfied2 witness of the CLAIMED descriptor whose
-  --     published commitments ARE `pi.toPublished`.
-  obtain ⟨minit, mfin, maddrs, t, hsat, hpub⟩ :=
-    (inferInstance : StarkSound hash R).extract pi π hacc
-  -- (2) the carried witness→state EXISTENCE rung supplies the decoded kernel boundary `(pre, post)`.
-  obtain ⟨pre, post, hdecode⟩ := hwitdec minit mfin maddrs t hsat hpub
-  -- (3) the SINGLE published-effect rung (fed the named hash CR carrier `hCR`) turns the circuit witness +
-  --     the derived decode into the step.
-  have hstep : kstep pi.effect pre post :=
-    hrefine hCR minit mfin maddrs t pi.toPublished pre post hsat hdecode
-  -- (4) faithfulness re-exports the published commitments as the genuine endpoint commitments.
-  refine ⟨pre, post, hdecode, hstep, ?_, ?_⟩
-  · simpa using hdecode.preBinds
-  · simpa using hdecode.postBinds
+  have hwitC : Dregg2.Circuit.ApexFloorFree.WitnessDecodesC hash R S.commit pi := by
+    intro minit mfin maddrs t hsat hpub
+    obtain ⟨pre, post, hd⟩ := hwitdec minit mfin maddrs t hsat hpub
+    exact ⟨pre, post, ⟨hd.preBinds, hd.postBinds, hd.preWF, hd.postWF⟩⟩
+  obtain ⟨pre, post, hdec, hstep, h1, h2⟩ :=
+    Dregg2.Circuit.ApexFloorFree.lightclient_unfoolable_free S.commit hash R kstep pi π hrefine
+      hwitC hacc
+  exact ⟨pre, post, ⟨hdec.preBinds, hdec.postBinds, hdec.preWF, hdec.postWF⟩, hstep, h1, h2⟩
 
 /-! ## §2 — `ClosedWitness`: the SINGLE witness floor, parametric in `pi.effect`.
 
@@ -152,12 +154,17 @@ CR fields, `logHashInjective` (inside `ClosedWitness.mkLog`), `ClosedWitness`}. 
 From a verifying batch against `vkOfRegistry Rfix` and EXACTLY the standard crypto foundations of a verified
 SNARK soundness proof —
   * `StarkSound hash Rfix` (the audited p3 batch-STARK extraction),
-  * `Poseidon2SpongeCR hash` + the `S_live` `CommitSurface` CR fields (the decode-faithfulness floor),
+  * the `S_live` `CommitSurface` CR fields (the decode-faithfulness floor),
   * `logHashInjective LH` (the log-CR floor, carried inside `ClosedWitness.mkLog`),
   * `ClosedWitness hash Rfix S_live LH pi` (the ONE prover-witness floor, parametric in `pi.effect`) —
 there EXIST decoded endpoints and a genuine FULL kernel+log transition `kstepAll pi.effect pre post` whose
 endpoints commit to the published `(pi.pre, pi.post)`. NO `∀ e` family of per-effect hypotheses: the
-per-effect prover-witness is subsumed under the single `ClosedWitness` floor at the published effect. -/
+per-effect prover-witness is subsumed under the single `ClosedWitness` floor at the published effect.
+
+⛑ `Poseidon2SpongeCR hash` SHED 2026-07-31 (it fed only `descriptorRefines`'s dead def-body antecedent).
+⚠ The `S_live` CR fields REMAIN and are refuted at every parameter
+(`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`), so this headline is still not applicable;
+`ApexFloorFree.lightclient_unfoolable_free` is the applicable one. -/
 theorem lightclient_unfoolable_circuit_sound
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
@@ -165,7 +172,7 @@ theorem lightclient_unfoolable_circuit_sound
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitness hash
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
@@ -179,12 +186,17 @@ theorem lightclient_unfoolable_circuit_sound
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn := by
   -- the single published-effect refinement rung, from the single `ext`/`mkLog` of the witness floor.
+  -- FLOOR-FREE: `descriptorRefinesFree_of_closedLogExtract` introduces no `Poseidon2SpongeCR`.
   have hrefine :
-      descriptorRefines (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-        hash (Rfix pi.effect) (kstepAll pi.effect) :=
-    effectDecodeBridge_of_closedLogExtract hcw.ext hcw.mkLog
+      Dregg2.Circuit.ApexFloorFree.descriptorRefinesFree
+        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+        hash (Rfix pi.effect) (kstepAll pi.effect) := by
+    intro minit mfin maddrs t pc pre post hsat _hlink hdecC
+    obtain ⟨pubLogPre, pubLogPost, hdecLog⟩ := hcw.mkLog pc pre post
+      ⟨hdecC.preBinds, hdecC.postBinds, hdecC.preWF, hdecC.postWF⟩
+    exact hcw.ext minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   exact lightclient_unfoolable_one hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix hCR kstepAll pi
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix kstepAll pi
     hrefine π hcw.wit hacc
 
 /-! ## §4 — non-vacuity: `ClosedWitness` is BUILT from the genuine readout bundle (rungs load-bearing).
@@ -238,7 +250,7 @@ theorem lightclient_unfoolable_circuit_sound_of_readouts
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (pc : PublishedCommit) (pre post : RecChainedState),
@@ -259,7 +271,7 @@ theorem lightclient_unfoolable_circuit_sound_of_readouts
         pre.kernel pi.turn ∧
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn :=
-  lightclient_unfoolable_circuit_sound hash LH hCR pi π
+  lightclient_unfoolable_circuit_sound hash LH pi π
     (closedWitness_of_readouts rds mkLog pi hwitdec) hacc
 
 /-! ## §5 — axiom hygiene. -/

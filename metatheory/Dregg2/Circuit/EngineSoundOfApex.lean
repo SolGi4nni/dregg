@@ -112,7 +112,7 @@ variable (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
 variable (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
 variable (hRest : RestHashIffFrame RH)
 variable (hash : List ℤ → ℤ) (LH : List Dregg2.Exec.Turn → ℤ)
-variable (hCR : Poseidon2SpongeCR hash) [inst : StarkSound hash Rfix]
+variable [inst : StarkSound hash Rfix]
 
 /-- The live commitment surface the apex is stated over. -/
 abbrev Surf : CommitSurface :=
@@ -165,7 +165,7 @@ transition — by RUNNING the apex `lightclient_unfoolable_circuit_sound` on the
 its conclusion to `apexLowers`. This is the genuine substance: `leaf_sound`'s per-step obligation is
 PROVED from circuit soundness, not assumed. -/
 
-include hCR inst in
+include inst in
 /-- **`leafStep_of_bundle`.** From a leaf's `ApexLeafBundle` and `verify p = true`, the step's
 verified-executor transition `recCexec s.pre s.turn = some s.post` — DISCHARGED by the apex. -/
 theorem leafStep_of_bundle (p : Proof) (s : ChainStep)
@@ -177,7 +177,7 @@ theorem leafStep_of_bundle (p : Proof) (s : ChainStep)
   b.apexLowers
     (lightclient_unfoolable_circuit_sound (CH := CH) (RH := RH) (cmb := cmb) (compress := compress)
       (compressN := compressN) (hCmb := hCmb) (hCompress := hCompress) (hCompressN := hCompressN)
-      (hLeaf := hLeaf) (hRest := hRest) hash LH hCR b.pi b.π b.cw (b.accepts hv))
+      (hLeaf := hLeaf) (hRest := hRest) hash LH b.pi b.π b.cw (b.accepts hv))
 
 /-! ## §4 — `engineSound_of_apex` — BUILD `EngineSound` (discharge `leaf_sound`) FROM the apex.
 
@@ -187,7 +187,7 @@ from a `Forall₂` of `ApexLeafBundle`s by mapping `leafStep_of_bundle` over the
 chain-binding AIR soundness) are the NAMED recursion hypotheses outside Lean — passed THROUGH unchanged;
 this weld discharges ONLY `leaf_sound`, the per-turn obligation circuit soundness proves. -/
 
-include hCR inst in
+include inst in
 /-- **`leafSound_of_bundles`.** The `EngineSound.leaf_sound` field — the positional `Forall₂` that
 "each verifying leaf attests its step's `recCexec`" — built by mapping the apex (`leafStep_of_bundle`)
 over a `Forall₂` of per-leaf bundles. -/
@@ -202,9 +202,9 @@ theorem leafSound_of_bundles {leafProofs : List Proof} {steps : List ChainStep}
   | @cons p s ps ss hhead _htail ih =>
     refine List.Forall₂.cons (fun hv => ?_) ih
     exact leafStep_of_bundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH hCR p s hhead.some hv
+      hCmb hCompress hCompressN hLeaf hRest hash LH p s hhead.some hv
 
-include hCR inst in
+include inst in
 /-- **`engineSound_of_apex` — THE WELD.** Builds `RecursiveAggregation.EngineSound` from:
   * a per-leaf `Forall₂` of `ApexLeafBundle`s — whose `leaf_sound` leg is DISCHARGED BY the apex
     (`leafSound_of_bundles` ∘ `lightclient_unfoolable_circuit_sound`), so circuit soundness — not a free
@@ -234,7 +234,7 @@ theorem engineSound_of_apex
     EngineSound Proof verify CH' RH' cmb' compress' compressN' agg g steps where
   recursive_sound := hrec
   leaf_sound := leafSound_of_bundles Proof verify CH RH cmb compress compressN
-    hCmb hCompress hCompressN hLeaf hRest hash LH hCR hb
+    hCmb hCompress hCompressN hLeaf hRest hash LH hb
   binding_sound := hbind
 
 end Weld
@@ -256,9 +256,9 @@ variable (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
 variable (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
 variable (hRest : RestHashIffFrame RH)
 variable (hash : List ℤ → ℤ) (LH : List Dregg2.Exec.Turn → ℤ)
-variable (hCR : Poseidon2SpongeCR hash) [inst : StarkSound hash Rfix]
+variable [inst : StarkSound hash Rfix]
 
-include hCR inst in
+include inst in
 /-- **`multiTurn_rests_on_apex`.** The whole-history attestation
 (`RecursiveAggregation.AggregateAttests` — every turn executed, correctly ordered, genuine fold)
 obtained WITHOUT carrying `EngineSound` as a free sibling: its `leaf_sound` is the apex
@@ -284,10 +284,10 @@ theorem multiTurn_rests_on_apex
   Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history
     Proof verify CH RH cmb compress compressN agg g steps
     (engineSound_of_apex Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH hCR agg g steps hb hrec hbind)
+      hCmb hCompress hCompressN hLeaf hRest hash LH agg g steps hb hrec hbind)
     hroot
 
-include hCR inst in
+include inst in
 /-- **`finalized_rests_on_apex`.** The three-leg finalized-history verdict
 (`FinalizedLightClient.FinalizedHistoryAttested` — the whole correct history PLUS the BFT-quorum
 finalization) obtained with `EngineSound.leaf_sound` discharged by the apex. The whole distributed
@@ -316,7 +316,7 @@ theorem finalized_rests_on_apex
   Dregg2.Distributed.FinalizedLightClient.light_client_accepts_finalized_history
     Proof verify CH RH cmb compress compressN agg g steps cert finalizedRoot
     (engineSound_of_apex Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH hCR agg g steps hb hrec hbind)
+      hCmb hCompress hCompressN hLeaf hRest hash LH agg g steps hb hrec hbind)
     hroot hbound hcert
 
 end Payoff

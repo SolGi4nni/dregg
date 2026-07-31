@@ -265,20 +265,43 @@ statement that you cannot be *fooled* about what knowledge was constructed: a li
 secrets, re-runs no cell, and yet — checking only a succinct root — learns that every turn in the whole
 history was a genuine kernel transition.
 
-The apex is `lightclient_unfoolable` (`Dregg2/Circuit/CircuitSoundness.lean:428`). Its only data inputs
-are what a light client actually has — the public inputs `pi` and the proof `π`; it takes *no* `pre`/
-`post` and *no* `StateDecode` as hypotheses (those would hide the hardest rung). From `verifyBatch vk pi
-π = accept` plus named floors (`StarkSound` extracting a `Satisfied2` witness, `Poseidon2SpongeCR`, the
-per-effect refinement `descriptorRefines`, and the carried existence rung `WitnessDecodes`,
-`CircuitSoundness.lean:421`) it *derives*:
+The apex is `ApexFloorFree.lightclient_unfoolable_free` (`Dregg2/Circuit/ApexFloorFree.lean`). Its only
+data inputs are what a light client actually has — the public inputs `pi` and the proof `π`; it takes
+*no* `pre`/`post` and *no* `StateDecode` as hypotheses (those would hide the hardest rung). From
+`verifyBatch vk pi π = accept` plus named floors (`StarkSound` extracting a `Satisfied2` witness, the
+per-effect refinement `descriptorRefinesFree`, and the carried existence rung `WitnessDecodesC`) it
+*derives*:
 
 ```
-∃ pre post, StateDecode S pi.toPublished pre post ∧ kstep pi.effect pre post
-          ∧ pi.pre = S.commit pre.kernel pi.turn ∧ pi.post = S.commit post.kernel pi.turn
+∃ pre post, StateDecodeC C pi.toPublished pre post ∧ kstep pi.effect pre post
+          ∧ pi.pre = C pre.kernel pi.turn ∧ pi.post = C post.kernel pi.turn
 ```
 
 — *accept ⟹ there exists a genuine kernel transition committing to exactly these published roots.* The
-light client ran nothing and cannot be shown a forged history.
+light client ran nothing.
+
+⚑ **Read the last sentence exactly, and no further (2026-07-31).** Two hypotheses that this paragraph
+used to list are REFUTED IN THIS TREE, and the apex was restated to stop carrying them:
+
+* `Poseidon2SpongeCR` is FALSE at deployed BabyBear (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`).
+  The older apex `CircuitSoundness.lightclient_unfoolable` carries it, but only to discharge a def-body
+  antecedent of `descriptorRefines` that the closed route introduces and DROPS — vestigial, and now shed
+  from the whole state-decode chain.
+* `S : CommitSurface` carries five commitment floors as FIELDS and has NO INHABITANT at any parameter
+  (`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`, Cantor on `restFrame`). Every apex stated
+  over it — including `lightclient_unfoolable_closed_final{,_genuine,_avail}` and
+  `kernelConfigSound{,Avail}` — is therefore VACUOUS, whether or not it also carries the sponge floor.
+  `lightclient_unfoolable_free` is stated over a bare commit map `C : RecordKernelState → Turn → ℤ`,
+  which is inhabited by the deployed `recStateCommit`, and it is REFUTABLE: its per-effect rung is FALSE
+  at the unsatisfiable step relation (`descriptorRefinesFree_false_at_False_kstep`), the test that both
+  `descriptorRefines` and `descriptorRefinesR` pass for free.
+
+⚠ **"Cannot be shown a forged history" is NOT what this apex says.** It says a real transition EXISTS
+behind an accepted proof, with the published roots as its endpoints. It does NOT say the state behind a
+published root is UNIQUE — that is `stateDecode_pre_faithful`/`_post_faithful` through
+`CommitSurface.commit_binds`, which consumes exactly the refuted five and is unavailable until the
+rest-hash is refined to finite support (`Verify.RestFrameFiniteSupportSuccessor`). Existence is
+floor-free and true; uniqueness is open.
 
 Over the *whole* history this is `light_client_verifies_whole_history`
 (`Dregg2/Circuit/RecursiveAggregation.lean:192`): checking only `verify agg.root = true` yields

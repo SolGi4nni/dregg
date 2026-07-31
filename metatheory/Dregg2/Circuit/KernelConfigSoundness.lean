@@ -152,7 +152,7 @@ theorem kernelConfigSound
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (LH : List Turn → ℤ)
     -- the ONE shared commitment hash + its collision-resistance floor
-    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     -- the STARK-side FRI/constraint sponge + its collision-resistance floor
     (sponge : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
@@ -200,7 +200,7 @@ theorem kernelConfigSound
       (fullChecks core A toNat params.powBits) initState logN view href
   -- CONFIG layer: closedLogExtract_all_genuine (the ASSEMBLED bridge) → kstepAll.
   obtain ⟨pre, post, hdec, hstep, hc1, hc2⟩ :=
-    lightclient_unfoolable_closed_final_genuine hash LH hCRh rds mkLog pi π hwitdec hacc
+    lightclient_unfoolable_closed_final_genuine hash LH rds mkLog pi π hwitdec hacc
   -- UNFOLD kstepAll = dispatchArm to expose the REAL config transition fullActionStep.
   obtain ⟨fa, htag, hfull⟩ := hstep
   exact ⟨pre, post, fa, hdec, htag, hfull, hc1, hc2⟩

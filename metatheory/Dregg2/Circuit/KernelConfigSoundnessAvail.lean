@@ -113,7 +113,7 @@ theorem kernelConfigSoundAvail
     {State : Type} {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (LH : List Turn → ℤ)
-    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (sponge : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
@@ -201,7 +201,7 @@ theorem kernelConfigSoundAvail
   have availBurn : Dregg2.Circuit.ClosureAll.ClosedLogExtract Slive LH hash RfixAvail 4 :=
     closedLogExtract_burn_closed_availFix (LH := LH) hash readoutB
   obtain ⟨pre, post, hdec, hstep, hc1, hc2⟩ :=
-    Dregg2.Circuit.ClosureFinalAvail.lightclient_unfoolable_closed_final_avail hash LH hCRh pi π
+    Dregg2.Circuit.ClosureFinalAvail.lightclient_unfoolable_closed_final_avail hash LH pi π
       (closedWitnessAvail_of_readouts rds availTransfer availBurn mkLog pi hwitdec) hacc
   -- UNFOLD kstepAll = dispatchArm to expose the REAL config transition fullActionStep.
   obtain ⟨fa, htag, hfull⟩ := hstep

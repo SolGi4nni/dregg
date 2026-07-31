@@ -18,15 +18,27 @@ module pins BOTH directions on every build, from the ELABORATED environment:
   * **§1 PORTED — 56 declarations that MUST NOT bind `Poseidon2SpongeCR` any more.** If one of
     them binds it again, someone re-introduced the refuted floor into a statement that had shed it,
     and the build goes red HERE rather than a reviewer noticing a binder.
-  * **§2 RETAINED — 2 declarations that MUST STILL bind it.** `KernelConfigSoundness.kernelConfigSound`
-    and `KernelConfigSoundnessAvail.kernelConfigSoundAvail` carry the OTHER instance,
-    `Poseidon2SpongeCR hash`, and GENUINELY apply it — not at the map-op arm, but at the STATE-DECODE
-    apex `ClosureFinal.lightclient_unfoolable_closed_final{,_avail}` (the published-commitment↔kernel
-    binding, `EffectVmEmitRotationV3.rotV3_binds_published` / the `CommitSurface` CR bundle). That is
-    Site 2 of the weld repair — a genuine re-proof (`_binds_or_collides`), not a mechanical re-point —
-    and the sponge/STARK-side ports do not retire it.
-    **If these ever clear without the state-decode de-vacuuming landing, this file is the thing that
-    says so.** A declaration that clears everything is a broken gate, not a fixed tree.
+  * **§2 RETAINED — the declarations that MUST STILL bind it.** A check that clears everything is a
+    broken gate, not a fixed tree, so this list must never be empty while any endpoint genuinely
+    carries the floor. Its current members are the WHOLE-TURN apex
+    `ClosureForest.lightclient_unfoolable_circuit_sound_turn` and the base single-transition apex
+    `CircuitSoundness.lightclient_unfoolable`: both consume `descriptorRefines`, whose refuted floor
+    sits in the DEF BODY and must be paid at the application site. If either clears, the turn-level /
+    base port landed — move it to §1 and say so in the commit.
+
+  ⛑ 2026-07-31 (SITE 3): `KernelConfigSoundness.kernelConfigSound` and
+    `KernelConfigSoundnessAvail.kernelConfigSoundAvail` LEFT §2 for §1, and this is the negative
+    control firing as designed — it fired, and the reason is the one it named. The state-decode
+    apex chain (`ClosureAll.lightclient_unfoolable_closed` →
+    `ClosureFinal{,Avail}`/`ClosureFanout{,Genuine}` → these two) now routes through
+    `ClosureAll.descriptorRefinesFree_of_closedLogExtract` → `ApexFloorFree.lightclient_unfoolable_free`,
+    in which NO `Poseidon2SpongeCR` is introduced anywhere. The §2 prose above was WRONG about which
+    binding was load-bearing: the apex's `hCR` was handed to `descriptorRefines`'s def-body antecedent
+    and DISCARDED by `ClosureAll.effectDecodeBridge_of_closedLogExtract`'s `intro _hCR`; it never
+    reached `rotV3_binds_published`. ⚠ AND SHEDDING IT DID NOT DE-VACUUM THOSE APEXES — they still
+    quantify over `CommitSurface`, refuted at EVERY parameter by
+    `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`. Read the clearance as "one refuted
+    hypothesis fewer", not as "the state-decode apex is now applicable".
 
   ⛑ 2026-07-31: fourteen names LEFT §2 for §1. The `2f72e093f` prose above once said the map-op arm
     APPLIES the floor via `mapOpsArm_of_modeler hash hCRh`. That became FALSE four hours later
@@ -56,6 +68,9 @@ import Dregg2.Circuit.KernelConfigSoundness
 import Dregg2.Circuit.KernelConfigSoundnessAvail
 import Dregg2.Circuit.FriFsDecodedOodRepair
 import Dregg2.Circuit.OodSingletonRepair
+import Dregg2.Circuit.ClosureForest
+import Dregg2.Circuit.ClosureFanout
+import Dregg2.Circuit.ApexFloorFree
 
 namespace Dregg2.Circuit.OpeningResidualCutoverCheck
 
@@ -140,17 +155,31 @@ def portedOffTheFloor : List Name :=
   , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_heapWrite
   , `Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel
   , `Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel_noOodShape
-  , `Dregg2.Circuit.AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail ]
+  , `Dregg2.Circuit.AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail
+  -- ⛑ 2026-07-31 (SITE 3): the two state-decode apexes, moved here from §2.
+  , `Dregg2.Circuit.KernelConfigSoundness.kernelConfigSound
+  , `Dregg2.Circuit.KernelConfigSoundnessAvail.kernelConfigSoundAvail
+  , `Dregg2.Circuit.ClosureAll.lightclient_unfoolable_closed
+  , `Dregg2.Circuit.ClosureFanout.lightclient_unfoolable_closed_final
+  , `Dregg2.Circuit.ClosureFanoutGenuine.lightclient_unfoolable_closed_final_genuine
+  , `Dregg2.Circuit.ClosureFinal.lightclient_unfoolable_one
+  , `Dregg2.Circuit.ClosureFinal.lightclient_unfoolable_circuit_sound
+  , `Dregg2.Circuit.ClosureFinal.lightclient_unfoolable_circuit_sound_of_readouts
+  , `Dregg2.Circuit.ClosureFinalAvail.lightclient_unfoolable_closed_final_avail
+  , `Dregg2.Circuit.ApexFloorFree.lightclient_unfoolable_free ]
 
-/-! ## §2 — RETAINED: the APPLIED `Poseidon2SpongeCR hash` endpoint, deliberately unported.
+/-! ## §2 — RETAINED: the `Poseidon2SpongeCR hash` endpoints that are genuinely still unported.
 
-Only the TWO kernel-config apexes remain: their `hash` floor is applied at the STATE-DECODE apex
-`ClosureFinal.lightclient_unfoolable_closed_final{,_avail}` (published-commitment↔kernel binding),
-which is genuinely load-bearing and is Site 2 of the weld repair. -/
+The two kernel-config apexes left this list on 2026-07-31 (see the ⛑ note in the header). What remains
+are the two apexes that still CONSUME `CircuitSoundness.descriptorRefines`, whose refuted antecedent
+lives in the def BODY and therefore has to be paid by whoever applies the rung: the base
+single-transition apex and the whole-turn forest apex. Porting them is the named remainder — the
+single-transition one needs its ~15 `hrefines`-threading consumers retyped, the turn one needs
+`stepsRefine_of_descriptorRefines` and `TurnDecodeChain` moved onto `ApexFloorFree.CommitMap`. -/
 
 def retainedEndpointCarriers : List Name :=
-  [ `Dregg2.Circuit.KernelConfigSoundness.kernelConfigSound
-  , `Dregg2.Circuit.KernelConfigSoundnessAvail.kernelConfigSoundAvail ]
+  [ `Dregg2.Circuit.CircuitSoundness.lightclient_unfoolable
+  , `Dregg2.Circuit.ClosureForest.lightclient_unfoolable_circuit_sound_turn ]
 
 elab "#opening_residual_cutover_check" : command => do
   liftTermElabM do

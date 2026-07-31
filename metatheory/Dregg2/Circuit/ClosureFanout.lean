@@ -43,14 +43,20 @@ dispatchArm`) is fully landed in `RotatedKernelRefinement*` and consumed inside 
 `closedLogExtract_all` discharges `∀ e, ClosedLogExtract S LH hash Rfix e` by case-splitting `e` over
 the 36 actionTags and invoking each `closedLogExtract_<e>_closed`. `lightclient_unfoolable_closed_final`
 feeds that to `lightclient_unfoolable_closed`, carrying ONLY
-`{StarkSound, Poseidon2SpongeCR + CR set, logHashInjective (in the log floor), WitnessDecodes,
-ClosureFloors}` — all realizable.
+`{StarkSound, the `S_live` CR set, logHashInjective (in the log floor), WitnessDecodes,
+ClosureFloors}`.
+
+⛑ `Poseidon2SpongeCR` SHED 2026-07-31 — it was fed to `descriptorRefines`'s def-body antecedent, which
+the closed route `intro`s and drops; see `Dregg2.Circuit.ApexFloorFree`. ⚠ The `S_live` CR set is NOT
+realizable: `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes it at EVERY parameter, so
+the apex below is still not applicable. The applicable statement is
+`ApexFloorFree.lightclient_unfoolable_free` over a bare `CommitMap`.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. All carriers (`StarkSound`,
-`Poseidon2SpongeCR`, the `CommitSurface` CR fields, `logHashInjective`, the `ClosureFloors`/`ClosedLogRung`
-family) enter as Prop hypotheses/classes, never as axioms. NEW file; imports read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. All carriers (`StarkSound`, the
+`CommitSurface` CR fields, `logHashInjective`, the `ClosureFloors`/`ClosedLogRung` family) enter as Prop
+hypotheses/classes, never as axioms.
 -/
 import Dregg2.Circuit.ClosureTransfer
 
@@ -366,23 +372,37 @@ theorem closedLogExtract_all
 
 /-! ## §5 — `lightclient_unfoolable_closed_final`: the final closed apex on the realizable floors ONLY.
 
-The capstone. From a verifying batch against `vkOfRegistry Rfix` + the realizable floors
-(`StarkSound`, `Poseidon2SpongeCR`, the `S_live` CR fields, `WitnessDecodes`, the log-enrichment `mkLog`
+The capstone. From a verifying batch against `vkOfRegistry Rfix` + the floors
+(`StarkSound`, the `S_live` CR fields, `WitnessDecodes`, the log-enrichment `mkLog`
 = the `logHashInjective` floor binding) + the `ClosureFloors` bundle (the per-effect
 `WitnessDecodes`-class circuit-witness extraction — ALL 36 actionTag slots discharged via
 `closedLogExtract_all`), there EXIST decoded endpoints and a genuine full kernel+log transition
 `kstepAll pi.effect pre post` committing to the published `(pi.pre, pi.post)`.
 
-Carried floor set, EXACTLY: `{StarkSound hash Rfix, Poseidon2SpongeCR hash + the S_live CR fields,
+Carried floor set, EXACTLY: `{StarkSound hash Rfix, the S_live CR fields,
 logHashInjective LH (inside mkLog/the log floor), WitnessDecodes hash Rfix S pi, ClosureFloors S LH hash
 (the per-effect circuit-witness extraction family)}`. NO per-effect `EffectDecodeBridge`/decode residual
-remains — every effect's slot is discharged to its realizable circuit-witness floor. -/
+remains — every effect's slot is discharged to its realizable circuit-witness floor.
+
+⛑ `Poseidon2SpongeCR hash` left the set 2026-07-31 (dead def-body antecedent of `descriptorRefines`).
+⚠ The `S_live` CR fields did NOT, and they are refuted at every parameter
+(`Verify.ApexPremiseVacuity`), so "realizable floors ONLY" in the section title is still FALSE of this
+capstone. See `Dregg2.Circuit.ApexFloorFree`. -/
 
 /-- **`lightclient_unfoolable_closed_final` — THE FINAL CLOSED CIRCUIT-SOUNDNESS APEX.** Stands on ONLY
 the realizable crypto floors + the per-effect circuit-witness extraction bundle (`ClosureFloors`), for
 ALL 36 actionTag effect slots. From a verifying batch + those floors, the light client (running nothing)
 concludes a genuine full kernel+log transition committing to the published commitments. The per-effect
-`EffectDecodeBridge` family is GONE — each slot discharged via `closedLogExtract_all`. -/
+`EffectDecodeBridge` family is GONE — each slot discharged via `closedLogExtract_all`.
+
+⛑ **`Poseidon2SpongeCR hash` SHED (2026-07-31)** — it was fed to `descriptorRefines`'s def-body
+antecedent, which the closed route `intro`s and drops. See `ClosureAll.lightclient_unfoolable_closed`.
+
+⚠ **STILL NOT APPLICABLE**, and shedding the sponge floor did not make it so: the five `S_live`
+commitment binders below (`hCmb`/`hCompress`/`hCompressN`/`hLeaf`/`hRest`) are the `CommitSurface`
+fields that `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes at EVERY parameter —
+`hRest` by Cantor, the other four additionally at deployed BabyBear width. The applicable statement is
+`ApexFloorFree.lightclient_unfoolable_free`. -/
 theorem lightclient_unfoolable_closed_final
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
@@ -390,10 +410,10 @@ theorem lightclient_unfoolable_closed_final
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (floors : ClosureFloors
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash)
-    (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
+    (mkLog : ∀ (_e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
       StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
@@ -412,7 +432,7 @@ theorem lightclient_unfoolable_closed_final
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_closed hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hCR
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
     (closedLogExtract_all floors) mkLog pi π hwitdec hacc
 
 /-! ## §6 — axiom hygiene. -/

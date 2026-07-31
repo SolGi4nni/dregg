@@ -155,13 +155,17 @@ structure ClosedWitnessAvail
 From a verifying batch against `vkOfRegistry RfixAvail` and EXACTLY the standard crypto foundations —
   * `StarkSound hash RfixAvail` (the audited p3 batch-STARK extraction at the deployed hardened registry;
     realizable via `AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail`, the umem memory-legs route),
-  * `Poseidon2SpongeCR hash` + the `S_live` `CommitSurface` CR fields,
+  * the `S_live` `CommitSurface` CR fields,
   * `logHashInjective LH` (carried inside `ClosedWitnessAvail.mkLog`),
   * `ClosedWitnessAvail hash S_live LH pi` (the ONE prover-witness floor, parametric in `pi.effect`) —
 there EXIST decoded endpoints and a genuine FULL kernel+log transition `kstepAll pi.effect pre post` whose
 endpoints commit to `(pi.pre, pi.post)`. At `pi.effect ∈ {0,4}` (transfer/burn) the transition's
 availability leg (`amt ≤ bal`) is FORCED by the deployed borrow chain — the `_availFix` `ext` slot carries
-NO `availOf`: `availOf` is DISCHARGED at the apex. -/
+NO `availOf`: `availOf` is DISCHARGED at the apex.
+
+⛑ `Poseidon2SpongeCR hash` SHED 2026-07-31 (it fed only `descriptorRefines`'s dead def-body antecedent).
+⚠ The `S_live` CR fields REMAIN and are refuted at every parameter (`Verify.ApexPremiseVacuity`), so this
+hardened apex is still not applicable; `ApexFloorFree.lightclient_unfoolable_free` is. -/
 theorem lightclient_unfoolable_closed_final_avail
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
@@ -169,7 +173,7 @@ theorem lightclient_unfoolable_closed_final_avail
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash RfixAvail]
+    [StarkSound hash RfixAvail]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitnessAvail hash
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
@@ -183,12 +187,17 @@ theorem lightclient_unfoolable_closed_final_avail
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn := by
   -- the single published-effect refinement rung, from the single `ext`/`mkLog` of the hardened floor.
+  -- FLOOR-FREE: `descriptorRefinesFree_of_closedLogExtract` introduces no `Poseidon2SpongeCR`.
   have hrefine :
-      descriptorRefines (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-        hash (RfixAvail pi.effect) (kstepAll pi.effect) :=
-    effectDecodeBridge_of_closedLogExtract hcw.ext hcw.mkLog
+      Dregg2.Circuit.ApexFloorFree.descriptorRefinesFree
+        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+        hash (RfixAvail pi.effect) (kstepAll pi.effect) := by
+    intro minit mfin maddrs t pc pre post hsat _hlink hdecC
+    obtain ⟨pubLogPre, pubLogPost, hdecLog⟩ := hcw.mkLog pc pre post
+      ⟨hdecC.preBinds, hdecC.postBinds, hdecC.preWF, hdecC.postWF⟩
+    exact hcw.ext minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   exact lightclient_unfoolable_one hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) RfixAvail hCR kstepAll pi
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) RfixAvail kstepAll pi
     hrefine π hcw.wit hacc
 
 /-! ## §5 — non-vacuity: `ClosedWitnessAvail` is BUILT from the genuine readouts + the `_availFix` slots.

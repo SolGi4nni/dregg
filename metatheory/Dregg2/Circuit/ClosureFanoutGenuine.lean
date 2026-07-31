@@ -1191,8 +1191,13 @@ From the genuine readout bundle (every cohort slot discharged by CALLING its pro
 rung) + the realizable crypto floors, the light client concludes a genuine full kernel+log transition.
 The proven `RotatedKernelRefinement*` soundness rungs are LOAD-BEARING; the carried set is the per-effect
 decode-extraction (`WitnessDecodes` class, named `<e>TraceReadout`) + the crypto floors
-(`StarkSound`/`Poseidon2SpongeCR` + `S_live` CR fields/`logHashInjective`/`Scap`/the `compressN`
-carriers) — NOT the whole refinement. -/
+(`StarkSound` + `S_live` CR fields/`logHashInjective`/`Scap`/the `compressN` carriers) — NOT the whole
+refinement.
+
+⛑ `Poseidon2SpongeCR hash` SHED 2026-07-31 (it only fed `descriptorRefines`'s dead def-body antecedent;
+see `ClosureAll.lightclient_unfoolable_closed`). ⚠ The five `S_live` CR binders REMAIN and are refuted
+at every parameter (`Verify.ApexPremiseVacuity`), so this apex is still not applicable — the applicable
+statement is `ApexFloorFree.lightclient_unfoolable_free`. -/
 
 theorem lightclient_unfoolable_closed_final_genuine
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
@@ -1203,7 +1208,7 @@ theorem lightclient_unfoolable_closed_final_genuine
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
@@ -1225,7 +1230,7 @@ theorem lightclient_unfoolable_closed_final_genuine
       pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_closed hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hCR
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
     (closedLogExtract_all_genuine rds) mkLog pi π hwitdec hacc
 
 /-! ## §9 — axiom hygiene. -/

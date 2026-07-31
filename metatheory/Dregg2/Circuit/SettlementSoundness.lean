@@ -215,7 +215,7 @@ theorem settlement_soundness
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitness hash
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
@@ -236,7 +236,7 @@ theorem settlement_soundness
   refine ⟨?_, ?_⟩
   · -- leg 1: the genuine kernel transition from the finalized apex.
     exact lightclient_unfoolable_circuit_sound (hCmb := hCmb) (hCompress := hCompress)
-      (hCompressN := hCompressN) (hLeaf := hLeaf) (hRest := hRest) hash LH hCR pi π hcw hacc
+      (hCompressN := hCompressN) (hLeaf := hLeaf) (hRest := hRest) hash LH pi π hcw hacc
   · -- leg 3: revocation evaluated AT THE SETTLEMENT TIP.
     intro cred m τ hrev hbound
     exact settled_revocation_bounded st cred m τ hrev hbound
@@ -256,7 +256,7 @@ theorem settlement_soundness_single_machine
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrame RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
+    [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitness hash
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
@@ -275,7 +275,7 @@ theorem settlement_soundness_single_machine
         honorsAtSettlement st cred = false) := by
   refine ⟨?_, ?_⟩
   · exact lightclient_unfoolable_circuit_sound (hCmb := hCmb) (hCompress := hCompress)
-      (hCompressN := hCompressN) (hLeaf := hLeaf) (hRest := hRest) hash LH hCR pi π hcw hacc
+      (hCompressN := hCompressN) (hLeaf := hLeaf) (hRest := hRest) hash LH pi π hcw hacc
   · intro cred m τ hrev hle
     exact settled_revocation_immediate st hinst cred m τ hrev hle
 
