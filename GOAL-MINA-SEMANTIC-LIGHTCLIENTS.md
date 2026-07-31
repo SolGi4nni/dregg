@@ -661,3 +661,24 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
      ⚑ The general shape is worth keeping: **a cached artifact from a shape the tree can no longer
      produce is a green that measures a dead chain.** Nothing detected it because the cache
      short-circuits the dumper, and only deleting the cache asked the question.
+- 23:45 ⚑ **THE RISK MY OWN CHANGE CREATES, named before anyone asks, and the tooth for it is
+  `#[ignore]`d.** Putting const values in the VK fingerprint is only safe if nothing in the fold
+  `alloc_const`s **per-history** data. If anything does, the anchor stops being content-independent
+  and the light client starts refusing **honest** histories — the exact mirror of the hole I closed,
+  and a worse failure, because a forgery-refusal is loud and an honest-refusal looks like a bug in
+  the prover.
+  **READ:** the fork builds the parent op-list from `rows`, `table_packing`, the `non_primitives`
+  manifest and per-instance public-value COUNTS — never the values (`accumulator.rs:691`'s own
+  statement of it) — and the one value it DOES bake, the child's cap, is a function of the child's
+  CIRCUIT, not its data. So two histories over one shape bake the same constant. That is a reading,
+  not a measurement.
+  **THE MEASUREMENT EXISTS AND IS GATED.** `accumulator::running_vk_fixed_point_is_value_independent`
+  drives two distinct value-streams (different balances, debits, roots and witness values, same
+  Transfer shape) to the depth-4 fixed point and asserts BYTE-IDENTICAL running VK material. It is
+  `#[ignore]`d as SLOW, so neither CI nor a plain `cargo test` has ever run it against this change.
+  **Launched directly against the built binary** (bypassing the cargo lock the full suite holds);
+  ⚑ **result IN FLIGHT at the time of writing — not predicted here.**
+  ⚑ **If it goes RED, this whole change must come out**, because value-dependence in the anchor is
+  strictly worse than the const hole it closes. Whoever reads this next: run it before trusting
+  tonight's close. It is the load-bearing check that the deliberate probe inversions cannot make,
+  since all three of those hold the SHAPE fixed and vary only the circuit.
