@@ -260,7 +260,8 @@ pub fn prove_sovereign_leaf_with_key_claim(
     let backend = create_recursion_backend();
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<Target>]| {
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("sovereign-authority leaf has a main instance carrying the descriptor PIs");

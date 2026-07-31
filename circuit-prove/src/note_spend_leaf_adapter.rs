@@ -639,7 +639,9 @@ pub fn prove_note_spend_binding_node(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("note-spend leg's re-exposed tuple instance present");
@@ -716,7 +718,9 @@ pub fn prove_note_spend_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose note-spend leg's claim instance present");
@@ -800,7 +804,9 @@ pub fn prove_note_spend_mint_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose bridge-mint leg's claim instance present");

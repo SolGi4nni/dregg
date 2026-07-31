@@ -311,10 +311,10 @@ p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a
 ## path; `RecursionOutput` carries `Option<Rc<CircuitProverData>>`; descends from 993efec's
 ## deterministic verifier op-list). PURE git deps, no `[patch]`, no sibling checkout —
 ## a fresh clone and CI resolve this identically.
-p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "0a4a554e144f4e60107555ea7a11cd9969d6208b" }
-p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "0a4a554e144f4e60107555ea7a11cd9969d6208b" }
-p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "0a4a554e144f4e60107555ea7a11cd9969d6208b" }
-p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "0a4a554e144f4e60107555ea7a11cd9969d6208b" }
+p3-recursion = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
+p3-circuit = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
+p3-circuit-prover = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
+p3-poseidon2-circuit-air = { git = "https://github.com/emberian/plonky3-recursion", rev = "4aead01" }
 
 ## Crates.io
 ## --- TEMP LOCAL DSU-FIX ITERATION PATCH (REMOVE before CI-correct rev bump) ---

@@ -577,7 +577,9 @@ pub fn prove_custom_leaf_with_commitment(
     // The expose hook: instance 0 (main) carries the descriptor PIs (== `public_inputs`, in order).
     // Compute the in-circuit PI-commitment over them and expose the 8 felts as a public claim.
     let num_pi = public_inputs.len();
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("custom leaf has a main instance carrying the descriptor PIs");
@@ -705,7 +707,9 @@ pub fn prove_custom_leaf_with_state_commitment(
     let backend = create_recursion_backend_with_coeff_lookups();
 
     let num_pi = public_inputs.len();
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("custom leaf has a main instance carrying the descriptor PIs");
@@ -818,7 +822,9 @@ pub fn prove_custom_leaf_descriptor_with_state_commitment(
     let backend = create_recursion_backend_with_coeff_lookups();
 
     let num_pi = public_inputs.len();
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("direct-IR2 custom state leaf has a main instance carrying the descriptor PIs");
@@ -968,7 +974,9 @@ pub fn prove_custom_leaf_descriptor_with_board_window(
     let in_slices = binding.in_slices.clone();
     let out_slices = binding.out_slices.clone();
     let claim_len = custom_board_window_claim_len(binding.window_len());
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("board-window leaf has a main instance carrying the descriptor PIs");
@@ -1108,7 +1116,9 @@ pub fn prove_custom_leaf_with_app_root_commitment(
     let j = binding.app_root_pi_offset;
     let l = binding.app_root_len;
     let claim_len = custom_app_root_claim_len(l);
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("custom leaf has a main instance carrying the descriptor PIs");
@@ -1222,7 +1232,9 @@ pub fn prove_direct_ir2_leaf_with_app_root_commitment(
     let l = binding.app_root_len;
     let vk_felts = vk_recipe.canonical_vk_felts();
     let claim_len = custom_app_root_claim_len(l) + vk_felts.len();
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("direct IR2 custom leaf has a main instance carrying descriptor PIs");
@@ -1333,7 +1345,9 @@ pub fn prove_direct_ir2_leaf_with_app_and_fields_root_commitment(
     let root_j = fields_binding.fields_root_pi_offset;
     let vk_felts = vk_recipe.canonical_vk_felts();
     let claim_len = custom_app_root_claim_len(app_l) + PostFieldsRootBinding::LEN + vk_felts.len();
-    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("direct IR2 fields-root leaf has a main descriptor instance");

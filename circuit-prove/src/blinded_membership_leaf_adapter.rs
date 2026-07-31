@@ -218,7 +218,8 @@ pub fn prove_blinded_membership_leaf_with_claim(
     let backend = create_recursion_backend();
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<Target>]| {
+                       apt: &[Vec<Target>],
+                       _vk_cap: &[Target]| {
         let main = apt
             .first()
             .expect("blinded-membership leaf has a main instance carrying the descriptor PIs");
@@ -309,7 +310,9 @@ pub fn prove_blinded_membership_binding_node(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("blinded-membership leg's re-exposed claim instance present");
@@ -395,7 +398,9 @@ pub fn prove_blinded_membership_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose blinded-membership leg's claim instance present");

@@ -1255,7 +1255,9 @@ fn bind_leg_node(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(left_idx)
             .expect("ring-clear left leaf's re-exposed claim instance present");

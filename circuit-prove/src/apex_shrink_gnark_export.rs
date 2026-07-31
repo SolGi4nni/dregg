@@ -426,7 +426,8 @@ pub fn shrink_apex_to_outer_exposed_pinned_to(
 
     // (1) The apex-verifier circuit + the claim & apex-VK re-exposure hook.
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<EF>,
-                       apt: &[Vec<p3_recursion::Target>]| {
+                       apt: &[Vec<p3_recursion::Target>],
+                       _vk_cap: &[p3_recursion::Target]| {
         let claim = &apt[claim_idx];
         assert_eq!(
             claim.len(),

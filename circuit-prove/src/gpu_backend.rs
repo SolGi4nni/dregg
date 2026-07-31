@@ -5144,7 +5144,15 @@ pub fn prove_recursion_aggregation_gpu_with_expose(
             <_ as VerifierCircuitResult<DreggRecursionConfig, BatchOnly>>::air_public_targets(
                 &right_result,
             );
-        expose(&mut cb, &left_apt, &right_apt);
+        let left_vk_cap =
+            <_ as VerifierCircuitResult<DreggRecursionConfig, BatchOnly>>::child_vk_cap_targets(
+                &left_result,
+            );
+        let right_vk_cap =
+            <_ as VerifierCircuitResult<DreggRecursionConfig, BatchOnly>>::child_vk_cap_targets(
+                &right_result,
+            );
+        expose(&mut cb, &left_apt, &right_apt, &left_vk_cap, &right_vk_cap);
     }
     let circuit = cb
         .build()

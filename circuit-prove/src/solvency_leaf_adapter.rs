@@ -500,7 +500,9 @@ pub fn prove_claim_union_fold(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(left_idx)
             .expect("left leaf's re-exposed claim instance present");

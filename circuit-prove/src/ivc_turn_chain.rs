@@ -494,6 +494,96 @@ pub const SEG_DIGEST_FIRST: usize = 2 * SEG_ANCHOR_WIDTH + 1;
 /// A segment is exactly [`NUM_CHAIN_CLAIMS`] base-field lanes.
 pub const SEG_WIDTH: usize = NUM_CHAIN_CLAIMS;
 
+/// **THE VK SPINE** — the block of lanes every K-fold node exposes, carrying the circuit identity
+/// of everything folded beneath it. `SEG_DIGEST_WIDTH` wide because it is a
+/// [`seg_poseidon_commit`] squeeze, exactly like the ordered-history digest.
+pub const VK_SPINE_WIDTH: usize = SEG_DIGEST_WIDTH;
+
+/// The spine sits immediately AFTER the segment in an exposed claim, and before any board window.
+pub const SEG_VK_SPINE_FIRST: usize = SEG_WIDTH;
+
+/// A K-fold exposed claim is `[segment(SEG_WIDTH) ‖ vk_spine(VK_SPINE_WIDTH) ‖ IN(W) ‖ OUT(W)]`.
+/// This is the plain (`W = 0`) width, and the base [`exposed_board_window`] recovers `W` from.
+pub const SEG_SPINE_WIDTH: usize = SEG_WIDTH + VK_SPINE_WIDTH;
+
+/// The number of base-field elements in a child's preprocessed-commitment cap (its VK-identity
+/// core) at the recursion config's `cap_height = 0`: ONE digest of `DIGEST_ELEMS = 8`.
+///
+/// Asserted rather than assumed at every absorb site: a cap of a different length would silently
+/// change what the spine commits to.
+pub const VK_CAP_TARGET_LEN: usize = 8;
+
+/// Domain tag absorbed at a LEAF, where there is no child cap to absorb: `"VKL1"` as a BabyBear.
+/// A leaf's own identity is its cap, which its PARENT absorbs — so this sentinel only needs to be
+/// domain-separated from an interior node's absorb, not itself identity-bound.
+const VK_SPINE_LEAF_TAG: u32 = 0x564B_4C31 % 0x7800_0001; // "VKL1" mod BabyBear
+
+/// **THE LEAF SPINE SEED.** `commit([VK_SPINE_LEAF_TAG])` — the base case of the spine fold.
+///
+/// Deliberately NOT identity-bound: a foreign leaf can emit any value here, and it does not matter,
+/// because the leaf's PARENT absorbs the leaf's real preprocessed cap (which a foreign leaf cannot
+/// choose). Making this a constant keeps every honest leaf's seed identical so the root spine is a
+/// function of the tree's circuit identities and shape alone.
+pub(crate) fn leaf_vk_spine(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+) -> [p3_recursion::Target; VK_SPINE_WIDTH] {
+    let tag = cb.define_const(RecursionChallenge::from_u32(VK_SPINE_LEAF_TAG));
+    seg_poseidon_commit(cb, &[tag])
+}
+
+/// **THE SPINE FOLD — the one place a child's circuit identity enters the parent's claim.**
+///
+/// `vk_spine = commit(L.cap8 ‖ L.vk_spine8 ‖ R.cap8 ‖ R.vk_spine8)`, over the SAME isolated
+/// `BABY_BEAR_D4_W24` sponge [`seg_poseidon_commit`] already runs the ordered-history digest on
+/// (so no new gadget, no new op-type, no AIR change).
+///
+/// `l_cap`/`r_cap` are the children's preprocessed-commitment cap TARGETS, handed over by the
+/// fork's widened expose hook (`VerifierCircuitResult::child_vk_cap_targets`). They are the same
+/// targets the child's preprocessed-trace opening is checked against inside this circuit, and —
+/// because `connect` gives the class ONE shared witness slot whose single creator is the pin's
+/// `Op::Const` (later writers are demoted to bus readers) — the value absorbed here is the value
+/// that opening consumed. That is what makes the spine bind rather than restate the prover's
+/// choice.
+///
+/// L is absorbed before R, so the spine is order-sensitive in the same way the history digest is.
+pub(crate) fn combine_vk_spine(
+    cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+    l: &[p3_recursion::Target],
+    r: &[p3_recursion::Target],
+    l_cap: &[p3_recursion::Target],
+    r_cap: &[p3_recursion::Target],
+    spine_first: usize,
+) -> [p3_recursion::Target; VK_SPINE_WIDTH] {
+    assert_eq!(
+        l_cap.len(),
+        VK_CAP_TARGET_LEN,
+        "left child exposes {} VK-cap target(s), expected {VK_CAP_TARGET_LEN} — a child with no \
+         preprocessed commitment has no circuit identity to fold and must be refused upstream, \
+         not absorbed as an empty cap",
+        l_cap.len()
+    );
+    assert_eq!(
+        r_cap.len(),
+        VK_CAP_TARGET_LEN,
+        "right child exposes {} VK-cap target(s), expected {VK_CAP_TARGET_LEN}",
+        r_cap.len()
+    );
+    let need = spine_first + VK_SPINE_WIDTH;
+    assert!(
+        l.len() >= need && r.len() >= need,
+        "both children must expose a segment AND a VK spine ({need} lanes); got {} and {} — a \
+         pre-spine artifact cannot be folded",
+        l.len(),
+        r.len()
+    );
+    let mut inputs = Vec::with_capacity(2 * (VK_CAP_TARGET_LEN + VK_SPINE_WIDTH));
+    inputs.extend_from_slice(l_cap);
+    inputs.extend_from_slice(&l[spine_first..spine_first + VK_SPINE_WIDTH]);
+    inputs.extend_from_slice(r_cap);
+    inputs.extend_from_slice(&r[spine_first..spine_first + VK_SPINE_WIDTH]);
+    seg_poseidon_commit(cb, &inputs)
+}
+
 fn to_p3(v: BabyBear) -> P3BabyBear {
     P3BabyBear::from_u64(v.0 as u64)
 }
@@ -703,6 +793,56 @@ pub(crate) fn expose_claim_instance_index(
         .iter()
         .position(|e| e.op_type.as_str() == "expose_claim")
         .map(|pos| num_primitive + pos)
+}
+
+/// **THE WHOLE-CHAIN TRUST ANCHOR — tooth 1's compared value, and what the light client holds.**
+///
+/// `blake3("dregg-whole-chain-anchor-v1" ‖ recursion_vk_fingerprint(root) ‖ root vk-spine lanes)`.
+///
+/// The first input is the root circuit's SHAPE + preprocessed binding. That half is deliberately
+/// content-independent — it must be, or the anchor could not be reused across histories — and it
+/// is exactly why it cannot see a child's identity: a `define_const` puts its VALUE in `ConstAir`'s
+/// constraint-free main trace, so two children differing only in a pinned cap fingerprint
+/// identically (MEASURED: `circuit-prove/tests/const_pin_probe.rs`).
+///
+/// The second input is the root's exposed VK SPINE — `commit(L.cap ‖ L.spine ‖ R.cap ‖ R.spine)`
+/// folded from the leaves up, so it commits to the circuit identity of EVERY node in the tree. It
+/// is host-readable and FRI-bound: the `expose_claim` lane is constrained
+/// `active * (public_value − v_0) == 0` against public values the verifier feeds from the proof,
+/// and `v_0` is bus-read at a PREPROCESSED `witness_idx` from the class's single creator — the
+/// same slot the child's preprocessed-trace opening consumed.
+///
+/// So substituting ANY node circuit in the tree — a leaf that does no descriptor verification, an
+/// interior node that skips a check — moves this value, and the caller-held anchor refuses it.
+/// The raw [`recursion_vk_fingerprint`] does NOT move, and must not; the anchor is the observable
+/// that binds.
+pub fn whole_chain_anchor(
+    root_proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+) -> Result<RecursionVk, TurnChainError> {
+    let exposed = root_exposed_claims(root_proof).ok_or_else(|| {
+        TurnChainError::ClaimedPublicsUnattested {
+            reason: "root proof carries no exposed claim table, so it carries no VK spine — \
+                     refused fail-closed rather than anchored on shape alone"
+                .to_string(),
+        }
+    })?;
+    if exposed.len() < SEG_SPINE_WIDTH {
+        return Err(TurnChainError::ClaimedPublicsUnattested {
+            reason: format!(
+                "root exposes {} claim lane(s), fewer than the {SEG_SPINE_WIDTH} a segment + VK \
+                 spine needs — this is a PRE-SPINE artifact and its subtree's circuit identity is \
+                 uncertified; refused",
+                exposed.len()
+            ),
+        });
+    }
+    let mut h = blake3::Hasher::new();
+    h.update(b"dregg-whole-chain-anchor-v1");
+    h.update(&recursion_vk_fingerprint(root_proof).0);
+    for lane in &exposed[SEG_VK_SPINE_FIRST..SEG_VK_SPINE_FIRST + VK_SPINE_WIDTH] {
+        h.update(&lane.as_u32().to_le_bytes());
+    }
+    Ok(RecursionVk(*h.finalize().as_bytes()))
 }
 
 /// Read the `expose_claim` table's public values from a batch proof (the 4 chain
@@ -1564,7 +1704,8 @@ pub fn prove_descriptor_leaf_with_pi_slice_expose(
     let backend = create_recursion_backend();
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<p3_recursion::Target>]| {
+                       apt: &[Vec<p3_recursion::Target>],
+                       _vk_cap: &[p3_recursion::Target]| {
         let main = apt
             .first()
             .expect("descriptor leaf has a main instance carrying the descriptor PIs");
@@ -1652,7 +1793,8 @@ pub fn prove_descriptor_leaf_rotated_with_segment(
     // 8-felt anchor blocks (genuine wide tail, or replicated single felt for a narrow leg), the
     // per-turn digest seed over them, and expose the 8-wide segment.
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<p3_recursion::Target>]| {
+                       apt: &[Vec<p3_recursion::Target>],
+                       _vk_cap: &[p3_recursion::Target]| {
         let main = apt
             .first()
             .expect("descriptor leaf has a main instance with descriptor PIs");
@@ -1685,12 +1827,15 @@ pub fn prove_descriptor_leaf_rotated_with_segment(
         acc_inputs.extend_from_slice(&first_old8);
         acc_inputs.extend_from_slice(&last_new8);
         let acc = seg_poseidon_commit(cb, &acc_inputs);
-        let mut seg = Vec::with_capacity(SEG_WIDTH);
+        let mut seg = Vec::with_capacity(SEG_SPINE_WIDTH);
         seg.extend_from_slice(&first_old8);
         seg.extend_from_slice(&last_new8);
         seg.push(count);
         seg.extend_from_slice(&acc);
-        debug_assert_eq!(seg.len(), SEG_WIDTH);
+        // THE SPINE BASE CASE. A leaf has no child cap to absorb; its own cap is absorbed by its
+        // parent. See `leaf_vk_spine` for why this constant seed is sound.
+        seg.extend_from_slice(&leaf_vk_spine(cb));
+        debug_assert_eq!(seg.len(), SEG_SPINE_WIDTH);
         cb.expose_as_public_output(&seg);
     };
 
@@ -1817,7 +1962,8 @@ pub fn prove_descriptor_leaf_dual_expose_at(
         };
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<p3_recursion::Target>]| {
+                       apt: &[Vec<p3_recursion::Target>],
+                       _vk_cap: &[p3_recursion::Target]| {
         let main = apt
             .first()
             .expect("custom descriptor leaf has a main instance with descriptor PIs");
@@ -1927,7 +2073,8 @@ pub fn prove_descriptor_leaf_expose_segment_and_claims(
         };
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<p3_recursion::Target>]| {
+                       apt: &[Vec<p3_recursion::Target>],
+                       _vk_cap: &[p3_recursion::Target]| {
         let main = apt
             .first()
             .expect("custom descriptor leaf has a main instance with descriptor PIs");
@@ -2048,7 +2195,8 @@ impl WholeChainProof {
     /// heights: an anchor pins one accepted window shape; a client accepting
     /// several window shapes holds one anchor per shape.
     pub fn root_vk_fingerprint(&self) -> RecursionVk {
-        recursion_vk_fingerprint(&self.root.0)
+        whole_chain_anchor(&self.root.0)
+            .expect("a fold this crate produced always exposes a segment + VK spine")
     }
 
     /// Serialize the VERIFY-SUFFICIENT subset of this proof into a versioned byte
@@ -2846,6 +2994,12 @@ const WSEG_DIGEST_FIRST: usize = 2 * WIDE_ANCHOR_WIDTH + 1;
 /// A wide segment is exactly this many base-field lanes.
 pub const WIDE_SEG_WIDTH: usize = WSEG_DIGEST_FIRST + SEG_DIGEST_WIDTH;
 
+/// The WIDE family's VK-spine offset and total exposed width — the 8-felt twin of
+/// [`SEG_VK_SPINE_FIRST`] / [`SEG_SPINE_WIDTH`]. Same spine, same fold, different segment ahead of
+/// it, so a wide root is anchored on its subtree's circuit identity exactly as a narrow one is.
+pub const WSEG_VK_SPINE_FIRST: usize = WIDE_SEG_WIDTH;
+pub const WIDE_SEG_SPINE_WIDTH: usize = WIDE_SEG_WIDTH + VK_SPINE_WIDTH;
+
 /// The host-side mirror of one WIDE descriptor-leaf / aggregation-node segment
 /// (the 8-felt twin of [`HostSeg`]): the base-field values it exposes through the
 /// `expose_claim` table, `[first_old8(8), last_new8(8), count(1), acc(W)]`. The
@@ -3003,7 +3157,8 @@ pub fn prove_descriptor_leaf_rotated_with_wide_segment(
         };
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
-                       apt: &[Vec<p3_recursion::Target>]| {
+                       apt: &[Vec<p3_recursion::Target>],
+                       _vk_cap: &[p3_recursion::Target]| {
         let main = apt
             .first()
             .expect("descriptor leaf has a main instance with descriptor PIs");
@@ -3029,7 +3184,8 @@ pub fn prove_descriptor_leaf_rotated_with_wide_segment(
         seg.extend_from_slice(&last_new8);
         seg.push(count);
         seg.extend_from_slice(&acc);
-        debug_assert_eq!(seg.len(), WIDE_SEG_WIDTH);
+        seg.extend_from_slice(&leaf_vk_spine(cb));
+        debug_assert_eq!(seg.len(), WIDE_SEG_SPINE_WIDTH);
         cb.expose_as_public_output(&seg);
     };
 
@@ -3079,14 +3235,18 @@ fn aggregate_tree_wide(
 
             let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                                left_apt: &[Vec<p3_recursion::Target>],
-                               right_apt: &[Vec<p3_recursion::Target>]| {
+                               right_apt: &[Vec<p3_recursion::Target>],
+                               left_vk_cap: &[p3_recursion::Target],
+                               right_vk_cap: &[p3_recursion::Target]| {
                 let l = left_apt
                     .get(left_idx)
                     .expect("left wide segment instance present");
                 let r = right_apt
                     .get(right_idx)
                     .expect("right wide segment instance present");
-                debug_assert!(l.len() >= WIDE_SEG_WIDTH && r.len() >= WIDE_SEG_WIDTH);
+                debug_assert!(l.len() >= WIDE_SEG_SPINE_WIDTH && r.len() >= WIDE_SEG_SPINE_WIDTH);
+                let vk_spine =
+                    combine_vk_spine(cb, l, r, left_vk_cap, right_vk_cap, WSEG_VK_SPINE_FIRST);
 
                 // (1) THE 8-FELT STATE CONTINUITY tooth, IN-CIRCUIT: L.last_new8 == R.first_old8,
                 // lane-by-lane. The left subtree's final 8-felt root must be the right subtree's
@@ -3107,12 +3267,13 @@ fn aggregate_tree_wide(
                 acc_inputs
                     .extend_from_slice(&r[WSEG_DIGEST_FIRST..WSEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
                 let acc = seg_poseidon_commit(cb, &acc_inputs);
-                let mut parent = Vec::with_capacity(WIDE_SEG_WIDTH);
+                let mut parent = Vec::with_capacity(WIDE_SEG_SPINE_WIDTH);
                 parent.extend_from_slice(&l[WSEG_FIRST_OLD..WSEG_FIRST_OLD + WIDE_ANCHOR_WIDTH]);
                 parent.extend_from_slice(&r[WSEG_LAST_NEW..WSEG_LAST_NEW + WIDE_ANCHOR_WIDTH]);
                 parent.push(count);
                 parent.extend_from_slice(&acc);
-                debug_assert_eq!(parent.len(), WIDE_SEG_WIDTH);
+                parent.extend_from_slice(&vk_spine);
+                debug_assert_eq!(parent.len(), WIDE_SEG_SPINE_WIDTH);
                 cb.expose_as_public_output(&parent);
             };
 
@@ -3161,7 +3322,8 @@ impl WideWholeChainProof {
     /// extracts this ONCE and distributes it as the trust anchor; a verifier NEVER takes the
     /// anchor from the artifact it verifies.
     pub fn root_vk_fingerprint(&self) -> RecursionVk {
-        recursion_vk_fingerprint(&self.root.0)
+        whole_chain_anchor(&self.root.0)
+            .expect("a fold this crate produced always exposes a segment + VK spine")
     }
 }
 
@@ -4656,6 +4818,8 @@ pub(crate) fn segment_combine_expose(
     right_apt: &[Vec<p3_recursion::Target>],
     left_idx: usize,
     right_idx: usize,
+    left_vk_cap: &[p3_recursion::Target],
+    right_vk_cap: &[p3_recursion::Target],
 ) {
     let l = left_apt
         .get(left_idx)
@@ -4663,7 +4827,8 @@ pub(crate) fn segment_combine_expose(
     let r = right_apt
         .get(right_idx)
         .expect("right segment instance present");
-    debug_assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
+    debug_assert!(l.len() >= SEG_SPINE_WIDTH && r.len() >= SEG_SPINE_WIDTH);
+    let vk_spine = combine_vk_spine(cb, l, r, left_vk_cap, right_vk_cap, SEG_VK_SPINE_FIRST);
 
     // (1) STATE CONTINUITY: L.last_new8 == R.first_old8, lane-by-lane over the 8-felt anchors
     //     (the temporal tooth, off the zero slot — `connect`, never `sub`+`assert_zero`).
@@ -4678,12 +4843,14 @@ pub(crate) fn segment_combine_expose(
     acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
     acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
     let acc = seg_poseidon_commit(cb, &acc_inputs);
-    let mut parent = Vec::with_capacity(SEG_WIDTH);
+    let mut parent = Vec::with_capacity(SEG_SPINE_WIDTH);
     parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
     parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
     parent.push(count);
     parent.extend_from_slice(&acc);
-    debug_assert_eq!(parent.len(), SEG_WIDTH);
+    // (3) THE VK SPINE — both children's circuit identities, folded into the parent's claim.
+    parent.extend_from_slice(&vk_spine);
+    debug_assert_eq!(parent.len(), SEG_SPINE_WIDTH);
     cb.expose_as_public_output(&parent);
 }
 
@@ -4731,7 +4898,7 @@ pub(crate) fn board_window_connects(
     window: usize,
 ) {
     for k in 0..window {
-        cb.connect(l[SEG_WIDTH + window + k], r[SEG_WIDTH + k]);
+        cb.connect(l[SEG_SPINE_WIDTH + window + k], r[SEG_SPINE_WIDTH + k]);
     }
 }
 
@@ -4769,7 +4936,7 @@ pub(crate) fn board_window_clean_handoff_connects(
     handoff: usize,
 ) {
     for k in 0..handoff {
-        cb.connect(l[SEG_WIDTH + l_window + k], r[SEG_WIDTH + k]);
+        cb.connect(l[SEG_SPINE_WIDTH + l_window + k], r[SEG_SPINE_WIDTH + k]);
     }
 }
 
@@ -4780,9 +4947,19 @@ pub(crate) fn segment_combine_expose_with_board_window(
     left_idx: usize,
     right_idx: usize,
     window: usize,
+    left_vk_cap: &[p3_recursion::Target],
+    right_vk_cap: &[p3_recursion::Target],
 ) {
     if window == 0 {
-        segment_combine_expose(cb, left_apt, right_apt, left_idx, right_idx);
+        segment_combine_expose(
+            cb,
+            left_apt,
+            right_apt,
+            left_idx,
+            right_idx,
+            left_vk_cap,
+            right_vk_cap,
+        );
         return;
     }
     let l = left_apt
@@ -4791,7 +4968,10 @@ pub(crate) fn segment_combine_expose_with_board_window(
     let r = right_apt
         .get(right_idx)
         .expect("right segment instance present");
-    debug_assert!(l.len() >= SEG_WIDTH + 2 * window && r.len() >= SEG_WIDTH + 2 * window);
+    debug_assert!(
+        l.len() >= SEG_SPINE_WIDTH + 2 * window && r.len() >= SEG_SPINE_WIDTH + 2 * window
+    );
+    let vk_spine = combine_vk_spine(cb, l, r, left_vk_cap, right_vk_cap, SEG_VK_SPINE_FIRST);
 
     // (1) STATE CONTINUITY — the cell tooth, unchanged.
     for k in 0..SEG_ANCHOR_WIDTH {
@@ -4806,15 +4986,16 @@ pub(crate) fn segment_combine_expose_with_board_window(
     acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
     acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
     let acc = seg_poseidon_commit(cb, &acc_inputs);
-    let mut parent = Vec::with_capacity(SEG_WIDTH + 2 * window);
+    let mut parent = Vec::with_capacity(SEG_SPINE_WIDTH + 2 * window);
     parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
     parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
     parent.push(count);
     parent.extend_from_slice(&acc);
+    parent.extend_from_slice(&vk_spine);
     // (4) parent window: the LEFT child's IN and the RIGHT child's OUT.
-    parent.extend_from_slice(&l[SEG_WIDTH..SEG_WIDTH + window]);
-    parent.extend_from_slice(&r[SEG_WIDTH + window..SEG_WIDTH + 2 * window]);
-    debug_assert_eq!(parent.len(), SEG_WIDTH + 2 * window);
+    parent.extend_from_slice(&l[SEG_SPINE_WIDTH..SEG_SPINE_WIDTH + window]);
+    parent.extend_from_slice(&r[SEG_SPINE_WIDTH + window..SEG_SPINE_WIDTH + 2 * window]);
+    debug_assert_eq!(parent.len(), SEG_SPINE_WIDTH + 2 * window);
     cb.expose_as_public_output(&parent);
 }
 
@@ -4841,8 +5022,8 @@ fn clean_handoff_seam_and_window(
     board_window_clean_handoff_connects(cb, l, r, l_window, handoff);
     // (4) THE PARENT MIXED WINDOW — L.IN(l_window) then R.OUT(r_window).
     let mut win = Vec::with_capacity(l_window + r_window);
-    win.extend_from_slice(&l[SEG_WIDTH..SEG_WIDTH + l_window]); // L.IN
-    win.extend_from_slice(&r[SEG_WIDTH + r_window..SEG_WIDTH + 2 * r_window]); // R.OUT
+    win.extend_from_slice(&l[SEG_SPINE_WIDTH..SEG_SPINE_WIDTH + l_window]); // L.IN
+    win.extend_from_slice(&r[SEG_SPINE_WIDTH + r_window..SEG_SPINE_WIDTH + 2 * r_window]); // R.OUT
     win
 }
 
@@ -4880,6 +5061,8 @@ pub(crate) fn segment_combine_expose_with_clean_handoff(
     l_window: usize,
     r_window: usize,
     handoff: usize,
+    left_vk_cap: &[p3_recursion::Target],
+    right_vk_cap: &[p3_recursion::Target],
 ) {
     let l = left_apt
         .get(left_idx)
@@ -4887,8 +5070,11 @@ pub(crate) fn segment_combine_expose_with_clean_handoff(
     let r = right_apt
         .get(right_idx)
         .expect("right segment instance present");
-    debug_assert!(l.len() >= SEG_WIDTH + 2 * l_window && r.len() >= SEG_WIDTH + 2 * r_window);
+    debug_assert!(
+        l.len() >= SEG_SPINE_WIDTH + 2 * l_window && r.len() >= SEG_SPINE_WIDTH + 2 * r_window
+    );
     debug_assert!(handoff > 0 && handoff <= l_window.min(r_window));
+    let vk_spine = combine_vk_spine(cb, l, r, left_vk_cap, right_vk_cap, SEG_VK_SPINE_FIRST);
 
     // (1) STATE CONTINUITY — the cell tooth, unchanged.
     for k in 0..SEG_ANCHOR_WIDTH {
@@ -4904,13 +5090,14 @@ pub(crate) fn segment_combine_expose_with_clean_handoff(
     acc_inputs.extend_from_slice(&l[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
     acc_inputs.extend_from_slice(&r[SEG_DIGEST_FIRST..SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH]);
     let acc = seg_poseidon_commit(cb, &acc_inputs);
-    let mut parent = Vec::with_capacity(SEG_WIDTH + l_window + r_window);
+    let mut parent = Vec::with_capacity(SEG_SPINE_WIDTH + l_window + r_window);
     parent.extend_from_slice(&l[SEG_FIRST_OLD..SEG_FIRST_OLD + SEG_ANCHOR_WIDTH]);
     parent.extend_from_slice(&r[SEG_LAST_NEW..SEG_LAST_NEW + SEG_ANCHOR_WIDTH]);
     parent.push(count);
     parent.extend_from_slice(&acc);
+    parent.extend_from_slice(&vk_spine);
     parent.extend_from_slice(&window);
-    debug_assert_eq!(parent.len(), SEG_WIDTH + l_window + r_window);
+    debug_assert_eq!(parent.len(), SEG_SPINE_WIDTH + l_window + r_window);
     cb.expose_as_public_output(&parent);
 }
 
@@ -4929,16 +5116,19 @@ pub(crate) fn exposed_board_window(
         .find(|e| e.op_type.as_str() == "expose_claim")
         .map(|e| e.public_values.len())
         .ok_or_else(|| "aggregation child carries no exposed claim table".to_string())?;
-    if lanes == SEG_WIDTH {
+    if lanes == SEG_SPINE_WIDTH {
         return Ok(0);
     }
-    if lanes < SEG_WIDTH || (lanes - SEG_WIDTH) % 2 != 0 {
+    if lanes < SEG_SPINE_WIDTH || (lanes - SEG_SPINE_WIDTH) % 2 != 0 {
         return Err(format!(
-            "aggregation child exposes {lanes} claim lane(s): neither a plain segment \
-             ({SEG_WIDTH}) nor a board-window segment ({SEG_WIDTH} + 2W) — refused fail-closed"
+            "aggregation child exposes {lanes} claim lane(s): neither a plain segment+spine \
+             ({SEG_SPINE_WIDTH}) nor a board-window segment+spine ({SEG_SPINE_WIDTH} + 2W) — \
+             refused fail-closed. A {SEG_WIDTH}-lane child is a PRE-SPINE artifact: it carries no \
+             VK spine, so its subtree's circuit identity cannot be certified and it is refused \
+             rather than folded without one"
         ));
     }
-    Ok((lanes - SEG_WIDTH) / 2)
+    Ok((lanes - SEG_SPINE_WIDTH) / 2)
 }
 
 /// Build a [`RecursionInput::BatchStark`] from a BARE [`BatchStarkProof`] (the host mirror of
@@ -5057,9 +5247,18 @@ pub(crate) fn merge_two_segment_proofs(
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<p3_recursion::Target>],
-                       right_apt: &[Vec<p3_recursion::Target>]| {
+                       right_apt: &[Vec<p3_recursion::Target>],
+                       left_vk_cap: &[p3_recursion::Target],
+                       right_vk_cap: &[p3_recursion::Target]| {
         segment_combine_expose_with_board_window(
-            cb, left_apt, right_apt, left_idx, right_idx, window,
+            cb,
+            left_apt,
+            right_apt,
+            left_idx,
+            right_idx,
+            window,
+            left_vk_cap,
+            right_vk_cap,
         );
     };
 
@@ -5178,9 +5377,20 @@ pub(crate) fn merge_clean_handoff_segment_proofs(
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<p3_recursion::Target>],
-                       right_apt: &[Vec<p3_recursion::Target>]| {
+                       right_apt: &[Vec<p3_recursion::Target>],
+                       left_vk_cap: &[p3_recursion::Target],
+                       right_vk_cap: &[p3_recursion::Target]| {
         segment_combine_expose_with_clean_handoff(
-            cb, left_apt, right_apt, left_idx, right_idx, l_window, r_window, handoff,
+            cb,
+            left_apt,
+            right_apt,
+            left_idx,
+            right_idx,
+            l_window,
+            r_window,
+            handoff,
+            left_vk_cap,
+            right_vk_cap,
         );
     };
 
@@ -5806,7 +6016,7 @@ pub fn verify_turn_chain_recursive_from_parts_with_board_window(
     }
 
     // (1) VK pin.
-    let found = recursion_vk_fingerprint(root_proof);
+    let found = whole_chain_anchor(root_proof)?;
     if found != *expected_vk {
         return Err(TurnChainError::VkFingerprintMismatch {
             expected: expected_vk.to_hex(),
@@ -5873,6 +6083,25 @@ pub fn verify_turn_chain_recursive_from_parts_with_board_window(
                 .to_string(),
         }
     })?;
+    // The exposure is `[segment(SEG_WIDTH) ‖ vk_spine(VK_SPINE_WIDTH) ‖ IN(W) ‖ OUT(W)]`. The
+    // spine lanes are NOT compared here — they are compared by tooth (1), inside
+    // `whole_chain_anchor`, against the caller-held anchor. Splicing them out keeps this ONE
+    // exact-equality over the values the CALLER actually carries, so a shape mismatch still falls
+    // out of it fail-closed instead of needing its own branch.
+    if exposed.len() < SEG_SPINE_WIDTH {
+        return Err(TurnChainError::ClaimedPublicsUnattested {
+            reason: format!(
+                "root exposes {} claim lane(s), fewer than the {SEG_SPINE_WIDTH} a segment + VK \
+                 spine needs — pre-spine artifact, refused",
+                exposed.len()
+            ),
+        });
+    }
+    let exposed: Vec<BabyBear> = exposed[..SEG_WIDTH]
+        .iter()
+        .copied()
+        .chain(exposed[SEG_SPINE_WIDTH..].iter().copied())
+        .collect();
     let mut expected = Vec::with_capacity(SEG_WIDTH);
     expected.extend_from_slice(&genesis_root);
     expected.extend_from_slice(&final_root);

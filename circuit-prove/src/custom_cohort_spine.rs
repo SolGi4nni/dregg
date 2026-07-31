@@ -155,7 +155,9 @@ pub fn prove_segment_merge_preserving_claims(
 
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let left_claim = left_apt
             .get(left_idx)
             .expect("left cohort expose_claim instance present");
@@ -243,7 +245,9 @@ pub fn prove_direct_ir2_whole_turn_binding_node_segmented(
     let l = app_root_len;
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
                        carrier_apt: &[Vec<Target>],
-                       direct_apt: &[Vec<Target>]| {
+                       direct_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let carrier = carrier_apt
             .get(carrier_idx)
             .expect("whole-turn carrier expose_claim instance present");

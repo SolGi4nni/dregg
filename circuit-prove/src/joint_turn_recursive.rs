@@ -146,7 +146,9 @@ pub fn prove_custom_binding_node(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("effect-vm leg's re-exposed commitment instance present");
@@ -324,7 +326,9 @@ pub fn prove_custom_binding_node_state_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose leg's claim instance present");
@@ -470,7 +474,9 @@ pub fn prove_custom_binding_node_state_and_board_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose leg's claim instance present");
@@ -722,7 +728,9 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
     let l = app_root_len;
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("app-root leg's claim instance present");
@@ -836,7 +844,9 @@ pub fn prove_claim_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose leg's claim instance present");
@@ -959,7 +969,9 @@ pub fn prove_bridge_binding_node(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("bridge leg's re-exposed tuple instance present");
@@ -1046,7 +1058,9 @@ pub fn prove_bridge_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose bridge leg's claim instance present");
@@ -1147,7 +1161,9 @@ pub fn prove_sovereign_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let ev = left_apt
             .get(ev_idx)
             .expect("dual-expose sovereign leg's claim instance present");

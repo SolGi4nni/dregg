@@ -534,7 +534,9 @@ pub fn prove_shielded_spend_binding_node(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("shielded-spend leg's re-exposed tuple instance present");
@@ -630,7 +632,9 @@ pub fn prove_shielded_spend_root_binding_node_segmented(
 
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
                        left_apt: &[Vec<Target>],
-                       right_apt: &[Vec<Target>]| {
+                       right_apt: &[Vec<Target>],
+                       _left_vk_cap: &[Target],
+                       _right_vk_cap: &[Target]| {
         let lg = left_apt
             .get(leg_idx)
             .expect("dual-expose shielded leg's claim instance present");

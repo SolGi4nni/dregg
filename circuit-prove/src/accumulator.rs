@@ -219,11 +219,21 @@ fn combine_segments_expose(
     right_apt: &[Vec<p3_recursion::Target>],
     left_idx: usize,
     right_idx: usize,
+    left_vk_cap: &[p3_recursion::Target],
+    right_vk_cap: &[p3_recursion::Target],
 ) {
     // The online running combine is byte-identical to the K-fold `aggregate_tree` combine (the
     // 8-felt FAITHFUL-FLOOR segment: 8-lane state continuity + count additivity + ordered multi-felt
     // digest fold). Delegate to the ONE shared primitive so the two paths cannot drift.
-    segment_combine_expose(cb, left_apt, right_apt, left_idx, right_idx);
+    segment_combine_expose(
+        cb,
+        left_apt,
+        right_apt,
+        left_idx,
+        right_idx,
+        left_vk_cap,
+        right_vk_cap,
+    );
 }
 
 /// **THE WRAP-STEP TRACE-HEIGHT CEILING (the `min_trace_height` half of the fixed-shape knob).**
@@ -793,13 +803,17 @@ impl Accumulator {
                 let expose =
                     move |cb: &mut p3_circuit::CircuitBuilder<AccChallenge>,
                           left_apt: &[Vec<p3_recursion::Target>],
-                          right_apt: &[Vec<p3_recursion::Target>]| {
+                          right_apt: &[Vec<p3_recursion::Target>],
+                          left_vk_cap: &[p3_recursion::Target],
+                          right_vk_cap: &[p3_recursion::Target]| {
                         combine_segments_expose(
                             cb,
                             left_apt,
                             right_apt,
                             left_seg_idx,
                             right_seg_idx,
+                            left_vk_cap,
+                            right_vk_cap,
                         );
                     };
                 build_and_prove_aggregation_layer_with_expose::<
