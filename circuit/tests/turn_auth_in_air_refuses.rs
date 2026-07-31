@@ -19,16 +19,22 @@
 //! signatures; a light client has no executor. These teeth are therefore run against the AIR, and
 //! the refusal that counts is the prover's/verifier's, not a host predicate's.
 //!
-//! ## The four measurements
+//! ## The five measurements, at BOTH block counts
 //!
 //! 1. **CONTROL** — the honest, correctly-signed witness PROVES.
 //! 2. **WRONG KEY** — one signature felt moved: REFUSED.
-//! 3. **UNSIGNED** — the whole signature block zeroed: REFUSED.
-//! 4. **MOVED `dst`** — the turn's recipient column moved by one, everything else untouched
-//!    (exactly the free-weld forgery): REFUSED.
+//! 3. **UNSIGNED** — the whole signature block zeroed: REFUSED. (This is also what an un-updated
+//!    producer leaves behind, and what the prover's zero-extension of short rows manufactures —
+//!    so the gadget is fail-CLOSED against that hazard rather than relying on a producer.)
+//! 4. **MOVED `dst`** — the recipient column moved by one, everything else untouched: REFUSED.
+//! 5. **MOVED `actor`** — likewise: REFUSED.
 //!
-//! Cases 2-4 differ from the control ONLY in witness cells; the descriptor, the public inputs and
+//! Cases 2-5 differ from the control ONLY in witness cells; the descriptor, the public inputs and
 //! the trace shape are identical, so the refusal cannot come from a shape check.
+//!
+//! `nb = 8` is the DEPLOYED instance: 248 signed bits, one 31-bit block per felt of the chip's
+//! 8-felt squeeze, so every digest felt is signed and the signed message determines the turn
+//! digest. `nb = 1` is the same generator at 31 bits, kept because it proves in under a second.
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, chip_absorb_all_lanes, parse_vm_descriptor2,
