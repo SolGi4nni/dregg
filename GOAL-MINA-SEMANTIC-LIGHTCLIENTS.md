@@ -420,6 +420,13 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   coupled to the denotation. 3 separations intact.
   ⚠ **`mapOp_holds_of_mapReconcile` is DELETED** — the arity-2 gate model provably cannot produce the
   arity-3 denotation; the `.mapOp` arm is a MODELLER now, as the LogUp arm always was.
+  ⚑⚑ **AND THE APEX PREMISE ITSELF MOVED**: `memoryLegs_of_mapShape`, `algoStarkSound_of_mapShape`,
+  all EIGHT per-effect fan-outs, the `Rfix` kernel capstone and both `KernelConfigSound*` took
+  `MapReconcileFamily` — the arity-2 GATE model, which `old_model_is_false_on_deployed_rows` proves
+  **FALSE on every deployed row**. *That binder is what "the apex is vacuous" meant.* They now take
+  `MapDenotationFamily`, whose underlying denotation is exhibited inhabited at deployed parameters.
+  ⚠ It is a MODELLER premise (same species as `BusModelFamily`) — assumed at the apex, discharged
+  below by `MapKindImtGates`; 3 of 5 kinds dischargeable, and the 2 that are not are Rust-side.
   ⚠ **RUST-SIDE, and one is LIVE**: the AAFI producer commits a **sorted** BEFORE tree and an
   **append-order** AFTER root (`fold_append_order_8`) — turn N's after-root ≠ turn N+1's before-root
   whenever the inserted key is not the current maximum. Producer-only fix, no VK rotation, state
