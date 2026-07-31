@@ -258,13 +258,47 @@ mod tests {
         // after — the old shape REFUSES TO LOAD rather than reinterpreting, which is the intended
         // fail-closed handshake. Every verifier, light client and relayer must be rebuilt. No
         // geometry widened (widths and PI counts are unchanged), so this is NOT a re-genesis.
-        assert_eq!(
-            WIDE_REGISTRY_STAGED_FP,
-            "0c6c402d332b16171b0511ce2df506cc8639c411099dfbc052a0ef828f7135dd"
-        );
-        assert_eq!(
-            WIDE_UMEM_WELD_REGISTRY_FP,
-            "a028e25fee2e9c05c941fb4592a7e003ed197fdd3a32996b2e94180d130cc3a5"
+        // ⚑ COLLECT, THEN ASSERT ONCE — do not `assert_eq!` per fingerprint.
+        //
+        // This block used to be two sequential `assert_eq!`s, and BOTH pins were stale after the
+        // nine-lane flag day. The first abort hid the second entirely: `a028e25f…` appeared nowhere
+        // else in the tree, so a reader fixing "the" mismatch would have shipped one still wrong.
+        // A gate that reports one of N failures teaches the wrong size of problem.
+        //
+        // ⚠ The comment above is ALSO a hazard of this shape: it is a confident essay about "ALL
+        // THREE registry fingerprints" written for the 07-30 rotation, still sitting over pins from
+        // a later one. It is right about the discipline and was wrong about which epoch is current.
+        // Hence the third pin below, which the essay claimed and the code never checked.
+        // ⚠ TWO, NOT THREE — and the comment above is why that needed checking. `registry_fp` is
+        // composed of exactly these two (`format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}")`,
+        // :144), so `V3_STAGED_REGISTRY_FP` is NOT part of this epoch's identity. The essay's "ALL
+        // THREE registry fingerprints moved" is true of the FLAG DAY and false of this pin's subject;
+        // I nearly added a third entry on the strength of it.
+        let pins: [(&str, &str, &str); 2] = [
+            (
+                "WIDE_REGISTRY_STAGED_FP",
+                WIDE_REGISTRY_STAGED_FP,
+                "8efec5f786f763592a29fd8e360f9905c697f904e620ada1513f52915d4cc510",
+            ),
+            (
+                "WIDE_UMEM_WELD_REGISTRY_FP",
+                WIDE_UMEM_WELD_REGISTRY_FP,
+                "1ac8bcb6de1675740c3a165666cbeda643862533a2b12a7c6268750cdf2b3884",
+            ),
+        ];
+        let stale: Vec<String> = pins
+            .iter()
+            .filter(|(_, actual, pinned)| actual != pinned)
+            .map(|(name, actual, pinned)| {
+                format!("  {name}\n    actual: {actual}\n    pinned: {pinned}")
+            })
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "{} of 2 epoch-identity fingerprints are stale — a re-emit rotated them and this VK-epoch pin \
+             was not updated with it. EVERY stale one is listed so the next reader fixes all of them:\n{}",
+            stale.len(),
+            stale.join("\n")
         );
     }
 
