@@ -35,7 +35,7 @@
 //!
 //!   * **`setFieldDyn` — the dynamic overflow write PROVES (the residual is CLOSED).** The dynamic
 //!     `SetField` (`field_idx > 7`) routes to `setFieldDynVmDescriptor2R24`, a DISTINCT V1Face
-//!     geometry (1664-wide at HEAD) the standard generator could not produce (it panicked on
+//!     geometry (1708-wide at HEAD) the standard generator could not produce (it panicked on
 //!     `field_idx < 8` and laid the 829-wide host). `generate_rotated_set_field_dyn_base` now builds
 //!     it from scratch: the
 //!     Blum write→read pair (`addr = value = col 69`, `prev_value = col 70`, `prev_serial = col 74`,
@@ -603,23 +603,34 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
         parse_vm_descriptor2(rotated_descriptor_json(name)).expect("setFieldDyn descriptor parses");
     assert_eq!(
         desc.public_input_count, 51,
-        "setFieldDyn descriptor DECLARES the fields-root weld fifth pin + the 4 dsl rc pins \
-         (46 rotated + fifth pin at PI 46 + withDfaRcPins rc at PI 47..50 = 51)"
+        "setFieldDyn DECLARES 46 rotated + the fields-root weld fifth PIN at PI 46 + the 4 \
+         `withDfaRcPins` rc tail SLOTS at PI 47..50 = 51. ⚑ SLOTS, not pins: `dropUnforcedPins` \
+         deleted the four rc `.piBinding`s (their columns are read by nothing) and left `piCount` \
+         untouched, so those four are now verifier-supplied inputs the AIR ignores. The fifth pin \
+         SURVIVED — gate 31 (`col 275 == col 68`) forces its column."
     );
     // The DISTINCT geometry the generator produces from scratch: a V1Face (the v13-geom re-lay), NOT
     // the ungraduated rotated trace — four fewer chip sites (4 × 7 lanes = 28 cols) than the standard
-    // GRAD_ROT_WIDTH (1647) graduated host, so its BASE geometry is 1619. The gentian flag-day refuse
-    // rides that OWN 1619 base (§HETEROGENEOUS GEOMETRY): the capacity-floor blocks widen it to
-    // 1619 + 45 = 1664. The narrow committed setFieldDynVmDescriptor2R24 trace_width is 1664.
+    // graduated host, so its BASE geometry is `GRAD_ROT_WIDTH − 28` (= `CUSTOM_HOST_WIDTH`). The
+    // gentian flag-day refuse rides that OWN base (§HETEROGENEOUS GEOMETRY): the capacity-floor
+    // blocks widen it by `REFUSE_WELD_WIDEN = 45`.
+    //
+    // ⚑ ALL THREE NUMBERS MOVED AT THE NINE-LANE EPOCH (1647/1619/1664 → 1691/1663/1708), and
+    // every one is derived rather than transcribed:
+    //   GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES = 725 + 7·138 = 1691   (was 709 + 7·134 = 1647)
+    //   setFieldDyn base = 1691 − 4·7 = 1663                              (was 1619)
+    //   trace_width      = 1663 + 45  = 1708                              (was 1664)
+    // Cross-check on a member with the standard host: 1691 + 45 = 1736, which is the committed
+    // `mint`/`revoke`/`setField-*` width; transfer's avail pad 10 gives 1746.
     assert_eq!(
-        desc.trace_width, 1664,
-        "setFieldDyn is a DISTINCT V1Face geometry (base 1619 = GRAD_ROT_WIDTH 1647 − four chip \
-         sites·7) refuse-welded over ITS OWN base: 1619 + 45 refuse span = 1664 (matches committed \
+        desc.trace_width, 1708,
+        "setFieldDyn is a DISTINCT V1Face geometry (base 1663 = GRAD_ROT_WIDTH 1691 − four chip \
+         sites·7) refuse-welded over ITS OWN base: 1663 + 45 refuse span = 1708 (matches committed \
          setFieldDynVmDescriptor2R24 trace_width — per-member, not fixed to the standard graduated host)"
     );
     assert_ne!(
         desc.trace_width, ROT_WIDTH,
-        "setFieldDyn's width (1664) != the ungraduated rotated width (ROT_WIDTH = 709)"
+        "setFieldDyn's width (1708) != the ungraduated rotated width (ROT_WIDTH = 725)"
     );
 
     // The dynamic SetField (field_idx > 7) routes to the dyn descriptor by name.
@@ -675,14 +686,14 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
     assert_eq!(
         dpis.len(),
         desc.public_input_count,
-        "dpis length matches the 51-PI descriptor (fifth pin inserted at 46, rc shifted to 47..50)"
+        "dpis length matches the 51-PI descriptor (fifth pin inserted at 46, rc SLOTS at 47..50)"
     );
 
     // THE PROVABILITY GATE: the honest dynamic-field write PROVES + light-client VERIFIES against the
-    // DEPLOYED 1664-wide descriptor — no catch_unwind. The residual is CLOSED.
+    // DEPLOYED 1708-wide descriptor — no catch_unwind. The residual is CLOSED.
     let proof =
         prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &[]).unwrap_or_else(|e| {
-            panic!("setFieldDyn must PROVE against its deployed descriptor (1664-wide): {e}")
+            panic!("setFieldDyn must PROVE against its deployed descriptor (1708-wide): {e}")
         });
     verify_vm_descriptor2(&desc, &proof, &dpis)
         .unwrap_or_else(|e| panic!("setFieldDyn proof must light-client VERIFY: {e}"));
@@ -706,7 +717,7 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
 
     eprintln!(
         "VK-EPOCH setFieldDyn: the DYNAMIC overflow-field write PROVES + light-client VERIFIES against \
-         the deployed 1664-wide descriptor (the Blum write→read transport over the V1Face geometry), \
+         the deployed 1708-wide descriptor (the Blum write→read transport over the V1Face geometry), \
          and a forged read-back is REJECTED. The missing-generator residual is CLOSED."
     );
 }

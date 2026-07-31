@@ -1,25 +1,45 @@
 //! # THE TURN-IDENTITY WELD (#225) — the LEDGERLESS LIGHT CLIENT'S forcing tooth.
 //!
 //! The Lean keystone `Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB` (descriptor
-//! `transferCapOpenTBVmDescriptor2R24`, public_input_count 49) is the LIVE transfer
-//! cap-open PLUS two turn-identity columns (`actor`/`dst`) and three appended `.piBinding .last` gates
-//! welding the cap-open `src`/`actor`/`dst` columns to NEW public-input slots (`src → PI[46]`, `actor →
-//! PI[47]`, `dst → PI[48]`). The verifier ANCHORS those three PIs to the TRUSTED turn it holds
-//! (`anchor_cap_open_turn_pins`, the deployment realization of the named `TurnIdentityAnchored`
-//! predicate), exactly as the record-pin family anchors `dpis[46]` from the trusted post-cell.
+//! `transferCapOpenTBVmDescriptor2R24`) is the LIVE transfer cap-open plus ONE appended
+//! `.piBinding .first` gate welding the cap-open `src` column to a NEW public-input slot
+//! (`src -> PI[46]`). It adds NO column: `src` is the column `targetBindGate` already pins to the
+//! opened leaf's `target`, and the depth-16 membership open chains that leaf to the committed cap
+//! root. The verifier ANCHORS that PI to the TRUSTED turn it holds (`anchor_cap_open_turn_pins`,
+//! the deployment realization of the named `TurnIdentityAnchored` predicate), exactly as the
+//! record-pin family anchors `dpis[46]` from the trusted post-cell.
 //!
-//! THE FORCING (the light-client-relevant tooth): a ledgerless light client, holding only the trusted
-//! turn, can conclude the published turn's `actor`/`src`/`dst` MATCH the proven transition. This test
+//! THE FORCING (the light-client-relevant tooth): a ledgerless light client, holding only the
+//! trusted turn, can conclude the published turn's `src` MATCHES the proven transition. This test
 //! realizes that END-TO-END in Rust:
 //!
-//!   * an HONEST transfer TB cap-open proof verifies when the verifier anchors the three turn-identity
-//!     PIs to the SAME `(src, actor, dst)` the prover published;
-//!   * a proof whose published `actor`/`src`/`dst` PI does NOT match the trusted turn is REJECTED by
-//!     `verify_vm_descriptor2` ALONE (the verifier overrides the PI from the trusted turn; the appended
-//!     `.piBinding` gate then disagrees with the proof's bound, last-row-pinned column → UNSAT).
+//!   * an HONEST transfer TB cap-open proof verifies when the verifier anchors the turn-identity PI
+//!     to the SAME `src` the prover published;
+//!   * a proof whose published `src` does NOT match the trusted turn is REJECTED by
+//!     `verify_vm_descriptor2` ALONE (the verifier overrides the PI from the trusted turn; the
+//!     appended `.piBinding` gate then disagrees with the proof's bound column -> UNSAT).
 //!
 //! This is `CapOpenTurnPins.effCapOpenV3TB_rejects_mismatched_src` made good on the deployed prover +
 //! verifier: the gate is LOAD-BEARING for a ledgerless client.
+//!
+//! ## FLAG DAY 2026-07-31 — and the two teeth this file used to carry were NOT teeth
+//!
+//! Until the re-emit, the member declared `public_input_count 49` and this file asserted three
+//! forcing teeth: a forged published `src`, `actor` or `dst` is rejected by the verifier alone.
+//! Only the `src` one meant anything. `actor` and `dst` were welded to two columns
+//! `CapOpenTurnPins` itself introduced and NO other constraint in the member read — so the prover
+//! chose the column and the published felt together, the pin held by construction, and the
+//! "rejection" this file measured was only the rejection of a forger who moved the PI and forgot to
+//! move its column. A prover who moves both is accepted, publishing any actor it likes. That is the
+//! shape `UnforcedPiPins.unforcedPins` censuses and `unforced_pin_row_admits_any_value` proves a
+//! no-op; the two pins are gone at the Lean source and the member now carries
+//! `public_input_count 47`.
+//!
+//! The teeth are therefore REPLACED, not renumbered: `src` keeps its end-to-end forcing test, and a
+//! new assertion reads the committed bytes and requires that NOTHING else is pinned in the
+//! turn-identity window. The successor that publishes `actor`/`dst` and can also FORCE them (they
+//! become `turnIn` of the Lamport turn-digest lookup whose output the signed message recomposes) is
+//! Lean `Dregg2/Circuit/Emit/TurnAuthCapOpenWeld.lean`, staged.
 //!
 //! LAW #1: this test fills COLUMNS only; every constraint is the Lean-declared chip lookup / base gate
 //! / pi_binding the IR-v2 interpreter realizes generically. No hand-authored Rust constraint semantics.
@@ -32,19 +52,20 @@
 // now unconditional in dregg-circuit, so this test compiles + runs by default.)
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
+use dregg_circuit::descriptor_ir2::VmConstraint2;
 use dregg_circuit::descriptor_ir2::{
     MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_TB_ACTOR_COL, CAP_OPEN_TB_DST_COL, CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST,
-    CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CapOpenWitness, FACET_MASK_HI, RotatedBlockWitness,
-    SIGNATURE_AUTH_TAG, WRITE_MASK_LO, anchor_cap_open_turn_pins, avail_pad_for_descriptor_name,
-    cap_open_tb_dpis, generate_rotated_effect_vm_trace_avail, transfer_caveat_manifest,
-    widen_to_cap_open_tb_avail,
+    CAP_OPEN_TB_PI_COUNT, CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CapOpenWitness, FACET_MASK_HI,
+    RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO, anchor_cap_open_turn_pins,
+    avail_pad_for_descriptor_name, cap_open_tb_dpis, generate_rotated_effect_vm_trace_avail,
+    transfer_caveat_manifest, widen_to_cap_open_tb_avail,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
+use dregg_circuit::lean_descriptor_air::VmConstraint;
 use dregg_turn::rotation_witness as rw;
 
 /// The LIVE turn-bound transfer cap-open descriptor (the #225 weld).
@@ -178,8 +199,10 @@ fn cap_open_witness() -> CapOpenWitness {
 }
 
 /// **THE DEPLOYMENT FORCING TEST (#225).** An honest transfer TB cap-open proof verifies under the
-/// trusted-turn anchor; a proof whose published `src`/`actor`/`dst` disagrees with the trusted turn is
-/// REJECTED by `verify_vm_descriptor2` ALONE (the verifier override realizes `TurnIdentityAnchored`).
+/// trusted-turn anchor; a proof whose published `src` disagrees with the trusted turn is REJECTED by
+/// `verify_vm_descriptor2` ALONE (the verifier override realizes `TurnIdentityAnchored`). And the
+/// committed member pins NOTHING ELSE in the turn-identity window — see the file header for the two
+/// pins that lived there and refused nothing.
 #[test]
 fn cap_open_turn_bound_verifier_forces_published_identity() {
     let desc =
@@ -202,60 +225,110 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
         "TB width = the bare turn-bound cap-open host + this member's own availability pad"
     );
     assert_eq!(
-        desc.public_input_count, 49,
-        "TB carries 49 PIs (46 rotated + 3 turn-identity) regardless of the pad — the pad shifts \
-         COLUMNS, never PI indices"
+        desc.public_input_count, CAP_OPEN_TB_PI_COUNT,
+        "TB carries {CAP_OPEN_TB_PI_COUNT} PIs (46 rotated + the ONE turn-identity `src`) \
+         regardless of the pad — the pad shifts COLUMNS, never PI indices"
     );
 
-    // The TRUSTED turn the light client holds. `src` IS the cap-leaf target the targetBind roots; the
-    // owner arm publishes `actor == dst == src` (the cap is a member of the actor's own c-list).
-    let trusted_src = BabyBear::new(SRC_FELT);
-    let trusted_actor = trusted_src;
-    let trusted_dst = trusted_src;
+    // ⚑ THE WITHDRAWAL, READ OFF THE COMMITTED BYTES. Exactly one `pi_binding` lands at or past the
+    // rotated 46, it is at `CAP_OPEN_TB_PI_SRC`, and its column is one the member reads elsewhere.
+    // That last clause is the whole difference between a binding and a publication, so it is
+    // asserted, not assumed: `actor`/`dst` failed exactly it.
+    {
+        let tail: Vec<(usize, usize)> = desc
+            .constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. })
+                    if *pi_index >= CAP_OPEN_TB_PI_SRC =>
+                {
+                    Some((*pi_index, *col))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tail.len(),
+            1,
+            "the TB weld appends EXACTLY ONE pin past the rotated 46; found {tail:?}. Two more sat \
+             at PI 47/48 until 2026-07-31 publishing prover-chosen `actor`/`dst` felts."
+        );
+        let (pi, col) = tail[0];
+        assert_eq!(
+            pi, CAP_OPEN_TB_PI_SRC,
+            "…and it is the turn-identity `src` slot"
+        );
+        // ⚠ `window_gate`, NOT `gate`. The 2026-07-30 last-row hardening flag day (`81ee5492d`)
+        // lowered EVERY row-local `.base (.gate …)` as a whole-domain
+        // `windowGate { on_transition: false }` over `WindowExpr::loc` — 6923 of them, registry
+        // wide — so a reader that only looks at `Gate` now sees zero gates and concludes every
+        // column is unread. That is precisely how `bare_floor_refuse_weld` went red one commit
+        // before the nine-lane epoch and was mistaken for flag-day noise. This reader was written
+        // with the same blind spot and caught by its own assertion; both arms are here now.
+        let read_elsewhere = desc.constraints.iter().any(|c| match c {
+            VmConstraint2::Base(VmConstraint::Gate(b))
+            | VmConstraint2::Base(VmConstraint::Boundary { body: b, .. }) => expr_reads(b, col),
+            VmConstraint2::Lookup(l) => l.tuple.iter().any(|e| expr_reads(e, col)),
+            VmConstraint2::WindowGate(w) => window_reads(&w.body, col),
+            _ => false,
+        });
+        assert!(
+            read_elsewhere,
+            "the pinned `src` column {col} must be READ by some non-pin constraint of the member \
+             (`targetBindGate` pins `leaf.target == src`, and the depth-16 open chains that leaf to \
+             the committed cap root). A pin on a column nothing else reads is `local[c] == pi[k]` \
+             with the prover choosing both sides — it publishes, it does not bind."
+        );
+        eprintln!(
+            "TURN-IDENTITY WINDOW: one pin, PI {pi} -> col {col}, and col {col} IS read elsewhere."
+        );
+    }
 
-    // The HONEST prover: build the transfer base, widen with the TB cap-open (fills src/actor/dst
-    // columns), publish the 49-PI vector with the prover's OWN (honest) identity.
+    // The TRUSTED turn the light client holds. `src` IS the cap-leaf target the targetBind roots.
+    let trusted_src = BabyBear::new(SRC_FELT);
+
+    // The HONEST prover: build the transfer base, widen with the TB cap-open, publish the 47-PI
+    // vector with the prover's OWN (honest) source.
     let (mut trace, base_pis) = build_transfer_base(pad);
     let w = cap_open_witness();
-    widen_to_cap_open_tb_avail(&mut trace, &w, trusted_actor, trusted_dst, pad).expect("TB widen");
-    let honest_pis = cap_open_tb_dpis(&base_pis, trusted_src, trusted_actor, trusted_dst);
-    assert_eq!(honest_pis.len(), 49);
+    widen_to_cap_open_tb_avail(&mut trace, &w, pad).expect("TB widen");
+    let honest_pis = cap_open_tb_dpis(&base_pis, trusted_src);
+    assert_eq!(honest_pis.len(), CAP_OPEN_TB_PI_COUNT);
     assert_eq!(
         trace[0].len(),
         desc.trace_width,
         "the widened row must equal the committed member's width — a shortfall of exactly the pad \
          means the bare v1 face was laid for the AVAIL-hardened committed member"
     );
-    // The published columns are pinned on the last row; sanity-check the fill landed (at the
-    // avail-shifted turn-identity columns the hardened member declares).
-    assert_eq!(trace[0][CAP_OPEN_TB_ACTOR_COL + pad], trusted_actor);
-    assert_eq!(trace[0][CAP_OPEN_TB_DST_COL + pad], trusted_dst);
 
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
     let proof = prove_vm_descriptor2(&desc, &trace, &honest_pis, &mem_boundary, &map_heaps)
         .expect("honest transfer TB cap-open proves (and self-verifies)");
 
-    // (A) THE VERIFIER ANCHOR — ACCEPT. The light client recomputes the three turn-identity PIs from
-    //     the TRUSTED turn it holds and verifies. They match the honest proof → ACCEPT.
+    // (A) THE VERIFIER ANCHOR — ACCEPT. The light client recomputes the turn-identity PI from the
+    //     TRUSTED turn it holds and verifies. It matches the honest proof → ACCEPT.
     let mut anchored_pis = honest_pis.clone();
-    anchor_cap_open_turn_pins(&mut anchored_pis, trusted_src, trusted_actor, trusted_dst);
+    anchor_cap_open_turn_pins(&mut anchored_pis, trusted_src);
     verify_vm_descriptor2(&desc, &proof, &anchored_pis)
         .expect("honest TB cap-open verifies under the trusted-turn anchor");
     eprintln!(
         "TURN-IDENTITY ANCHOR ACCEPT: honest transfer TB cap-open verified; the verifier recomputed \
-         src/actor/dst PIs (46/47/48) from the trusted turn and they MATCH the proven transition."
+         the src PI (46) from the trusted turn and it MATCHES the proven transition."
     );
 
     // (B) THE NEGATIVE TOOTH — a FORGED published SRC is rejected by the VERIFIER ALONE. The trusted
     //     turn's src is `trusted_src`; the verifier anchors PI[46] to it. The proof was bound to the
     //     honest src column (== trusted_src). We now anchor PI[46] to a DIFFERENT (forged) src the
-    //     trusted turn does NOT carry → the last-row src pin disagrees with the bound column → UNSAT.
+    //     trusted turn does NOT carry → the first-row src pin disagrees with the bound column → UNSAT.
+    //
+    //     This tooth is REAL where the deleted actor/dst ones were not, and the reason is the
+    //     assertion above: a prover cannot escape by moving the column to match, because the column
+    //     is `targetBindGate`'s and moving it breaks the depth-16 membership open.
     {
         let mut forged = honest_pis.clone();
         let forged_src = BabyBear::new(SRC_FELT + 1);
-        // The verifier holds a trusted turn whose src is `forged_src` (≠ the proof's src column).
-        anchor_cap_open_turn_pins(&mut forged, forged_src, trusted_actor, trusted_dst);
+        anchor_cap_open_turn_pins(&mut forged, forged_src);
         assert_ne!(forged[CAP_OPEN_TB_PI_SRC], honest_pis[CAP_OPEN_TB_PI_SRC]);
         let rejected = verify_vm_descriptor2(&desc, &proof, &forged).is_err();
         assert!(
@@ -264,38 +337,32 @@ fn cap_open_turn_bound_verifier_forces_published_identity() {
         );
     }
 
-    // (C) THE NEGATIVE TOOTH — a FORGED published ACTOR is rejected by the VERIFIER ALONE (PI[47]).
-    {
-        let mut forged = honest_pis.clone();
-        let forged_actor = BabyBear::new(0xDEAD);
-        anchor_cap_open_turn_pins(&mut forged, trusted_src, forged_actor, trusted_dst);
-        assert_ne!(
-            forged[CAP_OPEN_TB_PI_ACTOR],
-            honest_pis[CAP_OPEN_TB_PI_ACTOR]
-        );
-        let rejected = verify_vm_descriptor2(&desc, &proof, &forged).is_err();
-        assert!(
-            rejected,
-            "a published actor that does NOT match the trusted turn MUST be rejected by the verifier alone"
-        );
-    }
-
-    // (D) THE NEGATIVE TOOTH — a FORGED published DST is rejected by the VERIFIER ALONE (PI[48]).
-    {
-        let mut forged = honest_pis.clone();
-        let forged_dst = BabyBear::new(0xBEEF_BEEF & 0x7FFF_FFFF);
-        anchor_cap_open_turn_pins(&mut forged, trusted_src, trusted_actor, forged_dst);
-        assert_ne!(forged[CAP_OPEN_TB_PI_DST], honest_pis[CAP_OPEN_TB_PI_DST]);
-        let rejected = verify_vm_descriptor2(&desc, &proof, &forged).is_err();
-        assert!(
-            rejected,
-            "a published dst that does NOT match the trusted turn MUST be rejected by the verifier alone"
-        );
-    }
-
     eprintln!(
-        "TURN-IDENTITY NEGATIVE TEETH GREEN: a forged published src / actor / dst (one the trusted \
-         turn does NOT carry) is REJECTED by verify_vm_descriptor2 alone — the #225 gate is \
-         load-bearing for a ledgerless light client."
+        "TURN-IDENTITY NEGATIVE TOOTH GREEN: a forged published src (one the trusted turn does NOT \
+         carry) is REJECTED by verify_vm_descriptor2 alone — the #225 gate is load-bearing for a \
+         ledgerless light client."
     );
+}
+
+/// Does `e` read trace column `col`? (The census's `expr_cols`, specialised to one column.)
+fn expr_reads(e: &dregg_circuit::lean_descriptor_air::LeanExpr, col: usize) -> bool {
+    use dregg_circuit::lean_descriptor_air::LeanExpr;
+    match e {
+        LeanExpr::Var(v) => *v == col,
+        LeanExpr::Const(_) => false,
+        LeanExpr::Add(a, b) | LeanExpr::Mul(a, b) => expr_reads(a, col) || expr_reads(b, col),
+    }
+}
+
+/// The `WindowExpr` twin — the shape every row-local gate is emitted as since the last-row
+/// hardening flag day. A reader that omits this arm sees an empty descriptor.
+fn window_reads(e: &dregg_circuit::descriptor_ir2::WindowExpr, col: usize) -> bool {
+    use dregg_circuit::descriptor_ir2::WindowExpr;
+    match e {
+        WindowExpr::Loc(c) | WindowExpr::Nxt(c) => *c == col,
+        WindowExpr::Const(_) => false,
+        WindowExpr::Add(a, b) | WindowExpr::Mul(a, b) => {
+            window_reads(a, col) || window_reads(b, col)
+        }
+    }
 }

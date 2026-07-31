@@ -154,7 +154,9 @@ theorem effCapOpenV3TB_base_constraints (base : EffectVmDescriptor2) (name : Str
     c ∈ (effCapOpenV3TB base name n).constraints :=
   List.mem_append_left _ hc
 
-/-- The TB descriptor's constraints are EXACTLY the base's plus the three turn-identity pins. -/
+/-- The TB descriptor's constraints are EXACTLY the base's plus the ONE turn-identity pin.
+(It said "the three turn-identity pins" until 2026-07-31 — a leftover from the removed `actor`/`dst`
+publication; `turnIdentityPins` has been a singleton since the header's 07-30 measurement.) -/
 theorem effCapOpenV3TB_constraints (base : EffectVmDescriptor2) (name : String) (n : Nat) :
     (effCapOpenV3TB base name n).constraints
       = (effCapOpenV3 base name n).constraints

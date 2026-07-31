@@ -32,7 +32,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
     rotated_descriptor_name_for_effect,
 };
 use dregg_circuit::effect_vm::{
-    CellState, Effect, EffectVmTraceError, field_limbs8, state, try_generate_effect_vm_trace,
+    CellState, Effect, EffectVmTraceError, field_limbs9, state, try_generate_effect_vm_trace,
 };
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
@@ -107,7 +107,7 @@ fn the_maximum_provable_slot_proves_verifies_and_the_write_lands() {
     // for the honest write — the same shape `setfield_completion_lane_forge.rs` uses.
     let mut field_bytes = [0u8; 32];
     field_bytes[28..32].copy_from_slice(&0x0055_AA33u32.to_be_bytes());
-    let lane0 = field_limbs8(&field_bytes)[0];
+    let lane0 = field_limbs9(&field_bytes)[0];
 
     let effect = Effect::SetField {
         field_idx: MAX_PROVABLE_SLOT as u32,

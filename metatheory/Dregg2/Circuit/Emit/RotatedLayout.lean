@@ -91,7 +91,24 @@ nine-lane encoder that closes it, and each field's NINTH lane needs a column.
 The six extra columns come out of the two free pads (176, 177) plus 178..183, and **NOTHING SHIFTS**:
 every column that had a meaning at 178 keeps it. `(184 - 4) % 3 = 0`, so `bodyAligned` survives — 186
 would have been ILLEGAL and 187 costs four columns for nothing. Downstream: `B_SPAN` 239 → 247,
-`APPENDIX_SPAN` 521 → 537, the chained absorption 58 → 60 carriers. -/
+`APPENDIX_SPAN` 521 → 537, the chained absorption **59 → 61** carriers.
+
+⚠ That last figure read "58 → 60" until 2026-07-31 and was off by one at BOTH ends — corrected
+against the emitted constant rather than re-guessed. Carriers per block are `1 + (numPreLimbs - 4)/3`
+(one arity-4 head site, then arity-3 body groups): `1 + 174/3 = 59` at 178, `1 + 180/3 = 61` at 184.
+`layout_generated.rs` emits `B_NUM_CHAIN = 61` and `B_SPAN - B_CHAIN_BASE = 247 - 186 = 61` agrees.
+
+⚑ **AND THE COST OF THE ALTERNATIVE, since it gets proposed.** `docs/DESIGN-canonical-byte-felt-codec.md`
+recommends `Limbs16` (sixteen u16 limbs) as the tree's canonical byte→felt map, and it is the right
+call at an ABSORBED site — 16 lanes is exactly one `CHIP_RATE` absorb, so the width is free there.
+It is the wrong call HERE, because these are PERSISTENT COLUMNS, not absorb rate. Eight fields × 16
+lanes is 128 columns against the nonet's 72: `numPreLimbs` 184 → 240, which **fails `bodyAligned`**
+(`236 % 3 = 2`), so it would have to be 241 with a column wasted. That gives 80 carriers per block,
+`B_SPAN` 323 and `APPENDIX_SPAN` 689 — **+152 columns on every one of the 174 members and +38
+Poseidon2 absorptions per row** — to buy the same property the nonet already has, since both are
+injective and the anchor's strength is the sponge's either way. And `Limbs16` cannot hold lane 0:
+a 16-bit lane cannot carry the kernel's 32-bit u64-lane `lo32`, which `field_to_u64` and every
+escrow/discharge/vault weld read. Nine is not a compromise here; it is the better encoding. -/
 def rotatedNumPreLimbs : Nat := 184
 
 /-- The CURRENT deployed rotated geometry (184 pre-iroot limbs). This enumeration is a complete

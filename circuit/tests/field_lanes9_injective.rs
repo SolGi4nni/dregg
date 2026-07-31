@@ -34,7 +34,7 @@
 //!   * the **VALVE pole** — `field_limbs9(field_from_u64(v))[0].as_u32() == v` for every `v < p`, so
 //!     the escrow / discharge / vault weld constants, `setfield_encoder_window_gate` and every app
 //!     encoder are visibly unchanged. ⚑ The limit is `v < p = 2013265921`, **not** the `v < 2^31`
-//!     the deployed `field_limbs8` doc claimed — see
+//!     the (now deleted) `field_limbs8` doc claimed — see
 //!     `above_the_modulus_lane0_is_a_residue_and_the_ninth_lane_holds_the_quotient`, which measures
 //!     the 134,217,727-value window where that claim was false and no existing pin could say so.
 //!
@@ -42,7 +42,7 @@
 //! return the VALUE. An encoder that scrambled its input would separate every pair by accident and
 //! pass a differ-test; it cannot pass an inverse-test.
 
-use dregg_circuit::effect_vm::{field_from_lanes9, field_limbs8, field_limbs9};
+use dregg_circuit::effect_vm::{field_from_lanes9, field_limbs9};
 use dregg_circuit::field::BabyBear;
 
 /// BabyBear's modulus — the reduction lanes 0 and 1 perform, and the alias generator.
@@ -511,12 +511,31 @@ fn above_the_modulus_lane0_is_a_residue_and_the_ninth_lane_holds_the_quotient() 
     }
 }
 
-/// ⚑ **THE TWO ENCODERS MAY NOT DRIFT.** `field_limbs8` survives — the two rotated-pre-limb
-/// producers write eight scattered limbs per field and the ninth column does not exist yet — so
-/// while both are live, lanes 0 and 1 must agree BY MEASUREMENT and not merely by having been
-/// written to agree. Every migrated `field_limbs9(&x)[0]` call site depends on exactly this.
+/// ⚑ **THE PINNED PAIR, AGAINST THE ABI ITSELF — not against a second encoder.**
+///
+/// This test used to read `assert_eq!(field_limbs9(&b)[0], field_limbs8(&b)[0])`: it compared the
+/// survivor to the twin it replaced. That was the right pin while both were live and it is a DEAD
+/// pin the instant one is deleted — a comparison between two bodies says nothing once there is one
+/// body. `field_limbs8` was deleted on 2026-07-31, so the pin is restated against an INDEPENDENT
+/// transcription of the deployed ABI: lane 0 is `u32::from_be_bytes(b[28..32]) % p` and lane 1 is
+/// `u32::from_be_bytes(b[24..28]) % p`, written out here from the specification rather than obtained
+/// by calling the function under test.
+///
+/// This is the contract `field_to_u64`, the escrow / discharge / vault welds, the v1 face weld
+/// `gFieldWriteP1`, `setfield_encoder_window_gate` and every app encoder read. If it moves, that is a
+/// far larger flag day than this file.
 #[test]
-fn lanes_0_and_1_are_byte_identical_to_field_limbs8() {
+fn lanes_0_and_1_are_the_deployed_big_endian_u64_window() {
+    // The ABI, transcribed from the spec — deliberately NOT `field_limbs9`'s own body.
+    fn abi_lane0(b: &[u8; 32]) -> u32 {
+        (u32::from(b[28]) << 24 | u32::from(b[29]) << 16 | u32::from(b[30]) << 8 | u32::from(b[31]))
+            % P
+    }
+    fn abi_lane1(b: &[u8; 32]) -> u32 {
+        (u32::from(b[24]) << 24 | u32::from(b[25]) << 16 | u32::from(b[26]) << 8 | u32::from(b[27]))
+            % P
+    }
+
     let mut cases: Vec<[u8; 32]> = vec![
         [0u8; 32],
         [0xffu8; 32],
@@ -528,12 +547,49 @@ fn lanes_0_and_1_are_byte_identical_to_field_limbs8() {
     for seed in 0..4096u64 {
         cases.push(mix32(seed ^ 0xBEEF));
     }
-    for b in cases {
-        let n = field_limbs9(&b);
-        let o = field_limbs8(&b);
-        assert_eq!(n[0], o[0], "lane 0 must not drift for {b:02x?}");
-        assert_eq!(n[1], o[1], "lane 1 must not drift for {b:02x?}");
+    // NON-VACUITY OF THE SWEEP: it must reach values where the reduction actually bites, or it is a
+    // sweep over the half of the domain where `% p` is the identity.
+    let mut reduced = 0usize;
+    for b in &cases {
+        let n = field_limbs9(b);
+        assert_eq!(
+            n[0].as_u32(),
+            abi_lane0(b),
+            "lane 0 must be BE(b[28..32]) % p for {b:02x?}"
+        );
+        assert_eq!(
+            n[1].as_u32(),
+            abi_lane1(b),
+            "lane 1 must be BE(b[24..28]) % p for {b:02x?}"
+        );
+        if u32::from_be_bytes([b[28], b[29], b[30], b[31]]) >= P {
+            reduced += 1;
+        }
     }
+    assert!(
+        reduced > 100,
+        "the sweep must exercise the reducing window — only {reduced} of {} cases reduced",
+        cases.len()
+    );
+
+    // The other half of why the fields nonet needs its own grouping: NO plain-LE lane carries the
+    // numeric value. Lane 0 of `bytes32_to_8_limbs` is identically zero for a `field_from_u64`
+    // value, lane 7 is the byte-SWAPPED lo32 (equality constants could be re-derived, additive
+    // welds cannot), and the deployed Horner fold is not the raw value either. Moved here when
+    // `helpers.rs`'s `field_limbs8_tests` module was deleted with its subject.
+    let one = field_from_u64(1);
+    let plain = dregg_circuit::effect_vm::bytes32_to_8_limbs(&one);
+    assert_eq!(plain[0], BabyBear::ZERO, "plain lane0 == 0 for BE numerics");
+    assert_eq!(
+        plain[7],
+        BabyBear::new(0x0100_0000),
+        "plain lane7 is the byte-swapped lo32"
+    );
+    assert_ne!(
+        dregg_circuit::effect_vm::fold_bytes32_to_bb(&one),
+        BabyBear::new(1),
+        "the Horner fold is not the raw value either"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════

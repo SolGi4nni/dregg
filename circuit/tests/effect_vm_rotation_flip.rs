@@ -946,10 +946,20 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
 /// 339a97beb) carries two map-ops gated by the revoke selector (`sel::REVOKE_DELEGATION = 30`) —
 /// `revokedFreshOp` (`.absent`: the revoked id is a NON-MEMBER of the BEFORE revoked tree — no double
 /// revoke) and `revokedInsertOp` (`.aafiInsert`, op=4: the AFTER `revoked_root` (limb 37) IS the
-/// genuine AAFI two-path insert of the revoked id). The bare `revokeVmDescriptor2R24` row in the
-/// committed TSV predates the F2 regen, so this test reconstructs the two live map-ops onto the parsed
-/// bare descriptor at the `revoked_root` group columns (the SHAPE the F2 regen-from-Lean will bake in)
-/// and proves: (1) `generate_rotated_revoke_trace_with_revoked_tree` produces a trace whose FORCED
+/// genuine AAFI two-path insert of the revoked id).
+///
+/// ⚑ 2026-07-31: this test used to say *"the bare `revokeVmDescriptor2R24` row in the committed TSV
+/// predates the F2 regen, so this test reconstructs the two live map-ops onto the parsed bare
+/// descriptor"* and `push`ed them, with the after-block base written as the hand-typed literal
+/// `ROT_BB + 239`. Both halves are dead: the committed row HAS carried both map-ops since the F2
+/// regen let the welded cohort member through, and `239` was the pre-nine-lane `B_SPAN` — at 247 the
+/// reconstructed op read after-block limbs 29/74..80 instead of the revoked-root group, which is
+/// what produced `map op 3: claimed new_root != genuine AAFI insert`. The reconstruction is gone.
+/// What replaced it is stronger: the committed map-ops are VERIFIED to read the columns the Rust
+/// layout constants derive, so a geometry drift on either side goes red here instead of being
+/// papered over by a locally-consistent hand-built twin.
+///
+/// It proves: (1) `generate_rotated_revoke_trace_with_revoked_tree` produces a trace whose FORCED
 /// AAFI after-root satisfies op=4 (proves + verifies); (2) a FORGED/frozen after `revoked_root` is
 /// REJECTED (the gate bites — non-vacuous); (3) a DOUBLE-REVOKE (id already in the BEFORE tree) is
 /// refused by the producer before proving (`insert_witness_aafi` → `None`). Hole #3 closed: the
@@ -959,50 +969,75 @@ fn rotated_revoke_forces_revoked_set_insert_and_refuses_double_revoke() {
     use dregg_circuit::descriptor_ir2::{MapKind, MapOpSpec, VmConstraint2};
     use dregg_circuit::effect_vm::columns::{PARAM_BASE, param};
     use dregg_circuit::effect_vm::trace_rotated::{
-        B_REVOKED_ROOT, B_STATE_COMMIT as BSC, generate_rotated_revoke_trace_with_revoked_tree,
+        AFTER_BASE, B_REVOKED_ROOT, B_STATE_COMMIT as BSC, BEFORE_BASE,
+        generate_rotated_revoke_trace_with_revoked_tree,
     };
     use dregg_circuit::heap_root::HeapLeaf;
     use dregg_circuit::lean_descriptor_air::LeanExpr;
 
-    // The rotated revoked-block group columns in DESCRIPTOR space (the F2-regen shape): the rotated
-    // before-block base is `EFFECT_VM_WIDTH` (188), the after-block rides `+239` (mirrors the deployed
-    // noteSpend map-op columns 214/453). Lane 0 = limb 37 (`B_REVOKED_ROOT`); the seven completion
-    // lanes 1..7 = limbs 82..88 (`revokedRootGroupCol`).
-    const ROT_BB: usize = 188; // EFFECT_VM_WIDTH — rotated BEFORE block base (descriptor space)
-    const ROT_AFTER_DELTA: usize = 239; // rotated AFTER block base = ROT_BB + 239
+    // The rotated revoked-block group columns in DESCRIPTOR space, DERIVED from the emitted layout
+    // (`BEFORE_BASE`/`AFTER_BASE` are `pub use layout_generated::*`), never hand-typed: lane 0 =
+    // limb 37 (`B_REVOKED_ROOT`), completion lanes 1..7 = limbs 82..88 (`revokedRootGroupCol`).
     let group = |base: usize, lane: usize| -> usize {
         base + if lane == 0 { B_REVOKED_ROOT } else { 81 + lane }
     };
-    let before_group: Vec<LeanExpr> = (0..8).map(|l| LeanExpr::Var(group(ROT_BB, l))).collect();
+    let before_group: Vec<LeanExpr> = (0..8)
+        .map(|l| LeanExpr::Var(group(BEFORE_BASE, l)))
+        .collect();
     let after_group: Vec<LeanExpr> = (0..8)
-        .map(|l| LeanExpr::Var(group(ROT_BB + ROT_AFTER_DELTA, l)))
+        .map(|l| LeanExpr::Var(group(AFTER_BASE, l)))
         .collect();
     // param0 (the revoked id / `child_hash[0]`) rides descriptor var 68 (= PARAM_BASE fold slot 0,
     // identical to the deployed noteSpend key column). The revoked set is a membership set: value 0.
     let key_col = LeanExpr::Var(68);
     let sel_guard = LeanExpr::Var(dregg_circuit::effect_vm::columns::sel::REVOKE_DELEGATION);
 
-    // Parse the committed BARE revoke descriptor and append the two live map-ops (the op=4 grow-gate).
-    let mut desc = parse_vm_descriptor2(rotated_descriptor_json("revokeVmDescriptor2R24"))
-        .expect("bare revoke descriptor parses");
-    desc.constraints.push(VmConstraint2::MapOp(MapOpSpec {
-        // revokedFreshOp — `.absent`: the revoked id is a NON-MEMBER of the BEFORE revoked tree.
-        guard: sel_guard.clone(),
-        root: before_group.clone(),
-        key: key_col.clone(),
-        value: LeanExpr::Const(0),
-        new_root: before_group.clone(), // absent read leaves the root unchanged
-        op: MapKind::Absent,
-    }));
-    desc.constraints.push(VmConstraint2::MapOp(MapOpSpec {
-        // revokedInsertOp — `.aafiInsert` (op=4): the AFTER revoked root IS the AAFI insert of param0.
-        guard: sel_guard,
-        root: before_group,
-        key: key_col,
-        value: LeanExpr::Const(0),
-        new_root: after_group,
-        op: MapKind::AafiInsert,
-    }));
+    // THE COMMITTED DESCRIPTOR CARRIES BOTH MAP-OPS. Verify their shape against the layout-derived
+    // columns above rather than reconstructing them: two sources (the emitted bytes and the emitted
+    // Rust constants) that must agree, instead of one hand-built object agreeing with itself.
+    let desc = parse_vm_descriptor2(rotated_descriptor_json("revokeVmDescriptor2R24"))
+        .expect("revoke descriptor parses");
+    let map_ops: Vec<&MapOpSpec> = desc
+        .constraints
+        .iter()
+        .filter_map(|c| match c {
+            VmConstraint2::MapOp(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        map_ops.len(),
+        2,
+        "the deployed revoke member declares exactly the revokedFresh + revokedInsert map-ops"
+    );
+    let expect = |m: &MapOpSpec, op: MapKind, new_root: &[LeanExpr], what: &str| {
+        assert_eq!(m.op, op, "{what}: op kind");
+        assert_eq!(m.guard, sel_guard, "{what}: guarded by the revoke selector");
+        assert_eq!(m.key, key_col, "{what}: keyed on param0 (the revoked id)");
+        assert_eq!(
+            m.value,
+            LeanExpr::Const(0),
+            "{what}: a membership set, value 0"
+        );
+        assert_eq!(
+            m.root, before_group,
+            "{what}: reads the BEFORE revoked-root group at the layout-derived columns"
+        );
+        assert_eq!(
+            m.new_root, new_root,
+            "{what}: writes the expected root group"
+        );
+    };
+    // `.absent`: the revoked id is a NON-MEMBER of the BEFORE tree — no double revoke. An absent
+    // read leaves the root unchanged.
+    expect(map_ops[0], MapKind::Absent, &before_group, "revokedFreshOp");
+    // `.aafiInsert` (op=4): the AFTER revoked root IS the AAFI two-path insert of param0.
+    expect(
+        map_ops[1],
+        MapKind::AafiInsert,
+        &after_group,
+        "revokedInsertOp",
+    );
 
     // A real revoke turn: RevokeDelegation is a STATE-PASSTHROUGH row (nonce ticks); before == after
     // balance/state, the revoked id rides param0.
@@ -1590,11 +1625,22 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
             expected_rot_width(&desc),
             "the graduated rotated width + the gentian refuse extent"
         );
+        // 46 + 8 + 4 = 58, and BOTH middle terms changed at the nine-lane epoch:
+        //   * the VALUE8 completion pins went 7 -> 8 (PI 46..=52 -> 46..=53) — the ninth lane's
+        //     pin. For slot 0 they land on columns `AFTER_BASE + fieldLaneCol 0 k` =
+        //     435 + [113..=119, 176] = [548..=554, 611]; for slot 3, [569..=575, 614]. Lean's
+        //     `withSetFieldCompletionPins` guard moved with them (`piCount == 54`, up from 53).
+        //   * the 4 rc entries are now SLOTS, NOT PINS. `dropUnforcedPins` deleted all four
+        //     `withDfaRcPins` `.piBinding`s — the rc carrier columns are read by no gate, lookup,
+        //     hash site or range tooth — and left `piCount` alone, so PI 54..=57 survive as
+        //     verifier-supplied inputs the AIR ignores.
+        // The old message said "the 7 VALUE8 completion pins (46..=52) + 4 rc" and was wrong on
+        // both counts, not just on the total.
         assert_eq!(
-            desc.public_input_count, 57,
-            "setField is a 46-PI cohort member + the 7 VALUE8 completion pins (46..=52) + 4 rc; it \
-             was 50 while the member rode the freeze-ALL wrap that made an honest 32-byte write \
-             unprovable"
+            desc.public_input_count, 58,
+            "setField is a 46-PI cohort member + the 8 VALUE8 completion pins (46..=53) + the 4 \
+             unpinned rc tail slots (54..=57); it was 50 while the member rode the freeze-ALL wrap \
+             that made an honest 32-byte write unprovable"
         );
 
         // A real setField turn: the field write ticks the nonce (before 5 → after 6); the

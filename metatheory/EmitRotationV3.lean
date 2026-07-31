@@ -126,9 +126,13 @@ def main : IO Unit := do
   for (key, d0) in v3RegistryCapOpenDep do
     let d := (availOverride.lookup key).getD d0
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 <| Dregg2.Circuit.Emit.UnforcedPiPins.dropUnforcedPins <| hardenLastRow <| d}"
-  -- THE TURN-IDENTITY WELD (CapOpenTurnPins): the transfer cap-open PLUS the three turn-identity PI
-  -- pins welding `capOpenCols.src`/`actor`/`dst` to published PIs (the in-circuit realization of
-  -- `TurnIdentityBound`/`hsrc`). Emitted as a NEW member (`transferCapOpenTBVmDescriptor2R24`) so the
+  -- THE TURN-IDENTITY WELD (CapOpenTurnPins): the transfer cap-open PLUS the ONE turn-identity PI
+  -- pin welding the EXISTING `capOpenCols.src` column to `PI[piCount]` (the in-circuit realization
+  -- of `TurnIdentityBound`/`hsrc`). It used to weld `actor`/`dst` too, on two columns this module
+  -- introduced and nothing else read; those were the prover-chooses-both-sides shape the
+  -- `dropUnforcedPins` line below removes generically, and `CapOpenTurnPins` removed them at the
+  -- SOURCE on 2026-07-30. `TurnAuthCapOpenWeld` is the successor that publishes them FORCED.
+  -- Emitted as a NEW member (`transferCapOpenTBVmDescriptor2R24`) so the
   -- PROVEN turn-pinned descriptor rides the wire and the drift gate covers it. The cutover routing the
   -- live transfer cap-open through THIS (the prover's column-fill + the verifier's turn-identity PI
   -- anchor) is the named remaining integration — see CapOpenTurnPins / proof_verify.

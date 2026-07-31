@@ -38,10 +38,37 @@ use dregg_turn::rotation_witness as rw;
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 
 /// The RECORDED pre-flip deployed baseline ([M], docs/MEASURE-legacy-1felt-chain-drop.md).
+///
+/// ⚠ THESE THREE ARE RETIRED-GEOMETRY FIGURES and are used ONLY in the report `println!`s at the
+/// bottom of this file. They were measured on the 178-limb member; the deployed member is now
+/// 184-limb, so the byte/cell/millisecond deltas they print are CROSS-EPOCH and overstate the S2
+/// deletion's yield by whatever the nine-lane epoch itself added. They are kept, labelled, rather
+/// than silently re-typed, because nobody has re-measured them.
 const BASELINE_BYTES: usize = 556_810;
 const BASELINE_CELLS: usize = 578_720;
 const BASELINE_PROVER_MS: f64 = 637.9;
-const BASELINE_WIDTH: usize = 2664;
+
+/// The UNCOMPACTED deployed wide-transfer width at the CURRENT geometry — the only baseline the
+/// width assertion below uses, and the one figure of the four that is re-derived rather than
+/// recorded:
+///
+/// ```text
+/// UNCOMPACTED = <narrow deployed cohort trace_width> + WIDE_CARRIER_APPENDIX + 2 membership teeth
+///   178-limb:  1702 + 960 + 2 = 2664   (the recorded [M] baseline, reproduced exactly)
+///   184-limb:  1746 + 992 + 2 = 2740
+/// ```
+///
+/// The +76 is `44` on the narrow member (`2·ΔB_SPAN + 7·ΔN_ROT_SITES = 16 + 28`) plus `32` on the
+/// carrier appendix (`2 · 8 · ΔWIDE_NUM_CARRIERS = 2·8·2`). Cross-check that this is the right
+/// baseline and not a fitted number: `2740 − S2_DELETED_COLS(992) − e1_drop(94) = 1654`, which is
+/// the committed `transferVmDescriptor2R24` wide width, and the assertion below computes exactly
+/// that subtraction from live constants.
+///
+/// **The deletion's CLAIM is unchanged.** It removed `960 + 94 = 1054` of 2664 columns (−39.6%);
+/// it now removes `992 + 94 = 1086` of 2740 (−39.6%). The absolute saving grew by 32 because the
+/// S2 band grows with the limb count. Nothing about the S2 deletion's value is falsified — only
+/// the premise that a 178-limb baseline describes the member being measured.
+const BASELINE_WIDTH: usize = 2740;
 
 fn open_permissions() -> Permissions {
     Permissions {

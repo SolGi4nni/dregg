@@ -35,6 +35,44 @@ add the carry-chain, schoolbook-product, Euclidean-reduction, and bit-decomposit
 
 `Int`-valued, `sorry`-free, `#assert_axioms`-clean; the STATEMENTS are audited (no vacuity — every
 op is exhibited true AND its exploit exhibited false at the deployed params).
+
+## ⚠ WHAT THIS LIBRARY IS NOT, AND THE SECOND POSITIONAL ALGEBRA THAT LIVES BESIDE IT
+
+The header above says a weld gets "one algebra, not five". Measured 2026-07-31, that is not true of
+the tree, and the exception is worth stating here rather than being rediscovered:
+`Dregg2.Circuit.FieldLanes9` carries its OWN positional-numeral core — `ofDigits` / `digitsN` over
+`Nat`, with `ofDigits_append`, `ofDigits_lt`, `ofDigits_digitsN`, `digitsN_ofDigits`, `digitsN_lt`.
+It is not a mirror written in ignorance; it is there because of two real gaps.
+
+**Gap 1 — DIRECTION. This library only ever goes DIGITS → VALUE.** Every keystone here takes a limb
+list as given and says what integer it denotes (`bsValid_val`, `addValid_val`, `mul2_val`) or which
+limb lists are admissible (`_iff`). `Dregg2.Bignum.DigitInjective.bignumVal_injective` completes that
+direction: ranged limb lists are determined BY their value. **Nothing here goes VALUE → DIGITS** — no
+`digitsN`, and no `ofDigits (digitsN b k n) = n`. A CODEC needs exactly that half: it is handed a
+value and must produce the digits. §6's `ModValid` is ONE Euclidean step of it (`x = q·m + r`, with
+`modValid_pins_ediv`/`_emod` pinning `q`/`r`), and `digitsN` is that step ITERATED — so the missing
+piece is an induction over §6, not a new theory. It has simply never been written.
+
+⚑ So the natural-looking shortcut is wrong: `bignumVal_injective` does NOT discharge a codec's
+injectivity. It says two ranged digit lists with the same value are equal; a codec needs that two
+distinct values give distinct digit lists. Those are injectivity of DIFFERENT MAPS, and only one of
+them is proved here.
+
+**Gap 2 — CARRIER.** This library is `Int`-valued because `CaveatBignum`'s borrow chain needs signed
+intermediates. A codec's lanes are `Nat`/`Fin` — that is the shape the deployed `[BabyBear; 9]` has,
+and it is what makes the `#guard` protocol vectors (the pin to the Rust twin) decidable. Routing a
+codec through this carrier would put an `Int.toNat` at every leaf and buy nothing.
+
+**And a third difference that is not a gap but a LAYER.** Everything here is EMITTABLE — §8 ties each
+op to a real `Dregg2.Circuit.Constraint`. `FieldLanes9` emits nothing: measured across all 174
+deployed members, there is not one range check, constant pin or arithmetic gate on the fields lane
+columns. It is a producer-side encoding whose in-AIR image is unconstrained. Two different layers.
+
+**Verdict, so the next reader does not re-litigate it: do NOT re-derive `fieldToLanes9_injective` or
+`commitmentToLanes16_injective` through this library.** The one move that would pay is closing Gap 1
+here — lifting `digitsN` and `ofDigits_digitsN` out of `FieldLanes9` into this file (or a `Nat`-side
+sibling) — and that is worth doing when a SECOND codec needs it, not before. One consumer is how the
+17-implementation zoo this tree spent a month deleting got started.
 -/
 import Dregg2.Circuit.CaveatBignumCompare
 import Mathlib.Data.Int.ModEq

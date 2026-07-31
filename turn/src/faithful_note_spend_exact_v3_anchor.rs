@@ -1,12 +1,18 @@
 //! Durable rotated-state acceptance anchor for exact FNSP-v3.
 //!
-//! The proof-facing rotated trace carries a 179-felt BEFORE payload and an AFTER payload.  A live
-//! verifier must not accept those 179 felts from the proof or caller: doing so would let a valid
-//! exact-nullifier transition float free of the durable actor state it is supposed to update.
-//! This module builds the frame from the durable [`Cell`] and [`V9RotationContext`] instead:
+//! The proof-facing rotated trace carries a [`ROTATED_PAYLOAD_WIDTH`]-felt BEFORE payload and an
+//! AFTER payload.  A live verifier must not accept those felts from the proof or caller: doing so
+//! would let a valid exact-nullifier transition float free of the durable actor state it is supposed
+//! to update.  This module builds the frame from the durable [`Cell`] and [`V9RotationContext`]
+//! instead:
 //!
-//! 1. [`compute_rotated_pre_limbs`] authors the canonical 178 pre-iroot limbs;
-//! 2. the context's durable `iroot` becomes limb 178;
+//! ⚠ THE WIDTH IS DERIVED, NEVER WRITTEN DOWN.  This header read "179 felts" / "178 pre-iroot limbs"
+//! through the nine-lane geometry flag day (`e662ade32`, `NUM_PRE_LIMBS` 178 → 184), and so did the
+//! test below, which had been red on `185 != 179` since.  Every count here comes from
+//! `layout_generated` via `exact_nullifier_aafi_rotated_trace`.
+//!
+//! 1. [`compute_rotated_pre_limbs`] authors the canonical [`ROTATED_PRE_LIMBS`] pre-iroot limbs;
+//! 2. the context's durable `iroot` becomes limb [`ROTATED_IROOT_OFFSET`];
 //! 3. the context's nullifier octet must equal the independently reconstructed prior `FNS3`;
 //! 4. AFTER is derived by replacing only the exact eight [`NULLIFIER_OFFSETS`]; and
 //! 5. both outer commitments are recomputed with the consensus chip chain and checked against
@@ -398,14 +404,19 @@ mod tests {
     }
 
     #[test]
-    fn durable_anchor_builds_all_179_limbs_and_preserves_the_other_171() {
+    fn durable_anchor_builds_every_limb_and_preserves_the_stable_frame() {
         let (_, prior, successor) = first_transition();
         let ctx = context(prior);
         let anchor = derive_exact_fnsp_v3_durable_anchor(&actor(), &ctx, prior, successor)
             .expect("durable anchor");
 
-        assert_eq!(anchor.before_payload().len(), 179);
-        assert_eq!(anchor.after_payload().len(), 179);
+        // ⚑ DERIVED, NOT RE-PINNED. These read `179` (= 178 pre-limbs + iroot) and had been RED at
+        // `185 != 179` since the nine-lane geometry landed. The repair is not "write 185": it is to
+        // read the emitted width, so the next geometry move edits `layout_generated` and nothing
+        // else. This is the same class as `28695cefc` — a hand-written constant beside a generated
+        // one.
+        assert_eq!(anchor.before_payload().len(), ROTATED_PAYLOAD_WIDTH);
+        assert_eq!(anchor.after_payload().len(), ROTATED_PAYLOAD_WIDTH);
         let changed: Vec<_> = anchor
             .before_payload()
             .iter()
@@ -414,7 +425,7 @@ mod tests {
             .filter_map(|(offset, (before, after))| (before != after).then_some(offset))
             .collect();
         assert_eq!(changed, NULLIFIER_OFFSETS);
-        assert_eq!(179 - changed.len(), STABLE_FRAME_CELLS);
+        assert_eq!(ROTATED_PAYLOAD_WIDTH - changed.len(), STABLE_FRAME_CELLS);
         assert_eq!(
             anchor.before_payload()[ROTATED_IROOT_OFFSET],
             anchor.after_payload()[ROTATED_IROOT_OFFSET]

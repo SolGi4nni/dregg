@@ -165,6 +165,43 @@ Pricing the alternatives on this basis:
 | **16 × u16** | **16** | **1** | **16 lookups at the standard 2^16 width** | **yes** | **4× in Rust, 1× in Lean** | **recommended** |
 | 8 × u32 mod p (today) | 8 | 1 | none | yes | everywhere | non-injective, O(1) collisions |
 
+⚑ **CORRECTION, 2026-07-31 — the "9 felts" row priced a DIFFERENT ENCODING from the one that
+shipped, and this table's verdict on it is wrong.**
+
+That row assumes *9 × base-`p` digits*: hence "big-int `< 2^256` borrow chain", "not byte-aligned",
+"Lean model would be genuinely painful". The nine-lane encoder actually deployed
+(`metatheory/Dregg2/Circuit/FieldLanes9.lean`, Rust twin `effect_vm::field_limbs9`) is **not that**.
+It is 2 pinned `u32 % p` lanes — the kernel u64 window, unchanged deployed ABI — plus **7 base-`2^28`
+digits** of `W = ofDigits 256 (b[0..24] ++ [q₀ + 4·q₁])`, where the single extra base-256 digit
+carries the two quotients the pinned lanes' `mod p` discards. Re-priced on this table's own axes:
+
+| | 9 × base-`p` (as costed) | `field_limbs9` (as shipped) |
+|---|---|---|
+| range gadget | big-int `< 2^256` borrow chain | none needed for injectivity; canonicity is 7 × `< 2^28` |
+| byte-aligned | no | **yes** — a 25-byte source repacked into 28-bit digits |
+| Lean model | "genuinely painful" | 486 lines, total decoder + machine-checked left inverse, `#assert_axioms`-clean |
+| injective | yes | yes (`fieldToLanes9_injective`) |
+
+So "strictly dominated" does not hold. And at the **`fields[0..8]` rotated slots specifically,
+`Limbs16` is not merely more expensive — it is disqualified twice over**:
+
+1. **It cannot hold lane 0.** A 16-bit lane cannot carry the kernel's 32-bit u64-lane `lo32`, which
+   `field_to_u64`, `gFieldWriteP1`, the escrow / discharge / vault welds and every app encoder read.
+   §2.2's "width is free" argument is about ABSORB RATE; these are **persistent columns**, which is
+   the one case §2.2 itself excludes ("the width penalty is real only where limbs sit in persistent
+   columns").
+2. **It does not fit the layout.** 8 fields × 16 lanes = 128 columns against the nonet's 72, so
+   `NUM_PRE_LIMBS` 184 → 240, which **violates `RotatedLayout.Legal.bodyAligned`** (`236 % 3 = 2`;
+   the wire-commit chain folds arity-3 after an arity-4 head) and would have to be 241 with a column
+   wasted. That is `B_SPAN` 247 → 323 and `APPENDIX_SPAN` 537 → 689: **+152 columns on each of the
+   174 emitted members and +38 Poseidon2 absorptions per row** — buying nothing, since both
+   encodings are injective and the anchor's binding is the sponge's (`2^123.63`) either way.
+
+`Limbs16` remains the right recommendation for **absorbed preimages**, which is what §2.6 is about
+and where 16 lanes is exactly one `CHIP_RATE` absorb. The correction is narrow: at a **committed,
+persistent, ABI-pinned slot**, the minimum-width injective encoding wins, and it is not painful to
+model.
+
 11 × u24 is the interesting near-miss and it loses cleanly: it saves 5 felts of *preimage* width,
 which buys nothing because both fit in one absorb, and pays for it with a range-check story that
 either needs a 16-million-row table or decomposes back into 16-bit lookups anyway.

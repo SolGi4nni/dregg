@@ -83,7 +83,35 @@ abbrev Bytes32 := Fin 32 → Byte
 is exactly the deployed `[BabyBear; 9]` with no representability gap. -/
 abbrev Lanes9 := Fin 9 → Nat
 
-/-! ## Generic positional-numeral machinery (base `b`, low digit first) -/
+/-! ## Generic positional-numeral machinery (base `b`, low digit first)
+
+⚠ **THIS IS A SECOND POSITIONAL ALGEBRA AND `Dregg2.Bignum` IS THE FIRST.** Do not delete this block
+in favour of that one without reading why it is here; the answer is not "nobody looked".
+
+`Dregg2.Bignum` (over `Dregg2.Circuit.CaveatBignum.bignumVal`) is the emittable, `Int`-valued
+schoolbook library — compare/add/sub/mul/mod/range, each tied to a real `Dregg2.Circuit.Constraint`.
+`Dregg2.Bignum.DigitInjective.bignumVal_injective` even proves that ranged limb lists are determined
+by their value. **None of it discharges anything below**, for two reasons:
+
+1. **DIRECTION.** Every theorem there runs DIGITS → VALUE. `bignumVal_injective` says two ranged
+   digit lists with equal value are equal. A codec needs the converse map: a VALUE, and the digits
+   it determines — `digitsN` plus `ofDigits_digitsN`. `Bignum` §6's `ModValid` is one Euclidean step
+   of that (and pins `q`/`r` exactly); nobody iterated it. That iteration is `digitsN`, below.
+2. **CARRIER.** `Bignum` is `Int`-valued because the borrow chain needs signed intermediates. These
+   lanes are `Nat`, which is the deployed `[BabyBear; 9]`'s shape and what makes the `#guard` vectors
+   at the bottom of this file decidable — and those vectors are the whole pin to the Rust twin.
+
+⚑ And the encoder below is NOT a `bignumVal` instance in the first place, in the way the shape
+suggests. Lanes 0/1 are a `mod p` REDUCTION — deliberately non-injective, and no positional-digit
+theorem covers them. The injectivity comes from the DECODER being a left inverse
+(`lanes9ToField_fieldToLanes9`), which routes the quotient those lanes discard through
+`carryDigit` into the free lanes. That composition is this file's, not an algebra's.
+
+(By contrast `Dregg2.Circuit.CommitmentTreeWide.commitmentToLanes16` — 16 lanes of two base-256
+digits each — genuinely IS `DigitInjective.chunkedVal_injective` at `B = 256`, `width = 2`. Its
+bespoke proof is ten lines and the generic route through `Int` would be longer, so it stays bespoke
+too. Recorded so the census is honest, not as a TODO.)
+-/
 
 /-- `ofDigits b [d₀, d₁, …] = d₀ + b·d₁ + b²·d₂ + …` -/
 def ofDigits (b : Nat) : List Nat → Nat

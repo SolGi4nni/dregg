@@ -32,13 +32,13 @@
 //! else.
 //!
 //! [`free_pin_census_over_the_deployed_registry`],
-//! [`cap_open_tb_free_column_forge_and_its_anchor_control`] and
-//! [`mint_free_pin_forge_and_its_reconstruction_control`] measure the second, DISTINCT hazard the
+//! [`cap_open_tb_free_pins_are_gone_from_the_deployed_bytes`] and
+//! [`mint_free_pin_is_gone_from_the_deployed_bytes`] track the second, DISTINCT hazard the
 //! same audit predicted: PI slots pinned to a column **no other constraint mentions**, so the
-//! prover picks the column AND the published value. Note these pins are on the FIRST row, so
-//! last-row vacuity is not what makes them free — nothing referencing the column is. Each is
-//! exercised end-to-end INCLUDING the deployed anchor/reconstruction that compensates for it, and
-//! that compensation is the difference between them and the endpoint forge above.
+//! prover picks the column AND the published value. Note those pins were on the FIRST row, so
+//! last-row vacuity was not what made them free — nothing referencing the column was. They were
+//! measured end-to-end here, forge and compensating control, until the 2026-07-31 emitter
+//! subtraction removed them; see the section below.
 //!
 //! ## ⚑ INVERTED — the hole is CLOSED, and these now assert the refusal
 //!
@@ -70,16 +70,42 @@
 //! the last row is the wrap row. The last row's BEFORE block is forced by the INCOMING transition
 //! from row `n−2`; the newly-live gates carry it the rest of the way to the AFTER block.
 //!
-//! ## ⚑ What this file does NOT say is closed
+//! ## ⚑ INVERTED AGAIN, 2026-07-31 — the SECOND hazard is closed too, at the emitter
 //!
-//! [`free_pin_census_over_the_deployed_registry`],
-//! [`cap_open_tb_free_column_forge_and_its_anchor_control`] and
-//! [`mint_free_pin_forge_and_its_reconstruction_control`] are UNCHANGED and still GREEN, because
-//! the second hazard is still open: **173 PI slots across the 57 wide members are pinned to a
-//! column no other constraint mentions.** Those pins are free because nothing REFERENCES the
-//! column, not because of last-row vacuity — a whole-domain gate over columns the descriptor never
-//! names would change nothing. They are compensated at the wire (the executor overwrites those PIs
-//! from the trusted turn), and that compensation, not the AIR, is what stops them.
+//! This section used to read: *"…are UNCHANGED and still GREEN, because the second hazard is still
+//! open: **173 PI slots across the 57 wide members are pinned to a column no other constraint
+//! mentions.** … They are compensated at the wire (the executor overwrites those PIs from the
+//! trusted turn), and that compensation, not the AIR, is what stops them."*
+//!
+//! **That is now false in both halves, and the AIR — not the wire — is what changed.** The
+//! convergence re-emit shipped `Dregg2/Circuit/Emit/UnforcedPiPins.lean`'s `dropUnforcedPins`
+//! registry-wide: every `.piBinding` whose column no NON-pin constraint, hash site or range tooth
+//! reads was DELETED, 159 of them across the wide registry (1639 pins → 1480). The subtraction is
+//! proved a weakening (`satisfied2_dropUnforcedPins`), a fixpoint
+//! (`unforcedPins_dropUnforcedPins` — the residue is ZERO by theorem, not by re-measurement) and a
+//! no-op (`unforced_pin_row_admits_any_value`: overwrite the column and every slot its pins publish
+//! with an arbitrary value and every constraint still holds).
+//!
+//! Nothing got weaker. A pin that publishes a column nothing else reads refuses nothing, so
+//! deleting it removes no refusal — it removes a CLAIM. `piCount` is untouched, so the slots
+//! survive as what they always were: verifier-supplied inputs the AIR ignores. The wire
+//! compensation is unchanged; what is gone is the descriptor telling a light client those slots
+//! were attested.
+//!
+//! Measured at HEAD by [`free_pin_census_over_the_deployed_registry`], which is the reason that
+//! test is now an EQUALITY rather than a `> 0`:
+//!
+//!   * under this file's own reference notion, **173 → 6**;
+//!   * under Lean's `forcedCols` (which additionally counts `map_op` / `mem_op` / `proof_bind`
+//!     references), **0** — the fixpoint theorem.
+//!
+//! The gap between the two numbers is not noise, it is a REAL DIFFERENCE OF NOTION, and it is
+//! documented at the census helper.
+//!
+//! Consequently the two forge tests are inverted: the hazards they exercised are no longer
+//! representable, because the pins they forged are gone from the deployed bytes. Each now asserts
+//! the ABSENCE, which is a falsifiable statement about the artifact — it goes red the day an
+//! emitter re-adds a decorative pin.
 //!
 //! Read-only w.r.t. `circuit/src`: nothing here is a fix.
 
@@ -90,10 +116,8 @@ use dregg_circuit::descriptor_ir2::{
     prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST, CapOpenWitness, FACET_MASK_HI, RotatedBlockWitness,
-    SIGNATURE_AUTH_TAG, WRITE_MASK_LO, anchor_cap_open_turn_pins,
-    generate_rotated_effect_vm_descriptor_and_trace_wide,
-    generate_rotated_transfer_cap_open_tb_wide, transfer_caveat_manifest,
+    ROT_PI_COUNT, RotatedBlockWitness, generate_rotated_effect_vm_descriptor_and_trace_wide,
+    transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
@@ -860,6 +884,39 @@ fn non_pin_referenced_cols(desc: &EffectVmDescriptor2) -> std::collections::Hash
 /// **THE FREE-COLUMN CENSUS, MEASURED.** A `PiBinding` whose column appears in NO other constraint
 /// means the prover chooses the column and the published value together — the pin is satisfied by
 /// construction and publishes whatever the prover wants.
+///
+/// ⚑ INVERTED 2026-07-31. This was `assert!(total_free > 0)` with the message *"MEASURED: no free
+/// pins remain — the class named by the audit is closed and this test should be retired rather than
+/// relaxed"*, and it measured **173**. The emitter subtraction (`UnforcedPiPins.dropUnforcedPins`,
+/// registry-wide in the convergence re-emit) took it to **6**, so the inequality is now an
+/// EQUALITY over a NAMED set: an inequality here would keep passing while the residue changed
+/// character, which is the whole failure this file exists to catch.
+///
+/// ## The two notions, and why this number is 6 and Lean's is 0
+///
+/// [`non_pin_referenced_cols`] counts gates, boundaries, transitions, lookups and window-gates. It
+/// does NOT count `mem_op` / `map_op` / `umem_op` / `proof_bind` — the bus-bearing kinds, whose
+/// content is a permutation/lookup argument rather than a row-local polynomial. Lean's `forcedCols`
+/// counts all of them, which is why `unforcedPins_dropUnforcedPins` gives **0** on the same bytes.
+/// Both numbers are asserted here because their DIFFERENCE is the interesting object, and it splits
+/// exactly two ways:
+///
+///   * **4 pins are genuinely forced, by a `map_op`.** `MapOp::holds_at` reconciles the pinned
+///     column against the pre/post 8-felt roots — a real constraint this helper simply does not
+///     look at. `factory`/`spawn`'s cell-identity pins are in this class and are NOT a hazard.
+///   * **2 pins are `customVmDescriptor2R24`'s, forced only by a `proof_bind`** — and a `proof_bind`
+///     has NO row denotation at all. `descriptor_ir2.rs`'s `Ir2Air::eval` `continue`s on it (it is
+///     grouped with the bus kinds but emits no bus interaction), and Lean's `VmConstraint2.holdsAt`
+///     is `trivial` for it. So Lean's `forcedCols` calls those two columns forced on the strength of
+///     a DECLARATION, and they are in fact exactly as prover-chosen as the 159 that were deleted.
+///     They survive the subtraction as a bookkeeping artifact, not as a binding.
+///
+/// That second bullet is not a complaint about the subtraction; the custom member's proof-commitment
+/// and program-VK identity was NEVER bound in-AIR (see `effect_vm_descriptors::custom_commit_version`
+/// and `require_no_unbacked_proof_bind`: "the ONLY thing that makes the published claim mean anything
+/// is the per-turn fold connecting it to a re-proven sub-proof leaf"). It is the standing measurement
+/// that `forcedCols` over-counts by exactly these two, so the next reader does not mistake their
+/// survival for evidence that the AIR checks them.
 #[test]
 fn free_pin_census_over_the_deployed_registry() {
     let mut total_members = 0usize;
@@ -891,32 +948,57 @@ fn free_pin_census_over_the_deployed_registry() {
             worst.push((key.to_string(), free));
         }
     }
-    worst.sort_by_key(|(_, f)| std::cmp::Reverse(f.len()));
+    worst.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
     eprintln!(
-        "FREE-PIN CENSUS over {total_members} deployed wide members: {total_free} PI slots pinned to a column no other constraint mentions"
+        "FREE-PIN CENSUS over {total_members} deployed wide members: {total_free} PI slots pinned to a column no other ROW-LOCAL constraint mentions"
     );
-    for (k, f) in worst.iter().take(12) {
+    for (k, f) in worst.iter() {
         eprintln!("   {k}: PIs {f:?}");
     }
-    assert!(
-        total_free > 0,
-        "MEASURED: no free pins remain — the class named by the audit is closed and this test \
-         should be retired rather than relaxed"
+    assert_eq!(
+        worst,
+        vec![
+            ("customVmDescriptor2R24".to_string(), vec![46, 54]),
+            ("factoryVmDescriptor2R24".to_string(), vec![46]),
+            ("spawnCapOpenVmDescriptor2R24".to_string(), vec![46]),
+            ("spawnVmDescriptor2R24".to_string(), vec![46]),
+            ("spawnWriteCapOpenVmDescriptor2R24".to_string(), vec![46]),
+        ],
+        "the residue after `dropUnforcedPins`, NAMED. 4 of these 6 are forced by a `map_op` this \
+         helper does not read (factory/spawn cell identity) and are not a hazard. The other 2 are \
+         `custom`'s proof-commitment and program-VK limb-0 pins, whose only non-pin reader is a \
+         `proof_bind` — a DECLARATION with no row denotation in either the Lean model or the \
+         deployed `Ir2Air`. If this set grows, a new decorative pin was emitted; if `custom`'s two \
+         disappear, the fold's PI-side binding is the only thing left and `custom_commit_version` \
+         must stop keying on pins entirely."
     );
+    assert_eq!(total_free, 6, "…and nothing else is free under this notion");
 }
 
-/// **THE `transferCapOpenTB` FREE-COLUMN FORGE, end to end — INCLUDING the compensating control
-/// the deployed verifier already carries.** The audit predicted cols 928/929 (PIs 47/48, the turn's
-/// actor and destination) accept arbitrary values. Measured in two halves:
+/// **THE `transferCapOpenTB` FREE COLUMNS — GONE FROM THE DEPLOYED BYTES.**
 ///
-///   (a) at the AIR alone: a self-consistent forged (column, PI) pair proves and verifies;
-///   (b) through the DEPLOYED light-client anchor (`anchor_cap_open_turn_pins`, which overwrites
-///       those PIs from the TRUSTED turn before verifying): the same proof is REFUSED.
+/// ⚑ INVERTED 2026-07-31, and the ACCEPT it used to measure was real. This was
+/// `cap_open_tb_free_column_forge_and_its_anchor_control`: it built an honest wide cap-open-TB
+/// proof, forged a self-consistent (column, PI) pair at wide cols 928/929 (PIs 47/48 — the turn's
+/// `actor` and `dst`), and MEASURED that it proves and verifies at the AIR, then showed the
+/// deployed light-client anchor refusing the same proof. The audit predicted the ACCEPT and got it.
 ///
-/// (b) is the paired control and it is also the answer: the free column is real, and the wire is
-/// not fooled by it, because the light client does not read the prover's value.
+/// The hole is now closed at the EMITTER, not at the wire. `CapOpenTurnPins` deleted both pins and
+/// both columns at the Lean source (2026-07-30) on exactly the measurement this test made: a weld
+/// publishing a prover-chosen felt for *who acted* and *who received* is worse than no weld,
+/// because its name says otherwise. So the forge is no longer representable — there is nothing to
+/// forge — and the honest successor assertion is the ABSENCE, which is falsifiable: it goes red the
+/// day an emitter re-adds a decorative pin in that window.
+///
+/// ⚠ It must NOT go red if a FORCED `actor`/`dst` weld arrives. That is the point of the second
+/// half: `Dregg2/Circuit/Emit/TurnAuthCapOpenWeld.lean` is staged to re-publish both as `turnIn` of
+/// the Lamport turn-digest lookup whose 8-felt output the signed message recomposes — at which
+/// point their columns ARE read by a non-pin constraint, `unforcedPins` returns empty on that
+/// member (kernel-checked in that file's §3), and this test's condition is satisfied by a genuine
+/// binding rather than by absence. So the assertion is "every pin in the turn-identity window names
+/// a column something else reads", not "there is exactly one pin".
 #[test]
-fn cap_open_tb_free_column_forge_and_its_anchor_control() {
+fn cap_open_tb_free_pins_are_gone_from_the_deployed_bytes() {
     let name = "transferCapOpenTBVmDescriptor2R24";
     let json = WIDE_REGISTRY_STAGED_TSV
         .lines()
@@ -931,269 +1013,128 @@ fn cap_open_tb_free_column_forge_and_its_anchor_control() {
         })
         .expect("member present");
     let desc = parse_vm_descriptor2(json).unwrap();
-
-    let before_balance: i64 = 100_000;
-    let st = CellState::new(before_balance as u64, 0);
-    let effects = vec![Effect::Transfer {
-        amount: 1_000,
-        direction: 1,
-    }];
-    let mut ledger = Ledger::new();
-    let before_cell = producer_cell(before_balance, 0);
-    let after_cell = producer_cell(before_balance - 1_000, 1);
-    ledger.insert_cell(after_cell.clone()).unwrap();
-    let nr = dregg_circuit::heap_root::empty_heap_root_8();
-    let cr = dregg_circuit::heap_root::empty_heap_root_8();
-    let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
-    let before_w = rw::produce(
-        &before_cell,
-        &ledger,
-        &nr,
-        &cr,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ledger,
-        &nr,
-        &cr,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
-    let src_felt: u32 = 7_777;
-    let chosen: [BabyBear; 7] = [
-        BabyBear::new(0xA11CE),
-        BabyBear::new(src_felt),
-        BabyBear::new(SIGNATURE_AUTH_TAG),
-        BabyBear::new(WRITE_MASK_LO),
-        BabyBear::new(FACET_MASK_HI),
-        BabyBear::new(0x00FF_FFFF),
-        BabyBear::new(42),
-    ];
-    let other: [BabyBear; 7] = [
-        BabyBear::new(0xBEEF),
-        BabyBear::new(123),
-        BabyBear::new(1),
-        BabyBear::new(1),
-        BabyBear::new(0),
-        BabyBear::new(9),
-        BabyBear::new(0),
-    ];
-    let cap_open = CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness");
-    let src = BabyBear::new(src_felt);
-    let (trace, dpis) = generate_rotated_transfer_cap_open_tb_wide(
-        &st,
-        &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
-        &transfer_caveat_manifest(),
-        &cap_open,
-        src,
-        src,
-        src,
-    )
-    .expect("wide cap-open-TB generation");
-
-    // The two pinned columns, READ OUT OF THE DESCRIPTOR.
-    let pin_col = |pi_want: usize| -> (usize, VmRow) {
-        desc.constraints
-            .iter()
-            .find_map(|k| match k {
-                VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
-                    if *pi_index == pi_want =>
-                {
-                    Some((*col, *row))
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("PI {pi_want} is pinned"))
-    };
-    let (actor_col, actor_row) = pin_col(CAP_OPEN_TB_PI_ACTOR);
-    let (dst_col, dst_row) = pin_col(CAP_OPEN_TB_PI_DST);
     let referenced = non_pin_referenced_cols(&desc);
-    eprintln!(
-        "{name}: actor PI {CAP_OPEN_TB_PI_ACTOR} -> col {actor_col} ({actor_row:?}), \
-         dst PI {CAP_OPEN_TB_PI_DST} -> col {dst_col} ({dst_row:?}); \
-         referenced elsewhere: actor={} dst={}",
-        referenced.contains(&actor_col),
-        referenced.contains(&dst_col)
-    );
 
-    let mut t = trace.clone();
-    let mut p = dpis.clone();
-    let forged_actor = BabyBear::new(0x0DEA_DBEE);
-    let forged_dst = BabyBear::new(0x0BAD_F00D % 2_013_265_921);
-    let r_actor = match actor_row {
-        VmRow::First => 0,
-        VmRow::Last => t.len() - 1,
-    };
-    let r_dst = match dst_row {
-        VmRow::First => 0,
-        VmRow::Last => t.len() - 1,
-    };
-    t[r_actor][actor_col] = forged_actor;
-    t[r_dst][dst_col] = forged_dst;
-    p[CAP_OPEN_TB_PI_ACTOR] = forged_actor;
-    p[CAP_OPEN_TB_PI_DST] = forged_dst;
-
-    let mb = MemBoundaryWitness::default();
-    let heaps: Vec<Vec<HeapLeaf>> = vec![];
-    let air_level = try_prove(&desc, &t, &p, &mb, &heaps).and_then(|proof| {
-        verify_vm_descriptor2(&desc, &proof, &p)
-            .map(|()| proof)
-            .map_err(|e| format!("verify: {e}"))
-    });
-    match &air_level {
-        Ok(proof) => {
-            eprintln!(
-                "MEASURED — {name} AIR-LEVEL: a forged actor/dst pair (self-consistent column+PI) \
-                 PROVES and VERIFIES. The pin is satisfied by construction."
-            );
-            // (b) THE DEPLOYED CONTROL: the light client re-derives those PIs from the trusted
-            // turn. The same proof must then be REFUSED.
-            let mut anchored = p.clone();
-            anchor_cap_open_turn_pins(&mut anchored, src, src, src);
-            let anchored_result = verify_vm_descriptor2(&desc, proof, &anchored);
-            assert!(
-                anchored_result.is_err(),
-                "CONTROL FAILED: the forged proof survived the deployed trusted-turn anchor \
-                 (`anchor_cap_open_turn_pins`). If the anchor no longer bites, the free column IS \
-                 a wire-level forgery."
-            );
-            eprintln!(
-                "CONTROL — {name}: the DEPLOYED light-client anchor REFUSES the same proof: {}",
-                anchored_result.unwrap_err()
-            );
-        }
-        Err(e) => panic!(
-            "{name} free-column forge REFUTED at the AIR: {e}\n\
-             The audit predicted this ACCEPTS."
-        ),
-    }
-}
-
-/// **THE `mint` PIN — a PI bound to a column nothing else touches.** `mintVmDescriptor2R24` pins
-/// PI 46 to col 68 (`PARAM_BASE + param::MINT_HASH`) on the FIRST row. Measured above: that column
-/// appears in no gate, no lookup, no transition — so the prover chooses the column AND the
-/// published mint identity, and the pin holds by construction.
-///
-/// Measured in the same two halves as the cap-open pins:
-///   (a) at the AIR: an arbitrary self-consistent (col 68, PI 46) pair proves and verifies;
-///   (b) under the DEPLOYED reconstruction — the executor recomputes the mint identity from the
-///       turn's own carrier witness rather than reading the prover's — the same proof is REFUSED.
-#[test]
-fn mint_free_pin_forge_and_its_reconstruction_control() {
-    let name = "mintVmDescriptor2R24";
-    let st = CellState::new(100_000, 0);
-    let honest_mint_hash = BabyBear::new(0x00C0_FFEE);
-    let value_full: u64 = 4_242;
-    let effects = vec![Effect::BridgeMint {
-        value_lo: BabyBear::new(value_full as u32),
-        mint_hash: honest_mint_hash,
-        value_full,
-    }];
-    let before_cell = producer_cell(100_000, 0);
-    let after_cell = producer_cell(100_000 + value_full as i64, 1);
-    let mut ledger = Ledger::new();
-    ledger.insert_cell(after_cell.clone()).unwrap();
-    let nr = dregg_circuit::heap_root::empty_heap_root_8();
-    let cr = dregg_circuit::heap_root::empty_heap_root_8();
-    let receipt_log: Vec<[u8; 32]> = vec![[9u8; 32]];
-    let before_w = rw::produce(
-        &before_cell,
-        &ledger,
-        &nr,
-        &cr,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
-    let after_w = rw::produce(
-        &after_cell,
-        &ledger,
-        &nr,
-        &cr,
-        &dregg_turn::rotation_witness::empty_revoked_root_8(),
-        &receipt_log,
-        &Default::default(),
-    );
-    let (desc, trace, dpis, heaps, mb) = generate_rotated_effect_vm_descriptor_and_trace_wide(
-        &st,
-        &effects,
-        &bridge(&before_w),
-        &bridge(&after_w),
-        &dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest(),
-        None,
-        None,
-        None,
-        None,
-    )
-    .expect("the honest bridge-mint leg MUST dispatch");
-
-    // The pinned column, READ OUT OF THE DESCRIPTOR — and its reference count.
-    let (col, row) = desc
+    // The turn-identity window: the rotated base publishes 46 PIs, so anything the TB weld adds
+    // rides at 46 and above — below the 16 wide-commit anchors at the top of the vector.
+    let window = ROT_PI_COUNT..desc.public_input_count - 16;
+    let window_pins: Vec<(usize, usize)> = desc
         .constraints
         .iter()
-        .find_map(|k| match k {
-            VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
-                if *pi_index == MINT_HASH_PI =>
+        .filter_map(|k| match k {
+            VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. })
+                if window.contains(pi_index) =>
             {
-                Some((*col, *row))
+                Some((*pi_index, *col))
             }
             _ => None,
         })
-        .expect("mint pins PI 46");
-    let referenced = non_pin_referenced_cols(&desc);
-    eprintln!(
-        "{name}: mint-hash PI {MINT_HASH_PI} -> col {col} ({row:?}); referenced elsewhere: {}",
-        referenced.contains(&col)
-    );
-    assert_eq!(
-        dpis[MINT_HASH_PI], honest_mint_hash,
-        "the honest leg publishes the real mint hash"
-    );
+        .collect();
+    eprintln!("{name}: turn-identity window {window:?} pins {window_pins:?}");
 
-    let r = match row {
-        VmRow::First => 0,
-        VmRow::Last => trace.len() - 1,
-    };
-    let forged_hash = BabyBear::new(0x0BAD_1DEA);
-    let mut t = trace.clone();
-    let mut p = dpis.clone();
-    t[r][col] = forged_hash;
-    p[MINT_HASH_PI] = forged_hash;
-    // Re-derive the chip chains anyway, so an ACCEPT cannot be attributed to a stale lane.
-    let sites = chip_sites(&desc);
-    rehash_row(&sites, &mut t[r]);
-    rebuild_pis(&desc, &t, &mut p);
-    assert_eq!(p[MINT_HASH_PI], forged_hash);
-
-    let proof = match try_prove(&desc, &t, &p, &mb, &heaps) {
-        Ok(pr) => pr,
-        Err(e) => panic!("{name} free-pin forge REFUTED at the prover: {e}"),
-    };
-    verify_vm_descriptor2(&desc, &proof, &p)
-        .unwrap_or_else(|e| panic!("{name} free-pin forge REFUTED at the verifier: {e}"));
-    eprintln!(
-        "MEASURED — {name} AIR-LEVEL: an ARBITRARY mint identity (col {col} = PI {MINT_HASH_PI} = \
-         {forged_hash:?}) proves and verifies; the honest turn minted under {honest_mint_hash:?}."
-    );
-
-    // THE CONTROL: the deployed verifier does not read the prover's slot — it reconstructs the
-    // mint identity from the turn's own carrier witness. Substitute the reconstructed value.
-    let mut reconstructed = p.clone();
-    reconstructed[MINT_HASH_PI] = honest_mint_hash;
-    let control = verify_vm_descriptor2(&desc, &proof, &reconstructed);
+    // (a) NO FREE PIN SURVIVES IN THE WINDOW. Cols 928/929 were the two the audit named; the
+    //     statement is general so a differently-numbered replacement cannot slip through.
+    let free: Vec<(usize, usize)> = window_pins
+        .iter()
+        .copied()
+        .filter(|(_, col)| !referenced.contains(col))
+        .collect();
     assert!(
-        control.is_err(),
-        "CONTROL FAILED: the forged proof survived an executor-reconstructed mint identity. \
-         If the reconstruction no longer bites, the free pin IS a wire-level forgery."
+        free.is_empty(),
+        "{name}: a turn-identity PI is pinned to a column no other constraint reads: {free:?}. \
+         The prover then chooses the column AND the published felt, and a light client reading \
+         that slot is reading the prover. Two such pins (PI 47 -> col 928 `actor`, PI 48 -> col \
+         929 `dst`) were deleted on 2026-07-30 for exactly this; if one is back, check whether it \
+         is FORCED before believing it."
+    );
+
+    // (b) …AND THE FORCED ONE SURVIVED. A subtraction that deleted the whole window would satisfy
+    //     (a) vacuously; `src` is the weld that was always real, because `targetBindGate` chains
+    //     that column to the opened leaf and the depth-16 open chains the leaf to the cap root.
+    assert!(
+        window_pins.iter().any(|(pi, _)| *pi == ROT_PI_COUNT),
+        "{name}: the turn-identity `src` pin (PI {ROT_PI_COUNT}) must SURVIVE — its column IS \
+         read elsewhere, which is what makes it a binding and not a publication. Its loss would \
+         mean the turn-bound member no longer binds its source to the published turn at all."
+    );
+}
+
+/// **THE `mint` PIN — GONE FROM THE DEPLOYED BYTES.**
+///
+/// ⚑ INVERTED 2026-07-31, and like its cap-open sibling the ACCEPT it measured was real.
+/// `mintVmDescriptor2R24` pinned PI 46 to col 68 (`PARAM_BASE + param::MINT_HASH`) on the FIRST
+/// row, and this test — `mint_free_pin_forge_and_its_reconstruction_control` — proved that an
+/// ARBITRARY self-consistent (col 68, PI 46) pair proves and verifies, then showed the deployed
+/// executor's reconstruction (it recomputes the mint identity from the turn's own carrier witness
+/// rather than reading the prover's slot) refusing the same proof.
+///
+/// `dropUnforcedPins` deleted that pin, along with the member's four rc pins — five in all, which
+/// is exactly Lean's `#guard (v3Registry.lookup "mintVmDescriptor2R24" …) == some 5`. So the forge
+/// is unrepresentable: `find_map(pi_index == 46)` returns `None` and the `.expect("mint pins PI
+/// 46")` that used to open this test is the thing that now fails.
+///
+/// **Nothing was lost, and it is worth being exact about why**, because "the pin is gone" reads
+/// like a weakening. PI 46 is still in the PI vector (`dropUnforcedPins` leaves `piCount` alone),
+/// the executor still fills it from the turn's own carrier witness, and the fold still reads it.
+/// What changed is that the descriptor no longer CLAIMS the AIR ties that slot to a trace column.
+/// It never did tie it to anything a light client could rely on — col 68 appears in no gate, no
+/// lookup, no transition, which is what this test measured in the first place.
+#[test]
+fn mint_free_pin_is_gone_from_the_deployed_bytes() {
+    let name = "mintVmDescriptor2R24";
+    let json = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .find_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            if it.next() == Some(name) {
+                let _ = it.next();
+                it.next()
+            } else {
+                None
+            }
+        })
+        .expect("member present");
+    let desc = parse_vm_descriptor2(json).unwrap();
+    let referenced = non_pin_referenced_cols(&desc);
+
+    // The mint-hash column, named structurally (not as a literal): if the param layout moves, this
+    // moves with it and the test keeps asking the same question.
+    let mint_hash_col = dregg_circuit::effect_vm::columns::PARAM_BASE
+        + dregg_circuit::effect_vm::columns::param::MINT_HASH;
+    assert!(
+        !referenced.contains(&mint_hash_col),
+        "{name}: col {mint_hash_col} (the mint-hash param) is now READ by some constraint — the \
+         premise of this whole test changed. If the mint identity became genuinely forced, a pin \
+         on it is now a BINDING and should be restored; re-read the emitter before touching this."
+    );
+    let pinned_at: Vec<usize> = desc
+        .constraints
+        .iter()
+        .filter_map(|k| match k {
+            VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. })
+                if *col == mint_hash_col =>
+            {
+                Some(*pi_index)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        pinned_at.is_empty(),
+        "{name}: the mint-hash column is pinned at PI {pinned_at:?} while NOTHING else reads it — \
+         the prover chooses the column and the published mint identity together, and the pin holds \
+         by construction. That pin was deleted on 2026-07-31; its return is a regression unless \
+         the column became forced (checked above)."
+    );
+    // The slot itself is UNCHANGED — the subtraction removes claims, not published inputs.
+    assert!(
+        MINT_HASH_PI < desc.public_input_count,
+        "PI {MINT_HASH_PI} must still be a published slot: the executor fills it from the turn's \
+         own carrier witness and the fold reads it. `dropUnforcedPins` leaves `piCount` alone \
+         precisely so no producer's PI vector shape changes."
     );
     eprintln!(
-        "CONTROL — {name}: under the executor-reconstructed identity the same proof is REFUSED: {}",
-        control.unwrap_err()
+        "{name}: mint-hash col {mint_hash_col} is referenced by nothing AND pinned by nothing; \
+         PI {MINT_HASH_PI} survives as a verifier-supplied slot."
     );
 }

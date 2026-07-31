@@ -123,11 +123,17 @@ struct Honest {
 /// Build an honest single-effect setField trace whose written value sits entirely inside the kernel
 /// u64 lane (bytes `28..32`) — the smallest honest write there is.
 ///
-/// ⚑ Its completion lanes are NOT zero any more. They used to be, because `field_limbs8` lanes 2..7
-/// were `u32 % p` chunks over the (all-zero) bytes `0..24`; they now carry a Poseidon2 image over
-/// the whole 32-byte value, so an honest small write moves all seven freed lanes off zero. The
-/// deployed member frees and PUBLISHES exactly those lanes (PIs 46..=52), so this is provable —
-/// which is what `honest_small_value_setfield_proves_and_verifies` measures.
+/// ⚑ Its completion lanes are ZERO — and that assertion has now flipped twice, so read the reason
+/// rather than the value. Under the original `u32 % p` octet they were zero by ACCIDENT (chunks over
+/// the all-zero bytes `0..24`), and that accident was the `O(1)` alias. Under the hash-contained
+/// octet they were nonzero (a Poseidon2 image over the whole value). Under the deployed NINE-lane
+/// `field_limbs9` they are zero again and it is now CORRECT: the free lanes carry `b[0..24]` and the
+/// two `mod p` quotients VERBATIM, and a kernel-numeric write leaves both empty. Injectivity is a
+/// theorem (`fieldToLanes9_injective`), not an inference from how busy the lanes look.
+///
+/// The deployed member frees and PUBLISHES the written slot's eight completion lanes (PIs 46..=53,
+/// lane 8 at the NON-CONTIGUOUS column `176 + slot`), so this is provable either way — which is what
+/// `honest_small_value_setfield_proves_and_verifies` measures.
 fn build_honest_small() -> (Honest, BabyBear) {
     let before: i64 = 50_000;
     let mut field_bytes = [0u8; 32];
@@ -207,43 +213,72 @@ fn refused(h: &Honest, trace: &[Vec<BabyBear>], dpis: &[BabyBear]) -> bool {
     }
 }
 
-/// ⚑ **THE SELF-CHECK WAS INVERTED HERE AND THAT IS THE WHOLE MEASUREMENT.** It read
-/// "written-slot completion lane {k} must be zero" on every row, which held only while
-/// `field_limbs8` lanes 2..7 were `u32 % p` chunks over bytes `0..24` — the shape that collided in
-/// `O(1)` on the one octet with no byte-exact companion. Those lanes are a hash of the whole value
-/// now, so an honest SMALL write lights all seven, and the question this test answers changed with
-/// them: not "does a zero completion octet prove" but **"does a NONZERO one"**.
+/// ⚑ **THE SELF-CHECK HAS NOW BEEN INVERTED TWICE, WHICH IS THE REASON IT IS SPELLED OUT.** It read
+/// "written-slot completion lane {k} must be zero" (true only while `field_limbs8` lanes 2..7 were
+/// `u32 % p` chunks over bytes `0..24` — the shape that collided in `O(1)`), then "must be NONZERO"
+/// (true while those lanes were a Poseidon2 image over the whole value).
 ///
-/// It must, because the deployed member frees the written slot's lanes and publishes them as PIs
-/// 46..=52 (`withSetFieldCompletionPins`). If this ever refuses, the freeze-ALL wrap is back and the
-/// encoding change made honest field writes unprovable — which is the specific failure the fields
-/// octet repair had to avoid.
+/// Neither value was ever the property. The property is that the written slot's completion lanes are
+/// **EXACTLY the encoder's lanes for the written value** — pinned lane-for-lane against a fresh call
+/// to the encoder, whatever it happens to emit. Under the deployed nine-lane `field_limbs9` a
+/// kernel-numeric write's free lanes are zero again, and that is correct rather than a smell.
+///
+/// The write must PROVE, because the deployed member frees the written slot's lanes and publishes
+/// them as PIs 46..=53 (`withSetFieldCompletionPins`, eight lanes at the nine-lane geometry). If this
+/// ever refuses, the freeze-ALL wrap is back and the encoding change made honest field writes
+/// unprovable — the specific failure the fields repair had to avoid.
 #[test]
 fn honest_small_value_setfield_proves_and_verifies() {
     let (h, _v) = build_honest_small();
 
-    // The honest value8 the producer projected, recomputed from the encoder.
+    // The honest nonet the producer projected, recomputed from the encoder.
     let mut field_bytes = [0u8; 32];
     field_bytes[28..32].copy_from_slice(&1_000u32.to_be_bytes());
-    let honest = dregg_circuit::effect_vm::field_limbs8(&field_bytes);
+    let honest = dregg_circuit::effect_vm::field_limbs9(&field_bytes);
 
-    // Self-check: every row's written-slot completion lanes carry EXACTLY the honest lanes 1..7.
+    // Self-check: every row's written-slot completion lanes carry EXACTLY the honest lanes 1..=8.
+    // ⚠ Lane 8 is NON-CONTIGUOUS — read the Lean-emitted table, never `COMPLETION_BASE + 7`.
+    let cols = dregg_circuit::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL[SLOT];
+    assert_eq!(
+        &cols[1..8],
+        &[
+            COMPLETION_BASE,
+            COMPLETION_BASE + 1,
+            COMPLETION_BASE + 2,
+            COMPLETION_BASE + 3,
+            COMPLETION_BASE + 4,
+            COMPLETION_BASE + 5,
+            COMPLETION_BASE + 6
+        ],
+        "lanes 1..7 must still be the contiguous window this file's constant names"
+    );
+    assert_eq!(
+        cols[8],
+        176 + SLOT,
+        "lane 8 rides the flag-day column 176 + slot — outside the window"
+    );
     for (r, row) in h.trace.iter().enumerate() {
-        for k in 0..7 {
+        for lane in 1..9usize {
             assert_eq!(
-                row[AFTER_BASE + COMPLETION_BASE + k],
-                honest[1 + k],
-                "row {r}: written-slot completion lane {k} must be the honest field_limbs8 lane \
-                 {}",
-                1 + k
+                row[AFTER_BASE + cols[lane]],
+                honest[lane],
+                "row {r}: written-slot completion lane {lane} (col {}) must be the honest \
+                 field_limbs9 lane",
+                cols[lane]
             );
         }
     }
-    // NON-VACUITY: a zero octet would make this test the OLD one wearing a new assertion.
+    // NON-VACUITY, and it can no longer be a lane VALUE: the free lanes are legitimately zero for a
+    // kernel-numeric write. What must not be vacuous is that the lanes TRACK the value — so a
+    // DIFFERENT value must produce a different published vector at these very columns.
+    let mut other_bytes = field_bytes;
+    other_bytes[0] = 0xAB; // outside the u64 window: only the free lanes can carry it
+    let other = dregg_circuit::effect_vm::field_limbs9(&other_bytes);
+    assert_eq!(other[0], honest[0], "the control must agree on lane 0");
     assert!(
-        (0..7).any(|k| h.trace[0][AFTER_BASE + COMPLETION_BASE + k] != BabyBear::ZERO),
-        "the honest small-value completion octet must be NONZERO — if every lane is zero, the \
-         `u32 % p` chunk encoding is back and this test proves nothing about the repair"
+        (1..9).any(|lane| other[lane] != honest[lane]),
+        "a different field value must move a published completion lane — otherwise this test pins \
+         a constant, not the encoder"
     );
 
     let proof = prove_vm_descriptor2(&h.desc, &h.trace, &h.dpis, &h.mem_boundary, &h.map_heaps)
@@ -251,8 +286,8 @@ fn honest_small_value_setfield_proves_and_verifies() {
     verify_vm_descriptor2(&h.desc, &proof, &h.dpis)
         .expect("HONEST small-value setField proof must verify");
     eprintln!(
-        "R1 PROBE: honest small-value setField proves+verifies on the deployed descriptor with a \
-         NONZERO published completion octet."
+        "R1 PROBE: honest small-value setField proves+verifies on the deployed descriptor with its \
+         eight published completion lanes equal to the field_limbs9 nonet."
     );
 }
 
@@ -338,22 +373,23 @@ fn honest_large_value_setfield_proves_on_the_deployed_member() {
     let mut large_bytes = small_bytes;
     large_bytes[0] = 0xAB;
     large_bytes[1] = 0xCD;
-    let small8 = dregg_circuit::effect_vm::field_limbs8(&small_bytes);
-    let large8 = dregg_circuit::effect_vm::field_limbs8(&large_bytes);
+    let small9 = dregg_circuit::effect_vm::field_limbs9(&small_bytes);
+    let large9 = dregg_circuit::effect_vm::field_limbs9(&large_bytes);
     assert_eq!(
-        small8[0], large8[0],
+        small9[0], large9[0],
         "the pair must agree on lane 0 — the high bytes are invisible to the u64 lane"
     );
-    assert_eq!(small8[1], large8[1], "and on lane 1");
+    assert_eq!(small9[1], large9[1], "and on lane 1");
     assert!(
-        (1..8).any(|k| small8[k] != large8[k]),
-        "the high bytes must reach the completion octet, else this test measures nothing"
+        (1..9).any(|k| small9[k] != large9[k]),
+        "the high bytes must reach the completion nonet, else this test measures nothing"
     );
-    for k in 0..7 {
+    let cols = dregg_circuit::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL[SLOT];
+    for lane in 1..9usize {
         assert_eq!(
-            h.trace[0][AFTER_BASE + COMPLETION_BASE + k],
-            large8[1 + k],
-            "the generator must publish the honest large-value completion lane {k}"
+            h.trace[0][AFTER_BASE + cols[lane]],
+            large9[lane],
+            "the generator must publish the honest large-value completion lane {lane}"
         );
     }
     // The generator publishes the 7 freed lanes as PIs 46..=52, ahead of the 4 rc pins.

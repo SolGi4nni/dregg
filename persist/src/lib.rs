@@ -257,20 +257,56 @@ impl PersistentStore {
     /// no `*.redb` is tracked in git), so the correct answer for an existing
     /// store is to re-genesis it, exactly as the v10→v11 fields-root change did.
     ///
-    /// Epoch 13 changes what `fields[0..7]` COMMIT TO. `circuit/src/effect_vm/helpers.rs`
-    /// `field_limbs8` lanes 2..7 stopped being six `u32 % p` chunks over bytes `0..24` — an
-    /// encoding that collided in `O(1)` on the only octet in the rotated commitment with no
-    /// byte-exact companion — and now carry a Poseidon2 image over an injective 16 × u16-LE
-    /// preimage of the whole 32-byte value. Lanes 0/1 (the kernel u64 lane) are byte-identical.
+    /// Epoch 13 changed what `fields[0..7]` COMMIT TO: `field_limbs8` lanes 2..7 stopped being six
+    /// `u32 % p` chunks over `0..24` — an encoding that collided in `O(1)` on the only octet in the
+    /// rotated commitment with no byte-exact companion — and became a Poseidon2 image over an
+    /// injective 16 × u16-LE preimage of the whole 32-byte value.
     ///
-    /// The CELL BYTES did not move; the PROJECTION did. So a pre-v13 store would still decode, and
-    /// that is precisely the hazard: every persisted `TurnReceipt::{pre,post}_state_hash`, every
-    /// stored rotated `state_commit` and every checkpointed consensus anchor was computed under the
-    /// old projection and no longer equals a recomputation. A store that loads and quietly disagrees
-    /// with its own recomputation is worse than one that refuses, so this epoch makes it refuse. No
-    /// descriptor re-emits and no VK rotates — the deployed members never constrain a completion
-    /// lane's value (audited across all 175 rotated members of the four registries).
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 13;
+    /// **Epoch 14 changes it AGAIN, and this time to an INJECTION.** Epoch 13 was a containment, not
+    /// a fix: eight BabyBear lanes carry `8 · log₂ p = 247.26` bits against a 32-byte field's 256, so
+    /// no 8-lane encoding of 32 bytes is injective under ANY chunking — pigeonhole, whatever the
+    /// lanes contain. Its honest price was a **2^92.7 COLLISION** (the birthday bound over the six
+    /// image lanes; lanes 0/1 are `u32 % p` and an attacker matches them for free), which is BELOW
+    /// this tree's own ~124-bit bar and made the fields octet the weakest collision term in the
+    /// rotated commitment. It was written up at the time as "~2^185" — the *second-preimage* figure
+    /// for the same object, which is how a below-bar result read as a win.
+    ///
+    /// The producers (`turn::rotation_witness::produce`,
+    /// `dregg_cell::commitment::compute_rotated_pre_limbs`) now write
+    /// `Faithful9::from_field_lanes9` over the nine-lane `effect_vm::field_limbs9`, whose Lean
+    /// authority `Dregg2.Circuit.FieldLanes9` carries `fieldToLanes9_injective` — proved from a total
+    /// decoder and a machine-checked left inverse, `#assert_axioms`-clean — plus
+    /// `nine_lanes_is_the_minimum` (`P^8 < 2^256 ≤ P^9`). `field_limbs8`,
+    /// `Faithful8::from_field_limbs8` and `exact_nullifier_aafi::field_value_preimage` are **DELETED,
+    /// not deprecated**. Lanes 0/1 (the kernel u64 lane) are byte-identical across all three epochs.
+    ///
+    /// ⚠ **WHY THIS BUMP IS NOT OPTIONAL.** The CELL BYTES did not move; the PROJECTION did. So a
+    /// pre-v14 store still DECODES, and that is exactly the hazard: every persisted
+    /// `TurnReceipt::{pre,post}_state_hash`, every stored rotated `state_commit` and every
+    /// checkpointed consensus anchor was computed under the epoch-13 projection and no longer equals
+    /// a recomputation. A store that loads and quietly disagrees with itself is worse than one that
+    /// refuses. **This is a RE-GENESIS.**
+    ///
+    /// What does NOT move: no descriptor re-emits and no VK rotates. The 184-limb nine-lane geometry
+    /// was already emitted (`e662ade32`) — `layout_generated::ROTATED_FIELD_LANE_COL` already gives
+    /// each field nine columns, the setField members already publish eight completion lanes (PIs
+    /// 46..=53, the ninth at column `176 + slot`) and the absorption chain already folds `176..=183`
+    /// into `state_commit`. The producers were writing the dead octet into eight of those nine and
+    /// leaving the ninth at ZERO — consistent, and vacuous. Audited across all 174 members of the
+    /// three deployed registries: the fields lane columns carry exactly three constraint species —
+    /// `colEq` freezes, the Poseidon2 absorption, and the setField PI publications. No constant pin,
+    /// no arithmetic relation to lane 0, and **no range check** (see the residual note below).
+    ///
+    /// ⚠ **NAMED RESIDUAL — the `< 2^28` free-lane property is a PRODUCER invariant, not an AIR one.**
+    /// There is not one range lookup on any rotated block column in any deployed member, so nothing
+    /// in-circuit forces a witness's fields lanes into the encoder's IMAGE. Honest resolution: two
+    /// distinct field values can never share a lane vector (that is the injectivity, and it holds),
+    /// but an off-image lane vector is admissible in-AIR and `field_from_lanes9` is total and
+    /// many-to-one off-image — so a consumer that DECODES committed lanes back to bytes can be shown
+    /// an off-image vector that decodes to an honest value the anchor does not agree with. Closing it
+    /// is 7 × `< 2^28` lookups per field (or the `Pack8Plan`-style canonicity gate), which does not
+    /// exist today.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 14;
 
     /// Open a persistent store backed by a file on disk.
     ///

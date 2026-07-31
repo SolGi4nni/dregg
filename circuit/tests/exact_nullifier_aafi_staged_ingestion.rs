@@ -12,11 +12,17 @@ const STAGED_JSON: &[u8] = include_bytes!(
     "../staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
 );
 const EXPECTED_NAME: &str = "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state";
-const EXPECTED_SHA256: &str = "dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e";
+/// ⚑ ROTATED 2026-07-31 with the staged artifact itself. The nine-lane flag day re-emitted the
+/// registry copy of this member but not `circuit/staged-descriptors/fnsp-v3/`, so the two diverged
+/// at `trace_width` 3804 vs 3760 and this fingerprint went stale by omission. The repair was to
+/// re-run the emitter (`lake env lean --run metatheory/EmitExactNullifierAafiRotatedState.lean`)
+/// and install its stdout verbatim — the freshly emitted bytes are byte-identical to the registry
+/// copy, which is the property `descriptor_by_name`'s promotion tooth asserts.
+const EXPECTED_SHA256: &str = "df654baea5a922badb8cd287fda6955d30a931b940f221b80fed284b3b7fbfc5";
 const EXPECTED_TABLE_IDS: [usize; 5] = [0, 9, 1, 84, 85];
-const EXPECTED_TRACE_WIDTH: usize = 3760;
+const EXPECTED_TRACE_WIDTH: usize = 3804;
 const EXPECTED_PUBLIC_INPUT_COUNT: usize = 76;
-const EXPECTED_CONSTRAINT_COUNT: usize = 1258;
+const EXPECTED_CONSTRAINT_COUNT: usize = 1274;
 
 /// The descriptor registry's fingerprint semantics are SHA-256 over the exact Lean-emitted JSON
 /// bytes, without JSON normalization.  This is the same self-contained FIPS 180-4 implementation

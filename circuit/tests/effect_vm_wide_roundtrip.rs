@@ -166,7 +166,8 @@ fn assert_roundtrip(
 
     // The 8 BEFORE wide PIs (at wide_pi_base..+8) equal the BEFORE commit-carrier columns on row 0.
     // Read from the RAW (pre-refuse) trace: `before_commit_8` derives the carrier base as
-    // `width − 2·8·WIDE_NUM_CARRIERS` (the carriers are the last 960 columns of the WIDE member); the
+    // `width − 2·8·WIDE_NUM_CARRIERS` (the carriers are the last `WIDE_CARRIER_APPENDIX` = 992
+    // columns of the WIDE member — 960 before the nine-lane epoch); the
     // gentian refuse aux rides PAST them, so growing the trace would shift that derived base.
     let commit = before_commit_8(trace);
     for j in 0..8 {
@@ -926,25 +927,42 @@ fn wide_birth_wrappers_refuse_mismatched_lead() {
     );
 }
 
-/// **THE V2 GEOMETRY NO-PANIC BOUNDARY TOOTH (flag-day wide-carrier rotation).**
+/// **THE GEOMETRY NO-PANIC BOUNDARY TOOTH (the wide-carrier flag-day pins).**
 /// `append_wide_carriers` fills BOTH wide carrier blocks up to EXACTLY the last allocated
-/// byte (flush fit) and the commitment carrier is 59. Under the RETIRED v1 declarations
+/// byte (flush fit) and the commitment carrier is the last one. Under the RETIRED v1 declarations
 /// (`WIDE_NUM_CARRIERS = 57` / commit 56 / 912-column appendix) this very call PANICKED:
 /// the 60-carrier generator overran the 912-column allocation (the AFTER block's tail
-/// carriers ran to `host + 935`) and collided the BEFORE block into the AFTER base.
+/// carriers ran to `host + 935`) and collided the BEFORE block into the AFTER base. That is why
+/// the four literals below exist: they are the place a `NUM_PRE_LIMBS` drift goes red at a
+/// DEFINITION rather than at a mis-sized allocation three call-frames away.
 #[test]
 fn wide_carrier_blocks_fill_exactly_the_allocated_appendix() {
     use dregg_circuit::descriptor_ir2::chip_absorb_all_lanes;
     use dregg_circuit::effect_vm::trace_rotated::{
         AFTER_BASE, B_IROOT, BEFORE_BASE, GRAD_ROT_WIDTH, NUM_PRE_LIMBS, WIDE_CARRIER_APPENDIX,
-        WIDE_CARRIER_BLOCK_SPAN, append_wide_carriers, wide_carriers_for_limbs,
+        WIDE_CARRIER_BLOCK_SPAN, append_wide_carriers,
     };
-    // The derived flag-day geometry (the shared const fn is the single source).
-    assert_eq!(WIDE_NUM_CARRIERS, wide_carriers_for_limbs(NUM_PRE_LIMBS));
-    assert_eq!(WIDE_NUM_CARRIERS, 60, "178 pre-limbs -> 60 carriers");
-    assert_eq!(WIDE_COMMIT_CARRIER, 59, "the commitment carrier is 59");
-    assert_eq!(WIDE_CARRIER_BLOCK_SPAN, 480);
-    assert_eq!(WIDE_CARRIER_APPENDIX, 960);
+    // The derived flag-day geometry, RE-TYPED at the nine-lane epoch (178 -> 184 pre-limbs).
+    //
+    //   wide_carriers_for_limbs(n) = 1 + (n-4)/3 + (n-4)%3 + 1
+    //     head + 3-limb body groups + 1-limb leftovers + the final iroot carrier
+    //   n = 184: body = 180, 1 + 60 + 0 + 1 = 62          (n = 178: 1 + 58 + 0 + 1 = 60)
+    //   WIDE_COMMIT_CARRIER      = WIDE_NUM_CARRIERS - 1  = 61
+    //   WIDE_CARRIER_BLOCK_SPAN  = 8 * 62                 = 496
+    //   WIDE_CARRIER_APPENDIX    = 2 * 496                = 992
+    //
+    // The Lean side derives 62 INDEPENDENTLY — one carrier per emitted wide-lookup spec,
+    // `EffectVmEmitRotationWide.wideNumCarriers_eq : wideNumCarriers = 62` — and agrees.
+    //
+    // ⚠ `assert_eq!(WIDE_NUM_CARRIERS, wide_carriers_for_limbs(NUM_PRE_LIMBS))` USED TO STAND HERE
+    // and has been DELETED: `trace_rotated.rs` defines `WIDE_NUM_CARRIERS` as exactly that call, so
+    // the assertion was `x == x` — true at every geometry, including a wrong one. It is the same
+    // tautology the cap-open geometry block was cleaned of on the same day. The literals below CAN
+    // go red; that restated definition never could.
+    assert_eq!(WIDE_NUM_CARRIERS, 62, "184 pre-limbs -> 62 carriers");
+    assert_eq!(WIDE_COMMIT_CARRIER, 61, "the commitment carrier is 61");
+    assert_eq!(WIDE_CARRIER_BLOCK_SPAN, 496);
+    assert_eq!(WIDE_CARRIER_APPENDIX, 992);
 
     // A base row with recognizable limb material in both rotated blocks (limbs + iroot).
     let host_width = GRAD_ROT_WIDTH;
@@ -1005,7 +1023,7 @@ fn wide_carrier_blocks_fill_exactly_the_allocated_appendix() {
         ins[..8].copy_from_slice(&d);
         ins[8] = row[limb_base + B_IROOT];
         carrier += 1;
-        assert_eq!(carrier, WIDE_COMMIT_CARRIER, "the chain ends on carrier 59");
+        assert_eq!(carrier, WIDE_COMMIT_CARRIER, "the chain ends on carrier 61");
         chip_absorb_all_lanes(11, &ins)
     };
     assert_eq!(

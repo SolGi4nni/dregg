@@ -2,7 +2,7 @@
 //!
 //! The deployed `setFieldVmDescriptor2-{slot}R24` ships the freeze-ALL wrap (`v3OfFrozen
 //! (setFieldTickFace slot)`): all 7 of the written slot's COMPLETION lanes are pinned BEFORE↔AFTER.
-//! Combined with the lane split in [`dregg_circuit::effect_vm::field_limbs8`]
+//! Combined with the lane split in [`dregg_circuit::effect_vm::field_limbs9`]
 //! (`circuit/src/effect_vm/helpers.rs:133`):
 //!
 //! | lane | source | on a setField turn |
@@ -62,9 +62,12 @@ use dregg_turn::rotation_witness as rw;
 
 /// The written slot under test.
 const SLOT: usize = 3;
-/// The written slot's 7 frozen completion lanes, first pre-limb offset (`113 + 7·slot`).
+/// The written slot's completion-lane WINDOW, first pre-limb offset (`113 + 7·slot`).
 /// The authority for the base is `cell/src/commitment.rs` (the REVOKED-ROOT flag-day shifted the
 /// `fields[0..7]` completion octet `112..=167 → 113..=168`).
+/// ⚠ Lanes 1..7 only. The NINTH lane rides column `176 + slot`, outside this window — read
+/// `layout_generated::ROTATED_FIELD_LANE_COL`, never a stride off this constant.
+#[allow(dead_code)]
 const COMPLETION_BASE: usize = 113 + 7 * SLOT;
 
 fn rotated_descriptor_json(name: &str) -> &'static str {
@@ -211,19 +214,22 @@ fn canonical_and_le_prefix_encodings_both_prove_but_only_one_round_trips() {
         "canonical encoding of a small value must leave the frozen prefix 0..28 clear"
     );
     let good = build_setfield(canon);
-    // ⚑ THIS CHECK USED TO BE "every written-slot completion lane is 0 after". That was true only
-    // while lanes 2..7 were `u32 % p` chunks over the (all-zero) bytes `0..24` — the O(1)-aliasable
-    // shape. They are a Poseidon2 image over the whole value now, so the canonical small write
-    // lights all seven, and what the generator must get right is that they are the HONEST octet.
-    let canon8 = dregg_circuit::effect_vm::field_limbs8(&canon);
+    // ⚑ THIS CHECK'S VALUE HAS FLIPPED TWICE AND THE VALUE WAS NEVER THE PROPERTY. It read "every
+    // written-slot completion lane is 0 after" (true only while lanes 2..7 were `u32 % p` chunks over
+    // the all-zero bytes `0..24` — the O(1)-aliasable shape), then "they light up" (true while they
+    // were a Poseidon2 image). Under the deployed NINE-lane `field_limbs9` a canonical small write's
+    // free lanes are zero again, correctly: they carry `b[0..24]` and the two quotients verbatim.
+    // What the generator must get right, in every epoch, is that the published lanes ARE the encoder's.
+    let canon9 = dregg_circuit::effect_vm::field_limbs9(&canon);
+    let cols = dregg_circuit::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL[SLOT];
     for row in &good.trace {
-        for k in 0..7 {
+        for lane in 1..9usize {
             assert_eq!(
-                row[AFTER_BASE + COMPLETION_BASE + k],
-                canon8[1 + k],
-                "canonical small value: written-slot completion lane {k} must be the honest \
-                 field_limbs8 lane {}",
-                1 + k
+                row[AFTER_BASE + cols[lane]],
+                canon9[lane],
+                "canonical small value: written-slot completion lane {lane} (col {}) must be the \
+                 honest field_limbs9 lane",
+                cols[lane]
             );
         }
     }
@@ -243,20 +249,20 @@ fn canonical_and_le_prefix_encodings_both_prove_but_only_one_round_trips() {
     // check that cannot go red. The discriminating property is that the two encodings of the SAME
     // logical value land on DIFFERENT lanes: identical lane 0 would mean the LE write reached the
     // u64 window, and an identical completion octet would mean it reached nothing at all.
-    let le8 = dregg_circuit::effect_vm::field_limbs8(&le);
+    let le9 = dregg_circuit::effect_vm::field_limbs9(&le);
     assert_ne!(
-        le8[0], canon8[0],
+        le9[0], canon9[0],
         "the LE-prefix encoding must NOT land in the u64 lane — that is the bug it exhibits"
     );
     assert!(
-        (1..8).any(|k| le8[k] != canon8[k]),
-        "the LE-prefix encoding must reach the completion octet (else this tooth proves nothing)"
+        (1..9).any(|lane| le9[lane] != canon9[lane]),
+        "the LE-prefix encoding must reach the completion nonet (else this tooth proves nothing)"
     );
-    for k in 0..7 {
+    for lane in 1..9usize {
         assert_eq!(
-            bad.trace[0][AFTER_BASE + COMPLETION_BASE + k],
-            le8[1 + k],
-            "the generator must publish the LE-prefix value's honest completion lane {k}"
+            bad.trace[0][AFTER_BASE + cols[lane]],
+            le9[lane],
+            "the generator must publish the LE-prefix value's honest completion lane {lane}"
         );
     }
     assert!(

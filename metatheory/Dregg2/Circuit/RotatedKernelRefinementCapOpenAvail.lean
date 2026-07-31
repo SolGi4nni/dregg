@@ -24,7 +24,8 @@ Everything is width-parametric already (`effCapOpenV3`/`effCapOpenV3TB` append a
   * **`transferCapOpenEffV3Avail`** — `withSelectorGate TRANSFER (effCapOpenV3 transferV3Avail …)`,
     the hardened `transferCapOpenEffVmDescriptor2R24` wire member;
   * **`transferCapOpenEffV3TBAvail`** — `effCapOpenV3TB transferV3Avail …`, the hardened
-    `transferCapOpenTBVmDescriptor2R24` wire member (turn-identity pins at PI 46/47/48 as before).
+    `transferCapOpenTBVmDescriptor2R24` wire member (ONE turn-identity pin, at PI 46, welding the
+    existing `capOpenCols.src` column; NO new column — see the note on the def below).
 
 ## What is proven (both members)
 
@@ -117,9 +118,18 @@ def transferCapOpenEffV3Avail : EffectVmDescriptor2 :=
     (effCapOpenV3 transferV3Avail availEffName EFF_TRANSFER)
 
 /-- **`transferCapOpenEffV3TBAvail`** — the HARDENED turn-bound twin: the availability-weld rotated
-base + the cap-open appendix + the #225 turn-identity weld (two columns, three first-row PI pins at
-`piCount + 0/1/2 = 46/47/48`, exactly the bare TB shape). The
-`transferCapOpenTBVmDescriptor2R24` key's post-flip bytes. -/
+base + the cap-open appendix + the #225 turn-identity weld: **NO new column and exactly ONE
+first-row PI pin, at `piCount + 0 = 46`**, welding the EXISTING cap-open `src` column — the one
+`targetBindGate` and the depth-16 membership open already read. So this descriptor's `traceWidth`
+EQUALS `transferCapOpenEffV3Avail`'s and its `piCount` is `46 + 1 = 47`.
+
+⚑ This docstring read "two columns, three first-row PI pins at `piCount + 0/1/2 = 46/47/48`" until
+2026-07-31. It was FALSE from the moment `CapOpenTurnPins` dropped the `actor`/`dst` publication
+(2026-07-30): those two columns were introduced by that module and read by NO other constraint, so
+their pins were `local[c] == pi[k]` with the prover choosing both sides — censused by
+`UnforcedPiPins.unforcedPins`, proved a no-op by `unforced_pin_row_admits_any_value`. A weld that
+publishes a prover-chosen felt for *who acted* is worse than no weld, because its name says
+otherwise. The `transferCapOpenTBVmDescriptor2R24` key's post-flip bytes. -/
 def transferCapOpenEffV3TBAvail : EffectVmDescriptor2 :=
   effCapOpenV3TB transferV3Avail availTBName EFF_TRANSFER
 

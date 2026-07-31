@@ -5,9 +5,12 @@
 this file only serialises. Rust parses the bytes and supplies a witness — it constructs nothing.
 
 Emits `withTurnAuth` over a minimal 3-column base whose columns are the TURN IDENTITY
-`(src, actor, dst)` — the three that `transferCapOpenTB` publishes to PI 46/47/48 and that nothing
-else in the deployed circuit constrains. Here they are absorbed into the turn-digest lookup whose
-output the signature's message bits recompose, so moving `actor` or `dst` moves the signed message.
+`(src, actor, dst)`. `transferCapOpenTB` publishes only `src` (PI 46, welded to the cap-open `src`
+column that `targetBindGate` and the depth-16 open read); it USED to publish `actor`/`dst` at PI
+47/48 on two columns nothing else in the deployed circuit constrained, and those pins were deleted
+for exactly that reason. Here all three are absorbed into the turn-digest lookup whose output the
+signature's message bits recompose, so moving `actor` or `dst` moves the signed message — which is
+what lets `TurnAuthCapOpenWeld` publish them again, FORCED this time.
 
 Two instances, both the SAME generator:
 

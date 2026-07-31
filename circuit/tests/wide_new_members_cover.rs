@@ -15,10 +15,10 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST, CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH,
-    CapOpenWitness, FACET_MASK_HI, GRAD_ROT_WIDTH, HEAP_WRITE_HOST_WIDTH, RotatedBlockWitness,
-    SIGNATURE_AUTH_TAG, TRANSFER_AVAIL_PAD, V1_WIDTH, WIDE_CARRIER_APPENDIX, WRITE_MASK_LO,
-    anchor_cap_open_turn_pins, avail_pad_for_descriptor_name, empty_caveat_manifest,
+    CAP_OPEN_TB_PI_COUNT, CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CapOpenWitness, FACET_MASK_HI,
+    GRAD_ROT_WIDTH, HEAP_WRITE_HOST_WIDTH, RotatedBlockWitness, SIGNATURE_AUTH_TAG,
+    TRANSFER_AVAIL_PAD, V1_WIDTH, WIDE_CARRIER_APPENDIX, WRITE_MASK_LO, anchor_cap_open_turn_pins,
+    avail_pad_for_descriptor_name, empty_caveat_manifest,
     generate_rotated_effect_vm_descriptor_and_trace_wide, generate_rotated_heap_write_wide,
     generate_rotated_transfer_cap_open_tb_wide, transfer_caveat_manifest,
 };
@@ -127,10 +127,14 @@ fn new_wide_members_carry_16_commit_pis() {
     // after-spine host, and supplyMint rides the BARE graduated rotated host at the UNWRAPPED 62 PIs
     // (never rc-wrapped, like cap-open).
     for (name, host, want_pi) in [
+        // The TB member's wide PI count is DERIVED, not transcribed: `CAP_OPEN_TB_PI_COUNT` (47 =
+        // the rotated 46 + the ONE turn-identity `src` slot) + the 16 wide-commit anchors = 63.
+        // It was 65 until 2026-07-31, when `CapOpenTurnPins` deleted the `actor`/`dst` pins and
+        // their two PI slots — they named columns no other constraint read.
         (
             "transferCapOpenTBVmDescriptor2R24",
             CAP_OPEN_TB_WIDTH + TRANSFER_AVAIL_PAD,
-            65usize,
+            CAP_OPEN_TB_PI_COUNT + 16,
         ),
         ("heapWriteVmDescriptor2R24", HEAP_WRITE_HOST_WIDTH, 20),
         ("supplyMintVmDescriptor2R24", GRAD_ROT_WIDTH, 62),
@@ -337,9 +341,10 @@ fn wide_heap_write_proves_and_verifies() {
     );
 }
 
-/// transferCapOpenTB (the #225 turn-identity weld) PROVES + light-client VERIFIES at the wide geometry
-/// (1029 / 65 PIs) through its dedicated per-family wide producer: the verifier ANCHORS the three
-/// turn-identity PIs (src/actor/dst) to the trusted turn, and the 8-felt anchors bind.
+/// transferCapOpenTB (the #225 turn-identity weld) PROVES + light-client VERIFIES at the wide
+/// geometry through its dedicated per-family wide producer: the verifier ANCHORS the ONE
+/// turn-identity PI (`src`) to the trusted turn, and the 8-felt anchors bind. The weld adds no
+/// column, so the wide host is the plain cap-open host on the avail-hardened face.
 #[test]
 fn wide_transfer_cap_open_tb_proves_and_verifies() {
     let name = "transferCapOpenTBVmDescriptor2R24";
@@ -377,7 +382,7 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
     );
 
     // The cap-membership witness: a transfer-conferring leaf (two-axis facet × tier) whose `target` IS
-    // the turn's `src`. The owner arm publishes `actor == dst == src`.
+    // the turn's `src` — the column `targetBindGate` roots, and the only one the TB weld publishes.
     let src_felt: u32 = 7_777;
     let chosen: [BabyBear; 7] = [
         BabyBear::new(0xA11CE),
@@ -399,8 +404,6 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
     ];
     let cap_open = CapOpenWitness::build(&[other, chosen], 1).expect("cap-open witness builds");
     let src = BabyBear::new(src_felt);
-    let actor = src;
-    let dst = src;
 
     let (trace, dpis) = generate_rotated_transfer_cap_open_tb_wide(
         &st,
@@ -410,8 +413,6 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
         &transfer_caveat_manifest(),
         &cap_open,
         src,
-        actor,
-        dst,
     )
     .expect("wide cap-open-TB generation");
 
@@ -423,7 +424,12 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
          face + the wide-carrier appendix, MINUS the S2 stratum and this member's own E1 kill-set \
          (committed wide transferCapOpenTBVmDescriptor2R24)"
     );
-    assert_eq!(desc.public_input_count, 65, "transferCapOpenTB wide 65 PIs");
+    assert_eq!(
+        desc.public_input_count,
+        CAP_OPEN_TB_PI_COUNT + 16,
+        "transferCapOpenTB wide PIs = the TB member's {CAP_OPEN_TB_PI_COUNT} (46 rotated + the one \
+         turn-identity `src`) + the 16 wide-commit anchors"
+    );
     // PRODUCER ≡ DESCRIPTOR. A shortfall of exactly TRANSFER_AVAIL_PAD means the producer laid the
     // BARE transfer face and appended its wide carriers at `CAP_OPEN_TB_WIDTH`, while the COMMITTED
     // member is the AVAIL-hardened one (`…-transfer-v1-avail-…`) whose host is `CAP_OPEN_TB_WIDTH +
@@ -438,19 +444,17 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
          the BARE transfer face for an AVAIL-hardened committed member)"
     );
     assert_eq!(dpis.len(), desc.public_input_count);
-    // The published turn identity rides the three TB PIs.
+    // The published turn identity is `src`, and it is the ONE slot the TB weld adds.
     assert_eq!(dpis[CAP_OPEN_TB_PI_SRC], src);
-    assert_eq!(dpis[CAP_OPEN_TB_PI_ACTOR], actor);
-    assert_eq!(dpis[CAP_OPEN_TB_PI_DST], dst);
 
     let mb = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mb, &map_heaps)
         .unwrap_or_else(|e| panic!("transferCapOpenTB WIDE proof must prove: {e}"));
 
-    // THE LIGHT-CLIENT ANCHOR: recompute the three turn-identity PIs from the TRUSTED turn and verify.
+    // THE LIGHT-CLIENT ANCHOR: recompute the turn-identity PI from the TRUSTED turn and verify.
     let mut anchored = dpis.clone();
-    anchor_cap_open_turn_pins(&mut anchored, src, actor, dst);
+    anchor_cap_open_turn_pins(&mut anchored, src);
     verify_vm_descriptor2(&desc, &proof, &anchored).unwrap_or_else(|e| {
         panic!("transferCapOpenTB WIDE proof must verify under the trusted-turn anchor: {e}")
     });
@@ -458,13 +462,15 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
     // THE NEGATIVE TOOTH: a forged published src (one the trusted turn does NOT carry) is rejected by
     // the verifier alone — the #225 gate stays load-bearing at the wide geometry.
     let mut forged = dpis.clone();
-    anchor_cap_open_turn_pins(&mut forged, BabyBear::new(src_felt + 1), actor, dst);
+    anchor_cap_open_turn_pins(&mut forged, BabyBear::new(src_felt + 1));
     assert!(
         verify_vm_descriptor2(&desc, &proof, &forged).is_err(),
         "a published src that does NOT match the trusted turn MUST be rejected at the wide geometry"
     );
     eprintln!(
-        "WIDE transferCapOpenTB: PROVED + VERIFIED at width 1029 (turn-identity anchor + faithful 8-felt commit, 65 PIs); forged-src tooth bites."
+        "WIDE transferCapOpenTB: PROVED + VERIFIED (turn-identity anchor + faithful 8-felt commit, \
+         {} PIs); forged-src tooth bites.",
+        desc.public_input_count
     );
 }
 

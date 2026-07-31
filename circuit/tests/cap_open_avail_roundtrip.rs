@@ -11,8 +11,8 @@
 //!     live cap-open path — the fleet keeps proving;
 //!   * POST-regen (hardened members): the pad derives to 10, the avail generator fills the
 //!     availability witness limbs + borrow bits per row and lays the rotated appendix at the
-//!     shifted bases, `widen_to_cap_open{,_tb}_avail` lays the cap-membership crown (and the two
-//!     turn-identity columns) at the shifted appendix base, and the proof verifies;
+//!     shifted bases, `widen_to_cap_open{,_tb}_avail` lays the cap-membership crown at the shifted
+//!     appendix base, and the proof verifies;
 //!   * THE AVAILABILITY TOOTH (hardened only): a forged NO-FINAL-BORROW bit on an honest
 //!     cap-authorized trace is REFUSED — a cap-AUTHORIZED transfer still cannot over-debit;
 //!   * THE AUTHORITY TOOTH (both): the #225 turn-identity anchor still bites — a published src the
@@ -30,8 +30,8 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::Effect;
 use dregg_circuit::effect_vm::trace_rotated::{
-    CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CAP_OPEN_WIDTH, CapOpenWitness, FACET_MASK_HI,
-    ROT_PI_COUNT, RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
+    CAP_OPEN_TB_PI_COUNT, CAP_OPEN_TB_PI_SRC, CAP_OPEN_TB_WIDTH, CAP_OPEN_WIDTH, CapOpenWitness,
+    FACET_MASK_HI, ROT_PI_COUNT, RotatedBlockWitness, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
     anchor_cap_open_turn_pins, avail_pad_for_descriptor_name, cap_open_tb_dpis,
     generate_rotated_effect_vm_trace_avail, transfer_caveat_manifest, widen_to_cap_open_avail,
     widen_to_cap_open_tb_avail,
@@ -213,17 +213,38 @@ fn cap_open_tb_member_roundtrips_live() {
         CAP_OPEN_TB_WIDTH + pad,
         "TB width = bare TB width + avail pad"
     );
+    // THE TWO COMMITTED ARTIFACTS AGREE — the assertion a const-assert in `trace_rotated.rs`
+    // cannot make. `effCapOpenV3TB` adds `piCount + 1` and NO column, so the TB member and its
+    // non-TB twin, emitted from the SAME base at the SAME pad, must carry the SAME `trace_width`.
+    // Two members' bytes, compared: this goes red if a future weld quietly re-adds a column.
+    {
+        let eff = parse_vm_descriptor2(&registry_json("transferCapOpenEffVmDescriptor2R24"))
+            .expect("eff cap-open descriptor parses");
+        assert_eq!(
+            desc.trace_width, eff.trace_width,
+            "the TB weld adds NO column: the committed TB and non-TB cap-open members must carry \
+             the SAME trace_width. It carried +2 (the `actor`/`dst` turn-identity columns) until \
+             2026-07-31; those columns were read by no other constraint, so their pins published \
+             prover-chosen felts and were deleted at the Lean source (`CapOpenTurnPins`)."
+        );
+        assert_eq!(
+            desc.public_input_count,
+            eff.public_input_count + 1,
+            "…and it adds EXACTLY ONE PI slot over the non-TB member: the turn-identity `src`"
+        );
+    }
     assert_eq!(
-        desc.public_input_count, 49,
-        "TB carries 49 PIs regardless of the pad (columns shift, PI indices never)"
+        desc.public_input_count, CAP_OPEN_TB_PI_COUNT,
+        "TB carries {CAP_OPEN_TB_PI_COUNT} PIs (the rotated 46 + `src`) regardless of the pad \
+         (columns shift, PI indices never)"
     );
 
     let trusted_src = BabyBear::new(SRC_FELT);
     let (mut trace, base_pis) = build_transfer_base_avail(pad);
     let w = cap_open_witness();
-    widen_to_cap_open_tb_avail(&mut trace, &w, trusted_src, trusted_src, pad).expect("TB widen");
-    let honest_pis = cap_open_tb_dpis(&base_pis, trusted_src, trusted_src, trusted_src);
-    assert_eq!(honest_pis.len(), 49);
+    widen_to_cap_open_tb_avail(&mut trace, &w, pad).expect("TB widen");
+    let honest_pis = cap_open_tb_dpis(&base_pis, trusted_src);
+    assert_eq!(honest_pis.len(), CAP_OPEN_TB_PI_COUNT);
 
     let map_heaps: Vec<Vec<HeapLeaf>> = vec![];
     let proof = prove_vm_descriptor2(
@@ -235,9 +256,9 @@ fn cap_open_tb_member_roundtrips_live() {
     )
     .expect("honest transfer TB cap-open proves");
 
-    // (A) The verifier anchor — ACCEPT (trusted turn matches the published identity).
+    // (A) The verifier anchor — ACCEPT (trusted turn matches the published source).
     let mut anchored = honest_pis.clone();
-    anchor_cap_open_turn_pins(&mut anchored, trusted_src, trusted_src, trusted_src);
+    anchor_cap_open_turn_pins(&mut anchored, trusted_src);
     verify_vm_descriptor2(&desc, &proof, &anchored)
         .expect("honest TB cap-open verifies under the trusted-turn anchor");
 
@@ -245,12 +266,7 @@ fn cap_open_tb_member_roundtrips_live() {
     // verifier alone (the #225 pin, intact at the avail-shifted geometry).
     {
         let mut forged = honest_pis.clone();
-        anchor_cap_open_turn_pins(
-            &mut forged,
-            BabyBear::new(SRC_FELT + 1),
-            trusted_src,
-            trusted_src,
-        );
+        anchor_cap_open_turn_pins(&mut forged, BabyBear::new(SRC_FELT + 1));
         assert_ne!(forged[CAP_OPEN_TB_PI_SRC], honest_pis[CAP_OPEN_TB_PI_SRC]);
         assert!(
             verify_vm_descriptor2(&desc, &proof, &forged).is_err(),

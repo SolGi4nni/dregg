@@ -117,7 +117,7 @@ fn bridge(w: &rw::RotationWitness) -> RotatedBlockWitness {
 /// The 32 bytes a cell field must hold for the deployed member to read `v` out of it.
 ///
 /// ⚠ THE POSITION IS NOT `bytes[0..4]`. Since the v13 FAITHFUL FIELDS OCTET each field's 32 bytes
-/// ride a full `field_limbs8` split, whose LANE 0 — the one welded to rotated limb `4 + slot`, the
+/// ride a full `field_limbs9` nonet, whose LANE 0 — the one welded to rotated limb `4 + slot`, the
 /// one the setField write gate binds to the `VALUE` param, and the one
 /// `executor::effect_vm_bridge::field_element_to_bb` projects — is `u32::from_be_bytes(b[28..32])`.
 /// Lanes 1..7 are the COMPLETION lanes (rotated limbs `113 + 7·slot ..`), and the deployed member

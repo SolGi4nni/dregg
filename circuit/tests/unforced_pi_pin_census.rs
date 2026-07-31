@@ -31,11 +31,37 @@
 //!   the multiplier vacuity the last-row anchor forge was: a column can look referenced and be
 //!   free precisely where the pin reads it.
 //!
-//! ## Expected counts and the convergence re-emit
+//! ## Expected counts — the convergence re-emit LANDED (2026-07-31)
 //!
-//! The constants below are the measurement as of 2026-07-30, BEFORE the convergence re-emit. When
-//! that re-emit lands `dropUnforcedPins`, the row-blind counts go to ZERO and this test goes RED —
-//! which is the point: whoever lands it must state the new number here.
+//! This file used to carry the 2026-07-30 pre-re-emit measurement and say: *"When that re-emit
+//! lands `dropUnforcedPins`, the row-blind counts go to ZERO and this test goes RED — which is the
+//! point: whoever lands it must state the new number here."* It landed, this went red, and the new
+//! numbers are stated below. They are not transcribed off the failure: each was re-derived by an
+//! independent second implementation of `collect`/`free_row_*` run over the same committed TSVs,
+//! and the two agree exactly.
+//!
+//!   v3     839 → 682 pins, blind 165 → **0**, aware 216 → **51**
+//!   wide  1639 → 1480 pins, blind 167 → **0**, aware 215 → **48**
+//!   welded  (identical to wide)
+//!
+//! **`blind = 0` is the theorem, not a coincidence.** `unforcedPins_dropUnforcedPins` proves the
+//! subtraction is a FIXPOINT: `forcedCols` counts only NON-pin constraints, the subtraction removes
+//! only pins, so the forced surface is invariant and a second pass finds nothing. Measuring 0 here
+//! is the deployed-bytes witness of that theorem, and any nonzero value means a member was emitted
+//! without passing through `dropUnforcedPins`.
+//!
+//! **`aware` fell 216 → 51 purely as a consequence:** `aware` counts pins free ON THEIR OWN ROW,
+//! which is a superset of `blind`. Before: 216 = 165 blind + 51 aware-only. After: 51 = 0 + 51. The
+//! aware-only residue — the legacy 1-felt state-commitment pins — is UNCHANGED at (51, 48, 48),
+//! because the row-blind subtraction cannot reach it. That is stated as its own assertion below.
+//!
+//! ⚑ AND `forcedCols` OVER-COUNTS BY EXACTLY TWO. A `proof_bind` has no row denotation — the
+//! deployed `Ir2Air::eval` `continue`s on it and emits no bus interaction, and Lean's
+//! `VmConstraint2.holdsAt` is `trivial` for it — yet `forcedCols` counts its `commit`/`vk` column
+//! references. So `customVmDescriptor2R24`'s two surviving exposure pins (PI 46 → col 72, PI 54 →
+//! col 68) are as prover-chosen as the 159 that were deleted; they survive on the strength of a
+//! DECLARATION. That is measured, not asserted in prose, by
+//! [`proof_bind_is_the_only_reader_of_the_custom_exposure_columns`].
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, VmConstraint2, WindowExpr, parse_vm_descriptor2,
@@ -252,9 +278,10 @@ fn unforced_pi_pin_census_is_pinned() {
     let welded = census(WIDE_UMEM_WELD_REGISTRY_TSV);
 
     // ONE comparison, so a drift shows every number at once instead of stopping at the first.
-    // `blind` is the set the Lean-side `dropUnforcedPins` removes — PRE-CONVERGENCE it is nonzero;
-    // when the convergence re-emit lands the subtraction, all three go to 0 and this goes RED,
-    // which is the point: whoever lands it states the new numbers here.
+    // `blind` is the set the Lean-side `dropUnforcedPins` removes, and it is now ZERO in all three
+    // registries — which is `unforcedPins_dropUnforcedPins` (the subtraction is a FIXPOINT) made
+    // good on the deployed bytes. A NONZERO `blind` from here on means a member reached a registry
+    // without passing through `dropUnforcedPins`, not that a new hazard was invented.
     let measured = format!(
         "v3 {}/{} blind={} aware={} | wide {}/{} blind={} aware={} | welded {}/{} blind={} aware={}",
         v3.members,
@@ -272,36 +299,69 @@ fn unforced_pi_pin_census_is_pinned() {
     );
     assert_eq!(
         measured,
-        "v3 60/839 blind=165 aware=216 | wide 57/1639 blind=167 aware=215 \
-         | welded 57/1639 blind=167 aware=215",
+        "v3 60/682 blind=0 aware=51 | wide 57/1480 blind=0 aware=48 \
+         | welded 57/1480 blind=0 aware=48",
         "the unforced-PI-pin census moved"
     );
 
-    // The two named candidates the audit called, confirmed here on the emitted bytes.
+    // ⚑ THE THREE NAMED CANDIDATES, NOW ASSERTED ABSENT. These were `assert!(has(...))` — the
+    // audit's three exhibits, each measured PRESENT on the emitted bytes: the TB weld's `actor`
+    // (wide col 928 → PI 47) and `dst` (col 929 → PI 48), and the mint-hash pin (col 68 → PI 46).
+    // All three are gone. The polarity flip is the whole content of this test now, so it is spelled
+    // out per-exhibit rather than folded into `blind == 0`: a bare zero would also be produced by a
+    // census that stopped looking.
     let has = |c: &Census, key: &str, col: usize, pi: usize| {
         c.blind_detail
             .iter()
             .any(|(k, _, cc, pp)| k == key && *cc == col && *pp == pi)
     };
     assert!(
-        has(&wide, "transferCapOpenTBVmDescriptor2R24", 928, 47),
-        "the TB weld's `actor` publishes a prover-chosen felt"
+        !has(&wide, "transferCapOpenTBVmDescriptor2R24", 928, 47),
+        "the TB weld's `actor` pin must be GONE — it published a prover-chosen felt for WHO ACTED"
     );
     assert!(
-        has(&wide, "transferCapOpenTBVmDescriptor2R24", 929, 48),
-        "the TB weld's `dst` publishes a prover-chosen felt"
+        !has(&wide, "transferCapOpenTBVmDescriptor2R24", 929, 48),
+        "the TB weld's `dst` pin must be GONE — it published a prover-chosen felt for WHO RECEIVED"
     );
     assert!(
-        has(&wide, "mintVmDescriptor2R24", 68, 46),
-        "the mint-hash pin publishes a prover-chosen felt"
+        !has(&wide, "mintVmDescriptor2R24", 68, 46),
+        "the mint-hash pin must be GONE — it published a prover-chosen mint identity"
     );
-    // …and the `src` pin of the same weld is NOT free: `targetBindGate` reads that column.
-    assert!(
-        !wide
-            .blind_detail
+
+    // …and the POSITIVE half, which is what makes the deletion a subtraction of lies rather than a
+    // subtraction of checks: the TB weld's `src` pin SURVIVED, because `targetBindGate` and the
+    // depth-16 membership open read that column. A census that deleted everything would pass the
+    // three assertions above and fail this one.
+    let tb_pins: Vec<usize> = {
+        let d = parse_vm_descriptor2(
+            WIDE_REGISTRY_STAGED_TSV
+                .lines()
+                .find_map(|l| {
+                    let mut it = l.splitn(3, '\t');
+                    (it.next() == Some("transferCapOpenTBVmDescriptor2R24"))
+                        .then(|| it.nth(1))
+                        .flatten()
+                })
+                .expect("the TB member is deployed"),
+        )
+        .expect("TB member parses");
+        d.constraints
             .iter()
-            .any(|(k, _, _, pp)| k == "transferCapOpenTBVmDescriptor2R24" && *pp == 46),
-        "the TB weld's `src` IS forced (targetBindGate + the depth-16 open read it)"
+            .filter_map(|c| match c {
+                VmConstraint2::Base(VmConstraint::PiBinding { pi_index, .. })
+                    if *pi_index >= 46 =>
+                {
+                    Some(*pi_index)
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    assert!(
+        tb_pins.contains(&46),
+        "the TB weld's `src` pin (PI 46) must SURVIVE the subtraction: it is FORCED \
+         (targetBindGate pins leaf.target == src, and the depth-16 open chains that leaf to the \
+         committed cap root). Its survival is the evidence `dropUnforcedPins` discriminates."
     );
 
     // ⚑ **THE ROW-AWARE-ONLY RESIDUE, CLASSIFIED — the part the row-blind subtraction does NOT
@@ -346,6 +406,72 @@ fn unforced_pi_pin_census_is_pinned() {
     );
 }
 
+/// **⚑ `forcedCols` OVER-COUNTS BY EXACTLY TWO, AND THIS MEASURES IT.**
+///
+/// The Lean subtraction keeps a pin when some NON-PIN constraint references its column
+/// (`UnforcedPiPins.forcedCols`). `proof_bind` is a non-pin constraint and its `commit`/`vk`
+/// expressions ARE references — but a `proof_bind` has **no row denotation at all**: the deployed
+/// `Ir2Air::eval` groups it with the bus kinds and `continue`s without emitting a bus interaction,
+/// and Lean's `VmConstraint2.holdsAt` is `trivial` for it. So a column whose ONLY non-pin reader is
+/// a `proof_bind` is exactly as prover-chosen as the 159 columns the subtraction deleted; its pin
+/// survives on the strength of a DECLARATION.
+///
+/// Exactly two such pins exist, both on `customVmDescriptor2R24`: PI 46 → col 72
+/// (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`, commit limb 0) and PI 54 → col 68
+/// (`PARAM_BASE + CUSTOM_VK_HASH_BASE`, VK limb 0). This is not a defect being tolerated — it is
+/// the already-documented shape of the custom member (`require_no_unbacked_proof_bind`: *"The
+/// declaration is NOT an in-AIR check … the ONLY thing that makes the published claim mean anything
+/// is the per-turn fold connecting it to a re-proven sub-proof leaf"*). What this test adds is that
+/// the statement is now MEASURED on the deployed bytes and cannot rot:
+///
+///   * if a third such pin appears, some member gained a proof-bind-only exposure and whoever added
+///     it needs to know the AIR forces nothing about it;
+///   * if these two disappear, the custom member has NO in-bytes evidence of its exposure layout
+///     left and `effect_vm_descriptors::custom_commit_version` must stop keying on pins entirely.
+#[test]
+fn proof_bind_is_the_only_reader_of_the_custom_exposure_columns() {
+    for (label, tsv) in [
+        ("v3", V3_STAGED_REGISTRY_TSV),
+        ("wide", WIDE_REGISTRY_STAGED_TSV),
+        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+    ] {
+        let mut declaration_only: Vec<(String, usize, usize)> = Vec::new();
+        for line in tsv.lines().filter(|l| !l.is_empty()) {
+            let key = line.split('\t').next().expect("key").to_string();
+            let json = line.split('\t').nth(2).expect("member json");
+            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+            // `collect` folds a `ProofBind`'s commit/vk references into `loc_all` — exactly as
+            // Lean's `forcedCols` does, which is the over-count under measurement. So take the
+            // reference surface of the descriptor WITHOUT its proof-bind declarations: what is
+            // free there, and pinned, is published on the strength of a declaration alone.
+            let mut without_proof_bind = d.clone();
+            without_proof_bind
+                .constraints
+                .retain(|c| !matches!(c, VmConstraint2::ProofBind(_)));
+            let reads = collect(&without_proof_bind);
+            for c in &d.constraints {
+                if let VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) = c
+                    && free_row_blind(&reads, *col)
+                {
+                    declaration_only.push((key.clone(), *col, *pi_index));
+                }
+            }
+        }
+        declaration_only.sort();
+        assert_eq!(
+            declaration_only,
+            vec![
+                ("customVmDescriptor2R24".to_string(), 68, 54),
+                ("customVmDescriptor2R24".to_string(), 72, 46),
+            ],
+            "{label}: the pins whose only non-pin reader is a `proof_bind` — a constraint with no \
+             row denotation in either the Lean model or the deployed `Ir2Air`. These publish; they \
+             do not bind. The custom member's proof commitment and program VK are bound by the \
+             per-turn FOLD over PI slots and by nothing in the AIR."
+        );
+    }
+}
+
 /// **How many published slots are pinned AT ALL** — the other half of the light-client answer.
 /// A slot no constraint pins is not "trusted", it is IGNORED by the AIR: the verifier supplies it
 /// and no equation reads it. The danger is a consumer that believes it attested.
@@ -367,8 +493,18 @@ fn published_slot_accounting_is_pinned() {
         }
         pinned_slots += seen.iter().filter(|b| **b).count();
     }
-    assert_eq!(total_slots, 3815, "wide registry published PI slots");
-    assert_eq!(pinned_slots, 1639, "…of which some constraint pins");
+    // 3815 -> 3821. DERIVED, per-member, from the two shape changes in the same flag day:
+    //   +8  the eight `setFieldVmDescriptor2-{0..7}` members each gained ONE PI (73 -> 74) for the
+    //       ninth VALUE8 lane's completion pin;
+    //   -2  `transferCapOpenTBVmDescriptor2R24` lost the `actor`/`dst` slots (65 -> 63).
+    // No other member's `public_input_count` moved (checked member-by-member against the registry
+    // at `e662ade32^`). 3815 + 8 - 2 = 3821.
+    assert_eq!(total_slots, 3821, "wide registry published PI slots");
+    // 1639 -> 1480. This is EXACTLY the 159 pins `dropUnforcedPins` removed, and the equality of
+    // "pins removed" with "distinct pinned slots lost" is not an accident: the pin relation is a
+    // partial injection over every deployed member, which `pin_relation_is_injective_so_the_no_op_theorem_applies`
+    // (below) measures. So no surviving pin ever backfilled a slot a deleted one vacated.
+    assert_eq!(pinned_slots, 1480, "…of which some constraint pins");
 }
 
 /// **The `hsole` side condition of `unforced_pin_row_admits_any_value`, MEASURED.**

@@ -55,7 +55,7 @@ pub use dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS;
 use dregg_circuit::effect_vm::layout_generated::{
     AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
     CAP_ROOT_GROUP, CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
-    NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, VK_GROUP,
+    NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, ROTATED_FIELD_LANE_COL, VK_GROUP,
 };
 use dregg_circuit::effect_vm::split_u64;
 use dregg_circuit::field::BabyBear;
@@ -419,45 +419,39 @@ pub fn produce(
     pre_limbs[1] = balance_lo_felt(cell.state.balance()); // r0
     pre_limbs[2] = nonce_felt(cell.state.nonce()); // r1
     pre_limbs[3] = balance_hi_felt(cell.state.balance()); // r2
-    // r3..r10 ↔ fields[0..7] lane 0 (limbs 4..=11) ‖ the 56 fields COMPLETION lanes 113..=168
-    // (fields[i] lanes 1..7 → `113 + 7·i .. +6`). THE v13 FAITHFUL FIELDS OCTET (producer twin of
-    // `cell::commitment::compute_rotated_pre_limbs`): each field's 32 bytes ride a full
-    // `field_limbs8` 8-lane split (lane 0 = the u64-lane lo32, the faithful ~124-bit binding),
-    // REPLACING the eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode one
-    // `from_lossy_31bit_DANGER` octet.
+    // r3..r10 ↔ fields[0..7] lane 0 (limbs 4..=11) ‖ the 56 historical completion lanes 113..=168
+    // ‖ the eight NINTH lanes 176..=183. THE INJECTIVE NINE-LANE FIELDS NONET (producer twin of
+    // `cell::commitment::compute_rotated_pre_limbs`): each field's 32 bytes ride the full
+    // `field_limbs9` split, whose Lean authority `Dregg2.Circuit.FieldLanes9` carries
+    // `fieldToLanes9_injective` — a total decoder plus a machine-checked left inverse, not a hash
+    // bound and not a birthday bound.
     //
-    // ⚠ THIS USED TO CLAIM IT CLOSED THE LAST DEGRADED-FELT RESIDUAL. It did not — see the twin at
-    // `cell/src/commitment.rs` for the arithmetic. Every lane was `u32 % p`, `2p < 2^32`, so every
-    // field value had a constructible sibling with an identical lane vector.
+    // ⚑ NINE IS THE MINIMUM AND THAT IS WHY THE OCTET HAD TO DIE. `p = 2013265921`,
+    // `log₂ p = 30.907`: eight lanes carry 247.26 bits against a 32-byte field's 256, so NO 8-lane
+    // encoding of 32 bytes is injective under any chunking — pigeonhole, whatever the lanes hold.
+    // The predecessor (`field_limbs8`: lanes 0/1 `u32 % p`, lanes 2..7 a Poseidon2 image over an
+    // injective 16 × u16-LE preimage) priced out at a 2^92.7 COLLISION — below the ~124-bit bar
+    // quoted elsewhere in this tree, and the weakest collision term in the rotated commitment. It
+    // is DELETED, not deprecated. `P^8 < 2^256 ≤ P^9` (`nine_lanes_is_the_minimum`).
     //
-    // ⚑ Lanes 2..7 now carry a Poseidon2 image over an injective 16 × u16-LE preimage of the whole
-    // value, so that constructed alias is gone; eight lanes still carry only 247.26 bits against
-    // 256, so the octet is NOT injective and this comment must not say "faithful". Lanes 0/1 are
-    // byte-identically the kernel u64 lane and did not move.
+    // Lanes 0/1 are byte-identically the kernel u64 lane (`BE(b[28..32]) % p`, `BE(b[24..28]) % p`)
+    // and did not move: lane 0 is welded to the v1 face column `stateBase + FIELD_BASE + i` and read
+    // by `field_to_u64`, and the escrow / discharge / vault welds depend on it. Lanes 2..8 are the
+    // seven base-`2^28` digits of `W = ofDigits 256 (b[0..24] ++ [q₀ + 4·q₁])` — the 24 bytes the
+    // pinned pair says nothing about, plus ONE digit carrying the two quotients `mod p` discards.
     //
     // THE TWIN MOVES WITH IT BY CONSTRUCTION: both this producer and
-    // `cell::commitment::compute_rotated_pre_limbs` call `Faithful8::from_field_limbs8` over the
-    // same `[4 + i, 113 + 7·i .. +6]` index array, so there is one encoder and no second body to
-    // drift. The setField value8 pins PUBLISH the written slot's 7 lanes as PIs 46..=52; the
-    // completion freezes pin every non-written field's 7 lanes on a value turn (the fields GENTIAN
+    // `cell::commitment::compute_rotated_pre_limbs` call `Faithful9::from_field_lanes9` over the
+    // SAME Lean-emitted `ROTATED_FIELD_LANE_COL[i]` nonet, so there is one encoder, one index
+    // table, and no second body to drift. ⚠ THE NONET IS NON-CONTIGUOUS — never rebuild it with a
+    // stride; the ninth lane of slot `j` is column `176 + j`, not `113 + 8·j + 7`.
+    //
+    // The setField value8 pins PUBLISH the written slot's 8 completion lanes as PIs 46..=53; the
+    // completion freezes pin every non-written field's 8 lanes on a value turn (the fields GENTIAN
     // law) and still hold, because the lanes are a FUNCTION of the field value.
     for i in 0..8 {
-        // REVOKED-ROOT flag-day: the fields[0..7] completion octet shifted 112..=167 → 113..=168
-        // (every limb index ≥ 37 shifted +1 for the new base `revoked_root` limb 37).
-        let base = 113 + 7 * i;
-        dregg_circuit::Faithful8::from_field_limbs8(&cell.state.fields[i]).write_lanes(
-            &mut pre_limbs,
-            [
-                4 + i,
-                base,
-                base + 1,
-                base + 2,
-                base + 3,
-                base + 4,
-                base + 5,
-                base + 6,
-            ],
-        );
+        dregg_circuit::Faithful9::from_field_lanes9(&cell.state.fields[i])
+            .write_lanes(&mut pre_limbs, ROTATED_FIELD_LANE_COL[i]);
     }
     // r11..r17 (limbs 12..=18) + r23 (limb 24): THE FAITHFUL 8-FELT AUTHORITY DIGEST (H1) — the
     // ~124-bit blake3-rooted commitment folding ALL authority-bearing cell state that no other

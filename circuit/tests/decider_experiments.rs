@@ -402,14 +402,16 @@ fn d1_d2_chip_census_and_logup_aux_provenance() {
     // A MEASURED census, deliberately kept a literal: unlike a width it is not a function of the
     // Lean-emitted deletion tables, and a change in it SHOULD be a flag-day someone reads — not a
     // number that silently follows a regen. It moved 254 → 134 when the S2 flag-day deleted the
-    // graduated chip-lane stratum; the relation below anchors the literal to that Lean-emitted
-    // table so an S2 span change fails loudly here instead of leaving a floating count.
-    assert_eq!(sites.len(), 134, "chip lookups at HEAD (was 254 pre-S2)");
+    // graduated chip-lane stratum, then 134 → 138 / 254 → 262 at the NINE-LANE epoch (each rotated
+    // block gained two absorption sites with the six new limbs: 60 → 62 per block). The relation
+    // below anchors both literals to the Lean-emitted deletion table so an S2 span change fails
+    // loudly here instead of leaving a floating count.
+    assert_eq!(sites.len(), 138, "chip lookups at HEAD (was 262 pre-S2)");
     assert_eq!(
         sites.len() + dregg_circuit::effect_vm::s2_compact_generated::S2_LANE_SPAN / 7,
-        254,
+        262,
         "the S2 flag-day deleted exactly the graduated chip-lane sites (S2_LANE_SPAN spans 7 lanes \
-         per site), taking the deployed census 254 → 134"
+         per site), taking the deployed census 262 → 138"
     );
 
     // -- tag / var-arity histograms --
@@ -1086,7 +1088,7 @@ fn e3_mutable_last_limb_schedule_rate8_sim() {
     }
     assert_eq!(chains.len(), 2);
     for (i, c) in chains.iter().enumerate() {
-        assert_eq!(c.len(), 179, "chain {i}: 178 pre-limbs + iroot");
+        assert_eq!(c.len(), 185, "chain {i}: 184 pre-limbs + iroot");
     }
 
     // -- the empirical divergence set: WHERE do the two streams actually differ? --

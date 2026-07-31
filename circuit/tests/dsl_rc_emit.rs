@@ -189,32 +189,78 @@ fn dsl_rc_pins_prove_with_and_without_a_dfa_caveat_and_the_tooth_bites() {
         .expect("the Dfa-gated rotated transfer must prove (SAT with the real rc)");
     verify_vm_descriptor2(&desc, &proof_dfa, &dpis_dfa).expect("Dfa-gated proof verifies");
 
-    // ── 3. THE TOOTH: a claimed rc ≠ the bound carrier is REFUSED. ──
-    // (a) verifier-side: same proof, forged rc claim in the public vector.
-    let mut forged = dpis_dfa.clone();
-    forged[ROT_PI_COUNT] += BabyBear::ONE;
-    assert!(
-        verify_vm_descriptor2(&desc, &proof_dfa, &forged).is_err(),
-        "a forged rc claim against an honest proof must be refused"
-    );
-    // (b) prover-side: a trace whose carrier disagrees with the published rc cannot prove
-    //     (the pin gate is UNSAT — the prover cannot claim a different predicate than it ran).
-    let mut forged_trace = trace_dfa.clone();
-    for row in forged_trace.iter_mut() {
-        row[CAVEAT_BASE + pad + C_DFA_RC_OFF] += BabyBear::ONE;
+    // ── 3. ⚑ THE "TOOTH" WAS NEVER A TOOTH, AND `dropUnforcedPins` REMOVED THE PIN THAT
+    //       IMPERSONATED ONE. ──
+    //
+    // This step used to assert, in two halves, that "a claimed rc ≠ the bound carrier is REFUSED".
+    // Half (a) still passes and half (b) now fails, and the SPLIT is the diagnosis:
+    //
+    //   (a) forging the PUBLISHED vector against an honest proof is refused — but not by the rc
+    //       pin. Public values are absorbed into the Fiat–Shamir transcript, so ANY edit to the PI
+    //       vector breaks verification, including edits to slots no constraint mentions. (a) would
+    //       pass against a descriptor with no rc pin at all, which is exactly the situation now.
+    //
+    //   (b) forging the TRACE carrier and keeping the honest PI vector was the half that tested the
+    //       pin — and the pin is gone. `withDfaRcPins` appends ONLY `.piBinding`s
+    //       (`withDfaRcPins_constraints` / `memOpsOf_withDfaRcPins` / `mapOpsOf_withDfaRcPins`), and
+    //       the rc carrier columns (caveat-region offsets 39..=42) are read by no gate, lookup, hash
+    //       site or range tooth. So the pin was `local[c] == pi[k]` with the prover choosing both
+    //       sides, `UnforcedPiPins.unforcedPins` condemned all four, and the convergence re-emit
+    //       deleted them.
+    //
+    // ⚠ AND (b) WAS ALWAYS ROUTABLE-AROUND EVEN WHEN IT PASSED. It moved the carrier and left the
+    // PI alone; a real adversary moves BOTH and is accepted, publishing whatever route commitment
+    // it likes. `withDfaRcPins`'s own doc has said so all along: "the pins are plain PI bindings,
+    // satisfiable at any uniformly-filled value — the executor/verifier anchors the published
+    // value, real-or-zero, off the turn's own witnessed predicates." The AIR never bound the route
+    // commitment. This step is therefore replaced by the MEASUREMENT, not renumbered.
+    {
+        // (a) is kept, with its claim corrected to what it actually demonstrates.
+        let mut forged = dpis_dfa.clone();
+        forged[ROT_PI_COUNT] += BabyBear::ONE;
+        assert!(
+            verify_vm_descriptor2(&desc, &proof_dfa, &forged).is_err(),
+            "any edit to the published vector breaks the transcript this proof was bound to. NOTE \
+             this is transcript binding, NOT the rc pin — it would hold for an unpinned slot too."
+        );
+
+        // (b) INVERTED: the AIR ADMITS a trace whose rc carrier disagrees with the published rc.
+        let mut forged_trace = trace_dfa.clone();
+        for row in forged_trace.iter_mut() {
+            row[CAVEAT_BASE + pad + C_DFA_RC_OFF] += BabyBear::ONE;
+        }
+        let admitted =
+            prove_vm_descriptor2(&desc, &forged_trace, &dpis_dfa, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis_dfa));
+        assert!(
+            admitted.is_ok(),
+            "MEASURED: with the unforced rc pins deleted, the AIR must ADMIT a carrier/claim \
+             mismatch — nothing relates the rc carrier column to PI {ROT_PI_COUNT}. If this \
+             REFUSES, a real binding arrived (see the note below) and this assertion should be \
+             flipped back to a refusal, not deleted: {admitted:?}"
+        );
+        eprintln!(
+            "MEASURED — the rc route commitment is NOT bound in-AIR: a trace whose carrier \
+             disagrees with the published rc proves and verifies."
+        );
     }
-    // The rc pin-gate mismatch is caught at VERIFY (the light-client op), not necessarily at prove.
-    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        prove_vm_descriptor2(&desc, &forged_trace, &dpis_dfa, &mem_boundary, &map_heaps)
-            .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis_dfa))
-    }));
-    assert!(
-        match refused {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
-        },
-        "a carrier/claim mismatch must not prove"
-    );
+
+    // ⚑ AND THE REMOVAL BROKE A REAL CONSUMER — the one place the rc binding was ever enforced.
+    //
+    // `circuit-prove/src/ivc_turn_chain.rs::dsl_rc_claim_pi_lo` LOCATES the fold's rc slot BY
+    // searching for the `PiBinding` on the rc lane-0 column, and errors fail-closed ("dsl: leg
+    // descriptor carries NO rc pin … refusing to fold") when it is absent. `carrier_claim_pins_admitted`
+    // then requires a pin per claim slot. No member of any deployed registry carries an rc pin now,
+    // so the `CarrierWitness::Dsl` fold arm refuses every deployed leg.
+    //
+    // ⚠ THE REPAIR IS TO MAKE THE BINDING REAL, NOT TO TEACH THE FOLD TO ACCEPT AN UNPINNED SLOT.
+    // Fold the rc carrier into `caveatCommit` (move it inside the commit fold, so the columns enter
+    // `forcedCols`); the next emit then KEEPS the pins because they bind, `dsl_rc_claim_pi_lo` finds
+    // them again, and step 3(b) above flips back to a refusal that an adversary cannot route around
+    // by moving the column. Teaching the fold to accept an unpinned slot would restore the green
+    // and keep the hole — and would be the second time this route's binding was assumed rather
+    // than checked. Detection lives here and in
+    // `effect_vm_descriptors::v3_staged_registry_parses_and_covers`.
 
     // ── 4. THE AVAIL-WELD RANGE STILL BITES: wire 188 (`BEF0`) carries the 15-bit range lookup that
     //     closes the GAP #4 over-debit forgery. An over-15-bit value there (the forgery shape: a

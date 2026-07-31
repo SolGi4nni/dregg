@@ -561,7 +561,7 @@ fn bridgemint_forced_on_wire_rejects_forged_balance_anchor_disabled() {
 ///    A sibling rescue-pin was corrected for exactly this ("a rescue-pin aimed one lane off its
 ///    stated target is not a pin").
 ///  * The producer DOES fill them: `cell/src/commitment.rs` and its twin
-///    `turn/src/rotation_witness.rs` both write `Faithful8::from_field_limbs8(..).write_lanes(..)`
+///    `turn/src/rotation_witness.rs` both write `Faithful9::from_field_lanes9(..).write_lanes(..)`
 ///    at `113 + 7·i`, and `build_honest` routes through `rw::produce`.
 ///  * So it was never a producer gap. Measured, the failure was `constraints not satisfied on row 0:
 ///    failed constraints = [#94, #95]` = the gates `col323 == col562` and `col324 == col563`, i.e.
