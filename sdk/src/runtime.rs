@@ -1791,9 +1791,14 @@ fn produce(
             use dregg_exec_lean::{self as lean_apply, ProducerOutcome};
             let (result, outcome) = lean_apply::produce_via_lean(executor, turn, ledger);
             match &outcome {
+                // ⚑ DESTRUCTURED FIELD-BY-FIELD ON PURPOSE — no `..`. `ProducerOutcome` is the
+                // authority-inversion report; when it gains a leg (as it did on 2026-07-30 with
+                // `divergence`, which broke this consumer while `dregg-exec-lean` stayed green),
+                // this arm must go RED and be told about it rather than swallow it.
                 ProducerOutcome::LeanAuthoritative {
                     committed,
                     rust_agreed,
+                    divergence,
                     lean_root,
                     rust_root,
                     rust_committed,
@@ -1815,6 +1820,10 @@ fn produce(
                             agent = ?turn.agent,
                             lean_committed = *committed,
                             rust_committed = *rust_committed,
+                            // WHICH LEG caught it (commit bit / anchor / ledger-at-cell) — the
+                            // anchor is structurally blind to the third, so naming the leg is what
+                            // makes this line diagnosable instead of just alarming.
+                            divergence = ?divergence,
                             lean_root = ?lean_root,
                             rust_root = ?rust_root,
                             "THE SWAP authority inversion (SDK): verified Lean executor \

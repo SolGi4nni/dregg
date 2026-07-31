@@ -1,5 +1,110 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 30 — A1's WOUND IS CLOSED AND ITS FOUR ASSERTIONS WERE DEAD, AT THE SAME INSTANT: an emitter moved a constraint's DOMAIN and every reader keyed on its KIND stopped seeing it
+
+Sent to establish whether **A1** (*"a revoked capability could be left live, and the SDK asserted the
+opposite"*) and **D1** (`dreggnet-market` 23 of 52 red) were stale. Both were — and re-measuring A1
+found a **fresh, same-day regression in the thing that keeps A1 honest.**
+
+**THE AIR HALF IS INTACT, MEASURED IN THE DEPLOYED BYTES.** Both REMOVE members still carry all 16
+cap-root bindings — 8 BEFORE welds on `[213, 240..=246]` (the revocation READ) and 8 AFTER tombstone
+root pins on `[452, 479..=485]` (the write tooth) — **exactly one constraint per lane**, at
+`trace_width` 2119 with 310/309 constraints narrow and 2014 wide. End to end:
+`cap_open_write_prove_through` prints ✔ *"UNSAT AT THE PROVER: the fabricated post-remove cap-root
+makes `dregg-effectvm-revoke-v1-rot24-v3-remove-capopen` unsatisfiable"*. **This is Lean-authored
+AIR** — `Emit/CapOpenEmit.lean::removeTombstoneConstraints` (`#guard … == 32`),
+`Emit/CapRemoveEmit.lean::effCapRemoveV3_forces_tombstoneFold` and its refusal twin
+`effCapRemoveV3_rejects_forged_afterRoot`, `#assert_axioms`-clean, no `sorry`. Nothing here was
+hand-written in Rust.
+
+⚑ **AND EVERY RUST READER OF THOSE BYTES WAS BLIND.** `81ee5492d` (the last-row hardening flag day,
+the same day, 20:04) re-emitted all 174 members and moved every row-local body from `gate` (transition
+domain) to `window_gate` (whole domain). Counted at HEAD: **0 `gate` and 19,793 `window_gate` across
+all three registries.** Four teeth recovered weld geometry by matching `VmConstraint::Gate` — a KIND,
+where the meaning is a BODY — and found nothing:
+
+| tooth | what it stopped asserting | how it failed |
+|---|---|---|
+| `sdk …::cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound` | **A1's own tooth** — the 8 AFTER root pins whose absence WAS the 07-28 wound | RED in 0.203 s |
+| `sdk …::write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge` | the same 16 bindings, wide+narrow | RED in 0.160 s |
+| `sdk …::cap_write_delegate_atten_descriptor_carries_insert_and_submask` | the 8 `effCapInsertV3` AFTER welds | RED in 0.067 s |
+| `circuit …::cap_open_write_prove_through::remove_write_twins_bind_the_post_remove_cap_root` | ⚑ **A1's PERMANENT RED-PROOF** — its layout precondition (`constraints[n-1]` is a `Base(_)`) could not run, so the strip-the-spine leg never executed | RED **after** POLE 2 had already printed ✔ |
+
+⚠ **THE PANIC TEXT WAS A FALSE DIAGNOSIS IN A MEASUREMENT'S VOICE.** Because the BEFORE welds are
+checked first, all three SDK teeth died on lane 0 saying *"MUST weld the read capRoot lane 0 to the
+committed BEFORE cap-root var 213"* — which reads as **"the descriptor lost its welds."** It had not
+lost anything; the reader had. The four-inherited-wrong-diagnoses streak would have been five.
+
+**THE REPAIR IS ONE DECODER, AND IT ALREADY EXISTED.** `81ee5492d` named this class precisely, in
+`descriptor_ir2::row_local_body`'s own doc — *"matching `VmConstraint::Gate` directly is matching a
+KIND where the meaning is a BODY … it silently stops finding anything the moment an emitter moves the
+body's domain"* — and applied it to its own two witness-side decoders **inside `circuit/src/`**. It
+did not sweep. The three SDK copies are now one `descriptor_binds_var` over `row_local_body`, and the
+prove-through's shape precondition asks `row_local_body(c).is_some()` instead of a kind. The next
+domain move edits one function and one predicate, or nothing.
+
+**BOTH POLES, IN VALUE, PERMANENT.** A structure tooth that only ever says "present" cannot go red, so
+A1's SDK tooth now carries its own refusal in the same process: the 8 AFTER-pin constraints are
+deleted from the parsed descriptor and every AFTER lane must then read UNBOUND — **by variant, not by
+a blanket break**: exactly 8 constraints must have been removed, and every BEFORE weld must STILL be
+found in the same mutated value (a control that snapped everything would be satisfied by the blind
+decoder this replaced). Beside it the descriptor is re-expressed in the OTHER domain and required to
+give the same 16 answers, which is the property the flag day broke, asserted rather than trusted. One
+no-op retired on the way: `let _ = LeanExpr::Var(87);`, standing in for the sentence *"col 87 stays a
+frozen pass-through"*, is now that sentence as an assertion.
+
+**MEASURED — persvati, debug, `--no-fail-fast`, pbuild VERDICT read, never a pipe's exit code.**
+
+| run | result |
+|---|---|
+| `dregg-sdk` BEFORE (lane `packed-merkle`, HEAD) | **525 run, 515 passed (75 slow), 5 failed, 5 timed out** — VERDICT FAIL 100 |
+| `dregg-sdk` AFTER (same lane) | **525 run, 523 passed (34 slow), 1 failed, 1 timed out** — VERDICT FAIL 100 |
+| the three teeth, run by name from the built binary | `test result: ok. 3 passed; 0 failed` |
+| `cap_open_write_prove_through` BEFORE (lane `srot`) | **8 run, 7 passed, 1 failed** — the failure is A1's own red-proof, unable to run |
+| `cap_open_write_prove_through` AFTER | **8 run, 8 passed** — VERDICT **PASS status=0** |
+| `dreggnet-market` (lane `darkpool`, D1) | **53 run, 52 passed (26 slow), 1 timed out, 1 skipped**; the timeout **PASSES at 123.3 s in isolation**, VERDICT PASS |
+
+And the red-proof is not merely green, it **speaks** — `--nocapture`, both REMOVE twins, in order:
+*"✔ UNSAT AT THE PROVER: the fabricated post-remove cap-root makes `…-v3-remove-capopen`
+unsatisfiable"*, then *"✔ RED-PROOF: with the 32 tombstone constraints REMOVED from the descriptor
+value, the identical fabricated post-remove cap-root PROVES and ledgerlessly VERIFIES — exactly the
+wound HEAD carried until 2026-07-28."* That is the whole property in two lines: the revoked capability
+cannot be left live, **and** the reason is those 32 constraints and nothing else.
+
+**No mutation window on the shared tree.** The red-proof IS the pre-fix HEAD baseline, run from an
+rsynced lane copy, and each panic was re-read out of that lane's already-built binary; the permanent
+red-proofs are in-value mutations of parsed data. `git diff --exit-code` after shows only the repair.
+
+⚠ **NOT MINE, FOUND BY THE SAME RUNS, SAID OUT LOUD RATHER THAN FOLDED INTO A COUNT:**
+* `sdk::sovereign_producer_refuses_unwelded_movers::a_two_cohort_turns_committed_commitment_depends_on_the_field_value`
+  is a REAL red in isolation — *"cohort leg 1 … `dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse`:
+  IR v2 verification failed: `InvalidOpeningArgument(InvalidPowWitness)`"*. A setField/bare-refuse leg,
+  not a cap-write one.
+* **THE SHARED TREE DID NOT COMPILE FOR ~20 MINUTES AND `dregg-exec-lean` STAYED GREEN THROUGH IT.**
+  A concurrent lane added `divergence: Option<ProducerDivergence>` to `ProducerOutcome::LeanAuthoritative`
+  and did not update `sdk/src/runtime.rs:1794`, so every crate downstream of `dregg-sdk` stopped
+  building (`E0027`) while the crate that made the change was fine — the cfg-test-twin shape again.
+  Repaired here rather than silenced: the arm destructures **field-by-field, no `..`**, and now logs
+  WHICH leg caught the disagreement.
+* `sdk::tool_market_paid::agent_a_pays_agent_b_per_tool_call_conserved` failed in the baseline's
+  parallel run and passes **7/7 in isolation**; `service_economy::…lease_open_fund_run…` failed in one
+  run of three. Flakes, named, not counted as findings. Every TIMEOUT was the 180 s kill on a box at
+  load 90–480 — the budget-truncation class `.config/nextest.toml` already documents.
+
+⚠ **THE NEIGHBOUR I DID NOT MEASURE, NAMED SO IT IS NOT LAUNDERED:** the flag day hardened the 174
+EMITTED members, but the welds Rust *appends* at prove time are still constructed as transition-domain
+`Base(Gate)` — `effect_vm/bare_floor_refuse_weld.rs` (live; it carries a `caveat_uniform_gate` coupling
+the decode row to the last-row PI, so this reads as deliberate) and `effect_vm/satisfaction_weld.rs`
+(explicitly STAGED, on no live path). **I did not drive a last-row forge against either.** An
+observation, not a finding.
+
+**A1 × the capability-kernel lane, since both were live today: they do not overlap and neither covers
+the other.** `recKDelegateOwned` (`Dregg2/Exec/AuthTurn.lean`, `2a8e20d8a`) is c-list ADMISSION — may
+this grant happen — and is still grep-zero on the Rust side. A1 is the AIR binding of the post-remove
+cap-root — does the published root reflect the removal. A1's tooth says nothing about who was allowed
+to revoke; the admission gate says nothing about the root that gets published. Nothing in this repair
+touches the 90-reference cutover that lane deliberately left undone.
+
 ## ⚑⚑⚑⚑ JULY 30 — the wave CLOCK was outside the committee: three outsider blocks reordered an honest total order, and a fourth fork mechanism fell out of measuring it
 **F1 · ⚑ THE NINE-LANE RE-EMIT IS STAGED AND BLOCKED ON TWO FOREIGN FILES. READY.**
 `5326fbe7f` landed the Lean: `fieldToLanes9_injective` with a TOTAL decoder and a machine-checked left
@@ -1206,7 +1311,30 @@ keyed on `file:line` decays in days here, so every entry below leads with the **
 ### A. GRANTS AUTHORITY OR LOSES VALUE — fix these first
 
 **A1 · A REVOKED CAPABILITY COULD BE LEFT LIVE, AND THE SDK ASSERTED THE OPPOSITE IN THE PRESENT
-TENSE. FIXED 2026-07-28 — descriptor re-emit + VK rotation, a flag day.** The wound: on the two
+> ✅ **RE-MEASURED AT HEAD 2026-07-30 — THE AIR IS INTACT, THE TOOTH WAS NOT.** In the deployed bytes
+> both REMOVE members still carry all 16 cap-root bindings — 8 BEFORE welds (`[213, 240..=246]`) and
+> 8 AFTER tombstone root pins (`[452, 479..=485]`), **exactly one constraint per lane**, at 2119 wide
+> / 310 + 309 constraints in `rotation-v3-staged-registry.tsv` and 2014 wide in the wide registry. A
+> fabricated post-remove cap-root is still UNSAT. The wound this entry names is CLOSED.
+>
+> ⚑ **The SECOND CLAUSE re-opened the same day, and this time the assertion went RED, not quietly
+> green.** `81ee5492d` (the last-row hardening flag day, 20:04) moved every deployed member's
+> row-local bodies from `gate` (transition domain) to `window_gate` (whole domain): **0 `gate` and
+> 19,793 `window_gate` across all 174 members in all three registries.** Three teeth in
+> `sdk/src/full_turn_proof.rs` decoded welds by matching `VmConstraint::Gate` — a KIND, where the
+> meaning is a BODY — and stopped finding a single one:
+> `cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound` (THIS entry's tooth),
+> `write_cap_open_wrapper_requires_cap_tree_write_witness_no_silent_forge`, and
+> `cap_write_delegate_atten_descriptor_carries_insert_and_submask` — all three failing on their FIRST
+> lane in 0.067–0.203 s. ⚠ **And the panic was a false diagnosis in a measurement's voice:** *"MUST
+> weld the read capRoot lane 0 to the committed BEFORE cap-root var 213"* reads as "the descriptor
+> lost its welds", which is the opposite of what happened. Repaired by routing all three through ONE
+> decoder (`descriptor_binds_var` → `descriptor_ir2::row_local_body` — the accessor `81ee5492d`
+> created for exactly this class and then applied only inside `circuit/`), plus a permanent in-value
+> red-proof and a domain re-expression check. Counts + method: the JULY 30 entry at the top of this
+> file.
+
+TENSE. FIXED 2026-07-28 — descriptor re-emit + VK rotation, a flag day; TOOTH RE-BLINDED AND REPAIRED 07-30.** The wound: on the two
 REMOVE members (`revokeDelegationWriteCapOpen`, `revokeCapabilityWriteCapOpen`) the appendix `capRoot`
 was welded to the **BEFORE** group and the gates that constrained the after side (`c452 == c87`,
 `c87 == c65`) had been dropped with nothing put in their place. **Those members declare ZERO
@@ -1269,7 +1397,10 @@ false SDK sentence at
 **A2 · THE EFFECT-VM PROOF IS CONSULTED AFTER THE TURN HAS COMMITTED, CHAINED AND GOSSIPED — AND IT — FIXED.**
 > ✅ **FIXED 2026-07-28** (861bb3b33) — five MCP tools could not commit; `require_effect_vm_proof` deleted, every path routed onto the Lean-emitted rotated descriptor via the same seam HTTP uses
 
-CAN NEVER SUCCEED. LIVE.** `require_effect_vm_proof` is `node/src/mcp/proof.rs:377-392`, one
+CAN NEVER SUCCEED. FIXED 2026-07-28 (`861bb3b33`) — the headline's own second line still read LIVE
+two days after the ✅ above it; re-verified at HEAD 07-30, `require_effect_vm_proof` survives only
+inside comments (`node/src/mcp/{mod,handlers_delegate,receipt_head_e2e}.rs`), zero code sites.**
+`require_effect_vm_proof` was `node/src/mcp/proof.rs:377-392`, one
 expression over `try_generate_effect_vm_proof` (`:423-469`) whose **only two returns are both `Err`**;
 the terminal one (`:463`) is *"standalone v1 effect-vm proof material is retired"*. Its five call sites
 (`handlers_delegate.rs:154, 820, 1215`; `handlers_act.rs:1219, 1229`) are pre-commit, so the MCP grant
@@ -1870,7 +2001,28 @@ without making its inputs commit-resolvable.
 ### D. REAL MONEY AND PLAYER-FACING SURFACES THAT SHOW A NUMBER NOTHING MOVES
 
 **D1 · `dreggnet-market` IS 23 OF 52 RED, AND 22 OF THE 23 ARE ONE WIRING LINE THE CRATE CANNOT
-WRITE. LIVE — measured, deterministic.** `cargo nextest run -p dreggnet-market --no-fail-fast` →
+> ✅ **FIXED 2026-07-28** (`477b5a464`) — the wiring line, exactly as this entry predicted. The crate
+> now *has* `dregg-exec-lean` as a dependency (`dreggnet-market/Cargo.toml:180`) and every test binary
+> installs the gate for its own process through `tests/support/mod.rs::install_verified_settlement_gate`
+> (`:58`), which routes through `dregg_lean_ffi::demand_lean` so an absent archive PANICS rather than
+> letting a permissive stand-in turn "the market settles" into "the market compiles". The omission is
+> now DETECTED, not just fixed: `tests/verified_settlement_gate_canary.rs` drives both poles in one
+> process against the `OnceLock` — before the install a conserved, above-reserve, correctly-sealed
+> award is REFUSED *citing the absent gate*; after the install, the only thing changed, the identical
+> award CLEARS. The 23rd (unrelated) red, `banked_relic_bazaar`, passes too.
+>
+> ⚠ **RE-MEASURED AT HEAD 2026-07-30**, persvati lane `darkpool`, debug, `--no-fail-fast`, pbuild
+> VERDICT read: **53 run, 52 passed (26 slow), 1 TIMED OUT, 1 skipped.** **22 of the 23 original
+> failures verifiably PASS, including the unrelated 23rd (`banked_relic_bazaar`, 71.8 s).** ⚠ Said
+> precisely rather than rounded up: the one non-pass, `fhegg_atomic_asset::…durable_journal_recovers_idempotently…`,
+> IS one of the original 23 and **returned no verdict** — it hit the 180 s kill on a box at load
+> ~90-118, while its two siblings in the same file passed at 113 s and 124 s under the same
+> contention. That is the budget-truncation class `.config/nextest.toml` already documents, not a
+> wiring red, but it is not a green either and is not counted as one. ⚠ The entry's own stated blind spots are UNCHANGED: default
+> features are still `[]`, `.config/nextest.toml` still skips six market binaries, and the crate still
+> authors 110 `#[test]` fns against the 53 this invocation sees.
+
+WRITE. FIXED 2026-07-28 (`477b5a464`) — re-measured at HEAD 07-30.** `cargo nextest run -p dreggnet-market --no-fail-fast` →
 **52 run, 29 passed, 23 failed, 1 skipped, EXIT=100**, identical failing set across two runs (the
 earlier readings of 9 and 19 were undercounts of the same wound). It **compiles**, no SIGABRT, the
 Lean archive is present — every red is a real panic. 22 of them reach one refusal: *"WIRING BUG in

@@ -6024,6 +6024,43 @@ mod tests {
         dregg_circuit::cap_root::split_effect_mask(mask)
     }
 
+    /// **A COMMITTED WELD/PIN, DECODED BY ITS BODY AND NEVER BY ITS KIND.** Every cap-root weld
+    /// (`eqGate`) and every tombstone-spine root pin (`rootPinGate`) lowers to the row-local body
+    /// `<anything> + (−1)·var(g)`, so one matcher pins both groups. What it must NOT do is pin the
+    /// *domain*: the Lean emitters lower a row-local body two ways that denote the SAME polynomial
+    /// over the SAME columns — `Base(Gate(b))` (transition domain) and
+    /// `WindowGate { b, on_transition: false }` (whole domain) — and `descriptor_ir2::row_local_body`
+    /// is the accessor that reads the body out of whichever one carries it.
+    ///
+    /// ⚑ THIS IS NOT A STYLE NOTE; IT IS A REPAIR. Until 2026-07-30 the three descriptor-structure
+    /// teeth below each carried their own copy of this matcher keyed on `VmConstraint::Gate`
+    /// DIRECTLY. `81ee5492d` (the last-row hardening flag day, the same day) moved every deployed
+    /// member's row-local bodies onto the whole domain — the narrow
+    /// `revokeDelegationWriteCapOpenVmDescriptor2R24` went from 121 `gate` to 121 `window_gate`, and
+    /// **zero transition-domain `Gate`s survive in any of the three registries**. All three teeth
+    /// therefore stopped finding the welds they exist to assert, including
+    /// `cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound` — the tooth that closed the
+    /// 2026-07-28 "a prover could publish ANY 8-felt post-remove cap-root" wound. The flag day named
+    /// this exact class in `row_local_body`'s doc and repaired its own two witness-side decoders in
+    /// `circuit/`; `sdk/` was not swept, so the cap-write family went blind for ~2 hours.
+    ///
+    /// One decoder, one place to be wrong. A future emitter domain change now moves this function or
+    /// nothing.
+    fn descriptor_binds_var(
+        desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+        g: usize,
+    ) -> bool {
+        use dregg_circuit::lean_descriptor_air::LeanExpr;
+        desc.constraints.iter().any(|k| {
+            dregg_circuit::descriptor_ir2::row_local_body(k).is_some_and(|b| {
+                matches!(&*b, LeanExpr::Add(_, r)
+                    if matches!(&**r, LeanExpr::Mul(cneg, v)
+                        if matches!(&**cneg, LeanExpr::Const(-1))
+                            && matches!(&**v, LeanExpr::Var(x) if *x == g)))
+            })
+        })
+    }
+
     /// REGRESSION (felt-width class): the wide/narrow leg classifier must work on the NON-PROVER
     /// (light-client verify) build. A prior `#[cfg(not(feature = "prover"))]` stub returned `false`
     /// unconditionally, so a WIDE leg's ~124-bit 8-felt anchor was silently read at its narrow slot-0
@@ -7013,7 +7050,9 @@ mod tests {
     /// is UNCHANGED — a fabricated root binding must NOT be provable:
     ///   (structure) the deployed `revokeDelegationWriteCapOpen` wrapper carries NO arity-2 map-op AND
     ///   welds ALL 8 lanes of the membership read's `capRoot` group to the committed BEFORE cap-root
-    ///   block (lane0 = var 213, lanes 1..7 = vars 239..245) — the `effCapRemoveV3` BEFORE welds;
+    ///   block (`BEFORE_BASE + CAP_ROOT_GROUP` = `[213, 240..=246]` — DERIVED in the body, because
+    ///   the hand-written `239..245` this line used to carry named a column nothing binds and missed
+    ///   real lane 7) — the `effCapRemoveV3` BEFORE welds;
     ///   (bite) a trace whose committed BEFORE group is TAMPERED away from the membership-opened root
     ///   (the genuine after-spine trace, then BEFORE lane0 perturbed WITHOUT re-deriving the appendix)
     ///   REFUSES to prove — the weld gates bind; there is NO silent forge of the root binding.
@@ -7029,7 +7068,6 @@ mod tests {
             generate_rotated_cap_remove_after_spine_wide, generate_rotated_effect_vm_trace,
             widen_to_cap_open,
         };
-        use dregg_circuit::lean_descriptor_air::LeanExpr;
         use dregg_turn::rotation_witness as rw;
 
         const EFFECT_DELEGATION_OPS: u32 = 1 << 16;
@@ -7072,16 +7110,7 @@ mod tests {
             cap_open_descriptor_json_by_key("revokeDelegationWriteCapOpenVmDescriptor2R24")
                 .expect("the write wrapper is in the narrow V3 registry");
         let narrow = parse_vm_descriptor2(narrow_json).expect("narrow write wrapper parses");
-        let binds_var = |g: usize| {
-            narrow.constraints.iter().any(|c| {
-                matches!(c,
-                    VmConstraint2::Base(dregg_circuit::lean_descriptor_air::VmConstraint::Gate(
-                        LeanExpr::Add(_, r)))
-                    if matches!(&**r, LeanExpr::Mul(cneg, v)
-                        if matches!(&**cneg, LeanExpr::Const(-1))
-                            && matches!(&**v, LeanExpr::Var(x) if *x == g)))
-            })
-        };
+        let binds_var = |g: usize| descriptor_binds_var(&narrow, g);
         for (label, base) in [
             (
                 "BEFORE",
@@ -7557,14 +7586,23 @@ mod tests {
     /// descriptor-structure check, rather than only in a minutes-long prove-through. The
     /// end-to-end prove/refuse closure is `cap_write_revoke_proves_and_verifies_light_client` and
     /// `dregg-circuit`'s `cap_open_write_prove_through::remove_write_twins_bind_the_post_remove_cap_root`.
+    ///
+    /// ⚑ AND IT WENT BLIND ONCE MORE, 2026-07-30. The 16 assertions were decoded by MATCHING
+    /// `VmConstraint::Gate`, a KIND, where the meaning is a BODY; `81ee5492d` moved every deployed
+    /// member's row-local bodies onto the whole domain and this tooth stopped seeing a single weld.
+    /// It now decodes through [`descriptor_binds_var`] → `descriptor_ir2::row_local_body`, and BOTH
+    /// halves of that are asserted below in the same process: an in-value RED-PROOF (delete the 8
+    /// root pins, require the AFTER lanes to read UNBOUND while the BEFORE welds survive) and a
+    /// DOMAIN re-expression (the same descriptor lowered to the other domain must give the same 16
+    /// answers).
     #[test]
     fn cap_write_revoke_descriptor_after_root_is_tombstone_spine_bound() {
         use dregg_circuit::effect_vm::trace_rotated::CapTreeWriteOp;
         use dregg_circuit::heap_root::HeapLeaf;
 
         // The deployed write wrapper's descriptor JSON (the SAME the producer + light-client verifier
-        // resolve against). Assert col 87 (the AFTER cap-root) is bound ONLY via the map_op write — the
-        // over-determining poseidon-output binding was dropped.
+        // resolve against). The binding this asserts is the 16-lane cap-root weld/pin pair; the v1
+        // col 87 is a frozen pass-through and there is no map-op on this member at all.
         use dregg_circuit::descriptor_ir2::VmConstraint2;
         use dregg_circuit::lean_descriptor_air::LeanExpr;
         let json = cap_open_descriptor_json_by_key("revokeDelegationWriteCapOpenVmDescriptor2R24")
@@ -7592,16 +7630,7 @@ mod tests {
         );
         // A gate of the shape `<something> + (-1)·var(g)` — both the `eqGate` welds and the
         // `rootPinGate`s are exactly this, so one matcher pins both groups.
-        let binds_var = |g: usize| {
-            desc.constraints.iter().any(|c| {
-                matches!(c,
-                    VmConstraint2::Base(dregg_circuit::lean_descriptor_air::VmConstraint::Gate(
-                        LeanExpr::Add(_, r)))
-                    if matches!(&**r, LeanExpr::Mul(cneg, v)
-                        if matches!(&**cneg, LeanExpr::Const(-1))
-                            && matches!(&**v, LeanExpr::Var(x) if *x == g)))
-            })
-        };
+        let binds_var = |g: usize| descriptor_binds_var(&desc, g);
         // ⚑ DERIVED, not hand-listed. This was `once(213).chain(239..=245)`, and BOTH ends of that
         // were wrong: `239` is not a cap-root lane at all (nothing in the descriptor binds it) and
         // real lane 7 (`246`) was never checked. The generated layout is the authority —
@@ -7637,9 +7666,93 @@ mod tests {
                 desc.name
             );
         }
-        // The v1-state cap-root column (var 87) stays FROZEN pass-through: no map_op writes it (there
-        // are no map ops at all).
-        let _ = LeanExpr::Var(87);
+        // The v1-state cap-root column (var 87) stays FROZEN pass-through — the `213 == 65` collision
+        // is gone and nothing on this member defines it. This used to be `let _ = LeanExpr::Var(87);`,
+        // a no-op standing in for a sentence, so the claim was unchecked; it is an assertion now.
+        // (Meaningful only because the decoder's domain-agnosticism is itself asserted below: a
+        // NOT-bound answer from a blind decoder would be free.)
+        assert!(
+            !descriptor_binds_var(&desc, 87),
+            "the v1-state cap-root column 87 must stay a FROZEN pass-through on the REMOVE wrapper — \
+             the cap-root write lives on the ROTATED limbs (BEFORE 213 / AFTER 452), and a v1-column \
+             definition reappearing here is the `213 == 65` collision coming back"
+        );
+
+        // ── THE PERMANENT IN-VALUE RED-PROOF. The 16 assertions above are only worth their text if
+        // they can FAIL, and this tooth has now been green-for-the-wrong-reason once already (it was
+        // named `…_after_root_is_map_op_defined_only`, checked only the BEFORE group, and passed
+        // through the whole 2026-07-28 wound). So the refusal is exercised on a MUTATED VALUE in the
+        // same process: delete exactly the constraints that bind the AFTER group and re-ask.
+        //
+        // ⚑ BY VARIANT, NOT BY A BLANKET BREAK. A negative control that snaps every weld would be
+        // satisfied by any decoder that returns `false` — including the blind one this repair
+        // replaced. So the strip is asserted SURGICAL: exactly 8 constraints removed, the AFTER lanes
+        // all report UNBOUND, and every BEFORE lane is STILL bound in the same mutated value.
+        let mut stripped = desc.clone();
+        let binds_any_after = |k: &VmConstraint2| {
+            after_group.iter().any(|g| {
+                dregg_circuit::descriptor_ir2::row_local_body(k).is_some_and(|b| {
+                    matches!(&*b, LeanExpr::Add(_, r)
+                        if matches!(&**r, LeanExpr::Mul(cneg, v)
+                            if matches!(&**cneg, LeanExpr::Const(-1))
+                                && matches!(&**v, LeanExpr::Var(x) if x == g)))
+                })
+            })
+        };
+        stripped.constraints.retain(|k| !binds_any_after(k));
+        assert_eq!(
+            desc.constraints.len() - stripped.constraints.len(),
+            after_group.len(),
+            "the AFTER cap-root group must be bound by EXACTLY one constraint per lane — the \
+             tombstone spine's 8 `rootPinGate`s. A different count means this red-proof is deleting \
+             something other than the tooth it claims to disarm."
+        );
+        for (lane, g) in after_group.iter().enumerate() {
+            assert!(
+                !descriptor_binds_var(&stripped, *g),
+                "RED-PROOF FAILED: with the tombstone spine's root pins deleted, AFTER cap-root lane \
+                 {lane} (var {g}) still reads as bound — so the check above cannot go red and asserts \
+                 nothing about the post-remove cap-root"
+            );
+        }
+        for (lane, g) in before_group.iter().enumerate() {
+            assert!(
+                descriptor_binds_var(&stripped, *g),
+                "the AFTER-pin strip must be SURGICAL: BEFORE cap-root lane {lane} (var {g}) must \
+                 still be welded in the mutated value, or the red-proof above is a blanket break and \
+                 proves nothing about which group the decoder reads"
+            );
+        }
+
+        // ── THE DECODER READS THE BODY, NOT THE KIND — asserted on this very descriptor. `Gate(b)`
+        // and whole-domain `WindowGate { b }` denote the SAME row-local polynomial over the SAME
+        // columns; a decoder keyed on the KIND silently finds nothing the moment an emitter moves
+        // the domain, which is exactly what `81ee5492d` did to all 174 deployed members. Re-express
+        // this descriptor in the OTHER domain and require the same 16 answers.
+        let mut transition_domain = desc.clone();
+        transition_domain.constraints = desc
+            .constraints
+            .iter()
+            .map(|k| match dregg_circuit::descriptor_ir2::row_local_body(k) {
+                Some(b) => VmConstraint2::Base(
+                    dregg_circuit::lean_descriptor_air::VmConstraint::Gate(b.into_owned()),
+                ),
+                None => k.clone(),
+            })
+            .collect();
+        assert_ne!(
+            transition_domain.constraints, desc.constraints,
+            "the re-expression must actually CHANGE the constraint list, otherwise this asserts \
+             nothing (the deployed member carries whole-domain windowGates since 81ee5492d)"
+        );
+        for g in before_group.iter().chain(after_group.iter()) {
+            assert!(
+                descriptor_binds_var(&transition_domain, *g),
+                "the cap-root weld decoder must find var {g} whichever DOMAIN carries the body — \
+                 keying on `VmConstraint::Gate` is what made all three cap-write teeth in this file \
+                 go blind at the last-row hardening flag day"
+            );
+        }
 
         // The cap-tree->map_heaps bridge itself is sound + ready: it builds the genuine BEFORE/AFTER
         // roots over the real c-list (a wrong key fails closed — no fabricated post-root). Exercise it
@@ -9569,14 +9682,7 @@ mod tests {
             .map(|off| dregg_circuit::effect_vm::trace_rotated::AFTER_BASE + off)
             .collect();
         for (lane, g) in after_group.iter().enumerate() {
-            let has_weld = desc.constraints.iter().any(|c| {
-                matches!(c,
-                    VmConstraint2::Base(dregg_circuit::lean_descriptor_air::VmConstraint::Gate(
-                        LeanExpr::Add(_, r)))
-                    if matches!(&**r, LeanExpr::Mul(cneg, v)
-                        if matches!(&**cneg, LeanExpr::Const(-1))
-                            && matches!(&**v, LeanExpr::Var(x) if x == g)))
-            });
+            let has_weld = descriptor_binds_var(&desc, *g);
             assert!(
                 has_weld,
                 "the delegateAtten keystone wrapper MUST weld the read capRoot lane {lane} to the \

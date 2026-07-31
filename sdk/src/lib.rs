@@ -2,13 +2,15 @@
 //!
 //! # Which semantics does a deployed SDK run?
 //!
-//! The SDK builds and signs turns; the **federation node executes them**. Today
-//! that execution runs on the LEGACY dregg1 Rust executor (`dregg-turn`), with
-//! the VERIFIED Lean executor (`metatheory/Dregg2/`, via `dregg-lean-ffi`)
-//! running as a SHADOW that compares its commit decision against the Rust path
-//! (gated on `DREGG_LEAN_SHADOW=1`). The source of truth for the semantics is
-//! the Lean — the Rust executor is the subject-under-test pending THE SWAP
-//! (cutover to `dregg_exec_full_forest_auth` as the authoritative executor).
+//! The SDK builds and signs turns; the **federation node executes them**. On the
+//! covered set that execution is the VERIFIED Lean executor
+//! (`metatheory/Dregg2/`, via `dregg-lean-ffi`): `produce_via_lean` is ON by
+//! default on native (opt out with `DREGG_LEAN_PRODUCER=0`) and installs the
+//! verified post-state and verdict, with the LEGACY dregg1 Rust executor
+//! (`dregg-turn`) demoted to a checked reference. Off that set the turn is
+//! FENCED onto the Rust producer with a named reason
+//! (`ProducerOutcome::Fallback`). The source of truth for the semantics is the
+//! Lean — the Rust executor is the subject-under-test.
 //!
 //! Concretely, when you deploy this SDK today: turn-building, key management,
 //! attenuation and proof generation are SDK-local Rust; the on-chain *effect

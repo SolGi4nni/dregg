@@ -832,14 +832,27 @@ fn remove_write_twins_bind_the_post_remove_cap_root() {
             "[{key}] the committed remove twin must carry the tombstone spine + selector"
         );
         // The committed tail is: … 8 BEFORE welds, 16 node lookups, 8 root pins, 8 zero pins,
-        // 1 selector gate (`withSelectorGate` appends exactly one `.base`). Assert that shape
-        // before cutting, so a layout change fails loudly instead of stripping the wrong 32.
+        // 1 selector gate (`withSelectorGate` appends exactly one row-local gate). Assert that
+        // shape before cutting, so a layout change fails loudly instead of stripping the wrong 32.
+        //
+        // ⚑ BY BODY, NOT BY KIND — this shape check is what BROKE on 2026-07-30. It read
+        // `matches!(c, VmConstraint2::Base(_))`, and `81ee5492d` (the last-row hardening flag day)
+        // moved every deployed row-local body from `Gate` (transition domain) to whole-domain
+        // `WindowGate`: measured at HEAD, **0 `gate` and 19,793 `window_gate` across all 174
+        // members in all three registries**, and this member's tail is 16 lookups then 17
+        // `window_gate`s — the same 33 constraints, in the same order, wearing a different kind.
+        // So the RED-PROOF below could not run at all and this whole tooth went red, while POLE 2
+        // (the fabricated post-remove root is UNSAT) had already passed one line above. A guard
+        // that cannot execute is the one thing that must not happen to a red-proof, so the shape
+        // is now asked of the BODY via `descriptor_ir2::row_local_body` — the accessor that flag
+        // day created for exactly this — and a future domain move cannot disarm it again.
+        let is_row_local_gate = |c: &dregg_circuit::descriptor_ir2::VmConstraint2| {
+            dregg_circuit::descriptor_ir2::row_local_body(c).is_some()
+        };
         assert!(
-            matches!(
-                stripped.constraints[n - 1],
-                dregg_circuit::descriptor_ir2::VmConstraint2::Base(_)
-            ),
-            "[{key}] the last committed constraint must be the selector gate"
+            is_row_local_gate(&stripped.constraints[n - 1]),
+            "[{key}] the last committed constraint must be the selector gate (a row-local gate in \
+             EITHER domain — `Gate` or a whole-domain `WindowGate`)"
         );
         assert!(
             stripped.constraints[n - 33..n - 17]
@@ -850,8 +863,9 @@ fn remove_write_twins_bind_the_post_remove_cap_root() {
         assert!(
             stripped.constraints[n - 17..n - 1]
                 .iter()
-                .all(|c| matches!(c, dregg_circuit::descriptor_ir2::VmConstraint2::Base(_))),
-            "[{key}] the tombstone spine's 8 root pins + 8 zero pins must sit at [n-17, n-1)"
+                .all(is_row_local_gate),
+            "[{key}] the tombstone spine's 8 root pins + 8 zero pins must sit at [n-17, n-1) and \
+             must each carry a ROW-LOCAL BODY (either domain)"
         );
         stripped.constraints.drain(n - 33..n - 1);
         stripped.name = format!("{}-TOMBSTONE-SPINE-STRIPPED", desc.name);
