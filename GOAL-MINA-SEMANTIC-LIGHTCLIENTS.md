@@ -806,3 +806,21 @@ Four measured fail-opens the re-emit must not hit:
 - `.aafiInsert` post-layout is **LIVE**: producer commits a sorted before-tree and an append-order
   after-root, so turn N's after-root ≠ turn N+1's before-root unless the inserted key is the maximum.
   **Producer-only fix, no VK rotation, state re-genesis.**
+
+## The 6 lib failures — NAMED, and all one cause
+All six are `faithful_note_spend_exact_v3`, and the panic says it outright:
+**`"staged exact FNSP-v3 descriptor shape drifted"`** — a pinned-plan check noticing that the
+shielded descriptor was reshaped twice last night:
+1. the `Gated{Hash}` fix **relocated C4** to an ungated per-row `Hash` over `col::LEAF_COMMIT` and
+   added `BoundaryDef::Fixed{First, IS_LEAF, 1}` — the trace now carries `NULLIFIER`/`KEY0..3` on
+   every row;
+2. authorization added **`lkOwnerDerive`** forcing `owner = hash_fact(key[0..4])`, which closed the
+   carried-key double-spend that survived a fully repaired C4.
+
+`complete_composition_fills_exact_geometry_and_all_pins` · `exact_v3_proof_wire_size_refuses_before_decode`
+· `public_statement_transport_is_exact_and_canonical` · `staged_descriptor_cache_preserves_the_exact_pinned_plan`
+· `supplied_exact_v3_descriptor_shape_refuses_before_proof_decode` · `production_route_is_provenance_identical_to_execution`
+
+**These are the pins DOING THEIR JOB, not defects.** They ride the convergence re-emit and must be
+re-pinned from the emitter's output — never relaxed. ⚑ Whoever re-pins them: the drift is real and
+intended, so the correct move is to re-emit and re-pin, and to state the new geometry in the commit.
