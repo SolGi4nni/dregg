@@ -37,7 +37,7 @@ re-assumed `StarkSound`/`AlgoStarkSound`), where `Rfix` is the LIVE registry
      DEPLOYED descriptor of tag `e`, at the CORRECTED cons-shaped OOD point
      (`ApexOodLaneRepair`; see the migration note below);
   3. `BusModelFamily … (tr e) (Rfix e)`  — the per-used-table LogUp bus models at `Rfix e`;
-  4. `MapReconcileFamily … (tr e) (Rfix e)` — the MapOps-AIR reconcile modeler data
+  4. `MapDenotationFamily … (tr e) (Rfix e)` — the `.mapOp` DENOTATION modeller (⛑ 2026-07-30: was `MapReconcileFamily`, the arity-2 GATE model, which `old_model_is_false_on_deployed_rows` proves FALSE on every deployed row — an apex whose premise is false on every real trace concludes nothing about any real turn)
      (`AlgoStarkSoundFanoutMemory`); NON-vacuous exactly at the mapOp-carrying deployed members
      (the three §J′ accumulator-insert hosts, tags 17/27/28; heapWrite 56; the refusal
      fields-write 39; spawnWrite 19; factory 18) and VACUOUS at every lookup-shaped member;
@@ -120,7 +120,7 @@ open Dregg2.Circuit.ApexOodLaneRepair
   (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape)
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemFree
 open Dregg2.Circuit.AlgoStarkSoundFanoutMemory
-  (MapReconcileFamily MapTableAssembly algoStarkSound_of_mapShape noteSpendV3_shape
+  (MapReconcileFamily MapDenotationFamily MapTableAssembly algoStarkSound_of_mapShape noteSpendV3_shape
    noteCreateV3_shape createCellV3_shape factoryV3_shape spawnWriteV3_shape
    refusalFieldsWriteV3_shape heapWriteV3_shape)
 open Dregg2.Circuit.CircuitSoundnessAssembled (Rfix transferDescr)
@@ -338,11 +338,6 @@ theorem side_supplyMint : KernelSideConditions (Rfix 3) :=
 theorem side_burn : KernelSideConditions (Rfix 4) :=
   kernelSide_refused _ burn_sideConditions
 
--- ⚑ 2026-07-31 ninth-lane flag day: `setFieldV3` grew from 49 to 56 completion freezes and from 7
--- to 8 published completion PIs, so this discharge crossed the default 200000-heartbeat ceiling.
--- Raising the ceiling gives the SAME kernel check more time; it weakens nothing, and the
--- `#assert_axioms` below still has to pass.
-set_option maxHeartbeats 2000000 in
 /-- tag 5 — setField (the DEPLOYED static slot-0 tick face), flag-day welded. -/
 theorem side_setField : KernelSideConditions (Rfix 5) :=
   kernelSide_refused _ (setFieldStatic_sideConditions 0)
@@ -587,7 +582,7 @@ named floor. -/
 /-- **`algoStarkSound_kernel` — kernel STARK-soundness over the REAL registry.** From EXACTLY the
 named floor — {`Poseidon2SpongeCR hash`} (⛑ ×2 until 2026-07-30; the `sponge` instance is gone)
 + per tag {`FriLdtExtractCons (Rfix e)`, `BusModelFamily
-(Rfix e)`, `MapReconcileFamily (Rfix e)`, `MapTableAssembly (Rfix e)`} — the FULL
+(Rfix e)`, `MapDenotationFamily (Rfix e)`, `MapTableAssembly (Rfix e)`} — the FULL
 `AlgoStarkSound hash Rfix …`: every `verifyAlgo`-accepted batch at ANY published effect tag yields
 a genuine `Satisfied2 hash (Rfix pi.effect) …` witness whose published commitments are
 `pi.toPublished`. Assembled POINTWISE from the general per-effect assembler at each tag's DEPLOYED
@@ -607,7 +602,7 @@ theorem algoStarkSound_kernel {F : Type*} [Field F] [DecidableEq F]
         logN view (tr e) (Rfix e))
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
-    (hrec : ∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState
+    (hrec : ∀ e : EffectIdx, MapDenotationFamily hash perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     (hasm : ∀ e : EffectIdx, MapTableAssembly perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e)) :
@@ -666,7 +661,7 @@ theorem algoStarkSound_kernel_noOodShape {F : Type*} [Field F] [DecidableEq F]
         initState logN view (tr e) (Rfix e))
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
-    (hrec : ∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState
+    (hrec : ∀ e : EffectIdx, MapDenotationFamily hash perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     (hasm : ∀ e : EffectIdx, MapTableAssembly perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e)) :

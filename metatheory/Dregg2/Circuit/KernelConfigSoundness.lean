@@ -103,7 +103,7 @@ open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriCore FieldArith fullCh
 open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily)
 open Dregg2.Circuit.ApexOodLaneRepair
   (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape)
-open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapReconcileFamily MapTableAssembly)
+open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapDenotationFamily MapReconcileFamily MapTableAssembly)
 open Dregg2.Circuit.AlgoStarkSoundKernel (algoStarkSound_kernel)
 open Dregg2.Circuit.ActionDispatch (actionTag fullActionStep)
 open Dregg2.Exec
@@ -158,7 +158,7 @@ theorem kernelConfigSound
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     -- ★ THE ONE GENUINE ASSUMPTION: CanonicalHeapExtract at the 7 mapOp effects (vacuous elsewhere).
-    (hrec : ∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState
+    (hrec : ∀ e : EffectIdx, MapDenotationFamily hash perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     -- ★ NEEDS-A-LEMMA (carried, NOT discharged): the table-assembly faithfulness pair.
     (hasm : ∀ e : EffectIdx, MapTableAssembly perm RATE toNat params vk core A initState

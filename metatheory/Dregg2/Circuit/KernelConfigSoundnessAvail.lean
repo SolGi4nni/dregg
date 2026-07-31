@@ -70,7 +70,7 @@ open Dregg2.Circuit.FriVerifier (FriParams RecursionVk FriCore FieldArith fullCh
 open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily MemoryLegs)
 open Dregg2.Circuit.ApexOodLaneRepair
   (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape)
-open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapReconcileFamily MapTableAssembly)
+open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapDenotationFamily MapReconcileFamily MapTableAssembly)
 open Dregg2.Circuit.AlgoStarkSoundKernelAvail (algoStarkSound_kernelAvail)
 open Dregg2.Circuit.ClosureFanoutGenuine (ClosureReadouts)
 open Dregg2.Circuit.ClosureTransferAvail (RfixAvail TransferTraceReadoutAvail BurnTraceReadoutAvail
@@ -125,7 +125,7 @@ theorem kernelConfigSoundAvail
         logN view (tr e) (RfixAvail e))
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (RfixAvail e))
-    (hrec : ∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState
+    (hrec : ∀ e : EffectIdx, MapDenotationFamily hash perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     (hasm : ∀ e : EffectIdx, MapTableAssembly perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))

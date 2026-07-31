@@ -69,7 +69,7 @@ open Dregg2.Circuit.AlgoStarkSoundGeneral (BusModelFamily MemoryLegs)
 open Dregg2.Circuit.ApexOodLaneRepair
   (FriLdtExtractCons FriLdtExtractConsNoOodShape friLdtExtractCons_iff_noOodShape
    algoStarkSound_of_memoryLegs_cons)
-open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapReconcileFamily MapTableAssembly
+open Dregg2.Circuit.AlgoStarkSoundFanoutMemory (MapDenotationFamily MapReconcileFamily MapTableAssembly
   algoStarkSound_of_mapShape)
 open Dregg2.Circuit.AlgoStarkSoundKernel (algoStarkSound_of_pointwise rfix_sideConditions)
 open Dregg2.Circuit.CircuitSoundnessAssembled (Rfix)
@@ -118,7 +118,7 @@ theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
     (hbusF : ∀ e : EffectIdx, BusModelFamily fp embed perm RATE toNat params vk core A initState
         logN view (tr e) (RfixAvail e))
     -- the map-shape legs at the off-debit tags (used only where `RfixAvail e = Rfix e`).
-    (hrec : ∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState
+    (hrec : ∀ e : EffectIdx, MapDenotationFamily hash perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))
     (hasm : ∀ e : EffectIdx, MapTableAssembly perm RATE toNat params vk core A initState
         logN view (tr e) (Rfix e))

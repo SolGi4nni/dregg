@@ -133,6 +133,43 @@ def MapReconcileFamily
     AcceptsFull perm RATE toNat params vk core A initState logN view pi π →
     MapReconcileModelOk hash d (tr pi π)
 
+/-- **⚑⚑ `MapDenotationFamily d` — THE APEX PREMISE, AS OF 2026-07-30, AND IT IS INHABITED.**
+
+Per accepting batch, every declared `.mapOp` row DENOTES: the deployed row denotation
+`DescriptorIR2.MapOp.holdsAt` holds, at the arity-3 indexed-Merkle commitment `heap_root.rs`
+computes.
+
+**Why this replaced `MapReconcileFamily` in the memory legs.** That one delivers
+`MapReconcileModelOk` — "the arity-2 map-reconcile GATES accepted". The legs need the row
+DENOTATION, and until tonight the two were the same object, so `mapOp_holds_of_mapReconcile` bridged
+them. The denotation moved onto the deployed commitment; the arity-2 gates provably do not force it
+(`MapReconcileImtRepoint.imtRoot_ne_mapRoot`), the bridge is DELETED, and — the part that matters —
+`MapReconcileImtRepoint.old_model_is_false_on_deployed_rows` proves `MapReconcileModelOk` is FALSE on
+the rows the deployed prover produces. **An apex whose premise is false on every real trace concludes
+nothing about any real turn.** That was the vacuity.
+
+This premise is not false there. `MapDenotationCutoverCheck.deployed_opensTo_inhabited` exhibits a
+witness of the underlying denotation at the DEPLOYED depth, the DEPLOYED sparse occupancy and the
+DEPLOYED sentinel, for an arbitrary hash and with no floor.
+
+⚠ **Say what it is at its real resolution.** This is a MODELLER premise, the same species as
+`BusModelFamily` — it is *assumed* here and *discharged* by the arity-3 gate laws in
+`MapKindImtGates` / the `mapOpsArmImt*_of_modeler` family, which sit below this module. Two of the
+five kinds cannot be discharged from the deployed AIR at all, and neither is a Lean defect:
+`.insert` (op=3) constrains only the post-root — and is emitted by ZERO deployed descriptors — and
+`.aafiInsert`'s POST side folds the physical append-order layout, which
+`no_schema_commits_the_append_order_layout` shows no `MapLeafSchema` commits. Both are Rust-side. -/
+def MapDenotationFamily
+    (hash : List ℤ → ℤ)
+    (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
+    (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
+    (initState : List ℤ) (logN : Nat) (view : ProofView)
+    (tr : BatchPublicInputs → BatchProof → VmTrace)
+    (d : EffectVmDescriptor2) : Prop :=
+  ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    AcceptsFull perm RATE toNat params vk core A initState logN view pi π →
+    Dregg2.Circuit.MapOpsColumnLayout.MapDenotationModelOk hash d (tr pi π)
+
 /-- **`MapTableAssembly d`** — the NAMED SPECIES-B carried fact (the mapOp-effect analog of
 transferV3's `MemMapFree` emptiness pair, same epistemic classification as
 `AirLegsDischarged.lean:30-35`): per accepting batch, (i) the committed memory table is EMPTY
@@ -230,7 +267,7 @@ theorem memoryLegs_of_mapShape
     (d : EffectVmDescriptor2)
     (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m))
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr d)
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr d)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     MemoryLegs hash perm RATE toNat params vk core A initState logN view tr d := by
   have hNoMem : memOpsOf d = [] := memOpsOf_eq_nil_of_mapShape d hshape
@@ -243,7 +280,7 @@ theorem memoryLegs_of_mapShape
     intro i hi c hc hA hne
     rcases hshape c hc hA with ⟨l, rfl⟩ | ⟨m, rfl⟩
     · exact absurd rfl (hne l)
-    · exact mapOpsArm_of_modeler hash hCRh d (tr pi π) (hrec pi π hacc) i hi m hc
+    · exact mapOpsArm_of_modeler hash d (tr pi π) (hrec pi π hacc) i hi m hc
   · intro op hop
     rw [hMemLog] at hop
     simp at hop
@@ -283,7 +320,7 @@ theorem algoStarkSound_of_mapShape {F : Type*} [Field F] [DecidableEq F]
     (hsites : d.hashSites = []) (hranges : d.ranges = [])
     (hfri : FriLdtExtractCons sponge perm RATE toNat params vk core A initState logN view tr d)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr d)
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr d)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
@@ -397,7 +434,7 @@ theorem algoStarkSound_noteSpend
       noteSpendV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       noteSpendV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       noteSpendV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       noteSpendV3) :
@@ -414,7 +451,7 @@ theorem algoStarkSound_noteCreate
       noteCreateV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       noteCreateV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       noteCreateV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       noteCreateV3) :
@@ -431,7 +468,7 @@ theorem algoStarkSound_createCell
       createCellV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       createCellV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       createCellV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       createCellV3) :
@@ -448,7 +485,7 @@ theorem algoStarkSound_createCellFromFactory
       factoryV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       factoryV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       factoryV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       factoryV3) :
@@ -465,7 +502,7 @@ theorem algoStarkSound_spawn
       spawnV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       spawnV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       spawnV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       spawnV3) :
@@ -483,7 +520,7 @@ theorem algoStarkSound_spawnWrite
       spawnWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       spawnWriteV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       spawnWriteV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       spawnWriteV3) :
@@ -500,7 +537,7 @@ theorem algoStarkSound_refusal
       refusalFieldsWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       refusalFieldsWriteV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       refusalFieldsWriteV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       refusalFieldsWriteV3) :
@@ -518,7 +555,7 @@ theorem algoStarkSound_heapWrite
       heapWriteV3)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr
       heapWriteV3)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr
       heapWriteV3)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr
       heapWriteV3) :
@@ -599,7 +636,7 @@ theorem algoStarkSound_of_mapShape_noOodShape {F : Type*} [Field F] [DecidableEq
     (hfri : FriLdtExtractConsNoOodShape sponge perm RATE toNat params vk core A initState logN
       view tr d)
     (hbusF : BusModelFamily fp embed perm RATE toNat params vk core A initState logN view tr d)
-    (hrec : MapReconcileFamily hash perm RATE toNat params vk core A initState logN view tr d)
+    (hrec : MapDenotationFamily hash perm RATE toNat params vk core A initState logN view tr d)
     (hasm : MapTableAssembly perm RATE toNat params vk core A initState logN view tr d) :
     AlgoStarkSound hash (fun _ => d) perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
