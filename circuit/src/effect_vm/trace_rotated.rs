@@ -80,8 +80,12 @@ pub const NUM_REGISTERS: usize = 24;
 // `B_SPAN` (a rotated block: 178 pre-iroot limbs + iroot + state_commit + 59 chain carriers = 239
 // columns) and `C_SPAN` (the widened-caveat region = 43 columns) are Lean-emitted — read from the
 // `pub use layout_generated::*` above (Lean `EffectVmEmitRotationV3.{B_SPAN, C_SPAN}`).
-/// In-region offset of the chained caveat commitment (the `caveatCommit` fold over the 29 manifest
-/// felts — UNTOUCHED by the rc carrier appended past it). Lean-emitted as `C_COMMIT`.
+/// In-region offset of the PUBLISHED chained caveat commitment — `caveatCommitRc`, the manifest
+/// fold EXTENDED over the 4-felt DFA route-commitment carrier. Lean-emitted as `C_COMMIT`.
+///
+/// ⚑ It used to be the manifest fold alone (in-region 38, now `C_MANIFEST_COMMIT`), with the rc
+/// carrier riding beside it, read by nothing. That is why the `withDfaRcPins` pins bound nothing
+/// and were deleted by `dropUnforcedPins`. The rc FOLD moved this to in-region 44.
 pub const C_CAVEAT_COMMIT: usize = C_COMMIT;
 /// In-region base of the 4-felt DFA ROUTE-COMMITMENT carrier (offsets 39..=42 — the dsl rc-EMIT).
 /// Carries [`dfa_route_commitment`] of the turn's `Witnessed{Dfa}` proof-wire public inputs on a
@@ -98,16 +102,24 @@ pub const APPENDIX: usize = APPENDIX_SPAN;
 /// per-chip-lookup 7-lane blocks). `188 + 521 = 709`.
 pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 709
 
+/// The poseidon2-chip lookup SITES a bare graduated v1 FACE contributes, ahead of the rotated
+/// appendix (`EffectVmEmit`'s own state/param absorption chain). The rotated cohort's faces all
+/// carry the same four.
+pub const V1_FACE_SITES: usize = 4;
+
 /// The number of poseidon2-chip lookup SITES the graduated rotated descriptor
 /// (`*VmDescriptor2R24`, e.g. `attenuateVmDescriptor2R24`) carries — the per-site lane blocks
-/// Phase B-GATE appends at the END of the rotated layout (each chip tuple is now 17-wide:
+/// Phase B-GATE appends at the END of the rotated layout (each chip tuple is 17-wide:
 /// `1 arity + 8 inputs + out0 + 7 output-lanes`, the 7 lanes witnessed in appended columns). The
-/// REVOKED-ROOT base widen + cells-relocation (NUM_PRE_LIMBS 169→178, clean 58×3 body) lifts each
-/// block's chain-carrier count 56→59, so the two blocks contribute 2·59 = 118 sites + the 16
-/// caveat-region sites = 134. The committed graduated width is `ROT_WIDTH + 7 * N_ROT_SITES = 709 +
-/// 938 = 1647`, matching the regen'd `*VmDescriptor2R24` trace_width. Graduation APPENDS (positions
-/// < ROT_WIDTH unchanged).
-pub const N_ROT_SITES: usize = 2 * (1 + (NUM_PRE_LIMBS - 4) / 3) + 16;
+/// committed graduated width is `ROT_WIDTH + 7 * N_ROT_SITES`, matching the regen'd
+/// `*VmDescriptor2R24` trace_width. Graduation APPENDS (positions < ROT_WIDTH unchanged).
+///
+/// ⚑ This used to be the hand-carried arithmetic `2 * (1 + (NUM_PRE_LIMBS - 4) / 3) + 16`, whose
+/// own doc-comment had drifted two flag days out of date ("2·59 = 118 sites + the 16 caveat-region
+/// sites = 134" described neither the 184-limb value 138 nor the caveat region's actual 10 sites).
+/// The appendix site count is now Lean-emitted (`ROT_APPENDIX_SITES`, from `rotV3Appendix` itself),
+/// so the rc FOLD's two extra sites arrive here without anyone editing a literal.
+pub const N_ROT_SITES: usize = ROT_APPENDIX_SITES + V1_FACE_SITES;
 
 /// The GRADUATED rotated trace width: the un-graduated rotated columns PLUS the 7×`N_ROT_SITES`
 /// appended chip-lane columns (`709 + 938 = 1647` = the committed `transferVmDescriptor2R24`
@@ -2721,10 +2733,17 @@ fn fill_block(row: &mut [BabyBear], base: usize, state_base: usize, w: &RotatedB
     row[base + B_STATE_COMMIT] = commit;
 }
 
-/// Fill the widened-caveat region at `base` (29-felt manifest + 9 chain + commit) from the
-/// turn's manifest. The chained `caveatCommit` is genuine (Lean
-/// `EffectVmEmitRotationCaveat.caveatCommit`). A register (slot) operand can never alias a
+/// Fill the widened-caveat region at `base` (29-felt manifest + 9 chain + manifest commit + the
+/// 4-felt DFA route-commitment carrier + its 2 absorbing carriers + the PUBLISHED commit) from the
+/// turn's manifest. The chained commitment is genuine (Lean
+/// `EffectVmEmitRotationCaveat.caveatCommitRc`). A register (slot) operand can never alias a
 /// heap operand (the `caveat_operand_no_aliasing` keystone — the domain tag separates them).
+///
+/// ⚑ **THE rc FOLD.** The published commitment is no longer the manifest fold: it EXTENDS it over
+/// the route-commitment carrier, under the same `chunk31` arity-{2,4} chunking
+/// (`[[rc0,rc1,rc2],[rc3]]` → one arity-4 site then one arity-2 site). That extension is what
+/// makes columns `base + C_DFA_RC_OFF ..+4` READ by a constraint — before it they were read by
+/// nothing, the `withDfaRcPins` pins on them bound nothing, and `dropUnforcedPins` deleted them.
 fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
     // manifest: count + 4 × 7-felt entries `[type_tag, domain_tag, key, p0..p3]`.
     row[base] = BabyBear::new(m.count());
@@ -2738,10 +2757,17 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
         row[eb + 5] = e.params[2];
         row[eb + 6] = e.params[3];
     }
+    // The DFA route-commitment carrier (the dsl rc-EMIT): 4 felts past the MANIFEST fold's
+    // carrier, uniformly on every row (the descriptor's rc pins read the last row; a uniform fill
+    // keeps any-row reads coherent). ZERO when the turn carries no Dfa caveat (the Default
+    // manifest). Written BEFORE the chain, because the chain now absorbs it.
+    for k in 0..DFA_RC_LEN {
+        row[base + C_DFA_RC_OFF + k] = m.dfa_rc[k];
+    }
     // chained caveat commitment over the 29 manifest felts: 4-wide head, 3-wide body, tail.
     let manifest = cav::MANIFEST_SIZE; // 29
     let chain_base = base + manifest; // 9 carriers
-    let commit_col = chain_base + cav::NUM_CHAIN; // base + 29 + 9 = base + 38
+    let manifest_commit_col = chain_base + cav::NUM_CHAIN; // base + 29 + 9 = base + C_MANIFEST_COMMIT
     let mut d = hash_many(&[row[base], row[base + 1], row[base + 2], row[base + 3]]);
     let mut chain = 0usize;
     row[chain_base + chain] = d;
@@ -2759,13 +2785,15 @@ fn fill_caveat(row: &mut [BabyBear], base: usize, m: &RotatedCaveatManifest) {
         row[chain_base + chain] = d;
         chain += 1;
     }
-    row[commit_col] = d;
-    // The DFA route-commitment carrier (the dsl rc-EMIT): 4 felts PAST the caveat commit,
-    // uniformly on every row (the descriptor's rc pins read the last row; a uniform fill keeps
-    // any-row reads coherent). ZERO when the turn carries no Dfa caveat (the Default manifest).
-    for k in 0..DFA_RC_LEN {
-        row[base + C_DFA_RC_OFF + k] = m.dfa_rc[k];
-    }
+    row[manifest_commit_col] = d;
+    debug_assert_eq!(manifest_commit_col, base + C_MANIFEST_COMMIT);
+    // THE rc EXTENSION — the two further sites that make the carrier a BOUND datum. `chunk31` over
+    // the 4 rc felts is `[[rc0, rc1, rc2], [rc3]]`: one (digest+3) absorption then one (digest+1),
+    // arity 4 then 2, never the chip-refused 3. The final digest is the PUBLISHED caveat
+    // commitment (PI `piBase + 3`), so moving the carrier moves the published felt.
+    let rc = base + C_DFA_RC_OFF;
+    row[base + C_RC_CARRIER] = hash_many(&[d, row[rc], row[rc + 1], row[rc + 2]]);
+    row[base + C_COMMIT] = hash_many(&[row[base + C_RC_CARRIER], row[rc + 3]]);
 }
 
 /// Resolve the rotated registry descriptor NAME for one effect's v1 selector — the
@@ -3109,16 +3137,16 @@ pub const CAP_OPEN_TB_PI_COUNT: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
 // relations; see the `NUM_PRE_LIMBS`-derived wide block below.)
 const _: () = {
     assert!(
-        CAP_OPEN_BASE == 1691,
-        "cap-open rides the graduated rotated base (nine-lane epoch: 1647 -> 1691)"
+        CAP_OPEN_BASE == 1707,
+        "cap-open rides the graduated rotated base (1647 -> 1691 nine-lane -> 1707 dsl-rc carrier)"
     );
     assert!(
         CAP_OPEN_SPAN == 329,
         "Phase H-CAP-8 native 8-felt membership span"
     );
     assert!(
-        CAP_OPEN_WIDTH == 2020,
-        "cap-open READ host width = 1691 + 329"
+        CAP_OPEN_WIDTH == 2036,
+        "cap-open READ host width = 1707 + 329"
     );
     assert!(
         CAP_OPEN_AFTER_SPINE_SPAN == 143,
@@ -3130,7 +3158,7 @@ const _: () = {
     // above dangling over an assertion about something else. It is the only line in this block that
     // ties the Rust constants to a committed descriptor byte, so losing it lost the whole point.
     assert!(
-        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2163,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2179,
         "cap-WRITE narrow width"
     );
     // The TB PI geometry. `CAP_OPEN_TB_WIDTH` gets NO pin here on purpose: it is now *defined* as
