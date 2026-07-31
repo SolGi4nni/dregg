@@ -596,8 +596,9 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   would fire on one machine only). **A deliberate, recorded decision, not a drift.**
   **COST, priced.** Const preprocessed lane `2 → 2 + D` = **6 columns** at the deployed `D = 4`;
   main trace unchanged; `D` new degree-1 constraints per Const table, which the in-circuit verifier
-  also evaluates. From the measured instance list that is 89 → 93 total preprocessed columns on the
-  lever-(a) parent, **~4.5%**. **`const_pool` dedup is UNCHANGED** — it keys on VALUE in
+  also evaluates. The lever-(a) parent's instance list MEASURES 93 total preprocessed columns after
+  (`6+2+59+24+2`); the 89 before is DERIVED from the old Const width of 2, not measured, so call it
+  **~+4.5%** and know which half of that is a reading. **`const_pool` dedup is UNCHANGED** — it keys on VALUE in
   `expression_builder.rs:355-360`, my producer reads values off `circuit.ops` which is already
   post-dedup, and `const_pool_did_not_fold_the_two_probe_values` still passes. Dedup is in fact what
   makes the alignment exact: `primitive[Const][k]` and the k-th `Op::Const` come from one pass over
