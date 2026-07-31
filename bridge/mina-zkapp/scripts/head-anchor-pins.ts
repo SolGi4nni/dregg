@@ -13,6 +13,7 @@ import {
 } from '../src/RootFriWalk.js';
 import {
   UniformSpec,
+  VK_TREE_DEPTH,
   assertHomogeneous,
   assertOpensTerminalSeal,
   leafOf,
@@ -303,7 +304,53 @@ function main() {
     return;
   }
 
-  const hashes = programs.map((sp) => Field(JSON.parse(readFileSync(keyFile(sp), 'utf8')).hash));
+  //  ⚑ A COMPLETE DIRECTORY IS NOT A MATCHING ONE. The count check above catches
+  //  `.fullchain/uniform`'s 46; it does not catch 131 keys compiled against a
+  //  DIFFERENT plan, claim geometry or key-tree depth, which is the same wound
+  //  one turn later — a pin file naming a chain nobody built. `uniform-claim-keys`
+  //  records the shape it compiled in every key file; this refuses a ring whose
+  //  recorded shape is not the chain THIS run just planned.
+  const files = programs.map((sp) => JSON.parse(readFileSync(keyFile(sp), 'utf8')));
+  const wantPlan = {
+    instances: plan.totalSlices,
+    programs: plan.distinctPrograms,
+    steps: T,
+    head: plan.head.length,
+    block: plan.block.length,
+    chunk: CHUNK,
+    budget: BUDGET,
+  };
+  const unshaped = programs.filter((_, i) => !files[i].shape);
+  if (unshaped.length)
+    fail(
+      `${unshaped.length} of ${programs.length} keys record no shape (first: ${specName(unshaped[0])}). ` +
+        'They were written by something other than `npm run uniform-claim-keys`, so nothing says ' +
+        'which chain they are the key ring of. Re-compile them.',
+    );
+  programs.forEach((sp, i) => {
+    const s = files[i].shape;
+    if (JSON.stringify(s.plan) !== JSON.stringify(wantPlan))
+      fail(
+        `key-${specName(sp)}.json was compiled against ${JSON.stringify(s.plan)} and this run planned ` +
+          `${JSON.stringify(wantPlan)} — the ring belongs to a different chain`,
+      );
+    if (s.vkTreeDepth !== VK_TREE_DEPTH)
+      fail(
+        `key-${specName(sp)}.json was compiled at key-tree depth ${s.vkTreeDepth} and this run is at ` +
+          `${VK_TREE_DEPTH} — every Merkle path in the chain is a different length`,
+      );
+    if (s.leaf !== leafOf(plan, sp))
+      fail(
+        `key-${specName(sp)}.json records key-tree leaf ${s.leaf} and this plan puts ${specName(sp)} at ` +
+          `${leafOf(plan, sp)} — the ring is ordered differently than the chain that will use it`,
+      );
+  });
+  console.log(
+    `\n    ✓ all ${programs.length} keys record THIS plan (${wantPlan.instances}/${wantPlan.programs}/` +
+      `${wantPlan.steps}, depth ${VK_TREE_DEPTH}) and their own leaf`,
+  );
+
+  const hashes = files.map((f) => Field(f.hash));
   const root = vkTreeRoot(hashes);
   const terminalHash = hashes[leafOf(plan, terminal)];
 
