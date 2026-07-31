@@ -890,3 +890,26 @@ vk hash 263646474740178120675234183827374204670083063957174119757301074379543744
 `DreggAttestedGate.compile()` without `dregg-cell-fact-d4-p32`. **The deployed account's identity
 includes the ability to read a dregg cell.** `zkappState[0]` still 0 — the anchor tx
 (`5JuscCsjT9NxtoVBmZ5AAP8VMs13Fcqka9JT5pWsTqKWTredoKtY`) is submitted, not yet included.
+
+## 09:22 — ✅✅ ANCHOR INCLUDED. THE MINA-SIDE DEPLOY IS COMPLETE.
+```
+zkappState[0] = 18581648242968334732370325029655750949528832288424012648970545017975175278305
+```
+Exactly the root the deploy proved the anchor obligation for. Full sequence live on Mina devnet,
+driven from hbox: **account deployed (404 s) → VK confirmed on chain with the cell-fact circuit
+inside it → root anchored by an included transaction.**
+
+### GOAL SCORECARD
+1. **Both directions semantic** ✅ — measured on live chain data both ways, tampered and refused.
+2. **Deploy to demonstrate** ✅ **Mina devnet** (account + VK + anchor, from hbox) and ✅ **dregg side**
+   (`bridge/demo/dregg-verifies-mina.sh` EXIT=0 on hbox against real devnet blocks).
+3. **Poster** — dispatched, in flight.
+
+### ⚑ WHAT IS DEPLOYED IS NOT THE WHOLE LADDER, AND THE POSTER MUST SAY SO
+- `setDreggRoot` is **key-gated**; the proof-gated `DreggHeadAnchor` is written and **not compiled or
+  deployed** — it needs the 131-program compile + 905-instance prove (~9 h), not run.
+- Mina reads a cell **under a root the gate holds**; it cannot yet say that root *is* dregg's.
+- dregg reads an account **at the tip whose bytes it has**; a different component decides canonicity.
+- The FRI/STARK floor is undischarged.
+**Poster-4's rung 3 ("follow the other side's chain") is still NOT BUILT. "Deployed" must not read
+as rung 3.** That instruction is in the poster lane's brief verbatim.
