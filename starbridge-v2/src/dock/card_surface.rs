@@ -2609,6 +2609,58 @@ mod tests {
     use super::*;
     use dregg_cell::CellId;
 
+    /// ⚑ THE COCKPIT'S STALENESS, MEASURED. A STATELESS survey card's view-tree is
+    /// GENERATED FROM THE LEDGER at build time. This proves the tree genuinely
+    /// changes when the World moves — which is what makes the cockpit's cache key
+    /// for exactly these cards (`focus` alone; `mode_card_state_fp` returns `0` for
+    /// every non-Replay/Debugger/Cipherclerk/Swarm arm) a STALENESS BUG rather than
+    /// a sound memo: the input moved, the key did not, so the card is never rebuilt.
+    ///
+    /// The desktop half of the pulse→signals weld fixes this for its panes
+    /// (`deos_desktop::card_pulse` / `viewnode_pane`, whose module doc records the
+    /// same defect as "the frozen seeds 3/12/0 forever while the World moved
+    /// underneath it"). The cockpit half was never welded: nothing under
+    /// `src/cockpit/` calls `on_world_events` / `on_world_cells` /
+    /// `on_committed_turn`, and its `invalidate_for` delta loop drives only the Rust
+    /// `present_memo`, never a `CardPane` registry.
+    #[test]
+    fn a_stateless_survey_cards_tree_changes_when_the_world_moves() {
+        let (mut world, anchors) = crate::world::demo_world();
+        let [treasury, service, _user] = anchors;
+        let viewer = dregg_cell::AuthRequired::Signature;
+        let state = SurfaceState {
+            clerk: None,
+            debugger: None,
+            replay: None,
+            swarm: None,
+        };
+
+        let before = ModeCard::Objects
+            .view_tree(&world, treasury, &viewer, &state)
+            .to_json();
+
+        // A perfectly ordinary foreign turn: value moves between two OTHER cells.
+        let t = world.turn(
+            treasury,
+            vec![crate::world::transfer(treasury, service, 1_234)],
+        );
+        assert!(
+            world.commit_turn(t).is_committed(),
+            "the demo transfer must commit"
+        );
+
+        let after = ModeCard::Objects
+            .view_tree(&world, treasury, &viewer, &state)
+            .to_json();
+
+        assert_ne!(
+            before, after,
+            "the Objects card's view-tree is a FUNCTION OF THE LEDGER — it must differ \
+             after a committed turn. (It does. The defect is that the cockpit's cache \
+             key does not, so this new tree is never built.)"
+        );
+    }
+
     /// CIPHERCLERK: a fresh clerk and a clerk with one identity render DIFFERENT cards —
     /// the live roster is reflected, not a stale/empty snapshot.
     #[test]
