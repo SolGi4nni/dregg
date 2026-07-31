@@ -5,10 +5,22 @@
 //! `World`'s fields and helpers (`durable_regenesis`, `genesis_mutation_would_break_reopen`,
 //! `ensure_record_ledger`) exactly as it had inline.
 //!
-//! ⚑ THESE FOUR MUTATE THE LEDGER AND EMIT NO `WorldEvent`. That is the M2 cache-soundness
-//! hole: `commit_turn`'s write-set completeness pass tops up events from the executor
-//! journal, but these never run `commit_turn` at all, so a memoized projection of a cell
-//! they touch goes silently stale. Today the desktop 250 ms poll papers over it.
+//! ⚑ CLOSED 2026-07-31 (lane B1). These four used to mutate the ledger and emit NO
+//! `WorldEvent` — the M2 cache-soundness hole: `commit_turn`'s write-set completeness pass
+//! tops up events from the executor journal, but these never run `commit_turn` at all, so a
+//! memoized projection of a cell they touch went silently stale (the desktop's 250 ms poll
+//! papered over it). Each now emits on its SUCCESS LEG, past the reopen guard:
+//!   - `set_cell_program` / `genesis_open_permissions` → `CellMutated` (the tooth its own
+//!     doc names for a program / permissions write; both are cell-local).
+//!   - `genesis_grant_cap` → `CapabilityGranted` (viewer-NON-local: a cap edge changes what
+//!     OTHER cells' affordance badges say, which `CellMutated` — naming only the holder —
+//!     would leave stale; the cost is `invalidate_affordances_all`, see the call site).
+//!   - `set_cell_heap` → `HeapWritten`, NOT `CellMutated`: the doc editor persists per
+//!     keystroke and the user cell carries `AGENT_COUNTER_SLOT` (0) + `DOC_REV_SLOT` (14),
+//!     so the conservative tooth would light every field bind on every open card. The
+//!     variant NAMES its cell (completeness) but the field-bind registries ignore it.
+//! ⚠ What is NOT closed: the poll is still the desktop's only wake edge, and
+//! `Journal::touched_slots` (the fine-grained slot-level write set) is still absent.
 //!
 //! ⚠ `set_cell_heap` is the SHIPPING desktop document editor's persist path
 //! (`deos_desktop/mod.rs::commit_doc_to_umem_heap`) — and on a DURABLE image it refuses
@@ -18,8 +30,11 @@
 //! sidecar becomes the only copy of the prose. Closing that needs an ordered
 //! `Effect::SetHeap`; until it exists the sidecar CANNOT be deleted.
 //!
-//! ⚠ When these learn to emit, the event must go AFTER the reopen guard, on the success
-//! leg only — `persistence.rs`'s guard tests assert the early-return leg.
+//! ⚠ The emit goes AFTER the reopen guard, on the success leg only —
+//! `persistence.rs`'s guard tests assert the early-return leg, and an event for a write
+//! that did not happen is a spurious invalidation (and a lie in the activity feed). Pinned
+//! by `world::tests::a_guard_refused_mutation_emits_nothing` +
+//! `world::tests::a_mutator_that_moved_nothing_emits_nothing`.
 
 use super::*;
 
@@ -67,6 +82,16 @@ impl World {
         }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
+        // M2 CACHE SOUNDNESS: this write rode no turn, so `commit_turn`'s write-set
+        // completeness pass never sees it — name the cell here or a memoized
+        // projection of it goes silently stale. SUCCESS LEG ONLY (past the reopen
+        // guard, and only if the cell actually existed to be re-programmed): an
+        // event for a write that did not happen is a spurious invalidation.
+        // `CellMutated` is the right tooth — a program install is exactly the
+        // "non-field state changed" case it names.
+        if existed {
+            self.dynamics.emit(WorldEvent::CellMutated { cell: *cell });
+        }
         existed
     }
 
@@ -109,6 +134,27 @@ impl World {
         }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
+        // M2 CACHE SOUNDNESS, success leg only. `CapabilityGranted` — NOT the
+        // cheaper `CellMutated` — even though it is the more expensive tooth
+        // (`cockpit::construct::invalidate_for` answers it with
+        // `invalidate_affordances_all`, a whole-affordance-cache drop, and
+        // `letter_office.rs` grants two caps per office cell ⟹ two drops per
+        // office). The reason is that a cap grant is VIEWER-NON-LOCAL: it changes
+        // what OTHER cells' affordance badges say ("can I act on `target`?"), and
+        // `CellMutated` names only the HOLDER, so the target's badge — and every
+        // third cell's — would stay stale. Under-invalidating is a correctness bug;
+        // over-invalidating is a cost, and a bounded one: these grants are
+        // genesis-path SETUP (an office is furnished once), not a per-frame path,
+        // and the drop is scoped to the affordance cache, not the whole projection
+        // memo. A cheaper-but-sound tooth would need a per-target affordance index,
+        // which does not exist today — naming it as the fine-grained follow-up
+        // rather than paying for it with staleness now.
+        if slot.is_some() {
+            self.dynamics.emit(WorldEvent::CapabilityGranted {
+                from: *holder,
+                to: target,
+            });
+        }
         slot
     }
 
@@ -149,6 +195,12 @@ impl World {
         }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
+        // M2 CACHE SOUNDNESS, success leg only. `CellMutated` is the tooth its own
+        // doc names for a permissions write, and permissions are cell-local (unlike
+        // a cap edge, they change no other cell's badge).
+        if existed {
+            self.dynamics.emit(WorldEvent::CellMutated { cell: *cell });
+        }
         existed
     }
 
@@ -182,6 +234,16 @@ impl World {
         if self.genesis_mutation_would_break_reopen(cell) {
             return false;
         }
+        // The write's SHAPE, read off the incoming map before it is moved into the
+        // two ledgers: which collections the leaves land in (distinct, sorted — a
+        // `dregg_doc` document spreads over atoms/edges/fields/embeds/prose/history
+        // at once) and how many leaves the resealed boundary will bind.
+        let collections: Vec<u32> = {
+            let mut c: Vec<u32> = heap_map.keys().map(|(coll, _)| *coll).collect();
+            c.dedup(); // the BTreeMap iterates key-sorted, so equal colls are adjacent
+            c
+        };
+        let key_count = heap_map.len();
         let existed = if let Some(c) = self.engine.ledger_mut().get_mut(cell) {
             c.state.heap_map = heap_map.clone();
             c.state.reseal_heap_root();
@@ -202,6 +264,22 @@ impl World {
         }
         // Genesis-path ledger mutation without a height bump — bust the memo.
         self.state_root_memo.set(None);
+        // M2 CACHE SOUNDNESS, success leg only — and DELIBERATELY NOT `CellMutated`.
+        // This is the desktop document editor's per-keystroke persist path, and the
+        // user cell carries both `AGENT_COUNTER_SLOT` (0) and `DOC_REV_SLOT` (14);
+        // `CellMutated` routes to the consumers' conservative `invalidate_cell`, so
+        // a bare one here would dirty every field bind on every open card at every
+        // keystroke. `HeapWritten` names the cell (so write-set completeness holds
+        // and a whole-cell projection still drops) while the FIELD-bind registries
+        // ignore it — the heap register is orthogonal to `fields_map`, so no field
+        // bind can have gone stale.
+        if existed {
+            self.dynamics.emit(WorldEvent::HeapWritten {
+                cell: *cell,
+                collections,
+                key_count,
+            });
+        }
         existed
     }
 

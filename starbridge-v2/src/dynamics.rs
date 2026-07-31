@@ -89,6 +89,38 @@ pub enum WorldEvent {
     /// memoized projection of that cell is always invalidated. (Cache soundness =
     /// dynamics completeness — `.docs-history-noclaude/deos/EFFICIENCY-WELD-PLAN.md` §4.1.)
     CellMutated { cell: CellId },
+    /// **A cell's universal-memory HEAP was written out-of-band and its committed
+    /// `heap_root` resealed** (`World::set_cell_heap` — the shipping desktop
+    /// document editor's persist path, `deos_desktop::commit_doc_to_umem_heap`).
+    ///
+    /// This is a DELIBERATELY DISTINCT tooth from [`CellMutated`](Self::CellMutated),
+    /// not a nicer label for it. The heap register is ORTHOGONAL to `fields_map` —
+    /// a heap write moves no field slot — while `CellMutated` routes to the
+    /// consumers' conservative `invalidate_cell`, which dirties EVERY binding that
+    /// reads the cell. The desktop's user cell carries both `AGENT_COUNTER_SLOT`
+    /// (0, `agent_attach.rs`) and `DOC_REV_SLOT` (14, `deos_desktop/chrome.rs`), so
+    /// emitting `CellMutated` per document keystroke would light every field bind on
+    /// every open card, every beat of typing. A consumer that invalidates FIELD
+    /// binds must therefore ignore this variant; a consumer that caches a whole-cell
+    /// projection (which includes `heap_root`) must honour it.
+    ///
+    /// It still NAMES its cell in [`collect_named_cells`](Self::collect_named_cells)
+    /// — the write-set completeness property ("cache soundness = dynamics
+    /// completeness") is about the cell being named at all, not about which
+    /// invalidation a consumer chooses to run.
+    HeapWritten {
+        /// The cell whose umem boundary was resealed.
+        cell: CellId,
+        /// The DISTINCT `heap_map` collections the written leaves landed in, sorted
+        /// ascending. A `dregg_doc` document spreads across several at once (atoms
+        /// 0, edges 1, fields 2, embeds 3, prose 4, history 5 — `dregg-doc`'s
+        /// `COLL_*`), so a single `collection` field could not name the write; a
+        /// consumer bound to one collection filters on this.
+        collections: Vec<u32>,
+        /// How many leaves the resealed boundary binds (the write replaces the heap
+        /// WHOLESALE, so this is the post-write leaf count, not a delta).
+        key_count: usize,
+    },
     /// A cell was sealed (lifecycle → Sealed; rejects effects until unsealed).
     CellSealed { cell: CellId },
     /// A sealed cell was unsealed (lifecycle → Live).
@@ -167,6 +199,17 @@ impl WorldEvent {
             }
             WorldEvent::FieldSet { index, .. } => format!("field[{index}] set"),
             WorldEvent::CellMutated { .. } => "cell mutated".into(),
+            WorldEvent::HeapWritten {
+                collections,
+                key_count,
+                ..
+            } => {
+                let colls: Vec<String> = collections.iter().map(|c| c.to_string()).collect();
+                format!(
+                    "heap written ({key_count} leaves, collection(s) {})",
+                    colls.join("/")
+                )
+            }
             WorldEvent::CellSealed { .. } => "cell sealed".into(),
             WorldEvent::CellUnsealed { .. } => "cell unsealed".into(),
             WorldEvent::CellDestroyed { .. } => "cell destroyed (terminal)".into(),
@@ -223,6 +266,7 @@ impl WorldEvent {
             | WorldEvent::BalanceFlowed { cell, .. }
             | WorldEvent::FieldSet { cell, .. }
             | WorldEvent::CellMutated { cell }
+            | WorldEvent::HeapWritten { cell, .. }
             | WorldEvent::CellSealed { cell }
             | WorldEvent::CellUnsealed { cell }
             | WorldEvent::Burned { cell, .. }

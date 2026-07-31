@@ -2890,6 +2890,235 @@ mod tests {
         }
     }
 
+    /// A document heap exactly as the SHIPPING desktop persist path writes one
+    /// (`deos_desktop::commit_doc_to_umem_heap` → `DocHeapCell` → `set_cell_heap`):
+    /// several leaves spread over SEVERAL `dregg_doc` collections — atoms (0),
+    /// fields (2) and the verbatim prose (4). The spread is the point: it is why
+    /// the event cannot name one `collection`.
+    fn doc_shaped_heap() -> std::collections::BTreeMap<(u32, u32), dregg_cell::FieldElement> {
+        let fe = |b: u8| {
+            let mut f = [0u8; 32];
+            f[31] = b;
+            f
+        };
+        let mut heap = std::collections::BTreeMap::new();
+        heap.insert((0u32, 0u32), fe(1)); // COLL_ATOMS
+        heap.insert((2u32, 0u32), fe(2)); // COLL_FIELDS
+        heap.insert((4u32, 0u32), fe(3)); // COLL_TEXT (the prose)
+        heap.insert((4u32, 1u32), fe(4)); // COLL_TEXT (the prose, chunk 2)
+        heap
+    }
+
+    #[test]
+    fn an_out_of_band_heap_write_is_named_in_the_dynamics_stream() {
+        // THE OUT-OF-BAND MUTATOR HOLE (M2 cache-soundness). `set_cell_heap` is the
+        // shipping desktop document editor's persist path and it never runs
+        // `commit_turn`, so the write-set completeness pass never sees it: the cell's
+        // committed `heap_root` moved and NOTHING named the cell on the dynamics
+        // stream, so a memoized projection of the document went silently stale.
+        let mut w = World::new();
+        let doc = w.genesis_cell(0x5d, 0);
+        let cursor = w.dynamics().cursor();
+        let before = w.ledger().get(&doc).unwrap().state.heap_root;
+
+        assert!(
+            w.set_cell_heap(&doc, doc_shaped_heap()),
+            "an ephemeral world's heap write succeeds (no reopen guard to trip)"
+        );
+
+        // PROVE THE TEST BITES: the mutation genuinely MOVED committed state. A
+        // no-op write would make "an event was emitted" a measurement of nothing.
+        let after = w.ledger().get(&doc).unwrap().state.heap_root;
+        assert_ne!(
+            before, after,
+            "the heap write must move the cell's committed boundary (else this test \
+             measures an event for a mutation that never happened)"
+        );
+
+        // THE GATE: the ledger moved ⟹ the dynamics stream moved.
+        assert!(
+            w.dynamics().cursor() > cursor,
+            "set_cell_heap moved the committed heap_root but emitted NO WorldEvent — \
+             a memoized projection of cell {} goes silently stale (M2 violation)",
+            short(&doc)
+        );
+
+        // M2: the write is NAMED, so every consumer's invalidation sees the cell.
+        let mut named: HashSet<CellId> = HashSet::new();
+        for ev in w.dynamics().since(cursor) {
+            ev.collect_named_cells(&mut named);
+        }
+        assert!(
+            named.contains(&doc),
+            "the heap-written cell {} must be NAMED by the emitted event",
+            short(&doc)
+        );
+
+        // ⚠ AND NOT BY A BARE `CellMutated`. `CellMutated` routes to the conservative
+        // `invalidate_cell`, and the desktop's user cell carries BOTH the agent
+        // counter slot (`AGENT_COUNTER_SLOT` = 0) and the doc revision slot
+        // (`DOC_REV_SLOT` = 14) — so a `CellMutated` per keystroke would light every
+        // field bind on every open card, every beat of typing.
+        assert!(
+            !w.dynamics()
+                .since(cursor)
+                .iter()
+                .any(|e| matches!(e, WorldEvent::CellMutated { .. })),
+            "a heap write must NOT emit the conservative CellMutated tooth (it would \
+             dirty every field bind on the cell at every keystroke)"
+        );
+
+        // The event it DOES emit describes the write: the cell, the collections the
+        // leaves landed in, and how many leaves the boundary now binds.
+        let heap_written: Vec<&WorldEvent> = w
+            .dynamics()
+            .since(cursor)
+            .iter()
+            .filter(|e| matches!(e, WorldEvent::HeapWritten { .. }))
+            .collect();
+        assert_eq!(heap_written.len(), 1, "exactly one heap-write event");
+        match heap_written[0] {
+            WorldEvent::HeapWritten {
+                cell,
+                collections,
+                key_count,
+            } => {
+                assert_eq!(cell, &doc);
+                assert_eq!(*key_count, 4, "four leaves were written");
+                assert_eq!(
+                    collections,
+                    &vec![0u32, 2, 4],
+                    "the DISTINCT collections the write touched, sorted"
+                );
+            }
+            other => panic!("expected HeapWritten, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_other_out_of_band_mutators_name_their_cell_too() {
+        // The same hole in the three siblings of `set_cell_heap`. Each mutates the
+        // ledger without a turn; each must name the cell it moved.
+        use dregg_cell::CellProgram;
+        let mut w = World::new();
+        let a = w.genesis_cell(0x71, 100);
+        let b = w.genesis_cell(0x72, 0);
+
+        // 1. set_cell_program — an authority (caveat) install on a cell.
+        let c0 = w.dynamics().cursor();
+        assert!(w.set_cell_program(&a, CellProgram::Predicate(vec![])));
+        assert!(
+            w.dynamics().cursor() > c0,
+            "set_cell_program emitted no event"
+        );
+        let mut named: HashSet<CellId> = HashSet::new();
+        for ev in w.dynamics().since(c0) {
+            ev.collect_named_cells(&mut named);
+        }
+        assert!(named.contains(&a), "the reprogrammed cell must be named");
+
+        // 2. genesis_grant_cap — a new ocap EDGE, so BOTH endpoints are named.
+        let c1 = w.dynamics().cursor();
+        assert!(w.genesis_grant_cap(&a, b).is_some());
+        assert!(
+            w.dynamics().cursor() > c1,
+            "genesis_grant_cap emitted no event"
+        );
+        let mut named: HashSet<CellId> = HashSet::new();
+        for ev in w.dynamics().since(c1) {
+            ev.collect_named_cells(&mut named);
+        }
+        assert!(
+            named.contains(&a) && named.contains(&b),
+            "a granted cap edge names BOTH the holder and the target (the badge on \
+             the target changes too)"
+        );
+
+        // 3. genesis_open_permissions — a permissions write.
+        let c2 = w.dynamics().cursor();
+        assert!(w.genesis_open_permissions(&b));
+        assert!(
+            w.dynamics().cursor() > c2,
+            "genesis_open_permissions emitted no event"
+        );
+        let mut named: HashSet<CellId> = HashSet::new();
+        for ev in w.dynamics().since(c2) {
+            ev.collect_named_cells(&mut named);
+        }
+        assert!(named.contains(&b), "the re-permissioned cell must be named");
+    }
+
+    #[test]
+    fn a_mutator_that_moved_nothing_emits_nothing() {
+        // The SUCCESS-LEG-ONLY discipline, half one: a mutator whose cell does not
+        // exist mutates nothing, so it must emit nothing (an event for a write that
+        // did not happen is a spurious invalidation, and worse, a lie in the feed).
+        use dregg_cell::CellProgram;
+        let mut w = World::new();
+        let real = w.genesis_cell(0x81, 0);
+        let ghost = w.genesis_cell(0x82, 0);
+        // A cell id that is NOT in the ledger: fork a world, genesis there, use the id.
+        let absent = {
+            let mut side = World::new();
+            side.genesis_cell(0xEE, 0)
+        };
+        assert!(w.ledger().get(&absent).is_none(), "the id is truly absent");
+        let _ = (real, ghost);
+
+        let c = w.dynamics().cursor();
+        assert!(!w.set_cell_program(&absent, CellProgram::Predicate(vec![])));
+        assert!(w.genesis_grant_cap(&absent, real).is_none());
+        assert!(!w.genesis_open_permissions(&absent));
+        assert!(!w.set_cell_heap(&absent, doc_shaped_heap()));
+        assert_eq!(
+            w.dynamics().cursor(),
+            c,
+            "a mutator that touched no cell must not advance the dynamics stream"
+        );
+    }
+
+    /// The REFUSED leg of the reopen guard emits nothing either (success-leg-only,
+    /// half two). `genesis_mutation_would_break_reopen` fires only on a DURABLE
+    /// image whose cell a committed turn already touched, so this needs a real redb
+    /// image — the same throwaway-path harness `durable_write_failure_fully_unwinds`
+    /// uses.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_guard_refused_mutation_emits_nothing() {
+        use dregg_cell::CellProgram;
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("sbv2-guard-noemit-{pid}-{nanos}.redb"));
+
+        let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), 1_700_000_000)
+            .expect("fresh open of an empty store");
+        assert!(w.is_durable(), "the guard only fires on a durable image");
+        let a = w.genesis_cell(1, 1_000);
+        let b = w.genesis_cell(2, 0);
+        let t = w.turn(a, vec![transfer(a, b, 100)]);
+        assert!(w.commit_turn(t).is_committed(), "the seed turn commits");
+
+        // PROVE THE TEST BITES: the guard must actually REFUSE here, or "no event"
+        // would be measuring a success leg that emitted for a different reason.
+        let c = w.dynamics().cursor();
+        assert!(
+            !w.set_cell_program(&a, CellProgram::Predicate(vec![])),
+            "the reopen guard must REFUSE a mutation on a turn-touched cell"
+        );
+        assert!(w.genesis_grant_cap(&a, b).is_none());
+        assert!(!w.genesis_open_permissions(&a));
+        assert!(!w.set_cell_heap(&a, doc_shaped_heap()));
+        assert_eq!(
+            w.dynamics().cursor(),
+            c,
+            "a guard-REFUSED mutation must emit nothing (the early-return leg)"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn burn_exceeding_balance_is_rejected() {
         let mut w = World::new();
@@ -3442,6 +3671,7 @@ mod tests {
             | WorldEvent::CapabilityRevoked { cell, .. }
             | WorldEvent::FieldSet { cell, .. }
             | WorldEvent::CellMutated { cell }
+            | WorldEvent::HeapWritten { cell, .. }
             | WorldEvent::CellSealed { cell }
             | WorldEvent::CellUnsealed { cell }
             | WorldEvent::CellDestroyed { cell }

@@ -649,6 +649,16 @@ impl Cockpit {
             | E::EventEmitted { cell, .. } => {
                 self.present_memo.invalidate_cell(*cell);
             }
+            // An out-of-band umem-heap write resealed the cell's committed
+            // `heap_root`, which the cockpit's WHOLE-CELL projection renders — so
+            // this memo must drop, exactly like any other cell mutation. (The
+            // fine-grained FIELD-bind registries — the desktop pulse's pane/card
+            // broadcast — deliberately ignore this variant instead: a heap write
+            // moves no field slot, and a document keystroke must not dirty the
+            // counter bind that shares the cell. See `WorldEvent::HeapWritten`.)
+            E::HeapWritten { cell, .. } => {
+                self.present_memo.invalidate_cell(*cell);
+            }
             E::SurfaceDamaged { cell, owner, .. } => {
                 self.present_memo.invalidate_cell(*cell);
                 self.present_memo.invalidate_cell(*owner);

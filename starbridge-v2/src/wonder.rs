@@ -426,6 +426,9 @@ fn event_touches(ev: &WorldEvent, id: &CellId) -> bool {
         WorldEvent::BalanceFlowed { cell, .. } => cell == id,
         WorldEvent::FieldSet { cell, .. } => cell == id,
         WorldEvent::CellMutated { cell } => cell == id,
+        // An out-of-band umem-heap write moved the cell's committed boundary — the
+        // cell genuinely changed, so it glows like any other mutation.
+        WorldEvent::HeapWritten { cell, .. } => cell == id,
         WorldEvent::CapabilityGranted { from, to } => from == id || to == id,
         WorldEvent::CapabilityRevoked { cell, .. } => cell == id,
         WorldEvent::CellSealed { cell } => cell == id,
