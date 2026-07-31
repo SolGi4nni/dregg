@@ -30,13 +30,29 @@
 //!   lane, which a caller-held anchor can compare. This test asserts BOTH halves together, because
 //!   the pair is the actual claim: same VK, different bound exposure.
 //!
+//! ⚑ **(C) IS INVERTED as of fork rev `fc3c6df` — read this before the bullet above.** The two
+//! constants no longer fingerprint identically. The bullet's stated REASON is still true and is not
+//! what moved: `entry.public_values` remain excluded, and `PublicAir`'s value columns are still
+//! main-trace only. What changed is that `ConstAir`'s preprocessed row now carries the constant's
+//! VALUE (`[ext_mult, out_idx, value[0..D]]`) under a `main.value == prep.value` constraint, so a
+//! constant is circuit identity and the fingerprint — which hashes `preprocessed_commitment` —
+//! separates them. MEASURED here: `k=7 vk=8cbc73fe…5978`, `k=9 vk=ddd33490…ab1e`, exposed `[7]` vs
+//! `[9]`. The assertion was flipped by writing the opposite claim and re-running; the circuit, the
+//! proving path and the (A)/(B) halves are byte-unchanged.
+//!
+//! So the design's claim is now measured in a STRONGER form than it was written for: the
+//! discriminating bit exists in TWO independent places — the host-readable exposed lane (this
+//! file's channel) and the fingerprint itself (the const binding). Both are asserted, so neither
+//! can rot silently behind the other.
+//!
 //! FAST (a three-op circuit): NOT `#[ignore]`.
 //!
 //! ⚠ SCOPE. This measures the CHANNEL, not the deployed fold. It does not exercise a real child
-//! cap, the aggregation hook, or the spine's Poseidon2 fold — those need the fork plumbing change
-//! (`child_vk_cap_targets` on `VerifierCircuitResult`, widened expose hooks) that the design names
-//! and that is NOT built. A green run here says the mechanism the design leans on behaves as read;
-//! it says nothing about the repair being landed.
+//! cap, the aggregation hook, or the spine's Poseidon2 fold. ⚑ The sentence that stood here added
+//! "those need the fork plumbing change (`child_vk_cap_targets` on `VerifierCircuitResult`, widened
+//! expose hooks) that the design names and that is NOT built" — that plumbing IS built, at
+//! `e1d8ab9bc` plus fork rev `4aead01`. A green run here still says only that the mechanism behaves
+//! as read on a three-op shape; the deployed fold is exercised elsewhere.
 
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, RecursionVk, create_recursion_config, recursion_vk_fingerprint,
@@ -132,10 +148,24 @@ fn accepts(proof: &BatchStarkProof<DreggRecursionConfig>) -> bool {
     prover.verify_all_tables(proof).is_ok()
 }
 
-/// **(A) + (C).** Two circuits differing ONLY in the pinned constant. The fingerprints must still
-/// agree (the repair does not move the VK — the earlier probes' measurement stands), and the
-/// EXPOSED lanes must differ and equal the pinned constants. That pair is the design's claim:
-/// the discriminating information the fingerprint lacks now exists in a host-readable place.
+/// **(A) + (C).** Two circuits differing ONLY in the pinned constant. The EXPOSED lanes must
+/// differ and equal the pinned constants — that half is the design's claim and is unchanged.
+///
+/// ⚑ **(C) IS INVERTED at fork rev `fc3c6df`.** It used to assert the fingerprints STILL agree,
+/// because the repair was not supposed to move the VK. They no longer agree, and the reason is a
+/// substrate change rather than anything about this channel: a constant's value is now a
+/// PREPROCESSED column of `ConstAir`, and `recursion_vk_fingerprint` hashes
+/// `preprocessed_commitment`.
+///
+/// **The old comment's stated reason is still true and is NOT what moved.** `public_values` are
+/// still excluded from the fingerprint by design, and `PublicAir`'s value columns are still
+/// main-trace only. What changed is that a CONSTANT stopped being witness-shaped data and became
+/// circuit identity, which is what it always was semantically.
+///
+/// So this probe now measures a STRONGER pair than it was written for: the discriminating
+/// information exists in BOTH places — in the host-readable exposed lane (this file's design) and
+/// in the fingerprint itself (the const binding). The two are independent, and asserting both
+/// keeps either from silently rotting.
 #[test]
 fn exposing_the_pinned_slot_puts_the_constant_where_a_caller_can_check_it() {
     let (proof7, vk7, ok7) = prove_exposed_lever_a(7);
@@ -175,11 +205,15 @@ fn exposing_the_pinned_slot_puts_the_constant_where_a_caller_can_check_it() {
         "BROKEN: the exposed lane is not the pinned constant (k=9)"
     );
 
-    // (C) the fingerprint is STILL blind (public_values are excluded from it by design) ...
-    assert_eq!(
+    // (C) INVERTED at fork rev `fc3c6df`: the fingerprint is no longer blind to the constant,
+    // because the constant is now a preprocessed column and the fingerprint hashes the
+    // preprocessed commitment. `public_values` remain excluded — that is unchanged and is not
+    // what moved.
+    assert_ne!(
         vk7, vk9,
-        "unexpected: the two constants minted different fingerprints — re-read \
-         `const_pin_probe.rs`, the premise of this whole lane moved"
+        "THE CONST BINDING REGRESSED: two circuits differing only in a pinned constant minted the \
+         SAME fingerprint again. `ConstAir`'s preprocessed row must carry the value — see \
+         `const_pin_probe.rs`, which asserts the same separation on the bare shape."
     );
     // ... and the exposure is where the difference now lives.
     assert_ne!(
