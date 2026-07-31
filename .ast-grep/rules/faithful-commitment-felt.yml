@@ -16,10 +16,20 @@
 # error in the commitment-bearing producers. The faithful counterpart is
 # `bytes32_to_8_limbs` / `hash_many_8` / the 8-felt limb groups.
 #
-# Allowlisting an intentional residual: put the human reason on the line ABOVE
-# and suppress with a trailing  // ast-grep-ignore: degraded-felt-commitment
+# Allowlisting an intentional residual: put the human reason on a comment line
+# ABOVE, then the directive ON ITS OWN LINE directly above the offending line:
+#   // ast-grep-ignore: degraded-felt-commitment
 # (the text after the colon is parsed by ast-grep as a rule-id list, so the
 # REASON must live on its own comment line, not after the colon).
+#
+# ⚑ NOT TRAILING. Measured 2026-07-31: a trailing directive suppresses only when the
+# match sits on a line that ENDS its enclosing expression. On a method-chain
+# continuation —
+#     .map(|c| HeapLeaf::entry(fold_bytes32_to_bb(&c.0), ZERO)) // ast-grep-ignore: …
+# — it does NOT suppress, while the identical directive on its own preceding line
+# does. This file and docs/FAITHFUL-COMMITMENT-LAW.md both instructed the trailing
+# form, so a lane recording an EARNED residual on a `.map(…)` line got a red it could
+# not clear and no explanation. Own-line is the form that works for BOTH shapes.
 id: degraded-felt-commitment
 language: rust
 severity: error
@@ -36,6 +46,30 @@ files:
   # i.e. double-spend — and the gate reported PASS the whole time.
   - "cell/src/commitment_set.rs"
   - "cell/src/nullifier_set.rs"
+  # ⚑ ADDED 2026-07-31 (second pass) — the SAME `accumulator_leaf` shape in the two SIBLING
+  # ledger accumulators, plus the node's PI projector. The 07-31 widening above was found by a
+  # lane auditing the map-op schema and it stopped at the two files that lane happened to be in;
+  # a sweep of every `fold_bytes32_to_bb` call site in the tree found three more in genuine
+  # commitment positions. Naming only the instances one audit tripped over is how the scope
+  # became a habit the first time.
+  #
+  #   * cell/src/revoked_set.rs:284 — `RevokedSet::accumulator_leaf`. Its own doc: "the committed
+  #     `revoked_root` group is opened in-circuit against a `CanonicalHeapTree8` built from these
+  #     leaves". Two credential nullifiers aliasing at ~31 bits ⇒ one revocation silently absorbs
+  #     the other ⇒ a REVOKED CREDENTIAL READS AS LIVE. Exactly the double-spend argument the
+  #     comment above makes for commitment_set.rs, on the revocation side.
+  #   * cell/src/shielded_note_set.rs:279 — `ShieldedNoteSet::accumulator_leaf`, and the WORST of
+  #     the four: the leaf VALUE column is `BabyBear::ZERO` (a hiding leaf), so the folded address
+  #     is the ONLY distinguishing content in the leaf. An address collision makes two shielded
+  #     notes literally the same leaf. The module's own honest-scope block says `root8()` is not
+  #     yet AIR-bound — which is precisely when you want the gate on it, before the wiring lands.
+  #   * node/src/turn_proving.rs:1159 — `nullifier_to_field`, whose image IS a published public
+  #     input (`PI[NOTESPEND_NULLIFIER]`) and ALSO the key the double-spend freshness search
+  #     (`spent_set.binary_search_by_key`) and the `canonical_spent_nullifier_set` consensus
+  #     anchor run on. The only fold in `node/`, in a crate this rule had never scanned.
+  - "cell/src/revoked_set.rs"
+  - "cell/src/shielded_note_set.rs"
+  - "node/src/turn_proving.rs"
 rule:
   any:
     - pattern: fold_bytes32_to_bb($_)
@@ -44,9 +78,10 @@ message: >-
   Degraded felt in a state-commitment position: `fold_bytes32_to_bb` folds 32
   bytes -> ONE BabyBear (~31-bit). A committed component must bind its source at
   ~124-bit. Use `bytes32_to_8_limbs` (8-felt). If this is a deliberate,
-  proof-backed residual, document the reason on the line above and suppress with
-  a trailing `// ast-grep-ignore: degraded-felt-commitment`. See
-  docs/FAITHFUL-COMMITMENT-LAW.md.
+  proof-backed residual, document the reason on a line above and put
+  `// ast-grep-ignore: degraded-felt-commitment` ON ITS OWN LINE directly above the
+  offending line (a TRAILING directive does not suppress on a method-chain line).
+  See docs/FAITHFUL-COMMITMENT-LAW.md.
 note: |
   This is the ast-grep flavor of the never-again gate. The type-wall capstone
   (a `Faithful8` newtype the compiler enforces) comes after the
@@ -63,7 +98,8 @@ note: |
 #
 # Zero-initializers (`[ZERO; 8]`, `[0; 8]`, `[0u32; 8]`) are legitimate scratch
 # buffers, NOT commitments, and are excluded. A deliberate residual (e.g. a
-# genuinely-not-yet-welded family) is suppressed with a trailing
+# genuinely-not-yet-welded family) is suppressed by putting, ON ITS OWN LINE
+# directly above the offending line (NOT trailing — see the ⚑ note on the rule above):
 #   // ast-grep-ignore: replicated-felt-commitment
 id: replicated-felt-commitment
 language: rust
@@ -78,6 +114,14 @@ files:
   # i.e. double-spend — and the gate reported PASS the whole time.
   - "cell/src/commitment_set.rs"
   - "cell/src/nullifier_set.rs"
+  # ⚑ ADDED 2026-07-31 (second pass). KEEP THIS BLOCK BYTE-IDENTICAL TO THE ONE IN THE RULE
+  # ABOVE — `scripts/check-no-degraded-felt.sh` now DERIVES its scan scope from these blocks and
+  # REFUSES (exit 2) if the two disagree, so a one-sided edit is a hard failure rather than a
+  # rule that quietly covers less than its sibling. Rationale for each path is documented once,
+  # on the `degraded-felt-commitment` rule above.
+  - "cell/src/revoked_set.rs"
+  - "cell/src/shielded_note_set.rs"
+  - "node/src/turn_proving.rs"
 rule:
   pattern: "[$X; 8]"
   kind: array_expression
@@ -92,5 +136,7 @@ message: >-
   across all 8 lanes — a degenerate 8-felt that is STILL ~31-bit (the lane-0
   projection). A genuine 8-felt digest carries 8 DISTINCT lanes (node8 `root8`).
   Fill `root8[lane]` lane-for-lane. If this is a deliberate, proof-backed
-  residual, document the reason on the line above and suppress with a trailing
-  `// ast-grep-ignore: replicated-felt-commitment`. See docs/FAITHFUL-COMMITMENT-LAW.md.
+  residual, document the reason on a line above and put
+  `// ast-grep-ignore: replicated-felt-commitment` ON ITS OWN LINE directly above the
+  offending line (a TRAILING directive does not suppress on a method-chain line).
+  See docs/FAITHFUL-COMMITMENT-LAW.md.

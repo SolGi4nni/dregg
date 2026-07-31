@@ -40,25 +40,89 @@ fi
 
 echo "check-no-degraded-felt: scanning commitment-bearing producers with $SG ..."
 
-# The rule's `files:` already scopes to the commitment producers; we also pass
-# those paths explicitly so the scan is fast and deterministic regardless of the
-# working tree. Keep this list in sync with `files:` in
-# .ast-grep/rules/faithful-commitment-felt.yml.
-SCOPED_PATHS=(
-  "cell/src/commitment.rs"
-  "turn/src/rotation_witness.rs"
-  "circuit/src/effect_vm/trace_rotated.rs"
-  # ⚑ ADDED 2026-07-31. The two WORST `fold_bytes32_to_bb` call sites in the tree were
-  # outside this gate's blast radius for its entire life, and carried no ignore directive
-  # either — so the gate has been reporting PASS while the accumulator ADDRESSES (which key
-  # a tree that silently dedupes collisions, i.e. double-spend) were a 32-byte value
-  # squeezed into ONE felt by an onto linear form.
-  #
-  # A gate whose scope omits the worst instance is not a gate; it is a habit. Found by a
-  # lane auditing the arity-17 map-op schema, not by the gate.
-  "cell/src/commitment_set.rs"
-  "cell/src/nullifier_set.rs"
-)
+# ⚑ THE SCOPE HAS EXACTLY ONE AUTHORITY, AND IT IS THE RULE FILE.
+#
+# This used to be a hand-transcribed `SCOPED_PATHS=(…)` array kept "in sync" with the `files:`
+# blocks in .ast-grep/rules/faithful-commitment-felt.yml — which duplicates the scope in THREE
+# places (this array + one `files:` per rule document) while only ONE of them decides anything.
+# `ast-grep scan` applies each rule's OWN `files:` filter to whatever paths it is handed, so a
+# path added HERE and not THERE is scanned and then silently skipped: the gate prints a longer
+# path list and reports PASS having checked nothing new. Demonstrated 2026-07-31 —
+# `ast-grep scan --config sgconfig.yml cell/src/revoked_set.rs` exits 0 with zero diagnostics
+# while `revoked_set.rs:284` holds a live `fold_bytes32_to_bb` in an accumulator-leaf address.
+#
+# So: DERIVE the list from the rule file, and require the two rule documents to agree. A
+# one-sided edit is now a FATAL (exit 2), not a rule that quietly covers less than its sibling.
+RULE_FILE="$ROOT/.ast-grep/rules/faithful-commitment-felt.yml"
+[ -f "$RULE_FILE" ] || { echo "check-no-degraded-felt: FATAL — missing $RULE_FILE" >&2; exit 2; }
+
+# Parse every rule document's id + its `files:` list. Deliberately NOT a YAML library (no
+# dependency): the blocks are a flat `files:` followed by `  - "path"` lines, and anything that
+# does not match that shape must be LOUD rather than silently yield a short list.
+scope_report="$(
+  RULE_FILE="$RULE_FILE" python3 - <<'PY'
+import os, re, sys
+text = open(os.environ["RULE_FILE"]).read()
+docs = text.split("\n---\n")
+found = []
+for d in docs:
+    m_id = re.search(r"^id:\s*(\S+)\s*$", d, re.M)
+    if not m_id:
+        continue
+    m_files = re.search(r"^files:\s*$((?:\n(?:\s*#.*|\s*-\s*\S.*|\s*))*?)(?=^\S)", d, re.M)
+    if not m_files:
+        print(f"NOFILES\t{m_id.group(1)}"); continue
+    paths = re.findall(r'^\s*-\s*"([^"]+)"\s*$', m_files.group(1), re.M)
+    found.append((m_id.group(1), paths))
+for rid, paths in found:
+    print("RULE\t" + rid + "\t" + "\t".join(paths))
+PY
+)" || { echo "check-no-degraded-felt: FATAL — could not parse $RULE_FILE" >&2; exit 2; }
+
+# The two faithful-commitment rules MUST carry identical scopes; a third rule with its own
+# unrelated scope (e.g. anchored-lightclient-committee) lives in a different file and is not here.
+faithful_scopes=()
+faithful_ids=()
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  case "$line" in
+    NOFILES*)
+      echo "check-no-degraded-felt: FATAL — rule '${line#NOFILES	}' in $RULE_FILE has NO 'files:' block." >&2
+      echo "  An unscoped rule in this file would scan the whole tree (or nothing, depending on the" >&2
+      echo "  caller) rather than the commitment producers. Give it an explicit scope." >&2
+      exit 2 ;;
+  esac
+  rid="$(cut -f2 <<<"$line")"
+  paths="$(cut -f3- <<<"$line")"
+  faithful_ids+=("$rid")
+  faithful_scopes+=("$paths")
+done <<<"$scope_report"
+
+if [ "${#faithful_ids[@]}" -lt 2 ]; then
+  echo "check-no-degraded-felt: FATAL — expected at least 2 scoped rules in $RULE_FILE, parsed ${#faithful_ids[@]}." >&2
+  echo "  The parser cannot read the rule file's shape; a scope check that cannot read the scope" >&2
+  echo "  must not report a pass." >&2
+  exit 2
+fi
+
+for i in "${!faithful_scopes[@]}"; do
+  if [ "${faithful_scopes[$i]}" != "${faithful_scopes[0]}" ]; then
+    echo "check-no-degraded-felt: FATAL — the rules in $RULE_FILE DISAGREE about scope." >&2
+    echo "  ${faithful_ids[0]}:  $(tr '\t' ' ' <<<"${faithful_scopes[0]}")" >&2
+    echo "  ${faithful_ids[$i]}:  $(tr '\t' ' ' <<<"${faithful_scopes[$i]}")" >&2
+    echo "  Both rules police the SAME law over the SAME producers. A one-sided widening means" >&2
+    echo "  one shape is checked in a file where the other is not, with nothing red." >&2
+    exit 2
+  fi
+done
+
+IFS=$'\t' read -r -a SCOPED_PATHS <<<"${faithful_scopes[0]}"
+if [ "${#SCOPED_PATHS[@]}" -eq 0 ]; then
+  echo "check-no-degraded-felt: FATAL — parsed an EMPTY scope from $RULE_FILE; refusing to" >&2
+  echo "  scan nothing and report PASS." >&2
+  exit 2
+fi
+echo "check-no-degraded-felt: scope derived from $(basename "$RULE_FILE") — ${#SCOPED_PATHS[@]} producer(s), both rules agree."
 
 # ARM THE GATE. `ast-grep scan <path>` prints "No such file or directory" to stderr
 # but EXITS 0 for a path that no longer exists — so if a commitment producer is
@@ -93,8 +157,16 @@ else
   echo "(~31-bit) in a state-commitment producer. A committed component must bind" >&2
   echo "its SOURCE at ~124-bit — use bytes32_to_8_limbs (8-felt), not" >&2
   echo "fold_bytes32_to_bb. If this is a deliberate, proof-backed residual, document" >&2
-  echo "the reason on the line above and add a trailing" >&2
+  echo "the reason on the line above and add, ON ITS OWN LINE DIRECTLY ABOVE the offending line:" >&2
   echo "  // ast-grep-ignore: degraded-felt-commitment" >&2
+  echo "" >&2
+  echo "⚑ PUT THE DIRECTIVE ON ITS OWN LINE, NOT TRAILING. Measured 2026-07-31: a TRAILING" >&2
+  echo "  \`// ast-grep-ignore: …\` suppresses only when the match sits on a line that ENDS its" >&2
+  echo "  enclosing expression. On a method-chain continuation it does NOT suppress —" >&2
+  echo "    .map(|c| HeapLeaf::entry(fold_bytes32_to_bb(&c.0), ZERO)) // ast-grep-ignore: …" >&2
+  echo "  still errors, while the same directive on its own preceding line clears it. The" >&2
+  echo "  trailing form was what this script and docs/FAITHFUL-COMMITMENT-LAW.md instructed, so a" >&2
+  echo "  lane recording an EARNED residual got a red it could not clear and no reason why." >&2
   echo "See docs/FAITHFUL-COMMITMENT-LAW.md." >&2
   exit 1
 fi
