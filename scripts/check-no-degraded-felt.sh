@@ -48,6 +48,16 @@ SCOPED_PATHS=(
   "cell/src/commitment.rs"
   "turn/src/rotation_witness.rs"
   "circuit/src/effect_vm/trace_rotated.rs"
+  # ⚑ ADDED 2026-07-31. The two WORST `fold_bytes32_to_bb` call sites in the tree were
+  # outside this gate's blast radius for its entire life, and carried no ignore directive
+  # either — so the gate has been reporting PASS while the accumulator ADDRESSES (which key
+  # a tree that silently dedupes collisions, i.e. double-spend) were a 32-byte value
+  # squeezed into ONE felt by an onto linear form.
+  #
+  # A gate whose scope omits the worst instance is not a gate; it is a habit. Found by a
+  # lane auditing the arity-17 map-op schema, not by the gate.
+  "cell/src/commitment_set.rs"
+  "cell/src/nullifier_set.rs"
 )
 
 # ARM THE GATE. `ast-grep scan <path>` prints "No such file or directory" to stderr

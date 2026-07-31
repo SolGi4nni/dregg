@@ -30,6 +30,12 @@ files:
   - "cell/src/commitment.rs"
   - "turn/src/rotation_witness.rs"
   - "circuit/src/effect_vm/trace_rotated.rs"
+  # ⚑ ADDED 2026-07-31 — the two WORST `fold_bytes32_to_bb` sites in the tree were outside
+  # this rule for its entire life. `accumulator_leaf` squeezes a 32-byte address into ONE
+  # felt by an onto linear form, keying a tree that SILENTLY DEDUPES colliding addresses —
+  # i.e. double-spend — and the gate reported PASS the whole time.
+  - "cell/src/commitment_set.rs"
+  - "cell/src/nullifier_set.rs"
 rule:
   any:
     - pattern: fold_bytes32_to_bb($_)
@@ -66,6 +72,12 @@ files:
   - "cell/src/commitment.rs"
   - "turn/src/rotation_witness.rs"
   - "circuit/src/effect_vm/trace_rotated.rs"
+  # ⚑ ADDED 2026-07-31 — the two WORST `fold_bytes32_to_bb` sites in the tree were outside
+  # this rule for its entire life. `accumulator_leaf` squeezes a 32-byte address into ONE
+  # felt by an onto linear form, keying a tree that SILENTLY DEDUPES colliding addresses —
+  # i.e. double-spend — and the gate reported PASS the whole time.
+  - "cell/src/commitment_set.rs"
+  - "cell/src/nullifier_set.rs"
 rule:
   pattern: "[$X; 8]"
   kind: array_expression
