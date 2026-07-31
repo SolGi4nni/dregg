@@ -728,3 +728,21 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   object than a fixture, and because its detector being `#[ignore]`d means the re-emit will not be
   prompted by anything going red. ⚑ **Not re-emitted here** (the rotation is ember's), and
   `chain/gnark/fixtures/apex_vk_identity.json` was not touched.
+- 00:20 ✅ **THE VALUE-INDEPENDENCE TOOTH IS GREEN — the risk this change created is MEASURED shut.**
+  `accumulator::running_vk_fixed_point_is_value_independent`, run directly against the built binary
+  (`--ignored`, 1440 s / 24 min, so nothing in CI or a plain `cargo test` would ever have run it):
+  ```
+  stream A depth-4 fp=47c5938467c490c71dbd327d1421e504ebfe33e0b556b7d5917fabd4f2b22982  prep_commit=2ec998234c0e9d96
+  stream B depth-4 fp=47c5938467c490c71dbd327d1421e504ebfe33e0b556b7d5917fabd4f2b22982  prep_commit=2ec998234c0e9d96
+  test result: ok. 1 passed; 0 failed
+  ```
+  Two DISTINCT value-streams — different balances, debits, roots and witness values at every turn,
+  same Transfer shape — driven to the depth-4 fixed point produce **byte-identical VK material**.
+  ⚑ **The load-bearing field is `prep_commit`, and it agrees.** That is exactly where const values
+  now live, so this is not a generic determinism check: it says the constants the fold bakes are a
+  function of the child's CIRCUIT and not of its data, on the deployed online path. What was READ at
+  23:45 ("the fork builds the parent op-list from shape, and the one baked value is the child's cap")
+  is now MEASURED.
+  So both directions hold together, which is the pair that actually matters:
+  **a different CIRCUIT moves the anchor** (four probes) and **a different HISTORY does not** (this).
+  Without the second, the first would have been a light client that refuses everyone.
