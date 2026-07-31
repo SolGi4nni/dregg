@@ -7416,23 +7416,42 @@ async fn execute_finalized_turn(
     // authoritative cross-node commit path, matching the HTTP submit ingress.
     crate::executor_setup::require_pq_admission(&executor);
 
-    // THE FIRST-TURN CLAIM, before the predicate reads the actor cell. Every
-    // input is in-block and signature-verified (`SignedTurn.signer`,
-    // `SignedTurn.pq_signer`, `turn.hash()`), so every node writes the identical
+    // THE FIRST-TURN CLAIM, computed before the predicate reads the actor cell.
+    // Every input is in-block and signature-verified (`SignedTurn.signer`,
+    // `SignedTurn.pq_signer`, `turn.hash()`), so every node derives the identical
     // bytes at the identical id — the same cross-node uniformity argument
     // `provision_transfer_destinations` makes, but stronger: the actor's
     // pre-image IS carried, so the claim materializes the canonical account
-    // rather than a stub. Running it HERE rather than inside the execution clone
-    // below is the whole fix: with no cell the predicate answered
+    // rather than a stub. Deciding it HERE rather than inside the execution clone
+    // is the whole onboarding fix: with no cell the predicate answered
     // `pq-identity-not-enrolled`, and with the faucet's zero-pk stub it answered
     // `live-agent-signer-mismatch` — both BEFORE the upgrade that fixed either,
-    // so a funded client's first turn could never finalize. `Declined` writes
-    // nothing and the predicate then refuses the turn on its own terms.
-    crate::signed_turn_validation::claim_signer_actor_cell(
-        &mut s.ledger,
-        &signed_turn,
-        executor.require_pq(),
-    );
+    // so a funded client's first turn could never finalize. `None` means nothing
+    // to claim (already the signer's account, or the envelope does not prove it),
+    // and the predicate then refuses the turn on its own terms.
+    //
+    // ⚑ IT IS A CANDIDATE WRITE, NOT AN AUTHORITATIVE ONE, and that distinction
+    // is the whole reason this is `claimed_actor_cell` (pure) rather than
+    // `claim_signer_actor_cell` (which mutates a ledger). A finalized payload can
+    // clear this entire outer perimeter and still be refused afterwards — receipt
+    // continuity below, a faithful-note/nullifier refusal, or the executor's own
+    // phase-1 charge — and every one of those arms records a deterministic
+    // rejection that writes NOTHING durable. The durable image is `checkpoint ⊕
+    // touched-cell overlay` built from `ledger_touched_diff(pre_ledger,
+    // exec_ledger)`, so a claim written into `s.ledger` here appears in no commit
+    // record: it survives in RAM until this node restarts and then vanishes,
+    // while a peer that did not restart keeps it. `canonical_ledger_root` hashes
+    // the whole cell, so that is an attested-root split on the next finalized
+    // turn, not merely invisible content. The claim is therefore installed on the
+    // ISOLATED `exec_ledger` candidate below and reaches authoritative RAM only
+    // through `install_finalized_ledger_overlay`, past the durable commit point,
+    // exactly like every other cell this turn creates.
+    let claimed_actor_cell: Option<dregg_cell::Cell> =
+        crate::signed_turn_validation::claimed_actor_cell(
+            s.ledger.get(&signed_turn.turn.agent),
+            &signed_turn,
+            executor.require_pq(),
+        );
 
     // Consensus authenticated the block producer, not the enclosed user turn.
     // Re-run the exact HTTP/PG application predicate while holding the state
@@ -7443,7 +7462,9 @@ async fn execute_finalized_turn(
     let validated_signed_turn = match crate::signed_turn_validation::validate_signed_turn(
         &signed_turn,
         &executor,
-        s.ledger.get(&signed_turn.turn.agent),
+        claimed_actor_cell
+            .as_ref()
+            .or_else(|| s.ledger.get(&signed_turn.turn.agent)),
     ) {
         Ok(validated) => validated,
         Err(validation_error) => {
@@ -7927,6 +7948,23 @@ async fn execute_finalized_turn(
     // committee modes alike.  A historical durable solo receipt is recovery
     // input, never evidence that the RAM-only ledger mutation survived a crash.
 
+    // FLOW-B ROTATION: capture the actor cell's FULL pre-execution `Cell` (the real
+    // RecordKernelState the rotation producer reads — balance/nonce/fields/c-list/lifecycle/
+    // heap_root/authority), so the live node turn can prove ROTATED. Cloned BEFORE
+    // `execute_via_producer` mutates the ledger; the post-state cell is read after execution.
+    //
+    // This is the pre-state the EXECUTOR sees, which on a first turn is the
+    // claimed actor cell, not the live ledger's (absent / zero-pk stub) image.
+    // The proof binds `old_commit` to it, so reading the un-claimed live cell
+    // here would bind a transition the executor never took.
+    let full_turn_pre_cell: Option<dregg_cell::Cell> = if s.full_turn_proving_enabled {
+        claimed_actor_cell
+            .clone()
+            .or_else(|| s.ledger.get(&signed_turn.turn.agent).cloned())
+    } else {
+        None
+    };
+
     // Full-turn proving (commit-path): capture the actor cell's pre-execution
     // state BEFORE the executor mutates the ledger. The full-turn proof binds
     // `old_commit` to this pre-state; capturing it after execution would let a
@@ -7935,8 +7973,8 @@ async fn execute_finalized_turn(
         // THE EPOCH: balances are SIGNED (i64); the full-turn VM pre-state is
         // u64. The actor is an ORDINARY cell (non-negative) on the proving
         // path — checked conversion, never an `as` cast that wraps negatives.
-        s.ledger
-            .get(&signed_turn.turn.agent)
+        full_turn_pre_cell
+            .as_ref()
             .map(|cell| {
                 (
                     u64::try_from(cell.state.balance()).unwrap_or(0),
@@ -7944,16 +7982,6 @@ async fn execute_finalized_turn(
                 )
             })
             .or(Some((0, 0)))
-    } else {
-        None
-    };
-
-    // FLOW-B ROTATION: capture the actor cell's FULL pre-execution `Cell` (the real
-    // RecordKernelState the rotation producer reads — balance/nonce/fields/c-list/lifecycle/
-    // heap_root/authority), so the live node turn can prove ROTATED. Cloned BEFORE
-    // `execute_via_producer` mutates the ledger; the post-state cell is read after execution.
-    let full_turn_pre_cell: Option<dregg_cell::Cell> = if s.full_turn_proving_enabled {
-        s.ledger.get(&signed_turn.turn.agent).cloned()
     } else {
         None
     };
@@ -7975,8 +8003,8 @@ async fn execute_finalized_turn(
         dregg_circuit::field::BabyBear,
         [dregg_circuit::field::BabyBear; 8],
     ) = if s.full_turn_proving_enabled {
-        s.ledger
-            .get(&signed_turn.turn.agent)
+        full_turn_pre_cell
+            .as_ref()
             .map(|cell| {
                 (
                     dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities),
@@ -8099,12 +8127,20 @@ async fn execute_finalized_turn(
 
     let turn_for_exec = signed_turn.turn.clone();
     let exec_join = tokio::task::spawn_blocking(move || {
-        // The ACTOR cell is already the signer's canonical, identity-bound account:
-        // `claim_signer_actor_cell` ran on `s.ledger` before the admission
-        // predicate (which could not have passed otherwise), and `exec_ledger` is a
-        // clone of that ledger. Provisioning it a SECOND time here — after
-        // validation rather than before it — is what left the claim invisible to
-        // the predicate in the first place; there is now one claim, at one place.
+        // THE FIRST-TURN CLAIM, installed on the isolated candidate. It was
+        // DECIDED before the admission predicate (which could not have passed
+        // otherwise) and is APPLIED here, so the authoritative ledger carries it
+        // only through the post-durability overlay. There is still exactly one
+        // claim, computed once, by `claimed_actor_cell`; what moved is where it
+        // lands. `pre_ledger` was cloned before this install, so the actor is in
+        // the pre→post diff and therefore in the commit record's `touched_cells`
+        // whether or not execution touches it again — which is what makes the
+        // durable image and live RAM agree on a first turn.
+        if let Some(claimed) = claimed_actor_cell {
+            let id = claimed.id();
+            let _ = exec_ledger.remove(&id);
+            let _ = exec_ledger.insert_cell(claimed);
+        }
         // Provision Transfer destinations on the CLONE the FFI executes against
         // (byte-deterministic — the identical zero-stub every node inserts). The
         // pre→post diff below classifies each provisioned+credited destination as

@@ -297,6 +297,93 @@ async fn an_unfunded_fresh_client_is_refused_for_being_broke_not_for_being_unkno
     );
 }
 
+/// [5] THE CLAIM IS A CANDIDATE WRITE, NOT AN AUTHORITATIVE ONE.
+///
+/// `execute_finalized_turn` runs the first-turn claim before the admission
+/// predicate reads the actor cell — correct, and [1]/[2] above depend on it. But
+/// the claim must not touch the AUTHORITATIVE ledger before the durable commit
+/// point, because a finalized payload can pass the whole outer perimeter and
+/// still be refused afterwards (receipt continuity, the executor's own phase-1
+/// charge, a faithful-note or nullifier refusal). Consensus records those as
+/// `DeterministicallyRejected` and writes NOTHING durable — so a claim that
+/// landed in RAM survives only in RAM.
+///
+/// THE DIVERGENCE THAT CAUSES: the node's durable image is `checkpoint ⊕
+/// touched-cell overlay`, and `ledger_touched_diff` is taken against a base
+/// captured after the claim, so a RAM-only claim is in NO commit record. A node
+/// that restarts reconstructs a ledger WITHOUT the ghost cell; a node that did
+/// not restart keeps it — and `canonical_ledger_root` hashes the whole cell, so
+/// the very next finalized turn attests two different roots on the two nodes.
+///
+/// Reachable inside #65's own threat model: one enrolled Byzantine validator
+/// proposes a well-formed hybrid envelope from a fresh key with a fee it cannot
+/// pay. Honest HTTP ingress never gossips such a turn (it stages, rejects, and
+/// rolls back), so consensus is the only way in — which is exactly the auditor's
+/// point that block payloads are opaque to block admission.
+///
+/// THE CANARY: put `claim_signer_actor_cell(&mut s.ledger, …)` back in place of
+/// the pure `claimed_actor_cell` + candidate install in `execute_finalized_turn`
+/// and this goes RED on the surviving cell and on the root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_finalized_first_turn_leaves_no_ram_only_ghost_cell() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = NodeState::new(tmp.path(), Vec::new()).expect("node state");
+
+    // A fresh identity with no cell anywhere, and a fee it cannot pay. The
+    // envelope is honest: correct agent binding, both signature halves valid,
+    // genesis receipt link. Only the money is missing.
+    let client = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new([0xC5; 32]));
+    let actor = client.cell_id("default");
+    let destination = dregg_cell::CellId::derive_raw(&[0xD7; 32], &default_token());
+    let signed = client_transfer_turn(&state, &client, destination, 1_000, 5_000).await;
+    let payload = postcard::to_stdvec(&signed).expect("encode SignedTurn");
+
+    let before = {
+        let s = state.read().await;
+        assert!(
+            s.ledger.get(&actor).is_none(),
+            "the fixture must start with no cell at the actor id"
+        );
+        crate::blocklace_sync::canonical_ledger_root(&s.ledger)
+    };
+
+    let outcome = crate::blocklace_sync::finalize_admitted_turn_for_test(
+        &state,
+        dregg_blocklace::finality::BlockId([0x5C; 32]),
+        &payload,
+    )
+    .await;
+
+    // CLASSIFY THE REFUSAL. `is_err()`-shaped assertions pass for an
+    // infrastructure fault too; this turn must be refused by the EXECUTOR, after
+    // the outer perimeter admitted it — anything else (a validation code, a
+    // retryable store error) means the test never reached the state under test.
+    match &outcome {
+        crate::execution_cursor::FinalizedExecutionOutcome::DeterministicallyRejected {
+            reason_code,
+            ..
+        } => assert_eq!(
+            reason_code, "executor-rejected",
+            "the envelope must pass the outer SignedTurn perimeter and fail on VALUE; a \
+             validation reason code here means the claim never ran and the ghost path was \
+             never entered"
+        ),
+        other => panic!("expected a deterministic executor rejection, got {other:?}"),
+    }
+
+    let s = state.read().await;
+    assert!(
+        s.ledger.get(&actor).is_none(),
+        "a refused finalized payload wrote a cell into the authoritative ledger that no commit \
+         record carries — it exists only until this node restarts"
+    );
+    assert_eq!(
+        crate::blocklace_sync::canonical_ledger_root(&s.ledger),
+        before,
+        "the attested ledger root moved for a turn that committed nothing"
+    );
+}
+
 /// [4] The tooth the claim must never blunt: naming someone else's cell as your
 /// agent is still `agent-signer-mismatch`, and no cell is fabricated for it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
