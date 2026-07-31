@@ -202,9 +202,20 @@ abbrev pipelinedSendV3 : EffectVmDescriptor2 :=
 
 /-- The STATIC per-slot setField member (`setFieldVmDescriptor2-<slot>R24` — the eight
 selector-gated tick faces; the DYNAMIC `setFieldDynV3` is memory-ful and NOT here). -/
+-- ⚑ VALUE8 CONSUMER RE-POINT, 2026-07-30. `v3RegistryBare` now routes tag 5 through
+-- `withSetFieldCompletionPins slot (withSelectorGate … (setFieldV3 slot))`, which appends 7
+-- `.piBinding` constraints and takes `piCount` 50 → 57. This consumer still spelled the
+-- pre-VALUE8 member, so `Rfix 5` and `setFieldStaticV3` differed in exactly that field — and
+-- `isDefEq` spent all 200,000 heartbeats structurally unfolding two 304-entry constraint lists
+-- over a 61-member registry before it could reach the one that differed. It surfaced as a
+-- heartbeat timeout at `AlgoStarkSoundKernel.lean:341`, which reads like a budget problem and
+-- was a FALSE DEFEQ: raising `maxHeartbeats` would have bought a longer wait and then an
+-- inscrutable type mismatch. A false unification between two enormous terms wears a budget
+-- exhaustion's coat.
 abbrev setFieldStaticV3 (slot : Fin 8) : EffectVmDescriptor2 :=
-  withSelectorGate Dregg2.Circuit.Emit.EffectVmEmitSetField.SEL_SET_FIELD
-    (v3OfFrozen (setFieldTickFace slot))
+  Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withSetFieldCompletionPins slot
+    (withSelectorGate Dregg2.Circuit.Emit.EffectVmEmitSetField.SEL_SET_FIELD
+      (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.setFieldV3 slot))
 
 /-! ## §1 — the SHAPE BRICKS: `LookupShaped` is structural over the emission combinators.
 
@@ -319,9 +330,15 @@ theorem revokeDelegation_sideConditions : MemFreeSideConditions revokeDelegation
   ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _)⟩
 theorem supplyMint_sideConditions : MemFreeSideConditions supplyMintV3 :=
   ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _)⟩
+-- ⚑ The shape brick gains ONE outer append for the VALUE8 completion pins. No proof is
+-- weakened: `withSetFieldCompletionPins` is a single `++` of `.base (.piBinding …)`, which
+-- `lookupShaped_base_map` already covers, so this is the same brick with one more layer.
 theorem setFieldStatic_sideConditions (slot : Fin 8) :
     MemFreeSideConditions (setFieldStaticV3 slot) :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _)⟩
+  ⟨⟨rfl, rfl⟩,
+    lookupShaped_append
+      (lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _))
+      (lookupShaped_base_map _ _)⟩
 
 -- `graduateV1 … ++ (map .base pins)` (the H1 headroom-pin wrap):
 theorem makeSovereign_sideConditions : MemFreeSideConditions makeSovereignV3 :=
