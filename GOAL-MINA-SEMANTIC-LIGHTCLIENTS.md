@@ -1593,3 +1593,21 @@ HEAD. This blocks verifying the **soundness Lean** (de-vacuum modules, openmina�
 not on the metatheory wave.** Correct move: NOT spinning more lanes into the 45-file churn (clobber
 hazard, pushes the verify window further out); let the wave settle, then ONE clean root build
 adjudicates the Lean. Hold step 3 for the rayon result.
+
+## ✅ RAYON DETERMINISM SETTLED (`0efbc1437`) — VK safe, one staged fix, rayon STAYS ON
+- **Prover byte-deterministic? NO** — 3 runs, 3 byte-counts (apex 405286/405423/…, terminal
+  431431/431499/…). Every run accept+tamper-reject → proofs VALID, only serialization differs.
+- ⚑ **VK unchanged? YES — `101fdcee…2016b` serial==rayon-A==rayon-B, and safe BY CONSTRUCTION**:
+  `recursion_vk_fingerprint` hashes only circuit shape, EXCLUDES public/opened/query/pow values.
+  **Case C (flag day) ruled out on principle. The 131/12-key chain anchor is safe.**
+- **The site (grep-exhaustive):** p3-challenger FRI grind uses `find_any` (first thread to find a PoW
+  witness, not the min). Witness absorbed into FS before query indices → scheduling changes the
+  encoding length. **Fix: `find_any`→`find_first`** (deterministic min-index, byte-identical, still
+  parallel). STAGED for convergence (vendors `p3-challenger`, full-workspace rebuild) — not landed
+  mid-swarm. A benign proof-nonce race, NOT a soundness issue.
+- ⚑ **Caught a real casualty**: non-ignored `gpu_outer_config_synthetic_stark_byte_identical_to_cpu`
+  flakes 3/8 under rayon (same root cause) — and refuted my own commit's "proof must stay
+  byte-identical" claim: the VK does, the proof does not.
+- Mutation-differential gate: **still green** (301 lines byte-identical serial-vs-rayon).
+
+**⇒ rayon is SAFE for the load-bearing prove (VK stable, proofs valid). Step 3 UNBLOCKED at 5.8×.**
