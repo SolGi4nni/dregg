@@ -13,6 +13,18 @@
 //! AIRs themselves remain Lean-authored. Swapping the hash field changes what
 //! the commitment is *computed in*, not what is *being proved*.
 //!
+//! ⚑ That paragraph was **half false when it was first written**, and the law-#1
+//! gate said so: the `#[cfg(test)]` module below declared its own `MinaFibAir`, a
+//! byte-identical third copy of the toy Fibonacci AIR that
+//! `dregg_outer_config::tests` and `gpu_backend::tests` already each carried —
+//! 8 hand-authored symbolic sites, and `law1_enforcement_gate` went red on this
+//! file (`8 sites: 8 symbolic, 0 closure, 0 IR`) within hours of it landing. The
+//! sites were never dregg constraint content and never rode a production path,
+//! *and they were still a hand-written Rust AIR*; law #1 says an existing Rust
+//! AIR is debt rather than a foundation, so copying one is the drift. The three
+//! copies are now one — [`crate::dregg_outer_config::toy_fib_air`] — and this
+//! module imports it. The gate was right; nothing about it was relaxed.
+//!
 //! ## Why this exists — the measurement
 //!
 //! `docs/MINA-VERIFIES-DREGG-FRI-SIZE.md` measured a Mina-side verify of
@@ -292,14 +304,19 @@ pub fn create_mina_config() -> DreggMinaConfig {
 
 #[cfg(test)]
 mod tests {
-    use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
     use p3_field::integers::QuotientMap;
     use p3_field::{PrimeCharacteristicRing, PrimeField};
-    use p3_matrix::dense::RowMajorMatrix;
     use p3_symmetric::{MerkleCap, PseudoCompressionFunction};
     use p3_uni_stark::{Proof, prove, verify};
 
     use super::*;
+    // ⚑ LAW #1. The round-trip below proves the crate's ONE test-only toy AIR,
+    // imported rather than re-authored. This module used to declare its own
+    // byte-identical `MinaFibAir` — 8 hand-written symbolic sites that made
+    // `law1_enforcement_gate` red on the very file whose doc says "no AIR, no
+    // constraint, no gadget". Both were true; a copy of a Rust AIR is still a
+    // Rust AIR. See `dregg_outer_config::toy_fib_air`.
+    use crate::dregg_outer_config::toy_fib_air::{ToyFibAir, fib_trace};
     use crate::dregg_outer_config::{
         OUTER_EXT_DEGREE, OUTER_FRI_COMMIT_POW_BITS, OUTER_FRI_LOG_BLOWUP,
         OUTER_FRI_LOG_FINAL_POLY_LEN, OUTER_FRI_MAX_LOG_ARITY, OUTER_FRI_NUM_QUERIES,
@@ -330,65 +347,13 @@ mod tests {
         );
     }
 
-    /// Minimal 2-column Fibonacci AIR — the same shape `dregg_outer_config`'s
-    /// round-trip uses, so the two configs are exercised on one object.
-    struct MinaFibAir;
-
-    impl<F> BaseAir<F> for MinaFibAir {
-        fn width(&self) -> usize {
-            2
-        }
-        fn num_public_values(&self) -> usize {
-            3
-        }
-        fn max_constraint_degree(&self) -> Option<usize> {
-            Some(2)
-        }
-    }
-
-    impl<AB: AirBuilder> Air<AB> for MinaFibAir {
-        fn eval(&self, builder: &mut AB) {
-            let main = builder.main();
-            let pis = builder.public_values();
-            let (a, b, x) = (pis[0], pis[1], pis[2]);
-
-            let local = main.current_slice();
-            let next = main.next_slice();
-
-            let mut when_first_row = builder.when_first_row();
-            when_first_row.assert_eq(local[0], a);
-            when_first_row.assert_eq(local[1], b);
-
-            let mut when_transition = builder.when_transition();
-            when_transition.assert_eq(local[1], next[0]);
-            when_transition.assert_eq(local[0] + local[1], next[1]);
-
-            builder.when_last_row().assert_eq(local[1], x);
-        }
-    }
-
-    fn fib_trace(n: usize) -> (RowMajorMatrix<BabyBear>, Vec<BabyBear>) {
-        assert!(n.is_power_of_two());
-        let mut values = Vec::with_capacity(2 * n);
-        let (mut a, mut b) = (BabyBear::ZERO, BabyBear::ONE);
-        for _ in 0..n {
-            values.push(a);
-            values.push(b);
-            let next = a + b;
-            a = b;
-            b = next;
-        }
-        let pis = vec![BabyBear::ZERO, BabyBear::ONE, values[2 * n - 1]];
-        (RowMajorMatrix::new(values, 2), pis)
-    }
-
     /// The config's own gate: prove a STARK under it and verify it — the
     /// Mina-native MMCS + MultiField challenger round-trip at the production
     /// FRI knobs, with the commitment asserted to really be Pasta-native.
     #[test]
     fn dregg_mina_config_proves_and_verifies_synthetic_stark() {
         let config = create_mina_config();
-        let air = MinaFibAir;
+        let air = ToyFibAir;
         let (trace, pis) = fib_trace(16);
 
         let mut proof = prove(&config, &air, trace, &pis);

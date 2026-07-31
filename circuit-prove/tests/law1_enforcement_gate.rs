@@ -72,11 +72,44 @@
 //! `CustomLeafEncoding.lean::cell_to_descriptor_faithful` exists to discharge. Destructuring is free;
 //! construction is counted wherever it happens.
 //!
+//! ## `#[cfg(test)]` INSIDE a `src/` file is COUNTED — and that is not an accident (2026-07-30)
+//! The scope test is `rel.contains("/src/")`, so the gate's "test code is not ratcheted" decision is
+//! implemented as a **directory** property. That proxy is wrong in exactly one direction: a
+//! `#[cfg(test)] mod tests` inside a `src/` file is test code that the directory test calls
+//! production, and identical source text therefore scores 8 in `circuit-prove/src/foo.rs` and 0 in
+//! `circuit-prove/tests/foo.rs`.
+//!
+//! **The strictness EARNED ITS KEEP, so it stays.** On 2026-07-30 the gate went red on
+//! `circuit-prove/src/dregg_mina_config.rs` — 8 sites, 8 symbolic, all inside `#[cfg(test)]`, and all
+//! of them a byte-identical THIRD copy of the toy Fibonacci AIR that `dregg_outer_config::tests` and
+//! `gpu_backend::tests` already each carried. None of it was dregg constraint content; the file's own
+//! module doc opened with "no AIR, no constraint, no gadget" and was, on the plumbing question,
+//! correct. It was still a hand-written Rust AIR, and law #1's own words are that an existing Rust AIR
+//! is debt rather than a foundation, so copying one **is** the drift. Had `#[cfg(test)]` been free,
+//! that third copy would have landed silently and a fourth would have followed. The fix was
+//! subtraction — three copies became one shared `dregg_outer_config::toy_fib_air` — and this gate was
+//! not touched to make it green.
+//!
+//! What DID change is that `cfg_test_regions` now ATTRIBUTES sites, so a failure message can say
+//! "ALL 8 inside `#[cfg(test)]`" instead of leaving the reader to open the file and guess whether the
+//! gate mis-fired. Attribution only: `authored()` is unchanged, and `#[cfg(any(test, feature = ..))]`
+//! deliberately does not count as test-only because that item ships whenever the feature is on.
+//!
+//! **The asymmetry's correct resolution is to close the `tests/` hole, not to widen the `src/`
+//! exemption** — the direction of the law is fewer Rust-authored constraints, and the hole is the
+//! looser side. That is a campaign, not a line: 847 sites across 41 files, most of them legitimate
+//! emit-gate differentials that must be separated from the rest before any of it can be ratcheted.
+//! **First rung, named so it is findable:** classify `tests/` sites into (a) differentials that build
+//! a Rust expectation *and compare it against a Lean emission in the same file* — the law working —
+//! and (b) everything else, then ratchet (b) alone. Until that exists, the bullet below stands.
+//!
 //! ## What this gate CANNOT see (say it out loud rather than imply coverage)
 //! * **`tests/` trees.** 41 test files author 847 sites — overwhelmingly emit-gate differentials,
 //!   which must build a Rust-side expectation in order to compare it against the Lean emission (that is
 //!   the law working). They are not ratcheted here, so a hand-written AIR parked in a `tests/` directory
-//!   is invisible to this gate. Scoped out deliberately, named as a hole.
+//!   is invisible to this gate. Scoped out deliberately, named as a hole. ⚑ And it is the LOOSER side
+//!   of the `#[cfg(test)]` asymmetry above: moving a counted `src/` AIR into `tests/` would zero its
+//!   score without deleting a line, which is laundering, not a fix.
 //! * **Semantics.** The count is IR *nodes constructed*, not constraint *degree* or *soundness*. It is a
 //!   monotone proxy: more Rust-authored algebra ⇒ a bigger number. It says nothing about whether a
 //!   constraint is right, and a file can restructure to lower its number without emitting from Lean.
@@ -107,6 +140,11 @@
 //!   refusal, never a silent divergence" (`note_spend_witness.rs:225-227`).
 //! * THE USER-PROGRAM GRAMMAR: `dsl/predicates/*`, `dsl/descriptors.rs` — the host-trusted smart-contract
 //!   surface users deploy programs against; interpreted, fails closed on an unknown vk_hash.
+//! * THE ONE TEST-ONLY TOY AIR: `dregg_outer_config.rs` (8) — `toy_fib_air::ToyFibAir`, the p3
+//!   uni-stark 2-column Fibonacci, `#[cfg(test)]`-gated and shared by all three configs in the crate
+//!   (CPU outer, GPU outer, Mina terminal). A `StarkConfig` round-trip needs *an* AIR to prove and it
+//!   must deliberately not be a dregg one. Was THREE copies until 2026-07-30; `gpu_backend.rs` (8) and
+//!   a fresh `dregg_mina_config.rs` (8) are both retired into this row.
 //! * NAMED RESIDUALS — real debt, now VISIBLE for the first time:
 //!   - ~~**`param-compose/src/{air,builder}.rs` (28) + the `entity-compose` consumer.**~~ **CLOSED
 //!     2026-07-25 — DELETED, 1028 lines.** It was a complete hand-written Rust AIR: 24 `assert_zero`
@@ -403,11 +441,26 @@ struct Counts {
     ir_constructed: usize,
     /// (3)+(4) constraint-IR values DESTRUCTURED. Reported, never counted as a violation.
     ir_lowered: usize,
+    /// How many of the AUTHORED sites sit inside a `#[cfg(test)]` item — a SUBSET of
+    /// `authored()`, not a deduction from it. Reported so a failure message can say
+    /// "8 of 8 are test-only" instead of leaving the reader to open the file.
+    cfg_test: usize,
 }
 
 impl Counts {
     fn authored(&self) -> usize {
         self.symbolic + self.closures + self.ir_constructed
+    }
+
+    /// The `, N of them #[cfg(test)]-only` clause, or nothing when N is 0.
+    fn cfg_test_note(&self) -> String {
+        if self.cfg_test == 0 {
+            String::new()
+        } else if self.cfg_test == self.authored() {
+            format!(", ALL {} inside `#[cfg(test)]`", self.cfg_test)
+        } else {
+            format!(", {} of them inside `#[cfg(test)]`", self.cfg_test)
+        }
     }
 }
 
@@ -421,10 +474,11 @@ fn ident_at(b: &[u8], i: usize) -> usize {
 
 /// `.name(` with arbitrary whitespace around the dot (chained builders wrap lines), and
 /// NOT `..name(`. A leading dot is what separates the `assert_eq` METHOD from the
-/// `assert_eq!` macro.
-fn count_method_calls(b: &[u8], names: &[&str], prefix_match: bool) -> usize {
+/// `assert_eq!` macro. Returns the OFFSET of each hit so it can be attributed to a
+/// `#[cfg(test)]` region (see `cfg_test_regions`) — the count alone cannot be.
+fn method_call_sites(b: &[u8], names: &[&str], prefix_match: bool) -> Vec<usize> {
     let n = b.len();
-    let mut hits = 0usize;
+    let mut hits = Vec::new();
     let mut i = 0usize;
     while i < n {
         if !(b[i].is_ascii_alphabetic() || b[i] == b'_') || prev_is_ident(b, i) {
@@ -450,12 +504,80 @@ fn count_method_calls(b: &[u8], names: &[&str], prefix_match: bool) -> usize {
             let dotted = p > 0 && b[p - 1] == b'.' && !(p > 1 && b[p - 2] == b'.');
             let q = skip_ws(b, end);
             if dotted && q < n && b[q] == b'(' {
-                hits += 1;
+                hits.push(i);
             }
         }
         i = end.max(i + 1);
     }
     hits
+}
+
+/// Byte ranges of `#[cfg(test)]`-gated items. Computed on the BLANKED code, so a
+/// commented-out attribute never opens a region.
+///
+/// ⚑ **This is ATTRIBUTION, not an exemption.** A site inside one of these ranges is
+/// counted by `authored()` exactly like any other; the range only lets the failure
+/// message say *which* sites are test-only, so the reader is not left guessing. See the
+/// module docs' `#[cfg(test)]`-inside-`src/` note for why the counting stays strict.
+///
+/// Only the LITERAL `#[cfg(test)]` opens a range. `#[cfg(any(test, feature = "x"))]`
+/// deliberately does not — that item compiles in a production build whenever the feature
+/// is on, so calling it test-only would be false.
+fn cfg_test_regions(b: &[u8]) -> Vec<(usize, usize)> {
+    let n = b.len();
+    // `#![cfg(test)]` is an INNER attribute: it gates the whole file.
+    if find(b, 0, b"#![cfg(test)]").is_some() {
+        return vec![(0, n)];
+    }
+    let attr = b"#[cfg(test)]";
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(p) = find(b, i, attr) {
+        i = p + 1;
+        let mut j = skip_ws(b, p + attr.len());
+        // Any further outer attributes on the same item.
+        while j < n && b[j] == b'#' {
+            let Some(open) = find(b, j, b"[") else { break };
+            j = skip_ws(b, matching(b, open));
+        }
+        // Visibility / qualifier words, then the item keyword.
+        let mut item_has_body = true;
+        loop {
+            let e = ident_at(b, j);
+            if e == j {
+                break;
+            }
+            match std::str::from_utf8(&b[j..e]).unwrap_or("") {
+                "pub" | "unsafe" | "async" | "default" => {
+                    let k = skip_ws(b, e);
+                    // `pub(crate)` / `pub(super)`
+                    j = if b.get(k) == Some(&b'(') {
+                        skip_ws(b, matching(b, k))
+                    } else {
+                        k
+                    };
+                }
+                // Bodyless items: `use a::{b, c};` opens a brace that is NOT a region.
+                "use" | "type" | "const" | "static" | "let" | "extern" => {
+                    item_has_body = false;
+                    break;
+                }
+                _ => break, // mod / fn / impl / struct / enum / trait / macro_rules
+            }
+        }
+        if !item_has_body {
+            continue;
+        }
+        // The body is the first brace group — but only if a `{` precedes the item's `;`.
+        let mut k = j;
+        while k < n && b[k] != b'{' && b[k] != b';' {
+            k += 1;
+        }
+        if k < n && b[k] == b'{' {
+            out.push((j, matching(b, k)));
+        }
+    }
+    out
 }
 
 fn count_sites(raw: &str) -> Counts {
@@ -472,15 +594,19 @@ fn count_sites_explained(
     let code = blank_noncode(raw);
     let b = code.as_bytes();
     let mut c = Counts::default();
+    let regions = cfg_test_regions(b);
+    let in_cfg_test = |p: usize| regions.iter().any(|&(s, e)| p >= s && p < e);
 
     // (1) `x.assert_zero(..)` on any receiver — this is the form the previous revision
     // missed on `b.assert_zero(&Head::..)`, which is param-compose's ENTIRE AIR.
-    c.symbolic += count_method_calls(b, &["assert_zero"], false);
+    let mut sym = method_call_sites(b, &["assert_zero"], false);
     // `.assert_eq(..)` / `.when*(..)` are a constraint dialect only on an AirBuilder.
     if code.contains("AirBuilder") {
-        c.symbolic += count_method_calls(b, &["assert_eq"], false);
-        c.symbolic += count_method_calls(b, &["when"], true);
+        sym.extend(method_call_sites(b, &["assert_eq"], false));
+        sym.extend(method_call_sites(b, &["when"], true));
     }
+    c.symbolic += sym.len();
+    c.cfg_test += sym.iter().filter(|&&p| in_cfg_test(p)).count();
 
     // (2) closures.
     {
@@ -491,6 +617,9 @@ fn count_sites_explained(
                 let r = skip_ws(b, q + 1);
                 if b[r..].starts_with(b"Box::new") {
                     c.closures += 1;
+                    if in_cfg_test(p) {
+                        c.cfg_test += 1;
+                    }
                 }
             }
             i = p + 4;
@@ -512,7 +641,12 @@ fn count_sites_explained(
             if vend > vstart && b[vstart].is_ascii_uppercase() {
                 let site = classify_site(b, i, vend);
                 match site {
-                    Site::Construct => c.ir_constructed += 1,
+                    Site::Construct => {
+                        c.ir_constructed += 1;
+                        if in_cfg_test(i) {
+                            c.cfg_test += 1;
+                        }
+                    }
                     Site::Pattern => c.ir_lowered += 1,
                 }
                 if let Some(ex) = explain.as_deref_mut() {
@@ -623,11 +757,23 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit-prove/src/caveat_admission_leaf_adapter.rs", 32),
     ("circuit-prove/src/custom_leaf_adapter.rs", 3),
     ("circuit-prove/src/deco_leaf_adapter.rs", 21),
+    // ⚑ THE CRATE'S ONE TEST-ONLY TOY AIR lives here, and all 8 sites are it:
+    // `toy_fib_air::ToyFibAir`, the p3 uni-stark 2-column Fibonacci, `#[cfg(test)]`-gated,
+    // shared by `dregg_outer_config`, `gpu_backend` and `dregg_mina_config`. It constrains
+    // nothing about dregg state — a StarkConfig round-trip needs *an* AIR and it must
+    // deliberately not be a real one. This row is the price of that, paid ONCE.
     ("circuit-prove/src/dregg_outer_config.rs", 8),
     ("circuit-prove/src/dsl_leaf_adapter.rs", 3),
     ("circuit-prove/src/effect_vm_p3_air.rs", 11),
     ("circuit-prove/src/factory_leaf_adapter.rs", 5),
-    ("circuit-prove/src/gpu_backend.rs", 8),
+    // ── `circuit-prove/src/gpu_backend.rs` (was 8) is GONE from this ledger, 2026-07-30.
+    //    Its 8 sites were a second private copy of the toy Fibonacci AIR above; the copy is
+    //    deleted and `gpu_backend::tests` imports `toy_fib_air` instead, so the file now
+    //    authors ZERO. The row is REMOVED rather than left at 8, because 8 sites of unused
+    //    slack in a ratchet is 8 hand-authored constraints a later lane can add without the
+    //    gate noticing (the same reason `descriptor_ir2.rs` was re-pinned 298 -> 283).
+    //    A byproduct worth naming: the GPU/CPU byte-identity test now proves literally the
+    //    same `Air` impl under both configs, so a byte difference cannot be the AIR's.
     ("circuit-prove/src/hatchery_leaf_adapter.rs", 5),
     ("circuit-prove/src/joint_turn_recursive.rs", 28),
     ("circuit-prove/src/lean_lookup_air.rs", 3),
@@ -751,12 +897,19 @@ const AIR_ACCEPTS_LEDGER: &[(&str, &str)] = &[
 fn print_baseline(found: &BTreeMap<String, Counts>) {
     println!("// LAW1 baseline, machine-printed:");
     for (f, c) in found {
-        println!("    (\"{f}\", {}),", c.authored());
+        let note = if c.cfg_test > 0 {
+            format!("  // {} of {} #[cfg(test)]", c.cfg_test, c.authored())
+        } else {
+            String::new()
+        };
+        println!("    (\"{f}\", {}),{note}", c.authored());
     }
     println!(
-        "// {} files, {} authored sites, {} lowering sites (free)",
+        "// {} files, {} authored sites ({} of them inside #[cfg(test)], counted all the same), \
+         {} lowering sites (free)",
         found.len(),
         found.values().map(|c| c.authored()).sum::<usize>(),
+        found.values().map(|c| c.cfg_test).sum::<usize>(),
         found.values().map(|c| c.ir_lowered).sum::<usize>(),
     );
 }
@@ -776,9 +929,12 @@ fn ratchet(
         let n = c.authored();
         match base.get(rel.as_str()) {
             None => violations.push(format!(
-                "  NEW Rust-authored constraints: {rel} ({n} sites: {} symbolic, {} closure, {} IR)\n\
-                      -> EMIT IT FROM LEAN. Do not add it to the baseline.",
-                c.symbolic, c.closures, c.ir_constructed
+                "  NEW Rust-authored constraints: {rel} ({n} sites: {} symbolic, {} closure, {} IR{})\n\
+                      -> EMIT IT FROM LEAN. Do not add it to the baseline.\n\
+                      -> If the sites are `#[cfg(test)]`-only they are STILL a hand-written Rust AIR, and the\n\
+                         remedy is still not a baseline row: reuse the crate's one shared test AIR\n\
+                         (`circuit-prove/src/dregg_outer_config.rs::toy_fib_air`) or delete the copy.",
+                c.symbolic, c.closures, c.ir_constructed, c.cfg_test_note()
             )),
             Some(allowed) if n > *allowed => violations.push(format!(
                 "  GREW: {rel} ({allowed} -> {n} sites)\n\
@@ -1013,6 +1169,61 @@ mod teeth {
             count_sites(air).symbolic,
             2,
             "when_transition + assert_eq inside an AirBuilder"
+        );
+    }
+
+    /// `#[cfg(test)]` ATTRIBUTES a site; it never forgives one. Both halves are pinned,
+    /// because the tempting "fix" for the 2026-07-30 red was to subtract these from
+    /// `authored()` — which would have made a copied Rust AIR in a `src/` file invisible
+    /// exactly when the gate needed to see it.
+    #[test]
+    fn cfg_test_sites_are_counted_and_merely_attributed() {
+        let mixed = r#"
+            fn prod<AB: AirBuilder>(b: &mut AB) { b.assert_zero(x); }
+            #[cfg(test)]
+            mod tests {
+                use p3_air::{Air, AirBuilder};
+                fn toy<AB: AirBuilder>(b: &mut AB) {
+                    b.assert_zero(y);
+                    b.assert_eq(y, z);
+                    b.push(ConstraintExpr::Binary { col: 3 });
+                }
+            }
+        "#;
+        let c = count_sites(mixed);
+        assert_eq!(
+            c.authored(),
+            4,
+            "cfg(test) sites are STILL counted as authored: {c:?}"
+        );
+        assert_eq!(c.cfg_test, 3, "three of the four are test-only: {c:?}");
+        assert!(
+            c.cfg_test_note().contains('3'),
+            "the message names the split: {}",
+            c.cfg_test_note()
+        );
+
+        // A `use a::{b, c};` under the attribute opens a brace that is NOT a body — if the
+        // region walker took it, everything after the import would read as test-only.
+        let prod_only = r#"fn f<AB: AirBuilder>(b: &mut AB) { b.assert_zero(x); }"#;
+        assert_eq!(count_sites(prod_only).cfg_test, 0);
+    }
+
+    /// `#[cfg(any(test, feature = "x"))]` is NOT test-only: that item compiles into a
+    /// production build whenever the feature is on. Only the literal `#[cfg(test)]` counts.
+    #[test]
+    fn cfg_any_test_feature_is_not_test_only() {
+        let src = r#"
+            #[cfg(any(test, feature = "probe"))]
+            mod maybe {
+                fn f<AB: AirBuilder>(b: &mut AB) { b.assert_zero(x); }
+            }
+        "#;
+        let c = count_sites(src);
+        assert_eq!(c.authored(), 1, "still authored: {c:?}");
+        assert_eq!(
+            c.cfg_test, 0,
+            "a feature can turn this on in a shipped build: {c:?}"
         );
     }
 

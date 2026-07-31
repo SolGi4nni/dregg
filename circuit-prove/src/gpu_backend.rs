@@ -5591,7 +5591,6 @@ pub mod wgsl_debug {
 mod tests {
     use std::time::Instant;
 
-    use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
     use p3_field::integers::QuotientMap;
     use p3_field::{Field, PrimeField};
     use p3_matrix::Dimensions;
@@ -5599,6 +5598,7 @@ mod tests {
 
     use super::*;
     use crate::dregg_outer_config::create_outer_config;
+    use crate::dregg_outer_config::toy_fib_air::{ToyFibAir, fib_trace};
 
     /// Deterministic xorshift-based BabyBear matrix (no rand-version friction).
     fn rand_matrix(seed: u64, rows: usize, cols: usize) -> RowMajorMatrix<BabyBear> {
@@ -5970,56 +5970,18 @@ mod tests {
     // the CPU config's and round-trips through the CPU verifier.
     // ------------------------------------------------------------------
 
-    struct FibAir;
-
-    impl<F> BaseAir<F> for FibAir {
-        fn width(&self) -> usize {
-            2
-        }
-        fn num_public_values(&self) -> usize {
-            3
-        }
-        fn max_constraint_degree(&self) -> Option<usize> {
-            Some(2)
-        }
-    }
-
-    impl<AB: AirBuilder> Air<AB> for FibAir {
-        fn eval(&self, builder: &mut AB) {
-            let main = builder.main();
-            let pis = builder.public_values();
-            let (a, b, x) = (pis[0], pis[1], pis[2]);
-            let local = main.current_slice();
-            let next = main.next_slice();
-            let mut when_first_row = builder.when_first_row();
-            when_first_row.assert_eq(local[0], a);
-            when_first_row.assert_eq(local[1], b);
-            let mut when_transition = builder.when_transition();
-            when_transition.assert_eq(local[1], next[0]);
-            when_transition.assert_eq(local[0] + local[1], next[1]);
-            builder.when_last_row().assert_eq(local[1], x);
-        }
-    }
-
-    fn fib_trace(n: usize) -> (RowMajorMatrix<BabyBear>, Vec<BabyBear>) {
-        let mut values = Vec::with_capacity(2 * n);
-        let (mut a, mut b) = (BabyBear::ZERO, BabyBear::ONE);
-        for _ in 0..n {
-            values.push(a);
-            values.push(b);
-            let next = a + b;
-            a = b;
-            b = next;
-        }
-        let pis = vec![BabyBear::ZERO, BabyBear::ONE, values[2 * n - 1]];
-        (RowMajorMatrix::new(values, 2), pis)
-    }
+    // The AIR proved below is [`crate::dregg_outer_config::toy_fib_air::ToyFibAir`]
+    // — the crate's ONE test-only toy AIR, imported. This module used to declare
+    // its own byte-identical `FibAir`, which is why `law1_enforcement_gate` carried
+    // a `gpu_backend.rs` = 8 row; that row is DELETED with these lines. Sharing it
+    // also strengthens the parity claim below: the GPU and CPU configs now prove
+    // literally the same `Air` impl, so a byte difference cannot be the AIR's.
 
     #[test]
     fn gpu_outer_config_synthetic_stark_byte_identical_to_cpu() {
         let gpu_config = create_gpu_outer_config();
         let cpu_config = create_outer_config();
-        let air = FibAir;
+        let air = ToyFibAir;
         let (trace, pis) = fib_trace(1 << 12);
 
         let t0 = Instant::now();

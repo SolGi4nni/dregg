@@ -450,17 +450,111 @@ pub fn create_outer_config() -> DreggOuterConfig {
 }
 
 // ============================================================================
+// The crate's ONE test-only toy AIR
+// ============================================================================
+
+/// ⚑ **THE SINGLE test-only toy AIR of `dregg-circuit-prove`. Use it; do not copy it.**
+///
+/// A `StarkConfig` round-trip needs *something* to prove, and that something must
+/// deliberately **not** be a dregg AIR — a real circuit belongs in Lean
+/// (`metatheory/Dregg2/Circuit/Emit/*`), and proving one here would be the drift
+/// architectural law #1 exists to stop. So this is the p3 uni-stark textbook
+/// 2-column Fibonacci: first row pinned to public `(a, b)`, transition is the
+/// Fibonacci step, last row's right column pinned to public `x`. It constrains
+/// nothing about dregg state, it is `#[cfg(test)]`-only so no consumer of this
+/// crate ever compiles it, and its whole job is to be a non-vacuous trace the
+/// commitment/challenger wiring of a config can be exercised on.
+///
+/// ## Why it is `pub(crate)` and shared rather than three private copies
+///
+/// It **was** three copies — `dregg_outer_config::tests::OuterFibAir`,
+/// `gpu_backend::tests::FibAir`, and (2026-07-30) a third,
+/// `dregg_mina_config::tests::MinaFibAir`, byte-identical to the first. The third
+/// copy is what turned `law1_enforcement_gate` red: 8 hand-authored symbolic sites
+/// in a file whose own module doc opened with "no AIR, no constraint, no gadget".
+/// Both statements were true at once — it is not dregg constraint content, and it
+/// is still a hand-written Rust AIR, and law #1 says an existing Rust AIR is debt
+/// rather than a foundation, so copying one **is** the drift.
+///
+/// The fix was subtraction, not an exemption: three copies became this one, and
+/// the gate's ledger row for `gpu_backend.rs` (8 sites) went with it. A fourth
+/// config lane that copies this instead of importing it will go red again, which
+/// is the correct outcome — the remedy is one `use`, not a baseline row.
+#[cfg(test)]
+pub(crate) mod toy_fib_air {
+    use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+    use p3_baby_bear::BabyBear;
+    use p3_field::PrimeCharacteristicRing;
+    use p3_matrix::dense::RowMajorMatrix;
+
+    /// The 2-column Fibonacci AIR. Generic over `AB: AirBuilder`, so every config
+    /// in this crate — CPU outer, GPU outer, Mina terminal — proves *the same
+    /// object* and any divergence is the config's, never the AIR's.
+    pub(crate) struct ToyFibAir;
+
+    impl<F> BaseAir<F> for ToyFibAir {
+        fn width(&self) -> usize {
+            2
+        }
+        fn num_public_values(&self) -> usize {
+            3
+        }
+        fn max_constraint_degree(&self) -> Option<usize> {
+            Some(2)
+        }
+    }
+
+    impl<AB: AirBuilder> Air<AB> for ToyFibAir {
+        fn eval(&self, builder: &mut AB) {
+            let main = builder.main();
+            let pis = builder.public_values();
+            let (a, b, x) = (pis[0], pis[1], pis[2]);
+
+            let local = main.current_slice();
+            let next = main.next_slice();
+
+            let mut when_first_row = builder.when_first_row();
+            when_first_row.assert_eq(local[0], a);
+            when_first_row.assert_eq(local[1], b);
+
+            let mut when_transition = builder.when_transition();
+            when_transition.assert_eq(local[1], next[0]);
+            when_transition.assert_eq(local[0] + local[1], next[1]);
+
+            builder.when_last_row().assert_eq(local[1], x);
+        }
+    }
+
+    /// `n` rows of the Fibonacci trace plus the `[a, b, x]` public values it
+    /// satisfies. `n` must be a power of two (uni-stark's domain requirement) —
+    /// asserted, because a non-power-of-two panics far downstream.
+    pub(crate) fn fib_trace(n: usize) -> (RowMajorMatrix<BabyBear>, Vec<BabyBear>) {
+        assert!(n.is_power_of_two(), "uni-stark needs a power-of-two height");
+        let mut values = Vec::with_capacity(2 * n);
+        let (mut a, mut b) = (BabyBear::ZERO, BabyBear::ONE);
+        for _ in 0..n {
+            values.push(a);
+            values.push(b);
+            let next = a + b;
+            a = b;
+            b = next;
+        }
+        let pis = vec![BabyBear::ZERO, BabyBear::ONE, values[2 * n - 1]];
+        (RowMajorMatrix::new(values, 2), pis)
+    }
+}
+
+// ============================================================================
 // Validation tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
     use p3_field::PrimeField;
-    use p3_matrix::dense::RowMajorMatrix;
     use p3_symmetric::{MerkleCap, Permutation};
     use p3_uni_stark::{Proof, prove, verify};
 
+    use super::toy_fib_air::{ToyFibAir, fib_trace};
     use super::*;
 
     /// Gold KAT: Poseidon2Bn254<3> permutation of [0,1,2], produced by the
@@ -497,61 +591,10 @@ mod tests {
     // ------------------------------------------------------------------
     // Synthetic STARK round-trip under DreggOuterConfig
     // ------------------------------------------------------------------
-
-    /// Minimal 2-column Fibonacci AIR (the p3 uni-stark test shape): first row
-    /// pinned to public (a, b), transition is the Fibonacci step, last row's
-    /// right column pinned to public x. Non-vacuous boundary + transition
-    /// constraints, and public values exercise the MultiField challenger's
-    /// BabyBear observe path.
-    struct OuterFibAir;
-
-    impl<F> BaseAir<F> for OuterFibAir {
-        fn width(&self) -> usize {
-            2
-        }
-        fn num_public_values(&self) -> usize {
-            3
-        }
-        fn max_constraint_degree(&self) -> Option<usize> {
-            Some(2)
-        }
-    }
-
-    impl<AB: AirBuilder> Air<AB> for OuterFibAir {
-        fn eval(&self, builder: &mut AB) {
-            let main = builder.main();
-            let pis = builder.public_values();
-            let (a, b, x) = (pis[0], pis[1], pis[2]);
-
-            let local = main.current_slice();
-            let next = main.next_slice();
-
-            let mut when_first_row = builder.when_first_row();
-            when_first_row.assert_eq(local[0], a);
-            when_first_row.assert_eq(local[1], b);
-
-            let mut when_transition = builder.when_transition();
-            when_transition.assert_eq(local[1], next[0]);
-            when_transition.assert_eq(local[0] + local[1], next[1]);
-
-            builder.when_last_row().assert_eq(local[1], x);
-        }
-    }
-
-    fn fib_trace(n: usize) -> (RowMajorMatrix<BabyBear>, Vec<BabyBear>) {
-        assert!(n.is_power_of_two());
-        let mut values = Vec::with_capacity(2 * n);
-        let (mut a, mut b) = (BabyBear::ZERO, BabyBear::ONE);
-        for _ in 0..n {
-            values.push(a);
-            values.push(b);
-            let next = a + b;
-            a = b;
-            b = next;
-        }
-        let pis = vec![BabyBear::ZERO, BabyBear::ONE, values[2 * n - 1]];
-        (RowMajorMatrix::new(values, 2), pis)
-    }
+    // The AIR being proved is [`super::toy_fib_air::ToyFibAir`] — the crate's ONE
+    // test-only toy AIR, shared with `gpu_backend` and `dregg_mina_config` rather
+    // than copied into each. See that module's doc for why copying it is the
+    // law-#1 drift this file used to be one third of.
 
     /// The lane's deliverable gate: prove a synthetic STARK UNDER the outer
     /// config and verify it — the BN254-native MMCS + MultiField challenger
@@ -559,7 +602,7 @@ mod tests {
     #[test]
     fn dregg_outer_config_proves_and_verifies_synthetic_stark() {
         let config = create_outer_config();
-        let air = OuterFibAir;
+        let air = ToyFibAir;
         let (trace, pis) = fib_trace(16);
 
         let mut proof = prove(&config, &air, trace, &pis);

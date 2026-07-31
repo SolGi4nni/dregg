@@ -44,7 +44,7 @@
 # crate	stem	test_path	expect
 #!EXPECT_GATE_FILES=24
 #!EXPECT_EMIT_GATES=23
-#!EXPECT_TESTS=191
+#!EXPECT_TESTS=193
 dregg-circuit-prove	law1_enforcement_gate	law1_no_new_rust_authored_constraints	run
 dregg-circuit-prove	law1_enforcement_gate	law1_no_new_rust_authored_air_accepts	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::destructuring_is_not_authoring	run
@@ -54,6 +54,8 @@ dregg-circuit-prove	law1_enforcement_gate	teeth::gpui_when_is_not_a_constraint	r
 dregg-circuit-prove	law1_enforcement_gate	teeth::comments_and_strings_are_not_algebra	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::the_gate_goes_red_on_a_hand_written_air	run
 dregg-circuit-prove	law1_enforcement_gate	teeth::the_scope_reaches_outside_the_two_old_directories	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::cfg_test_sites_are_counted_and_merely_attributed	run
+dregg-circuit-prove	law1_enforcement_gate	teeth::cfg_any_test_feature_is_not_test_only	run
 dregg-circuit-prove	accumulator_nonrev_emit_gate	accumulator_nonrev_emit_decodes_to_hand_built	run
 dregg-circuit-prove	accumulator_nonrev_emit_gate	honest_non_revocation_proves_and_verifies	run
 dregg-circuit-prove	accumulator_nonrev_emit_gate	forged_accumulator_pi_refuses	run
