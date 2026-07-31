@@ -107,6 +107,16 @@ async fn headless_node_hosts_deos_server_client_discovers_and_fires() {
         // Player: an OPEN, funded cell so its signed turn passes the budget gate.
         let mut player = Cell::with_balance(player_pubkey, token, 1_000_000);
         player.permissions = open_permissions();
+        // ⚑ COMMIT THE PLAYER'S ML-DSA ANCHOR. Step (5) fires through the GENUINE remote ingress
+        // (`post_submit_signed_turn` → `signed_turn_validation`), which requires the signer's
+        // post-quantum identity to be Cell-committed or independently enrolled — a real client's
+        // account has one (`first_turn_e2e` asserts the first claim commits it). Seeding this cell
+        // with the ed25519 half ALONE made the whole client-fires leg unreachable behind
+        // `pq-identity-not-enrolled`, and that was invisible while the turn before it was being
+        // vetoed by the verified kernel.
+        player
+            .install_pq_identity(&player_cclerk.ml_dsa_public_bytes())
+            .expect("install the player's epoch-0 ML-DSA anchor");
         assert_eq!(
             player.id(),
             player_cell,

@@ -521,6 +521,7 @@ pub fn execute_via_producer(
         dregg_exec_lean::ProducerOutcome::LeanAuthoritative {
             committed,
             rust_agreed,
+            divergence,
             lean_root,
             rust_root,
             rust_committed,
@@ -543,6 +544,13 @@ pub fn execute_via_producer(
                     agent = ?agent,
                     lean_committed = *committed,
                     rust_committed = *rust_committed,
+                    // WHICH leg caught it (`ProducerDivergence`): `CommitBit` = the two executors
+                    // disagreed on committing at all; `Anchor` = same verdict, different signed
+                    // consensus commitment; `PostStateCell` = both agree on the verdict AND the
+                    // anchor, and the ledgers still differ at a cell the anchor is structurally
+                    // blind to. Logging only the two roots could not tell those apart, and for a
+                    // `PostStateCell` finding it printed two IDENTICAL roots beside "DISAGREE".
+                    divergence = ?divergence,
                     lean_root = %dregg_types::hex_encode(lean_root),
                     rust_root = %dregg_types::hex_encode(rust_root),
                     "THE SWAP authority inversion: verified Lean executor (AUTHORITATIVE) and the \

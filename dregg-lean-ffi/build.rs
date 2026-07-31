@@ -3536,6 +3536,13 @@ fn main() {
     if mina_head_advance_present {
         shim.define("DREGG_MINA_HEAD_ADVANCE", None);
     }
+    // THE PER-CHECKPOINT LOOP. Its own module (`Dregg2.Bridge.MinaCheckpoint`), so this define gates
+    // the extern decl, the `_str` bridge AND the module initializer — and initializing THAT module
+    // chains into `MinaForkChoiceGate` (the pinned `mainnet` constants) and `MinaSlidingWindow` (the
+    // density re-derivation), so the gate is correct whether or not the fork-choice pair is present.
+    if mina_checkpoint_advance_present {
+        shim.define("DREGG_MINA_CHECKPOINT_ADVANCE", None);
+    }
     if direct_present {
         shim.define("DREGG_DIRECT", None);
     }

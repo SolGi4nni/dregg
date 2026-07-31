@@ -93,6 +93,21 @@ impl Default for Config {
 }
 
 fn main() {
+    // ⚑ THE VERIFIED PQ CORES FIRST — this driver's whole premise is that nothing here is faked.
+    //
+    // `dregg-drive` runs the REAL hosts in-process: `dreggnet-telegram`'s router, `dreggnet-web`'s
+    // axum handlers, the catalog's durable store, and the `verify` command re-verifies the committed
+    // chain through the surface's own verify path. Every one of those drives `dregg_turn`'s executor,
+    // whose hybrid authorization calls `dregg_pq::ml_dsa_verify`. Unrouted, that call REFUSES —
+    // `refuse_unaudited` → `process::abort`, `dregg-pq/src/mldsa.rs:833` — so an unwired driver either
+    // dies mid-transcript or (with `DREGG_ALLOW_UNAUDITED_PQ`) reports findings taken by a DIFFERENT
+    // verify authority than the deployed process it claims to mirror. A driver whose verdicts are not
+    // the deployed one's is exactly the faked projection this crate's header refuses to ship.
+    //
+    // The archive was already in this binary (`dreggnet-telegram` pulls `dregg-lean-ffi`
+    // non-optionally); `dregg-sdk` is the direct, non-optional edge that lets us name the install.
+    dregg_sdk::install_verified_pq_cores();
+
     let mut cfg = Config::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {

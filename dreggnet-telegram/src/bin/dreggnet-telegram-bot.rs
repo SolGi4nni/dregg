@@ -43,6 +43,23 @@ use dreggnet_telegram::transport::RawBotApi;
 type LiveTransport = RawBotApi<ReqwestHttpPost>;
 
 fn main() {
+    // 0. ⚑ THE VERIFIED PQ CORES, BEFORE ANYTHING ELSE — the ML-DSA accept/reject this process takes
+    //    must be the Lean-verified one, not the `fips204` crate's.
+    //
+    //    This bot drives REAL turns (`/market`, the Dark Bazaar, the Descent) through
+    //    `dregg_turn`'s executor, whose hybrid authorization path calls `dregg_pq::ml_dsa_verify`.
+    //    With no verified core installed and no declared `DREGG_ALLOW_UNAUDITED_PQ`, that call
+    //    REFUSES — `refuse_unaudited` → `process::abort`, `dregg-pq/src/mldsa.rs:833` — so the
+    //    missing install was never "quietly unverified", it was "the bot dies at the first PQ
+    //    signature". Both outcomes are wrong and one install fixes both.
+    //
+    //    It costs no dependency and no link weight: `dregg-lean-ffi` and `dregg-sdk` are already
+    //    non-optional deps here (the archive is linked either way; §6a-bis below already calls
+    //    into it). `install_verified_pq_cores` is `Once`-guarded and export-gated, so a build
+    //    against an archive that exports nothing installs nothing and the refusal at the point of
+    //    use still stands.
+    dregg_sdk::install_verified_pq_cores();
+
     // 1. The token — ops-gated; exit honestly without it.
     let token = match std::env::var("TELEGRAM_BOT_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),

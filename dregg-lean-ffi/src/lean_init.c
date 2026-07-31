@@ -649,6 +649,35 @@ extern lean_object *dregg_mina_better_tip(lean_object *input);
 #ifdef DREGG_MINA_HEAD_ADVANCE
 extern lean_object *dregg_mina_head_advance(lean_object *input);
 #endif
+/* dregg_mina_checkpoint_advance — ⚑ THE PER-CHECKPOINT LOOP (`Dregg2.Bridge.MinaCheckpoint`): the
+ * TWO-TIER head the fork-choice pair above cannot express. Mina's Pickles proof is RECURSIVE, so
+ * verifying ONE block's Wrap proof attests the validity of the whole chain behind it; a client
+ * therefore verifies at a CHECKPOINT cadence it chooses and runs a cheap provisional tier in
+ * between. Input is a mode byte, the Wrap ARITHMETIC verdict, the persisted ratchet/run/cap and
+ * FOUR protocol states (parent, tip, verified head, candidate) with the hash each is claimed under;
+ * output is `"mv=<0|1>;adv=<0|1>;fin=<Nat>;rn=<Nat>"` / `"ERR"` (fail-closed).
+ *
+ * ⚑ THE TIER SPLIT IS THE SAFETY ARGUMENT, and it is a theorem rather than a convention:
+ * `provisional_never_ratchets` — a between-checkpoint step is DEFINITIONALLY unable to raise
+ * `finalized` — and `runSteps_finalized_monotone` — the ratchet survives ANY interleaving of the two
+ * tiers, any order, any length. So a longer cadence buys LATENCY and LIVENESS cost, never a safety
+ * one, and `MinaChainSelection.beats_not_transitive`'s genuine 3-cycles are CONTAINED to the tier
+ * that decides nothing.
+ *
+ * ⚑ RUST SUPPLIES NO CHEAP VERDICT. The parent link and the density RE-DERIVATION (
+ * `MinaSlidingWindow.step` from the decoded parent, not a bound check on a served value) happen
+ * INSIDE the gate — `MinaCheckpoint.okOf`. The one bit that crosses is `wk`, the Wrap arithmetic,
+ * which is arithmetic Rust did not do either.
+ *
+ * ⚑ NEEDS ITS MODULE INITIALIZER, for exactly the reason the fork-choice pair above does: `okOf`
+ * reads the pinned `MinaChainSelection.mainnet` constants record out of initialized module data, and
+ * the density step reads `MinaSlidingWindow`'s. Calling the export first dereferences uninitialized
+ * globals and takes SIGSEGV with no Rust panic, which looks exactly like the missing-archive
+ * SIGABRT. Initializing THIS module chains into both imports. */
+#ifdef DREGG_MINA_CHECKPOINT_ADVANCE
+extern lean_object *dregg_mina_checkpoint_advance(lean_object *input);
+extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaCheckpoint(uint8_t builtin);
+#endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
@@ -804,6 +833,19 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(mfcres);
+#endif
+#ifdef DREGG_MINA_CHECKPOINT_ADVANCE
+    /* `Dregg2.Bridge.MinaCheckpoint` imports `MinaForkChoiceGate` and `MinaSlidingWindow`, so this
+     * one call brings BOTH the pinned `mainnet` selection constants and the density window's module
+     * data into existence. Re-entrant-safe under Lean's init guards, so it is correct alongside the
+     * fork-choice initializer above whether or not that gate is also present. */
+    lean_object *mckres = initialize_Dregg2_Dregg2_Bridge_MinaCheckpoint(1);
+    if (!lean_io_result_is_ok(mckres)) {
+        lean_io_result_show_error(mckres);
+        lean_dec_ref(mckres);
+        return 1;
+    }
+    lean_dec_ref(mckres);
 #endif
 #ifdef DREGG_CROSS_CELL_CONSERVES
     lean_object *cccres = initialize_Dregg2_Dregg2_Circuit_CrossCellConserveDecision(1);
@@ -1641,6 +1683,37 @@ size_t dregg_mina_head_advance_str(const char *in_utf8, char *out, size_t out_ca
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_head_advance(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_CHECKPOINT_ADVANCE
+/* dregg_mina_checkpoint_advance_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * two-tier checkpoint roll (`Dregg2.Bridge.MinaCheckpoint.minaCheckpointGate`). Input:
+ * `"md=<p|c>;wk=<0|1>;fz=<Nat>;rn=<Nat>;rc=<Nat>;ph=<Nat>;th=<Nat>;vh=<Nat>;ch=<Nat>;`
+ * `p=<hex>;t=<hex>;v=<hex>;c=<hex>"` — the mode (provisional / CHECKPOINT), the Wrap arithmetic
+ * verdict (read ONLY on a checkpoint call), the persisted finalized height, the provisional run
+ * counter and its cap, then the four `Protocol_state.Value.Stable.V2` byte strings with the state
+ * hash each is claimed under. Output: `"mv=<0|1>;adv=<0|1>;fin=<Nat>;rn=<Nat>"` / `"ERR"`.
+ *
+ * Four fields come back because the caller persists a decision it did not make: `mv` says the
+ * provisional tip moved, `adv` says the VERIFIED head moved, `fin` is the ratchet and `rn` the new
+ * run. `provisional_never_ratchets` proves `md=p` cannot raise `fin`; `runSteps_finalized_monotone`
+ * proves `fin` is never below the `fz` that went in under ANY interleaving. Each side's bytes are
+ * re-hashed against the hash presented WITH them inside the gate, so all four hashes are claims and
+ * none is trusted framing. Same return contract as the bridges above. */
+size_t dregg_mina_checkpoint_advance_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_checkpoint_advance(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

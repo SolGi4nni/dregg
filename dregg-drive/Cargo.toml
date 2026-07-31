@@ -47,6 +47,12 @@ dreggnet-telegram = { path = "../dreggnet-telegram" }
 # THE REAL WEB SURFACE — `CatalogState`, `catalog_router`, `demo_host_resumed_from`,
 # `web_identity`. Driven with no port through `tower::ServiceExt::oneshot`.
 dreggnet-web = { path = "../dreggnet-web" }
+# THE VERIFY AUTHORITY — `install_verified_pq_cores()`, called first thing in `main`. The surfaces
+# above drive real turns, and `dregg_pq::ml_dsa_verify` REFUSES (process abort) in a process with no
+# verified core installed, so this is what keeps the driver's verdicts the deployed process's
+# verdicts. It adds no link weight: `dreggnet-telegram` already pulls `dregg-lean-ffi`
+# non-optionally, and `dregg-sdk` rides that same archive.
+dregg-sdk = { path = "../sdk" }
 # The view IR + the two ungated projections this crate needs: `text::render_text` (the
 # prose/chat projection) and `actuations` (the affordance enumeration). `web` matches the
 # feature dreggnet-web already selects, so this dep adds no new resolve.

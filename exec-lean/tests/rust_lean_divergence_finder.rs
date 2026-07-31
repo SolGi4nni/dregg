@@ -692,14 +692,32 @@ fn rust_lean_divergence_finder() {
     // rejected by BOTH apply.rs ("missing spending proof") and the verified `noteSpendChainA`
     // (`noteSpendChainA_fails_without_proof`), so they AGREE. (The proof BYTES / STARK membership
     // stay the circuit's job; only the presence bit the commit decision turns on crosses.)
-    //   * `GrantCapability` — a SAFE-DIRECTION MODEL DIFFERENCE (the verified delegate gate is
-    //     STRICTER). The verified `.delegate` routes to `recKDelegate`, gated on the delegator
+    //   * `GrantCapability` — ⚑ **NOT a "safe-direction" difference. A KERNEL OVER-REFUSAL**, and
+    //     this entry called it safe until 2026-07-31. The verified `.delegate` routes to
+    //     `recKDelegate` (`metatheory/Dregg2/Exec/AuthTurn.lean:174`), gated on the delegator
     //     HOLDING an edge to the cap target (`(caps from).any (confersEdgeTo t)`). dregg1's
     //     `apply_grant_capability` SHORT-CIRCUITS a SELF-grant (`cap.target == from`) — it skips
-    //     the c-list lookup entirely, trusting the action signature as owner consent. So a
-    //     self-grant on a cell WITHOUT a self-cap commits in apply.rs (rust=true) but the verified
-    //     gate REJECTS (lean=false): the verified executor insists the delegator actually hold the
-    //     edge. The `GrantCapability/self-cap` case (a self-`node` cap held ⇒ verified COMMITS) is
+    //     the c-list lookup entirely, because a cell is the ORIGIN of authority over itself. So a
+    //     self-grant on a cell WITHOUT a self-cap commits in apply.rs (rust=true) and the verified
+    //     gate REJECTS (lean=false).
+    //
+    //     WHY "safe direction" was the wrong reading. Every deployed cell is minted with an EMPTY
+    //     c-list, so the kernel refuses the FIRST grant every cell ever makes; and no Lean rule
+    //     creates a first edge (`recKDelegate`/`recKDelegateAtten`/`introduceA` all require one,
+    //     `recKRevokeTarget` only removes), so `caps = fun _ => []` is a FIXPOINT of the modelled
+    //     authority calculus. Meanwhile the SIBLING gate `authorizedB` (`Dregg2/Exec/Kernel.lean:54`)
+    //     DOES carry the owner disjunct `turn.actor == turn.src`. The kernel is internally
+    //     inconsistent, not stricter.
+    //
+    //     WHAT IT COST. The characterization above was made while the Lean executor was a SHADOW.
+    //     When `GrantCapability` entered `producer_root_agreeing_effects`, the same difference
+    //     became an AUTHORITATIVE VETO — `dregg-node::deos_host_e2e` died with
+    //     `TurnError::LeanShadowVeto` on a door's self-grant. The owner-endowment SHAPE is now
+    //     fenced out of the covered set (`lean_shadow::first_unmodelled_authority_origin_effect`,
+    //     `exec-lean/tests/producer_owner_endowment_fence.rs`); the REPAIR is the owner disjunct in
+    //     `recKDelegate`, authored in Lean. This finder runs BELOW the coverage gate, so both
+    //     corpus cases still reach the FFI and the two-sided tooth below is unchanged.
+    //     The `GrantCapability/self-cap` case (a self-`node` cap held ⇒ verified COMMITS) is
     //     the NON-VACUITY TOOTH proving the gate is two-sided, not vacuously-false.
     let known_drift: &[&str] = &["Burn", "GrantCapability"];
     let unexpected: Vec<(&String, &EffectStat)> = per_effect

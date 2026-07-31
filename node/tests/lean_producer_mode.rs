@@ -173,6 +173,7 @@ fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[C
         ProducerOutcome::LeanAuthoritative {
             committed,
             rust_agreed,
+            divergence,
             lean_root,
             rust_root,
             rust_committed,
@@ -185,11 +186,23 @@ fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[C
                 rust_committed, expected_committed,
                 "Rust reference commit bit did not match expectation"
             );
+            // Assert on the NAMED leg, not the boolean: `rust_agreed` is a summary of
+            // `divergence`, and a `PostStateCell` finding (the leg the anchor is structurally
+            // blind to) carries two IDENTICAL roots — so the old message printed
+            // `lean_root == rust_root` beside "disagrees" and said nothing about WHICH leg
+            // caught it. `rust_agreed == divergence.is_none()` holds by construction.
+            assert_eq!(
+                rust_agreed,
+                divergence.is_none(),
+                "ProducerOutcome invariant broken: rust_agreed must equal divergence.is_none() \
+                 (got rust_agreed={rust_agreed}, divergence={divergence:?})"
+            );
             assert!(
                 rust_agreed,
-                "RUST BUG SURFACED: the demoted Rust reference disagrees with the AUTHORITATIVE \
-                 verified Lean verdict (lean_root={lean_root:?} rust_root={rust_root:?}) — the \
-                 Lean verdict was committed; Rust did not override it"
+                "RUST BUG SURFACED on leg {divergence:?}: the demoted Rust reference disagrees \
+                 with the AUTHORITATIVE verified Lean verdict (lean_root={lean_root:?} \
+                 rust_root={rust_root:?}) — the Lean verdict was committed; Rust did not \
+                 override it"
             );
             // The installed (committed) ledger must equal the independent Rust reference (they
             // agree on this turn, so the authoritative Lean state == the Rust reference state).

@@ -3665,3 +3665,413 @@ mod ffi_mina_wrap_ft_eval0 {
         )
     }
 }
+
+// ===========================================================================
+// MINA — THE PER-CHECKPOINT LOOP (`dregg_mina_checkpoint_advance`)
+// ===========================================================================
+//
+// ⚑ WHY THIS SECTION EXISTS, and it is the THIRD instance of one class in three days. On
+// 2026-07-30 `Dregg2.Bridge.MinaCheckpoint` landed with `@[export] dregg_mina_checkpoint_advance`,
+// `Dregg2/FFI.lean` rooted it, `build.rs` added it to `REQUIRED_DECISION_EXPORTS`, declared
+// `dregg_mina_checkpoint_advance_present` to `--check-cfg` and probed the archive to SET it — and
+// there was no `shim.define`, no `_str` bridge in `lean_init.c`, and no `#[cfg(…)]` here. So the
+// archive carried the symbol, cargo set the cfg, and **nothing in the process could call it**: a
+// gate that cannot be entered cannot go red. `cfg_gate_declaration_audit`'s check #3
+// (`EMITTED ⊆ USED`) is what found it, which is the point of that test.
+//
+// It is the same commit-shape as `2a64b61b4` (`dregg_mina_wrap_challenges`, exported/probed/cfg-set
+// with no bridge at all) — the export and the plumbing were authored in one commit that was
+// deliberately committed UNBUILT, and the plumbing half was three files short. Both halves land
+// together here.
+//
+// ⚑ WHAT THE GATE IS. A TWO-TIER head the fork-choice pair above cannot express. Mina's Pickles
+// proof is recursive, so verifying ONE block's Wrap proof attests the whole chain behind it; a
+// client verifies at a CHECKPOINT cadence it chooses and runs a cheap provisional tier in between.
+// The split is safe because `provisional_never_ratchets` proves a between-checkpoint step is
+// DEFINITIONALLY unable to raise `finalized`, and `runSteps_finalized_monotone` proves the ratchet
+// survives ANY interleaving of the two tiers. A longer cadence therefore costs LATENCY, not safety.
+//
+// ⚑ RUST SUPPLIES NO CHEAP VERDICT, deliberately. The parent link and the density RE-DERIVATION
+// (`MinaSlidingWindow.step` from the decoded parent — strictly stronger than the bound check a
+// served window gets) happen INSIDE the gate. A bit Rust computed and handed over would be a
+// carrier for a decision. The ONE bit that crosses is `wrap_ok`, the Wrap arithmetic, which is
+// arithmetic Rust did not do either — it comes from a prover, and an unavailable prover supplies
+// `false`, never a skip (`checkpoint_without_the_wrap_verdict_moves_nothing`).
+
+/// The persisted result of one checkpoint-loop step. Callers write ALL FOUR fields back.
+///
+/// ⚑ Every field is the gate's output, parsed. Nothing here is computed on this side, and there is
+/// no constructor that fills one in from anywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinaCheckpointRoll {
+    /// The PROVISIONAL tip moved. A guess — it decides nothing and it can be walked in a cycle by
+    /// an adversarial presentation order (`beats_not_transitive`, contained to this tier).
+    pub tip_moved: bool,
+    /// The VERIFIED head moved, and therefore the ratchet may have risen. Only a CHECKPOINT call
+    /// can ever set this: `provisional_never_ratchets`.
+    pub advanced: bool,
+    /// The new finalized height. A RATCHET — `runSteps_finalized_monotone` proves this is never
+    /// below the `finalized` that went in, under any interleaving of the two tiers, any order, any
+    /// length. Persist it as returned; never recompute `blockchain_length - k` on this side.
+    pub finalized: u64,
+    /// The new provisional run counter — blocks accepted onto the tip since the last checkpoint.
+    /// A checkpoint that advances RESETS it to 0 (`an_advancing_checkpoint_reanchors_the_tip`);
+    /// once it reaches the cap the cheap tier stops moving the tip at all
+    /// (`a_stale_run_refuses_to_move_the_tip`), so a peer withholding checkpoint evidence can
+    /// stall the client but cannot walk it arbitrarily far on cheap checks.
+    pub run: u64,
+}
+
+/// The FOUR protocol states one checkpoint step reads, each with the state hash it is claimed
+/// under.
+///
+/// ⚑ Every hash is a CLAIM, not framing: `MinaForkChoiceGate.decodeSide?` re-derives `state_hash`
+/// from the bytes and refuses the whole wire when it disagrees. Grouped into a struct rather than
+/// eight positional arguments because transposing a (hash, bytes) pair is exactly the mistake that
+/// would otherwise be silent at the call site.
+#[derive(Debug, Clone, Copy)]
+pub struct MinaCheckpointSides<'a> {
+    /// The candidate's PARENT — required, never optional. It is what the density re-derivation
+    /// reads; making it optional would produce a client that silently degrades to a bound check
+    /// whenever a peer declines to serve one.
+    pub parent_state_hash: &'a str,
+    /// The parent's raw binprot `Protocol_state.Value.Stable.V2` bytes.
+    pub parent_protocol_state: &'a [u8],
+    /// The persisted PROVISIONAL tip.
+    pub tip_state_hash: &'a str,
+    /// The provisional tip's raw bytes.
+    pub tip_protocol_state: &'a [u8],
+    /// The persisted VERIFIED head — the last checkpoint, the thing carrying the ratchet.
+    pub verified_state_hash: &'a str,
+    /// The verified head's raw bytes.
+    pub verified_protocol_state: &'a [u8],
+    /// The block being offered.
+    pub candidate_state_hash: &'a str,
+    /// The candidate's raw bytes.
+    pub candidate_protocol_state: &'a [u8],
+}
+
+/// Whether the linked archive exports the verified checkpoint-loop gate
+/// (`dregg_mina_checkpoint_advance`, spliced from `Dregg2.Bridge.MinaCheckpoint`). When false the
+/// caller must FAIL CLOSED: neither tier moves, the ratchet does not rise, and the client is
+/// visibly stalled. There is NO Rust twin and there must not be one — a Rust two-tier head is a
+/// re-rendering of `provisional_never_ratchets`, i.e. of the safety argument itself, and the
+/// available fallbacks are per-block verification the client cannot afford or a single-tier head
+/// whose ratchet moves on cheap checks alone.
+pub fn mina_checkpoint_advance_available() -> bool {
+    ffi_mina_checkpoint_advance::present() && lean_init_once().is_ok()
+}
+
+/// Build the checkpoint-loop wire.
+///
+/// `checkpoint` selects the tier: `true` runs the expensive one (and is the only tier that can move
+/// the ratchet), `false` the cheap per-block one. `wrap_ok` is the Wrap ARITHMETIC verdict and is
+/// read ONLY on a checkpoint call — an unavailable prover passes `false` here and NEVER a skip.
+/// `finalized` / `run` are read back from persistence unmodified; `run_cap` is the client's own
+/// policy for how long a provisional run may get before the cheap tier refuses to extend it.
+pub fn mina_checkpoint_advance_wire(
+    checkpoint: bool,
+    wrap_ok: bool,
+    finalized: u64,
+    run: u64,
+    run_cap: u64,
+    sides: &MinaCheckpointSides<'_>,
+) -> String {
+    format!(
+        "md={};wk={};fz={finalized};rn={run};rc={run_cap};ph={};th={};vh={};ch={};\
+         p={};t={};v={};c={}",
+        if checkpoint { 'c' } else { 'p' },
+        u8::from(wrap_ok),
+        sides.parent_state_hash,
+        sides.tip_state_hash,
+        sides.verified_state_hash,
+        sides.candidate_state_hash,
+        hex_lower(sides.parent_protocol_state),
+        hex_lower(sides.tip_protocol_state),
+        hex_lower(sides.verified_protocol_state),
+        hex_lower(sides.candidate_protocol_state),
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_checkpoint_advance` over a pre-built wire and return
+/// the raw output (`"mv=B;adv=B;fin=N;rn=N"` / `"ERR"`). `Err` when the archive did not export it.
+pub fn shadow_mina_checkpoint_advance(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_checkpoint_advance::call(wire)
+}
+
+/// Strict decode of the checkpoint gate's output. Anything that is not exactly
+/// `"mv=" B ";adv=" B ";fin=" u64 ";rn=" u64` — including the gate's own `"ERR"` — is an `Err`, and
+/// the caller persists NOTHING: it keeps its tip, its verified head, its finalized height and its
+/// run counter, all unchanged. There is no arm that returns an advance it did not read and none
+/// that returns a `finalized` this side computed.
+fn parse_checkpoint_roll(out: &str) -> Result<MinaCheckpointRoll, String> {
+    if out == "ERR" {
+        return Err(
+            "the VERIFIED checkpoint gate REFUSED this step: a malformed wire, an odd-length hex \
+             string, a byte string that is not a `Protocol_state.Value`, a side whose bytes do not \
+             hash to the state hash presented with them, or carried constants that disagree with \
+             the pinned mainnet ones. Nothing moved and nothing is to be persisted"
+                .to_string(),
+        );
+    }
+    let v = parse_kv_ordered(out, &["mv", "adv", "fin", "rn"])?;
+    let bit = |s: &str, key: &str| -> Result<bool, String> {
+        match s {
+            "1" => Ok(true),
+            "0" => Ok(false),
+            _ => Err(format!(
+                "the gate returned a non-boolean `{key}` field `{s}`"
+            )),
+        }
+    };
+    let num = |s: &str, key: &str| -> Result<u64, String> {
+        if !all_decimal(s) {
+            return Err(format!(
+                "the gate returned a non-decimal `{key}` field `{s}`"
+            ));
+        }
+        s.parse::<u64>()
+            .map_err(|e| format!("the gate returned an unrepresentable `{key}` field `{s}`: {e}"))
+    };
+    Ok(MinaCheckpointRoll {
+        tip_moved: bit(&v[0], "mv")?,
+        advanced: bit(&v[1], "adv")?,
+        finalized: num(&v[2], "fin")?,
+        run: num(&v[3], "rn")?,
+    })
+}
+
+/// ⚑⚑ **THE PER-CHECKPOINT LOOP.** Present ONE candidate — with its parent — to the two-tier head
+/// and get back everything the client must persist.
+///
+/// ⚑ ONE CANDIDATE, ONE CALL, against the head as it stands after the previous call. Not a fold:
+/// `MinaChainSelection.beats_not_transitive` proves `select` has genuine 3-cycles at real mainnet
+/// constants, so a "best of a set" is a function of presentation order and a hostile peer picks the
+/// order. What survives that is the ratchet, and the ratchet is why the cycles are harmless: they
+/// are contained to the provisional tier, which decides nothing.
+///
+/// `Err` on an absent archive and on every refusal alike, because both mean the same thing to the
+/// caller — persist nothing, keep what you hold.
+pub fn verified_mina_checkpoint_advance(
+    checkpoint: bool,
+    wrap_ok: bool,
+    finalized: u64,
+    run: u64,
+    run_cap: u64,
+    sides: &MinaCheckpointSides<'_>,
+) -> Result<MinaCheckpointRoll, String> {
+    let wire = mina_checkpoint_advance_wire(checkpoint, wrap_ok, finalized, run, run_cap, sides);
+    let out = shadow_mina_checkpoint_advance(&wire)?;
+    parse_checkpoint_roll(&out)
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_checkpoint_advance_present))]
+mod ffi_mina_checkpoint_advance {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_checkpoint_advance_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn present() -> bool {
+        true
+    }
+
+    pub fn call(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_checkpoint_advance_str(
+                    c_in.as_ptr(),
+                    buf.as_mut_ptr() as *mut c_char,
+                    cap,
+                )
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_checkpoint_advance_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_checkpoint_advance_present)))]
+mod ffi_mina_checkpoint_advance {
+    pub fn present() -> bool {
+        false
+    }
+
+    pub fn call(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_checkpoint_advance not exported by the linked archive (rebuild to enable). \
+             There is NO Rust twin and there must not be one"
+                .into(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_advance_tests {
+    use super::*;
+
+    /// Four distinguishable byte strings, so a wire that transposed two sides would be visible.
+    fn sides<'a>(
+        parent: &'a [u8],
+        tip: &'a [u8],
+        verified: &'a [u8],
+        candidate: &'a [u8],
+    ) -> MinaCheckpointSides<'a> {
+        MinaCheckpointSides {
+            parent_state_hash: "11",
+            parent_protocol_state: parent,
+            tip_state_hash: "22",
+            tip_protocol_state: tip,
+            verified_state_hash: "33",
+            verified_protocol_state: verified,
+            candidate_state_hash: "44",
+            candidate_protocol_state: candidate,
+        }
+    }
+
+    /// The wire grammar is EXACTLY what `MinaCheckpoint.parseCheckpointWire` splits on: five
+    /// leading `key=value` fields then eight more, `;`-separated, in that order. A field out of
+    /// position is a refusal in the Lean, not a re-ordered read, so this is a byte-level contract
+    /// and not a formatting preference.
+    #[test]
+    fn wire_grammar_matches_lean_parseCheckpointWire() {
+        let s = sides(b"\x01", b"\x02", b"\x03", b"\x04");
+        assert_eq!(
+            mina_checkpoint_advance_wire(false, false, 7, 3, 20, &s),
+            "md=p;wk=0;fz=7;rn=3;rc=20;ph=11;th=22;vh=33;ch=44;p=01;t=02;v=03;c=04"
+        );
+        // The CHECKPOINT tier and an affirmative Wrap verdict are the only two fields that differ.
+        assert_eq!(
+            mina_checkpoint_advance_wire(true, true, 7, 3, 20, &s),
+            "md=c;wk=1;fz=7;rn=3;rc=20;ph=11;th=22;vh=33;ch=44;p=01;t=02;v=03;c=04"
+        );
+        // Thirteen fields, exactly — `parseCheckpointWire` matches `m :: w :: z :: n :: r :: rest`
+        // and then `rest` against a list of EXACTLY eight.
+        assert_eq!(
+            mina_checkpoint_advance_wire(false, false, 0, 0, 0, &s)
+                .split(';')
+                .count(),
+            13
+        );
+    }
+
+    /// ⚑ THE CFG-OFF POLE, asserted by exact message rather than `is_err()`. With
+    /// `dregg_mina_checkpoint_advance_present` unset the gate is a REFUSAL that names itself — not
+    /// a Rust two-tier head, not a permissive default, and not a silent `Ok`.
+    #[cfg(not(all(lean_lib_present, dregg_mina_checkpoint_advance_present)))]
+    #[test]
+    fn absent_export_refuses_and_names_itself() {
+        assert!(
+            !mina_checkpoint_advance_available(),
+            "the checkpoint gate must not report available when the cfg is off"
+        );
+        let s = sides(b"\x01", b"\x02", b"\x03", b"\x04");
+        let err = verified_mina_checkpoint_advance(true, true, 100, 0, 20, &s)
+            .expect_err("an absent export must never yield a roll to persist");
+        assert_eq!(
+            err,
+            "dregg_mina_checkpoint_advance not exported by the linked archive (rebuild to \
+             enable). There is NO Rust twin and there must not be one"
+        );
+        // ⚑ And a CHECKPOINT call with `wrap_ok = true` and a large `finalized` is refused too —
+        // the one shape a fail-OPEN fallback would have been tempting for.
+        assert_eq!(
+            shadow_mina_checkpoint_advance("md=c;wk=1;fz=999;rn=0;rc=20").unwrap_err(),
+            "dregg_mina_checkpoint_advance not exported by the linked archive (rebuild to \
+             enable). There is NO Rust twin and there must not be one"
+        );
+    }
+
+    /// ⚑ THE CFG-ON POLE. With the cfg set the module is the `extern "C"` one, the availability
+    /// probe is true (given a healthy init), and the gate answers rather than refusing structurally.
+    #[cfg(all(lean_lib_present, dregg_mina_checkpoint_advance_present))]
+    #[test]
+    fn present_export_is_entered_and_refuses_garbage() {
+        assert!(
+            mina_checkpoint_advance_available(),
+            "the cfg is set and the archive is linked — the gate must be enterable"
+        );
+        // The gate was ENTERED (an absent export would be `Err` here, not `Ok("ERR")`), and its
+        // refusal is a refusal rather than a verdict computed from what did parse.
+        assert_eq!(
+            shadow_mina_checkpoint_advance("garbage").as_deref(),
+            Ok("ERR")
+        );
+        // …and a REFUSAL never becomes something to persist.
+        let s = sides(b"\x00", b"\x00", b"\x00", b"\x00");
+        assert!(
+            verified_mina_checkpoint_advance(true, true, 539_897, 0, 20, &s).is_err(),
+            "bytes that are not a protocol state must not yield a roll to persist"
+        );
+    }
+
+    /// The answer parser is STRICT and ORDERED. A gate that grew a field, dropped one, reordered
+    /// two or answered a non-number must not be read as a partially-parsed roll — every one of
+    /// these is a refusal, and none of them silently persists a `finalized`.
+    #[test]
+    fn the_roll_parser_refuses_every_shape_but_the_one() {
+        assert_eq!(
+            parse_checkpoint_roll("mv=1;adv=1;fin=539897;rn=0"),
+            Ok(MinaCheckpointRoll {
+                tip_moved: true,
+                advanced: true,
+                finalized: 539_897,
+                run: 0
+            })
+        );
+        assert_eq!(
+            parse_checkpoint_roll("mv=0;adv=0;fin=0;rn=7"),
+            Ok(MinaCheckpointRoll {
+                tip_moved: false,
+                advanced: false,
+                finalized: 0,
+                run: 7
+            })
+        );
+        // The gate's own fail-closed answer.
+        assert!(parse_checkpoint_roll("ERR")
+            .unwrap_err()
+            .contains("REFUSED this step"));
+        // Field count.
+        assert_eq!(
+            parse_checkpoint_roll("mv=1;adv=1;fin=5").unwrap_err(),
+            "the gate answered 3 field(s), expected 4 ([\"mv\", \"adv\", \"fin\", \"rn\"])"
+        );
+        // Field ORDER — `adv` arriving where `mv` belongs is not a roll with the fields swapped.
+        assert_eq!(
+            parse_checkpoint_roll("adv=1;mv=1;fin=5;rn=0").unwrap_err(),
+            "field adv is not the expected `mv`"
+        );
+        // A bit that is not a bit. `2` is not "truthy".
+        assert_eq!(
+            parse_checkpoint_roll("mv=2;adv=0;fin=5;rn=0").unwrap_err(),
+            "the gate returned a non-boolean `mv` field `2`"
+        );
+        // A ratchet that is not a number, and one that is signed.
+        assert_eq!(
+            parse_checkpoint_roll("mv=0;adv=0;fin=-1;rn=0").unwrap_err(),
+            "the gate returned a non-decimal `fin` field `-1`"
+        );
+        assert_eq!(
+            parse_checkpoint_roll("mv=0;adv=0;fin=5;rn=x").unwrap_err(),
+            "the gate returned a non-decimal `rn` field `x`"
+        );
+    }
+}

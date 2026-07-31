@@ -509,6 +509,16 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
         "Burn",
         // (F2b: QueueAllocate left this set with the FACTORY-DISSOLVED queue family — the verified
         // kernel no longer parses queue wire actions; queue behavior is the factory story.)
+        // ⚑ `GrantCapability` IS ROOT-AGREEING ONLY FOR ITS CROSS-CELL (DELEGATION) SHAPE. The
+        // OWNER-ENDOWMENT shape (`cap.target == from`) is fenced by
+        // `first_unmodelled_authority_origin_effect` — read `authority_origin_gap_kind` for why
+        // (dregg1 grants it from ownership; the verified `recKDelegate` has no owner disjunct and
+        // refuses it, and every deployed cell starts with an EMPTY c-list, so that is the FIRST
+        // grant every cell makes). This list is per-KIND, so the entry below cannot express the
+        // split; the shape fence is where it lives. Membership here was read as covering both
+        // halves until 2026-07-31 and the covered path installed the kernel's wrong REJECT as
+        // authoritative (`dregg-node::deos_host_e2e`, `TurnError::LeanShadowVeto`).
+        //
         // CAP-FIDELITY ROOT-GAP CLOSE (the cap-reshape lever). GrantCapability / Introduce /
         // AttenuateCapability are now root-AGREEING: the verified kernel DECIDES the commit bit (the
         // delegator/introducer must hold the edge; the attenuation must be a monotone narrowing —
@@ -641,6 +651,86 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
 /// is fenced — now with `Mint` as its named reason instead of `"unknown"`.
 pub fn producer_root_gap_effects() -> &'static [&'static str] {
     &["NoteSpend", "NoteCreate", "RevokeCapability", "Mint"]
+}
+
+/// ⚑ **THE OWNER-ENDOWMENT SHAPE — the `GrantCapability` half the verified kernel does not model.**
+/// The named reason [`first_unmodelled_authority_origin_effect`] reports.
+pub const AUTHORITY_ORIGIN_GAP: &str = "GrantCapability/owner-endowment";
+
+/// The owner-endowment shape inside one effect, or `None`.
+///
+/// dregg1's `apply_grant_capability` (`turn/src/executor/apply.rs:760`) carries TWO semantics under
+/// one effect variant:
+///
+///   * `cap.target == from` — **OWNER ENDOWMENT.** The c-list lookup is SKIPPED ENTIRELY; the
+///     authority is the action's own authorization against `from`, enforced upstream by
+///     `execute_tree`. A cell is the ORIGIN of authority over itself, so it may hand a capability
+///     over itself to anyone. This is where every capability in the system comes from.
+///   * `cap.target != from` — **DELEGATION.** The granter must HOLD an edge to `cap.target` and the
+///     grant must be a monotone narrowing on all three axes (permissions lattice / facet submask /
+///     expiry). This is the amplification-relevant half.
+///
+/// The verified kernel models only the SECOND. `effect_to_wire` projects BOTH onto
+/// `WireAction::Delegate`, which routes to `recKDelegate`
+/// (`metatheory/Dregg2/Exec/AuthTurn.lean:174`), gated SOLELY on
+/// `(caps delegator).any (fun cap => confersEdgeTo t cap)` — with **no owner disjunct**, unlike the
+/// sibling gate `authorizedB` (`Dregg2/Exec/Kernel.lean:54`), which short-circuits on
+/// `turn.actor == turn.src` and is what `stateAuthB` routes through. So the SAME kernel lets a cell
+/// write its own fields and move its own balance from an empty c-list, and refuses to let it
+/// delegate any of that.
+///
+/// ⚑ **This is the verified kernel OVER-REFUSING, not a stricter check.** Every cell on the
+/// deployed ledger is minted with an EMPTY c-list (`Cell::new` / `Cell::with_balance` install no
+/// capabilities), so the verified gate refuses the FIRST grant any cell ever makes. And no Lean
+/// rule creates a first edge — `recKDelegate`, `recKDelegateAtten` and `introduceA` all require a
+/// pre-existing one and `recKRevokeTarget` only removes — so `caps = fun _ => []` is a FIXPOINT of
+/// the whole modelled authority calculus. That is Granovetter with its base cases deleted, not the
+/// Granovetter property.
+///
+/// **THE REPAIR IS IN LEAN AND THIS FENCE IS NOT IT.** `recKDelegate`'s guard needs the owner
+/// disjunct its sibling already has (`(delegator == t) || (caps delegator).any …`), authored in
+/// `metatheory/Dregg2/Exec/AuthTurn.lean`. Until then the honest classification is that the
+/// owner-endowment shape is OUTSIDE the swap-safe set — the same treatment `Mint` got on
+/// 2026-07-30 for a MODEL divergence (see [`producer_root_gap_effects`]) — so it is fenced onto the
+/// Rust producer with a NAMED reason instead of being vetoed by a rule the kernel gets wrong.
+///
+/// Until 2026-07-31 it was neither: `GrantCapability` sat in [`producer_root_agreeing_effects`] on
+/// the strength of a comment saying "the verified kernel DECIDES the commit bit (the delegator must
+/// hold the edge)", which is true of the model and FALSE of dregg1 for this half. So the covered
+/// path installed the kernel's REJECT as authoritative and `dregg-node::deos_host_e2e` died on
+/// `LeanShadowVeto` at the door's self-grant. The tooth that was supposed to pin the claim
+/// (`lean_state_producer_widen::grant_capability_round_trips_cap_fidelity_closed`) calls
+/// `grant_self_cap` first, i.e. it arranges the one sub-shape that agrees.
+///
+/// `ExerciseViaCapability` is recursed for the same anti-tunnelling reason as
+/// [`consensus_side_state_mutation_kind`].
+fn authority_origin_gap_kind(effect: &Effect) -> Option<&'static str> {
+    match effect {
+        Effect::GrantCapability { from, cap, .. } if cap.target == *from => {
+            Some(AUTHORITY_ORIGIN_GAP)
+        }
+        Effect::ExerciseViaCapability { inner_effects, .. } => {
+            inner_effects.iter().find_map(authority_origin_gap_kind)
+        }
+        _ => None,
+    }
+}
+
+/// The first owner-endowment `GrantCapability` in forest order, or `None`.
+///
+/// A pre-execution, ledger-free predicate (decided identically in both builds), so
+/// `produce_via_lean` can fence the turn BEFORE invoking either producer. See
+/// [`authority_origin_gap_kind`] for why this shape is not swap-safe.
+pub fn first_unmodelled_authority_origin_effect(turn: &Turn) -> Option<&'static str> {
+    fn walk(tree: &CallTree) -> Option<&'static str> {
+        tree.action
+            .effects
+            .iter()
+            .find_map(authority_origin_gap_kind)
+            .or_else(|| tree.children.iter().find_map(walk))
+    }
+
+    turn.call_forest.roots.iter().find_map(walk)
 }
 
 /// The first executor-owned consensus accumulator mutation inside an effect.
@@ -874,6 +964,14 @@ pub fn forest_is_root_agreeing(turn: &Turn) -> bool {
     if first_unproduced_consensus_side_state_effect(turn).is_some() {
         return false;
     }
+    // THE OWNER-ENDOWMENT FENCE. A model divergence, not an unproduced accumulator: the verified
+    // `recKDelegate` gate has no owner disjunct, so it refuses the self-grant dregg1 commits from
+    // ownership. Fencing here (rather than letting the covered path install the kernel's REJECT as
+    // authoritative) is what stops a KERNEL bug from vetoing a correct turn. See
+    // `authority_origin_gap_kind` — the repair is a Lean change to `AuthTurn.lean`.
+    if first_unmodelled_authority_origin_effect(turn).is_some() {
+        return false;
+    }
     if !forest_is_marshallable(turn) {
         return false;
     }
@@ -922,11 +1020,17 @@ pub(crate) fn forest_agent_reaches_roots(turn: &Turn) -> bool {
 /// is root-agreeing (or the turn is unmappable for some other reason). Used by `produce_via_lean` to
 /// name the precise gap in its Rust-fallback reason, so the fallback is never a silent skip.
 pub fn first_root_gap_kind(turn: &Turn) -> Option<&'static str> {
-    first_unproduced_consensus_side_state_effect(turn).or_else(|| {
-        turn_effect_kinds(turn)
-            .into_iter()
-            .find(|k| producer_covers_kind(k) && !producer_root_agrees_kind(k))
-    })
+    first_unproduced_consensus_side_state_effect(turn)
+        // Named BEFORE the per-kind scan: `GrantCapability` is root-agreeing AS A KIND (the
+        // cross-cell delegation half is genuinely decided by the verified gate), so the per-kind
+        // scan below finds nothing and the fence would report `"unknown"` — the same nothing-named
+        // fallback `Mint` produced until 2026-07-30. The gap is a SHAPE, so it is named as one.
+        .or_else(|| first_unmodelled_authority_origin_effect(turn))
+        .or_else(|| {
+            turn_effect_kinds(turn)
+                .into_iter()
+                .find(|k| producer_covers_kind(k) && !producer_root_agrees_kind(k))
+        })
 }
 
 fn tree_is_marshallable(tree: &CallTree, id_map: &HashMap<CellId, u64>, any: &mut bool) -> bool {
