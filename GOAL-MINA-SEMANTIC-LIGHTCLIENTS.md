@@ -271,3 +271,24 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   pins in `bridge/mina-zkapp/scripts/root-air-{real,fullchain}.ts`. **No envelope bump needed** —
   the anchor stays one 32-byte `RecursionVk`, so v6 stands and I do not collide with the
   `num_turns` lane. Every pre-spine artifact now refuses to fold at `exposed_board_window`.
+- 23:35 ⚑ **VK SPINE LANDED** (`e1d8ab9bc` + fork `emberian/plonky3-recursion@4aead01`). Every fold
+  node exposes `vk_spine = commit(L.cap ‖ L.spine ‖ R.cap ‖ R.spine)`; leaves seed a tagged
+  sentinel; `exposed_board_window` refuses a bare-`SEG_WIDTH` child as a pre-spine artifact.
+  **AIR-free by construction.** `circuit-prove` lib+tests GREEN — that blocker is cleared.
+  ⚑ **It corrected my framing and was right**: I asked for the *root fingerprint* to move. It must
+  NOT — `recursion_vk_fingerprint` deliberately excludes `public_values`, and that
+  content-independence is what lets ONE anchor serve MANY histories; if a substituted child moved
+  it, it would move for every honest history too. The inversion belongs on
+  **`whole_chain_anchor` = blake3(tag ‖ vk_fingerprint ‖ root spine lanes)** — what the client holds.
+  MEASURED: honest `65fc32cd…`, forged-no-check `cd0c6c62…` **REFUSED**.
+- 23:35 ⚑ **NEW SIN, found by that lane REFUTING ITS OWN CLAIM**: a child's **constant VALUES** are
+  not bound. `ConstAir` keeps a const's value in the **constraint-free MAIN trace**, only
+  `[ext_mult, out_idx]` in preprocessed — so two children differing only in a constant share cap,
+  spine and anchor. MEASURED: `anchor const-swapped child = 65fc32cd…` **ACCEPTED**.
+  *"The original hole one level down: from which circuit was folded to which constants sit inside a
+  fixed circuit. A constant is a constraint operand; zeroing a coefficient weakens what the
+  constraint says."* Dispatched.
+  ⚑ **Substrate call recorded**: HOUSE LAW #1 governs DREGG's circuit logic. `ConstAir` is a p3
+  primitive in a fork we maintain with no Lean authoring path short of replacing p3, so a **minimal
+  local** change is permitted — one column into preprocessed, one equality, law1 delta reported, and
+  **stop-and-report if it needs more than that.**
