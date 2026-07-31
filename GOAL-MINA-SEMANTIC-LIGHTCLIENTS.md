@@ -746,3 +746,63 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   So both directions hold together, which is the pair that actually matters:
   **a different CIRCUIT moves the anchor** (four probes) and **a different HISTORY does not** (this).
   Without the second, the first would have been a light client that refuses everyone.
+
+---
+
+# ⚑ MORNING STATE — 2026-07-31 ~08:15. READ THIS FIRST.
+
+## Both directions are SEMANTIC and MEASURED on real data ✅
+
+- **dregg reads a Mina ACCOUNT** — `Dregg2/Bridge/MinaAccountOpening.lean`, `@[export]` + C bridge +
+  module initializer + Rust wrapper, all landed together. Decodes `staged_ledger_hash` **out of the
+  block's own binprot bytes** — no argument lets a caller name the root it opens against. Measured
+  on **devnet block 540268**, live account, leaf 6202, 35-level opening: honest `"1"`; balance+1,
+  nonce, delegate, index, sibling, transposed direction, 34-level opening all `"0"`; broken wire
+  `"ERR"`. Two layout traps caught by the live equation: prefixes are `MinaAccount`/`MinaMklTree%03d`
+  (not `Coda*`), and a compressed pubkey's Base58Check carries **two** version bytes.
+- **Mina reads a dregg CELL's named columns** — `DreggCellFact.ts` publishes
+  `{stateCommit, balanceLo, balanceHi, nonce, capRoot}`; the gate **requires a balance**. Accept at
+  floor 100, refuse at 101, refuse a forged cell. ⚑ Its own tamper found a real hole in its own
+  circuit: `assertLaneLt2p31` admitted `p + x`, so `p+100` and `100` shared a leaf while the
+  published balance was the raw lane — **a cell holding 100 could publish 2,013,266,021.** Refused now.
+
+## Sins closed overnight ✅
+- **Authorization IN-AIR** (Poseidon2 one-time signature, chosen on soundness — ed25519-in-AIR is
+  non-native and classical inside a PQ floor). Deployed instance 12,188 cols / 248 bits: control
+  PROVES; **wrong key, unsigned, moved dst, moved actor all REFUSED.** Also closed the shielded
+  spending-key hole (`owner = hash_fact(key)` forced).
+- **Child identity bound — programs AND constants.** `anchor const-swapped child` accepted → REFUSED.
+  And the converse measured: two histories over one circuit reach a byte-identical VK, so it did not
+  become a wall that refuses honest clients.
+- **Apex premise INHABITED**; carriers **FELL 1999 → 1936** (19 removed, 1 renamed, 0 new).
+- **167 of 173 free PI pins deleted**, proven a no-op by theorem. 1,424/3,815 published values
+  AIR-forced; the misleading subset drops 215 → 48 at re-emit.
+- **The anchor's own vk-pin was vacuous** (two `ZkProgram`s differing only in NAME compile to the
+  same VK) — fixed and proved refutable; **seal preimage emitted**, so an advance can be presented.
+- **Seam tests widened to the spine** (`eb3a65ac4`): 3/10 → 10/10. `SEG_WIDTH` (25) and
+  `SEG_SPINE_WIDTH` (33) now pinned **separately**, so a later edit cannot move one and compensate.
+
+## ⚑ THE CONVERGENCE — STAGED, NOT FIRED. Fire on a QUIET tree.
+Five lanes staged rotations rather than each firing one (5 rotations → 5 re-bakes → 5 compiles, each
+invalidating the last). **Order: `emit-descriptors.sh` → re-bake `whole_history_proof.bin` → 131
+compile (~2 h, parallel) → 905 prove (~7 h, serial) → deploy → poster.**
+
+⚠ **DO NOT FIRE WHILE THE TREE IS DIRTY.** At 08:15 `trace_rotated.rs`,
+`setfield_value8_epoch_flip.rs`, `cap_open_write_prove_through.rs`, `bridge_lc_ffi.rs` are `MM` —
+the encoding epoch and other sessions are mid-edit. `emit-descriptors.sh` is idempotent on a clean
+tree; on a dirty one it bakes in-flight work into committed artifacts.
+
+Four measured fail-opens the re-emit must not hit:
+1. `registry_fp` is sha256 of **Lean-emitted TSV bytes** — a Rust-only change moves no fingerprint.
+2. `trace_rotated.rs` has **zero** `effects_hash` references — that family could be swapped invisibly.
+3. ⚑ `prove_vm_descriptor2` **zero-extends short rows BEFORE the width check** — an un-updated
+   producer proves green with zeros.
+4. New columns must route through `compacted_column(registry_key, raw)`.
+
+## Known reds, all attributed
+- `circuit-prove --lib`: **332 pass / 6 fail** (was 339/7 before the seam fix). Names being captured.
+- `root_air_instance` **compiles**; the const_air width panic is a runtime shape the re-emit fixes.
+- `CustomDeployedBytePin` golden stale by +44 cols — rides the re-emit.
+- `.aafiInsert` post-layout is **LIVE**: producer commits a sorted before-tree and an append-order
+  after-root, so turn N's after-root ≠ turn N+1's before-root unless the inserted key is the maximum.
+  **Producer-only fix, no VK rotation, state re-genesis.**
