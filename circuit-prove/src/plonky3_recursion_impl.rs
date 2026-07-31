@@ -712,22 +712,40 @@ pub mod recursive {
     /// fork work — see the module docs of [`crate::ivc_turn_chain`] for the
     /// precise follow-up.
     ///
-    /// ⚑ 2026-07-30: THIS PARAGRAPH IS THE CORRECT ONE. `ivc_turn_chain`'s
-    /// module docs used to carry a contradicting "CLOSED" bullet claiming the
-    /// `alloc_const` + `connect` VK pin transitively certified the tree's
-    /// child identities; that label is RETRACTED and the measurements are
-    /// cited there. Two probes on `main`:
-    /// `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) — two circuits
-    /// differing only in an `alloc_const` value fingerprint IDENTICALLY here
-    /// and both verify, so a k = 7 anchor accepts a k = 9 proof; and
-    /// `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`) — baking a
-    /// perturbed child cap on the deployed fold path leaves this fingerprint's
-    /// preprocessed-commitment input unmoved, while the positive control
-    /// (dropping the pin entirely) moves it. The cause is that a const's VALUE
-    /// lives in `ConstAir`'s main trace while only `[ext_mult, out_idx]` is
-    /// preprocessed. The designed repair (exposing the pinned cap through the
-    /// bound `expose_claim` channel and checking it against a caller-held
-    /// anchor) is written out in [`crate::ivc_turn_chain`]'s module docs.
+    /// ⚑ 2026-07-30 (morning): the paragraph above was the correct one, and
+    /// `ivc_turn_chain`'s contradicting "CLOSED" bullet was retracted. Two
+    /// probes on `main` measured the `alloc_const` + `connect` VK pin to pin
+    /// nothing: `const_pin_probe.rs` (`63ffb1a08`) — two circuits differing
+    /// only in an `alloc_const` value fingerprinted IDENTICALLY here; and
+    /// `vk_pin_lever_a_probe.rs` (`bb42f9800`) — baking a perturbed child cap
+    /// left this fingerprint's preprocessed-commitment input unmoved while the
+    /// positive control (dropping the pin) moved it. The cause was that a
+    /// const's VALUE lived in `ConstAir`'s main trace with only
+    /// `[ext_mult, out_idx]` preprocessed.
+    ///
+    /// ⚑ 2026-07-30 (evening) — **THE CAUSE IS FIXED AND BOTH PROBES ARE
+    /// INVERTED.** Fork rev `fc3c6df` made a constant's value a PREPROCESSED
+    /// column of `ConstAir` (`[ext_mult, out_idx, value[0..D]]`) constrained
+    /// equal to the main-trace copy. Re-measured: the two constants now mint
+    /// DIFFERENT fingerprints (`b2c625d1…3b80` vs `a1b0c130…1bcb`), and baking
+    /// a perturbed cap MOVES this fingerprint's preprocessed-commitment input
+    /// while every SHAPE field it hashes stays identical.
+    ///
+    /// ⚑ **What that does and does not change about the paragraph above.**
+    /// The `MerkleCapTargets::new` → `alloc_public_input_array` half is
+    /// UNCHANGED and still true: a child's cap also rides as a runtime PUBLIC
+    /// input, `PublicAir`'s value columns are still main-trace only, and that
+    /// was deliberately NOT touched — a public input's value is per-execution
+    /// data and must stay out of circuit identity. What changed is the pin
+    /// that sits BESIDE it: `into_recursion_input_pinned` `connect`s those
+    /// targets to an `alloc_const`, and the const now reaches this
+    /// fingerprint. So "does NOT pin the child proofs' circuit identity" is no
+    /// longer right as stated — it is pinned, through the constant, at every
+    /// layer `merge_two_segment_proofs` folds.
+    /// ⚑ Resolution: the single-layer step is MEASURED; transitivity to the
+    /// root is READ off that call graph. The two-horn analysis, the residual
+    /// (horn 1, unmeasured) and the flag day are in
+    /// [`crate::ivc_turn_chain`]'s module docs.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct RecursionVk(pub [u8; 32]);
 

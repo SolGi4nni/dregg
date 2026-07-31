@@ -48,21 +48,41 @@
 //! dregg-specific gap and is not provable in Lean. Of the two precisely-scoped fork follow-ups that
 //! once sat ALONGSIDE it, (b) is discharged and (a) is ⚑ OPEN:
 //!
-//! - (a) **leaf-circuit identity — ⚑ OPEN; the "CLOSED" label here is RETRACTED (2026-07-30).**
+//! - (a) **leaf-circuit identity — ⚑ CLOSED (2026-07-30), after a same-day RETRACTION of an
+//!   earlier "CLOSED". Read the residual at the end of this bullet before citing it.**
+//!
 //!   Every child of the K-fold tree is folded through the fork's `into_recursion_input_pinned`,
 //!   baking the child's own preprocessed commitment as a CONSTANT the parent `connect`s its
-//!   child-commitment targets to — but a `define_const` is not a pin. MEASURED twice on `main`:
-//!   `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) shows two circuits differing ONLY in an
-//!   `alloc_const` value both verify under ONE `recursion_vk_fingerprint`, so an anchor extracted
-//!   from one accepts the other; `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`) shows
-//!   that baking a perturbed cap on the deployed fold path does not move the parent's VK core at
-//!   all, while the positive control (dropping the pin) does. A const's VALUE lives in `ConstAir`'s
-//!   constraint-free MAIN trace; only `[ext_mult, out_idx]` is preprocessed. So a prover may
-//!   substitute any circuit with a matching table manifest that does NO descriptor verification and
-//!   the parent re-verifies it — the root VK pin does NOT transitively certify the tree's leaf
-//!   identity, and this light client's guarantee is correspondingly weaker than the sentence it
-//!   replaced. The full measurement, the two-horn analysis, the designed repair ("the exposed VK
-//!   spine") and its flag day are in `circuit-prove/src/ivc_turn_chain.rs`'s module docs.
+//!   child-commitment targets to. Earlier today that was measured to pin NOTHING, because a
+//!   const's VALUE lived in `ConstAir`'s constraint-free MAIN trace with only `[ext_mult, out_idx]`
+//!   preprocessed — `const_pin_probe.rs` (`63ffb1a08`) and `vk_pin_lever_a_probe.rs` (`bb42f9800`)
+//!   both measured it, and the "CLOSED" label was retracted here.
+//!
+//!   Fork rev `fc3c6df` put the value in the preprocessed row
+//!   (`[ext_mult, out_idx, value[0..D]]`) and constrains `main.value == prep.value`. Both probes
+//!   were then INVERTED and re-measured:
+//!   * two circuits differing only in an `alloc_const` value now mint DIFFERENT
+//!     `recursion_vk_fingerprint`s (`b2c625d1…3b80` vs `a1b0c130…1bcb`), so a k = 7 anchor REFUSES
+//!     a k = 9 proof;
+//!   * baking a perturbed child cap now MOVES the parent's VK core, with every SHAPE field the
+//!     fingerprint hashes identical on both sides.
+//!
+//!   `merge_two_segment_proofs` pins BOTH children through `batch_to_pinned_input`, and
+//!   `aggregate_tree` calls it at every level, so each layer's preprocessed commitment depends on
+//!   its children's caps and the dependence reaches the root fingerprint. ⚑ **Resolution: the
+//!   single-layer step is MEASURED; the transitivity over a full K-fold tree is READ off that call
+//!   graph, not measured end to end.** Independently, the VK spine (`e1d8ab9bc`) carries the same
+//!   binding through `whole_chain_anchor`, and THAT half is measured through the fold.
+//!
+//!   ⚠ **RESIDUAL — horn 1, and it is unmeasured.** A prover who bakes a FOREIGN cap to match a
+//!   substituted child is now refused at the root fingerprint (measured). A prover who keeps the
+//!   HONEST cap and substitutes the child anyway must be refused by the in-circuit
+//!   preprocessed-trace opening being UNSAT — that is READ from the fork's PCS commitment round,
+//!   never measured, and the one test that looks like evidence
+//!   (`pinned_leaf_identity_rejects_foreign_child_in_band`) was measured to die in the honest
+//!   witness generator with a `WitnessConflict`, which an adversarial prover simply does not run.
+//!   The full two-horn analysis and this measurement are in
+//!   `circuit-prove/src/ivc_turn_chain.rs`'s module docs.
 //! - (b) **leaf public values re-exposed at the root — CLOSED.** Each child is fed with its GENUINE
 //!   per-table public inputs threaded up (`into_recursion_input_pinned` calls
 //!   `genuine_table_public_inputs`, not the empty-vector legacy path), so a child's exposed segment
