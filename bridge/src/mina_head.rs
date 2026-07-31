@@ -47,15 +47,15 @@
 //! `ConsensusState`** (`proof_of_stake.ml:2449-2536` has no resolver for it), so Samasika's
 //! long-range branch cannot be evaluated from that surface at all.
 //!
-//! ⚑ **The in-repo socket implementation is a SUBPROCESS, and that is on purpose.** The protocol is
+//! ⚑ **The byte source is a SUBPROCESS, and that is on purpose.** The protocol is
 //! `TCP → pnet(XSalsa20 under the chain-id PSK) → multistream-select → Noise XX → /coda/yamux/1.0.0
 //! → coda/rpcs/0.0.1 → get_best_tip v2`. openmina is a complete Rust implementation of exactly that
 //! and it is on this machine; hand-writing Salsa20, a Noise XX state machine and a yamux muxer into
 //! this crate would be reconstructing a thing that already exists, which is the same mistake as a
 //! Rust binprot decoder wearing different clothes. [`CommandProtocolStateSource`] runs an
 //! operator-configured helper and takes its stdout. The helper shipped here is
-//! `bridge/tools/mina-besttip.py` — a small Python client, deliberately not a second Rust
-//! implementation of a stack openmina already implements.
+//! `bridge/tools/mina-tip` — a small Rust bin that LINKS openmina's audited stack (it does not
+//! reimplement it), replacing the retired `mina-besttip.py` Python transport.
 //!
 //! # Fail closed
 //!
