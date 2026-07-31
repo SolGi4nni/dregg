@@ -124,3 +124,27 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   floor. (~3 orders of magnitude cheaper than the ~10⁷-gate ed25519 verify is a CONSEQUENCE, not the
   reason.) One-time is the right granularity — a turn is a one-shot act; the many-time lift is the
   depth-16 crown indexed by turn sequence.
+- 23:05 ⚑ **`effects_hash` pin: comment corrected, pin DESIGNED and PROVED with live controls**
+  (`7a4db259d`, `d59941ff8`). Lean-authored AIR in `Emit/`; Rust authors nothing. The false comment
+  at `EffectVmEmitRotationV3.lean` §5.PC.EH claimed `verify_vm_descriptor2` already checked the
+  declared hash — it reasoned from the RETIRED v1 hand-AIR, and it was the stated reason three
+  effects have no declared column. **The E1 kill-set was already the proof**: `e1_compact_generated.rs`
+  deletes cols 94/95 in all 57 wide members under the criterion *"referenced by NO surviving
+  constraint"*.
+  ⚑ **My first draft was the exact `∃`-vacuity this tree names.** It concluded
+  `∃ x y, x≠y ∧ perm x = perm y`, which `EffectVmEmitRotationR.lean:255` records as
+  **unconditionally TRUE by pigeonhole** at deployed parameters. Restated on `IsCollW` (pair-specific,
+  decidable); every rung is now total, no hash hypothesis anywhere. Controls include
+  `ehTagGate_rejects_wrong_tag` so the acceptance control cannot be met by a gate that accepts all.
+  ⚑ **Arity corrected 16→11** — `single_perm_compress` is `carrier(8) ‖ 3 fresh`;
+  `descriptor_ir2::CHIP_RATE = 16` is the chip BUS, a different number. 17 declared felts ride six
+  steps, the identical shape as the deployed `wire_commit_8`.
+  ⚠ **NOT WIRED into the registry emit, deliberately.** The chokepoint is `emitCompact key (weldWide
+  key …)`, one line — but wiring makes every wide member unprovable until `trace_rotated.rs` emits
+  the 65 new columns, and that wedges every sibling lane in this shared tree tonight. Wiring + Rust
+  decoder + emit regen + both test inversions is one follow-on commit. **This is a named residual and
+  therefore a sin under this goal; it is the next thing on this lane, not a deferral.**
+  Fail-opens measured for whoever lands it: `registry_fp` is the sha256 of Lean-emitted TSV bytes, so
+  a Rust-only hash change moves NO fingerprint and two binaries would handshake `Compatible`;
+  `trace_rotated.rs` has ZERO `effects_hash` references today; `prove_vm_descriptor2` zero-extends
+  short rows BEFORE the width check (`descriptor_ir2.rs:6619` vs `:6487`).
