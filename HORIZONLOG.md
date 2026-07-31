@@ -1,5 +1,55 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ JULY 30 — issue #65 re-grounded: all six confirmed findings were fixed the afternoon it was filed, and the FIX for one of them opened a RAM-only ledger ghost
+
+**Outside longform audit** (#65, akapug, filed 2026-07-21 19:06 UTC) against a fork snapshot
+`314455f18…` on `reconcile/upstream-2026-07-20` — a revision not in this repo. Re-grounded at
+`a33aaeb13`. **All six confirmed findings are FIXED, five of them within 2h31m of the filing**
+(`45a57e19a` 15:56 → `0369e75f5` 17:44 EDT, plus `529a8029f` next morning). **Nothing they confirmed
+was ever a false positive**, and their own false-positive section is still accurate at HEAD. The
+issue was never answered, so the reporter has had no way to know — and their sibling reports #71/#73
+were fixed *before* filing, so they are probably reading a stale build.
+
+⚑ **The interesting part is what the repair grew.** `c89036627` (07-25) fixed onboarding by moving
+`claim_signer_actor_cell` AHEAD of the admission predicate. The ordering was right; the target was
+not. It wrote to the LIVE authoritative ledger, and `pre_ledger` — the base of
+`ledger_touched_diff`, which is what becomes the commit record's `touched_cells` — is cloned AFTER
+it. So a finalized payload that cleared the whole outer perimeter and was then refused (receipt
+continuity, a nullifier/faithful-note arm, or the executor's own phase-1 charge) left a cell in RAM
+that **no commit record carries**. It vanishes on restart while a peer that did not restart keeps
+it, and `canonical_ledger_root` hashes the whole cell — an attested-root split on the next turn.
+It also wedges every later exact-v3 spend on that node (`capture_from_store_and_live_ledger`
+demands `live root == durable root` and then answers `LiveRootMismatch` forever).
+
+Reachable in #65's own model: one enrolled Byzantine validator proposes a hybrid-signed envelope
+from a fresh key with a fee it cannot pay. Honest HTTP ingress never gossips such a turn — consensus
+is the only way in, which is the auditor's exact point that payloads are opaque to block admission.
+
+**CLOSED** `29c4d36d7`: the claim is DECIDED where it was (pure `claimed_actor_cell`, so the
+predicate still reads it) and APPLIED to the isolated `exec_ledger`, reaching authoritative RAM only
+through `install_finalized_ledger_overlay` past the durable commit point.
+`first_turn_e2e::a_refused_finalized_first_turn_leaves_no_ram_only_ghost_cell` was RED before it,
+driven through `execute_finalized_turn` (not a mock), and classifies the refusal by variant
+(`executor-rejected`) so an infrastructure fault cannot satisfy it. The onboarding pole
+(`a_faucet_funded_fresh_client_can_take_its_own_first_turn`) still commits.
+
+**AND ONE HALF OF THEIR REPORT WAS STILL OPEN, PRECISELY AS WRITTEN.** #65 finding 6 had two halves;
+`0e6e419ee` closed the predicate half and left the other: *"It executes directly against the live
+ledger. No blocklace submission occurs in that function despite comments referring to the existing
+finality path."* True until today. `submit_queue_drainer::execute_submission` was the **only** ingress
+that mutated authoritative state outside consensus — HTTP has been staging-only at every committee
+size since `5f0999ab9` — so a pg-drained turn advanced one node's nonce and no peer ever saw it.
+**CLOSED** `8e1d56ac3`: stage, roll back on every arm, submit to the blocklace, resolve the row only
+from `store.lookup_turn`. ⚑ Its four `#[cfg(test)]` teeth had **never run** — `pg-mirror-live` is T3
+compile-only, and under the feature all four SIGABRTed in dregg-pq's UNAUDITED refusal before any
+assertion, because a lib test never installs the verified ML-DSA cores. They install them now; one
+also asserted a refusal string the code stopped using in `0369e75f5`.
+
+⚠ **Named residual, not closed here:** `n3_plateau_probe` cannot run on the `hcargo` lane — the
+spawned `dregg-node` binary aborts in `genesis` on "missing/stale libdregg_lean.a" although every
+archive in that lane's target dir exports all six cores. Environment, and it means the n=3 probe has
+been unreadable there.
+
 ## ⚑⚑⚑⚑ JULY 30 — a relayer could inflate a history's length by editing one integer. CLOSED at the decode gate; both probes inverted; the wasm32 leg measured, not read
 
 **The measurement that opened it** (`c80ee7c92`, `0a1854df0`): editing one `u64` in a
