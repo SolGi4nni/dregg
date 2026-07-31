@@ -158,10 +158,20 @@ impl World {
                         short(&turn.agent)
                     )
                 })?;
-            debug_assert!(
-                !is_deferred(&receipt),
-                "a collapsed receipt must carry a real (non-deferred) witness"
-            );
+            // FAIL-CLOSED, NOT `debug_assert!`. This was a `debug_assert!` — i.e. compiled
+            // OUT of every release build, so in production a still-deferred receipt would
+            // have been written into the provenance log as though it were collapsed, and
+            // the whole point of collapse is to turn an unpublishable receipt into a
+            // publishable one. The sibling check in `turn/src/collapse.rs` was hardened for
+            // exactly this reason; this is its twin, one file over, and it was left behind.
+            if is_deferred(&receipt) {
+                return Err(format!(
+                    "collapse: the re-derived receipt for the buffered turn from agent {} is \
+                     STILL deferred — collapse produced an unpublishable receipt, which is an \
+                     integrity event (the Full re-execution did not materialize a witness)",
+                    short(&receipt.agent)
+                ));
+            }
             // Replace the deferred receipt in the provenance log with the real one.
             self.receipts[first + offset] = receipt;
         }

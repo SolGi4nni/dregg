@@ -272,16 +272,63 @@ mod one_palette_gate {
     /// holds the values — otherwise "exactly one file" could be satisfied by
     /// ZERO. Pins the ten canonical hexes present at the canonical path.
     #[test]
-    fn the_canonical_file_is_the_one_that_holds_them() {
-        let canonical = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CANONICAL);
-        let body = std::fs::read_to_string(&canonical)
-            .unwrap_or_else(|e| panic!("{} must be readable: {e}", canonical.display()))
-            .to_ascii_lowercase();
-        for hex in PALETTE_HEXES {
-            assert!(
-                body.contains(hex),
-                "{CANONICAL} must hold {hex} — the gate is vacuous if the canonical home is empty"
-            );
-        }
+    /// THE ANTI-VACUITY POLE — "the literals live in exactly ONE file" is satisfiable by
+    /// ZERO files, so something must prove the canonical home is actually populated.
+    ///
+    /// ⚑ THE OBVIOUS WAY TO WRITE THIS DOES NOT WORK, AND SHIPPED BRIEFLY (caught by the
+    /// audit of `d1`). Reading `src/views/mod.rs` as TEXT and asserting it contains each
+    /// entry of `PALETTE_HEXES` cannot fail — `PALETTE_HEXES` is a literal array *in that
+    /// same file*, so every hex is present by construction. Amputating the whole
+    /// `pub mod theme` block still passed it. A constant checked against its own
+    /// definition is decoration, not a gate.
+    ///
+    /// So this calls the FUNCTIONS instead. The hex on the right is re-typed by hand
+    /// against the committed source — that hand re-typing IS the review, and it is the
+    /// one place in this module where a literal is legitimately duplicated. Delete
+    /// `theme::bg()`, rename it, or change what it returns, and this goes red.
+    #[test]
+    fn the_canonical_palette_is_reachable_and_returns_these_exact_colours() {
+        use super::theme;
+        use gpui::rgb;
+
+        // The ten canonical GitHub-dark values, by the accessor the chrome actually calls.
+        assert_eq!(theme::bg(), rgb(0x0e1116).into(), "theme::bg drifted");
+        assert_eq!(theme::panel(), rgb(0x161b22).into(), "theme::panel drifted");
+        assert_eq!(
+            theme::panel_hi(),
+            rgb(0x1f2630).into(),
+            "theme::panel_hi drifted"
+        );
+        assert_eq!(
+            theme::border(),
+            rgb(0x2b3340).into(),
+            "theme::border drifted"
+        );
+        assert_eq!(theme::text(), rgb(0xd7dee8).into(), "theme::text drifted");
+        assert_eq!(theme::muted(), rgb(0x7d8794).into(), "theme::muted drifted");
+        assert_eq!(
+            theme::accent(),
+            rgb(0x6cb6ff).into(),
+            "theme::accent drifted"
+        );
+        assert_eq!(theme::good(), rgb(0x57d977).into(), "theme::good drifted");
+        assert_eq!(theme::warn(), rgb(0xe3b341).into(), "theme::warn drifted");
+        assert_eq!(theme::bad(), rgb(0xe5534b).into(), "theme::bad drifted");
+
+        // The measured drift, preserved deliberately rather than normalised away: three
+        // call sites had already diverged to their own greens before the consolidation,
+        // and folding them silently would have changed pixels. They keep their values
+        // and their own names, beside the sibling they differ from.
+        assert_eq!(
+            theme::good_mint(),
+            rgb(0x5bd18b).into(),
+            "the unified-boot green drifted"
+        );
+        assert_ne!(
+            theme::good(),
+            theme::good_mint(),
+            "good and good_mint are DIFFERENT greens on purpose — if these ever converge, \
+             delete one and its accessor rather than leaving two names for one colour"
+        );
     }
 }
