@@ -124,6 +124,11 @@ pub enum ResolveStatus {
         /// How many affordances of the embedded cell this viewer's caps clear (the
         /// per-viewer content readout).
         visible_affordances: usize,
+        /// How many affordances the embedded cell DECLARES in total, so a surface can
+        /// say "you see N of M — the rest are attenuated away by your caps" rather than
+        /// a bare count whose denominator the reader has to guess. Read straight off
+        /// [`EmbeddedCellView::declared_affordance_count`].
+        declared_affordances: usize,
     },
     /// The embed resolved + verified, but THIS viewer's authority cannot reach it — the
     /// paste DARKENS: the citation (provenance) survives, the content is withheld
@@ -348,6 +353,7 @@ fn resolve_paste(
             receipt,
             commitment,
             visible_affordances: affordance_names.len(),
+            declared_affordances: view.declared_affordance_count,
         },
         EmbedVisibility::Darkened => ResolveStatus::Darkened {
             receipt,
@@ -501,6 +507,7 @@ mod tests {
                 receipt,
                 commitment,
                 visible_affordances,
+                declared_affordances,
             } => {
                 // The cited receipt + content commitment are real (drawn from the
                 // verified finalized read), not blank.
@@ -510,6 +517,11 @@ mod tests {
                 assert_eq!(
                     *visible_affordances, 3,
                     "the editor sees the embed's content (view/comment/edit), not admin"
+                );
+                assert_eq!(
+                    *declared_affordances, 4,
+                    "…out of the FOUR the source declares (the denominator is carried, \
+                     not guessed)"
                 );
             }
             other => panic!("an authorized paste must resolve, got {other:?}"),

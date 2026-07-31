@@ -338,10 +338,14 @@ fn console_row(line: &str) -> AnyElement {
 }
 
 /// Parse a document line back to the `CellId` it transcludes, if any. The compose
-/// gesture writes `{transclude dregg://<64-hex> · <kind> · balance <b> · <life>}`
-/// (see [`DeosDesktop::transclude_into`]); this reverses the `dregg://<hex>` head so
-/// a transclusion becomes a STRUCTURED link the Links window can resolve to live
-/// faces + invert into a backlink. Returns `None` for any non-transclusion line.
+/// gesture writes a verified transclusion whose HEAD is the source's content-addressed
+/// `dregg://<64-hex>` origin, followed by the per-viewer resolution and the citation
+/// ([`crate::docuverse::transclusion_line`], reached via
+/// [`DeosDesktop::transclude_into`]); this reverses that head so a transclusion becomes
+/// a STRUCTURED link the Links window can resolve to live faces + invert into a
+/// backlink. Only the `dregg://<hex>` anchor is load-bearing here — the body after it
+/// is per-viewer and may say anything — so the two-way inversion is stable across
+/// readers. Returns `None` for any non-transclusion line.
 fn parse_transclusion_ref(line: &str) -> Option<CellId> {
     let after = line.split("dregg://").nth(1)?;
     // The hex id runs up to the first delimiter (space, middot, or closing brace).
@@ -1016,6 +1020,15 @@ pub struct DeosDesktop {
     /// chain on every repaint of the open walker window. Rebuilt only when the
     /// live chain grows.
     prov_walker_rows: RefCell<Option<ProvWalkerRowsCache>>,
+    /// **THE DOCUVERSE** — the desktop's `dregg://` origin surface
+    /// ([`crate::docuverse::Docuverse`]): a real `WebOfCells` whose origins are THIS
+    /// World's own cells, published through `WebOfCells::publish_as`. The compose
+    /// gesture ([`Self::transclude_into`]) resolves every transclusion through it — the
+    /// verified finalized read plus the per-viewer membrane projection — so a quote is
+    /// a receipt-pinned embed and an id the ledger does not hold is REFUSED rather than
+    /// interpolated into prose. Owned by the desktop (not per-window): the docuverse is
+    /// the image's addressing surface, and closing a document does not un-publish a cell.
+    docuverse: crate::docuverse::Docuverse,
 }
 
 /// The paint-time per-cell receipt index behind [`DeosDesktop::receipt_index`].
@@ -1209,6 +1222,7 @@ impl DeosDesktop {
             virtual_faces: virtual_face::VirtualFaceRegistry::default(),
             receipt_index: RefCell::new(ReceiptIndexCache::default()),
             prov_walker_rows: RefCell::new(None),
+            docuverse: crate::docuverse::Docuverse::new(),
         };
         // Re-open any windows the persisted layout remembers (spatial persistence
         // for windows, not just icons — and now for window TYPE too).
@@ -2418,20 +2432,52 @@ impl DeosDesktop {
         self.world.borrow_mut().set_cell_heap(&cell, heap)
     }
 
-    /// **COMPOSE — transclude a cell into a document.** Embed a provenanced reference
-    /// to `src`'s content (its id, kind, balance, lifecycle) as a line into the open
-    /// document on `into`. This is a genuine cross-cell compose: a receipted
-    /// `dregg_doc::Patch` lands on the document AND a verified `SetField` turn bumps
-    /// the document cell's revision (so the composed doc is real, receipted state).
+    /// **COMPOSE — transclude a cell into a document.** A REAL verified transclusion:
+    /// the source cell is published as a `dregg://` origin on the desktop's
+    /// [`crate::docuverse::Docuverse`], opened through the genuine finalized read
+    /// (`WholeCellTransclusion::embed` — content → commitment → receipt →
+    /// receipt-stream root → quorum), and projected through the viewing user's
+    /// [`Membrane`](starbridge_web_surface::rehydrate::Membrane) built from their real
+    /// c-list. Only then does a line reach the document — a receipted `dregg_doc::Patch`
+    /// on the host plus a verified `SetField` turn bumping its revision.
+    ///
+    /// **THE ANTI-FORGE TOOTH.** This used to `format!` four ledger fields — id · kind ·
+    /// balance · lifecycle — straight into the buffer, and a `format!` interpolates ANY
+    /// 32 bytes: an id naming no cell of this World rendered an ordinary-looking
+    /// `{transclude dregg://…}` line, and it also baked a balance snapshot that rotted
+    /// on the source's very next turn. Now an id the ledger does not hold is never
+    /// published, so there is no finalized read to open: the document is left EXACTLY
+    /// as it was, no patch, no turn, and the refusal is narrated
+    /// ([`crate::docuverse::TranscludeRefusal`]).
     fn transclude_into(&mut self, src: CellId, into: CellId) {
-        // The transclusion line — a live, provenanced quote of the source cell.
-        let line = format!(
-            "{{transclude dregg://{} · {} · balance {} · {}}}\n",
-            id_hex(&src),
-            self.cell_kind(&src),
-            fmt_balance(self.cell_balance(&src)),
-            self.cell_lifecycle(&src),
-        );
+        // (0) There must be an open document to compose INTO. Checked first so the
+        //     refusal below cannot be confused with "no document here".
+        if !self.windows.contains_key(&(into, WinKindTag::DocEditor)) {
+            self.say(format!(
+                "COMPOSE: no open Document on {} — Open as Document first.",
+                id_short(&into)
+            ));
+            return;
+        }
+
+        // (1) THE VERIFIED TRANSCLUSION. `world` is cloned as an `Rc` handle first so
+        //     the live ledger read and `&mut self.docuverse` are not two borrows of
+        //     `self` at once.
+        let world_handle = self.world.clone();
+        let outcome = {
+            let world = world_handle.borrow();
+            self.docuverse.transclude(&world, into, src, self.user)
+        };
+        let transclusion = match outcome {
+            Ok(t) => t,
+            Err(refusal) => {
+                // NOTHING is written: no buffer append, no patch, no heap commit, no
+                // revision turn. The document is byte-identical to what it was.
+                self.say(refusal.narration());
+                return;
+            }
+        };
+        let line = format!("{}\n", transclusion.line);
         let author = self.author;
         let mut committed = false;
         let mut graph = None;
@@ -2459,15 +2505,22 @@ impl DeosDesktop {
             // (this path has no `&mut Window` to push into `InputState` directly).
             self.doc_resync.insert(into);
             self.say(format!(
-                "COMPOSE: transcluded {} into doc {} → patch + umem heap_root {} (height {}).",
+                "COMPOSE: transcluded {} into doc {} [{}] citing receipt {} → patch + umem \
+                 heap_root {} (height {}).",
                 id_short(&src),
                 id_short(&into),
+                transclusion.status.badge(),
+                transclusion.status.receipt().unwrap_or("(none)"),
                 if ok { "committed" } else { "rejected" },
                 self.world.borrow().height()
             ));
         } else {
+            // The window key said DocEditor but its `WinKind` did not — an internal
+            // inconsistency, not "you forgot to open a document" (the (0) guard above
+            // already ruled that out). Say the true thing.
             self.say(format!(
-                "COMPOSE: no open Document on {} — Open as Document first.",
+                "COMPOSE: the window on {} is keyed as a Document but is not one — nothing \
+                 transcluded.",
                 id_short(&into)
             ));
         }
@@ -8412,11 +8465,21 @@ mod tests {
         CellId::from_bytes([b; 32])
     }
 
-    /// The exact line shape `transclude_into` composes (id · kind · balance · life).
+    /// The exact line shape `transclude_into` composes — built by the REAL renderer
+    /// ([`crate::docuverse::transclusion_line`]) over a real [`ResolveStatus`], not a
+    /// hand-typed imitation of it. So this is a genuine round-trip of two independent
+    /// functions (render, then parse); if the renderer ever stops emitting a parseable
+    /// `dregg://` anchor, the two-way link inversion below goes red HERE rather than
+    /// silently emptying the backlink graph.
     fn quote_line(target: &CellId) -> String {
-        format!(
-            "{{transclude dregg://{} · token · balance 500 · Live}}",
-            id_hex(target)
+        crate::docuverse::transclusion_line(
+            &starbridge_web_surface::web_of_cells::DreggUri::new(*target),
+            &crate::link_paste::ResolveStatus::Resolved {
+                receipt: "aabbccdd".to_string(),
+                commitment: "11223344".to_string(),
+                visible_affordances: 3,
+                declared_affordances: 4,
+            },
         )
     }
 

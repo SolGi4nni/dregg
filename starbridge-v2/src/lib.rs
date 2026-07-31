@@ -134,6 +134,15 @@ pub mod desktop_authoring;
 #[cfg(feature = "embedded-executor")]
 pub mod link_paste;
 
+// THE DESKTOP'S DOCUVERSE — the live World's cells published as `dregg://` origins
+// (`WebOfCells::publish_as`), so the desktop's transclude gesture resolves through the
+// REAL pipeline `link_paste` runs (verified finalized read → per-viewer membrane
+// projection) instead of interpolating four ledger fields into prose. Owns the
+// anti-forge tooth of the compose: an id the live ledger does not hold never becomes an
+// origin, so it can never be transcluded. gpui-free, `cargo test`-able.
+#[cfg(feature = "embedded-executor")]
+pub mod docuverse;
+
 // The DREGGVERSE navigation — "what links here", the verified per-viewer query on
 // the witness-graph. VENDORED byte-identical from the committed
 // `dregg_app_framework::dreggverse_map` (a thin pure navigation over the REAL
