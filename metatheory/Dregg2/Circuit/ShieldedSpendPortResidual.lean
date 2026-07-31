@@ -228,7 +228,16 @@ theorem emitted_nullifier_determined (hash : List ℤ → ℤ)
   have e2 := (spend_relation_row0 hash minit₂ mfin₂ maddrs₂ t₂ hne₂ hsat₂ hChip₂ hwire₂).2.1
   rw [e2, e1, hLeaf, hk0, hk1, hk2, hk3]
 
-/-- **⚑ THE #A COMPOSITION (`emitted_nullifier_double_spend_refused`).** The full double-spend closure:
+/-- **⚑ THE #A COMPOSITION (`emitted_nullifier_double_spend_refused`).**
+⚠ **SCOPE CORRECTION 2026-07-30 — read the hypotheses before citing this.** The line below reads
+"The full double-spend closure". It is NOT full, and the missing half is adversary-controlled:
+`hk0..hk3` ("SAME key") are HYPOTHESES, and `cKEY0..cKEY3` occur in `lkNullifier` and in NO other
+constraint of `shieldedSpendDesc` — nothing relates them to `cOWNER`, which likewise occurs only
+inside `lkLeafCommit`. A prover spending the same note under a different key therefore publishes a
+DIFFERENT nullifier, satisfies the AIR, and meets no accumulator member. What this theorem closes is
+REPLAY WITH THE SAME KEY. Closing double-spend needs an in-AIR key↔owner derivation
+(`owner = hash(key…)`, the Zcash `ivk`-shape binding) that no shielded descriptor in this tree emits.
+The full double-spend closure:
 the in-AIR nullifier binding (replay determinism) COMPOSED with the landed sorted-tree nullifier
 accumulator (`Exec.NullifierAccumulator`, 8-felt-keyed). Once a first satisfying spend of a note has
 committed its nullifier into the accumulator root `root`, a SECOND satisfying spend of the SAME note
