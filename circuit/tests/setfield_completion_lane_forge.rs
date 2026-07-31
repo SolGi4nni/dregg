@@ -357,10 +357,14 @@ fn honest_large_value_setfield_proves_on_the_deployed_member() {
         );
     }
     // The generator publishes the 7 freed lanes as PIs 46..=52, ahead of the 4 rc pins.
+    // ⚑ 57 → 58: the NINE-LANE epoch (`e662ade32`). DERIVED, not re-pinned to what the file says:
+    // the emitted descriptor carries pi_binding indices 46..=53 on columns [569..575, 614] — seven
+    // contiguous lanes plus the ninth at 614, which is `fieldLaneCol`'s documented NON-CONTIGUOUS
+    // shape. So the count is 46 prefix + 8 value8 + 4 rc.
     assert_eq!(
         h.dpis.len(),
-        57,
-        "the deployed setField member is 57 PIs (46 prefix + 7 value8 + 4 rc)"
+        58,
+        "the deployed setField member is 58 PIs (46 prefix + 8 value8 + 4 rc)"
     );
     let last = h.trace.last().expect("non-empty trace");
     for k in 0..7 {

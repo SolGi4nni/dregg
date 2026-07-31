@@ -169,12 +169,30 @@ fn honest_large_value_setfield_proves_under_value8() {
     );
 
     let desc = deployed_desc(SLOT);
+    // ⚑ 1692 → 1736, AND THE CLAIM ABOVE IS NOW FALSE BY DESIGN.
+    //
+    // This read "the VALUE8 weld adds no column — the deployed width is unmoved", which was true of
+    // the seven-lane VALUE8 epoch: those lanes rode completion columns that already existed. The
+    // NINE-LANE epoch (`e662ade32`) deliberately adds a column per slot — `fieldLaneCol` places slot
+    // j's ninth lane at `176 + j`, consuming the two free pads plus 178..183 — so the width MUST move.
+    //
+    // Kept as a LITERAL on purpose: the other side is a committed descriptor byte, so re-typing it each
+    // epoch IS the review. Verified against the emitted artifact rather than the failure message —
+    // every setField member in both registries reads `trace_width: 1736`, so this is a consistent
+    // emit, not a partial one.
     assert_eq!(
-        desc.trace_width, 1692,
-        "the VALUE8 weld adds no column — the deployed width is unmoved"
+        desc.trace_width, 1736,
+        "the NINE-LANE weld adds one column per slot — the deployed width moved 1692 → 1736"
     );
-    assert_eq!(desc.public_input_count, 57);
-    assert_eq!(dpis.len(), 57, "the generator publishes the value8 block");
+    // 57 → 58: the ninth lane publishes one more PI. `46 prefix + 8 value8 + 4 rc`, and the emitted
+    // descriptor carries pi_binding indices 46..=53 on columns [569..575, 614] — the seventh contiguous
+    // plus the ninth at 614, `fieldLaneCol`'s documented NON-CONTIGUOUS placement.
+    assert_eq!(desc.public_input_count, 58);
+    assert_eq!(
+        dpis.len(),
+        58,
+        "the generator publishes the value8 block AND the ninth lane"
+    );
 
     assert!(
         prove_verify(&desc, &trace, &dpis),
@@ -212,12 +230,12 @@ fn deployed_wide_member_accepts_the_honest_large_write() {
         )
         .expect("the LIVE wide producer must build a large-value setField leg");
     assert_eq!(
-        desc.public_input_count, 73,
-        "the deployed WIDE setField member is 46 prefix + 7 value8 + 4 rc + 16 wide anchors"
+        desc.public_input_count, 74,
+        "the deployed WIDE setField member is 46 prefix + 8 value8 + 4 rc + 16 wide anchors"
     );
     assert_eq!(
         dpis.len(),
-        73,
+        74,
         "the wide producer publishes the value8 block"
     );
     let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
