@@ -83,7 +83,8 @@ carried **inside the block's own binprot bytes**. That is a 255-bit equation aga
 party to this repo chose. Every one of the four traps above breaks it.
 
 ⚑ It also costs nothing to re-fetch, which is the point: `mina-account-opening.py --from-tip-creator`
-plus `mina-besttip.py --emit-protocol-state` reproduces the fixture from the live network.
+(a dev-only GraphQL fixture generator) plus `mina-tip besttip` (openmina's audited Rust p2p stack,
+`bridge/tools/mina-tip`) reproduces the fixture from the live network.
 
 ## The two pinned externals, and why they are pinned
 

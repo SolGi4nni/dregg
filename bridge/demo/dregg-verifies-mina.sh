@@ -66,11 +66,38 @@ CARGO_FLAGS=(--release -p dregg-bridge)
 # ===========================================================================
 say "0 · PREFLIGHT"
 
-command -v python3 >/dev/null || die "python3 is not on PATH"
-if python3 -c 'import cryptography' 2>/dev/null; then
-  pass "python3 $(python3 -c 'import platform;print(platform.python_version())') with cryptography $(python3 -c 'import cryptography;print(cryptography.__version__)')"
+# python3 is needed only for the OFFLINE state-hash transcription cross-check
+# (step 2 — an independent Poseidon re-derivation, not a p2p client). The p2p
+# BYTE SOURCE is no longer Python: it is bridge/tools/mina-tip, below.
+command -v python3 >/dev/null || die "python3 is not on PATH (step 2's offline crosscheck needs it)"
+pass "python3 $(python3 -c 'import platform;print(platform.python_version())')"
+
+# ⚑ THE BYTE SOURCE — bridge/tools/mina-tip. A small Rust bin that LINKS openmina
+# (`~/dev/mina-rust`), the audited Mina Rust stack the ecosystem runs, and emits
+# raw Protocol_state.Value binprot off `get_best_tip`/`get_transition_chain`. It
+# replaces the retired mina-besttip.py / mina-consecutive-pair.py Python
+# transport — the bytes now come off the SAME stack a real Mina node runs.
+MINA_TIP_DIR="$ROOT/bridge/tools/mina-tip"
+FIXTURES="$ROOT/bridge/tools/fixtures"
+MINA_TIP="${MINA_TIP:-}"
+if [ -z "$MINA_TIP" ]; then
+  for cand in "$MINA_TIP_DIR/target/release/mina-tip" "$MINA_TIP_DIR/target/debug/mina-tip"; do
+    [ -x "$cand" ] && MINA_TIP="$cand" && break
+  done
+fi
+if [ -n "$MINA_TIP" ]; then
+  pass "mina-tip present ($MINA_TIP) — bytes come off openmina's audited Rust p2p stack, not a Python transport"
+elif [ -d "$HOME/dev/mina-rust" ] && command -v cargo >/dev/null; then
+  echo "   mina-tip not built; building it against ~/dev/mina-rust (first run links openmina — a few minutes)…"
+  if ( cd "$MINA_TIP_DIR" && RUSTUP_TOOLCHAIN=1.92 timeout 2400 cargo build --release ) \
+       > "$LOGDIR/mina-tip-build.log" 2>&1; then
+    MINA_TIP="$MINA_TIP_DIR/target/release/mina-tip"
+    pass "built mina-tip ($MINA_TIP) — openmina-linked byte source"
+  else
+    blok "mina-tip did not build (see $LOGDIR/mina-tip-build.log). The LIVE fetch steps will BLOCK; the OFFLINE openmina gates still run."
+  fi
 else
-  die "python3 has no \`cryptography\` — the Noise XX handshake needs it. pip install cryptography"
+  blok "mina-tip binary absent and ~/dev/mina-rust or cargo unavailable. LIVE fetch steps will BLOCK."
 fi
 
 # The Lean archive is what the decode, the selection rule and the ratchet ARE.
@@ -94,13 +121,15 @@ say "1 · THE LIVE WIRE — a best tip off Mina devnet's peer-to-peer stack"
 TIP="$LOGDIR/tip.bin"
 if [ "$OFFLINE" = 1 ]; then
   blok "--offline: the live tip was not fetched"
-elif MINA_BESTTIP_OUTDIR="$LOGDIR" timeout 240 python3 "$TOOLS/mina-besttip.py" --emit-protocol-state \
-       > "$TIP" 2> "$LOGDIR/besttip.err"; then
+elif [ -z "$MINA_TIP" ]; then
+  blok "mina-tip is not available (see preflight); the live tip was not fetched"
+elif "$MINA_TIP" besttip --timeout 200 > "$TIP" 2> "$LOGDIR/besttip.err"; then
   SZ=$(wc -c < "$TIP" | tr -d ' ')
-  PEER=$(grep -o 'remote ed25519 identity=[0-9a-f]*' "$LOGDIR/besttip.err" | head -1 | cut -d= -f2)
-  pass "$SZ bytes of Protocol_state.Value from a live devnet seed (peer ${PEER:0:16}…)"
+  PEER=$(grep -o 'new connection [0-9A-Za-z]*' "$LOGDIR/besttip.err" | head -1 | awk '{print $3}')
+  BLK=$(grep -o 'block [0-9]*' "$LOGDIR/besttip.err" | head -1 | awk '{print $2}')
+  pass "$SZ bytes of Protocol_state.Value from a live devnet seed via openmina (peer ${PEER:0:16}…, block ${BLK:-?})"
 else
-  blok "the p2p fetch did not complete — devnet seeds may be unreachable from here. See $LOGDIR/besttip.err"
+  blok "the openmina p2p fetch did not complete — devnet seeds may be unreachable from here. See $LOGDIR/besttip.err"
 fi
 
 # ===========================================================================
@@ -119,29 +148,31 @@ else
 fi
 
 # ===========================================================================
-say "3 · THE LINK — the strongest gate available, and it takes no oracle"
-# `derive_state_hash(block N) == block N+1's previous_state_hash`, with BOTH
-# sides read off the daemon's own wire. Nothing is asked of any server: the
-# child block itself is the answer key.
-PAIRSRC="$ROOT/metatheory/Dregg2/Bridge/MinaStateHashRealBlock.lean"
-if [ "$LIVE_PAIR" = 1 ] && [ "$OFFLINE" = 0 ]; then
-  echo "   capturing a FRESH pair off the network (devnet blocks are ~3 min apart; up to 25 min)"
-  if timeout 1800 python3 "$TOOLS/mina-consecutive-pair.py" --out "$LOGDIR/pair.lean" \
-       > "$LOGDIR/pair.log" 2>&1; then
-    pass "$(grep -m1 'CONSECUTIVE PAIR' "$LOGDIR/pair.log" | sed 's/\[pair\] //')  — $(grep -m1 'python rendering says' "$LOGDIR/pair.log" | sed 's/.*says: //')"
+say "3 · THE LINK — derive_state_hash(N) == block N+1's previous_state_hash, and it takes no oracle"
+# BOTH sides come off the daemon's own wire via openmina; the child block itself
+# is the answer key. `mina-tip` decodes each Protocol_state.Value with openmina's
+# own binprot and re-derives the parent's state hash with openmina's Poseidon.
+# ⚑ The DEEP gate is Lean's — `Dregg2.Bridge.MinaStateHashRealBlock` proves the
+# ORDER of ~30 field elements — and step 4 runs the openmina pair through the
+# Lean binprot decoder + Samasika over the C ABI.
+if [ "$LIVE_PAIR" = 1 ] && [ "$OFFLINE" = 0 ] && [ -n "$MINA_TIP" ]; then
+  echo "   capturing a FRESH consecutive pair via openmina (get_best_tip + get_transition_chain)"
+  if "$MINA_TIP" pair --parent-out "$LOGDIR/pair-parent.bin" --child-out "$LOGDIR/pair-child.bin" \
+       --timeout 300 > "$LOGDIR/pair.log" 2>&1; then
+    pass "$(grep -m1 'consecutive=' "$LOGDIR/pair.log" | sed 's/mina-tip: //')  (fresh openmina capture)"
   else
-    blok "no consecutive pair within the budget — devnet block cadence. See $LOGDIR/pair.log"
+    blok "no consecutive pair within the budget — devnet block cadence, or seeds unreachable. See $LOGDIR/pair.log"
   fi
-elif [ -f "$PAIRSRC" ]; then
-  if timeout 600 python3 "$TOOLS/mina-consecutive-pair.py" --from-lean "$PAIRSRC" \
-       --out "$LOGDIR/pair-replay.lean" > "$LOGDIR/pair.log" 2>&1; then
-    pass "$(grep -m1 'CONSECUTIVE PAIR' "$LOGDIR/pair.log" | sed 's/\[pair\] //')  — $(grep -m1 'python rendering says' "$LOGDIR/pair.log" | sed 's/.*says: //')  (replayed from the captured pair; --live-pair captures a fresh one)"
+elif [ -f "$FIXTURES/mina-pair-parent.bin" ] && [ -f "$FIXTURES/mina-pair-child.bin" ] && [ -n "$MINA_TIP" ]; then
+  if "$MINA_TIP" verify-pair --parent "$FIXTURES/mina-pair-parent.bin" \
+       --child "$FIXTURES/mina-pair-child.bin" > "$LOGDIR/pair.log" 2>&1; then
+    pass "$(grep -m1 'CONSECUTIVE PAIR' "$LOGDIR/pair.log")  (openmina-captured fixture; --live-pair captures a fresh one)"
   else
-    fail "the captured pair did not re-derive — see $LOGDIR/pair.log"
+    fail "the openmina consecutive pair did not re-derive — see $LOGDIR/pair.log"
     tail -20 "$LOGDIR/pair.log"; summary; exit 1
   fi
 else
-  blok "no captured pair at $PAIRSRC and --live-pair not given"
+  blok "no openmina pair fixture in $FIXTURES, or mina-tip unavailable"
 fi
 
 # ===========================================================================
@@ -187,23 +218,33 @@ fi
 summary
 cat <<'EOF'
   ⚑ WHAT THIS DIRECTION ESTABLISHES:
-      bytes taken off Mina's own peer-to-peer stack decode under a Lean-verified
-      binprot decoder, hash to the state hash the NEXT block names as its parent,
-      and drive a chain-selection rule and a finalized-height ratchet that are
-      machine-checked theorems rather than a hand-written `select`.
+      bytes taken off Mina's own peer-to-peer stack — via openmina, the AUDITED
+      Rust implementation the ecosystem runs (bridge/tools/mina-tip) — decode
+      under a Lean-verified binprot decoder, hash to the state hash the NEXT
+      block names as its parent, and drive a chain-selection rule and a
+      finalized-height ratchet that are machine-checked theorems rather than a
+      hand-written `select`. Step 4 runs the LIVE openmina pair through the Lean
+      decoder + Samasika over the C ABI.
 
-  ⚑ AND WHAT IT DOES NOT:
-      * the opening check accepts an anchored SEGMENT — "this exhibited segment
-        is anchored, linked, canonical and k deep" — not "and it is the chain
-        the network selected". Two k-deep segments under different anchors are
-        indistinguishable to it; `mina_head` is the object that distinguishes
-        them, and it does not read `bestChain`.
-      * the p2p helper is TRUSTED FOR AVAILABILITY ONLY. Every byte it produces
-        goes through the Lean decoder's refusals; the worst a malicious helper
-        achieves is to be refused, or to withhold — and withholding is the one
-        thing no light client can be defended against.
-      * the helper is a small dependency-light Python client, not audited crypto
-        and not a production path. openmina is the maintained Rust
-        implementation of the same stack and is what to link when this leaves
-        `bridge/tools/`.
+  ⚑ THE ONE HONEST RESIDUAL, AND IT IS NOT TRANSMUTABLE:
+      the byte source is TRUSTED FOR AVAILABILITY ONLY. Every byte it produces
+      goes through the Lean decoder's refusals; the worst a malicious source
+      achieves is to be refused, or to withhold — and withholding is the one
+      thing no light client can be defended against, by ANY stack. This is a
+      fact of the model, not undone work, and openmina does not change it.
+
+  ⚑ A SCOPE NOTE (unchanged):
+      the opening check accepts an anchored SEGMENT — "this exhibited segment is
+      anchored, linked, canonical and k deep" — not "and it is the chain the
+      network selected". Two k-deep segments under different anchors are
+      indistinguishable to it; `mina_head` is the object that distinguishes them,
+      and it does not read `bestChain`.
+
+  ⚑ RETIRED: the "small dependency-light Python client, not audited crypto"
+      caveat. The p2p BYTE SOURCE is now openmina's Rust stack (mina-tip). The
+      only Python left is step 2's OFFLINE Poseidon transcription cross-check —
+      an independent tripwire, not a p2p client. (mina-account-opening.py, the
+      account+Merkle-opening FIXTURE generator, is a GraphQL dev tool, not a p2p
+      client and not on this demo's path; its openmina equivalent is a
+      snarked-ledger sync — the named remaining lift.)
 EOF

@@ -1,0 +1,5 @@
+# Stable 1.92 — the toolchain mina-rust pins (`~/dev/mina-rust/rust-toolchain.toml`).
+# This override keeps `mina-tip` OFF the breadstuffs rolling-nightly pin so the
+# openmina crates build with the toolchain they were written against.
+[toolchain]
+channel = "1.92"

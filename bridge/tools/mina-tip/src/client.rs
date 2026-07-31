@@ -1,0 +1,143 @@
+// Vendored from `~/dev/mina-rust/tools/bootstrap-sandbox/src/client.rs`.
+//
+// openmina's typed-RPC client loop is not exposed from a library crate — it
+// lives inside the `mina-bootstrap-sandbox` binary — so it is copied here
+// verbatim in substance. It drives the libp2p swarm event loop: on
+// `ConnectionEstablished` it opens an outgoing RPC stream, on `HandshakeDone`
+// it issues the query, and on the matching `Response` it binprot-decodes the
+// typed `M::Response` and returns it. Every byte still flows through openmina's
+// own transport, RPC framing and binprot decoders — this file just sequences a
+// single request/response.
+
+use libp2p::{futures::StreamExt, swarm::SwarmEvent, PeerId, Swarm};
+use libp2p_rpc_behaviour::{Event as RpcEvent, Received, StreamId};
+use mina_p2p_messages::{
+    binprot::BinProtRead,
+    rpc::GetBestTipV2,
+    rpc_kernel::{self, QueryHeader, ResponseHeader, ResponsePayload, RpcMethod},
+};
+
+use super::behaviour::{Behaviour, Event};
+
+use thiserror::Error;
+
+pub struct Client {
+    swarm: Swarm<Behaviour>,
+    peer: Option<PeerId>,
+    stream: Option<StreamId>,
+    id: u64,
+}
+
+#[derive(Debug, Error)]
+pub enum ClientError {
+    #[error("{0}")]
+    Binprot(#[from] mina_p2p_messages::binprot::Error),
+    #[error("peer returned an rpc-level error: {0:?}")]
+    InternalError(rpc_kernel::Error),
+    #[error("libp2p stopped working (swarm stream ended)")]
+    Libp2p,
+}
+
+impl Client {
+    pub fn new(swarm: Swarm<Behaviour>) -> Self {
+        Client {
+            swarm,
+            peer: None,
+            stream: None,
+            id: 1,
+        }
+    }
+
+    pub async fn rpc<M>(&mut self, query: M::Query) -> Result<M::Response, ClientError>
+    where
+        M: RpcMethod,
+    {
+        let mut query = Some(query);
+        if let (Some(peer_id), Some(stream_id)) = (self.peer, self.stream) {
+            if let Some(query) = query.take() {
+                self.swarm
+                    .behaviour_mut()
+                    .rpc
+                    .query::<M>(peer_id, stream_id, self.id, query)?;
+                self.id += 1;
+            }
+        }
+
+        loop {
+            match self.swarm.next().await.ok_or(ClientError::Libp2p)? {
+                SwarmEvent::Behaviour(Event::Rpc((peer_id, RpcEvent::ConnectionEstablished))) => {
+                    log::info!("new connection {peer_id}");
+
+                    self.peer = Some(peer_id);
+                    self.swarm.behaviour_mut().rpc.open(peer_id, 0);
+                }
+                SwarmEvent::Behaviour(Event::Rpc((peer_id, RpcEvent::ConnectionClosed))) => {
+                    log::info!("connection closed {peer_id}");
+                    if self.peer == Some(peer_id) {
+                        self.peer = None;
+                    }
+                }
+                SwarmEvent::Behaviour(Event::Rpc((
+                    peer_id,
+                    RpcEvent::Stream {
+                        stream_id,
+                        received,
+                    },
+                ))) => match received {
+                    Received::HandshakeDone => {
+                        log::info!("new stream {peer_id} {stream_id:?}");
+                        if self.stream.is_none() {
+                            self.stream = Some(stream_id);
+                        }
+
+                        if let (Some(peer_id), Some(stream_id)) = (self.peer, self.stream) {
+                            if let Some(query) = query.take() {
+                                self.swarm
+                                    .behaviour_mut()
+                                    .rpc
+                                    .query::<M>(peer_id, stream_id, self.id, query)?;
+                                self.id += 1;
+                            }
+                        }
+                    }
+                    Received::Menu(menu) => {
+                        log::info!("menu: {menu:?}");
+                    }
+                    Received::Query {
+                        header: QueryHeader { tag, version, id },
+                        bytes,
+                    } => {
+                        // A peer may ask US for its best tip; we hold none. Answer
+                        // `None` so the stream stays healthy, ignore everything else.
+                        if tag.to_string_lossy() == "get_best_tip" && version == 2 {
+                            let _ = bytes;
+                            let _ = self.swarm.behaviour_mut().rpc.respond::<GetBestTipV2>(
+                                peer_id,
+                                stream_id,
+                                id,
+                                Ok(None),
+                            );
+                        } else {
+                            log::warn!("unhandled inbound query: {tag} {version}");
+                        }
+                    }
+                    Received::Response {
+                        header: ResponseHeader { id },
+                        bytes,
+                    } => {
+                        if id + 1 == self.id {
+                            let mut bytes = bytes.as_slice();
+                            let response =
+                                ResponsePayload::<M::Response>::binprot_read(&mut bytes)?
+                                    .0
+                                    .map_err(ClientError::InternalError)?
+                                    .0;
+                            return Ok(response);
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+}

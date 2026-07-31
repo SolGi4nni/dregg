@@ -1,0 +1,72 @@
+# mina-tip — the openmina-linked byte source for dregg's Mina light client.
+#
+# This is the transmutation of `bridge/tools/mina-besttip.py` and
+# `bridge/tools/mina-consecutive-pair.py`: instead of a hand-written Python p2p
+# transport, the bytes now come off the SAME audited Rust stack the Mina
+# ecosystem runs — openmina (`~/dev/mina-rust`). It links openmina's transport,
+# p2p-messages and libp2p-rpc-behaviour crates by path and issues real RPCs
+# (`get_best_tip` v2, `get_transition_chain` v2) against a live devnet seed,
+# then writes the raw binprot `Protocol_state.Value` bytes the Lean decoder
+# consumes. The Lean decoder and the fork-choice rule are UNCHANGED — only the
+# source of the bytes moves from Python to the maintained Rust node.
+#
+# ⚑ STANDALONE WORKSPACE ON PURPOSE. This crate is NOT a member of the
+# breadstuffs workspace (which pins a rolling nightly toolchain) and NOT a
+# member of the mina-rust workspace (codex's tree). It carries its own
+# `[workspace]` table and its own `rust-toolchain.toml` (stable 1.92, matching
+# mina-rust's pin) so it builds the openmina crates with the toolchain they
+# expect, in ITS OWN target dir, without disturbing either tree.
+
+[package]
+name = "mina-tip"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "mina-tip"
+path = "src/main.rs"
+
+[dependencies]
+# openmina crates, by path into the sibling checkout (`~/dev/mina-rust`).
+# `mina-p2p-messages` re-exports the exact `binprot` used to (de)serialize the
+# wire types, so we take BinProtWrite from there rather than pinning it twice.
+mina-p2p-messages = { path = "../../../../mina-rust/crates/p2p-messages" }
+mina-transport = { path = "../../../../mina-rust/tools/transport" }
+libp2p-rpc-behaviour = { path = "../../../../mina-rust/crates/p2p/libp2p-rpc-behaviour" }
+
+# The custom libp2p fork openmina pins. The rev MUST match mina-rust's
+# workspace pin, or the `Swarm<Behaviour>` types will not line up.
+libp2p = { git = "https://github.com/o1-labs/rust-libp2p", rev = "e88cec09bd2554f4cc79ff90f200e4c864adf495", default-features = false, features = [
+  "tokio",
+  "noise",
+  "pnet",
+  "tcp",
+  "yamux",
+  "dns",
+  "gossipsub",
+  "identify",
+  "macros",
+] }
+
+# ⚑ RESOLUTION PIN, not a used dependency. `ark-ff-macros` floats num-bigint to
+# crates.io 0.4.8 while the [patch] fork is 0.4.6; two versions make ark-ff's
+# `From<BigInt<4>>` impl target the wrong `BigUint`. Pinning `=0.4.6` intersects
+# every requirement onto the patched fork, exactly as mina-rust's lock does.
+num-bigint = "=0.4.6"
+
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+log = "0.4"
+env_logger = "0.11"
+thiserror = "1"
+
+[workspace]
+
+# ⚑ MUST MIRROR mina-rust's workspace patches (`~/dev/mina-rust/Cargo.toml`).
+# openmina globally swaps num-bigint/num-rational for on-stack const-generic
+# forks; `mina-p2p-messages`' `bigint.rs` relies on the fork's
+# `From<ark_ff::BigInt<4>>`. Without these, crates.io num-bigint 0.4.x leaks in
+# and the trait impl does not resolve.
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

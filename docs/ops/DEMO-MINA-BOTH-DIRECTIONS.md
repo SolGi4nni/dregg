@@ -115,16 +115,20 @@ bridge/demo/dregg-verifies-mina.sh --offline     # no network at all
 ```
 
 `--live-pair` waits for two tips whose `blockchain_length` differ by exactly 1.
-Devnet blocks are ~3 minutes apart, so **expect 1–2 polls plus a wait**. Without
-it the step replays the already-captured pair, which exercises the same
-derivation over the same real bytes and takes seconds. The default is the replay
-because a 25-minute wait in the middle of a demonstration is not a
-demonstration.
+Devnet blocks are ~3 minutes apart, so **expect a short wait** while
+`mina-tip pair` fetches a tip and then its parent (`get_best_tip` +
+`get_transition_chain`). Without `--live-pair` the step verifies the committed
+openmina pair fixture (`bridge/tools/fixtures/mina-pair-{parent,child}.bin`)
+offline with `mina-tip verify-pair`, which decodes both protocol states with
+openmina's binprot and re-derives the parent hash with openmina's Poseidon —
+seconds. The default is the offline verify because a multi-minute wait in the
+middle of a demonstration is not a demonstration.
 
-⚠ Run the capture through the script, not by hand: `mina-consecutive-pair.py`'s
-default `--out` **overwrites a tracked Lean source file**
-(`metatheory/Dregg2/Bridge/MinaStateHashRealBlock.lean`). The script points it at
-its own log directory.
+⚑ As of 2026-07-31 the byte source is `bridge/tools/mina-tip`, which LINKS
+openmina's audited Rust stack; the Python p2p helpers (mina-besttip.py,
+mina-consecutive-pair.py) were retired. The DEEP order-gate remains Lean's
+(`metatheory/Dregg2/Bridge/MinaStateHashRealBlock.lean`), and step 4 runs the
+live openmina pair through the Lean binprot decoder + Samasika over the C ABI.
 
 ### 1.3 The measured transcript (local, 2026-07-30)
 

@@ -107,21 +107,23 @@ pub trait MinaProtocolStateSource {
 
 /// A source that runs an external helper and takes its stdout as the bytes.
 ///
-/// The helper speaks Mina's peer-to-peer stack. `bridge/tools/mina-besttip.py --emit-protocol-state`
-/// is the one this was built against and the one measured: it connects to a devnet seed, negotiates
-/// pnet / Noise XX / yamux / `coda/rpcs/0.0.1`, issues `get_best_tip` v2, and writes the response
-/// payload from the Option tag onward to stdout.
+/// The helper speaks Mina's peer-to-peer stack. `bridge/tools/mina-tip besttip` is the one this is
+/// built against and the one measured: it LINKS openmina (`~/dev/mina-rust`) — the maintained Rust
+/// implementation of the Mina protocol the ecosystem runs — negotiates pnet / Noise XX / yamux /
+/// `coda/rpcs/0.0.1`, issues `get_best_tip` v2, and writes the tip's raw `Protocol_state.Value`
+/// binprot to stdout.
 ///
-/// ⚑ That helper is a small dependency-light Python client, NOT audited crypto and NOT the
-/// production path. openmina (`~/dev/mina-rust`) is a complete, maintained Rust implementation of
-/// the same stack and is what to link when this leaves `tools/`. Naming the real thing here rather
-/// than implying a Rust helper exists: it does not.
+/// ⚑ The byte source is now the AUDITED Rust stack, not a hand-written transport. `mina-tip`
+/// depends on openmina's `mina-transport`, `mina-p2p-messages` and `libp2p-rpc-behaviour` crates by
+/// path and calls their real RPC client; it reimplements no protocol. (The retired
+/// `mina-besttip.py` was a small dependency-light Python transport — correct, but not audited and
+/// not a production path.)
 ///
-/// ⚑ The helper is TRUSTED FOR AVAILABILITY ONLY, not for content. It cannot make the client accept
-/// a chain: every byte it produces goes through the Lean decoder's canonicality, bound and
-/// carried-constants refusals and then through `select`. The worst a malicious helper achieves is
-/// to be refused, or to withhold — and withholding is the one thing no light client can be
-/// defended against by any means.
+/// ⚑ The source is TRUSTED FOR AVAILABILITY ONLY, not for content — and that fact is not
+/// transmutable, because no light client can be defended against a withholding peer. It cannot make
+/// the client accept a chain: every byte it produces goes through the Lean decoder's canonicality,
+/// bound and carried-constants refusals and then through `select`. The worst a malicious source
+/// achieves is to be refused, or to withhold.
 #[derive(Clone, Debug)]
 pub struct CommandProtocolStateSource {
     /// The helper binary.
@@ -588,7 +590,7 @@ mod tests {
         let mut h = head();
         let before = h.clone();
         let src = CommandProtocolStateSource {
-            program: PathBuf::from("/nonexistent/mina-besttip"),
+            program: PathBuf::from("/nonexistent/mina-tip"),
             args: vec![],
         };
         let g = ScriptedGate {
@@ -622,5 +624,63 @@ mod tests {
     fn an_unverified_segment_is_sent_as_sg_zero() {
         let w = head_advance_wire(false, 100, "1", "2", &[0x01], &[0x02]);
         assert!(w.starts_with("sg=0;"), "{w}");
+    }
+
+    /// ⚑ THE LIVE openmina PAIR, THROUGH THE LEAN BINPROT DECODER + SAMASIKA, OVER THE C ABI.
+    ///
+    /// This is the measured half of the byte-source transmutation. `bridge/tools/mina-tip` — which
+    /// LINKS openmina's audited Rust p2p stack (`~/dev/mina-rust`) instead of a hand-written Python
+    /// transport — captured a GENUINE consecutive devnet pair, 540478 → 540479, off `get_best_tip`
+    /// v2 and `get_transition_chain` v2. Those exact bytes go here through `dregg_mina_better_tip`,
+    /// which DECODES each `Protocol_state.Value` IN LEAN (`Dregg2.Bridge.MinaBinprot`) and runs
+    /// Samasika `select`. A non-`ERR` verdict is proof the verified decoder read openmina's bytes;
+    /// the one-block-longer child must be taken, the reverse presentation must not (`select_asymm`),
+    /// and a tip must not displace itself (`select_irrefl`). REGENERATE the fixtures with
+    /// `mina-tip pair --parent-out … --child-out …`.
+    ///
+    /// UNGATED like its sibling `mina_fork_choice_decides_on_real_devnet_bytes_through_the_real_ffi`:
+    /// archive-absence routes through `demand_lean` (which PANICS under `DREGG_TEST_REQUIRE_LEAN=1`)
+    /// rather than the test silently ceasing to check anything.
+    #[test]
+    fn the_live_openmina_pair_decodes_and_selects_through_the_real_lean_gate() {
+        use dregg_lean_ffi::MinaForkChoiceVerdict;
+        if !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::mina_better_tip_available(),
+            "dregg_mina_better_tip on the openmina-captured devnet pair",
+        ) {
+            return;
+        }
+        // Captured by `mina-tip` off openmina's stack; the same bytes `mina-tip verify-pair` checks.
+        let parent = include_bytes!("../tools/fixtures/mina-pair-parent.bin").to_vec();
+        let child = include_bytes!("../tools/fixtures/mina-pair-child.bin").to_vec();
+        assert_eq!(
+            parent.len(),
+            1544,
+            "openmina parent fixture is not the 1544-byte protocol state"
+        );
+        assert_eq!(
+            child.len(),
+            1544,
+            "openmina child fixture is not the 1544-byte protocol state"
+        );
+
+        // A tip does not displace itself (select_irrefl) — decode succeeds, select says no.
+        assert_eq!(
+            dregg_lean_ffi::verified_mina_better_tip("1", "1", &parent, &parent),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "a tip must not displace itself"
+        );
+        // The one-block-longer child (540479) decodes under Lean and wins select over 540478.
+        assert_eq!(
+            dregg_lean_ffi::verified_mina_better_tip("1", "2", &parent, &child),
+            Ok(MinaForkChoiceVerdict::TakeCandidate),
+            "the live openmina child must decode under the Lean binprot decoder and win select"
+        );
+        // Reverse presentation must not also win (select_asymm).
+        assert_eq!(
+            dregg_lean_ffi::verified_mina_better_tip("2", "1", &child, &parent),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "presentation order must not make both sides win"
+        );
     }
 }

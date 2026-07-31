@@ -3,6 +3,19 @@
 `mina-account-opening` — fetch a REAL Mina devnet account together with its
 ledger Merkle opening, and the ledger hash that opening must reach.
 
+⚑ DEV-ONLY FIXTURE GENERATOR — NOT A P2P CLIENT, NOT ON ANY DEMO PATH.
+This is a GraphQL client (it POSTs to a daemon's `/graphql` endpoint; see
+DEFAULT_ENDPOINT below), NOT a peer-to-peer client, and it is invoked by no demo
+or script — its ONLY job is to regenerate the committed opening fixture
+(`metatheory/fixtures/pickles-extractors/mina_devnet_block.json` and friends)
+that `cargo run --example mina_opening_check` consumes. The two p2p helpers it
+used to sit beside (mina-besttip.py, mina-consecutive-pair.py) were retired
+2026-07-31 in favour of `bridge/tools/mina-tip`, which LINKS openmina's audited
+Rust stack. openmina's p2p EQUIVALENT of this tool is an `answer_sync_ledger_query`
+snarked-ledger sync plus a `mina-tree` Merkle-path reconstruction — a real but
+heavier lift, left named rather than done, because this tool is GraphQL and
+off-path. Kept dev-only, not deleted, so the fixture can still be regenerated.
+
 This is the byte source behind `Dregg2.Bridge.MinaAccountOpening` and the
 `dregg_mina_account_state_ok` FFI gate. It is an I/O CLIENT and it decides
 NOTHING: it does not hash an account, it does not fold a path, and it cannot

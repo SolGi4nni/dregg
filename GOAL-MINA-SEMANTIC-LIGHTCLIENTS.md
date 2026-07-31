@@ -1414,6 +1414,63 @@ diffed for run-to-run determinism, VK diffed serial-vs-rayon, mutation-different
 Rayon stays on ONLY if deterministic + VK-unchanged, or if a single locatable site is fixed. **The
 guard I wrote fired; the work is to investigate it, not label it.**
 
+## ⚑ openmina LINKED — the "small Python client" caveat RETIRED, not re-labelled (2026-07-31)
+Transmutation of the caveat I had been reciting as honesty ("the p2p helper is a small Python client,
+not audited crypto — openmina is what to link for production"). ember's cut was right: that was
+undone work, not a law of nature. DONE for the two p2p helpers.
+
+**What shipped.** `bridge/tools/mina-tip` — a small Rust bin that LINKS openmina (`~/dev/mina-rust`,
+the maintained Rust Mina node) by path (`mina-transport`, `mina-p2p-messages`, `libp2p-rpc-behaviour`)
+and issues REAL RPCs against a live devnet seed. It reimplements no protocol — it vendors openmina's
+own `Client` loop and calls `client.rpc::<GetBestTipV2>` / `GetTransitionChainV2`. Standalone
+workspace on stable 1.92 (openmina's pin), NOT a breadstuffs nightly member. Three subcommands:
+- `besttip` → raw `Protocol_state.Value` binprot on stdout — the exact `CommandProtocolStateSource`
+  contract. **MEASURED**: connected to two devnet seeds over pnet/Noise-XX/yamux/coda-rpc,
+  `get_best_tip` v2, block **540479**, **1544 bytes** emitted — the size the Lean decoder consumes.
+- `pair` → `get_best_tip` + `get_transition_chain(previous_state_hash)` = a genuine consecutive pair.
+  **MEASURED**: 540478 → 540479, openmina's OWN Poseidon confirms `consecutive=true linked=true`.
+- `verify-pair` → OFFLINE openmina decode + Poseidon link check. **MEASURED**: positive exit 0 AND
+  refutable (swapped pair → exit 1) — a real gate, not vacuous.
+
+**The Lean decoder / selection rule are UNCHANGED — only the source of the bytes moved.** Added a
+measured Lean-decode: `bridge/src/mina_head.rs::the_live_openmina_pair_decodes_and_selects_through_the_real_lean_gate`
+runs the committed openmina pair through `dregg_mina_better_tip` over the C ABI (Lean's `MinaBinprot`
+decodes each protocol state, Samasika `select` picks the longer child, `select_asymm`/`select_irrefl`
+checked). It COMPILES and the 11 mock fork-choice tests pass (**11/11**); the new test is a fail-closed
+`demand_lean` gate like its sibling `mina_fork_choice_decides_on_real_devnet_bytes_through_the_real_ffi`.
+
+**⚠ NOT YET MEASURED GREEN, and I will not dress that up.** That test needs a coherent current-source
+Lean archive exporting `dregg_mina_better_tip`. The on-disk SEED (2026-07-25) predates the Samasika
+gate (`nm`: zero `dregg_mina_*` exports), and the source rebuild is BLOCKED by a **sibling's**
+in-progress `Dregg2/Exec/Handlers/Authority.lean` (` M`, `sorryAx` + type mismatches → `lake build`
+red). That same breakage blocks the OLD Python demo's steps 4/5 identically — it is not this
+transmutation's regression, and per doctrine I did NOT touch the sibling's Lean. The demo's
+openmina-specific steps are what I could measure: step 1 (besttip, 1544 B), step 2 (offline crosscheck,
+`state_hash(540186)` reproduced), step 3 (verify-pair, CONSECUTIVE PAIR 540478→540479) — all green.
+
+**Demo sourced from openmina.** `bridge/demo/dregg-verifies-mina.sh`: preflight resolves/builds
+`mina-tip` (release built, 6.7 MB); step 1 fetches via `mina-tip besttip`; step 3 verifies the
+openmina pair (`mina-tip pair` live / `mina-tip verify-pair` offline over
+`bridge/tools/fixtures/mina-pair-{parent,child}.bin`); step 4 runs the openmina pair through the Lean
+gate. Footer retires the "small Python client" caveat and DISTINGUISHES the permanent, non-transmutable
+availability-only fact.
+
+**DELETED** (greenfield, prefer removing the old shape): `mina-besttip.py`, `mina-consecutive-pair.py`.
+
+**KEPT / DISTINGUISHED:** the availability-only fact ("withholding is undefendable by any light client")
+is a FACT OF THE MODEL, not transmutable, and openmina does not change it. `mina-state-hash-crosscheck.py`
+is an OFFLINE Poseidon transcription tripwire (step 2), not a p2p client — kept.
+
+**RESIDUAL, named not deferred:** `mina-account-opening.py` is a GraphQL FIXTURE generator (not p2p,
+not on the demo path — step 5 reads a committed fixture). openmina's p2p equivalent is an
+`answer_sync_ledger_query` snarked-ledger sync + `mina-tree` Merkle-path reconstruction — a real,
+heavier lift. Marked dev-only in its header, not deleted, so the opening fixture can still be regenerated.
+
+**Build notes (paid for):** getting the standalone graph to resolve required (a) seeding the lockfile
+from mina-rust's (snow floated to an API-incompatible HEAD), (b) mirroring mina-rust's `[patch.crates-io]`
+num-bigint/num-rational forks, and (c) pinning `num-bigint = "=0.4.6"` so ark-ff's num-bigint did not
+split into a second (0.4.8) version that broke `From<ark_ff::BigInt<4>>`.
+
 ## ⚑ DE-VACUUM: the framing was wrong, and the correction is the value (NOT build-verified — honest)
 "1 of 32, rest mechanical" was imprecise. Ground-truth (lane + 3 sub-agents): the apex is vacuous at
 BabyBear via **TWO independent refuted floors**, and the hash weld is only one:
