@@ -274,13 +274,13 @@ export type TwinState = Map<number, bigint>;
  *  ~30, so a wrong convention would compile and prove cleanly for as far as any
  *  affordable run reaches. */
 export type TwinCheck = {
-  kind: 'inputRoot' | 'ro' | 'fold' | 'final' | 'preSealZeta' | 'preSealChal';
+  kind: 'inputRoot' | 'ro' | 'fold' | 'final' | 'commitRoot' | 'preSealZeta' | 'preSealChal';
   q: number;
   round?: number;
   h?: number;
   i?: number;
   got: bigint[];
-  /** For the preamble seal: the committed value `got` must equal. */
+  /** For the preamble seal and `commitRoot`: the committed value `got` must equal. */
   want?: bigint[];
 };
 
@@ -529,6 +529,19 @@ export function walkTwin(
         break;
       }
       case 'cpRoot':
+        //  ⚑ THE COMMIT-PHASE ROOT BINDING — the circuit asserts it (`runSegments`
+        //  `cpRoot`: `cur == laneFri(ft.commit[r])`) but the twin only ever pushed the
+        //  `fold` cross-check here, so the reconstructed Merkle root was never compared
+        //  against the committed one out of circuit. Without it a bent commit-phase
+        //  sibling that still folds correctly, or a bent commit root, is invisible to a
+        //  twin-only verdict. `got` is the reconstructed root, `want` the committed one.
+        checks.push({
+          kind: 'commitRoot',
+          q: s.q,
+          i: s.r,
+          got: extOf(st, S.cur),
+          want: real.commits[s.r].map((x) => BigInt(x)),
+        });
         if (!rollAt(s.r)) checks.push({ kind: 'fold', q: s.q, i: s.r, got: extOf(st, S.folded) });
         break;
       case 'cpFold': {
