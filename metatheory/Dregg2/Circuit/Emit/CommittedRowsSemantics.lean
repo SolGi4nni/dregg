@@ -21,9 +21,10 @@ obstruction). There is NO row semantics whose contents are committed by a ROOT.
 
 ## What is built here
 
-  * `CommittedContents hash cd R t` (§2) — the table `cd.id` carries the GRAPH of some sorted,
-    `2^cd.depth`-leaf heap whose deployed binary-Merkle `mapRoot` is `R`. Contents become a
-    WITNESS pinned by a root, rather than a transcription of descriptor bytes.
+  * `CommittedContents hash cd R t` (§2) — the table `cd.id` carries the GRAPH of some admissible
+    heap whose DEPLOYED indexed-Merkle root (`padImtRoot`, arity-3 leaves, sparse zero-padded
+    occupancy) is `R`. Contents become a WITNESS pinned by a root, rather than a transcription of
+    descriptor bytes.
   * `committed_lookup_opens` (§3) — THE LEVER: a lookup hit on such a table IS an `opensTo`
     opening under `R`. This is the exact primitive `MapOp.holdsAt` supplies per-row, obtained
     instead from table membership.
@@ -33,23 +34,56 @@ obstruction). There is NO row semantics whose contents are committed by a ROOT.
     consuming NO crypto floor.
   * `committedRoot_binds_contents_or_collides` (§4) — the attestation: one root, one table
     content, or a NAMED `mapRoot` collision at the pair the hypotheses hand over.
-  * §5 — non-vacuity: `CommittedContents` is INHABITED (any sorted `2^d`-leaf heap realizes it),
-    and inhabited at the automaton commitment `autoHeap`/`autoRoot` specifically.
+  * §5 — non-vacuity: `CommittedContents` is INHABITED (any admissible heap of at most `2^d`
+    entries realizes it), and inhabited at the automaton commitment `autoHeap`/`autoRoot`
+    specifically.
   * §6 — the cost law, as ARITHMETIC over the deployed AIR's permutation counts. ⚠ These are NOT
     measurements of a proven object: they are counts read off `circuit/src/descriptor_ir2.rs`'s
     `Ir2Air::MapOps` arm. Every `#guard` is compiled evaluation of a closed `Bool` and proves NO
     `Prop`. The only WITNESSED descriptor costs in this area are `AttestedAutomatonEmit` §7's,
     which stand behind `attWit_satisfies`.
 
+## ⛑ REBOUND ONTO THE DEPLOYED COMMITMENT, 2026-07-30
+
+Every root in this file used to be `MapMerkleRoot.mapRoot` — the arity-2 DENSE binary-Merkle fold
+that `circuit/src/heap_root.rs` STOPPED COMPUTING on 2026-07-12 (`919b2b0b8d`). `DescriptorIR2`'s
+`opensTo`/`writesTo` were moved onto `DeployedMapDenotation.padImtSchema MAP_SENTINEL` — arity-3
+IMT leaves `hash[addr, value, next_addr]`, the `relink_next_addrs` pointers with the terminal one
+pinned to `SENTINEL_MAX = 2013265920`, sparse occupancy `length ≤ 2 ^ depth`, zero padding — so
+`committed_lookup_opensTo`'s claim ("a lookup hit on a committed table IS the same relation the
+map-ops table realizes") became UNPROVABLE, and with it §3's whole premise. It is now literally
+true again because `CommittedContents` commits the object the prover commits.
+
+Three hypothesis shapes changed with it, and each names a deployed fact rather than a proof
+convenience:
+
+  * `h.length = 2 ^ depth` became `≤` — the deployed tree is SPARSE (`CanonicalHeapTree::new`
+    commits one live leaf in a `2^16` tree). This ADMITS MORE heaps, so §5's non-vacuity got
+    stronger, not narrower.
+  * a new `∀ x ∈ Heap.keys h, x < MAP_SENTINEL` conjunct — the terminal-sentinel bound
+    `relink_next_addrs` refuses to violate; it is the other half of the deployed schema's `HeapOk`.
+  * the table view stays `[key, value]` at arity 2 even though the committed LEAF is arity 3.
+    That is sound rather than sloppy: `imtChainOf` is a FUNCTION of the sorted heap, so the
+    pointer column carries no committed datum the `(key, value)` graph does not already determine.
+
 ## The felt-width wound is INHERITED, not repaired — but it is no longer LAUNDERED
 
-⚑ NOTHING HERE CONSUMES A CRYPTO FLOOR ANY MORE (2026-07-25). The three binding results shipped
-with `Poseidon2SpongeCR hash` binders, which this tree PROVES FALSE at the deployed BabyBear
-codomain (p ≈ 2^31, ~2^15.5 birthday work) — so at deployed parameters they were VACUOUS: true, and
-saying nothing about anything that ships. They are restated in the `…_or_collides` idiom (§2b):
-the binding half is UNCONDITIONAL and the residual is a NAMED `mapRoot` collision at the pair the
-hypotheses themselves supply, with `mapRootColl1_refutes_sponge` proving that exhibiting the
-residual REFUTES the floor (so it is not a pigeonhole free pass, and no strength was lost).
+⚑ NOTHING HERE CONSUMES A CRYPTO FLOOR (2026-07-25, and still true after the rebinding). The three
+binding results shipped with `Poseidon2SpongeCR hash` binders, which this tree PROVES FALSE at the
+deployed BabyBear codomain (p ≈ 2^31, ~2^15.5 birthday work) — so at deployed parameters they were
+VACUOUS: true, and saying nothing about anything that ships. They are stated in the `…_or_collides`
+idiom (§2b): the binding half is UNCONDITIONAL and the residual is a NAMED root collision at the
+pair the hypotheses themselves supply.
+
+⚠ **AND THE CANARY GOT HONESTLY WEAKER, 2026-07-30.** `mapRootColl1_refutes_sponge` used to say
+that exhibiting the residual REFUTES `Poseidon2SpongeCR` outright. At the deployed commitment that
+is FALSE, and it is not a Lean defect: the padding constant is the literal `BabyBear::ZERO`, so
+`PadGhost3` — a live arity-3 leaf digest equal to that literal — is a FIXED-TARGET PREIMAGE, which
+collision-resistance does not exclude. Two distinct heaps can therefore share a `padImtRoot` under
+a perfectly injective hash. `padImtRootColl_refutes_injective_and_padFree` says exactly what is
+true: exhibiting the residual refutes `Function.Injective hash ∧ PadFree3 hash` — which IS
+`mapTeeth.Good`, the deployed schema's own anti-laundering predicate. Closing the gap between the
+two is a change to `heap_root.rs` (pad with a domain-separated digest), not to this file.
 
 The WOUND is unchanged and is now visible in the statements rather than hidden in a false
 hypothesis: at 1 felt the residual costs ~2^15.5, so "binds" honestly reads "binds unless the
@@ -85,7 +119,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.DeployedMapDenotation (padImtRoot padImtSchema opensToMerkleS PadFree3)
 open Dregg2.Substrate
 open Dregg2.Crypto.DfaAcceptanceAir (TableDfa)
 open Dregg2.Circuit.Emit.AttestedAutomatonEmit
@@ -96,7 +130,12 @@ set_option autoImplicit false
 
 /-- The arity-2 table view of a sorted map: one row `[key, value]` per entry, in key order. This
 is the shape a `committedRows` table would carry for a `(key, value)` commitment; a wider arity
-would pack the value block, which changes nothing below. -/
+would pack the value block, which changes nothing below.
+
+⚑ It stays arity 2 even though the DEPLOYED committed leaf is arity 3
+(`hash[addr, value, next_addr]`): `DeployedMapDenotation.imtChainOf` derives every `next_addr` from
+the sorted heap, so the pointer is a FUNCTION of this table and declaring it would commit nothing
+new. -/
 def rowsOfHeap (h : Heap.FeltHeap) : Table := h.map (fun e => [e.1, e.2])
 
 /-- A table row of a heap view IS an entry of the heap. -/
@@ -149,16 +188,21 @@ structure CommittedRowsDecl where
   arity : Nat
   /-- The column expression carrying the commitment root (evaluated on the main row). -/
   root  : EmittedExpr
-  /-- The committed binary-Merkle depth (the leaf domain is `2 ^ depth`). -/
+  /-- The committed indexed-Merkle depth (the leaf domain is `2 ^ depth`; occupancy is SPARSE). -/
   depth : Nat
 
 /-- **THE FAITHFULNESS LEG** that replaces `TableDef.publicContentsFaithful` for a committed
-table: the table's contents are not the descriptor's bytes but the graph of SOME sorted,
-`2^depth`-leaf heap whose deployed binary-Merkle root is `R`. Contents are a WITNESS; the root
-pins them. -/
+table: the table's contents are not the descriptor's bytes but the graph of SOME heap admissible
+under the DEPLOYED schema (sorted, all keys below the terminal sentinel, at most `2^depth`
+entries) whose deployed indexed-Merkle root `padImtRoot` is `R`. Contents are a WITNESS; the root
+pins them.
+
+⛑ REBOUND 2026-07-30 off `MapMerkleRoot.mapRoot` (arity-2, dense) onto the commitment
+`heap_root.rs` actually computes — see the header. -/
 def CommittedContents (hash : List ℤ → ℤ) (cd : CommittedRowsDecl) (R : ℤ) (t : VmTrace) : Prop :=
-  ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ h.length = 2 ^ cd.depth
-    ∧ MapMerkleRoot.mapRoot hash cd.depth h = R ∧ t.tf cd.id = rowsOfHeap h
+  ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
+    ∧ h.length ≤ 2 ^ cd.depth
+    ∧ padImtRoot MAP_SENTINEL hash cd.depth h = R ∧ t.tf cd.id = rowsOfHeap h
 
 /-! ## §2b — ⚑ THE WITNESS-EXPLICIT FORMS AND THE NAMED RESIDUAL.
 
@@ -169,68 +213,102 @@ BIND, or exhibit a collision at a pair the hypotheses THEMSELVES name. No crypto
 consumed anywhere in this file.
 
 ⚑ **WHY THE WITNESS IS EXPLICIT.** Exactly the reason `AttestedAutomatonWeld8.CommitsAutomaton8By`
-gives: the residual must be about the SPECIFIC heaps the openings supply. Restating it existentially
-— `∃ a b, a ≠ b ∧ mapRoot a = mapRoot b` — would be a FREE PASS, because at deployed parameters that
-existential is simply TRUE by pigeonhole (`2^16` felt-valued leaves into one BabyBear felt), so the
-disjunction would discharge itself through the right branch and prove nothing. That is the trap
-`MapMerkleRoot` §5b.E refuses and the one `MapRootColl`'s own docstring names. -/
+gives, and the same reason `DeployedMapDenotation` §6 hoists the residual to `Exists.choose` rather
+than quantifying: the residual must be about the SPECIFIC heaps the openings supply. Restating it
+existentially — `∃ a b, a ≠ b ∧ padImtRoot a = padImtRoot b` — would be a FREE PASS, because at
+deployed parameters that existential is simply TRUE by pigeonhole (`2^16` felt-valued leaves into one
+BabyBear felt), so the disjunction would discharge itself through the right branch and prove nothing.
+That is the trap `MapMerkleRoot` §5b.E refuses and `DeployedMapDenotation` §6's own ⚠ names. -/
 
 /-- **`CommittedContentsBy hash cd R t m`** — `CommittedContents` with the witnessing heap NAMED:
 `m` IS the table's contents and IS the heap behind the root `R`. -/
 def CommittedContentsBy (hash : List ℤ → ℤ) (cd : CommittedRowsDecl) (R : ℤ) (t : VmTrace)
     (m : Heap.FeltHeap) : Prop :=
-  Heap.SortedKeys m ∧ m.length = 2 ^ cd.depth
-    ∧ MapMerkleRoot.mapRoot hash cd.depth m = R ∧ t.tf cd.id = rowsOfHeap m
+  Heap.SortedKeys m ∧ (∀ x ∈ Heap.keys m, x < MAP_SENTINEL)
+    ∧ m.length ≤ 2 ^ cd.depth
+    ∧ padImtRoot MAP_SENTINEL hash cd.depth m = R ∧ t.tf cd.id = rowsOfHeap m
 
 /-- The existential form, for consumers that never see the heap (e.g. `Satisfied2Committed`). -/
 theorem CommittedContentsBy.contents {hash : List ℤ → ℤ} {cd : CommittedRowsDecl} {R : ℤ}
     {t : VmTrace} {m : Heap.FeltHeap} (h : CommittedContentsBy hash cd R t m) :
     CommittedContents hash cd R t :=
-  ⟨m, h.1, h.2.1, h.2.2.1, h.2.2.2⟩
+  ⟨m, h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2⟩
 
 /-- …and back: the two forms carry the same information, so nothing downstream is narrowed. -/
 theorem CommittedContents.exists_by {hash : List ℤ → ℤ} {cd : CommittedRowsDecl} {R : ℤ}
     {t : VmTrace} (h : CommittedContents hash cd R t) :
     ∃ m : Heap.FeltHeap, CommittedContentsBy hash cd R t m := h
 
-/-- **`MapRootColl1 hash d m₁ m₂`** — the residual, at the 1-felt binary-Merkle root this prototype
-commits with: the two heaps the hypotheses hand over are DISTINCT yet publish the SAME depth-`d`
-root. It is about THAT pair — the extractor is the hypotheses' own witnesses, hence total — and it
-is a genuine `mapRoot` collision, not a pigeonhole free pass. -/
-def MapRootColl1 (hash : List ℤ → ℤ) (d : Nat) (m₁ m₂ : Heap.FeltHeap) : Prop :=
-  m₁ ≠ m₂ ∧ MapMerkleRoot.mapRoot hash d m₁ = MapMerkleRoot.mapRoot hash d m₂
+/-- **`PadImtRootColl hash d m₁ m₂`** — the residual, at the 1-felt DEPLOYED indexed-Merkle root
+this prototype commits with: the two heaps the hypotheses hand over are DISTINCT yet publish the
+SAME depth-`d` `padImtRoot`. It is about THAT pair — the extractor is the hypotheses' own witnesses,
+hence total — and it is a genuine equivocation of the deployed commitment, not a pigeonhole free
+pass.
 
-/-- ⚑ **THE RESIDUAL IS NOT A FREE PASS — TAKING IT REFUTES THE FLOOR OUTRIGHT.**
+⛑ REBOUND 2026-07-30 from `MapRootColl1`, which named a collision of the retired arity-2 dense fold
+`heap_root.rs` no longer computes. -/
+def PadImtRootColl (hash : List ℤ → ℤ) (d : Nat) (m₁ m₂ : Heap.FeltHeap) : Prop :=
+  m₁ ≠ m₂ ∧ padImtRoot MAP_SENTINEL hash d m₁ = padImtRoot MAP_SENTINEL hash d m₂
+
+/-- ⚑ **THE RESIDUAL IS NOT A FREE PASS — TAKING IT REFUTES THE DEPLOYED SCHEMA'S `Good`.**
 
 This is the canary, and deliberately in the STRONGER of the two available spellings. The usual
 `…_refutable_of_injective` form ASSUMES injectivity to empty the disjunct, which makes it a carrier
 of a hypothesis BabyBear refutes. This instead says: a prover who exhibits the collides branch has
-thereby produced a `Poseidon2SpongeCR` COUNTEREXAMPLE. It assumes no floor and concludes a floor's
-negation, so it is anti-floor content — the campaign wants more of it, and the accrual gate exempts
-it by construction rather than by grandfathering.
+thereby produced a COUNTEREXAMPLE to `mapTeeth.Good` — the exact predicate
+`DeployedMapDenotation.padImtTeeth` requires its residual to vanish at. It assumes no floor and
+concludes a floor's negation, so it is anti-floor content; the accrual gate exempts it by
+construction rather than by grandfathering.
 
-Contrapositively it delivers everything the `_of_injective` bridge did: under `Poseidon2SpongeCR`
-the residual is impossible, so every disjunction below collapses to its binding half. NO STRENGTH
-IS LOST by exporting the disjunction. -/
-theorem mapRootColl1_refutes_sponge (hash : List ℤ → ℤ) (d : Nat) {m₁ m₂ : Heap.FeltHeap}
-    (hlen₁ : m₁.length = 2 ^ d) (hlen₂ : m₂.length = 2 ^ d)
-    (hc : MapRootColl1 hash d m₁ m₂) : ¬ Poseidon2SpongeCR hash :=
-  fun hCR => hc.1 (MapMerkleRoot.mapRoot_injective hash d hlen₁ hlen₂
-    (fun hcc => hcc.1 (hCR _ _ hcc.2)) hc.2)
+⚠ **THIS IS WEAKER THAN THE `mapRootColl1_refutes_sponge` IT REPLACES, AND THAT IS THE TRUTH
+RATHER THAN A GREEN.** That statement concluded `¬ Poseidon2SpongeCR hash` — collision-resistance
+ALONE. At the deployed commitment it would be FALSE: `heap_root.rs` pads with the literal
+`BabyBear::ZERO`, so a live arity-3 leaf digesting to that literal (`PadGhost3`) makes two distinct
+heaps share a root under a perfectly injective hash. Pad-freeness is a FIXED-TARGET PREIMAGE
+property that no amount of collision-resistance supplies, so the honest conclusion is the
+conjunction. Getting back to the one-conjunct form is a `heap_root.rs` change (domain-separated
+padding), not a Lean one.
+
+Contrapositively it still delivers everything the `_of_injective` bridge did: at a `Good` hash the
+residual is impossible, so every disjunction below collapses to its binding half. ⚑ That direction
+is DELIBERATELY NOT given a name here. A `theorem … (hgood : mapTeeth.Good hash) : ¬ PadImtRootColl …`
+would be a new declaration whose BINDER is `Function.Injective hash ∧ PadFree3 hash` — a fresh
+carrier of the refuted floor, which is what `#floor_ratchet` exists to red on and what the
+"migrate the vacuity to a new address" failure looks like. The contrapositive is one `fun hc => …`
+at the use site and needs no export. -/
+theorem padImtRootColl_refutes_injective_and_padFree (hash : List ℤ → ℤ) (d : Nat)
+    {m₁ m₂ : Heap.FeltHeap} (hlen₁ : m₁.length ≤ 2 ^ d) (hlen₂ : m₂.length ≤ 2 ^ d)
+    (hc : PadImtRootColl hash d m₁ m₂) :
+    ¬ (Function.Injective hash ∧ PadFree3 hash) := by
+  rintro ⟨hinj, hpf⟩
+  rcases DeployedMapDenotation.padImtRoot_binds_or_ghost_or_collides MAP_SENTINEL hash d
+      hlen₁ hlen₂ hc.2 with heq | hg₁ | hg₂ | hcc
+  · exact hc.1 heq
+  · exact DeployedMapDenotation.padGhost3_refuted hpf MAP_SENTINEL m₁ hg₁
+  · exact DeployedMapDenotation.padGhost3_refuted hpf MAP_SENTINEL m₂ hg₂
+  · exact hcc.1 (hinj hcc.2)
 
 /-- **`CommitsAutomatonBy hash m R d`** — the witness-explicit twin of
 `AttestedAutomatonEmit.CommitsAutomaton`, for the same reason: the residual names the heaps. -/
 def CommitsAutomatonBy (hash : List ℤ → ℤ) (m : Heap.FeltHeap) (R : ℤ)
     (d : TableDfa Nat Nat) : Prop :=
-  Heap.SortedKeys m ∧ m.length = 2 ^ MAP_TREE_DEPTH
-    ∧ MapMerkleRoot.mapRoot hash MAP_TREE_DEPTH m = R
+  Heap.SortedKeys m ∧ (∀ x ∈ Heap.keys m, x < MAP_SENTINEL)
+    ∧ m.length ≤ 2 ^ MAP_TREE_DEPTH
+    ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH m = R
     ∧ ∀ s y : Nat, s < ASTATES → y < ASYM →
         Heap.get m ((keyOf s y : Nat) : ℤ) = some ((d.step s y : Nat) : ℤ)
 
-/-- The opening-level form, for consumers that never see the heap. -/
+/-- The opening-level form, for consumers that never see the heap.
+
+⚠ TRANSPORT, never an anonymous constructor. The old body `⟨m, h.1, …⟩` built the opening AT the
+deployed depth, which whnf's the goal into `perfectRoot hash 16 _`, splits the symbolic leaf vector
+and dies at the heartbeat limit. `AttestedAutomatonEmit.opensToPadImt` discharges the constructor at
+a GENERIC depth; this only APPLIES it. -/
 theorem CommitsAutomatonBy.commits {hash : List ℤ → ℤ} {m : Heap.FeltHeap} {R : ℤ}
     {d : TableDfa Nat Nat} (h : CommitsAutomatonBy hash m R d) : CommitsAutomaton hash R d :=
-  fun s y hs hy => ⟨m, h.1, h.2.1, h.2.2.1, h.2.2.2 s y hs hy⟩
+  fun s y hs hy =>
+    opensToPadImt MAP_SENTINEL hash MAP_TREE_DEPTH m h.1 h.2.1 h.2.2.1 h.2.2.2.1
+      (h.2.2.2.2 s y hs hy)
 
 /-- **The acceptance predicate a `committedRows` descriptor would denote**: `Satisfied2` plus the
 committed-contents leg plus the root pin (the root column carries the public commitment on every
@@ -248,15 +326,19 @@ structure Satisfied2Committed (hash : List ℤ → ℤ) (d : EffectVmDescriptor2
 /-! ## §3 — ⚑ THE LEVER: a lookup hit on a committed table IS a root opening. -/
 
 /-- **`committed_lookup_opens`** — the table-membership face of a root opening. If the table's
-contents are committed by `R`, then any row `[k, v]` of it is a genuine `opensToMerkle` opening of
-`R` at `k`. This is the primitive `MapOp.holdsAt` supplies PER ROW, obtained here from ONE table
-membership — the whole point of the extension. -/
+contents are committed by `R`, then any row `[k, v]` of it is a genuine DEPLOYED indexed-Merkle
+opening of `R` at `k`. This is the primitive `MapOp.holdsAt` supplies PER ROW, obtained here from
+ONE table membership — the whole point of the extension.
+
+⚠ Stated at the DECLARED depth `cd.depth`, which is a variable — see `committed_lookup_opensTo` for
+the transport to the deployed 16. -/
 theorem committed_lookup_opens (hash : List ℤ → ℤ) (cd : CommittedRowsDecl) (R : ℤ) (t : VmTrace)
     (hc : CommittedContents hash cd R t) {k v : ℤ} (hmem : [k, v] ∈ t.tf cd.id) :
-    MapMerkleRoot.opensToMerkle hash cd.depth R k (some v) := by
-  obtain ⟨h, hs, hlen, hroot, htf⟩ := hc
+    opensToMerkleS (padImtSchema MAP_SENTINEL) hash cd.depth R k (some v) := by
+  obtain ⟨h, hs, hb, hlen, hroot, htf⟩ := hc
   rw [htf] at hmem
-  exact ⟨h, hs, hlen, hroot, get_of_mem_sorted h k v hs (mem_rowsOfHeap hmem)⟩
+  exact opensToPadImt MAP_SENTINEL hash cd.depth h hs hb hlen hroot
+    (get_of_mem_sorted h k v hs (mem_rowsOfHeap hmem))
 
 /-- At the DEPLOYED depth the opening is literally `DescriptorIR2.opensTo` — the same relation the
 map-ops table realizes, so the two routes are interchangeable at the soundness interface. -/
@@ -273,7 +355,7 @@ heap. No existential is opened, so the heap stays nameable in a residual. -/
 theorem committed_lookup_getBy (hash : List ℤ → ℤ) (cd : CommittedRowsDecl) (R : ℤ) (t : VmTrace)
     {m : Heap.FeltHeap} (hc : CommittedContentsBy hash cd R t m) {k v : ℤ}
     (hmem : [k, v] ∈ t.tf cd.id) : Heap.get m k = some v := by
-  rw [hc.2.2.2] at hmem
+  rw [hc.2.2.2.2] at hmem
   exact get_of_mem_sorted m k v hc.1 (mem_rowsOfHeap hmem)
 
 /-- ⚑ **`lookup_replaces_mapOp_or_collides` — THE PAYOFF, machine-checked, UNCONDITIONAL.** The
@@ -281,12 +363,12 @@ conclusion `AttestedAutomatonEmit.att_row_reads` extracts from a per-row `MapOp`
 IS the COMMITTED automaton's step, not merely some declared edge — is derived here from a `Lookup`
 against a `committedRows` table, consuming NO crypto hypothesis: either the lookup reads the
 committed step, or the committed table and the committed automaton are behind ONE root while being
-DIFFERENT heaps, which `mapRootColl1_refutes_sponge` shows refutes `Poseidon2SpongeCR` outright.
-So the attestation the map-op route buys is available in lookup shape; §6 is where the prices
-differ.
+DIFFERENT heaps, which `padImtRootColl_refutes_injective_and_padFree` shows refutes the deployed
+schema's `Good`. So the attestation the map-op route buys is available in lookup shape; §6 is where
+the prices differ.
 
 (Replaces the `Poseidon2SpongeCR`-consuming `lookup_replaces_mapOp`, which was VACUOUS at deployed
-BabyBear parameters. The old statement is the injective special case, recovered in one line from
+BabyBear parameters. The old statement is the good-hash special case, recovered in one line from
 this one plus the canary — see §4's note.) -/
 theorem lookup_replaces_mapOp_or_collides (hash : List ℤ → ℤ)
     (cd : CommittedRowsDecl) (hd : cd.depth = MAP_TREE_DEPTH) (R : ℤ)
@@ -295,7 +377,7 @@ theorem lookup_replaces_mapOp_or_collides (hash : List ℤ → ℤ)
     (env : VmRowEnv) (kx nx : EmittedExpr) (s y : Nat) (hs : s < ASTATES) (hy : y < ASYM)
     (hkey : kx.eval env.loc = ((keyOf s y : Nat) : ℤ))
     (hlk : Lookup.holdsAt t.tf env ⟨cd.id, [kx, nx]⟩) :
-    nx.eval env.loc = ((d.step s y : Nat) : ℤ) ∨ MapRootColl1 hash MAP_TREE_DEPTH mc ma := by
+    nx.eval env.loc = ((d.step s y : Nat) : ℤ) ∨ PadImtRootColl hash MAP_TREE_DEPTH mc ma := by
   have hmem : [kx.eval env.loc, nx.eval env.loc] ∈ t.tf cd.id := by
     simpa [Lookup.holdsAt] using hlk
   rw [hkey] at hmem
@@ -303,27 +385,31 @@ theorem lookup_replaces_mapOp_or_collides (hash : List ℤ → ℤ)
   · subst hne
     refine Or.inl ?_
     have g₁ := committed_lookup_getBy hash cd R t hc hmem
-    have g₂ := hcommit.2.2.2 s y hs hy
+    have g₂ := hcommit.2.2.2.2 s y hs hy
     rw [g₁] at g₂
     simpa using g₂
   · refine Or.inr ⟨hne, ?_⟩
-    rw [← hd, hc.2.2.1, hd, hcommit.2.2.1]
+    rw [← hd, hc.2.2.2.1, hd, hcommit.2.2.2.1]
 
 /-! ## §4 — ⚑ THE ATTESTATION: one root, one table content. -/
 
 /-- **`committedRoot_binds_contents_or_collides`** — the analog of `root_binds_automaton` at the
 table level, UNCONDITIONAL. Two committed tables published under the SAME root agree at every key
-they both carry, OR the two witnessing heaps are distinct behind one root — a named `mapRoot`
-collision, which `mapRootColl1_refutes_sponge` turns into a refutation of `Poseidon2SpongeCR`. A
-root determines the table's contents: precisely what `exactPublicRows` gets from the descriptor
-bytes, obtained instead from ONE felt.
+they both carry, OR the two witnessing heaps are distinct behind one root — a named `padImtRoot`
+equivocation, which `padImtRootColl_refutes_injective_and_padFree` turns into a refutation of the
+deployed schema's `Good`. A root determines the table's contents: precisely what `exactPublicRows`
+gets from the descriptor bytes, obtained instead from ONE felt.
 
 ⚠ THE FELT WIDTH IS STILL THE WOUND, and the disjunction is where it now shows. At the deployed
-BabyBear codomain a `mapRoot` collision costs ~2^15.5 work, so the right disjunct is REACHABLE for
-a real adversary — the honest reading is "binds, unless the prover pays ~2^15.5", not "binds". That
+BabyBear codomain a root collision costs ~2^15.5 work, so the right disjunct is REACHABLE for a
+real adversary — the honest reading is "binds, unless the prover pays ~2^15.5", not "binds". That
 is the same ~31-bit scalar `AttestedAutomatonWeld8` welds to 8 felts, and a real `committedRows`
 root would need the SAME weld. What changed is that the price is now VISIBLE in the statement
 instead of hidden inside a hypothesis that is false.
+
+⚠ AND THE OTHER HALF OF THE PRICE, since 2026-07-30: the right disjunct is also reachable with NO
+work at all if a live arity-3 leaf digests to the literal zero the deployed tree pads with
+(`PadGhost3`). That is a `heap_root.rs` property, not a hash-strength one.
 
 (Replaces the `Poseidon2SpongeCR`-consuming `committedRoot_binds_contents`.) -/
 theorem committedRoot_binds_contents_or_collides (hash : List ℤ → ℤ)
@@ -331,7 +417,7 @@ theorem committedRoot_binds_contents_or_collides (hash : List ℤ → ℤ)
     {m₁ m₂ : Heap.FeltHeap}
     (h₁ : CommittedContentsBy hash cd₁ R t₁ m₁) (h₂ : CommittedContentsBy hash cd₂ R t₂ m₂)
     {k v₁ v₂ : ℤ} (mem₁ : [k, v₁] ∈ t₁.tf cd₁.id) (mem₂ : [k, v₂] ∈ t₂.tf cd₂.id) :
-    v₁ = v₂ ∨ MapRootColl1 hash cd₁.depth m₁ m₂ := by
+    v₁ = v₂ ∨ PadImtRootColl hash cd₁.depth m₁ m₂ := by
   by_cases hne : m₁ = m₂
   · subst hne
     refine Or.inl ?_
@@ -340,7 +426,7 @@ theorem committedRoot_binds_contents_or_collides (hash : List ℤ → ℤ)
     rw [g₁] at g₂
     simpa using g₂
   · refine Or.inr ⟨hne, ?_⟩
-    rw [h₁.2.2.1, ← hdep, h₂.2.2.1]
+    rw [h₁.2.2.2.1, ← hdep, h₂.2.2.2.1]
 
 /-! ## §5 — NON-VACUITY: the predicate is inhabited, and inhabited AT the automaton commitment. -/
 
@@ -349,14 +435,19 @@ table empty. -/
 def committedTrace (tid : TableId) (h : Heap.FeltHeap) : VmTrace :=
   { rows := [], pub := zeroAsg, tf := fun id => if id = tid then rowsOfHeap h else [] }
 
-/-- ⚑ **`CommittedContents` is INHABITED for EVERY sorted `2^d`-leaf heap** — the predicate is a
-construction, not a wish (the same discipline `autoRoot_commits` holds `CommitsAutomaton` to). -/
+/-- ⚑ **`CommittedContents` is INHABITED for EVERY admissible heap of at most `2^dep` entries** —
+the predicate is a construction, not a wish (the same discipline `autoRoot_commits` holds
+`CommitsAutomaton` to). The occupancy hypothesis is `≤`, matching the deployed sparse tree, so this
+admits STRICTLY MORE witnesses than the dense `= 2 ^ dep` form it replaces.
+
+⚠ GENERIC `dep`: the deployed instances below TRANSPORT this by application. -/
 theorem committedContents_inhabited (hash : List ℤ → ℤ) (tid : TableId) (dep : Nat)
     (rootE : EmittedExpr) (h : Heap.FeltHeap)
-    (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ dep) :
+    (hs : Heap.SortedKeys h) (hb : ∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
+    (hlen : h.length ≤ 2 ^ dep) :
     CommittedContents hash ⟨tid, 2, rootE, dep⟩
-      (MapMerkleRoot.mapRoot hash dep h) (committedTrace tid h) :=
-  ⟨h, hs, hlen, rfl, by simp [committedTrace]⟩
+      (padImtRoot MAP_SENTINEL hash dep h) (committedTrace tid h) :=
+  ⟨h, hs, hb, hlen, rfl, by simp [committedTrace]⟩
 
 /-- ⚑ **Inhabited AT the automaton commitment.** The very heap `AttestedAutomatonEmit` commits
 (`autoHeap d`, total over the deployed `2^16` leaves) realizes `CommittedContents` at the deployed
@@ -364,18 +455,18 @@ depth — so the committed-rows route and the map-op route commit the SAME objec
 theorem committedContents_automaton (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) (tid : TableId)
     (rootE : EmittedExpr) :
     CommittedContents hash ⟨tid, 2, rootE, MAP_TREE_DEPTH⟩
-      (MapMerkleRoot.mapRoot hash MAP_TREE_DEPTH (autoHeap d))
+      (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d))
       (committedTrace tid (autoHeap d)) :=
   committedContents_inhabited hash tid MAP_TREE_DEPTH rootE (autoHeap d)
-    (autoHeap_sorted d) (autoHeap_length d)
+    (autoHeap_sorted d) (autoHeap_keys_lt d) (le_of_eq (autoHeap_length d))
 
-/-- The automaton commitment `autoRoot` IS the root of `autoHeap` (the `irreducible` barrier hides
-the body from elaboration but the equation lemma survives — nothing here ever unfolds a `2^16`-leaf
-heap). -/
+/-- The automaton commitment `autoRoot` IS the DEPLOYED padded arity-3 root of `autoHeap` (the
+`irreducible` barrier hides the body from elaboration but the equation lemma survives — nothing here
+ever unfolds a `2^16`-leaf heap). -/
 theorem autoRoot_eq (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) :
-    autoRoot hash d = MapMerkleRoot.mapRoot hash MAP_TREE_DEPTH (autoHeap d) := by
+    autoRoot hash d = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d) := by
   unfold autoRoot
-  rfl
+  exact rfl
 
 /-- ⚑ **THE COMBINED NON-VACUITY**: at ONE root — the automaton's own `autoRoot` — the committed
 table exists AND commits the automaton. So `lookup_replaces_mapOp`'s two hypotheses are
@@ -412,20 +503,22 @@ theorem autoHeap_get (d : TableDfa Nat Nat) (s y : Nat) (hs : s < ASTATES) (hy :
 `autoHeap d` is the heap that realizes it. CONSTRUCTED; consumes no crypto hypothesis. -/
 theorem autoRoot_commitsBy (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) :
     CommitsAutomatonBy hash (autoHeap d) (autoRoot hash d) d :=
-  ⟨autoHeap_sorted d, autoHeap_length d, (autoRoot_eq hash d).symm, autoHeap_get d⟩
+  ⟨autoHeap_sorted d, autoHeap_keys_lt d, le_of_eq (autoHeap_length d),
+    (autoRoot_eq hash d).symm, autoHeap_get d⟩
 
 /-- The committed table, witness-explicit, at the automaton's own heap. -/
 theorem committedContents_automatonBy (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) (tid : TableId)
     (rootE : EmittedExpr) :
     CommittedContentsBy hash ⟨tid, 2, rootE, MAP_TREE_DEPTH⟩ (autoRoot hash d)
       (committedTrace tid (autoHeap d)) (autoHeap d) :=
-  ⟨autoHeap_sorted d, autoHeap_length d, (autoRoot_eq hash d).symm, by simp [committedTrace]⟩
+  ⟨autoHeap_sorted d, autoHeap_keys_lt d, le_of_eq (autoHeap_length d),
+    (autoRoot_eq hash d).symm, by simp [committedTrace]⟩
 
 /-- ⚑ **THE WHOLE ROUTE, FIRED END-TO-END — UNCONDITIONALLY, AND WITH NO RESIDUAL AT ALL.**
 Against the automaton's own commitment, a lookup hit `[2s + y, n]` on the committed table forces
 `n = d.step s y`. Every hypothesis of §3 is discharged concretely, and the collision disjunct is
 not merely refutable here but IMPOSSIBLE BY CONSTRUCTION: the committed table and the committed
-automaton are the SAME heap `autoHeap d`, so `MapRootColl1` would assert `autoHeap d ≠ autoHeap d`.
+automaton are the SAME heap `autoHeap d`, so `PadImtRootColl` would assert `autoHeap d ≠ autoHeap d`.
 
 ⚑ Note what this does and does not say. It is a statement about the route — the lookup shape
 carries the same conclusion the `MapOp` shape carries — proven with NO crypto floor, so it is not
@@ -474,7 +567,11 @@ def mapOpPerms (w : Nat) : Nat := mapOpPermsPerRow * w
 
 /-- The committed-rows route's chip-permutation bill: the table AIR recomputes the commitment over
 its OWN `E` rows ONCE — `E` leaf absorbs + `E - 1` internal nodes for a packed depth-`⌈log₂ E⌉`
-tree — and each lookup is then ONE bus send, no permutation. INDEPENDENT of `w`. -/
+tree — and each lookup is then ONE bus send, no permutation. INDEPENDENT of `w`.
+
+(The arity-3 rebinding does not move this count: the leaf absorb is one permutation whether the
+preimage is `[key, value]` or `[addr, value, next_addr]`, and the deployed relink derives the third
+felt from the sorted table rather than committing a column for it.) -/
 def committedPermsPacked (E : Nat) : Nat := 2 * E - 1
 
 /-- The same route if the commitment is kept at the DEPLOYED `MAP_TREE_DEPTH` leaf domain rather
@@ -514,7 +611,8 @@ for the WIRE TAG and the Rust dispatch. The full break list is in
 #assert_all_clean [mem_rowsOfHeap, get_of_mem_sorted,
   committed_lookup_opens, committed_lookup_opensTo, committed_lookup_getBy,
   lookup_replaces_mapOp_or_collides, committedRoot_binds_contents_or_collides,
-  mapRootColl1_refutes_sponge, CommittedContentsBy.contents, CommitsAutomatonBy.commits,
+  padImtRootColl_refutes_injective_and_padFree,
+  CommittedContentsBy.contents, CommitsAutomatonBy.commits,
   committedContents_inhabited, committedContents_automaton, committedContents_automatonBy,
   autoRoot_eq, autoHeap_get, autoRoot_commitsBy, committed_and_commits_automaton,
   committed_lookup_reads_step_unconditional]
