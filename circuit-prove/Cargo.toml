@@ -18,6 +18,7 @@ dregg-cell = { path = "../cell" }
 # pull — the prove/verify partition that keeps `cargo tree -p dregg-circuit` free
 # of the recursion prover.
 p3-field = { workspace = true }
+p3-maybe-rayon = { workspace = true }  # force rayon on (parallel feature)
 p3-baby-bear = { workspace = true }
 # p3-bn254 + p3-poseidon2: the BN254 scalar field, Poseidon2Bn254, and the
 # ExternalLayerConstants constructor — used ONLY by the outer "shrink" config

@@ -298,6 +298,12 @@ p3-dft = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0
 p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-fri = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-lookup = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+# ⚑ REAL PARALLELISM. Measured 2026-07-31: p3-maybe-rayon resolved with `default` only,
+# so every par_* in p3-dft/merkle/fri/uni-stark was the SERIAL fallback (finding was
+# quoted and left undone). Enabling `parallel` here forces rayon on across the whole
+# resolve by feature unification. Deterministic (par over independent chunks) — the
+# bit-exact CPU-parity discipline is the guard; the proof/VK must stay byte-identical.
+p3-maybe-rayon = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec", features = ["parallel"] }
 p3-matrix = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-mds = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
 p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
