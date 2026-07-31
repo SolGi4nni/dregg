@@ -142,6 +142,15 @@
     .verdict .body { color: var(--fg-dim); font-size: 1rem; max-width: 48ch; margin: 0 auto; }
     .verdict .body b { color: var(--accent-bright); }
     .verdict.fail .headline { color: var(--warm); }
+    /* ⚑ THE THIRD STATE: a real check, run by the party under test, reported back. Not the
+       green pass this used to wear, not a failure. The scope note is part of the verdict,
+       not a footnote under it — it is the sentence that decides what the result is worth. */
+    .verdict.consistent .mark { color: var(--warm); }
+    .verdict.consistent .headline { color: var(--warm); }
+    .verdict-scope { margin: var(--s3) auto 0; max-width: 52ch; font-size: 0.88rem; line-height: 1.6;
+      color: var(--fg-muted); text-align: left; border-left: 2px solid var(--warm);
+      padding: 0.5rem 0 0.5rem 0.85rem; }
+    .verdict-scope b { color: var(--warm); }
     .nerd { margin-top: var(--s4); font-size: 0.85rem; }
     .nerd summary { cursor: pointer; color: var(--fg-muted); }
     .nerd summary:hover { color: var(--accent-bright); }
@@ -430,9 +439,30 @@
   }
 
   // ── STEP 3 · the payoff, in plain terms ──────────────────────────────────
+  //
+  // ⚑ MEASURED 2026-07-30, AND THE COPY BELOW USED TO BE FALSE. This function makes
+  // three HTTP requests to the SANDBOX HOST — `/verify`, `/verify?r2`, `/attest` — and
+  // reads the STATUS CODES. Nothing is checked in this tab. `/attest` is fetched and
+  // its signature is never opened; only its byte count was shown, captioned "the
+  // signed record you can keep". And over two 200s the page printed:
+  //
+  //     "You just verified this yourself, and the computer running the agent
+  //      couldn't have lied to you even if it wanted to."
+  //
+  // Both halves of that sentence are wrong in the same way: YOU verified nothing —
+  // the host did, and reported its own answer — and a host that wanted to lie returns
+  // 200 twice. This is the campaign's exact class, in the most damaging form it takes,
+  // because a stranger reads it and acts on it.
+  //
+  // The check is REAL SERVER-SIDE (the platform runs the R0/R2 rungs; see
+  // `agent-platform/src/serve.rs`) and it is worth showing. What it is NOT is a
+  // trust decision, and this page now says which one it is. Making it one needs the
+  // attestation VERIFIED IN THIS TAB against a signer key the reader pinned out of
+  // band — the `grain-verify-wasm` bundle already does exactly that, and wiring it
+  // here is the named, OPEN residual, not something this repair pretends away.
   async function verify() {
     el('verify').disabled = true;
-    el('verify-out').innerHTML = '<p class="run-status">Re-deriving the record yourself…</p>';
+    el('verify-out').innerHTML = '<p class="run-status">Asking the sandbox to re-derive its record…</p>';
     let r0, r2, att;
     try {
       [r0, r2, att] = await Promise.all([
@@ -452,19 +482,30 @@
 
     let html;
     if (tamperOk && realSteps) {
-      html = `<div class="verdict">
-        <div class="mark">✅</div>
-        <div class="headline">Confirmed.</div>
-        <div class="body">The agent took <b>${esc(n)}</b> action${n === 1 ? '' : 's'}: exactly the ones you
-          saw above, nothing hidden, nothing faked. You just verified this yourself, and
-          <b>the computer running the agent couldn't have lied to you</b> even if it wanted to.</div>
+      html = `<div class="verdict consistent">
+        <div class="mark">≡</div>
+        <div class="headline">The sandbox re-derived its record, and it held.</div>
+        <div class="body">It re-ran both rungs over the <b>${esc(n)}</b> action${n === 1 ? '' : 's'} you saw —
+          the receipt chain is signed and ordered (R0), and each step is a view over a real committed
+          kernel turn (R2) — and reported that both passed.
+          <p class="verdict-scope"><b>Read that carefully, because it is not the strong claim.</b>
+          The re-derivation ran <b>on the same machine that ran the agent</b>, and this page is showing you
+          its answer about itself. A host that wanted to lie would answer exactly this. To make it a
+          decision about the host you need the signed attestation checked <em>outside</em> it, against a
+          signer key you pinned yourself —
+          <a href="/grain-verify/" rel="noopener">the standalone verifier</a> does that in your own
+          browser, offline. Not yet wired into this button.</p></div>
       </div>`;
     } else if (tamperOk) {
       html = `<div class="verdict fail">
         <div class="mark">🟡</div>
-        <div class="headline">Record is intact.</div>
-        <div class="body">The list of <b>${esc(n)}</b> action${n === 1 ? '' : 's'} is tamper-evident: it can't
-          be quietly edited. (The stronger cryptographic seal wasn't produced for this run.)</div>
+        <div class="headline">The record is self-consistent; the stronger rung did not run.</div>
+        <div class="body">The sandbox reports the list of <b>${esc(n)}</b> action${n === 1 ? '' : 's'} is
+          tamper-evident (R0): it cannot be quietly edited without breaking the chain. The kernel-turn
+          rung (R2) was not produced for this run.
+          <p class="verdict-scope">Same caveat as above, and it bites harder here: R0 alone is a property
+          of a chain the host itself signed, re-checked by that host. It is the weakest of the three
+          rungs.</p></div>
       </div>`;
     } else {
       html = `<div class="verdict fail">
@@ -477,7 +518,9 @@
     html += `<details class="nerd"><summary>For the curious · the raw verdict</summary><pre>${esc(
       'GET /verify      → ' + r0.status + '  ' + JSON.stringify(r0.data) + '\n' +
       'GET /verify?r2   → ' + r2.status + '  ' + JSON.stringify(r2.data) + '\n' +
-      'GET /attest      → ' + att.status + '  (' + att.bytes + ' bytes · the signed record you can keep)'
+      // ⚑ The signature in these bytes is NEVER opened by this page. Saying so beside the
+      // byte count, because "the signed record you can keep" reads as though it were checked.
+      'GET /attest      → ' + att.status + '  (' + att.bytes + ' bytes · the signed record — its signature is NOT checked here; take it to /grain-verify/)'
     )}</pre>
       <p style="color:var(--fg-muted);margin-top:8px">Plain <code>/verify</code> proves the record can't
       be tampered with; <code>/verify?r2</code> proves each receipt is a real, committed step, not a

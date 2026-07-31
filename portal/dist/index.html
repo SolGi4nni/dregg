@@ -25,7 +25,7 @@
     <div class="hero-copy">
       <span class="hero-eyebrow">recursive-STARK light client · in this tab</span>
       <h1><span class="strike">Don&rsquo;t trust the&nbsp;server.</span><br><span class="em">Verify it yourself.</span></h1>
-      <p class="hero-lede">Every sovereign cell on DreggNet carries a proof that its <b>entire committed history</b> was authorized, conservative, and correctly committed. A light client checks that proof <b>here, in your browser</b> &mdash; re-running nothing, trusting no server.</p>
+      <p class="hero-lede">Every sovereign cell on DreggNet carries a proof that its <b>entire committed history</b> was authorized, conservative, and correctly committed. A light client checks that proof <b>here, in your browser</b> &mdash; re-running nothing. <b>A proof still needs an anchor</b>, and by default this host serves you that too, in the same file as the proof: append <code>?anchor=&lt;64 hex&gt;</code> to bring your own, and the verdict tells you which one it used either way.</p>
       <div class="hero-actions">
         <button class="btn btn-primary" id="hero-verify">Run the light client now</button>
         <a class="btn btn-ghost" href="#network">See the living network &darr;</a>
@@ -113,7 +113,7 @@
   <div class="wrap foot-grid">
     <div>
       <a class="brand" href="./"><span class="glyph">d</span>DreggNet</a>
-      <p>The read-only trustless network view plus the interactive drive layer. The verification you see runs entirely client-side; the server is never trusted, only checked.</p>
+      <p>The read-only network view plus the interactive drive layer. The proof check runs entirely client-side &mdash; but by default the <b>anchor</b> it is checked against is served by this host too, so the verdict labels itself a consistency check unless you supply <code>?anchor=</code>. The cell list and the network graph are <b>drawn from what this node reports</b>; nothing verifies them.</p>
     </div>
     <div>
       <p><a href="./drive.html">Drive the network &rsaquo;</a> &mdash; connect an identity and fire real cap-gated turns: publish a minisite, open a metered lease, fire a transfer. Then verify the resulting cell trustlessly, in-tab.</p>

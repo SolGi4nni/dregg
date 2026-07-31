@@ -87,14 +87,28 @@ async fn verify(
     let valid = data["valid"].as_bool().unwrap_or(false);
     let public_inputs = &data["public_inputs"];
 
+    // ⚑ WHO DECIDED. This command POSTs the proof to the configured node's
+    // `/proof/verify` and prints the node's answer; it runs no verifier itself. That is a
+    // legitimate thing to do and it is NOT a trust decision, and until 2026-07-30 the
+    // output said only "Proof is VALID" — indistinguishable from a local check. The node
+    // is named on every verdict now, including the refusal, because a refusal from a node
+    // you do not trust is worth no more than its acceptance.
     if valid {
-        ctx.success("Proof is VALID");
+        ctx.success(&format!("{} reports this proof VALID", cfg.node.url));
     } else {
-        ctx.error("Proof is INVALID");
+        ctx.error(&format!("{} reports this proof INVALID", cfg.node.url));
         if let Some(reason) = data["reason"].as_str() {
             ctx.kv("Reason", reason);
         }
     }
+    ctx.kv(
+        "Who checked it",
+        &format!(
+            "{} — this command uploaded the proof and is printing that node's answer. It ran \
+             no verifier here.",
+            cfg.node.url
+        ),
+    );
 
     // Show public inputs.
     if let Some(inputs) = public_inputs.as_array()
@@ -252,9 +266,16 @@ async fn chain(
             let height = p["height"].as_u64().unwrap_or(0);
             let turn_hash = p["turn_hash"].as_str().unwrap_or("?");
             let proof_hash = p["proof_hash"].as_str().unwrap_or("?");
-            let valid = p["valid"].as_bool().unwrap_or(true);
-
-            let status = if valid { "ok" } else { "INVALID" };
+            // ⚑ MEASURED 2026-07-30: this was `unwrap_or(true)` — FAIL-OPEN. A node that
+            // omits the `valid` key (an older node, a stripped response, a hostile one)
+            // painted EVERY row `[ok]`. Its sibling ninety lines up, on the same JSON from
+            // the same endpoint, already used `unwrap_or(false)`. Absent is not a pass, and
+            // it is not a failure either — it is an ABSENT ANSWER and now prints as one.
+            let status = match p["valid"].as_bool() {
+                Some(true) => "ok",
+                Some(false) => "INVALID",
+                None => "no verdict (this node reported none)",
+            };
             let label = format!(
                 "#{} turn={} proof={} [{}]",
                 height,

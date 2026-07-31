@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Drive a grain · the dreggnet cloud</title>
-  <meta name="description" content="Rent a confined agent grain, drive it, watch its transcript stream, and verify it (trust no host) from your browser, over the agent-platform HTTP API.">
+  <meta name="description" content="Rent a confined agent grain, drive it, watch its transcript stream, and have the host re-derive its record, from your browser over the agent-platform HTTP API. Checking it WITHOUT trusting that host means taking the signed attestation to the standalone verifier.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <!-- The shared site stylesheet, when this page is served from the site tree. When
        served same-origin by the agent-platform bin (GET /dev, also /console and
@@ -122,7 +122,7 @@
 <body>
 <div class="wrap">
   <h1>Drive a grain</h1>
-  <p class="lede">Rent a confined agent grain, drive it, watch its transcript stream, and verify it: <em>trust no host</em>. This page talks to the <span class="mono">agent-platform</span> HTTP API over the browser-friendly routing shim (a browser cannot set the <code>Host</code> header, so the grain-host rides an <code>X-Dregg-Grain-Host</code> header, or query params for the header-less <code>EventSource</code> transcript). <strong>Rent / verify / watch work with no model; live drive needs the server built <code>--features live-brain</code> with an LLM key.</strong></p>
+  <p class="lede">Rent a confined agent grain, drive it, watch its transcript stream, and have the host re-derive and re-check its own record. <em>(That last part is the host checking itself &mdash; the host-independent check is <a href="/grain-verify/" rel="noopener">the standalone verifier</a>, which opens the signed attestation against a key you pinned.)</em> This page talks to the <span class="mono">agent-platform</span> HTTP API over the browser-friendly routing shim (a browser cannot set the <code>Host</code> header, so the grain-host rides an <code>X-Dregg-Grain-Host</code> header, or query params for the header-less <code>EventSource</code> transcript). <strong>Rent / verify / watch work with no model; live drive needs the server built <code>--features live-brain</code> with an LLM key.</strong></p>
 
   <!-- ── config ─────────────────────────────────────────────────────────── -->
   <section class="card">
@@ -208,8 +208,9 @@
 
   <!-- ── verify ─────────────────────────────────────────────────────────── -->
   <section class="card">
-    <h2><span class="num">3 · verify</span>Trust no host</h2>
-    <p class="card__hint">The renter's check. <code>/verify</code> is <b>R0</b> tamper-evidence (the receipt chain re-witnesses); <code>/verify?r2</code> is <b>R2</b> (every receipt is a view over a kernel turn the platform's minter committed; an unminted grain honestly fails this); <code>/attest</code> hands you the signed attestation to keep. All read-only: <b>no model required.</b></p>
+    <h2><span class="num">3 · verify</span>Ask the host to re-derive</h2>
+    <p class="card__hint">The renter's check, <b>run by the host</b>. <code>/verify</code> is <b>R0</b> tamper-evidence (the receipt chain re-witnesses); <code>/verify?r2</code> is <b>R2</b> (every receipt is a view over a kernel turn the platform's minter committed; an unminted grain honestly fails this); <code>/attest</code> hands you the signed attestation to keep. All read-only: <b>no model required.</b></p>
+    <p class="card__hint">⚑ <b>These three routes are served by the machine that ran the agent</b>, so a pass here is that machine re-deriving its own record and reporting the result &mdash; useful, and <em>not</em> "trust no host". Trusting no host means taking the <code>/attest</code> bytes to a verifier outside it, against a signer key you pinned yourself: <a href="/grain-verify/" rel="noopener">the standalone browser verifier</a> does exactly that, offline. This console does not.</p>
     <div class="btns"><button onclick="verify()">Verify (R0 · R2 · attest)</button></div>
     <div class="out" id="verify-out"></div>
   </section>
@@ -549,7 +550,7 @@
       const calls = msg.tool_calls || [];
       if (!calls.length) {
         if (msg.content) byokFrame(stream, 'frame--model', 'model', esc(msg.content), 'the model stopped calling tools');
-        out.innerHTML = `<span class="pill ok">done</span> the model finished after ${step} tool call(s); verify below (trust no host).`;
+        out.innerHTML = `<span class="pill ok">done</span> the model finished after ${step} tool call(s); ask the host to re-derive its record below.`;
         return;
       }
       // ONE proposed action per turn → a one-shot POST /act on the host.

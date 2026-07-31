@@ -25,7 +25,7 @@
     <div class="banner-shield" id="banner-shield">&#9676;</div>
     <div class="banner-text">
       <h1 id="banner-title">Verifying this cell&rsquo;s history in your browser&hellip;</h1>
-      <p id="banner-sub">A recursive-STARK light client is checking the proof of this cell&rsquo;s whole finalized history (locally, trusting no server).</p>
+      <p id="banner-sub">A recursive-STARK light client is checking the proof of this cell&rsquo;s whole finalized history, locally. The verdict will say which <b>anchor</b> it was checked against &mdash; yours (<code>?anchor=</code>) or this host&rsquo;s.</p>
     </div>
   </section>
 
@@ -158,27 +158,55 @@ function fillFloor(v){
     return '<div class="floor-item"><span class="mk">'+f[0]+'</span><span>'+f[1]+'</span></div>';
   }).join("");
   var root=(v.final_root||[]).join(", ");
-  note.innerHTML="This page reflects a <b style=\"color:var(--mint)\">genuinely verified</b> attestation: the recursive STARK over a real finalized history verified in this tab, re-witnessing nothing. "+
+  note.innerHTML="The recursive STARK over a real finalized history ran in this tab, re-witnessing nothing"+
+    (ANCHOR_IS_YOURS?" \u2014 against <b style=\"color:var(--mint)\">the anchor YOU supplied</b>. "
+                    :", against <b style=\"color:#d29922\">an anchor this host served</b> in the same file as the proof. ")+
     "commitment <code>final_root</code> = ["+esc(root)+"] · engine <code>"+esc(v.engine)+"</code>. "+
     "Binding <i>this specific cell&rsquo;s</i> committed history into that root (a server-supplied proof envelope + per-field heap openings) is the named next rung.";
 }
 
+// ---- the anchor, and where it came from ---------------------------------------
+// ⚑ MEASURED 2026-07-30. This page ran a genuine recursion verify and then said
+// "The verifier is genuine and ran on your machine, trusting no server." The
+// verifier really is genuine and really does run here. But the VK anchor it enforces
+// arrived in the SAME `history.json` fetch as the proof, from the SAME origin — so a
+// hostile host swaps both halves and this banner still paints mint. The page already
+// knew the doctrine sixty lines below (`verifyFields` paints its per-slot openings
+// amber and says "opened against a SERVER-SUPPLIED heap root (not verified)"); the
+// headline did not. `?anchor=<64 hex>` in the visitor's own URL is the repair the
+// sibling light-client page shipped, and every verdict now prints which anchor ran.
+function urlAnchor(){
+  var q; try{ q=new URLSearchParams(location.search); }catch(e){ return ""; }
+  var a=String(q.get("anchor")||"").trim().toLowerCase().replace(/^0x/,"");
+  return /^[0-9a-f]{64}$/.test(a)?a:"";
+}
+var ANCHOR_USED="", ANCHOR_IS_YOURS=false;
+function anchorNote(){
+  return ANCHOR_IS_YOURS
+    ? " Anchor: <b>YOUR <code>?anchor=</code></b> \u2014 a value this host did not put here. This is a trust decision."
+    : " Anchor: <b>SERVED BY THIS HOST</b>, in the same <code>history.json</code> as the proof. The verifier enforced it, but you were handed both halves \u2014 a <b>consistency check, not a trust decision</b>. Append <code>?anchor=&lt;64 hex&gt;</code> to bring your own.";
+}
+
 // ---- boot --------------------------------------------------------------------
 function bannerVerified(v){
-  var b=$("banner"); b.className="banner verified";
-  $("banner-shield").innerHTML="&#10003;";
+  var b=$("banner"); b.className=ANCHOR_IS_YOURS?"banner verified":"banner consistent";
+  $("banner-shield").innerHTML=ANCHOR_IS_YOURS?"&#10003;":"&#8801;";
   // NOT "finalized": this page calls verify_devnet_history, which runs legs 1+2 and NO
   // finality leg. A correctly-proven fork the network never finalized reaches this banner.
-  $("banner-title").textContent="✓ Light-client verified — "+v.num_turns+" turns folded, checked in YOUR browser"
+  $("banner-title").textContent=(ANCHOR_IS_YOURS
+      ? "✓ Light-client verified — "
+      : "≡ Consistent with this host's own anchor — ")
+    +v.num_turns+" turns folded, checked in YOUR browser"
     +(v.finality_attested?" · finality quorum checked":" · finality NOT checked");
-  $("banner-sub").innerHTML="The recursive STARK over a real finalized history verified in this tab. The verifier is genuine and ran on your machine, trusting no server.";
-  setTrust("ok","light client · verified ✓");
+  $("banner-sub").innerHTML="The recursive STARK over a real finalized history ran in this tab, re-witnessing nothing."+anchorNote();
+  setTrust(ANCHOR_IS_YOURS?"ok":"warn",
+    ANCHOR_IS_YOURS?"light client · verified ✓":"light client · consistent (host anchor) ≡");
   foldComplete();
   $("floor").style.display=""; fillFloor(v);
   var f=verifyFields();
   if(f.total>0){
     var sub=$("banner-sub");
-    sub.innerHTML+=" <b style=\"color:var(--mint)\">"+f.ok+"/"+f.total+"</b> field values bound by per-slot heap openings.";
+    sub.innerHTML+=" <b style=\"color:#d29922\">"+f.ok+"/"+f.total+"</b> field values OPENED against a heap root this server supplied (see the note by the fields \u2014 not verified).";
   }
 }
 function bannerRefused(v,err){
@@ -203,7 +231,9 @@ async function boot(){
     await M.default();
     setTrust("live","light client · verifying the pre-folded history…");
     await new Promise(function(r){ setTimeout(r, reduceMotion?0:700); });
-    var verdict=M.verify_devnet_history(JSON.stringify(baked.envelope),baked.anchor_hex);
+    ANCHOR_USED=urlAnchor()||String(baked.anchor_hex||"").trim().toLowerCase();
+    ANCHOR_IS_YOURS=!!urlAnchor();
+    var verdict=M.verify_devnet_history(JSON.stringify(baked.envelope),ANCHOR_USED);
     if(verdict&&verdict.aggregate_attested){ buildFold(verdict.num_turns||3); setTimeout(function(){ bannerVerified(verdict); }, reduceMotion?0:300); }
     else bannerRefused(verdict,null);
   }catch(e){

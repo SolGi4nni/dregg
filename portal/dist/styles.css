@@ -108,6 +108,8 @@ code,.mono{font-family:var(--mono);}
 .trustchip.live .led{background:var(--indigo);box-shadow:0 0 0 0 var(--indigo);animation:ledpulse 2.2s infinite;}
 .trustchip.ok{color:var(--mint);border-color:var(--mint-line);box-shadow:0 0 24px -10px var(--mint-glow);}
 .trustchip.ok .led{background:var(--mint);box-shadow:0 0 10px var(--mint-glow);animation:none;}
+.trustchip.warn{color:#d29922;border-color:rgba(210,153,34,.45);box-shadow:0 0 24px -12px rgba(210,153,34,.5);}
+.trustchip.warn .led{background:#d29922;box-shadow:0 0 10px rgba(210,153,34,.5);animation:none;}
 @keyframes ledpulse{0%{box-shadow:0 0 0 0 rgba(109,134,255,.5);}70%{box-shadow:0 0 0 7px rgba(109,134,255,0);}100%{box-shadow:0 0 0 0 rgba(109,134,255,0);}}
 
 /* ---- hero ----------------------------------------------------------------- */
@@ -166,6 +168,11 @@ code,.mono{font-family:var(--mono);}
 }
 .engine.ok .engine-shield{background:var(--mint-soft);border-color:var(--mint-line);color:var(--mint);box-shadow:0 0 26px -6px var(--mint-glow);}
 .engine.bad .engine-shield{background:var(--coral-soft);border-color:var(--coral);color:var(--coral);}
+/* ⚑ THE THIRD STATE. A real verify that ran against an anchor THIS HOST served is neither a
+   pass nor a refusal; painting it with either was the defect. Amber, and the shield shows
+   `≡`, not `✓`. Set when the visitor did not supply `?anchor=`. */
+.engine.warn .engine-shield{background:rgba(210,153,34,.12);border-color:rgba(210,153,34,.5);color:#d29922;box-shadow:0 0 26px -8px rgba(210,153,34,.4);}
+.engine.warn .engine-state{color:#d29922;}
 .engine-state{font-size:1.04rem;font-weight:700;letter-spacing:-.01em;color:var(--fg);}
 .engine.ok .engine-state{color:var(--mint);}
 .engine.bad .engine-state{color:var(--coral);}
@@ -216,14 +223,17 @@ code,.mono{font-family:var(--mono);}
 .node.breathe .node-core{animation:breathe 4s ease-in-out infinite;}
 @keyframes breathe{0%,100%{opacity:.85;}50%{opacity:1;}}
 .node-hub .node-core{fill:url(#hubgrad);stroke:var(--indigo);}
-.node.verified .node-core{fill:var(--mint-soft);stroke:var(--mint);filter:drop-shadow(0 0 8px var(--mint-glow));}
-.node.verified .node-ring{stroke:var(--mint-line);opacity:.8;animation:pop 1s ease;}
+/* ⚑ `lit` is DECORATION — a timer drew this node, nothing verified it. It must not wear
+   the mint palette a verdict wears, and it no longer shows a tick (see .node-tick). */
+.node.lit .node-core{fill:rgba(210,153,34,.14);stroke:#d29922;filter:drop-shadow(0 0 8px rgba(210,153,34,.35));}
+.node.lit .node-ring{stroke:rgba(210,153,34,.5);opacity:.8;animation:pop 1s ease;}
 @keyframes pop{0%{transform:scale(1);opacity:.6;}45%{transform:scale(1.18);opacity:.9;}100%{transform:scale(1);opacity:.8;}}
 .node-tick{fill:var(--mint);font-size:11px;font-weight:800;opacity:0;transition:opacity .3s;}
-.node.verified .node-tick{opacity:1;}
+/* the tick is GONE: `lightNode` checks nothing, so it may not draw a checkmark. */
+.node.lit .node-tick{opacity:0;}
 .node:hover .node-core{stroke-width:2.4;filter:drop-shadow(0 0 10px var(--indigo));}
 .node-label{fill:var(--muted);font-size:9.5px;font-family:var(--mono);pointer-events:none;letter-spacing:.02em;}
-.node.verified .node-label{fill:var(--fg-dim);}
+.node.lit .node-label{fill:var(--fg-dim);}
 .sweep-line{stroke:var(--mint);stroke-width:2;opacity:0;filter:drop-shadow(0 0 6px var(--mint-glow));}
 
 .net-foot{padding:.7rem 1.1rem;border-top:1px solid var(--line);font-size:.74rem;color:var(--muted);line-height:1.5;}
@@ -239,12 +249,12 @@ code,.mono{font-family:var(--mono);}
 }
 .cell::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--line-2);transition:background .4s,box-shadow .4s;}
 .cell:hover{transform:translateY(-3px);border-color:var(--indigo-line);box-shadow:0 16px 40px -22px var(--indigo);}
-.cell.verified::before{background:var(--mint);box-shadow:0 0 14px var(--mint-glow);}
-.cell.verified{border-color:var(--mint-line);}
+.cell.lit::before{background:#d29922;box-shadow:0 0 14px rgba(210,153,34,.4);}
+.cell.lit{border-color:rgba(210,153,34,.45);}
 .cell-top{display:flex;align-items:center;justify-content:space-between;gap:.5rem;}
 .cell-id{color:var(--fg);font-weight:600;font-family:var(--mono);font-size:.9rem;word-break:break-all;}
 .cell-vchip{flex:none;font-family:var(--mono);font-size:.62rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line-2);border-radius:999px;padding:.12rem .45rem;transition:all .3s;white-space:nowrap;}
-.cell.verified .cell-vchip{color:var(--mint);border-color:var(--mint-line);background:var(--mint-soft);}
+.cell.lit .cell-vchip{color:#d29922;border-color:rgba(210,153,34,.45);background:rgba(210,153,34,.12);}
 .cell-rows{display:flex;flex-direction:column;gap:.18rem;margin-top:.1rem;}
 .cell-row{display:flex;justify-content:space-between;gap:.5rem;font-size:.78rem;color:var(--muted);}
 .cell-row b{color:var(--fg);font-weight:600;font-family:var(--mono);font-variant-numeric:tabular-nums;}
@@ -301,6 +311,11 @@ code,.mono{font-family:var(--mono);}
   width:58px;height:58px;flex:none;border-radius:14px;display:grid;place-items:center;font-size:1.7rem;font-weight:800;
   background:var(--panel);border:1px solid var(--line-2);color:var(--muted);transition:all .5s;
 }
+/* ⚑ THE THIRD BANNER STATE. A real verify against an anchor the HOST served: neither
+   the mint pass nor the coral refusal. Amber, `≡`, and the sub-line says which anchor. */
+.banner.consistent{border-color:rgba(210,153,34,.45);box-shadow:0 0 50px -20px rgba(210,153,34,.5);}
+.banner.consistent .banner-shield{background:rgba(210,153,34,.12);border-color:#d29922;color:#d29922;box-shadow:0 0 30px -8px rgba(210,153,34,.45);}
+.banner.consistent .banner-text h1{color:#d29922;}
 .banner.verified{border-color:var(--mint-line);box-shadow:0 0 50px -18px var(--mint-glow);}
 .banner.verified .banner-shield{background:var(--mint-soft);border-color:var(--mint);color:var(--mint);box-shadow:0 0 30px -6px var(--mint-glow);}
 .banner.refused{border-color:var(--coral);}

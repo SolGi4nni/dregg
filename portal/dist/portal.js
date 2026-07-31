@@ -30,7 +30,7 @@
     var trustText = document.getElementById("trustchip-text");
 
     var lastCells = [];
-    var nodeById = {};        // cellId -> { group, verified }
+    var nodeById = {};        // cellId -> { group, lit }  (`lit` is DECORATION; nothing here verifies a cell)
     var enginePromise = null; // memoized wasm load+verify
     var verdict = null;
 
@@ -73,10 +73,15 @@
         })
       ]).then(function (loaded) {
         var m = loaded[0], baked = loaded[1];
-        eng.state.textContent = "Verifying a pre-folded history…";
-        eng.sub.textContent = "one recursive proof over the whole committed chain — checked here";
+        eng.state.textContent = "Checking a pre-folded history…";
+        eng.sub.textContent = "one recursive proof over the whole committed chain — run here";
+        // ⚑ WHICH ANCHOR. `?anchor=<64 hex>` comes out of the visitor's own URL — a value
+        // this host did not put there. Absent one we fall back to `baked.anchor_hex`, which
+        // arrives in the SAME `history.json` fetch as the proof, and every verdict says so.
+        anchorUsed = urlAnchor() || String(baked.anchor_hex || "").trim().toLowerCase();
+        anchorIsYours = !!urlAnchor();
         return new Promise(function (res) { setTimeout(res, reduceMotion ? 0 : 420); }).then(function () {
-          return m.verify_devnet_history(JSON.stringify(baked.envelope), baked.anchor_hex);
+          return m.verify_devnet_history(JSON.stringify(baked.envelope), anchorUsed);
         });
       }).then(function (v) {
         verdict = v;
@@ -102,11 +107,39 @@
       return enginePromise;
     }
 
+    // ⚑ THE ANCHOR THE PRODUCER DOES NOT CONTROL — the sibling light-client page's repair
+    // (`site/light-client/index.html`), applied to the portal, which was its unfixed twin.
+    // MEASURED 2026-07-30: this page ran a genuine recursion verify and then printed
+    // "Verified in your browser" and (index.html) "trusting no server", while the proof and
+    // the VK anchor it was checked against arrived in ONE `history.json` fetch from ONE
+    // origin. A hostile host swaps both halves and the ✓ still paints. The verify is real;
+    // the trust claim over it was not.
+    function urlAnchor() {
+      var q;
+      try { q = new URLSearchParams(location.search); } catch (e) { return ""; }
+      var a = String(q.get("anchor") || "").trim().toLowerCase().replace(/^0x/, "");
+      return /^[0-9a-f]{64}$/.test(a) ? a : "";
+    }
+    var anchorUsed = "", anchorIsYours = false;
+    function anchorNote() {
+      return anchorIsYours
+        ? '<div class="engine-floor"><b>anchor:</b> YOUR <code>?anchor=</code> URL parameter \u2014 ' +
+          'a value this host did not put here. This is a trust decision. <code>' + esc(anchorUsed) + '</code></div>'
+        : '<div class="engine-floor"><b>anchor:</b> SERVED BY THIS HOST, in the same ' +
+          '<code>history.json</code> as the proof. The verifier really did enforce it \u2014 but we handed ' +
+          'you both halves, so this is a <b>consistency check, not a trust decision</b>. Append ' +
+          '<code>?anchor=&lt;64 hex&gt;</code> to this URL to bring your own. <code>' + esc(anchorUsed) + '</code></div>';
+    }
+
     function onVerified(v) {
-      eng.box && eng.box.classList.add("ok");
-      eng.shield.innerHTML = "&#10003;";
-      eng.state.textContent = "Verified in your browser";
-      eng.sub.textContent = "recursion checked · re-executing nothing";
+      eng.box && eng.box.classList.add(anchorIsYours ? "ok" : "warn");
+      eng.shield.innerHTML = anchorIsYours ? "&#10003;" : "&#8801;";
+      eng.state.textContent = anchorIsYours
+        ? "Verified in your browser, against your anchor"
+        : "Consistent \u2014 checked against this host's own anchor";
+      eng.sub.textContent = anchorIsYours
+        ? "recursion checked · re-executing nothing"
+        : "recursion checked · re-executing nothing · the anchor came from this host";
       var root = (v.final_root || []).join(", ");
       eng.detail.innerHTML =
         '<div class="engine-stats">' +
@@ -114,9 +147,11 @@
           '<div class="engine-stat"><div class="k">engine</div><div class="v" style="font-size:.74rem">' + esc(v.engine) + "</div></div>" +
           '<div class="engine-stat span2"><div class="k">commitment · final_root</div><div class="v root">[' + esc(root) + "]</div></div>" +
         "</div>" +
+        anchorNote() +
         '<div class="engine-floor"><b>rests on:</b> ' + esc(v.named_floor || "FRI soundness + Poseidon2 collision-resistance") + "</div>";
       if (eng.runBtn) eng.runBtn.parentNode.style.display = "none";
-      setTrust("ok", "light client · verified ✓");
+      setTrust(anchorIsYours ? "ok" : "warn",
+        anchorIsYours ? "light client · verified ✓" : "light client · consistent (host anchor) ≡");
       runSweep();
     }
 
@@ -125,23 +160,40 @@
       eng.shield.innerHTML = "&#10007;";
       eng.state.textContent = "Attestation refused";
       eng.sub.textContent = "treat the served content as an unproven claim";
-      eng.detail.innerHTML = '<div class="engine-floor">' + esc((v && v.named_floor) || "no verdict returned") + "</div>";
+      eng.detail.innerHTML = '<div class="engine-floor">' + esc((v && v.named_floor) || "no verdict returned") + "</div>" + anchorNote();
       setTrust("", "light client · refused");
       if (eng.runBtn) { eng.runBtn.disabled = false; eng.runBtn.textContent = "Run again →"; }
     }
 
-    // ---- the verification sweep across the network --------------------------
+    // ---- the network animation ----------------------------------------------
+    // ⚑ MEASURED 2026-07-30. This was called `runSweep` and it counted
+    // "<b>N / N</b> cells whose aggregate verified under the live light client".
+    // NOTHING WAS VERIFIED. `lightNode` is a `setTimeout` that adds a CSS class and
+    // sets `n.verified = true` unconditionally; the counter is incremented by that
+    // timer, over `lastCells` — a list fetched from `/api/cells`, i.e. supplied by
+    // the very host under test. Adding a hundred fabricated cells to that endpoint
+    // made this page report "100 / 100 cells verified" without a single proof.
+    // ONE proof of ONE pre-folded history.json is verified in this file, at
+    // `verify_devnet_history` above, and that is all.
+    //
+    // The animation is kept — it is a nice depiction of the topology and the page
+    // is allowed to be pretty — and every word claiming it was a verification is
+    // GONE. The class it adds is `lit`, not `verified`, so no stylesheet or
+    // consumer can read a verdict out of the DOM either.
     function runSweep() {
       var spokes = lastCells.slice(1);
       var total = lastCells.length;
       var done = 0;
       function bump() {
         done++;
-        if (counterEl) counterEl.innerHTML = "verifying · <b>" + done + "</b> / " + total + " cells";
+        if (counterEl) counterEl.innerHTML = "drawing · <b>" + done + "</b> / " + total + " cells";
         if (meterEl) meterEl.style.width = Math.round((done / Math.max(1, total)) * 100) + "%";
-        if (done >= total && counterEl) counterEl.innerHTML = "<b>" + total + " / " + total + "</b> cells whose aggregate verified under the live light client (no finality leg)";
+        if (done >= total && counterEl) counterEl.innerHTML =
+          "<b>" + total + "</b> cells this node reports it hosts \u2014 <b>drawn, not verified</b>. " +
+          "One proof was checked in this tab: the pre-folded history above. Nothing here checked " +
+          "these cells, and this list came from the node.";
       }
-      if (counterEl) counterEl.innerHTML = "verifying · <b>0</b> / " + total + " cells";
+      if (counterEl) counterEl.innerHTML = "drawing · <b>0</b> / " + total + " cells";
       var dur = reduceMotion ? 0 : Math.min(2600, 700 + total * 180);
       addRadar(dur);
       // hub verifies first (it is the anchor), then spokes by angle
@@ -152,12 +204,15 @@
         lightNode(c.id, t, bump);
       });
     }
+    // ⚑ `lit`, never `verified`. This function checks NOTHING — it is a timer — and
+    // both the flag and the CSS class it used to set said otherwise, which is how a
+    // decorative animation came to drive a verification counter.
     function lightNode(id, delay, cb) {
       var n = nodeById[id];
       setTimeout(function () {
-        if (n && n.group && !n.verified) { n.group.classList.add("verified"); n.verified = true; }
+        if (n && n.group && !n.lit) { n.group.classList.add("lit"); n.lit = true; }
         var card = id && document.querySelector('.cell[data-id="' + cssesc(id) + '"]');
-        if (card) card.classList.add("verified");
+        if (card) card.classList.add("lit");
         cb && cb();
       }, delay);
     }
@@ -187,7 +242,9 @@
           renderGraph(lastCells);
           if (verdict && verdict.aggregate_attested) { // already verified: re-light immediately
             lastCells.forEach(function (c) { lightNode(c.id, 0, function () {}); });
-            if (counterEl) counterEl.innerHTML = "<b>" + lastCells.length + " / " + lastCells.length + "</b> cells whose aggregate verified under the live light client (no finality leg)";
+            if (counterEl) counterEl.innerHTML =
+              "<b>" + lastCells.length + "</b> cells this node reports it hosts \u2014 <b>drawn, not verified</b>. " +
+              "The one proof checked in this tab is the pre-folded history above.";
             if (meterEl) meterEl.style.width = "100%";
           }
         })
@@ -252,7 +309,9 @@
         var a = svg("a", {}); a.setAttributeNS("http://www.w3.org/1999/xlink", "href", href); a.setAttribute("href", href);
         a.appendChild(svg("circle", { class: "node-ring", cx: x, cy: y, r: r + 6 }));
         a.appendChild(svg("circle", { class: "node-core", cx: x, cy: y, r: r }));
-        var tick = svg("text", { class: "node-tick", x: x, y: y + 4, "text-anchor": "middle" }); tick.textContent = "✓";
+        // ⚑ NOT a checkmark. Nothing in this file checks a per-cell anything; a ✓ here was
+        // the graphical half of the counter defect. A dot says "drawn" and claims nothing.
+        var tick = svg("text", { class: "node-tick", x: x, y: y + 4, "text-anchor": "middle" }); tick.textContent = "·";
         a.appendChild(tick);
         var label = svg("text", { class: "node-label", x: x, y: y + r + 14, "text-anchor": "middle" });
         label.textContent = isHub ? "hub" : shortId(c.id);
@@ -261,7 +320,7 @@
         a.appendChild(title);
         g.appendChild(a);
         svgEl.appendChild(g);
-        nodeById[c.id] = { group: g, verified: false };
+        nodeById[c.id] = { group: g, lit: false };
       }
 
       spokes.forEach(function (c, i) {
