@@ -82,8 +82,8 @@ import Dregg2.Crypto.SpongeCarrierReduction
 namespace Dregg2.Circuit.DeployedMapDenotation
 
 open Dregg2.Substrate
-open Dregg2.Circuit.Poseidon2Binding (SpongeColl spongeColl_refutable_of_injective)
-open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
+open Dregg2.Circuit.Poseidon2Binding (SpongeColl)
+
 open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot perfectRootFind
   perfectRoot_binds_or_collides)
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
@@ -589,14 +589,23 @@ end Teeth
 
 /-! ## §8 — THE DEPLOYED INSTANCE'S TEETH. -/
 
-/-- An injective hash with NO preimage of the padding constant: `refSponge` made odd. Witness that
-`PadFree3` is satisfiable, so the padded instance's `good_inhabited` is real. -/
-def oddSponge (xs : List ℤ) : ℤ := 2 * refSponge xs + 1
+/-- An injective hash with NO preimage of the padding constant. Witness that `Good` is satisfiable,
+so the padded instance's `good_inhabited` is real and `resid_refuted` is not discharged by an empty
+premise.
+
+⚑ **Deliberately NOT `refSponge`.** The obvious witness is `2 * refSponge xs + 1`, and its
+injectivity is `refSponge_CR`, whose TYPE is `Poseidon2SpongeCR refSponge`. Citing it puts the
+REFUTED floor constant into the proof-term closure of `padImtTeeth`, hence of `opensTo_functional`,
+hence of every `AlgoStarkSound*` route — and `#assert_not_depends_on … [Poseidon2SpongeCR]` on the
+deployed anti-ghost then fails through an inhabitation witness that assumes nothing. The encodable
+injection carries the same content with no Poseidon2-flavoured constant in it, so the guard can be
+LANDED instead of relaxed. (`2 * … + 1` is odd, hence never `padDigest = 0`.) -/
+def oddSponge (xs : List ℤ) : ℤ := 2 * (Encodable.encode xs : ℤ) + 1
 
 theorem oddSponge_injective : Function.Injective oddSponge := by
   intro xs ys h
   simp only [oddSponge] at h
-  exact refSponge_CR _ _ (by omega)
+  exact Encodable.encode_injective (by omega)
 
 theorem oddSponge_ne_pad (xs : List ℤ) : oddSponge xs ≠ padDigest := by
   simp only [oddSponge, padDigest]
@@ -618,7 +627,12 @@ def padImtTeeth (sent : ℤ) : MapLeafTeeth (padImtSchema sent) where
     rintro (hg | hg | hc)
     · exact padGhost3_refuted hgood.2 sent h₁ hg
     · exact padGhost3_refuted hgood.2 sent h₂ hg
-    · exact spongeColl_refutable_of_injective hash hgood.1 _ hc
+    -- ⚑ INLINED rather than `spongeColl_refutable_of_injective`. That lemma's binder is
+    -- `Poseidon2SpongeCR hash`, which is DEFINITIONALLY `Function.Injective hash` — so citing it
+    -- puts the REFUTED floor constant into the proof-term closure of every consumer, and
+    -- `#assert_not_depends_on … [Poseidon2SpongeCR]` on the deployed anti-ghost then fails through
+    -- a route that assumes nothing. One line of injectivity keeps the closure honest.
+    · exact hc.1 (hgood.1 hc.2)
   good_inhabited := ⟨oddSponge, oddSponge_injective, oddSponge_padFree3⟩
 
 /-! ## §9 — AXIOM HYGIENE. -/

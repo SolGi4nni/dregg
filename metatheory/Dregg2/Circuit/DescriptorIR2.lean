@@ -40,6 +40,7 @@ import Dregg2.Circuit.Emit.EffectVmEmit
 import Dregg2.Circuit.Lookup
 import Dregg2.Substrate.Heap
 import Dregg2.Circuit.MapMerkleRoot
+import Dregg2.Circuit.DeployedMapDenotation
 import Dregg2.Crypto.MemoryChecking
 import Dregg2.Crypto.UniversalMemory
 import Mathlib.Data.Multiset.Basic
@@ -513,91 +514,144 @@ the Rust assembly runs proves exactly this multiset-supported membership for eve
 def Lookup.holdsAt (tf : TraceFamily) (env : VmRowEnv) (l : Lookup) : Prop :=
   l.tuple.map (·.eval env.loc) ∈ tf l.table
 
-/-! ## §4 — Map-op semantics: openings of the PROVEN sorted-Poseidon2 map, committed by the
-DEPLOYED depth-16 BINARY MERKLE root (`MapMerkleRoot.mapRoot` — `heap_root.rs::CanonicalHeapTree`).
+/-! ## §4 — Map-op semantics: openings of the DEPLOYED INDEXED-MERKLE map, committed by
+`heap_root.rs::CanonicalHeapTree` — arity-3 leaves, deployed relink, sparse zero padding.
 
-The denotation is an EXISTENTIAL opening of `Dregg2.Substrate.Heap`'s sorted map — the prover witnesses
-a sorted heap behind the root. The COMMITMENT is the deployed depth-`HEAP_TREE_DEPTH` BINARY MERKLE fold
-(`MapMerkleRoot.mapRoot`: arity-2 `leafOf` leaves, arity-2 `mapNode` nodes), NOT the flat sponge — the
-fixed-depth tree the `Ir2Air::MapOps` AIR (`descriptor_ir2.rs:2213`) recomposes by its `mix` closure. The
-deployment pins every heap as the `2^HEAP_TREE_DEPTH`-leaf padded vector; the opening carries that
-`length = 2^HEAP_TREE_DEPTH` discipline. ⚑ **NO CR FLOOR (2026-07-28).** The opening is FUNCTIONAL up
-to a NAMED, DECIDABLE, per-instance residual (`OpenColl` / `WriteColl` → `MapMerkleRoot.mapRootFind`),
-which the honest prover discharges at zero cost and whose exhibition REFUTES `Poseidon2SpongeCR`
-outright. The old form assumed that floor, and it is FALSE at deployed BabyBear
-(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`) — so the deployed map-op anti-ghost bottomed
-out in a vacuous theorem. Non-membership reuses the gap bracketing (`get_none_of_gap`). -/
+⚑⚑ **THE DENOTATION MOVED, 2026-07-30.** It used to be `MapMerkleRoot.opensToMerkle` — a DENSE fold
+of **arity-2** `Heap.leafOf` leaves. `heap_root.rs` stopped computing that root on 2026-07-12
+(`919b2b0b8d`): `HEAP_LEAF_ARITY = 3`, the leaf is `hash[addr, value, next_addr]` with the pointer
+INSIDE the digest, the pointers are derived by `relink_next_addrs` from the sorted successor with the
+terminal one pinned to `SENTINEL_MAX`, and the `2^16` vector is zero-padded above the live prefix.
+Under an injective sponge the two are provably different commitments
+(`MapReconcileImtRepoint.imtRoot_ne_mapRoot`), so the old denotation was not a weak description of the
+deployed object — it was **refutable at it** (`mapOpHoldsAt_unsat_at_imtRoot`), and with it the
+`.mapOp` arm of `Satisfied2` and every `AlgoStarkSound*` conclusion. The apex said nothing about any
+real turn, and said it on the ORDINARY path (every fresh nullifier and cell-id above the committed
+maximum).
+
+**What is deployed and therefore what is here:** `DeployedMapDenotation.padImtSchema
+DEPLOYED_SENTINEL` — arity-3 IMT leaves (`HeapLeaf::preimage`), the deployed relink, occupancy
+`length ≤ 2 ^ MAP_TREE_DEPTH` (SPARSE: `CanonicalHeapTree::new` commits one live leaf in a `2^16`
+tree), zero padding welded to `EMPTY_SUBTREE_ROOTS` (`perfectRoot_all_padding`).
+
+⚑ **NO CR FLOOR, AND THE RESIDUAL IS AT THE OPENINGS' OWN HEAPS.** The three teeth below are
+`DeployedMapDenotation` §6's ∃-hoisted forms: **no hypothesis on `hash` at all**, with the residual
+named at the ONE pair of heaps THESE TWO OPENINGS supply. That matters more than the arity did. The
+arity-3 schema's `_of_good` teeth need `Good hash ⊇ Function.Injective hash`, which is
+`Poseidon2SpongeCR hash` under another name and is **PROVED FALSE** at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`); binding the deployed denotation to those would
+have moved the vacuity to a new address rather than removed it. Non-membership reuses the gap
+bracketing (`get_none_of_gap`).
+
+⚠ **The residual has THREE named disjuncts now, and the third is a DEPLOYED wound, not a Lean one:**
+`PadGhost3` — a LIVE arity-3 leaf digest equal to the padding constant. The padding is the literal
+`BabyBear::ZERO`, so that is a FIXED-TARGET PREIMAGE of a literal, which collision-resistance does not
+exclude. Closing it is a change to `heap_root.rs` (pad with a domain-separated digest), not to this
+file. -/
 
 /-- The deployed map-tree depth (`heap_root.rs::HEAP_TREE_DEPTH = 16`). -/
 abbrev MAP_TREE_DEPTH : Nat := MapMerkleRoot.HEAP_TREE_DEPTH
 
-/-- `opensTo hash r k o` — some sorted, depth-`MAP_TREE_DEPTH` `2^d`-leaf heap behind the DEPLOYED
-BINARY-MERKLE root `r` reads `o` at `k`. The denotation of the deployed `Ir2Air::MapOps` opening. -/
+/-- The deployed terminal `next_addr` (`heap_root.rs::SENTINEL_MAX = BabyBear(2013265920)`). -/
+abbrev MAP_SENTINEL : ℤ := DeployedMapDenotation.DEPLOYED_SENTINEL
+
+/-- ⚑ **THE DEPLOYED LEAF SCHEMA.** Every map-op denotation below is an opening of THIS commitment. -/
+abbrev mapSchema : DeployedMapDenotation.MapLeafSchema :=
+  DeployedMapDenotation.padImtSchema MAP_SENTINEL
+
+/-- ⚑ **THE DEPLOYED SCHEMA'S ANTI-GHOST TEETH** — floor-free `binds`, refutable residual, inhabited
+`Good`. -/
+abbrev mapTeeth : DeployedMapDenotation.MapLeafTeeth mapSchema :=
+  DeployedMapDenotation.padImtTeeth MAP_SENTINEL
+
+/-- `opensTo hash r k o` — some admissible heap behind the DEPLOYED indexed-Merkle root `r` reads `o`
+at `k`. The denotation of the deployed `Ir2Air::MapOps` opening. -/
 def opensTo (hash : List ℤ → ℤ) (r k : ℤ) (o : Option ℤ) : Prop :=
-  MapMerkleRoot.opensToMerkle hash MAP_TREE_DEPTH r k o
+  DeployedMapDenotation.opensToMerkleS mapSchema hash MAP_TREE_DEPTH r k o
 
-/-- `writesTo hash r k v r'` — some sorted, depth-`MAP_TREE_DEPTH` `2^d`-leaf heap behind binary root
-`r` produces root `r'` under the sorted insert-or-update of `(k, v)` (the post-heap still `2^d`-leaf). -/
+/-- `writesTo hash r k v r'` — some admissible heap behind the DEPLOYED indexed-Merkle root `r`
+produces root `r'` under the sorted insert-or-update of `(k, v)`. -/
 def writesTo (hash : List ℤ → ℤ) (r k v r' : ℤ) : Prop :=
-  MapMerkleRoot.writesToMerkle hash MAP_TREE_DEPTH r k v r'
+  DeployedMapDenotation.writesToMerkleS mapSchema hash MAP_TREE_DEPTH r k v r'
 
-/-- **`OpenColl`** — the DEPLOYED map-op read anti-ghost's per-instance residual: the deployed sponge
-genuinely collides at the ONE pair `MapMerkleRoot.mapRootFind` returns for the two heaps THESE two
-openings supply. Decidable; dischargeable by an honest prover at zero cost; refutable; and a
-REFUTATION of `Poseidon2SpongeCR` rather than a new floor. -/
+/-- **`OpenColl`** — the DEPLOYED map-op read anti-ghost's per-instance residual, at the deployed
+schema: at the two heaps THESE two openings supply, either a live arity-3 leaf digest equals the
+padding constant, or the sponge genuinely collides at the ONE pair `padImtRootFind` returns.
+Dischargeable by an honest prover at zero cost; refutable; and NOT a floor. -/
 abbrev OpenColl (hash : List ℤ → ℤ) {r k : ℤ} {o₁ o₂ : Option ℤ}
     (h₁ : opensTo hash r k o₁) (h₂ : opensTo hash r k o₂) : Prop :=
-  MapMerkleRoot.OpenColl hash MAP_TREE_DEPTH h₁ h₂
+  DeployedMapDenotation.OpenResidS mapTeeth hash MAP_TREE_DEPTH h₁ h₂
 
 /-- **`WriteColl`** — the same, for the map-op WRITE row's `new_root` column. -/
 abbrev WriteColl (hash : List ℤ → ℤ) {r k v r₁ r₂ : ℤ}
     (h₁ : writesTo hash r k v r₁) (h₂ : writesTo hash r k v r₂) : Prop :=
-  MapMerkleRoot.WriteColl hash MAP_TREE_DEPTH h₁ h₂
+  DeployedMapDenotation.WriteResidS mapTeeth hash MAP_TREE_DEPTH h₁ h₂
 
-/-- **⚑ Openings are FUNCTIONAL (the anti-ghost) — PORTED OFF THE REFUTED FLOOR (2026-07-28).** The
-BINARY-MERKLE root + key determine the read: two openings of the same root at the same key agree, up
-to the named per-instance residual.
+/-- **⚑ Openings are FUNCTIONAL (the anti-ghost) — AT THE DEPLOYED COMMITMENT, FLOOR-FREE.** The
+deployed indexed-Merkle root + key determine the read: two openings of the same root at the same key
+agree, up to the named per-instance residual.
 
 This is THE deployed map-op anti-ghost — `MapOp.holdsAt`'s `.read` leg, hence the `.mapOp` arm of
-`Satisfied2`, hence every `AlgoStarkSound*` conclusion that quantifies over it. Until today it
-assumed `Poseidon2SpongeCR hash`, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES
-FALSE at deployed BabyBear parameters: the anti-ghost of the deployed denotation terminated, at its
-final step, in a VACUOUS theorem. It now terminates in a condition the deployed sponge can satisfy.
-
-⚑ Read the price honestly: `mapRoot` is a ONE-FELT commitment, so the residual is a collision search
-on a single BabyBear felt — **≈2^15.5, a BREAK**. Nothing here makes the arity-2 denotation sound;
-it makes what it costs visible. -/
+`Satisfied2`, hence every `AlgoStarkSound*` conclusion that quantifies over it. Until 2026-07-30 it
+was a statement about the arity-2 commitment `heap_root.rs` stopped computing on 2026-07-12, so its
+conclusion was FALSE at the prover's own root; before 2026-07-28 it additionally assumed a floor that
+is false at the prover's own parameters. Neither remains. -/
 theorem opensTo_functional (hash : List ℤ → ℤ)
     {r k : ℤ} {o₁ o₂ : Option ℤ}
     (h₁ : opensTo hash r k o₁) (h₂ : opensTo hash r k o₂)
     (hno : ¬ OpenColl hash h₁ h₂) : o₁ = o₂ :=
-  MapMerkleRoot.opensToMerkle_functional hash MAP_TREE_DEPTH h₁ h₂ hno
+  (DeployedMapDenotation.opensToMerkleS_binds_or_collides mapTeeth hash MAP_TREE_DEPTH h₁
+    h₂).resolve_right hno
 
 /-- Membership and non-membership at the same root/key EXCLUDE each other (the tooth the
 nullifier/cap non-membership argument needs from the map-ops table), up to the same residual. -/
 theorem opensTo_some_excludes_none (hash : List ℤ → ℤ)
     {r k v : ℤ} (h₁ : opensTo hash r k (some v)) (h₂ : opensTo hash r k none)
-    (hno : ¬ OpenColl hash h₁ h₂) : False :=
-  MapMerkleRoot.opensToMerkle_some_excludes_none hash MAP_TREE_DEPTH h₁ h₂ hno
+    (hno : ¬ OpenColl hash h₁ h₂) : False := by
+  have h := opensTo_functional hash h₁ h₂ hno
+  simp at h
 
-/-- **⚑ Writes are FUNCTIONAL — PORTED OFF THE REFUTED FLOOR (2026-07-28).** The BINARY-MERKLE root +
-key + value determine the new root: the map-op row's `new_root` column cannot be forged, up to the
-named per-instance residual. Same story, same price, as `opensTo_functional`. -/
+/-- **⚑ Writes are FUNCTIONAL — AT THE DEPLOYED COMMITMENT, FLOOR-FREE.** The deployed root + key +
+value determine the new root: the map-op row's `new_root` column cannot be forged, up to the named
+per-instance residual. Same story as `opensTo_functional`. -/
 theorem writesTo_functional (hash : List ℤ → ℤ)
     {r k v r₁ r₂ : ℤ}
     (h₁ : writesTo hash r k v r₁) (h₂ : writesTo hash r k v r₂)
     (hno : ¬ WriteColl hash h₁ h₂) : r₁ = r₂ :=
-  MapMerkleRoot.writesToMerkle_functional hash MAP_TREE_DEPTH h₁ h₂ hno
+  (DeployedMapDenotation.writesToMerkleS_binds_or_collides mapTeeth hash MAP_TREE_DEPTH h₁
+    h₂).resolve_right hno
+
+/-- **THE HONEST PROVER DISCHARGES THE RESIDUAL AT ZERO COST.** One and the same opening never
+equivocates with itself — but that is now a statement about the schema's residual, which contains the
+`PadGhost3` disjunct, so it is NOT free: it holds exactly when the opening's own heap has no live leaf
+digesting to the padding constant. Stated as the refutation at a `Good` hash, which is inhabited
+(`padImtTeeth`'s `good_inhabited`). -/
+theorem openColl_refuted_at_good (hash : List ℤ → ℤ) (hgood : mapTeeth.Good hash)
+    {r k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : opensTo hash r k o₁) (h₂ : opensTo hash r k o₂) : ¬ OpenColl hash h₁ h₂ :=
+  DeployedMapDenotation.openResidS_refuted_at_good mapTeeth hgood MAP_TREE_DEPTH h₁ h₂
+
+/-- Same, write side. -/
+theorem writeColl_refuted_at_good (hash : List ℤ → ℤ) (hgood : mapTeeth.Good hash)
+    {r k v r₁ r₂ : ℤ}
+    (h₁ : writesTo hash r k v r₁) (h₂ : writesTo hash r k v r₂) : ¬ WriteColl hash h₁ h₂ :=
+  DeployedMapDenotation.writeResidS_refuted_at_good mapTeeth hgood MAP_TREE_DEPTH h₁ h₂
 
 /-- Non-membership openings are CONSTRUCTIBLE from the proven gap bracketing — completeness of the
-`absent` kind (the `sorted_gap_excludes` machinery, via `Heap.get_none_of_gap`), over a depth-`d`
-`2^d`-leaf heap (the deployed fixed-depth tree). -/
+`absent` kind (the `sorted_gap_excludes` machinery, via `Heap.get_none_of_gap`), over the DEPLOYED
+sparse indexed-Merkle tree.
+
+⚑ Three hypotheses changed shape with the denotation, and each names a real deployed fact:
+`hlen` is now `≤` (the deployed tree is sparse, not dense); `hb` is the terminal-sentinel bound
+`relink_next_addrs` refuses to violate; and `hr` is the arity-3 padded root, not the arity-2 fold. -/
 theorem opensTo_none_of_gap (hash : List ℤ → ℤ) {h : Heap.FeltHeap} {r lo hi k : ℤ}
-    (hs : Heap.SortedKeys h) (hlen : h.length = 2 ^ MAP_TREE_DEPTH)
-    (hr : MapMerkleRoot.mapRoot hash MAP_TREE_DEPTH h = r)
+    (hs : Heap.SortedKeys h) (hlen : h.length ≤ 2 ^ MAP_TREE_DEPTH)
+    (hb : ∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
+    (hr : DeployedMapDenotation.padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r)
     (hadj : Dregg2.Crypto.NonMembership.Adjacent (Heap.keys h) lo hi)
     (hlo : lo < k) (hhi : k < hi) : opensTo hash r k none :=
-  ⟨h, hs, hlen, hr, Heap.get_none_of_gap h lo hi k hs hadj hlo hhi⟩
+  DeployedMapDenotation.padImt_opens_none_of_gap MAP_SENTINEL hash MAP_TREE_DEPTH
+    hs hlen hb hr hadj hlo hhi
 
 /-- The map-op's per-row denotation: when the guard fires, the evaluated `(root, key, value,
 new_root)` columns are a genuine opening per the op kind. -/
