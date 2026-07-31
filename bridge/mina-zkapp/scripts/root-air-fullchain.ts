@@ -140,13 +140,20 @@ function repoRoot(): string {
 /** ⚑ MISSING TOOLCHAIN IS A FAILURE, NOT A SKIP: there is no synthetic fallback
  *  instance here, because "the chain runs on dregg's proof" is the claim. */
 function realRootAir(): RealRootAir {
-  const ROOT = repoRoot();
   // ⚑ The DRIVER mints this once and the seven slice processes read it. Ten
   // `cargo build` invocations racing one cargo lock is how a lane blinds itself;
   // the driver clears the whole workdir on a fresh run, so a stale copy cannot
   // survive into one.
+  //
+  // ⚑ THE CACHE IS CHECKED BEFORE THE REPO ROOT, AND THE ORDER WAS BACKWARDS.
+  // `repoRoot()` ran first, so a workdir that ALREADY HELD the dumped instance
+  // still refused unless the Rust tree sat two directories up — which is exactly
+  // a build-lane layout (`/tank/dregg-build/<lane>/`, sources rsynced, no
+  // `circuit-prove/`). The repo root is needed to BUILD the dumper and for
+  // nothing else, so it is resolved where it is used.
   const cached = resolve(WORK, 'real-root-air.json');
   if (existsSync(cached)) return JSON.parse(readFileSync(cached, 'utf8'));
+  const ROOT = repoRoot();
   execFileSync('cargo', ['build', '-p', 'dregg-circuit-prove', '--release', '--bin', 'root_air_instance'], {
     cwd: ROOT,
     stdio: ['ignore', 'ignore', 'inherit'],

@@ -108,10 +108,57 @@ import {
 
 const LANE_MAX = (1n << 31n) - 1n;
 
-/** The verification-key list is padded to a fixed power of two so the Merkle
- *  depth — and therefore every slice's cost — does not move when the plan does. */
-export const VK_TREE_DEPTH = 7;
+/**
+ * The verification-key list is padded to a fixed power of two so the Merkle
+ * depth — and therefore every slice's cost — does not move when the plan does.
+ *
+ * ⚑ 7 → 8, AND IT IS A FLAG DAY. MEASURED 2026-07-31. §3.29's chain was 46
+ * programs and fit a depth-7 (128-leaf) tree with room to spare. §3.30's
+ * preamble took the head from 3 slices to 88, so the chain is **131 programs**
+ * and the terminal `block42` sits at **leaf 130** — outside a 128-leaf tree.
+ * Both halves were broken and neither had ever been run:
+ *
+ *   * out of circuit, `vkTreeRoot` THROWS (`131 programs do not fit a depth-7
+ *     key tree`), so `head-anchor-pins --emit` could not have produced a pin
+ *     file even holding all 131 keys;
+ *   * IN CIRCUIT it does not throw, it ALIASES. `bitsOf` takes `VK_TREE_DEPTH`
+ *     low bits, so leaf 130 decomposes to `0100000` — **leaf 2** — and the
+ *     position that closes the chain would have pinned head slice 2's key.
+ *     `prevLeaf` at a block's position 0 for q > 0 is 130 as well.
+ *
+ * A depth-7 tree over 131 leaves is not a tight fit, it is the wrong tree. Depth
+ * 8 holds 256 and `assertLeavesFit` below refuses the silent truncation rather
+ * than leaving the next grower to find it in circuit.
+ *
+ * ⚑ WHAT RE-EMITS: the path is a private input of every slice
+ * (`Provable.Array(Field, VK_TREE_DEPTH)`) and one more Merkle level is emitted,
+ * so EVERY verification key in the chain changes — `chainVkRoot` and
+ * `terminalVkHash` with them. Nothing held the old ones: `.fullchain/uniform`'s
+ * §3.29 keys were already dead to the claim's public-output change, and the
+ * claim-carrying ring had never been compiled at all.
+ */
+export const VK_TREE_DEPTH = 8;
 export const VK_TREE_LEAVES = 1 << VK_TREE_DEPTH;
+
+/**
+ * ⚑ THE REFUSAL THE TRUNCATION NEEDED. `vkTreeRoot` already refuses a list that
+ * does not fit; the CIRCUIT never did, because `(leaf >> i) & 1` over
+ * `VK_TREE_DEPTH` bits is total — an out-of-range leaf silently becomes
+ * `leaf mod 2^depth` and the slice pins some other program's key.
+ */
+export function assertLeavesFit(programs: number, leaves: number[], where: string): void {
+  if (programs > VK_TREE_LEAVES)
+    throw new Error(
+      `${where}: a ${programs}-program chain does not fit a depth-${VK_TREE_DEPTH} key tree ` +
+        `(${VK_TREE_LEAVES} leaves). Raise VK_TREE_DEPTH and re-emit every key.`,
+    );
+  for (const l of leaves)
+    if (l < 0 || l >= VK_TREE_LEAVES)
+      throw new Error(
+        `${where}: key-tree leaf ${l} is outside a depth-${VK_TREE_DEPTH} tree, and the in-circuit ` +
+          `bit decomposition would silently pin leaf ${((l % VK_TREE_LEAVES) + VK_TREE_LEAVES) % VK_TREE_LEAVES} instead`,
+      );
+}
 
 /** The modelled cost of what uniformity adds to a slice: the key path, the
  *  one-hot over the queries, the current-index multiplexer and the `k`/`q`
@@ -757,6 +804,13 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
   const leafFirst = prevLeaf(plan, sp, 0);
   const leafLater = prevLeaf(plan, sp, Math.min(1, Q - 1));
   const leafSplit = sp.kind === 'block' && sp.pos === 0 && leafFirst !== leafLater;
+  //  ⚑ BEFORE `bitsOf` TRUNCATES. See `assertLeavesFit`: a leaf outside the tree
+  //  does not fail here, it pins a DIFFERENT program's key.
+  assertLeavesFit(
+    plan.distinctPrograms,
+    [leafOf(plan, sp), leafFirst, leafLater],
+    `uniform slice ${specName(sp)}`,
+  );
 
   const prog = ZkProgram({
     name: uniformProgramName(sp, opts),
