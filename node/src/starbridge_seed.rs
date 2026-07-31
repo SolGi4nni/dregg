@@ -292,12 +292,35 @@ fn seed_one_cell(
         return SeedOutcome::Existing;
     }
 
-    if marker.get(&entry.label).is_some_and(|id| {
-        hex_decode_32(id)
-            .map(|bytes| CellId(bytes) == expected_cell_id)
-            .unwrap_or(false)
-    }) {
-        return SeedOutcome::Existing;
+    // ⚑ THE MARKER IS A HINT, THE LEDGER IS THE AUTHORITY — and the check above is
+    // the one that answers "is this cell present". A marker entry used to be
+    // sufficient on its own, which meant a data dir whose ledger had LOST the cell
+    // (a restart below the first ledger checkpoint: the checkpoint does not exist
+    // yet and no finalized turn ever TOUCHED a factory cell, so nothing carries it)
+    // reported `starbridge factory cell already present` and left it absent. The
+    // reconstructed ledger was then short by all ten, its canonical root did not
+    // match the durably recorded finalized root, and the node refused to boot on its
+    // own healthy image (issue #59, measured 2026-07-30 against the real binary).
+    //
+    // The height-0 boot checkpoint (`complete_boot_recovery`) is what stops the cell
+    // from going missing in the first place; this is the other pole — when it IS
+    // missing, re-materialize it rather than believing a side file over the ledger.
+    // Insert-if-absent, exactly like `materialize_genesis_cells`: a cell present in
+    // the ledger already returned `Existing` above, so nothing here can overwrite a
+    // finalized post-state.
+    if ledger.get(&expected_cell_id).is_none()
+        && marker.get(&entry.label).is_some_and(|id| {
+            hex_decode_32(id)
+                .map(|bytes| CellId(bytes) == expected_cell_id)
+                .unwrap_or(false)
+        })
+    {
+        warn!(
+            label = %entry.label,
+            cell_id = %hex_encode(&expected_cell_id.0),
+            "starbridge seed marker claims this factory cell exists but the LEDGER does not \
+             carry it — re-materializing from the descriptor (the ledger is the authority)"
+        );
     }
 
     let owner_key = match load_agent_secret_key(data_dir, &entry.owner_agent) {

@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""lean-ffi-closure.py — enumerate the module closure of the runtime splice roots.
+"""lean-ffi-closure.py — enumerate the module closure of the ONE runtime splice root.
 
-Prints one module name per line (`Dregg2.Exec.FFI`-style) for the transitive
-import closure of the executor roots and the six real post-quantum runtime roots
-that build.rs recognizes,
-walking BOTH the project tree and every lake package (mathlib's new module
-syntax — `public import` / `meta import` / `import all` — included). Core
-(Init/Lean/Std) modules come from the toolchain, not the seed, and are skipped.
+Prints one module name per line for the transitive import closure of
+`Dregg2.FFI` — THE Lean<->Rust boundary manifest, and the same single target
+`dregg-lean-ffi/build.rs` builds and splices — walking BOTH the project tree and
+every lake package (mathlib's module syntax — `public import` / `private import`
+/ `meta import` / `import all` — included). Core (Init/Lean/Std) modules come
+from the toolchain, not the seed, and are skipped.
 
-Used by seed-dregg2-closure.sh to cut a CLOSURE-ONLY seed: archiving every
-warm IR object ships ~5000 mathlib modules the FFI never imports (a 295 MB
-seed where the closure is ~95 MB — measured 2026-07-10, see
-docs/LEAN-SEED-SIZE.md).
+⚠ The prose here said "the executor roots and the six real post-quantum runtime
+roots" until 2026-07-30. That was true of the NINE-ROOT LIST this file carried
+until `ec4ed5e17` and false of the code under it for a day afterwards — a name
+outliving the thing it named, which is how the nine-root list survived review in
+the first place.
+
+TWO consumers, and they must not drift:
+  * `dregg-lean-ffi/scripts/seed-dregg2-closure.sh` picks the seed's members
+    from this list. Archiving every warm IR object ships ~5000 mathlib modules
+    the FFI never imports (a 295 MB seed where the closure is ~96 MB — measured
+    2026-07-10, docs/LEAN-SEED-SIZE.md).
+  * `scripts/check-lean-seed-closure.sh` checks an archive AGAINST this list, so
+    a seed and its check compute the closure the same way by construction. That
+    gate is what detects a disagreement with `build.rs::boundary_closure`, the
+    third walk of this same graph (Rust, in-tree edges only) — see its note.
 
 Usage: lean-ffi-closure.py <metatheory-dir> [extra roots...]
 """

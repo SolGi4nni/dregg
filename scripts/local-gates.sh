@@ -121,6 +121,14 @@ GATES=(
   "test-stubs-firewall|300|bash scripts/check-test-stubs-firewall.sh"
   "no-disarmed-guard|180|bash scripts/check-no-disarmed-guard.sh"
   "lean-seed-freshness|120|bash scripts/check-lean-seed-freshness.sh"
+  # `lean-seed-freshness` compares a TREE HASH recorded in the pin. It says nothing about
+  # what is IN the archive, and a seed can match the pin and still be missing every verified
+  # decision export. Measured 2026-07-30 (issue #41): the seed installed in this checkout
+  # carried 188 `Dregg2_*.o` against a 243-module boundary closure — 55 in-tree modules
+  # absent, and no `Dregg2_FFI.o` — while reporting ZERO undefined initializers, because the
+  # boundary object that would reference the missing 55 was itself missing. "It self-links"
+  # is not the bar; the closure is. This row reads the members.
+  "lean-seed-closure|180|bash scripts/check-lean-seed-closure.sh"
   "nightly-verdict|120|bash scripts/check-nightly-verdict.sh"
   # A function that DECIDES something — `verify_*`, `check_*`, `*_admits` — with no
   # production caller. `dregg_circuit::effect_vm::verify_balance_limb_pis` was the

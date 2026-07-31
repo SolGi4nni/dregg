@@ -184,6 +184,26 @@ if command -v "$NM" >/dev/null 2>&1; then
   unset syms
   echo "    verified executor + all six real PQ exports present"
 fi
+# ── CLOSURE COMPLETENESS — the accelerator promise, checked (issue #41) ──────
+# The symbol check above asks "does this archive export the named cores". It cannot ask
+# "does it carry the boundary closure", and those come apart: measured 2026-07-30, a seed
+# exporting every required symbol was still 55 in-tree modules short of `Dregg2.FFI`'s
+# closure and did not contain `Dregg2_FFI.o` at all. Every `#[cfg(dregg_*_present)]` gate
+# for those 55 compiles its ABSENT arm, and the first `cargo build` pays for the rest in
+# closure passes — 1,251 objects / 21m47s when the reporter measured it.
+#
+# This FAILS rather than warns. A seed that cannot arm the gates it is fetched to arm is
+# not a slower seed, it is a silent one, and installing it is how eleven days of green
+# happened over disarmed teeth. Re-cut with `gh workflow run lean-seed.yml`.
+if [ -x "$(dirname "$0")/check-lean-seed-closure.sh" ]; then
+  if ! "$(dirname "$0")/check-lean-seed-closure.sh" "$TMP/libdregg_lean.a"; then
+    die "the downloaded archive is SHORT of the Dregg2.FFI boundary closure (report above).
+  NOT installing: a seed that leaves verified gates dark is worse than no seed, because
+  every test behind \`if !<x>_available() { SKIP }\` then reports ok having asserted nothing.
+  Cut a fresh one:  gh workflow run lean-seed.yml"
+  fi
+fi
+
 mv -f "$TMP/libdregg_lean.a" "$DEST"
 
 say "DONE — verified Lean seed installed ($(du -h "$DEST" | cut -f1 | tr -d ' '))."

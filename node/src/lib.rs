@@ -1668,17 +1668,11 @@ async fn run_node(
         }
     }
 
-    // Recovery-convergence verdict (DEFERRED from NodeState construction). The
-    // genesis/baseline cells are now (re)seeded on top of the recovered
-    // commit-log overlay, so the in-memory ledger is the FULL finalized ledger
-    // (genesis ⊕ touched). Verify its canonical root equals the durably recorded
-    // finalized root. A node that finalized turns BELOW the first ledger
-    // checkpoint converges HERE (the genesis baseline restores the untouched
-    // cells the overlay can't carry) — it no longer fail-closes on a clean
-    // restart. A genuinely corrupt/divergent store STILL fails closed: reseeding
-    // is insert-if-absent and cannot paper over a tampered touched cell. FAIL
-    // CLOSED on mismatch — refuse to serve wrong state.
-    if let Err(e) = node_state.verify_recovery_convergence().await {
+    // Recovery-convergence verdict (DEFERRED from NodeState construction), via the
+    // ONE weld every serving entrypoint runs. The reseed above already put the
+    // genesis baseline under the recovered overlay; `complete_boot_recovery` redoes
+    // it idempotently and then renders the verdict. FAIL CLOSED on mismatch.
+    if let Err(e) = complete_boot_recovery(&node_state, &data_path, BootBaseline::Complete).await {
         error!("{e}");
         std::process::exit(1);
     }
@@ -2180,6 +2174,19 @@ async fn run_mcp(data_dir: &str, peers: Vec<String>) {
         }
     };
 
+    // The SAME boot-recovery weld `run_node` runs. `NodeState::new` renders no
+    // integrity verdict (see `complete_boot_recovery`), and the MCP tools COMMIT
+    // TURNS — so without this an image whose recorded finalized root the ledger does
+    // not reconstruct was served here in silence, on a data dir `run_node` would
+    // refuse. `PartialServeOnly`: this path builds no starbridge/demo baseline, so it
+    // must never pin one.
+    if let Err(e) =
+        complete_boot_recovery(&node_state, &data_path, BootBaseline::PartialServeOnly).await
+    {
+        error!("{e}");
+        std::process::exit(1);
+    }
+
     // F-DOS-1: async prove pool here too, so the MCP tool commit paths offload
     // proving off the write lock rather than blocking inline.
     {
@@ -2553,6 +2560,176 @@ fn materialize_genesis_cells(
     }
 
     stats
+}
+
+/// `true` iff this store has never checkpointed AND has never committed a finalized
+/// turn — i.e. the ledger in hand right now is, by construction, the pre-turn boot
+/// baseline and not a partial recovery. The two conditions together are what keep
+/// [`complete_boot_recovery`]'s height-0 checkpoint from ever overwriting a real one
+/// or laundering a short reconstruction into the store.
+fn is_prefinalization_boot(store: &dregg_persist::PersistentStore) -> bool {
+    matches!(store.load_latest_ledger_checkpoint(), Ok(None))
+        && matches!(store.commit_cursor(), Ok(0))
+}
+
+/// Whether the caller has materialized the WHOLE boot-time ledger baseline before
+/// calling [`complete_boot_recovery`], and may therefore pin it as the height-0
+/// checkpoint every later restart reconstructs from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BootBaseline {
+    /// `run_node`: genesis `initial_cells`, the starbridge factory cells and the
+    /// demo execution-lease cells are all in the ledger by the time it calls.
+    Complete,
+    /// `run_mcp`: it builds none of the boot seeds, so its ledger is genesis ⊕
+    /// overlay only. Checkpointing THAT would freeze a short baseline into the
+    /// store and brick every later `run_node` on the same data dir — the exact
+    /// failure this function exists to end, written by the fix for it.
+    ///
+    /// ⚠ NAMED RESIDUAL, not closed here: `run_mcp` and `run_node` build
+    /// DIFFERENT boot baselines, and both commit turns. A data dir driven by
+    /// `mcp` alone is self-consistent (it records roots over the baseline it
+    /// builds) and a data dir driven by `run` alone is self-consistent; a dir
+    /// driven by BOTH is not, and the second one to boot fail-closes on
+    /// convergence. That predates this function — `run_mcp` never seeded
+    /// starbridge — and what changed is only that the divergence is now
+    /// REFUSED on both paths instead of served on one. The real fix is one
+    /// boot-baseline builder both entrypoints share.
+    PartialServeOnly,
+}
+
+/// **THE BOOT-RECOVERY WELD — the one named step every serving entrypoint runs.**
+///
+/// `NodeState::new*` deliberately leaves the ledger at `checkpoint ⊕ commit-log
+/// overlay` and renders NO integrity verdict. On a node below its first ledger
+/// checkpoint that is only the touched-cell delta on an empty base, while every
+/// commit record's `ledger_root` commits the FULL ledger (genesis ⊕ touched) — so
+/// comparing there would fail-close every legitimate sub-checkpoint restart. That
+/// is why the verdict is deferred (see [`crate::state::NodeState::verify_recovery_convergence`]
+/// and `run_boot_torn_tail_recovery`).
+///
+/// ⚑ A DEFERRED CHECK IS A CHECK THAT SOMEBODY MUST STILL RUN, and for four days
+/// exactly one caller did. Before the deferral landed (`e5c92ac80`, 2026-07-26) the
+/// early `recover_to_last_consistent` fatal fired inside the CONSTRUCTOR, so it
+/// covered `run_node` and `run_mcp` alike. After it, the verdict lived only in
+/// `run_node`'s body — and `run_mcp` (which unlocks the cipherclerk and serves
+/// turn-COMMITTING tools over stdio) constructed a `NodeState` on the same data dir,
+/// never reseeded the genesis baseline, never verified convergence, and served. A
+/// store whose recorded finalized root the ledger does not reconstruct was accepted
+/// there in silence. The commit that moved the verdict said "it does not remove a
+/// gate"; that was true of `run_node` and false of the process next to it.
+///
+/// So the two steps are welded into one function with one name, and both
+/// entrypoints call it:
+///
+/// 1. **Rebuild the full finalized ledger** — [`reseed_genesis_then_overlay`], which
+///    lifts the recovered overlay out, materializes the genesis baseline on a FRESH
+///    ledger (so `genesis_moves` replay EXACTLY ONCE), re-applies the overlay
+///    last-writer-wins, and re-applies post-checkpoint removals. It is IDEMPOTENT by
+///    construction, which is what lets `run_node` keep its own earlier reseed (it
+///    needs the materialized wells before this point) and still route through here.
+/// 2. **Render the verdict** — `verify_recovery_convergence`, carrying the
+///    crash-consistency, quorum-signed-anchor and anti-rollback legs.
+///
+/// 3. **Pin the boot baseline as a height-0 ledger checkpoint** — see
+///    [`BootBaseline`]. This is what makes step 2 survivable on a young node at all
+///    (below), and only a caller that actually built the whole baseline may do it.
+///
+/// FAIL CLOSED: `Err` means refuse to serve. A node with no `genesis.json` skips
+/// step 1 (there is no baseline to rebuild) and STILL runs step 2.
+///
+/// ⚑ MEASURED 2026-07-30 against the real binary (issue #59). A fresh solo node,
+/// three faucet grants, `kill -9`, restart:
+///
+/// ```text
+/// recovery convergence failed: reconstructed ledger root 26298416… does not match
+/// the durably recorded finalized root 1f9ba1aa… (STORE INTEGRITY EVENT)
+/// ```
+///
+/// on its own healthy, never-tampered image — after `e5c92ac80` had already fixed
+/// the earlier, louder refusal one step upstream. The image was fine. The
+/// reconstruction was short by exactly the **ten starbridge factory cells**
+/// (`starbridge_seed`) plus the demo execution-lease cells: the boot baseline is
+/// `initial_cells ⊕ starbridge ⊕ demo-lease`, but only `initial_cells` is
+/// reconstructible from `genesis.json`, and a cell that no finalized turn ever
+/// TOUCHED is in no commit-log overlay either. Below the first ledger checkpoint
+/// there was nothing carrying them, so every record's full-ledger root was
+/// unreachable — exactly the reporter's "`LEDGER_CHECKPOINT_INTERVAL` must not
+/// define the earliest survivable restart", one layer under where they found it.
+///
+/// The seeder even reports `existing=10` on that restart, because
+/// `starbridge_seed::seed_one_cell` accepts a **marker file** as evidence a cell is
+/// present. Two authorities for one fact; the ledger is the one that counts.
+async fn complete_boot_recovery(
+    node_state: &state::NodeState,
+    data_path: &std::path::Path,
+    baseline: BootBaseline,
+) -> Result<(), String> {
+    let genesis_path = data_path.join("genesis.json");
+    if genesis_path.exists() {
+        match std::fs::read_to_string(&genesis_path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| {
+                serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())
+            }) {
+            Ok(genesis) => {
+                let mut s = node_state.write().await;
+                let removed_since_checkpoint = {
+                    let cp_h = s.store.latest_ledger_checkpoint_height().unwrap_or(0);
+                    s.store.removed_cell_ids_since(cp_h).unwrap_or_default()
+                };
+                let _ =
+                    reseed_genesis_then_overlay(&genesis, &mut s.ledger, &removed_since_checkpoint);
+            }
+            Err(e) => {
+                // Not fatal by itself — but say it, because the verdict below is now
+                // being taken against a ledger with no genesis baseline under it and
+                // will (correctly) refuse a node that has finalized turns.
+                tracing::warn!(
+                    error = %e,
+                    path = %genesis_path.display(),
+                    "genesis.json is present but unreadable/unparseable — the recovery \
+                     verdict runs WITHOUT a rebuilt genesis baseline"
+                );
+            }
+        }
+    }
+    node_state.verify_recovery_convergence().await?;
+
+    // ── PIN THE BASELINE ────────────────────────────────────────────────────
+    // A node that has never checkpointed and has never committed a finalized turn
+    // is standing on the complete boot baseline RIGHT NOW and will never be able to
+    // rebuild it from `genesis.json` alone. Write it as the height-0 checkpoint, so
+    // the very first crash — before turn 1, before block 100, before anything — has
+    // a full-ledger snapshot to recover onto.
+    //
+    // The conditions are what keep this from being a way to launder a short ledger
+    // into the store: NO existing checkpoint (never overwrite a real one) and a ZERO
+    // commit cursor (nothing finalized yet, so this ledger is by construction the
+    // pre-turn baseline and not a partial recovery). `PartialServeOnly` callers are
+    // excluded outright.
+    if baseline == BootBaseline::Complete {
+        let s = node_state.read().await;
+        if is_prefinalization_boot(&s.store) {
+            match s.store.checkpoint_ledger(&s.ledger, 0) {
+                Ok(()) => info!(
+                    cells = s.ledger.len(),
+                    "pinned the boot ledger baseline as the height-0 checkpoint — a crash \
+                     before the first periodic checkpoint is now recoverable"
+                ),
+                Err(e) => {
+                    // Fail closed. Without this checkpoint the node is one `kill -9`
+                    // away from an image it cannot reconstruct, and saying so at boot
+                    // is the whole point of writing it here.
+                    return Err(format!(
+                        "could not pin the boot ledger baseline as the height-0 checkpoint \
+                         ({e}) — refusing to serve a node whose first crash would be \
+                         unrecoverable"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reconstruct the recovered ledger in the SOUND order — genesis BASELINE
@@ -3014,6 +3191,181 @@ async fn shutdown_signal() {
             .await
             .expect("failed to listen for Ctrl-C");
         info!("received Ctrl-C, initiating graceful checkpoint-then-exit shutdown");
+    }
+}
+
+#[cfg(test)]
+mod boot_recovery_baseline_tests {
+    use super::*;
+    use dregg_cell::Ledger;
+
+    fn cell(seed: u8, balance: i64) -> dregg_cell::Cell {
+        dregg_cell::Cell::with_balance([seed; 32], [7u8; 32], balance)
+    }
+
+    /// A store holding ONE finalized turn whose recorded root commits
+    /// `boot_baseline ⊕ touched`, where `boot_baseline` contains a cell that is
+    /// NOT in any `genesis.json` — the starbridge/demo-lease shape. Returns the
+    /// full ledger so a caller can checkpoint it.
+    fn store_with_one_turn_over_an_unreconstructible_baseline(
+        dir: &std::path::Path,
+    ) -> (dregg_persist::PersistentStore, Ledger) {
+        let store = dregg_persist::PersistentStore::open(&dir.join("dregg.redb")).expect("open");
+        let mut ledger = Ledger::new();
+        // The BOOT SEED: born at boot from a descriptor, never named by
+        // genesis.json, and never touched by a finalized turn. Nothing but a
+        // checkpoint can carry it across a restart.
+        ledger
+            .insert_cell(cell(0xbb, 1_000))
+            .expect("boot-seeded cell");
+        // A cell a finalized turn touches — this one IS in the commit-log overlay.
+        let touched = cell(0x11, 42);
+        ledger.insert_cell(touched.clone()).expect("touched cell");
+        let record = dregg_persist::CommitRecord {
+            ordinal: 0,
+            height: 1,
+            block_id: [0u8; 32],
+            block_executed_up_to: 0,
+            turn_hash: [0xc1; 32],
+            creator: [0u8; 32],
+            receipt_hash: [0xd1; 32],
+            ledger_root: crate::blocklace_sync::canonical_ledger_root(&ledger),
+            touched_cells: vec![touched],
+            removed: Vec::new(),
+        };
+        store.commit_finalized_turn(0, &record).expect("commit");
+        (store, ledger)
+    }
+
+    /// POLE 1 — THE WOUND (issue #59, measured against the real binary
+    /// 2026-07-30). With no ledger checkpoint, a cell that entered the ledger at
+    /// BOOT (not from `genesis.json`) and was never TOUCHED by a finalized turn is
+    /// carried by nothing: not the checkpoint (there is none), not the commit-log
+    /// overlay (only touched cells). The reconstruction is short by exactly that
+    /// cell, the canonical root does not match the recorded finalized root, and
+    /// the node refuses its own healthy image.
+    ///
+    /// This test asserts the REFUSAL, deliberately. It is the pre-state pole 2
+    /// must beat, and if it ever stops refusing this test stops being about
+    /// anything.
+    #[tokio::test]
+    async fn boot_seeded_cell_is_unreconstructible_without_a_checkpoint() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (store, _full) = store_with_one_turn_over_an_unreconstructible_baseline(tmp.path());
+        assert!(
+            store
+                .load_latest_ledger_checkpoint()
+                .expect("read")
+                .is_none(),
+            "the window this is about is DEFINED by having no checkpoint"
+        );
+        drop(store);
+
+        let state = state::NodeState::new(tmp.path(), vec![]).expect("construct");
+        // No genesis.json in this dir, so `complete_boot_recovery` reseeds nothing
+        // and verifies what the overlay alone rebuilt.
+        let err = complete_boot_recovery(&state, tmp.path(), BootBaseline::Complete)
+            .await
+            .expect_err(
+                "a ledger short of a boot-seeded cell must NOT be accepted — if this passes, \
+                 the convergence verdict has stopped comparing anything",
+            );
+        assert!(
+            err.contains("convergence"),
+            "the refusal must name the convergence failure; got: {err}"
+        );
+    }
+
+    /// POLE 2 — THE FIX. The SAME image, with the boot baseline pinned as a
+    /// height-0 ledger checkpoint before the crash. `NodeState::new` restores
+    /// `checkpoint ⊕ overlay`, which IS the full finalized ledger, and the verdict
+    /// converges. This is what `complete_boot_recovery` writes on a fresh node's
+    /// first boot.
+    #[tokio::test]
+    async fn the_height_zero_boot_checkpoint_makes_that_same_image_recoverable() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (store, full) = store_with_one_turn_over_an_unreconstructible_baseline(tmp.path());
+        store
+            .checkpoint_ledger(&full, 0)
+            .expect("pin the boot baseline");
+        drop(store);
+
+        let state = state::NodeState::new(tmp.path(), vec![]).expect("construct");
+        complete_boot_recovery(&state, tmp.path(), BootBaseline::Complete)
+            .await
+            .expect("the pinned boot baseline must make this image recoverable");
+    }
+
+    /// POLE 3 — the checkpoint must not become a way to accept ANYTHING. Same
+    /// shape as pole 2, but the recorded finalized root is one the ledger does not
+    /// reconstruct to. A checkpoint is present, so pole 2's mechanism is fully in
+    /// play; the verdict must still refuse.
+    #[tokio::test]
+    async fn a_checkpointed_but_divergent_image_is_still_refused() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store =
+            dregg_persist::PersistentStore::open(&tmp.path().join("dregg.redb")).expect("open");
+        let mut ledger = Ledger::new();
+        ledger
+            .insert_cell(cell(0xbb, 1_000))
+            .expect("boot-seeded cell");
+        let touched = cell(0x11, 42);
+        ledger.insert_cell(touched.clone()).expect("touched cell");
+        let record = dregg_persist::CommitRecord {
+            ordinal: 0,
+            height: 1,
+            block_id: [0u8; 32],
+            block_executed_up_to: 0,
+            turn_hash: [0xc1; 32],
+            creator: [0u8; 32],
+            receipt_hash: [0xd1; 32],
+            ledger_root: [0xde; 32], // deliberately NOT the post-overlay root
+            touched_cells: vec![touched],
+            removed: Vec::new(),
+        };
+        store.commit_finalized_turn(0, &record).expect("commit");
+        store.checkpoint_ledger(&ledger, 0).expect("checkpoint");
+        drop(store);
+
+        let state = state::NodeState::new(tmp.path(), vec![]).expect("construct");
+        let err = complete_boot_recovery(&state, tmp.path(), BootBaseline::Complete)
+            .await
+            .expect_err("a divergent image must fail closed even with a checkpoint present");
+        assert!(
+            err.contains("convergence"),
+            "the refusal must name the convergence failure; got: {err}"
+        );
+    }
+
+    /// The guard on WHEN the boot baseline may be pinned. Both conditions are
+    /// load-bearing: an existing checkpoint means this ledger is a RECOVERY (and
+    /// may legitimately be mid-reconstruction), and a non-zero commit cursor means
+    /// turns have been finalized (so this ledger is no longer the pre-turn
+    /// baseline). Either one alone would let a short reconstruction be frozen into
+    /// the store as if it were the baseline.
+    #[tokio::test]
+    async fn the_baseline_pin_refuses_a_store_that_is_not_a_fresh_boot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store =
+            dregg_persist::PersistentStore::open(&tmp.path().join("dregg.redb")).expect("open");
+        assert!(
+            is_prefinalization_boot(&store),
+            "a store with no checkpoint and no finalized turn IS a fresh boot"
+        );
+
+        std::fs::create_dir_all(tmp.path().join("b")).expect("subdir");
+        let (store2, full) =
+            store_with_one_turn_over_an_unreconstructible_baseline(&tmp.path().join("b"));
+        assert!(
+            !is_prefinalization_boot(&store2),
+            "a NON-ZERO commit cursor means turns are finalized — this ledger is no longer the \
+             pre-turn baseline and pinning it would freeze a partial recovery"
+        );
+        store2.checkpoint_ledger(&full, 0).expect("checkpoint");
+        assert!(
+            !is_prefinalization_boot(&store2),
+            "an EXISTING checkpoint must never be overwritten by the boot pin"
+        );
     }
 }
 
