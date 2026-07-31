@@ -292,3 +292,17 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   primitive in a fork we maintain with no Lean authoring path short of replacing p3, so a **minimal
   local** change is permitted — one column into preprocessed, one equality, law1 delta reported, and
   **stop-and-report if it needs more than that.**
+- 23:45 ⚑ **HORN 1 SETTLED — MEASURED, and it is the FLOOR, not a gap.**
+  Ran `pinned_leaf_identity_rejects_foreign_child_in_band --ignored` (263.7 s):
+  `REFUSED WITH: Circuit(WitnessConflict { witness_id: WitnessId(477), existing: …16832257…,
+  new: …16832258… })` — **exactly the spine lane's prediction.** The two values differ by ONE at a
+  single shared slot: that is the **honest witness generator declining to build**, not a verifier
+  refusing a proof. **An adversarial prover does not decline.** So the test is NOT horn-1 evidence,
+  and the lane was right to say so before I measured it.
+  **The correct resolution**: horn 1 (mismatched cap ⇒ in-circuit preprocessed-trace opening UNSAT)
+  is a **restatement of `recursive_sound`** — the cap targets are a commitment round of the
+  in-circuit PCS check, so a mismatched cap has no satisfying opening *under MMCS binding*. That is
+  **an assumption of the same class as the FRI/STARK floor, not a missing tooth.**
+  ⚑ Recording the distinction because it matters under this goal's bar: **"we assume MMCS binding"
+  is a floor every SNARK stands on; "a define_const is not a pin" was a HOLE.** The first is not a
+  sin; the second was, and it is closed for programs and in flight for constants.
