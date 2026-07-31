@@ -24,16 +24,25 @@ pub const B_SPAN: usize = 247;
 pub const AFTER_BLOCK_OFF: usize = 247;
 
 /// the caveat region's span
-pub const C_SPAN: usize = 43;
+pub const C_SPAN: usize = 45;
 
-/// the caveat commitment carrier, in-region
-pub const C_COMMIT: usize = 38;
+/// the 29-limb MANIFEST fold's carrier, in-region — an INTERMEDIATE of the chain, not the published commitment
+pub const C_MANIFEST_COMMIT: usize = 38;
 
-/// the DFA route-commitment (rc) carrier, in-region
+/// the DFA route-commitment (rc) carrier, in-region — ABSORBED into the published caveat commitment (the rc FOLD), which is what forces these columns
 pub const C_RC_OFF: usize = 39;
 
+/// the rc extension's first carrier: hash [manifest commit, rc0, rc1, rc2]
+pub const C_RC_CARRIER: usize = 43;
+
+/// the PUBLISHED caveat commitment carrier, in-region — caveatCommitRc over the manifest AND the rc carrier; the column rotPins binds to PI piBase+3
+pub const C_COMMIT: usize = 44;
+
 /// 2*B_SPAN + C_SPAN — the rotated appendix appended to the v1 face
-pub const APPENDIX_SPAN: usize = 537;
+pub const APPENDIX_SPAN: usize = 539;
+
+/// poseidon2-chip SITES the rotated appendix contributes (2 blocks + the caveat region incl. the rc fold). Graduation appends 7 lane columns per site, so this is the multiplier the Rust host width uses — it was a hand-carried arithmetic literal in trace_rotated.rs and it drifted.
+pub const ROT_APPENDIX_SITES: usize = 136;
 
 /// committed record/authority digest limb
 pub const B_RECORD_DIGEST: usize = 24;
