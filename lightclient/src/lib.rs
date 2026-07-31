@@ -122,6 +122,17 @@
 
 use std::collections::HashSet;
 
+/// **THE WIRE ENVELOPE** — the JSON a producer ships and a remote verifier reads.
+///
+/// Defined here rather than in `wasm/` because `wasm/` is excluded from the workspace,
+/// so a guard living there never ran in a green pass. See the module docs for the v2
+/// flag day (the four unchecked carried publics are deleted).
+pub mod external_envelope;
+
+pub use external_envelope::{
+    EXTERNAL_HISTORY_ENVELOPE_VERSION, ExternalHistoryEnvelope, FinalityCertJson, FinalityVoteJson,
+};
+
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, RecursionVk, SEG_ANCHOR_WIDTH, SEG_DIGEST_WIDTH, TurnChainError,

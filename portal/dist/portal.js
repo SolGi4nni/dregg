@@ -81,7 +81,7 @@
       }).then(function (v) {
         verdict = v;
         if (eng.box) eng.box.classList.remove("scanning");
-        if (v && v.attested) {
+        if (v && v.aggregate_attested) {
           onVerified(v);
         } else {
           onRefused(v);
@@ -110,7 +110,7 @@
       var root = (v.final_root || []).join(", ");
       eng.detail.innerHTML =
         '<div class="engine-stats">' +
-          '<div class="engine-stat"><div class="k">finalized turns</div><div class="v">' + esc(v.num_turns) + "</div></div>" +
+          '<div class="engine-stat"><div class="k">turns folded</div><div class="v">' + esc(v.num_turns) + "</div></div>" +
           '<div class="engine-stat"><div class="k">engine</div><div class="v" style="font-size:.74rem">' + esc(v.engine) + "</div></div>" +
           '<div class="engine-stat span2"><div class="k">commitment · final_root</div><div class="v root">[' + esc(root) + "]</div></div>" +
         "</div>" +
@@ -139,7 +139,7 @@
         done++;
         if (counterEl) counterEl.innerHTML = "verifying · <b>" + done + "</b> / " + total + " cells";
         if (meterEl) meterEl.style.width = Math.round((done / Math.max(1, total)) * 100) + "%";
-        if (done >= total && counterEl) counterEl.innerHTML = "<b>" + total + " / " + total + "</b> cells attested under the live light client";
+        if (done >= total && counterEl) counterEl.innerHTML = "<b>" + total + " / " + total + "</b> cells whose aggregate verified under the live light client (no finality leg)";
       }
       if (counterEl) counterEl.innerHTML = "verifying · <b>0</b> / " + total + " cells";
       var dur = reduceMotion ? 0 : Math.min(2600, 700 + total * 180);
@@ -185,9 +185,9 @@
           lastCells = cells || [];
           renderCells(lastCells);
           renderGraph(lastCells);
-          if (verdict && verdict.attested) { // already verified: re-light immediately
+          if (verdict && verdict.aggregate_attested) { // already verified: re-light immediately
             lastCells.forEach(function (c) { lightNode(c.id, 0, function () {}); });
-            if (counterEl) counterEl.innerHTML = "<b>" + lastCells.length + " / " + lastCells.length + "</b> cells attested under the live light client";
+            if (counterEl) counterEl.innerHTML = "<b>" + lastCells.length + " / " + lastCells.length + "</b> cells whose aggregate verified under the live light client (no finality leg)";
             if (meterEl) meterEl.style.width = "100%";
           }
         })

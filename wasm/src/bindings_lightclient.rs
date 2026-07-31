@@ -51,37 +51,45 @@ use wasm_bindgen::prelude::*;
 /// The whole-history attestation a light client obtains — the JS view of
 /// `dregg_lightclient::AttestedHistory`.
 ///
-/// **What `attested: true` means, exactly.** Corrected 2026-07-30. The previous
-/// text read: "Holding it means: *every one of `num_turns` finalized turns
-/// executed correctly, in order, from `genesis_root` to `final_root`, and
-/// `chain_digest` commits to that exact ordered history* — and the tab
-/// re-executed nothing." Two words in that outran the code:
+/// **THERE IS NO `attested` FIELD, DELIBERATELY.** Until 2026-07-30 this struct
+/// carried one bare `attested: bool`, and it was set to `true` by
+/// [`verify_devnet_history`] (which runs NO finality leg) and by
+/// [`verify_finalized_devnet_history`] (which does) ALIKE — the difference lived
+/// only in the prose of `named_floor`, which no JS consumer can branch on. A UI
+/// testing `view.attested === true` could not tell whether finality was checked,
+/// so a correctly-proven fork the network never finalized rendered the same ✓ as a
+/// quorum-ratified head. The bit is now SPLIT, one flag per leg, and the old name
+/// is GONE: every consumer that read `view.attested` gets `undefined` (falsy) and
+/// breaks loudly rather than reading the ambiguous bit.
 ///
-/// - **"finalized"** — this same struct is returned by [`verify_devnet_history`],
-///   which runs NO finality leg at all. A correctly-proven fork the network never
-///   finalized yields `attested: true` there. Only
-///   [`verify_finalized_devnet_history`] checks a committee quorum, and IT RETURNS
-///   THE SAME TYPE with no field distinguishing the two — the difference lives
-///   only in the prose of `named_floor`, which no JS consumer can branch on. A UI
-///   that tests `view.attested === true` cannot tell whether finality was checked.
-/// - **"executed correctly"** — the folded leaves are `EffectVmDescriptorAir`
-///   proofs (state-commit hash sites, transition continuity, `OLD/NEW_COMMIT` PI
-///   bindings, range checks). They are NOT the composed full-turn STARK, and no
-///   capability chain, nullifier, or revocation epoch is an input to the fold at
-///   all — `FinalizedTurn` carries one `DescriptorParticipant` and nothing else.
-///   So authorization, freshness and non-revocation are OUTSIDE this verdict.
+/// **What `aggregate_attested: true` still does NOT mean.** The folded leaves are
+/// `EffectVmDescriptorAir` proofs (state-commit hash sites, transition continuity,
+/// `OLD/NEW_COMMIT` PI bindings, range checks). They are NOT the composed full-turn
+/// STARK, and no capability chain, nullifier, or revocation epoch is an input to the
+/// fold at all — `FinalizedTurn` carries one `DescriptorParticipant` and nothing
+/// else. So authorization, freshness and non-revocation are OUTSIDE this verdict.
 ///
 /// What IS supported: the aggregate verified under the caller's configured VK
 /// anchor, and the four values below are the root's own exposed segment (tooth 4
-/// compares them for exact equality against it), so they are not bare fields.
+/// compares them for exact equality against it), so they are not bare fields — they
+/// are ALWAYS the byte-verified inner publics, never a producer's carried claim
+/// (see [`ExternalHistoryEnvelope`], which no longer carries a second copy).
 #[derive(Clone, Debug, Serialize)]
 pub struct AttestedHistoryView {
-    /// Whether the aggregate verified (the headline). On a real verify failure
-    /// this is the engine REJECTING the proof — no attestation granted.
+    /// **LEG 1+2.** Whether the recursive aggregate verified against the caller's
+    /// CONFIG anchor (the VK pin, the carried-publics attestation, the root batch
+    /// verify). On a real verify failure this is the engine REJECTING the proof —
+    /// no attestation granted.
     ///
-    /// ⚑ This bit does NOT say which legs ran: see the struct doc. It is `true`
-    /// for a legs-1+2-only verify and for a legs-1+2+3 verify alike.
-    pub attested: bool,
+    /// ⚑ This says NOTHING about finality. Branch on `finality_attested` for that.
+    pub aggregate_attested: bool,
+    /// **LEG 3.** Whether a supermajority of the caller's CONFIG committee was
+    /// checked to have ratified the proven head root. Only
+    /// [`verify_finalized_devnet_history`] can set this; every other entry point
+    /// returns `false` because it never ran the leg. `false` here with
+    /// `aggregate_attested: true` means exactly "correctly proven, finality NOT
+    /// checked" — which is indistinguishable from an equivocating fork.
+    pub finality_attested: bool,
     /// The 8-felt (~124-bit faithful) genesis state anchor (decimal felts).
     pub genesis_root: Vec<u32>,
     /// The 8-felt final state anchor — the genuine fold of the whole history (decimal felts).
@@ -89,8 +97,9 @@ pub struct AttestedHistoryView {
     /// The multi-felt Poseidon2 digest committing to the ORDERED `(old_root, new_root)`
     /// pairs (decimal felts) — distinct histories with the same endpoints still differ.
     pub chain_digest: Vec<u32>,
-    /// How many finalized turns the attested history folds. The light client
-    /// learns ALL of them executed correctly without seeing any.
+    /// How many turns the attested history folds — the BYTE-VERIFIED inner count
+    /// (tooth 4 compares it against the root's exposed segment), never a producer's
+    /// carried claim. "Finalized" is not implied: see `finality_attested`.
     pub num_turns: usize,
     /// The proof-system identifier + the honest named floor, for the UI.
     pub engine: String,
@@ -123,7 +132,8 @@ pub fn light_client_demo(k: usize, step: u64) -> Result<JsValue, JsError> {
     let (_agg, attested) = fold_demo_chain(k, step)?;
 
     let view = AttestedHistoryView {
-        attested: true,
+        aggregate_attested: true,
+        finality_attested: false,
         genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
         final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
         chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
@@ -195,7 +205,8 @@ pub fn verify_history_against_anchor(
     match verify_history(&agg, &anchor) {
         Ok(attested) => {
             let view = AttestedHistoryView {
-                attested: true,
+                aggregate_attested: true,
+                finality_attested: false,
                 genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
                 final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
                 chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
@@ -203,7 +214,8 @@ pub fn verify_history_against_anchor(
                 engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
                 named_floor: "verified against a CONFIG-SUPPLIED anchor (not self-anchored): \
                               the VK pin + carried-publics attestation + root verify all held. \
-                              named floor: recursive_sound (FRI engine soundness)"
+                              NO finality leg ran. named floor: recursive_sound (FRI engine \
+                              soundness)"
                     .to_string(),
             };
             serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
@@ -213,7 +225,8 @@ pub fn verify_history_against_anchor(
             // for a wrong anchor is the from-scratch-prover tooth firing — NO
             // attestation granted). We do not launder a refusal as success.
             let view = AttestedHistoryView {
-                attested: false,
+                aggregate_attested: false,
+                finality_attested: false,
                 genesis_root: Vec::new(),
                 final_root: Vec::new(),
                 chain_digest: Vec::new(),
@@ -230,107 +243,25 @@ pub fn verify_history_against_anchor(
     }
 }
 
-/// The wasm-side **versioned external-aggregate envelope** — the JSON/paste-UX
-/// transport a node/relayer serializes a `WholeChainProof` into and a tab
-/// deserializes. It is the OUTER wrapper: `proof_bytes_b64` is the base64 of the
-/// circuit's INNER versioned byte envelope
-/// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]), which carries the
-/// verify-sufficient subset of the proof (the root `BatchStarkProof`, the binding
-/// `Proof`, the four publics) — everything the recursion verify reads, and nothing
-/// of the prover-only `root.1`.
+/// The wire envelope, the finality-cert JSON, and the hex parsers all live in
+/// **`dregg_lightclient::external_envelope`** — NOT here.
 ///
-/// - `vk_fingerprint_hex` rides as the producer's CLAIM, NEVER trusted from here —
-///   the verifier compares it to its OWN configured anchor and, crucially, re-pins
-///   the anchor from the proof bytes during the real verify. (Carrying it lets the
-///   client give a precise "your config anchor ≠ the one this aggregate was built
-///   for" diagnostic without trusting it.)
-/// - `genesis_root` / `final_root` / `num_turns` / `chain_digest` are **DISPLAY
-///   HINTS ONLY, and are NEVER CHECKED**. Corrected 2026-07-30; the previous text
-///   read: "the carried public commitments — the same four the recursion verify
-///   re-attests against the binding proof (a relabeled value is refused at tooth
-///   2)." That was false of THESE fields. The verify path
-///   ([`verify_devnet_history`] step 5, [`verify_finalized_devnet_history`] step
-///   4) passes only `proof_bytes_b64` to `verify_history_bytes`; the four fields
-///   above are never an argument to anything. The values tooth 2 re-attests are
-///   the INNER `WholeChainProofBytes` publics, which are a different copy — and
-///   the two copies are never compared. So a producer may set these four to
-///   anything; on SUCCESS the returned view carries the inner (verified) values
-///   and the outer ones are silently discarded, and on REFUSAL the view carries
-///   these UNVERIFIED ones (see the `finalized_refusal` / mismatch arms below).
-///   **Any consumer that reads this JSON directly — an indexer, a relay, a
-///   summary rendered before verifying — is reading unbound producer input.**
-/// - `version` pins the OUTER envelope format. Note it is independent of the
-///   INNER `WholeChainProofBytes::version`, which is the one that actually
-///   fail-closes a layout change.
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct ExternalHistoryEnvelope {
-    /// Envelope format version (current: 1).
-    pub version: u32,
-    /// The producer's CLAIMED root-circuit VK fingerprint (hex). NEVER trusted
-    /// from the envelope — compared to the client's configured anchor AND re-pinned
-    /// from the proof bytes during verify.
-    pub vk_fingerprint_hex: String,
-    /// Base64 of the proof's inner versioned byte envelope
-    /// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`]). Populated by
-    /// [`produce_external_history_envelope`]; an empty value fails closed at verify
-    /// (nothing to cryptographically check).
-    #[serde(default)]
-    pub proof_bytes_b64: String,
-    /// Carried public commitment: the 8-felt genesis state anchor (decimal felts).
-    pub genesis_root: Vec<u32>,
-    /// Carried public commitment: the 8-felt final state anchor (decimal felts).
-    pub final_root: Vec<u32>,
-    /// Carried public commitment: the multi-felt ordered-history digest (decimal felts).
-    pub chain_digest: Vec<u32>,
-    /// Carried public commitment: how many finalized turns the aggregate folds.
-    pub num_turns: usize,
-    /// **LC-3 — the finality certificate (artifact side).** The producer's BFT finality cert over
-    /// the head root: the signed ratification votes a quorum cast. `None` for a legacy
-    /// legs-1+2-only envelope (which [`verify_finalized_devnet_history`] then refuses as
-    /// un-finalized). The verifier checks these votes against its OWN configured committee (a
-    /// separate argument, never read from here) — so a fabricated cert by foreign keys is rejected.
-    #[serde(default)]
-    pub finality_cert: Option<FinalityCertJson>,
-}
-
-/// A finality certificate as it rides in the [`ExternalHistoryEnvelope`] (artifact side). The
-/// verifier reconstructs a [`dregg_lightclient::FinalityCert`] from it and checks it against the
-/// client's CONFIG committee — the keys here are the producer's CLAIM, never trusted on their own.
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
-pub struct FinalityCertJson {
-    /// The ratifying votes (each a 64-hex validator key + a 128-hex Ed25519 signature).
-    pub votes: Vec<FinalityVoteJson>,
-    /// The group size the producer claims the supermajority was taken over (diagnostic only — the
-    /// verifier anchors the threshold to its OWN committee size, never this field).
-    pub participant_count: usize,
-    /// The FULL 8-felt wide head state root (decimal BabyBear lanes) the cert claims a quorum
-    /// finalized. Must equal the aggregate's byte-verified 8-felt final anchor for the seam to bind
-    /// — ALL lanes are compared and ALL lanes are inside each vote's signed message (a lane-0-only
-    /// `u32` here was the ~31-bit finality-substitution hole).
-    pub finalized_root: [u32; SEG_ANCHOR_WIDTH],
-}
-
-/// One ratification vote in a [`FinalityCertJson`].
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
-pub struct FinalityVoteJson {
-    /// The validator's Ed25519 verifying key (64 hex chars / 32 bytes).
-    pub validator_hex: String,
-    /// The Ed25519 signature over `finality_signing_message(finalized_root, participant_count)`
-    /// (128 hex chars / 64 bytes).
-    pub signature_hex: String,
-    /// The voter's ML-DSA-65 public key (FIPS 204, 1952 bytes → 3904 hex chars), carried
-    /// SELF-CONTAINED so the post-quantum half of the HYBRID vote is re-verifiable in-tab with no
-    /// committee PQ-key history — the client half of the end-to-end-PQ perimeter. `#[serde(default)]`
-    /// so a legacy classical-only envelope still parses; it then reconstructs an empty PQ half, which
-    /// the light client's hybrid gate REJECTS (fail-closed — never a silent ed25519-only accept).
-    #[serde(default)]
-    pub ml_dsa_pubkey_hex: String,
-    /// The ML-DSA-65 (FIPS 204) signature over the SAME `finality_signing_message` the Ed25519 half
-    /// signs, bound to `dregg_lightclient::HYBRID_PQ_CTX`. `#[serde(default)]` for legacy envelopes;
-    /// a missing/empty half fails the hybrid check closed.
-    #[serde(default)]
-    pub pq_signature_hex: String,
-}
+/// They used to be defined in this file, and `lightclient/src/bin/produce_history_envelope.rs`
+/// hand-printed the same JSON with `println!`: a second shape of one wire format. Worse,
+/// `wasm/` is EXCLUDED from the workspace, so the serde guards on the type never ran in a
+/// `cargo test --workspace` green pass — an unguarded wire format. One definition now, in the
+/// crate that defines what verifying a history means, with its falsifiers in
+/// `lightclient/tests/`.
+///
+/// **v2 flag day:** the envelope no longer carries `genesis_root` / `final_root` /
+/// `chain_digest` / `num_turns`. Those four were transported and never checked against
+/// anything (only the INNER `WholeChainProofBytes` copy is verified, and the two were never
+/// compared), so every reader that was not the success path below rendered unbound producer
+/// input. `deny_unknown_fields` + the version pin make a v1 artifact REFUSE TO LOAD.
+pub use dregg_lightclient::external_envelope::{
+    EXTERNAL_HISTORY_ENVELOPE_VERSION, ExternalHistoryEnvelope, FinalityCertJson, FinalityVoteJson,
+    parse_hex_var, parse_hex32, parse_hex64,
+};
 
 /// **VERIFY AN EXTERNAL HISTORY against a config-pinned VK anchor** — the real
 /// remote-verifier shape, over the versioned [`ExternalHistoryEnvelope`].
@@ -372,9 +303,12 @@ pub fn verify_devnet_history(
     // (1) Parse + version-check the envelope.
     let env: ExternalHistoryEnvelope = serde_json::from_str(envelope_json)
         .map_err(|e| JsError::new(&format!("envelope parse failed: {e}")))?;
-    if env.version != 1 {
+    if env.version != EXTERNAL_HISTORY_ENVELOPE_VERSION {
         return Err(JsError::new(&format!(
-            "unsupported envelope version {} (this client speaks v1)",
+            "unsupported envelope version {} (this client speaks v{EXTERNAL_HISTORY_ENVELOPE_VERSION}). \
+             v1 carried four publics that were never checked; they are DELETED, and a v1 artifact \
+             is refused rather than read with them silently dropped. Re-emit the envelope from the \
+             same fold — no re-proving, no VK rotation.",
             env.version
         )));
     }
@@ -394,11 +328,16 @@ pub fn verify_devnet_history(
         .map_err(|e| JsError::new(&format!("envelope claimed fingerprint malformed: {e}")))?;
     if claimed_bytes != cfg_bytes {
         let view = AttestedHistoryView {
-            attested: false,
-            genesis_root: env.genesis_root.clone(),
-            final_root: env.final_root.clone(),
-            chain_digest: env.chain_digest.clone(),
-            num_turns: env.num_turns,
+            aggregate_attested: false,
+            finality_attested: false,
+            // NOTHING was verified, so the view carries NOTHING. It used to echo the
+            // envelope's four carried publics here — unbound producer input rendered
+            // into a verdict object. Those fields are gone; a refusal reports the
+            // reason and no numbers.
+            genesis_root: Vec::new(),
+            final_root: Vec::new(),
+            chain_digest: Vec::new(),
+            num_turns: 0,
             engine: "recursive-stark (plonky3 fork)".to_string(),
             named_floor: format!(
                 "REFUSED at the anchor-discipline check: the envelope was built for circuit \
@@ -413,11 +352,12 @@ pub fn verify_devnet_history(
     // (4) The proof bytes must be present for the cryptographic verify.
     if env.proof_bytes_b64.is_empty() {
         let view = AttestedHistoryView {
-            attested: false,
-            genesis_root: env.genesis_root.clone(),
-            final_root: env.final_root.clone(),
-            chain_digest: env.chain_digest.clone(),
-            num_turns: env.num_turns,
+            aggregate_attested: false,
+            finality_attested: false,
+            genesis_root: Vec::new(),
+            final_root: Vec::new(),
+            chain_digest: Vec::new(),
+            num_turns: 0,
             engine: "recursive-stark (plonky3 fork)".to_string(),
             named_floor: "REFUSED: the envelope carries no proof_bytes — the anchor discipline \
                           passed, but there is nothing to cryptographically verify (fail-closed). \
@@ -437,7 +377,10 @@ pub fn verify_devnet_history(
     match verify_history_bytes(&proof_bytes, &anchor) {
         Ok(attested) => {
             let view = AttestedHistoryView {
-                attested: true,
+                aggregate_attested: true,
+                // This entry runs NO finality leg. The flag says so in a field a JS
+                // consumer can branch on, not only in the prose below.
+                finality_attested: false,
                 genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
                 final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
                 chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
@@ -445,20 +388,25 @@ pub fn verify_devnet_history(
                 engine: "recursive-stark (plonky3 fork) · descriptor-leaf EffectVM".to_string(),
                 named_floor: "verified OVER THE WIRE against a CONFIG-supplied anchor: the byte \
                               envelope decoded, the VK pin + carried-publics attestation + root \
-                              verify all held. named floor: recursive_sound (FRI engine soundness)"
+                              verify all held. NO finality leg ran — a correctly-proven fork the \
+                              network never finalized passes this entry (use \
+                              verify_finalized_devnet_history for leg 3). named floor: \
+                              recursive_sound (FRI engine soundness)"
                     .to_string(),
             };
             serde_wasm_bindgen::to_value(&view).map_err(JsError::from)
         }
         Err(LightClientError::AggregateInvalid(e)) => {
             // The engine REFUSED the bytes (tamper, wrong circuit, malformed
-            // envelope). We carry the genuine reason; no attestation is laundered.
+            // envelope). We carry the genuine reason and NO numbers; no attestation
+            // is laundered and no unverified public is rendered.
             let view = AttestedHistoryView {
-                attested: false,
-                genesis_root: env.genesis_root,
-                final_root: env.final_root,
-                chain_digest: env.chain_digest.clone(),
-                num_turns: env.num_turns,
+                aggregate_attested: false,
+                finality_attested: false,
+                genesis_root: Vec::new(),
+                final_root: Vec::new(),
+                chain_digest: Vec::new(),
+                num_turns: 0,
                 engine: "recursive-stark (plonky3 fork)".to_string(),
                 named_floor: format!(
                     "REFUSED at the over-wire recursion verify: {e} — the byte envelope was \
@@ -513,9 +461,12 @@ pub fn verify_finalized_devnet_history(
     // (1) Parse + version-check the envelope.
     let env: ExternalHistoryEnvelope = serde_json::from_str(envelope_json)
         .map_err(|e| JsError::new(&format!("envelope parse failed: {e}")))?;
-    if env.version != 1 {
+    if env.version != EXTERNAL_HISTORY_ENVELOPE_VERSION {
         return Err(JsError::new(&format!(
-            "unsupported envelope version {} (this client speaks v1)",
+            "unsupported envelope version {} (this client speaks v{EXTERNAL_HISTORY_ENVELOPE_VERSION}). \
+             v1 carried four publics that were never checked; they are DELETED, and a v1 artifact \
+             is refused rather than read with them silently dropped. Re-emit the envelope from the \
+             same fold — no re-proving, no VK rotation.",
             env.version
         )));
     }
@@ -546,18 +497,14 @@ pub fn verify_finalized_devnet_history(
     let claimed_bytes = parse_hex32(&env.vk_fingerprint_hex)
         .map_err(|e| JsError::new(&format!("envelope claimed fingerprint malformed: {e}")))?;
     if claimed_bytes != cfg_bytes {
-        return finalized_refusal(
-            &env,
-            format!(
-                "REFUSED at the anchor-discipline check: the envelope was built for circuit {} but \
+        return finalized_refusal(format!(
+            "REFUSED at the anchor-discipline check: the envelope was built for circuit {} but \
                  your configured anchor pins {}",
-                env.vk_fingerprint_hex, config_anchor_hex
-            ),
-        );
+            env.vk_fingerprint_hex, config_anchor_hex
+        ));
     }
     if env.proof_bytes_b64.is_empty() {
         return finalized_refusal(
-            &env,
             "REFUSED: the envelope carries no proof_bytes — nothing to cryptographically verify \
              (fail-closed)."
                 .to_string(),
@@ -571,10 +518,9 @@ pub fn verify_finalized_devnet_history(
     let attested = match verify_history_bytes(&proof_bytes, &anchor) {
         Ok(a) => a,
         Err(LightClientError::AggregateInvalid(e)) => {
-            return finalized_refusal(
-                &env,
-                format!("REFUSED at the over-wire recursion verify (legs 1+2): {e}"),
-            );
+            return finalized_refusal(format!(
+                "REFUSED at the over-wire recursion verify (legs 1+2): {e}"
+            ));
         }
     };
 
@@ -582,28 +528,27 @@ pub fn verify_finalized_devnet_history(
     // supermajority. The proven root is the byte-verified FULL 8-felt final anchor (all lanes).
     let Some(cert_json) = env.finality_cert.clone() else {
         return finalized_refusal(
-            &env,
             "REFUSED: legs 1+2 verified, but the envelope carries NO finality certificate — a \
              correct-looking history is not a finalized one (it could be an equivocating fork). No \
              finalized attestation."
                 .to_string(),
         );
     };
-    let cert = match reconstruct_finality_cert(&cert_json) {
+    let cert = match cert_json.reconstruct() {
         Ok(c) => c,
-        Err(e) => return finalized_refusal(&env, format!("REFUSED: malformed finality cert: {e}")),
+        Err(e) => return finalized_refusal(format!("REFUSED: malformed finality cert: {e}")),
     };
     let proven_root = attested.final_root;
     if let Err(reason) = finality_leg(proven_root, &cert, &committee, &ml_dsa_committee) {
-        return finalized_refusal(
-            &env,
-            format!("REFUSED at the finality leg (leg 3): {reason}"),
-        );
+        return finalized_refusal(format!("REFUSED at the finality leg (leg 3): {reason}"));
     }
 
     let signers = cert.distinct_committee_signers(&committee, &ml_dsa_committee);
     let view = AttestedHistoryView {
-        attested: true,
+        aggregate_attested: true,
+        // The ONLY place this is ever set: leg 3 ran and held against the CONFIG
+        // committee. Nothing else in this file can produce it.
+        finality_attested: true,
         genesis_root: attested.genesis_root.iter().map(|d| d.as_u32()).collect(),
         final_root: attested.final_root.iter().map(|d| d.as_u32()).collect(),
         chain_digest: attested.chain_digest.iter().map(|d| d.as_u32()).collect(),
@@ -670,46 +615,20 @@ fn finality_leg(
     Ok(cert.distinct_committee_signers(committee, ml_dsa_committee))
 }
 
-/// Reconstruct a [`dregg_lightclient::FinalityCert`] from its JSON form (hex-decoding each vote).
-fn reconstruct_finality_cert(
-    json: &FinalityCertJson,
-) -> Result<dregg_lightclient::FinalityCert, String> {
-    use dregg_circuit::field::BabyBear;
-    use dregg_lightclient::SignedVote;
-    let mut votes = Vec::with_capacity(json.votes.len());
-    for v in &json.votes {
-        let validator = parse_hex32(&v.validator_hex).map_err(|e| format!("validator key: {e}"))?;
-        let signature = parse_hex64(&v.signature_hex).map_err(|e| format!("signature: {e}"))?;
-        // HYBRID: the PQ half rides self-contained. An empty/absent hex string reconstructs an
-        // empty Vec, which the light client's `verify_ml_dsa_half` rejects fail-closed (so a legacy
-        // classical-only cert simply does not finalize under the hybrid gate). A present-but-malformed
-        // hex string is a hard error (never a silent drop).
-        let ml_dsa_pubkey =
-            parse_hex_var(&v.ml_dsa_pubkey_hex).map_err(|e| format!("ml-dsa pk: {e}"))?;
-        let pq_signature =
-            parse_hex_var(&v.pq_signature_hex).map_err(|e| format!("pq sig: {e}"))?;
-        votes.push(SignedVote {
-            validator,
-            signature,
-            ml_dsa_pubkey,
-            pq_signature,
-        });
-    }
-    Ok(dregg_lightclient::FinalityCert {
-        votes,
-        participant_count: json.participant_count,
-        finalized_root: core::array::from_fn(|i| BabyBear::new(json.finalized_root[i])),
-    })
-}
-
-/// Build the `attested: false` finalized-refusal view (carries the envelope's publics for context).
-fn finalized_refusal(env: &ExternalHistoryEnvelope, reason: String) -> Result<JsValue, JsError> {
+/// Build the refusal view: BOTH legs false, NO numbers, and the genuine reason.
+///
+/// This used to take the envelope and echo its four carried publics "for context" —
+/// which is to say it rendered UNVERIFIED producer input into a verdict object, on
+/// exactly the path where nothing had been verified. Those fields no longer exist on
+/// the envelope, and a refusal now reports the reason alone.
+fn finalized_refusal(reason: String) -> Result<JsValue, JsError> {
     let view = AttestedHistoryView {
-        attested: false,
-        genesis_root: env.genesis_root.clone(),
-        final_root: env.final_root.clone(),
-        chain_digest: env.chain_digest.clone(),
-        num_turns: env.num_turns,
+        aggregate_attested: false,
+        finality_attested: false,
+        genesis_root: Vec::new(),
+        final_root: Vec::new(),
+        chain_digest: Vec::new(),
+        num_turns: 0,
         engine: "recursive-stark (plonky3 fork)".to_string(),
         named_floor: reason,
     };
@@ -753,25 +672,6 @@ fn parse_ml_dsa_committee_csv(s: &str) -> Result<Vec<Vec<u8>>, String> {
         .collect()
 }
 
-/// Parse a 128-char hex string into a `[u8; 64]` (an Ed25519 signature). Mirrors [`parse_hex32`].
-fn parse_hex64(s: &str) -> Result<[u8; 64], String> {
-    let s = s.trim();
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.len() != 128 {
-        return Err(format!(
-            "expected 128 hex chars (64 bytes), got {}",
-            s.len()
-        ));
-    }
-    let mut out = [0u8; 64];
-    for (i, byte) in out.iter_mut().enumerate() {
-        let hi = hex_nibble(s.as_bytes()[2 * i])?;
-        let lo = hex_nibble(s.as_bytes()[2 * i + 1])?;
-        *byte = (hi << 4) | lo;
-    }
-    Ok(out)
-}
-
 /// **THE PRODUCER** — fold a real `k`-turn chain in the tab and emit its
 /// [`ExternalHistoryEnvelope`] as JSON, with `proof_bytes_b64` populated from the
 /// proof's versioned byte envelope. This is the artifact a node/relayer ships and a
@@ -789,19 +689,12 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
     let proof_bytes = agg.to_bytes();
     let proof_bytes_b64 = base64::engine::general_purpose::STANDARD.encode(&proof_bytes);
 
-    let env = ExternalHistoryEnvelope {
-        version: 1,
-        vk_fingerprint_hex: agg.root_vk_fingerprint().to_hex(),
-        proof_bytes_b64,
-        genesis_root: agg.genesis_root.iter().map(|d| d.as_u32()).collect(),
-        final_root: agg.final_root.iter().map(|d| d.as_u32()).collect(),
-        chain_digest: agg.chain_digest.iter().map(|d| d.as_u32()).collect(),
-        num_turns: agg.num_turns,
-        // The demo producer holds no validator keys; a finalized envelope is produced by the node
-        // that ran consensus. `verify_finalized_devnet_history` refuses a cert-less envelope as
-        // un-finalized (legs 1+2 only) — exactly the LC-3 boundary.
-        finality_cert: None,
-    };
+    // The ONE constructor, shared with the native producer bin. The four publics are NOT
+    // carried (v2): they ride inside `proof_bytes_b64`, where tooth 2 re-attests them
+    // against the binding proof. A second outer copy would be a value nothing checks.
+    // `finality_cert` stays `None` — this demo producer holds no validator keys, and
+    // `verify_finalized_devnet_history` refuses a cert-less envelope as un-finalized.
+    let env = ExternalHistoryEnvelope::new(agg.root_vk_fingerprint().to_hex(), proof_bytes_b64);
     serde_json::to_string(&env)
         .map_err(|e| JsError::new(&format!("envelope serialize failed: {e}")))
 }
@@ -1035,58 +928,6 @@ fn fold_demo_chain(
         .map_err(|e| JsError::new(&format!("light-client fold/verify failed: {e}")))
 }
 
-/// Parse a 64-char hex string into a `[u8; 32]`. The single hex→anchor decoder the
-/// config-anchor entry points share. Rejects wrong length / non-hex with a precise
-/// message (so a fat-fingered anchor is a clear error, not a silent zero-fill).
-fn parse_hex32(s: &str) -> Result<[u8; 32], String> {
-    let s = s.trim();
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.len() != 64 {
-        return Err(format!("expected 64 hex chars (32 bytes), got {}", s.len()));
-    }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        let hi = hex_nibble(s.as_bytes()[2 * i])?;
-        let lo = hex_nibble(s.as_bytes()[2 * i + 1])?;
-        *byte = (hi << 4) | lo;
-    }
-    Ok(out)
-}
-
-/// Decode a variable-length hex string (optional `0x` prefix) to bytes. An empty string decodes to
-/// an empty `Vec` (the "PQ half absent" sentinel the hybrid gate rejects fail-closed). An odd length
-/// or a non-hex character is a hard error — never a silent truncation.
-fn parse_hex_var(s: &str) -> Result<Vec<u8>, String> {
-    let s = s.trim();
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    if s.len() % 2 != 0 {
-        return Err(format!(
-            "expected an even number of hex chars, got {}",
-            s.len()
-        ));
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(s.len() / 2);
-    for pair in bytes.chunks_exact(2) {
-        let hi = hex_nibble(pair[0])?;
-        let lo = hex_nibble(pair[1])?;
-        out.push((hi << 4) | lo);
-    }
-    Ok(out)
-}
-
-fn hex_nibble(c: u8) -> Result<u8, String> {
-    match c {
-        b'0'..=b'9' => Ok(c - b'0'),
-        b'a'..=b'f' => Ok(c - b'a' + 10),
-        b'A'..=b'F' => Ok(c - b'A' + 10),
-        other => Err(format!("non-hex character '{}'", other as char)),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Native (host-runnable) tests for the CONFIG-NOT-ARTIFACT discipline.
 //
@@ -1125,33 +966,91 @@ mod tests {
         assert!(e.to_lowercase().contains("non-hex"), "got: {e}");
     }
 
+    /// **THE FALSIFIER FOR THE CARRIED-PUBLICS DELETION.** Runs on every green pass;
+    /// goes RED the moment anyone re-adds an outer public to the envelope or drops the
+    /// `deny_unknown_fields` that keeps the old shape from being silently reinterpreted.
     #[test]
-    fn external_envelope_roundtrips_and_carries_publics() {
+    fn external_envelope_carries_no_unchecked_publics() {
         let env = ExternalHistoryEnvelope {
-            version: 1,
+            version: EXTERNAL_HISTORY_ENVELOPE_VERSION,
             vk_fingerprint_hex: "ab".repeat(32),
             proof_bytes_b64: String::new(),
-            genesis_root: vec![11, 0, 0, 0, 0, 0, 0, 0],
-            final_root: vec![22, 0, 0, 0, 0, 0, 0, 0],
-            chain_digest: vec![33, 0, 0, 0, 0, 0, 0, 0],
-            num_turns: 4,
             finality_cert: None,
         };
         let json = serde_json::to_string(&env).unwrap();
-        let back: ExternalHistoryEnvelope = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.version, 1);
-        assert_eq!(back.vk_fingerprint_hex, "ab".repeat(32));
-        assert_eq!(back.genesis_root, vec![11, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(back.final_root, vec![22, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(back.chain_digest, vec![33, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(back.num_turns, 4);
-        // proof_bytes_b64 is `#[serde(default)]` — an envelope omitting it parses.
-        let minimal = r#"{"version":1,"vk_fingerprint_hex":"00","genesis_root":[0,0,0,0,0,0,0,0],
-            "final_root":[0,0,0,0,0,0,0,0],"chain_digest":[0,0,0,0,0,0,0,0],"num_turns":2}"#;
-        let m: ExternalHistoryEnvelope = serde_json::from_str(minimal).unwrap();
+
+        // (a) THE KEY SET IS EXACTLY the four things a verifier reads. A new key here
+        // is a new value that rides the wire; if it is not an argument to a verify, it
+        // is the exact defect this test exists to catch.
+        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&json).unwrap();
+        let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "finality_cert",
+                "proof_bytes_b64",
+                "version",
+                "vk_fingerprint_hex",
+            ],
+            "the envelope must carry ONLY values a verify consumes. `genesis_root` / \
+             `final_root` / `chain_digest` / `num_turns` were carried and NEVER checked \
+             against anything; they are deleted. If you are re-adding a field, make it an \
+             argument to verify_history_bytes first."
+        );
+
+        // (b) The old v1 shape REFUSES TO LOAD — twice over. It must not parse with the
+        // unbound publics quietly dropped, which is what a permissive serde would do.
+        let v1 = r#"{"version":1,"vk_fingerprint_hex":"00","proof_bytes_b64":"",
+            "genesis_root":[1,2,3],"final_root":[4,5,6],"chain_digest":[7],"num_turns":9}"#;
+        let e = serde_json::from_str::<ExternalHistoryEnvelope>(v1)
+            .expect_err("a v1 artifact carrying the deleted publics must REFUSE to parse");
+        assert!(
+            e.to_string().contains("genesis_root") || e.to_string().contains("unknown field"),
+            "the refusal must name the unknown field, got: {e}"
+        );
+
+        // (c) The minimal v2 shape parses; proof_bytes_b64 is `#[serde(default)]`.
+        let minimal = format!(
+            r#"{{"version":{EXTERNAL_HISTORY_ENVELOPE_VERSION},"vk_fingerprint_hex":"00"}}"#
+        );
+        let m: ExternalHistoryEnvelope = serde_json::from_str(&minimal).unwrap();
         assert!(
             m.proof_bytes_b64.is_empty(),
             "omitted proof bytes default empty"
+        );
+        let back: ExternalHistoryEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.version, EXTERNAL_HISTORY_ENVELOPE_VERSION);
+        assert_eq!(back.vk_fingerprint_hex, "ab".repeat(32));
+    }
+
+    /// **THE FALSIFIER FOR THE AMBIGUOUS `attested` BIT.** The view must expose ONE
+    /// FLAG PER LEG and must NOT expose a bare `attested`, which was `true` for a
+    /// legs-1+2 verify and a legs-1+2+3 verify alike. Goes RED if the bit is merged
+    /// back, or if a leg flag stops being serialized where a JS consumer can branch.
+    #[test]
+    fn attested_view_reports_one_flag_per_leg_and_no_bare_attested_bit() {
+        let view = AttestedHistoryView {
+            aggregate_attested: true,
+            finality_attested: false,
+            genesis_root: vec![1],
+            final_root: vec![2],
+            chain_digest: vec![3],
+            num_turns: 2,
+            engine: "e".into(),
+            named_floor: "f".into(),
+        };
+        let map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&serde_json::to_string(&view).unwrap()).unwrap();
+        assert!(
+            map.contains_key("aggregate_attested") && map.contains_key("finality_attested"),
+            "a JS consumer must be able to branch on WHICH legs ran"
+        );
+        assert!(
+            !map.contains_key("attested"),
+            "`attested` is deliberately GONE: one bit cannot mean both 'the aggregate \
+             verified' and 'the network finalized this head'. A consumer reading it got \
+             the same ✓ for a correctly-proven fork as for a quorum-ratified head."
         );
     }
 
@@ -1164,13 +1063,9 @@ mod tests {
         let raw: Vec<u8> = (0u16..512).map(|i| (i % 251) as u8).collect();
         let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
         let env = ExternalHistoryEnvelope {
-            version: 1,
+            version: EXTERNAL_HISTORY_ENVELOPE_VERSION,
             vk_fingerprint_hex: "ab".repeat(32),
             proof_bytes_b64: b64.clone(),
-            genesis_root: vec![7, 0, 0, 0],
-            final_root: vec![9, 0, 0, 0],
-            chain_digest: vec![13, 0, 0, 0],
-            num_turns: 3,
             finality_cert: None,
         };
         let json = serde_json::to_string(&env).unwrap();
@@ -1310,7 +1205,7 @@ mod tests {
     }
 
     /// **LC-3 — THE FINALITY LEG (host tooth for the over-wire finalized check).** Exercises the
-    /// pure `finality_leg` / `reconstruct_finality_cert` helpers that the wasm
+    /// pure `finality_leg` / `FinalityCertJson::reconstruct` helpers that the wasm
     /// `verify_finalized_devnet_history` composes — no STARK fold — so the leg-3 anchor is validated
     /// in milliseconds: an UNANCHORED client (empty committee) accepts nothing; a fork signed by
     /// FOREIGN keys is sub-quorum; a ROOT-SEAM break is refused; and only a real committee quorum
@@ -1453,7 +1348,7 @@ mod tests {
             "a lane-0-colliding fork root is refused by the ALL-LANES seam"
         );
 
-        // (e) reconstruct_finality_cert roundtrips the JSON wire form back to a verifying cert.
+        // (e) FinalityCertJson::reconstruct roundtrips the JSON wire form back to a verifying cert.
         let json = FinalityCertJson {
             votes: honest
                 .votes
@@ -1468,7 +1363,7 @@ mod tests {
             participant_count: n,
             finalized_root: root_lanes,
         };
-        let back = reconstruct_finality_cert(&json).expect("the wire cert reconstructs");
+        let back = json.reconstruct().expect("the wire cert reconstructs");
         assert_eq!(
             finality_leg(root, &back, &committee, &ml_dsa_committee),
             Ok(3),

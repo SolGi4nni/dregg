@@ -45,6 +45,13 @@ ed25519-dalek = { version = "2", features = ["std"] }
 # build (`wasm/`) intact; the heavy `dregg-federation` crate is deliberately NOT pulled in for a
 # single verify.
 dregg-pq = { path = "../dregg-pq" }
+# THE WIRE ENVELOPE (`external_envelope`) is defined in this crate, not in `wasm/`:
+# `wasm/` is excluded from the workspace, so a serde guard living there never ran in a
+# `cargo test --workspace` green pass. Both the wasm bindings and the native
+# `produce_history_envelope` bin now build the SAME struct — the bin used to hand-print
+# the JSON with `println!`, a second shape of the same format agreeing by inspection.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [features]
 # `prover` gates the whole-history light client (the whole lib is `#![cfg(feature = "prover")]`)

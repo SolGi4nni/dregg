@@ -6854,6 +6854,8 @@ dependencies = [
  "dregg-turn",
  "dregg-turn-prover",
  "ed25519-dalek",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

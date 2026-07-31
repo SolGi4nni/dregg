@@ -143,7 +143,10 @@ pub struct CrossFedVerdict {
     /// (4) F1's `AttestedRoot` quorum is structurally + cryptographically
     /// valid under F1's committee.
     pub attested_root_f1_verified: bool,
-    /// (5) F2's `AttestedRoot` quorum is valid under F2's committee.
+    /// (5) F2's `AttestedRoot` quorum is valid under F2's committee **and** its
+    /// `receipt_stream_root` ties to the `recipient_chain` presented with it. Both
+    /// halves, or the flag stays false — the tie used to be checked after the flag was
+    /// already set, so a broken stream reported a verified root.
     pub attested_root_f2_verified: bool,
     /// (6) F2's `FederationReceipt` (when present) verifies under F2's
     /// committee.
@@ -263,6 +266,13 @@ pub fn verify_cross_fed_bundle(
         overall_verified: false,
     };
 
+    // ⚑ THE FLAG IS SET BY THE CHECK, NOT BY POSITION (2026-07-30). Legs (4) and (5) used
+    // to be bare `verdict.attested_root_fN_verified = true;` statements ~90 lines below
+    // this, resting on the early-returns here to keep them honest. That is a reporting
+    // shape one refactor away from a flag that cannot go false, and it already misreported
+    // once: the F2 receipt-stream tie is checked AFTER the old assignment, so a bundle
+    // whose stream did not match returned `attested_root_f2_verified: true`. Assign where
+    // the evidence is, and fold the stream tie into the same leg.
     if let Err(reason) = verify_attested_root_against_descriptor(
         "F1 AttestedRoot",
         &bundle.issuer_attested_root,
@@ -274,6 +284,7 @@ pub fn verify_cross_fed_bundle(
         verdict.summary = reason;
         return verdict;
     }
+    verdict.attested_root_f1_verified = true;
 
     if let Err(reason) = verify_attested_root_against_descriptor(
         "F2 AttestedRoot",
@@ -354,12 +365,11 @@ pub fn verify_cross_fed_bundle(
     }
     verdict.replay_detail = Some(replay);
 
-    // (4) F1 AttestedRoot.
-    verdict.attested_root_f1_verified = true;
-
-    // (5) F2 AttestedRoot.
-    verdict.attested_root_f2_verified = true;
-
+    // (5, second half) F2's attested root must also TIE to the chain it is presented with:
+    // its `receipt_stream_root` must be the stream of these receipts. Leg (5) is only
+    // reported verified once BOTH halves hold — the committee quorum (checked above) and
+    // this tie. Reporting the quorum half alone as "F2 AttestedRoot verified" while the
+    // tie was broken is the misreport this ordering fixes.
     let receipt_hashes: Vec<[u8; 32]> = bundle
         .recipient_chain
         .iter()
@@ -373,6 +383,7 @@ pub fn verify_cross_fed_bundle(
             "F2 AttestedRoot receipt_stream_root does not match recipient_chain receipts".into();
         return verdict;
     }
+    verdict.attested_root_f2_verified = true;
 
     // (8 — F3 binding flag) blocklace binding present?
     verdict.attested_root_f2_blocklace_bound =

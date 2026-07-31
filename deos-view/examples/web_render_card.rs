@@ -551,7 +551,11 @@ fn main() {
         &[0],
         &[],
         &TrustlessAttestation::ServerSupplied {
-            envelope_json: r#"{"version":1,"vk_fingerprint_hex":"ab","genesis_root":[0],"final_root":[0],"chain_digest":[0],"num_turns":2,"proof_bytes_b64":""}"#,
+            // v2: the envelope carries ONLY values a verify consumes. The four publics
+            // (genesis_root / final_root / chain_digest / num_turns) were transported and
+            // never checked against anything; `deny_unknown_fields` now REFUSES an envelope
+            // that still carries them, so this fixture would fail to parse if left as it was.
+            envelope_json: r#"{"version":2,"vk_fingerprint_hex":"ab","proof_bytes_b64":""}"#,
             config_anchor_hex: &"ab".repeat(32),
         },
         "./pkg/dregg_wasm.js",

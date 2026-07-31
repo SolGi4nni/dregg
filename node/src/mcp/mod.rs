@@ -46,6 +46,46 @@ use crate::state::NodeState;
 
 // Re-import x25519 and chacha for seal/unseal operations.
 
+/// **THE DECISION POINTS THE VERIFICATION-CLAIM CONTROL NEEDS, AND NOTHING ELSE.**
+///
+/// `node/tests/mcp_verification_claims_are_earned.rs` is the permanent control for one
+/// rule: a tool may only report a verification it actually ran. Measured 2026-07-30,
+/// `dregg_compress_history` reported `"verification": "valid"` after verifying a fold
+/// against a fingerprint recomputed from that same fold — the VK pin comparing a value
+/// with itself, unable to fail.
+///
+/// Keeping the rule true needs the two decision points reachable from an integration
+/// test WITHOUT a node, a ledger, or an hour of recursive proving — otherwise the control
+/// is a heavyweight test that gets disabled, and this campaign has watched ten such
+/// checks go silently unpointed. These are pure functions over JSON: no state, no
+/// authority, nothing a caller could drive.
+pub mod test_hooks {
+    use serde_json::Value;
+
+    /// See [`super::handlers_verify`]: the required caller-supplied VK anchor. `Err` when
+    /// absent or malformed — there is no default and no self-mint.
+    pub fn required_config_anchor(params: &Value) -> Result<[u8; 32], String> {
+        super::handlers_verify::required_config_anchor(params)
+    }
+
+    /// See [`super::handlers_verify`]: the ONE place `"verification": "valid"` is written,
+    /// and only when an anchored verify held.
+    pub fn compress_history_report(
+        fold: serde_json::Map<String, Value>,
+        cell_id_hex: &str,
+        anchored_verify_held: bool,
+    ) -> Value {
+        super::handlers_verify::compress_history_report(fold, cell_id_hex, anchored_verify_held)
+    }
+
+    /// The tool catalogue an agent plans from, as JSON. A description that outruns its
+    /// handler is the same defect one layer out, so the control reads the served list.
+    pub fn tool_catalogue() -> Value {
+        serde_json::to_value(super::tools_def::tool_definitions())
+            .expect("the tool catalogue serializes")
+    }
+}
+
 mod dispatch;
 mod handlers_act;
 mod handlers_apps;

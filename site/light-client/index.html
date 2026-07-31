@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Light client: verify a whole history in one proof · dregg</title>
-  <meta name="description" content="A producer folds a finalized multi-turn history into one succinct recursive proof; your browser tab verifies that proof, re-executing nothing. Check it against a config anchor you control; a tampered anchor is refused.">
+  <meta name="description" content="A producer folds a multi-turn history into one succinct recursive proof; your browser tab verifies that proof, re-executing nothing. The verifier enforces whatever anchor it is handed — and on this page the anchor is served to you by us, unless you supply your own.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -111,7 +111,7 @@
     <div class="step"><div class="step__n">verify · in your tab</div><div class="step__t">Check cheaply</div>
       <div class="step__d">Your tab runs the real recursion verify over the wire proof, independent of how many turns the history holds. Verification is the light step, and it runs client-side in WebAssembly.</div></div>
     <div class="step"><div class="step__n">anchor · your config</div><div class="step__t">The anchor is a separate input</div>
-      <div class="step__d">The verifier takes the trust anchor as an argument, never off the proof under verification: a proof built for a different circuit cannot pass it. <strong>On this page, though, the anchor is served to you by us</strong> — it arrives in the same <code>history.json</code> as the proof. So what you are watching is a consistency check, not a trust decision. A real client holds its anchor from genesis/checkpoint configuration.</div></div>
+      <div class="step__d">The verifier takes the trust anchor as an argument, never off the proof under verification: a proof built for a different circuit cannot pass it. <strong>By default on this page the anchor is served to you by us</strong> — it arrives in the same <code>history.json</code> as the proof, so what you are watching is a consistency check, not a trust decision. <strong>Add <code>?anchor=&lt;64 hex&gt;</code> to the URL</strong> and it comes from your link instead; the readout labels which one every verdict used.</div></div>
   </div>
 
   <!-- Panel 1: verify the real baked aggregate in-tab -->
@@ -119,9 +119,11 @@
     <h2>1 · Verify a real history in your tab</h2>
     <p class="hint">
       The aggregate below is a real, pre-folded whole-history proof (shipped as a wire envelope). Click
-      <em>Verify</em> and your tab runs the genuine recursion verify against the config anchor, re-witnessing
-      nothing. The carried public commitments (genesis/final root, the ordered-history digest, the turn count)
-      are re-attested against the binding proof.
+      <em>Verify</em> and your tab runs the genuine recursion verify against the anchor, re-witnessing
+      nothing. Every number in the result comes out of the <em>verified</em> proof bytes &mdash; the roots, the
+      ordered-history digest and the turn count are read against the binding proof, not off the envelope.
+      The envelope carries no second copy of them to read: through v1 it did, and nothing ever compared the
+      two, so a producer could label the wrapper anything it liked. Those fields are deleted.
     </p>
     <div class="readout" id="meta">loading the in-tab verifier and the baked aggregate…</div>
     <div class="controls" style="margin-top:var(--s4)">
@@ -137,12 +139,17 @@
       The anchor is a <em>separate input</em> to the verifier, never taken from the proof it is checking.
       Verify against the correct anchor and it attests; tamper one hex digit and it is refused outright.
       <br><br>
-      <strong>Being straight about what this demo does and does not show.</strong> The anchor pre-filled below
-      was fetched from <code>./history.json</code> — the same file, from the same server, as the proof. So this
-      panel demonstrates that the verifier really does <em>enforce</em> the anchor, which is a genuine property
-      of the code. It does not demonstrate that you avoided trusting us: we handed you both halves. Anchor
-      discipline becomes real when the anchor reaches you out of band — from genesis or a checkpoint you already
-      trusted — and stays fixed while proofs come and go. Paste your own value below if you have one.
+      <strong>Being straight about what this demo does and does not show.</strong> Unless you supply your own,
+      the anchor pre-filled below was fetched from <code>./history.json</code> — the same file, from the same
+      server, as the proof. So this panel demonstrates that the verifier really does <em>enforce</em> the
+      anchor, which is a genuine property of the code. It does not demonstrate that you avoided trusting us:
+      we handed you both halves. Anchor discipline becomes real when the anchor reaches you out of band — from
+      genesis or a checkpoint you already trusted — and stays fixed while proofs come and go.
+      <br><br>
+      <strong>So bring your own.</strong> Append <code>?anchor=&lt;64 hex&gt;</code> to this page's URL and the
+      anchor comes from <em>your</em> link — a value we did not put there, that survives whatever we serve
+      next. The readout below labels which of the two you are using, on every verdict, so a ✓ can never be
+      read as more than it is.
     </p>
     <div class="controls">
       <div class="field wide"><label for="anchor2">config VK anchor (64 hex chars)</label>
@@ -165,7 +172,9 @@
     <strong>And what it does not say.</strong> Three things this page's ✓ is silent about, stated here rather than
     left for you to discover. (1) <em>Finalized is not checked.</em> The baked aggregate carries no committee
     certificate, so a correct-looking history and one the network never finalized are indistinguishable here; the
-    finality leg is a separate entry point. (2) <em>The leaves are execution, not authorization.</em> Each folded
+    finality leg is a separate entry point. The verdict says so in a field, not just in prose &mdash;
+    <code>finality_attested</code> reads <code>false</code> below, and the old single <code>attested</code> bit
+    (which was <code>true</code> either way) no longer exists. (2) <em>The leaves are execution, not authorization.</em> Each folded
     leaf is the EffectVM constraint set — state commitments, transition continuity, range checks. No capability
     chain, nullifier, or revocation record is an input to the fold, so "authorized", "conserved" and "not
     replayed" are outside this verdict. (3) <em>The chain digest commits to the root sequence only</em> — two
@@ -179,16 +188,48 @@
   import init, { verify_devnet_history } from '../cards/pkg/dregg_wasm.js';
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  let baked = null, correctAnchor = null;
+  let baked = null, servedAnchor = null, ownAnchor = null;
 
-  function renderAttested(view) {
-    const ok = view.attested;
-    return `<span class="bigverdict ${ok ? 'ok' : 'no'}">${ok ? '✓ whole history attested' : '✕ refused'}</span>` +
+  // THE ANCHOR THE PRODUCER DOES NOT CONTROL. `?anchor=<64 hex>` comes out of the
+  // visitor's own URL — a bookmark, a link from a checkpoint they already trusted — and it
+  // survives whatever this server serves next. When it is absent we fall back to the served
+  // value and SAY SO on every verdict; the page never renders a ✓ whose provenance is not
+  // printed next to it.
+  function urlAnchor() {
+    const q = new URLSearchParams(location.search).get('anchor');
+    if (!q) return null;
+    const a = q.trim().replace(/^0x/i, '');
+    return /^[0-9a-fA-F]{64}$/.test(a) ? a.toLowerCase() : null;
+  }
+
+  // Which of the two an anchor string IS, decided by comparison rather than by which
+  // code path filled the box — so a visitor who pastes the served value back in still
+  // gets the served-value label.
+  function provenanceOf(anchor) {
+    const a = (anchor || '').trim().toLowerCase().replace(/^0x/, '');
+    if (ownAnchor && a === ownAnchor) {
+      return { own: true, label: 'anchor provenance: YOUR ?anchor= URL parameter — we did not put this value here. This is a trust decision.' };
+    }
+    if (servedAnchor && a === servedAnchor) {
+      return { own: false, label: 'anchor provenance: SERVED BY US, in the same history.json as the proof. The verifier enforced it, but we handed you both halves — this is a consistency check, not a trust decision. Append ?anchor=<64 hex> to bring your own.' };
+    }
+    return { own: true, label: 'anchor provenance: a value you typed in this box.' };
+  }
+
+  function renderAttested(view, anchorUsed) {
+    // `attested` is deliberately GONE from the verdict: one bit meant both "the aggregate
+    // verified" and "the network finalized this head", and it was true either way.
+    const ok = view.aggregate_attested;
+    const fin = view.finality_attested;
+    const prov = provenanceOf(anchorUsed);
+    return `<span class="bigverdict ${ok ? 'ok' : 'no'}">${ok ? '✓ aggregate verified' : '✕ refused'}</span>` +
+      `<span class="k">finality (leg 3)</span> <span class="v">${fin ? 'quorum checked' : 'NOT CHECKED — no committee certificate was verified'}</span>\n` +
       `<span class="k">turns folded</span> <span class="v">${view.num_turns}</span>\n` +
       `<span class="k">genesis root</span> <span class="v">[${[].concat(view.genesis_root).join(', ')}]</span>\n` +
       `<span class="k">final root</span> <span class="v">[${[].concat(view.final_root).join(', ')}]</span>\n` +
       `<span class="k">chain digest</span> <span class="v">[${(view.chain_digest || []).join(', ')}]</span>\n` +
       `<span class="k">engine</span> <span class="v">${esc(view.engine)}</span>\n` +
+      `<span class="floor">${esc(prov.label)}</span>\n` +
       `<span class="floor">${esc(view.named_floor)}</span>`;
   }
 
@@ -197,18 +238,26 @@
       await init();
       const res = await fetch('./history.json', { cache: 'no-store' });
       baked = await res.json();
-      correctAnchor = baked.anchor_hex;
+      servedAnchor = (baked.anchor_hex || '').trim().toLowerCase();
+      ownAnchor = urlAnchor();
+      const active = ownAnchor || servedAnchor;
       const e = baked.envelope;
+      // NOTHING about the history is printed here. This panel used to render the
+      // envelope's carried genesis/final root, chain digest and turn count as facts about
+      // the aggregate — BEFORE any verify ran, off fields no verify ever read. Those
+      // fields are deleted from the wire (v2); the roots appear only in a verdict, after
+      // the proof bytes they came out of have been checked.
       $('#meta').innerHTML =
-        `<span class="k">baked aggregate</span> <span class="v">real ${e.num_turns}-turn whole-history proof</span>\n` +
-        `<span class="k">genesis root</span> <span class="v">[${[].concat(e.genesis_root).join(', ')}]</span>  ` +
-        `<span class="k">final root</span> <span class="v">[${[].concat(e.final_root).join(', ')}]</span>\n` +
-        `<span class="k">chain digest</span> <span class="v">[${e.chain_digest.join(', ')}]</span>\n` +
-        `<span class="k">config anchor</span> <span class="v">${esc(correctAnchor)}</span>\n` +
-        `<span class="k">proof bytes</span> <span class="v">${e.proof_bytes_b64.length} base64 chars (the wire envelope)</span>`;
+        `<span class="k">baked aggregate</span> <span class="v">a real pre-folded whole-history proof · envelope v${esc(e.version)}</span>\n` +
+        `<span class="k">proof bytes</span> <span class="v">${e.proof_bytes_b64.length} base64 chars — every number in the verdict comes out of THESE, after they verify</span>\n` +
+        `<span class="k">producer's claimed VK</span> <span class="v">${esc(e.vk_fingerprint_hex)}</span>\n` +
+        `<span class="k">anchor in use</span> <span class="v">${esc(active)}</span>\n` +
+        `<span class="floor">${esc(provenanceOf(active).label)}</span>`;
       $('#out1').innerHTML = 'ready: click Verify to run the real recursion verify in your tab.';
-      $('#anchor2').value = correctAnchor;
-      $('#out2').innerHTML = 'ready: verify against the correct anchor, or tamper a digit.';
+      $('#anchor2').value = active;
+      $('#out2').innerHTML = ownAnchor
+        ? 'ready: your ?anchor= value is loaded. Verify, or tamper a digit to watch it refuse.'
+        : 'ready: verify against the served anchor, or tamper a digit. Append ?anchor=<64 hex> to bring your own.';
       for (const id of ['#run1', '#run2', '#tamper2', '#reset2']) $(id).disabled = false;
     } catch (err) {
       $('#meta').innerHTML = '<span class="verdict no">failed to load the verifier / baked aggregate:</span>\n' + esc(String(err));
@@ -220,25 +269,25 @@
     return new Promise(r => setTimeout(r, 20)).then(() => {
       try {
         const view = verify_devnet_history(JSON.stringify(envelope), anchor);
-        outEl.innerHTML = renderAttested(view);
+        outEl.innerHTML = renderAttested(view, anchor);
       } catch (e) {
         outEl.innerHTML = '<span class="verdict no">error:</span> ' + esc(String(e));
       }
     });
   }
 
-  $('#run1').addEventListener('click', () => verify(baked.envelope, correctAnchor, $('#out1')));
+  $('#run1').addEventListener('click', () => verify(baked.envelope, ownAnchor || servedAnchor, $('#out1')));
   $('#run2').addEventListener('click', () => verify(baked.envelope, ($('#anchor2').value || '').trim(), $('#out2')));
   $('#tamper2').addEventListener('click', () => {
-    let a = ($('#anchor2').value || correctAnchor).trim().split('');
+    let a = ($('#anchor2').value || ownAnchor || servedAnchor).trim().split('');
     const flip = { '0': '1', '1': '0' };
     a[0] = flip[a[0]] || (a[0] === 'a' ? 'b' : 'a');
     $('#anchor2').value = a.join('');
     $('#out2').innerHTML = 'anchor tampered (one digit flipped). Now click Verify; it must be refused.';
   });
   $('#reset2').addEventListener('click', () => {
-    $('#anchor2').value = correctAnchor;
-    $('#out2').innerHTML = 'anchor reset to the correct config value.';
+    $('#anchor2').value = ownAnchor || servedAnchor;
+    $('#out2').innerHTML = ownAnchor ? 'anchor reset to YOUR ?anchor= value.' : 'anchor reset to the served value.';
   });
 
   boot();

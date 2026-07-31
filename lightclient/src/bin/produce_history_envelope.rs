@@ -19,7 +19,7 @@
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit_prove::ivc_turn_chain::FinalizedTurn;
 use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
-use dregg_lightclient::fold_and_attest;
+use dregg_lightclient::{ExternalHistoryEnvelope, fold_and_attest};
 use dregg_turn_prover::rotation_witness::mint_rotated_participant_leg;
 
 fn open_permissions() -> dregg_cell::Permissions {
@@ -113,44 +113,38 @@ fn main() {
     let k: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(3);
     let step: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(7);
 
-    eprintln!("producing a real {k}-turn whole-history aggregate (the heavy fold)…");
+    eprintln!("producing a real {k}-turn whole-history aggregate (the heavy fold)\u{2026}");
     let turns = make_chain(1_000, step, k);
     let (agg, _att) = fold_and_attest(&turns).expect("a continuous chain folds + light-verifies");
 
     let anchor_hex = agg.root_vk_fingerprint().to_hex();
-    let proof_bytes_b64 = b64(&agg.to_bytes());
-    let lanes_json = |a: &[dregg_circuit::field::BabyBear]| {
-        a.iter()
-            .map(|d| d.as_u32().to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let genesis_json = lanes_json(&agg.genesis_root);
-    let final_json = lanes_json(&agg.final_root);
-    let genesis = agg.genesis_root[0].as_u32();
-    let final_root = agg.final_root[0].as_u32();
-    let chain_digest: Vec<u32> = agg.chain_digest.iter().map(|d| d.as_u32()).collect();
-    let num_turns = agg.num_turns;
-    let digest_json = chain_digest
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
 
-    // The baked artifact: the wire envelope + the config anchor a verifier holds
-    // SEPARATELY (same value here because the anchor is the circuit-shape fingerprint
-    // an honest setup mints from a fold of this shape).
-    println!("{{");
-    println!("  \"anchor_hex\": \"{anchor_hex}\",");
-    println!("  \"envelope\": {{");
-    println!("    \"version\": 1,");
-    println!("    \"vk_fingerprint_hex\": \"{anchor_hex}\",");
-    println!("    \"proof_bytes_b64\": \"{proof_bytes_b64}\",");
-    println!("    \"genesis_root\": [{genesis_json}],");
-    println!("    \"final_root\": [{final_json}],");
-    println!("    \"chain_digest\": [{digest_json}],");
-    println!("    \"num_turns\": {num_turns}");
-    println!("  }}");
-    println!("}}");
-    eprintln!("done: k={num_turns} genesis={genesis} final={final_root} anchor={anchor_hex}");
+    // THE ONE ENVELOPE CONSTRUCTOR. This bin used to hand-print the JSON with a stack of
+    // `println!`s — a SECOND shape of the wire format, agreeing with the Rust type by
+    // inspection only, and the place the four now-deleted carried publics were emitted
+    // from. It now builds the real `ExternalHistoryEnvelope` and serializes it, so a
+    // change to the wire format cannot leave this producer behind.
+    let envelope = ExternalHistoryEnvelope::new(anchor_hex.clone(), b64(&agg.to_bytes()));
+
+    // `anchor_hex` sits OUTSIDE the envelope on purpose: it is what a verifier is
+    // supposed to hold as CONFIG. Shipping it in the same file as the proof means this
+    // artifact cannot demonstrate anchor discipline — only that the verifier enforces
+    // whatever anchor it is handed. The consuming page says so in as many words; do not
+    // let a caller read this co-location as "the anchor was checked independently".
+    let baked = serde_json::json!({
+        "anchor_hex": anchor_hex,
+        "anchor_provenance": "SERVED BY THE PRODUCER — this is the fingerprint of the fold \
+                              printed just above, not an independently held config anchor. A \
+                              verify against it is a consistency check, not a trust decision.",
+        "envelope": envelope,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&baked).expect("the baked artifact serializes")
+    );
+    eprintln!(
+        "done: k={} anchor={anchor_hex} (envelope v{})",
+        agg.num_turns,
+        dregg_lightclient::EXTERNAL_HISTORY_ENVELOPE_VERSION
+    );
 }

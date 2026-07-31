@@ -76,9 +76,12 @@ let verdict;
 try {
   verdict = m.verify_devnet_history(JSON.stringify(baked.envelope), baked.anchor_hex);
 } catch (e) {
-  verdict = { attested: false, named_floor: String(e && e.message || e) };
+  verdict = { aggregate_attested: false, named_floor: String(e && e.message || e) };
 }
-if (!verdict.attested) {
+// `aggregate_attested` = legs 1+2 (the aggregate verified under the anchor). The old
+// `attested` bit also meant "finality checked" to anyone reading it, and this path never
+// checks finality — the flag is now per-leg so the gate says what it gates.
+if (!verdict.aggregate_attested) {
   console.error(
     "ERROR: the baked history.json does NOT attest under the just-staged wasm engine —\n" +
     "the circuit/VK moved since the artifact was folded. Regenerate it (repo root):\n" +

@@ -1648,7 +1648,16 @@ pub fn render_trustless_cell_document(
             (
                 block,
                 obtain,
-                "verified against a CONFIG-supplied anchor (held separately from the served proof)",
+                // ⚑ MEASURED 2026-07-30. This used to read "(held separately from the
+                // served proof)". It is not held separately: `const anchor = '{anchor}'`
+                // is emitted into the SAME HTTP response as the `#deos-attestation`
+                // envelope island a dozen lines above, so the server hands the tab both
+                // halves. The verifier really does ENFORCE the anchor it is given —
+                // a genuine property — but a page asserting a separateness it does not
+                // have is the exact defect this campaign closes. Say what is true.
+                "verified against the anchor THIS PAGE CARRIES — which the same server sent in \
+                 the same response as the proof. That makes it a consistency check, not a trust \
+                 decision; anchor discipline becomes real when the anchor reaches you out of band",
             )
         }
         TrustlessAttestation::InTabDemo { k, step } => {
@@ -1701,7 +1710,7 @@ function deosVerifyFields() {{\n\
     try {{ good = verify_slot_opening(o.root, o.coll, o.key, o.value, o.next, o.sibs, o.dirs); }} catch (e) {{ good = false; }}\n\
     span.classList.remove('deos-field-unverified');\n\
     span.classList.add(good ? 'deos-field-verified' : 'deos-field-refused');\n\
-    span.title = good ? 'field value verified: a per-slot opening checks against the committed heap root' : 'field value REFUSED: opening did not check';\n\
+    span.title = good ? 'the opening checks against the heap root THIS PAGE supplied \\u2014 not yet tied to the verified final_root' : 'field value REFUSED: opening did not check';\n\
     if (good) ok++;\n\
   }});\n\
   return {{ ok: ok, total: total }};\n\
@@ -1714,15 +1723,16 @@ async function boot() {{\n\
   try {{\n\
     await init();                                  // instantiate the wasm light client\n\
     {obtain}\n\
-    if (verdict && verdict.attested) {{\n\
+    if (verdict && verdict.aggregate_attested) {{\n\
       const fr = (verdict.final_root || []).join(', ');\n\
       banner.className = 'deos-trust verified';\n\
-      banner.textContent = '\\u2713 light-client verified \\u00b7 ' + verdict.num_turns + ' finalized turns, checked in YOUR browser';\n\
+      banner.textContent = '\\u2713 light-client verified \\u00b7 ' + verdict.num_turns + ' turns folded, checked in YOUR browser'\n\
+        + (verdict.finality_attested ? ' \\u00b7 finality quorum checked' : ' \\u00b7 finality NOT checked');\n\
       content.className = content.className.replace('deos-unverified', 'deos-verified');\n\
       const fields = deosVerifyFields();   // bind each painted field value to the committed heap\n\
       let fieldNote = '';\n\
       if (fields && fields.total > 0) {{\n\
-        fieldNote = '<br>field values: ' + fields.ok + '/' + fields.total + ' verified by per-slot heap openings (the shown values provably equal the committed cell state under <code>heap_root</code>; binding <code>heap_root</code> into <code>final_root</code> is the named residual)';\n\
+        fieldNote = '<br>field values: ' + fields.ok + '/' + fields.total + ' opened against the <code>heap_root</code> THIS PAGE SUPPLIED \\u2014 that root is not yet tied to the light-client-verified <code>final_root</code>, so a server minting its own tree can produce a consistent opening for any value. Binding <code>heap_root</code> into <code>final_root</code> is the named, OPEN residual';\n\
       }}\n\
       detail.innerHTML = 'This page reflects a genuine verified cell. The recursive STARK aggregate over its whole finalized history verified in this tab, re-witnessing nothing, ' +\n\
         '{mode_note}.<br>commitment <code>final_root</code> = [' + fr + ']<br>engine: ' + verdict.engine + fieldNote + '<br><span class=\\\"deos-floor\\\">' + verdict.named_floor + '</span>';\n\
@@ -2181,8 +2191,40 @@ mod trustless_tests {
         assert!(doc.contains("produce_external_history_envelope(3, 7n)"));
         assert!(doc.contains("verify_devnet_history(env, anchor)"));
         // The card starts unverified; the flip is gated on a real attestation.
-        assert!(doc.contains("deos-unverified") && doc.contains("verdict.attested"));
+        assert!(doc.contains("deos-unverified") && doc.contains("verdict.aggregate_attested"));
         assert!(doc.contains("id=\"deos-trust\""));
+
+        // ⚑ THE PERMANENT FALSIFIER for this page's share of the "reports a verification
+        // that did not happen" class. It runs on every `cargo test -p deos-view`; there is
+        // no injection anyone must remember to fire. Each assertion below names a claim
+        // this page MADE and that the code did not support (measured 2026-07-30).
+        //
+        // (1) The bare `attested` bit is gone. It was `true` for a legs-1+2 verify and a
+        //     legs-1+2+3 verify alike, so a page branching on it could not tell a
+        //     correctly-proven fork from a quorum-ratified head.
+        assert!(
+            !doc.contains("verdict.attested"),
+            "the portal must branch on a PER-LEG flag; `verdict.attested` was one bit \
+             meaning two different verdicts"
+        );
+        // (2) This page calls `verify_devnet_history`, which runs NO finality leg. It must
+        //     not print the word "finalized" as a property of the turns it counts.
+        assert!(
+            !doc.contains("finalized turns"),
+            "this page runs legs 1+2 only — `verify_finalized_devnet_history` is never \
+             called from here, so `num_turns` is a fold count, not a finalized count"
+        );
+        assert!(
+            doc.contains("finality_attested"),
+            "whether leg 3 ran must be VISIBLE in the banner, not only in free-text prose"
+        );
+        // (3) The anchor is inlined into the same response as the proof, so no copy on this
+        //     page may claim it was held separately.
+        assert!(
+            !doc.contains("held separately from the served proof"),
+            "the anchor is emitted into the same HTTP response as the envelope island; a \
+             page may enforce an anchor, it may not claim provenance it does not have"
+        );
         // With no openings carried, no field-opening island is emitted.
         assert!(!doc.contains("id=\"deos-openings\""));
     }

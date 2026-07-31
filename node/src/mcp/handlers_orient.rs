@@ -477,35 +477,64 @@ pub(super) async fn tool_verify_provenance(params: &Value, state: &NodeState) ->
     let is_sovereign = s.ledger.get_sovereign_commitment(&cell_id).is_some();
     let is_hosted = s.ledger.get(&cell_id).is_some();
 
-    // For provenance verification, we check if the cell_id is derivable from
-    // the expected factory VK (if provided).
-    let factory_match = match expected_factory {
-        Some(hex) => {
-            match hex_decode(hex) {
-                Ok(expected_vk) => {
-                    // Verify derivation: was this cell_id possibly derived from this factory?
-                    let provenance =
-                        dregg_cell::factory::Provenance::from_factory(expected_vk, None, 0);
-                    provenance.verify_derivation(&cell_id_bytes)
-                }
-                Err(_) => false,
-            }
-        }
-        None => true,
+    // ⚑ `factory_match` IS GONE (2026-07-30). It reported a boolean that was a pure
+    // function of whether the caller passed a parameter, on a tool titled "Verify Cell
+    // Provenance":
+    //
+    //   * `expected_factory_vk` ABSENT  -> `true`. Nothing was checked; the tool said
+    //     "match".
+    //   * `expected_factory_vk` PRESENT -> `false`, ALWAYS. It built the comparison from
+    //     `Provenance::from_factory(vk, None, 0)`, which hard-sets
+    //     `derivation_param_hash: None` (`cell/src/factory.rs:788`), and
+    //     `verify_derivation` returns `false` on that arm (`:812-818`). It also passed a
+    //     CELL ID where the parameter is `cell_program_vk`, so even with a param hash it
+    //     would compare a derived child VK against an identifier.
+    //
+    // Zero provenance information in either direction. The honest reason is that this node
+    // STORES no provenance record — nothing in the ledger or cell state carries a
+    // `Provenance` — so the two inputs a real derivation check needs (the cell's committed
+    // program VK and the factory's derivation parameter hash) are not available here at
+    // all. The tool now says that instead of emitting a boolean that reads as a verdict.
+    let derivation_check = match expected_factory {
+        None => serde_json::json!({
+            "ran": false,
+            "reason": "no expected_factory_vk supplied — nothing to check against. This is \
+                       NOT a match: absence of a check is not a passing check.",
+        }),
+        Some(hex) => match hex_decode(hex) {
+            Err(_) => serde_json::json!({
+                "ran": false,
+                "reason": "expected_factory_vk is not 64 hex chars",
+            }),
+            Ok(_) => serde_json::json!({
+                "ran": false,
+                "reason": "this node holds NO provenance record for any cell: neither the \
+                           ledger nor the cell state stores a `Provenance`, so the cell's \
+                           committed program VK and the factory's derivation_param_hash — \
+                           both inputs to ChildVkStrategy::derive_child_vk — are unavailable. \
+                           A derivation check cannot be run here, and this tool will not \
+                           report one it did not run.",
+            }),
+        },
     };
 
     McpToolResult::json(&serde_json::json!({
         "cell_id": cell_id_hex,
-        "has_provenance": is_hosted || is_sovereign,
+        // Renamed from `has_provenance`, which measured only "this cell id is in my local
+        // ledger" while its name promised a provenance record was found.
+        "known_to_this_node": is_hosted || is_sovereign,
         "is_sovereign": is_sovereign,
         "is_hosted": is_hosted,
-        "factory_match": factory_match,
+        "factory_derivation_verified": false,
+        "factory_derivation_check": derivation_check,
         "note": if is_sovereign {
-            "Cell is sovereign (commitment-only registration)"
+            "Cell is sovereign (commitment-only registration). Its FACTORY PROVENANCE is \
+             NOT verified — see factory_derivation_check."
         } else if is_hosted {
-            "Cell is hosted (full state in federation)"
+            "Cell is hosted (full state in federation). Its FACTORY PROVENANCE is NOT \
+             verified — see factory_derivation_check."
         } else {
-            "Cell not found in ledger"
+            "Cell not found in ledger."
         },
     }))
 }

@@ -59,12 +59,86 @@ pub(super) async fn tool_peer_exchange(params: &Value, state: &NodeState) -> Mcp
     }))
 }
 
+/// **THE ANCHOR A VERIFICATION CLAIM IS EARNED AGAINST.**
+///
+/// `dregg_compress_history` used to fold the node's retained turns, recompute the VK
+/// fingerprint *of the fold it had just produced*, verify against THAT, and report
+/// `"verification": "valid"`. Tooth 1 — the VK pin, the entire point of which is that the
+/// anchor is configuration the verifier held BEFOREHAND — compared a value with itself and
+/// **could not fail**. Every caller of the tool was told a proof verified against an anchor
+/// that came from the thing under test.
+///
+/// A tooth that compares a value with itself is worse than no tooth, so there is no longer a
+/// code path that produces one: the anchor is a REQUIRED caller parameter, and the tool
+/// refuses before folding anything without it. There is no "self-anchor" flag to set, no
+/// default to fall through to, and the tool never derives the value it checks against.
+pub(super) fn required_config_anchor(params: &Value) -> Result<[u8; 32], String> {
+    let Some(hex) = params.get("vk_anchor").and_then(|v| v.as_str()) else {
+        return Err(
+            "missing required parameter: vk_anchor (the 64-hex root-circuit VK fingerprint \
+             your configuration pins). This tool will not verify against an anchor it \
+             computed itself: the anchor IS the trust input, and one recomputed from the \
+             fold under test makes the VK pin compare a value with itself, which cannot \
+             fail. Obtain it the way a light client does — from the genesis/checkpoint \
+             configuration for this circuit shape, or once from an honest setup fold you \
+             ran yourself (`produce_history_envelope`) and then held fixed. Passing back a \
+             value this node minted in the same breath is the self-anchoring this refusal \
+             exists to prevent."
+                .to_string(),
+        );
+    };
+    let hex = hex.trim().strip_prefix("0x").unwrap_or(hex.trim());
+    if hex.len() != 64 {
+        return Err(format!(
+            "vk_anchor must be 64 hex chars (32 bytes), got {}. A fat-fingered anchor is a \
+             clear error, never a silent zero-fill.",
+            hex.len()
+        ));
+    }
+    hex_decode(hex).map_err(|_| "vk_anchor is not valid hex".to_string())
+}
+
+/// Assemble the tool's JSON report. Split out from the handler so the ONE rule that matters
+/// is checkable without a node, a ledger, or an hour of recursive proving:
+///
+/// > the `verification` key exists **only** when a caller-supplied anchor was checked.
+///
+/// `anchored_verify_held` is the outcome of `verify_whole_chain_proof_bytes` against
+/// [`required_config_anchor`]'s value — never against a locally recomputed fingerprint.
+/// `node/tests/mcp_verification_claims_are_earned.rs` is the permanent control.
+pub(super) fn compress_history_report(
+    mut fold: serde_json::Map<String, Value>,
+    cell_id_hex: &str,
+    anchored_verify_held: bool,
+) -> Value {
+    fold.insert("compressed".into(), serde_json::json!(true));
+    fold.insert("cell_id".into(), serde_json::json!(cell_id_hex));
+    if anchored_verify_held {
+        // Stated ONLY here, and only when the byte envelope re-verified through the
+        // light-client teeth against the CALLER'S anchor. This is the light-client check:
+        // the anchor was configuration the caller held, not a value this node minted.
+        fold.insert("verification".into(), serde_json::json!("valid"));
+        fold.insert(
+            "anchor_source".into(),
+            serde_json::json!("caller-supplied config anchor"),
+        );
+    }
+    Value::Object(fold)
+}
+
 pub(super) async fn tool_compress_history(params: &Value, state: &NodeState) -> McpToolResult {
     let cell_id_hex = match params.get("cell_id").and_then(|v| v.as_str()) {
         Some(h) => h,
         None => return McpToolResult::error("missing required parameter: cell_id"),
     };
     let turn_count = params.get("turn_count").and_then(|v| v.as_u64());
+
+    // FIRST, before any work: the anchor. Refusing here rather than after the fold means a
+    // caller cannot discover the tool's own fingerprint and hand it straight back.
+    let config_anchor = match required_config_anchor(params) {
+        Ok(a) => a,
+        Err(e) => return McpToolResult::error(e),
+    };
 
     let _cell_id_bytes = match hex_decode(cell_id_hex) {
         Ok(b) => b,
@@ -152,52 +226,57 @@ pub(super) async fn tool_compress_history(params: &Value, state: &NodeState) -> 
     // rotated proof re-verified standalone, selector-bound), re-proves each leaf
     // in-circuit, and folds the tree to ONE root; then the byte envelope is
     // verified with `verify_whole_chain_proof_bytes` — the SAME three teeth a
-    // light client runs, against the recomputed VK fingerprint of this locally
-    // produced fold (the honest-setup anchor mint). Heavy: run off the async core.
+    // light client runs, against the CALLER'S CONFIG ANCHOR.
+    //
+    // ⚑ THE ANCHOR IS `config_anchor`, NOT `proof.root_vk_fingerprint()`. It used to be
+    // the latter: the fold's own recomputed fingerprint, checked against itself, so tooth
+    // 1 could not fail and "valid" meant only "this node's fold is internally consistent"
+    // while reading as "an independent party verified this history". Passing the caller's
+    // value here is what makes the VK pin able to REFUSE — a fold of a different circuit
+    // shape, or a node whose recursion tower has moved, now returns a mismatch instead of
+    // a green tick. Heavy: run off the async core.
     let turn_total = turns.len();
     let folded = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
         let proof = dregg_circuit_prove::ivc_turn_chain::prove_turn_chain_recursive(&turns)
             .map_err(|e| format!("whole-chain fold failed: {e:?}"))?;
         let bytes = proof.to_bytes();
-        let vk = proof.root_vk_fingerprint();
-        dregg_circuit_prove::ivc_turn_chain::verify_whole_chain_proof_bytes(&bytes, &vk)
-            .map_err(|e| format!("whole-chain proof did NOT verify: {e:?}"))?;
+        let anchor = RecursionVk(config_anchor);
+        dregg_circuit_prove::ivc_turn_chain::verify_whole_chain_proof_bytes(&bytes, &anchor)
+            .map_err(|e| {
+                format!(
+                    "whole-chain proof did NOT verify against your configured vk_anchor: {e:?}. \
+                     Nothing is reported valid. A VK-fingerprint mismatch means this node's \
+                     recursion tower folds a DIFFERENT circuit shape than your anchor pins — \
+                     which is precisely the refusal the anchor exists to produce, and which \
+                     the retired self-anchored path could never reach."
+                )
+            })?;
         Ok(serde_json::json!({
             "turns_compressed": proof.num_turns,
             "proof_size_bytes": bytes.len(),
             "genesis_root": proof.genesis_root.iter().map(|f| f.as_u32()).collect::<Vec<_>>(),
             "final_root": proof.final_root.iter().map(|f| f.as_u32()).collect::<Vec<_>>(),
             "chain_digest": proof.chain_digest.iter().map(|f| f.as_u32()).collect::<Vec<_>>(),
-            "vk_fingerprint": vk.to_hex(),
         }))
     })
     .await;
 
     match folded {
-        Ok(Ok(mut summary)) => {
-            if let Some(map) = summary.as_object_mut() {
-                map.insert("compressed".into(), serde_json::json!(true));
-                map.insert("cell_id".into(), serde_json::json!(cell_id_hex));
-                // "valid" is stated ONLY here: the fold succeeded AND the byte
-                // envelope re-verified through the light-client teeth above.
-                //
-                // ⚑ SCOPED 2026-07-30 — read this before quoting the field. This
-                // path SELF-ANCHORS: `vk` is recomputed from the fold we just
-                // produced, so tooth 1 (the VK pin) compares a value against
-                // itself and CANNOT FAIL. What "valid" reports is a
-                // self-consistency check — the root batch proof verifies and the
-                // root's exposed segment matches the carried claim (teeth 2/3/4,
-                // which do real work and would catch a broken fold). It is NOT
-                // the light-client check, because the light-client check is
-                // defined by the anchor being CONFIGURATION the verifier held
-                // beforehand. A consumer of this tool (an agent reading the JSON)
-                // learns "this node folded its own retained turns and the fold is
-                // internally consistent", not "an independent party verified this
-                // history". The `vk_fingerprint` field is what a real verifier
-                // would need to have already trusted.
-                map.insert("verification".into(), serde_json::json!("valid"));
-            }
-            McpToolResult::json(&summary)
+        // The verify HELD against the caller's anchor — the only path on which this tool
+        // has ever been entitled to the word "valid". `compress_history_report` is the one
+        // place the key is written, and it writes it only when told the anchored verify
+        // held (see `node/tests/mcp_verification_claims_are_earned.rs`).
+        Ok(Ok(summary)) => {
+            let map = match summary {
+                Value::Object(m) => m,
+                other => {
+                    return McpToolResult::error(format!(
+                        "internal: fold summary was not an object ({other})"
+                    ));
+                }
+            };
+            McpToolResult::json(&compress_history_report(map, cell_id_hex, true))
         }
         Ok(Err(e)) => McpToolResult::error(format!(
             "IVC compression failed for {turn_total} retained turns (fail-closed): {e}"

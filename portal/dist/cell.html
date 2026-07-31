@@ -163,7 +163,10 @@ function fillFloor(v){
 function bannerVerified(v){
   var b=$("banner"); b.className="banner verified";
   $("banner-shield").innerHTML="&#10003;";
-  $("banner-title").textContent="✓ Light-client verified — "+v.num_turns+" finalized turns, checked in YOUR browser";
+  // NOT "finalized": this page calls verify_devnet_history, which runs legs 1+2 and NO
+  // finality leg. A correctly-proven fork the network never finalized reaches this banner.
+  $("banner-title").textContent="✓ Light-client verified — "+v.num_turns+" turns folded, checked in YOUR browser"
+    +(v.finality_attested?" · finality quorum checked":" · finality NOT checked");
   $("banner-sub").innerHTML="The recursive STARK over a real finalized history verified in this tab. The verifier is genuine and ran on your machine, trusting no server.";
   setTrust("ok","light client · verified ✓");
   foldComplete();
@@ -197,7 +200,7 @@ async function boot(){
     setTrust("live","light client · verifying the pre-folded history…");
     await new Promise(function(r){ setTimeout(r, reduceMotion?0:700); });
     var verdict=M.verify_devnet_history(JSON.stringify(baked.envelope),baked.anchor_hex);
-    if(verdict&&verdict.attested){ buildFold(verdict.num_turns||3); setTimeout(function(){ bannerVerified(verdict); }, reduceMotion?0:300); }
+    if(verdict&&verdict.aggregate_attested){ buildFold(verdict.num_turns||3); setTimeout(function(){ bannerVerified(verdict); }, reduceMotion?0:300); }
     else bannerRefused(verdict,null);
   }catch(e){
     bannerRefused(null,String(e&&e.message||e));

@@ -71,12 +71,12 @@ await m.default({ module_or_path: readFileSync('$PKG/dregg_wasm_bg.wasm') });
 const baked = JSON.parse(readFileSync('$HISTORY', 'utf8'));
 let v;
 try { v = m.verify_devnet_history(JSON.stringify(baked.envelope), baked.anchor_hex); }
-catch (e) { v = { attested: false, named_floor: String(e?.message ?? e) }; }
-if (!v.attested) {
+catch (e) { v = { aggregate_attested: false, named_floor: String(e?.message ?? e) }; }
+if (!v.aggregate_attested) {
   console.error('TOOTH light-client-freshness: $HISTORY does NOT attest under this engine — the circuit/VK moved since the artifact was folded. Regenerate it (see the header of scripts/check-web-surface-teeth.sh). Refusal: ' + v.named_floor);
   process.exit(1);
 }
-console.log('light-client freshness tooth: the baked aggregate attests (' + v.num_turns + ' turns)');
+console.log('light-client freshness tooth: the baked aggregate attests, legs 1+2 (' + v.num_turns + ' turns; finality_attested=' + v.finality_attested + ')');
 "
 
 # ── TOOTH 2: transclusion, both polarities ───────────────────────────────────────
