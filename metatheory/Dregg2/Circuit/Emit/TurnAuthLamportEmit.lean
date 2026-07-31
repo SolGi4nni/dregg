@@ -195,30 +195,58 @@ def ctCol (w nb q : Nat) : Nat := w + 6 * W * ELL nb + ELL nb + 2 * nb + q
 /-- The turn-identity digest felt for block `q` (the message the owner signed, felt-wise). -/
 def tdCol (w nb q : Nat) : Nat := w + 6 * W * ELL nb + ELL nb + 3 * nb + q
 
-/-- The whole gadget's column span past `w`. -/
-def AUTH_SPAN (nb : Nat) : Nat := 6 * W * ELL nb + ELL nb + 4 * nb
+/-- **The zero-pinned pad group.** ⚑ MEASURED HAZARD this exists to avoid: the deployed absorb
+`chip_absorb_all_lanes` seeds lanes 4/5/6 from the inputs ONLY at arity `7`, `CHIP_WIDE_ARITY = 11`
+or `CHIP_NODE8_ARITY = 16`; at every other arity it writes `st[4] = arity` and leaves `st[5]`,
+`st[6]` ZERO — so an arity-8 absorb SILENTLY DROPS inputs 4, 5 and 6. An 8-felt signature block
+absorbed at arity 8 would therefore commit only five of its eight felts and be malleable in the
+other three. Every absorb in this gadget is padded to arity 16 (`node8`, which seeds all sixteen
+lanes) against these zero-pinned columns. -/
+def zpadCol (w nb : Nat) : Nat := w + 6 * W * ELL nb + ELL nb + 3 * nb + W
+
+/-- The whole gadget's column span past `w`. The turn-digest block is always `W` wide (the chip's
+full squeeze), independent of how many of its felts are signed. -/
+def AUTH_SPAN (nb : Nat) : Nat := 6 * W * ELL nb + ELL nb + 3 * nb + W + 1
 
 /-- The turn-digest columns as the wide lookup's output block.
 
-⚑ **`nb = W` is FORCED, not chosen.** `chipLookupTupleN`'s output block is the chip's FULL squeeze —
-exactly `W = 8` felts. So this list must have length `W`, i.e. `nb = W`: every digest felt must be
-signed. At any other `nb` the lookup relates lists of different lengths, so it can never hold and
-`AuthCore` is UNSATISFIABLE — the teeth below would be vacuously true rather than false. That is the
-idle-carrier hazard, so the deployed instance is pinned here (`NB`) and guarded, and §10 exhibits an
-honest witness at `NB` so the teeth are non-vacuous. -/
-def tdCols (w nb : Nat) : List Nat := (List.range nb).map (tdCol w nb)
+The block is always `W = 8` columns — `chipLookupTupleN`'s output block is the chip's FULL squeeze,
+so a shorter list makes the lookup relate lists of different lengths and it could never hold.
+
+⚑ **The DEPLOYED instance signs ALL `W` of them (`nb = NB = W`), and that is load-bearing.** At
+`nb < W` the gadget is still well-formed and still forces a signature — but only `nb` of the 8
+digest felts are covered by the message, so the signed bits would NOT determine the turn digest and
+the weld would leak. `same_msg_same_turn_digest` therefore carries `hnb : nb = W` explicitly rather
+than being quietly true of a shape nobody deploys. -/
+def tdCols (w nb : Nat) : List Nat := (List.range W).map (tdCol w nb)
 
 /-- The DEPLOYED block count: `nb = W = 8`. A 248-bit signed message — one 31-bit block per felt of
-the chip's 8-felt squeeze. -/
+the chip's 8-felt squeeze, so EVERY digest felt is signed. -/
 def NB : Nat := W
 
--- `nb = W` is the ONLY value at which the turn-digest lookup can hold.
+-- The output block is the chip's full squeeze at any `nb`; the DEPLOYED instance signs all of it.
 #guard (tdCols 0 NB).length == W
-#guard (tdCols 0 1).length != W
-#guard (tdCols 0 4).length != W
+#guard (tdCols 0 1).length == W
 #guard ELL NB == 248
+#guard AUTH_SPAN NB == 6 * 8 * 248 + 248 + 24 + 8 + 1
 
 /-! ## §2 — the GENERATORS (no gate is hand-authored). -/
+
+/-- Pad an absorb's input column list to the `node8` arity 16 with zero-pinned columns, so the
+deployed chip seeds ALL sixteen lanes and drops none of the real inputs. -/
+def padTo16 (w nb : Nat) (ins : List Nat) : List Nat :=
+  ins ++ List.replicate (Dregg2.Circuit.DescriptorIR2.CHIP_RATE - ins.length) (zpadCol w nb)
+
+/-- The gate pinning the pad column to zero. -/
+def zpadGates (w nb : Nat) : List VmConstraint2 := [cgH (Head.lin 1 (zpadCol w nb))]
+
+/-- The fixed zero tail every 8-felt block is absorbed with, to reach the `node8` arity 16. -/
+def SIGPAD : List ℤ := List.replicate (Dregg2.Circuit.DescriptorIR2.CHIP_RATE - W) 0
+
+/-- **The effective one-way function the signature verify runs on**: the deployed permutation of the
+8-felt block followed by the zero tail that lifts the absorb to arity 16. It is `permOut` composed
+with a fixed injection, so it inherits `permOut`'s preimage/collision resistance exactly. -/
+def Hsig (permOut : List ℤ → List ℤ) : List ℤ → List ℤ := fun blk => permOut (blk ++ SIGPAD)
 
 /-- The wide Poseidon2 lookup forcing an 8-felt output group from an input column list. -/
 def wideHash (ins : List Nat) (out : List Nat) : VmConstraint2 :=
@@ -226,7 +254,8 @@ def wideHash (ins : List Nat) (out : List Nat) : VmConstraint2 :=
 
 /-- **`sigLookups`** — per bit `k`, force `sigH k = permOut (sig k)`. -/
 def sigLookups (w nb : Nat) : List VmConstraint2 :=
-  (List.range (ELL nb)).map (fun k => wideHash (gcols (sigG w nb k)) (gcols (sigHG w nb k)))
+  (List.range (ELL nb)).map (fun k =>
+    wideHash (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k)))
 
 /-- The SELECT head at bit `k`, lane `j`: `sigH − pk0 + m·pk0 − m·pk1`. Zero forces
 `sigH[k][j] = pk0[k][j]` when `m k = 0` and `= pk1[k][j]` when `m k = 1`. -/
@@ -247,7 +276,7 @@ def msgBitGates (w nb : Nat) : List VmConstraint2 :=
 `pk0 ‖ pk1`. -/
 def pairLookups (w nb : Nat) : List VmConstraint2 :=
   (List.range (ELL nb)).map (fun k =>
-    wideHash (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k)))
+    wideHash (padTo16 w nb (gcols (pk0G w nb k) ++ gcols (pk1G w nb k))) (gcols (pairG w nb k)))
 
 /-- The `k`-th fold input block: `pair 0 ‖ pair 1` at `k = 1`, else `acc (k−1) ‖ pair k`. -/
 def foldIns (w nb k : Nat) : List Nat :=
@@ -255,7 +284,8 @@ def foldIns (w nb k : Nat) : List Nat :=
 
 /-- **`accLookups`** — the running authority-root fold over every public-key pair. -/
 def accLookups (w nb : Nat) : List VmConstraint2 :=
-  (List.range (ELL nb - 1)).map (fun i => wideHash (foldIns w nb (i + 1)) (gcols (accG w nb (i + 1))))
+  (List.range (ELL nb - 1)).map (fun i =>
+    wideHash (padTo16 w nb (foldIns w nb (i + 1))) (gcols (accG w nb (i + 1))))
 
 /-- **`authRootPins`** — the folded authority root is PUBLISHED: its 8 felts are pinned to
 `PI[pcBase .. pcBase+7]`. The light client ANCHORS these from the owner's committed authority root,
@@ -268,7 +298,7 @@ def authRootPins (w nb pcBase : Nat) : List VmConstraint2 :=
 `turnIn` is supplied by the caller: `src`, `actor`, `dst`, and whatever else the turn is. THIS is
 what makes `actor` and `dst` load-bearing. -/
 def turnDigestLookup (w nb : Nat) (turnIn : List Nat) : VmConstraint2 :=
-  wideHash turnIn (tdCols w nb)
+  wideHash (padTo16 w nb turnIn) (tdCols w nb)
 
 /-- The recomposition head for block `q`: `Σ_{i<31} m[31q+i]·2ⁱ − td[q]`. -/
 def reconHead (w nb q : Nat) : Head :=
@@ -303,11 +333,12 @@ def lamportAuthConstraints (w nb pcBase : Nat) (turnIn : List Nat) : List VmCons
   sigLookups w nb ++ selectGates w nb ++ msgBitGates w nb
     ++ pairLookups w nb ++ accLookups w nb ++ authRootPins w nb pcBase
     ++ [turnDigestLookup w nb turnIn] ++ msgReconGates w nb ++ allCanonGates w nb
+    ++ zpadGates w nb
 
 /-! ## §3 — structural `#guard`s (the generators produce the budgeted shapes). -/
 
 #guard ELL 8 == 248
-#guard AUTH_SPAN 8 == 6 * 8 * 248 + 248 + 32
+#guard AUTH_SPAN 8 == 6 * 8 * 248 + 248 + 33
 #guard (sigLookups 0 8).length == 248
 #guard (selectGates 0 8).length == 248 * 8
 #guard (msgBitGates 0 8).length == 248
@@ -317,7 +348,11 @@ def lamportAuthConstraints (w nb pcBase : Nat) (turnIn : List Nat) : List VmCons
 #guard (msgReconGates 0 8).length == 8
 #guard (allCanonGates 0 8).length == 8 * 30
 #guard (lamportAuthConstraints 0 8 40 [1, 2, 3]).length
-  == 248 + 248 * 8 + 248 + 248 + 247 + 8 + 1 + 8 + 240
+  == 248 + 248 * 8 + 248 + 248 + 247 + 8 + 1 + 8 + 240 + 1
+-- every absorb is arity 16 (node8): all sixteen lanes seeded, no input dropped.
+#guard (padTo16 0 8 [1, 2, 3]).length == 16
+#guard (padTo16 0 8 (gcols (sigG 0 8 0))).length == 16
+#guard (padTo16 0 8 (gcols (pk0G 0 8 0) ++ gcols (pk1G 0 8 0))).length == 16
 
 -- The column groups do not overlap: the six 8-felt blocks tile `[w, w + 6·8·ELL)` and the scalar
 -- columns follow. (Docstring DEMOTED to a comment: Lean attaches a `/-- -/` to the next command,
@@ -378,6 +413,18 @@ theorem gval_eq (a : Assignment) (g : Fin W → Nat) :
     gval a g = (List.finRange W).map (fun j => a (g j)) := by
   simp [gval, gcols, List.map_map, Function.comp_def]
 
+/-- A padded absorb has exactly the `node8` arity 16 whenever the real inputs fit. -/
+theorem padTo16_length (w nb : Nat) (ins : List Nat)
+    (h : ins.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
+    (padTo16 w nb ins).length = Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by
+  simp [padTo16]; omega
+
+/-- Reading a padded absorb's inputs: the real columns followed by the fixed zero tail. -/
+theorem padTo16_vals (a : Assignment) (w nb : Nat) (ins : List Nat) (hz : a (zpadCol w nb) = 0) :
+    (padTo16 w nb ins).map a
+      = ins.map a ++ List.replicate (Dregg2.Circuit.DescriptorIR2.CHIP_RATE - ins.length) 0 := by
+  simp [padTo16, List.map_append, List.map_replicate, hz]
+
 /-! ## §5 — the wide-lookup forcing lever (the deployed chip, at full 8-felt squeeze width). -/
 
 /-- The `Lookup` a `wideHash` wraps. -/
@@ -409,7 +456,8 @@ content beyond "the gadget's constraints hold here". §8 derives it from `Satisf
 structure AuthCore (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat)
     (turnIn : List Nat) (env : VmRowEnv) : Prop where
   /-- every signature block hashes to its digest block (the wide chip lookup). -/
-  sigHashed  : ∀ k < ELL nb, (wideHashLk (gcols (sigG w nb k)) (gcols (sigHG w nb k))).holdsAt tf env
+  sigHashed  : ∀ k < ELL nb,
+    (wideHashLk (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k))).holdsAt tf env
   /-- the per-lane SELECT gate: the hashed signature equals the public-key entry for the message bit. -/
   selectZero : ∀ k < ELL nb, ∀ j : Fin W,
     evalH (selectHead w nb k j) env.loc ≡ 0 [ZMOD 2013265921]
@@ -417,17 +465,20 @@ structure AuthCore (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase 
   msgBool    : ∀ k < ELL nb, env.loc (mCol w nb k) = 0 ∨ env.loc (mCol w nb k) = 1
   /-- each public-key pair is compressed (the rate-16 absorb of `pk0 ‖ pk1`). -/
   pairHashed : ∀ k < ELL nb,
-    (wideHashLk (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k))).holdsAt tf env
+    (wideHashLk (padTo16 w nb (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)))
+      (gcols (pairG w nb k))).holdsAt tf env
   /-- the running authority-root fold. -/
   accHashed  : ∀ k, 1 ≤ k → k < ELL nb →
-    (wideHashLk (foldIns w nb k) (gcols (accG w nb k))).holdsAt tf env
+    (wideHashLk (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k))).holdsAt tf env
   /-- the folded authority root is pinned to the 8 published PI slots. -/
   rootPinned : ∀ j : Fin W,
     env.loc (accG w nb (ELL nb - 1) j) ≡ env.pub (pcBase + j.val) [ZMOD 2013265921]
   /-- the turn-identity digest felts are `permOut` of the TURN IDENTITY columns. -/
-  turnHashed : (wideHashLk turnIn (tdCols w nb)).holdsAt tf env
+  turnHashed : (wideHashLk (padTo16 w nb turnIn) (tdCols w nb)).holdsAt tf env
   /-- the signed bits recompose to the turn-digest felts. -/
   reconZero  : ∀ q < nb, evalH (reconHead w nb q) env.loc ≡ 0 [ZMOD 2013265921]
+  /-- the arity-16 pad column is zero (so every absorb's tail is the fixed `SIGPAD`). -/
+  zpadZero   : env.loc (zpadCol w nb) = 0
 
 /-! ## §7 — THE TEETH. -/
 
@@ -483,11 +534,13 @@ theorem lamport_verify_forced (permOut : List ℤ → List ℤ)
     (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
     (hcore : AuthCore tf w nb pcBase turnIn env)
     (hcanon : AuthRowCanon env) :
-    Dregg2.Crypto.HashSig.verify permOut (pkOf env w nb) (msgOf env w nb) (sigOf env w nb) := by
+    Dregg2.Crypto.HashSig.verify (Hsig permOut) (pkOf env w nb) (msgOf env w nb)
+      (sigOf env w nb) := by
   intro k
-  -- the chip lookup: the digest block IS the permutation of the signature block.
+  -- the chip lookup: the digest block IS the permutation of the PADDED signature block.
   have hlk := wideHash_forces permOut tf env hChip _ _
-    (by rw [gcols_length]; decide) (hcore.sigHashed k.val k.isLt)
+    (by rw [padTo16_length _ _ _ (by rw [gcols_length]; decide)])
+    (hcore.sigHashed k.val k.isLt)
   -- the select gate, lane by lane: the digest block IS the selected public-key block.
   have hpk : pkOf env w nb k (msgOf env w nb k)
       = (List.finRange W).map (fun j =>
@@ -502,8 +555,10 @@ theorem lamport_verify_forced (permOut : List ℤ → List ℤ)
     exact select_lane w nb env hcanon k.val j (hcore.msgBool k.val k.isLt)
       (hcore.selectZero k.val k.isLt j)
   -- compose: permOut (sig k) = digest block = pk k (m k).
-  have hlk' : gval env.loc (sigHG w nb k.val) = permOut (gval env.loc (sigG w nb k.val)) := hlk
-  show permOut (gval env.loc (sigG w nb k.val)) = pkOf env w nb k (msgOf env w nb k)
+  rw [padTo16_vals env.loc w nb _ hcore.zpadZero, gcols_length] at hlk
+  have hlk' : gval env.loc (sigHG w nb k.val)
+      = Hsig permOut (gval env.loc (sigG w nb k.val)) := hlk
+  show Hsig permOut (gval env.loc (sigG w nb k.val)) = pkOf env w nb k (msgOf env w nb k)
   rw [← hlk']
   exact hsel
 
@@ -555,7 +610,7 @@ theorem withTurnAuth_auth_constraints (base : EffectVmDescriptor2) (nb : Nat) (t
 /-! ### Membership of each generated block in the gadget's constraint list. -/
 
 theorem mem_sigLookups (w nb k : Nat) (hk : k < ELL nb) :
-    wideHash (gcols (sigG w nb k)) (gcols (sigHG w nb k)) ∈ sigLookups w nb :=
+    wideHash (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k)) ∈ sigLookups w nb :=
   List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
 
 theorem mem_selectGates (w nb k : Nat) (hk : k < ELL nb) (j : Fin W) :
@@ -564,12 +619,12 @@ theorem mem_selectGates (w nb k : Nat) (hk : k < ELL nb) (j : Fin W) :
     List.mem_map.mpr ⟨j, List.mem_finRange j, rfl⟩⟩
 
 theorem mem_pairLookups (w nb k : Nat) (hk : k < ELL nb) :
-    wideHash (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k))
+    wideHash (padTo16 w nb (gcols (pk0G w nb k) ++ gcols (pk1G w nb k))) (gcols (pairG w nb k))
       ∈ pairLookups w nb :=
   List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
 
 theorem mem_accLookups (w nb k : Nat) (hk1 : 1 ≤ k) (hk : k < ELL nb) :
-    wideHash (foldIns w nb k) (gcols (accG w nb k)) ∈ accLookups w nb :=
+    wideHash (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k)) ∈ accLookups w nb :=
   List.mem_map.mpr ⟨k - 1, List.mem_range.mpr (by omega), by
     have : k - 1 + 1 = k := by omega
     rw [this]⟩
@@ -586,15 +641,15 @@ theorem mem_msgReconGates (w nb q : Nat) (hq : q < nb) :
 /-! ### Lifting each block into `lamportAuthConstraints` (nine left-associated appends). -/
 
 theorem auth_mem_sig (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
-    wideHash (gcols (sigG w nb k)) (gcols (sigHG w nb k))
+    wideHash (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (mem_sigLookups w nb k hk))))))))
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (mem_sigLookups w nb k hk)))))))))
 
 theorem auth_mem_select (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb)
     (j : Fin W) : cgH (selectHead w nb k j) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_selectGates w nb k hk j))))))))
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_selectGates w nb k hk j)))))))))
 
 theorem mem_msgBitGates (w nb k : Nat) (hk : k < ELL nb) :
     binGate (mCol w nb k) ∈ msgBitGates w nb :=
@@ -603,36 +658,41 @@ theorem mem_msgBitGates (w nb k : Nat) (hk : k < ELL nb) :
 theorem auth_mem_msgbit (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
     binGate (mCol w nb k) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_msgBitGates w nb k hk)))))))
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_msgBitGates w nb k hk))))))))
 
 theorem auth_mem_pair (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
-    wideHash (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k))
+    wideHash (padTo16 w nb (gcols (pk0G w nb k) ++ gcols (pk1G w nb k))) (gcols (pairG w nb k))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inl (.inl (.inl (.inr (mem_pairLookups w nb k hk))))))
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_pairLookups w nb k hk)))))))
 
 theorem auth_mem_acc (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk1 : 1 ≤ k)
     (hk : k < ELL nb) :
-    wideHash (foldIns w nb k) (gcols (accG w nb k))
+    wideHash (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inl (.inl (.inr (mem_accLookups w nb k hk1 hk)))))
+  exact .inl (.inl (.inl (.inl (.inl (.inr (mem_accLookups w nb k hk1 hk))))))
 
 theorem auth_mem_root (w nb pcBase : Nat) (turnIn : List Nat) (j : Fin W) :
     (VmConstraint2.base (.piBinding VmRow.first (accG w nb (ELL nb - 1) j) (pcBase + j.val)))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inl (.inr (mem_authRootPins w nb pcBase j))))
+  exact .inl (.inl (.inl (.inl (.inr (mem_authRootPins w nb pcBase j)))))
 
 theorem auth_mem_turn (w nb pcBase : Nat) (turnIn : List Nat) :
     turnDigestLookup w nb turnIn ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inl (.inr (by simp)))
+  exact .inl (.inl (.inl (.inr (by simp))))
 
 theorem auth_mem_recon (w nb pcBase : Nat) (turnIn : List Nat) (q : Nat) (hq : q < nb) :
     cgH (reconHead w nb q) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
-  exact .inl (.inr (mem_msgReconGates w nb q hq))
+  exact .inl (.inl (.inr (mem_msgReconGates w nb q hq)))
+
+theorem auth_mem_zpad (w nb pcBase : Nat) (turnIn : List Nat) :
+    cgH (Head.lin 1 (zpadCol w nb)) ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inr (by simp [zpadGates])
 
 /-- **`authCore_of_satisfied` — `AuthCore` is DERIVED, not carried.** On row 0 of any real (≥2-row)
 trace satisfying the widened descriptor, every gadget constraint bites: `isFirst = true` (the
@@ -650,7 +710,8 @@ theorem authCore_of_satisfied (base : EffectVmDescriptor2) (nb : Nat) (turnIn : 
   set w := base.traceWidth
   set pc := base.piCount
   refine { sigHashed := ?_, selectZero := ?_, msgBool := ?_, pairHashed := ?_
-         , accHashed := ?_, rootPinned := ?_, turnHashed := ?_, reconZero := ?_ }
+         , accHashed := ?_, rootPinned := ?_, turnHashed := ?_, reconZero := ?_
+         , zpadZero := ?_ }
   · intro k hk
     have h := hrow _ (auth_mem_sig w nb pc turnIn k hk)
     exact h
@@ -676,6 +737,11 @@ theorem authCore_of_satisfied (base : EffectVmDescriptor2) (nb : Nat) (turnIn : 
     have h := hrow _ (auth_mem_recon w nb pc turnIn q hq)
     simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
     rwa [headToExpr_eval] at h
+  · have h := hrow _ (auth_mem_zpad w nb pc turnIn)
+    simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
+    rw [headToExpr_eval] at h
+    simp only [evalH_lin, one_mul] at h
+    exact diffExact (hcanon.cells _) ⟨le_refl 0, by norm_num [P]⟩ (by simpa using h)
 
 #assert_axioms authCore_of_satisfied
 
@@ -691,7 +757,7 @@ theorem turn_auth_forced (permOut : List ℤ → List ℤ) (base : EffectVmDescr
     (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
     (hlen : 2 ≤ t.rows.length)
     (hcanon : AuthRowCanon (envAt t 0)) :
-    Dregg2.Crypto.HashSig.verify permOut
+    Dregg2.Crypto.HashSig.verify (Hsig permOut)
       (pkOf (envAt t 0) base.traceWidth nb)
       (msgOf (envAt t 0) base.traceWidth nb)
       (sigOf (envAt t 0) base.traceWidth nb) :=
@@ -723,6 +789,11 @@ def msgSum (a : Assignment) (w nb q : Nat) : ℤ :=
   ((List.range BLOCK_BITS).map
     (fun i => (2 : ℤ) ^ i * a (mCol w nb (BLOCK_BITS * q + i)))).sum
 
+/-- The absorbed block of the turn-identity lookup: the turn columns' values followed by the fixed
+zero tail that lifts the absorb to the `node8` arity 16. -/
+def turnAbsorb (a : Assignment) (turnIn : List Nat) : List ℤ :=
+  turnIn.map a ++ List.replicate (Dregg2.Circuit.DescriptorIR2.CHIP_RATE - turnIn.length) 0
+
 /-- **`turn_digest_forced`** — the message-digest felts ARE the deployed Poseidon2 of the TURN
 IDENTITY columns. `turnIn` is where `src`, `actor` and `dst` enter. -/
 theorem turn_digest_forced (permOut : List ℤ → List ℤ)
@@ -731,8 +802,10 @@ theorem turn_digest_forced (permOut : List ℤ → List ℤ)
     (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
     (hcore : AuthCore tf w nb pcBase turnIn env)
     (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
-    (tdCols w nb).map env.loc = permOut (turnIn.map env.loc) :=
-  wideHash_forces permOut tf env hChip turnIn (tdCols w nb) hlenIn hcore.turnHashed
+    (tdCols w nb).map env.loc = permOut (turnAbsorb env.loc turnIn) := by
+  have h := wideHash_forces permOut tf env hChip (padTo16 w nb turnIn) (tdCols w nb)
+    (by rw [padTo16_length _ _ _ hlenIn]) hcore.turnHashed
+  rwa [padTo16_vals env.loc w nb turnIn hcore.zpadZero] at h
 
 /-- **`msg_recomposes`** — the signed bits recompose to the turn-digest felts, mod `p`. -/
 theorem msg_recomposes (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat)
@@ -767,8 +840,11 @@ theorem same_msg_same_turn_digest (permOut : List ℤ → List ℤ)
     (hcore : AuthCore tf w nb pcBase turnIn env) (hcore' : AuthCore tf w nb pcBase turnIn env')
     (hcanon : AuthRowCanon env) (hcanon' : AuthRowCanon env')
     (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
+    -- ⚑ the DEPLOYED instance: every one of the chip's 8 squeezed digest felts is signed. Without
+    -- this the message covers only `nb` of them and the weld leaks.
+    (hnb : nb = W)
     (hsame : ∀ k : Fin (ELL nb), msgOf env w nb k = msgOf env' w nb k) :
-    permOut (turnIn.map env.loc) = permOut (turnIn.map env'.loc) := by
+    permOut (turnAbsorb env.loc turnIn) = permOut (turnAbsorb env'.loc turnIn) := by
   -- (1) equal bits as booleans ⇒ equal bit COLUMNS as integers ⇒ equal recomposition sums.
   have hcols : ∀ k, ∀ hk : k < ELL nb, env.loc (mCol w nb k) = env'.loc (mCol w nb k) :=
     fun k hk => msgCol_eq_of_msgOf_eq tf tf w nb pcBase turnIn env env' hcore hcore' k hk
@@ -803,7 +879,7 @@ theorem same_msg_same_turn_digest (permOut : List ℤ → List ℤ)
   refine List.map_congr_left ?_
   intro c hc
   obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hc
-  exact htd q (List.mem_range.mp hq)
+  exact htd q (by rw [hnb]; exact List.mem_range.mp hq)
 
 /-- **`moved_turn_needs_different_bits` — THE WELD, stated as a tooth.** A witness whose TURN
 IDENTITY hashes to something else — because `actor` moved, or `dst` moved, or `src` moved — MUST
@@ -815,12 +891,12 @@ theorem moved_turn_needs_different_bits (permOut : List ℤ → List ℤ)
     (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
     (hcore : AuthCore tf w nb pcBase turnIn env) (hcore' : AuthCore tf w nb pcBase turnIn env')
     (hcanon : AuthRowCanon env) (hcanon' : AuthRowCanon env')
-    (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
-    (hmoved : permOut (turnIn.map env.loc) ≠ permOut (turnIn.map env'.loc)) :
+    (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (hnb : nb = W)
+    (hmoved : permOut (turnAbsorb env.loc turnIn) ≠ permOut (turnAbsorb env'.loc turnIn)) :
     ∃ k : Fin (ELL nb), msgOf env' w nb k ≠ msgOf env w nb k := by
   by_contra hall
   refine hmoved (same_msg_same_turn_digest permOut tf w nb pcBase turnIn env env' hChip hcore hcore'
-    hcanon hcanon' hlenIn ?_)
+    hcanon hcanon' hlenIn hnb ?_)
   intro k
   by_contra hk
   exact hall ⟨k, fun h => hk h.symm⟩
@@ -839,22 +915,23 @@ theorem air_forgery_breaks_hash (permOut : List ℤ → List ℤ) (base : Effect
     (hcanon : AuthRowCanon (envAt t 0))
     -- the owner's authority key is an honest Lamport public key (the light client's anchor names it)
     (sk : Dregg2.Crypto.HashSig.SecretKey (List ℤ) (ELL nb))
-    (hpk : pkOf (envAt t 0) base.traceWidth nb = Dregg2.Crypto.HashSig.publicKey permOut sk)
+    (hpk : pkOf (envAt t 0) base.traceWidth nb
+      = Dregg2.Crypto.HashSig.publicKey (Hsig permOut) sk)
     -- the bits the OWNER actually signed, and a position where this witness disagrees
     (m : Fin (ELL nb) → Bool) (k : Fin (ELL nb))
     (hne : msgOf (envAt t 0) base.traceWidth nb k ≠ m k) :
-    permOut (sigOf (envAt t 0) base.traceWidth nb k)
-        = permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k))
+    Hsig permOut (sigOf (envAt t 0) base.traceWidth nb k)
+        = Hsig permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k))
       ∧ (sigOf (envAt t 0) base.traceWidth nb k
             = sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)
          ∨ (sigOf (envAt t 0) base.traceWidth nb k
               ≠ sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)
-            ∧ permOut (sigOf (envAt t 0) base.traceWidth nb k)
-                = permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)))) := by
+            ∧ Hsig permOut (sigOf (envAt t 0) base.traceWidth nb k)
+                = Hsig permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)))) := by
   have hver := turn_auth_forced permOut base nb turnIn hash minit mfin maddrs t hChip hsat hlen
     hcanon
   rw [hpk] at hver
-  exact Dregg2.Crypto.HashSig.lamport_forgery_breaks_hash permOut sk m
+  exact Dregg2.Crypto.HashSig.lamport_forgery_breaks_hash (Hsig permOut) sk m
     (msgOf (envAt t 0) base.traceWidth nb) k hne (sigOf (envAt t 0) base.traceWidth nb) hver
 
 #assert_axioms reconHead_eval
