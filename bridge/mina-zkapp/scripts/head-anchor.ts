@@ -7,6 +7,7 @@ import {
   Mina,
   Poseidon,
   PrivateKey,
+  SelfProof,
   VerificationKey,
   ZkProgram,
 } from 'o1js';
@@ -65,9 +66,23 @@ import { MINA_TIER, atTier, tierStop } from '../src/tier.js';
 // object it is fed is not a function of what compiled.
 //
 //   MINA_TIER=0   the out-of-circuit table. Nothing compiles. Seconds.
-//   MINA_TIER=1   + the LocalBlockchain table against a real prove().
+//   MINA_TIER=1   + the LocalBlockchain table against a real prove(), the
+//                 UNPINNED control, and the vk-facts phase.
 //   MINA_TIER=2   + nothing yet: the real chain is a coordinator job and the
 //                 row for it is printed NOT ATTRIBUTABLE at every tier.
+//
+// ⚑ THE VK-PIN ROW WAS A GREEN OVER A FALSE PREMISE UNTIL 2026-07-30, and the
+// repair is the `standIn` factory below plus `assertDistinctKeys`. Both stand-in
+// producers used to differ ONLY in their `name:`, and a Kimchi verification key
+// does not commit to a program's name — so the row aimed at `vk.hash
+// .assertEquals` compared two EQUAL fields and passed whatever the pin did, and
+// so did the UNPINNED control that is supposed to make its refusal attributable.
+// The accept row meanwhile could not run at all: the stand-in had no proof input
+// and therefore `maxProofsVerified = 0`, while `DreggTerminalProof` declares 1,
+// so every advance died at Pickles' `prevs_verified` before reaching this gate.
+// Both are fixed HERE, in the harness, and neither was a defect in
+// `DreggHeadGate`. What enters a verification key is written out below the
+// out-of-circuit table and MEASURED by phase [4].
 // ---------------------------------------------------------------------------
 
 const WORK = process.env.HEAD_WORKDIR ?? resolve(process.cwd(), '.fullchain');
@@ -348,14 +363,63 @@ const canonicalStateBig = (g: bigint): HeadState => ({
 // [2] THE CIRCUIT TABLE — one gate compile, a real prove() per row.
 // ===========================================================================
 
+// ---------------------------------------------------------------------------
+// ⚑ WHAT ENTERS A KIMCHI/PICKLES VERIFICATION KEY, AND WHAT DOES NOT.
+//
+// Written here because it surprised a careful lane, and the thing it surprised
+// them into was a GREEN OVER A FALSE PREMISE: two `ZkProgram`s differing only in
+// their `name:` field compiled to the SAME `vk.hash`, so the row aimed at this
+// gate's vk pin compared two EQUAL fields and passed no matter what the pin did.
+// The `vkfacts` phase below MEASURES each line of this; none of it is asserted.
+//
+//   ENTERS — because the key commits to the CONSTRAINT SYSTEM and to the branch
+//   structure Pickles wraps it in:
+//     * the gates: every constraint, and therefore every `Poseidon.hash`,
+//       `assert*`, range check and lookup a method emits, plus the domain size
+//       they round up to;
+//     * the WIRING: the permutation argument's sigma commitments, i.e. which
+//       cells are equated with which;
+//     * the number of public input/output FIELD ELEMENTS (the layout, not the
+//       provable type's name);
+//     * `maxProofsVerified` and the METHOD COUNT — Pickles builds one branch per
+//       method and the branch table is inside the wrap key. This is why a
+//       stand-in without a proof input is not merely "smaller": it is a
+//       DIFFERENT SHAPE, and side-loading it into a `DynamicProof` that declares
+//       `maxProofsVerified = 1` dies at `prevs_verified` before any assertion in
+//       this gate is reached;
+//     * the feature flags the circuit was compiled with.
+//
+//   DOES NOT ENTER — o1js bookkeeping, used to key the prover-key cache and to
+//   name the class, never turned into a polynomial commitment:
+//     * `name:` — the program's name;
+//     * the method's own identifier, beyond its position in the branch table;
+//     * the TypeScript identifiers of the provable types.
+//
+// So "a proof of a DIFFERENT program" is only a real row if the two programs
+// have DIFFERENT CONSTRAINT SYSTEMS. `standIn`'s `extraRounds` is what supplies
+// that, and it is not decoration — with it at 0 for both producers, the vk pin
+// below is untestable and the UNPINNED control in §[3] is untestable with it.
+// ---------------------------------------------------------------------------
+
 /**
  * ⚑ THE MAXIMALLY ADVERSARIAL STAND-IN. It emits ANY boundary and ANY claim,
  * because a stand-in that could only emit honest values would make the gate's
  * refusals unfalsifiable. What it stands in for is the chain's TYPE — public
- * input `Field`, public output `ClaimedBoundary` — and nothing else; it is never
- * described as dregg's chain.
+ * input `Field`, public output `ClaimedBoundary`, and `maxProofsVerified = 1` —
+ * and nothing else; it is never described as dregg's chain.
+ *
+ * ⚑ `relay` IS NEVER CALLED AND IS LOAD-BEARING ANYWAY. Its presence is what
+ * makes the program's `maxProofsVerified` 1, which is what `DreggTerminalProof`
+ * declares and what dregg's real terminal program is (`RootFriUniform`'s
+ * terminal slice verifies its predecessor). Without it every advance below dies
+ * at Pickles' `prevs_verified` — the proof's SHAPE, not this gate — and the
+ * whole table stops being about `DreggHeadGate`.
+ *
+ * ⚑ `extraRounds` PERTURBS THE CONSTRAINT SYSTEM so a second producer gets a
+ * genuinely different verification key. See the block above: a different NAME
+ * gets the same key.
  */
-const standIn = (name: string) =>
+const standIn = (name: string, extraRounds = 0) =>
   ZkProgram({
     name,
     publicInput: Field,
@@ -363,12 +427,38 @@ const standIn = (name: string) =>
     methods: {
       emit: {
         privateInputs: [Field, ChainClaim],
-        async method(_bIn: Field, boundary: Field, claim: ChainClaim) {
+        async method(bIn: Field, boundary: Field, claim: ChainClaim) {
+          let acc = bIn;
+          for (let i = 0; i < extraRounds; i++) acc = Poseidon.hash([acc, Field(i)]);
+          //  The extra gates must be OBSERVED or the optimiser is free to drop
+          //  them and the two keys converge again.
+          if (extraRounds > 0) acc.assertNotEquals(Field(0xdead_beefn));
           return { publicOutput: new ClaimedBoundary({ boundary, claim }) };
+        },
+      },
+      relay: {
+        privateInputs: [SelfProof<Field, ClaimedBoundary>],
+        async method(_bIn: Field, prev: SelfProof<Field, ClaimedBoundary>) {
+          prev.verify();
+          return { publicOutput: prev.publicOutput };
         },
       },
     },
   });
+
+/** ⚑ ONE PLACE THAT REFUSES A DEGENERATE PRODUCER PAIR. Two producers whose keys
+ *  are equal make the vk-pin row and the unpinned control BOTH vacuous, and the
+ *  transcript reads identically to a working one. So it is a FAILURE here, in
+ *  both the gate phase and the control phase, rather than a printed boolean. */
+function assertDistinctKeys(vkA: VerificationKey, vkB: VerificationKey): void {
+  if (vkA.hash.toBigInt() === vkB.hash.toBigInt())
+    fail(
+      'the two stand-in producers compiled to the SAME verification key. Every row below that ' +
+        "says 'a DIFFERENT program' would compare two equal fields and pass regardless of what " +
+        'the pin does — a green over a false premise, inside the guard whose whole job is proving ' +
+        'the anchor binds. See the block above: a program NAME does not enter a Kimchi key.',
+    );
+}
 
 async function circuitTable(C: ClaimValues, G: bigint) {
   console.log('\n[2] THE GATE, AGAINST A REAL prove()\n');
@@ -378,11 +468,15 @@ async function circuitTable(C: ClaimValues, G: bigint) {
   //  Two stand-ins plus one gate is three; the UNPINNED control is a fourth and
   //  therefore runs in a child process.
   let t = Date.now();
-  const A = standIn('dregg-head-standin-A');
-  const B = standIn('dregg-head-standin-B');
+  const A = standIn('dregg-head-standin-A', 0);
+  const B = standIn('dregg-head-standin-B', 3);
   const vkA = (await A.compile()).verificationKey;
   const vkB = (await B.compile()).verificationKey;
-  ok(`compiled two stand-in producers in ${secs(t)} (vk hashes differ: ${vkA.hash.toBigInt() !== vkB.hash.toBigInt()})`);
+  assertDistinctKeys(vkA, vkB);
+  ok(
+    `compiled two stand-in producers with DIFFERENT constraint systems in ${secs(t)} — ` +
+      `vk ${hex(vkA.hash.toBigInt())} vs ${hex(vkB.hash.toBigInt())}`,
+  );
 
   const CHAIN_VK_ROOT = Field(0x5eed_beefn);
   //  ⚑ 912 IS THE REAL CHAIN'S LENGTH (`head-anchor-pins` reports 905 uniform
@@ -443,7 +537,15 @@ async function circuitTable(C: ClaimValues, G: bigint) {
     return DreggTerminalProof.fromProof(proof);
   };
 
-  type Row = { what: string; want: 'ACCEPTED' | 'REFUSED'; run: () => Promise<void> };
+  type Row = {
+    what: string;
+    want: 'ACCEPTED' | 'REFUSED';
+    run: () => Promise<void>;
+    /** ⚑ WHICH ASSERTION. A row that is refused by SOME constraint is not a row
+     *  about the constraint it names — the vk pin's row in particular has been
+     *  refused before by the proof's SHAPE, which is not this gate at all. */
+    msg?: RegExp;
+  };
   const send = async (f: () => Promise<void>) => {
     const tx = await Mina.transaction(deployer, f);
     await tx.prove();
@@ -458,9 +560,10 @@ async function circuitTable(C: ClaimValues, G: bigint) {
   //  ---- the refusals, each aimed at ONE named assertion -------------------
   const refusals: Row[] = [
     {
-      what: 'a proof of a DIFFERENT program (the vk pin)',
+      what: 'a proof of a DIFFERENT program, under its own real key (the vk pin)',
       want: 'REFUSED',
       run: advance(await proveStandIn(B, honestSeal, honestClaim), vkB),
+      msg: /a key this gate does not name/,
     },
     {
       what: 'a mid-chain STEP boundary presented as terminal (the seal exhibition)',
@@ -530,8 +633,24 @@ async function circuitTable(C: ClaimValues, G: bigint) {
       await r.run();
       accepted = true;
     } catch (e) {
+      const m = String((e as Error)?.message ?? e);
       if (!isConstraintFailure(e))
         fail(`'${r.what}' failed for a reason that is not a constraint failure: ${String(e)}`);
+      //  ⚑ `prevs_verified` IS PICKLES, NOT THIS GATE. It says the side-loaded
+      //  proof's SHAPE is not the shape the verifier circuit was built for, and
+      //  it fires BEFORE any assertion in `DreggHeadGate`. A row "refused" by it
+      //  is a row about the harness's producer.
+      if (/prevs_verified/.test(m))
+        fail(
+          `'${r.what}' was refused at Pickles' \`prevs_verified\` — the producer's SHAPE, not this ` +
+            'gate. Every row in this table would read REFUSED for that one reason and none of them ' +
+            `would be about \`DreggHeadGate\`. Raw:\n${m.slice(0, 600)}`,
+        );
+      if (r.msg && !r.msg.test(m))
+        fail(
+          `'${r.what}' was refused, but not by the assertion it names (${r.msg}). A refusal by some ` +
+            `other constraint does not make this row attributable. Raw:\n${m.slice(0, 600)}`,
+        );
     }
     if (accepted) fail(`'${r.what}' was ACCEPTED and must be refused`);
     console.log(`      REFUSED   ${r.what}`);
@@ -585,10 +704,14 @@ async function circuitTable(C: ClaimValues, G: bigint) {
 async function control() {
   console.log('\n[3] THE UNPINNED CONTROL — same gate, `vk.hash.assertEquals` removed\n');
   const { claim: C } = realClaim();
-  const A = standIn('dregg-head-standin-A');
-  const B = standIn('dregg-head-standin-B');
+  const A = standIn('dregg-head-standin-A', 0);
+  const B = standIn('dregg-head-standin-B', 3);
   const vkA = (await A.compile()).verificationKey;
   const vkB = (await B.compile()).verificationKey;
+  //  ⚑ THE CONTROL IS ONLY A CONTROL IF B IS FOREIGN. Same refusal as the gate
+  //  phase: two equal keys would make "the unpinned gate accepts a foreign
+  //  proof" a sentence about a proof that is not foreign.
+  assertDistinctKeys(vkA, vkB);
 
   const CHAIN_VK_ROOT = Field(0x5eed_beefn);
   const TOTAL_STEPS = 912;
@@ -641,9 +764,87 @@ async function control() {
 }
 
 // ===========================================================================
+// [4] WHAT ENTERS A VERIFICATION KEY — measured, in its own process.
+//
+// ⚑ THIS PHASE EXISTS BECAUSE THE ANSWER WAS ASSUMED AND WRONG. Both producers
+// above used to differ only in their `name:`, which made the vk-pin row compare
+// two equal fields. The three rows here are the discriminating experiment: hold
+// everything constant but the name (SAME key), add one gate (DIFFERENT key), add
+// a method (DIFFERENT key). Nothing here is read off a doc.
+// ===========================================================================
+
+async function vkFacts() {
+  console.log('\n[4] WHAT ENTERS A KIMCHI VERIFICATION KEY — three compiles, one variable each\n');
+
+  //  A deliberately tiny program: the point is the DELTA between keys, and a
+  //  small circuit measures it as well as a large one for a fraction of the
+  //  compile.
+  const tiny = (name: string, gates: number, withRelay: boolean) =>
+    ZkProgram({
+      name,
+      publicInput: Field,
+      publicOutput: Field,
+      methods: {
+        emit: {
+          privateInputs: [],
+          async method(x: Field) {
+            let a = x;
+            for (let i = 0; i < gates; i++) a = Poseidon.hash([a, Field(i)]);
+            if (gates > 0) a.assertNotEquals(Field(0xdead_beefn));
+            return { publicOutput: a };
+          },
+        },
+        ...(withRelay
+          ? {
+              relay: {
+                privateInputs: [SelfProof<Field, Field>],
+                async method(_x: Field, prev: SelfProof<Field, Field>) {
+                  prev.verify();
+                  return { publicOutput: prev.publicOutput };
+                },
+              },
+            }
+          : {}),
+      },
+    } as any);
+
+  const t = Date.now();
+  const base = (await tiny('vkfacts-BASELINE', 1, false).compile()).verificationKey.hash.toBigInt();
+  const renamed = (await tiny('vkfacts-A-DIFFERENT-NAME-ENTIRELY', 1, false).compile())
+    .verificationKey.hash.toBigInt();
+  const oneMoreGate = (await tiny('vkfacts-BASELINE', 2, false).compile()).verificationKey.hash.toBigInt();
+  const oneMoreMethod = (await tiny('vkfacts-BASELINE', 1, true).compile()).verificationKey.hash.toBigInt();
+
+  const rows: [string, bigint, 'SAME' | 'DIFFERENT'][] = [
+    ['the program NAME, and nothing else', renamed, 'SAME'],
+    ['ONE more Poseidon.hash gate', oneMoreGate, 'DIFFERENT'],
+    ['ONE more method (maxProofsVerified 0 → 1)', oneMoreMethod, 'DIFFERENT'],
+  ];
+  for (const [what, h, want] of rows) {
+    const got = h === base ? 'SAME' : 'DIFFERENT';
+    if (got !== want)
+      fail(
+        `changing '${what}' gave a ${got} verification key and this file says ${want}. The ` +
+          'description of what enters a Kimchi key in this file is WRONG on this o1js, and every ' +
+          'row built on it has to be redone.',
+      );
+    console.log(`      ${got.padEnd(9)} key   ← ${what}`);
+  }
+  ok(
+    `MEASURED in ${secs(t)}: a Kimchi key commits to the CONSTRAINT SYSTEM and the branch table, ` +
+      'and NOT to the program name — so "a proof of a different program" needs different gates',
+  );
+}
+
+// ===========================================================================
 
 async function main() {
   const t0 = Date.now();
+  if (PHASE === 'vkfacts') {
+    await vkFacts();
+    console.log('\n=== HEAD-ANCHOR VK-FACTS PASS ===\n');
+    return;
+  }
   if (PHASE === 'control') {
     await control();
     console.log('\n=== HEAD-ANCHOR CONTROL PASS ===\n');
@@ -683,14 +884,20 @@ async function main() {
 
   //  ⚑ THE CONTROL RUNS IN A CHILD PROCESS, and that is not fastidiousness:
   //  this process has compiled three circuits and §3.20 measured that a fourth
-  //  hangs at the first `prove`.
-  console.log('\n    (spawning the control in its own process — four compiled circuits hang at prove)');
-  const r = spawnSync(process.execPath, ['--max-old-space-size=16384', process.argv[1]], {
-    env: { ...process.env, HEAD_PHASE: 'control' },
-    stdio: 'inherit',
-  });
-  if (r.status !== 0) fail(`the control process exited ${r.status} — the refusals are not attributable`);
-  checks++;
+  //  hangs at the first `prove`. The vk-facts phase is a fourth, fifth and sixth
+  //  and goes in its own process for the same reason.
+  const phase = (name: string, why: string) => {
+    console.log(`\n    (spawning ${name} in its own process — ${why})`);
+    const r = spawnSync(process.execPath, ['--max-old-space-size=16384', process.argv[1]], {
+      env: { ...process.env, HEAD_PHASE: name },
+      stdio: 'inherit',
+    });
+    if (r.status !== 0)
+      fail(`the ${name} process exited ${r.status} — the table above is not attributable`);
+    checks++;
+  };
+  phase('control', 'four compiled circuits hang at prove');
+  phase('vkfacts', 'it compiles three more, and its answer is what makes the vk pin a pin');
 
   console.log(`\n=== HEAD-ANCHOR PASS === ${checks} checks, ${secs(t0)}, MINA_TIER=${MINA_TIER}`);
   console.log(
