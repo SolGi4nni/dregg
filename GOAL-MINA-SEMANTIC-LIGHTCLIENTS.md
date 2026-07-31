@@ -1640,3 +1640,58 @@ terminal (a single 2^15 native-Pasta batch-STARK, not a 199-step chain), then pr
 sound object AND the cheaper one. Honest label: "o1js Kimchi verify of a native Mina-Poseidon shrink
 of dregg's apex, binding a real p3-emitted Pasta commitment, on the universal FRI floor, attesting
 execution G→H (not consensus finality)."
+
+## ✅ STEP-3 MISSING PIECE BUILT — o1js VERIFIES dregg's NATIVE-PASTA SHRINK TERMINAL (measured, binds, tamper-refused)
+The object the STEP-3 redirect named is now built and PROVED on a REAL terminal. Not the 199-instance
+re-hash chain — the SHRINK.
+
+**Rust (new/changed):**
+- `circuit-prove/src/apex_shrink_gnark_export.rs` — `shrink_apex_to_outer_exposed[_pinned_to]` made
+  **generic over `OuterShrinkConfig`** (was BN254-only; structurally identical to the already-generic
+  plain shrink), so the apex's 25-lane G→H claim (+ apex-VK tail) re-exposes through the shrink's own
+  `expose_claim` table at `DreggMinaConfig` too.
+- `circuit-prove/src/apex_shrink_mina_export.rs` (NEW) — `export_real_mina_shrink_fri_fixture`: a Pasta
+  twin of the gnark exporter that emits the **`RealRootFri` schema** (native Pasta digests as canonical
+  DECIMAL strings, `rehashed:false`, with `openedEvals`/`foldedAfterRound`/points), self-checked by
+  handing the mirrored transcript to the REAL `TwoAdicFriPcs::verify` + re-running the whole FRI flow
+  host-side (a transcription error REJECTS at export, never ships).
+- `circuit-prove/tests/mina_shrink_fixture.rs` (NEW) — mints a real 2-turn apex → exposed Mina shrink →
+  verify (ACCEPT) → host tamper (REJECT) → export. **MEASURED on hbox:** apex fold 65s, Mina shrink
+  prove 21s, fixture 1.19 MB, exposed `expose_claim` = 41 lanes (25 chain claim ‖ apex spine+VK).
+
+**o1js (new/changed):** `bridge/mina-zkapp/src/MinaShrinkVerify.ts` (NEW) + `scripts/mina-shrink-verify.ts`
+(NEW) + `package.json`. The shrink terminal is a **6-instance / 4-PCS-round batch STARK** — the same
+family `RootConsume` reads for the 7-instance root — so the verifier is `rootShapeOf`+`rootValues`
+(pasta suite, **REAL Pasta digests, NO re-hash**) + `DreggProofVerify`'s FRI walk / DEEP quotient /
+input-batch Merkle openings, unchanged; MinaShrinkVerify adds the pasta-real values reader and exposes
+the apex's G→H `ChainClaim` as the program's **public output**.
+
+**MEASURED, hbox, `O1JS_BACKEND=native`, on the REAL minted terminal:**
+- **ACCEPT** — `prove()` 58.6 s, `verify(proof) = true`. Public output ChainClaim: genesisRoot/finalRoot/
+  **numTurns = 2**/chainDigest (the 2-turn transfer chain's G→H).
+- **TAMPER REFUSED** — flip ONE opened input-row lane (a committed leaf), prove the tampered witness
+  against the **already-compiled** program → **`Constraint unsatisfied`** at `verifyInputBatches`'s
+  `assertEq(recomputedRoot, realCommit)`. ⚑ First cut of this test was VACUOUS (it built a fresh program
+  for the tampered fixture and "refused" with *"no prover found"* — never compiled); now the driver
+  fails closed on that string and proves the tampered witness on the compiled prog. **This is the exact
+  property the re-mint chain lacks: the recomputed Pasta root is checked against dregg's OWN emitted
+  root, not `f(openings)`. Binds, not a re-mint.**
+- **rows 151,966 / query** (measured at 1 query); compile 43 s.
+
+⚑ **HONEST N — one ZkProgram = ONE query-batch step; the full 38-query verify PARTITIONS.** o1js's
+`compile()` serializes the whole gate list to a napi string that **overflows above ~a few hundred K
+gates** (measured: 1 query = 152 K gates compiles; 8 queries ≈ 1.1 M gates → napi `Failed to convert
+rust String` at compile). The 38-query circuit is ~5.8 M gates and cannot be one o1js program — which
+is **exactly why the deployed root verifier is ~500 Pickles steps** (`DreggProofPartition`/`Schedule`).
+So this single program verifies one query batch (needs `numChunks:4` for the 2^18 domain, `overrideWrapDomain:2`);
+the full-soundness verify is that step ×38, the same partition the root already uses. Not a containment —
+the batch-STARK verifier is intrinsically a partition chain.
+
+⚑ **SCOPE, at CURRENT resolution.** PCS floor, CARRIED challenges (`RootConsume.ROOT_CHALLENGE_STATUS`,
+the §3.14 residual the deployed root path also carries): it authenticates the opened values against
+dregg's emitted Pasta commitments (input-batch + commit-phase Merkle openings, DEEP fold to the emitted
+final poly) on the FRI/MMCS floor; it does NOT re-evaluate the apex-verifier AIR closing equalities
+(`constraints` absent — that stays the STARK layer) nor re-derive the batch preamble transcript. The
+claim's binding to the committed trace is the shrink's own `ExposeClaimAir` quotient identity (Rust
+side); here it rides as a transcript-observed public value of a **commitment-bound** proof. Run:
+`MINA_SHRINK_FIXTURE=… MINA_WRAP_DOMAIN=2 MINA_NUM_CHUNKS=4 O1JS_BACKEND=native npm run mina-shrink-verify`.

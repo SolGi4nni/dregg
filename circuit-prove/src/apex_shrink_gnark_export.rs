@@ -353,11 +353,11 @@ pub fn derive_apex_vk_identity(
 /// Same split-config five steps as
 /// [`crate::apex_shrink::shrink_recursion_input_to_outer_with_packing`], at
 /// [`crate::apex_shrink::default_shrink_packing`].
-pub fn shrink_apex_to_outer_exposed(
+pub fn shrink_apex_to_outer_exposed<SC: crate::apex_shrink::OuterShrinkConfig>(
     apex: &RecursionOutput<DreggRecursionConfig>,
     inner_config: &DreggRecursionConfig,
-    outer_config: &DreggOuterConfig,
-) -> Result<ApexShrinkProof, String> {
+    outer_config: &SC,
+) -> Result<ApexShrinkProof<SC>, String> {
     // Pin to the apex's own preprocessed commitment (the fixture-mint path:
     // the apex IS the deployed dregg apex, so its commitment IS the deployed
     // value — the derivation test `derive_deployed_apex_vk_identity_and_check_fixture`
@@ -386,12 +386,12 @@ pub type ApexVkCommit = <<DreggRecursionConfig as StarkGenericConfig>::Pcs as Pc
 /// commitment differs — a same-shape malicious apex — fails witness
 /// generation/proving (the pin canary in `tests/apex_shrink_gnark_fixture.rs`
 /// exercises exactly this).
-pub fn shrink_apex_to_outer_exposed_pinned_to(
+pub fn shrink_apex_to_outer_exposed_pinned_to<SC: crate::apex_shrink::OuterShrinkConfig>(
     apex: &RecursionOutput<DreggRecursionConfig>,
     inner_config: &DreggRecursionConfig,
-    outer_config: &DreggOuterConfig,
+    outer_config: &SC,
     apex_pre_commit: ApexVkCommit,
-) -> Result<ApexShrinkProof, String> {
+) -> Result<ApexShrinkProof<SC>, String> {
     // Locate the apex's expose_claim instance (its 25-lane claim channel).
     let claim_pos = apex
         .0
@@ -465,14 +465,14 @@ pub fn shrink_apex_to_outer_exposed_pinned_to(
         recompose_preprocessor::<BabyBear>(false),
         expose_claim_preprocessor::<BabyBear>(),
     ];
-    let air_builders: Vec<Box<dyn NpoAirBuilder<DreggOuterConfig, D>>> = {
-        let mut builders = poseidon2_air_builders::<DreggOuterConfig, D>();
-        builders.extend(recompose_air_builders::<DreggOuterConfig, D>(1, false));
-        builders.extend(expose_claim_air_builders::<DreggOuterConfig, D>());
+    let air_builders: Vec<Box<dyn NpoAirBuilder<SC, D>>> = {
+        let mut builders = poseidon2_air_builders::<SC, D>();
+        builders.extend(recompose_air_builders::<SC, D>(1, false));
+        builders.extend(expose_claim_air_builders::<SC, D>());
         builders
     };
     let (airs_degrees, primitive_columns, non_primitive_columns) =
-        get_airs_and_degrees_with_prep::<DreggOuterConfig, EF, D>(
+        get_airs_and_degrees_with_prep::<SC, EF, D>(
             &circuit,
             &packing,
             &preprocessors,

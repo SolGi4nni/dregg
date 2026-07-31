@@ -20,6 +20,9 @@
 pub mod accumulator;
 pub mod apex_shrink;
 pub mod apex_shrink_gnark_export;
+/// The MINA/PASTA fixture exporter — a native-Pasta shrink terminal into the
+/// o1js Kimchi verifier (`bridge/mina-zkapp/src/MinaShrinkVerify.ts`).
+pub mod apex_shrink_mina_export;
 pub mod blinded_membership_leaf_adapter;
 pub mod bridge_leaf_adapter;
 pub mod carrier_pin_twin;
