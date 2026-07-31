@@ -27,9 +27,34 @@ Reads the 540186 fixture out of the Lean source and the Poseidon constants out o
 
     bridge/tools/mina-state-hash-crosscheck.py
 """
-import re, hashlib
+import re, hashlib, os, sys
+
+# ⚑ RESOLVED FROM THIS FILE, NOT FROM ONE MACHINE'S HOME DIRECTORY. Until
+# 2026-07-30 both reads below were absolute `/Users/ember/...` paths, so this
+# tool ran on exactly one laptop and died with a bare `FileNotFoundError`
+# anywhere else — which is how it failed the first time the demonstration was
+# rehearsed on hbox. `REPO` is two levels up from `bridge/tools/`; `DREGG_REPO`
+# overrides it for a checkout laid out differently.
+REPO = os.environ.get(
+    'DREGG_REPO',
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+)
+
+
+def _read(rel):
+    p = os.path.join(REPO, rel)
+    if not os.path.exists(p):
+        sys.exit(
+            f"{p} does not exist.\n"
+            f"  This tool reads its inputs out of the Lean sources at REPO={REPO}, resolved from\n"
+            f"  the location of this script. Set DREGG_REPO if your checkout is laid out otherwise."
+        )
+    with open(p) as f:
+        return f.read()
+
+
 P = 28948022309329048855892746252171976963363056481941560715954676764349967630337
-src = open('/Users/ember/dev/breadstuffs/metatheory/Dregg2/Circuit/Emit/PastaPoseidon.lean').read()
+src = _read('metatheory/Dregg2/Circuit/Emit/PastaPoseidon.lean')
 def grab(name, n):
     i = src.index('def %s : List (List Nat) :=' % name); j = src.index(']]', i)
     rows = re.findall(r'\[([0-9,\s]+)\]', src[i:j+2])
@@ -180,7 +205,7 @@ def state_hash(ps):
 # ⚑ Guarded so the module can be IMPORTED (by `mina-consecutive-pair.py`, which reuses this
 # binprot reader rather than carrying a second one) without running the report.
 def main():
-    lean = open("/Users/ember/dev/breadstuffs/metatheory/Dregg2/Bridge/MinaBinprotRealBlock.lean").read()
+    lean = _read('metatheory/Dregg2/Bridge/MinaBinprotRealBlock.lean')
     i = lean.index("def devnetBlock540186 : List Nat := [")
     j = lean.index("]", i)
     nums=[int(x) for x in re.findall(r"\d+", lean[i+len("def devnetBlock540186 : List Nat := ["):j])]

@@ -94,7 +94,14 @@ case "$MINA_ENDPOINT" in
   *devnet*) : ;;
   *) die "MINA_ENDPOINT '$MINA_ENDPOINT' is not a devnet endpoint; these scripts are devnet-only" ;;
 esac
-DSTAT="$(curl -sS --max-time 30 -X POST "$MINA_ENDPOINT" \
+# ⚑ `-4`, MEASURED AND NOT SUPERSTITION. `api.minascan.io` publishes AAAA records
+# and hbox has no IPv6 route, so a plain `curl` there hangs for the whole timeout
+# and returns nothing — the first rehearsal on hbox reported "devnet did not
+# answer" for a host that was up. node's own `fetch` has happy-eyeballs and
+# falls back on its own, so the o1js scripts were never affected; only this
+# preflight was. Forcing v4 here makes the preflight agree with the scripts it
+# is a preflight for.
+DSTAT="$(curl -sS -4 --max-time 30 -X POST "$MINA_ENDPOINT" \
   -H 'Content-Type: application/json' \
   -d '{"query":"{ daemonStatus { syncStatus blockchainLength } }"}' 2>/dev/null || true)"
 if printf '%s' "$DSTAT" | grep -q '"syncStatus":"SYNCED"'; then
@@ -109,7 +116,17 @@ say "1 · THE GATE'S DECISION, OUT OF CIRCUIT  (MINA_TIER=0, seconds)"
 # The head decision, the seal, the bootstrap and the pin refusals as ARITHMETIC.
 # On this directory's own record the cheap exhaustive differential is the better
 # instrument — it is what found every defect the affordable proof runs missed.
-if (cd "$ZK" && MINA_TIER=0 npm run head-anchor) > "$LOGDIR/tier0.log" 2>&1; then
+#
+# ⚑ IT READS A GITIGNORED ARTIFACT, so absence is BLOCKED and not FAIL. The step
+# decodes the committed root proof's own claim out of `.fullchain/`, which is in
+# `.gitignore` and therefore exists only where `root-air-fullchain` has run — not
+# in a fresh clone and not in a synced build lane. Discovered by rehearsing on
+# hbox, where the step failed for exactly this and said "run root-air-fullchain",
+# which is true and is not the same thing as a defect.
+ROOTAIR="$ZK/.fullchain/real-root-air.json"
+if [ ! -f "$ROOTAIR" ]; then
+  blok "$ROOTAIR absent — \`.fullchain/\` is gitignored, so this artifact exists only where \`npm run root-air-fullchain\` has run. Copy it to this box, or run the demo where it is."
+elif (cd "$ZK" && MINA_TIER=0 npm run head-anchor) > "$LOGDIR/tier0.log" 2>&1; then
   N="$(grep -c '✓' "$LOGDIR/tier0.log" || true)"
   pass "head-anchor tier-0: $N out-of-circuit checks (the decision table, the seal, the bootstrap)"
 else
