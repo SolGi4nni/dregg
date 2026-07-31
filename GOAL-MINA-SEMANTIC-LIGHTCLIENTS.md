@@ -148,3 +148,32 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   a Rust-only hash change moves NO fingerprint and two binaries would handshake `Compatible`;
   `trace_rotated.rs` has ZERO `effects_hash` references today; `prove_vm_descriptor2` zero-extends
   short rows BEFORE the width check (`descriptor_ir2.rs:6619` vs `:6487`).
+- 22:50 **`effects_hash` pin PROVED (not installed).** 8 `#assert_axioms` clean; ladder `ehHop` →
+  `ehChain_back` → `ehContinuity_step` → `ehPublish_binds`, with **both** polarity controls
+  (accept-honest AND reject-wrong-tag — the first alone would pass for a gate accepting everything).
+  Two self-corrections worth keeping: the first draft was the tree's own **∃-vacuity** (hypothesised
+  the negation of something *unconditionally true by pigeonhole*), restated on a pair-specific
+  decidable predicate so **every rung is total, no hash hypothesis anywhere**; and the absorb arity
+  was 16→**11** (`single_perm_compress` takes ≤11; `CHIP_RATE = 16` is the chip BUS, a different
+  number). 65 columns, 27 constraints, `piCount` unchanged.
+
+- 22:50 ⚑⚑ **CONVERGENCE DECISION — ONE FLAG DAY, NOT FIVE.**
+  Five lanes each produce a descriptor/VK rotation: the VK spine (every `RecursionVk`), the
+  `effects_hash` pin (65 cols × 174 members), authorization-in-AIR, the 173 free-column pins, and
+  the arity+∃-hoist cutover. **Landing them separately means five rotations, five re-bakes of
+  `whole_history_proof.bin`, and five 131-program compiles — and each invalidates the last.**
+  **Therefore: lanes PROVE and STAGE; the coordinator fires ONE convergence re-emit.** Order:
+  spine + arity + authorization + effects_hash + pins all staged → **one** descriptor re-emit →
+  **one** root-proof re-bake → **one** 131 compile → **one** 905 prove → deploy.
+  ⚠ The `effects_hash` lane already made this call independently for its own wiring, on blast-radius
+  grounds, and was right to.
+
+  ⚑ Four measured fail-opens the convergence commit MUST NOT fall into (from that lane):
+  1. `registry_fp` is sha256 of **Lean-emitted TSV bytes** — a Rust-only hash change moves NO
+     fingerprint, so two binaries computing different hashes would handshake `Compatible`.
+  2. `trace_rotated.rs` has **zero** `effects_hash` references today — the family could be replaced
+     with every deployed path byte-unchanged.
+  3. `prove_vm_descriptor2` **zero-extends short rows BEFORE the width check** (`:6619` resize vs
+     `:6487` guard) — an un-updated producer proves green with zeros.
+  4. New columns must route through `compacted_column(registry_key, raw)`; that class already fired
+     once (`trace_rotated.rs:4696`).
