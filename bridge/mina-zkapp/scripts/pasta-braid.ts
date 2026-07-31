@@ -531,7 +531,10 @@ row('work + carry rows', fmt(bbU.p.totalWork + bbU.p.totalCarry), fmt(paU.p.tota
 const instRatio = bbU.p.totalSlices / paU.p.totalSlices;
 ok(
   `the uniform ring is ${fmt(bbU.p.totalSlices)} instances at BabyBear and ${fmt(paU.p.totalSlices)} at Pasta — ` +
-    `${instRatio.toFixed(2)}x FEWER SEQUENTIAL STEPS, which is the whole of the join's cost`,
+    `${instRatio.toFixed(2)}x FEWER SEQUENTIAL STEPS. ⚠ NOT the whole of the join's cost: ` +
+    "`PASTA_BRAID_TIME=babybear` measures the per-instance rate too, and it is NOT equal at the " +
+    'two hashes (24.0 s against 10.1 s at similar row counts) — a `getRows()` figure is not a ' +
+    'prover-time figure',
 );
 
 // ---------------------------------------------------------------------------
