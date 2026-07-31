@@ -177,3 +177,20 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
      `:6487` guard) — an un-updated producer proves green with zeros.
   4. New columns must route through `compacted_column(registry_key, raw)`; that class already fired
      once (`trace_rotated.rs:4696`).
+- 23:05 **Root build: 2 red files, both accounted for.**
+  1. `EffectVmEffectsHashPin.lean:492,501` `Function expected at` → cascading `sorryAx` on **both**
+     polarity controls (`ehTagGate_accepts_honest`, `ehTagGate_rejects_wrong_tag`). ⚑ **Third time
+     tonight a lane's single-file green disagreed with the root.** Suspect its own 16→11 arity
+     correction leaving a call site at the old shape. Routed back with the exact errors and a
+     standing instruction: **ask me for the root build rather than trusting a file build.**
+  2. `CustomDeployedBytePin.lean:118,122` — the byte golden is stale. **MEASURED**: emitted
+     `trace_width` **1672 → 1716**, `main` arity **1619 → 1663**, exactly **+44 columns**, from
+     `ec69b6c0f`'s "appropriately wide buses". The file's own text says *"that red is the pin DOING
+     ITS JOB — do not relax it, re-emit."*
+     ⚑ **I did NOT re-bake it.** `git status` shows **four Emit modules mid-edit**
+     (`EffectVmEffectsHashPin`, `EffectVmEmitV2`, `ShieldedSpendDescriptor`, `TurnAuthLamportEmit`).
+     **Baking a golden over four lanes' in-flight work is precisely the mistake the convergence
+     decision exists to prevent.** It rides the one re-emit.
+- 23:05 ⚑ **The authorization lane picked LAMPORT** (`Emit/TurnAuthLamportEmit.lean` in flight) —
+  hash-based, so it needs only the **Poseidon2 chip that already exists**: no curve table, and
+  post-quantum as a side effect. That is the right shape for "no signature table in the registry".
