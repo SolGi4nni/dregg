@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "7ddec1e24a2c51d8e8e6429ff7878cb9adcace97f96b8a0a5a7efec0b5ce9146";
+    "983b0d75cf3e86d338b723aa3110d75e1f68aabf9d224e226c59af7402e00096";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1218,7 +1218,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "1162d9d3dd200661bff240f83ffaf147f15bf3eb2175659aa6931dd4dc182195";
+    "0c6c402d332b16171b0511ce2df506cc8639c411099dfbc052a0ef828f7135dd";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1244,7 +1244,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "eb804baeb6037501e61be3aa3a11b93d36320b6eae90919e4ff3426f64249e81";
+    "a028e25fee2e9c05c941fb4592a7e003ed197fdd3a32996b2e94180d130cc3a5";
 
 /// The number of written-slot completion lanes the deployed setField members publish (the VALUE8
 /// weld — the high 224 bits of the written 32-byte field value, `field_limbs8` lanes 1..=7).
@@ -2930,8 +2930,8 @@ mod tests {
                     let fc = rebase(refuse::floor_col(b)) + avail_pad;
                     assert!(
                         d.constraints.iter().any(|c| matches!(
-                            c,
-                            VmConstraint2::Base(VmConstraint::Gate(LeanExpr::Var(v))) if *v == fc
+                            crate::descriptor_ir2::row_local_body(c).as_deref(),
+                            Some(LeanExpr::Var(v)) if *v == fc
                         )),
                         "{key}: bare-floor-refuse gate (floor_col({b}) == {fc} == 0) missing — the \
                          gentian flag-day weld did not land on this cohort member"

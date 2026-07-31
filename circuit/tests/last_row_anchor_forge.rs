@@ -40,13 +40,46 @@
 //! exercised end-to-end INCLUDING the deployed anchor/reconstruction that compensates for it, and
 //! that compensation is the difference between them and the endpoint forge above.
 //!
-//! ## Reading a failure
+//! ## ⚑ INVERTED — the hole is CLOSED, and these now assert the refusal
 //!
-//! These tests assert that the hole is OPEN. If the descriptors are repaired (frame gates emitted
-//! as `windowGate { on_transition: false }`, `.last` pins moved onto a covered row, or a trailing
-//! inert row forced structurally) then [`last_row_after_anchor_forge_accepts`] goes **RED with the
-//! refusal text**, which is the intended way to find out. A repair must delete or invert this
-//! file deliberately — it must never start passing quietly.
+//! This file was written asserting the hole was OPEN, and it MEASURED that. The repair landed in
+//! the Lean emitters (`Dregg2/Circuit/Emit/LastRowFrameHardening.lean`, wired into all three
+//! deployed emit probes): every row-local `gate` body is now lowered as a WHOLE-domain
+//! `windowGate { on_transition: false }`, so the last row carries the frame/economic algebra it
+//! was missing. The descriptors were re-emitted and the three registry fingerprints rotated.
+//!
+//! The assertions below were then inverted DELIBERATELY, one by one, and this note is the record
+//! of it — per the file's own original instruction that a repair "must delete or invert this file
+//! deliberately — it must never start passing quietly". What each one says now:
+//!
+//!   * [`deployed_members_all_carry_last_row_algebra`] — was `covered == ["refusal…"]` (1 of 57).
+//!     Now `covered == every member` (57 of 57), and ZERO transition-domain `Gate`s survive.
+//!   * [`last_row_after_anchor_forge_is_refused`] — was "PROVES and VERIFIES". Now REFUSED at the
+//!     prover: `constraints not satisfied on row 63: failed constraints = [#0, #37]`.
+//!   * [`last_row_forge_cannot_publish_the_canonical_commitment_of_an_attacker_chosen_cell`] — the
+//!     wire-shaped whole-block substitution. The byte-equality measurement is KEPT (the published
+//!     anchor WOULD be `wire_commit_8_chip` of the attacker's cell), and the acceptance is
+//!     inverted: the proof is now refused, so that equality never reaches a verifier.
+//!   * [`transition_covered_row_forge_is_refused`] — **UNCHANGED, not one character**. It refused
+//!     before the repair with `[#0, #14, #26, #37]` and it refuses after with the SAME FOUR. That
+//!     is the evidence the repair did not simply break the harness.
+//!
+//! The last-row refusal names TWO constraints where the covered row names four: `#0` and `#37` are
+//! the row-local gates that now fire on both rows, and `#14`/`#26` are `transition` constraints,
+//! which are DELIBERATELY still transition-domain-only — their bodies read the NEXT row, which on
+//! the last row is the wrap row. The last row's BEFORE block is forced by the INCOMING transition
+//! from row `n−2`; the newly-live gates carry it the rest of the way to the AFTER block.
+//!
+//! ## ⚑ What this file does NOT say is closed
+//!
+//! [`free_pin_census_over_the_deployed_registry`],
+//! [`cap_open_tb_free_column_forge_and_its_anchor_control`] and
+//! [`mint_free_pin_forge_and_its_reconstruction_control`] are UNCHANGED and still GREEN, because
+//! the second hazard is still open: **173 PI slots across the 57 wide members are pinned to a
+//! column no other constraint mentions.** Those pins are free because nothing REFERENCES the
+//! column, not because of last-row vacuity — a whole-domain gate over columns the descriptor never
+//! names would change nothing. They are compensated at the wire (the executor overwrites those PIs
+//! from the trusted turn), and that compensation, not the AIR, is what stops them.
 //!
 //! Read-only w.r.t. `circuit/src`: nothing here is a fix.
 
@@ -418,17 +451,24 @@ fn forge_after_balance_at_row(
 // 0. The structural read, MEASURED over the whole deployed registry
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// **The premise of the attack, measured rather than read.** Across both deployed wide registries:
-/// how many members emit ANY constraint that is live on the last row other than a `Last` boundary
-/// pin — i.e. a `Boundary` or a whole-domain `WindowGate { on_transition: false }`.
+/// **INVERTED.** Across both deployed wide registries: how many members emit constraints that are
+/// live on the last row other than a `Last` boundary pin — a `Boundary`, or a whole-domain
+/// `WindowGate { on_transition: false }`.
+///
+/// Before the repair this measured **1 of 57** (`refusalVmDescriptor2R24` alone). It now measures
+/// **57 of 57**, and additionally that ZERO transition-domain `Gate`s survive anywhere — the Lean
+/// `hardenLastRow` moved every one of them onto the whole domain, so there is no residue to be
+/// vacuous on the last row.
 #[test]
-fn deployed_members_have_no_last_row_algebra() {
+fn deployed_members_all_carry_last_row_algebra() {
     for (label, tsv) in [
         ("WIDE_REGISTRY_STAGED_TSV", WIDE_REGISTRY_STAGED_TSV),
         ("WIDE_UMEM_WELD_REGISTRY_TSV", WIDE_UMEM_WELD_REGISTRY_TSV),
     ] {
         let mut total = 0usize;
-        let mut covered: Vec<String> = Vec::new();
+        let mut uncovered: Vec<String> = Vec::new();
+        let mut unhardened: Vec<(String, usize)> = Vec::new();
+        let mut total_whole_domain = 0usize;
         for line in tsv.lines() {
             let mut it = line.splitn(3, '\t');
             let (Some(key), Some(_), Some(json)) = (it.next(), it.next(), it.next()) else {
@@ -440,22 +480,43 @@ fn deployed_members_have_no_last_row_algebra() {
                 matches!(k, VmConstraint2::Base(VmConstraint::Boundary { .. }))
                     || matches!(k, VmConstraint2::WindowGate(w) if !w.on_transition)
             });
-            if has_last_row_algebra {
-                covered.push(key.to_string());
+            let residual_gates = d
+                .constraints
+                .iter()
+                .filter(|k| matches!(k, VmConstraint2::Base(VmConstraint::Gate(_))))
+                .count();
+            if residual_gates != 0 {
+                unhardened.push((key.to_string(), residual_gates));
             }
+            if !has_last_row_algebra {
+                uncovered.push(key.to_string());
+            }
+            total_whole_domain += d
+                .constraints
+                .iter()
+                .filter(|k| matches!(k, VmConstraint2::WindowGate(w) if !w.on_transition))
+                .count();
         }
         eprintln!(
-            "{label}: {}/{total} members carry last-row-live algebra: {covered:?}",
-            covered.len()
+            "{label}: {total} members, {total_whole_domain} whole-domain windowGates, \
+             {} members WITHOUT last-row-live algebra",
+            uncovered.len()
         );
         assert_eq!(total, 57, "{label} member count");
-        assert_eq!(
-            covered,
-            vec!["refusalVmDescriptor2R24".to_string()],
-            "MEASURED: exactly one deployed member emits algebra that survives on the last row. \
-             Every other member's row-local algebra is `Gate`/`Transition`, both of which the \
-             emitter puts under `builder.is_transition()`. If this list GREW, the frame gates were \
-             repaired and the forge below should be re-read."
+        assert!(
+            uncovered.is_empty(),
+            "MEASURED (inverted 2026-07-30): every deployed member must emit algebra that survives \
+             on the LAST row — the row it pins its published 8-felt AFTER anchor on. Before the \
+             Lean `hardenLastRow` flag day exactly ONE member did (`refusalVmDescriptor2R24`) and \
+             the last-row anchor forge below ACCEPTED. If this list is non-empty again, a member \
+             was re-emitted without the hardening: {uncovered:?}"
+        );
+        assert!(
+            unhardened.is_empty(),
+            "MEASURED (inverted 2026-07-30): NO transition-domain `Gate` may survive in a deployed \
+             member — `holdsVm .gate` is definitionally `True` on the last row, so any residue is \
+             a body that silently stops being asserted there. Members still carrying one: \
+             {unhardened:?}"
         );
     }
 }
@@ -464,18 +525,20 @@ fn deployed_members_have_no_last_row_algebra() {
 // 1. THE LAST-ROW FORGE, and its paired control
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// **THE FORGE.** Honest wide transfer; then on row `n−1` ONLY, rewrite the AFTER balance,
-/// re-derive the Poseidon2 chip chain honestly, rebuild the PI vector, prove and verify.
+/// **THE FORGE, INVERTED.** Honest wide transfer; then on row `n−1` ONLY, rewrite the AFTER
+/// balance, re-derive the Poseidon2 chip chain honestly, rebuild the PI vector, prove.
 ///
-/// A green run MEASURES that a prover publishes an 8-felt NEW anchor — the value the IVC fold
-/// consumes as the turn's endpoint — committing to a state the turn never produced, at the cost of
-/// one honest proving run.
+/// This test asserted an ACCEPT and measured one. It now asserts the REFUSAL, and the refusal is
+/// `constraints not satisfied on row 63: failed constraints = [#0, #37]` — the economic frame gate
+/// and the AFTER-balance limb recomposition, both of which used to be multiplied to zero on that
+/// row by `builder.is_transition()`.
 ///
-/// A RED run means the forge was refused: read the printed refusal, then re-read
-/// [`transition_covered_row_forge_is_refused`] to see whether the hole was closed or the harness
-/// broke.
+/// The honest baseline is kept AHEAD of the mutation and is the thing that makes the refusal mean
+/// something: the same descriptor, the same producer, the same PI rebuild, one row different.
+/// Without it a green run here would be indistinguishable from a descriptor that refuses
+/// everything.
 #[test]
-fn last_row_after_anchor_forge_accepts() {
+fn last_row_after_anchor_forge_is_refused() {
     let (desc, trace, dpis, heaps, mb) = honest_wide_transfer();
     let n = trace.len();
     eprintln!(
@@ -503,51 +566,75 @@ fn last_row_after_anchor_forge_accepts() {
     );
     eprintln!("  forged NEW anchor: {forged_anchor:?}");
 
-    let proof = match try_prove(&desc, &ftrace, &fpis, &mb, &heaps) {
-        Ok(p) => p,
-        Err(e) => panic!(
-            "LAST-ROW FORGE REFUTED at the prover: {e}\n\
-             The audit predicted this ACCEPTS. Something forces the last row's AFTER block after \
-             all — read the refusal above before recording the prediction as confirmed."
-        ),
-    };
-    verify_vm_descriptor2(&desc, &proof, &fpis).unwrap_or_else(|e| {
-        panic!(
-            "LAST-ROW FORGE REFUTED at the verifier: {e}\n\
-             The prover accepted the forged trace but the verifier did not."
-        )
-    });
-
-    // The published endpoint is forged AND self-consistent: the last-row pins agree with the
-    // mutated trace, and the anchor differs from the honest one.
+    // The forged PI vector IS self-consistent with the mutated trace — every `Last` pin agrees —
+    // so nothing about the PI layout is what refuses it. Only the row-local algebra can.
     let n_pi = desc.public_input_count;
     assert_ne!(
         &dpis[n_pi - 8..],
         &fpis[n_pi - 8..],
-        "the published 8-felt NEW anchor must differ from the honest turn's"
+        "the forge must still MOVE the published 8-felt NEW anchor, or the refusal below is not a \
+         measurement of anything"
+    );
+
+    let outcome = try_prove(&desc, &ftrace, &fpis, &mb, &heaps)
+        .and_then(|p| verify_vm_descriptor2(&desc, &p, &fpis).map_err(|e| format!("verify: {e}")));
+    let err = match outcome {
+        Ok(()) => panic!(
+            "⚑ THE LAST-ROW ANCHOR FORGE IS OPEN AGAIN. {} published a NEW anchor committing to \
+             balance {} where the honest turn ended at {} — the value `ivc_turn_chain`'s fold \
+             consumes as this turn's endpoint, for the cost of one honest proving run and one \
+             rehash. This test was INVERTED on 2026-07-30 when the Lean `hardenLastRow` flag day \
+             closed it; an ACCEPT here means a member was re-emitted without the hardening, or \
+             `windowGate {{ on_transition: false }}` stopped being asserted on the whole domain.",
+            desc.name,
+            FORGED_BALANCE,
+            trace[n - 1][V1_AFTER_BAL_LO].as_u32()
+        ),
+        Err(e) => e,
+    };
+    eprintln!("LAST-ROW FORGE REFUSED: {err}");
+
+    // The refusal must be a CONSTRAINT failure on the LAST row, not a shape/arity complaint —
+    // otherwise the hole could be open and merely masked by a harness error.
+    let lowered = err.to_lowercase();
+    for bogus in [
+        "width",
+        "arity",
+        "public_input_count",
+        "degree_bits",
+        "not in ",
+    ] {
+        assert!(
+            !lowered.contains(bogus),
+            "the last-row refusal must be a CONSTRAINT failure, not a shape error \
+             (saw {bogus:?} in: {err})"
+        );
+    }
+    assert!(
+        err.contains(&format!("row {}", n - 1)),
+        "the refusal must name the LAST row ({}), or it is refusing for some other reason: {err}",
+        n - 1
     );
     eprintln!(
-        "MEASURED — LAST-ROW FORGE ACCEPTS: {} published a NEW anchor committing to balance {} \
-         (honest turn ended at {}). One honest proving run, one rehash, no grinding.",
-        desc.name,
-        FORGED_BALANCE,
-        trace[n - 1][V1_AFTER_BAL_LO].as_u32()
+        "MEASURED — the forged endpoint is REFUSED on row {} by the now-whole-domain frame gates.",
+        n - 1
     );
 }
 
-/// **THE FORGE, IN ITS WIRE-SHAPED FORM.** The test above moves one limb. This one replaces the
-/// last row's ENTIRE rotated AFTER block with the limbs of a cell the attacker picked — so the
-/// published 8-felt anchor is not merely "different", it is the CANONICAL COMMITMENT of an
-/// attacker-chosen cell, byte-equal to what an honest producer would publish for that cell.
+/// **THE FORGE IN ITS WIRE-SHAPED FORM, INVERTED.** The test above moves one limb. This one
+/// replaces the last row's ENTIRE rotated AFTER block with the limbs of a cell the attacker picked.
 ///
-/// That equality is what makes the hole reach the wire. `turn/src/executor/proof_verify.rs` reads
-/// the claimed NEW commitment off the turn (`turn.execution_proof_new_commitment`), expands it with
-/// `bytes32_to_felt8`, OVERRIDES the last 8 PIs with it, and — if the proof verifies — writes that
-/// same value into the ledger. The override is a consistency check between the trace carrier and a
-/// field the submitter supplies; the only thing that was supposed to force the carrier to be the
-/// honest post-state is the row-local algebra this test shows is vacuous there.
+/// The BYTE-EQUALITY MEASUREMENT IS KEPT and still asserted, because it is what named the wire
+/// reach: the anchor such a trace would publish is byte-equal to `wire_commit_8_chip` of the
+/// attacker's cell, i.e. exactly what an honest producer would publish for that cell — so a
+/// submitter setting `turn.execution_proof_new_commitment` to it satisfies
+/// `proof_verify.rs`'s PI override by construction. What is INVERTED is the acceptance: that trace
+/// no longer proves, so the equality never reaches a verifier.
+///
+/// Keeping the equality rather than deleting it is deliberate. It is the statement of what the
+/// wire would have done, and it stays true; only the AIR now stands in front of it.
 #[test]
-fn last_row_forge_publishes_the_canonical_commitment_of_an_attacker_chosen_cell() {
+fn last_row_forge_cannot_publish_the_canonical_commitment_of_an_attacker_chosen_cell() {
     use dregg_circuit::effect_vm::trace_rotated::{B_IROOT, NUM_PRE_LIMBS};
 
     let (desc, trace, dpis, heaps, mb) = honest_wide_transfer();
@@ -597,18 +684,30 @@ fn last_row_forge_publishes_the_canonical_commitment_of_an_attacker_chosen_cell(
          otherwise this measures a corrupted trace, not a forgery the wire would accept"
     );
 
-    let proof = try_prove(&desc, &t, &p, &mb, &heaps)
-        .unwrap_or_else(|e| panic!("WIRE-SHAPED LAST-ROW FORGE REFUTED at the prover: {e}"));
-    verify_vm_descriptor2(&desc, &proof, &p)
-        .unwrap_or_else(|e| panic!("WIRE-SHAPED LAST-ROW FORGE REFUTED at the verifier: {e}"));
+    let outcome = try_prove(&desc, &t, &p, &mb, &heaps)
+        .and_then(|pr| verify_vm_descriptor2(&desc, &pr, &p).map_err(|e| format!("verify: {e}")));
+    let last_err = match outcome {
+        Ok(()) => panic!(
+            "⚑ THE WIRE-SHAPED LAST-ROW FORGE IS OPEN AGAIN: the published NEW anchor is \
+             `wire_commit_8_chip` of an ATTACKER-CHOSEN cell (balance {FORGED_BALANCE}) and the \
+             proof VERIFIES. A submitter setting `execution_proof_new_commitment` to this same \
+             8-felt value satisfies `proof_verify.rs`'s PI override by construction, and the \
+             executor writes it to the ledger."
+        ),
+        Err(e) => e,
+    };
     eprintln!(
-        "MEASURED — the published NEW anchor is `wire_commit_8_chip` of an ATTACKER-CHOSEN cell \
-         (balance {FORGED_BALANCE}), and the proof verifies. A submitter setting \
-         `execution_proof_new_commitment` to this same 8-felt value satisfies the executor's \
-         override by construction."
+        "WIRE-SHAPED LAST-ROW FORGE REFUSED at row {}: {last_err}",
+        n - 1
+    );
+    assert!(
+        last_err.contains(&format!("row {}", n - 1)),
+        "the whole-block substitution must be refused ON THE LAST ROW: {last_err}"
     );
 
-    // ITS OWN PAIRED CONTROL: the SAME whole-block substitution one row earlier must be REFUSED.
+    // ITS OWN PAIRED CONTROL, UNCHANGED: the SAME whole-block substitution one row earlier is
+    // REFUSED, exactly as it was before the repair. Both rows now refuse; the control's continued
+    // refusal is what shows the last-row refusal is the algebra and not a broken harness.
     let mut c = trace.clone();
     for (j, l) in forged_w.pre_limbs.iter().enumerate() {
         c[n - 2][base + j] = *l;
@@ -623,7 +722,7 @@ fn last_row_forge_publishes_the_canonical_commitment_of_an_attacker_chosen_cell(
     let err = match control {
         Ok(()) => panic!(
             "CONTROL FAILED: the SAME whole-block substitution on a TRANSITION-COVERED row was \
-             ACCEPTED. The last-row ACCEPT is then not attributable to last-row vacuity."
+             ACCEPTED. The last-row REFUSAL above is then not attributable to the algebra."
         ),
         Err(e) => e,
     };

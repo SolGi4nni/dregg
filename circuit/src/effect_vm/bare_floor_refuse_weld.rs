@@ -247,10 +247,12 @@ fn refuse_aux_base(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
     let mut bare_var_gates: Vec<usize> = desc
         .constraints
         .iter()
-        .filter_map(|c| match c {
-            VmConstraint2::Base(VmConstraint::Gate(LeanExpr::Var(col))) => Some(*col),
-            _ => None,
-        })
+        .filter_map(
+            |c| match crate::descriptor_ir2::row_local_body(c)?.as_ref() {
+                LeanExpr::Var(col) => Some(*col),
+                _ => None,
+            },
+        )
         .collect();
     bare_var_gates.sort_unstable();
     bare_var_gates.dedup();
@@ -307,7 +309,8 @@ fn recover_tag_cols(
         let bit = aux_base + k; // block 0, slot k (`bit_col(0, k)` at this member's aux base)
         // Match `Gate(Add(Add(Var(bit), Mul(Add(Var(tag), Const(_)), Var(_))), Const(-1)))`.
         let found = desc.constraints.iter().find_map(|c| {
-            let VmConstraint2::Base(VmConstraint::Gate(LeanExpr::Add(outer_l, outer_r))) = c else {
+            let body = crate::descriptor_ir2::row_local_body(c)?;
+            let LeanExpr::Add(outer_l, outer_r) = body.as_ref() else {
                 return None;
             };
             if !matches!(**outer_r, LeanExpr::Const(-1)) {

@@ -4377,6 +4377,52 @@ pub fn eval_lean_expr(e: &LeanExpr, row: &[BabyBear]) -> BabyBear {
     eval_c(e, row)
 }
 
+/// Read a whole-domain `WindowExpr` back as the one-row `LeanExpr` it is. `None` as soon as any
+/// `Nxt` leaf appears — that body is genuinely two-row and has no one-row reading.
+fn window_body_as_local(e: &WindowExpr) -> Option<LeanExpr> {
+    Some(match e {
+        WindowExpr::Loc(c) => LeanExpr::Var(*c),
+        WindowExpr::Nxt(_) => return None,
+        WindowExpr::Const(k) => LeanExpr::Const(*k),
+        WindowExpr::Add(a, b) => LeanExpr::Add(
+            Box::new(window_body_as_local(a)?),
+            Box::new(window_body_as_local(b)?),
+        ),
+        WindowExpr::Mul(a, b) => LeanExpr::Mul(
+            Box::new(window_body_as_local(a)?),
+            Box::new(window_body_as_local(b)?),
+        ),
+    })
+}
+
+/// **A constraint's ROW-LOCAL BODY, whichever domain carries it.**
+///
+/// The Lean emitters lower a row-local body two ways that denote the SAME polynomial over the SAME
+/// columns and differ only in the row set it is asserted on:
+///
+///   * `Base(Gate(b))`                     — the TRANSITION domain (vacuous on the last row);
+///   * `WindowGate { b, on_transition: false }` — the WHOLE domain (the last-row hardening form).
+///
+/// WITNESS-SIDE decoders that recover a weld's geometry by pattern-matching the committed
+/// constraint list care about the BODY and never about the domain, so they must go through here.
+/// Matching `VmConstraint::Gate` directly is matching a KIND where the meaning is a BODY: it reads
+/// correct, it compiles, and it silently stops finding anything the moment an emitter moves the
+/// body's domain — which is exactly what the last-row hardening flag day did to every deployed
+/// member, and exactly how it was found (the wide transfer producer refused to dispatch because
+/// `refuse_weld_widen` recovered a geometry from zero surviving `Gate`s).
+///
+/// Returns `None` for a constraint carrying no row-local body at all (`Transition`, the boundary /
+/// PI forms, every bus kind) and for a transition-domain or genuinely two-row `WindowGate`.
+pub fn row_local_body(k: &VmConstraint2) -> Option<std::borrow::Cow<'_, LeanExpr>> {
+    match k {
+        VmConstraint2::Base(VmConstraint::Gate(b)) => Some(std::borrow::Cow::Borrowed(b)),
+        VmConstraint2::WindowGate(w) if !w.on_transition => {
+            window_body_as_local(&w.body).map(std::borrow::Cow::Owned)
+        }
+        _ => None,
+    }
+}
+
 /// Concrete evaluation of a `LeanExpr` over one main row.
 fn eval_c(e: &LeanExpr, row: &[BabyBear]) -> BabyBear {
     match e {
