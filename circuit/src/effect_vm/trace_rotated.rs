@@ -3073,7 +3073,7 @@ pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 48
 // definitions, rather than rotting a paragraph a reader will believe.
 const _: () = {
     assert!(
-        CAP_OPEN_BASE == 1647,
+        CAP_OPEN_BASE == GRAD_ROT_WIDTH,
         "cap-open rides the graduated rotated base"
     );
     assert!(
@@ -3081,8 +3081,8 @@ const _: () = {
         "Phase H-CAP-8 native 8-felt membership span"
     );
     assert!(
-        CAP_OPEN_WIDTH == 1976,
-        "cap-open READ host width = 1647 + 329"
+        CAP_OPEN_WIDTH == CAP_OPEN_BASE + CAP_OPEN_SPAN,
+        "cap-open READ host width is its base plus the membership span"
     );
     assert!(
         CAP_OPEN_AFTER_SPINE_SPAN == 143,
@@ -3091,15 +3091,12 @@ const _: () = {
     // The committed narrow `attenuateCapOpenEffVmDescriptor2R24.trace_width`
     // (`circuit/descriptors/rotation-v3-staged-registry.tsv`).
     assert!(
-        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2119,
-        "cap-WRITE narrow width"
-    );
-    assert!(
-        CAP_OPEN_TB_ACTOR_COL == 1976 && CAP_OPEN_TB_DST_COL == 1977,
+        CAP_OPEN_TB_ACTOR_COL == CAP_OPEN_BASE + CAP_OPEN_SPAN
+            && CAP_OPEN_TB_DST_COL == CAP_OPEN_TB_ACTOR_COL + 1,
         "TB turn-identity cols"
     );
     assert!(
-        CAP_OPEN_TB_WIDTH == 1978,
+        CAP_OPEN_TB_WIDTH == CAP_OPEN_TB_DST_COL + 1,
         "TB host = cap-open host + the 2 turn-identity cols"
     );
     assert!(
@@ -4435,30 +4432,30 @@ pub const WIDE_AFTER_CBASE: usize = GRAD_ROT_WIDTH + WIDE_CARRIER_BLOCK_SPAN;
 pub const WIDE_COMMIT_CARRIER: usize = WIDE_NUM_CARRIERS - 1; // 59
 
 // FLAG-DAY GEOMETRY PINS (the wide-carrier rotation, v2): the derived constants must land on the
-// exact 178-limb / 60-carrier / 960-column shape — a drift in `NUM_PRE_LIMBS` or the derivation
+// exact 184-limb / 62-carrier shape (the nine-lane epoch) — a drift in `NUM_PRE_LIMBS` or the derivation
 // breaks the build here, not at proving time. (The Lean twins are `wideNumCarriers_eq` /
 // `wideCarrierBlockSpan_eq` / `wideAppendixSpan_eq` / `wideCommitCarrier_eq` in
 // `EffectVmEmitRotationWide.lean`.)
 const _: () = {
     assert!(
-        NUM_PRE_LIMBS == 178,
-        "wide geometry v2 is pinned to 178 pre-iroot limbs"
+        NUM_PRE_LIMBS == 184,
+        "wide geometry v2 is pinned to 184 pre-iroot limbs (the NINE-LANE epoch: 178 + 6, consuming pads 176/177 plus 178..183)"
     );
     assert!(
-        WIDE_NUM_CARRIERS == 60,
-        "178 limbs need 60 wide carriers (head + 58 body + iroot)"
+        WIDE_NUM_CARRIERS == 62,
+        "184 limbs need 62 wide carriers (head + 60 body + iroot)"
     );
     assert!(
-        WIDE_COMMIT_CARRIER == 59,
-        "the final (commitment) carrier is 59"
+        WIDE_COMMIT_CARRIER == 61,
+        "the final (commitment) carrier is 61"
     );
     assert!(
-        WIDE_CARRIER_BLOCK_SPAN == 480,
-        "one wide carrier block spans 480 columns"
+        WIDE_CARRIER_BLOCK_SPAN == WIDE_NUM_CARRIERS * 8,
+        "a wide carrier block spans 8 columns per carrier"
     );
     assert!(
-        WIDE_CARRIER_APPENDIX == 960,
-        "the two-block wide appendix spans 960 columns"
+        WIDE_CARRIER_APPENDIX == 2 * WIDE_CARRIER_BLOCK_SPAN,
+        "the wide appendix is exactly two carrier blocks"
     );
     // The AFTER block's commit carrier ends FLUSH at the allocated width (no slack, no overrun).
     assert!(WIDE_AFTER_CBASE + 8 * WIDE_COMMIT_CARRIER + 8 == WIDE_WIDTH);

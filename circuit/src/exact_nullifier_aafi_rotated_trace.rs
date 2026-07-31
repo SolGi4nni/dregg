@@ -59,16 +59,22 @@ pub const WIDE_EVENTS_PER_ROW: usize = 2 * WIDE_CARRIERS;
 pub const WIDE_EVENTS: usize = EXACT_AAFI_TRACE_ROWS * WIDE_EVENTS_PER_ROW;
 
 const _: () = {
-    assert!(V3_TRACE_WIDTH == 2442);
-    assert!(BEFORE_PAYLOAD_BASE == 2442);
-    assert!(AFTER_PAYLOAD_BASE == 2621);
-    assert!(ROTATED_HOST_WIDTH == 2800);
-    assert!(BEFORE_CARRIER_BASE == 2800);
-    assert!(AFTER_CARRIER_BASE == 3280);
-    assert!(BEFORE_COMMIT_BASE == 3272);
-    assert!(AFTER_COMMIT_BASE == 3752);
-    assert!(ROTATED_TRACE_WIDTH == 3760);
-    assert!(ROTATED_PUBLIC_INPUT_COUNT == 76);
+    // ⚑ DERIVED, NOT PINNED TO LITERALS (2026-07-31, the nine-lane epoch).
+    //
+    // These read `assert!(AFTER_PAYLOAD_BASE == 2621)` and friends — seven literals that encoded the
+    // 178-limb geometry. The nine-lane epoch moved `NUM_PRE_LIMBS` 178 → 184 and every one of them
+    // became a build error, which is the pin doing its job, but a literal has to be re-typed by hand
+    // at every epoch and that is how a geometry pin drifts from the geometry.
+    //
+    // What is actually invariant is the LAYOUT RELATION: each region begins where the previous one
+    // ends. That holds at any `NUM_PRE_LIMBS`, and it still catches the overlap/gap this block was
+    // written to catch.
+    assert!(BEFORE_PAYLOAD_BASE == V3_TRACE_WIDTH);
+    assert!(AFTER_PAYLOAD_BASE == BEFORE_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH);
+    assert!(ROTATED_HOST_WIDTH == AFTER_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH);
+    assert!(BEFORE_CARRIER_BASE == ROTATED_HOST_WIDTH);
+    assert!(AFTER_CARRIER_BASE == BEFORE_CARRIER_BASE + WIDE_BLOCK_WIDTH);
+    assert!(BEFORE_COMMIT_BASE + 8 == AFTER_CARRIER_BASE);
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

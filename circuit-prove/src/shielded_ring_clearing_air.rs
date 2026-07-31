@@ -323,8 +323,11 @@ const FINAL_TRACE_WIDTH: usize = ENDPOINT_TRACE_WIDTH;
 const ENDPOINT_COMMIT_CARRIER: usize = ENDPOINT_WIDE_CARRIERS - 1;
 
 const _: () = {
-    assert!(ENDPOINT_WIDE_CARRIERS == 60);
-    assert!(ENDPOINT_COMMIT_CARRIER == 59);
+    // ⚑ DERIVED, not pinned to the 178-limb literals (the nine-lane epoch moved them).
+    // This file's doc CLAIMED "the same wireCommitR8 shape as the live wide cohort" with nothing
+    // checking it; these now assert that relation instead of restating two numbers.
+    assert!(ENDPOINT_WIDE_CARRIERS == dregg_circuit::effect_vm::trace_rotated::WIDE_NUM_CARRIERS);
+    assert!(ENDPOINT_COMMIT_CARRIER + 1 == ENDPOINT_WIDE_CARRIERS);
     assert!(POST_WIDE_CARRIER_BASE + ENDPOINT_WIDE_BLOCK_SPAN == ENDPOINT_TRACE_WIDTH);
 };
 

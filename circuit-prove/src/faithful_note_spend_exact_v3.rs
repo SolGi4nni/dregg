@@ -75,7 +75,7 @@ const _: () = {
     assert!(V2_TRACE_WIDTH == 1023);
     assert!(V2_PUBLIC_INPUT_COUNT == 44);
     assert!(NOTE_TREE_DEPTH == EXACT_AAFI_TRACE_ROWS);
-    assert!(STAGED_TRACE_WIDTH == 3760);
+    assert!(STAGED_TRACE_WIDTH == ROTATED_TRACE_WIDTH);
     assert!(STAGED_PUBLIC_INPUT_COUNT == 76);
     assert!(OUTER_PUBLIC_INPUTS == 16);
 };

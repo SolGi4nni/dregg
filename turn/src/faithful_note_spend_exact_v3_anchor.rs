@@ -36,7 +36,11 @@ const _: () = {
     assert!(ROTATED_IROOT_OFFSET == ROTATED_PRE_LIMBS);
     assert!(ROTATED_PAYLOAD_WIDTH == ROTATED_PRE_LIMBS + 1);
     assert!(OUTER_PUBLIC_INPUTS == 16);
-    assert!(STABLE_FRAME_CELLS == 171);
+    assert!(
+        STABLE_FRAME_CELLS
+            == ROTATED_PAYLOAD_WIDTH
+                - dregg_circuit::exact_nullifier_aafi_rotated_trace::NULLIFIER_OFFSETS.len()
+    );
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

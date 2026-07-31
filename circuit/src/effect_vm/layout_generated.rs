@@ -15,13 +15,13 @@
 pub const EFFECT_VM_WIDTH: usize = 188;
 
 /// pre-iroot limbs in one rotated block — projected from the verified RotatedLayout
-pub const NUM_PRE_LIMBS: usize = 178;
+pub const NUM_PRE_LIMBS: usize = 184;
 
 /// one rotated state block's span (BEFORE and AFTER each occupy B_SPAN columns)
-pub const B_SPAN: usize = 239;
+pub const B_SPAN: usize = 247;
 
 /// column offset from a member's face to its AFTER block (= B_SPAN)
-pub const AFTER_BLOCK_OFF: usize = 239;
+pub const AFTER_BLOCK_OFF: usize = 247;
 
 /// the caveat region's span
 pub const C_SPAN: usize = 43;
@@ -33,7 +33,7 @@ pub const C_COMMIT: usize = 38;
 pub const C_RC_OFF: usize = 39;
 
 /// 2*B_SPAN + C_SPAN — the rotated appendix appended to the v1 face
-pub const APPENDIX_SPAN: usize = 521;
+pub const APPENDIX_SPAN: usize = 537;
 
 /// committed record/authority digest limb
 pub const B_RECORD_DIGEST: usize = 24;
@@ -84,10 +84,10 @@ pub const B_PERMS_COMPLETION: usize = 38;
 pub const B_VK_COMPLETION: usize = 45;
 
 /// the iroot limb (pre-iroot limbs end here)
-pub const B_IROOT: usize = 178;
+pub const B_IROOT: usize = 184;
 
 /// the state-commitment limb
-pub const B_STATE_COMMIT: usize = 179;
+pub const B_STATE_COMMIT: usize = 185;
 
 /// state register index of the first committed field (fields[0]); the AFTER-block field octet holds register r(FIELD_BASE+i) at octet index i, so octet_index(r) = r - FIELD_BASE
 pub const FIELD_BASE: usize = 3;
@@ -110,7 +110,7 @@ pub const B_PUBKEY_OCTET: usize = 105;
 /// One faithful-8 group: lane 0 followed by seven completion columns.
 pub type Felt8Group = [usize; 8];
 
-/// Every named group, emitted verbatim from `rotated178.groupTable`.
+/// Every named group, emitted verbatim from `rotated184.groupTable`.
 pub const ROTATED_GROUP_TABLE: [Felt8Group; 10] = [
     [24, 12, 13, 14, 15, 16, 17, 18],
     [25, 52, 53, 54, 55, 56, 57, 58],
