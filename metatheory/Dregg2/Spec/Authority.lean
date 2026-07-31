@@ -16,11 +16,23 @@ The object-capability model is a **graph dynamics**:
 
 Two families of authorized moves:
 
-  * **Generative** ops grow the graph, each authorized by something already in it —
-    `introduce` (Granovetter delegation), `amplify` (sealer/unsealer), `mint`
-    (powerbox/factory), `endow` (parenthood at creation);
+  * **Generative** ops grow the graph — `introduce` (Granovetter delegation), `amplify`
+    (sealer/unsealer), `mint` (powerbox/factory), `endow` (parenthood at creation), each
+    authorized by something already in the graph; and `origin` (self-reference), the BASE
+    CASE, authorized by the owner's consent over its OWN cell;
   * **Restrictive** ops shrink it — `attenuate` (narrow an edge via `≤`), `revoke`
     (remove an edge).
+
+⚑ **Why `origin` exists (2026-07-31).** Without it this module modelled Granovetter with its
+base cases deleted. The classical taxonomy has FOUR ways to become connected — initial
+conditions, parenthood, endowment, introduction — and every rule here except the initial graph
+`G0` required a pre-existing edge. So `G = fun _ _ => False` was a FIXPOINT of the whole
+dynamics: no rule could create a first edge, and the executable kernel that refines this module
+(`Exec/AuthTurn.lean`'s `recKDelegate`) consequently REFUSED every cell's first capability
+grant. `Origin` is self-reference: a cell is the origin of authority over ITSELF. It is the
+only generative rule with no authorizing edge, and it is confined by `over_self` — it can add
+ONLY a cap whose target is the originator, only with that originator's consent
+(`origin_cannot_forge_foreign_edge`). It widens the reachable set by exactly the diagonal.
 
 Grounded in dregg1's enforcement: `apply_introduce` enforces the four-part discipline
 (connectivity premise, held cap, `is_attenuation` non-amplification, consent);
@@ -211,6 +223,34 @@ structure Endow (G : Graph CellId Rights)
   /-- result: the child is endowed with `cap`. -/
   result : G' = addEdge G child cap
 
+/-- **`Origin G consents owner recipient cap G'`** — SELF-REFERENCE, the generative BASE CASE.
+A cell is the origin of authority over ITSELF, so `owner` may hand `recipient` a cap over
+`owner`'s own cell with NO pre-existing edge — the classical "self-reference" arm of the
+connectivity taxonomy, and dregg1's `apply_grant_capability` short-circuit
+(`turn/src/executor/apply.rs:647`: `if cap.target == *from { /* skip the c-list lookup */ }`).
+
+This is the ONLY generative rule with no authorizing edge, so its confinement is the whole of
+its soundness argument, and it is carried in the relation itself:
+
+  * `over_self` — the granted cap targets the ORIGINATOR (`cap.target = owner`). An origin step
+    can never make anyone reach a cell the originator does not own. Drop this field and
+    `origin_cannot_forge_foreign_edge` becomes underivable and the rule becomes edge forgery.
+  * `consented` — the originator consents (in dregg1 the signed action IS the consent).
+
+Nothing is amplified: the authority handed out is authority over `owner` itself, which `owner`
+holds implicitly and totally (`Exec.self_cap_dominates` proves the executable counterpart —
+the implicit self-cap is `⊤` on the rights lattice, so it dominates every cap). -/
+structure Origin (G : Graph CellId Rights)
+    (consents : CellId → Prop)
+    (owner recipient : CellId) (cap : Cap CellId Rights)
+    (G' : Graph CellId Rights) : Prop where
+  /-- ⚑ THE CONFINEMENT: the granted cap is over the ORIGINATOR's own cell. -/
+  over_self : cap.target = owner
+  /-- the originator consents (the signed action). -/
+  consented : consents owner
+  /-- result: `recipient` now holds `cap`. -/
+  result : G' = addEdge G recipient cap
+
 /-! ### §3.2 — RESTRICTIVE ops. -/
 
 /-- **`Attenuate G holder cap narrowed G'`** — narrow an edge's rights via `≤`. The holder
@@ -243,9 +283,11 @@ This is the "derived instances" discipline (NO flat coproduct): the legacy ops a
 orthogonal primitives above; `GenAct`/`RestrictAct` are *derived* predicates that say "this
 step is an authorized generative/restrictive act", each constructor wrapping one primitive. -/
 
-/-- **An authorized GENERATIVE act** — the step adds an edge, authorized by an
-already-present edge. Each constructor is one generative primitive; `introduce`/`mint`/
-`amplify`/`endow` are all instances of "authorized generative act". -/
+/-- **An authorized GENERATIVE act** — the step adds an edge. `introduce`/`mint`/`amplify`/
+`endow` are each authorized by an already-present edge; `origin` is the BASE CASE, authorized
+instead by the originator's consent over its OWN cell and confined to it (`Origin.over_self`).
+Without an `origin`-shaped constructor the empty graph is a fixpoint and no first edge can
+ever exist — see the module header. -/
 inductive GenAct (consents : CellId → Prop)
     (G : Graph CellId Rights) (G' : Graph CellId Rights) : Prop where
   | introduce {holder recipient : CellId} {parent cap : Cap CellId Rights}
@@ -257,6 +299,9 @@ inductive GenAct (consents : CellId → Prop)
       (h : Mint G minter factory contract child G')
   | endow {parent child : CellId} {cap source : Cap CellId Rights}
       (h : Endow G parent child cap source G')
+  /-- ⚑ the BASE CASE: self-reference, no authorizing edge, confined to the owner's own cell. -/
+  | origin {owner recipient : CellId} {cap : Cap CellId Rights}
+      (h : Origin G consents owner recipient cap G')
 
 /-- **An authorized RESTRICTIVE act** — the step narrows or removes an edge. `attenuate`/
 `revoke` are instances of "restrictive act". -/
@@ -369,20 +414,31 @@ initially or was added by an authorized generative act whose authorizing edge wa
 present in the immediately-preceding graph. "No edge appears ex nihilo." -/
 
 /-- **`AddedByAuthorizedGen consents G G' h c`** — the edge `h ⟶ c` that is *new* in the
-step `G ⟶ G'` was added by an authorized generative act, and that act's authorizing edge was
-present in `G`. This is the per-step content of non-forgeability: a freshly-appearing edge
-traces to (a) an authorized generative constructor, with (b) its authorizing edge already in
-`G`. (Restrictive steps add nothing, so they never satisfy this and never need to.) -/
+step `G ⟶ G'` was added by an authorized generative act, and that act was grounded. This is
+the per-step content of non-forgeability: a freshly-appearing edge traces to an authorized
+generative constructor, whose GROUND is carried in the disjunct alongside it.
+
+Four of the five disjuncts carry an **authorizing edge already present in `G`** — nothing
+appears without a predecessor. The fifth (`Origin`, self-reference) has no authorizing edge by
+construction, so it carries its confinement instead: **the new cap targets the originator, and
+the originator consents** (`c.target = owner ∧ consents owner`). That pair is what keeps the
+base case from being edge forgery — an origin step can mint connectivity only INTO the
+consenting originator's own cell, never into a third party's
+(`origin_disjunct_forces_consented_self_target`).
+
+(Restrictive steps add nothing, so they never satisfy this and never need to.) -/
 def AddedByAuthorizedGen (consents : CellId → Prop)
     (G G' : Graph CellId Rights) (h : CellId) (c : Cap CellId Rights) : Prop :=
   G' h c ∧ ¬ G h c ∧
     -- the new edge `h ⟶ c` is the result of some authorized generative constructor,
-    -- whose authorizing edge is present in `G`:
+    -- whose authorizing edge is present in `G` — or, for the base case, whose target is the
+    -- consenting originator itself:
     ( (∃ holder recipient parent, h = recipient ∧
         Introduce G consents holder recipient parent c G' ∧ G holder parent)
     ∨ (∃ amplifier, Amplify G h amplifier c G' ∧ G h amplifier)
     ∨ (∃ factory contract, Mint G h factory contract c G' ∧ G h factory)
-    ∨ (∃ parent source, Endow G parent h c source G' ∧ G parent source) )
+    ∨ (∃ parent source, Endow G parent h c source G' ∧ G parent source)
+    ∨ (∃ owner, Origin G consents owner h c G' ∧ c.target = owner ∧ consents owner) )
 
 /-- **`gen_step_traces`** — per-step non-forgeability: if a single generative step `G ⟶ G'`
 makes an edge `h ⟶ c` appear that was not in `G`, then that edge is `AddedByAuthorizedGen`.
@@ -422,7 +478,98 @@ theorem gen_step_traces {consents : CellId → Prop} {G G' : Graph CellId Rights
       rcases hnew with hG | ⟨heq, hceq⟩
       · exact absurd hG hold
       · subst heq; subst hceq
-        exact Or.inr (Or.inr (Or.inr ⟨parent, source, st, st.holds_source⟩))
+        exact Or.inr (Or.inr (Or.inr (Or.inl ⟨parent, source, st, st.holds_source⟩)))
+  | @origin owner recipient cap st =>
+      -- ⚑ the BASE CASE. No authorizing edge exists (that is the point), so the disjunct is
+      -- discharged by the CONFINEMENT instead: the new cap targets the originator, who consents.
+      have hres := st.result
+      rw [hres, addEdge] at hnew
+      rcases hnew with hG | ⟨heq, hceq⟩
+      · exact absurd hG hold
+      · subst heq; subst hceq
+        exact Or.inr (Or.inr (Or.inr (Or.inr ⟨owner, st, st.over_self, st.consented⟩)))
+
+/-! ### §5.ORIGIN — the base case is CONFINED, not a hole.
+
+`origin` is the one generative rule with no authorizing edge, so "does it forge?" is the whole
+question. These four state the answer, and each names what would make it fail.
+
+Nothing here weakens `only_connectivity_begets_connectivity`: that theorem's STATEMENT is
+unchanged, because its generative case defers to `gen_step_traces`, and the widening is
+entirely inside `AddedByAuthorizedGen`'s fifth disjunct — where it is visible, and where it
+carries `c.target = owner ∧ consents owner` in place of the authorizing edge the other four
+carry. -/
+
+/-- **`origin_cannot_forge_foreign_edge` — THE CONFINEMENT.** Every edge an `Origin` step makes
+appear is `recipient ⟶ cap` with `cap.target = owner` and `consents owner`. So the base case
+adds exactly one edge, into the consenting originator's OWN cell, and nothing else.
+
+⚑ **What makes it fail:** delete `Origin.over_self` and the `c.target = owner` conjunct has no
+other source — the rule would then admit `Origin G consents owner recipient ⟨victim, ⊤⟩ G'`,
+i.e. any cell manufacturing a full cap over any other cell. This conjunct IS the difference
+between a base case and edge forgery. -/
+theorem origin_cannot_forge_foreign_edge {consents : CellId → Prop}
+    {G G' : Graph CellId Rights} {owner recipient : CellId} {cap : Cap CellId Rights}
+    (st : Origin G consents owner recipient cap G')
+    {h : CellId} {c : Cap CellId Rights}
+    (hnew : G' h c) (hold : ¬ G h c) :
+    h = recipient ∧ c = cap ∧ c.target = owner ∧ consents owner := by
+  have hres := st.result
+  rw [hres, addEdge] at hnew
+  rcases hnew with hG | ⟨heq, hceq⟩
+  · exact absurd hG hold
+  · exact ⟨heq, hceq, by rw [hceq]; exact st.over_self, st.consented⟩
+
+/-- **`origin_grants_no_foreign_reach` — the security property at the REACHABILITY level.** If
+an `Origin` step gives any cell `h` access to a target `t` it could not reach before, then
+`t` is the originator itself, `h` is the named recipient, and the originator consented. An
+origin step cannot extend ANYONE's reach to a third party's cell.
+
+⚑ **What makes it fail:** the same `over_self` field — with it gone, `t = owner` is
+underivable. It is also non-vacuous in the useful direction: an origin step genuinely DOES
+create reach that was absent (`origin_admits_self_refuses_foreign`'s left conjunct over the
+empty graph is exactly that), so the hypothesis pair is satisfiable. -/
+theorem origin_grants_no_foreign_reach {consents : CellId → Prop}
+    {G G' : Graph CellId Rights} {owner recipient : CellId} {cap : Cap CellId Rights}
+    (st : Origin G consents owner recipient cap G')
+    {h t : CellId} (hnew : G'.has h t) (hold : ¬ G.has h t) :
+    t = owner ∧ h = recipient ∧ consents owner := by
+  obtain ⟨r, hr⟩ := hnew
+  have hnotG : ¬ G h ⟨t, r⟩ := fun hg => hold ⟨r, hg⟩
+  obtain ⟨heq, _, htgt, hcons⟩ := origin_cannot_forge_foreign_edge st hr hnotG
+  exact ⟨htgt, heq, hcons⟩
+
+/-- **`origin_disjunct_forces_consented_self_target`** — reading the fifth disjunct of
+`AddedByAuthorizedGen` back out: an edge traced to the base case always targets a cell that
+CONSENTED. The other four disjuncts each name an authorizing edge in `G`; this is what the
+fifth names instead, and it is why the trace stays informative after the widening. -/
+theorem origin_disjunct_forces_consented_self_target {consents : CellId → Prop}
+    {G G' : Graph CellId Rights} {h owner : CellId} {c : Cap CellId Rights}
+    (hd : Origin G consents owner h c G' ∧ c.target = owner ∧ consents owner) :
+    consents c.target := by
+  rw [hd.2.1]; exact hd.2.2
+
+/-- **`origin_refuses_foreign_target` — THE REFUSAL POLE.** A cap over a cell the originator
+does not own admits NO origin step at all, for any post-graph. Stated as a non-existence, so it
+cannot be satisfied by weakening the conclusion. -/
+theorem origin_refuses_foreign_target {consents : CellId → Prop}
+    {G G' : Graph CellId Rights} {owner recipient : CellId} {cap : Cap CellId Rights}
+    (hne : cap.target ≠ owner) : ¬ Origin G consents owner recipient cap G' :=
+  fun st => hne st.over_self
+
+/-- **`origin_admits_self_refuses_foreign` — BOTH POLES, BY VARIANT.** Over ONE graph `G`, ONE
+originator, ONE recipient and ONE rights value, varying ONLY the cap's TARGET:
+  * target = `owner` — the step EXISTS, from any graph including the empty one (the base case
+    does its job: a first edge can now be created);
+  * target = `foreign ≠ owner` — NO step exists, for ANY post-graph (the base case is confined).
+So the origin rule is neither vacuous nor a blanket admission of the shape "add an edge". -/
+theorem origin_admits_self_refuses_foreign {consents : CellId → Prop}
+    (G : Graph CellId Rights) (owner recipient foreign : CellId) (r : Rights)
+    (hc : consents owner) (hne : foreign ≠ owner) :
+    Origin G consents owner recipient ⟨owner, r⟩ (addEdge G recipient ⟨owner, r⟩)
+    ∧ (∀ G' : Graph CellId Rights, ¬ Origin G consents owner recipient ⟨foreign, r⟩ G') :=
+  ⟨{ over_self := rfl, consented := hc, result := rfl },
+   fun _ => origin_refuses_foreign_target hne⟩
 
 /-- **`restrict_step_adds_nothing`** — a restrictive step never makes a new edge
 appear: if `G' h c` after a `RestrictAct` then `G h c` was already true. Restriction only
@@ -531,6 +678,12 @@ theorem amplify_is_gen {G G' : Graph CellId Rights} {consents : CellId → Prop}
     (st : Amplify G actor amplifier recovered G') : GenAct consents G G' :=
   .amplify st
 
+/-- `origin` is an authorized generative act (derived instance — the base case). -/
+theorem origin_is_gen {G G' : Graph CellId Rights} {consents : CellId → Prop}
+    {owner recipient : CellId} {cap : Cap CellId Rights}
+    (st : Origin G consents owner recipient cap G') : GenAct consents G G' :=
+  .origin st
+
 /-- `attenuate` is a restrictive act (derived instance). -/
 theorem attenuate_is_restrict {G G' : Graph CellId Rights}
     {holder : CellId} {cap narrowed : Cap CellId Rights}
@@ -559,6 +712,12 @@ is closed (the narrowed edge inherits its predecessor's origin witness via `conf
 #assert_axioms gen_conferral_is_attenuation
 #assert_axioms attenuate_is_restrictive_narrowing
 #assert_axioms gen_step_traces
+#assert_axioms origin_cannot_forge_foreign_edge
+#assert_axioms origin_grants_no_foreign_reach
+#assert_axioms origin_disjunct_forces_consented_self_target
+#assert_axioms origin_refuses_foreign_target
+#assert_axioms origin_admits_self_refuses_foreign
+#assert_axioms origin_is_gen
 #assert_axioms revoke_step_adds_nothing
 #assert_axioms introduce_is_gen
 #assert_axioms mint_is_gen

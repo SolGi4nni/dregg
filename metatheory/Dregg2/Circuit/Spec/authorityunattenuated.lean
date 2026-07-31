@@ -66,9 +66,15 @@ The Granovetter connectivity premise the executor checks before committing a `de
 `recKDelegate`'s `if` (`AuthTurn.lean:83`), extracted so the bridge's directions are clean
 re-assembly. -/
 
-/-- **`delegateGuard s del t`** — the delegator holds a `t`-conferring cap (the executor's gate). -/
+/-- **`delegateGuard s del t`** — the executor's gate: the delegator OWNS the cap target
+(`t = del` — the `Spec.Origin` base case, no c-list edge needed, since the signed action is the
+consent) OR it holds a `t`-conferring cap (the unchanged Granovetter connectivity premise).
+
+⚑ **This WIDENED on 2026-07-31** with the kernel cutover. For every `t ≠ del` it is EXACTLY the old
+edge-only guard (`recKDelegate_cross_gated`), so no cross-cell grant became admissible; the delta is
+precisely the diagonal. -/
 def delegateGuard (s : RecChainedState) (del t : CellId) : Prop :=
-  (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
 
 /-! ## §2 — The post-state's touched `caps` map, validated DECLARATIVELY (the `recTransfer_correct`
 analogue).
@@ -77,10 +83,11 @@ analogue).
 declaratively (not blindly trust the helper): the `recipient`'s slot gains the delegator's held
 `t`-conferring cap on top of its prior caps, and EVERY OTHER holder's cap-slot is untouched. -/
 
-/-- The post-`caps` map of a committed unattenuated delegate: `grant` the recipient the delegator's
-held `t`-conferring cap. (Definitionally `grant s.kernel.caps rec (heldCapTo s.kernel.caps del t)`.) -/
+/-- The post-`caps` map of a committed unattenuated delegate: `grant` the recipient the delegated
+cap — the delegator's held `t`-conferring cap on the cross path, the implicit `Cap.node t` self-cap
+on the self path. (Definitionally `grant caps rec (delegatedCapTo caps del t)`.) -/
 def recDelegateCaps (caps : Caps) (del rec t : CellId) : Caps :=
-  grant caps rec (heldCapTo caps del t)
+  grant caps rec (delegatedCapTo caps del t)
 
 /-- **`recDelegateCaps_correct`** — the post-`caps` helper validated DECLARATIVELY. The recipient's
 slot gains exactly the delegator's held `t`-conferring cap (prepended to its prior caps), and every
@@ -88,7 +95,7 @@ OTHER holder's cap-slot is literally unchanged. So the spec's `caps`-clause enco
 grant ∧ caps-frame, rather than trusting `grant`. -/
 theorem recDelegateCaps_correct (caps : Caps) (del rec t : CellId) :
     recDelegateCaps caps del rec t rec
-        = heldCapTo caps del t :: caps rec
+        = delegatedCapTo caps del t :: caps rec
     ∧ (∀ h, h ≠ rec → recDelegateCaps caps del rec t h = caps h) := by
   refine ⟨?_, ?_⟩
   · simp only [recDelegateCaps, grant, if_true]
@@ -143,16 +150,16 @@ unattenuated delegate into `s'` iff `s'` is exactly the spec'd full post-state. 
 theorem recCDelegate_iff_spec (s : RecChainedState) (del rec t : CellId) (s' : RecChainedState) :
     recCDelegate s del rec t = some s' ↔ DelegateSpec s del rec t s' := by
   unfold recCDelegate recKDelegate DelegateSpec delegateGuard recDelegateCaps
-  by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hg]
-    simp only [hg, true_and]
     constructor
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-        rfl, rfl, rfl⟩
-    · rintro ⟨hcaps, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+      -- the guard conjunct is the commit condition itself (owner OR held edge), then 20 `rfl`s.
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl, rfl, rfl⟩
+    · rintro ⟨-, hcaps, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
               h17, h18⟩
       -- reconstruct `s'` from its 20 components.
       obtain ⟨k', log'⟩ := s'
@@ -170,7 +177,7 @@ commits SOME post-state iff the Granovetter connectivity premise holds. -/
 theorem recCDelegate_iff_guard (s : RecChainedState) (del rec t : CellId) :
     (∃ s', recCDelegate s del rec t = some s') ↔ delegateGuard s del t := by
   unfold recCDelegate recKDelegate delegateGuard
-  by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hg]
     constructor
     · intro _; exact hg
@@ -215,12 +222,13 @@ balance ledger is UNTOUCHED) and the negative content (an un-connected delegator
 delegate). These mirror `recDelegate_grants` / `recKDelegate_frame` but are derived from the
 INDEPENDENT spec, not the executor body. -/
 
-/-- **`delegate_grants_recipient` — POSITIVE teeth.** A committed delegate puts the
-delegator's held `t`-conferring cap into the recipient's slot. Derived from the spec's `caps` clause
-+ the declaratively-validated post-`caps` helper. -/
+/-- **`delegate_grants_recipient` — POSITIVE teeth.** A committed delegate puts the DELEGATED cap
+(`delegatedCapTo` — the held `t`-conferring cap on the cross path, the implicit self-cap on the self
+path) into the recipient's slot. Derived from the spec's `caps` clause + the declaratively-validated
+post-`caps` helper. -/
 theorem delegate_grants_recipient (s : RecChainedState) (del rec t : CellId) (s' : RecChainedState)
     (h : DelegateSpec s del rec t s') :
-    heldCapTo s.kernel.caps del t ∈ s'.kernel.caps rec := by
+    delegatedCapTo s.kernel.caps del t ∈ s'.kernel.caps rec := by
   obtain ⟨_, hcaps, _⟩ := h
   rw [hcaps, (recDelegateCaps_correct s.kernel.caps del rec t).1]
   exact List.mem_cons_self
@@ -234,15 +242,21 @@ theorem delegate_balance_neutral (s : RecChainedState) (del rec t : CellId) (s' 
   obtain ⟨_, _, _, _, hcell, _, _, _, hbal, _⟩ := h
   exact ⟨hbal, hcell⟩
 
-/-- **`delegate_rejects_unconnected` — NEGATIVE teeth.** A delegator that holds NO `t`-conferring cap
-CANNOT delegate: `recCDelegate` (hence every family constructor) returns `none`. The Granovetter
-"only connectivity begets connectivity" premise is FAIL-CLOSED — manufacturing an edge from thin air
-is rejected by construction. -/
+/-- **`delegate_rejects_unconnected` — NEGATIVE teeth.** A NON-OWNER delegator that holds NO
+`t`-conferring cap CANNOT delegate: `recCDelegate` (hence every family constructor) returns `none`.
+The Granovetter "only connectivity begets connectivity" premise is FAIL-CLOSED — manufacturing an
+edge over a cell you neither own nor can reach is rejected by construction.
+
+⚑ The `t ≠ del` hypothesis is the 2026-07-31 cutover made explicit, and it is the RIGHT shape: this
+theorem is about FORGERY, and an owner granting over its own cell is not forging anything. Stated
+WITHOUT the hypothesis it would now be FALSE — which is exactly why the hypothesis is written here
+rather than the conclusion quietly weakened. -/
 theorem delegate_rejects_unconnected (s : RecChainedState) (del rec t : CellId)
+    (hne : t ≠ del)
     (hbad : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = false) :
     recCDelegate s del rec t = none := by
   unfold recCDelegate recKDelegate
-  rw [if_neg (by rw [hbad]; simp)]
+  rw [if_neg (by rintro (h | h); exacts [hne h, by rw [hbad] at h; exact Bool.noConfusion h])]
 
 /-! ## §7 — Concrete #guard witnesses: a connected delegator commits; an unconnected one is rejected.
 

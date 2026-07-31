@@ -123,7 +123,9 @@ connectivity premise the executor checks; the write is the held-cap copy the exe
 `recKDelegate`'s `if` condition: the introducer `intro` ALREADY holds a cap conferring an edge to `t`
 ("only connectivity begets connectivity"). Fail-closed when `intro` holds no such cap. -/
 def introduceGate (intro t : CellId) : RecordKernelState → Bool :=
-  fun k => (k.caps intro).any (fun cap => confersEdgeTo t cap)
+  -- ⚑ OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover: the delegator owns the cap target
+  -- (`Spec.Origin`, the base case) or holds a `t`-conferring cap. Mirrors `recKDelegate`'s `if`.
+  fun k => (t == intro) || (k.caps intro).any (fun cap => confersEdgeTo t cap)
 
 /-- The held-cap-copy `caps`-write leaf — exactly `recKDelegate`'s commit grant: copy the introducer's
 HELD cap to `t` (`heldCapTo k.caps intro t`, the executable `lookup_by_target`) into the recipient
@@ -131,7 +133,7 @@ HELD cap to `t` (`heldCapTo k.caps intro t`, the executable `lookup_by_target`) 
 the granted cap is the held cap COPIED (not attenuated), so its conferred authority equals — hence
 `⊆` — the held cap's. -/
 def introduceCaps (intro rec t : CellId) : RecordKernelState → Caps :=
-  fun k => grant k.caps rec (heldCapTo k.caps intro t)
+  fun k => grant k.caps rec (delegatedCapTo k.caps intro t)
 
 /-- **The introduceA effect as an Argus IR term.** The Granovetter connectivity `guard`, then the
 held-cap-copy `setCaps` write. The body is the §A cap-graph write primitive (no new IR constructor); the
@@ -139,6 +141,14 @@ held-cap-copy `setCaps` write. The body is the §A cap-graph write primitive (no
 def introduceStmt (intro rec t : CellId) : RecStmt :=
   RecStmt.seq (RecStmt.guard (introduceGate intro t))
     (RecStmt.setCaps (introduceCaps intro rec t))
+
+/-- **`introduceGate_iff`** — the in-band `Bool` gate IS the kernel's `Prop` commit condition
+(owner-OR-connectivity). Propositionally equal, not defeq, so the cornerstone routes through it. -/
+theorem introduceGate_iff (intro t : CellId) (k : RecordKernelState) :
+    introduceGate intro t k = true
+      ↔ (t = intro ∨ (k.caps intro).any (fun cap => confersEdgeTo t cap) = true) := by
+  unfold introduceGate
+  simp only [Bool.or_eq_true, beq_iff_eq]
 
 /-! ## §2 — THE CORNERSTONE: `interp` of the introduce term IS the executor kernel step `recKDelegate`.
 
@@ -158,14 +168,14 @@ commit the two post-states are the SAME record-update (`introduceCaps intro rec 
 (heldCapTo k.caps intro t)`, definitionally). -/
 theorem interp_introduceStmt_eq_recKDelegate (intro rec t : CellId) (k : RecordKernelState) :
     interp (introduceStmt intro rec t) k = recKDelegate k intro rec t := by
-  simp only [introduceStmt, interp, introduceGate, introduceCaps]
+  simp only [introduceStmt, interp, introduceCaps]
   unfold recKDelegate
-  by_cases hg : (k.caps intro).any (fun cap => confersEdgeTo t cap) = true
-  · -- ADMIT: the connectivity gate fires (`some k`), `bind` runs the `setCaps` write = `grant … held`.
-    rw [if_pos hg, if_pos hg]
+  by_cases hg : t = intro ∨ (k.caps intro).any (fun cap => confersEdgeTo t cap) = true
+  · -- ADMIT: the owner-OR-connectivity gate fires (`some k`), `bind` runs the `setCaps` write.
+    rw [if_pos ((introduceGate_iff intro t k).mpr hg), if_pos hg]
     simp only [Option.bind]
   · -- REJECT (fail-closed): the gate returns `none`, `bind` short-circuits; the kernel `if` closes too.
-    rw [if_neg hg, if_neg hg]
+    rw [if_neg (fun hc => hg ((introduceGate_iff intro t k).mp hc)), if_neg hg]
     rfl
 
 #assert_axioms interp_introduceStmt_eq_recKDelegate
@@ -186,7 +196,7 @@ holds because the granted cap IS the held cap (`granted = held`), so the inclusi
 in-band `granted ≤ held` gate, here saturated by the copy. NOT a `()≤()` collapse, NOT `:= True`: an
 amplifying grant would be REJECTED (`amplifyingF_rejected`), so the predicate has teeth. -/
 theorem introduce_non_amplifying (intro t : CellId) (k : RecordKernelState) :
-    IsNonAmplifyingF (heldCapTo k.caps intro t) (heldCapTo k.caps intro t) :=
+    IsNonAmplifyingF (delegatedCapTo k.caps intro t) (delegatedCapTo k.caps intro t) :=
   fun _ ha => ha
 
 /-- **`introduce_grants_held_cap` — the grant LANDS (the non-amplification is about the real installed
@@ -195,7 +205,7 @@ post c-list — so the cap `introduce_non_amplifying` certifies is the cap actua
 phantom. -/
 theorem introduce_grants_held_cap (intro rec t : CellId) (k k' : RecordKernelState)
     (hexec : interp (introduceStmt intro rec t) k = some k') :
-    heldCapTo k.caps intro t ∈ k'.caps rec := by
+    delegatedCapTo k.caps intro t ∈ k'.caps rec := by
   rw [interp_introduceStmt_eq_recKDelegate] at hexec
   exact recKDelegate_grants k k' intro rec t hexec
 

@@ -249,8 +249,8 @@ re-route). The relational floor needs NO different treatment than monotone-nonce
 body in the SAME structure. -/
 def authNonAmpFloor : FloorObligation RecordKernelState DelegateArgs delegateAttenStep where
   floor := fun k a =>
-    confRights (attenuate a.keep (heldCapTo k.caps a.delegator a.target))
-      ≤ confRights (heldCapTo k.caps a.delegator a.target)
+    confRights (attenuate a.keep (delegatedCapTo k.caps a.delegator a.target))
+      ≤ confRights (delegatedCapTo k.caps a.delegator a.target)
   gated := by
     intro k a k' _
     exact recKDelegateAtten_non_amplifying k.caps a.delegator a.target a.keep
@@ -468,10 +468,11 @@ premise is the over-grant guard: connectivity (hence authority) cannot begin fro
 no witness in which the recipient receives a cap exceeding a (nonexistent) held one. The non-amp floor
 is load-bearing precisely because the ONLY committing path attenuates a cap the delegator REALLY held. -/
 theorem authNonAmpFloor_overgrant_rejected (k : RecordKernelState) (a : DelegateArgs)
+    (hne : a.target ≠ a.delegator)
     (h : (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = false) :
     delegateAttenStep k a = none := by
   unfold delegateAttenStep recKDelegateAtten
-  rw [if_neg (by simp [h])]
+  rw [if_neg (by rintro (hc | hc); exacts [hne hc, by rw [h] at hc; exact Bool.noConfusion hc])]
 
 /-- **`reservedFieldFloor` DISCHARGES** — a committed developer write SUPPLIES `reservedField = false`
 WITHOUT a side-hypothesis. This is the `hnr` that `handler_refines_execFullA_setField` USED to take
@@ -494,8 +495,8 @@ see `HandlerExecutor.handler_refines_execFullA_delegateAtten_nonAmp`), produced 
 obligation. The relational authority floor sheds exactly as the monotone floor did. -/
 theorem authNonAmpFloor_discharges {k k' : RecordKernelState} {a : DelegateArgs}
     (h : delegateAttenStep k a = some k') :
-    confRights (attenuate a.keep (heldCapTo k.caps a.delegator a.target))
-      ≤ confRights (heldCapTo k.caps a.delegator a.target) :=
+    confRights (attenuate a.keep (delegatedCapTo k.caps a.delegator a.target))
+      ≤ confRights (delegatedCapTo k.caps a.delegator a.target) :=
   authNonAmpFloor.discharge h
 
 /-- **`spawnFreshnessFloor` DISCHARGES** — a committed spawn SUPPLIES the birth-stamp equality

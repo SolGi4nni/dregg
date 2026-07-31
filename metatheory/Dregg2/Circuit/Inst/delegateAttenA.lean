@@ -5,7 +5,7 @@
 `delegateAttenA del rec t keep` is the single-component `caps`-mutating arm of `FullActionA`: the GATED
 "only connectivity begets connectivity" delegation (`recCDelegateAtten`). On commit (GATED on `del`
 already holding a cap conferring a connectivity edge to `t`) it rewrites the WHOLE capability table to
-`grant caps rec (attenuate keep (heldCapTo caps del t))` — `rec`'s slot GAINS the delegator's held cap
+`grant caps rec (attenuate keep (delegatedCapTo caps del t))` — `rec`'s slot GAINS the delegator's held cap
 ATTENUATED to `keep` (genuine non-amplification `confRights granted ≤ confRights held`), every other
 holder's slot LITERALLY unchanged — prepends an authority receipt to the log, and FREEZES the 16
 non-`caps` kernel fields. Fail-closed (no held edge ⇒ `none`).
@@ -13,7 +13,7 @@ non-`caps` kernel fields. Fail-closed (no held edge ⇒ `none`).
 The touched component is the CAPABILITY TABLE `caps : Caps = Label → List Cap`, a FUNCTION-field — so it
 uses the `funcComponent` smart constructor (a whole-function injective digest, the realizable
 Poseidon-CR bar), EXACTLY the `burnA`/`bal` template shape. Its `postClause` is the FULL function
-equality `post.caps = grant caps rec (attenuate keep (heldCapTo caps del t))` — so a tamper with ANY
+equality `post.caps = grant caps rec (attenuate keep (delegatedCapTo caps del t))` — so a tamper with ANY
 holder's slot (not just `rec`'s, and not just "grew by the granted cap") is REJECTED, not merely the
 recipient's. This is precisely `DelegateAttenSpec`'s `caps` clause.
 
@@ -113,7 +113,9 @@ def delAttenGuardProp (s : RecChainedState) (args : DelegateAttenArgs) : Prop :=
   DelegateAttenGuard s args.del args.t
 
 instance (s : RecChainedState) (args : DelegateAttenArgs) : Decidable (delAttenGuardProp s args) := by
-  unfold delAttenGuardProp DelegateAttenGuard; exact inferInstanceAs (Decidable (_ = true))
+  -- ⚑ the guard is the OWNER-OR-CONNECTIVITY disjunction as of the 2026-07-31 cutover; the
+  -- `propBit` column below therefore carries a WIDER bit for owner self-grants (flag day).
+  unfold delAttenGuardProp DelegateAttenGuard; exact inferInstanceAs (Decidable (_ ∨ _))
 
 /-- The guard's witness generator: lay the single `propBit` column at wire `0`. -/
 def delAttenGuardEncode (s : RecChainedState) (args : DelegateAttenArgs) (_s' : RecChainedState) :
@@ -136,13 +138,13 @@ theorem delAttenGuardLocal (a b : Assignment) (hab : ∀ w, w < 1 → a w = b w)
       exact hcc
 
 /-- The `caps` component digest: an injective whole-function hash (carried `Function.Injective D`). The
-spec-predicted value is the attenuated grant `grant caps rec (attenuate keep (heldCapTo caps del t))`
+spec-predicted value is the attenuated grant `grant caps rec (attenuate keep (delegatedCapTo caps del t))`
 (the WHOLE post-table, so a tamper with any holder's slot is REJECTED — FULL function equality). -/
 def capsComponent (D : Caps → ℤ) (hD : Function.Injective D) :
     ActiveComponent RecChainedState DelegateAttenArgs :=
   funcComponent (β := Caps) (·.caps) D hD
     (fun s args =>
-      grant s.kernel.caps args.recv (attenuate args.keep (heldCapTo s.kernel.caps args.del args.t)))
+      grant s.kernel.caps args.recv (attenuate args.keep (delegatedCapTo s.kernel.caps args.del args.t)))
 
 /-- **`delegateAttenE`** — the `EffectSpec2` for `delegateAttenA`, supplied to the v2 framework. -/
 def delegateAttenE (D : Caps → ℤ) (hD : Function.Injective D) :
@@ -208,7 +210,7 @@ IS the spec relation). So both directions are a flat re-packaging of the same 19
 
 /-- **`apex_iff_delegateAttenSpec`** — the framework's derived `apex` for `delegateAttenE` is EXACTLY
 `DelegateAttenSpec`. The guard is `DelegateAttenGuard`; the component `postClause` is the FULL
-capability-table equality (`grant … (attenuate keep (heldCapTo …))`); the log is the
+capability-table equality (`grant … (attenuate keep (delegatedCapTo …))`); the log is the
 authority-receipt-prepended chain; the `restFrame` is the 16 non-`caps` frame clauses in
 `DelegateAttenSpec`'s order. -/
 theorem apex_iff_delegateAttenSpec (D : Caps → ℤ) (hD : Function.Injective D)
@@ -218,7 +220,7 @@ theorem apex_iff_delegateAttenSpec (D : Caps → ℤ) (hD : Function.Injective D
   show (delAttenGuardProp s args
         ∧ s'.kernel.caps
             = grant s.kernel.caps args.recv
-                (attenuate args.keep (heldCapTo s.kernel.caps args.del args.t))
+                (attenuate args.keep (delegatedCapTo s.kernel.caps args.del args.t))
         ∧ s'.log = authReceipt args.del :: s.log
         ∧ ((delegateAttenE D hD).restFrame s.kernel s'.kernel))
        ↔ DelegateAttenSpec s args.del args.recv args.t args.keep s'

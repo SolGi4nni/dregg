@@ -407,9 +407,9 @@ de-vacuified Granovetter law, on the executed kernel state — NOT the declared 
 theorem recCDelegateAtten_executed_no_amplify
     (s s' : RecChainedState) (delegator holder t : CellId) (keep : List Auth)
     (h : recCDelegateAtten s delegator holder t keep = some s') :
-    attenuate keep (heldCapTo s.kernel.caps delegator t) ∈ s'.kernel.caps holder
-      ∧ confRights (attenuate keep (heldCapTo s.kernel.caps delegator t))
-          ≤ confRights (heldCapTo s.kernel.caps delegator t) := by
+    attenuate keep (delegatedCapTo s.kernel.caps delegator t) ∈ s'.kernel.caps holder
+      ∧ confRights (attenuate keep (delegatedCapTo s.kernel.caps delegator t))
+          ≤ confRights (delegatedCapTo s.kernel.caps delegator t) := by
   -- `recCDelegateAtten` wraps `recKDelegateAtten s.kernel …`; on commit `s'.kernel = k'`.
   unfold recCDelegateAtten at h
   cases hd : recKDelegateAtten s.kernel delegator holder t keep with
@@ -618,8 +618,8 @@ theorem execFullChildrenA_confined_uses_delegated
     (hconf : confinedChildren (⟨holder, keep, parentCap, sub⟩ :: rest)) :
     targetOf sub.action = t
       ∧ (∀ s1, recCDelegateAtten s delegator holder t keep = some s1 →
-          confRights (attenuate keep (heldCapTo s.kernel.caps delegator t))
-            ≤ confRights (heldCapTo s.kernel.caps delegator t)) := by
+          confRights (attenuate keep (delegatedCapTo s.kernel.caps delegator t))
+            ≤ confRights (delegatedCapTo s.kernel.caps delegator t)) := by
   refine ⟨?_, ?_⟩
   · -- the confinement precondition pins the child's target to the delegated `t`.
     have htarget : (match capTarget parentCap with

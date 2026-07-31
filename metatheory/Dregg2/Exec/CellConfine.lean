@@ -200,15 +200,25 @@ theorem noteSpendNullifier_caps {k k' : RecordKernelState} {nf : Nat}
 /-! ## Step 3 — `execFullA_confine`: one full-action step preserves confinement (the CORE case split). -/
 
 mutual
-/-- **`execFullA_confine` — the per-action confinement step.** With `control ∈ U`, every
-committed `FullActionA` preserves `CapsConfined U`. The ~40 non-authority effects frame `caps`
-(`*_caps_unchanged`/`rfl`); `revoke`/`dropRef`/`revokeDelegation` filter (`mono`); `attenuate`
-narrows in place (`attenuateSlot`); `delegate`/`introduce`/`validateHandoff` copy an already-held cap;
-`delegateAtten` grants `attenuate keep (heldCapTo …)` whose conferred authority is ⊆ the held parent cap
-⊆ `U` (`grant` + `attenuate_subset`); `spawn` grants `Cap.node` under the explicit `[control] ⊆ U`
-ceiling. `exerciseA` RECURSES (mutual `execInnerA_confine`, same ceiling). This is `confinement_preserved` discharged on the
-executor, per effect. -/
-theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
+/-- **`execFullA_confine` — the per-action confinement step.** Under a ceiling `U` admitting the
+whole self-cap (`nodeFacets ⊆ U`), every committed `FullActionA` preserves `CapsConfined U`. The ~40
+non-authority effects frame `caps` (`*_caps_unchanged`/`rfl`); `revoke`/`dropRef`/`revokeDelegation`
+filter (`mono`); `attenuate` narrows in place (`attenuateSlot`); `delegate`/`introduce`/
+`validateHandoff` copy an already-held cap ON THE CROSS PATH; `delegateAtten` grants
+`attenuate keep (delegatedCapTo …)` whose conferred authority is ⊆ the delegated parent cap;
+`spawn` copies a held parent cap. `exerciseA` RECURSES (mutual `execInnerA_confine`, same ceiling).
+This is `confinement_preserved` discharged on the executor, per effect.
+
+⚑ **THE CEILING PREMISE GREW ON 2026-07-31, and this is the honest place to read why.** It used to be
+`Auth.control ∈ U`. The kernel cutover gave `recKDelegate` its owner disjunct, and on the SELF path a
+delegation deposits the implicit self-cap `Cap.node t`, which confers ALL EIGHT `nodeFacets`. So under
+a ceiling missing any single facet the conclusion is FALSE, and the old premise was no longer enough.
+
+The new premise is STRICTLY STRONGER (`nodeFacets ⊆ U` gives `Auth.control ∈ U` by `decide`), so no
+conclusion weakened and no consumer lost a guarantee — but the theorem now applies to FEWER ceilings,
+and that cost is real. `self_grant_needs_the_full_ceiling` below exhibits a ceiling where the old
+statement would now be false, so this is a measured requirement, not a defensive over-assumption. -/
+theorem execFullA_confine {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U)
     (s s' : RecChainedState) (fa : FullActionA)
     (h : execFullA s fa = some s') (hpre : CapsConfined U s.kernel.caps) :
     CapsConfined U s'.kernel.caps := by
@@ -265,11 +275,20 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
           rw [hd] at h; option_inj at h; rcases h with ⟨rfl⟩
           show CapsConfined U k'.caps
           unfold recKDelegate at hd
-          by_cases hg : (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
+          by_cases hg : t = intro ∨ (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
           · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
-            show CapsConfined U (Dregg2.Exec.grant s.kernel.caps rec (heldCapTo s.kernel.caps intro t))
+            show CapsConfined U (Dregg2.Exec.grant s.kernel.caps rec (delegatedCapTo s.kernel.caps intro t))
             refine CapsConfined.grant (fun a ha => ?_) hpre
-            exact hpre intro (heldCapTo s.kernel.caps intro t) a (heldCapTo_mem s.kernel.caps intro t hg).1 ha
+            -- ⚑ TWO PATHS as of the 2026-07-31 cutover. CROSS: the granted cap is one the delegator
+            -- already HELD, so confinement carries from `hpre`. SELF: the granted cap is the implicit
+            -- `Cap.node t`, conferring ALL of `nodeFacets` — bounded only by the CEILING, which is
+            -- why `hctrl` had to grow from `control ∈ U` to `nodeFacets ⊆ U`.
+            unfold delegatedCapTo at ha
+            by_cases hself : t = intro
+            · rw [if_pos hself] at ha; exact hctrl a ha
+            · rw [if_neg hself] at ha
+              exact hpre intro (heldCapTo s.kernel.caps intro t) a
+                (heldCapTo_mem s.kernel.caps intro t (hg.resolve_left hself)).1 ha
           · rw [if_neg hg] at hd; exact absurd hd (by simp)
   | delegate del rec t =>
       simp only [execFullA, recCDelegate] at h
@@ -279,11 +298,20 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
           rw [hd] at h; option_inj at h; rcases h with ⟨rfl⟩
           show CapsConfined U k'.caps
           unfold recKDelegate at hd
-          by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+          by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
           · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
-            show CapsConfined U (Dregg2.Exec.grant s.kernel.caps rec (heldCapTo s.kernel.caps del t))
+            show CapsConfined U (Dregg2.Exec.grant s.kernel.caps rec (delegatedCapTo s.kernel.caps del t))
             refine CapsConfined.grant (fun a ha => ?_) hpre
-            exact hpre del (heldCapTo s.kernel.caps del t) a (heldCapTo_mem s.kernel.caps del t hg).1 ha
+            -- ⚑ TWO PATHS as of the 2026-07-31 cutover. CROSS: the granted cap is one the delegator
+            -- already HELD, so confinement carries from `hpre`. SELF: the granted cap is the implicit
+            -- `Cap.node t`, conferring ALL of `nodeFacets` — bounded only by the CEILING, which is
+            -- why `hctrl` had to grow from `control ∈ U` to `nodeFacets ⊆ U`.
+            unfold delegatedCapTo at ha
+            by_cases hself : t = del
+            · rw [if_pos hself] at ha; exact hctrl a ha
+            · rw [if_neg hself] at ha
+              exact hpre del (heldCapTo s.kernel.caps del t) a
+                (heldCapTo_mem s.kernel.caps del t (hg.resolve_left hself)).1 ha
           · rw [if_neg hg] at hd; exact absurd hd (by simp)
   | delegateAttenA del rec t keep =>
       -- grants `attenuate keep (heldCapTo s.kernel.caps del t)`; conferred ⊆ the held parent cap ⊆ U.
@@ -294,16 +322,25 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
       | some k' =>
           rw [hd] at h; option_inj at h; rcases h with ⟨rfl⟩
           show CapsConfined U k'.caps
-          -- On commit the gate fired (`heldCapTo` names a GENUINELY-HELD cap), and `k'.caps` is the grant.
+          -- On commit the gate fired, and `k'.caps` is the grant of `delegatedAttenCapTo`.
           unfold recKDelegateAtten at hd
           split at hd
           · rename_i hgate
             simp only [Option.some.injEq] at hd; subst hd
-            obtain ⟨hheld, _⟩ := heldCapTo_mem s.kernel.caps del t hgate
-            show CapsConfined U (Dregg2.Exec.grant s.kernel.caps rec (attenuate keep (heldCapTo s.kernel.caps del t)))
+            show CapsConfined U
+              (Dregg2.Exec.grant s.kernel.caps rec (delegatedAttenCapTo s.kernel.caps del t keep))
             refine CapsConfined.grant (fun a ha => ?_) hpre
-            -- conferred (attenuate keep held) ⊆ conferred held; held ∈ del's slot ⇒ bounded by U.
-            exact hpre del (heldCapTo s.kernel.caps del t) a hheld (attenuate_subset keep _ ha)
+            -- The granted cap is an ATTENUATION of the delegated parent, so its conferred authority
+            -- is ⊆ the parent's (`attenuate_subset`). The parent is a HELD cap on the cross path
+            -- (bounded by `hpre`) and the implicit `Cap.node t` self-cap on the SELF path (bounded
+            -- only by the ceiling `hctrl`) — the same two-path split as the unattenuated arm.
+            unfold delegatedAttenCapTo delegatedCapTo at ha
+            have ha' := attenuate_subset keep _ ha
+            by_cases hself : t = del
+            · rw [if_pos hself] at ha'; exact hctrl a ha'
+            · rw [if_neg hself] at ha'
+              exact hpre del (heldCapTo s.kernel.caps del t) a
+                (heldCapTo_mem s.kernel.caps del t (hgate.resolve_left hself)).1 ha'
           · exact absurd hd (by simp)
   | attenuateA actor idx keep =>
       obtain ⟨_, rfl⟩ := attenuateA_factors h
@@ -408,7 +445,7 @@ confinement under the SAME `control ∈ U` ceiling (+ the Wave-3 `grant`/`reply`
 seal cluster). Mutual with `execFullA_confine`; induction on the inner list, threading the per-step
 confinement AND the box-confinement carry (each step preserves `BoxesConfined`, via the dedicated
 `execFullA_boxesConfine` below). -/
-theorem execInnerA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
+theorem execInnerA_confine {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U)
     (s s' : RecChainedState) (inner : List FullActionA)
     (h : execInnerA s inner = some s') (hpre : CapsConfined U s.kernel.caps) :
     CapsConfined U s'.kernel.caps := by
@@ -430,7 +467,7 @@ end
 /-- **`execFullTurnA_kconfine` (Wave-3)** — a committed full turn preserves the COMBINED invariant
 `KConfined U` (caps AND sealed-box payloads): induction on the action list, chaining both halves
 (`execFullA_confine` + `execFullA_boxesConfine`). -/
-theorem execFullTurnA_kconfine {U : List Auth} (hctrl : Auth.control ∈ U) :
+theorem execFullTurnA_kconfine {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U) :
     ∀ (s s' : RecChainedState) (tt : List FullActionA),
       execFullTurnA s tt = some s' → KConfined U s.kernel → KConfined U s'.kernel
   | s, s', [], h, hpre => by
@@ -446,7 +483,7 @@ theorem execFullTurnA_kconfine {U : List Auth} (hctrl : Auth.control ∈ U) :
 
 /-- **`execFullTurnA_confine`** — the caps-half corollary (the headline confinement crown): a committed
 full turn preserves `CapsConfined U`, given the initial kernel is fully `KConfined` (caps + boxes). -/
-theorem execFullTurnA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
+theorem execFullTurnA_confine {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U)
     (s s' : RecChainedState) (tt : List FullActionA)
     (h : execFullTurnA s tt = some s') (hpre : KConfined U s.kernel) :
     CapsConfined U s'.kernel.caps :=
@@ -454,7 +491,7 @@ theorem execFullTurnA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
 
 /-- **`execFullForestA_kconfine`** — a committed full forest preserves `KConfined U`. Routes through
 the pre-order bridge `execFullForestA_eq_execFullTurnA` into `execFullTurnA_kconfine`. -/
-theorem execFullForestA_kconfine {U : List Auth} (hctrl : Auth.control ∈ U)
+theorem execFullForestA_kconfine {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U)
     (s s' : RecChainedState) (f : FullForestA)
     (h : execFullForestA s f = some s') (hpre : KConfined U s.kernel) :
     KConfined U s'.kernel := by
@@ -463,7 +500,7 @@ theorem execFullForestA_kconfine {U : List Auth} (hctrl : Auth.control ∈ U)
 
 /-- **`cellNextA_kconfine` — the one-step obligation.** A single living-cell step preserves `KConfined U`:
 on a commit the forest confinement lemma applies; on a reject the state is unchanged. -/
-theorem cellNextA_kconfine {U : List Auth} (hctrl : Auth.control ∈ U)
+theorem cellNextA_kconfine {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U)
     (s : RecChainedState) (cf : ConservingForest) (hpre : KConfined U s.kernel) :
     KConfined U (cellNextA s cf).kernel := by
   unfold cellNextA
@@ -473,7 +510,48 @@ theorem cellNextA_kconfine {U : List Auth} (hctrl : Auth.control ∈ U)
 
 /-! ## Step 5 — `livingCellA_confinement`: confinement carried FOREVER. -/
 
-/-- **`livingCellA_confinement`** — Fix an authority ceiling `U` containing `control`. If the initial
+/-! ### Step 4.CEILING — WHY the ceiling premise is `nodeFacets ⊆ U` and not `control ∈ U`. -/
+
+/-- The post-`caps` of cell `0`'s FIRST self-grant to cell `1`, out of the faucet-minted `rs0` (every
+cap slot EMPTY). The cutover admits this turn; it deposits the implicit `Cap.node 0` self-cap. -/
+def selfGrantPostCaps : Caps := ((recKDelegate rs0 0 1 0).getD rs0).caps
+
+-- The self-grant commits and lands the full self-cap (the object the ceiling has to bound).
+#guard (recKDelegate rs0 0 1 0).isSome
+#guard (selfGrantPostCaps 1) == [Cap.node 0]
+
+/-- **`self_grant_needs_the_full_ceiling` — THE MEASUREMENT BEHIND THE GROWN PREMISE.** Over the
+ceiling `U = [control]`:
+
+  * the OLD premise `Auth.control ∈ U` HOLDS;
+  * the pre-state `rs0` IS confined by `U` (every slot empty);
+  * cell `0`'s first self-grant COMMITS (the cutover);
+  * and the post-state is **NOT** confined by `U` — the deposited `Cap.node 0` confers `read`, which
+    is not in `U`.
+
+So `execFullA_confine` stated with the old premise would be FALSE after the cutover. This is why the
+premise grew to `nodeFacets ⊆ U`, and it is stated as a refutation rather than asserted in prose: if
+someone weakens the premise back, this theorem is what contradicts them. It also shows the growth is
+NOT over-assumption — `read ∉ [control]` is the actual witness. -/
+theorem self_grant_needs_the_full_ceiling :
+    Auth.control ∈ ([Auth.control] : List Auth)
+    ∧ CapsConfined [Auth.control] rs0.caps
+    ∧ (recKDelegate rs0 0 1 0).isSome
+    ∧ ¬ CapsConfined [Auth.control] selfGrantPostCaps := by
+  refine ⟨by decide, ?_, recKDelegate_admits_self rs0 0 1, ?_⟩
+  · -- every slot of `rs0` is empty, so confinement is vacuous at the pre-state.
+    intro l c a hc _
+    simp only [rs0] at hc
+    exact absurd hc (by simp)
+  · -- the granted `Cap.node 0` confers `read`, and `read ∉ [control]`.
+    intro hcon
+    exact absurd (hcon 1 (Cap.node 0) Auth.read (by decide) (by decide)) (by decide)
+
+#assert_axioms self_grant_needs_the_full_ceiling
+
+/-- **`livingCellA_confinement`** — Fix an authority ceiling `U` admitting the whole self-cap
+(`nodeFacets ⊆ U`; strictly stronger than the pre-cutover `control ∈ U`, and necessary —
+`self_grant_needs_the_full_ceiling`). If the initial
 kernel's caps are confined by `U` (every authority conferred by every held cap lies in `U`), they stay
 confined at every index of the unbounded adversarial trajectory `trajA s sched`, under every schedule:
 
@@ -485,7 +563,7 @@ coinductively: held-cap copies (ordinary delegation, handoff, spawn), attenuatin
 fresh seal caps never push conferred authority past the fixed ceiling, for all time.
 `cellNextA_confine` is the one-step obligation; `livingCellA_carries` carries it over the entire
 adversarial future. -/
-theorem livingCellA_confinement {U : List Auth} (hctrl : Auth.control ∈ U)
+theorem livingCellA_confinement {U : List Auth} (hctrl : ∀ a ∈ nodeFacets, a ∈ U)
     (s : RecChainedState) (hinit : KConfined U s.kernel) (sched : SchedA) :
     ∀ n, CapsConfined U (trajA s sched n).kernel.caps :=
   -- F3 STRENGTHENING: the ceiling needs ONLY `control` — the seal-cluster `grant`/`reply`

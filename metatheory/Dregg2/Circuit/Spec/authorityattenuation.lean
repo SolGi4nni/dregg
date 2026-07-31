@@ -48,14 +48,14 @@ open Dregg2.Authority (Caps Cap Auth Label)
     | none    => none
 
 and `recKDelegateAtten k del rec t keep` commits IFF `del` holds a cap conferring an edge to `t`,
-rewriting ONLY `k.caps` (to `grant k.caps rec (attenuate keep (heldCapTo k.caps del t))`). -/
+rewriting ONLY `k.caps` (to `grant k.caps rec (attenuate keep (delegatedCapTo k.caps del t))`). -/
 
 /-- **The admissibility guard `delegateAttenA` checks**, as a `Prop`: the delegator `del` already
 holds a cap conferring a connectivity edge to `t` (the Granovetter "only connectivity begets
 connectivity" premise / `Spec.Endow.holds_source`). Stated INDEPENDENTLY (over the pre-state's
 `caps`), NOT by referencing the executor. -/
 def DelegateAttenGuard (s : RecChainedState) (del t : CellId) : Prop :=
-  (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
 
 /-- **`delegateAttenCaps_correct`** — the cap-update helper validated DECLARATIVELY (the `recTransfer_correct`
 analog). On commit, `delegateAttenA` rewrites the cap table to `grant caps rec (attenuate keep
@@ -67,16 +67,16 @@ analog). On commit, `delegateAttenA` rewrites the cap table to `grant caps rec (
 So the spec's `s'.kernel.caps = grant …` clause encodes grant ∧ attenuation ∧ slot-frame,
 rather than blindly trusting the helper. -/
 theorem delegateAttenCaps_correct (caps : Caps) (del rec t : CellId) (keep : List Auth) :
-    (attenuate keep (heldCapTo caps del t)
-        ∈ grant caps rec (attenuate keep (heldCapTo caps del t)) rec)
-    ∧ confRights (attenuate keep (heldCapTo caps del t)) ≤ confRights (heldCapTo caps del t)
+    (attenuate keep (delegatedCapTo caps del t)
+        ∈ grant caps rec (attenuate keep (delegatedCapTo caps del t)) rec)
+    ∧ confRights (attenuate keep (delegatedCapTo caps del t)) ≤ confRights (delegatedCapTo caps del t)
     ∧ (∀ h, h ≠ rec →
-        grant caps rec (attenuate keep (heldCapTo caps del t)) h = caps h) := by
+        grant caps rec (attenuate keep (delegatedCapTo caps del t)) h = caps h) := by
   refine ⟨?_, ?_, ?_⟩
   · -- the granted cap is prepended onto `rec`'s slot.
     unfold grant; rw [if_pos rfl]; exact List.mem_cons_self
   · -- genuine `granted ⊆ held` over the `ExecAuth` rights lattice.
-    exact attenuate_confRights_le keep (heldCapTo caps del t)
+    exact attenuate_confRights_le keep (delegatedCapTo caps del t)
   · -- a non-recipient slot is unchanged by `grant`.
     intro h hh; simp only [grant, if_neg hh]
 
@@ -87,7 +87,7 @@ SIXTEEN non-`caps` kernel fields is unchanged. No frame clause mentions the exec
 def DelegateAttenSpec (s : RecChainedState) (del rec t : CellId) (keep : List Auth)
     (s' : RecChainedState) : Prop :=
   DelegateAttenGuard s del t
-  ∧ s'.kernel.caps = grant s.kernel.caps rec (attenuate keep (heldCapTo s.kernel.caps del t))
+  ∧ s'.kernel.caps = grant s.kernel.caps rec (attenuate keep (delegatedCapTo s.kernel.caps del t))
   ∧ s'.log = authReceipt del :: s.log
   -- THE FRAME: the sixteen non-`caps` kernel fields, all LITERALLY unchanged.
   ∧ s'.kernel.accounts = s.kernel.accounts
@@ -120,7 +120,7 @@ theorem delegateAtten_iff_spec (s : RecChainedState) (del rec t : CellId) (keep 
       ↔ DelegateAttenSpec s del rec t keep s' := by
   unfold DelegateAttenSpec DelegateAttenGuard
   simp only [execFullA, recCDelegateAtten, recKDelegateAtten]
-  by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hg]
     constructor
     · intro h
@@ -241,12 +241,12 @@ committed step pins via `delegateAtten_iff_spec`) + `delegateAttenCaps_correct`.
 theorem delegateAtten_spec_non_amplifying (s : RecChainedState) (del rec t : CellId)
     (keep : List Auth) (s' : RecChainedState)
     (h : execFullA s (.delegateAttenA del rec t keep) = some s') :
-    attenuate keep (heldCapTo s.kernel.caps del t) ∈ s'.kernel.caps rec
-    ∧ confRights (attenuate keep (heldCapTo s.kernel.caps del t))
-        ≤ confRights (heldCapTo s.kernel.caps del t) := by
+    attenuate keep (delegatedCapTo s.kernel.caps del t) ∈ s'.kernel.caps rec
+    ∧ confRights (attenuate keep (delegatedCapTo s.kernel.caps del t))
+        ≤ confRights (delegatedCapTo s.kernel.caps del t) := by
   have hspec := (delegateAtten_iff_spec s del rec t keep s').mp h
   have hcaps : s'.kernel.caps
-      = grant s.kernel.caps rec (attenuate keep (heldCapTo s.kernel.caps del t)) := hspec.2.1
+      = grant s.kernel.caps rec (attenuate keep (delegatedCapTo s.kernel.caps del t)) := hspec.2.1
   obtain ⟨hmem, hle, _⟩ := delegateAttenCaps_correct s.kernel.caps del rec t keep
   exact ⟨by rw [hcaps]; exact hmem, hle⟩
 

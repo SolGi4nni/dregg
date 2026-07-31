@@ -1,5 +1,64 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 31 — THE KERNEL'S AUTHORITY CALCULUS HAD NO BASE CASE, and the fix was one disjunct in the gate plus one constructor in the SPEC
+**`recKDelegateOwned` was correct, proved, and routed NOWHERE for 13 days. It is now the gate.**
+
+`recKDelegate` (`Dregg2/Exec/AuthTurn.lean`) gated **solely** on
+`(k.caps delegator).any (confersEdgeTo t)` — no owner disjunct — so it refused **every cell's FIRST
+capability grant**. Cells are born with empty c-lists, so `caps = fun _ => []` was a **FIXPOINT** of
+the whole modelled authority calculus: no rule could create a first edge. Granovetter with its base
+cases deleted.
+
+⚑ **The deeper half, which is why this had not landed: the ABSTRACT SPEC had no base case either.**
+`Spec.GenAct` (`Dregg2/Spec/Authority.lean`) offered `introduce`/`amplify`/`mint`/`endow`, and every
+one requires a pre-existing edge. So there was no constructor an owner's first grant could inhabit —
+widening the kernel alone would have broken the refinement into `Spec.AuthStep`, which is exactly what
+`Proof/LTS.lean::authAbsStep_forward` builds. The classical taxonomy has FOUR routes to connectivity
+(initial conditions, parenthood, endowment, introduction); **self-reference was the missing one.**
+
+**WHAT CHANGED**
+
+- `Spec.Origin` + `GenAct.origin` — the base case, confined by `over_self : cap.target = owner` and
+  `consented : consents owner`. It is the ONLY generative rule with no authorizing edge, so the
+  confinement IS its soundness argument.
+- `recKDelegate` / `recKDelegateAtten` now gate on `t = delegator ∨ …any (confersEdgeTo t)` and grant
+  `delegatedCapTo` / `delegatedAttenCapTo`. The pre-cutover gate survives as **`recKDelegateEdgeOnly`**
+  — not for compatibility (nothing routes through it) but because `recKDelegate_cross_eq` and
+  `recKDelegate_widens_exactly_self` quantify over it; delete it and the delta cannot be stated.
+- The whole stack follows: `recCDelegate` → `execFullA .delegate`/`.introduceA` → `delegateGuard` →
+  the Argus IR guards → the `Inst/*` `propBit` columns → the FFI. **34 Lean files, 4 Rust.**
+
+**WHAT BROKE, NAMED**
+
+| shape | change |
+|---|---|
+| `recKDelegate_grounds` | **WEAKENED** to `t = delegator ∨ execGraph …`. Every consumer now case-splits — that is the point, the widening is visible at each site that relied on the narrow claim. |
+| `fullActionInv` / `fullActionInvA` `.delegate`/`.introduceA`/`.delegateAttenA` | grounding leg is the disjunction |
+| `authAbsStep_forward`, `absStep'_forward` | now take `consents delegator` — `Spec.Origin.consented`. Unprovable on the self path without it. |
+| `execFullA_introduceA_holds_real_cap` | **WEAKENED** — on the self path there IS no held cap; a fresh cell's c-list is empty, which is the whole reason the base case exists |
+| `delegate_rejects_unconnected`, `handoff_rejects_unconnected`, `authNonAmpFloor_overgrant_rejected` | gained `t ≠ delegator`. Stated without it they are now **FALSE**; the hypothesis is written rather than the conclusion quietly weakened. |
+| ⚑ **confinement ceiling** | `execFullA_confine` … `livingCellA_confinement` and `confinement% U` grew from `control ∈ U` to **`nodeFacets ⊆ U`**: a self-grant deposits the implicit `Cap.node t`, conferring all 8 facets. Strictly stronger premise, same conclusion — so it applies to FEWER ceilings, and that cost is real. `self_grant_needs_the_full_ceiling` exhibits `U = [control]` where the OLD statement is now false, so this is measured, not defensive. |
+| `AUTHORITY_ORIGIN_GAP` fence | **DELETED** — predicate, call sites, named reason. `GrantCapability` is root-agreeing for BOTH shapes. |
+| divergence-finder `known_drift` | `GrantCapability` **REMOVED** (2 divergences → 0). Its non-vacuity tooth measured two-sidedness by *disagreement with Rust*, which only worked while the kernel was wrong; **re-pointed** at the verified gate's own commit bit over a new `GrantCapability/cross-no-edge` corpus case. |
+
+**NO RE-EMIT, NO VK ROTATION.** `guardWidth`, `guardEncode`'s layout and `delegateGuardGates` are
+byte-identical; the delegate AIR is still `[var0==1, var66==var67, var68==var69, var70==var71]`. Only
+the **witness bit** at wire 0 widens — an owner self-grant can now set it honestly. Schema epoch stays
+at **14**. The `DelegateWitness` goldens are a CROSS grant (`t=5 ≠ del=0`) and are unchanged by
+`recKDelegate_cross_eq`.
+
+**MEASURED** — `lake build` (full default target, 5 libs) **exit 0, 10557 jobs, 0 errors**;
+`Dregg2/Claims.lean` exit 0; `cargo nextest -p dregg-exec-lean --no-fail-fast` **150/150, exit 0**.
+No `sorry`, no `axiom`, no `native_decide`. Floor ratchet unchanged (baseline 2200, slack 182); no
+`FloorRatchetBaseline` row added. **Every pre-existing `#guard` in the tree holds at its original
+value** — the six that moved are renames with identical expected values.
+
+**BOTH POLES, BY VARIANT, over ONE empty-c-list state, SAME cap target, only `from` varying:**
+`owner_admitted_forger_refused_same_target` (Lean) and
+`ffi_admits_the_owner_and_refuses_the_forger_by_variant` (Rust, driving the LIVE FFI). A cutover that
+admitted the owner AND the forger would pass everything else and fail exactly there.
+
+
 ## ⚑⚑⚑⚑ JULY 30 — A1's WOUND IS CLOSED AND ITS FOUR ASSERTIONS WERE DEAD, AT THE SAME INSTANT: an emitter moved a constraint's DOMAIN and every reader keyed on its KIND stopped seeing it
 **F2 · ⚠ THE NINE-LANE RE-EMIT LEFT `dregg-circuit` AT 161 REDS. CLOSED, and it is mine.**
 > ✅ **CLOSED 2026-07-31** — 161 → **16, all `pasta_*`** (a live Mina lane). ⚑ The cause was NOT the flag day: `trace_rotated.rs` carried `B_CHAIN_BASE = 180`, a hand-written literal `layout_generated.rs` never exported while Lean said 186, so `fill_block` wrote chain digests ON TOP of the iroot and state-commit limbs. A revert would have been wrong — `rotatedNumPreLimbs := 184` had landed 89 commits earlier.

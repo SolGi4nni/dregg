@@ -19,14 +19,14 @@ and binds it against the audited `delegateAttenA` circuit.
 `recKDelegateAtten k del rec t keep`:
 
     if (k.caps del).any (fun cap => confersEdgeTo t cap) = true then
-      some { k with caps := grant k.caps rec (attenuate keep (heldCapTo k.caps del t)) }
+      some { k with caps := grant k.caps rec (attenuate keep (delegatedCapTo k.caps del t)) }
     else none
 
 So a committed `delegateAttenA`:
 
   * **GUARD** `(k.caps del).any (fun cap => confersEdgeTo t cap) = true` — the Granovetter connectivity
     premise: `del` ALREADY HOLDS a `t`-conferring cap ("only connectivity begets connectivity").
-  * **TOUCHED `caps`** ← `grant k.caps rec (attenuate keep (heldCapTo k.caps del t))` — `rec`'s slot
+  * **TOUCHED `caps`** ← `grant k.caps rec (attenuate keep (delegatedCapTo k.caps del t))` — `rec`'s slot
     gains the delegator's held `t`-cap ATTENUATED to `keep` (genuine non-amplification, §NON-AMPLIFICATION).
   * **FRAME** every other `RecordKernelState` component literally unchanged (`caps` is the one touched
     field) — so the IR body is `seq (guard …) (… setCaps …)`, the §A cap-graph write primitive.
@@ -50,7 +50,7 @@ uses). The term is therefore `seq (guard premise) (seq (checkSubset granted held
      `…_incomparable_grant`, §6) — it would reject a superset OR an incomparable pair, the FULL partial
      order the cardinality `checkLe` could never express. So the FULL subset is an in-band IR gate.
   3. **`setCaps install`** — the EXACT executor cap-table write
-     `grant k.caps rec (attenuate keep (heldCapTo k.caps del t))`.
+     `grant k.caps rec (attenuate keep (delegatedCapTo k.caps del t))`.
 
 The cornerstone (§3) proves this whole term IS `recKDelegateAtten` — the executor IS its meaning,
 INCLUDING that the in-band `checkSubset` non-amplification leg matches the executor's (always-admitting,
@@ -127,20 +127,20 @@ set_option autoImplicit false
 
 The FULL non-amplification gate reads the genuine rights LATTICE element `confRights c : ExecAuth`
 (`Exec/Caps.lean:66`), ordered by `⊆`. The two read-outs are the conferred-rights SETS of the held
-(parent) cap — `heldCapTo k.caps del t`, the cap the Granovetter premise witnesses — and of its
+(parent) cap — `delegatedCapTo k.caps del t`, the cap the Granovetter premise witnesses — and of its
 `keep`-attenuation (the cap the move actually installs into `rec`'s slot). These are exactly the values
 the FULL `granted.rights ⊆ held.rights` gate (`checkSubset`) compares. -/
 
-/-- The HELD-rights SET read-out: the parent cap's (`heldCapTo k.caps del t`) conferred rights as a
+/-- The HELD-rights SET read-out: the parent cap's (`delegatedCapTo k.caps del t`) conferred rights as a
 `Finset Auth` lattice element — the authority the attenuated grant must not exceed. -/
 def heldDelRightsSet (del t : Label) : RecordKernelState → ExecAuth :=
-  fun k => confRights (heldCapTo k.caps del t)
+  fun k => confRights (delegatedCapTo k.caps del t)
 
 /-- The GRANTED-rights SET read-out: the conferred rights of the cap the move installs into `rec`'s
 slot — the held `t`-cap ATTENUATED to `keep`. Its rights SET must be `⊆` the parent's (the FULL
 non-amplification, `attenuate_confRights_le`). -/
 def grantedDelRightsSet (del t : Label) (keep : List Auth) : RecordKernelState → ExecAuth :=
-  fun k => confRights (attenuate keep (heldCapTo k.caps del t))
+  fun k => confRights (attenuate keep (delegatedCapTo k.caps del t))
 
 /-- **`grantedDelRightsSet_le_held` — the FULL in-band gate ALWAYS admits a genuine attenuation.**
 The attenuated cap's conferred-rights SET is `⊆` (= `≤`) the parent's, over the genuine `ExecAuth =
@@ -150,7 +150,7 @@ genuine `delegateAttenA`: fail-closed, never fail-stuck. This is the FULL subset
 shadow — the genuine `granted.rights ⊆ held.rights`. -/
 theorem grantedDelRightsSet_le_held (del t : Label) (keep : List Auth) (k : RecordKernelState) :
     grantedDelRightsSet del t keep k ≤ heldDelRightsSet del t k :=
-  attenuate_confRights_le keep (heldCapTo k.caps del t)
+  attenuate_confRights_le keep (delegatedCapTo k.caps del t)
 
 /-! ## §2 — THE IR TERM: the Granovetter guard, the in-band FULL-SUBSET `checkSubset` gate, then the
 attenuated cap-graph install.
@@ -170,11 +170,13 @@ attenuated cap-graph install.
 (`AuthTurn.lean:99`): the delegator already holds a cap conferring an edge to `t`. The in-band Boolean
 form of the Granovetter connectivity premise ("only connectivity begets connectivity"). -/
 def delAttenGuardB (del t : Label) (k : RecordKernelState) : Bool :=
-  (k.caps del).any (fun cap => confersEdgeTo t cap)
+  -- ⚑ OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover: the delegator owns the cap target
+  -- (`Spec.Origin`, the base case) or holds a `t`-conferring cap. Mirrors `recKDelegate`'s `if`.
+  (t == del) || (k.caps del).any (fun cap => confersEdgeTo t cap)
 
 /-- **The delegateAtten effect as an Argus IR term.** Gate on the Granovetter premise, then the FULL
 in-band non-amplification subset check `granted.rights ⊆ held.rights` (via `checkSubset`), then install
-`grant k.caps rec (attenuate keep (heldCapTo k.caps del t))` (the EXACT executor cap-table write).
+`grant k.caps rec (attenuate keep (delegatedCapTo k.caps del t))` (the EXACT executor cap-table write).
 Mirrors `Effects/Attenuate.lean`'s `checkSubset`-gated shape, but with the leading Granovetter `guard`
 (the executor's real commit condition — attenuate has none) — and a GENUINELY non-trivial subset (the
 attenuated grant strictly narrows, unlike the verbatim-copy unattenuated `delegate`). -/
@@ -183,7 +185,7 @@ def delegateAttenStmt (del rec t : Label) (keep : List Auth) : RecStmt :=
     (RecStmt.seq
       (RecStmt.checkSubset (grantedDelRightsSet del t keep) (heldDelRightsSet del t))
       (RecStmt.setCaps (fun k =>
-        grant k.caps rec (attenuate keep (heldCapTo k.caps del t)))))
+        grant k.caps rec (attenuate keep (delegatedCapTo k.caps del t)))))
 
 /-! ## §3 — THE CORNERSTONE: `interp` of the delegateAtten term IS the kernel step `recKDelegateAtten`.
 
@@ -193,6 +195,16 @@ commit condition; the `checkSubset` ALWAYS admits (`grantedDelRightsSet_le_held`
 is exactly `recKDelegateAtten`'s `grant … (attenuate keep (heldCapTo …))`. The executor IS the meaning
 of the term, INCLUDING that the in-band `checkSubset` non-amplification leg matches the executor's
 (always-admitting) attenuation discipline. -/
+
+/-- **`delAttenGuardB_iff`** — the in-band `Bool` guard IS the kernel's `Prop` commit condition. The Bool
+side is `(t == del) || .any …` (what a circuit column can carry); the kernel `if` is the `Prop`
+disjunction `t = del ∨ … = true`. They are propositionally equal but NOT defeq, so the cornerstone
+below routes through this bridge rather than an `unfold`. -/
+theorem delAttenGuardB_iff (del t : Label) (k : RecordKernelState) :
+    delAttenGuardB del t k = true
+      ↔ (t = del ∨ (k.caps del).any (fun cap => confersEdgeTo t cap) = true) := by
+  unfold delAttenGuardB
+  simp only [Bool.or_eq_true, beq_iff_eq]
 
 /-- **The cornerstone (gated rights-carrying delegation).** `interp` of the delegateAtten term IS the
 verified executor `recKDelegateAtten` — the same partial function, by construction, exactly as the
@@ -213,14 +225,13 @@ theorem interp_delegateAttenStmt_eq_recKDelegateAtten (del rec t : Label) (keep 
     simp only [Option.bind_some]
     rw [if_pos (grantedDelRightsSet_le_held del t keep k)]
     simp only [Option.bind_some]
-    unfold delAttenGuardB at hg
-    rw [if_pos hg]
+    rw [if_pos ((delAttenGuardB_iff del t k).mp hg)]
+    rfl
   · -- REJECT: the Granovetter `guard` fails (`none`); the outer `bind` short-circuits ⇒ `none`. The
     -- kernel `if` also rejects on the same (negated) premise.
     rw [if_neg hg]
     simp only [Option.bind_none]
-    unfold delAttenGuardB at hg
-    rw [if_neg hg]
+    rw [if_neg (fun hc => hg ((delAttenGuardB_iff del t k).mpr hc))]
 
 #assert_axioms interp_delegateAttenStmt_eq_recKDelegateAtten
 
@@ -391,9 +402,9 @@ theorem delegateAttenStmt_admits_iff_guard (s : RecChainedState) (del rec t : La
     (interp (delegateAttenStmt del rec t keep) s.kernel).isSome = true ↔ DelegateAttenGuard s del t := by
   rw [interp_delegateAttenStmt_eq_recKDelegateAtten]
   unfold DelegateAttenGuard recKDelegateAtten
-  by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hg]; simp [hg]
-  · rw [if_neg hg]; simp [hg]
+  by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hg]; exact ⟨fun _ => hg, fun _ => rfl⟩
+  · rw [if_neg hg]; exact ⟨fun h => absurd h (by simp), fun h => absurd h hg⟩
 
 /-- **NON-VACUITY (the in-band gate REJECTS a strict SUPERSET).** A synthetic move whose installed cap's
 rights SET is a strict SUPERSET of the parent's (`{read,write} ⊄ {read}`) is REJECTED by the `checkSubset`

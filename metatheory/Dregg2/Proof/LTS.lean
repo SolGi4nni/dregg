@@ -188,6 +188,10 @@ theorem transfer_fires_no_authStep
       | amplify h => exact hadd _ _ _ h.result
       | mint h => exact hadd _ _ _ h.result
       | endow h => exact hadd _ _ _ h.result
+      -- ⚑ the `origin` BASE CASE also ADDS an edge (it needs no authorizing one, but it still
+      -- results in an `addEdge`), so the obstruction survives the 2026-07-31 widening: a balance
+      -- transfer is still not an `AuthStep` firing.
+      | origin h => exact hadd _ _ _ h.result
   | restrict hres =>
       -- Every restrictive act requires a HELD cap on the (empty) pre-graph — impossible.
       cases hres with
@@ -267,42 +271,30 @@ def authAbsStep (consents : Label → Prop) (a a' : AbstractState) : Prop :=
   Spec.AuthStep (CellId := Label) (Rights := ExecRights) consents a.authGraph a'.authGraph
 
 /-- **KEYSTONE — `authAbsStep_forward`.** Every committed `recKDelegate` is matched by
-`authAbsStep`: (C') from `recKDelegate_frame`, (A') from a `Spec.Endow` whose `holds_source` is
-`recKDelegate_grounds`, `nonAmplifying` is `confers_refl`, and `result` is
-`recKDelegate_execGraph`. -/
+`authAbsStep`: (C') from `recKDelegate_frame`, (A') from `recKDelegate_genAct` — a `Spec.Endow` on
+the cross path (`holds_source` from `recKDelegate_grounds`'s right disjunct, `nonAmplifying` from
+`confers_refl`) and a `Spec.Origin` on the self path (the base case).
+
+⚑ **The self path needs a hypothesis the old statement did not carry.** `Spec.Origin.consented`
+demands the originator consent, so the square now takes `consents delegator`. That is not
+bookkeeping: it is the abstract counterpart of "the signed action IS the consent" — the delegator's
+signature is what authorizes a grant over its own cell, since no c-list edge does. A version of
+this theorem WITHOUT the hypothesis would be unprovable on the self path, because
+`Spec.GenAct.origin` cannot be built without it. -/
 theorem authAbsStep_forward (consents : Label → Prop)
     (k k' : RecordKernelState) (delegator recipient t : Label)
+    (hconsent : consents delegator)
     (h : Exec.recKDelegate k delegator recipient t = some k') :
     authAbsStep consents (recAbsOf k) (recAbsOf k') := by
-  -- The post-state's caps are the granted table; extract that equation.
-  -- Codex's no-amplification semantics: delegation COPIES the held cap (`heldCapTo`), it does not
-  -- manufacture `Cap.node t`. The committed-step hypothesis forces the held-edge condition `hg`.
-  have hg : (k.caps delegator).any (fun cap => Exec.confersEdgeTo t cap) = true := by
-    unfold Exec.recKDelegate at h
-    by_cases hg : (k.caps delegator).any (fun cap => Exec.confersEdgeTo t cap) = true
-    · exact hg
-    · rw [if_neg hg] at h; exact absurd h (by simp)
-  have hk' : k' = { k with caps := Exec.grant k.caps recipient (Exec.heldCapTo k.caps delegator t) } := by
-    unfold Exec.recKDelegate at h
-    rw [if_pos hg] at h; exact (Option.some.injEq _ _ ▸ h).symm
   refine ⟨?_, ?_⟩
   · -- (C') the balance total is fixed (the DUAL frame).
     simp only [recAbsOf]
     exact (Exec.recKDelegate_frame k k' delegator recipient t h).1
-  · -- (A') the authority graph fires a genuine `Endow` generative `AuthStep`.
+  · -- (A') the authority graph fires a genuine generative `AuthStep` — `origin` on the self path,
+    -- `endow` on the cross path. Both arms are discharged inside `recKDelegate_genAct`.
     simp only [recAbsOf]
-    -- `execGraph k'.caps = addEdge (execGraph k.caps) recipient ⟨t,()⟩` — the `Endow.result`.
-    have hres : execGraph k'.caps
-        = Spec.addEdge (execGraph k.caps) recipient (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
-      rw [hk']
-      exact Exec.recKDelegate_execGraph k.caps delegator recipient t hg
-    -- Build the `Endow`: parent = delegator, child = recipient, cap = source = ⟨t,()⟩.
-    refine Spec.AuthStep.gen (Spec.GenAct.endow (parent := delegator) (child := recipient)
-      (cap := ⟨t, ()⟩) (source := ⟨t, ()⟩) ?_)
-    exact
-      { holds_source := Exec.recKDelegate_grounds k k' delegator recipient t h
-        nonAmplifying := Spec.confers_refl _
-        result := hres }
+    exact Spec.AuthStep.gen
+      (Exec.recKDelegate_genAct consents k k' delegator recipient t hconsent h)
 
 /-! ### §7.1 — The union `AbsStep'` — the complete single-cell LTS. -/
 
@@ -317,22 +309,27 @@ theorem absStep'_forward_balance (consents : Label → Prop)
     AbsStep' consents (recAbsOf k) (recAbsOf k') :=
   Or.inl (recAbsStep_forward_exists k k' turn h)
 
-/-- A committed authority turn is matched by `AbsStep'` via the `authAbsStep` disjunct. -/
+/-- A committed authority turn is matched by `AbsStep'` via the `authAbsStep` disjunct. Carries the
+delegator's consent, which the self path's `Spec.Origin` needs (see `authAbsStep_forward`). -/
 theorem absStep'_forward_authority (consents : Label → Prop)
     (k k' : RecordKernelState) (delegator recipient t : Label)
+    (hconsent : consents delegator)
     (h : Exec.recKDelegate k delegator recipient t = some k') :
     AbsStep' consents (recAbsOf k) (recAbsOf k') :=
-  Or.inr (authAbsStep_forward consents k k' delegator recipient t h)
+  Or.inr (authAbsStep_forward consents k k' delegator recipient t hconsent h)
 
 /-- Both executable transition kinds (balance via `recKExec`, authority via `recKDelegate`) are
-matched by `AbsStep'`. The complete single-cell forward-simulation square. -/
+matched by `AbsStep'`. The complete single-cell forward-simulation square. The authority disjunct
+now bundles the delegator's consent with the committed step, since a self-grant is authorized by
+the signature rather than by a c-list edge. -/
 theorem absStep'_forward (consents : Label → Prop) (k k' : RecordKernelState)
     (h : (∃ turn, recKExec k turn = some k') ∨
-         (∃ delegator recipient t, Exec.recKDelegate k delegator recipient t = some k')) :
+         (∃ delegator recipient t, consents delegator ∧
+            Exec.recKDelegate k delegator recipient t = some k')) :
     AbsStep' consents (recAbsOf k) (recAbsOf k') := by
-  rcases h with ⟨turn, hb⟩ | ⟨delegator, recipient, t, ha⟩
+  rcases h with ⟨turn, hb⟩ | ⟨delegator, recipient, t, hconsent, ha⟩
   · exact absStep'_forward_balance consents k k' turn hb
-  · exact absStep'_forward_authority consents k k' delegator recipient t ha
+  · exact absStep'_forward_authority consents k k' delegator recipient t hconsent ha
 
 /-! ### §7.2 — Non-vacuity of `authAbsStep`. -/
 

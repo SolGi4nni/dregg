@@ -287,12 +287,13 @@ theorem recKBurn_shape {k k' : RecordKernelState} {actor cell : CellId} {amt : �
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact h.symm
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- A committed delegation grants (into `caps` at `recipient`) the delegator's held `t`-conferring cap. -/
+/-- A committed delegation grants (into `caps` at `recipient`) the DELEGATED cap: the delegator's
+held `t`-conferring cap on the cross path, the implicit `Cap.node t` self-cap on the self path. -/
 theorem recKDelegate_shape {k k' : RecordKernelState} {delegator recipient t : Label}
     (h : recKDelegate k delegator recipient t = some k') :
-    k' = { k with caps := grant k.caps recipient (heldCapTo k.caps delegator t) } := by
+    k' = { k with caps := grant k.caps recipient (delegatedCapTo k.caps delegator t) } := by
   unfold recKDelegate at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact h.symm
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
@@ -319,12 +320,14 @@ def finTransfer (turn : Turn) (f : FinKernelState) : FinKernelState :=
               (setBalance_ne_default _ _)) }
   | none => f
 
-/-- The finite delegation: grant into `caps` at `recipient` (prepend the held cap); identity on reject. -/
+/-- The finite delegation: grant into `caps` at `recipient` (prepend the DELEGATED cap — the held
+`t`-conferring cap on the cross path, the implicit `Cap.node t` self-cap on the self path); identity
+on reject. Tracks `recKDelegate`'s commit body exactly (`recKDelegate_shape`). -/
 def finDelegate (delegator recipient t : CellId) (f : FinKernelState) : FinKernelState :=
   match recKDelegate (denote f) delegator recipient t with
   | some _ =>
       { f with caps := (f.caps.set recipient
-          (heldCapTo (fun l => f.caps.get l) delegator t :: f.caps.get recipient)) }
+          (delegatedCapTo (fun l => f.caps.get l) delegator t :: f.caps.get recipient)) }
   | none => f
 
 /-- The finite revocation: filter `holder`'s `caps` slot; ALWAYS commits. When the filter empties the slot the

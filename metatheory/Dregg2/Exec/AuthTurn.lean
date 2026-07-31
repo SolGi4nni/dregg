@@ -155,44 +155,86 @@ theorem specCap_eq_iff_target (c : Spec.Cap Label ExecRights) (t : Label) :
     subst h
     rfl
 
-/-! ## §3 — `recKDelegate` — the executable Granovetter delegation.
+/-! ## §3 — `recKDelegate` — the executable Granovetter delegation, WITH ITS BASE CASE.
 
-Edits `caps` and leaves the `cell`/balance state untouched. Fail-closed: gates on the delegator
-already holding connectivity to `t` — "only connectivity begets connectivity" (the Granovetter
-`Introduce` premise). On commit it copies the concrete held cap that witnesses the premise, rather
-than manufacturing a fresh `node t` control cap. -/
+Edits `caps` and leaves the `cell`/balance state untouched. The gate is the Granovetter
+connectivity premise — "only connectivity begets connectivity" — **disjoined with its base case**:
+a cell is the ORIGIN of authority over ITSELF (`Spec.Origin`, dregg1's `apply_grant_capability`
+short-circuit at `turn/src/executor/apply.rs:647`). On the cross path it copies the concrete held
+cap that witnesses the premise; on the self path it grants `Cap.node t`, the projection of the
+implicit `⊤` self-cap onto the connectivity graph.
+
+⚑ **FLAG DAY 2026-07-31 — the gate ADMITS MORE than it did.** Until today `recKDelegate` gated
+SOLELY on `(k.caps delegator).any (confersEdgeTo t)`, with no owner disjunct, and so refused
+**every cell's FIRST capability grant**: a faucet-minted cell is born with empty caps, and
+`caps = fun _ => []` was therefore a FIXPOINT of the whole authority calculus — no rule could
+create a first edge. That was a liveness (completeness) gap against dregg1, not a soundness
+hole, and the kernel's own sibling gate `authorizedB` (`Exec/Kernel.lean:54`) already carried
+the disjunct. The pre-cutover gate is preserved verbatim as `recKDelegateEdgeOnly` — NOT for
+compatibility (nothing routes through it) but because the admission-delta theorems
+(`recKDelegate_cross_eq`, `recKDelegate_widens_exactly_self`) are stated AGAINST it, and without
+a second object to compare to they could not be refutable. -/
 
 /-- The introducer's held cap conferring an edge to `t` (executable `lookup_by_target`): the first
 cap in `h`'s slot that `confersEdgeTo t`, or `Cap.null` if none. -/
 def heldCapTo (caps : Caps) (h t : Label) : Cap :=
   ((caps h).find? (fun cap => confersEdgeTo t cap)).getD Cap.null
 
-/-- The executable authority turn: `delegator` copies to `recipient` the concrete cap it already
-holds that confers an edge to `t`. Commits only when the delegator already holds such a cap
-(Granovetter connectivity premise); on commit rewrites only `caps`, leaving every balance intact.
-This preserves the abstract `addEdge` behavior while avoiding rights amplification. -/
-def recKDelegate (k : RecordKernelState) (delegator recipient t : Label) :
+/-- The cap a delegation grants: on a SELF-grant (`t = delegator`) the implicit self-cap is the
+strongest cap over `t`, so grant the full `Cap.node t` (`⊤` on the rights axis, `confRights_node_top`);
+on a cross grant, copy the held witness cap `heldCapTo` (the non-amplifying held-copy). -/
+def delegatedCapTo (caps : Caps) (delegator t : Label) : Cap :=
+  if t = delegator then Cap.node t else heldCapTo caps delegator t
+
+/-- **`recKDelegateEdgeOnly` — THE PRE-CUTOVER GATE, kept ONLY as the delta's reference object.**
+The edge-only gate `recKDelegate` ran until 2026-07-31: commit iff the delegator already holds a
+`t`-conferring cap, with NO owner disjunct. Nothing routes through it — `recCDelegate`, `execFullA`,
+the Argus IR, the emitted descriptors and the FFI all run `recKDelegate`. It exists so that
+`recKDelegate_cross_eq` ("off the diagonal the two gates are the SAME FUNCTION") and
+`recKDelegate_widens_exactly_self` have a second object to quantify over; delete it and those two
+theorems cannot be stated, let alone refuted. -/
+def recKDelegateEdgeOnly (k : RecordKernelState) (delegator recipient t : Label) :
     Option RecordKernelState :=
-  -- The delegator must already hold a cap conferring an edge to `t` (`Spec.Endow.holds_source`).
   if (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true then
     some { k with caps := grant k.caps recipient (heldCapTo k.caps delegator t) }
   else
     none
 
+/-- **The executable authority turn.** Commits when the delegator grants over its OWN cell
+(`t = delegator` — the implicit self-cap; the signed action IS the consent, `Spec.Origin`) OR it
+already holds a `t`-conferring cap (the unchanged Granovetter connectivity premise, `Spec.Endow`);
+fail-closed otherwise. On commit rewrites only `caps`, leaving every balance intact. Preserves the
+abstract `addEdge` behavior on both paths while avoiding rights amplification (the self path grants
+`⊤` over a cell the delegator already owns totally — `self_cap_dominates`). -/
+def recKDelegate (k : RecordKernelState) (delegator recipient t : Label) :
+    Option RecordKernelState :=
+  -- Owner (`Spec.Origin.over_self`) OR a held `t`-conferring cap (`Spec.Endow.holds_source`).
+  if t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true then
+    some { k with caps := grant k.caps recipient (delegatedCapTo k.caps delegator t) }
+  else
+    none
+
 /-! ### §3.RIGHTS — The attenuating delegation (the genuine `is_attenuation` mirror).
 
-`recKDelegate` copies the witness cap unchanged. `recKDelegateAtten` is the explicitly attenuating
-variant: locate the held cap, attenuate to `keep`, and grant the attenuated cap. The granted cap's
-conferred rights are `⊆` the held cap's (`attenuate_confRights_le`) — the genuine `granted.rights ≤
-held.rights` over `ExecAuth`, not a `()≤()` collapse. -/
+`recKDelegate` copies the witness cap (or the self-cap) unchanged. `recKDelegateAtten` is the
+explicitly attenuating variant: locate the delegated cap, attenuate to `keep`, and grant that. The
+granted cap's conferred rights are `⊆` the delegated cap's (`attenuate_confRights_le`) — the genuine
+`granted.rights ≤ held.rights` over `ExecAuth`, not a `()≤()` collapse. On the self path this is
+Rust's "any requested mask is an attenuation of the implicit self-cap". -/
+
+/-- The cap an attenuating delegation grants: `delegatedCapTo` narrowed to `keep`. On the self path
+that is the implicit `⊤` self-cap ATTENUATED; on the cross path the held witness cap attenuated. -/
+def delegatedAttenCapTo (caps : Caps) (delegator t : Label) (keep : List Auth) : Cap :=
+  attenuate keep (delegatedCapTo caps delegator t)
 
 /-- The rights-carrying Granovetter delegation (faithful `apply_introduce`): on commit, grant
-`recipient` the delegator's held cap to `t` attenuated to `keep`. The granted cap carries real
-rights `⊆` the held cap's (`attenuate_confRights_le`). Fail-closed: no held cap to `t` ⇒ none. -/
+`recipient` the delegated cap to `t` attenuated to `keep`. The granted cap carries real rights `⊆`
+the delegated cap's (`attenuate_confRights_le`). Same owner-OR-connectivity gate as `recKDelegate`;
+fail-closed otherwise. -/
 def recKDelegateAtten (k : RecordKernelState) (delegator recipient t : Label) (keep : List Auth) :
     Option RecordKernelState :=
-  if (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true then
-    some { k with caps := grant k.caps recipient (attenuate keep (heldCapTo k.caps delegator t)) }
+  if t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true then
+    some { k with caps := grant k.caps recipient (delegatedAttenCapTo k.caps delegator t keep) }
   else
     none
 
@@ -208,31 +250,33 @@ def recKRevokeTarget (k : RecordKernelState) (holder t : Label) : RecordKernelSt
 Where a balance turn holds `caps` fixed, an authority turn holds `recTotal` fixed — proved by the
 cap-edit touching only `caps` (so `cell`, hence `balOf`, hence `recTotal`, is unchanged). -/
 
-/-- A committed delegation preserves `recTotal` and `accounts` (edits only `caps`). -/
+/-- A committed delegation preserves `recTotal` and `accounts` (edits only `caps`) — on BOTH the
+self and cross paths. -/
 theorem recKDelegate_frame (k k' : RecordKernelState) (delegator recipient t : Label)
     (h : recKDelegate k delegator recipient t = some k') :
     recTotal k' = recTotal k ∧ k'.accounts = k.accounts ∧ k'.cell = k.cell := by
   unfold recKDelegate at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hg] at h
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hc] at h
     simp only [Option.some.injEq] at h
     subst h
     refine ⟨?_, rfl, rfl⟩
     -- `recTotal` reads only `accounts` and `cell`, both unchanged by the `caps`-only edit.
     rfl
-  · rw [if_neg hg] at h; exact absurd h (by simp)
+  · rw [if_neg hc] at h; exact absurd h (by simp)
 
-/-- A committed ordinary delegation grants exactly the delegator's held `t`-conferring cap. -/
+/-- A committed ordinary delegation grants exactly `delegatedCapTo` — the delegator's held
+`t`-conferring cap on the cross path, the full `Cap.node t` self-cap on the self path. -/
 theorem recKDelegate_grants (k k' : RecordKernelState) (delegator recipient t : Label)
     (h : recKDelegate k delegator recipient t = some k') :
-    heldCapTo k.caps delegator t ∈ k'.caps recipient := by
+    delegatedCapTo k.caps delegator t ∈ k'.caps recipient := by
   unfold recKDelegate at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hg] at h
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hc] at h
     simp only [Option.some.injEq] at h
     subst h
-    exact grant_adds k.caps recipient (heldCapTo k.caps delegator t)
-  · rw [if_neg hg] at h; exact absurd h (by simp)
+    exact grant_adds k.caps recipient (delegatedCapTo k.caps delegator t)
+  · rw [if_neg hc] at h; exact absurd h (by simp)
 
 /-- A copied held cap is non-amplifying against the cap it copies, over the real `ExecAuth` lattice. -/
 theorem recKDelegate_copy_non_amplifying (caps : Caps) (delegator t : Label) :
@@ -401,6 +445,17 @@ theorem heldCapTo_mem (caps : Caps) (delegator t : Label)
       simp only [Option.getD_some]
       exact ⟨List.mem_of_find?_eq_some hfind, List.find?_some hfind⟩
 
+/-- The granted cap confers the target edge on BOTH commit paths: on the self path `Cap.node t`
+confers `t` by construction; on the cross path `heldCapTo` confers `t` (`heldCapTo_mem`). This is
+what lets ONE graph lemma cover both arms of the completed gate. -/
+theorem confersEdgeTo_delegatedCapTo (caps : Caps) (delegator t : Label)
+    (hc : t = delegator ∨ (caps delegator).any (fun cap => confersEdgeTo t cap) = true) :
+    confersEdgeTo t (delegatedCapTo caps delegator t) = true := by
+  unfold delegatedCapTo
+  by_cases hself : t = delegator
+  · rw [if_pos hself]; simp [confersEdgeTo]
+  · rw [if_neg hself]; exact (heldCapTo_mem caps delegator t (hc.resolve_left hself)).2
+
 /-- Granting any concrete cap that confers the target edge reconstructs as adding that single
 connectivity edge in the abstract `ExecRights = Unit` graph. This is the rights-parametric version
 of the old `node t` graph lemma. -/
@@ -446,15 +501,29 @@ theorem grant_conferring_execGraph (caps : Caps) (recipient t : Label) (cap : Ca
 `⟨t,()⟩` applied to `execGraph` of the pre-state — verbatim `Spec.Introduce.result` /
 `Spec.Revoke.result`. Proved by `funext`/`propext` reducing `.any` over the edited slot. -/
 
-/-- After copying the delegator's held `t`-conferring cap to `recipient`, the reconstructed graph
-equals the pre-graph with edge `recipient ⟶ ⟨t,()⟩` added — `Spec.Introduce.result` verbatim,
-without assuming the concrete cap was `node t`. -/
+/-- After granting `delegatedCapTo` to `recipient`, the reconstructed graph equals the pre-graph
+with edge `recipient ⟶ ⟨t,()⟩` added — `Spec.Endow.result` / `Spec.Origin.result` verbatim, on BOTH
+paths, without assuming the concrete cap was `node t`. -/
 theorem recKDelegate_execGraph (caps : Caps) (delegator recipient t : Label)
-    (hg : (caps delegator).any (fun cap => confersEdgeTo t cap) = true) :
-    execGraph (grant caps recipient (heldCapTo caps delegator t))
-      = addEdge (execGraph caps) recipient (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
-  exact grant_conferring_execGraph caps recipient t (heldCapTo caps delegator t)
-    (heldCapTo_mem caps delegator t hg).2
+    (hc : t = delegator ∨ (caps delegator).any (fun cap => confersEdgeTo t cap) = true) :
+    execGraph (grant caps recipient (delegatedCapTo caps delegator t))
+      = addEdge (execGraph caps) recipient (⟨t, ()⟩ : Spec.Cap Label ExecRights) :=
+  grant_conferring_execGraph caps recipient t (delegatedCapTo caps delegator t)
+    (confersEdgeTo_delegatedCapTo caps delegator t hc)
+
+/-- **`recKDelegate_step_execGraph` — the same, keyed on the COMMIT rather than the guard.** A
+committed delegation's post-graph IS the pre-graph with the single Spec edge `recipient ⟶ ⟨t,()⟩`
+added. This is the form downstream consumers want: it takes the executor hypothesis they already
+have, so no consumer needs to unfold the gate to recover a guard. -/
+theorem recKDelegate_step_execGraph (k k' : RecordKernelState) (delegator recipient t : Label)
+    (h : recKDelegate k delegator recipient t = some k') :
+    execGraph k'.caps
+      = addEdge (execGraph k.caps) recipient (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
+  unfold recKDelegate at h
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h
+    exact recKDelegate_execGraph k.caps delegator recipient t hc
+  · rw [if_neg hc] at h; exact absurd h (by simp)
 
 /-- After revoking every `t`-conferring cap from `holder`, the reconstructed graph equals the
 pre-graph with edge `holder ⟶ ⟨t,()⟩` removed — `Spec.Revoke.result` verbatim. -/
@@ -506,21 +575,58 @@ theorem recKRevokeTarget_execGraph (caps : Caps) (holder t : Label) :
     · intro hpre; exact ⟨hpre, fun heq => absurd heq.1 hh⟩
     · intro hpre; exact hpre.1
 
-/-! ## §6 — Granovetter grounding: the gate witnesses `Spec.Endow.holds_source`.
+/-! ## §6 — Granovetter grounding: the gate witnesses `Spec.Endow.holds_source` OR `Spec.Origin`.
 
-On commit, the delegator holds the Spec source edge `delegator ⟶ ⟨t,()⟩` in `execGraph` —
-"only connectivity begets connectivity". -/
+On commit, EITHER the delegator is the owner of the cap target (`t = delegator` — the base case,
+`Spec.Origin.over_self`) OR it holds the Spec source edge `delegator ⟶ ⟨t,()⟩` in `execGraph`
+(`Spec.Endow.holds_source`, "only connectivity begets connectivity"). This is the exact
+disjunction `Spec.GenAct` case-splits on, and `recKDelegate_genAct` builds the abstract step from
+it — the origin arm on the left, the endow arm on the right. -/
 
-/-- A committed delegation holds the Spec source edge `delegator ⟶ ⟨t,()⟩` on `execGraph` —
-exactly `Spec.Endow.holds_source`. -/
+/-- **`recKDelegate_grounds` — the COMPLETED owner-OR-connectivity premise.** On commit, EITHER the
+delegator is granting over its OWN cell (`t = delegator`, the implicit self-cap — Rust's
+`cap.target == from` branch, abstractly `Spec.Origin`) OR it holds the Spec source edge
+`delegator ⟶ ⟨t,()⟩` on `execGraph` (`Spec.Endow.holds_source`, the cross Granovetter premise).
+
+⚑ **This theorem WEAKENED on 2026-07-31** — it used to assert the right disjunct unconditionally,
+which is exactly the over-refusal the cutover removed. Every consumer that read it as "the
+Granovetter premise holds" now has to case-split, and that is the point: the widening is visible at
+every site that relied on the narrow claim rather than being absorbed silently. -/
 theorem recKDelegate_grounds (k k' : RecordKernelState) (delegator recipient t : Label)
     (h : recKDelegate k delegator recipient t = some k') :
-    execGraph k.caps delegator (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
+    t = delegator ∨ execGraph k.caps delegator (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
   unfold recKDelegate at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · -- a held `t`-conferring cap IS the Spec source edge `delegator ⟶ ⟨t,()⟩`.
-    rw [execGraph_eq_any]; exact hg
-  · rw [if_neg hg] at h; exact absurd h (by simp)
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rcases hc with hself | hg
+    · exact Or.inl hself
+    · exact Or.inr (by rw [execGraph_eq_any]; exact hg)
+  · rw [if_neg hc] at h; exact absurd h (by simp)
+
+/-- **`recKDelegate_genAct` — THE ABSTRACT STEP, BOTH ARMS.** A committed delegation IS an
+authorized `Spec.GenAct` on the reconstructed authority graph, for any `consents` the delegator
+satisfies: `Spec.GenAct.origin` on the self path (no authorizing edge — the base case, confined by
+`Origin.over_self` to a cap targeting the delegator itself) and `Spec.GenAct.endow` on the cross
+path (authorized by the held source edge, non-amplifying by `confers_refl`).
+
+This is the theorem the cutover actually needed: before the base case existed in
+`Spec/Authority.lean` there was no `GenAct` constructor an owner's first grant could inhabit, so
+the kernel could not have admitted it and still refined the spec. -/
+theorem recKDelegate_genAct (consents : Label → Prop)
+    (k k' : RecordKernelState) (delegator recipient t : Label)
+    (hconsent : consents delegator)
+    (h : recKDelegate k delegator recipient t = some k') :
+    Spec.GenAct (CellId := Label) (Rights := ExecRights) consents
+      (execGraph k.caps) (execGraph k'.caps) := by
+  have hres := recKDelegate_step_execGraph k k' delegator recipient t h
+  rcases recKDelegate_grounds k k' delegator recipient t h with hself | hsrc
+  · -- BASE CASE: the delegator owns the cap target, so the abstract step is `Origin`.
+    subst hself
+    exact Spec.GenAct.origin
+      { over_self := rfl, consented := hconsent, result := hres }
+  · -- CROSS: the held source edge authorizes an `Endow`, non-amplifying by reflexivity.
+    exact Spec.GenAct.endow (parent := delegator) (child := recipient)
+      (cap := ⟨t, ()⟩) (source := ⟨t, ()⟩)
+      { holds_source := hsrc, nonAmplifying := Spec.confers_refl _, result := hres }
 
 /-! ### §6.RIGHTS — the rights-delegation grounds in a held cap and attenuates it.
 
@@ -528,47 +634,53 @@ When `recKDelegateAtten` commits: (a) `heldCapTo` is a real member of the delega
 `confersEdgeTo t`; (b) the granted cap's real conferred rights are `⊆` the held cap's
 (`is_attenuation` over `ExecAuth`) — granted-vs-held, not self-vs-self. -/
 
-/-- A committed rights-delegation grants a cap whose real authority is `⊆` the introducer's held
-cap: `confRights (attenuate keep held) ≤ confRights held` over `ExecAuth`. The genuine
-`is_attenuation(held, granted)` inequality via `attenuate_confRights_le`. -/
+/-- A committed rights-delegation grants a cap whose real authority is `⊆` the cap it delegates
+from: `confRights (attenuate keep delegated) ≤ confRights delegated` over `ExecAuth`. The genuine
+`is_attenuation(held, granted)` inequality via `attenuate_confRights_le`. On the self path the cap
+delegated from is the implicit `⊤` self-cap, so this is Rust's "any requested mask is an
+attenuation of the implicit self-cap". -/
 theorem recKDelegateAtten_non_amplifying (caps : Caps) (delegator t : Label) (keep : List Auth) :
-    confRights (attenuate keep (heldCapTo caps delegator t))
-      ≤ confRights (heldCapTo caps delegator t) :=
-  attenuate_confRights_le keep (heldCapTo caps delegator t)
+    confRights (attenuate keep (delegatedCapTo caps delegator t))
+      ≤ confRights (delegatedCapTo caps delegator t) :=
+  attenuate_confRights_le keep (delegatedCapTo caps delegator t)
 
-/-- On commit, the recipient holds the attenuated cap (`attenuate keep (heldCapTo …)`) in its slot. -/
+/-- On commit, the recipient holds the attenuated cap (`delegatedAttenCapTo`) in its slot. -/
 theorem recKDelegateAtten_grants (k k' : RecordKernelState) (delegator recipient t : Label)
     (keep : List Auth) (h : recKDelegateAtten k delegator recipient t keep = some k') :
-    attenuate keep (heldCapTo k.caps delegator t) ∈ k'.caps recipient := by
+    delegatedAttenCapTo k.caps delegator t keep ∈ k'.caps recipient := by
   unfold recKDelegateAtten at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
-    exact grant_adds k.caps recipient (attenuate keep (heldCapTo k.caps delegator t))
-  · rw [if_neg hg] at h; exact absurd h (by simp)
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h
+    exact grant_adds k.caps recipient (delegatedAttenCapTo k.caps delegator t keep)
+  · rw [if_neg hc] at h; exact absurd h (by simp)
 
 /-- The rights-delegation edits only `caps`, so `recTotal`/`accounts`/`cell` are fixed. -/
 theorem recKDelegateAtten_frame (k k' : RecordKernelState) (delegator recipient t : Label)
     (keep : List Auth) (h : recKDelegateAtten k delegator recipient t keep = some k') :
     recTotal k' = recTotal k ∧ k'.accounts = k.accounts ∧ k'.cell = k.cell := by
   unfold recKDelegateAtten at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h; exact ⟨rfl, rfl, rfl⟩
-  · rw [if_neg hg] at h; exact absurd h (by simp)
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h; exact ⟨rfl, rfl, rfl⟩
+  · rw [if_neg hc] at h; exact absurd h (by simp)
 
-/-- A committed rights-delegation holds the source edge `delegator ⟶ ⟨t,()⟩` on `execGraph`. -/
+/-- A committed rights-delegation is grounded: owner (`t = delegator`, `Spec.Origin`) OR the source
+edge `delegator ⟶ ⟨t,()⟩` on `execGraph` (`Spec.Endow.holds_source`). Same widening as
+`recKDelegate_grounds`, same reason. -/
 theorem recKDelegateAtten_grounds (k k' : RecordKernelState) (delegator recipient t : Label)
     (keep : List Auth) (h : recKDelegateAtten k delegator recipient t keep = some k') :
-    execGraph k.caps delegator (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
+    t = delegator ∨ execGraph k.caps delegator (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
   unfold recKDelegateAtten at h
-  by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [execGraph_eq_any]; exact hg
-  · rw [if_neg hg] at h; exact absurd h (by simp)
+  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
+  · rcases hc with hself | hg
+    · exact Or.inl hself
+    · exact Or.inr (by rw [execGraph_eq_any]; exact hg)
+  · rw [if_neg hc] at h; exact absurd h (by simp)
 
-/-! ## §6.OWNED — the implicit self-cap: COMPLETE the gate to admit an owner's FIRST self-grant.
+/-! ## §6.OWNED — the implicit self-cap: the gate ADMITS an owner's FIRST self-grant.
 
-The edge-only `recKDelegate` gate REJECTS an owner's first self-grant over its OWN cell. A
+The pre-cutover edge-only gate REJECTED an owner's first self-grant over its OWN cell. A
 faucet-minted cell is born with EMPTY caps (`createCellChainA`, "born EMPTY"), so
-`[].any confersEdgeTo = false`: the Granovetter connectivity premise fails and the delegation is
+`[].any confersEdgeTo = false`: the Granovetter connectivity premise failed and the delegation was
 refused. But dregg1 ADMITS it — a cell implicitly holds the STRONGEST capability over ITSELF, so
 granting access to its own cell is authorized by the signed action (the owner consents), NOT by a
 c-list edge (`turn/src/executor/apply.rs:647`: `if cap.target == *from { /* skip c-list lookup; the
@@ -576,128 +688,34 @@ signature proves the owner consents; the implicit self-cap is ⊤ on every axis 
 kernel was STRICTER than Rust — a LIVENESS (completeness) gap, NOT a soundness hole: the implicit
 self-cap is `⊤` on every axis, so admitting the self-grant cannot amplify authority.
 
-`recKDelegateOwned` COMPLETES the gate: admit when `t = delegator` (the owner, granting over its own
-cell — the signed action IS the consent) OR the delegator holds a `t`-conferring edge (the unchanged
-Granovetter premise, fail-closed otherwise). On the self path it grants the full `Cap.node t` — the
-projection of the implicit `⊤` self-cap onto the connectivity graph. The edge-based `recKDelegate` and
-its ENTIRE lemma web are LEFT UNTOUCHED (the cross path is verbatim `heldCapTo`); routing the deployed
-executor (`recCDelegate`/`execFullA`) through this completed gate is a SEPARATE cutover. -/
+⚑ **CUT OVER 2026-07-31.** `recKDelegate` (§3) now carries the owner disjunct, and every layer that
+decides a delegation runs it: `recCDelegate` → `execFullA .delegate`/`.introduceA` → the Argus IR
+`delegateStmt` → the emitted descriptor → the FFI. The pre-cutover gate survives as
+`recKDelegateEdgeOnly`, the reference object the delta theorems below quantify over. The theorems
+in this section are unchanged in content; they now describe the object the executor actually runs. -/
 
-/-- The cap a completed delegation grants: on a SELF-grant (`t = delegator`) the implicit self-cap is
-the strongest cap over `t`, so grant the full `Cap.node t` (`⊤` on the rights axis); on a cross grant,
-copy the held witness cap `heldCapTo` (verbatim `recKDelegate`). -/
-def delegatedCapTo (caps : Caps) (delegator t : Label) : Cap :=
-  if t = delegator then Cap.node t else heldCapTo caps delegator t
-
-/-- **`recKDelegateOwned`** — `recKDelegate` COMPLETED with Rust's implicit self-cap (`apply.rs:647`).
-Admits when the delegator grants over its OWN cell (`t = delegator`, no c-list edge needed — the
-signed action IS the consent) OR it already holds a `t`-conferring cap (the unchanged Granovetter
-connectivity premise; fail-closed otherwise). Edits only `caps`. -/
-def recKDelegateOwned (k : RecordKernelState) (delegator recipient t : Label) :
-    Option RecordKernelState :=
-  if t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true then
-    some { k with caps := grant k.caps recipient (delegatedCapTo k.caps delegator t) }
-  else
-    none
-
-/-- The attenuating completed delegation: on a self-grant hand out `attenuate keep (Cap.node t)` —
-the implicit `⊤` self-cap ATTENUATED to `keep` (Rust: "any requested mask is an attenuation of the
-implicit self-cap"); on a cross grant `attenuate keep (heldCapTo …)` (verbatim `recKDelegateAtten`). -/
-def delegatedAttenCapTo (caps : Caps) (delegator t : Label) (keep : List Auth) : Cap :=
-  attenuate keep (delegatedCapTo caps delegator t)
-
-/-- **`recKDelegateOwnedAtten`** — the rights-carrying completed delegation (the attenuating mirror). -/
-def recKDelegateOwnedAtten (k : RecordKernelState) (delegator recipient t : Label) (keep : List Auth) :
-    Option RecordKernelState :=
-  if t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true then
-    some { k with caps := grant k.caps recipient (delegatedAttenCapTo k.caps delegator t keep) }
-  else
-    none
-
-/-- **`recKDelegateOwned_admits_self` — THE COMPLETENESS CLOSURE (the gap CLOSED).** An owner's
+/-- **`recKDelegate_admits_self` — THE COMPLETENESS CLOSURE (the gap CLOSED).** An owner's
 self-grant (`t = delegator`) is ALWAYS admitted, with NO c-list precondition — even from an EMPTY cap
-slot. Exactly Rust's `cap.target == from` branch. The edge-only `recKDelegate` could NOT prove this
-(`[].any … = false ⇒ none`): this theorem IS the liveness gap closed. -/
-theorem recKDelegateOwned_admits_self (k : RecordKernelState) (delegator recipient : Label) :
-    (recKDelegateOwned k delegator recipient delegator).isSome := by
-  unfold recKDelegateOwned
+slot. Exactly Rust's `cap.target == from` branch. The pre-cutover `recKDelegateEdgeOnly` could NOT
+prove this (`[].any … = false ⇒ none`): this theorem IS the liveness gap closed. -/
+theorem recKDelegate_admits_self (k : RecordKernelState) (delegator recipient : Label) :
+    (recKDelegate k delegator recipient delegator).isSome := by
+  unfold recKDelegate
   rw [if_pos (Or.inl rfl)]
   rfl
 
-/-- **`recKDelegateOwned_cross_gated` — NO over-admission.** For a NON-self target (`t ≠ delegator`)
-the completed gate is EXACTLY the Granovetter premise: admits IFF the delegator holds a `t`-conferring
+/-- **`recKDelegate_cross_gated` — NO over-admission.** For a NON-self target (`t ≠ delegator`)
+the gate is EXACTLY the Granovetter premise: admits IFF the delegator holds a `t`-conferring
 cap. A cross grant with no held edge is STILL rejected — the self disjunct opened nothing on the cross
 path. -/
-theorem recKDelegateOwned_cross_gated (k : RecordKernelState) (delegator recipient t : Label)
+theorem recKDelegate_cross_gated (k : RecordKernelState) (delegator recipient t : Label)
     (hne : t ≠ delegator) :
-    (recKDelegateOwned k delegator recipient t).isSome = true
+    (recKDelegate k delegator recipient t).isSome = true
       ↔ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true := by
-  unfold recKDelegateOwned
+  unfold recKDelegate
   by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos (Or.inr hg)]; simp [hg]
   · rw [if_neg (by rintro (h | h); exacts [hne h, hg h])]; simp [hg]
-
-/-- The granted cap confers the target edge on BOTH commit paths: on the self path `Cap.node t`
-confers `t`; on the cross path `heldCapTo` confers `t` (`heldCapTo_mem`). -/
-theorem confersEdgeTo_delegatedCapTo (caps : Caps) (delegator t : Label)
-    (hc : t = delegator ∨ (caps delegator).any (fun cap => confersEdgeTo t cap) = true) :
-    confersEdgeTo t (delegatedCapTo caps delegator t) = true := by
-  unfold delegatedCapTo
-  by_cases hself : t = delegator
-  · rw [if_pos hself]; simp [confersEdgeTo]
-  · rw [if_neg hself]; exact (heldCapTo_mem caps delegator t (hc.resolve_left hself)).2
-
-/-- A committed completed delegation edits only `caps`: `recTotal`/`accounts`/`cell` are fixed
-(the dual frame — like `recKDelegate_frame`, holds on BOTH the self and cross paths). -/
-theorem recKDelegateOwned_frame (k k' : RecordKernelState) (delegator recipient t : Label)
-    (h : recKDelegateOwned k delegator recipient t = some k') :
-    recTotal k' = recTotal k ∧ k'.accounts = k.accounts ∧ k'.cell = k.cell := by
-  unfold recKDelegateOwned at h
-  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h; exact ⟨rfl, rfl, rfl⟩
-  · rw [if_neg hc] at h; exact absurd h (by simp)
-
-/-- On commit the recipient holds the granted cap (`Cap.node t` on the self path, `heldCapTo` on the
-cross path). -/
-theorem recKDelegateOwned_grants (k k' : RecordKernelState) (delegator recipient t : Label)
-    (h : recKDelegateOwned k delegator recipient t = some k') :
-    delegatedCapTo k.caps delegator t ∈ k'.caps recipient := by
-  unfold recKDelegateOwned at h
-  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h
-    exact grant_adds k.caps recipient (delegatedCapTo k.caps delegator t)
-  · rw [if_neg hc] at h; exact absurd h (by simp)
-
-/-- **The completed delegation IS `addEdge`.** After a committed self-OR-cross grant, the
-reconstructed authority graph is the pre-graph with the single Spec edge `recipient ⟶ ⟨t,()⟩` ADDED —
-`Spec.Endow.result` verbatim, on both paths (`grant_conferring_execGraph`, since the granted cap
-confers the `t` edge either way). -/
-theorem recKDelegateOwned_execGraph (k k' : RecordKernelState) (delegator recipient t : Label)
-    (h : recKDelegateOwned k delegator recipient t = some k') :
-    execGraph k'.caps
-      = addEdge (execGraph k.caps) recipient (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
-  unfold recKDelegateOwned at h
-  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h
-    exact grant_conferring_execGraph k.caps recipient t (delegatedCapTo k.caps delegator t)
-      (confersEdgeTo_delegatedCapTo k.caps delegator t hc)
-  · rw [if_neg hc] at h; exact absurd h (by simp)
-
-/-- **`recKDelegateOwned_grounds` — the COMPLETED Granovetter/owner premise (owner-OR-connectivity).**
-On commit, EITHER the delegator is granting over its OWN cell (`t = delegator`, the implicit self-cap —
-Rust's `cap.target == from` branch) OR it holds the Spec source edge `delegator ⟶ ⟨t,()⟩` on
-`execGraph` (`Spec.Endow.holds_source`, the cross Granovetter premise). This is the exact disjunction
-`Authority.Integrity` itself case-splits on (`intra` owner vs `cross` edge) — the edge-only
-`recKDelegate_grounds` was the `cross`-only projection. -/
-theorem recKDelegateOwned_grounds (k k' : RecordKernelState) (delegator recipient t : Label)
-    (h : recKDelegateOwned k delegator recipient t = some k') :
-    t = delegator ∨ execGraph k.caps delegator (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
-  unfold recKDelegateOwned at h
-  by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
-  · rcases hc with hself | hg
-    · exact Or.inl hself
-    · exact Or.inr (by rw [execGraph_eq_any]; exact hg)
-  · rw [if_neg hc] at h; exact absurd h (by simp)
 
 /-! ### §6.OWNED.RIGHTS — NON-AMPLIFICATION: the self-cap dominates, so a self-grant cannot amplify.
 
@@ -726,15 +744,15 @@ theorem self_cap_dominates (t : Label) (c : Cap) :
 
 /-- The unattenuated self-grant is non-amplifying against the implicit self-cap (it IS the self-cap
 `Cap.node t`, `le_rfl`; and by `self_cap_dominates` dominates every cap). -/
-theorem recKDelegateOwned_self_non_amplifying (caps : Caps) (delegator : Label) :
+theorem recKDelegate_self_non_amplifying (caps : Caps) (delegator : Label) :
     confRights (delegatedCapTo caps delegator delegator) ≤ confRights (Cap.node delegator) := by
   unfold delegatedCapTo; rw [if_pos rfl]
 
-/-- **`recKDelegateOwnedAtten_self_non_amplifying` — the genuine `is_attenuation` on the self path.**
+/-- **`recKDelegateAtten_self_non_amplifying` — the genuine `is_attenuation` on the self path.**
 The attenuating self-grant hands out `attenuate keep (Cap.node t)`, whose real conferred rights are
 `≤` the implicit `⊤` self-cap's (`attenuate_confRights_le`) — a self-grant can only WEAKEN the
 self-cap, exactly Rust's "any requested mask is an attenuation of the implicit self-cap". -/
-theorem recKDelegateOwnedAtten_self_non_amplifying (caps : Caps) (delegator : Label) (keep : List Auth) :
+theorem recKDelegateAtten_self_non_amplifying (caps : Caps) (delegator : Label) (keep : List Auth) :
     confRights (delegatedAttenCapTo caps delegator delegator keep)
       ≤ confRights (Cap.node delegator) := by
   unfold delegatedAttenCapTo delegatedCapTo; rw [if_pos rfl]
@@ -742,7 +760,7 @@ theorem recKDelegateOwnedAtten_self_non_amplifying (caps : Caps) (delegator : La
 
 /-! ### §6.OWNED.SHARP — the ADMISSION DELTA, characterised exactly (GitHub `#55`).
 
-`recKDelegateOwned_admits_self` and `recKDelegateOwned_cross_gated` say what the completed gate
+`recKDelegate_admits_self` and `recKDelegate_cross_gated` say what the completed gate
 admits on each path separately. The question `#55` actually asks is the DELTA one: admitting
 `cap.target == from` must **widen nothing else**. A self-cap admission that also admitted a
 non-owner's identically-shaped grant would be a capability-FORGERY hole, and "it commits on the
@@ -750,17 +768,17 @@ self path" is no evidence at all about the cross path.
 
 So this section states the delta as a theorem in three strengths, weakest to strongest:
 
-  * `recKDelegateOwned_admits_iff` — the SHARP characterisation: the completed gate commits IFF
+  * `recKDelegate_admits_iff` — the SHARP characterisation: the completed gate commits IFF
     `t = delegator ∨ (the delegator holds a t-conferring cap)`. An `iff`, so it names the admitted
     set EXACTLY — nothing outside the disjunction is admitted, by construction of the statement.
-  * `recKDelegateOwned_cross_eq` — on EVERY non-self grant the completed gate IS the edge-only gate:
+  * `recKDelegate_cross_eq` — on EVERY non-self grant the completed gate IS the edge-only gate:
     not merely the same commit BIT but the same `Option`, hence the same POST-STATE and the same
     granted cap. The self disjunct is inert off the diagonal `t = delegator`.
-  * `recKDelegateOwned_widens_exactly_self` — the delta, contrapositively: every turn the completed
+  * `recKDelegate_widens_exactly_self` — the delta, contrapositively: every turn the completed
     gate admits and the edge-only gate refused is a self-grant. There is no third kind of newly
     admitted turn.
 
-`recKDelegateOwned_refuses_unbacked_nonowner` is the forgery pole stated positively, and
+`recKDelegate_refuses_unbacked_nonowner` is the forgery pole stated positively, and
 `owner_admitted_forger_refused_same_target` asserts BOTH poles by VARIANT over ONE state (`rs0`,
 every cap slot empty): the SAME effect shape and the SAME cap target `0`, differing only in `from`.
 
@@ -770,113 +788,115 @@ speak as the delegator — the `delegate` wire arm carries no actor. That bindin
 `authorize` over `action.target` plus `check_cross_cell_permission(actor, from, Delegate)`
 (`turn/src/executor/apply.rs:739`). Admitting `t = delegator` moves neither. -/
 
-/-- **`recKDelegateOwned_admits_iff` — THE SHARP CHARACTERISATION.** The completed gate commits IFF
+/-- **`recKDelegate_admits_iff` — THE SHARP CHARACTERISATION.** The completed gate commits IFF
 the delegator is granting over its OWN cell (`t = delegator`, the implicit self-cap) OR it already
 holds a `t`-conferring cap (the Granovetter premise). An `iff`: the admitted set is EXACTLY that
 disjunction, so nothing outside it is admitted. This is the statement to read when asking "what did
 admitting the self-grant let in?" — the answer is the left disjunct and nothing else. -/
-theorem recKDelegateOwned_admits_iff (k : RecordKernelState) (delegator recipient t : Label) :
-    (recKDelegateOwned k delegator recipient t).isSome = true
+theorem recKDelegate_admits_iff (k : RecordKernelState) (delegator recipient t : Label) :
+    (recKDelegate k delegator recipient t).isSome = true
       ↔ (t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true) := by
-  unfold recKDelegateOwned
+  unfold recKDelegate
   by_cases hc : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hc]
     exact ⟨fun _ => hc, fun _ => rfl⟩
   · rw [if_neg hc]
     exact ⟨fun h => absurd h (by simp), fun h => absurd h hc⟩
 
-/-- **`recKDelegateOwned_cross_eq` — OFF THE DIAGONAL THE TWO GATES ARE THE SAME FUNCTION.** For
+/-- **`recKDelegate_cross_eq` — OFF THE DIAGONAL THE TWO GATES ARE THE SAME FUNCTION.** For
 every `t ≠ delegator` the completed gate and the edge-only `recKDelegate` are EQUAL as `Option`s —
 same commit decision, same post-state, same granted cap (`delegatedCapTo` takes its `heldCapTo`
 branch). So the self disjunct changes NOTHING about any grant over a cell the delegator does not
 own. This is the strongest form of "widens nothing else": not a bit-agreement, a function equality. -/
-theorem recKDelegateOwned_cross_eq (k : RecordKernelState) (delegator recipient t : Label)
+theorem recKDelegate_cross_eq (k : RecordKernelState) (delegator recipient t : Label)
     (hne : t ≠ delegator) :
-    recKDelegateOwned k delegator recipient t = recKDelegate k delegator recipient t := by
-  unfold recKDelegateOwned recKDelegate
+    recKDelegate k delegator recipient t = recKDelegateEdgeOnly k delegator recipient t := by
+  unfold recKDelegate recKDelegateEdgeOnly
   by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos (Or.inr hg), if_pos hg]
     unfold delegatedCapTo
     rw [if_neg hne]
   · rw [if_neg (by rintro (h | h); exacts [hne h, hg h]), if_neg hg]
 
-/-- **`recKDelegateOwned_widens_exactly_self` — THE ADMISSION DELTA.** Every turn the completed gate
+/-- **`recKDelegate_widens_exactly_self` — THE ADMISSION DELTA.** Every turn the completed gate
 ADMITS that the edge-only gate REFUSED is a self-grant (`t = delegator`). There is no third kind of
 newly-admitted turn: the widening is exactly the diagonal. The contrapositive of
-`recKDelegateOwned_cross_eq`, and the direct answer to "does mirroring the implicit self-cap admit
+`recKDelegate_cross_eq`, and the direct answer to "does mirroring the implicit self-cap admit
 anything else?" — no. -/
-theorem recKDelegateOwned_widens_exactly_self (k : RecordKernelState) (delegator recipient t : Label)
-    (hnew : (recKDelegateOwned k delegator recipient t).isSome = true)
-    (hold : (recKDelegate k delegator recipient t).isSome = false) :
+theorem recKDelegate_widens_exactly_self (k : RecordKernelState) (delegator recipient t : Label)
+    (hnew : (recKDelegate k delegator recipient t).isSome = true)
+    (hold : (recKDelegateEdgeOnly k delegator recipient t).isSome = false) :
     t = delegator := by
   by_contra hne
-  rw [recKDelegateOwned_cross_eq k delegator recipient t hne, hold] at hnew
+  rw [recKDelegate_cross_eq k delegator recipient t hne, hold] at hnew
   simp at hnew
 
-/-- **`recKDelegateOwned_refuses_unbacked_nonowner` — THE FORGERY POLE.** A delegator that is NOT
+/-- **`recKDelegate_refuses_unbacked_nonowner` — THE FORGERY POLE.** A delegator that is NOT
 the cap target (`t ≠ attacker`) and holds NO `t`-conferring cap is REFUSED outright, `none`. Covers
 both directions of the shape: a non-owner granting over someone else's cell, and an owner granting
 over a cell it does not own. The self disjunct opened neither. -/
-theorem recKDelegateOwned_refuses_unbacked_nonowner (k : RecordKernelState)
+theorem recKDelegate_refuses_unbacked_nonowner (k : RecordKernelState)
     (attacker recipient t : Label) (hne : t ≠ attacker)
     (hno : (k.caps attacker).any (fun cap => confersEdgeTo t cap) = false) :
-    recKDelegateOwned k attacker recipient t = none := by
+    recKDelegate k attacker recipient t = none := by
   have hg : ¬ ((k.caps attacker).any (fun cap => confersEdgeTo t cap) = true) := by
     rw [hno]; simp
-  unfold recKDelegateOwned
+  unfold recKDelegate
   rw [if_neg (by rintro (h | h); exacts [hne h, hg h])]
 
-/-- **`recKDelegate_refuses_owner_self_grant` — THE DIVERGENCE, NAMED.** The EDGE-ONLY gate — the one
-the deployed executor runs today (`recCDelegate`, hence `execFullA .delegate`, hence the FFI `{"del":…}`
-arm) — REFUSES an owner's first self-grant from an empty cap slot, while `apply_grant_capability`
-(`turn/src/executor/apply.rs:760`) ADMITS it. `rs0` is the faucet-minted world: every cap slot empty.
-This theorem is the refusal half of GitHub `#55` stated over the object that actually decides. -/
-theorem recKDelegate_refuses_owner_self_grant : recKDelegate rs0 0 1 0 = none := rfl
+/-- **`recKDelegateEdgeOnly_refuses_owner_self_grant` — THE DIVERGENCE, NAMED (and now HISTORICAL).**
+The EDGE-ONLY gate — the one the deployed executor ran until 2026-07-31 — REFUSES an owner's first
+self-grant from an empty cap slot, while `apply_grant_capability` (`turn/src/executor/apply.rs:760`)
+ADMITS it. `rs0` is the faucet-minted world: every cap slot empty. This theorem is the refusal half
+of GitHub `#55`, kept because it is the LOWER pole of the delta: without a gate that provably refuses
+this turn, "the cutover admits it" has nothing to be a change FROM. -/
+theorem recKDelegateEdgeOnly_refuses_owner_self_grant : recKDelegateEdgeOnly rs0 0 1 0 = none := rfl
 
 /-- **`owner_admitted_forger_refused_same_target` — BOTH POLES, BY VARIANT, IN ONE STATEMENT.** Over
 ONE state (`rs0`, every cap slot EMPTY), with the SAME effect shape and the SAME cap target `0`,
 varying ONLY the delegator:
   * `delegator = 0` (the OWNER of cell `0`) — ADMITTED with no c-list precondition;
   * `delegator = 1` (a NON-owner, holding nothing) — REFUSED, `none`.
-The completed gate is therefore not a blanket admission of the shape `grant over cell 0`; it admits
-the owner and refuses the forger. Third conjunct: the edge-only gate the executor runs today refuses
-even the OWNER — the divergence `#55` reports. -/
+The gate is therefore not a blanket admission of the shape `grant over cell 0`; it admits
+the owner and refuses the forger. ⚑ This is the load-bearing pole of the cutover: a cutover that
+admitted the owner AND the forger would be worse than no cutover, and the second conjunct is what
+rules that out — SAME target, SAME recipient shape, SAME (empty) state, only `from` varies. Third
+conjunct: the PRE-cutover gate refused even the OWNER — the divergence `#55` reported, kept as the
+measurement the change is measured against. -/
 theorem owner_admitted_forger_refused_same_target :
-    (recKDelegateOwned rs0 0 1 0).isSome = true
-    ∧ recKDelegateOwned rs0 1 2 0 = none
-    ∧ recKDelegate rs0 0 1 0 = none := by
-  refine ⟨recKDelegateOwned_admits_self rs0 0 1, ?_, recKDelegate_refuses_owner_self_grant⟩
-  exact recKDelegateOwned_refuses_unbacked_nonowner rs0 1 2 0 (by decide) rfl
+    (recKDelegate rs0 0 1 0).isSome = true
+    ∧ recKDelegate rs0 1 2 0 = none
+    ∧ recKDelegateEdgeOnly rs0 0 1 0 = none := by
+  refine ⟨recKDelegate_admits_self rs0 0 1, ?_, recKDelegateEdgeOnly_refuses_owner_self_grant⟩
+  exact recKDelegate_refuses_unbacked_nonowner rs0 1 2 0 (by decide) rfl
 
-#assert_axioms recKDelegateOwned_admits_iff
-#assert_axioms recKDelegateOwned_cross_eq
-#assert_axioms recKDelegateOwned_widens_exactly_self
-#assert_axioms recKDelegateOwned_refuses_unbacked_nonowner
-#assert_axioms recKDelegate_refuses_owner_self_grant
+#assert_axioms recKDelegate_admits_iff
+#assert_axioms recKDelegate_cross_eq
+#assert_axioms recKDelegate_widens_exactly_self
+#assert_axioms recKDelegate_refuses_unbacked_nonowner
+#assert_axioms recKDelegateEdgeOnly_refuses_owner_self_grant
 #assert_axioms owner_admitted_forger_refused_same_target
 
-#assert_axioms recKDelegateOwned_admits_self
-#assert_axioms recKDelegateOwned_cross_gated
+#assert_axioms recKDelegate_admits_self
+#assert_axioms recKDelegate_cross_gated
 #assert_axioms confersEdgeTo_delegatedCapTo
-#assert_axioms recKDelegateOwned_frame
-#assert_axioms recKDelegateOwned_grants
-#assert_axioms recKDelegateOwned_execGraph
-#assert_axioms recKDelegateOwned_grounds
+#assert_axioms recKDelegate_frame
+#assert_axioms recKDelegate_grants
+#assert_axioms recKDelegate_step_execGraph
+#assert_axioms recKDelegate_grounds
 #assert_axioms confRights_node_top
 #assert_axioms self_cap_dominates
-#assert_axioms recKDelegateOwned_self_non_amplifying
-#assert_axioms recKDelegateOwnedAtten_self_non_amplifying
+#assert_axioms recKDelegate_self_non_amplifying
+#assert_axioms recKDelegateAtten_self_non_amplifying
 
 /-! ## §7 — Axiom-hygiene tripwires. -/
 
-#assert_axioms recKDelegate_frame
-#assert_axioms recKDelegate_grants
 #assert_axioms recKDelegate_copy_non_amplifying
 #assert_axioms recKRevokeTarget_frame
 #assert_axioms grant_conferring_execGraph
 #assert_axioms recKDelegate_execGraph
+#assert_axioms recKDelegate_genAct
 #assert_axioms recKRevokeTarget_execGraph
-#assert_axioms recKDelegate_grounds
 #assert_axioms confersEdgeTo_unique
 #assert_axioms specCap_eq_iff_target
 #assert_axioms heldCapTo_mem
@@ -913,15 +933,35 @@ def rsEndpointWrite : RecordKernelState :=
 self-grant is the exact turn Rust ADMITS and the edge-only Lean gate REJECTED. -/
 
 -- FALSIFIER (RED→GREEN): cell 0's FIRST self-grant (`t = delegator = 0`) from an EMPTY slot is ADMITTED.
-#guard (recKDelegateOwned rs0 0 1 0).isSome            -- true — the completed gate admits the self-grant
+#guard (recKDelegate rs0 0 1 0).isSome            -- true — the completed gate admits the self-grant
 -- MUTATION CANARY: the edge-only gate REJECTED the very same first self-grant (the closed liveness gap).
-#guard (recKDelegate rs0 0 1 0).isSome == false        -- false — `[].any … = false ⇒ none`
+#guard (recKDelegateEdgeOnly rs0 0 1 0).isSome == false        -- false — `[].any … = false ⇒ none`
 -- NO over-admission: a NON-self grant (`t = 9 ≠ 0`) with no held edge is STILL rejected.
-#guard (recKDelegateOwned rs0 0 1 9).isSome == false   -- false — the self disjunct opened nothing cross
+#guard (recKDelegate rs0 0 1 9).isSome == false   -- false — the self disjunct opened nothing cross
 -- After the self-grant, recipient 1 holds the full `node 0` self-cap (`⊤` over cell 0).
-#guard (((recKDelegateOwned rs0 0 1 0).map (fun k => k.caps 1)).getD []) == [Cap.node 0]
--- CROSS parity: a delegator holding a real `node 7` edge delegates exactly as `recKDelegate` did.
-#guard (recKDelegateOwned rsCap 0 1 7).isSome           -- true — held edge ⇒ admitted (cross path)
-#guard (recKDelegateOwned rsCap 5 1 9).isSome == false  -- false — 5 holds no edge to 9 and 9 ≠ 5
+#guard (((recKDelegate rs0 0 1 0).map (fun k => k.caps 1)).getD []) == [Cap.node 0]
+-- CROSS parity: a delegator holding a real `node 7` edge delegates exactly as the pre-cutover
+-- gate did — SAME `Option`, hence same post-state and same granted cap (`recKDelegate_cross_eq`
+-- proves this for every `t ≠ delegator`; these are two executable instances of it).
+#guard (recKDelegate rsCap 0 1 7).isSome           -- true — held edge ⇒ admitted (cross path)
+#guard (recKDelegate rsCap 5 1 9).isSome == false  -- false — 5 holds no edge to 9 and 9 ≠ 5
+#guard ((recKDelegate rsCap 0 1 7).map (fun k => k.caps 1))
+    == ((recKDelegateEdgeOnly rsCap 0 1 7).map (fun k => k.caps 1))
+#guard ((recKDelegate rsEndpointWrite 0 1 7).map (fun k => k.caps 1))
+    == ((recKDelegateEdgeOnly rsEndpointWrite 0 1 7).map (fun k => k.caps 1))
+
+/-! ### §8.ATTEN — the attenuating arm carries the SAME two poles.
+
+The self path hands out the implicit `⊤` self-cap NARROWED to `keep` (never the bare `⊤`), and the
+forgery pole is refused identically. -/
+
+-- The owner's first ATTENUATING self-grant is admitted, and hands out the NARROWED self-cap.
+#guard (recKDelegateAtten rs0 0 1 0 [Auth.read]).isSome
+#guard (((recKDelegateAtten rs0 0 1 0 [Auth.read]).map (fun k => k.caps 1)).getD [])
+    == [attenuate [Auth.read] (Cap.node 0)]
+-- FORGERY POLE, same shape and same target `0`, only the delegator varies: REFUSED.
+#guard (recKDelegateAtten rs0 1 2 0 [Auth.read]).isSome == false
+-- And a cross grant with no held edge is still refused.
+#guard (recKDelegateAtten rs0 0 1 9 [Auth.read]).isSome == false
 
 end Dregg2.Exec

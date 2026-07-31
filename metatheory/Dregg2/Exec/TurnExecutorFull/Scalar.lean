@@ -458,12 +458,16 @@ theorem execFull_balance_authorized (s s' : RecChainedState) (a : Action)
     (h : execFull s (.balance a) = some s') : authorizedB s.kernel.caps a.move = true :=
   (recCexec_attests (by simpa [execFull] using h)).2.1
 
-/-- **Delegation grounds.** A committed delegation HOLDS the Granovetter source edge
-`delegator ⟶ ⟨t,()⟩` on `execGraph` (only connectivity begets connectivity), via
-`recKDelegate_grounds`. -/
+/-- **Delegation grounds.** A committed delegation is GROUNDED: either the delegator owns the cap
+target (`t = del` — the base case, abstractly `Spec.Origin`) or it HOLDS the Granovetter source edge
+`delegator ⟶ ⟨t,()⟩` on `execGraph` (only connectivity begets connectivity). Via
+`recKDelegate_grounds`, which widened to this disjunction with the 2026-07-31 cutover — a committed
+delegation over a cell the delegator does NOT own still forces the right disjunct
+(`recKDelegate_cross_gated`). -/
 theorem execFull_delegate_grounds (s s' : RecChainedState) (del rec t : CellId)
     (h : execFull s (.delegate del rec t) = some s') :
-    Dregg2.Spec.execGraph s.kernel.caps del (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
+    t = del ∨
+      Dregg2.Spec.execGraph s.kernel.caps del (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
   simp only [execFull, recCDelegate] at h
   cases hd : recKDelegate s.kernel del rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -507,18 +511,15 @@ theorem execFull_delegate_addEdge (s s' : RecChainedState) (del rec t : CellId)
   | none => rw [hd] at h; exact absurd h (by simp)
   | some k' =>
       rw [hd] at h; simp only [Option.some.injEq] at h; subst h
-      -- `recKDelegate` commits ⟹ it copied the held cap that witnesses connectivity to `t`.
-      unfold recKDelegate at hd
-      by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
-      · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
-        exact recKDelegate_execGraph s.kernel.caps del rec t hg
-      · rw [if_neg hg] at hd; exact absurd hd (by simp)
+      -- Both commit paths add the SAME single edge, so this reads straight off the committed step.
+      exact recKDelegate_step_execGraph s.kernel k' del rec t hd
 
-/-- **Delegation grants the copied held cap.** The scalar executor's concrete cap edit is
-the same non-amplifying held-cap copy as `recKDelegate`, not a fresh control cap. -/
+/-- **Delegation grants the delegated cap.** The scalar executor's concrete cap edit is the same
+non-amplifying `delegatedCapTo` as `recKDelegate` — the held-cap copy on the cross path, the
+implicit self-cap on the self path — not a fresh control cap over a cell the delegator lacks. -/
 theorem execFull_delegate_grants_held_cap (s s' : RecChainedState) (del rec t : CellId)
     (h : execFull s (.delegate del rec t) = some s') :
-    heldCapTo s.kernel.caps del t ∈ s'.kernel.caps rec := by
+    delegatedCapTo s.kernel.caps del t ∈ s'.kernel.caps rec := by
   simp only [execFull, recCDelegate] at h
   cases hd : recKDelegate s.kernel del rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -615,9 +616,14 @@ def fullActionInv (s : RecChainedState) (fa : FullAction) (s' : RecChainedState)
   -- KindObligation: the kind-specific authority/graph/disclosure content.
   (match fa with
    | .balance a          => authorizedB s.kernel.caps a.move = true
+   -- ⚑ GROUNDING is the owner-OR-connectivity disjunction as of the 2026-07-31 cutover: the
+   -- delegator owns the cap target (`t = del`, `Spec.Origin` — the base case a first grant needs)
+   -- or it holds the source edge (`Spec.Endow.holds_source`). The right disjunct is still FORCED
+   -- for every `t ≠ del` (`recKDelegate_cross_gated`), so nothing about a cross-cell grant weakened.
    | .delegate del rec t =>
-       Dregg2.Spec.execGraph s.kernel.caps del
-         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
+       (t = del ∨
+         Dregg2.Spec.execGraph s.kernel.caps del
+           (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights)) ∧
        Dregg2.Spec.execGraph s'.kernel.caps
          = Dregg2.Spec.addEdge (Dregg2.Spec.execGraph s.kernel.caps) rec ⟨t, ()⟩
    | .revoke holder t    =>

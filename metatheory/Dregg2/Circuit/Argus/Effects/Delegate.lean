@@ -134,7 +134,9 @@ delegator's CURRENT held cap — exactly `recKDelegate`'s `grant k.caps rec (hel
 (`AuthTurn.lean:82`): the delegator already holds a cap conferring an edge to `t`. This is the in-band
 Boolean form of the Granovetter connectivity premise ("only connectivity begets connectivity"). -/
 def delegateGuardB (del t : Label) (k : RecordKernelState) : Bool :=
-  (k.caps del).any (fun cap => confersEdgeTo t cap)
+  -- ⚑ OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover: the delegator owns the cap target
+  -- (`Spec.Origin`, the base case) or holds a `t`-conferring cap. Mirrors `recKDelegate`'s `if`.
+  (t == del) || (k.caps del).any (fun cap => confersEdgeTo t cap)
 
 /-- **The delegate effect as an IR term: gate, then the cap-graph write.** A single `setCaps` move on the
 verified post-`caps` map `recDelegateCaps k.caps del rec t` (= `grant k.caps rec (heldCapTo k.caps del t)`).
@@ -144,6 +146,16 @@ def delegateStmt (del rec t : Label) : RecStmt :=
     (RecStmt.setCaps (fun k => recDelegateCaps k.caps del rec t))
 
 /-! ## §2 — The cornerstone: `interp` of the delegate term IS the kernel step `recKDelegate`. -/
+
+/-- **`delegateGuardB_iff`** — the in-band `Bool` guard IS the kernel's `Prop` commit condition. The Bool
+side is `(t == del) || .any …` (what a circuit column can carry); the kernel `if` is the `Prop`
+disjunction `t = del ∨ … = true`. They are propositionally equal but NOT defeq, so the cornerstone
+below routes through this bridge rather than an `unfold`. -/
+theorem delegateGuardB_iff (del t : Label) (k : RecordKernelState) :
+    delegateGuardB del t k = true
+      ↔ (t = del ∨ (k.caps del).any (fun cap => confersEdgeTo t cap) = true) := by
+  unfold delegateGuardB
+  simp only [Bool.or_eq_true, beq_iff_eq]
 
 /-- **The cornerstone (cap graph).** `interp` of the delegate term IS the verified executor `recKDelegate`
 — the same partial function, by construction, exactly as the transfer/mint/burn/escrow cornerstones, now
@@ -159,14 +171,12 @@ theorem interp_delegateStmt_eq_recKDelegate (del rec t : Label) (k : RecordKerne
     -- `recDelegateCaps k.caps del rec t` = `grant k.caps rec (heldCapTo k.caps del t)` (definitional).
     rw [if_pos hg]
     simp only [Option.bind_some]
-    unfold delegateGuardB at hg
-    rw [if_pos hg]
+    rw [if_pos ((delegateGuardB_iff del t k).mp hg)]
     rfl
   · -- REJECT: the guard fails (`none`); the `bind` short-circuits ⇒ `none`. The kernel `if` also rejects.
     rw [if_neg hg]
     simp only [Option.bind_none]
-    unfold delegateGuardB at hg
-    rw [if_neg hg]
+    rw [if_neg (fun hc => hg ((delegateGuardB_iff del t k).mpr hc))]
 
 #assert_axioms interp_delegateStmt_eq_recKDelegate
 
@@ -193,7 +203,7 @@ theorem recKDelegate_installs_caps {k k' : RecordKernelState} {del rec t : Label
     (h : recKDelegate k del rec t = some k') :
     k'.caps = recDelegateCaps k.caps del rec t := by
   unfold recKDelegate at h
-  by_cases hg : (k.caps del).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = del ∨ (k.caps del).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
     -- `{ k with caps := grant … }.caps = grant … = recDelegateCaps k.caps del rec t` (definitional).
     rfl
@@ -307,8 +317,8 @@ holds by COPYING, not by an `Int` `checkLe` comparison (which is inapplicable: r
 unattenuated delegate, pinned so the "no `checkLe`" decision is witnessed, not asserted. -/
 theorem delegateStmt_non_amplifying (del rec t : Label) (k k' : RecordKernelState)
     (h : interp (delegateStmt del rec t) k = some k') :
-    heldCapTo k.caps del t ∈ k'.caps rec
-    ∧ confRights (heldCapTo k.caps del t) ≤ confRights (heldCapTo k.caps del t) := by
+    delegatedCapTo k.caps del t ∈ k'.caps rec
+    ∧ confRights (delegatedCapTo k.caps del t) ≤ confRights (delegatedCapTo k.caps del t) := by
   rw [interp_delegateStmt_eq_recKDelegate] at h
   exact ⟨recKDelegate_grants k k' del rec t h, le_rfl⟩
 

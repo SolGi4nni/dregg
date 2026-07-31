@@ -75,8 +75,8 @@ theorem delegate_refines_abstract_verb {P W : Type} [Dregg2.Laws.Verifiable P W]
     (hspec : AuthorityUnattenuated.DelegateSpec s del rec t s')
     (hadm : Admits (P := P) (W := W) adm w) :
     Fires (W := W)
-      (capGrantVerb adm ((s.kernel.caps del).any (fun cap => confersEdgeTo t cap))) w :=
-  capGrantVerb_fires adm _ w hadm hspec.1
+      (capGrantVerb adm ((t == del) || (s.kernel.caps del).any (fun cap => confersEdgeTo t cap))) w :=
+  capGrantVerb_fires adm _ w hadm (by rcases hspec.1 with h | h <;> simp [h])
 
 theorem delegate_preserves_product_validity {P W : Type} [Dregg2.Laws.Verifiable P W]
     (adm : Admission P) (w : W)
@@ -85,9 +85,9 @@ theorem delegate_preserves_product_validity {P W : Type} [Dregg2.Laws.Verifiable
     (hadm : Admits (P := P) (W := W) adm w)
     (fr : Product DreggValue DreggAuthority DreggEvidence DreggState)
     (hfr : ResourceAlgebra.valid
-      ((capGrantVerb adm ((s.kernel.caps del).any (fun cap => confersEdgeTo t cap))).pre ⊙ fr)) :
+      ((capGrantVerb adm ((t == del) || (s.kernel.caps del).any (fun cap => confersEdgeTo t cap))).pre ⊙ fr)) :
     ResourceAlgebra.valid
-      ((capGrantVerb adm ((s.kernel.caps del).any (fun cap => confersEdgeTo t cap))).post ⊙ fr) :=
+      ((capGrantVerb adm ((t == del) || (s.kernel.caps del).any (fun cap => confersEdgeTo t cap))).post ⊙ fr) :=
   kernel_meta_law _ w (delegate_refines_abstract_verb adm w s del rec t s' hspec hadm) fr hfr
 
 /-! ## §delegateAtten (attenuated grant — the attenuate shape). -/
@@ -102,8 +102,8 @@ theorem delegateAtten_refines_abstract_verb {P W : Type} [Dregg2.Laws.Verifiable
     (hspec : AuthorityAttenuation.DelegateAttenSpec s del rec t keep s')
     (hadm : Admits (P := P) (W := W) adm w) :
     Fires (W := W)
-      (capGrantVerb adm ((s.kernel.caps del).any (fun cap => confersEdgeTo t cap))) w :=
-  capGrantVerb_fires adm _ w hadm hspec.1
+      (capGrantVerb adm ((t == del) || (s.kernel.caps del).any (fun cap => confersEdgeTo t cap))) w :=
+  capGrantVerb_fires adm _ w hadm (by rcases hspec.1 with h | h <;> simp [h])
 
 /-! ## §refreshDelegation. -/
 

@@ -109,7 +109,17 @@ def delegateAttenStep (k : RecordKernelState) (a : DelegateArgs) : Option Record
 already holds a cap conferring an edge to `target`. This is the EXACT gate `recKDelegateAtten` checks,
 so `auth_gated` is provable directly off the committed step. -/
 def delegateGateB (k : RecordKernelState) (a : DelegateArgs) : Bool :=
-  (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap)
+  (a.target == a.delegator) || (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap)
+
+/-- **`delegateGateB_iff`** — the `Bool` handler gate IS the kernel's `Prop` commit condition
+(owner-OR-connectivity). Propositionally equal, not defeq; consumers that case-split on the kernel `if`
+route through this. -/
+theorem delegateGateB_iff (k : RecordKernelState) (a : DelegateArgs) :
+    delegateGateB k a = true
+      ↔ (a.target = a.delegator
+          ∨ (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true) := by
+  unfold delegateGateB
+  simp only [Bool.or_eq_true, beq_iff_eq]
 
 /-- **`delegateAttenH` — the registered attenuated-delegation handler.** `step` routes through
 `recKDelegateAtten` (granted `⊆` held); `conserves` is the `caps`-only frame (`delta = 0`); `auth_gated`
@@ -126,21 +136,27 @@ def delegateAttenH : EffectHandler DelegateArgs where
     unfold delegateAttenStep recKDelegateAtten at h
     show delegateGateB s a = true
     unfold delegateGateB
-    by_cases hg : (s.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
-    · exact hg
+    by_cases hg : a.target = a.delegator ∨ (s.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
+    · -- ⚑ the gate is OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover; the `Bool` gate mirrors it.
+      rcases hg with hself | hany
+      · simp [hself]
+      · simp [hany]
     · rw [if_neg hg] at h; exact absurd h (by simp)
   admission_gated := by
     intro s a s' h
     unfold delegateAttenStep recKDelegateAtten at h
     show delegateGateB s a = true
     unfold delegateGateB
-    by_cases hg : (s.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
-    · exact hg
+    by_cases hg : a.target = a.delegator ∨ (s.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
+    · -- ⚑ the gate is OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover; the `Bool` gate mirrors it.
+      rcases hg with hself | hany
+      · simp [hself]
+      · simp [hany]
     · rw [if_neg hg] at h; exact absurd h (by simp)
   conserves := by
     intro s a s' h b
     unfold delegateAttenStep recKDelegateAtten at h
-    by_cases hg : (s.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
+    by_cases hg : a.target = a.delegator ∨ (s.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
     · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
       rw [capsOnly_recTotalAsset_fixed]; ring
     · rw [if_neg hg] at h; exact absurd h (by simp)
@@ -150,8 +166,8 @@ recipient confers REAL rights `⊆` the delegator's held cap to `t`: `confRights
 confRights held` over the genuine `ExecAuth` lattice (`recKDelegateAtten_non_amplifying`). Granted
 authority cannot exceed held — the rights-amplification hole is closed BY CONSTRUCTION. -/
 theorem delegateAttenH_non_amplifying (k : RecordKernelState) (a : DelegateArgs) :
-    confRights (attenuate a.keep (heldCapTo k.caps a.delegator a.target))
-      ≤ confRights (heldCapTo k.caps a.delegator a.target) :=
+    confRights (attenuate a.keep (delegatedCapTo k.caps a.delegator a.target))
+      ≤ confRights (delegatedCapTo k.caps a.delegator a.target) :=
   recKDelegateAtten_non_amplifying k.caps a.delegator a.target a.keep
 
 /-- The full-authority delegations (`delegateA`/`introduceA`/`validateHandoffA`) ARE `delegateAttenH`
@@ -343,8 +359,8 @@ REAL rights `⊆` the introducer's held cap to `target`: the cert mask cannot am
 `HandoffValid.nonAmplifying`), discharged off `delegateAttenH_non_amplifying` for the cert's `keep`. -/
 theorem validateHandoffCert_non_amplifying (k : RecordKernelState)
     (cert : Dregg2.Exec.CapTP.HandoffCert CellId (List Auth)) (target : CellId) :
-    confRights (attenuate (certMask cert) (heldCapTo k.caps cert.introducer target))
-      ≤ confRights (heldCapTo k.caps cert.introducer target) :=
+    confRights (attenuate (certMask cert) (delegatedCapTo k.caps cert.introducer target))
+      ≤ confRights (delegatedCapTo k.caps cert.introducer target) :=
   recKDelegateAtten_non_amplifying k.caps cert.introducer target (certMask cert)
 
 /-- Build a closed attenuated-delegate effect (tag `3`; explicit narrower `keep`). -/

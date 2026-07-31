@@ -268,11 +268,11 @@ handoff (`delegateAttenA`) installs into B — the NARROWED grant, NOT the unatt
 conferred rights are `⊆` the held cap's (`attenuate_confRights_le`), the cap-lattice realization of
 the §6 `grantedPerm ≤ heldPerm` bound. -/
 def HandoffCert2.installedCap (s : RecChainedState) (c : HandoffCert2) : Cap :=
-  attenuate c.keep (heldCapTo s.kernel.caps c.introducer c.targetCell)
+  attenuate c.keep (delegatedCapTo s.kernel.caps c.introducer c.targetCell)
 
 /-- The introducer's held `targetCell`-cap (the unattenuated source the grant attenuates). -/
 def HandoffCert2.heldCap (s : RecChainedState) (c : HandoffCert2) : Cap :=
-  heldCapTo s.kernel.caps c.introducer c.targetCell
+  delegatedCapTo s.kernel.caps c.introducer c.targetCell
 
 /-- **`handoff_installs_exactly` — THEOREM (1).** Given a validated certificate (`validateHandoff2
 = true`) and the Granovetter connectivity premise (`DelegateAttenGuard s introducer targetCell` — A
@@ -302,7 +302,7 @@ theorem handoff_installs_exactly
   obtain ⟨s', hspec⟩ : ∃ s', DelegateAttenSpec s c.introducer c.recipient c.targetCell c.keep s' := by
     refine ⟨{ kernel := { s.kernel with
                 caps := grant s.kernel.caps c.recipient
-                          (attenuate c.keep (heldCapTo s.kernel.caps c.introducer c.targetCell)) }
+                          (attenuate c.keep (delegatedCapTo s.kernel.caps c.introducer c.targetCell)) }
             , log := authReceipt c.introducer :: s.log }, ?_⟩
     exact ⟨hconn, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
       rfl, rfl, rfl, rfl⟩
@@ -324,13 +324,21 @@ theorem handoff_installs_exactly
 `targetCell`-conferring cap (the Granovetter premise FAILS), then even a perfectly-signed,
 non-amplifying certificate cannot drive the attenuating handoff executor to commit:
 `delegateAttenA` returns `none`. Manufacturing a cross-vat edge from a key alone is rejected by
-construction — the signature attests intent, but connectivity must already exist. -/
+construction — the signature attests intent, but connectivity must already exist.
+
+⚑ The `targetCell ≠ introducer` hypothesis is the 2026-07-31 cutover made explicit, and it is the
+right shape here: this theorem is about forging a CROSS-VAT edge. A vat handing out authority over
+ITS OWN cell forges nothing — that is `Spec.Origin`, and it is the one case a signature genuinely
+does authorize on its own. Stated without the hypothesis the theorem would now be FALSE. -/
 theorem handoff_rejects_unconnected (s : RecChainedState) (c : HandoffCert2)
+    (hne : c.targetCell ≠ c.introducer)
     (hbad : (s.kernel.caps c.introducer).any (fun cap => confersEdgeTo c.targetCell cap) = false) :
     execFullA s (.delegateAttenA c.introducer c.recipient c.targetCell c.keep) = none := by
   refine delegateAtten_rejects_ungrounded s c.introducer c.recipient c.targetCell c.keep ?_
   unfold DelegateAttenGuard
-  rw [hbad]; exact Bool.false_ne_true
+  rintro (hc | hc)
+  · exact hne hc
+  · rw [hbad] at hc; exact Bool.noConfusion hc
 
 /-! ## §5 — THEOREM (2): unforgeability at n>1.
 

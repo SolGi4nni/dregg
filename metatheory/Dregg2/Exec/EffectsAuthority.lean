@@ -176,17 +176,19 @@ theorem introduce_addEdge {s s' : RecChainedState} {introducer recipient target 
   subst hs'
   -- `recKDelegate` commits ⟹ it took the `grant` branch.
   unfold recKDelegate at hd
-  by_cases hg : (s.kernel.caps introducer).any (fun cap => confersEdgeTo target cap) = true
+  by_cases hg : target = introducer ∨ (s.kernel.caps introducer).any (fun cap => confersEdgeTo target cap) = true
   · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
     exact recKDelegate_execGraph s.kernel.caps introducer recipient target hg
   · rw [if_neg hg] at hd; exact absurd hd (by simp)
 
-/-- **(c) `introduce_authorized`.** A committed introduction HOLDS the Granovetter source
-edge: the introducer holds the Spec edge `introducer ⟶ ⟨target,()⟩` on `execGraph` (only
-connectivity begets connectivity), via `recKDelegate_grounds`. -/
+/-- **(c) `introduce_authorized`.** A committed introduction is GROUNDED: the introducer OWNS the
+target (`target = introducer`, the `Spec.Origin` base case) or holds the Spec source edge
+`introducer ⟶ ⟨target,()⟩` on `execGraph` (only connectivity begets connectivity), via
+`recKDelegate_grounds`. The right disjunct is still FORCED whenever `target ≠ introducer`. -/
 theorem introduce_authorized {s s' : RecChainedState} {introducer recipient target : Label}
     (h : introduceStep s introducer recipient target = some s') :
-    execGraph s.kernel.caps introducer (⟨target, ()⟩ : Spec.Cap Label ExecRights) := by
+    target = introducer ∨
+      execGraph s.kernel.caps introducer (⟨target, ()⟩ : Spec.Cap Label ExecRights) := by
   obtain ⟨k', hd, _⟩ := introduceStep_factors h
   exact recKDelegate_grounds s.kernel k' introducer recipient target hd
 
@@ -218,15 +220,18 @@ theorem introduce_non_amplifying (held : ECap) (keep : List Auth) :
   Dregg2.Exec.attenuate_subset keep held
 
 /-- **`introduce_grounded_and_non_amplifying` — the FULL Granovetter discipline.** A
-committed introduction (a) GROUNDS in held connectivity — the introducer already held the Spec source
-edge `introducer ⟶ ⟨target,()⟩` (no reachability conjured) — AND (b) the rights it confers are a
-genuine attenuation of a held cap (`IsNonAmplifying held (attenuate keep held)`). Both the
-connectivity premise and the REAL rights non-amplification, in one statement. -/
+committed introduction (a) is GROUNDED — the introducer OWNS the target (`Spec.Origin`, where the
+authority conferred is authority over the introducer's own cell) or already held the Spec source
+edge `introducer ⟶ ⟨target,()⟩`, so no reachability into a THIRD party's cell is conjured — AND
+(b) the rights it confers are a genuine attenuation of a held cap
+(`IsNonAmplifying held (attenuate keep held)`). Both the grounding premise and the REAL rights
+non-amplification, in one statement. -/
 theorem introduce_grounded_and_non_amplifying
     {s s' : RecChainedState} {introducer recipient target : Label}
     (h : introduceStep s introducer recipient target = some s')
     (held : ECap) (keep : List Auth) :
-    execGraph s.kernel.caps introducer (⟨target, ()⟩ : Spec.Cap Label ExecRights)
+    (target = introducer ∨
+      execGraph s.kernel.caps introducer (⟨target, ()⟩ : Spec.Cap Label ExecRights))
     ∧ IsNonAmplifying held (attenuate keep held) :=
   ⟨introduce_authorized h, introduce_non_amplifying held keep⟩
 

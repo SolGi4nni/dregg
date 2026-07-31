@@ -1222,8 +1222,10 @@ private theorem attenuate_allAuths_id (c : Cap) : attenuate allAuths c = c := by
 private theorem recKDelegateAtten_allAuths_eq_recKDelegate (k : RecordKernelState) (d r t : CellId) :
     recKDelegateAtten k d r t allAuths = recKDelegate k d r t := by
   unfold recKDelegateAtten recKDelegate
-  by_cases hg : (k.caps d).any (fun cap => confersEdgeTo t cap) = true
-  · rw [if_pos hg, if_pos hg, attenuate_allAuths_id (heldCapTo k.caps d t)]
+  by_cases hg : t = d ∨ (k.caps d).any (fun cap => confersEdgeTo t cap) = true
+  · rw [if_pos hg, if_pos hg]
+    unfold delegatedAttenCapTo
+    rw [attenuate_allAuths_id (delegatedCapTo k.caps d t)]
   · rw [if_neg hg, if_neg hg]
 
 theorem handler_refines_execFullA_delegate (s s' : RecChainedState) (del rec t : CellId)
@@ -1234,7 +1236,7 @@ theorem handler_refines_execFullA_delegate (s s' : RecChainedState) (del rec t :
   change delegateAttenStep s.kernel
     { delegator := del, recipient := rec, target := t, keep := allAuths } = some s'.kernel at hstep
   simp only [delegateAttenStep] at hstep
-  by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
   · have hk : recKDelegate s.kernel del rec t = some s'.kernel := by
       rw [← recKDelegateAtten_allAuths_eq_recKDelegate, hstep]
     refine ⟨{ kernel := s'.kernel, log := authReceipt del :: s.log }, ?_, rfl⟩
@@ -1251,7 +1253,7 @@ theorem handler_refines_execFullA_delegateAtten (s s' : RecChainedState) (del re
   change delegateAttenStep s.kernel
     { delegator := del, recipient := rec, target := t, keep := keep } = some s'.kernel at hstep
   simp only [delegateAttenStep] at hstep
-  by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
   · refine ⟨{ kernel := s'.kernel, log := authReceipt del :: s.log }, ?_, rfl⟩
     show recCDelegateAtten s del rec t keep = _
     unfold recCDelegateAtten
@@ -1266,7 +1268,7 @@ theorem handler_refines_execFullA_introduce (s s' : RecChainedState) (intro rec 
   change delegateAttenStep s.kernel
     { delegator := intro, recipient := rec, target := t, keep := allAuths } = some s'.kernel at hstep
   simp only [delegateAttenStep] at hstep
-  by_cases hg : (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = intro ∨ (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
   · have hk : recKDelegate s.kernel intro rec t = some s'.kernel := by
       rw [← recKDelegateAtten_allAuths_eq_recKDelegate, hstep]
     refine ⟨{ kernel := s'.kernel, log := authReceipt intro :: s.log }, ?_, rfl⟩
@@ -1297,8 +1299,8 @@ unconditional fact (`recKDelegateAtten_non_amplifying`, what `authNonAmpFloor.ga
 the refinement carries NO `hamp` hypothesis: the non-amp is internal, not a caller obligation. -/
 private theorem delegateAttenA_nonAmp_off_commit {s s' : RecChainedState} {del rec t : CellId}
     {keep : List Auth} (_h : execHandlerOne (.delegateAttenA del rec t keep) s = some s') :
-    confRights (attenuate keep (heldCapTo s.kernel.caps del t))
-      ≤ confRights (heldCapTo s.kernel.caps del t) :=
+    confRights (attenuate keep (delegatedCapTo s.kernel.caps del t))
+      ≤ confRights (delegatedCapTo s.kernel.caps del t) :=
   recKDelegateAtten_non_amplifying s.kernel.caps del t keep
 
 /-- **BEFORE (the side-hyp version).** A delegateAtten refinement reporting non-amplification, with the
@@ -1307,12 +1309,12 @@ proof never uses `hamp` other than to return it — the witness that `hamp` is a
 version sheds. -/
 theorem handler_refines_execFullA_delegateAtten_nonAmp_weak (s s' : RecChainedState)
     (del rec t : CellId) (keep : List Auth)
-    (hamp : confRights (attenuate keep (heldCapTo s.kernel.caps del t))
-              ≤ confRights (heldCapTo s.kernel.caps del t))
+    (hamp : confRights (attenuate keep (delegatedCapTo s.kernel.caps del t))
+              ≤ confRights (delegatedCapTo s.kernel.caps del t))
     (h : execHandlerOne (.delegateAttenA del rec t keep) s = some s') :
     (∃ s'', execFullA s (.delegateAttenA del rec t keep) = some s'' ∧ s''.kernel = s'.kernel)
-      ∧ confRights (attenuate keep (heldCapTo s.kernel.caps del t))
-          ≤ confRights (heldCapTo s.kernel.caps del t) :=
+      ∧ confRights (attenuate keep (delegatedCapTo s.kernel.caps del t))
+          ≤ confRights (delegatedCapTo s.kernel.caps del t) :=
   ⟨handler_refines_execFullA_delegateAtten s s' del rec t keep h, hamp⟩
 
 /-- **AFTER (the side-hyp SHED).** The SAME conclusion — kernel-agreement AND the non-amplification
@@ -1324,8 +1326,8 @@ theorem handler_refines_execFullA_delegateAtten_nonAmp (s s' : RecChainedState)
     (del rec t : CellId) (keep : List Auth)
     (h : execHandlerOne (.delegateAttenA del rec t keep) s = some s') :
     (∃ s'', execFullA s (.delegateAttenA del rec t keep) = some s'' ∧ s''.kernel = s'.kernel)
-      ∧ confRights (attenuate keep (heldCapTo s.kernel.caps del t))
-          ≤ confRights (heldCapTo s.kernel.caps del t) :=
+      ∧ confRights (attenuate keep (delegatedCapTo s.kernel.caps del t))
+          ≤ confRights (delegatedCapTo s.kernel.caps del t) :=
   ⟨handler_refines_execFullA_delegateAtten s s' del rec t keep h,
    delegateAttenA_nonAmp_off_commit h⟩
 
@@ -1336,8 +1338,8 @@ allAuths held) ≤ confRights held` (non-amp holds for ANY keep). -/
 theorem handler_refines_execFullA_introduce_nonAmp (s s' : RecChainedState) (intro rec t : CellId)
     (h : execHandlerOne (.introduceA intro rec t) s = some s') :
     (∃ s'', execFullA s (.introduceA intro rec t) = some s'' ∧ s''.kernel = s'.kernel)
-      ∧ confRights (attenuate Handlers.Authority.allAuths (heldCapTo s.kernel.caps intro t))
-          ≤ confRights (heldCapTo s.kernel.caps intro t) := by
+      ∧ confRights (attenuate Handlers.Authority.allAuths (delegatedCapTo s.kernel.caps intro t))
+          ≤ confRights (delegatedCapTo s.kernel.caps intro t) := by
   exact ⟨handler_refines_execFullA_introduce s s' intro rec t h,
     recKDelegateAtten_non_amplifying s.kernel.caps intro t Handlers.Authority.allAuths⟩
 

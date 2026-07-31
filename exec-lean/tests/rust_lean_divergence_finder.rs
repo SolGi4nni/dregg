@@ -326,14 +326,22 @@ fn build_corpus() -> Vec<CorpusCase> {
             ledger,
         });
     }
-    // GrantCapability NON-VACUITY TOOTH: a self-grant on a cell WITHOUT a self-cap. apply.rs still
-    // commits (the self-grant path skips the c-list lookup), but the verified `recKDelegate` gate
-    // REJECTS (no `confersEdgeTo self` edge in the empty c-list) — a SAFE-direction model
-    // difference (the verified delegate gate insists the delegator HOLD the edge, even for a
-    // self-grant). Pins the gate as genuinely two-sided: self-cap ⇒ commit, no-cap ⇒ reject.
-    case!("GrantCapability/no-cap", 100, 100, |a, _b| {
+    // GrantCapability NON-VACUITY TOOTH (⚑ RE-POINTED 2026-07-31 by the owner-endowment cutover).
+    // It used to be a self-grant from an EMPTY c-list, where apply.rs committed and the verified
+    // `recKDelegate` REJECTED — and the tooth measured the gate's two-sidedness by that
+    // DISAGREEMENT. The kernel now carries the owner disjunct, so that case AGREES (both commit)
+    // and disagreement can no longer measure anything. The two-sidedness is now measured where it
+    // actually lives: the VERIFIED gate's own commit bit, over a shape it must REFUSE.
+    //
+    // This is that shape: a CROSS-CELL grant (`cap.target = b ≠ from = a`) where `a` holds NO edge
+    // to `b`. The Granovetter premise fails and the self disjunct does not apply
+    // (`recKDelegate_cross_gated` / `recKDelegate_refuses_unbacked_nonowner`), so the verified gate
+    // REJECTS — and apply.rs rejects too (it runs the c-list lookup on the non-self path). They
+    // AGREE on the refusal, which is the point: agreement on BOTH a commit and a refusal.
+    case!("GrantCapability/cross-no-edge", 100, 100, |a, b| {
+        let _ = a;
         let cap = dregg_cell::CapabilityRef {
-            target: a,
+            target: b,
             slot: 0,
             permissions: AuthRequired::None,
             breadstuff: None,
@@ -565,6 +573,10 @@ fn rust_lean_divergence_finder() {
 
     let mut per_effect: BTreeMap<String, EffectStat> = BTreeMap::new();
     let mut rows: Vec<String> = Vec::new();
+    // Per-case Lean commit bit, so the non-vacuity teeth can read the VERIFIED gate's own
+    // decision rather than inferring it from (dis)agreement with apply.rs.
+    let mut lean_commit_by_label: std::collections::HashMap<&'static str, Option<bool>> =
+        std::collections::HashMap::new();
     let mut total = 0usize;
     let mut comparable = 0usize;
     let mut diverged = 0usize;
@@ -615,6 +627,8 @@ fn rust_lean_divergence_finder() {
             }
             None => "GAP (no Lean model)".to_string(),
         };
+
+        lean_commit_by_label.insert(case.label, report.lean_committed);
 
         rows.push(format!(
             "| {} | {} | {} | lean={:?} | {} |",
@@ -692,34 +706,23 @@ fn rust_lean_divergence_finder() {
     // rejected by BOTH apply.rs ("missing spending proof") and the verified `noteSpendChainA`
     // (`noteSpendChainA_fails_without_proof`), so they AGREE. (The proof BYTES / STARK membership
     // stay the circuit's job; only the presence bit the commit decision turns on crosses.)
-    //   * `GrantCapability` — ⚑ **NOT a "safe-direction" difference. A KERNEL OVER-REFUSAL**, and
-    //     this entry called it safe until 2026-07-31. The verified `.delegate` routes to
-    //     `recKDelegate` (`metatheory/Dregg2/Exec/AuthTurn.lean:174`), gated on the delegator
-    //     HOLDING an edge to the cap target (`(caps from).any (confersEdgeTo t)`). dregg1's
-    //     `apply_grant_capability` SHORT-CIRCUITS a SELF-grant (`cap.target == from`) — it skips
-    //     the c-list lookup entirely, because a cell is the ORIGIN of authority over itself. So a
-    //     self-grant on a cell WITHOUT a self-cap commits in apply.rs (rust=true) and the verified
-    //     gate REJECTS (lean=false).
-    //
-    //     WHY "safe direction" was the wrong reading. Every deployed cell is minted with an EMPTY
-    //     c-list, so the kernel refuses the FIRST grant every cell ever makes; and no Lean rule
-    //     creates a first edge (`recKDelegate`/`recKDelegateAtten`/`introduceA` all require one,
-    //     `recKRevokeTarget` only removes), so `caps = fun _ => []` is a FIXPOINT of the modelled
-    //     authority calculus. Meanwhile the SIBLING gate `authorizedB` (`Dregg2/Exec/Kernel.lean:54`)
-    //     DOES carry the owner disjunct `turn.actor == turn.src`. The kernel is internally
-    //     inconsistent, not stricter.
-    //
-    //     WHAT IT COST. The characterization above was made while the Lean executor was a SHADOW.
-    //     When `GrantCapability` entered `producer_root_agreeing_effects`, the same difference
-    //     became an AUTHORITATIVE VETO — `dregg-node::deos_host_e2e` died with
-    //     `TurnError::LeanShadowVeto` on a door's self-grant. The owner-endowment SHAPE is now
-    //     fenced out of the covered set (`lean_shadow::first_unmodelled_authority_origin_effect`,
-    //     `exec-lean/tests/producer_owner_endowment_fence.rs`); the REPAIR is the owner disjunct in
-    //     `recKDelegate`, authored in Lean. This finder runs BELOW the coverage gate, so both
-    //     corpus cases still reach the FFI and the two-sided tooth below is unchanged.
-    //     The `GrantCapability/self-cap` case (a self-`node` cap held ⇒ verified COMMITS) is
-    //     the NON-VACUITY TOOTH proving the gate is two-sided, not vacuously-false.
-    let known_drift: &[&str] = &["Burn", "GrantCapability"];
+    // The OLD `GrantCapability` drift is now RESOLVED (not on the list). It was a KERNEL
+    // OVER-REFUSAL, not a safe-direction difference: the verified `.delegate` routed to
+    // `recKDelegate` gated SOLELY on the delegator holding an edge to the cap target, while
+    // dregg1's `apply_grant_capability` short-circuits a SELF-grant (`cap.target == from`) —
+    // a cell is the ORIGIN of authority over itself. Every deployed cell is minted with an EMPTY
+    // c-list, so the kernel refused the FIRST grant every cell ever made, and no Lean rule created
+    // a first edge, making `caps = fun _ => []` a FIXPOINT of the modelled authority calculus.
+    // CUT OVER 2026-07-31: `recKDelegate` carries the owner disjunct
+    // (`t = delegator ∨ (k.caps delegator).any …`, `metatheory/Dregg2/Exec/AuthTurn.lean`),
+    // grounded abstractly in `Spec.Origin` — the self-reference base case added to
+    // `Dregg2/Spec/Authority.lean`. Both corpus cases now AGREE, so the allowlist entry is GONE:
+    // leaving it would silently absorb the next real `GrantCapability` drift. The
+    // `GrantCapability/self-cap` case (a self-`node` cap HELD ⇒ verified COMMITS) remains the
+    // NON-VACUITY tooth proving the gate is two-sided, and the refusal pole (a cross-cell grant
+    // with no held edge ⇒ verified REFUSES) is pinned in
+    // `exec-lean/tests/producer_owner_endowment_cutover.rs`.
+    let known_drift: &[&str] = &["Burn"];
     let unexpected: Vec<(&String, &EffectStat)> = per_effect
         .iter()
         .filter(|(k, s)| s.diverge > 0 && !known_drift.contains(&k.as_str()))
@@ -801,21 +804,49 @@ fn rust_lean_divergence_finder() {
              missing-proof spend) with NO divergence (got agree={ns_agree} diverge={ns_diverge}). \
              The §8 spending-proof flag on the `nspend` wire arm closes the old NoteSpend drift."
         );
-        // GAP-SHRINK + NON-VACUITY TOOTH (GrantCapability/delegate gate): the verified
-        // `recKDelegate` requires the delegator to HOLD the cap-target edge. The corpus exercises
-        // BOTH sides — `GrantCapability/self-cap` (a self-`node` cap ⇒ verified COMMITS ⇒ agrees)
-        // AND `GrantCapability/no-cap` (empty c-list ⇒ verified REJECTS ⇒ diverges from apply.rs's
-        // self-grant short-circuit). So the gate must show ≥1 agree AND ≥1 diverge.
+        // ⚑ NON-VACUITY TOOTH (GrantCapability/delegate gate) — RE-POINTED 2026-07-31.
+        //
+        // The old form asserted `agree >= 1 && diverge >= 1`: it measured the gate's two-sidedness
+        // by DISAGREEMENT with apply.rs, which only worked while the kernel was WRONG about the
+        // owner endowment. The cutover made both deciders agree, so that form would now be
+        // unsatisfiable — and "loosen it to agree >= 1" would make it vacuous, since a gate that
+        // committed EVERYTHING would pass.
+        //
+        // So it is re-pointed at the thing that was always the real subject: the VERIFIED gate's
+        // own commit bit. It must COMMIT one shape and REFUSE another, and AGREE with apply.rs on
+        // both. Full agreement is now the expected state, so `diverge == 0` is asserted rather
+        // than tolerated — a fresh GrantCapability divergence is a regression, not a known drift.
         let (g_agree, g_diverge) = per_effect
             .get("GrantCapability")
             .map(|s| (s.agree, s.diverge))
             .unwrap_or((0, 0));
-        assert!(
-            g_agree >= 1 && g_diverge >= 1,
-            "GrantCapability delegate-gate non-vacuity TOOTH failed — got agree={g_agree} \
-             diverge={g_diverge}. The verified delegate gate must COMMIT a self-grant when the \
-             self-cap is held (GrantCapability/self-cap) and REJECT it when the c-list is empty \
-             (GrantCapability/no-cap); a gate that only ever agrees or only ever diverges is vacuous."
+        assert_eq!(
+            g_diverge, 0,
+            "GrantCapability must show NO divergence after the 2026-07-31 owner-endowment cutover \
+             (got agree={g_agree} diverge={g_diverge}). The verified `recKDelegate` gate is \
+             `t = delegator ∨ (caps delegator).any (confersEdgeTo t)`, which matches \
+             `apply_grant_capability` on BOTH its shapes. A divergence here is a regression."
+        );
+        let self_cap_commit = *lean_commit_by_label
+            .get("GrantCapability/self-cap")
+            .expect("the GrantCapability/self-cap corpus case must have run");
+        let cross_no_edge_commit = *lean_commit_by_label
+            .get("GrantCapability/cross-no-edge")
+            .expect("the GrantCapability/cross-no-edge corpus case must have run");
+        assert_eq!(
+            self_cap_commit,
+            Some(true),
+            "NON-VACUITY (the ADMIT pole): the verified delegate gate must COMMIT a grant over a \
+             cell the delegator owns. Got {self_cap_commit:?}."
+        );
+        assert_eq!(
+            cross_no_edge_commit,
+            Some(false),
+            "⚑ NON-VACUITY (the REFUSE pole): the verified delegate gate must REFUSE a CROSS-CELL \
+             grant whose delegator holds no edge to the cap target. Got {cross_no_edge_commit:?}. \
+             If this is Some(true), the owner disjunct is being read as a blanket admission of \
+             `GrantCapability` and the cutover admitted the forger along with the owner \
+             (`recKDelegate_cross_gated` is the Lean pole)."
         );
     }
 

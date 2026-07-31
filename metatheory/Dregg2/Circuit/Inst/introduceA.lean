@@ -112,7 +112,9 @@ def introduceGuardProp (s : RecChainedState) (args : IntroduceArgs) : Prop :=
   delegateGuard s args.intro args.t
 
 instance (s : RecChainedState) (args : IntroduceArgs) : Decidable (introduceGuardProp s args) := by
-  unfold introduceGuardProp delegateGuard; exact inferInstanceAs (Decidable (_ = _))
+  -- ⚑ the guard is the OWNER-OR-CONNECTIVITY disjunction as of the 2026-07-31 cutover; the
+  -- `propBit` column below therefore carries a WIDER bit for owner self-grants (flag day).
+  unfold introduceGuardProp delegateGuard; exact inferInstanceAs (Decidable (_ ∨ _))
 
 /-- The introduce guard's witness generator: lay the single `propBit` column at wire `0`. -/
 def introduceGuardEncode (s : RecChainedState) (args : IntroduceArgs) (_s' : RecChainedState) :

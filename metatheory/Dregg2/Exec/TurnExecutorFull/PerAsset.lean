@@ -2074,7 +2074,7 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
       | some k' =>
           rw [hd] at h; simp only [Option.some.injEq] at h; subst h
           unfold recKDelegate at hd
-          by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+          by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
           · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
             simp only [recTotalAsset]; ring
           · rw [if_neg hg] at hd; exact absurd hd (by simp)
@@ -2146,7 +2146,7 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
       | some k' =>
           rw [hd] at h; simp only [Option.some.injEq] at h; subst h
           unfold recKDelegate at hd
-          by_cases hg : (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
+          by_cases hg : t = intro ∨ (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
           · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
             simp only [recTotalAsset]; ring
           · rw [if_neg hg] at hd; exact absurd hd (by simp)
@@ -2758,12 +2758,15 @@ theorem execFullA_balance_dst_live (s s' : RecChainedState) (t : Turn) (a : Asse
   · rw [if_neg hadm] at h; exact absurd h (by simp)
 
 
-/-- **Per-asset delegation grounds.** A committed per-asset-turn delegation HOLDS the
-Granovetter source edge `delegator ⟶ ⟨t,()⟩` on `execGraph` (REUSES the same `recCDelegate`/
-`recKDelegate_grounds` the scalar executor does). -/
+/-- **Per-asset delegation grounds.** A committed per-asset-turn delegation is GROUNDED: the
+delegator owns the cap target (`t = del`, the `Spec.Origin` base case) or it HOLDS the Granovetter
+source edge `delegator ⟶ ⟨t,()⟩` on `execGraph` (REUSES the same `recCDelegate`/
+`recKDelegate_grounds` the scalar executor does). For every `t ≠ del` the right disjunct is still
+FORCED (`recKDelegate_cross_gated`). -/
 theorem execFullA_delegate_grounds (s s' : RecChainedState) (del rec t : CellId)
     (h : execFullA s (.delegate del rec t) = some s') :
-    Dregg2.Spec.execGraph s.kernel.caps del (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
+    t = del ∨
+      Dregg2.Spec.execGraph s.kernel.caps del (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
   simp only [execFullA, recCDelegate] at h
   cases hd : recKDelegate s.kernel del rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -2781,16 +2784,17 @@ theorem execFullA_delegate_addEdge (s s' : RecChainedState) (del rec t : CellId)
   | some k' =>
       rw [hd] at h; simp only [Option.some.injEq] at h; subst h
       unfold recKDelegate at hd
-      by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+      by_cases hg : t = del ∨ (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
       · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
         exact recKDelegate_execGraph s.kernel.caps del rec t hg
       · rw [if_neg hg] at hd; exact absurd hd (by simp)
 
-/-- **Per-asset delegation grants the copied held cap.** The concrete authority move copies
-the delegator's held witness cap; the abstract graph still sees exactly `addEdge`. -/
+/-- **Per-asset delegation grants the delegated cap.** The concrete authority move hands over
+`delegatedCapTo` — the delegator's held witness cap on the cross path, the implicit self-cap on the
+self path; the abstract graph still sees exactly `addEdge` either way. -/
 theorem execFullA_delegate_grants_held_cap (s s' : RecChainedState) (del rec t : CellId)
     (h : execFullA s (.delegate del rec t) = some s') :
-    heldCapTo s.kernel.caps del t ∈ s'.kernel.caps rec := by
+    delegatedCapTo s.kernel.caps del t ∈ s'.kernel.caps rec := by
   simp only [execFullA, recCDelegate] at h
   cases hd : recKDelegate s.kernel del rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -3071,7 +3075,8 @@ the proofs `Exec.EffectsAuthority` carries (which we cannot import, being downst
 edge `introducer ⟶ ⟨target,()⟩` (only connectivity begets connectivity). REUSES `recKDelegate_grounds`. -/
 theorem execFullA_introduceA_grounds (s s' : RecChainedState) (intro rec t : CellId)
     (h : execFullA s (.introduceA intro rec t) = some s') :
-    Dregg2.Spec.execGraph s.kernel.caps intro (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
+    t = intro ∨
+      Dregg2.Spec.execGraph s.kernel.caps intro (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
   simp only [execFullA, recCDelegate] at h
   cases hd : recKDelegate s.kernel intro rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -3090,7 +3095,7 @@ theorem execFullA_introduceA_addEdge (s s' : RecChainedState) (intro rec t : Cel
   | some k' =>
       rw [hd] at h; simp only [Option.some.injEq] at h; subst h
       unfold recKDelegate at hd
-      by_cases hg : (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
+      by_cases hg : t = intro ∨ (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
       · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
         exact recKDelegate_execGraph s.kernel.caps intro rec t hg
       · rw [if_neg hg] at hd; exact absurd hd (by simp)
@@ -3101,23 +3106,28 @@ held cap behind the connectivity edge: the introducer holds, in its real c-list,
 non-amplification reads (the seam `EffectsAuthority.exercise_holds_real_cap` opens). -/
 theorem execFullA_introduceA_holds_real_cap (s s' : RecChainedState) (intro rec t : CellId)
     (h : execFullA s (.introduceA intro rec t) = some s') :
-    ∃ held : Cap, held ∈ s.kernel.caps intro ∧ confersEdgeTo t held = true := by
+    t = intro ∨ ∃ held : Cap, held ∈ s.kernel.caps intro ∧ confersEdgeTo t held = true := by
   simp only [execFullA, recCDelegate] at h
   cases hd : recKDelegate s.kernel intro rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
   | some k' =>
       unfold recKDelegate at hd
-      by_cases hg : (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
-      · rw [List.any_eq_true] at hg
-        obtain ⟨held, hmem, hconf⟩ := hg
-        exact ⟨held, hmem, hconf⟩
+      by_cases hg : t = intro ∨ (s.kernel.caps intro).any (fun cap => confersEdgeTo t cap) = true
+      · -- ⚑ On the SELF path there is no real held cap to witness — a freshly minted cell's c-list
+        -- is EMPTY, which is the whole reason the base case exists. So the conclusion is the
+        -- disjunction, and the left arm is discharged by the owner equation itself.
+        rcases hg with hself | hany
+        · exact Or.inl hself
+        · rw [List.any_eq_true] at hany
+          obtain ⟨held, hmem, hconf⟩ := hany
+          exact Or.inr ⟨held, hmem, hconf⟩
       · rw [if_neg hg] at hd; exact absurd hd (by simp)
 
 /-- **`execFullA_introduceA_grants_held_cap`.** A committed introduce grants the recipient
 the concrete held cap selected by `heldCapTo`; no endpoint cap is widened into `node`/control. -/
 theorem execFullA_introduceA_grants_held_cap (s s' : RecChainedState) (intro rec t : CellId)
     (h : execFullA s (.introduceA intro rec t) = some s') :
-    heldCapTo s.kernel.caps intro t ∈ s'.kernel.caps rec := by
+    delegatedCapTo s.kernel.caps intro t ∈ s'.kernel.caps rec := by
   simp only [execFullA, recCDelegate] at h
   cases hd : recKDelegate s.kernel intro rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -3133,7 +3143,7 @@ over the exact cap it copied. Explicit narrowing belongs to `delegateAttenA`; th
 concrete copy branch rather than an uncarried attenuation payload. -/
 theorem execFullA_introduceA_non_amplifying (s s' : RecChainedState) (intro rec t : CellId)
     (_h : execFullA s (.introduceA intro rec t) = some s') :
-    IsNonAmplifyingF (heldCapTo s.kernel.caps intro t) (heldCapTo s.kernel.caps intro t) :=
+    IsNonAmplifyingF (delegatedCapTo s.kernel.caps intro t) (delegatedCapTo s.kernel.caps intro t) :=
   fun _ ha => ha
 
 /-- **`execFullA_attenuateA_non_amplifying` — THE HEADLINE (GENUINE).** Whatever cap the
@@ -3174,7 +3184,8 @@ source edge `del ⟶ ⟨t,()⟩` (the Granovetter connectivity premise — the d
 `t`). Reads `recKDelegateAtten_grounds`. -/
 theorem execFullA_delegateAttenA_grounds (s s' : RecChainedState) (del rec t : CellId) (keep : List Auth)
     (h : execFullA s (.delegateAttenA del rec t keep) = some s') :
-    Dregg2.Spec.execGraph s.kernel.caps del (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
+    t = del ∨
+      Dregg2.Spec.execGraph s.kernel.caps del (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
   simp only [execFullA, recCDelegateAtten] at h
   cases hd : recKDelegateAtten s.kernel del rec t keep with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -3185,7 +3196,7 @@ delegator's held cap to `t` ATTENUATED to `keep` (the executable `grant_with_exp
 attenuated permission). Reads `recKDelegateAtten_grants`. -/
 theorem execFullA_delegateAttenA_grants (s s' : RecChainedState) (del rec t : CellId) (keep : List Auth)
     (h : execFullA s (.delegateAttenA del rec t keep) = some s') :
-    attenuate keep (heldCapTo s.kernel.caps del t) ∈ s'.kernel.caps rec := by
+    delegatedAttenCapTo s.kernel.caps del t keep ∈ s'.kernel.caps rec := by
   simp only [execFullA, recCDelegateAtten] at h
   cases hd : recKDelegateAtten s.kernel del rec t keep with
   | none => rw [hd] at h; exact absurd h (by simp)
@@ -3199,9 +3210,10 @@ the recipient actually RECEIVES confers a `List Auth` SUBSET of the delegator's 
 Reads `attenuate_subset`. -/
 theorem execFullA_delegateAttenA_non_amplifying (s s' : RecChainedState) (del rec t : CellId) (keep : List Auth)
     (_h : execFullA s (.delegateAttenA del rec t keep) = some s') :
-    IsNonAmplifyingF (heldCapTo s.kernel.caps del t) (attenuate keep (heldCapTo s.kernel.caps del t)) := by
+    IsNonAmplifyingF (delegatedCapTo s.kernel.caps del t)
+      (attenuate keep (delegatedCapTo s.kernel.caps del t)) := by
   unfold IsNonAmplifyingF
-  exact attenuate_subset keep (heldCapTo s.kernel.caps del t)
+  exact attenuate_subset keep (delegatedCapTo s.kernel.caps del t)
 
 /-- **`execFullA_exerciseA_authorized`.** A committed exercise HOLDS the source edge:
 `actor ⟶ ⟨target,()⟩` on `execGraph` (the resolved c-list slot — only the holder may exercise). The
@@ -3303,8 +3315,11 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        -- EXISTENTIAL over the cap-table), NOT the `execGraph` `.any`-lookup it would be DEF-EQ to
        -- (`execGraph_eq_any := rfl`) — so this leg attests genuine connectivity, not a tautology.
        -- The graph-CHANGE leg keeps `execGraph` (the `addEdge` content, proven by funext/propext).
-       Dregg2.Spec.authConnects s.kernel.caps del
-         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
+       -- ⚑ OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover: the delegator owns the cap target
+       -- (`t = del`, `Spec.Origin` — the base case a cell's FIRST grant needs) or it is genuinely
+       -- connected. The right disjunct is still FORCED for every `t ≠ del`.
+       (t = del ∨ Dregg2.Spec.authConnects s.kernel.caps del
+         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights)) ∧
        Dregg2.Spec.execGraph s'.kernel.caps
          = Dregg2.Spec.addEdge (Dregg2.Spec.execGraph s.kernel.caps) rec ⟨t, ()⟩
    | .revoke holder t    =>
@@ -3353,12 +3368,12 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        -- (a) grounds in held connectivity, (b) edits the graph by `addEdge`, (c) grants the concrete
        -- held cap selected by the executable lookup, and (d) that actual copied cap is non-amplifying.
        -- Explicit attenuation is the separate `delegateAttenA` branch.
-       Dregg2.Spec.authConnects s.kernel.caps intro
-         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
+       (t = intro ∨ Dregg2.Spec.authConnects s.kernel.caps intro
+         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights)) ∧
        Dregg2.Spec.execGraph s'.kernel.caps
          = Dregg2.Spec.addEdge (Dregg2.Spec.execGraph s.kernel.caps) rec ⟨t, ()⟩ ∧
-       heldCapTo s.kernel.caps intro t ∈ s'.kernel.caps rec ∧
-       IsNonAmplifyingF (heldCapTo s.kernel.caps intro t) (heldCapTo s.kernel.caps intro t)
+       delegatedCapTo s.kernel.caps intro t ∈ s'.kernel.caps rec ∧
+       IsNonAmplifyingF (delegatedCapTo s.kernel.caps intro t) (delegatedCapTo s.kernel.caps intro t)
    | .attenuateA _ idx keep =>
        -- GENUINE non-amplification: narrowing to `keep` confers a `List Auth` SUBSET of ANY cap.
        ∀ c : Cap, IsNonAmplifyingF c (attenuate keep c)
@@ -3370,10 +3385,11 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        -- cap to `t` ATTENUATED to `keep` (the EXECUTED rights handoff — `recKDelegateAtten_grants`,
        -- NOT a static claim), (c) GENUINE rights non-amplification: that granted cap confers a
        -- `List Auth` SUBSET of the held cap (`is_attenuation(held, granted)`, `apply.rs:2829`).
-       Dregg2.Spec.authConnects s.kernel.caps del
-         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) ∧
-       attenuate keep (heldCapTo s.kernel.caps del t) ∈ s'.kernel.caps rec ∧
-       IsNonAmplifyingF (heldCapTo s.kernel.caps del t) (attenuate keep (heldCapTo s.kernel.caps del t))
+       (t = del ∨ Dregg2.Spec.authConnects s.kernel.caps del
+         (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights)) ∧
+       delegatedAttenCapTo s.kernel.caps del t keep ∈ s'.kernel.caps rec ∧
+       IsNonAmplifyingF (delegatedCapTo s.kernel.caps del t)
+         (attenuate keep (delegatedCapTo s.kernel.caps del t))
    | .exerciseA actor t inner =>
        -- authorized BY the held edge (only the holder may exercise) AND the exercise RECURSED — the
        -- `inner` effects actually RAN against the target (de-SHADOW). BOTH legs are now INDEPENDENT of
@@ -3498,8 +3514,8 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   | delegate del rec t =>
       -- ground via the GENUINE refinement `execGraph_iff_authConnects` (the `.any` lookup IMPLIES
       -- `authConnects`), NOT the `execGraph_eq_any := rfl` defeq.
-      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
-               (execFullA_delegate_grounds s s' del rec t h),
+      exact ⟨(execFullA_delegate_grounds s s' del rec t h).imp id
+               (Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp,
              execFullA_delegate_addEdge s s' del rec t h⟩
   | revoke holder t => exact execFullA_revoke_removeEdge s s' holder t h
   -- W1: mint/burn discharge the ISSUER gate + the live-well witness (the disclosure leg died with
@@ -3525,14 +3541,14 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   -- §MA-auth: discharge the 6 authority effects' REAL obligation (grounding/addEdge/removeEdge/
   -- graph-unchanged ∧ the GENUINE `capAuthConferred ⊆` non-amplification).
   | introduceA intro rec t =>
-      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
-               (execFullA_introduceA_grounds s s' intro rec t h),
+      exact ⟨(execFullA_introduceA_grounds s s' intro rec t h).imp id
+               (Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp,
              execFullA_introduceA_addEdge s s' intro rec t h,
              execFullA_introduceA_grants_held_cap s s' intro rec t h,
              execFullA_introduceA_non_amplifying s s' intro rec t h⟩
   | delegateAttenA del rec t keep =>
-      exact ⟨(Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp
-               (execFullA_delegateAttenA_grounds s s' del rec t keep h),
+      exact ⟨(execFullA_delegateAttenA_grounds s s' del rec t keep h).imp id
+               (Dregg2.Exec.execGraph_iff_authConnects _ _ _).mp,
              execFullA_delegateAttenA_grants s s' del rec t keep h,
              execFullA_delegateAttenA_non_amplifying s s' del rec t keep h⟩
   | attenuateA actor idx keep => exact execFullA_attenuateA_non_amplifying s s' actor idx keep h
