@@ -202,6 +202,8 @@ struct Census {
     free_aware: usize,
     /// (member key, row, col, pi) for the row-blind free set
     blind_detail: Vec<(String, VmRow, usize, usize)>,
+    /// (member key, row, col, pi) for the pins free ONLY on the pinned row
+    aware_only_detail: Vec<(String, VmRow, usize, usize)>,
 }
 
 fn census(tsv: &str) -> Census {
@@ -211,6 +213,7 @@ fn census(tsv: &str) -> Census {
         free_blind: 0,
         free_aware: 0,
         blind_detail: Vec::new(),
+        aware_only_detail: Vec::new(),
     };
     for line in tsv.lines().filter(|l| !l.is_empty()) {
         let mut it = line.split('\t');
@@ -229,6 +232,10 @@ fn census(tsv: &str) -> Census {
                 }
                 if free_row_aware(&reads, *row, *col) {
                     out.free_aware += 1;
+                    if !free_row_blind(&reads, *col) {
+                        out.aware_only_detail
+                            .push((key.clone(), *row, *col, *pi_index));
+                    }
                 }
             }
         }
@@ -296,6 +303,47 @@ fn unforced_pi_pin_census_is_pinned() {
             .any(|(k, _, _, pp)| k == "transferCapOpenTBVmDescriptor2R24" && *pp == 46),
         "the TB weld's `src` IS forced (targetBindGate + the depth-16 open read it)"
     );
+
+    // ⚑ **THE ROW-AWARE-ONLY RESIDUE, CLASSIFIED — the part the row-blind subtraction does NOT
+    // remove.** Every one of these is a LEGACY 1-felt state-commitment pin: `PI[OLD_COMMIT] =
+    // state_before.STATE_COMMIT` on the FIRST row (col 54+12 = 66), or `PI[NEW_COMMIT] =
+    // state_after.STATE_COMMIT` on the LAST row (col 76+12 = 88) in the three members whose col 88
+    // is not a chip output. The `.transition {12,12}` chain links them to each other and to
+    // NOTHING ELSE, and it is `is_transition`-gated, so the first row's before-commit has no
+    // predecessor and the last row's after-commit has no successor: the prover picks the chain's
+    // endpoints. What makes this a DUPLICATE rather than a hole is that the bound replacement is
+    // published in the SAME PI vector — the wide 8-felt BEFORE/AFTER anchors, whose carrier columns
+    // ARE poseidon2-chip outputs over the rotated limbs the `weldsAt` welds tie to these very state
+    // columns. Deleting the legacy pins is "prefer deleting the old thing to keeping both"; it
+    // needs the ROW-AWARE subtraction, whose no-op argument is a single-row trace edit rather than
+    // the whole-column one `unforced_pin_row_admits_any_value` proves.
+    //
+    // This assertion is the DETECTION: if a row-aware-only free pin appears that is NOT one of
+    // those two commitment slots, it is a new hole of an unknown kind and this goes red.
+    const OLD_COMMIT_COL: usize = STATE_BEFORE_BASE + 12;
+    const NEW_COMMIT_COL: usize = STATE_AFTER_BASE + 12;
+    for c in [&v3, &wide, &welded] {
+        for (key, row, col, pi) in &c.aware_only_detail {
+            let known = matches!(
+                (row, *col, *pi),
+                (VmRow::First, OLD_COMMIT_COL, 0) | (VmRow::Last, NEW_COMMIT_COL, 8)
+            );
+            assert!(
+                known,
+                "{key}: an unforced-on-its-row pin that is NOT a legacy state-commitment slot — \
+                 row {row:?} col {col} pi {pi}"
+            );
+        }
+    }
+    assert_eq!(
+        (
+            v3.aware_only_detail.len(),
+            wide.aware_only_detail.len(),
+            welded.aware_only_detail.len()
+        ),
+        (51, 48, 48),
+        "the legacy 1-felt commitment pins whose 8-felt bound replacement rides beside them"
+    );
 }
 
 /// **How many published slots are pinned AT ALL** — the other half of the light-client answer.
@@ -321,6 +369,47 @@ fn published_slot_accounting_is_pinned() {
     }
     assert_eq!(total_slots, 3815, "wide registry published PI slots");
     assert_eq!(pinned_slots, 1639, "…of which some constraint pins");
+}
+
+/// **The `hsole` side condition of `unforced_pin_row_admits_any_value`, MEASURED.**
+///
+/// The Lean no-op theorem needs "no OTHER column shares a PI slot with this one" — otherwise
+/// overwriting the slot could break a second pin that lands on a different column. That hypothesis
+/// is not decorative and it is not assumed: across all three deployed registries the pin relation
+/// is a partial INJECTION — no PI slot is pinned by two different columns, and no column is pinned
+/// to two different slots. So the theorem applies to every censused pin, and if a future member
+/// ever double-pins a slot this goes red before the subtraction is trusted on it.
+#[test]
+fn pin_relation_is_injective_so_the_no_op_theorem_applies() {
+    for (label, tsv) in [
+        ("v3", V3_STAGED_REGISTRY_TSV),
+        ("wide", WIDE_REGISTRY_STAGED_TSV),
+        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+    ] {
+        for line in tsv.lines().filter(|l| !l.is_empty()) {
+            let key = line.split('\t').next().expect("key");
+            let json = line.split('\t').nth(2).expect("member json");
+            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+            let mut pairs: Vec<(usize, usize)> = Vec::new();
+            for c in &d.constraints {
+                if let VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) = c {
+                    pairs.push((*pi_index, *col));
+                }
+            }
+            for (i, (pi_a, col_a)) in pairs.iter().enumerate() {
+                for (pi_b, col_b) in &pairs[i + 1..] {
+                    assert!(
+                        !(pi_a == pi_b && col_a != col_b),
+                        "{label}/{key}: PI {pi_a} is pinned by two columns ({col_a}, {col_b})"
+                    );
+                    assert!(
+                        !(col_a == col_b && pi_a != pi_b),
+                        "{label}/{key}: column {col_a} is pinned to two PI slots ({pi_a}, {pi_b})"
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// **The `APPROVED_HANDOFFS` retired sentinel, measured.**
