@@ -32,10 +32,17 @@
 //!   modes. Symbolic skips computing the Merkle *root*; it never skips the
 //!   *decision* a turn's legality rests on. A turn that is rejected in Full is
 //!   rejected in Symbolic, at the same action, for the same reason.
-//! * **Symbolic state is local / unpublishable.** A receipt carrying
-//!   [`DEFERRED_STATE_HASH`] is not a network artifact: it has no usable
-//!   commitment to publish to a light client. Publishing requires
-//!   [`collapse`], the ONLY witness path.
+//! * **Symbolic state is local / unpublishable, and the verifiers ENFORCE
+//!   that.** A receipt carrying [`DEFERRED_STATE_HASH`] is not a network
+//!   artifact: it has no usable commitment to publish to a light client.
+//!   Publishing requires [`collapse`], the ONLY witness path. Every chain
+//!   verifier in `crate::verify` refuses such a receipt outright
+//!   (`VerifyError::DeferredWitness`) unless the caller names the
+//!   `*_allowing_deferred` variant, which is for verifying one's OWN
+//!   un-collapsed chain and nothing else. Until 2026-07-31 this paragraph was
+//!   the only thing standing between a deferred receipt and a verifier's
+//!   `Ok(())`: `is_deferred` had zero callers outside two `debug_assert!`s,
+//!   both compiled out in release.
 //! * **Collapse reproduces Full.** Determinism is already discharged (the
 //!   pinned timestamp + cost model + the recorded post-root tooth), so
 //!   re-running a recorded turn under Full re-derives the byte-identical
@@ -205,10 +212,17 @@ pub fn collapse_with(
             crate::turn::TurnResult::Committed { receipt, .. } => {
                 exec.set_last_receipt_hash(receipt.agent, receipt.receipt_hash());
                 // A collapsed receipt is a Full receipt: its witness is real.
-                debug_assert!(
-                    !is_deferred(&receipt),
-                    "collapse must materialize a real witness, not a deferred sentinel"
-                );
+                // This is a RETURN, not a `debug_assert!` — collapse is the only
+                // bridge to a publishable receipt, and a check that is compiled
+                // out in release is exactly the check a release build needs.
+                if is_deferred(&receipt) {
+                    return Err(format!(
+                        "collapse: re-derived receipt #{i} (agent {:?}) STILL carries the \
+                         deferred sentinel — collapse must materialize a real witness, and \
+                         this one would leave the publish boundary uncommitted",
+                        receipt.agent
+                    ));
+                }
                 receipts.push(receipt);
             }
             other => {

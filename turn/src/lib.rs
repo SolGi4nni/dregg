@@ -245,8 +245,10 @@ pub use turn::{
     SovereignCellWitness, Turn, TurnReceipt, TurnResult, absorb_emitted_event,
 };
 pub use verify::{
-    VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_head,
-    verify_receipt_chain_strict, verify_receipt_chain_with_optional_keys, verify_receipt_extends,
+    VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_allowing_deferred,
+    verify_receipt_chain_head, verify_receipt_chain_strict,
+    verify_receipt_chain_strict_allowing_deferred, verify_receipt_chain_with_optional_keys,
+    verify_receipt_extends, verify_receipt_extends_allowing_deferred,
     verify_receipt_signature_with_keys,
 };
 pub use witnessed_receipt::{

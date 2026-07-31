@@ -15,6 +15,16 @@
 //! agent's intervening turn can legitimately make the next receipt's pre-state
 //! differ from this agent's prior post-state. Per-agent causality is carried by
 //! `previous_receipt_hash`; the executor signature authenticates each snapshot.
+//!
+//! # A snapshot that is not a snapshot
+//!
+//! Every chain verifier here REFUSES a receipt whose snapshots are the
+//! deferred sentinel ([`crate::collapse::DEFERRED_STATE_HASH`], all-zeros) —
+//! [`VerifyError::DeferredWitness`]. Such a receipt is committed and genuinely
+//! executor-signed, so it clears every other check; it simply commits to no
+//! state. A caller holding its OWN un-collapsed symbolic receipts opts back in
+//! by name (`*_allowing_deferred`); everything else refuses, including the
+//! head-returning verifier, which has no opt-in at all.
 
 use dregg_cell::CellId;
 use ed25519_dalek;
@@ -95,6 +105,32 @@ pub enum VerifyError {
         /// Index of the receipt with no signature.
         index: usize,
     },
+
+    /// A receipt carries the DEFERRED-WITNESS sentinel
+    /// ([`crate::collapse::DEFERRED_STATE_HASH`], all-zeros) in BOTH its
+    /// `pre_state_hash` and `post_state_hash` — it was committed under
+    /// [`crate::collapse::WitnessMode::Symbolic`] and has not been collapsed.
+    ///
+    /// **The adversary this stops:** none, and that is the point — there is no
+    /// forgery here at all. The receipt is *genuine*: the executor produced it,
+    /// signed `receipt_hash()`, and the sentinel is inside that hash, so every
+    /// signature check passes. What it does not have is any **commitment to
+    /// state**. Accepting it means a verifier whose whole job is "this state was
+    /// produced by a sequence of valid turns" returns `Ok(())` having checked
+    /// nothing about the state. The head-returning verifier is the sharpest
+    /// case: it would hand back `[0u8; 32]` *as the proved commitment*, and a
+    /// caller comparing an expected root against it is comparing against a
+    /// value any party can name for free.
+    ///
+    /// A caller that legitimately holds its own un-collapsed symbolic receipts
+    /// (local, unpublishable work) opts in explicitly — see
+    /// [`verify_receipt_chain_allowing_deferred`]. Everything else refuses.
+    /// The cure for a published chain is [`crate::collapse::collapse`], which
+    /// materializes the real witnesses.
+    DeferredWitness {
+        /// Index of the receipt carrying the deferred sentinel.
+        index: usize,
+    },
 }
 
 impl core::fmt::Display for VerifyError {
@@ -129,6 +165,14 @@ impl core::fmt::Display for VerifyError {
                     "receipt index {index} carries no executor signature, and this verifier requires one"
                 )
             }
+            VerifyError::DeferredWitness { index } => {
+                write!(
+                    f,
+                    "receipt index {index} carries the DEFERRED witness sentinel (all-zero \
+                     pre/post state hash): it commits to no state and must be collapsed before \
+                     it can be verified"
+                )
+            }
         }
     }
 }
@@ -154,9 +198,53 @@ impl std::error::Error for VerifyError {}
 ///
 /// This function does NOT verify that the turns themselves were valid (that was the
 /// executor's job at commit time). It only verifies the chain structure is intact.
+///
+/// **It DOES refuse a deferred-witness receipt** ([`VerifyError::DeferredWitness`]):
+/// a symbolic-mode receipt commits to no state, so "the chain structure is
+/// intact" would be a true statement about an object that proves nothing. A
+/// caller holding its own un-collapsed local receipts uses
+/// [`verify_receipt_chain_allowing_deferred`].
 pub fn verify_receipt_chain(receipts: &[TurnReceipt]) -> Result<(), VerifyError> {
+    verify_chain_structure(receipts, /* allow_deferred */ false)
+}
+
+/// [`verify_receipt_chain`] with the deferred-witness refusal turned OFF.
+///
+/// The ONLY caller this is for: one verifying **its own** un-collapsed
+/// [`WitnessMode::Symbolic`](crate::collapse::WitnessMode) receipts — local,
+/// unpublishable work where the witness is deliberately deferred and
+/// [`crate::collapse::collapse`] has not run yet. It relaxes exactly one
+/// question (is there a real witness); genesis, hash-linking and agent
+/// consistency are checked identically.
+///
+/// A chain accepted here is NOT publishable and NOT convincing to anyone else:
+/// its head is `[0u8; 32]`, which any party can name for free. Never use it on
+/// a chain that came from somewhere else.
+pub fn verify_receipt_chain_allowing_deferred(receipts: &[TurnReceipt]) -> Result<(), VerifyError> {
+    verify_chain_structure(receipts, /* allow_deferred */ true)
+}
+
+/// Shared body of [`verify_receipt_chain`] and
+/// [`verify_receipt_chain_allowing_deferred`]. `allow_deferred` is the ONLY
+/// difference between the two, so the refusing variant cannot drift from the
+/// permissive one's structural checks.
+fn verify_chain_structure(
+    receipts: &[TurnReceipt],
+    allow_deferred: bool,
+) -> Result<(), VerifyError> {
     if receipts.is_empty() {
         return Err(VerifyError::EmptyChain);
+    }
+
+    // The witness question first: a receipt with no state commitment is not a
+    // thing whose structure is worth reporting on. Named per-receipt so a caller
+    // can see WHICH turn was never collapsed.
+    if !allow_deferred {
+        for (i, receipt) in receipts.iter().enumerate() {
+            if crate::collapse::is_deferred(receipt) {
+                return Err(VerifyError::DeferredWitness { index: i });
+            }
+        }
     }
 
     // Check genesis receipt.
@@ -212,6 +300,11 @@ pub fn verify_receipt_chain(receipts: &[TurnReceipt]) -> Result<(), VerifyError>
 /// On success, returns the `post_state_hash` claimed by the last receipt in the
 /// chain. Structural verification alone does not authenticate that claim; an
 /// untrusted chain should first pass [`verify_receipt_chain_strict`].
+///
+/// Deliberately has NO deferred-allowing variant: the value this returns IS the
+/// state commitment, and the deferred sentinel is `[0u8; 32]` — a "head" any
+/// party can produce without executing anything. There is no caller for whom
+/// handing that back as a proved commitment is correct.
 pub fn verify_receipt_chain_head(receipts: &[TurnReceipt]) -> Result<[u8; 32], VerifyError> {
     verify_receipt_chain(receipts)?;
     Ok(receipts.last().unwrap().post_state_hash)
@@ -221,10 +314,48 @@ pub fn verify_receipt_chain_head(receipts: &[TurnReceipt]) -> Result<[u8; 32], V
 ///
 /// This is the "online" check used when appending to a chain: you already trust
 /// the chain up to `previous`, and you want to verify `next` links correctly.
+///
+/// This does **not** route through [`verify_receipt_chain`] — it is a separate
+/// code path with its own checks, so it carries its own deferred-witness arm.
+/// Both receipts are checked: appending a real receipt onto a deferred head is
+/// as unpublishable as the deferred receipt itself. A local caller opts in via
+/// [`verify_receipt_extends_allowing_deferred`].
 pub fn verify_receipt_extends(
     previous: &TurnReceipt,
     next: &TurnReceipt,
 ) -> Result<(), VerifyError> {
+    verify_extends_inner(previous, next, /* allow_deferred */ false)
+}
+
+/// [`verify_receipt_extends`] with the deferred-witness refusal turned OFF —
+/// for a caller appending to its OWN un-collapsed symbolic chain. See
+/// [`verify_receipt_chain_allowing_deferred`] for what this does and does not
+/// relax.
+pub fn verify_receipt_extends_allowing_deferred(
+    previous: &TurnReceipt,
+    next: &TurnReceipt,
+) -> Result<(), VerifyError> {
+    verify_extends_inner(previous, next, /* allow_deferred */ true)
+}
+
+/// Shared body of [`verify_receipt_extends`] and
+/// [`verify_receipt_extends_allowing_deferred`].
+fn verify_extends_inner(
+    previous: &TurnReceipt,
+    next: &TurnReceipt,
+    allow_deferred: bool,
+) -> Result<(), VerifyError> {
+    // The witness question first. Index 0 is `previous`, index 1 is `next` —
+    // the same indexing the structural errors below use for this pair.
+    if !allow_deferred {
+        if crate::collapse::is_deferred(previous) {
+            return Err(VerifyError::DeferredWitness { index: 0 });
+        }
+        if crate::collapse::is_deferred(next) {
+            return Err(VerifyError::DeferredWitness { index: 1 });
+        }
+    }
+
     // Check agent consistency.
     if next.agent != previous.agent {
         return Err(VerifyError::AgentMismatch {
@@ -290,6 +421,28 @@ pub fn verify_receipt_chain_strict(
         receipts,
         executor_pubkeys,
         /* require_signature */ true,
+        /* allow_deferred */ false,
+    )
+}
+
+/// [`verify_receipt_chain_strict`] with the deferred-witness refusal turned
+/// OFF — the executor binding is still REQUIRED on every receipt.
+///
+/// For a caller checking that its OWN un-collapsed symbolic receipts were
+/// genuinely countersigned by its executor. The executor does sign a symbolic
+/// receipt (the sentinel is inside `receipt_hash()`), so a valid signature here
+/// attests authorship and nothing about state. Do not confuse the two: a chain
+/// that passes this is signed, structurally sound, and still commits to no
+/// state.
+pub fn verify_receipt_chain_strict_allowing_deferred(
+    receipts: &[TurnReceipt],
+    executor_pubkeys: &[[u8; 32]],
+) -> Result<(), VerifyError> {
+    verify_chain_signatures(
+        receipts,
+        executor_pubkeys,
+        /* require_signature */ true,
+        /* allow_deferred */ true,
     )
 }
 
@@ -321,21 +474,25 @@ pub fn verify_receipt_chain_with_optional_keys(
         receipts,
         executor_pubkeys,
         /* require_signature */ false,
+        /* allow_deferred */ false,
     )
 }
 
 /// Shared body of [`verify_receipt_chain_strict`] and
 /// [`verify_receipt_chain_with_optional_keys`] — structural checks, then
-/// per-receipt signature verification. `require_signature` is the ONLY
-/// difference between the two, so the strict variant cannot drift from
-/// the lenient one's signature-checking.
+/// per-receipt signature verification. `require_signature` and
+/// `allow_deferred` are the ONLY differences between the variants, so the
+/// strict one cannot drift from the lenient one's signature-checking.
 fn verify_chain_signatures(
     receipts: &[TurnReceipt],
     executor_pubkeys: &[[u8; 32]],
     require_signature: bool,
+    allow_deferred: bool,
 ) -> Result<(), VerifyError> {
-    // First, verify structural integrity.
-    verify_receipt_chain(receipts)?;
+    // First, verify structural integrity (and, unless opted out, refuse a
+    // deferred-witness receipt — a valid signature over an absent commitment is
+    // still an absent commitment).
+    verify_chain_structure(receipts, allow_deferred)?;
 
     // Then verify executor signatures.
     for (i, receipt) in receipts.iter().enumerate() {
@@ -392,6 +549,14 @@ fn verify_chain_signatures(
 /// [`VerifyError::ExecutorSignatureInvalid`] (an absent signature is not a
 /// pass): callers wanting to distinguish "unsigned" from "wrong signer" should
 /// pre-check `receipt.executor_signature.is_none()` themselves.
+///
+/// ⚠ **It does NOT consider the deferred-witness sentinel, and this is the one
+/// verifier in this module that does not.** A symbolic-mode receipt is
+/// genuinely executor-signed, so it passes here — correctly, because the
+/// question asked is authorship, not state. A caller using this to decide
+/// whether a receipt is *publishable* is asking the wrong function and must
+/// also check [`crate::collapse::is_deferred`] (or use a chain verifier, which
+/// refuses by default).
 ///
 /// The signature is checked over [`TurnReceipt::canonical_executor_signed_message`]
 /// — the exact message the executor produces (Stage 9 R-4) and the exact bytes
