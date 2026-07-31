@@ -713,3 +713,18 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   ⚑ **The lesson I am charging myself with**: a brief that names two probes is a *starting* list, not
   a census. The fourth probe was found by a suite nobody could read, and the reason nobody could
   read it was a red that had been sitting for hours in a different lane's tests.
+- 23:58 ⚑ **ONE MORE FLAG-DAY ITEM, and its detector is `#[ignore]`d — so the suite is GREEN over a
+  stale GOVERNANCE pin.** `DREGG_APEX_RECURSION_VK` (`circuit-prove/src/apex_shrink_gnark_export.rs:216`)
+  is a governance-pinned VK hex that `check_apex_vk_identity_pin` asserts at load. Every
+  `RecursionVk` moved tonight, so it is stale. The test that would catch it —
+  `apex_shrink_gnark_fixture::derive_deployed_apex_vk_identity_and_check_fixture`, which *derives
+  the identity at HEAD* — is `#[ignore]`d as SLOW (one real 2-turn fold, ~4 min). What DID run is
+  the sibling that reads the COMMITTED `apex_vk_identity.json` and compares it to the COMMITTED
+  constant: **two static values that agree with each other and with nothing at HEAD**, so it
+  reports `1 passed` while the pin no longer describes the deployed circuit.
+  This is the **fail-open / documented-≠-detected** class exactly: the only test with a live
+  premise is gated, and the gate that runs cannot go red. It is covered by "every `RecursionVk`" on
+  the staged rotation list, but generically — naming it here because a governance pin is a heavier
+  object than a fixture, and because its detector being `#[ignore]`d means the re-emit will not be
+  prompted by anything going red. ⚑ **Not re-emitted here** (the rotation is ember's), and
+  `chain/gnark/fixtures/apex_vk_identity.json` was not touched.
