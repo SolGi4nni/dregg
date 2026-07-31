@@ -114,42 +114,19 @@ proof below (the value `V` is never ordered). The DEPLOYED instantiation is the 
 unchanged — and the #4/#10 note-nullifier widening instantiates `K := Digest8Key = Lex (Fin 8 → ℤ)`
 directly (`Crypto/Digest8KeySpike.lean`), the lex-order bracketing coming for free. -/
 
-/-- **`ImtLeaf`** — an indexed-Merkle-tree leaf: the sort key `addr`, the stored `value`, and the
-`nextAddr` POINTER to the next-larger present key (the sorted linked-list link). The genesis
-sentinel points `MIN → MAX`; every real insert splices between an `addr` and its `nextAddr`.
-Key/value types generic; the defaults are the deployed felt instantiation. -/
-structure ImtLeaf (K : Type := ℤ) (V : Type := ℤ) where
-  /-- The sort key (deployed: the heap address `hash[coll, key]`; widens to `Digest8Key` for the
-  #4/#10 note nullifiers — the tree is sorted by this). -/
-  addr : K
-  /-- The stored value (deployed: a felt; irrelevant to the ordering — hence free). -/
-  value : V
-  /-- The pointer to the next-larger present key (the linked-list link; the absence bracket). -/
-  nextAddr : K
-deriving DecidableEq, Repr
+/-! ⚑⚑ **THE DEPLOYED LEAF NOW LIVES UPSTREAM (2026-07-30).** `ImtLeaf`, `imtLeafHash`,
+`imtLeafPre`, `imtToHeap` and `imtLeafHash_binds_or_collides` were DEFINED here and are now
+`Dregg2.Circuit.DeployedMapDenotation`'s, re-exported below so every reference in this file and its
+~120 downstream sites resolves UNCHANGED — to the SAME constant, not a copy.
 
-/-- **`imtLeafHash hash l`** — the 3-felt IMT leaf digest `hash[addr, value, nextAddr]` (the deployed
-`heap_root.rs::HeapLeaf::digest8` gains the `nextAddr` felt: arity 2 → 3). -/
-def imtLeafHash (hash : List ℤ → ℤ) (l : ImtLeaf) : ℤ := hash [l.addr, l.value, l.nextAddr]
+Why they moved: `DescriptorIR2.opensTo` / `writesTo` — the deployed map-op denotation — now denote
+the arity-3 indexed-Merkle commitment, and `DescriptorIR2` is UPSTREAM of this module. Leaving a
+second `ImtLeaf` here would make every separation theorem below (`imtLeafHash_ne_heapLeafOf` and
+friends) a statement about a structure the denotation does not use — a twin, and the exact
+laundering this campaign exists to kill. There is one `ImtLeaf` in the tree. -/
 
-/-- **`imtLeafPre l`** — the IMT leaf's sponge PREIMAGE, named so the per-instance collision event
-is stated at exactly the list the deployed digest absorbs (`imtLeafHash hash l = hash (imtLeafPre l)`,
-`rfl`). -/
-def imtLeafPre (l : ImtLeaf) : List ℤ := [l.addr, l.value, l.nextAddr]
-
-/-- **THE HYPOTHESIS-FREE IMT-LEAF BINDING.** Equal 3-felt leaf digests force equal leaves OR name a
-genuine collision of the deployed sponge at the two absorbed preimages. NO floor hypothesis. -/
-theorem imtLeafHash_binds_or_collides (hash : List ℤ → ℤ) {l₁ l₂ : ImtLeaf}
-    (h : imtLeafHash hash l₁ = imtLeafHash hash l₂) :
-    l₁ = l₂ ∨ IsSpongeColl hash (imtLeafPre l₁, imtLeafPre l₂) := by
-  by_cases hpre : imtLeafPre l₁ = imtLeafPre l₂
-  · refine Or.inl ?_
-    obtain ⟨a₁, v₁, n₁⟩ := l₁
-    obtain ⟨a₂, v₂, n₂⟩ := l₂
-    simp only [imtLeafPre, List.cons.injEq, and_true] at hpre
-    obtain ⟨ha, hv, hn⟩ := hpre
-    subst ha; subst hv; subst hn; rfl
-  · exact Or.inr ⟨hpre, h⟩
+export Dregg2.Circuit.DeployedMapDenotation (ImtLeaf imtLeafHash imtLeafPre imtToHeap
+  imtLeafHash_binds_or_collides)
 
 /-- **`imtLeafHash_injective`** — the IMT leaf digest BINDS its three fields: a prover cannot forge
 the pointer (or address, or value) inside the digest. The crypto residue that binds a pointer-bracket
@@ -246,10 +223,7 @@ theorem imtSorted_addrs_sorted : ∀ {c : List (ImtLeaf K V)}, ImtSorted c → S
       · exact hll'
       · exact hll'.trans (head_lt_of_sorted ihs x hxr)
 
-/-- **`imtToHeap c`** — the projection to the deployed sorted `FeltHeap`: drop the `nextAddr`
-pointer, keeping `(addr, value)` (the pointer is the ABSENCE machinery; the openable map is
-`(addr) → value`). -/
-def imtToHeap (c : List ImtLeaf) : Heap.FeltHeap := c.map (fun l => (l.addr, l.value))
+-- (`imtToHeap` is re-exported from `DeployedMapDenotation` at §1 above.)
 
 theorem keys_imtToHeap (c : List ImtLeaf) : Heap.keys (imtToHeap c) = imtAddrs c := by
   simp [Heap.keys, imtToHeap, imtAddrs, List.map_map, Function.comp]
@@ -890,7 +864,7 @@ theorem toy_low_ne_pad :
   have h' : imtLeafHash refSponge ⟨0, 0, 100⟩ = imtLeafHash refSponge ⟨0, 0, 0⟩ := h
   have heq : (⟨0, 0, 100⟩ : ImtLeaf) = ⟨0, 0, 0⟩ :=
     imtLeafHash_injective refSponge (noImtLeafColl_of_CR refSponge_CR) h'
-  exact absurd (congrArg ImtLeaf.nextAddr heq) (by norm_num)
+  exact absurd (congrArg Dregg2.Circuit.DeployedMapDenotation.ImtLeaf.nextAddr heq) (by norm_num)
 
 /-- **★ `ImtVecCorr` HOLDS concretely** — the toy committed vector `aafiXsToy` IS the `imtLayout` of the
 genesis chain (`phys = genesis 0 100`, a `List.Perm.refl`): the low leaf at cell 0, empties elsewhere.

@@ -1083,11 +1083,18 @@ theorem attenuateV2_non_amp (hash : List ℤ → ℤ)
   obtain ⟨a, b, _, _, hab, hx, hy⟩ := (subsetTable_mem_iff MASK_BITS _ _).mp hlook'
   exact ⟨a, b, hx, hy, hab⟩
 
-/-- **The held leaf is DETERMINED (anti-forgery, FORGERY-3 in Lean form).** Under CR, ANY
-opening of the same before-root at the same key agrees with the satisfying row's held mask — a
-forged held leaf with inflated rights is excluded by `opensTo_functional`. -/
+/-- **The held leaf is DETERMINED (anti-forgery, FORGERY-3 in Lean form).** ANY opening of the same
+before-root at the same key agrees with the satisfying row's held mask — a forged held leaf with
+inflated rights is excluded by `opensTo_functional`.
+
+⛑ **OFF THE FLOOR, 2026-07-30.** This took `hCR : Poseidon2SpongeCR hash` and discharged the
+opening residual from it. That floor is PROVED FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the anti-forgery theorem was true and said
+nothing. It now takes the PER-INSTANCE residual directly: `hno` is refutable, decidable on committed
+data, and dischargeable by an honest prover at zero cost — the two openings on THIS row simply do not
+equivocate. Nothing was weakened: `hCR` implied `hno` (that is what the old proof did), so this is
+strictly the more general statement. -/
 theorem attenuateV2_held_determined (hash : List ℤ → ℤ)
-    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsub : t.tf (.custom SUBMASK_TID) = subsetTable MASK_BITS)
     (hsat : Satisfied2 hash attenuateVmDescriptor2 minit mfin maddrs t)
@@ -1095,10 +1102,11 @@ theorem attenuateV2_held_determined (hash : List ℤ → ℤ)
     (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1)
     (v : ℤ)
     (hclaim : opensTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
-        ((envAt t i).loc (prmCol CAP_KEY)) (some v)) :
+        ((envAt t i).loc (prmCol CAP_KEY)) (some v))
+    (hno : ¬ OpenColl hash hclaim
+      (attenuateV2_non_amp hash minit mfin maddrs t hsub hsat i hi hactive).1) :
     v = (envAt t i).loc (prmCol HELD_MASK) := by
-  have h := (attenuateV2_non_amp hash minit mfin maddrs t hsub hsat i hi hactive).1
-  have := opensTo_functional hash hclaim h (fun hc => hc.1 (hCR _ _ hc.2))
+  have := opensTo_functional hash hclaim _ hno
   simpa using this
 
 /-! ## §7.5 — NEWLY EXPRESSIBLE I.b: the RevokeCapability cap-crown circuit leg (sel 24).
@@ -1171,33 +1179,33 @@ theorem revokeV2_removes (hash : List ℤ → ℤ)
 the same key agrees with the satisfying row's held value — a forged held leaf is excluded by
 `opensTo_functional`. The revoke analogue of `attenuateV2_held_determined`. -/
 theorem revokeV2_held_determined (hash : List ℤ → ℤ)
-    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash revokeCapabilityVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
     (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1)
     (v : ℤ)
     (hclaim : opensTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
-        ((envAt t i).loc (prmCol CAP_KEY)) (some v)) :
+        ((envAt t i).loc (prmCol CAP_KEY)) (some v))
+    (hno : ¬ OpenColl hash hclaim
+      (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).1) :
     v = (envAt t i).loc (prmCol HELD_MASK) := by
-  have h := (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).1
-  have := opensTo_functional hash hclaim h (fun hc => hc.1 (hCR _ _ hc.2))
+  have := opensTo_functional hash hclaim _ hno
   simpa using this
 
 /-- **The post `cap_root` is DETERMINED (anti-forgery).** Under CR, the new root is the unique sorted
 write of `(key ↦ 0)` — a forged `new_cap_root` is excluded by `writesTo_functional`. -/
 theorem revokeV2_post_determined (hash : List ℤ → ℤ)
-    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash revokeCapabilityVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length)
     (hactive : (envAt t i).loc EffectVmEmitAttenuateA.selA.ATTENUATE = 1)
     (r' : ℤ)
     (hclaim : writesTo hash ((envAt t i).loc (sbCol state.CAP_ROOT))
-        ((envAt t i).loc (prmCol CAP_KEY)) 0 r') :
-    r' = (envAt t i).loc (saCol state.CAP_ROOT) := by
-  have h := (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).2
-  exact writesTo_functional hash hclaim h (fun hc => hc.1 (hCR _ _ hc.2))
+        ((envAt t i).loc (prmCol CAP_KEY)) 0 r')
+    (hno : ¬ WriteColl hash hclaim
+      (revokeV2_removes hash minit mfin maddrs t hsat i hi hactive).2) :
+    r' = (envAt t i).loc (saCol state.CAP_ROOT) :=
+  writesTo_functional hash hclaim _ hno
 
 /-! ## §7.6 — NEWLY EXPRESSIBLE I.c: the Custom cell-program recursive-proof binding (sel 8).
 

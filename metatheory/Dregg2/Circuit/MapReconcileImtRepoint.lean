@@ -26,7 +26,7 @@
      * `ReconcileGatesAt` has no witness FOR ANY KIND (`reconcileGatesAt_unsat_at_imtRoot`) — so the
        apex premise is not merely incomplete in the top gap, it is EMPTY on every deployed row;
      * and `MapOp.holdsAt` — the DENOTATION the apex concludes about — has no witness either
-       (`mapOpHoldsAt_unsat_at_imtRoot`).
+       (`retiredMapOpHoldsAt_unsat_at_imtRoot` — RENAMED 2026-07-30 when the denotation moved).
    The last one is the wall: no premise whatsoever can deliver a conclusion that is itself refutable
    at the deployed commitment. Repointing the apex therefore requires moving `opensTo`/`writesTo`
    (hence `MapOp.holdsAt`, `VmConstraint2.holdsAt`, `Satisfied2`, `AlgoStarkSound`) onto the IMT
@@ -111,7 +111,7 @@ open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.MapMerkleRoot (mapNode perfectRoot perfectRoot_injective
   mapRoot mapRoot_injective opensToMerkle writesToMerkle)
 open Dregg2.Circuit.MapOpsColumnLayout (pathRecompute perfectRoot_append ReconcileGatesAt
-  MapReconcileModelOk mapOp_holds_of_mapReconcile mem_mapOpsOf toyAbsentOp toyAbsentEnv toyHeap
+  MapReconcileModelOk mem_mapOpsOf toyAbsentOp toyAbsentEnv toyHeap
   toy_absent_gates)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf ImtSorted imtAddrs imtAddrs_cons imtToHeap
   imtLeafHash imtSorted_sortedKeys keys_imtToHeap)
@@ -180,18 +180,50 @@ theorem reconcileGatesAt_unsat_at_imtRoot (hash : List ℤ → ℤ) (hCR : Posei
   rintro ⟨h, -, hlen, hroot, -⟩
   exact imtRoot_ne_mapRoot hash hCR dep c h hc hlen (hrow.symm.trans hroot.symm)
 
-/-- **★ THE WALL: THE DENOTATION ITSELF IS REFUTED AT A DEPLOYED PRE-ROOT.** `MapOp.holdsAt` — what
-`Satisfied2`'s `.mapOp` arm asserts and what every apex theorem concludes about — speaks `opensTo` /
-`writesTo`, i.e. the arity-2 commitment, at the ROW's pre-root column. On a fired row whose pre-root
-is the deployed indexed-Merkle commitment it is FALSE for every kind. **Hence no repointing of the
-PREMISE can make the apex non-vacuous there: its CONCLUSION is refutable at the deployed commitment.
-The denotation has to move.** -/
-theorem mapOpHoldsAt_unsat_at_imtRoot (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`RetiredMapOpHoldsAt`** — the per-row body `DescriptorIR2.MapOp.holdsAt` HAD until 2026-07-30:
+an opening of the arity-2 dense binary-Merkle fold. Written out explicitly here because the live
+denotation no longer means it, and a refutation has to name the object it refutes.
+
+⚠ This is NOT a twin of the live denotation. It is the RETIRED shape, kept only so the theorem below
+— the measurement that FORCED the cutover — can still be stated and re-checked. Nothing derives the
+live `MapOp.holdsAt` from it, and nothing may. -/
+def RetiredMapOpHoldsAt (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) : Prop :=
+  m.guard.eval env.loc = 1 →
+    match m.op with
+    | .read   => opensToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                   (m.key.eval env.loc) (some (m.value.eval env.loc))
+                 ∧ (m.newRoot 0).eval env.loc = (m.root 0).eval env.loc
+    | .absent => opensToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                   (m.key.eval env.loc) none
+                 ∧ (m.newRoot 0).eval env.loc = (m.root 0).eval env.loc
+    | .write  => writesToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                   (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+    | .insert => writesToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                   (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+    | .aafiInsert => writesToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                   (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+
+/-- **★ THE WALL THAT FORCED THE CUTOVER — and it is now a statement about the RETIRED denotation.**
+
+⛑ **RENAMED FROM `mapOpHoldsAt_unsat_at_imtRoot`, 2026-07-30, and the rename IS the result.** This
+said: `MapOp.holdsAt` — what `Satisfied2`'s `.mapOp` arm asserts and what every apex theorem concludes
+about — is FALSE on a fired row whose pre-root is the deployed indexed-Merkle commitment, for every
+kind. That was true, and it meant the apex's CONCLUSION (not its premise) was refutable at the object
+the prover commits, on the ordinary path.
+
+The denotation moved. So the statement can no longer be made about `MapOp.holdsAt`, and it is not:
+`MapDenotationCutoverCheck.deployed_opensTo_inhabited` exhibits a witness of the LIVE denotation at
+the deployed depth, sentinel and sparse occupancy. **If this theorem still typechecked with
+`MapOp.holdsAt` in it, the cutover would have changed nothing.**
+
+What survives, and is still worth re-checking on every build: the RETIRED body is unsatisfiable at a
+deployed pre-root. That is why the move was not optional. -/
+theorem retiredMapOpHoldsAt_unsat_at_imtRoot (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (env : VmRowEnv) (m : MapOp) (c : List ImtLeaf) (hc : c.length = 2 ^ MAP_TREE_DEPTH)
     (hguard : m.guard.eval env.loc = 1)
     (hrow : (m.root 0).eval env.loc
       = perfectRoot hash MAP_TREE_DEPTH (c.map (imtLeafHash hash))) :
-    ¬ MapOp.holdsAt hash env m := by
+    ¬ RetiredMapOpHoldsAt hash env m := by
   intro hh
   have h := hh hguard
   rw [hrow] at h
@@ -342,12 +374,22 @@ def MapOpImtHoldsAt (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) : Pro
 
 /-- **★ THE REPOINTED `.mapOp` ARM (∀ d).** The repointed model + the one CR floor force the
 repointed per-row denotation for every declared map op: the `.absent` rows through the deployed
-pointer-bracket law, every other kind through the untouched `mapOp_holds_of_mapReconcile`. This is
-`MapOpsColumnLayout.mapOpsArm_of_modeler` with the `.absent` leg moved onto the shape that ships —
-and it is exactly as far as the repointing can go before it meets the wall of §1, because
-`MemoryLegs` demands `MapOp.holdsAt`, not this. -/
+pointer-bracket law, every other kind through the `.mapOp` MODELLER.
+
+⛑ **2026-07-30.** The second leg used to be `MapOpsColumnLayout.mapOp_holds_of_mapReconcile` — the
+arity-2 gate model producing the row denotation. That producer is RETIRED and cannot be reinstated:
+the denotation now names the deployed arity-3 indexed-Merkle commitment, and the arity-2 gates
+provably do not force it (`imtRoot_ne_mapRoot`; `retiredMapOpHoldsAt_unsat_at_imtRoot`). The leg
+therefore carries the NON-`.absent` kinds as a modeller premise — the same idiom the LogUp arm has
+always used, and NARROWER than `MapDenotationModelOk` because the `.absent` leg is still DERIVED, from
+the deployed arity-3 pointer-bracket law —
+and the arity-3 producers that discharge it live in `MapKindImtGates`. This is a premise CARRIED
+here and DISCHARGED below, not a hole: what it replaced was not a stronger theorem, it was a false
+one. -/
 theorem mapOpsArmImt_of_modeler (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (d : EffectVmDescriptor2) (t : VmTrace) (hok : MapReconcileImtModelOk hash d t) :
+    (d : EffectVmDescriptor2) (t : VmTrace) (hok : MapReconcileImtModelOk hash d t)
+    (hden : ∀ i < t.rows.length, ∀ m ∈ mapOpsOf d,
+      m.op ≠ MapOpKind.absent → MapOp.holdsAt hash (envAt t i) m) :
     ∀ i < t.rows.length, ∀ m : MapOp, VmConstraint2.mapOp m ∈ d.constraints →
       MapOpImtHoldsAt hash (envAt t i) m := by
   intro i hi m hm
@@ -357,8 +399,7 @@ theorem mapOpsArmImt_of_modeler (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
   refine ⟨fun hop hguard => ?_, fun hop => ?_⟩
   · exact absentRowImt_force_imtOpensNone hash hCR MAP_TREE_DEPTH (envAt t i).loc m
       ((hmodel hguard).1 hop)
-  · exact mapOp_holds_of_mapReconcile hash hCR (envAt t i) m
-      (fun hguard => (hmodel hguard).2 hop)
+  · exact hden i hi m hmem hop
 
 /-! ## §3 — THE DEPLOYED-DEPTH WITNESS KIT.
 
@@ -669,15 +710,20 @@ theorem topGap_imt_absence_fires :
     depSpine_sorted depSpine_length rfl (depGate_accepts refSponge)
   exact ⟨hnot, hget, depSpine, depSpine_sorted, depSpine_length, rfl, hnot, hget⟩
 
-/-- **★ THE WALL, CONCRETE ON THE SAME ROW.** `MapOp.holdsAt` — the `.mapOp` arm of `Satisfied2`,
-which is what the apex concludes about — is REFUTED here. So the apex conclusion is not recoverable
-on this row by ANY repointing of its premise: the DENOTATION is what has to move. -/
-theorem topGap_mapOpHoldsAt_false :
-    ¬ MapOp.holdsAt refSponge
+/-- **★ THE WALL, CONCRETE ON THE SAME ROW — and it is now about the RETIRED body.**
+
+⛑ **RENAMED FROM `topGap_mapOpHoldsAt_false`, 2026-07-30.** It said `MapOp.holdsAt` is REFUTED on the
+deployed-depth top-gap `.absent` row — the ordinary path, where every fresh nullifier and cell-id
+lands. It was, and that is why the denotation moved. It now says the RETIRED body is refuted there.
+The live denotation is inhabited at deployed parameters
+(`MapDenotationCutoverCheck.deployed_opensTo_inhabited`); if this still typechecked with
+`MapOp.holdsAt` in it, the cutover would have changed nothing. -/
+theorem topGap_retiredMapOpHoldsAt_false :
+    ¬ RetiredMapOpHoldsAt refSponge
         (envAt (traceOf
           (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge))) depKey) 0)
         toyAbsentOp := by
-  refine mapOpHoldsAt_unsat_at_imtRoot refSponge refSponge_CR _ toyAbsentOp depSpine
+  refine retiredMapOpHoldsAt_unsat_at_imtRoot refSponge refSponge_CR _ toyAbsentOp depSpine
     depSpine_length ?_ ?_
   · rw [traceOf_loc]; exact rowOf_guard _ _
   · rw [traceOf_loc, rowOf_root]
@@ -710,13 +756,21 @@ theorem topGap_repointed_denotation_holds :
       toyAbsentOp :=
   mapOpsArmImt_of_modeler refSponge refSponge_CR dTopGap
     (traceOf (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge))) depKey)
-    topGap_imt_model_holds 0 (by rw [traceOf_rows_length]; omega) toyAbsentOp
+    topGap_imt_model_holds
+    (by
+      intro _ _ m hm hop
+      have : m = toyAbsentOp := by
+        simpa [dTopGap, mapOpsOf] using hm
+      exact absurd (by rw [this]; rfl) hop)
+    0 (by rw [traceOf_rows_length]; omega) toyAbsentOp
     (List.mem_singleton_self _)
 
 /-- **★ THE DELIVERABLE, IN ONE STATEMENT.** On ONE turn containing ONE fired top-gap `.absent` row,
 at the DEPLOYED depth: the OLD apex premise is FALSE, the REPOINTED premise HOLDS, the repointed
-denotation is DELIVERED — and the apex's own denotation `MapOp.holdsAt` is REFUTED, which is why the
-apex conclusion does not follow from any premise here and the denotation is what must move. -/
+denotation is DELIVERED — and the RETIRED body is REFUTED, which is why the apex conclusion did not
+follow from any premise here and the denotation had to move. ⛑ The fourth conjunct named
+`MapOp.holdsAt` until 2026-07-30; it names `RetiredMapOpHoldsAt` now, because the denotation moved
+and the live one is inhabited at deployed parameters. -/
 theorem topGap_apex_premise_repointed :
     ¬ MapReconcileModelOk refSponge dTopGap
         (traceOf (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge)))
@@ -728,12 +782,12 @@ theorem topGap_apex_premise_repointed :
         (envAt (traceOf
           (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge))) depKey) 0)
         toyAbsentOp
-    ∧ ¬ MapOp.holdsAt refSponge
+    ∧ ¬ RetiredMapOpHoldsAt refSponge
         (envAt (traceOf
           (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge))) depKey) 0)
         toyAbsentOp :=
   ⟨topGap_old_model_false, topGap_imt_model_holds, topGap_repointed_denotation_holds,
-   topGap_mapOpHoldsAt_false⟩
+   topGap_retiredMapOpHoldsAt_false⟩
 
 /-- **The narrow toy top-gap witnesses, REUSED verbatim.** `MapAbsentImtGate.topGap_deployed_accepts`
 (chain `topChain`, key `50`, low leaf `⟨40, 4, 100⟩`) IS a repointed `.absent` row body — the same
@@ -799,7 +853,7 @@ end Instrument
 #assert_axioms opensToMerkle_unsat_at_imtRoot
 #assert_axioms writesToMerkle_unsat_at_imtRoot
 #assert_axioms reconcileGatesAt_unsat_at_imtRoot
-#assert_axioms mapOpHoldsAt_unsat_at_imtRoot
+#assert_axioms retiredMapOpHoldsAt_unsat_at_imtRoot
 #assert_axioms mapReconcileModelOk_forbids_imtRootedRows
 #assert_axioms absentRowImt_force_imtOpensNone
 #assert_axioms imtOpensNone_gives_projected_opening
@@ -815,7 +869,7 @@ end Instrument
 #assert_axioms topGap_old_model_false_bracket
 #assert_axioms topGap_imt_model_holds
 #assert_axioms topGap_imt_absence_fires
-#assert_axioms topGap_mapOpHoldsAt_false
+#assert_axioms topGap_retiredMapOpHoldsAt_false
 #assert_axioms topGap_repointed_denotation_holds
 #assert_axioms topGap_apex_premise_repointed
 #assert_axioms models_are_incomparable

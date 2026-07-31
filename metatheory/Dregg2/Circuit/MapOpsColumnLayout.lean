@@ -909,18 +909,43 @@ theorem reconcileGates_force_opening (hash : List ℤ → ℤ) (hCR : Poseidon2S
     exact writesToMerkle_of_path hash dep h hs hlen hroot steps vOld hsl hpOld hpNew
       (noPathColl_of_CR hCR) (noLeafColl_of_CR hCR)
 
-/-- **THE MAPOPS-AIR LAW (per row, deployed depth).** The deployed map-reconcile gates (at
-`MAP_TREE_DEPTH`) plus the single named CR floor FORCE the row denotation `MapOp.holdsAt` — the
-existential `opensTo`/`writesTo` — for ANY map op on ANY row. The `.mapOp` twin of
-`busModel_forces_lookup_holds`. -/
-theorem mapOp_holds_of_mapReconcile (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (env : VmRowEnv) (m : MapOp)
-    (hg : m.guard.eval env.loc = 1 → ReconcileGatesAt hash MAP_TREE_DEPTH env.loc m) :
-    MapOp.holdsAt hash env m := by
-  intro hguard
-  have h := reconcileGates_force_opening hash hCR MAP_TREE_DEPTH env.loc m (hg hguard)
-  revert h
-  cases m.op <;> exact fun h => h
+/-! ### ⚑⚑ RETIRED 2026-07-30 — `mapOp_holds_of_mapReconcile` CANNOT EXIST, and that is a theorem.
+
+This was: "the deployed map-reconcile gates at `MAP_TREE_DEPTH`, plus the named CR floor, FORCE the
+row denotation `MapOp.holdsAt`". It typechecked because `MapOp.holdsAt` was an opening of the
+**arity-2 dense** binary-Merkle fold — the same object `ReconcileGatesAt` recomputes. `MapOp.holdsAt`
+is now an opening of the **deployed arity-3 indexed-Merkle** commitment
+(`heap_root.rs`, `HEAP_LEAF_ARITY = 3`, relinked pointers, sparse zero padding), and the arity-2
+gates do not force it. Not "not yet": `MapReconcileImtRepoint.imtRoot_ne_mapRoot` separates the two
+commitments and `mapOpHoldsAt_unsat_at_imtRoot` REFUTES the arity-2 denotation at a deployed root.
+There is no proof of this statement to be found, and keeping the name would be keeping a claim that
+is false at the parameters the prover runs.
+
+**What survives, unchanged and still true:** `reconcileGates_force_opening` above — the arity-2 gates
+force the arity-2 opening (`MapMerkleRoot.opensToMerkle` / `writesToMerkle`). That is a true fact
+about a commitment `heap_root.rs` stopped computing on 2026-07-12; it is kept because the wide-key
+and cutover-check families still measure against it, not because anything deployed rests on it.
+
+**What replaces it:** the `.mapOp` arm is now supplied by a MODELLER, exactly as the LogUp arm is
+supplied by `BusModelOk` — see `MapDenotationModelOk` below. The arity-3 producers that discharge it
+are `MapKindImtGates`' four per-kind arm laws and the `mapOpsArmImt*_of_modeler` family
+(`MapReconcileImtRepoint`, `MapInsertImtRepoint`, `MapAafiLiveRepoint`), all of which live BELOW this
+module because they need the deployed-leaf gate machinery. ⚠ Two of the five kinds are not
+dischargeable from the deployed AIR at all, for reasons that are Rust-side and proved:
+`.insert` (op=3) constrains only the post-root (`insertImtGates_cannot_force_the_write_denotation`;
+op=3 is emitted by ZERO deployed descriptors), and `.aafiInsert`'s POST side folds the physical
+append-order layout, which `no_schema_commits_the_append_order_layout` shows no `MapLeafSchema`
+commits. -/
+
+/-- **`MapDenotationModelOk hash d t`** — the `.mapOp` MODELLER: every declared map op DENOTES on
+every row, i.e. the deployed row denotation holds. The `.mapOp` counterpart of `BusModelOk`.
+
+⚑ This is a CARRIED premise at this module and a DISCHARGED one below it. It is carried here, rather
+than derived from `MapReconcileModelOk`, because the derivation is REFUTED — see the retirement note
+above. Carrying it makes the module's claim exactly true; deriving it made the module's claim false
+at the deployed commitment while looking stronger. -/
+def MapDenotationModelOk (hash : List ℤ → ℤ) (d : EffectVmDescriptor2) (t : VmTrace) : Prop :=
+  ∀ i < t.rows.length, ∀ m ∈ mapOpsOf d, MapOp.holdsAt hash (envAt t i) m
 
 /-- **The per-trace map-reconcile model (∀ d)**: every declared map op whose guard fires on a row
 has accepted gate data there — what the deployed `Ir2Air::MapOps` AIR checks over the whole
@@ -935,12 +960,11 @@ model + CR discharge the ENTIRE `.mapOp` arm of `Satisfied2.rowConstraints`: eve
 (`docs/SUPERSEDED/MEMORY-LEGS-SCOPE.md` §0), now produced by the modeler for all of them at once —
 their per-effect teeth (`*_grow_gate_forces_set_insert`, `*_forces_write`,
 `heapWrite_splice_forced`) consume `Satisfied2` downstream unchanged. -/
-theorem mapOpsArm_of_modeler (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (d : EffectVmDescriptor2) (t : VmTrace) (hok : MapReconcileModelOk hash d t) :
+theorem mapOpsArm_of_modeler (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor2) (t : VmTrace) (hok : MapDenotationModelOk hash d t) :
     ∀ i < t.rows.length, ∀ m : MapOp, VmConstraint2.mapOp m ∈ d.constraints →
       MapOp.holdsAt hash (envAt t i) m :=
-  fun i hi m hm => mapOp_holds_of_mapReconcile hash hCR (envAt t i) m
-    (fun hg => hok i hi m (mem_mapOpsOf.mpr hm) hg)
+  fun i hi m hm => hok i hi m (mem_mapOpsOf.mpr hm)
 
 /-! ## §6 — the ASSEMBLY: the graduated+mapOps `hbus` and the full `Satisfied2` for the 7-effect
 shape. -/
@@ -953,12 +977,11 @@ generalization of `hbus_of_busModels` MEMORY-LEGS-SCOPE §1 calls for. -/
 theorem hbus_of_busModels_and_mapModel {F : Type*} [Field F] [DecidableEq F]
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (d : EffectVmDescriptor2) (t : VmTrace)
-    (hCR : Poseidon2SpongeCR hash)
     (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
         (∃ l : Lookup, c = .lookup l) ∨ (∃ m : MapOp, c = .mapOp m))
     (hlok : ∀ l : Lookup, VmConstraint2.lookup l ∈ d.constraints →
         ∃ mult : List ℕ, BusModelOk fp embed d t l.table mult)
-    (hmap : MapReconcileModelOk hash d t) :
+    (hmap : MapDenotationModelOk hash d t) :
     ∀ i < t.rows.length, ∀ c ∈ d.constraints, ¬ isArith c →
       c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi c hc hA
@@ -966,7 +989,7 @@ theorem hbus_of_busModels_and_mapModel {F : Type*} [Field F] [DecidableEq F]
   · obtain ⟨mult, hm⟩ := hlok l hc
     exact busModel_forces_lookup_holds fp embed d t l.table mult hm i hi l
       (mem_lookupsInto.mpr ⟨hc, rfl⟩)
-  · exact mapOpsArm_of_modeler hash hCR d t hmap i hi m hc
+  · exact mapOpsArm_of_modeler hash d t hmap i hi m hc
 
 /-- A descriptor with no declared mem ops gathers an EMPTY memory log on every trace (the
 `rfl`-adjacent lemma the 7 mapOp effects need — `.mapOp` appends contribute nothing to `memLog`). -/
@@ -991,12 +1014,11 @@ theorem airAccept_forces_satisfied2_of_modelers {F : Type*} [Field F] [Decidable
     (hash : List ℤ → ℤ) (fp : List ℤ → F) (embed : ℤ → F)
     (d : EffectVmDescriptor2) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (t : VmTrace)
     (hAir : MainAirAcceptF d t)
-    (hCR : Poseidon2SpongeCR hash)
     (hshape : ∀ c ∈ d.constraints, ¬ isArith c →
         (∃ l : Lookup, c = .lookup l) ∨ (∃ m : MapOp, c = .mapOp m))
     (hlok : ∀ l : Lookup, VmConstraint2.lookup l ∈ d.constraints →
         ∃ mult : List ℕ, BusModelOk fp embed d t l.table mult)
-    (hmap : MapReconcileModelOk hash d t)
+    (hmap : MapDenotationModelOk hash d t)
     (hNoHash : d.hashSites = []) (hNoRange : d.ranges = [])
     (hNoMemOps : memOpsOf d = [])
     (hMemEmpty : t.tf .memory = [])
@@ -1005,7 +1027,7 @@ theorem airAccept_forces_satisfied2_of_modelers {F : Type*} [Field F] [Decidable
   have hMemLog := memLog_nil_of_no_memOps d t hNoMemOps
   exact airAccept_forces_satisfied2 hash d minit mfin [] t
     hAir
-    (hbus_of_busModels_and_mapModel hash fp embed d t hCR hshape hlok hmap)
+    (hbus_of_busModels_and_mapModel hash fp embed d t hshape hlok hmap)
     (by intro i _; rw [hNoHash]; trivial)
     (by intro i _ r hr; rw [hNoRange] at hr; simp at hr)
     List.nodup_nil
@@ -1031,7 +1053,6 @@ theorem airAccept_forces_satisfied2_of_modelers {F : Type*} [Field F] [Decidable
 #assert_axioms opensToMerkle_none_of_bracket
 #assert_axioms writesToMerkle_of_path
 #assert_axioms reconcileGates_force_opening
-#assert_axioms mapOp_holds_of_mapReconcile
 #assert_axioms mapOpsArm_of_modeler
 #assert_axioms hbus_of_busModels_and_mapModel
 #assert_axioms airAccept_forces_satisfied2_of_modelers
@@ -1260,7 +1281,7 @@ theorem toy_frozen_insert_bites :
 end Teeth
 
 #check @pathRecompute_binds_updates
-#check @mapOp_holds_of_mapReconcile
+#check @reconcileGates_force_opening   -- (the arity-2 producer that SURVIVES; `mapOp_holds_of_mapReconcile` is RETIRED, see §5)
 #check @mapOpsArm_of_modeler
 #check @airAccept_forces_satisfied2_of_modelers
 

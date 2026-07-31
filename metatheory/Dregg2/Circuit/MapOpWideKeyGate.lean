@@ -1141,7 +1141,7 @@ theorem wideLeaf_kills_the_pointer_forgery (hash : List ℤ → ℤ)
     (hno : ¬ IsSpongeColl hash (imtLeafInput8 ⟨keyLo, 1, keyE⟩, imtLeafInput8 ⟨keyLo, 1, ptrHi⟩)) :
     imtLeafHash8Of hash ⟨keyLo, 1, keyE⟩ ≠ imtLeafHash8Of hash ⟨keyLo, 1, ptrHi⟩ := by
   intro h
-  exact keyE_lt_ptrHi.ne (congrArg ImtLeaf.nextAddr (imtLeafHash8Of_injective hash hno h))
+  exact keyE_lt_ptrHi.ne (congrArg Dregg2.Circuit.DeployedMapDenotation.ImtLeaf.nextAddr (imtLeafHash8Of_injective hash hno h))
 
 /-- **★ THE SLOT IS BOUND (the positive form).** One committed arity-17 digest admits exactly ONE
 `(addr8, value, next8)` reading — contrast `halfWideLeaf_forges_absence_of_present`, where the same
