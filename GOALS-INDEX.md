@@ -8,6 +8,7 @@ file; never clobber another lane's.
 
 | lane | trail file | one-line mission |
 |---|---|---|
+| **mina-semantic-lightclients** | `GOAL-MINA-SEMANTIC-LIGHTCLIENTS.md` | semantic FULL light clients BOTH ways (mina↔dregg), no named residuals, then deploy both devnets + a poster |
 | **storage-in-lean** | `GOAL.md` | rebuild the Rust storage layer IN LEAN (proven), package to Rust via `@[export]`; decentralized providers + erasure/PoR + market, all Lean-verified |
 | **distributed-deos** | `GOAL-DISTRIBUTED-DEOS.md` | the sovereign live image, across machines — the distributed inhabited world |
 | **fable** | `GOAL-fable.md` | make it real, and keep it honest (general Fable driver) |
