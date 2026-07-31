@@ -448,3 +448,25 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   public key and the verify is a tautology. Shielded: re-emit
   `by-name/dregg-shielded-spend-pinned-root-v1.json` + its `PROVENANCE.json` row, and its producer
   must write `cOWNER = hash_fact(key0..3)`.
+- 23:4x ⚑ **BOTH DIRECTIONS NOW GREEN ON HBOX, and rehearsing there found FOUR breakages that would
+  have landed at 08:00.** `dregg-verifies-mina.sh` **exit 0, 7/7 PASS on hbox**;
+  `mina-verifies-dregg.sh` **exit 0, 5 PASS + 2 BLOCKED**, both BLOCKEDs being the VK-gated steps
+  naming their absent artifact. The first hbox run failed BOTH scripts. What it found:
+  1. **`mina-state-hash-crosscheck.py` opened two absolute `/Users/ember/...` paths** — it had never
+     been runnable on any machine but one, and said so only as a bare `FileNotFoundError`. Now
+     resolved from `__file__`, `DREGG_REPO` overrides.
+  2. ⚑ **`swarm-build` makes curl's HTTP/2 to `api.minascan.io` hang — 15.00 s, code 000, EVERY
+     repeat** — while bare curl is 0.46 s and `--http1.1` inside the scope is 0.57 s. Inside the
+     scope DNS resolves, TCP 443 connects, and HTTPS to a *different* host is 301 in 0.06 s, so it
+     is neither the network nor the cgroup. **node's `fetch` is unaffected (2.4 s, SYNCED)** — so the
+     devnet scripts were always fine and only the shell preflight lied. **This is a fleet-wide fact:
+     anything network-touching under `swarm-build` needs node or `--http1.1`.**
+  3. **hbox has no IPv6 route** and the host publishes AAAA, so plain `curl` burns its timeout.
+     Together with (2) that is TWICE in one evening a preflight calling a live endpoint dead.
+     **The preflight now asks through node — the same client the scripts use — so it agrees with
+     them by construction rather than by coincidence.** A preflight that can be wrong in the SAFE
+     direction will eventually stop a deploy that would have worked.
+  4. **Every npm script in `bridge/mina-zkapp` runs `tsc` over the WHOLE `scripts/` dir**, so one
+     lane's half-saved file reds every leg in it — it happened mid-rehearsal (`cell-fact-gate.ts`,
+     green again minutes later). Both circuit steps now report that as BLOCKED **naming the
+     offending files**, because reading it as "the demo is broken" costs an hour.

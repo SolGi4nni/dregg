@@ -31,7 +31,8 @@ ember passes `--broadcast`.
 | hbox | ✅ ready | 24 c / 123 G, node **v20.16.0**, `linux-x64`, `npm ci` clean in 51 s |
 | `@o1js/native-linux-x64` | ✅ installs | lands from `package-lock.json` via `npm ci`; no extra step |
 | `O1JS_BACKEND=native` on hbox | ✅ **and the VK is bit-identical** | see the table below |
-| `dregg-verifies-mina.sh` | ✅ **7/7 PASS** | local, ~2 min including a release build; hbox legs all green too (`mina_head` 11, `mina_observer` 43, opening check proved+verified). See §1.3 |
+| `dregg-verifies-mina.sh` | ✅ **7/7 PASS, both boxes** | local ~2 min; **hbox exit 0, all seven** (`mina_head` 11, `mina_observer` 43, opening check proved+verified). See §1.3 |
+| `mina-verifies-dregg.sh` | ✅ **hbox exit 0** | 5 PASS + 2 BLOCKED, and both BLOCKEDs are the VK-gated steps of §5 naming their absent artifact |
 | `head-anchor` tier-0 | ✅ green | 12 out-of-circuit checks, **1.2 s** (local) |
 | `head-gate-rehearsal` | ✅ green | 7 checks, **55.2 s** on hbox with the native backend |
 | `head-anchor` tier-1 | ❌ **RED** | its accept row fails — **the harness, not the gate**; see §4 |
@@ -275,16 +276,30 @@ an hour. After that the explorer is the record.
 
 Recorded because each of them presents as something it is not.
 
-**1. `curl` to `api.minascan.io` hangs on hbox and returns nothing.** The host
-publishes AAAA records; hbox has no IPv6 route (`ping6: Network is
-unreachable`). A plain `curl` burns the whole timeout and the preflight reports
-*"devnet did not answer SYNCED"* about a host that is up. **`curl -4` returns in
-under a second**, and the demo script now passes it.
+**1. A `curl` preflight called the Mina endpoint DOWN twice, and it was up both
+times.** Two independent causes, both measured on hbox:
 
-⚑ **node's own `fetch` was never affected** — happy-eyeballs falls back to IPv4
-on its own — so every `devnet:*` script worked on hbox the whole time and only
-the shell preflight lied. If you see a preflight say the endpoint is down, check
-it with `curl -4` before believing it.
+| invocation | result |
+|---|---|
+| `curl` (no `-4`) | hangs the full timeout — the host publishes AAAA and **hbox has no IPv6 route** (`ping6: Network is unreachable`) |
+| `curl -4`, bare | `200` in **0.46 s**, negotiating HTTP/2 |
+| `curl -4`, **under `swarm-build`** | `000` at **15.00 s — deterministically, every repeat** |
+| `curl -4 --http1.1` under `swarm-build` | `200` in **0.57 s** |
+| **node `fetch` under `swarm-build`** | **`SYNCED` in 2.4 s** |
+
+Inside the `swarm-build` systemd scope DNS resolves, TCP 443 connects, and an
+HTTPS request to a *different* host returns `301` in 0.06 s — so it is neither
+the network nor the memory cgroup. It is **curl's HTTP/2 to this host under the
+scope**, and `--http1.1` is the workaround.
+
+⚑ **The devnet scripts were never affected.** They use node's `fetch`, which
+speaks HTTP/1.1 and has happy-eyeballs. So the preflight now asks *through node*
+too, and agrees with the thing it is a preflight for **by construction rather
+than by coincidence**. A preflight that can be wrong in the *safe* direction is
+one that will eventually stop a deploy that would have worked.
+
+⚑ **If you wrap anything network-touching in `swarm-build`, use node or
+`--http1.1`.** This is a fleet-wide fact, not a Mina one.
 
 **2. `bridge/tools/mina-state-hash-crosscheck.py` used to open two absolute
 `/Users/ember/...` paths** and died anywhere else with a bare
@@ -305,6 +320,14 @@ scp bridge/mina-zkapp/.fullchain/real-root-air.json \
 
 The demo reports `BLOCKED` with that reason rather than `FAIL`, because a
 missing local artifact is not a defect in the thing being demonstrated.
+
+**4. One lane's half-saved file reds every leg in `bridge/mina-zkapp`.** Every
+npm script there runs `npm run build` — `tsc` over the *whole* `scripts/`
+directory — so an unrelated in-flight file fails the demo. It happened
+mid-rehearsal (`cell-fact-gate.ts`, green again minutes later). Both circuit
+steps now report that as `BLOCKED` **with the offending filenames**, because
+reading it as "the demo is broken" costs an hour. Same family as a coordinator's
+root build capturing a lane's mid-save.
 
 ---
 
