@@ -39,19 +39,37 @@ pub const EFFECT_VM_WIDTH: usize = AUX_BASE + NUM_AUX; // 90 + 98 = 188
 /// their selector
 /// COLUMNS remain in the layout (the frozen verified descriptors emitted by
 /// `Dregg2/Circuit/Emit/*` pin absolute column indices against the 186-wide
-/// trace), and the AIR pins every retired selector to ZERO on every row, so
-/// no valid trace can carry a doomed effect (the refusal is in-circuit).
-/// The column COMPACTION (54 → 29 selectors, width 186 → 159) lands together
-/// with the Lean emitter relayout in the descriptor-regeneration lane.
+/// trace).
+///
+/// ⚑ **CORRECTION, 2026-07-30.** This note used to claim "the AIR pins every
+/// retired selector to ZERO on every row, so no valid trace can carry a doomed
+/// effect (the refusal is in-circuit)". **That was false.** MEASURED across all
+/// 117 emitted members of `rotation-v3-staged-registry.tsv` +
+/// `rotation-wide-registry-staged.tsv`: the 24 retired selector columns are
+/// referenced by **zero** constraints — no pin-to-zero, no gate, no lookup. A
+/// trace CAN carry a non-zero retired selector. What makes that harmless is not
+/// a refusal but INERTNESS: no constraint reads those columns, so their value
+/// cannot reach any published slot or any state transition. The measurement is
+/// the gate `circuit/tests/unforced_pi_pin_census.rs::
+/// retired_selector_columns_are_referenced_by_nothing`, which goes red the day
+/// one of them becomes load-bearing — a prose claim could not.
+///
+/// The column COMPACTION (54 → 30 selectors) is a pure size win and needs the
+/// producer relayout: `Transition { hi, lo }` is offset-encoded through the
+/// FIXED state bases (`EFFECTVM_STATE_{BEFORE,AFTER}_BASE = NUM_EFFECTS`, …),
+/// so deleting selector columns moves every state and appendix column in every
+/// member and every producer that fills them. It is the descriptor-regeneration
+/// lane's, not a doc's.
 pub const NUM_EFFECTS: usize = 54;
 
 /// Selector column indices.
 ///
 /// VERB-LOCKSTEP: the 29 live effects keep their historical column indices
-/// (the frozen verified descriptors pin absolute columns); the 25 retired
-/// indices are listed in [`sel::RETIRED_SELECTORS`] and pinned to ZERO on
-/// every row by the AIR (and by the Lean-emitted descriptors), so a doomed
-/// effect cannot appear in any valid trace.
+/// (the frozen verified descriptors pin absolute columns); the 24 retired
+/// indices are listed in [`sel::RETIRED_SELECTORS`].
+///
+/// ⚑ They are NOT pinned to zero by anything — see the correction on
+/// [`NUM_EFFECTS`]. They are unreferenced, hence inert, and that is measured.
 pub mod sel {
     pub const NOOP: usize = 0;
     pub const TRANSFER: usize = 1;
@@ -160,16 +178,26 @@ pub mod sel {
     /// for the global nonce tick; selector alone binds intent.
     pub const INCREMENT_NONCE: usize = 53;
 
-    /// The 25 RETIRED selector columns (VERB-LOCKSTEP). Their effects no
+    /// The 24 RETIRED selector columns (VERB-LOCKSTEP). Their effects no
     /// longer exist as `Effect` variants — escrow ×6 (37, 39, 42..46 less
     /// the survivors), obligation ×3 (6, 7, 9), field-seal pair ×3 (10, 11,
     /// 28), caps-in-slots/CapTP ×4 (14..18), queue ×6 (18..24), bridge
-    /// lock/finalize/cancel ×3 (33, 38, 41). The AIR pins each of these
-    /// columns to ZERO on every row, so a trace claiming a doomed effect is
-    /// UNSATISFIABLE — the kernel's refusal is structural in-circuit. The
-    /// columns themselves are kept until the Lean-emitter relayout lane
-    /// regenerates the frozen descriptors against a compacted 29-selector
-    /// layout.
+    /// lock/finalize/cancel ×3 (33, 38, 41).
+    ///
+    /// ⚑ **CORRECTED 2026-07-30.** This doc used to say "the AIR pins each of
+    /// these columns to ZERO on every row, so a trace claiming a doomed effect
+    /// is UNSATISFIABLE — the kernel's refusal is structural in-circuit". It is
+    /// not: MEASURED over all 117 emitted members, these 24 columns are
+    /// referenced by **zero** constraints, so nothing pins them and nothing
+    /// refuses a non-zero one. They are safe because they are INERT — no gate,
+    /// lookup, mem/map op, hash site, range tooth or PI pin reads them, so a
+    /// non-zero value there reaches nothing. `retired_selector_columns_are_
+    /// referenced_by_nothing` in `circuit/tests/unforced_pi_pin_census.rs` is
+    /// that measurement, and it uses THIS list as its input — the constant is
+    /// load-bearing for the gate rather than decorative.
+    ///
+    /// The columns are kept until the Lean-emitter relayout lane regenerates
+    /// the frozen descriptors against a compacted 30-selector layout.
     ///
     /// Index ↔ retired effect (index 14, the dissolved `ExportSturdyRef`, was
     /// REPURPOSED for the dedicated supply [`MINT`] selector, SUPPLY-MODEL.md

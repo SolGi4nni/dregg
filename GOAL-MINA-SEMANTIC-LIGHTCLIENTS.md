@@ -306,3 +306,80 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   ⚑ Recording the distinction because it matters under this goal's bar: **"we assume MMCS binding"
   is a floor every SNARK stands on; "a define_const is not a pin" was a HOLE.** The first is not a
   sin; the second was, and it is closed for programs and in flight for constants.
+
+- 22:20→01:0x ⚑ **OPEN #5 — the "173 free-column PI pins" — CENSUSED, PROVED A NO-OP, SUBTRACTED**
+  (staged; the coordinator fires ONE convergence re-emit, so no descriptor bytes move in these
+  commits). **THE SUBSTRATE: Lean-authored AIR** — `metatheory/Dregg2/Circuit/Emit/UnforcedPiPins.lean`.
+  Rust authors no constraint; `circuit/tests/unforced_pi_pin_census.rs` only *reads* the emitted
+  bytes through `parse_vm_descriptor2`, the decoder the prover feeds.
+
+  **THE CENSUS, measured on the deployed bytes** (`unforced_pi_pin_census_is_pinned`, one string
+  comparison so a drift shows every number at once):
+
+  | registry | members | pins | column read by NOTHING else | free on the PINNED ROW |
+  |---|---|---|---|---|
+  | `rotation-v3-staged-registry.tsv` | 60 | 839 | **165** | 216 |
+  | `rotation-wide-registry-staged.tsv` | 57 | 1639 | **167** | 215 |
+  | `rotation-wide-umem-welded-…tsv` | 57 | 1639 | **167** | 215 |
+
+  The audit's "173 across 57 wide members" resolves to **167 row-blind / 215 row-aware** under a
+  stated definition. The gap between the two columns is ONE mechanism and it is worth naming: the
+  `.transition {hi,lo}` continuity chain is `is_transition`-gated, so it forces row `i+1`'s
+  `state_before[hi]` from row `i`'s `state_after[lo]` only for `i < n-1`. The FIRST row's
+  before-commit has no predecessor and the LAST row's after-commit has no successor — **a column
+  can look referenced and be free exactly where the pin reads it.** Same multiplier vacuity as the
+  last-row anchor forge, one level up.
+
+  **THE THREE COMPENSATION CLASSES (they do NOT get the same fix):**
+  1. **148 of 167 — the `withDfaRcPins` DFA route-commitment quartet** (4 `.piBinding .last` per
+     member, ~37 members). Compensation: **nothing in-AIR**; the emitter's own doc already said a
+     turn with no Dfa caveat "publishes zeros and still proves … the executor/verifier anchors the
+     published value, real-or-zero". **DELETED.**
+  2. **The `custom` member's 14 octet limbs** — `proofBind` binds limb 0 of the 8-felt program-VK
+     and limb 0 of the proof commitment; limbs 1..7 of each are published and unforced. Compensation:
+     host. **DELETED** here; the real repair (a `ProofBind` over full octets) is the VK-spine lane's.
+  3. **The turn-identity weld's `actor`/`dst`** on `transferCapOpenTB` (emitted cols 928/929 → PI
+     47/48). Compensation: `anchor_cap_open_turn_pins` overwrites them from the trusted turn.
+     **DELETED AT THE SOURCE** — `CapOpenTurnPins.lean` no longer adds the two columns, the two pins
+     or the two PI slots, and `TurnIdentityAnchored` lost the two conjuncts *every consumer already
+     destructured and discarded*. `src` STAYS and is genuinely forced (`targetBindGate` and the
+     depth-16 open read that column) — measured: `src` is NOT in the free set.
+
+  **WHY DELETION IS THE WHOLE ANSWER, and it is a theorem, not a preference.** A pin on a column no
+  other constraint reads cannot refuse anything — *and it cannot help a host either*, because the
+  column it forces is inert, so the host's overwrite compares its own value against nothing.
+  `unforced_pin_row_admits_any_value` is the dual of a forgery tooth: take any satisfying row
+  window, overwrite the column **and every PI slot its pins publish** with an ARBITRARY value, and
+  every constraint of the descriptor still holds. **The prover chooses both sides.** Removing such a
+  pin removes no refusal — which is why "bind it" was never available for these: there is no
+  in-trace referent to bind them to.
+
+  Also proved: `satisfied2_dropUnforcedPins` (the subtraction is a weakening; the mem/map logs are
+  literally unchanged), `dropUnforcedPins_col_dead` (afterwards the column is referenced by NOTHING,
+  so the already-proven E1 kill-set `deadColsE1`/`compactE1_expand` removes it — a follow-on size
+  win), and `unforcedPins_dropUnforcedPins` (**FIXPOINT**: the post-re-emit census is zero *by
+  theorem*, not by re-measurement).
+
+  **`piCount` IS DELIBERATELY UNCHANGED** for the 167. Dropping a pin cannot make a producer
+  unprovable; dropping a SLOT changes every producer's PI vector length in the same breath, and
+  `prove_vm_descriptor2` zero-extends short rows *before* its width check, so a lagging producer
+  would pass with zeros. The slots survive as what they always were — verifier-supplied inputs the
+  AIR ignores. (The TB `actor`/`dst` slots DO go, because that member's PI tail is the weld itself.)
+
+  **THE FALSE CLAIM, CORRECTED AND MADE DETECTABLE.** `columns.rs:52` said "the AIR pins every
+  retired selector to ZERO on every row, so a trace claiming a doomed effect is UNSATISFIABLE — the
+  refusal is in-circuit". **MEASURED: across all 117 emitted members the 24 `RETIRED_SELECTORS`
+  columns are referenced by ZERO constraints** — no pin, no gate, no lookup. Nothing refuses a
+  non-zero retired selector. They are safe by INERTNESS, not by refusal, and that is now a gate
+  (`retired_selector_columns_are_referenced_by_nothing`) that consumes the constant as input, so a
+  dead decoration became load-bearing. Deleting the columns is a pure size win blocked on the
+  producer relayout (`Transition` is offset-encoded through `NUM_EFFECTS`), not on this pass.
+
+  ⚑ **THE HEADLINE, and it is bigger than the 167.** The wide registry publishes **3,815 PI slots**
+  across 57 members. Only **1,639** are pinned to a column at all; **2,176 are pinned by nothing**
+  (`published_slot_accounting_is_pinned`). Of the 1,639, 167 pin a free column and 48 more pin a
+  column free on the pinned row. So **AIR-forced ≈ 1,424 of 3,815 — 37%.** The 2,176 are not
+  "trusted" in the dangerous sense: an unpinned slot is *ignored by the AIR*, so the light client
+  can neither learn from it nor be lied to by it. **The danger is a consumer that believes one
+  attested**, and after this pass the two categories are distinguishable by inspection rather than
+  by audit.
