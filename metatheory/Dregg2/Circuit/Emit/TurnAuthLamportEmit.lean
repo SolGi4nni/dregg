@@ -658,4 +658,168 @@ theorem turn_auth_forced (permOut : List ℤ → List ℤ) (base : EffectVmDescr
 
 #assert_axioms turn_auth_forced
 
+/-! ## §9 — THE WELD: the signed message IS the turn identity, so `actor` and `dst` stop being free.
+
+`transferCapOpenTB` publishes `actor` (col 928) and `dst` (col 929) to PI 47/48 from columns NO
+OTHER CONSTRAINT MENTIONS — measured, one `pi_binding` each and nothing else. They are free because
+NOTHING SIGNS THEM. Here they are inputs to `turnDigestLookup`, whose output is bit-decomposed into
+the very bits the signature opens: move one and the signed message moves with it. -/
+
+/-- The recomposition head evaluates to `Σ_{i<31} 2ⁱ·m[31q+i] − td[q]`. -/
+theorem reconHead_eval (a : Assignment) (w nb q : Nat) :
+    evalH (reconHead w nb q) a
+      = ((List.range BLOCK_BITS).map
+          (fun i => (2 : ℤ) ^ i * a (mCol w nb (BLOCK_BITS * q + i)))).sum
+        - a (tdCol w nb q) := by
+  simp only [reconHead, evalH_addLin]
+  rw [evalH_foldl_addLinG]
+  simp only [evalH_zero, zero_add]
+  ring
+
+/-- The signed-message value of block `q`. -/
+def msgSum (a : Assignment) (w nb q : Nat) : ℤ :=
+  ((List.range BLOCK_BITS).map
+    (fun i => (2 : ℤ) ^ i * a (mCol w nb (BLOCK_BITS * q + i)))).sum
+
+/-- **`turn_digest_forced`** — the message-digest felts ARE the deployed Poseidon2 of the TURN
+IDENTITY columns. `turnIn` is where `src`, `actor` and `dst` enter. -/
+theorem turn_digest_forced (permOut : List ℤ → List ℤ)
+    (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat) (turnIn : List Nat)
+    (env : VmRowEnv)
+    (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
+    (hcore : AuthCore tf w nb pcBase turnIn env)
+    (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
+    (tdCols w nb).map env.loc = permOut (turnIn.map env.loc) :=
+  wideHash_forces permOut tf env hChip turnIn (tdCols w nb) hlenIn hcore.turnHashed
+
+/-- **`msg_recomposes`** — the signed bits recompose to the turn-digest felts, mod `p`. -/
+theorem msg_recomposes (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat)
+    (turnIn : List Nat) (env : VmRowEnv) (hcore : AuthCore tf w nb pcBase turnIn env)
+    (q : Nat) (hq : q < nb) :
+    msgSum env.loc w nb q ≡ env.loc (tdCol w nb q) [ZMOD 2013265921] := by
+  have h := hcore.reconZero q hq
+  rw [reconHead_eval] at h
+  have := Int.ModEq.add_right (env.loc (tdCol w nb q)) h
+  simpa [msgSum, sub_add_cancel] using this
+
+/-- Message bits agreeing as BOOLEANS means the columns agree as integers (booleanity from the
+deployed 1-bit range tooth). -/
+theorem msgCol_eq_of_msgOf_eq (tf tf' : Dregg2.Circuit.DescriptorIR2.TraceFamily)
+    (w nb pcBase : Nat) (turnIn : List Nat) (env env' : VmRowEnv)
+    (hcore : AuthCore tf w nb pcBase turnIn env) (hcore' : AuthCore tf' w nb pcBase turnIn env')
+    (k : Nat) (hk : k < ELL nb)
+    (hsame : msgOf env w nb ⟨k, hk⟩ = msgOf env' w nb ⟨k, hk⟩) :
+    env.loc (mCol w nb k) = env'.loc (mCol w nb k) := by
+  have hb := hcore.msgBool k hk
+  have hb' := hcore'.msgBool k hk
+  simp only [msgOf, decide_eq_decide] at hsame
+  rcases hb with h0 | h1 <;> rcases hb' with h0' | h1' <;> simp_all
+
+/-- **`same_msg_same_turn_digest`** — if two witnesses sign the SAME bits then the deployed hash of
+their turn-identity columns is the SAME value. Contrapositive: a witness whose turn identity hashes
+differently MUST sign different bits. -/
+theorem same_msg_same_turn_digest (permOut : List ℤ → List ℤ)
+    (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat) (turnIn : List Nat)
+    (env env' : VmRowEnv)
+    (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
+    (hcore : AuthCore tf w nb pcBase turnIn env) (hcore' : AuthCore tf w nb pcBase turnIn env')
+    (hcanon : AuthRowCanon env) (hcanon' : AuthRowCanon env')
+    (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
+    (hsame : ∀ k : Fin (ELL nb), msgOf env w nb k = msgOf env' w nb k) :
+    permOut (turnIn.map env.loc) = permOut (turnIn.map env'.loc) := by
+  -- (1) equal bits as booleans ⇒ equal bit COLUMNS as integers ⇒ equal recomposition sums.
+  have hcols : ∀ k, ∀ hk : k < ELL nb, env.loc (mCol w nb k) = env'.loc (mCol w nb k) :=
+    fun k hk => msgCol_eq_of_msgOf_eq tf tf w nb pcBase turnIn env env' hcore hcore' k hk
+      (hsame ⟨k, hk⟩)
+  have hsum : ∀ q < nb, msgSum env.loc w nb q = msgSum env'.loc w nb q := by
+    intro q hq
+    unfold msgSum
+    refine congrArg List.sum (List.map_congr_left ?_)
+    intro i hi
+    have hik : BLOCK_BITS * q + i < ELL nb := by
+      have hi' : i < BLOCK_BITS := List.mem_range.mp hi
+      have : BLOCK_BITS * q + i < BLOCK_BITS * q + BLOCK_BITS := by omega
+      calc BLOCK_BITS * q + i < BLOCK_BITS * q + BLOCK_BITS := this
+        _ = BLOCK_BITS * (q + 1) := by ring
+        _ ≤ BLOCK_BITS * nb := Nat.mul_le_mul_left _ (by omega)
+    rw [hcols _ hik]
+  -- (2) equal sums + the mod-`p` recomposition + canonicality ⇒ equal turn-digest felts.
+  have htd : ∀ q < nb, env.loc (tdCol w nb q) = env'.loc (tdCol w nb q) := by
+    intro q hq
+    have h1 := msg_recomposes tf w nb pcBase turnIn env hcore q hq
+    have h2 := msg_recomposes tf w nb pcBase turnIn env' hcore' q hq
+    rw [hsum q hq] at h1
+    have hcong : env.loc (tdCol w nb q) ≡ env'.loc (tdCol w nb q) [ZMOD 2013265921] :=
+      h1.symm.trans h2
+    refine diffExact (hcanon.cells _) (hcanon'.cells _) ?_
+    have := Int.ModEq.sub hcong (Int.ModEq.refl (env'.loc (tdCol w nb q)))
+    simpa using this
+  -- (3) equal digest felts ⇒ the two wide lookups force the same permutation output.
+  have hlk := turn_digest_forced permOut tf w nb pcBase turnIn env hChip hcore hlenIn
+  have hlk' := turn_digest_forced permOut tf w nb pcBase turnIn env' hChip hcore' hlenIn
+  rw [← hlk, ← hlk']
+  refine List.map_congr_left ?_
+  intro c hc
+  obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hc
+  exact htd q (List.mem_range.mp hq)
+
+/-- **`moved_turn_needs_different_bits` — THE WELD, stated as a tooth.** A witness whose TURN
+IDENTITY hashes to something else — because `actor` moved, or `dst` moved, or `src` moved — MUST
+sign a different message bit. `actor` and `dst` are no longer publishable at will: they are
+arguments of the hash whose bits the signature opens. -/
+theorem moved_turn_needs_different_bits (permOut : List ℤ → List ℤ)
+    (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat) (turnIn : List Nat)
+    (env env' : VmRowEnv)
+    (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
+    (hcore : AuthCore tf w nb pcBase turnIn env) (hcore' : AuthCore tf w nb pcBase turnIn env')
+    (hcanon : AuthRowCanon env) (hcanon' : AuthRowCanon env')
+    (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
+    (hmoved : permOut (turnIn.map env.loc) ≠ permOut (turnIn.map env'.loc)) :
+    ∃ k : Fin (ELL nb), msgOf env' w nb k ≠ msgOf env w nb k := by
+  by_contra hall
+  refine hmoved (same_msg_same_turn_digest permOut tf w nb pcBase turnIn env env' hChip hcore hcore'
+    hcanon hcanon' hlenIn ?_)
+  intro k
+  by_contra hk
+  exact hall ⟨k, fun h => hk h.symm⟩
+
+/-- **`air_forgery_breaks_hash` — moving the turn costs a HASH BREAK, not a re-sign.** Compose the
+weld with the emitted verify and the already-proved Lamport tooth: a witness that signs a bit the
+owner did not sign hits the hash of a preimage the owner NEVER revealed — so it either produced that
+unrevealed preimage, or produced a distinct value with the same Poseidon2 image. There is no third
+option, and neither is available to a prover that lacks the owner's secret. -/
+theorem air_forgery_breaks_hash (permOut : List ℤ → List ℤ) (base : EffectVmDescriptor2) (nb : Nat)
+    (turnIn : List Nat) (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hChip : ChipTableSoundN permOut (t.tf TableId.poseidon2))
+    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
+    (hlen : 2 ≤ t.rows.length)
+    (hcanon : AuthRowCanon (envAt t 0))
+    -- the owner's authority key is an honest Lamport public key (the light client's anchor names it)
+    (sk : Dregg2.Crypto.HashSig.SecretKey (List ℤ) (ELL nb))
+    (hpk : pkOf (envAt t 0) base.traceWidth nb = Dregg2.Crypto.HashSig.publicKey permOut sk)
+    -- the bits the OWNER actually signed, and a position where this witness disagrees
+    (m : Fin (ELL nb) → Bool) (k : Fin (ELL nb))
+    (hne : msgOf (envAt t 0) base.traceWidth nb k ≠ m k) :
+    permOut (sigOf (envAt t 0) base.traceWidth nb k)
+        = permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k))
+      ∧ (sigOf (envAt t 0) base.traceWidth nb k
+            = sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)
+         ∨ (sigOf (envAt t 0) base.traceWidth nb k
+              ≠ sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)
+            ∧ permOut (sigOf (envAt t 0) base.traceWidth nb k)
+                = permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)))) := by
+  have hver := turn_auth_forced permOut base nb turnIn hash minit mfin maddrs t hChip hsat hlen
+    hcanon
+  rw [hpk] at hver
+  exact Dregg2.Crypto.HashSig.lamport_forgery_breaks_hash permOut sk m
+    (msgOf (envAt t 0) base.traceWidth nb) k hne (sigOf (envAt t 0) base.traceWidth nb) hver
+
+#assert_axioms reconHead_eval
+#assert_axioms turn_digest_forced
+#assert_axioms msg_recomposes
+#assert_axioms same_msg_same_turn_digest
+#assert_axioms moved_turn_needs_different_bits
+#assert_axioms air_forgery_breaks_hash
+
 end Dregg2.Circuit.Emit.TurnAuthLamportEmit
