@@ -1329,3 +1329,20 @@ function verifies a real dregg terminal proof in 209 ms.**
 shape + deploy — the 4-step ladder above). The distinction stands; this closes ladder step 1.
 ⚠ Ran CPU-forced (`DREGG_GPU_DISABLE=1`) — the GPU path hits the apex-scale dispatch bug; a lane is
 tiling it. The 173 s is a CPU number; GPU is pending the fix.
+
+## ✅ GPU apex-scale bug FIXED (`c2444d0f9`), and it corrected TWO of my briefed numbers
+- **The scale was 2^24, not 2^16** (my brief). The overflowing kernel is the coset-LDE finalize
+  `K_EXPAND` (one workgroup per 256 outputs); the real shrink-apex LDE reaches n=2^24 → dim0=65536,
+  one past Vulkan's 65535. Every other kernel ruled out by range. Fix: fold dim-0 into z; collapses to
+  byte-identical `gid.x` when it fits. **Bit-exact CPU parity at n=2^24 AND n=2^25.** No re-emit.
+- ⚑ **The GPU speedup I quoted all night (~1.4× on the prove) is REFUTED for the shrink terminal:**
+  | phase | GPU | CPU | |
+  |---|---|---|---|
+  | Mina terminal prove | 174.5s | 167.8s | **0.96× (parity)** — Pasta/BN254 hashing is CPU both sides |
+  | apex fold | 166.7s | 1762.3s | **10.6×** — BabyBear Poseidon2 recursion, GPU end-to-end |
+  | whole join | 428s | 2014s | **4.7×** |
+  **The GPU's real payoff is the APEX FOLD (10.6×), the part I called "amortized, don't optimize."**
+  The terminal prove is hash-bound and GPU-neutral. So: GPU helps the fold, not the settlement prove;
+  the merge tree / native / Pasta-shape levers remain the ones that move the settlement cost.
+- Load-bearing outcome: **the GPU path RUNS at apex scale now** — before this it crashed on any real
+  Vulkan GPU. Surfaced only by DRIVING the terminal run, not by a status check.
