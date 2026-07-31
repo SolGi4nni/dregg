@@ -118,6 +118,26 @@
 //! * **Non-Rust hosts.** Solidity, Lean-adjacent scripts, and generated code under `target/` are out of
 //!   scope, as are `docs/` snapshots of Rust (there is a byte-identical copy of `descriptor_ir2.rs` under
 //!   `docs/deos/artifacts/` that is documentation, not a compiled unit).
+//! * ⚑ **THE VENDORED FORKS — the largest blind spot, and it is Rust (named 2026-07-30).**
+//!   `scan_repo` walks `repo_root()`, which is THIS repository. Every p3 crate enters as a **git
+//!   dependency** on `emberian/plonky3-recursion` (pinned by rev in the root `Cargo.toml`), so
+//!   `circuit-prover/src/air/{const,alu,public,recompose,expose_claim}_air.rs` — the ENTIRE primitive
+//!   AIR layer the whole prover stands on — scores exactly **zero** here, no matter what is written in
+//!   it. So do `vendor/plonky3-fri-82cfad73` and the other `[patch]`ed trees.
+//!   MEASURED: `fc3c6df` added `builder.assert_eq(main.value[i], prep.value[i])` to `ConstAir::eval`,
+//!   binding a constant's value into the preprocessed commitment. Run the gate's own classifier over
+//!   that file and it scores **1 authored symbolic site**
+//!   (`LAW1_EXPLAIN=../plonky3-recursion/circuit-prover/src/air/const_air.rs`); run the RATCHET and the
+//!   delta is **0**, because the walker never reaches it. A zero delta from this gate is therefore NOT
+//!   evidence that no Rust constraint was authored — only that none was authored *in this repo*.
+//!   That change was a deliberate, recorded decision (it is a p3 primitive with no Lean authoring path
+//!   short of replacing p3, and dregg's own circuit logic stayed Lean-authored), which is exactly why it
+//!   is written down here rather than left to a silent zero.
+//!   ⚑ The remedy is NOT to scan a sibling checkout: the fork resolves from git, so a fresh clone and CI
+//!   have no sibling path to walk, and a gate that only fires on one developer's machine is worse than
+//!   one that admits its scope. It needs a ratchet keyed to the **pinned rev** — a recorded per-rev site
+//!   count for the fork's `src/` trees, checked against the resolved source in `~/.cargo/git/checkouts`.
+//!   That is a campaign, not a line; until it exists, this bullet is the honest statement of coverage.
 //! * **`metatheory/`** is skipped entirely — that is where the algebra is SUPPOSED to live.
 //!
 //! ## If this test fails

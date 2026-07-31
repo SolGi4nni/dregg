@@ -1270,24 +1270,45 @@ fn mixed_root_forgery_executes_A_claims_B() {
 /// `accumulator::pinned_fold_rejects_foreign_vk_in_circuit` exercises the same fork lever on the
 /// ONLINE fixed-point path; this is the K-fold light-client path.)
 ///
-/// ⚑ **2026-07-30 — READ BEFORE CITING THIS AS "the close". The paragraph above is RETRACTED.**
-/// The constant does NOT live in the op-list as a VALUE: `ConstAir` commits a const's value in its
-/// constraint-free MAIN trace and only `[ext_mult, out_idx]` in preprocessed, so the root VK
-/// fingerprint is blind to which cap was baked. MEASURED twice on `main`:
-/// `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) and
-/// `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`). There is no transitive
-/// certification.
+/// ⚑ **2026-07-30 (first pass) — the paragraph above was RETRACTED.** The constant did not live in
+/// the op-list as a VALUE: `ConstAir` committed a const's value in its constraint-free MAIN trace
+/// and only `[ext_mult, out_idx]` in preprocessed, so the root VK fingerprint was blind to which
+/// cap was baked. MEASURED twice on `main`: `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`)
+/// and `circuit-prove/tests/vk_pin_lever_a_probe.rs` (`bb42f9800`).
 ///
-/// ⚑ And what case (2) below MEASURES is narrower than its assertion reads. It pins an HONEST child
-/// to a FOREIGN cap — the DUAL of the attack, which is a foreign child under its OWN cap (and that
-/// one is measured invisible). On this path the honest witness generator is handed two different
-/// values for one `connect`-shared witness slot, so the error is PREDICTED to be a runner
-/// `WitnessConflict` — the honest prover declining to write a trace, which an adversarial prover
-/// does not do. The assertion inspects only `is_err()`, so it cannot distinguish that from the
-/// in-circuit preprocessed-trace opening being UNSAT. Printing the actual error variant here is the
-/// cheapest way to settle it; until then this test is NOT evidence for horn 1. See
-/// `circuit-prove/src/ivc_turn_chain.rs`'s module docs for the two-horn analysis and the designed
-/// repair.
+/// ⚑ **2026-07-30 (later, same day) — THE RETRACTION IS ITSELF RETRACTED, because the substrate
+/// changed.** Fork rev `fc3c6df` (`emberian/plonky3-recursion`) moved a constant's VALUE into
+/// `ConstAir`'s preprocessed row (`[ext_mult, out_idx, value[0..D]]`) and constrains
+/// `main.value == prep.value`. The baked cap is `alloc_const` material, so it IS now part of the
+/// parent's preprocessed commitment and the transitive certification the top paragraph claims
+/// really does run. MEASURED at that rev by the two probes above, both inverted deliberately: the
+/// parent's VK core moves when a different cap is baked, with every shape field
+/// `recursion_vk_fingerprint` hashes identical on both sides.
+///
+/// ⚑ **What case (2) below MEASURES is still narrower than its assertion reads, and the print
+/// settled it.** It pins an HONEST child to a FOREIGN cap — the DUAL of the attack, which is a
+/// foreign child under its OWN cap. On this path the honest witness generator is handed two
+/// different values for one `connect`-shared witness slot. That was PREDICTED to surface as a
+/// runner `WitnessConflict` rather than an in-circuit UNSAT, and running it with `--ignored`
+/// MEASURED exactly that:
+///
+/// ```text
+/// [foreign-cap fold] REFUSED WITH: Circuit(WitnessConflict {
+///   witness_id: WitnessId(478), existing: 1588400913, new: 1588400914,
+///   expr_ids: [ExprId(32947), ExprId(221911)] })
+/// ```
+///
+/// The delta is exactly 1 — the `roots[0][0] += ONE` this test applies. So the refusal is the
+/// HONEST prover declining to write a trace, which an adversarial prover simply does not do. This
+/// test is still NOT evidence for horn 1, and horn 1 (an honest baked cap with a genuinely foreign
+/// child, refused because the in-circuit preprocessed-trace opening is UNSAT) remains UNMEASURED.
+///
+/// ⚑ What DID change is that horn 1 is **no longer the only door**. Before `fc3c6df` a prover could
+/// bake a matching foreign cap and the root fingerprint never noticed, so horn 1 carried the whole
+/// refusal alone and untested. Now the prover faces both: bake the foreign cap and horn 2 moves the
+/// root fingerprint away from the caller-held anchor (MEASURED); keep the honest cap and horn 1 must
+/// bite (STILL UNMEASURED). See `circuit-prove/src/ivc_turn_chain.rs`'s module docs for the two-horn
+/// analysis.
 #[test]
 #[ignore = "SLOW: a real segment fold (~minutes); run with --ignored — fork follow-up (a) close"]
 fn pinned_leaf_identity_rejects_foreign_child_in_band() {

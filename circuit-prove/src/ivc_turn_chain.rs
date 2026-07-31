@@ -168,11 +168,48 @@
 //!   now mismatches the root digest. The ONLINE [`crate::accumulator`] is scoped OUT (it
 //!   keeps the single-felt binding-leaf carrier, zero-padded to the new lane width — codex
 //!   #4 mixed-root weakness for that path is unchanged).
-//! - **Child-circuit identity under the VK pin — ⚑ THE "CLOSED" LABEL IS RETRACTED (2026-07-30).**
-//!   The bullet that stood here claimed this hole was closed by [`aggregate_tree`] folding every
+//! - **Child-circuit identity under the VK pin — ⚑ RETRACTED, THEN CLOSED FOR REAL (2026-07-30).**
+//!
+//!   ⚑ **READ THIS FIRST; the whole bullet below it describes a substrate that no longer exists.**
+//!   Fork rev `fc3c6df` (`emberian/plonky3-recursion`, pinned in the root `Cargo.toml`) moved a
+//!   constant's VALUE into `ConstAir`'s preprocessed row — `[ext_mult, out_idx, value[0..D]]`,
+//!   width `D + 2`, was `[ext_mult, out_idx]` — and added `D` degree-1 constraints
+//!   `main.value[i] == prep.value[i]`. That is exactly the repair sketched under "THE REPAIR,
+//!   DESIGNED" further down, which said it must not be taken. It WAS taken, deliberately, on an
+//!   explicit substrate call: `ConstAir` is a **p3 primitive AIR in a fork this repo maintains**,
+//!   with no Lean authoring path short of replacing p3; dregg's own circuit logic — the effect VM,
+//!   the descriptors, the gadgets, `air_accepts` — stayed Lean-authored and was not touched. The
+//!   change is one column block plus one equality and adds no dregg semantics to a p3 primitive.
+//!   ⚑ `circuit-prove/tests/law1_enforcement_gate.rs` scores that edit at 1 authored symbolic site
+//!   and its RATCHET DELTA IS ZERO, because the gate cannot see the fork at all; that blindness is
+//!   now written down in the gate's own "what this gate CANNOT see" list.
+//!
+//!   CONSEQUENCES, each MEASURED at the new rev by inverting the probe that had asserted the
+//!   opposite (opposite claim written and re-run; construction and controls byte-unchanged):
+//!   * `const_pin_probe.rs` — k = 7 and k = 9 now mint DIFFERENT fingerprints
+//!     (`b2c625d1…3b80` vs `a1b0c130…1bcb`), so an anchor from one REFUSES the other's proof.
+//!   * `vk_pin_lever_a_probe.rs` (A) — two children differing only in a const present DIFFERENT
+//!     caps, so the deployed pin can discriminate a const-level lie at all.
+//!   * `vk_pin_lever_a_probe.rs` (B) — **horn 2 is closed.** Baking a foreign cap MOVES the parent's
+//!     preprocessed commitment (`[1233588605, …]` vs `[1128576629, …]`) while every SHAPE field
+//!     `recursion_vk_fingerprint` hashes stays identical: instances
+//!     `[(6,7), (2,6), (59,13), (24,11), (2,12)]`, `public_flat_len = 51`. The separation runs
+//!     through the commitment itself, not through a row count. (`(6, 7)` is the Const table at its
+//!     new `2 + D` width.)
+//!   * `vk_spine_forgery_probe.rs` — the const-swapped child now MOVES the whole-chain anchor
+//!     (`c206d0f7…e3ab` honest vs `c3464e4e…2d2f` const-swapped), holding the root fingerprint
+//!     FIXED on both sides so the movement is attributable to the spine alone.
+//!
+//!   ⚑ **AND THEREFORE HORN 1 IS NO LONGER THE ONLY DOOR** — see the horn bullets below, whose
+//!   "MEASURED INVISIBLE" verdict on horn 2 is superseded.
+//!
+//!   ---
+//!
+//!   The retraction that stood here, kept because it is the record of how the hole was found:
+//!   the bullet before it claimed this hole was closed by [`aggregate_tree`] folding every
 //!   child through the fork's `into_recursion_input_pinned`, baking each child's own preprocessed
-//!   commitment as a CONSTANT. Two probes on `main` MEASURE that claim false at its load-bearing
-//!   half. A comment claiming a closed hole is worse than the hole, so it is retracted here rather
+//!   commitment as a CONSTANT. Two probes on `main` MEASURED that claim false at its load-bearing
+//!   half. A comment claiming a closed hole is worse than the hole, so it was retracted rather
 //!   than softened.
 //!
 //!   * `circuit-prove/tests/const_pin_probe.rs` (`63ffb1a08`) — two circuits differing ONLY in an
@@ -215,20 +252,48 @@
 //!     DUAL (honest child, FOREIGN cap) and asserts only `is_err()`; on that path the honest witness
 //!     generator is handed two different values for one `connect`-shared slot, so the error is
 //!     PREDICTED to be a runner `WitnessConflict` — a refusal by the honest prover, which an
-//!     adversarial prover simply does not perform. Until that error value is inspected the test does
-//!     not separate "UNSAT" from "the runner declined to write the trace".
-//!   * **Horn 2 — bake the FOREIGN cap.** MEASURED INVISIBLE, twice, above. This is the horn a
-//!     forger takes, and it costs them nothing.
+//!     adversarial prover simply does not perform.
+//!     ⚑ **THAT PREDICTION IS NOW MEASURED, AND IT WAS RIGHT.** Run with `--ignored --nocapture`:
+//!     `Circuit(WitnessConflict { witness_id: WitnessId(478), existing: 1588400913,
+//!     new: 1588400914, expr_ids: [ExprId(32947), ExprId(221911)] })` — a delta of exactly 1, the
+//!     `roots[0][0] += ONE` the test applies. So the test is the honest prover declining to write a
+//!     trace, NOT the in-circuit opening being UNSAT, and it is **not evidence for horn 1**.
+//!     Horn 1 itself remains READ, not measured.
+//!   * **Horn 2 — bake the FOREIGN cap.** ⚑ **CLOSED at fork rev `fc3c6df` — the "MEASURED
+//!     INVISIBLE, twice" verdict this bullet carried is SUPERSEDED.** The baked cap is
+//!     `alloc_const` material, and const values are now preprocessed columns, so baking a foreign
+//!     cap moves the parent's preprocessed commitment and hence the root fingerprint. Re-measured
+//!     by `vk_pin_lever_a_probe.rs` (B), inverted deliberately. This was the horn a forger took for
+//!     free; it now costs them the root anchor.
 //!
-//!   ### THE REPAIR, DESIGNED — "the exposed VK spine" (⚑ DESIGNED, NOT BUILT)
+//!   So the two horns no longer share a single unguarded door. A prover substituting a child must
+//!   either bake the foreign cap — and be refused by verify tooth (1), MEASURED — or keep the honest
+//!   cap and be refused by horn 1, which is READ and still UNMEASURED. ⚑ Horn 1 is the residual;
+//!   it is no longer the *only* thing standing between a forger and the anchor.
+//!
+//!   ### THE REPAIR, DESIGNED — "the exposed VK spine" (⚑ BUILT, `e1d8ab9bc`)
 //!
 //!   The obvious fix — put const values in `ConstAir`'s PREPROCESSED trace and constrain
-//!   `main.value == prep.value` — is a change to a hand-written Rust AIR in the p3 fork. Under this
-//!   repo's standing law that IS the drift, not the fix. It is named here so the next reader does
-//!   not rediscover it and take it. Nor is there a no-AIR-change variant of it: every primitive
-//!   lane's preprocessed columns carry WIRING ONLY (`ConstAir`/`PublicAir`
-//!   `[multiplicity, witness_idx]`; `AluPrepLaneCols`'s 13 selector/index columns), so no existing
-//!   op has a preprocessed IMMEDIATE the pin could be re-expressed over.
+//!   `main.value == prep.value` — is a change to a Rust AIR in the p3 fork. This paragraph used to
+//!   say that under this repo's standing law it IS the drift, not the fix, and that it was named
+//!   here so the next reader would not take it.
+//!   ⚑ **THAT READING WAS OVER-BROAD AND IS CORRECTED (2026-07-30).** Law #1 governs DREGG's
+//!   circuit logic — the effect VM, the descriptors, the gadgets, `air_accepts` — and every one of
+//!   those is Lean-authored and stayed so. `ConstAir` is a **p3 primitive** in a fork this repo
+//!   already maintains, and there is no Lean authoring path for it short of replacing p3, so a
+//!   minimal local change there is not the drift the law is aimed at. The fix was taken at fork rev
+//!   `fc3c6df`, kept to one column block and one equality, with no dregg semantics added to the
+//!   primitive. What the law's caution DID buy is real and should be kept in view: a Rust AIR is
+//!   debt, and this change enlarges the un-ratcheted surface by one authored site that
+//!   `law1_enforcement_gate.rs` structurally cannot see.
+//!
+//!   The rest of this section — the spine over `expose_claim` — is still the right shape and is
+//!   BUILT. The const binding does not replace it: the spine binds a child's PROGRAM, the const
+//!   binding binds the VALUES inside a fixed program, and they close different halves. The
+//!   sentence below about wiring-only preprocessed columns was true when written and is now true of
+//!   `PublicAir` and `AluPrepLaneCols` only — `ConstAir` carries its value as a preprocessed
+//!   IMMEDIATE, deliberately, while `PublicAir` deliberately does NOT (a public input's value is
+//!   per-execution data and must stay out of circuit identity).
 //!
 //!   What stays out of the AIR is the `expose_claim` channel this module already runs the segment
 //!   over — and it has teeth the const pin lacks:
@@ -286,7 +351,13 @@
 //!   route is horn 1: fold a foreign child while baking the HONEST cap, which requires breaking the
 //!   in-circuit MMCS opening — i.e. `recursive_sound`. That is the intended shape: the app-specific
 //!   escape is gone and what is left is the named crypto carrier. ⚠ The design ROUTES AROUND horn 1;
-//!   it does not close it. After the repair horn 1 matters MORE, because it is the only door left.
+//!   it does not close it.
+//!   ⚑ The sentence that stood here — "after the repair horn 1 matters MORE, because it is the only
+//!   door left" — was written when horn 2 was measured invisible. At fork rev `fc3c6df` horn 2 is
+//!   measured CLOSED, so horn 1 is no longer the only door: a forger who bakes a matching foreign
+//!   cap is refused by the root fingerprint, and only a forger who keeps the honest cap reaches
+//!   horn 1. Horn 1 is still the residual and is still unmeasured; it is no longer load-bearing
+//!   alone.
 //!
 //!   WHAT THE SPINE DOES NOT DO. It binds the tree's circuit identities to ONE anchor value per fold
 //!   SHAPE. It does not make the anchor K-independent. That needs canonical shape normalization —
