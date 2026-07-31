@@ -56,19 +56,24 @@ const BASELINE_PROVER_MS: f64 = 637.9;
 /// UNCOMPACTED = <narrow deployed cohort trace_width> + WIDE_CARRIER_APPENDIX + 2 membership teeth
 ///   178-limb:  1702 + 960 + 2 = 2664   (the recorded [M] baseline, reproduced exactly)
 ///   184-limb:  1746 + 992 + 2 = 2740
+///   rc FOLD:   1762 + 992 + 2 = 2756
 /// ```
 ///
-/// The +76 is `44` on the narrow member (`2·ΔB_SPAN + 7·ΔN_ROT_SITES = 16 + 28`) plus `32` on the
-/// carrier appendix (`2 · 8 · ΔWIDE_NUM_CARRIERS = 2·8·2`). Cross-check that this is the right
-/// baseline and not a fitted number: `2740 − S2_DELETED_COLS(992) − e1_drop(94) = 1654`, which is
-/// the committed `transferVmDescriptor2R24` wide width, and the assertion below computes exactly
-/// that subtraction from live constants.
+/// The +76 (178 → 184) is `44` on the narrow member (`2·ΔB_SPAN + 7·ΔN_ROT_SITES = 16 + 28`) plus
+/// `32` on the carrier appendix (`2 · 8 · ΔWIDE_NUM_CARRIERS = 2·8·2`). The further +16 (rc FOLD)
+/// is entirely on the narrow member: `ΔC_SPAN(2) + 7·ΔN_ROT_SITES(2) = 2 + 14`, the two carriers
+/// the caveat fold's rc extension needs plus their graduated chip lanes; the carrier appendix does
+/// not move. Cross-check that this is the right baseline and not a fitted number:
+/// `2756 − S2_DELETED_COLS(992) − e1_drop(94) = 1670`, which is the committed
+/// `transferVmDescriptor2R24` wide width, and the assertion below computes exactly that
+/// subtraction from live constants.
 ///
 /// **The deletion's CLAIM is unchanged.** It removed `960 + 94 = 1054` of 2664 columns (−39.6%);
-/// it now removes `992 + 94 = 1086` of 2740 (−39.6%). The absolute saving grew by 32 because the
-/// S2 band grows with the limb count. Nothing about the S2 deletion's value is falsified — only
-/// the premise that a 178-limb baseline describes the member being measured.
-const BASELINE_WIDTH: usize = 2740;
+/// then `992 + 94 = 1086` of 2740 (−39.6%); now `992 + 94 = 1086` of 2756 (−39.4%). The S2 band
+/// grows with the limb count, not with the caveat region, so the rc fold's +16 lands entirely on
+/// the SURVIVING side — which is the honest reading: the fold adds bound columns, and bound
+/// columns are exactly what a dead-stratum deletion must not touch.
+const BASELINE_WIDTH: usize = 2756;
 
 fn open_permissions() -> Permissions {
     Permissions {

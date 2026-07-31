@@ -13,7 +13,10 @@
 //!      `dfa_route_commitment(DfaProofWire.public_inputs)`) proves + verifies, publishing
 //!      the rc at the TAIL slots the fold's binding node will `connect` to;
 //!   3. THE TOOTH: a verifier-side rc CLAIM that differs from the trace's bound carrier
-//!      (a forged / omitted route commitment) is REFUSED.
+//!      (a forged / omitted route commitment) is REFUSED — **and so is the adversary that moves
+//!      the carrier AND every PI the rc pins publish, together**, because the rc FOLD absorbs the
+//!      carrier into the caveat commitment a verifier reconstructs from the turn's own witnessed
+//!      predicates. The pin-only emit admitted that adversary; the fold is what refuses it.
 
 use dregg_circuit::CellState;
 use dregg_circuit::descriptor_ir2::{
@@ -21,12 +24,13 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::Effect;
 use dregg_circuit::effect_vm::trace_rotated::{
-    C_DFA_RC_OFF, CAVEAT_BASE, DFA_RC_LEN, ROT_PI_COUNT, RotatedBlockWitness,
+    C_DFA_RC_OFF, CAVEAT_BASE, DFA_RC_LEN, ROT_PI_COUNT, RotatedBlockWitness, V1_PI_COUNT,
     avail_pad_for_descriptor_name, dfa_route_commitment, generate_rotated_effect_vm_trace_avail,
     transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
 use dregg_turn::rotation_witness as rw;
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
@@ -189,33 +193,26 @@ fn dsl_rc_pins_prove_with_and_without_a_dfa_caveat_and_the_tooth_bites() {
         .expect("the Dfa-gated rotated transfer must prove (SAT with the real rc)");
     verify_vm_descriptor2(&desc, &proof_dfa, &dpis_dfa).expect("Dfa-gated proof verifies");
 
-    // ── 3. ⚑ THE "TOOTH" WAS NEVER A TOOTH, AND `dropUnforcedPins` REMOVED THE PIN THAT
-    //       IMPERSONATED ONE. ──
+    // ── 3. THE TOOTH, RESTORED AS A REAL ONE — the rc carrier is FOLDED into the published
+    //       caveat commitment, so the pins bind and the move-both adversary is refused. ──
     //
-    // This step used to assert, in two halves, that "a claimed rc ≠ the bound carrier is REFUSED".
-    // Half (a) still passes and half (b) now fails, and the SPLIT is the diagnosis:
+    // History, because the shape of the hole is the lesson. `withDfaRcPins` appends ONLY
+    // `.piBinding`s, and until 2026-07-31 the rc carrier columns (caveat-region offsets 39..=42)
+    // were read by no gate, lookup, hash site or range tooth. So each pin was `local[c] == pi[k]`
+    // with the prover choosing BOTH sides: `UnforcedPiPins.unforcedPins` condemned all four on
+    // every member and the convergence re-emit deleted them — correctly. The half of this step
+    // that "tested the pin" then had to be inverted to a MEASUREMENT that the AIR admits a
+    // carrier/claim mismatch, and `ivc_turn_chain::dsl_rc_claim_pi_lo` (which locates the fold's rc
+    // slot BY that pin) started refusing every deployed leg.
     //
-    //   (a) forging the PUBLISHED vector against an honest proof is refused — but not by the rc
-    //       pin. Public values are absorbed into the Fiat–Shamir transcript, so ANY edit to the PI
-    //       vector breaks verification, including edits to slots no constraint mentions. (a) would
-    //       pass against a descriptor with no rc pin at all, which is exactly the situation now.
-    //
-    //   (b) forging the TRACE carrier and keeping the honest PI vector was the half that tested the
-    //       pin — and the pin is gone. `withDfaRcPins` appends ONLY `.piBinding`s
-    //       (`withDfaRcPins_constraints` / `memOpsOf_withDfaRcPins` / `mapOpsOf_withDfaRcPins`), and
-    //       the rc carrier columns (caveat-region offsets 39..=42) are read by no gate, lookup, hash
-    //       site or range tooth. So the pin was `local[c] == pi[k]` with the prover choosing both
-    //       sides, `UnforcedPiPins.unforcedPins` condemned all four, and the convergence re-emit
-    //       deleted them.
-    //
-    // ⚠ AND (b) WAS ALWAYS ROUTABLE-AROUND EVEN WHEN IT PASSED. It moved the carrier and left the
-    // PI alone; a real adversary moves BOTH and is accepted, publishing whatever route commitment
-    // it likes. `withDfaRcPins`'s own doc has said so all along: "the pins are plain PI bindings,
-    // satisfiable at any uniformly-filled value — the executor/verifier anchors the published
-    // value, real-or-zero, off the turn's own witnessed predicates." The AIR never bound the route
-    // commitment. This step is therefore replaced by the MEASUREMENT, not renumbered.
+    // ⚠ AND THE OLD TOOTH WAS ROUTABLE-AROUND EVEN WHEN IT PASSED: it moved the carrier and left
+    // the PI alone; a real adversary moves BOTH. That is why the repair is the FOLD, not a
+    // restored pin — see (c).
     {
-        // (a) is kept, with its claim corrected to what it actually demonstrates.
+        // (a) forging the PUBLISHED vector against an honest proof is refused — but note WHAT by.
+        // Public values are absorbed into the Fiat–Shamir transcript, so ANY edit to the PI vector
+        // breaks verification, including edits to slots no constraint mentions. This would pass
+        // against a descriptor with no rc pin at all; it is transcript binding, not the pin.
         let mut forged = dpis_dfa.clone();
         forged[ROT_PI_COUNT] += BabyBear::ONE;
         assert!(
@@ -224,43 +221,148 @@ fn dsl_rc_pins_prove_with_and_without_a_dfa_caveat_and_the_tooth_bites() {
              this is transcript binding, NOT the rc pin — it would hold for an unpinned slot too."
         );
 
-        // (b) INVERTED: the AIR ADMITS a trace whose rc carrier disagrees with the published rc.
+        // (b) THE PIN, back and biting: forge the TRACE carrier, keep the honest PI vector. The
+        // `withDfaRcPins` pin `local[rc lane 0] == pi[46]` now fails — and it is a real pin again
+        // only because the fold made the column FORCED, so `dropUnforcedPins` keeps it.
         let mut forged_trace = trace_dfa.clone();
         for row in forged_trace.iter_mut() {
             row[CAVEAT_BASE + pad + C_DFA_RC_OFF] += BabyBear::ONE;
         }
-        let admitted =
-            prove_vm_descriptor2(&desc, &forged_trace, &dpis_dfa, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis_dfa));
-        assert!(
-            admitted.is_ok(),
-            "MEASURED: with the unforced rc pins deleted, the AIR must ADMIT a carrier/claim \
-             mismatch — nothing relates the rc carrier column to PI {ROT_PI_COUNT}. If this \
-             REFUSES, a real binding arrived (see the note below) and this assertion should be \
-             flipped back to a refusal, not deleted: {admitted:?}"
+        let refused = must_refuse_or_unsat_panic(
+            "a trace whose rc carrier disagrees with the published rc",
+            || {
+                prove_vm_descriptor2(&desc, &forged_trace, &dpis_dfa, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis_dfa))
+            },
         );
+        // ...and it is the PIN that bites, not a bus imbalance. The distinction is the whole
+        // tooth: a LogUp mismatch would mean the caveat-chain lookups disagreed, which is a
+        // different statement from "the published rc is not the one the trace carries".
+        assert_violated_constraint_not_bus("the rc carrier/claim mismatch", &refused.reason());
+
+        // (c) ⚑ THE MOVE-BOTH ADVERSARY — the one (b) could never catch. Mint a FULLY CONSISTENT
+        // forged world: a different route commitment, its carrier columns, the two chip carriers
+        // the fold derives from them, and the four published rc PIs, all agreeing. The ONLY felt it
+        // does not get to choose is the caveat commit at PI 45, which a verifier reconstructs from
+        // the turn's own witnessed predicates (`proof_verify.rs`: PI `V1_PI_COUNT + 3` is
+        // witness-INDEPENDENT and re-derived, with `caveat.dfa_rc` recomputed from the turn's Dfa
+        // blobs). Because the carrier is now ABSORBED into that commitment, the forged world moves
+        // it — and the leg is UNSAT against the honest one.
+        let mut forged_rc = rc;
+        forged_rc[0] += BabyBear::ONE;
+        assert_ne!(forged_rc, rc);
+        let mut caveat_forged = transfer_caveat_manifest();
+        caveat_forged.dfa_rc = forged_rc;
+        let (trace_moved, dpis_moved) = honest_transfer(pad, &caveat_forged);
+
+        // S1 — THE HONEST POLE FIRST, in this same step: the forged world is internally consistent
+        // and proves on its own terms. Without this, (c)'s refusal would be satisfied just as well
+        // by an arm that refuses every chain of this shape.
+        let consistent =
+            prove_vm_descriptor2(&desc, &trace_moved, &dpis_moved, &mem_boundary, &map_heaps)
+                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis_moved));
+        assert!(
+            consistent.is_ok(),
+            "the move-both world is a well-formed turn on its OWN caveat commit; the refusal below \
+             must come from the anchor, not from the shape: {consistent:?}"
+        );
+
+        // The fold really did move the published caveat commit — the whole point of the repair.
+        assert_ne!(
+            dpis_moved[V1_PI_COUNT + 3],
+            dpis_dfa[V1_PI_COUNT + 3],
+            "moving the rc carrier must move the PUBLISHED caveat commit (PI 45). If these are \
+             EQUAL the rc carrier is outside the commitment fold again and the pins bind nothing."
+        );
+
+        // ...and now the adversary: everything moved EXCEPT the anchor the verifier supplies.
+        let mut moved_both = dpis_moved.clone();
+        moved_both[V1_PI_COUNT + 3] = dpis_dfa[V1_PI_COUNT + 3];
+        for k in 0..DFA_RC_LEN {
+            assert_eq!(moved_both[ROT_PI_COUNT + k], forged_rc[k]);
+            assert_eq!(
+                trace_moved[0][CAVEAT_BASE + pad + C_DFA_RC_OFF + k],
+                forged_rc[k],
+                "carrier and PI moved TOGETHER — the adversary the pin-only emit admitted"
+            );
+        }
+        let move_both = must_refuse_or_unsat_panic(
+            "MOVE-BOTH: a forged route commitment published consistently at its own pins",
+            || {
+                prove_vm_descriptor2(&desc, &trace_moved, &moved_both, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &moved_both))
+            },
+        );
+        assert_violated_constraint_not_bus("the move-both adversary", &move_both.reason());
         eprintln!(
-            "MEASURED — the rc route commitment is NOT bound in-AIR: a trace whose carrier \
-             disagrees with the published rc proves and verifies."
+            "rc FOLD: carrier/claim mismatch REFUSED, and the move-both adversary (carrier + all \
+             four rc PIs moved together) REFUSED against the verifier-anchored caveat commit."
         );
     }
 
-    // ⚑ AND THE REMOVAL BROKE A REAL CONSUMER — the one place the rc binding was ever enforced.
-    //
-    // `circuit-prove/src/ivc_turn_chain.rs::dsl_rc_claim_pi_lo` LOCATES the fold's rc slot BY
-    // searching for the `PiBinding` on the rc lane-0 column, and errors fail-closed ("dsl: leg
-    // descriptor carries NO rc pin … refusing to fold") when it is absent. `carrier_claim_pins_admitted`
-    // then requires a pin per claim slot. No member of any deployed registry carries an rc pin now,
-    // so the `CarrierWitness::Dsl` fold arm refuses every deployed leg.
-    //
-    // ⚠ THE REPAIR IS TO MAKE THE BINDING REAL, NOT TO TEACH THE FOLD TO ACCEPT AN UNPINNED SLOT.
-    // Fold the rc carrier into `caveatCommit` (move it inside the commit fold, so the columns enter
-    // `forcedCols`); the next emit then KEEPS the pins because they bind, `dsl_rc_claim_pi_lo` finds
-    // them again, and step 3(b) above flips back to a refusal that an adversary cannot route around
-    // by moving the column. Teaching the fold to accept an unpinned slot would restore the green
-    // and keep the hole — and would be the second time this route's binding was assumed rather
-    // than checked. Detection lives here and in
-    // `effect_vm_descriptors::v3_staged_registry_parses_and_covers`.
+    // ⚑ AND THE PINS ARE BACK ON THEIR OWN MERITS. `dropUnforcedPins` is UNCHANGED and still drops
+    // every pin whose column no non-pin constraint reads; these survive it because the fold made
+    // their columns read. Measured here on the committed bytes, not asserted in prose.
+    {
+        use dregg_circuit::descriptor_ir2::VmConstraint2;
+        use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+        let rc_col0 = CAVEAT_BASE + pad + C_DFA_RC_OFF;
+        let rc_pins: Vec<usize> = desc
+            .constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index })
+                    if *row == VmRow::Last && (rc_col0..rc_col0 + DFA_RC_LEN).contains(col) =>
+                {
+                    Some(*pi_index)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rc_pins,
+            (0..DFA_RC_LEN)
+                .map(|k| ROT_PI_COUNT + k)
+                .collect::<Vec<_>>(),
+            "the committed transfer member must carry all four rc pins, contiguous at the tail \
+             slots — this is what `ivc_turn_chain::dsl_rc_claim_pi_lo` searches for"
+        );
+
+        // ⚑ AND THE FORCING IS A READ, NOT A DECLARATION. This is the discrimination
+        // `unforced_pi_pin_census::proof_bind_is_the_only_reader_of_the_custom_exposure_columns`
+        // exists to make: `forcedCols` counts a `proof_bind`'s commit/vk references even though the
+        // deployed `Ir2Air::eval` `continue`s on that kind and Lean's `holdsAt` is `trivial` for it,
+        // so a column can be "forced" on the strength of a declaration and still be prover-chosen.
+        // The rc columns are not in that class — each is read by a CHIP LOOKUP, the constraint kind
+        // the caveat chain graduates to, which has a row denotation in both models.
+        let mut readers = vec![0usize; DFA_RC_LEN];
+        for c in &desc.constraints {
+            if let VmConstraint2::Lookup(l) = c {
+                for e in &l.tuple {
+                    if let dregg_circuit::lean_descriptor_air::LeanExpr::Var(v) = e {
+                        if (rc_col0..rc_col0 + DFA_RC_LEN).contains(v) {
+                            readers[v - rc_col0] += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            readers.iter().all(|n| *n > 0),
+            "every rc carrier column must be READ by a chip lookup (the caveat fold's two new \
+             absorption sites), not merely pinned or declared: readers per lane = {readers:?}"
+        );
+        // ...and nothing about this is a `proof_bind`: the custom member is the only one with one,
+        // and this member carries none at all.
+        assert!(
+            !desc
+                .constraints
+                .iter()
+                .any(|c| matches!(c, VmConstraint2::ProofBind(_))),
+            "the transfer member carries no proof_bind, so no rc column can be forced by a \
+             declaration here even in principle"
+        );
+    }
 
     // ── 4. THE AVAIL-WELD RANGE STILL BITES: wire 188 (`BEF0`) carries the 15-bit range lookup that
     //     closes the GAP #4 over-debit forgery. An over-15-bit value there (the forgery shape: a

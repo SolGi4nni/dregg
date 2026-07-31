@@ -40,9 +40,15 @@
 //! independent second implementation of `collect`/`free_row_*` run over the same committed TSVs,
 //! and the two agree exactly.
 //!
-//!   v3     839 → 682 pins, blind 165 → **0**, aware 216 → **51**
-//!   wide  1639 → 1480 pins, blind 167 → **0**, aware 215 → **48**
+//!   v3     839 → 682 → 830 pins, blind 165 → **0**, aware 216 → **51**
+//!   wide  1639 → 1480 → 1628 pins, blind 167 → **0**, aware 215 → **48**
 //!   welded  (identical to wide)
+//!
+//! ⚑ The THIRD number in each row is the rc FOLD (2026-07-31, same day). It restored 148 pins —
+//! the `withDfaRcPins` DFA route-commitment quartet on each of the 37 rc-wrapped members — WITHOUT
+//! touching `dropUnforcedPins`: `EffectVmEmitRotationV3.caveatV3SitesAt` now absorbs the carrier
+//! into the published caveat commitment, so those columns are READ and the pins survive the
+//! subtraction on their own merits. That is the only honest way to bring a censused pin back.
 //!
 //! **`blind = 0` is the theorem, not a coincidence.** `unforcedPins_dropUnforcedPins` proves the
 //! subtraction is a FIXPOINT: `forcedCols` counts only NON-pin constraints, the subtraction removes
@@ -269,8 +275,19 @@ fn census(tsv: &str) -> Census {
     out
 }
 
-/// **THE CENSUS.** Measured 2026-07-30 on the deployed bytes. `free_blind` is the set the
-/// Lean-side `dropUnforcedPins` removes; when the convergence re-emit lands it, these become 0.
+/// **THE CENSUS.** Measured 2026-07-31 on the deployed bytes, after the rc FOLD. `free_blind` is
+/// the set the Lean-side `dropUnforcedPins` removes, and it is ZERO — the subtraction's FIXPOINT
+/// theorem made good on the emitted bytes.
+///
+/// ⚑ THE PIN TOTALS ROSE 682 → 830 (v3) and 1480 → 1628 (wide/welded) WITHOUT `dropUnforcedPins`
+/// changing at all. `EffectVmEmitRotationV3.caveatV3SitesAt` now absorbs the 4-felt DFA
+/// route-commitment carrier into the PUBLISHED caveat commitment, so those columns are READ, they
+/// enter `forcedCols`, and the same unchanged subtraction keeps the `withDfaRcPins` pins on their
+/// own merits. +148 on each registry = 4 pins × 37 rc-wrapped members (the v3 TSV's 60 rows and
+/// the wide 57 both contain exactly 37 of them; `heapWrite`, `supplyMint` and the three staged
+/// capacity-satisfaction welds are rc-EXEMPT, and the setField family shares the count).
+/// `aware` did NOT move (51/48/48): it counts pins free on their own row, a superset of `blind`
+/// whose residue is the legacy 1-felt state-commitment pins the row-blind subtraction cannot reach.
 #[test]
 fn unforced_pi_pin_census_is_pinned() {
     let v3 = census(V3_STAGED_REGISTRY_TSV);
@@ -299,8 +316,8 @@ fn unforced_pi_pin_census_is_pinned() {
     );
     assert_eq!(
         measured,
-        "v3 60/682 blind=0 aware=51 | wide 57/1480 blind=0 aware=48 \
-         | welded 57/1480 blind=0 aware=48",
+        "v3 60/830 blind=0 aware=51 | wide 57/1628 blind=0 aware=48 \
+         | welded 57/1628 blind=0 aware=48",
         "the unforced-PI-pin census moved"
     );
 
@@ -500,11 +517,15 @@ fn published_slot_accounting_is_pinned() {
     // No other member's `public_input_count` moved (checked member-by-member against the registry
     // at `e662ade32^`). 3815 + 8 - 2 = 3821.
     assert_eq!(total_slots, 3821, "wide registry published PI slots");
-    // 1639 -> 1480. This is EXACTLY the 159 pins `dropUnforcedPins` removed, and the equality of
+    // ⚑ UNMOVED by the rc FOLD: `piCount` is invariant under `dropUnforcedPins` in both directions,
+    // so restoring 148 pins published no new slot — it bound slots that were already there.
+    // 1639 -> 1480 -> 1628. The first move was EXACTLY the 159 pins `dropUnforcedPins` removed; the
+    // second is the 148 the rc FOLD brought back by making their columns forced (the subtraction
+    // itself is unchanged). The equality of
     // "pins removed" with "distinct pinned slots lost" is not an accident: the pin relation is a
     // partial injection over every deployed member, which `pin_relation_is_injective_so_the_no_op_theorem_applies`
     // (below) measures. So no surviving pin ever backfilled a slot a deleted one vacated.
-    assert_eq!(pinned_slots, 1480, "…of which some constraint pins");
+    assert_eq!(pinned_slots, 1628, "…of which some constraint pins");
 }
 
 /// **The `hsole` side condition of `unforced_pin_row_admits_any_value`, MEASURED.**

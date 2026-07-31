@@ -405,13 +405,15 @@ fn d1_d2_chip_census_and_logup_aux_provenance() {
     // graduated chip-lane stratum, then 134 → 138 / 254 → 262 at the NINE-LANE epoch (each rotated
     // block gained two absorption sites with the six new limbs: 60 → 62 per block). The relation
     // below anchors both literals to the Lean-emitted deletion table so an S2 span change fails
-    // loudly here instead of leaving a floating count.
-    assert_eq!(sites.len(), 138, "chip lookups at HEAD (was 262 pre-S2)");
+    // loudly here instead of leaving a floating count. ⚑ 138 → 140 / 262 → 264 at the rc FOLD: the
+    // caveat region gained the TWO chip sites that absorb the DFA route-commitment carrier into the
+    // published caveat commitment (the S2 stratum is per-BLOCK and does not move with them).
+    assert_eq!(sites.len(), 140, "chip lookups at HEAD (was 264 pre-S2)");
     assert_eq!(
         sites.len() + dregg_circuit::effect_vm::s2_compact_generated::S2_LANE_SPAN / 7,
-        262,
+        264,
         "the S2 flag-day deleted exactly the graduated chip-lane sites (S2_LANE_SPAN spans 7 lanes \
-         per site), taking the deployed census 262 → 138"
+         per site), taking the deployed census 264 → 140"
     );
 
     // -- tag / var-arity histograms --
@@ -1239,7 +1241,10 @@ fn e3_mutable_last_limb_schedule_rate8_sim() {
         survivor_tuples.insert(t);
     }
     let survivors = survivor_tuples.len();
-    assert_eq!(survivors, 14, "D1's non-wide survivor count");
+    // ⚑ 14 → 16 at the rc FOLD: the caveat region gained the two chip sites that absorb the DFA
+    // route-commitment carrier into the published caveat commitment, and neither is a chain HEAD
+    // nor a tag-11 wide site, so both land in the non-wide survivor set.
+    assert_eq!(survivors, 16, "D1's non-wide survivor count");
 
     let pi8_col: Option<usize> = desc.constraints.iter().find_map(|k| match k {
         VmConstraint2::Base(VmConstraint::PiBinding {
@@ -1279,9 +1284,13 @@ fn e3_mutable_last_limb_schedule_rate8_sim() {
         .flat_map(|s| s.ins.iter())
         .filter(|e| matches!(e, LeanExpr::Var(v) if !all_chip_out.contains(v)))
         .count();
+    // ⚑ (10, 29, 4) → (12, 33, 4) at the rc FOLD. The caveat stratum gained the TWO sites that
+    // absorb the DFA route-commitment carrier into the published caveat commitment (one arity-4,
+    // one arity-2), and with them FOUR fresh inputs — the four rc lanes, which are exactly the
+    // columns that were read by nothing before. The H4 stratum is untouched.
     assert_eq!(
         (caveat_sites.len(), caveat_fresh, h4_sites.len()),
-        (10, 29, 4),
+        (12, 33, 4),
         "D1's caveat/H4 strata"
     );
 
@@ -1318,10 +1327,18 @@ fn e3_mutable_last_limb_schedule_rate8_sim() {
         64,
         "M1 leaves EPOCH-2-B at 64 (one step of dedup short: 33 > 32)"
     );
+    // ⚑ 32 → 64 at the rc FOLD, and this is a MEASURED COST, not a re-pin. The caveat fold's two
+    // new absorption sites move the projection by +1 (`survivors` +2, `caveat_sites` +2 cancelling
+    // it, `caveat_fresh` 29 → 33 crossing a rate-8 bucket: ⌈33/8⌉ = 5 where ⌈29/8⌉ = 4), which puts
+    // EPOCH-2-B at 33 — one over the cliff. EPOCH-2-C is unaffected (`c2` = 29, still ≤ 32), so the
+    // full Epoch-2 bundle still lands at chip height 32 under M2; only the B projection loses it.
+    // Recorded here rather than smoothed away: the route-commitment binding cost one rate-8 step of
+    // headroom in the B stratum, and a future scheduling change should know it is spending against
+    // 33, not 32.
     assert_eq!(
         next_pow2(b2),
-        32,
-        "M2's extra shared step moves EPOCH-2-B across the 32 cliff too"
+        64,
+        "M2's EPOCH-2-B is one step over the 32 cliff since the rc fold (33 unique)"
     );
 
     // -- registry-wide projection: the wide skeleton (118 tag-11 sites + 2 heads, 179 fresh
@@ -1347,10 +1364,11 @@ fn e3_mutable_last_limb_schedule_rate8_sim() {
             next_pow2(v)
         );
     }
-    // The closed form for the freeze decision (transfer-family constants: survivors 14 -
-    // caveat 10 + caveat-steps 4 - H4 4 = +4): v_C = wide_unique + 4, so chip-32 needs
-    // wide_unique <= 28, i.e. at most 5 divergent after-chain steps, i.e. the verb's whole
-    // mutation set confined to the LAST 5 rate-8 steps = the last 35 schedule positions.
+    // The closed form for the freeze decision (transfer-family constants at the rc-fold geometry:
+    // survivors 16 - caveat 12 + caveat-steps 5 - H4 4 = +5): v_C = wide_unique + 5, so chip-32
+    // needs wide_unique <= 27, i.e. at most 5 divergent after-chain steps, i.e. the verb's whole
+    // mutation set confined to the LAST 5 rate-8 steps = the last 35 schedule positions. (The
+    // window is unchanged; the slack inside it shrank by one unique tuple.)
     println!(
         "E3: tail window — chip-32 holds for any verb whose BEFORE/AFTER mutation set fits \
          the last 35 schedule positions (divergence confined to the final 5 of 23 steps)"

@@ -615,17 +615,17 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
     // gentian flag-day refuse rides that OWN base (§HETEROGENEOUS GEOMETRY): the capacity-floor
     // blocks widen it by `REFUSE_WELD_WIDEN = 45`.
     //
-    // ⚑ ALL THREE NUMBERS MOVED AT THE NINE-LANE EPOCH (1647/1619/1664 → 1691/1663/1708), and
-    // every one is derived rather than transcribed:
-    //   GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES = 725 + 7·138 = 1691   (was 709 + 7·134 = 1647)
-    //   setFieldDyn base = 1691 − 4·7 = 1663                              (was 1619)
-    //   trace_width      = 1663 + 45  = 1708                              (was 1664)
-    // Cross-check on a member with the standard host: 1691 + 45 = 1736, which is the committed
-    // `mint`/`revoke`/`setField-*` width; transfer's avail pad 10 gives 1746.
+    // ⚑ ALL THREE NUMBERS MOVED AT THE NINE-LANE EPOCH (1647/1619/1664 → 1691/1663/1708) AND AGAIN
+    // AT THE rc FOLD (→ 1707/1679/1724), and every one is derived rather than transcribed:
+    //   GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES = 727 + 7·140 = 1707   (was 725 + 7·138 = 1691)
+    //   setFieldDyn base = 1707 − 4·7 = 1679                              (was 1663)
+    //   trace_width      = 1679 + 45  = 1724                              (was 1708)
+    // Cross-check on a member with the standard host: 1707 + 45 = 1752, which is the committed
+    // `mint`/`revoke`/`setField-*` width; transfer's avail pad 10 gives 1762.
     assert_eq!(
-        desc.trace_width, 1708,
-        "setFieldDyn is a DISTINCT V1Face geometry (base 1663 = GRAD_ROT_WIDTH 1691 − four chip \
-         sites·7) refuse-welded over ITS OWN base: 1663 + 45 refuse span = 1708 (matches committed \
+        desc.trace_width, 1724,
+        "setFieldDyn is a DISTINCT V1Face geometry (base 1679 = GRAD_ROT_WIDTH 1707 − four chip \
+         sites·7) refuse-welded over ITS OWN base: 1679 + 45 refuse span = 1724 (matches committed \
          setFieldDynVmDescriptor2R24 trace_width — per-member, not fixed to the standard graduated host)"
     );
     assert_ne!(

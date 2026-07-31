@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "ce2d26ea76d9f021371372796429733937d3381a286706e2a2091962936ca49f";
+    "125751ed1dcbf8672da1141f54df7ea88df13a2308f5485dd38a04e1f10dec35";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1218,7 +1218,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "3b698db0a8618736e4bc174cc1d1addec15234493f0d611f3830f3ff201af795";
+    "2137a18b0f10f5104f10533ad9d145fbb03c37774d4ac63418f7057df8a04e38";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1244,7 +1244,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "b3a25dbad249978f60d5f853a1cac1e821ae2293571179884cb8177374501edc";
+    "a62330da351a59d47bbfab82abfb96a7abc33ebffdd3b854a9f5467c9f058d8c";
 
 /// The number of written-slot completion lanes the deployed setField members publish (the VALUE8
 /// weld — the high bits of the written 32-byte field value).
@@ -2813,12 +2813,15 @@ mod tests {
         const V1_WIDTH: usize = EFFECT_VM_WIDTH;
         // chain carriers occupy `[B_CHAIN_BASE, B_SPAN)` (the head digest + one per 3-wide group).
         const B_NUM_CHAIN: usize = B_SPAN - B_CHAIN_BASE; // 37 (v12: 112 limbs)
-        // The caveat region grew 39 → 43 with the dsl rc-EMIT: the 4-felt `Witnessed{Dfa}`
-        // route-commitment carrier rides in-region offsets 39..=42 on EVERY rotated member's
-        // layout (`trace_rotated::C_SPAN`); only the PI pins (`withDfaRcPins`) are per-member.
-        const C_SPAN: usize = crate::effect_vm::trace_rotated::C_SPAN; // 43 (v12 + rc)
-        const C_COMMIT: usize = cav::MANIFEST_SIZE + cav::NUM_CHAIN; // 29 + 9 = 38
-        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN; // 345 (v12 + rc)
+        // The caveat region grew 39 → 43 with the dsl rc-EMIT (the 4-felt `Witnessed{Dfa}`
+        // route-commitment carrier at in-region 39..=42) and 43 → 45 with the rc FOLD, which
+        // ABSORBS that carrier into the published commitment through two further chip sites. All
+        // three offsets are Lean-emitted (`layout_generated`); only the PI pins (`withDfaRcPins`)
+        // are per-member.
+        use crate::effect_vm::trace_rotated::{
+            C_COMMIT, C_DFA_RC_OFF, C_MANIFEST_COMMIT, C_RC_CARRIER, C_SPAN, DFA_RC_LEN,
+        };
+        const APPENDIX_SPAN: usize = 2 * B_SPAN + C_SPAN;
 
         let mut n = 0usize;
         for line in V3_STAGED_REGISTRY_TSV.lines() {
@@ -3036,17 +3039,18 @@ mod tests {
                 // exact committed widths (a drift tooth on the satisfaction-gadget span, read from the
                 // committed registry TSV) and strip back to the graduated base for the lane check.
                 let expected = if key == "dischargeSatVmDescriptor2R24" {
-                    // 1720 -> 1764 at the nine-lane epoch: GRAD_ROT_WIDTH(1691) + the
-                    // cursor/total/due + G5 free-param bind columns.
-                    1764
+                    // 1720 -> 1764 at the nine-lane epoch, 1764 -> 1780 at the rc FOLD:
+                    // GRAD_ROT_WIDTH(1707) + the cursor/total/due + G5 free-param bind columns.
+                    1780
                 } else {
-                    // GRAD_ROT_WIDTH(1647) + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns.
+                    // GRAD_ROT_WIDTH + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns.
                     // Re-pinned 2121 → 2185 from the emitted TSV: the satisfaction-gadget span grew
                     // by 64 columns with the arity-3 IMT / AAFI accumulator rewiring. This is a raw
                     // drift tooth (a literal read off the committed artifact), so it MUST be re-read
                     // whenever the gadget changes — it does not derive itself. Re-read again
-                    // 2185 -> 2229 at the nine-lane epoch.
-                    2229
+                    // 2185 -> 2229 at the nine-lane epoch, 2229 -> 2245 at the rc FOLD (both members
+                    // ride GRAD_ROT_WIDTH, so both moved by the same +16).
+                    2245
                 };
                 assert_eq!(
                     d.trace_width, expected,
@@ -3081,14 +3085,17 @@ mod tests {
             let caveat_base = before_base + 2 * B_SPAN;
 
             // A "fresh limb" of the appendix is a column inside one of the three blocks'
-            // LIMB ranges (before/after rotated limbs 0..=iroot, or the caveat manifest
-            // 0..MANIFEST_SIZE) — NOT a chain-carrier column (those ride the accumulator as
+            // LIMB ranges (before/after rotated limbs 0..=iroot, the caveat manifest
+            // 0..MANIFEST_SIZE, or the 4-felt DFA route-commitment carrier the rc FOLD absorbs)
+            // — NOT a chain-carrier column (those ride the accumulator as
             // inputs but are not absorbed data). We audit only appendix sites (digest >=
             // V1_WIDTH); the v1 descriptor's own chip lookups absorb columns < V1_WIDTH.
+            let rc_lo = caveat_base + C_DFA_RC_OFF;
             let is_limb = |v: usize| -> bool {
                 (before_base..=before_base + B_IROOT).contains(&v)
                     || (after_base..=after_base + B_IROOT).contains(&v)
                     || (caveat_base..caveat_base + cav::MANIFEST_SIZE).contains(&v)
+                    || (rc_lo..rc_lo + DFA_RC_LEN).contains(&v)
             };
             let mut digests: Vec<usize> = Vec::new();
             let mut absorbed: Vec<usize> = Vec::new();
@@ -3123,14 +3130,22 @@ mod tests {
             expected_absorbed.extend((0..=B_IROOT).map(|i| before_base + i));
             expected_absorbed.extend((0..=B_IROOT).map(|i| after_base + i));
             expected_absorbed.extend((0..cav::MANIFEST_SIZE).map(|i| caveat_base + i));
+            // ⚑ THE rc FOLD, measured on the committed bytes: the four DFA route-commitment
+            // columns are ABSORBED, in order, right after the manifest. Until 2026-07-31 they were
+            // absorbed by nothing — which is exactly why the `withDfaRcPins` pins on them bound
+            // nothing and `dropUnforcedPins` deleted all 144 of them, taking the `CarrierWitness::
+            // Dsl` fold arm down with them. If this line is ever deleted to "fix" a regen, the
+            // pins go back to publishing a prover-chosen felt.
+            expected_absorbed.extend((0..DFA_RC_LEN).map(|i| rc_lo + i));
             assert_eq!(
                 absorbed, expected_absorbed,
-                "{key}: appendix must absorb the BEFORE block, the AFTER block, then the \
-                 29-felt caveat manifest, each limb exactly once in absorption order"
+                "{key}: appendix must absorb the BEFORE block, the AFTER block, the \
+                 29-felt caveat manifest, then the 4-felt DFA route-commitment carrier, each \
+                 limb exactly once in absorption order"
             );
 
             // Expected digest carriers: before chain → before state_commit; after chain →
-            // after state_commit; caveat chain → caveat commit.
+            // after state_commit; caveat chain → manifest commit → rc carrier → CAVEAT COMMIT.
             let mut expected_digests: Vec<usize> = Vec::new();
             expected_digests.extend((0..B_NUM_CHAIN).map(|k| before_base + B_CHAIN_BASE + k));
             expected_digests.push(before_base + B_STATE_COMMIT);
@@ -3140,11 +3155,13 @@ mod tests {
             // absolute within the standalone caveat probe at base cav::BASE).
             let cav_chain_rel = cav::CHAIN_BASE - cav::BASE; // 29
             expected_digests.extend((0..cav::NUM_CHAIN).map(|k| caveat_base + cav_chain_rel + k));
+            expected_digests.push(caveat_base + C_MANIFEST_COMMIT);
+            expected_digests.push(caveat_base + C_RC_CARRIER);
             expected_digests.push(caveat_base + C_COMMIT);
             assert_eq!(
                 digests, expected_digests,
                 "{key}: before chain→state_commit, after chain→state_commit, \
-                 caveat chain→CAVEAT_COMMIT"
+                 caveat chain→manifest commit→rc carrier→CAVEAT_COMMIT"
             );
 
             // The four rotated commit pins always sit at the v1 prefix count (42..=45),
@@ -3224,44 +3241,51 @@ mod tests {
                 || key == "settleEscrowSatVmDescriptor2R24"
                 || key == "dischargeSatVmDescriptor2R24"
                 || key == "vaultSatVmDescriptor2R24";
-            // ⚑ 2026-07-31 — THE rc PINS ARE GONE FROM EVERY MEMBER, and the assertion that stood
-            // here (`has_rc == !rc_exempt`, "dsl rc pins present iff the member is the rc-wrapped
-            // cohort") is FALSE, not merely off by a number. `withDfaRcPins` appends ONLY
-            // `.piBinding`s (`withDfaRcPins_constraints` / `memOpsOf_withDfaRcPins` /
-            // `mapOpsOf_withDfaRcPins`), and the rc carrier columns (caveat-region offsets 39..=42)
-            // are read by NO gate, lookup, hash site or range tooth — so each pin was
-            // `local[c] == pi[k]` with the prover choosing both sides, and `dropUnforcedPins`
-            // deleted all four from every rc-wrapped member. The AIR never bound the route
-            // commitment; `withDfaRcPins`'s own doc says so ("the pins are plain PI bindings,
-            // satisfiable at any uniformly-filled value"). The intended binding was always the
-            // per-turn FOLD, which reads the PI slots — and `piCount` is UNCHANGED by the
-            // subtraction, so the four slots survive as verifier-supplied inputs.
+            // ⚑ 2026-07-31 — THE rc PINS ARE BACK, AND THIS TIME THEY BIND. Between the
+            // convergence re-emit and the rc FOLD (both on 2026-07-31) they were ABSENT and this
+            // block asserted their absence, because `withDfaRcPins` appends ONLY `.piBinding`s and
+            // the rc carrier columns (caveat-region offsets 39..=42) were read by NO gate, lookup,
+            // hash site or range tooth: each pin was `local[c] == pi[k]` with the prover choosing
+            // both sides, so `dropUnforcedPins` deleted all four from every rc-wrapped member — and
+            // took `ivc_turn_chain::dsl_rc_claim_pi_lo`, which locates the fold's rc slot BY the
+            // pin, down with them.
             //
-            // ⚠ THAT IS NOT COST-FREE, and it is not this file's to fix:
-            // `circuit-prove/src/ivc_turn_chain.rs::dsl_rc_claim_pi_lo` LOCATES the fold's rc slot
-            // BY the pin and errors fail-closed when it is absent, so the DSL/Dfa fold arm now
-            // refuses every deployed leg. The repair is to make the binding real — fold the rc
-            // carrier into `caveatCommit` so the columns enter `forcedCols` and the next emit KEEPS
-            // the pins — not to teach the fold to accept an unpinned slot. Tracked at
-            // `circuit/tests/dsl_rc_emit.rs`.
+            // The repair was NOT an exemption from the subtraction and NOT teaching the fold to
+            // accept an unpinned slot: `EffectVmEmitRotationV3.caveatV3SitesAt` now ABSORBS the
+            // carrier into the PUBLISHED caveat commitment (`caveatCommitRc`), so those four
+            // columns are read by chip lookups, they are in `UnforcedPiPins.forcedCols`, and the
+            // SAME unchanged subtraction keeps the pins. `circuit/tests/dsl_rc_emit.rs` measures
+            // both poles on the committed bytes, including the adversary that moves the carrier
+            // AND all four PIs together.
             //
-            // So: assert the ABSENCE (which is falsifiable — it goes red the day an emitter
-            // re-adds them, which is what the repair above would do), and take rc-wrapping from the
-            // emitter-side membership. The membership is still two-sided: `base_pi_count` feeds
-            // every per-effect branch below, so a member wrongly classified here fails there.
-            assert!(
-                rc_pins.is_empty(),
-                "{key}: the dsl rc pins must be ABSENT — `dropUnforcedPins` removed all four \
-                 because the rc carrier columns are read by nothing. Their return means either a \
-                 member skipped the subtraction, or (the intended repair) the rc carrier was \
-                 folded into `caveatCommit` and is now genuinely forced. Check WHICH before \
-                 restoring the old `present iff rc-wrapped` assertion: found {rc_pins:?}"
+            // So the two-sided assertion is restored: present iff the member is rc-wrapped. If it
+            // ever goes red with `rc_pins` EMPTY again, do not re-assert the absence — check first
+            // whether the caveat fold still reaches the carrier (the `absorbed` walk in
+            // `v3_staged_registry_parses_and_covers` above is where that is measured).
+            let has_rc: bool = !rc_pins.is_empty();
+            assert_eq!(
+                has_rc, !rc_exempt,
+                "{key}: the dsl rc pins are present iff the member is the rc-wrapped cohort \
+                 (rc_exempt={rc_exempt}); found {rc_pins:?}"
             );
+            if has_rc {
+                let mut got = rc_pins.clone();
+                got.sort_by_key(|(_, pi)| *pi);
+                let lo = got[0].1;
+                assert_eq!(
+                    got,
+                    (0..4).map(|k| (rc_col + k, lo + k)).collect::<Vec<_>>(),
+                    "{key}: the four rc pins must bind columns {rc_col}..{}+4 to CONTIGUOUS tail \
+                     PI slots — that contiguity is exactly what \
+                     `ivc_turn_chain::carrier_claim_pins_admitted` requires of the fold's claim \
+                     slice",
+                    rc_col
+                );
+            }
             // The member's PRE-rc PI count — what every per-effect branch below pins. The rc tail
             // SLOTS are still allocated (`piCount` is invariant under the subtraction); only their
             // pins are gone.
             let base_pi_count = d.public_input_count - if rc_exempt { 0 } else { 4 };
-            let _ = rc_col;
             // THE RECORD-FORCING PIN (the deployment-soundness close, `EffectVmEmitRotationV3
             // .rotateV3WithRecordPin`): cellSeal/cellUnseal/cellDestroy AND receiptArchive force the
             // AFTER block's lifecycle limb (col `after_base + B_LIFECYCLE`) — the deployed apply moves
@@ -3740,57 +3764,66 @@ mod tests {
         // is pinned by a literal: the welded member is checked as `bare + 7` by
         // `wide_umem_weld_registry_parity_and_no_narrowing`, and the narrow one rides the derived
         // `HEAP_WRITE_HOST_WIDTH` / `HEAP_WRITE_READ_BASE`.
+        // ⚑ FLAG DAY 2026-07-31 (the rc FOLD), and the SPLIT in the deltas is the interesting
+        // part. Every member gained +16 from the geometry (`C_SPAN` 43 → 45 for the two carriers
+        // the rc extension needs, plus 2 new chip sites × 7 graduated lane columns). TWENTY
+        // members gained +20: the cap-open / write / heapWrite / supplyMint rows, whose E1
+        // kill-set used to swallow the four DEAD rc carrier columns. They are no longer dead — the
+        // caveat fold reads them — so E1 keeps them and the member is 4 columns wider. That the
+        // split falls exactly on "which members E1 had reached" is the cross-check that the fold
+        // reached every member's carrier, not just the ones whose pins came back (heapWrite and
+        // supplyMint are rc-EXEMPT: no pins, but the columns are live all the same).
         const WIDE_MEMBER_GEOMETRY: [(&str, usize); 57] = [
-            ("transferVmDescriptor2R24", 1654),
-            ("burnVmDescriptor2R24", 1650),
-            ("mintVmDescriptor2R24", 1645),
-            ("noteSpendVmDescriptor2R24", 1936),
-            ("noteCreateVmDescriptor2R24", 1936),
-            ("cellSealVmDescriptor2R24", 1645),
-            ("cellDestroyVmDescriptor2R24", 1645),
-            ("refusalVmDescriptor2R24", 2153),
-            ("setPermsVmDescriptor2R24", 1645),
-            ("setVKVmDescriptor2R24", 1645),
-            ("exerciseVmDescriptor2R24", 1645),
-            ("pipelinedSendVmDescriptor2R24", 1645),
-            ("refreshVmDescriptor2R24", 1645),
-            ("incrementNonceVmDescriptor2R24", 1645),
-            ("revokeVmDescriptor2R24", 1645),
-            ("introduceVmDescriptor2R24", 1645),
-            ("attenuateVmDescriptor2R24", 1645),
-            ("revokeCapabilityVmDescriptor2R24", 1645),
-            ("customVmDescriptor2R24", 1621),
-            ("setFieldDynVmDescriptor2R24", 1613),
-            ("grantCapVmDescriptor2R24", 1645),
-            ("makeSovereignVmDescriptor2R24", 1681),
-            ("createCellVmDescriptor2R24", 1936),
-            ("factoryVmDescriptor2R24", 1645),
-            ("spawnVmDescriptor2R24", 1645),
-            ("receiptArchiveVmDescriptor2R24", 1645),
-            ("cellUnsealVmDescriptor2R24", 1645),
-            ("emitEventVmDescriptor2R24", 1645),
-            ("setFieldVmDescriptor2-0R24", 1645),
-            ("setFieldVmDescriptor2-1R24", 1645),
-            ("setFieldVmDescriptor2-2R24", 1645),
-            ("setFieldVmDescriptor2-3R24", 1645),
-            ("setFieldVmDescriptor2-4R24", 1645),
-            ("setFieldVmDescriptor2-5R24", 1645),
-            ("setFieldVmDescriptor2-6R24", 1645),
-            ("setFieldVmDescriptor2-7R24", 1645),
-            ("delegateCapOpenVmDescriptor2R24", 1922),
-            ("introduceCapOpenVmDescriptor2R24", 1922),
-            ("grantCapCapOpenVmDescriptor2R24", 1922),
-            ("revokeCapOpenVmDescriptor2R24", 1922),
-            ("refreshDelegationCapOpenVmDescriptor2R24", 1922),
-            ("revokeCapabilityCapOpenVmDescriptor2R24", 1922),
-            ("transferCapOpenEffVmDescriptor2R24", 1932),
-            ("attenuateCapOpenEffVmDescriptor2R24", 2065),
-            ("transferFeeVmDescriptor2R24", 1613),
-            ("transferCapOpenTBVmDescriptor2R24", 1932),
-            ("heapWriteVmDescriptor2R24", 1999),
-            ("delegateWriteCapOpenVmDescriptor2R24", 1922),
-            ("introduceWriteCapOpenVmDescriptor2R24", 1922),
-            ("delegateAttenWriteCapOpenVmDescriptor2R24", 1922),
+            ("transferVmDescriptor2R24", 1670),
+            ("burnVmDescriptor2R24", 1666),
+            ("mintVmDescriptor2R24", 1661),
+            ("noteSpendVmDescriptor2R24", 1952),
+            ("noteCreateVmDescriptor2R24", 1952),
+            ("cellSealVmDescriptor2R24", 1661),
+            ("cellDestroyVmDescriptor2R24", 1661),
+            ("refusalVmDescriptor2R24", 2169),
+            ("setPermsVmDescriptor2R24", 1661),
+            ("setVKVmDescriptor2R24", 1661),
+            ("exerciseVmDescriptor2R24", 1661),
+            ("pipelinedSendVmDescriptor2R24", 1661),
+            ("refreshVmDescriptor2R24", 1661),
+            ("incrementNonceVmDescriptor2R24", 1661),
+            ("revokeVmDescriptor2R24", 1661),
+            ("introduceVmDescriptor2R24", 1661),
+            ("attenuateVmDescriptor2R24", 1661),
+            ("revokeCapabilityVmDescriptor2R24", 1661),
+            ("customVmDescriptor2R24", 1637),
+            ("setFieldDynVmDescriptor2R24", 1629),
+            ("grantCapVmDescriptor2R24", 1661),
+            ("makeSovereignVmDescriptor2R24", 1697),
+            ("createCellVmDescriptor2R24", 1952),
+            ("factoryVmDescriptor2R24", 1661),
+            ("spawnVmDescriptor2R24", 1661),
+            ("receiptArchiveVmDescriptor2R24", 1661),
+            ("cellUnsealVmDescriptor2R24", 1661),
+            ("emitEventVmDescriptor2R24", 1661),
+            ("setFieldVmDescriptor2-0R24", 1661),
+            ("setFieldVmDescriptor2-1R24", 1661),
+            ("setFieldVmDescriptor2-2R24", 1661),
+            ("setFieldVmDescriptor2-3R24", 1661),
+            ("setFieldVmDescriptor2-4R24", 1661),
+            ("setFieldVmDescriptor2-5R24", 1661),
+            ("setFieldVmDescriptor2-6R24", 1661),
+            ("setFieldVmDescriptor2-7R24", 1661),
+            ("delegateCapOpenVmDescriptor2R24", 1942),
+            ("introduceCapOpenVmDescriptor2R24", 1942),
+            ("grantCapCapOpenVmDescriptor2R24", 1942),
+            ("revokeCapOpenVmDescriptor2R24", 1942),
+            ("refreshDelegationCapOpenVmDescriptor2R24", 1942),
+            ("revokeCapabilityCapOpenVmDescriptor2R24", 1942),
+            ("transferCapOpenEffVmDescriptor2R24", 1952),
+            ("attenuateCapOpenEffVmDescriptor2R24", 2085),
+            ("transferFeeVmDescriptor2R24", 1629),
+            ("transferCapOpenTBVmDescriptor2R24", 1952),
+            ("heapWriteVmDescriptor2R24", 2019),
+            ("delegateWriteCapOpenVmDescriptor2R24", 1942),
+            ("introduceWriteCapOpenVmDescriptor2R24", 1942),
+            ("delegateAttenWriteCapOpenVmDescriptor2R24", 1942),
             // ⚑ FLAG DAY 2026-07-28: 1878 → 2014. The two REMOVE write twins gained the TOMBSTONE
             // after-spine (Lean `CapOpenEmit.removeTombstoneConstraints`), so their NARROW host is
             // now `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119, the same as the UPDATE twin.
@@ -3801,13 +3834,13 @@ mod tests {
             // leaves its 7 leaf-field columns unread — and the E1 dead-column scan strips exactly
             // that run (`e1_compact_generated.rs` gained `(1016, 1023)` on both members). The narrow
             // widths coincide because the narrow member is not compacted; the wide ones do not.
-            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2058),
-            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2058),
-            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2065),
-            ("spawnWriteCapOpenVmDescriptor2R24", 1922),
-            ("spawnCapOpenVmDescriptor2R24", 1922),
-            ("exerciseCapOpenVmDescriptor2R24", 1922),
-            ("supplyMintVmDescriptor2R24", 1593),
+            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2078),
+            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2078),
+            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2085),
+            ("spawnWriteCapOpenVmDescriptor2R24", 1942),
+            ("spawnCapOpenVmDescriptor2R24", 1942),
+            ("exerciseCapOpenVmDescriptor2R24", 1942),
+            ("supplyMintVmDescriptor2R24", 1613),
         ];
 
         let mut n = 0usize;
