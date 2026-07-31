@@ -277,6 +277,31 @@ layout — AND the corresponding `internal_vars`. Build on P2's data model `[exi
   `[exists]` `MinaWrapPublicInput.lean` census (the SAME 40 words, from the other side).
 - **New:** the producer-side packing + `internal_vars` for the statement I/O.
 
+#### R3 — EARLIEST FALSIFIABLE SIGNAL, MEASURED 2026-07-31 (the packing crux CLEARS)
+`[exists]` `metatheory/Dregg2/Bridge/PicklesR3BranchDataDiff.lean` (kernel-clean, no axioms) +
+`bridge/mina-zkapp/scripts/pickles-r3-branchdata-oracle.ts` (exit 0). The smallest scaffolding piece
+that requires real *packing* logic — `branch_data`, the ONE Wrap-statement field whose packed value
+differs from its raw inputs — was emitted from Lean and DIFFED byte-exact against the real chain:
+- **Lean emit** `branchDataPack {proofs_verified = N2, domain_log2 = 16} = 67` (via `prefix_mask`
+  + LSB-first `project` + `4·domain_log2`, authored from reading `branch_data.ml:63-74`).
+- **Oracle** `wrap_public_input[29] = 67` of devnet block 539508 (`mina_real_block_proof.json`) —
+  openmina's own `PreparedStatement::to_public_input`, which **o1-labs' `kimchi::verifier::verify`
+  ACCEPTS** (extractor ground-truth #3, so slot 29 is validated not transcribed). o1js is js_of_ocaml
+  of the same Pickles (`o1js_node.bc.cjs` carries `branch_data`/`Prefix_mask`/`proofs_verified` —
+  79/1/266 hits), so `67` is an emission of exactly the `Branch_data.pack` o1js runs.
+- **MATCH, byte-exact.** FOUR-way agreement: deployed OCaml chain · openmina Rust · kimchi acceptance
+  · Lean synthesis. **Falsifiable and it bites:** a naive tag-not-mask packer emits `66` (`prefix_mask
+  N2 = 3`, not `to_int N2 = 2`, is load-bearing); the gate goes RED on exactly that mistake.
+- **Verdict — the packing half of R3 is TRACTABLE, not blocked.** The crux field is byte-confirmed
+  against a live consensus artifact, and `MinaWrapPublicInput.lean` already pins the full 40-word flat
+  ORDER (slots 13–28 = the 16 bulletproof challenges = the block's `step_prechallenges_raw`, verified
+  here; padding 30–39 = 0) against the same block. **Residual, unmoved:** `internal_vars` (the witness
+  mapping) has no dregg model and NO zero-build oracle at this rung — the real block gives packed
+  VALUES, not the witness recipe; `internal_vars` is emitted BY the R1 builder, so it is tested when
+  R1 exists. R3 does NOT kill the epoch on the packing evidence; the `internal_vars` residual is real,
+  bounded, and coupled to R1. Phase-A cost estimate UNCHANGED (R3 2–4; the packing sub-half is now
+  de-risked toward the low end, `internal_vars` still carries the variance).
+
 ### R4 — The circuit bodies + VK + a proof that VERIFIES
 Assemble R1–R3 into the step and wrap circuit bodies: emit `incrementally_verify_proof` +
 `finalize_other_proof` + me-only hashing + `step_main`/`wrap_main` orchestration `[read]`
