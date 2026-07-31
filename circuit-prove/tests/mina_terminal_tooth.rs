@@ -117,9 +117,8 @@ fn real_apex_terminates_mina_native_and_verifies() {
     verify_recursive_batch_proof_with_config(&whole.root.0, &inner_config)
         .expect("the real apex verifies under ir2_leaf_wrap_config");
 
-    let apex_bytes = postcard::to_allocvec(&whole.root.0)
-        .expect("apex proof postcard-serializes")
-        .len();
+    let apex_ser = postcard::to_allocvec(&whole.root.0).expect("apex proof postcard-serializes");
+    let apex_bytes = apex_ser.len();
 
     // ---- 3. TERMINATE: prove the apex-verifier AIR under DreggMinaConfig --
     let mina_config = create_mina_config();
@@ -149,9 +148,9 @@ fn real_apex_terminates_mina_native_and_verifies() {
         );
     }
 
-    let terminal_bytes = postcard::to_allocvec(&terminal.proof)
-        .expect("terminal proof postcard-serializes")
-        .len();
+    let terminal_ser =
+        postcard::to_allocvec(&terminal.proof).expect("terminal proof postcard-serializes");
+    let terminal_bytes = terminal_ser.len();
 
     // ---- 4. ACCEPT --------------------------------------------------------
     let t2 = Instant::now();
@@ -168,9 +167,29 @@ fn real_apex_terminates_mina_native_and_verifies() {
     let t4 = Instant::now();
     verify_shrink_proof(&bn.proof, &outer_config).expect("the BN254-native shrink proof verifies");
     let bn_verify = t4.elapsed();
-    let bn_bytes = postcard::to_allocvec(&bn.proof)
-        .expect("shrink proof postcard-serializes")
-        .len();
+    let bn_ser = postcard::to_allocvec(&bn.proof).expect("shrink proof postcard-serializes");
+    let bn_bytes = bn_ser.len();
+
+    // ⚑ DETERMINISM DUMP (env-gated). Write the VK fingerprint (the 131-key chain
+    // trust anchor) plus all three proof serializations so serial-vs-rayon and
+    // rayon-vs-rayon can be byte-diffed OUTSIDE the process. This is the whole
+    // rayon-determinism probe: two rayon runs must agree (else non-deterministic),
+    // and the VK must match serial (else a flag day). See
+    // GOAL-MINA-SEMANTIC-LIGHTCLIENTS.md.
+    if let Some(prefix) = std::env::var_os("DREGG_TOOTH_DUMP") {
+        let base = prefix.to_string_lossy().into_owned();
+        let vkfp = whole.root_vk_fingerprint().to_hex();
+        std::fs::write(format!("{base}.vkfp"), vkfp.as_bytes()).expect("write vkfp");
+        std::fs::write(format!("{base}.apex"), &apex_ser).expect("write apex");
+        std::fs::write(format!("{base}.terminal"), &terminal_ser).expect("write terminal");
+        std::fs::write(format!("{base}.shrink"), &bn_ser).expect("write shrink");
+        println!(
+            "DUMP base={base} vkfp={vkfp} apex_bytes={} terminal_bytes={} shrink_bytes={}",
+            apex_ser.len(),
+            terminal_ser.len(),
+            bn_ser.len()
+        );
+    }
 
     // ⚑ The two terminals are the SAME CIRCUIT: identical trace geometry,
     // identical table census. Only the hash field differs. If this ever fails,

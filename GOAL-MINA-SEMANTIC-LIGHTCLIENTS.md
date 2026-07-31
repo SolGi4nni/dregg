@@ -1414,6 +1414,78 @@ diffed for run-to-run determinism, VK diffed serial-vs-rayon, mutation-different
 Rayon stays on ONLY if deterministic + VK-unchanged, or if a single locatable site is fixed. **The
 guard I wrote fired; the work is to investigate it, not label it.**
 
+### ⚑ RESOLVED 07-31: rayon prover is NON-byte-deterministic (case B) — but VK-UNCHANGED, BENIGN, rayon STAYS ON
+
+Measured on hbox in two warm lanes differing ONLY in the `p3-maybe-rayon` `parallel` feature
+(`eth-lc-air` = rayon ON, `hcargo` = serial; every other source byte-identical to HEAD, same p3 rev
+`82cfad73`; A/B verified with `cargo tree -e features`). `mina_terminal_tooth --ignored`,
+`DREGG_GPU_DISABLE=1`, env-gated `DREGG_TOOTH_DUMP` writing VK-fp + apex/terminal/shrink serializations.
+
+**(1) Two rayon runs DIFFER → non-deterministic (case B).**
+
+| bytes | serial | rayon-A | rayon-B |
+|---|---:|---:|---:|
+| apex proof | 405,409 | 405,286 | 405,423 |
+| terminal (Mina) | 431,454 | 431,431 | 431,499 |
+| shrink (BN254) | 431,470 | 431,508 | 431,412 |
+
+All three proof byte-counts differ run-to-run under rayon (same binary). Serial reproduces its earlier
+numbers EXACTLY (terminal 431,454, shrink 431,470) — serial is deterministic; rayon gave three distinct
+values across three runs. Every run PASSES accept + tamper-REJECT → the proofs are VALID; only the
+serialization differs.
+
+**(2) VK IDENTICAL across serial + both rayon runs → NOT a flag day (case C ruled out).**
+`root_vk_fingerprint` = `101fdceebe4004126b23fe4bcea68b8e8b7f251ebc7bd7e43c3431cd56b2016b` for serial
+== rayon-A == rayon-B. By construction too: `recursion_vk_fingerprint`
+(plonky3_recursion_impl.rs:764) hashes only circuit SHAPE — table manifest, degree_bits, and the
+preprocessed commitment (a Merkle commit to the verifier circuit's STATIC op-list columns) — and
+EXPLICITLY excludes runtime `public_values`, opened values, query proofs, and the pow_witness. So even
+the apex PROOF bytes being non-deterministic cannot move the VK. The 131-key chain anchor is safe.
+
+**(3) The offending site — grep-exhaustive: the ONLY non-determinism source in the whole prove path.**
+p3-challenger FRI grinding uses a racing parallel search that returns whichever thread wins:
+- `MultiField32Challenger::grind` (grinding_challenger.rs:309) `find_any` — Mina terminal
+- `DuplexChallenger::grind` (grinding_challenger.rs:169) `find_map_any` — BN254 shrink
+- `grind_generic` (grinding_challenger.rs:275) + `SerializingChallenger::grind`
+  (serializing_challenger.rs:221,411) `find_any`
+
+`query_pow_bits` = 14 (recursion fold), 16 (mina), 16 (outer). Under rayon, `find_any` returns
+WHICHEVER thread's range yields a valid PoW witness first (scheduling-dependent, not the minimum). The
+witness is absorbed into Fiat-Shamir BEFORE the query indices are drawn, so a different witness →
+different query indices → different opened values (postcard varint-encoded) → different total proof
+length. The serial fallback implements `find_any` as `Iterator::find` (min-index) → deterministic.
+
+FIX (keeps rayon and the 5.8x): `find_any`→`find_first`, `find_map_any`→`find_map_first`.
+`find_first` returns the deterministic lowest-index witness = byte-identical to serial while still
+searching in parallel. Requires vendoring p3-challenger into the workspace `[patch]` (mirror
+`vendor/plonky3-fri-82cfad73`). Shared-infra (full-workspace rebuild, touches the VK-validated rev
+boundary) → STAGE for the coordinator's convergence, not landed unilaterally mid-swarm.
+
+**(4) The non-determinism is BENIGN.** A FRI PoW witness is a search result; the verifier checks
+VALIDITY (`check_witness`: low `bits` zero), never a canonical value — any valid witness verifies. Both
+rayon runs accept and reject a tamper.
+
+**(5) Mutation-differential gate UNAFFECTED.** `root_fri_mutation 1 300` in both lanes → 301 NDJSON
+lines BYTE-IDENTICAL serial-vs-rayon; baseline ACCEPT both, 74,686 sites. The gate verifies a FIXED
+committed fixture (no re-prove), and the verifier verdict is a boolean over exact field arithmetic —
+threading cannot change accept/reject. (`root_proof_mutation` JOINT aborts identically in BOTH lanes on
+the pre-existing fork-rev/fixture mismatch — its AIR baseline REJECTs; unrelated to rayon.)
+
+**(6) One live casualty (MEASURED).** The NON-ignored `#[test]`
+`gpu_outer_config_synthetic_stark_byte_identical_to_cpu` (gpu_backend.rs:6125) FLAKES 3/8 under rayon
+(`assertion left == right failed: GPU-config proof is not byte-identical to the CPU-config proof`),
+because the GPU-config and CPU-config provers grind independently. Several `#[ignore]`d GPU byte-parity
+tests (gpu_recursion_fold_e2e.rs:63,281; gpu_backend_shrink_e2e.rs) would flake likewise if run. All
+share the one root cause; all fixed by find_first. ⚑ This also refutes the `Cargo.toml`
+enable-comment's own claim that "the proof/VK must stay byte-identical": the VK does, the PROOF does not.
+
+**VERDICT: rayon STAYS ON.** The prover is not byte-deterministic, but the VK is unchanged (not a flag
+day), the non-determinism is a benign grinding-nonce race (any valid PoW witness verifies), and the
+mutation-differential gate is unaffected. The single broken byte-parity gate is fixable at one site
+(`find_any`→`find_first`), which additionally restores exact byte-reproducibility. `mina_terminal_tooth`
+now honours `DREGG_TOOTH_DUMP=<prefix>` (writes `<prefix>.{vkfp,apex,terminal,shrink}`) so the probe is
+reproducible.
+
 ## ⚑ openmina LINKED — the "small Python client" caveat RETIRED, not re-labelled (2026-07-31)
 Transmutation of the caveat I had been reciting as honesty ("the p2p helper is a small Python client,
 not audited crypto — openmina is what to link for production"). ember's cut was right: that was
