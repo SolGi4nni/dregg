@@ -547,3 +547,66 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   `dregg-chain-seal.json` is **gitignored**: it is a measurement that rotates with every re-emit and
   records its own regeneration command, so a committed copy would be a second source of truth that
   goes stale silently. **Nothing was re-emitted; no descriptor, fixture or anchor was touched.**
+- 23:15 ⚑ **THE CONST-VALUE HOLE IS CLOSED — a const-swapped child now moves the anchor**
+  (`d7ba0c4d3`, `fd507d99b`; fork `emberian/plonky3-recursion@fc3c6df`, rev bumped from `4aead01`).
+  The spine lane's own residual, the one it named as a SIN under this goal and could not take.
+  **MEASURED at the new rev**, holding the root fingerprint FIXED on both sides so the movement is
+  attributable to the spine alone:
+  ```
+  anchor honest              = c206d0f77f3206fc80c4bc8d1afe4bbebdd8c044bdebc04946836ef92207e3ab
+  anchor forged (no check)   = 1de790e3cc663409ff95750b4900d9d97371e861c1c32f217c6083ba7e4c71e9  REFUSED
+  anchor const-swapped child = c3464e4ea1ec3bccaf5d5918d9cf220d4ef00c7ee6f502ffe893aa3b49882d2f  REFUSED  ⚑
+  ```
+  **SUBSTRATE, said out loud, and it is not the drift.** `ConstAir` is a **p3 primitive AIR in the
+  fork we already maintain**, not dregg circuit logic. House law #1 governs the effect VM, the
+  descriptors, the gadgets and `air_accepts` — every one of those is Lean-authored and **not one
+  line of them was touched**. The change is confined to the primitive and is exactly what ember's
+  call permitted: preprocessed row `[ext_mult, out_idx]` → `[ext_mult, out_idx, value[0..D]]`, plus
+  `D` degree-1 constraints `main.value[i] == prep.value[i]`. No dregg semantics entered a p3
+  primitive; nothing beyond that was written.
+  **THREE probes inverted DELIBERATELY** — the opposite claim written and re-run, never reshaped to
+  pass; circuit construction, proving path and controls are byte-unchanged in all three:
+  - `const_pin_probe.rs` — `k=7 vk=b2c625d1…3b80` vs `k=9 vk=a1b0c130…1bcb`, were byte-identical.
+  - `vk_pin_lever_a_probe.rs` (A) — the two children's caps DIFFER, were identical.
+  - `vk_pin_lever_a_probe.rs` (B) — ⚑ **HORN 2 CLOSED, which the brief did not anticipate.** Baking
+    a foreign cap MOVES the parent's VK core (`[1233588605,…]` vs `[1128576629,…]`), because the
+    baked cap is `alloc_const` material. **Every SHAPE field the fingerprint hashes is IDENTICAL on
+    both sides** — instances `[(6,7),(2,6),(59,13),(24,11),(2,12)]`, `public_flat_len 51` — so this
+    is separation through the COMMITMENT, not through a row count. That is precisely the
+    sufficient-vs-necessary demonstration the spine lane said its three-op miniature could not give;
+    it is now given, though on the lever-(a) parent rather than through a full fold.
+  - `vk_spine_forgery_probe.rs` — the anchor table above.
+  ⚑ **HORN 1 MEASURED, and it is the weak kind.** `pinned_leaf_identity_rejects_foreign_child_in_band`
+  run with `--ignored`: `WitnessConflict { witness_id: WitnessId(478), existing: 1588400913,
+  new: 1588400914 }` — a delta of exactly **1**, the `roots[0][0] += ONE` the test applies. It is the
+  HONEST prover declining to write two values into one `connect`-shared slot, **not** an in-circuit
+  UNSAT. So that test is **not evidence for horn 1**, exactly as the `1ad67a241` note predicted.
+  What changed is that **horn 1 is no longer the only door**: bake the foreign cap and horn 2 now
+  refuses you at the root anchor; keep the honest cap and horn 1 must bite, and horn 1 is still READ,
+  not measured. **That is the residual, stated plainly rather than left implied.**
+  ⚑ **LAW1 RATCHET DELTA = 0, AND THAT ZERO IS A HOLE, NOT A CLEAN BILL.** Both runs fail
+  identically on two entries that are **other lanes' uncommitted work** (`circuit/src/descriptor_ir2.rs`
+  283→287, `sdk/src/full_turn_proof.rs` 2→3) — red before I started, red after, unchanged by me.
+  Measured both ways: the gate's OWN classifier scores my `ConstAir` edit at **1 authored symbolic
+  site** (`LAW1_EXPLAIN=../plonky3-recursion/circuit-prover/src/air/const_air.rs`), and the ratchet
+  never sees it, because `scan_repo` walks THIS repo and every p3 crate arrives as a **git
+  dependency**. The whole primitive AIR layer — const/alu/public/recompose/expose_claim — scores zero
+  no matter what is in it. Written into the gate's own "what this gate CANNOT see" list, with the
+  remedy named and explicitly NOT "scan a sibling checkout" (the fork resolves from git, so that
+  would fire on one machine only). **A deliberate, recorded decision, not a drift.**
+  **COST, priced.** Const preprocessed lane `2 → 2 + D` = **6 columns** at the deployed `D = 4`;
+  main trace unchanged; `D` new degree-1 constraints per Const table, which the in-circuit verifier
+  also evaluates. From the measured instance list that is 89 → 93 total preprocessed columns on the
+  lever-(a) parent, **~4.5%**. **`const_pool` dedup is UNCHANGED** — it keys on VALUE in
+  `expression_builder.rs:355-360`, my producer reads values off `circuit.ops` which is already
+  post-dedup, and `const_pool_did_not_fold_the_two_probe_values` still passes. Dedup is in fact what
+  makes the alignment exact: `primitive[Const][k]` and the k-th `Op::Const` come from one pass over
+  one post-dedup op list, and a `debug_assert_eq!` on the lengths guards it on every test run.
+  ⚑ **FLAG DAY — JOINS THE SPINE'S STAGED ROTATION, adds no second one, and I fired NOTHING.**
+  Every preprocessed commitment moves, so every `RecursionVk` and every anchor derived from one
+  changes — the same list already staged at 22:35, unchanged and still ember's to fire. **No
+  descriptor, fixture or anchor was re-emitted.** One addition to that list, in the FORK rather than
+  here: `recursion/tests/frozen_ivc_replay.rs`'s `agg_child_<N>.bin` were captured at prep width 2
+  and now **refuse to load** (`index out of bounds: the len is 2 but the index is 2` inside
+  `const_air.rs`) — that panic is the stale artifact refusing, not a regression, and it is said so
+  in the fork at `d690290`. Fork tip is one doc-only commit ahead of the pinned `fc3c6df`.
