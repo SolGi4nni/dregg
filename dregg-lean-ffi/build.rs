@@ -240,6 +240,19 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          `tool_invocation_commit_iff_admit` and its three rejection teeth are proven over",
     ),
     (
+        "dregg_trustline_step",
+        "the TRUSTLINE draw/repay/settle decision has no answer source. ⚠ READ THE TENSE: today \
+         NOTHING ROUTES THROUGH IT, so an absent export costs only a failing probe — the ~16 Rust \
+         spend-authority implementations (`coord/src/budget.rs`, `turn/src/budget_gate.rs`, \
+         `node/src/trustline_service.rs`, `narrator/src/ledger.rs`, `cell/src/allowance.rs`, \
+         `dregg-agent/src/{budget,meter}.rs`, …) still decide it themselves. It is REQUIRED anyway, \
+         and deliberately so: this entry is what stops the `Dregg2/FFI.lean` rooting from silently \
+         regressing in the window BEFORE the first call site is routed, which is precisely the \
+         window in which a rooting disappears without anyone noticing. Once routing lands, the \
+         consequence becomes the real one — every draw gate REFUSES, with no Rust twin to fall back \
+         to, and the anti-replay leg `draw_replay_refused` proves is gone",
+    ),
+    (
         "dregg_mina_lc_verify",
         "the MINA (Ouroboros Samasika) anchored-segment gate compiles out — \
          `mina_lc_verify_available()` goes constantly false and `MinaObserver::observe_settlement` \
@@ -2246,6 +2259,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -3060,6 +3074,18 @@ fn main() {
         absent_export_warn("dregg_deleg_admit");
     }
 
+    // TRUSTLINE DRAW/REPAY/SETTLE (`Dregg2.Apps.TrustlineCore.trustlineStepFFI`): the spend-authority
+    // decision `Dregg2.Apps.Trustline`'s 101 kernel-clean theorems are stated over. The probe is the
+    // ARCHIVE, not the elaboration — `Dregg2.lean` rooting alone would leave this `false` forever
+    // while every `lake build` looked green, which is the layer-1 failure `Dregg2/FFI.lean:40-46`
+    // records (2026-07-29, every Mina settlement returning `VerifiedGateUnavailable`).
+    let trustline_step_present = archive_exports(&build_archive, "dregg_trustline_step");
+    if trustline_step_present {
+        println!("cargo:rustc-cfg=dregg_trustline_step_present");
+    } else {
+        absent_export_warn("dregg_trustline_step");
+    }
+
     // AUTOMATAFL GAME ORACLE (`Dregg2.Games.AutomataflFFI.rulesFFI`): the verb-dispatched wire over
     // the rules-faithful spec `Dregg2.Games.AutomataflRules` — board resolution (`mid`), the
     // automaton step and its whole decision (`step` / `sense`), move legality, the round's conflict
@@ -3478,6 +3504,12 @@ fn main() {
     // generated C is self-contained, same as the FRI ledger's).
     if deleg_admit_present {
         shim.define("DREGG_DELEG_ADMIT", None);
+    }
+    // TRUSTLINE STEP: `DREGG_TRUSTLINE_STEP` gates BOTH the extern decl and the `_str` bridge in
+    // `lean_init.c` (no module initializer — `Dregg2.Apps.TrustlineCore` is Init-only and its
+    // generated C carries exactly `initialize_Init` plus its own, same as DelegAdmit's).
+    if trustline_step_present {
+        shim.define("DREGG_TRUSTLINE_STEP", None);
     }
     // The FOUR light-client gates (ETH / Tendermint / MPT / Mina): each define gates BOTH the extern
     // decl and the `_str` bridge in `lean_init.c` (no module initializer — see the extern-decl note

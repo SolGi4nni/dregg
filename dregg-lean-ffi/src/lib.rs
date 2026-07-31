@@ -1262,6 +1262,180 @@ pub fn deleg_admit(g: DelegGrant, now: i64, tool: i64, old: i64, new: i64) -> Re
     }
 }
 
+/// The six trustline channel registers — the marshalling shape the `dregg_trustline_step` wire
+/// carries, mirroring `Dregg2.Apps.TrustlineCore.Channel` (which holds a `Line` plus the two
+/// hard-asset balances).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrustlineChannel {
+    /// The extended line `N` — the attenuation bound. Immutable for the line's life.
+    pub ceiling: u64,
+    /// Outstanding drawn amount (the Stingray `Slice::spent`).
+    pub drawn: u64,
+    /// The holder's credit balance in the issuer-asset: `+drawn` at every well-formed state.
+    pub holder_acct: i64,
+    /// The issuer's signed well: `−drawn`. The draw is PRODUCTION here, never a mint.
+    pub issuer_well: i64,
+    /// Issuer's hard-asset balance (the settlement target ledger).
+    pub issuer_hard: i64,
+    /// Holder's hard-asset balance.
+    pub holder_hard: i64,
+    /// The committed draw-digest registry — the no-double-draw set. A digest is one-shot FOREVER;
+    /// repayment does not resurrect it (`Dregg2.Apps.Trustline.repay_draws_fixed`).
+    pub draws: Vec<[u8; 32]>,
+}
+
+/// One trustline verb. Mirrors the `op` selector of the `dregg_trustline_step` wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrustlineOp {
+    /// Exercise the line: burn `digest`, draw `amount`.
+    Draw {
+        /// The one-shot debit digest (content-addressed; a repeat is REFUSED).
+        digest: [u8; 32],
+        /// The amount to draw.
+        amount: u64,
+    },
+    /// Restore the line by `amount` (the digest registry is untouched).
+    Repay {
+        /// The amount to repay.
+        amount: u64,
+    },
+    /// Settle `amount`: the holder pays hard asset to the issuer and the credit legs unwind.
+    SettlePay {
+        /// The amount to settle.
+        amount: u64,
+    },
+    /// Close the line: settle the whole outstanding draw.
+    SettleAll,
+}
+
+/// Render a 32-byte digest as its FULL decimal (schoolbook base-256 → base-10).
+///
+/// ⚑ This exists so a digest CANNOT be silently truncated. Lean's `draws` are arbitrary-precision
+/// `Nat`, and folding a 32-byte hash into a `u64` would map distinct debits onto one burned digest
+/// — defeating the very anti-replay leg (`draw_replay_refused`) this export is here to provide. A
+/// `[u8; 32]` in the signature makes that mistake unrepresentable at the type level.
+fn digest_to_decimal(digest: &[u8; 32]) -> String {
+    let mut out: Vec<u8> = vec![0];
+    for &byte in digest.iter() {
+        let mut carry = byte as u32;
+        for d in out.iter_mut() {
+            let v = (*d as u32) * 256 + carry;
+            *d = (v % 10) as u8;
+            carry = v / 10;
+        }
+        while carry > 0 {
+            out.push((carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+    out.iter().rev().map(|d| (b'0' + d) as char).collect()
+}
+
+/// Whether the linked archive exports the TRUSTLINE draw/repay/settle decision
+/// (`dregg_trustline_step`, the C-ABI entry over `Dregg2.Apps.TrustlineCore.trustlineStepFFI`).
+///
+/// ⚠ READ THE TENSE. Today nothing routes through it, so `false` costs only a failing probe — the
+/// ~16 Rust spend-authority implementations still decide it themselves. It is probed and REQUIRED
+/// anyway so the `Dregg2/FFI.lean` rooting cannot silently regress in the window before routing
+/// lands. Distinct from [`lean_available`]: a stale archive can lack this export.
+pub fn trustline_step_available() -> bool {
+    ffi::trustline_step_present() && lean_init_once().is_ok()
+}
+
+/// **Run the TRUSTLINE step decision `@[export] dregg_trustline_step`** — the executable
+/// `Dregg2.Apps.TrustlineCore.{draw, repay, settlePay, settleAll}`, the objects
+/// `Dregg2.Apps.Trustline`'s 101 kernel-clean theorems are stated over.
+///
+/// `Ok(Some(post))` = the op COMMITTED, and `post` is the verified post-state.
+/// `Ok(None)` = the policy REFUSED it (a replayed digest, an over-line draw, or an over-repay) —
+/// a verdict.
+/// `Err` = **no verdict was reached** (the archive lacks the export, the Lean runtime would not
+/// initialize, or the wire came back malformed). The three are deliberately distinguishable, and a
+/// caller must treat `Err` as a refusal WITH a distinct reason — an unanswered gate is not an open
+/// gate.
+///
+/// ⚑ The FULL digest registry travels in both directions on purpose. The anti-replay verdict is
+/// decided in Lean, never summarised into a Rust-computed freshness bit — which is precisely the
+/// check `turn/src/budget_gate.rs:29` keeps a `debits` list for and never performs.
+pub fn trustline_step(
+    channel: &TrustlineChannel,
+    op: TrustlineOp,
+) -> Result<Option<TrustlineChannel>, String> {
+    ensure_lean_init()?;
+    let (opcode, a1, a2) = match op {
+        TrustlineOp::Draw { digest, amount } => {
+            (0u8, digest_to_decimal(&digest), amount.to_string())
+        }
+        TrustlineOp::Repay { amount } => (1u8, amount.to_string(), "0".to_string()),
+        TrustlineOp::SettlePay { amount } => (2u8, amount.to_string(), "0".to_string()),
+        TrustlineOp::SettleAll => (3u8, "0".to_string(), "0".to_string()),
+    };
+    let mut wire = format!(
+        "{opcode} {} {} {} {} {} {} {a1} {a2} {}",
+        channel.ceiling,
+        channel.drawn,
+        channel.holder_acct,
+        channel.issuer_well,
+        channel.issuer_hard,
+        channel.holder_hard,
+        channel.draws.len()
+    );
+    for d in &channel.draws {
+        wire.push(' ');
+        wire.push_str(&digest_to_decimal(d));
+    }
+    let reply = ffi::lean_trustline_step(&wire)?;
+    let reply = reply.trim();
+    if reply.is_empty() {
+        return Err(format!(
+            "dregg_trustline_step returned no verdict for {wire:?} (fail-closed)"
+        ));
+    }
+    if reply == "0" {
+        return Ok(None);
+    }
+    // A COMMITTED draw burns its digest, so the post-state registry is `digest :: pre-state`. The
+    // known set must therefore include the op's digest — it is fresh by construction (that freshness
+    // is exactly what Lean just decided), so it is absent from `channel.draws`.
+    let mut known = channel.draws.clone();
+    if let TrustlineOp::Draw { digest, .. } = op {
+        known.push(digest);
+    }
+    parse_trustline_reply(reply, &known)
+        .map(Some)
+        .ok_or_else(|| format!("dregg_trustline_step returned an unparsable post-state: {reply:?}"))
+}
+
+/// Decode the post-state wire. The digest registry comes back as decimals; we re-associate them
+/// with the caller's `[u8; 32]` digests by decimal equality rather than re-deriving bytes from
+/// decimal, so a mismatch is a parse failure (fail-closed) and never a silently wrong digest.
+fn parse_trustline_reply(reply: &str, known: &[[u8; 32]]) -> Option<TrustlineChannel> {
+    let t: Vec<&str> = reply.split_whitespace().collect();
+    if t.len() < 7 {
+        return None;
+    }
+    let n: usize = t[6].parse().ok()?;
+    if t.len() != 7 + n {
+        return None;
+    }
+    let mut draws = Vec::with_capacity(n);
+    for tok in t.iter().skip(7) {
+        // The post-state registry is the pre-state registry plus at most the digest just drawn, so
+        // every decimal here must match one the caller already holds. Anything else is a wire fault.
+        let found = known.iter().find(|d| digest_to_decimal(d) == *tok)?;
+        draws.push(*found);
+    }
+    Some(TrustlineChannel {
+        ceiling: t[0].parse().ok()?,
+        drawn: t[1].parse().ok()?,
+        holder_acct: t[2].parse().ok()?,
+        issuer_well: t[3].parse().ok()?,
+        issuer_hard: t[4].parse().ok()?,
+        holder_hard: t[5].parse().ok()?,
+        draws,
+    })
+}
+
 /// Whether the linked archive exports the automatafl GAME ORACLE (`dregg_automatafl_rules`, the
 /// C-ABI entry over `Dregg2.Games.AutomataflFFI.rulesFFI`). When false, `dregg-automatafl` has NO
 /// answer source for a board transition and its oracle calls fail closed — there is no Rust twin to
@@ -1538,6 +1712,13 @@ mod ffi {
         #[cfg(dregg_deleg_admit_present)]
         fn dregg_deleg_admit_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize)
             -> usize;
+
+        #[cfg(dregg_trustline_step_present)]
+        fn dregg_trustline_step_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
         #[cfg(dregg_automatafl_rules_present)]
         fn dregg_automatafl_rules_str(
             in_utf8: *const c_char,
@@ -2235,6 +2416,26 @@ mod ffi {
         true
     }
 
+    #[cfg(dregg_trustline_step_present)]
+    pub fn lean_trustline_step(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_trustline_step_str, "dregg_trustline_step_str")
+    }
+
+    #[cfg(not(dregg_trustline_step_present))]
+    pub fn lean_trustline_step(_wire: &str) -> Result<String, String> {
+        Err("dregg_trustline_step not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    #[cfg(dregg_trustline_step_present)]
+    pub fn trustline_step_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_trustline_step_present))]
+    pub fn trustline_step_present() -> bool {
+        false
+    }
+
     #[cfg(not(dregg_deleg_admit_present))]
     pub fn deleg_admit_present() -> bool {
         false
@@ -2702,6 +2903,14 @@ mod ffi {
     }
 
     pub fn lean_deleg_admit(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn trustline_step_present() -> bool {
+        false
+    }
+
+    pub fn lean_trustline_step(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }

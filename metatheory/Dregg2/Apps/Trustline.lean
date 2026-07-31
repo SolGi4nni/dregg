@@ -74,12 +74,44 @@ tight); an over-line draw, a replayed digest, and an over-repay are each REFUSED
 Quot.sound}). No executor import — the cell shape (which registers, which slot caveats) is the
 design doc's §3; the SGM/CWM mandate modules are the executor-welding precedent.
 -/
+import Dregg2.Apps.TrustlineCore
 import Dregg2.Proof.Stingray
 import Dregg2.Tactics
+
+/-! ## §0 — The Stingray-facing bridge for the EXPORTED `Line`.
+
+`Line`, `Line.remaining`, `Line.WF`, `Line.init`, `draw`, `repay`, `Channel`, `settlePay` and
+`settleAll` LIVE in `Dregg2.Apps.TrustlineCore` — an Init-only (no-Mathlib) module carrying
+`@[export dregg_trustline_step]`, so RUST CALLS THIS DECISION instead of re-implementing it. Every
+theorem in this file is therefore a theorem about the object the C-ABI entry runs; there is no
+second model.
+
+These two are the ONLY members that could not go with it: they mention
+`Dregg2.Proof.Stingray.Slice`, whose module imports Mathlib. They are proof-side bridges — nothing
+computational reads them — so they stay here, declared back into the core's namespace so that
+dot-notation on a `TrustlineCore.Line` still resolves. -/
+namespace Dregg2.Apps.TrustlineCore
+
+open Dregg2.Proof.Stingray (Slice)
+
+/-- The trustline's `Slice` face: the line IS the Stingray bounded counter
+(`coord/src/budget.rs::BudgetSlice`), `ceiling = N`, `spent = drawn`. -/
+def Line.slice (t : Line) : Slice := ⟨t.ceiling, t.drawn⟩
+
+/-- The remaining line agrees with the slice face's remaining. -/
+theorem Line.remaining_eq_slice (t : Line) : t.remaining = t.slice.remaining := rfl
+
+end Dregg2.Apps.TrustlineCore
 
 namespace Dregg2.Apps.Trustline
 
 open Dregg2.Proof.Stingray (Slice)
+open Dregg2.Apps.TrustlineCore
+
+-- Re-export the moved names so the two downstream modules that `open Dregg2.Apps.Trustline`
+-- UNQUALIFIED (`Dregg2/Distributed/CrashRecovery.lean:447`, `Dregg2/Verify/StripeReserve.lean:23`)
+-- keep resolving them.
+export Dregg2.Apps.TrustlineCore (Line draw repay Channel settlePay settleAll)
 
 /-! ## §1 — The trustline state (the bilateral cell's registers).
 
@@ -89,76 +121,14 @@ governed amendment); `drawn` is the shared counter; `draws` is the debit-digest 
 (`BudgetSlice::debits`); `holderAcct`/`issuerWell` are the bilateral signed-well pair in the
 issuer's asset (`AssetId := issuer`, the issuer carries the negative well). -/
 
-/-- The bilateral trustline: issuer A extends holder B a line of `ceiling`. Directional — this
-record IS the A→B line; a B→A line is a separate trustline with the roles swapped. -/
-structure Line where
-  /-- The extended line N — the attenuation bound (`Slice.ceiling`). Immutable register. -/
-  ceiling : Nat
-  /-- Outstanding drawn amount — the shared counter (`Slice.spent`). -/
-  drawn : Nat
-  /-- Committed draw digests (`BudgetSlice::debits`, `turn/src/budget_gate.rs:29`) — the
-  no-double-draw registry. A digest is one-shot FOREVER (repayment does not resurrect it). -/
-  draws : List Nat
-  /-- The holder's credit balance in the issuer-asset: `+drawn`. -/
-  holderAcct : Int
-  /-- The issuer's signed well in its own asset: `−drawn` (the issuer-move model — the draw is
-  PRODUCTION at the issuer's negative-capable well, never an out-of-thin-air mint). -/
-  issuerWell : Int
-  deriving Repr, DecidableEq
-
-/-- The trustline's `Slice` face: the line IS the Stingray bounded counter
-(`coord/src/budget.rs::BudgetSlice`), `ceiling = N`, `spent = drawn`. -/
-def Line.slice (t : Line) : Slice := ⟨t.ceiling, t.drawn⟩
-
-/-- Remaining undrawn line (`BudgetSlice::remaining`, truncated subtraction = saturating). -/
-def Line.remaining (t : Line) : Nat := t.ceiling - t.drawn
-
-/-- The remaining line agrees with the slice face's remaining. -/
-theorem Line.remaining_eq_slice (t : Line) : t.remaining = t.slice.remaining := rfl
-
-/-- **Well-formedness — the reachable-state invariant.** Drawn within the line; the bilateral pair
-carries exactly `±drawn`; the digest registry is duplicate-free. -/
-def Line.WF (t : Line) : Prop :=
-  t.drawn ≤ t.ceiling
-    ∧ t.holderAcct = (t.drawn : Int)
-    ∧ t.issuerWell = -(t.drawn : Int)
-    ∧ t.draws.Nodup
-
-instance (t : Line) : Decidable t.WF := by
-  unfold Line.WF; infer_instance
+-- `Line` (ceiling / drawn / draws / holderAcct / issuerWell), `Line.remaining`, `Line.WF` and its
+-- `Decidable` instance MOVED to `Dregg2.Apps.TrustlineCore` (§0). `Line.slice` and
+-- `Line.remaining_eq_slice` stayed — see §0 for why.
 
 /-! ## §2 — Birth, draw, repay (the ops). -/
 
-/-- **`init` — the BIRTH of the line** (the missing `init_budget_coordinator` edge,
-`node/src/state.rs:1129`): issuer extends a fresh line of `n`. Nothing drawn, no digests, both
-wells level. The REAL birth must be funded by a ledger debit at the issuer (design doc §2); this
-is the post-birth cell state it installs. -/
-def Line.init (n : Nat) : Line :=
-  { ceiling := n, drawn := 0, draws := [], holderAcct := 0, issuerWell := 0 }
-
-/-- **`draw` — the holder exercises the line** (`BudgetSlice::try_debit` + digest registration).
-Fail-closed twice over: a replayed digest is refused (no-double-draw); an amount beyond the
-remaining line is refused (the attenuation bound). On commit: counter up, digest burned, holder
-credit up, issuer well down — a MOVE against the issuer's well. -/
-def draw (t : Line) (digest amt : Nat) : Option Line :=
-  if digest ∈ t.draws then none
-  else if amt ≤ t.ceiling - t.drawn then
-    some { t with drawn := t.drawn + amt
-                , draws := digest :: t.draws
-                , holderAcct := t.holderAcct + (amt : Int)
-                , issuerWell := t.issuerWell - (amt : Int) }
-  else none
-
-/-- **`repay` — the holder restores the line.** Fail-closed: repaying more than is drawn is
-refused (over-repayment would MINT credit at the issuer's well). On commit: counter down, holder
-credit down, issuer well up — the inverse move. The digest registry is untouched: spent digests
-stay burned. -/
-def repay (t : Line) (amt : Nat) : Option Line :=
-  if amt ≤ t.drawn then
-    some { t with drawn := t.drawn - amt
-                , holderAcct := t.holderAcct - (amt : Int)
-                , issuerWell := t.issuerWell + (amt : Int) }
-  else none
+-- `Line.init`, `draw` and `repay` MOVED to `Dregg2.Apps.TrustlineCore` (§0) — they are the
+-- computational core the `@[export dregg_trustline_step]` wire codec dispatches to.
 
 /-- **`draw_spec` — the commit-shape lemma.** A committed draw means: the digest was fresh, the
 amount fit the remaining line, and the post-state is exactly the four-register move. -/
@@ -296,20 +266,9 @@ move, holder→issuer) while the credit legs unwind. This is `rebalance_budgets`
 `(agent, total_spent)` settlement list (`node/src/state.rs:1213-1216`) applied as a move — the
 design doc's §4 weld. We model the hard-asset pair explicitly and prove the settle conserves it. -/
 
-/-- A trustline together with the parties' hard-asset balances (the settlement target ledger). -/
-structure Channel where
-  tl : Line
-  /-- Issuer's hard-asset balance (e.g. the devnet payment asset). -/
-  issuerHard : Int
-  /-- Holder's hard-asset balance. -/
-  holderHard : Int
-  deriving Repr, DecidableEq
-
-/-- **`settlePay`** — settle `amt` of the outstanding draw: the holder pays `amt` hard asset to
-the issuer AND the credit legs unwind by `amt` (a `repay`). Fail-closed via `repay`'s gate. -/
-def settlePay (c : Channel) (amt : Nat) : Option Channel :=
-  (repay c.tl amt).map fun tl' =>
-    { tl := tl', issuerHard := c.issuerHard + (amt : Int), holderHard := c.holderHard - (amt : Int) }
+-- `Channel` (the trustline + the parties' hard-asset balances) and `settlePay` MOVED to
+-- `Dregg2.Apps.TrustlineCore` (§0). ⚠ `SLine` (§9) and `ChannelC` (§11) are DISTINCT objects — the
+-- settled/deployed model carrying `escrow` — and stay here.
 
 /-- **`settlePay_conserves_hard`** — settlement is a MOVE on the hard-asset pair: the combined
 hard balance is exactly conserved (the `rebalance_conserves` shape, on the bilateral ledger). -/
@@ -325,9 +284,8 @@ theorem settlePay_conserves_hard {c c' : Channel} {amt : Nat} (h : settlePay c a
       show c.issuerHard + (amt : Int) + (c.holderHard - (amt : Int)) = c.issuerHard + c.holderHard
       omega
 
-/-- **`settleAll`** — close the line: settle the whole outstanding draw. Total — the full repay
-always fires (`drawn ≤ drawn`). -/
-def settleAll (c : Channel) : Channel := (settlePay c c.tl.drawn).getD c
+-- `settleAll` MOVED to `Dregg2.Apps.TrustlineCore` (§0) with `Channel` and `settlePay`, which it
+-- is defined over.
 
 /-- **`settleAll_clears`** — closing the line zeroes the counter and levels BOTH credit wells:
 the trustline returns to its just-born shape (full line available), and the hard-asset move paid
@@ -1464,3 +1422,9 @@ end Dregg2.Apps.Trustline
 
 -- §8 + §14 collapsed into one batch pin (see the §14 note above).
 #assert_namespace_axioms Dregg2.Apps.Trustline
+
+-- ⚑ SECOND PIN, and it is not decoration. `#assert_namespace_axioms` walks ONE namespace, so the
+-- moment §0 declared `Line.slice` / `Line.remaining_eq_slice` back into `Dregg2.Apps.TrustlineCore`
+-- they left the pin above WITHOUT ANY DIAGNOSTIC — a theorem can only fall out of an axiom
+-- tripwire silently. This line re-covers them, and covers the exported decision core besides.
+#assert_namespace_axioms Dregg2.Apps.TrustlineCore

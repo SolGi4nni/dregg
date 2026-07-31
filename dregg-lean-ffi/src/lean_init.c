@@ -451,6 +451,25 @@ extern lean_object *dregg_fri_ledger(lean_object *input);
 extern lean_object *dregg_deleg_admit(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` TRUSTLINE DRAW/REPAY/SETTLE decision
+ * (`Dregg2.Apps.TrustlineCore.trustlineStepFFI`). Runs `draw` / `repay` / `settlePay` /
+ * `settleAll` — the objects `Dregg2.Apps.Trustline`'s 101 kernel-clean theorems are stated over
+ * (`over_line_draw_refused`, `draw_replay_refused`, `draw_replay_refused_across_epochs`,
+ * `over_repay_refused`, `bilateral_conserved`, `settlePay_conserves_hard`, `settleAll_clears`).
+ * The wire carries the FULL channel state INCLUDING the digest registry, deliberately: the
+ * anti-replay verdict is DECIDED HERE, never summarised into a Rust-computed freshness bit —
+ * which is exactly the check `turn/src/budget_gate.rs:29` keeps a `debits` list for and never
+ * performs. NOTHING ROUTES THROUGH IT YET (the ~16 Rust spend-authority implementations still
+ * decide it themselves), so an absent export today means a probe fails, not that a gateway
+ * refuses; that changes the moment the first call site is routed.
+ * GATED on DREGG_TRUSTLINE_STEP (build.rs probes + defines it). Like R3's / holding's /
+ * interchain's / FRI's / DelegAdmit's export it needs NO module initializer:
+ * `Dregg2.Apps.TrustlineCore` imports nothing beyond core Init — its emitted `.c` carries exactly
+ * `initialize_Init` and its own — so it is self-contained on the always-initialized Init runtime. */
+#ifdef DREGG_TRUSTLINE_STEP
+extern lean_object *dregg_trustline_step(lean_object *input);
+#endif
+
 /* The @[export]ed Lean `String -> String` VERIFIED LIGHT-CLIENT verify-logic gates — the three
  * foreign-chain admission decisions the interchain bridge routes through
  * (`Dregg2.Bridge.LightClient{Eth,Mpt,Tendermint}Gate`):
@@ -1295,6 +1314,37 @@ size_t dregg_deleg_admit_str(const char *in_utf8, char *out, size_t out_cap) {
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_deleg_admit(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_TRUSTLINE_STEP
+/* dregg_trustline_step_str — the C string bridge over the Lean `String -> String` TRUSTLINE
+ * DRAW/REPAY/SETTLE export (`Dregg2.Apps.TrustlineCore.trustlineStepFFI`). Input:
+ * `"op ceiling drawn holderAcct issuerWell issuerHard holderHard a1 a2 n d1 ... dn"` — the verb,
+ * the six channel registers (ceiling/drawn unsigned; the two credit wells and the two hard
+ * balances SIGNED), two op arguments, then the draw-digest registry as a length-prefixed run.
+ * `op` is 0=draw(digest=a1, amt=a2) / 1=repay(amt=a1) / 2=settlePay(amt=a1) / 3=settleAll.
+ * Output: the six post-state registers plus the post-state registry (COMMITTED) / `"0"` (REFUSED —
+ * replayed digest, over-line, or over-repay) / `""` (malformed wire, NO VERDICT — the Rust wrapper
+ * turns an empty answer into an `Err` and every caller refuses). The three shapes are deliberately
+ * distinguishable: `"0"` is a verdict, `""` is "no verdict was reached".
+ * ⚠ A digest is an arbitrary-precision Lean `Nat`, so a 32-byte hash marshals as its FULL decimal.
+ * A caller that folds it to 64 bits would collide two distinct debits onto one burned digest and
+ * silently defeat the anti-replay leg this export exists to provide.
+ * Same return contract as the bridges above. */
+size_t dregg_trustline_step_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_trustline_step(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

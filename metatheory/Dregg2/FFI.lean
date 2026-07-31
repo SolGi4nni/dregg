@@ -29,6 +29,17 @@ import Dregg2.Crypto.MlKemEncaps
 import Dregg2.Crypto.MlKemKeygen
 
 -- §1.5 Exported with no current caller — in the closure deliberately (see §1.5, §4).
+-- `dregg_trustline_step` — the TRUSTLINE draw/repay/settle decision
+-- (`Dregg2.Apps.TrustlineCore.trustlineStepFFI`). It is in §1.5 and not §1.3 because NOTHING
+-- ROUTES THROUGH IT YET: the ~16 Rust spend-authority implementations (`coord/src/budget.rs`,
+-- `turn/src/budget_gate.rs`, `node/src/trustline_service.rs`, `narrator/src/ledger.rs`,
+-- `cell/src/allowance.rs`, `dregg-agent/src/{budget,meter}.rs`, …) still decide it themselves.
+-- Move this line to §1.3 when the first call site is routed. Rooted HERE and not only in
+-- `Dregg2.lean` for the layer-1 reason the Mina block below records at length.
+-- +1 module to the closure — MEASURED, not asserted: `TrustlineCore.lean` declares zero `import`s,
+-- and its emitted `.c` contains exactly `initialize_Init` + `initialize_Dregg2_Dregg2_Apps_
+-- TrustlineCore`, so its transitive closure is itself.
+import Dregg2.Apps.TrustlineCore
 import Dregg2.Crypto.HandlebarsFFI
 import Dregg2.Crypto.X25519HkdfExtract
 import Dregg2.Circuit.FriLedger
