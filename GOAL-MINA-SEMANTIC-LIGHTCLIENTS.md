@@ -494,3 +494,56 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
      lane's half-saved file reds every leg in it — it happened mid-rehearsal (`cell-fact-gate.ts`,
      green again minutes later). Both circuit steps now report that as BLOCKED **naming the
      offending files**, because reading it as "the demo is broken" costs an hour.
+- 23:1x ⚑ **THE ANCHOR'S OWN VK PIN WAS A GREEN OVER A FALSE PREMISE, and it is now a pin that
+  discriminates.** Two sins the deploy-rehearsal lane flagged as blocking rather than documenting —
+  correctly, and both were in the gate whose entire job is proving the anchor binds.
+  1. ⚑ **The vk-pin row compared two EQUAL fields.** `head-anchor.ts`'s two stand-in producers
+     differed ONLY in their `name:`, and **a Kimchi verification key does not commit to a program's
+     name** — so `vk.hash.assertEquals(TERMINAL_VK_HASH)` was asserted between identical hashes and
+     passed whatever the pin did. **The UNPINNED control in [3] was vacuous for the same reason**:
+     "the unpinned gate accepts a foreign proof" was a sentence about a proof that was not foreign.
+     And the ACCEPT row could not run at all — the stand-in had no proof input, so
+     `maxProofsVerified` was 0 against `DreggTerminalProof`'s 1, and every advance died at Pickles'
+     **`prevs_verified`**, which is the producer's SHAPE and fires *before* any assertion in the
+     gate. Fixed in the harness, not in `DreggHeadGate`: a `relay` method over a `SelfProof` (never
+     called; its presence is what makes `maxProofsVerified` 1) plus `extraRounds` OBSERVED Poseidon
+     gates so the second key genuinely differs; `assertDistinctKeys` **FAILS** on an equal pair in
+     both phases; the refusal loop now fails a row refused at `prevs_verified` and requires the
+     vk-pin row's message to **name the pin**.
+     ⚑ **MEASURED, `MINA_TIER=1 npm run head-anchor`, 21 checks / 218.3 s, exit 0**: keys now
+     `0xa2be57fd8acf281a…` vs `0x38d80a5014d76254…`; 7 refusals each attributable; **ACCEPTED: head
+     = H, turns = 3** in 9.6 s; the UNPINNED control ACCEPTS producer B's proof, so the pinned
+     refusal is **the pin**. The NOT-ATTRIBUTABLE row is unchanged and still honest — no pin file
+     exists, and nothing about this fix touches it.
+     ⚑ **What enters a Kimchi/Pickles VK is now written in the file AND measured** by a new phase
+     [4] (`vkfacts`, own process, three compiles varying one thing each): the **constraint system**
+     (every gate, the wiring/sigma commitments, the public-field count), **`maxProofsVerified` and
+     the method count** (Pickles' branch table), and the feature flags. **NOT** the program name,
+     the method identifier, or the TS type names. Measured: name-only → **SAME** key; one more gate
+     → DIFFERENT; one more method → DIFFERENT.
+  2. ⚑ **The seal preimage could not be presented.** `friCommit`/`accOutDigest` are **not
+     recoverable from the proof** — the boundary IS a hash of them — and **no run recorded them**:
+     they lived in `root-fri-uniform.ts`'s `context()` and died with the process. So an advance
+     could not be presented **at all**, whatever the keys said. Now emitted by two writers over
+     **one definition** (`terminalSealPreimage`, the `uniformBoundaryOut` terminal branch factored
+     rather than re-spelled): `dregg-chain-seal.json` beside the pin file, and
+     `.fullchain/uniform/terminal-seal-preimage.json` from `root-fri-uniform`'s [3b].
+     **Deliberately two files** — the seal needs only the proof artifacts and is emittable TODAY;
+     the pins need all 131 compiled keys and are not.
+     ⚑ **MEASURED**: `friCommit 2680963697…958444`, `accOutDigest 3196139203…810541`, taken at
+     `block42` q=18 over **87 live-out lanes + 4 accumulator limbs**, and it opens the chain's own
+     terminal boundary through **both** `uniformBoundaryOut` and `DreggHeadAnchor.terminalSealOf`,
+     at two independent key-list roots. `devnet-head-advance`'s HANDOFF blocker is **gone**; the
+     remaining four are the real ones (131 keys, the proof, the deployment, ember's `--broadcast`).
+     ⚑ The 4-field domain-tagged seal is **untouched** — it drags `chainVkRoot` and the chain LENGTH
+     in, and that is exactly what makes a six-of-nineteen-queries proof unusable under the identical
+     key. Not weakened to make presentation easier.
+     ⚑ Two new refusals rather than a silent preference: **SEAL-DISAGREE** (a handoff and a seal
+     file giving different values) and **SEAL-SHAPE** (the seal file's chain LENGTH not the pins' —
+     the two emitters run at 827 and 912 steps and `friCommit`/`accOutDigest` **agree** between
+     them, so that mismatch is invisible in the fields themselves).
+  ⚠ Also fixed in passing: the emitted artifact carried `/Users/ember/...` in its `source` field —
+  breakage class (1) above, in a file written twenty minutes after that lesson was logged.
+  `dregg-chain-seal.json` is **gitignored**: it is a measurement that rotates with every re-emit and
+  records its own regeneration command, so a committed copy would be a second source of truth that
+  goes stale silently. **Nothing was re-emitted; no descriptor, fixture or anchor was touched.**
