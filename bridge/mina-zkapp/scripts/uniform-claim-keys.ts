@@ -4,16 +4,19 @@ import { relative, resolve } from 'node:path';
 import { Cache, FeatureFlags, Field, VerificationKey } from 'o1js';
 import { RealRootAir, rootAirDag } from '../src/RootAirDag.js';
 import {
+  PASTA_WALK_HASH,
   RealRootFri,
   airColumnIndex,
   friLaneTable,
   planOpenedValues,
+  priceForSuite,
   rootFriShape,
   rootPreambleMeta,
   segmentWalk,
 } from '../src/RootFriWalk.js';
 import {
   UniformCtx,
+  UniformPlan,
   UniformSpec,
   VK_TREE_DEPTH,
   VK_TREE_LEAVES,
@@ -30,7 +33,9 @@ import {
   uniformShape,
   vkTreeRoot,
 } from '../src/RootFriUniform.js';
-import { claimBindSlice, claimChunks, claimIndex, NUM_CHAIN_CLAIMS } from '../src/RootClaim.js';
+import { babyBearSuite, pastaSuite } from '../src/HashSuites.js';
+import { rehashRealRootFri } from '../src/RootConsume.js';
+import { claimChunks, claimIndex, NUM_CHAIN_CLAIMS } from '../src/RootClaim.js';
 
 // ---------------------------------------------------------------------------
 // THE KEY RING — the 131 claim-carrying verification keys, compiled.
@@ -91,8 +96,33 @@ const CHUNK = Number(process.env.CLAIM_CHUNK ?? 256);
 const LIMIT = Number(process.env.CLAIM_KEYS_LIMIT ?? -1);
 const PLAN_ONLY = process.argv.includes('--plan');
 
-/** `root-claim-carry`'s ratchet and `head-anchor-pins`'s, restated as a REFUSAL. */
-const EXPECT = { instances: 905, programs: 131, steps: 912 };
+/**
+ * ⚑ WHICH CHAIN THIS RUN IS THE KEY RING OF — `babybear` (the deployed,
+ * transcript-DERIVING chain: a batch-STARK preamble, 131 programs) or `pasta`
+ * (the transcript-CARRYING chain minted under `DreggMinaConfig`, hashing with
+ * kimchi's Poseidon over Pasta and so NATIVE in o1js, 12 programs). The two are
+ * not 131 keys with different contents — a hash change reshapes the ring, so
+ * they are DIFFERENT KEY RINGS and MUST live in different `HEAD_KEYS` dirs. The
+ * shape-check refuses a BabyBear key where a Pasta one is wanted, but a shared
+ * directory would still be a directory of two chains, which is what the split
+ * dir prevents. See `pasta-braid` for the measurement this shape is re-cut from.
+ */
+const SUITE = (process.env.CLAIMKEYS_SUITE ?? 'babybear') as 'babybear' | 'pasta';
+
+/**
+ * The ratchet, restated as a REFUSAL — a plan that has drifted fails here rather
+ * than emitting keys for a chain nobody built.
+ *
+ *   babybear  905 / 131 / 912 — `root-claim-carry`'s and `head-anchor-pins`'s,
+ *             WITH the batch-STARK preamble (head 3 → 88).
+ *   pasta     192 / 12 / 199 — `pasta-braid`'s MEASURED uniform shape, no
+ *             preamble (`segmentWalk` refuses a preamble at a CARRIED hash),
+ *             head 2 + 19·block 10 = 192 uniform + 7 AIR = 199 steps.
+ */
+const EXPECT =
+  SUITE === 'pasta'
+    ? { instances: 192, programs: 12, steps: 199 }
+    : { instances: 905, programs: 131, steps: 912 };
 
 /** ⚑ ONE FEATURE-FLAG SETTING FOR THE WHOLE CHAIN. A block's position 0 has two
  *  possible predecessors and a `DynamicProof` class carries ONE flag set;
@@ -135,20 +165,60 @@ type Ctx = UniformCtx & {
   realAir: RealRootAir;
   ix: ReturnType<typeof claimIndex>;
   chunks: number[];
-  bindPos: number;
+  /** ⚑ THE ONE PROGRAM THAT SEALS THE CLAIM — a head slice on the deployed
+   *  preamble chain, a BLOCK slice on the Pasta chain, because the seal goes
+   *  where the claim's AIR chunks ALREADY are and the preamble is what put them
+   *  in the head. See `findSealSpec`. */
+  sealSpec: UniformSpec;
 };
 
-function context(): Ctx {
-  const { air: realAir, fri: real } = readReal();
+/** The walk, shaped for the selected suite. ⚑ THE PASTA WALK CARRIES its
+ *  challenges (no preamble — `segmentWalk` refuses one at a carried hash), runs
+ *  the Pasta MMCS hash NATIVELY, and is built over the RE-HASHED FRI object
+ *  (`DreggMinaConfig` commits the same openings with kimchi's Poseidon). This is
+ *  `pasta-braid`'s context, minus the braid plan it does not need here. */
+function walkFor(realBb: RealRootFri, realAir: RealRootAir, air: ReturnType<typeof airColumnIndex>) {
+  if (SUITE === 'pasta') {
+    const real = rehashRealRootFri(realBb, pastaSuite).real;
+    const shape = rootFriShape(real);
+    const op = planOpenedValues(shape, air);
+    const ftD = friLaneTable(shape, op, PASTA_WALK_HASH);
+    const w = segmentWalk(shape, { hash: PASTA_WALK_HASH, price: priceForSuite(pastaSuite.name) });
+    return { real, shape, op, w, ftD, suite: pastaSuite };
+  }
+  const real = realBb;
   const shape = rootFriShape(real);
-  const air = airColumnIndex();
-  const meta = rootPreambleMeta(realAir, air);
-  //  ⚑ ONE `OpenedPlan` PER LANE TABLE — `friLaneTable` MUTATES `op.refs`.
   const op = planOpenedValues(shape, air);
   //  ⚑ WITH the preamble: 905 / 131 is the §3.30 shape, 820 / 46 is the one
   //  without it, and the one without it is what `.fullchain/uniform` holds.
+  const meta = rootPreambleMeta(realAir, air);
   const w = segmentWalk(shape, { preamble: meta });
   const ftD = friLaneTable(shape, op);
+  return { real, shape, op, w, ftD, suite: babyBearSuite };
+}
+
+/**
+ * **THE SEALING PROGRAM.** The first program whose loaded AIR chunks cover every
+ * claim lane — head first (where the deployed preamble puts them, sealed once),
+ * then block. A block sealer seals at all 19 query instances of that one
+ * program; the AIR is global, so every instance reads the SAME chunk 17/18
+ * lanes and asserts the SAME four equalities — over-pinned, never under. `null`
+ * means no slice reads the claim chunks and the claim cannot be sealed at all.
+ */
+function findSealSpec(plan: UniformPlan, chunks: number[]): UniformSpec | null {
+  const covers = (s: { readsAirChunks: number[] }) => chunks.every((c) => s.readsAirChunks.includes(c));
+  const h = plan.head.findIndex(covers);
+  if (h >= 0) return { kind: 'head', pos: h };
+  const b = plan.block.findIndex(covers);
+  if (b >= 0) return { kind: 'block', pos: b };
+  return null;
+}
+
+function context(): Ctx {
+  const { air: realAir, fri: realBb } = readReal();
+  const air = airColumnIndex();
+  //  ⚑ ONE `OpenedPlan` PER LANE TABLE — `friLaneTable` MUTATES `op.refs`.
+  const { real, shape, op, w, ftD, suite } = walkFor(realBb, realAir, air);
   const L = uniformLayout(w, shape, ftD, CHUNK);
   const ft = uniformLaneTable(shape, ftD, L);
   assertHomogeneous(w, op, ft, L);
@@ -156,13 +226,13 @@ function context(): Ctx {
 
   const ix = claimIndex(air);
   const chunks = claimChunks(ix, CHUNK);
-  const bindPos = claimBindSlice(plan.head, chunks);
-  if (bindPos < 0)
+  const sealSpec =
+    findSealSpec(plan, chunks) ??
     fail(
-      `no head slice loads every AIR chunk the claim lives in (${chunks}) — the seal would have to ` +
-        "add a chunk to a slice, which moves the planner's carry and therefore the 905",
+      `no slice loads every AIR chunk the claim lives in (${chunks}) — the seal would have to ` +
+        "add a chunk to a slice, which moves the planner's carry",
     );
-  return { w, shape, ft, op, plan, real, realAir, ix, chunks, bindPos };
+  return { w, shape, ft, op, plan, real, suite, realAir, ix, chunks, sealSpec };
 }
 
 function programList(c: Ctx): UniformSpec[] {
@@ -172,11 +242,12 @@ function programList(c: Ctx): UniformSpec[] {
   ];
 }
 
-/** ⚑ THE SEAL IS A COMPILE-TIME FACT AND IT IS ONE POSITION. `assertClaimSeal`
+/** ⚑ THE SEAL IS A COMPILE-TIME FACT AND IT IS ONE PROGRAM. `assertClaimSeal`
  *  reads the 25 claim lanes out of the AIR chunks the slice ALREADY loads, so
  *  only a slice covering chunks `[17, 18]` can seal at all — every other
  *  position propagates, and its claim is pinned inductively by the carry. */
-const sealsAt = (c: Ctx, sp: UniformSpec) => sp.kind === 'head' && sp.pos === c.bindPos;
+const sealsAt = (c: Ctx, sp: UniformSpec) =>
+  sp.kind === c.sealSpec.kind && sp.pos === c.sealSpec.pos;
 
 function optsFor(c: Ctx, sp: UniformSpec, airVkHash: bigint) {
   return {
@@ -378,7 +449,10 @@ function child(env: Record<string, string>, label: string): Promise<any> {
 // ===========================================================================
 
 async function main() {
-  console.log('\n=== UNIFORM-CLAIM-KEYS — the 131 claim-carrying verification keys ===\n');
+  console.log(
+    `\n=== UNIFORM-CLAIM-KEYS — the ${EXPECT.programs} claim-carrying verification keys ` +
+      `(${SUITE.toUpperCase()} hash) ===\n`,
+  );
   const T0 = Date.now();
   const c = context();
   const specs = programList(c);
@@ -420,12 +494,12 @@ async function main() {
 
   console.log(
     `    claim         ${NUM_CHAIN_CLAIMS} lanes, AIR chunks [${c.chunks}], sealed at ` +
-      `head${c.bindPos} — every other position propagates`,
+      `${specName(c.sealSpec)} — every other position propagates`,
   );
   const sealers = specs.filter((sp) => sealsAt(c, sp));
   if (sealers.length !== 1)
     fail(`${sealers.length} programs would seal the claim — the seal is ONE compile-time position`);
-  ok('exactly one program seals the claim; 130 carry it under an equality');
+  ok(`exactly one program seals the claim; the other ${specs.length - 1} carry it under an equality`);
 
   if (PLAN_ONLY) {
     console.log(`\n=== PLAN ONLY === ${checks} checks, ${secs(T0)}, nothing compiled\n`);

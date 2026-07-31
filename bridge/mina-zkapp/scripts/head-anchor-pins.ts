@@ -3,10 +3,12 @@ import { relative, resolve } from 'node:path';
 import { Field, Poseidon } from 'o1js';
 import { RealRootAir, realRootColumns, rootAirAccumulator } from '../src/RootAirDag.js';
 import {
+  PASTA_WALK_HASH,
   RealRootFri,
   airColumnIndex,
   friLaneTable,
   planOpenedValues,
+  priceForSuite,
   rootFriShape,
   rootPreambleMeta,
   segmentWalk,
@@ -34,6 +36,8 @@ import {
   walkTwin,
 } from '../src/RootFriSlice.js';
 import { dagDigestOfChunkDigests } from '../src/RootAirChain.js';
+import { babyBearSuite, pastaSuite } from '../src/HashSuites.js';
+import { rehashRealRootFri } from '../src/RootConsume.js';
 import { claimChunks, claimIndex, NUM_CHAIN_CLAIMS, SEG_ANCHOR_WIDTH, octetBigInt } from '../src/RootClaim.js';
 import {
   accOutDigestOf,
@@ -88,8 +92,16 @@ const CHUNK = Number(process.env.CLAIM_CHUNK ?? 256);
 const BUDGET = Number(process.env.CLAIM_BUDGET ?? 50_000);
 const EMIT = process.argv.includes('--emit');
 
-/** `root-claim-carry`'s ratchet, restated as a REFUSAL rather than a comment. */
-const EXPECT = { instances: 905, programs: 131 };
+/** ⚑ WHICH CHAIN — see `uniform-claim-keys`'s `SUITE`. `babybear` is the
+ *  deployed preamble chain; `pasta` is the transcript-CARRYING chain minted
+ *  under `DreggMinaConfig`, hashed NATIVELY in o1js. Defaults MUST agree with
+ *  the key ring in `HEAD_KEYS`; the shape-check below refuses a mismatch. */
+const SUITE = (process.env.CLAIMKEYS_SUITE ?? 'babybear') as 'babybear' | 'pasta';
+
+/** The ratchet, restated as a REFUSAL rather than a comment. See
+ *  `uniform-claim-keys`'s `EXPECT` for the shape each names. */
+const EXPECT =
+  SUITE === 'pasta' ? { instances: 192, programs: 12 } : { instances: 905, programs: 131 };
 
 const fail = (m: string): never => {
   console.error(`\n✗ ${m}`);
@@ -105,15 +117,23 @@ function readReal(): { air: RealRootAir; fri: RealRootFri } {
 }
 
 function main() {
-  const { air: realAir, fri: realFri } = readReal();
-  const shape = rootFriShape(realFri);
+  const { air: realAir, fri: realBb } = readReal();
   const airIx = airColumnIndex();
-  const meta = rootPreambleMeta(realAir, airIx);
+  //  ⚑ THE WALK, SHAPED FOR THE SUITE — identical to `uniform-claim-keys`'s
+  //  `walkFor`, so the pin file and the key ring describe the SAME chain.
+  //  Pasta CARRIES its challenges (no preamble — refused at a carried hash),
+  //  hashes NATIVELY, and is built over the RE-HASHED FRI object.
+  const suite = SUITE === 'pasta' ? pastaSuite : babyBearSuite;
+  const realFri = SUITE === 'pasta' ? rehashRealRootFri(realBb, pastaSuite).real : realBb;
+  const shape = rootFriShape(realFri);
   const op = planOpenedValues(shape, airIx);
-  //  ⚑ WITH the preamble — 905 / 131 is the §3.29 shape and 820 / 46 is the one
-  //  without it. Getting this wrong changes `totalSteps`, which is a PIN.
-  const w = segmentWalk(shape, { preamble: meta });
-  const ftD = friLaneTable(shape, op);
+  //  ⚑ WITH the preamble on babybear — 905 / 131 is the §3.30 shape and 820 / 46
+  //  is the one without it. Getting this wrong changes `totalSteps`, a PIN.
+  const w =
+    SUITE === 'pasta'
+      ? segmentWalk(shape, { hash: PASTA_WALK_HASH, price: priceForSuite(pastaSuite.name) })
+      : segmentWalk(shape, { preamble: rootPreambleMeta(realAir, airIx) });
+  const ftD = SUITE === 'pasta' ? friLaneTable(shape, op, PASTA_WALK_HASH) : friLaneTable(shape, op);
   const L = uniformLayout(w, shape, ftD, CHUNK);
   const ft = uniformLaneTable(shape, ftD, L);
   assertHomogeneous(w, op, ft, L);
@@ -163,7 +183,7 @@ function main() {
   const cols = realRootColumns(realAir);
   const airLanes = airLaneValues(cols.base, cols.ext);
   const friLanes = friLaneValues(realFri, shape, ft, op);
-  const twin = walkTwin(w, shape, ft, op, friLanes, airLanes, realFri);
+  const twin = walkTwin(w, shape, ft, op, friLanes, airLanes, realFri, suite);
   const acc = rootAirAccumulator(realAir);
 
   const nAirChunks = airLanes.length / AIR_CHUNK_LANES;
@@ -290,10 +310,11 @@ function main() {
     console.log(`\n    ◌ NOT EMITTABLE — ${missing.length} of ${programs.length} keys are absent in ${KEYS}`);
     console.log(`      first missing: ${missing.slice(0, 4).map(specName).join(', ')}`);
     console.log(
-      '      ⚑ AND `.fullchain/uniform` IS NOT THE ANSWER. Those 46 keys are the §3.29 chain:\n' +
-        '        `publicOutput: Field`, no claim, no preamble. §3.30 changed the public output\n' +
-        '        type, so every key in the chain changed. The claim-carrying chain must be\n' +
-        '        compiled — 131 programs, one process each — into HEAD_KEYS.',
+      `      ⚑ Compile the ${SUITE.toUpperCase()} claim-carrying chain — ${programs.length} programs,\n` +
+        '        one process each — into HEAD_KEYS:\n' +
+        `          CLAIMKEYS_SUITE=${SUITE} HEAD_KEYS=${relative(process.cwd(), KEYS)} npm run uniform-claim-keys\n` +
+        '        A key from another chain (`.fullchain/uniform`, or the other hash) is REFUSED by the\n' +
+        '        shape-check, not reinterpreted.',
     );
     if (EMIT)
       fail(

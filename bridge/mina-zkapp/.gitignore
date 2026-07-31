@@ -15,8 +15,9 @@ dist*/
 # re-emit of the descriptors. A committed copy would be a second source of truth
 # for two fields that look authoritative and go stale silently, which is the one
 # way this artifact can hurt: the run that regenerates it is a single command and
-# it records that command in itself.
-dregg-chain-seal.json
+# it records that command in itself. (`-pasta` is the CARRIED-hash chain's seal;
+# same rotating-measurement rationale, one pattern for both.)
+dregg-chain-seal*.json
 
 # The process-per-slice chain's boundary artifacts (`npm run root-air-fullchain`)
 # — proofs, verification keys and feature flags handed between processes. They

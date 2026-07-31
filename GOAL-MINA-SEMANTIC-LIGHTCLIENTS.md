@@ -746,6 +746,33 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   So both directions hold together, which is the pair that actually matters:
   **a different CIRCUIT moves the anchor** (four probes) and **a different HISTORY does not** (this).
   Without the second, the first would have been a light client that refuses everyone.
+- ⚑⚑ **16:35 — THE 12-KEY PASTA VERIFIER CHAIN IS COMPILED. Ladder step 2 CLOSED.** The
+  `uniform-claim-keys` driver defaulted to `babyBearSuite` with the batch-STARK preamble baked in
+  (905/131/912); it now takes `CLAIMKEYS_SUITE=pasta` and re-cuts the plan from `pasta-braid`'s
+  MEASURED shape: **12 programs (2 head + 10 block), 192 uniform + 7 AIR = 199 steps**, no preamble
+  (`segmentWalk` REFUSES a preamble at a carried hash), over the RE-HASHED `DreggMinaConfig` FRI, the
+  Pasta MMCS hashing NATIVELY. **MEASURED, all 12 compiled** into `.fullchain/uniform-claim-pasta/`
+  (a SEPARATE dir — the shape-check refuses a BabyBear key where a Pasta one is wanted): **9.3 min
+  total, 46.4 s/program (wasm; VK backend-independent)**, rows 14,471…49,847 (mean 38,996, Kimchi
+  domain 65,532), 12 distinct VKs.
+  ⚑ **The claim STILL SEALS without the preamble — at a BLOCK slice, not a head one.** The preamble
+  was what put the claim's AIR chunks `[17,18]` in the head (bindPos=head1 on BabyBear); the Pasta
+  head reads only `[20-24]`, so `findSealSpec` now searches head THEN block and binds **block6**
+  (`readsAirChunks=[0,1,2,3,17,18,19,20]`). block6 seals at all 19 query instances of that one
+  program — the AIR is global, same chunk 17/18 lanes every instance, over-pinned not under. The
+  seal is NOT vacuous: `readClaimLanes` throws at analyze if the sealing slice lacks the chunks, and
+  block6 compiled clean, so the seal fired. `dregg-root-fri-block6-CLAIM`, `seals:true, armed:true`.
+  ⚑ **`head-anchor-pins --emit` ACCEPTS the Pasta chain** → `dregg-chain-pins-pasta.json`:
+  `totalSteps 199`, `terminalVkHash 4184751575016691838178956349390631709970988735383895065902086888753185227645`,
+  `chainVkRoot 5427954303780182133344651145090621592840463136436581106294553988363264277910`,
+  `genesisRoot 0x7393…` (same anchor as BabyBear — read from the same proof's `expose_claim`), terminal
+  `block9` at leaf 11. `assertLeavesFit` passes, NO leaf alias (12 ≤ 256). The seal preimage opens the
+  terminal boundary through BOTH the chain's `uniformBoundaryOut` and the gate's `terminalSealOf`. The
+  BabyBear pins (`dregg-chain-pins.json`, 131/912) are UNTOUCHED — two chains, two pin files, two key
+  dirs. ⚠ NOT proved (step 3) and NOT deployed (step 4). ⚠ The chain still needs a Pasta-hashed ROOT
+  to EXIST (dregg mints none; this re-hashes and says so) — that is `DreggMinaConfig` in the Rust
+  prover, not an o1js change. Regenerate: `CLAIMKEYS_SUITE=pasta HEAD_KEYS=.fullchain/uniform-claim-pasta
+  npm run uniform-claim-keys` then `… npm run head-anchor-pins -- --emit`.
 
 ---
 
