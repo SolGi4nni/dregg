@@ -60,9 +60,19 @@
 //! `seg_poseidon_commit` mirrors in-circuit. That measures the discriminating step end to end
 //! without a fold.
 //!
-//! [`a_substituted_child_moves_the_root_anchor_through_a_real_fold`] is the same statement through
-//! a REAL 2-to-1 aggregation (`merge_two_segment_proofs`, the deployed merge primitive) and is
-//! `#[ignore]`d because it proves two child layers and one parent layer.
+//! ⚑ **A test named here DOES NOT EXIST, and that is corrected rather than quietly dropped.** This
+//! paragraph used to read: "`a_substituted_child_moves_the_root_anchor_through_a_real_fold` is the
+//! same statement through a REAL 2-to-1 aggregation (`merge_two_segment_proofs`, the deployed merge
+//! primitive) and is `#[ignore]`d because it proves two child layers and one parent layer." There
+//! is no such function in this file — `grep` it. A doc naming an `#[ignore]`d test reads as "the
+//! expensive demonstration exists, just gated", and here nothing was gated because nothing was
+//! written. **The through-a-real-fold demonstration is UNBUILT and unclaimed.**
+//!
+//! What DOES exist, and is the nearest measurement to it, is `vk_pin_lever_a_probe.rs` (B): it
+//! builds the parent verifier circuit twice over one child through the fold's own
+//! `build_next_layer_prep` and measures the parent's preprocessed commitment MOVE while every shape
+//! field is identical. That is a real recursion verifier circuit rather than a three-op toy, but it
+//! stops at the layer's preprocessed commitment and does not carry a proof to a root anchor.
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
@@ -267,14 +277,22 @@ fn the_spine_binds_a_childs_program_and_its_constants() {
     // A SECOND substituted program — one that checks the WRONG public input.
     //
     // ⚠ MEASURED AND WORTH SAYING: in this miniature the SHAPE fingerprint separates every program
-    // variant too (three distinct `fp=` lines above). So this probe demonstrates the spine is
+    // variant too (four distinct `fp=` lines above). So this probe demonstrates the spine is
     // SUFFICIENT to refuse a substituted child; it does NOT demonstrate it is NECESSARY, because
     // at three ops any wiring change also moves a row count. The two notions come apart only at
     // scale, where a large circuit can be padded to a matching (rows, degree_bits, manifest,
     // packing) summary while wiring differently — the cap is a Merkle commitment to the actual
-    // preprocessed columns, the fingerprint is a short summary of their dimensions. Separating
-    // them by measurement needs a REAL fold, not this miniature; that is named in the report and
-    // is not claimed here.
+    // preprocessed columns, the fingerprint is a short summary of their dimensions.
+    //
+    // ⚑ THAT GAP IS NOW PARTLY MEASURED, ELSEWHERE, AND THE REMAINDER IS STATED HONESTLY.
+    // `vk_pin_lever_a_probe.rs` (B) exhibits exactly the come-apart case on a REAL recursion
+    // verifier circuit: two parents differing only in a baked cap, whose preprocessed
+    // commitments DIFFER while every dimension the fingerprint summarises is IDENTICAL —
+    // instances `[(6,7), (2,6), (59,13), (24,11), (2,12)]`, `public_flat_len 51`. So "a matching
+    // summary with different columns" is no longer hypothetical; the commitment separates it.
+    // What remains unmeasured is the same statement carried THROUGH A PROVED MULTI-LAYER FOLD to
+    // a root anchor. That needs a real fold, it is not claimed here, and — see the module docs —
+    // the test this file used to cite for it was never written.
     assert_ne!(
         cap_c7, cap_o7,
         "THE CLOSE FAILED at the sharp case: two DIFFERENT programs with an identical table \
