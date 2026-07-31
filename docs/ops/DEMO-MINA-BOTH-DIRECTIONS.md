@@ -31,7 +31,7 @@ ember passes `--broadcast`.
 | hbox | ✅ ready | 24 c / 123 G, node **v20.16.0**, `linux-x64`, `npm ci` clean in 51 s |
 | `@o1js/native-linux-x64` | ✅ installs | lands from `package-lock.json` via `npm ci`; no extra step |
 | `O1JS_BACKEND=native` on hbox | ✅ **and the VK is bit-identical** | see the table below |
-| `dregg-verifies-mina.sh` | ✅ **7/7 PASS** | full run, local, ~2 min including a release build; see §1.3 |
+| `dregg-verifies-mina.sh` | ✅ **7/7 PASS** | local, ~2 min including a release build; hbox legs all green too (`mina_head` 11, `mina_observer` 43, opening check proved+verified). See §1.3 |
 | `head-anchor` tier-0 | ✅ green | 12 out-of-circuit checks, **1.2 s** (local) |
 | `head-gate-rehearsal` | ✅ green | 7 checks, **55.2 s** on hbox with the native backend |
 | `head-anchor` tier-1 | ❌ **RED** | its accept row fails — **the harness, not the gate**; see §4 |
@@ -271,6 +271,43 @@ an hour. After that the explorer is the record.
 
 ---
 
+## 3.5 ⚑ Running anywhere but ember's mac — three things the first hbox rehearsal hit
+
+Recorded because each of them presents as something it is not.
+
+**1. `curl` to `api.minascan.io` hangs on hbox and returns nothing.** The host
+publishes AAAA records; hbox has no IPv6 route (`ping6: Network is
+unreachable`). A plain `curl` burns the whole timeout and the preflight reports
+*"devnet did not answer SYNCED"* about a host that is up. **`curl -4` returns in
+under a second**, and the demo script now passes it.
+
+⚑ **node's own `fetch` was never affected** — happy-eyeballs falls back to IPv4
+on its own — so every `devnet:*` script worked on hbox the whole time and only
+the shell preflight lied. If you see a preflight say the endpoint is down, check
+it with `curl -4` before believing it.
+
+**2. `bridge/tools/mina-state-hash-crosscheck.py` used to open two absolute
+`/Users/ember/...` paths** and died anywhere else with a bare
+`FileNotFoundError`. Fixed 2026-07-30: it resolves the repository from its own
+`__file__`, `DREGG_REPO` overrides, and an absent input is a refusal that names
+the path and the variable. **If you are on a checkout that predates this, that
+is the symptom.**
+
+**3. `head-anchor` reads `.fullchain/real-root-air.json`, which is gitignored.**
+It therefore exists only where `npm run root-air-fullchain` has run — not in a
+fresh clone, and not in a synced build lane, because `pbuild` filters by
+`.gitignore`. Copy it to the box before running direction 1 there:
+
+```bash
+scp bridge/mina-zkapp/.fullchain/real-root-air.json \
+    hbox:/tank/dregg-build/<lane>/bridge/mina-zkapp/.fullchain/
+```
+
+The demo reports `BLOCKED` with that reason rather than `FAIL`, because a
+missing local artifact is not a defect in the thing being demonstrated.
+
+---
+
 ## 4. ⚑ Two defects this rehearsal found, and where they live
 
 Both are in `bridge/mina-zkapp/scripts/head-anchor.ts`, which is another lane's
@@ -347,8 +384,8 @@ bridge/demo/mina-verifies-dregg.sh --broadcast    # direction 1 — needs items 
 | leg | measured / predicted | time |
 |---|---|---|
 | direction 2, steps 0–3 (live wire, transcription, link) | **measured** | ~10 s |
-| direction 2, step 4 (`mina_head`) | measured, warm lane | ~1 min |
-| direction 2, step 5 (opening check) | **predicted** — this leg is coupled to the dregg circuit crate and the four descriptor sha pins, so a re-emit turns it red | minutes |
+| direction 2, step 4 (`mina_head`) | **measured** — 11 passed local, 11 passed hbox | seconds, warm |
+| direction 2, step 5 (opening check) | **measured** — 15.9 s local (m-series), **67.4 s on hbox tonight**. ⚑ hbox is slower here because it is co-tenanted at load ~35; it is not the faster box for a single-threaded prove. This leg is coupled to the dregg circuit crate and the four descriptor sha pins, so a re-emit turns it red | 16–70 s |
 | direction 1, steps 1–2 (tier-0 + rehearsal) | **measured on hbox** | 56 s |
 | direction 1, step 4 deploy — compile `DreggHeadGate` at real pins | **predicted**, extrapolated from 12.1 s at stand-in pins; the real terminal proof's feature flags are wider | ~1–3 min |
 | direction 1, step 4 deploy — inclusion on devnet | measured on the 2026-07-28 deploy | ~1 block, 1–3 min |

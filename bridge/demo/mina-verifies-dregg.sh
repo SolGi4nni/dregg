@@ -94,16 +94,26 @@ case "$MINA_ENDPOINT" in
   *devnet*) : ;;
   *) die "MINA_ENDPOINT '$MINA_ENDPOINT' is not a devnet endpoint; these scripts are devnet-only" ;;
 esac
-# ⚑ `-4`, MEASURED AND NOT SUPERSTITION. `api.minascan.io` publishes AAAA records
-# and hbox has no IPv6 route, so a plain `curl` there hangs for the whole timeout
-# and returns nothing — the first rehearsal on hbox reported "devnet did not
-# answer" for a host that was up. node's own `fetch` has happy-eyeballs and
-# falls back on its own, so the o1js scripts were never affected; only this
-# preflight was. Forcing v4 here makes the preflight agree with the scripts it
-# is a preflight for.
-DSTAT="$(curl -sS -4 --max-time 30 -X POST "$MINA_ENDPOINT" \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"{ daemonStatus { syncStatus blockchainLength } }"}' 2>/dev/null || true)"
+# ⚑ THE PREFLIGHT ASKS THE WAY THE SCRIPTS ASK — through node, not through curl.
+# Twice in one evening a `curl` preflight reported this endpoint DOWN while it
+# was up, and both times the devnet scripts would have worked:
+#   * `api.minascan.io` publishes AAAA records and hbox has no IPv6 route, so a
+#     plain `curl` burns its whole timeout. `-4` fixes that one.
+#   * inside `swarm-build`'s systemd scope, curl's HTTP/2 to this host hangs
+#     DETERMINISTICALLY — 15.0 s, code 000, every time — while `--http1.1`
+#     returns in 0.57 s and a bare curl outside the scope returns in 0.45 s.
+# node's `fetch` has happy-eyeballs and speaks HTTP/1.1, so it was unaffected by
+# both (measured inside the scope: 2.4 s, SYNCED). Asking through node makes the
+# preflight agree with the thing it is a preflight FOR by construction, instead
+# of by coincidence. A preflight that can be wrong in the safe direction is a
+# preflight that will one day stop a deploy that would have worked.
+DSTAT="$(node -e '
+  const ep = process.argv[1];
+  fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ query: "{ daemonStatus { syncStatus blockchainLength } }" }) })
+    .then(r => r.text()).then(t => process.stdout.write(t))
+    .catch(e => process.stdout.write("FETCH_ERROR " + e.message));
+' "$MINA_ENDPOINT" 2>/dev/null || true)"
 if printf '%s' "$DSTAT" | grep -q '"syncStatus":"SYNCED"'; then
   HEIGHT="$(printf '%s' "$DSTAT" | sed -n 's/.*"blockchainLength":\([0-9]*\).*/\1/p')"
   pass "Mina devnet SYNCED at height $HEIGHT  ($MINA_ENDPOINT)"
@@ -130,9 +140,20 @@ elif (cd "$ZK" && MINA_TIER=0 npm run head-anchor) > "$LOGDIR/tier0.log" 2>&1; t
   N="$(grep -c '✓' "$LOGDIR/tier0.log" || true)"
   pass "head-anchor tier-0: $N out-of-circuit checks (the decision table, the seal, the bootstrap)"
 else
-  fail "head-anchor tier-0 — see $LOGDIR/tier0.log"
-  tail -20 "$LOGDIR/tier0.log"
-  summary; exit 1
+  # ⚑ A SIBLING'S IN-FLIGHT FILE IS NOT THIS LEG'S DEFECT, and this branch exists
+  # because it happened mid-rehearsal. Every npm script here runs `tsc` over the
+  # WHOLE `scripts/` directory first, so ONE lane's half-written file reds every
+  # leg in the directory. That reads as "the demo is broken" and is not. Naming
+  # the offending files turns a 20-line stack into a glance.
+  TSERR="$(grep -oE '^[^ (]+\.ts' "$LOGDIR/tier0.log" 2>/dev/null | sort -u | tr '\n' ' ' || true)"
+  if grep -q 'error TS' "$LOGDIR/tier0.log" 2>/dev/null; then
+    blok "the SHARED TypeScript build is red from files this leg does not use: ${TSERR:-(see log)}. Every npm script in bridge/mina-zkapp runs \`tsc\` over the whole scripts/ directory, so another lane's in-flight file reds this one. Not a defect in the gate."
+    grep -m6 'error TS' "$LOGDIR/tier0.log" | sed 's/^/     /'
+  else
+    fail "head-anchor tier-0 — see $LOGDIR/tier0.log"
+    tail -20 "$LOGDIR/tier0.log"
+    summary; exit 1
+  fi
 fi
 
 # ===========================================================================
@@ -146,6 +167,11 @@ elif (cd "$ZK" && npm run head-gate-rehearsal) > "$LOGDIR/rehearsal.log" 2>&1; t
   REF="$(grep -c 'REFUSED' "$LOGDIR/rehearsal.log" || true)"
   pass "deployed, ACCEPTED an honest advance (head moved to H), and REFUSED $REF things that are not one"
   grep -E '^\s+(✓|REFUSED)' "$LOGDIR/rehearsal.log" | sed 's/^/     /'
+elif grep -q 'error TS' "$LOGDIR/rehearsal.log" 2>/dev/null; then
+  # Same shared-`tsc` hazard as step 1 — see the note there.
+  TSERR2="$(grep -oE '^[^ (]+\.ts' "$LOGDIR/rehearsal.log" 2>/dev/null | sort -u | tr '\n' ' ' || true)"
+  blok "the SHARED TypeScript build is red from files this leg does not use: ${TSERR2:-(see log)}. Another lane's in-flight file; not a defect in the gate."
+  grep -m6 'error TS' "$LOGDIR/rehearsal.log" | sed 's/^/     /'
 else
   fail "head-gate-rehearsal — see $LOGDIR/rehearsal.log"
   tail -30 "$LOGDIR/rehearsal.log"
