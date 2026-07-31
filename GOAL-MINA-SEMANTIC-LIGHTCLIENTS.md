@@ -1346,3 +1346,19 @@ tiling it. The 173 s is a CPU number; GPU is pending the fix.
   the merge tree / native / Pasta-shape levers remain the ones that move the settlement cost.
 - Load-bearing outcome: **the GPU path RUNS at apex scale now** — before this it crashed on any real
   Vulkan GPU. Surfaced only by DRIVING the terminal run, not by a status check.
+
+## ✅ dregg → Mina DEMONSTRATED on hbox, live devnet data (RUN_EXIT=0, every check PASS)
+`bridge/demo/dregg-verifies-mina.sh`, hbox, this session:
+- **87,870 bytes of `Protocol_state.Value` off a LIVE devnet peer** (`12200c1f124de82a…`) — real p2p wire.
+- **`state_hash(540186) = 23150793208165238508010746024646151327500557688103637800887369182027809926508`**
+  reproduced by the Lean-verified binprot transcription (dregg re-derives Mina's block identity from raw bytes).
+- **CONSECUTIVE PAIR 540221 → 540222, MATCH** — derived state hash == the next block's named parent
+  (child block is its own answer key; no server trusted).
+- **`mina_head` 11/11** — Samasika fork choice, decided in Lean, not a hand-written `select`.
+- **opening check proved + verified on real devnet block 539508** (its own 15 IPA prechallenges, DERIVED).
+
+**This direction is a semantic light client: dregg decodes Mina's chain, re-derives its hashes, and
+applies the consensus rule — all machine-checked Lean; a malicious peer's worst case is a REFUSAL.**
+Honest scope (printed by the demo): the opening check accepts an anchored SEGMENT, not "the chain the
+network selected" (`mina_head` distinguishes those); the p2p helper is trusted for AVAILABILITY only;
+it is a small Python client, not audited crypto — openmina is what to link for production.
