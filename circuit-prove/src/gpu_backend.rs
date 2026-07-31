@@ -244,6 +244,16 @@ static SHARED_GPU: OnceLock<Option<SharedGpu>> = OnceLock::new();
 fn shared_gpu() -> Option<&'static SharedGpu> {
     SHARED_GPU
         .get_or_init(|| {
+            // CPU-force switch. `DREGG_GPU_DISABLE=1` skips adapter acquisition so the
+            // whole stack takes its CPU-fallback branches. Added 2026-07-31 when the
+            // apex-scale (2^16-row) dispatch hit a real wgpu tiling bug on hbox's RX
+            // 6750 XT (`workgroup count [65536,31,1]` > Vulkan's 65535 max in dim 0) —
+            // this lets a measurement run complete on CPU while the tiling is fixed
+            // separately. It is a genuine debug/measurement lever, not a workaround
+            // masquerading as a feature: the GPU path is the one that must be repaired.
+            if std::env::var("DREGG_GPU_DISABLE").as_deref() == Ok("1") {
+                return None;
+            }
             let instance = wgpu::Instance::default();
             let adapter =
                 pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
