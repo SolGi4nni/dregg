@@ -77,6 +77,24 @@
 //! 4. Recipient presents the certificate to the target.
 //! 5. Target validates and creates a routing entry.
 
+// THE VERIFIED PQ CORES, for THIS crate's lib-test binary, at PROCESS START.
+//
+// `dregg-captp` is a light leaf: it never links the Lean archive, and every crate it reaches
+// ML-DSA through (`dregg-pq` directly in `netlayer`, `dregg-blocklace` via handoff fixtures)
+// installs a core only under its OWN `cfg(test)`, which is not set when those crates are
+// compiled as dependencies. With nothing installed `dregg-pq` refuses with an uncatchable
+// `process::abort()`.
+//
+// `handoff.rs` already called `install_or_panic()` at two of its own fixtures — and that is
+// exactly the shape this replaces. A hand-audited call list is coverage by audit: `netlayer::
+// tests::hybrid_*` reach ML-KEM/ML-DSA from a THIRD direction that list never named, and all
+// three died as bare SIGABRTs. A process-start initializer makes the install a property of the
+// BINARY: it runs before libtest starts, so no test can beat it and `--test-threads` cannot
+// change the outcome. `#[cfg(test)]`, so the shipped crate stays archive-free — a deployed
+// process installs the same cores at startup (`node/src/lib.rs::install_verified_pq_cores`).
+#[cfg(test)]
+dregg_pq_testkit::install_at_process_start!();
+
 // Re-export the canonical FederationId from dregg-types so all crates agree
 // on the identifier (see FEDERATION-UNIFICATION-DESIGN.md §2).
 pub use dregg_types::FederationId;

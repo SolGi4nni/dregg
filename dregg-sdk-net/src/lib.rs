@@ -28,6 +28,22 @@
 //! are `NetClerk` methods over `&self.clerk` and a node URL; private intent
 //! discovery is the free function [`discovery::discover_intents_privately`].
 
+// THE VERIFIED PQ CORES, for THIS crate's lib-test binary, at PROCESS START.
+//
+// `dregg-sdk-net` never calls `dregg-pq` itself — it reaches ML-DSA through the identity
+// derivation in `dregg_turn::pq` / `dregg_cell_crypto`, and those crates install a core only
+// under their OWN `cfg(test)`, which is not set when they are compiled as dependencies here.
+// With nothing installed `dregg-pq` refuses with an uncatchable `process::abort()`, and all
+// six `faithful_spend::tests` — the whole bounded-page spend protocol — died as bare SIGABRTs.
+//
+// Process-start rather than a call at a gateway: the reach is transitive and arrives from
+// several directions, so a hand-audited call list would be coverage by audit. This runs before
+// libtest starts, so no test can beat it and `--test-threads` cannot change the outcome.
+// `#[cfg(test)]`, so the shipped crate stays archive-free — `sdk/src/runtime.rs` installs the
+// same cores when an `AgentRuntime` is built.
+#[cfg(test)]
+dregg_pq_testkit::install_at_process_start!();
+
 pub mod captp_client;
 pub mod channels;
 pub mod client;

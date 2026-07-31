@@ -127,6 +127,21 @@ pub use catalog::{
     demo_catalog, subject_credential, CapScope, CapTurn, Catalog, SnapshotCatalog, SUBJECT_ATTR,
 };
 
+// THE VERIFIED PQ CORES, for THIS crate's lib-test binary, at PROCESS START — `cap` only.
+//
+// A `dregg-auth` credential is HYBRID: ed25519 ∧ ML-DSA. `dregg-auth` installs a verified
+// ML-DSA core only under its OWN `cfg(test)`, which is not set when it is compiled as a
+// dependency here, so with nothing installed `dregg-pq` refused the derivation with an
+// uncatchable abort and all seven `catalog::tests` — the entire cap-scoping tooth — died
+// without asserting anything. (`deos-view` links SpiderMonkey, whose `mozalloc` redirects
+// `abort()`, so the corpse read as SIGSEGV rather than SIGABRT.)
+//
+// Gated on `cap` as well as `test`, so the gpui-free `--no-default-features --features
+// web|integration` bakes pull no archive: the PQ reach exists only through `dep:dregg-auth`,
+// which is exactly what `cap` turns on.
+#[cfg(all(test, feature = "cap"))]
+dregg_pq_testkit::install_at_process_start!();
+
 // ── The NATIVE renderer: `ViewNode` → real gpui-component pixels (the heavy stack
 //    + deos-js live verified turns). Gated on `native` so the `web` build stays tiny. ──
 #[cfg(feature = "native")]

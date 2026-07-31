@@ -44,6 +44,22 @@ impl HostAuthority {
     /// A host authority from a 32-byte secret seed — deterministic, for a host that
     /// derives its powerbox root from its master secret (or a KMS-held key).
     pub fn from_seed(seed: [u8; 32]) -> Self {
+        // THE VERIFIED PQ CORES, for this crate's lib-test binary. A `dregg-auth` credential is
+        // HYBRID (ed25519 ∧ ML-DSA), and `dregg-auth` installs a verified ML-DSA core only under
+        // its OWN `cfg(test)` — inert here, where it is compiled as a dependency. With nothing
+        // installed `dregg-pq` refuses the derivation with an uncatchable `process::abort()`, and
+        // all 23 tests that touch the cap rail (every `bridge::tests`, both `integration_tests`,
+        // every `webauth_rail::tests`) died without asserting anything.
+        //
+        // THIS CRATE CANNOT USE `dregg_pq_testkit::install_at_process_start!()` — that macro
+        // registers a `.init_array` entry via `#[link_section]`, which `unsafe_code = "forbid"`
+        // in this crate's `[lints.rust]` rejects at compile time. So the install sits at the one
+        // real CHOKE POINT instead: `from_seed`/`generate` are the only two constructors of a
+        // `HostAuthority`, and every capability in this crate is minted from one, so this is a
+        // gateway rather than a hand-audited call list. `#[cfg(test)]`, so the shipped crate
+        // stays archive-free; a deployed host installs the same cores at startup.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         HostAuthority {
             root: RootKey::from_seed(seed),
         }
@@ -51,6 +67,9 @@ impl HostAuthority {
 
     /// A freshly generated host authority (OS randomness).
     pub fn generate() -> Self {
+        // The other constructor — see `from_seed` for why the install is here.
+        #[cfg(test)]
+        dregg_pq_testkit::install_or_panic();
         HostAuthority {
             root: RootKey::generate(),
         }

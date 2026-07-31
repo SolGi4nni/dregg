@@ -47,5 +47,13 @@ blake3 = "1"
 ed25519-dalek = { version = "2.1", features = ["std"] }
 sha2 = "0.10"
 
+[dev-dependencies]
+# THE VERIFIED PQ CORES for the lib-test binary. `grain-commons` stays archive-free in
+# `[dependencies]`; it reaches ML-DSA through `sandstorm_bridge::webauth_rail` (the `dga1_`
+# cap rail's PQ half) and `dregg_sdk`'s hatchery mint, and those crates' own `cfg(test)`
+# installs are inert when they are compiled as dependencies here. Dev-only, and a binary that
+# never calls `install()` links nothing extra. See `dregg-pq-testkit`'s crate docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [lints]
 workspace = true

@@ -46,6 +46,12 @@ libc = "0.2"
 ed25519-dalek = { version = "2.1", features = ["std"] }
 grain-commons = { path = "../grain-commons" }
 tempfile = { workspace = true }
+# THE VERIFIED PQ CORES for the lib-test binary. Every cap this suite presents is a HYBRID
+# `dga1_` credential (ed25519 ∧ ML-DSA); `dregg-auth`'s and `sandstorm-bridge`'s own `cfg(test)`
+# installs are inert when they are compiled as dependencies here, so `tests::host()` installs
+# them for this process. ⚠ `install_at_process_start!()` is NOT usable in this crate: it needs
+# `#[link_section]`, which `unsafe_code = "forbid"` below rejects. Dev-only; nothing ships it.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [lints.rust]
 unsafe_code = "forbid"

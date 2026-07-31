@@ -85,7 +85,25 @@ mod tests {
         grain_commons::publish(&config, &author_key(seed)).expect("publishable demo grain")
     }
 
+    /// The host powerbox authority every cap in this suite is minted from — and the ONE place
+    /// this test process installs the Lean-verified PQ cores.
+    ///
+    /// A `dregg-auth` `dga1_` credential is HYBRID (ed25519 ∧ ML-DSA). `dregg-auth` installs a
+    /// verified ML-DSA core only under its OWN `cfg(test)`, and so does
+    /// `sandstorm_bridge::webauth_rail::HostAuthority::from_seed` — both inert here, where those
+    /// crates are compiled as dependencies. With nothing installed `dregg-pq` refused the
+    /// derivation with an uncatchable `process::abort()` (reported as SIGSEGV: this binary links
+    /// SpiderMonkey, whose `mozalloc` redirects `abort()`), and the six tests that present a cap
+    /// died having asserted nothing.
+    ///
+    /// ⚠ NOT `dregg_pq_testkit::install_at_process_start!()`: that macro needs `#[link_section]`,
+    /// which this crate's `unsafe_code = "forbid"` rejects at compile time. `host()` is the
+    /// crate's own choke point instead — it is the only `HostAuthority` construction outside the
+    /// two attacker fixtures, and no cap can be minted, attenuated or presented without one.
+    /// `install_or_panic` PANICS naming the missing directions if the linked archive is
+    /// incomplete, rather than letting a test print `ok` about a cap nothing verified.
     fn host() -> HostAuthority {
+        dregg_pq_testkit::install_or_panic();
         HostAuthority::from_seed([42u8; 32])
     }
 

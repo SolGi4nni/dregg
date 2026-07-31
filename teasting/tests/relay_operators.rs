@@ -9,6 +9,15 @@ use dregg_storage::queue::{empty_queue_root, verify_dequeue_proof};
 use dregg_storage::relay::RelayError;
 use dregg_teasting::harness::SimulationHarness;
 
+// THE VERIFIED PQ CORES, for THIS test binary. Every node this file builds derives a
+// HYBRID identity — `H(ed25519_pk ‖ ml_dsa_pk)` — through `dregg_blocklace`, and
+// `dregg-blocklace` installs a core only under its OWN `cfg(test)`, which is not set when
+// it is compiled as a dependency here. With nothing installed `dregg-pq` refuses the
+// ML-DSA keygen with an uncatchable `process::abort()`, so every test in this binary died
+// as a bare SIGABRT having asserted NOTHING. Process-start, so no test can beat it and
+// `--test-threads` cannot change the outcome. See `dregg-pq-testkit`'s crate docs.
+dregg_pq_testkit::install_at_process_start!();
+
 /// Deterministic identity from a seed byte.
 fn identity(n: u8) -> [u8; 32] {
     [n; 32]

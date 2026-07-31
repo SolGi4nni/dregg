@@ -72,6 +72,11 @@ test-support = []
 
 [dev-dependencies]
 dregg-intent = { path = "../intent" }
+# THE VERIFIED PQ CORES for the lib-test binary. `dregg-sdk-net` stays archive-free in
+# `[dependencies]`; it reaches ML-DSA through `dregg-turn`/`dregg-cell-crypto`, whose own
+# `cfg(test)` installs are inert when they are compiled as dependencies here. Dev-only, and
+# a binary that never calls `install()` links nothing extra. See `dregg-pq-testkit`'s docs.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
 
 [[example]]
 name = "reactive_agent"

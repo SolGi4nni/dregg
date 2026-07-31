@@ -65,6 +65,23 @@
 //! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
 
+// THE VERIFIED PQ CORES, for THIS crate's lib-test binary, at PROCESS START.
+//
+// `dregg-coord` never calls `dregg-pq` itself — it reaches it through `dregg_blocklace::
+// finality::Block::new` / `Blocklace::new_simple`, which derive the block author's ML-DSA-65
+// half from its ed25519 seed. `dregg-blocklace` installs a core only under its OWN `cfg(test)`,
+// which is not set when it is compiled as a dependency, so with nothing installed `dregg-pq`
+// refuses the derivation with an uncatchable `process::abort()`.
+//
+// `shared_budget::tests::install_pq_cores()` and `coord_diff` already did this per-test — and
+// that is exactly the shape this replaces. Two of `shared_budget`'s own tests
+// (`test_resource_state_lifecycle`, `test_try_optimistic_debit_resumes_after_resolution`) were
+// not on that hand-audited call list and died as bare SIGABRTs. A process-start initializer
+// makes the install a property of the BINARY, so no test can be left off a list again.
+// `#[cfg(test)]`, so the shipped crate stays archive-free.
+#[cfg(test)]
+dregg_pq_testkit::install_at_process_start!();
+
 pub mod atomic;
 pub mod budget;
 pub mod causal;

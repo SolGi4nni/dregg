@@ -30,6 +30,19 @@
 //!    whose forever-invariant the executor enforces for the child's whole life, endowed
 //!    with a strict attenuation of its own caps.
 
+// THE VERIFIED PQ CORES, for THIS crate's lib-test binary, at PROCESS START.
+//
+// `grain-commons` never calls `dregg-pq` itself — it reaches ML-DSA through
+// `sandstorm_bridge::webauth_rail`'s `dga1_` cap rail (the credential's PQ half) and through
+// `dregg_sdk`'s hatchery mint. Both of those crates install a verified core only under their
+// OWN `cfg(test)`, which is not set when they are compiled as dependencies here, so with
+// nothing installed `dregg-pq` refused with an uncatchable `process::abort()` and the whole
+// commons loop — hatch, attenuate, forge-detect — died as bare SIGABRTs having asserted
+// nothing. Process-start, so no test can beat it and `--test-threads` cannot change the
+// outcome. `#[cfg(test)]`, so the shipped crate stays archive-free.
+#[cfg(test)]
+dregg_pq_testkit::install_at_process_start!();
+
 pub mod fork;
 pub mod hatchery;
 pub mod package;

@@ -53,6 +53,15 @@ dregg-cell = { path = "../cell" }
 # take NONE of the native/cap/discord elephants (`default-features = false`).
 deos-view = { path = "../deos-view", default-features = false, features = ["web"] }
 
+[dev-dependencies]
+# THE VERIFIED PQ CORES for the lib-test binary. The `dga1_` cap rail this crate mints on is a
+# HYBRID credential (ed25519 ∧ ML-DSA); `dregg-auth` installs a verified ML-DSA core only under
+# its own `cfg(test)`, inert when it is a dependency here. `webauth_rail::HostAuthority::
+# {from_seed,generate}` — the only two constructors — install it for the test process.
+# ⚠ `install_at_process_start!()` is NOT usable in this crate: it needs `#[link_section]`,
+# which `unsafe_code = "forbid"` below rejects. Dev-only; nothing ships this edge.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [lints.rust]
 unsafe_code = "forbid"
 unexpected_cfgs = "deny"

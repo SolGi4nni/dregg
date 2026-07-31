@@ -145,6 +145,15 @@ serenity = { version = "0.12", default-features = false, features = [
 anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
+[dev-dependencies]
+# THE VERIFIED PQ CORES for the lib-test binary, used ONLY under `feature = "cap"` (see the
+# `#[cfg(all(test, feature = "cap"))]` initializer in `src/lib.rs`). The `cap` scope's
+# `dregg-auth` credential is HYBRID — ed25519 ∧ ML-DSA — and `dregg-auth` installs a verified
+# core only under its OWN `cfg(test)`, which is inert when it is compiled as a dependency
+# here. Dev-only, and a binary that never calls `install()` links nothing extra, so the
+# gpui-free `--no-default-features --features web|integration` bakes are unaffected.
+dregg-pq-testkit = { path = "../dregg-pq-testkit" }
+
 [features]
 # The DEFAULT build is the native renderer PLUS the cap-scope: `cargo test --release` (the
 # crate's documented command) then exercises both the pixel path and the cap-scoping teeth.

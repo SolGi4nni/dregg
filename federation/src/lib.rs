@@ -59,6 +59,23 @@
 //! - [`revocation`]: Revocation Merkle tree + non-membership proofs
 //! - [`node`]: Federation node implementation (includes BFT consensus simulation)
 
+// THE VERIFIED PQ CORES, for THIS crate's lib-test binary, at PROCESS START.
+//
+// `dregg-federation` is a light leaf: it never links the Lean archive. It reaches ML-DSA
+// through `dregg_blocklace::finality::Block` (the block author's hybrid identity), and
+// `dregg-blocklace` installs a core only under its OWN `cfg(test)`, which is not set when it
+// is compiled as a dependency. With nothing installed `dregg-pq` refuses the derivation with
+// an uncatchable `process::abort()`.
+//
+// `frost.rs` already called `install_or_panic()` at two of its own fixtures — and that is
+// exactly the shape this replaces. All five `court::tests` build blocklace evidence from a
+// direction that list never named and died as bare SIGABRTs, so the equivocation court's
+// slashing pipeline had never executed. A process-start initializer makes the install a
+// property of the BINARY: it runs before libtest starts, so no test can beat it and no test
+// can be left off a list. `#[cfg(test)]`, so the shipped crate stays archive-free.
+#[cfg(test)]
+dregg_pq_testkit::install_at_process_start!();
+
 /// Strand admission — the HYBRID (stake-OR-vouch) Sybil-admission gate (closes red-team F-4).
 /// The gate IN FRONT of participation/finalization: only admitted strands (seeds, ≥N
 /// distinct-rooted-vouched, or ≥`min_bond` bonded) are finalizable; bonded equivocators are

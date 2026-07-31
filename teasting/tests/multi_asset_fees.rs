@@ -6,6 +6,15 @@
 use dregg_storage::multi_asset::{COMPUTRON_ASSET, ExchangeRate, FeeError, FeePayment, FeePolicy};
 use dregg_teasting::harness::SimulationHarness;
 
+// THE VERIFIED PQ CORES, for THIS test binary. Every node this file builds derives a
+// HYBRID identity — `H(ed25519_pk ‖ ml_dsa_pk)` — through `dregg_blocklace`, and
+// `dregg-blocklace` installs a core only under its OWN `cfg(test)`, which is not set when
+// it is compiled as a dependency here. With nothing installed `dregg-pq` refuses the
+// ML-DSA keygen with an uncatchable `process::abort()`, so every test in this binary died
+// as a bare SIGABRT having asserted NOTHING. Process-start, so no test can beat it and
+// `--test-threads` cannot change the outcome. See `dregg-pq-testkit`'s crate docs.
+dregg_pq_testkit::install_at_process_start!();
+
 /// Deterministic asset ID from a name.
 fn asset_id(name: &str) -> [u8; 32] {
     *blake3::hash(name.as_bytes()).as_bytes()
