@@ -724,8 +724,13 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: v
 #[cfg(not(target_arch = "wasm32"))]
 const K_EXPAND: &str = r#"
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let p = gid.x;
+fn main(@builtin(global_invocation_id) gid: vec3<u32>,
+        @builtin(num_workgroups) nwg: vec3<u32>) {
+    // dim-0 is tiled into dim-2 when the row count exceeds the 65535 workgroup
+    // ceiling (see `dispatch_folded`); reconstruct the flat element index and
+    // fence the padded tail. When not tiled, nwg.z == 1 and gid.z == 0.
+    let p = gid.z * (nwg.x * 256u) + gid.x;
+    if (p >= $N) { return; }
     let c = gid.y;
     let jj = (reverseBits(p) >> $RSHN) & $HM1;
     let jsrc = ($H - jj) & $HM1;
@@ -781,9 +786,14 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
 #[cfg(not(target_arch = "wasm32"))]
 fn radix_kernel(n: u32, logn: u32, l: u32, r: u32, wgsz: u32) -> String {
     let m = 1u32 << r;
+    // Number of radix-2^r butterfly groups this stage launches (one thread each);
+    // the dispatch rounds this up to the workgroup size and, at apex scale, folds
+    // the dim-0 excess into dim-2 (`dispatch_folded`). Reconstruct the flat group
+    // index and fence the padded tail. When not tiled, nwg.z == 1 / gid.z == 0.
+    let tcount = n >> r;
     let mut s = String::new();
     s.push_str(&format!(
-        "@compute @workgroup_size({wgsz})\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    let t = gid.x;\n    let off = gid.y * {n}u;\n"
+        "@compute @workgroup_size({wgsz})\nfn main(@builtin(global_invocation_id) gid: vec3<u32>,\n        @builtin(num_workgroups) nwg: vec3<u32>) {{\n    let t = gid.z * (nwg.x * {wgsz}u) + gid.x;\n    if (t >= {tcount}u) {{ return; }}\n    let off = gid.y * {n}u;\n"
     ));
     if l == 0 {
         s.push_str("    let tlow = 0u;\n");
@@ -857,6 +867,34 @@ fn split_stages(total: u32) -> Vec<u32> {
         }
     }
     out
+}
+
+/// Vulkan (and the WebGPU downlevel floor) guarantees only 65535 workgroups per
+/// grid dimension. `maxComputeWorkGroupCount[i] >= 65535`.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_WG_PER_DIM: u32 = 65535;
+
+/// Launch `x` workgroups in dim-0 without tripping the per-dimension ceiling: if
+/// `x` exceeds [`MAX_WG_PER_DIM`], fold the excess into dim-2 (`z` is otherwise
+/// unused == 1). The kernels that go through this path (`K_EXPAND`,
+/// `radix_kernel`) reconstruct their linear index as
+/// `gid.z * (num_workgroups.x * wgsz) + gid.x` and guard the padded tail, so the
+/// tiled launch computes **byte-identically** to the flat one — when `x` fits,
+/// `z == 1`, `gid.z == 0`, and the reconstruction collapses to `gid.x`, i.e. the
+/// old behavior exactly.
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_folded(pass: &mut wgpu::ComputePass, x: u32, y: u32) {
+    if x <= MAX_WG_PER_DIM {
+        pass.dispatch_workgroups(x, y, 1);
+    } else {
+        // z = ceil(x / cap) <= 65535 for any x < cap^2 (~2^32); xg = ceil(x / z)
+        // <= cap. xg*z >= x, so every dim-0 index is covered, and the kernel's
+        // tail guard fences the (xg*z - x) padded workgroups.
+        let z = x.div_ceil(MAX_WG_PER_DIM);
+        let xg = x.div_ceil(z);
+        debug_assert!(xg <= MAX_WG_PER_DIM && z <= MAX_WG_PER_DIM);
+        pass.dispatch_workgroups(xg, y, z);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1204,7 +1242,12 @@ impl GpuDft {
                     .write_buffer(&bufs.a, 0, bytemuck::cast_slice(&staging));
             }
 
-            let mut plan: Vec<(wgpu::ComputePipeline, Target, (u32, u32))> = Vec::new();
+            // (pipeline, target, (dim0_workgroups, dim1_workgroups), tiling_aware).
+            // `tiling_aware` marks the kernels whose WGSL reconstructs a folded
+            // dim-0 index (radix butterflies, LDE expand); only those may exceed
+            // the 65535 dim-0 ceiling and be split into dim-2. The transpose (self-
+            // capped at 32768 via `rpt`) and fused1b (dim0 == h>>11) never do.
+            let mut plan: Vec<(wgpu::ComputePipeline, Target, (u32, u32), bool)> = Vec::new();
             let wgsz = 256u32;
 
             // transpose in: A (row-major) -> B (column-contiguous)
@@ -1225,6 +1268,7 @@ impl GpuDft {
                     p,
                     Target::B,
                     (row_tiles.div_ceil(rpt), (wb as u32).div_ceil(16)),
+                    false,
                 ));
             }
 
@@ -1252,7 +1296,7 @@ impl GpuDft {
                     )
                 );
                 let p = ctx.pipeline(key, &wgsl);
-                plan.push((p, Target::A, ((h as u32) >> (E1 + LB), wb as u32)));
+                plan.push((p, Target::A, ((h as u32) >> (E1 + LB), wb as u32), false));
                 let mut l = E1;
                 for r in split_stages(logh - E1) {
                     let key = format!("radix_l{logh}_s{l}_r{r}_two{twh_off}");
@@ -1263,7 +1307,12 @@ impl GpuDft {
                         radix_kernel(h as u32, logh, l, r, wgsz)
                     );
                     let p = ctx.pipeline(key, &wgsl);
-                    plan.push((p, Target::A, (((h as u32) >> r).div_ceil(wgsz), wb as u32)));
+                    plan.push((
+                        p,
+                        Target::A,
+                        (((h as u32) >> r).div_ceil(wgsz), wb as u32),
+                        true,
+                    ));
                     l += r;
                 }
             }
@@ -1286,7 +1335,7 @@ impl GpuDft {
                         )
                     );
                     let p = ctx.pipeline(key, &wgsl);
-                    plan.push((p, Target::B, ((n as u32).div_ceil(wgsz), wb as u32)));
+                    plan.push((p, Target::B, ((n as u32).div_ceil(wgsz), wb as u32), true));
                 }
                 let mut l = added_bits;
                 for r in split_stages(logn - added_bits) {
@@ -1298,7 +1347,12 @@ impl GpuDft {
                         radix_kernel(n as u32, logn, l, r, wgsz)
                     );
                     let p = ctx.pipeline(key, &wgsl);
-                    plan.push((p, Target::B, (((n as u32) >> r).div_ceil(wgsz), wb as u32)));
+                    plan.push((
+                        p,
+                        Target::B,
+                        (((n as u32) >> r).div_ceil(wgsz), wb as u32),
+                        true,
+                    ));
                     l += r;
                 }
                 Target::B
@@ -1330,7 +1384,12 @@ impl GpuDft {
                 } else {
                     Target::B
                 };
-                plan.push((p, tgt, (row_tiles.div_ceil(rpt), (wb as u32).div_ceil(16))));
+                plan.push((
+                    p,
+                    tgt,
+                    (row_tiles.div_ceil(rpt), (wb as u32).div_ceil(16)),
+                    false,
+                ));
                 tgt
             };
 
@@ -1357,10 +1416,22 @@ impl GpuDft {
                 None
             };
             let trans_out_idx = plan.len() - 1;
+            if std::env::var_os("DREGG_GPU_DBG").is_some() {
+                eprintln!(
+                    "[gpu_flow] logh={logh} logn={logn} w={w} wb={wb} lde={lde}: {} passes",
+                    plan.len()
+                );
+                for (i, (_, _, (x, y), aware)) in plan.iter().enumerate() {
+                    eprintln!(
+                        "  pass {i}: dim0={x} dim1={y} aware={aware} folds={}",
+                        *x > MAX_WG_PER_DIM
+                    );
+                }
+            }
             let mut enc = ctx.device.create_command_encoder(&Default::default());
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
-                for (i, (pipe, tgt, (x, y))) in plan.iter().enumerate() {
+                for (i, (pipe, tgt, (x, y), tiling_aware)) in plan.iter().enumerate() {
                     let bg = match (&retained_bg, i == trans_out_idx) {
                         (Some(bg), true) => bg,
                         _ => match tgt {
@@ -1370,7 +1441,19 @@ impl GpuDft {
                     };
                     pass.set_bind_group(0, bg, &[]);
                     pass.set_pipeline(pipe);
-                    pass.dispatch_workgroups(*x, *y, 1);
+                    if *tiling_aware {
+                        dispatch_folded(&mut pass, *x, *y);
+                    } else {
+                        // Not index-folded in WGSL: it must fit the dim-0 ceiling
+                        // on its own (transpose self-caps at 32768; fused1b is
+                        // h>>11). A violation is a launch-geometry bug, not silent
+                        // truncation — fail loudly rather than dispatch it wrong.
+                        assert!(
+                            *x <= MAX_WG_PER_DIM,
+                            "non-tiled DFT pass {i} dim-0 = {x} exceeds {MAX_WG_PER_DIM}"
+                        );
+                        pass.dispatch_workgroups(*x, *y, 1);
+                    }
                 }
             }
             let out_buf = match &retained_out {
@@ -5683,6 +5766,49 @@ mod tests {
         }
     }
 
+    /// The apex-scale tiling gate. The `K_EXPAND` (coset-LDE) kernel dispatches
+    /// one workgroup per 256 output elements, so `n = 2^24` (blowup 2^3 over a
+    /// 2^21-row trace) launches `2^16 = 65536` dim-0 workgroups — one past
+    /// Vulkan's 65535 ceiling. This exercises the dim-0 -> dim-2 fold at and one
+    /// octave above the wall and asserts the tiled launch is **byte-identical**
+    /// to the CPU reference. Width is small (the fold is entirely in dim-0/dim-2;
+    /// the column dim is untouched), so the case is memory-cheap; the `w = 31`
+    /// end-to-end path is covered by the `mina_terminal_tooth` prove itself.
+    #[test]
+    #[ignore = "GPU + SLOW: 2^24/2^25-element LDE parity; run on the GPU lane"]
+    fn gpu_lde_parity_apex_scale_dim0_fold() {
+        let gpu = GpuDft::default();
+        assert!(
+            gpu.adapter_name().is_some(),
+            "no GPU adapter — this gate must run on the GPU lane"
+        );
+        let cpu = Radix2DitParallel::<BabyBear>::default();
+        let shift = BabyBear::GENERATOR;
+
+        // (logh, w, added_bits): logh+ab == 24 -> n = 2^24 (expand dim0 = 65536,
+        // folds); logh+ab == 25 -> n = 2^25 (expand dim0 = 131072). Both are past
+        // the ceiling; the second confirms the next apex octave does not re-wall.
+        for (i, &(logh, w, ab)) in [(21u32, 2usize, 3usize), (22, 2, 3)].iter().enumerate() {
+            let n = 1u64 << (logh + ab as u32);
+            assert!(
+                (n / 256) > MAX_WG_PER_DIM as u64,
+                "case 2^{logh}+{ab} does not reach the fold (dim0 = {})",
+                n / 256
+            );
+            let mat = rand_matrix(200 + i as u64, 1 << logh, w);
+            let got = gpu
+                .coset_lde_batch(mat.clone(), ab, shift)
+                .to_row_major_matrix();
+            let want = cpu.coset_lde_batch(mat, ab, shift).to_row_major_matrix();
+            assert_eq!(
+                got.values,
+                want.values,
+                "apex-scale LDE parity 2^{logh} x {w} +{ab} (n=2^{})",
+                logh + ab as u32
+            );
+        }
+    }
+
     #[test]
     #[ignore = "GPU: asserts a real adapter; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn gpu_mmcs_root_parity_openings_and_reject() {
@@ -6325,7 +6451,11 @@ impl OnDeviceGpu {
             base += rows;
         }
 
-        // Compress up to the root (single matrix ⇒ no injection). desc = [n_out, 0, 0, 0].
+        // Compress up to the root (single matrix ⇒ no injection). desc = [cnt, base, 0, 0].
+        // Watchdog-/ceiling-chunked exactly like `HashCtx::dispatch_level`: at apex
+        // heights a whole level (up to h/2 nodes) would exceed the 65535 dim-0
+        // workgroup ceiling (h = 2^24 ⇒ 2^17 workgroups). Each thread writes its
+        // ABSOLUTE node (`desc[1] + gid.x`), so splitting a level is transparent.
         let mut cur_len = h;
         let mut cur_is_a = true;
         while cur_len > 1 {
@@ -6336,17 +6466,22 @@ impl OnDeviceGpu {
                 (&dig_b, &dig_a)
             };
             let bg = bind(src, dst);
-            let desc = [next_len as u32, 0u32, 0u32, 0u32];
-            self.queue
-                .write_buffer(&desc_buf, 0, bytemuck::cast_slice(&desc));
-            let mut enc = self.device.create_command_encoder(&Default::default());
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&compress_pipe);
-                pass.set_bind_group(0, &bg, &[]);
-                pass.dispatch_workgroups((next_len as u32).div_ceil(HASH_WG), 1, 1);
+            let mut base = 0usize;
+            while base < next_len {
+                let cnt = HASH_MAX_PERMS_PER_DISPATCH.min(next_len - base);
+                let desc = [cnt as u32, base as u32, 0u32, 0u32];
+                self.queue
+                    .write_buffer(&desc_buf, 0, bytemuck::cast_slice(&desc));
+                let mut enc = self.device.create_command_encoder(&Default::default());
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&compress_pipe);
+                    pass.set_bind_group(0, &bg, &[]);
+                    pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_WG), 1, 1);
+                }
+                self.queue.submit([enc.finish()]);
+                base += cnt;
             }
-            self.queue.submit([enc.finish()]);
             cur_len = next_len;
             cur_is_a = !cur_is_a;
         }
