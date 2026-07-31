@@ -1413,3 +1413,32 @@ flag day, load-bearing for the 131-key chain). **Dispatched the exact diagnostic
 diffed for run-to-run determinism, VK diffed serial-vs-rayon, mutation-differential gate re-checked.
 Rayon stays on ONLY if deterministic + VK-unchanged, or if a single locatable site is fixed. **The
 guard I wrote fired; the work is to investigate it, not label it.**
+
+## ⚑ DE-VACUUM: the framing was wrong, and the correction is the value (NOT build-verified — honest)
+"1 of 32, rest mechanical" was imprecise. Ground-truth (lane + 3 sub-agents): the apex is vacuous at
+BabyBear via **TWO independent refuted floors**, and the hash weld is only one:
+1. **`Poseidon2SpongeCR` (hash weld) — VESTIGIAL on the apex path.** Honest producers `intro` it as
+   `_hCR` and drop it; the real tie is `StateDecode`/`logHashInjective`. `descriptorRefines`'s
+   "GENUINE antecedent" docstring is FALSE. (A sibling migrates this; lane stayed clear.) The
+   transfer template `wireCommitR_binds_or_collides` is **parametric in `d`** → already ~26 members,
+   not "1."
+2. **`CommitSurface` injective bundle (`cellLeafInjective`/`compressNInjective`) — GENUINELY
+   load-bearing, a DIFFERENT floor**, refuted by `cellLeafInjective_false_babyBear`. **Every apex
+   takes `S : CommitSurface`, so it is uninhabitable regardless of the hash weld.**
+
+**GATE answer, precise:**
+- hash-weld bindings: **non-vacuous or one mechanical cutover away for all 32** (map/note tags
+  {17,18,19,27,28,39,56} already floor-free at the `_sat`/8-felt apex; residual is `compressNInjective`
+  in the MODEL list-digest rung, ~24 lemmas, not a build).
+- **the apex itself: non-vacuous for 0 of 32** until `CommitSurface` is threaded floor-free.
+
+⚑ **THE LINE between transmutable and terminal, drawn:** the hash campaign is transmutable-mechanical;
+**`CommitSurface`→`recStateCommit_binds_kernel`→`StateDecode` threading is the REAL remaining
+obstruction to apex non-vacuity** — the felt-width/leaf campaign, not the hash one. Leaf endpoints
+already floor-free (`StateCommitLeafRegrounded`, 07-25); not yet threaded up.
+
+⚠ **NOT DONE, and the lane refused to claim it was**: it wrote 2 inert modules
+(`CaveatCommitBindsOrCollides`, `RotatedCommitBindsOrCollides`) mirroring the proven idiom, but
+**NOT build-verified, NOT committed** — the shared tree is under fleet-wide mid-edit churn (siblings'
+sorries + a signature break + the apex migration), no green window, and it would not append a "done"
+it can't back with `#floor_ratchet`. That is the bar holding under pressure, not mediocrity.
