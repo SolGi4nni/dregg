@@ -116,22 +116,18 @@ set_option linter.unusedVariables false
 
 /-! ## §1 — THE SCHEMA. -/
 
-/-- **`MapLeafSchema`** — the map tree's LEAF SCHEMA: how a committed heap becomes a root, together
-with the admissible shape of a committed heap under that schema.
+/-! ⚑⚑ **`MapLeafSchema`, `opensToMerkleS`, `writesToMerkleS`, `imtChainOf` MOVED UPSTREAM
+(2026-07-30)** to `Dregg2.Circuit.DeployedMapDenotation`, and are re-exported here so every reference
+resolves UNCHANGED — to the SAME constant.
 
-`commit` is the whole arity story. `HeapOk` is the extraction premise's DOMAIN — the class of heaps a
-prover can actually have committed under this schema — carried here rather than at each use site,
-exactly as `MapOpWideKeyGate.LaneEnc.HeapOk` carries the wide-key canonicity. -/
-structure MapLeafSchema where
-  /-- The admissible committed heap. -/
-  HeapOk : Heap.FeltHeap → Prop
-  /-- An admissible heap is sorted, so every `Heap` lemma the openers call still applies. -/
-  heapOk_sorted : ∀ h, HeapOk h → Heap.SortedKeys h
-  /-- **THE OCCUPANCY DISCIPLINE.** How many entries a depth-`d` commitment admits. A field rather
-  than the hard-wired `h.length = 2 ^ d` because the DEPLOYED tree is SPARSE — see §2b. -/
-  SizeOk : Nat → Heap.FeltHeap → Prop
-  /-- **THE COMMITMENT.** The depth-`d` root this schema folds an admissible heap to. -/
-  commit : (List ℤ → ℤ) → Nat → Heap.FeltHeap → ℤ
+They had to move because `DescriptorIR2.opensTo`/`writesTo` now DENOTE the deployed instance, and
+`DescriptorIR2` is upstream of this module. Leaving a second `MapLeafSchema` here would have been
+worse than the wound this file was written to close: every `MapKindImtGates` arm law, stated over
+`padImtSchema`, would have been a theorem about a structure the deployed denotation does not use —
+green, and about nothing. There is ONE `MapLeafSchema` in the tree. -/
+
+open Dregg2.Circuit.DeployedMapDenotation (MapLeafSchema opensToMerkleS writesToMerkleS
+  imtChainOf imtChainOf_cons)
 
 /-- **The RETIRED arity-2 schema — the CONSERVATIVITY ANCHOR, and NOT the deployed one.**
 The arity-2 `Heap.leafOf` binary fold, whose `commit` IS `MapMerkleRoot.mapRoot`, whose `HeapOk` IS
@@ -156,14 +152,6 @@ def narrowSchema : MapLeafSchema where
   heapOk_sorted := fun _ h => h
   SizeOk := fun d h => h.length = 2 ^ d
   commit := mapRoot
-
-/-- **`imtChainOf sent h`** — the deployed RELINK (`heap_root.rs::relink_next_addrs`) as a function:
-turn a sorted heap into the well-linked IMT chain by pointing each leaf at its sorted successor's
-address, and the last leaf at the terminal sentinel `sent`. -/
-def imtChainOf (sent : ℤ) : Heap.FeltHeap → List ImtLeaf
-  | [] => []
-  | [e] => [⟨e.1, e.2, sent⟩]
-  | e :: e' :: rest => ⟨e.1, e.2, e'.1⟩ :: imtChainOf sent (e' :: rest)
 
 /-- **The DEPLOYED LEAF at DENSE occupancy** — the arity-3 indexed-Merkle fold of the same heap.
 `commit` relinks and folds `imtLeafHash`; `HeapOk` adds the one thing sortedness does not give,
@@ -229,13 +217,22 @@ def MapOp.holdsAtS (S : MapLeafSchema) (hash : List ℤ → ℤ) (env : VmRowEnv
     | .aafiInsert => writesToMerkleS S hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
                    (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
 
-/-- **★★ THE CONSERVATIVITY KEYSTONE.** The DEPLOYED per-row denotation `MapOp.holdsAt` — the
-`.mapOp` arm of `Satisfied2` and what every `AlgoStarkSound*` theorem concludes about — IS the narrow
-instance of the schema-parametric one, by KERNEL DEFEQ. Parameterising the leaf schema changed no
-deployed meaning; the eye is not being asked to check it. -/
-theorem narrow_holdsAtS_is_instance (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) :
-    MapOp.holdsAtS narrowSchema hash env m ↔ DescriptorIR2.MapOp.holdsAt hash env m := by
-  unfold MapOp.holdsAtS DescriptorIR2.MapOp.holdsAt DescriptorIR2.opensTo DescriptorIR2.writesTo
+/-- **★★ THE CONSERVATIVITY KEYSTONE — ⛑ AND IT NOW NAMES THE RETIRED DENOTATION (2026-07-30).**
+
+It said: the DEPLOYED per-row denotation `MapOp.holdsAt` IS the narrow instance of the
+schema-parametric one, by kernel defeq — "parameterising the leaf schema changed no deployed
+meaning". That was the whole point of this file while the parameterisation was ADDITIVE. The cutover
+has since happened: `MapOp.holdsAt` is the DEPLOYED `padImtSchema` instance, so the narrow instance
+is no longer it. The narrow instance is what `MapOp.holdsAt` MEANT before, and this theorem says
+exactly that, at the same kernel strength.
+
+★ The file's job is done rather than undone: it existed to make the move possible without a flag day
+inside Lean, and the move happened. `narrowSchema` is now unambiguously the retired anchor, which is
+what its own corrected header already said. -/
+theorem narrow_holdsAtS_is_the_retired_denotation (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) :
+    MapOp.holdsAtS narrowSchema hash env m
+      ↔ Dregg2.Circuit.MapReconcileImtRepoint.RetiredMapOpHoldsAt hash env m := by
+  unfold MapOp.holdsAtS Dregg2.Circuit.MapReconcileImtRepoint.RetiredMapOpHoldsAt
   cases m.op <;> simp only [opensToMerkleS_narrow, writesToMerkleS_narrow]
 
 /-! ## §3 — THE WELD: the relink is INVERSE to the projection, and the IMT schema's admissible
@@ -251,15 +248,6 @@ def ImtLinkedTo (sent : ℤ) : List ImtLeaf → Prop
   | [] => True
   | [l] => l.nextAddr = sent
   | l :: l' :: rest => l.nextAddr = l'.addr ∧ ImtLinkedTo sent (l' :: rest)
-
-/-- The relink's cons step, with the produced pointer NAMED — the shape both inductions below need
-(the tail of `imtChainOf` is not syntactically a cons, so `ImtSorted`'s own three-case match is
-otherwise stuck). -/
-theorem imtChainOf_cons (sent : ℤ) (e : ℤ × ℤ) (rest : Heap.FeltHeap) :
-    ∃ n : ℤ, imtChainOf sent (e :: rest) = ⟨e.1, e.2, n⟩ :: imtChainOf sent rest := by
-  cases rest with
-  | nil => exact ⟨sent, rfl⟩
-  | cons e' rest' => exact ⟨e'.1, rfl⟩
 
 /-- **★ THE RELINK INVERTS THE PROJECTION.** A chain whose pointers ARE the deployed relink is
 recovered exactly from its `(addr, value)` projection — so the arity-3 leaf carries no committed
@@ -355,7 +343,7 @@ open Dregg2.Circuit.MapOpsColumnLayout (toyAbsentOp)
 open Dregg2.Circuit.MapReconcileImtRepoint (spineC spineC_length depT depSpine depKey
   depSpine_length depSpine_sorted depHeap_length depSpine_addr_lt traceOf traceOf_loc traceOf_rows_length
   rowOf rowOf_root rowOf_newRoot rowOf_key rowOf_guard topGap_imt_absence_fires
-  topGap_mapOpHoldsAt_false)
+  RetiredMapOpHoldsAt topGap_retiredMapOpHoldsAt_false)
 
 /-- The spine's pointers ARE the deployed relink, with terminal sentinel `a + 2n`. -/
 theorem spineC_linkedTo : ∀ (n : Nat) (a : ℤ), ImtLinkedTo (a + 2 * (n : ℤ)) (spineC n a) := by
@@ -405,16 +393,16 @@ path, where every fresh nullifier and cell-id lands — the schema-parametric de
 DEPLOYED arity-3 leaf schema **HOLDS**, while the denotation the apex actually concludes about is
 **REFUTED**. This is exactly what is not true today: a map-op denotation inhabited at the commitment
 `heap_root.rs` computes. -/
-theorem topGap_holdsAtS_holds_where_holdsAt_is_refuted :
+theorem topGap_holdsAtS_holds_where_retired_is_refuted :
     MapOp.holdsAtS (imtSchema depSent) refSponge
         (envAt (traceOf
           (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge))) depKey) 0)
         toyAbsentOp
-    ∧ ¬ DescriptorIR2.MapOp.holdsAt refSponge
+    ∧ ¬ RetiredMapOpHoldsAt refSponge
         (envAt (traceOf
           (perfectRoot refSponge MAP_TREE_DEPTH (depSpine.map (imtLeafHash refSponge))) depKey) 0)
         toyAbsentOp := by
-  refine ⟨?_, topGap_mapOpHoldsAt_false⟩
+  refine ⟨?_, topGap_retiredMapOpHoldsAt_false⟩
   intro _
   show opensToMerkleS (imtSchema depSent) refSponge MAP_TREE_DEPTH
       ((toyAbsentOp.root 0).eval
@@ -446,7 +434,7 @@ are `docs/DESIGN-mapop-denotation-move.md`. -/
 
 #assert_axioms opensToMerkleS_narrow
 #assert_axioms writesToMerkleS_narrow
-#assert_axioms narrow_holdsAtS_is_instance
+#assert_axioms narrow_holdsAtS_is_the_retired_denotation
 #assert_axioms imtSchema_heapOk_iff
 #assert_axioms imtChainOf_imtToHeap
 #assert_axioms imtSchema_chain_imtSorted
@@ -454,6 +442,16 @@ are `docs/DESIGN-mapop-denotation-move.md`. -/
 #assert_axioms spineC_linkedTo
 #assert_axioms depSpine_linkedTo
 #assert_axioms depHeap_heapOk
-#assert_axioms topGap_holdsAtS_holds_where_holdsAt_is_refuted
+#assert_axioms topGap_holdsAtS_holds_where_retired_is_refuted
+
+/-! ## §7 — THE RE-EXPORT, emitted LAST.
+
+⚠ `export` acts like `open` in the current scope as well as creating the alias, so placing it above
+the body puts the original AND the alias in scope and every bare use becomes `Ambiguous term`. The
+body `open`s; the aliases are emitted here so consumers' existing
+`open Dregg2.Circuit.MapDenotationSchema (MapLeafSchema …)` lines keep resolving — to the SAME
+constant. -/
+export Dregg2.Circuit.DeployedMapDenotation (MapLeafSchema opensToMerkleS writesToMerkleS
+  imtChainOf imtChainOf_cons)
 
 end Dregg2.Circuit.MapDenotationSchema

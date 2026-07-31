@@ -106,8 +106,16 @@ open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
 open Dregg2.Circuit.MapMerkleRoot (mapNode foldLevel perfectRoot mapRoot opensToMerkle writesToMerkle
   foldLevel_length_half foldLevelFind perfectRootFind foldLevel_binds_or_collides
   perfectRoot_binds_or_collides mapRootFind MapRootSpongeColl mapRoot_binds_or_collides)
-open Dregg2.Circuit.MapDenotationSchema (MapLeafSchema narrowSchema imtSchema imtChainOf
-  opensToMerkleS writesToMerkleS)
+open Dregg2.Circuit.MapDenotationSchema (narrowSchema imtSchema)
+open Dregg2.Circuit.DeployedMapDenotation (MapLeafSchema opensToMerkleS writesToMerkleS imtChainOf
+  MapLeafTeeth padDigest padTo padTo_length padTo_dense PadHit append_replicate_eq_or_hit
+  padTo_eq_or_hit padHit_singleton imtChainOf_length imtToHeap_imtChainOf imtChainOf_injective
+  imtLeafFind imtLeafFind_spec padImtRoot PadGhost3 PadFree3 padGhost3_refuted padImtRootFind
+  padImtRoot_binds_or_ghost_or_collides padImtSchema padImtTeeth oddSponge oddSponge_injective
+  oddSponge_ne_pad oddSponge_padFree3 opensToMerkleS_functional_or_resid
+  opensToMerkleS_some_excludes_none_or_resid writesToMerkleS_functional_or_resid
+  opensToMerkleS_functional_of_good opensToMerkleS_some_excludes_none_of_good
+  writesToMerkleS_functional_of_good)
 open Dregg2.Circuit.IndexedMerkleTree (ImtLeaf imtLeafHash imtLeafPre imtToHeap)
 open Dregg2.Circuit.DescriptorIR2 (MAP_TREE_DEPTH)
 
@@ -130,25 +138,6 @@ and `MapMerkleRoot`'s keystones ride it (2026-07-28).
 The names are `open`ed above, so everything below reads exactly as it did. -/
 
 /-! ## §2 — THE PADDING, and its weld to `heap_root.rs`'s precomputed empty-subtree roots. -/
-
-/-- **`padDigest`** — `heap_root.rs`'s padding marker: the LITERAL `BabyBear::ZERO`
-(`EMPTY_SUBTREE_ROOTS[0]`, `heap_root.rs:72-87`). ⚑ It is a literal, NOT a hash output — which is
-exactly what makes §5's ghost available. -/
-def padDigest : ℤ := 0
-
-/-- **`padTo d L`** — the deployed occupancy discipline: the real leaf digests are a contiguous sorted
-PREFIX and every position `≥ L.length` holds `padDigest`
-(`CanonicalHeapTree::new:234-238`, "every position `>= n` is the ZERO padding leaf the dense build
-`resize`d in"). -/
-def padTo (d : Nat) (L : List ℤ) : List ℤ := L ++ List.replicate (2 ^ d - L.length) padDigest
-
-theorem padTo_length {d : Nat} {L : List ℤ} (h : L.length ≤ 2 ^ d) : (padTo d L).length = 2 ^ d := by
-  simp only [padTo, List.length_append, List.length_replicate]
-  omega
-
-/-- **A FULL tree pads to itself** — the padded fold EXTENDS the dense one; it does not replace it. -/
-theorem padTo_dense {d : Nat} {L : List ℤ} (h : L.length = 2 ^ d) : padTo d L = L := by
-  simp only [padTo, h, Nat.sub_self, List.replicate_zero, List.append_nil]
 
 /-- `heap_root.rs`'s `EMPTY_SUBTREE_ROOTS[k]`: `roots[0] = ZERO`, `roots[k] = heap_node(r,r)`. -/
 def emptySubtreeRoot (hash : List ℤ → ℤ) : Nat → ℤ
@@ -203,59 +192,6 @@ theorem perfectRoot_all_padding (hash : List ℤ → ℤ) :
   | succ k ih => rw [constRoot_succ, ih, emptySubtreeRoot]
 
 /-! ## §3 — THE PADDING GHOST: the residual the relaxed occupancy actually costs. -/
-
-/-- **`PadHit L`** — the committed leaf-digest vector `L` CONTAINS the padding constant.
-
-⚠ Read what this quantifies over: the POSITIONS OF A GIVEN, FINITE, COMMITTED vector — decidable,
-checkable, refutable. It is deliberately NOT `∃ e, leafOf hash e = padDigest`, which quantifies over
-the hash's whole domain and which pigeonhole makes unconditionally TRUE at deployed parameters; such a
-disjunct would carry no more content than `True`. Same discipline as `SpongeColl`'s "the SPECIFIC pair
-the extractor returns". -/
-def PadHit (L : List ℤ) : Prop := padDigest ∈ L
-
-/-- **★ THE PADDING LEMMA — the whole density argument, and its exact residual.** Two zero-padded
-vectors that are EQUAL force their live prefixes equal UNLESS one of the prefixes already contains the
-padding constant. Purely combinatorial: no hash, no depth, no length hypothesis. -/
-theorem append_replicate_eq_or_hit : ∀ (L₁ L₂ : List ℤ) (k₁ k₂ : Nat),
-    L₁ ++ List.replicate k₁ padDigest = L₂ ++ List.replicate k₂ padDigest →
-    L₁ = L₂ ∨ PadHit L₁ ∨ PadHit L₂ := by
-  intro L₁
-  induction L₁ with
-  | nil =>
-    intro L₂ k₁ k₂ h
-    cases L₂ with
-    | nil => exact Or.inl rfl
-    | cons b L₂' =>
-      cases k₁ with
-      | zero => simp at h
-      | succ m =>
-        rw [List.nil_append, List.replicate_succ, List.cons_append, List.cons.injEq] at h
-        exact Or.inr (Or.inr (by rw [PadHit, h.1]; simp))
-  | cons a L₁' ih =>
-    intro L₂ k₁ k₂ h
-    cases L₂ with
-    | nil =>
-      cases k₂ with
-      | zero => simp at h
-      | succ m =>
-        rw [List.nil_append, List.replicate_succ, List.cons_append, List.cons.injEq] at h
-        exact Or.inr (Or.inl (by rw [PadHit, ← h.1]; simp))
-    | cons b L₂' =>
-      rw [List.cons_append, List.cons_append, List.cons.injEq] at h
-      obtain ⟨hab, htail⟩ := h
-      rcases ih L₂' k₁ k₂ htail with heq | hh₁ | hh₂
-      · exact Or.inl (by rw [hab, heq])
-      · exact Or.inr (Or.inl (List.mem_cons_of_mem _ hh₁))
-      · exact Or.inr (Or.inr (List.mem_cons_of_mem _ hh₂))
-
-/-- The padded occupancy discipline binds the live prefix, up to the named ghost. -/
-theorem padTo_eq_or_hit (d : Nat) {L₁ L₂ : List ℤ} (h : padTo d L₁ = padTo d L₂) :
-    L₁ = L₂ ∨ PadHit L₁ ∨ PadHit L₂ :=
-  append_replicate_eq_or_hit L₁ L₂ _ _ h
-
-/-- One padding position IS a `PadHit`, so the ghost branch is REACHABLE (the canary the other way:
-`PadHit` is not accidentally empty). -/
-theorem padHit_singleton : PadHit [padDigest] := by simp [PadHit]
 
 /-! ## §4 — THE PADDED COMMITMENTS, and their floor-free bindings.
 
@@ -320,129 +256,6 @@ theorem padMapRoot_binds_or_ghost_or_collides (hash : List ℤ → ℤ) (d : Nat
     · exact absurd hc hif
 
 /-! ### §4b — arity-3 padded: THE DEPLOYED TREE. -/
-
-/-- The relink preserves length (`relink_next_addrs` rewrites pointers in place). -/
-theorem imtChainOf_length (sent : ℤ) :
-    ∀ h : Heap.FeltHeap, (imtChainOf sent h).length = h.length := by
-  intro h
-  induction h with
-  | nil => rfl
-  | cons e rest ih =>
-    obtain ⟨n, hn⟩ := Dregg2.Circuit.MapDenotationSchema.imtChainOf_cons sent e rest
-    rw [hn, List.length_cons, List.length_cons, ih]
-
-/-- **The relink is a RETRACTION** — dropping the pointers recovers the heap. The other half of the
-landed `imtChainOf_imtToHeap` weld, and what makes the relink INJECTIVE. -/
-theorem imtToHeap_imtChainOf (sent : ℤ) :
-    ∀ h : Heap.FeltHeap, imtToHeap (imtChainOf sent h) = h := by
-  intro h
-  induction h with
-  | nil => rfl
-  | cons e rest ih =>
-    obtain ⟨n, hn⟩ := Dregg2.Circuit.MapDenotationSchema.imtChainOf_cons sent e rest
-    obtain ⟨a, v⟩ := e
-    rw [hn]
-    show (a, v) :: imtToHeap (imtChainOf sent rest) = (a, v) :: rest
-    rw [ih]
-
-theorem imtChainOf_injective (sent : ℤ) {h₁ h₂ : Heap.FeltHeap}
-    (h : imtChainOf sent h₁ = imtChainOf sent h₂) : h₁ = h₂ := by
-  have hc := congrArg imtToHeap h
-  rwa [imtToHeap_imtChainOf, imtToHeap_imtChainOf] at hc
-
-/-- The arity-3 leaf-list extractor: walk to the first differing leaf and hand back the two absorbed
-arity-3 IMT blocks. TOTAL. -/
-def imtLeafFind (hash : List ℤ → ℤ) : List ImtLeaf → List ImtLeaf → List ℤ × List ℤ
-  | l :: ls, l' :: ls' =>
-      if l = l' then imtLeafFind hash ls ls' else (imtLeafPre l, imtLeafPre l')
-  | _, _ => ([], [])
-
-theorem imtLeafFind_spec (hash : List ℤ → ℤ) :
-    ∀ (c₁ c₂ : List ImtLeaf), c₁ ≠ c₂ →
-      c₁.map (imtLeafHash hash) = c₂.map (imtLeafHash hash) →
-      SpongeColl hash (imtLeafFind hash c₁ c₂) := by
-  intro c₁
-  induction c₁ with
-  | nil =>
-    intro c₂ hne hmap
-    cases c₂ with
-    | nil => exact absurd rfl hne
-    | cons l' ls' => simp at hmap
-  | cons l ls ih =>
-    intro c₂ hne hmap
-    cases c₂ with
-    | nil => simp at hmap
-    | cons l' ls' =>
-      simp only [List.map_cons, List.cons.injEq] at hmap
-      obtain ⟨hleaf, htail⟩ := hmap
-      by_cases hll : l = l'
-      · subst hll
-        have htne : ls ≠ ls' := fun hc => hne (by rw [hc])
-        rw [imtLeafFind, if_pos rfl]
-        exact ih ls' htne htail
-      · rw [imtLeafFind, if_neg hll]
-        exact (Dregg2.Circuit.IndexedMerkleTree.imtLeafHash_binds_or_collides hash
-          hleaf).resolve_left hll
-
-/-- **`padImtRoot sent hash d h`** — ⚑ THE DEPLOYED MAP COMMITMENT: relink the pointers
-(`relink_next_addrs`, terminal `sent`), digest each linked leaf at arity 3 (`HeapLeaf::digest`), fold
-the perfect tree over the ZERO-PADDED vector (`CanonicalHeapTree::new`). -/
-def padImtRoot (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap) : ℤ :=
-  perfectRoot hash d (padTo d ((imtChainOf sent h).map (imtLeafHash hash)))
-
-/-- **`PadGhost3 sent hash h`** — a LIVE arity-3 IMT leaf digest equals the padding constant. -/
-def PadGhost3 (sent : ℤ) (hash : List ℤ → ℤ) (h : Heap.FeltHeap) : Prop :=
-  PadHit ((imtChainOf sent h).map (imtLeafHash hash))
-
-/-- The hash-level side condition: the padding constant has NO arity-3 IMT leaf preimage. -/
-def PadFree3 (hash : List ℤ → ℤ) : Prop := ∀ l : ImtLeaf, imtLeafHash hash l ≠ padDigest
-
-theorem padGhost3_refuted {hash : List ℤ → ℤ} (hpf : PadFree3 hash) (sent : ℤ) (h : Heap.FeltHeap) :
-    ¬ PadGhost3 sent hash h := by
-  intro hmem
-  rw [PadGhost3, PadHit, List.mem_map] at hmem
-  obtain ⟨l, _, hl⟩ := hmem
-  exact hpf l hl
-
-/-- The deployed root extractor: the node descent if it collides, else the arity-3 leaf scan. TOTAL. -/
-def padImtRootFind (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
-    (h₁ h₂ : Heap.FeltHeap) : List ℤ × List ℤ :=
-  if SpongeColl hash (perfectRootFind hash d
-        (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash)))
-        (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))))
-  then perfectRootFind hash d
-        (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash)))
-        (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash)))
-  else imtLeafFind hash (imtChainOf sent h₁) (imtChainOf sent h₂)
-
-/-- **★★ THE DEPLOYED PADDED ROOT BINDS THE HEAP — UNCONDITIONALLY, up to TWO named residuals.**
-Arity-3 IMT leaves, the deployed relink, relaxed (sparse) occupancy, zero padding. No floor at the
-node, none at the leaf. This is the theorem the padded instance's teeth are built from. -/
-theorem padImtRoot_binds_or_ghost_or_collides (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
-    {h₁ h₂ : Heap.FeltHeap} (hl₁ : h₁.length ≤ 2 ^ d) (hl₂ : h₂.length ≤ 2 ^ d)
-    (heq : padImtRoot sent hash d h₁ = padImtRoot sent hash d h₂) :
-    h₁ = h₂ ∨ PadGhost3 sent hash h₁ ∨ PadGhost3 sent hash h₂
-      ∨ SpongeColl hash (padImtRootFind sent hash d h₁ h₂) := by
-  by_cases hif : SpongeColl hash (perfectRootFind hash d
-      (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash)))
-      (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))))
-  · refine Or.inr (Or.inr (Or.inr ?_))
-    rw [padImtRootFind, if_pos hif]
-    exact hif
-  · have hlen₁ : (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash))).length = 2 ^ d :=
-      padTo_length (by rw [List.length_map, imtChainOf_length]; exact hl₁)
-    have hlen₂ : (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))).length = 2 ^ d :=
-      padTo_length (by rw [List.length_map, imtChainOf_length]; exact hl₂)
-    rcases perfectRoot_binds_or_collides hash d hlen₁ hlen₂ heq with hpad | hc
-    · rcases padTo_eq_or_hit d hpad with hL | hh₁ | hh₂
-      · by_cases hne : h₁ = h₂
-        · exact Or.inl hne
-        · refine Or.inr (Or.inr (Or.inr ?_))
-          rw [padImtRootFind, if_neg hif]
-          exact imtLeafFind_spec hash _ _ (fun hcc => hne (imtChainOf_injective sent hcc)) hL
-      · exact Or.inr (Or.inl hh₁)
-      · exact Or.inr (Or.inr (Or.inl hh₂))
-    · exact absurd hc hif
 
 /-! ### §4c — the DENSE arity-2 root: ⚑ MOVED to `MapMerkleRoot` §4a (2026-07-28).
 
@@ -555,129 +368,18 @@ theorem padded_imt_injectivity_is_refuted (sent : ℤ) (hs : 0 < sent) :
 
 /-! ## §6 — THE SCHEMA-LEVEL TEETH: what the landed `MapLeafSchema` had nothing of. -/
 
-/-- **`MapLeafTeeth S`** — the ANTI-GHOST TEETH of a leaf schema, as a bundle an instance must EARN.
-
-`binds` is the floor-free binding. The other three fields are the ANTI-LAUNDERING structure, and they
-are what stops this from being option (b) in disguise:
-
-  * `Good` is a HASH-LEVEL predicate, so a residual cannot be defined to hold at every equivocation;
-  * `resid_refuted` forces the residual to VANISH at a good hash, which kills `Resid := True` and
-    also `Resid := (h₁ ≠ h₂)` (that would force every good hash to identify all heaps);
-  * `good_inhabited` forces `Good` to be non-empty, so `resid_refuted` cannot be discharged by an
-    empty premise.
-
-Together: the residual is refutable AND the refutation is reachable. That is the §5b.S "strength
-relation, both directions" discipline, generalised to a schema. -/
-structure MapLeafTeeth (S : MapLeafSchema) where
-  /-- The NAMED, per-commitment residual of this schema's binding. -/
-  Resid : (List ℤ → ℤ) → Nat → Heap.FeltHeap → Heap.FeltHeap → Prop
-  /-- ★ THE BINDING, with NO hypothesis on `hash`. -/
-  binds : ∀ (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : Heap.FeltHeap),
-      S.HeapOk h₁ → S.HeapOk h₂ → S.SizeOk d h₁ → S.SizeOk d h₂ →
-      S.commit hash d h₁ = S.commit hash d h₂ → h₁ = h₂ ∨ Resid hash d h₁ h₂
-  /-- The hash-level property at which the residual is empty (the injective idealisation, plus
-  whatever else this schema's shape genuinely needs — for a padded schema, pad-freeness). -/
-  Good : (List ℤ → ℤ) → Prop
-  /-- ★ ANTI-LAUNDERING #1 — at a GOOD hash the residual is REFUTED. -/
-  resid_refuted : ∀ hash, Good hash → ∀ d h₁ h₂, ¬ Resid hash d h₁ h₂
-  /-- ★ ANTI-LAUNDERING #2 — GOOD hashes EXIST, so #1 is not vacuous. -/
-  good_inhabited : ∃ hash, Good hash
-
 section Teeth
 variable {S : MapLeafSchema}
-
-/-- **★ TOOTH 1/3 — OPENINGS ARE FUNCTIONAL (schema level).** Root + key determine the read, up to
-the schema's named residual. Stated over EXPLICIT witness heaps, per §5b.E's discipline: the residual
-is a function of the WITNESSES, so hiding them behind the existential and writing `… ∨ ∃ residual`
-would be the free pass this whole idiom exists to avoid. -/
-theorem opensToMerkleS_functional_or_resid (T : MapLeafTeeth S)
-    (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o₁ o₂ : Option ℤ} {m₁ m₂ : Heap.FeltHeap}
-    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ = r)
-      (hg₁ : Heap.get m₁ k = o₁)
-    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ = r)
-      (hg₂ : Heap.get m₂ k = o₂) :
-    o₁ = o₂ ∨ T.Resid hash d m₁ m₂ := by
-  rcases T.binds hash d m₁ m₂ hk₁ hk₂ hz₁ hz₂ (hr₁.trans hr₂.symm) with hm | hc
-  · exact Or.inl (by rw [← hg₁, ← hg₂, hm])
-  · exact Or.inr hc
-
-/-- **★ TOOTH 2/3 — MEMBERSHIP EXCLUDES NON-MEMBERSHIP (schema level).** The tooth that stops a
-prover claiming ABSENCE of a key the committed tree PRESENTS. -/
-theorem opensToMerkleS_some_excludes_none_or_resid (T : MapLeafTeeth S)
-    (hash : List ℤ → ℤ) (d : Nat) {r k v : ℤ} {m₁ m₂ : Heap.FeltHeap}
-    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ = r)
-      (hg₁ : Heap.get m₁ k = some v)
-    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ = r)
-      (hg₂ : Heap.get m₂ k = none) :
-    T.Resid hash d m₁ m₂ := by
-  rcases opensToMerkleS_functional_or_resid T hash d hk₁ hz₁ hr₁ hg₁ hk₂ hz₂ hr₂ hg₂ with he | hc
-  · simp at he
-  · exact hc
-
-/-- **★ TOOTH 3/3 — WRITES ARE FUNCTIONAL (schema level).** Root + key + value determine the new
-root: the map-op row's `new_root` column cannot be forged, up to the named residual. -/
-theorem writesToMerkleS_functional_or_resid (T : MapLeafTeeth S)
-    (hash : List ℤ → ℤ) (d : Nat) {r k v r₁ r₂ : ℤ} {m₁ m₂ : Heap.FeltHeap}
-    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ = r)
-      (he₁ : r₁ = S.commit hash d (Heap.set m₁ k v))
-    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ = r)
-      (he₂ : r₂ = S.commit hash d (Heap.set m₂ k v)) :
-    r₁ = r₂ ∨ T.Resid hash d m₁ m₂ := by
-  rcases T.binds hash d m₁ m₂ hk₁ hk₂ hz₁ hz₂ (hr₁.trans hr₂.symm) with hm | hc
-  · exact Or.inl (by rw [he₁, he₂, hm])
-  · exact Or.inr hc
 
 /-! ### §6.S — the EXISTENTIAL-level teeth at a GOOD hash: the three theorems the design doc names,
 recovered VERBATIM in shape over `opensToMerkleS` / `writesToMerkleS`, for ANY schema carrying teeth.
 These are the statements the padded instance had nothing to inherit; they now exist once. -/
 
-/-- **`opensToMerkle_functional` at the schema level.** -/
-theorem opensToMerkleS_functional_of_good (T : MapLeafTeeth S) {hash : List ℤ → ℤ}
-    (hgood : T.Good hash) (d : Nat) {r k : ℤ} {o₁ o₂ : Option ℤ}
-    (h₁ : opensToMerkleS S hash d r k o₁) (h₂ : opensToMerkleS S hash d r k o₂) : o₁ = o₂ := by
-  obtain ⟨m₁, hk₁, hz₁, hr₁, hg₁⟩ := h₁
-  obtain ⟨m₂, hk₂, hz₂, hr₂, hg₂⟩ := h₂
-  rcases opensToMerkleS_functional_or_resid T hash d hk₁ hz₁ hr₁ hg₁ hk₂ hz₂ hr₂ hg₂ with ho | hc
-  · exact ho
-  · exact absurd hc (T.resid_refuted hash hgood d m₁ m₂)
-
-/-- **`opensToMerkle_some_excludes_none` at the schema level.** -/
-theorem opensToMerkleS_some_excludes_none_of_good (T : MapLeafTeeth S) {hash : List ℤ → ℤ}
-    (hgood : T.Good hash) (d : Nat) {r k v : ℤ}
-    (h₁ : opensToMerkleS S hash d r k (some v)) (h₂ : opensToMerkleS S hash d r k none) : False := by
-  have := opensToMerkleS_functional_of_good T hgood d h₁ h₂
-  simp at this
-
-/-- **`writesToMerkle_functional` at the schema level.** -/
-theorem writesToMerkleS_functional_of_good (T : MapLeafTeeth S) {hash : List ℤ → ℤ}
-    (hgood : T.Good hash) (d : Nat) {r k v r₁ r₂ : ℤ}
-    (h₁ : writesToMerkleS S hash d r k v r₁) (h₂ : writesToMerkleS S hash d r k v r₂) : r₁ = r₂ := by
-  obtain ⟨m₁, hk₁, hz₁, _, hr₁, he₁⟩ := h₁
-  obtain ⟨m₂, hk₂, hz₂, _, hr₂, he₂⟩ := h₂
-  rcases writesToMerkleS_functional_or_resid T hash d hk₁ hz₁ hr₁ he₁ hk₂ hz₂ hr₂ he₂ with hr | hc
-  · exact hr
-  · exact absurd hc (T.resid_refuted hash hgood d m₁ m₂)
-
 end Teeth
 
 /-! ## §7 — THE INSTANCES. Three, all INHABITED — the schema-level teeth are not an ∃-image. -/
 
-/-- An injective hash with NO preimage of the padding constant: `refSponge` made odd. Witness that
-`PadFree2` / `PadFree3` are satisfiable, so the padded instances' `good_inhabited` is real. -/
-def oddSponge (xs : List ℤ) : ℤ := 2 * refSponge xs + 1
-
-theorem oddSponge_injective : Function.Injective oddSponge := by
-  intro xs ys h
-  simp only [oddSponge] at h
-  exact refSponge_CR _ _ (by omega)
-
-theorem oddSponge_ne_pad (xs : List ℤ) : oddSponge xs ≠ padDigest := by
-  simp only [oddSponge, padDigest]
-  omega
-
 theorem oddSponge_padFree2 : PadFree2 oddSponge := fun _ => oddSponge_ne_pad _
-theorem oddSponge_padFree3 : PadFree3 oddSponge := fun _ => oddSponge_ne_pad _
-
 /-- **TEETH FOR THE DENSE arity-2 schema (the RETIRED shape).** No padding, hence NO ghost: the residual
 is a genuine sponge collision and nothing else. This is the CONSERVATIVITY anchor of §8 — and that is
 all it is. ⚠ This doc-comment said "(deployed-today)", inheriting the false claim in
@@ -715,33 +417,6 @@ def padNarrowTeeth : MapLeafTeeth padNarrowSchema where
     · exact spongeColl_refutable_of_injective hash hgood.1 _ hc
   good_inhabited := ⟨oddSponge, oddSponge_injective, oddSponge_padFree2⟩
 
-/-- **⚑ `padImtSchema sent` — THE DEPLOYED INSTANCE.** Arity-3 IMT leaves over the deployed relink
-AND the deployed sparse occupancy. `HeapOk` is the landed `imtSchema`'s (sorted, every key below the
-terminal sentinel); only `SizeOk` and `commit` move. -/
-def padImtSchema (sent : ℤ) : MapLeafSchema where
-  HeapOk := fun h => Heap.SortedKeys h ∧ ∀ x ∈ Heap.keys h, x < sent
-  heapOk_sorted := fun _ h => h.1
-  SizeOk := fun d h => h.length ≤ 2 ^ d
-  commit := padImtRoot sent
-
-/-- **★★ TEETH FOR THE DEPLOYED PADDED INSTANCE.** This is stage 2b's deliverable: the padded,
-arity-3, deployed-shape instance now ARRIVES WITH the three anti-ghost theorems instead of assuming
-them. -/
-def padImtTeeth (sent : ℤ) : MapLeafTeeth (padImtSchema sent) where
-  Resid := fun hash d h₁ h₂ =>
-    PadGhost3 sent hash h₁ ∨ PadGhost3 sent hash h₂
-      ∨ SpongeColl hash (padImtRootFind sent hash d h₁ h₂)
-  binds := fun hash d _ _ _ _ hz₁ hz₂ he =>
-    padImtRoot_binds_or_ghost_or_collides sent hash d hz₁ hz₂ he
-  Good := fun hash => Function.Injective hash ∧ PadFree3 hash
-  resid_refuted := by
-    intro hash hgood d h₁ h₂
-    rintro (hg | hg | hc)
-    · exact padGhost3_refuted hgood.2 sent h₁ hg
-    · exact padGhost3_refuted hgood.2 sent h₂ hg
-    · exact spongeColl_refutable_of_injective hash hgood.1 _ hc
-  good_inhabited := ⟨oddSponge, oddSponge_injective, oddSponge_padFree3⟩
-
 /-! ## §8 — CONSERVATIVITY: the padded instances EXTEND the dense ones, and the three dense theorems
 come back verbatim.
 
@@ -762,9 +437,10 @@ theorem padMapRoot_dense (hash : List ℤ → ℤ) (d : Nat) {h : Heap.FeltHeap}
 
 theorem padImtRoot_dense (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) {h : Heap.FeltHeap}
     (hlen : h.length = 2 ^ d) : padImtRoot sent hash d h = (imtSchema sent).commit hash d h := by
-  show perfectRoot hash d (padTo d ((imtChainOf sent h).map (imtLeafHash hash)))
-    = perfectRoot hash d ((imtChainOf sent h).map (imtLeafHash hash))
-  rw [padTo_dense (by rw [List.length_map, imtChainOf_length]; exact hlen)]
+  have hd : padTo d ((imtChainOf sent h).map (imtLeafHash hash))
+      = (imtChainOf sent h).map (imtLeafHash hash) :=
+    padTo_dense (by rw [List.length_map, imtChainOf_length]; exact hlen)
+  simp only [padImtRoot, hd, Dregg2.Circuit.MapDenotationSchema.imtSchema]
 
 /-- A DENSE opening is a PADDED opening: the padded denotation CONTAINS the deployed-today one, so
 nothing that held before is lost by relaxing the occupancy. -/
@@ -901,5 +577,32 @@ end Bite
 #assert_axioms bite_absence_is_refused
 #assert_axioms bite_write_is_functional
 #assert_axioms ghost_pair_is_the_named_resid
+
+/-! ## §Re-export — emitted LAST, so the body's bare names stay unambiguous.
+
+⚑⚑ **THESE 32 DECLARATIONS MOVED UPSTREAM (2026-07-30)** to
+`Dregg2.Circuit.DeployedMapDenotation`, and are re-exported here so every consumer's existing
+`open Dregg2.Circuit.MapPaddedDenotation (…)` resolves UNCHANGED — to the SAME constant.
+
+They had to move because `DescriptorIR2.opensTo`/`writesTo` now DENOTE `padImtSchema
+MAP_SENTINEL`, and `DescriptorIR2` is upstream of this module. A second `padImtSchema` here would
+have been strictly worse than the wound this file closed: `MapKindImtGates`' four arm laws, stated
+over it, would be theorems about a schema the deployed denotation does not use — green, and about
+nothing. There is ONE `padImtSchema` in the tree, and one `MapLeafTeeth`.
+
+⚠ `oddSponge` changed WITNESS in the move: it was `2 * refSponge xs + 1`, whose injectivity is
+`refSponge_CR : Poseidon2SpongeCR refSponge` — which put the REFUTED floor constant into the
+proof-term closure of `padImtTeeth`, hence of `opensTo_functional`, hence of every apex route. It is
+an `Encodable` injection now: same content, no Poseidon2-flavoured constant, so
+`#assert_not_depends_on … [Poseidon2SpongeCR]` on the deployed anti-ghost can be LANDED instead of
+relaxed. -/
+export Dregg2.Circuit.DeployedMapDenotation (MapLeafTeeth padDigest padTo padTo_length padTo_dense
+  PadHit append_replicate_eq_or_hit padTo_eq_or_hit padHit_singleton imtChainOf_length
+  imtToHeap_imtChainOf imtChainOf_injective imtLeafFind imtLeafFind_spec padImtRoot PadGhost3
+  PadFree3 padGhost3_refuted padImtRootFind padImtRoot_binds_or_ghost_or_collides padImtSchema
+  padImtTeeth oddSponge oddSponge_injective oddSponge_ne_pad oddSponge_padFree3
+  opensToMerkleS_functional_or_resid opensToMerkleS_some_excludes_none_or_resid
+  writesToMerkleS_functional_or_resid opensToMerkleS_functional_of_good
+  opensToMerkleS_some_excludes_none_of_good writesToMerkleS_functional_of_good)
 
 end Dregg2.Circuit.MapPaddedDenotation

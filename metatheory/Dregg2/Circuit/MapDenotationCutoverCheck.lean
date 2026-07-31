@@ -42,6 +42,7 @@ cannot be forced, for Rust-side reasons: `.insert` (op=3) constrains only the po
 `MapKindImtGates`; neither is a Lean defect and neither is repaired here.
 -/
 import Dregg2.Circuit.MapInsertImtRepoint
+import Dregg2.Circuit.MapKindImtGates
 import Dregg2.Tactics
 
 namespace Dregg2.Circuit.MapDenotationCutoverCheck
@@ -165,6 +166,43 @@ from re-basing the same vacuous theorems onto a new commitment. -/
   [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
 #assert_not_depends_on Dregg2.Circuit.DescriptorIR2.opensTo_some_excludes_none
   [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+
+/-! ## §5 — ★★ THE TWIN CHECK. The one failure mode that would look like success.
+
+The schema core (`MapLeafSchema`, `imtChainOf`, `padImtRoot`, `padImtSchema`, `padImtTeeth`, the IMT
+leaf) had to move UPSTREAM of `DescriptorIR2` for the denotation to be rebindable onto it. The cheap
+way to do that is to COPY it and leave the originals in place. That would build green everywhere and
+be worth nothing: `MapKindImtGates`' four arm laws, `MapPaddedDenotation`'s teeth and every
+`Map*ImtRepoint` theorem are stated over `MapPaddedDenotation.padImtSchema`, so if that were a
+SECOND structure they would all be theorems about a schema the deployed denotation does not use.
+
+Nothing was copied. Each equation below is by KERNEL DEFEQ, and a resurrected local definition
+anywhere in the family turns the build RED here.
+
+⚑ This is not hypothetical: a local `imtChainOf` DID survive the first deletion pass in
+`MapDenotationSchema`, and the only thing that caught it was a `rfl` failing three modules
+downstream. -/
+
+example : Dregg2.Circuit.MapPaddedDenotation.padImtSchema
+        = Dregg2.Circuit.DeployedMapDenotation.padImtSchema := rfl
+example : Dregg2.Circuit.MapPaddedDenotation.padImtTeeth
+        = Dregg2.Circuit.DeployedMapDenotation.padImtTeeth := rfl
+example : Dregg2.Circuit.MapPaddedDenotation.padImtRoot
+        = Dregg2.Circuit.DeployedMapDenotation.padImtRoot := rfl
+example : Dregg2.Circuit.MapDenotationSchema.imtChainOf
+        = Dregg2.Circuit.DeployedMapDenotation.imtChainOf := rfl
+example : Dregg2.Circuit.IndexedMerkleTree.imtLeafHash
+        = Dregg2.Circuit.DeployedMapDenotation.imtLeafHash := rfl
+example : Dregg2.Circuit.IndexedMerkleTree.ImtLeaf
+        = Dregg2.Circuit.DeployedMapDenotation.ImtLeaf := rfl
+
+/-- ★★ AND THE DEPLOYED DENOTATION IS THAT SCHEMA'S OPENING, definitionally — the single equation
+that ties `MapKindImtGates`' arm laws to `Satisfied2`'s `.mapOp` arm. -/
+example (hash : List ℤ → ℤ) (r k : ℤ) (o : Option ℤ) :
+    DescriptorIR2.opensTo hash r k o
+      = DeployedMapDenotation.opensToMerkleS
+          (MapPaddedDenotation.padImtSchema DescriptorIR2.MAP_SENTINEL) hash
+          DescriptorIR2.MAP_TREE_DEPTH r k o := rfl
 
 #assert_axioms deployed_opensTo_inhabited
 #assert_axioms deployed_writesTo_inhabited_with_growth
