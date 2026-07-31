@@ -96,8 +96,9 @@ def deployedSetFieldMembers : List (String × EffectVmDescriptor2) :=
 
 #guard deployedSetFieldMembers.length == 8
 -- WIDTH IS UNMOVED by the value8 weld (the pins add no column); it moves only with the rotated
--- geometry itself (178 → 184 took it 1692 → 1736; the rc FOLD 1736 → 1752).
-#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1752
+-- geometry itself (178 → 184 took it 1692 → 1736; the rc FOLD 1736 → 1752; the FIELDS-CANONICITY
+-- flag day 1752 → 1864, `APPENDIX_SPAN` 539 → 651).
+#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1864
 -- PI LAYOUT: 46 rotated prefix + 8 value8 completion pins (46..53) + 4 rc pins (54..57) = 58.
 #guard deployedSetFieldMembers.all fun (k, d) =>
   d.piCount == 58 && !d.name.isEmpty && !d.constraints.isEmpty

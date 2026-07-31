@@ -159,7 +159,7 @@ def FEE_AVAIL_BB : Nat := FEE_AVAIL_WIDTH
 #guard FEE_AVAIL_BB == transferFeeVmDescriptorAvail.traceWidth
 #guard FEE_AVAIL_BB == 204
 #guard transferFeeAvailV3W.piCount == 47
-#guard transferFeeAvailV3W.traceWidth == 1723
+#guard transferFeeAvailV3W.traceWidth == 1835   -- ⚑ +112 at the FIELDS-CANONICITY flag day
 #guard graduableWide transferFeeVmDescriptorAvail
 -- the Rust avail-pad key (TRANSFER_FEE_AVAIL_PAD = 16) survives every wrapper
 #guard transferFeeAvailV3W.name.startsWith "dregg-effectvm-transfer-v1-fee-avail"
@@ -177,7 +177,7 @@ def transferFeeAvailWide : EffectVmDescriptor2 :=
 -- Geometry pins: the avail fee member mirrors the bare wide fee member (+16 pad): 67 PIs,
 -- width 2715 (= 1723 + wideAppendixSpan 992).
 #guard transferFeeAvailWide.piCount == 67
-#guard transferFeeAvailWide.traceWidth == 2715
+#guard transferFeeAvailWide.traceWidth == 2827
 #guard transferFeeAvailWide.traceWidth == transferFeeAvailV3W.traceWidth + wideAppendixSpan
 #guard transferFeeAvailWide.name == "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged"
 -- The bare wide fee twin for reference: the SAME 67-PI layout, fee-avail-shifted columns.

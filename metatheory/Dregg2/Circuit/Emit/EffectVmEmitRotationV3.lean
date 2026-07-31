@@ -14,8 +14,10 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
     `lifecycle_disc` + `perms_digest` + `vk_digest` + `mode` + `fields_root` limbs, the v11/v12
     completion octets, and the v14 fields[0..7] completion NONET), a rotated AFTER block at
     `d.traceWidth + B_SPAN`, and the WIDENED-CAVEAT region at `d.traceWidth + 2·B_SPAN`
-    (29-felt manifest · 9 chain carriers · caveat commit · 4 DFA rc felts = 43 columns).
-    Width: `+APPENDIX_SPAN = +537`.
+    (29-felt manifest · 9 chain carriers · caveat commit · 4 DFA rc felts + the rc fold = 45
+    columns), and — 2026-07-31 — the FIELDS-CANONICITY region at `d.traceWidth + CANON9_REGION_OFF`
+    (2 blocks × 8 slots × 7 aux columns = 112, the witness columns `Canonical9`'s `NoWrap` leg needs).
+    Width: `+APPENDIX_SPAN = +651`.
 
     ⚑ **FLAG DAY 2026-07-31 (178 → 184).** `rotatedNumPreLimbs` grew by six so every `fields[j]`
     gets a NINTH lane (`Dregg2.Circuit.FieldLanes9` — eight lanes carry 247.26 bits against a
@@ -249,8 +251,32 @@ def C_RC_CARRIER : Nat := 43
 `caveatCommitRc` of the row's manifest AND its route-commitment carrier. THIS is the column
 `rotPins` pins to PI `piBase + 3`. ⚑ 38 → 44 at the rc-FOLD flag day. -/
 def C_COMMIT : Nat := 44
-/-- The whole appendix width: two rotated blocks plus the caveat region. -/
-def APPENDIX_SPAN : Nat := 2 * B_SPAN + C_SPAN
+/-- **The FIELDS-CANONICITY region's in-appendix base** — past both rotated blocks and the caveat
+region. It carries the seven aux columns per `(block, slot)` that make `Canonical9`'s third leg
+(`NoWrap`) expressible: `r, q0, q1, v0, v0b, v1, v1b`. See `Emit.FieldsCanonicity9Emit`. -/
+def CANON9_REGION_OFF : Nat := 2 * B_SPAN + C_SPAN
+
+/-- **The fields-canonicity region's span**: 2 blocks × 8 slots × 7 aux columns.
+
+⚑ **FLAG DAY 2026-07-31 (APPENDIX_SPAN 539 → 651).** `FieldLanes9.canonical9_iff_in_image` proves
+`Canonical9` is EXACTLY the nine-lane encoder's image, and its third leg `NoWrap` is **not a range
+check on any lane** — it is a joint condition on lane 0, lane 1 and lane 8's top nibble. Expressing
+it needs witness columns, and they ride here.
+
+The region sits PAST both blocks and the caveat region, so **the pre-limb geometry and the
+absorption chain are untouched**: `rotatedNumPreLimbs` is still 184, `B_SPAN` still 247, every
+`rotV3SitesAt`/`caveatV3SitesAt` site is at its old in-block offset, and no committed limb moves.
+What moves is each member's `traceWidth` (+112) and, downstream of it, the graduated chip-lane base
+and every wrapper that anchors at `d.traceWidth`. A descriptor re-emit and a VK rotation — NOT a
+re-genesis; `CANONICAL_STATE_SCHEMA_EPOCH` stays 14.
+
+112 is a multiple of `CHIP_OUT_LANES - 1 = 7`, so the registry's `(traceWidth - base) % 7 == 0`
+width discipline survives verbatim. -/
+def CANON9_SPAN : Nat := 2 * 8 * 7
+
+/-- The whole appendix width: two rotated blocks, the caveat region, and the fields-canonicity
+region. -/
+def APPENDIX_SPAN : Nat := CANON9_REGION_OFF + CANON9_SPAN
 
 /-- The rotated CAVEAT-region base offset (past the v1 layout + the two rotated blocks). Defined
 HERE, beside the other span constants, so every consumer in this file names it instead of carrying
@@ -272,8 +298,11 @@ def CAVEAT_REGION_OFF : Nat := 2 * B_SPAN
 #guard B_COMMITTED_HEIGHT == 31      -- last SCALAR pre-iroot limb (disc/perms/vk/mode/fields-root ride past it)
 #guard B_SPAN == B_IROOT + 63        -- 184 pre-iroot + iroot + state_commit + 61 chain carriers = 247
 #guard B_SPAN == 247
-#guard APPENDIX_SPAN == 2 * B_SPAN + C_SPAN
-#guard APPENDIX_SPAN == 539          -- 2·247 + 45 (was 537 at C_SPAN 43)
+#guard APPENDIX_SPAN == 2 * B_SPAN + C_SPAN + CANON9_SPAN
+#guard CANON9_REGION_OFF == 539      -- 2·247 + 45: the canonicity aux ride PAST the caveat region
+#guard CANON9_SPAN == 112            -- 2 blocks × 8 slots × 7 aux columns
+#guard CANON9_SPAN % (CHIP_OUT_LANES - 1) == 0   -- the registry width discipline survives
+#guard APPENDIX_SPAN == 651          -- 539 + 112 (was 539 before the canonicity emit)
 #guard CAVEAT_REGION_OFF == 2 * B_SPAN
 #guard CAVEAT_REGION_OFF == 494      -- was 478
 #guard C_RC_OFF == C_MANIFEST_COMMIT + 1  -- the rc carrier rides PAST the manifest fold's digest
@@ -2458,8 +2487,11 @@ def customV3 : EffectVmDescriptor2 :=
 -- from graduation (the appendix gained 4 sites × 7 lane columns). The Rust twin MUST be re-pinned.
 -- ⚑ FLAG DAY rc-FOLD: 1663 → 1679. `+2` from `C_SPAN` (43 → 45, the two rc-absorbing carriers) and
 -- `+14` from graduation (the appendix gained 2 sites × 7 lane columns). Re-pin the Rust twin again.
-#guard CUSTOM_COMMIT_TEETH_COL == 1679
-#guard CUSTOM_VK_TEETH_COL == 1683
+-- ⚑ FLAG DAY FIELDS-CANONICITY (2026-07-31): 1679 → 1791. `+112` from `CANON9_SPAN` — the aux
+-- region rides inside the appendix, PAST the caveat region, and contributes NO new hash site, so
+-- graduation adds nothing. Re-pin the Rust twin (`trace_rotated::CUSTOM_HOST_WIDTH`).
+#guard CUSTOM_COMMIT_TEETH_COL == 1791
+#guard CUSTOM_VK_TEETH_COL == 1795
 #guard customV3.traceWidth == CUSTOM_COMMIT_TEETH_COL + 8
 
 /-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).

@@ -68,6 +68,7 @@ import Dregg2.Circuit.Emit.UnforcedPiPins
 -- compaction kill-sets are untouched, and the `s2compact`/`e1compact` companion lines do not move.
 -- See Dregg2.Circuit.Emit.LastRowFrameHardening.{satisfied2_of_hardened, hardened_gate_binds_on_last_row}.
 import Dregg2.Circuit.Emit.LastRowFrameHardening
+import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.CapOpenEmit (v3RegistryCapOpenWide v3RegistryCapOpenWriteWide)
@@ -144,7 +145,11 @@ member is then the GENTIAN weld of the proof object
 `BareCohortFloorRefuseWide.satisfied2_of_gentianDeployedBareRefuse` — matching the deployed producer,
 whose `compact_e1` runs on the pre-gentian trace and whose `fill_refuse_aux` adds the gentian at prove
 time. -/
-def emitCompact (key : String) (d : EffectVmDescriptor2) : IO Unit := do
+def emitCompact (key : String) (d0 : EffectVmDescriptor2) : IO Unit := do
+  -- ⚑ THE FIELDS-CANONICITY WELD, applied to the UNCOMPACTED member so the S2/E1 compactions see
+  -- its 112 aux columns as LIVE and renumber them with everything else. Emitting it after
+  -- compaction would name pre-compaction column indices — the avail-shift trap, one level up.
+  let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d0
   match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
   | .ok (cm, bb, lb) =>
     let ks := deadColsE1Fast cm (e1Ceiling key cm)

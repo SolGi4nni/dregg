@@ -244,7 +244,7 @@ def makeSovereignV3DeployedWide : EffectVmDescriptor2 :=
 #guard makeSovereignV3Deployed.traceWidth == makeSovereignV3.traceWidth + 32
 #guard makeSovereignV3DeployedWide.piCount == 78
 #guard makeSovereignV3DeployedWide.traceWidth == makeSovereignV3.traceWidth + wideAppendixSpan + 32
-#guard makeSovereignV3.traceWidth == 1707
+#guard makeSovereignV3.traceWidth == 1819   -- ⚑ +112 at the FIELDS-CANONICITY flag day
 #guard MS_WIDE_BB == 188
 
 /-- **THE FULL PEEL — `Satisfied2 makeSovereignV3Deployed ⟹ Satisfied2 makeSovereignV3`** (gate →
@@ -482,13 +482,14 @@ theorem withMembershipTeethPinsAt_constraints (teethCol : Nat) (g : EffectVmDesc
       = g.constraints ++ (List.range 2).map (fun j =>
           VmConstraint2.base (.piBinding .first (teethCol + j) (g.piCount + j))) := rfl
 
-/-- The WIDE membership teeth columns: PAST the wide carriers (`1707 + 992 = 2699..2700` — the
-producer lays the host at 1707, `append_wide_carriers` the 992 carrier columns at 1707..2698, and
+/-- The WIDE membership teeth columns: PAST the wide carriers (`1819 + 992 = 2811..2812` — the
+producer lays the host at 1819, `append_wide_carriers` the 992 carrier columns at 1819..2810, and
 the teeth ride the END, exactly the `membership_binding_deployed_tooth.rs` twin geometry).
 Pinned by the `#guard` below to the DERIVED `transferV3.traceWidth + wideAppendixSpan` (the
 numeral form keeps the downstream `omega` disequalities decidable). ⚑ 2683 → 2699 at the rc-FOLD
-flag day (`C_SPAN` 43 → 45 plus the two new appendix sites' 14 graduated lane columns). -/
-def MEMBERSHIP_TEETH_COL_WIDE : Nat := 2699
+flag day (`C_SPAN` 43 → 45 plus the two new appendix sites' 14 graduated lane columns); ⚑ 2699 →
+2811 at the FIELDS-CANONICITY flag day (`APPENDIX_SPAN` 539 → 651, no new site). -/
+def MEMBERSHIP_TEETH_COL_WIDE : Nat := 2811
 
 #guard MEMBERSHIP_TEETH_COL_WIDE == transferV3.traceWidth + wideAppendixSpan
 
@@ -506,7 +507,7 @@ def transferV3MembershipWide : EffectVmDescriptor2 :=
 #guard transferV3.piCount == 46
 #guard transferV3Membership.piCount == 52
 #guard transferV3Membership.traceWidth == transferV3.traceWidth + 2
-#guard transferV3.traceWidth == 1707
+#guard transferV3.traceWidth == 1819   -- ⚑ +112 at the FIELDS-CANONICITY flag day
 #guard transferV3MembershipWide.piCount == 68
 #guard transferV3MembershipWide.traceWidth == transferV3.traceWidth + wideAppendixSpan + 2
 

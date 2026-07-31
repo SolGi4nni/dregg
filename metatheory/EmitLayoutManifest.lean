@@ -105,8 +105,14 @@ def items : List Item :=
       doc := "the rc extension's first carrier: hash [manifest commit, rc0, rc1, rc2]" }
   , { name := "C_COMMIT", value := C_COMMIT,
       doc := "the PUBLISHED caveat commitment carrier, in-region — caveatCommitRc over the manifest AND the rc carrier; the column rotPins binds to PI piBase+3" }
+  , { name := "CANON9_REGION_OFF", value := CANON9_REGION_OFF,
+      doc := "in-appendix base of the FIELDS-CANONICITY region (= 2*B_SPAN + C_SPAN, past both blocks and the caveat region). Its 7 aux columns per (block, slot) are what makes Canonical9's NoWrap leg expressible; the producer MUST fill them or every honest turn is UNSAT." }
+  , { name := "CANON9_PER_SLOT", value := 7,
+      doc := "aux columns one (block, slot) canonicity gadget uses, in order: r, q0, q1, v0, v0b, v1, v1b" }
+  , { name := "CANON9_SPAN", value := CANON9_SPAN,
+      doc := "the fields-canonicity region's span (2 blocks * 8 slots * 7 aux columns)" }
   , { name := "APPENDIX_SPAN", value := APPENDIX_SPAN,
-      doc := "2*B_SPAN + C_SPAN — the rotated appendix appended to the v1 face" }
+      doc := "2*B_SPAN + C_SPAN + CANON9_SPAN — the rotated appendix appended to the v1 face" }
   , { name := "ROT_APPENDIX_SITES", value := (rotV3Appendix EFFECT_VM_WIDTH).length,
       doc := "poseidon2-chip SITES the rotated appendix contributes (2 blocks + the caveat region incl. the rc fold). Graduation appends 7 lane columns per site, so this is the multiplier the Rust host width uses — it was a hand-carried arithmetic literal in trace_rotated.rs and it drifted." }
     -- the committed base limbs (pre-iroot)

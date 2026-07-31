@@ -294,7 +294,7 @@ def CAVEAT_BASE : Nat :=
 
 -- The derived widths PINNED at the 184-limb + rc-FOLD geometry (was 138 / 1691 / 682).
 #guard N_ROT_SITES == 140
-#guard GRAD_ROT_WIDTH == 1707
+#guard GRAD_ROT_WIDTH == 1819 -- ⚑ +112 at the FIELDS-CANONICITY flag day (APPENDIX_SPAN 539 → 651)
 #guard CAVEAT_BASE == 682     -- UNMOVED: the rc fold grows the region's TAIL, not its base
 
 /-- The deployed caveat count column. -/
@@ -511,9 +511,9 @@ section Witnesses
 #guard ebDep 3 == 704
 -- STANDARD geometry (auxBase = GRAD_ROT_WIDTH = 1707): the three aux blocks are DISJOINT (no
 -- bit/inv/or/floor column aliases across blocks). Floor cols 1719/1735/1751, separated by REFUSE_STRIDE.
-#guard fcDep GRAD_ROT_WIDTH 0 == 1719
-#guard fcDep GRAD_ROT_WIDTH 1 == 1735
-#guard fcDep GRAD_ROT_WIDTH 2 == 1751
+#guard fcDep GRAD_ROT_WIDTH 0 == 1831
+#guard fcDep GRAD_ROT_WIDTH 1 == 1847
+#guard fcDep GRAD_ROT_WIDTH 2 == 1863
 #guard ([ bcDep GRAD_ROT_WIDTH 0 0, bcDep GRAD_ROT_WIDTH 0 1, bcDep GRAD_ROT_WIDTH 0 2,
           bcDep GRAD_ROT_WIDTH 0 3, icDep GRAD_ROT_WIDTH 0 0, icDep GRAD_ROT_WIDTH 0 1,
           icDep GRAD_ROT_WIDTH 0 2, icDep GRAD_ROT_WIDTH 0 3,
@@ -528,27 +528,27 @@ section Witnesses
           ocDep GRAD_ROT_WIDTH 2 0, ocDep GRAD_ROT_WIDTH 2 1, ocDep GRAD_ROT_WIDTH 2 2, fcDep GRAD_ROT_WIDTH 2 ]).dedup.length == 36
 -- The aux blocks start PAST the graduated rotated width (the traceWidth widening the flag-day pays).
 #guard fcDep GRAD_ROT_WIDTH 2 ≥ GRAD_ROT_WIDTH
-#guard fcDep GRAD_ROT_WIDTH 2 + 1 == 1752
+#guard fcDep GRAD_ROT_WIDTH 2 + 1 == 1864
 -- The three-block weld adds 3 × 13 = 39 gates (each block: 8 is-zero + 3 fold-into + 1 refuse = 13).
 #guard (deployedRefuseGates GRAD_ROT_WIDTH).length == 39
 -- DISTINCT V1Face geometry (auxBase = 1679 = GRAD_ROT_WIDTH − 4 chip sites·7): setFieldDyn / custom
 -- base their refuse at 1679 (floor cols 1691/1707/1723) and widen to 1724 over their OWN base — NOT
 -- the fixed 1707 that would over-widen to 1752 and strand a 28-column dead gap.
-#guard fcDep (GRAD_ROT_WIDTH - 28) 0 == 1691
-#guard fcDep (GRAD_ROT_WIDTH - 28) 2 == 1723
-#guard fcDep (GRAD_ROT_WIDTH - 28) 2 + 1 == 1724
+#guard fcDep (GRAD_ROT_WIDTH - 28) 0 == 1803
+#guard fcDep (GRAD_ROT_WIDTH - 28) 2 == 1835
+#guard fcDep (GRAD_ROT_WIDTH - 28) 2 + 1 == 1836
 private def toyBare : EffectVmDescriptor2 :=
   { name := "toy", traceWidth := GRAD_ROT_WIDTH, piCount := 46, tables := [], constraints := [],
     hashSites := [], ranges := [] }
 -- Standard member: widens 1707 → 1752 (byte-identical to the pre-heterogeneous weld at the new geometry).
-#guard (gentianDeployedBareRefuse toyBare).traceWidth == 1752
+#guard (gentianDeployedBareRefuse toyBare).traceWidth == 1864
 #guard (gentianDeployedBareRefuse toyBare).constraints.length == 39
 #guard (gentianDeployedBareRefuse toyBare).piCount == 46
 private def toyDistinct : EffectVmDescriptor2 :=
   { name := "toy-distinct", traceWidth := GRAD_ROT_WIDTH - 28, piCount := 46, tables := [],
     constraints := [], hashSites := [], ranges := [] }
--- Distinct-geometry member: widens 1679 → 1724 over its OWN 1679 base (per-member geometry respected).
-#guard (gentianDeployedBareRefuse toyDistinct).traceWidth == 1724
+-- Distinct-geometry member: widens 1791 → 1836 over its OWN 1791 base (per-member geometry respected).
+#guard (gentianDeployedBareRefuse toyDistinct).traceWidth == 1836
 #guard (gentianDeployedBareRefuse toyDistinct).constraints.length == 39
 #guard (refuseGatesAt (tagSettleEscrow : ℤ) ebDep (bcDep GRAD_ROT_WIDTH 0) (icDep GRAD_ROT_WIDTH 0)
   (ocDep GRAD_ROT_WIDTH 0) (fcDep GRAD_ROT_WIDTH 0)).length == 13

@@ -56,7 +56,7 @@ def WIDE_WIDTH : Nat :=
   Dregg2.Deos.BareCohortFloorRefuseDeployed.GRAD_ROT_WIDTH
     + Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppendixSpan
 
-#guard WIDE_WIDTH == 2699
+#guard WIDE_WIDTH == 2811   -- ⚑ +112 at the FIELDS-CANONICITY flag day
 
 /-! ## §1 — the WIDE aux column layout (aux base = the member's OWN width, past the wide carriers). -/
 

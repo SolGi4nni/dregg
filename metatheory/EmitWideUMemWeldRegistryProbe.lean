@@ -59,6 +59,7 @@ import Dregg2.Circuit.Emit.WideCompactTable
 import Dregg2.Circuit.Emit.RotWideCompactE1
 -- THE UNFORCED-PIN SUBTRACTION: drop every `.piBinding` whose column nothing else reads.
 import Dregg2.Circuit.Emit.UnforcedPiPins
+import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
@@ -142,6 +143,7 @@ def e1Ceiling (key : String) (cm : EffectVmDescriptor2) : Nat :=
 
 def main : IO Unit := do
   for (key, d) in weldedWideRegistryRefusedFirst do
+    let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d
     match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
     | .ok (cm, _, _) =>
       -- E1 (the SECOND flag-day): delete the dead v1-face bands at the derived kill-set (floor 90),
