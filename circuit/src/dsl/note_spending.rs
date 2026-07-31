@@ -782,6 +782,41 @@ pub fn note_spend_mint_hash_felt(
 /// verified against (`AttestedRoot::note_tree_root`); the attestation wrapper's
 /// remaining fields are pinned executor-side by the trusted-set equality check
 /// and do NOT ride the mint identity (the STARK never binds them).
+/// **THE EXACT WINDOW THE TWO VALUE LIMBS FAITHFULLY BIND** — `p · 2^30 = 2161727821137838080`
+/// (`≈ 2^60.907`). A bridge value at or above this is NOT bound by the note-spend claim tuple, and
+/// must be REFUSED rather than encoded.
+///
+/// The limb pair is `lo = v & (2^30 − 1)`, `hi = BabyBear::new((v >> 30) as u32)`, and it fails
+/// injectivity twice above this bound:
+///
+///  * `v >> 30` reaches `2^34`, so the `as u32` **truncates bits 62..64 outright** — `v` and
+///    `v + 2^62` produce an IDENTICAL `(lo, hi)` and therefore an identical `mint_hash` and an
+///    identical 7-slot claim tuple. That is not a grind: it is one addition.
+///  * `BabyBear::new` then reduces, so `hi` aliases again with a value period of `p · 2^30`.
+///
+/// The doc that stood at the call site said `hi` "fits in u32 since v < 2^64" — the same false
+/// contract `split_u64` carried. It does not; that is what this bound exists to say.
+///
+/// `2^60.9` is not a cap invented here: `BAL_LIMB_BITS = 30` already pins every in-circuit balance
+/// limb to `[0, 2^30)`, so the deployed AIR's own balance range is `[0, 2^60)` — strictly inside
+/// this window. Refusing above it admits every value the rest of the system can represent and
+/// makes the encoding INJECTIVE ON THE ADMITTED DOMAIN, which is what the two slots were always
+/// documented to do.
+///
+/// ⚠ This is the whole fix, not a containment: no alias survives inside the admitted domain, so
+/// there is nothing left to widen. The SEPARATE nullifier-width wound at this same boundary (the
+/// 32-byte nullifier compressed to ONE felt) is NOT closed by it and needs a PI widening in the
+/// Lean-authored `note-spend-leaf::dregg-note-spending-dsl-v3` descriptor.
+pub const NOTE_SPEND_VALUE_BOUND: u64 = (crate::field::BABYBEAR_P as u64) << 30;
+
+/// Whether `value` is inside [`NOTE_SPEND_VALUE_BOUND`] — i.e. whether the note-spend claim
+/// tuple's two value limbs bind it INJECTIVELY. Every boundary that encodes a bridge value must
+/// gate on this BEFORE encoding; `dregg_cell_crypto::note_bridge::verify_portable_note` does.
+#[inline]
+pub const fn note_spend_value_is_faithfully_bound(value: u64) -> bool {
+    value < NOTE_SPEND_VALUE_BOUND
+}
+
 pub fn bridge_mint_hash_felt(
     nullifier: &[u8; 32],
     note_tree_root: &[u8; 32],
@@ -792,6 +827,15 @@ pub fn bridge_mint_hash_felt(
     fn compress(bytes: &[u8; 32]) -> BabyBear {
         hash_many(&crate::effect_vm::bytes32_to_8_limbs(bytes))
     }
+    // The identity is only an IDENTITY inside the faithful window; above it two distinct values
+    // share this felt. The admission gate is `verify_portable_note`, which refuses by variant
+    // before any encoder runs — this assert is the developer-facing echo of that gate, not the
+    // gate itself.
+    debug_assert!(
+        note_spend_value_is_faithfully_bound(value),
+        "bridge value {value} is at/above NOTE_SPEND_VALUE_BOUND ({NOTE_SPEND_VALUE_BOUND}) — the \
+         two value limbs do not bind it injectively; the caller must refuse it, not encode it"
+    );
     let value_lo = BabyBear::new((value & ((1u64 << 30) - 1)) as u32);
     let value_hi = BabyBear::new((value >> 30) as u32);
     let asset_bb = BabyBear::new((asset_type & ((1u64 << 30) - 1)) as u32);

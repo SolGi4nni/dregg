@@ -939,8 +939,19 @@ fn v9_lifecycle_felt(lc: &crate::lifecycle::CellLifecycle) -> dregg_circuit::fie
 /// `field_visibility`, `commitments`, `proved_state`, `swiss_table_root`,
 /// `refcount_table_root`, `fields_root`, `system_roots_digest`, and `fields[8..16]`. The
 /// fields the rotated limbs already carry (balance/nonce/`fields[0..8]`/cap_root/heap_root/
-/// committed_height/delegation_epoch) are NOT re-absorbed here — they are bound by their own
-/// limbs. The accumulated bytes are hashed to a felt via the same Poseidon2 `hash_bytes` the
+/// committed_height/delegation_epoch) are NOT re-absorbed here — this digest is FROZEN by the
+/// rotated descriptors across every non-record-mover effect, so nothing that changes within a turn
+/// can live in it.
+///
+/// ⚠ "They are bound by their own limbs" is what this doc used to say about that exclusion, and it
+/// is the sentence the fields-octet wound was written in too. It is only ever true of an INJECTIVE
+/// limb. `fields[0..8]` earned it by moving to the nine-lane `field_limbs9`; `cap_root` /
+/// `heap_root` / the accumulator roots earned it by becoming `Faithful8` groups. **`balance` has
+/// NOT earned it** — `split_u64` truncates bits 62..64 — and because this residue is frozen, the
+/// repair cannot be made here. See the block at the tail of [`authority_residue_bytes`]'s body for
+/// the measurement and for what the real (Lean-authored, VK-rotating) repair is.
+///
+/// The accumulated bytes are hashed to a felt via the same Poseidon2 `hash_bytes` the
 /// other byte-rooted limbs use, under a dedicated domain context.
 pub fn compute_authority_digest_felt(cell: &Cell) -> dregg_circuit::field::BabyBear {
     // The v1-leg cross-anchor + the rotated `B_AUTHORITY_DIGEST` (limb 24) carry limb-0 of the
@@ -977,6 +988,11 @@ pub fn compute_authority_digest_8(cell: &Cell) -> dregg_circuit::Faithful8 {
 /// program, and the CellState authority sub-state (`field_visibility`, `commitments`,
 /// `proved_state`, `swiss_table_root`, `refcount_table_root`, `fields_root`, `system_roots_digest`,
 /// `fields[8..16]`).
+///
+/// ⚠ Read the block at the TAIL of this body before adding anything to it: this digest is FROZEN
+/// across non-record-mover effects, so a value that changes within a turn CANNOT be absorbed here.
+/// That is measured, not assumed — and it is why the live `balance` aliasing wound is not repaired
+/// at this site.
 pub fn authority_residue_bytes(cell: &Cell) -> Vec<u8> {
     use crate::state::STATE_SLOTS;
 
@@ -1119,6 +1135,44 @@ pub fn authority_residue_bytes(cell: &Cell) -> Vec<u8> {
     bytes.extend_from_slice(&st.refcount_table_root);
     bytes.extend_from_slice(&st.fields_root.to_bytes32());
     bytes.extend_from_slice(&st.system_roots_digest());
+
+    // ⚑ THE BALANCE IS NOT HERE, AND THIS RESIDUE IS NOT WHERE IT CAN GO. Measured 2026-07-31.
+    //
+    // The wound is real and is pinned by `split_u64_still_aliases_the_deployed_balance_limbs_*`
+    // plus `the_balance_alias_reaches_the_consensus_anchor_WOUND_PIN` in this file's test module:
+    // `balance` reaches the signed anchor ONLY through `pre[1]`/`pre[3]` =
+    // `split_u64(balance as u64)`, whose `hi` is `(val >> 30) as u32`. The `as u32` TRUNCATES bits
+    // 62..64, so `split_u64(v)` and `split_u64(v + 2^62)` agree in BOTH limbs (and `hi` aliases
+    // again mod `p` at a period of `p·2^30 ≈ 2^61`). Both members of every such pair are legal
+    // `i64` balances. `consensus_state_commitment` IS the chip chain over these limbs, so a cell
+    // holding `100` and a cell holding `2^62 + 100` produce a BYTE-IDENTICAL
+    // `TurnReceipt::{pre,post}_state_hash` — the value the executor signs and the receipt QC
+    // carries. That is the fields-octet wound one register over: excluded from this residue
+    // "because a limb carries it", carried by a limb that is not injective.
+    //
+    // ⚠ ABSORBING IT HERE WAS TRIED AND IS WRONG — do not re-attempt it. This digest is FROZEN
+    // across every effect that is not a record-digest mover: the rotated descriptors' continuity
+    // constraints hold the eight AFTER authority limbs (limb 24 + headroom 12..=18) equal to the
+    // BEFORE ones, and `trace_rotated.rs` fills the AFTER block by COPY precisely because the
+    // residue is balance-independent. Putting the balance in it makes a BridgeMint / Transfer /
+    // Mint / Burn legitimately MOVE a frozen limb, and the deployed AIR refuses the honest trace:
+    // `rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta` and
+    // `bridgemint_forced_on_wire_rejects_forged_balance_anchor_disabled` both go UNSAT on exactly
+    // the eight authority constraints, and they are the ONLY two of 200 that do — the correlation
+    // with "the effect moves the balance" is total. The same argument rules out `nonce`,
+    // `delegation_epoch` and `committed_height`: all four move within a turn, which is why they
+    // were excluded from a frozen residue in the first place. The exclusion was right; the
+    // sentence justifying it ("bound by their own limbs") was the false part.
+    //
+    // ⚑ SUBSTRATE, SAID OUT LOUD: the honest repair is LEAN-AUTHORED AIR, not a Rust preimage.
+    // The balance needs an INJECTIVE limb encoding in the rotated vector — `u64_to_4_limbs_16`
+    // (already in `circuit/src/effect_vm/helpers.rs`, 4 × 16 bits, nothing reduces) is the
+    // adopt-don't-invent candidate, replacing the two aliasing limbs with four faithful ones.
+    // That moves `EffectVmEmitRotationV3.weldsAt` (r0/r2), the 30-bit balance range decomposition,
+    // and the pre-limb geometry — so it costs a descriptor re-emit and a VK rotation, and every
+    // committed cell moves (a re-genesis). Per CLAUDE.md that is ordinary work, not a reason to
+    // defer; it is NOT done here only because `metatheory/Dregg2/Circuit/` and
+    // `circuit/descriptors/` are held by a concurrent lane and racing them would strand both.
 
     bytes
 }
@@ -2759,5 +2813,115 @@ mod tests {
         let bytes = compute_canonical_state_commitment_v9(&cell, &v9_ctx(0, 0));
         assert_eq!(&bytes[0..4], &felt.as_u32().to_le_bytes());
         assert_eq!(&bytes[4..], &[0u8; 28], "felt encoding zero-pads the tail");
+    }
+
+    // ---- THE LOSSY-LIMB SCALAR CLOSE (`split_u64` → the consensus anchor) ----
+    //
+    // Four teeth. Two of them are ALIAS poles that must KEEP PASSING: they assert the deployed
+    // `split_u64` limbs still collide, because that is the premise the close is about. If a later
+    // change makes them fail, the CLOSED poles below have gone vacuous and this pair is the alarm.
+
+    /// A cell at an exact balance, everything else fixed.
+    fn cell_at(balance: i64) -> Cell {
+        let mut c = Cell::with_balance(test_key(7), test_token(0), 0);
+        c.state.set_balance(balance);
+        c
+    }
+
+    /// ALIAS POLE (truncation). `split_u64`'s `hi` is `(val >> 30) as u32`, so bit 62 is thrown
+    /// away outright: `v` and `v + 2^62` are EQUAL in BOTH deployed limbs. Asserted by VALUE on
+    /// both limbs, and both members are asserted to be legal `i64` balances — an alias between two
+    /// unreachable states would prove nothing.
+    #[test]
+    fn split_u64_still_aliases_the_deployed_balance_limbs_at_2_62() {
+        let a: i64 = 100;
+        let b: i64 = 100 + (1i64 << 62);
+        assert!(
+            b > a,
+            "both aliasing balances are legal, distinct i64 values"
+        );
+
+        let (a_lo, a_hi) = dregg_circuit::effect_vm::split_u64(a as u64);
+        let (b_lo, b_hi) = dregg_circuit::effect_vm::split_u64(b as u64);
+        assert_eq!(
+            a_lo, b_lo,
+            "the LOW limb aliases (both are `val & 2^30 - 1`)"
+        );
+        assert_eq!(
+            a_hi, b_hi,
+            "the HIGH limb aliases too — `(val >> 30) as u32` truncates bit 62"
+        );
+
+        // And the alias is present in the DEPLOYED absorption vector, at the welded r0/r2 limbs.
+        let ctx = v9_ctx(11, 22);
+        let pre_a = compute_rotated_pre_limbs(&cell_at(a), &ctx);
+        let pre_b = compute_rotated_pre_limbs(&cell_at(b), &ctx);
+        assert_eq!(pre_a[1], pre_b[1], "r0 ↔ balance_lo is identical");
+        assert_eq!(pre_a[3], pre_b[3], "r2 ↔ balance_hi is identical");
+    }
+
+    /// ALIAS POLE (mod-`p`). The second, finer alias: `BabyBear::new` reduces `hi` mod `p`, so the
+    /// pair also repeats with a value period of `p · 2^30 ≈ 2^61` — reachable well below the
+    /// truncation pole and equally legal.
+    #[test]
+    fn split_u64_still_aliases_the_deployed_balance_limbs_at_p_times_2_30() {
+        let a: i64 = 7;
+        let b: i64 = 7 + (dregg_circuit::field::BABYBEAR_P as i64) * (1i64 << 30);
+        assert!(b > a && b < i64::MAX, "the mod-p alias is a legal i64 pair");
+
+        let ctx = v9_ctx(11, 22);
+        let pre_a = compute_rotated_pre_limbs(&cell_at(a), &ctx);
+        let pre_b = compute_rotated_pre_limbs(&cell_at(b), &ctx);
+        assert_eq!(pre_a[1], pre_b[1], "r0 ↔ balance_lo is identical");
+        assert_eq!(pre_a[3], pre_b[3], "r2 ↔ balance_hi is identical");
+    }
+
+    /// ⚑ **WOUND PIN — THIS TEST ASSERTS A LIVE SOUNDNESS HOLE, AND IT MUST BE INVERTED WHEN THE
+    /// HOLE IS CLOSED.** It is not a passing check; it is the hole's detector.
+    ///
+    /// The anchor here is exactly `dregg_turn::state_commit::consensus_state_commitment`'s body
+    /// (`compute_canonical_state_commitment_v9_felt8(cell, ctx).to_bytes32()`) — the value signed
+    /// into `TurnReceipt::{pre,post}_state_hash` and carried by the receipt QC. Today three
+    /// distinct-balance pairs produce a BYTE-IDENTICAL anchor, including an issuer well whose
+    /// balance IS the negated total supply.
+    ///
+    /// **When the rotated balance limbs are widened to an injective encoding** (the Lean-authored
+    /// repair named at the tail of `authority_residue_bytes` — `u64_to_4_limbs_16` replacing the
+    /// `split_u64` pair, a descriptor re-emit and a VK rotation), every `assert_eq!` below becomes
+    /// FALSE and this test goes red. That is the intended signal: flip them to `assert_ne!`,
+    /// rename the test, and delete the wound block. A green here means the hole is still open.
+    #[test]
+    fn the_balance_alias_reaches_the_consensus_anchor_wound_pin() {
+        let ctx = v9_ctx(11, 22);
+        let anchor =
+            |b: i64| compute_canonical_state_commitment_v9_felt8(&cell_at(b), &ctx).to_bytes32();
+
+        // (1) truncation pair, two ordinary positive balances 2^62 apart.
+        assert_eq!(
+            anchor(100),
+            anchor(100 + (1i64 << 62)),
+            "WOUND: 100 and 2^62 + 100 share the signed consensus anchor"
+        );
+        // (2) mod-p pair — the finer alias, reachable ~2^61.
+        assert_eq!(
+            anchor(7),
+            anchor(7 + (dregg_circuit::field::BABYBEAR_P as i64) * (1i64 << 30)),
+            "WOUND: the p·2^30 alias shares the signed consensus anchor"
+        );
+        // (3) ISSUER WELL. A well carries −supply, so this pair is two different total supplies
+        // attested by one signature.
+        assert_eq!(
+            anchor(-1),
+            anchor(-1 - (1i64 << 62)),
+            "WOUND: a well at −1 and a well at −(2^62 + 1) share the signed consensus anchor"
+        );
+
+        // ANTI-VACUITY. The equalities above must be about the BALANCE, not about the anchor being
+        // constant: a balance that moves inside the faithful window DOES move the anchor.
+        assert_ne!(
+            anchor(100),
+            anchor(101),
+            "the anchor is not simply insensitive to the balance"
+        );
     }
 }
