@@ -46,6 +46,7 @@ GATES=(
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
   "no-degraded-felt|120|bash scripts/check-no-degraded-felt.sh"
+  "no-degraded-felt|120|bash scripts/check-emitter-routing.sh"
   "anchored-lc-committee|60|bash scripts/check-anchored-lc-committee.sh"
   "anchored-lc-committee-red|60|bash scripts/check-anchored-lc-committee.sh --self-test"
   "byte-to-felt|120|bash scripts/check-byte-to-felt.sh"
