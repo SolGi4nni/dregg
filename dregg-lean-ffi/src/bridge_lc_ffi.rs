@@ -1665,6 +1665,311 @@ mod ffi_mina_state_hash_word {
 }
 
 // ===========================================================================
+// MINA — THE ACCOUNT OPENING (`dregg_mina_account_state_ok`)
+// ===========================================================================
+//
+// ⚑ THE FIRST THING IN THIS TREE THAT READS MINA *STATE* RATHER THAN MINA'S CHAIN.
+//
+// Everything above this line decides about headers, proofs and forks: `lc_verify`, `better_tip`,
+// `head_advance`, `proof_chain_ok`, `state_hash_word_ok`, `wrap_shape_ok`. Not one of them can
+// observe a balance, a nonce, or where a stake is delegated. dregg could follow Mina and could not
+// see anything *in* it.
+//
+// `Blockchain_state.staged_ledger_hash.non_snark.ledger_hash` IS the Merkle root of Mina's account
+// ledger, and `MinaBinprot` has decoded it since `Blockchain_state` stopped being discarded. So an
+// account plus a 35-level opening against that root is a statement about Mina STATE, anchored in a
+// header whose identity `MinaStateHashDerive` re-derives from the same bytes.
+//
+// ⚑ THE ROOT IS DECODED, NEVER SUPPLIED. There is no argument on this side by which a caller names
+// the ledger hash it wants to open against: `accountInBlockLedger` runs
+// `decodeProtocolStateRawChecked` over the exhibited bytes and reads the root out of the result.
+// A decode refusal is a gate refusal (`the_gate_refuses_when_the_decode_refuses`), never a
+// pass-through.
+//
+// ⚑ AND THERE IS NO RUST TWIN, deliberately. A Rust `Account.to_input` would be a re-rendering of
+// openmina's `account.rs` — which of the account's fields are in the leaf preimage and in what
+// order IS the whole content of the claim "this account holds this balance" — and its correctness
+// would be a differential test against another implementation. `Dregg2.Bridge.MinaAccountOpening`'s
+// header enumerates six ways to read that layout wrong (the `Fields.fold` order is REVERSED and
+// there is no `List.rev`; the prefixes are `Mina*` not `Coda*`; `Merkle_path.t`'s tag names YOUR
+// node's side, not the sibling's; `Untimed` carries `vesting_period = 1`, not 0; `txn_version` sits
+// INSIDE the controller run; an `Auth_required` is THREE one-bit chunks, not one three-bit chunk) —
+// every one of them still parses, still hashes, and fails the live-block guard. Rust here formats
+// decimals, hex and `key=value`, and decides nothing.
+//
+// ⚑ WHAT AN ACCEPT MEANS, AND WHAT IT DOES NOT. It says: at the tip whose protocol-state bytes
+// these are, Mina's ledger contained an account with this public key, balance, nonce and delegate
+// at leaf index *i*. It says NOTHING about that tip's canonicity — that is
+// `dregg_mina_better_tip` / `dregg_mina_head_advance`'s question, and whether the header is the
+// block it claims to be is `MinaStateHashDerive`'s. The three compose; this one does not subsume
+// them, and no caller may describe an account accept as "the account is on Mina's best chain".
+//
+// Wire grammar (mirrors `MinaAccountOpening.decodeAccountWire`, 15 `;`-separated segments):
+// ```text
+// INPUT := "blk="  lowercase hex of the Protocol_state.Value.Stable.V2 PREFIX
+//        ";pk="   Nat "," Bool01     ";tk="  Nat        ";ts="  Nat      ";bal=" Nat
+//        ";non="  Nat                ";rch=" Nat        ";dlg=" Nat "," Bool01
+//        ";vf="   Nat                ";tm="  Bool01 "," Nat*5
+//        ";perm=" Auth("|"Auth)*5 "|" Nat "|" Auth("|"Auth)*5
+//        ";zk="   "" | Nat           ";idx=" Nat        ";sib=" Nat("," Nat)*
+//        ";dir="  ("0"|"1")*
+// ```
+
+/// The thirteen permission controllers of a Mina account, in **DECLARATION order** — which is also
+/// the absorb order, because `Permissions.Poly.to_input` ends in `|> List.rev` while
+/// `Account.to_input` does not. One file, two directions; the reversal that applies to the account
+/// does NOT apply here.
+///
+/// ⚑ Each controller is a `String` and NOT a Rust enum, on purpose. The six admissible tokens
+/// (`None`, `Either`, `Proof`, `Signature`, `Impossible`, `Both`) are `Auth_required`'s OCaml
+/// `to_string`, and `MinaAccountOpening.parseAuth?` is the ONE place in this repo that knows them.
+/// A Rust enum would need a `to_string` table, and that table is a second reading of Mina's
+/// encoding that could drift from the first. An unrecognised token is not a Rust error: the gate
+/// answers `"ERR"`, which every caller treats as a refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinaAccountPermissions {
+    /// `edit_state`.
+    pub edit_state: String,
+    /// `access`.
+    pub access: String,
+    /// `send`.
+    pub send: String,
+    /// `receive`.
+    pub receive: String,
+    /// `set_delegate`.
+    pub set_delegate: String,
+    /// `set_permissions`.
+    pub set_permissions: String,
+    /// `set_verification_key.auth`.
+    pub set_verification_key: String,
+    /// `set_verification_key.txn_version` — `Mina_numbers.Txn_version`, 32 bits, absorbed BETWEEN
+    /// `set_verification_key` and `set_zkapp_uri`. A decimal, not an `Auth`.
+    pub txn_version: String,
+    /// `set_zkapp_uri`.
+    pub set_zkapp_uri: String,
+    /// `edit_action_state`.
+    pub edit_action_state: String,
+    /// `set_token_symbol`.
+    pub set_token_symbol: String,
+    /// `increment_nonce`.
+    pub increment_nonce: String,
+    /// `set_voting_for`.
+    pub set_voting_for: String,
+    /// `set_timing`.
+    pub set_timing: String,
+}
+
+/// One exhibited (block, account, opening) triple — everything `dregg_mina_account_state_ok`
+/// decides over.
+///
+/// ⚑ EVERY FIELD ELEMENT IS A DECIMAL `String`. `public_key_x`, `token_id`, `receipt_chain_hash`,
+/// `delegate_x`, `voting_for` and every sibling hash are elements of `Fp`, i.e. **255-bit**
+/// integers. `u64` cannot hold one and `u128` cannot either; a numeric field here would silently
+/// truncate a real account into a different account. `balance`/`nonce`/the timing fields are
+/// bounded (64/32 bits) but are decimals too, so that one convention covers the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinaAccountOpeningInput {
+    /// The binprot `Protocol_state.Value.Stable.V2` bytes as a peer served them. A PREFIX is
+    /// enough — the gate decodes the protocol state and ignores whatever follows — and the bytes
+    /// go over as bytes precisely so that nothing on this side interprets them.
+    pub protocol_state_prefix: Vec<u8>,
+    /// `public_key.x`, decimal.
+    pub public_key_x: String,
+    /// `public_key.is_odd`.
+    pub public_key_is_odd: bool,
+    /// `token_id`, decimal; the default (MINA) token is `1`.
+    pub token_id: String,
+    /// `token_symbol` as `Token_symbol.to_field` — the ≤ 6 bytes read LITTLE-endian. The empty
+    /// symbol is `0`.
+    pub token_symbol: String,
+    /// `balance`, in nanomina.
+    pub balance: String,
+    /// `nonce`.
+    pub nonce: String,
+    /// `receipt_chain_hash`, decimal.
+    pub receipt_chain_hash: String,
+    /// `delegate.x`, decimal — `0` when the account delegates to nobody
+    /// (`Public_key.Compressed.empty`).
+    pub delegate_x: String,
+    /// `delegate.is_odd`.
+    pub delegate_is_odd: bool,
+    /// `voting_for`, decimal; `State_hash.dummy` is `0`.
+    pub voting_for: String,
+    /// `timing = Timed _` when true. ⚑ When FALSE the five fields below are IGNORED by the gate —
+    /// `Untimed` absorbs the constant `vesting_period = 1` and zeros elsewhere — so an honest
+    /// caller may leave them `"0"`, and a caller that fills them cannot change the verdict.
+    pub is_timed: bool,
+    /// `timing.initial_minimum_balance`.
+    pub initial_minimum_balance: String,
+    /// `timing.cliff_time`.
+    pub cliff_time: String,
+    /// `timing.cliff_amount`.
+    pub cliff_amount: String,
+    /// `timing.vesting_period`.
+    pub vesting_period: String,
+    /// `timing.vesting_increment`.
+    pub vesting_increment: String,
+    /// The thirteen controllers plus the txn version.
+    pub permissions: MinaAccountPermissions,
+    /// `None` = the account has NO zkApp, and the leaf preimage then carries
+    /// `Zkapp_account.default_digest`. ⚑ That is a CLAIM, not a default: an account that does have
+    /// a zkApp does not open under it.
+    pub zkapp_digest: Option<String>,
+    /// The account's leaf index in the ledger. The opening's directions must spell it out bit by
+    /// bit, LSB at the leaf — that is the second, independent answer a server gives about the same
+    /// fact, and disagreement is a refusal rather than a preference.
+    pub leaf_index: u64,
+    /// The 35 sibling hashes, **LEAF FIRST**, as decimals.
+    pub siblings: Vec<String>,
+    /// The 35 `Merkle_path` tags, LEAF FIRST. ⚑ `true` means the ACCUMULATOR is the LEFT operand
+    /// (`Merkle_path.t = Left of hash` names the position of YOUR node, not the sibling's). A
+    /// reader who takes it as "the sibling is on the left" transposes every level; the index is the
+    /// cross-check.
+    pub node_is_left: Vec<bool>,
+}
+
+/// Whether the linked archive exports the verified account-opening gate
+/// (`dregg_mina_account_state_ok`, spliced from `Dregg2.Bridge.MinaAccountOpening`). When false the
+/// caller must FAIL CLOSED and report the absence: there is no Rust twin of this leaf hash, and a
+/// balance that silently goes unchecked is indistinguishable from a balance a peer asserted.
+pub fn mina_account_state_ok_available() -> bool {
+    ffi_mina_account_state::mina_account_state_ok_present() && lean_init_once().is_ok()
+}
+
+/// Render `Bool01`.
+fn bool01(b: bool) -> &'static str {
+    if b {
+        "1"
+    } else {
+        "0"
+    }
+}
+
+/// Build the account-opening wire. Pure formatting: hex for the block bytes, decimals passed
+/// through as given, `0`/`1` for every boolean, and `|` / `,` / `;` joins. No arithmetic, no
+/// validation of the field values, and no local notion of what a valid account is — the grammar
+/// and every refusal live in `MinaAccountOpening.decodeAccountWire`.
+///
+/// ⚑ The permission run puts `txn_version` between `set_verification_key` and `set_zkapp_uri`,
+/// because that is where `Permissions.Poly.to_input` absorbs it. It is not appended at either end.
+pub fn mina_account_opening_wire(input: &MinaAccountOpeningInput) -> String {
+    let p = &input.permissions;
+    let perm = [
+        p.edit_state.as_str(),
+        p.access.as_str(),
+        p.send.as_str(),
+        p.receive.as_str(),
+        p.set_delegate.as_str(),
+        p.set_permissions.as_str(),
+        p.set_verification_key.as_str(),
+        p.txn_version.as_str(),
+        p.set_zkapp_uri.as_str(),
+        p.edit_action_state.as_str(),
+        p.set_token_symbol.as_str(),
+        p.increment_nonce.as_str(),
+        p.set_voting_for.as_str(),
+        p.set_timing.as_str(),
+    ]
+    .join("|");
+    let dirs: String = input.node_is_left.iter().map(|&b| bool01(b)).collect();
+    format!(
+        "blk={};pk={},{};tk={};ts={};bal={};non={};rch={};dlg={},{};vf={};\
+         tm={},{},{},{},{},{};perm={};zk={};idx={};sib={};dir={}",
+        hex_lower(&input.protocol_state_prefix),
+        input.public_key_x,
+        bool01(input.public_key_is_odd),
+        input.token_id,
+        input.token_symbol,
+        input.balance,
+        input.nonce,
+        input.receipt_chain_hash,
+        input.delegate_x,
+        bool01(input.delegate_is_odd),
+        input.voting_for,
+        bool01(input.is_timed),
+        input.initial_minimum_balance,
+        input.cliff_time,
+        input.cliff_amount,
+        input.vesting_period,
+        input.vesting_increment,
+        perm,
+        input.zkapp_digest.as_deref().unwrap_or(""),
+        input.leaf_index,
+        dec_list(&input.siblings),
+        dirs,
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_account_state_ok` over a pre-built wire and return
+/// the raw output (`"1"` / `"0"` / `"ERR"`). `Err` when the archive did not export it.
+pub fn shadow_mina_account_state_ok(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_account_state::lean_mina_account_state_ok(wire)
+}
+
+/// The end-to-end verified account query. `Ok(true)` ONLY on the gate's `"1"`; `"0"` (the opening
+/// does not reach the ledger hash in the block) and `"ERR"` (the wire or the block bytes are
+/// malformed) are both `Ok(false)` — fail-closed. `Err` ONLY when the archive lacks the export,
+/// which a caller must surface as an unavailable gate rather than as a negative answer about the
+/// account.
+pub fn verified_mina_account_state_ok(input: &MinaAccountOpeningInput) -> Result<bool, String> {
+    let out = shadow_mina_account_state_ok(&mina_account_opening_wire(input))?;
+    Ok(out == "1")
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_account_state_ok_present))]
+mod ffi_mina_account_state {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_account_state_ok_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_account_state_ok_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_account_state_ok(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_account_state_ok_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_account_state_ok_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_account_state_ok_present)))]
+mod ffi_mina_account_state {
+    pub fn mina_account_state_ok_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_account_state_ok(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_mina_account_state_ok not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+}
+
+// ===========================================================================
 // MINA — SAMASIKA FORK CHOICE (`dregg_mina_better_tip`) and the ROLLING VERIFIED HEAD
 // (`dregg_mina_head_advance`)
 // ===========================================================================
@@ -2725,6 +3030,295 @@ mod tests {
             "the fork-choice gate returned the SAME verdict on a chain one block longer — it is a \
              constant, not a gate"
         );
+    }
+
+    // ========================================================================
+    // MINA STATE — the ACCOUNT-OPENING gate, on a LIVE devnet account
+    // ========================================================================
+
+    /// The fetched fixture: devnet block **540268**'s protocol-state prefix, the live account
+    /// `B62qmGudrekyaWbKzw2b4LagLvhUjVup3vUxKf1Yj96ZiiUJKpPZHjG` at leaf index 6202, and its
+    /// 35-level ledger opening. Provenance and regeneration: `goldens/REGENERATE.md` and
+    /// `bridge/tools/mina-account-opening.py --from-tip-creator --with-block`.
+    const REAL_DEVNET_ACCOUNT_OPENING_JSON: &str =
+        include_str!("../goldens/mina-devnet-account-opening.json");
+
+    /// The wire the Lean side pins (`MinaAccountOpeningRealBlock.honestWire`). The Rust builder is
+    /// asserted BYTE-IDENTICAL to it, which is the only thing that makes "the Rust builder and the
+    /// Lean parser agree on the grammar" a measurement rather than a hope.
+    const REAL_DEVNET_ACCOUNT_OPENING_WIRE: &str =
+        include_str!("../goldens/mina-devnet-account-opening.wire");
+
+    /// `serde_json` is NOT a dependency of this crate and this is not a reason to add one: the
+    /// fixture is a committed, tool-generated file with a fixed shape, and these four readers are
+    /// ~30 lines against a ~200 KB dependency tree. Each PANICS on a shape it does not recognise,
+    /// so a regenerated fixture that moved a field fails here loudly rather than defaulting.
+    fn json_after(json: &str, key: &str) -> usize {
+        let pat = format!("\"{key}\":");
+        let at = json
+            .find(&pat)
+            .unwrap_or_else(|| panic!("the account golden has no `{key}` field"));
+        at + pat.len()
+    }
+
+    fn json_string(json: &str, key: &str) -> String {
+        let rest = &json[json_after(json, key)..];
+        let open = rest
+            .find('"')
+            .unwrap_or_else(|| panic!("`{key}` is not string-valued"));
+        let after = &rest[open + 1..];
+        let end = after
+            .find('"')
+            .unwrap_or_else(|| panic!("`{key}` has an unterminated string"));
+        after[..end].to_string()
+    }
+
+    fn json_bool(json: &str, key: &str) -> bool {
+        let rest = json[json_after(json, key)..].trim_start();
+        if rest.starts_with("true") {
+            true
+        } else if rest.starts_with("false") {
+            false
+        } else {
+            panic!("`{key}` is not a boolean")
+        }
+    }
+
+    fn json_u64(json: &str, key: &str) -> u64 {
+        let rest = json[json_after(json, key)..].trim_start();
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        rest[..end]
+            .parse()
+            .unwrap_or_else(|_| panic!("`{key}` is not a decimal"))
+    }
+
+    /// A flat `[...]` of scalars, split on `,` with quotes and whitespace stripped.
+    fn json_flat_array(json: &str, key: &str) -> Vec<String> {
+        let rest = &json[json_after(json, key)..];
+        let open = rest
+            .find('[')
+            .unwrap_or_else(|| panic!("`{key}` is not an array"));
+        let close = rest[open..]
+            .find(']')
+            .unwrap_or_else(|| panic!("`{key}` is unterminated"))
+            + open;
+        rest[open + 1..close]
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .collect()
+    }
+
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+        assert_eq!(hex.len() % 2, 0, "the golden block hex is odd-length");
+        hex.as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16)
+                    .expect("the golden block is not hex")
+            })
+            .collect()
+    }
+
+    /// The honest input, read out of the committed fixture. Nothing here is transcribed by hand:
+    /// every value comes from the file the fetcher wrote.
+    fn real_devnet_account_opening() -> MinaAccountOpeningInput {
+        let j = REAL_DEVNET_ACCOUNT_OPENING_JSON;
+        MinaAccountOpeningInput {
+            protocol_state_prefix: hex_to_bytes(&json_string(j, "hex")),
+            public_key_x: json_string(j, "publicKeyX"),
+            public_key_is_odd: json_bool(j, "publicKeyIsOdd"),
+            token_id: json_string(j, "tokenId"),
+            // `Token_symbol.to_field` of the EMPTY symbol is `0`, and the fixture carries the
+            // symbol itself (`""`) rather than the field element. This is the one place the test
+            // converts, and it converts only the empty case — a non-empty symbol would need the
+            // ≤6-byte little-endian read, which belongs in the fetcher, not here.
+            token_symbol: {
+                let s = json_string(j, "tokenSymbol");
+                assert!(
+                    s.is_empty(),
+                    "the golden account grew a token symbol ({s:?}); its `Token_symbol.to_field` \
+                     must come from the fetcher, not from this test"
+                );
+                "0".to_string()
+            },
+            balance: json_string(j, "balance"),
+            nonce: json_string(j, "nonce"),
+            receipt_chain_hash: json_string(j, "receiptChainHash"),
+            delegate_x: json_string(j, "delegateX"),
+            delegate_is_odd: json_bool(j, "delegateIsOdd"),
+            voting_for: json_string(j, "votingFor"),
+            is_timed: json_bool(j, "isTimed"),
+            initial_minimum_balance: json_string(j, "initialMinimumBalance"),
+            cliff_time: json_string(j, "cliffTime"),
+            cliff_amount: json_string(j, "cliffAmount"),
+            vesting_period: json_string(j, "vestingPeriod"),
+            vesting_increment: json_string(j, "vestingIncrement"),
+            permissions: MinaAccountPermissions {
+                edit_state: json_string(j, "editState"),
+                access: json_string(j, "access"),
+                send: json_string(j, "send"),
+                receive: json_string(j, "receive"),
+                set_delegate: json_string(j, "setDelegate"),
+                set_permissions: json_string(j, "setPermissions"),
+                set_verification_key: json_string(j, "auth"),
+                txn_version: json_string(j, "txnVersion"),
+                set_zkapp_uri: json_string(j, "setZkappUri"),
+                edit_action_state: json_string(j, "editActionState"),
+                set_token_symbol: json_string(j, "setTokenSymbol"),
+                increment_nonce: json_string(j, "incrementNonce"),
+                set_voting_for: json_string(j, "setVotingFor"),
+                set_timing: json_string(j, "setTiming"),
+            },
+            // `"zkappState": null` — the account has NO zkApp, and the leaf preimage carries
+            // `Zkapp_account.default_digest`.
+            zkapp_digest: None,
+            leaf_index: json_u64(j, "index"),
+            siblings: json_flat_array(j, "siblings"),
+            node_is_left: json_flat_array(j, "nodeIsLeft")
+                .iter()
+                .map(|s| match s.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    other => panic!("`nodeIsLeft` carries {other:?}, not a boolean"),
+                })
+                .collect(),
+        }
+    }
+
+    /// Change the final decimal digit. A 255-bit sibling hash cannot be incremented as a `u128`,
+    /// and the point is only that the value is a DIFFERENT one — `(d + 1) % 10` always is.
+    fn bump_last_digit(s: &str) -> String {
+        let mut cs: Vec<char> = s.chars().collect();
+        let last = cs.len() - 1;
+        let d = cs[last].to_digit(10).expect("not a decimal");
+        cs[last] = char::from_digit((d + 1) % 10, 10).unwrap();
+        cs.into_iter().collect()
+    }
+
+    /// ⚑ THE ACCOUNT-OPENING GATE, THROUGH THE REAL C ABI, ON A REAL DEVNET ACCOUNT. UNGATED on
+    /// purpose like its five Mina siblings: archive-absence routes through `demand_lean` (which
+    /// PANICS under `DREGG_TEST_REQUIRE_LEAN=1`) rather than the test ceasing to exist.
+    ///
+    /// What it measures that `MinaAccountOpeningRealBlock`'s `#guard`s cannot: those run the gate
+    /// INSIDE Lean on a pinned string. This one builds the wire in Rust from the fetched JSON,
+    /// asserts it is byte-identical to the string Lean pins, and then drives it through
+    /// `dregg_mina_account_state_ok_str` into the linked archive. A Rust builder that disagreed
+    /// with the Lean parser on one separator, one key, or the `txn_version` position would still
+    /// leave every `#guard` green.
+    ///
+    /// The three answers are kept apart deliberately. A `"0"` asserted as `!= "1"` would be
+    /// satisfied by `"ERR"`, i.e. by a harness that broke its own wire — which is a shape failure
+    /// wearing a refusal's clothes. Every rejection below pins the exact string `"0"`.
+    #[test]
+    fn mina_account_opening_gate_decides_on_a_real_devnet_account_through_the_real_ffi() {
+        if !crate::demand_lean(
+            mina_account_state_ok_available(),
+            "dregg_mina_account_state_ok Mina account-opening gate",
+        ) {
+            return;
+        }
+
+        let honest = real_devnet_account_opening();
+        assert_eq!(
+            honest.siblings.len(),
+            35,
+            "the golden is not a 35-level opening"
+        );
+        assert_eq!(
+            honest.node_is_left.len(),
+            35,
+            "the golden is not a 35-level opening"
+        );
+        assert_eq!(
+            honest.leaf_index, 6202,
+            "the golden is not the pinned account"
+        );
+        assert_eq!(
+            honest.balance, "28305375018363953",
+            "the golden is not the pinned account"
+        );
+
+        // ⚑ THE CROSS-CHECK ON THE GRAMMAR ITSELF. The Rust builder and `decodeAccountWire` must
+        // agree on all 15 segments, their keys, their order and their separators — including the
+        // `txn_version` sitting INSIDE the permission run. Byte identity against the string the
+        // Lean `#guard`s are stated over is what makes that a measurement.
+        let wire = mina_account_opening_wire(&honest);
+        assert_eq!(
+            wire,
+            REAL_DEVNET_ACCOUNT_OPENING_WIRE.trim_end(),
+            "the Rust wire builder and the Lean-pinned wire disagree"
+        );
+
+        // ACCEPT — a real account, a real block, and a ledger hash decoded out of Mina's own bytes.
+        assert_eq!(
+            shadow_mina_account_state_ok(&wire).as_deref(),
+            Ok("1"),
+            "the honest opening must be ACCEPTED"
+        );
+        assert_eq!(verified_mina_account_state_ok(&honest), Ok(true));
+
+        // REJECT — ONE NANOMINA. The exact string `"0"`: an `"ERR"` here would mean the harness
+        // broke the wire rather than the gate refusing the account, and that must fail.
+        let mut richer = honest.clone();
+        richer.balance = (honest.balance.parse::<u128>().unwrap() + 1).to_string();
+        assert_eq!(
+            shadow_mina_account_state_ok(&mina_account_opening_wire(&richer)).as_deref(),
+            Ok("0"),
+            "an account one nanomina richer must be REFUSED, and refused rather than unparsed"
+        );
+        assert_eq!(verified_mina_account_state_ok(&richer), Ok(false));
+
+        // REJECT — a tampered leaf-level sibling. The opening no longer folds to the ledger hash.
+        let mut wrong_sibling = honest.clone();
+        wrong_sibling.siblings[0] = bump_last_digit(&honest.siblings[0]);
+        assert_eq!(
+            shadow_mina_account_state_ok(&mina_account_opening_wire(&wrong_sibling)).as_deref(),
+            Ok("0"),
+            "a tampered sibling must be REFUSED"
+        );
+
+        // REJECT — a wrong index, and by the INDEX check rather than by luck: the exhibited
+        // directions no longer spell 6203, so `directionsMatchIndex` fails before a hash is taken.
+        let mut wrong_index = honest.clone();
+        wrong_index.leaf_index = honest.leaf_index + 1;
+        assert_eq!(
+            shadow_mina_account_state_ok(&mina_account_opening_wire(&wrong_index)).as_deref(),
+            Ok("0"),
+            "an account presented at the wrong leaf index must be REFUSED"
+        );
+
+        // ERR — the THIRD answer. A structurally broken wire is a parse failure, and it must not
+        // be spelled the same way as a refusal: if it were, none of the three `"0"`s above would
+        // mean anything.
+        assert_eq!(
+            shadow_mina_account_state_ok("garbage").as_deref(),
+            Ok("ERR"),
+            "a wire that is not the grammar must be ERR"
+        );
+        assert_eq!(
+            shadow_mina_account_state_ok(&wire.replace(";bal=", ";blah=")).as_deref(),
+            Ok("ERR"),
+            "a renamed key must be ERR, not a refusal computed from what did parse"
+        );
+        // THE STANDING NON-CONSTANCY CANARY: three distinct answers on three inputs. A gate that
+        // has degenerated to always-accept, always-reject or always-`"ERR"` collapses at least two
+        // of these together.
+        let accept = shadow_mina_account_state_ok(&wire);
+        let reject = shadow_mina_account_state_ok(&mina_account_opening_wire(&richer));
+        let err = shadow_mina_account_state_ok("garbage");
+        assert_ne!(
+            accept, reject,
+            "the account gate returned the SAME verdict on a balance one nanomina apart — it is a \
+             constant, not a gate"
+        );
+        assert_ne!(
+            reject, err,
+            "the account gate spells REFUSAL and PARSE FAILURE the same way — the rejections above \
+             carry no information"
+        );
+        assert_ne!(accept, err);
     }
 }
 

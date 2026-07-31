@@ -271,6 +271,18 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          served block enters a Wrap verification) are never computed from the served header",
     ),
     (
+        "dregg_mina_account_state_ok",
+        "the MINA ACCOUNT-OPENING gate compiles out — `mina_account_state_ok_available()` goes \
+         constantly false and `verified_mina_account_state_ok` returns `Err` for every account, so \
+         dregg can follow Mina's chain and observe NOTHING IN IT: no balance, no nonce, no \
+         delegation, no permission. Fail-closed with NO Rust twin and there must not be one — a \
+         Rust `Account.to_input` is a re-rendering of openmina's `account.rs` whose correctness \
+         would be a differential test, and six documented ways to read the leaf layout wrong \
+         (reversed `Fields.fold` order, `Coda*` prefixes, transposed `Merkle_path` tags, \
+         `vesting_period = 0`, `txn_version` at an end, a three-bit auth chunk) all still parse \
+         and still hash",
+    ),
+    (
         "dregg_mina_better_tip",
         "the SAMASIKA FORK-CHOICE decision compiles out — `verified_mina_better_tip` returns `Err` \
          for every pair, so the client keeps whatever tip it already holds and cannot choose \
@@ -2224,6 +2236,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_proof_chain_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_state_hash_word_ok_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_account_state_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_better_tip_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_head_advance_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_checkpoint_advance_present)");
@@ -3197,6 +3210,19 @@ fn main() {
     } else {
         absent_export_warn("dregg_mina_state_hash_word_ok");
     }
+    // ⚑ THE MINA ACCOUNT-OPENING gate (`Dregg2.Bridge.MinaAccountOpening`) — the first export in
+    // this tree that reads Mina STATE rather than Mina's chain: an account's ledger leaf,
+    // recomputed from its own fields and folded up a 35-level opening to the
+    // `staged_ledger_hash.non_snark.ledger_hash` DECODED out of the block's binprot bytes. Same
+    // `Dregg2/FFI.lean` layer-1 reasoning as every gate above — rooted only in `Dregg2.lean` it
+    // elaborates and emits no `:c` facet — and it rides the `import` line added there 2026-07-30.
+    let mina_account_state_ok_present =
+        archive_exports(&build_archive, "dregg_mina_account_state_ok");
+    if mina_account_state_ok_present {
+        println!("cargo:rustc-cfg=dregg_mina_account_state_ok_present");
+    } else {
+        absent_export_warn("dregg_mina_account_state_ok");
+    }
     // The SAMASIKA FORK-CHOICE pair (`Dregg2.Bridge.MinaForkChoiceGate`): the pairwise tip
     // comparison and the head roll that drives it. They ride the `import` line in `Dregg2/FFI.lean`
     // exactly as the four gates above do — a module rooted only in `Dregg2.lean` elaborates but
@@ -3483,6 +3509,14 @@ fn main() {
     }
     if mina_state_hash_word_ok_present {
         shim.define("DREGG_MINA_STATE_HASH_WORD_OK", None);
+    }
+    // ⚑ THE ACCOUNT-OPENING gate's `_str` bridge. Defining the cfg above without defining THIS is
+    // the exact hole `DREGG_MINA_WRAP_CHALLENGES` fell into below — the export enters the archive,
+    // the Rust `#[cfg(…_present)]` arm compiles, and the `extern "C"` symbol it calls is never
+    // defined, so the crate does not link at all (or, before the cfg existed, the gate was simply
+    // uncallable). Both halves land together or neither does.
+    if mina_account_state_ok_present {
+        shim.define("DREGG_MINA_ACCOUNT_STATE_OK", None);
     }
     // ⚑ THE TWO PER-BLOCK DERIVATION GATES. `DREGG_MINA_WRAP_CHALLENGES` was MISSING here while its
     // cfg probe above was already live — the export entered the archive and no `_str` bridge was

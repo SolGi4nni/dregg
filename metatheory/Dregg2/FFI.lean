@@ -115,6 +115,17 @@ import Dregg2.Bridge.MinaWrapChallenges
 -- measured the same +0 for the same reason). ⚠ VERIFY that claim on the import graph before
 -- quoting it; it is a prediction from the graph as read, not a measurement of this build.
 import Dregg2.Bridge.MinaWrapFtEval0
+-- `dregg_mina_account_state_ok` — ⚑ THE FIRST THING IN THIS TREE THAT READS MINA *STATE* RATHER
+-- THAN MINA'S CHAIN. Every other Mina export above decides about headers, proofs and forks; none of
+-- them can observe a balance, a nonce or a delegation. This one recomputes an account's ledger LEAF
+-- and folds it up a 35-level opening to `staged_ledger_hash.non_snark.ledger_hash` — a value it
+-- DECODES out of the block's own binprot bytes, never one a caller supplies. Same layer-1 reasoning
+-- as the seven above: rooted only in `Dregg2.lean` it elaborates and emits no `:c` facet, so the
+-- symbol never enters `libdregg_lean.a` and the Rust wrapper compiles its fail-closed arm. Added
+-- 2026-07-30; **+0 modules** to the closure claimed — it imports only `MinaStateHashDerive`, whose
+-- cone came in with `MinaStateHashWordGate`/`MinaForkChoiceGate`. ⚠ that is a read of the import
+-- graph, not a measurement of an archive build; check it before quoting it.
+import Dregg2.Bridge.MinaAccountOpening
 
 /-!
 # `Dregg2.FFI` — THE Lean⟷Rust boundary. One file. This one.
@@ -189,6 +200,16 @@ a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
   conjuncts — `sdk/src/tool_gateway.rs`, `starbridge-apps/tool-access-delegation/src/lib.rs`,
   `dreggnet-offerings/src/session.rs` — each of which called itself "the byte-faithful Rust mirror".
   Absent ⇒ every routed gateway REFUSES; there is no Rust arm left to fall back to.)
+* `Dregg2.Bridge.MinaAccountOpening` — `dregg_mina_account_state_ok` (a Mina ACCOUNT — public key,
+  balance, nonce, delegate, permissions, timing — recomputed as a ledger leaf and folded up a
+  35-level opening to the `staged_ledger_hash` DECODED from the block's own binprot bytes; no
+  caller names the root it opens against). ⚑ SCOPE, said at current resolution: no node path routes
+  through it yet. Its only callers today are this crate's `verified_mina_account_state_ok` and
+  `mina_account_opening_gate_decides_on_a_real_devnet_account_through_the_real_ffi`, so what it
+  buys right now is that the gate can be ENTERED and can go red — not that `MinaObserver` consults
+  it. Absent ⇒ `mina_account_state_ok_available()` is constantly false and every query is `Err`;
+  there is no Rust twin and there must not be one (a Rust `Account.to_input` is a mirror of
+  openmina's `account.rs` whose correctness would be a differential test).
 * `Dregg2.Games.MultiwayTugFFI` — `dregg_multiway_tug_rules` (multiway-tug's action/response
   legality, the escrow split, row control, the tallies and the adjudicated round winner — the
   decisions `dregg-multiway-tug/src/reference.rs` re-expressed in Rust, with `winner_of` already

@@ -601,6 +601,26 @@ extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaWrapChallenges(uint8_t b
 extern lean_object *dregg_mina_wrap_ft_eval0(lean_object *input);
 extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaWrapFtEval0(uint8_t builtin);
 #endif
+/* dregg_mina_account_state_ok — ⚑ MINA *STATE*, NOT MINA'S CHAIN
+ * (`Dregg2.Bridge.MinaAccountOpening.minaAccountOpeningGate`). Every Mina bridge above decides
+ * about headers, proofs and forks; none of them can observe a balance, a nonce or a delegation.
+ * This one recomputes an account's ledger LEAF from its own fields — `Account.to_input` in
+ * REVERSED declaration order, the `Mina*` (not `Coda*`) hash prefixes, `Untimed`'s
+ * `vesting_period = 1`, `txn_version` inside the controller run — and folds it up a 35-level
+ * level-indexed Poseidon opening to `staged_ledger_hash.non_snark.ledger_hash`, which it DECODES
+ * out of the block's own binprot bytes. No argument lets a caller name the root it opens against.
+ * Same `"1"`/`"0"`/`"ERR"` fail-closed contract as the gates above.
+ *
+ * ⚑ NEEDS ITS MODULE INITIALIZER, for exactly the reason `headerOk` does: the gate reads top-level
+ * constants out of initialized module data — the pinned `mainnet` `Constants` record, `dummyVkHash`
+ * and the derived `defaultZkappDigest`, plus the `fpParams` Poseidon parameters underneath them.
+ * Calling the export before `initialize_Dregg2_Dregg2_Bridge_MinaAccountOpening` dereferences
+ * uninitialized globals and the process takes SIGSEGV with no Rust panic, which looks exactly like
+ * the missing-archive SIGABRT. */
+#ifdef DREGG_MINA_ACCOUNT_STATE_OK
+extern lean_object *dregg_mina_account_state_ok(lean_object *input);
+extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaAccountOpening(uint8_t builtin);
+#endif
 /* dregg_mina_better_tip / dregg_mina_head_advance — the SAMASIKA FORK-CHOICE decision and the
  * ROLLING VERIFIED HEAD (`Dregg2.Bridge.MinaForkChoiceGate`, over the `select` rule of
  * `Dregg2.Bridge.MinaChainSelection`). The anchored-segment gate above deliberately decides no fork
@@ -763,6 +783,15 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(mwfres);
+#endif
+#ifdef DREGG_MINA_ACCOUNT_STATE_OK
+    lean_object *maores = initialize_Dregg2_Dregg2_Bridge_MinaAccountOpening(1);
+    if (!lean_io_result_is_ok(maores)) {
+        lean_io_result_show_error(maores);
+        lean_dec_ref(maores);
+        return 1;
+    }
+    lean_dec_ref(maores);
 #endif
 #if defined(DREGG_MINA_BETTER_TIP) || defined(DREGG_MINA_HEAD_ADVANCE)
     /* ONE initializer for BOTH fork-choice exports — they share a module, and it is what brings the
@@ -1466,6 +1495,36 @@ size_t dregg_mina_state_hash_word_ok_str(const char *in_utf8, char *out, size_t 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_state_hash_word_ok(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_ACCOUNT_STATE_OK
+/* dregg_mina_account_state_ok_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * MINA ACCOUNT-OPENING gate
+ * (`Dregg2.Bridge.MinaAccountOpening.dregg_mina_account_state_ok`). Input, 15 `;`-separated
+ * segments:
+ *   `"blk=<hex>;pk=<Nat>,<0|1>;tk=<Nat>;ts=<Nat>;bal=<Nat>;non=<Nat>;rch=<Nat>;dlg=<Nat>,<0|1>"`
+ *   `";vf=<Nat>;tm=<0|1>,<Nat>x5;perm=<Auth>|x7...<txnVersion>...;zk=[<Nat>];idx=<Nat>"`
+ *   `";sib=<Nat>,...x35;dir=<0|1>x35"`
+ * — the block's binprot `Protocol_state.Value.Stable.V2` PREFIX as lowercase hex (the rest of the
+ * block may follow and is not read), the account's every leaf field, and its 35-level Merkle
+ * opening LEAF FIRST. `zk=` empty is a CLAIM that the account has no zkApp, not a default.
+ * Output: `"1"` / `"0"` / `"ERR"` (fail-closed). The wire is ~7 KB (4 KB of block hex plus 35
+ * 255-bit decimals); the caller's growable output buffer already handles it. Same return contract
+ * as the bridges above. */
+size_t dregg_mina_account_state_ok_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_account_state_ok(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
