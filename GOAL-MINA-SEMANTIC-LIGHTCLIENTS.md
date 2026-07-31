@@ -1273,3 +1273,41 @@ previously tied the MMCS.
 The merge-tree and any future Pasta work targets `mina_terminal_tooth`'s shrink terminal, NOT a
 wholesale `DreggMinaConfig` root swap. The root swap is measured to cap the join at ~1 h and is
 retired as a route.
+
+---
+
+# ⚑ RUNNING THE REAL SHRINK — what it proves, stated BEFORE the number lands (so I don't overclaim it)
+
+`mina_terminal_tooth::real_apex_terminates_mina_native_and_verifies` on hbox (CPU-forced via the new
+`DREGG_GPU_DISABLE=1`, because the GPU path hit a real apex-scale dispatch bug — see below):
+
+**What it IS** (read from the test body):
+1. `prove_turn_chain_recursive(the_chain())` — folds a REAL 2-turn chain to an apex.
+2. host-verify the apex under `ir2_leaf_wrap_config` (BabyBear).
+3. `shrink_apex_to_outer(root, inner, DreggMinaConfig)` — proves the apex-verifier AIR under the
+   **Pasta-committed terminal config** (`create_mina_config`).
+4. verify the terminal (Rust `DreggMinaConfig` verifier) → **ACCEPT**; tamper one opened value → **REJECT**.
+
+**So this is the RUST-SIDE SUBSTRATE of the shrink route**: dregg mints the Pasta-native object
+Mina's hash needs, from a real fold, and a native verifier accepts it and rejects a tamper. This is
+the piece that was "proven, never run" — now running end to end. **It is the first real (non-re-mint)
+Pasta terminal from a genuine dregg fold.**
+
+**What it is NOT — say this every time**: it is NOT on-chain o1js Mina settlement. That needs the
+o1js verifier chain recompiled over the Pasta shape (the 199-instance / 12-uniform-program braid, vs
+the 131 BabyBear keys already compiled) plus a deploy + `advanceHead`. The `devnet-head-advance.ts`
+path consumes an o1js `DynamicProof`, a different object from this Rust terminal.
+
+**The honest ladder to on-chain Mina→dregg, remaining:**
+1. ✅ (running) Rust shrink substrate: dregg mints Pasta terminal, native verifier accepts/rejects.
+2. o1js chain over the Pasta shape compiled (driver exists + resumable; ran for BabyBear).
+3. o1js terminal proof produced (the 905→199 sequential prove, or the merge tree).
+4. deploy the Pasta-shape gate + `advanceHead` consuming it.
+
+# ⚑ A REAL GPU BUG, surfaced by DRIVING the run (not by asking about status)
+Apex-scale (2^16-row) prove on hbox's RX 6750 XT died: wgpu dispatch `[65536,31,1]`, dim0=rows=2^16
+> Vulkan's 65535 max. The DFT/LDE/commit kernel launches one workgroup per row with no dim-0 tiling —
+so the GPU path is dead at 2^16 on any real Vulkan device (never showed on the Mac). This is ALSO the
+wgpu-speedup work ember asked about (the GPU path must run at production scale for its ~1.4× to
+matter). A lane is tiling it properly with the existing bit-exact CPU-parity check. `DREGG_GPU_DISABLE`
+(`70acac585`) is the measurement lever, not the fix.
