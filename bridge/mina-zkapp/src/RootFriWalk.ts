@@ -158,11 +158,30 @@ export type WalkHash = {
    * and it is NOT a new hole: the deployed sliced chain's own entering state is
    * a witness too, one permutation earlier in the same argument.
    *
-   * What `carried` is NOT is a Pasta preamble. Writing one would mean writing
-   * `MultiField32Challenger` into the emitter with no object to be wrong
-   * against, and every downstream figure would then be a measurement of a
-   * protocol nobody runs. The choice here is between a stated residual and an
-   * invented oracle, and the residual is the one that is true.
+   * What `carried` is NOT is a Pasta preamble, and the reason has TWO parts —
+   * said separately because collapsing them into "there is no oracle"
+   * overstates one and understates the other.
+   *
+   *   1. THE EMITTER AND THE EXECUTOR DO NOT EXIST. `challengerRun` below
+   *      simulates `DuplexChallenger`'s duplex boundaries and `runSegments`'
+   *      `duplex` arm executes `provablePermBounded` — the BabyBear permutation
+   *      — inline. `MultiField32Challenger` packs eight lanes into a Pasta cell
+   *      to absorb, splits a cell into seven canonical limbs to squeeze, absorbs
+   *      a digest natively after flushing the pending base buffer, tags the
+   *      capacity with a length and pops its queue from the BACK. That is a
+   *      different state machine and nothing here emits or runs it. This part is
+   *      plain unbuilt work.
+   *   2. THE ROOT-SCALE SCRIPT HAS NO ORACLE. `PastaChallenger` itself DOES have
+   *      one — `npm run pasta-verify` replays a Pasta-hashed fixture's whole
+   *      transcript against p3's own recorded sponge states, lane by lane, after
+   *      every permutation. What has no oracle is the ROOT's batch-STARK
+   *      preamble AT PASTA: the observe/sample order over seven instances, the
+   *      25 public values, the 64 cumulative sums, the 2,630 opened values, and
+   *      the ζ and LogUp challenges it must reproduce. dregg mints no
+   *      Pasta-hashed ROOT, so that script would be checked against nothing.
+   *
+   * So a Pasta preamble is not unmodellable; it is unbuilt AND unchecked at the
+   * shape that matters. Until it is both, the honest chain carries.
    *
    * ⚠ WHAT A `carried` WALK THEREFORE DOES NOT SUPPORT: a preamble. `preamble`
    * and `carried` together is refused below, because the preamble IS the
@@ -1507,10 +1526,13 @@ export function segmentWalk(
   if (H.transcript === 'carried' && opts.preamble)
     throw new Error(
       `the walk shape '${H.name}' CARRIES its challenges (\`transcript: 'carried'\`) and was given a ` +
-        'batch-STARK preamble to derive them with. The preamble runs `challengerRun`, which models ' +
-        '`DuplexChallenger` alone; at this hash the transcript is a `MultiField32Challenger` and ' +
-        'there is no object to check a model of it against. Drop the preamble and read the residual ' +
-        'in `ROOT_CHALLENGE_STATUS`, or implement the challenger first.',
+        'batch-STARK preamble to derive them with. Two things are missing and they are different: ' +
+        '(1) `challengerRun` emits `DuplexChallenger` boundaries and `runSegments` executes the ' +
+        'BabyBear permutation inline, so this hash\'s `MultiField32Challenger` is UNBUILT in both ' +
+        'the emitter and the executor; (2) `PastaChallenger` itself is oracle-checked by ' +
+        '`npm run pasta-verify`, but the ROOT\'s preamble SCRIPT at this hash is checked against ' +
+        'nothing, because dregg mints no Pasta-hashed root. Drop the preamble and read the residual ' +
+        'in `ROOT_CHALLENGE_STATUS`, or build both halves first.',
     );
   const hybrid = !!opts.price && opts.price.spongeRate !== H.spongeRate;
   if (hybrid && opts.priceOnly !== true)
