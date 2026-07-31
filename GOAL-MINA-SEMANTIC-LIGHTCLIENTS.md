@@ -90,3 +90,18 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   ⚠ Residual named by that lane: **the spending key is carried, not bound** — a fresh key per spend
   yields a fresh nullifier for the same note, so a double-spend survives a fully repaired C4.
   **That is a SIN under this goal and belongs to the authorization lane.**
+- 22:35 **51 verdict surfaces censused; 13 could not go false for a hostile party; all 13 addressed**
+  (11 repaired, 2 disclosed). Worst: `portal/dist/portal.js` **counted verifications it never ran**
+  (a `setTimeout` setting `verified = true` over a cell list from the node under test — 100 fake
+  cells → "100/100 verified", zero proofs); `site/grain/play.html` printed *"the computer running
+  the agent couldn't have lied to you"* over two HTTP 200s from that computer; `cli`'s proof view
+  was **fail-open** (`unwrap_or(true)` → every IVC step `[ok]`). Converged shape: oracle from the
+  visitor, provenance printed on every verdict, and a served oracle gets a **third state** (amber
+  `≡`, never green `✓`). Control **executes** the badge against a simulated hostile host.
+  ⚑ I mis-told that lane four of its targets were already closed by siblings — **they were its own
+  work.** It checked rather than complying. My error, not its.
+- 22:35 **SEQUENCING DECISION**: `whole_history_proof.bin` is stale (`OodEvaluationMismatch`) because
+  the last-row flag day rotated the circuit. **NOT re-baking yet** — the VK spine rotates every
+  `RecursionVk`, so the order is **spine → re-bake once → 131 compile → 905 prove → deploy**.
+  Re-baking now burns a real proving run on a shape about to change.
+  ⚠ `circuit-prove` is red mid-cutover (expose-hook arity 2→3) — that IS the spine lane working.
