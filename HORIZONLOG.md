@@ -1,7 +1,8 @@
 # HORIZONLOG — the named-follow-up burn-down
 
 ## ⚑⚑⚑⚑ JULY 30 — A1's WOUND IS CLOSED AND ITS FOUR ASSERTIONS WERE DEAD, AT THE SAME INSTANT: an emitter moved a constraint's DOMAIN and every reader keyed on its KIND stopped seeing it
-**F2 · ⚠ THE NINE-LANE RE-EMIT LEFT `dregg-circuit` AT 161 REDS. LIVE, and it is mine.**
+**F2 · ⚠ THE NINE-LANE RE-EMIT LEFT `dregg-circuit` AT 161 REDS. CLOSED, and it is mine.**
+> ✅ **CLOSED 2026-07-31** — 161 → **16, all `pasta_*`** (a live Mina lane). ⚑ The cause was NOT the flag day: `trace_rotated.rs` carried `B_CHAIN_BASE = 180`, a hand-written literal `layout_generated.rs` never exported while Lean said 186, so `fill_block` wrote chain digests ON TOP of the iroot and state-commit limbs. A revert would have been wrong — `rotatedNumPreLimbs := 184` had landed 89 commits earlier.
 `e662ade32` ran the flag day: `NUM_PRE_LIMBS` 178 → 184, `B_SPAN` 239 → 247, all three registries and
 `layout_generated.rs` re-emitted, all three fingerprints rotated, `VK-REGEN-LOG` row written.
 
@@ -135,6 +136,7 @@ touches the 90-reference cutover that lane deliberately left undone.
 
 ## ⚑⚑⚑⚑ JULY 30 — the wave CLOCK was outside the committee: three outsider blocks reordered an honest total order, and a fourth fork mechanism fell out of measuring it
 **F1 · ⚑ THE NINE-LANE RE-EMIT IS STAGED AND BLOCKED ON TWO FOREIGN FILES. READY.**
+> ✅ **CLOSED 2026-07-31** — the emit RAN (`e662ade32`): `NUM_PRE_LIMBS` 178 → 184, three registries re-emitted, three fingerprints rotated, `VK-REGEN-LOG` row written at `2026-07-31T07:03:54Z`.
 `5326fbe7f` landed the Lean: `fieldToLanes9_injective` with a TOTAL decoder and a machine-checked left
 inverse — injectivity as a THEOREM, not a hash bound — plus `nine_lanes_is_the_minimum`
 (`P^8 < 2^256 ≤ P^9`) and the 184 geometry (`rotated184_complete`, slot `j`'s ninth lane at column
@@ -1466,6 +1468,7 @@ accidental encoding argument rather than on the tag. ⚑ **The adjacent one is w
 `Mint{amount: 10^9}` produce an identical mixed-atomic turn hash. Used at `:1498`, `:1630`.
 
 **A5 · THE CONSERVATION FALLBACK READS A DELTA OF `p` AS ZERO IMBALANCE, ON THE TARGETS THAT GET
+> ✅ **CLOSED 2026-07-30** (`49db904dc`) — `net_delta_mag_felt` REFUSES `|δ| ≥ p` rather than wrapping (deliberately not widened to u64: the destination is one felt). A ±p cross-asset forge had COMMITTED — 2,013,265,921 units of X minted from a destroyed 2,013,265,921 of Y.
 PROVEN. LIVE.** `turn/src/executor/atomic.rs:542`:
 `net_delta_mag: BabyBear::new_canonical(delta.unsigned_abs() as u32)` — `u64 → u32` drops the high
 half, then `% BABYBEAR_P`. The enclosing fn carries
@@ -1599,6 +1602,7 @@ over an eight-key band, and the divergence is a `def`, not only a stale comment.
 ### B. THE VERIFIED THING IS NOT THE THING THAT RUNS
 
 **B1 · `DREGG_LEAN_SHADOW` IS SET BY NOTHING BUT ONE TEST, SO THE VERIFIED EXECUTOR DECIDES NOTHING IN
+> ✅ **CLOSED 2026-07-30** — the dark path DELETED and its strength TRANSPLANTED. `DREGG_LEAN_SHADOW` had zero setters AND `let _ = maybe_shadow_turn(...)` at the one call site. ⚑ The `ShadowAgreement` tooth turned out STRICTLY STRONGER than the armed seam, because `rust_agreed` compared an anchor whose only whole-ledger component has EXISTENCE-BIT leaves — two post-states differing in a recipient's balance were byte-identical.
 > ⚑ **REWRITTEN 2026-07-28 — THE SWEEP STANDS, THE CONCLUSION IS REFUTED.** `DREGG_LEAN_SHADOW` really is set by nothing (verified four ways incl. a per-file-class inventory over 26 workflows, every Dockerfile/compose/k8s file, 7 systemd units, and every Rust `env::set_var`). But it is the **superseded** seam. The verified executor decides on `DREGG_LEAN_PRODUCER` — **opt-OUT, default ON** — which installs the verified post-state AND verdict unconditionally in BOTH directions, strictly stronger than the shadow's one-way veto.
 >
 > **The real finding is worse than the one recorded**: the dark gate was BROKEN. Measured — a veto restored the ledger but not the executor-owned receipt head, so ONE VETOED TURN PERMANENTLY BRICKED THE AGENT (`ReceiptChainMismatch` forever after). And arming it alongside the default-on producer would have LAUNDERED the producer's central finding, logging `Rust reference AGREES` for a genuine Rust-commits-what-Lean-rejects. Deleted; the tooth moved onto the armed seam.
@@ -1611,6 +1615,7 @@ or deployment file. `turn/src/executor/execute.rs:339` says the shadow *"only ru
 `a0fcd53ff` — **eleven of thirteen executor joints are trusted Rust.**
 
 **B2 · THE ONE PLACE ALL 36 EFFECTS ANSWER "DOES THIS CONSERVE?" HAS ZERO PRODUCTION CALLERS.
+> ✅ **CLOSED 2026-07-30** — `Effect::linearity()` has zero callers because it does not exist (deleted 07-28). ⚠ But its twin had been RE-HOSTED into `dregg_mcp.rs` and was WRONG at HEAD, serving `Burn → Annihilative` against the proved Lean coloring — over MCP, to third parties. Deleted, with the tool description's false 'COMPLETE … 31 … never drifts' (31 entries, 36-variant enum).
 ⚑ THE DEAD RUST TWIN IS DELETED 2026-07-28 — THE REAL RESIDUAL IS THE ONE UNDERNEATH IT, AND IT IS
 STILL LIVE.**
 
@@ -1941,6 +1946,7 @@ line: `if "ignore" in attrs` → `if attrs & {"ignore", "no_run"}`, plus 29 base
 currently exits 0 with 8 baselined exemptions, none of them a `no_run` reason.
 
 **C4 · `check-production-callers` STILL MERGES CALLERS BY NAME, AND IT IS HIDING TWO GUARDS RIGHT
+> ✅ **CLOSED 2026-07-30, as a HARDENING with a measured NULL result** — a name's callers no longer clear every definition of that name. ⚠ Measured identical row sets before and after: no name in the tree today has multiple definitions AND production callers, so the entry's claim that it 'is HIDING TWO GUARDS RIGHT NOW' does NOT reproduce.
 NOW. LIVE.** `460727e9f` made the ratchet's *definition* key `(kind, name, definition_file)`; the
 **caller counts were not moved with it** — `count_callers` (`scripts/check-production-callers.py:280`)
 builds `counts = {n: [0, 0] for n in names}`, one bucket per NAME, and `classify` (`:347`) does
