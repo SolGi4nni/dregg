@@ -62,6 +62,20 @@ use dregg_turn::turn::{Turn, TurnReceipt};
 /// covered by `close_and_reopen_restores_the_exact_image`).
 pub use dregg_persist::canonical_ledger_root;
 
+/// How many consecutive durable commits may ride the incremental leaf cache
+/// before the next one ALSO re-derives the root from the whole ledger and
+/// refuses the commit if the two disagree ([`WorldPersist::incremental_ledger_root`]).
+///
+/// This is the price of the incremental root and it is deliberately not zero and
+/// not infinite. The cache is exact only if `touched` is a COMPLETE change-set;
+/// if a cell were ever mutated outside it, the durable overlay would miss that
+/// cell AND the cached leaf would keep its pre-turn value — the recorded root and
+/// the reconstruction would then be wrong in the SAME direction and recovery
+/// would converge on a silently-truncated image. Today's full recompute makes
+/// that case diverge loudly at reopen; this audit keeps it loud, and moves the
+/// alarm from "the next time the owner reopens" to "within 128 turns".
+const LEAF_CACHE_AUDIT_EVERY: u64 = 128;
+
 /// The METADATA_BYTES config-key prefix for a durably-persisted [`DurableTurn`]
 /// (the input `Turn` + the wall-clock it committed under), keyed by its commit
 /// ordinal (zero-padded so lexicographic == numeric order).
@@ -170,6 +184,67 @@ pub struct WorldPersist {
     /// of truth (its torn-state guard re-checks it); this mirrors it for O(1)
     /// dual-write without a read-back.
     cursor: u64,
+    /// The INCREMENTAL canonical-root state (see [`LeafCache`]): `None` until the
+    /// first durable commit primes it from the whole ledger, and dropped back to
+    /// `None` whenever something changes the ledger outside a dual-write's
+    /// change-set (a genesis mirror) or the cached cardinality stops matching.
+    ///
+    /// Behind a `Mutex` because [`Self::record_genesis`] takes `&self` (its
+    /// caller, `World::install_genesis`, holds the store by shared reference) and
+    /// must be able to invalidate. The lock is uncontended — a `World` owns its
+    /// store exclusively — and costs ~20ns against the ~10ms redb commit it sits
+    /// in front of; it also keeps `WorldPersist` `Send + Sync`, which a `RefCell`
+    /// would silently take away from every downstream holder.
+    leaves: std::sync::Mutex<Option<LeafCache>>,
+}
+
+/// The incremental canonical-root state: the SORTED leaf set
+/// (`cell_id -> BLAKE3(postcard(cell))`) that `canonical_ledger_root` folds.
+///
+/// `dregg_persist::canonical_ledger_root` is O(N) in the WHOLE ledger — it
+/// postcards every cell, BLAKE3s each, sorts by id and folds — and `dual_write`
+/// called it on every durable commit, so one `SetField` turn on a 4096-cell image
+/// paid for 4096 cells (measured: 42.5 ms of a 53 ms durable commit, debug
+/// build). A turn changes only its touched set, so the leaves of every untouched
+/// cell are already known: keep them, re-derive only what the turn touched, and
+/// fold.
+///
+/// ⚠ BYTE-STABILITY IS THE WHOLE CONTRACT. The incremental root must equal the
+/// full recompute for the same ledger ALWAYS — recovery compares the recorded
+/// root against a from-scratch reconstruction and refuses the image on a
+/// mismatch. Two things enforce it structurally rather than by care:
+///
+/// * the leaf is [`dregg_persist::canonical_ledger_leaf`] and the fold is
+///   [`dregg_persist::canonical_ledger_root_from_sorted`] — the SAME functions
+///   `canonical_ledger_root` itself is built from, not replicas of them;
+/// * a `BTreeMap` keyed by the raw id iterates in exactly the order
+///   `canonical_ledger_leaves`' `sort_by_key` produces (both are `[u8; 32]`'s
+///   lexicographic `Ord`), so "sorted" is a type invariant, not a step that can
+///   be forgotten.
+struct LeafCache {
+    /// `cell_id -> BLAKE3(postcard(cell))`, in canonical (id-sorted) order.
+    leaves: std::collections::BTreeMap<[u8; 32], [u8; 32]>,
+    /// Durable commits served from this cache since the last full audit.
+    commits_since_audit: u64,
+}
+
+impl LeafCache {
+    /// Prime from the whole ledger — one full O(N) pass, identical to what
+    /// `canonical_ledger_root` does internally.
+    fn primed(ledger: &Ledger) -> Self {
+        LeafCache {
+            leaves: ledger
+                .iter()
+                .map(|(id, cell)| (*id.as_bytes(), dregg_persist::canonical_ledger_leaf(cell)))
+                .collect(),
+            commits_since_audit: 0,
+        }
+    }
+
+    /// The canonical root of the cached leaf set.
+    fn root(&self) -> [u8; 32] {
+        dregg_persist::canonical_ledger_root_from_sorted(self.leaves.len(), self.leaves.iter())
+    }
 }
 
 /// One durably-recorded committed turn: the replayable input `Turn` **plus the
@@ -226,7 +301,113 @@ impl WorldPersist {
     pub fn open(path: &Path) -> Result<Self, OpenError> {
         let store = PersistentStore::open(path)?;
         let cursor = store.commit_cursor()?;
-        Ok(WorldPersist { store, cursor })
+        Ok(WorldPersist {
+            store,
+            cursor,
+            // Unprimed: the first durable commit primes it from the ledger the
+            // World rebuilt (`World::open` attaches the store only AFTER the
+            // genesis + turn replay, so the first thing this cache ever sees is
+            // the fully recovered image).
+            leaves: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// THE INCREMENTAL CANONICAL ROOT — the durable root of `ledger` after a turn
+    /// whose change-set is `touched`, derived by re-hashing ONLY the touched cells
+    /// over the cached leaf set (see [`LeafCache`]).
+    ///
+    /// Equal to `canonical_ledger_root(ledger)` for the same ledger, always. Three
+    /// things make that true rather than hoped-for:
+    ///
+    /// 1. **Every changed cell is in `touched`.** `World::commit_turn` passes the
+    ///    executor journal's write-set unioned with the turn's syntactic touched
+    ///    set, which is the same completeness the durable OVERLAY already depends
+    ///    on: a cell missing from it makes the recorded post-state incomplete
+    ///    whether or not the root is incremental.
+    /// 2. **Cardinality reconciliation, every commit.** After applying the
+    ///    change-set the cache must hold exactly as many leaves as the ledger has
+    ///    cells; if it does not, a create or a remove happened outside `touched`,
+    ///    the cache is DROPPED and this commit pays a full recompute — so the
+    ///    recorded root is the true one and a stale overlay still diverges loudly
+    ///    at reopen, exactly as before.
+    /// 3. **A full audit every [`LEAF_CACHE_AUDIT_EVERY`] commits**, which
+    ///    re-derives from the whole ledger and FAILS THE COMMIT (fail-closed,
+    ///    the `dual_write` contract) if the two roots disagree.
+    ///
+    /// A cell whose CONTENT changed without appearing in `touched` is the one case
+    /// (2) cannot see, and it is precisely what (3) is for: 128 turns, not "the
+    /// next time the owner reopens".
+    fn incremental_ledger_root(
+        &self,
+        ledger: &Ledger,
+        touched: &[dregg_cell::CellId],
+    ) -> Result<[u8; 32], StoreError> {
+        let mut slot = self
+            .leaves
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Apply this turn's change-set: a touched cell that still exists gets its
+        // leaf re-derived, one that is gone (the MakeSovereign tombstone) is
+        // dropped from the leaf set — the same split `dual_write` makes below.
+        let mut structurally_stale = false;
+        if let Some(cache) = slot.as_mut() {
+            for id in touched {
+                match ledger.get(id) {
+                    Some(cell) => {
+                        cache
+                            .leaves
+                            .insert(id.0, dregg_persist::canonical_ledger_leaf(cell));
+                    }
+                    None => {
+                        cache.leaves.remove(&id.0);
+                    }
+                }
+            }
+            structurally_stale = cache.leaves.len() != ledger.len();
+        }
+        if structurally_stale {
+            *slot = None;
+        }
+
+        if slot.is_none() {
+            *slot = Some(LeafCache::primed(ledger));
+            return Ok(slot.as_ref().expect("just primed").root());
+        }
+
+        let cache = slot.as_mut().expect("primed above");
+        let root = cache.root();
+        cache.commits_since_audit += 1;
+        if cache.commits_since_audit >= LEAF_CACHE_AUDIT_EVERY {
+            cache.commits_since_audit = 0;
+            let recomputed = canonical_ledger_root(ledger);
+            if root != recomputed {
+                // The cache no longer describes the ledger: some cell changed
+                // outside every dual-write's change-set. Refuse the commit (the
+                // World unwinds and degrades to ephemeral, loudly) rather than
+                // durably record a root the live image does not have.
+                *slot = None;
+                return Err(StoreError::Integrity(format!(
+                    "incremental ledger root {} != full recompute {} at the {}-commit audit — a \
+                     cell changed outside every durable change-set; refusing to record a root the \
+                     live image does not have",
+                    hex16(&root),
+                    hex16(&recomputed),
+                    LEAF_CACHE_AUDIT_EVERY,
+                )));
+            }
+        }
+        Ok(root)
+    }
+
+    /// Drop the incremental leaf cache — the next durable commit re-primes it from
+    /// the whole ledger. Called wherever the ledger changes OUTSIDE a dual-write's
+    /// change-set (the genesis mirror), so a stale leaf can never reach a root.
+    fn invalidate_leaf_cache(&self) {
+        *self
+            .leaves
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 
     /// The durable commit cursor mirror.
@@ -240,6 +421,12 @@ impl WorldPersist {
     /// also appends the id to the install-order list (deterministic recovery
     /// order); a re-record of an existing id just overwrites its snapshot.
     pub fn record_genesis(&self, cell: &Cell) -> Result<(), StoreError> {
+        // A genesis install / in-place genesis mutation changes the live ledger
+        // OUTSIDE any dual-write change-set, so the incremental leaf set no longer
+        // describes it. Drop it; the next durable commit re-primes from the whole
+        // ledger. (Genesis is setup-time and rare — the full recompute it costs is
+        // paid once per genesis batch, not per turn.)
+        self.invalidate_leaf_cache();
         let id = cell.id().0;
         let bytes =
             postcard::to_stdvec(cell).map_err(|e| StoreError::Serialization(e.to_string()))?;
@@ -322,6 +509,12 @@ impl WorldPersist {
             .filter(|id| ledger.get(id).is_none())
             .map(|id| id.0)
             .collect();
+        // THE POST-STATE ROOT, O(change) — re-hash only the touched cells over the
+        // cached leaf set instead of postcarding + BLAKE3ing every cell in the
+        // ledger and sorting them (see `incremental_ledger_root` / `LeafCache`).
+        // Equal to `canonical_ledger_root(ledger)`, always; on any doubt the cache
+        // is dropped and this IS `canonical_ledger_root(ledger)`.
+        let ledger_root = self.incremental_ledger_root(ledger, touched)?;
         let record = CommitRecord {
             ordinal: 0, // assigned by the store at the cursor
             height,
@@ -330,7 +523,7 @@ impl WorldPersist {
             turn_hash: receipt.turn_hash,
             creator: *receipt.agent.as_bytes(),
             receipt_hash: receipt.receipt_hash(),
-            ledger_root: canonical_ledger_root(ledger),
+            ledger_root,
             touched_cells,
             removed,
         };
@@ -720,6 +913,437 @@ mod tests {
             );
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    // =======================================================================
+    // LANE C4 — the incremental durable root. Gate (b): COST.
+    // =======================================================================
+
+    /// A deterministic open cell for index `i` (wider than the 256 distinct cells
+    /// the one-byte `make_open_cell` seed can address).
+    fn wide_cell(i: usize, balance: i64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+        pk[31] = 0xa5;
+        let mut cell = Cell::with_balance(pk, [0u8; 32], balance);
+        cell.permissions = crate::world::open_permissions();
+        cell
+    }
+
+    /// A ledger of `n` deterministic cells, and their ids.
+    fn wide_ledger(n: usize) -> (Ledger, Vec<CellId>) {
+        let mut ledger = Ledger::new();
+        let mut ids = Vec::with_capacity(n);
+        for i in 0..n {
+            let cell = wide_cell(i, 1_000);
+            let id = cell.id();
+            ledger.insert_cell(cell).expect("fresh id");
+            ids.push(id);
+        }
+        (ledger, ids)
+    }
+
+    /// Mean nanoseconds per `dual_write` of a ONE-CELL change against an
+    /// `n`-cell ledger — the shipping durable cost of one `SetField` turn.
+    /// Returns `(mean_dual_write_ns, mean_root_only_ns)`.
+    fn durable_setfield_cost(n: usize, iters: usize) -> (u128, u128) {
+        use std::time::Instant;
+        let path = scratch_path();
+        let mut p = WorldPersist::open(&path).expect("fresh store");
+        let (mut ledger, ids) = wide_ledger(n);
+        let target = ids[n / 2];
+        let turn = bare_turn(ids[0], 0, vec![transfer(ids[0], target, 1)]);
+        let mut receipt = TurnReceipt {
+            agent: ids[0],
+            timestamp: TS,
+            ..Default::default()
+        };
+
+        // Warm up (page-in redb, prime whatever caches exist).
+        for k in 0..4u64 {
+            if let Some(c) = ledger.get_mut(&target) {
+                c.state.set_balance(2_000 + k as i64);
+            }
+            receipt.turn_hash = [k as u8; 32];
+            p.dual_write(k + 1, &ledger, &[target], &receipt, &turn)
+                .expect("warmup dual_write");
+        }
+
+        let base = p.cursor();
+        let start = Instant::now();
+        for k in 0..iters as u64 {
+            if let Some(c) = ledger.get_mut(&target) {
+                c.state.set_balance(10_000 + k as i64);
+            }
+            receipt.turn_hash = (k + 1_000).to_le_bytes().repeat(4).try_into().unwrap();
+            p.dual_write(base + k + 1, &ledger, &[target], &receipt, &turn)
+                .expect("timed dual_write");
+        }
+        let dual = start.elapsed().as_nanos() / iters as u128;
+
+        let start = Instant::now();
+        for k in 0..iters {
+            if let Some(c) = ledger.get_mut(&target) {
+                c.state.set_balance(50_000 + k as i64);
+            }
+            std::hint::black_box(canonical_ledger_root(&ledger));
+        }
+        let root_only = start.elapsed().as_nanos() / iters as u128;
+
+        drop(p);
+        let _ = std::fs::remove_file(&path);
+        (dual, root_only)
+    }
+
+    /// A splitmix64 step — a deterministic, seeded pseudo-random walk (no dev-dep).
+    fn splitmix(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// ⚑ GATE (a) — EQUIVALENCE, property-style. The incremental root MUST equal
+    /// `canonical_ledger_root` for the same ledger, at EVERY step of a seeded
+    /// random walk that mutates, CREATES and REMOVES cells (the removal is the
+    /// `MakeSovereign` tombstone shape: the cell is simply gone from the hosted
+    /// set and its leaf must leave the fold), including multi-cell change-sets,
+    /// empty change-sets, and change-sets naming a cell that is not there.
+    ///
+    /// This is the correctness half of the incremental root and it is the one that
+    /// matters: recovery compares the recorded root against a from-scratch
+    /// reconstruction, so a single step where the two disagree is an image that
+    /// refuses to open (or, worse, one that opens on a truncated ledger).
+    ///
+    /// The walk is long enough (600 steps) that the
+    /// `LEAF_CACHE_AUDIT_EVERY`-commit full audit fires four times inside it.
+    #[test]
+    fn the_incremental_root_equals_the_full_recompute_over_a_random_walk() {
+        let path = scratch_path();
+        let p = WorldPersist::open(&path).expect("fresh store");
+        let (mut ledger, mut ids) = wide_ledger(24);
+        let mut next_pk = 24usize;
+        let mut rng = 0x0DDB_1A5E_5BAD_5EEDu64;
+
+        const STEPS: usize = 600;
+        assert!(
+            STEPS as u64 > 4 * LEAF_CACHE_AUDIT_EVERY,
+            "the walk must be long enough for the full audit to fire repeatedly"
+        );
+        let mut creations = 0usize;
+        let mut removals = 0usize;
+
+        for step in 0..STEPS {
+            let mut touched: Vec<CellId> = Vec::new();
+            match splitmix(&mut rng) % 8 {
+                // MUTATE 1..=3 existing cells (the common turn).
+                0 | 1 | 2 => {
+                    let k = 1 + (splitmix(&mut rng) % 3) as usize;
+                    for _ in 0..k {
+                        let id = ids[(splitmix(&mut rng) % ids.len() as u64) as usize];
+                        if let Some(c) = ledger.get_mut(&id) {
+                            c.state.set_balance(step as i64 * 7 + 11);
+                        }
+                        touched.push(id);
+                    }
+                }
+                // CREATE a cell (the newborn a create-cell turn adds).
+                3 => {
+                    let cell = wide_cell(next_pk, 0);
+                    next_pk += 1;
+                    let id = cell.id();
+                    ledger.insert_cell(cell).expect("fresh id");
+                    ids.push(id);
+                    touched.push(id);
+                    creations += 1;
+                }
+                // REMOVE a cell (the MakeSovereign tombstone: gone from the
+                // hosted set, so its leaf must leave the fold).
+                4 => {
+                    if ids.len() > 2 {
+                        let at = (splitmix(&mut rng) % ids.len() as u64) as usize;
+                        let id = ids.swap_remove(at);
+                        ledger.remove(&id).expect("id was in the ledger");
+                        touched.push(id);
+                        removals += 1;
+                    }
+                }
+                // A MIXED turn: create + mutate + remove in ONE change-set.
+                5 => {
+                    let cell = wide_cell(next_pk, 0);
+                    next_pk += 1;
+                    let born = cell.id();
+                    ledger.insert_cell(cell).expect("fresh id");
+                    ids.push(born);
+                    touched.push(born);
+                    creations += 1;
+
+                    let id = ids[(splitmix(&mut rng) % ids.len() as u64) as usize];
+                    if let Some(c) = ledger.get_mut(&id) {
+                        c.program = dregg_cell::CellProgram::Predicate(vec![]);
+                    }
+                    touched.push(id);
+
+                    if ids.len() > 2 {
+                        let at = (splitmix(&mut rng) % ids.len() as u64) as usize;
+                        let gone = ids.swap_remove(at);
+                        if ledger.remove(&gone).is_some() {
+                            touched.push(gone);
+                            removals += 1;
+                        }
+                    }
+                }
+                // A turn that changed NOTHING (empty change-set).
+                6 => {}
+                // A change-set naming a cell that is not (and never was) in the
+                // ledger — the false-positive tombstone the write-set union can
+                // produce. It must be a no-op, not a corruption.
+                _ => {
+                    let ghost = wide_cell(900_000 + step, 0).id();
+                    touched.push(ghost);
+                }
+            }
+
+            let incremental = p
+                .incremental_ledger_root(&ledger, &touched)
+                .expect("the incremental root must not refuse a consistent ledger");
+            assert_eq!(
+                incremental,
+                canonical_ledger_root(&ledger),
+                "step {step}: incremental root diverged from the full recompute \
+                 (ledger has {} cells, change-set {:?})",
+                ledger.len(),
+                touched.len(),
+            );
+        }
+        assert!(
+            creations >= 50 && removals >= 50,
+            "the walk must actually exercise creation ({creations}) and removal ({removals})"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// NON-VACUITY for gate (a): the incremental root is only trustworthy because
+    /// a CORRUPT cached leaf is CAUGHT. Poke one leaf in the cache (the exact
+    /// failure a stale/incomplete change-set would produce) and the next commit's
+    /// full audit must REFUSE — `dual_write` returns `Err`, which `World` turns
+    /// into a rejected turn and a loud degrade-to-ephemeral, rather than durably
+    /// recording a root the live image does not have.
+    #[test]
+    fn a_corrupted_cached_leaf_is_refused_by_the_full_audit() {
+        let path = scratch_path();
+        let p = WorldPersist::open(&path).expect("fresh store");
+        let (ledger, ids) = wide_ledger(8);
+
+        // Prime, then poison ONE leaf.
+        let honest = p
+            .incremental_ledger_root(&ledger, &[])
+            .expect("priming pass");
+        assert_eq!(honest, canonical_ledger_root(&ledger));
+        {
+            let mut slot = p.leaves.lock().unwrap();
+            let cache = slot.as_mut().expect("primed");
+            let leaf = cache.leaves.get_mut(&ids[3].0).expect("cell 3 is cached");
+            leaf[0] ^= 0xff;
+            // Put the audit one commit away so the next call re-derives.
+            cache.commits_since_audit = LEAF_CACHE_AUDIT_EVERY - 1;
+        }
+
+        // The very next commit runs the audit and must refuse.
+        let refused = p.incremental_ledger_root(&ledger, &[]);
+        let outcome = match &refused {
+            Ok(r) => format!(
+                "Ok({}) — recorded a root the ledger does not have",
+                hex16(r)
+            ),
+            Err(e) => format!("Err({e})"),
+        };
+        assert!(
+            matches!(refused, Err(StoreError::Integrity(_))),
+            "a corrupted cached leaf must be REFUSED by the audit, got {outcome}"
+        );
+        // ... and the refusal DROPPED the cache, so the next commit re-primes from
+        // the whole ledger and is honest again (the owner is not stranded).
+        assert_eq!(
+            p.incremental_ledger_root(&ledger, &[])
+                .expect("re-primes after the refusal"),
+            canonical_ledger_root(&ledger),
+            "the commit after a refused audit re-derives from the whole ledger"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// GATE (a), through REAL TURNS: a durable session whose sequence includes a
+    /// cell CREATION and a `MakeSovereign` REMOVAL closes and REOPENS. The reopen
+    /// is the equivalence check end-to-end — `World::open` reconstructs the ledger
+    /// from checkpoint ⊕ overlay, recomputes `canonical_ledger_root` from scratch
+    /// and refuses the image unless it equals the root the incremental path
+    /// durably recorded, for the LAST commit, with every earlier one having had to
+    /// produce the overlay that gets there.
+    #[test]
+    fn a_create_and_a_make_sovereign_ride_the_incremental_root_through_a_reopen() {
+        use dregg_turn::Effect;
+        let path = scratch_path();
+        let (leaver, user, born, root_before, cells_before) = {
+            let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), TS)
+                .expect("fresh open of an empty store");
+            let treasury = w.genesis_cell(0x11, 1_000_000);
+            let user = w.genesis_cell(0x33, 5_000);
+            let leaver = w.genesis_cell(0x55, 0);
+
+            // 1. an ordinary transfer (primes the leaf cache on the first commit)
+            let t = w.turn(treasury, vec![transfer(treasury, user, 100)]);
+            assert!(w.commit_turn(t).is_committed(), "transfer commits");
+
+            // 2. a CREATE — the newborn's leaf must ENTER the cached leaf set
+            let before: std::collections::HashSet<CellId> =
+                w.ledger().iter().map(|(id, _)| *id).collect();
+            let t = w.turn(treasury, vec![crate::world::create_cell(0x77)]);
+            assert!(w.commit_turn(t).is_committed(), "create-cell commits");
+            let born = w
+                .ledger()
+                .iter()
+                .map(|(id, _)| *id)
+                .find(|id| !before.contains(id))
+                .expect("a cell was born");
+
+            // 3. a second transfer, so the newborn's leaf is carried forward
+            let t = w.turn(treasury, vec![transfer(treasury, user, 250)]);
+            assert!(w.commit_turn(t).is_committed(), "second transfer commits");
+
+            // 4. MAKE SOVEREIGN — `leaver` leaves the hosted set, so its leaf must
+            //    LEAVE the cached leaf set (the tombstone path). The effect
+            //    requires the cell to be its own action target, so it acts as its
+            //    own agent.
+            let t = w.turn(leaver, vec![Effect::MakeSovereign { cell: leaver }]);
+            assert!(
+                w.commit_turn(t).is_committed(),
+                "the MakeSovereign turn must commit"
+            );
+            assert!(
+                !w.ledger().contains(&leaver),
+                "MakeSovereign dropped the cell from the hosted set"
+            );
+
+            // 5. one more ordinary turn AFTER the removal — the cached leaf set
+            //    must still fold to the truth with a cell missing from it.
+            let t = w.turn(treasury, vec![transfer(treasury, user, 50)]);
+            assert!(
+                w.commit_turn(t).is_committed(),
+                "post-removal transfer commits"
+            );
+
+            let root = canonical_ledger_root(w.ledger());
+            let cells = w.cell_count();
+            w.checkpoint_now();
+            (leaver, user, born, root, cells)
+        };
+
+        // EVERY RECORDED ROOT, not just the head. Reopen only checks the LAST
+        // commit's root against its reconstruction, so a root that was wrong at
+        // ordinal k and healed by ordinal k+1 would slip through it. Walk the
+        // durable log from the genesis mirror and re-derive the canonical root
+        // from scratch after each record: every one must equal the root the
+        // incremental path wrote.
+        {
+            let p = WorldPersist::open(&path).expect("reopen the store for the audit walk");
+            let mut ledger = Ledger::new();
+            for cell in p.load_genesis_cells().expect("genesis mirror") {
+                upsert_cell(&mut ledger, cell);
+            }
+            let cursor = p.cursor();
+            assert_eq!(cursor, 5, "five turns committed");
+            for ordinal in 0..cursor {
+                let record = p
+                    .store
+                    .commit_record_at(ordinal)
+                    .expect("store read")
+                    .expect("record present");
+                for cell in record.touched_cells {
+                    upsert_cell(&mut ledger, cell);
+                }
+                for id in &record.removed {
+                    let _ = ledger.remove(&CellId(*id));
+                }
+                assert_eq!(
+                    canonical_ledger_root(&ledger),
+                    record.ledger_root,
+                    "commit {ordinal}: the durably recorded (incremental) root must equal the \
+                     from-scratch reconstruction of the ledger as of that turn"
+                );
+            }
+            // `p` dropped → the redb single-writer lock is released for the reopen.
+        }
+
+        // The durable image REOPENS: the from-scratch reconstruction equals the
+        // root the incremental path recorded (else `Divergent`).
+        let reopened = World::open_with_timestamp(&path, ComputronCosts::zero(), TS)
+            .expect("reopen must converge — the incremental root recorded the true root");
+        assert_eq!(
+            canonical_ledger_root(reopened.ledger()),
+            root_before,
+            "the recovered root equals the incrementally-recorded one"
+        );
+        assert_eq!(reopened.cell_count(), cells_before);
+        assert!(
+            reopened.ledger().contains(&born),
+            "the created cell survived"
+        );
+        assert!(
+            !reopened.ledger().contains(&leaver),
+            "the made-sovereign cell stayed gone (the tombstone rode the overlay)"
+        );
+        assert_eq!(
+            reopened.ledger().get(&user).unwrap().state.balance(),
+            5_000 + 100 + 250 + 50
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// ⚑ GATE (b) — COST. A durable one-`SetField` turn must stay within a small
+    /// constant factor of its own small-N cost as the ledger grows. Before the
+    /// incremental root this was LINEAR: `dual_write` called
+    /// `canonical_ledger_root`, which postcards EVERY WHOLE CELL, BLAKE3s each,
+    /// and sorts — so a 64× bigger ledger cost ~64× more per turn.
+    #[test]
+    fn a_durable_setfield_commit_does_not_scale_with_the_ledger() {
+        const SMALL: usize = 64;
+        const LARGE: usize = 4_096;
+        // Take the BEST of three passes at each size: a timing gate on a shared
+        // build box must measure the floor, not a scheduler hiccup.
+        let mut small = (u128::MAX, u128::MAX);
+        let mut large = (u128::MAX, u128::MAX);
+        for _ in 0..3 {
+            let s = durable_setfield_cost(SMALL, 200);
+            let l = durable_setfield_cost(LARGE, 200);
+            small = (small.0.min(s.0), small.1.min(s.1));
+            large = (large.0.min(l.0), large.1.min(l.1));
+        }
+        let growth = large.0 as f64 / small.0 as f64;
+        let root_growth = large.1 as f64 / small.1 as f64;
+        println!(
+            "durable one-SetField commit: N={SMALL} {}ns  N={LARGE} {}ns  growth {growth:.2}x \
+             (ledger is {}x bigger)\n  canonical_ledger_root alone: N={SMALL} {}ns  N={LARGE} \
+             {}ns  growth {root_growth:.2}x",
+            small.0,
+            large.0,
+            LARGE / SMALL,
+            small.1,
+            large.1,
+        );
+        // The ledger grows 64x. A durable turn is allowed a 4x envelope over that
+        // span (redb's own per-commit work is not perfectly flat either); LINEAR
+        // would be ~64x.
+        assert!(
+            growth < 4.0,
+            "a durable one-SetField turn must not pay for the whole ledger: {}x growth from \
+             N={SMALL} ({}ns) to N={LARGE} ({}ns) while the ledger grew {}x",
+            growth,
+            small.0,
+            large.0,
+            LARGE / SMALL,
+        );
     }
 
     /// `open_recovering` on a CLEAN image is identical to a plain open (0 dropped).

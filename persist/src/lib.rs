@@ -138,13 +138,25 @@ pub fn canonical_ledger_root(ledger: &dregg_cell::Ledger) -> [u8; 32] {
 pub fn canonical_ledger_leaves(ledger: &dregg_cell::Ledger) -> Vec<([u8; 32], [u8; 32])> {
     let mut entries: Vec<([u8; 32], [u8; 32])> = ledger
         .iter()
-        .map(|(id, cell)| {
-            let bytes = postcard::to_stdvec(cell).unwrap_or_default();
-            (*id.as_bytes(), *blake3::hash(&bytes).as_bytes())
-        })
+        .map(|(id, cell)| (*id.as_bytes(), canonical_ledger_leaf(cell)))
         .collect();
     entries.sort_by_key(|a| a.0);
     entries
+}
+
+/// ONE cell's canonical leaf — `BLAKE3(postcard(WHOLE cell))`, the value
+/// [`canonical_ledger_leaves`] pairs with the cell's id.
+///
+/// Exposed so a caller that maintains an INCREMENTAL leaf set (the single-image
+/// World's durable commit — `starbridge_v2::persistence`, which re-derives only
+/// the turn's touched cells instead of the whole ledger) computes the leaf with
+/// THIS function rather than a byte-for-byte replica of it. The replica is the
+/// hazard: two copies that agree today are two copies that disagree after the
+/// next `Cell` field lands, and the disagreement surfaces as an unopenable
+/// image. There is exactly one leaf construction and it is here.
+pub fn canonical_ledger_leaf(cell: &dregg_cell::Cell) -> [u8; 32] {
+    let bytes = postcard::to_stdvec(cell).unwrap_or_default();
+    *blake3::hash(&bytes).as_bytes()
 }
 
 /// Fold the domain-separated flat root over an ALREADY-SORTED leaf set. Callers that
@@ -152,8 +164,23 @@ pub fn canonical_ledger_leaves(ledger: &dregg_cell::Ledger) -> Vec<([u8; 32], [u
 /// re-hashing cells; the fold order (len prefix, then id then leaf-hash per entry)
 /// is fixed and load-bearing.
 pub fn canonical_ledger_root_from_leaves(entries: &[([u8; 32], [u8; 32])]) -> [u8; 32] {
+    canonical_ledger_root_from_sorted(entries.len(), entries.iter().map(|(id, h)| (id, h)))
+}
+
+/// The allocation-free twin of [`canonical_ledger_root_from_leaves`]: fold the
+/// canonical root over an ALREADY-SORTED `(id, leaf)` iterator of known length.
+///
+/// A caller holding its leaves in a `BTreeMap<[u8;32], [u8;32]>` (sorted by id by
+/// construction — the same `Ord` the `sort_by_key` above uses) folds straight out
+/// of the map with no intermediate `Vec`. Both entry points go through THIS fold,
+/// so the byte-pinned order (u64 length prefix, then id then leaf-hash per entry)
+/// has one implementation.
+pub fn canonical_ledger_root_from_sorted<'a>(
+    len: usize,
+    entries: impl Iterator<Item = (&'a [u8; 32], &'a [u8; 32])>,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v3");
-    hasher.update(&(entries.len() as u64).to_le_bytes());
+    hasher.update(&(len as u64).to_le_bytes());
     for (id, h) in entries {
         hasher.update(id);
         hasher.update(h);
