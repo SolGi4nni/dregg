@@ -682,3 +682,34 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   strictly worse than the const hole it closes. Whoever reads this next: run it before trusting
   tonight's close. It is the load-bearing check that the deliberate probe inversions cannot make,
   since all three of those hold the SHAPE fixed and vary only the circuit.
+- 23:55 ⚑ **THE FULL `--no-fail-fast` SUITE RAN — 7 targets fail, and I attributed every one.**
+  This is the run that fail-fast had been hiding (123 `test result` lines; a plain `cargo test -p
+  dregg-circuit-prove` reports only the first). **Two are mine, five are not**, and saying which is
+  the whole point of running it:
+  - ⚑ **MINE — `vk_pin_exposed_cap_probe` (a FOURTH probe I missed).** Its (C) still asserted the
+    two constants fingerprint identically, with the message *"unexpected: … the premise of this
+    whole lane moved"*. It had. Inverted deliberately and green (`5fc4d68ad`): `k=7
+    vk=8cbc73fe…5978 exposed=[7]`, `k=9 vk=ddd33490…ab1e exposed=[9]`. **I should have grepped for
+    every probe asserting the old premise instead of taking the brief's list of two as complete.**
+    The bullet's stated REASON was right and is not what moved — `public_values` are still excluded
+    — so the file now measures a STRONGER pair: the discriminating bit lives in the exposed lane
+    AND in the fingerprint, independently, both asserted.
+  - ⚑ **MINE, and it is THE FLAG DAY, so it stays broken.** `height1_air_check_binding::
+    root_verifier_refuses_a_falsified_expose_claim` loads `ugc-dregg/tests/fixtures/
+    whole_history_proof.bin` — **an artifact already on the staged re-emit list** — and dies with
+    `index out of bounds: the len is 2 but the index is 2` inside `const_air.rs`, the exact
+    signature of a proof captured at the OLD preprocessed width refusing to load. **Not re-emitted:
+    that is the convergence rotation and it is ember's to fire.** The old shape refusing to load is
+    the behaviour house doctrine asks for; what it needs is the re-emit, not a fix.
+  - **NOT mine — `sovereign_binding_deployed_tooth` (2).** `"left aggregation child exposes 25
+    claim lane(s): neither a plain segment+spine (33) nor a board-window segment+spine (33 + 2W)"`
+    — the SPINE's own fail-closed refusal of a pre-spine artifact, `e1d8ab9bc`'s flag day.
+  - **NOT mine — `rotation_batchstark_leaf_smoke` (2).** `desc.trace_width` 1702 vs the pinned 1647,
+    and a `range wire 188 value >= 2^15`. That is a **descriptor** width, Lean-emitted, nothing to
+    do with a preprocessed column.
+  - **NOT mine — `mock_proof_purge_gate`.** `fhegg-fhe/src/private_book_canonical_backend.rs` (3
+    sites) is a NEW production surface riding a mock prover.
+  - **NOT mine — `law1_enforcement_gate`.** The same two other-lane entries, red before I started.
+  ⚑ **The lesson I am charging myself with**: a brief that names two probes is a *starting* list, not
+  a census. The fourth probe was found by a suite nobody could read, and the reason nobody could
+  read it was a red that had been sitting for hours in a different lane's tests.
