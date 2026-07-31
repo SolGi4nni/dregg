@@ -6699,7 +6699,7 @@ mod board_window_seam_tests {
     /// An honest automatafl leaf pair's claim lanes: `[segment(25) ‖ IN(11) ‖ OUT(11)]`, with the
     /// window halves filled from `win_in` / `win_out`.
     fn claim(seed: u32, win_in: &[u32], win_out: &[u32]) -> Vec<u32> {
-        let mut c: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| seed + k).collect();
+        let mut c: Vec<u32> = (0..SEG_SPINE_WIDTH as u32).map(|k| seed + k).collect();
         c.extend_from_slice(win_in);
         c.extend_from_slice(win_out);
         c
@@ -6775,15 +6775,15 @@ mod board_window_seam_tests {
     /// shape-sensitive).
     #[test]
     fn a_zero_window_connects_nothing() {
-        let a: Vec<u32> = (0..SEG_WIDTH as u32).collect();
-        let b: Vec<u32> = (100..100 + SEG_WIDTH as u32).collect();
+        let a: Vec<u32> = (0..SEG_SPINE_WIDTH as u32).collect();
+        let b: Vec<u32> = (100..100 + SEG_SPINE_WIDTH as u32).collect();
         run_seam(0, &a, &b).expect("window 0 imposes no seam at all");
     }
 
-    /// The lane arithmetic the whole design is stated in: a plain child exposes `SEG_WIDTH`, a
-    /// board-window child `SEG_WIDTH + 2W`, and the automatafl `W = 11` gives the 47/46 pair the
+    /// The lane arithmetic the whole design is stated in: a plain child exposes `SEG_SPINE_WIDTH`, a
+    /// board-window child `SEG_SPINE_WIDTH + 2W`, and the automatafl `W = 11` gives the 47/46 pair the
     /// verifier and the leaf were extended to. Because the two windows are carried SIDE BY SIDE
-    /// (never one), a genuine windowed exposure is always `SEG_WIDTH` plus an EVEN number — which
+    /// (never one), a genuine windowed exposure is always `SEG_SPINE_WIDTH` plus an EVEN number — which
     /// is what lets [`exposed_board_window`] recover `W` from the lane count alone and refuse any
     /// other shape instead of truncating it into a plain segment (silently dropping the seam) or
     /// padding it into a window.
@@ -6792,8 +6792,19 @@ mod board_window_seam_tests {
     /// so needs a prove.
     #[test]
     fn the_two_leg_lane_arithmetic_is_unambiguous() {
-        assert_eq!(SEG_WIDTH, 25);
-        assert_eq!(SEG_WIDTH + 2 * W, 47, "the board-window root exposure");
+        // Two independent constants, both pinned: the segment itself is unchanged at 25, and the
+        // spine adds exactly the 8 `vk_spine` lanes a fold node now exposes. Pinning only the sum
+        // would let a future edit move one and compensate in the other without anything going red.
+        assert_eq!(
+            SEG_WIDTH, 25,
+            "the segment exposure, unchanged by the spine"
+        );
+        assert_eq!(SEG_SPINE_WIDTH, 33, "segment + the 8 vk_spine lanes");
+        assert_eq!(
+            SEG_SPINE_WIDTH + 2 * W,
+            55,
+            "the board-window root exposure"
+        );
         assert_eq!(
             crate::custom_leaf_adapter::custom_board_window_claim_len(W),
             46,
@@ -6801,9 +6812,9 @@ mod board_window_seam_tests {
         );
         for w in 1..64usize {
             assert_eq!(
-                (SEG_WIDTH + 2 * w - SEG_WIDTH) % 2,
+                (SEG_SPINE_WIDTH + 2 * w - SEG_SPINE_WIDTH) % 2,
                 0,
-                "a windowed exposure is SEG_WIDTH plus an EVEN count at every W"
+                "a windowed exposure is SEG_SPINE_WIDTH plus an EVEN count at every W"
             );
         }
     }
@@ -6876,11 +6887,11 @@ mod board_window_seam_tests {
         r_in: &[u32],
     ) -> Result<(), p3_circuit::errors::CircuitError> {
         // left  = seg(25) ‖ IN_l(l_window) ‖ OUT_l(l_window)   (IN_l is irrelevant to the handoff)
-        let mut left: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 1 + k).collect();
+        let mut left: Vec<u32> = (0..SEG_SPINE_WIDTH as u32).map(|k| 1 + k).collect();
         left.extend((0..l_window as u32).map(|k| 40_000 + k));
         left.extend_from_slice(l_out);
         // right = seg(25) ‖ IN_r(r_window) ‖ OUT_r(r_window)   (OUT_r is irrelevant to the handoff)
-        let mut right: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 60_000 + k).collect();
+        let mut right: Vec<u32> = (0..SEG_SPINE_WIDTH as u32).map(|k| 60_000 + k).collect();
         right.extend_from_slice(r_in);
         right.extend((0..r_window as u32).map(|k| 90_000 + k));
 
@@ -6953,14 +6964,14 @@ mod board_window_seam_tests {
     #[test]
     fn the_roundstate_lane_arithmetic_is_unambiguous() {
         assert_eq!(RS, 32, "roundStateWindowLanes 11 2");
-        assert_eq!(SEG_WIDTH + 2 * RS, 89, "the RoundState root exposure");
+        assert_eq!(SEG_SPINE_WIDTH + 2 * RS, 97, "the RoundState root exposure");
         assert_eq!(
             crate::custom_leaf_adapter::custom_board_window_claim_len(RS),
             88,
             "the RoundState leaf exposure (commitment(8) ‖ old8 ‖ new8 ‖ IN(32) ‖ OUT(32))"
         );
-        // The generic recovery `exposed_board_window` performs: (lanes - SEG_WIDTH) / 2.
-        assert_eq!((SEG_WIDTH + 2 * RS - SEG_WIDTH) / 2, RS);
+        // The generic recovery `exposed_board_window` performs: (lanes - SEG_SPINE_WIDTH) / 2.
+        assert_eq!((SEG_SPINE_WIDTH + 2 * RS - SEG_SPINE_WIDTH) / 2, RS);
         assert_eq!(HANDOFF, 18, "the clean handoff carries board(9) ‖ marks(9)");
         assert!(
             HANDOFF < RS,
@@ -6986,11 +6997,11 @@ mod board_window_seam_tests {
         r_in: &[u32],
     ) -> Result<(), p3_circuit::errors::CircuitError> {
         // left  = seg(25) ‖ IN_l(l_window) ‖ OUT_l(l_window)
-        let mut left: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 1 + k).collect();
+        let mut left: Vec<u32> = (0..SEG_SPINE_WIDTH as u32).map(|k| 1 + k).collect();
         left.extend((0..l_window as u32).map(|k| 40_000 + k));
         left.extend_from_slice(l_out);
         // right = seg(25) ‖ IN_r(r_window) ‖ OUT_r(r_window)
-        let mut right: Vec<u32> = (0..SEG_WIDTH as u32).map(|k| 60_000 + k).collect();
+        let mut right: Vec<u32> = (0..SEG_SPINE_WIDTH as u32).map(|k| 60_000 + k).collect();
         right.extend_from_slice(r_in);
         right.extend((0..r_window as u32).map(|k| 90_000 + k));
 
@@ -7015,7 +7026,7 @@ mod board_window_seam_tests {
     ///
     ///   * STRUCTURAL: the parent MIXED window `clean_handoff_seam_and_window` carries is EXACTLY
     ///     `[L.IN(l_window) ‖ R.OUT(r_window)]`, in order — the 32-lane genesis RoundState followed by
-    ///     the 20-lane clean-round final state, `SEG_WIDTH + 32 + 20 = 77` root lanes total.
+    ///     the 20-lane clean-round final state, `SEG_SPINE_WIDTH + 32 + 20 = 77` root lanes total.
     ///   * SEAM: an honest C(32)→R(20) handoff (board||marks agree) is satisfiable; a mismatched
     ///     board-or-marks lane is a `WitnessConflict` (UNSAT node ⇒ no root ⇒ no verifying artifact);
     ///     a differing dropped `locked ‖ waiting ‖ auto` lane leaves it satisfiable (consumed at the
@@ -7026,19 +7037,21 @@ mod board_window_seam_tests {
         {
             let mut cb: CircuitBuilder<RecursionChallenge> = CircuitBuilder::new();
             let l: Vec<p3_recursion::Target> =
-                cb.alloc_public_inputs(SEG_WIDTH + 2 * RS, "left_claim");
+                cb.alloc_public_inputs(SEG_SPINE_WIDTH + 2 * RS, "left_claim");
             let r: Vec<p3_recursion::Target> =
-                cb.alloc_public_inputs(SEG_WIDTH + 2 * CLEAN_W, "right_claim");
+                cb.alloc_public_inputs(SEG_SPINE_WIDTH + 2 * CLEAN_W, "right_claim");
             let window = clean_handoff_seam_and_window(&mut cb, &l, &r, RS, CLEAN_W, HANDOFF);
             assert_eq!(
                 window.len(),
                 RS + CLEAN_W,
                 "the parent MIXED window is L.IN(32) ‖ R.OUT(20) = 52 lanes; the root exposes \
-                 SEG_WIDTH + 52 = {} lanes",
-                SEG_WIDTH + RS + CLEAN_W
+                 SEG_SPINE_WIDTH + 52 = {} lanes",
+                SEG_SPINE_WIDTH + RS + CLEAN_W
             );
-            let mut expected: Vec<p3_recursion::Target> = l[SEG_WIDTH..SEG_WIDTH + RS].to_vec();
-            expected.extend_from_slice(&r[SEG_WIDTH + CLEAN_W..SEG_WIDTH + 2 * CLEAN_W]);
+            let mut expected: Vec<p3_recursion::Target> =
+                l[SEG_SPINE_WIDTH..SEG_SPINE_WIDTH + RS].to_vec();
+            expected
+                .extend_from_slice(&r[SEG_SPINE_WIDTH + CLEAN_W..SEG_SPINE_WIDTH + 2 * CLEAN_W]);
             assert_eq!(
                 window, expected,
                 "the parent window selects L.IN (the genesis RoundState) then R.OUT (the clean \
