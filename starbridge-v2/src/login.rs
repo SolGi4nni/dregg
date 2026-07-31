@@ -732,6 +732,13 @@ pub struct SessionShell {
     #[allow(dead_code)] // held for the logout-revoke write into the session image
     base_dir: std::path::PathBuf,
     focus: FocusHandle,
+    /// **THE WAKE EDGE** — the cockpit's only repaint driver
+    /// ([`Cockpit::spawn_wake_edge`]). Held HERE, not detached, because gpui
+    /// cancels a dropped task: the edge must live exactly as long as the cockpit
+    /// this shell wraps, and logout (which swaps the window root away and drops
+    /// this shell) must take it down with it rather than leave a task waking a
+    /// dead entity id against the previous session's World.
+    wake_edge: Option<gpui::Task<()>>,
 }
 
 impl SessionShell {
@@ -808,12 +815,31 @@ impl SessionShell {
                     identity: identity_for_root,
                     base_dir: base_dir_for_root,
                     focus,
+                    // Installed just below, once the shell (and so the cockpit
+                    // entity id) exists.
+                    wake_edge: None,
                 }
             });
             shell_slot = Some(session_shell.clone());
             crate::cockpit::root::wrap_root(session_shell, window, cx)
         });
         let shell = shell_slot.expect("the Root builder ran and stashed the shell");
+
+        // ── THE WAKE EDGE — the cockpit's repaint driver ────────────────────
+        // Before this, the cockpit had NONE: no `cx.observe` on the World, and the
+        // three tasks below all self-stop on a default embedded image (the seed
+        // ends after five turns; `pump_live` returns false with no `--node`; the
+        // world-bridge pump returns false with `DEOS_WORLD_BRIDGE_SOCKET` unbound).
+        // A few hundred ms after login the glass only moved when a click handler
+        // called `cx.notify()` — so an MCP-bridge turn, a resident agent's turn, or
+        // a peer's turn changed the committed ledger and painted nothing.
+        //
+        // Now every event this session's World emits marks the cockpit as owing a
+        // repaint and the drain task notifies it. NOT detached: the task is owned by
+        // the shell so logout drops it (see the field's doc).
+        let wake_cockpit = shell.read(cx).cockpit.clone();
+        let edge = Cockpit::spawn_wake_edge(&wake_cockpit, cx);
+        shell.update(cx, |s, _| s.wake_edge = Some(edge));
 
         // THE POST-PAINT SEEDING TASK — drive the demo seed turns one at a time,
         // a beat between each (so each committed turn paints), against the cockpit

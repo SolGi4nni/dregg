@@ -587,6 +587,71 @@ impl Cockpit {
         self.cells = sorted_cells(&self.world.borrow());
     }
 
+    // --- THE WAKE EDGE (the cockpit's ONLY repaint driver) -------------------
+
+    /// **Attach this cockpit to the World's wake edge** — the drain task that
+    /// turns a committed turn into a repaint. Returns the `gpui::Task`; DROPPING
+    /// IT DETACHES THE EDGE (gpui cancels a dropped task), so the caller must hold
+    /// it for as long as the cockpit lives. `login::SessionShell` does; the test
+    /// below does.
+    ///
+    /// # Why the cockpit needs this at all
+    ///
+    /// The cockpit had NO repaint driver. It never called `cx.observe` on the
+    /// World, and its three async pumps all self-terminate on a default embedded
+    /// image (the demo seed ends after five turns, `pump_live` returns `false`
+    /// with no `--node`, the world-bridge pump returns `false` with
+    /// `DEOS_WORLD_BRIDGE_SOCKET` unbound). A few hundred milliseconds after
+    /// boot the only thing that repainted it was a click handler reaching
+    /// `cx.notify()` — so a turn committed from ANY other hand (the MCP bridge, a
+    /// resident agent, another view, a peer) moved the committed ledger and left
+    /// the glass stale until you happened to click.
+    ///
+    /// # Why it is a task and not a callback
+    ///
+    /// `World::commit_turn` is called from inside `cx.listener`. Reaching for
+    /// `entity.update` there re-enters `EntityMap::lease`, which PANICS on a
+    /// double lease — and with no panic hook and no `catch_unwind` in the gpui
+    /// loop that is a process abort, not an error. So the commit path only MARKS
+    /// (`WakeLedger::wake`), and this task does the repainting later, from the
+    /// foreground executor, through [`App::notify`] — the lease-free path, which
+    /// takes an `EntityId` and touches no entity.
+    ///
+    /// # Why there is no timer here
+    ///
+    /// The loop awaits [`WakeLedger::woken`], a future the commit itself
+    /// completes. Nothing in this path consults the clock, which is what lets a
+    /// turn committed from outside gpui repaint the cockpit with NO clock
+    /// advance at all — the property the gate below tests and a poll cannot have.
+    pub fn spawn_wake_edge(cockpit: &Entity<Cockpit>, cx: &mut App) -> gpui::Task<()> {
+        let observer = cockpit.entity_id().as_u64();
+        let ledger = cockpit.read(cx).world.borrow().wakes().clone();
+        ledger.register(observer);
+        let weak = cockpit.downgrade();
+        cx.spawn(async move |cx| {
+            loop {
+                // THE EDGE: parked until a commit marks a repaint owing. No timer.
+                ledger.woken().await;
+                // THE ONE DRAIN SITE. `App::notify` is lease-free: it invalidates
+                // the window rendering that entity (or queues a Notify effect when
+                // no window shows it yet) without ever leasing the entity, so it is
+                // safe from anywhere — including a frame in flight.
+                let alive = cx.update(|app: &mut App| {
+                    for id in ledger.take_pending() {
+                        app.notify(gpui::EntityId::from(id));
+                    }
+                    // The cockpit is gone (logout swapped the root away, or the
+                    // window closed) — stop driving it.
+                    weak.upgrade().is_some()
+                });
+                if !alive {
+                    ledger.unregister(observer);
+                    break;
+                }
+            }
+        })
+    }
+
     /// Thread the LIVE login session into the cockpit (called by
     /// `login::SessionShell::open` after the ceremony). The gadget rolodex's
     /// possession partition reads THIS session's c-list against the live ledger
@@ -733,4 +798,141 @@ impl Cockpit {
     }
 
     // --- the verbs (each runs the REAL embedded executor) -------------------
+}
+
+/// **THE WAKE EDGE, GATED** — a turn committed from OUTSIDE gpui repaints the
+/// cockpit, with NO clock advance.
+///
+/// This is the property the cockpit did not have. It is stated so that a
+/// timer-driven implementation CANNOT satisfy it: the test never calls
+/// `advance_clock`, so every `timer(..).await` in the process stays parked, and
+/// the only thing that can reach `Cockpit::render` is an event-driven wake.
+///
+/// The repaint is measured through the cockpit's OWN render path rather than by
+/// asking gpui whether it was notified: `Cockpit::render` opens with
+/// `fold_dynamics`, which advances `self.dynamics_cursor` to the World's live
+/// dynamics head. So `dynamics_cursor` catching up to a head it had never seen is
+/// a statement that `render` RAN — not that a notification was queued.
+///
+/// Run: `cd starbridge-v2 && cargo test --features native-full --lib cockpit::construct::wake_edge -- --nocapture`
+#[cfg(all(
+    test,
+    feature = "dev-surfaces",
+    feature = "card-pane",
+    feature = "render-capture"
+))]
+mod wake_edge {
+    use super::*;
+    use gpui::{px, size, AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_wgpu::CosmicTextSystem;
+    use std::borrow::Cow;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    /// The same headless gpui app the cockpit bake (and `frame.rs`'s rail gate)
+    /// uses — fonts + kit + theme — so the cockpit's gpui-component widgets render
+    /// without panicking.
+    fn headless() -> HeadlessAppContext {
+        static LILEX: &[u8] = include_bytes!("../../assets/fonts/Lilex-Regular.ttf");
+        static IBM_PLEX: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf");
+        let text_system: Arc<dyn PlatformTextSystem> =
+            Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        text_system
+            .add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])
+            .expect("register headless fonts");
+        let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), || {
+            gpui_platform::current_headless_renderer()
+        });
+        cx.update(gpui_component::init);
+        cx
+    }
+
+    #[test]
+    fn a_turn_committed_outside_gpui_repaints_the_cockpit_with_no_clock_advance() {
+        let mut cx = headless();
+        let (world, anchors) = world::demo_world();
+        let shared = Rc::new(RefCell::new(world));
+        let window = cx
+            .open_window(size(px(1280.), px(832.)), |window, cx| {
+                let view = cx.new(|cx| {
+                    let focus = cx.focus_handle();
+                    // `None` seed: NO demo-seeding task exists, so nothing else in
+                    // this process is trying to drive the cockpit.
+                    Cockpit::with_node(shared.clone(), anchors, focus, None, None)
+                });
+                view.update(cx, |c, cx| c.focus_on_open(window, cx));
+                view
+            })
+            .expect("open the cockpit window");
+        let entity = window.root(&mut cx).expect("cockpit root entity");
+
+        // THE PRODUCTION INSTALL — the same call `login::SessionShell::open` makes.
+        // Held for the test's life (dropping the task detaches the edge).
+        let entity_for_edge = entity.clone();
+        let _edge = cx.update(|app| Cockpit::spawn_wake_edge(&entity_for_edge, app));
+        assert_eq!(
+            shared.borrow().wakes().observer_count(),
+            1,
+            "the cockpit registered itself as a wake observer"
+        );
+
+        // Settle the boot frames (the first draw, plus whatever the once-guarded
+        // `ensure_*` builders commit on it). No clock is advanced here either.
+        cx.run_until_parked();
+        let folded_before = entity.read_with(&cx, |c, _| c.dynamics_cursor);
+        let head_before = shared.borrow().dynamics().cursor();
+        assert_eq!(
+            folded_before, head_before,
+            "the boot frames folded the whole stream — the cockpit starts caught up"
+        );
+
+        // ── COMMIT FROM OUTSIDE ANY GPUI HANDLER ─────────────────────────────
+        // Not `cx.update`, not a listener, not an entity update: the plain shared
+        // World, exactly as the MCP bridge / a resident agent / a peer reaches it.
+        let treasury = anchors[0];
+        let outcome = {
+            let mut w = shared.borrow_mut();
+            let t = w.turn(treasury, vec![world::set_field(treasury, 1, [0x5Au8; 32])]);
+            w.commit_turn(t)
+        };
+        assert!(
+            outcome.is_committed(),
+            "the SetField must really commit through the executor: {:?}",
+            match &outcome {
+                CommitOutcome::Rejected { reason, .. } => reason.clone(),
+                _ => String::new(),
+            }
+        );
+        let head_after = shared.borrow().dynamics().cursor();
+        assert!(
+            head_after > head_before,
+            "the committed turn emitted onto the dynamics stream"
+        );
+        assert!(
+            folded_before < head_after,
+            "the cockpit has NOT yet seen the commit (nothing has repainted it)"
+        );
+
+        // ── NO CLOCK ADVANCE, NO REFRESH, NO INPUT ───────────────────────────
+        // Every `timer(..)` in the process is still parked. The ONLY thing that can
+        // run the cockpit's render is the wake edge.
+        cx.run_until_parked();
+
+        let folded_after = entity.read_with(&cx, |c, _| c.dynamics_cursor);
+        assert!(
+            folded_after >= head_after,
+            "THE WAKE EDGE IS DEAD: the cockpit's dynamics cursor is still at {folded_after} \
+             while the World committed through {head_after}. A turn moved the verified ledger \
+             and the cockpit never re-rendered (no clock was advanced, so a timer-driven \
+             pump cannot rescue this)."
+        );
+        // And the debt is settled — the drain took the pending set rather than
+        // leaving it to accumulate for the next wake.
+        assert_eq!(
+            shared.borrow().wakes().pending_len(),
+            0,
+            "the drain cleared what it repainted"
+        );
+    }
 }

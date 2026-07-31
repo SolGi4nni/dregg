@@ -46,7 +46,7 @@ use dregg_turn::{
     ComputronCosts, TurnExecutor,
 };
 
-use crate::dynamics::{Dynamics, WorldEvent};
+use crate::dynamics::{Dynamics, WakeLedger, WorldEvent};
 use crate::persistence::WorldPersist;
 // `OpenError`/`RecoveredImage` are used only by the durable `open`/
 // `open_with_timestamp` paths, which are `not(wasm32)`-gated (no `dregg-persist`
@@ -157,6 +157,14 @@ pub struct World {
     /// The dynamics: an observation stream of state transitions, decoupled from
     /// the visual layer (see [`crate::dynamics`]).
     dynamics: Dynamics,
+    /// **THE WAKE EDGE** — the observers this world owes a repaint. `dynamics`
+    /// above says WHAT a frame will see; this says a frame must HAPPEN. Populated
+    /// at the [`World::emit_dynamics`] choke-point (so it cannot fall out of step
+    /// with the stream) and drained by the visual layer's one drain task, which
+    /// repaints through the lease-free `gpui::App::notify`. Empty — and therefore
+    /// free — until something registers: headless worlds, tests and every
+    /// [`World::fork`] pay nothing.
+    wakes: WakeLedger,
     /// Monotonic "height" — one per committed turn (the local chain index).
     height: u64,
     /// The fixed wall-clock the engine + history share, so a recorded turn
@@ -293,6 +301,9 @@ impl World {
             record_exec,
             receipts: Vec::new(),
             dynamics: Dynamics::new(),
+            // No observers until a view registers one — a headless world's wake
+            // is a single `is_empty()` and returns.
+            wakes: WakeLedger::default(),
             height: 0,
             timestamp,
             turn_fee: 0,
@@ -629,6 +640,14 @@ impl World {
         &self.dynamics
     }
 
+    /// **THE WAKE LEDGER** — the observers this world owes a repaint (see the
+    /// wake-edge section of [`crate::dynamics`]). A view REGISTERS an opaque
+    /// handle here; every event this world emits marks it, and the view's drain
+    /// task repaints. Empty (and free) for a headless / test / forked world.
+    pub fn wakes(&self) -> &WakeLedger {
+        &self.wakes
+    }
+
     /// Emit a [`WorldEvent`] onto the dynamics stream directly (an observation a
     /// view-layer model records about a transition the executor already made).
     ///
@@ -638,8 +657,23 @@ impl World {
     /// `present()`'s `SetField` turn COMMITTED through `commit_turn`). The state
     /// change itself always went through the real executor; this records the
     /// observation for the feed.
+    ///
+    /// ⚑ THIS IS THE EMIT CHOKE-POINT, and it is the only one. Every `WorldEvent`
+    /// this world produces — the commit path's per-effect derivation, the genesis
+    /// installs, the rejection notices, the out-of-band mutators — goes through
+    /// here, so a state transition CANNOT reach the dynamics log without also
+    /// reaching the [`WakeLedger`]. That is the whole structural claim of the wake
+    /// edge: "the stream is complete" and "the observers were woken" are the same
+    /// statement, not two that must be kept in sync by hand. If you add a
+    /// `self.dynamics.emit(..)` anywhere else, you have re-opened the hole this
+    /// closed (a turn that moves committed state and paints nothing).
     pub fn emit_dynamics(&mut self, event: WorldEvent) {
         self.dynamics.emit(event);
+        // Mark every registered observer, and wake the parked drain. This does NOT
+        // repaint here: `commit_turn` runs inside `cx.listener`, where taking an
+        // entity lease is a double-lease abort. The drain repaints later, off the
+        // foreground executor, through the lease-free `App::notify`.
+        self.wakes.wake();
     }
 
     /// TEST-ONLY bulk genesis for the efficiency microbench: install `cell` into
@@ -655,7 +689,7 @@ impl World {
             .ledger_mut()
             .insert_cell(cell)
             .expect("bench genesis insert is into a fresh slot");
-        self.dynamics.emit(WorldEvent::CellBorn {
+        self.emit_dynamics(WorldEvent::CellBorn {
             cell: id,
             balance,
             genesis: true,
@@ -821,6 +855,12 @@ impl World {
             record_exec,
             receipts: Vec::new(),
             dynamics: Dynamics::new(),
+            // A FORK MUST NEVER REPAINT THE LIVE COCKPIT. A what-if prediction
+            // commits real turns against this throwaway copy; carrying the live
+            // world's observers here would make a `simulate` flash the operator's
+            // screen with a state that never happened. A fresh, unsubscribed
+            // ledger — the fork's wakes go nowhere, by construction.
+            wakes: WakeLedger::default(),
             height: self.height,
             timestamp: self.timestamp,
             turn_fee: self.turn_fee,
@@ -882,7 +922,7 @@ impl World {
             p.record_genesis(&cell)
                 .expect("durable genesis record must not fail on a healthy image");
         }
-        self.dynamics.emit(WorldEvent::CellBorn {
+        self.emit_dynamics(WorldEvent::CellBorn {
             cell: id,
             balance,
             genesis: true,
@@ -1021,7 +1061,7 @@ impl World {
         if self.suspended {
             let agent = turn.agent;
             self.pending.push_back(turn);
-            self.dynamics.emit(WorldEvent::TurnQueued { agent });
+            self.emit_dynamics(WorldEvent::TurnQueued { agent });
             return CommitOutcome::Queued { agent };
         }
 
@@ -1167,7 +1207,7 @@ impl World {
                             let reason = format!(
                                 "durable image write failed (image no longer durable): {e}"
                             );
-                            self.dynamics.emit(WorldEvent::TurnRejected {
+                            self.emit_dynamics(WorldEvent::TurnRejected {
                                 agent: turn.agent,
                                 reason: reason.clone(),
                             });
@@ -1275,7 +1315,7 @@ impl World {
                 }
 
                 for ev in &events {
-                    self.dynamics.emit(ev.clone());
+                    self.emit_dynamics(ev.clone());
                 }
                 self.receipts.push(receipt.clone());
                 CommitOutcome::Committed {
@@ -1284,7 +1324,7 @@ impl World {
                 }
             }
             Err(EmbedError::TurnRejected { reason, at_action }) => {
-                self.dynamics.emit(WorldEvent::TurnRejected {
+                self.emit_dynamics(WorldEvent::TurnRejected {
                     agent: turn.agent,
                     reason: reason.clone(),
                 });
@@ -1292,7 +1332,7 @@ impl World {
             }
             Err(other) => {
                 let reason = other.to_string();
-                self.dynamics.emit(WorldEvent::TurnRejected {
+                self.emit_dynamics(WorldEvent::TurnRejected {
                     agent: turn.agent,
                     reason: reason.clone(),
                 });

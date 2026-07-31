@@ -90,7 +90,7 @@ impl World {
         // `CellMutated` is the right tooth — a program install is exactly the
         // "non-field state changed" case it names.
         if existed {
-            self.dynamics.emit(WorldEvent::CellMutated { cell: *cell });
+            self.emit_dynamics(WorldEvent::CellMutated { cell: *cell });
         }
         existed
     }
@@ -150,7 +150,7 @@ impl World {
         // which does not exist today — naming it as the fine-grained follow-up
         // rather than paying for it with staleness now.
         if slot.is_some() {
-            self.dynamics.emit(WorldEvent::CapabilityGranted {
+            self.emit_dynamics(WorldEvent::CapabilityGranted {
                 from: *holder,
                 to: target,
             });
@@ -199,7 +199,7 @@ impl World {
         // doc names for a permissions write, and permissions are cell-local (unlike
         // a cap edge, they change no other cell's badge).
         if existed {
-            self.dynamics.emit(WorldEvent::CellMutated { cell: *cell });
+            self.emit_dynamics(WorldEvent::CellMutated { cell: *cell });
         }
         existed
     }
@@ -274,7 +274,7 @@ impl World {
         // ignore it — the heap register is orthogonal to `fields_map`, so no field
         // bind can have gone stale.
         if existed {
-            self.dynamics.emit(WorldEvent::HeapWritten {
+            self.emit_dynamics(WorldEvent::HeapWritten {
                 cell: *cell,
                 collections,
                 key_count,

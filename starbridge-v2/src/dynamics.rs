@@ -34,7 +34,11 @@
 //! [`emit`]: Dynamics::emit
 //! [`since`]: Dynamics::since
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Context as TaskContext, Poll, Waker};
 
 use dregg_cell::CellId;
 use serde::{Deserialize, Serialize};
@@ -418,6 +422,176 @@ impl Dynamics {
     }
 }
 
+// ===========================================================================
+// THE WAKE EDGE — "a committed turn owes its observers a repaint".
+// ===========================================================================
+//
+// [`Dynamics`] above is a PULL log: a view stores a cursor and re-reads
+// `since(cursor)` on each frame. That is trivially correct under gpui's
+// pull-render model — but it only describes what a frame SEES, never what
+// causes a frame to happen. The cockpit had no cause at all: zero
+// `cx.observe` on the World, and its three async pumps all self-terminate on
+// a default embedded image, so ~300ms after boot it repainted only when a
+// click handler happened to call `cx.notify()`. A turn committed from
+// anywhere else — an MCP bridge, a resident agent, another view's button, a
+// test — moved the ledger and painted nothing.
+//
+// The [`WakeLedger`] is the missing edge, and it is deliberately NOT a
+// callback bus: an observer REGISTERS an opaque handle, `World`'s emit
+// choke-point marks every registered handle PENDING, and a single consumer
+// drains the pending set later and repaints. Two properties matter:
+//
+//   * **It carries no gpui.** The handle is a bare `u64` (the visual layer's
+//     `gpui::EntityId::as_u64()`), so this stays in the gpui-free lib half
+//     that `--no-default-features --features embedded-executor` builds.
+//   * **It never re-enters.** `wake` runs inside `World::commit_turn`, which
+//     itself runs inside `cx.listener` — taking an entity lease there is a
+//     `EntityMap::lease` double-lease PANIC, and with no panic hook in the
+//     gpui loop that is a process abort. So `wake` only marks + wakes a
+//     `Waker`; the repaint happens later, on the foreground executor, via the
+//     lease-free `App::notify`.
+//
+// The `Waker` is what makes this an EDGE rather than a poll: a drain task
+// awaits [`WakeLedger::woken`], which is `Pending` until a commit marks
+// something. No timer, so no clock advance is needed to deliver a repaint —
+// which is exactly the property a timer-based implementation cannot have.
+
+/// The shared interior of a [`WakeLedger`].
+#[derive(Default)]
+struct WakeInner {
+    /// Observer handles currently subscribed (a live view's entity id).
+    registered: BTreeSet<u64>,
+    /// Observers owed a repaint — drained by the one consumer.
+    pending: BTreeSet<u64>,
+    /// The drain task's waker, parked while `pending` is empty.
+    waker: Option<Waker>,
+    /// Total wakes ever signalled (a commit that found registered observers).
+    /// Introspection for tests/diagnostics — never a correctness input.
+    wakes: u64,
+}
+
+/// **THE WAKE LEDGER** — the observers a committed turn owes a repaint, and
+/// the `Waker` that hands the debt to the foreground loop.
+///
+/// Cloning shares the same ledger (an `Arc` handle), so `World` and the visual
+/// layer's drain task hold the same one. See the module section above for why
+/// this is a marked-set + waker rather than a callback.
+#[derive(Clone, Default)]
+pub struct WakeLedger {
+    inner: Arc<Mutex<WakeInner>>,
+}
+
+impl WakeLedger {
+    fn lock(&self) -> MutexGuard<'_, WakeInner> {
+        // A panic while holding this lock must not cascade into every later
+        // commit: the invariant is a marked set, and recovering the poisoned
+        // guard leaves it consistent (worst case one extra repaint).
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Subscribe `observer` (the visual layer's `EntityId::as_u64()`). Every
+    /// later commit marks it pending until it is [`unregister`](Self::unregister)ed.
+    pub fn register(&self, observer: u64) {
+        self.lock().registered.insert(observer);
+    }
+
+    /// Unsubscribe `observer` and drop any repaint it was still owed.
+    pub fn unregister(&self, observer: u64) {
+        let mut g = self.lock();
+        g.registered.remove(&observer);
+        g.pending.remove(&observer);
+    }
+
+    /// How many observers are subscribed.
+    pub fn observer_count(&self) -> usize {
+        self.lock().registered.len()
+    }
+
+    /// **Mark every registered observer as owing a repaint, and wake the
+    /// drain.** Called from `World`'s dynamics emit choke-point, so a state
+    /// transition cannot reach the log without also reaching this.
+    ///
+    /// A no-op (no allocation, no wake) when nothing is subscribed — the
+    /// headless/test/`fork` worlds pay nothing.
+    pub fn wake(&self) {
+        let mut g = self.lock();
+        if g.registered.is_empty() {
+            return;
+        }
+        let due: Vec<u64> = g.registered.iter().copied().collect();
+        g.pending.extend(due);
+        g.wakes += 1;
+        let waker = g.waker.take();
+        // Drop the guard BEFORE waking: the woken task may poll immediately on
+        // this thread (gpui's foreground executor is the same thread) and
+        // re-enter `lock`.
+        drop(g);
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+
+    /// **Take the observers owed a repaint**, clearing the debt. This is the
+    /// drain: exactly one consumer should call it, and it must then notify each
+    /// returned handle.
+    pub fn take_pending(&self) -> Vec<u64> {
+        let mut g = self.lock();
+        std::mem::take(&mut g.pending).into_iter().collect()
+    }
+
+    /// How many observers are currently owed a repaint (undrained).
+    pub fn pending_len(&self) -> usize {
+        self.lock().pending.len()
+    }
+
+    /// How many times a commit has signalled this ledger (introspection).
+    pub fn wake_count(&self) -> u64 {
+        self.lock().wakes
+    }
+
+    /// A future that resolves the moment some observer is owed a repaint.
+    ///
+    /// This is the edge the drain task awaits. It is `Pending` — parking its
+    /// waker — while the debt is empty, and `Ready` the instant [`wake`](Self::wake)
+    /// marks anything. NOTE it does NOT clear the debt: the consumer drains
+    /// with [`take_pending`](Self::take_pending) after awaiting.
+    pub fn woken(&self) -> Woken {
+        Woken {
+            ledger: self.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for WakeLedger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let g = self.lock();
+        f.debug_struct("WakeLedger")
+            .field("registered", &g.registered.len())
+            .field("pending", &g.pending.len())
+            .field("wakes", &g.wakes)
+            .finish()
+    }
+}
+
+/// The future [`WakeLedger::woken`] returns — ready when a repaint is owed.
+pub struct Woken {
+    ledger: WakeLedger,
+}
+
+impl Future for Woken {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<()> {
+        let mut g = self.ledger.lock();
+        if g.pending.is_empty() {
+            g.waker = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,5 +722,85 @@ mod tests {
         assert_eq!(indices(d.all()), vec![4]);
         assert_eq!(d.cursor(), 5);
         assert_eq!(indices(d.since(0)), vec![4]);
+    }
+
+    // --- THE WAKE EDGE ------------------------------------------------------
+
+    #[test]
+    fn an_unsubscribed_ledger_owes_nothing() {
+        // A headless / test / `fork` world has no observers, so a commit's wake
+        // must allocate nothing and owe nothing — the edge is free when unused.
+        let w = WakeLedger::default();
+        w.wake();
+        w.wake();
+        assert_eq!(w.pending_len(), 0);
+        assert_eq!(w.wake_count(), 0, "an unsubscribed wake is not signalled");
+        assert!(w.take_pending().is_empty());
+    }
+
+    #[test]
+    fn a_wake_owes_every_registered_observer_until_drained() {
+        let w = WakeLedger::default();
+        w.register(7);
+        w.register(9);
+        assert_eq!(w.observer_count(), 2);
+        assert_eq!(w.pending_len(), 0, "registering owes nothing by itself");
+        w.wake();
+        assert_eq!(w.take_pending(), vec![7, 9]);
+        // The DEBT is cleared by the drain (a second drain repaints nothing) —
+        // but the SUBSCRIPTION survives, so the next commit owes them again.
+        assert!(w.take_pending().is_empty());
+        assert_eq!(w.observer_count(), 2);
+        w.wake();
+        assert_eq!(w.take_pending(), vec![7, 9]);
+        // Unregistering drops both the subscription and any outstanding debt.
+        w.wake();
+        w.unregister(7);
+        assert_eq!(w.take_pending(), vec![9]);
+    }
+
+    #[test]
+    fn woken_is_pending_until_a_wake_and_needs_no_timer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{RawWaker, RawWakerVTable, Waker};
+
+        // A counting waker: the ONLY thing that may resolve `woken()` is a wake,
+        // never the passage of time.
+        static WOKE: AtomicUsize = AtomicUsize::new(0);
+        fn vtable() -> &'static RawWakerVTable {
+            &RawWakerVTable::new(
+                |_| RawWaker::new(std::ptr::null(), vtable()),
+                |_| {
+                    WOKE.fetch_add(1, Ordering::SeqCst);
+                },
+                |_| {
+                    WOKE.fetch_add(1, Ordering::SeqCst);
+                },
+                |_| {},
+            )
+        }
+        WOKE.store(0, Ordering::SeqCst);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), vtable())) };
+        let mut tcx = TaskContext::from_waker(&waker);
+
+        let w = WakeLedger::default();
+        w.register(1);
+
+        let mut f = Box::pin(w.woken());
+        assert!(
+            f.as_mut().poll(&mut tcx).is_pending(),
+            "no commit yet ⟹ nothing is owed ⟹ the drain parks"
+        );
+        assert_eq!(WOKE.load(Ordering::SeqCst), 0);
+
+        w.wake();
+        assert_eq!(
+            WOKE.load(Ordering::SeqCst),
+            1,
+            "the commit itself wakes the parked drain — no timer in the loop"
+        );
+        assert!(f.as_mut().poll(&mut tcx).is_ready());
+        // `woken` reports the debt; it does NOT clear it (the drain does).
+        assert_eq!(w.pending_len(), 1);
     }
 }
