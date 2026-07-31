@@ -3174,11 +3174,64 @@ root-fri-uniform`, `npm run head-anchor-pins`):
 | chain length | 905 uniform + 7 AIR = **912 steps** — the `totalSteps` pin |
 | modelled rows | **42,245,547** (of which the claim is +185, 0.0004%) |
 | per-instance budget | 50,000; mean 46,681 |
-| terminal | `block42`, key-tree leaf 130, `VK_TREE_DEPTH = 7` |
+| terminal | `block42`, key-tree leaf 130, `VK_TREE_DEPTH = 8` (**was 7 — see below**) |
 | claim | 25 lanes, AIR chunks `[17, 18]`, binding head slice 1 |
 | genesis anchor | `0x7393bc8b02186f4b83317f9d622429c3b51bf90e91d883409e60895ae4abbc` |
 
-#### What it costs
+#### ⚑ THE BLOCKER WAS NEVER COMPUTE — measured 2026-07-31
+
+**Nothing had ever written `.fullchain/uniform-claim/`, because nothing compiled the claim-carrying
+chain.** The ~9 h figure below priced a run that no code performed:
+
+- `bridge/mina-zkapp/scripts/root-fri-uniform.ts` **has** a one-program-per-process compile driver and it builds the
+  §3.29 shape — `segmentWalk(shape)`, no preamble, and `claim:` is never passed to
+  `makeUniformSliceProgram`. Its 46 keys are a different chain.
+- `bridge/mina-zkapp/scripts/root-claim-carry.ts` builds the claim-carrying program and only ever calls
+  `analyzeMethods()` — a row measurement — at one position, twice. **It never calls `.compile()`.**
+- `head-anchor-pins.ts:295` printed *"compiled — 131 programs, one process each — into HEAD_KEYS"* as
+  an **instruction to a human**, not an implemented path.
+
+`bridge/mina-zkapp/scripts/uniform-claim-keys.ts` (`npm run uniform-claim-keys`) is that driver. It reproduces
+`root-claim-carry`'s context call for call, restates its ratchet as a **refusal** (905 / 131 / 912,
+checked before anything compiles), spawns **one process per program**, and is **resumable with a
+shape-checked skip** — each `key-<spec>.json` records the plan counts, claim geometry, key-tree
+depth, own leaf, private-input widths and o1js version, and a key is reused only when re-compiling it
+would produce the same one.
+
+**⚑ AND `VK_TREE_DEPTH = 7` COULD NOT HOLD THIS CHAIN — 7 → 8, every key re-emits.** §3.29 was 46
+programs in a 128-leaf tree with room. §3.30's preamble took the head from 3 slices to 88, so the
+chain is **131 programs** and the terminal `block42` sits at **leaf 130**. Both halves were broken and
+neither had ever been run:
+
+- out of circuit `vkTreeRoot` **throws** (`131 programs do not fit a depth-7 key tree`), so
+  `head-anchor-pins --emit` could not have produced a pin file *even holding all 131 keys*;
+- in circuit it does **not** throw, it **aliases**. `bitsOf` takes `VK_TREE_DEPTH` low bits, so leaf
+  130 decomposes to `0100000` — **leaf 2** — and the position that closes the chain would have pinned
+  head slice 2's key. `prevLeaf` at a block's position 0 for `q > 0` is 130 as well.
+
+The row above recorded "leaf 130, `VK_TREE_DEPTH = 7`" as if the two were consistent. They never
+were. `assertLeavesFit` is the refusal the truncation needed: `vkTreeRoot` refused an oversized
+*list*, nothing refused an oversized *leaf*.
+
+#### What it costs — MEASURED 2026-07-31 on hbox, not extrapolated
+
+The estimate below was §3.28's 54.6 s/slice on a mac. On hbox (24 core, 123 GB) with
+`O1JS_BACKEND=native` the same bodies compile in **~22 s**, ~26.5 s wall per program including
+process start and context rebuild.
+
+- **`@o1js/native` is 4.1× on compile for a real body, not 2.2×.** head0 (49,787 rows) compiles in
+  **22.3 s** on hbox/native against **90.5 s** on darwin-arm64/wasm.
+- **The verification key is byte-identical across platform AND backend.** head0's `hash` *and* its
+  2,396-byte `data` blob agree exactly between darwin-arm64/wasm and linux-x64/native. The ring is
+  portable; the pins are not box-specific.
+- **The `rust_oom` cache wall does not reproduce on hbox at this body size, on either backend.**
+  head1 (the sealing slice, 51,103 rows) compiles under `Cache.FileSystem` at **34.1 s / 2.79 GiB
+  RSS** native and **71.3 s / 4.05 GiB RSS** wasm, same VK both times. The wasm figure sits right at
+  the 4 GiB address-space edge, which is consistent with the wall being real and marginal rather than
+  absent. **`Cache.None` stays** — it is also *faster* here (22.3 s against 34.1 s), since each of the
+  131 programs is compiled exactly once in its own process and a cache write is pure cost.
+
+The historical estimate, kept for the record:
 
 The only measured per-slice figures on real bodies of this size class are §3.28's: **48 FRI slices,
 compile 2,621 s and prove 960 s** — **54.6 s to compile, 20.0 s to prove**, per slice, at ~47k rows.
@@ -3186,7 +3239,8 @@ compile 2,621 s and prove 960 s** — **54.6 s to compile, 20.0 s to prove**, pe
 
 - **The compile run: 131 × 54.6 s ≈ 7,150 s ≈ 2.0 hours serial**, and it is **embarrassingly
   parallel** — 131 independent processes, no ordering, `Cache.None`, `--max-old-space-size=16384`
-  each. Wall clock is a function of how many fit in RAM at once.
+  each. Wall clock is a function of how many fit in RAM at once. (Actual on hbox/native:
+  **~58 min serial**, and it was still run serially — the parallelism was never needed.)
 - **The proving run is a different object and is NOT this request.** 905 instances, strictly
   sequential (instance `k+1` consumes instance `k`'s proof). One process per program holding its key
   and serving its 19 instances gives `131 × 54.6 + 905 × 20.0 ≈ 7.0 hours`; the naive one process
