@@ -408,3 +408,43 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   whenever the inserted key is not the current maximum. Producer-only fix, no VK rotation, state
   re-genesis. (op=3 emits from ZERO descriptors; zero padding needs a domain-separated digest = VK
   rotation + full re-emit.)
+- 01:10 ⚑ **AUTHORIZATION IS IN THE AIR, AND IT BITES. Ten measurements, deployed prover.**
+  `metatheory/Dregg2/Circuit/Emit/TurnAuthLamportEmit.lean` — Lean-authored generators, forcing
+  lemmas over the emitted object. A `Satisfied2` witness FORCES `HashSig.verify`, so the
+  already-proved Lamport forgery tooth applies to the emitted object verbatim. `AuthCore` is
+  DERIVED from `Satisfied2`, not carried.
+  **`circuit/tests/turn_auth_in_air_refuses.rs`**, `prove_vm_descriptor2`, release, both instances:
+
+  | | control | wrong key | unsigned | moved dst | moved actor |
+  |---|---|---|---|---|---|
+  | nb=1 (1,534 col) | **PROVES** | Ood | Ood | LookupError | LookupError |
+  | nb=8 DEPLOYED (12,188 col, 248 bits) | **PROVES** | Ood | Ood | Ood | Ood |
+
+  Every refusal is a `DEPLOYED_VERIFIER_REFUSAL_MARKER`, so it fires in every build profile, and
+  the negatives differ from the control ONLY in witness cells — same descriptor, same PIs, same
+  shape. **A light client performs these refusals; the executor's ed25519 check is exactly the one
+  it cannot run.**
+- 01:10 **Three bugs the build would never have shown, each found by reading the deployed code:**
+  (1) v2 refuses a non-empty `ranges` carrier — the descriptor **would not have assembled**;
+  (2) `chip_absorb_all_lanes` at arity 8 **drops inputs 4, 5 and 6** (only `{7,11,16}` seed every
+  lane) — an 8-felt signature block would have had a **5-felt** preimage and three free lanes;
+  every absorb is now arity 16. (3) `nb = W = 8` is forced by the chip's squeeze, and below it the
+  weld theorems go **vacuously true** — now a stated `hnb`.
+- 01:10 **`actor`/`dst`: published AND forced.** A sibling deleted the unforced pins today and named
+  this lane as successor ("it will publish `actor` when it can also force it").
+  `TurnAuthCapOpenWeld.lean` does: both are `turnIn` of the turn-digest absorb the signature covers.
+  Measured with the sibling's own census — `unforcedPins` is **EMPTY**, with a control that goes red
+  (delete the one lookup reading them and it condemns exactly those 2 again).
+- 01:10 **Shielded double-spend CLOSED** (coordinator handoff, same wound one subsystem over). The
+  spending key was carried, not bound: `KEY0..3` in the nullifier hash only, `OWNER` in the leaf
+  only, nothing relating them — a fresh key per spend gave a fresh nullifier for the same note.
+  `lkOwnerDerive` (C8) forces `owner = hash_fact(key[0..4])`; `hk0..hk3` are now **derived**
+  (`emitted_same_note_forces_same_key`), and `emitted_nullifier_double_spend_refused_derived_key`
+  drops all four. Kernel-clean; the inhabitation witness still goes through.
+- 01:10 ⚑ **STAGED for the single convergence re-emit** (nothing emitted by this lane):
+  `authWeldedCapOpenTB` = +12,185 columns, +8 PIs, `registry_fp` moves, VK rotates; the producer
+  must write the signature/public-key/fold/digest/bit columns; **the verifier must ANCHOR the 8
+  authority-root PIs from the owner's committed key** — without that anchor the prover picks the
+  public key and the verify is a tautology. Shielded: re-emit
+  `by-name/dregg-shielded-spend-pinned-root-v1.json` + its `PROVENANCE.json` row, and its producer
+  must write `cOWNER = hash_fact(key0..3)`.
