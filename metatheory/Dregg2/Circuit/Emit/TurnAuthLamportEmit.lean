@@ -123,6 +123,7 @@ free precisely because nothing signs them.
 `native_decide`. The `#guard` KATs reduce in the kernel.
 -/
 import Dregg2.Circuit.Emit.AirBuilder
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Crypto.HashSig
 
 namespace Dregg2.Circuit.Emit.TurnAuthLamportEmit
@@ -197,8 +198,25 @@ def tdCol (w nb q : Nat) : Nat := w + 6 * W * ELL nb + ELL nb + 3 * nb + q
 /-- The whole gadget's column span past `w`. -/
 def AUTH_SPAN (nb : Nat) : Nat := 6 * W * ELL nb + ELL nb + 4 * nb
 
-/-- The `nb` turn-digest columns as a group-shaped list (the wide lookup's output block). -/
+/-- The turn-digest columns as the wide lookup's output block.
+
+⚑ **`nb = W` is FORCED, not chosen.** `chipLookupTupleN`'s output block is the chip's FULL squeeze —
+exactly `W = 8` felts. So this list must have length `W`, i.e. `nb = W`: every digest felt must be
+signed. At any other `nb` the lookup relates lists of different lengths, so it can never hold and
+`AuthCore` is UNSATISFIABLE — the teeth below would be vacuously true rather than false. That is the
+idle-carrier hazard, so the deployed instance is pinned here (`NB`) and guarded, and §10 exhibits an
+honest witness at `NB` so the teeth are non-vacuous. -/
 def tdCols (w nb : Nat) : List Nat := (List.range nb).map (tdCol w nb)
+
+/-- The DEPLOYED block count: `nb = W = 8`. A 248-bit signed message — one 31-bit block per felt of
+the chip's 8-felt squeeze. -/
+def NB : Nat := W
+
+-- `nb = W` is the ONLY value at which the turn-digest lookup can hold.
+#guard (tdCols 0 NB).length == W
+#guard (tdCols 0 1).length != W
+#guard (tdCols 0 4).length != W
+#guard ELL NB == 248
 
 /-! ## §2 — the GENERATORS (no gate is hand-authored). -/
 
@@ -334,6 +352,17 @@ theorem diffExact {a b : ℤ} (ha : 0 ≤ a ∧ a < P) (hb : 0 ≤ b ∧ b < P)
   obtain ⟨k, hk⟩ := h
   simp only [P] at ha hb
   omega
+
+/-- Boolean-gate exactness: `d·(d−1) ≡ 0 [ZMOD p]` with `d` canonical ⟹ `d ∈ {0,1}` over ℤ
+(`p`'s primality splits the product; the canonicality envelope pins each factor). The same route
+`CapOpenEmit.boolGate_exact` uses for the cap mask bits. -/
+theorem boolExact {d : ℤ} (hc : 0 ≤ d ∧ d < P) (h : d * (d + -1) ≡ 0 [ZMOD 2013265921]) :
+    d = 0 ∨ d = 1 := by
+  rw [Int.modEq_zero_iff_dvd] at h
+  simp only [P] at hc
+  rcases Dregg2.Circuit.Emit.EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h0 | h1
+  · obtain ⟨k, hk⟩ := h0; left; omega
+  · obtain ⟨k, hk⟩ := h1; right; omega
 
 /-- Evaluating a column list lifted to `EmittedExpr.var`s is just reading the columns. -/
 theorem map_var_eval (a : Assignment) (cols : List Nat) :
@@ -488,21 +517,27 @@ theorem lamport_verify_forced (permOut : List ℤ → List ℤ)
 Nothing above is carried: `withTurnAuth` widens any base descriptor by the gadget, and
 `authCore_of_satisfied` derives every `AuthCore` field from the deployed denotation on row 0. -/
 
-/-- The 1-bit range teeth on the message bits. These give ℤ-level booleanity from the DEPLOYED range
-table, so the mod-`p` boolean gate never has to be lifted by primality. -/
-def authRanges (w nb : Nat) : List Dregg2.Circuit.Emit.EffectVmEmit.VmRange :=
-  (List.range (ELL nb)).map (fun k => ⟨mCol w nb k, 1⟩)
-
 /-- **`withTurnAuth base nb turnIn`** — `base` widened by the in-AIR authorization gadget: `+
-AUTH_SPAN nb` columns, `+8` public inputs (the published authority root), the gadget's constraints
-appended, and the message-bit range teeth. -/
+AUTH_SPAN nb` columns, `+8` public inputs (the published authority root), and the gadget's
+constraints appended.
+
+⚑ **`ranges` is deliberately UNTOUCHED.** The v1 `ranges` carrier is illegal on a GRADUATED v2
+descriptor — `check_descriptor2` refuses any descriptor with a non-empty `hash_sites`/`ranges`
+("v2 assembly requires a GRADUATED descriptor"). An earlier draft put the message-bit booleanity
+there and would have been unassemblable by the deployed prover. Booleanity comes from the emitted
+`binGate` instead, lifted to ℤ by `boolGate_exact` (`p`'s primality + the canonicality envelope) —
+the same route `CapOpenEmit` uses for its mask bits. -/
 def withTurnAuth (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat) : EffectVmDescriptor2 :=
   { base with
     traceWidth  := base.traceWidth + AUTH_SPAN nb
     piCount     := base.piCount + W
     constraints := base.constraints
-      ++ lamportAuthConstraints base.traceWidth nb base.piCount turnIn
-    ranges      := base.ranges ++ authRanges base.traceWidth nb }
+      ++ lamportAuthConstraints base.traceWidth nb base.piCount turnIn }
+
+-- A graduated v2 descriptor carries NO v1 range/hash-site carriers; the deployed
+-- `check_descriptor2` refuses one that does.
+#guard (withTurnAuth ⟨"b", 3, 0, [], [], [], []⟩ NB [0, 1, 2]).ranges.isEmpty
+#guard (withTurnAuth ⟨"b", 3, 0, [], [], [], []⟩ NB [0, 1, 2]).hashSites.isEmpty
 
 /-- Every base constraint survives the widening (so every existing keystone lifts verbatim). -/
 theorem withTurnAuth_base_constraints (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
@@ -561,6 +596,15 @@ theorem auth_mem_select (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : 
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_selectGates w nb k hk j))))))))
 
+theorem mem_msgBitGates (w nb k : Nat) (hk : k < ELL nb) :
+    binGate (mCol w nb k) ∈ msgBitGates w nb :=
+  List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
+
+theorem auth_mem_msgbit (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
+    binGate (mCol w nb k) ∈ lamportAuthConstraints w nb pcBase turnIn := by
+  simp only [lamportAuthConstraints, List.mem_append]
+  exact .inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_msgBitGates w nb k hk)))))))
+
 theorem auth_mem_pair (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
     wideHash (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)) (gcols (pairG w nb k))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
@@ -596,7 +640,7 @@ authority-root PI pins fire) and `isLast = false` (the gates are on their active
 theorem authCore_of_satisfied (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
-    (hlen : 2 ≤ t.rows.length) :
+    (hlen : 2 ≤ t.rows.length) (hcanon : AuthRowCanon (envAt t 0)) :
     AuthCore t.tf base.traceWidth nb base.piCount turnIn (envAt t 0) := by
   have hi : 0 < t.rows.length := by omega
   have hnotlast : ((0 : Nat) + 1 == t.rows.length) = false := by
@@ -615,12 +659,10 @@ theorem authCore_of_satisfied (base : EffectVmDescriptor2) (nb : Nat) (turnIn : 
     simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
     rwa [headToExpr_eval] at h
   · intro k hk
-    have hmem : (⟨mCol w nb k, 1⟩ : Dregg2.Circuit.Emit.EffectVmEmit.VmRange)
-        ∈ (withTurnAuth base nb turnIn).ranges :=
-      List.mem_append_right _ (List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩)
-    have h := hsat.rowRanges 0 hi _ hmem
-    simp only [Dregg2.Circuit.Emit.EffectVmEmit.VmRange.holds] at h
-    omega
+    have h := hrow _ (auth_mem_msgbit w nb pc turnIn k hk)
+    simp only [binGate, cg, gBin, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast,
+      Dregg2.Exec.CircuitEmit.EmittedExpr.eval] at h
+    exact boolExact (hcanon.cells _) h
   · intro k hk
     exact hrow _ (auth_mem_pair w nb pc turnIn k hk)
   · intro k hk1 hk
@@ -654,7 +696,7 @@ theorem turn_auth_forced (permOut : List ℤ → List ℤ) (base : EffectVmDescr
       (msgOf (envAt t 0) base.traceWidth nb)
       (sigOf (envAt t 0) base.traceWidth nb) :=
   lamport_verify_forced permOut t.tf base.traceWidth nb base.piCount turnIn (envAt t 0) hChip
-    (authCore_of_satisfied base nb turnIn hash minit mfin maddrs t hsat hlen) hcanon
+    (authCore_of_satisfied base nb turnIn hash minit mfin maddrs t hsat hlen hcanon) hcanon
 
 #assert_axioms turn_auth_forced
 
