@@ -1237,3 +1237,39 @@ DREGG's own prover, since 255-bit Poseidon on every node of a 2^22 batch is not 
 5.50 h → **Pasta shrink 33.5 min (LANDED)** → merge tree @4 workers ~9 min (BUILDING) → GPU quotient
 ~7 min → witness-gen −3.3 min. Next math lever: DEEP quotient is now **90.8%** of the Pasta walk, so
 column narrowing operates on 91% of the budget instead of 13%.
+
+---
+
+# ⚑ THE LADDER CORRECTED — the Pasta ROOT caps it; the Pasta SHRINK keeps it (measured c6af62fa3)
+
+**Minting the whole root under Pasta costs DREGG 83.5×** on the commitment hash (43 s → 60 min,
+1.73B LDE cells, four rounds, root's own knobs). Route matters absolutely:
+
+- **Pasta ROOT** (naive): Mina 5.50h→0.56h **but dregg +0.99h** → net **1.55h = 3.55×**, and it puts
+  a **~1 h floor** under the join. At the merge-tree rung the dregg mint is **87%** of the cost —
+  the tree and GPU levers become **nearly worthless**. THE ROOT ROUTE CAPS THE LADDER.
+- **Pasta SHRINK** (`mina_terminal_tooth.rs`, already built + reject-tested): shrinks a real apex
+  under `DreggMinaConfig` in **280 s = 4.7 min — 13× cheaper**. Join = 0.64h (**8.6×**), or **0.23h
+  (24×) with the merge tree.** THE SHRINK KEEPS EVERY RUNG WORTH IT.
+- This is the shrink-layer architecture done RIGHT: Pasta on the small apex, not across the 2^22
+  batch — exactly the design ember and I resolved. Structurally forced: a Pasta root is TERMINAL
+  (recursing on it needs a Mina-Poseidon AIR in BabyBear that does not exist), and it breaks the ETH
+  path. The shrink does neither.
+
+**Corrected ladder, per join, via the SHRINK:**
+5.50 h → Pasta-shrink terminal **~40 min** → merge tree @4 workers **~14 min** → GPU quotient **~10 min**.
+(The exact interleave needs the shrink's Mina-side slice count, 30–67, folded in — a measurement, not
+a guess.)
+
+**Free lever both routes miss:** ⚑ dregg's whole Plonky3 stack is **single-threaded** —
+`p3-maybe-rayon` has zero features enabled, every `par_*` is the serial fallback. Predicted ~8–10× on
+12 cores (60 min → ~6–8). `ark-ff/asm` also off (x86_64, helps hbox). Unpulled, both mint routes.
+
+**Security, labelled pair (moves UP, nothing traded):** collision 2^123.63→2^127.00, 2nd-preimage
+2^247.26→2^254.00. ⚠ `EF4 = 2^123.63` does NOT move → it becomes the sole weakest link where it
+previously tied the MMCS.
+
+## Design decision recorded: MINT VIA THE SHRINK, NOT THE ROOT.
+The merge-tree and any future Pasta work targets `mina_terminal_tooth`'s shrink terminal, NOT a
+wholesale `DreggMinaConfig` root swap. The root swap is measured to cap the join at ~1 h and is
+retired as a route.
