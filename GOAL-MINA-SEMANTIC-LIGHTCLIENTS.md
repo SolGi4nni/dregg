@@ -1189,3 +1189,51 @@ canonicalisation conditional. Both are things a plan figure is blind to. Measure
 That is the check the change actually needed, and it is worth naming as a class: *a plan-level
 figure is not evidence about an emitted circuit.* The right instrument for "did this move the
 BabyBear path" is a recompiled VK hash, not a row model.
+
+---
+
+# ⚑ THE ARCHITECTURE, resolved by ember's questions 2026-07-31 — read this before optimising
+
+## The shrink layer is the whole design (READ: `dregg_outer_config.rs`, `dregg_mina_config.rs`)
+dregg proves everything in **BabyBear** up its own recursion — fast, narrow, AIRs untouched. Then
+**one extra recursion layer at the apex** re-commits its Merkle roots + Fiat–Shamir transcript in
+the **destination chain's native field**. Trace arithmetic stays BabyBear; only the HASH field moves.
+- BN254 twin (`DreggOuterConfig`) is shipped and load-bearing: **40.9M → 1.0M R1CS** collapse of the
+  wrap's hashing term. RISC0 = `identity_p254`, SP1 = `shrink`. `DreggMinaConfig` (Pasta) is the twin.
+- **ONE proof, not two.** The shrink layer IS the apex; dregg does not mint a parallel Pasta proof.
+- **Mina verifies dregg's exact bytes** — the bytes of that top layer, which recursively binds all
+  history beneath it.
+- **Pasta hashing is paid ONCE on the small recursion trace, not across a 2^22 batch.**
+
+## Cadence — ember's question, answered from the structure
+**Once per sync checkpoint, once per destination chain. NEVER per block, never per hash-family-per-block.**
+- The shrink caps the ROOT PROOF, which covers however many turns you batch in. **Batching more turns
+  into a join costs the foreign verifier nothing** — it verifies one apex either way. Join cadence is
+  policy (hourly/daily), not a per-unit cost.
+- **One shrink config per DESTINATION** (BN254 for gnark, Pasta for Mina, …). Settling to two chains
+  from one apex is two cheap caps, not two proofs.
+- The 131-program verifier is built per shrink SHAPE → **compiled once per protocol snapshot**, not
+  per join.
+- **Cost structure: dregg pays for its history once in its own field; bridging costs a small cap per
+  destination per checkpoint. The bridge scales with how often the other chain must know, not with
+  how much dregg does.** That is the property that makes it a bridge and not a stunt.
+
+## ⚠ THE RE-MINT vs THE REAL THING — do not conflate them again (I did, this morning)
+The 9.8×/33.5-min figure was measured on a **re-mint**: it re-commits the 19 opened leaves over a
+sparse Pasta tree, so rows/heights/indices are the committed root's but the digests are NOT dregg's.
+**The real thing** mints under `DreggMinaConfig` so Mina verifies dregg's actual bytes — needs the
+`DreggMinaConfig` root prove run (in flight: a lane is measuring what minting under Pasta costs
+DREGG's own prover, since 255-bit Poseidon on every node of a 2^22 batch is not free and is unpriced).
+
+## Status of the argument, stated plainly (not "pre-deployment measurements")
+- **dregg→Mina**: light-client-shaped and real. Fork choice ours in Lean off the p2p wire; state_hash
+  re-derived and checked against the chain.
+- **Mina→dregg**: design sound, **never run end to end.** Keys exist (131, BabyBear ring). Terminal
+  proof does not. Sits on the undischarged FRI floor — untouched by any speedup.
+- ember: implementing right before running is fine; **1–3 swarmcycles from a solid rerun.** The itch
+  to *see it run* is mine and is not a signal.
+
+## The measured ladder (per join), for reference — all levers compose
+5.50 h → **Pasta shrink 33.5 min (LANDED)** → merge tree @4 workers ~9 min (BUILDING) → GPU quotient
+~7 min → witness-gen −3.3 min. Next math lever: DEEP quotient is now **90.8%** of the Pasta walk, so
+column narrowing operates on 91% of the budget instead of 13%.
