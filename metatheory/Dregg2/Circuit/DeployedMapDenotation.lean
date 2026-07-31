@@ -512,6 +512,29 @@ theorem padImt_opens_none_of_gap (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat
     opensToMerkleS (padImtSchema sent) hash d r k none :=
   ⟨h, ⟨hs, hb⟩, hlen, hr, Heap.get_none_of_gap h lo hi k hs hadj hlo hhi⟩
 
+/-- **★ THE DEPLOYED OPENING IS INHABITED, at GENERIC depth.** An admissible heap opens its own
+padded arity-3 commitment at whatever it holds. Trivial as a construction, load-bearing as a fact:
+this is the witness the retired dense arity-2 denotation had none of at deployed occupancy.
+
+⚠ GENERIC `d`, transported to `MAP_TREE_DEPTH` by application — see `padImt_opens_none_of_gap`. -/
+theorem padImt_opens_of_get (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) {h : Heap.FeltHeap} {k : ℤ}
+    {o : Option ℤ} (hok : (padImtSchema sent).HeapOk h) (hz : h.length ≤ 2 ^ d)
+    (hg : Heap.get h k = o) :
+    opensToMerkleS (padImtSchema sent) hash d (padImtRoot sent hash d h) k o :=
+  ⟨h, hok, hz, rfl, hg⟩
+
+/-- **★ THE DEPLOYED WRITE IS INHABITED, at GENERIC depth — INCLUDING GENUINE GROWTH.** At the DENSE
+occupancy (`length = 2 ^ d`) a `writesToMerkleS` witness must have the key ALREADY committed, since a
+fresh key grows the heap by one and breaks the equation; that is why every `.write`/`.insert` law at
+the retired schema could only ever speak about an in-place update. At the deployed SPARSE occupancy
+(`≤`) a fresh key is representable. -/
+theorem padImt_writes_of_set (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) {h : Heap.FeltHeap} {k v : ℤ}
+    (hok : (padImtSchema sent).HeapOk h) (hz : h.length ≤ 2 ^ d)
+    (hz' : (Heap.set h k v).length ≤ 2 ^ d) :
+    writesToMerkleS (padImtSchema sent) hash d (padImtRoot sent hash d h) k v
+      (padImtRoot sent hash d (Heap.set h k v)) :=
+  ⟨h, hok, hz, hz', rfl, rfl⟩
+
 /-! ## §7 — THE SCHEMA-LEVEL TEETH over EXPLICIT witness heaps (the `_or_resid` family). -/
 
 section Teeth
@@ -652,6 +675,8 @@ def padImtTeeth (sent : ℤ) : MapLeafTeeth (padImtSchema sent) where
 #assert_axioms writesToMerkleS_binds_or_collides
 #assert_axioms openResidS_refuted_at_good
 #assert_axioms writeResidS_refuted_at_good
+#assert_axioms padImt_opens_of_get
+#assert_axioms padImt_writes_of_set
 #assert_axioms opensToMerkleS_functional_or_resid
 #assert_axioms opensToMerkleS_some_excludes_none_or_resid
 #assert_axioms writesToMerkleS_functional_or_resid

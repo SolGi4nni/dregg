@@ -780,7 +780,9 @@ theorem writesToMerkleW_of_path (hash : List ℤ → ℤ) (E : LaneEnc K)
 /-! ### §1e — the widened PER-KIND DENOTATION and GATE MODEL (design S4 + S5). -/
 
 /-- **`HoldsKindMerkleW`** — what one map-op row MEANS at key width `E`, per kind. The deployed
-`DescriptorIR2.MapOp.holdsAt` body is this at `narrowEnc` (`narrow_holdsAt_is_instance`). -/
+`DescriptorIR2.MapOp.holdsAt` body WAS this at `narrowEnc` until 2026-07-30; it is now the deployed
+arity-3 indexed-Merkle opening, and this is the RETIRED shape
+(`narrowW_is_the_retired_denotation`). -/
 def HoldsKindMerkleW (hash : List ℤ → ℤ) (E : LaneEnc K) (dep : Nat)
     (r : ℤ) (k : K) (v r' : ℤ) : MapOpKind → Prop
   | .read       => opensToMerkleW hash E dep r k (some v) ∧ r' = r
@@ -955,13 +957,45 @@ theorem leafCollW_refutable :
   refine ⟨?_, rfl⟩
   decide
 
-/-- **★ The DEPLOYED per-row denotation `MapOp.holdsAt` IS `HoldsKindMerkleW` at `narrowEnc`** —
-the S4 surface, conservative by `rfl`. -/
-theorem narrow_holdsAt_is_instance (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) :
-    Dregg2.Circuit.DescriptorIR2.MapOp.holdsAt hash env m ↔
-      (m.guard.eval env.loc = 1 →
+/-- **⚑⚑ `narrow_holdsAt_is_instance` IS RETIRED (2026-07-30) — the wide-key family at `narrowEnc`
+describes the RETIRED commitment, not the deployed one.**
+
+It said: the DEPLOYED per-row denotation `MapOp.holdsAt` IS `HoldsKindMerkleW` at `narrowEnc`, by
+`Iff.rfl`. It was the S4 conservativity anchor, and it was true while `MapOp.holdsAt` was an opening
+of the arity-2 dense binary-Merkle fold. `DescriptorIR2.opensTo`/`writesTo` now denote the DEPLOYED
+arity-3 indexed-Merkle commitment (`heap_root.rs`, `HEAP_LEAF_ARITY = 3`, relinked pointers, sparse
+zero padding). `HoldsKindMerkleW hash narrowEnc` is still `mapRootW`-at-width-1, i.e. the arity-2
+fold, and the two are provably different commitments
+(`MapReconcileImtRepoint.imtRoot_ne_mapRoot`). The `Iff.rfl` is gone and no other proof exists.
+
+**This does not weaken the wide-key epoch; it re-labels what it is about.** `narrow_gates_is_instance`
+below is UNCHANGED and still `Iff.rfl` — the arity-2 GATE model `ReconcileGatesAt` did not move, only
+the DENOTATION did. What is retired is the claim that the width-generic denotation, at width 1, is
+what the deployed prover commits.
+
+⚠ Consequence for anyone extending this file: the whole `…W` family is now a theory of a commitment
+`heap_root.rs` stopped computing on 2026-07-12. It is kept because its width arithmetic
+(`MapOpWideDigest8`'s 2^15.5 → 2^123.63 bar) is the reason the deployed digest must widen, and that
+argument is independent of leaf arity. Do NOT re-derive a deployed claim through it. -/
+theorem narrowW_is_the_retired_denotation (hash : List ℤ → ℤ) (env : VmRowEnv) (m : MapOp) :
+    (m.guard.eval env.loc = 1 →
         HoldsKindMerkleW hash narrowEnc MAP_TREE_DEPTH ((m.root 0).eval env.loc)
-          (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc) m.op) :=
+          (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc) m.op)
+      ↔ (m.guard.eval env.loc = 1 →
+        match m.op with
+        | .read   => MapMerkleRoot.opensToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                       (m.key.eval env.loc) (some (m.value.eval env.loc))
+                     ∧ (m.newRoot 0).eval env.loc = (m.root 0).eval env.loc
+        | .absent => MapMerkleRoot.opensToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                       (m.key.eval env.loc) none
+                     ∧ (m.newRoot 0).eval env.loc = (m.root 0).eval env.loc
+        | .write  => MapMerkleRoot.writesToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                       (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+        | .insert => MapMerkleRoot.writesToMerkle hash MAP_TREE_DEPTH ((m.root 0).eval env.loc)
+                       (m.key.eval env.loc) (m.value.eval env.loc) ((m.newRoot 0).eval env.loc)
+        | .aafiInsert => MapMerkleRoot.writesToMerkle hash MAP_TREE_DEPTH
+                       ((m.root 0).eval env.loc) (m.key.eval env.loc) (m.value.eval env.loc)
+                       ((m.newRoot 0).eval env.loc)) :=
   Iff.rfl
 
 /-- **★ The DEPLOYED gate model `ReconcileGatesAt` IS `ReconcileGatesAtW` at `narrowEnc`** — the S5
@@ -1528,7 +1562,7 @@ theorem map_tree_leaf_arity_delta : MAP_TREE_LEAF_ARITY_WIDE - MAP_TREE_LEAF_ARI
 #assert_axioms deployed_bracket_opener_is_instance
 #assert_axioms deployed_read_opener_is_instance
 #assert_axioms deployed_write_opener_is_instance
-#assert_axioms narrow_holdsAt_is_instance
+#assert_axioms narrowW_is_the_retired_denotation
 #assert_axioms narrow_gates_is_instance
 #assert_axioms mapOpW_gates_force_holds
 #assert_axioms absentGateW_of_lexBlocks
