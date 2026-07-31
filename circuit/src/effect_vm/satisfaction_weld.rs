@@ -225,16 +225,22 @@ mod tests {
             "rotated 46-PI + the selector slot"
         );
 
-        // The emitted welded gates: `.gate` constraints whose body is `mul(var ESCROW_SEL_COL, _)`.
-        let emitted: Vec<&LeanExpr> = desc
+        // The emitted welded gates: row-local bodies of the form `mul(var ESCROW_SEL_COL, _)`.
+        // Read through `row_local_body` rather than by matching `VmConstraint::Gate`: the last-row
+        // hardening flag day carries every row-local body as a whole-domain `windowGate`, and a
+        // kind-match here silently collected zero — taking this Rust-builder-vs-Lean-emitter
+        // byte-equality tie with it.
+        let emitted: Vec<LeanExpr> = desc
             .constraints
             .iter()
-            .filter_map(|c| match c {
-                VmConstraint2::Base(VmConstraint::Gate(body)) => match body {
-                    LeanExpr::Mul(l, _) if **l == LeanExpr::Var(ESCROW_SEL_COL) => Some(body),
+            .filter_map(|c| {
+                let body = crate::descriptor_ir2::row_local_body(c)?;
+                match body.as_ref() {
+                    LeanExpr::Mul(l, _) if **l == LeanExpr::Var(ESCROW_SEL_COL) => {
+                        Some(body.into_owned())
+                    }
                     _ => None,
-                },
-                _ => None,
+                }
             })
             .collect();
         assert_eq!(
@@ -245,7 +251,7 @@ mod tests {
 
         // (a) the Rust builder reproduces the emitted gate bodies byte-for-byte.
         let built = settle_escrow_satisfaction_gates(ESCROW_SEL_COL, LEG_A, LEG_B);
-        let built_bodies: Vec<&LeanExpr> = built.iter().map(gate_body).collect();
+        let built_bodies: Vec<LeanExpr> = built.iter().map(|c| gate_body(c).clone()).collect();
         assert_eq!(
             built_bodies, emitted,
             "the Rust builder reproduces the emitted descriptor's welded gate bodies"

@@ -155,13 +155,17 @@ fn selector_gate_body(own: usize) -> LeanExpr {
 /// bit: a malformed trace errs too, and a tooth that refuses everything reads green from the
 /// negative side alone. Removing exactly the gate under test and re-proving the SAME trace
 /// separates the two. The exact-count assert means a re-emit that moves the gate's shape reds
-/// HERE rather than silently degrading the guard into a second copy of the tooth.
+/// HERE rather than silently degrading the guard into a second copy of the tooth — and it DID:
+/// the last-row hardening flag day moved every row-local body from the transition-domain `Gate`
+/// onto a whole-domain `windowGate`, this matched the KIND, removed nothing, and this assert
+/// fired. It now matches the BODY through `descriptor_ir2::row_local_body`, which finds it under
+/// either domain.
 fn without_selector_gate(desc: &EffectVmDescriptor2, own: usize) -> EffectVmDescriptor2 {
     let want = selector_gate_body(own);
     let mut out = desc.clone();
     let before = out.constraints.len();
     out.constraints
-        .retain(|c| !matches!(c, VmConstraint2::Base(VmConstraint::Gate(b)) if *b == want));
+        .retain(|c| dregg_circuit::descriptor_ir2::row_local_body(c).as_deref() != Some(&want));
     assert_eq!(
         before - out.constraints.len(),
         1,

@@ -98,14 +98,19 @@ fn emitted_welded_gates() -> Vec<LeanExpr> {
         })
         .expect("settleEscrowSatVmDescriptor2R24 in the staged registry");
     let desc = parse_vm_descriptor2(json).expect("welded escrow descriptor parses");
+    // Read the BODY through `row_local_body`, not the constraint KIND: the last-row hardening flag
+    // day moved every row-local body from the transition-domain `Gate` onto a whole-domain
+    // `windowGate`, and a kind-match here collected zero.
     desc.constraints
-        .into_iter()
-        .filter_map(|c| match c {
-            VmConstraint2::Base(VmConstraint::Gate(body)) => match &body {
-                LeanExpr::Mul(l, _) if **l == LeanExpr::Var(ESCROW_SEL_COL) => Some(body),
+        .iter()
+        .filter_map(|c| {
+            let body = dregg_circuit::descriptor_ir2::row_local_body(c)?;
+            match body.as_ref() {
+                LeanExpr::Mul(l, _) if **l == LeanExpr::Var(ESCROW_SEL_COL) => {
+                    Some(body.into_owned())
+                }
                 _ => None,
-            },
-            _ => None,
+            }
         })
         .collect()
 }
