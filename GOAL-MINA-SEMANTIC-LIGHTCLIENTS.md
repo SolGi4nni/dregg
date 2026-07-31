@@ -79,6 +79,23 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
 ## DONE-LOG
 - 21:44 goal adopted; state inventoried from six audits + four confirmed-and-measured exploits.
 - 21:50 `dregg-cell` compiles again (the `tcb_ok`→`TcbStatus` blocker landed); doctrine suite unblocked.
+- 22:38 **dregg→Mina SEMANTIC rung landed.** `Dregg2/Bridge/MinaAccountOpening.lean`, Lean-authored,
+  `@[export dregg_mina_account_state_ok]`: an account + a 35-level opening against the
+  `staged_ledger_hash` DECODED out of a block's own binprot bytes. MEASURED on devnet block
+  540268, live account at leaf index 6202 — honest `"1"`; balance/nonce/delegate/index/sibling/
+  direction/34-level tampers each `"0"`; malformed `"ERR"`. Two layout traps caught by the live
+  equation after a two-source read: the prefixes are `Mina*` not `Coda*`, and a compressed public
+  key carries TWO base58 version bytes. Re-fetchable: `bridge/tools/mina-account-opening.py`.
+- 22:53 **Mina→dregg SEMANTIC rung landed.** `bridge/mina-zkapp/src/DreggCellFact.ts` publishes
+  `{stateCommit, balanceLo, balanceHi, nonce, capRoot}` — NAMED EffectVM columns — and
+  `DreggAttestedGate.actOnCellFact` REQUIRES a balance. Cell is the Lean-emitted
+  `KimchiCellCommit` witness (bal 100, nonce 6); `cellCommitOf` reproduces `honestCommit`
+  841295468 in and out of circuit. MEASURED tier 2, native backend: accept at floor 100, REFUSE
+  at floor 101, REFUSE a forged cell claiming 101, both controls green. ⚑ The BabyBear-modulus
+  aliasing tamper was ACCEPTED on the first run — `assertLaneLt2p31` admits 134,217,727 aliases
+  and the published balance was the raw lane; `canonicalLane` + an equality assertion now refuses.
+- 23:02 `cell-fact` gated at tier 0 in `check-mina-attestation.sh` (48 → 49 checks). First
+  placement was after the tier-0 early exit and silently never ran.
 - 22:15 ⚑ **VALUE8 consumer re-point LANDED** — `AlgoStarkSoundKernel` green (was 6 errors + 2
   hygiene cascades). The "heartbeat timeout" was a **FALSE DEFEQ**: `Rfix 5` piCount 57 vs the
   pre-VALUE8 member at 50, and `isDefEq` burned the whole budget unfolding two 304-entry lists
