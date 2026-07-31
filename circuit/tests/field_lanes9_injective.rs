@@ -31,9 +31,12 @@
 //!     not a residual wound), and the full nine-lane vectors nevertheless differ, in lane 8
 //!     specifically. Asserting the lane-0 collision explicitly is the point: it documents WHY a
 //!     ninth lane was the repair rather than a re-chunking.
-//!   * the **VALVE pole** — `field_limbs9(field_from_u64(v))[0] == v` for every `v < 2^31`, so the
-//!     escrow / discharge / vault weld constants, `setfield_encoder_window_gate` and every app
-//!     encoder are visibly unchanged.
+//!   * the **VALVE pole** — `field_limbs9(field_from_u64(v))[0].as_u32() == v` for every `v < p`, so
+//!     the escrow / discharge / vault weld constants, `setfield_encoder_window_gate` and every app
+//!     encoder are visibly unchanged. ⚑ The limit is `v < p = 2013265921`, **not** the `v < 2^31`
+//!     the deployed `field_limbs8` doc claimed — see
+//!     `above_the_modulus_lane0_is_a_residue_and_the_ninth_lane_holds_the_quotient`, which measures
+//!     the 134,217,727-value window where that claim was false and no existing pin could say so.
 //!
 //! And the anti-vacuity everywhere is ROUND-TRIP, not "the vectors differ": `field_from_lanes9` must
 //! return the VALUE. An encoder that scrambled its input would separate every pair by accident and
