@@ -1362,3 +1362,27 @@ applies the consensus rule — all machine-checked Lean; a malicious peer's wors
 Honest scope (printed by the demo): the opening check accepts an anchored SEGMENT, not "the chain the
 network selected" (`mina_head` distinguishes those); the p2p helper is trusted for AVAILABILITY only;
 it is a small Python client, not audited crypto — openmina is what to link for production.
+
+## ⚑ RAYON ON — 5.8× measured, and a byte-identity question NOT waved past
+Transmutation of the "single-threaded Plonky3" caveat (which I had MEASURED and left undone —
+ember's exact point). `p3-maybe-rayon` `parallel` feature enabled workspace-wide; `rayon v1.12.0`
+resolving. Re-ran `mina_terminal_tooth` on hbox, `DREGG_GPU_DISABLE=1`:
+
+| phase | serial | rayon | speedup |
+|---|---:|---:|---:|
+| apex fold | 1868.98s | 324.40s | **5.76×** |
+| terminal prove | 172.94s | 29.27s | **5.91×** |
+| whole join | 2128s | 366.71s | **5.80×** |
+
+Test PASSES (accept + tamper-REJECT) → proof is VALID and the security property holds. And this
+corrects the GPU lane's read: the terminal prove is NOT unparallelizable-hash-bound, it was just
+unthreaded — rayon speeds it 5.9× too.
+
+⚠ ⚑ **NOT byte-identical, and I will not dress that up.** Serial terminal proof = 431,454 bytes,
+rayon = 431,495 (41 different); shrink 431,470 → 431,406. Field arith is exact + FS is deterministic,
+so a CORRECT parallel prover SHOULD be byte-identical. A difference means (A) benign stable-different
+serialization, (B) genuine non-determinism (bad — non-reproducible proofs), or (C) the VK moved (a
+flag day, load-bearing for the 131-key chain). **Dispatched the exact diagnostic**: two rayon runs
+diffed for run-to-run determinism, VK diffed serial-vs-rayon, mutation-differential gate re-checked.
+Rayon stays on ONLY if deterministic + VK-unchanged, or if a single locatable site is fixed. **The
+guard I wrote fired; the work is to investigate it, not label it.**
