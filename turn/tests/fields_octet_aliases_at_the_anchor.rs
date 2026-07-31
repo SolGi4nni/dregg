@@ -1,7 +1,7 @@
 //! **A `fields[0..7]` mod-`p` alias reaches the signed consensus anchor.**
 //!
 //! ═══ THE WOUND ═══════════════════════════════════════════════════════════════════
-//! `cell/src/commitment.rs` welds `fields[0..7]` into the v9 rotated limbs through
+//! `cell/src/commitment.rs` welded `fields[0..7]` into the v9 rotated limbs through
 //! `Faithful8::from_field_limbs8` — eight lanes, each `u32 % BABYBEAR_P`. And:
 //!
 //!   * `p = 2013265921`, so `log₂ p = 30.907`: eight lanes carry **247.26 bits** against a 32-byte
@@ -22,7 +22,7 @@
 //! ═══ WHY THIS TEST EXISTS ════════════════════════════════════════════════════════
 //! The repo has a coherent family of non-injectivity exhibits — `split_u64_is_not_injective.rs`,
 //! `note_value_aliases_at_2_30.rs`, `effects_hash_fold_and_burn_target_width.rs`,
-//! `byte_to_felt_codec_pins.rs`, `dregg-codec/src/limbs.rs` — and `field_limbs8` had **no member**.
+//! `byte_to_felt_codec_pins.rs`, `dregg-codec/src/limbs.rs` — and the fields octet had **no member**.
 //! A documented wound is not a detected one: three separate docstrings claimed this commitment was
 //! "faithful" and nothing could contradict them.
 //!
@@ -49,25 +49,22 @@
 //! cannot be built at all. `the_constructed_alias_pair_cannot_be_built_under_the_nine_lane_encoder`
 //! below asserts exactly that, by exhibiting the decoder that recovers both members.
 //!
-//! ⚠ ═══ AND THE HALF THAT IS NOT DONE, MEASURED RATHER THAN NARRATED ══════════════
-//! **The anchor does not run the nine-lane encoder yet.** `cell/src/commitment.rs` and
-//! `turn/src/rotation_witness.rs` still call `Faithful8::from_field_limbs8(..).write_lanes(..)` with
-//! an `[usize; 8]` index array — the rotated pre-limb layout gives each field EIGHT slots
-//! (`4 + i` ‖ `113 + 7·i .. +6`) and there is no ninth column. Allocating one is a
-//! `layout_generated.rs` re-emit from the Lean layout manifest plus a VK rotation, which is the AIR
-//! lane's work, not an encoder edit.
+//! **Flip 3 — the ANCHOR inherited the injection (2026-07-31).** The two producers
+//! (`turn/src/rotation_witness.rs`, `cell/src/commitment.rs`) now call
+//! `Faithful9::from_field_lanes9(..).write_lanes(.., ROTATED_FIELD_LANE_COL[i])` — NINE committed
+//! columns per field (`4 + i` ‖ `113 + 7·i .. +6` ‖ `176 + i`), at the 184-limb geometry the
+//! descriptor re-emit `e662ade32` already shipped. `field_limbs8` and `Faithful8::from_field_limbs8`
+//! are **DELETED**. Every committed field value moved: this is a re-genesis.
 //!
-//! So the split, stated at its real resolution:
-//!
-//!   * **the ENCODER** is injective, and `field_limbs9` is the deployed name for it;
-//!   * **the ANCHOR** still separates this alias family at HASH strength (~2^92.7 collision, the
-//!     six Poseidon2 lanes), because the ninth lane — the one that carries the quotient lane 0
-//!     discards — is not committed.
-//!
-//! `the_anchors_separation_of_this_family_is_still_hash_strength_not_injective` MEASURES that
-//! instead of asserting it in prose: it shows the deployed octet's pinned pair COLLIDING on the
-//! alias, so the reader can see that every bit of the anchor's separation is carried by the hash
-//! lanes and none by the pinned pair.
+//! Until that cutover the split was: the ENCODER was injective and the ANCHOR was not — the ninth
+//! column existed in the layout, was published as a setField PI, and the producers wrote ZERO into
+//! it, so the anchor's separation of this alias family was carried entirely by six Poseidon2 lanes
+//! at ~2^92.7 collision strength. `the_anchors_separation_of_this_family_is_still_hash_strength_not_injective`
+//! measured exactly that and its own docstring said it should be DELETED the day the nine lanes were
+//! committed. It has been, and its successor
+//! (`the_anchor_now_separates_this_family_by_construction_not_by_hash_strength`) asserts the other
+//! side: the pinned pair STILL collides — that is the immovable deployed ABI — and the ninth lane is
+//! what the anchor now carries instead of a hash.
 //!
 //! Anti-vacuity throughout: the field values are asserted to ROUND-TRIP out of the cell, so an
 //! encoder that scrambled everything — and separated the pair by accident — would not pass.
@@ -109,10 +106,11 @@ fn anchor_with_field(seed: u8, slot: usize, value: [u8; 32]) -> [u8; 32] {
 /// A 32-byte field value whose LE `u32` chunk at `chunk` holds `v`, zero elsewhere.
 ///
 /// Chunk index `k` is byte range `4k..4k+4`. Chunks 0..6 sit below byte 24, i.e. OUTSIDE the kernel
-/// u64 lane that `field_limbs8` lanes 0/1 read — so the only way such a value reaches the
-/// commitment at all is through the completion lanes. Under the old encoding chunk `k` rode lane
-/// `k + 2` alone, which is exactly what made `c` / `c + p` a one-lane collision; the lanes are a
-/// hash of all 32 bytes now.
+/// u64 lane that lanes 0/1 read — so the only way such a value reaches the commitment at all is
+/// through the free lanes. Under the original `u32 % p` encoding chunk `k` rode lane `k + 2` alone,
+/// which is exactly what made `c` / `c + p` a one-lane collision. The free lanes are now the seven
+/// base-`2^28` digits of `W`, which carry those bytes VERBATIM — so the pair separates because the
+/// encoding is an injection, not because a hash is hard.
 fn field_with_le_chunk(chunk: usize, v: u32) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[chunk * 4..chunk * 4 + 4].copy_from_slice(&v.to_le_bytes());
@@ -177,9 +175,9 @@ fn a_constructed_field_alias_must_not_reach_the_same_signed_anchor() {
          The pair costs one addition to construct. `fields[0..7]` have no byte-exact companion in\n\
          the commitment (the authority residue starts at `fields[8]`), so these lanes are the only\n\
          binding.\n\n\
-         THIS ASSERTION IS A REGRESSION PIN, NOT A WOUND REPORT: it went green when `field_limbs8`\n\
-         lanes 2..7 moved onto a Poseidon2 image over an injective 16 x u16-LE preimage. A red here\n\
-         means the `u32 % p` chunk encoding came back.\n"
+         THIS ASSERTION IS A REGRESSION PIN, NOT A WOUND REPORT. It first went green on a hash\n\
+         containment (~2^92.7 collision, below this tree's bar) and is now carried by the NINE-lane\n\
+         injection. A red here means the producers went back to an eight-lane encoding.\n"
     );
 }
 
@@ -225,11 +223,11 @@ fn an_honest_field_change_does_move_the_anchor() {
 /// A doc comment is a name, not a proof, and this octet is the one whose encoding just moved.
 ///
 /// The structural reason it holds is that there is ONE encoder and two call sites of it
-/// (`Faithful8::from_field_limbs8` at `turn/src/rotation_witness.rs` and `cell/src/commitment.rs`,
-/// with the same `[4 + i, 113 + 7·i .. +6]` index array); this asserts the consequence, so a future
-/// hand-inlined second body is caught instead of trusted.
+/// (`Faithful9::from_field_lanes9` at `turn/src/rotation_witness.rs` and `cell/src/commitment.rs`,
+/// over the SAME Lean-emitted `ROTATED_FIELD_LANE_COL[i]` nonet); this asserts the consequence, so a
+/// future hand-inlined second body is caught instead of trusted.
 #[test]
-fn both_producers_fill_the_fields_octet_byte_identically() {
+fn both_producers_fill_the_fields_nonet_byte_identically() {
     use dregg_cell::commitment::{V9RotationContext, compute_rotated_pre_limbs};
     use dregg_turn::rotation_witness as rw;
 
@@ -238,9 +236,16 @@ fn both_producers_fill_the_fields_octet_byte_identically() {
     let mut cell = cell_with(0xE7);
     for slot in 0..8usize {
         let mut v = [0u8; 32];
-        v[0] = 0xF0 ^ slot as u8;
-        v[7] = slot as u8;
-        v[24..32].copy_from_slice(&(((slot as u64) << 33) | 0x0BAD_F00D).to_be_bytes());
+        v[0] = 0xF0 ^ slot as u8; // free lane 2
+        v[7] = slot as u8; // free lane 4
+        // ⚑ BYTE 23 AND A REDUCING lo32 ARE HERE ON PURPOSE — the ninth lane's window is W bits
+        // 168..196, i.e. source bytes 21..24. The original fixture wrote bytes 0, 7 and 24..32 only,
+        // so lane 8 was ZERO for every slot and a "the ninth lane is written" check passed vacuously
+        // — it was measured failing, and the fixture was the wrong thing, not the check.
+        v[23] = 0x30 ^ slot as u8; // lane 8 bits 16..24
+        // `0x8BAD_F00D = 2343112717 > p`, so `q₀ = 1`: the ninth lane also carries the quotient the
+        // pinned lane 0 discards, which is the whole reason the column exists.
+        v[24..32].copy_from_slice(&(((slot as u64) << 33) | 0x8BAD_F00D).to_be_bytes());
         assert!(cell.state.set_field(slot, v));
     }
     let mut ledger = Ledger::new();
@@ -272,14 +277,14 @@ fn both_producers_fill_the_fields_octet_byte_identically() {
 
     let zero = dregg_circuit::field::BabyBear::ZERO;
     for slot in 0..8usize {
-        // lane 0 rides the welded limb `4 + slot`; lanes 1..7 ride `113 + 7·slot .. +6`.
-        let positions: Vec<usize> = std::iter::once(4 + slot)
-            .chain((0..7).map(|k| 113 + 7 * slot + k))
-            .collect();
-        // NON-VACUITY: an all-zero octet would let a twin that writes nothing pass.
+        // ⚠ READ THE EMITTED TABLE. The nonet is NON-CONTIGUOUS: lane 0 at `4 + slot`, lanes 1..7 at
+        // `113 + 7·slot .. +6`, lane 8 at `176 + slot`. A stride reconstruction would silently
+        // compare slot `j`'s ninth lane against slot `j+1`'s first completion lane.
+        let positions = dregg_circuit::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL[slot];
+        // NON-VACUITY: an all-zero nonet would let a twin that writes nothing pass.
         assert!(
             positions.iter().any(|&p| w.pre_limbs[p] != zero),
-            "slot {slot}: the octet must be non-zero, or this comparison proves nothing"
+            "slot {slot}: the nonet must be non-zero, or this comparison proves nothing"
         );
         for (lane, &pos) in positions.iter().enumerate() {
             assert_eq!(
@@ -288,6 +293,23 @@ fn both_producers_fill_the_fields_octet_byte_identically() {
                  byte-identically"
             );
         }
+        // ⚑ AND THE NINTH LANE IS ACTUALLY WRITTEN. Both producers left column `176 + slot` at ZERO
+        // until 2026-07-31 while the descriptor published it as a PI and the absorption chain folded
+        // it into `state_commit` — consistent, and vacuous. The fixture above puts content in the
+        // ninth lane's window (byte 23) AND forces a lo32 quotient, so a producer that still wrote
+        // eight lanes fails here.
+        assert!(
+            w.pre_limbs[positions[8]] != zero,
+            "slot {slot}: the ninth lane (col {}) must be written, not left at the producer zero \
+             the eight-lane encoder used to leave there",
+            positions[8]
+        );
+        // The quotient half specifically: `q₀ = 1` sets lane 8's bits 24..28.
+        assert!(
+            w.pre_limbs[positions[8]].as_u32() & (1 << 24) != 0,
+            "slot {slot}: lane 8 must carry q₀ = 1 for a lo32 above the modulus — that quotient is \
+             what the pinned pair discards and the eight-lane encoder lost outright"
+        );
     }
 }
 
@@ -353,59 +375,67 @@ fn the_constructed_alias_pair_cannot_be_built_under_the_nine_lane_encoder() {
     }
 }
 
-/// ⚠ **THE RESIDUAL, MEASURED.** The anchor is not on the nine-lane encoder: `cell/src/commitment.rs`
-/// and `turn/src/rotation_witness.rs` write `Faithful8::from_field_limbs8(..).write_lanes(..)` into
-/// EIGHT rotated slots per field (`4 + i` ‖ `113 + 7·i .. +6`), and the layout has no ninth column.
+/// ⚑ **THE RESIDUAL IS CLOSED, AND THIS TEST REPLACES THE ONE THAT MEASURED IT.**
 ///
-/// This test does not restate that in prose — it shows the consequence. The deployed octet's PINNED
-/// PAIR (lanes 0 and 1, the kernel u64 window, byte-identical across both encoders) COLLIDES on the
-/// u64-window alias. So the anchor's separation of this family, which
-/// `a_constructed_field_alias_must_not_reach_the_same_signed_anchor` confirms holds, is carried
-/// ENTIRELY by the six Poseidon2 completion lanes: hash strength (~2^92.7 collision), not the
-/// injection.
+/// Its predecessor — `the_anchors_separation_of_this_family_is_still_hash_strength_not_injective` —
+/// showed the deployed octet's PINNED PAIR colliding on the u64-window alias, so that the reader
+/// could see every bit of the anchor's separation being carried by six Poseidon2 lanes (~2^92.7
+/// collision, below this tree's ~124-bit bar). Its own docstring said: *"A green here is not good
+/// news; it is the honest size of what is left. It turns red — correctly, and loudly — the day the
+/// fields octet is re-laid onto nine committed lanes, at which point this test is deleted and the
+/// anchor inherits the injection."* That day was 2026-07-31; it is deleted, and this says what
+/// replaced it.
 ///
-/// A green here is not good news; it is the honest size of what is left. It turns red — correctly,
-/// and loudly — the day the fields octet is re-laid onto nine committed lanes, at which point this
-/// test is deleted and the anchor inherits the injection.
+/// The pinned pair STILL collides and always will — lane 0 is `BE(b[28..32]) % p`, welded to the v1
+/// face column and read by `field_to_u64`, so "fix the alias by re-chunking lane 0" was never
+/// available. What changed is where the separation comes from: the quotient lane 0 discards now
+/// rides the committed ninth lane, so the anchor separates this family BY CONSTRUCTION.
 #[test]
-fn the_anchors_separation_of_this_family_is_still_hash_strength_not_injective() {
-    use dregg_circuit::effect_vm::{field_limbs8, field_limbs9};
+fn the_anchor_now_separates_this_family_by_construction_not_by_hash_strength() {
+    use dregg_circuit::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL;
+    use dregg_circuit::effect_vm::{field_from_lanes9, field_limbs9};
 
     let (mut honest, mut sibling) = ([0u8; 32], [0u8; 32]);
     honest[28..32].copy_from_slice(&7u32.to_be_bytes());
     sibling[28..32].copy_from_slice(&(7u32 + P).to_be_bytes());
     assert_ne!(honest, sibling);
 
-    let (o8, s8) = (field_limbs8(&honest), field_limbs8(&sibling));
     let (o9, s9) = (field_limbs9(&honest), field_limbs9(&sibling));
 
-    // The pinned pair is the SAME two lanes in both encoders — that is the deployed ABI, and it is
-    // exactly why the ninth lane had to exist rather than lane 0 being re-chunked.
-    assert_eq!(o8[0], o9[0], "lane 0 is byte-identical across the encoders");
-    assert_eq!(o8[1], o9[1], "lane 1 is byte-identical across the encoders");
-
-    // ⚑ THE MEASUREMENT: on the alias, the committed pinned pair carries NO separation at all.
+    // (1) THE PINNED PAIR STILL COLLIDES — asserted deliberately. This is the immovable deployed
+    //     ABI, and it is exactly why a ninth lane was the repair rather than a re-chunking.
     assert_eq!(
-        (o8[0], o8[1]),
-        (s8[0], s8[1]),
-        "the u64-window alias collides in the deployed pinned pair — every bit of the anchor's \
-         separation is the hash lanes'"
+        (o9[0], o9[1]),
+        (s9[0], s9[1]),
+        "the u64-window alias must still collide in the pinned pair — that pair is the deployed ABI"
     );
 
-    // And what the ninth lane would have added, if it were committed: the quotient, in lane 8.
+    // (2) AND THE NINTH LANE CARRIES THE DIFFERENCE, in the committed column.
     assert_ne!(
         o9[8], s9[8],
-        "the UNCOMMITTED ninth lane is what distinguishes the pair by construction rather than by \
-         hash strength"
+        "lane 8 must carry the quotient that lane 0's `mod p` discards"
     );
-    assert_ne!(o9, s9, "the nine-lane vectors separate");
+    assert!(
+        (2..8).all(|k| o9[k] == s9[k]),
+        "for a pure u64-window alias the OTHER free lanes agree — the whole separation is lane 8's, \
+         which is what makes the committed ninth column load-bearing rather than decorative"
+    );
 
-    // The anchor does separate them today — via the hash lanes. Stated so the residual is not
-    // mistaken for an open forgery.
+    // (3) ANTI-VACUITY: both members decode. A separation from a scrambling encoder fails here.
+    assert_eq!(field_from_lanes9(&o9), honest);
+    assert_eq!(field_from_lanes9(&s9), sibling);
+
+    // (4) AND THE ANCHOR SEPARATES THEM. Under the pre-cutover producers the ONLY column carrying
+    //     this pair's difference — `176 + slot` — was written ZERO, so the anchor's separation came
+    //     from the hash lanes. It now comes from the committed nonet.
     assert_ne!(
         anchor_with_field(0xE5, 0, honest),
         anchor_with_field(0xE5, 0, sibling),
-        "the anchor must still separate the pair at hash strength"
+        "the anchor must separate the pair"
+    );
+    assert_eq!(
+        ROTATED_FIELD_LANE_COL[0][8], 176,
+        "the separating lane rides a real committed column, not a pad"
     );
 }
 

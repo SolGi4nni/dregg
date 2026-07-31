@@ -180,7 +180,6 @@ fn witness(
         cap_membership: Some(cap),
         turn_hash: [0xC2u8; 32],
         rotation: Some(rot),
-        cap_turn_identity: None,
         umem_witness,
     }
 }
