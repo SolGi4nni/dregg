@@ -879,3 +879,14 @@ Four circuits compiled, and the semantic one is now part of the gate's own VK:
    recording the superseded address in the new one.**
 4. The gate's VK now **depends on** `dregg-cell-fact-d4-p32`, so the deploy script had to compile it
    before `DreggAttestedGate` — o1js refuses otherwise. Fixed in `scripts/devnet-deploy.ts`.
+
+## 09:15 — ⚑ CONFIRMED ON CHAIN
+Queried Mina devnet directly (not the deploy log):
+```
+account B62qq8d7J9MmKroYmHiuAJ7LW38MxXq5ytdmGEM4Sxn6pGYA8X9Y5jK
+vk hash 26364647474017812067523418382737420467008306395717411975730107437954374444742
+```
+**That is the gate VK we compiled — and the cell-fact circuit is INSIDE it**, because o1js refuses
+`DreggAttestedGate.compile()` without `dregg-cell-fact-d4-p32`. **The deployed account's identity
+includes the ability to read a dregg cell.** `zkappState[0]` still 0 — the anchor tx
+(`5JuscCsjT9NxtoVBmZ5AAP8VMs13Fcqka9JT5pWsTqKWTredoKtY`) is submitted, not yet included.
