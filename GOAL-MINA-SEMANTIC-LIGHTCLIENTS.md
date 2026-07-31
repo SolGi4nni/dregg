@@ -1311,3 +1311,21 @@ so the GPU path is dead at 2^16 on any real Vulkan device (never showed on the M
 wgpu-speedup work ember asked about (the GPU path must run at production scale for its ~1.4× to
 matter). A lane is tiling it properly with the existing bit-exact CPU-parity check. `DREGG_GPU_DISABLE`
 (`70acac585`) is the measurement lever, not the fix.
+
+## ✅ 2026-07-31 — THE REAL PASTA SHRINK TERMINAL PROVED AND VERIFIED (hbox, CPU, `passed`)
+`mina_terminal_tooth::real_apex_terminates_mina_native_and_verifies` — **1 passed**, 2128 s total:
+- **apex fold** (real 2-turn chain → apex, BabyBear): 1868.98 s — the AMORTIZED recursion.
+- **terminal prove** (apex-verifier AIR under `DreggMinaConfig`, Pasta Fp, kimchi Poseidon 55 rounds):
+  **172.94 s (~2.9 min)**.
+- **terminal verify** (Rust `DreggMinaConfig` native verifier): **209 ms → ACCEPT**; a tampered opened
+  value → **REJECT** (accept is non-vacuous, by the test's own polarity).
+- proof bytes 431,454. vs the shipped BN254 ETH terminal, same apex: prove **2.02×**, verify 2.10×,
+  bytes 1.000×.
+
+**MEASURED, on the target box.** This is the Rust-side substrate of the shrink route, run end to end
+for the first time from a genuine fold — the piece that was "proven, never run." **Mina's own hash
+function verifies a real dregg terminal proof in 209 ms.**
+⚠ STILL the Rust substrate, NOT on-chain o1js settlement (that needs the o1js chain over the Pasta
+shape + deploy — the 4-step ladder above). The distinction stands; this closes ladder step 1.
+⚠ Ran CPU-forced (`DREGG_GPU_DISABLE=1`) — the GPU path hits the apex-scale dispatch bug; a lane is
+tiling it. The 173 s is a CPU number; GPU is pending the fix.
