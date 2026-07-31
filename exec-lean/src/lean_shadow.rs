@@ -1,7 +1,29 @@
-//! Optional Lean FFI shadow execution — compares Rust commit decisions against the
-//! verified Lean kernel without affecting [`dregg_turn::turn::TurnResult`].
+//! Lean FFI marshalling + the Lean↔Rust DIFFERENTIAL COMPARISON, as a library of pure entry
+//! points. Nothing here runs itself: every function is called by a consumer that decides.
 //!
-//! Enabled when `DREGG_LEAN_SHADOW=1` and `dregg_lean_ffi::lean_available()`.
+//! ⚑ **THE `DREGG_LEAN_SHADOW` ENTRY POINT IS GONE — 2026-07-30.** `maybe_shadow_turn`,
+//! `capture_pre_state_if_eligible`, `shadow_enabled` and the `SHADOW_PRE`/`SHADOW_HOST`/
+//! `SHADOW_BLOCK_HEIGHT` thread-locals implemented a differential that ran on the production
+//! execute path gated on `DREGG_LEAN_SHADOW=1`. The variable was set by NOTHING in the tree
+//! outside one test (swept four ways: 26 workflows, every Dockerfile/compose/k8s file, 7 systemd
+//! units, every Rust `env::set_var`), so the comparison never ran on a deployed node — and the
+//! single call site discarded its verdict (`let _ = maybe_shadow_turn(..)`), so it decided nothing
+//! even when armed.
+//!
+//! Its one genuine strength was [`post_states_agree`]: a CELL-BY-CELL comparison of the verified
+//! Lean post-state against the Rust one. That is strictly stronger than what the ARMED seam had —
+//! `produce_via_lean` compared `consensus_state_commitment`, which binds the AGENT's cell in full
+//! but every other cell only by an EXISTENCE BIT (`rotation_witness::cells_root` leaves are
+//! `BabyBear::ONE`), so a Lean↔Rust divergence in, say, a transfer RECIPIENT's balance was
+//! invisible to it. The predicate was therefore MOVED onto the armed seam
+//! ([`crate::lean_apply::produce_via_lean`], where it decides `ProducerOutcome::divergence`) and
+//! the dark entry point deleted rather than kept beside it.
+//!
+//! What remains here and IS consumed: [`shadow_agreement_for`] (the harness entry, pinned by
+//! `exec-lean/tests/shadow_agreement_strength.rs`), [`shadow_report`] (the corpus
+//! divergence-finder), [`run_shadow_state`] / [`build_pre_ledger`] / the marshaller (the verified
+//! PRODUCER's own path), and [`last_admission_reason`] (read by `produce_via_lean` so a verified
+//! rejection names the gate that refused).
 //!
 //! # Scope: full multi-action FORESTS (no longer single-`SetField`)
 //!
@@ -34,7 +56,7 @@ pub use dregg_turn::ShadowHostCtx;
 use dregg_turn::action::Effect;
 use dregg_turn::action::{Authorization, DelegationProofData};
 use dregg_turn::forest::CallTree;
-use dregg_turn::turn::{Turn, TurnResult};
+use dregg_turn::turn::Turn;
 
 /// Minimal pre-execution ledger snapshot for shadow marshalling.
 ///
@@ -53,12 +75,10 @@ pub(crate) struct ShadowPreLedger {
 // chain-head / budget legs (boundary-P1 bug-1; `Dregg2.Exec.HostCorrespondence`).
 
 thread_local! {
-    static SHADOW_PRE: RefCell<Option<ShadowPreLedger>> = const { RefCell::new(None) };
-    static SHADOW_BLOCK_HEIGHT: RefCell<u64> = const { RefCell::new(0) };
-    static SHADOW_HOST: RefCell<Option<ShadowHostCtx>> = const { RefCell::new(None) };
-    /// The theorem-backed admission REASON the verified executor reported for the LAST observed
-    /// turn (the legible "why" of a refusal). Set by `run_shadow` from the decoded verdict; read
-    /// by `LeanShadowObserver::admission_reason` so the veto path can surface the named reason.
+    /// The theorem-backed admission REASON the verified executor reported for the LAST turn it
+    /// decided (the legible "why" of a refusal). Set by `run_shadow` / `record_admission_reason`
+    /// from the decoded verdict; read by [`crate::lean_apply::produce_via_lean`] so a verified
+    /// rejection names the gate that refused instead of a bare `LeanShadowVeto`.
     /// Mapped from the FFI `dregg_lean_ffi::AdmissionReason` to the FFI-free `dregg_turn` mirror.
     static SHADOW_REASON: RefCell<Option<dregg_turn::AdmissionReason>> = const { RefCell::new(None) };
 }
@@ -83,23 +103,6 @@ fn map_ffi_reason(r: dregg_lean_ffi::AdmissionReason) -> Option<dregg_turn::Admi
         F::OverBudget => 11,
     };
     dregg_turn::AdmissionReason::from_code(code)
-}
-
-/// Capture a minimal pre-state snapshot when shadow mode may run later.
-///
-/// Call at the start of [`dregg_turn::executor::TurnExecutor::execute`] before any ledger mutation so
-/// the Lean oracle sees the same admission inputs as Rust. `host` carries the NODE-fed admission
-/// context (clock / freeze-set / stored head / budget) — the bug-1 seam.
-pub fn capture_pre_state_if_eligible(turn: &Turn, ledger: &Ledger, host: ShadowHostCtx) {
-    let snapshot = if shadow_env_enabled() && forest_is_marshallable(turn) {
-        Some(build_pre_ledger(turn, ledger))
-    } else {
-        None
-    };
-    let block_height = host.block_height;
-    SHADOW_PRE.with(|slot| *slot.borrow_mut() = snapshot);
-    SHADOW_BLOCK_HEIGHT.with(|h| *h.borrow_mut() = block_height);
-    SHADOW_HOST.with(|slot| *slot.borrow_mut() = Some(host));
 }
 
 /// The STRENGTH of the agreement a shadow comparison actually established — so the harness never
@@ -154,91 +157,8 @@ impl ShadowAgreement {
     }
 }
 
-/// Shadow-execute eligible turns against the Lean kernel and log divergences.
-///
-/// Uses the pre-execution snapshot stored by [`capture_pre_state_if_eligible`].
-/// The `ledger` argument matches the public API; marshalling uses the captured pre-state.
-///
-/// Returns the Lean commit verdict (`Some(true/false)`) when the turn was comparable (eligible +
-/// the FFI ran), else `None`. This is a PURE OBSERVER: it never changes the `TurnResult`, and since
-/// the strict veto was deleted (2026-07-28) there is no path by which it can. The verified executor
-/// DECIDES on the armed authority-inversion path instead ([`crate::lean_apply::produce_via_lean`]),
-/// which owns the full reject-side rollback this observer never had.
-///
-/// # The comparison is DENOTATIONAL where it can be (no laundered "agreement")
-///
-/// For a turn in the root-agreeing (swap-safe) set that BOTH executors commit, the shadow does NOT
-/// stop at the commit bit: it reconstitutes the verified Lean executor's FULL post-state ledger
-/// (`run_shadow_state` → `lean_apply::wire_state_to_ledger`) and compares it CELL BY CELL against
-/// the Rust executor's post-state ledger — genuine eval agreement (the SAME post-state on the SAME
-/// input). A FULL-STATE divergence (commit bits match but a cell differs) is a real finding the
-/// commit bit alone would MISS, logged at `dregg::lean_shadow::divergence`. Outside that set (a
-/// characterized root-gap effect, or a turn that did not commit on both sides) the post-state root
-/// cannot byte-match by construction, so the comparison is HONESTLY a commit-bit check (logged as
-/// such, [`ShadowAgreement::CommitBitOnly`]). The veto path is unaffected — it keys on the commit
-/// verdict, which this still returns.
-pub fn maybe_shadow_turn(
-    turn: &Turn,
-    ledger: &Ledger,
-    result: &TurnResult,
-    block_height: u64,
-) -> Option<(bool, ShadowAgreement)> {
-    let _ = block_height;
-    // Clear any stale reason from a previous turn — a non-comparable turn (FFI off / GAP / not
-    // marshallable) must surface NO reason, never a stale one. `run_shadow` re-sets it on a real
-    // comparison.
-    SHADOW_REASON.with(|r| *r.borrow_mut() = None);
-    if !shadow_env_enabled() {
-        SHADOW_PRE.with(|slot| slot.borrow_mut().take());
-        SHADOW_BLOCK_HEIGHT.with(|h| *h.borrow_mut() = 0);
-        SHADOW_HOST.with(|slot| slot.borrow_mut().take());
-        return None;
-    }
-
-    if !dregg_lean_ffi::lean_available() {
-        tracing::debug!("lean shadow: Lean lib unavailable, skipping");
-        SHADOW_PRE.with(|slot| slot.borrow_mut().take());
-        SHADOW_HOST.with(|slot| slot.borrow_mut().take());
-        return None;
-    }
-
-    let Some(pre) = SHADOW_PRE.with(|slot| slot.borrow_mut().take()) else {
-        return None;
-    };
-    // The NODE-fed admission context captured alongside the pre-state (bug-1 seam). Falls back
-    // to the diagnostic default only if the executor did not provide one (should not happen on
-    // the production path, which always passes a real `ShadowHostCtx`).
-    let host = SHADOW_HOST
-        .with(|slot| slot.borrow_mut().take())
-        .unwrap_or_else(ShadowHostCtx::diag);
-
-    if !forest_is_marshallable(turn) {
-        return None;
-    }
-
-    let kinds = turn_effect_kinds(turn).join("+");
-    let rust_committed = result.is_committed();
-
-    match shadow_compare(turn, &pre, &host, rust_committed, ledger) {
-        Ok((lean_committed, agreement)) => {
-            log_shadow_outcome(turn, &kinds, lean_committed, rust_committed, agreement);
-            Some((lean_committed, agreement))
-        }
-        Err(e) => {
-            tracing::warn!(
-                target: "dregg::lean_shadow",
-                agent = ?turn.agent,
-                effects = %kinds,
-                error = %e,
-                "lean shadow: marshal/exec failed (turn NOT compared)"
-            );
-            None
-        }
-    }
-}
-
-/// **THE COMPARISON ITSELF**, split out of [`maybe_shadow_turn`] so its STRENGTH is assertable by a
-/// test without touching `DREGG_LEAN_SHADOW` or the thread-local pre-state.
+/// **THE COMPARISON ITSELF**, reachable ONLY through [`shadow_agreement_for`] so its STRENGTH is
+/// assertable by a test — no env var, no thread-local pre-state.
 ///
 /// ⚑ This split is the fix for a standing hole: [`ShadowAgreement`] existed, distinguished a genuine
 /// denotational agreement from a commit-bit coincidence, and NOTHING anywhere asserted which one a
@@ -246,6 +166,10 @@ pub fn maybe_shadow_turn(
 /// `FullState` detector (the root-vs-anchor kind mismatch) ran for nine days unnoticed: a detector
 /// no test can read is a detector no test can find broken. `shadow_agreement_strength.rs` now pins
 /// both faces against the live FFI.
+///
+/// The `maybe_shadow_turn` entry that used to drive this on the production execute path — gated on
+/// `DREGG_LEAN_SHADOW=1`, set by nothing, with its verdict dropped at the call site — was deleted
+/// 2026-07-30. See the module header.
 ///
 /// Returns `(lean_committed, agreement)`. Errors are marshal/exec failures (the turn was NOT
 /// compared) — never a silent "agreed".
@@ -356,53 +280,39 @@ fn compare_post_state(
 /// Cells outside that union are outside the Lean reconstitution's scope — it only ever holds the
 /// referenced closure — so they are deliberately not claimed. That scope limit is exactly what the
 /// old root-vs-root comparison got wrong in the other direction.
+///
+/// ⚑ The old note here said un-referenced cells "are covered by `produce_via_lean`'s own
+/// consensus-anchor comparison" — **that was false**, and it was a mutual-coverage claim where
+/// neither leg covered: the anchor binds the AGENT's cell plus an EXISTENCE BIT per other cell
+/// (`rotation_witness::cells_root`), never another cell's value. Since 2026-07-30 the producer runs
+/// this same comparison over the WHOLE ledger (via [`first_divergent_cell`], which this delegates
+/// to — ONE implementation, two views), so nothing rests on the scope limit any more.
 fn post_states_agree(closure: impl Iterator<Item = CellId>, lean: &Ledger, rust: &Ledger) -> bool {
-    let mut compared: std::collections::HashSet<CellId> = closure.collect();
-    compared.extend(lean.iter().map(|(id, _)| *id));
-    compared.iter().all(|id| lean.get(id) == rust.get(id))
+    first_divergent_cell(closure, lean, rust).is_none()
 }
 
-/// Log the shadow outcome at the right strength — a FULL-STATE divergence (commit bits agree but the
-/// post-state roots differ) is a real finding the commit bit alone would miss, so it is logged as a
-/// divergence even though the commit bits matched.
-fn log_shadow_outcome(
-    turn: &Turn,
-    kinds: &str,
-    lean_committed: bool,
-    rust_committed: bool,
-    agreement: ShadowAgreement,
-) {
-    if lean_committed != rust_committed {
-        tracing::warn!(
-            target: "dregg::lean_shadow::divergence",
-            agent = ?turn.agent,
-            effects = %kinds,
-            lean_committed,
-            rust_committed,
-            full_state = agreement.is_full_state(),
-            "RUST↔LEAN divergence: commit-bit mismatch (apply.rs vs verified Lean executor)"
-        );
-    } else if !agreement.agreed() {
-        // Commit bits AGREE but the FULL post-state diverges — exactly the divergence a commit-bit
-        // check launders away. Only reachable on the denotational (FullState) leg.
-        tracing::warn!(
-            target: "dregg::lean_shadow::divergence",
-            agent = ?turn.agent,
-            effects = %kinds,
-            committed = lean_committed,
-            "RUST↔LEAN divergence: post-state CELL mismatch despite matching commit bit \
-             (full-state denotational divergence — the commit bit alone would MISS this)"
-        );
-    } else {
-        tracing::debug!(
-            target: "dregg::lean_shadow",
-            agent = ?turn.agent,
-            effects = %kinds,
-            committed = lean_committed,
-            full_state = agreement.is_full_state(),
-            "lean shadow agrees (full_state = genuine post-state agreement; else commit-bit only)"
-        );
-    }
+/// **THE COMPARISON**, naming the offending cell. The lowest `CellId` at which the two post-states
+/// disagree over the union of `closure`, `lean`'s keys and `rust`'s keys — or `None` when they
+/// agree everywhere that union reaches.
+///
+/// `Option<Cell>` equality is the point: a cell present on one side and absent on the other is a
+/// divergence (a create the other executor did not make, or a destroy it did not perform), not a
+/// skipped comparison. The union is walked in `CellId` order so the cell reported for a multi-cell
+/// divergence is deterministic — a `HashSet` here would make the same defect report a different
+/// cell run to run.
+///
+/// Two callers, deliberately sharing this one body rather than growing a second implementation:
+/// [`post_states_agree`] (the [`ShadowAgreement::FullState`] leg, scoped to the turn's referenced
+/// closure) and [`crate::lean_apply::classify_divergence`] (the armed producer's third leg, over
+/// both full ledgers).
+pub(crate) fn first_divergent_cell(
+    closure: impl Iterator<Item = CellId>,
+    lean: &Ledger,
+    rust: &Ledger,
+) -> Option<CellId> {
+    let mut compared: std::collections::BTreeSet<CellId> = closure.collect();
+    compared.extend(lean.iter().map(|(id, _)| *id));
+    compared.into_iter().find(|id| lean.get(id) != rust.get(id))
 }
 
 // ── DELETED 2026-07-28: `DREGG_LEAN_SHADOW_STRICT` / `strict_veto_enabled` / `lean_vetoes` ──
@@ -426,24 +336,31 @@ fn log_shadow_outcome(
 // `TurnError::LeanShadowVeto` survives and is still constructed — by `produce_via_lean`, the path
 // that actually runs.
 
-fn shadow_env_enabled() -> bool {
-    std::env::var("DREGG_LEAN_SHADOW").as_deref() == Ok("1")
-}
-
-/// Whether shadow execution is enabled (`DREGG_LEAN_SHADOW=1`). The executor uses this to AVOID
-/// building the host-fed admission context (which locks the migration / budget mutexes) on the hot
-/// path when the shadow is off.
-pub fn shadow_enabled() -> bool {
-    shadow_env_enabled()
-}
+// ── DELETED 2026-07-30: `DREGG_LEAN_SHADOW` / `shadow_env_enabled` / `shadow_enabled` /
+//    `maybe_shadow_turn` / `capture_pre_state_if_eligible` / `log_shadow_outcome` and the
+//    `SHADOW_PRE` / `SHADOW_HOST` / `SHADOW_BLOCK_HEIGHT` thread-locals ──
+//
+// The differential they drove ran from `TurnExecutor::execute` and was gated on
+// `DREGG_LEAN_SHADOW=1`, which was set by NOTHING in the tree outside one test — so on every
+// deployed turn `capture_pre_state_if_eligible` stored `None` and `maybe_shadow_turn` returned
+// before touching the FFI. And it could not have decided anything even armed: the single call site
+// (`LeanShadowObserver::observe`) discarded the verdict with `let _ = …`. Two independent reasons
+// it was structurally decisionless, on the boundary the whole crate exists to guard.
+//
+// It was NOT simply removed. Its strength — the cell-by-cell [`post_states_agree`] — is now a leg
+// of the ARMED seam (`lean_apply::produce_via_lean`'s `ProducerDivergence::PostStateCell`), where a
+// disagreement is a surfaced Rust bug rather than a `tracing::warn!` nobody reads. That transplant
+// is load-bearing rather than cosmetic: the producer's other leg is
+// `consensus_state_commitment`, which binds the AGENT's cell in full but every OTHER cell only by
+// an existence bit, so it was blind to a divergence in (for example) a transfer recipient's
+// balance. `exec-lean/tests/producer_differential_sees_non_agent_cells.rs` pins exactly that.
 
 // ===================================================================
 // STRUCTURED DIVERGENCE REPORT — for the corpus divergence-finder.
 //
-// `maybe_shadow_turn` logs divergences via `tracing` (side-effect only). The divergence
-// LEDGER harness needs a structured per-turn outcome so it can build an effect-by-effect
-// map of where the verified Lean executor models the Rust `apply.rs` executor and whether
-// the two agree. `shadow_report` runs the SAME marshal+exec path and returns that outcome.
+// The divergence LEDGER harness needs a structured per-turn outcome so it can build an
+// effect-by-effect map of where the verified Lean executor models the Rust `apply.rs` executor
+// and whether the two agree. `shadow_report` runs the marshal+exec path and returns that outcome.
 // ===================================================================
 
 /// Per-turn outcome of running the Lean FFI shadow alongside the real Rust executor.
@@ -854,8 +771,7 @@ fn turn_effect_kinds(turn: &Turn) -> Vec<&'static str> {
 
 /// Run the Lean FFI shadow against the real Rust result and return a STRUCTURED outcome.
 ///
-/// Unlike [`maybe_shadow_turn`] (which only logs), this returns a [`ShadowReport`] for the
-/// corpus divergence-finder. Must be called with the SAME `ledger` and `block_height` as the
+/// Returns a structured [`ShadowReport`] for the corpus divergence-finder. Must be called with the SAME `ledger` and `block_height` as the
 /// `execute` call that produced `result`; it internally re-snapshots the pre-state from the
 /// post-state would be wrong, so callers should snapshot BEFORE executing (see the harness).
 pub fn shadow_report(
@@ -894,7 +810,7 @@ pub fn shadow_report(
     // the turn's `prev: None`), with no frozen cells and a generous budget — the DIAGNOSTIC host
     // context at the harness's chosen `block_height`. The ChainHead leg is still REAL (genesis
     // matches the corpus turn's `previous_receipt_hash: None`); the production node feeds the
-    // advancing head / freeze-set / budget via `maybe_shadow_turn`'s `ShadowHostCtx`.
+    // advancing head / freeze-set / budget through `build_shadow_host_ctx` on the producer path.
     let host = ShadowHostCtx {
         block_height,
         ..ShadowHostCtx::diag()

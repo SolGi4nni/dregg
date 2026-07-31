@@ -8,8 +8,8 @@
 //! the honestly-weaker check for turns off the root-agreeing set.
 //!
 //! ⚑ Until this file, **no test anywhere asserted which one a real turn produced** — the strength
-//! was only ever `tracing`-logged, and `maybe_shadow_turn` threw it away (`let _ = …` at the single
-//! call site). That is exactly how an always-red `FullState` detector survived NINE DAYS: it
+//! was only ever `tracing`-logged, and the production entry point threw it away (`let _ = …` at the
+//! single call site — that entry point is now DELETED, 2026-07-30). That is exactly how an always-red `FullState` detector survived NINE DAYS: it
 //! compared a BLAKE3 sub-ledger root against an 8-felt whole-context anchor, so
 //! `FullState { agreed: false }` fired on every honest turn and the warning meant nothing. A
 //! detector no test can read is a detector no test can find broken.
@@ -21,7 +21,9 @@
 //!     future change that quietly promoted everything to `FullState` fails here.
 //!
 //! No env var, no thread-local: the comparison is driven through `shadow_agreement_for` with
-//! explicit pre/post ledgers, which is the same code path `maybe_shadow_turn` runs.
+//! explicit pre/post ledgers. Since 2026-07-30 that is the ONLY way in — the `DREGG_LEAN_SHADOW`
+//! entry point is deleted, and the cell-level comparison it carried decides
+//! `ProducerDivergence::PostStateCell` on the armed producer seam.
 //!
 //! Requires the linked Lean archive; self-skips when absent (PANICS under `DREGG_TEST_REQUIRE_LEAN=1`).
 

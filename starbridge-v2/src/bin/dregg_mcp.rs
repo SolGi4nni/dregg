@@ -1183,264 +1183,245 @@ fn tool_federation(s: &Session) -> Value {
 
 /// The protocol's action vocabulary: the canonical 8 verbs (the minimal kernel)
 /// plus the Effect catalog, each with its descriptor fields (the action's
-/// parameters) and its conservation class.
+/// parameters).
 ///
-/// ⚠ **This IS a hand-list.** The docstring here used to claim it was "sourced
-/// from the real `dregg_turn::action::Effect` enum, so it never drifts from a
-/// hand-list" — false in both halves: `cat` below is a hardcoded array literal,
-/// and it had already drifted (it lists variants by a stale count). The
-/// conservation classes it reports were likewise claimed to be "the linearity the
-/// verified executor enforces per effect": the executor never read them. The Rust
-/// `Effect::linearity()` they came from had zero non-test callers and was deleted
-/// on 2026-07-28; the classification's real, PROVED home is
-/// `metatheory/Dregg2/Spec/Conservation.lean` + `Dregg2/CatalogInstances.lean`,
-/// which is spec-only (no `@[export]`). Read the classes below as a design
-/// vocabulary, not as an enforced property.
+/// ⚠ **This IS a hand-list**, and it says so now in every string it serves. The
+/// docstring once claimed it was "sourced from the real `dregg_turn::action::Effect`
+/// enum, so it never drifts from a hand-list" — false in both halves: `cat` below
+/// is a hardcoded array literal, and it has drifted. Measured 2026-07-30: it holds
+/// **31 entries against a 36-variant `Effect`**, missing `Mint`, `ShieldedTransfer`,
+/// `Custom`, `CreateHybridCell` and `RotatePqIdentity` — i.e. missing two of the
+/// value-moving effects while calling itself COMPLETE.
+///
+/// ⚑ **THE CONSERVATION COLUMN IS DELETED — 2026-07-30, and the reason is that it
+/// was WRONG at HEAD, not merely unenforced.** It was the surviving re-host of
+/// `Effect::linearity()`, the 36-arm Rust coloring deleted on 2026-07-28 for having
+/// zero non-test callers — and it carried forward the exact staleness that got the
+/// original deleted. It served `Burn -> "Annihilative"` and `"Annihilative": "value
+/// sink (Burn — the only one)"`, while the PROVED Lean coloring at HEAD says
+/// `effectLinearity .burn = Conservative` (`Dregg2/CatalogEffects.lean:116`,
+/// recolored 2026-07-28: mint/burn are two-sided issuer-WELL moves that conserve
+/// exactly) and `bridgeFinalize` is the sole `Annihilative`
+/// (`CatalogInstances.lean:348`). A hand-maintained Rust copy of a Lean-authored
+/// classification is the twin this repo deletes on sight; keeping a third labelling
+/// of it would only have been a third thing to go stale.
+///
+/// The classification's real, PROVED home is `metatheory/Dregg2/Spec/Conservation.lean`
+/// + `Dregg2/CatalogInstances.lean`, and the Lean↔Rust vocabulary drift is pinned by
+/// `tests/src/effect_catalog_lean_rust_pin.rs`. What the executor actually enforces is
+/// per-asset `Σδ=0` over `Action::balance_change`, routed through the verified Lean
+/// `dregg_cross_cell_conserves` oracle — never an effect's colour.
 fn tool_effects() -> Value {
-    // (name, is_canonical_verb, conservation_class, descriptor_fields, gloss)
-    let cat: &[(&str, bool, &str, &str, &str)] = &[
+    // (name, is_canonical_verb, descriptor_fields, gloss)
+    let cat: &[(&str, bool, &str, &str)] = &[
         (
             "SetField",
             true,
-            "Neutral",
             "cell, index, value",
             "set a state field on a cell",
         ),
         (
             "Transfer",
             true,
-            "Conservative",
             "from, to, amount",
             "move balance between cells (Σδ=0 — the conservation tooth)",
         ),
         (
             "GrantCapability",
             true,
-            "Generative",
             "from, to, cap: CapabilityRef",
             "grant a cap edge (non-amplifying: granted ⊆ held)",
         ),
         (
             "RevokeCapability",
             true,
-            "Terminal",
             "cell, slot",
             "revoke a held cap (terminal — monotone down)",
         ),
         (
             "EmitEvent",
             true,
-            "Neutral",
             "cell, event",
             "emit an event into the receipt (no state change)",
         ),
         (
             "IncrementNonce",
             true,
-            "Monotonic",
             "cell",
             "advance the cell nonce (the anti-replay tick)",
         ),
         (
             "CreateCell",
             true,
-            "Generative",
             "public_key, token_id, balance",
             "mint a new cell into the ledger",
         ),
         (
             "SetPermissions",
             true,
-            "Neutral",
             "cell, new_permissions",
             "rewrite a cell's AuthRequired gates (applied LAST in an action)",
         ),
         (
             "SetVerificationKey",
             false,
-            "Neutral",
             "cell, new_vk",
             "rewrite a cell's VK (applied LAST in an action)",
         ),
         (
             "SetProgram",
             false,
-            "Neutral",
             "cell, program: CellProgram",
             "reprogram a cell's caveat table as an ordered turn (the live-customize path)",
         ),
         (
             "NoteSpend",
             false,
-            "Conservative",
             "nullifier, note_tree_root, value, asset_type, spending_proof, value_commitment?",
             "spend a shielded note by revealing its nullifier (proof-carrying)",
         ),
         (
             "NoteCreate",
             false,
-            "Conservative",
             "commitment, value, asset_type, encrypted_note, value_commitment?, range_proof?",
             "create a shielded note (adds a commitment to the note tree)",
         ),
         (
             "SpawnWithDelegation",
             false,
-            "Generative",
             "child_public_key, child_token_id, max_staleness",
             "spawn a delegated child cell",
         ),
         (
             "RefreshDelegation",
             false,
-            "Neutral",
             "child, snapshot",
             "refresh a delegation's freshness snapshot",
         ),
         (
             "RevokeDelegation",
             false,
-            "Terminal",
             "child",
             "revoke a delegation (terminal)",
         ),
         (
             "BridgeMint",
             false,
-            "Generative",
             "portable_proof: PortableNoteProof",
             "mint from a cross-federation portable note proof",
         ),
         (
             "Introduce",
             false,
-            "Generative",
             "introducer, recipient, target, permissions",
             "the ocap introduction primitive (a → grants b a cap on c)",
         ),
         (
             "PipelinedSend",
             false,
-            "Neutral",
             "target: EventualRef, action",
             "CapTP promise-pipelined send (a send against a not-yet-resolved ref)",
         ),
         (
             "ExerciseViaCapability",
             false,
-            "Neutral",
             "cap_slot, inner_effects",
             "exercise effects THROUGH a held capability (attenuated re-dispatch)",
         ),
         (
             "MakeSovereign",
             false,
-            "Terminal",
             "cell",
             "make a cell sovereign (terminal authority transition)",
         ),
         (
             "CreateCellFromFactory",
             false,
-            "Generative",
             "factory_vk, owner_pubkey, token_id, params",
             "mint a cell from a deployed factory descriptor",
         ),
         (
             "Refusal",
             false,
-            "Monotonic",
             "cell, offered_action_commitment, refusal_reason, proof_witness_index",
             "a witnessed refusal (a cell declines an offered action, on the record)",
         ),
         (
             "CellSeal",
             false,
-            "Terminal",
             "target, reason",
             "seal a cell (reversible quiescence — rejects new effects)",
         ),
-        (
-            "CellUnseal",
-            false,
-            "Terminal",
-            "target",
-            "unseal a sealed cell",
-        ),
+        ("CellUnseal", false, "target", "unseal a sealed cell"),
         (
             "CellDestroy",
             false,
-            "Terminal",
             "target, certificate: DeathCertificate",
             "permanently retire a cell (terminal)",
         ),
         (
             "Burn",
             false,
-            "Annihilative",
             "target, slot, amount",
             "burn value out of existence (the only non-conservative value sink)",
         ),
         (
             "AttenuateCapability",
             false,
-            "Terminal",
             "cell, slot, narrower_permissions, narrower_effects?, narrower_expiry?",
             "attenuate a held cap in place (monotone narrowing — adoption IS attenuation)",
         ),
         (
             "ReceiptArchive",
             false,
-            "Terminal",
             "prefix_end_height, checkpoint: ArchivalAttestation",
             "archive a receipt-chain prefix under a checkpoint attestation",
         ),
         (
             "Promise",
             false,
-            "Generative",
             "cell, resolution_condition, wake, timeout_height",
             "post a promise (a hole the circuit treats as a nullifier; resolution = a spend)",
         ),
         (
             "Notify",
             false,
-            "Generative",
             "from, to, resolution_condition, wake, timeout_height",
             "register a wake on another cell's resolution condition",
         ),
         (
             "React",
             false,
-            "Terminal",
             "pending_id, condition, resolution_proof, wake",
             "resolve a pending promise with a proof (fires the wake; one-shot)",
         ),
     ];
 
-    let verbs: Vec<Value> = cat.iter().filter(|e| e.1).map(|(name, _, class, fields, gloss)| {
-        json!({ "verb": name, "conservation": class, "descriptor": fields, "gloss": gloss })
-    }).collect();
-    let all: Vec<Value> = cat.iter().map(|(name, canon, class, fields, gloss)| {
-        json!({ "effect": name, "canonical_verb": canon, "conservation": class, "descriptor": fields, "gloss": gloss })
-    }).collect();
+    let verbs: Vec<Value> = cat
+        .iter()
+        .filter(|e| e.1)
+        .map(|(name, _, fields, gloss)| {
+            json!({ "verb": name, "descriptor": fields, "gloss": gloss })
+        })
+        .collect();
+    let all: Vec<Value> = cat
+        .iter()
+        .map(|(name, canon, fields, gloss)| {
+            json!({ "effect": name, "canonical_verb": canon, "descriptor": fields, "gloss": gloss })
+        })
+        .collect();
 
     json!({
-        "what": "the protocol's action vocabulary. NOTE: this table is a HAND-LIST maintained in dregg_mcp.rs, NOT generated from dregg_turn::action::Effect — it can and does drift; verify against the enum before relying on it",
+        "what": "the protocol's action vocabulary. NOTE: this table is a HAND-LIST maintained in dregg_mcp.rs, NOT generated from dregg_turn::action::Effect — it can and does drift; verify against the enum before relying on it. Measured 2026-07-30 it holds 31 entries against a 36-variant Effect (missing Mint, ShieldedTransfer, Custom, CreateHybridCell, RotatePqIdentity), so it is INCOMPLETE and this field says so rather than the word 'complete'",
         "the_eight_verbs": {
             "what": "the minimal kernel set (dregg3: 8 verbs from 52) — the canonical subset every cell speaks",
             "verbs": verbs,
         },
-        "conservation_classes": {
-            "what": "the DESIGN vocabulary for per-effect conservation, NOT an enforced property. Proved in Lean (metatheory/Dregg2/Spec/Conservation.lean, Dregg2/CatalogInstances.lean) but SPEC-ONLY — no @[export], so no executor path consults it. The Rust Effect::linearity() twin had zero non-test callers and was deleted 2026-07-28. What the executor actually enforces is per-asset Σδ=0 over Action::balance_change, routed through the verified Lean conservation oracle",
-            "classes": {
-                "Conservative": "Σδ = 0 (Transfer, NoteSpend, NoteCreate) — value is moved, never made/lost",
-                "Generative": "introduces structure under non-forgeability (Create*, Grant, Introduce, Promise, Notify, Spawn, BridgeMint)",
-                "Terminal": "monotone-down / one-way (Revoke*, Destroy, Seal, Attenuate, MakeSovereign, Archive, React)",
-                "Annihilative": "value sink (Burn — the only one)",
-                "Monotonic": "advances a monotone counter/log (IncrementNonce, Refusal)",
-                "Neutral": "state mutation with no linear obligation (SetField/Permissions/VK/Program, Emit, Pipeline, Exercise, Refresh)",
-            },
+        "conservation": {
+            "what": "THIS SURFACE NO LONGER SERVES A PER-EFFECT CONSERVATION CLASS, and the deletion (2026-07-30) is a correction, not a trim. The column here was the last re-host of the Rust Effect::linearity() twin (deleted 2026-07-28, zero non-test callers) and it had inherited that twin's staleness: it reported Burn as 'Annihilative — the only value sink' while the proved Lean coloring says effectLinearity .burn = Conservative (mint/burn are two-sided issuer-WELL moves that conserve exactly; bridgeFinalize is the sole Annihilative). Ask Lean for the classification, not this tool",
+            "authored_in": "metatheory/Dregg2/Spec/Conservation.lean + Dregg2/CatalogInstances.lean (proved; spec-only — no @[export], so no executor path consults the colors)",
+            "drift_pin": "tests/src/effect_catalog_lean_rust_pin.rs reads BOTH sources as text and pins the vocabulary difference in both directions",
+            "what_the_executor_actually_enforces": "per-asset Σδ=0 over Action::balance_change, decided by the Lean-authored dregg_cross_cell_conserves through the runtime ConservationOracle (fail-CLOSED on a native release node with no oracle) — the arithmetic, never a label about the arithmetic",
         },
         "full_catalog": {
             "count": all.len(),
@@ -1491,9 +1472,17 @@ fn tool_map(s: &Session, out: Option<&str>) -> Result<Value, String> {
         for e in arr {
             let name = e["effect"].as_str().unwrap_or("?");
             let eid = format!("effect:{name}");
-            nodes.push(node(eid.clone(), "effect", name.to_string(), json!({
-                "canonical_verb": e["canonical_verb"], "conservation": e["conservation"], "descriptor": e["descriptor"],
-            })));
+            nodes.push(node(
+                eid.clone(),
+                "effect",
+                name.to_string(),
+                json!({
+                    // No "conservation" key: the per-effect colour this graph used to carry came from
+                    // `tool_effects`'s hand-list, which reported `Burn` as `Annihilative` while the
+                    // proved Lean coloring says `Conservative`. Deleted 2026-07-30 with its source.
+                    "canonical_verb": e["canonical_verb"], "descriptor": e["descriptor"],
+                }),
+            ));
             edges.push(edge("sys:root".into(), "defines-effect", eid));
         }
     }
@@ -1682,7 +1671,7 @@ fn tool_schemas() -> Value {
           "inputSchema": { "type": "object", "properties": {} } },
         { "name": "federation", "description": "The FEDERATION surface: committee (BLS threshold) / epoch (membership rotation) / checkpoint (state-root quorum certificate) / cross-fed bridge (handoff cert) / revocation tree. The embedded image is a solo n=1 federation; the live quorum/consensus state is a wire seam — this tool surfaces the honest captp-only/node-service object catalog (kind+seam+route, never faked) plus the federation type vocabulary.",
           "inputSchema": { "type": "object", "properties": {} } },
-        { "name": "effects", "description": "The protocol's COMPLETE action vocabulary: the canonical 8 verbs (the minimal kernel) + the full Effect catalog (every variant, 31), each with its descriptor fields (the action's parameters) and its conservation class (Conservative/Generative/Terminal/Annihilative/Monotonic/Neutral — the linearity the verified executor enforces). Sourced from dregg_turn::action::Effect so it never drifts.",
+        { "name": "effects", "description": "The protocol's action vocabulary: the canonical 8 verbs (the minimal kernel) + an Effect catalog with each variant's descriptor fields (the action's parameters). ⚠ A HAND-LIST maintained in dregg_mcp.rs, NOT generated from dregg_turn::action::Effect — 31 entries against a 36-variant enum as of 2026-07-30, so it is INCOMPLETE and it drifts. It serves NO per-effect conservation class: that classification is authored and proved in Lean (Dregg2/Spec/Conservation.lean), and the column this tool used to serve was a stale copy that called Burn 'Annihilative' after Lean recolored it Conservative. What the executor enforces is per-asset Σδ=0 through the verified Lean conservation oracle, never an effect's color.",
           "inputSchema": { "type": "object", "properties": {} } },
         { "name": "map", "description": "THE keystone: ONE comprehensive cross-linked machine-readable graph over the WHOLE inspectable system — every cell, presentation face, affordance/message, effect/verb, surface candidate, and the data-plane/federation/firmament seams, as nodes with stable `id`s and TYPED edges (contains-cell, presents, affords, fires, caps, surfaces-as, distance-rung, has-plane). The hypermedia backbone the atlas site links over. Optionally writes to `out`.",
           "inputSchema": { "type": "object", "properties": { "out": str_prop("output .json path (omit to return the full graph inline)") } } },

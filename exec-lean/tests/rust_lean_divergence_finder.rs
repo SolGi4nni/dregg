@@ -19,9 +19,8 @@
 //!                 the turn is INELIGIBLE for shadow). This is the remaining drift surface,
 //!                 not a divergence — it tells us what still needs a Lean model before swap.
 //!
-//! Run with the Lean FFI linked + shadow on:
-//!   DREGG_LEAN_SHADOW=1 cargo test -p dregg-turn \
-//!       --test rust_lean_divergence_finder -- --nocapture
+//! Run with the Lean FFI linked (no env var — it runs whenever the archive is present):
+//!   cargo nextest run -p dregg-exec-lean --test rust_lean_divergence_finder --no-capture
 //!
 //! Without the feature the harness still runs (every effect reports GAP — no Lean linked),
 //! so it is CI-safe either way; the ledger then records the eligibility map only.
@@ -550,7 +549,13 @@ fn classify(
 
 #[test]
 fn rust_lean_divergence_finder() {
-    let shadow_on = std::env::var("DREGG_LEAN_SHADOW").as_deref() == Ok("1");
+    // ⛑ ARMED 2026-07-30. This was `std::env::var("DREGG_LEAN_SHADOW") == Ok("1")` — a variable
+    // set by NOTHING in the tree, while the harness below calls `shadow_report`, which never
+    // consulted it. So the two non-vacuity assertions gated on this flag (that the Lean FFI
+    // actually ran, and that `SetField` still AGREES) could not fire on any run anyone ever made:
+    // the finder wrote its markdown ledger and asserted nothing. The real condition is whether the
+    // verified executor is LINKED, which is what the flag's own label always claimed to report.
+    let lean_linked = dregg_lean_ffi::lean_available();
     // block_height 0 ⇒ the marshaller omits the optional `block_height` wire field (the
     // executor falls back to `now`/`valid_until` for expiry). We run at 0 so the corpus is
     // marshalled with the SAME envelope shape the byte-exact `marshal_roundtrip` gate proves
@@ -622,7 +627,7 @@ fn rust_lean_divergence_finder() {
     }
 
     // ---- Emit the ledger to stdout ----
-    println!("\n=== RUST↔LEAN DIVERGENCE LEDGER (shadow_on={shadow_on}) ===\n");
+    println!("\n=== RUST↔LEAN DIVERGENCE LEDGER (lean_linked={lean_linked}) ===\n");
     println!(
         "Corpus turns: {total} | comparable (Lean modelled): {comparable} | DIVERGENCES: {diverged}\n"
     );
@@ -652,7 +657,7 @@ fn rust_lean_divergence_finder() {
     }
 
     // ---- Write the markdown ledger to disk for the maintainer ----
-    write_ledger_markdown(shadow_on, total, comparable, diverged, &rows, &per_effect);
+    write_ledger_markdown(lean_linked, total, comparable, diverged, &rows, &per_effect);
 
     // The harness is a DIVERGENCE LEDGER / monitor: its job is to RUN both executors and
     // CHARACTERISE the drift, not to pretend there is none. Divergences are recorded (above +
@@ -710,10 +715,10 @@ fn rust_lean_divergence_finder() {
         );
     }
 
-    if shadow_on {
+    if lean_linked {
         assert!(
             comparable > 0,
-            "shadow is ON but NO turn was comparable — the Lean FFI did not run (link/marshal \
+            "the Lean archive IS linked but NO turn was comparable — the FFI did not run (link/marshal \
              failure?). The divergence finder must actually execute the Lean executor."
         );
         assert!(
@@ -809,7 +814,7 @@ fn rust_lean_divergence_finder() {
 }
 
 fn write_ledger_markdown(
-    shadow_on: bool,
+    lean_linked: bool,
     total: usize,
     comparable: usize,
     diverged: usize,
@@ -843,7 +848,7 @@ fn write_ledger_markdown(
          FFI) side-by-side over a corpus of turns and records every divergence.\n\n",
     );
     md.push_str(&format!(
-        "- `DREGG_LEAN_SHADOW` active (Lean linked by default on native): **{shadow_on}** (false ⇒ Lean not linked; \
+        "- Verified Lean executor LINKED (`dregg_lean_ffi::lean_available()`): **{lean_linked}** (false ⇒ no archive; \
          the table records the eligibility map only — every effect shows GAP).\n",
     ));
     md.push_str(&format!(
@@ -935,13 +940,14 @@ fn write_ledger_markdown(
          chain-head/budget legs are decided by the node, not the turn. The marshaller also carries \
          the cell's REAL c-list (`capabilities`) as wire `caps`, so the verified authority gates \
          (`authorizedB`/`mintAuthorizedB`) read the actual edges the actor holds.\n\n\
-         ## How to run\n\n```\nDREGG_LEAN_SHADOW=1 cargo test -p dregg-turn \
-         --test rust_lean_divergence_finder -- --nocapture\n```\n\n\
+         ## How to run\n\n```\ncargo nextest run -p dregg-exec-lean \
+         --test rust_lean_divergence_finder --no-capture\n```\n\n\
          Requires `dregg-lean-ffi/libdregg_lean.a` (the compiled Lean closure) present + the \
-         project Lean toolchain (build.rs resolves the sysroot via `lake env`). \
-         Wire into CI / devnet by running the node with `DREGG_LEAN_SHADOW=1` and the \
-         default native build — `lean_shadow::maybe_shadow_turn` then logs live divergences \
-         (target `dregg::lean_shadow::divergence`) for every executed turn.\n",
+         project Lean toolchain (build.rs resolves the sysroot via `lake env`). There is no env \
+         var to set. \u{26d1} On a live node the Lean-vs-Rust differential is not a log, it is a \
+         DECISION: `lean_apply::produce_via_lean` (default-ON via `DREGG_LEAN_PRODUCER`) installs \
+         the verified verdict and reports the reference's disagreement as \
+         `ProducerOutcome::divergence`.\n",
     );
 
     let _ = std::fs::write(&path, md);

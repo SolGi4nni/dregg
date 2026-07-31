@@ -1586,7 +1586,7 @@ pub fn prof_outer_dump(label: &str) {
     );
 }
 
-/// THE DENOTATIONAL DIFFERENTIAL leg used by [`crate::lean_shadow::maybe_shadow_turn`]: reconstitute
+/// THE DENOTATIONAL DIFFERENTIAL leg used by [`crate::lean_shadow::shadow_agreement_for`]: reconstitute
 /// the verified Lean executor's post-state ledger from an already-run [`ShadowState`], so the shadow
 /// can compare it CELL BY CELL against the Rust executor's post-state.
 ///
@@ -1648,6 +1648,40 @@ pub(crate) fn lean_post_state_ledger(
     Ok(ledger)
 }
 
+/// HOW the demoted Rust reference disagreed with the authoritative verified verdict, when it did.
+///
+/// `None` on `ProducerOutcome::LeanAuthoritative` is agreement; a `Some` is a surfaced RUST BUG (on
+/// the covered path a Lean↔Rust disagreement is, by definition, the Rust path being wrong). The
+/// variants are ordered by how coarse the disagreement is, and each is checked only when the
+/// coarser ones passed — so the variant NAMES which leg caught it, which is what makes a test able
+/// to assert the differential's STRENGTH rather than just its verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProducerDivergence {
+    /// The two executors disagreed on whether to COMMIT AT ALL. The coarsest and loudest kind.
+    CommitBit { lean: bool, rust: bool },
+    /// Commit bits agree; the AGENT-cell consensus anchor
+    /// (`TurnExecutor::consensus_state_commitment` — the value stamped into the receipt and signed)
+    /// differs. So the agent's own cell, or the SET of present cells, or one of the three
+    /// accumulator roots, came out differently.
+    Anchor {
+        lean_root: [u8; 32],
+        rust_root: [u8; 32],
+    },
+    /// ⚑ THE LEG THE ANCHOR IS STRUCTURALLY BLIND TO. Commit bits AND the anchor agree, yet the two
+    /// post-state LEDGERS differ at `cell`.
+    ///
+    /// This is possible — not a defensive impossibility — because the anchor is a per-AGENT-cell
+    /// commitment: `state_commit::consensus_state_commitment` commits the agent's cell under a ctx
+    /// whose only whole-ledger component is `rotation_witness::cells_root`, and that tree's leaves
+    /// are EXISTENCE BITS (`BabyBear::ONE`), never a cell's value. Two ledgers that differ only in
+    /// a transfer RECIPIENT's balance therefore produce the SAME anchor. Until 2026-07-30 the
+    /// producer's whole differential was the anchor, so every such divergence read as `rust_agreed:
+    /// true`. The cell-by-cell predicate that catches it (`lean_shadow::post_states_agree`) existed,
+    /// but only behind `DREGG_LEAN_SHADOW=1`, which nothing set — and its verdict was dropped at the
+    /// call site. It was moved here and the dark path deleted.
+    PostStateCell { cell: CellId },
+}
+
 /// Which executor produced the committed state, plus the verified-vs-Rust differential, for one
 /// producer-mode commit.
 #[derive(Debug, Clone)]
@@ -1659,14 +1693,21 @@ pub enum ProducerOutcome {
     /// `TurnResult` and `ledger` reflect. `lean_root` is the authoritative post-state root;
     /// `rust_root` / `rust_committed` are the demoted reference's outputs.
     ///
-    /// `rust_agreed` is whether the Rust reference reproduced the verified verdict (commit bit AND
-    /// root). A `false` `rust_agreed` is a REAL Rust BUG surfaced as a finding — it does NOT change
+    /// `rust_agreed` is whether the Rust reference reproduced the verified verdict — the commit
+    /// bit, the consensus anchor, AND (since 2026-07-30) the whole post-state LEDGER cell by cell.
+    /// `divergence` names WHICH of those three legs caught a disagreement, or `None` on agreement;
+    /// `rust_agreed == divergence.is_none()` by construction.
+    ///
+    /// A `false` `rust_agreed` is a REAL Rust BUG surfaced as a finding — it does NOT change
     /// what was committed (Lean still won). The Rust executor is the artifact dregg2 exists to
     /// REPLACE because it is buggy; on the covered path a Lean↔Rust disagreement is, by definition,
     /// the Rust path being wrong, NEVER a reason to override the verified producer.
     LeanAuthoritative {
         committed: bool,
         rust_agreed: bool,
+        /// Which leg caught the disagreement, or `None` when the reference reproduced the verified
+        /// verdict exactly. See [`ProducerDivergence`].
+        divergence: Option<ProducerDivergence>,
         lean_root: [u8; 32],
         rust_root: [u8; 32],
         rust_committed: bool,
@@ -1695,6 +1736,17 @@ impl ProducerOutcome {
                 ..
             }
         )
+    }
+
+    /// WHICH leg of the differential caught the disagreement, when one did. Prefer this over
+    /// [`Self::rust_bug_surfaced`] in a test: a bare boolean is satisfied by any disagreement,
+    /// including one an infrastructure error would produce, whereas the variant says which
+    /// comparison ran and answered.
+    pub fn divergence(&self) -> Option<&ProducerDivergence> {
+        match self {
+            ProducerOutcome::LeanAuthoritative { divergence, .. } => divergence.as_ref(),
+            ProducerOutcome::Fallback { .. } => None,
+        }
     }
 }
 
@@ -1830,11 +1882,20 @@ pub fn produce_via_lean(
     let rust_result = executor.execute(turn, ledger);
     let rust_committed = matches!(rust_result, TurnResult::Committed { .. });
     let rust_root = executor.consensus_state_commitment(ledger, &turn.agent);
-    let rust_agreed = lean_committed == rust_committed && lean_root == rust_root;
+    let divergence = classify_divergence(
+        lean_committed,
+        rust_committed,
+        lean_root,
+        rust_root,
+        &lean_ledger,
+        ledger,
+    );
+    let rust_agreed = divergence.is_none();
 
     let outcome = ProducerOutcome::LeanAuthoritative {
         committed: lean_committed,
         rust_agreed,
+        divergence,
         lean_root,
         rust_root,
         rust_committed,
@@ -1877,6 +1938,65 @@ pub fn produce_via_lean(
         };
         (result, outcome)
     }
+}
+
+/// THE DIFFERENTIAL, in three legs of increasing resolution. Returns the FIRST leg that caught a
+/// disagreement between the authoritative (Lean) verdict and the demoted Rust reference, or `None`
+/// when the reference reproduced it exactly.
+///
+/// The order matters and is not cosmetic: a commit-bit divergence already makes the post-states
+/// incomparable (one executor committed and the other did not), so reporting a cell would be
+/// noise. Only once the coarse legs agree is a cell-level difference a *finding*.
+///
+/// ⚑ **Leg 3 exists because legs 1–2 cannot see most of the ledger.** `lean_root` / `rust_root` are
+/// `consensus_state_commitment` — the chip commitment of the AGENT'S cell under a context whose
+/// only whole-ledger component, `rotation_witness::cells_root`, has EXISTENCE-BIT leaves. Two
+/// ledgers differing only in a transfer recipient's balance produce byte-identical anchors, so the
+/// two-leg differential this replaced reported `rust_agreed: true` for them. (That is also true of
+/// the receipt's signed `post_state_hash`, which is the same value — a separate, larger residual
+/// that `state_commit`'s module docs already label: "a per-cell commit, not the whole-ledger
+/// snapshot the BLAKE3 root was".)
+///
+/// Both ledgers here are FULL ledgers over the same template (`execute_via_lean` reconstitutes from
+/// `pre_ledger`, and the Rust reference mutates that same ledger in place), so a cell either
+/// executor left untouched is identical on both sides by construction — the comparison has no
+/// false-positive surface from bystander cells. Iteration is over the union of both key sets, so an
+/// asymmetric create or destroy is caught too, and the reported cell is the least by id so the
+/// finding is deterministic.
+///
+/// `pub` so `exec-lean/tests/producer_differential_sees_non_agent_cells.rs` can assert each leg BY
+/// VARIANT. The `PostStateCell` leg in particular cannot be provoked end-to-end on demand (it needs
+/// a genuine Lean↔Rust cell divergence), so the tooth measures the anchor equality that would have
+/// laundered it and then asserts this function refuses to call it agreement.
+pub fn classify_divergence(
+    lean_committed: bool,
+    rust_committed: bool,
+    lean_root: [u8; 32],
+    rust_root: [u8; 32],
+    lean_ledger: &Ledger,
+    rust_ledger: &Ledger,
+) -> Option<ProducerDivergence> {
+    if lean_committed != rust_committed {
+        return Some(ProducerDivergence::CommitBit {
+            lean: lean_committed,
+            rust: rust_committed,
+        });
+    }
+    if lean_root != rust_root {
+        return Some(ProducerDivergence::Anchor {
+            lean_root,
+            rust_root,
+        });
+    }
+    // ONE comparison body, shared with the `ShadowAgreement::FullState` leg — see
+    // `lean_shadow::first_divergent_cell`. The "closure" here is the Rust side's own key set, so
+    // the union it walks is every cell either post-state holds.
+    lean_shadow::first_divergent_cell(
+        rust_ledger.iter().map(|(id, _)| *id),
+        lean_ledger,
+        rust_ledger,
+    )
+    .map(|cell| ProducerDivergence::PostStateCell { cell })
 }
 
 /// Build the AUTHORITATIVE `Committed` `TurnResult` for the inversion's commit branch: the verified

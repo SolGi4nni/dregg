@@ -3,27 +3,29 @@
 //! This native-only crate holds ALL the Lean-FFI executor code that `dregg-turn` used to carry
 //! behind the (now-deleted) `no-lean-link` feature:
 //!
-//! - [`lean_shadow`] — the differential OBSERVER, and ONLY an observer: it marshals a turn through
-//!   the verified Lean kernel and compares its commit decision (and, on the swap-safe root-agreeing
-//!   set, its full reconstituted post-state root) against the legacy Rust executor, WITHOUT
-//!   affecting the `TurnResult`. It is gated on `DREGG_LEAN_SHADOW=1`, which is set by nothing, so
-//!   in a default deployment it does not run. **That is not where the verified decision lives.**
-//!   (A `DREGG_LEAN_SHADOW_STRICT` veto that DID decide from here was deleted 2026-07-28: armed
-//!   nowhere, dominated by [`lean_apply`], and its rollback left the agent's receipt head advanced
-//!   to a receipt that was never issued.)
+//! - [`lean_shadow`] — the MARSHALLER and the Lean↔Rust comparison predicates, as a library. It
+//!   runs nothing by itself. Two decisionless entry points that used to drive it from the
+//!   production execute path have been deleted rather than kept beside the armed one: the
+//!   `DREGG_LEAN_SHADOW_STRICT` veto (2026-07-28 — armed nowhere, and its rollback left the agent's
+//!   receipt head advanced to a receipt that was never issued) and the `DREGG_LEAN_SHADOW`
+//!   differential itself (2026-07-30 — the variable was set by nothing, and the single call site
+//!   dropped the verdict with `let _ =`). The comparison's strength moved onto [`lean_apply`].
 //! - [`lean_apply`] — the authoritative state PRODUCER: `produce_via_lean` installs the verified
 //!   Lean post-state and commit verdict UNCONDITIONALLY (the authority inversion), demoting the
-//!   Rust executor to a checked reference.
+//!   Rust executor to a checked reference — and, since 2026-07-30, running the CELL-BY-CELL
+//!   post-state differential the dark path used to carry ([`ProducerDivergence`]).
 //!
 //! # The seam
 //!
 //! `dregg-turn` defines [`dregg_turn::ShadowObserver`] (a `Send + Sync` trait) and holds an
 //! `Arc<dyn ShadowObserver>` in its `TurnExecutor`, defaulting to `NoOpShadowObserver`. This crate
-//! provides [`LeanShadowObserver`], which implements that trait by delegating to the moved
-//! `lean_shadow` free functions. A native node injects it via
+//! provides [`LeanShadowObserver`], which implements it. A native node injects it via
 //! `TurnExecutor::with_shadow_observer(Arc::new(LeanShadowObserver))`; a wasm / no-FFI build simply
-//! does not depend on this crate and keeps the no-op default. That dependency choice — not a feature
-//! flag — is what selects the verified shadow/gate executor.
+//! does not depend on this crate and keeps the no-op default.
+//!
+//! ⚑ What that seam carries is now exactly one thing: the DURABLE nullifier frontier advance on a
+//! committed `NoteSpend`. It is a real production side effect, and it is the only reason the trait
+//! still exists — the differential it also used to carry is gone (see above).
 
 pub mod conservation_oracle;
 pub mod constraint_oracle;
@@ -38,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use dregg_cell::Ledger;
 use dregg_turn::action::Effect;
 use dregg_turn::forest::CallTree;
-use dregg_turn::shadow::{ShadowHostCtx, ShadowObserver};
+use dregg_turn::shadow::ShadowObserver;
 use dregg_turn::turn::{Turn, TurnResult};
 
 pub use nullifier::{NullifierDoubleSpend, ShadowNullifierAccumulator};
@@ -47,17 +49,16 @@ pub use conservation_oracle::{LeanConservationOracle, register_conservation_orac
 pub use constraint_oracle::{LeanConstraintOracle, register_constraint_oracle};
 pub use distributed_gates::{LeanDistributedGate, register_distributed_gates};
 pub use lean_apply::{
-    ProducerOutcome, execute_via_lean, produce_via_lean, prof_outer_dump, profile_lean_phases,
+    ProducerDivergence, ProducerOutcome, execute_via_lean, produce_via_lean, prof_outer_dump,
+    profile_lean_phases,
 };
-pub use lean_shadow::{
-    ShadowAgreement, ShadowReport, maybe_shadow_turn, shadow_agreement_for, shadow_report,
-};
+pub use lean_shadow::{ShadowAgreement, ShadowReport, shadow_agreement_for, shadow_report};
 pub use spec_audit::{
     AuditEntry, AuditOutcome, AuditWorker, DivergenceKind, DivergenceReport, DivergenceSink,
     SpeculativeAudit, WorkerStop,
 };
 
-/// The verified-Lean shadow/gate observer — the real implementation of
+/// The native post-commit observer — the real implementation of
 /// [`dregg_turn::ShadowObserver`] that `dregg-turn`'s executor drives through the seam.
 ///
 /// Inject it on a native node:
@@ -71,9 +72,7 @@ pub use spec_audit::{
 /// # let _ = executor;
 /// ```
 ///
-/// The differential trait methods delegate to the moved `lean_shadow` free functions (which carry
-/// the thread-local pre-state / host-context the differential needs). The observer additionally
-/// holds the DURABLE nullifier accumulator ([`ShadowNullifierAccumulator`], VK-epoch stage E2 Path
+/// The observer holds the DURABLE nullifier accumulator ([`ShadowNullifierAccumulator`], VK-epoch stage E2 Path
 /// B): a per-executor cumulative double-spend frontier advanced on every committed `NoteSpend`.
 /// This is the cross-turn executor state — the observer lives for the node's lifetime inside the
 /// `TurnExecutor`'s `Arc<dyn ShadowObserver>`, so the frontier persists across turns. The advanced
@@ -151,20 +150,15 @@ impl LeanShadowObserver {
 }
 
 impl ShadowObserver for LeanShadowObserver {
-    fn enabled(&self) -> bool {
-        lean_shadow::shadow_enabled()
-    }
-
-    fn capture_pre_state(&self, turn: &Turn, ledger: &Ledger, host: ShadowHostCtx) {
-        lean_shadow::capture_pre_state_if_eligible(turn, ledger, host);
-    }
-
     fn observe(&self, turn: &Turn, ledger: &Ledger, result: &TurnResult, block_height: u64) {
-        // DIAGNOSTIC: logs a Lean↔Rust divergence at `dregg::lean_shadow::divergence`. The verdict
-        // is deliberately dropped — this observer decides nothing (see `ShadowObserver`).
-        let _ = lean_shadow::maybe_shadow_turn(turn, ledger, result, block_height);
+        let _ = (ledger, block_height);
         // Path B: advance the durable nullifier root on a committed NoteSpend (the fast O(depth)
         // Rust advance; the verified Lean `advanceRoot8Exec` is the proven spec + offline KAT tie).
+        //
+        // ⚑ A `let _ = lean_shadow::maybe_shadow_turn(..)` stood on the line above until
+        // 2026-07-30 — a Lean↔Rust differential whose verdict was thrown away right here, behind a
+        // `DREGG_LEAN_SHADOW=1` gate nothing set. Deleted; its cell-by-cell comparison is now a leg
+        // of `lean_apply::produce_via_lean`, where the verdict is part of `ProducerOutcome`.
         if result.is_committed() {
             self.advance_committed_nullifiers(turn);
         }
