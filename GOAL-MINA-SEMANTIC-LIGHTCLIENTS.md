@@ -1611,3 +1611,32 @@ adjudicates the Lean. Hold step 3 for the rayon result.
 - Mutation-differential gate: **still green** (301 lines byte-identical serial-vs-rayon).
 
 **⇒ rayon is SAFE for the load-bearing prove (VK stable, proofs valid). Step 3 UNBLOCKED at 5.8×.**
+
+## ⚑⚑ STEP-3 REDIRECTED — the 199-instance Pasta chain is a RE-MINT (would have wasted hours)
+Architecture read (cited): `advanceHead` consumes the RootFriUniform terminal, which forks:
+- **BabyBear variant (131 prog): SOUND** — runs over dregg's real p3-emitted commitments
+  (`RootConsume.ts:266`, `rehashed:false`, "the equality can go red"). But hashes Poseidon2-BabyBear
+  EMULATED in o1js (~2600 rows/perm × 912) — brutally expensive. This is the motivation for Pasta.
+- **Pasta variant (12 prog, the "199-instance" object): a RE-MINT, SUBSTITUTABLE.** Fed
+  `rehashRealRootFri(pastaSuite)` (`head-anchor-pins.ts:127`, `uniform-claim-keys.ts:182`): opened
+  VALUES real, MMCS digests RECOMPUTED from the openings under Pasta. `RootConsume.ts:389-393` in its
+  OWN voice: *"Re-deriving a commitment from an opening cannot fail… the input-phase equalities are
+  true by construction and PROVE NOTHING ABOUT THE PROVER."* The Pasta commitment is `f(openings)`, so
+  `assertEq` is a tautology; **nothing binds to dregg's real BabyBear root.** A prover supplies
+  different openings → different self-consistent Pasta object → `advanceHead` moves to its `finalRoot`.
+  **Proving this = dressing a re-mint as a settlement — the exact mediocrity ember's cut names.**
+
+⚑ **THE SOUND + CHEAP path is Object B (the SHRINK), and its o1js verifier is the MISSING piece:**
+```
+dregg apex → shrink_apex_to_outer(DreggMinaConfig)  [NATIVE Pasta, p3-emitted, binds, "can go red"]
+   ✅ already proved: mina_terminal_tooth, 209ms Rust verify, 2^15 rows, 130-bit ledger
+→ [MISSING] small o1js Kimchi verifier of THAT batch-STARK  → terminal → head gate
+```
+`mina_terminal_tooth.rs:23-25` names it: "re-pointing it is separate work." No o1js file consumes a
+`DreggMinaConfig` shrink proof yet.
+
+**⇒ STEP 3 is NOT "prove the 199-instance re-hash chain." It is: build the o1js verifier of the shrink
+terminal (a single 2^15 native-Pasta batch-STARK, not a 199-step chain), then prove THAT.** Both the
+sound object AND the cheaper one. Honest label: "o1js Kimchi verify of a native Mina-Poseidon shrink
+of dregg's apex, binding a real p3-emitted Pasta commitment, on the universal FRI floor, attesting
+execution G→H (not consensus finality)."
