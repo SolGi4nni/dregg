@@ -495,7 +495,38 @@ function child(env: Record<string, string>, label: string): Promise<any> {
 async function main() {
   console.log('\n=== ROOT-AIR-FULLCHAIN — all 7 slices, one process each (leg 17) ===\n');
   const T0 = Date.now();
-  if (!REUSE && existsSync(WORK)) rmSync(WORK, { recursive: true, force: true });
+  //  ⚑ THE CLEAR MUST NOT DELETE WHAT THIS LEG DOES NOT PRODUCE. It used to
+  //  `rmSync(WORK)` outright, which took `real-root-fri.json` with it — an
+  //  artifact this leg NEVER re-mints (the `root_fri_instance` dumper writes it,
+  //  and nothing here calls that dumper). So every non-REUSE run of this leg
+  //  silently broke `root-fri-uniform`, `root-claim-carry`, `root-fri-preamble`
+  //  and `head-anchor-pins`, all of which refuse without it.
+  //
+  //  ⚑ AND THE ORDER WAS THE OTHER HALF. The clear ran BEFORE the dumper, so a
+  //  dumper that panics leaves an EMPTY workdir and no way back — which is
+  //  exactly what happened on 2026-07-30 when `d7ba0c4d3` (fork rev 4aead01 →
+  //  fc3c6df, D value columns into ConstAir's preprocessed trace) made
+  //  `root_air_instance` panic at `const_air.rs:203`, `index out of bounds: the
+  //  len is 2 but the index is 2`. A destructive step that runs before the step
+  //  that can fail is a destructive step with no undo.
+  //
+  //  These two are INPUTS, produced by the two `dregg-circuit-prove` dumpers and
+  //  read by six legs. Preserved across the clear, restored after it.
+  const PRESERVE = ['real-root-air.json', 'real-root-fri.json'];
+  if (!REUSE && existsSync(WORK)) {
+    const kept: [string, Buffer][] = [];
+    for (const n of PRESERVE) {
+      const p = resolve(WORK, n);
+      if (existsSync(p)) kept.push([n, readFileSync(p)]);
+    }
+    rmSync(WORK, { recursive: true, force: true });
+    mkdirSync(WORK, { recursive: true });
+    for (const [n, buf] of kept) writeFileSync(resolve(WORK, n), buf);
+    if (kept.length)
+      console.log(
+        `    (kept ${kept.map(([n]) => n).join(', ')} across the clear — this leg does not mint them)`,
+      );
+  }
   mkdirSync(WORK, { recursive: true });
 
   // -----------------------------------------------------------------------
