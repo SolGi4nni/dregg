@@ -402,17 +402,31 @@ impl ExchangeFloorState {
     }
 
     /// **SETTLE the offer at `cell`** — read the LIVE `BID` + `BUDGET` off the
-    /// World ledger and commit the REAL `settle` turn paying the provider IN FULL
-    /// (`PAID := BID`, `REFUNDED := BUDGET − BID`, `STATE -> SETTLED`). The
-    /// executor re-enforces the FLASHWELL `AffineEq(PAID + REFUNDED − BUDGET = 0)`
-    /// on the commit — Σδ = 0 by law, and [`OfferFacts::delta`] re-reads it off
-    /// the live slots afterwards. A second settle is refused by
-    /// `StrictMonotonic(STATE)` (no double-settle).
+    /// World ledger and commit the REAL `settle` turn writing the settlement RECORD
+    /// (`PAID := BID`, `REFUNDED := BUDGET − BID`, `STATE -> SETTLED`) and emitting
+    /// `job-settled` with `job::party_id(FLOOR_PROVIDER)` as the payee. The executor
+    /// re-enforces the FLASHWELL `AffineEq(PAID + REFUNDED − BUDGET = 0)` on the
+    /// commit — Σδ = 0 by law, and [`OfferFacts::delta`] re-reads it off the live
+    /// slots afterwards. A second settle is refused by `StrictMonotonic(STATE)`
+    /// (no double-settle).
+    ///
+    /// ⚠ **THE RECORD LEG ONLY — NO VALUE MOVES.** This calls the crate's
+    /// [`job::settle_effects`], which is 3× `SetField` + `EmitEvent`. The PAYMENT leg
+    /// is `job::payment_effects` (an `Effect::Transfer`), reached via
+    /// `job::build_settle_actions`, and the floor does not fire it — the floor's
+    /// parties are name-hash identities (`REQUESTER_HASH` / `PROVIDER_HASH`), not
+    /// funded cells, and the offer cell holds its own balance. So the Σδ = 0 this
+    /// reports is an identity over three SLOTS, not a conservation of moved value.
+    /// Making it move requires funded requester/provider cells on the floor, which
+    /// is the same "one requester, one provider" seam the module header names.
     pub fn settle(&self, cell: &CellId) -> Result<TurnReceipt, String> {
         let offer = self
             .find(cell)
             .ok_or_else(|| format!("no offer at {} on this floor", id_short(cell)))?;
         let target = offer.cell;
+        // Phase 1: the floor has exactly ONE provider (`FLOOR_PROVIDER`), so the
+        // payee is the desk that took every lease on this book.
+        let payee = job::party_id(FLOOR_PROVIDER);
         offer
             .spine
             .commit(
@@ -422,7 +436,7 @@ impl ExchangeFloorState {
                 |live| {
                     let budget = field_tail_u64(&live.fields[job::BUDGET_SLOT]);
                     let bid = field_tail_u64(&live.fields[job::BID_SLOT]);
-                    job::settle_effects(target, bid, budget.saturating_sub(bid))
+                    job::settle_effects(target, payee, bid, budget.saturating_sub(bid))
                 },
             )
             .map_err(|e| e.to_string())

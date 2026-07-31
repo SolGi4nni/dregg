@@ -992,9 +992,11 @@ fn run_window(
         // `gpui-component` dep in Cargo.toml for the byte-identical-gpui rationale.)
         gpui_component::init(cx);
         // Install the deos theme: gpui-component's `init` leaves the kit in its
-        // LIGHT default (the flashbang). Follow the OS appearance here (windowed),
-        // defaulting to Dark, and tune the kit palette to the cockpit's GitHub-dark.
-        apply_deos_theme(None, false, cx);
+        // LIGHT default (the flashbang). The cockpit is dark, so the kit is dark —
+        // this used to consult the OS appearance and, on Linux, always lost that
+        // read to a Light default (see `apply_deos_theme`), which is what made the
+        // WEB-SHELL URL bar white on pug's box.
+        apply_deos_theme(None, cx);
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
         // Move the seed into the LOGIN surface builder (the login surface hands it
         // to the cockpit at the post-login transition). `Option` so it is consumed
@@ -1123,9 +1125,9 @@ fn run_desktop_window() {
         // be LIGHT regardless of the OS appearance. (Following the OS here painted
         // the GitHub-dark kit palette into the doc editor's Input and the Spotter's
         // query field under OS dark mode — the scout-found theme inversion.) The
-        // cockpit windows keep following the OS via `apply_deos_theme`.
+        // cockpit is dark on the same rule, via `apply_deos_theme`.
         gpui_component::init(cx);
-        gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
+        apply_deos_desktop_theme(None, cx);
 
         let bounds = Bounds::centered(None, size(px(1600.), px(1000.)), cx);
         let layout_path = layout_path.clone();
@@ -1224,64 +1226,81 @@ fn default_world_image_path() -> std::path::PathBuf {
         .join("deos-world.redb")
 }
 
-/// Install the deos theme on the gpui-component kit, the SINGLE call every init
-/// site makes immediately after `gpui_component::init(cx)`.
+/// Install the deos COCKPIT theme on the gpui-component kit — the SINGLE call
+/// every cockpit init site makes immediately after `gpui_component::init(cx)`.
 ///
 /// `gpui_component::init` ends with `Theme::change(ThemeMode::Light, …)` — it
 /// installs the kit's LIGHT theme by default. Left alone, kit widgets (`Button`,
 /// `Input`, list/table) render as bright patches against the cockpit's dark
-/// chrome — the "flashbang". This routes through the kit's own theme API to:
+/// chrome — the "flashbang". This routes through the kit's own theme API to
+/// `Theme::change(Dark, …)` and then re-tunes the kit `ThemeColor` tokens to the
+/// cockpit's GitHub-dark palette (the same values as `views::theme` /
+/// `dock::theme` / `showcase`) so the kit widgets, the dock chrome, and the
+/// hand-rolled panels are ONE cohesive dark look — same backgrounds, borders,
+/// text, accent — instead of the kit's flat near-black neutral sitting next to
+/// the cockpit's blue-tinted slate.
 ///
-///  1. Pick the mode. Windowed: follow the OS appearance (`cx.window_appearance()`)
-///     so a user in OS dark mode gets dark deos and OS light mode gets light —
-///     defaulting to Dark when the platform is ambiguous. Headless bakes pass
-///     `force_dark = true` (the marketing shot is always the dark desktop).
-///  2. `Theme::change(mode, …)` to swap the kit to that mode's palette.
-///  3. In dark, re-tune the kit `ThemeColor` tokens to the cockpit's GitHub-dark
-///     palette (the same values as `views::theme` / `dock::theme` / `showcase`)
-///     so the kit widgets, the dock chrome, and the hand-rolled panels are ONE
-///     cohesive dark look — same backgrounds, borders, text, accent — instead of
-///     the kit's flat near-black neutral sitting next to the cockpit's blue-tinted
-///     slate.
+/// **THE COCKPIT IS DARK, UNCONDITIONALLY, AND THIS FUNCTION DOES NOT ASK THE OS.**
+/// It used to: `ThemeMode::from(cx.window_appearance())`, returning early without
+/// tuning anything when that came back Light. That was never a light *deos* — the
+/// cockpit's own chrome is `views::theme`, ten `fn`s returning hard-coded
+/// GitHub-dark constants with NO light branch anywhere. So the light path could
+/// only ever produce the mismatch it was trying to avoid: dark chrome everywhere,
+/// with each kit widget a white patch inside it.
+///
+/// On macOS that stayed invisible, because `window_appearance()` reports the real
+/// appearance and this box runs dark. On **Linux it fired every time**, for two
+/// independent reasons in `gpui_linux`:
+///
+///  1. `platform.rs` seeds `appearance: WindowAppearance::Light` and the real value
+///     arrives **asynchronously** from the xdg-desktop-portal (`color_scheme().await`).
+///     Boot-time is exactly when this function runs, so the read races the portal
+///     and loses — a dark-preferring Linux desktop still got Light.
+///  2. `ColorScheme::NoPreference` maps to `WindowAppearance::Light`, so any box with
+///     no portal or no stated preference got Light on the merits.
+///
+/// That is the white WEB-SHELL URL bar in pug's 2026-07-11 screenshot: the address
+/// bar is the one kit `Input` on that screen, so it was the one thing that glared.
+/// The fix is not a better appearance probe — it is that a light kit theme has no
+/// chrome to be coherent with. When `views::theme` grows a real light palette, the
+/// mode becomes a genuine choice and can be plumbed here; until then, asking the
+/// question at all was the bug.
+///
+/// The NT desktop (`--desktop`) is a separate surface and a LIGHT room by design —
+/// it uses [`apply_deos_desktop_theme`], not this.
 #[cfg(feature = "gpui-ui")]
-fn apply_deos_theme(window: Option<&mut gpui::Window>, force_dark: bool, cx: &mut gpui::App) {
+fn apply_deos_theme(window: Option<&mut gpui::Window>, cx: &mut gpui::App) {
     use gpui::{rgb, Hsla};
     use gpui_component::{Theme, ThemeMode};
 
-    let mode = if force_dark {
-        ThemeMode::Dark
-    } else {
-        // Follow the OS appearance, defaulting to Dark. `WindowAppearance ->
-        // ThemeMode` maps Dark/VibrantDark -> Dark and Light/VibrantLight -> Light.
-        ThemeMode::from(cx.window_appearance())
-    };
+    Theme::change(ThemeMode::Dark, window, cx);
 
-    Theme::change(mode, window, cx);
-
-    if !mode.is_dark() {
-        // OS light mode: leave the kit's light theme as-is (no flashbang the other
-        // direction — the chrome the cockpit hand-rolls reads dark, but the kit
-        // surfaces stay coherent light; the windowed light path is the minority
-        // case a user explicitly opted into via their OS).
-        return;
-    }
-
-    // The cockpit's GitHub-dark palette — the single source of truth mirrored by
-    // `views::theme`, `dock::theme`, and `showcase::theme`.
-    let bg: Hsla = rgb(0x0e1116).into(); // surface
-    let panel: Hsla = rgb(0x161b22).into(); // raised card / popover / sidebar
-    let panel_hi: Hsla = rgb(0x1f2630).into(); // hover / active fill
-    let border: Hsla = rgb(0x2b3340).into();
-    let text: Hsla = rgb(0xd7dee8).into();
-    let muted: Hsla = rgb(0x7d8794).into();
-    let accent: Hsla = rgb(0x6cb6ff).into(); // the blue the cockpit accents with
-    let on_accent: Hsla = rgb(0x0e1116).into(); // dark text on the bright accent
-                                                // The status hues — the SAME values the cockpit hand-rolls in `views::theme`
-                                                // (good / warn / bad), so a kit `.success()`/`.warning()`/`.danger()` button
-                                                // matches a hand-rolled status pill exactly.
-    let good: Hsla = rgb(0x57d977).into();
-    let warn: Hsla = rgb(0xe3b341).into();
-    let bad: Hsla = rgb(0xe5534b).into();
+    // THE COCKPIT'S PALETTE, READ FROM THE CHROME RATHER THAN RE-TYPED. This
+    // function's entire job is to make the kit agree with the hand-rolled chrome, so
+    // sourcing the values from `views::theme` — what that chrome actually paints —
+    // is the difference between agreement by construction and agreement by two
+    // people typing the same hex. It used to re-type all ten, one `let` each.
+    //
+    // ⚠ `views::theme` is not yet the sole copy: `unified_boot.rs`, `guest.rs` and
+    // two more sites in this file each hold their own transcription of these hexes.
+    // Those are separate surfaces' palettes and folding them in is its own pass;
+    // named here so the next reader knows the "single source of truth" claim covers
+    // this call and not yet the repo.
+    use starbridge_v2::views::theme as chrome;
+    let bg: Hsla = chrome::bg(); // surface
+    let panel: Hsla = chrome::panel(); // raised card / popover / sidebar
+    let panel_hi: Hsla = chrome::panel_hi(); // hover / active fill
+    let border: Hsla = chrome::border();
+    let text: Hsla = chrome::text();
+    let muted: Hsla = chrome::muted();
+    let accent: Hsla = chrome::accent(); // the blue the cockpit accents with
+    let on_accent: Hsla = chrome::bg(); // dark text on the bright accent
+                                        // The status hues — the SAME values the cockpit hand-rolls in `views::theme`
+                                        // (good / warn / bad), so a kit `.success()`/`.warning()`/`.danger()` button
+                                        // matches a hand-rolled status pill exactly.
+    let good: Hsla = chrome::good();
+    let warn: Hsla = chrome::warn();
+    let bad: Hsla = chrome::bad();
 
     // CRITICAL: kit `Button` variants read their FILL from `theme.tokens.button_*`,
     // which derive 1:1 from the `colors.button_*` source fields. Start from the
@@ -1425,6 +1444,25 @@ fn apply_deos_theme(window: Option<&mut gpui::Window>, force_dark: bool, cx: &mu
     let t = Theme::global_mut(cx);
     t.colors = c;
     t.tokens = gpui_component::ThemeTokens::from(&t.colors);
+}
+
+/// Install the NT-desktop theme on the gpui-component kit — the counterpart of
+/// [`apply_deos_theme`] for the `--desktop` surface and its headless bakes.
+///
+/// **The NT desktop is a LIGHT room by design**: its hand-rolled chrome is
+/// panel-grey with dark text, so the kit must be LIGHT to match — the mirror image
+/// of the cockpit, and the same rule (the kit follows the chrome it sits in, and
+/// the chrome is not a runtime choice). Following the OS here painted the
+/// GitHub-dark kit palette into the doc editor's `Input` and the Spotter's query
+/// field under OS dark mode.
+///
+/// The kit's light theme is already what `gpui_component::init` leaves installed,
+/// so this is a re-assertion rather than a change. It exists so the four desktop
+/// bakes state their mode instead of inheriting it silently from an init detail —
+/// which is how they read as "the site that forgot to call `apply_deos_theme`".
+#[cfg(feature = "gpui-ui")]
+fn apply_deos_desktop_theme(window: Option<&mut gpui::Window>, cx: &mut gpui::App) {
+    gpui_component::Theme::change(gpui_component::ThemeMode::Light, window, cx);
 }
 
 /// Parse the `--render-cockpit <out>` (or `--render-cockpit=<out>`) argument —
@@ -1600,6 +1638,9 @@ fn render_woven_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
+    // The NT desktop is a LIGHT room — the headless twin of the `--desktop`
+    // window, so it takes the same kit mode, said out loud.
+    cx.update(|cx| apply_deos_desktop_theme(None, cx));
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -2070,6 +2111,9 @@ fn render_doc_collab_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
+    // The NT desktop is a LIGHT room — the headless twin of the `--desktop`
+    // window, so it takes the same kit mode, said out loud.
+    cx.update(|cx| apply_deos_desktop_theme(None, cx));
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -2265,6 +2309,9 @@ fn render_welcome_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
+    // The NT desktop is a LIGHT room — the headless twin of the `--desktop`
+    // window, so it takes the same kit mode, said out loud.
+    cx.update(|cx| apply_deos_desktop_theme(None, cx));
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -2364,6 +2411,9 @@ fn render_desktop_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
+    // The NT desktop is a LIGHT room — the headless twin of the `--desktop`
+    // window, so it takes the same kit mode, said out loud.
+    cx.update(|cx| apply_deos_desktop_theme(None, cx));
 
     let world_for_view = shared.clone();
     let lp = layout_path.clone();
@@ -3483,7 +3533,7 @@ fn serve_ie6_headless(port: u16) -> anyhow::Result<()> {
     cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
     let (world, anchors) = world::demo_world();
     let shared = Rc::new(RefCell::new(world));
     let window = cx.open_window(size(px(W), px(H)), |window, cx| {
@@ -3951,7 +4001,7 @@ fn explore_ui_headless(outdir: &str) -> anyhow::Result<()> {
     cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let (world, anchors) = world::demo_world();
     let shared = Rc::new(RefCell::new(world));
@@ -4147,7 +4197,7 @@ fn render_cockpit_headless(
     cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // 3. The fully-seeded demo image — the same `World` the windowed cockpit runs,
     //    with every verified executor turn already committed (eager seeding).
@@ -4360,7 +4410,7 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let shared = rendered_world.clone();
     let window = cx.open_window(size(px(w), px(h)), |window, cx| {
@@ -4485,7 +4535,7 @@ fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let card_applet = shared.clone();
     let card_tree = tree.clone();
@@ -4598,7 +4648,7 @@ fn render_first_card_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // The cockpit's real image — the SAME `World` the windowed cockpit runs. The
     // stranger's home cell is the `user` anchor; we read its counter before/after.
@@ -4974,7 +5024,7 @@ fn render_apps_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // ── (A) THE APP STORE — the real registry's launch rows ──
     let launcher = RegistryLauncher::standard(APPS_FED);
@@ -5208,7 +5258,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let (world, _anchors) = world::demo_world();
     let live = Rc::new(RefCell::new(world));
@@ -5545,7 +5595,7 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let (world, _anchors) = world::demo_world();
     let live = Rc::new(RefCell::new(world));
@@ -5695,13 +5745,22 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         total_fired += 1; // the launch's bid (POSTED -> BID, bid 750)
         use starbridge_compute_exchange as j;
         let cell = spine.app_cell();
-        // settle (BID -> SETTLED): pay the provider IN FULL + refund the remainder — the
-        // conserving AffineEq(PAID + REFUNDED == BUDGET).
+        // settle (BID -> SETTLED): write the settlement RECORD — PAID := BID, the
+        // remainder to REFUNDED — under the AffineEq(PAID + REFUNDED == BUDGET) the
+        // executor re-enforces, naming as payee the SAME provider the launch's `bid`
+        // bound into PROVIDER_HASH.
+        //
+        // ⚠ RECORD LEG ONLY, NO VALUE MOVES: `settle_effects` is 3× SetField +
+        // EmitEvent. The payment leg is `j::payment_effects` via
+        // `j::build_settle_actions`, and this bake has no funded provider cell to
+        // send to — `party_id` is an identity, not a balance. So the AffineEq here
+        // is an identity over three SLOTS, not a conservation of moved value.
+        let payee = j::party_id(starbridge_v2::app_registry::REGISTRY_COMPUTE_PROVIDER);
         spine
             .commit("settle", &j::REQUESTER_RIGHTS, &j::REQUESTER_RIGHTS, |st| {
                 let budget = field_tail_u64_le(&st.fields[j::BUDGET_SLOT]);
                 let bid = field_tail_u64_le(&st.fields[j::BID_SLOT]);
-                j::settle_effects(cell, bid, budget.saturating_sub(bid))
+                j::settle_effects(cell, payee, bid, budget.saturating_sub(bid))
             })
             .map_err(|err| anyhow::anyhow!("compute-exchange settle refused: {err}"))?;
         total_fired += 1;
@@ -5836,7 +5895,7 @@ fn render_app_card_fire_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let (world, _anchors) = world::demo_world();
     let live = Rc::new(RefCell::new(world));
@@ -5959,7 +6018,7 @@ fn render_webshell_live_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // 2. The cockpit's real image, on the WEB-SHELL tab. The `Root` wrap is required —
     //    the web-shell bears the URL-bar text input, which aborts on paint without it.
@@ -6130,7 +6189,7 @@ fn bake_inspector_over_world(
         gpui_platform::current_headless_renderer()
     });
     cx.update(|cx| gpui_component::init(cx));
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     let shared = world.clone();
     let window = cx.open_window(size(px(w), px(h)), |window, cx| {
@@ -6485,7 +6544,7 @@ fn render_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // The fully-seeded demo image — the real cell world the chrome reads off.
     let (world, _anchors) = world::demo_world();
@@ -6550,7 +6609,7 @@ fn render_guest_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // The fully-seeded demo image — the real cell world the wonder strip reads off.
     let (world, _anchors) = world::demo_world();
@@ -6656,7 +6715,7 @@ fn render_self_hosting_headless(
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
     // The live PTY's child runs on a REAL OS thread and writes the grid
     // asynchronously; allow the test dispatcher to park on that real I/O so
     // `run_until_parked` doesn't busy-fail while the command produces output.
@@ -6820,7 +6879,7 @@ fn render_unified_boot_headless(
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
     cx.allow_parking();
 
     // The LOCAL cockpit World the editor saves into (the SAME ledger the local
@@ -7044,7 +7103,7 @@ fn render_client_signed_turn_headless(
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
     cx.allow_parking();
 
     let (world, _anchors) = world::demo_world();
@@ -7203,7 +7262,7 @@ fn render_interactive_node_save_headless(
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
     cx.allow_parking();
 
     let (world, _anchors) = world::demo_world();
@@ -7389,7 +7448,7 @@ fn render_self_hosting_full_headless(out: &str, w: f32, h: f32) -> anyhow::Resul
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
     cx.allow_parking();
 
     // The disk-mirror temp dir: the firmament editor dual-writes saves HERE, and
@@ -7551,7 +7610,7 @@ fn render_login_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     cx.update(gpui_component::init);
     // Force the deos DARK theme for the headless bake (the marketing/atlas shot
     // is always the dark desktop) + tune the kit palette to the cockpit GitHub-dark.
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // The at-rest genesis image — the login surface only needs the anchors to
     // provision the system principal; no seed turns need to have run.
@@ -7609,7 +7668,7 @@ fn render_touch_headless(out: &str, w: f32, h: f32, mode: Option<&str>) -> anyho
         gpui_platform::current_headless_renderer()
     });
     cx.update(gpui_component::init);
-    cx.update(|cx| apply_deos_theme(None, true, cx));
+    cx.update(|cx| apply_deos_theme(None, cx));
 
     // The fully-seeded demo image — the SAME `World` the desktop cockpit runs, so the
     // garden's glows are the running image's actual recent activity.
@@ -7691,5 +7750,117 @@ fn thin_report(client: &client::NodeClient) {
             }
         }
         Err(e) => println!("cells: <error: {e}>"),
+    }
+}
+
+// =============================================================================
+// THE COCKPIT KIT THEME IS DARK — the gate on pug's white URL bar
+// =============================================================================
+//
+// These run in the BINARY crate (`cargo test --features native-full --bin
+// starbridge-v2`), because `apply_deos_theme` lives here and the `tests/` lane
+// links the LIB, which has never compiled a line of it.
+#[cfg(all(test, feature = "gpui-ui"))]
+mod theme_gate {
+    use gpui::{AppContext, HeadlessAppContext, PlatformTextSystem};
+    use gpui_component::Theme;
+    use gpui_wgpu::CosmicTextSystem;
+    use std::sync::Arc;
+
+    /// A headless `App` with no renderer — enough to install and read the kit
+    /// theme globals, which is all these assertions touch (nothing paints).
+    fn headless() -> HeadlessAppContext {
+        let ts: Arc<dyn PlatformTextSystem> =
+            Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        HeadlessAppContext::new(ts)
+    }
+
+    /// **THE REGRESSION.** The cockpit's chrome is unconditionally dark, so every
+    /// kit widget sitting inside it must be too. This asserts it on the value the
+    /// kit's text `Input` actually fills with — `Theme::input_background()`, which
+    /// is what painted the WEB-SHELL address bar white in pug's 2026-07-11 shot.
+    ///
+    /// ⚠ **REFUTABLE, and it was ACTUALLY RED before the fix.** In dark,
+    /// `input_background()` is `input.mix_oklab(transparent, 0.3)` — a dark slate.
+    /// In light it is `self.background`, near-white. Restore the
+    /// `ThemeMode::from(cx.window_appearance())` probe this function used to make
+    /// and a platform reporting Light (every Linux box: `gpui_linux` seeds
+    /// `WindowAppearance::Light` and the portal answers asynchronously) puts
+    /// lightness back near 1.0 and fails this line.
+    #[test]
+    fn the_cockpit_kit_theme_is_dark_so_the_url_bar_cannot_be_a_white_patch() {
+        let mut cx = headless();
+        cx.update(gpui_component::init);
+        cx.update(|cx| super::apply_deos_theme(None, cx));
+        cx.update(|cx| {
+            let t = Theme::global(cx);
+            assert!(
+                t.mode.is_dark(),
+                "the cockpit kit theme must be dark; got {:?}",
+                t.mode
+            );
+            let l = t.input_background().l;
+            assert!(
+                l < 0.30,
+                "the kit input background (the WEB-SHELL URL bar's fill) must be dark; \
+                 lightness {l} — a light kit theme puts this near 1.0, which is the \
+                 white address bar this gate exists for"
+            );
+        });
+    }
+
+    /// The kit surfaces are tuned to the SAME palette the hand-rolled chrome paints,
+    /// not merely to some dark. `apply_deos_theme` reads `views::theme` directly, so
+    /// this is a check that the tuning RAN and reached the globals — the failure it
+    /// catches is `gpui_component::init` without the deos theme after it, which is
+    /// how four bake sites were sitting when this was written.
+    #[test]
+    fn the_kit_surfaces_are_the_chrome_palette_not_merely_some_dark() {
+        use starbridge_v2::views::theme as chrome;
+        let mut cx = headless();
+        cx.update(gpui_component::init);
+        cx.update(|cx| super::apply_deos_theme(None, cx));
+        cx.update(|cx| {
+            let t = Theme::global(cx);
+            assert_eq!(t.background, chrome::bg(), "kit background vs chrome bg");
+            assert_eq!(t.popover, chrome::panel(), "kit popover vs chrome panel");
+            assert_eq!(t.border, chrome::border(), "kit border vs chrome border");
+            assert_eq!(
+                t.foreground,
+                chrome::text(),
+                "kit foreground vs chrome text"
+            );
+        });
+    }
+
+    /// The NT desktop is the mirror case and must NOT be swept dark by a future
+    /// "make everything dark" edit — its hand-rolled chrome is panel-grey with dark
+    /// text, so its kit theme is light ON PURPOSE. Two surfaces, two modes, both
+    /// stated rather than inherited.
+    ///
+    /// **This also keeps the `l < 0.30` bar above from going vacuous**, by measuring
+    /// the OTHER side of it: the kit's LIGHT `input_background()` — the exact value
+    /// that painted pug's URL bar — and asserting it is genuinely bright. If some
+    /// future kit rev made every mode dark, `l < 0.30` would start passing for
+    /// reasons that have nothing to do with this fix, and this line goes red instead.
+    #[test]
+    fn the_nt_desktop_kit_theme_is_light_on_purpose() {
+        let mut cx = headless();
+        cx.update(gpui_component::init);
+        cx.update(|cx| super::apply_deos_desktop_theme(None, cx));
+        cx.update(|cx| {
+            let t = Theme::global(cx);
+            assert!(
+                !t.mode.is_dark(),
+                "the NT desktop's kit theme is LIGHT by design (see apply_deos_desktop_theme)"
+            );
+            let l = t.input_background().l;
+            assert!(
+                l > 0.80,
+                "the kit's LIGHT input background is the white patch the cockpit gate \
+                 forbids — it must stay measurably bright for that gate to mean \
+                 anything; lightness {l}"
+            );
+        });
     }
 }

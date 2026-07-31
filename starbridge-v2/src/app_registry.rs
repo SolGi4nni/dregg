@@ -51,6 +51,13 @@ use std::cell::RefCell;
 #[cfg(feature = "embedded-executor")]
 use std::rc::Rc;
 
+/// The provider identity the registry's `compute-exchange` launch binds into the
+/// job cell's `PROVIDER_HASH` when it fires the seeded `bid`. Named here rather
+/// than spelled twice, because the SETTLE that follows must name the SAME party as
+/// the payee in its `job-settled` event — the bid and the settlement disagreeing
+/// about who the provider is would be invisible in both.
+pub const REGISTRY_COMPUTE_PROVIDER: &str = "provider-gpu";
+
 /// One **app substrate** — an [`AppCipherclerk`] + [`EmbeddedExecutor`] pair (the
 /// app framework's SDK surface every verified-turn fire routes through). A launched
 /// registry app owns one; its backing cell, its seeded program, and every turn it
@@ -1293,7 +1300,7 @@ impl AppRegistry {
                             "bid",
                             &j::PROVIDER_RIGHTS,
                             &j::PROVIDER_RIGHTS,
-                            |_live| j::bid_effects(job, "provider-gpu", 750),
+                            |_live| j::bid_effects(job, REGISTRY_COMPUTE_PROVIDER, 750),
                         )?;
                         Ok((spine, receipt))
                     },

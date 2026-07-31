@@ -740,6 +740,24 @@ pub fn party_hash(party: &str) -> FieldElement {
     field_from_bytes(party.as_bytes())
 }
 
+/// **The same named party AS A CELL ID** — the payee [`settle_effects`] writes into
+/// the `job-settled` payload, for the surfaces whose parties are NAMES rather than
+/// funded cells (the desktop exchange floor, the wired-card bakes). A blake3
+/// derive-key over the name, so one name is one stable id everywhere.
+///
+/// ⚠ **Paired with [`party_hash`], NOT equal to it, and NOT a funded cell.**
+/// `party_hash` is the field-encoded value in the cell's `*_HASH` slot;
+/// this is a 32-byte id in the event payload. Both derive from the same string, so
+/// they name the same party, but a caller that only has these has an IDENTITY and
+/// no balance — [`payment_effects`] needs a real cell holding value. A surface
+/// using this is emitting the settlement RECORD only; see the ⚠ on
+/// [`build_settle_actions`] for the leg that moves the money.
+pub fn party_id(party: &str) -> CellId {
+    let mut h = blake3::Hasher::new_derive_key("dregg compute-exchange party id v1");
+    h.update(party.as_bytes());
+    CellId(*h.finalize().as_bytes())
+}
+
 /// The big-endian-padded amount field written into the value slots.
 pub fn amount_field(amount: u64) -> FieldElement {
     field_from_u64(amount)
