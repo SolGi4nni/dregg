@@ -11,13 +11,11 @@ import {
 import { canonicalLane } from './Poseidon2BabyBearW16.js';
 import { BbExt } from './FriQueryStep.js';
 import {
-  CHAL_WIDTH,
   EXT_LANES,
   FriLaneTable,
   FriPlan,
   FriShape,
   FriSlice,
-  LANES_PER_DIGEST,
   OpenedPlan,
   PRICE,
   RealRootFri,
@@ -1283,4 +1281,3 @@ export function auxOf(ctx: UniformCtx, twin: WalkTwin, sp: UniformSpec, q: numbe
   return out;
 }
 
-export { CHAL_WIDTH, LANES_PER_DIGEST };

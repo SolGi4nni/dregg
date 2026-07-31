@@ -98,13 +98,23 @@ const CHUNK = Number(process.env.PASTA_BRAID_CHUNK ?? 256);
  *  multiplied out and is labelled PROJECTED. */
 const LIMIT = Number(process.env.PASTA_BRAID_LIMIT ?? 2);
 /**
- * ⚑ WHICH HASH `[7]` TIMES — and the CONTROL is the point of the switch.
+ * ⚑ WHICH HASH `[7]` TIMES — and the CONTROL EXISTS BECAUSE THE OBVIOUS CLAIM
+ * TURNED OUT TO BE FALSE.
  *
- * The claim this leg makes is that the Pasta hash wins on the INSTANCE COUNT and
- * not on per-instance latency: every slice is packed to the same row budget at
- * either hash, so a step costs what a ~50,000-row Pickles step costs. That is a
- * claim about a number, and `PASTA_BRAID_TIME=babybear` measures it instead of
- * asserting it — same harness, same box, same backend, the other hash.
+ * The expected story was: every slice is packed to the same row budget at either
+ * hash, so a step costs what a ~50,000-row Pickles step costs and the whole win
+ * is the INSTANCE COUNT. `PASTA_BRAID_TIME=babybear` was added to measure that
+ * rather than assert it — same harness, same box, same backend, the other hash —
+ * and it does not hold. MEASURED on the first three slices of each chain: Pasta
+ * 13.0 / 8.0 / 9.4 s against BabyBear 19.7 / 32.6 / … s at similar row counts.
+ * A `getRows()` figure is not a prover-time figure; the emulated permutation's
+ * gate mix costs more per row.
+ *
+ * ⚠ AND THE SAMPLE IS HEAD SLICES, WHICH IS NOT THE CHAIN. Slices 0-2 hold the
+ * transcript and the `permBind` bridge; the 19 query blocks that dominate both
+ * chains are a different gate mix. Proving into a block means proving every
+ * slice before it, which no affordable run reaches — so the rate is reported as
+ * a THREE-SLICE HEAD measurement and the join figure that uses it says so.
  */
 const TIME_HASH = (process.env.PASTA_BRAID_TIME ?? 'pasta') as 'pasta' | 'babybear';
 const NO_CACHE = Cache.None;
@@ -670,6 +680,73 @@ for (const [label, si, bend, expect] of cases) {
   need(
     accepted === expect,
     `slice ${si}: ${label} is ${accepted ? 'ACCEPTED' : 'REFUSED'}${why ? ` — ${why}` : ''} (${secs(t)})`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ⚑ THE ROW MODEL, CHECKED AT EVERY CUT AND NOT AT THE THREE THAT GET PROVED.
+//
+// `[7]` proves three slices. The plan has 207, and a segment type this leg
+// UNDER-prices at Pasta would produce a cut that models under the budget and
+// blows the Pickles domain — discovered at instance 130 of a prove run nobody
+// can afford to repeat. `Provable.constraintSystem` over `runSegments` alone
+// needs no side-loaded predecessor and therefore no process boundary, so every
+// cut can be measured in one pass at about a second each.
+//
+// ⚠ IT IS THE WALK'S ROWS, NOT THE SLICE'S. The commitment, the boundary and the
+// recursive verification are not in this body; the headroom below is therefore
+// the walk against the whole budget, which is the conservative reading.
+// ---------------------------------------------------------------------------
+console.log('\n[7a] THE ROW MODEL at every cut — is any Pasta segment UNDER-priced');
+if (process.env.PASTA_BRAID_ALLCUTS === '0') {
+  console.log('    (skipped: PASTA_BRAID_ALLCUTS=0)');
+} else {
+  const { runSegments } = await import('../src/RootFriSlice.js');
+  t = Date.now();
+  let worst = { si: -1, rows: 0, modelled: 0 };
+  let worstRatio = { si: -1, ratio: 0, rows: 0, modelled: 0 };
+  const N = PA.plan.slices.length;
+  for (let si = 0; si < N; si++) {
+    const wit = witnessOf(PA, si);
+    const cs = await Provable.constraintSystem(async () => {
+      const sto = new Map<number, Field>();
+      const sl = PA.plan.slices[si];
+      PA.w.liveIn[sl.from].forEach((slot, i) => sto.set(slot, Provable.witness(Field, () => wit.liveIn[i])));
+      runSegments(
+        PA.w,
+        PA.shape,
+        PA.ft,
+        PA.op,
+        PA.plan,
+        si,
+        sto,
+        {
+          airLanes: wit.airRead.slice(0, wit.sh.nAirRead).map((v) => Provable.witness(Field, () => v)),
+          airOther: wit.airOther.slice(0, wit.sh.nAirOther),
+          friLanes: wit.friRead.slice(0, wit.sh.nFriRead).map((v) => Provable.witness(Field, () => v)),
+          friOther: wit.friOther.slice(0, wit.sh.nFriOther),
+          aux: wit.aux.slice(0, wit.sh.nAux).map((v) => Provable.witness(Field, () => v)),
+        } as any,
+        PA.suite,
+      );
+    });
+    const modelled = PA.plan.slices[si].workRows;
+    if (cs.rows > worst.rows) worst = { si, rows: cs.rows, modelled };
+    const ratio = cs.rows / Math.max(modelled, 1);
+    if (ratio > worstRatio.ratio) worstRatio = { si, ratio, rows: cs.rows, modelled };
+  }
+  console.log(`    (${N} cuts measured, ${secs(t)})`);
+  need(
+    worst.rows <= PICKLES.usableRowsMpv1,
+    `the WIDEST of all ${N} Pasta cuts is slice ${worst.si} at ${fmt(worst.rows)} MEASURED walk rows ` +
+      `(modelled ${fmt(worst.modelled)}), inside the ${fmt(PICKLES.usableRowsMpv1)}-row Pickles budget ` +
+      `— ${((worst.rows / PICKLES.usableRowsMpv1) * 100).toFixed(1)}%`,
+  );
+  need(
+    worstRatio.ratio <= 1,
+    `and the model never UNDER-prices: the worst measured/modelled ratio over all ${N} cuts is ` +
+      `${worstRatio.ratio.toFixed(3)} at slice ${worstRatio.si} (${fmt(worstRatio.rows)} measured vs ` +
+      `${fmt(worstRatio.modelled)} modelled)`,
   );
 }
 

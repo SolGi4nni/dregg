@@ -353,6 +353,18 @@ export function walkTwin(
         //  have pointed the FRI transcript back at the witnessed state and every
         //  challenge downstream would still have matched p3 — because it IS the
         //  right number, just not derived.
+        //  ⚑ THIS ARM IS THE `DuplexChallenger`, AND ONLY IT. `CHAL_WIDTH` is
+        //  that challenger's state width, not "the walk's" — a hash whose
+        //  transcript is `carried` emits no `duplex` segment at all, and a
+        //  future `implemented` hash with a different state width would read
+        //  the wrong lanes here silently. So the agreement is asserted rather
+        //  than assumed.
+        if (w.hash.chalStateLanes !== CHAL_WIDTH)
+          throw new Error(
+            `a \`duplex\` segment under hash '${w.hash.name}', whose challenger state is ` +
+              `${w.hash.chalStateLanes} lanes — this arm executes \`DuplexChallenger\` at ` +
+              `${CHAL_WIDTH}. A hash with a different challenger needs its own emitter and executor.`,
+          );
         const state =
           s.entry === 'chalState'
             ? friLanes.slice(ft.chalState, ft.chalState + CHAL_WIDTH)
@@ -705,6 +717,12 @@ export function runSegments(
         //  ⚑ `entry` REPLACED `k === 0` — see the twin's note. `zero` is a
         //  CONSTANT `Field(0)` per lane, which is the whole point: the derived
         //  chain starts from a literal nobody can choose.
+        //  ⚑ THE SAME AGREEMENT THE TWIN ASSERTS, for the same reason.
+        if (w.hash.chalStateLanes !== CHAL_WIDTH)
+          throw new Error(
+            `a \`duplex\` segment under hash '${w.hash.name}', whose challenger state is ` +
+              `${w.hash.chalStateLanes} lanes — this arm executes \`DuplexChallenger\` at ${CHAL_WIDTH}.`,
+          );
         const state =
           s.entry === 'chalState'
             ? Array.from({ length: CHAL_WIDTH }, (_, i) => laneFri(ft.chalState + i))

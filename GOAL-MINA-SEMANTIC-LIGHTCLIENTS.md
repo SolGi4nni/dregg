@@ -1009,3 +1009,164 @@ argument settling on Mina**, with the Pasta/IPA wrap classical and the FRI floor
 **The free lever, unpulled**: `O1JS_BACKEND=native` — measured **2.2× on PROVE**, bit-identical VK,
 and the chain has never been run with it. Under the corrected economics this is the most valuable
 thing available for zero work.
+
+---
+
+# ⚑⚑ 10:15 — THE SLICED CHAIN RUNS THE PASTA HASH. ONE JOIN: 199 INSTANCES, 0.56 h.
+
+`priceForSuite` closed the pricing half and said so in its own docstring: *"pricing is not execution
+— `RootFriSlice`'s segment executor still calls `compressBB`/`condSwap` directly and its state slots
+are eight lanes wide, so the SLICED chain runs the deployed hash whatever this returns."* That is now
+false. The leg is **`npm run pasta-braid`**.
+
+## MEASURED — `O1JS_BACKEND=native`, one box, one harness, both hashes
+
+| | BabyBear (deployed) | Pasta | |
+|---|---:|---:|---|
+| walk segments | 11,303 | 9,648 | |
+| modelled rows | 30,363,795 | 4,297,174 | **7.07×** |
+| FRI lane table | 33,062 lanes | 32,993 lanes | |
+| braid slices | 839 | 207 | 4.05× |
+| uniform **PROGRAMS** (compiles, keys) | 46 | **12** | 3.83× |
+| uniform **INSTANCES** | 820 | **192** | 4.27× |
+| **CHAIN LENGTH** (+7 AIR slices) | 827 | **199** | **4.16×** |
+| work + carry rows | 38,133,228 | 8,398,373 | 4.54× |
+| **s/instance** (3 slices PROVED each, native) | **24.0** | **10.1** / 8.3 | 2.38× |
+| **ONE JOIN** | **5.50 h** | **0.56 h** | **9.8×** |
+
+Two independent Pasta timing runs gave **10.1** and **8.3** s/instance (0.56 h and 0.46 h); the
+table and every figure below use the **slower** one. **One join costs 33.5 minutes.** The target was under 1 h = 7×; this is **9.8×** and it is under.
+The BabyBear column is a control run through the identical harness on the identical box, and its
+**5.50 h brackets the 5.03 h the operational model quotes** — the two agree, which is the reason to
+believe the Pasta column.
+
+⚠ **The expected story was wrong and the control is what caught it.** "Both chains pack every slice
+to the same row budget, so a step costs what a 50,000-row Pickles step costs and the whole win is
+the instance count" — measured, **false**: 24.0 s against 10.1 s at similar row counts. A
+`getRows()` figure is not a prover-time figure; the emulated permutation's gate mix costs more per
+row. The win is **4.16× on instances × 2.38× on latency**.
+
+⚠ **The rate is a THREE-SLICE HEAD measurement on each side**, multiplied out. Slices 0–2 hold the
+transcript and the `permBind` bridge; the 19 query blocks that dominate both chains are a different
+gate mix, and proving into a block means proving every slice before it, which no affordable run
+reaches. The **instance count is measured**; the rate is not a chain average and is not quoted as
+one.
+
+## ⚠ 905 → 199 IS NOT THE FIGURE, AND 4.55× IS THE FLATTERING NUMBER OF A PAIR
+
+The chain the 131-key driver is compiling is **905 instances / 131 programs WITH the batch-STARK
+preamble** — it DERIVES ζ and the LogUp challenges and closes §3.14 residual 1. The Pasta chain
+**cannot have the preamble** and carries them. So the like-for-like figure is **827 → 199**, both
+challenge-carrying, same committed proof, same budget, same planner. 905 → 199 would be comparing
+two different statements.
+
+## What was built
+
+1. **The lane KIND** — `WalkHash.digestKind` drives `FriLaneTable.kinds` and `SlotLayout.kinds`.
+   `chunkedCommitment` and `uniformFriDigest` take them as a **required** argument and range-check a
+   lane only where `< 2^31` means something; the slice boundary canonicalises a carried slot only
+   where its kind says BabyBear. MEASURED: the Pasta table has **20 native lanes** of 32,993 (the 16
+   commit-phase roots + 4 input-round roots, nothing else) and **9 native slots** (`cur`, five
+   mixed-height injection registers, the 3-cell sponge state); the BabyBear table has **zero**, so
+   its behaviour is unchanged *by construction*. `assertLanesAreBabyBear` is **deleted**, not
+   disarmed.
+2. **The suite reaches the programs** — `FriBraidCtx.suite` / `UniformCtx.suite` thread into
+   `makeFriSliceProgram` and `makeUniformSliceProgram` → `runSegments`, which already spoke
+   `MerkleSuite` and was still being invoked at its default. `runSegments` also emits
+   `suite.anchorLookupTable?.()` once per body: a Pasta slice holding only Merkle levels has no
+   BabyBear arithmetic, so kimchi never installs the 12-bit table and the slice compiles, analyses,
+   passes `runAndCheck` and **dies inside `prove()`**.
+3. **`RootConsume.rehashRealRootFri`** puts `rehash`'s re-committed digests back into the emitter's
+   own record, so the SLICED walk can consume a Pasta-hashed root and not only the flat consumer.
+
+## The transcript question — CARRIED, said out loud and taken
+
+`WalkHash.transcript` gains a third value. A Pasta walk does not derive its challenges: FRI's α, the
+sixteen βs and the nineteen query indices are committed lanes read into their slots by one new
+`chalCarry` segment, under `friDigest` and under the chain's boundary. That is
+`ROOT_CHALLENGE_STATUS`'s existing status for the root path **at both hashes** and §3.14's residual
+1 — not a new hole. The query index is bounded at the READ rather than at the draw (witness the
+bits, recompose, assert equality), which is strictly tighter than `assertLowBitsSplit`.
+
+**The two missing halves are different things and collapsing them overstates one and understates the
+other:**
+- `MultiField32Challenger` is **UNBUILT** in the emitter and the executor. `challengerRun` simulates
+  `DuplexChallenger`'s duplex boundaries; `runSegments`' `duplex` arm runs the BabyBear permutation
+  inline. Plain unbuilt work.
+- The **root-scale preamble script** at Pasta has **no oracle**. The CHALLENGER does have one —
+  `npm run pasta-verify` replays a Pasta-hashed fixture's transcript against p3's own recorded sponge
+  states, lane by lane, after every permutation. Unchecked is the root's observe/sample order over
+  seven instances: 25 public values, 64 cumulative sums, 2,630 opened values, and the ζ and LogUp
+  challenges it must reproduce. dregg mints no Pasta-hashed ROOT.
+
+`segmentWalk` refuses `carried` + `preamble` by name rather than emitting a preamble nobody can
+check.
+
+## Does the Pasta chain run the Pasta hash all the way through — YES
+
+- **76 input-round openings** (19 queries × 4 PCS rounds) close on the **re-hashed Pasta
+  commitments**: the mixed-height injection schedule, the leaf sponge and every Merkle level ran
+  `Poseidon.hash` natively.
+- **95 reduced openings and 304 fold values are dregg's OWN and unchanged** — the DEEP quotient and
+  the fold chain are BabyBear extension arithmetic that no hash choice touches. That is the control
+  saying the re-hash moved digests and nothing else; every opened ROW is byte-identical across the
+  two objects.
+- **19 queries reach the final-polynomial landing.**
+- **Five falsifiers in circuit at the Pasta hash, all as expected**: honest ACCEPTED at two different
+  cuts; a bent Pasta Merkle sibling REFUSED; a bent opened ROW lane REFUSED *at the cut that closes
+  its own round*; a bent **NATIVE Pasta round commitment** REFUSED — the one that exercises the lane
+  kind, and a lane that could not be committed at all under the old code.
+- **`[7a]` measures the constraint system of ALL 207 cuts**, not the three that get proved — a
+  segment type under-priced at Pasta would otherwise surface at instance 130 of a prove run nobody
+  can repeat. MEASURED (207 cuts, 344.7 s): the **widest cut is slice 186 at 25,778 walk rows**,
+  47.5% of the 54,300-row Pickles budget, and the model **never under-prices** — worst
+  measured/modelled ratio **0.935** at slice 20. `Provable.constraintSystem` over `runSegments`
+  alone needs no side-loaded predecessor and therefore no process boundary, which is what makes
+  every cut affordable.
+
+⚠ The row falsifier is deliberately run at the cut holding both the `inBlock` and its round's
+`inRoot`. The first version bent a loaded-but-unread lane, was correctly ACCEPTED, and **went red on
+its own falsifier** — a cut where a bend is not attributable proves nothing.
+
+## NO BABYBEAR REGRESSION
+
+- `npm run fri-walk-plan` — unchanged **to the row**: 11,303 segments, 30,363,795 modelled rows,
+  33,062 lanes, 839 slices at the 50,000-row budget.
+- `MINA_TIER=0 npm run root-fri-preamble` — PASS, and every ratchet figure reproduces: 1,374
+  preamble segments, 3,575,411 preamble rows, 928 slices with the preamble, and **820 instances / 46
+  programs without it, 905 / 131 with it**.
+- `npm run schedule` — PASS at **09:43 on this tree**, 14 recorded figures as recorded. ⚠ It could
+  **not be re-run after the edits**: it mints its fixture with `cargo build -p dregg-circuit` and the
+  Rust tree does not currently compile (`ROT_APPENDIX_SITES`, `C_MANIFEST_COMMIT`, `C_RC_CARRIER`
+  not found — a sibling's in-flight edit under `circuit/`, uncommitted, nothing to do with this
+  work). What stands in its place is a STATIC argument and it is stated as one: the leg's transitive
+  import closure is **15 modules** — `AirEval, CostModel, DeepQuotient, DreggProofPartition,
+  DreggProofSchedule, DreggProofVerify, FriChallenger, FriQueryStep, HashSuiteType, HashSuites,
+  PartitionSchedule, PastaChallenger, PastaMmcs, Poseidon2BabyBearW16, Poseidon2Merkle` — and it
+  contains **none** of the four this work changed (`RootFriWalk`, `RootFriSlice`, `RootFriUniform`,
+  `RootConsume`). Re-run it when the Rust tree builds.
+- The BabyBear lane table has **zero** native-kind lanes and zero native slots, so the new range-check
+  branch cannot fire on it at all.
+
+## ⚑ SEQUENCING — the answer the 131-key run needs, since it is ember's call
+
+**A hash change invalidates every key**, and the Pasta chain is not 131 keys with different contents:
+it is **12 keys of a differently-shaped ring**. If the 131-key compile completes and we then adopt
+Pasta, that run is discarded.
+
+But they are **not the same product**, so this is a genuine fork:
+- **The 131-key chain DERIVES the transcript.** Stronger statement, it is what `head-anchor-pins` and
+  `DreggHeadAnchor` are written against, ~905 sequential instances a join (5.5 h measured here).
+- **The 12-key Pasta chain CARRIES the transcript** (§3.14 residual 1, open) at 199 instances
+  (0.56 h). It also needs a Pasta-hashed root to EXIST: dregg mints none, so a real deployment needs
+  `DreggMinaConfig` wired into the root prover — a **Rust prove run over a 2^22 batch**, not an o1js
+  change. This leg re-hashes, and says so on every line.
+
+**Neither blocks the other.** If the 131-key run is in flight it should finish: it is the only path
+to a chain that derives its challenges, and its keys are what the deployed anchor pins today.
+
+## The shape flipped, and it points at the next lever
+
+At Pasta the DEEP quotient is **3,902,258 of 4,297,174 modelled rows = 90.8%** of the walk; hashing
+is **6.9%**. The hash is no longer the cost. **Column narrowing** — already priced — now operates on
+91% of the budget instead of 13%.
