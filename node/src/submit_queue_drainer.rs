@@ -20,12 +20,14 @@
 //! 2. for each pending row, `postcard`-decodes the `signed_turn` bytes into a
 //!    [`dregg_sdk::SignedTurn`] and runs the SAME admission gates the node's
 //!    `POST /turns/submit` handler runs (signature over the turn hash,
-//!    agent-derivation, receipt-chain), then executes it through THE ONE executor
-//!    gate ([`crate::executor_setup::execute_via_producer`], #171) — the verified
-//!    Lean producer is authoritative exactly as for an HTTP-submitted turn;
+//!    agent-derivation, receipt-chain), staging it through THE ONE executor gate
+//!    ([`crate::executor_setup::execute_via_producer`], #171) — the verified Lean
+//!    producer is authoritative exactly as for an HTTP-submitted turn — and then
+//!    rolling that staging run back and submitting the envelope to the blocklace;
 //! 3. writes the outcome back in one `UPDATE`:
-//!    `status='executed', receipt_hash=…, resolved_at=now()` on commit, or
-//!    `status='refused', error=…` on rejection.
+//!    `status='executed', receipt_hash=…, resolved_at=now()` once the turn is
+//!    DURABLY FINALIZED, or `status='refused', error=…` on rejection. A turn that
+//!    is admitted but not yet finalized leaves the row `pending`.
 //!
 //! # The spine invariant (preserved)
 //!
@@ -40,8 +42,17 @@
 //! commit-path mirror ([`crate::state::NodeStateInner::mirror_committed_record`])
 //! when the executed turn reaches finality, exactly as a locally-submitted turn's
 //! post-state does — duplicating it here would fight the M2 [`crate::pg_mirror`]
-//! `RootChain` ordinal discipline. The drainer's load-bearing contract is solely
-//! "execute the queued intent through the real executor and resolve the row."
+//! `RootChain` ordinal discipline.
+//!
+//! ⚑ That paragraph WAS FALSE for the drainer until 2026-07-30, and the sentence
+//! it was false about is the one right above: the drained turn never reached
+//! finality, because the drainer committed the in-place execution itself and
+//! submitted nothing to the blocklace. It was the only ingress that mutated
+//! authoritative state outside consensus (HTTP `/turns/submit` has been
+//! staging-only at every committee size since `5f0999ab9`). Reported as the
+//! second half of issue #65 finding 6. The drainer's load-bearing contract is now
+//! "admit the queued intent on the shared predicate, hand it to consensus, and
+//! resolve the row from the durable commit log."
 //!
 //! # Opt-in, off by default
 //!
@@ -100,15 +111,31 @@ struct PendingSubmission {
     signed_turn: Vec<u8>,
 }
 
-/// The outcome of executing one queued turn — what gets written back to the row.
+/// The outcome of draining one queued turn — what gets written back to the row.
 enum DrainOutcome {
-    /// The turn committed; carry the receipt hash back to the submitter.
+    /// The turn is DURABLY FINALIZED: a commit record exists for its turn hash in
+    /// this node's own log. Carry the finalized receipt hash back to the
+    /// submitter. This is the only outcome that reports state changed, and it is
+    /// read from the commit log — never from a local execution result.
     Executed { receipt_hash: [u8; 32] },
+    /// Admitted and submitted to consensus, but not yet finalized within this
+    /// drain pass. The row stays `pending` and the next sweep re-checks; a
+    /// re-drain short-circuits on the commit log rather than re-executing.
+    Deferred,
     /// The turn was refused (bad bytes, bad signature, agent mismatch, receipt
     /// chain mismatch, or the executor rejected it). The reason is recorded so a
     /// submitter polling `submit_queue.error` learns why.
     Refused { error: String },
 }
+
+/// How long one drain pass waits for a submitted turn to appear in the durable
+/// commit log before leaving the row `pending` for the next sweep. Solo cadence
+/// is 50 ms blocks plus a 150 ms finality debounce, so this is generous; the
+/// sweep interval above bounds how long a `Deferred` row waits to be re-checked.
+const FINALITY_WAIT: Duration = Duration::from_secs(5);
+
+/// Poll cadence inside [`FINALITY_WAIT`].
+const FINALITY_POLL: Duration = Duration::from_millis(50);
 
 /// Spawn the drainer task IF mirroring is configured (`DREGG_PG_MIRROR_URL` set;
 /// the `pg-mirror-live` feature gates the whole module). Returns the task handle,
@@ -287,14 +314,39 @@ async fn fetch_pending(client: &Client) -> Result<Vec<PendingSubmission>, String
         .collect())
 }
 
-/// Execute one queued signed turn through the REAL executor, returning the
-/// outcome to write back. This mirrors the admission gates of
-/// `api::post_submit_signed_turn` (the remote-ingress HTTP handler) exactly, so a
-/// pg-submitted turn is held to the identical bar as one arriving over HTTP:
-/// complete shared outer authorization (Ed25519, signer→agent binding, and the
-/// enrolled/required ML-DSA half), receipt-chain continuity, then
-/// [`crate::executor_setup::execute_via_producer`] — the ONE executor gate
-/// (#171) routing through the verified Lean producer.
+/// Admit one queued signed turn and hand it to CONSENSUS, returning the outcome
+/// to write back.
+///
+/// This mirrors `api::post_submit_signed_turn` (the remote-ingress HTTP handler)
+/// exactly, in both halves:
+///
+/// * the same admission gates — complete shared outer authorization (Ed25519,
+///   signer→agent binding, and the enrolled/required ML-DSA half), receipt-chain
+///   continuity, then [`crate::executor_setup::execute_via_producer`], the ONE
+///   executor gate (#171) routing through the verified Lean producer; and
+/// * the same FATE for the mutation: the in-place run is ADMISSION STAGING, its
+///   journal is rolled back UNCONDITIONALLY, and the envelope is submitted to the
+///   blocklace so `execute_finalized_turn` is the sole authoritative application.
+///
+/// ⚑ WHAT THIS USED TO DO, AND WHY IT IS THE BUG A READER SHOULD LOOK FOR.
+/// The drainer used to `commit_restore_point()` the in-place execution and
+/// `append_receipt` on the spot, with no blocklace submission anywhere in the
+/// function — while its own module docs said the post-state "rides the existing
+/// commit-path mirror when the executed turn reaches finality." It never reached
+/// finality. That made this the ONLY ingress that mutated authoritative state
+/// outside consensus: a pg-drained turn advanced one node's nonce/balance and no
+/// peer ever saw it, and the same turn arriving over consensus later would then
+/// meet a bumped nonce and be refused `NonceReplay`. Reported as the second half
+/// of issue #65 finding 6 ("a separate admission predicate and state-mutation
+/// path"); the predicate half was closed on 2026-07-21, this half was not.
+///
+/// A row therefore resolves `executed` ONLY against this node's durable commit
+/// log ([`dregg_persist::PersistentStore::lookup_turn`]), never against a local
+/// execution result. A turn that has not finalized inside [`FINALITY_WAIT`]
+/// leaves the row `pending` and the next sweep re-checks it; the commit-log
+/// short-circuit at the top makes that re-drain safe, since re-executing an
+/// already-finalized turn would meet its own bumped nonce and be misreported as
+/// `refused`.
 async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutcome {
     // Decode the postcard SignedTurn bytes the pg-user enqueued.
     let signed: SignedTurn = match crate::signed_turn_validation::decode_signed_turn(signed_turn) {
@@ -306,6 +358,8 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
         }
     };
 
+    let turn_hash = signed.turn.hash();
+
     // Take the write lock before validation and hold it through execution.  The
     // enrolled identity and live cell epoch used by validation therefore cannot
     // rotate between check and mutation.
@@ -316,14 +370,32 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
         };
     }
 
+    // COMMIT-LOG SHORT-CIRCUIT, before anything is staged. A row left `pending`
+    // by an earlier pass (submitted, not yet finalized) is re-drained by the
+    // sweep; if consensus has since applied it, re-executing here would meet the
+    // actor's own bumped nonce and resolve the row `refused` for a turn that
+    // succeeded.
+    match s.store.lookup_turn(&turn_hash) {
+        Ok(Some(record)) => {
+            return DrainOutcome::Executed {
+                receipt_hash: record.receipt_hash,
+            };
+        }
+        Ok(None) => {}
+        Err(error) => {
+            return DrainOutcome::Refused {
+                error: format!("could not read the durable commit log: {error}"),
+            };
+        }
+    }
+
     // The same complete application-payload predicate as HTTP admission and
     // consensus finalization.  In required/native mode a self-carried key is
     // never an authority: it must equal the independently enrolled key.
     let executor = crate::executor_setup::new_submit_executor(&s);
-    // The queue drainer mutates authoritative state in-place, so weld its
-    // receipt-log append to that mutation with the ledger restore journal —
-    // armed BEFORE the first-turn claim, so a refused turn leaves the ledger
-    // exactly as it found it.
+    // Admission staging is O(touched)-reversible: arm the undo journal BEFORE the
+    // first-turn claim so a refused turn — and an admitted one, which consensus
+    // applies authoritatively — leaves the ledger exactly as it found it.
     s.ledger.begin_restore_point();
     // THE FIRST-TURN CLAIM, before the predicate reads the actor cell — the same
     // ordering every other ingress uses. A queued first turn from a fresh client
@@ -366,54 +438,76 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
         lean_producer_enabled,
     );
 
-    match exec_result {
-        dregg_turn::TurnResult::Committed { receipt, .. } => {
-            if let Err(error) = s.cclerk.append_receipt(receipt.clone()) {
-                s.ledger.rollback_restore_point();
+    // EVERY arm rolls the journal back, admitted or refused: this run exists to
+    // decide admissibility and nothing else. The executor restores its own
+    // mutations on rejection, but the first-turn claim above is not the
+    // executor's, and an ADMITTED turn's mutation belongs to finalization.
+    let admitted = match exec_result {
+        dregg_turn::TurnResult::Committed { .. } => Ok(()),
+        dregg_turn::TurnResult::Rejected { reason, .. } => Err(format!("turn rejected: {reason}")),
+        dregg_turn::TurnResult::Expired => Err("turn expired".to_string()),
+        dregg_turn::TurnResult::Pending => {
+            Err("turn pending (conditional turns are not queue-drainable)".to_string())
+        }
+    };
+    s.ledger.rollback_restore_point();
+    if let Err(error) = admitted {
+        return DrainOutcome::Refused { error };
+    }
+    drop(s);
+
+    // Hand the admitted envelope to consensus. A node with no blocklace can never
+    // finalize it, so say that rather than reporting a success nothing applied.
+    let Some(blocklace) = state.blocklace().await else {
+        return DrainOutcome::Refused {
+            error: "node has no blocklace handle; a queued turn cannot reach finality".to_string(),
+        };
+    };
+    blocklace.submit_turn(state, signed_turn.to_vec()).await;
+
+    // Resolve against the DURABLE COMMIT LOG, never against the staging run.
+    let deadline = tokio::time::Instant::now() + FINALITY_WAIT;
+    loop {
+        match state.read().await.store.lookup_turn(&turn_hash) {
+            Ok(Some(record)) => {
+                let receipt_hash = record.receipt_hash;
+                tracing::info!(
+                    receipt_hash = %crate::trustline_service::hex_encode(&receipt_hash),
+                    "pg-drainer: queued turn FINALIZED through consensus"
+                );
+                return DrainOutcome::Executed { receipt_hash };
+            }
+            Ok(None) => {}
+            Err(error) => {
                 return DrainOutcome::Refused {
-                    error: format!("receipt chain mismatch: {error}"),
+                    error: format!("could not read the durable commit log: {error}"),
                 };
             }
-            s.ledger.commit_restore_point();
-            let receipt_hash = receipt.receipt_hash();
+        }
+        if tokio::time::Instant::now() >= deadline {
             tracing::info!(
-                receipt_hash = %crate::trustline_service::hex_encode(&receipt_hash),
-                "pg-drainer: queued turn COMMITTED through the verified executor"
+                turn_hash = %crate::trustline_service::hex_encode(&turn_hash),
+                "pg-drainer: queued turn admitted and submitted; awaiting finality (row stays pending)"
             );
-            DrainOutcome::Executed { receipt_hash }
+            return DrainOutcome::Deferred;
         }
-        // Every refusal ROLLS BACK rather than dropping the journal: the executor
-        // restores its own mutations, but the first-turn claim above is not the
-        // executor's, and a refused turn leaves nothing behind.
-        dregg_turn::TurnResult::Rejected { reason, .. } => {
-            s.ledger.rollback_restore_point();
-            DrainOutcome::Refused {
-                error: format!("turn rejected: {reason}"),
-            }
-        }
-        dregg_turn::TurnResult::Expired => {
-            s.ledger.rollback_restore_point();
-            DrainOutcome::Refused {
-                error: "turn expired".to_string(),
-            }
-        }
-        dregg_turn::TurnResult::Pending => {
-            s.ledger.rollback_restore_point();
-            DrainOutcome::Refused {
-                error: "turn pending (conditional turns are not queue-drainable)".to_string(),
-            }
-        }
+        tokio::time::sleep(FINALITY_POLL).await;
     }
 }
 
 /// Write the outcome back to the row in ONE `UPDATE`, flipping `status` away from
-/// `pending` and stamping `resolved_at`. On commit: `status='executed'` +
-/// `receipt_hash`. On refusal: `status='refused'` + `error`. The `WHERE
-/// status='pending'` guard makes a re-drain idempotent — a row another pass
-/// already resolved is skipped (0 rows updated), so a coalesced wake or a restart
-/// mid-drain never double-resolves.
+/// `pending` and stamping `resolved_at`. On durable finality: `status='executed'`
+/// + `receipt_hash`. On refusal: `status='refused'` + `error`. On
+/// [`DrainOutcome::Deferred`] the row is deliberately LEFT `pending` — the turn is
+/// in consensus but not yet applied, and `executed` must never precede the commit
+/// record. The `WHERE status='pending'` guard makes a re-drain idempotent — a row
+/// another pass already resolved is skipped (0 rows updated), so a coalesced wake
+/// or a restart mid-drain never double-resolves.
 async fn resolve_row(client: &Client, id: &str, outcome: DrainOutcome) -> Result<(), String> {
     match outcome {
+        // Not terminal: no UPDATE at all, so the next sweep re-reads this row and
+        // short-circuits on the commit log.
+        DrainOutcome::Deferred => {}
         DrainOutcome::Executed { receipt_hash } => {
             client
                 .execute(
@@ -460,7 +554,20 @@ async fn resolve_row(client: &Client, id: &str, outcome: DrainOutcome) -> Result
 mod tests {
     use super::*;
 
+    /// The deployed node installs the Lean-verified ML-DSA cores in `run()`; a lib
+    /// test never reaches that, and `dregg-pq` ABORTS THE PROCESS rather than fall
+    /// back to the unaudited `fips204` crate. Every drainer fixture therefore
+    /// installs them first, exactly as `faucet_grant_e2e::faucet_node` does — the
+    /// pre-existing tests in this module did not, which is why a
+    /// `--features pg-mirror-live` run SIGABRTed before reaching an assertion.
+    fn install_verified_pq_cores() {
+        let _ = crate::install_mldsa_verified_keygen_core_real();
+        let _ = crate::install_mldsa_verified_sign_core_real();
+        let _ = crate::install_mldsa_verified_verify_core();
+    }
+
     async fn operator_signed_empty_turn(state: &NodeState) -> SignedTurn {
+        install_verified_pq_cores();
         let mut s = state.write().await;
         s.unlocked = true;
         let operator_pk = s.cclerk.public_key().0;
@@ -513,7 +620,81 @@ mod tests {
         match outcome {
             DrainOutcome::Refused { error } => error,
             DrainOutcome::Executed { .. } => panic!("hostile SignedTurn must be refused"),
+            DrainOutcome::Deferred => {
+                panic!("hostile SignedTurn must be refused, not submitted to consensus")
+            }
         }
+    }
+
+    /// A solo node with a live blocklace + finality executor — the only shape in
+    /// which a queued turn can reach a terminal `executed`, now that consensus
+    /// finalization is the sole authoritative application.
+    async fn drainer_node() -> (NodeState, tempfile::TempDir) {
+        let (state, _app, _faucet, tmp) = crate::faucet_grant_e2e::faucet_node().await;
+        (state, tmp)
+    }
+
+    /// Block until the operator's agent-scoped causal chain reaches `expected`.
+    /// `execute_submission` resolves on the DURABLE commit log, which lands a beat
+    /// before the in-RAM overlay/receipt projection; a follow-up turn must be built
+    /// from the projected state, not from a read that raced it.
+    async fn await_agent_receipt_count(
+        state: &NodeState,
+        agent: dregg_cell::CellId,
+        expected: usize,
+    ) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if state.read().await.cclerk.agent_receipt_count(&agent) >= expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "agent receipt chain never reached {expected}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    /// ⚑ THE DEFECT, EXPRESSED AS A REFUSAL (issue #65, finding 6, second half).
+    ///
+    /// The drainer used to commit the queued turn's in-place execution itself —
+    /// `commit_restore_point` + `append_receipt` — and submit nothing to the
+    /// blocklace, which made it the only ingress that mutated authoritative state
+    /// outside consensus. On a node with no blocklace handle at all that is now
+    /// impossible to express: there is nowhere to send the turn, so it is refused,
+    /// and the ledger is byte-identical afterwards.
+    ///
+    /// THE CANARY: restore the old `s.ledger.commit_restore_point()` +
+    /// `s.cclerk.append_receipt(receipt)` arm and this goes RED on both the
+    /// outcome and the ledger root.
+    #[tokio::test]
+    async fn a_node_without_consensus_refuses_rather_than_committing_locally() {
+        install_verified_pq_cores();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(dir.path(), vec![]).expect("node state");
+        let signed = operator_signed_empty_turn(&state).await;
+        let agent = signed.turn.agent;
+        let bytes = postcard::to_stdvec(&signed).expect("encode submission");
+
+        let before = {
+            let s = state.read().await;
+            (
+                dregg_persist::canonical_ledger_root(&s.ledger),
+                s.cclerk.agent_receipt_count(&agent),
+            )
+        };
+        assert_eq!(
+            refusal_error(execute_submission(&state, &bytes).await),
+            "node has no blocklace handle; a queued turn cannot reach finality"
+        );
+        let s = state.read().await;
+        assert_eq!(
+            dregg_persist::canonical_ledger_root(&s.ledger),
+            before.0,
+            "an admitted-but-unfinalized queued turn must leave the authoritative ledger alone"
+        );
+        assert_eq!(s.cclerk.agent_receipt_count(&agent), before.1);
     }
 
     /// The optional PostgreSQL transport is not a weaker alternate ingress:
@@ -527,6 +708,7 @@ mod tests {
                 .unwrap_or(true),
             "hostile native-PQ gate must run with required PQ enabled"
         );
+        install_verified_pq_cores();
         let dir = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(dir.path(), vec![]).expect("node state");
         let signed = operator_signed_empty_turn(&state).await;
@@ -565,7 +747,7 @@ mod tests {
         let substituted_bytes = postcard::to_stdvec(&substituted).expect("encode substituted");
         assert_eq!(
             refusal_error(execute_submission(&state, &substituted_bytes).await),
-            "carried post-quantum signer does not match the independently enrolled identity"
+            "carried post-quantum signer does not match the canonical or migration identity"
         );
 
         let mut trailing = postcard::to_stdvec(&signed).expect("encode canonical SignedTurn");
@@ -576,27 +758,32 @@ mod tests {
         );
     }
 
-    /// The optional PG ingress is an authoritative mutator, so each committed
-    /// receipt must advance the same agent-scoped durable log used by HTTP and
-    /// finalization.  Exact Option equality makes an omitted second-turn link a
-    /// pre-mutation refusal rather than a new genesis.
-    #[tokio::test]
-    async fn drainer_advances_agent_receipt_head_and_refuses_omitted_link() {
+    /// A queued turn reaches a terminal `executed` only THROUGH CONSENSUS, and
+    /// each finalized receipt advances the same agent-scoped durable log HTTP and
+    /// finalization use.  Exact Option equality makes an omitted second-turn link
+    /// a pre-mutation refusal rather than a new genesis.
+    ///
+    /// `Executed` is read from `store.lookup_turn`, so a green here is proof the
+    /// envelope entered the DAG and `execute_finalized_turn` applied it — the
+    /// drainer's own staging run is rolled back and can no longer produce it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drainer_finalizes_through_consensus_and_refuses_omitted_link() {
         assert!(
             std::env::var("DREGG_REQUIRE_PQ")
                 .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
                 .unwrap_or(true),
             "PG chain gate must run with native PQ required"
         );
-        let dir = tempfile::tempdir().expect("tempdir");
-        let state = NodeState::new(dir.path(), vec![]).expect("node state");
+        let (state, _tmp) = drainer_node().await;
 
         let first = operator_signed_empty_turn(&state).await;
+        let agent = first.turn.agent;
         let first_bytes = postcard::to_stdvec(&first).expect("encode first");
         assert!(matches!(
             execute_submission(&state, &first_bytes).await,
             DrainOutcome::Executed { .. }
         ));
+        await_agent_receipt_count(&state, agent, 1).await;
 
         let second = operator_signed_empty_turn(&state).await;
         assert!(second.turn.previous_receipt_hash.is_some());
@@ -605,6 +792,7 @@ mod tests {
             execute_submission(&state, &second_bytes).await,
             DrainOutcome::Executed { .. }
         ));
+        await_agent_receipt_count(&state, agent, 2).await;
 
         let (operator, before_nonce, omitted) = {
             let s = state.read().await;
@@ -638,37 +826,65 @@ mod tests {
         );
     }
 
-    /// Named crash falsifier for the remaining direct-PG architecture: the
-    /// receipt sink is durable-first and fail-closed on an I/O error, but its
-    /// redb transaction is not the finalized ledger/commit-log transaction.
-    /// Until PG submissions enter consensus finalization (or gain an equivalent
-    /// welded state commit), a crash can therefore restore a receipt whose
-    /// corresponding in-memory ledger mutation was never durably committed.
-    #[tokio::test]
-    #[ignore = "known residual: direct PG receipt and ledger state are not one durable transaction"]
-    async fn pg_direct_commit_restart_falsifier_receipt_must_not_outrun_ledger() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let state = NodeState::new(dir.path(), vec![]).expect("node state");
+    /// The crash falsifier this module carried `#[ignore]`d, now RUNNABLE and
+    /// asserted against the RECONSTRUCTED durable image rather than a reopen.
+    ///
+    /// It was named for the direct-PG architecture: the receipt sink was
+    /// durable-first and fail-closed, but its redb transaction was not the
+    /// finalized ledger/commit-log transaction, so a crash could restore a receipt
+    /// whose ledger mutation was never durably committed. Its own `#[ignore]`
+    /// reason said the fix was "until PG submissions enter consensus
+    /// finalization" — which is what they now do, so it runs.
+    ///
+    /// The commit tail is read directly, which is the whole statement: a durable
+    /// `CommitRecord` for THIS turn hash, carrying the receipt hash and the
+    /// actor's post-state in `touched_cells`, whose recorded `ledger_root` equals
+    /// the live ledger's root. Under the old direct-commit drainer none of that
+    /// existed — the receipt was durable through its own sink and the ledger
+    /// mutation lived only in RAM, which is exactly what the `#[ignore]` named.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pg_submission_lands_receipt_and_ledger_in_one_durable_image() {
+        let (state, _dir) = drainer_node().await;
         let signed = operator_signed_empty_turn(&state).await;
         let agent = signed.turn.agent;
+        let turn_hash = signed.turn.hash();
         let bytes = postcard::to_stdvec(&signed).expect("encode submission");
-        assert!(matches!(
-            execute_submission(&state, &bytes).await,
-            DrainOutcome::Executed { .. }
-        ));
-        drop(state);
+        let receipt_hash = match execute_submission(&state, &bytes).await {
+            DrainOutcome::Executed { receipt_hash } => receipt_hash,
+            other => panic!(
+                "the queued turn must finalize; got {}",
+                match other {
+                    DrainOutcome::Refused { error } => error,
+                    _ => "deferred".to_string(),
+                }
+            ),
+        };
+        await_agent_receipt_count(&state, agent, 1).await;
 
-        let reopened = NodeState::new(dir.path(), vec![]).expect("reopen node state");
-        let s = reopened.read().await;
+        let s = state.read().await;
+        let record = s
+            .store
+            .lookup_turn(&turn_hash)
+            .expect("read the durable commit log")
+            .expect("the drained turn must have a durable commit record");
+        assert_eq!(record.receipt_hash, receipt_hash);
+        assert_eq!(
+            record.ledger_root,
+            dregg_persist::canonical_ledger_root(&s.ledger),
+            "the finalized commit's recorded root must equal the live ledger's root — a RAM-only \
+             mutation shows up exactly here"
+        );
         let durable_receipts = s.cclerk.agent_receipt_count(&agent) as u64;
-        let recovered_nonce = s
-            .ledger
-            .get(&agent)
-            .map(|cell| cell.state.nonce())
-            .unwrap_or(0);
+        assert_eq!(durable_receipts, 1);
+        let durable_actor = record
+            .touched_cells
+            .iter()
+            .find(|cell| cell.id() == agent)
+            .expect("the actor's post-state must ride the same durable transaction as the receipt");
         assert!(
-            recovered_nonce >= durable_receipts,
-            "durable receipt head outran recovered ledger: receipts={durable_receipts}, nonce={recovered_nonce}"
+            durable_actor.state.nonce() >= durable_receipts,
+            "durable receipt head outran the durable ledger: receipts={durable_receipts}, nonce={}",
+            durable_actor.state.nonce()
         );
     }
 
