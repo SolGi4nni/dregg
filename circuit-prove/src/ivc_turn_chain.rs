@@ -812,10 +812,24 @@ pub(crate) fn expose_claim_instance_index(
 /// and `v_0` is bus-read at a PREPROCESSED `witness_idx` from the class's single creator — the
 /// same slot the child's preprocessed-trace opening consumed.
 ///
-/// So substituting ANY node circuit in the tree — a leaf that does no descriptor verification, an
-/// interior node that skips a check — moves this value, and the caller-held anchor refuses it.
-/// The raw [`recursion_vk_fingerprint`] does NOT move, and must not; the anchor is the observable
-/// that binds.
+/// So substituting a node's PROGRAM — a leaf that does no descriptor verification, an interior
+/// node that skips a check, a node wired to check the wrong quantity — moves this value, and the
+/// caller-held anchor refuses it. The raw [`recursion_vk_fingerprint`] does NOT move on a
+/// same-shape substitution, and must not; the anchor is the observable that binds.
+///
+/// ## ⚑ WHAT THIS DOES NOT BIND — measured, not predicted
+///
+/// A child's CONSTANT VALUES. `ConstAir` commits a constant's value in its constraint-free MAIN
+/// trace and only `[ext_mult, out_idx]` in preprocessed, so two circuits differing ONLY in a
+/// constant have IDENTICAL preprocessed traces, hence an identical cap, hence an identical spine
+/// and an identical anchor. MEASURED at `circuit-prove/tests/vk_spine_forgery_probe.rs`: the
+/// `k = 7` and `k = 9` children agree on all four.
+///
+/// This is the ORIGINAL hole, pushed one level down: from "which circuit was folded" to "which
+/// constants sit inside a fixed circuit". It matters, because a constant is an operand of a
+/// constraint — zeroing a coefficient weakens what that constraint says. Reaching it requires
+/// const values in the PREPROCESSED trace, which is an AIR change, which under this repo's
+/// standing law is not ours to hand-write in Rust. It is NAMED here and NOT closed.
 pub fn whole_chain_anchor(
     root_proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
 ) -> Result<RecursionVk, TurnChainError> {

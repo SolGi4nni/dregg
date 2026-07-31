@@ -1170,7 +1170,9 @@ fn mixed_root_forgery_executes_A_claims_B() {
             let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
             let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                                left_apt: &[Vec<p3_recursion::Target>],
-                               right_apt: &[Vec<p3_recursion::Target>]| {
+                               right_apt: &[Vec<p3_recursion::Target>],
+                               _left_vk_cap: &[p3_recursion::Target],
+                               _right_vk_cap: &[p3_recursion::Target]| {
                 let l = left_apt.get(left_idx).expect("left seg present");
                 let r = right_apt.get(right_idx).expect("right seg present");
                 assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
@@ -1344,7 +1346,9 @@ fn pinned_leaf_identity_rejects_foreign_child_in_band() {
     {
         let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                            left_apt: &[Vec<p3_recursion::Target>],
-                           right_apt: &[Vec<p3_recursion::Target>]| {
+                           right_apt: &[Vec<p3_recursion::Target>],
+                           _left_vk_cap: &[p3_recursion::Target],
+                           _right_vk_cap: &[p3_recursion::Target]| {
             let l = left_apt.get(left_idx).expect("left seg present");
             let r = right_apt.get(right_idx).expect("right seg present");
             assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
@@ -1394,7 +1398,9 @@ fn pinned_leaf_identity_rejects_foreign_child_in_band() {
     {
         let expose = move |cb: &mut p3_circuit::CircuitBuilder<_>,
                            left_apt: &[Vec<p3_recursion::Target>],
-                           right_apt: &[Vec<p3_recursion::Target>]| {
+                           right_apt: &[Vec<p3_recursion::Target>],
+                           _left_vk_cap: &[p3_recursion::Target],
+                           _right_vk_cap: &[p3_recursion::Target]| {
             let l = left_apt.get(left_idx).expect("left seg present");
             let r = right_apt.get(right_idx).expect("right seg present");
             assert!(l.len() >= SEG_WIDTH && r.len() >= SEG_WIDTH);
