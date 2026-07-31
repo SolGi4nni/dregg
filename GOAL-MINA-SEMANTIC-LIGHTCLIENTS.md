@@ -1499,3 +1499,25 @@ already floor-free (`StateCommitLeafRegrounded`, 07-25); not yet threaded up.
 **NOT build-verified, NOT committed** — the shared tree is under fleet-wide mid-edit churn (siblings'
 sorries + a signature break + the apex migration), no green window, and it would not append a "done"
 it can't back with `#floor_ratchet`. That is the bar holding under pressure, not mediocrity.
+
+## ✅ openmina LINKED — the "Python client / not audited crypto" caveat RETIRED
+`bridge/tools/mina-tip` links openmina (`~/dev/mina-rust`) by path, vendors its `Client` loop, issues
+real RPCs. Live devnet, exit 0: besttip → 1544-byte `Protocol_state.Value` (block 540484); pair →
+consecutive 540478→540479 on openmina's Poseidon; verify-pair → exit 1 on a swapped pair. Demo steps
+0–3 GREEN sourced from openmina. **Python helpers DELETED** (greenfield: one shape). Availability-only
+fact KEPT and distinguished (terminal, not transmutable). Committed `b7207f704`+`ae0e8b212`.
+
+## ⚑ THE ACTUAL BLOCKER right now: metatheory fleet-churn, NOT any one piece of work
+Diagnosed: `Authority.lean` is `M` (uncommitted sibling mid-edit), **45 files dirty in `metatheory/`**
+— a fleet-wide Lean edit wave. HEAD has no sorry in that cone; the redness is the WORKING TREE, not
+HEAD. This blocks verifying the **soundness Lean** (de-vacuum modules, openmina→Lean test, the
+`#floor_ratchet` count) — three landed-or-written pieces can't be adjudicated green.
+⚑ **But it does NOT block the ENGINEERING ladder** — those are different trees:
+  - step 2 (Pasta o1js keys): o1js/TS — done, verified.
+  - GPU tiling, rayon: Rust — done / running.
+  - openmina bin + demo 0–3: Rust+shell — green.
+  - de-vacuum + openmina→Lean test: `metatheory/` — churn-blocked.
+**So step 3 (prove the 199-instance Pasta chain) is gated ONLY on the rayon VK-determinism answer,
+not on the metatheory wave.** Correct move: NOT spinning more lanes into the 45-file churn (clobber
+hazard, pushes the verify window further out); let the wave settle, then ONE clean root build
+adjudicates the Lean. Hold step 3 for the rayon result.
