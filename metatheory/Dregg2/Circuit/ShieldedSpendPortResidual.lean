@@ -228,6 +228,71 @@ theorem emitted_nullifier_determined (hash : List ℤ → ℤ)
   have e2 := (spend_relation_row0 hash minit₂ mfin₂ maddrs₂ t₂ hne₂ hsat₂ hChip₂ hwire₂).2.1
   rw [e2, e1, hLeaf, hk0, hk1, hk2, hk3]
 
+/-- **⚑ THE SCOPE CORRECTION, CLOSED (`emitted_same_note_forces_same_key`).**
+
+The correction below said: `hk0..hk3` ("SAME key") are HYPOTHESES an adversary controls, because
+`cKEY0..cKEY3` occurred in `lkNullifier` and in NO other constraint, and `cOWNER` occurred only inside
+`lkLeafCommit`, with nothing relating them. A prover could spend the same note under a fresh key,
+publish a different nullifier, satisfy the AIR, and meet no accumulator member.
+
+The missing constraint now exists: `ShieldedSpendDescriptor.lkOwnerDerive` (C8) forces
+`owner = hash_fact(key[0..4])`. So the key is DERIVED FROM THE NOTE: the leaf commits the owner, the
+owner commits the key. Two satisfying spends of the SAME note either carry the SAME key — making
+`hk0..hk3` derived rather than assumed — or exhibit a Poseidon2 collision. There is no third option,
+and the "fresh key per spend" double-spend is gone with it. -/
+theorem emitted_same_note_forces_same_key (hash : List ℤ → ℤ)
+    (minit₁ minit₂ : ℤ → ℤ) (mfin₁ mfin₂ : ℤ → ℤ × Nat) (maddrs₁ maddrs₂ : List ℤ)
+    (t₁ t₂ : VmTrace) (hne₁ : t₁.rows ≠ []) (hne₂ : t₂.rows ≠ [])
+    (hsat₁ : Satisfied2 hash shieldedSpendDesc minit₁ mfin₁ maddrs₁ t₁)
+    (hsat₂ : Satisfied2 hash shieldedSpendDesc minit₂ mfin₂ maddrs₂ t₂)
+    (hChip₁ : ChipTableSound hash (t₁.tf TableId.poseidon2))
+    (hwire₁ : t₁.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₁.tf TableId.poseidon2))
+    (hChip₂ : ChipTableSound hash (t₂.tf TableId.poseidon2))
+    (hwire₂ : t₂.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₂.tf TableId.poseidon2))
+    (hLeaf : (t₂.rows.getD 0 zeroAsg) cLEAF = (t₁.rows.getD 0 zeroAsg) cLEAF) :
+    ((t₂.rows.getD 0 zeroAsg) cKEY0 = (t₁.rows.getD 0 zeroAsg) cKEY0
+      ∧ (t₂.rows.getD 0 zeroAsg) cKEY1 = (t₁.rows.getD 0 zeroAsg) cKEY1
+      ∧ (t₂.rows.getD 0 zeroAsg) cKEY2 = (t₁.rows.getD 0 zeroAsg) cKEY2
+      ∧ (t₂.rows.getD 0 zeroAsg) cKEY3 = (t₁.rows.getD 0 zeroAsg) cKEY3)
+    ∨ (∃ xs ys : List ℤ, xs ≠ ys ∧ hash xs = hash ys) := by
+  -- C6a on both traces: the leaf IS the hash of its opening cells.
+  have eL1 := (spend_relation_row0 hash minit₁ mfin₁ maddrs₁ t₁ hne₁ hsat₁ hChip₁ hwire₁).2.2.1
+  have eL2 := (spend_relation_row0 hash minit₂ mfin₂ maddrs₂ t₂ hne₂ hsat₂ hChip₂ hwire₂).2.2.1
+  -- equal leaves ⇒ the two opening blocks have equal hashes.
+  have hcollL : hash [(t₂.rows.getD 0 zeroAsg) cVAL, (t₂.rows.getD 0 zeroAsg) cASSET,
+      (t₂.rows.getD 0 zeroAsg) cOWNER, (t₂.rows.getD 0 zeroAsg) cRAND, 0, NS_FACT_MARK, 1]
+      = hash [(t₁.rows.getD 0 zeroAsg) cVAL, (t₁.rows.getD 0 zeroAsg) cASSET,
+        (t₁.rows.getD 0 zeroAsg) cOWNER, (t₁.rows.getD 0 zeroAsg) cRAND, 0, NS_FACT_MARK, 1] := by
+    rw [← eL1, ← eL2]; exact hLeaf
+  by_cases hLists : ([(t₂.rows.getD 0 zeroAsg) cVAL, (t₂.rows.getD 0 zeroAsg) cASSET,
+      (t₂.rows.getD 0 zeroAsg) cOWNER, (t₂.rows.getD 0 zeroAsg) cRAND, 0, NS_FACT_MARK, 1] :
+      List ℤ)
+      = [(t₁.rows.getD 0 zeroAsg) cVAL, (t₁.rows.getD 0 zeroAsg) cASSET,
+        (t₁.rows.getD 0 zeroAsg) cOWNER, (t₁.rows.getD 0 zeroAsg) cRAND, 0, NS_FACT_MARK, 1]
+  · -- the opening blocks agree ⇒ the OWNERS agree.
+    have hOwner : (t₂.rows.getD 0 zeroAsg) cOWNER = (t₁.rows.getD 0 zeroAsg) cOWNER := by
+      simp only [List.cons.injEq] at hLists
+      exact hLists.2.2.1
+    -- C8 on both traces: the owner IS the hash of the key limbs.
+    have eO1 := owner_is_derived_row0 hash minit₁ mfin₁ maddrs₁ t₁ hne₁ hsat₁ hChip₁ hwire₁
+    have eO2 := owner_is_derived_row0 hash minit₂ mfin₂ maddrs₂ t₂ hne₂ hsat₂ hChip₂ hwire₂
+    have hcollK : hash [(t₂.rows.getD 0 zeroAsg) cKEY0, (t₂.rows.getD 0 zeroAsg) cKEY1,
+        (t₂.rows.getD 0 zeroAsg) cKEY2, (t₂.rows.getD 0 zeroAsg) cKEY3, 0, NS_FACT_MARK, 1]
+        = hash [(t₁.rows.getD 0 zeroAsg) cKEY0, (t₁.rows.getD 0 zeroAsg) cKEY1,
+          (t₁.rows.getD 0 zeroAsg) cKEY2, (t₁.rows.getD 0 zeroAsg) cKEY3, 0, NS_FACT_MARK, 1] := by
+      rw [← eO1, ← eO2]; exact hOwner
+    by_cases hK : ([(t₂.rows.getD 0 zeroAsg) cKEY0, (t₂.rows.getD 0 zeroAsg) cKEY1,
+        (t₂.rows.getD 0 zeroAsg) cKEY2, (t₂.rows.getD 0 zeroAsg) cKEY3, 0, NS_FACT_MARK, 1] :
+        List ℤ)
+        = [(t₁.rows.getD 0 zeroAsg) cKEY0, (t₁.rows.getD 0 zeroAsg) cKEY1,
+          (t₁.rows.getD 0 zeroAsg) cKEY2, (t₁.rows.getD 0 zeroAsg) cKEY3, 0, NS_FACT_MARK, 1]
+    · simp only [List.cons.injEq] at hK
+      exact Or.inl ⟨hK.1, hK.2.1, hK.2.2.1, hK.2.2.2.1⟩
+    · exact Or.inr ⟨_, _, hK, hcollK⟩
+  · exact Or.inr ⟨_, _, hLists, hcollL⟩
+
 /-- **⚑ THE #A COMPOSITION (`emitted_nullifier_double_spend_refused`).**
 ⚠ **SCOPE CORRECTION 2026-07-30 — read the hypotheses before citing this.** The line below reads
 "The full double-spend closure". It is NOT full, and the missing half is adversary-controlled:
@@ -267,6 +332,34 @@ theorem emitted_nullifier_double_spend_refused (hash : List ℤ → ℤ)
     t₁ t₂ hne₁ hne₂ hsat₁ hsat₂ hChip₁ hwire₁ hChip₂ hwire₂ hLeaf hk0 hk1 hk2 hk3
   rw [hdet]
   exact present_no_witness hspent
+
+/-- **`emitted_nullifier_double_spend_refused_derived_key` — the double-spend closure WITHOUT the
+key hypotheses.** A second satisfying spend of the same note admits no accumulator non-membership
+witness — or the deployed Poseidon2 collides. The four `hk0..hk3` assumptions are gone: C8 derives
+them. -/
+theorem emitted_nullifier_double_spend_refused_derived_key (hash : List ℤ → ℤ)
+    (minit₁ minit₂ : ℤ → ℤ) (mfin₁ mfin₂ : ℤ → ℤ × Nat) (maddrs₁ maddrs₂ : List ℤ)
+    (t₁ t₂ : VmTrace) (hne₁ : t₁.rows ≠ []) (hne₂ : t₂.rows ≠ [])
+    (hsat₁ : Satisfied2 hash shieldedSpendDesc minit₁ mfin₁ maddrs₁ t₁)
+    (hsat₂ : Satisfied2 hash shieldedSpendDesc minit₂ mfin₂ maddrs₂ t₂)
+    (hChip₁ : ChipTableSound hash (t₁.tf TableId.poseidon2))
+    (hwire₁ : t₁.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₁.tf TableId.poseidon2))
+    (hChip₂ : ChipTableSound hash (t₂.tf TableId.poseidon2))
+    (hwire₂ : t₂.tf Dregg2.Circuit.DescriptorIR2.poseidon2narrow
+      = Dregg2.Circuit.ChipNarrowLookup.narrowTable (t₂.tf TableId.poseidon2))
+    (hLeaf : (t₂.rows.getD 0 zeroAsg) cLEAF = (t₁.rows.getD 0 zeroAsg) cLEAF)
+    (S8 : Heap8Scheme) (root : Digest8)
+    (hspent : (t₁.rows.getD 0 zeroAsg) cNUL ∈ keysOf8 S8 root) :
+    IsEmpty (NfAccWitness S8 root ((t₂.rows.getD 0 zeroAsg) cNUL))
+      ∨ (∃ xs ys : List ℤ, xs ≠ ys ∧ hash xs = hash ys) := by
+  rcases emitted_same_note_forces_same_key hash minit₁ minit₂ mfin₁ mfin₂ maddrs₁ maddrs₂
+    t₁ t₂ hne₁ hne₂ hsat₁ hsat₂ hChip₁ hwire₁ hChip₂ hwire₂ hLeaf with
+    ⟨hk0, hk1, hk2, hk3⟩ | hcoll
+  · exact Or.inl (emitted_nullifier_double_spend_refused hash minit₁ minit₂ mfin₁ mfin₂
+      maddrs₁ maddrs₂ t₁ t₂ hne₁ hne₂ hsat₁ hsat₂ hChip₁ hwire₁ hChip₂ hwire₂ hLeaf
+      hk0 hk1 hk2 hk3 S8 root hspent)
+  · exact Or.inr hcoll
 
 /-! ### §B — the `NoteAccumulatorCR` fold-walk. -/
 
