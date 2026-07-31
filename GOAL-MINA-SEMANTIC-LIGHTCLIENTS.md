@@ -635,3 +635,28 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   would mint a green test asserting the wrong lane layout, which is worse than the red. Handed over
   with the numbers rather than fixed blind. ⚠ Until it lands, **no one can read `circuit-prove`'s
   integration suite at all without `--no-fail-fast`**, and that is the part that should sting.
+- 23:2x ⚠ **MY ERROR, AND WHAT IT UNCOVERED.** I ran `root-air-fullchain` at tier 0 as a "sanity
+  check" after touching `RootAirDag.ts`. Its `main` opens with `rmSync(WORK)` — it **wiped
+  `.fullchain/` (229 entries)** and then the Rust dumper panicked, so nothing was re-minted.
+  Fully recovered (`real-root-fri.json` re-dumped byte-size-identical at 939,255;
+  `real-root-air.json` rebuilt at `d7ba0c4d3^` in an isolated `git worktree` — **108,685 bytes, the
+  exact size of the destroyed file**, and it re-emits the identical `friCommit`/`accOutDigest`).
+  Two real defects fell out, both now fixed or reported:
+  1. ⚑ **`root-air-fullchain`'s clear deleted an artifact it never mints, before the step that can
+     fail.** `real-root-fri.json` comes from the `root_fri_instance` dumper and this leg never calls
+     it, so **every non-REUSE run silently broke `root-fri-uniform`, `root-claim-carry`,
+     `root-fri-preamble` and `head-anchor-pins`** — and the resulting refusal points at the dumper,
+     not at the leg that deleted its output. And the clear ran BEFORE the dumper, so a dumper that
+     fails leaves an empty workdir with no undo. **FIXED** (`41669f97b`): both dumper outputs are
+     preserved across the clear and the transcript says so.
+  2. ⚑ **`root_air_instance` IS RED AT HEAD, and the cache was masking it.** `d7ba0c4d3` (23:07)
+     moved D value columns into `ConstAir`'s preprocessed trace and bumped the fork rev
+     `4aead01 → fc3c6df`; `eval` now reads `prep_local[CONST_PREP_VALUE_OFFSET + i]` against a
+     preprocessed row of **width 2**, the pre-bump shape — `panicked at const_air.rs:203: index out
+     of bounds: the len is 2 but the index is 2`. **The fork bump is landed and the descriptor shape
+     it needs is not**, which is precisely the convergence re-emit ember has not fired.
+     ⚠ **Any lane that rebuilds that binary after 23:07 hits this**, and the 19:00 binary that still
+     worked is gone. Not fixed here: it is the re-emit, and the re-emit is ember's.
+     ⚑ The general shape is worth keeping: **a cached artifact from a shape the tree can no longer
+     produce is a green that measures a dead chain.** Nothing detected it because the cache
+     short-circuits the dumper, and only deleting the cache asked the question.
