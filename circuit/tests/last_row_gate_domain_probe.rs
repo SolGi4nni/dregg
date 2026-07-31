@@ -19,14 +19,17 @@
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, chip_absorb_all_lanes,
-    eval_lean_expr,
+    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, WindowExpr,
+    chip_absorb_all_lanes, eval_lean_expr, parse_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::trace_rotated::{
     RotatedBlockWitness, generate_rotated_effect_vm_descriptor_and_trace_wide,
     transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
+use dregg_circuit::effect_vm_descriptors::{
+    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint};
@@ -380,4 +383,108 @@ fn smart_forge_gate_residue() {
             eprintln!("   gate #{i}: {:?}", &desc.constraints[i]);
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚑ HOUSE LAW #1: is `row_local_body` TRANSLATION, or is it authoring?
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Do a `WindowExpr` and a `LeanExpr` have the SAME SHAPE and the SAME LEAVES, node for node?
+///
+/// `false` on any structural disagreement, and on any `Nxt` leaf (which has no one-row reading at
+/// all). Nothing here is tolerant: a translation that invented a node, dropped a node, changed a
+/// column index or changed a constant would fail.
+fn mirrors(w: &WindowExpr, l: &LeanExpr) -> bool {
+    match (w, l) {
+        (WindowExpr::Loc(a), LeanExpr::Var(b)) => a == b,
+        (WindowExpr::Const(a), LeanExpr::Const(b)) => a == b,
+        (WindowExpr::Add(a1, a2), LeanExpr::Add(b1, b2))
+        | (WindowExpr::Mul(a1, a2), LeanExpr::Mul(b1, b2)) => mirrors(a1, b1) && mirrors(a2, b2),
+        _ => false,
+    }
+}
+
+/// **THE LAW-1 QUESTION, MEASURED over all 174 deployed members.**
+///
+/// `descriptor_ir2::row_local_body` reads a whole-domain `windowGate`'s body back as a `LeanExpr`,
+/// and its private helper `window_body_as_local` constructs `LeanExpr::{Var, Const, Add, Mul}` to
+/// do it. A doctrine gate counts those four constructions as authored sites, and it is right to:
+/// constructing a `LeanExpr` in Rust is EXACTLY the shape of the drift House Law #1 forbids, and
+/// "it is only plumbing" is what every instance of that drift says about itself.
+///
+/// So it is measured rather than asserted. Over every whole-domain `windowGate` in all three
+/// deployed registries, the returned `LeanExpr` must be the node-for-node MIRROR of the
+/// `WindowExpr` the Lean emitter committed — same shape, same column indices, same constants,
+/// nothing added, nothing dropped. A function that is a total structural isomorphism onto its own
+/// input cannot express a constraint the input did not already contain: every leaf it emits came
+/// from the descriptor, which came from Lean.
+///
+/// That is the difference between translation and authoring, and this is the instrument that keeps
+/// it honest. If someone later gives `window_body_as_local` a case that synthesizes a node — a
+/// normalisation, a folded constant, a rewritten selector — this goes RED, because the mirror
+/// stops holding. It is not a comment promising good behaviour; it is a check that fails.
+///
+/// ⚑ It measures translation. It does NOT license authoring anywhere else in the file, and it says
+/// nothing about the 283 sites the gate already ledgers there.
+#[test]
+fn row_local_body_is_a_structural_mirror_and_authors_nothing() {
+    let mut whole_domain = 0usize;
+    let mut two_row = 0usize;
+    let mut gates = 0usize;
+    for (label, tsv) in [
+        ("V3_STAGED_REGISTRY_TSV", V3_STAGED_REGISTRY_TSV),
+        ("WIDE_REGISTRY_STAGED_TSV", WIDE_REGISTRY_STAGED_TSV),
+        ("WIDE_UMEM_WELD_REGISTRY_TSV", WIDE_UMEM_WELD_REGISTRY_TSV),
+    ] {
+        for line in tsv.lines() {
+            let mut it = line.splitn(3, '\t');
+            let (Some(key), Some(_), Some(json)) = (it.next(), it.next(), it.next()) else {
+                continue;
+            };
+            let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key}: {e}"));
+            for (i, k) in d.constraints.iter().enumerate() {
+                let got = dregg_circuit::descriptor_ir2::row_local_body(k);
+                match k {
+                    VmConstraint2::WindowGate(w) if !w.on_transition => {
+                        match got {
+                            Some(l) => {
+                                assert!(
+                                    mirrors(&w.body, &l),
+                                    "{label}/{key} constraint {i}: `row_local_body` returned a \
+                                     body that is NOT the node-for-node mirror of the committed \
+                                     `WindowExpr`. That is AUTHORING, not translation, and it \
+                                     belongs in the Lean emitter.\n  window: {:?}\n  lean:   {l:?}",
+                                    w.body
+                                );
+                                whole_domain += 1;
+                            }
+                            // The only legitimate `None` on a whole-domain gate: a genuine
+                            // two-row body, which has no one-row reading to translate.
+                            None => two_row += 1,
+                        }
+                    }
+                    // A transition-domain `Gate` is returned BORROWED — nothing is constructed.
+                    VmConstraint2::Base(VmConstraint::Gate(b)) => {
+                        assert_eq!(got.as_deref(), Some(b));
+                        gates += 1;
+                    }
+                    // Everything else carries no row-local body at all.
+                    _ => assert!(got.is_none(), "{label}/{key} constraint {i}"),
+                }
+            }
+        }
+    }
+    eprintln!(
+        "LAW-1 MIRROR: {whole_domain} whole-domain bodies translated node-for-node, \
+         {two_row} genuinely two-row (correctly refused), {gates} residual transition-domain gates"
+    );
+    assert!(
+        whole_domain > 10_000,
+        "the mirror must be measured over the WHOLE deployed surface, not a handful — saw only \
+         {whole_domain}"
+    );
+    assert_eq!(
+        gates, 0,
+        "no transition-domain `Gate` should survive in a deployed member after the hardening"
+    );
 }
