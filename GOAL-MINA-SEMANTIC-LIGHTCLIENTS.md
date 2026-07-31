@@ -610,3 +610,28 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
   and now **refuse to load** (`index out of bounds: the len is 2 but the index is 2` inside
   `const_air.rs`) — that panic is the stale artifact refusing, not a regression, and it is said so
   in the fork at `d690290`. Fork tip is one doc-only commit ahead of the pinned `fc3c6df`.
+- 23:25 ⚑ **"`circuit-prove` lib+tests are GREEN as of the spine landing" is REFUTED — 7 lib tests
+  have been red since the spine commit itself, and fail-fast is why nobody saw it.**
+  Found while looking for what my own change broke. `cargo test -p dregg-circuit-prove` reports
+  `331 passed; 7 failed` in `ivc_turn_chain::board_window_seam_tests` and then **stops** — cargo
+  fail-fasts after the first failing target, so **the entire `circuit-prove` INTEGRATION suite never
+  ran at all**. Every green anyone has quoted for that crate tonight, mine included, came from
+  running a single `--test` target by name. `--no-fail-fast` is the only honest invocation here.
+  **ATTRIBUTED, not assumed.** `git log -S "SEG_SPINE_WIDTH + window + k"` returns exactly one
+  commit: **`e1d8ab9bc`, THE VK SPINE**. Since then only two commits have touched
+  `circuit-prove/src/ivc_turn_chain.rs` — `84eac660e` (the spine's own probe) and my `fd507d99b`
+  (doc comments only). The failures are lane-offset panics (`index out of bounds: the len is 47 but
+  the index is 47`; `len 89 index 89`; `range end index 73 out of range for slice of length 65`)
+  and one `WitnessConflict` in an HONEST-path assertion. **My change cannot move a lane offset** —
+  it alters `ConstAir`'s preprocessed width and adds 4 constraints, and touches no claim layout.
+  **THE CAUSE, and the fix is unambiguous because the production side is fail-closed.** The spine
+  moved every producer to `SEG_SPINE_WIDTH` (= `SEG_WIDTH + VK_SPINE_WIDTH` = 25 + 8 = **33**) and
+  `exposed_board_window` now REFUSES anything that is not `SEG_SPINE_WIDTH + 2W`. The seven tests
+  still hand-build their claim vectors at `SEG_WIDTH + 2W`. So: `SEG_WIDTH` → `SEG_SPINE_WIDTH`
+  throughout `mod board_window_seam_tests` (~20 sites, from line 6672), and the two pinned
+  exposures re-priced **47 → 55** (`+ 2W`, W = 11) and **89 → 97** (`+ 2·RS`, RS = 32).
+  ⚑ **NOT TAKEN HERE, deliberately.** It is the spine lane's own seam arithmetic during a
+  convergence, and those two pins are CLAIMS about what a root exposes, not renames — a wrong guess
+  would mint a green test asserting the wrong lane layout, which is worse than the red. Handed over
+  with the numbers rather than fixed blind. ⚠ Until it lands, **no one can read `circuit-prove`'s
+  integration suite at all without `--no-fail-fast`**, and that is the part that should sting.
