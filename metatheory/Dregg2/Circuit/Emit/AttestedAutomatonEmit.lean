@@ -1,31 +1,49 @@
 /-
 
-⚠⚠⚠ FELT-WIDTH WOUND AT THE ATTESTATION BOUNDARY — an adversarial verify caught this and the file's
-own prose claimed the opposite. READ BEFORE CITING `root_binds_automaton`.
+⛑⛑ OFF THE FLOOR, 2026-07-30 — and the FELT-WIDTH WOUND RE-PRICED, not repaired.
+READ BEFORE CITING `root_binds_automaton`.
 
-`attTransitionOpen` sets `root := fun _ => .var ROOT` and `newRoot := fun _ => .var ROOT` —
-definitionally `EffectVmEmitRotationV3.scalarRootGroup ROOT`, whose own IR doc says: "A
-not-yet-8-felt-welded root … the root stays ~31-bit until that family's own weld" (contrast
-`beforeCapRootGroup`/`beforeHeapRootGroup`, which carry the real 8 lanes plus an after-spine keystone).
-The DEPLOYED map-log tuple is 19 felts `[root8, key, value, op, new_root8]`
+Every binding theorem here used to consume `Poseidon2SpongeCR hash`. That floor is **PROVED FALSE**
+at the deployed BabyBear parameters (`Dregg2.Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`;
+pigeonhole on a ~2^30.9 codomain), so `root_binds_automaton` / `att_row_reads` /
+`attested_refines_committed` / `attested_exposes_components` / `forged_edge_refused` were TRUE AND SAID
+NOTHING. The floor binder is now GONE from all five. What each takes instead is the PER-INSTANCE
+residual of the deployed anti-ghost — `¬ OpenColl hash h₁ h₂` at the two openings THAT ROW supplies —
+which is decidable on committed data, refutable (`DescriptorIR2.openColl_refuted_at_good`, at an
+INHABITED `Good`), and dischargeable by an honest prover at zero cost. The old `hCR` IMPLIED the new
+`hno` — that is exactly what the old proofs did with it — so every statement below is strictly MORE
+GENERAL than before. §8 carries `#assert_not_depends_on … [Poseidon2SpongeCR]` so the floor cannot
+creep back in through a cited lemma.
+
+⚠ THE FELT-WIDTH WOUND IS STILL HERE. It changed from a VACUITY into a PRICE. `attTransitionOpen`
+sets `root := fun _ => .var ROOT` and `newRoot := fun _ => .var ROOT` — definitionally
+`EffectVmEmitRotationV3.scalarRootGroup ROOT`, whose own IR doc says: "A not-yet-8-felt-welded root …
+the root stays ~31-bit until that family's own weld" (contrast `beforeCapRootGroup`/
+`beforeHeapRootGroup`, which carry the real 8 lanes plus an after-spine keystone). The DEPLOYED
+map-log tuple is 19 felts `[root8, key, value, op, new_root8]`
 (circuit/src/descriptor_ir2.rs:2165-2185); this descriptor feeds ONE column into all eight lanes.
 
-CONSEQUENCE, stated at full resolution: `root_binds_automaton` / `attested_refines_committed` /
-`forged_edge_refused` consume `Poseidon2SpongeCR hash` for `hash : List ℤ → ℤ` — an UNBOUNDED codomain,
-where the hypothesis is reasonable. The DEPLOYED instantiation has a BabyBear codomain,
-p = 2013265921 ≈ 2^31, where CR is simply FALSE: a birthday search finds `d'` with
-`autoRoot hash d' = autoRoot hash d` in ~2^15.5 work. So "the root determines the machine" holds
-against the MODELLED hash and NOT against the deployed one. The attestation is real as a construction
-and as a Lean theorem; it is NOT yet a deployed security property.
+CONSEQUENCE, stated at full resolution: at a BabyBear codomain, p = 2013265921 ≈ 2^31, a birthday
+search finds a second heap with `autoRoot hash d' = autoRoot hash d` in ~2^15.5 work — so the
+`SpongeColl` disjunct of `OpenColl` is CHEAPLY SATISFIABLE at deployed width. The theorems no longer
+ASSUME that away; they NAME it, per row, as the event an honest run does not exhibit and an attacker
+at 2^15.5 work can. "The root determines the machine" is a real conditional statement whose condition
+a deployed attacker can break — not a claim resting on a hypothesis the deployment refutes outright.
 
 THE FIX IS THE SAME ONE THE FELT-WIDTH CAMPAIGN NAMES: weld the root to 8 felts (mirror
 `beforeCapRootGroup`/`beforeHeapRootGroup` — the real lanes plus the after-spine keystone) so the
-committed digest carries ~124 bits rather than ~31. Until then every theorem here that consumes
-`Poseidon2SpongeCR` is conditional on a hypothesis the deployment refutes.
+committed digest carries ~124 bits rather than ~31, at which point `¬ OpenColl` is a side condition
+no efficient adversary can violate.
 
-(Unaffected: `attWit_satisfies` / `prodAttWit_satisfies` — the WITNESS legs take NO crypto hypothesis,
-because the opening is CONSTRUCTED (`autoHeap`/`autoRoot`/`autoRoot_commits` build a genuine 2^16-leaf
-sorted heap). The satisfiability and cost results stand; only the BINDING claim is width-wounded.)
+⚠ AND THE THIRD DISJUNCT IS A DEPLOYED WOUND, NOT A LEAN ONE. `OpenColl` also carries `PadGhost3` —
+a LIVE arity-3 IMT leaf digest equal to the padding constant. The padding is the literal
+`BabyBear::ZERO` (`heap_root.rs::EMPTY_SUBTREE_ROOTS[0]`), so that is a FIXED-TARGET PREIMAGE of a
+literal, which collision-resistance does not exclude. Closing it is a change to `heap_root.rs`.
+
+(Unaffected: `attWit_satisfies` / `prodAttWit_satisfies` — the WITNESS legs take NO crypto hypothesis
+and NO residual, because the opening is CONSTRUCTED: `autoHeap`/`autoRoot`/`autoRoot_commits` build a
+genuine sorted heap and fold it with the DEPLOYED arity-3 `padImtRoot`. The satisfiability and cost
+results stand.)
 # Dregg2.Circuit.Emit.AttestedAutomatonEmit — CLOSING THE ATTESTATION GAP of the run-table
 discipline: the run's edges are bound to a COMMITTED automaton by an OPENING, not by declaring
 the automaton's edges.
@@ -49,8 +67,9 @@ EULERIAN path through every declared edge. That route is both expensive AND unsa
 
 ## What is built here instead
 
-The automaton rides as ONE FELT — a `mapRoot` commitment of its whole transition function — and
-each step is a MAP-OP READ against that root:
+The automaton rides as ONE FELT — a DEPLOYED `padImtRoot` commitment (arity-3 indexed-Merkle leaves
+`hash[addr, value, next_addr]` over `relink_next_addrs`, zero-padded to `2 ^ MAP_TREE_DEPTH`) of its
+whole transition function — and each step is a MAP-OP READ against that root:
 
   * `attestedDesc` declares NO table rows at all. Its wire bytes are CONSTANT in `|w|` and in
     `|Q|·|Σ|`: 4 columns, 3 PIs, 6 constraints, 2 range teeth, ZERO declared rows.
@@ -59,8 +78,9 @@ each step is a MAP-OP READ against that root:
     inhabited, not a wish.
   * `attWit_satisfies` (§3) is a real `Satisfied2Public` witness — GENERAL in the automaton, the
     start state and the (non-empty, in-alphabet) word.
-  * `root_binds_automaton` (§4) is the ATTESTATION: under CR, two automata committed by the SAME
-    root AGREE on the whole declared key domain. The root determines the machine.
+  * `root_binds_automaton` (§4) is the ATTESTATION: two automata committed by the SAME root AGREE on
+    the whole declared key domain, unless the two openings EQUIVOCATE at a named key. The root
+    determines the machine — with NO hypothesis on `hash`.
   * `attested_refines_committed` (§5) is the soundness leg: a satisfying trace's every row is a
     genuine step of the COMMITTED automaton, and the exposed public `final_state` IS
     `classifyFrom d q₀` of the word the trace reads.
@@ -75,9 +95,9 @@ Attestation is NOT free, and the free axis is not the one the IR cost counters s
     rows (vs `|w|`), `0` nonlinear mults (same). Main-trace area `4·|w|` vs `3·|w|`.
   * The map-ops table carries `|w|` rows of arity 5 — the aux trace the run-table route does not pay.
   * ⚠ AND THE COST THE IR DOES NOT COUNT: the IR denotation of a map-op read is an EXISTENTIAL
-    opening (`opensTo`); the DEPLOYED AIR realizes it as a depth-`MAP_TREE_DEPTH = 16` binary-Merkle
-    path, i.e. 16 `mapNode` permutations per opened row — `16·|w|` chip rows. That is the real bill,
-    it is stated here rather than hidden, and it is INDEPENDENT of `|Q|·|Σ|`.
+    opening (`opensTo`); the DEPLOYED AIR realizes it as a depth-`MAP_TREE_DEPTH = 16` INDEXED-Merkle
+    path, i.e. 16 `mapNode` permutations per opened row (plus the arity-3 leaf digest) — `16·|w|`
+    chip rows. That is the real bill, stated here rather than hidden, INDEPENDENT of `|Q|·|Σ|`.
 
 So: attestation costs `+1` main column, `+2` constraints, `5·|w|` map-op rows and `16·|w|` chip
 rows; it buys a bound automaton WITH A WITNESS, at a descriptor that is ONE object for every
@@ -88,9 +108,11 @@ the automaton, and has NO witness at any `k`.
 
 ## Residuals (named, not laundered)
 
-  * **The CR floor.** `root_binds_automaton` and `attested_refines_committed` consume
-    `Poseidon2SpongeCR hash` — the standing named collision-resistance hypothesis of every sibling
-    map-opening theorem. The witness (§3) needs NO crypto hypothesis.
+  * **The per-row opening residual — NOT a floor.** `root_binds_automaton`, `att_row_reads`,
+    `attested_refines_committed`, `attested_exposes_components` and `forged_edge_refused` take
+    `¬ OpenColl hash h₁ h₂` at the two openings each row supplies: `PadGhost3` on either heap, or a
+    genuine `SpongeColl` at the ONE pair `padImtRootFind` returns. Refutable, per-instance, free for
+    an honest prover — and NOT a hypothesis on `hash`. The witness (§3) needs neither.
   * **Field canonicality.** The root column is pinned to `pi[root]` on the FIRST row and threaded by
     a constancy window; both are field CONGRUENCES, so collapsing them to ℤ equality needs the
     standing canonical-representative discipline (`hcanonRoot` / `hRcanon`: cells in `[0, p)`), the
@@ -117,7 +139,6 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRow VmRowEnv VmRange holdsVm_piFirst_true holdsVm_piLast_true)
 open Dregg2.Circuit.DescriptorIR2
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Substrate
 open Dregg2.Crypto.DfaAcceptanceAir (TableDfa classifyFrom lastNext_eq_classifyFrom symbols)
 open Dregg2.Circuit.Emit.DfaRoutingTableEmit
@@ -130,10 +151,13 @@ set_option autoImplicit false
 
 /-! ## §1 — THE COMMITMENT INSTRUMENT: an automaton committed by ONE felt.
 
-The deployed map (`DescriptorIR2.opensTo` = `MapMerkleRoot.opensToMerkle` at depth
-`MAP_TREE_DEPTH = 16`) is a sorted `2^16`-leaf heap behind a binary-Merkle root. We commit an
-automaton's WHOLE transition function into one: key `2s + y ↦ d.step s y`, TOTAL over the
-`2^16`-key domain. Nothing here is ever evaluated — the root stays abstract in `hash`. -/
+The deployed map (`DescriptorIR2.opensTo` = `DeployedMapDenotation.opensToMerkleS mapSchema` at depth
+`MAP_TREE_DEPTH = 16`) is a sorted heap behind the deployed INDEXED-Merkle root: arity-3 leaves
+`hash[addr, value, next_addr]` over `relink_next_addrs`, occupancy `length ≤ 2 ^ 16` (SPARSE), zero
+padding above the live prefix. We commit an automaton's WHOLE transition function into one: key
+`2s + y ↦ d.step s y`, TOTAL over the `2^16`-key domain (so this instance saturates the occupancy
+bound rather than exercising the sparse case). Nothing here is ever evaluated — the root stays
+abstract in `hash`. -/
 
 /-- The alphabet bound the descriptor's `SYMBOL` range tooth enforces (`Σ = {0, 1}`). -/
 def ASYM : Nat := 2
@@ -171,6 +195,20 @@ theorem kvRows_key_mem (g : Nat → ℤ) :
     · exact ⟨b, Nat.le_refl b, rfl⟩
     · obtain ⟨i, hi, rfl⟩ := kvRows_key_mem g n (b + 1) x hx
       exact ⟨i, by omega, rfl⟩
+
+/-- Every key of a block is BELOW the block's end. ⚑ The DEPLOYED schema's `HeapOk` demands this
+upper bound as well as sortedness: `relink_next_addrs` pins the largest live leaf's `next_addr` to
+`SENTINEL_MAX`, so no live key may reach it. -/
+theorem kvRows_key_lt (g : Nat → ℤ) :
+    ∀ (n b : Nat) (x : ℤ), x ∈ Heap.keys (kvRows g n b) → x < ((b + n : Nat) : ℤ)
+  | 0,     _, _, hx => absurd hx (by simp [kvRows, Heap.keys])
+  | n + 1, b, x, hx => by
+    rw [show kvRows g (n + 1) b = ((b : ℤ), g b) :: kvRows g n (b + 1) from rfl,
+      Heap.keys_cons, List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · omega
+    · have h := kvRows_key_lt g n (b + 1) x hx
+      omega
 
 /-- A block's keys are STRICTLY increasing — the heap invariant, by construction. -/
 theorem kvRows_sorted (g : Nat → ℤ) : ∀ (n b : Nat), Heap.SortedKeys (kvRows g n b)
@@ -210,10 +248,45 @@ theorem autoHeap_length (d : TableDfa Nat Nat) : (autoHeap d).length = 2 ^ MAP_T
 theorem autoHeap_sorted (d : TableDfa Nat Nat) : Heap.SortedKeys (autoHeap d) :=
   kvRows_sorted _ _ _
 
-/-- **The automaton's commitment — ONE FELT.** The deployed binary-Merkle root of the committed
-heap; abstract in `hash`, never evaluated. -/
+/-- The committed heap's keys are `0 … 2^16 − 1`, all far below the deployed terminal sentinel
+`SENTINEL_MAX = p − 1` — the second half of the deployed schema's `HeapOk`. -/
+theorem autoHeap_keys_lt (d : TableDfa Nat Nat) :
+    ∀ x ∈ Heap.keys (autoHeap d), x < MAP_SENTINEL := by
+  intro x hx
+  rw [autoHeap] at hx
+  have h := kvRows_key_lt (fun j => ((d.step (j / 2) (j % 2) : Nat) : ℤ)) NKEYS 0 x hx
+  have hn : ((0 + NKEYS : Nat) : ℤ) = 65536 := by norm_num [NKEYS]
+  rw [hn] at h
+  show x < (2013265920 : ℤ)
+  omega
+
+/-- ⚑ **THE DEPLOYED OPENING INTRODUCTION, AT A GENERIC DEPTH `dep`.**
+
+⚠ Stated at a VARIABLE depth ON PURPOSE. With the deployed `MAP_TREE_DEPTH = 16` substituted, the
+anonymous constructor whnf's the goal into `perfectRoot hash 16 _`, splits the symbolic leaf vector
+and dies at the heartbeat limit — the same trap `DeployedMapDenotation.padImt_opens_none_of_gap` is
+stated generically to avoid. `autoRoot_commits` TRANSPORTS this by APPLICATION; it never re-derives
+the constructor at 16, and `maxHeartbeats` is never touched. -/
+theorem opensToPadImt (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    {r k : ℤ} {o : Option ℤ}
+    (hs : Heap.SortedKeys h) (hb : ∀ x ∈ Heap.keys h, x < sent)
+    (hlen : h.length ≤ 2 ^ dep)
+    (hr : DeployedMapDenotation.padImtRoot sent hash dep h = r)
+    (hg : Heap.get h k = o) :
+    DeployedMapDenotation.opensToMerkleS (DeployedMapDenotation.padImtSchema sent) hash dep r k o :=
+  ⟨h, ⟨hs, hb⟩, hlen, hr, hg⟩
+
+/-- **The automaton's commitment — ONE FELT.** ⚑ THE DEPLOYED INDEXED-MERKLE ROOT of the committed
+heap (`heap_root.rs`: arity-3 leaves `hash[addr, value, next_addr]`, pointers from
+`relink_next_addrs` with the terminal one pinned to `SENTINEL_MAX`, zero-padded to `2 ^ 16`);
+abstract in `hash`, never evaluated.
+
+⚑ REBOUND 2026-07-30 from `MapMerkleRoot.mapRoot` — the arity-2 DENSE fold `heap_root.rs` stopped
+computing on 2026-07-12 (`919b2b0b8d`). Under an injective sponge the two are provably DIFFERENT
+commitments, so the old `autoRoot` was not a weak description of the deployed root: it was refutable
+at it, and `CommitsAutomaton` was a predicate about a felt no prover computes. -/
 def autoRoot (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) : ℤ :=
-  MapMerkleRoot.mapRoot hash MAP_TREE_DEPTH (autoHeap d)
+  DeployedMapDenotation.padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d)
 
 /-- **`CommitsAutomaton hash R d`** — the root `R` COMMITS the automaton `d`: at every declared key
 `2s + y` it opens to `d.step s y`. This is the whole attestation content, and it is ONE felt wide:
@@ -227,21 +300,24 @@ def CommitsAutomaton (hash : List ℤ → ℤ) (R : ℤ) (d : TableDfa Nat Nat) 
 theorem autoRoot_commits (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) :
     CommitsAutomaton hash (autoRoot hash d) d := by
   intro s y hs hy
-  refine ⟨autoHeap d, autoHeap_sorted d, autoHeap_length d, rfl, ?_⟩
-  have hk : keyOf s y < 0 + NKEYS := by
-    have h1 : s < 32768 := by simpa [ASTATES] using hs
-    have h2 : y < 2 := by simpa [ASYM] using hy
-    show keyOf s y < 0 + 65536
-    unfold keyOf
-    omega
-  have hget := kvRows_get (fun j => ((d.step (j / 2) (j % 2) : Nat) : ℤ)) NKEYS 0 (keyOf s y)
-    (Nat.zero_le _) hk
-  rw [autoHeap, hget]
-  have hy2 : y < 2 := by simpa [ASYM] using hy
-  have hdiv : keyOf s y / 2 = s := by unfold keyOf; omega
-  have hmod : keyOf s y % 2 = y := by unfold keyOf; omega
-  show some ((d.step (keyOf s y / 2) (keyOf s y % 2) : Nat) : ℤ) = some ((d.step s y : Nat) : ℤ)
-  rw [hdiv, hmod]
+  have hget : Heap.get (autoHeap d) ((keyOf s y : Nat) : ℤ) = some ((d.step s y : Nat) : ℤ) := by
+    have hk : keyOf s y < 0 + NKEYS := by
+      have h1 : s < 32768 := by simpa [ASTATES] using hs
+      have h2 : y < 2 := by simpa [ASYM] using hy
+      show keyOf s y < 0 + 65536
+      unfold keyOf
+      omega
+    have hkv := kvRows_get (fun j => ((d.step (j / 2) (j % 2) : Nat) : ℤ)) NKEYS 0 (keyOf s y)
+      (Nat.zero_le _) hk
+    rw [autoHeap, hkv]
+    have hy2 : y < 2 := by simpa [ASYM] using hy
+    have hdiv : keyOf s y / 2 = s := by unfold keyOf; omega
+    have hmod : keyOf s y % 2 = y := by unfold keyOf; omega
+    show some ((d.step (keyOf s y / 2) (keyOf s y % 2) : Nat) : ℤ) = some ((d.step s y : Nat) : ℤ)
+    rw [hdiv, hmod]
+  -- ⚑ TRANSPORT, not re-derivation: the constructor was discharged at a GENERIC depth.
+  exact opensToPadImt MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d)
+    (autoHeap_sorted d) (autoHeap_keys_lt d) (le_of_eq (autoHeap_length d)) rfl hget
 
 /- ⚑ THE OPAQUENESS BARRIER. Past this point `autoRoot`/`autoHeap` are IRREDUCIBLE: no
 elaboration step may unfold a root into its `2^16`-leaf heap (it cannot terminate in any useful
@@ -646,18 +722,28 @@ theorem attWit_satisfies (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) (R : �
 
 /-! ## §4 — ⚑ THE ATTESTATION: the root DETERMINES the automaton.
 
-This is the property the run-table discipline does not have at any price. Under the standing CR
-hypothesis, two automata committed by the SAME root agree on the ENTIRE declared key domain — so
-"which automaton ran" is pinned by one public felt. -/
+This is the property the run-table discipline does not have at any price. Two automata committed by
+the SAME root agree on the ENTIRE declared key domain — so "which automaton ran" is pinned by one
+public felt — with NO hypothesis on `hash`. -/
 
 /-- ⚑ **`root_binds_automaton`** — a root commits AT MOST ONE transition function on the declared
-domain. Pure consequence of `opensToMerkle_functional` (the deployed binary-Merkle anti-ghost). -/
-theorem root_binds_automaton (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (R : ℤ)
-    (d e : TableDfa Nat Nat) (hd : CommitsAutomaton hash R d) (he : CommitsAutomaton hash R e) :
+domain. Pure consequence of `DescriptorIR2.opensTo_functional` (the DEPLOYED indexed-Merkle
+anti-ghost, arity-3 leaves over the sparse zero-padded occupancy).
+
+⛑ **OFF THE FLOOR, 2026-07-30.** This took `hCR : Poseidon2SpongeCR hash` and discharged the opening
+residual from it. That floor is PROVED FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the attestation was true and said nothing.
+It now takes the PER-INSTANCE residual directly, at each DECLARED KEY: `hno` quantifies over the
+`2^16` keys the descriptor's range teeth admit — a FINITE, committed, decidable family, not over the
+infinitely many heaps that share a root. Nothing was weakened: `hCR` implied `hno` (that is what the
+old proof did), so this is strictly the more general statement. -/
+theorem root_binds_automaton (hash : List ℤ → ℤ) (R : ℤ)
+    (d e : TableDfa Nat Nat) (hd : CommitsAutomaton hash R d) (he : CommitsAutomaton hash R e)
+    (hno : ∀ (s y : Nat) (hs : s < ASTATES) (hy : y < ASYM),
+      ¬ OpenColl hash (hd s y hs hy) (he s y hs hy)) :
     ∀ s y : Nat, s < ASTATES → y < ASYM → d.step s y = e.step s y := by
   intro s y hs hy
-  have h := opensTo_functional hash (hd s y hs hy) (he s y hs hy)
-    (fun hc => hc.1 (hCR _ _ hc.2))
+  have h := opensTo_functional hash (hd s y hs hy) (he s y hs hy) (hno s y hs hy)
   simp only [Option.some.injEq] at h
   exact_mod_cast h
 
@@ -717,54 +803,95 @@ theorem att_root_const (R : ℤ) (hRlo : 0 ≤ R) (hRhi : R < 2013265921)
     rw [hprev] at hcong
     exact int_eq_of_modEq (hcanon (j + 1) h).1 (hcanon (j + 1) h).2 hRlo hRhi hcong
 
-/-- **Every row is a genuine step of the COMMITTED automaton.** The range teeth make the row's
-`current`/`symbol` canonical in-domain naturals; the map-op opening plus `opensTo_functional`
-against the commitment forces `next = d.step current symbol` EXACTLY. -/
-theorem att_row_reads (hCR : Poseidon2SpongeCR hash) (d : TableDfa Nat Nat) (R : ℤ)
-    (hcommit : CommitsAutomaton hash R d)
-    (hsat : Satisfied2Public hash (attestedDesc name) minit mfin maddrs t)
-    (hrootAll : ∀ (i : Nat) (h : i < t.rows.length), (t.rows[i]'h) ROOT = R)
+/-- **The row's key columns are canonical in-domain naturals** — the content of the two range teeth,
+factored out so the ROW'S OWN opening (`att_row_open`) and the commitment's opening at the SAME key
+can both be NAMED in a theorem statement. -/
+theorem att_row_dom (hsat : Satisfied2Public hash (attestedDesc name) minit mfin maddrs t)
     {i : Nat} (hi : i < t.rows.length) :
-    ∃ s y : Nat, s < ASTATES ∧ y < ASYM
-      ∧ (t.rows[i]'hi) CURRENT = Int.ofNat s
-      ∧ (t.rows[i]'hi) SYMBOL = Int.ofNat y
-      ∧ (t.rows[i]'hi) NEXT = Int.ofNat (d.step s y) := by
-  -- the two range teeth make the key columns canonical in-domain naturals
+    ((t.rows[i]'hi) CURRENT).toNat < ASTATES ∧ ((t.rows[i]'hi) SYMBOL).toNat < ASYM
+      ∧ (t.rows[i]'hi) CURRENT = Int.ofNat ((t.rows[i]'hi) CURRENT).toNat
+      ∧ (t.rows[i]'hi) SYMBOL = Int.ofNat ((t.rows[i]'hi) SYMBOL).toNat := by
   have hrC := hsat.rowRanges i hi ⟨CURRENT, 15⟩ (by simp [attestedDesc])
   have hrS := hsat.rowRanges i hi ⟨SYMBOL, 1⟩ (by simp [attestedDesc])
   simp only [VmRange.holds] at hrC hrS
   rw [envAt_loc hi] at hrC hrS
   norm_num at hrC hrS
-  refine ⟨((t.rows[i]'hi) CURRENT).toNat, ((t.rows[i]'hi) SYMBOL).toNat, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · simp only [ASTATES]; omega
   · simp only [ASYM]; omega
   · rw [Int.ofNat_eq_natCast]; omega
   · rw [Int.ofNat_eq_natCast]; omega
-  · -- the ATTESTATION tooth bites: the opening is against the COMMITTED root
-    have hrc := hsat.rowConstraints i hi _ (attOpen_mem name)
-    have hopen : opensTo hash ((envAt t i).loc ROOT)
-        (2 * (envAt t i).loc CURRENT + (envAt t i).loc SYMBOL)
-        (some ((envAt t i).loc NEXT)) := (hrc rfl).1
-    rw [envAt_loc hi, hrootAll i hi] at hopen
-    have hkey : 2 * ((t.rows[i]'hi) CURRENT) + ((t.rows[i]'hi) SYMBOL)
-        = ((keyOf ((t.rows[i]'hi) CURRENT).toNat ((t.rows[i]'hi) SYMBOL).toNat : Nat) : ℤ) := by
-      simp only [keyOf]
-      push_cast
-      omega
-    rw [hkey] at hopen
-    have hc := hcommit ((t.rows[i]'hi) CURRENT).toNat ((t.rows[i]'hi) SYMBOL).toNat
-      (by simp only [ASTATES]; omega) (by simp only [ASYM]; omega)
-    have hval := opensTo_functional hash hopen hc (fun hcc => hcc.1 (hCR _ _ hcc.2))
-    simp only [Option.some.injEq] at hval
-    rw [hval]
-    rfl
+
+/-- **THE ROW'S OWN OPENING**, extracted from satisfaction and stated at the COMMITTED key
+`2·current + symbol`. Naming it is what lets the anti-ghost residual be taken as a hypothesis AT THIS
+ROW rather than assumed away by a hash-level floor. -/
+theorem att_row_open (R : ℤ)
+    (hsat : Satisfied2Public hash (attestedDesc name) minit mfin maddrs t)
+    (hrootAll : ∀ (i : Nat) (h : i < t.rows.length), (t.rows[i]'h) ROOT = R)
+    {i : Nat} (hi : i < t.rows.length) :
+    opensTo hash R
+      ((keyOf ((t.rows[i]'hi) CURRENT).toNat ((t.rows[i]'hi) SYMBOL).toNat : Nat) : ℤ)
+      (some ((t.rows[i]'hi) NEXT)) := by
+  have hrC := hsat.rowRanges i hi ⟨CURRENT, 15⟩ (by simp [attestedDesc])
+  have hrS := hsat.rowRanges i hi ⟨SYMBOL, 1⟩ (by simp [attestedDesc])
+  simp only [VmRange.holds] at hrC hrS
+  rw [envAt_loc hi] at hrC hrS
+  norm_num at hrC hrS
+  have hrc := hsat.rowConstraints i hi _ (attOpen_mem name)
+  have hopen : opensTo hash ((envAt t i).loc ROOT)
+      (2 * (envAt t i).loc CURRENT + (envAt t i).loc SYMBOL)
+      (some ((envAt t i).loc NEXT)) := (hrc rfl).1
+  rw [envAt_loc hi, hrootAll i hi] at hopen
+  have hkey : 2 * ((t.rows[i]'hi) CURRENT) + ((t.rows[i]'hi) SYMBOL)
+      = ((keyOf ((t.rows[i]'hi) CURRENT).toNat ((t.rows[i]'hi) SYMBOL).toNat : Nat) : ℤ) := by
+    simp only [keyOf]
+    push_cast
+    omega
+  rw [hkey] at hopen
+  exact hopen
+
+/-- **Every row is a genuine step of the COMMITTED automaton.** The range teeth make the row's
+`current`/`symbol` canonical in-domain naturals; the map-op opening plus `opensTo_functional`
+against the commitment forces `next = d.step current symbol` EXACTLY.
+
+⛑ **OFF THE FLOOR, 2026-07-30.** This took `hCR : Poseidon2SpongeCR hash` and discharged the opening
+residual from it. That floor is PROVED FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the soundness leg was true and said nothing.
+It now takes the residual at THE TWO OPENINGS OF THIS ROW: the row's own (`att_row_open`) and the
+commitment's at the same key. `hno` is refutable, decidable on committed data, and free for an honest
+prover — those two openings simply do not equivocate. Nothing was weakened: `hCR` implied `hno`. -/
+theorem att_row_reads (d : TableDfa Nat Nat) (R : ℤ)
+    (hcommit : CommitsAutomaton hash R d)
+    (hsat : Satisfied2Public hash (attestedDesc name) minit mfin maddrs t)
+    (hrootAll : ∀ (i : Nat) (h : i < t.rows.length), (t.rows[i]'h) ROOT = R)
+    {i : Nat} (hi : i < t.rows.length)
+    (hno : ¬ OpenColl hash (att_row_open R hsat hrootAll hi)
+      (hcommit _ _ (att_row_dom hsat hi).1 (att_row_dom hsat hi).2.1)) :
+    ∃ s y : Nat, s < ASTATES ∧ y < ASYM
+      ∧ (t.rows[i]'hi) CURRENT = Int.ofNat s
+      ∧ (t.rows[i]'hi) SYMBOL = Int.ofNat y
+      ∧ (t.rows[i]'hi) NEXT = Int.ofNat (d.step s y) := by
+  obtain ⟨hs, hy, hcur, hsym⟩ := att_row_dom hsat hi
+  refine ⟨_, _, hs, hy, hcur, hsym, ?_⟩
+  -- the ATTESTATION tooth bites: the opening is against the COMMITTED root
+  have hval := opensTo_functional hash (att_row_open R hsat hrootAll hi)
+    (hcommit _ _ (att_row_dom hsat hi).1 (att_row_dom hsat hi).2.1) hno
+  simp only [Option.some.injEq] at hval
+  rw [hval]
+  rfl
 
 /-- ⚑ **`attested_refines_committed` — THE SOUNDNESS THEOREM.** A trace satisfying the emitted
 attested descriptor reads a genuine ℕ-word off its symbol column, EVERY row of it is a step of the
 automaton COMMITTED by the public root, and the exposed public `final_state` IS
 `classifyFrom d initial_state` of that word. The automaton is bound by ONE felt; no edge is
-declared anywhere. -/
-theorem attested_refines_committed (hCR : Poseidon2SpongeCR hash) (d : TableDfa Nat Nat) (R : ℤ)
+declared anywhere.
+
+⛑ **OFF THE FLOOR, 2026-07-30.** `hCR : Poseidon2SpongeCR hash` is GONE — it is PROVED FALSE at
+deployed BabyBear, so this theorem was true and said nothing. `hno` is its replacement: the
+per-instance opening residual, ROW BY ROW, over the trace's OWN finitely many rows. Refutable,
+decidable on committed data, free for an honest prover; and `hCR` implied it, so this is strictly the
+more general statement. -/
+theorem attested_refines_committed (d : TableDfa Nat Nat) (R : ℤ)
     (hcommit : CommitsAutomaton hash R d)
     (hdom : ∀ s y, s < ASTATES → y < ASYM → d.step s y < ASTATES)
     (hRlo : 0 ≤ R) (hRhi : R < 2013265921)
@@ -774,14 +901,18 @@ theorem attested_refines_committed (hCR : Poseidon2SpongeCR hash) (d : TableDfa 
       0 ≤ (t.rows[i]'h) ROOT ∧ (t.rows[i]'h) ROOT < 2013265921)
     (hroot : t.pub PI_ROOT = R)
     (q0 : ℕ) (hstart : t.pub PI_INITIAL = Int.ofNat q0) (hq0 : q0 < 2013265921)
-    (fN : ℕ) (hfin : t.pub PI_FINAL = Int.ofNat fN) (hfN : fN < 2013265921) :
+    (fN : ℕ) (hfin : t.pub PI_FINAL = Int.ofNat fN) (hfN : fN < 2013265921)
+    (hno : ∀ (i : Nat) (hi : i < t.rows.length),
+      ¬ OpenColl hash
+        (att_row_open R hsat (att_root_const R hRlo hRhi hsat hroot hcanon) hi)
+        (hcommit _ _ (att_row_dom hsat hi).1 (att_row_dom hsat hi).2.1)) :
     t.rows.map (fun a => a SYMBOL)
         = (t.rows.map (fun a => (a SYMBOL).toNat)).map Int.ofNat
       ∧ fN = classifyFrom d q0 (t.rows.map (fun a => (a SYMBOL).toNat)) := by
   have hpos : 0 < t.rows.length := List.length_pos_of_ne_nil hne
   have hrootAll := att_root_const R hRlo hRhi hsat hroot hcanon
   have reads := fun {i : Nat} (hi : i < t.rows.length) =>
-    att_row_reads hCR d R hcommit hsat hrootAll hi
+    att_row_reads d R hcommit hsat (att_root_const R hRlo hRhi hsat hroot hcanon) hi (hno i hi)
   -- (i) the symbol column is a genuine ℕ-word
   have hcol : t.rows.map (fun a => a SYMBOL)
       = (t.rows.map (fun a => (a SYMBOL).toNat)).map Int.ofNat := by
@@ -915,8 +1046,11 @@ theorem prodAttWit_satisfies (hash : List ℤ → ℤ) (k : Nat) (w : List Nat) 
 /-- ⚑ **THE COMPOSITION, ATTESTED.** A trace satisfying the attested descriptor against a root that
 commits the `k`-fold product exposes, in its public `final_state`, the mixed-radix packing of EVERY
 component automaton's classification of the word it reads — and "which product automaton ran" is
-pinned by the public root (§4), not assumed. -/
-theorem attested_exposes_components (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+pinned by the public root (§4), not assumed.
+
+⛑ **OFF THE FLOOR, 2026-07-30.** `hCR : Poseidon2SpongeCR hash` is GONE; `hno` carries the per-row
+opening residual straight through from `attested_refines_committed`. -/
+theorem attested_exposes_components (hash : List ℤ → ℤ)
     {name : String} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (k : Nat) (hlen : (famI k).length = k) (R : ℤ)
     (hcommit : CommitsAutomaton hash R (prodI k))
@@ -927,13 +1061,17 @@ theorem attested_exposes_components (hash : List ℤ → ℤ) (hCR : Poseidon2Sp
       0 ≤ (t.rows[i]'h) ROOT ∧ (t.rows[i]'h) ROOT < 2013265921)
     (hroot : t.pub PI_ROOT = R)
     (hstart : t.pub PI_INITIAL = Int.ofNat 0)
-    (fN : ℕ) (hfin : t.pub PI_FINAL = Int.ofNat fN) (hfN : fN < 2013265921) :
+    (fN : ℕ) (hfin : t.pub PI_FINAL = Int.ofNat fN) (hfN : fN < 2013265921)
+    (hno : ∀ (i : Nat) (hi : i < t.rows.length),
+      ¬ OpenColl hash
+        (att_row_open R hsat (att_root_const R hRlo hRhi hsat hroot hcanon) hi)
+        (hcommit _ _ (att_row_dom hsat hi).1 (att_row_dom hsat hi).2.1)) :
     fN = encodeDigits IRADIX (List.zipWith
       (fun d q => classifyFrom d q (t.rows.map (fun a => (a SYMBOL).toNat)))
       (famI k) (List.replicate k 0)) := by
-  have hbase := attested_refines_committed hCR (prodI k) R hcommit
+  have hbase := attested_refines_committed (prodI k) R hcommit
     (fun s y _ _ => prodI_step_lt k s y) hRlo hRhi hsat hne hcanon hroot
-    0 hstart (by norm_num) fN hfin hfN
+    0 hstart (by norm_num) fN hfin hfN hno
   have hproj := classify_prodList IRADIX (by norm_num [IRADIX]) (famI k) (List.replicate k 0)
     (by rw [hlen, List.length_replicate]) (famI_step_lt k)
     (fun x hx => by rw [List.eq_of_mem_replicate hx]; norm_num [IRADIX])
@@ -954,25 +1092,45 @@ def forgedTrace (R : ℤ) (q y n : Nat) : VmTrace :=
   , pub  := attPub q n R
   , tf   := attTf [asg4 q y n R] }
 
+/-- The forged trace has exactly one row. -/
+theorem forgedTrace_pos (R : ℤ) (q y n : Nat) : 0 < (forgedTrace R q y n).rows.length :=
+  Nat.zero_lt_one
+
+/-- Its single row carries the root it was built with. -/
+theorem forgedTrace_root (R : ℤ) (q y n : Nat) :
+    ∀ (i : Nat) (hi : i < (forgedTrace R q y n).rows.length),
+      ((forgedTrace R q y n).rows[i]'hi) ROOT = R := by
+  intro i hi
+  have hi0 : i = 0 := by
+    have : i < 1 := by simpa [forgedTrace] using hi
+    omega
+  subst hi0
+  rfl
+
 /-- ⚑ **A NON-EDGE OF THE COMMITTED AUTOMATON PROVABLY FAILS `Satisfied2Public`.** No declared
 table is involved: the map-op opening against the committed root, plus opening functionality,
-forces the row's `next` to be the committed automaton's step. -/
-theorem forged_edge_refused (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+forces the row's `next` to be the committed automaton's step.
+
+⛑ **OFF THE FLOOR, 2026-07-30.** `hCR : Poseidon2SpongeCR hash` is GONE (PROVED FALSE at deployed
+BabyBear ⇒ the canary was true and said nothing). `hno` is the residual at the forged row's two
+openings. It is stated as a `∀` over PROOFS of the one satisfaction proposition purely so the
+conclusion can stay the punchy `¬ Satisfied2Public`: proof irrelevance is DEFINITIONAL, and
+`OpenResidS` reads its heaps through `Exists.choose`, so that `∀` binds exactly ONE residual — the
+one at the single row of `forgedTrace R q y n`, not a family. -/
+theorem forged_edge_refused (hash : List ℤ → ℤ)
     (d : TableDfa Nat Nat) (R : ℤ) (hcommit : CommitsAutomaton hash R d) (name : String)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (q y n : Nat)
-    (hbad : n ≠ d.step q y) :
+    (hbad : n ≠ d.step q y)
+    (hno : ∀ hsat : Satisfied2Public hash (attestedDesc name) minit mfin maddrs
+        (forgedTrace R q y n),
+      ¬ OpenColl hash
+        (att_row_open R hsat (forgedTrace_root R q y n) (forgedTrace_pos R q y n))
+        (hcommit _ _ (att_row_dom hsat (forgedTrace_pos R q y n)).1
+          (att_row_dom hsat (forgedTrace_pos R q y n)).2.1)) :
     ¬ Satisfied2Public hash (attestedDesc name) minit mfin maddrs (forgedTrace R q y n) := by
   intro h
-  have hlen : 0 < (forgedTrace R q y n).rows.length := Nat.zero_lt_one
-  have hrootAll : ∀ (i : Nat) (hi : i < (forgedTrace R q y n).rows.length),
-      ((forgedTrace R q y n).rows[i]'hi) ROOT = R := by
-    intro i hi
-    have hi0 : i = 0 := by
-      have : i < 1 := by simpa [forgedTrace] using hi
-      omega
-    subst hi0
-    rfl
-  obtain ⟨s, y', _, _, hcur, hsym, hnext⟩ := att_row_reads hCR d R hcommit h hrootAll hlen
+  obtain ⟨s, y', _, _, hcur, hsym, hnext⟩ :=
+    att_row_reads d R hcommit h (forgedTrace_root R q y n) (forgedTrace_pos R q y n) (hno h)
   have hc : Int.ofNat q = Int.ofNat s := hcur
   have hy : Int.ofNat y = Int.ofNat y' := hsym
   have hn : Int.ofNat n = Int.ofNat (d.step s y') := hnext
@@ -1025,9 +1183,9 @@ def wordN (n : Nat) : List Nat := List.replicate n 1
 #guard (List.map (fun n => (AW_WIDTH * n, 3 * n)) [8, 16, 32]) == [(32, 24), (64, 48), (128, 96)]
 
 -- ⚑ THE AUX BILL THE IR COUNTERS DO **NOT** SEE. The map-ops table carries one arity-5 row per
--- opened trace row (5·|w|), and the DEPLOYED AIR realizes each opening as a depth-16 binary-Merkle
--- path — `MAP_TREE_DEPTH` permutations per opened row, 16·|w| chip rows. This is the real price of
--- attestation, and it is INDEPENDENT of |Q|·|Σ| and of k.
+-- opened trace row (5·|w|), and the DEPLOYED AIR realizes each opening as a depth-16 INDEXED-Merkle
+-- path — `MAP_TREE_DEPTH` node permutations per opened row (plus the arity-3 leaf digest), 16·|w|
+-- chip rows. This is the real price of attestation, and it is INDEPENDENT of |Q|·|Σ| and of k.
 #guard (List.map (fun n => (5 * n, MAP_TREE_DEPTH * n)) [8, 16, 32])
   == [(40, 128), (80, 256), (160, 512)]
 
@@ -1079,12 +1237,41 @@ rather than a literal row list. -/
 /-! ## §8 — axiom tripwires. -/
 
 #assert_all_clean [forged_edge_refused,
-  kvRows_length, kvRows_key_mem, kvRows_sorted, kvRows_get,
-  autoHeap_length, autoHeap_sorted, autoRoot_commits,
+  kvRows_length, kvRows_key_mem, kvRows_key_lt, kvRows_sorted, kvRows_get,
+  autoHeap_length, autoHeap_sorted, autoHeap_keys_lt, opensToPadImt, autoRoot_commits,
   att_memLog, att_mapOps, att_mapLog,
   attRows_length, attRows_shape, attRows_chain, attRows_root, attRows_head_current,
   attRows_last_next, attRows_symbols, attWit_rows_ne, attWit_satisfies,
-  root_binds_automaton, int_eq_of_modEq, att_root_const, att_row_reads,
-  attested_refines_committed, prodI_step_lt, prodAttWit_satisfies, attested_exposes_components]
+  root_binds_automaton, int_eq_of_modEq, att_root_const, att_row_dom, att_row_open, att_row_reads,
+  attested_refines_committed, prodI_step_lt, prodAttWit_satisfies, attested_exposes_components,
+  forgedTrace_pos, forgedTrace_root]
+
+/-! ### ⛑ THE FLOOR TRIPWIRE — the refuted hypothesis must not creep back in.
+
+`#assert_axioms` pins which AXIOMS a proof rests on; it says nothing about which DEFINITIONS the
+proof term walks through. `Poseidon2SpongeCR` is PROVED FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so a later edit that re-cites a `_of_good` /
+`_of_injective` lemma would silently restore vacuity while staying green. These walk the transitive
+constant closure and ERROR if the floor — or the `Function.Injective`-flavoured idealisations it
+hides behind — is reachable from any binding theorem here. -/
+
+#assert_not_depends_on root_binds_automaton
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR,
+   Dregg2.Circuit.DeployedMapDenotation.opensToMerkleS_functional_of_good]
+#assert_not_depends_on att_row_reads
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR,
+   Dregg2.Circuit.DeployedMapDenotation.opensToMerkleS_functional_of_good]
+#assert_not_depends_on attested_refines_committed
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR,
+   Dregg2.Circuit.DeployedMapDenotation.opensToMerkleS_functional_of_good]
+#assert_not_depends_on attested_exposes_components
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR,
+   Dregg2.Circuit.DeployedMapDenotation.opensToMerkleS_functional_of_good]
+#assert_not_depends_on forged_edge_refused
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR,
+   Dregg2.Circuit.DeployedMapDenotation.opensToMerkleS_functional_of_good]
+#assert_not_depends_on autoRoot_commits
+  [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR,
+   Dregg2.Circuit.MapMerkleRoot.mapRoot]
 
 end Dregg2.Circuit.Emit.AttestedAutomatonEmit
