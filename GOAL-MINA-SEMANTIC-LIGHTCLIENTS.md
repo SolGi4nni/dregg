@@ -913,3 +913,21 @@ inside it → root anchored by an included transaction.**
 - The FRI/STARK floor is undischarged.
 **Poster-4's rung 3 ("follow the other side's chain") is still NOT BUILT. "Deployed" must not read
 as rung 3.** That instruction is in the poster lane's brief verbatim.
+
+## 09:50 — the attest tool is stale, and that is the drift's THIRD appearance
+`npm run devnet:attest` refuses: *"the deployed gate anchors 2914d717…, not the emitted root."*
+**MEASURED: `2914d717…` IS the on-chain value** — `hex(18581648242968334732370325029655750949528832288424012648970545017975175278305)`
+matches it exactly. Nothing is wrong on chain.
+
+The tool compares against the RAW root `0x388feba5…`. The **old** contract (deployed from `a8935dca`)
+stored the field directly; the **current** source computes a BabyBear vouch → Pasta image
+(`1270644807…` → `18581648…`) and anchors that. **`devnet-attest.ts` is written for the contract we
+just superseded.** Same source/record drift that produced the placeholder-signature refusal, in a
+third place. Recorded, not patched under time pressure — patching a verification tool to agree with
+a deployment is exactly the move this repo has spent two days learning not to make.
+
+⚑ **And a shared-tree hazard worth its own line: `hbuild`'s rsync DESTROYS artifacts the remote run
+produced.** The deploy wrote `devnet-deployment.json` on hbox; the next `hbuild` pushed the stale
+local copy over it, and the attest script's address check caught it. **A remote run's outputs must
+be pulled back before the next invocation, or they are gone.** The deployment record was
+reconstructed locally from the deploy's own log and committed.
