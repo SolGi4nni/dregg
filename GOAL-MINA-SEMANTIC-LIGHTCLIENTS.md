@@ -970,3 +970,42 @@ honest caveat that the Pasta/IPA wrap around it is classical and the FRI floor i
 Write the driver (resumable, one process per program, `NO_CACHE`, `O1JS_BACKEND=native`), run it on
 hbox, then `head-anchor-pins --emit`. **Keys first; the 905-instance prove is a separate decision.**
 ⚠ And the driver must not lose its output to `hbuild`'s rsync — that ate a deployment record today.
+
+---
+
+# ⚑ THE OPERATIONAL MODEL — check every decision against this
+
+Written 2026-07-31 after ember had to correct four things that are obvious facts about the system.
+The pattern in all four: I held the MECHANISMS precisely and the PURPOSE not at all. This section
+exists so the next decision gets checked against it instead of re-derived.
+
+**What the thing IS.** 131 o1js/Pickles programs that verify **dregg's actual FRI-STARK inside
+Mina** — not a re-proof of dregg's semantics in Mina's system, a verification of dregg's real proof
+object. 905 chained instances, one program serving all 19 queries of a block. **A post-quantum
+argument settling on Mina**, with the Pasta/IPA wrap classical and the FRI floor undischarged.
+
+**What it COSTS, and this is the part I got wrong.**
+- **COMPILE: once per dregg protocol snapshot.** 131 programs, ~2 h. **Amortized. Effectively free.**
+  Optimising it (prover-key cache, process parallelism) is a ONE-TIME win on a cost nobody pays twice.
+- **PROVE: once per JOIN between the chain strands.** 905 instances, ~7 h. ⚑ **STRICTLY SEQUENTIAL**
+  — each step consumes its predecessor, so process parallelism buys NOTHING here. **Per-instance
+  latency is the only lever.** ~28 s/instance today. **This is the operational cost and the product.**
+- **Per JOIN, not per TURN.** The 905 verify ONE batch-STARK regardless of how many turns it covers,
+  and the anchor requires `claim.genesisRoot == head`, so a join proves a SEGMENT. **Batching more
+  turns into a join is free.** Join cadence is the thing to optimise, not turn throughput.
+
+**Targets, so "faster" is checkable**: under 1 h/join = ~4 s/instance = **7×**. Under 10 min =
+~0.66 s/instance = **42×**.
+
+**Three levers, and (a)+(b) compose:**
+- **(a) faster instance** — GPU MSM/NTT over Pasta. ⚠ Amdahl: 50× on MSM gives only ~2.4× overall
+  if MSM is 60% of a step. And a GPU cannot touch the **40 MB js_of_ocaml witness-generation layer**
+  at all — that share is the ceiling and is **unmeasured**.
+- **(b) shorter chain** — precedented: the uniform walk cut **839 VKs → 46**; column narrowing is
+  priced at **54 slices → 31** (the DEEP quotient is 86–90% of the Pasta budget at 1,067 rows per
+  opened value).
+- **(c) change what a join must verify** — unexplored, possibly the largest.
+
+**The free lever, unpulled**: `O1JS_BACKEND=native` — measured **2.2× on PROVE**, bit-identical VK,
+and the chain has never been run with it. Under the corrected economics this is the most valuable
+thing available for zero work.
