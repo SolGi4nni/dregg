@@ -366,7 +366,7 @@ pub use embed::{DreggEngine, EmbedError, EngineConfig};
 // [`Receipt::proof`] / [`TurnProof`], not these.)
 pub use full_turn_proof::{
     CapMembershipExpectation, CapMembershipWitness, FullTurnProof, FullTurnVerifyError,
-    FullTurnWitness, RotationTurnWitness, TurnIdentityFelts, UmemWeldWitness, prove_full_turn,
+    FullTurnWitness, RotationTurnWitness, UmemWeldWitness, prove_full_turn,
     prove_turn_self_sovereign, prove_turn_self_sovereign_rotated, verify_full_turn,
     verify_full_turn_bound,
 };

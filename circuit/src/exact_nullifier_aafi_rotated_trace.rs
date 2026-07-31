@@ -532,9 +532,16 @@ mod tests {
         let descriptor = parse_vm_descriptor2(STAGED).expect("staged Lean descriptor parses");
         assert_eq!(descriptor.trace_width, ROTATED_TRACE_WIDTH);
         assert_eq!(descriptor.public_input_count, ROTATED_PUBLIC_INPUT_COUNT);
-        // 1258 -> 1294 at the nine-lane epoch: the wide chain gained two carriers per block
-        // (60 -> 62) and the narrow payload six limbs, each carrying its own emitted constraints.
-        assert_eq!(descriptor.constraints.len(), 1294);
+        // 1258 -> 1274 at the nine-lane epoch, COUNTED off the re-emitted artifact and decomposed
+        // (the 1294 that stood here was a guess, and it was wrong by 20):
+        //   +4  `lookup`   238 -> 244 ... no: table-1 TID_P2 wide lookups 120 -> 124
+        //                  = 2 blocks x WIDE_NUM_CARRIERS, 2*60 -> 2*62
+        //   +6  `window_gate` outer continuity windows = ROTATED_PAYLOAD_WIDTH, 179 -> 185
+        //                  = NUM_PRE_LIMBS + 1, 178+1 -> 184+1
+        //   +6  `boundary`  outer last-row boundaries = STABLE_FRAME_CELLS + 2*CHIP_OUT_LANES
+        //                  = (ROTATED_PAYLOAD_WIDTH - 8) + 16, 187 -> 193
+        // 1258 + 4 + 6 + 6 = 1274. `gate` (108) and `pi_binding` (76) are not limb-dependent.
+        assert_eq!(descriptor.constraints.len(), 1274);
         let trace = sample_trace();
 
         let wide: Vec<_> = descriptor
@@ -590,7 +597,10 @@ mod tests {
             }
         }
 
-        // Exactly 171 stable-frame + 16 FNS3 weld expressions mention the appended payload.
+        // Exactly `STABLE_FRAME_CELLS` stable-frame + `2 * CHIP_OUT_LANES` FNS3 weld expressions
+        // mention the appended payload. (`STABLE_FRAME_CELLS = ROTATED_PAYLOAD_WIDTH - 8 =
+        // NUM_PRE_LIMBS + 1 - 8`, so it moved 171 -> 177 at the nine-lane epoch; the assertion
+        // below is derived and self-updated, only this prose said 171.)
         let outer_boundaries: Vec<_> = descriptor
             .constraints
             .iter()

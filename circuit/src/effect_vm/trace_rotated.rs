@@ -3063,32 +3063,36 @@ pub const CAP_OPEN_AFTER_SPINE_SPAN: usize = 15 + 8 * CAP_OPEN_DEPTH; // 143
 /// `attenuateCapOpenEffVmDescriptor2R24.trace_width` under the native 8-felt cap tree).
 pub const CAP_OPEN_WIDTH: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 
-/// The turn-identity `actor` column of the TB (turn-bound) cap-open weld
-/// (`CapOpenTurnPins.capOpenActorCol w = w + CAP_OPEN_SPAN`, i.e. the first column PAST the full
-/// cap-open appendix). `= CAP_OPEN_BASE + CAP_OPEN_SPAN = 1976` (the committed
-/// `transferCapOpenTBVmDescriptor2R24` turn-identity column, PI 47).
-pub const CAP_OPEN_TB_ACTOR_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
-/// The turn-identity `dst` column of the TB cap-open weld (`CapOpenTurnPins.capOpenDstCol w = w +
-/// CAP_OPEN_SPAN + 1`). `= CAP_OPEN_BASE + CAP_OPEN_SPAN + 1 = 1977` (PI 48).
-pub const CAP_OPEN_TB_DST_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN + 1;
-/// The turn-bound cap-open trace width: the cap-open width PLUS the two turn-identity columns
-/// (`effCapOpenV3TB`'s `traceWidth := d.traceWidth + 2`). `= CAP_OPEN_WIDTH + 2 = 1978`.
-pub const CAP_OPEN_TB_WIDTH: usize = CAP_OPEN_WIDTH + 2;
+/// The turn-bound cap-open trace width. **It EQUALS [`CAP_OPEN_WIDTH`]**: `effCapOpenV3TB` adds
+/// `piCount + 1` and NO column — the pin it appends names the EXISTING `capOpenCols.src` column.
+///
+/// ⚑ FLAG DAY 2026-07-31. This was `CAP_OPEN_WIDTH + 2` for the two turn-identity columns
+/// (`actor`/`dst`) the TB weld used to add. `CapOpenTurnPins` deleted them at the source on
+/// 2026-07-30 and the re-emit shipped it: the committed `transferCapOpenTBVmDescriptor2R24` and
+/// `transferCapOpenEffVmDescriptor2R24` now carry the SAME `trace_width`, and the TB member's
+/// `public_input_count` is 47, not 49. The two columns were introduced by that weld and read by
+/// no other constraint, so their `.piBinding`s were `local[c] == pi[k]` with the prover choosing
+/// both sides — no producer, verifier or light client loses a check by their removal, and the
+/// successor that publishes `actor`/`dst` FORCED (through the Lamport turn-digest lookup) is
+/// `Dregg2/Circuit/Emit/TurnAuthCapOpenWeld.lean`.
+pub const CAP_OPEN_TB_WIDTH: usize = CAP_OPEN_WIDTH;
 /// The cap-open base descriptor's PI count (`effCapOpenV3.piCount = 46`; the cap-open appendix adds
-/// no PIs). The TB weld appends THREE turn-identity PIs at `46/47/48`.
+/// no PIs). The TB weld appends exactly ONE turn-identity PI, at 46.
 pub const CAP_OPEN_TB_PI_BASE: usize = ROT_PI_COUNT; // 46
-/// The published turn-identity PI slots of the TB cap-open (`effCapOpenV3.piCount + 0/1/2`):
-/// `src → PI[46]`, `actor → PI[47]`, `dst → PI[48]` (`CapOpenTurnPins.turnIdentityPins`).
+/// The one published turn-identity PI slot of the TB cap-open (`effCapOpenV3.piCount + 0`):
+/// `src → PI[46]` (`CapOpenTurnPins.turnIdentityPins`, a singleton).
 pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE; // 46
-pub const CAP_OPEN_TB_PI_ACTOR: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
-pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 48
+/// The TB cap-open's public-input count: the rotated 46 plus the one turn-identity slot.
+pub const CAP_OPEN_TB_PI_COUNT: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
 
 // CAP-OPEN GEOMETRY PINS — the twin of the wide-carrier FLAG-DAY block below, and it exists
 // because this family's numbers ROTTED IN PLACE ONCE ALREADY. Docs on the widener, the wide
 // lift and the TB turn-pin filler carried `818 / 1026 / 210 / 91 / +608` and the TB PI slots
 // `38/39/40` long after Phase H-CAP-8 moved the span to 329 (host 1976) and the TB pins to
 // 46/47/48 — a doc comment that is wrong about a width is how the next reader derives a wrong
-// descriptor, and a prose number cannot go red. These CAN. Any drift in `GRAD_ROT_WIDTH`,
+// descriptor, and a prose number cannot go red. (That `46/47/48` is HISTORY, not the current
+// shape: the 2026-07-31 subtraction left ONE TB pin, at 46. See `CAP_OPEN_TB_WIDTH`.)
+// These CAN. Any drift in `GRAD_ROT_WIDTH`,
 // `CAP_OPEN_DEPTH`, `CAP_OPEN_MASK_BITS` or the digest width now breaks the BUILD here, at the
 // definitions, rather than rotting a paragraph a reader will believe.
 //
@@ -3129,17 +3133,16 @@ const _: () = {
         CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2163,
         "cap-WRITE narrow width"
     );
+    // The TB PI geometry. `CAP_OPEN_TB_WIDTH` gets NO pin here on purpose: it is now *defined* as
+    // `CAP_OPEN_WIDTH`, so `CAP_OPEN_TB_WIDTH == 2020` beside `CAP_OPEN_WIDTH == 2020` four lines
+    // up is one fact typed twice — the two can only ever go red together. The claim worth guarding
+    // ("the TB member and the non-TB member carry the SAME committed `trace_width`, and the TB
+    // member's `public_input_count` is 47") relates two COMMITTED ARTIFACTS, which a const-assert
+    // cannot reach; it is pinned in `circuit/tests/cap_open_avail_roundtrip.rs` against the
+    // registry bytes. What IS local and non-redundant is the PI slot arithmetic:
     assert!(
-        CAP_OPEN_TB_ACTOR_COL == 2020 && CAP_OPEN_TB_DST_COL == 2021,
-        "TB turn-identity cols"
-    );
-    assert!(
-        CAP_OPEN_TB_WIDTH == 2022,
-        "TB host = cap-open host + the 2 turn-identity cols"
-    );
-    assert!(
-        CAP_OPEN_TB_PI_SRC == 46 && CAP_OPEN_TB_PI_ACTOR == 47 && CAP_OPEN_TB_PI_DST == 48,
-        "TB turn-identity PI slots ride PAST the base 46"
+        CAP_OPEN_TB_PI_SRC == 46 && CAP_OPEN_TB_PI_COUNT == 47,
+        "the TB weld appends exactly ONE turn-identity PI, at the first slot past rotateV3's 46"
     );
 };
 
@@ -4298,94 +4301,65 @@ pub fn apply_rotated_cap_remove_after_spine(
     Ok(())
 }
 
-/// Fill the two TURN-IDENTITY columns of the TB (turn-bound) cap-open weld on a single row: the
-/// `actor` felt at [`CAP_OPEN_TB_ACTOR_COL`] (1976) and the `dst` felt at [`CAP_OPEN_TB_DST_COL`]
-/// (1977). (The `src` column — laid inside the cap-open appendix by [`fill_cap_open`] — is the EXISTING cap-open `src`
-/// column already filled by [`fill_cap_open`] from `w.src`; the TB weld pins THAT column, not a new
-/// one.) The three `CapOpenTurnPins.turnIdentityPins` are LAST-row `.piBinding` gates welding these
-/// columns to the published turn PIs [`CAP_OPEN_TB_PI_SRC`] / [`CAP_OPEN_TB_PI_ACTOR`] /
-/// [`CAP_OPEN_TB_PI_DST`] = `src → 46`, `actor → 47`, `dst → 48` — PAST the base 46, matching the
-/// deployed `transferCapOpenTBVmDescriptor2R24.public_input_count = 49`.
-pub fn fill_cap_open_turn_pins(row: &mut [BabyBear], actor: BabyBear, dst: BabyBear) {
-    row[CAP_OPEN_TB_ACTOR_COL] = actor;
-    row[CAP_OPEN_TB_DST_COL] = dst;
-}
-
 /// Widen a rotated base trace (`ROT_WIDTH`) to the TURN-BOUND cap-open width
-/// ([`CAP_OPEN_TB_WIDTH`] = 1978): the cap-open appendix (incl. the `src` column from `w.src`) PLUS
-/// the two turn-identity columns (`actor`/`dst`) filled UNIFORMLY on every row. The TB descriptor
-/// (`effCapOpenV3TB`) pins the `src`/`actor`/`dst` columns to PIs `46/47/48` on the LAST row
-/// ([`CAP_OPEN_TB_PI_SRC`] and friends); filling them uniformly makes the
-/// pins hold on the last row. The `src` column is rooted (`targetBindGate` already pins `leaf.target ==
-/// src`), so `src == w.src`; `actor`/`dst` are the published columns the verifier ANCHORS to the
-/// trusted turn (`TurnIdentityAnchored`). Caller MUST pass `actor`/`dst` consistent with `w.src` (the
-/// honest turn's identity); the verifier's PI override is what FORCES the published identity = trusted.
-pub fn widen_to_cap_open_tb(
-    trace: &mut [Vec<BabyBear>],
-    w: &CapOpenWitness,
-    actor: BabyBear,
-    dst: BabyBear,
-) -> Result<(), String> {
-    widen_to_cap_open_tb_avail(trace, w, actor, dst, 0)
+/// ([`CAP_OPEN_TB_WIDTH`], which EQUALS [`CAP_OPEN_WIDTH`]): the cap-open appendix, including the
+/// `src` column laid by [`fill_cap_open`] from `w.src`. The TB descriptor (`effCapOpenV3TB`) adds
+/// NO column — it pins that EXISTING `src` column to [`CAP_OPEN_TB_PI_SRC`] on the FIRST row.
+///
+/// ⚑ 2026-07-31: this used to take `actor`/`dst` and lay them in two extra columns. Those columns
+/// and their pins are gone (see [`CAP_OPEN_TB_WIDTH`]); the TB widener is now exactly the cap-open
+/// widener, retained as a named entry point because the TB *PI* vector still differs
+/// ([`cap_open_tb_dpis`]).
+pub fn widen_to_cap_open_tb(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Result<(), String> {
+    widen_to_cap_open_tb_avail(trace, w, 0)
 }
 
 /// The AVAIL-AWARE turn-bound widener (GAP #4, cap-open TB member): [`widen_to_cap_open_tb`] for a
 /// base trace produced at a NONZERO availability pad — the hardened
-/// `transferCapOpenTBVmDescriptor2R24` member's cap-open appendix AND its two turn-identity
-/// columns ride `avail_pad` past the bare layout (the three turn-identity PI slots are UNCHANGED:
-/// the pad shifts columns, never PI indices). At `avail_pad = 0` this is byte-identical to the
-/// bare TB widener.
+/// `transferCapOpenTBVmDescriptor2R24` member's cap-open appendix rides `avail_pad` past the bare
+/// layout (the turn-identity PI slot is UNCHANGED: the pad shifts columns, never PI indices). At
+/// `avail_pad = 0` this is byte-identical to the bare TB widener.
 pub fn widen_to_cap_open_tb_avail(
     trace: &mut [Vec<BabyBear>],
     w: &CapOpenWitness,
-    actor: BabyBear,
-    dst: BabyBear,
     avail_pad: usize,
 ) -> Result<(), String> {
-    widen_to_cap_open_avail(trace, w, avail_pad)?;
-    for row in trace.iter_mut() {
-        row.resize(CAP_OPEN_TB_WIDTH + avail_pad, BabyBear::ZERO);
-        row[CAP_OPEN_TB_ACTOR_COL + avail_pad] = actor;
-        row[CAP_OPEN_TB_DST_COL + avail_pad] = dst;
-    }
-    Ok(())
+    widen_to_cap_open_avail(trace, w, avail_pad)
 }
 
-/// Extend a base 46-PI rotated vector to the turn-bound 49-PI vector by appending the three
-/// turn-identity PIs (`src` at 46, `actor` at 47, `dst` at 48 — [`CAP_OPEN_TB_PI_SRC`] and
-/// friends; the deployed `transferCapOpenTBVmDescriptor2R24.public_input_count` is 49). The honest prover publishes its own
-/// turn's `(src, actor, dst)`; the verifier OVERRIDES these slots from the trusted turn before
-/// `verify_vm_descriptor2` (see [`anchor_cap_open_turn_pins`]), so a forged identity is UNSAT.
-pub fn cap_open_tb_dpis(
-    base_dpis: &[BabyBear],
-    src: BabyBear,
-    actor: BabyBear,
-    dst: BabyBear,
-) -> Vec<BabyBear> {
+/// Extend a base 46-PI rotated vector to the turn-bound 47-PI vector by appending the ONE
+/// turn-identity PI (`src` at 46, [`CAP_OPEN_TB_PI_SRC`]; the deployed
+/// `transferCapOpenTBVmDescriptor2R24.public_input_count` is [`CAP_OPEN_TB_PI_COUNT`] = 47). The
+/// honest prover publishes its own turn's `src`; the verifier OVERRIDES that slot from the trusted
+/// turn before `verify_vm_descriptor2` (see [`anchor_cap_open_turn_pins`]), so a forged `src` is
+/// UNSAT — the pinned column is the one `targetBindGate` and the depth-16 membership open read.
+///
+/// ⚑ 2026-07-31: this used to append `actor` at 47 and `dst` at 48. Those two slots pinned columns
+/// no other constraint read, so the prover chose both sides and a light client that believed them
+/// attested was believing nothing. `TurnAuthCapOpenWeld` is the staged successor that publishes
+/// `actor`/`dst` again with the Lamport turn-digest lookup FORCING them.
+pub fn cap_open_tb_dpis(base_dpis: &[BabyBear], src: BabyBear) -> Vec<BabyBear> {
     let mut dpis = base_dpis[..ROT_PI_COUNT].to_vec();
     debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE);
     dpis.push(src); // PI 46 (CAP_OPEN_TB_PI_SRC)
-    dpis.push(actor); // PI 47 (CAP_OPEN_TB_PI_ACTOR)
-    dpis.push(dst); // PI 48 (CAP_OPEN_TB_PI_DST)
+    debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_COUNT);
     dpis
 }
 
 /// **`anchor_cap_open_turn_pins` — the `TurnIdentityAnchored` verifier override (DEPLOYMENT side).**
-/// Override the three turn-identity PIs (`46/47/48`) of a TB cap-open dpis vector with the TRUSTED
-/// turn's `(src, actor, dst)` felts, exactly as the record-pin family anchors its own PI from the
-/// trusted post-cell. A prover-published identity that disagrees (a forged `actor`/`src`/`dst`) makes
-/// the anchored PI disagree with the proof's bound, last-row-pinned column ⇒ `verify_vm_descriptor2`
-/// UNSAT ⇒ reject. This is what makes a LEDGERLESS light client able to conclude the published turn's
-/// `actor`/`src`/`dst` MATCH the proven transition: it recomputes them from the trusted turn it holds.
-pub fn anchor_cap_open_turn_pins(
-    dpis: &mut [BabyBear],
-    trusted_src: BabyBear,
-    trusted_actor: BabyBear,
-    trusted_dst: BabyBear,
-) {
+/// Override the turn-identity PI (`46`) of a TB cap-open dpis vector with the TRUSTED turn's `src`
+/// felt, exactly as the record-pin family anchors its own PI from the trusted post-cell. A
+/// prover-published `src` that disagrees makes the anchored PI disagree with the proof's bound,
+/// first-row-pinned column ⇒ `verify_vm_descriptor2` UNSAT ⇒ reject. This is what makes a LEDGERLESS
+/// light client able to conclude the published turn's `src` MATCHES the proven transition — and the
+/// binding is real because `targetBindGate` chains that column to the opened leaf and thence to the
+/// committed cap root.
+///
+/// ⚑ It used to override `actor` and `dst` as well. Doing so *looked* like it forced them, and it
+/// did force the published PI to equal a trace column — but that column was read by nothing else,
+/// so an honest anchor rejected only a prover who forgot to move the column too. Both are gone.
+pub fn anchor_cap_open_turn_pins(dpis: &mut [BabyBear], trusted_src: BabyBear) {
     dpis[CAP_OPEN_TB_PI_SRC] = trusted_src;
-    dpis[CAP_OPEN_TB_PI_ACTOR] = trusted_actor;
-    dpis[CAP_OPEN_TB_PI_DST] = trusted_dst;
 }
 
 /// The honest transfer-turn caveat manifest the flip test + the cutover use: ONE register
@@ -5475,13 +5449,13 @@ pub fn generate_rotated_heap_write_wide_raw(
 ///
 /// The wide twin of the #225 turn-identity weld (Lean `CapOpenTurnPins.effCapOpenV3TB`): it builds the
 /// LIVE rotated transfer base, widens it to the turn-bound cap-open shape ([`widen_to_cap_open_tb_avail`]
-/// — the cap-membership columns + the two `actor`/`dst` turn-identity columns), publishes the 49-PI
-/// turn-bound vector ([`cap_open_tb_dpis`]: 46 rotated + `src`/`actor`/`dst` at 46/47/48), and then
+/// — the cap-membership columns; the TB weld adds NO column of its own), publishes the 47-PI
+/// turn-bound vector ([`cap_open_tb_dpis`]: 46 rotated + `src` at 46), and then
 /// appends the BEFORE/AFTER `WIDE_NUM_CARRIERS`×8 wide carriers + 16 wide commit PIs at the
-/// cap-open-TB host width. The cap-membership host columns, the turn-identity pins, and the live
+/// cap-open-TB host width. The cap-membership host columns, the turn-identity pin, and the live
 /// 1-felt carriers are CARRIED UNCHANGED — the wide append is purely additive, preserving the 8-felt
-/// before/after anchors. The verifier ANCHORS the three turn-identity PIs to the trusted turn
-/// ([`anchor_cap_open_turn_pins`]) exactly as on the narrow path; a forged published identity is UNSAT.
+/// before/after anchors. The verifier ANCHORS the turn-identity PI to the trusted turn
+/// ([`anchor_cap_open_turn_pins`]) exactly as on the narrow path; a forged published `src` is UNSAT.
 ///
 /// THE FACE IS THE COMMITTED MEMBER'S, NOT THE BARE ONE. `transferCapOpenTBVmDescriptor2R24` is
 /// emitted at the AVAIL-HARDENED transfer v1 face (`dregg-effectvm-transfer-v1-avail-…-capopen-eff-tb`,
@@ -5494,9 +5468,11 @@ pub fn generate_rotated_heap_write_wide_raw(
 /// the resolved descriptor's name).
 ///
 /// `cap_open` MUST be a genuine transfer-conferring cap-membership witness whose leaf `target` IS the
-/// turn's `src` (the `targetBind` gate roots it); `actor`/`dst` are the published turn identity the
-/// caller threads from the honest turn. Returns `(trace, dpis)` ready for `prove_vm_descriptor2(&desc,
+/// turn's `src` (the `targetBind` gate roots it). Returns `(trace, dpis)` ready for `prove_vm_descriptor2(&desc,
 /// &trace, &dpis, &MemBoundaryWitness::default(), &[])` against the wide `transferCapOpenTBVmDescriptor2R24`.
+///
+/// ⚑ 2026-07-31: the `actor`/`dst` arguments are GONE. They fed two columns and two PI slots this
+/// member no longer carries; see [`CAP_OPEN_TB_WIDTH`].
 #[allow(clippy::too_many_arguments)]
 pub fn generate_rotated_transfer_cap_open_tb_wide(
     initial_state: &CellState,
@@ -5506,8 +5482,6 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
     caveat: &RotatedCaveatManifest,
     cap_open: &CapOpenWitness,
     src: BabyBear,
-    actor: BabyBear,
-    dst: BabyBear,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     const TB_KEY: &str = "transferCapOpenTBVmDescriptor2R24";
     // The committed member's v1 face, read off its own registry name and cross-checked against its S2
@@ -5525,22 +5499,22 @@ pub fn generate_rotated_transfer_cap_open_tb_wide(
         return Err(format!(
             "cap-open-TB wide generator: base PI vector {} != {} (the base generator emits the \
              rotated 46 + the 4 dsl rc PIs; the TB descriptor is UNWRAPPED, so `cap_open_tb_dpis` \
-             strips the rc tail and appends the 3 turn-identity PIs at 46..48)",
+             strips the rc tail and appends the ONE turn-identity PI at 46)",
             base_pis.len(),
             ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
-    widen_to_cap_open_tb_avail(&mut trace, cap_open, actor, dst, avail_pad)
+    widen_to_cap_open_tb_avail(&mut trace, cap_open, avail_pad)
         .map_err(|e| format!("cap-open-TB wide widen: {e}"))?;
-    let tb_pis = cap_open_tb_dpis(&base_pis, src, actor, dst);
-    debug_assert_eq!(tb_pis.len(), CAP_OPEN_TB_PI_BASE + 3); // 49
+    let tb_pis = cap_open_tb_dpis(&base_pis, src);
+    debug_assert_eq!(tb_pis.len(), CAP_OPEN_TB_PI_COUNT); // 47
     let dpis =
         append_wide_carriers_avail(&mut trace, tb_pis, CAP_OPEN_TB_WIDTH + avail_pad, avail_pad);
     debug_assert_eq!(
         trace[0].len(),
         CAP_OPEN_TB_WIDTH + avail_pad + 2 * WIDE_NUM_CARRIERS * 8
     );
-    debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_BASE + 3 + 16); // 65
+    debug_assert_eq!(dpis.len(), CAP_OPEN_TB_PI_COUNT + 16); // 63
     compact_s2_columns(&mut trace, TB_KEY)?;
     compact_e1_columns(&mut trace, TB_KEY)?;
     Ok((trace, dpis))

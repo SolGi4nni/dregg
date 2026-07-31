@@ -799,7 +799,16 @@ mod tests {
         );
 
         // Promotion must be byte-preserving: this is the exact Lean-emitted artifact whose staged
-        // SHA-256 is dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e.
+        // SHA-256 is df654baea5a922badb8cd287fda6955d30a931b940f221b80fed284b3b7fbfc5.
+        //
+        // ⚑ 2026-07-31: this tooth went red and it was RIGHT. The nine-lane re-emit refreshed the
+        // registry copy but not `circuit/staged-descriptors/fnsp-v3/`, so the two diverged at
+        // `trace_width` 3804 vs 3760 — the staged tree was simply not in the flag day's file set.
+        // The repair was to RE-RUN the emitter (`lake env lean --run
+        // metatheory/EmitExactNullifierAafiRotatedState.lean`) and install its stdout verbatim,
+        // NOT to relax this comparison: the freshly emitted bytes hash to `df654bae…` and are
+        // byte-identical to the registry copy, which is the whole claim. The sibling manifest was
+        // regenerated from the same bytes.
         assert_eq!(FAITHFUL_NOTE_SPEND_EXACT_V3_JSON.as_bytes(), STAGED_BYTES);
         assert!(
             ALL_KINDS
@@ -810,9 +819,14 @@ mod tests {
 
         let desc = descriptor_by_name(NAME).expect("exact FNSP-v3 must dispatch by exact name");
         assert_eq!(desc.name, NAME);
-        assert_eq!(desc.trace_width, 3760);
+        // `ROTATED_TRACE_WIDTH = V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS + 1) + 2*8*WIDE_CARRIERS`
+        // = 2442 + 2*185 + 2*496 = 3804 (was 3760 at 178 limbs / 60 carriers; the delta is
+        // 2*6 payload limbs + 2*16 carrier columns = 44).
+        assert_eq!(desc.trace_width, 3804);
         assert_eq!(desc.public_input_count, 76);
-        assert_eq!(desc.constraints.len(), 1258);
+        // 1258 + 4 TID_P2 wide lookups + 6 outer continuity windows + 6 outer last-row boundaries
+        // — decomposed at `exact_nullifier_aafi_rotated_trace.rs`'s twin of this assertion.
+        assert_eq!(desc.constraints.len(), 1274);
         assert_eq!(
             desc.tables.iter().map(|table| table.id).collect::<Vec<_>>(),
             vec![0, 9, 1, 84, 85]
@@ -828,7 +842,8 @@ mod tests {
                 .count()
         };
         assert_eq!(lookup_counts(TID_P2_STATE16), 128);
-        assert_eq!(lookup_counts(TID_P2), 120);
+        // 2 blocks x WIDE_NUM_CARRIERS: 2*60 -> 2*62 at the nine-lane epoch.
+        assert_eq!(lookup_counts(TID_P2), 124);
         assert_eq!(lookup_counts(84), 48, "15-bit range-table lookups");
         assert_eq!(lookup_counts(85), 132, "16-bit range-table lookups");
         assert_eq!(

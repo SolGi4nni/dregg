@@ -581,10 +581,10 @@ mod tests {
     /// every one of the 36 deployed cohort rows in the committed `rotation-v3-staged-registry.tsv`
     /// carries the flag-day weld — the `-gentian-deployed-bare-refuse` name suffix, the per-member
     /// widened `trace_width`, and the three pure `floor_col(b) == 0`-refuse gates over ITS OWN base.
-    /// §HETEROGENEOUS GEOMETRY: a standard graduated member (base `GRAD_ROT_WIDTH = 1647`) widens to
-    /// `1692` with floor cols `1659/1675/1691`; the two DISTINCT V1Face members (setFieldDyn / custom,
-    /// base `1619` — four fewer chip sites) widen to `1664` with floor cols `1631/1647/1663` over THEIR
-    /// own 1619 base (NOT the fixed 1647 that would strand a 28-column dead gap). Both derive from the
+    /// §HETEROGENEOUS GEOMETRY: a standard graduated member (base `GRAD_ROT_WIDTH = 1691`) widens to
+    /// `1736` with floor cols `1703/1719/1735`; the two DISTINCT V1Face members (setFieldDyn / custom,
+    /// base `1663` — four fewer chip sites) widen to `1708` with floor cols `1675/1691/1707` over THEIR
+    /// own 1663 base (NOT the fixed 1691 that would strand a 28-column dead gap). Both derive from the
     /// per-member aux base = `trace_width − (3·REFUSE_STRIDE − 3)`; the refuse block spans `base..base+44`.
     /// A light client that verifies any of these deployed descriptors REFUSES a declared-capacity dodge
     /// (Lean `declared_capacity_unsat_deployed`), because the refuse block is in the COMMITTED VK bytes,
@@ -593,8 +593,31 @@ mod tests {
     fn deployed_cohort_bytes_carry_the_refuse() {
         let tsv = crate::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
         // The refuse floor gate the Lean/Rust deployed alignment welds (compact-JSON serialized).
-        let refuse_gate =
-            |col: usize| format!("{{\"t\":\"gate\",\"body\":{{\"t\":\"var\",\"v\":{col}}}}}");
+        //
+        // ⚑ THIS NEEDLE WAS WRONG FROM `81ee5492d` TO 2026-07-31, AND THIS TEST WAS RIGHT AND EARLY.
+        // It reads the registry as TEXT rather than through `parse_vm_descriptor2`, which is what
+        // makes it a bytes-level tooth — and also the one consumer a serialization change can break
+        // silently. `81ee5492d` ("FLAG DAY: the last-row anchor forge is CLOSED — 174 members
+        // re-emitted") lowered every row-local `.base (.gate …)` as a whole-domain
+        // `windowGate { onTransition := false }` so the last row carries the frame algebra it was
+        // missing: registry-wide, 6923 `gate` -> 6923 `window_gate`, constraint counts unchanged.
+        // Its commit message said Rust "changes only by re-reading re-emitted descriptor bytes, and
+        // the `windowGate { on_transition: false }` decoder it now exercises was already live" —
+        // true of every consumer that goes through the decoder, and false of this one.
+        //
+        // So this went red ONE COMMIT BEFORE the nine-lane flag day and was read as flag-day noise.
+        // It is not: the gate IS in the committed bytes, at exactly the column this file derives
+        // (verified at HEAD for all 36 cohort rows). Nothing here is a repair to a NUMBER — every
+        // number in this test was and is correct. The needle is now the current serialization.
+        //
+        // ⚠ If a future emitter changes the wire spelling again, this test is the tripwire, and the
+        // right response is to re-spell the needle — never to widen it to a substring that both
+        // spellings satisfy, which would make it unable to go red at all.
+        let refuse_gate = |col: usize| {
+            format!(
+                "{{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{{\"t\":\"loc\",\"c\":{col}}}}}"
+            )
+        };
         // Per-member widening span: the weld widens to `fcDep base 2 + 1 = base + 45`. Single
         // source of truth = the public weld footprint (kept in lock-step with the trace_rotated
         // exclusion, which subtracts the SAME count from the wide teeth-column tail).
@@ -682,7 +705,8 @@ mod tests {
         // the deployed cohort member `withDfaRcPins (gentianDeployedBareRefuse revokeV3)` — stripping
         // the refuse. Removing that override lets the welded cohort member flow through, so revoke now
         // carries revokeV3's aafiInsert (hole #3) AND the escrow/discharge/vault floor-refuse (base
-        // 1647 → tw 1692, floor cols 1659/1675/1691) its 26 graduated peers carry.
+        // 1691 → tw 1736, floor cols 1703/1719/1735 at the nine-lane geometry) its 26 graduated
+        // peers carry.
         assert_eq!(
             cohort_rows, 36,
             "all 36 deployed bare cohort rows must carry the flag-day refuse weld"

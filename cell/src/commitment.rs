@@ -1133,7 +1133,8 @@ pub fn compute_rotated_pre_limbs(
     use dregg_circuit::effect_vm::layout_generated::{
         AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
         CAP_ROOT_GROUP, CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP,
-        HEAP_ROOT_GROUP, NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, VK_GROUP,
+        HEAP_ROOT_GROUP, NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP,
+        ROTATED_FIELD_LANE_COL, VK_GROUP,
     };
     use dregg_circuit::effect_vm::split_u64;
     use dregg_circuit::field::BabyBear;
@@ -1156,58 +1157,45 @@ pub fn compute_rotated_pre_limbs(
     pre[1] = bal_lo; // r0 ↔ balance_lo
     pre[2] = BabyBear::new((cell.state.nonce() & 0x7FFF_FFFF) as u32); // r1 ↔ nonce
     pre[3] = bal_hi; // r2 ↔ balance_hi
-    // r3..r10 ↔ fields[0..7] lane 0 (limbs 4..=11) ‖ the 56 fields COMPLETION lanes 113..=168
-    // (fields[i] lanes 1..7 → `113 + 7·i .. +6`). THE v13 FAITHFUL FIELDS OCTET: each field's
-    // 32 bytes ride a full `field_limbs8` 8-lane split (lane 0 = the u64-lane lo32, the faithful
-    // ~124-bit binding), REPLACING the eight ~31-bit `fold_bytes32_to_bb` Horner folds that rode
-    // one `from_lossy_31bit_DANGER` octet.
+    // r3..r10 ↔ fields[0..7] lane 0 (limbs 4..=11) ‖ the 56 historical completion lanes 113..=168
+    // ‖ the eight NINTH lanes 176..=183. THE INJECTIVE NINE-LANE FIELDS NONET: each field's 32
+    // bytes ride the full `field_limbs9` split, whose Lean authority `Dregg2.Circuit.FieldLanes9`
+    // carries `fieldToLanes9_injective` — proved from a TOTAL decoder and a machine-checked left
+    // inverse (`lanes9ToField_fieldToLanes9`), `#assert_axioms`-clean. Not a hash bound, not a
+    // birthday bound: an explicit bijection onto its image.
     //
-    // ⚠ THIS COMMENT USED TO CLAIM "the whole state commitment is now faithful". IT IS NOT, and the
-    // sentence survived one correction pass before this one — it is deleted here. The v13 octet was
-    // a real WIDTH improvement (one Horner fold became eight lanes, `from_lossy_31bit_DANGER` has
-    // grep-zero callers) but every lane was `u32 % p`, and since `2p < 2^32` EVERY field value had a
-    // sibling with an identical lane vector, constructible by adding `p` to any 4-byte chunk with no
-    // grind. Width is not hardness.
+    // ⚑ WHY THE OCTET HAD TO DIE, AND WHY NINE. `p = 2013265921`, `log₂ p = 30.907`: eight lanes
+    // carry 247.26 bits against 256, so NO 8-lane encoding of 32 bytes is injective under any
+    // chunking — pigeonhole, whatever the lanes contain. Three successive repairs of the octet (an
+    // eight-way `fold_bytes32_to_bb` Horner fold, then a `u32 % p` chunking, then a Poseidon2 image
+    // over an injective 16 × u16-LE preimage) each moved the attacker's COST and none reached
+    // injectivity; the last priced out at a **2^92.7 COLLISION** — the birthday figure, not the
+    // flattering 2^185 second-preimage one — which is BELOW the ~124-bit bar quoted elsewhere in
+    // this tree. `P^8 < 2^256 ≤ P^9` (`nine_lanes_is_the_minimum`). `field_limbs8` is DELETED.
     //
-    // ⚑ AND THIS IS THE ONE PLACE IT BIT. Sixty lines up, `fields[8..STATE_SLOTS]` enter the
-    // authority residue BYTE-EXACT. `fields[0..8]` are excluded there deliberately ("bound by their
-    // own limbs"), so these lanes are their ONLY binding — and they reach
-    // `TurnReceipt::{pre,post}_state_hash`, the executor signature and the receipt QC. The tier that
-    // carries proof obligations had the breakable commitment; the tier with no proof lane at all is
-    // bound at BLAKE3 strength. A full node that also re-checks `canonical_ledger_root` is covered,
-    // but that is a DIFFERENT CONSUMER, not a fix — a receipt-only client is not.
+    // ⚑ AND THIS IS THE PLACE IT BIT. Sixty lines up, `fields[8..STATE_SLOTS]` enter the authority
+    // residue BYTE-EXACT. `fields[0..8]` are excluded there deliberately ("bound by their own
+    // limbs"), so these lanes are their ONLY binding — and they reach
+    // `TurnReceipt::{pre,post}_state_hash`, the executor signature and the receipt QC. That is the
+    // tier the collision reached, and it is now closed by an injection rather than a cost estimate.
     //
-    // ⚑ THE O(1) ALIAS IS CLOSED; THE OCTET IS STILL NOT INJECTIVE. `field_limbs8` lanes 2..7 now
-    // carry the leading six felts of a Poseidon2 image over an injective 16 × u16-LE preimage of the
-    // WHOLE 32-byte value (lanes 0/1 are byte-identically the kernel u64 lane, unchanged deployed
-    // ABI). A colliding sibling must match lanes 0/1 AND a six-felt hash. Eight lanes still carry
-    // only 247.26 bits against 256, so no 8-lane encoding of 32 bytes is injective under any
-    // chunking — the repair moved the attacker's cost, not the pigeonhole.
+    // Lanes 0/1 are byte-identically the kernel u64 lane (`BE(b[28..32]) % p`, `BE(b[24..28]) % p`)
+    // — the deployed ABI `field_to_u64` and the escrow / discharge / vault welds read — and did not
+    // move. Lanes 2..8 are the seven base-`2^28` digits of
+    // `W = ofDigits 256 (b[0..24] ++ [q₀ + 4·q₁])`: the 24 bytes the pinned pair says nothing about,
+    // plus ONE digit carrying the two quotients that lane 0/1's `mod p` discards. Every free lane is
+    // `< 2^28 < p`, so nothing reduces and the `u32 % p` shape that aliased never appears again.
     //
-    // ⚠ EVERY COMMITTED FIELD VALUE MOVED. This is a RE-GENESIS, not a migration; it is
-    // descriptor-invariant (no deployed member pins a completion lane to a constant or relates it to
-    // lane 0), so no VK rotates and no descriptor re-emits. The setField value8 pins PUBLISH the
-    // written slot's 7 lanes as PIs 46..=52; the completion freezes pin every non-written field's 7
-    // lanes on a value turn (the fields GENTIAN law) and still hold, because the lanes are a
-    // FUNCTION of the field value. Byte-identical to the `rotation_witness` producer fill: both
-    // sides call `Faithful8::from_field_limbs8`, so they move together by construction.
+    // ⚠ EVERY COMMITTED FIELD VALUE MOVES AGAIN. This is a RE-GENESIS. The 184-limb geometry and
+    // the nine-lane setField pins were already emitted (`e662ade32`); this producer was still
+    // writing the dead octet into eight of the nine columns and leaving `176 + i` at ZERO, so the
+    // committed vector was the 2^92.7 one with a zero stapled to it. Byte-identical to the
+    // `rotation_witness::produce` twin: both sides call `Faithful9::from_field_lanes9` over the SAME
+    // Lean-emitted `ROTATED_FIELD_LANE_COL[i]` nonet. ⚠ THE NONET IS NON-CONTIGUOUS — never rebuild
+    // it with a stride.
     for i in 0..8 {
-        // REVOKED-ROOT flag-day: the fields[0..7] completion octet shifted 112..=167 → 113..=168
-        // (every limb index ≥ 37 shifted +1 for the new base `revoked_root` limb 37).
-        let base = 113 + 7 * i;
-        dregg_circuit::Faithful8::from_field_limbs8(&cell.state.fields[i]).write_lanes(
-            &mut pre,
-            [
-                4 + i,
-                base,
-                base + 1,
-                base + 2,
-                base + 3,
-                base + 4,
-                base + 5,
-                base + 6,
-            ],
-        );
+        dregg_circuit::Faithful9::from_field_lanes9(&cell.state.fields[i])
+            .write_lanes(&mut pre, ROTATED_FIELD_LANE_COL[i]);
     }
     // r11..r22 (limbs 12..=23): app-register headroom.
     // r23 (limb 24) + r11..r17 (limbs 12..=18): THE FAITHFUL 8-FELT AUTHORITY DIGEST (H1) — the

@@ -1582,38 +1582,86 @@ impl core::fmt::Display for CustomCommitVersionError {
 
 impl std::error::Error for CustomCommitVersionError {}
 
-/// **The structural custom-commitment version detector.** Locates the custom
-/// exposure block by the FIRST-row pin of the `custom_proof_commitment` column
-/// (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`, commit limb 0 — shift-invariant:
-/// the param union never moves) and classifies the four PI slots directly after
-/// the low commit block:
+/// **The structural custom-commitment version detector.**
 ///
-/// * `Ok(CUSTOM_COMMIT_VERSION)` — v3: those slots pin NON-param columns (the
-///   commit teeth carrying limbs 4..8), the low VK block (cols
-///   `PARAM_BASE..+4`) rides at the four slots after THEM, and four contiguous
-///   VK teeth immediately complete the exact VK8;
-/// * `Err(RetiredV1)` — v1: those slots pin the VK block directly (cols
-///   `PARAM_BASE..+4`) — the 4-felt legacy exposure: explicit version refusal;
+/// ## ⚑ What the custom member ACTUALLY binds — read this before changing the gate
+///
+/// **Nothing, in-AIR.** Not the proof commitment, not the program VK. The `proof_bind` op is a
+/// DECLARATION: the deployed `Ir2Air::eval` groups it with the bus kinds and `continue`s without
+/// emitting a bus interaction, and Lean's `VmConstraint2.holdsAt` is `trivial` for it. Every column
+/// of both octets is read by no gate, lookup, hash site or range tooth. `require_no_unbacked_proof_bind`
+/// has always said so: *"The declaration is NOT an in-AIR check … the ONLY thing that makes the
+/// published claim mean anything is the per-turn fold connecting it to a re-proven sub-proof leaf."*
+///
+/// So the binding lives entirely in the FOLD, over PUBLISHED PI SLOTS. That matters here because
+/// **this function classifies a LAYOUT, not a binding.** It answers "which exposure shape did this
+/// artifact commit to", so a retired one is refused at admission. It has never answered, and cannot
+/// answer, "is the commitment forced".
+///
+/// ## ⚑ FLAG DAY 2026-07-31 — 14 of the 16 exposure pins are gone, and nothing got weaker
+///
+/// The convergence re-emit shipped `UnforcedPiPins.dropUnforcedPins` registry-wide. Of the sixteen
+/// `.piBinding .first` exposure pins, **fourteen were deleted** — every one whose column no non-pin
+/// constraint read, which was all of them except the two the `proof_bind` names. The deployed
+/// `customVmDescriptor2R24` now carries exactly two: commit limb 0 (PI `lo` → `PARAM_BASE +
+/// CUSTOM_PROOF_COMMIT_BASE`) and VK limb 0 (PI `lo + 8` → `PARAM_BASE + CUSTOM_VK_HASH_BASE`).
+///
+/// **No refusal was lost.** A pin on a column nothing else reads is `local[c] == pi[k]` with the
+/// prover choosing both sides; `unforced_pin_row_admits_any_value` proves overwriting the column and
+/// its slot with an arbitrary value preserves every constraint. And `piCount` is UNCHANGED by the
+/// subtraction, so the fold still reads the same 16 slots and its check is exactly as strong. What
+/// was deleted is a claim, not a check.
+///
+/// This detector used to classify by that decorative 16-pin shape and therefore returned
+/// `UnknownLayout` on the live member. It now classifies by the evidence that SURVIVES.
+///
+/// ## The classification
+///
+/// `lo` is the PI slot of the first-row pin on commit limb 0, `vk_lo` that of VK limb 0. The gap
+/// `vk_lo - lo` IS the declared commitment width in felts — that is what the retirement is about:
+///
+/// * `Err(RetiredV1)` — `vk_lo == lo + 4`: the VK block rides directly after a 4-felt commitment
+///   (~62-bit birthday). Explicit version refusal, never widened or zero-padded.
+/// * `vk_lo == lo + 8` — commitment8. The VK width then decides:
+///   - a pin in `vk_lo + 4 .. vk_lo + 8` ⇒ the artifact carries the full pre-subtraction exposure
+///     with VK teeth ⇒ `Ok(3)`;
+///   - pins inside the window but NONE in `vk_lo + 4 ..` ⇒ commitment8 with VK low4 only ⇒
+///     `Err(RetiredV2Low4Vk)`;
+///   - NO pin in the window besides the two anchors ⇒ the SUBTRACTED form. Classified `Ok(3)` iff
+///     the artifact reserves the full 16-slot exposure window (`piCount >= lo + 16`) and its
+///     `proof_bind` names exactly the two anchored columns.
 /// * `Err(MissingCommitPins)` / `Err(UnknownLayout)` — fail closed.
+///
+/// ⚠ **NAMED RESIDUAL, and it is a real loss of discrimination.** In the subtracted form the bytes
+/// cannot separate v2 from v3: both would show two anchors 8 slots apart, and a v2's 12-slot window
+/// plus a 4-slot rc tail reserves the same 16 PIs. This is not a hole today because **no emitter
+/// produces a subtracted v2** — a v2 artifact predates the subtraction and therefore still carries
+/// its pins, which the `RetiredV2Low4Vk` arm catches. If the exposure width ever becomes
+/// configurable, this classifier must key on a DECLARED width, not on a reserved window.
 pub fn custom_commit_version(
     d: &crate::descriptor_ir2::EffectVmDescriptor2,
 ) -> Result<u32, CustomCommitVersionError> {
-    use crate::descriptor_ir2::VmConstraint2;
+    use crate::descriptor_ir2::{ProofBindSpec, VmConstraint2};
     use crate::effect_vm::columns::{PARAM_BASE, param};
-    use crate::lean_descriptor_air::{VmConstraint, VmRow};
+    use crate::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
     let commit_col0 = PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE;
-    // Collect ALL first-row pins keyed by PI slot.
+    let vk_col0 = PARAM_BASE + param::CUSTOM_VK_HASH_BASE;
+    // ALL first-row pins keyed by PI slot, plus the two anchors.
     let mut first_pins: std::collections::BTreeMap<usize, usize> =
         std::collections::BTreeMap::new();
     let mut commit_pi_lo: Option<usize> = None;
+    let mut vk_pi_lo: Option<usize> = None;
     for c in &d.constraints {
-        if let VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) = c {
-            if *row == VmRow::First {
-                first_pins.insert(*pi_index, *col);
-                if *col == commit_col0 {
-                    commit_pi_lo = Some(*pi_index);
-                }
+        if let VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) = c
+            && *row == VmRow::First
+        {
+            first_pins.insert(*pi_index, *col);
+            if *col == commit_col0 {
+                commit_pi_lo = Some(*pi_index);
+            }
+            if *col == vk_col0 {
+                vk_pi_lo = Some(*pi_index);
             }
         }
     }
@@ -1622,48 +1670,69 @@ pub fn custom_commit_version(
             name: d.name.clone(),
         });
     };
-    let is_vk_low_block = |base: usize, pins: &std::collections::BTreeMap<usize, usize>| -> bool {
-        (0..4)
-            .all(|k| pins.get(&(base + k)) == Some(&(PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k)))
+    let unknown = || CustomCommitVersionError::UnknownLayout {
+        name: d.name.clone(),
+        commit_pi_lo: lo,
     };
-    // The four slots after the low commit block.
-    let mid = lo + CUSTOM_COMMIT_WIDTH_RETIRED_V1;
-    if is_vk_low_block(mid, &first_pins) {
-        // v1: commit limbs 0..4, then the VK block directly — the retired 4-felt exposure.
+    let Some(vk_lo) = vk_pi_lo else {
+        // No VK exposure anchor at all: we cannot read the declared widths. Fail closed.
+        return Err(unknown());
+    };
+
+    // THE RETIRED v1: the VK block rides `CUSTOM_COMMIT_WIDTH_RETIRED_V1` slots after the
+    // commitment, i.e. the artifact declares a 4-felt proof commitment.
+    if vk_lo == lo + CUSTOM_COMMIT_WIDTH_RETIRED_V1 {
         return Err(CustomCommitVersionError::RetiredV1 {
             name: d.name.clone(),
             commit_pi_lo: lo,
         });
     }
-    // v2/v3 common prefix: slots mid..mid+4 must pin four NON-param columns (the commit teeth,
-    // contiguous and ascending), and the low VK block must ride directly after them. Only v3
-    // continues with the four exact contiguous VK teeth; prefix-only v2 is retired.
-    // The S2-compacted wide registry shifts this member-local tail left by 960 columns,
-    // so classify by its exact relative shape: four contiguous non-param commit teeth,
-    // immediately followed by four contiguous VK teeth. No arbitrary/folded columns pass.
-    let teeth_base = first_pins.get(&mid).copied();
-    let teeth_ok = teeth_base.is_some_and(|base| {
-        base >= crate::effect_vm::trace_rotated::V1_WIDTH
-            && (0..CUSTOM_COMMIT_WIDTH_RETIRED_V1)
-                .all(|k| first_pins.get(&(mid + k)) == Some(&(base + k)))
-    });
-    let vk_lo = mid + CUSTOM_COMMIT_WIDTH_RETIRED_V1;
-    if teeth_ok && is_vk_low_block(vk_lo, &first_pins) {
-        let vk_hi_ok = teeth_base.is_some_and(|base| {
-            (0..4).all(|k| first_pins.get(&(vk_lo + 4 + k)) == Some(&(base + 4 + k)))
-        });
-        if vk_hi_ok {
-            return Ok(CUSTOM_COMMIT_VERSION);
-        }
+    // Anything other than a full commitment8 window between the anchors is unclassifiable.
+    if vk_lo != lo + CUSTOM_COMMIT_WIDTH_V2 {
+        return Err(unknown());
+    }
+
+    let pin_in =
+        |range: std::ops::Range<usize>| range.into_iter().any(|k| first_pins.contains_key(&k));
+    let window = lo..lo + 2 * CUSTOM_COMMIT_WIDTH_V2;
+
+    // (a) THE FULL (pre-subtraction) EXPOSURE: a pin in the VK-HI quarter is the v3 signature, and
+    //     its absence beside other window pins is exactly the v2 prefix-only-VK shape.
+    if pin_in(vk_lo + 4..vk_lo + CUSTOM_COMMIT_WIDTH_V2) {
+        return Ok(CUSTOM_COMMIT_VERSION);
+    }
+    let extra_window_pins = window
+        .clone()
+        .filter(|k| *k != lo && *k != vk_lo)
+        .any(|k| first_pins.contains_key(&k));
+    if extra_window_pins {
         return Err(CustomCommitVersionError::RetiredV2Low4Vk {
             name: d.name.clone(),
             commit_pi_lo: lo,
         });
     }
-    Err(CustomCommitVersionError::UnknownLayout {
-        name: d.name.clone(),
-        commit_pi_lo: lo,
-    })
+
+    // (b) THE SUBTRACTED FORM: the two anchors and nothing else. The surviving evidence is the
+    //     reserved 16-slot exposure window, plus the `proof_bind` declaring exactly the two
+    //     anchored columns — the tie between the exposure and the op the fold keys on. Both are
+    //     required; neither is implied by the other.
+    if d.public_input_count < lo + 2 * CUSTOM_COMMIT_WIDTH_V2 {
+        return Err(unknown());
+    }
+    let declares_the_anchors = d.constraints.iter().any(|c| {
+        matches!(
+            c,
+            VmConstraint2::ProofBind(ProofBindSpec {
+                commit: LeanExpr::Var(cc),
+                vk: LeanExpr::Var(vv),
+                ..
+            }) if *cc == commit_col0 && *vv == vk_col0
+        )
+    });
+    if !declares_the_anchors {
+        return Err(unknown());
+    }
+    Ok(CUSTOM_COMMIT_VERSION)
 }
 
 /// Require the LIVE (v2, 8-felt) custom proof-bind commitment layout; refuse the
@@ -1695,8 +1764,10 @@ impl core::fmt::Display for UnbackedProofBindError {
             "'{name}': declares {declarations} recursive proof-binding op(s) \
              (`DescriptorIR2.ProofBind`) but the leg carries NO carrier witness — a proof-bind \
              member has no re-exec rung. The declaration is NOT an in-AIR check (the deployed \
-             evaluator has no `ProofBind` arm and the sixteen `pi_binding` pins only PUBLISH the \
-             binding columns); the ONLY thing that makes the published claim mean anything is \
+             evaluator has no `ProofBind` arm, and the two surviving `pi_binding` pins only \
+             PUBLISH the binding columns — the other fourteen were deleted in 2026-07-31's \
+             unforced-pin subtraction for pinning columns nothing reads); the ONLY thing that \
+             makes the published claim mean anything is \
              the per-turn fold connecting it to a re-proven sub-proof leaf. Folding this leg as \
              a plain segment leaf would carry a prover-chosen commitment no sub-proof backs, and \
              a light client could not tell which arm was taken — refused fail-closed. Attach the \
@@ -2777,20 +2848,31 @@ mod tests {
             // general `facetEffGate` / `effBitGateFor (1<<<n)`), not the constant EFFECT_TRANSFER.
             if key.contains("CapOpen") {
                 // The TURN-IDENTITY weld (`transferCapOpenTBVmDescriptor2R24`,
-                // CapOpenTurnPins.effCapOpenV3TB) is the cap-open PLUS two turn-identity columns
-                // (capOpenActorCol/capOpenDstCol) and three turn-identity PI pins (welding the
-                // cap-open `src`/`actor`/`dst` columns to the published turn PIs). So it carries the
-                // 91-column cap-membership appendix + 2 turn-identity columns = +93, and 46 + 3 = 49
-                // PIs. The cap-membership chip-lookup count (1 leaf + 16 node) is unchanged.
+                // `CapOpenTurnPins.effCapOpenV3TB`) is the cap-open PLUS **one** PI slot and **no**
+                // column: the pin it appends names the EXISTING `capOpenCols.src` column, which
+                // `targetBindGate` and the depth-16 membership open already read. So the TB member's
+                // `trace_width` EQUALS its non-TB twin's, and it carries 46 + 1 = 47 PIs.
+                //
+                // ⚑ 2026-07-31: this read "+2 turn-identity columns … and 46 + 3 = 49 PIs". The weld
+                // used to add `capOpenActorCol`/`capOpenDstCol` and pin them to PI 47/48 as the
+                // turn's `actor`/`dst`. Those two columns were introduced BY that weld and read by
+                // no other constraint in the member, so each pin was `local[c] == pi[k]` with the
+                // prover choosing both sides — a published felt for *who acted* that a light client
+                // could not rely on, and `last_row_anchor_forge` measured the forge succeeding at
+                // the AIR. Both columns and both pins are gone at the Lean source. The successor
+                // that publishes actor/dst AND forces them (through the Lamport turn-digest lookup
+                // whose 8-felt output the signed message recomposes) is
+                // `Dregg2/Circuit/Emit/TurnAuthCapOpenWeld.lean`, staged.
                 let is_tb = key.contains("CapOpenTB");
-                let extra_cols = if is_tb { 2 } else { 0 };
+                let extra_cols = 0;
+                let _ = is_tb;
                 // The spawn cap-open members (`spawnCapOpen`/`spawnWriteCapOpen`) are the ONLY cap-fanout
                 // members built over a BIRTH base (`spawnV3`/`spawnWriteV3`): spawn carries the extra
                 // new-cell-key PI weld (`ROT_NEW_CELL_KEY_PI = 46`, the child id pinned on row 0), so its
                 // rotated base publishes 47 PIs (the 46-PI vector + 1), not 46. So the cap-open wrapper
                 // inherits 47 PIs. Every other cap-open member rides a non-birth base (46 PIs).
                 let is_spawn = key.starts_with("spawn");
-                let extra_pis = if is_tb { 3 } else { 0 } + if is_spawn { 1 } else { 0 };
+                let extra_pis = if is_tb { 1 } else { 0 } + if is_spawn { 1 } else { 0 };
                 // Phase H-CAP-8: the FAITHFUL 8-FELT cap-open appendix. The native `node8` arity-16
                 // tree commits the WHOLE 8-felt digest group per absorb (the 7 spare permutation
                 // lanes are PROMOTED into the bound fold — no separate `7·17` lane tail). The Lean
@@ -2813,7 +2895,8 @@ mod tests {
                 let appendix = cap_span + extra_cols;
                 // The rotated base graduates by `7·n_rot_sites` wire-commit lane cols (still 7-felt;
                 // only the CAP DIGEST groups went 8-felt). So the width is
-                //   rot_base + 7·n_sites + 329 (+ 2 TB) (+ 143 after-spine for write/attenuate).
+                //   rot_base + 7·n_sites + 329 (+ 143 after-spine for write/attenuate).
+                // The TB weld contributes NO column (see above), so it does not appear here.
                 // 143 % 7 ≠ 0, so the with/without-after-spine forms are mutually EXCLUSIVE — the
                 // residual cleanly decides which member this is (no name-keyed dispatch).
                 assert!(
@@ -2830,12 +2913,14 @@ mod tests {
                 assert!(
                     matches!(lane_surplus, Some(s) if s % 7 == 0),
                     "{key}: cap-open trace width = rotated base (+ 7·n_rot_sites lane cols) + 329 \
-                     cap-membership appendix (+2 TB cols) (+143 after-spine for write/attenuate)"
+                     cap-membership appendix (+143 after-spine for write/attenuate). The TB weld \
+                     adds NO column: it pins the EXISTING `src` column."
                 );
                 assert_eq!(
                     d.public_input_count,
                     46 + extra_pis,
-                    "{key}: cap-open carries the rotated 46-PI vector (+3 turn-identity PIs for TB)"
+                    "{key}: cap-open carries the rotated 46-PI vector (+1 turn-identity `src` PI \
+                     for TB, +1 new-cell-key PI for the spawn birth base)"
                 );
                 // The cap-open READ appendix declares EXACTLY 17 poseidon2 chip lookups whose DIGEST
                 // (out0, tuple col CHIP_RATE+1) lands in the cap-membership CORE column block
@@ -2847,7 +2932,7 @@ mod tests {
                 // Recover the appendix base from the total width. The cap appendix starts at the
                 // GRADUATED rotated width (`base.traceWidth`); for write/attenuate members the
                 // after-spine sits past it, so subtract it too: `cap_open_base = trace_width -
-                // CAP_OPEN_SPAN(329) - extra_cols (- AFTER_SPINE_SPAN(143) if write)`.
+                // CAP_OPEN_SPAN(329) (- AFTER_SPINE_SPAN(143) if write)`.
                 let cap_membership_core = 7 + 8 + 16 * 17; // leaf + leaf-digest + DEPTH·17 = 287
                 let cap_open_base = d.trace_width
                     - cap_span
@@ -3130,7 +3215,6 @@ mod tests {
                 nullifier_pins
                     .into_iter()
                     .partition(|(col, _)| (rc_col..rc_col + 4).contains(col));
-            let has_rc = !rc_pins.is_empty();
             // NOT rc-wrapped: heapWrite (v3RegistryHeap tail, no v1 prefix), the dedicated
             // supply-mint (tail `withSelectorGate sel::MINT mintV3` over the BARE body), and the three
             // STAGED capacity-satisfaction welds (escrow/discharge/vault — no live routing). Everything
@@ -3140,22 +3224,44 @@ mod tests {
                 || key == "settleEscrowSatVmDescriptor2R24"
                 || key == "dischargeSatVmDescriptor2R24"
                 || key == "vaultSatVmDescriptor2R24";
-            assert_eq!(
-                has_rc, !rc_exempt,
-                "{key}: dsl rc pins present iff the member is the rc-wrapped cohort"
+            // ⚑ 2026-07-31 — THE rc PINS ARE GONE FROM EVERY MEMBER, and the assertion that stood
+            // here (`has_rc == !rc_exempt`, "dsl rc pins present iff the member is the rc-wrapped
+            // cohort") is FALSE, not merely off by a number. `withDfaRcPins` appends ONLY
+            // `.piBinding`s (`withDfaRcPins_constraints` / `memOpsOf_withDfaRcPins` /
+            // `mapOpsOf_withDfaRcPins`), and the rc carrier columns (caveat-region offsets 39..=42)
+            // are read by NO gate, lookup, hash site or range tooth — so each pin was
+            // `local[c] == pi[k]` with the prover choosing both sides, and `dropUnforcedPins`
+            // deleted all four from every rc-wrapped member. The AIR never bound the route
+            // commitment; `withDfaRcPins`'s own doc says so ("the pins are plain PI bindings,
+            // satisfiable at any uniformly-filled value"). The intended binding was always the
+            // per-turn FOLD, which reads the PI slots — and `piCount` is UNCHANGED by the
+            // subtraction, so the four slots survive as verifier-supplied inputs.
+            //
+            // ⚠ THAT IS NOT COST-FREE, and it is not this file's to fix:
+            // `circuit-prove/src/ivc_turn_chain.rs::dsl_rc_claim_pi_lo` LOCATES the fold's rc slot
+            // BY the pin and errors fail-closed when it is absent, so the DSL/Dfa fold arm now
+            // refuses every deployed leg. The repair is to make the binding real — fold the rc
+            // carrier into `caveatCommit` so the columns enter `forcedCols` and the next emit KEEPS
+            // the pins — not to teach the fold to accept an unpinned slot. Tracked at
+            // `circuit/tests/dsl_rc_emit.rs`.
+            //
+            // So: assert the ABSENCE (which is falsifiable — it goes red the day an emitter
+            // re-adds them, which is what the repair above would do), and take rc-wrapping from the
+            // emitter-side membership. The membership is still two-sided: `base_pi_count` feeds
+            // every per-effect branch below, so a member wrongly classified here fails there.
+            assert!(
+                rc_pins.is_empty(),
+                "{key}: the dsl rc pins must be ABSENT — `dropUnforcedPins` removed all four \
+                 because the rc carrier columns are read by nothing. Their return means either a \
+                 member skipped the subtraction, or (the intended repair) the rc carrier was \
+                 folded into `caveatCommit` and is now genuinely forced. Check WHICH before \
+                 restoring the old `present iff rc-wrapped` assertion: found {rc_pins:?}"
             );
-            if has_rc {
-                let rc_expected: Vec<(usize, usize)> = (0..4)
-                    .map(|k| (rc_col + k, d.public_input_count - 4 + k))
-                    .collect();
-                assert_eq!(
-                    rc_pins, rc_expected,
-                    "{key}: the 4 rc pins publish the rc carrier (region offsets 39..=42) as the \
-                     LAST 4 member PIs"
-                );
-            }
-            // The member's PRE-rc PI count — what every per-effect branch below pins.
-            let base_pi_count = d.public_input_count - if has_rc { 4 } else { 0 };
+            // The member's PRE-rc PI count — what every per-effect branch below pins. The rc tail
+            // SLOTS are still allocated (`piCount` is invariant under the subtraction); only their
+            // pins are gone.
+            let base_pi_count = d.public_input_count - if rc_exempt { 0 } else { 4 };
+            let _ = rc_col;
             // THE RECORD-FORCING PIN (the deployment-soundness close, `EffectVmEmitRotationV3
             // .rotateV3WithRecordPin`): cellSeal/cellUnseal/cellDestroy AND receiptArchive force the
             // AFTER block's lifecycle limb (col `after_base + B_LIFECYCLE`) — the deployed apply moves
@@ -3300,15 +3406,26 @@ mod tests {
                 // is UNSAT in-circuit (Lean `setFieldDynForcedV3`). The column is the Lean's
                 // `afterFieldsRootCol setFieldDynV1Face.traceWidth` = face + B_SPAN + B_FIELDS_ROOT.
                 //
-                // This pin ROTTED once already (439 → 451) when the REVOKED-ROOT flag day grew
-                // `B_SPAN` 227 → 239 (+12), because it is a hand-pinned literal. It is re-pinned from
-                // the emitted registry TSV (this file's stated practice for it), NOT derived, and the
-                // reason is worth naming rather than hiding: the derived form would be
-                // `V1_WIDTH + B_SPAN + B_FIELDS_ROOT`, but that yields 463 — Rust's `EFFECT_VM_WIDTH`
-                // (188) and the Lean `setFieldDynV1Face` base (451 − 239 − 36 = 176) DISAGREE by 12.
-                // Until that Lean/Rust face-width divergence is reconciled, a "derived" form here
-                // would be a fabricated identity, so the literal stands with the discrepancy recorded.
-                const SETFIELD_DYN_AFTER_FIELDS_ROOT_COL: usize = 451;
+                // ⚑ NOW DERIVED, AND THE ROT HISTORY IS THE EVIDENCE FOR THE DERIVATION. This was a
+                // fully hand-pinned literal and it rotted TWICE, both times by exactly `ΔB_SPAN`:
+                //   439 → 451 when the revoked-root flag day grew `B_SPAN` 227 → 239 (+12)
+                //   451 → 459 when the nine-lane flag day grew `B_SPAN` 239 → 247 (+8)
+                // Two independent confirmations that the emitted column IS
+                // `face + B_SPAN + B_FIELDS_ROOT`, so only the FACE stays a literal.
+                //
+                // The face is where Rust and Lean genuinely disagree, and that is why the whole
+                // thing was hand-pinned before: Rust's `EFFECT_VM_WIDTH` is 188, the Lean
+                // `setFieldDynV1Face.traceWidth` is 176 (= 459 − 247 − 36), a 12-column divergence
+                // with no Rust-side source to derive from. Writing `V1_WIDTH + B_SPAN +
+                // B_FIELDS_ROOT` would give 471 and be a FABRICATED identity — so the face is
+                // named as its own constant, with the divergence recorded, and the two moving
+                // terms are read from the emitted layout. A `B_SPAN` change now updates this
+                // automatically; a FACE change still goes red here, which is the part that
+                // genuinely needs a human.
+                const SETFIELD_DYN_LEAN_V1FACE_WIDTH: usize = 176;
+                const SETFIELD_DYN_AFTER_FIELDS_ROOT_COL: usize = SETFIELD_DYN_LEAN_V1FACE_WIDTH
+                    + crate::effect_vm::trace_rotated::B_SPAN
+                    + crate::effect_vm::trace_rotated::B_FIELDS_ROOT;
                 assert_eq!(
                     base_pi_count, 47,
                     "setFieldDyn: rotated 46-PI + the appended fields-root weld slot"
@@ -3316,21 +3433,41 @@ mod tests {
                 assert_eq!(
                     nullifier_pins,
                     vec![(SETFIELD_DYN_AFTER_FIELDS_ROOT_COL, pi_base + 4)],
-                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (451) to PI[46]"
+                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col \
+                     (Lean face 176 + B_SPAN + B_FIELDS_ROOT) to PI[46]"
                 );
             } else if key == "mintVmDescriptor2R24" {
-                // THE SUPPLY-MINT hash weld: the fifth pin welds the published mint-hash param
-                // (`PARAM_BASE + param::MINT_HASH`, col 68) to PI[46] on the first row, so a live
-                // `Effect::Mint` (e.g. a Stripe-attested credit) rides the ALREADY-EMITTED PI-46
-                // binding — the minted supply anchor is a committed public input, not free. base_pi 47.
+                // ⚑ THE SUPPLY-MINT HASH "WELD" WAS NOT A WELD, and 2026-07-31's subtraction said so.
+                //
+                // This branch used to assert `nullifier_pins == [(PARAM_BASE + param::MINT_HASH,
+                // pi_base + 4)]` with the message "the fifth pin welds the published mint-hash
+                // (param0, col 68) to PI[46] … the minted supply anchor is a committed public input,
+                // NOT FREE." The last four words were exactly wrong. Col 68 appears in no gate, no
+                // lookup, no transition, no hash site and no range tooth of this member, so the pin
+                // was `local[68] == pi[46]` with the prover choosing both sides — and
+                // `last_row_anchor_forge` MEASURED that end to end: an arbitrary mint identity
+                // proved and verified at the AIR, and only the executor's reconstruction (it
+                // recomputes the identity from the turn's own carrier witness) stopped it.
+                // `dropUnforcedPins` removed the pin; `piCount` is untouched, so PI 46 is still
+                // published, still filled by the executor, still read by the fold. What is gone is
+                // the descriptor claiming the AIR ties that slot to a column.
+                //
+                // The base PI count therefore does NOT move: the slot survives, only its pin does
+                // not. Asserting the ABSENCE is falsifiable — it goes red if a mint pin returns,
+                // which is what a REAL supply-anchor weld (one whose column something else reads)
+                // would look like, and at that point this should become a presence assertion again.
                 assert_eq!(
                     base_pi_count, 47,
-                    "mint: rotated 46-PI + the appended mint-hash slot"
+                    "mint: rotated 46-PI + the appended mint-hash SLOT (the slot survives the \
+                     unforced-pin subtraction; only its pin was dropped)"
                 );
                 assert_eq!(
                     nullifier_pins,
-                    vec![(PARAM_BASE + param::MINT_HASH, pi_base + 4)],
-                    "mint: the fifth pin welds the published mint-hash (param0, col 68) to PI[46]"
+                    vec![],
+                    "mint: the mint-hash slot must be UNPINNED — col {} is read by nothing, so a \
+                     pin on it published a prover-chosen mint identity. If a pin is back, check \
+                     whether the column became FORCED before restoring the old claim.",
+                    PARAM_BASE + param::MINT_HASH
                 );
             } else if key == "settleEscrowSatVmDescriptor2R24"
                 || key == "dischargeSatVmDescriptor2R24"
@@ -3374,39 +3511,71 @@ mod tests {
             } else if key == "customVmDescriptor2R24" {
                 // G2 custom-leg PI exposure (`EffectVmEmitRotationV3.customPiExposure`) — the
                 // PROOF-BIND FLAG-DAY ROTATION (blocker #2, 4 → 8 commitment felts): customV3
-                // publishes the deployed custom fold-binding anchors PAST the rotated 46-PI vector —
-                // `custom_proof_commitment` limbs 0..4 (PARAM_BASE+4..7) → PI[46..49], limbs 4..8
-                // (the commit-teeth cols `CUSTOM_COMMIT_TEETH_BASE..+4`) → PI[50..53], and
-                // `custom_program_vk_hash` low4 (PARAM_BASE+0..3) → PI[54..57], high4
-                // (`CUSTOM_VK_TEETH_BASE..+4`) → PI[58..61], all on the FIRST row
-                // (the binding is fold-enforced, like memOp/umemOp, NOT a row poly). So custom
-                // carries 62 PIs (46 + 16 binding pins).
-                use crate::effect_vm::trace_rotated::{
-                    CUSTOM_COMMIT_TEETH_BASE, CUSTOM_VK_TEETH_BASE,
-                };
+                // RESERVES 16 published slots PAST the rotated 46-PI vector —
+                // `custom_proof_commitment` limbs 0..8 at PI[46..53] and `custom_program_vk_hash`
+                // limbs 0..8 at PI[54..61] — so custom carries 62 PIs (46 + 16).
+                //
+                // ⚑ 2026-07-31: FOURTEEN OF THE SIXTEEN PINS ARE GONE, and this assertion listed
+                // all sixteen. It read them as "16 fold-binding pins weld …", and the word `weld`
+                // was the error: a `.piBinding` is a weld only when something ELSE forces the
+                // column. Nothing does here. A `proof_bind` has NO row denotation — the deployed
+                // `Ir2Air::eval` `continue`s on it without emitting a bus interaction, and Lean's
+                // `holdsAt` is `trivial` — so every one of the sixteen columns was prover-chosen on
+                // both sides. `require_no_unbacked_proof_bind` has always said this in prose ("the
+                // declaration is NOT an in-AIR check … the ONLY thing that makes the published
+                // claim mean anything is the per-turn fold"); the subtraction made the descriptor
+                // stop contradicting it.
+                //
+                // Two pins survive, and ONLY because `UnforcedPiPins.forcedCols` counts a
+                // `proof_bind`'s `commit`/`vk` references — a DECLARATION, not a constraint. They
+                // are as prover-chosen as the fourteen; that over-count is measured directly by
+                // `circuit/tests/unforced_pi_pin_census.rs::proof_bind_is_the_only_reader_of_the_custom_exposure_columns`.
+                //
+                // NOTHING GOT WEAKER. `piCount` is invariant under the subtraction, so all 16 slots
+                // are still published and the FOLD — which is where the binding has always lived —
+                // reads exactly what it read before. What is gone is the claim.
                 assert_eq!(
                     base_pi_count, 62,
-                    "custom: rotated 46-PI + the 16 custom fold-binding anchors (46..61)"
+                    "custom: rotated 46-PI + the 16 RESERVED custom exposure slots (46..61). The \
+                     slots survive the unforced-pin subtraction; only 14 of their pins do not."
                 );
-                let mut expected: Vec<(usize, usize)> = Vec::new();
-                for i in 0..4 {
-                    expected.push((PARAM_BASE + 4 + i, pi_base + 4 + i)); // commit limbs 0..4 → 46..49
-                }
-                for i in 0..4 {
-                    expected.push((CUSTOM_COMMIT_TEETH_BASE + i, pi_base + 8 + i)); // commit limbs 4..8 → 50..53
-                }
-                for i in 0..4 {
-                    expected.push((PARAM_BASE + i, pi_base + 12 + i)); // program_vk_hash → 54..57
-                }
-                for i in 0..4 {
-                    expected.push((CUSTOM_VK_TEETH_BASE + i, pi_base + 16 + i)); // VK limbs 4..8 → 58..61
-                }
+                let expected: Vec<(usize, usize)> = vec![
+                    // commit limb 0 — the column the member's `proof_bind` names as `commit`
+                    (PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE, pi_base + 4),
+                    // VK limb 0 — the column the same `proof_bind` names as `vk`
+                    (PARAM_BASE + param::CUSTOM_VK_HASH_BASE, pi_base + 12),
+                ];
                 assert_eq!(
                     nullifier_pins, expected,
-                    "custom: 16 fold-binding pins weld proof_commitment limbs 0..4 \
-                     (PARAM_BASE+4..7)→PI[46..49] + limbs 4..8 (commit teeth)→PI[50..53] \
-                     + program_vk_hash low4→PI[54..57] + exact high4 VK teeth→PI[58..61]"
+                    "custom: EXACTLY the two limb-0 exposure pins survive — commit limb 0 at \
+                     PI[46] and program-VK limb 0 at PI[54], the two columns this member's \
+                     `proof_bind` declares. The other fourteen pinned columns nothing reads and \
+                     were dropped. If more reappear, check whether their columns became FORCED \
+                     before calling any of them a weld."
                 );
+                // …and the two that survived are exactly the `proof_bind`'s own columns, which is
+                // the only structural tie between the published exposure and the op the fold keys
+                // on. Asserted, not assumed: it is what `custom_commit_version` now classifies by.
+                {
+                    use crate::descriptor_ir2::ProofBindSpec;
+                    use crate::lean_descriptor_air::LeanExpr;
+                    let declared = d.constraints.iter().find_map(|c| match c {
+                        VmConstraint2::ProofBind(ProofBindSpec { commit, vk, .. }) => {
+                            Some((commit.clone(), vk.clone()))
+                        }
+                        _ => None,
+                    });
+                    assert_eq!(
+                        declared,
+                        Some((
+                            LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE),
+                            LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE)
+                        )),
+                        "custom: the `proof_bind` must declare the SAME two columns the surviving \
+                         pins publish — that correspondence is all that connects the exposure to \
+                         the fold's re-proven sub-proof leaf"
+                    );
+                }
                 // The versioned boundary classifies THIS committed member as live v3 (and the
                 // retired commitment4/VK4 and commitment8/VK4 layouts as typed refusals).
                 assert_eq!(
@@ -3988,10 +4157,15 @@ mod tests {
     /// cols `PARAM_BASE+4..8` → PI 46..49, then the VK block DIRECTLY after at 50..53, NO commit
     /// teeth) — is REFUSED by the versioned route with the TYPED
     /// `CustomCommitVersionError::RetiredV1`, never silently widened or zero-padded. The former v2
-    /// twelve-pin low4-VK layout is also refused; the live sixteen-pin
-    /// layout classifies `Ok(3)`. A pin-less descriptor and a garbled layout fail
-    /// closed with their own typed variants. Also: the COMMITTED registry members (narrow + wide)
-    /// classify as live v3.
+    /// twelve-pin low4-VK layout is also refused; the live sixteen-pin layout classifies `Ok(3)`.
+    /// A pin-less descriptor and a garbled layout fail closed with their own typed variants. Also:
+    /// the COMMITTED registry members (narrow + wide) classify as live v3.
+    ///
+    /// ⚑ 2026-07-31: the committed members are now the SUBTRACTED form — `dropUnforcedPins` deleted
+    /// 14 of the 16 exposure pins because their columns were read by nothing, so the classifier was
+    /// returning `UnknownLayout` on the live member. The pre-subtraction shapes are still exercised
+    /// here (a retired artifact predates the subtraction and still carries its pins), and a new
+    /// block below exercises the subtracted shape and its two fail-closed edges.
     #[test]
     fn custom_commit_version_boundary_refuses_legacy_four_felt() {
         use crate::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
@@ -4078,6 +4252,51 @@ mod tests {
             custom_commit_version(&none),
             Err(CustomCommitVersionError::MissingCommitPins { .. })
         ));
+
+        // ⚑ THE SUBTRACTED (post-`dropUnforcedPins`) SHAPE, which is what the deployed member is:
+        // the two anchors 8 slots apart and NOTHING else pinned. It classifies v3 only when BOTH
+        // surviving pieces of evidence are present — the reserved 16-slot exposure window AND a
+        // `proof_bind` naming exactly those two columns.
+        {
+            use crate::descriptor_ir2::ProofBindSpec;
+            use crate::lean_descriptor_air::LeanExpr;
+            let anchors = vec![
+                pin(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE, 46),
+                pin(PARAM_BASE + param::CUSTOM_VK_HASH_BASE, 54),
+            ];
+            // (i) window reserved but NO proof_bind ⇒ fail closed. The bare pin pair is not enough:
+            //     without the declaration nothing ties the exposure to the op the fold keys on.
+            let no_decl = mk("custom-subtracted-no-proofbind", anchors.clone(), 62);
+            assert!(
+                matches!(
+                    custom_commit_version(&no_decl),
+                    Err(CustomCommitVersionError::UnknownLayout { .. })
+                ),
+                "two anchors alone must NOT classify as live v3"
+            );
+            // (ii) proof_bind present but the window is SHORT (a 12-slot v2-sized exposure) ⇒ fail
+            //      closed rather than round up.
+            let mut with_decl = anchors.clone();
+            with_decl.push(VmConstraint2::ProofBind(ProofBindSpec {
+                guard: LeanExpr::Const(1),
+                commit: LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE),
+                vk: LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE),
+            }));
+            let short = mk("custom-subtracted-short-window", with_decl.clone(), 58);
+            assert!(
+                matches!(
+                    custom_commit_version(&short),
+                    Err(CustomCommitVersionError::UnknownLayout { .. })
+                ),
+                "a 12-slot exposure window must NOT be rounded up to the live 16-slot v3"
+            );
+            // (iii) both ⇒ live v3.
+            let subtracted = mk("custom-subtracted-live", with_decl, 62);
+            assert_eq!(
+                custom_commit_version(&subtracted),
+                Ok(CUSTOM_COMMIT_VERSION)
+            );
+        }
 
         // Garbled: commit limbs 0..4 present but the following slots pin neither the VK block
         // nor teeth (a param column that is not the VK block) — fail closed as UnknownLayout.

@@ -412,27 +412,18 @@ pub fn raw_to_u16_le(raw: [u8; 32]) -> [u16; KEY_LIMBS] {
     out
 }
 
-/// **The injective hash preimage of a 32-byte field value**, domain-separated.
-///
-/// Sixteen little-endian `u16` limbs — every one `< 65536 < p`, so **nothing reduces** and the
-/// preimage determines all 32 bytes exactly. This is the same construction
-/// [`crate::openable_fields_root::EXACT_FIELDS_VALUE_LIMBS`] and `dregg_codec::Limbs16` use.
-///
-/// Used by [`crate::effect_vm::field_limbs8`] to fill lanes 2..7 with a Poseidon2 image instead of
-/// six `u32 % p` chunks that aliased in O(1). The leading domain felt keeps this preimage from
-/// colliding with a bare sixteen-limb key/value run elsewhere in the tree.
-pub fn field_value_preimage(b: &[u8; 32]) -> [BabyBear; KEY_LIMBS + 1] {
-    let mut out = [BabyBear::ZERO; KEY_LIMBS + 1];
-    out[0] = BabyBear::new(FIELD_VALUE_PREIMAGE_DOMAIN);
-    for (dst, limb) in out[1..].iter_mut().zip(raw_to_u16_le(*b)) {
-        *dst = BabyBear::new(u32::from(limb));
-    }
-    out
-}
-
-/// Domain tag for [`field_value_preimage`]. Distinct from every other preimage domain in this
-/// module so a field value cannot be confused with a nullifier or commitment leaf run.
-pub const FIELD_VALUE_PREIMAGE_DOMAIN: u32 = 0x4656_4C38; // "FVL8"
+// ⚑ `field_value_preimage` and its `FVL8` domain tag lived here until 2026-07-31. They existed for
+// ONE consumer: `effect_vm::field_limbs8`, which filled lanes 2..7 with a Poseidon2 image over this
+// preimage instead of six `u32 % p` chunks that aliased in `O(1)`. That containment was real — it
+// killed the constructed alias — but it landed at a **2^92.7 COLLISION** (the birthday figure; its
+// write-up quoted the flattering 2^185 second-preimage one), below this tree's ~124-bit bar, because
+// eight BabyBear lanes cannot carry 256 bits at all: `8 · log₂ p = 247.26`. Pigeonhole.
+//
+// The real fix — a ninth lane — landed as `effect_vm::field_limbs9` / `Faithful9`, whose injectivity
+// is a Lean theorem with a total decoder and a machine-checked left inverse rather than a hash bound.
+// With `field_limbs8` deleted this preimage had zero consumers, so it is deleted too: a hash preimage
+// kept for a deleted hash is a trap for the next reader, who will assume something still uses it.
+// `raw_to_u16_le` / `u16_le_to_raw` survive — they have their own consumers.
 
 pub fn u16_le_to_raw(limbs: [u16; KEY_LIMBS]) -> [u8; 32] {
     let mut out = [0u8; 32];

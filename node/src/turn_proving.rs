@@ -1314,7 +1314,6 @@ pub fn prove_and_verify_finalized_turn_freshness(
         cap_membership: None,
         turn_hash,
         rotation,
-        cap_turn_identity: None,
         umem_witness: None,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
@@ -1654,42 +1653,24 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         ),
     };
 
-    // #225 TURN-IDENTITY (cross-vat close): derive the genuine `(actor, src, dst)` single-felt
-    // identity from the REAL turn so a cap-gated transfer where the cap HOLDER/actor (`agent`)
-    // differs from the cap's TARGET (`src` — the cell being moved) publishes its true identity.
+    // ⚑ #225 TURN-IDENTITY, WITHDRAWN 2026-07-31. This site used to derive the single-felt
+    // `(actor, src, dst)` of the turn — `actor = fold_bytes32(agent)`, `dst = fold_bytes32(to)`,
+    // `src = consumed.leaf_target` — and thread it as `FullTurnWitness::cap_turn_identity` so a
+    // cross-vat cap-gated transfer published its true identity at the TB member's PI 46/47/48.
     //
-    // CONVENTION (precision-critical — must byte-match what `verify_vm_descriptor2` anchors into
-    // PIs 38/39/40 via `anchor_cap_open_turn_pins`): the single-felt cell projection is
-    // `dregg_circuit::cap_root::fold_bytes32(cell_id.as_bytes())`
-    // (`circuit/src/cap_root.rs:194` = `hash_many(&dregg_circuit::effect_vm::bytes32_to_8_limbs(bytes))`).
-    //   - `src`   = the consumed cap's `leaf.target` — ALREADY the rooted value: the cap-leaf
-    //               `target` is `fold_bytes32(cap.target.as_bytes())` (`cell/src/commitment.rs:506`),
-    //               folded to `consumed.leaf_target` (`turn/src/executor/authorize.rs:1045`,
-    //               `leaf.target.as_u32()`). The SDK cap-open route reads exactly this as
-    //               `cap_open.src = leaf.target` (`circuit/.../trace_rotated.rs:1149`), so we re-use
-    //               the felt verbatim rather than re-folding.
-    //   - `actor` = the turn's actor / cap holder (`agent`), under the SAME `fold_bytes32` projection.
-    //   - `dst`   = the transfer's recipient cell (`Effect::Transfer.to`), SAME projection.
-    // NB: this is `cap_root::fold_bytes32` (Poseidon2 `encode_hash`), NOT the distinct
-    // `effect_vm::fold_bytes32_to_bb` Horner fold — they are different functions; using the latter
-    // for actor/dst would make an honest cross-vat proof's PIs disagree with the anchor and REJECT.
+    // The TB member no longer carries PI 47/48. `CapOpenTurnPins` deleted the `actor`/`dst` pins
+    // because the two columns they named were introduced by that weld and read by NO other
+    // constraint: the prover chose the column AND the published felt, so the "identity" a light
+    // client read off those slots was prover-supplied, and the executor's PI anchor rejected only
+    // a forger who neglected to move the column to match. `src` (PI 46) is unaffected and still
+    // published — it comes from the cap witness's own `leaf.target`, which `targetBindGate` chains
+    // to the opened leaf and thence to the committed cap root, so THAT pin is a real binding.
     //
-    // On the OWNER arm (`agent == src cell` and `to == src cell`, a cap in the actor's own c-list)
-    // this yields `actor == dst == src`, byte-identical to the prior `None` default — so the owner
-    // path is unchanged. `dst` falls back to `src` when the turn carries no Transfer recipient.
-    let cap_turn_identity = {
-        use dregg_circuit::cap_root::fold_bytes32;
-        let src = BabyBear::new(consumed.leaf_target);
-        let actor = fold_bytes32(agent.as_bytes());
-        let dst = effects
-            .iter()
-            .find_map(|e| match e {
-                dregg_turn::Effect::Transfer { to, .. } => Some(fold_bytes32(to.as_bytes())),
-                _ => None,
-            })
-            .unwrap_or(src);
-        Some(dregg_sdk::TurnIdentityFelts { actor, src, dst })
-    };
+    // The projection convention recorded here is not lost, it is relocated: the successor that
+    // publishes `actor`/`dst` AND forces them (they become `turnIn` of the Lamport turn-digest
+    // lookup whose 8-felt output the signed message recomposes) is Lean
+    // `Dregg2/Circuit/Emit/TurnAuthCapOpenWeld.lean`, staged behind `AUTH_WELD_REEMIT_NOTE`. When
+    // that member is emitted this site gets a witness again — a signature, not two bare felts.
 
     // Compose the full-turn proof WITH the cap-membership leg (+ freshness when
     // the turn also spends).
@@ -1711,7 +1692,6 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         )),
         turn_hash,
         rotation,
-        cap_turn_identity,
         // DOMAIN-2 UMEM WELD (the producer seam this closes): when the caller threads the turn's
         // genuine CAPS-domain projection diff, the cap-open leg mints the WIDE cap-open+umem WELDED
         // form (the membership crown + the 8-felt anchors + the appended caps `umemOp` leg) that the
@@ -4989,28 +4969,31 @@ mod tests {
         }
     }
 
-    /// THE FEATURE (#225 cross-vat close): an HONEST CROSS-VAT cap-gated transfer —
-    /// the actor `A` (cap holder) is DISTINCT from the cap's TARGET `src` cell `B`,
-    /// and the published recipient `dst` is a third cell — proves + verifies
-    /// end-to-end through the live node holder path, and the proof PUBLISHES the
-    /// GENUINE `(actor, src, dst)` turn identity on PIs 38/39/40 with `actor != src`.
+    /// An HONEST CROSS-VAT cap-gated transfer — the actor `A` (cap holder) is DISTINCT
+    /// from the cap's TARGET `src` cell `B`, and the recipient is a third cell — proves
+    /// + verifies end-to-end through the live node holder path, and the proof publishes
+    /// `src == fold_bytes32(B) == leaf.target` on the TB cap-open leg's ONE turn-identity
+    /// PI. The convention: the single-felt cell projection is
+    /// `cap_root::fold_bytes32(cell_id.as_bytes())` (the SAME fold the cap-leaf `target`
+    /// uses — `cell/src/commitment.rs:506` — so `src` byte-matches what
+    /// `verify_vm_descriptor2` anchors on the deployment side).
     ///
-    /// Before the fix the node site forced `cap_turn_identity: None`, so the
-    /// cap-open prover defaulted to the OWNER arm (`actor = dst = src = leaf.target`)
-    /// — a genuine cross-vat transfer could NOT publish its real actor/dst. This
-    /// test drives a `consumed` witness whose `leaf.target` is `B` (distinct from the
-    /// actor `A`), confirms the node derives `actor = fold(A)`, `src = fold(B) =
-    /// leaf.target`, `dst = fold(recipient)`, welds them into the TB cap-open PIs,
-    /// and that the composed proof verifies. The convention: the single-felt cell
-    /// projection is `cap_root::fold_bytes32(cell_id.as_bytes())` (the SAME fold the
-    /// cap-leaf `target` uses — `cell/src/commitment.rs:506` — so `src` byte-matches
-    /// what `verify_vm_descriptor2` anchors on the deployment side).
+    /// ⚑ REWRITTEN 2026-07-31, and the OLD CLAIM WAS FALSE. This test was named
+    /// `…_publishes_genuine_identity` and asserted that the proof published the genuine
+    /// `(actor, src, dst)` at PI 46/47/48 with `actor != src` — "the feature (#225
+    /// cross-vat close)". Two of those three slots were pinned to columns the TB weld
+    /// itself introduced and NOTHING else in the 397-constraint member read, so the
+    /// prover chose the column and the published felt together and the AIR refused
+    /// nothing: `actor != src` on the wire was a statement about what the honest
+    /// producer happened to write, not about the turn. The pins are gone
+    /// (`CapOpenTurnPins`, 2026-07-30) and so is the node's `cap_turn_identity`
+    /// threading. What survives is the part that was always real — the `src` weld,
+    /// which `targetBindGate` chains to the opened leaf and thence to the committed cap
+    /// root — plus a new assertion that the member pins nothing else in that window.
     #[test]
-    fn honest_cross_vat_cap_gated_transfer_publishes_genuine_identity() {
+    fn honest_cross_vat_cap_gated_transfer_publishes_the_forced_src() {
         use dregg_circuit::cap_root::{CAP_TREE_DEPTH, CanonicalCapTree, fold_bytes32};
-        use dregg_circuit::effect_vm::trace_rotated::{
-            CAP_OPEN_TB_PI_ACTOR, CAP_OPEN_TB_PI_DST, CAP_OPEN_TB_PI_SRC,
-        };
+        use dregg_circuit::effect_vm::trace_rotated::CAP_OPEN_TB_PI_SRC;
 
         // The actor (cap HOLDER) `A` and the cap's TARGET `src` cell `B` are DISTINCT
         // — this is the cross-vat shape (A spends a cap over B). We reuse the bearer
@@ -5135,10 +5118,11 @@ mod tests {
             "the actor self-transfer must yield a rotation witness (faithful real cell)"
         );
 
-        // The expected GENUINE identity felts (what the node site now derives).
+        // The cross-vat SHAPE: the actor felt and the cap-target (`src`) felt genuinely differ.
+        // This is the precondition of the test, not a claim about what gets published.
         let exp_actor = fold_bytes32(actor_id.as_bytes());
         let exp_src = BabyBear::new(consumed.leaf_target); // == fold_bytes32(B)
-        let exp_dst = fold_bytes32(dst_id.as_bytes());
+        let _exp_dst = fold_bytes32(dst_id.as_bytes());
         assert_ne!(
             exp_actor, exp_src,
             "CROSS-VAT: the actor felt MUST differ from the src (cap-target) felt"
@@ -5167,8 +5151,7 @@ mod tests {
             "the AUTHORITY (cap-membership) leg is attached for the cross-vat turn"
         );
 
-        // The proof PUBLISHES the genuine cross-vat identity on the TB cap-open leg's
-        // PIs 38/39/40 — `actor != src`, exactly the felts the node derived.
+        // What the TB cap-open leg publishes about the turn's identity: `src`, and ONLY `src`.
         let rotated_leg = proven
             .proof
             .composed
@@ -5177,27 +5160,56 @@ mod tests {
             .find(|p| p.label == "effect-vm-rotated")
             .expect("the rotated effect-vm leg is present");
         assert!(
-            rotated_leg.sub_public_inputs.len() > CAP_OPEN_TB_PI_DST,
-            "the TB cap-open leg publishes the three turn-identity PIs (38/39/40)"
+            rotated_leg.sub_public_inputs.len() > CAP_OPEN_TB_PI_SRC,
+            "the TB cap-open leg publishes the turn-identity PI at {CAP_OPEN_TB_PI_SRC}"
         );
         assert_eq!(
             rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_SRC], exp_src,
-            "published src == leaf.target (fold_bytes32(B))"
+            "published src == leaf.target (fold_bytes32(B)) — the ONE turn-identity slot the TB \
+             member carries, and the one `targetBindGate` chains to the committed cap root"
         );
-        assert_eq!(
-            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_ACTOR], exp_actor,
-            "published actor == fold_bytes32(A) — the GENUINE cross-vat actor"
-        );
-        assert_eq!(
-            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_DST], exp_dst,
-            "published dst == fold_bytes32(recipient)"
-        );
-        assert_ne!(
-            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_ACTOR],
-            rotated_leg.sub_public_inputs[CAP_OPEN_TB_PI_SRC],
-            "CROSS-VAT PUBLISHED: actor != src on the live proof (the feature — before the fix this \
-             was forced equal by the owner-arm `None` default)"
-        );
+
+        // ⚑ AND THE MEMBER PUBLISHES NO `actor`/`dst` SLOT AT ALL. Read off the committed
+        // descriptor, not off this leg's PI vector: the wide TB member's PI vector is
+        // `CAP_OPEN_TB_PI_COUNT (47) + 16` wide-commit slots, so indices 47/48 still EXIST — they
+        // are simply the first two wide-commit felts now, and asserting anything about them here
+        // would be asserting about the wrong quantity. The claim is that no `pi_binding` of the
+        // member ties a trace column to a published actor or destination:
+        {
+            use dregg_circuit::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
+            use dregg_circuit::lean_descriptor_air::VmConstraint;
+            let json = dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV
+                .lines()
+                .find_map(|l| {
+                    let mut it = l.splitn(3, '\t');
+                    (it.next() == Some("transferCapOpenTBVmDescriptor2R24"))
+                        .then(|| it.nth(1))
+                        .flatten()
+                })
+                .expect("the wide TB member is in the deployed registry");
+            let desc = parse_vm_descriptor2(json).expect("TB member parses");
+            let turn_pins: Vec<usize> = desc
+                .constraints
+                .iter()
+                .filter_map(|c| match c {
+                    VmConstraint2::Base(VmConstraint::PiBinding { pi_index, .. })
+                        if (CAP_OPEN_TB_PI_SRC..CAP_OPEN_TB_PI_SRC + 3).contains(pi_index) =>
+                    {
+                        Some(*pi_index)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                turn_pins,
+                vec![CAP_OPEN_TB_PI_SRC],
+                "the TB member must pin EXACTLY the src slot in the turn-identity window. Two more \
+                 pins lived at 47/48 until 2026-07-31, publishing `actor` and `dst` off columns no \
+                 other constraint read — the prover chose both sides, so a light client reading \
+                 them read the prover. If either reappears, check it is FORCED before believing it \
+                 (the successor that does force them is Lean `Emit/TurnAuthCapOpenWeld.lean`)."
+            );
+        }
 
         // Light-client re-verify against the holder's root accepts.
         let expectation = dregg_sdk::CapMembershipExpectation {

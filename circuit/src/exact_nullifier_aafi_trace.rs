@@ -838,9 +838,13 @@ mod tests {
             "../staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
         );
         let descriptor = parse_vm_descriptor2(STAGED).expect("Lean-emitted v3 descriptor parses");
-        assert_eq!(descriptor.trace_width, 3760);
+        // Nine-lane epoch: `V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS+1) + 2*8*WIDE_CARRIERS`
+        // = 2442 + 2*185 + 2*496 = 3804 (was 2442 + 2*179 + 2*480 = 3760); constraints
+        // 1258 + 4 TID_P2 wide lookups + 6 outer continuity windows + 6 outer last-row
+        // boundaries = 1274. Decomposed at `exact_nullifier_aafi_rotated_trace.rs`.
+        assert_eq!(descriptor.trace_width, 3804);
         assert_eq!(descriptor.public_input_count, 76);
-        assert_eq!(descriptor.constraints.len(), 1258);
+        assert_eq!(descriptor.constraints.len(), 1274);
         let state16: Vec<_> = descriptor
             .constraints
             .iter()
