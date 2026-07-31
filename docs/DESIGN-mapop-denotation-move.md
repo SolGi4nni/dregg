@@ -1112,3 +1112,82 @@ doc-comment said "TEETH FOR THE DENSE arity-2 schema (deployed-today)". Correcte
 on it — the two uses of `narrowSchema` in `MapKindImtGates` (`:113` open, `:1009`
 `denseSchema_write_forces_key_present narrowSchema`) are legitimate instantiations of a general dense-
 schema law at the narrow instance, and say nothing about deployment.
+
+---
+
+## 14. ⚑⚑ STAGE 3 IS LANDED (2026-07-30) — and the blocker was not in §1's inventory
+
+**`DescriptorIR2.opensTo` / `writesTo` now denote `DeployedMapDenotation.padImtSchema
+MAP_SENTINEL`** — arity-3 IMT leaves, the deployed relink, sparse zero padding — so `MapOp.holdsAt`,
+the `.mapOp` arm of `Satisfied2` and every `AlgoStarkSound*` conclusion are about the commitment
+`heap_root.rs` computes.
+
+### 14.1 The blocker §1–§13 never named: the repair was DOWNSTREAM of the thing it had to repair
+
+`MapLeafSchema` (§8), `padImtSchema`/`padImtTeeth` (§11) and the arity-3 leaf all lived **below**
+`DescriptorIR2` in the import order (`MapPaddedDenotation → MapDenotationSchema →
+MapReconcileImtRepoint → MapAbsentImtGate → IndexedMerkleTree → MapOpsColumnLayout → … →
+DescriptorIR2`). A denotation cannot be rebound onto a definition that imports it, so §4's "stage 3
+= rebind one body" was never executable as written. **The schema core moved up** into
+`Dregg2/Circuit/DeployedMapDenotation.lean` (imports: `MapMerkleRoot`, `Heap`,
+`SpongeCarrierReduction`), and the modules it came from re-export it.
+
+### 14.2 The ∃-hoist was NOT optional, and §11's teeth do not supply it
+
+`opensToMerkleS_functional_of_good` takes `T.Good hash ⊇ Function.Injective hash` — which is
+`Poseidon2SpongeCR hash` under another name, **proved false at deployed BabyBear**. Binding the
+deployed anti-ghost to it would have re-based the same vacuous theorems onto a new commitment.
+`DeployedMapDenotation` §6 adds what §11 lacked: `openHeapS`/`writeHeapS` (`Exists.choose`, canonical
+by proof irrelevance) and `opensToMerkleS_binds_or_collides`/`writesToMerkleS_binds_or_collides`,
+which have **no hypothesis on `hash` at all**. That is what `opensTo_functional` binds to.
+
+### 14.3 THE TWIN — the failure mode that looks exactly like success
+
+Moving a definition upstream invites copying it. A second `padImtSchema` would leave
+`MapKindImtGates`' four arm laws, `MapPaddedDenotation`'s teeth and every `Map*ImtRepoint` theorem
+green and about nothing. 33 declarations were **deleted** from `MapPaddedDenotation` and 5 from
+`MapDenotationSchema`, re-exported from the core.
+
+⚠ **A local `imtChainOf` survived the first deletion pass** (it sat between `narrowSchema` and
+`imtSchema`, outside the removed block), so `imtSchema` went on committing a different relink
+function — and everything still built. It was caught only by `padImtRoot_dense`'s `rfl` failing three
+modules later. `MapDenotationCutoverCheck` §5 now pins all seven objects by kernel defeq.
+
+### 14.4 §10.5's 20 sites, measured on contact
+
+The independent break set in the whole default build was **five modules**, not twenty: the producer
+(`MapOpsColumnLayout`), the decider (`DecideMapMerkle`), the automaton emit, the heapWrite tooth, and
+the wide-key conservativity anchor. §10.5's per-effect teeth **did not break**: they are phrased in
+`writesTo`/`opensTo` and were rebound for free. §10.5's recommendation to restate them over
+`holdsAtS S` additively during stage 2 was therefore not needed — the punch-through count was a
+LOWER bound on *definitional* coupling and an over-estimate of *statement* breakage.
+
+### 14.5 What could NOT survive, and it was not in any table
+
+**`mapOp_holds_of_mapReconcile` is DELETED.** The arity-2 gate model provably cannot force the
+arity-3 denotation, so the `.mapOp` arm is now supplied by a MODELLER (`MapDenotationModelOk`) as the
+LogUp arm always was — carried at `MapOpsColumnLayout`, discharged below it. §4's staging table
+counted this as a "producer to re-point"; it is not re-pointable.
+
+Casualties, all renamed onto an explicit `RetiredMapOpHoldsAt` body rather than deleted, because they
+are the measurement that forced the move: `mapOpHoldsAt_unsat_at_imtRoot`,
+`topGap_mapOpHoldsAt_false`, `narrow_holdsAtS_is_instance`, `MapOpWideKeyGate.narrow_holdsAt_is_instance`.
+`old_model_is_false_on_deployed_rows` is **still green and still true** — it was never coupled to the
+denotation, and it is now the justification for the producer retirement.
+
+### 14.6 The result, stated at its current resolution
+
+- **The apex premise is INHABITED at deployed parameters** — `deployed_opensTo_inhabited` /
+  `deployed_writesTo_inhabited_with_growth`: depth 16, one live leaf in a `2^16` tree, `SENTINEL_MAX`,
+  **arbitrary hash, no floor**. The write witness is a FRESH key that GROWS the heap, which the dense
+  schema could not express at all.
+- **The drift guard is cut and landed**: `MapOp.holdsAt` clean of `Heap.leafOf`, `mapRoot`,
+  `opensToMerkle`, with positive controls.
+- **18 floor carriers fell, 0 added** (`FloorRatchetBaseline` 1999 → 1981), each verified by a
+  proof-term walk before de-registering.
+- ⚠ **Two kinds are still not FORCED by the deployed AIR, and no Lean fixes either**: `.insert`
+  (op=3) constrains only the post-root — and is emitted by **zero** deployed descriptors — and
+  `.aafiInsert`'s POST side folds the physical append-order layout.
+- ⚠ **The AAFI lineage split is LIVE**: the producer commits a **sorted** BEFORE tree and an
+  **append-order** AFTER root, so turn N's after-root ≠ turn N+1's before-root whenever the inserted
+  key is not the current maximum. Producer-only fix; no VK rotation; state re-genesis.
