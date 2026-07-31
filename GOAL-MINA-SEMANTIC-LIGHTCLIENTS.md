@@ -1170,3 +1170,22 @@ to a chain that derives its challenges, and its keys are what the deployed ancho
 At Pasta the DEEP quotient is **3,902,258 of 4,297,174 modelled rows = 90.8%** of the walk; hashing
 is **6.9%**. The hash is no longer the cost. **Column narrowing** — already priced — now operates on
 91% of the budget instead of 13%.
+
+## ⚑ ADDENDUM 10:20 — the sequencing question ANSWERED BY EVENTS, and a better no-regression check
+
+**The 131-key run completed at 10:05** (`d9d748537`, hbox, native, 48.7 min serial at 22.3 s per
+compile, 131/131 distinct, `head-anchor-pins --emit` ACCEPTS). So the fork above is not a race: this
+work lands **after** it, and nothing was discarded by ordering. Adopting Pasta later would discard
+those keys — that cost is now a known 48.7 minutes of compile, which is the amortized side of the
+ledger and not the product.
+
+⚑ **And that lane measured the threading commit better than this one did.** `334550ba7`'s stated
+no-regression evidence was `npm run fri-walk-plan` — a PLAN-level row count, which **cannot speak to
+the emitted circuit**, and the commit also adds `suite.anchorLookupTable?.()` per body and makes
+canonicalisation conditional. Both are things a plan figure is blind to. Measured directly instead:
+**head0 recompiled at that commit gives the identical VK hash and identical 49,787 rows**, and
+`head-anchor-pins` at HEAD reproduces every pin from a ring compiled before it.
+
+That is the check the change actually needed, and it is worth naming as a class: *a plan-level
+figure is not evidence about an emitted circuit.* The right instrument for "did this move the
+BabyBear path" is a recompiled VK hash, not a row model.
