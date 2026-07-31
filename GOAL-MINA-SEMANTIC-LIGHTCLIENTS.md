@@ -824,3 +824,32 @@ shielded descriptor was reshaped twice last night:
 **These are the pins DOING THEIR JOB, not defects.** They ride the convergence re-emit and must be
 re-pinned from the emitter's output — never relaxed. ⚑ Whoever re-pins them: the drift is real and
 intended, so the correct move is to re-emit and re-pin, and to state the new geometry in the commit.
+
+## 08:20 — CONVERGENCE FIRED, and the result is informative
+
+`scripts/emit-descriptors.sh` on hbox: **EXIT=0, "NO-OP — all 152 descriptor files and 66 FP
+constants byte-identical to the Lean emission."** Two dependency builds were needed first
+(`UnforcedPiPins` + `CapOpenTurnPins`, then all 59 of `EmitByName`'s imports) — `lake env lean --run`
+does not build deps, which is why the script's four retries all died in 0.75 s with empty stderr.
+
+⚑ **The no-op is the finding.** `dropUnforcedPins` IS wired (17 uses in `EmitRotationV3.lean` on the
+lane), and the emit still changes nothing — because **the lanes staged their LEAN but deliberately
+did not add their new members to the registries.** Authorization's `authWeldedCapOpenTB` (+12,185
+cols, +8 PIs) is proved and unwired; `effects_hash`'s pin is proved and unwired. **The mechanisms
+exist and the deployed registry does not carry them yet.**
+So the emitter is right: the tree IS self-consistent. Wiring is a separate, larger step than firing
+an emitter, and the lanes were correct not to wedge the tree doing it mid-swarm.
+
+## 08:20 — ✅ dregg → Mina DEMONSTRATED ON HBOX
+`bash bridge/demo/dregg-verifies-mina.sh` → **EXIT=0**. Bytes off Mina's own p2p stack decode under
+a Lean-verified binprot decoder, hash to the state hash the **next** block names as its parent, and
+drive a chain-selection rule and finalized-height ratchet that are machine-checked theorems.
+Its own printed scope is kept, not softened: the opening check accepts an anchored **segment**, not
+"the chain the network selected"; the p2p helper is trusted for **availability only** (every byte
+goes through the Lean decoder's refusals); and it is a small Python client, not production crypto —
+openmina is what to link when it leaves `bridge/tools/`.
+
+## ⚑ BLOCKED ON EMBER — one item, and it is key material
+The Mina-side deploy needs **one fresh zkApp keypair**. The deploy script refuses to mint one and
+prints the exact command — correct, per the standing rule that key material and custody are ember's.
+The deployed address `B62qkiRhX1tK…` holds `DreggAttestedGate`; a new contract needs its own account.
