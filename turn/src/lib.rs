@@ -15,13 +15,17 @@
 //! `metatheory/docs/rebuild/SUCCESSOR-ROADMAP.md` and
 //! `metatheory/Dregg2/Exec/FullForestAuth.lean`.
 //!
-//! While the swap is in flight, the `dregg-exec-lean` crate runs the verified
-//! Lean executor as a *shadow* (gated on `DREGG_LEAN_SHADOW=1`) and compares its
-//! commit decision against this Rust path — that comparison is the differential
-//! harness validating the eventual cutover. This crate is FFI-free: it reaches
-//! the shadow only through the [`shadow::ShadowObserver`] seam (a native node
-//! injects `dregg_exec_lean::LeanShadowObserver`). The Lean side is the oracle;
-//! this Rust side is the subject under test, never the reverse.
+//! ⚑ THE SWAP IS ARMED, and this Rust path is the DEMOTED REFERENCE, not the
+//! producer. `dregg_exec_lean::lean_apply::produce_via_lean` (default-ON via
+//! `DREGG_LEAN_PRODUCER`) runs the verified Lean executor, installs its
+//! post-state and commit verdict UNCONDITIONALLY on the covered set, and runs
+//! `TurnExecutor::execute` only as a cross-check whose disagreement is reported
+//! as a Rust BUG (`ProducerOutcome::divergence`). A separate `DREGG_LEAN_SHADOW`
+//! differential that only LOGGED, and only when a variable nothing set was set,
+//! was deleted 2026-07-30. This crate is FFI-free either way: it reaches the
+//! Lean crate only through the [`shadow::ShadowObserver`] seam, which now carries
+//! exactly the node's durable nullifier-frontier advance. The Lean side is the
+//! oracle; this Rust side is the subject under test, never the reverse.
 //!
 //! Do NOT read this crate as "the dregg semantics". Read `metatheory/Dregg2/`.
 //! See `metatheory/docs/rebuild/DREGG1-TO-DREGG2.md`.

@@ -287,10 +287,23 @@ pub const B_NULLIFIER_ROOT: usize = B_NULLIFIER_ROOT_OFF;
 // `Felt8Group`, every named `*_GROUP`, and `ROTATED_GROUP_TABLE`/`ALL_FELT8_GROUPS` are
 // Lean-generated and re-exported from `layout_generated`; this module carries no coordinate copy.
 // `B_STATE_COMMIT` (in-block offset of the `state_commit` carrier, the chain's final digest
-// `= hash(carrier238, iroot)`, limb 179) is Lean-emitted — read from `layout_generated` (`pub use`
-// above), Lean `EffectVmEmitRotationV3.B_STATE_COMMIT`.
-/// In-block base of the chained-absorption intermediate carriers (59 sites at 180..=238).
-pub const B_CHAIN_BASE: usize = 180;
+// `= hash(last carrier, iroot)`) is Lean-emitted — read from `layout_generated` (`pub use` above),
+// Lean `EffectVmEmitRotationV3.B_STATE_COMMIT`.
+//
+// ⚑ `B_CHAIN_BASE` (in-block base of the chained-absorption intermediate carriers) and
+// `B_NUM_CHAIN` (how many of them) are Lean-emitted TOO, as of 2026-07-31 — read from
+// `layout_generated` (`pub use` above), projected in `EmitLayoutManifest.lean` off the FIRST SITE
+// of `EffectVmEmitRotationV3.rotV3SitesAt`, which is the very object the descriptors are built
+// from.
+//
+// They were `pub const B_CHAIN_BASE: usize = 180;` here — the ONE geometry number on this page
+// that was never emitted. The 178 -> 184 flag day moved `B_STATE_COMMIT` 179 -> 185 and the
+// committed descriptors' carrier band 180.. -> 186.., and this literal did not move. Both
+// producers ([`fill_block`], [`recompute_block_commit`]) then wrote their chain digests ON TOP of
+// pre-limbs 180..183, the iroot at 184 and the state-commit carrier at 185, while the descriptor
+// audit looked for carriers six columns below where the emitted registry puts them. That is the
+// exact class this module's Lean-emitted header exists to make unrepresentable, and it cost 143
+// reds in `dregg-circuit` presenting as "the registry is wrong".
 
 /// Absolute base column of the BEFORE rotated block.
 pub const BEFORE_BASE: usize = V1_WIDTH; // 188
@@ -829,11 +842,18 @@ fn generate_rotated_effect_vm_trace_avail_core(
         && (*field_idx as usize) < 8
     {
         let slot = *field_idx as usize;
-        let base = after_base
-            + crate::effect_vm_descriptors::SETFIELD_VALUE8_LANE_BASE
-            + crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN * slot;
-        for k in 0..crate::effect_vm_descriptors::SETFIELD_VALUE8_PI_LEN {
-            dpis.push(last[base + k]);
+        // ⚑ READ THE EMITTED NONET TABLE, never a stride. This was
+        // `after_base + SETFIELD_VALUE8_LANE_BASE + SETFIELD_VALUE8_PI_LEN * slot + k` — i.e.
+        // `113 + LEN·slot + k`, the exact formula `RotatedLayout.fieldLaneCol`'s docstring
+        // forbids ("the nonet is deliberately NON-CONTIGUOUS"). It agreed with the layout only
+        // while `LEN` happened to equal the completion stride 7; at the nine-lane epoch (`LEN` 7
+        // → 8) it would have published slot `j`'s lanes starting inside slot `j+1`'s window, and
+        // the ninth lane at `176 + slot` would never have been published at all.
+        for lane in 1..=crate::effect_vm::layout_generated::ROTATED_FIELD_COMPLETION_LANES {
+            dpis.push(
+                last[after_base
+                    + crate::effect_vm::layout_generated::ROTATED_FIELD_LANE_COL[slot][lane]],
+            );
         }
         debug_assert_eq!(
             dpis.len(),
@@ -3071,32 +3091,50 @@ pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 48
 // descriptor, and a prose number cannot go red. These CAN. Any drift in `GRAD_ROT_WIDTH`,
 // `CAP_OPEN_DEPTH`, `CAP_OPEN_MASK_BITS` or the digest width now breaks the BUILD here, at the
 // definitions, rather than rotting a paragraph a reader will believe.
+//
+// ⚑ AND THEY MUST BE LITERALS. On 2026-07-31 five of these were "re-expressed as the relation they
+// were checking" — `CAP_OPEN_BASE == GRAD_ROT_WIDTH` beside `pub const CAP_OPEN_BASE: usize =
+// GRAD_ROT_WIDTH`, `CAP_OPEN_WIDTH == CAP_OPEN_BASE + CAP_OPEN_SPAN` beside its identical
+// definition three lines up. Every one became `x == x`: TRUE AT EVERY GEOMETRY, including a wrong
+// one. That is not a softer tripwire, it is no tripwire — this block's whole job is to be the
+// place a `GRAD_ROT_WIDTH` drift goes red, and a tautology cannot go red. Re-typing a literal per
+// epoch IS the cost of a tripwire; a relation that restates the definition beside it buys nothing
+// and reads as though it still guards something.
+//
+// (The genuinely relational pins — the ones whose two sides come from DIFFERENT sources — stay
+// relations; see the `NUM_PRE_LIMBS`-derived wide block below.)
 const _: () = {
     assert!(
-        CAP_OPEN_BASE == GRAD_ROT_WIDTH,
-        "cap-open rides the graduated rotated base"
+        CAP_OPEN_BASE == 1691,
+        "cap-open rides the graduated rotated base (nine-lane epoch: 1647 -> 1691)"
     );
     assert!(
         CAP_OPEN_SPAN == 329,
         "Phase H-CAP-8 native 8-felt membership span"
     );
     assert!(
-        CAP_OPEN_WIDTH == CAP_OPEN_BASE + CAP_OPEN_SPAN,
-        "cap-open READ host width is its base plus the membership span"
+        CAP_OPEN_WIDTH == 2020,
+        "cap-open READ host width = 1691 + 329"
     );
     assert!(
         CAP_OPEN_AFTER_SPINE_SPAN == 143,
         "cap-WRITE after-spine appendix = 15 + 8·16"
     );
     // The committed narrow `attenuateCapOpenEffVmDescriptor2R24.trace_width`
-    // (`circuit/descriptors/rotation-v3-staged-registry.tsv`).
+    // (`circuit/descriptors/rotation-v3-staged-registry.tsv`). ⚑ RESTORED: the nine-lane re-emit
+    // moved this 2119 -> 2163 and the pin was DELETED rather than re-typed, leaving the comment
+    // above dangling over an assertion about something else. It is the only line in this block that
+    // ties the Rust constants to a committed descriptor byte, so losing it lost the whole point.
     assert!(
-        CAP_OPEN_TB_ACTOR_COL == CAP_OPEN_BASE + CAP_OPEN_SPAN
-            && CAP_OPEN_TB_DST_COL == CAP_OPEN_TB_ACTOR_COL + 1,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2163,
+        "cap-WRITE narrow width"
+    );
+    assert!(
+        CAP_OPEN_TB_ACTOR_COL == 2020 && CAP_OPEN_TB_DST_COL == 2021,
         "TB turn-identity cols"
     );
     assert!(
-        CAP_OPEN_TB_WIDTH == CAP_OPEN_TB_DST_COL + 1,
+        CAP_OPEN_TB_WIDTH == 2022,
         "TB host = cap-open host + the 2 turn-identity cols"
     );
     assert!(
@@ -4449,13 +4487,16 @@ const _: () = {
         WIDE_COMMIT_CARRIER == 61,
         "the final (commitment) carrier is 61"
     );
+    // ⚑ LITERALS, deliberately. These read `== WIDE_NUM_CARRIERS * 8` and `== 2 *
+    // WIDE_CARRIER_BLOCK_SPAN` for one day — verbatim restatements of the two definitions ~20 lines
+    // up, so both were `x == x` and neither could ever fail.
     assert!(
-        WIDE_CARRIER_BLOCK_SPAN == WIDE_NUM_CARRIERS * 8,
-        "a wide carrier block spans 8 columns per carrier"
+        WIDE_CARRIER_BLOCK_SPAN == 496,
+        "one wide carrier block spans 496 columns (62 carriers × 8)"
     );
     assert!(
-        WIDE_CARRIER_APPENDIX == 2 * WIDE_CARRIER_BLOCK_SPAN,
-        "the wide appendix is exactly two carrier blocks"
+        WIDE_CARRIER_APPENDIX == 992,
+        "the two-block wide appendix spans 992 columns"
     );
     // The AFTER block's commit carrier ends FLUSH at the allocated width (no slack, no overrun).
     assert!(WIDE_AFTER_CBASE + 8 * WIDE_COMMIT_CARRIER + 8 == WIDE_WIDTH);
@@ -4583,9 +4624,14 @@ pub fn generate_rotated_transfer_wide(
 /// match the committed S2-COMPACTED wide descriptor (Lean `RotWideCompactS2.compactS2`; every
 /// member passed the `compactOk` emit gate). Geometry comes from the Lean-emitted single source
 /// (`s2_compact_generated::S2_COMPACT_TABLE`); the three dropped bands per member are
-/// `[bb+179, bb+239) ∪ [bb+418, bb+478) ∪ [lane_base, lane_base+840)`. Every published PI is
-/// UNCHANGED (the retired 1-felt commit slots stay zeroed). Fails closed on an unknown key or a
-/// row too short to span the lane band (a mis-staged producer, never a silent misalignment).
+/// `[bb+S2_CARRIER_OFF, bb+B_SPAN) ∪ [bb+B_SPAN+S2_CARRIER_OFF, bb+2·B_SPAN) ∪ [lane_base,
+/// lane_base+S2_LANE_SPAN)`. Every published PI is UNCHANGED (the retired 1-felt commit slots stay
+/// zeroed). Fails closed on an unknown key or a row too short to span the lane band (a mis-staged
+/// producer, never a silent misalignment).
+///
+/// ⚑ The AFTER band used to be reached with a bare `bb + 239` — the 178-geometry `B_SPAN` written
+/// out as a literal in the middle of an otherwise Lean-sourced routine. At 184 limbs it aimed the
+/// second drain 8 columns short of the AFTER block's carrier band and 8 columns into its LIMBS.
 pub fn compact_s2_columns(trace: &mut [Vec<BabyBear>], registry_key: &str) -> Result<(), String> {
     use super::s2_compact_generated::{
         S2_CARRIER_OFF, S2_CARRIER_SPAN, S2_COMPACT_TABLE, S2_LANE_SPAN,
@@ -4595,7 +4641,7 @@ pub fn compact_s2_columns(trace: &mut [Vec<BabyBear>], registry_key: &str) -> Re
         .find(|(k, _, _)| *k == registry_key)
         .ok_or_else(|| format!("compact_s2_columns: {registry_key} not in S2_COMPACT_TABLE"))?;
     let (bb, lane_base) = (*bb, *lane_base);
-    if bb + 478 > lane_base {
+    if bb + 2 * B_SPAN > lane_base {
         return Err(format!(
             "compact_s2_columns: {registry_key} geometry inconsistent (bb={bb}, lane_base={lane_base})"
         ));
@@ -4611,7 +4657,7 @@ pub fn compact_s2_columns(trace: &mut [Vec<BabyBear>], registry_key: &str) -> Re
         }
         // descending order, so earlier drains do not shift later band positions
         row.drain(lane_base..lane_base + S2_LANE_SPAN);
-        row.drain(bb + 239 + S2_CARRIER_OFF..bb + 239 + S2_CARRIER_OFF + S2_CARRIER_SPAN);
+        row.drain(bb + B_SPAN + S2_CARRIER_OFF..bb + B_SPAN + S2_CARRIER_OFF + S2_CARRIER_SPAN);
         row.drain(bb + S2_CARRIER_OFF..bb + S2_CARRIER_OFF + S2_CARRIER_SPAN);
     }
     Ok(())
@@ -7487,34 +7533,51 @@ mod tests {
         );
     }
 
-    /// Rust re-check of the Lean-generated table's complete tiling. Group coordinates and
-    /// `NUM_PRE_LIMBS` are generated; the remaining scalar/octet regions below make this an
-    /// end-to-end artifact-integrity tooth for the full pre-limb layout.
+    /// Rust re-check of the Lean-generated table's complete tiling — an end-to-end
+    /// artifact-integrity tooth over the full pre-limb layout: every emitted region assembled,
+    /// sorted, and required to be EXACTLY `0..NUM_PRE_LIMBS`. A regen that drops a region,
+    /// duplicates a column, or emits a `NUM_PRE_LIMBS` its region lists do not cover fails here.
+    ///
+    /// ⚑ Every region is now READ from `layout_generated`. Until 2026-07-31 the non-group regions
+    /// were hand-listed here (`[176, 177]` pads, `113 + k` for `k in 0..56` field lanes) — the
+    /// 178-geometry restated beside the generated group table. The nine-lane epoch consumed both
+    /// pads into the fields NONET and this tooth went red for the one region it was not reading
+    /// from Lean, which is the drift it was written to catch, pointed at itself.
     #[test]
     fn rotated_layout_is_a_complete_disjoint_tiling() {
         let mut occ: Vec<usize> = Vec::new();
-        // singles (scalars, no completion group): r0/r1/r2, fields[0..7] lane-0, lifecycle/epoch/height/disc/mode
-        occ.extend([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29, 30, 31, 32, 35]);
+        // scalars with no completion group: r0/r1/r2, fields[0..7] lane-0, lifecycle/epoch/height/disc/mode
+        occ.extend(ROTATED_SINGLES);
         for g in ROTATED_GROUP_TABLE {
             occ.extend(g);
         }
         // carrier-material octets (each base .. base+8)
-        for base in [B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET] {
+        for base in ROTATED_OCTET_BASES {
             for k in 0..8 {
                 occ.push(base + k);
             }
         }
-        // fields[0..7] completion octet (113..168)
-        for k in 0..56 {
-            occ.push(113 + k);
-        }
-        // pads
-        occ.extend([176, 177]);
+        occ.extend(ROTATED_FIELDS_LANE_COLS);
+        occ.extend(ROTATED_CELLS_COMPLETION);
+        occ.extend(ROTATED_PADS);
         occ.sort_unstable();
         let expected: Vec<usize> = (0..NUM_PRE_LIMBS).collect();
         assert_eq!(
             occ, expected,
-            "rotated pre-iroot layout must be a complete disjoint tiling of 0..{NUM_PRE_LIMBS} (matches Lean rotated178_legal + rotated178_complete)"
+            "rotated pre-iroot layout must be a complete disjoint tiling of 0..{NUM_PRE_LIMBS} \
+             (matches Lean rotated184_legal + rotated184_complete)"
+        );
+        // The named octet bases the rest of this module reads ARE the emitted octet list — the one
+        // place a consumer could still drift off the table it just checked.
+        assert_eq!(
+            ROTATED_OCTET_BASES,
+            [B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET]
+        );
+        // The nine-lane epoch left NO spare column: the tiling above is only complete because the
+        // pads are gone. Stated so a future bump that re-introduces a pad has to say so here.
+        assert!(
+            ROTATED_PADS.is_empty(),
+            "the nine-lane geometry consumed both former pads (176, 177) into the fields nonet"
         );
     }
 

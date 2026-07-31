@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "983b0d75cf3e86d338b723aa3110d75e1f68aabf9d224e226c59af7402e00096";
+    "ce2d26ea76d9f021371372796429733937d3381a286706e2a2091962936ca49f";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1218,7 +1218,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "0c6c402d332b16171b0511ce2df506cc8639c411099dfbc052a0ef828f7135dd";
+    "3b698db0a8618736e4bc174cc1d1addec15234493f0d611f3830f3ff201af795";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1244,11 +1244,18 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "a028e25fee2e9c05c941fb4592a7e003ed197fdd3a32996b2e94180d130cc3a5";
+    "b3a25dbad249978f60d5f853a1cac1e821ae2293571179884cb8177374501edc";
 
 /// The number of written-slot completion lanes the deployed setField members publish (the VALUE8
-/// weld — the high 224 bits of the written 32-byte field value, `field_limbs8` lanes 1..=7).
-pub const SETFIELD_VALUE8_PI_LEN: usize = 7;
+/// weld — the high bits of the written 32-byte field value).
+///
+/// ⚑ 7 → 8 AT THE NINE-LANE EPOCH (2026-07-31). The fields octet became a fields NONET: slot `j`
+/// gained a NINTH lane at the new column `176 + j` (`RotatedLayout.fieldLaneCol slot 8`), so the
+/// deployed members now pin lanes 1..=8 at PIs 46..=53 — verified against the emitted bytes:
+/// `setFieldVmDescriptor2-0R24` pins PI 46..=52 to the contiguous window `after_base + 113..=119`
+/// and PI 53 to `after_base + 176`, the non-contiguous ninth lane. That eighth pin is the whole
+/// point of the epoch — with seven, the top of the value was still unbound on the wire.
+pub const SETFIELD_VALUE8_PI_LEN: usize = 8;
 
 /// The PI slot the deployed setField members' VALUE8 completion pins start at: immediately past the
 /// 46-PI rotated prefix, BEFORE the 4 dsl rc pins (Lean `withDfaRcPins (gentianDeployedBareRefuse
@@ -2944,14 +2951,17 @@ mod tests {
                 // exact committed widths (a drift tooth on the satisfaction-gadget span, read from the
                 // committed registry TSV) and strip back to the graduated base for the lane check.
                 let expected = if key == "dischargeSatVmDescriptor2R24" {
-                    1720 // GRAD_ROT_WIDTH(1647) + the cursor/total/due + G5 free-param bind columns
+                    // 1720 -> 1764 at the nine-lane epoch: GRAD_ROT_WIDTH(1691) + the
+                    // cursor/total/due + G5 free-param bind columns.
+                    1764
                 } else {
                     // GRAD_ROT_WIDTH(1647) + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns.
                     // Re-pinned 2121 → 2185 from the emitted TSV: the satisfaction-gadget span grew
                     // by 64 columns with the arity-3 IMT / AAFI accumulator rewiring. This is a raw
                     // drift tooth (a literal read off the committed artifact), so it MUST be re-read
-                    // whenever the gadget changes — it does not derive itself.
-                    2185
+                    // whenever the gadget changes — it does not derive itself. Re-read again
+                    // 2185 -> 2229 at the nine-lane epoch.
+                    2229
                 };
                 assert_eq!(
                     d.trace_width, expected,
@@ -3405,19 +3415,20 @@ mod tests {
                     "the committed custom member must classify as faithful carrier v3"
                 );
             } else if key.starts_with("setFieldVmDescriptor2-") {
-                // THE VALUE8 EPOCH: the 8 static-slot setField members publish the written slot's 7
-                // freed completion lanes (the high 224 bits of the 32-byte value) as PIs 46..=52,
-                // ahead of the rc tail. Before the flip these were bare 46-PI members and the freeze
+                // THE VALUE8 EPOCH: the 8 static-slot setField members publish the written slot's
+                // freed completion lanes (the high bits of the 32-byte value) as PIs
+                // 46..=46+SETFIELD_VALUE8_PI_LEN-1 (46..=53 at the nine-lane geometry: lanes 1..=7
+                // in the contiguous window plus the ninth lane at `176 + slot`), ahead of the rc tail. Before the flip these were bare 46-PI members and the freeze
                 // made an honest 32-byte write unprovable. (`setFieldDynVmDescriptor2R24` is a
                 // different member and stays bare — it carries no completion weld.)
                 assert_eq!(
                     base_pi_count,
                     46 + SETFIELD_VALUE8_PI_LEN,
-                    "{key}: the deployed setField member carries the rotated 46-PI + the 7 VALUE8 \
+                    "{key}: the deployed setField member carries the rotated 46-PI + the VALUE8 \
                      completion pins"
                 );
-                // The 7 extras are EXACTLY the value8 completion block: contiguous PI slots
-                // 46..=52 over 7 distinct columns. (They are `.last`-row pins, unlike the
+                // The extras are EXACTLY the value8 completion block: contiguous PI slots
+                // 46..=53 over 8 distinct columns. (They are `.last`-row pins, unlike the
                 // note-spend/record fifth pin, but this walk collects by pi_index.)
                 let mut extra: Vec<(usize, usize)> = nullifier_pins.clone();
                 extra.sort_by_key(|(_, pi)| *pi);
@@ -3533,6 +3544,14 @@ mod tests {
         //   * the E1 per-member dead-column compaction (`bd21266e6b`, kill-set narrowed to the
         //     pre-gentian `e1Ceiling` by `3ebf42e25f`) dropped each member's OWN kill-set
         //     (transfer 1704 → 1610 = 94 columns; see `e1_compact_generated::E1_COMPACT_TABLE`).
+        //   * ⚑ THE NINE-LANE EPOCH (`NUM_PRE_LIMBS` 178 → 184, `B_SPAN` 239 → 247, the wide chain
+        //     60 → 62 carriers): +44 columns on 56 of the 57 members (transfer 1610 → 1654), read
+        //     back off the emitted TSV on 2026-07-31. The ONE member that did not move by +44 is
+        //     `transferCapOpenTB`, at +42 — it is now byte-for-byte the width of the non-TB
+        //     `transferCapOpenEff`, because `CapOpenTurnPins.effCapOpenV3TB` no longer appends the
+        //     two turn-identity COLUMNS (see the note on that member in the cap-open branch of
+        //     `v3_staged_registry_parses_and_covers`). The per-member shape of this pin is exactly
+        //     what made that one member's divergence visible instead of averaging it away.
         //
         // It is re-pinned PER MEMBER rather than as a fresh whitelist because E1's kill-set is a
         // per-member fact: a shared width whitelist lets one member silently drift onto another
@@ -3553,56 +3572,56 @@ mod tests {
         // `wide_umem_weld_registry_parity_and_no_narrowing`, and the narrow one rides the derived
         // `HEAP_WRITE_HOST_WIDTH` / `HEAP_WRITE_READ_BASE`.
         const WIDE_MEMBER_GEOMETRY: [(&str, usize); 57] = [
-            ("transferVmDescriptor2R24", 1610),
-            ("burnVmDescriptor2R24", 1606),
-            ("mintVmDescriptor2R24", 1601),
-            ("noteSpendVmDescriptor2R24", 1892),
-            ("noteCreateVmDescriptor2R24", 1892),
-            ("cellSealVmDescriptor2R24", 1601),
-            ("cellDestroyVmDescriptor2R24", 1601),
-            ("refusalVmDescriptor2R24", 2109),
-            ("setPermsVmDescriptor2R24", 1601),
-            ("setVKVmDescriptor2R24", 1601),
-            ("exerciseVmDescriptor2R24", 1601),
-            ("pipelinedSendVmDescriptor2R24", 1601),
-            ("refreshVmDescriptor2R24", 1601),
-            ("incrementNonceVmDescriptor2R24", 1601),
-            ("revokeVmDescriptor2R24", 1601),
-            ("introduceVmDescriptor2R24", 1601),
-            ("attenuateVmDescriptor2R24", 1601),
-            ("revokeCapabilityVmDescriptor2R24", 1601),
-            ("customVmDescriptor2R24", 1577),
-            ("setFieldDynVmDescriptor2R24", 1569),
-            ("grantCapVmDescriptor2R24", 1601),
-            ("makeSovereignVmDescriptor2R24", 1637),
-            ("createCellVmDescriptor2R24", 1892),
-            ("factoryVmDescriptor2R24", 1601),
-            ("spawnVmDescriptor2R24", 1601),
-            ("receiptArchiveVmDescriptor2R24", 1601),
-            ("cellUnsealVmDescriptor2R24", 1601),
-            ("emitEventVmDescriptor2R24", 1601),
-            ("setFieldVmDescriptor2-0R24", 1601),
-            ("setFieldVmDescriptor2-1R24", 1601),
-            ("setFieldVmDescriptor2-2R24", 1601),
-            ("setFieldVmDescriptor2-3R24", 1601),
-            ("setFieldVmDescriptor2-4R24", 1601),
-            ("setFieldVmDescriptor2-5R24", 1601),
-            ("setFieldVmDescriptor2-6R24", 1601),
-            ("setFieldVmDescriptor2-7R24", 1601),
-            ("delegateCapOpenVmDescriptor2R24", 1878),
-            ("introduceCapOpenVmDescriptor2R24", 1878),
-            ("grantCapCapOpenVmDescriptor2R24", 1878),
-            ("revokeCapOpenVmDescriptor2R24", 1878),
-            ("refreshDelegationCapOpenVmDescriptor2R24", 1878),
-            ("revokeCapabilityCapOpenVmDescriptor2R24", 1878),
-            ("transferCapOpenEffVmDescriptor2R24", 1888),
-            ("attenuateCapOpenEffVmDescriptor2R24", 2021),
-            ("transferFeeVmDescriptor2R24", 1569),
-            ("transferCapOpenTBVmDescriptor2R24", 1890),
-            ("heapWriteVmDescriptor2R24", 1955),
-            ("delegateWriteCapOpenVmDescriptor2R24", 1878),
-            ("introduceWriteCapOpenVmDescriptor2R24", 1878),
-            ("delegateAttenWriteCapOpenVmDescriptor2R24", 1878),
+            ("transferVmDescriptor2R24", 1654),
+            ("burnVmDescriptor2R24", 1650),
+            ("mintVmDescriptor2R24", 1645),
+            ("noteSpendVmDescriptor2R24", 1936),
+            ("noteCreateVmDescriptor2R24", 1936),
+            ("cellSealVmDescriptor2R24", 1645),
+            ("cellDestroyVmDescriptor2R24", 1645),
+            ("refusalVmDescriptor2R24", 2153),
+            ("setPermsVmDescriptor2R24", 1645),
+            ("setVKVmDescriptor2R24", 1645),
+            ("exerciseVmDescriptor2R24", 1645),
+            ("pipelinedSendVmDescriptor2R24", 1645),
+            ("refreshVmDescriptor2R24", 1645),
+            ("incrementNonceVmDescriptor2R24", 1645),
+            ("revokeVmDescriptor2R24", 1645),
+            ("introduceVmDescriptor2R24", 1645),
+            ("attenuateVmDescriptor2R24", 1645),
+            ("revokeCapabilityVmDescriptor2R24", 1645),
+            ("customVmDescriptor2R24", 1621),
+            ("setFieldDynVmDescriptor2R24", 1613),
+            ("grantCapVmDescriptor2R24", 1645),
+            ("makeSovereignVmDescriptor2R24", 1681),
+            ("createCellVmDescriptor2R24", 1936),
+            ("factoryVmDescriptor2R24", 1645),
+            ("spawnVmDescriptor2R24", 1645),
+            ("receiptArchiveVmDescriptor2R24", 1645),
+            ("cellUnsealVmDescriptor2R24", 1645),
+            ("emitEventVmDescriptor2R24", 1645),
+            ("setFieldVmDescriptor2-0R24", 1645),
+            ("setFieldVmDescriptor2-1R24", 1645),
+            ("setFieldVmDescriptor2-2R24", 1645),
+            ("setFieldVmDescriptor2-3R24", 1645),
+            ("setFieldVmDescriptor2-4R24", 1645),
+            ("setFieldVmDescriptor2-5R24", 1645),
+            ("setFieldVmDescriptor2-6R24", 1645),
+            ("setFieldVmDescriptor2-7R24", 1645),
+            ("delegateCapOpenVmDescriptor2R24", 1922),
+            ("introduceCapOpenVmDescriptor2R24", 1922),
+            ("grantCapCapOpenVmDescriptor2R24", 1922),
+            ("revokeCapOpenVmDescriptor2R24", 1922),
+            ("refreshDelegationCapOpenVmDescriptor2R24", 1922),
+            ("revokeCapabilityCapOpenVmDescriptor2R24", 1922),
+            ("transferCapOpenEffVmDescriptor2R24", 1932),
+            ("attenuateCapOpenEffVmDescriptor2R24", 2065),
+            ("transferFeeVmDescriptor2R24", 1613),
+            ("transferCapOpenTBVmDescriptor2R24", 1932),
+            ("heapWriteVmDescriptor2R24", 1999),
+            ("delegateWriteCapOpenVmDescriptor2R24", 1922),
+            ("introduceWriteCapOpenVmDescriptor2R24", 1922),
+            ("delegateAttenWriteCapOpenVmDescriptor2R24", 1922),
             // ⚑ FLAG DAY 2026-07-28: 1878 → 2014. The two REMOVE write twins gained the TOMBSTONE
             // after-spine (Lean `CapOpenEmit.removeTombstoneConstraints`), so their NARROW host is
             // now `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119, the same as the UPDATE twin.
@@ -3613,13 +3632,13 @@ mod tests {
             // leaves its 7 leaf-field columns unread — and the E1 dead-column scan strips exactly
             // that run (`e1_compact_generated.rs` gained `(1016, 1023)` on both members). The narrow
             // widths coincide because the narrow member is not compacted; the wide ones do not.
-            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2014),
-            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2014),
-            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2021),
-            ("spawnWriteCapOpenVmDescriptor2R24", 1878),
-            ("spawnCapOpenVmDescriptor2R24", 1878),
-            ("exerciseCapOpenVmDescriptor2R24", 1878),
-            ("supplyMintVmDescriptor2R24", 1549),
+            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2058),
+            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2058),
+            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2065),
+            ("spawnWriteCapOpenVmDescriptor2R24", 1922),
+            ("spawnCapOpenVmDescriptor2R24", 1922),
+            ("exerciseCapOpenVmDescriptor2R24", 1922),
+            ("supplyMintVmDescriptor2R24", 1593),
         ];
 
         let mut n = 0usize;
@@ -3831,9 +3850,10 @@ mod tests {
         use std::collections::BTreeSet;
 
         for (label, tsv, want_pi) in [
-            ("v3-1felt", V3_STAGED_REGISTRY_TSV, 57usize),
-            ("wide", WIDE_REGISTRY_STAGED_TSV, 73),
-            ("wide-umem-welded", WIDE_UMEM_WELD_REGISTRY_TSV, 73),
+            // 57/73/73 → 58/74/74: the nine-lane epoch's EIGHTH value lane is an eighth PI.
+            ("v3-1felt", V3_STAGED_REGISTRY_TSV, 58usize),
+            ("wide", WIDE_REGISTRY_STAGED_TSV, 74),
+            ("wide-umem-welded", WIDE_UMEM_WELD_REGISTRY_TSV, 74),
         ] {
             let mut seen = 0usize;
             let mut per_slot_cols: Vec<BTreeSet<usize>> = Vec::new();
@@ -3849,8 +3869,8 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{label}/{key} parses: {e}"));
                 assert_eq!(
                     d.public_input_count, want_pi,
-                    "{label}/{key}: the VALUE8 epoch publishes 7 completion PIs \
-                     (46..=52) ahead of the rc tail"
+                    "{label}/{key}: the VALUE8 epoch publishes 8 completion PIs \
+                     (46..=53) ahead of the rc tail"
                 );
                 let mut cols = BTreeSet::new();
                 for k in 0..SETFIELD_VALUE8_PI_LEN {
@@ -3882,7 +3902,7 @@ mod tests {
                 assert_eq!(
                     cols.len(),
                     SETFIELD_VALUE8_PI_LEN,
-                    "{label}/{key}: 7 distinct columns"
+                    "{label}/{key}: 8 distinct columns"
                 );
                 per_slot_cols.push(cols);
                 seen += 1;

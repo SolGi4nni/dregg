@@ -323,11 +323,19 @@ const FINAL_TRACE_WIDTH: usize = ENDPOINT_TRACE_WIDTH;
 const ENDPOINT_COMMIT_CARRIER: usize = ENDPOINT_WIDE_CARRIERS - 1;
 
 const _: () = {
-    // ⚑ DERIVED, not pinned to the 178-limb literals (the nine-lane epoch moved them).
-    // This file's doc CLAIMED "the same wireCommitR8 shape as the live wide cohort" with nothing
-    // checking it; these now assert that relation instead of restating two numbers.
+    // THE ONE GENUINELY CROSS-SOURCE PIN, and the good half of the nine-lane edit: this file's
+    // doc CLAIMED "the same `wireCommitR8` shape as the live wide cohort" with nothing checking
+    // it. `ENDPOINT_WIDE_CARRIERS` is derived from THIS file's own `ENDPOINT_NUM_PRE_LIMBS`, so
+    // comparing it to the rotated cohort's constant really does relate two independent sources
+    // and really can fail. Keep it a relation.
     assert!(ENDPOINT_WIDE_CARRIERS == dregg_circuit::effect_vm::trace_rotated::WIDE_NUM_CARRIERS);
-    assert!(ENDPOINT_COMMIT_CARRIER + 1 == ENDPOINT_WIDE_CARRIERS);
+    // ⚑ LITERALS. `ENDPOINT_COMMIT_CARRIER + 1 == ENDPOINT_WIDE_CARRIERS` sat beside `const
+    // ENDPOINT_COMMIT_CARRIER: usize = ENDPOINT_WIDE_CARRIERS - 1;`, and `POST_WIDE_CARRIER_BASE +
+    // ENDPOINT_WIDE_BLOCK_SPAN == ENDPOINT_TRACE_WIDTH` sat beside that constant's definition.
+    // Both were `x == x` and could not fail at any geometry.
+    assert!(ENDPOINT_WIDE_CARRIERS == 62);
+    assert!(ENDPOINT_COMMIT_CARRIER == 61);
+    assert!(ENDPOINT_WIDE_BLOCK_SPAN == 496);
     assert!(POST_WIDE_CARRIER_BASE + ENDPOINT_WIDE_BLOCK_SPAN == ENDPOINT_TRACE_WIDTH);
 };
 

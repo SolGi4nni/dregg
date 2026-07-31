@@ -1,20 +1,31 @@
-//! The shadow-observer SEAM — dependency inversion that keeps `dregg-turn` FFI-free.
+//! The post-commit observer SEAM — dependency inversion that keeps `dregg-turn` FFI-free.
 //!
-//! The verified-Lean shadow/gate executor (the differential observer + the strict-veto
-//! rejection authority) lives in the native-only `dregg-exec-lean` crate, which links
-//! `libdregg_lean.a`. `dregg-turn` itself must NOT link the Lean archive (it is the crate
-//! a wasm / no-FFI build composes), so the executor's production path calls the shadow
-//! through this trait rather than the FFI directly.
+//! The verified-Lean executor cluster lives in the native-only `dregg-exec-lean` crate, which
+//! links `libdregg_lean.a`. `dregg-turn` itself must NOT link the Lean archive (it is the crate
+//! a wasm / no-FFI build composes), so the executor's production path reaches it through this
+//! trait rather than the FFI directly.
 //!
 //! [`TurnExecutor`](crate::executor::TurnExecutor) holds an
-//! `Arc<dyn ShadowObserver>`. A native node injects `dregg_exec_lean::LeanShadowObserver`
-//! (the real differential + veto authority); every other construction defaults to
-//! [`NoOpShadowObserver`], which compares nothing and never vetoes. "No shadow" is then a
-//! visible platform fact (the wasm / no-FFI path), never an accident — the native node's
-//! executor builders inject the Lean observer explicitly.
+//! `Arc<dyn ShadowObserver>`. A native node injects `dregg_exec_lean::LeanShadowObserver`;
+//! every other construction defaults to [`NoOpShadowObserver`], which does nothing.
 //!
-//! [`ShadowHostCtx`] is pure data (only `CellId`, no FFI), so it lives here in `dregg-turn`
-//! and the trait can name it; the Lean observer reads it to drive the verified gate.
+//! ⚑ **THE DIFFERENTIAL IS NO LONGER HERE — 2026-07-30.** Until this date the trait also carried
+//! `enabled()` and `capture_pre_state()`, driving a Lean↔Rust differential gated on
+//! `DREGG_LEAN_SHADOW=1`. That variable was set by NOTHING in the tree outside one test (swept
+//! four ways), so the differential never ran on a deployed node; and its verdict was discarded at
+//! the single call site (`let _ = maybe_shadow_turn(..)`), so it could not decide anything even
+//! armed. Its one genuine strength — a CELL-BY-CELL Lean↔Rust post-state comparison — was moved
+//! onto the seam that IS armed (`dregg_exec_lean::lean_apply::produce_via_lean`, default-ON via
+//! `DREGG_LEAN_PRODUCER`), where it now decides `ProducerOutcome`'s `divergence` field, and the
+//! dark path was deleted rather than kept alongside it.
+//!
+//! What survives here is what the observer actually *does* on a live node: advance
+//! observer-owned cross-turn accumulators after a committed turn (the durable nullifier
+//! frontier). That is a real side effect on the production path, not a diagnostic.
+//!
+//! [`ShadowHostCtx`] is pure data (only `CellId`, no FFI), so it lives here in `dregg-turn`;
+//! the verified producer reads it (via `TurnExecutor::build_shadow_host_ctx`) to drive the
+//! verified gate.
 
 use dregg_cell::CellId;
 
@@ -120,61 +131,48 @@ impl ShadowHostCtx {
     }
 }
 
-/// The dependency-inversion seam for the verified-Lean shadow OBSERVER.
+/// The dependency-inversion seam for the native post-commit observer.
 ///
 /// The production execute path ([`TurnExecutor::execute`](crate::executor::TurnExecutor::execute))
-/// drives the 3-step differential flow through this trait so `dregg-turn` never links the FFI
-/// directly:
+/// calls [`observe`](ShadowObserver::observe) once, after the turn's result is final, so
+/// `dregg-turn` never links the FFI directly.
 ///
-/// 1. [`enabled`](ShadowObserver::enabled) — is the shadow on (`DREGG_LEAN_SHADOW=1`)?
-/// 2. [`capture_pre_state`](ShadowObserver::capture_pre_state) — snapshot the pre-state + host ctx.
-/// 3. [`observe`](ShadowObserver::observe) — run the verified Lean executor and report divergence.
+/// ⚑ **THIS SEAM DECIDES NOTHING, AND NO LONGER PRETENDS TO OBSERVE ANYTHING EITHER.** `observe`
+/// is side-effect-free with respect to the `TurnResult`; the executor does not consult it to
+/// commit or reject. The verified Lean executor is the AUTHORITATIVE decision-maker on the *other*
+/// seam — `dregg_exec_lean::lean_apply::produce_via_lean` (THE SWAP authority inversion, default-ON
+/// via `DREGG_LEAN_PRODUCER`), which installs the verified post-state and verdict, owns the
+/// reject-side rollback of executor side state (`checkpoint_producer_reference` /
+/// `rollback_producer_reference`), and — since 2026-07-30 — carries the cell-by-cell Lean↔Rust
+/// post-state comparison that used to live behind `DREGG_LEAN_SHADOW`.
 ///
-/// ⚑ **THIS SEAM DECIDES NOTHING.** `observe` is side-effect-free with respect to the `TurnResult`;
-/// the executor does not consult it to commit or reject. The verified Lean executor is the
-/// AUTHORITATIVE decision-maker on the *other* seam — `dregg_exec_lean::lean_apply::produce_via_lean`
-/// (THE SWAP authority inversion, default-ON via `DREGG_LEAN_PRODUCER`), which installs the verified
-/// post-state and verdict, and which owns the reject-side rollback of executor side state
-/// (`checkpoint_producer_reference` / `rollback_producer_reference`).
+/// Two decisionless mechanisms have now been deleted from this seam rather than left alongside the
+/// armed one:
 ///
-/// A binding `strict_veto_enabled` / `lean_vetoes` pair lived here until 2026-07-28. It was set by
-/// nothing but its own test, it was dominated by the producer inversion, and its rollback was
-/// INCOMPLETE — it restored the ledger but left the agent's receipt-chain head advanced to a receipt
-/// that was never issued, bricking the agent. It is deleted; see `dregg_exec_lean::lean_shadow`.
+/// * `strict_veto_enabled` / `lean_vetoes` (2026-07-28) — armed by nothing, dominated by the
+///   producer inversion, and its rollback restored the ledger while leaving the agent's
+///   receipt-chain head advanced to a receipt that was never issued, bricking the agent.
+/// * `enabled` / `capture_pre_state` and the `DREGG_LEAN_SHADOW` differential (2026-07-30) —
+///   the variable was set by nothing, and the verdict was dropped at the call site.
 ///
 /// The native node injects `dregg_exec_lean::LeanShadowObserver`; everyone else gets
 /// [`NoOpShadowObserver`].
 pub trait ShadowObserver: Send + Sync {
-    /// Whether shadow execution is enabled (`DREGG_LEAN_SHADOW=1`). The executor uses this to AVOID
-    /// building the host-fed admission context (which locks the migration / budget mutexes) on the
-    /// hot path when the shadow is off.
-    fn enabled(&self) -> bool;
-
-    /// Capture a minimal pre-state snapshot when shadow mode may run later. Called at the start of
-    /// [`TurnExecutor::execute`](crate::executor::TurnExecutor::execute) before any ledger mutation
-    /// so the Lean oracle sees the same admission inputs as Rust. `host` carries the NODE-fed
-    /// admission context (clock / freeze-set / stored head / budget) — the bug-1 seam.
-    fn capture_pre_state(&self, turn: &Turn, ledger: &Ledger, host: ShadowHostCtx);
-
-    /// Run the verified Lean executor against the just-produced Rust `result` and report any
-    /// divergence. DIAGNOSTIC ONLY — it must never change `result`, and the executor discards
-    /// whatever it learns. (The observer may also advance observer-owned cross-turn accumulators;
-    /// `dregg_exec_lean` advances its durable nullifier frontier here.)
+    /// Advance observer-owned CROSS-TURN state from a finished turn. Called once at the end of
+    /// [`TurnExecutor::execute`](crate::executor::TurnExecutor::execute) with the final `result`.
+    ///
+    /// It must never change `result` — the turn is already decided. `dregg_exec_lean` uses it to
+    /// advance its durable nullifier frontier on a committed `NoteSpend`; that is the only live
+    /// consumer, and it is a real production side effect rather than a diagnostic.
     fn observe(&self, turn: &Turn, ledger: &Ledger, result: &TurnResult, block_height: u64);
 }
 
-/// The default shadow observer for every executor that is NOT a native Lean-linked node: it
-/// compares nothing and captures nothing. The wasm / no-FFI path gets this, making "no shadow" a
-/// visible platform fact rather than a silent omission.
+/// The default observer for every executor that is NOT a native Lean-linked node: it advances
+/// nothing. The wasm / no-FFI path gets this, making the absence a visible platform fact rather
+/// than a silent omission.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoOpShadowObserver;
 
 impl ShadowObserver for NoOpShadowObserver {
-    fn enabled(&self) -> bool {
-        false
-    }
-
-    fn capture_pre_state(&self, _turn: &Turn, _ledger: &Ledger, _host: ShadowHostCtx) {}
-
     fn observe(&self, _turn: &Turn, _ledger: &Ledger, _result: &TurnResult, _block_height: u64) {}
 }

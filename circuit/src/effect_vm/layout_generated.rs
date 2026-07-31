@@ -89,6 +89,21 @@ pub const B_IROOT: usize = 184;
 /// the state-commitment limb
 pub const B_STATE_COMMIT: usize = 185;
 
+/// in-block base of the chained-absorption carriers — READ OFF `rotV3SitesAt`'s first emitted site, so the producer writes the columns the descriptors bind. Rust carried this by hand and it rotted across the 178 -> 184 flag day (180 vs 186): the producer overwrote four pre-limbs plus iroot/state_commit and every rotated member was UNSAT.
+pub const B_CHAIN_BASE: usize = 186;
+
+/// chain carriers per block: they fill `[B_CHAIN_BASE, B_SPAN)` exactly
+pub const B_NUM_CHAIN: usize = 61;
+
+/// in-block offset of the first S2-deleted column (the 1-felt state_commit digest)
+pub const S2_CARRIER_OFF: usize = 185;
+
+/// one S2-deleted carrier band's width (state_commit digest + B_NUM_CHAIN chain carriers)
+pub const S2_CARRIER_SPAN: usize = 62;
+
+/// the S2-deleted graduated chip-lane band's width (7 lanes per deleted block site)
+pub const S2_LANE_SPAN: usize = 868;
+
 /// state register index of the first committed field (fields[0]); the AFTER-block field octet holds register r(FIELD_BASE+i) at octet index i, so octet_index(r) = r - FIELD_BASE
 pub const FIELD_BASE: usize = 3;
 
@@ -137,6 +152,43 @@ pub const CELLS_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[9];
 
 /// Compatibility/readability alias used by the Rust disjointness tooth.
 pub const ALL_FELT8_GROUPS: [Felt8Group; 10] = ROTATED_GROUP_TABLE;
+
+/// The scalar limbs that carry no faithful-8 completion group.
+pub const ROTATED_SINGLES: [usize; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29, 30, 31, 32, 35];
+
+/// The carrier-material octet BASES (each occupies `base .. base + 8`).
+pub const ROTATED_OCTET_BASES: [usize; 3] = [89, 97, 105];
+
+/// Every `fields[0..8]` completion lane column, in layout order (lanes 1..8 of each of the 8 slots — deliberately NON-CONTIGUOUS: the ninth lane of slot `j` is `176 + j`).
+pub const ROTATED_FIELDS_LANE_COLS: [usize; 64] = [
+    113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+    132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150,
+    151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 176,
+    177, 178, 179, 180, 181, 182, 183,
+];
+
+/// The legacy cells-completion slot (empty since `cells` became a named group).
+pub const ROTATED_CELLS_COMPLETION: [usize; 0] = [];
+
+/// Unoccupied pad columns. EMPTY at the nine-lane geometry — the two former pads (176, 177) were consumed by the fields nonet.
+pub const ROTATED_PADS: [usize; 0] = [];
+
+/// `ROTATED_FIELD_LANE_COL[slot][lane]` — the column carrying lane `lane` of `fields[slot]`.
+/// Lane 0 is the welded v1-face limb, lanes 1..7 the historical completion window, lane 8 the
+/// flag-day ninth lane. NON-CONTIGUOUS BY DESIGN: never reconstruct this with a stride.
+pub const ROTATED_FIELD_LANE_COL: [[usize; 9]; 8] = [
+    [4, 113, 114, 115, 116, 117, 118, 119, 176],
+    [5, 120, 121, 122, 123, 124, 125, 126, 177],
+    [6, 127, 128, 129, 130, 131, 132, 133, 178],
+    [7, 134, 135, 136, 137, 138, 139, 140, 179],
+    [8, 141, 142, 143, 144, 145, 146, 147, 180],
+    [9, 148, 149, 150, 151, 152, 153, 154, 181],
+    [10, 155, 156, 157, 158, 159, 160, 161, 182],
+    [11, 162, 163, 164, 165, 166, 167, 168, 183],
+];
+
+/// Completion lanes per committed field slot (lanes 1..=8 — the VALUE8/nonet weld width).
+pub const ROTATED_FIELD_COMPLETION_LANES: usize = 8;
 
 /// Derive the app-root field OCTET INDEX from a state register slot: the AFTER-block
 /// `fields[0..8]` octet holds field register `r(FIELD_BASE + i)` at octet index `i`, so

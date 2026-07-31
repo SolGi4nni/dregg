@@ -59,22 +59,36 @@ pub const WIDE_EVENTS_PER_ROW: usize = 2 * WIDE_CARRIERS;
 pub const WIDE_EVENTS: usize = EXACT_AAFI_TRACE_ROWS * WIDE_EVENTS_PER_ROW;
 
 const _: () = {
-    // ⚑ DERIVED, NOT PINNED TO LITERALS (2026-07-31, the nine-lane epoch).
+    // ⚑ RE-PINNED TO LITERALS AT THE NINE-LANE GEOMETRY (2026-07-31, second pass).
     //
-    // These read `assert!(AFTER_PAYLOAD_BASE == 2621)` and friends — seven literals that encoded the
-    // 178-limb geometry. The nine-lane epoch moved `NUM_PRE_LIMBS` 178 → 184 and every one of them
-    // became a build error, which is the pin doing its job, but a literal has to be re-typed by hand
-    // at every epoch and that is how a geometry pin drifts from the geometry.
+    // These were `assert!(AFTER_PAYLOAD_BASE == 2621)` and friends: seven literals encoding the
+    // 178-limb geometry, every one of which correctly went red when `NUM_PRE_LIMBS` moved 178 →
+    // 184. They were then replaced by "the relation they were checking" — and every replacement
+    // restated the DEFINITION on the line it was checking:
     //
-    // What is actually invariant is the LAYOUT RELATION: each region begins where the previous one
-    // ends. That holds at any `NUM_PRE_LIMBS`, and it still catches the overlap/gap this block was
-    // written to catch.
-    assert!(BEFORE_PAYLOAD_BASE == V3_TRACE_WIDTH);
-    assert!(AFTER_PAYLOAD_BASE == BEFORE_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH);
-    assert!(ROTATED_HOST_WIDTH == AFTER_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH);
-    assert!(BEFORE_CARRIER_BASE == ROTATED_HOST_WIDTH);
-    assert!(AFTER_CARRIER_BASE == BEFORE_CARRIER_BASE + WIDE_BLOCK_WIDTH);
-    assert!(BEFORE_COMMIT_BASE + 8 == AFTER_CARRIER_BASE);
+    //     pub const BEFORE_PAYLOAD_BASE: usize = V3_TRACE_WIDTH;
+    //     assert!(BEFORE_PAYLOAD_BASE == V3_TRACE_WIDTH);          // x == x
+    //     pub const AFTER_PAYLOAD_BASE: usize = BEFORE_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH;
+    //     assert!(AFTER_PAYLOAD_BASE == BEFORE_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH);  // x == x
+    //
+    // Five of the six were tautologies. The block compiled, read like a geometry gate, and could
+    // not fail at ANY `NUM_PRE_LIMBS` — including the wrong one this file was simultaneously
+    // carrying. A pin that survives every epoch without being re-typed is not a durable pin; it is
+    // an absent one. The cost of a tripwire IS re-typing it, and the number is one grep away in
+    // `circuit/descriptors/`.
+    assert!(V3_TRACE_WIDTH == 2442);
+    assert!(BEFORE_PAYLOAD_BASE == 2442);
+    assert!(AFTER_PAYLOAD_BASE == 2627);
+    assert!(ROTATED_HOST_WIDTH == 2812);
+    assert!(BEFORE_CARRIER_BASE == 2812);
+    assert!(AFTER_CARRIER_BASE == 3308);
+    assert!(BEFORE_COMMIT_BASE == 3300);
+    assert!(AFTER_COMMIT_BASE == 3796);
+    assert!(ROTATED_TRACE_WIDTH == 3804);
+    assert!(ROTATED_PUBLIC_INPUT_COUNT == 76);
+    // The one genuinely CROSS-SOURCE relation here (two independently-derived constants, not a
+    // definition restated): this file's payload width and the emitted rotated layout must agree.
+    assert!(ROTATED_PAYLOAD_WIDTH == crate::effect_vm::layout_generated::B_STATE_COMMIT);
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -437,8 +451,10 @@ mod tests {
     #[test]
     fn exact_rotated_geometry_and_derived_frame_are_pinned() {
         assert_eq!(NULLIFIER_OFFSETS, [26, 68, 69, 70, 71, 72, 73, 74]);
-        assert_eq!(STABLE_FRAME_CELLS, 171);
-        assert_eq!(WIDE_CARRIERS, 60);
+        // The nine-lane epoch (`NUM_PRE_LIMBS` 178 → 184): the payload gained six cells, all of
+        // them stable (the nullifier group did not move), and the wide chain gained two carriers.
+        assert_eq!(STABLE_FRAME_CELLS, 177);
+        assert_eq!(WIDE_CARRIERS, 62);
         let trace = sample_trace();
         assert_eq!(trace.rows().len(), EXACT_AAFI_TRACE_ROWS);
         assert!(
@@ -516,7 +532,9 @@ mod tests {
         let descriptor = parse_vm_descriptor2(STAGED).expect("staged Lean descriptor parses");
         assert_eq!(descriptor.trace_width, ROTATED_TRACE_WIDTH);
         assert_eq!(descriptor.public_input_count, ROTATED_PUBLIC_INPUT_COUNT);
-        assert_eq!(descriptor.constraints.len(), 1258);
+        // 1258 -> 1294 at the nine-lane epoch: the wide chain gained two carriers per block
+        // (60 -> 62) and the narrow payload six limbs, each carrying its own emitted constraints.
+        assert_eq!(descriptor.constraints.len(), 1294);
         let trace = sample_trace();
 
         let wide: Vec<_> = descriptor

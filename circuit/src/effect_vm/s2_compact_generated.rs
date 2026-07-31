@@ -3,79 +3,83 @@
 // THE S2 DELETION GEOMETRY (Epoch 1): per wide-registry member, the block base `bb`
 // (the face width the rotated BEFORE limbs sit at) and the graduated S2 lane base.
 // The deleted columns of a member are exactly the three bands
-//   [bb+179, bb+239) ∪ [bb+418, bb+478) ∪ [lane_base, lane_base+840)
-// — the two rotated 1-felt Merkle–Damgård chain carrier/digest bands plus their 840
+//   [bb+S2_CARRIER_OFF, bb+B_SPAN) ∪ [bb+B_SPAN+S2_CARRIER_OFF, bb+2*B_SPAN)
+//     ∪ [lane_base, lane_base+S2_LANE_SPAN)
+// — the two rotated 1-felt Merkle–Damgård chain carrier/digest bands plus their
 // graduated chip-lane columns. The Lean emit deleted these from the committed wide
 // descriptors (`RotWideCompactS2.compactS2`, gated per member by `compactOk`); the Rust
 // trace producer must drop the SAME columns from its old-geometry rows
 // (`trace_rotated::compact_s2_columns`). One source: this table.
+//
+// ⚑ THE THREE BAND CONSTANTS ARE NOT DECLARED HERE. They used to be — as PYTHON STRING
+// LITERALS in `scripts/emit_descriptors.py` (`179` / `60` / `840`) inside a module whose
+// own header says DO NOT EDIT BY HAND. Only the per-member table came from Lean, so the
+// 178 -> 184 flag day moved the table and left the bands three columns' worth of a
+// geometry that no longer existed. They are now emitted from `RotWideCompactS2`'s own
+// spec lists via `EmitLayoutManifest.lean` and re-exported below: ONE source, in Lean.
 
-/// In-block offset of the first deleted carrier column (the 1-felt state_commit digest).
-pub const S2_CARRIER_OFF: usize = 179;
-/// One deleted carrier band's width (digest + 59 chain carriers).
-pub const S2_CARRIER_SPAN: usize = 60;
-/// The deleted graduated lane band's width (120 sites × 7 lanes).
-pub const S2_LANE_SPAN: usize = 840;
+pub use super::layout_generated::{S2_CARRIER_OFF, S2_CARRIER_SPAN, S2_LANE_SPAN};
+
 /// Total deleted columns per member.
 pub const S2_DELETED_COLS: usize = 2 * S2_CARRIER_SPAN + S2_LANE_SPAN;
 
 /// `(registry key, bb, lane_base)` per wide member, in registry order.
 pub const S2_COMPACT_TABLE: &[(&str, usize, usize)] = &[
-    ("transferVmDescriptor2R24", 198, 747),
-    ("burnVmDescriptor2R24", 196, 745),
-    ("mintVmDescriptor2R24", 188, 737),
-    ("noteSpendVmDescriptor2R24", 188, 737),
-    ("noteCreateVmDescriptor2R24", 188, 737),
-    ("cellSealVmDescriptor2R24", 188, 737),
-    ("cellDestroyVmDescriptor2R24", 188, 737),
-    ("refusalVmDescriptor2R24", 188, 737),
-    ("setPermsVmDescriptor2R24", 188, 737),
-    ("setVKVmDescriptor2R24", 188, 737),
-    ("exerciseVmDescriptor2R24", 188, 737),
-    ("pipelinedSendVmDescriptor2R24", 188, 737),
-    ("refreshVmDescriptor2R24", 188, 737),
-    ("incrementNonceVmDescriptor2R24", 188, 737),
-    ("revokeVmDescriptor2R24", 188, 737),
-    ("introduceVmDescriptor2R24", 188, 737),
-    ("attenuateVmDescriptor2R24", 188, 737),
-    ("revokeCapabilityVmDescriptor2R24", 188, 737),
-    ("customVmDescriptor2R24", 188, 709),
-    ("setFieldDynVmDescriptor2R24", 188, 709),
-    ("grantCapVmDescriptor2R24", 188, 737),
-    ("makeSovereignVmDescriptor2R24", 188, 737),
-    ("createCellVmDescriptor2R24", 188, 737),
-    ("factoryVmDescriptor2R24", 188, 737),
-    ("spawnVmDescriptor2R24", 188, 737),
-    ("receiptArchiveVmDescriptor2R24", 188, 737),
-    ("cellUnsealVmDescriptor2R24", 188, 737),
-    ("emitEventVmDescriptor2R24", 188, 737),
-    ("setFieldVmDescriptor2-0R24", 188, 737),
-    ("setFieldVmDescriptor2-1R24", 188, 737),
-    ("setFieldVmDescriptor2-2R24", 188, 737),
-    ("setFieldVmDescriptor2-3R24", 188, 737),
-    ("setFieldVmDescriptor2-4R24", 188, 737),
-    ("setFieldVmDescriptor2-5R24", 188, 737),
-    ("setFieldVmDescriptor2-6R24", 188, 737),
-    ("setFieldVmDescriptor2-7R24", 188, 737),
-    ("delegateCapOpenVmDescriptor2R24", 188, 737),
-    ("introduceCapOpenVmDescriptor2R24", 188, 737),
-    ("grantCapCapOpenVmDescriptor2R24", 188, 737),
-    ("revokeCapOpenVmDescriptor2R24", 188, 737),
-    ("refreshDelegationCapOpenVmDescriptor2R24", 188, 737),
-    ("revokeCapabilityCapOpenVmDescriptor2R24", 188, 737),
-    ("transferCapOpenEffVmDescriptor2R24", 198, 747),
-    ("attenuateCapOpenEffVmDescriptor2R24", 188, 737),
-    ("transferFeeVmDescriptor2R24", 204, 753),
-    ("transferCapOpenTBVmDescriptor2R24", 198, 747),
-    ("heapWriteVmDescriptor2R24", 188, 716),
-    ("delegateWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("introduceWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("delegateAttenWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("revokeDelegationWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("refreshDelegationWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("spawnWriteCapOpenVmDescriptor2R24", 188, 737),
-    ("spawnCapOpenVmDescriptor2R24", 188, 737),
-    ("exerciseCapOpenVmDescriptor2R24", 188, 737),
-    ("supplyMintVmDescriptor2R24", 188, 737),
+    ("transferVmDescriptor2R24", 198, 763),
+    ("burnVmDescriptor2R24", 196, 761),
+    ("mintVmDescriptor2R24", 188, 753),
+    ("noteSpendVmDescriptor2R24", 188, 753),
+    ("noteCreateVmDescriptor2R24", 188, 753),
+    ("cellSealVmDescriptor2R24", 188, 753),
+    ("cellDestroyVmDescriptor2R24", 188, 753),
+    ("refusalVmDescriptor2R24", 188, 753),
+    ("setPermsVmDescriptor2R24", 188, 753),
+    ("setVKVmDescriptor2R24", 188, 753),
+    ("exerciseVmDescriptor2R24", 188, 753),
+    ("pipelinedSendVmDescriptor2R24", 188, 753),
+    ("refreshVmDescriptor2R24", 188, 753),
+    ("incrementNonceVmDescriptor2R24", 188, 753),
+    ("revokeVmDescriptor2R24", 188, 753),
+    ("introduceVmDescriptor2R24", 188, 753),
+    ("attenuateVmDescriptor2R24", 188, 753),
+    ("revokeCapabilityVmDescriptor2R24", 188, 753),
+    ("customVmDescriptor2R24", 188, 725),
+    ("setFieldDynVmDescriptor2R24", 188, 725),
+    ("grantCapVmDescriptor2R24", 188, 753),
+    ("makeSovereignVmDescriptor2R24", 188, 753),
+    ("createCellVmDescriptor2R24", 188, 753),
+    ("factoryVmDescriptor2R24", 188, 753),
+    ("spawnVmDescriptor2R24", 188, 753),
+    ("receiptArchiveVmDescriptor2R24", 188, 753),
+    ("cellUnsealVmDescriptor2R24", 188, 753),
+    ("emitEventVmDescriptor2R24", 188, 753),
+    ("setFieldVmDescriptor2-0R24", 188, 753),
+    ("setFieldVmDescriptor2-1R24", 188, 753),
+    ("setFieldVmDescriptor2-2R24", 188, 753),
+    ("setFieldVmDescriptor2-3R24", 188, 753),
+    ("setFieldVmDescriptor2-4R24", 188, 753),
+    ("setFieldVmDescriptor2-5R24", 188, 753),
+    ("setFieldVmDescriptor2-6R24", 188, 753),
+    ("setFieldVmDescriptor2-7R24", 188, 753),
+    ("delegateCapOpenVmDescriptor2R24", 188, 753),
+    ("introduceCapOpenVmDescriptor2R24", 188, 753),
+    ("grantCapCapOpenVmDescriptor2R24", 188, 753),
+    ("revokeCapOpenVmDescriptor2R24", 188, 753),
+    ("refreshDelegationCapOpenVmDescriptor2R24", 188, 753),
+    ("revokeCapabilityCapOpenVmDescriptor2R24", 188, 753),
+    ("transferCapOpenEffVmDescriptor2R24", 198, 763),
+    ("attenuateCapOpenEffVmDescriptor2R24", 188, 753),
+    ("transferFeeVmDescriptor2R24", 204, 769),
+    ("transferCapOpenTBVmDescriptor2R24", 198, 763),
+    ("heapWriteVmDescriptor2R24", 188, 732),
+    ("delegateWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("introduceWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("delegateAttenWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("revokeDelegationWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("refreshDelegationWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("spawnWriteCapOpenVmDescriptor2R24", 188, 753),
+    ("spawnCapOpenVmDescriptor2R24", 188, 753),
+    ("exerciseCapOpenVmDescriptor2R24", 188, 753),
+    ("supplyMintVmDescriptor2R24", 188, 753),
 ];

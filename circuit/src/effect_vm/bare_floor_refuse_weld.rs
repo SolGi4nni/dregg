@@ -459,11 +459,12 @@ mod tests {
     fn tag_cols_are_the_deployed_bound_columns() {
         // The decode reads the EXACT deployed caveat-manifest type-tag columns the COVERAGE carrier
         // binds via the caveat-commit chain (imported `caveat_tag_col` = `CAVEAT_BASE + 1 + k·ENTRY_SIZE`).
-        // Concrete drift pin at the REVOKED-ROOT/178-limb geometry (CAVEAT_BASE = 666; ENTRY_SIZE = 7).
-        assert_eq!(caveat_tag_col(0), 667);
-        assert_eq!(caveat_tag_col(1), 674);
-        assert_eq!(caveat_tag_col(2), 681);
-        assert_eq!(caveat_tag_col(3), 688);
+        // Concrete drift pin at the NINE-LANE/184-limb geometry: `CAVEAT_BASE = V1_WIDTH(188) +
+        // 2·B_SPAN(247) = 682`, `ENTRY_SIZE = 7`. (Was 666/667.. at 178 limbs.)
+        assert_eq!(caveat_tag_col(0), 683);
+        assert_eq!(caveat_tag_col(1), 690);
+        assert_eq!(caveat_tag_col(2), 697);
+        assert_eq!(caveat_tag_col(3), 704);
     }
 
     #[test]

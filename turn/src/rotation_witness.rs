@@ -1064,10 +1064,12 @@ mod tests {
         // WAVE-2/3 + REVOKED-ROOT flag-days; revoked_root = base limb 37)
         // + 51 accumulator-8-felt completion limbs (38..88, lanes 1..7, incl. revoked 82..88)
         // + 24 v12 carrier-material octets (89..112: child_vk8·contract_hash8·pubkey8, ZERO until gate-welded)
-        // + 56 v13 fields[0..7] completion lanes (113..168)
-        // + 7 circuit-only cells_root completion lanes (169..175, ZERO in producer) + 2 pad limbs (176..177)
-        //   → body [4..177] = 174 = 58×3 (clean 3-grouping).
-        assert_eq!(NUM_PRE_LIMBS, 178);
+        // + 56 v13 fields[0..7] completion lanes 1..7 (113..168)
+        // + 7 circuit-only cells_root completion lanes (169..175, ZERO in producer)
+        // + 8 NINE-LANE fields[0..7] lane-8 columns (176..183 — the two former pads plus the
+        //   flag-day extent bump; `RotatedLayout.fieldLaneCol slot 8 = 176 + slot`)
+        //   → body [4..183] = 180 = 60×3 (clean 3-grouping).
+        assert_eq!(NUM_PRE_LIMBS, 184);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /

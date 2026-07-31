@@ -248,20 +248,16 @@ impl TurnExecutor {
             }
         }
 
-        // boundary-P1 (bug 1): build the NODE-fed admission context from the executor's OWN state
-        // (NOT the turn) — the chain clock, the migration freeze-set, the agent's stored
-        // receipt-chain head, and the Stingray budget slice. The verified Lean gate derives its
-        // `AdmCtx` from THIS (`admCtxOfHost`), so the shadow's clock/frozen/chain-head/budget legs
-        // are decided by the node exactly as the real `apply.rs` admission decides them.
+        // The post-commit observer (the node's durable nullifier frontier). It is driven ONCE,
+        // after the result is final — see the `obs.observe(..)` call below.
+        //
+        // ⚑ A pre-state capture stood here until 2026-07-30, building the NODE-fed admission ctx
+        // (boundary-P1 bug 1) for a Lean↔Rust differential gated on `DREGG_LEAN_SHADOW=1`. That
+        // variable was set by nothing, so the capture stored `None` on every deployed turn and the
+        // differential never ran. The verified producer builds the SAME ctx itself
+        // (`build_shadow_host_ctx`, called from `produce_via_lean`), which is where the bug-1 seam
+        // actually lives and where it is exercised.
         let obs = self.shadow_observer.clone();
-        let host = if obs.enabled() {
-            self.shadow_host_ctx(turn, ledger)
-        } else {
-            // Shadow off: skip the migration / budget mutex locks on the hot path. The diagnostic
-            // ctx is never consumed (capture is a no-op when shadow is disabled).
-            crate::shadow::ShadowHostCtx::diag()
-        };
-        obs.capture_pre_state(turn, ledger, host);
 
         // Factory quota is part of the same turn transaction as the newborn
         // cell. `CreateCellFromFactory` validates/records before all later
@@ -276,20 +272,20 @@ impl TurnExecutor {
         let mut staged_rate_limits = super::execute_tree::StagedRateLimitState::default();
         let result = self.execute_without_shadow(turn, ledger, &mut staged_rate_limits);
 
-        // The verified-Lean DIFFERENTIAL — a pure observer. It logs Lean↔Rust divergence and
-        // advances observer-owned cross-turn accumulators; it does NOT decide this turn, and
-        // `result` is already final above.
+        // Advance observer-owned CROSS-TURN state (the durable nullifier frontier). It does NOT
+        // decide this turn — `result` is already final above.
         //
         // ⚑ THE VERIFIED DECISION IS NOT HERE. It is the authority inversion in
         // `dregg_exec_lean::lean_apply::produce_via_lean` (default-ON via `DREGG_LEAN_PRODUCER`),
         // which runs THIS function as its demoted Rust reference and then installs the verified
-        // post-state and verdict over it. A `strict_veto_enabled`/`lean_vetoes` pair that rolled a
-        // Rust commit back from inside this function was deleted 2026-07-28: it was armed nowhere,
-        // it was dominated by the producer, and its rollback restored the ledger while leaving the
-        // agent's receipt-chain head advanced to a receipt that was never issued — one vetoed turn
-        // permanently bricked the agent (`ReceiptChainMismatch { expected: Some(..), got: None }`,
-        // unsatisfiable forever). `produce_via_lean` undoes that side state properly, via
-        // `checkpoint_producer_reference`/`rollback_producer_reference`.
+        // post-state and verdict over it. Two decisionless mechanisms that used to sit on this
+        // line have been deleted rather than kept beside it: the `strict_veto_enabled`/`lean_vetoes`
+        // pair (2026-07-28 — armed nowhere, dominated by the producer, and its rollback left the
+        // agent's receipt-chain head advanced to a receipt that was never issued, so one vetoed
+        // turn permanently bricked the agent), and the `DREGG_LEAN_SHADOW` differential
+        // (2026-07-30 — the variable was set by nothing and the verdict was dropped by `let _ =`;
+        // its cell-by-cell post-state comparison now decides `ProducerOutcome::divergence` on the
+        // armed producer seam instead).
         obs.observe(turn, ledger, &result, self.block_height);
 
         if !result.is_committed() {
@@ -306,9 +302,10 @@ impl TurnExecutor {
         result
     }
 
-    /// Build the HOST-fed shadow admission context (boundary-P1 bug 1) from the executor's own
-    /// state. Cheap (only runs the shadow when `DREGG_LEAN_SHADOW=1`, but always built so the
-    /// non-shadow path is identical and the seam is exercised by the differential harness).
+    /// Build the HOST-fed admission context (boundary-P1 bug 1) from the executor's own state.
+    /// Its ONE production caller is the verified producer (`lean_apply::produce_via_lean`); it is
+    /// no longer built on the plain `execute` path, which used to build it for a differential
+    /// gated on a variable nothing set.
     ///
     ///   * `block_height` — the chain clock (`self.block_height`);
     ///   * `frozen` — the cells frozen for migration (`self.cell_migrations`), the subset of
