@@ -28,11 +28,14 @@ re-assumed `StarkSound`/`AlgoStarkSound`), where `Rfix` is the LIVE registry
 `v3RegistryHeap`, the SAME registry the soundness apex `lightclient_unfoolable_assembled` and
 `vkOfRegistry` quantify over). Its residual `Prop` hypotheses are EXACTLY (per effect tag `e`):
 
-  1. `Poseidon2SpongeCR hash` — the constraint-semantics half of the commitment-binding
-     ⛑ 2026-07-30: the `sponge` instance LEFT this list — `ApexOodLaneRepair.FriLdtExtractCons` now carries the one per-run Merkle-opening residual it bought. The `hash` instance STAYS: it is APPLIED by the map-op arm and is an unported ENDPOINT, so these theorems REMAIN floor carriers. What follows describes the pair as it stood:
-     `Poseidon2SpongeCR sponge` + `Poseidon2SpongeCR hash` — the ONE shared commitment-binding
-     hash floor (FRI-commitment sponge / constraint-semantics hash; in deployment the same
-     Poseidon2 sponge);
+  1. ⛑ NO refuted `Poseidon2SpongeCR` floor — BOTH instances are gone. The `sponge` instance left
+     2026-07-30 (`ApexOodLaneRepair.FriLdtExtractCons` carries the per-run Merkle-opening residual
+     it bought). The `hash` instance left 2026-07-31: it was VESTIGIAL after the same-day denotation
+     cutover (`97a6520ce`) made the map-op arm `mapOpsArm_of_modeler` project the CARRIED
+     `MapDenotationFamily` modeler directly (no floor). The real map obligation is residual 4,
+     whose non-vacuity at deployed args is `MapDenotationCutoverCheck.deployed_opensTo_inhabited`
+     (floor-free, arbitrary hash). The residual is now the honest FRI-LDT floor (residual 2), not a
+     refuted hash floor;
   2. `FriLdtExtractCons … (tr e) (Rfix e)` — the ∀-d FRI-LDT-@-deployed extraction bundle at the
      DEPLOYED descriptor of tag `e`, at the CORRECTED cons-shaped OOD point
      (`ApexOodLaneRepair`; see the migration note below);
@@ -579,8 +582,9 @@ theorem rfix_sideConditions : ∀ e : EffectIdx, KernelSideConditions (Rfix e)
 /-! ## §5 — ★★ THE CAPSTONE: `AlgoStarkSound hash Rfix` — the kernel is STARK-sound modulo the
 named floor. -/
 
-/-- **`algoStarkSound_kernel` — kernel STARK-soundness over the REAL registry.** From EXACTLY the
-named floor — {`Poseidon2SpongeCR hash`} (⛑ ×2 until 2026-07-30; the `sponge` instance is gone)
+/-- **`algoStarkSound_kernel` — kernel STARK-soundness over the REAL registry.** ⛑ From NO refuted
+`Poseidon2SpongeCR` floor (both instances shed — the `sponge` on 2026-07-30, the vestigial `hash`
+on 2026-07-31 when the map-op arm went to the carried `MapDenotationFamily` modeler)
 + per tag {`FriLdtExtractCons (Rfix e)`, `BusModelFamily
 (Rfix e)`, `MapDenotationFamily (Rfix e)`, `MapTableAssembly (Rfix e)`} — the FULL
 `AlgoStarkSound hash Rfix …`: every `verifyAlgo`-accepted batch at ANY published effect tag yields
@@ -592,7 +596,7 @@ effect's FRI extraction bundle names ITS extracted trace). NO `sorry`, NO carrie
 `StarkSound`/`AlgoStarkSound`, NO `verifyBatch`. -/
 theorem algoStarkSound_kernel {F : Type*} [Field F] [DecidableEq F]
     (sponge : List ℤ → ℤ)
-    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -611,7 +615,7 @@ theorem algoStarkSound_kernel {F : Type*} [Field F] [DecidableEq F]
   algoStarkSound_of_pointwise hash Rfix perm RATE toNat params vk
     (fullChecks core A toNat params.powBits) initState logN view
     (fun e =>
-      algoStarkSound_of_mapShape (Rfix e) sponge hash hCRh fp embed perm RATE toNat
+      algoStarkSound_of_mapShape (Rfix e) sponge hash fp embed perm RATE toNat
         params vk core A initState logN view (tr e)
         (rfix_sideConditions e).2
         (rfix_sideConditions e).1.1 (rfix_sideConditions e).1.2
@@ -651,7 +655,7 @@ deployed arguments (see `docs/WOUND-apex-premise-vacuity-2026-07-24.md` §2 — 
 this bundle is exhibited anywhere). -/
 theorem algoStarkSound_kernel_noOodShape {F : Type*} [Field F] [DecidableEq F]
     (sponge : List ℤ → ℤ)
-    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -667,7 +671,7 @@ theorem algoStarkSound_kernel_noOodShape {F : Type*} [Field F] [DecidableEq F]
         logN view (tr e) (Rfix e)) :
     AlgoStarkSound hash Rfix perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-  algoStarkSound_kernel sponge hash hCRh fp embed perm RATE toNat params vk core A initState
+  algoStarkSound_kernel sponge hash fp embed perm RATE toNat params vk core A initState
     logN view tr
     (fun e => (kernelPremise_adds_no_strength sponge perm RATE toNat params vk core A initState
       logN view tr e).mpr (hfri e))

@@ -35,9 +35,13 @@ The conclusion rests on EXACTLY the following, all NAMED hypotheses (never axiom
 `StarkSound`/`EffectDecodeBridge`):
 
   ALLOWED FLOOR (the crypto modulus — do NOT discharge):
-    * `Poseidon2SpongeCR hash` — the commitment-binding hash floor. ⛑ 2026-07-30 the second
-      instance `Poseidon2SpongeCR sponge` is GONE (`FriLdtExtractCons` carries the residual it
-      bought); the `hash` one is an unported ENDPOINT and this theorem is still its carrier.
+    * `Poseidon2SpongeCR hash` — the commitment-binding hash floor. ⛑ 2026-07-30 the `sponge`
+      instance is GONE (`FriLdtExtractCons` carries the residual it bought). ⛑ 2026-07-31 the STARK
+      layer (`algoStarkSound_kernel`) shed its vestigial `hash` binder too. This theorem STILL
+      carries `Poseidon2SpongeCR hash`, but now only for the STATE-DECODE apex
+      `ClosureFinal.lightclient_unfoolable_closed_final_genuine` (the published-commitment↔kernel
+      binding), where the floor is GENUINELY load-bearing — that is Site 2 of the weld repair, not
+      the STARK layer.
     * `hfri : ∀ e, FriLdtExtractCons … (Rfix e)` — the `{FRI-LDT @ deployed}` extraction, per effect tag
       at the CORRECTED cons-shaped OOD point (`ApexOodLaneRepair`). ⚑ MIGRATED 2026-07-25: this was
       `AlgoStarkSoundGeneral.FriLdtExtract`, whose singleton OOD conjunct is REFUTED on accepting
@@ -52,10 +56,13 @@ The conclusion rests on EXACTLY the following, all NAMED hypotheses (never axiom
 
   THE ONE GENUINE ASSUMPTION beyond the allowed modulus (the residual the SCOPE doc names,
   `docs/reference/CONFIG-EVOLUTION-SOUNDNESS-SCOPE.md` §Layer-1.3):
-    * `hrec : ∀ e, MapReconcileFamily … (Rfix e)` — its ONLY non-vacuous content is the
-      `CanonicalHeapTree` knowledge-extraction at the 7 mapOp effects (tags 17/27/28 accumulator
-      inserts, 56 heapWrite, 39 refusal fields-write, 19 spawn, 18 factory); VACUOUS at every
-      lookup-shaped member. This is `CanonicalHeapExtract`, pending its own modeling lane.
+    * `hrec : ∀ e, MapDenotationFamily … (Rfix e)` — the `.mapOp` DENOTATION modeller (the deployed
+      arity-3 indexed-Merkle row denotation `MapOp.holdsAt`, per accepting batch). ⛑ 2026-07-30 this
+      REPLACED `MapReconcileFamily`, the arity-2 gate model `ApexMapOpVacuityJoin` proves FALSE on
+      every deployed row. Non-vacuous content at the 7 mapOp effects (tags 17/27/28 accumulator
+      inserts, 56 heapWrite, 39 refusal fields-write, 19 spawn, 18 factory), VACUOUS at every
+      lookup-shaped member; inhabitable floor-free at deployed args by
+      `MapDenotationCutoverCheck.deployed_opensTo_inhabited`.
 
   NAMED-BUT-NOT-YET-DISCHARGED (the honest gap vs the aspiration: the SCOPE doc's "NEEDS-A-LEMMA"
   wiring items — NO discharger exists in the tree; carried, NOT claimed discharged):
@@ -123,7 +130,9 @@ local notation "Slive" =>
 
 /-- **`kernelConfigSound` — verifyBatch-accept over `Rfix` ⟹ a REAL kernel-config transition.**
 
-From the STARK-side floor (Poseidon2 CR ×1 — ⛑ ×2 until 2026-07-30 —, `FriLdtExtractCons`, `BusModelFamily`, `MapReconcileFamily`,
+From the STARK-side residual (⛑ NO refuted Poseidon2 CR floor as of 2026-07-31 — the STARK layer shed
+it; CR now enters only via the state-decode `DeployedRefines`/`ClosureFinal` apex, Site 2 —,
+`FriLdtExtractCons`, `BusModelFamily`, `MapDenotationFamily`,
 `MapTableAssembly`, `DeployedRefines`) composed through `algoStarkSound_kernel` +
 `starkSound_of_verifyAlgo`, and the config-side genuine readout bundle (`ClosureReadouts`, `mkLog`,
 `WitnessDecodes`) composed through `closedLogExtract_all_genuine`, a `verifyBatch`-accepted batch at
@@ -184,7 +193,7 @@ theorem kernelConfigSound
   -- STARK layer: the ENUMERATED kernel object → AlgoStarkSound → StarkSound (opaque carrier gone).
   haveI hAlgo : AlgoStarkSound hash Rfix perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-    algoStarkSound_kernel sponge hash hCRh fp embed perm RATE toNat params vk core A
+    algoStarkSound_kernel sponge hash fp embed perm RATE toNat params vk core A
       initState logN view tr hfri hbusF hrec hasm
   haveI hSS : StarkSound hash Rfix :=
     starkSound_of_verifyAlgo hash Rfix perm RATE toNat params vk

@@ -96,25 +96,27 @@ arity-3 indexed-Merkle root is not ALSO the arity-2 `mapRoot` of some heap. That
 argument uses and nothing more. It is strictly WEAKER than `Poseidon2SpongeCR` (§1 discharges it
 from CR), it is REFUTABLE (§1 refutes it at the constant hash, so it is not a tautology), and it is
 not known false at deployed width — so the refutations below SURVIVE the felt-width refutation of
-CR, which the apex's own premise does not. Exactly two declarations bind the CR floor, both named
-`…_under_the_apex_floor`, and they exist only so the composition onto the apex's OWN hypothesis is
-machine-checked rather than left to a reader.
+CR, which the retired model's premise does not. ⛑ 2026-07-31: the backbone binds NO CR floor. The
+two `…_under_the_apex_floor` CR-carrier receipts are DELETED — they existed only to compose the
+refutation onto the apex's OWN `hCRh`, and `algoStarkSound_kernel` no longer binds one (Site 1 of
+the weld de-vacuuming shed the vestigial binder).
 
 ## ⚠ THE IMPORT THIS FILE WANTED AND COULD NOT TAKE
 
 The intended fourth import is `Dregg2.Circuit.AlgoStarkSoundKernel`, so that the apex THEOREM
 `algoStarkSound_kernel` and this refutation would share a build unit by name and not only by type.
-It is not taken because that module does not elaborate at this commit, for a fault that is not this
-lane's: `AlgoStarkSoundKernel.lean:341` (`side_setField`) hits a deterministic `isDefEq` heartbeat
-timeout. The Prop refuted below is nevertheless the apex's hypothesis VERBATIM —
-`MapReconcileFamily hash perm RATE toNat params vk core A initState logN view (tr e) (Rfix e)`, the
-same definition from the same module the kernel consumes — so adding the import is a one-line change
-with no new proof obligation the day the kernel is green.
+It is not taken because that module did not elaborate at the original commit (a `side_setField`
+`isDefEq` heartbeat timeout not this lane's; it builds now). ⛑ 2026-07-31: the Prop refuted below is
+`MapReconcileFamily …`, which was the apex's hypothesis VERBATIM UNTIL the 2026-07-30 denotation
+cutover replaced the apex's `hrec` slot with `MapDenotationFamily` (arity-3 denotation, inhabitable
+floor-free). So this file is now a RECEIPT that the RETIRED gate model was false on deployed traces,
+not a live refutation of the deployed apex's current premise.
 
 ## Discipline
-Sorry-free; no `native_decide`; nothing weakened, widened or relaxed to make this build — in
-particular the `#floor_ratchet` baseline is NOT edited, which is why the backbone is floor-free
-rather than composed from the grandfathered CR carrier. All three imported modules are read-only;
+Sorry-free; no `native_decide`; nothing weakened, widened or relaxed to make this build. ⛑
+2026-07-31 the `#floor_ratchet` baseline IS edited — to DELETE the two `…_under_the_apex_floor`
+carriers this file used to add (the backbone was always floor-free; those receipts are now
+purposeless). All three imported modules are read-only;
 no deployed descriptor, emit path, JSON or Rust byte is touched. The `decide`s are disequalities of
 deployed column literals and nothing else; ROOTED in `Dregg2.lean` (marginal cost 5.5s — all three
 imports were already in the root cone).
@@ -179,16 +181,6 @@ theorem rootSeparated_false_at_constant_hash (dep : Nat) (c : List ImtLeaf)
     have hmap : c.map (imtLeafHash (fun _ => 0)) = c.map (fun _ => (0 : ℤ)) := rfl
     rw [hmap, List.map_const', hc]
   rw [mapRoot, h1, h2]
-
-/-- **⚑ THE CR BRIDGE (carrier #1 of 2).** `MapReconcileImtRepoint.imtRoot_ne_mapRoot` discharges the
-separation from the apex's OWN floor `Poseidon2SpongeCR hash` — the very instance
-`algoStarkSound_kernel` binds as `hCRh`. This declaration takes a hypothesis the tree proves false at
-deployed BabyBear width and is therefore vacuous THERE; it exists so that the composition onto the
-apex's own terms is machine-checked. Every theorem in §§1-6 is independent of it. -/
-theorem rootSeparated_of_poseidon2CR_under_the_apex_floor
-    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash) (dep : Nat) (c : List ImtLeaf)
-    (hc : c.length = 2 ^ dep) : RootSeparated hash dep c :=
-  fun h hlen heq => imtRoot_ne_mapRoot hash hCRh dep c h hc hlen heq.symm
 
 /-! ## §1 — THE DEPLOYED-SHAPED ROW, AND THE GENERIC REFUTATION.
 
@@ -513,10 +505,15 @@ theorem mapReconcileFamily_false_at_tag56
   intro hfam
   exact mapReconcileModelOk_false_at_tag56 hash c hsep (hfam pi π hacc)
 
-/-- **★★ THE APEX'S `hrec` ARGUMENT, REFUTED AS A WHOLE.** This Prop is exactly the `hrec` slot of
-`AlgoStarkSoundKernel.algoStarkSound_kernel` / `algoStarkSound_kernel_noOodShape` at
-`tr := trImt hash c`. On the deployed-shaped extracted trace it is FALSE — so the apex, fed the
-traces the deployed prover actually produces, cannot be applied at all. -/
+/-- **★★ THE RETIRED ARITY-2 GATE MODEL, REFUTED AS A WHOLE.** ⚑ 2026-07-31 LABEL CORRECTION: this
+Prop is `∀ e, MapReconcileFamily …`, the arity-2 GATE model. It USED to be the `hrec` slot of
+`AlgoStarkSoundKernel.algoStarkSound_kernel`, but the 2026-07-30 denotation cutover (`97a6520ce`)
+REPLACED that slot with `MapDenotationFamily` (the arity-3 indexed-Merkle DENOTATION modeller,
+inhabitable floor-free at deployed args by `MapDenotationCutoverCheck.deployed_opensTo_inhabited`).
+So this is a RECEIPT that the retired model was false on every deployed-shaped extracted trace — the
+wound this file was built to expose, now CLOSED by the cutover — NOT a live refutation of the
+deployed apex's current premise. (The theorem statement is unchanged and valid; only the "this is
+the apex's `hrec`" claim was stale.) -/
 theorem apex_hrec_false_at_deployed_map_traces
     (c : List ImtLeaf) (hsep : RootSeparated hash MAP_TREE_DEPTH c)
     (pi : BatchPublicInputs) (π : BatchProof)
@@ -574,21 +571,13 @@ theorem deployed_mapOp_census
    mapReconcileModelOk_false_at_tag39 hash c hsep,
    mapReconcileModelOk_false_at_tag56 hash c hsep⟩
 
-/-- **⚑⚑ THE COMPOSITION ONTO THE APEX'S OWN TERMS (carrier #2 of 2).** The same refutation with
-the separation discharged from `Poseidon2SpongeCR hash` — the instance `algoStarkSound_kernel` binds
-as `hCRh`. Read it as: *on the apex's own floor, at the apex's own registry, fed the traces the
-deployed prover produces, the apex's own `hrec` is FALSE.* This declaration is vacuous exactly where
-that floor is (deployed BabyBear width); `apex_hrec_false_at_deployed_map_traces` above is not, and
-is the statement to cite. -/
-theorem apex_hrec_false_at_deployed_map_traces_under_the_apex_floor
-    (hCRh : Poseidon2SpongeCR hash)
-    (c : List ImtLeaf) (hc : c.length = 2 ^ MAP_TREE_DEPTH)
-    (pi : BatchPublicInputs) (π : BatchProof)
-    (hacc : AcceptsFull perm RATE toNat params vk core A initState logN view pi π) :
-    ¬ (∀ e : EffectIdx, MapReconcileFamily hash perm RATE toNat params vk core A initState logN
-        view (trImt hash c e) (Rfix e)) :=
-  apex_hrec_false_at_deployed_map_traces hash perm RATE toNat params vk core A initState logN view c
-    (rootSeparated_of_poseidon2CR_under_the_apex_floor hash hCRh MAP_TREE_DEPTH c hc) pi π hacc
+-- ⛑ 2026-07-31: the TWO `…_under_the_apex_floor` CR-carrier receipts
+-- (`rootSeparated_of_poseidon2CR_under_the_apex_floor`, this one) are DELETED. Their sole purpose
+-- was to machine-check the retired-model refutation onto the apex's OWN `hCRh` — and
+-- `AlgoStarkSoundKernel.algoStarkSound_kernel` no longer binds one (Site 1 shed the vestigial
+-- binder). With the apex's floor gone there is nothing to compose onto, so keeping two vacuous
+-- CR carriers would be a no-op retained for a constituency that no longer exists. The floor-free
+-- `apex_hrec_false_at_deployed_map_traces` above is the whole content and it survives.
 
 end Family
 
@@ -638,7 +627,6 @@ theorem censused_columns_are_the_deployed_ones :
 
 #assert_axioms RootSeparated
 #assert_axioms rootSeparated_false_at_constant_hash
-#assert_axioms rootSeparated_of_poseidon2CR_under_the_apex_floor
 #assert_axioms mapReconcileModelOk_false_of_imtRootedRow
 #assert_axioms mapReconcileFamily_false_of_imtRootedRow
 #assert_axioms mapOp_mem_Rfix17
@@ -658,7 +646,6 @@ theorem censused_columns_are_the_deployed_ones :
 #assert_axioms mapReconcileFamily_false_at_tag56
 #assert_axioms apex_hrec_false_at_deployed_map_traces
 #assert_axioms apex_is_dead_either_way
-#assert_axioms apex_hrec_false_at_deployed_map_traces_under_the_apex_floor
 #assert_axioms censused_rows_declare_and_fire
 #assert_axioms censused_columns_are_the_deployed_ones
 #assert_axioms deployed_mapOp_census

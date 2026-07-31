@@ -189,7 +189,7 @@ theorem kernelConfigSoundAvail
   -- STARK layer: the ENUMERATED hardened kernel object → AlgoStarkSound → StarkSound (opaque gone).
   haveI hAlgo : AlgoStarkSound hash RfixAvail perm RATE toNat params vk
       (fullChecks core A toNat params.powBits) initState logN view :=
-    algoStarkSound_kernelAvail sponge hash hCRh fp embed perm RATE toNat params vk core A
+    algoStarkSound_kernelAvail sponge hash fp embed perm RATE toNat params vk core A
       initState logN view tr hfri hbusF hrec hasm hlegs0 hlegs4
   haveI hSS : StarkSound hash RfixAvail :=
     starkSound_of_verifyAlgo hash RfixAvail perm RATE toNat params vk

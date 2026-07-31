@@ -15,15 +15,28 @@ parameters and which therefore made every one of those statements vacuous at dep
 A port measured only by what CLEARS cannot tell "the tree improved" from "the ruler moved". So this
 module pins BOTH directions on every build, from the ELABORATED environment:
 
-  * **§1 PORTED — 42 declarations that MUST NOT bind `Poseidon2SpongeCR` any more.** If one of
+  * **§1 PORTED — 56 declarations that MUST NOT bind `Poseidon2SpongeCR` any more.** If one of
     them binds it again, someone re-introduced the refuted floor into a statement that had shed it,
     and the build goes red HERE rather than a reviewer noticing a binder.
-  * **§2 RETAINED — 16 declarations that MUST STILL bind it.** These carry the OTHER instance,
-    `Poseidon2SpongeCR hash`, which the map-op arm APPLIES (`memoryLegs_of_mapShape` →
-    `mapOpsArm_of_modeler hash hCRh`). An applied floor is an ENDPOINT: it needs a hand-written
-    extractor, not a mechanical re-point, and the sponge-side port cannot and does not retire it.
-    **If these ever clear without the extractor landing, this file is the thing that says so.** A
-    declaration that clears everything is a broken gate, not a fixed tree.
+  * **§2 RETAINED — 2 declarations that MUST STILL bind it.** `KernelConfigSoundness.kernelConfigSound`
+    and `KernelConfigSoundnessAvail.kernelConfigSoundAvail` carry the OTHER instance,
+    `Poseidon2SpongeCR hash`, and GENUINELY apply it — not at the map-op arm, but at the STATE-DECODE
+    apex `ClosureFinal.lightclient_unfoolable_closed_final{,_avail}` (the published-commitment↔kernel
+    binding, `EffectVmEmitRotationV3.rotV3_binds_published` / the `CommitSurface` CR bundle). That is
+    Site 2 of the weld repair — a genuine re-proof (`_binds_or_collides`), not a mechanical re-point —
+    and the sponge/STARK-side ports do not retire it.
+    **If these ever clear without the state-decode de-vacuuming landing, this file is the thing that
+    says so.** A declaration that clears everything is a broken gate, not a fixed tree.
+
+  ⛑ 2026-07-31: fourteen names LEFT §2 for §1. The `2f72e093f` prose above once said the map-op arm
+    APPLIES the floor via `mapOpsArm_of_modeler hash hCRh`. That became FALSE four hours later
+    (`97a6520ce`, 2026-07-30 22:32): the denotation cutover retired `mapOp_holds_of_mapReconcile`
+    and made `mapOpsArm_of_modeler` project the CARRIED, floor-free `MapDenotationFamily` modeler.
+    The `Poseidon2SpongeCR hash` binder on `memoryLegs_of_mapShape` / `algoStarkSound_of_mapShape` /
+    the map-shape fan-out apexes / `algoStarkSound_kernel{,Avail}` was therefore VESTIGIAL and is
+    deleted. The real map obligation is `MapDenotationFamily`, inhabitable floor-free at deployed
+    args by `MapDenotationCutoverCheck.deployed_opensTo_inhabited` — the tree improved, the ruler did
+    not move.
 
 Both lists are checked FAIL-CLOSED: a name that no longer resolves is an error too, so the tooth
 cannot quietly stop measuring by having its subjects renamed out from under it.
@@ -111,26 +124,32 @@ def portedOffTheFloor : List Name :=
   , `Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_transferV3_extChallenges
   , `Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_decoded_cons
   , `Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_transferV3_cons
-  , `Dregg2.Circuit.OodSingletonRepair.mainAirAcceptF_of_decodedLdtLinkExtCons ]
-
-/-! ## §2 — RETAINED: the APPLIED `Poseidon2SpongeCR hash` endpoint, deliberately unported. -/
-
-def retainedEndpointCarriers : List Name :=
-  [ `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCell
-  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCellFromFactory
-  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_heapWrite
-  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteCreate
-  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteSpend
+  , `Dregg2.Circuit.OodSingletonRepair.mainAirAcceptF_of_decodedLdtLinkExtCons
+  -- ⛑ 2026-07-31: the map-shape STARK layer sheds its VESTIGIAL `Poseidon2SpongeCR hash` binder
+  -- (the map-op arm went floor-free at the `97a6520ce` denotation cutover; the binder never applied).
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.memoryLegs_of_mapShape
   , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_of_mapShape
   , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_of_mapShape_noOodShape
-  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_refusal
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteSpend
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteCreate
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCell
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCellFromFactory
   , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_spawn
   , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_spawnWrite
-  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.memoryLegs_of_mapShape
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_refusal
+  , `Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_heapWrite
   , `Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel
   , `Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel_noOodShape
-  , `Dregg2.Circuit.AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail
-  , `Dregg2.Circuit.KernelConfigSoundness.kernelConfigSound
+  , `Dregg2.Circuit.AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail ]
+
+/-! ## §2 — RETAINED: the APPLIED `Poseidon2SpongeCR hash` endpoint, deliberately unported.
+
+Only the TWO kernel-config apexes remain: their `hash` floor is applied at the STATE-DECODE apex
+`ClosureFinal.lightclient_unfoolable_closed_final{,_avail}` (published-commitment↔kernel binding),
+which is genuinely load-bearing and is Site 2 of the weld repair. -/
+
+def retainedEndpointCarriers : List Name :=
+  [ `Dregg2.Circuit.KernelConfigSoundness.kernelConfigSound
   , `Dregg2.Circuit.KernelConfigSoundnessAvail.kernelConfigSoundAvail ]
 
 elab "#opening_residual_cutover_check" : command => do

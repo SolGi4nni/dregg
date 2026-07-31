@@ -44,11 +44,11 @@ parallel of `KernelConfigSoundness` at the hardened registry.
 capstone) onto `ApexOodLaneRepair.FriLdtExtractCons` / `algoStarkSound_of_memoryLegs_cons`; §3b is
 the zero-added-strength receipt for the replacement.
 
-Same named floor as `algoStarkSound_kernel` per tag {`Poseidon2SpongeCR hash` — ⛑ ×2 until
-2026-07-30, the `sponge` instance is gone —, `FriLdtExtractCons`,
-`BusModelFamily`}, PLUS: at tags 0/4 the umem `MemoryLegs`, at every other tag the `MapReconcileFamily` +
-`MapTableAssembly` pair `algoStarkSound_kernel` already carries. Nothing faked; `.umemOp` handled by the
-umem leg; the two graduated-shape legs discharge `rfl`.
+Same residual as `algoStarkSound_kernel` per tag {⛑ NO refuted `Poseidon2SpongeCR` floor (both
+instances shed — `sponge` 2026-07-30, vestigial `hash` 2026-07-31), `FriLdtExtractCons`,
+`BusModelFamily`}, PLUS: at tags 0/4 the umem `MemoryLegs`, at every other tag the
+`MapDenotationFamily` + `MapTableAssembly` pair `algoStarkSound_kernel` already carries. Nothing
+faked; `.umemOp` handled by the umem leg; the two graduated-shape legs discharge `rfl`.
 
 ## Discipline
 
@@ -95,10 +95,10 @@ Assembled POINTWISE: tags 0/4 route through `algoStarkSound_of_memoryLegs` at th
 the carried umem `MemoryLegs`; every other tag is the `algoStarkSound_of_mapShape` route of
 `algoStarkSound_kernel`, transported across `RfixAvail_off`. -/
 
-/-- **`algoStarkSound_kernelAvail` — kernel STARK-soundness over the DEPLOYED HARDENED registry.** From
-EXACTLY the named floor of `algoStarkSound_kernel` per tag — {`Poseidon2SpongeCR hash` (⛑ ×2 until
-2026-07-30), `FriLdtExtractCons`,
-`BusModelFamily`} + per off-debit tag {`MapReconcileFamily`, `MapTableAssembly`} — PLUS, at the two
+/-- **`algoStarkSound_kernelAvail` — kernel STARK-soundness over the DEPLOYED HARDENED registry.** ⛑ From
+NO refuted `Poseidon2SpongeCR` floor (both instances shed, the vestigial `hash` on 2026-07-31), per
+tag {`FriLdtExtractCons`,
+`BusModelFamily`} + per off-debit tag {`MapDenotationFamily`, `MapTableAssembly`} — PLUS, at the two
 BALANCE-DEBITING tags (0 transfer, 4 burn), the umem `MemoryLegs` (`hlegs0`/`hlegs4`) at the welded avail
 members (the `.umemOp` memory-checking leg replacing the map-shape route), the full
 `AlgoStarkSound hash RfixAvail …`. Assembled POINTWISE: tags 0/4 via `algoStarkSound_of_memoryLegs`, every
@@ -106,7 +106,7 @@ other tag via the `algoStarkSound_kernel` map-shape route transported across `Rf
 NO carrier, NO re-assumed `StarkSound`/`AlgoStarkSound`. -/
 theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
     (sponge : List ℤ → ℤ)
-    (hash : List ℤ → ℤ) (hCRh : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (fp : List ℤ → F) (embed : ℤ → F)
     (perm : List ℤ → List ℤ) (RATE : Nat) (toNat : ℤ → Nat)
     (params : FriParams) (vk : RecursionVk ℤ) (core : FriCore ℤ) (A : FieldArith ℤ)
@@ -154,7 +154,7 @@ theorem algoStarkSound_kernelAvail {F : Type*} [Field F] [DecidableEq F]
           rw [RfixAvail_off h0 h4]
           have hfrie := hfri e; have hbusFe := hbusF e
           rw [RfixAvail_off h0 h4] at hfrie hbusFe
-          exact algoStarkSound_of_mapShape (Rfix e) sponge hash hCRh fp embed perm RATE toNat
+          exact algoStarkSound_of_mapShape (Rfix e) sponge hash fp embed perm RATE toNat
             params vk core A initState logN view (tr e)
             (rfix_sideConditions e).2 (rfix_sideConditions e).1.1 (rfix_sideConditions e).1.2
             hfrie hbusFe (hrec e) (hasm e))

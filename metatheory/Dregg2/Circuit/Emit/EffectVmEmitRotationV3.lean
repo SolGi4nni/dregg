@@ -95,6 +95,7 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
 `Poseidon2SpongeCR` hypothesis.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
+import Dregg2.Circuit.Emit.WireCommitBindsOrCollides
 import Dregg2.Circuit.Emit.RotatedLayout
 -- The mod-p gate-denotation toolkit (field-faithful `holdsVm ≡ 0 [ZMOD p]`): positive
 -- glue `eqToModEq`/`gate_modEq_iff`, negative-tooth glue `not_modEq_zero_of_canon`. Transfer
@@ -132,6 +133,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmitV2
 open Dregg2.Circuit.Emit.EffectVmEmitRotationR
+open Dregg2.Circuit.Emit.WireCommitBindsOrCollides (wireCommitR_binds_or_collides
+  wireCommitRFind_spec wireCommitRColl_refutable_on_agreement WireColl1)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
   (RotCaveatManifest caveatCommit caveatCommit_binds caveatCommitRc caveatCommitRc_binds)
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
@@ -1548,6 +1551,108 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
 #assert_axioms rotV3_caveat_binds_manifest_and_rc
 #assert_axioms rotV3_moved_rc_moves_the_published_caveat_commit
 #assert_axioms rotV3_binds_published
+
+/-! ## §4½ — ⚑ THE FLOOR-FREE PUBLISHED-COMMITMENT BINDING (Site 2 of the weld de-vacuuming).
+
+`rotV3_binds_published` binds the published PIs to the decoded kernel limbs under `hCR :
+Poseidon2SpongeCR hash`, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES
+FALSE at deployed BabyBear width — so at the deployed hash it is a true-but-empty implication, and so
+is every rung above it (`descriptorRefines`, the per-effect refinement, the apex): "a Mina settlement
+today certifies the AIR's arithmetic, not that a dregg turn happened."
+
+`rotV3_before_binds_or_collides` is the OLD-state-commitment half restated WITHOUT the floor, by the
+same `_binds_or_collides` idiom the map leaf received and the faithful 8-felt commitment already
+carries: two `Satisfied2Faithful` witnesses of ANY rotated cohort member (transfer INCLUDED — the
+"once, for all 26" keystone above is stated at the same `d`) publishing the SAME rotated OLD commit
+EITHER agree on the whole rotated before block AND its iroot, OR EXHIBIT a genuine collision of the
+deployed sponge at the two distinct limb lists `wireCommitRFind` returns. NO hypothesis on `hash`.
+This is what makes "Mina verified the proof" mean "a dregg turn happened, OR the prover found a
+Poseidon2 collision" — a satisfiable antecedent at the deployed hash, with the crypto residual named
+in the conclusion rather than assumed away in a refuted premise.
+
+BOTH POLARITIES, FLOOR-FREE (no `Function.Injective hash`, which is the refuted CR floor inj-spelled):
+`rotV3_before_forgery_exhibits_collision` is the forged pole — a forged OLD commitment that publishes
+the same digest on a DIFFERENT before-block is refused UNLESS the prover HANDS BACK a genuine sponge
+collision; and `WireCommitBindsOrCollides.wireCommitRColl_refutable_on_agreement` is the refutability
+canary — on agreeing claims the residual is FALSE, so the disjunction is not a free `True`. The honest
+pole is that `rotV3_before_binds_or_collides` is UNCONDITIONAL: an honest trace whose limbs match lands
+in the left disjunct with no hypothesis at all. -/
+theorem rotV3_before_binds_or_collides (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
+    (hgrad : graduable d = true)
+    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
+    (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
+    (hpubOld : (envAt t i).pub d.piCount = (envAt t' j).pub d.piCount)
+    (hcCanonOld : 0 ≤ (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
+        ∧ (envAt t i).loc (d.traceWidth + B_STATE_COMMIT) < 2013265921)
+    (hcCanonOld' : 0 ≤ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT)
+        ∧ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT) < 2013265921) :
+    (preLimbsAt d.traceWidth (envAt t i).loc = preLimbsAt d.traceWidth (envAt t' j).loc
+      ∧ (envAt t i).loc (d.traceWidth + B_IROOT) = (envAt t' j).loc (d.traceWidth + B_IROOT))
+    ∨ WireColl1 hash (preLimbsAt d.traceWidth (envAt t i).loc)
+        ((envAt t i).loc (d.traceWidth + B_IROOT))
+        (preLimbsAt d.traceWidth (envAt t' j).loc)
+        ((envAt t' j).loc (d.traceWidth + B_IROOT)) := by
+  have hp := rotV3_pins permOut hash d minit mfin maddrs t hgrad hf
+  have hp' := rotV3_pins permOut hash d minit' mfin' maddrs' t' hgrad hf'
+  have hq := rotV3_publishes permOut hash d minit mfin maddrs t hgrad hf
+  have hq' := rotV3_publishes permOut hash d minit' mfin' maddrs' t' hgrad hf'
+  have hc := (hq i hi).1 hfirst
+  have hc' := (hq' j hj).1 hfirst'
+  have hcEq : (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
+      = (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT) :=
+    canon_eq_of_modEq hcCanonOld hcCanonOld'
+      (calc (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
+            ≡ (envAt t i).pub d.piCount [ZMOD 2013265921] := hc
+        _ = (envAt t' j).pub d.piCount := hpubOld
+        _ ≡ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT) [ZMOD 2013265921] := hc'.symm)
+  have hwire : wireCommitR hash (preLimbsAt d.traceWidth (envAt t i).loc)
+      ((envAt t i).loc (d.traceWidth + B_IROOT))
+      = wireCommitR hash (preLimbsAt d.traceWidth (envAt t' j).loc)
+          ((envAt t' j).loc (d.traceWidth + B_IROOT)) := by
+    rw [← (hp i hi).1, ← (hp' j hj).1]
+    show (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
+      = (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT)
+    exact hcEq
+  exact wireCommitR_binds_or_collides hash
+    (by rw [preLimbsAt_length, preLimbsAt_length]) hwire
+
+/-- **FORGED POLE, FLOOR-FREE.** Two `Satisfied2Faithful` witnesses of the same cohort member that
+publish the SAME rotated OLD commit but whose decoded before-blocks DIFFER (`hne`) HAND BACK a genuine
+collision of the deployed sponge — a forged OLD commitment on different limbs is refused unless the
+prover exhibits a real `SpongeColl`. No hypothesis on `hash`: the left disjunct of
+`rotV3_before_binds_or_collides` is excluded by `hne`, leaving the residual. -/
+theorem rotV3_before_forgery_exhibits_collision (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
+    (hgrad : graduable d = true)
+    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
+    (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
+    (hpubOld : (envAt t i).pub d.piCount = (envAt t' j).pub d.piCount)
+    (hcCanonOld : 0 ≤ (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
+        ∧ (envAt t i).loc (d.traceWidth + B_STATE_COMMIT) < 2013265921)
+    (hcCanonOld' : 0 ≤ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT)
+        ∧ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT) < 2013265921)
+    (hne : ¬ (preLimbsAt d.traceWidth (envAt t i).loc = preLimbsAt d.traceWidth (envAt t' j).loc
+      ∧ (envAt t i).loc (d.traceWidth + B_IROOT) = (envAt t' j).loc (d.traceWidth + B_IROOT))) :
+    WireColl1 hash (preLimbsAt d.traceWidth (envAt t i).loc)
+        ((envAt t i).loc (d.traceWidth + B_IROOT))
+        (preLimbsAt d.traceWidth (envAt t' j).loc)
+        ((envAt t' j).loc (d.traceWidth + B_IROOT)) := by
+  rcases rotV3_before_binds_or_collides permOut hash d minit mfin maddrs t minit' mfin' maddrs' t'
+    hgrad hf hf' i j hi hj hfirst hfirst' hpubOld hcCanonOld hcCanonOld' with hbind | hcoll
+  · exact absurd hbind hne
+  · exact hcoll
+
+#assert_axioms rotV3_before_binds_or_collides
+#assert_axioms rotV3_before_forgery_exhibits_collision
 
 /-! ## §5 — the v3 registry: all 27 v2-cohort members (+ the 8 widened), rotated. -/
 

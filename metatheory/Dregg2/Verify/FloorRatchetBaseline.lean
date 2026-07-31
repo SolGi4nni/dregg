@@ -1594,25 +1594,13 @@ def manual : Array String := #[
   -- `deployed_mapOp_census` SURVIVE the felt-width refutation of CR that the apex's own premise
   -- does not. Those are the statements to cite; none of them is a carrier.
   --
-  --   rootSeparated_of_poseidon2CR_under_the_apex_floor — CR ⟹ `RootSeparated`, one application of
-  --     `MapReconcileImtRepoint.imtRoot_ne_mapRoot`.
-  --   apex_hrec_false_at_deployed_map_traces_under_the_apex_floor — the same refutation with the
-  --     separation discharged that way.
-  --
-  -- ⚑ THE FLOOR IS THEIR SUBJECT, NOT THEIR SUPPORT (the `padImtRoot8Coll_refutable_of_injective`
-  -- reasoning above). Their whole content is "on the apex's OWN floor — the very instance
-  -- `algoStarkSound_kernel` binds as `hCRh` — at the apex's own registry, fed the traces the
-  -- deployed prover produces, the apex's own `hrec` is FALSE." Deleting them would leave that last
-  -- step to a reader, which is precisely the hand-composition across disjoint cones the module
-  -- exists to end. Neither is a keystone and nothing consumes either.
-  --
-  -- PORT NAMED, NOT TAKEN: direction (a) is reachable here and is the follow-up —
-  -- `MapMerkleRoot.perfectRoot_binds_or_collides` + `perfectRootFind` already supply the total
-  -- extractor, and the leaf step is a collision at ONE named pair whose lists have lengths 3 and 2,
-  -- so `RootSeparated` can be discharged as `binding ∨ named-refutable-collision` with no floor at
-  -- all. That is a separate piece of work and was not smuggled into this change.
-  "Dregg2.Circuit.ApexMapOpVacuityJoin.apex_hrec_false_at_deployed_map_traces_under_the_apex_floor",
-  "Dregg2.Circuit.ApexMapOpVacuityJoin.rootSeparated_of_poseidon2CR_under_the_apex_floor",
+  -- ⛑ 2026-07-31: the TWO `…_under_the_apex_floor` CR-carrier receipts this block used to list
+  -- (`rootSeparated_of_poseidon2CR_under_the_apex_floor`,
+  -- `apex_hrec_false_at_deployed_map_traces_under_the_apex_floor`) are DELETED, so their pins are
+  -- gone from here. Their whole content was "on the apex's OWN floor, the apex's own `hrec` is
+  -- FALSE" — and `algoStarkSound_kernel` no longer binds an `hCRh` (Site 1 of the weld
+  -- de-vacuuming shed the vestigial binder), so there is no floor to compose onto. The floor-free
+  -- `apex_hrec_false_at_deployed_map_traces` carries the whole content and is the statement to cite.
 -- ⚑⚑ RAISE OF 2026-07-25 (second), +2 — THE TWO SECURITY CLAIMS THE B4 HOLE WAS HIDING.
 --
 -- These are not new theorems and nothing about them changed. What changed is the RULER: the
@@ -1684,24 +1672,15 @@ def manual : Array String := #[
   "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_setVK",
   "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_supplyMint",
   "Dregg2.Circuit.AlgoStarkSoundFanoutMemFree.algoStarkSound_transferFee",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCell",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_createCellFromFactory",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_heapWrite",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteCreate",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_noteSpend",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_of_mapShape",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_of_mapShape_noOodShape",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_refusal",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_spawn",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.algoStarkSound_spawnWrite",
-  "Dregg2.Circuit.AlgoStarkSoundFanoutMemory.memoryLegs_of_mapShape",
+  -- ⛑ 2026-07-31 PORTED off the vestigial `Poseidon2SpongeCR hash` binder (Site 1 of the weld
+  -- de-vacuuming): AlgoStarkSoundFanoutMemory map-shape apexes + memoryLegs + AlgoStarkSoundKernel
+  -- {,Avail}. The map-op arm went floor-free at the 2026-07-30 denotation cutover; the residual
+  -- map obligation `MapDenotationFamily` is inhabitable via
+  -- `MapDenotationCutoverCheck.deployed_opensTo_inhabited`. See `OpeningResidualCutoverCheck` §1.
   "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_of_memShape",
   "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_of_memShape_noOodShape",
   "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_setFieldDyn",
   "Dregg2.Circuit.AlgoStarkSoundFanoutSetField.algoStarkSound_setFieldDynForced",
-  "Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel",
-  "Dregg2.Circuit.AlgoStarkSoundKernel.algoStarkSound_kernel_noOodShape",
-  "Dregg2.Circuit.AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail",
   "Dregg2.Circuit.ClosureAll.closedLogExtract_converse_costs_the_floor",
   "Dregg2.Circuit.ClosureAll.closedLogExtract_no_strength_lost",
   "Dregg2.Circuit.FriFsDecodedOodRepair.positiveRadiusTraceDecode_decoded_extChallenges",
