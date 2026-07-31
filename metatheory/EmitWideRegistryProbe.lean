@@ -58,6 +58,9 @@ import Dregg2.Circuit.Emit.WideCompactTable
 -- carry the kill-set (POST-S2 coords, as half-open runs) to the Rust producer table
 -- (`e1_compact_generated.rs`).
 import Dregg2.Circuit.Emit.RotWideCompactE1
+-- THE UNFORCED-PIN SUBTRACTION: drop every `.piBinding` whose column nothing else reads (the pins
+-- where the prover chooses BOTH sides). Proved a weakening + a no-op + a fixpoint.
+import Dregg2.Circuit.Emit.UnforcedPiPins
 -- THE LAST-ROW ANCHOR FORGE CLOSURE (flag day): every emitted member's row-local `gate` bodies are
 -- lifted OFF the transition domain onto the WHOLE domain (`windowGate … onTransition := false`), so
 -- the LAST row — the row every member pins its published 8-felt AFTER anchor on — carries algebra.
@@ -153,7 +156,15 @@ def emitCompact (key : String) (d : EffectVmDescriptor2) : IO Unit := do
       -- `gate` body is asserted on. The existing keystone chain re-connects through
       -- `satisfied2_of_hardened` (a hardened witness IS an `e1cm` witness).
       let hardened := Dregg2.Circuit.Emit.LastRowFrameHardening.hardenLastRow e1cm
-      IO.println s!"{key}\t{hardened.name}\t{emitVmJson2 hardened}"
+      -- THE UNFORCED-PIN SUBTRACTION (`UnforcedPiPins.dropUnforcedPins`), applied OUTERMOST so it
+      -- sees the final constraint set. It removes exactly the `.piBinding`s whose column no other
+      -- constraint / hash site / range tooth reads — the pins where the prover chooses both sides.
+      -- `satisfied2_dropUnforcedPins` makes it a weakening (the keystone chain re-connects
+      -- verbatim), `unforced_pin_row_admits_any_value` proves the removed pins refused nothing,
+      -- and `unforcedPins_dropUnforcedPins` makes the post-emit census zero BY THEOREM.
+      -- `piCount` is untouched: the slots survive as the verifier inputs they always were.
+      let pinned := Dregg2.Circuit.Emit.UnforcedPiPins.dropUnforcedPins hardened
+      IO.println s!"{key}\t{pinned.name}\t{emitVmJson2 pinned}"
       IO.println s!"s2compact\t{key}\t{bb}\t{lb}"
       IO.println s!"e1compact\t{key}\t{intervalsStr ks}"
     else throw (IO.userError

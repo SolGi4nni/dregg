@@ -57,6 +57,8 @@ import Dregg2.Circuit.Emit.WideCompactTable
 -- `wide_desc.trace_width` auto-shifts); the `wide_umem_weld_registry_parity_and_no_narrowing` tooth
 -- asserts this refuse/umem-vs-compact commutation byte-for-byte.
 import Dregg2.Circuit.Emit.RotWideCompactE1
+-- THE UNFORCED-PIN SUBTRACTION: drop every `.piBinding` whose column nothing else reads.
+import Dregg2.Circuit.Emit.UnforcedPiPins
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
@@ -152,7 +154,9 @@ def main : IO Unit := do
         -- THE LAST-ROW HARDENING (see the import note): geometry-preserving, order-preserving, and
         -- the identity on the welded `.umemOp`, so it commutes with the weld.
         let hardened := Dregg2.Circuit.Emit.LastRowFrameHardening.hardenLastRow e1cm
-        IO.println s!"{key}\t{hardened.name}\t{emitVmJson2 hardened}"
+        -- THE UNFORCED-PIN SUBTRACTION — see `UnforcedPiPins` (weakening + no-op + fixpoint).
+        let pinned := Dregg2.Circuit.Emit.UnforcedPiPins.dropUnforcedPins hardened
+        IO.println s!"{key}\t{pinned.name}\t{emitVmJson2 pinned}"
       else throw (IO.userError
           s!"E1-compact REFUSED for welded {key} — transitionCeilingOk failed (a `.transition` \
              reads a face column ≥ 90); the emit fails closed")

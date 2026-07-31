@@ -323,6 +323,45 @@ fn published_slot_accounting_is_pinned() {
     assert_eq!(pinned_slots, 1639, "…of which some constraint pins");
 }
 
+/// **The `APPROVED_HANDOFFS` retired sentinel, measured.**
+///
+/// `pi::APPROVED_HANDOFFS_BASE..+4` (PI 29..32) is the CapTP federation-scoped approved-handoffs
+/// root. `ValidateHandoff` no longer exists as an effect; `pi.rs` says the slot "stays at the
+/// empty-tree sentinel", and `pi.rs:864` already admits it is "bound only by the executor's PI
+/// matching loop". This makes that admission a MEASUREMENT: no member of any deployed registry
+/// pins those four slots to any column, so what the AIR says about them is nothing at all. They
+/// are verifier-supplied inputs that no equation reads — the same class as the other 2,172
+/// unpinned slots, not a binding that a light client could rely on.
+///
+/// Deleting the slots is a PI-layout flag day (every offset above 32 shifts, in `pi.rs`, every
+/// producer's PI vector, `proof_verify.rs`, the fold and the Mina-side verifier, in one commit).
+/// This test is the standing statement that nothing in-circuit is lost by doing it.
+#[test]
+fn approved_handoffs_sentinel_is_pinned_by_no_member() {
+    use dregg_circuit::effect_vm::pi::{APPROVED_HANDOFFS_BASE, APPROVED_HANDOFFS_LEN};
+    for (label, tsv) in [
+        ("v3", V3_STAGED_REGISTRY_TSV),
+        ("wide", WIDE_REGISTRY_STAGED_TSV),
+        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+    ] {
+        for line in tsv.lines().filter(|l| !l.is_empty()) {
+            let key = line.split('\t').next().expect("key");
+            let json = line.split('\t').nth(2).expect("member json");
+            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+            for c in &d.constraints {
+                if let VmConstraint2::Base(VmConstraint::PiBinding { pi_index, .. }) = c {
+                    assert!(
+                        !(APPROVED_HANDOFFS_BASE..APPROVED_HANDOFFS_BASE + APPROVED_HANDOFFS_LEN)
+                            .contains(pi_index),
+                        "{label}/{key}: PI {pi_index} is in the retired APPROVED_HANDOFFS window \
+                         and IS pinned — the sentinel became load-bearing"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// **The `RETIRED_SELECTORS` claim, corrected into a measurement.**
 ///
 /// `circuit/src/effect_vm/columns.rs` used to state that "the AIR pins every retired selector to
