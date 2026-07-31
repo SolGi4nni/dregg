@@ -931,3 +931,42 @@ produced.** The deploy wrote `devnet-deployment.json` on hbox; the next `hbuild`
 local copy over it, and the attest script's address check caught it. **A remote run's outputs must
 be pulled back before the next invocation, or they are gone.** The deployment record was
 reconstructed locally from the deploy's own log and committed.
+
+---
+
+# ⚑⚑ 10:20 — THE ACTUAL BLOCKER, AND I HAD IT WRONG ALL NIGHT
+
+I have been reporting the Mina-side anchor as **"blocked on ~9 h of compute."** It is not.
+**It is blocked on a driver nobody ever wrote**, and I only found that by reading the scripts
+instead of trusting my own summary of lane reports.
+
+MEASURED:
+- `scripts/root-fri-uniform.ts` compiles the **§3.29 shape** — 46 keys, `publicOutput: Field`,
+  **no claim**. It never passes `claim:` to `makeUniformSliceProgram`.
+- `scripts/root-claim-carry.ts` calls `makeUniformSliceProgram` twice, both at the **same single
+  position**, and only `analyzeMethods()` — a row-count measurement. **It never calls `.compile()`.**
+- `scripts/head-anchor-pins.ts:295` prints *"compiled — 131 programs, one process each"* as an
+  **instruction to a human**, not an implemented path.
+
+**So `.fullchain/uniform-claim/` has never existed**, and `head-anchor-pins` refuses correctly:
+`.fullchain/uniform`'s 46 keys are the claim-less chain, and *"a pin file built from those 46 would
+name a chain whose terminal proof states nothing."*
+
+## What that cost, said plainly
+The contract I deployed to Mina devnet today anchors a root emitted by
+`circuit-prove/sketches/mina-pasta-hash-probe` on **2026-07-28**, signed by a **placeholder key**.
+It has **no connection to any proof**. I then briefed a poster whose claim would have read as
+"Mina is a dregg light client." ember caught it. **The stop is on me** — I drifted from the hard
+task into audits (real work, wrong task) and then dressed the result up.
+
+## What the 131 keys actually are — worth stating, because it is the point
+**The Mina-side verifier of dregg's real FRI-STARK**: 88 head + 43 block programs, 905 chained
+Pickles instances, one program serving all 19 queries of a block (which is precisely why
+`DreggHeadAnchor` **exhibits** the terminal seal instead of trusting the key alone). Kimchi/Pickles
+checking a hash-based STARK natively — **a post-quantum L2 argument settling on Mina**, with the
+honest caveat that the Pasta/IPA wrap around it is classical and the FRI floor is undischarged.
+
+## Dispatched
+Write the driver (resumable, one process per program, `NO_CACHE`, `O1JS_BACKEND=native`), run it on
+hbox, then `head-anchor-pins --emit`. **Keys first; the 905-instance prove is a separate decision.**
+⚠ And the driver must not lose its output to `hbuild`'s rsync — that ate a deployment record today.
