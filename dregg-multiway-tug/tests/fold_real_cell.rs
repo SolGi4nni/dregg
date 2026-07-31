@@ -128,7 +128,7 @@ fn the_leg_octet_exposes_the_committed_field_values() {
 
     // Every exposed octet lane equals the cell's committed lane-0 field at that slot.
     for k in 0..8 {
-        let committed = dregg_circuit::effect_vm::field_limbs8(&real.state.fields[k])[0].as_u32();
+        let committed = dregg_circuit::effect_vm::field_limbs9(&real.state.fields[k])[0].as_u32();
         assert_eq!(
             octet[k], committed,
             "leg octet[{k}] ({}) must equal the committed fields[{k}] lane-0 ({committed})",
@@ -152,7 +152,7 @@ fn the_leg_octet_exposes_the_committed_field_values() {
 /// = `a_secret`, the driven `0 vs 2` WitnessConflict — captured here so the mis-map cannot return.
 #[test]
 fn the_winner_rides_its_own_field_slot_in_the_exposed_octet() {
-    use dregg_circuit::effect_vm::{field_limbs8, layout_generated::CUSTOM_APP_FIELD_OCTET_LEN};
+    use dregg_circuit::effect_vm::{field_limbs9, layout_generated::CUSTOM_APP_FIELD_OCTET_LEN};
 
     let (game, _charm, winner) = winning_game();
     let real = game.world().cell_snapshot().expect("cell");
@@ -165,7 +165,7 @@ fn the_winner_rides_its_own_field_slot_in_the_exposed_octet() {
     );
 
     // octet index = field slot: octet[k] lane-0 == field value at slot k.
-    let octet_at = |k: usize| field_limbs8(&real.state.fields[k])[0];
+    let octet_at = |k: usize| field_limbs9(&real.state.fields[k])[0];
     assert_eq!(
         octet_at(winner_slot),
         BabyBear::from_u64(winner),

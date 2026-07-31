@@ -280,10 +280,27 @@ const PRE_RECEIPT_ROOT_COL: usize = TURN_COUNT_COL + 1;
 const MID_RECEIPT_ROOT_COL: usize = PRE_RECEIPT_ROOT_COL + 1;
 const POST_RECEIPT_ROOT_COL: usize = MID_RECEIPT_ROOT_COL + 1;
 
-/// The endpoint commitment uses the deployed wide carrier geometry: a 178-limb
-/// pre-iroot block followed by the receipt-index root, with an eight-felt carrier at
-/// every Poseidon step.  This is the same `wireCommitR8` shape as the live wide cohort.
-const ENDPOINT_NUM_PRE_LIMBS: usize = 178;
+/// The endpoint commitment uses the deployed wide carrier geometry: a pre-iroot block followed by
+/// the receipt-index root, with an eight-felt carrier at every Poseidon step.  This is the same
+/// `wireCommitR8` shape as the live wide cohort.
+///
+/// ⚑ PINNED 2026-07-31 (the 178 -> 184 ninth-lane flag day). That sentence was a CLAIM carried by a
+/// hand-written `178` with nothing checking it, so a geometry flag day would have moved the live
+/// cohort and left this endpoint silently disagreeing while every build stayed green — "breaking it
+/// silently", which is the only cost `CLAUDE.md` recognises. The value is now PROJECTED from the
+/// Lean-emitted table and the pin below refuses to COMPILE if the two ever part.
+const ENDPOINT_NUM_PRE_LIMBS: usize = dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS;
+
+const _: () = {
+    assert!(
+        ENDPOINT_NUM_PRE_LIMBS == dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS,
+        "the ring-clearing endpoint claims the deployed wide geometry; it must BE it"
+    );
+    assert!(
+        ENDPOINT_NUM_PRE_LIMBS >= 4 && (ENDPOINT_NUM_PRE_LIMBS - 4) % 3 == 0,
+        "wireCommitR8 folds the body in arity-3 groups after the arity-4 head (Legal.bodyAligned)"
+    );
+};
 const PRE_KERNEL_LIMBS_BASE: usize = POST_RECEIPT_ROOT_COL + 1;
 const PRE_KERNEL_IROOT_COL: usize = PRE_KERNEL_LIMBS_BASE + ENDPOINT_NUM_PRE_LIMBS;
 const POST_KERNEL_LIMBS_BASE: usize = PRE_KERNEL_IROOT_COL + 1;

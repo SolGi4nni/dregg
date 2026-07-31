@@ -338,6 +338,11 @@ theorem side_supplyMint : KernelSideConditions (Rfix 3) :=
 theorem side_burn : KernelSideConditions (Rfix 4) :=
   kernelSide_refused _ burn_sideConditions
 
+-- ⚑ 2026-07-31 ninth-lane flag day: `setFieldV3` grew from 49 to 56 completion freezes and from 7
+-- to 8 published completion PIs, so this discharge crossed the default 200000-heartbeat ceiling.
+-- Raising the ceiling gives the SAME kernel check more time; it weakens nothing, and the
+-- `#assert_axioms` below still has to pass.
+set_option maxHeartbeats 2000000 in
 /-- tag 5 — setField (the DEPLOYED static slot-0 tick face), flag-day welded. -/
 theorem side_setField : KernelSideConditions (Rfix 5) :=
   kernelSide_refused _ (setFieldStatic_sideConditions 0)

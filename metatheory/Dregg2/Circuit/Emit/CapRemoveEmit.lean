@@ -64,7 +64,7 @@ open Dregg2.Circuit.Emit.CapOpenEmit
 open Dregg2.Circuit.SortedTreeNonMembership
   (SpineCommits keysOf GapOpen keyOf nonMembership_sound)
 open Dregg2.Circuit.CapTreeUpdate (sortedRemove capRemove_sound)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (capRootGroupCol)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (capRootGroupCol B_SPAN)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -306,16 +306,16 @@ theorem effCapRemoveV3_forces_write8 (S8 : Cap8Scheme)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (spine : List ℤ)
     (hbefore : SpineCommits S8 (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k)) spine)
-    (g : GapOpen S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
+    (g : GapOpen S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k))
           (keyOf (leafOf (capOpenCols base.traceWidth) (envAt t i))))
     (hcov : g.coversSpine
               (sortedRemove (keyOf (leafOf (capOpenCols base.traceWidth) (envAt t i))) spine))
-    (hafter : SpineCommits S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
+    (hafter : SpineCommits S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k))
                 (sortedRemove (keyOf (leafOf (capOpenCols base.traceWidth) (envAt t i))) spine)) :
     capRemoves8 S8
         (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k))
         (leafOf (capOpenCols base.traceWidth) (envAt t i))
-        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
   have hbeforeMem := effCapRemoveV3_forces_beforeMembership S8 base name n hash minit mfin maddrs t
     hChip hsat i hi hnotlast hcells
   exact capRemove_writesTo8 S8 _ _ (leafOf (capOpenCols base.traceWidth) (envAt t i)) spine
@@ -444,7 +444,7 @@ theorem effCapRemoveV3_forces_tombstoneFold (S8 : Cap8Scheme)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     recomposeUp8 S8 (fun _ => 0)
         (pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH)
-      = (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+      = (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
   have hopenSat := effCapRemoveV3_strips_to_capOpen base name n hash minit mfin maddrs t hsat
   have hReadCore : MembershipCore hash t.tf (capOpenCols base.traceWidth) (envAt t i) :=
     effCapOpenV3_membershipCore base name n hash minit mfin maddrs t hopenSat i hi hnotlast hcells
@@ -477,7 +477,7 @@ theorem effCapRemoveV3_forces_tombstone8 (S8 : Cap8Scheme)
     capRemoveTombstones8 S8
         (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k))
         (leafOf (capOpenCols base.traceWidth) (envAt t i))
-        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
   refine ⟨pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH, ?_, ?_⟩
   · -- the BEFORE leg: the read's own fold, welded to the committed BEFORE group.
     have hopenSat := effCapRemoveV3_strips_to_capOpen base name n hash minit mfin maddrs t hsat
@@ -518,7 +518,7 @@ theorem effCapRemoveV3_rejects_forged_afterRoot (S8 : Cap8Scheme)
     (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
-    (hforged : (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
+    (hforged : (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k))
       ≠ recomposeUp8 S8 (fun _ => 0)
           (pathOf8 (capOpenCols base.traceWidth) (envAt t i) DEPTH)) :
     ¬ Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t := by

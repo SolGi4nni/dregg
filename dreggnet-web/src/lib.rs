@@ -1235,6 +1235,13 @@ p.needs{max-width:100%;flex-wrap:wrap;white-space:normal}
 .receipt.refused{border-color:rgba(255,123,134,.3);background:rgba(255,123,134,.05)}
 .receipt.refused .dot{background:var(--bad);box-shadow:0 0 9px var(--bad)}
 .receipt.refused .verdict{color:var(--bad)}
+/* ⚑ THE THIRD STATE, and the one this design was missing. A check that RAN and HELD, against
+   an oracle the party under test supplied, is neither a pass nor a refusal — painting it with
+   either is the whole defect. Amber, and never `ok`. Used by the crown board when its anchor
+   was bootstrapped from a submission rather than pinned by an operator. */
+.receipt.warn{border-color:rgba(255,196,92,.3);background:rgba(255,196,92,.05)}
+.receipt.warn .dot{background:#ffc45c;box-shadow:0 0 9px rgba(255,196,92,.7)}
+.receipt.warn .label,.receipt.warn .verdict{color:#ffc45c}
 /* The register gloss under the receipt strip: quiet prose, NOT the mono voice — it explains the
    mono line above it and would read as more verifiable material if it wore the same face. FOLDED:
    the summary is the QUESTION, so the answer costs a click and never sits under the move buttons of

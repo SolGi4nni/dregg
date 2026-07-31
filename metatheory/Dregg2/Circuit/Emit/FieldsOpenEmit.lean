@@ -48,6 +48,7 @@ open Dregg2.Circuit.Emit.CapOpenEmit
    boolGate_exact diffGate_exact
    CAP_OPEN_SPAN AFTER_SPINE_SPAN AFTER_SPINE_BASE)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace envAt)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN)
 
 set_option autoImplicit false
 
@@ -345,7 +346,7 @@ theorem effFieldsOpenV3_core (base : EffectVmDescriptor2) (name : String)
 /-! ## §4 — the AFTER-spine appendix + the trace-FORCED `effFieldsWriteV3_forces_write8` (§12 twin). -/
 
 /-- The after-spine fields column layout. `sib`/`dir` SHARED with the read; `capRoot` IS the committed
-AFTER fields-root block (`fieldsRootGroupCol (EFFECT_VM_WIDTH+91)`). -/
+AFTER fields-root block (`fieldsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN)`). -/
 def afterSpineColsF (w : Nat) : CapOpenCols :=
   { leaf       := fun i => AFTER_SPINE_BASE w + i.val
   , leafDigest := fun i => AFTER_SPINE_BASE w + 7 + i.val
@@ -353,7 +354,7 @@ def afterSpineColsF (w : Nat) : CapOpenCols :=
   , dir        := (capOpenCols w).dir
   , node       := fun lvl i => AFTER_SPINE_BASE w + 15 + 8 * lvl + i.val
   , capRoot    := fun i => Dregg2.Circuit.Emit.EffectVmEmitRotationV3.fieldsRootGroupCol
-                             (EFFECT_VM_WIDTH + 239) i
+                             (EFFECT_VM_WIDTH + B_SPAN) i
   , src        := AFTER_SPINE_BASE w + 15 + 8 * DEPTH
   , effBit     := AFTER_SPINE_BASE w + 16 + 8 * DEPTH
   , bit        := fun i => AFTER_SPINE_BASE w + 17 + 8 * DEPTH + i }

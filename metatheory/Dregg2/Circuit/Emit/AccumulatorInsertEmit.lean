@@ -56,6 +56,7 @@ open Dregg2.Circuit.Emit.HeapOpenEmit
 open Dregg2.Circuit.SortedTreeNonMembershipHeap8
   (SpineCommits8 keysOf8 GapOpen8 keyOfH nonMembership_sound8 update_sound8)
 open Dregg2.Circuit.SortedTreeNonMembership (sortedInsert)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -166,10 +167,10 @@ deployed node8-AIR insert faithfulness, EXACTLY as `AccumulatorOpenEmit.effAccum
 (non-fitting) update shape — here the shape is CORRECT for the accumulators' genuine sorted insert. -/
 
 /-- The 8 AFTER accumulator-root weld gates: the read appendix `capRoot` group equals the committed
-AFTER accumulator block (`groupCol (EFFECT_VM_WIDTH + 239)`) — the spliced leaf opens against AFTER. -/
+AFTER accumulator block (`groupCol (EFFECT_VM_WIDTH + B_SPAN)`) — the spliced leaf opens against AFTER. -/
 def afterGroupWeldsI (groupCol : Nat → Fin 8 → Nat) (w : Nat) : List VmConstraint2 :=
   (List.finRange 8).map (fun i =>
-    VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot i) (groupCol (EFFECT_VM_WIDTH + 239) i))))
+    VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot i) (groupCol (EFFECT_VM_WIDTH + B_SPAN) i))))
 
 /-- **The SELECTOR-GATED bind gate.** With `sel = none` the bind is UNCONDITIONAL (`var a - var col =
 0`, byte-identical to a bare `eqGate` — the noteCreate/createCell families whose base economics do not
@@ -335,7 +336,7 @@ theorem accumInsertI_eqGate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol va
 
 /-- **`effAccumInsertV3_forces_afterMembership`** — THE STEP-B DELIVERABLE: a `Satisfied2` of the insert
 descriptor TRACE-FORCES `MembersAt8 afterRoot (key, value)` over the FULL committed AFTER accumulator
-group (`groupCol (EFFECT_VM_WIDTH + 239)`, the whole ~124-bit root) at the accumulator's published
+group (`groupCol (EFFECT_VM_WIDTH + B_SPAN)`, the whole ~124-bit root) at the accumulator's published
 `keyCol`/`valueCol` — the spliced-leaf membership in the rebuilt after-tree. -/
 theorem effAccumInsertV3_forces_afterMembership (S8 : Heap8Scheme)
     (groupCol : Nat → Fin 8 → Nat) (keyCol valueCol : Nat) (sel : Option Nat)
@@ -347,7 +348,7 @@ theorem effAccumInsertV3_forces_afterMembership (S8 : Heap8Scheme)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hsel : ∀ s, sel = some s → (envAt t i).loc s = 1) :
-    MembersAt8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k))
+    MembersAt8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k))
       ((envAt t i).loc keyCol, (envAt t i).loc valueCol) := by
   set e := envAt t i with he
   set w := base.traceWidth with hw
@@ -363,10 +364,10 @@ theorem effAccumInsertV3_forces_afterMembership (S8 : Heap8Scheme)
     ⟨(heapLeafTripleOf (capOpenCols w) e).2.2, _, hrec⟩
   -- weld: the read capRoot group IS the committed AFTER accumulator group.
   have hroot : groupVal e (capOpenCols w).capRoot
-      = (fun k => e.loc (groupCol (EFFECT_VM_WIDTH + 239) k)) := by
+      = (fun k => e.loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
     funext k
     have hin : VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot k)
-        (groupCol (EFFECT_VM_WIDTH + 239) k)))
+        (groupCol (EFFECT_VM_WIDTH + B_SPAN) k)))
         ∈ accumInsertConstraints groupCol keyCol valueCol sel w := by
       refine List.mem_append_left _ ?_
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
@@ -415,13 +416,13 @@ theorem effAccumInsertV3_forces_write8 (S8 : Heap8Scheme)
     (hbefore : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k)) spine)
     (g : GapOpen8 S8 (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k)) ((envAt t i).loc keyCol))
     (hcov : g.coversSpine spine)
-    (hafter : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k))
+    (hafter : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k))
                 (sortedInsert ((envAt t i).loc keyCol) spine)) :
     accumInserts8 S8
         (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))
         ((envAt t i).loc keyCol)
         ((envAt t i).loc valueCol)
-        (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k)) := by
+        (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
   have hafterMem := effAccumInsertV3_forces_afterMembership S8 groupCol keyCol valueCol sel
     base name hash minit mfin maddrs t hChip hsat i hi hnotlast hcells hsel
   exact accumInsert_writesTo8 S8 _ _ _ _ spine hbefore g hcov hafterMem hafter

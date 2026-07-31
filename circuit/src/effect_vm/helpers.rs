@@ -155,14 +155,22 @@ pub fn bytes32_to_8_limbs(b: &[u8; 32]) -> [BabyBear; 8] {
 ///
 /// ## Consequences (the derivation, pinned)
 ///
-///  * `field_limbs8(field_from_u64(v))[0] == v` for `v < 2^31` (and `== lo32(v)
-///    mod p` generally). **The escrow/discharge/vault weld
-///    constants survive verbatim** — the valve outcome of the v13 encoding
-///    audit: `sel·(before[leg] − 1)`, `after = before + period`, the 28-bit
-///    range checks and 15-bit decompositions all operate on the genuine value.
-///    (Honest numeric domain: values `< 2^31`; the staged welds already assume
-///    small numeric fields — DUE_BITS=28, 30-bit vault operands — so this is
-///    not a new restriction.)
+///  * `field_limbs8(field_from_u64(v))[0] == v` for **`v < p = 2013265921`** (and `== lo32(v) mod p`
+///    generally). **The escrow/discharge/vault weld constants survive verbatim** — the valve
+///    outcome of the v13 encoding audit: `sel·(before[leg] − 1)`, `after = before + period`, the
+///    28-bit range checks and 15-bit decompositions all operate on the genuine value. (Honest
+///    numeric domain: the staged welds already assume small numeric fields — DUE_BITS=28, 30-bit
+///    vault operands — so this is not a new restriction.)
+///
+///    ⚑ **THIS LINE SAID `v < 2^31` AND THAT WAS FALSE BY 134,217,727 VALUES.**
+///    `p = 2013265921 < 2^31 = 2147483648`; across `[p, 2^31)` lane 0 is `v − p`, not `v`. The pin
+///    that should have caught it — `lane0_is_the_raw_value_for_kernel_numeric_fields` below —
+///    asserts `lanes[0] == BabyBear::new(v as u32)`, and `BabyBear::new` REDUCES, so both sides go
+///    through the same modulus and the assertion cannot fail for ANY `v < 2^32`. It is a tautology
+///    wearing a limit. Corrected 2026-07-30; the limit is now measured on the raw `u32` in
+///    `circuit/tests/field_lanes9_injective.rs`
+///    (`lane0_is_the_raw_value_for_every_honest_numeric_field` plus its
+///    `above_the_modulus_lane0_is_a_residue_and_the_ninth_lane_holds_the_quotient` pole).
 ///  * **Lanes 2..7 are no longer zero for a small numeric value** — they are the hash of the whole
 ///    field, and `field_value_preimage([0u8; 32])` still hashes to something nonzero. Every
 ///    committed field value therefore moves, so this is a **re-genesis**. It is descriptor-invariant:
@@ -239,6 +247,162 @@ pub fn field_limbs8(b: &[u8; 32]) -> [BabyBear; 8] {
     // descriptor re-emit, a VK rotation and a re-genesis.
     let digest = hash_many_8(&crate::exact_nullifier_aafi::field_value_preimage(b));
     out[2..8].copy_from_slice(&digest[..6]);
+    out
+}
+
+/// The free lanes' radix, `2^28`. Strictly below `p = 2013265921`, so a free lane NEVER reduces —
+/// `BabyBear::new` is the identity on every value this encoder puts in lanes 2..8. Lean twin:
+/// `Dregg2.Circuit.FieldLanes9.CH`, with `CH_lt_P` proved by `decide`.
+const LANE9_CH: u32 = 1 << 28;
+
+/// **THE INJECTIVE NINE-LANE FIELDS-OCTET ENCODER.** The Rust twin of the Lean authority
+/// `metatheory/Dregg2/Circuit/FieldLanes9.lean` (`fieldToLanes9`).
+///
+/// ## Substrate, stated plainly
+///
+/// **The Lean file is the authority; this is its twin.** `fieldToLanes9_injective` and
+/// `lanes9ToField_fieldToLanes9` are machine-checked theorems (`#assert_axioms`-clean) about the
+/// LEAN encoder — an explicit bijection onto its image with a total decoder and a left inverse, not
+/// a hash bound and not a birthday bound. **They are not theorems about this Rust function.** There
+/// is no formal semantics of Rust and this body is not extracted from the Lean; what pins the two
+/// together is the Lean-COMPUTED protocol vectors and the round-trip sweep in
+/// `circuit/tests/field_lanes9_injective.rs`. Read that as "case-tested against a verified spec",
+/// never as "verified".
+///
+/// ## Why nine
+///
+/// `p = 2013265921`, `log₂ p = 30.907`: eight lanes carry **247.26 bits** against a 32-byte field's
+/// **256**, so *no* 8-lane encoding of 32 bytes is injective under ANY chunking — pigeonhole, before
+/// a line of code is read. That is why every previous repair of this octet (an eight-way Horner
+/// fold, then a `u32 % p` chunking, then a Poseidon2 image over an injective preimage) moved the
+/// attacker's COST and never reached injectivity; the last of them priced out at a `2^92.7`
+/// collision, below the ~124-bit bar quoted elsewhere in this tree. `P^8 < 2^256 ≤ P^9`
+/// (`nine_lanes_is_the_minimum`): nine is the minimum, and this is that encoding.
+///
+/// ## The layout
+///
+/// ```text
+///   lane 0   = u32::from_be_bytes(b[28..32]) % p      -- BYTE-IDENTICAL to the old field_limbs8
+///   lane 1   = u32::from_be_bytes(b[24..28]) % p      -- BYTE-IDENTICAL to the old field_limbs8
+///
+///   q0 = u32::from_be_bytes(b[28..32]) / p            -- in {0,1,2}, since 2p < 2^32
+///   q1 = u32::from_be_bytes(b[24..28]) / p            -- in {0,1,2}
+///   carry = q0 + 4·q1                                 -- ≤ 10, ONE base-256 digit
+///
+///   W = ofDigits 256 ([b[0], …, b[23]] ++ [carry])    -- 25 base-256 digits, low first
+///   lane 2+i = (W / 2^(28i)) % 2^28,  i = 0..6        -- seven 28-bit digits, low first
+/// ```
+///
+/// `W < 11·2^192 < 2^196 = (2^28)^7`, so it is EXACTLY seven base-`2^28` digits and nothing
+/// reduces. `7 × 28 = 196` is the tight fit, and the `u32 % p` lane shape — the shape that aliased —
+/// never appears among the free lanes.
+///
+/// ## Why lanes 0 and 1 could not move
+///
+/// Together they are the kernel's u64 lane (`field_from_u64`'s payload window, bytes `24..32`):
+/// lane 0 is welded to the v1 face column `stateBase + FIELD_BASE + i`, forced by `gFieldWriteP1`
+/// against `param1`, and read by `field_to_u64`; lane 1 is the staged capacity descriptors' named
+/// hi-pin slot. The escrow / discharge / vault welds, `setfield_encoder_window_gate` and every app
+/// encoder (`deos-js-core::pack_u64`, `starbridge-web-surface::pack_coord`) depend on lane 0
+/// carrying the RAW numeric value **for `v < p = 2013265921`** — not `v < 2^31`, which is what the
+/// `field_limbs8` doc claimed until 2026-07-30 and is false across the 134-million-wide window
+/// `[p, 2^31)`. Above `p` lane 0 is the residue and the quotient rides lane 8.
+/// So injectivity had to come from the seven free lanes PLUS those
+/// two — never by moving them. `field_limbs9(b)[0] == field_limbs8(b)[0]` and
+/// `field_limbs9(b)[1] == field_limbs8(b)[1]` hold for every `b` by construction, and are pinned
+/// by `field_lanes9_injective.rs::lanes_0_and_1_are_byte_identical_to_field_limbs8`.
+///
+/// Lane 0 STILL ALIASES on its own — `x` and `x + p` share it, and that is the pinned ABI. What
+/// changed is that the ALIAS NO LONGER REACHES THE VECTOR: the quotient it drops is carried in the
+/// carry digit and therefore in lane 8. That pair is the alias pole of the test.
+///
+/// The exact inverse is [`field_from_lanes9`] (Lean `lanes9ToField`).
+#[inline]
+pub fn field_limbs9(b: &[u8; 32]) -> [BabyBear; 9] {
+    let p = crate::field::BABYBEAR_P;
+    let lo = u32::from_be_bytes([b[28], b[29], b[30], b[31]]);
+    let hi = u32::from_be_bytes([b[24], b[25], b[26], b[27]]);
+
+    let mut out = [BabyBear::ZERO; 9];
+    out[0] = BabyBear::new(lo % p);
+    out[1] = BabyBear::new(hi % p);
+
+    // THE DISAMBIGUATION DIGIT. `2p = 4026531842 < 2^32`, so each quotient is 0, 1 or 2 and the
+    // digit is `≤ 2 + 4·2 = 10 < 16`: it fits ONE base-256 byte with its top four bits clear, which
+    // is what makes 7 × 28 = 196 bits an exact fit for the 25 source digits' 200.
+    let carry = (lo / p) + 4 * (hi / p);
+    debug_assert!(
+        carry < 16,
+        "carry digit {carry} must be < 16 — its top nibble is the 4 bits 7×28=196 does not cover"
+    );
+
+    // W's 25 base-256 digits, low first: the 24 bytes the pinned lanes carry NOTHING about, then
+    // the carry. Streamed into seven 28-bit limbs through a bit accumulator (W is 196 bits; there
+    // is no u196).
+    let mut src = [0u8; 25];
+    src[..24].copy_from_slice(&b[..24]);
+    src[24] = carry as u8;
+
+    let mut acc: u64 = 0;
+    let mut nbits: u32 = 0;
+    let mut next = 0usize;
+    for lane in out[2..9].iter_mut() {
+        while nbits < 28 {
+            let byte = if next < src.len() { src[next] } else { 0 };
+            acc |= (byte as u64) << nbits;
+            next += 1;
+            nbits += 8;
+        }
+        // `< 2^28 < p`, so this reduction is the identity — the free lanes never reduce.
+        *lane = BabyBear::new((acc as u32) & (LANE9_CH - 1));
+        acc >>= 28;
+        nbits -= 28;
+    }
+    debug_assert_eq!(acc, 0, "the 4 bits above 196 must be zero — carry < 16");
+    out
+}
+
+/// **THE DECODER** — the exact inverse of [`field_limbs9`] on its image, and TOTAL everywhere else.
+/// The Rust twin of Lean `Dregg2.Circuit.FieldLanes9.lanes9ToField`.
+///
+/// Totality matters: this is an adversarial-test entry point, so a forged lane vector (a "free"
+/// lane ≥ `2^28`, up to `p−1`) must still decode to *something* rather than panic or wrap. It
+/// mirrors Lean's `decWord = ofDigits CH (laneList L)` exactly, including on those inputs —
+/// `Σ lanes[2+i]·(2^28)^i < 2^200` even at the maximum, so the 25 base-256 digits are complete and
+/// the accumulation is done with carry propagation over a 26-byte buffer rather than a 196-bit
+/// stream.
+///
+/// `field_from_lanes9(&field_limbs9(&b)) == b` for EVERY `b` is the Lean theorem
+/// `lanes9ToField_fieldToLanes9`; in this crate it is a swept test, not a proof.
+#[inline]
+pub fn field_from_lanes9(lanes: &[BabyBear; 9]) -> [u8; 32] {
+    // W = Σ_{i<7} lanes[2+i] · (2^28)^i, as little-endian base-256 digits. The terms OVERLAP when a
+    // free lane exceeds 2^28 (only a forged vector does), so this is a carry-propagating add rather
+    // than a concatenation of digits.
+    let mut w = [0u8; 26];
+    for i in 0..7usize {
+        let bits = 28 * i;
+        // 28·i mod 8 ∈ {0, 4}; the lane is < p < 2^31, so the shifted value is < 2^35.
+        let mut v = (lanes[2 + i].as_u32() as u64) << (bits % 8);
+        let mut j = bits / 8;
+        while v != 0 && j < w.len() {
+            let s = w[j] as u64 + (v & 0xFF);
+            w[j] = (s & 0xFF) as u8;
+            v = (v >> 8) + (s >> 8);
+            j += 1;
+        }
+    }
+
+    let carry = w[24] as u64;
+    let p = crate::field::BABYBEAR_P as u64;
+    // Undo the pinned lanes' `mod p` reduction with the quotients the carry digit held.
+    let hi = lanes[1].as_u32() as u64 + (carry / 4) * p;
+    let lo = lanes[0].as_u32() as u64 + (carry % 4) * p;
+
+    let mut out = [0u8; 32];
+    out[..24].copy_from_slice(&w[..24]);
+    out[24..28].copy_from_slice(&((hi & 0xFFFF_FFFF) as u32).to_be_bytes());
+    out[28..32].copy_from_slice(&((lo & 0xFFFF_FFFF) as u32).to_be_bytes());
     out
 }
 

@@ -71,36 +71,136 @@ namespace Dregg2.Distributed.BlocklaceFinality
 
 open Dregg2.Authority.Blocklace (Block Lace BlockId AuthorId)
 
-/-! ## 1. `computeRounds` — the DAG-depth recurrence (`ordering.rs::compute_rounds`).
+/-! ## 1. `computeRounds` — the DAG-depth recurrence (`ordering.rs::compute_rounds`),
+OVER THE ENROLLED EDGE SET.
 
-round(b) = 1 + max over present predecessors of round(p); genesis (no present preds) = 1. The Rust
+round(b) = 1 + max over present ENROLLED predecessors of round(p); no such pred = 1. The Rust
 runs Kahn topological order; here we fold over the lace already pre-sorted by `seq` (the node also
 sorts by `(seq, creator)` before building the ordering lace — `build_ordering_blocklace`), which is
 a topological order for the honest virtual-chain discipline (`seq` strictly increases along an
 author's chain, and a pred always has strictly smaller `seq` of its own author OR is another
-author's earlier block). We memoize into an assoc list. -/
+author's earlier block). We memoize into an assoc list.
+
+⚑ **Why the recurrence reads `participants` (HORIZONLOG B6's named residual, this pass).** It used
+to count EVERY present predecessor. Depth is the wave clock — `roundToWave`, `blocksAtRound`, the
+leader slot, the wave end, and `xsortBy`'s primary sort key are all read off it — so any creator who
+could add depth could move the wave structure. A NON-PARTICIPANT chain that one honest block acks
+did exactly that, and §9's `traceOrderFork` is the measurement: two honest nodes holding the
+IDENTICAL enrolled sub-lace, differing only in whether they received two outsider blocks, finalize
+the SAME twelve enrolled coordinates in DIFFERENT ORDERS (creator 3's `seq 1` block lands at index 5
+on one node and index 7 on the other, and neither order is a prefix of the other). That is
+`no_conflicting_finalized_history` violated between two HONEST nodes, not a timing wobble — and
+non-participants are precisely the creators dissemination does not guarantee every node sees, so the
+divergent view is the ordinary case, not the exotic one.
+
+**We filter the EDGES, not the NODES.** The Rust `tau_unified` sibling (`compute_rounds_filtered`)
+drops non-participant blocks from the round map entirely. That is sound THERE — every downstream
+read in `tau_unified` is participant-restricted — but on `tau`'s path it would SUBSUME the B6
+repair: `blocksAtRound` at the wave end would no longer contain an outsider's block at all, so
+`traceSybilOnly` would stop exhibiting the ratifier gate and start exhibiting an empty wave-end
+round, and `tauOrderUnfiltered`'s red guard would go green for the wrong reason. So a
+non-participant's block still RECEIVES the round its enrolled predecessors give it; what it cannot
+do is CONTRIBUTE one. -/
 
 /-- Look up an already-computed round for a block id. -/
 def roundLookup (rs : List (BlockId × Nat)) (h : BlockId) : Option Nat :=
   (rs.find? (fun p => p.1 = h)).map (·.2)
 
+/-- **`enrolledId B participants bid`** — the ENROLLMENT PREDICATE: the block at `bid` was created
+by a member of the reference participant set. It gates TWO things, and they are independent:
+
+* **WHICH ACKS COUNT AS DEPTH** (§1, this pass) — `roundOfStep` maxes only over enrolled
+  predecessors, so a non-participant cannot move the wave clock;
+* **WHOSE BLOCKS MAY BE ORDERED** (§6, `tauOrder`) — the finalized order carries only enrolled
+  creators, so an unenrolled creator's state transition cannot reach the executor.
+
+**Why the second exists** (`node/src/finality_gate.rs`'s falsifier
+`attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule`). `leaderCoverage` is the
+union of the causal pasts of the wave-end blocks that ratify the leader, and `leaderSegment`
+subtracts only `prevCovered` and equivocators. A block from a creator that is NOT in `participants`
+sits in the honest leader's causal past as soon as one honest node acks it — so the rule EMITTED it,
+and the node fed it to the executor. Measured on a 4-creator / 3-round lace with 3 enrolled: the
+finalized set was 12 coordinates, 100% of the lace, including all three of the unenrolled creator's
+blocks. `participants` was consulted for the round-robin leader schedule and the supermajority
+count, and NEVER for who is allowed to be ordered at all.
+
+The Rust sibling `blocklace/src/ordering.rs::tau_unified` already carried this filter (
+"FILTER: only include blocks from reference group participants"); `ordering.rs::tau` — the one the
+node runs — did not, because its docstring's precondition is "all blocks belong to participants".
+That precondition is NOT enforceable on the live path (see the module header of
+`node/src/finality_gate.rs` and `blocklace/src/finality.rs::from_checkpoint_trusted`), so the rule
+enforces it itself.
+
+**`none ⇒ true` is deliberate.** An id that does not resolve in `B` is not the enrollment filter's
+business: it is an invariant breach (`tauOrder` only ever emits ids drawn from `leaderCoverage`,
+which is drawn from causal pasts of present blocks), and the CALLER owns it — `tauBlocks`'
+`filterMap B.lookup`, the Rust `compute_order`'s `id_to_block` filter_map, and
+`poll_finalized_blocks`' `error!("finalized block id not present in the lace")`. Making this branch
+`false` would silently convert a breach into a drop and hide it; it would also make the
+honest-lace identity theorems below false for a reason that has nothing to do with enrollment. On
+the §1 depth side the `none` branch is inert for a second reason: an absent pred has no entry in the
+accumulator either, so `roundLookup` drops it whichever way this branch goes. -/
+def enrolledId (B : Lace) (participants : List AuthorId) (bid : BlockId) : Bool :=
+  match B.lookup bid with
+  | some b => participants.contains b.creator
+  | none   => true
+
 /-- One folding step of `compute_rounds`: given the rounds computed so far (`rs`) and the next
-block `b` (in topological order), assign `round(b) = 1 + max(round(p) | p ∈ b.preds present in rs)`,
-defaulting the max to `0` for genesis (so genesis gets round `1`). Mirrors `ordering.rs:82..93`. -/
-def roundOfStep (rs : List (BlockId × Nat)) (b : Block) : Nat :=
+block `b` (in topological order), assign `round(b) = 1 + max(round(p) | p ∈ b.preds, p ENROLLED and
+present in rs)`, defaulting the max to `0` (so a block with no enrolled predecessor gets round `1`).
+Mirrors `ordering.rs:82..93` with the participant filter of `compute_rounds`' `participant_set`. -/
+def roundOfStep (B : Lace) (participants : List AuthorId)
+    (rs : List (BlockId × Nat)) (b : Block) : Nat :=
+  let predRounds : List Nat :=
+    (b.preds.filter (enrolledId B participants)).filterMap (fun p => roundLookup rs p)
+  1 + predRounds.foldl Nat.max 0
+
+/-- **`roundOfStepPreParticipant`** — the depth step EXACTLY as it stood before this pass: every
+present predecessor counts, enrolled or not.
+
+⚑ THIS IS NOT THE RECURRENCE. It is kept, named, and reachable from nothing but
+`computeRoundsPreParticipant` and the §9 `#guard`s, for one reason: it is the FALSIFICATION WITNESS
+for the participant filter — the same discipline `isSuperRatifiedPreEnrollment` and
+`tauOrderUnfiltered` carry. A red-proof that lives in the tree forever instead of in a reverted
+source edit. -/
+def roundOfStepPreParticipant (rs : List (BlockId × Nat)) (b : Block) : Nat :=
   let predRounds : List Nat := b.preds.filterMap (fun p => roundLookup rs p)
   1 + predRounds.foldl Nat.max 0
 
-/-- **`computeRounds B`** — fold `roundOfStep` over the lace pre-sorted by `seq` then `creator`
-(the node's `build_ordering_blocklace` sort), producing the `(id, round)` map. Genesis blocks get
-round `1`; depth increases by one per causal layer. (`ordering.rs::compute_rounds`.) -/
-def computeRounds (B : Lace) : List (BlockId × Nat) :=
-  let sorted := B.toArray.qsort (fun a b => a.seq < b.seq || (a.seq == b.seq && a.creator < b.creator))
-  sorted.foldl (fun rs b => (b.id, roundOfStep rs b) :: rs) []
+/-- The topological pre-sort the depth fold runs over: the lace by `(seq, creator)` (the node's
+`build_ordering_blocklace` sort). Named so the fold and its theorems can speak about it.
+
+⚠ `Array.qsort`'s worker is well-founded and private to `Init`, and this toolchain carries NO
+`qsort` permutation lemma (`Distributed.LaceMerge` says so at length), so `sortedLace B ~ B` is
+NOT available to a proof — every theorem below that quantifies over the folded blocks quantifies
+over `sortedLace B`, not over `B`. Lean 4.30's `List.mergeSort` DOES carry `mergeSort_perm`; moving
+to it would unlock `b ∈ B`, and it is a genuine design fork (the two sorts differ exactly on
+`(seq, creator)` TIES, which are exactly equivocating pairs), so it is not folded into this pass. -/
+def sortedLace (B : Lace) : List Block :=
+  (B.toArray.qsort (fun a b => a.seq < b.seq || (a.seq == b.seq && a.creator < b.creator))).toList
+
+/-- The depth fold itself, over an explicit block list — hoisted out of `computeRounds` so the
+safety theorem below can be proved by induction on the list the sort produced, with no `qsort`
+permutation lemma anywhere in the argument. -/
+def roundsFold (B : Lace) (participants : List AuthorId) (bs : List Block) : List (BlockId × Nat) :=
+  bs.foldl (fun rs b => (b.id, roundOfStep B participants rs b) :: rs) []
+
+/-- **`computeRounds B participants`** — fold `roundOfStep` over the lace pre-sorted by `seq` then
+`creator`, producing the `(id, round)` map. A block with no enrolled predecessor gets round `1`;
+depth increases by one per ENROLLED causal layer. (`ordering.rs::compute_rounds`.) -/
+def computeRounds (B : Lace) (participants : List AuthorId) : List (BlockId × Nat) :=
+  roundsFold B participants (sortedLace B)
+
+/-- **`computeRoundsPreParticipant B`** — the depth map EXACTLY as it stood before this pass. The
+FALSIFICATION WITNESS; see `roundOfStepPreParticipant`. Feeding it to `tauOrderWithRounds` (§6b)
+runs the WHOLE rule with the round map as the only variable, which is what makes §9's exhibits an
+experiment rather than two anecdotes. -/
+def computeRoundsPreParticipant (B : Lace) : List (BlockId × Nat) :=
+  (sortedLace B).foldl (fun rs b => (b.id, roundOfStepPreParticipant rs b) :: rs) []
 
 /-- The round of a specific block id in the computed map (`0` if absent — only for ids not in `B`). -/
-def roundOf (B : Lace) (h : BlockId) : Nat :=
-  (roundLookup (computeRounds B) h).getD 0
+def roundOf (B : Lace) (participants : List AuthorId) (h : BlockId) : Nat :=
+  (roundLookup (computeRounds B participants) h).getD 0
 
 /-! ## 2. Wave arithmetic + round-robin leader (`ordering.rs:147..170`). -/
 
@@ -152,7 +252,8 @@ observer's causal past (`ordering.rs::EquivocationIndex::equivocates_in_past` �
 `has_equivocation_in_past` when the equivocator scan was memoized into a precomputed index; the
 per-observer predicate is unchanged. Corrected 2026-07-16). The exact equivocation guard the
 node's `approves`/`tau` consult to repel a forking creator. -/
-def hasEquivInPast (B : Lace) (observer : BlockId) (creator : AuthorId) : Bool :=
+def hasEquivInPast (B : Lace) (participants : List AuthorId)
+    (observer : BlockId) (creator : AuthorId) : Bool :=
   let past := causalPastIncl B observer
   let creatorBlocks : List Block :=
     past.filterMap (fun bid => match B.lookup bid with
@@ -160,12 +261,13 @@ def hasEquivInPast (B : Lace) (observer : BlockId) (creator : AuthorId) : Bool :
                                 | none   => none)
   -- two distinct creator-blocks sharing a round ⇒ equivocation visible from observer.
   creatorBlocks.any (fun a =>
-    creatorBlocks.any (fun b => a.id ≠ b.id && roundOf B a.id == roundOf B b.id))
+    creatorBlocks.any (fun b =>
+      a.id ≠ b.id && roundOf B participants a.id == roundOf B participants b.id))
 
 /-- **`approves`** — observer block `o` approves leader `l`: `l` is in `o`'s causal past AND no
 equivocation by `l.creator` is visible from `o` (`ordering.rs:184..200`). -/
-def approves (B : Lace) (o l : Block) : Bool :=
-  (causalPastIncl B o.id).contains l.id && ¬ hasEquivInPast B o.id l.creator
+def approves (B : Lace) (participants : List AuthorId) (o l : Block) : Bool :=
+  (causalPastIncl B o.id).contains l.id && ¬ hasEquivInPast B participants o.id l.creator
 
 /-- **`ratifies`** — block `o` ratifies leader `l` iff a supermajority of DISTINCT participants
 have at least one block in `o`'s causal past that approves `l` (`ordering.rs:206..234`). -/
@@ -174,13 +276,20 @@ def ratifies (B : Lace) (participants : List AuthorId) (o l : Block) : Bool :=
   let approvingParticipants : Nat :=
     (participants.filter (fun p =>
       past.any (fun bid => match B.lookup bid with
-                            | some b => b.creator == p && approves B b l
+                            | some b => b.creator == p && approves B participants b l
                             | none   => false))).length
   approvingParticipants ≥ superMajority participants.length
 
-/-- All block ids at a given round in `B`. -/
-def blocksAtRound (B : Lace) (r : Nat) : List BlockId :=
-  (B.filter (fun b => roundOf B b.id == r)).map (·.id)
+/-- All block ids at a given round in `B`.
+
+⚑ NOT restricted to enrolled creators, deliberately. Restricting it here would make the B6
+ratifier gate (`ratifiesEnrolled`, the only thing that decides whether a wave-end block COUNTS)
+unreachable on exactly the traces that exhibit it — `traceSybilOnly`'s wave-end round would become
+empty and stop being an exhibit of the gate. The depth an outsider's block carries is now derived
+from its enrolled predecessors (§1), so its presence in a round set is view-consistent; whether it
+DECIDES anything is B6's question, and stays B6's question. -/
+def blocksAtRound (B : Lace) (participants : List AuthorId) (r : Nat) : List BlockId :=
+  (B.filter (fun b => roundOf B participants b.id == r)).map (·.id)
 
 /-- **`ratifiesEnrolled`** — the RATIFIER-SIDE enrollment gate: a wave-end block counts as a
 ratifier only when its OWN creator is an enrolled participant, on top of the Cordial-Miners
@@ -221,7 +330,7 @@ that ratify the leader (`ordering.rs::is_super_ratified`). The node's finality c
 leader. The `ratifiesEnrolled` gate is the B6 repair; see its docstring. -/
 def isSuperRatified (B : Lace) (participants : List AuthorId)
     (l : Block) (waveEndRound : Nat) : Bool :=
-  let endBlocks := blocksAtRound B waveEndRound
+  let endBlocks := blocksAtRound B participants waveEndRound
   let ratifyingCreators : List AuthorId :=
     (endBlocks.filterMap (fun bid => match B.lookup bid with
        | some b => if ratifiesEnrolled B participants b l then some b.creator else none
@@ -240,7 +349,7 @@ returns `false`, so the gate is demonstrably load-bearing rather than a no-op th
 changes nothing. A red-proof that lives in the tree forever instead of in a reverted source edit. -/
 def isSuperRatifiedPreEnrollment (B : Lace) (participants : List AuthorId)
     (l : Block) (waveEndRound : Nat) : Bool :=
-  let endBlocks := blocksAtRound B waveEndRound
+  let endBlocks := blocksAtRound B participants waveEndRound
   let ratifyingCreators : List AuthorId :=
     (endBlocks.filterMap (fun bid => match B.lookup bid with
        | some b => if ratifies B participants b l then some b.creator else none
@@ -256,8 +365,8 @@ leader. We bound the wave count by `maxRound` (the deepest block), which the nod
 `max_round`. -/
 
 /-- The maximum computed round over the lace (`compute_rounds`' returned `max_round`). -/
-def maxRound (B : Lace) : Nat :=
-  (B.map (fun b => roundOf B b.id)).foldl Nat.max 0
+def maxRound (B : Lace) (participants : List AuthorId) : Nat :=
+  (B.map (fun b => roundOf B participants b.id)).foldl Nat.max 0
 
 /-- The leader's candidate blocks: creator = `waveLeader w` at the wave-START round. The node
 requires EXACTLY ONE (`leader_blocks.len() == 1`) — a second block at the slot is the leader itself
@@ -268,7 +377,7 @@ def leaderCandidates (B : Lace) (participants : List AuthorId)
   | none => []
   | some lk =>
       let ws := waveFirstRound wave wavelength
-      B.filter (fun b => b.creator == lk && roundOf B b.id == ws)
+      B.filter (fun b => b.creator == lk && roundOf B participants b.id == ws)
 
 /-- **`finalLeaderAt`** — the (optional) final leader anchoring wave `w`: the unique leader-slot
 block, if super-ratified by the wave end. Mirrors the body of `find_all_final_leaders`' loop. -/
@@ -282,7 +391,7 @@ def finalLeaderAt (B : Lace) (participants : List AuthorId)
 where `waveCount` is the wave containing `maxRound` (the node breaks when `wave_end > max_round`).
 (`ordering.rs:283..336`.) -/
 def findAllFinalLeaders (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List Block :=
-  let mr := maxRound B
+  let mr := maxRound B participants
   let waveCount := if wavelength == 0 then 0 else mr / wavelength + 1
   (List.range waveCount).filterMap (fun w => finalLeaderAt B participants w wavelength)
 
@@ -298,10 +407,10 @@ participants that ratify it (`ordering.rs::tau`'s coverage loop). The `ratifiesE
 B6 repair — an unenrolled ack must not decide WHERE an honest block lands in the total order; see
 `ratifiesEnrolled`. -/
 def leaderCoverage (B : Lace) (participants : List AuthorId) (l : Block) (wavelength : Nat) : List BlockId :=
-  let lr := roundOf B l.id
+  let lr := roundOf B participants l.id
   let lwave := roundToWave lr wavelength
   let waveEnd := waveLastRound lwave wavelength
-  let endBlocks := blocksAtRound B waveEnd
+  let endBlocks := blocksAtRound B participants waveEnd
   (endBlocks.flatMap (fun bid => match B.lookup bid with
      | some b => if ratifiesEnrolled B participants b l then causalPastIncl B bid else []
      | none   => [])).dedup
@@ -309,9 +418,10 @@ def leaderCoverage (B : Lace) (participants : List AuthorId) (l : Block) (wavele
 /-- Deterministic intra-segment linearization by `(round, id)` — the OPEN-CM-XSORT stand-in. A
 predecessor has a strictly smaller round, so this respects causal order; ties (concurrent blocks)
 break by `id`, exactly the Rust `xsort`'s deterministic by-block-id tie-break. -/
-def xsortBy (B : Lace) (ids : List BlockId) : List BlockId :=
+def xsortBy (B : Lace) (participants : List AuthorId) (ids : List BlockId) : List BlockId :=
   (ids.toArray.qsort (fun a b =>
-    roundOf B a < roundOf B b || (roundOf B a == roundOf B b && a < b))).toList
+    roundOf B participants a < roundOf B participants b
+      || (roundOf B participants a == roundOf B participants b && a < b))).toList
 
 /-- **`leaderSegment B participants wavelength prevCovered l`** — the blocks a final leader `l`
 APPENDS to the order: its coverage minus the previously-covered set, minus equivocators visible
@@ -323,9 +433,9 @@ def leaderSegment (B : Lace) (participants : List AuthorId) (wavelength : Nat)
   let coverage := leaderCoverage B participants l wavelength
   let newBlocks := (coverage.filter (fun bid => ¬ prevCovered.contains bid)).filter
     (fun bid => match B.lookup bid with
-      | some b => ¬ hasEquivInPast B l.id b.creator
+      | some b => ¬ hasEquivInPast B participants l.id b.creator
       | none   => false)
-  xsortBy B newBlocks
+  xsortBy B participants newBlocks
 
 /-- **`tauStep`** — one iteration of `ordering.rs::tau`'s leader loop: append the leader's
 segment to the order accumulated so far, and replace `prevCovered` with this leader's coverage
@@ -348,38 +458,6 @@ and `tauOrderFast`. -/
 def tauOrderUnfiltered (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
   ((findAllFinalLeaders B participants wavelength).foldl
     (tauStep B participants wavelength) ([], [])).1
-
-/-- **`enrolledId B participants bid`** — the ENROLLMENT PREDICATE: the block at `bid` was created
-by a member of the reference participant set.
-
-**Why this exists** (`node/src/finality_gate.rs`'s falsifier
-`attacker_block_from_unenrolled_creator_is_refused_by_the_verified_rule`). `leaderCoverage` is the
-union of the causal pasts of the wave-end blocks that ratify the leader, and `leaderSegment`
-subtracts only `prevCovered` and equivocators. A block from a creator that is NOT in `participants`
-sits in the honest leader's causal past as soon as one honest node acks it — so the rule EMITTED it,
-and the node fed it to the executor. Measured on a 4-creator / 3-round lace with 3 enrolled: the
-finalized set was 12 coordinates, 100% of the lace, including all three of the unenrolled creator's
-blocks. `participants` was consulted for the round-robin leader schedule and the supermajority
-count, and NEVER for who is allowed to be ordered at all.
-
-The Rust sibling `blocklace/src/ordering.rs::tau_unified` already carried this filter (
-"FILTER: only include blocks from reference group participants"); `ordering.rs::tau` — the one the
-node runs — did not, because its docstring's precondition is "all blocks belong to participants".
-That precondition is NOT enforceable on the live path (see the module header of
-`node/src/finality_gate.rs` and `blocklace/src/finality.rs::from_checkpoint_trusted`), so the rule
-enforces it itself.
-
-**`none ⇒ true` is deliberate.** An id that does not resolve in `B` is not the enrollment filter's
-business: it is an invariant breach (`tauOrder` only ever emits ids drawn from `leaderCoverage`,
-which is drawn from causal pasts of present blocks), and the CALLER owns it — `tauBlocks`'
-`filterMap B.lookup`, the Rust `compute_order`'s `id_to_block` filter_map, and
-`poll_finalized_blocks`' `error!("finalized block id not present in the lace")`. Making this branch
-`false` would silently convert a breach into a drop and hide it; it would also make the
-honest-lace identity theorem below false for a reason that has nothing to do with enrollment. -/
-def enrolledId (B : Lace) (participants : List AuthorId) (bid : BlockId) : Bool :=
-  match B.lookup bid with
-  | some b => participants.contains b.creator
-  | none   => true
 
 /-- **`tauOrder B participants wavelength`** — the computed total order (`ordering.rs::tau`),
 RESTRICTED TO ENROLLED CREATORS.
@@ -478,33 +556,36 @@ pure rule are untouched. -/
 abbrev RoundCache := List (BlockId × Nat)
 
 /-- Build the round cache: run the `computeRounds` fold over `B` ONCE. -/
-def mkRoundCache (B : Lace) : RoundCache := computeRounds B
+def mkRoundCache (B : Lace) (participants : List AuthorId) : RoundCache :=
+  computeRounds B participants
 
 /-- `roundOf` against a precomputed round cache (the lookup that replaces the per-call recompute). -/
 def roundOfR (rc : RoundCache) (h : BlockId) : Nat := (roundLookup rc h).getD 0
 
-theorem roundOfR_eq (B : Lace) (h : BlockId) : roundOfR (mkRoundCache B) h = roundOf B h := rfl
+theorem roundOfR_eq (B : Lace) (P : List AuthorId) (h : BlockId) :
+    roundOfR (mkRoundCache B P) h = roundOf B P h := rfl
 
 /-- `maxRound` against the cache. -/
 def maxRoundR (rc : RoundCache) (B : Lace) : Nat :=
   (B.map (fun b => roundOfR rc b.id)).foldl Nat.max 0
 
-theorem maxRoundR_eq (B : Lace) : maxRoundR (mkRoundCache B) B = maxRound B := rfl
+theorem maxRoundR_eq (B : Lace) (P : List AuthorId) :
+    maxRoundR (mkRoundCache B P) B = maxRound B P := rfl
 
 /-- `blocksAtRound` against the cache. -/
 def blocksAtRoundR (rc : RoundCache) (B : Lace) (r : Nat) : List BlockId :=
   (B.filter (fun b => roundOfR rc b.id == r)).map (·.id)
 
-theorem blocksAtRoundR_eq (B : Lace) (r : Nat) :
-    blocksAtRoundR (mkRoundCache B) B r = blocksAtRound B r := rfl
+theorem blocksAtRoundR_eq (B : Lace) (P : List AuthorId) (r : Nat) :
+    blocksAtRoundR (mkRoundCache B P) B r = blocksAtRound B P r := rfl
 
 /-- `xsortBy` against the cache. -/
 def xsortByR (rc : RoundCache) (ids : List BlockId) : List BlockId :=
   (ids.toArray.qsort (fun a b =>
     roundOfR rc a < roundOfR rc b || (roundOfR rc a == roundOfR rc b && a < b))).toList
 
-theorem xsortByR_eq (B : Lace) (ids : List BlockId) :
-    xsortByR (mkRoundCache B) ids = xsortBy B ids := rfl
+theorem xsortByR_eq (B : Lace) (P : List AuthorId) (ids : List BlockId) :
+    xsortByR (mkRoundCache B P) ids = xsortBy B P ids := rfl
 
 /-- `leaderCandidates` against the cache. -/
 def leaderCandidatesR (rc : RoundCache) (B : Lace) (participants : List AuthorId)
@@ -516,7 +597,7 @@ def leaderCandidatesR (rc : RoundCache) (B : Lace) (participants : List AuthorId
       B.filter (fun b => b.creator == lk && roundOfR rc b.id == ws)
 
 theorem leaderCandidatesR_eq (B : Lace) (participants : List AuthorId) (wave wavelength : Nat) :
-    leaderCandidatesR (mkRoundCache B) B participants wave wavelength
+    leaderCandidatesR (mkRoundCache B participants) B participants wave wavelength
       = leaderCandidates B participants wave wavelength := rfl
 
 /-- `hasEquivInPast` with both caches (`§4`). -/
@@ -529,16 +610,17 @@ def hasEquivInPastC (B : Lace) (cache : PastCache) (rc : RoundCache) (observer :
   creatorBlocks.any (fun a =>
     creatorBlocks.any (fun b => a.id ≠ b.id && roundOfR rc a.id == roundOfR rc b.id))
 
-theorem hasEquivInPastC_eq (B : Lace) (observer : BlockId) (creator : AuthorId) :
-    hasEquivInPastC B (mkPastCache B) (mkRoundCache B) observer creator = hasEquivInPast B observer creator := by
+theorem hasEquivInPastC_eq (B : Lace) (P : List AuthorId) (observer : BlockId) (creator : AuthorId) :
+    hasEquivInPastC B (mkPastCache B) (mkRoundCache B P) observer creator
+      = hasEquivInPast B P observer creator := by
   simp only [hasEquivInPastC, hasEquivInPast, cachedPast_eq, roundOfR_eq]
 
 /-- `approves` with both caches (`§4`). -/
 def approvesC (B : Lace) (cache : PastCache) (rc : RoundCache) (o l : Block) : Bool :=
   (cachedPast B cache o.id).contains l.id && ¬ hasEquivInPastC B cache rc o.id l.creator
 
-theorem approvesC_eq (B : Lace) (o l : Block) :
-    approvesC B (mkPastCache B) (mkRoundCache B) o l = approves B o l := by
+theorem approvesC_eq (B : Lace) (P : List AuthorId) (o l : Block) :
+    approvesC B (mkPastCache B) (mkRoundCache B P) o l = approves B P o l := by
   simp only [approvesC, approves, cachedPast_eq, hasEquivInPastC_eq]
 
 /-- `ratifies` with both caches (`§4`). -/
@@ -552,7 +634,8 @@ def ratifiesC (B : Lace) (cache : PastCache) (rc : RoundCache) (participants : L
   approvingParticipants ≥ superMajority participants.length
 
 theorem ratifiesC_eq (B : Lace) (participants : List AuthorId) (o l : Block) :
-    ratifiesC B (mkPastCache B) (mkRoundCache B) participants o l = ratifies B participants o l := by
+    ratifiesC B (mkPastCache B) (mkRoundCache B participants) participants o l
+      = ratifies B participants o l := by
   simp only [ratifiesC, ratifies, cachedPast_eq, approvesC_eq]
 
 /-- `ratifiesEnrolled` with both caches (`§4`) — the B6 ratifier-enrollment gate on the fast path. -/
@@ -560,7 +643,7 @@ def ratifiesEnrolledC (B : Lace) (cache : PastCache) (rc : RoundCache) (particip
   participants.contains o.creator && ratifiesC B cache rc participants o l
 
 theorem ratifiesEnrolledC_eq (B : Lace) (participants : List AuthorId) (o l : Block) :
-    ratifiesEnrolledC B (mkPastCache B) (mkRoundCache B) participants o l
+    ratifiesEnrolledC B (mkPastCache B) (mkRoundCache B participants) participants o l
       = ratifiesEnrolled B participants o l := by
   simp only [ratifiesEnrolledC, ratifiesEnrolled, ratifiesC_eq]
 
@@ -575,7 +658,7 @@ def isSuperRatifiedC (B : Lace) (cache : PastCache) (rc : RoundCache) (participa
   ratifyingCreators.length ≥ superMajority participants.length
 
 theorem isSuperRatifiedC_eq (B : Lace) (participants : List AuthorId) (l : Block) (waveEndRound : Nat) :
-    isSuperRatifiedC B (mkPastCache B) (mkRoundCache B) participants l waveEndRound
+    isSuperRatifiedC B (mkPastCache B) (mkRoundCache B participants) participants l waveEndRound
       = isSuperRatified B participants l waveEndRound := by
   simp only [isSuperRatifiedC, isSuperRatified, blocksAtRoundR_eq, ratifiesEnrolledC_eq]
 
@@ -587,7 +670,7 @@ def finalLeaderAtC (B : Lace) (cache : PastCache) (rc : RoundCache) (participant
   | _   => none
 
 theorem finalLeaderAtC_eq (B : Lace) (participants : List AuthorId) (wave wavelength : Nat) :
-    finalLeaderAtC B (mkPastCache B) (mkRoundCache B) participants wave wavelength
+    finalLeaderAtC B (mkPastCache B) (mkRoundCache B participants) participants wave wavelength
       = finalLeaderAt B participants wave wavelength := by
   simp only [finalLeaderAtC, finalLeaderAt, leaderCandidatesR_eq, isSuperRatifiedC_eq]
 
@@ -599,7 +682,7 @@ def findAllFinalLeadersC (B : Lace) (cache : PastCache) (rc : RoundCache) (parti
   (List.range waveCount).filterMap (fun w => finalLeaderAtC B cache rc participants w wavelength)
 
 theorem findAllFinalLeadersC_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat) :
-    findAllFinalLeadersC B (mkPastCache B) (mkRoundCache B) participants wavelength
+    findAllFinalLeadersC B (mkPastCache B) (mkRoundCache B participants) participants wavelength
       = findAllFinalLeaders B participants wavelength := by
   simp only [findAllFinalLeadersC, findAllFinalLeaders, maxRoundR_eq, finalLeaderAtC_eq]
 
@@ -615,7 +698,7 @@ def leaderCoverageC (B : Lace) (cache : PastCache) (rc : RoundCache) (participan
      | none   => [])).dedup
 
 theorem leaderCoverageC_eq (B : Lace) (participants : List AuthorId) (l : Block) (wavelength : Nat) :
-    leaderCoverageC B (mkPastCache B) (mkRoundCache B) participants l wavelength
+    leaderCoverageC B (mkPastCache B) (mkRoundCache B participants) participants l wavelength
       = leaderCoverage B participants l wavelength := by
   simp only [leaderCoverageC, leaderCoverage, roundOfR_eq, blocksAtRoundR_eq, cachedPast_eq,
     ratifiesEnrolledC_eq]
@@ -632,7 +715,7 @@ def leaderSegmentC (B : Lace) (cache : PastCache) (rc : RoundCache) (participant
 
 theorem leaderSegmentC_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat)
     (prevCovered : List BlockId) (l : Block) :
-    leaderSegmentC B (mkPastCache B) (mkRoundCache B) participants wavelength prevCovered l
+    leaderSegmentC B (mkPastCache B) (mkRoundCache B participants) participants wavelength prevCovered l
       = leaderSegment B participants wavelength prevCovered l := by
   simp only [leaderSegmentC, leaderSegment, leaderCoverageC_eq, hasEquivInPastC_eq, xsortByR_eq]
 
@@ -643,7 +726,8 @@ def tauStepC (B : Lace) (cache : PastCache) (rc : RoundCache) (participants : Li
    leaderCoverageC B cache rc participants l wavelength)
 
 theorem tauStepC_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat) :
-    tauStepC B (mkPastCache B) (mkRoundCache B) participants wavelength = tauStep B participants wavelength := by
+    tauStepC B (mkPastCache B) (mkRoundCache B participants) participants wavelength
+      = tauStep B participants wavelength := by
   funext acc l
   simp only [tauStepC, tauStep, leaderSegmentC_eq, leaderCoverageC_eq]
 
@@ -653,7 +737,7 @@ by the whole fold. This is the function the live gate exports run; both whole-la
 built once instead of being re-derived per `roundOf`/`causalPastIncl` call. -/
 def tauOrderFastUnfiltered (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
   let cache := mkPastCache B
-  let rc := mkRoundCache B
+  let rc := mkRoundCache B participants
   ((findAllFinalLeadersC B cache rc participants wavelength).foldl
     (tauStepC B cache rc participants wavelength) ([], [])).1
 
@@ -675,6 +759,39 @@ by rewriting, and the live gate may run the fast path with no loss of the verifi
 theorem tauOrderFast_eq (B : Lace) (participants : List AuthorId) (wavelength : Nat) :
     tauOrderFast B participants wavelength = tauOrder B participants wavelength := by
   simp only [tauOrderFast, tauOrder, tauOrderFastUnfiltered_eq]
+
+/-- **`tauOrderWithRounds B rc participants wavelength`** — the WHOLE finalization rule with the
+round map as an explicit PARAMETER. Every round the rule reads — the leader slot, the wave end,
+`maxRound`'s wave count, `hasEquivInPast`'s same-round test, `xsortBy`'s primary sort key — comes
+from `rc`, so instantiating `rc` is the ONLY variable.
+
+This is what makes §9's exhibits an EXPERIMENT rather than two anecdotes: `tauOrderWithRounds B
+(computeRoundsPreParticipant B) …` is the rule as it stood before this pass and `tauOrderWithRounds
+B (mkRoundCache B P) …` is the rule now, on ONE lace, with one bit changed. It is not a second
+implementation — `tauOrderFast_eq_withRounds` below is `rfl`. -/
+def tauOrderWithRounds (B : Lace) (rc : RoundCache) (participants : List AuthorId)
+    (wavelength : Nat) : List BlockId :=
+  let cache := mkPastCache B
+  (((findAllFinalLeadersC B cache rc participants wavelength).foldl
+    (tauStepC B cache rc participants wavelength) ([], [])).1).filter (enrolledId B participants)
+
+/-- **`tauOrderFast_eq_withRounds`** — the live path IS `tauOrderWithRounds` at the participant-
+filtered round map. Definitional, so the §9 pre/post pair compares the deployed rule against itself
+with only `rc` swapped. -/
+theorem tauOrderFast_eq_withRounds (B : Lace) (participants : List AuthorId) (wavelength : Nat) :
+    tauOrderFast B participants wavelength
+      = tauOrderWithRounds B (mkRoundCache B participants) participants wavelength := rfl
+
+/-- **`tauOrderPreRounds B participants wavelength`** — the finalization rule driven by the
+PRE-PARTICIPANT depth map: the rule exactly as it stood before this pass.
+
+⚑ THIS IS NOT THE FINALIZATION RULE. It is kept, named, and reachable from nothing but the §9
+`#guard`s, for one reason: it is the FALSIFICATION WITNESS for the §1 edge filter — the same
+discipline `isSuperRatifiedPreEnrollment` and `tauOrderUnfiltered` carry. §9 runs it against
+`traceOrderFork` and `traceRelayStall` and shows it computes an order the repaired rule does not,
+so the filter is demonstrably load-bearing rather than a no-op that "obviously" changes nothing. -/
+def tauOrderPreRounds (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
+  tauOrderWithRounds B (computeRoundsPreParticipant B) participants wavelength
 
 /-! ## 6c. THE RUNTIME FAST PATH — `@[implemented_by]` over `Std.HashMap`/`Std.HashSet`.
 
@@ -733,10 +850,23 @@ def fastPastMap (B : Lace) : Std.HashMap BlockId (List BlockId) :=
 /-- The round map as a `Std.HashMap` (O(1) lookup) — the runtime twin of `mkRoundCache`
 (`computeRounds`), built ONCE with `Std.HashMap.get?` replacing the pure fold's `roundLookup`
 `List.find?`. Same topological fold over the `(seq, creator)`-sorted lace. -/
-def fastRoundMap (B : Lace) : Std.HashMap BlockId Nat :=
+def fastRoundMap (B : Lace) (participants : List AuthorId) : Std.HashMap BlockId Nat :=
+  -- the enrolled BLOCK IDS as a HashSet, built ONCE: the O(1) twin of `enrolledId`'s `B.lookup`
+  -- scan. First-wins on a duplicated id, matching `Lace.lookup`'s `List.find?`; an id ABSENT from
+  -- the lace is `enrolledId`-true and is dropped by the `rm.get?` miss anyway (§1's docstring).
+  let ps : Std.HashSet AuthorId :=
+    participants.foldl (fun acc p => acc.insert p) (∅ : Std.HashSet AuthorId)
+  let enrolled : Std.HashSet BlockId :=
+    (B.foldl (init := ((∅ : Std.HashMap BlockId AuthorId), (∅ : Std.HashSet BlockId)))
+      (fun st b =>
+        let (seen, acc) := st
+        if seen.contains b.id then st
+        else (seen.insert b.id b.creator, if ps.contains b.creator then acc.insert b.id else acc))).2
   let sorted := B.toArray.qsort (fun a b => a.seq < b.seq || (a.seq == b.seq && a.creator < b.creator))
   sorted.foldl (init := (∅ : Std.HashMap BlockId Nat))
-    (fun rm b => rm.insert b.id (1 + (b.preds.filterMap (fun p => rm.get? p)).foldl Nat.max 0))
+    (fun rm b => rm.insert b.id
+      (1 + ((b.preds.filter (fun p => enrolled.contains p)).filterMap (fun p => rm.get? p)).foldl
+        Nat.max 0))
 
 /-- O(1) past lookup with a LAZY pure fallback (the `match`, not `getD`, keeps the fallback from
 being computed on a hit) — the runtime twin of `cachedPast`. -/
@@ -877,7 +1007,7 @@ applies the enrollment filter through `fastEnrolledFilter` (above), exactly as `
 applies `enrolledId`. -/
 def tauOrderFastImpl (B : Lace) (participants : List AuthorId) (wavelength : Nat) : List BlockId :=
   let pm := fastPastMap B
-  let rm := fastRoundMap B
+  let rm := fastRoundMap B participants
   fastEnrolledFilter B participants
     ((fastFindAllFinalLeaders B pm rm participants wavelength).foldl
       (fastTauStep B pm rm participants wavelength) ([], [])).1
@@ -1091,7 +1221,7 @@ theorem superRatified_exists_enrolled_ratifier {B : Lace} {participants : List A
     ∃ o ∈ B, participants.contains o.creator = true ∧ ratifies B participants o l = true := by
   unfold isSuperRatified at hsr
   simp only [decide_eq_true_eq] at hsr
-  set cs := ((blocksAtRound B r).filterMap (fun bid => match B.lookup bid with
+  set cs := ((blocksAtRound B participants r).filterMap (fun bid => match B.lookup bid with
       | some b => if ratifiesEnrolled B participants b l then some b.creator else none
       | none => none)).dedup with hcs
   have hpos : 0 < cs.length := lt_of_lt_of_le (Nat.succ_pos _) hsr
@@ -1109,6 +1239,163 @@ theorem superRatified_exists_enrolled_ratifier {B : Lace} {participants : List A
       simp only [ratifiesEnrolled, Bool.and_eq_true] at hr'
       exact ⟨b, List.mem_of_find?_eq_some hlk, hr'.1, hr'.2⟩
     · rw [if_neg hr] at hf'; simp at hf'
+
+/-! ## 7d. THE DEPTH TOOTH — the wave clock is driven ONLY by enrolled blocks, and on an enrolled
+lace the edge filter is the IDENTITY.
+
+§7b (`enrolledId` on the OUTPUT) governs whose blocks may be ORDERED. §7c (`ratifiesEnrolled`)
+governs who may DECIDE that a wave anchors. Neither says anything about who may move the CLOCK, and
+that turned out to be the third, independent question: `computeRounds` maxed over every present
+predecessor, so a non-participant chain that one honest block acked added depth, and depth is what
+`roundToWave` / `blocksAtRound` / the leader slot / the wave end / `xsortBy`'s primary sort key are
+all read off.
+
+Both halves, as §7b and §7c: the depth EXHIBITS an enrolled predecessor (safety, no hypothesis on
+the lace), and on an enrolled lace the filter changes nothing (liveness). -/
+
+/-- `List.foldl Nat.max a l` is either the seed or one of the list's own elements — the arithmetic
+fact that turns "the depth is `1 + max`" into "the depth NAMES a predecessor". -/
+theorem foldl_max_eq_or_mem : ∀ (l : List Nat) (a : Nat),
+    l.foldl Nat.max a = a ∨ l.foldl Nat.max a ∈ l := by
+  intro l
+  induction l with
+  | nil => intro a; exact Or.inl rfl
+  | cons x xs ih =>
+    intro a
+    simp only [List.foldl_cons]
+    rcases ih (Nat.max a x) with h | h
+    · rw [h]
+      by_cases hle : a ≤ x
+      · have hx : Nat.max a x = x := by simp [Nat.max_def, hle]
+        exact Or.inr (by rw [hx]; simp)
+      · exact Or.inl (by simp [Nat.max_def, hle])
+    · exact Or.inr (List.mem_cons_of_mem x h)
+
+/-- **`unenrolled_preds_contribute_no_depth`** — the leak's direct negation, at the recurrence. A
+block whose acks are ALL from non-participants sits at genesis depth `1`, however deep the chain it
+acknowledges. No hypothesis on the lace. -/
+theorem unenrolled_preds_contribute_no_depth (B : Lace) (participants : List AuthorId)
+    (rs : List (BlockId × Nat)) (b : Block)
+    (h : ∀ p ∈ b.preds, enrolledId B participants p = false) :
+    roundOfStep B participants rs b = 1 := by
+  have hnil : b.preds.filter (enrolledId B participants) = [] := by
+    apply List.filter_eq_nil_iff.mpr
+    intro p hp
+    simp [h p hp]
+  show 1 + _ = 1
+  rw [hnil]
+  rfl
+
+/-- **`roundOfStep_exhibits_enrolled_pred`** — one step of the recurrence, at full detail: any depth
+above `1` NAMES an ENROLLED predecessor carrying exactly one less. No hypothesis on the lace. -/
+theorem roundOfStep_exhibits_enrolled_pred {B : Lace} {participants : List AuthorId}
+    {rs : List (BlockId × Nat)} {b : Block} (h : 1 < roundOfStep B participants rs b) :
+    ∃ p ∈ b.preds, enrolledId B participants p = true ∧
+      roundLookup rs p = some (roundOfStep B participants rs b - 1) := by
+  have hstep : roundOfStep B participants rs b
+      = 1 + (((b.preds.filter (enrolledId B participants)).filterMap
+                (fun p => roundLookup rs p)).foldl Nat.max 0) := rfl
+  rw [hstep] at h ⊢
+  rcases foldl_max_eq_or_mem
+      ((b.preds.filter (enrolledId B participants)).filterMap (fun p => roundLookup rs p)) 0
+    with hz | hmem
+  · rw [hz] at h; omega
+  · rw [List.mem_filterMap] at hmem
+    obtain ⟨p, hpf, hlk⟩ := hmem
+    rw [List.mem_filter] at hpf
+    exact ⟨p, hpf.1, hpf.2, by simpa using hlk⟩
+
+/-- Every entry the depth fold produces was produced by `roundOfStep` on one of the folded blocks —
+proved by induction on the block LIST, so no `qsort` permutation lemma appears anywhere. -/
+theorem roundsFold_entry_of_mem (B : Lace) (participants : List AuthorId) :
+    ∀ (bs : List Block) (acc : List (BlockId × Nat)) (h : BlockId) (r : Nat),
+      (h, r) ∈ bs.foldl (fun rs b => (b.id, roundOfStep B participants rs b) :: rs) acc →
+      (h, r) ∈ acc ∨ ∃ b ∈ bs, b.id = h ∧ ∃ rs, r = roundOfStep B participants rs b := by
+  intro bs
+  induction bs with
+  | nil => intro acc h r hmem; exact Or.inl hmem
+  | cons b rest ih =>
+    intro acc h r hmem
+    rw [List.foldl_cons] at hmem
+    rcases ih _ h r hmem with hacc | ⟨b', hb', hid, rs, hrs⟩
+    · rcases List.mem_cons.mp hacc with heq | hin
+      · simp only [Prod.mk.injEq] at heq
+        exact Or.inr ⟨b, by simp, heq.1.symm, acc, heq.2⟩
+      · exact Or.inl hin
+    · exact Or.inr ⟨b', List.mem_cons_of_mem _ hb', hid, rs, hrs⟩
+
+/-- **`computeRounds_depth_exhibits_enrolled_pred` (THE SAFETY HALF).** Every round the rule
+assigns above `1` EXHIBITS an ENROLLED predecessor of the block that carries it. **No hypothesis on
+the lace** — this holds on a lace stuffed with a non-participant chain of any length, which is
+precisely the case that mattered: an outsider can no longer add a level, so it cannot move the wave
+clock, so it cannot decide where an honest block lands in the total order.
+
+Non-vacuity: the conclusion is genuinely FALSE for the pre-repair recurrence on §9's
+`traceOrderFork` — block `31`'s depth there is supplied entirely by the unenrolled relay `80`, and
+the `#guard` pair executes exactly that.
+
+⚠ The witness is a member of `sortedLace B`, not of `B`. That is the `Array.qsort` gap this file
+carries throughout (`sortedLace`'s docstring): the sort's output is `B` reordered, and nothing in
+this toolchain can prove it. -/
+theorem computeRounds_depth_exhibits_enrolled_pred {B : Lace} {participants : List AuthorId}
+    {h : BlockId} {r : Nat}
+    (hmem : (h, r) ∈ computeRounds B participants) (hr : 1 < r) :
+    ∃ b ∈ sortedLace B, b.id = h ∧ ∃ p ∈ b.preds, enrolledId B participants p = true := by
+  rw [computeRounds, roundsFold] at hmem
+  rcases roundsFold_entry_of_mem B participants (sortedLace B) [] h r hmem with hnil | ⟨b, hb, hid, rs, hrs⟩
+  · simp at hnil
+  · refine ⟨b, hb, hid, ?_⟩
+    obtain ⟨p, hp, hen, _⟩ := roundOfStep_exhibits_enrolled_pred (B := B) (participants := participants)
+      (rs := rs) (b := b) (by omega)
+    exact ⟨p, hp, hen⟩
+
+/-- **`roundOfStep_eq_pre_of_enrolled`** — on a lace whose every block is from a participant, the
+edge filter is the IDENTITY on the recurrence. The pointwise liveness half. The `EnrolledLace`
+hypothesis is genuinely refutable (`traceOrderFork`, `traceRelayStall`, `traceUnenrolled`,
+`traceSybilRatify`, `traceSybilOnly` all refute it, §9). -/
+theorem roundOfStep_eq_pre_of_enrolled {B : Lace} {participants : List AuthorId}
+    (hE : EnrolledLace B participants) (rs : List (BlockId × Nat)) (b : Block) :
+    roundOfStep B participants rs b = roundOfStepPreParticipant rs b := by
+  have hf : b.preds.filter (enrolledId B participants) = b.preds := by
+    apply List.filter_eq_self.mpr
+    intro p _
+    show enrolledId B participants p = true
+    unfold enrolledId
+    cases hl : B.lookup p with
+    | none => rfl
+    | some c => exact hE c (List.mem_of_find?_eq_some hl)
+  show 1 + _ = 1 + _
+  rw [hf]
+
+/-- **`computeRounds_eq_pre_of_enrolled`** — on an HONEST lace the repaired depth map is
+BIT-IDENTICAL to the pre-repair one. -/
+theorem computeRounds_eq_pre_of_enrolled (B : Lace) (participants : List AuthorId)
+    (hE : EnrolledLace B participants) :
+    computeRounds B participants = computeRoundsPreParticipant B := by
+  have hf : (fun (rs : List (BlockId × Nat)) (b : Block) =>
+                (b.id, roundOfStep B participants rs b) :: rs)
+          = (fun (rs : List (BlockId × Nat)) (b : Block) =>
+                (b.id, roundOfStepPreParticipant rs b) :: rs) := by
+    funext rs b; rw [roundOfStep_eq_pre_of_enrolled hE rs b]
+  unfold computeRounds computeRoundsPreParticipant roundsFold
+  rw [hf]
+
+/-- **`tauOrder_eq_preRounds_of_enrolled` (THE LIVENESS HALF).** On an HONEST lace — every block
+from a participant, the only kind a correct federation produces — the WHOLE finalization is
+bit-identical to the pre-repair rule's: same blocks, same order, same length. So this is a pure
+subtraction of non-participant DEPTH, never a liveness trade: the honest committee anchors exactly
+the waves it anchored before, in exactly the order it anchored them.
+
+⚑ The hypothesis is not merely refutable, it is LOAD-BEARING: on §9's `traceOrderFork` the
+CONCLUSION IS FALSE — the two sides are twelve-element orders that differ at index 5 — and a
+`#guard` executes that. A statement whose conclusion fails the moment its hypothesis does is not
+one that could have been proved vacuously. -/
+theorem tauOrder_eq_preRounds_of_enrolled (B : Lace) (participants : List AuthorId)
+    (wavelength : Nat) (hE : EnrolledLace B participants) :
+    tauOrder B participants wavelength = tauOrderPreRounds B participants wavelength := by
+  rw [← tauOrderFast_eq, tauOrderFast_eq_withRounds]
+  unfold tauOrderPreRounds mkRoundCache
+  rw [computeRounds_eq_pre_of_enrolled B participants hE]
 
 /-! ## 8. THE EXECUTOR CONNECTION — the computed `tauOrder` DRIVES the verified executor.
 
@@ -1264,6 +1551,74 @@ def traceSybilOnly : Lace := traceR1 ++ traceR2 ++ traceSybilOnlyR3
 /-- The wave-0 leader block both Sybil traces share: creator `1`'s genesis (`participants[0]`). -/
 def sybilLeader : Block := ⟨10,1,0,[],true⟩
 
+/-- **THE ORDER-FORK TRACE (the rounds leak — this pass).** Three enrolled creators `1,2,3` over
+four causal layers at wavelength `4`, plus a two-block NON-PARTICIPANT RELAY (`70` by creator `7`,
+`80` by creator `8`, `80` acking `70`) that ONE honest block acks: creator `3`'s layer-2 block `31`
+lists `80` among its predecessors.
+
+Everything else is ordinary. The relay is two well-formed blocks from creators who are simply not in
+`participants` — exactly what `enroll_pq`'s insert-only roster leaves behind when
+`constitution.current.participants` shrinks, and exactly what `from_checkpoint_trusted` reloads with
+no roster check. No attacker is required and no check is defeated.
+
+⚑ **What it measures.** Under the PRE-repair recurrence the relay adds a level: `roundOf 80 = 2`,
+so `roundOf 31 = 3` instead of `2`. The wave still anchors on the same leader (`10`) at the same
+wave-end round (`4`, holding `{13, 23, 33}` under BOTH maps) — so this is not a stall and not a
+delay. What moves is `xsortBy`'s primary key: `31` leaves the round-2 group and joins the round-3
+group, and the finalized order becomes `[10,20,30,11,21,12,22,31,32,13,23,33]` instead of
+`[10,20,30,11,21,31,12,22,32,13,23,33]`. **Same twelve enrolled coordinates, different order, and
+neither is a prefix of the other.**
+
+Two honest nodes, `traceOrderFork` and `traceOrderForkHonestView`, hold the IDENTICAL enrolled
+sub-lace and differ ONLY in whether they received the two outsider blocks — which is precisely the
+difference dissemination does not rule out, since non-participants are the creators no honest node
+is obliged to relay. So the pre-repair rule lets two honest nodes execute the same turns in
+different orders: `no_conflicting_finalized_history` violated with no Byzantine validator anywhere.
+
+⚑ It also manufactures an EQUIVOCATOR: under the pre-repair map creator `3`'s blocks `31` and `32`
+BOTH land at round `3`, which is the model's (and the node's) equivocation signature — a same-round
+pair by one creator. The §9 guards execute that too; here it changes no outcome only because the
+wave-0 anchor's causal past is the single block `10`, so `leaderSegment`'s equivocation filter reads
+it from a viewpoint that cannot see the pair. A deeper anchor would have dropped an honest
+validator's blocks from the order outright. -/
+def traceOrderFork : Lace :=
+  [⟨10,1,0,[],true⟩, ⟨20,2,0,[],true⟩, ⟨30,3,0,[],true⟩,
+   ⟨70,7,0,[],true⟩, ⟨80,8,0,[70],true⟩,
+   ⟨11,1,1,[10,20,30],true⟩, ⟨21,2,1,[10,20,30],true⟩, ⟨31,3,1,[10,20,30,80],true⟩,
+   ⟨12,1,2,[11,21],true⟩, ⟨22,2,2,[11,21],true⟩, ⟨32,3,2,[11,21],true⟩,
+   ⟨13,1,3,[12,22,32,31],true⟩, ⟨23,2,3,[12,22,32,31],true⟩, ⟨33,3,3,[12,22,32,31],true⟩]
+
+/-- The SECOND honest node's view of the same run: the IDENTICAL enrolled blocks, minus the two
+outsider blocks it was never sent. Defined as a filter of `traceOrderFork` so the two views cannot
+drift apart — the pair is an experiment with one variable, not two hand-written laces. -/
+def traceOrderForkHonestView : Lace :=
+  traceOrderFork.filter (fun b => trace3Participants.contains b.creator)
+
+/-- **THE RELAY-STALL TRACE** — the same defect's liveness face, at wavelength `3`. A THREE-block
+non-participant relay (`70 ← 80 ← 90`, creators `7, 8, 9`) reaches depth 3 under the pre-repair
+recurrence, and ONE honest block (`11`) acks its tip. That pushes `11` to round `4` and its whole
+downstream layer to round `5`, so the wave-0 END round (`3`) is occupied by the relay tip `90` and
+by NOTHING ELSE — not one enrolled block sits at the round where the committee's ratification is
+counted, and the federation finalizes NOTHING while every honest validator is up and correct.
+
+The honest view (same enrolled blocks, no relay) finalizes all nine. So the pre-repair rule turns an
+identical committee run into "0 coordinates" or "9 coordinates" depending on whether a node happened
+to receive three blocks from creators it does not recognise. -/
+def traceRelayStall : Lace :=
+  [⟨10,1,0,[],true⟩, ⟨20,2,0,[],true⟩, ⟨30,3,0,[],true⟩,
+   ⟨70,7,0,[],true⟩, ⟨80,8,0,[70],true⟩, ⟨90,9,0,[80],true⟩,
+   ⟨11,1,1,[10,20,30,90],true⟩, ⟨21,2,1,[10,20,30],true⟩, ⟨31,3,1,[10,20,30],true⟩,
+   ⟨12,1,2,[11,21,31],true⟩, ⟨22,2,2,[11,21,31],true⟩, ⟨32,3,2,[11,21,31],true⟩]
+
+/-- The second honest node's view of the relay-stall run. -/
+def traceRelayStallHonestView : Lace :=
+  traceRelayStall.filter (fun b => trace3Participants.contains b.creator)
+
+/-- The pre-repair round map of `traceOrderFork`, named so the guards can read individual depths
+off it through the cache-parameterised `…R` twins (`roundOfR` / `blocksAtRoundR` /
+`hasEquivInPastC`) — the rule with ONE variable changed, never a second implementation. -/
+def forkRoundsPre : RoundCache := computeRoundsPreParticipant traceOrderFork
+
 /-- **THE DIFFERENTIAL GOLDEN VECTOR** — the finalized order projected to `(creator, seq)` pairs.
 This is the level at which the Lean model and the Rust `ordering.rs::tau` are compared: the abstract
 `BlockId` is a `Nat` here vs. a blake3 hash in Rust, but the `(creator, seq)` coordinate of each
@@ -1297,7 +1652,7 @@ theorem tauGoldenFast_eq (B : Lace) (participants : List AuthorId) (wavelength :
 #guard (finalLeaderAt traceEquiv trace3Participants 0 3).isNone
 #guard (tauOrder traceEquiv trace3Participants 3).all
         (fun id => match traceEquiv.lookup id with | some b => b.creator != 1 | none => true)
-#guard hasEquivInPast traceEquiv 11 1   -- the fork IS detected from a downstream observer.
+#guard hasEquivInPast traceEquiv trace3Participants 11 1  -- the fork IS detected downstream.
 
 /-! ### THE ENROLLMENT `#guard`s — a RED/GREEN PAIR on ONE lace.
 
@@ -1350,7 +1705,7 @@ block could not have made quorum — those guards would be FALSE and the build w
 #guard traceUnenrolled.all (fun b => b.id == 32 || traceSybilRatify.contains b)
 #guard !traceSybilRatify.any (fun b => b.id == 32)
 -- the wave-end round genuinely holds the unenrolled creator's block, and it genuinely `ratifies`.
-#guard (blocksAtRound traceSybilRatify 3) == [12, 22, 92]
+#guard (blocksAtRound traceSybilRatify trace3Participants 3) == [12, 22, 92]
 #guard ratifies traceSybilRatify trace3Participants ⟨92,9,2,[11,21,31,91],true⟩ sybilLeader
 #guard !trace3Participants.contains 9
 -- (RED) THE WOUND: the PRE-REPAIR rule super-ratifies the wave on `{1, 2, 9}`.
@@ -1363,7 +1718,7 @@ block could not have made quorum — those guards would be FALSE and the build w
 
 -- ── EXHIBIT 2: the wave anchored with ZERO enrolled ratifiers. ──
 -- Anti-vacuity: all three wave-end blocks ratify the leader on the merits, and none is enrolled.
-#guard (blocksAtRound traceSybilOnly 3) == [72, 82, 92]
+#guard (blocksAtRound traceSybilOnly trace3Participants 3) == [72, 82, 92]
 #guard traceSybilOnlyR3.all (fun b => ratifies traceSybilOnly trace3Participants b sybilLeader)
 #guard traceSybilOnlyR3.all (fun b => !trace3Participants.contains b.creator)
 -- (RED) THE WOUND: three unenrolled creators are a "supermajority of DISTINCT PARTICIPANTS".
@@ -1385,6 +1740,100 @@ block could not have made quorum — those guards would be FALSE and the build w
         == isSuperRatifiedPreEnrollment trace3 trace3Participants sybilLeader 3
 #guard isSuperRatified traceMW4 traceMW4Participants ⟨11,1,0,[],true⟩ 3
         == isSuperRatifiedPreEnrollment traceMW4 traceMW4Participants ⟨11,1,0,[],true⟩ 3
+
+/-! ### THE DEPTH `#guard`s (§7d) — the ORDER FORK, executed.
+
+`computeRoundsPreParticipant` is the pre-repair recurrence, kept for exactly this, and
+`tauOrderWithRounds` runs the WHOLE rule with the round map as the only variable — so each pair
+below is one lace, one bit changed, not two anecdotes. If the edge filter were vacuous — if a
+non-participant's chain could not have moved the wave clock — the first guard of each pair would be
+FALSE and the build would break. -/
+
+-- ── EXHIBIT 1: TWO HONEST NODES, ONE ENROLLED SUB-LACE, TWO DIFFERENT ORDERS. ──
+-- Anti-vacuity: the two views differ by EXACTLY the two outsider blocks, and the outsider is
+-- load-bearing (an honest block ACKS the relay tip), and neither creator is enrolled.
+#guard traceOrderFork.filter (fun b => trace3Participants.contains b.creator)
+        == traceOrderForkHonestView
+#guard traceOrderFork.length == traceOrderForkHonestView.length + 2
+#guard (traceOrderFork.filter (fun b => !trace3Participants.contains b.creator)).map (·.id) == [70, 80]
+#guard (traceOrderFork.lookup 31).map (·.preds) == some [10, 20, 30, 80]
+#guard !trace3Participants.contains 7 && !trace3Participants.contains 8
+-- The wave still ANCHORS under both maps, on the same leader at the same wave-end round — so what
+-- follows is a REORDERING, not a stall, not a delay, not a prefix.
+#guard blocksAtRoundR forkRoundsPre traceOrderFork 4 == [13, 23, 33]
+#guard blocksAtRound traceOrderFork trace3Participants 4 == [13, 23, 33]
+#guard (finalLeaderAt traceOrderFork trace3Participants 0 4).map (·.id) == some 10
+-- (RED) THE WOUND: the relay adds a level, and creator 3's layer-2 block moves two positions.
+#guard roundOfR forkRoundsPre 80 == 2 && roundOfR forkRoundsPre 31 == 3
+#guard tauOrderPreRounds traceOrderFork trace3Participants 4
+        == [10, 20, 30, 11, 21, 12, 22, 31, 32, 13, 23, 33]
+#guard tauOrderPreRounds traceOrderForkHonestView trace3Participants 4
+        == [10, 20, 30, 11, 21, 31, 12, 22, 32, 13, 23, 33]
+-- …the SAME twelve blocks (a permutation, so neither order is behind the other)…
+#guard ((tauOrderPreRounds traceOrderFork trace3Participants 4).toArray.qsort (· < ·)).toList
+        == ((tauOrderPreRounds traceOrderForkHonestView trace3Participants 4).toArray.qsort (· < ·)).toList
+-- …and the node harness's own `prefix_consistent` check (zip, compare pointwise) says FORK.
+#guard !((tauOrderPreRounds traceOrderFork trace3Participants 4).zip
+          (tauOrderPreRounds traceOrderForkHonestView trace3Participants 4)).all (fun p => p.1 == p.2)
+-- (RED) …and it manufactures an EQUIVOCATOR: creator 3's blocks 31 and 32 collide at one round,
+--       which is exactly the same-creator/same-round pair the equivocation guard keys on.
+#guard roundOfR forkRoundsPre 31 == roundOfR forkRoundsPre 32
+#guard hasEquivInPastC traceOrderFork (mkPastCache traceOrderFork) forkRoundsPre 13 3
+-- (GREEN) THE REFUSAL: the repaired rule agrees on the two views, block for block and position for
+--         position; the relay contributes no depth and creator 3 is no longer an equivocator.
+#guard roundOf traceOrderFork trace3Participants 80 == 1
+#guard roundOf traceOrderFork trace3Participants 31 == 2
+#guard !hasEquivInPast traceOrderFork trace3Participants 13 3
+#guard tauOrder traceOrderFork trace3Participants 4
+        == tauOrder traceOrderForkHonestView trace3Participants 4
+#guard tauGolden traceOrderFork trace3Participants 4
+        == tauGolden traceOrderForkHonestView trace3Participants 4
+-- (GREEN, THE LIVENESS POLE) …and it is not refusing anyone: all TWELVE enrolled coordinates still
+--         finalize, in the causal order, with the outsider's own blocks excluded.
+#guard (tauOrder traceOrderFork trace3Participants 4).length == 12
+#guard tauOrder traceOrderFork trace3Participants 4
+        == [10, 20, 30, 11, 21, 31, 12, 22, 32, 13, 23, 33]
+#guard (tauOrder traceOrderFork trace3Participants 4).all
+        (fun id => match traceOrderFork.lookup id with
+                    | some b => trace3Participants.contains b.creator | none => true)
+#guard tauOrderFast traceOrderFork trace3Participants 4 == tauOrder traceOrderFork trace3Participants 4
+
+-- ── EXHIBIT 2: the relay stalls the federation outright (the liveness face). ──
+#guard traceRelayStall.filter (fun b => trace3Participants.contains b.creator)
+        == traceRelayStallHonestView
+#guard traceRelayStall.length == traceRelayStallHonestView.length + 3
+-- (RED) THE WOUND: the wave-END round holds ONLY the relay tip — not one enrolled block sits where
+--       the committee's ratification is counted — and the federation finalizes NOTHING.
+#guard blocksAtRoundR (computeRoundsPreParticipant traceRelayStall) traceRelayStall 3 == [90]
+#guard (tauOrderPreRounds traceRelayStall trace3Participants 3).isEmpty
+#guard (tauOrderPreRounds traceRelayStallHonestView trace3Participants 3).length == 9
+-- (GREEN) THE REFUSAL: the wave end is the committee's own three blocks again, and BOTH views
+--         finalize the identical nine coordinates.
+#guard blocksAtRound traceRelayStall trace3Participants 3 == [12, 22, 32]
+#guard tauOrder traceRelayStall trace3Participants 3
+        == tauOrder traceRelayStallHonestView trace3Participants 3
+#guard (tauOrder traceRelayStall trace3Participants 3).length == 9
+#guard tauGolden traceRelayStall trace3Participants 3 == tauGolden trace3 trace3Participants 3
+
+-- ── THE `EnrolledLace` HYPOTHESIS OF `tauOrder_eq_preRounds_of_enrolled` IS LOAD-BEARING. ──
+-- It is REFUTED on both attack laces (so the identity theorem is not silently applying to them)…
+#guard !traceOrderFork.all (fun b => trace3Participants.contains b.creator)
+#guard !traceRelayStall.all (fun b => trace3Participants.contains b.creator)
+-- …and its CONCLUSION genuinely FAILS there, which is the part a vacuous hypothesis could not do.
+#guard tauOrder traceOrderFork trace3Participants 4
+        != tauOrderPreRounds traceOrderFork trace3Participants 4
+#guard tauOrder traceRelayStall trace3Participants 3
+        != tauOrderPreRounds traceRelayStall trace3Participants 3
+-- On every all-enrolled lace in this file the filter is the IDENTITY (the theorem, executably) —
+-- including both honest views, so no honest federation loses a block or a position.
+#guard traceOrderForkHonestView.all (fun b => trace3Participants.contains b.creator)
+#guard tauOrder trace3 trace3Participants 3 == tauOrderPreRounds trace3 trace3Participants 3
+#guard tauOrder traceMW4 traceMW4Participants 3 == tauOrderPreRounds traceMW4 traceMW4Participants 3
+#guard tauOrder traceEquiv trace3Participants 3 == tauOrderPreRounds traceEquiv trace3Participants 3
+#guard tauOrder traceOrderForkHonestView trace3Participants 4
+        == tauOrderPreRounds traceOrderForkHonestView trace3Participants 4
+#guard tauOrder traceRelayStallHonestView trace3Participants 3
+        == tauOrderPreRounds traceRelayStallHonestView trace3Participants 3
 
 -- THE MEMOIZED FAST PATH agrees with the pure rule on the concrete traces (the live gate exports run
 -- `tauOrderFast`/`tauGoldenFast`; the exponential re-traversal is gone, the order is IDENTICAL).
@@ -1446,3 +1895,12 @@ constrain a REAL, non-trivial finalized order, and the model reproduces the node
 #assert_axioms ratifiesEnrolled_eq_of_enrolled
 #assert_axioms isSuperRatified_eq_pre_of_enrolled
 #assert_axioms superRatified_exists_enrolled_ratifier
+#assert_axioms foldl_max_eq_or_mem
+#assert_axioms unenrolled_preds_contribute_no_depth
+#assert_axioms roundOfStep_exhibits_enrolled_pred
+#assert_axioms roundsFold_entry_of_mem
+#assert_axioms computeRounds_depth_exhibits_enrolled_pred
+#assert_axioms roundOfStep_eq_pre_of_enrolled
+#assert_axioms computeRounds_eq_pre_of_enrolled
+#assert_axioms tauOrder_eq_preRounds_of_enrolled
+#assert_axioms tauOrderFast_eq_withRounds

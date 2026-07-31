@@ -103,8 +103,8 @@ fn convert_turn_effects_to_vm_unchecked(
             dregg_circuit::effect_vm::fold_bytes32_to_bb(h)
         }
 
-        // v13 FIELDS-OCTET: the SetField value param is lane 0 of the FAITHFUL
-        // `field_limbs8` split (the u64-lane lo32), the SAME lane the rotated
+        // FIELDS-OCTET: the SetField value param is lane 0 of the nine-lane
+        // `field_limbs9` encoding (the u64-lane lo32), the SAME lane the rotated
         // producer writes to the field's welded limb `4 + slot`. So the setField
         // write gate `gFieldWriteP1 slot` (fields[slot]_after == param VALUE) binds
         // the genuine faithful lane 0. REPLACES the ~31-bit `fold_bytes32_to_bb`.
@@ -113,7 +113,7 @@ fn convert_turn_effects_to_vm_unchecked(
         // the state commitment". That is FALSE on this wire, in the live tense. What the
         // DEPLOYED member does is the OPPOSITE: `v3OfFrozen (setFieldTickFace slot)` FREEZES
         // all 56 fields completion lanes at before == after — the written slot's 7 included.
-        // The completion lanes are not fed by this 1-felt param at all; they are `field_limbs8`
+        // The completion lanes are not fed by this 1-felt param at all; they are the encoder's
         // of the REAL 32-byte cell field (`rotation_witness::produce`), so freezing them makes
         // bytes 0..28 of a field value UNWRITABLE rather than merely unbound: an honest
         // large-value write is UNSAT, not silently truncated. That is what makes the 1-felt
@@ -127,7 +127,7 @@ fn convert_turn_effects_to_vm_unchecked(
         // WIDE_REGISTRY_STAGED_TSV + WIDE_UMEM_WELD_REGISTRY_TSV, w=1601/1608, pi=66). Adopting
         // it is an epoch, not a collect-set flip.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
-            dregg_circuit::effect_vm::field_limbs8(value)[0]
+            dregg_circuit::effect_vm::field_limbs9(value)[0]
         }
 
         // ⚠ CORRECTION (canonical-codec Stage 0): "the full 256-bit binding path" is an

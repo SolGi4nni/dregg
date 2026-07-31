@@ -8,7 +8,7 @@
 //! `dregg_circuit::effect_vm::verify_slot_caveat_manifest` compares DIRECTLY against
 //! the AIR's `STATE_BEFORE_BASE` / `STATE_AFTER_BASE` field columns.
 //!
-//! Those columns carry `field_limbs8(f)[0]` = `u32::from_be_bytes(f[28..32])` — the lo32
+//! Those columns carry `field_limbs9(f)[0]` = `u32::from_be_bytes(f[28..32])` — the lo32
 //! of the kernel u64 lane that `dregg_cell::field_from_u64` writes. The operand projector
 //! used to take `u32::from_le_bytes(f[0..4])` instead: a DIFFERENT lane, and identically
 //! ZERO for every canonically-encoded operand. That skew is not a narrow binding, it is a
@@ -25,7 +25,7 @@
 use dregg_cell::field_from_u64;
 use dregg_cell::program::StateConstraint;
 use dregg_circuit::effect_vm::pi;
-use dregg_circuit::effect_vm::{SlotCaveatEntry, field_limbs8, verify_slot_caveat_manifest};
+use dregg_circuit::effect_vm::{SlotCaveatEntry, field_limbs9, verify_slot_caveat_manifest};
 use dregg_circuit::field::BabyBear;
 use dregg_turn::executor::project_slot_caveat_manifest;
 
@@ -45,7 +45,7 @@ fn pi_with_manifest(count: u32, entries: &[SlotCaveatEntry]) -> Vec<BabyBear> {
 /// `verify_slot_caveat_manifest` is documented to be compared against.
 fn air_field_view(slot_value: u64) -> [BabyBear; 8] {
     let mut f = [BabyBear::ZERO; 8];
-    f[SLOT as usize] = field_limbs8(&field_from_u64(slot_value))[0];
+    f[SLOT as usize] = field_limbs9(&field_from_u64(slot_value))[0];
     f
 }
 
@@ -61,7 +61,7 @@ fn value_operands_project_into_the_air_field_lane() {
         assert_eq!(entries[0].type_tag, pi::SLOT_CAVEAT_TAG_FIELD_GTE);
         assert_eq!(
             entries[0].params[0],
-            field_limbs8(&field_from_u64(v))[0],
+            field_limbs9(&field_from_u64(v))[0],
             "the FieldGte operand must land in the AIR's field-column lane for {v}"
         );
         assert_ne!(
@@ -132,8 +132,8 @@ fn allowed_transitions_operands_are_distinguished() {
     assert_eq!(count, 1);
     let e = entries[0];
     assert_eq!(e.type_tag, pi::SLOT_CAVEAT_TAG_ALLOWED_TRANSITIONS);
-    assert_eq!(e.params[1], field_limbs8(&field_from_u64(1))[0]);
-    assert_eq!(e.params[2], field_limbs8(&field_from_u64(2))[0]);
+    assert_eq!(e.params[1], field_limbs9(&field_from_u64(1))[0]);
+    assert_eq!(e.params[2], field_limbs9(&field_from_u64(2))[0]);
     assert_ne!(
         e.params[1], e.params[2],
         "the old/new operands of a transition must not collapse to the same felt"
@@ -141,7 +141,7 @@ fn allowed_transitions_operands_are_distinguished() {
 }
 
 /// The residual, pinned so the fix is not over-read: this is still a ONE-felt operand.
-/// Bytes 0..28 of a 32-byte operand ride `field_limbs8` lanes 1..7 and are NOT carried
+/// Bytes 0..28 of a 32-byte operand ride `field_limbs9` lanes 1..8 and are NOT carried
 /// by the manifest entry — a 32-byte digest is not a caveat operand, exactly as
 /// `docs/FINDING-state-field-truncation.md` concludes ("a `fields[]` slot is
 /// definitionally a u64 lane").

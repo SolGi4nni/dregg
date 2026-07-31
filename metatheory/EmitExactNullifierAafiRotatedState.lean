@@ -36,13 +36,13 @@ theorem descriptorJson_eq_canonical_emit :
 -- The production geometry and ABI are checked at the emitter boundary as well as in the author.
 #guard exactNullifierAafiRotatedStateDescriptor.name ==
   "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state"
-#guard exactNullifierAafiRotatedStateDescriptor.traceWidth == 3760
+#guard exactNullifierAafiRotatedStateDescriptor.traceWidth == 3804
 #guard exactNullifierAafiRotatedStateDescriptor.piCount == 76
-#guard exactNullifierAafiRotatedStateDescriptor.constraints.length == 1258
+#guard exactNullifierAafiRotatedStateDescriptor.constraints.length == 1274
 #guard exactNullifierAafiRotatedStateDescriptor.tables.map (fun t => t.id) ==
   [.main, .custom 4, .poseidon2, .custom 79, .custom 80]
 #guard descriptorJson.startsWith
-  "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",\"ir\":2,\"trace_width\":3760,\"public_input_count\":76"
+  "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",\"ir\":2,\"trace_width\":3804,\"public_input_count\":76"
 #guard descriptorJson.endsWith "\"hash_sites\":[],\"ranges\":[]}"
 
 #assert_axioms descriptorJson_eq_canonical_emit

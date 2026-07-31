@@ -19,7 +19,7 @@ builds the two wide-transfer AVAIL members the emission retargets to:
     `v3OfFrozenWide transferVmDescriptorAvail`, with the rc pins at the AVAIL-shifted caveat rc
     carrier (`withDfaRcPinsAt AVAIL_WIDTH` — the fixed-geometry `withDfaRcPins` would read the
     WRONG columns on the widened face) and the membership teeth columns past the avail wide
-    carriers (`2617..2618`, teeth PIs 50..51 UNCHANGED — same slots as the bare member, so the
+    carriers (`2693..2694`, teeth PIs 50..51 UNCHANGED — same slots as the bare member, so the
     fold-arm PI convention `MEMBERSHIP_CLAIM_PI_LO = 50` survives);
   * **`transferCapOpenTBAvailWide`** — the live-only `transferCapOpenTBVmDescriptor2R24` host:
     `effCapOpenV3TB` (fully parametric in its base) over the same hardened rotated face,
@@ -50,7 +50,7 @@ face's own constraints are never pin-shaped, decidably), and the site prefix ret
 
 The crown transfer is a bare-cohort route, so the emitted wide row carries the capacity-floor
 refuse. On the avail face the caveat type-tag columns ride `cavBaseOf AVAIL_WIDTH = 676` (not the
-bare 666), so the refuse is `AvailWireMembers.gentianDeployedBareRefuseAt (cavBaseOf AVAIL_WIDTH)`
+bare 682), so the refuse is `AvailWireMembers.gentianDeployedBareRefuseAt (cavBaseOf AVAIL_WIDTH)`
 (aux blocks past the member's OWN width, above the wide carriers — the `gentianWideBareRefuse`
 geometry at the avail caveat base). §6 re-closes the three capacity dodges on the refused member
 via the column-parametric keystone `declared_tag_unsat_at`, so the flag-day teeth do not regress
@@ -74,7 +74,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitV2
    rangeTidW rangeLookupW lookup_replaces_rangeW siteLookups_sound)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (rotateV3 rotateV3FrozenAuthority rotateV3FrozenAuthority_constraints v3OfFrozenWide
-   graduableWide_rotateV3FrozenAuthority rotV3Appendix go_append_left B_STATE_COMMIT)
+   graduableWide_rotateV3FrozenAuthority rotV3Appendix go_append_left B_STATE_COMMIT B_SPAN)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationWide
   (wideAppend isLegacyCommitPin1 wideAppendixSpan)
 open Dregg2.Circuit.Emit.CarrierComposed
@@ -175,15 +175,15 @@ def TR_AVAIL_BB : Nat := AVAIL_WIDTH
 
 #guard TR_AVAIL_BB == transferVmDescriptorAvail.traceWidth
 #guard transferAvailV3W.piCount == 46
-#guard transferAvailV3W.traceWidth == 1657
+#guard transferAvailV3W.traceWidth == 1701
 #guard graduableWide transferVmDescriptorAvail
 -- the Rust avail-pad key survives every wrapper (all append-only on the name)
 #guard transferAvailV3W.name.startsWith "dregg-effectvm-transfer-v1-avail"
 
 /-- The AVAIL wide membership teeth columns: past the avail wide carriers
-(`1657 + 960 = 2617..2618` — the avail mirror of `MEMBERSHIP_TEETH_COL_WIDE = 2607`). The teeth
+(`1701 + 992 = 2693..2694` — the avail mirror of `MEMBERSHIP_TEETH_COL_WIDE = 2683`). The teeth
 PI slots are UNCHANGED (50..51 — the avail rotated face publishes the same 46 + 4 rc PIs). -/
-def MEMBERSHIP_TEETH_COL_AVAIL_WIDE : Nat := 2617
+def MEMBERSHIP_TEETH_COL_AVAIL_WIDE : Nat := 2693
 
 #guard MEMBERSHIP_TEETH_COL_AVAIL_WIDE == transferAvailV3W.traceWidth + wideAppendixSpan
 
@@ -193,7 +193,7 @@ def transferMembershipAvailWideBase : EffectVmDescriptor2 :=
   wideAppend
     (withMembershipTeethPinsAt MEMBERSHIP_TEETH_COL_AVAIL_WIDE
       (withDfaRcPinsAt AVAIL_WIDTH transferAvailV3W))
-    TR_AVAIL_BB (TR_AVAIL_BB + 239)
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
 /-- **`transferV3MembershipAvailWide`** — the AVAIL crown wide transfer member (the
 `transferVmDescriptor2R24` wide-registry host post-retarget): the membership-teeth transfer
@@ -217,7 +217,7 @@ def transferCapOpenTBAvailWide : EffectVmDescriptor2 :=
     (Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB transferAvailV3W
       "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb"
       Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER)
-    TR_AVAIL_BB (TR_AVAIL_BB + 239)
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
 /-- **`transferAvailWideRefused`** — the crown member as EMITTED under the bare-cohort
 capacity-floor refuse, at the AVAIL-shifted caveat base (`cavBaseOf AVAIL_WIDTH = 676`; aux
@@ -227,16 +227,16 @@ umem-welded twin welds (refuse-first, the runtime producer's composition). -/
 def transferAvailWideRefused : EffectVmDescriptor2 :=
   gentianDeployedBareRefuseAt (cavBaseOf AVAIL_WIDTH) transferV3MembershipAvailWide
 
--- Geometry pins: the avail crown mirrors the bare crown (+10 pad): 68 PIs, width 2619 (+2 teeth);
--- the TB member 65 PIs, width 2948; the refused crown +45 aux columns.
+-- Geometry pins: the avail crown mirrors the bare crown (+10 pad): 68 PIs, width 2695 (+2 teeth);
+-- the TB member 65 PIs, width 3024; the refused crown +45 aux columns.
 #guard transferV3MembershipAvailWide.piCount == 68
-#guard transferV3MembershipAvailWide.traceWidth == 2619
+#guard transferV3MembershipAvailWide.traceWidth == 2695
 #guard transferV3MembershipAvailWide.name == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged"
 #guard transferCapOpenTBAvailWide.piCount == 65
-#guard transferCapOpenTBAvailWide.traceWidth == 2948
+#guard transferCapOpenTBAvailWide.traceWidth == 3024
 #guard transferCapOpenTBAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb"
-#guard transferAvailWideRefused.traceWidth == 2619 + 45
+#guard transferAvailWideRefused.traceWidth == 2695 + 45
 #guard transferAvailWideRefused.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare crown twin for reference: same PI layout, avail-shifted columns.
@@ -248,16 +248,16 @@ def transferAvailWideRefused : EffectVmDescriptor2 :=
 
 /-- No hardened-face v1 constraint is a retired legacy commit pin: every face piBinding column
 rides the v1 face (`< AVAIL_WIDTH`), far below the rotated commit carriers
-(`TR_AVAIL_BB + B_STATE_COMMIT = 377` / `TR_AVAIL_BB + 239 + B_STATE_COMMIT = 616`). Decidable —
+(`TR_AVAIL_BB + B_STATE_COMMIT = 383` / `TR_AVAIL_BB + B_SPAN + B_STATE_COMMIT = 630`). Decidable —
 the face is concrete. -/
 theorem transferAvail_no_legacy_pins :
     transferVmDescriptorAvail.constraints.all
-      (fun c => !isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) (VmConstraint2.base c))
+      (fun c => !isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) (VmConstraint2.base c))
       = true := by decide
 
 theorem transferAvail_clean :
     ∀ c ∈ transferVmDescriptorAvail.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) (VmConstraint2.base c) = false := by
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) (VmConstraint2.base c) = false := by
   intro c hc
   have h := List.all_eq_true.mp transferAvail_no_legacy_pins c hc
   simpa using h
@@ -267,21 +267,21 @@ pins only APPEND, and `wideAppend` keeps every non-pin host constraint
 (`wideAppend_mem_of_host`); the trailing teeth width bump keeps constraints verbatim. -/
 theorem availHost_mem_membershipAvailWide :
     ∀ c ∈ transferAvailV3W.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferV3MembershipAvailWide.constraints := by
   intro c hc hnp
   show c ∈ transferMembershipAvailWideBase.constraints
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_left _ hc)) hnp
 
 /-- Face-host constraint membership in the TB avail wide member (`effCapOpenV3TB` = base
 constraints ++ cap-open appendix ++ turn-identity pins — all appends). -/
 theorem availHost_mem_tbAvailWide :
     ∀ c ∈ transferAvailV3W.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferCapOpenTBAvailWide.constraints := by
   intro c hc hnp
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_left _ hc)) hnp
 
 /-! ## §4 — the per-member v1 collapses: the hardened face's FULL row denotation returns from a
@@ -297,7 +297,7 @@ theorem membershipAvailWide_row_v1 (permOut : List ℤ → List ℤ) (hash : Lis
       satisfiedVm hash transferVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbedded_sound_v1 permOut hash transferVmDescriptorAvail transferV3MembershipAvailWide
-    TR_AVAIL_BB (TR_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferAvail_clean
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferAvail_clean
     availHost_mem_membershipAvailWide hf
 
 /-- The TB avail wide member forces the hardened face's v1 denotation on every row. -/
@@ -308,7 +308,7 @@ theorem tbAvailWide_row_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ �
       satisfiedVm hash transferVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbedded_sound_v1 permOut hash transferVmDescriptorAvail transferCapOpenTBAvailWide
-    TR_AVAIL_BB (TR_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferAvail_clean
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferAvail_clean
     availHost_mem_tbAvailWide hf
 
 #assert_axioms membershipAvailWide_row_v1
@@ -334,11 +334,11 @@ theorem transferV3MembershipAvailWide_publishes_teeth (hash : List ℤ → ℤ)
           (withDfaRcPinsAt AVAIL_WIDTH transferAvailV3W)).constraints := by
     rw [withMembershipTeethPinsAt_constraints]
     exact List.mem_append_right _ (List.mem_map.mpr ⟨j.val, List.mem_range.mpr j.isLt, rfl⟩)
-  have hnp : isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239)
+  have hnp : isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
       (VmConstraint2.base (.piBinding .first (MEMBERSHIP_TEETH_COL_AVAIL_WIDE + j.val)
         ((withDfaRcPinsAt AVAIL_WIDTH transferAvailV3W).piCount + j.val))) = false := by
     have hj : j.val < 2 := j.isLt
-    have hbb : TR_AVAIL_BB + B_STATE_COMMIT = 377 := by decide
+    have hbb : TR_AVAIL_BB + B_STATE_COMMIT = 383 := by decide
     simp only [isLegacyCommitPin1, beq_eq_false_iff_ne, ne_eq, hbb,
       MEMBERSHIP_TEETH_COL_AVAIL_WIDE]
     omega
@@ -347,7 +347,7 @@ theorem transferV3MembershipAvailWide_publishes_teeth (hash : List ℤ → ℤ)
         ((withDfaRcPinsAt AVAIL_WIDTH transferAvailV3W).piCount + j.val))
       ∈ transferV3MembershipAvailWide.constraints := by
     show _ ∈ transferMembershipAvailWideBase.constraints
-    exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) _ hinHost hnp
+    exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) _ hinHost hnp
   have h := hsat.rowConstraints 0 h0 _ hin
   simp only [VmConstraint2.holdsAt, hfirstt, holdsVm_piFirst_true] at h
   exact h
@@ -489,7 +489,7 @@ on the wide/welded leg after the bare + narrow-wire closes. The retarget mirrors
 member-for-member, MINUS the membership teeth (burn's crown host is the plain cohort wide
 member): the hardened face `v3OfFrozenWide burnVmDescriptorAvail`, rc pins at the avail-shifted
 carrier (`withDfaRcPinsAt 196`), `wideAppend` at the burn AVAIL face base — PI count UNCHANGED at
-66, width 2607 → 2615 (+8 avail pad; burn is debit-only, no credit-carry twin). -/
+66, width 2683 → 2691 (+8 avail pad; burn is debit-only, no credit-carry twin). -/
 
 /-- The hardened rotated graduated burn face — the SAME term as
 `RotatedKernelRefinementMintBurnAvail.burnV3Avail` (`v3OfFrozenWide burnVmDescriptorAvail`),
@@ -505,7 +505,7 @@ def BU_AVAIL_BB : Nat := Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH
 #guard BU_AVAIL_BB == Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.traceWidth
 #guard BU_AVAIL_BB == 196
 #guard burnAvailV3W.piCount == 46
-#guard burnAvailV3W.traceWidth == 1655
+#guard burnAvailV3W.traceWidth == 1699
 #guard graduableWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
 -- the Rust avail-pad key survives every wrapper (all append-only on the name)
 #guard burnAvailV3W.name.startsWith "dregg-effectvm-burn-v1-avail"
@@ -516,10 +516,10 @@ rc pins at the AVAIL-shifted caveat rc carrier, wide-appended at the burn AVAIL 
 Geometry mirror of the bare wide burn at the avail pad (+8 everywhere; 66 PIs UNCHANGED — burn
 carries no membership teeth). -/
 def burnV3AvailWide : EffectVmDescriptor2 :=
-  wideAppend (withDfaRcPinsAt BU_AVAIL_BB burnAvailV3W) BU_AVAIL_BB (BU_AVAIL_BB + 239)
+  wideAppend (withDfaRcPinsAt BU_AVAIL_BB burnAvailV3W) BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN)
 
 /-- **`burnAvailWideRefused`** — the crown burn member as EMITTED under the bare-cohort
-capacity-floor refuse, at the burn-AVAIL-shifted caveat base (`cavBaseOf 196 = 674`; aux blocks
+capacity-floor refuse, at the burn-AVAIL-shifted caveat base (`cavBaseOf 196 = 690`; aux blocks
 past the member's OWN width, above the wide carriers). This is the exact
 `WIDE_REGISTRY_STAGED_TSV` row object for the burn key post-retarget, and the host the
 umem-welded twin welds (refuse-first, the runtime producer's composition). -/
@@ -527,12 +527,12 @@ def burnAvailWideRefused : EffectVmDescriptor2 :=
   gentianDeployedBareRefuseAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide
 
 -- Geometry pins: the avail crown mirrors the bare wide burn (+8 pad): 66 PIs (46 + 4 rc + 16
--- wide anchors), width 2615; the refused crown +45 aux columns.
+-- wide anchors), width 2691; the refused crown +45 aux columns.
 #guard burnV3AvailWide.piCount == 66
-#guard burnV3AvailWide.traceWidth == 2615
+#guard burnV3AvailWide.traceWidth == 2691
 #guard burnV3AvailWide.name == "dregg-effectvm-burn-v1-avail-rot24-v3-staged"
 #guard burnAvailWideRefused.piCount == 66
-#guard burnAvailWideRefused.traceWidth == 2615 + 45
+#guard burnAvailWideRefused.traceWidth == 2691 + 45
 #guard burnAvailWideRefused.name
   == "dregg-effectvm-burn-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare wide burn twin for reference: SAME 66-PI layout, avail-shifted columns.
@@ -544,16 +544,16 @@ def burnAvailWideRefused : EffectVmDescriptor2 :=
 
 /-- No hardened-burn-face v1 constraint is a retired legacy commit pin: every face piBinding
 column rides the v1 face (`< 196`), far below the rotated commit carriers
-(`BU_AVAIL_BB + B_STATE_COMMIT` / `BU_AVAIL_BB + 239 + B_STATE_COMMIT`). Decidable — the face is
+(`BU_AVAIL_BB + B_STATE_COMMIT` / `BU_AVAIL_BB + B_SPAN + B_STATE_COMMIT`). Decidable — the face is
 concrete. -/
 theorem burnAvail_no_legacy_pins :
     Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.constraints.all
-      (fun c => !isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) (VmConstraint2.base c))
+      (fun c => !isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) (VmConstraint2.base c))
       = true := by decide
 
 theorem burnAvail_clean :
     ∀ c ∈ Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.constraints,
-      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) (VmConstraint2.base c) = false := by
+      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) (VmConstraint2.base c) = false := by
   intro c hc
   have h := List.all_eq_true.mp burnAvail_no_legacy_pins c hc
   simpa using h
@@ -562,10 +562,10 @@ theorem burnAvail_clean :
 `wideAppend` keeps every non-pin host constraint (`wideAppend_mem_of_host`). -/
 theorem availHost_mem_burnAvailWide :
     ∀ c ∈ burnAvailV3W.constraints,
-      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) c = false →
       c ∈ burnV3AvailWide.constraints := by
   intro c hc hnp
-  refine wideAppend_mem_of_host _ BU_AVAIL_BB (BU_AVAIL_BB + 239) c ?_ hnp
+  refine wideAppend_mem_of_host _ BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) c ?_ hnp
   rw [withDfaRcPinsAt_constraints]
   exact List.mem_append_left _ hc
 
@@ -583,7 +583,7 @@ theorem burnAvailWide_row_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ 
         (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
   wideEmbedded_sound_v1 permOut hash
     Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail burnV3AvailWide
-    BU_AVAIL_BB (BU_AVAIL_BB + 239) minit mfin maddrs t (by decide) burnAvail_clean
+    BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) burnAvail_clean
     availHost_mem_burnAvailWide hf
 
 #assert_axioms burnAvail_clean
@@ -729,7 +729,7 @@ selector-gated effect-general cap-open transfer (`withSelectorGate TRANSFER (eff
 fully parametric in its base) over the hardened rotated face, wide-appended at the AVAIL face
 base `TR_AVAIL_BB`. The `transferCapOpenEffVmDescriptor2R24` crown key's post-retarget bytes —
 the wide lift of the already-flipped narrow `transferCapOpenEffV3Avail` (definitionally
-`wideAppend transferCapOpenEffV3Avail TR_AVAIL_BB (TR_AVAIL_BB + 239)`; the refinement tower
+`wideAppend transferCapOpenEffV3Avail TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)`; the refinement tower
 states that tie, this layer restates the term so the emission layer does not import it). -/
 def transferCapOpenEffAvailWide : EffectVmDescriptor2 :=
   wideAppend
@@ -738,12 +738,12 @@ def transferCapOpenEffAvailWide : EffectVmDescriptor2 :=
       (Dregg2.Circuit.Emit.CapOpenEmit.effCapOpenV3 transferAvailV3W
         "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff"
         Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER))
-    TR_AVAIL_BB (TR_AVAIL_BB + 239)
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
--- Geometry pins: the EFF member is the narrow avail cap-open (width 1986, 46 PIs) + the wide
--- appendix (+960 columns, +16 PIs). The Rust `avail_pad_for_descriptor_name` prefix survives.
+-- Geometry pins: the EFF member is the narrow avail cap-open (width 2030, 46 PIs) + the wide
+-- appendix (+992 columns, +16 PIs). The Rust `avail_pad_for_descriptor_name` prefix survives.
 #guard transferCapOpenEffAvailWide.piCount == 62
-#guard transferCapOpenEffAvailWide.traceWidth == 2946
+#guard transferCapOpenEffAvailWide.traceWidth == 3022
 #guard transferCapOpenEffAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff"
 
@@ -751,10 +751,10 @@ def transferCapOpenEffAvailWide : EffectVmDescriptor2 :=
 `effCapOpenV3` both only APPEND, and `wideAppend` keeps every non-pin host constraint). -/
 theorem availHost_mem_effAvailWide :
     ∀ c ∈ transferAvailV3W.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferCapOpenEffAvailWide.constraints := by
   intro c hc hnp
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_left _ hc)) hnp
 
 /-- No cap-open appendix constraint is a retired legacy commit pin (the appendix is all
@@ -762,7 +762,7 @@ theorem availHost_mem_effAvailWide :
 theorem capOpenAppendixAvail_no_legacy_pins :
     (Dregg2.Circuit.Emit.CapOpenEmit.capOpenConstraintsEff transferAvailV3W.traceWidth
         Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER).all
-      (fun c => !isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c) = true := by decide
+      (fun c => !isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c) = true := by decide
 
 /-- **The cap-open AUTHORITY appendix rides the wide member VERBATIM** — every appendix
 constraint (the depth-16 membership open, the submask facet gates, the mask-recon gates, the
@@ -775,7 +775,7 @@ theorem capOpenAppendix_mem_effAvailWide :
       c ∈ transferCapOpenEffAvailWide.constraints := by
   intro c hc
   have hnp := List.all_eq_true.mp capOpenAppendixAvail_no_legacy_pins c hc
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_right _ hc)) (by simpa using hnp)
 
 /-- The EFF avail wide member forces the hardened face's v1 denotation on every row (the
@@ -787,7 +787,7 @@ theorem effAvailWide_row_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ �
       satisfiedVm hash transferVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbedded_sound_v1 permOut hash transferVmDescriptorAvail transferCapOpenEffAvailWide
-    TR_AVAIL_BB (TR_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferAvail_clean
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferAvail_clean
     availHost_mem_effAvailWide hf
 
 #assert_axioms availHost_mem_effAvailWide

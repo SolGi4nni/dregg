@@ -4,19 +4,19 @@ DEPLOYED-DEFAULT flip: the light client verifies capacity turns against the WIDE
 so the capacity-floor refuse must ride the WIDE bare cohort, not only the V3 1-felt cohort).
 
 `BareCohortFloorRefuseDeployed` welds the three-block capacity-floor refuse onto the V3 1-felt bare
-cohort at aux columns `GRAD_ROT_WIDTH + b·REFUSE_STRIDE + …` (1593/1609/1625) — FREE headroom past the
-1581-wide graduated rotation. But the DEPLOYED light client (`verify_effect_vm_rotated_with_cutover`,
-`verify_one_cohort_run`) resolves the WIDE registry (`WIDE_REGISTRY_STAGED_TSV`, width 2493) and the
-WELDED twin (`WIDE_UMEM_WELD_REGISTRY_TSV`), NOT the V3 1-felt cohort. On a wide member the V3 aux band
-(1581+) is OCCUPIED by the two 13×8 BEFORE/AFTER wide carriers (`wideAppend` bases them at the host
-width and runs to `w + 912`), so the V3 refuse cannot ride there.
+cohort at aux columns `GRAD_ROT_WIDTH + b·REFUSE_STRIDE + …` (1703/1719/1735) — FREE headroom past the
+1691-wide graduated rotation. But the DEPLOYED light client (`verify_effect_vm_rotated_with_cutover`,
+`verify_one_cohort_run`) resolves the WIDE registry (`WIDE_REGISTRY_STAGED_TSV`, width `WIDE_WIDTH` =
+2683) and the WELDED twin (`WIDE_UMEM_WELD_REGISTRY_TSV`), NOT the V3 1-felt cohort. On a wide member
+the V3 aux band (1691+) is OCCUPIED by the two 62×8 BEFORE/AFTER wide carriers (`wideAppend` bases them
+at the host width and runs to `w + wideAppendixSpan = w + 992`), so the V3 refuse cannot ride there.
 
 This module lifts the refuse to a member whose aux blocks ride PAST the member's OWN `traceWidth` — free
 headroom above the wide carriers — reusing the fully column-parametric keystone
 `BareCohortFloorRefuseDeployed.declared_tag_unsat_at` (soundness) and the append-only peel shape
 (`satisfied2_of_gentianDeployedBareRefuse`). The decode still reads the SAME deployed caveat type-tag
-columns `ebDep k = 643/650/657/664` — which `wideAppend` preserves (it only appends past the host width
-and retires the two 1-felt commit pins; the caveat region at `CAVEAT_BASE = 642` is untouched), so the
+columns `ebDep k = 683/690/697/704` — which `wideAppend` preserves (it only appends past the host width
+and retires the two 1-felt commit pins; the caveat region at `CAVEAT_BASE = 682` is untouched), so the
 `hbind` hypothesis is discharged by the LIVE PI-45 caveat pin on the wide member exactly as on V3.
 
 ## The anti-launder keystone
@@ -46,6 +46,17 @@ open Dregg2.Deos.BareCohortFloorRefuseDeployed
   (REFUSE_STRIDE ccDep ebDep refuseGatesAt decodeGatesAt declared_tag_unsat_at manifestOf)
 
 set_option autoImplicit false
+
+/-- The committed WIDE cohort member width (Rust twin `trace_rotated::WIDE_WIDTH = GRAD_ROT_WIDTH +
+WIDE_CARRIER_APPENDIX`): the graduated rotated width plus the two `wideNumCarriers × 8` wide-carrier
+blocks. DERIVED from the two named constants, never carried — the `2493` this file used to spell out
+was the RETIRED `1581 + 912` (169-limb / 57-carrier) shape, two flag days behind. At the 184-limb
+geometry: `1691 + 992 = 2683`. -/
+def WIDE_WIDTH : Nat :=
+  Dregg2.Deos.BareCohortFloorRefuseDeployed.GRAD_ROT_WIDTH
+    + Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppendixSpan
+
+#guard WIDE_WIDTH == 2683
 
 /-! ## §1 — the WIDE aux column layout (aux base = the member's OWN width, past the wide carriers). -/
 
@@ -251,33 +262,33 @@ theorem satisfied2_of_gentianWideBareRefuse (hash : List ℤ → ℤ) (d : Effec
 
 section Witnesses
 
--- The wide refuse reads the SAME deployed caveat tag columns as V3 (667/674/681/688).
-#guard ebDep 0 == 667
-#guard ebDep 3 == 688
+-- The wide refuse reads the SAME deployed caveat tag columns as V3 (683/690/697/704).
+#guard ebDep 0 == 683
+#guard ebDep 3 == 704
 -- The three-block wide weld adds 3 × 13 = 39 gates (each block: 8 is-zero + 3 fold + 1 refuse = 13).
-#guard (wideRefuseGates 2493).length == 39
+#guard (wideRefuseGates WIDE_WIDTH).length == 39
 -- The aux blocks ride PAST the wide member width (aux base = the member's own width; no carrier collision).
 private def toyWide : EffectVmDescriptor2 :=
-  { name := "toy-wide", traceWidth := 2493, piCount := 74, tables := [], constraints := [],
+  { name := "toy-wide", traceWidth := WIDE_WIDTH, piCount := 74, tables := [], constraints := [],
     hashSites := [], ranges := [] }
-#guard (gentianWideBareRefuse toyWide).traceWidth == 2493 + 48
+#guard (gentianWideBareRefuse toyWide).traceWidth == WIDE_WIDTH + 48
 #guard (gentianWideBareRefuse toyWide).constraints.length == 39
 #guard (gentianWideBareRefuse toyWide).piCount == 74
 #guard (gentianWideBareRefuse toyWide).name == "toy-wide-gentian-deployed-bare-refuse"
 -- The wide floor columns are all ≥ the member width (free headroom, disjoint from the wide carriers).
-#guard wideFc 2493 0 == 2493 + 12
-#guard wideFc 2493 1 == 2493 + 28
-#guard wideFc 2493 2 == 2493 + 44
+#guard wideFc WIDE_WIDTH 0 == WIDE_WIDTH + 12
+#guard wideFc WIDE_WIDTH 1 == WIDE_WIDTH + 28
+#guard wideFc WIDE_WIDTH 2 == WIDE_WIDTH + 44
 -- The 36 aux columns across the three blocks are disjoint (no bit/inv/or/floor alias).
-#guard ([ wideBc 2493 0 0, wideBc 2493 0 1, wideBc 2493 0 2, wideBc 2493 0 3,
-          wideIc 2493 0 0, wideIc 2493 0 1, wideIc 2493 0 2, wideIc 2493 0 3,
-          wideOc 2493 0 0, wideOc 2493 0 1, wideOc 2493 0 2, wideFc 2493 0,
-          wideBc 2493 1 0, wideBc 2493 1 1, wideBc 2493 1 2, wideBc 2493 1 3,
-          wideIc 2493 1 0, wideIc 2493 1 1, wideIc 2493 1 2, wideIc 2493 1 3,
-          wideOc 2493 1 0, wideOc 2493 1 1, wideOc 2493 1 2, wideFc 2493 1,
-          wideBc 2493 2 0, wideBc 2493 2 1, wideBc 2493 2 2, wideBc 2493 2 3,
-          wideIc 2493 2 0, wideIc 2493 2 1, wideIc 2493 2 2, wideIc 2493 2 3,
-          wideOc 2493 2 0, wideOc 2493 2 1, wideOc 2493 2 2, wideFc 2493 2 ]).dedup.length == 36
+#guard ([ wideBc WIDE_WIDTH 0 0, wideBc WIDE_WIDTH 0 1, wideBc WIDE_WIDTH 0 2, wideBc WIDE_WIDTH 0 3,
+          wideIc WIDE_WIDTH 0 0, wideIc WIDE_WIDTH 0 1, wideIc WIDE_WIDTH 0 2, wideIc WIDE_WIDTH 0 3,
+          wideOc WIDE_WIDTH 0 0, wideOc WIDE_WIDTH 0 1, wideOc WIDE_WIDTH 0 2, wideFc WIDE_WIDTH 0,
+          wideBc WIDE_WIDTH 1 0, wideBc WIDE_WIDTH 1 1, wideBc WIDE_WIDTH 1 2, wideBc WIDE_WIDTH 1 3,
+          wideIc WIDE_WIDTH 1 0, wideIc WIDE_WIDTH 1 1, wideIc WIDE_WIDTH 1 2, wideIc WIDE_WIDTH 1 3,
+          wideOc WIDE_WIDTH 1 0, wideOc WIDE_WIDTH 1 1, wideOc WIDE_WIDTH 1 2, wideFc WIDE_WIDTH 1,
+          wideBc WIDE_WIDTH 2 0, wideBc WIDE_WIDTH 2 1, wideBc WIDE_WIDTH 2 2, wideBc WIDE_WIDTH 2 3,
+          wideIc WIDE_WIDTH 2 0, wideIc WIDE_WIDTH 2 1, wideIc WIDE_WIDTH 2 2, wideIc WIDE_WIDTH 2 3,
+          wideOc WIDE_WIDTH 2 0, wideOc WIDE_WIDTH 2 1, wideOc WIDE_WIDTH 2 2, wideFc WIDE_WIDTH 2 ]).dedup.length == 36
 
 end Witnesses
 

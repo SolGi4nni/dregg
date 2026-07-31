@@ -1470,7 +1470,7 @@ theorem wireRomFamily_card_R (D : WideKeyed) (tagDec : DecidableEq D.Tag) (l : �
 previous digest; the context is the shared domain-separation tag. Generic in the block count `n`
 because §3.4's break game pins only EQUAL limb counts; the weld below pins `n` to the deployed
 schedule of any concrete limb list. Same shape as the landed
-`Market.WideCommitBoundary.stateCommitRomCarrier` (which fixes `n = 59` at the 178-limb payload). -/
+`Market.WideCommitBoundary.stateCommitRomCarrier` (which fixes `n = 61` at the 184-limb payload). -/
 def wireCommitRomCarrier (D : WideKeyed) (tagDec : DecidableEq D.Tag) (n : ℕ) :
     RomChainedCarrier (wireRomFamily D tagDec) where
   Ctx := fun _ => D.Tag

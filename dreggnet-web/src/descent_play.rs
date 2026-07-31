@@ -18,13 +18,23 @@
 //! working, server-side copy of the same game sat one URL away and was never mentioned.
 //!
 //! **What the browser engine BUYS**, so the opt-in has a reason attached rather than being a toggle
-//! nobody understands: it is the mode where you do not have to trust this server about your run. The
-//! tab verifies today's drand beacon by BLS pairing ITSELF before it will open a day
-//! (`NativeDescentWorld.fromBeacon`, fail-closed), it replays its own receipts locally (`Verify full
-//! record`), and the run lives in `localStorage` rather than in this server's session store — where
-//! the hosted page states outright that your moves, the dungeon and the result all live here and
-//! anyone with the link can read them. That is the whole of the difference, and it is the only part
-//! worth a download.
+//! nobody understands: the tab verifies today's drand beacon by BLS pairing ITSELF before it will
+//! open a day (`NativeDescentWorld.fromBeacon`, fail-closed, against a pinned public key — a
+//! genuinely independent oracle), it replays its own receipts locally (`Verify full record`), and
+//! the run lives in `localStorage` rather than in this server's session store, where the hosted
+//! page states outright that your moves, the dungeon and the result all live here and anyone with
+//! the link can read them. That is the whole of the difference, and it is the only part worth a
+//! download.
+//!
+//! ⚑ **AND THE BOUND ON IT, because this doc used to say "the mode where you do not have to trust
+//! this server about your run" and that is not true.** The wasm bundle IS SERVED BY THIS SERVER,
+//! same-origin by deliberate design (`PLAY_CSP`, `script-src 'self'`) — which is the right defence
+//! against a CDN or a MITM, and no defence at all against the origin, because the origin is the
+//! party the sentence was excusing you from trusting. What the browser engine actually removes is
+//! the server's discretion over the BEACON and over where your run is STORED. It does not remove
+//! the server's authorship of the verifier. The visitor-facing copy in [`engine_door`] says only
+//! the true part ("the tab checks today's public random number itself rather than taking this
+//! server's word for it"); this doc now does too.
 //!
 //! The installed game program is the checked-in Lean emission. This module contains presentation
 //! and persistence glue only: it does not reproduce a move rule.
@@ -908,11 +918,16 @@ fn browser_bundle_present() -> bool {
 /// one URL away and never mentioned.
 ///
 /// So the default is the server, the browser engine is opted into by name, and the trade is stated
-/// rather than implied: **what the browser engine buys is not needing to trust this server about
-/// your run.** It verifies the day's drand beacon by BLS pairing in your own tab (`fromBeacon`), it
-/// replays its own receipts locally (`Verify full record`), and the run lives in your browser rather
-/// than in this server's session store — the hosted page says plainly that your moves, the dungeon
-/// and the result all live here. That is a real difference and it is the only one worth a download.
+/// rather than implied: **what the browser engine buys is the server's discretion over the BEACON
+/// and over where your run is STORED.** It verifies the day's drand beacon by BLS pairing in your
+/// own tab (`fromBeacon`, against a pinned key), it replays its own receipts locally (`Verify full
+/// record`), and the run lives in your browser rather than in this server's session store — the
+/// hosted page says plainly that your moves, the dungeon and the result all live here. That is a
+/// real difference and it is the only one worth a download.
+///
+/// ⚑ It is NOT "not needing to trust this server about your run", which is what this line said
+/// until 2026-07-30: the wasm doing the verifying is served BY this server, same-origin on purpose.
+/// The rendered copy below never made that claim and does not now.
 ///
 /// ⚑ **BUT ON THE DEFAULT ENGINE IT IS DEMOTED TO A LINE, because it was standing between a player
 /// and the game.** On `Engine::Server` this page renders an EMPTY mount div (that is correct — see

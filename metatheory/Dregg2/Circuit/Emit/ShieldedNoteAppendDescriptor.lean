@@ -127,6 +127,7 @@ open Dregg2.Circuit.SortedTreeNonMembership (sortedInsert)
 open Dregg2.Circuit.SortedTreeNonMembershipWide8 (SpineCommitsW keysOfW)
 open Dregg2.Circuit.SortedTreeInsertWide8 (sortedInsertW update_soundW update_preserves_sortedW)
 open Dregg2.Crypto.NonMembership (Sorted)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -448,12 +449,12 @@ theorem shieldedNoteAppend_forces_grow8 (S8 : Heap8Scheme)
     (g : GapOpen8 S8 (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))
            ((envAt t i).loc keyCol))
     (hcov : g.coversSpine spine)
-    (hafter : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k))
+    (hafter : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k))
                 (sortedInsert ((envAt t i).loc keyCol) spine)) :
     shieldedAppends8 S8
       (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))
       ((envAt t i).loc keyCol)
-      (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k)) := by
+      (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
   have hzero : (envAt t i).loc valueCol = 0 :=
     shieldedAppend_forces_hiding_leaf groupCol keyCol valueCol sel hash base name
       minit mfin maddrs t hsat i hi hnotlast hcells hsel
@@ -485,9 +486,9 @@ theorem shieldedNoteAppend_forces_growth (S8 : Heap8Scheme)
     (g : GapOpen8 S8 (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))
            ((envAt t i).loc keyCol))
     (hcov : g.coversSpine spine)
-    (hafter : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k))
+    (hafter : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k))
                 (sortedInsert ((envAt t i).loc keyCol) spine)) :
-    ∀ y, y ∈ keysOf8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k))
+    ∀ y, y ∈ keysOf8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + B_SPAN) k))
       ↔ (y = (envAt t i).loc keyCol
           ∨ y ∈ keysOf8 S8 (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))) :=
   shieldedAppends8_growth S8 _ _ _

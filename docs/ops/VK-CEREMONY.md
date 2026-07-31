@@ -346,11 +346,32 @@ Then, in ONE commit, update all four to the new fingerprint:
 
 The on-chain `vk_hash` re-pin is now AUTOMATIC and cannot be forgotten: drop the
 ceremony VK into `chain/codegen/dregg_vk.json`, run `python3 chain/codegen/gen_verifiers.py`,
-and `VK_DIGEST` moves in all three emitted verifiers at once. `InitSettlement` refuses any
-other value, and `chain/codegen/check_consistency.sh` step 4 fails if the pin did not move.
+and `VK_DIGEST` moves in all three emitted verifiers at once, and
+`chain/codegen/check_consistency.sh` step 4 fails if the pin did not move.
 (This step used to read "re-pin from `keccak256("dregg-settlement-vk-dev-setup")` to
 `keccak256(<ceremony VK bytes>)`" — a manual edit of a LABEL hash that nothing verified,
 which is exactly how a ceremony could complete with the pin unchanged and nobody the wiser.)
+
+⚑ **2026-07-30: ALL THREE CHAINS NOW REFUSE A WRONG PIN, not just Solana.** Until then
+`InitSettlement` was the only one of the three that compared the declared digest to
+anything — the EVM `DreggSettlement` constructor checked its argument only for
+`!= bytes32(0)` and the Cosmos `instantiate` only for "not all zeros", so both accepted
+the superseded label hash, and neither read the value again. Fixing the pin's VALUE on
+07-28 had therefore left it INERT on two of the three chains. Now:
+
+| chain | what refuses a wrong declaration |
+|---|---|
+| Solana | `processor.rs::init` — `vk_hash != vk::VK_DIGEST` → `VkDigestMismatch` |
+| EVM | `DreggSettlement` constructor — `verifyingKeyHash_ != verifier.vkDigest()` → `VerifyingKeyHashMismatch` |
+| Cosmos | `instantiate` — declared digest `!= vk::VK_DIGEST` → `VkDigestMismatch` |
+
+On the EVM the expected value is **recomputed on-chain from the key material** by
+`IGroth16Verifier25.vkDigest()`, so the ceremony operator no longer types a pin at all:
+both deploy scripts READ it from the verifier they just deployed (the `DREGG_VK_HASH`
+env override is gone — it could only agree or revert). ⚠ Note the pin is a
+**deployment-time** refusal on all three, not an acceptance gate: the key that decides
+whether a proof verifies is compiled into the verifier, so what the pin buys is that a
+deployment cannot come into existence naming a key other than the one it checks against.
 
 **Negative check (both directions fail-closed):** `check_apex_vk_identity_pin`
 (`apex_shrink_gnark_export.rs:224`) / `loadApexVkIdentity` (Go) must now **REJECT the old

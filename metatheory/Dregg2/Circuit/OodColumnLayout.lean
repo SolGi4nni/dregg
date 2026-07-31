@@ -26,7 +26,7 @@ same named residual: "the column layout is unmodeled" — the map from `verifyAl
 
 ## Non-vacuity
 
-The modeler reads real descriptors: `#guard (oodArithList transferV3).length == 147` (of 283 total —
+The modeler reads real descriptors: `#guard (oodArithList transferV3).length == 155` (of 295 total —
 a PROPER subset, so `isArithB` genuinely discriminates), the kernel-checked
 `oodArithList_transferV3_length`, and `oodColumnLayout_law_fires` (the coefficient law at the concrete
 first column of the deployed `transferV3` layout). `transferV3_rlc_bound` discharges outright the
@@ -42,7 +42,7 @@ deployment fact, not layout plumbing.
 ## Discipline
 
 Sorry-free; no carrier; no `Fintype`/`decide` over `|F|`-sized objects (the only `decide` is a
-283-element constraint-list length; degree bounds are `< #constraints`, a small Nat). New file;
+295-element constraint-list length; degree bounds are `< #constraints`, a small Nat). New file;
 imports read-only; builds targeted (`lake build Dregg2.Circuit.OodColumnLayout`).
 -/
 import Dregg2.Circuit.AlgoStarkSoundTransferV3
@@ -255,23 +255,30 @@ theorem transferV3_columnLayout_law (t : VmTrace) (ζ : BabyBear)
 
 /-! ## §5 — NON-VACUITY: the modeler reads the REAL deployed descriptor. -/
 
--- transferV3 declares 283 constraints; its column layout selects EXACTLY the 147 arithmetic ones —
+-- transferV3 declares 295 constraints; its column layout selects EXACTLY the 155 arithmetic ones —
 -- a proper subset, so `isArithB` genuinely discriminates (neither vacuously true nor false).
-#guard transferV3.constraints.length == 283
-#guard (oodArithList transferV3).length == 147
+--
+-- ⚑ 283/147 -> 295/155 at the 2026-07-31 ninth-lane flag day (`rotatedNumPreLimbs` 178 -> 184).
+-- The +8 ARITHMETIC constraints are exactly the eight new `fields[slot]` lane-8 completion freezes
+-- (`colEq(before, after)` on columns 176..183, one per slot); the other +4 are the two extra chip
+-- absorption sites per block, which are lookups and so do NOT enter the arithmetic layout. MEASURED
+-- by `#eval` against the deployed descriptor, not derived — and the delta being 8-and-only-8 is
+-- itself the check that the nonet reached this member exactly once per slot.
+#guard transferV3.constraints.length == 295
+#guard (oodArithList transferV3).length == 155
 #guard (oodArithList transferV3).length < transferV3.constraints.length
 
 set_option maxRecDepth 4096 in
-/-- Kernel-checked (not just `#guard`-evaluated): the deployed `transferV3` layout has EXACTLY 147
-columns. (A 283-element list filter — a small computation, nothing `|F|`-sized.) -/
-theorem oodArithList_transferV3_length : (oodArithList transferV3).length = 147 := by decide
+/-- Kernel-checked (not just `#guard`-evaluated): the deployed `transferV3` layout has EXACTLY 155
+columns. (A 295-element list filter — a small computation, nothing `|F|`-sized.) -/
+theorem oodArithList_transferV3_length : (oodArithList transferV3).length = 155 := by decide
 
 /-- The deployed layout is nonempty — the RLC batch genuinely carries columns. -/
 theorem oodArithList_transferV3_pos : 0 < (oodArithList transferV3).length := by
   rw [oodArithList_transferV3_length]; omega
 
 /-- **The law FIRES on the deployed descriptor**: coefficient `0` of `transferV3`'s batched residual
-is the residual of the FIRST column of its actual 147-column layout — the general law applied at a
+is the residual of the FIRST column of its actual 155-column layout — the general law applied at a
 concrete real descriptor and a concrete index. -/
 theorem oodColumnLayout_law_fires (t : VmTrace) (ζ : BabyBear)
     (qp : VmConstraint2 → Polynomial BabyBear) :
@@ -280,11 +287,11 @@ theorem oodColumnLayout_law_fires (t : VmTrace) (ζ : BabyBear)
   batchResidual_coeff (oodRfam transferV3 t ζ qp) ⟨0, oodArithList_transferV3_pos⟩
 
 /-- The RLC bad-Λ bound at the deployed descriptor, with the nonemptiness hypothesis DISCHARGED
-outright (the template's `rlc_lambda_is_bounded_fs_form` had to carry it): fewer than 147 bad
-challenges, so ε_RLC ≤ 146/2013265921. -/
+outright (the template's `rlc_lambda_is_bounded_fs_form` had to carry it): fewer than 155 bad
+challenges, so ε_RLC ≤ 154/2013265921. -/
 theorem transferV3_rlc_bound (t : VmTrace) (ζ : BabyBear)
     (qp : VmConstraint2 → Polynomial BabyBear) :
-    (exceptionalSet (oodBatchResidual transferV3 t ζ qp)).card < 147 := by
+    (exceptionalSet (oodBatchResidual transferV3 t ζ qp)).card < 155 := by
   have h := oodBatchResidual_exceptionalSet_card_lt transferV3
     oodArithList_transferV3_pos t ζ qp
   rwa [oodArithList_transferV3_length] at h

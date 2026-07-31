@@ -255,7 +255,7 @@ def insertValidArrival (arrival : List Block) : Bool := go [] arrival
 #guard insertValidArrival lagGrown
 #guard lagGrown.all (fun a => lagGrown.all (fun b =>
         a.id == b.id || a.creator != b.creator
-          || roundOf lagGrown a.id != roundOf lagGrown b.id))
+          || roundOf lagGrown lagParticipants a.id != roundOf lagGrown lagParticipants b.id))
 #guard superMajority lagParticipants.length == 3
 -- The growth is a plain superset extension (lagGrown = lagBase ++ lagLate).
 #guard lagBase.all (fun b => lagGrown.contains b)

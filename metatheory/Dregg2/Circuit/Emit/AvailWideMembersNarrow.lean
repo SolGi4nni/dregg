@@ -59,7 +59,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (rotateV3FrozenAuthority rotateV3FrozenAuthority_constraints
    graduableWide_rotateV3FrozenAuthority graduableWide_rotateV3WithFeePin
    rotateV3WithFeePin rotateV3WithFeePin_constraints rotV3Appendix go_append_left B_STATE_COMMIT
-   v3OfFrozenWide v3OfFrozenFeeWide)
+   B_SPAN v3OfFrozenWide v3OfFrozenFeeWide)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationWide
   (wideAppend isLegacyCommitPin1 wideAppendixSpan)
 open Dregg2.Circuit.Emit.CarrierComposed
@@ -204,7 +204,7 @@ def transferMembershipAvailWideNarrowBase : EffectVmDescriptor2 :=
   wideAppend
     (withMembershipTeethPinsAt MEMBERSHIP_TEETH_COL_AVAIL_WIDE_NARROW
       (withDfaRcPinsAt AVAIL_WIDTH transferAvailV3WNarrow))
-    TR_AVAIL_BB (TR_AVAIL_BB + 239)
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
 /-- **`transferV3MembershipAvailWideNarrow`** — the narrow twin of the AVAIL crown wide transfer
 member (`transferV3MembershipAvailWide`): the membership-teeth transfer rebuilt over the narrow-base
@@ -221,11 +221,11 @@ theorem transferV3MembershipAvailWideNarrow_constraints :
 `availHost_mem_membershipAvailWide`, narrow host). -/
 theorem availHost_mem_membershipAvailWideNarrow :
     ∀ c ∈ transferAvailV3WNarrow.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferV3MembershipAvailWideNarrow.constraints := by
   intro c hc hnp
   show c ∈ transferMembershipAvailWideNarrowBase.constraints
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_left _ hc)) hnp
 
 /-- **`membershipAvailWideNarrow_row_v1`** — the CROWN narrow avail wide member forces the hardened
@@ -238,7 +238,7 @@ theorem membershipAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
       satisfiedVm hash transferVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbeddedNarrow_sound_v1 hash transferVmDescriptorAvail transferV3MembershipAvailWideNarrow
-    TR_AVAIL_BB (TR_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferAvail_clean
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferAvail_clean
     availHost_mem_membershipAvailWideNarrow hf
 
 #assert_axioms membershipAvailWideNarrow_row_v1
@@ -253,16 +253,16 @@ def transferCapOpenTBAvailWideNarrow : EffectVmDescriptor2 :=
     (Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB transferAvailV3WNarrow
       "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb"
       Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER)
-    TR_AVAIL_BB (TR_AVAIL_BB + 239)
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
 /-- Face-host constraint membership in the TB narrow avail wide member (mirror of
 `availHost_mem_tbAvailWide`, narrow host). -/
 theorem availHost_mem_tbAvailWideNarrow :
     ∀ c ∈ transferAvailV3WNarrow.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferCapOpenTBAvailWideNarrow.constraints := by
   intro c hc hnp
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_left _ hc)) hnp
 
 /-- **`tbAvailWideNarrow_row_v1`** — the TB narrow avail wide member forces the hardened face's v1
@@ -274,7 +274,7 @@ theorem tbAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
       satisfiedVm hash transferVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbeddedNarrow_sound_v1 hash transferVmDescriptorAvail transferCapOpenTBAvailWideNarrow
-    TR_AVAIL_BB (TR_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferAvail_clean
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferAvail_clean
     availHost_mem_tbAvailWideNarrow hf
 
 #assert_axioms tbAvailWideNarrow_row_v1
@@ -284,16 +284,16 @@ theorem tbAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
 /-- **`burnV3AvailWideNarrow`** — the narrow twin of the burn crown wide host (`burnV3AvailWide`):
 the plain cohort wide member rebuilt over the narrow-base hardened burn face. -/
 def burnV3AvailWideNarrow : EffectVmDescriptor2 :=
-  wideAppend (withDfaRcPinsAt BU_AVAIL_BB burnAvailV3WNarrow) BU_AVAIL_BB (BU_AVAIL_BB + 239)
+  wideAppend (withDfaRcPinsAt BU_AVAIL_BB burnAvailV3WNarrow) BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN)
 
 /-- Face-host constraint membership in the burn narrow avail wide member (mirror of
 `availHost_mem_burnAvailWide`, narrow host). -/
 theorem availHost_mem_burnAvailWideNarrow :
     ∀ c ∈ burnAvailV3WNarrow.constraints,
-      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) c = false →
       c ∈ burnV3AvailWideNarrow.constraints := by
   intro c hc hnp
-  refine wideAppend_mem_of_host _ BU_AVAIL_BB (BU_AVAIL_BB + 239) c ?_ hnp
+  refine wideAppend_mem_of_host _ BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) c ?_ hnp
   rw [withDfaRcPinsAt_constraints]
   exact List.mem_append_left _ hc
 
@@ -307,7 +307,7 @@ theorem burnAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
         (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
   wideEmbeddedNarrow_sound_v1 hash
     Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail burnV3AvailWideNarrow
-    BU_AVAIL_BB (BU_AVAIL_BB + 239) minit mfin maddrs t (by decide) burnAvail_clean
+    BU_AVAIL_BB (BU_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) burnAvail_clean
     availHost_mem_burnAvailWideNarrow hf
 
 #assert_axioms burnAvailWideNarrow_row_v1
@@ -325,16 +325,16 @@ def transferCapOpenEffAvailWideNarrow : EffectVmDescriptor2 :=
       (Dregg2.Circuit.Emit.CapOpenEmit.effCapOpenV3 transferAvailV3WNarrow
         "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff"
         Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER))
-    TR_AVAIL_BB (TR_AVAIL_BB + 239)
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
 /-- Face-host constraint membership in the EFF narrow avail wide member (mirror of
 `availHost_mem_effAvailWide`, narrow host). -/
 theorem availHost_mem_effAvailWideNarrow :
     ∀ c ∈ transferAvailV3WNarrow.constraints,
-      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferCapOpenEffAvailWideNarrow.constraints := by
   intro c hc hnp
-  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + 239) c
+  exact wideAppend_mem_of_host _ TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) c
     (List.mem_append_left _ (List.mem_append_left _ hc)) hnp
 
 /-- **`effAvailWideNarrow_row_v1`** — the EFF narrow avail wide member forces the hardened face's v1
@@ -346,7 +346,7 @@ theorem effAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
       satisfiedVm hash transferVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbeddedNarrow_sound_v1 hash transferVmDescriptorAvail transferCapOpenEffAvailWideNarrow
-    TR_AVAIL_BB (TR_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferAvail_clean
+    TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferAvail_clean
     availHost_mem_effAvailWideNarrow hf
 
 #assert_axioms effAvailWideNarrow_row_v1
@@ -358,16 +358,16 @@ theorem effAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
 wide-appended at the FEE avail face base. -/
 def transferFeeAvailWideNarrow : EffectVmDescriptor2 :=
   wideAppend (withDfaRcPinsAt FEE_AVAIL_WIDTH transferFeeAvailV3WNarrow)
-    FEE_AVAIL_BB (FEE_AVAIL_BB + 239)
+    FEE_AVAIL_BB (FEE_AVAIL_BB + B_SPAN)
 
 /-- Face-host constraint membership in the fee narrow avail wide member (mirror of
 `feeAvailHost_mem_feeAvailWide`, narrow host). -/
 theorem feeAvailHost_mem_feeAvailWideNarrow :
     ∀ c ∈ transferFeeAvailV3WNarrow.constraints,
-      isLegacyCommitPin1 FEE_AVAIL_BB (FEE_AVAIL_BB + 239) c = false →
+      isLegacyCommitPin1 FEE_AVAIL_BB (FEE_AVAIL_BB + B_SPAN) c = false →
       c ∈ transferFeeAvailWideNarrow.constraints := by
   intro c hc hnp
-  refine wideAppend_mem_of_host _ FEE_AVAIL_BB (FEE_AVAIL_BB + 239) c ?_ hnp
+  refine wideAppend_mem_of_host _ FEE_AVAIL_BB (FEE_AVAIL_BB + B_SPAN) c ?_ hnp
   show c ∈ (withDfaRcPinsAt FEE_AVAIL_WIDTH transferFeeAvailV3WNarrow).constraints
   rw [withDfaRcPinsAt_constraints]
   exact List.mem_append_left _ hc
@@ -381,7 +381,7 @@ theorem feeAvailWideNarrow_row_v1 (hash : List ℤ → ℤ)
       satisfiedVm hash transferFeeVmDescriptorAvail (envAt t i)
         (i == 0) (i + 1 == t.rows.length) :=
   wideEmbeddedFeeNarrow_sound_v1 hash transferFeeVmDescriptorAvail transferFeeAvailWideNarrow
-    FEE_AVAIL_BB (FEE_AVAIL_BB + 239) minit mfin maddrs t (by decide) transferFeeAvail_clean
+    FEE_AVAIL_BB (FEE_AVAIL_BB + B_SPAN) minit mfin maddrs t (by decide) transferFeeAvail_clean
     feeAvailHost_mem_feeAvailWideNarrow hf
 
 #assert_axioms feeAvailHost_mem_feeAvailWideNarrow

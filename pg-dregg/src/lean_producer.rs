@@ -146,13 +146,13 @@ impl LeanProducer {
                 (
                     WIRE_SRC,
                     WireValue::Record(vec![
-                        ("balance".into(), WireValue::Int(src_bal as i128)),
-                        ("nonce".into(), WireValue::Int(src_nonce as i128)),
+                        ("balance".into(), WireValue::int(src_bal as i128)),
+                        ("nonce".into(), WireValue::int(src_nonce as i128)),
                     ]),
                 ),
                 (
                     WIRE_DST,
-                    WireValue::Record(vec![("balance".into(), WireValue::Int(dst_bal as i128))]),
+                    WireValue::Record(vec![("balance".into(), WireValue::int(dst_bal as i128))]),
                 ),
             ],
             bal: vec![

@@ -109,9 +109,10 @@ set_option autoImplicit false
 
 /-- The base of the three v12 carrier-material octets (LITERAL 89 since the REVOKED-ROOT
 flag-day's +1 shift — Rust `trace_rotated.rs::B_CHILD_VK_OCTET = 89`; was 88 in v13. The
-fields[0..7] completion lanes 113..=168, the circuit-only cells_root completion 169..=175 and
-the two pads 176..=177 ride PAST the carrier octets, so the octet base no longer tracks
-`B_IROOT`). -/
+fields[0..7] completion lanes 1..7 (113..=168), the circuit-only cells_root completion 169..=175
+and — since the NINTH-LANE flag day — the eight `fields[slot]` lane-8 columns 176..=183 ride PAST
+the carrier octets, so the octet base no longer tracks `B_IROOT`. There are NO pads left: the two
+that used to sit at 176/177 were consumed by the nonet, `rotated184.pads = []`). -/
 def B_CARRIER_OCTETS : Nat := 89
 
 /-- The factory `child_vk8` octet base (in-block limb offset; M1 of the v12 plan). The
@@ -140,10 +141,14 @@ def AFTER_BLOCK_BASE : Nat :=
 #guard B_CHILD_VK8 == 89
 #guard B_CONTRACT_HASH8 == 97
 #guard B_PUBKEY8 == 105
--- REVOKED-ROOT geometry: the fields completion lanes (113..=168, 56 limbs) + the circuit-only
--- cells_root completion (169..=175, 7 limbs) + the two pads (176..=177) ride between the carrier
--- octets and the iroot, so the octets end 65 limbs BEFORE it (105 + 8 + 56 + 7 + 2 = 178 = B_IROOT).
-#guard B_PUBKEY8 + 8 + 56 + 7 + 2 == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
+-- NINTH-LANE geometry (re-derived from `RotatedLayout.rotated184`, column order): the pubkey octet
+-- (105..=112, 8 limbs) + the fields lanes 1..7 window (113..=168, 56 limbs) + the circuit-only
+-- cells_root completion (169..=175, 7 limbs) + the eight fields NINTH lanes (176..=183, 8 limbs —
+-- `rotated184.fieldsOctet`'s second run, which ATE the two former pads at 176/177 and the six new
+-- columns 178..183) ride between the carrier octets and the iroot, so the octets now end 71 limbs
+-- BEFORE it (105 + 8 + 56 + 7 + 8 = 184 = B_IROOT; was 105 + 8 + 56 + 7 + 2 = 178, the `+ 2` being
+-- the pads that no longer exist — `rotated184.pads = []`).
+#guard B_PUBKEY8 + 8 + 56 + 7 + 8 == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
 #guard Dregg2.Circuit.Emit.EffectVmEmitRotationV3.AFTER_BLOCK_OFF
     == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN
 #guard AFTER_BLOCK_BASE == EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.AFTER_BLOCK_OFF

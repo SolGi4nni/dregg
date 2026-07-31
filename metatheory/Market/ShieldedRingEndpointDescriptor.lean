@@ -132,7 +132,7 @@ def ringClearing (c0 c1 a0 a1 : Nat) (m0 m1 : ℤ)
 #assert_axioms ringNodes_wantPos
 #assert_axioms ringKernel_settles
 
-/-! ## The exact 27-lane endpoint surface and 178-limb wide commitment. -/
+/-! ## The exact 27-lane endpoint surface and 184-limb wide commitment. -/
 
 /-- Semantic fields carried by the endpoint AIR.  `noteClaim i` is the deployed
 `[nullifier, merkleRoot, valueBinding]` prefix for leg `i`. -/
@@ -163,11 +163,11 @@ def ringKernelPayload (f : RingEndpointFields) (post : Bool) : List ℤ :=
     1, 1, 1, 1, 1, 1, 2,
     f.noteClaim 0 0, f.noteClaim 1 0, f.noteClaim 0 1,
     f.noteClaim 1 1, f.noteClaim 0 2, f.noteClaim 1 2] : List ℤ) ++
-    List.replicate 157 0
+    List.replicate 163 0
 
 theorem ringKernelPayload_length (f : RingEndpointFields) (post : Bool) :
-    (ringKernelPayload f post).length = 178 := by
-  -- `length_append` + `length_replicate` as REWRITES: the 157-element tail is never unfolded,
+    (ringKernelPayload f post).length = 184 := by
+  -- `length_append` + `length_replicate` as REWRITES: the 163-element tail is never unfolded,
   -- only its length is read off. The explicit prefix costs 21 `length_cons` steps.
   simp only [ringKernelPayload, List.length_append, List.length_replicate, List.length_cons,
     List.length_nil]
@@ -235,7 +235,7 @@ theorem ringCommit8_pre_binds_kernel (permW : List ℤ → List ℤ)
   have h3 := congrArg (fun xs : List ℤ => xs.getD 3 0) hp
   have h4 := congrArg (fun xs : List ℤ => xs.getD 4 0) hp
   have h6 := congrArg (fun xs : List ℤ => xs.getD 6 0) hp
-  -- `cons_append` exposes each head so `getD` walks only the 0..6 prefix; the 157-element
+  -- `cons_append` exposes each head so `getD` walks only the 0..6 prefix; the 163-element
   -- replicate tail is never unfolded.
   simp only [ringKernelPayload, List.cons_append, List.getD_cons_zero, List.getD_cons_succ]
     at h0 h1 h2 h3 h4 h6
@@ -331,11 +331,11 @@ def preReceipt : Nat := 188
 def midReceipt : Nat := 189
 def postReceipt : Nat := 190
 def preLimbs : Nat := 191
-def preIroot : Nat := 369
-def postLimbs : Nat := 370
-def postIroot : Nat := 548
-def receiptLanes : Nat := 549
-def hostWidth : Nat := 577
+def preIroot : Nat := 375
+def postLimbs : Nat := 376
+def postIroot : Nat := 560
+def receiptLanes : Nat := 561
+def hostWidth : Nat := 589
 
 end Col
 
@@ -464,7 +464,7 @@ private def endpointActionConstraints : List VmConstraint2 :=
      (Col.receiptLanes + 21)]
 
 private def payloadConstraints : List VmConstraint2 :=
-  (List.range 178).flatMap (fun j =>
+  (List.range 184).flatMap (fun j =>
     [payloadPin Col.preLimbs j preBalanceSource,
      payloadPin Col.postLimbs j postBalanceSource]) ++
   [eqCol Col.preIroot Col.preReceipt, eqCol Col.postIroot Col.postReceipt]
@@ -493,7 +493,7 @@ def shieldedRingEndpointHost : EffectVmDescriptor2 where
   hashSites := []
   ranges := []
 
-/-- The deployed descriptor: host teeth plus the proved 60-step wide pre/post chains
+/-- The deployed descriptor: host teeth plus the proved 62-step wide pre/post chains
 and their sixteen public lanes. -/
 def shieldedRingEndpointDescriptor : EffectVmDescriptor2 :=
   wideAppend shieldedRingEndpointHost Col.preLimbs Col.postLimbs
@@ -563,15 +563,15 @@ theorem RingEndpointAccepted.receipt_transition {permW : List ℤ → List ℤ}
     Dregg2.Intent.Ring.MatchNode.toRingNode,
     RingEndpointFields.turn0, RingEndpointFields.turn1, RingLeg.toTurn]
 
-#guard shieldedRingEndpointHost.traceWidth == 577
+#guard shieldedRingEndpointHost.traceWidth == 589
 #guard shieldedRingEndpointHost.piCount == 11
-#guard shieldedRingEndpointDescriptor.traceWidth == 1537
+#guard shieldedRingEndpointDescriptor.traceWidth == 1581
 #guard shieldedRingEndpointDescriptor.piCount == 27
 #guard shieldedRingEndpointDescriptor.name == "shielded-ring-clear-2-endpoint-wide"
 
 #guard (ringKernelPayload
   { creator0 := 1, creator1 := 2, asset0 := 0, asset1 := 1,
-    amount0 := 3, amount1 := 4, noteClaim := fun _ _ => 0 } false).length == 178
+    amount0 := 3, amount1 := 4, noteClaim := fun _ _ => 0 } false).length == 184
 #guard (endpointPostLog
   { creator0 := 1, creator1 := 2, asset0 := 0, asset1 := 1,
     amount0 := 3, amount1 := 4, noteClaim := fun _ _ => 0 } []).length == 2

@@ -43,7 +43,9 @@
 use std::collections::HashMap;
 
 use dregg_blocklace::constitution::{Constitution, ConstitutionManager};
-use dregg_blocklace::finality::{Block, BlockError, BlockId, Blocklace, MergeError, Payload};
+use dregg_blocklace::finality::{
+    Block, BlockError, BlockId, Blocklace, CheckpointData, MergeError, Payload,
+};
 use dregg_blocklace::ordering::supermajority_threshold;
 use ed25519_dalek::SigningKey;
 
@@ -186,6 +188,38 @@ fn finalized_order(finality_lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<
         .into_iter()
         .filter_map(|oid| ordering_to_cs.get(&oid).copied())
         .collect()
+}
+
+/// The SAME projection loop as [`finalized_order`], exposed as `(creator, seq) -> ordering-lace
+/// BlockId`. Used to MEASURE (not assume) why two views can still differ intra-cohort: the
+/// projection re-hashes each block over only the acks that RESOLVED in this node's lace, so a
+/// block that acks something the node does not hold gets a different ordering-lace id — and
+/// `ordering::xsort` breaks its ties on exactly that id.
+fn ordering_projection_ids(
+    finality_lace: &Blocklace,
+) -> HashMap<([u8; 32], u64), dregg_blocklace::BlockId> {
+    let mut finality_to_ordering: HashMap<BlockId, dregg_blocklace::BlockId> = HashMap::new();
+    let mut out: HashMap<([u8; 32], u64), dregg_blocklace::BlockId> = HashMap::new();
+
+    let mut blocks: Vec<(&BlockId, &Block)> = finality_lace.iter().collect();
+    blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+
+    for (fid, block) in blocks {
+        let predecessors: Vec<dregg_blocklace::BlockId> = block
+            .predecessors
+            .iter()
+            .filter_map(|p| finality_to_ordering.get(p).copied())
+            .collect();
+        let payload = match &block.payload {
+            Payload::Turn(d) => d.clone(),
+            _ => vec![],
+        };
+        let ob = dregg_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
+        let oid = ob.id();
+        finality_to_ordering.insert(*fid, oid);
+        out.insert((block.creator, block.seq), oid);
+    }
+    out
 }
 
 /// Build a round-synchronous DAG for `keys` over `rounds` rounds, each creator's
@@ -773,6 +807,295 @@ fn unenrolled_creator_cannot_supply_a_missing_wave_end_ratifier() {
         orders_ok[0].is_empty(),
         "the scenario must DISTINGUISH the safe stall from the honest commit"
     );
+}
+
+// ─── SCENARIO E — an OUTSIDER RELAY must not move the wave clock (the rounds leak) ────
+
+/// Build the relay run and hand back TWO honest nodes' views of it.
+///
+/// `n` committee members produce three fully-connected rounds. Alongside them, THREE signers that
+/// are **not in the committee** produce one block each, chained `r1 <- r2 <- r3` — three blocks,
+/// depth three — and ONE honest layer-2 block acks the tip `r3`.
+///
+/// Node A receives everything. Node B receives the committee's blocks and NOT the relay. Their
+/// ENROLLED sub-laces are identical, block for block; the only difference is three blocks from
+/// creators node B was never sent — which is exactly the difference dissemination does not rule
+/// out, because a non-participant is precisely the creator no honest node is obliged to relay.
+///
+/// The relay is not an exotic adversary: `finality.rs::enroll_pq` is INSERT-ONLY while
+/// `constitution.current.participants` shrinks on a passed membership proposal, so rotated-out
+/// validators keep producing exactly these blocks, and this sim puts them in through the same
+/// `merge` the live node uses, defeating no check.
+fn outsider_relay_two_views(n: usize) -> (Node, Node, Vec<[u8; 32]>, Vec<[u8; 32]>) {
+    let keys: Vec<SigningKey> = (0..n).map(|i| key(40 + i as u8)).collect();
+    let participants: Vec<[u8; 32]> = keys.iter().map(pubkey).collect();
+
+    // The relay's three signers, sorted by HYBRID ID. `finalized_order` (lifted verbatim from
+    // `poll_finalized_blocks`) builds the ordering projection in `(seq, creator)` order and keeps
+    // an ack only if its target was inserted first — so a same-`seq` chain must run
+    // creator-ascending or the projection silently drops the very edges under test.
+    let mut relay_keys: Vec<SigningKey> = (0..3).map(|i| key(210 + i as u8)).collect();
+    relay_keys.sort_by_key(pubkey);
+    let relay_ids: Vec<[u8; 32]> = relay_keys.iter().map(pubkey).collect();
+    for r in &relay_ids {
+        assert!(
+            !participants.contains(r),
+            "a relay signer must NOT be enrolled — else this scenario has no outsider"
+        );
+    }
+
+    // The relay chain: one block each, at seq 0, each acking the previous.
+    let mut relay: Vec<Block> = Vec::new();
+    for (i, sk) in relay_keys.iter().enumerate() {
+        let preds: Vec<BlockId> = relay.last().map(|b| vec![b.id()]).unwrap_or_default();
+        relay.push(round_block(sk, 0, &preds, &[0x70u8.wrapping_add(i as u8)]));
+    }
+
+    // Layer 1: the whole committee, genesis.
+    let l1: Vec<Block> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, sk)| round_block(sk, 0, &[], &[0x10, i as u8]))
+        .collect();
+    let l1_ids: Vec<BlockId> = l1.iter().map(|b| b.id()).collect();
+
+    // Layer 2: the whole committee — and member 0 additionally acks the relay TIP.
+    let mut with_relay = l1_ids.clone();
+    with_relay.push(relay.last().unwrap().id());
+    let l2: Vec<Block> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, sk)| {
+            let preds = if i == 0 { &with_relay } else { &l1_ids };
+            round_block(sk, 1, preds, &[0x20, i as u8])
+        })
+        .collect();
+    let l2_ids: Vec<BlockId> = l2.iter().map(|b| b.id()).collect();
+
+    // Layer 3 (the wave end at wavelength 3): the whole committee.
+    let l3: Vec<Block> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, sk)| round_block(sk, 2, &l2_ids, &[0x30, i as u8]))
+        .collect();
+
+    let committee: Vec<&SigningKey> = keys.iter().collect();
+    let mut node_a = Node::new("A(+relay)", keys[0].clone(), &committee);
+
+    // Node A: everything, relay first so the delta is causally closed.
+    let full: Vec<Block> = relay
+        .iter()
+        .chain(l1.iter())
+        .chain(l2.iter())
+        .chain(l3.iter())
+        .cloned()
+        .collect();
+    node_a
+        .merge(full)
+        .expect("honest nodes accept the outsiders' well-formed, correctly signed blocks");
+
+    // ── Node B: the SAME committee blocks, WITHOUT the relay — member 0's layer-2 ack of `r3`
+    //    simply dangles.
+    //
+    // ⚑ This view is NOT reachable through gossip, and the difference matters. `receive_block` /
+    // `receive_block_pinned` both go through `insert_checked`, which refuses a block with an
+    // unknown predecessor (`MissingPredecessor`), and `merge` refuses the whole delta
+    // (`NotCausallyClosed`) — so a node that holds the acking block necessarily holds the relay,
+    // and two GOSSIPING honest nodes cannot differ on it. The reachable route is the RESTART path:
+    // `from_checkpoint_trusted` inserts every persisted block straight into the map with no
+    // signature check, no roster check and NO CLOSURE CHECK, which is exactly what the enrollment
+    // docs in `ordering.rs` and `finality_gate.rs` already say about it. So this is the real
+    // function on the real path, not a hand-built lace.
+    let enrolled_only: Vec<Block> = l1
+        .iter()
+        .chain(l2.iter())
+        .chain(l3.iter())
+        .cloned()
+        .collect();
+    let mut tips: HashMap<[u8; 32], BlockId> = HashMap::new();
+    for b in &enrolled_only {
+        tips.insert(b.creator, b.id());
+    }
+    let ckpt = CheckpointData {
+        blocks: enrolled_only.iter().map(|b| b.to_bytes()).collect(),
+        tips,
+        equivocators: vec![],
+        ordered_block_ids: vec![],
+        attested_block_ids: vec![],
+    };
+    let quorum = supermajority_threshold(n);
+    let restored = Blocklace::from_checkpoint_trusted(&ckpt, keys[1].clone(), quorum)
+        .expect("the restart path reloads a persisted DAG with no closure check");
+    let strands: Vec<[u8; 32]> = committee.iter().map(|k| strand_key(k)).collect();
+    let node_b = Node {
+        name: "B(restarted, no relay)".to_string(),
+        lace: restored,
+        constitution: ConstitutionManager::new(Constitution::new(strands, 0)),
+    };
+
+    (node_a, node_b, participants, relay_ids)
+}
+
+/// **THE ROUNDS LEAK, ON THE RUN.** `compute_rounds` maxed over every present predecessor, so a
+/// non-participant chain that one honest block acked ADDED DEPTH — and depth is the wave clock:
+/// `round_to_wave`, the leader slot, the wave-end round where ratification is counted, and
+/// `xsort`'s ordering are all read off it. With a three-deep relay the wave-end round of wave 0
+/// contained the relay tip and NOT ONE committee block, so node A finalized nothing while node B —
+/// same committee, same blocks, same everything it was allowed to see — finalized the lot.
+///
+/// That is not wave TIMING. Two honest nodes whose enrolled sub-laces are identical must finalize
+/// identically; this is the reduction `tauOrder_deterministic` rests on ("agreement reduces to
+/// seeing the same lace"), and non-participants are exactly the creators that reduction cannot
+/// quantify over.
+///
+/// BOTH POLES, in one harness:
+///   * the relay changes NOTHING — the two views agree coordinate for coordinate; and
+///   * the committee still finalizes all of its own blocks, with no relay coordinate ordered.
+///
+/// Verified twin: `BlocklaceFinality.traceRelayStall` / `traceOrderFork` and the `#guard` red/green
+/// pairs on `tauOrderPreRounds` vs `tauOrder`. The RED half is executed in-tree by
+/// `ordering::tests::compute_rounds_gives_a_nonparticipant_relay_no_depth`, which runs THIS
+/// module's `compute_rounds` at the pre-repair parameter.
+#[test]
+fn outsider_relay_cannot_shift_the_wave_clock() {
+    let n = 3;
+    let (node_a, node_b, participants, relay_ids) = outsider_relay_two_views(n);
+
+    // ANTI-VACUITY — the relay really is in A's lace, really is three blocks by three DISTINCT
+    // unenrolled creators, and really is acked by an honest block. A refusal that came from the
+    // blocks being absent would say nothing about the finality rule.
+    let in_a: Vec<[u8; 32]> = node_a
+        .lace
+        .iter()
+        .map(|(_, b)| b.creator)
+        .filter(|c| relay_ids.contains(c))
+        .collect();
+    assert_eq!(in_a.len(), 3, "all three relay blocks must be in A's lace");
+    assert!(
+        node_b
+            .lace
+            .iter()
+            .all(|(_, b)| !relay_ids.contains(&b.creator)),
+        "B must not hold any relay block — that is the whole difference between the two views"
+    );
+    // The two nodes' ENROLLED sub-laces are identical, block id for block id.
+    let enrolled_of = |nd: &Node| -> Vec<([u8; 32], u64)> {
+        let mut v: Vec<([u8; 32], u64)> = nd
+            .lace
+            .iter()
+            .filter(|(_, b)| participants.contains(&b.creator))
+            .map(|(_, b)| (b.creator, b.seq))
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        enrolled_of(&node_a),
+        enrolled_of(&node_b),
+        "the two views must differ ONLY by the outsider blocks"
+    );
+    // …and an honest block genuinely ACKS the relay tip, so the relay is load-bearing in the
+    // honest leader's causal past and cannot be refused by ignoring an unreferenced subgraph.
+    let relay_tip_acked = node_a.lace.iter().any(|(_, b)| {
+        participants.contains(&b.creator)
+            && b.predecessors.iter().any(|p| {
+                node_a
+                    .lace
+                    .iter()
+                    .any(|(id, rb)| id == p && relay_ids.contains(&rb.creator))
+            })
+    });
+    assert!(
+        relay_tip_acked,
+        "an honest block must ack the relay — else the relay cannot reach the wave clock"
+    );
+
+    // ── THE REFUSAL: the outsider relay no longer moves the wave clock. Both views finalize the
+    //    SAME coordinates, in the SAME round cohorts, and BOTH finalize (before the repair the
+    //    view holding the relay finalized NOTHING — the wave-end round was occupied by the relay
+    //    tip and by no committee block at all; see
+    //    `ordering::tests::compute_rounds_gives_a_nonparticipant_relay_no_depth`).
+    let order_a = node_a.finalized(&participants);
+    let order_b = node_b.finalized(&participants);
+    assert!(
+        !order_a.is_empty() && !order_b.is_empty(),
+        "[LIVENESS] a three-block outsider relay must not stall a healthy committee: A={} B={}",
+        order_a.len(),
+        order_b.len()
+    );
+    assert_eq!(
+        order_a.len(),
+        3 * n,
+        "[LIVENESS] the committee must still finalize all {} of its blocks; got {order_a:?}",
+        3 * n
+    );
+    assert!(
+        order_a.iter().all(|(c, _)| participants.contains(c)),
+        "no outsider coordinate may be finalized: {order_a:?}"
+    );
+    let set = |o: &[([u8; 32], u64)]| -> Vec<([u8; 32], u64)> {
+        let mut v = o.to_vec();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        set(&order_a),
+        set(&order_b),
+        "[ROUNDS LEAK] the two views must finalize the SAME coordinates"
+    );
+    // The load-bearing level, and the one the Lean↔Rust differential is stated at: the sequence of
+    // ROUND COHORTS and each cohort's creator set. This is what the wave clock decides, and it is
+    // now identical on the two views.
+    let cohorts = |o: &[([u8; 32], u64)]| -> Vec<(u64, Vec<[u8; 32]>)> {
+        let mut out: Vec<(u64, Vec<[u8; 32]>)> = Vec::new();
+        for (c, seq) in o {
+            match out.last_mut() {
+                Some((s, members)) if s == seq => members.push(*c),
+                _ => out.push((*seq, vec![*c])),
+            }
+        }
+        for (_, members) in out.iter_mut() {
+            members.sort();
+        }
+        out
+    };
+    assert_eq!(
+        cohorts(&order_a),
+        cohorts(&order_b),
+        "[ROUNDS LEAK] the round-cohort structure must be a function of the ENROLLED sub-lace"
+    );
+
+    // ── ⚠ MEASURED RESIDUAL — NOT this defect, and NOT closed here.
+    //
+    // The two orders are still not EQUAL: within a cohort they differ. The cause is not the wave
+    // clock (the cohorts above are identical) and not `xsort`'s algorithm — it is the projection
+    // `poll_finalized_blocks` builds. It re-hashes every block over only the predecessors that
+    // RESOLVED in this node's lace, so the acking block gets a different ordering-lace id on a
+    // node that does not hold the relay, that id is `xsort`'s tie-break, and the difference
+    // cascades into every block that acks it. Measured, not inferred:
+    let ids_a = ordering_projection_ids(&node_a.lace);
+    let ids_b = ordering_projection_ids(&node_b.lace);
+    let acker = participants[0];
+    assert_ne!(
+        ids_a.get(&(acker, 1)),
+        ids_b.get(&(acker, 1)),
+        "the mechanism under test: the acking block's ORDERING-LACE id must differ between the \
+         two views (if this ever becomes equal the residual below is closed and this test should \
+         assert order equality instead)"
+    );
+    assert_eq!(
+        ids_a.get(&(participants[1], 0)),
+        ids_b.get(&(participants[1], 0)),
+        "anti-vacuity: a block with no dangling ack keeps the SAME projection id in both views"
+    );
+    // Two consequences, both out of scope for the wave-clock pass and both named:
+    //   * `from_checkpoint_trusted` can produce a lace that is NOT causally closed at all — the
+    //     gossip paths (`insert_checked`, `merge`) both refuse one — which is what puts the two
+    //     views in different states in the first place;
+    //   * the ordering projection's content address is therefore a function of the VIEW, not of
+    //     the block, so `xsort`'s deterministic tie-break is deterministic per node and not across
+    //     nodes. Fixing that means keying the projection by the FINALITY block id (a stable
+    //     content address) instead of re-hashing — `node/src/blocklace_sync.rs`, a different pass.
 }
 
 // ─── META-tests: the property checkers are NON-VACUOUS (they reject the fault) ──

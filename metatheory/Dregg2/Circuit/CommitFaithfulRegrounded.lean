@@ -24,14 +24,14 @@ a finite hash.  This file removes both errors:
   adversary-failure event, which is inhabited on honest equal openings; no theorem assumes global
   nonexistence of collisions.
 
-The legacy analysis remains as a diagnostic, but the keystone surface is the live 178-limb rotated
+The legacy analysis remains as a diagnostic, but the keystone surface is the live 184-limb rotated
 path.  `RotatedCell` and `rotatedLimb` place the authority octet at `[24,12..18]`, the faithful cap
 and heap roots in their deployed groups, lifecycle/epoch/height at `29/30/31`, and publish the
 eight-output `wireCommitR8`.  `CH_faithful8` uses a lossless tuple serialization only to fit the
 older scalar `recStateCommit` interface; it adds no hash assumption and projects no lane.
 
 Consequently the kernel/no-replay/transfer keystones return only a genuine collision of the full
-eight-lane authority digest, the 178-limb wide chain, or an outer state-tree primitive.  A collision
+eight-lane authority digest, the 184-limb wide chain, or an outer state-tree primitive.  A collision
 visible only in legacy lane zero is no longer on their break surface.
 
 No `sorry`, `admit`, `native_decide`, or new axiom.  Every theorem is audited below.
@@ -462,7 +462,7 @@ theorem cellCollision_faithful_reduces (fold : AuthorityFold)
 
 #assert_axioms cellCollision_faithful_reduces
 
-/-! ## 3. The deployed rotated 178-limb / eight-output surface.
+/-! ## 3. The deployed rotated 184-limb / eight-output surface.
 
 The legacy leaf above remains only as the differential-pinned diagnostic.  The binding consumer
 below models the live wide route: the authority digest occupies all eight deployed lanes
@@ -601,11 +601,17 @@ theorem sameRotatedSurface_authorityInput_injective {v w : Value}
     · simpa only [rotatedAuthorityInput, if_neg hv, if_neg hw,
         AuthorityInput.abstract.injEq] using ha
 
-/-- The non-cell/turn-owned remainder of the deployed 178-limb row.  Known cell-owned positions are
-overridden below; `residual` carries cells/nullifier/commitments/revoked roots, carrier octets, pads,
-and other already-modeled lanes without pretending they are authority bytes. -/
+/-- The non-cell/turn-owned remainder of the deployed 184-limb row.  Known cell-owned positions are
+overridden below; `residual` carries cells/nullifier/commitments/revoked roots, carrier octets,
+and other already-modeled lanes without pretending they are authority bytes.
+
+⚑ At the ninth-lane flag day (178 → 184) the two free pads are GONE and columns 176..183 are the
+NINTH lane of `fields[0..7]` (`Dregg2.Circuit.FieldLanes9`). They are still carried as `residual`
+here: this surface's conclusions are UNWEAKENED (it never claimed them), but the strengthening —
+reading 176..183 as cell-owned field lanes, which is what makes the field octet injective — is NOT
+taken yet. -/
 structure RotatedContext where
-  residual : Fin 178 → Int
+  residual : Fin 184 → Int
   iroot : Int
 
 abbrev RotatedContextProvider := CellId → Value → RotatedContext
@@ -613,7 +619,7 @@ abbrev RotatedContextProvider := CellId → Value → RotatedContext
 /-- One exact deployed pre-iroot position.  The indices mirror
 `cell::commitment::compute_rotated_pre_limbs` and `trace_rotated.rs` at HEAD. -/
 noncomputable def rotatedLimb (fold8 : AuthorityFold8) (ctx : RotatedContext)
-    (v : Value) (i : Fin 178) : Int :=
+    (v : Value) (i : Fin 184) : Int :=
   let d := decodedRotatedCell v
   match i.1 with
   | 1 => d.balance % splitMod
@@ -645,7 +651,7 @@ noncomputable def rotatedPreLimbs (fold8 : AuthorityFold8) (ctx : RotatedContext
   List.ofFn (rotatedLimb fold8 ctx v)
 
 theorem rotatedPreLimbs_length (fold8 : AuthorityFold8) (ctx : RotatedContext) (v : Value) :
-    (rotatedPreLimbs fold8 ctx v).length = 178 := by
+    (rotatedPreLimbs fold8 ctx v).length = 184 := by
   unfold rotatedPreLimbs
   exact List.length_ofFn
 
@@ -657,9 +663,9 @@ noncomputable def rotatedCommit8 (fold8 : AuthorityFold8) (permW : List Int → 
   wireCommitR8 permW (rotatedPreLimbs fold8 ctx v) ctx.iroot
 
 /-- Computable direct twin on a canonical `RotatedCell`, used by the golden guards and by a Rust
-differential: it avoids the abstract malformed-value branch while retaining the exact 178 indices. -/
+differential: it avoids the abstract malformed-value branch while retaining the exact 184 indices. -/
 def deployedRotatedLimb (fold8 : AuthorityFold8) (ctx : RotatedContext)
-    (d : RotatedCell) (i : Fin 178) : Int :=
+    (d : RotatedCell) (i : Fin 184) : Int :=
   match i.1 with
   | 1 => d.balance % splitMod
   | 2 => d.nonce
@@ -760,7 +766,7 @@ eight lanes.  This is the only authority failure on the live wide surface. -/
 def AuthorityDigest8Collision (fold8 : AuthorityFold8) : Prop :=
   ∃ x y : AuthorityInput, x ≠ y ∧ fold8 x = fold8 y
 
-/-- A genuine collision of the deployed 178-limb plus iroot wide chain. -/
+/-- A genuine collision of the deployed 184-limb plus iroot wide chain. -/
 def WireCommit8Collision (permW : List Int → List Int) : Prop :=
   ∃ l l' : List Int, ∃ ir ir' : Int,
     (l ≠ l' ∨ ir ≠ ir') ∧ wireCommitR8 permW l ir = wireCommitR8 permW l' ir'
@@ -772,7 +778,7 @@ theorem rotatedPreLimbs_eq_implies (fold8 : AuthorityFold8)
       fold8 (rotatedAuthorityInput v) = fold8 (rotatedAuthorityInput w) := by
   have hfn : rotatedLimb fold8 ctx v = rotatedLimb fold8 ctx' w :=
     List.ofFn_injective h
-  have hp (n : Nat) (hn : n < 178) :
+  have hp (n : Nat) (hn : n < 184) :
       rotatedLimb fold8 ctx v ⟨n, hn⟩ = rotatedLimb fold8 ctx' w ⟨n, hn⟩ :=
     congrFun hfn ⟨n, hn⟩
   have hlo : (decodedRotatedCell v).balance % splitMod =

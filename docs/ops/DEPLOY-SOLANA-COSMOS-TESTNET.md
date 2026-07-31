@@ -360,11 +360,25 @@ BROADCAST →    --label dregg-settlement --admin <osmo1...> $TXFLAGS
 
 `init_msg` shape (`cosmos-settlement/src/msg.rs::InstantiateMsg`): `genesis_root`
 = the fixture's 8 genesis lanes (pinned anchor; the first settle must chain from
-it); `verifying_key_hash` = a non-zero hex commitment. The contract **stores** the
-hash (it does not re-derive it on the settle path — the VK itself is baked into
-`vk.rs`), so any non-zero hex accepts, but pin the cross-chain dev value
-`VK_DIGEST` = `0xcfda612f...790a37cc` above for parity with EVM/Solana (was
-`keccak256("dregg-settlement-vk-dev-setup")` until 2026-07-28).
+it); `verifying_key_hash` = the cross-chain `VK_DIGEST`
+`0xcfda612f...790a37cc` above — 32 bytes of hex, `0x` prefix optional,
+case-insensitive (the comparison is over BYTES, not over the string).
+
+⚑ **FLAG DAY 2026-07-30 — this value is now MANDATORY, not advisory.** This
+paragraph used to read "any non-zero hex accepts, but pin the cross-chain dev
+value for parity", and that was accurate: `instantiate` checked only that the
+string was not all zeros, then **stored** it, and nothing ever compared it —
+`settle` never read it and one query served it back. So the "commitment"
+committed to whatever the operator typed, and `"0x1"` was a legal VK pin.
+`instantiate` now REFUSES any declaration but `vk::VK_DIGEST`
+(`ContractError::VkDigestMismatch`), and a malformed one with
+`MalformedVkDigest` — so a runbook still carrying the old
+`keccak256("dregg-settlement-vk-dev-setup")` value fails loudly. The contract no
+longer stores the hash at all: `Config.verifying_key_hash` is GONE and the
+`verifying_key_hash` query answers from `vk::VK_DIGEST` directly, so it cannot
+report a key other than the one the wasm verifies against. Any instance
+instantiated before this must be RE-INSTANTIATED (a stored `Config` from before
+fails to deserialize).
 
 ### 2.5 Post-deploy verify — query + settle the fixture
 

@@ -1,5 +1,187 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 30 — the wave CLOCK was outside the committee: three outsider blocks reordered an honest total order, and a fourth fork mechanism fell out of measuring it
+
+`9c82117a4` closed B6's ratifier half and left one residual, explicitly: *"the rounds leak is still
+live … that is wave TIMING."* **It is not timing.** `computeRounds` / `compute_rounds` maxed over
+EVERY present predecessor, and depth is the wave clock — `roundToWave`, `blocksAtRound`, the leader
+slot, the wave end where ratification is counted, and `xsortBy`'s primary sort key are all read off
+it. So any creator who could add depth could move the wave structure, and non-participants are
+exactly the creators dissemination does not guarantee every node sees.
+
+**Constructed against the rule at HEAD, three faces, all `#guard`ed in
+`BlocklaceFinality.lean` §9:**
+
+* **AN ORDER FORK** (`traceOrderFork`). Two honest nodes, IDENTICAL enrolled sub-lace, differing only
+  in whether they received two outsider blocks (`70 ← 80`, one honest layer-2 block acks `80`). Same
+  leader, same wave-end round `{13,23,33}` under both maps — so not a stall and not a delay. Creator
+  3's `seq 1` block moves from index 5 to index 7 and the finalized orders are
+  `[10,20,30,11,21,31,12,22,32,13,23,33]` vs `[10,20,30,11,21,12,22,31,32,13,23,33]`: **the same
+  twelve enrolled coordinates, permuted, neither a prefix of the other.** That is
+  `no_conflicting_finalized_history` violated between two HONEST nodes.
+* **A TOTAL STALL** (`traceRelayStall`). A three-block relay pushes the honest layer off round 3, so
+  the wave-END round holds ONLY the relay tip and NOT ONE committee block — zero enrolled ratifiers,
+  `tauOrder = []`, while every validator is up and correct. The other view finalizes all nine.
+* **A MANUFACTURED EQUIVOCATOR.** Under the pre-repair clock creator 3's blocks `31` and `32` both
+  land at round 3 — a same-creator/same-round pair, which is exactly what the equivocation guard
+  keys on. `hasEquivInPastC … forkRoundsPre 13 3` is `true` and the repaired `hasEquivInPast` is
+  `false`. It changed no outcome here only because wave 0's anchor is a genesis block whose causal
+  past is itself; a deeper anchor would have dropped an honest validator's blocks from the order.
+
+**THE FIX IS IN THE RULE, AND IT FILTERS THE EDGES, NOT THE NODES.** `computeRounds B participants`
+maxes only over predecessors created by participants (`roundOfStep`, reusing the existing
+`enrolledId` — one predicate now gating which acks count as DEPTH and whose blocks may be ORDERED),
+threaded through `roundOf` / `maxRound` / `blocksAtRound` / `xsortBy` / `hasEquivInPast` / `approves`,
+`mkRoundCache B participants`, `fastRoundMap B participants` (a `Std.HashSet` of enrolled ids, built
+once) and `tauOrderFastImpl`, the `@[implemented_by]` target the FFI executes. Dropping
+non-participant blocks from the map entirely — what `compute_rounds_filtered` does for `tau_unified`,
+soundly, because every read there is participant-restricted — would have SUBSUMED B6 on `tau`'s
+path: `traceSybilOnly`'s wave-end round would have become empty and stopped exhibiting the ratifier
+gate. Every pre-existing `#guard` in the file is green **at its original value**, including
+`tauOrderUnfiltered traceUnenrolled … == 11` and `blocksAtRound traceSybilRatify … == [12,22,92]`.
+
+**Theorems.** `computeRounds_depth_exhibits_enrolled_pred` — safety, **no hypothesis on the lace**:
+every round above 1 EXHIBITS an enrolled predecessor of the block carrying it, so an outsider chain
+of any length adds nothing (proved by induction on the folded block LIST, so no `qsort` permutation
+lemma appears; the witness is in `sortedLace B`, not `B`, and that gap is stated at the definition).
+Plus `unenrolled_preds_contribute_no_depth` (all-outsider acks ⇒ genesis depth) and
+`roundOfStep_exhibits_enrolled_pred` (the step, with the `r−1` witness).
+`tauOrder_eq_preRounds_of_enrolled` — liveness, hypothesis `EnrolledLace`: on an honest lace the
+WHOLE finalization is bit-identical to the pre-repair rule's. The hypothesis is not merely refutable,
+**its conclusion FAILS without it** — `#guard tauOrder traceOrderFork … != tauOrderPreRounds
+traceOrderFork …` — which is the part a vacuous hypothesis could not do.
+`computeRoundsPreParticipant` is kept as the permanent falsification witness, and
+`tauOrderWithRounds` runs the ENTIRE rule with the round map as the only parameter, so each exhibit
+is one lace with one bit changed rather than two anecdotes.
+
+**⚑ SAY WHAT BROKE.** `SuperRatifyBridge.Model.forked` needed repair and the reason is a
+STRENGTHENING: its hidden author-`7` fork hung off `other`, a NON-PARTICIPANT genesis, so under the
+filtered clock its committee-depth is 0, it collides with `leader` AT THE LEADER SLOT, and the node
+now correctly refuses the wave (`#guard finalLeaderAt forked parts 0 3 == some leader` went false).
+That is a fork rooted wholly outside the committee becoming visible where it decides something — it
+is NOT a closure of `OPEN-CM-LOCAL-EQUIVOCATION`, which is about forks with genuine in-committee
+depth. A `forked`-only `freeBlk` (an enrolled independent genesis) gives the fork that depth back, so
+the witness keeps witnessing the hole that is actually open. Signature changes ripple to
+`StrandAdmission` (`maxRound B participants`), `TauPrefixMonotone`, and `SuperRatifyBridge`
+(`RatifierRead B ps o l p`, `deployedState`, `deployedHistory`).
+
+**⚑ AND A FOURTH FORK MECHANISM, FOUND BY DRIVING IT.** Two honest nodes still finalize the same nine
+coordinates in a DIFFERENT intra-cohort order after the fix, and it is not the clock (the round
+cohorts are now identical) and not `xsort`'s algorithm: `poll_finalized_blocks` builds its ordering
+projection by RE-HASHING each block over only the predecessors that RESOLVED in that node's lace, so
+a block acking something the node does not hold gets a different ordering-lace id — and that id is
+`xsort`'s tie-break, cascading into everything that acks it. Measured, not inferred, in
+`consensus_fault_sim.rs` (`ordering_projection_ids`). **The projection's content address is a
+function of the VIEW, not of the block.** Fix = key the projection by the FINALITY block id;
+`node/src/blocklace_sync.rs`, a different pass.
+
+**⚑ AND THE UPSTREAM GATE, MEASURED RATHER THAN ASSUMED.** The two-honest-view fork is NOT reachable
+through gossip: `insert_checked` (behind `receive_block` and `receive_block_pinned`) refuses a block
+with an unknown predecessor and `merge` refuses the whole delta, so a node holding the acking block
+necessarily holds the relay. It IS reachable through the RESTART path —
+`from_checkpoint_trusted` inserts every persisted block with no signature, no roster and **no closure
+check** — which is the same unguarded path B5 named. The STALL needs no divergence at all: every node
+holds the relay and every node stalls together. The outsider itself is ordinary, not exotic:
+`receive_block_pinned` fails closed on an unenrolled PQ key, but `enroll_pq` is INSERT-ONLY while the
+constitution's participant set SHRINKS, so a ROTATED-OUT validator is in the roster and out of
+`participants` — B6's own mechanism.
+
+**Rust mirrors, and one more thing moved.** `compute_rounds(blocklace, &participant_set)`; the RED is
+executed in-tree by `ordering::tests::compute_rounds_gives_a_nonparticipant_relay_no_depth`, which
+runs THIS module's `compute_rounds` at the pre-repair parameter — hand it every creator and the
+filter is the identity, which is `computeRounds_eq_pre_of_enrolled`, so `pre` is literally yesterday's
+function. ⚑ The enrollment filter also MOVED from the finished order into `new_blocks`, before
+`xsort`. In Lean the two placements are the same value and `tauOrder`'s docstring proves it — but that
+argument needs a KEY sort, and Rust's `xsort` is a Kahn sweep with a min-block-id ready heap, so an
+extra element changes when a block becomes ready. Leaving an outsider's block in the segment let it
+reorder honest blocks even with the clock filtered.
+
+⚠ `lake build Dregg2` is RED at HEAD on `Dregg2/Circuit/{CustomDeployedBytePin,OodColumnLayout}.lean`
+— the ninth-lane encoding epoch, both files modified in the working tree by that lane, neither
+importing anything in this pass (import closures checked: 201 and 197 modules, zero overlap). The
+REVERSE-dependency closure of `BlocklaceFinality` — all 23 modules, including `FinalityGate`
+(the FFI export), `Consensus.Safety`, `FinalizedLightClient`, `SelfSettlement`, `LaceMerge`,
+`CheckpointPrune`, `CatchupConverges` and `Dregg2.FFI` — builds green, 3547 jobs, 0 errors.
+`dregg-blocklace` fault sim 9/9 (B6's own test included). RED-PROOF on a scratch COPY, never the
+shared tree: delete the one `.filter (enrolledId B participants)` and 15 `#guard`s go red plus four
+safety theorems fail to prove.
+
+**Residual, named:** `xsort` (Kahn-min-id) and `xsortBy` (`(round, id)`) are still different
+linearizers — OPEN-CM-XSORT — coinciding only where every block acks all of the previous layer, which
+is what the differential tests use. And a non-participant can still push `maxRound` up by one, adding
+one wave iteration whose first round exceeds every enrolled block's round, so it has no leader
+candidate and cannot anchor: argued, not proved.
+
+## ⚑⚑⚑⚑ JULY 31 — the fields octet became a NONET: injectivity is a theorem, and it cost `rotatedNumPreLimbs` 178 → 184
+
+`p = 2013265921`, so `log₂ p = 30.907` and **eight lanes carry 247.26 bits against a 32-byte field's
+256**. No 8-lane encoding of 32 bytes is injective under any chunking — pigeonhole, before you read a
+line of code. `fields[0..7]` are excluded from the byte-exact authority residue (`cell/src/commitment.rs`
+— "bound by their own limbs"), so those lanes are the ONLY binding those fields have, and the deficit
+reached `TurnReceipt::{pre,post}_state_hash`, the executor signature and the receipt QC.
+
+**Three repairs in a row moved the COST and none reached injectivity** — an eight-way
+`fold_bytes32_to_bb` Horner fold, then a `u32 % p` chunking (`O(1)`-forgeable: `2p < 2^32`, so a
+colliding sibling was CONSTRUCTED by adding `p`), then `2892d0999`'s Poseidon2 image over an injective
+preimage, which killed the constructed alias and priced out at a **2^92.7 collision** — below the
+~124-bit bar this repo quotes elsewhere, i.e. the octet became *the weakest collision term in the
+rotated commitment*. Each was correctly described at the time. None could be the fix, because the
+counting argument does not care what the lanes contain.
+
+**`metatheory/Dregg2/Circuit/FieldLanes9.lean` is the ninth lane.** `fieldToLanes9_injective` is an
+INJECTION — a total decoder `lanes9ToField` plus a machine-checked left inverse
+`lanes9ToField_fieldToLanes9` — not a hash bound and not a birthday bound.
+`nine_lanes_is_the_minimum` pins the counting argument as arithmetic: `P^8 < 2^256 ≤ P^9`. Lanes 0/1
+are byte-identical to the old encoder and had to be (the kernel u64 lane: `gFieldWriteP1`/`param1`,
+`field_to_u64`, the escrow/discharge/vault welds, every app encoder); the seven free lanes carry the
+25-digit base-256 word `[b 0 … b 23] ++ [q₀ + 4·q₁]` as **seven 28-bit digits — `7 × 28 = 196` is the
+tight fit**, so nothing reduces and a `u32 % p` lane never appears. The single carry digit is what
+repairs the pinned pair: `x % p` recovers `x < 2^32` only up to its quotient, and that quotient is
+now committed.
+
+**Geometry: 184, and NOTHING SHIFTED.** Each slot keeps lane 0 at `4 + slot` and lanes 1..7 at
+`113 + 7·slot .. +6`; the ninth lane of slot `j` is the new column `176 + j`. 176/177 were the
+layout's only free pads; 178..183 are the extent bump. `(184-4) % 3 = 0` so `Legal.bodyAligned`
+survives (186 is bodyAligned-ILLEGAL; 187 costs four columns for nothing). ⚠ The nonet is
+deliberately NON-CONTIGUOUS — read `RotatedLayout.fieldLaneCol`, never `113 + 8·slot`.
+
+Cascade: `B_SPAN` 239→247, `2·B_SPAN` 478→494, `APPENDIX_SPAN` 521→537, chain carriers 59→61, chip
+sites/block 60→62, wide carriers 60→62, `fieldsCompletionOffs` 56→64, setField `piCount` 53→54.
+`EFFECT_VM_WIDTH` (188), `state::SIZE`, `PARAM_BASE`, `AUX_BASE` and the 8-bit `sealed_field_mask`
+all stay put — the completion lanes are appendix-side, and the regenerated manifest confirms it.
+
+⚑ **Two silent hand-mirrors were de-mirrored in the same pass**, because a flag day that leaves a
+literal `178` behind is the drift class this whole layout object exists to kill:
+`circuit/src/exact_nullifier_aafi_rotated_trace.rs` and — worse, because its doc CLAIMED "the same
+`wireCommitR8` shape as the live wide cohort" with nothing checking it —
+`circuit-prove/src/shielded_ring_clearing_air.rs`. Both now project
+`layout_generated::NUM_PRE_LIMBS` behind compile-time pins.
+
+⚠ **STANDING: A2/A3, and the prescription that was circulating is a REGRESSION.**
+`turn/tests/note_value_aliases_at_2_30.rs` still documents rather than asserts.
+`MapOpWideKeyGate.halfWideLeaf_forges_absence_of_present` proves — for EVERY hash, NO CR hypothesis —
+that widening the map-op ADDRESS while the POINTER stays projected to lane 0 gives two leaves the
+SAME digest and lets a fabricated bracket contain a key the honest chain PRESENTS: a non-membership
+FORGERY, strictly worse than today's aliasing. There is no width knob; the schema is the **arity-17
+leaf `addr8 ‖ value ‖ next8`** or it is broken. The Lean for it is already built and
+`#assert_axioms`-clean across five modules; the residual is registering the widened node in the
+DEPLOYED descriptor (`DescriptorIR2.MapOp.key : EmittedExpr → Fin 8 → EmittedExpr`) and widening the
+Rust chip row — insert and open sides in ONE epoch, or it is a double spend
+(`narrowInsert_wideOpen_double_spend`).
+
+⚠ **STANDING: the Rust encoder is a pinned TWIN, not an invocation.** The injectivity theorem is over
+the Lean `fieldToLanes9`; `field_limbs9` is tied to it by Lean-computed KAT vectors plus a round-trip
+differential. That is the shape the MapOp arity finding warns about. The repo already has the cure
+pattern — `Circuit.CrossCellConserveDecision` (`@[export]`, init-only so its `leanc` `.c` splices
+into `libdregg_lean.a`) plus a `*Refine` module proving the export EQUALS the spec. Doing that for the
+field encoder is the difference between "differential-tested" and "the node INVOKES the Lean".
+
+⚠ **STANDING: the audit trail has a hole.** The re-emit that cleared `PROVENANCE.json` to
+`source_dirty: false` (2026-07-30T23:54:01Z; verified here, 75/75 pins rehash byte-exact) appended
+**no row to `docs/VK-REGEN-LOG.md`**, which is supposed to be append-only and written by
+`emit_descriptors.py`.
+
+
 ## ⚑⚑⚑ JULY 30 — issue #65 re-grounded: all six confirmed findings were fixed the afternoon it was filed, and the FIX for one of them opened a RAM-only ledger ghost
 
 **Outside longform audit** (#65, akapug, filed 2026-07-21 19:06 UTC) against a fork snapshot
@@ -1492,7 +1674,12 @@ with no signature, roster or closure check** (verified: `:2130-2134` is a bare d
 loop).
 
 **B6 · A NON-PARTICIPANT'S BLOCK STILL COUNTS TOWARD A SUPERMAJORITY, AND IT IS STRONGER THAN THE DOC
-ADMITS. LIVE.** `blocklace/src/ordering.rs:881` says `tau` *"still does NOT do (1)–(4)"*. Measured:
+ADMITS. BOTH HALVES FIXED.**
+> ✅ **RATIFIER HALF FIXED 2026-07-30** (`9c82117a4`) — `ratifiesEnrolled`, threshold untouched.
+> ✅ **ROUNDS HALF FIXED 2026-07-30** (this entry, top of file) — `computeRounds` takes the
+> participant set. ⚑ And the residual `9c82117a4` left was UNDERSTATED: it was written up as wave
+> TIMING and it is an ORDER FORK between two honest nodes plus a total stall. See the July 30 entry.
+ `blocklace/src/ordering.rs:881` says `tau` *"still does NOT do (1)–(4)"*. Measured:
 `:540` calls `compute_rounds(blocklace)` — unfiltered, no `participants` argument — where
 `tau_unified` calls `compute_rounds_filtered(blocklace, reference_group)` at `:909`. And `:357-375`
 `is_super_ratified` builds `ratifying_participants` from `end_round_blocks` via `Some(block.creator)`

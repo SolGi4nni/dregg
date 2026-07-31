@@ -620,7 +620,7 @@ theorem dfa_zeroLane_bRawGate_mem : bRawGate (.var ZERO_LANE) ∈ dfaRoutingDesc
 -- The three floor-refuse raw gates, at the real deployed floor columns.
 #guard bZeroCols (deployedRefuseGates GRAD_ROT_WIDTH)
   == [fcDep GRAD_ROT_WIDTH 0, fcDep GRAD_ROT_WIDTH 1, fcDep GRAD_ROT_WIDTH 2]
-#guard bZeroCols (deployedRefuseGates GRAD_ROT_WIDTH) == [1659, 1675, 1691]
+#guard bZeroCols (deployedRefuseGates GRAD_ROT_WIDTH) == [1703, 1719, 1735]
 -- The whole weld is 39 gates; the recogniser accounts for 12 + 12 + 3 of them by shape.
 #guard (deployedRefuseGates GRAD_ROT_WIDTH).length == 39
 

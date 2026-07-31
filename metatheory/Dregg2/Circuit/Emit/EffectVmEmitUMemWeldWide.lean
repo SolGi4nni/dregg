@@ -47,6 +47,7 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Crypto.UniversalMemory (Domain)
 open Dregg2.Circuit.Emit.CapOpenEmit (v3RegistryCapOpenWide v3RegistryCapOpenWriteWide)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN)
 
 set_option autoImplicit false
 
@@ -146,15 +147,15 @@ def liveOnlyWideHosts : List (String × EffectVmDescriptor2) :=
   -- EXACTLY the bare `EmitWideRegistryProbe` position-46 host — the Class-A splice base widened by the
   -- heap-open READ appendix + the AFTER-spine membership appendix, so the deployed descriptor's
   -- `Satisfied2` FORCES the faithful 8-felt heap-write (`HeapOpenEmit.effHeapWriteV3_forces_write8`),
-  -- never the lane-0 squeeze the raw map_op-only splice host left. `ab = bb + 239` (`B_SPAN`).
+  -- never the lane-0 squeeze the raw map_op-only splice host left. `ab = bb + B_SPAN` (247).
   let hwBB := Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.heapWriteSpliceVmDescriptor.traceWidth
   let hwHost := Dregg2.Circuit.Emit.HeapOpenEmit.effHeapWriteV3
     Dregg2.Circuit.RotatedKernelRefinementExercise.heapWriteV3
     "dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen"
-  let hwWide := Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend hwHost hwBB (hwBB + 239)
+  let hwWide := Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend hwHost hwBB (hwBB + B_SPAN)
   let smBB := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.mintTickFace.traceWidth
   let smWide := Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend
-    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3 smBB (smBB + 239)
+    Dregg2.Circuit.Emit.EffectVmEmitRotationV3.supplyMintV3 smBB (smBB + B_SPAN)
   [ ("transferCapOpenTBVmDescriptor2R24", tbWide)
   , ("heapWriteVmDescriptor2R24", hwWide)
   , ("supplyMintVmDescriptor2R24", smWide) ]
@@ -173,14 +174,14 @@ position-7 `refusalVmDescriptor2R24` crown member IN PLACE with the after-spine 
 `effCapOpenWriteV3`): the DEPLOYED refusal descriptor's `Satisfied2` FORCES the faithful 8-felt
 fields-write over the full ~124-bit BEFORE/AFTER fields-root blocks
 (`FieldsOpenEmit.effFieldsWriteV3_forces_write8`). Built at the SAME geometry the bare emit uses —
-`bb = refusalVmDescriptor.traceWidth`, `ab = bb + 239` (`B_SPAN`) — so the welded twin welds onto the
+`bb = refusalVmDescriptor.traceWidth`, `ab = bb + B_SPAN` (247) — so the welded twin welds onto the
 GENUINE after-spine wide, not the stale record-pin refusal (`v3RegistryCapOpenWide`'s own position-7
 entry is the pre-after-spine refusal; the bare emit + this welded emit both override it). -/
 def refusalAfterSpineWide : EffectVmDescriptor2 :=
   Dregg2.Circuit.Emit.ExactFieldsRefusalEmit.refusalExactFieldsWide
 
 /-- **The §J′ INSERT-shaped accumulator wide hosts** — the insert twins of `refusalAfterSpineWide`. Each
-is `wideAppend (effAccumInsertV3 groupCol keyCol valueCol baseV3 …) bb (bb+151)` at the accumulator's v1
+is `wideAppend (effAccumInsertV3 groupCol keyCol valueCol baseV3 …) bb (bb + B_SPAN)` at the accumulator's v1
 FACE `bb` (the SAME geometry the bare emit + `v3RegistryWideBB` use). The DEPLOYED accumulator descriptor
 FORCES the faithful 8-felt INSERT over the genuine sorted fresh-key insert (`effAccumInsertV3_forces_
 write8`), NEVER the lane-0 squeeze. Key-stable swaps into `crownWideHosts` (positions 3/4/22). -/
@@ -195,7 +196,7 @@ def noteSpendInsertWide : EffectVmDescriptor2 :=
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteSpendV3
     "dregg-effectvm-noteSpend-v1-rot24-v3-insert-heapopen")
   let bb := Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.noteSpendVmDescriptor.traceWidth
-  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend host bb (bb + 239)
+  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend host bb (bb + B_SPAN)
 
 def noteCreateInsertWide : EffectVmDescriptor2 :=
   let host := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
@@ -208,7 +209,7 @@ def noteCreateInsertWide : EffectVmDescriptor2 :=
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.noteCreateV3
     "dregg-effectvm-noteCreate-v1-rot24-v3-insert-heapopen")
   let bb := Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.noteCreateVmDescriptor.traceWidth
-  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend host bb (bb + 239)
+  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend host bb (bb + B_SPAN)
 
 def createCellInsertWide : EffectVmDescriptor2 :=
   let host := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
@@ -220,7 +221,7 @@ def createCellInsertWide : EffectVmDescriptor2 :=
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.createCellV3
     "dregg-effectvm-createCell-v1-rot24-v3-insert-heapopen")
   let bb := Dregg2.Circuit.Emit.EffectVmEmitCreateCell.createCellActorVmDescriptor.traceWidth
-  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend host bb (bb + 239)
+  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend host bb (bb + B_SPAN)
 
 /-- **The 45 AUTHORITY-crown wide HOSTS** — `v3RegistryCapOpenWide` with the position-7 refusal member
 REPLACED by the after-spine `refusalAfterSpineWide` AND the §J′ accumulator positions (3/4/22:
@@ -249,14 +250,14 @@ def crownWideHosts : List (String × EffectVmDescriptor2) :=
     -- AVAILABILITY RETARGET, the WIDE-BURN twin (the LAST wrap-class member): the burn crown
     -- host is the plain cohort wide member REBUILT over the §8¾ borrow-weld face
     -- (`AvailWideMembers.burnV3AvailWide` — 66 PIs UNCHANGED, rc pins at the burn-avail-shifted
-    -- carrier, width 2607 → 2615), so the welded twin carries the availability forcing
+    -- carrier, width 2683 → 2691), so the welded twin carries the availability forcing
     -- (`burnAvailWide_row_v1` + `burnAvail_derives_availability_row` — the well-supply-inflation
     -- forgery UNSAT on the welded leg).
     else if e.1 == "burnVmDescriptor2R24" then
       (e.1, Dregg2.Circuit.Emit.AvailWideMembers.burnV3AvailWide)
     -- AVAILABILITY RETARGET, the WIDE-CAP-OPEN-EFF twin: the live cap-open EFF crown host
     -- (position 42) is the selector-gated cap-open transfer REBUILT over the §11.7 borrow-weld
-    -- face (`AvailWideMembers.transferCapOpenEffAvailWide` — 46 + 16 PIs, width 1986 → 2946),
+    -- face (`AvailWideMembers.transferCapOpenEffAvailWide` — 46 + 16 PIs, width 2030 → 3022),
     -- so the welded twin carries the availability forcing (`effAvailWide_row_v1` +
     -- `transferAvail_derives_availability_row`) while the cap-open AUTHORITY appendix (the
     -- depth-16 open + facet gates) rides verbatim (`capOpenAppendix_mem_effAvailWide`).
@@ -266,7 +267,7 @@ def crownWideHosts : List (String × EffectVmDescriptor2) :=
     -- 44, the LIVE SOVEREIGN transfer's effect-vm leg) is the §11.8 MID-linked borrow/carry
     -- face lifted `v3OfFrozenFeeWide` + rc pins, wide-appended at the FEE avail base 204
     -- (`AvailWideFeeMember.transferFeeAvailWide` — the 67-PI layout UNCHANGED: 46 base + fee
-    -- pin 46 + rc 47..50 + 16 anchors; width 2607 → 2623), so the welded fee twin carries the
+    -- pin 46 + rc 47..50 + 16 anchors; width 2683 → 2699), so the welded fee twin carries the
     -- fee availability forcing through BOTH debit legs (`feeAvailWide_row_v1` via the
     -- FEE-PINNED keystone `wideEmbeddedFee_sound_v1` +
     -- `transferFeeAvail_derives_availability_row`).

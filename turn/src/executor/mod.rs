@@ -184,7 +184,7 @@ pub fn project_slot_caveat_manifest(
     /// ⚠ CORRECTION. This used to be `u32::from_le_bytes(fe[0..4])` under the comment
     /// "the low-4-bytes path used everywhere else by the Effect VM's state column
     /// truncation". That was FALSE after the v13 fields-octet epoch: the state columns
-    /// carry `field_limbs8(f)[0]` = `u32::from_be_bytes(f[28..32])`, the lo32 of the
+    /// carry `field_limbs9(f)[0]` = `u32::from_be_bytes(f[28..32])`, the lo32 of the
     /// kernel u64 lane. So the params were skewed against the very columns they are
     /// compared to, and — because `dregg_cell::field_from_u64` puts the payload in
     /// bytes 24..32 — every canonically-encoded operand projected to `0`. That made
@@ -195,7 +195,7 @@ pub fn project_slot_caveat_manifest(
     /// `EffectVmContext::slot_caveat_count` (it is `0` everywhere outside tests), so
     /// no deployed PI vector changes.
     fn fe_to_bb(fe: &[u8; 32]) -> BabyBear {
-        dregg_circuit::effect_vm::field_limbs8(fe)[0]
+        dregg_circuit::effect_vm::field_limbs9(fe)[0]
     }
 
     for c in constraints {
@@ -801,7 +801,9 @@ pub use owner_envelope::{
 
 /// The turn executor: applies turns to a ledger atomically.
 mod effect_vm_bridge;
-pub use effect_vm_bridge::{convert_turn_effects_to_vm, try_convert_turn_effects_to_vm};
+pub use effect_vm_bridge::{
+    EffectVmProjectionError, convert_turn_effects_to_vm, try_convert_turn_effects_to_vm,
+};
 pub struct TurnExecutor {
     /// Cost configuration for computron metering.
     pub costs: ComputronCosts,

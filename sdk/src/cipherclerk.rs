@@ -6527,12 +6527,12 @@ impl AgentCipherclerk {
         // F_p-linear form (collision and chosen-target hit are each one linear solve), so this is
         // a ~31-bit linear image of the 32 bytes. This comment used to claim the full value was
         // bound; the 4-byte-truncation fix it describes was real, the framing overstated it.
-        // v13 FIELDS-OCTET: lane 0 of the FAITHFUL `field_limbs8` split (the
+        // FIELDS-OCTET: lane 0 of the nine-lane `field_limbs9` encoding (the
         // u64-lane lo32) — byte-identical to the executor projector, the SAME
         // welded lane the rotated producer writes to limb `4 + slot`. REPLACES the
         // ~31-bit `fold_bytes32_to_bb`.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
-            dregg_circuit::effect_vm::field_limbs8(value)[0]
+            dregg_circuit::effect_vm::field_limbs9(value)[0]
         }
 
         fn hash_to_bb(h: &[u8; 32]) -> BabyBear {

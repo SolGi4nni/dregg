@@ -22,14 +22,22 @@ use crate::poseidon2::wire_commit_8_chip;
 use std::error::Error;
 use std::fmt;
 
-pub const ROTATED_PAYLOAD_WIDTH: usize = 179;
-pub const ROTATED_PRE_LIMBS: usize = 178;
-pub const ROTATED_IROOT_OFFSET: usize = 178;
+/// ⚑ DE-MIRRORED 2026-07-31 (the 178 -> 184 ninth-lane flag day). These were three hand-carried
+/// literals that agreed with `layout_generated::NUM_PRE_LIMBS` only by coincidence; a geometry
+/// flag day moved the Lean and left them silently disagreeing, which is the exact drift class
+/// `layout_generated.rs`'s own header exists to kill. They now PROJECT the generated value, so a
+/// re-emit carries them and the `const _: ()` width pins below fail the BUILD if it does not.
+pub const ROTATED_PRE_LIMBS: usize = crate::effect_vm::layout_generated::NUM_PRE_LIMBS;
+pub const ROTATED_IROOT_OFFSET: usize = ROTATED_PRE_LIMBS;
+pub const ROTATED_PAYLOAD_WIDTH: usize = ROTATED_PRE_LIMBS + 1;
 pub const BEFORE_PAYLOAD_BASE: usize = V3_TRACE_WIDTH;
 pub const AFTER_PAYLOAD_BASE: usize = BEFORE_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH;
 pub const ROTATED_HOST_WIDTH: usize = AFTER_PAYLOAD_BASE + ROTATED_PAYLOAD_WIDTH;
 
-pub const WIDE_CARRIERS: usize = 60;
+/// Head + one carrier per arity-3 body group + the iroot carrier — the same
+/// `wide_carriers_for_limbs` derivation `trace_rotated.rs` uses, so the ninth-lane flag day
+/// (178 -> 184, 60 -> 62 carriers) moves it instead of leaving it a stale literal.
+pub const WIDE_CARRIERS: usize = 2 + (ROTATED_PRE_LIMBS - 4) / 3;
 pub const WIDE_CARRIER_WIDTH: usize = CHIP_OUT_LANES;
 pub const WIDE_BLOCK_WIDTH: usize = WIDE_CARRIERS * WIDE_CARRIER_WIDTH;
 pub const BEFORE_CARRIER_BASE: usize = ROTATED_HOST_WIDTH;

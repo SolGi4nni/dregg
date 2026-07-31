@@ -193,7 +193,7 @@ import Dregg2.Deos.CarrierBoundFloorGadget
 -- keystone). BareCohortFloorRefuse: the abstract-column floor==0-REFUSE weld makes a declared-capacity
 -- turn UNSAT under any bare cohort member (declared_tag_unsat_under_bare, tags 17/18/19).
 -- BareCohortFloorRefuseDeployed: the column-parametric lift to the DEPLOYED caveat columns
--- (643/650/657/664) with three disjoint aux blocks at GRAD_ROT_WIDTH — the sound emit-weld target the
+-- (683/690/697/704) with three disjoint aux blocks at GRAD_ROT_WIDTH — the sound emit-weld target the
 -- flag-day maps over v3RegistryBare (declared_{escrow,discharge,vault}_unsat_deployed). Both
 -- #assert_all_clean; hbind dischargeable by the live PI-45 caveat pin.
 import Dregg2.Deos.BareCohortFloorRefuse

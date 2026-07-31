@@ -14,7 +14,7 @@ wide composition is conjunctive.
 
 `compactE1 M ks` is the value-preserving deletion for a PER-MEMBER kill-set `ks`: drop exactly
 the columns in `ks`, remapping every surviving column reference through the verified index map
-`dropIdxG ks`. Unlike S2 (a uniform 960-column chain stratum with a chip-lane walk), E1 kills
+`dropIdxG ks`. Unlike S2 (a uniform 992-column chain stratum with a chip-lane walk), E1 kills
 PURE-DEAD columns — referenced by nothing that survives — so the expansion needs NO permutation
 walk and NO chip-table extension: the deleted columns are recomputed as the aliased compact
 value (they constrain nothing in the original, so any value satisfies it).

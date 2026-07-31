@@ -318,7 +318,7 @@ def FullRotatedWitnessResidual (perm16 : List ℤ → List ℤ) (t : VmTrace) : 
 
 /-- What a verifier learns at a particular last row, without pretending either permutation is
 globally injective.  `preFns3`/`postFns3` are the exact five-step state16 executions; the two
-published octets are the genuine wide commitments; every one of the 171 stable cells agrees.
+published octets are the genuine wide commitments; every one of the 177 stable cells agrees.
 The payload/FNS3 equations are field equations because AIR constraints live in BabyBear. -/
 structure ExactRotatedBoundaryOpening (perm16 permW : List ℤ → List ℤ)
     (t : VmTrace) (row : Nat) : Prop where
@@ -332,26 +332,26 @@ structure ExactRotatedBoundaryOpening (perm16 permW : List ℤ → List ℤ)
     (envAt t row).loc (postStateCommitDigestCols.getD i.val 0) ≡
       (envAt t row).loc (AFTER_BLOCK_BASE + layoutGroupCol .nullifier i)
         [ZMOD 2013265921]
-  stable171 : ∀ off ∈ stableFrameOffsets,
+  stable177 : ∀ off ∈ stableFrameOffsets,
     (envAt t row).loc (AFTER_BLOCK_BASE + off) ≡
       (envAt t row).loc (BEFORE_BLOCK_BASE + off) [ZMOD 2013265921]
-  beforeWide : carrierVals BEFORE_CARRIER_BASE 59 (envAt t row).loc =
+  beforeWide : carrierVals BEFORE_CARRIER_BASE wideCommitCarrier (envAt t row).loc =
     wireCommitR8 permW (preLimbsWide BEFORE_BLOCK_BASE (envAt t row).loc)
-      ((envAt t row).loc (BEFORE_BLOCK_BASE + 178))
-  afterWide : carrierVals AFTER_CARRIER_BASE 59 (envAt t row).loc =
+      ((envAt t row).loc (BEFORE_BLOCK_BASE + B_IROOT))
+  afterWide : carrierVals AFTER_CARRIER_BASE wideCommitCarrier (envAt t row).loc =
     wireCommitR8 permW (preLimbsWide AFTER_BLOCK_BASE (envAt t row).loc)
-      ((envAt t row).loc (AFTER_BLOCK_BASE + 178))
+      ((envAt t row).loc (AFTER_BLOCK_BASE + B_IROOT))
   piBefore : ∀ k, (hk : k < 8) →
-    (envAt t row).loc ((carrierCols BEFORE_CARRIER_BASE 59).getD k 0) ≡
+    (envAt t row).loc ((carrierCols BEFORE_CARRIER_BASE wideCommitCarrier).getD k 0) ≡
       (envAt t row).pub (PI_BEFORE_ROTATED_COMMIT_BASE + k) [ZMOD 2013265921]
   piAfter : ∀ k, (hk : k < 8) →
-    (envAt t row).loc ((carrierCols AFTER_CARRIER_BASE 59).getD k 0) ≡
+    (envAt t row).loc ((carrierCols AFTER_CARRIER_BASE wideCommitCarrier).getD k 0) ≡
       (envAt t row).pub (PI_AFTER_ROTATED_COMMIT_BASE + k) [ZMOD 2013265921]
 
 /-- **Adversarial soundness/extraction apex.** Any satisfying trace with genuine state16 and wide
 chip tables forces the complete FNS3/rotated-state/public-input boundary.  In particular, PI60..75
 cannot name independently chosen digests: they publish the two wide commits computed from payloads
-whose nullifier lanes are the circuit's pre/post state-commit executions, and all 171 remaining
+whose nullifier lanes are the circuit's pre/post state-commit executions, and all 177 remaining
 payload cells are unchanged. -/
 theorem satisfying_exact_rotated_boundary
     (perm16 permW : List ℤ → List ℤ) (scalarHash : List ℤ → ℤ)
@@ -375,7 +375,7 @@ theorem satisfying_exact_rotated_boundary
     , postFns3 := hpost
     , preNullifierWeld := fun i => (hweld i).1
     , postNullifierWeld := fun i => (hweld i).2
-    , stable171 := fun off hoff =>
+    , stable177 := fun off hoff =>
         satisfying_last_row_preserves_stable_frame scalarHash minit mfin maddrs t hsat row off
           hrow hlast hoff
     , beforeWide := hbeforeWide

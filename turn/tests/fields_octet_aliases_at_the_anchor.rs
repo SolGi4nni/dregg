@@ -28,20 +28,46 @@
 //!
 //! Built on `note_value_aliases_at_2_30.rs`'s template deliberately, so the two read alike.
 //!
-//! ═══ ⚑ THIS TOOTH'S MEANING WAS FLIPPED, AND SAYING SO IS THE POINT ══════════════
-//! It shipped RED, and its docstring said so: *"THIS TEST IS EXPECTED TO FAIL TODAY. It asserts the
-//! property we want, not the behaviour we have. It goes green when the field octet migrates onto an
-//! injective preimage."* 3 of its 5 assertions failed.
+//! ═══ ⚑ THIS TOOTH'S MEANING HAS BEEN FLIPPED TWICE, AND SAYING SO IS THE POINT ═══
 //!
-//! The octet migrated. `field_limbs8` lanes 2..7 now carry the leading six felts of a Poseidon2
-//! image over an injective 16 × u16-LE preimage of the whole 32-byte value, so the constructed
-//! `c` / `c + p` pair no longer reaches one anchor. **Every assertion below is now a REGRESSION PIN
-//! for that repair, not a statement of a wound.** A red here means the chunk encoding came back.
+//! **Flip 1 — "documents the wound" → "pins the hash repair".** It shipped RED, and its docstring
+//! said so: *"THIS TEST IS EXPECTED TO FAIL TODAY. It asserts the property we want, not the
+//! behaviour we have. It goes green when the field octet migrates onto an injective preimage."*
+//! 3 of its 5 assertions failed. Then `field_limbs8` lanes 2..7 moved onto the leading six felts of
+//! a Poseidon2 image over an injective 16 × u16-LE preimage, the constructed `c` / `c + p` pair
+//! stopped reaching one anchor, and every assertion became a regression pin for THAT repair.
 //!
-//! ⚠ **AND THE WOUND IT NAMED IS NOT FULLY CLOSED.** Eight lanes carry 247.26 bits against 256, so
-//! the octet is still NOT injective — the repair converted a CONSTRUCTED alias into a hash-strength
-//! one and did not deliver injectivity. Injectivity needs a ninth lane (a descriptor re-emit, a VK
-//! rotation and a re-genesis). Nothing here may be described as "faithful".
+//! **Flip 2 — "pins the hash repair" → "asserts the repair, and the alias pair is now IMPOSSIBLE
+//! TO BUILD" (2026-07-30).** The counting argument the header opens with is now discharged rather
+//! than merely stated: `metatheory/Dregg2/Circuit/FieldLanes9.lean` carries the NINE-lane encoder
+//! with `lanes9ToField_fieldToLanes9` (a total decoder that is a left inverse) and
+//! `fieldToLanes9_injective` (its corollary), both `#assert_axioms`-clean, plus
+//! `nine_lanes_is_the_minimum` (`P^8 < 2^256 ≤ P^9`). Its Rust twin is
+//! `dregg_circuit::effect_vm::field_limbs9`, pinned to the Lean by KAT + round-trip in
+//! `circuit/tests/field_lanes9_injective.rs`. **Under that encoder no alias pair EXISTS** — not "is
+//! expensive to find", does not exist — so the `c` / `c + p` construction this file is built around
+//! cannot be built at all. `the_constructed_alias_pair_cannot_be_built_under_the_nine_lane_encoder`
+//! below asserts exactly that, by exhibiting the decoder that recovers both members.
+//!
+//! ⚠ ═══ AND THE HALF THAT IS NOT DONE, MEASURED RATHER THAN NARRATED ══════════════
+//! **The anchor does not run the nine-lane encoder yet.** `cell/src/commitment.rs` and
+//! `turn/src/rotation_witness.rs` still call `Faithful8::from_field_limbs8(..).write_lanes(..)` with
+//! an `[usize; 8]` index array — the rotated pre-limb layout gives each field EIGHT slots
+//! (`4 + i` ‖ `113 + 7·i .. +6`) and there is no ninth column. Allocating one is a
+//! `layout_generated.rs` re-emit from the Lean layout manifest plus a VK rotation, which is the AIR
+//! lane's work, not an encoder edit.
+//!
+//! So the split, stated at its real resolution:
+//!
+//!   * **the ENCODER** is injective, and `field_limbs9` is the deployed name for it;
+//!   * **the ANCHOR** still separates this alias family at HASH strength (~2^92.7 collision, the
+//!     six Poseidon2 lanes), because the ninth lane — the one that carries the quotient lane 0
+//!     discards — is not committed.
+//!
+//! `the_anchors_separation_of_this_family_is_still_hash_strength_not_injective` MEASURES that
+//! instead of asserting it in prose: it shows the deployed octet's pinned pair COLLIDING on the
+//! alias, so the reader can see that every bit of the anchor's separation is carried by the hash
+//! lanes and none by the pinned pair.
 //!
 //! Anti-vacuity throughout: the field values are asserted to ROUND-TRIP out of the cell, so an
 //! encoder that scrambled everything — and separated the pair by accident — would not pass.
@@ -51,7 +77,10 @@ use dregg_cell::nullifier_set::NullifierSet;
 use dregg_cell::{Cell, CellId, Ledger};
 use dregg_turn::state_commit::{consensus_ctx, consensus_state_commitment};
 
-/// BabyBear's modulus — the reduction every lane of `field_limbs8` performs.
+/// BabyBear's modulus — the reduction the PINNED lanes (0 and 1) perform in both the deployed
+/// eight-lane octet and the nine-lane encoder, and therefore the alias generator this file is built
+/// around. (`field_limbs9`'s seven FREE lanes are `< 2^28 < p` and never reduce — which is the
+/// whole reason the alias stops at them.)
 const P: u32 = 2013265921;
 
 fn cell_with(seed: u8) -> Cell {
@@ -260,6 +289,124 @@ fn both_producers_fill_the_fields_octet_byte_identically() {
             );
         }
     }
+}
+
+/// ⚑ **THE PAIR THIS WHOLE FILE IS BUILT AROUND CANNOT BE BUILT ANY MORE.**
+///
+/// Every other test here asks "do these two values reach the same anchor?" — a question that only
+/// makes sense while an alias pair can exist. Under the nine-lane encoder it cannot: Lean's
+/// `fieldToLanes9_injective` says no two distinct 32-byte values share a lane vector, so the search
+/// space for this attack is EMPTY, not merely expensive.
+///
+/// Asserted here in the only form a Rust test can honestly take — the LEFT INVERSE, which is what
+/// the injectivity is a corollary of. If both members of a would-be alias pair are recovered from
+/// their lane vectors, the vectors were never equal.
+///
+/// The alias family walked below is the full construction this file exhibits: `c` / `c + p` in the
+/// pinned u64 window (lanes 0/1) AND in each of the six low LE chunks (the lanes that used to be
+/// `u32 % p` chunks). Neither survives.
+#[test]
+fn the_constructed_alias_pair_cannot_be_built_under_the_nine_lane_encoder() {
+    use dregg_circuit::effect_vm::{field_from_lanes9, field_limbs9};
+
+    let mut family: Vec<([u8; 32], [u8; 32])> = Vec::new();
+    // (a) the LOW-HALF construction: chunk `k` of bytes 0..24, `c` vs `c + p`.
+    for chunk in 0..6usize {
+        family.push((
+            field_with_le_chunk(chunk, 1),
+            field_with_le_chunk(chunk, 1 + P),
+        ));
+        family.push((
+            field_with_le_chunk(chunk, 7),
+            field_with_le_chunk(chunk, 7 + P),
+        ));
+    }
+    // (b) the U64-WINDOW construction: `c` and `c + p` big-endian in bytes 28..32. This is the one
+    //     lane 0 CANNOT distinguish — it is `BE(b[28..32]) % p` and always will be, because that
+    //     lane is welded to the v1 face column and read by `field_to_u64`. The ninth lane is what
+    //     separates it.
+    for c in [0u32, 1, 7, 0x0800_0000] {
+        let (mut lo, mut hi) = ([0u8; 32], [0u8; 32]);
+        lo[28..32].copy_from_slice(&c.to_be_bytes());
+        hi[28..32].copy_from_slice(&(c + P).to_be_bytes());
+        family.push((lo, hi));
+    }
+
+    assert!(
+        family.len() >= 16,
+        "the family must be non-trivial or this test proves nothing"
+    );
+    for (a, b) in family {
+        assert_ne!(a, b, "each pair must be two DISTINCT 32-byte values");
+        let (la, lb) = (field_limbs9(&a), field_limbs9(&b));
+        // THE ANTI-VACUITY AND THE PROPERTY IN ONE: both members come back out of their lane
+        // vectors. A separating-but-scrambling encoder fails this; an aliasing one cannot pass it.
+        assert_eq!(field_from_lanes9(&la), a, "{a:02x?} must decode back");
+        assert_eq!(field_from_lanes9(&lb), b, "{b:02x?} must decode back");
+        assert_ne!(
+            la, lb,
+            "\n⚑ AN ALIAS PAIR EXISTS UNDER THE NINE-LANE ENCODER.\n\n\
+             {a:02x?}\nand\n{b:02x?}\nshare a lane vector. Lean's `fieldToLanes9_injective` says \
+             this is impossible, so a red here is a DIVERGENCE BETWEEN THE RUST TWIN AND ITS \
+             VERIFIED SPEC — not a newly discovered wound in the encoding.\n"
+        );
+    }
+}
+
+/// ⚠ **THE RESIDUAL, MEASURED.** The anchor is not on the nine-lane encoder: `cell/src/commitment.rs`
+/// and `turn/src/rotation_witness.rs` write `Faithful8::from_field_limbs8(..).write_lanes(..)` into
+/// EIGHT rotated slots per field (`4 + i` ‖ `113 + 7·i .. +6`), and the layout has no ninth column.
+///
+/// This test does not restate that in prose — it shows the consequence. The deployed octet's PINNED
+/// PAIR (lanes 0 and 1, the kernel u64 window, byte-identical across both encoders) COLLIDES on the
+/// u64-window alias. So the anchor's separation of this family, which
+/// `a_constructed_field_alias_must_not_reach_the_same_signed_anchor` confirms holds, is carried
+/// ENTIRELY by the six Poseidon2 completion lanes: hash strength (~2^92.7 collision), not the
+/// injection.
+///
+/// A green here is not good news; it is the honest size of what is left. It turns red — correctly,
+/// and loudly — the day the fields octet is re-laid onto nine committed lanes, at which point this
+/// test is deleted and the anchor inherits the injection.
+#[test]
+fn the_anchors_separation_of_this_family_is_still_hash_strength_not_injective() {
+    use dregg_circuit::effect_vm::{field_limbs8, field_limbs9};
+
+    let (mut honest, mut sibling) = ([0u8; 32], [0u8; 32]);
+    honest[28..32].copy_from_slice(&7u32.to_be_bytes());
+    sibling[28..32].copy_from_slice(&(7u32 + P).to_be_bytes());
+    assert_ne!(honest, sibling);
+
+    let (o8, s8) = (field_limbs8(&honest), field_limbs8(&sibling));
+    let (o9, s9) = (field_limbs9(&honest), field_limbs9(&sibling));
+
+    // The pinned pair is the SAME two lanes in both encoders — that is the deployed ABI, and it is
+    // exactly why the ninth lane had to exist rather than lane 0 being re-chunked.
+    assert_eq!(o8[0], o9[0], "lane 0 is byte-identical across the encoders");
+    assert_eq!(o8[1], o9[1], "lane 1 is byte-identical across the encoders");
+
+    // ⚑ THE MEASUREMENT: on the alias, the committed pinned pair carries NO separation at all.
+    assert_eq!(
+        (o8[0], o8[1]),
+        (s8[0], s8[1]),
+        "the u64-window alias collides in the deployed pinned pair — every bit of the anchor's \
+         separation is the hash lanes'"
+    );
+
+    // And what the ninth lane would have added, if it were committed: the quotient, in lane 8.
+    assert_ne!(
+        o9[8], s9[8],
+        "the UNCOMMITTED ninth lane is what distinguishes the pair by construction rather than by \
+         hash strength"
+    );
+    assert_ne!(o9, s9, "the nine-lane vectors separate");
+
+    // The anchor does separate them today — via the hash lanes. Stated so the residual is not
+    // mistaken for an open forgery.
+    assert_ne!(
+        anchor_with_field(0xE5, 0, honest),
+        anchor_with_field(0xE5, 0, sibling),
+        "the anchor must still separate the pair at hash strength"
+    );
 }
 
 #[test]

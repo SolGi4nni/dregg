@@ -5,14 +5,14 @@
 ## What this module is
 
 `docs/ARCH-REVIEW-rotated-commitment-chip.md` §1.1: in every WIDE registry member the two
-rotated 1-felt commitment chains (S2 — 120 chip sites, 120 carrier/digest columns, 840 exposed
+rotated 1-felt commitment chains (S2 — 124 chip sites, 124 carrier/digest columns, 868 exposed
 lane columns) are DEAD — `wideAppend` retired their two `STATE_COMMIT` PI pins, the 8-felt wide
 chains are self-rooted in the raw limb columns, and zero constraints outside the 1-felt lookups
 themselves read the S2 columns (constraint-level verified, registry-wide). They persist only
 because the wide composition is conjunctive.
 
-`compactS2` is the value-preserving deletion: drop exactly the 120 S2 chip lookups and REMOVE
-their 960 columns, remapping every surviving column reference through the verified index map
+`compactS2` is the value-preserving deletion: drop exactly the 124 S2 chip lookups and REMOVE
+their 992 columns, remapping every surviving column reference through the verified index map
 (`dropIdx`). The result is what the wide member always meant.
 
 ## The soundness bridge (`compactS2_expand`)
@@ -179,26 +179,30 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
 
 /-- One rotated block's S2 carrier/digest columns: the 1-felt `state_commit` digest at
-`base + 179` and the 59 chain carriers at `base + 180 .. base + 238` (60 columns). The 178
-pre-iroot limbs and the iroot (`base + 0 .. base + 178`) are NOT here — the wide chain absorbs
-them; they stay. -/
-def s2CarrierCols (base : Nat) : List Nat := (List.range 60).map (base + 179 + ·)
+`base + 185` (`B_STATE_COMMIT`) and the 61 chain carriers at `base + 186 .. base + 246`
+(62 columns). The 184 pre-iroot limbs and the iroot (`base + 0 .. base + 184`) are NOT here — the
+wide chain absorbs them; they stay.
+
+⚑ The band literals here stay LITERAL rather than `B_STATE_COMMIT`/`B_SPAN`: every proof in §2 is
+discharged by `omega`, which treats a `def` as an opaque atom and so cannot see that
+`B_SPAN - B_STATE_COMMIT = 62`. The `#guard`-shaped pins below hold them to the flag day. -/
+def s2CarrierCols (base : Nat) : List Nat := (List.range 62).map (base + 185 + ·)
 
 /-- ALL columns the S2 deletion removes from a member whose rotated BEFORE block sits at `bb`
-(AFTER at `bb + 239`) and whose S2 chip-lane region starts at `laneBase`: the two 60-column
-carrier bands plus the contiguous `120 × 7 = 840` graduated lane columns. 960 columns. -/
+(AFTER at `bb + 247` = `B_SPAN`) and whose S2 chip-lane region starts at `laneBase`: the two
+62-column carrier bands plus the contiguous `124 × 7 = 868` graduated lane columns. 992 columns. -/
 def s2DeadCols (bb laneBase : Nat) : List Nat :=
-  s2CarrierCols bb ++ s2CarrierCols (bb + 239) ++ (List.range 840).map (laneBase + ·)
+  s2CarrierCols bb ++ s2CarrierCols (bb + 247) ++ (List.range 868).map (laneBase + ·)
 
-theorem s2DeadCols_length (bb laneBase : Nat) : (s2DeadCols bb laneBase).length = 960 := by
+theorem s2DeadCols_length (bb laneBase : Nat) : (s2DeadCols bb laneBase).length = 992 := by
   simp [s2DeadCols, s2CarrierCols]
 
 /-- O(1) membership in the dead-column set (the list `s2DeadCols` is the SPEC; this is the
 computable form the emit-time gates and the index map run on). -/
 def isDeadCol (bb laneBase c : Nat) : Bool :=
-  (decide (bb + 179 ≤ c) && decide (c < bb + 239))
-    || (decide (bb + 418 ≤ c) && decide (c < bb + 478))
-    || (decide (laneBase ≤ c) && decide (c < laneBase + 840))
+  (decide (bb + 185 ≤ c) && decide (c < bb + 247))
+    || (decide (bb + 432 ≤ c) && decide (c < bb + 494))
+    || (decide (laneBase ≤ c) && decide (c < laneBase + 868))
 
 theorem isDeadCol_eq_mem (bb laneBase c : Nat) :
     isDeadCol bb laneBase c = true ↔ c ∈ s2DeadCols bb laneBase := by
@@ -207,8 +211,8 @@ theorem isDeadCol_eq_mem (bb laneBase c : Nat) :
     decide_eq_true_eq]
   constructor
   · rintro ((⟨h1, h2⟩ | ⟨h1, h2⟩) | ⟨h1, h2⟩)
-    · exact Or.inl (Or.inl ⟨c - (bb + 179), by omega, by omega⟩)
-    · exact Or.inl (Or.inr ⟨c - (bb + 239 + 179), by omega, by omega⟩)
+    · exact Or.inl (Or.inl ⟨c - (bb + 185), by omega, by omega⟩)
+    · exact Or.inl (Or.inr ⟨c - (bb + 247 + 185), by omega, by omega⟩)
     · exact Or.inr ⟨c - laneBase, by omega, by omega⟩
   · rintro ((⟨i, hi, rfl⟩ | ⟨i, hi, rfl⟩) | ⟨i, hi, rfl⟩)
     · exact Or.inl (Or.inl ⟨by omega, by omega⟩)
@@ -221,19 +225,19 @@ def cutBelow (lo span c : Nat) : Nat := if c ≤ lo then 0 else min span (c - lo
 /-- The compaction index map: a surviving column falls by the number of deleted columns below
 it. O(1); strictly monotone on survivors; the identity below the first deleted column. -/
 def dropIdx (bb laneBase c : Nat) : Nat :=
-  c - (cutBelow (bb + 179) 60 c + cutBelow (bb + 418) 60 c + cutBelow laneBase 840 c)
+  c - (cutBelow (bb + 185) 62 c + cutBelow (bb + 432) 62 c + cutBelow laneBase 868 c)
 
-theorem dropIdx_id_of_low (bb laneBase c : Nat) (h1 : c ≤ bb + 179) (h2 : c ≤ laneBase) :
+theorem dropIdx_id_of_low (bb laneBase c : Nat) (h1 : c ≤ bb + 185) (h2 : c ≤ laneBase) :
     dropIdx bb laneBase c = c := by
   unfold dropIdx cutBelow
-  have h3 : c ≤ bb + 418 := by omega
+  have h3 : c ≤ bb + 432 := by omega
   rw [if_pos h1, if_pos h3, if_pos h2]
   omega
 
 /-! ## §3 — the EXPECTED S2 stratum (what the member must carry for the deletion to be sound).
 
 The graduated S2 lookups are the chip lookups of the two block chains `rotV3SitesAt bb` /
-`rotV3SitesAt (bb + 239)`, the `j`-th site's 7 lane columns at `laneBase + 7·j`. The emit gate
+`rotV3SitesAt (bb + 247)`, the `j`-th site's 7 lane columns at `laneBase + 7·j`. The emit gate
 checks the member's poseidon2 lookups whose out0 lands in the carrier bands are EXACTLY this
 list — order, tuples, lanes, everything. -/
 
@@ -253,8 +257,8 @@ of the two carrier bands). -/
 def isS2LookupL (bb : Nat) (l : Lookup) : Bool :=
   l.table == TableId.poseidon2 &&
     match lookupOut0? l with
-    | some c => (decide (bb + 179 ≤ c) && decide (c < bb + 239))
-        || (decide (bb + 418 ≤ c) && decide (c < bb + 478))
+    | some c => (decide (bb + 185 ≤ c) && decide (c < bb + 247))
+        || (decide (bb + 432 ≤ c) && decide (c < bb + 494))
     | none => false
 
 /-- Is this constraint an S2 chain lookup? -/
@@ -268,9 +272,9 @@ def s2LookupsOf (M : EffectVmDescriptor2) (bb : Nat) : List Lookup :=
     | .lookup l => if isS2LookupL bb l then some l else none
     | _ => none
 
-/-- The S2 walk plan: the 120 sites with their graduated lane bases. -/
+/-- The S2 walk plan: the 124 sites with their graduated lane bases. -/
 def s2Plan (bb laneBase : Nat) : List (VmHashSite × Nat) :=
-  (rotV3SitesAt bb ++ rotV3SitesAt (bb + 239)).mapIdx (fun j s => (s, laneBase + 7 * j))
+  (rotV3SitesAt bb ++ rotV3SitesAt (bb + 247)).mapIdx (fun j s => (s, laneBase + 7 * j))
 
 /-- The EXPECTED graduated S2 lookups (the S2 sites are col-only, so the `sites` resolution
 argument of `siteLookup` is irrelevant — `[]` emits the same tuple the full-list graduation
@@ -307,7 +311,7 @@ def keptOk (bb laneBase : Nat) (c : VmConstraint2) : Bool :=
   (refs2 c).all (fun r => !isDeadCol bb laneBase r)
     && (match c with
         | .base (.transition hi lo) =>
-            decide (sbCol hi < bb + 179) && decide (saCol lo < bb + 179)
+            decide (sbCol hi < bb + 185) && decide (saCol lo < bb + 185)
               && decide (sbCol hi ≤ laneBase) && decide (saCol lo ≤ laneBase)
         | _ => true)
 
@@ -316,7 +320,7 @@ def keptOk (bb laneBase : Nat) (c : VmConstraint2) : Bool :=
     falsifier of the "dead stratum" verdict);
   * every surviving constraint / hash site / range tooth avoids the dead columns;
   * the walk plan is well-formed;
-  * the three dead bands are pairwise disjoint (`bb + 478 ≤ laneBase` — exact width bookkeeping);
+  * the three dead bands are pairwise disjoint (`bb + 494 ≤ laneBase` — exact width bookkeeping);
   * every override column is a dead column (the expansion touches nothing that survives). -/
 def compactOk (M : EffectVmDescriptor2) (bb laneBase : Nat) : Bool :=
   s2LookupsOf M bb == s2Lookups bb laneBase
@@ -324,24 +328,24 @@ def compactOk (M : EffectVmDescriptor2) (bb laneBase : Nat) : Bool :=
     && M.hashSites.all (fun s => (refsSite s).all (fun r => !isDeadCol bb laneBase r))
     && M.ranges.all (fun r => !isDeadCol bb laneBase r.wire)
     && planOk (s2Plan bb laneBase)
-    && decide (bb + 478 ≤ laneBase)
+    && decide (bb + 494 ≤ laneBase)
     && (s2Plan bb laneBase).all
         (fun p => (overrideColsOf p.1 p.2).all (isDeadCol bb laneBase))
-    && decide (960 ≤ M.traceWidth)
+    && decide (992 ≤ M.traceWidth)
 
 /-! ## §4 — `compactS2`: the deletion itself. -/
 
-/-- **`compactS2 M bb laneBase`** — the S2-deleted member: the 120 chain lookups dropped, every
-surviving column reference remapped through `dropIdx`, the width down by exactly 960, the main
+/-- **`compactS2 M bb laneBase`** — the S2-deleted member: the 124 chain lookups dropped, every
+surviving column reference remapped through `dropIdx`, the width down by exactly 992, the main
 table arity following. Name, PI count, and every published value are UNCHANGED (the retired
 PI slots 42/43 stay as producer-zeroed slots — they bound nothing before and bind nothing now). -/
 def compactS2 (M : EffectVmDescriptor2) (bb laneBase : Nat) : EffectVmDescriptor2 :=
   let g := dropIdx bb laneBase
   { name := M.name
-  , traceWidth := M.traceWidth - 960
+  , traceWidth := M.traceWidth - 992
   , piCount := M.piCount
   , tables := M.tables.map (fun td =>
-      if td.id = TableId.main then { td with arity := td.arity - 960 } else td)
+      if td.id = TableId.main then { td with arity := td.arity - 992 } else td)
   , constraints := (M.constraints.filter (fun c => !isS2 bb c)).map (mapC2 g)
   , hashSites := M.hashSites.map (mapSite g)
   , ranges := M.ranges.map (mapRange g) }

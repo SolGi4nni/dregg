@@ -116,7 +116,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitV2
   (graduateV1 graduateV1_sound graduateV1_satisfiedVm_of_rowConstraints graduable)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3 rotateV3_satisfiedVm_v1 graduable_rotateV3
    beforeHeapRootGroup afterHeapRootGroup heapRootGroupCol beforeHeapRootCol afterHeapRootCol
-   beforeHeapRootCols afterHeapRootCols)
+   beforeHeapRootCols afterHeapRootCols B_SPAN)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
 
 set_option autoImplicit false
@@ -262,7 +262,7 @@ def HEAP_ROOT_BEFORE_ROT : Nat := heapRootGroupCol EFFECT_VM_WIDTH 0
 
 /-- Lane 0 (rotated limb 28 of the after block) of the committed AFTER heap-root group — the felt the
 repointed splice `.newRoot` writes. -/
-def HEAP_ROOT_AFTER_ROT : Nat := heapRootGroupCol (EFFECT_VM_WIDTH + 239) 0
+def HEAP_ROOT_AFTER_ROT : Nat := heapRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) 0
 
 /-- `heapSpliceWriteOp.root` at lane 0 evaluates to the BEFORE rotated heap-root limb. -/
 theorem heapSpliceWriteOp_root0 (env : VmRowEnv) :

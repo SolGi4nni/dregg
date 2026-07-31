@@ -281,7 +281,7 @@ end KprimeExtSeparation
 (`oodRfamExt`, `oodBatchResidualExt`, `oodColumnLayoutExt_law`, `oodLayoutExt_debatch`,
 `mainAirAcceptF_of_oodLayoutExt`). What it does NOT supply — and what `OodColumnLayout` §4/§5 has
 at the base typing — is the DEPLOYED `transferV3` half: the membership form of the law, the law
-fired at the real 147-column layout, and the RLC bad-set cap at that layout. Supplied here at the
+fired at the real 155-column layout, and the RLC bad-set cap at that layout. Supplied here at the
 extension typing, so the deployed descriptor's column-layout facts exist at the challenge typing the
 deployed verifier actually uses. -/
 
@@ -309,18 +309,18 @@ theorem oodColumnLayoutExt_law_mem (d : EffectVmDescriptor2) (t : VmTrace) (ζ :
 
 /-- **The law FIRES on the DEPLOYED descriptor at the deployed challenge typing**: coefficient `0`
 of `transferV3`'s extension-valued batched residual is the extension-valued residual of the FIRST
-column of its actual 147-column layout. -/
+column of its actual 155-column layout. -/
 theorem oodColumnLayoutExt_law_fires_transferV3 (t : VmTrace) (ζ : E)
     (qp : VmConstraint2 → Polynomial E) :
     (oodBatchResidualExt E transferV3 t ζ qp).coeff 0
       = oodRfamExt E transferV3 t ζ qp ⟨0, oodArithList_transferV3_pos⟩ :=
   batchResidual_coeff (oodRfamExt E transferV3 t ζ qp) ⟨0, oodArithList_transferV3_pos⟩
 
-/-- **The deployed RLC bad-Λ cap at the extension typing**: fewer than 147 bad batching challenges,
+/-- **The deployed RLC bad-Λ cap at the extension typing**: fewer than 155 bad batching challenges,
 now inside a challenge space of size `|E|` rather than `|BabyBear|`. (`OodColumnLayout`'s
 `transferV3_rlc_bound` at the deployed challenge typing; §4 prices it.) -/
 theorem transferV3_rlc_bound_ext (t : VmTrace) (ζ : E) (qp : VmConstraint2 → Polynomial E) :
-    (exceptionalSet (oodBatchResidualExt E transferV3 t ζ qp)).card < 147 := by
+    (exceptionalSet (oodBatchResidualExt E transferV3 t ζ qp)).card < 155 := by
   have h := oodBatchResidualExt_exceptionalSet_card_lt (E := E) transferV3
     oodArithList_transferV3_pos t ζ qp
   rwa [oodArithList_transferV3_length] at h
@@ -375,7 +375,7 @@ theorem rlc_debatch_error_bb4 {n : ℕ} (hn : 0 < n) (R : Fin n → BB4) :
   gcongr
 
 /-- **The DEPLOYED descriptor's RLC ε at the DEPLOYED challenge space**: at `transferV3`'s real
-147-column layout, `≤ 146/2013265921^4`. -/
+155-column layout, `≤ 154/2013265921^4`. -/
 theorem transferV3_rlc_error_bb4 (t : VmTrace) (ζ : BB4) (qp : VmConstraint2 → Polynomial BB4) :
     winProb (oodNonExcAcc (oodBatchResidualExt BB4 transferV3 t ζ qp))
       ≤ (((oodArithList transferV3).length - 1 : ℕ) : ℝ) / 2013265921 ^ 4 :=
@@ -400,11 +400,11 @@ theorem ext_pricing_strictly_tighter (x : ℝ) (hx : 0 < x) :
   have h2 : (2013265921 : ℝ) < 2013265921 ^ 4 := by norm_num
   exact div_lt_div_of_pos_left hx h1 h2
 
-/-- The separation, fired at the DEPLOYED `transferV3` RLC numerator (146 bad challenges): the
+/-- The separation, fired at the DEPLOYED `transferV3` RLC numerator (154 bad challenges): the
 faithful ε is strictly below the reported one. -/
 theorem transferV3_pricing_separation :
-    (146 : ℝ) / 2013265921 ^ 4 < (146 : ℝ) / 2013265921 :=
-  ext_pricing_strictly_tighter 146 (by norm_num)
+    (154 : ℝ) / 2013265921 ^ 4 < (154 : ℝ) / 2013265921 :=
+  ext_pricing_strictly_tighter 154 (by norm_num)
 
 end EpsilonBB4
 
@@ -455,8 +455,8 @@ theorem rlc_lambda_bounded_bb4 {Ω : Type} [Fintype Ω]
 
 /-- **⚑ THE `FriLdtExtractV3` Λ-CLAUSE AT THE DEPLOYED CHALLENGE SPACE.** At the exact object the
 deployed bundle carries — now typed as the extension-valued batched residual of `transferV3`'s real
-147-column layout — the probability that the deployed faithful verifier accepts while the prover's
-declared RLC `Challenge` violates the clause is at most `146/2013265921^4`. -/
+155-column layout — the probability that the deployed faithful verifier accepts while the prover's
+declared RLC `Challenge` violates the clause is at most `154/2013265921^4`. -/
 theorem hLam_clause_bounded_bb4 {Ω : Type} [Fintype Ω]
     (perm : List BB4 → List BB4) (RATE : Nat) (toNat : BB4 → Nat)
     (params : FriParams) (vk : RecursionVk BB4) (core : FriCore BB4) (A : FieldArith BB4)

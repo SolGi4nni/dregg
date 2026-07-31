@@ -307,13 +307,17 @@ theorem transferCapOpenEffV3TBAvail_rejects_mismatched_src (hash : List ℤ → 
 
 section Witnesses
 
--- The hardened rotated base is 10 wider than the bare (`transferV3.traceWidth = 1647`): the avail
--- witness pad shifts the cap-open appendix (and the TB columns) uniformly.
-#guard transferV3Avail.traceWidth == 1657
+-- The hardened rotated base is 10 wider than the bare (`transferV3.traceWidth = 1691`): the avail
+-- witness pad shifts the cap-open appendix (and the TB columns) uniformly. DERIVATION at the
+-- 184-limb geometry: `(EFFECT_VM_WIDTH + AVAIL_PAD) + APPENDIX_SPAN + 7·N_ROT_SITES`
+-- `= 198 + 537 + 7·138 = 1701` (was `198 + 521 + 7·134 = 1657`).
+#guard transferV3Avail.traceWidth == 1701
 #guard transferCapOpenEffV3Avail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
-#guard transferCapOpenEffV3Avail.traceWidth == 1986
+-- `CAP_OPEN_SPAN = 329` is limb-count INDEPENDENT (7 + 8 + 16·17 + 8 + 2 + 32), so the cap-open
+-- widths move exactly with the base: 1701 + 329 (was 1657 + 329 = 1986).
+#guard transferCapOpenEffV3Avail.traceWidth == 2030
 #guard transferCapOpenEffV3TBAvail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN + 2
-#guard transferCapOpenEffV3TBAvail.traceWidth == 1988
+#guard transferCapOpenEffV3TBAvail.traceWidth == 2032
 -- PI shape unchanged: 46 (42 v1 + 4 rotated commit pins); TB adds the 3 turn-identity pins.
 #guard transferCapOpenEffV3Avail.piCount == 46
 #guard transferCapOpenEffV3TBAvail.piCount == 49

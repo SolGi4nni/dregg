@@ -79,11 +79,37 @@ impl Default for OrderingConfig {
 
 // ─── Extended Blocklace Queries ──────────────────────────────────────────────
 
-/// Compute the round (depth) of each block in the blocklace.
+/// Compute the round (depth) of each block in the blocklace, OVER THE ENROLLED EDGE SET.
 ///
-/// Round = 1 + max(predecessor rounds). Genesis blocks (no predecessors) have round 1.
-/// Returns a map from BlockId to round number, and the maximum round seen.
-fn compute_rounds(blocklace: &Blocklace) -> (HashMap<BlockId, u64>, u64) {
+/// Round = 1 + max(rounds of the predecessors that are present AND created by a `participant`);
+/// a block with no such predecessor has round 1. Returns a map from BlockId to round number, and
+/// the maximum round seen.
+///
+/// ⚑ **Why it reads `participant_set`** (the residual HORIZONLOG B6 left open, closed here). It
+/// used to max over EVERY present predecessor. Depth is the wave clock — `round_to_wave`, the
+/// leader slot, the wave end, and `xsort`'s primary key are all read off it — so any creator who
+/// could add depth could move the wave structure. A NON-PARTICIPANT chain that one honest block
+/// acked did exactly that: two honest nodes holding the identical enrolled sub-lace and differing
+/// only in whether they received two outsider blocks finalized the SAME enrolled coordinates in
+/// DIFFERENT ORDERS (`ordering_forks_when_an_outsider_relay_shifts_the_wave_clock` in
+/// `tests/consensus_fault_sim.rs` drives it through the real `finality::Blocklace`, and
+/// `find_fork` — this repo's own safety checker — reports the fork). Non-participants are exactly
+/// the creators dissemination does not guarantee every node sees, so the divergent view is the
+/// ordinary case.
+///
+/// **The EDGES are filtered, not the NODES**, and that is deliberate: a non-participant's block
+/// still RECEIVES the round its enrolled predecessors give it, so it still appears in a round set
+/// and `ratifies_enrolled` (B6) is still what decides that it may not RATIFY. Dropping it from the
+/// map entirely — what [`compute_rounds_filtered`] does for `tau_unified`, correctly, because
+/// every read there is participant-restricted — would subsume the B6 gate on `tau`'s path and
+/// silently retire its exhibits.
+///
+/// VERIFIED MODEL: `BlocklaceFinality.computeRounds` / `roundOfStep`; the pre-repair recurrence is
+/// kept there as `computeRoundsPreParticipant`, the permanent falsification witness.
+fn compute_rounds(
+    blocklace: &Blocklace,
+    participant_set: &HashSet<[u8; 32]>,
+) -> (HashMap<BlockId, u64>, u64) {
     let mut rounds: HashMap<BlockId, u64> = HashMap::new();
     let mut max_round: u64 = 0;
 
@@ -114,17 +140,22 @@ fn compute_rounds(blocklace: &Blocklace) -> (HashMap<BlockId, u64>, u64) {
 
     while let Some(id) = queue.pop_front() {
         let block = &blocklace.blocks[&id];
-        let round = if block.predecessors.is_empty() {
-            1
-        } else {
-            1 + block
-                .predecessors
-                .iter()
-                .filter_map(|p| rounds.get(p))
-                .max()
-                .copied()
-                .unwrap_or(0)
-        };
+        // Only a predecessor created by a PARTICIPANT contributes depth. An absent predecessor has
+        // no entry in `rounds` either way, so the `None` arm of the enrollment test is inert here —
+        // exactly as in `BlocklaceFinality.enrolledId`'s `none => true`.
+        let round = 1 + block
+            .predecessors
+            .iter()
+            .filter(|p| {
+                blocklace
+                    .get(p)
+                    .map(|pb| participant_set.contains(&pb.creator))
+                    .unwrap_or(true)
+            })
+            .filter_map(|p| rounds.get(p))
+            .max()
+            .copied()
+            .unwrap_or(0);
         rounds.insert(id, round);
         if round > max_round {
             max_round = round;
@@ -568,7 +599,9 @@ fn xsort(cache: &PastCache, blocklace: &Blocklace, blocks: &HashSet<BlockId>) ->
 ///
 /// A leader anchors only when a supermajority of DISTINCT ENROLLED participants have wave-end
 /// blocks ratifying it ([`ratifies_enrolled`], HORIZONLOG B6) — a non-participant's block counts
-/// toward neither the threshold nor the coverage.
+/// toward neither the threshold nor the coverage. And it cannot move the WAVE CLOCK either:
+/// [`compute_rounds`] maxes only over predecessors created by `participants`, so a non-participant
+/// chain adds no depth and cannot change which round a block sits at.
 ///
 /// Uses default configuration (wavelength = 3).
 ///
@@ -592,7 +625,8 @@ pub fn tau_with_config(
     }
 
     let cache = PastCache::new();
-    let (rounds, max_round) = compute_rounds(blocklace);
+    let participant_set: HashSet<[u8; 32]> = participants.iter().copied().collect();
+    let (rounds, max_round) = compute_rounds(blocklace, &participant_set);
     let equiv = EquivocationIndex::build(blocklace, &rounds);
     let final_leaders = find_all_final_leaders(
         &cache,
@@ -657,6 +691,9 @@ pub fn tau_with_config(
                 // Exclude blocks from creators that equivocated (as visible from leader).
                 if let Some(block) = blocklace.get(bid) {
                     !equiv.equivocates_in_past(&block.creator, &leader_past)
+                        // …and blocks from creators outside the committee (see the enrollment note
+                        // below). Applied HERE, before `xsort`, not to the finished order.
+                        && participant_set.contains(&block.creator)
                 } else {
                     false
                 }
@@ -695,19 +732,26 @@ pub fn tau_with_config(
     // `poll_finalized_blocks`' per-poll `coord(&lean_order) != coord(&rust_order)` check stays
     // silent on an attacked lace instead of alarming on a divergence that is the fix working.
     //
-    // Applied to the whole order rather than inside `new_blocks` (where `tau_unified` puts it) to
-    // stay line-for-line with the Lean `tauOrder`. Same value: `prev_covered` is set from
-    // `coverage`, never from the segment, so filtering a segment cannot change a later one.
-    // `None => true` mirrors `enrolledId`'s `none` branch — an id absent from the lace is not this
-    // filter's business; `poll_finalized_blocks` treats it as an invariant breach and says so.
-    let participant_set: HashSet<[u8; 32]> = participants.iter().copied().collect();
+    // ⚑ THE FILTER SITS INSIDE `new_blocks`, NOT ON THE FINISHED ORDER — and that is where the two
+    // implementations legitimately differ. In Lean the two placements are the SAME VALUE (the
+    // docstring of `tauOrder` proves it: `prev_covered` is set from `coverage`, never from the
+    // segment, and `List.filter` distributes over the `++`-fold). That argument needs the
+    // linearizer to be a KEY sort, insensitive to which other elements are present — Lean's
+    // `xsortBy` sorts by `(round, id)`, so it is. **Rust's [`xsort`] is not**: it is a Kahn sweep
+    // over the segment's own causal subgraph with a min-block-id ready-heap, so an extra element
+    // can change WHEN a block becomes ready and therefore the relative order of the blocks around
+    // it. Leaving a non-participant's block in the segment would let it reorder honest blocks even
+    // with the wave clock filtered — the same "the order must be a function of the enrolled
+    // sub-lace" property this pass is about, leaking through a second seam. Filtering before
+    // `xsort` makes the segment (and its `local_predecessors`, which restrict the causal past to
+    // the segment) identical on two nodes with identical enrolled sub-laces.
+    //
+    // ⚠ NAMED RESIDUAL, measured here and NOT closed: `xsort` (Kahn-min-id) and `xsortBy`
+    // (`(round, id)`) are still different linearizers — OPEN-CM-XSORT, named in the Lean header —
+    // and they coincide only on traces where every block acks all of the previous layer, which is
+    // what the differential tests use. That is a separate defect from this one and belongs in its
+    // own pass.
     ordered
-        .into_iter()
-        .filter(|bid| match blocklace.get(bid) {
-            Some(block) => participant_set.contains(&block.creator),
-            None => true,
-        })
-        .collect()
 }
 
 // ─── Cordiality Check ────────────────────────────────────────────────────────
@@ -717,7 +761,8 @@ pub fn tau_with_config(
 /// A cordial block has predecessors from > 2n/3 distinct participants at the
 /// previous round. Genesis blocks (round 1) are trivially cordial.
 pub fn is_cordial(blocklace: &Blocklace, block_id: &BlockId, participants: &[[u8; 32]]) -> bool {
-    let (rounds, _) = compute_rounds(blocklace);
+    let participant_set: HashSet<[u8; 32]> = participants.iter().copied().collect();
+    let (rounds, _) = compute_rounds(blocklace, &participant_set);
 
     let round = match rounds.get(block_id) {
         Some(r) => *r,
@@ -950,16 +995,20 @@ fn compute_rounds_filtered(
 ///     wave's coverage orders. These are independent: (5) held of the pre-B6 rule too, because the
 ///     unenrolled creator's OWN blocks were dropped from the ORDER while its VOTE still finalized
 ///     the honest ones.
+///   * (1) and (2), the WAVE CLOCK, closed by [`compute_rounds`] taking the participant set. A
+///     non-participant's ack no longer adds depth, so a relay chain cannot move which round a
+///     block sits at, which round is a wave start or wave end, or where `xsort` puts an honest
+///     block. That was NOT merely wave timing, which is how it was written up when B6 left it
+///     open: two honest nodes holding the IDENTICAL enrolled sub-lace and differing only in
+///     whether they received the relay finalized the same coordinates in different orders
+///     (`BlocklaceFinality.traceOrderFork`) or one of them finalized nothing at all
+///     (`traceRelayStall`) — a fork and a stall, not a delay.
 ///
-/// ⚑ It still does NOT do (1)–(3). `tau` calls `compute_rounds` (unfiltered), so a
-/// non-participant's blocks still receive ROUND NUMBERS and a deep non-participant chain that
-/// honest blocks ack still INFLATES honest rounds, shifting the wave structure — no honest block
-/// then sits at a wave-start or wave-end round and the federation stops finalizing. That residual
-/// is wave TIMING; it is not "an unenrolled creator decides finality", which is what (4) closes,
-/// nor "reaches the executor", which is what (5) closes. Fixing it means `compute_rounds` taking
-/// the participant set — i.e. the verified `BlocklaceFinality.computeRounds` taking it, since the
-/// RULE is Lean-authored and this is its differential sibling. `tau_unified` remains the only one
-/// of the two that is sound on a lace it does not own.
+/// ⚑ **(3) is what remains** — leader selection is already participant-only in `tau`, but the two
+/// functions' LINEARIZERS still differ: [`xsort`] is a Kahn sweep with a min-block-id ready heap
+/// and the Lean `xsortBy` is a `(round, id)` key sort. They coincide only where every block acks
+/// all of the previous layer. That is OPEN-CM-XSORT, named in the Lean header, and it is a
+/// different defect from this one.
 ///
 /// The algorithm is the same as `tau_with_config`, but:
 /// 1. `compute_rounds_filtered` only counts blocks from `reference_group.participants`
@@ -1258,6 +1307,149 @@ mod tests {
             // Equivalent closed form for n ≥ 1.
             assert_eq!(q, n - f, "supermajority = n - floor((n-1)/3) at n={n}");
         }
+    }
+
+    /// **THE ROUNDS LEAK, EXECUTED — and the repair, at the point of the fix.**
+    ///
+    /// `compute_rounds` used to max over EVERY present predecessor. Depth is the wave clock, so a
+    /// NON-PARTICIPANT chain that one honest block acked moved the wave structure. This drives the
+    /// module's own `compute_rounds` twice on ONE lace and changes exactly one thing: the
+    /// participant set it is handed.
+    ///
+    /// **The second call IS the pre-repair recurrence, not a reimplementation of it.** Hand it a
+    /// set containing every creator in the lace and the enrollment filter is the identity — which
+    /// is precisely `BlocklaceFinality.computeRounds_eq_pre_of_enrolled` (on an `EnrolledLace` the
+    /// filtered map is bit-identical to `computeRoundsPreParticipant`). So `pre` is what this
+    /// function computed yesterday and `now` is what it computes today.
+    ///
+    /// Verified twin: `BlocklaceFinality.traceRelayStall` and its `#guard` red/green pair.
+    #[test]
+    fn compute_rounds_gives_a_nonparticipant_relay_no_depth() {
+        let participants = vec![make_key(1), make_key(2), make_key(3)];
+        // Three outsiders, one block each, chained: r1 <- r2 <- r3. Three blocks, depth three.
+        let outsiders = [make_key(7), make_key(8), make_key(9)];
+
+        let mut bl = Blocklace::new();
+        let push = |bl: &mut Blocklace, c: [u8; 32], seq: u64, preds: Vec<BlockId>, tag: u8| {
+            let b = make_block(c, seq, preds, vec![tag]);
+            let id = b.id();
+            bl.insert_unverified(b).unwrap();
+            id
+        };
+        let r1 = push(&mut bl, outsiders[0], 0, vec![], 0x71);
+        let r2 = push(&mut bl, outsiders[1], 0, vec![r1], 0x72);
+        let r3 = push(&mut bl, outsiders[2], 0, vec![r2], 0x73);
+
+        let l1: Vec<BlockId> = participants
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| push(&mut bl, p, 0, vec![], 0x10 + i as u8))
+            .collect();
+        // ONE honest block acks the relay tip; the other two are ordinary.
+        let c1 = push(
+            &mut bl,
+            participants[0],
+            1,
+            {
+                let mut v = l1.clone();
+                v.push(r3);
+                v
+            },
+            0x20,
+        );
+        let c2 = push(&mut bl, participants[1], 1, l1.clone(), 0x21);
+        let c3 = push(&mut bl, participants[2], 1, l1.clone(), 0x22);
+        let l2 = vec![c1, c2, c3];
+        let l3: Vec<BlockId> = participants
+            .iter()
+            .enumerate()
+            .map(|(i, &p)| push(&mut bl, p, 2, l2.clone(), 0x30 + i as u8))
+            .collect();
+
+        let enrolled: HashSet<[u8; 32]> = participants.iter().copied().collect();
+        let every_creator: HashSet<[u8; 32]> = participants
+            .iter()
+            .chain(outsiders.iter())
+            .copied()
+            .collect();
+
+        let (pre, _) = compute_rounds(&bl, &every_creator); // == the pre-repair recurrence
+        let (now, _) = compute_rounds(&bl, &enrolled);
+
+        // ── (RED) THE WOUND: the relay is three levels deep and it LENDS them to an honest block.
+        assert_eq!(pre[&r3], 3, "anti-vacuity: the relay really is three deep");
+        assert_eq!(
+            pre[&c1], 4,
+            "the wound: an honest layer-2 block sits at round 4 because it acked an outsider chain"
+        );
+        assert_eq!(
+            pre[&l3[0]], 5,
+            "…and the whole layer above it moves with it"
+        );
+        // …so at the wave-end round of wave 0 (wavelength 3) there is NOT ONE enrolled block: the
+        // committee's ratification is counted at a round only the outsider occupies.
+        let pre_at_3: HashSet<BlockId> = pre
+            .iter()
+            .filter(|(_, r)| **r == 3)
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(
+            pre_at_3,
+            HashSet::from([r3]),
+            "the wound: the wave-END round holds only the relay tip"
+        );
+
+        // ── (GREEN) THE REPAIR: an outsider ack contributes no depth.
+        assert_eq!(now[&r1], 1);
+        assert_eq!(
+            now[&r2], 1,
+            "the relay's own depth collapses: its ancestry is all outsiders"
+        );
+        assert_eq!(now[&r3], 1);
+        assert_eq!(
+            now[&c1], 2,
+            "the honest block is back where the committee put it"
+        );
+        assert_eq!(now[&c2], 2);
+        assert_eq!(now[&l3[0]], 3);
+        let now_at_3: HashSet<BlockId> = now
+            .iter()
+            .filter(|(_, r)| **r == 3)
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(
+            now_at_3,
+            l3.iter().copied().collect::<HashSet<_>>(),
+            "the wave-end round is the committee's own three blocks again"
+        );
+
+        // ── BOTH POLES ON THE ORDER ITSELF: the committee still finalizes all nine, and it
+        //    finalizes IDENTICALLY to a node that never received the relay at all.
+        let order = tau(&bl, &participants);
+        assert_eq!(
+            order.len(),
+            9,
+            "[LIVENESS] the honest committee still finalizes everything"
+        );
+        assert!(
+            order.iter().all(|id| {
+                let c = bl.get(id).unwrap().creator;
+                participants.contains(&c)
+            }),
+            "no outsider coordinate may be finalized"
+        );
+
+        // ── THE LIVENESS POLE AT THE RECURRENCE: on an all-enrolled lace the filter is the
+        //    IDENTITY, so no honest federation's clock moves by one tick
+        //    (`BlocklaceFinality.computeRounds_eq_pre_of_enrolled`, executably).
+        let (hon, _) = build_full_blocklace(&participants, 3);
+        let (hon_now, hon_max) = compute_rounds(&hon, &enrolled);
+        let (hon_pre, hon_pre_max) = compute_rounds(&hon, &every_creator);
+        assert_eq!(
+            hon_now, hon_pre,
+            "all-enrolled lace: the filter must change nothing"
+        );
+        assert_eq!(hon_max, hon_pre_max);
     }
 
     #[test]
@@ -1570,7 +1762,7 @@ mod tests {
         wave_end_round: u64,
     ) -> (HashSet<[u8; 32]>, HashSet<[u8; 32]>) {
         let cache = PastCache::new();
-        let (rounds, _) = compute_rounds(bl);
+        let (rounds, _) = compute_rounds(bl, &participants.iter().copied().collect());
         let equiv = EquivocationIndex::build(bl, &rounds);
         let leader_creator = bl.get(leader_id).expect("leader in lace").creator;
         let all: HashSet<[u8; 32]> = rounds

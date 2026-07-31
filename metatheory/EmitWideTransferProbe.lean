@@ -6,7 +6,7 @@ Prints ONE TSV line:
   `transferVmDescriptor2R24Wide\t<name>\t<emitVmJson2 (wide transfer)>`
 
 from the verified wide registry `v3RegistryWide` (the transfer member at index 0 =
-`wideAppend transferV3 bb (bb+239)`, host + the 960-column wide appendix). This is the byte source of the
+`wideAppend transferV3 bb (bb + B_SPAN)`, host + the 992-column wide appendix). This is the byte source of the
 ADDITIVE Rust artifact `circuit/descriptors/rotation-wide-transfer-staged.tsv` the wide-roundtrip
 slice consumes — NOTHING on the live 1-felt wire path changes (`v3RegistryCapOpen` / the live TSV
 are UNTOUCHED). SCRATCH executable: `lake env lean --run EmitWideTransferProbe.lean`.

@@ -160,7 +160,7 @@ chained fold: absorb the head (`encHd`), then `len` blocks, each step re-absorbi
 digest (`encStep`). The per-site content is the two structural encodings into the tag-separated
 domain and their injectivity — layout facts the deployment genuinely satisfies (fixed widths make
 `acc ++ c` injective in the pair), NEVER a claim about the hash. The chain LENGTH is pinned by the
-carrier (`len`), as deployed: the wide state anchor absorbs a fixed 178-limb payload schedule. -/
+carrier (`len`), as deployed: the wide state anchor absorbs a fixed 184-limb payload schedule. -/
 structure RomChainedCarrier (F : KeyedRomFamily) where
   /-- The shared context both claims agree on (the deployment's fixed opening data — e.g. the
   domain-separation tag choice). -/

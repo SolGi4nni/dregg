@@ -9,12 +9,23 @@ cohort member against the rotated 25+…-limb state block — as ONE parametric 
 
   * **§1 the appended geometry** — each rotated descriptor carries, PAST its v1 layout
     (every v1 column index, constraint, and theorem untouched): a rotated BEFORE block at
-    `d.traceWidth` (169 absorption-ordered limbs · iroot · state_commit · 56 chain carriers
-    = 239 columns, the R=24 register geometry PLUS the `commitments_root` + `lifecycle_disc` +
-    `perms_digest` + `vk_digest` + `mode` + `fields_root` limbs, the v11/v12 completion octets,
-    and the v13 fields[0..7] completion lanes), a rotated AFTER block at `d.traceWidth + 239`, and the
-    WIDENED-CAVEAT region at `d.traceWidth + 478` (29-felt manifest · 9 chain carriers · caveat
-    commit · 4 DFA rc felts = 43 columns). Width: `+497`.
+    `d.traceWidth` (184 absorption-ordered limbs · iroot · state_commit · 61 chain carriers
+    = 247 columns = `B_SPAN`, the R=24 register geometry PLUS the `commitments_root` +
+    `lifecycle_disc` + `perms_digest` + `vk_digest` + `mode` + `fields_root` limbs, the v11/v12
+    completion octets, and the v14 fields[0..7] completion NONET), a rotated AFTER block at
+    `d.traceWidth + B_SPAN`, and the WIDENED-CAVEAT region at `d.traceWidth + 2·B_SPAN`
+    (29-felt manifest · 9 chain carriers · caveat commit · 4 DFA rc felts = 43 columns).
+    Width: `+APPENDIX_SPAN = +537`.
+
+    ⚑ **FLAG DAY 2026-07-31 (178 → 184).** `rotatedNumPreLimbs` grew by six so every `fields[j]`
+    gets a NINTH lane (`Dregg2.Circuit.FieldLanes9` — eight lanes carry 247.26 bits against a
+    32-byte field's 256, so no 8-lane encoding is injective, pigeonhole). NOTHING SHIFTED: the two
+    free pads 176/177 plus the new columns 178..183 became the eight ninth lanes, and every column
+    meaningful at 178 still means the same thing. `B_SPAN` 239 → 247, `2·B_SPAN` 478 → 494,
+    `APPENDIX_SPAN` 521 → 537, the chained absorption 59 → 61 carriers (60 → 62 sites per block,
+    130 → 134 appendix sites), and the setField VALUE8 pins 7 → 8 per slot (piCount 53 → 54 bare,
+    57 → 58 after the rc wrap). Re-emit: every v3 descriptor, both Rust producers, the staged
+    registry TSV, and every VK.
   * **§2 col-chained sites** — the chained absorptions reference their carrier COLUMNS
     (`.col`), never `.digest k`, so the site group is POSITION-INDEPENDENT (appendable
     after any descriptor's own sites with no index shift) and graduates to the SAME wire
@@ -148,30 +159,29 @@ set_option maxRecDepth 16000
 /-- Project a named faithful-8 group lane from the verified layout. `Legal.groupCoverage` and
 `Legal.groupWidth` make every lane total; `getD 0` stays only at this raw-data projection boundary. -/
 def layoutGroupCol (name : GroupName) (i : Fin 8) : Nat :=
-  (rotated178.groupCol name i).getD 0
+  (rotated184.groupCol name i).getD 0
 
--- ── THE MODE/FIELDS-ROOT FLAG-DAY (NUM_PRE_LIMBS 35→37) — WAVE 3 (the mover tail) ────────────────
--- On TOP of the perms/VK flag-day (limbs 33,34), the deployed rotated block now carries TWO more
--- dedicated authority sub-limbs as the NEW LAST pre-iroot limbs: the committed cell `MODE` byte limb
--- at in-block offset 35 (`B_MODE`, the `Hosted=0 / Sovereign=1` byte that
--- `compute_authority_digest_felt` folds — `rotation_witness.rs::mode_felt`) and the committed
--- `fields_root` digest limb at offset 36 (`B_FIELDS_ROOT`, the overflow named-field map root the same
--- digest folds — `hash_bytes(cell.state.fields_root)`). Committed BESIDE the opaque `record_digest`
--- (r23, limb 24). Every offset 0..34 stays STABLE (`B_LIFECYCLE = 29`, `B_RECORD_DIGEST = 24`,
--- `B_CAP_ROOT = 25`, `B_COMMITMENTS_ROOT = 27`, `B_COMMITTED_HEIGHT = 31`, `B_DISC = 32`,
--- `B_PERMS = 33`, `B_VK = 34` UNCHANGED); only the iroot/state_commit/chain carriers shift +2, the
--- block span 49→51, and the post-block (`+49`→`+51`) offsets follow. The 37-limb pre-iroot list chains
--- as: a 4-wide head (limbs 0..3) + ELEVEN 3-wide body groups (limbs 4..36, exactly 33 = 11×3 limbs,
--- so NO arity-2 leftover — the WAVE-2 vk singleton is absorbed into the eleventh 3-wide group) + the
--- iroot ALONE last. The site count stays 13 (12 chain carriers + the state-commit carrier). The
--- `chunk31` (`EffectVmEmitRotationR`) is length-generic, so the chained-commitment binding lifts
--- unchanged; only the literal site walk + offsets move here. This commits the mode + fields_root
--- authority shape so the per-effect movers go LIVE: makeSovereign FORCES the AFTER mode limb to
--- `Sovereign(1)` as a CONSTANT (the disc shape, NO trusted post-cell); setFieldDyn / refusal WELD the
--- AFTER fields_root sub-limb to the declared post-`fields_root` param column (the perms/VK weld shape,
--- declared-param anchored).
+-- ── THE MODE / FIELDS-ROOT AUTHORITY SUB-LIMBS ───────────────────────────────────────────────────
+-- The rotated block carries two dedicated authority sub-limbs beside the opaque `record_digest`
+-- (r23, limb 24): the committed cell `MODE` byte at in-block offset 35 (`B_MODE`, the
+-- `Hosted=0 / Sovereign=1` byte `compute_authority_digest_felt` folds —
+-- `rotation_witness.rs::mode_felt`) and the committed `fields_root` digest at offset 36
+-- (`B_FIELDS_ROOT`, the overflow named-field map root the same digest folds —
+-- `hash_bytes(cell.state.fields_root)`). They are what makes the per-effect movers LIVE:
+-- makeSovereign FORCES the AFTER mode limb to `Sovereign(1)` as a CONSTANT (the disc shape, NO
+-- trusted post-cell), and setFieldDyn / refusal WELD the AFTER fields_root sub-limb to the declared
+-- post-`fields_root` param column (the perms/VK weld shape, declared-param anchored).
+--
+-- ⚑ The WAVE-3 narrative that used to sit here ("NUM_PRE_LIMBS 35→37 … block span 49→51 … the site
+-- count stays 13") is DELETED, not updated: it described a geometry three flag days dead, and every
+-- number in it was false at 178 already. The live extent is `rotatedNumPreLimbs` in
+-- `RotatedLayout.lean` and the live chaining is `rotV3SitesAt` below — read those, never a comment.
+-- The one structural fact that survives every bump: `chunk31` (`EffectVmEmitRotationR`) is
+-- length-generic, so a limb-count change moves the literal site walk and NOTHING in the
+-- chained-commitment binding.
 
-/-- The current per-block span: 178 pre-iroot limbs, iroot, state_commit, and 59 chain carriers. -/
+/-- The current per-block span: 184 pre-iroot limbs, iroot, state_commit, and 61 chain carriers.
+Derived from `rotatedNumPreLimbs` (the ONE verified source), never a hand-carried literal. -/
 def B_SPAN : Nat := rotatedNumPreLimbs + 3 + (rotatedNumPreLimbs - 4) / 3
 /-- lifecycle-disc offset inside a block (limb 32 — the WAVE-1 flag-day committed discriminant limb,
 committed BESIDE the opaque `lifecycle_felt` at 29; UNCHANGED by the perms/VK + mode/fields-root flag-days). -/
@@ -226,6 +236,11 @@ def C_RC_OFF : Nat := 39
 /-- The whole appendix width: two rotated blocks plus the caveat region. -/
 def APPENDIX_SPAN : Nat := 2 * B_SPAN + C_SPAN
 
+/-- The rotated CAVEAT-region base offset (past the v1 layout + the two rotated blocks). Defined
+HERE, beside the other span constants, so every consumer in this file names it instead of carrying
+`478`/`494` — the bare-literal drift class the 178 → 184 flag day paid for. -/
+def CAVEAT_REGION_OFF : Nat := 2 * B_SPAN
+
 -- The map-root offsets ride past the R=24 probe's named columns (cap_root at probe `capRootCol 24`);
 -- the `commitments_root` limb is the +1 over the bare R=24 register shape.
 #guard B_CAP_ROOT == capRootCol 24
@@ -235,21 +250,26 @@ def APPENDIX_SPAN : Nat := 2 * B_SPAN + C_SPAN
 #guard B_VK == 34                    -- WAVE-2 committed vk-digest limb
 #guard B_MODE == 35                  -- WAVE-3 committed mode byte limb
 #guard B_FIELDS_ROOT == 36           -- WAVE-3 committed fields_root digest limb
-#guard B_IROOT == 178                -- verified pre-iroot layout, then iroot
-#guard B_IROOT == rotated178.numPreLimbs
+#guard B_IROOT == 184                -- verified pre-iroot layout, then iroot (FLAG DAY: was 178)
+#guard B_IROOT == rotated184.numPreLimbs
 #guard B_STATE_COMMIT == B_IROOT + 1
 #guard B_COMMITTED_HEIGHT == 31      -- last SCALAR pre-iroot limb (disc/perms/vk/mode/fields-root ride past it)
-#guard B_SPAN == B_IROOT + 61        -- 178 pre-iroot + iroot + state_commit + 59 chain carriers = 239
+#guard B_SPAN == B_IROOT + 63        -- 184 pre-iroot + iroot + state_commit + 61 chain carriers = 247
+#guard B_SPAN == 247
 #guard APPENDIX_SPAN == 2 * B_SPAN + C_SPAN
+#guard APPENDIX_SPAN == 537          -- 2·247 + 43 (was 521)
+#guard CAVEAT_REGION_OFF == 2 * B_SPAN
+#guard CAVEAT_REGION_OFF == 494      -- was 478
 #guard C_RC_OFF == C_COMMIT + 1      -- the DFA rc carrier rides PAST the caveat commit
 #guard C_SPAN == C_RC_OFF + 4        -- 4 rc felts close the region
 
-/-- The pre-iroot limb list of a block at `base` (v10: 67 limbs, absorption order: cells_root ·
-r0..r23 · cap_root · nullifier_root · commitments_root · heap_root · lifecycle · epoch ·
-committed height · lifecycle_disc · perms_digest · vk_digest · **mode** · **fields_root** · then the
-30 NEW faithful-8-felt completion limbs 37..66 — the 7 extra felts each for cap_root · heap_root ·
-perms · vk · fields_root, plus the 5 repurposed headroom limbs 19..23). Literal, so every positional
-fact is `rfl`. -/
+/-- The pre-iroot limb list of a block at `base` — all `rotatedNumPreLimbs = 184` of them, in the
+verified `rotated184` tiling order: cells_root · r0..r23 · cap_root · nullifier_root ·
+commitments_root · heap_root · lifecycle · epoch · committed height · lifecycle_disc · perms_digest ·
+vk_digest · **mode** · **fields_root** · revoked_root · the faithful-8-felt completion limbs · the
+three carrier octets · the fields NONET lanes (`113..168` plus the flag-day ninth lanes `176..183`).
+Literal, so every positional fact is `rfl`. ⚑ 178 → 184: the tail six entries are NEW columns; every
+earlier entry names the column it always named. -/
 def preLimbsAt (base : Nat) (a : Assignment) : List ℤ :=
   [ a (base + 0), a (base + 1), a (base + 2), a (base + 3), a (base + 4), a (base + 5)
   , a (base + 6), a (base + 7), a (base + 8), a (base + 9), a (base + 10), a (base + 11)
@@ -280,10 +300,16 @@ def preLimbsAt (base : Nat) (a : Assignment) : List ℤ :=
   , a (base + 156), a (base + 157), a (base + 158), a (base + 159), a (base + 160), a (base + 161)
   , a (base + 162), a (base + 163), a (base + 164), a (base + 165), a (base + 166), a (base + 167)
   , a (base + 168), a (base + 169), a (base + 170), a (base + 171), a (base + 172), a (base + 173)
-  , a (base + 174), a (base + 175), a (base + 176), a (base + 177) ]
+  , a (base + 174), a (base + 175), a (base + 176), a (base + 177), a (base + 178), a (base + 179)
+  , a (base + 180), a (base + 181), a (base + 182), a (base + 183) ]
 
 theorem preLimbsAt_length (base : Nat) (a : Assignment) :
-    (preLimbsAt base a).length = 178 := rfl
+    (preLimbsAt base a).length = 184 := rfl
+
+/-- The literal limb list really is the verified layout's extent — the `#guard` that makes a future
+`rotatedNumPreLimbs` bump fail HERE rather than silently emit a short block. -/
+theorem preLimbsAt_length_eq_layout (base : Nat) (a : Assignment) :
+    (preLimbsAt base a).length = rotatedNumPreLimbs := rfl
 
 /-- Read the caveat manifest off a row at region base `base` (positional, 29 felts). -/
 def manifestAt (base : Nat) (a : Assignment) : RotCaveatManifest :=
@@ -299,73 +325,76 @@ def manifestAt (base : Nat) (a : Assignment) : RotCaveatManifest :=
 
 /-! ## §2 — the col-chained sites (position-independent; graduate to the probe's bytes). -/
 
-/-- The 57 chained absorption sites of a rotated block at `base` (v13): the 4-wide head, FIFTY-FIVE
-3-wide body groups (limbs 4..168 — the 165-limb body `[4..168]` is exactly fifty-five 3-wide groups, NO
-arity-2 leftover), then the iroot ALONE last onto the state-commit carrier. Chaining is by CARRIER
-COLUMNS (`.col`), which graduates to the SAME wire bytes as `.digest` chaining while keeping the group
-position-independent. Chain carriers ride `base + 171 .. base + 226` (56 carriers); the state-commit
-carrier is `base + 170`. -/
+/-- The 62 chained absorption sites of a rotated block at `base` (v14): the 4-wide head over limbs
+0..3, SIXTY 3-wide body groups (limbs 4..183 — the 180-limb body `[4..183]` is exactly sixty 3-wide
+groups, NO arity-2 leftover, which is why `Legal.bodyAligned` forces `(184-4) % 3 = 0`), then the
+iroot ALONE last onto the state-commit carrier. Chaining is by CARRIER COLUMNS (`.col`), which
+graduates to the SAME wire bytes as `.digest` chaining while keeping the group position-independent.
+Chain carriers ride `base + 186 .. base + 246` (61 carriers); the state-commit carrier is
+`base + 185` (`B_STATE_COMMIT`) and the iroot is `base + 184` (`B_IROOT`). -/
 def rotV3SitesAt (base : Nat) : List VmHashSite :=
-  [ ⟨base + 180, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
-  , ⟨base + 181, [.col (base + 180), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
-  , ⟨base + 182, [.col (base + 181), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
-  , ⟨base + 183, [.col (base + 182), .col (base + 10), .col (base + 11), .col (base + 12)], 4⟩
-  , ⟨base + 184, [.col (base + 183), .col (base + 13), .col (base + 14), .col (base + 15)], 4⟩
-  , ⟨base + 185, [.col (base + 184), .col (base + 16), .col (base + 17), .col (base + 18)], 4⟩
-  , ⟨base + 186, [.col (base + 185), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
-  , ⟨base + 187, [.col (base + 186), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
-  , ⟨base + 188, [.col (base + 187), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
-  , ⟨base + 189, [.col (base + 188), .col (base + 28), .col (base + 29), .col (base + 30)], 4⟩
-  , ⟨base + 190, [.col (base + 189), .col (base + 31), .col (base + 32), .col (base + 33)], 4⟩
-  , ⟨base + 191, [.col (base + 190), .col (base + 34), .col (base + 35), .col (base + 36)], 4⟩
-  , ⟨base + 192, [.col (base + 191), .col (base + 37), .col (base + 38), .col (base + 39)], 4⟩
-  , ⟨base + 193, [.col (base + 192), .col (base + 40), .col (base + 41), .col (base + 42)], 4⟩
-  , ⟨base + 194, [.col (base + 193), .col (base + 43), .col (base + 44), .col (base + 45)], 4⟩
-  , ⟨base + 195, [.col (base + 194), .col (base + 46), .col (base + 47), .col (base + 48)], 4⟩
-  , ⟨base + 196, [.col (base + 195), .col (base + 49), .col (base + 50), .col (base + 51)], 4⟩
-  , ⟨base + 197, [.col (base + 196), .col (base + 52), .col (base + 53), .col (base + 54)], 4⟩
-  , ⟨base + 198, [.col (base + 197), .col (base + 55), .col (base + 56), .col (base + 57)], 4⟩
-  , ⟨base + 199, [.col (base + 198), .col (base + 58), .col (base + 59), .col (base + 60)], 4⟩
-  , ⟨base + 200, [.col (base + 199), .col (base + 61), .col (base + 62), .col (base + 63)], 4⟩
-  , ⟨base + 201, [.col (base + 200), .col (base + 64), .col (base + 65), .col (base + 66)], 4⟩
-  , ⟨base + 202, [.col (base + 201), .col (base + 67), .col (base + 68), .col (base + 69)], 4⟩
-  , ⟨base + 203, [.col (base + 202), .col (base + 70), .col (base + 71), .col (base + 72)], 4⟩
-  , ⟨base + 204, [.col (base + 203), .col (base + 73), .col (base + 74), .col (base + 75)], 4⟩
-  , ⟨base + 205, [.col (base + 204), .col (base + 76), .col (base + 77), .col (base + 78)], 4⟩
-  , ⟨base + 206, [.col (base + 205), .col (base + 79), .col (base + 80), .col (base + 81)], 4⟩
-  , ⟨base + 207, [.col (base + 206), .col (base + 82), .col (base + 83), .col (base + 84)], 4⟩
-  , ⟨base + 208, [.col (base + 207), .col (base + 85), .col (base + 86), .col (base + 87)], 4⟩
-  , ⟨base + 209, [.col (base + 208), .col (base + 88), .col (base + 89), .col (base + 90)], 4⟩
-  , ⟨base + 210, [.col (base + 209), .col (base + 91), .col (base + 92), .col (base + 93)], 4⟩
-  , ⟨base + 211, [.col (base + 210), .col (base + 94), .col (base + 95), .col (base + 96)], 4⟩
-  , ⟨base + 212, [.col (base + 211), .col (base + 97), .col (base + 98), .col (base + 99)], 4⟩
-  , ⟨base + 213, [.col (base + 212), .col (base + 100), .col (base + 101), .col (base + 102)], 4⟩
-  , ⟨base + 214, [.col (base + 213), .col (base + 103), .col (base + 104), .col (base + 105)], 4⟩
-  , ⟨base + 215, [.col (base + 214), .col (base + 106), .col (base + 107), .col (base + 108)], 4⟩
-  , ⟨base + 216, [.col (base + 215), .col (base + 109), .col (base + 110), .col (base + 111)], 4⟩
-  , ⟨base + 217, [.col (base + 216), .col (base + 112), .col (base + 113), .col (base + 114)], 4⟩
-  , ⟨base + 218, [.col (base + 217), .col (base + 115), .col (base + 116), .col (base + 117)], 4⟩
-  , ⟨base + 219, [.col (base + 218), .col (base + 118), .col (base + 119), .col (base + 120)], 4⟩
-  , ⟨base + 220, [.col (base + 219), .col (base + 121), .col (base + 122), .col (base + 123)], 4⟩
-  , ⟨base + 221, [.col (base + 220), .col (base + 124), .col (base + 125), .col (base + 126)], 4⟩
-  , ⟨base + 222, [.col (base + 221), .col (base + 127), .col (base + 128), .col (base + 129)], 4⟩
-  , ⟨base + 223, [.col (base + 222), .col (base + 130), .col (base + 131), .col (base + 132)], 4⟩
-  , ⟨base + 224, [.col (base + 223), .col (base + 133), .col (base + 134), .col (base + 135)], 4⟩
-  , ⟨base + 225, [.col (base + 224), .col (base + 136), .col (base + 137), .col (base + 138)], 4⟩
-  , ⟨base + 226, [.col (base + 225), .col (base + 139), .col (base + 140), .col (base + 141)], 4⟩
-  , ⟨base + 227, [.col (base + 226), .col (base + 142), .col (base + 143), .col (base + 144)], 4⟩
-  , ⟨base + 228, [.col (base + 227), .col (base + 145), .col (base + 146), .col (base + 147)], 4⟩
-  , ⟨base + 229, [.col (base + 228), .col (base + 148), .col (base + 149), .col (base + 150)], 4⟩
-  , ⟨base + 230, [.col (base + 229), .col (base + 151), .col (base + 152), .col (base + 153)], 4⟩
-  , ⟨base + 231, [.col (base + 230), .col (base + 154), .col (base + 155), .col (base + 156)], 4⟩
-  , ⟨base + 232, [.col (base + 231), .col (base + 157), .col (base + 158), .col (base + 159)], 4⟩
-  , ⟨base + 233, [.col (base + 232), .col (base + 160), .col (base + 161), .col (base + 162)], 4⟩
-  , ⟨base + 234, [.col (base + 233), .col (base + 163), .col (base + 164), .col (base + 165)], 4⟩
-  , ⟨base + 235, [.col (base + 234), .col (base + 166), .col (base + 167), .col (base + 168)], 4⟩
-  , ⟨base + 236, [.col (base + 235), .col (base + 169), .col (base + 170), .col (base + 171)], 4⟩
-  , ⟨base + 237, [.col (base + 236), .col (base + 172), .col (base + 173), .col (base + 174)], 4⟩
-  , ⟨base + 238, [.col (base + 237), .col (base + 175), .col (base + 176), .col (base + 177)], 4⟩
-  , ⟨base + 179, [.col (base + 238), .col (base + 178)], 2⟩ ]
+  [ ⟨base + 186, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
+  , ⟨base + 187, [.col (base + 186), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
+  , ⟨base + 188, [.col (base + 187), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
+  , ⟨base + 189, [.col (base + 188), .col (base + 10), .col (base + 11), .col (base + 12)], 4⟩
+  , ⟨base + 190, [.col (base + 189), .col (base + 13), .col (base + 14), .col (base + 15)], 4⟩
+  , ⟨base + 191, [.col (base + 190), .col (base + 16), .col (base + 17), .col (base + 18)], 4⟩
+  , ⟨base + 192, [.col (base + 191), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
+  , ⟨base + 193, [.col (base + 192), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
+  , ⟨base + 194, [.col (base + 193), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
+  , ⟨base + 195, [.col (base + 194), .col (base + 28), .col (base + 29), .col (base + 30)], 4⟩
+  , ⟨base + 196, [.col (base + 195), .col (base + 31), .col (base + 32), .col (base + 33)], 4⟩
+  , ⟨base + 197, [.col (base + 196), .col (base + 34), .col (base + 35), .col (base + 36)], 4⟩
+  , ⟨base + 198, [.col (base + 197), .col (base + 37), .col (base + 38), .col (base + 39)], 4⟩
+  , ⟨base + 199, [.col (base + 198), .col (base + 40), .col (base + 41), .col (base + 42)], 4⟩
+  , ⟨base + 200, [.col (base + 199), .col (base + 43), .col (base + 44), .col (base + 45)], 4⟩
+  , ⟨base + 201, [.col (base + 200), .col (base + 46), .col (base + 47), .col (base + 48)], 4⟩
+  , ⟨base + 202, [.col (base + 201), .col (base + 49), .col (base + 50), .col (base + 51)], 4⟩
+  , ⟨base + 203, [.col (base + 202), .col (base + 52), .col (base + 53), .col (base + 54)], 4⟩
+  , ⟨base + 204, [.col (base + 203), .col (base + 55), .col (base + 56), .col (base + 57)], 4⟩
+  , ⟨base + 205, [.col (base + 204), .col (base + 58), .col (base + 59), .col (base + 60)], 4⟩
+  , ⟨base + 206, [.col (base + 205), .col (base + 61), .col (base + 62), .col (base + 63)], 4⟩
+  , ⟨base + 207, [.col (base + 206), .col (base + 64), .col (base + 65), .col (base + 66)], 4⟩
+  , ⟨base + 208, [.col (base + 207), .col (base + 67), .col (base + 68), .col (base + 69)], 4⟩
+  , ⟨base + 209, [.col (base + 208), .col (base + 70), .col (base + 71), .col (base + 72)], 4⟩
+  , ⟨base + 210, [.col (base + 209), .col (base + 73), .col (base + 74), .col (base + 75)], 4⟩
+  , ⟨base + 211, [.col (base + 210), .col (base + 76), .col (base + 77), .col (base + 78)], 4⟩
+  , ⟨base + 212, [.col (base + 211), .col (base + 79), .col (base + 80), .col (base + 81)], 4⟩
+  , ⟨base + 213, [.col (base + 212), .col (base + 82), .col (base + 83), .col (base + 84)], 4⟩
+  , ⟨base + 214, [.col (base + 213), .col (base + 85), .col (base + 86), .col (base + 87)], 4⟩
+  , ⟨base + 215, [.col (base + 214), .col (base + 88), .col (base + 89), .col (base + 90)], 4⟩
+  , ⟨base + 216, [.col (base + 215), .col (base + 91), .col (base + 92), .col (base + 93)], 4⟩
+  , ⟨base + 217, [.col (base + 216), .col (base + 94), .col (base + 95), .col (base + 96)], 4⟩
+  , ⟨base + 218, [.col (base + 217), .col (base + 97), .col (base + 98), .col (base + 99)], 4⟩
+  , ⟨base + 219, [.col (base + 218), .col (base + 100), .col (base + 101), .col (base + 102)], 4⟩
+  , ⟨base + 220, [.col (base + 219), .col (base + 103), .col (base + 104), .col (base + 105)], 4⟩
+  , ⟨base + 221, [.col (base + 220), .col (base + 106), .col (base + 107), .col (base + 108)], 4⟩
+  , ⟨base + 222, [.col (base + 221), .col (base + 109), .col (base + 110), .col (base + 111)], 4⟩
+  , ⟨base + 223, [.col (base + 222), .col (base + 112), .col (base + 113), .col (base + 114)], 4⟩
+  , ⟨base + 224, [.col (base + 223), .col (base + 115), .col (base + 116), .col (base + 117)], 4⟩
+  , ⟨base + 225, [.col (base + 224), .col (base + 118), .col (base + 119), .col (base + 120)], 4⟩
+  , ⟨base + 226, [.col (base + 225), .col (base + 121), .col (base + 122), .col (base + 123)], 4⟩
+  , ⟨base + 227, [.col (base + 226), .col (base + 124), .col (base + 125), .col (base + 126)], 4⟩
+  , ⟨base + 228, [.col (base + 227), .col (base + 127), .col (base + 128), .col (base + 129)], 4⟩
+  , ⟨base + 229, [.col (base + 228), .col (base + 130), .col (base + 131), .col (base + 132)], 4⟩
+  , ⟨base + 230, [.col (base + 229), .col (base + 133), .col (base + 134), .col (base + 135)], 4⟩
+  , ⟨base + 231, [.col (base + 230), .col (base + 136), .col (base + 137), .col (base + 138)], 4⟩
+  , ⟨base + 232, [.col (base + 231), .col (base + 139), .col (base + 140), .col (base + 141)], 4⟩
+  , ⟨base + 233, [.col (base + 232), .col (base + 142), .col (base + 143), .col (base + 144)], 4⟩
+  , ⟨base + 234, [.col (base + 233), .col (base + 145), .col (base + 146), .col (base + 147)], 4⟩
+  , ⟨base + 235, [.col (base + 234), .col (base + 148), .col (base + 149), .col (base + 150)], 4⟩
+  , ⟨base + 236, [.col (base + 235), .col (base + 151), .col (base + 152), .col (base + 153)], 4⟩
+  , ⟨base + 237, [.col (base + 236), .col (base + 154), .col (base + 155), .col (base + 156)], 4⟩
+  , ⟨base + 238, [.col (base + 237), .col (base + 157), .col (base + 158), .col (base + 159)], 4⟩
+  , ⟨base + 239, [.col (base + 238), .col (base + 160), .col (base + 161), .col (base + 162)], 4⟩
+  , ⟨base + 240, [.col (base + 239), .col (base + 163), .col (base + 164), .col (base + 165)], 4⟩
+  , ⟨base + 241, [.col (base + 240), .col (base + 166), .col (base + 167), .col (base + 168)], 4⟩
+  , ⟨base + 242, [.col (base + 241), .col (base + 169), .col (base + 170), .col (base + 171)], 4⟩
+  , ⟨base + 243, [.col (base + 242), .col (base + 172), .col (base + 173), .col (base + 174)], 4⟩
+  , ⟨base + 244, [.col (base + 243), .col (base + 175), .col (base + 176), .col (base + 177)], 4⟩
+  , ⟨base + 245, [.col (base + 244), .col (base + 178), .col (base + 179), .col (base + 180)], 4⟩
+  , ⟨base + 246, [.col (base + 245), .col (base + 181), .col (base + 182), .col (base + 183)], 4⟩
+  , ⟨base + 185, [.col (base + 246), .col (base + 184)], 2⟩ ]
 
 /-- The 10 chained caveat sites at region base `base` (the `caveatSites` shape, positional):
 4-wide head over `[count, e0.tag, e0.dom, e0.key]`, eight (carrier+3) body groups, the
@@ -383,82 +412,86 @@ def caveatV3SitesAt (base : Nat) : List VmHashSite :=
   , ⟨base + 38, [.col (base + 37), .col (base + 28)], 2⟩ ]
 
 /-- The whole appendix site group for a descriptor of width `w`. The AFTER block rides at
-`w + B_SPAN` (= `w + 239`); the caveat region at `w + 2·B_SPAN` (= `w + 478`). -/
+`w + B_SPAN`; the caveat region at `w + CAVEAT_REGION_OFF` (`= 2·B_SPAN`). ⚑ Both offsets are the
+NAMED constants — the two bare `239`/`478` literals that used to sit here are exactly the drift the
+178 → 184 flag day paid for. -/
 def rotV3Appendix (w : Nat) : List VmHashSite :=
-  rotV3SitesAt w ++ rotV3SitesAt (w + 239) ++ caveatV3SitesAt (w + 478)
+  rotV3SitesAt w ++ rotV3SitesAt (w + B_SPAN) ++ caveatV3SitesAt (w + CAVEAT_REGION_OFF)
 
 -- Arity discipline: every appendix site is arity 4 or 2 (the chip refuses 3) — checked at
 -- a concrete base; the literal arities are base-independent.
 #guard (rotV3Appendix 186).all fun s => s.arity == 4 || s.arity == 2
-#guard (rotV3Appendix 186).length == 130  -- 60 (before) + 60 (after) + 10 (caveat)
+#guard (rotV3Appendix 186).length == 134  -- 62 (before) + 62 (after) + 10 (caveat)
 
--- **THE BYTE-IDENTITY TRIPWIRE** (v10 67-limb shape): the col-chained 23-site block at base 0
+-- **THE BYTE-IDENTITY TRIPWIRE** (v14, 184-limb shape): the col-chained 62-site block at base 0
 -- graduates to the EXACT wire JSON of its DIGEST-chained twin (the running accumulator referenced
 -- as `.digest (k-1)` instead of `.col carrier`). `HashInput.toExpr` resolves `.digest k` to site
 -- `k`'s `digestCol`, which IS the chain-carrier column the col-chained form names, so the two emit
 -- byte-for-byte. This is the standalone analog of the old R=24-probe cross-check, at the deployed
--- 67-limb geometry (the R-register probe no longer matches the +30 faithful-8-felt completion limbs).
+-- 184-limb geometry (the R-register probe no longer matches the faithful-8-felt completion limbs).
 private def rotV3SitesDigestAt0 : List VmHashSite :=
-  [ ⟨180, [.col 0, .col 1, .col 2, .col 3], 4⟩
-  , ⟨181, [.digest 0, .col 4, .col 5, .col 6], 4⟩
-  , ⟨182, [.digest 1, .col 7, .col 8, .col 9], 4⟩
-  , ⟨183, [.digest 2, .col 10, .col 11, .col 12], 4⟩
-  , ⟨184, [.digest 3, .col 13, .col 14, .col 15], 4⟩
-  , ⟨185, [.digest 4, .col 16, .col 17, .col 18], 4⟩
-  , ⟨186, [.digest 5, .col 19, .col 20, .col 21], 4⟩
-  , ⟨187, [.digest 6, .col 22, .col 23, .col 24], 4⟩
-  , ⟨188, [.digest 7, .col 25, .col 26, .col 27], 4⟩
-  , ⟨189, [.digest 8, .col 28, .col 29, .col 30], 4⟩
-  , ⟨190, [.digest 9, .col 31, .col 32, .col 33], 4⟩
-  , ⟨191, [.digest 10, .col 34, .col 35, .col 36], 4⟩
-  , ⟨192, [.digest 11, .col 37, .col 38, .col 39], 4⟩
-  , ⟨193, [.digest 12, .col 40, .col 41, .col 42], 4⟩
-  , ⟨194, [.digest 13, .col 43, .col 44, .col 45], 4⟩
-  , ⟨195, [.digest 14, .col 46, .col 47, .col 48], 4⟩
-  , ⟨196, [.digest 15, .col 49, .col 50, .col 51], 4⟩
-  , ⟨197, [.digest 16, .col 52, .col 53, .col 54], 4⟩
-  , ⟨198, [.digest 17, .col 55, .col 56, .col 57], 4⟩
-  , ⟨199, [.digest 18, .col 58, .col 59, .col 60], 4⟩
-  , ⟨200, [.digest 19, .col 61, .col 62, .col 63], 4⟩
-  , ⟨201, [.digest 20, .col 64, .col 65, .col 66], 4⟩
-  , ⟨202, [.digest 21, .col 67, .col 68, .col 69], 4⟩
-  , ⟨203, [.digest 22, .col 70, .col 71, .col 72], 4⟩
-  , ⟨204, [.digest 23, .col 73, .col 74, .col 75], 4⟩
-  , ⟨205, [.digest 24, .col 76, .col 77, .col 78], 4⟩
-  , ⟨206, [.digest 25, .col 79, .col 80, .col 81], 4⟩
-  , ⟨207, [.digest 26, .col 82, .col 83, .col 84], 4⟩
-  , ⟨208, [.digest 27, .col 85, .col 86, .col 87], 4⟩
-  , ⟨209, [.digest 28, .col 88, .col 89, .col 90], 4⟩
-  , ⟨210, [.digest 29, .col 91, .col 92, .col 93], 4⟩
-  , ⟨211, [.digest 30, .col 94, .col 95, .col 96], 4⟩
-  , ⟨212, [.digest 31, .col 97, .col 98, .col 99], 4⟩
-  , ⟨213, [.digest 32, .col 100, .col 101, .col 102], 4⟩
-  , ⟨214, [.digest 33, .col 103, .col 104, .col 105], 4⟩
-  , ⟨215, [.digest 34, .col 106, .col 107, .col 108], 4⟩
-  , ⟨216, [.digest 35, .col 109, .col 110, .col 111], 4⟩
-  , ⟨217, [.digest 36, .col 112, .col 113, .col 114], 4⟩
-  , ⟨218, [.digest 37, .col 115, .col 116, .col 117], 4⟩
-  , ⟨219, [.digest 38, .col 118, .col 119, .col 120], 4⟩
-  , ⟨220, [.digest 39, .col 121, .col 122, .col 123], 4⟩
-  , ⟨221, [.digest 40, .col 124, .col 125, .col 126], 4⟩
-  , ⟨222, [.digest 41, .col 127, .col 128, .col 129], 4⟩
-  , ⟨223, [.digest 42, .col 130, .col 131, .col 132], 4⟩
-  , ⟨224, [.digest 43, .col 133, .col 134, .col 135], 4⟩
-  , ⟨225, [.digest 44, .col 136, .col 137, .col 138], 4⟩
-  , ⟨226, [.digest 45, .col 139, .col 140, .col 141], 4⟩
-  , ⟨227, [.digest 46, .col 142, .col 143, .col 144], 4⟩
-  , ⟨228, [.digest 47, .col 145, .col 146, .col 147], 4⟩
-  , ⟨229, [.digest 48, .col 148, .col 149, .col 150], 4⟩
-  , ⟨230, [.digest 49, .col 151, .col 152, .col 153], 4⟩
-  , ⟨231, [.digest 50, .col 154, .col 155, .col 156], 4⟩
-  , ⟨232, [.digest 51, .col 157, .col 158, .col 159], 4⟩
-  , ⟨233, [.digest 52, .col 160, .col 161, .col 162], 4⟩
-  , ⟨234, [.digest 53, .col 163, .col 164, .col 165], 4⟩
-  , ⟨235, [.digest 54, .col 166, .col 167, .col 168], 4⟩
-  , ⟨236, [.digest 55, .col 169, .col 170, .col 171], 4⟩
-  , ⟨237, [.digest 56, .col 172, .col 173, .col 174], 4⟩
-  , ⟨238, [.digest 57, .col 175, .col 176, .col 177], 4⟩
-  , ⟨179, [.digest 58, .col 178], 2⟩ ]
+  [ ⟨186, [.col 0, .col 1, .col 2, .col 3], 4⟩
+  , ⟨187, [.digest 0, .col 4, .col 5, .col 6], 4⟩
+  , ⟨188, [.digest 1, .col 7, .col 8, .col 9], 4⟩
+  , ⟨189, [.digest 2, .col 10, .col 11, .col 12], 4⟩
+  , ⟨190, [.digest 3, .col 13, .col 14, .col 15], 4⟩
+  , ⟨191, [.digest 4, .col 16, .col 17, .col 18], 4⟩
+  , ⟨192, [.digest 5, .col 19, .col 20, .col 21], 4⟩
+  , ⟨193, [.digest 6, .col 22, .col 23, .col 24], 4⟩
+  , ⟨194, [.digest 7, .col 25, .col 26, .col 27], 4⟩
+  , ⟨195, [.digest 8, .col 28, .col 29, .col 30], 4⟩
+  , ⟨196, [.digest 9, .col 31, .col 32, .col 33], 4⟩
+  , ⟨197, [.digest 10, .col 34, .col 35, .col 36], 4⟩
+  , ⟨198, [.digest 11, .col 37, .col 38, .col 39], 4⟩
+  , ⟨199, [.digest 12, .col 40, .col 41, .col 42], 4⟩
+  , ⟨200, [.digest 13, .col 43, .col 44, .col 45], 4⟩
+  , ⟨201, [.digest 14, .col 46, .col 47, .col 48], 4⟩
+  , ⟨202, [.digest 15, .col 49, .col 50, .col 51], 4⟩
+  , ⟨203, [.digest 16, .col 52, .col 53, .col 54], 4⟩
+  , ⟨204, [.digest 17, .col 55, .col 56, .col 57], 4⟩
+  , ⟨205, [.digest 18, .col 58, .col 59, .col 60], 4⟩
+  , ⟨206, [.digest 19, .col 61, .col 62, .col 63], 4⟩
+  , ⟨207, [.digest 20, .col 64, .col 65, .col 66], 4⟩
+  , ⟨208, [.digest 21, .col 67, .col 68, .col 69], 4⟩
+  , ⟨209, [.digest 22, .col 70, .col 71, .col 72], 4⟩
+  , ⟨210, [.digest 23, .col 73, .col 74, .col 75], 4⟩
+  , ⟨211, [.digest 24, .col 76, .col 77, .col 78], 4⟩
+  , ⟨212, [.digest 25, .col 79, .col 80, .col 81], 4⟩
+  , ⟨213, [.digest 26, .col 82, .col 83, .col 84], 4⟩
+  , ⟨214, [.digest 27, .col 85, .col 86, .col 87], 4⟩
+  , ⟨215, [.digest 28, .col 88, .col 89, .col 90], 4⟩
+  , ⟨216, [.digest 29, .col 91, .col 92, .col 93], 4⟩
+  , ⟨217, [.digest 30, .col 94, .col 95, .col 96], 4⟩
+  , ⟨218, [.digest 31, .col 97, .col 98, .col 99], 4⟩
+  , ⟨219, [.digest 32, .col 100, .col 101, .col 102], 4⟩
+  , ⟨220, [.digest 33, .col 103, .col 104, .col 105], 4⟩
+  , ⟨221, [.digest 34, .col 106, .col 107, .col 108], 4⟩
+  , ⟨222, [.digest 35, .col 109, .col 110, .col 111], 4⟩
+  , ⟨223, [.digest 36, .col 112, .col 113, .col 114], 4⟩
+  , ⟨224, [.digest 37, .col 115, .col 116, .col 117], 4⟩
+  , ⟨225, [.digest 38, .col 118, .col 119, .col 120], 4⟩
+  , ⟨226, [.digest 39, .col 121, .col 122, .col 123], 4⟩
+  , ⟨227, [.digest 40, .col 124, .col 125, .col 126], 4⟩
+  , ⟨228, [.digest 41, .col 127, .col 128, .col 129], 4⟩
+  , ⟨229, [.digest 42, .col 130, .col 131, .col 132], 4⟩
+  , ⟨230, [.digest 43, .col 133, .col 134, .col 135], 4⟩
+  , ⟨231, [.digest 44, .col 136, .col 137, .col 138], 4⟩
+  , ⟨232, [.digest 45, .col 139, .col 140, .col 141], 4⟩
+  , ⟨233, [.digest 46, .col 142, .col 143, .col 144], 4⟩
+  , ⟨234, [.digest 47, .col 145, .col 146, .col 147], 4⟩
+  , ⟨235, [.digest 48, .col 148, .col 149, .col 150], 4⟩
+  , ⟨236, [.digest 49, .col 151, .col 152, .col 153], 4⟩
+  , ⟨237, [.digest 50, .col 154, .col 155, .col 156], 4⟩
+  , ⟨238, [.digest 51, .col 157, .col 158, .col 159], 4⟩
+  , ⟨239, [.digest 52, .col 160, .col 161, .col 162], 4⟩
+  , ⟨240, [.digest 53, .col 163, .col 164, .col 165], 4⟩
+  , ⟨241, [.digest 54, .col 166, .col 167, .col 168], 4⟩
+  , ⟨242, [.digest 55, .col 169, .col 170, .col 171], 4⟩
+  , ⟨243, [.digest 56, .col 172, .col 173, .col 174], 4⟩
+  , ⟨244, [.digest 57, .col 175, .col 176, .col 177], 4⟩
+  , ⟨245, [.digest 58, .col 178, .col 179, .col 180], 4⟩
+  , ⟨246, [.digest 59, .col 181, .col 182, .col 183], 4⟩
+  , ⟨185, [.digest 60, .col 184], 2⟩ ]
 
 #guard emitVmJson2 (graduateV1
     { name := "dregg-effectvm-rotation-v3-commitments-tripwire"
@@ -537,9 +570,9 @@ def weldsAtNoCapRoot (base stateBase : Nat) : List VmConstraint :=
 rotated OLD commit (first row) · rotated NEW commit · rotated height · caveat commit (last). -/
 def rotPins (w piBase : Nat) : List VmConstraint :=
   [ .piBinding .first (w + B_STATE_COMMIT) piBase
-  , .piBinding .last (w + 239 + B_STATE_COMMIT) (piBase + 1)
-  , .piBinding .last (w + 239 + B_COMMITTED_HEIGHT) (piBase + 2)
-  , .piBinding .last (w + 478 + C_COMMIT) (piBase + 3) ]
+  , .piBinding .last (w + B_SPAN + B_STATE_COMMIT) (piBase + 1)
+  , .piBinding .last (w + B_SPAN + B_COMMITTED_HEIGHT) (piBase + 2)
+  , .piBinding .last (w + CAVEAT_REGION_OFF + C_COMMIT) (piBase + 3) ]
 
 /-- **`rotateV3`** — the ONE parametric regen: append the rotated BEFORE/AFTER blocks and
 the caveat region past the descriptor's own layout; weld where the v1 block carries the
@@ -552,7 +585,7 @@ def rotateV3 (d : EffectVmDescriptor) : EffectVmDescriptor :=
   , piCount     := d.piCount + 4
   , constraints := d.constraints
       ++ (weldsAt d.traceWidth STATE_BEFORE_BASE
-          ++ weldsAt (d.traceWidth + 239) STATE_AFTER_BASE
+          ++ weldsAt (d.traceWidth + B_SPAN) STATE_AFTER_BASE
           ++ rotPins d.traceWidth d.piCount)
   , hashSites   := d.hashSites ++ rotV3Appendix d.traceWidth
   , ranges      := d.ranges }
@@ -570,7 +603,7 @@ def rotateV3CapWrite (d : EffectVmDescriptor) : EffectVmDescriptor :=
   , piCount     := d.piCount + 4
   , constraints := d.constraints
       ++ (weldsAtNoCapRoot d.traceWidth STATE_BEFORE_BASE
-          ++ weldsAtNoCapRoot (d.traceWidth + 239) STATE_AFTER_BASE
+          ++ weldsAtNoCapRoot (d.traceWidth + B_SPAN) STATE_AFTER_BASE
           ++ rotPins d.traceWidth d.piCount)
   , hashSites   := d.hashSites ++ rotV3Appendix d.traceWidth
   , ranges      := d.ranges }
@@ -639,7 +672,7 @@ theorem go_append_left (hash : List ℤ → ℤ) (env : VmRowEnv) :
     obtain ⟨hd, hgo⟩ := h
     exact ⟨hd, ih _ Q hgo⟩
 
-/-- Every rotated-block site is col-only (13 literal cases). -/
+/-- Every rotated-block site is col-only (62 literal cases). -/
 theorem rotV3SitesAt_colOnly (base : Nat) : ∀ s ∈ rotV3SitesAt base, colOnly s = true := by
   intro s hs
   fin_cases hs <;> rfl
@@ -652,254 +685,264 @@ theorem caveatV3SitesAt_colOnly (base : Nat) :
   rcases hs with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> rfl
 
 set_option maxHeartbeats 6400000 in
-/-- **The block pin, parametric in `base`** (v13): the fifty-seven col-chained site equations compose
-into the chained rotated commitment — the row's state-commit carrier at `base + 179` IS
-`wireCommitR` of the row's OWN 169 limbs and iroot (the fields-octet completion shape). -/
+/-- **The block pin, parametric in `base`** (v14): the sixty-two col-chained site equations compose
+into the chained rotated commitment — the row's state-commit carrier at `base + B_STATE_COMMIT` IS
+`wireCommitR` of the row's OWN 184 limbs and iroot (the fields-NONET completion shape). Stated
+against the NAMED offsets; the `show` below is the one place the concrete 185/184 appear. -/
 theorem rotV3SitesAt_pin (hash : List ℤ → ℤ) (env : VmRowEnv) (base : Nat)
     (h : ∀ s ∈ rotV3SitesAt base, env.loc s.digestCol = hash (s.resolvedInputs env [])) :
-    env.loc (base + 179)
-      = wireCommitR hash (preLimbsAt base env.loc) (env.loc (base + 178)) := by
-  have h0 : env.loc (base + 180) = hash [env.loc (base + 0), env.loc (base + 1), env.loc (base + 2), env.loc (base + 3)] := by
+    env.loc (base + B_STATE_COMMIT)
+      = wireCommitR hash (preLimbsAt base env.loc) (env.loc (base + B_IROOT)) := by
+  show env.loc (base + 185) = wireCommitR hash (preLimbsAt base env.loc) (env.loc (base + 184))
+  have h0 : env.loc (base + 186) = hash [env.loc (base + 0), env.loc (base + 1), env.loc (base + 2), env.loc (base + 3)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 180, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
+      h ⟨base + 186, [.col (base + 0), .col (base + 1), .col (base + 2), .col (base + 3)], 4⟩
         (by simp [rotV3SitesAt])
-  have h1 : env.loc (base + 181) = hash [env.loc (base + 180), env.loc (base + 4), env.loc (base + 5), env.loc (base + 6)] := by
+  have h1 : env.loc (base + 187) = hash [env.loc (base + 186), env.loc (base + 4), env.loc (base + 5), env.loc (base + 6)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 181, [.col (base + 180), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
+      h ⟨base + 187, [.col (base + 186), .col (base + 4), .col (base + 5), .col (base + 6)], 4⟩
         (by simp [rotV3SitesAt])
-  have h2 : env.loc (base + 182) = hash [env.loc (base + 181), env.loc (base + 7), env.loc (base + 8), env.loc (base + 9)] := by
+  have h2 : env.loc (base + 188) = hash [env.loc (base + 187), env.loc (base + 7), env.loc (base + 8), env.loc (base + 9)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 182, [.col (base + 181), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
+      h ⟨base + 188, [.col (base + 187), .col (base + 7), .col (base + 8), .col (base + 9)], 4⟩
         (by simp [rotV3SitesAt])
-  have h3 : env.loc (base + 183) = hash [env.loc (base + 182), env.loc (base + 10), env.loc (base + 11), env.loc (base + 12)] := by
+  have h3 : env.loc (base + 189) = hash [env.loc (base + 188), env.loc (base + 10), env.loc (base + 11), env.loc (base + 12)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 183, [.col (base + 182), .col (base + 10), .col (base + 11), .col (base + 12)], 4⟩
+      h ⟨base + 189, [.col (base + 188), .col (base + 10), .col (base + 11), .col (base + 12)], 4⟩
         (by simp [rotV3SitesAt])
-  have h4 : env.loc (base + 184) = hash [env.loc (base + 183), env.loc (base + 13), env.loc (base + 14), env.loc (base + 15)] := by
+  have h4 : env.loc (base + 190) = hash [env.loc (base + 189), env.loc (base + 13), env.loc (base + 14), env.loc (base + 15)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 184, [.col (base + 183), .col (base + 13), .col (base + 14), .col (base + 15)], 4⟩
+      h ⟨base + 190, [.col (base + 189), .col (base + 13), .col (base + 14), .col (base + 15)], 4⟩
         (by simp [rotV3SitesAt])
-  have h5 : env.loc (base + 185) = hash [env.loc (base + 184), env.loc (base + 16), env.loc (base + 17), env.loc (base + 18)] := by
+  have h5 : env.loc (base + 191) = hash [env.loc (base + 190), env.loc (base + 16), env.loc (base + 17), env.loc (base + 18)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 185, [.col (base + 184), .col (base + 16), .col (base + 17), .col (base + 18)], 4⟩
+      h ⟨base + 191, [.col (base + 190), .col (base + 16), .col (base + 17), .col (base + 18)], 4⟩
         (by simp [rotV3SitesAt])
-  have h6 : env.loc (base + 186) = hash [env.loc (base + 185), env.loc (base + 19), env.loc (base + 20), env.loc (base + 21)] := by
+  have h6 : env.loc (base + 192) = hash [env.loc (base + 191), env.loc (base + 19), env.loc (base + 20), env.loc (base + 21)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 186, [.col (base + 185), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
+      h ⟨base + 192, [.col (base + 191), .col (base + 19), .col (base + 20), .col (base + 21)], 4⟩
         (by simp [rotV3SitesAt])
-  have h7 : env.loc (base + 187) = hash [env.loc (base + 186), env.loc (base + 22), env.loc (base + 23), env.loc (base + 24)] := by
+  have h7 : env.loc (base + 193) = hash [env.loc (base + 192), env.loc (base + 22), env.loc (base + 23), env.loc (base + 24)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 187, [.col (base + 186), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
+      h ⟨base + 193, [.col (base + 192), .col (base + 22), .col (base + 23), .col (base + 24)], 4⟩
         (by simp [rotV3SitesAt])
-  have h8 : env.loc (base + 188) = hash [env.loc (base + 187), env.loc (base + 25), env.loc (base + 26), env.loc (base + 27)] := by
+  have h8 : env.loc (base + 194) = hash [env.loc (base + 193), env.loc (base + 25), env.loc (base + 26), env.loc (base + 27)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 188, [.col (base + 187), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
+      h ⟨base + 194, [.col (base + 193), .col (base + 25), .col (base + 26), .col (base + 27)], 4⟩
         (by simp [rotV3SitesAt])
-  have h9 : env.loc (base + 189) = hash [env.loc (base + 188), env.loc (base + 28), env.loc (base + 29), env.loc (base + 30)] := by
+  have h9 : env.loc (base + 195) = hash [env.loc (base + 194), env.loc (base + 28), env.loc (base + 29), env.loc (base + 30)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 189, [.col (base + 188), .col (base + 28), .col (base + 29), .col (base + 30)], 4⟩
+      h ⟨base + 195, [.col (base + 194), .col (base + 28), .col (base + 29), .col (base + 30)], 4⟩
         (by simp [rotV3SitesAt])
-  have h10 : env.loc (base + 190) = hash [env.loc (base + 189), env.loc (base + 31), env.loc (base + 32), env.loc (base + 33)] := by
+  have h10 : env.loc (base + 196) = hash [env.loc (base + 195), env.loc (base + 31), env.loc (base + 32), env.loc (base + 33)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 190, [.col (base + 189), .col (base + 31), .col (base + 32), .col (base + 33)], 4⟩
+      h ⟨base + 196, [.col (base + 195), .col (base + 31), .col (base + 32), .col (base + 33)], 4⟩
         (by simp [rotV3SitesAt])
-  have h11 : env.loc (base + 191) = hash [env.loc (base + 190), env.loc (base + 34), env.loc (base + 35), env.loc (base + 36)] := by
+  have h11 : env.loc (base + 197) = hash [env.loc (base + 196), env.loc (base + 34), env.loc (base + 35), env.loc (base + 36)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 191, [.col (base + 190), .col (base + 34), .col (base + 35), .col (base + 36)], 4⟩
+      h ⟨base + 197, [.col (base + 196), .col (base + 34), .col (base + 35), .col (base + 36)], 4⟩
         (by simp [rotV3SitesAt])
-  have h12 : env.loc (base + 192) = hash [env.loc (base + 191), env.loc (base + 37), env.loc (base + 38), env.loc (base + 39)] := by
+  have h12 : env.loc (base + 198) = hash [env.loc (base + 197), env.loc (base + 37), env.loc (base + 38), env.loc (base + 39)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 192, [.col (base + 191), .col (base + 37), .col (base + 38), .col (base + 39)], 4⟩
+      h ⟨base + 198, [.col (base + 197), .col (base + 37), .col (base + 38), .col (base + 39)], 4⟩
         (by simp [rotV3SitesAt])
-  have h13 : env.loc (base + 193) = hash [env.loc (base + 192), env.loc (base + 40), env.loc (base + 41), env.loc (base + 42)] := by
+  have h13 : env.loc (base + 199) = hash [env.loc (base + 198), env.loc (base + 40), env.loc (base + 41), env.loc (base + 42)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 193, [.col (base + 192), .col (base + 40), .col (base + 41), .col (base + 42)], 4⟩
+      h ⟨base + 199, [.col (base + 198), .col (base + 40), .col (base + 41), .col (base + 42)], 4⟩
         (by simp [rotV3SitesAt])
-  have h14 : env.loc (base + 194) = hash [env.loc (base + 193), env.loc (base + 43), env.loc (base + 44), env.loc (base + 45)] := by
+  have h14 : env.loc (base + 200) = hash [env.loc (base + 199), env.loc (base + 43), env.loc (base + 44), env.loc (base + 45)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 194, [.col (base + 193), .col (base + 43), .col (base + 44), .col (base + 45)], 4⟩
+      h ⟨base + 200, [.col (base + 199), .col (base + 43), .col (base + 44), .col (base + 45)], 4⟩
         (by simp [rotV3SitesAt])
-  have h15 : env.loc (base + 195) = hash [env.loc (base + 194), env.loc (base + 46), env.loc (base + 47), env.loc (base + 48)] := by
+  have h15 : env.loc (base + 201) = hash [env.loc (base + 200), env.loc (base + 46), env.loc (base + 47), env.loc (base + 48)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 195, [.col (base + 194), .col (base + 46), .col (base + 47), .col (base + 48)], 4⟩
+      h ⟨base + 201, [.col (base + 200), .col (base + 46), .col (base + 47), .col (base + 48)], 4⟩
         (by simp [rotV3SitesAt])
-  have h16 : env.loc (base + 196) = hash [env.loc (base + 195), env.loc (base + 49), env.loc (base + 50), env.loc (base + 51)] := by
+  have h16 : env.loc (base + 202) = hash [env.loc (base + 201), env.loc (base + 49), env.loc (base + 50), env.loc (base + 51)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 196, [.col (base + 195), .col (base + 49), .col (base + 50), .col (base + 51)], 4⟩
+      h ⟨base + 202, [.col (base + 201), .col (base + 49), .col (base + 50), .col (base + 51)], 4⟩
         (by simp [rotV3SitesAt])
-  have h17 : env.loc (base + 197) = hash [env.loc (base + 196), env.loc (base + 52), env.loc (base + 53), env.loc (base + 54)] := by
+  have h17 : env.loc (base + 203) = hash [env.loc (base + 202), env.loc (base + 52), env.loc (base + 53), env.loc (base + 54)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 197, [.col (base + 196), .col (base + 52), .col (base + 53), .col (base + 54)], 4⟩
+      h ⟨base + 203, [.col (base + 202), .col (base + 52), .col (base + 53), .col (base + 54)], 4⟩
         (by simp [rotV3SitesAt])
-  have h18 : env.loc (base + 198) = hash [env.loc (base + 197), env.loc (base + 55), env.loc (base + 56), env.loc (base + 57)] := by
+  have h18 : env.loc (base + 204) = hash [env.loc (base + 203), env.loc (base + 55), env.loc (base + 56), env.loc (base + 57)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 198, [.col (base + 197), .col (base + 55), .col (base + 56), .col (base + 57)], 4⟩
+      h ⟨base + 204, [.col (base + 203), .col (base + 55), .col (base + 56), .col (base + 57)], 4⟩
         (by simp [rotV3SitesAt])
-  have h19 : env.loc (base + 199) = hash [env.loc (base + 198), env.loc (base + 58), env.loc (base + 59), env.loc (base + 60)] := by
+  have h19 : env.loc (base + 205) = hash [env.loc (base + 204), env.loc (base + 58), env.loc (base + 59), env.loc (base + 60)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 199, [.col (base + 198), .col (base + 58), .col (base + 59), .col (base + 60)], 4⟩
+      h ⟨base + 205, [.col (base + 204), .col (base + 58), .col (base + 59), .col (base + 60)], 4⟩
         (by simp [rotV3SitesAt])
-  have h20 : env.loc (base + 200) = hash [env.loc (base + 199), env.loc (base + 61), env.loc (base + 62), env.loc (base + 63)] := by
+  have h20 : env.loc (base + 206) = hash [env.loc (base + 205), env.loc (base + 61), env.loc (base + 62), env.loc (base + 63)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 200, [.col (base + 199), .col (base + 61), .col (base + 62), .col (base + 63)], 4⟩
+      h ⟨base + 206, [.col (base + 205), .col (base + 61), .col (base + 62), .col (base + 63)], 4⟩
         (by simp [rotV3SitesAt])
-  have h21 : env.loc (base + 201) = hash [env.loc (base + 200), env.loc (base + 64), env.loc (base + 65), env.loc (base + 66)] := by
+  have h21 : env.loc (base + 207) = hash [env.loc (base + 206), env.loc (base + 64), env.loc (base + 65), env.loc (base + 66)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 201, [.col (base + 200), .col (base + 64), .col (base + 65), .col (base + 66)], 4⟩
+      h ⟨base + 207, [.col (base + 206), .col (base + 64), .col (base + 65), .col (base + 66)], 4⟩
         (by simp [rotV3SitesAt])
-  have h22 : env.loc (base + 202) = hash [env.loc (base + 201), env.loc (base + 67), env.loc (base + 68), env.loc (base + 69)] := by
+  have h22 : env.loc (base + 208) = hash [env.loc (base + 207), env.loc (base + 67), env.loc (base + 68), env.loc (base + 69)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 202, [.col (base + 201), .col (base + 67), .col (base + 68), .col (base + 69)], 4⟩
+      h ⟨base + 208, [.col (base + 207), .col (base + 67), .col (base + 68), .col (base + 69)], 4⟩
         (by simp [rotV3SitesAt])
-  have h23 : env.loc (base + 203) = hash [env.loc (base + 202), env.loc (base + 70), env.loc (base + 71), env.loc (base + 72)] := by
+  have h23 : env.loc (base + 209) = hash [env.loc (base + 208), env.loc (base + 70), env.loc (base + 71), env.loc (base + 72)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 203, [.col (base + 202), .col (base + 70), .col (base + 71), .col (base + 72)], 4⟩
+      h ⟨base + 209, [.col (base + 208), .col (base + 70), .col (base + 71), .col (base + 72)], 4⟩
         (by simp [rotV3SitesAt])
-  have h24 : env.loc (base + 204) = hash [env.loc (base + 203), env.loc (base + 73), env.loc (base + 74), env.loc (base + 75)] := by
+  have h24 : env.loc (base + 210) = hash [env.loc (base + 209), env.loc (base + 73), env.loc (base + 74), env.loc (base + 75)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 204, [.col (base + 203), .col (base + 73), .col (base + 74), .col (base + 75)], 4⟩
+      h ⟨base + 210, [.col (base + 209), .col (base + 73), .col (base + 74), .col (base + 75)], 4⟩
         (by simp [rotV3SitesAt])
-  have h25 : env.loc (base + 205) = hash [env.loc (base + 204), env.loc (base + 76), env.loc (base + 77), env.loc (base + 78)] := by
+  have h25 : env.loc (base + 211) = hash [env.loc (base + 210), env.loc (base + 76), env.loc (base + 77), env.loc (base + 78)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 205, [.col (base + 204), .col (base + 76), .col (base + 77), .col (base + 78)], 4⟩
+      h ⟨base + 211, [.col (base + 210), .col (base + 76), .col (base + 77), .col (base + 78)], 4⟩
         (by simp [rotV3SitesAt])
-  have h26 : env.loc (base + 206) = hash [env.loc (base + 205), env.loc (base + 79), env.loc (base + 80), env.loc (base + 81)] := by
+  have h26 : env.loc (base + 212) = hash [env.loc (base + 211), env.loc (base + 79), env.loc (base + 80), env.loc (base + 81)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 206, [.col (base + 205), .col (base + 79), .col (base + 80), .col (base + 81)], 4⟩
+      h ⟨base + 212, [.col (base + 211), .col (base + 79), .col (base + 80), .col (base + 81)], 4⟩
         (by simp [rotV3SitesAt])
-  have h27 : env.loc (base + 207) = hash [env.loc (base + 206), env.loc (base + 82), env.loc (base + 83), env.loc (base + 84)] := by
+  have h27 : env.loc (base + 213) = hash [env.loc (base + 212), env.loc (base + 82), env.loc (base + 83), env.loc (base + 84)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 207, [.col (base + 206), .col (base + 82), .col (base + 83), .col (base + 84)], 4⟩
+      h ⟨base + 213, [.col (base + 212), .col (base + 82), .col (base + 83), .col (base + 84)], 4⟩
         (by simp [rotV3SitesAt])
-  have h28 : env.loc (base + 208) = hash [env.loc (base + 207), env.loc (base + 85), env.loc (base + 86), env.loc (base + 87)] := by
+  have h28 : env.loc (base + 214) = hash [env.loc (base + 213), env.loc (base + 85), env.loc (base + 86), env.loc (base + 87)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 208, [.col (base + 207), .col (base + 85), .col (base + 86), .col (base + 87)], 4⟩
+      h ⟨base + 214, [.col (base + 213), .col (base + 85), .col (base + 86), .col (base + 87)], 4⟩
         (by simp [rotV3SitesAt])
-  have h29 : env.loc (base + 209) = hash [env.loc (base + 208), env.loc (base + 88), env.loc (base + 89), env.loc (base + 90)] := by
+  have h29 : env.loc (base + 215) = hash [env.loc (base + 214), env.loc (base + 88), env.loc (base + 89), env.loc (base + 90)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 209, [.col (base + 208), .col (base + 88), .col (base + 89), .col (base + 90)], 4⟩
+      h ⟨base + 215, [.col (base + 214), .col (base + 88), .col (base + 89), .col (base + 90)], 4⟩
         (by simp [rotV3SitesAt])
-  have h30 : env.loc (base + 210) = hash [env.loc (base + 209), env.loc (base + 91), env.loc (base + 92), env.loc (base + 93)] := by
+  have h30 : env.loc (base + 216) = hash [env.loc (base + 215), env.loc (base + 91), env.loc (base + 92), env.loc (base + 93)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 210, [.col (base + 209), .col (base + 91), .col (base + 92), .col (base + 93)], 4⟩
+      h ⟨base + 216, [.col (base + 215), .col (base + 91), .col (base + 92), .col (base + 93)], 4⟩
         (by simp [rotV3SitesAt])
-  have h31 : env.loc (base + 211) = hash [env.loc (base + 210), env.loc (base + 94), env.loc (base + 95), env.loc (base + 96)] := by
+  have h31 : env.loc (base + 217) = hash [env.loc (base + 216), env.loc (base + 94), env.loc (base + 95), env.loc (base + 96)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 211, [.col (base + 210), .col (base + 94), .col (base + 95), .col (base + 96)], 4⟩
+      h ⟨base + 217, [.col (base + 216), .col (base + 94), .col (base + 95), .col (base + 96)], 4⟩
         (by simp [rotV3SitesAt])
-  have h32 : env.loc (base + 212) = hash [env.loc (base + 211), env.loc (base + 97), env.loc (base + 98), env.loc (base + 99)] := by
+  have h32 : env.loc (base + 218) = hash [env.loc (base + 217), env.loc (base + 97), env.loc (base + 98), env.loc (base + 99)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 212, [.col (base + 211), .col (base + 97), .col (base + 98), .col (base + 99)], 4⟩
+      h ⟨base + 218, [.col (base + 217), .col (base + 97), .col (base + 98), .col (base + 99)], 4⟩
         (by simp [rotV3SitesAt])
-  have h33 : env.loc (base + 213) = hash [env.loc (base + 212), env.loc (base + 100), env.loc (base + 101), env.loc (base + 102)] := by
+  have h33 : env.loc (base + 219) = hash [env.loc (base + 218), env.loc (base + 100), env.loc (base + 101), env.loc (base + 102)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 213, [.col (base + 212), .col (base + 100), .col (base + 101), .col (base + 102)], 4⟩
+      h ⟨base + 219, [.col (base + 218), .col (base + 100), .col (base + 101), .col (base + 102)], 4⟩
         (by simp [rotV3SitesAt])
-  have h34 : env.loc (base + 214) = hash [env.loc (base + 213), env.loc (base + 103), env.loc (base + 104), env.loc (base + 105)] := by
+  have h34 : env.loc (base + 220) = hash [env.loc (base + 219), env.loc (base + 103), env.loc (base + 104), env.loc (base + 105)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 214, [.col (base + 213), .col (base + 103), .col (base + 104), .col (base + 105)], 4⟩
+      h ⟨base + 220, [.col (base + 219), .col (base + 103), .col (base + 104), .col (base + 105)], 4⟩
         (by simp [rotV3SitesAt])
-  have h35 : env.loc (base + 215) = hash [env.loc (base + 214), env.loc (base + 106), env.loc (base + 107), env.loc (base + 108)] := by
+  have h35 : env.loc (base + 221) = hash [env.loc (base + 220), env.loc (base + 106), env.loc (base + 107), env.loc (base + 108)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 215, [.col (base + 214), .col (base + 106), .col (base + 107), .col (base + 108)], 4⟩
+      h ⟨base + 221, [.col (base + 220), .col (base + 106), .col (base + 107), .col (base + 108)], 4⟩
         (by simp [rotV3SitesAt])
-  have h36 : env.loc (base + 216) = hash [env.loc (base + 215), env.loc (base + 109), env.loc (base + 110), env.loc (base + 111)] := by
+  have h36 : env.loc (base + 222) = hash [env.loc (base + 221), env.loc (base + 109), env.loc (base + 110), env.loc (base + 111)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 216, [.col (base + 215), .col (base + 109), .col (base + 110), .col (base + 111)], 4⟩
+      h ⟨base + 222, [.col (base + 221), .col (base + 109), .col (base + 110), .col (base + 111)], 4⟩
         (by simp [rotV3SitesAt])
-  have h37 : env.loc (base + 217) = hash [env.loc (base + 216), env.loc (base + 112), env.loc (base + 113), env.loc (base + 114)] := by
+  have h37 : env.loc (base + 223) = hash [env.loc (base + 222), env.loc (base + 112), env.loc (base + 113), env.loc (base + 114)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 217, [.col (base + 216), .col (base + 112), .col (base + 113), .col (base + 114)], 4⟩
+      h ⟨base + 223, [.col (base + 222), .col (base + 112), .col (base + 113), .col (base + 114)], 4⟩
         (by simp [rotV3SitesAt])
-  have h38 : env.loc (base + 218) = hash [env.loc (base + 217), env.loc (base + 115), env.loc (base + 116), env.loc (base + 117)] := by
+  have h38 : env.loc (base + 224) = hash [env.loc (base + 223), env.loc (base + 115), env.loc (base + 116), env.loc (base + 117)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 218, [.col (base + 217), .col (base + 115), .col (base + 116), .col (base + 117)], 4⟩
+      h ⟨base + 224, [.col (base + 223), .col (base + 115), .col (base + 116), .col (base + 117)], 4⟩
         (by simp [rotV3SitesAt])
-  have h39 : env.loc (base + 219) = hash [env.loc (base + 218), env.loc (base + 118), env.loc (base + 119), env.loc (base + 120)] := by
+  have h39 : env.loc (base + 225) = hash [env.loc (base + 224), env.loc (base + 118), env.loc (base + 119), env.loc (base + 120)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 219, [.col (base + 218), .col (base + 118), .col (base + 119), .col (base + 120)], 4⟩
+      h ⟨base + 225, [.col (base + 224), .col (base + 118), .col (base + 119), .col (base + 120)], 4⟩
         (by simp [rotV3SitesAt])
-  have h40 : env.loc (base + 220) = hash [env.loc (base + 219), env.loc (base + 121), env.loc (base + 122), env.loc (base + 123)] := by
+  have h40 : env.loc (base + 226) = hash [env.loc (base + 225), env.loc (base + 121), env.loc (base + 122), env.loc (base + 123)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 220, [.col (base + 219), .col (base + 121), .col (base + 122), .col (base + 123)], 4⟩
+      h ⟨base + 226, [.col (base + 225), .col (base + 121), .col (base + 122), .col (base + 123)], 4⟩
         (by simp [rotV3SitesAt])
-  have h41 : env.loc (base + 221) = hash [env.loc (base + 220), env.loc (base + 124), env.loc (base + 125), env.loc (base + 126)] := by
+  have h41 : env.loc (base + 227) = hash [env.loc (base + 226), env.loc (base + 124), env.loc (base + 125), env.loc (base + 126)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 221, [.col (base + 220), .col (base + 124), .col (base + 125), .col (base + 126)], 4⟩
+      h ⟨base + 227, [.col (base + 226), .col (base + 124), .col (base + 125), .col (base + 126)], 4⟩
         (by simp [rotV3SitesAt])
-  have h42 : env.loc (base + 222) = hash [env.loc (base + 221), env.loc (base + 127), env.loc (base + 128), env.loc (base + 129)] := by
+  have h42 : env.loc (base + 228) = hash [env.loc (base + 227), env.loc (base + 127), env.loc (base + 128), env.loc (base + 129)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 222, [.col (base + 221), .col (base + 127), .col (base + 128), .col (base + 129)], 4⟩
+      h ⟨base + 228, [.col (base + 227), .col (base + 127), .col (base + 128), .col (base + 129)], 4⟩
         (by simp [rotV3SitesAt])
-  have h43 : env.loc (base + 223) = hash [env.loc (base + 222), env.loc (base + 130), env.loc (base + 131), env.loc (base + 132)] := by
+  have h43 : env.loc (base + 229) = hash [env.loc (base + 228), env.loc (base + 130), env.loc (base + 131), env.loc (base + 132)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 223, [.col (base + 222), .col (base + 130), .col (base + 131), .col (base + 132)], 4⟩
+      h ⟨base + 229, [.col (base + 228), .col (base + 130), .col (base + 131), .col (base + 132)], 4⟩
         (by simp [rotV3SitesAt])
-  have h44 : env.loc (base + 224) = hash [env.loc (base + 223), env.loc (base + 133), env.loc (base + 134), env.loc (base + 135)] := by
+  have h44 : env.loc (base + 230) = hash [env.loc (base + 229), env.loc (base + 133), env.loc (base + 134), env.loc (base + 135)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 224, [.col (base + 223), .col (base + 133), .col (base + 134), .col (base + 135)], 4⟩
+      h ⟨base + 230, [.col (base + 229), .col (base + 133), .col (base + 134), .col (base + 135)], 4⟩
         (by simp [rotV3SitesAt])
-  have h45 : env.loc (base + 225) = hash [env.loc (base + 224), env.loc (base + 136), env.loc (base + 137), env.loc (base + 138)] := by
+  have h45 : env.loc (base + 231) = hash [env.loc (base + 230), env.loc (base + 136), env.loc (base + 137), env.loc (base + 138)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 225, [.col (base + 224), .col (base + 136), .col (base + 137), .col (base + 138)], 4⟩
+      h ⟨base + 231, [.col (base + 230), .col (base + 136), .col (base + 137), .col (base + 138)], 4⟩
         (by simp [rotV3SitesAt])
-  have h46 : env.loc (base + 226) = hash [env.loc (base + 225), env.loc (base + 139), env.loc (base + 140), env.loc (base + 141)] := by
+  have h46 : env.loc (base + 232) = hash [env.loc (base + 231), env.loc (base + 139), env.loc (base + 140), env.loc (base + 141)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 226, [.col (base + 225), .col (base + 139), .col (base + 140), .col (base + 141)], 4⟩
+      h ⟨base + 232, [.col (base + 231), .col (base + 139), .col (base + 140), .col (base + 141)], 4⟩
         (by simp [rotV3SitesAt])
-  have h47 : env.loc (base + 227) = hash [env.loc (base + 226), env.loc (base + 142), env.loc (base + 143), env.loc (base + 144)] := by
+  have h47 : env.loc (base + 233) = hash [env.loc (base + 232), env.loc (base + 142), env.loc (base + 143), env.loc (base + 144)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 227, [.col (base + 226), .col (base + 142), .col (base + 143), .col (base + 144)], 4⟩
+      h ⟨base + 233, [.col (base + 232), .col (base + 142), .col (base + 143), .col (base + 144)], 4⟩
         (by simp [rotV3SitesAt])
-  have h48 : env.loc (base + 228) = hash [env.loc (base + 227), env.loc (base + 145), env.loc (base + 146), env.loc (base + 147)] := by
+  have h48 : env.loc (base + 234) = hash [env.loc (base + 233), env.loc (base + 145), env.loc (base + 146), env.loc (base + 147)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 228, [.col (base + 227), .col (base + 145), .col (base + 146), .col (base + 147)], 4⟩
+      h ⟨base + 234, [.col (base + 233), .col (base + 145), .col (base + 146), .col (base + 147)], 4⟩
         (by simp [rotV3SitesAt])
-  have h49 : env.loc (base + 229) = hash [env.loc (base + 228), env.loc (base + 148), env.loc (base + 149), env.loc (base + 150)] := by
+  have h49 : env.loc (base + 235) = hash [env.loc (base + 234), env.loc (base + 148), env.loc (base + 149), env.loc (base + 150)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 229, [.col (base + 228), .col (base + 148), .col (base + 149), .col (base + 150)], 4⟩
+      h ⟨base + 235, [.col (base + 234), .col (base + 148), .col (base + 149), .col (base + 150)], 4⟩
         (by simp [rotV3SitesAt])
-  have h50 : env.loc (base + 230) = hash [env.loc (base + 229), env.loc (base + 151), env.loc (base + 152), env.loc (base + 153)] := by
+  have h50 : env.loc (base + 236) = hash [env.loc (base + 235), env.loc (base + 151), env.loc (base + 152), env.loc (base + 153)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 230, [.col (base + 229), .col (base + 151), .col (base + 152), .col (base + 153)], 4⟩
+      h ⟨base + 236, [.col (base + 235), .col (base + 151), .col (base + 152), .col (base + 153)], 4⟩
         (by simp [rotV3SitesAt])
-  have h51 : env.loc (base + 231) = hash [env.loc (base + 230), env.loc (base + 154), env.loc (base + 155), env.loc (base + 156)] := by
+  have h51 : env.loc (base + 237) = hash [env.loc (base + 236), env.loc (base + 154), env.loc (base + 155), env.loc (base + 156)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 231, [.col (base + 230), .col (base + 154), .col (base + 155), .col (base + 156)], 4⟩
+      h ⟨base + 237, [.col (base + 236), .col (base + 154), .col (base + 155), .col (base + 156)], 4⟩
         (by simp [rotV3SitesAt])
-  have h52 : env.loc (base + 232) = hash [env.loc (base + 231), env.loc (base + 157), env.loc (base + 158), env.loc (base + 159)] := by
+  have h52 : env.loc (base + 238) = hash [env.loc (base + 237), env.loc (base + 157), env.loc (base + 158), env.loc (base + 159)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 232, [.col (base + 231), .col (base + 157), .col (base + 158), .col (base + 159)], 4⟩
+      h ⟨base + 238, [.col (base + 237), .col (base + 157), .col (base + 158), .col (base + 159)], 4⟩
         (by simp [rotV3SitesAt])
-  have h53 : env.loc (base + 233) = hash [env.loc (base + 232), env.loc (base + 160), env.loc (base + 161), env.loc (base + 162)] := by
+  have h53 : env.loc (base + 239) = hash [env.loc (base + 238), env.loc (base + 160), env.loc (base + 161), env.loc (base + 162)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 233, [.col (base + 232), .col (base + 160), .col (base + 161), .col (base + 162)], 4⟩
+      h ⟨base + 239, [.col (base + 238), .col (base + 160), .col (base + 161), .col (base + 162)], 4⟩
         (by simp [rotV3SitesAt])
-  have h54 : env.loc (base + 234) = hash [env.loc (base + 233), env.loc (base + 163), env.loc (base + 164), env.loc (base + 165)] := by
+  have h54 : env.loc (base + 240) = hash [env.loc (base + 239), env.loc (base + 163), env.loc (base + 164), env.loc (base + 165)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 234, [.col (base + 233), .col (base + 163), .col (base + 164), .col (base + 165)], 4⟩
+      h ⟨base + 240, [.col (base + 239), .col (base + 163), .col (base + 164), .col (base + 165)], 4⟩
         (by simp [rotV3SitesAt])
-  have h55 : env.loc (base + 235) = hash [env.loc (base + 234), env.loc (base + 166), env.loc (base + 167), env.loc (base + 168)] := by
+  have h55 : env.loc (base + 241) = hash [env.loc (base + 240), env.loc (base + 166), env.loc (base + 167), env.loc (base + 168)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 235, [.col (base + 234), .col (base + 166), .col (base + 167), .col (base + 168)], 4⟩
+      h ⟨base + 241, [.col (base + 240), .col (base + 166), .col (base + 167), .col (base + 168)], 4⟩
         (by simp [rotV3SitesAt])
-  have h56 : env.loc (base + 236) = hash [env.loc (base + 235), env.loc (base + 169), env.loc (base + 170), env.loc (base + 171)] := by
+  have h56 : env.loc (base + 242) = hash [env.loc (base + 241), env.loc (base + 169), env.loc (base + 170), env.loc (base + 171)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 236, [.col (base + 235), .col (base + 169), .col (base + 170), .col (base + 171)], 4⟩
+      h ⟨base + 242, [.col (base + 241), .col (base + 169), .col (base + 170), .col (base + 171)], 4⟩
         (by simp [rotV3SitesAt])
-  have h57 : env.loc (base + 237) = hash [env.loc (base + 236), env.loc (base + 172), env.loc (base + 173), env.loc (base + 174)] := by
+  have h57 : env.loc (base + 243) = hash [env.loc (base + 242), env.loc (base + 172), env.loc (base + 173), env.loc (base + 174)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 237, [.col (base + 236), .col (base + 172), .col (base + 173), .col (base + 174)], 4⟩
+      h ⟨base + 243, [.col (base + 242), .col (base + 172), .col (base + 173), .col (base + 174)], 4⟩
         (by simp [rotV3SitesAt])
-  have h58 : env.loc (base + 238) = hash [env.loc (base + 237), env.loc (base + 175), env.loc (base + 176), env.loc (base + 177)] := by
+  have h58 : env.loc (base + 244) = hash [env.loc (base + 243), env.loc (base + 175), env.loc (base + 176), env.loc (base + 177)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 238, [.col (base + 237), .col (base + 175), .col (base + 176), .col (base + 177)], 4⟩
+      h ⟨base + 244, [.col (base + 243), .col (base + 175), .col (base + 176), .col (base + 177)], 4⟩
         (by simp [rotV3SitesAt])
-  have h59 : env.loc (base + 179) = hash [env.loc (base + 238), env.loc (base + 178)] := by
+  have h59 : env.loc (base + 245) = hash [env.loc (base + 244), env.loc (base + 178), env.loc (base + 179), env.loc (base + 180)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
-      h ⟨base + 179, [.col (base + 238), .col (base + 178)], 2⟩
+      h ⟨base + 245, [.col (base + 244), .col (base + 178), .col (base + 179), .col (base + 180)], 4⟩
         (by simp [rotV3SitesAt])
-  rw [h59, h58, h57, h56, h55, h54, h53, h52, h51, h50, h49, h48, h47, h46, h45, h44, h43, h42, h41, h40, h39, h38, h37, h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26, h25, h24, h23, h22, h21, h20, h19, h18, h17, h16, h15, h14, h13, h12, h11, h10, h9, h8, h7, h6, h5, h4, h3, h2, h1, h0]
+  have h60 : env.loc (base + 246) = hash [env.loc (base + 245), env.loc (base + 181), env.loc (base + 182), env.loc (base + 183)] := by
+    simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
+      h ⟨base + 246, [.col (base + 245), .col (base + 181), .col (base + 182), .col (base + 183)], 4⟩
+        (by simp [rotV3SitesAt])
+  have h61 : env.loc (base + 185) = hash [env.loc (base + 246), env.loc (base + 184)] := by
+    simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
+      h ⟨base + 185, [.col (base + 246), .col (base + 184)], 2⟩
+        (by simp [rotV3SitesAt])
+  rw [h61, h60, h59, h58, h57, h56, h55, h54, h53, h52, h51, h50, h49, h48, h47, h46, h45, h44, h43, h42, h41, h40, h39, h38, h37, h36, h35, h34, h33, h32, h31, h30, h29, h28, h27, h26, h25, h24, h23, h22, h21, h20, h19, h18, h17, h16, h15, h14, h13, h12, h11, h10, h9, h8, h7, h6, h5, h4, h3, h2, h1, h0]
   rfl
 
 set_option maxHeartbeats 6400000 in
@@ -907,7 +950,8 @@ set_option maxHeartbeats 6400000 in
 compose into the chained caveat commitment of the row's OWN manifest block. -/
 theorem caveatV3SitesAt_pin (hash : List ℤ → ℤ) (env : VmRowEnv) (base : Nat)
     (h : ∀ s ∈ caveatV3SitesAt base, env.loc s.digestCol = hash (s.resolvedInputs env [])) :
-    env.loc (base + 38) = caveatCommit hash (manifestAt base env.loc) := by
+    env.loc (base + C_COMMIT) = caveatCommit hash (manifestAt base env.loc) := by
+  show env.loc (base + 38) = caveatCommit hash (manifestAt base env.loc)
   have h0 : env.loc (base + 29) = hash [env.loc (base + 0), env.loc (base + 1),
       env.loc (base + 2), env.loc (base + 3)] := by
     simpa [VmHashSite.resolvedInputs, HashInput.resolve] using
@@ -980,13 +1024,13 @@ commitment of the row's OWN limbs. -/
 theorem rotateV3_pins_commits (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (env : VmRowEnv) (isFirst isLast : Bool)
     (h : satisfiedVm hash (rotateV3 d) env isFirst isLast) :
-    env.loc (d.traceWidth + 179)
-      = wireCommitR hash (preLimbsAt d.traceWidth env.loc) (env.loc (d.traceWidth + 178))
-    ∧ env.loc (d.traceWidth + 239 + 179)
-      = wireCommitR hash (preLimbsAt (d.traceWidth + 239) env.loc)
-          (env.loc (d.traceWidth + 239 + 178))
-    ∧ env.loc (d.traceWidth + 478 + 38)
-      = caveatCommit hash (manifestAt (d.traceWidth + 478) env.loc) := by
+    env.loc (d.traceWidth + B_STATE_COMMIT)
+      = wireCommitR hash (preLimbsAt d.traceWidth env.loc) (env.loc (d.traceWidth + B_IROOT))
+    ∧ env.loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
+      = wireCommitR hash (preLimbsAt (d.traceWidth + B_SPAN) env.loc)
+          (env.loc (d.traceWidth + B_SPAN + B_IROOT))
+    ∧ env.loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+      = caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) env.loc) := by
   have hsites := h.2.1
   have heq := go_colOnly_mem hash env [] _ hsites
   have hmem : ∀ s ∈ rotV3Appendix d.traceWidth, s ∈ (rotateV3 d).hashSites :=
@@ -995,10 +1039,10 @@ theorem rotateV3_pins_commits (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
   · exact rotV3SitesAt_pin hash env d.traceWidth fun s hs =>
       heq s (hmem s (List.mem_append_left _ (List.mem_append_left _ hs)))
         (rotV3SitesAt_colOnly _ s hs)
-  · exact rotV3SitesAt_pin hash env (d.traceWidth + 239) fun s hs =>
+  · exact rotV3SitesAt_pin hash env (d.traceWidth + B_SPAN) fun s hs =>
       heq s (hmem s (List.mem_append_left _ (List.mem_append_right _ hs)))
         (rotV3SitesAt_colOnly _ s hs)
-  · exact caveatV3SitesAt_pin hash env (d.traceWidth + 478) fun s hs =>
+  · exact caveatV3SitesAt_pin hash env (d.traceWidth + CAVEAT_REGION_OFF) fun s hs =>
       heq s (hmem s (List.mem_append_right _ hs)) (caveatV3SitesAt_colOnly _ s hs)
 
 /-- A weld of the rotated descriptor holds on every satisfying TRANSITION row (`isLast = false`).
@@ -1009,7 +1053,7 @@ theorem rotateV3_weld (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (h : satisfiedVm hash (rotateV3 d) env isFirst isLast)
     {a b : Nat}
     (hw : colEq a b ∈ weldsAt d.traceWidth STATE_BEFORE_BASE
-        ∨ colEq a b ∈ weldsAt (d.traceWidth + 239) STATE_AFTER_BASE) :
+        ∨ colEq a b ∈ weldsAt (d.traceWidth + B_SPAN) STATE_AFTER_BASE) :
     env.loc a ≡ env.loc b [ZMOD 2013265921] := by
   have hc := h.1 (colEq a b) (List.mem_append_right _ (by
     rcases hw with hw | hw
@@ -1026,9 +1070,9 @@ theorem rotateV3_welds_named (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     env.loc (d.traceWidth + 1) ≡ env.loc (sbCol state.BALANCE_LO) [ZMOD 2013265921]
     ∧ env.loc (d.traceWidth + 2) ≡ env.loc (sbCol state.NONCE) [ZMOD 2013265921]
     ∧ env.loc (d.traceWidth + B_CAP_ROOT) ≡ env.loc (sbCol state.CAP_ROOT) [ZMOD 2013265921]
-    ∧ env.loc (d.traceWidth + 239 + 1) ≡ env.loc (saCol state.BALANCE_LO) [ZMOD 2013265921]
-    ∧ env.loc (d.traceWidth + 239 + 2) ≡ env.loc (saCol state.NONCE) [ZMOD 2013265921]
-    ∧ env.loc (d.traceWidth + 239 + B_CAP_ROOT) ≡ env.loc (saCol state.CAP_ROOT) [ZMOD 2013265921] := by
+    ∧ env.loc (d.traceWidth + B_SPAN + 1) ≡ env.loc (saCol state.BALANCE_LO) [ZMOD 2013265921]
+    ∧ env.loc (d.traceWidth + B_SPAN + 2) ≡ env.loc (saCol state.NONCE) [ZMOD 2013265921]
+    ∧ env.loc (d.traceWidth + B_SPAN + B_CAP_ROOT) ≡ env.loc (saCol state.CAP_ROOT) [ZMOD 2013265921] := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact rotateV3_weld hash d env isFirst isLast hlast h (Or.inl (by simp [weldsAt, sbCol]))
   · exact rotateV3_weld hash d env isFirst isLast hlast h (Or.inl (by simp [weldsAt, sbCol]))
@@ -1138,14 +1182,14 @@ theorem rotV3_pins (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ) (
     (hgrad : graduable d = true)
     (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
-    (envAt t i).loc (d.traceWidth + 179)
+    (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
       = wireCommitR hash (preLimbsAt d.traceWidth (envAt t i).loc)
-          ((envAt t i).loc (d.traceWidth + 178))
-    ∧ (envAt t i).loc (d.traceWidth + 239 + 179)
-      = wireCommitR hash (preLimbsAt (d.traceWidth + 239) (envAt t i).loc)
-          ((envAt t i).loc (d.traceWidth + 239 + 178))
-    ∧ (envAt t i).loc (d.traceWidth + 478 + 38)
-      = caveatCommit hash (manifestAt (d.traceWidth + 478) (envAt t i).loc) :=
+          ((envAt t i).loc (d.traceWidth + B_IROOT))
+    ∧ (envAt t i).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
+      = wireCommitR hash (preLimbsAt (d.traceWidth + B_SPAN) (envAt t i).loc)
+          ((envAt t i).loc (d.traceWidth + B_SPAN + B_IROOT))
+    ∧ (envAt t i).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+      = caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t i).loc) :=
   rotateV3_pins_commits hash d _ _ _
     (satisfied2Faithful_satisfiedVm permOut hash (rotateV3 d) minit mfin maddrs t
       (graduable_rotateV3 hgrad) hf i hi)
@@ -1160,11 +1204,11 @@ theorem rotV3_publishes (permOut : List ℤ → List ℤ) (hash : List ℤ → �
     ((i == 0) = true →
       (envAt t i).loc (d.traceWidth + B_STATE_COMMIT) ≡ (envAt t i).pub d.piCount [ZMOD 2013265921])
     ∧ ((i + 1 == t.rows.length) = true →
-      (envAt t i).loc (d.traceWidth + 239 + B_STATE_COMMIT)
+      (envAt t i).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
           ≡ (envAt t i).pub (d.piCount + 1) [ZMOD 2013265921]
-      ∧ (envAt t i).loc (d.traceWidth + 239 + B_COMMITTED_HEIGHT)
+      ∧ (envAt t i).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT)
           ≡ (envAt t i).pub (d.piCount + 2) [ZMOD 2013265921]
-      ∧ (envAt t i).loc (d.traceWidth + 478 + C_COMMIT)
+      ∧ (envAt t i).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
           ≡ (envAt t i).pub (d.piCount + 3) [ZMOD 2013265921]) := by
   have h := satisfied2Faithful_satisfiedVm permOut hash (rotateV3 d) minit mfin maddrs t
     (graduable_rotateV3 hgrad) hf i hi
@@ -1172,11 +1216,11 @@ theorem rotV3_publishes (permOut : List ℤ → List ℤ) (hash : List ℤ → �
     fun c hc => List.mem_append_right _ (List.mem_append_right _ hc)
   have h0 := h.1 _ (hmem (.piBinding .first (d.traceWidth + B_STATE_COMMIT) d.piCount)
     (by simp [rotPins]))
-  have h1 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 239 + B_STATE_COMMIT)
+  have h1 := h.1 _ (hmem (.piBinding .last (d.traceWidth + B_SPAN + B_STATE_COMMIT)
     (d.piCount + 1)) (by simp [rotPins]))
-  have h2 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 239 + B_COMMITTED_HEIGHT)
+  have h2 := h.1 _ (hmem (.piBinding .last (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT)
     (d.piCount + 2)) (by simp [rotPins]))
-  have h3 := h.1 _ (hmem (.piBinding .last (d.traceWidth + 478 + C_COMMIT) (d.piCount + 3))
+  have h3 := h.1 _ (hmem (.piBinding .last (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) (d.piCount + 3))
     (by simp [rotPins]))
   simp only [VmConstraint.holdsVm] at h0 h1 h2 h3
   exact ⟨h0, fun hl => ⟨h1 hl, h2 hl, h3 hl⟩⟩
@@ -1210,26 +1254,26 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
         ∧ (envAt t i).loc (d.traceWidth + B_STATE_COMMIT) < 2013265921)
     (hcCanonOld' : 0 ≤ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT)
         ∧ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT) < 2013265921)
-    (hcCanonNew : 0 ≤ (envAt t k).loc (d.traceWidth + 239 + B_STATE_COMMIT)
-        ∧ (envAt t k).loc (d.traceWidth + 239 + B_STATE_COMMIT) < 2013265921)
-    (hcCanonNew' : 0 ≤ (envAt t' l).loc (d.traceWidth + 239 + B_STATE_COMMIT)
-        ∧ (envAt t' l).loc (d.traceWidth + 239 + B_STATE_COMMIT) < 2013265921)
+    (hcCanonNew : 0 ≤ (envAt t k).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
+        ∧ (envAt t k).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT) < 2013265921)
+    (hcCanonNew' : 0 ≤ (envAt t' l).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
+        ∧ (envAt t' l).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT) < 2013265921)
     (hhCanon : 0 ≤ (envAt t k).pub (d.piCount + 2)
         ∧ (envAt t k).pub (d.piCount + 2) < 2013265921)
     (hhCanon' : 0 ≤ (envAt t' l).pub (d.piCount + 2)
         ∧ (envAt t' l).pub (d.piCount + 2) < 2013265921)
-    (hcCanonCav : 0 ≤ (envAt t k).loc (d.traceWidth + 478 + C_COMMIT)
-        ∧ (envAt t k).loc (d.traceWidth + 478 + C_COMMIT) < 2013265921)
-    (hcCanonCav' : 0 ≤ (envAt t' l).loc (d.traceWidth + 478 + C_COMMIT)
-        ∧ (envAt t' l).loc (d.traceWidth + 478 + C_COMMIT) < 2013265921) :
+    (hcCanonCav : 0 ≤ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        ∧ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) < 2013265921)
+    (hcCanonCav' : 0 ≤ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        ∧ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) < 2013265921) :
     (preLimbsAt d.traceWidth (envAt t i).loc = preLimbsAt d.traceWidth (envAt t' j).loc
-      ∧ (envAt t i).loc (d.traceWidth + 178) = (envAt t' j).loc (d.traceWidth + 178))
-    ∧ (preLimbsAt (d.traceWidth + 239) (envAt t k).loc
-        = preLimbsAt (d.traceWidth + 239) (envAt t' l).loc
-      ∧ (envAt t k).loc (d.traceWidth + 239 + 178) = (envAt t' l).loc (d.traceWidth + 239 + 178)
+      ∧ (envAt t i).loc (d.traceWidth + B_IROOT) = (envAt t' j).loc (d.traceWidth + B_IROOT))
+    ∧ (preLimbsAt (d.traceWidth + B_SPAN) (envAt t k).loc
+        = preLimbsAt (d.traceWidth + B_SPAN) (envAt t' l).loc
+      ∧ (envAt t k).loc (d.traceWidth + B_SPAN + B_IROOT) = (envAt t' l).loc (d.traceWidth + B_SPAN + B_IROOT)
       ∧ (envAt t k).pub (d.piCount + 2) = (envAt t' l).pub (d.piCount + 2))
-    ∧ manifestAt (d.traceWidth + 478) (envAt t k).loc
-        = manifestAt (d.traceWidth + 478) (envAt t' l).loc := by
+    ∧ manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc
+        = manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc := by
   have hp := rotV3_pins permOut hash d minit mfin maddrs t hgrad hf
   have hp' := rotV3_pins permOut hash d minit' mfin' maddrs' t' hgrad hf'
   have hq := rotV3_publishes permOut hash d minit mfin maddrs t hgrad hf
@@ -1248,9 +1292,9 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
           _ = (envAt t' j).pub d.piCount := hpubOld
           _ ≡ (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT) [ZMOD 2013265921] := hc'.symm)
     have hwire : wireCommitR hash (preLimbsAt d.traceWidth (envAt t i).loc)
-        ((envAt t i).loc (d.traceWidth + 178))
+        ((envAt t i).loc (d.traceWidth + B_IROOT))
         = wireCommitR hash (preLimbsAt d.traceWidth (envAt t' j).loc)
-            ((envAt t' j).loc (d.traceWidth + 178)) := by
+            ((envAt t' j).loc (d.traceWidth + B_IROOT)) := by
       rw [← (hp i hi).1, ← (hp' j hj).1]
       show (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
         = (envAt t' j).loc (d.traceWidth + B_STATE_COMMIT)
@@ -1260,49 +1304,49 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
   · -- the after block, via the last-row pins
     obtain ⟨hc, hh, -⟩ := (hq k hk).2 hlast
     obtain ⟨hc', hh', -⟩ := (hq' l hl).2 hlast'
-    have hcEq : (envAt t k).loc (d.traceWidth + 239 + B_STATE_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + 239 + B_STATE_COMMIT) :=
+    have hcEq : (envAt t k).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
+        = (envAt t' l).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT) :=
       canon_eq_of_modEq hcCanonNew hcCanonNew'
-        (calc (envAt t k).loc (d.traceWidth + 239 + B_STATE_COMMIT)
+        (calc (envAt t k).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
               ≡ (envAt t k).pub (d.piCount + 1) [ZMOD 2013265921] := hc
           _ = (envAt t' l).pub (d.piCount + 1) := hpubNew
-          _ ≡ (envAt t' l).loc (d.traceWidth + 239 + B_STATE_COMMIT) [ZMOD 2013265921] := hc'.symm)
-    have hwire : wireCommitR hash (preLimbsAt (d.traceWidth + 239) (envAt t k).loc)
-        ((envAt t k).loc (d.traceWidth + 239 + 178))
-        = wireCommitR hash (preLimbsAt (d.traceWidth + 239) (envAt t' l).loc)
-            ((envAt t' l).loc (d.traceWidth + 239 + 178)) := by
+          _ ≡ (envAt t' l).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT) [ZMOD 2013265921] := hc'.symm)
+    have hwire : wireCommitR hash (preLimbsAt (d.traceWidth + B_SPAN) (envAt t k).loc)
+        ((envAt t k).loc (d.traceWidth + B_SPAN + B_IROOT))
+        = wireCommitR hash (preLimbsAt (d.traceWidth + B_SPAN) (envAt t' l).loc)
+            ((envAt t' l).loc (d.traceWidth + B_SPAN + B_IROOT)) := by
       rw [← (hp k hk).2.1, ← (hp' l hl).2.1]
-      show (envAt t k).loc (d.traceWidth + 239 + B_STATE_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + 239 + B_STATE_COMMIT)
+      show (envAt t k).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
+        = (envAt t' l).loc (d.traceWidth + B_SPAN + B_STATE_COMMIT)
       exact hcEq
     obtain ⟨hpre, hir⟩ := wireCommitR_binds hash hCR
       (by rw [preLimbsAt_length, preLimbsAt_length]) hwire
     refine ⟨hpre, hir, ?_⟩
     -- the published heights agree: pub(pc+2)(k) ≡ loc(CH)(k) = loc(CH)(l) ≡ pub(pc+2)(l), lifted
     -- to ℤ by the PI-slot canonicality; the loc(CH) equality is the height limb of the bound block.
-    have hHtEq : (envAt t k).loc (d.traceWidth + 239 + B_COMMITTED_HEIGHT)
-        = (envAt t' l).loc (d.traceWidth + 239 + B_COMMITTED_HEIGHT) :=
+    have hHtEq : (envAt t k).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT)
+        = (envAt t' l).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT) :=
       congrArg (fun L => L.getD 31 0) hpre
     exact canon_eq_of_modEq hhCanon hhCanon'
       (calc (envAt t k).pub (d.piCount + 2)
-            ≡ (envAt t k).loc (d.traceWidth + 239 + B_COMMITTED_HEIGHT) [ZMOD 2013265921] := hh.symm
-        _ = (envAt t' l).loc (d.traceWidth + 239 + B_COMMITTED_HEIGHT) := hHtEq
+            ≡ (envAt t k).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT) [ZMOD 2013265921] := hh.symm
+        _ = (envAt t' l).loc (d.traceWidth + B_SPAN + B_COMMITTED_HEIGHT) := hHtEq
         _ ≡ (envAt t' l).pub (d.piCount + 2) [ZMOD 2013265921] := hh')
   · -- the caveat manifest, via the last-row pin
     obtain ⟨-, -, hk1⟩ := (hq k hk).2 hlast
     obtain ⟨-, -, hk2⟩ := (hq' l hl).2 hlast'
-    have hccEq : (envAt t k).loc (d.traceWidth + 478 + C_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + 478 + C_COMMIT) :=
+    have hccEq : (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        = (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) :=
       canon_eq_of_modEq hcCanonCav hcCanonCav'
-        (calc (envAt t k).loc (d.traceWidth + 478 + C_COMMIT)
+        (calc (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
               ≡ (envAt t k).pub (d.piCount + 3) [ZMOD 2013265921] := hk1
           _ = (envAt t' l).pub (d.piCount + 3) := hpubCav
-          _ ≡ (envAt t' l).loc (d.traceWidth + 478 + C_COMMIT) [ZMOD 2013265921] := hk2.symm)
-    have hcc : caveatCommit hash (manifestAt (d.traceWidth + 478) (envAt t k).loc)
-        = caveatCommit hash (manifestAt (d.traceWidth + 478) (envAt t' l).loc) := by
+          _ ≡ (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT) [ZMOD 2013265921] := hk2.symm)
+    have hcc : caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t k).loc)
+        = caveatCommit hash (manifestAt (d.traceWidth + CAVEAT_REGION_OFF) (envAt t' l).loc) := by
       rw [← (hp k hk).2.2, ← (hp' l hl).2.2]
-      show (envAt t k).loc (d.traceWidth + 478 + C_COMMIT)
-        = (envAt t' l).loc (d.traceWidth + 478 + C_COMMIT)
+      show (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
+        = (envAt t' l).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
       exact hccEq
     exact caveatCommit_binds hash hCR hcc
 
@@ -1472,9 +1516,9 @@ free to move before≠after and folds into the committed rotated state-commit. -
 cap accumulator's PRE root the membership-open + write-gate open against — note-spend-shaped, NOT col 65. -/
 def beforeCapRootCol (w : Nat) : Nat := w + B_CAP_ROOT
 
-/-- The rotated AFTER-block `cap_root` limb column (limb 25 of the after block at `base = w + 239`). The
+/-- The rotated AFTER-block `cap_root` limb column (limb 25 of the after block at `base = w + B_SPAN`). The
 deployed cap accumulator's POST root — the write-gate's `newRoot`, witness-carried (no v1-state continuity). -/
-def afterCapRootCol (w : Nat) : Nat := w + 239 + B_CAP_ROOT
+def afterCapRootCol (w : Nat) : Nat := w + B_SPAN + B_CAP_ROOT
 
 /-! ### v10 — the FAITHFUL 8-felt cap-root column GROUP + the native-`node8` write relation `writesTo8`.
 
@@ -1488,7 +1532,7 @@ binding (`recomposeUp8_binds_or_collides`): a forged high-felt post-root forces 
 unless the deployed chip collides at the two `node8` blocks the walk hands back. -/
 
 /-- The cap-root 8-felt column at lane `i` in the block based at `blockBase` (limb `B_CAP_ROOT` = 25 for
-lane 0; the seven completion limbs 52..58 for lanes 1..7). `blockBase = w` (BEFORE) / `w + 239` (AFTER). -/
+lane 0; the seven completion limbs 52..58 for lanes 1..7). `blockBase = w` (BEFORE) / `w + B_SPAN` (AFTER). -/
 def capRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
   blockBase + layoutGroupCol .cap i
 
@@ -1498,7 +1542,7 @@ def beforeCapRootCols (env : VmRowEnv) : Digest8 :=
 
 /-- The AFTER-block 8-felt cap-root digest read off the row env (lane 0 = `afterCapRootCol`). -/
 def afterCapRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- Lane 0 of the BEFORE group IS the existing scalar cap-root limb (the projection the scalar `writesTo`
 forces) — so the 8-felt relation REFINES the lane-0 write rather than replacing it. -/
@@ -1550,7 +1594,7 @@ def B_HEAP_ROOT : Nat := layoutGroupCol .heap 0
 def beforeHeapRootCol (w : Nat) : Nat := w + B_HEAP_ROOT
 
 /-- The AFTER-block scalar heap-root column. -/
-def afterHeapRootCol (w : Nat) : Nat := w + 239 + B_HEAP_ROOT
+def afterHeapRootCol (w : Nat) : Nat := w + B_SPAN + B_HEAP_ROOT
 
 /-- The heap-root 8-felt column at lane `i` in the block based at `blockBase` (limb `B_HEAP_ROOT` = 28 for
 lane 0; the seven completion limbs 59..65 for lanes 1..7 — the cap completions 52..58 shifted by 7). The
@@ -1564,7 +1608,7 @@ def beforeHeapRootCols (env : VmRowEnv) : Digest8 :=
 
 /-- The AFTER-block 8-felt heap-root digest read off the row env (lane 0 = `afterHeapRootCol`). -/
 def afterHeapRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (heapRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (heapRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-! ### `MapOp.root`/`newRoot` 8-felt groups (Phase H-HEAP-8 / the cap-analog emit widening).
 
@@ -1581,14 +1625,14 @@ completion limbs 52..58). -/
 def beforeCapRootGroup : Fin 8 → EmittedExpr := fun i => .var (capRootGroupCol EFFECT_VM_WIDTH i)
 
 /-- The AFTER-block cap-root 8-felt column group (lane 0 = `afterCapRootCol`). -/
-def afterCapRootGroup : Fin 8 → EmittedExpr := fun i => .var (capRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+def afterCapRootGroup : Fin 8 → EmittedExpr := fun i => .var (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- The BEFORE-block heap-root 8-felt column group (lane 0 = `beforeHeapRootCol`, lanes 1..7 the heap
 completion limbs 59..65). -/
 def beforeHeapRootGroup : Fin 8 → EmittedExpr := fun i => .var (heapRootGroupCol EFFECT_VM_WIDTH i)
 
 /-- The AFTER-block heap-root 8-felt column group (lane 0 = `afterHeapRootCol`). -/
-def afterHeapRootGroup : Fin 8 → EmittedExpr := fun i => .var (heapRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+def afterHeapRootGroup : Fin 8 → EmittedExpr := fun i => .var (heapRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- A not-yet-8-felt-welded root as a `MapOp` group: the scalar limb `col` carried across all 8
 lanes (denotation is lane 0; no after-spine keystone forces lanes 1..7 — the root stays ~31-bit
@@ -1656,14 +1700,14 @@ def beforeFieldsRootCols (env : VmRowEnv) : Digest8 :=
 
 /-- The AFTER-block 8-felt fields-root digest read off the row env (lane 0 at the AFTER block base). -/
 def afterFieldsRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (fieldsRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (fieldsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- The BEFORE-block fields-root 8-felt column group (lane 0 = limb 36, lanes 1..7 the fields completion
 limbs 66,67,19..23). -/
 def beforeFieldsRootGroup : Fin 8 → EmittedExpr := fun i => .var (fieldsRootGroupCol EFFECT_VM_WIDTH i)
 
 /-- The AFTER-block fields-root 8-felt column group (lane 0 at the AFTER block base). -/
-def afterFieldsRootGroup : Fin 8 → EmittedExpr := fun i => .var (fieldsRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+def afterFieldsRootGroup : Fin 8 → EmittedExpr := fun i => .var (fieldsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- Lane 0 of the BEFORE fields group IS the existing scalar fields-root limb (limb `B_FIELDS_ROOT`=36),
 the projection the scalar `writesTo` forces — the 8-felt relation REFINES the lane-0 write. -/
@@ -1673,7 +1717,7 @@ theorem beforeFieldsRootCols_lane0 (env : VmRowEnv) :
 
 /-- Lane 0 of the AFTER fields group IS the existing scalar post fields-root limb. -/
 theorem afterFieldsRootCols_lane0 (env : VmRowEnv) :
-    afterFieldsRootCols env 0 = env.loc (EFFECT_VM_WIDTH + 239 + B_FIELDS_ROOT) := by
+    afterFieldsRootCols env 0 = env.loc (EFFECT_VM_WIDTH + B_SPAN + B_FIELDS_ROOT) := by
   rfl
 
 /-! ### v11 — the FAITHFUL 8-felt ACCUMULATOR root column GROUPS (nullifier@26 · commitments@27 ·
@@ -1720,25 +1764,25 @@ def revokedRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
 def beforeNullifierRootGroup : Fin 8 → EmittedExpr :=
   fun i => .var (nullifierRootGroupCol EFFECT_VM_WIDTH i)
 def afterNullifierRootGroup : Fin 8 → EmittedExpr :=
-  fun i => .var (nullifierRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => .var (nullifierRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- The BEFORE/AFTER-block commitments-root 8-felt column groups (lane 0 = the scalar limb 27). -/
 def beforeCommitmentsRootGroup : Fin 8 → EmittedExpr :=
   fun i => .var (commitmentsRootGroupCol EFFECT_VM_WIDTH i)
 def afterCommitmentsRootGroup : Fin 8 → EmittedExpr :=
-  fun i => .var (commitmentsRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => .var (commitmentsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- The BEFORE/AFTER-block cells-root 8-felt column groups (lane 0 = the scalar limb 0). -/
 def beforeCellsRootGroup : Fin 8 → EmittedExpr :=
   fun i => .var (cellsRootGroupCol EFFECT_VM_WIDTH i)
 def afterCellsRootGroup : Fin 8 → EmittedExpr :=
-  fun i => .var (cellsRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => .var (cellsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- The BEFORE/AFTER-block revoked-root 8-felt column groups (lane 0 = the scalar limb 37). -/
 def beforeRevokedRootGroup : Fin 8 → EmittedExpr :=
   fun i => .var (revokedRootGroupCol EFFECT_VM_WIDTH i)
 def afterRevokedRootGroup : Fin 8 → EmittedExpr :=
-  fun i => .var (revokedRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => .var (revokedRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- Lane 0 of each accumulator group IS the existing scalar limb (the projection the scalar `writesTo`
 forces) — the 8-felt group REFINES the lane-0 write. -/
@@ -1758,19 +1802,19 @@ these committed groups (the assurance-case reads the consumer trio quantifies ov
 def beforeNullifierRootCols (env : VmRowEnv) : Digest8 :=
   fun i => env.loc (nullifierRootGroupCol EFFECT_VM_WIDTH i)
 def afterNullifierRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (nullifierRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (nullifierRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 def beforeCommitmentsRootCols (env : VmRowEnv) : Digest8 :=
   fun i => env.loc (commitmentsRootGroupCol EFFECT_VM_WIDTH i)
 def afterCommitmentsRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (commitmentsRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (commitmentsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 def beforeCellsRootCols (env : VmRowEnv) : Digest8 :=
   fun i => env.loc (cellsRootGroupCol EFFECT_VM_WIDTH i)
 def afterCellsRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (cellsRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (cellsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 def beforeRevokedRootCols (env : VmRowEnv) : Digest8 :=
   fun i => env.loc (revokedRootGroupCol EFFECT_VM_WIDTH i)
 def afterRevokedRootCols (env : VmRowEnv) : Digest8 :=
-  fun i => env.loc (revokedRootGroupCol (EFFECT_VM_WIDTH + 239) i)
+  fun i => env.loc (revokedRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i)
 
 /-- **`fieldsWritesTo8 S8 oldRoot k v newRoot`** — the native-`node8` fields-tree UPDATE-AT-KEY over the
 FULL 8-felt root: some sibling/direction `path` recomposes `oldRoot` from the fields leaf `(k, oldVal)`,
@@ -2093,8 +2137,8 @@ theorem epochBumpGate_forces (env : VmRowEnv) (isFirst isLast : Bool) (hlast : i
 /-- The rotated BEFORE-block `delegation_epoch` limb column (limb 30 of the before block at `base = w`). -/
 def beforeEpochCol (w : Nat) : Nat := w + B_EPOCH
 
-/-- The rotated AFTER-block `delegation_epoch` limb column (limb 30 of the after block at `base = w + 239`). -/
-def afterEpochCol (w : Nat) : Nat := w + 239 + B_EPOCH
+/-- The rotated AFTER-block `delegation_epoch` limb column (limb 30 of the after block at `base = w + B_SPAN`). -/
+def afterEpochCol (w : Nat) : Nat := w + B_SPAN + B_EPOCH
 
 /-- The rotated REVOKE-DELEGATION on the MOVING `revokeVmDescriptorGenuine` face (no `gCapPass` freeze) WITH
 the cap-crown circuit leg: held-membership read + the ZERO-value REMOVE-write (`removeWriteOp`, reused from
@@ -2243,10 +2287,12 @@ def customV3 : EffectVmDescriptor2 :=
     constraints := d.constraints ++ customPiExposure }
 
 -- The commit-teeth base is the PRE-TEETH graduated host width — byte-pinned to the Rust twin
--- (`trace_rotated::CUSTOM_COMMIT_TEETH_BASE = CUSTOM_HOST_WIDTH = 1619`) and to the widened
--- member geometry (host 1627 = 1619 + 4 commit teeth + 4 VK teeth).
-#guard CUSTOM_COMMIT_TEETH_COL == 1619
-#guard CUSTOM_VK_TEETH_COL == 1623
+-- (`trace_rotated::CUSTOM_COMMIT_TEETH_BASE = CUSTOM_HOST_WIDTH = 1663`) and to the widened
+-- member geometry (host 1671 = 1663 + 4 commit teeth + 4 VK teeth).
+-- ⚑ FLAG DAY 178 → 184: 1619 → 1663. `+16` from `APPENDIX_SPAN` (two blocks × 8 columns) and `+28`
+-- from graduation (the appendix gained 4 sites × 7 lane columns). The Rust twin MUST be re-pinned.
+#guard CUSTOM_COMMIT_TEETH_COL == 1663
+#guard CUSTOM_VK_TEETH_COL == 1667
 #guard customV3.traceWidth == CUSTOM_COMMIT_TEETH_COL + 8
 
 /-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).
@@ -2338,9 +2384,9 @@ sorted-Poseidon2 root the grow-gate opens against. -/
 def beforeNullifierRootCol (w : Nat) : Nat := w + 26
 
 /-- The rotated AFTER-block `nullifier_root` limb column (limb 26 of the after block at
-`base = traceWidth + 239`). The deployed nullifier accumulator's POST root — the grow-gate's
+`base = traceWidth + B_SPAN`). The deployed nullifier accumulator's POST root — the grow-gate's
 `newRoot`. -/
-def afterNullifierRootCol (w : Nat) : Nat := w + 239 + 26
+def afterNullifierRootCol (w : Nat) : Nat := w + B_SPAN + 26
 
 /-! ## §5.N — the noteSpend KERNEL-SET GROW-GATE (the deployment-real set-insert + double-spend
 tooth).
@@ -2622,9 +2668,9 @@ def COMMITMENT_KEY_PARAM_COL : Nat := prmCol 0
 def beforeCommitmentsRootCol (w : Nat) : Nat := w + B_COMMITMENTS_ROOT
 
 /-- The rotated AFTER-block `commitments_root` limb column (limb 27 of the after block at
-`base = traceWidth + 239`). The deployed commitments accumulator's POST root — the grow-gate's
+`base = traceWidth + B_SPAN`). The deployed commitments accumulator's POST root — the grow-gate's
 `newRoot`. -/
-def afterCommitmentsRootCol (w : Nat) : Nat := w + 239 + B_COMMITMENTS_ROOT
+def afterCommitmentsRootCol (w : Nat) : Nat := w + B_SPAN + B_COMMITMENTS_ROOT
 
 /-- **`rotateV3WithCommitmentKeyPin`** — `rotateV3` PLUS the fifth appended PI pin welding the note
 commitment (`prmCol 0`) to `ROT_COMMITMENT_KEY_PI = 38` on the FIRST row. Structurally identical to
@@ -2689,7 +2735,7 @@ theorem noteCreateV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
 #guard noteCreateV3.piCount == 47
 #guard (mapOpsOf noteCreateV3).length == 1
 #guard beforeCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 27
-#guard afterCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 27
+#guard afterCommitmentsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 27
 
 /-! ## §5.RV — the revoke REVOKED-SET GROW-GATE (the deployment-real revoked set-insert; hole #3).
 
@@ -2724,7 +2770,7 @@ def beforeRevokedRootCol (w : Nat) : Nat := w + B_REVOKED_ROOT
 
 /-- The rotated AFTER-block `revoked_root` scalar limb column (limb 37 of the after block) — the
 grow-gate's forced `newRoot` (hole #3: no longer a free producer witness). -/
-def afterRevokedRootCol (w : Nat) : Nat := w + 239 + B_REVOKED_ROOT
+def afterRevokedRootCol (w : Nat) : Nat := w + B_SPAN + B_REVOKED_ROOT
 
 /-- The NO-DOUBLE-REVOKE tooth: the revoked id (`param0`) is a NON-MEMBER of the BEFORE revoked tree
 (limb 37); an absent read leaves the root unchanged. -/
@@ -2790,7 +2836,7 @@ theorem revokeV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
 #guard revokedFreshOp.op.code == 2
 #guard REVOKED_KEY_PARAM_COL == 68
 #guard beforeRevokedRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 37
-#guard afterRevokedRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 37
+#guard afterRevokedRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 37
 -- Lane 0 of the revoked root group IS the scalar limb 37 (the projection the scalar writesTo forces).
 #guard revokedRootGroupCol EFFECT_VM_WIDTH 0 == EFFECT_VM_WIDTH + 37
 
@@ -2837,9 +2883,9 @@ sorted-Poseidon2 root the grow-gate opens against. -/
 def beforeCellsRootCol (w : Nat) : Nat := w + 0
 
 /-- The rotated AFTER-block `cells_root` limb column (limb 0 of the after block at
-`base = traceWidth + 239`). The deployed accounts accumulator's POST root — the grow-gate's
+`base = traceWidth + B_SPAN`). The deployed accounts accumulator's POST root — the grow-gate's
 `newRoot`. -/
-def afterCellsRootCol (w : Nat) : Nat := w + 239 + 0
+def afterCellsRootCol (w : Nat) : Nat := w + B_SPAN + 0
 
 /-- **`rotateV3WithNewCellKeyPin`** — `rotateV3` PLUS the fifth appended PI pin welding the
 new-cell key (column `keyCol`) to `ROT_NEW_CELL_KEY_PI = 38` on the FIRST row. Structurally identical
@@ -3224,63 +3270,95 @@ def permsVKCompletionOffs : List Nat :=
 def permsVKCompletionFreezes (w : Nat) : List VmConstraint :=
   permsVKCompletionOffs.map (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
 
-/-- **All 56 fields[0..7] completion-lane offsets** (`113..168`) — the eight flat fields' lanes 1..7
-of the `field_limbs8` split (`fields[j]` lanes 1..7 → `113 + 7·j .. +6`; lane 0 rides the welded limb
-`4 + j`). These previously-absent lanes carry the higher bytes of each 32-byte record field.
+/-- **The 8 completion lanes (1..8) of `fields[slot]`** — the written slot's window, projected
+through the verified layout's `Dregg2.Circuit.Emit.fieldLaneCol`, which is the SINGLE SOURCE for a
+fields lane column.
 
-⚠ **THIS DOCSTRING USED TO SAY "so the deployed state commitment binds ALL 32 bytes of every field
-(the v13 fields-octet grow closing the LAST degraded-felt residual)". THAT IS FALSE**, and it was the
-only false statement about the encoding anywhere in `metatheory/` (corrected 2026-07-30).
+⚑ **NEVER write `113 + 8·slot`.** The nonet is deliberately NON-CONTIGUOUS: lanes 1..7 keep their
+historical window `113 + 7·slot .. +6` (UNMOVED by the flag day, exactly like the `fields` root group
+already reuses headroom 19..23), and the NINTH lane of slot `j` is the flag-day column `176 + j`.
+`fieldLaneCol_nodup` (RotatedLayout) machine-checks that the 72 lane columns are pairwise distinct. -/
+def fieldsSlotLanes (slot : Fin 8) : List Nat :=
+  (List.finRange 8).map (fun l => fieldLaneCol slot l.succ)
 
-All 32 bytes are READ — the layout is exhaustive, no gap and no overlap. They are not BOUND. Eight
-lanes carry `8 · log₂ p = 247.26` bits against a 32-byte field's 256, so **no 8-lane encoding of 32
-bytes is injective under any chunking** — pigeonhole, independent of what the lanes carry.
+-- Slot 0's window: the historical seven, then the ninth lane at the first ex-pad column.
+#guard fieldsSlotLanes 0 == [113, 114, 115, 116, 117, 118, 119, 176]
+#guard fieldsSlotLanes 7 == [162, 163, 164, 165, 166, 167, 168, 183]
+#guard ((List.finRange 8).flatMap fieldsSlotLanes).length == 64
 
-Until 2026-07-30 it was worse than the deficit suggests: every Rust-side lane was `u32 % p`, and
-since `2p = 4026531842 < 2^32` every residue has at least two u32 preimages, so a colliding sibling
-was CONSTRUCTED by adding `p` to any 4-byte chunk, with no grind. Rust `field_limbs8` lanes 2..7 now
-carry the leading six felts of a Poseidon2 image over an injective 16 × u16-LE preimage of the whole
-value (lanes 0/1, the kernel u64 lane, are unchanged), so that constructed alias is gone and a
-collision costs the hash. The octet is still not injective and nothing here may call it faithful.
+/-- **All 64 fields[0..7] completion-lane offsets** — the eight flat fields' lanes 1..8 of the
+`field_limbs9` NONET (`fields[j]` lanes 1..7 → `113 + 7·j .. +6`, lane 8 → `176 + j`; lane 0 rides
+the welded limb `4 + j`). These lanes carry the higher bytes of each 32-byte record field.
 
-⚑ Note this is a claim about the DEPLOYED Rust projector, which `metatheory/` does not model: neither
-`field_limbs8` nor `bytes32_to_8_limbs` has a `def` here, and every setField capstone takes the
-encoder's effect as a HYPOTHESIS (`hval : env.loc (prmCol VALUE) = v`) rather than deriving it. So no
-theorem below is unsound and none needed retracting — the encoding step is simply outside the verified
-perimeter, and this docstring was the one place that reached past it. `32463e3cf`'s own commit message
-said so correctly while shipping this line.
+⚑ **FLAG DAY 2026-07-31 (56 → 64), and this is the point of the whole 178 → 184 bump.** The
+docstring here used to record a WOUND: eight lanes carry `8 · log₂ p = 247.26` bits against a 32-byte
+field's 256, so **no 8-lane encoding of 32 bytes is injective under any chunking** — pigeonhole,
+independent of what the lanes carry. Every earlier repair (an eight-way Horner fold, a `u32 % p`
+chunking, a Poseidon2 image over an injective preimage) moved the attacker's COST and never reached
+injectivity; the last priced out at a 2^92.7 collision. Since the `fields[0..7]` lanes are the only
+binding those fields have (they are excluded from the byte-exact authority residue —
+`cell/src/commitment.rs`, "bound by their own limbs"), the deficit reached
+`TurnReceipt::{pre,post}_state_hash`.
 
-The injective codec this should migrate onto already exists and is proved:
-`Dregg2/Circuit/CommitmentTreeWide.lean`'s `commitmentToLanes16` / `commitmentToLanes16_injective`
-(16 lanes × 16 bits, every lane `< 65536 < p`, so nothing reduces).
+**Nine lanes is the minimum and the encoder now exists**: `Dregg2.Circuit.FieldLanes9`'s
+`fieldToLanes9` is an EXPLICIT BIJECTION onto its image with a total decoder and a machine-checked
+left inverse (`lanes9ToField_fieldToLanes9`), so `fieldToLanes9_injective` is an injectivity theorem,
+not a hash bound. Lanes 0 and 1 are byte-identical to the old `field_limbs8` (the kernel u64 lane),
+so every weld constant, `setfield_encoder_window_gate` and every app encoder survives verbatim.
 
-An explicit literal list (like `permsVKCompletionOffs`) so the non-vacuity `fin_cases` discharge
-reduces. -/
+⚑ The residual that REMAINS: `metatheory/` still does not model the deployed Rust projector — neither
+`field_limbs9` nor `bytes32_to_9_limbs` has a `def` here, and every setField capstone takes the
+encoder's effect as a HYPOTHESIS (`hval : env.loc (prmCol VALUE) = v`) rather than deriving it. What
+this file supplies is the COLUMN geometry and the freeze/publish teeth over it; the Lean-side
+injectivity of the encoding lives in `FieldLanes9`, and `circuit/tests/field_lanes9_injective.rs`
+asserts the deployed Rust reproduces its Lean-COMPUTED vectors. The two are joined by that test, not
+by a theorem — say it at that resolution.
+
+An explicit list, in exactly `rotated184.fieldsOctet`'s order (the historical 56 first, then the
+eight ninth lanes), so the non-vacuity `fin_cases` discharges reduce and every pre-flag-day
+constraint keeps its emission position. -/
 def fieldsCompletionOffs : List Nat :=
   [113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128,
    129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144,
    145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160,
-   161, 162, 163, 164, 165, 166, 167, 168]
+   161, 162, 163, 164, 165, 166, 167, 168,
+   176, 177, 178, 179, 180, 181, 182, 183]
 
-/-- The 56 continuity `colEq` freezes welding each fields[0..7] completion lane BEFORE↔AFTER. For a
+-- ⚑ THE LITERAL IS THE VERIFIED LAYOUT'S, not a second copy that agrees today: this list is exactly
+-- `rotated184.fieldsOctet`, whose membership in a legal (disjoint, in-bounds) tiling is
+-- `native_decide`-checked in `RotatedLayout.lean`. A geometry change that forgets this list fails HERE.
+#guard fieldsCompletionOffs == rotated184.fieldsOctet
+#guard fieldsCompletionOffs.length == 64
+-- …and it is exactly the union of the eight per-slot windows (no lane orphaned, none invented).
+#guard fieldsCompletionOffs.all (fun off => ((List.finRange 8).flatMap fieldsSlotLanes).contains off)
+#guard ((List.finRange 8).flatMap fieldsSlotLanes).all (fun c => fieldsCompletionOffs.contains c)
+
+/-- The 64 continuity `colEq` freezes welding each fields[0..7] completion lane BEFORE↔AFTER. For a
 VALUE turn that does NOT write a flat field (transfer/burn/mint/bridgeMint/incrementNonce/emitEvent/
 noteSpend/…) EVERY flat field is UNCHANGED, so each completion lane is frozen — closing the GENTIAN
 fail-open for the fields halves (no unwelded wide-open completion can smuggle a forged higher-byte
-field into NEW_COMMIT during an innocuous value move). -/
+field into NEW_COMMIT during an innocuous value move). ⚑ The eight NINTH lanes are in this list, so
+the flag day widened the tooth rather than leaving eight new wide-open columns. -/
 def fieldsCompletionFreezes (w : Nat) : List VmConstraint :=
   fieldsCompletionOffs.map (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
 
-/-- The fields completion freezes EXCLUDING the written slot `slot`'s 7 lanes — setField[0..7]'s 49
-freezes (the SEVEN OTHER flat fields × 7 completion lanes each; the written slot's block is `113 + 7·slot
-.. +6`). The written slot's lane 0 is FORCED by `gFieldWriteP1`; its seven completion lanes 1..7 are the
-ONE named residual (the setField VALUE8 weld — forcing them to the declared value8 params — is the
-deliberately-gated follow-on). Freezing them here would be UNSOUND: a large-value write
-(`FieldElement = [u8;32]`) moves them off zero, and `colEq (before = after)` would reject the honest
-write. -/
+/-- The fields completion freezes EXCLUDING the written slot `slot`'s 8 lanes — setField[0..7]'s 56
+freezes (the SEVEN OTHER flat fields × 8 completion lanes each). The written slot's lane 0 is FORCED
+by `gFieldWriteP1`; its eight completion lanes 1..8 are PUBLISHED by `withSetFieldCompletionPins`.
+Freezing them here would be UNSOUND: a large-value write (`FieldElement = [u8;32]`) moves them off
+zero, and `colEq (before = after)` would reject the honest write.
+
+⚑ The excluded window is `fieldsSlotLanes slot` — the `fieldLaneCol` projection, NOT an arithmetic
+range. It is two disjoint pieces (`113 + 7·slot .. +6` and the single column `176 + slot`), and a
+range predicate cannot express that. -/
 def fieldsCompletionFreezesExcept (slot : Fin 8) (w : Nat) : List VmConstraint :=
-  (fieldsCompletionOffs.filter
-      (fun off => decide (off < 113 + 7 * slot.val ∨ 113 + 7 * slot.val + 7 ≤ off))).map
+  (fieldsCompletionOffs.filter (fun off => !(fieldsSlotLanes slot).contains off)).map
     (fun off => colEq (w + off) (w + AFTER_BLOCK_OFF + off))
+
+-- The freeze-EXCEPT wrap frees EXACTLY the written slot's eight lanes and freezes the other 56.
+#guard (fieldsCompletionFreezesExcept 0 186).length == 56
+#guard (fieldsCompletionFreezesExcept 7 186).length == 56
+#guard (fieldsCompletionFreezes 186).length == 64
 
 /-- The full appended authority-continuity weld list: the six dedicated-sub-limb freezes (r23 ·
 lifecycle · perms · vk · mode · fields-root) PLUS the seven H1 headroom freezes — ONE right-operand of
@@ -3318,14 +3396,14 @@ def rotateV3FrozenAuthority (d : EffectVmDescriptor) : EffectVmDescriptor :=
   let r := rotateV3 d
   -- The six dedicated-sub-limb freezes PLUS the seven H1 headroom freezes (all 8 authority limbs
   -- WELDED for a VALUE turn — the GENTIAN law: no unwelded limb can smuggle a 31-bit-colliding
-  -- wide-open authority into NEW_COMMIT) PLUS the 56 v13 fields[0..7] completion-lane freezes (every
+  -- wide-open authority into NEW_COMMIT) PLUS the 64 v14 fields[0..7] completion-lane freezes (every
   -- flat field UNCHANGED on a non-field-writing value turn — no forged higher-byte field can ride an
   -- innocuous value move). ONE appended right-operand so v1 stays the left operand.
   { r with constraints :=
       r.constraints ++ (frozenAuthorityColEqs d.traceWidth ++ fieldsCompletionFreezes d.traceWidth) }
 
 /-- The continuity welds (r23 · lifecycle · perms · vk · mode · fields-root + the seven H1 headroom
-authority limbs + the 56 v13 fields[0..7] completion lanes) are the only constraints past
+authority limbs + the 64 v14 fields[0..7] completion lanes) are the only constraints past
 `rotateV3`'s — so a VALUE turn cannot smuggle an authority-shape OR a forged field-completion change
 into NEW_COMMIT. -/
 theorem rotateV3FrozenAuthority_constraints (d : EffectVmDescriptor) :
@@ -3381,7 +3459,8 @@ theorem rotateV3FrozenAuthority_rejects_drift (hash : List ℤ → ℤ) (d : Eff
     (rotateV3FrozenAuthority_freezes hash d env isFirst isLast hlast h).1)
 
 /-- **The fields[0..7] completion lanes are FROZEN on a satisfying TRANSITION row of the shared value
-wrap.** For any of the 56 fields completion offsets, a row satisfying `rotateV3FrozenAuthority d` (a
+wrap.** For any of the 64 fields completion offsets (the eight NINTH lanes included), a row
+satisfying `rotateV3FrozenAuthority d` (a
 non-field-writing VALUE turn) carries AFTER completion = BEFORE completion — the v13 fields GENTIAN
 weld: no forged higher-byte field can ride an innocuous value move into NEW_COMMIT. -/
 theorem rotateV3FrozenAuthority_freezes_fields (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
@@ -3537,7 +3616,7 @@ theorem rotV3FrozenSetField_sound_v1 (slot : Fin 8) (permOut : List ℤ → List
 /-- **`setFieldV3 slot`** — the rotated tick-faced setField (the registry member). setField[0..7] is a
 VALUE effect, so it carries the authority-frame freeze AND the v13 fields completion freezes for the
 seven OTHER flat fields (`v3OfFrozenSetField`); its own written slot's lane 0 is `gFieldWriteP1`-forced
-and its 7 completion lanes are the named VALUE8 residual. -/
+and its 8 completion lanes are PUBLISHED by `withSetFieldCompletionPins`. -/
 def setFieldV3 (slot : Fin 8) : EffectVmDescriptor2 := v3OfFrozenSetField slot (setFieldTickFace slot)
 
 /-- **The nonce TICK holds on a satisfying non-NoOp setField row.** A row satisfying the rotated
@@ -5051,7 +5130,7 @@ theorem refusalFieldsWriteV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 #guard refusalFieldsWriteOp.op == MapOpKind.write
 #guard REFUSAL_AUDIT_FELT_COL == 70                          -- PARAM_BASE (68) + param2 (spare)
 #guard beforeFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 36
-#guard afterFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 36
+#guard afterFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 36
 -- BOTH POLARITIES of the write tooth's GUARD on the toy environment: the write fires under the refusal
 -- selector (col 52 = 1) and is inert without it (the gate contributes nothing on a non-refusal pad row).
 #guard (let env : VmRowEnv := ⟨fun c => if c == 52 then 1 else 0, fun _ => 0, fun _ => 0⟩;
@@ -5361,16 +5440,16 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 #assert_axioms makeSovereignV3_rejects_unpromoted
 #assert_axioms setFieldDynV3_rejects_forged
 
--- The mode / fields-root force-cols land at AFTER limb 35 / 36 (= traceWidth + 239 + 35 / +36).
-#guard afterModeCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 35
-#guard afterFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 36
+-- The mode / fields-root force-cols land at AFTER limb 35 / 36 (= traceWidth + B_SPAN + 35 / +36).
+#guard afterModeCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 35
+#guard afterFieldsRootCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 36
 #guard beforeModeCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 35
 #guard declaredFieldsRootCol == prmCol 0
 #guard decide (modeHosted ≠ modeSovereign)
 
--- The perms/vk force-cols land at AFTER limb 33 / 34 (= traceWidth + 239 + 33 / +34).
-#guard afterPermsCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 33
-#guard afterVKCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 34
+-- The perms/vk force-cols land at AFTER limb 33 / 34 (= traceWidth + B_SPAN + 33 / +34).
+#guard afterPermsCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 33
+#guard afterVKCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 34
 #guard declaredParamCol == prmCol 0
 
 -- The disc discriminants are pairwise distinct (the gate distinguishes lifecycle states).
@@ -5378,8 +5457,8 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 #guard decide (discSealed ≠ discDestroyed)
 #guard decide (discDestroyed ≠ discArchived)
 #guard decide (discLive ≠ discArchived)
--- The disc force-cols land at AFTER limb 32 (= traceWidth + 239 + 32) and BEFORE limb 32.
-#guard afterDiscCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 239 + 32
+-- The disc force-cols land at AFTER limb 32 (= traceWidth + B_SPAN + 32) and BEFORE limb 32.
+#guard afterDiscCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 247 + 32
 #guard beforeDiscCol EFFECT_VM_WIDTH == EFFECT_VM_WIDTH + 32
 
 #assert_axioms graduable_rotateV3WithRecordPin
@@ -5466,11 +5545,11 @@ theorem setFieldDynV3_rejects_forged (hash : List ℤ → ℤ) (env : VmRowEnv) 
 -- tw+47+29; with tw = 186 that is col 262; PI 46 carries the recomputed post felt). A row whose AFTER
 -- limb equals PI[46] PASSES the pin; a frozen / wrong one FAILS it (the forgery is rejected).
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + 239 + off then 1 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
-        decide (env.loc (tw + 239 + off) = env.pub 46))   -- sealed (1) == PI[46] ⇒ pin holds
+        let env : VmRowEnv := ⟨fun c => if c == tw + B_SPAN + off then 1 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
+        decide (env.loc (tw + B_SPAN + off) = env.pub 46))   -- sealed (1) == PI[46] ⇒ pin holds
 #guard (let off := B_LIFECYCLE; let tw := (186 : Nat);
-        let env : VmRowEnv := ⟨fun c => if c == tw + 239 + off then 0 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
-        decide (env.loc (tw + 239 + off) ≠ env.pub 46))   -- frozen-Live (0) ≠ sealed PI[46] ⇒ pin REJECTS
+        let env : VmRowEnv := ⟨fun c => if c == tw + B_SPAN + off then 0 else 0, fun _ => 0, fun k => if k == 46 then 1 else 0⟩;
+        decide (env.loc (tw + B_SPAN + off) ≠ env.pub 46))   -- frozen-Live (0) ≠ sealed PI[46] ⇒ pin REJECTS
 
 /-! ## §v12 — THE DIRECT CARRIER-OCTET PI PINS (factory `child_vk` · hatchery `contract_hash`).
 
@@ -5680,50 +5759,61 @@ theorem withAfterFieldsRootPins_publishes (hash : List ℤ → ℤ) (g : EffectV
 /-! ### §VALUE8 — THE setField WRITTEN-SLOT COMPLETION-LANE PINS (`withSetFieldCompletionPins`).
 
 The deployed setField members ride `v3OfFrozen (setFieldTickFace slot)` (freeze-ALL): every one of the
-56 fields completion lanes is frozen BEFORE↔AFTER, so an honest LARGE-value write (`FieldElement =
+64 fields completion lanes is frozen BEFORE↔AFTER, so an honest LARGE-value write (`FieldElement =
 [u8;32]` with nonzero high bytes) is REJECTED — the R1 completeness seam
 (`setfield_completion_lane_forge::honest_large_value_setfield_fails_the_deployed_freeze`), and the
 written slot's high 224 bits are left UNBOUND by the light-client view (the ORPHAN-SWEEP §5.2 residual;
 `keystone_descriptor_deployment_gate.rs:62/69`, reason "deploy: VALUE8 setField weld").
 
-The FIX — freeze-EXCEPT + VALUE8. `setFieldV3 slot = v3OfFrozenSetField slot (setFieldTickFace slot)`
-freezes the OTHER seven slots (49 lanes) but FREES the written slot's 7 completion lanes (in-block
-offsets `113 + 7·slot .. +6`), so an honest large write is no longer over-frozen. `withSetFieldCompletionPins`
-then PUBLISHES those exact seven freed lanes (`EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (113 + 7·slot + k)`,
-`k < 7`) as seven TAIL PIs — binding them to the declared value8 the executor derives, so (a) the high
-224 bits are no longer an unconstrained free felt (a forge that moves them off the published value is
-UNSAT — the `_rejects_forged_pi` tooth), and (b) a slot-i proof publishes slot-i's completion value at
-these PIs, so it verifies UNIQUELY under descriptor-i (a slot-j descriptor pins slot-j's frozen
-completion lanes to the SAME PI slots, which the slot-i trace violates). Structurally identical to
-`withAfterOctetPins` (7-lane variant) — additive, no site / range / mem-op / map-op touched, so every
+The FIX — freeze-EXCEPT + VALUE9. `setFieldV3 slot = v3OfFrozenSetField slot (setFieldTickFace slot)`
+freezes the OTHER seven slots (56 lanes) but FREES the written slot's 8 completion lanes
+(`fieldsSlotLanes slot` — `113 + 7·slot .. +6` PLUS the ninth lane `176 + slot`), so an honest large
+write is no longer over-frozen. `withSetFieldCompletionPins` then PUBLISHES those exact eight freed
+lanes (`EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ`, `k : Fin 8`) as eight TAIL PIs
+— binding them to the declared lane vector the executor derives, so (a) the high 224 bits are no
+longer an unconstrained free felt (a forge that moves them off the published value is UNSAT — the
+`_rejects_forged_pi` tooth), and (b) a slot-i proof publishes slot-i's completion value at these PIs,
+so it verifies UNIQUELY under descriptor-i (a slot-j descriptor pins slot-j's frozen completion lanes
+to the SAME PI slots, which the slot-i trace violates). Structurally identical to
+`withAfterOctetPins` (8-lane variant) — additive, no site / range / mem-op / map-op touched, so every
 existing setField forcing keystone lifts by `List.mem_append_left` (the peel below).
+
+⚑ **What the ninth pin buys, and what it does NOT.** With eight lanes the published vector could not
+determine the field — `fieldToLanes8` cannot be injective at 247.26 bits against 256 (pigeonhole), so
+two distinct 32-byte values shared a legal PI vector and the light client could not tell them apart.
+With `Dregg2.Circuit.FieldLanes9.fieldToLanes9_injective`, the lane vector DOES determine the value.
+That is a fact about the Lean encoder; this file pins the COLUMNS the deployed producer must fill,
+and `circuit/tests/field_lanes9_injective.rs` is what ties the deployed Rust to it. No theorem here
+derives the Rust encoder — the capstones still take `hval` as a hypothesis.
 
 ⚑ THIS IS THE DEPLOYED SHAPE, NOT A STAGING SET. `v3RegistryBare`'s setField members ARE
 `withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))`, so the 1-felt
 registry, both wide registries and the umem weld all carry it. The parallel
 `v3RegistrySetFieldValue8` staging registry that once sat beside the live wire is DELETED. -/
 
-/-- In-block base of the written slot's first freed completion lane (the `fieldsCompletionFreezesExcept`
-un-frozen range `113 + 7·slot .. 119 + 7·slot`). -/
-def setFieldCompletionBase (slot : Fin 8) : Nat := 113 + 7 * slot.val
+/-- **`withSetFieldCompletionPins slot g`** — APPEND 8 `.piBinding .last` pins publishing the written
+slot's freed AFTER-block completion lanes (`EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot
+k.succ`, `k : Fin 8`) as 8 TAIL PIs (`g.piCount + k`), bumping `piCount` by 8. The nonet mirror of
+`withAfterOctetPins`.
 
-/-- **`withSetFieldCompletionPins slot g`** — APPEND 7 `.piBinding .last` pins publishing the written
-slot's freed AFTER-block completion lanes (`EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase
-slot + k)`, `k < 7`) as 7 TAIL PIs (`g.piCount + k`), bumping `piCount` by 7. The 7-lane mirror of
-`withAfterOctetPins`. -/
+⚑ **FLAG DAY 2026-07-31 (7 pins → 8).** The lane columns come from `fieldLaneCol`, the verified
+layout's projection — the eighth pin publishes the NINTH lane at `176 + slot`, which is NOT
+`setFieldCompletionBase slot + 7`. The old `setFieldCompletionBase` (`113 + 7·slot`) is DELETED
+rather than kept beside the projection: an arithmetic base cannot name a non-contiguous window, and
+a second shape that agrees on seven of eight lanes is exactly the pair that disagrees later. -/
 def withSetFieldCompletionPins (slot : Fin 8) (g : EffectVmDescriptor2) : EffectVmDescriptor2 :=
   { g with
-    piCount := g.piCount + 7
-    constraints := g.constraints ++ (List.range 7).map (fun k =>
+    piCount := g.piCount + 8
+    constraints := g.constraints ++ (List.finRange 8).map (fun k =>
       VmConstraint2.base (.piBinding .last
-        (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k)) (g.piCount + k))) }
+        (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ) (g.piCount + k.val))) }
 
-/-- The 7 completion pins are the ONLY constraints past the inner descriptor's (single `++`). -/
+/-- The 8 completion pins are the ONLY constraints past the inner descriptor's (single `++`). -/
 theorem withSetFieldCompletionPins_constraints (slot : Fin 8) (g : EffectVmDescriptor2) :
     (withSetFieldCompletionPins slot g).constraints
-      = g.constraints ++ (List.range 7).map (fun k =>
+      = g.constraints ++ (List.finRange 8).map (fun k =>
           VmConstraint2.base (.piBinding .last
-            (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k)) (g.piCount + k))) := rfl
+            (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ) (g.piCount + k.val))) := rfl
 
 /-- The completion pins are `.piBinding`s, so they contribute NO mem-op (the mem log is unchanged). -/
 theorem memOpsOf_withSetFieldCompletionPins (slot : Fin 8) (g : EffectVmDescriptor2) :
@@ -5761,24 +5851,25 @@ theorem satisfied2_of_withSetFieldCompletionPins (hash : List ℤ → ℤ) (slot
     , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
     , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
 
-/-- **`withSetFieldCompletionPins_publishes`.** On any LAST row of a `Satisfied2` witness, each of the 7
+/-- **`withSetFieldCompletionPins_publishes`.** On any LAST row of a `Satisfied2` witness, each of the 8
 published TAIL PIs (`g.piCount + k`) EQUALS its committed AFTER-block completion lane — so the light
 client reads the written slot's high 224 bits off the PI vector, and a forged completion lane (a
-laundered high-byte field) is UNSAT (it would break both the pin and the committed `state_commit`). -/
+laundered high-byte field) is UNSAT (it would break both the pin and the committed `state_commit`).
+⚑ `k : Fin 8` now, and lane `8` is the flag-day NINTH column `176 + slot`. -/
 theorem withSetFieldCompletionPins_publishes (hash : List ℤ → ℤ) (slot : Fin 8)
     (g : EffectVmDescriptor2)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (withSetFieldCompletionPins slot g) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 = t.rows.length) :
-    ∀ k : Fin 7, (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k.val))
+    ∀ k : Fin 8, (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ)
       ≡ (envAt t i).pub (g.piCount + k.val) [ZMOD 2013265921] := by
   intro k
   have hlastt : (i + 1 == t.rows.length) = true := by simp [hlast]
   have hin : VmConstraint2.base
-      (.piBinding .last (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k.val))
+      (.piBinding .last (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ)
         (g.piCount + k.val)) ∈ (withSetFieldCompletionPins slot g).constraints := by
     rw [withSetFieldCompletionPins_constraints]
-    exact List.mem_append_right _ (List.mem_map.mpr ⟨k.val, List.mem_range.mpr k.isLt, rfl⟩)
+    exact List.mem_append_right _ (List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩)
   have h := hsat.rowConstraints i hi _ hin
   simp only [VmConstraint2.holdsAt, hlastt, holdsVm_piLast_true] at h
   exact h
@@ -5788,12 +5879,12 @@ published PI (a forged high-byte value smuggled into NEW_COMMIT) does NOT satisf
 light-client bite for the setField VALUE8 half: `verify_vm_descriptor2` alone rejects it. -/
 theorem withSetFieldCompletionPins_rejects_forged_pi (hash : List ℤ → ℤ) (slot : Fin 8)
     (g : EffectVmDescriptor2) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 = t.rows.length) (k : Fin 7)
-    (hcanonLoc : 0 ≤ (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k.val))
-      ∧ (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k.val)) < 2013265921)
+    (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 = t.rows.length) (k : Fin 8)
+    (hcanonLoc : 0 ≤ (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ)
+      ∧ (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ) < 2013265921)
     (hcanonPI : 0 ≤ (envAt t i).pub (g.piCount + k.val)
       ∧ (envAt t i).pub (g.piCount + k.val) < 2013265921)
-    (hforged : (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + (setFieldCompletionBase slot + k.val))
+    (hforged : (envAt t i).loc (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + fieldLaneCol slot k.succ)
       ≠ (envAt t i).pub (g.piCount + k.val)) :
     ¬ Satisfied2 hash (withSetFieldCompletionPins slot g) minit mfin maddrs t :=
   fun hsat => hforged (canon_eq_of_modEq hcanonLoc hcanonPI
@@ -5811,12 +5902,16 @@ theorem withSetFieldCompletionPins_rejects_forged_pi (hash : List ℤ → ℤ) (
 -- DEPLOYED wrap, so nothing is lost.
 --
 -- The freeze-EXCEPT setField carries the same 46-PI rotated prefix as the old freeze-ALL member; the
--- VALUE8 weld appends 7, so the deployed bare member is 53 PIs (57 after the uniform rc wrap).
+-- VALUE8 weld appends 8 (was 7 — the ninth lane), so the deployed bare member is 54 PIs (58 after
+-- the uniform rc wrap). ⚑ FLAG DAY: every setField VK and every consumer reading PI slot ≥ 53 moves.
 #guard (setFieldV3 0).piCount == 46
 #guard (withSetFieldCompletionPins 0 (withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD
-  (setFieldV3 0))).piCount == 53
+  (setFieldV3 0))).piCount == 54
 #guard (withSetFieldCompletionPins 7 (withSelectorGate EffectVmEmitSetField.SEL_SET_FIELD
-  (setFieldV3 7))).piCount == 53
+  (setFieldV3 7))).piCount == 54
+-- The eight published lane columns really are the NONET's, ninth lane included (not `113 + 8·slot`).
+#guard (List.finRange 8).map (fun k => fieldLaneCol 0 k.succ) == [113, 114, 115, 116, 117, 118, 119, 176]
+#guard (List.finRange 8).map (fun k => fieldLaneCol 5 k.succ) == [148, 149, 150, 151, 152, 153, 154, 181]
 -- Additive: width / tables / sites / ranges are the freeze-EXCEPT member's (the pins add no column).
 #guard (withSetFieldCompletionPins 3 (setFieldV3 3)).traceWidth == (setFieldV3 3).traceWidth
 #guard (withSetFieldCompletionPins 3 (setFieldV3 3)).tables.length == (setFieldV3 3).tables.length
@@ -5849,10 +5944,8 @@ effect: any cap-authorized turn can carry it), so the per-turn FOLD can `connect
 leaf's in-circuit PI-commitment to the deployed leg at these slots (the dual-expose the fold lane
 mints). -/
 
-/-- The rotated CAVEAT-region base offset (past the v1 layout + the two rotated blocks). -/
-def CAVEAT_REGION_OFF : Nat := 2 * B_SPAN
-
-#guard CAVEAT_REGION_OFF == 478
+-- `CAVEAT_REGION_OFF` (= `2 * B_SPAN`) is defined with the other span constants in §1, so the whole
+-- file can name it; it used to be minted HERE, ~5700 lines after the first `+ 478` that meant it.
 
 /-- **`withDfaRcPins g`** — APPEND 4 `.piBinding .last` pins publishing the caveat-region DFA
 route-commitment carrier (`EFFECT_VM_WIDTH + CAVEAT_REGION_OFF + C_RC_OFF + k`, `k < 4`) as 4 TAIL
@@ -6129,11 +6222,12 @@ def v3RegistryBare : List (String × EffectVmDescriptor2) :=
   , ("cellUnsealVmDescriptor2R24", cellUnsealV3)
   , ("emitEventVmDescriptor2R24", v3OfFrozen EffectVmEmitEmitEvent.emitEventVmDescriptor) ]
     -- THE VALUE8 EPOCH (the deployed setField members, was the freeze-ALL `v3OfFrozen`). The
-    -- freeze-ALL wrap froze ALL 56 fields completion lanes BEFORE↔AFTER — including the WRITTEN
+    -- freeze-ALL wrap froze ALL 64 fields completion lanes BEFORE↔AFTER — including the WRITTEN
     -- slot's — so a `FieldElement = [u8;32]` with any nonzero byte outside `28..32` could not
     -- prove: the protocol could not express an honest 32-byte field write. `setFieldV3 slot`
-    -- (freeze-EXCEPT) frees exactly the written slot's 7 completion lanes and
-    -- `withSetFieldCompletionPins slot` PUBLISHES them as 7 tail PIs, so the high 224 bits are
+    -- (freeze-EXCEPT) frees exactly the written slot's 8 completion lanes (`fieldsSlotLanes slot`,
+    -- the seven historical PLUS the flag-day ninth at `176 + slot`) and
+    -- `withSetFieldCompletionPins slot` PUBLISHES them as 8 tail PIs, so the high 224 bits are
     -- BOUND (a lane forged off its published PI is UNSAT — `withSetFieldCompletionPins_rejects_forged_pi`)
     -- rather than frozen. The other seven slots stay fully frozen.
   ++ (List.finRange 8).map fun slot =>
@@ -6180,9 +6274,9 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
     && (d.traceWidth - (EFFECT_VM_WIDTH + APPENDIX_SPAN) - teeth) % (CHIP_OUT_LANES - 1) == 0
 #guard v3Registry.all fun (_, d) => d.tables.length == 5
 #guard v3Registry.all fun (_, d) => d.hashSites.length == 0 && d.ranges.length == 0
--- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 130 chip sites (v13).
+-- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 134 chip sites (v14).
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).constraints.length
-        == transferVmDescriptor2.constraints.length + 24 + 4 + 130
+        == transferVmDescriptor2.constraints.length + 24 + 4 + 134
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).piCount == 42 + 4
 -- The graduation side conditions hold on every v1-faced member (per-instance witnesses of
 -- the parametric `graduable_rotateV3`; attenuate/setFieldDyn ride `v3OfWith` over faces

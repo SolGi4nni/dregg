@@ -16,7 +16,8 @@ discharges availability on the EXACT post-retarget wire objects:
 
   * **`transferCapOpenEffAvailWide`** (`AvailWideMembers` §8) — the crown host post-retarget:
     the already-flipped narrow member wide-appended at the AVAIL face base (§0 pins the tie
-    `= wideAppend transferCapOpenEffV3Avail TR_AVAIL_BB (TR_AVAIL_BB + 239)` definitionally);
+    `= wideAppend transferCapOpenEffV3Avail TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)` definitionally —
+    `B_SPAN` is the ONE named block span, 247 at the 184-limb geometry, was 239);
   * **`weldedTransferCapOpenEffAvailWide`** (`EffectVmEmitUMemWeldWide`) — its umem-welded twin
     (crown key, not a bare cohort route: umem-only, no capacity-floor refuse).
 
@@ -97,7 +98,7 @@ two towers name ONE term. -/
 theorem transferCapOpenEffAvailWide_eq :
     transferCapOpenEffAvailWide
       = Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend transferCapOpenEffV3Avail
-          TR_AVAIL_BB (TR_AVAIL_BB + 239) := rfl
+          TR_AVAIL_BB (TR_AVAIL_BB + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN) := rfl
 
 /-! ## §1 — the row-v1 collapses on the wire objects (wide + welded). -/
 

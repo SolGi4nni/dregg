@@ -433,7 +433,7 @@ fn the_entity_params_live_in_the_committed_wide_plane() {
 #[test]
 fn the_post_state_commits_the_outcome_and_declares_the_app_root_weld() {
     use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
-    use dregg_circuit::effect_vm::field_limbs8;
+    use dregg_circuit::effect_vm::field_limbs9;
 
     let entity = deploy_entity(entity_key(1), 1_000, actor());
     let landed = compose_onto(&entity, &[partner()], ruleset(), shape(), 4).expect("composes");
@@ -465,7 +465,7 @@ fn the_post_state_commits_the_outcome_and_declares_the_app_root_weld() {
     for j in 0..8 {
         let fe = entity.cell.state.get_field(j).copied().unwrap_or([0u8; 32]);
         assert_eq!(
-            field_limbs8(&fe)[0],
+            field_limbs9(&fe)[0],
             dregg_circuit::field::BabyBear::ZERO,
             "the pre state must not already carry the outcome (native slot {j})"
         );

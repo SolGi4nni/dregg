@@ -63,7 +63,7 @@ open Dregg2.Circuit.Emit.CapOpenEmit
    afterCapRootWelds effCapInsertV3)
 open Dregg2.Circuit.SortedTreeNonMembership
   (SpineCommits keysOf GapOpen keyOf nonMembership_sound update_sound sortedInsert)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (capRootGroupCol)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (capRootGroupCol B_SPAN)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -238,7 +238,7 @@ theorem effCapInsertV3_gate_forces (base : EffectVmDescriptor2) (name : String) 
 
 /-- **`effCapInsertV3_forces_afterMembership`** — THE STEP-B DELIVERABLE: a `Satisfied2` of the insert
 descriptor TRACE-FORCES `MembersAt8 afterRoot (leafOf …)` over the FULL committed AFTER cap-root group
-(`capRootGroupCol (EFFECT_VM_WIDTH + 239)`, the whole ~124-bit cap-root) at the read leaf — the
+(`capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN)`, the whole ~124-bit cap-root) at the read leaf — the
 spliced-leaf membership in the rebuilt after cap-tree. -/
 theorem effCapInsertV3_forces_afterMembership (S8 : Cap8Scheme)
     (base : EffectVmDescriptor2) (name : String) (n : Nat)
@@ -250,7 +250,7 @@ theorem effCapInsertV3_forces_afterMembership (S8 : Cap8Scheme)
     -- the deployed cell canonicality (`0 ≤ · < p`): lifts the mod-`p` membership gates + welds to
     -- their ℤ form (the Merkle fold and `MembersAt8` are ℤ-level).
     (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
-    MembersAt8 S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
+    MembersAt8 S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k))
       (leafOf (capOpenCols base.traceWidth) (envAt t i)) := by
   set e := envAt t i with he
   set w := base.traceWidth with hw
@@ -262,10 +262,10 @@ theorem effCapInsertV3_forces_afterMembership (S8 : Cap8Scheme)
     membershipCore_opens S8 hash t.tf (capOpenCols w) e hChip hCore
   -- weld: the read capRoot group IS the committed AFTER cap-root group.
   have hroot : groupVal e (capOpenCols w).capRoot
-      = (fun k => e.loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+      = (fun k => e.loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
     funext k
     have hin : VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot k)
-        (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))) ∈ afterCapRootWelds w :=
+        (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k))) ∈ afterCapRootWelds w :=
       List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
     have hmod := effCapInsertV3_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin
     -- the eqGate residual collapses in `(−p, p)` under canonicality.
@@ -298,12 +298,12 @@ theorem effCapInsertV3_forces_write8 (S8 : Cap8Scheme)
     (g : GapOpen S8 (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k))
           (keyOf (leafOf (capOpenCols base.traceWidth) (envAt t i))))
     (hcov : g.coversSpine spine)
-    (hafter : SpineCommits S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
+    (hafter : SpineCommits S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k))
                 (sortedInsert (keyOf (leafOf (capOpenCols base.traceWidth) (envAt t i))) spine)) :
     capInserts8 S8
         (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k))
         (leafOf (capOpenCols base.traceWidth) (envAt t i))
-        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
+        (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) k)) := by
   have hafterMem := effCapInsertV3_forces_afterMembership S8 base name n hash minit mfin maddrs t
     hChip hsat i hi hnotlast hcells
   exact capInsert_writesTo8 S8 _ _ (leafOf (capOpenCols base.traceWidth) (envAt t i)) spine

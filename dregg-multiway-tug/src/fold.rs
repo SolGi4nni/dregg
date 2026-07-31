@@ -296,7 +296,7 @@ fn cell_block_witnesses(
 /// `EffectVmEmitRotationV3.weldsAt`), NOT from the rotation witness — so with the default
 /// `CellState::new` (fields all zero) the octet is ALL ZEROS and NO `field_key` can ever read the
 /// committed winner. Populate `st.fields` with the cell's real lane-0 field octet
-/// (`field_limbs8(fields[i])[0]`, the SAME lane the v9 commitment absorbs) so the v1 state block,
+/// (`field_limbs9(fields[i])[0]`, the SAME lane the v9 commitment absorbs) so the v1 state block,
 /// the appendix octet, and the wide anchors all carry the real committed values and the octet
 /// exposes `field[7] == winner`. Neither a `Custom` nor an `IncrementNonce` effect mutates fields,
 /// so the AFTER block (which the octet reads) carries exactly these. Fields 8..15 have no lane-0
@@ -311,7 +311,7 @@ fn cell_state_with_committed_fields(before_cell: &Cell, after_cell: &Cell) -> Ce
         before_cell.state.nonce() as u32,
     );
     for i in 0..8 {
-        st.fields[i] = dregg_circuit::effect_vm::field_limbs8(&after_cell.state.fields[i])[0];
+        st.fields[i] = dregg_circuit::effect_vm::field_limbs9(&after_cell.state.fields[i])[0];
     }
     st.refresh_commitment();
     st

@@ -68,7 +68,9 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{RecursionVk, SEG_ANCHOR_WIDTH};
 
 use dregg_automatafl::AutomataflOffering;
-use dreggnet_game_board::{Game, GameBoard, MatchProof, ProofAnchor, UniverseId, match_anchor};
+use dreggnet_game_board::{
+    AnchorProvenance, Game, GameBoard, MatchProof, ProofAnchor, UniverseId, match_anchor,
+};
 use dreggnet_prove_service::{
     AutomataflMatch, JobId, JobStatus, MatchProveService, MultiRoundTurn, PlayedMatch,
     match_prove_service,
@@ -120,17 +122,25 @@ fn offering_key_of(game: Game) -> &'static str {
     }
 }
 
-/// The game's **committed canonical board anchor** — the submission-independent trust root
-/// (fixed VK + committed genesis + canonical WIN root) a baked reference fold pins, so the board
-/// verifies every player's proof against a genesis / win it did NOT choose.
+/// The game's **operator-configured board anchor** — the submission-independent trust root
+/// (fixed VK + committed genesis + canonical WIN root), read from an environment variable no
+/// player can write, so the board checks every player's proof against a genesis / win it did NOT
+/// choose.
 ///
-/// Returns `None` until such a reference is committed for the deployment; the board then
-/// bootstraps its anchor ONCE from the first honest fold (an operator reference) and freezes it
-/// (see [`CrownCore::anchors`]). This is the seam a shipped canonical anchor fills so the trust
-/// root never depends on any single player's fold. It is deliberately NOT derived from a
-/// submitted proof.
-fn canonical_anchor(_game: Game) -> Option<ProofAnchor> {
-    None
+/// ⚑ MEASURED 2026-07-30. This function used to be `fn canonical_anchor(_game) -> None` — a seam
+/// that was never filled — so every deployment fell through to `match_anchor(&proof)`: the board's
+/// trust root came from the FIRST fold's own wire and froze there, while the public crown post
+/// said *"You do not have to trust the winner."* You did. They chose the anchor.
+///
+/// `Ok(None)` ⇒ nothing configured, so the board still bootstraps from the first honest fold —
+/// and the provenance now rides on every card it prints. `Err` ⇒ the variable is SET and
+/// malformed, which is REFUSED rather than downgraded to the bootstrap the operator was
+/// configuring their way out of.
+///
+/// `dreggnet-web`'s `/crown` board calls the SAME function on the SAME variable: the two boards
+/// must agree about what they are pinned to, or a cross-surface fold can never rank on both.
+fn operator_anchor(game: Game) -> Result<Option<ProofAnchor>, String> {
+    dreggnet_game_board::operator_anchor(game)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +167,10 @@ struct Ranked {
     proof_len: usize,
     /// The root-circuit VK fingerprint prefix (hex), the anchor's trust root.
     vk8: String,
+    /// ⚑ **WHERE THE ANCHOR CAME FROM** — the one fact that decides whether this card may say
+    /// "you do not have to trust the winner". Carried per fold rather than looked up at render
+    /// time, because it is a fact about the pin that happened.
+    anchor_provenance: AnchorProvenance,
 }
 
 /// One tracked fold: which game, whose, where, and how far along.
@@ -179,7 +193,10 @@ struct FoldRecord {
 //
 // A crown post is not a session. It is a PUBLIC message in a channel, carrying a
 // `.dreggproof` attachment and a button labelled "Re-verify (anyone, O(1))" whose whole
-// pitch is *you do not have to trust the winner, and you do not have to trust this bot*.
+// pitch is *you do not have to trust this bot* — and, ONLY when an operator pinned the
+// board's anchor, *you do not have to trust the winner* either. Which of the two the card
+// is allowed to say is decided by `Ranked::anchor_provenance`, in one place, in
+// `ranked_post`.
 // The board that button re-verifies against was an in-memory `GameBoard`, so after any
 // restart `reverify_fold` answered `Err("no such fold")` and the post rendered
 // "✗ Re-verify refused." A public artifact whose verification affordance stops working is
@@ -295,7 +312,7 @@ fn restore_folds(core: &mut CrownCore) {
 /// `CROWN_STORE`.
 fn restore_rows(
     board: &mut GameBoard,
-    anchors: &mut BTreeMap<Game, ProofAnchor>,
+    anchors: &mut BTreeMap<Game, (ProofAnchor, AnchorProvenance)>,
     folds: &mut HashMap<u64, FoldRecord>,
     next_token: &mut u64,
     rows: Vec<StoredCrownFold>,
@@ -322,22 +339,47 @@ fn restore_rows(
         // refuse every honest crown behind it. Probe the candidate on a THROWAWAY board first —
         // one O(1) light-client run, and only for the row that would do the pinning.
         if !anchors.contains_key(&game) {
-            let candidate = row.anchor();
+            // ⚑ AN OPERATOR ANCHOR OUTRANKS THE PERSISTED ONE, and a restart is exactly when a
+            // newly-configured one first takes effect. A malformed spec REFUSES the restore of
+            // this row rather than falling back to `row.anchor()` — silently reinstating the
+            // submitter-pinned board an operator was configuring their way out of is the whole
+            // failure this arm exists to prevent.
+            let (candidate, provenance) = match operator_anchor(game) {
+                Err(e) => {
+                    tracing::warn!(
+                        "persisted crown fold #{} was NOT restored: {e}. The board stays \
+                         unpinned rather than falling back to the fold's own anchor.",
+                        row.token,
+                    );
+                    refused += 1;
+                    continue;
+                }
+                Ok(Some(a)) => (a, AnchorProvenance::OperatorConfigured),
+                Ok(None) => (row.anchor(), AnchorProvenance::BootstrappedFromSubmission),
+            };
             let mut probe = GameBoard::new();
             probe.ensure_open(game, candidate.clone());
             if let Err(e) = probe.submit_bytes(game, &row.player, row.proof.clone(), row.turns) {
                 tracing::warn!(
-                    "persisted crown fold #{} did NOT verify against its OWN stored anchor \
-                     ({e}) — it does not pin the {} board",
+                    "persisted crown fold #{} did NOT verify against the anchor it would pin the \
+                     {} board to ({e}) — it does not pin the board",
                     row.token,
                     game.slug(),
                 );
                 refused += 1;
                 continue;
             }
-            anchors.insert(game, candidate);
+            if provenance == AnchorProvenance::BootstrappedFromSubmission {
+                tracing::warn!(
+                    game = game.slug(),
+                    env = %dreggnet_game_board::env_var_name(game),
+                    "the crown board came up pinned to a PERSISTED SUBMISSION's own anchor — it \
+                     will rank self-reported claims until the named variable is set"
+                );
+            }
+            anchors.insert(game, (candidate, provenance));
         }
-        let anchor = anchors
+        let (anchor, provenance) = anchors
             .get(&game)
             .expect("the anchor was just pinned or already present")
             .clone();
@@ -360,6 +402,7 @@ fn restore_rows(
                             rank: accepted.rank,
                             proof_len: row.proof.len(),
                             vk8: hex::encode(&row.vk[..4]),
+                            anchor_provenance: provenance,
                         }),
                     },
                 );
@@ -413,12 +456,13 @@ fn persist_fold(token: u64, rec: &FoldRecord, proof: &MatchProof) {
 struct CrownCore {
     service: MatchProveService,
     board: GameBoard,
-    /// The per-game board trust anchor, pinned ONCE and never re-minted from a submitted proof.
-    /// It is board CONFIG (VK + genesis + WIN roots): a committed canonical reference when one is
-    /// baked ([`canonical_anchor`]), otherwise bootstrapped ONCE from the first honest fold and
-    /// frozen. Every later submission is verified against this pinned anchor, so a submitter can
-    /// neither define nor replace it.
-    anchors: BTreeMap<Game, ProofAnchor>,
+    /// The per-game board trust anchor, pinned ONCE and never re-minted from a submitted proof,
+    /// PLUS where it came from. It is board CONFIG (VK + genesis + WIN roots): operator
+    /// configuration when one is set ([`operator_anchor`]), otherwise bootstrapped ONCE from the
+    /// first honest fold and frozen. Every later submission is checked against this pinned anchor,
+    /// so no LATER submitter can define or replace it — but on the bootstrap arm the FIRST one
+    /// already did, which is exactly what [`AnchorProvenance`] carries out to the cards.
+    anchors: BTreeMap<Game, (ProofAnchor, AnchorProvenance)>,
     folds: HashMap<u64, FoldRecord>,
     next_token: u64,
 }
@@ -611,22 +655,44 @@ fn poll_fold(token: u64) -> Poll {
             JobStatus::Done(p) => {
                 let proof: MatchProof = (*p).clone();
                 // Pin the board's trust anchor ONCE per game and treat it as IMMUTABLE board
-                // CONFIG — it is never minted from THIS submitted proof. Deriving the anchor per
-                // submission (`open(game, match_anchor(&proof))`) let the FIRST fold define the
-                // board's genesis / WIN roots (the genesis+win checks then self-compared) and —
-                // because the content universe id is a per-game constant published `or_insert` —
-                // froze that first anchor forever, refusing every later distinct submission. Here
-                // the anchor comes from the game's committed canonical reference when one is baked
-                // ([`canonical_anchor`]); absent that it bootstraps ONCE from the first honest
-                // fold (an operator reference) and freezes. `ensure_open` pins it once and ignores
-                // every later anchor, so a submitter can neither capture nor replace it.
-                let anchor = core
-                    .anchors
-                    .entry(game)
-                    .or_insert_with(|| {
-                        canonical_anchor(game).unwrap_or_else(|| match_anchor(&proof))
-                    })
-                    .clone();
+                // CONFIG. `ensure_open` pins it once and ignores every later anchor, so no LATER
+                // submitter can capture or replace it — but that has never been the whole story,
+                // and ⚑ MEASURED 2026-07-30 this comment used to claim it was ("it is never
+                // minted from THIS submitted proof"). Absent an operator anchor the FIRST fold's
+                // own `match_anchor(&proof)` becomes the board's genesis and WIN roots and freezes
+                // there, so the genesis+win checks self-compare for that fold and every later one
+                // is measured against a definition of winning a player supplied. The honest split:
+                // [`operator_anchor`] when configured (`AnchorProvenance::OperatorConfigured`),
+                // else the bootstrap (`BootstrappedFromSubmission`) — which rides on `Ranked` out
+                // to the public card, which then may not say "you do not have to trust the winner".
+                let pinned = match core.anchors.get(&game) {
+                    Some(p) => p.clone(),
+                    None => {
+                        // A MALFORMED operator spec REFUSES the rank. Downgrading here would hand
+                        // the trust root to this very submitter, which is the thing the operator
+                        // was configuring their way out of.
+                        let picked = match operator_anchor(game) {
+                            Err(e) => return Poll::BoardRefused(e),
+                            Ok(Some(a)) => (a, AnchorProvenance::OperatorConfigured),
+                            Ok(None) => {
+                                tracing::warn!(
+                                    game = game.slug(),
+                                    env = %dreggnet_game_board::env_var_name(game),
+                                    "the crown board is pinning its trust root to THIS submitted \
+                                     fold's own anchor and freezing there — it will rank \
+                                     self-reported claims until the named variable is set"
+                                );
+                                (
+                                    match_anchor(&proof),
+                                    AnchorProvenance::BootstrappedFromSubmission,
+                                )
+                            }
+                        };
+                        core.anchors.insert(game, picked.clone());
+                        picked
+                    }
+                };
+                let (anchor, provenance) = pinned;
                 let universe = core.board.ensure_open(game, anchor);
                 match core.board.submit(game, &player, &proof) {
                     Err(e) => Poll::BoardRefused(e.to_string()),
@@ -638,6 +704,7 @@ fn poll_fold(token: u64) -> Poll {
                             rank: accepted.rank,
                             proof_len: proof.proof_bytes.len(),
                             vk8: hex::encode(&proof.vk.0[..4]),
+                            anchor_provenance: provenance,
                         };
                         if let Some(rec) = core.folds.get_mut(&token) {
                             rec.ranked = Some(facts.clone());
@@ -1119,22 +1186,45 @@ fn ranked_post(game: Game, token: u64, facts: &Ranked) -> (CreateEmbed, Vec<Crea
              anywhere**."
         }
     };
+    // ⚑ THE ANCHOR LINE IS NOT OPTIONAL AND IT IS NOT A FOOTNOTE. Whether this card may say
+    // "you do not have to trust the winner" is decided entirely by where the anchor came from,
+    // so the two are written together, in one match, and cannot drift apart.
+    let anchor_line = match facts.anchor_provenance {
+        AnchorProvenance::OperatorConfigured => format!(
+            "**The anchor is not the winner's.** It is operator configuration \
+             (`{env}`), held before this fold existed. You do not have to trust the winner. \
+             You do not have to trust this bot: take the attached file and check it yourself.",
+            env = dreggnet_game_board::env_var_name(game),
+        ),
+        AnchorProvenance::BootstrappedFromSubmission => format!(
+            "⚠ **Read this before reading the rank.** No operator anchor is configured for this \
+             board (`{env}` is unset), so its genesis root and its WIN root were taken from the \
+             FIRST fold this board accepted and frozen there. Every fold since — including this \
+             one — is checked against a definition of *winning* that a player supplied. So this \
+             card says *this proof agrees with that first fold's claim about the game*; it does \
+             NOT say you need not trust the winner. The proof itself is real and you can check it \
+             yourself from the attached file — against whichever anchor **you** choose.",
+            env = dreggnet_game_board::env_var_name(game),
+        ),
+    };
     let body = format!(
         "**{turns} turns attested** · rank **#{rank}** · proof envelope **{len} bytes** · \
          vk `{vk}…` · completion `{cid}…`\n\n\
-        The board verified this proof in **O(1)**: one whole-history light-client check \
+        The board checked this proof in **O(1)**: one whole-history light-client run \
         against its pinned anchor (VK + genesis + WIN). It re-witnessed nothing, replayed \
         nothing, and stored **no moves**: `has_moves() == false` on every entry.\n\n\
         {scope}\n\n\
         The envelope is attached. **Anyone** may press *Re-verify* and watch this bot re-run \
         the same O(1) check on the stored proof, in public, or take the file and check it \
-        themselves. You do not have to trust the winner. You do not have to trust this bot.",
+        themselves.\n\n\
+        {anchor}",
         turns = facts.turns,
         rank = facts.rank,
         len = facts.proof_len,
         vk = facts.vk8,
         cid = hex::encode(&facts.completion_id[..4]),
         scope = scope_line,
+        anchor = anchor_line,
     );
     (
         crown_embed(
@@ -1445,15 +1535,17 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             let (embed, rows) = match reverify_fold(token) {
                 Ok((game, turns, facts)) => (
                     crown_embed(
-                        &format!("✓ Re-verified in O(1) · fold #{token} ({})", game.slug()),
+                        &format!("✓ Re-checked in O(1) · fold #{token} ({})", game.slug()),
                         &format!(
                             "The whole-history light client just re-checked the **stored** \
                              proof against the board's pinned anchor: **{turns} turns \
                              attested**, genesis → WIN, completion `{}…`.\n\n\
                              No move was replayed. None exists to replay: the board stores \
                              the proof and nothing else. That is the crown: *anyone* can do \
-                             what just happened, in one cheap check, forever.",
+                             what just happened, in one cheap check, forever.\n\n\
+                             ⚑ Against WHICH anchor: {}.",
                             hex::encode(&facts.completion_id[..4]),
+                            facts.anchor_provenance.sentence(game),
                         ),
                     ),
                     vec![reverify_button(token)],
@@ -1744,7 +1836,7 @@ mod tests {
     /// A fresh restore target (what `restore_rows` writes into) — no proving pool, no store.
     fn restore_target() -> (
         GameBoard,
-        BTreeMap<Game, ProofAnchor>,
+        BTreeMap<Game, (ProofAnchor, AnchorProvenance)>,
         HashMap<u64, FoldRecord>,
         u64,
     ) {
@@ -1825,7 +1917,7 @@ mod tests {
             vec![corrupt, good.clone()],
         );
         assert_eq!(
-            anchors.get(&Game::Automatafl).map(|a| a.vk.0),
+            anchors.get(&Game::Automatafl).map(|(a, _)| a.vk.0),
             Some(good.vk),
             "the board must pin the HONEST row's anchor, not the corrupt row's"
         );
@@ -1936,6 +2028,70 @@ mod tests {
         );
     }
 
+    /// ⚑ **THE PERMANENT CONTROL: the card may not tell a stranger to trust a ranking whose
+    /// anchor a player supplied.**
+    ///
+    /// Measured 2026-07-30: `ranked_post` printed *"You do not have to trust the winner."* on
+    /// every crown, while `canonical_anchor` returned `None` unconditionally and the board's
+    /// genesis and WIN roots therefore came from the FIRST fold's own wire and froze there.
+    /// The winner defined winning.
+    ///
+    /// This drives the real renderer on both provenances and asserts the two sentences are
+    /// mutually exclusive. Reinstate the unconditional line — or drop the `⚠` arm — and it
+    /// goes red. It needs no proving pool and no fixture: the card is a pure function of
+    /// `Ranked`, which is why the provenance is carried there.
+    #[test]
+    fn the_public_card_claims_winner_independence_only_when_an_operator_pinned_the_anchor() {
+        fn facts(p: AnchorProvenance) -> Ranked {
+            Ranked {
+                universe: UniverseId::from_bytes([0u8; 32]),
+                completion_id: [0u8; 32],
+                turns: 9,
+                rank: 1,
+                proof_len: 4096,
+                vk8: "deadbeef".to_string(),
+                anchor_provenance: p,
+            }
+        }
+
+        let (boot, _) = ranked_post(
+            Game::Automatafl,
+            7,
+            &facts(AnchorProvenance::BootstrappedFromSubmission),
+        );
+        let boot_txt = format!("{boot:?}");
+        assert!(
+            !boot_txt.contains("You do not have to trust the winner"),
+            "a board pinned to a submitted fold's own anchor may NOT tell a reader they need \
+             not trust the winner — the winner chose the anchor"
+        );
+        assert!(
+            boot_txt.contains("No operator anchor is configured")
+                && boot_txt.contains("CROWN_ANCHOR_AUTOMATAFL"),
+            "the card must say WHY the weaker claim, and how an operator fixes it"
+        );
+        assert!(
+            boot_txt.contains("check it yourself"),
+            "what a reader CAN still do must survive: the envelope is attached either way"
+        );
+
+        let (pinned, _) = ranked_post(
+            Game::Automatafl,
+            7,
+            &facts(AnchorProvenance::OperatorConfigured),
+        );
+        let pinned_txt = format!("{pinned:?}");
+        assert!(
+            pinned_txt.contains("You do not have to trust the winner"),
+            "an operator-pinned board earns the strong claim — a gate that cannot go green is \
+             not a gate either"
+        );
+        assert!(
+            !pinned_txt.contains("No operator anchor is configured"),
+            "the two arms must be mutually exclusive"
+        );
+    }
+
     /// **A RESTART PRESERVES THE BOARD'S PINNED TRUST ANCHOR.**
     ///
     /// The anchor is the leaderboard's whole trust root: `submit_bytes` verifies every proof
@@ -1959,7 +2115,7 @@ mod tests {
         let pinned = run(|core| {
             core.anchors
                 .get(&Game::Automatafl)
-                .map(|a| (a.vk.0, a.genesis_root.map(|f| f.0), a.win_root.map(|f| f.0)))
+                .map(|(a, _)| (a.vk.0, a.genesis_root.map(|f| f.0), a.win_root.map(|f| f.0)))
         })
         .expect("the crown board thread answers");
 

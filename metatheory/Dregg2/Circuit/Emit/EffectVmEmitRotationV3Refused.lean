@@ -81,8 +81,10 @@ DEPLOYED members (and every registry derived from them: `v3RegistryRefused`, `v3
 twin beside it would be two shapes that agree today and disagree later.
 
 The deployed setField member is therefore `withDfaRcPins (gentianDeployedBareRefuse
-(withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))))`: `traceWidth = 1692`
-(unchanged — the pins add no column) and `piCount = 57` (46 rotated prefix + 7 value8 + 4 rc). The
+(withSetFieldCompletionPins slot (withSelectorGate SEL_SET_FIELD (setFieldV3 slot))))`: `traceWidth = 1736`
+(the pins add no column; the width moved with the 178 → 184 ninth-lane flag day) and `piCount = 58`
+(46 rotated prefix + **8** value8 lanes + 4 rc — ⚑ the NINTH `fields[slot]` lane is published too,
+so the setField PI count moved 57 → 58 and every setField VK rotates). The
 per-effect setField soundness rungs peel it as `satisfied2_of_v3RefusedMember` plus
 `satisfied2_of_withSetFieldCompletionPins` (an appended `.piBinding` cohort). -/
 
@@ -93,12 +95,12 @@ def deployedSetFieldMembers : List (String × EffectVmDescriptor2) :=
   v3RegistryRefused.filter (·.1.startsWith "setFieldVmDescriptor2-")
 
 #guard deployedSetFieldMembers.length == 8
--- WIDTH IS UNMOVED by the value8 weld (the pins add no column): the live fixed-width setField trace
--- verifies against the deployed member unchanged.
-#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1692
--- PI LAYOUT: 46 rotated prefix + 7 value8 completion pins (46..52) + 4 rc pins (53..56) = 57.
+-- WIDTH IS UNMOVED by the value8 weld (the pins add no column); it moves only with the rotated
+-- geometry itself (178 → 184 took it 1692 → 1736).
+#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1736
+-- PI LAYOUT: 46 rotated prefix + 8 value8 completion pins (46..53) + 4 rc pins (54..57) = 58.
 #guard deployedSetFieldMembers.all fun (k, d) =>
-  d.piCount == 57 && !d.name.isEmpty && !d.constraints.isEmpty
+  d.piCount == 58 && !d.name.isEmpty && !d.constraints.isEmpty
     && k.startsWith "setFieldVmDescriptor2-"
 
 end Value8Witnesses

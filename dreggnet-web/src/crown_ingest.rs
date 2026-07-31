@@ -22,9 +22,11 @@
 //!                                                 GET /crown/results.json   on every read)
 //! ```
 //!
-//! ## ⚑ A RESULT IS **VERIFIED HERE**, NEVER ADMITTED ON THE SENDER'S SAY-SO
+//! ## ⚑ A RESULT IS **RE-CHECKED HERE**, NEVER ADMITTED ON THE SENDER'S SAY-SO
 //!
-//! Nothing in the wire is believed. The only load-bearing field is `proof_b64` — the
+//! Nothing in the wire is believed *except the anchor, when no operator pinned one* — see the
+//! next section, which is the one that decides what a row on this board is worth. The only
+//! load-bearing field is `proof_b64` — the
 //! `WholeChainProof` envelope — and it goes through
 //! [`GameBoard::submit_bytes`](dreggnet_game_board::GameBoard::submit_bytes), which is *the same
 //! O(1) accept path a live submission takes*: `dregg_lightclient::verify_history_bytes` under the
@@ -38,20 +40,36 @@
 //! row is displayed and grouped, and it is never an input to any verification. Say that out loud
 //! rather than let a reader infer it from where the fields are used.
 //!
-//! ## ⚑ THE ANCHOR IS CONFIG, AND A SUBMISSION MAY NEVER MINT IT
+//! ## ⚑ THE ANCHOR IS THE TRUST ROOT — AND UNTIL AN OPERATOR PINS ONE, A SUBMITTER MINTS IT
 //!
 //! The board's whole trust root is the [`ProofAnchor`] (`vk` + `genesis_root` + `win_root`). Read
 //! it off the submitted proof and the genesis/WIN checks become self-comparisons — the submitter
-//! picks their own win. So the discipline here is exactly `discord-bot`'s, for exactly the same
-//! reason it grew there:
+//! picks their own win.
 //!
-//! 1. a game's anchor is pinned **once** and is thereafter immutable
-//!    ([`GameBoard::ensure_open`](dreggnet_game_board::GameBoard::ensure_open) is write-once);
-//! 2. the row that *would* do the pinning is **probed on a throwaway board first** — one O(1)
-//!    light-client run — so a corrupt or hostile first row cannot freeze the board on an
-//!    attacker-chosen genesis/WIN and refuse every honest crown behind it;
-//! 3. a baked canonical anchor (`canonical_anchor`) is the seam that removes the bootstrap
-//!    entirely. It ships `None` today, exactly as the bot's does, and that is named, not hidden.
+//! **MEASURED 2026-07-30, and this module said the opposite until then.** The seam that was
+//! supposed to supply a submission-independent anchor (`canonical_anchor`) returned `None`
+//! unconditionally, so every deployment fell through to `row.anchor()`: the FIRST accepted fold's
+//! own wire, frozen forever by the write-once `ensure_open`. Meanwhile the ingest handler answered
+//! `"verified": true` with *"nothing was taken on the sender's word"*. The sender's word was the
+//! anchor.
+//!
+//! What holds now:
+//!
+//! 1. **An operator may pin the anchor**, via
+//!    [`dreggnet_game_board::operator_anchor`] — one environment variable per game, read from a
+//!    place no submitter can write, and read by `discord-bot`'s board too so the two agree. A
+//!    malformed spec REFUSES the admission rather than falling back to the bootstrap.
+//! 2. **Absent that, the board still bootstraps** — the first row that survives a throwaway-board
+//!    probe pins it — but the resulting
+//!    [`AnchorProvenance::BootstrappedFromSubmission`](dreggnet_game_board::AnchorProvenance)
+//!    rides on **every verdict this board prints**: the ingest response, `results.json`, and the
+//!    board page, which says in its own chrome that it is RANKING SELF-REPORTED CLAIMS.
+//! 3. **The word "verified" is written in exactly one place** — the ingest response's
+//!    operator-anchored arm — and the key is ABSENT otherwise, so a consumer testing
+//!    `verified === true` gets `undefined` for a self-anchored board rather than a softer string.
+//!    What always happened is reported as `accepted`.
+//! 4. The probe-before-pin still stands: a corrupt or hostile first row cannot freeze the board on
+//!    an anchor nothing verifies against and refuse every honest crown behind it.
 //!
 //! ⚑ **The consequence, stated plainly because it bounds what this board can hold:** since the
 //! anchor pins a *specific* genesis and a *specific* WIN root, only folds attesting **those** roots
@@ -112,7 +130,7 @@ use zeroize::Zeroizing;
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{RecursionVk, SEG_ANCHOR_WIDTH};
-use dreggnet_game_board::{Game, GameBoard, ProofAnchor, UniverseId};
+use dreggnet_game_board::{AnchorProvenance, Game, GameBoard, ProofAnchor, UniverseId};
 use webauth_core::identity_resolve::RootResolver;
 
 use crate::{document, esc};
@@ -485,16 +503,21 @@ impl CrownFoldStore for SqliteCrownFoldStore {
 // The board.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// The game's **committed canonical board anchor** — the submission-independent trust root a baked
-/// reference fold would pin, so the board verifies every surface's proof against a genesis / WIN it
-/// did NOT choose.
+/// The game's **operator-configured board anchor** — the submission-independent trust root, read
+/// from an environment variable no submitter can write, so the board verifies every surface's proof
+/// against a genesis / WIN it did NOT choose.
 ///
-/// Returns `None` until such a reference is committed for the deployment; the board then bootstraps
-/// its anchor ONCE from the first fold that survives a throwaway-board probe, and freezes it. This
-/// mirrors `discord-bot`'s `commands::crown::canonical_anchor` deliberately: the two boards must
-/// agree about what they are pinned to, or a cross-surface fold can never rank on both.
-fn canonical_anchor(_game: Game) -> Option<ProofAnchor> {
-    None
+/// This is `dreggnet_game_board::operator_anchor` verbatim; `discord-bot`'s crown board calls the
+/// SAME function on the SAME variable, deliberately — the two boards must agree about what they are
+/// pinned to, or a cross-surface fold can never rank on both.
+///
+/// `Ok(None)` ⇒ nothing is configured, and the board bootstraps from the first fold that survives a
+/// throwaway-board probe and freezes there — which every verdict then reports as
+/// [`AnchorProvenance::BootstrappedFromSubmission`]. `Err` ⇒ the variable is SET and malformed, and
+/// the admission is refused rather than downgraded to the bootstrap the operator was configuring
+/// their way out of.
+fn operator_anchor(game: Game) -> Result<Option<ProofAnchor>, String> {
+    dreggnet_game_board::operator_anchor(game)
 }
 
 /// The slug → [`Game`] map. An unknown slug is refused rather than defaulted.
@@ -530,6 +553,9 @@ pub struct Admitted {
     /// The pinned anchor's VK fingerprint prefix (hex) — the board's trust root, shown so a reader
     /// can compare it against the one the sending surface published.
     pub vk8: String,
+    /// ⚑ **WHERE THE TRUST ROOT CAME FROM** — the one fact that decides what this row's ✓ is worth.
+    /// Rides on every verdict rather than living in a comment.
+    pub anchor_provenance: AnchorProvenance,
     /// When this board admitted the fold (unix seconds). The page's only freshness claim.
     pub admitted_at: u64,
 }
@@ -537,8 +563,10 @@ pub struct Admitted {
 #[derive(Default)]
 struct Inner {
     board: GameBoard,
-    /// The per-game trust anchor, pinned ONCE and never re-minted from a submitted proof.
-    anchors: BTreeMap<Game, ProofAnchor>,
+    /// The per-game trust anchor, pinned ONCE and never re-minted from a submitted proof, PLUS
+    /// where it came from. The provenance is stored beside the anchor and not recomputed, because
+    /// it is a fact about the pin that happened, not about the environment at read time.
+    anchors: BTreeMap<Game, (ProofAnchor, AnchorProvenance)>,
     admitted: Vec<Admitted>,
 }
 
@@ -628,9 +656,12 @@ impl CrownIngestState {
     /// 1. resolve the game (unknown slug ⇒ refused);
     /// 2. idempotence: a row id already on the board returns the existing [`Admitted`] and submits
     ///    nothing (`rank_entry` pushes unconditionally, so a retried POST would otherwise double-rank);
-    /// 3. **probe-before-pin**: if this game's anchor is not yet pinned, verify the row against its
-    ///    OWN claimed anchor on a THROWAWAY [`GameBoard`] first. Only a row that survives that may
-    ///    pin the board — a corrupt or hostile first row cannot freeze the trust root;
+    /// 3. **pin the anchor**: operator configuration if [`operator_anchor`] supplies one (a
+    ///    malformed spec is an `Err` here, never a downgrade), else **probe-before-pin** — verify
+    ///    the row against its OWN claimed anchor on a THROWAWAY [`GameBoard`] first, so a corrupt
+    ///    or hostile first row cannot freeze the trust root on something nothing verifies against.
+    ///    ⚑ The bootstrap arm records [`AnchorProvenance::BootstrappedFromSubmission`] on the
+    ///    [`Admitted`], and every surface that renders the row prints it;
     /// 4. `ensure_open` (write-once) + `submit_bytes` — the O(1) light client, the genesis binding,
     ///    the WIN binding, the claimed-turns binding. `Err` here means **nothing is admitted**.
     ///
@@ -652,9 +683,15 @@ impl CrownIngestState {
         }
 
         if !inner.anchors.contains_key(&game) {
-            // A baked canonical anchor removes the bootstrap entirely; until one ships, the first
-            // row that SURVIVES a probe pins the board.
-            let candidate = canonical_anchor(game).unwrap_or_else(|| row.anchor());
+            // ⚑ AN OPERATOR ANCHOR REMOVES THE BOOTSTRAP ENTIRELY. Absent one, the first row that
+            // SURVIVES a probe pins the board — and the resulting provenance travels with every
+            // verdict this board ever prints, because that anchor came from a submitter's wire.
+            // A MALFORMED operator spec is refused here, never downgraded: an operator who meant
+            // to pin the board must not silently get the submitter-chosen anchor instead.
+            let (candidate, provenance) = match operator_anchor(game)? {
+                Some(a) => (a, AnchorProvenance::OperatorConfigured),
+                None => (row.anchor(), AnchorProvenance::BootstrappedFromSubmission),
+            };
             let mut probe = GameBoard::new();
             probe.ensure_open(game, candidate.clone());
             probe
@@ -666,9 +703,18 @@ impl CrownIngestState {
                         game.slug()
                     )
                 })?;
-            inner.anchors.insert(game, candidate);
+            if provenance == AnchorProvenance::BootstrappedFromSubmission {
+                tracing::warn!(
+                    game = game.slug(),
+                    env = %dreggnet_game_board::env_var_name(game),
+                    "the crown board pinned its trust root to a SUBMITTED fold's own anchor and \
+                     froze there — it is now ranking self-reported claims. Set the named variable \
+                     to pin it to operator configuration instead."
+                );
+            }
+            inner.anchors.insert(game, (candidate, provenance));
         }
-        let anchor = inner
+        let (anchor, provenance) = inner
             .anchors
             .get(&game)
             .expect("the anchor was just pinned or already present")
@@ -690,6 +736,7 @@ impl CrownIngestState {
             completion_id: accepted.completion_id,
             proof_len: row.proof.len(),
             vk8: hex_of(&row.vk[..4]),
+            anchor_provenance: provenance,
             admitted_at: row.admitted_at,
         };
         inner.admitted.push(admitted.clone());
@@ -818,6 +865,7 @@ impl CrownIngestState {
                 // The private-strategy property, asserted alongside non-emptiness (it is vacuously
                 // true of an empty board).
                 stores_no_moves: inner.board.stores_no_moves(game),
+                anchor_provenance: inner.anchors.get(&game).map(|(_, p)| *p),
                 rows,
             });
         }
@@ -840,6 +888,10 @@ pub struct BoardView {
     pub universe: Option<UniverseId>,
     /// Every ranked entry is proof-backed and stores NO moves.
     pub stores_no_moves: bool,
+    /// ⚑ **WHERE THIS BOARD'S TRUST ROOT CAME FROM.** `None` = the board is open but nothing
+    /// pinned it (unreachable today; `ensure_open` and the pin happen together). Every rendering
+    /// of this view prints it.
+    pub anchor_provenance: Option<AnchorProvenance>,
     /// The ranked rows, best first, one per human.
     pub rows: Vec<BoardRow>,
 }
@@ -997,27 +1049,47 @@ async fn post_ingest(
         Err(e) => return refused(format!("crown ingest task join: {e}")),
     };
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "verified": true,
-            "ranked": true,
-            "kind": "o1-light-client-accept",
-            "id": admitted.id,
-            "game": admitted.game.slug(),
-            "origin": admitted.origin,
-            "player": admitted.player,
-            "ruleset": ruleset_or_unstated(&admitted.ruleset),
-            "turns": admitted.turns,
-            "proof_bytes": admitted.proof_len,
-            "vk8": admitted.vk8,
-            "admitted_at": admitted.admitted_at,
-            "board": "/crown",
-            "detail": "the whole-history light client accepted this envelope against the board's \
-                       pinned anchor, on this server, just now — nothing was taken on the sender's word",
-        })),
-    )
-        .into_response()
+    (StatusCode::OK, Json(ingest_ok_body(&admitted))).into_response()
+}
+
+/// **THE ONE PLACE THE WORD `verified` IS WRITTEN ON THIS SURFACE.**
+///
+/// `accepted` is what always happened on this path: the O(1) light client ran HERE and
+/// admitted the envelope against the board's pinned anchor. Whether that is a **trust
+/// decision** depends entirely on where the anchor came from, so `verified` is added on the
+/// operator-anchored arm ONLY and the key is **ABSENT** otherwise — a consumer testing
+/// `verified === true` gets `undefined` for a self-anchored board rather than a softer
+/// string it skims past. `anchor_provenance` is the branchable token underneath it.
+///
+/// Split out of the handler so the property is structural and directly testable; see
+/// `the_success_word_is_written_only_for_an_operator_pinned_anchor`.
+fn ingest_ok_body(admitted: &Admitted) -> serde_json::Value {
+    let prov = admitted.anchor_provenance;
+    let mut body = serde_json::json!({
+        "accepted": true,
+        "ranked": true,
+        "kind": "o1-light-client-accept",
+        "anchor_provenance": prov.token(),
+        "id": admitted.id,
+        "game": admitted.game.slug(),
+        "origin": admitted.origin,
+        "player": admitted.player,
+        "ruleset": ruleset_or_unstated(&admitted.ruleset),
+        "turns": admitted.turns,
+        "proof_bytes": admitted.proof_len,
+        "vk8": admitted.vk8,
+        "admitted_at": admitted.admitted_at,
+        "board": "/crown",
+        "detail": format!(
+            "the whole-history light client accepted this envelope on this server, just now, \
+             against this board's pinned anchor — and {}",
+            prov.sentence(admitted.game),
+        ),
+    });
+    if prov.is_trust_decision() {
+        body["verified"] = serde_json::Value::Bool(true);
+    }
+    body
 }
 
 /// A refusal that says what was refused and asserts that nothing was retained.
@@ -1025,7 +1097,9 @@ fn refused(error: String) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({
-            "verified": false,
+            // `verified` is deliberately ABSENT here too — it is written on exactly one arm of
+            // exactly one handler. `accepted: false` is the refusal's own word.
+            "accepted": false,
             "ranked": false,
             "kind": "o1-light-client-accept",
             "error": error,
@@ -1059,6 +1133,10 @@ async fn results_json(State(state): State<Arc<CrownIngestState>>) -> Response {
                 "title": v.game.title(),
                 "universe": v.universe.map(|u| hex_of(u.as_bytes())),
                 "stores_no_moves": v.stores_no_moves,
+                // ⚑ PER BOARD, because the pin is per board. A consumer ranking these rows against
+                // any other surface's needs this before it needs anything else here.
+                "anchor_provenance": v.anchor_provenance.map(|p| p.token()),
+                "anchor_note": v.anchor_provenance.map(|p| p.sentence(v.game)),
                 "rows": v.rows.iter().enumerate().map(|(i, r)| serde_json::json!({
                     "rank": i + 1,
                     "id": r.id,
@@ -1079,7 +1157,11 @@ async fn results_json(State(state): State<Arc<CrownIngestState>>) -> Response {
     Json(serde_json::json!({
         "as_of": now_secs(),
         "verification": "each row re-ran the O(1) whole-history light client on its stored proof \
-                         envelope against this board's pinned anchor, on this read",
+                         envelope against its board's pinned anchor, on this read. ⚑ What that is \
+                         WORTH is `anchor_provenance` on each board below: `operator-configured` \
+                         means the anchor is config no submitter can write; \
+                         `bootstrapped-from-first-submission` means the board froze onto an anchor \
+                         a submitter minted, and is ranking self-reported claims.",
         "boards": boards,
     }))
     .into_response()
@@ -1099,8 +1181,10 @@ fn board_page(views: &[BoardView], ingest_armed: bool) -> String {
     if views.is_empty() {
         sections.push_str(
             "<section class=\"deos-section tag-muted\"><h2>No crown has crossed yet</h2>\
-             <p class=\"prose\">A row appears here only once its proof re-verifies against this \
-             board's pinned anchor. A result is never listed because a sender said so.</p>\
+             <p class=\"prose\">A row appears here only once its proof passes this server's own \
+             O(1) light client against this board's pinned anchor. A result is never listed \
+             because a sender said so — though until an operator pins an anchor, the FIRST \
+             accepted fold supplies one, and every board says which case it is in.</p>\
              </section>",
         );
     }
@@ -1108,13 +1192,39 @@ fn board_page(views: &[BoardView], ingest_armed: bool) -> String {
         sections.push_str(&format!(
             "<section class=\"deos-section\"><p class=\"eyebrow\">Succinct fold · O(1) accept</p>\
              <h2>{title}</h2><p class=\"prose\">Every row below is a finished match folded to ONE \
-             proof and re-verified <em>on this request</em> against this board's pinned anchor: no \
-             moves were posted, and none are stored. <strong>One row per human, not per \
-             account:</strong> a player who has <a href=\"/identity/link\">proven</a> that their \
-             chat and web identities are the same person ranks once, on their best fold; an \
-             unlinked player is their own human, so nothing groups by accident.</p>",
+             proof and re-run through the whole-history light client <em>on this request</em> \
+             against this board's pinned anchor: no moves were posted, and none are stored. \
+             <strong>One row per human, not per account:</strong> a player who has \
+             <a href=\"/identity/link\">proven</a> that their chat and web identities are the same \
+             person ranks once, on their best fold; an unlinked player is their own human, so \
+             nothing groups by accident.</p>",
             title = esc(v.game.title()),
         ));
+        // ⚑ THE ANCHOR'S PROVENANCE, ON THE BOARD ITSELF, ABOVE THE ROWS. The rank column is
+        // meaningless without it: an accept against a submitter-minted anchor is a consistency
+        // check, and a reader must not have to infer that from a footnote.
+        match v.anchor_provenance {
+            Some(p) if p.is_trust_decision() => sections.push_str(&format!(
+                "<div class=\"receipt ok\"><span class=\"dot\"></span>\
+                 <span class=\"label\">operator-pinned anchor</span>\
+                 <span class=\"detail\">{}</span></div>",
+                esc(&p.sentence(v.game)),
+            )),
+            Some(p) => sections.push_str(&format!(
+                "<div class=\"receipt warn\"><span class=\"dot\"></span>\
+                 <span class=\"label\">RANKING SELF-REPORTED CLAIMS</span>\
+                 <span class=\"detail\">{}</span></div>\
+                 <p class=\"prose\"><strong>What that means for the ranking below.</strong> The \
+                 proofs are real and this server really did re-run the light client on each of \
+                 them just now. But the genesis root and the WIN root every one of them is checked \
+                 against were taken from the first fold this board accepted, and frozen. A player \
+                 who folds first defines what winning <em>is</em> here — so read this table as \
+                 <em>these folds agree with the first fold's own claim about the game</em>, not as \
+                 <em>these players won</em>.</p>",
+                esc(&p.sentence(v.game)),
+            )),
+            None => {}
+        }
         sections.push_str(&format!(
             "<div class=\"kv\">\
              <div><p class=\"k\">Board universe</p><p class=\"v mono\">{universe}</p></div>\
@@ -1176,18 +1286,20 @@ fn board_page(views: &[BoardView], ingest_armed: bool) -> String {
          <p class=\"eyebrow\">Re-verified on this request</p>\
          <h1>Crowns · one board, every surface</h1>\
          <p class=\"deck\">A finished match of a portfolio game folds to ONE succinct proof. A crown \
-         won in a Discord channel and a crown won here rank on the SAME board, not because the \
-         surfaces trust each other, but because a proof does not need trust: this server re-runs the \
-         whole-history light client itself, on every read.</p></div>\
+         won in a Discord channel and a crown won here rank on the SAME board, and this server \
+         re-runs the whole-history light client itself on every read rather than taking another \
+         surface's word for a result. <strong>A proof still needs an anchor, and an anchor is \
+         somebody's choice</strong> — each board below says whose.</p></div>\
          <p class=\"prose\">{door}</p>\
          <p class=\"prose\"><strong>These are finished results, not a live view.</strong> Each row \
          states when this board admitted it (unix seconds). Nothing here is a mirror of another \
          surface's screen.</p>\
          {sections}\
          <div class=\"receipt ok\"><span class=\"dot\"></span>\
-         <span class=\"label\">verified, not relayed</span>\
+         <span class=\"label\">re-checked here, not relayed</span>\
          <span class=\"detail\">a result arriving from another surface is admitted only if its \
-         proof verifies here</span></div>\
+         proof passes this server's own O(1) light client against this board's pinned anchor — \
+         whose provenance is printed on each board above</span></div>\
          <p class=\"prose tag-muted\">Honest scope: the deployed STARK is <em>succinct</em>, not \
          <em>hiding</em>. &ldquo;The moves are never posted&rdquo; is a data-availability privacy \
          property (this board never sees them and nobody publishes them), not a cryptographic \
@@ -1623,5 +1735,146 @@ mod tests {
         // label is written by another surface and rendered on a public page.
         assert_eq!(short("ábcdef", 3), "ábc");
         assert_eq!(short("ab", 9), "ab");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ⚑ THE PERMANENT CONTROLS for "the board ranks against an anchor a submitter
+    // minted, and calls it verified".
+    //
+    // These are CONTROLS, not injections: they are evaluated on every green pass, and
+    // they go red the moment the property they guard stops holding. They need NO env
+    // var and NO fixture proof — the shapes they check are pure functions of an
+    // `Admitted` / a `BoardView`, which is exactly why `ingest_ok_body` was split out
+    // of the handler.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    fn admitted_with(provenance: AnchorProvenance) -> Admitted {
+        Admitted {
+            id: "row".to_string(),
+            game: Game::Automatafl,
+            origin: "discord".to_string(),
+            player: "aa".repeat(32),
+            ruleset: String::new(),
+            turns: 7,
+            universe: UniverseId::from_bytes([0u8; 32]),
+            completion_id: [0u8; 32],
+            proof_len: 1234,
+            vk8: "deadbeef".to_string(),
+            anchor_provenance: provenance,
+            admitted_at: 1_700_000_000,
+        }
+    }
+
+    /// **THE SUCCESS WORD IS WRITTEN IN EXACTLY ONE PLACE, AND ONLY WHEN IT IS EARNED.**
+    ///
+    /// Measured 2026-07-30: this handler answered `"verified": true` unconditionally, with
+    /// the detail string *"nothing was taken on the sender's word"*, while the board's
+    /// anchor had been taken from the first sender's wire and frozen. A caller could not
+    /// tell the two cases apart at all.
+    ///
+    /// The shape asserted here is the sibling light-client repair's: the key is ABSENT on
+    /// the weaker arm, so `body.verified === true` is `undefined` rather than a softer
+    /// string a reader skims past. Re-add an unconditional `verified` and this goes red.
+    #[test]
+    fn the_success_word_is_written_only_for_an_operator_pinned_anchor() {
+        let boot = ingest_ok_body(&admitted_with(AnchorProvenance::BootstrappedFromSubmission));
+        assert!(
+            boot.get("verified").is_none(),
+            "a board pinned to a SUBMITTER's anchor must not report `verified` at all — the \
+             key must be ABSENT, not `false` and not a softer string, so a consumer testing \
+             `verified === true` gets `undefined`. Got: {boot}"
+        );
+        assert_eq!(
+            boot["accepted"], true,
+            "what DID happen must still be reported: the light client ran here and admitted it"
+        );
+        assert_eq!(
+            boot["anchor_provenance"],
+            "bootstrapped-from-first-submission"
+        );
+        let detail = boot["detail"].as_str().unwrap_or_default();
+        assert!(
+            detail.contains("SELF-REPORTED") && detail.contains("CROWN_ANCHOR_AUTOMATAFL"),
+            "the response's own detail must say what the board is doing and how to stop it, \
+             not leave it to a page a caller never renders. Got: {detail}"
+        );
+        assert!(
+            !detail.contains("nothing was taken on the sender's word"),
+            "the retired claim must stay retired — the sender's word WAS the anchor"
+        );
+
+        let pinned = ingest_ok_body(&admitted_with(AnchorProvenance::OperatorConfigured));
+        assert_eq!(
+            pinned["verified"], true,
+            "an operator-pinned board IS a trust decision and must reach the word — a gate \
+             that cannot go green is not a gate either"
+        );
+        assert_eq!(pinned["anchor_provenance"], "operator-configured");
+    }
+
+    /// **THE BOARD A STRANGER READS SAYS WHAT IT IS RANKING.**
+    ///
+    /// The rank column is meaningless without the anchor's provenance, and a reader must not
+    /// have to infer it from a footnote. Delete the amber receipt, or paint the bootstrap
+    /// arm with `receipt ok`, and this goes red.
+    #[test]
+    fn the_board_page_says_when_it_is_ranking_self_reported_claims() {
+        let view = |p: AnchorProvenance| BoardView {
+            game: Game::Automatafl,
+            universe: None,
+            stores_no_moves: true,
+            anchor_provenance: Some(p),
+            rows: Vec::new(),
+        };
+
+        let boot = board_page(&[view(AnchorProvenance::BootstrappedFromSubmission)], false);
+        assert!(
+            boot.contains("RANKING SELF-REPORTED CLAIMS"),
+            "a board whose trust root came from a submission must SAY SO, in its own chrome, \
+             above the rows"
+        );
+        assert!(
+            boot.contains("receipt warn") && !boot.contains("operator-pinned anchor"),
+            "the bootstrap arm must be the third state — not the green `receipt ok` a reader \
+             reads as a pass"
+        );
+        assert!(
+            boot.contains("frozen") || boot.contains("froze"),
+            "the FREEZE is the part that makes this more than a per-submission caveat: the \
+             first fold defines the board forever"
+        );
+
+        let pinned = board_page(&[view(AnchorProvenance::OperatorConfigured)], false);
+        assert!(
+            pinned.contains("operator-pinned anchor") && !pinned.contains("SELF-REPORTED"),
+            "an operator-pinned board must render the honest strong state"
+        );
+    }
+
+    /// **A MALFORMED OPERATOR ANCHOR REFUSES THE ADMISSION; IT NEVER DOWNGRADES.**
+    ///
+    /// The failure this forbids: an operator sets `CROWN_ANCHOR_AUTOMATAFL`, fat-fingers the
+    /// spec, and the board silently hands its trust root to the next submitter — the exact
+    /// state they were configuring their way out of, now with a config file that says
+    /// otherwise. `operator_anchor` returns `Result<Option<_>>` for this reason alone.
+    ///
+    /// Env vars are process-global, so this test drives the parser directly rather than
+    /// racing every other test in this binary for `set_var`. What it pins is the contract
+    /// `admit` depends on: malformed ⇒ `Err`, and `Err` propagates (the `?` in `admit`).
+    #[test]
+    fn a_malformed_operator_anchor_spec_is_an_error_not_a_fallback() {
+        let err = dreggnet_game_board::parse_anchor_spec("not-an-anchor")
+            .expect_err("a malformed spec must be an Err");
+        assert!(
+            err.contains("three colon-separated") || err.contains("64 hex"),
+            "the refusal must say what the spec should look like, got: {err}"
+        );
+        // And the arm `admit` takes on that Err is a REFUSAL, because it is `operator_anchor(game)?`
+        // — a `.unwrap_or(None)` there would silently reinstate the bootstrap. This asserts the
+        // signature that makes the mistake impossible to write by accident.
+        fn _assert_result_shape(f: fn(Game) -> Result<Option<ProofAnchor>, String>) -> bool {
+            f as usize != 0
+        }
+        assert!(_assert_result_shape(operator_anchor));
     }
 }

@@ -2398,9 +2398,9 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     // The non-zero field carried by the cell (and, to keep the v1-welded state block consistent
     // with the cell, by the circuit `CellState` the generator opens over).
     let field0_bytes = [0x07u8; 32];
-    // v13: the producer folds each flat field via the FAITHFUL field_limbs8 8-lane split; lane 0
+    // The producer projects each flat field through the nine-lane field_limbs9 encoding; lane 0
     // (the u64-lane lo32) is the welded limb `4 + i` the v1 state block carries.
-    let field0_felt = dregg_circuit::effect_vm::field_limbs8(&field0_bytes)[0];
+    let field0_felt = dregg_circuit::effect_vm::field_limbs9(&field0_bytes)[0];
     assert_ne!(
         field0_felt,
         BabyBear::ZERO,

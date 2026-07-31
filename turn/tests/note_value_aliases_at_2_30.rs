@@ -41,14 +41,44 @@
 //! noteSpend / noteCreate turn would go UNSAT.
 //!
 //! So A2 (the address) and A3 (the value) are **not** the same class of repair as the fields octet.
-//! Closing them is a Lean AIR change — `MapOp.key`/`value` widened to eight felts plus lex-8 sorted
-//! bracketing on both the open and insert sides (the compare gadget exists:
-//! `Circuit/Emit/LexCompare8Emit.lean::lexLt8_refines`) — followed by a descriptor re-emit and a VK
-//! rotation. `circuit/src/effect_vm/trace_rotated.rs` registers the address half as felt-width wound
-//! site #20 and reaches the same conclusion independently.
+//! Closing them is a Lean AIR change — followed by a descriptor re-emit and a VK rotation.
+//! `circuit/src/effect_vm/trace_rotated.rs` registers the address half as felt-width wound site #20
+//! and reaches the same conclusion independently.
 //!
-//! ⚠ And that re-emit is currently BLOCKED upstream: `circuit/descriptors/PROVENANCE.json` reads
-//! `"source_dirty": true`, so anything riding the emit pipeline inherits that drift.
+//! ⚑ **TWO OF THE THREE BLOCKERS THIS COMMENT NAMED ARE GONE, AND THE PRESCRIPTION WAS WRONG.**
+//! Re-measured 2026-07-31:
+//!
+//! 1. **The PROVENANCE blocker is CLEARED.** `circuit/descriptors/PROVENANCE.json` now reads
+//!    `"source_dirty": false`, and all 75 `descriptor_sha256` pins rehash byte-exact against the
+//!    files on disk (0 drift). Nothing riding the emit pipeline inherits drift any more.
+//!
+//! 2. **The fields-octet sibling is no longer a Rust-helper repair with no Lean consequence.** It
+//!    is now `metatheory/Dregg2/Circuit/FieldLanes9.lean` — `fieldToLanes9_injective`, a genuine
+//!    INJECTION with a total decoder and a machine-checked left inverse — and it cost the geometry
+//!    flag day `rotatedNumPreLimbs` 178 -> 184 (`B_SPAN` 239 -> 247), because eight lanes cannot be
+//!    injective at all (`nine_lanes_is_the_minimum : P^8 < 2^256 <= P^9`). The precedent for A2/A3
+//!    is therefore "pay the flag day", not "swap a helper".
+//!
+//! 3. ⚠ **BUT "widen `MapOp.key`/`value` to eight felts plus lex-8 bracketing" IS NOT THE REPAIR,
+//!    AND DONE LITERALLY IT IS A REGRESSION.**
+//!    `Dregg2/Circuit/MapOpWideKeyGate.lean::halfWideLeaf_forges_absence_of_present` proves — for
+//!    EVERY hash, with NO collision-resistance hypothesis — that widening the ADDRESS while the
+//!    POINTER stays projected to lane 0 gives the honest low leaf `<keyLo, 1, keyE>` and the
+//!    fabricated `<keyLo, 1, ptrHi>` the SAME digest, and the fabricated bracket then CONTAINS a key
+//!    the honest chain PRESENTS: a non-membership FORGERY, strictly worse than today's aliasing.
+//!    There is no width knob. The schema is the **arity-17 leaf** `addr8 || value || next8`
+//!    (`imtLeafHash8`), or it is broken.
+//!
+//! What is actually left is narrower than this comment used to imply, and it is already built in
+//! Lean: `MapOpWideKey` / `MapOpWideKeyGate` / `MapOpWideKeyCanonDischarge` /
+//! `MapOpWideKeyRowBoundary` / `MapAbsentImtGateWide` carry the widened node (`MapOpW`), the
+//! arity-17 leaf, the canonicity discharge (`lexLt8_refines_canon`, hypothesis-free), the row-boundary
+//! weld (`absentRow_of_lexBlocks_forces_absence`) and the both-sides-must-move-together refusals
+//! (`insertW_absentW_jointly_unsat`, `narrowInsert_wideOpen_double_spend`), all `#assert_axioms`-clean.
+//! The residual those files name as W3/W4 is exactly two things: **register the widened node in the
+//! DEPLOYED descriptor** (`DescriptorIR2.MapOp.key : EmittedExpr` -> `Fin 8 -> EmittedExpr`, and the
+//! same for `value`/the pointer) and **widen the Rust chip row + decoder**. That is one epoch, and it
+//! moves the insert and open sides together or it is a double spend.
 //!
 //! Until then the assertions below are TRUE and must stay: they are the characterization that keeps
 //! the aliasing detected. `a8_the_exact_duals_separate_what_the_committed_roots_alias` is the pole

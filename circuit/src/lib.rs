@@ -232,6 +232,7 @@ pub mod body_membership;
 pub mod constraint_prover;
 pub mod dsl;
 pub mod faithful8;
+pub mod faithful9;
 pub mod field;
 pub mod ivc;
 /// FFI symbols the Lean-compiled storage logic calls back for its Poseidon2 hashing (@[extern]).
@@ -600,6 +601,7 @@ pub use proof_tier::{CryptographicProof, ProofTier, VerifiedProof};
 
 // The faithful-commitment TYPE WALL (docs/FAITHFUL-COMMITMENT-LAW.md).
 pub use faithful8::Faithful8;
+pub use faithful9::Faithful9;
 
 // Re-export primary types.
 pub use binding::{

@@ -2430,6 +2430,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-commit",
+ "dregg-p3-pasta",
  "futures-channel",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
@@ -2861,6 +2862,8 @@ dependencies = [
  "dregg-turn",
  "dregg-turn-prover",
  "ed25519-dalek",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2921,6 +2924,22 @@ dependencies = [
 [[package]]
 name = "dregg-node-target"
 version = "0.1.0"
+
+[[package]]
+name = "dregg-p3-pasta"
+version = "0.1.0"
+dependencies = [
+ "ark-ff",
+ "mina-curves",
+ "mina-poseidon",
+ "num-bigint",
+ "p3-baby-bear",
+ "p3-field",
+ "p3-symmetric",
+ "paste",
+ "rand 0.10.1",
+ "serde",
+]
 
 [[package]]
 name = "dregg-param-compose"

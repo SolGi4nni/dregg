@@ -195,7 +195,7 @@ theorem gated_leader_is_admitted (fed : AdmissionState) (B : Lace)
 leaders. (`BlocklaceFinality.findAllFinalLeaders`, filtered through the admission gate.) -/
 def admittedFinalLeaders (fed : AdmissionState) (B : Lace) (participants : List AuthorId)
     (wavelength : Nat) : List Block :=
-  let mr := BlocklaceFinality.maxRound B
+  let mr := BlocklaceFinality.maxRound B participants
   let waveCount := if wavelength == 0 then 0 else mr / wavelength + 1
   (List.range waveCount).filterMap (fun w => finalLeaderAtAdmitted fed B participants w wavelength)
 

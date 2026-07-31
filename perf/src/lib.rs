@@ -776,13 +776,13 @@ pub fn embedded_commit_wire() -> String {
             (
                 0,
                 WireValue::Record(vec![
-                    ("balance".into(), WireValue::Int(100)),
-                    ("nonce".into(), WireValue::Int(7)),
+                    ("balance".into(), WireValue::int(100)),
+                    ("nonce".into(), WireValue::int(7)),
                 ]),
             ),
             (
                 1,
-                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+                WireValue::Record(vec![("balance".into(), WireValue::int(5))]),
             ),
         ],
         caps: vec![(9, vec![Cap::Node(0)])],

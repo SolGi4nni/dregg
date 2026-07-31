@@ -157,14 +157,14 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
         .expect("ordinary actor cell balance is non-negative");
     let mut vm_initial = VmCellState::new(vm_balance, actor_cell.state.nonce() as u32);
     // Pull current field bytes into BabyBear via the SAME faithful lane the
-    // deployed bridge writes SetField into: `field_limbs8(f)[0]` = big-endian
+    // deployed bridge writes SetField into: `field_limbs9(f)[0]` = big-endian
     // bytes[28..32] (the u64-lane lo32), the lane the rotated producer welds to
     // limb `4 + slot`. (The historical `u32::from_le_bytes([f[0..4]])` dialect
     // put before/after state in DIFFERENT domains — a third projector — so the
     // field comparisons were meaningless; this aligns them.)
     for i in 0..8 {
         if let Some(f) = actor_cell.state.get_field(i) {
-            vm_initial.fields[i] = dregg_circuit::effect_vm::field_limbs8(f)[0];
+            vm_initial.fields[i] = dregg_circuit::effect_vm::field_limbs9(f)[0];
         }
     }
     vm_initial.refresh_commitment();
@@ -486,7 +486,7 @@ proptest! {
 
         // Write v0 into the FAITHFUL u64-lane lo32: big-endian bytes[28..32].
         // That is exactly the lane the deployed bridge reads via
-        // `field_limbs8(value)[0]` (BE bytes[28..32]) and the rotated producer
+        // `field_limbs9(value)[0]` (BE bytes[28..32]) and the rotated producer
         // welds to limb `4 + slot`, so v0 lands in the AIR's field column
         // meaningfully (nonzero) rather than in a byte range the bridge ignores.
         let mut value = [0u8; 32];
@@ -502,7 +502,7 @@ proptest! {
 
         // GENUINE executor↔AIR consistency: project the RUNTIME's actually-stored
         // 32-byte field bytes through the SAME canonical field encoding the AIR
-        // uses (`field_limbs8(..)[0]`), and require the AIR's claimed field
+        // uses (`field_limbs9(..)[0]`), and require the AIR's claimed field
         // column to equal it. No hand-typed expectation — the bar is that the
         // deployed bridge's projection (carried into the AIR trace) agrees with
         // what the executor wrote. A bridge that reverted SetField to the stale
@@ -512,10 +512,10 @@ proptest! {
             .state
             .get_field(idx)
             .expect("SetField wrote the field slot at runtime");
-        let expected_bb = dregg_circuit::effect_vm::field_limbs8(runtime_field_bytes)[0];
+        let expected_bb = dregg_circuit::effect_vm::field_limbs9(runtime_field_bytes)[0];
         prop_assert_eq!(
             claim.final_fields[idx], expected_bb,
-            "SetField: AIR final field[{}]={:?} must equal field_limbs8(runtime field)[0]={:?}",
+            "SetField: AIR final field[{}]={:?} must equal field_limbs9(runtime field)[0]={:?}",
             idx, claim.final_fields[idx], expected_bb,
         );
         // Runtime side: the executor must have stored EXACTLY the 32 bytes we

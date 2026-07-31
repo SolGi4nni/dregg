@@ -596,17 +596,33 @@ fn boundary_closure(meta: &Path) -> Option<std::collections::HashSet<String>> {
         };
         for line in text.lines() {
             // Imports precede every declaration in Lean, but a doc block may mention the word;
-            // only a line whose FIRST token is `import` (optionally `meta`/`public`-qualified) is one.
+            // only a line whose FIRST token is `import` (optionally qualified) is one.
+            //
+            // ⚑ THE GRAMMAR MUST MATCH `scripts/lean-ffi-closure.py`, which walks this SAME
+            // import graph to pick the seed archive's members. This is the third walk of one
+            // graph (Python for the seed cut, Python again for `scripts/check-lean-seed-
+            // closure.sh`, Rust here for the splice filter), and a form one accepts and another
+            // drops is a module whose object the seed carries and the splice never refreshes —
+            // silently stale, and green. Until 2026-07-30 this side accepted only
+            // `import` / `meta import` / `public import`; `private import` was dropped outright
+            // and `import all Foo` parsed as a module literally named `all`. Zero occurrences
+            // in-tree today, which is exactly why it would have been found late.
             let trimmed = line.trim_start();
             let rest = trimmed
                 .strip_prefix("import ")
                 .or_else(|| trimmed.strip_prefix("meta import "))
-                .or_else(|| trimmed.strip_prefix("public import "));
+                .or_else(|| trimmed.strip_prefix("public import "))
+                .or_else(|| trimmed.strip_prefix("private import "));
             let Some(rest) = rest else { continue };
+            // `import all Foo` re-exports Foo's whole environment; the MODULE is still `Foo`.
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix("all ").unwrap_or(rest);
             let name: String = rest
                 .trim()
                 .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .take_while(|c| {
+                    c.is_alphanumeric() || *c == '_' || *c == '.' || *c == '«' || *c == '»'
+                })
                 .collect();
             if !name.is_empty() {
                 stack.push(name);

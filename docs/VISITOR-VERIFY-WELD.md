@@ -48,6 +48,29 @@ extension defaults (genesis-anchor pattern), whose slots/events carry `name → 
 The on-ledger vocabulary exists (`starbridge-apps/nameservice`, `starbridge-apps/domains`);
 the name→cell *read endpoint* does not yet.
 
+### ⚑ Update 2026-07-30 — the badge stopped claiming otherwise, and gained a partial out-of-band channel
+
+For three weeks this section was correct and `verify-badge.js` painted a green
+"✓ verified on-chain" over the words *"You did not trust the host."* That is now repaired,
+**but the repair is a labelling fix plus a manual channel, not the binding**:
+
+- the badge accepts **`?dregg-cell=<64 hex>` and `?dregg-node=<base>` from the visitor's own
+  URL** — a link you did not get from the host under test is, today, the only out-of-band
+  channel that exists. `transclude.js` takes `?dregg-node=`, which **outranks a per-element
+  `data-node`**;
+- **only** a verdict whose oracle came entirely from the visitor is labelled *verified* and
+  sets `window.__DREGG_VERIFY__.verdict`. A page-supplied oracle paints a third, amber state —
+  *consistent — host-supplied oracle* — and the key is absent, so a consumer testing
+  `=== "verified"` gets `undefined`;
+- a `?dregg-cell=` that **disagrees** with the page's `data-cell` is refused before any hashing;
+- `scripts/check-verdict-provenance.mjs` (registered in `scripts/local-gates.sh`) executes the
+  real badge against a simulated hostile host and fails if it ever paints the strong verdict on
+  a page-supplied oracle. Its `--self-test` row proves it can go red.
+
+**What this does NOT do, and plan item 3 below is still the answer:** a visitor who does not
+paste a cell id gets the labelled-but-weak state, and nothing yet binds `mysite.dregg.works`
+to one cell. The default path is honest now; it is not trustless.
+
 ## What already works (don't rebuild)
 
 - Node `GET /api/cell/{id}` is public and returns `fields[]` (`node/src/api.rs:1653`, :4257);
@@ -61,7 +84,10 @@ the name→cell *read endpoint* does not yet.
 
 ## The plan, effort-ranked
 
-1. **Endpoint-default sweep (hours; extension + page-surface legs DONE, SDK remains).** The
+1. **Endpoint-default sweep (hours; extension + page-surface legs DONE, SDK remains).** ⚑ Note
+   the framing below is about a *hardcoded dead default*, which is a different (and lesser)
+   defect than the oracle-provenance one recorded above — the page surfaces hardcoded no
+   endpoint and were still defeated, because the endpoint came from the page. The
    extension defaults are swept: `extension/src/endpoints.ts:22` and
    `extension/manifest.json:19-20` carry the product host `node.dregg.net`
    (runtime-overridable). The page surfaces are swept too: `verify-badge.js:39-42,:138-139`

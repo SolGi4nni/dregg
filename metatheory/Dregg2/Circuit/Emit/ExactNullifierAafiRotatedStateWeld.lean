@@ -15,7 +15,7 @@ This module closes the Lean side of that boundary, additively and without emitti
   faithful-eight `.nullifier` group;
 * the complete BEFORE payload is transition-carried, so the first-row commitment and last-row
   FNS3 weld refer to one state rather than two unrelated row witnesses;
-* all 171 non-nullifier payload lanes (including iroot) are preserved into the AFTER state.
+* all 177 non-nullifier payload lanes (including iroot) are preserved into the AFTER state.
 
 The descriptor is deliberately not emitted or registered as a production artifact here.  The
 remaining production seam is the Rust witness/refinement cutover: populate these two rotated
@@ -46,14 +46,14 @@ set_option autoImplicit false
 /-- The exact AAFI circuit remains the core. -/
 def CORE_WIDTH : Nat := V3_TRACE_WIDTH
 
-/-- One rotated payload is the verified 178 pre-iroot limbs plus iroot. -/
+/-- One rotated payload is the verified 184 pre-iroot limbs plus iroot. -/
 def ROTATED_PAYLOAD_WIDTH : Nat := rotatedNumPreLimbs + 1
 
 def BEFORE_BLOCK_BASE : Nat := CORE_WIDTH
 def AFTER_BLOCK_BASE : Nat := BEFORE_BLOCK_BASE + ROTATED_PAYLOAD_WIDTH
 def ROTATED_HOST_WIDTH : Nat := AFTER_BLOCK_BASE + ROTATED_PAYLOAD_WIDTH
 
-/-- Each wide chain owns sixty eight-felt carriers. -/
+/-- Each wide chain owns sixty-two eight-felt carriers. -/
 def BEFORE_CARRIER_BASE : Nat := ROTATED_HOST_WIDTH
 def AFTER_CARRIER_BASE : Nat := BEFORE_CARRIER_BASE + wideCarrierBlockSpan
 def WELDED_TRACE_WIDTH : Nat := ROTATED_HOST_WIDTH + wideAppendixSpan
@@ -68,24 +68,24 @@ def nullifierOffsets : List Nat :=
   (List.finRange 8).map (layoutGroupCol .nullifier)
 
 /-- Every payload lane except the faithful-eight nullifier checkpoint is preserved.  This includes
-the iroot at offset 178: the exact append mutates only the nullifier accumulator component. -/
+the iroot at offset 184: the exact append mutates only the nullifier accumulator component. -/
 def stableFrameOffsets : List Nat :=
   (List.range ROTATED_PAYLOAD_WIDTH).filter fun off => !nullifierOffsets.contains off
 
 #guard CORE_WIDTH == 2442
-#guard ROTATED_PAYLOAD_WIDTH == 179
+#guard ROTATED_PAYLOAD_WIDTH == 185
 #guard BEFORE_BLOCK_BASE == 2442
-#guard AFTER_BLOCK_BASE == 2621
-#guard ROTATED_HOST_WIDTH == 2800
-#guard BEFORE_CARRIER_BASE == 2800
-#guard AFTER_CARRIER_BASE == 3280
-#guard WELDED_TRACE_WIDTH == 3760
+#guard AFTER_BLOCK_BASE == 2627
+#guard ROTATED_HOST_WIDTH == 2812
+#guard BEFORE_CARRIER_BASE == 2812
+#guard AFTER_CARRIER_BASE == 3308
+#guard WELDED_TRACE_WIDTH == 3804
 #guard CORE_PI_COUNT == 60
 #guard PI_BEFORE_ROTATED_COMMIT_BASE == 60
 #guard PI_AFTER_ROTATED_COMMIT_BASE == 68
 #guard WELDED_PI_COUNT == 76
 #guard nullifierOffsets == [26, 68, 69, 70, 71, 72, 73, 74]
-#guard stableFrameOffsets.length == 171
+#guard stableFrameOffsets.length == 177
 
 /-! ## 2. Actual weld gates -/
 
@@ -117,8 +117,8 @@ def wideStateLookups : List VmConstraint2 :=
     rotV3WideLookups AFTER_BLOCK_BASE AFTER_CARRIER_BASE
 
 def wideStatePins : List VmConstraint2 :=
-  commitPins .first (carrierCols BEFORE_CARRIER_BASE 59) PI_BEFORE_ROTATED_COMMIT_BASE ++
-    commitPins .last (carrierCols AFTER_CARRIER_BASE 59) PI_AFTER_ROTATED_COMMIT_BASE
+  commitPins .first (carrierCols BEFORE_CARRIER_BASE wideCommitCarrier) PI_BEFORE_ROTATED_COMMIT_BASE ++
+    commitPins .last (carrierCols AFTER_CARRIER_BASE wideCommitCarrier) PI_AFTER_ROTATED_COMMIT_BASE
 
 /-- Only the first sixty v3 pins survive.  In particular the old caller-selected FNS3 digest pins
 at 60..75 are absent; those slots now publish the outer rotated-state commitments. -/
@@ -140,14 +140,14 @@ def exactNullifierAafiRotatedStateDescriptor : EffectVmDescriptor2 :=
   , hashSites := []
   , ranges := [] }
 
-#guard beforePayloadContinuity.length == 179
-#guard stableFrameConstraints.length == 171
+#guard beforePayloadContinuity.length == 185
+#guard stableFrameConstraints.length == 177
 #guard fns3WeldConstraints.length == 16
-#guard wideStateLookups.length == 120
+#guard wideStateLookups.length == 124
 #guard wideStatePins.length == 16
 #guard retainedCorePins.length == 60
 #guard (v3PublicPins.take CORE_PI_COUNT).map (fun p => p.pi) == List.range 60
-#guard exactNullifierAafiRotatedStateDescriptor.traceWidth == 3760
+#guard exactNullifierAafiRotatedStateDescriptor.traceWidth == 3804
 #guard exactNullifierAafiRotatedStateDescriptor.piCount == 76
 #guard exactNullifierAafiRotatedStateDescriptor.tables.length == 5
 #guard exactNullifierAafiRotatedStateDescriptor.tables.map (fun t => t.id) ==
@@ -227,21 +227,21 @@ theorem afterWideLookup_mem :
   tauto
 
 theorem beforeWidePin_mem (k : Nat) (hk : k < 8) :
-    .base (.piBinding .first ((carrierCols BEFORE_CARRIER_BASE 59).getD k 0)
+    .base (.piBinding .first ((carrierCols BEFORE_CARRIER_BASE wideCommitCarrier).getD k 0)
       (PI_BEFORE_ROTATED_COMMIT_BASE + k)) ∈
       exactNullifierAafiRotatedStateDescriptor.constraints := by
-  have hlocal : .base (.piBinding .first ((carrierCols BEFORE_CARRIER_BASE 59).getD k 0)
+  have hlocal : .base (.piBinding .first ((carrierCols BEFORE_CARRIER_BASE wideCommitCarrier).getD k 0)
       (PI_BEFORE_ROTATED_COMMIT_BASE + k)) ∈ wideStatePins := by
     unfold wideStatePins commitPins
     apply List.mem_append_left
     rw [List.mem_map]
-    refine ⟨((carrierCols BEFORE_CARRIER_BASE 59).getD k 0, k), ?_, rfl⟩
+    refine ⟨((carrierCols BEFORE_CARRIER_BASE wideCommitCarrier).getD k 0, k), ?_, rfl⟩
     rw [List.mem_iff_getElem]
     refine ⟨k, ?_, ?_⟩
     · rw [List.length_zipIdx, carrierCols_length]
       exact hk
     · rw [List.getElem_zipIdx]
-      have hk' : k < (carrierCols BEFORE_CARRIER_BASE 59).length := by
+      have hk' : k < (carrierCols BEFORE_CARRIER_BASE wideCommitCarrier).length := by
         rw [carrierCols_length]
         exact hk
       simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk']
@@ -250,21 +250,21 @@ theorem beforeWidePin_mem (k : Nat) (hk : k < 8) :
   tauto
 
 theorem afterWidePin_mem (k : Nat) (hk : k < 8) :
-    .base (.piBinding .last ((carrierCols AFTER_CARRIER_BASE 59).getD k 0)
+    .base (.piBinding .last ((carrierCols AFTER_CARRIER_BASE wideCommitCarrier).getD k 0)
       (PI_AFTER_ROTATED_COMMIT_BASE + k)) ∈
       exactNullifierAafiRotatedStateDescriptor.constraints := by
-  have hlocal : .base (.piBinding .last ((carrierCols AFTER_CARRIER_BASE 59).getD k 0)
+  have hlocal : .base (.piBinding .last ((carrierCols AFTER_CARRIER_BASE wideCommitCarrier).getD k 0)
       (PI_AFTER_ROTATED_COMMIT_BASE + k)) ∈ wideStatePins := by
     unfold wideStatePins commitPins
     apply List.mem_append_right
     rw [List.mem_map]
-    refine ⟨((carrierCols AFTER_CARRIER_BASE 59).getD k 0, k), ?_, rfl⟩
+    refine ⟨((carrierCols AFTER_CARRIER_BASE wideCommitCarrier).getD k 0, k), ?_, rfl⟩
     rw [List.mem_iff_getElem]
     refine ⟨k, ?_, ?_⟩
     · rw [List.length_zipIdx, carrierCols_length]
       exact hk
     · rw [List.getElem_zipIdx]
-      have hk' : k < (carrierCols AFTER_CARRIER_BASE 59).length := by
+      have hk' : k < (carrierCols AFTER_CARRIER_BASE wideCommitCarrier).length := by
         rw [carrierCols_length]
         exact hk
       simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk']
@@ -331,19 +331,19 @@ theorem satisfying_last_row_preserves_stable_frame
   · exact hz
 
 /-- Both wide lookup chains of a satisfying trace really compute the commitment primitive over
-their own row's 178 limbs and iroot. -/
+their own row's 184 limbs and iroot. -/
 theorem satisfying_row_computes_wide_state_commits
     (permW : List ℤ → List ℤ) (scalarHash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace) (hchip : ChipTableSoundN permW (t.tf .poseidon2))
     (hsat : Satisfied2 scalarHash exactNullifierAafiRotatedStateDescriptor minit mfin maddrs t)
     (row : Nat) (hrow : row < t.rows.length) :
-    carrierVals BEFORE_CARRIER_BASE 59 (envAt t row).loc =
+    carrierVals BEFORE_CARRIER_BASE wideCommitCarrier (envAt t row).loc =
         wireCommitR8 permW (preLimbsWide BEFORE_BLOCK_BASE (envAt t row).loc)
-          ((envAt t row).loc (BEFORE_BLOCK_BASE + 178)) ∧
-      carrierVals AFTER_CARRIER_BASE 59 (envAt t row).loc =
+          ((envAt t row).loc (BEFORE_BLOCK_BASE + B_IROOT)) ∧
+      carrierVals AFTER_CARRIER_BASE wideCommitCarrier (envAt t row).loc =
         wireCommitR8 permW (preLimbsWide AFTER_BLOCK_BASE (envAt t row).loc)
-          ((envAt t row).loc (AFTER_BLOCK_BASE + 178)) := by
+          ((envAt t row).loc (AFTER_BLOCK_BASE + B_IROOT)) := by
   have hconstraints := hsat.rowConstraints row hrow
   constructor
   · apply rotV3WidePin permW (t.tf .poseidon2) hchip (envAt t row)
@@ -369,10 +369,10 @@ theorem satisfying_row_publishes_wide_state_commits
     (hsat : Satisfied2 hash exactNullifierAafiRotatedStateDescriptor minit mfin maddrs t)
     (row : Nat) (hrow : row < t.rows.length) :
     ((row == 0) = true → ∀ k, (hk : k < 8) →
-      (envAt t row).loc ((carrierCols BEFORE_CARRIER_BASE 59).getD k 0) ≡
+      (envAt t row).loc ((carrierCols BEFORE_CARRIER_BASE wideCommitCarrier).getD k 0) ≡
         (envAt t row).pub (PI_BEFORE_ROTATED_COMMIT_BASE + k) [ZMOD 2013265921]) ∧
     ((row + 1 == t.rows.length) = true → ∀ k, (hk : k < 8) →
-      (envAt t row).loc ((carrierCols AFTER_CARRIER_BASE 59).getD k 0) ≡
+      (envAt t row).loc ((carrierCols AFTER_CARRIER_BASE wideCommitCarrier).getD k 0) ≡
         (envAt t row).pub (PI_AFTER_ROTATED_COMMIT_BASE + k) [ZMOD 2013265921]) := by
   have hconstraints := hsat.rowConstraints row hrow
   constructor
@@ -400,14 +400,14 @@ structure CarriedRotatedState where
 def outerCommit (permW : List ℤ → List ℤ) (s : CarriedRotatedState) : List ℤ :=
   wireCommitR8 permW s.limbs s.iroot
 
-/-- Semantic projection of the emitted 179-cell payload. -/
+/-- Semantic projection of the emitted 185-cell payload. -/
 def payloadAt (s : CarriedRotatedState) (off : Nat) : ℤ :=
   if off = rotatedNumPreLimbs then s.iroot else s.limbs.getD off 0
 
 def PreservesStableFrame (before after : CarriedRotatedState) : Prop :=
   ∀ off ∈ stableFrameOffsets, payloadAt before off = payloadAt after off
 
-/-- Direct rejection tooth for every one of the 171 emitted identity lanes. -/
+/-- Direct rejection tooth for every one of the 177 emitted identity lanes. -/
 theorem changed_stable_frame_cell_rejected {before after : CarriedRotatedState}
     {off : Nat} (hoff : off ∈ stableFrameOffsets)
     (hchanged : payloadAt before off ≠ payloadAt after off) :
@@ -433,7 +433,7 @@ theorem changed_payload_moves_or_wire_collides (permW : List ℤ → List ℤ)
     · exact Or.inr hcoll
   · exact Or.inl hcommit
 
-/-- The 171-lane frame-specific form used by the emitted identity gates. -/
+/-- The 177-lane frame-specific form used by the emitted identity gates. -/
 theorem changed_stable_frame_moves_or_wire_collides (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW) (left right : CarriedRotatedState) (off : Nat)
     (_hoff : off ∈ stableFrameOffsets)

@@ -15,7 +15,7 @@ model the rules as a pure `applyTurn : Board → List Move → Board`, PROVE the
 load-bearing properties, and STATE the AIR-refinement contract
 (`automatafl_air_refines_applyTurn`) — the game-level analogue of the
 `evalSimpleCtx_*_iff` constraint twins (Dregg2/Exec/Program.lean) and the
-`RotatedLayout.Legal` / `rotated178_legal` construction obligation
+`RotatedLayout.Legal` / `rotated184_legal` construction obligation
 (Dregg2/Circuit/Emit/RotatedLayout.lean).
 
 STANDALONE by design: no imports beyond the Lean prelude, so this type-checks even
@@ -646,7 +646,7 @@ def BoardTransitionAIR.Refines (air : BoardTransitionAIR) : Prop :=
   ∀ b ms nb, air.admits b ms nb ↔ nb = applyTurn b ms
 
 /-- The reference realization — the AIR whose admission IS `applyTurn`.  It witnesses
-`Refines` is SATISFIABLE (the obligation is non-vacuous, exactly as `rotated178_legal`
+`Refines` is SATISFIABLE (the obligation is non-vacuous, exactly as `rotated184_legal`
 witnesses `Legal` is inhabited). -/
 def applyTurnAIR : BoardTransitionAIR where
   admits := fun b ms nb => nb = applyTurn b ms

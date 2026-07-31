@@ -61,6 +61,7 @@ import Dregg2.Circuit.Emit.RotWideCompactE1
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
   (crownWideHosts weldedWriteTail weldedLiveOnlyTail weldUMemIntoWide wideKeyUMemDomain)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN)
 
 -- THE GENTIAN DEPLOYED-DEFAULT FLIP (welded twin): the capacity-floor refuse rides the WELDED bare
 -- cohort too, welded onto the wide HOST BEFORE the umem leg (refuse aux at `host.traceWidth`, umem
@@ -91,7 +92,7 @@ def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDes
           (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterOctetPins
             (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.customV3) 4))
-        188 (188 + 239)
+        188 (188 + B_SPAN)
     else e.2
   let refused :=
     if e.1 == "transferVmDescriptor2R24" then

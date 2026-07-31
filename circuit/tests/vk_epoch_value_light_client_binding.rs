@@ -579,16 +579,17 @@ fn bridgemint_forced_on_wire_rejects_forged_balance_anchor_disabled() {
 /// RUNS instead of being skipped. The large-value regime is deliberately NOT re-litigated here.
 ///
 /// ⚠ Second correction: `new_value` was `fold_bytes32_to_bb(&field_bytes)`, but the producer lays
-/// `field_limbs8(b)[0] = BE(b[28..32])`, and `helpers.rs` states outright that
-/// `fold_bytes32_to_bb(x) ≠ field_limbs8(x)[0]` in general. The declared value now comes from
-/// `field_limbs8`, the same projection the trace carries.
+/// `field_limbs9(b)[0] = BE(b[28..32])`, and `helpers.rs` states outright that
+/// `fold_bytes32_to_bb(x) ≠ field_limbs9(x)[0]` in general. The declared value now comes from
+/// `field_limbs9`, the same projection the trace carries (lane 0 is byte-identical across the
+/// eight- and nine-lane encoders — pinned by `circuit/tests/field_lanes9_injective.rs`).
 #[test]
 fn setfield_forced_on_wire_rejects_forged_field_anchor_disabled() {
     let before: i64 = 50_000;
     let field_idx: u32 = 3;
-    // The producer projects a cell field via `field_limbs8(bytes)`; the V1 SetField write sets the
+    // The producer projects a cell field via `field_limbs9(bytes)`; the V1 SetField write sets the
     // AFTER field limb to the effect's `value` directly. For the honest weld to hold, the effect's
-    // `value` MUST equal `field_limbs8(bytes)[0] = BE(bytes[28..32])` — NOT `fold_bytes32_to_bb`,
+    // `value` MUST equal `field_limbs9(bytes)[0] = BE(bytes[28..32])` — NOT `fold_bytes32_to_bb`,
     // which `helpers.rs` says differs in general. Keeping the payload inside `b[28..32]` also keeps
     // every fields[3] completion lane (`113 + 7·3 = 134 ..= 140`) at ZERO, which the deployed
     // freeze-ALL member requires; the large-value regime has its own tests (see the doc above).
@@ -597,7 +598,7 @@ fn setfield_forced_on_wire_rejects_forged_field_anchor_disabled() {
     field_bytes[29] = 0xAB;
     field_bytes[30] = 0xCD;
     field_bytes[31] = 0x42;
-    let new_value = dregg_circuit::effect_vm::field_limbs8(&field_bytes)[0];
+    let new_value = dregg_circuit::effect_vm::field_limbs9(&field_bytes)[0];
 
     let mut after_cell = producer_cell(before, 0);
     // Mirror the V1 SetField write into the producer cell's field slot so the after witness is

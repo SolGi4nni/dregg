@@ -90,7 +90,7 @@ pub mod fold {
         RotatedBlockWitness, empty_caveat_manifest,
         generate_rotated_effect_vm_descriptor_and_trace_wide,
     };
-    use dregg_circuit::effect_vm::{CellState, Effect, field_limbs8};
+    use dregg_circuit::effect_vm::{CellState, Effect, field_limbs9};
     use dregg_circuit::field::BabyBear;
     use dregg_circuit_prove::custom_leaf_adapter::prove_direct_ir2_leaf_with_app_root_commitment;
     use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
@@ -192,7 +192,7 @@ pub mod fold {
         // commitment over the (default-zero) fields, so refresh it after populating the octet or
         // the trace's committed-state column is stale vs the hash the descriptor recomputes.
         for i in 0..8 {
-            st.fields[i] = field_limbs8(after.state.get_field(i).expect("native slot"))[0];
+            st.fields[i] = field_limbs9(after.state.get_field(i).expect("native slot"))[0];
         }
         st.refresh_commitment();
 

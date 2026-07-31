@@ -356,7 +356,7 @@ fn the_tail_filler_leg_clears_the_arm_selection_guard_and_the_custom_leg_does_no
 /// every `cargo test`.
 #[test]
 fn the_field_octet_sits_where_the_deployed_derivation_says_fast() {
-    use dregg_circuit::effect_vm::field_limbs8;
+    use dregg_circuit::effect_vm::field_limbs9;
     use dregg_circuit::field::BabyBear;
     use dregg_circuit_prove::ivc_turn_chain::custom_leg_field_octet_lo;
 
@@ -376,7 +376,7 @@ fn the_field_octet_sits_where_the_deployed_derivation_says_fast() {
     let n = dpis.len();
     let octet_lo = custom_leg_field_octet_lo(n)
         .expect("the wide custom leg carries the octet + fields-root + anchors PI tail");
-    let marker = |i: usize| field_limbs8(&before.state.fields[i])[0];
+    let marker = |i: usize| field_limbs9(&before.state.fields[i])[0];
 
     // MEASURED, not derived: each marker occurs exactly once in the PI vector, and slot `i` lands at
     // `octet_lo + i`. If the octet moves, this is where it is caught.

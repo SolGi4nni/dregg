@@ -292,19 +292,20 @@ determine: its lace, `ordering.rs::compute_rounds` as the round map, its partici
 wavelength. This is the state on which `Consensus.Safety`'s apex must be read if it is to be a
 statement about a running node. -/
 def deployedState (B : Lace) (participants : List AuthorId) (wavelength : Nat) : CordialState :=
-  { lace := B, rounds := roundOf B, participants := participants, wavelength := wavelength }
+  { lace := B, rounds := roundOf B participants, participants := participants,
+    wavelength := wavelength }
 
 /-- The per-participant test inside `ordering.rs::ratifies` (a `p`-authored block in the
 observer's inclusive past that approves the leader), named so it can be reasoned about. -/
-def RatifierRead (B : Lace) (o l : Block) (p : AuthorId) : Bool :=
+def RatifierRead (B : Lace) (ps : List AuthorId) (o l : Block) (p : AuthorId) : Bool :=
   (causalPastIncl B o.id).any (fun bid => match B.lookup bid with
-    | some b => b.creator == p && approves B b l
+    | some b => b.creator == p && approves B ps b l
     | none   => false)
 
 /-- `ratifies` IS the count of `RatifierRead` over the participants, against `superMajority`. -/
 theorem ratifies_eq (B : Lace) (ps : List AuthorId) (o l : Block) :
     ratifies B ps o l
-      = decide (superMajority ps.length ≤ (ps.filter (RatifierRead B o l)).length) := rfl
+      = decide (superMajority ps.length ≤ (ps.filter (RatifierRead B ps o l)).length) := rfl
 
 /-- Filtering by a stronger predicate cannot keep more. Proved directly (no name-guessing at the
 `countP` API). -/
@@ -334,7 +335,7 @@ theorem hasApprovingBlock_of_ratifierRead {B : Lace} {rnd : Nat → Nat} {ps : L
     {wl : Nat} {o l : Block} {p : AuthorId}
     (hc : B.Canonical) (hoB : o ∈ B) (hlB : l ∈ B)
     (hne : LeaderNotGlobalEquivocator B l)
-    (hr : RatifierRead B o l p = true) :
+    (hr : RatifierRead B ps o l p = true) :
     CordialState.HasApprovingBlock ⟨B, rnd, ps, wl⟩ o l p := by
   unfold RatifierRead at hr
   rw [List.any_eq_true] at hr
@@ -369,10 +370,10 @@ theorem quorum_of_ratifies {B : Lace} {rnd : Nat → Nat} {ps : List AuthorId} {
       ≤ (CordialState.ratifyingVoters ⟨B, rnd, ps, wl⟩ o l).length := by
   classical
   rw [ratifies_eq] at hrat
-  have hcount : superMajority ps.length ≤ (ps.filter (RatifierRead B o l)).length :=
+  have hcount : superMajority ps.length ≤ (ps.filter (RatifierRead B ps o l)).length :=
     of_decide_eq_true hrat
   refine le_trans hcount ?_
-  have hsub : ps.filter (RatifierRead B o l)
+  have hsub : ps.filter (RatifierRead B ps o l)
       ⊆ CordialState.ratifyingVoters ⟨B, rnd, ps, wl⟩ o l := by
     intro p hp
     rw [List.mem_filter] at hp
@@ -425,16 +426,16 @@ collects: the round-robin leader's blocks at the wave-START round. Stated as an 
 theorem mem_leaderCandidates_iff {B : Lace} {ps : List AuthorId} {wave wl : Nat} {b : Block} :
     b ∈ leaderCandidates B ps wave wl ↔
       ∃ lk, waveLeader wave ps = some lk ∧ b ∈ B ∧ b.creator = lk ∧
-        roundOf B b.id = waveFirstRound wave wl := by
+        roundOf B ps b.id = waveFirstRound wave wl := by
   unfold leaderCandidates
   cases hwl : waveLeader wave ps with
   | none => simp
   | some lk =>
     -- the goal is DEFEQ to this (the `match some lk` iota-reduces, the `have ws` zeta-reduces)
     have hgoal :
-        (b ∈ B.filter (fun x => x.creator == lk && roundOf B x.id == waveFirstRound wave wl)) ↔
+        (b ∈ B.filter (fun x => x.creator == lk && roundOf B ps x.id == waveFirstRound wave wl)) ↔
           ∃ lk', some lk = some lk' ∧ b ∈ B ∧ b.creator = lk' ∧
-            roundOf B b.id = waveFirstRound wave wl := by
+            roundOf B ps b.id = waveFirstRound wave wl := by
       rw [List.mem_filter]
       simp only [Bool.and_eq_true, beq_iff_eq]
       constructor
@@ -457,7 +458,7 @@ theorem mem_lace_of_finalLeaderAt {B : Lace} {ps : List AuthorId} {wave wl : Nat
 `isSuperRatified` alone has nothing at all to say. -/
 theorem unique_leader_of_finalLeaderAt {B : Lace} {ps : List AuthorId} {wave wl : Nat} {l : Block}
     (h : finalLeaderAt B ps wave wl = some l) :
-    ∀ b ∈ B, b.creator = l.creator → roundOf B b.id = roundOf B l.id → b = l := by
+    ∀ b ∈ B, b.creator = l.creator → roundOf B ps b.id = roundOf B ps l.id → b = l := by
   obtain ⟨hlc, _⟩ := finalLeaderAt_spec h
   intro b hbB hcr hrd
   have hlmem : l ∈ leaderCandidates B ps wave wl := by rw [hlc]; simp
@@ -491,7 +492,7 @@ theorem committed_of_finalLeaderAt {B : Lace} {ps : List AuthorId} {wave wl : Na
 `findAllFinalLeaders`' loop (`ordering.rs:283..336`), keeping the wave index the apex's
 `leaderAtWave` reads. -/
 def deployedHistory (B : Lace) (ps : List AuthorId) (wl : Nat) : Safety.FinalizedHistory :=
-  let waveCount := if wl == 0 then 0 else maxRound B / wl + 1
+  let waveCount := if wl == 0 then 0 else maxRound B ps / wl + 1
   (List.range waveCount).filterMap (fun w => (finalLeaderAt B ps w wl).map (fun l => (w, l)))
 
 /-- Reading a leader off the deployed history means the node's per-wave rule returned it. -/
@@ -566,14 +567,30 @@ def ra2 : Block := ⟨112, 2, 1, [100], true⟩
 def ro0 : Block := ⟨120, 0, 2, [110, 111, 112], true⟩
 def ro1 : Block := ⟨121, 1, 2, [110, 111, 112], true⟩
 def ro2 : Block := ⟨122, 2, 2, [110, 111, 112], true⟩
-/-- **The HIDDEN FORK**: a second author-`7` block, attached to `other`, hence incomparable with
+/-- An independent genesis block by an ENROLLED author (`2`) that does NOT observe the leader —
+present in `forked` ONLY, so `honest` and every theorem about it are untouched.
+
+⚑ **Why it exists** (the participant-filtered wave clock, `BlocklaceFinality.computeRounds`). This
+model's fork used to attach to `other`, a NON-PARTICIPANT genesis. Under the pre-filter recurrence
+that gave the fork round `2` and the leader slot (round `1`) stayed a singleton, so the node
+finalized and §4b's coverage hole had its witness. Under the filtered clock a block whose ENTIRE
+ancestry is outside the committee has committee-depth `0` and sits at round `1` — so the fork
+collides with `leader` AT THE LEADER SLOT, `leader_blocks.len() == 1` fails, and the node correctly
+refuses the wave. That is a STRENGTHENING (a fork rooted wholly outside the committee is now visible
+where it decides something), and it is NOT a closure of `OPEN-CM-LOCAL-EQUIVOCATION`: a fork with
+genuine in-committee depth still sits at its own round and is still invisible to the observer-local
+guard. `freeBlk` gives this fork exactly that depth, so the witness keeps witnessing the hole that
+is actually open rather than one the clock now catches. -/
+def freeBlk : Block := ⟨91, 2, 7, [], true⟩
+/-- **The HIDDEN FORK**: a second author-`7` block, attached to `freeBlk`, hence incomparable with
 `leader` — and NOT in any observer's causal past, so `hasEquivInPast` never sees it. -/
-def forkBlk : Block := ⟨130, 7, 9, [90], true⟩
+def forkBlk : Block := ⟨130, 7, 9, [91], true⟩
 
 /-- The honest lace: no author-`7` fork. -/
 def honest : Lace := [leader, other, ra0, ra1, ra2, ro0, ro1, ro2]
-/-- The forked lace: `honest` plus the hidden author-`7` equivocation. -/
-def forked : Lace := forkBlk :: honest
+/-- The forked lace: `honest` plus the hidden author-`7` equivocation and the independent enrolled
+genesis it hangs from. Both additions are `forked`-only. -/
+def forked : Lace := forkBlk :: freeBlk :: honest
 
 /-- `participants[0] = 7`, so author `7` is the wave-0 round-robin leader. -/
 def parts : List AuthorId := [7, 0, 1, 2]
@@ -607,7 +624,7 @@ theorem honest_no_equiv : LeaderNotGlobalEquivocator honest leader := by
 `finalLeaderAt` here — that would force `roundOf`; the model feeds the round-free core directly,
 with the unique-leader guard discharged from the lace and holding for EVERY round map. -/
 theorem bridge_fires :
-    Committed ⟨honest, roundOf honest, parts, 3⟩ cfg leader := by
+    Committed ⟨honest, roundOf honest parts, parts, 3⟩ cfg leader := by
   refine ⟨{ observer := ro0, observer_mem := by decide, quorum_from_lace := ?_,
             unique_leader := ?_ }⟩
   · exact le_trans threshold_holds
@@ -629,19 +646,19 @@ ratifies at the full supermajority (its causal past does not contain the fork, s
 ratifier list. -/
 
 /-- The fork is genuinely an equivocation: two distinct author-`7` blocks, neither observing the
-other (`leader` is genesis; `forkBlk`'s only predecessor is the non-leader genesis `other`). -/
+other (`leader` is genesis; `forkBlk`'s only predecessor is the non-leader genesis `freeBlk`). -/
 theorem forked_is_equivocator : Equivocator forked 7 := by
   refine ⟨leader, forkBlk, by decide, by decide, by decide, by decide, ?_, ?_, ?_⟩
   · decide
-  · -- ¬ precedes forked leader forkBlk : the only way down from `forkBlk` is `other`, a genesis
+  · -- ¬ precedes forked leader forkBlk : the only way down from `forkBlk` is `freeBlk`, a genesis
     intro hpre
     obtain ⟨p, hp, hcase⟩ := precedes_inv hpre
-    have hp' : p = 90 := by simpa [forkBlk] using hp
+    have hp' : p = 91 := by simpa [forkBlk] using hp
     subst hp'
     rcases hcase with hid | ⟨m, hm, hpm⟩
     · exact absurd hid (by decide)
-    · have hmo : m = other := by
-        have : (forked.lookup 90) = some other := by decide
+    · have hmo : m = freeBlk := by
+        have : (forked.lookup 91) = some freeBlk := by decide
         rw [this] at hm; exact (Option.some_inj.mp hm).symm
       subst hmo
       exact precedes_preds_ne_nil hpm (by decide)

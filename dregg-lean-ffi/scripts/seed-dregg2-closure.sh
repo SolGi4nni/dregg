@@ -108,12 +108,16 @@ echo "==> Compiled $total objects ($dregg Dregg2 + $((total - dregg)) dependency
 [ "$dregg" -gt 0 ] || { echo "FATAL: no Dregg2 objects produced — did the lake build emit :c facets?"; exit 1; }
 
 echo "==> Archiving → $ARCH"
-# CLOSURE-ONLY by default: archive the import closure of the three splice roots
-# (scripts/lean-ffi-closure.py — executor + real-PQ roots), not
-# every warm IR object. A cache-warmed mathlib tree carries ~5000 modules the
-# FFI never imports; archiving them all ships a 295 MB seed where the closure
-# is ~96 MB (measured 2026-07-10, docs/LEAN-SEED-SIZE.md). DREGG_SEED_ALL=1
-# restores the archive-everything behavior.
+# CLOSURE-ONLY by default: archive the import closure of the ONE splice root
+# `Dregg2.FFI` (scripts/lean-ffi-closure.py — the same root this script `lake
+# build`s above and the same one build.rs builds), not every warm IR object. A
+# cache-warmed mathlib tree carries ~5000 modules the FFI never imports;
+# archiving them all ships a 295 MB seed where the closure is ~96 MB (measured
+# 2026-07-10, docs/LEAN-SEED-SIZE.md). DREGG_SEED_ALL=1 restores the
+# archive-everything behavior.
+#
+# ⚠ This comment said "the three splice roots (executor + real-PQ roots)" until
+# 2026-07-30 — a leftover from the hand-maintained list `ec4ed5e17` deleted.
 #
 # Build into a temp sibling and rename: the seed is the shared READ-ONLY base
 # every cargo build copies at build start — an in-place rewrite could hand a

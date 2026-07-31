@@ -58,7 +58,7 @@
 //! keystone descends from Lean `CustomBindingFromFold`). Rust here does only two ABI things, no
 //! constraint authoring: (1) it RELOCATES the 8-felt `outcome_commitment` out of the wide plane
 //! and into the entity cell's **native `fields[0..8]` octet** — the octet the wide Custom leg
-//! exposes and the `new8` commitment absorbs at lane-0 (`field_limbs8(fields[i])[0]`), the SAME
+//! exposes and the `new8` commitment absorbs at lane-0 (`field_limbs9(fields[i])[0]`), the SAME
 //! lane the deployed weld reads; and (2) it DECLARES the binding
 //! ([`LandedComposition::app_root_binding`]) so the outcome PI at
 //! [`pi::outcome_commitment_base`] is tied, lane-by-lane, to that committed octet. The wide
@@ -79,7 +79,7 @@ use dregg_cell::commitment::{
 use dregg_cell::{Cell, CellId, CellMode, Ledger};
 use dregg_circuit::descriptor_ir2::EffectVmDescriptor2;
 use dregg_circuit::effect_vm::custom_state_binding::AppRootBinding;
-use dregg_circuit::effect_vm::field_limbs8;
+use dregg_circuit::effect_vm::field_limbs9;
 use dregg_circuit::field::BabyBear;
 use dregg_param_compose::lean_descriptor::{lean_descriptor_for, lean_descriptor_json};
 use dregg_param_compose::model::{ComposeError, Composition, Ruleset, Subject};
@@ -115,8 +115,8 @@ pub fn felt_to_fe(f: BabyBear) -> [u8; 32] {
 }
 
 /// Encode a single BabyBear into a native `fields[i]` slot such that
-/// `field_limbs8(&fe)[0] == f` — i.e. the felt lands in the lane-0 position the wide Custom leg
-/// exposes and the `new8` commitment absorbs. `field_limbs8` reads lane-0 from the big-endian
+/// `field_limbs9(&fe)[0] == f` — i.e. the felt lands in the lane-0 position the wide Custom leg
+/// exposes and the `new8` commitment absorbs. `field_limbs9` reads lane-0 from the big-endian
 /// low 4 bytes `[28..32]`, so the felt is written there; every other byte is zero.
 pub fn outcome_native_fe(f: BabyBear) -> [u8; 32] {
     let mut out = [0u8; 32];
@@ -374,7 +374,7 @@ impl LandedComposition {
                 return false;
             };
             // The committed octet's lane-0 is the felt the wide leg exposes and the weld reads.
-            if field_limbs8(fe)[0] != *expect {
+            if field_limbs9(fe)[0] != *expect {
                 return false;
             }
             // ...and it is the same value the sub-proof published as its outcome PI.

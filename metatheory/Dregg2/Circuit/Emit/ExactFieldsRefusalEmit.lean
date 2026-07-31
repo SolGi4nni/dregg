@@ -39,7 +39,14 @@ def FLD2 : Int := 0x464c4432
 def FLN2 : Int := 0x464c4e32
 
 /-! Column geometry; kept definitionally aligned with Rust `trace_rotated::REFUSAL_EXACT_*`. -/
-def BEFORE_BASE : Nat := 1647
+
+/-- The exact-refusal appendix starts EXACTLY where the graduated rotated refusal host ends —
+`refusalV3.traceWidth = (188 + APPENDIX_SPAN) + 7·(4 + |rotV3Appendix|)`. The literal is kept so the
+whole column ladder below stays `rfl`-shaped, but the `#guard` under the ladder now WELDS it to that
+host width: at the 178 → 184 ninth-lane flag day this moved 1647 → 1691 (`APPENDIX_SPAN` 521 → 537
+and four more appendix sites, `+16 + 28 = +44`), and the guard goes RED rather than silent if the
+host moves again. -/
+def BEFORE_BASE : Nat := 1691
 def OCC_COL : Nat := BEFORE_BASE
 def OLD_VALUE_BASE : Nat := OCC_COL + 1
 def OLD_LEAF_STATE_BASE : Nat := OLD_VALUE_BASE + VALUE_LIMBS
@@ -63,10 +70,11 @@ def TRACE_WIDTH : Nat := COUNT_COL + 1
 def AUDIT_PI_BASE : Nat := 54
 def AUDIT_PI_COUNT : Nat := 16
 
-#guard BEFORE_BASE == 1647
-#guard AFTER_BASE == 1905
-#guard ACTIVE_COL == 2153
-#guard TRACE_WIDTH == 2155
+#guard BEFORE_BASE == 1691
+#guard BEFORE_BASE == refusalV3.traceWidth   -- ⚑ the reality gate: no independent literal
+#guard AFTER_BASE == 1949
+#guard ACTIVE_COL == 2197
+#guard TRACE_WIDTH == 2199
 #guard AUDIT_PI_BASE == 46 + 8
 
 def ev (c : Nat) : EmittedExpr := .var c
@@ -209,7 +217,7 @@ def pathConstraints : List VmConstraint2 :=
           (wl (fieldsRootGroupCol EFFECT_VM_WIDTH i))), true⟩
     , .windowGate ⟨wm (wm (wl ACTIVE_COL) (ws (wk 1) (wn ACTIVE_COL)))
         (ws (wl (newNodeDigestCols.getD i.val 0))
-          (wl (fieldsRootGroupCol (EFFECT_VM_WIDTH + 239) i))), true⟩ ])
+          (wl (fieldsRootGroupCol (EFFECT_VM_WIDTH + B_SPAN) i))), true⟩ ])
 
 def auditPins (piBase : Nat) : List VmConstraint2 :=
   (List.range VALUE_LIMBS).map fun i =>
@@ -237,12 +245,12 @@ def refusalExactFieldsWide : EffectVmDescriptor2 :=
     (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend
       (withDfaRcPins refusalExactFieldsV4)
       EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
-      (EffectVmEmitRefusal.refusalVmDescriptor.traceWidth + 239))
+      (EffectVmEmitRefusal.refusalVmDescriptor.traceWidth + B_SPAN))
 
 #guard refusalExactFieldsV4.traceWidth == TRACE_WIDTH
 #guard refusalExactFieldsV4.piCount == 70
 #guard (withRecordPin8Headroom2 refusalV3).piCount == AUDIT_PI_BASE
-#guard refusalExactFieldsWide.traceWidth == TRACE_WIDTH + 960
+#guard refusalExactFieldsWide.traceWidth == TRACE_WIDTH + 992
 #guard refusalExactFieldsWide.piCount == 90
 #guard ((refusalExactFieldsV4.constraints.filter fun c =>
   match c with | .lookup l => l.table == poseidon2state16 | _ => false).length) == 26
