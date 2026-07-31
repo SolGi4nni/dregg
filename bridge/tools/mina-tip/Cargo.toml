@@ -31,9 +31,9 @@ path = "src/main.rs"
 # openmina crates, by path into the sibling checkout (`~/dev/mina-rust`).
 # `mina-p2p-messages` re-exports the exact `binprot` used to (de)serialize the
 # wire types, so we take BinProtWrite from there rather than pinning it twice.
-mina-p2p-messages = { path = "../../../../mina-rust/crates/p2p-messages" }
-mina-transport = { path = "../../../../mina-rust/tools/transport" }
-libp2p-rpc-behaviour = { path = "../../../../mina-rust/crates/p2p/libp2p-rpc-behaviour" }
+mina-p2p-messages = { git = "https://github.com/emberian/mina-rust", rev = "82480cd468f1" }
+mina-transport = { git = "https://github.com/emberian/mina-rust", rev = "82480cd468f1" }
+libp2p-rpc-behaviour = { git = "https://github.com/emberian/mina-rust", rev = "82480cd468f1" }
 
 # The custom libp2p fork openmina pins. The rev MUST match mina-rust's
 # workspace pin, or the `Swarm<Behaviour>` types will not line up.
