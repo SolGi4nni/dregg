@@ -21,19 +21,38 @@ welding `src` to the published `pi.src` welds the OPENED LEAF's target to the li
 
 ## What is built
 
-  1. **`capOpenActorCol` / `capOpenDstCol`** — two NEW columns past the cap-open appendix (so every
-     existing `capOpenCols` proof is untouched), carrying the turn's `actor`/`dst`.
-  2. **`turnIdentityPins`** — three `.piBinding .last` constraints welding `capOpenCols.src`,
-     `capOpenActorCol base`, `capOpenDstCol base` to the three NEW PI slots (`base.piCount + 0/1/2`,
-     where the cap-open base `effCapOpenV3` does NOT add PIs, so these are the first past `rotateV3`'s
-     four commit pins).
-  3. **`effCapOpenV3TB base name n`** — `effCapOpenV3` PLUS the two columns and the three pins. Every
-     cap-open appendix constraint is UNTOUCHED (still references the same columns), so
+  1. **`turnIdentityPins`** — ONE `.piBinding .first` constraint welding `capOpenCols.src` to the NEW
+     PI slot `base.piCount` (the cap-open base `effCapOpenV3` does NOT add PIs, so this is the first
+     slot past `rotateV3`'s four commit pins).
+  2. **`effCapOpenV3TB base name n`** — `effCapOpenV3` PLUS that one pin. Every cap-open appendix
+     constraint is UNTOUCHED (still references the same columns), so
      `effCapOpenV3_satisfiedEff` / `effCapOpenV3_authorizes` lift verbatim through the append.
-  4. **`effCapOpenV3TB_publishes`** — a `Satisfied2` witness's LAST row pins
-     `src/actor/dst` columns to `PI[piCount + 0/1/2]`. The keystone the discharge reads.
-  5. **`effCapOpenV3TB_hsrc`** — from the pin + the verifier's PI anchor (`PI[piCount] = turn.src`),
+  3. **`effCapOpenV3TB_publishes`** — a `Satisfied2` witness's FIRST row pins the `src` column to
+     `PI[piCount]`. The keystone the discharge reads.
+  4. **`effCapOpenV3TB_hsrc`** — from the pin + the verifier's PI anchor (`PI[piCount] = turn.src`),
      `capOpenCols.src = turn.src` — the `hsrc` obligation FORCED, not carried.
+
+## ⚑ WHAT WAS REMOVED, 2026-07-30, and why (the `actor`/`dst` publication)
+
+This module used to carry TWO MORE columns (`capOpenActorCol` / `capOpenDstCol`) and TWO MORE pins,
+publishing the turn's `actor` and `dst` at `PI[piCount+1]` / `PI[piCount+2]`. **They bound nothing.**
+The two columns were introduced by this module and read by NO other constraint, so a
+`.piBinding` on them is `local[c] == pi[k]` with the prover choosing both sides — measured by
+`UnforcedPiPins.unforcedPins`, which flagged exactly those two on
+`transferCapOpenTBVmDescriptor2R24` (emitted columns 928/929 → PI 47/48), and proved a no-op by
+`UnforcedPiPins.unforced_pin_row_admits_any_value`. Nothing downstream lost a discharge: the
+actor/dst legs of `TurnIdentityAnchored` were destructured and DISCARDED at every use
+(`effCapOpenV3TB_hsrc` reads only `PI[piCount]`), and the facet claim's `actor`/`dst` were always
+carried through `hedge`, never forced by a pin.
+
+A weld that publishes a PROVER-CHOSEN felt for *who acted* and *who received* is worse than no weld,
+because its name says otherwise: a light client, which has no executor to overwrite the slot from a
+trusted turn, would read `PI[actor]` as attested. It never was. The `src` weld — the load-bearing
+one, since `targetBindGate` already pins `leaf.target = src` — stays and is FORCED.
+
+The real actor binding (an owner-claim `actor` must be the genuine holder of the opened c-list slot)
+needs the cap-tree Merkle path to encode the actor; that is the authorization-in-AIR lane's work,
+and it will publish `actor` when it can also force it.
 
 ## The row-domain match (the turn-identity weld pins on the FIRST row)
 
@@ -50,18 +69,15 @@ the depth-16 open reads it — no cross-row residual. The `≥2-row` fact (`hlen
 genuine shape of a real cap-open trace (a depth-16 open plus its wrap/pad row); it gives `0 + 1 ≠
 rows.length`, the `hiNotLast` the membership keystone needs on the first row.
 
-## Honest residual (named, not faked)
+## The one carried hypothesis (named, not faked)
 
-The PI **anchor** (`PI[piCount] = turn.src` etc.) is the deployed verifier's override (it recomputes the
-turn-identity PIs from the trusted turn before calling `verify_vm_descriptor2`, exactly as the
+The PI **anchor** (`PI[piCount] = turn.src`) is the deployed verifier's override (it recomputes the
+turn-identity PI from the trusted turn before calling `verify_vm_descriptor2`, exactly as the
 record-pin family anchors `dpis[38]` from the trusted post-cell). It is carried here as the named
 `TurnIdentityAnchored` predicate — REALIZABLE (the honest verifier holds the turn) and the deployment
-analog of `rotateV3WithRecordPin`'s anchor. The src weld is the load-bearing tooth (it forecloses the
-prover-chosen-src cap open). The ACTOR binding to the leaf's c-list position (so an owner-claim `actor`
-must be the real owner of `src`) is the heavier fan-out: the leaf-membership Merkle path roots in the
-`actor`'s subtree, so binding `actor` end-to-end needs the path to encode the actor — REPORTED as the
-remaining work; this module publishes the `actor` column + PI (so the light client SEES it and the owner
-disjunct is a decision on published data) but does not yet weld it into the Merkle root.
+analog of `rotateV3WithRecordPin`'s anchor. Unlike the removed actor/dst pins, this one BITES without
+the anchor too: `capOpenCols.src` is read by `targetBindGate` and the depth-16 membership open, so
+the pin relates the published slot to a column the AIR forces.
 
 ## Axiom hygiene
 
@@ -88,23 +104,17 @@ open Dregg2.Exec.FacetAuthority (AuthProvided FacetCaps authorizedFacetEffB)
 
 set_option autoImplicit false
 
-/-! ## §1 — the two NEW turn-identity columns (past the cap-open appendix).
+/-! ## §1 — no new columns.
 
-`effCapOpenV3 base name n` has width `base.traceWidth + CAP_OPEN_SPAN`. The two turn-identity columns
-ride at `base.traceWidth + CAP_OPEN_SPAN + 0/1` — past every existing column, so no existing
-`capOpenCols` index collides. (The `src` column is the EXISTING `capOpenCols.src`; only `actor`/`dst`
-are new.) -/
+The weld adds NO column: it pins the EXISTING `capOpenCols.src`, which the depth-16 membership open
+and `targetBindGate` already read. (The two columns this module used to add for `actor`/`dst` were
+read by nothing else and are GONE — see the header.) -/
 
-/-- The turn's `actor` column for the cap-open of a base of width `w`. -/
-def capOpenActorCol (w : Nat) : Nat := w + CAP_OPEN_SPAN
-/-- The turn's `dst` column for the cap-open of a base of width `w`. -/
-def capOpenDstCol (w : Nat) : Nat := w + CAP_OPEN_SPAN + 1
-
-/-! ## §2 — the three turn-identity PI pins.
+/-! ## §2 — the turn-identity PI pin.
 
 `effCapOpenV3 base name n` does NOT add PIs to `base` (it appends only `capOpenConstraintsEff`), so the
-base's `piCount` is `(v3Of …).piCount = base'.piCount + 4` (the rotated commit pins). The three
-turn-identity pins ride the first slots past those four: `base.piCount + 0/1/2`. Each is a FIRST-row pin
+base's `piCount` is `(v3Of …).piCount = base'.piCount + 4` (the rotated commit pins). The
+turn-identity pin rides the first slot past those four: `base.piCount`. It is a FIRST-row pin
 (`when_first_row()`, the deployed mechanism the rotation's BEFORE-commit pin already uses —
 `EffectVmEmitRotationV3.rotPins`'s `.piBinding .first`).
 
@@ -118,26 +128,24 @@ on the FIRST row co-locates the weld with the membership: on the first row of an
 trace, `isFirst = true` (the pin fires) AND `isLast = false` (the membership gates bite). One active row
 carries both — `capOpenCols.src` welded to the published source EXACTLY where it is opened. -/
 
-/-- The three turn-identity PI pins for a cap-open base of width `w`, PI count `pc`: weld the cap-open
-`src` column to `PI[pc]`, the new `actor` column to `PI[pc+1]`, the new `dst` column to `PI[pc+2]`. They
-ride the FIRST row (`when_first_row()`) — the same active row the membership binding gates are forced on,
-so the published-src weld and the depth-16 open constrain ONE row. -/
+/-- The turn-identity PI pin for a cap-open base of width `w`, PI count `pc`: weld the cap-open
+`src` column to `PI[pc]`. It rides the FIRST row (`when_first_row()`) — the same active row the
+membership binding gates are forced on, so the published-src weld and the depth-16 open constrain
+ONE row. (The `actor`/`dst` pins that used to sit beside it named columns nothing else read; see the
+header for the measurement that removed them.) -/
 def turnIdentityPins (w pc : Nat) : List VmConstraint2 :=
-  [ .base (.piBinding .first (capOpenCols w).src pc)
-  , .base (.piBinding .first (capOpenActorCol w) (pc + 1))
-  , .base (.piBinding .first (capOpenDstCol w) (pc + 2)) ]
+  [ .base (.piBinding .first (capOpenCols w).src pc) ]
 
 /-! ## §3 — `effCapOpenV3TB`: the cap-open descriptor PLUS the turn-identity weld. -/
 
-/-- **`effCapOpenV3TB base name n`** — `effCapOpenV3 base name n` widened by the two turn-identity
-columns (`+2`) and three new PI slots (`+3`), with the three `turnIdentityPins` appended. Every cap-open
-appendix constraint is preserved (still references the same `capOpenCols` columns), so every cap-open
-keystone lifts verbatim through the append. -/
+/-- **`effCapOpenV3TB base name n`** — `effCapOpenV3 base name n` with ONE new PI slot (`+1`) and the
+`turnIdentityPins` weld appended. NO new column (the pinned `src` column already exists). Every
+cap-open appendix constraint is preserved (still references the same `capOpenCols` columns), so every
+cap-open keystone lifts verbatim through the append. -/
 def effCapOpenV3TB (base : EffectVmDescriptor2) (name : String) (n : Nat) : EffectVmDescriptor2 :=
   let d := effCapOpenV3 base name n
   { d with
-    traceWidth  := d.traceWidth + 2
-    piCount     := d.piCount + 3
+    piCount     := d.piCount + 1
     constraints := d.constraints ++ turnIdentityPins base.traceWidth d.piCount }
 
 /-- The cap-open base (`effCapOpenV3`) constraints are a PREFIX of the TB descriptor's. -/
@@ -211,24 +219,19 @@ theorem effCapOpenV3TB_to_base (base : EffectVmDescriptor2) (name : String) (n :
   · have := hsat.memTableFaithful; rwa [effCapOpenV3TB_memLog] at this
   · have := hsat.mapTableFaithful; rwa [effCapOpenV3TB_mapLog] at this
 
-/-! ## §4 — `effCapOpenV3TB_publishes`: the FIRST row pins src/actor/dst to the three new PIs. -/
+/-! ## §4 — `effCapOpenV3TB_publishes`: the FIRST row pins `src` to the new PI. -/
 
 /-- **`effCapOpenV3TB_publishes`** — on the FIRST row of a `Satisfied2` witness of `effCapOpenV3TB`, the
-cap-open `src` column is pinned to `PI[piCount]`, the new `actor` column to `PI[piCount+1]`, the new `dst`
-column to `PI[piCount+2]` (`piCount` = the cap-open base's PI count) — `≡ [ZMOD p]`, the field-faithful
-pin the deployed AIR forces (the ℤ equality follows under cell canonicality, at the consumer). The three
-turn-identity `.piBinding .first` pins are FORCED — on the SAME active row the membership binding gates
-bite (in any ≥2-row trace). -/
+cap-open `src` column is pinned to `PI[piCount]` (`piCount` = the cap-open base's PI count) —
+`≡ [ZMOD p]`, the field-faithful pin the deployed AIR forces (the ℤ equality follows under cell
+canonicality, at the consumer). The turn-identity `.piBinding .first` pin is FORCED — on the SAME
+active row the membership binding gates bite (in any ≥2-row trace). -/
 theorem effCapOpenV3TB_publishes (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hfirst : (i == 0) = true) :
-    ((envAt t i).loc (capOpenCols base.traceWidth).src
-        ≡ (envAt t i).pub (effCapOpenV3 base name n).piCount [ZMOD 2013265921])
-    ∧ ((envAt t i).loc (capOpenActorCol base.traceWidth)
-        ≡ (envAt t i).pub ((effCapOpenV3 base name n).piCount + 1) [ZMOD 2013265921])
-    ∧ ((envAt t i).loc (capOpenDstCol base.traceWidth)
-        ≡ (envAt t i).pub ((effCapOpenV3 base name n).piCount + 2) [ZMOD 2013265921]) := by
+    (envAt t i).loc (capOpenCols base.traceWidth).src
+        ≡ (envAt t i).pub (effCapOpenV3 base name n).piCount [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi
   set pc := (effCapOpenV3 base name n).piCount with hpc
   have hmem : ∀ c ∈ turnIdentityPins base.traceWidth pc, c ∈ (effCapOpenV3TB base name n).constraints :=
@@ -236,29 +239,23 @@ theorem effCapOpenV3TB_publishes (base : EffectVmDescriptor2) (name : String) (n
   have memSrc : VmConstraint2.base (.piBinding .first (capOpenCols base.traceWidth).src pc)
       ∈ (effCapOpenV3TB base name n).constraints :=
     hmem _ (by simp [turnIdentityPins])
-  have memAct : VmConstraint2.base (.piBinding .first (capOpenActorCol base.traceWidth) (pc + 1))
-      ∈ (effCapOpenV3TB base name n).constraints :=
-    hmem _ (by simp [turnIdentityPins])
-  have memDst : VmConstraint2.base (.piBinding .first (capOpenDstCol base.traceWidth) (pc + 2))
-      ∈ (effCapOpenV3TB base name n).constraints :=
-    hmem _ (by simp [turnIdentityPins])
   have hsrc := hrow _ memSrc
-  have hact := hrow _ memAct
-  have hdst := hrow _ memDst
-  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hsrc hact hdst
-  exact ⟨hsrc hfirst, hact hfirst, hdst hfirst⟩
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hsrc
+  exact hsrc hfirst
 
 /-! ## §5 — `TurnIdentityAnchored`: the verifier's PI override (NAMED), and `hsrc` DISCHARGED. -/
 
-/-- **`TurnIdentityAnchored t i src actor dst`** — the deployed verifier ANCHORS the three turn-identity
-PIs to the trusted turn's fields (it recomputes them from the turn before `verify_vm_descriptor2`,
-exactly as the record-pin family anchors `dpis[38]` from the trusted post-cell). NAMED, realizable (the
-honest verifier holds the turn), the deployment analog of `rotateV3WithRecordPin`'s anchor. -/
+/-- **`TurnIdentityAnchored t i src`** — the deployed verifier ANCHORS the turn-identity PI to the
+trusted turn's `src` (it recomputes it from the turn before `verify_vm_descriptor2`, exactly as the
+record-pin family anchors `dpis[38]` from the trusted post-cell). NAMED, realizable (the honest
+verifier holds the turn), the deployment analog of `rotateV3WithRecordPin`'s anchor.
+
+⚑ It used to carry two more conjuncts, for `actor` and `dst`. Every consumer destructured them and
+DISCARDED them — nothing was ever derived from an anchored `actor` or `dst`, because the columns they
+anchored were read by no gate. They are gone with the pins. -/
 def TurnIdentityAnchored (base : EffectVmDescriptor2) (name : String) (n : Nat)
-    (t : VmTrace) (i : Nat) (src actor dst : Label) : Prop :=
+    (t : VmTrace) (i : Nat) (src : Label) : Prop :=
   (envAt t i).pub (effCapOpenV3 base name n).piCount = (src : ℤ)
-  ∧ (envAt t i).pub ((effCapOpenV3 base name n).piCount + 1) = (actor : ℤ)
-  ∧ (envAt t i).pub ((effCapOpenV3 base name n).piCount + 2) = (dst : ℤ)
 
 /-- **`effCapOpenV3TB_hsrc` — the cap-open `src` column = the turn's `src`, FORCED.** From a `Satisfied2`
 witness of `effCapOpenV3TB` on the FIRST row and the verifier's PI anchor `PI[piCount] = turn.src`, the
@@ -269,16 +266,15 @@ theorem effCapOpenV3TB_hsrc (base : EffectVmDescriptor2) (name : String) (n : Na
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hfirst : (i == 0) = true)
-    (src actor dst : Label) (hanchor : TurnIdentityAnchored base name n t i src actor dst)
+    (src : Label) (hanchor : TurnIdentityAnchored base name n t i src)
     -- the src cell is field-canonical + the turn's src label is a canonical field element: lifts the
     -- mod-`p` pin congruence to the ℤ equality the membership keystone consumes.
     (hcellSrc : 0 ≤ (envAt t i).loc (capOpenCols base.traceWidth).src
       ∧ (envAt t i).loc (capOpenCols base.traceWidth).src < 2013265921)
     (hsrcLt : (src : ℤ) < 2013265921) :
     (envAt t i).loc (capOpenCols base.traceWidth).src = (src : ℤ) := by
-  obtain ⟨hpubSrc, _, _⟩ := effCapOpenV3TB_publishes base name n hash minit mfin maddrs t hsat i hi hfirst
-  obtain ⟨hanSrc, _, _⟩ := hanchor
-  exact canon_eq_of_modEq hcellSrc ⟨Int.natCast_nonneg _, hsrcLt⟩ (by rw [← hanSrc]; exact hpubSrc)
+  have hpubSrc := effCapOpenV3TB_publishes base name n hash minit mfin maddrs t hsat i hi hfirst
+  exact canon_eq_of_modEq hcellSrc ⟨Int.natCast_nonneg _, hsrcLt⟩ (by rw [← hanchor]; exact hpubSrc)
 
 /-- **`effCapOpenV3TB_authorizes` — the AUTHORITY leg, the turn-identity weld and the cap-open membership
 co-located on the FIRST (active) row.**
@@ -306,7 +302,7 @@ theorem effCapOpenV3TB_authorizes (base : EffectVmDescriptor2) (name : String) (
     (hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< n) caps
       (groupVal (envAt t 0) (capOpenCols base.traceWidth).capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
-    (hanchor : TurnIdentityAnchored base name n t 0 src actor dst)
+    (hanchor : TurnIdentityAnchored base name n t 0 src)
     -- the turn's src label is a canonical field element (the deployed label range).
     (hsrcLt : (src : ℤ) < 2013265921)
     (hedge : leafOf (capOpenCols base.traceWidth) (envAt t 0) = leafAt actor src)
@@ -320,7 +316,7 @@ theorem effCapOpenV3TB_authorizes (base : EffectVmDescriptor2) (name : String) (
   -- the published-src binding on the FIRST row (the `.piBinding .first` weld + the anchor) — the SAME
   -- active row the membership opens, so no cross-row transport is needed.
   have hsrc : (envAt t 0).loc (capOpenCols base.traceWidth).src = (src : ℤ) :=
-    effCapOpenV3TB_hsrc base name n hash minit mfin maddrs t hsat 0 hi rfl src actor dst hanchor
+    effCapOpenV3TB_hsrc base name n hash minit mfin maddrs t hsat 0 hi rfl src hanchor
       (hcanon.cells _) hsrcLt
   -- the membership on the FIRST (active) row FORCES authority for the PUBLISHED `src`.
   exact effCapOpenV3_authorizes base name n hn S8 hash vkOfTag provided minit mfin maddrs t hChip hbase
@@ -350,7 +346,7 @@ theorem effCapOpenV3TB_rejects_mismatched_src (base : EffectVmDescriptor2) (name
     (hbad : (envAt t i).loc (capOpenCols base.traceWidth).src ≠ (envAt t i).pub (effCapOpenV3 base name n).piCount) :
     ¬ Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t := by
   intro hsat
-  obtain ⟨hpubSrc, _, _⟩ := effCapOpenV3TB_publishes base name n hash minit mfin maddrs t hsat i hi hfirst
+  have hpubSrc := effCapOpenV3TB_publishes base name n hash minit mfin maddrs t hsat i hi hfirst
   exact hbad (canon_eq_of_modEq hcellSrc hcellPub hpubSrc)
 
 /-! ## §7 — Axiom hygiene. -/

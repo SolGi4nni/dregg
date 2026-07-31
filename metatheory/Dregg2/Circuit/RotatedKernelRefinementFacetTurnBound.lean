@@ -355,7 +355,7 @@ def transferAuthoritySourceCanon_ofTB (hash : List ℤ → ℤ) (fcaps : FacetCa
     -- `hlen` is the genuine ≥2-row shape of a real cap-open trace (depth-16 open + its wrap row).
     (hlen : 2 ≤ t.rows.length)
     (hanchor : TurnIdentityAnchored Dregg2.Circuit.RotatedKernelRefinement.transferV3
-      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER t 0 tr.src tr.actor tr.dst)
+      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER t 0 tr.src)
     -- the FIRST-row canonicality envelope (cells range-checked `0 ≤ · < p`): supplies the `hcanon` field
     -- AND the `hcellSrc` the `src` pin needs to lift the mod-`p` weld to the ℤ equality.
     (hcanon : Dregg2.Circuit.Emit.CapOpenEmit.CapOpenRowCanon
@@ -392,7 +392,7 @@ def transferAuthoritySourceCanon_ofTB (hash : List ℤ → ℤ) (fcaps : FacetCa
   -- (`hcanon.cells`) and the turn-src Label range (`hsrcLt`) — the SAME row the membership opens.
   hsrc := effCapOpenV3TB_hsrc Dregg2.Circuit.RotatedKernelRefinement.transferV3
     "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER hash minit mfin maddrs t hsat
-    0 (by omega) rfl tr.src tr.actor tr.dst hanchor (hcanon.cells _) hsrcLt
+    0 (by omega) rfl tr.src hanchor (hcanon.cells _) hsrcLt
   hedge := hedge
   hipc := hipc
   htier := htier
@@ -425,8 +425,7 @@ theorem transfer_descriptorRefines_facetTB_realized (hash : List ℤ → ℤ)
     -- ≥2-row cap-open trace; `hclen` is its genuine shape (depth-16 open + its wrap row).
     (hclen : 2 ≤ ct.rows.length)
     (hanchor : TurnIdentityAnchored Dregg2.Circuit.RotatedKernelRefinement.transferV3
-      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER ct 0 pc.turn.src pc.turn.actor
-      pc.turn.dst)
+      "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff" EFF_TRANSFER ct 0 pc.turn.src)
     -- the cap-open FIRST-row canonicality envelope (cells range-checked) + the turn-src Label range —
     -- what lifts the mod-`p` src pin to the ℤ equality (fed into `transferAuthoritySourceCanon_ofTB`).
     (hccanon : Dregg2.Circuit.Emit.CapOpenEmit.CapOpenRowCanon

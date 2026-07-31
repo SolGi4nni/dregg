@@ -232,8 +232,10 @@ def transferAvailWideRefused : EffectVmDescriptor2 :=
 #guard transferV3MembershipAvailWide.piCount == 68
 #guard transferV3MembershipAvailWide.traceWidth == 2695
 #guard transferV3MembershipAvailWide.name == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged"
-#guard transferCapOpenTBAvailWide.piCount == 65
-#guard transferCapOpenTBAvailWide.traceWidth == 3024
+-- ⚑ 2026-07-30: TB piCount 65 → 63 and width 3024 → 3022, the two unforced `actor`/`dst`
+-- publications deleted (`UnforcedPiPins`); the convergence re-emit rotates the wide registry FP.
+#guard transferCapOpenTBAvailWide.piCount == 63
+#guard transferCapOpenTBAvailWide.traceWidth == 3022
 #guard transferCapOpenTBAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb"
 #guard transferAvailWideRefused.traceWidth == 2695 + 45

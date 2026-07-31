@@ -274,7 +274,7 @@ theorem transferCapOpenEffV3TBAvail_authorizes (S8 : Cap8Scheme) (hash : List �
     (hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< EFF_TRANSFER) caps
       (groupVal (envAt t 0) (capOpenCols transferV3Avail.traceWidth).capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
-    (hanchor : TurnIdentityAnchored transferV3Avail availTBName EFF_TRANSFER t 0 src actor dst)
+    (hanchor : TurnIdentityAnchored transferV3Avail availTBName EFF_TRANSFER t 0 src)
     (hsrcLt : (src : ℤ) < 2013265921)
     (hedge : leafOf (capOpenCols transferV3Avail.traceWidth) (envAt t 0) = leafAt actor src)
     (htier : (tierOfTag vkOfTag (leafAt actor src).auth_tag).isSatisfiedBy provided = true) :
@@ -316,14 +316,17 @@ section Witnesses
 -- `CAP_OPEN_SPAN = 329` is limb-count INDEPENDENT (7 + 8 + 16·17 + 8 + 2 + 32), so the cap-open
 -- widths move exactly with the base: 1701 + 329 (was 1657 + 329 = 1986).
 #guard transferCapOpenEffV3Avail.traceWidth == 2030
-#guard transferCapOpenEffV3TBAvail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN + 2
-#guard transferCapOpenEffV3TBAvail.traceWidth == 2032
--- PI shape unchanged: 46 (42 v1 + 4 rotated commit pins); TB adds the 3 turn-identity pins.
+-- ⚑ 2026-07-30: the TB weld adds NO column any more. The `actor`/`dst` columns it used to append
+-- were read by nothing, so their pins published prover-chosen felts (`UnforcedPiPins`); both are
+-- deleted, leaving the `src` pin, which lands on a column `targetBindGate` reads.
+#guard transferCapOpenEffV3TBAvail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
+#guard transferCapOpenEffV3TBAvail.traceWidth == 2030
+-- PI shape unchanged: 46 (42 v1 + 4 rotated commit pins); TB adds the ONE turn-identity pin.
 #guard transferCapOpenEffV3Avail.piCount == 46
-#guard transferCapOpenEffV3TBAvail.piCount == 49
--- Constraint deltas: the 78-gate appendix + the selector tooth (eff) / + the 3 TB pins (TB).
+#guard transferCapOpenEffV3TBAvail.piCount == 47
+-- Constraint deltas: the 78-gate appendix + the selector tooth (eff) / + the 1 TB pin (TB).
 #guard transferCapOpenEffV3Avail.constraints.length == transferV3Avail.constraints.length + 79
-#guard transferCapOpenEffV3TBAvail.constraints.length == transferV3Avail.constraints.length + 78 + 3
+#guard transferCapOpenEffV3TBAvail.constraints.length == transferV3Avail.constraints.length + 78 + 1
 -- The wide graduation's 15-bit range table rides along (6 tables — the borrow-limb teeth land).
 #guard transferCapOpenEffV3Avail.tables.length == 6
 #guard transferCapOpenEffV3TBAvail.tables.length == 6
