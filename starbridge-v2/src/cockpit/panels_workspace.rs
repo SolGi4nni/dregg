@@ -3359,34 +3359,129 @@ mod popout_crash_repro {
         );
     }
 
-    /// THE SAFETY NET, PROVEN: a deliberately-panicking UI action wrapped in the
-    /// cockpit's event-boundary guard ([`Cockpit::guard_ui_event`]) LOGS + no-ops —
-    /// it returns `false` and does NOT unwind past the guard, so a real gpui Obj-C
-    /// event callback (a nounwind boundary) would never see the panic and never
-    /// abort. (We assert the guard contains the panic; the cockpit survives.)
+    /// A panic raised **mid-mutation inside a live `Cockpit` lease** is contained by
+    /// [`Cockpit::guard_ui_event`], the entity is NOT left leased or poisoned, and the
+    /// window still paints a real frame afterwards.
+    ///
+    /// ⚠ **What this does NOT prove, said out loud** (the version of this test that
+    /// this one replaces claimed all three in its title and asserted none of them):
+    ///
+    /// * It says nothing about gpui's Obj-C `nounwind` event boundary. There is no
+    ///   Obj-C in a headless test; the abort ember hit is not reproducible here at
+    ///   all. The guard's *value* at that boundary is an argument, not a measurement.
+    /// * It does not prove any particular seam is guarded — that is
+    ///   [`the_pop_out_click_handler_is_wrapped_in_the_guard`] below, and the two are
+    ///   separate on purpose: the replaced test called `guard_ui_event` DIRECTLY, so
+    ///   it stayed green with the guard amputated from the pop-out handler entirely.
+    /// * It does not survive `panic = "abort"`. Under that panic strategy
+    ///   `catch_unwind` contains nothing and the whole safety net is a no-op — the
+    ///   workspace does not currently set it and nothing pins that it never will.
+    ///
+    /// It DOES pin one thing the guard's own doc gets wrong: containment is **not a
+    /// rollback**. Mutations the action made before it panicked STAY. "Logged no-op"
+    /// means the remainder does not run, not that the cockpit is unchanged.
     #[test]
-    fn ui_event_guard_turns_a_panicking_action_into_a_logged_no_op() {
+    fn a_panic_mid_action_is_contained_and_the_cockpit_still_draws_and_acts() {
         let mut cx = headless();
-        let (entity, _window) = boot_cockpit(&mut cx);
+        let (entity, window) = boot_cockpit(&mut cx);
 
-        let survived = entity.update(&mut cx, |c, cx| {
-            // A click handler that panics (e.g. an unwrap on a missing item). The
-            // guard must contain it.
-            let ok = Cockpit::guard_ui_event("test-panicking-click", || {
+        let (contained, ran_after) = entity.update(&mut cx, |c, cx| {
+            // A click handler that writes cockpit state and THEN panics — the shape
+            // of a real handler that unwraps something missing partway through.
+            let panicked_ok = Cockpit::guard_ui_event("test-panicking-click", || {
+                c.last_outcome = Some("HALF-WRITTEN before the panic".into());
                 panic!("deliberate UI panic inside a click handler");
             });
-            assert!(!ok, "the guard reports the action panicked (no-op)");
-            // The cockpit is still usable AFTER the contained panic — a normal
-            // guarded action runs to completion.
+            // ... and the cockpit is still writable inside the SAME lease afterwards.
             let ran = Cockpit::guard_ui_event("test-ok-click", || {
-                c.last_outcome = Some("guarded click ran".into());
+                c.dock_open = !c.dock_open;
             });
             cx.notify();
-            ran
+            (!panicked_ok, ran)
         });
+        assert!(contained, "the guard reports the action panicked");
         assert!(
-            survived,
-            "a non-panicking guarded action returns true (ran)"
+            ran_after,
+            "a following guarded action still runs to completion"
+        );
+
+        // FAIL-SOFT IS NOT TRANSACTIONAL: the half-written mutation survived.
+        let half = entity.update(&mut cx, |c, _cx| c.last_outcome.clone());
+        assert_eq!(
+            half.as_deref(),
+            Some("HALF-WRITTEN before the panic"),
+            "the guard contains the unwind, it does NOT roll back what the action \
+             already wrote — a guarded handler must leave the cockpit consistent on \
+             its own"
+        );
+
+        // THE REAL FRAME: the entity was not left leased and the window still draws.
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, w, _| w.refresh())
+            .expect("the cockpit window still refreshes after a contained UI panic");
+        cx.run_until_parked();
+        window
+            .root(&mut cx)
+            .expect("the cockpit root entity is still reachable after a contained panic");
+
+        // And a real UI verb — the one the pop-out button drives — still works.
+        let tab = entity.update(&mut cx, |c, _cx| c.active_tab());
+        entity.update(&mut cx, |c, cx| c.tear_off_tab(tab, cx));
+        cx.run_until_parked();
+        assert!(
+            entity.update(&mut cx, |c, _cx| c.tab_is_torn_off(tab)),
+            "the cockpit still executes a real tear-off after the contained panic"
+        );
+    }
+}
+
+/// **THE OTHER HALF OF THE SAFETY NET: the guard has to be APPLIED.**
+///
+/// [`Cockpit::guard_ui_event`] working in isolation is worth nothing if the seam that
+/// actually aborted the app is not wrapped in it. The test that used to stand here
+/// called the guard directly, so it passed with the guard stripped off the pop-out
+/// handler — proved by amputation on 2026-07-31: replacing
+/// `Cockpit::guard_ui_event("pane-popout", || { … })` with a bare immediately-invoked
+/// closure left `ui_event_guard_turns_a_panicking_action_into_a_logged_no_op` green.
+///
+/// This gate reads the render body of the pane's "↗ pop out" control and requires the
+/// wrapper. It is a source scan, but it is NOT the shape it replaces: the expectation
+/// (*this seam is wrapped*) and the subject (*the handler as written*) are two
+/// different things, so the amputation above turns it RED. If the button is renamed or
+/// removed the gate also goes red, which is the point — the change should be said out
+/// loud rather than silently un-netting ember's crash path.
+///
+/// ⚠ RESIDUAL, unpinned: [`Cockpit::tear_off_tab_deferred`] hands the actual window
+/// open to `cx.defer`, whose body runs on a LATER app pass — outside this guard and
+/// outside any other. A panic in the deferred tear-off is not contained by anything
+/// here.
+#[cfg(test)]
+mod ui_event_guard_seam {
+    /// The file's own render source. The subject is the handler text below; the
+    /// expectation is the wrapper name, which lives only here.
+    const SRC: &str = include_str!("panels_workspace.rs");
+
+    #[test]
+    fn the_pop_out_click_handler_is_wrapped_in_the_guard() {
+        let anchor = SRC
+            .find(r#".id("pane-popout")"#)
+            .expect("the pane tab-bar still renders a control with id \"pane-popout\"");
+        let rest = &SRC[anchor..];
+        let end = rest
+            .find(".child(if is_torn")
+            .expect("the \"pane-popout\" control still ends at its `.child(if is_torn …)` label");
+        let handler = &rest[..end];
+
+        assert!(
+            handler.contains("on_mouse_down"),
+            "the \"pane-popout\" control no longer carries a mouse-down handler — the \
+             seam this gate watches has moved; move the gate with it"
+        );
+        assert!(
+            handler.contains(r#"Cockpit::guard_ui_event("pane-popout""#),
+            "the pop-out mouse-down handler is NOT wrapped in `Cockpit::guard_ui_event` \
+             — this is the exact seam whose panic crossed gpui's Obj-C nounwind boundary \
+             and aborted the app. Handler body as found:\n{handler}"
         );
     }
 }
