@@ -4599,33 +4599,62 @@ theorem cellSealV3_payload_rejects_forged (hash : List ℤ → ℤ) (env : VmRow
 
 #assert_axioms cellSealV3_payload_rejects_forged
 
-/-! ### §5.PC.EH — THE effects_hash SUB-CASE (emitEvent / pipelinedSend / exercise) — ALREADY
-LIGHT-CLIENT-BOUND, NO declared-payload column needed.
+/-! ### §5.PC.EH — THE effects_hash SUB-CASE (emitEvent / pipelinedSend / exercise).
 
-The third family the VK-epoch swept (`emitEvent` / `pipelinedSend` / `exercise`) declares a HASH
-(topic/payload for emitEvent; send_hash for pipelinedSend; exercise_hash for exercise) — NOT a post-cell
-STATE payload. These effects are STATELESS / FREEZE-ALL (`emitEvent` rides `v3OfFrozen =
-rotateV3FrozenAuthority`: every authority limb r23/lifecycle/perms/vk/mode/fields-root is FROZEN to the
-BEFORE, the topic/payload digests ride the row's params OFF-trace, `EffectVmEmitEmitEvent` §intro). So
-there is NO AFTER payload SUB-LIMB to forge — the declared hash IS the `effects_hash` the row folds via
-`compute_effects_hash`.
+⚑ **THE PARAGRAPH THAT STOOD HERE WAS FALSE, AND IT WAS THE STATED REASON THESE THREE EFFECTS HAVE
+NO DECLARED-PAYLOAD COLUMN.** It read: *"the v1 descriptor pi-binds that slot to the row's
+`compute_effects_hash` of the declared params — the SAME perms/VK chain (`prmCol i → effects_hash
+→ PI`) … So `verify_vm_descriptor2` ALONE already checks the declared hash against a
+producer-non-free PI."* It reasoned from the **v1 hand-AIR**, which is **RETIRED**
+(`circuit/src/effect_vm/air.rs:7-10`: *"The v1 hand-AIR (`EffectVmAir` + its `StarkAir` impl) is
+RETIRED; the rotated IR-v2 multi-table descriptor is the sole effect-VM circuit"*). Nothing
+inherited that binding. The correction was already written twenty lines from its own restatement,
+in `sdk/src/full_turn_proof.rs:870-897`.
 
-And `effects_hash` is ALREADY light-client-bound IN-WINDOW: it lands at PI slots `[16..20)`
-(`pi.rs::EFFECTS_HASH_BASE = NEW_COMMIT_BASE(8) + NEW_COMMIT_LEN(8) = 16`), which is INSIDE the rotated PI
-window (`V1_PI_COUNT = 42`, so `pis[..42]` carries it into the rotated dpis). The v1 descriptor pi-binds
-that slot to the row's `compute_effects_hash` of the declared params — the SAME perms/VK chain
-(`prmCol i → effects_hash → PI`) that makes setPerms/setVK light-client-forced. So `verify_vm_descriptor2`
-ALONE already checks the declared hash against a producer-non-free PI: a forged topic/payload/send/exercise
-hash that disagrees with the bound `effects_hash` is UNSAT on the light-client path.
+**MEASURED at HEAD (2026-07-30), four independent ways:**
 
-THE PRECISE RESIDUE (named, not laundered): the RAW per-effect emit topic/payload slots (`pi.rs` index
-174+) ride PAST the rotated window and bind only at the full-node v1 hand-AIR — but those are the
-PRE-fold OPERANDS, redundant with the in-window folded `effects_hash` PI[16..20] that the rotated path
-DOES carry and DOES bind. The light-client-forced quantity for these three is the declared HASH (the
-folded `effects_hash`), which is in-window. No declared-payload column is required: the effects_hash
-sub-case is light-client-forced by the EXISTING in-window `effects_hash` pin (the perms/VK-shaped
-chain), not by a new primitive. (`vk_epoch_misc_light_client_binding.rs` carries the emitEvent
-discriminator.) -/
+1. **No descriptor binds the slot.** `PI[16..20)` (`pi.rs::EFFECTS_HASH_BASE = 16`,
+   `EFFECTS_HASH_LEN = 4`) carries ZERO `piBinding` in any deployed member.
+   `circuit/tests/vk_epoch_misc_light_client_binding.rs:196-210` asserts exactly this as a
+   PRECONDITION: `(16..20).all(|p| !bound_pis.contains(&p))`.
+2. **The witness columns are gone, and the deletion is a machine-derived proof they were
+   unconstrained.** `compute_effects_hash_4`'s two witness felts landed at `AUX_BASE + 4/5`
+   = abs. cols 94/95 (`trace.rs:1118-1119`). `e1_compact_generated.rs`'s kill-set is *"every column
+   at index ≥ 90 referenced by NO surviving constraint / hash site / range"*, and it deletes
+   `[90, 98)` in **all 57** wide members. Cols 94/95 were droppable **because** nothing read them.
+3. **Only the PROVER computes it.** `compute_effects_hash_4` has exactly one non-test caller —
+   `circuit/src/effect_vm/trace.rs:1289`, the trace generator, writing `public_inputs[16..20]`.
+   No verifier calls it on the deployed path.
+4. **`pi.rs` says so in its own audit note.** `AUDIT[stage1-pi-only-bound]` (`pi.rs:862-867`):
+   `PI[EFFECTS_HASH_BASE+1..+4]` is *"bound only by the executor's PI matching loop … not by
+   per-row AIR constraints"* — and since the hand-AIR's retirement that now covers position 0 too.
+
+**What actually holds the value up.** On the **full node**, `verify_and_commit_proof_rotated`
+(`turn/src/executor/proof_verify.rs:711`) re-derives the pre-state from the ledger, converts the
+turn's own effects (`:773`), REGENERATES the trace and the whole PI vector, and substitutes ITS
+vector into `verify_batch` (`:1745`). A proof minted over different effects diverges the
+Fiat–Shamir transcript and fails. That is real — and it means **the proof adds nothing the host did
+not already compute**. On the **ledgerless** path (`sdk/src/full_turn_proof.rs:4460`) the PI vector
+comes off the wire and is **free**.
+
+**And the row cannot carry the preimage anyway.** `NUM_PARAMS = 8` (`columns.rs:233`), and
+`trace.rs:754-766` parks only the **low 4 felts** of `topic_hash` and the **low 4** of
+`payload_hash` into `params[0..8]` — while `effects_hash_inputs` absorbs **all 8 limbs of each**
+(tag + 16 = 17 felts). Nine of emitEvent's seventeen preimage felts are **not columns at all**. So
+the old text's "the topic/payload digests ride the row's params OFF-trace" was true; its inference
+that a PI binding compensated was not.
+
+**Consequence, stated at current resolution:** a turn's rotated proof establishes that two
+committed cell-states are joined by a chain of legal balance/nonce moves in one effect family, and
+**not what the effects were**. `vk_epoch_misc_light_client_binding.rs` asserts the hole open, on
+purpose, in three tests whose green depends on the forgery being ACCEPTED — see
+`Dregg2.Circuit.Emit.EffectVmEffectsHashPin` for the pin that must invert them.
+
+**These three effects therefore DO need a declared block.** Being STATELESS / FREEZE-ALL
+(`emitEvent` rides `v3OfFrozen = rotateV3FrozenAuthority`; every authority limb is frozen to the
+BEFORE) removes the AFTER SUB-LIMB to forge — it does not put the declaration on the wire. The
+declaration is the whole content of these effects, and today it is published by nobody and
+constrained by nothing. -/
 
 /-- **`cellSealV3`** — the LIVE rotated cellSeal WITH the lifecycle-forcing pin AND the LIVE disc gate:
 the BEFORE disc limb is force-pinned to `Live(0)` and the AFTER disc limb to `Sealed(1)` (selector
