@@ -50,54 +50,82 @@
 //!
 //! For peak RSS, run one test per process under `/usr/bin/time -l`.
 //!
-//! ## ⚑ MEASURED 2026-07-31 — one box, one process at a time, `--release`
+//! ## ⛑ MEASURED 2026-07-31 — one box, one process at a time, `--release`
 //!
 //! Apple aarch64, 12 cores, 96 GB. **Every figure below is SINGLE-THREADED and
 //! that is not a choice of this harness**: `p3-maybe-rayon` resolves in this
 //! workspace with **zero features** (`cargo metadata` on the whole resolve), so
 //! the `parallel` feature is off and every `par_*` call in `p3-merkle-tree`,
 //! `p3-dft`, `p3-fri` and `p3-uni-stark` is the serial fallback. `user ≈ real`
-//! on every run above confirms it. Three sketch crates outside the workspace
-//! (`circuit-prove/sketches/*-ntt`) turn it on for `p3-dft`; the shipping tree
-//! turns it on nowhere.
+//! on every run confirms it (4,585 user / 5,149 real on the full-geometry run).
+//! Three sketch crates outside the workspace (`circuit-prove/sketches/*-ntt`)
+//! turn it on for `p3-dft`; the shipping tree turns it on nowhere.
+//!
+//! ### ⛑⛑ THE HEADLINE — the real root, all 1,734,899,840 committed LDE cells
+//!
+//! | commitment hash | `commit_ldes`, four rounds | per cell | vs deployed |
+//! |---|---:|---:|---:|
+//! | Poseidon2-BabyBear-W16 (**deployed root**) | **43.23 s** | 24.92 ns | 1x |
+//! | Poseidon2-BN254 (ETH terminal) | **1,494.64 s** (24.9 min) | 861.51 ns | 34.6x |
+//! | **Mina-Poseidon / Pasta** (`DreggMinaConfig`) | **3,608.76 s** (60.1 min) | 2,080.10 ns | **83.5x** |
+//!
+//! Per round, Pasta: main 1,474.2 s . quotient 267.7 s . preprocessed 1,019.3 s
+//! . permutation 847.6 s. Peak RSS **5.59 GB** (all three legs, one process).
+//!
+//! ### [2] the scaling sweep, and ⚠ THE SHAPE IS NOT WHAT LINEARITY PREDICTS
+//!
+//! | LDE cells | BabyBear | BN254 | Pasta | Pasta ns/cell |
+//! |---:|---:|---:|---:|---:|
+//! | 6.83 M | 0.17 s | 6.18 s | 12.76 s | 1,869.1 |
+//! | 27.15 M | 0.70 s | 21.64 s | 47.41 s | 1,745.9 |
+//! | 108.46 M | 2.70 s | 85.55 s | 188.81 s | 1,740.8 |
+//! | **1,734.90 M** | **43.23 s** | **1,494.64 s** | **3,608.76 s** | **2,080.1** |
+//!
+//! log-log exponents, last octave (108 M -> 1,735 M) and least-squares over all
+//! four points:
+//!
+//! | | last octave | all four | naive-linear extrapolation from 108 M |
+//! |---|---:|---:|---|
+//! | BabyBear | **1.0004** | 0.998 | under by **0.1%** |
+//! | BN254 | 1.0318 | 0.996 | under by **8.4%** |
+//! | Pasta | **1.0642** | 1.023 | under by **16.3%** |
+//!
+//! ⛑ **The deployed 31-bit hash is exactly linear in committed cells. The wide
+//! hashes are NOT** — they turn over into mild superlinearity at scale, and the
+//! wider the field the sooner. Extrapolating the Pasta root linearly from the
+//! largest affordable sub-scale point predicts 3,020 s against a measured
+//! 3,609 s. **That is why the 1,735 M point is measured here and not modelled**,
+//! and any future re-price of a bigger batch must measure rather than scale.
+//! The mechanism is not settled by this harness (the Pasta leg streams a ~5.6 GB
+//! working set on one core; cache/TLB behaviour is the obvious suspect and is
+//! NOT verified) — the exponent is the measurement, the cause is not.
 //!
 //! ### [1] permutation microbench (single thread, 200,000 iterations)
 //!
-//! | permutation | ns/perm | BabyBear lanes absorbed | ns/lane |
+//! | permutation | ns/perm | BabyBear lanes/perm | ns/lane |
 //! |---|---:|---:|---:|
-//! | `Poseidon2BabyBear<16>` (deployed root) | 1,343.2 | 8 | **167.9** |
-//! | `Poseidon2Bn254<3>` (ETH terminal) | 22,842.9 | 16 | **1,427.7** |
-//! | `MinaPoseidonPerm` (Mina terminal) | 34,544.8 | 16 | **2,159.1** |
+//! | `Poseidon2BabyBear<16>` (deployed root) | 811.6 | 8 | **101.5** |
+//! | `Poseidon2Bn254<3>` (ETH terminal) | 8,718.8 | 16 | **544.9** |
+//! | `MinaPoseidonPerm` (Mina terminal) | 20,472.4 | 16 | **1,279.5** |
 //!
-//! ### [2] commitment hashing (`commit_ldes`, four rounds, real root geometry)
-//!
-//! | `HASH_SWAP_SHRINK` | LDE cells | BabyBear | BN254 | Pasta | Pasta/BB |
-//! |---:|---:|---:|---:|---:|---:|
-//! | 8 | 6.83 M | 0.17 s | 6.18 s | 12.76 s | 76.5× |
-//! | 6 | 27.15 M | 0.70 s | 21.64 s | 47.41 s | 67.9× |
-//! | 4 | 108.46 M | 2.70 s | 85.55 s | 188.81 s | 70.0× |
-//! | 2 | 433.74 M | 10.70 s | — | — | — |
-//!
-//! Per-cell cost is FLAT — BabyBear 24.4–25.7 ns, BN254 789–906 ns, Pasta
-//! 1,741–1,869 ns — so the shape is **linear in committed cells**, not a step
-//! function: the log–log exponent is **0.998** over the 6→4 pair and 0.974–1.000
-//! fitted across all three.
-//!
-//! ⚠ The cross-check against [1] does NOT close, and the gap points the wrong
-//! way: the leaf sponge absorbs at most 16 BabyBear lanes per permutation and
-//! the tree adds compressions on top, so `commit_ldes` should cost **at least**
-//! [1]'s 2,159 ns/lane. It measures **1,740** — 19% under a floor it cannot be
-//! under. So [1] over-prices `MinaPoseidonPerm` relative to what the MMCS
-//! achieves (loop-carried dependency on one state in [1] vs independent rows in
-//! the tree is the likely cause, unverified). **[2] is the number to quote**;
-//! [1] is a rough unit price and is labelled as one.
+//! ⚠ **An earlier run of this same bench read 1,343 / 22,843 / 34,545 ns/perm
+//! — 1.7-2.6x slower — and it was wrong.** A sibling lane was building on this
+//! shared tree at the time. The figures above are the re-run on a quiet box
+//! immediately after the full-geometry measurement. The tell that something was
+//! off was a *physical impossibility*: the contaminated bench put the per-lane
+//! floor at 2,159 ns while the tree measured 1,740 ns/cell, and a leaf sponge
+//! absorbing <=16 lanes per permutation, plus compressions on top, cannot come
+//! in under its own permutation cost. With the clean numbers the check closes
+//! the right way — the tree pays **1.63x** the ideal 1,279.5 ns/lane (imperfect
+//! sponge fill on narrow matrices, plus the 2:1 compressions).
+//! **Quote [2]; [1] is a unit price only.**
 //!
 //! ### [3] the LDE control — it came back IMPOSSIBLE, and that is the result
 //!
-//! At `SHRINK=4`, `commit` − `commit_ldes` implies an LDE of **0.22 s
-//! (BabyBear), 4.33 s (BN254), −3.26 s (Pasta)**. A negative LDE cannot happen,
-//! so the spread is this method's noise floor: **±~3.5 s on a 100–200 s
-//! quantity, i.e. ±2%**. What survives is the bound it was built to give — the
+//! At `SHRINK=4`, `commit` minus `commit_ldes` implies an LDE of **0.22 s
+//! (BabyBear), 4.33 s (BN254), -3.26 s (Pasta)**. A negative LDE cannot happen,
+//! so the spread is this method's noise floor: **+/-~3.5 s on a 100-200 s
+//! quantity, i.e. +/-2%**. What survives is the bound it was built to give — the
 //! coset LDE at blowup 64 is under 2% of the Pasta commit and is therefore not
 //! where the delta lands. **Do not quote the BabyBear 0.22 s as an LDE
 //! measurement**; quote the bound.
@@ -110,9 +138,8 @@
 //! | BN254 | 87.87 s | 7.01 s | 270,026 B |
 //! | Pasta | 189.91 s | 11.75 s | 270,118 B |
 //!
-//! **94.2% of the Pasta−BabyBear delta is the input-round MMCS commit**; 5.8%
-//! is everything `open` does. Proof size **falls** 0.919×. Peak RSS 589 MB at
-//! `SHRINK=4` for all three legs in one process.
+//! **94.2% of the Pasta-minus-BabyBear delta is the input-round MMCS commit**;
+//! 5.8% is everything `open` does. Proof size **falls** 0.919x.
 //!
 //! ### The buckets, named — and what is NOT in them
 //!
