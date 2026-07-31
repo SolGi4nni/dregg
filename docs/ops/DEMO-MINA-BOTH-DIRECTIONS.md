@@ -343,7 +343,7 @@ since `RootFriUniform`'s terminal program verifies its predecessor — while the
 harness's stand-in producer has no proof input and is therefore **0**. Give the
 producer a method that verifies a `SelfProof` and the **same gate accepts**:
 head moves to H, turns = 3, in 6.2 s. Measured in
-`scripts/head-gate-rehearsal.ts` §[2].
+`bridge/mina-zkapp/scripts/head-gate-rehearsal.ts` §[2].
 
 **(b) the vk-pin row is green over a false premise.** The harness prints
 `compiled two stand-in producers … (vk hashes differ: false)` and then treats
