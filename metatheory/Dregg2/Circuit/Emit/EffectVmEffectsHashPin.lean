@@ -95,12 +95,78 @@ not an independent implementation. Flag day: see §Cost.
 
 ## §Cost — a rebuild, priced, not deferred
 
-* **Columns:** `EH_SPAN = 41` appended past each member's existing `traceWidth` (tag 1, ext 8,
-  accIn 8, two carriers 16, accOut 8). Nothing existing moves — the append idiom of
-  `withRecordPin8Headroom2` / `rotateV3`'s appendix, so every existing column index, `#guard`, and
-  per-effect forcing keystone survives verbatim.
-* **Constraints:** 24 per member — 3 chip lookups, 1 tag gate, 8 `windowGate` continuity, 8
-  `boundary .first` IV pins, 4 `piBinding .last`.
+* **Columns:** `EH_SPAN = 65` appended past each member's existing `traceWidth` (tag 1, ext 8,
+  accIn 8, six step carriers 48 — the last of which IS `ehAccOut`). Nothing existing moves — the
+  append idiom of `withRecordPin8Headroom2` / `rotateV3`'s appendix, so every existing column index,
+  `#guard`, and per-effect forcing keystone survives verbatim.
+  ⚑ **This block said `41` (tag 1, ext 8, accIn 8, "two carriers 16", accOut 8) and `24` until
+  2026-07-31, and both numbers were the PRE-arity-correction estimate.** §2's 16→11 absorb-arity fix
+  turned two absorb steps into six and was never carried into this paragraph. **The `#guard`s in §7
+  are the price, not this prose** — `EH_SPAN == 65`, six absorbs at arities `[11,11,11,11,11,10]`,
+  27 constraints. A stale cost estimate is exactly the failure `CLAUDE.md` names: it does not stay
+  an estimate, it becomes a remembered constraint, and here it was 38% low on columns.
+* **Constraints:** 27 per member — 1 tag gate, **6** chip lookups (the six arity-≤11 absorb steps),
+  8 `windowGate` continuity, 8 `boundary .first` IV pins, 4 `piBinding .last`.
+* **Applicability:** 171 of the 174 deployed members, NOT all of them. See §6¾ — the three
+  `heapWriteVmDescriptor2R24` rows are not on the EffectVM PI layout and the pin is refused on them
+  by `withEffectsHashPinChecked` rather than emitting a broken member.
+
+### ⚑ PRICED BY EXECUTION, 2026-07-31 — a real emit of all 57 wide members
+
+Not an estimate. `EmitWideRegistryProbe` was wired to `withEffectsHashPin` on a scratch clone (never
+installed, `metatheory/Dregg2` was dirty from three live lanes and the driver correctly refuses that)
+and run to completion. Diffed against the committed `rotation-wide-registry-staged.tsv`:
+
+  * **56 of 57 members take the pin**; `heapWriteVmDescriptor2R24` is skipped by the predicate above
+    with `Δwidth = 0`, `Δconstraints = 0`, pins unchanged. The exemption is exactly one member and it
+    is the one §6¾ names.
+  * **`piCount` moves on ZERO members.** The four slots were already there.
+  * **Δconstraints = +27 on 54 members** — the designed budget, met exactly.
+  * **Δwidth is +65 on 20 members, +53 on 34, +56 on 2, 0 on one.** The block is 65 columns by
+    construction, so the members below it had 9–12 further columns removed by the E1 kill-set: the
+    new LIVE columns raise `e1Ceiling`, and dead v1-face columns that were previously out of reach
+    enter the kill-set. ⚠ That is a measured side effect and it is recorded rather than smoothed —
+    whoever installs this owes the E1 interaction an explanation before believing the widths.
+
+### ⚑⚑ AND IT CLOSES THE FREE-PIN RESIDUE, BY FORCING
+
+This was not designed for and it is the larger result. `ehFreshCols` absorbs `prmCol 0..7` — every
+effect-parameter column — into the published fold, so those columns become READ by a chip lookup and
+enter `UnforcedPiPins.forcedCols`. Measured on the emitted bytes, wide registry:
+
+| | committed | with the pin |
+|---|---|---|
+| pins | 1628 | **1859** |
+| free under the row-local notion | 6 | **0** |
+| free under `forcedCols` | 0 | 0 |
+| **declaration-only** (`proof_bind` the sole reader) | **2** | **0** |
+
+  * `mintVmDescriptor2R24` gains back `PI 46 → col 68`, the mint identity `dropUnforcedPins` deleted
+    on 2026-07-31 as unforced. It returns because the column IS forced now — **the same unchanged
+    subtraction keeps it**, which is the only honest way to bring a censused pin back (the rc-FOLD
+    precedent, `96001f909`).
+  * `customVmDescriptor2R24` gains back six octet limbs (`PI 47,48,49 → cols 73,74,75`, the proof
+    commitment; `PI 55,56,57 → cols 69,70,71`, the program VK) for the same reason, and its two
+    surviving `proof_bind`-only pins (`PI 46 → 72`, `PI 54 → 68`) stop being declaration-only —
+    `UnforcedPiPins.declarationOnlyPins` goes to **empty**.
+  * `factory` / `spawn` / `spawnCapOpen` / `spawnWriteCapOpen`'s `PI 46` were forced only by a
+    `map_op` the row-local notion does not read; they are now row-locally forced as well.
+
+So the effects-hash fold is not only the repair for `PI[16..20)` — it is the repair for the last six
+free pins in the wide registry, and it makes them forced rather than exempt.
+
+### What still blocks the install, stated as work and not as a reason
+
+  1. **The producer.** `trace_rotated.rs` has ZERO `effects_hash` references and must write all 65
+     columns per row. `prove_vm_descriptor2` zero-extends short rows BEFORE its width check, so an
+     un-updated producer folds the IV over zeros and proves GREEN. New columns must route through
+     `compacted_column(registry_key, raw)`.
+  2. **`compute_effects_hash_4` must be rewritten** to this fixed-width-per-row fold and become the
+     twin of what this file emits. Its value changes; every persisted `effects_hash` is invalid.
+  3. **The two other drivers** (`EmitRotationV3`, `EmitWideUMemWeldRegistryProbe`) need the same one
+     line plus an `import` — none of the three imports this module today.
+  4. **`metatheory/Dregg2` must be clean** for the emit driver to install, and it was dirty from
+     three concurrent lanes throughout this measurement.
 * **PI count: UNCHANGED.** `PI[16..20)` is already inside the rotated window (`V1_PI_COUNT = 42`),
   already carried into the rotated `dpis`, and already produced by the trace generator. This pin
   spends **zero** new PI slots. (`EFFECTS_HASH_LEN = 4` publishes lanes 0..3 of an 8-felt carrier;
@@ -288,6 +354,91 @@ def withEffectsHashPin (g : EffectVmDescriptor2) : EffectVmDescriptor2 :=
       ++ ehContinuity g.traceWidth
       ++ ehSeed g.traceWidth
       ++ ehPublish g.traceWidth }
+
+/-! ## §6¾ — ⚑ THE APPLICABILITY PRECONDITION, AND WHY IT IS FAIL-CLOSED
+
+**MEASURED on the committed registry bytes, 2026-07-31, BEFORE any wiring.** `withEffectsHashPin`
+above is unconditional, and applying it at the emit chokepoints as written would have broken **3 of
+the 174 deployed members** — silently in two of them. Both failures are `heapWriteVmDescriptor2R24`,
+which is the one member NOT on the EffectVM PI layout:
+
+  * `rotation-v3-staged-registry.tsv` — `public_input_count = 4`. `ehPublish` pins PI 16..19, and
+    `descriptor_ir2.rs:1604`'s `check_descriptor2` refuses `pi_index >= public_input_count`. The
+    member would fail to load; every consumer of the v3 registry refuses at parse.
+  * `rotation-wide-registry-staged.tsv` / `…-umem-welded-…tsv` — `public_input_count = 20`, and the
+    member **already pins PI 16,17,18,19** to cols 2127..2130 (the heap-splice roots) on the LAST
+    row. Adding `ehPublish` double-pins all four slots to different columns on the same row, which
+    forces `local[2127] = local[ehAccOut 0]` — two unrelated values. **An honest heap-write trace
+    becomes UNSATISFIABLE, and the member still parses**, so this one lands and heap-write silently
+    stops proving.
+
+That is the shape this repo names a landmine: a staged combinator whose precondition lives in prose
+("`PI[16..20)` is already inside the rotated window"), is true of 171 members, and is checked by
+nothing. So the precondition becomes a decidable predicate and the emit-facing combinator is an
+`Except`, not a silent skip — a skip would be the fail-open twin (`minted-fail-open-gate-class`): a
+member quietly emitted WITHOUT the pin looks exactly like one that never needed it, and the census
+that is supposed to prove the pin landed registry-wide would read "171 of 171". -/
+
+/-- **`ehPiWindowBindable`** — is `PI[16..20)` in range AND unbound in this member? Both halves are
+necessary and neither implies the other: a member can declare enough slots and already bind them
+(the wide `heapWrite`), or bind none and not declare them (the v3 `heapWrite`). -/
+def ehPiWindowBindable (g : EffectVmDescriptor2) : Bool :=
+  decide (EFFECTS_HASH_PI_BASE + EFFECTS_HASH_PI_LEN ≤ g.piCount)
+    && g.constraints.all (fun c => match c with
+        | .base (.piBinding _ _ k) =>
+            decide (k < EFFECTS_HASH_PI_BASE || EFFECTS_HASH_PI_BASE + EFFECTS_HASH_PI_LEN ≤ k)
+        | _ => true)
+
+/-- **The emit-facing combinator — FAIL-CLOSED.** The driver must handle the `.error`; it names the
+member so the refusal is attributable rather than a count that came out one short. -/
+def withEffectsHashPinChecked (g : EffectVmDescriptor2)
+    : Except String EffectVmDescriptor2 :=
+  if ehPiWindowBindable g then .ok (withEffectsHashPin g)
+  else .error s!"effects-hash pin REFUSED for `{g.name}`: PI[{EFFECTS_HASH_PI_BASE}..\
+    {EFFECTS_HASH_PI_BASE + EFFECTS_HASH_PI_LEN}) is not a free window (piCount = {g.piCount}). \
+    This member is not on the EffectVM PI layout; pinning it would emit a descriptor that either \
+    fails `check_descriptor2` or double-pins a slot and is UNSATISFIABLE for an honest trace."
+
+/-- The `.ok` branch is exactly `withEffectsHashPin`, so every theorem above applies to what the
+emit installs — the checked wrapper adds a guard, never a different object. -/
+theorem withEffectsHashPinChecked_ok {g : EffectVmDescriptor2} (h : ehPiWindowBindable g = true) :
+    withEffectsHashPinChecked g = .ok (withEffectsHashPin g) := by
+  simp [withEffectsHashPinChecked, h]
+
+/-- **The predicate is not vacuous in either direction, and the witnesses are the DEPLOYED shapes.**
+`unbindable4` is the v3 `heapWrite` (piCount 4); `unbindableTaken` is the wide `heapWrite` (piCount
+20 with `PI[16..20)` already pinned); `bindable` is every other member's shape. -/
+def ehWitnessUnbindable4 : EffectVmDescriptor2 :=
+  { name := "eh-witness-picount-4", traceWidth := 8, piCount := 4
+  , tables := [], constraints := [], hashSites := [], ranges := [] }
+
+def ehWitnessUnbindableTaken : EffectVmDescriptor2 :=
+  { name := "eh-witness-window-taken", traceWidth := 8, piCount := 20
+  , tables := []
+  , constraints := (List.range EFFECTS_HASH_PI_LEN).map (fun j =>
+      .base (.piBinding .last (2127 + j) (EFFECTS_HASH_PI_BASE + j)))
+  , hashSites := [], ranges := [] }
+
+def ehWitnessBindable : EffectVmDescriptor2 :=
+  { name := "eh-witness-bindable", traceWidth := 8, piCount := 46
+  , tables := []
+  , constraints := [.base (.piBinding .first 0 0), .base (.piBinding .last 1 20)]
+  , hashSites := [], ranges := [] }
+
+#guard ehPiWindowBindable ehWitnessUnbindable4 == false
+#guard ehPiWindowBindable ehWitnessUnbindableTaken == false
+#guard ehPiWindowBindable ehWitnessBindable == true
+#guard (withEffectsHashPinChecked ehWitnessUnbindable4).isOk == false
+#guard (withEffectsHashPinChecked ehWitnessUnbindableTaken).isOk == false
+#guard (withEffectsHashPinChecked ehWitnessBindable).isOk == true
+
+/-! ⚑ **THE PIN IS ITS OWN IDEMPOTENCE TRIPWIRE.** After the pin lands, the window IS bound, so the
+predicate is FALSE on the result — applying the combinator twice is refused rather than emitting two
+chains onto the same four slots. This is the machine-checked form of "the emit installs it exactly
+once", and it is also what makes a post-emit census of `ehPiWindowBindable` meaningful: on a
+correctly emitted registry it reads FALSE for the 171 pinned members and FALSE for the 3 exempt
+ones, and the two are told apart by WHICH half fails. -/
+#guard ehPiWindowBindable (withEffectsHashPin ehWitnessBindable) == false
 
 /-! ## §6½ — THE SOUNDNESS LADDER.
 

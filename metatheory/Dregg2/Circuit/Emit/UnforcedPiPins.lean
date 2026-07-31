@@ -592,6 +592,95 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (v3Registry)
 #guard registryPinCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2)))
   - (607 - 159) == 4 * v3Registry.length
 
+/-! ## §6 — ⚑ WHAT `forcedCols` OVER-COUNTS, MEASURED IN THE AUTHORING LANGUAGE.
+
+`forcedCols` asks "does some NON-PIN constraint reference this column". That is the right question
+for a *weakening* argument — it is exactly the surface `satisfied2_dropUnforcedPins` has to preserve
+— but it is NOT the same question as "does anything in the DEPLOYED denotation force this column".
+Two v2 kinds reference columns whose content does not enter `Satisfied2` at all:
+
+  * **`.proofBind`** — `holdsAt` is `True` and its content lives in `Satisfied2Custom`, which
+    `DescriptorIR2.lean:730-735` states in its own words is *"NOT the deployed `Satisfied2`"*, with
+    the standing instruction *"Do NOT read this `True` as 'compensated like memOp'."* The deployed
+    `Ir2Air::eval` groups it with the bus kinds and `continue`s **without emitting a bus
+    interaction**, so it is the one kind that denotes nothing in either language.
+  * **`.umemOp`** — `holdsAt` is `True` and its global leg is `Satisfied2U`, which is STAGED.
+
+A pin that `dropUnforcedPins` KEEPS solely on the strength of one of those is a pin the AIR does not
+force: the prover still chooses the column and the published slot together. That is not a defect in
+the subtraction — widening `forcedCols` would break the weakening proof, and the right repair for
+such a pin is to make its column genuinely read (the rc-FOLD shape), not to delete it blind. What
+was missing is that the over-count was measured only downstream, in
+`circuit/tests/unforced_pi_pin_census.rs`, on bytes that are three compaction stages and a re-emit
+away from this file. **A number the authoring language cannot see is a number that rots.** So it is
+a `#guard` here, on the registry object, where it goes red BEFORE an emit rather than after.
+
+⚠ This section adds no theorem and changes no emitted byte. `dropUnforcedPins` is untouched. -/
+
+/-- `refs2` restricted to the kinds that actually denote under the DEPLOYED `Satisfied2`: every
+row-local kind, plus `memOp`/`mapOp` (whose content is `memBalanced`/`mapTableFaithful`). Drops
+`.proofBind` (content in `Satisfied2Custom`, not deployed) and `.umemOp` (content in `Satisfied2U`,
+staged). -/
+def refs2Denoting : VmConstraint2 → List Nat
+  | .proofBind _ => []
+  | .umemOp _    => []
+  | c            => refs2 c
+
+/-- `forcedCols` under the denoting-only reference surface. Always a SUBSET of `forcedCols`. -/
+def forcedColsDenoting (M : EffectVmDescriptor2) : List Nat :=
+  (M.constraints.filter (fun c => !isPin c)).flatMap refs2Denoting
+    ++ M.hashSites.flatMap refsSite
+    ++ M.ranges.map (fun r => r.wire)
+
+/-- **The over-count.** The pins that SURVIVE the subtraction and are still forced by nothing that
+denotes — published on the strength of a declaration. -/
+def declarationOnlyPins (M : EffectVmDescriptor2) : List (VmRow × Nat × Nat) :=
+  (pinsOf (dropUnforcedPins M)).filter
+    (fun p => !(forcedColsDenoting M).contains p.2.1)
+
+/-- The over-count, as one number over a registry. -/
+def registryDeclarationOnlyCount (R : List (String × EffectVmDescriptor2)) : Nat :=
+  (R.map (fun p => (declarationOnlyPins p.2).length)).foldl (· + ·) 0
+
+-- MEASURED on `v3Registry` after the subtraction. `forcedCols` over-counts by exactly TWO, both on
+-- the custom member: PI 46 → the proof-commitment limb 0, PI 54 → the program-VK limb 0, whose only
+-- non-pin reader is the `proofBind`. Downstream, `circuit/tests/unforced_pi_pin_census.rs`'s
+-- `proof_bind_is_the_only_reader_of_the_custom_exposure_columns` measures the SAME two on the
+-- emitted bytes of all three registries; this is that statement one stage upstream, where it can
+-- refuse an emit instead of describing one.
+#guard registryDeclarationOnlyCount v3Registry == 2
+-- ⚑ AND IT IS INVARIANT UNDER THE SUBTRACTION — 2 before, 2 after. That is the whole content of
+-- "the subtraction does not reach them": `registryUnforcedCount` goes 15 → 0 across the same map,
+-- because `dropUnforcedPins` removes exactly the pins `forcedCols` condemns, and `forcedCols` is
+-- what calls these two forced. A reader who assumed the subtraction cleans up after itself would
+-- write `== 0` here; it does not, and this guard is the difference between those two beliefs.
+#guard registryDeclarationOnlyCount (v3Registry.map (fun p => (p.1, dropUnforcedPins p.2))) == 2
+#guard (v3Registry.filter (fun p => (declarationOnlyPins p.2).length != 0)).map (·.1)
+  == ["customVmDescriptor2R24"]
+#guard ((v3Registry.lookup "customVmDescriptor2R24").map
+  (fun M => (declarationOnlyPins M).map (fun p => p.2.2))) == some [46, 54]
+
+/-- The same surface with ONLY `.proofBind` dropped — `.umemOp` kept. -/
+def refs2NoProofBind : VmConstraint2 → List Nat
+  | .proofBind _ => []
+  | c            => refs2 c
+
+def forcedColsNoProofBind (M : EffectVmDescriptor2) : List Nat :=
+  (M.constraints.filter (fun c => !isPin c)).flatMap refs2NoProofBind
+    ++ M.hashSites.flatMap refsSite
+    ++ M.ranges.map (fun r => r.wire)
+
+def declarationOnlyPinsNoProofBind (M : EffectVmDescriptor2) : List (VmRow × Nat × Nat) :=
+  (pinsOf (dropUnforcedPins M)).filter
+    (fun p => !(forcedColsNoProofBind M).contains p.2.1)
+
+-- ⚑ AND `.umemOp` CONTRIBUTES NOTHING TO THE OVER-COUNT ON THIS REGISTRY — dropping `proofBind`
+-- ALONE condemns the same two pins, so the exclusion of `umemOp` is not doing hidden work and the
+-- `== 2` above is attributable to `proofBind`. Stated as its own guard because an exclusion that
+-- silently condemned extra pins would make that number read as a `proofBind` measurement when it
+-- was really a umem one.
+#guard (v3Registry.map (fun p => (declarationOnlyPinsNoProofBind p.2).length)).foldl (· + ·) 0 == 2
+
 #assert_axioms dropUnforcedPins_mem
 #assert_axioms filter_nonpin_dropUnforcedPins
 #assert_axioms forcedCols_dropUnforcedPins
