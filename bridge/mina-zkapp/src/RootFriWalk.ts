@@ -105,6 +105,25 @@ export type WalkHash = {
    *  (`sponge[..8]`), 14 Pasta (2 rate cells x 7 squeezed limbs). */
   chalSqueeze: number;
   /**
+   * ⚑ WHAT A DIGEST LANE **IS**, which is not the same question as how many of
+   * them there are.
+   *
+   * `digestLanes` says a commitment occupies eight lanes or one. This says what
+   * lives in one: a BabyBear lane, canonical below `p_BabyBear = 2^31 − 1`, or a
+   * NATIVE Pasta field element, which is every `Field` and therefore bounded by
+   * nothing. The lane table is otherwise homogeneous — it puts
+   * `canonicalLane(l, 2^31 − 1)` on every lane it commits — and a Pasta digest
+   * canonicalised as a BabyBear lane refuses EVERY honest proof, because a
+   * 255-bit digest is not `< 2^31`.
+   *
+   * So `FriLaneTable.kinds` and `SlotLayout.kinds` are per-entry vectors driven
+   * by this field, and `chunkedCommitment` range-checks a lane only when its
+   * kind says the check is meaningful. That is the second of the two blockers
+   * `assertLanesAreBabyBear` used to name; it is closed, and the assertion is
+   * gone.
+   */
+  digestKind: 'babybear-lanes' | 'native-field';
+  /**
    * ⚑ WHETHER `segmentWalk` MODELS AND `runSegments` EXECUTES THIS HASH'S
    * TRANSCRIPT — and today exactly one hash does.
    *
@@ -128,8 +147,28 @@ export type WalkHash = {
    * protocol nobody runs. That is the exact shape this directory's own record
    * says its cheap differentials keep catching, so the walk REFUSES BY NAME
    * instead.
+   *
+   * ⚑ AND THERE IS A THIRD VALUE, WHICH IS THE HONEST ANSWER RATHER THAN A
+   * WEAKER REFUSAL. `carried` says: this walk does not derive its transcript at
+   * all — FRI's α, the sixteen βs and the nineteen query indices are COMMITTED
+   * LANES read into their slots under `friDigest`, exactly as
+   * `ROOT_CHALLENGE_STATUS` says the root path already reads them and exactly
+   * as the consumer (`DreggProofVerify` + `RootConsume`, `deriveChallenges:
+   * false`) already consumes them at BOTH hashes. It is §3.14 residual 1, named,
+   * and it is NOT a new hole: the deployed sliced chain's own entering state is
+   * a witness too, one permutation earlier in the same argument.
+   *
+   * What `carried` is NOT is a Pasta preamble. Writing one would mean writing
+   * `MultiField32Challenger` into the emitter with no object to be wrong
+   * against, and every downstream figure would then be a measurement of a
+   * protocol nobody runs. The choice here is between a stated residual and an
+   * invented oracle, and the residual is the one that is true.
+   *
+   * ⚠ WHAT A `carried` WALK THEREFORE DOES NOT SUPPORT: a preamble. `preamble`
+   * and `carried` together is refused below, because the preamble IS the
+   * derivation this value says is absent.
    */
-  transcript: 'implemented' | 'unimplemented';
+  transcript: 'implemented' | 'carried' | 'unimplemented';
 };
 
 /** The deployed hash's shape — `Poseidon2BabyBear<16>` emulated in Pasta. */
@@ -141,6 +180,7 @@ export const BABYBEAR_WALK_HASH: WalkHash = {
   chalStateLanes: 16,
   chalAbsorbRate: 8,
   chalSqueeze: 8,
+  digestKind: 'babybear-lanes',
   transcript: 'implemented',
 };
 
@@ -155,7 +195,11 @@ export const PASTA_WALK_HASH: WalkHash = {
   chalStateLanes: 3,
   chalAbsorbRate: 16,
   chalSqueeze: 14,
-  transcript: 'unimplemented',
+  digestKind: 'native-field',
+  //  ⚑ CARRIED, AND THAT IS THE ANSWER RATHER THAN A DEFERRAL — see
+  //  `WalkHash.transcript`. The root path carries its challenges today at BOTH
+  //  hashes; a Pasta preamble would be a model of a protocol nobody runs.
+  transcript: 'carried',
 };
 
 /** The walk's shape for a hash suite, BY THE SUITE'S OWN NAME — the same
@@ -185,10 +229,23 @@ export function walkHashForSuite(name: string): WalkHash {
  */
 export function assertWalkHashMatchesSuite(
   hash: WalkHash,
-  suite: { name: string; digestElems: number; spongeStream: { rate: number; stateLanes: number } },
+  suite: {
+    name: string;
+    digestElems: number;
+    spongeStream: { rate: number; stateLanes: number };
+    laneCheckIsFree?: boolean;
+  },
 ) {
   const mism: string[] = [];
   if (hash.name !== suite.name) mism.push(`name ${hash.name} vs ${suite.name}`);
+  //  ⚑ THE LANE KIND IS THE SUITE'S OWN `laneCheckIsFree`, RESTATED — and a
+  //  restatement that is not checked is the drift this function exists for. A
+  //  digest needs no range check exactly when the hash field IS the circuit's
+  //  field, which is exactly when its lanes are native.
+  if (suite.laneCheckIsFree !== undefined && (hash.digestKind === 'native-field') !== suite.laneCheckIsFree)
+    mism.push(
+      `digestKind ${hash.digestKind} vs laneCheckIsFree ${suite.laneCheckIsFree}`,
+    );
   if (hash.digestLanes !== suite.digestElems)
     mism.push(`digestLanes ${hash.digestLanes} vs digestElems ${suite.digestElems}`);
   if (hash.spongeRate !== suite.spongeStream.rate)
@@ -342,6 +399,13 @@ export type FriShape = {
 
 /** `circuit-prove/src/bin/root_fri_instance.rs`'s output — the FRI half of
  *  dregg's committed root proof, canonical. */
+/** ⚑ ONE MMCS DIGEST LANE, AS THE EMITTER WRITES IT OR AS A RE-HASH WRITES IT.
+ *  `number` is the emitter's spelling of a BabyBear lane; `string` is a decimal
+ *  Pasta element, which does not fit a JS `number` and therefore cannot be
+ *  smuggled in as one. Every consumer already goes through `BigInt(...)`, which
+ *  takes either. See `RootConsume.rehashRealRootFri`. */
+export type DigestLane = number | string;
+
 export type RealRootFri = {
   kind: string;
   vkFingerprint: string;
@@ -352,13 +416,13 @@ export type RealRootFri = {
   airAlpha: number[];
   friAlpha: number[];
   betas: number[][];
-  commits: number[][];
+  commits: DigestLane[][];
   finalPoly: number[][];
   queryPowWitness: number;
   inputRounds: {
     round: number;
     kindName: string;
-    commit: number[];
+    commit: DigestLane[];
     matrices: {
       matrix: number;
       instance: number;
@@ -384,9 +448,9 @@ export type RealRootFri = {
   }[];
   queries: {
     index: number;
-    inputBatches: { matrices: { logHeight: number; width: number }[]; rows: number[][]; path: number[][] }[];
+    inputBatches: { matrices: { logHeight: number; width: number }[]; rows: number[][]; path: DigestLane[][] }[];
     reducedOpenings: { logHeight: number; ro: number[] }[];
-    commitPhase: { sibling: number[]; path: number[][] }[];
+    commitPhase: { sibling: number[]; path: DigestLane[][] }[];
     rollIns: { afterRound: number; value: number[] }[];
     foldedAfterRound: number[][];
   }[];
@@ -573,6 +637,38 @@ export type FriLaneTable = {
   /** The lane range one sponge block covers. */
   blockLanes: (q: number, round: number, height: number, block: number) => [number, number];
   perQueryRowLanes: number;
+  /**
+   * ⚑ THE PER-LANE KIND. `1` = a NATIVE field element (a Pasta MMCS digest, or a
+   * Pasta challenger cell); `0` = a BabyBear lane, canonical below `2^31 − 1`.
+   *
+   * The table used to be homogeneous and `chunkedCommitment` put
+   * `canonicalLane(l, 2^31 − 1)` on every lane it committed. Under the deployed
+   * hash that is right end to end. Under Pasta the four round commitments, the
+   * sixteen commit-phase commitments and the challenger state are 255-bit native
+   * elements sharing a lane space with 31-bit opened values, and canonicalising
+   * one refuses every honest proof. So the kind travels with the table and the
+   * range check is a function of it.
+   *
+   * ⚠ THE OPENED VALUES, THE OPENING POINTS, THE FINAL POLYNOMIAL, THE PoW
+   * WITNESS AND THE CARRIED CHALLENGES STAY BABYBEAR AT BOTH HASHES, and that is
+   * not an oversight: `DreggMinaConfig` changes the HASH field only —
+   * `Val = BabyBear`, `Challenge = EF4` — so everything the hash does not produce
+   * is a BabyBear lane in both columns.
+   */
+  kinds: Uint8Array;
+  /**
+   * ⚑ THE CARRIED CHALLENGES, PRESENT EXACTLY WHEN THE WALK DOES NOT DERIVE
+   * THEM (`WalkHash.transcript === 'carried'`), and `null` otherwise so the
+   * deployed table's lane numbering is byte-identical to what it was.
+   */
+  carried: {
+    /** FRI's batch-combination α — 4 lanes. */
+    friAlpha: number;
+    /** One fold challenge per commit-phase layer — 4 lanes each. */
+    betas: number[];
+    /** One canonical query index per query — 1 lane each. */
+    qidx: number[];
+  } | null;
 };
 
 export function friLaneTable(
@@ -588,17 +684,38 @@ export function friLaneTable(
   hash: WalkHash = BABYBEAR_WALK_HASH,
 ): FriLaneTable {
   const spongeRate = hash.spongeRate;
+  const carriedChal = hash.transcript === 'carried';
   let at = 0;
-  const take = (n: number) => {
+  const kindOf: number[] = [];
+  const take = (n: number, kind = 0) => {
     const o = at;
     at += n;
+    for (let i = 0; i < n; i++) kindOf.push(kind);
     return o;
   };
-  const chalState = take(hash.chalStateLanes);
-  const commit = Array.from({ length: shape.knobs.layers }, () => take(hash.digestLanes));
-  const inputCommit = shape.rounds.map(() => take(hash.digestLanes));
+  //  ⚑ A DIGEST LANE'S KIND IS THE HASH'S, and it is the only thing in this
+  //  table that is not a BabyBear lane. See `FriLaneTable.kinds`.
+  const DK = hash.digestKind === 'native-field' ? 1 : 0;
+  //  ⚑ A CARRIED WALK ALLOCATES NO ENTERING CHALLENGER STATE, because it enters
+  //  no challenger. Committing to a state nothing reads would be a lane of
+  //  witness the chain pays for and never uses.
+  const chalState = carriedChal ? take(0, DK) : take(hash.chalStateLanes, DK);
+  const commit = Array.from({ length: shape.knobs.layers }, () => take(hash.digestLanes, DK));
+  const inputCommit = shape.rounds.map(() => take(hash.digestLanes, DK));
   const finalPoly = Array.from({ length: shape.knobs.finalPolyLen }, () => take(EXT_LANES));
   const powWitness = take(1);
+  //  ⚑ THE CARRIED CHALLENGES SIT IN THE GLOBAL REGION, before the per-query
+  //  rows — `uniformLayout` defines the global region as everything ahead of the
+  //  19 opened-row blocks, and a challenge read by every query's block must be
+  //  in it. They are BabyBear lanes at both hashes: `DreggMinaConfig` changes
+  //  the hash field, not `Challenge = EF4`.
+  const carried = carriedChal
+    ? {
+        friAlpha: take(EXT_LANES),
+        betas: Array.from({ length: shape.knobs.layers }, () => take(EXT_LANES)),
+        qidx: Array.from({ length: shape.knobs.numQueries }, () => take(1)),
+      }
+    : null;
   const z = shape.rounds.map((r) => r.matrices.map((m) => Array.from({ length: m.numPoints }, () => take(EXT_LANES))));
   //  The AIR-uncovered f(z): `planOpenedValues` already numbered them, and the
   //  numbering is dense, so one contiguous block holds them all.
@@ -651,7 +768,23 @@ export function friLaneTable(
     fx,
     blockLanes,
     perQueryRowLanes,
+    kinds: Uint8Array.from(kindOf),
+    carried,
   };
+}
+
+/** ⚑ THE LANE KIND OF A LANE THE UNIFORM TABLE HAS RE-ADDRESSED. `kinds` is
+ *  indexed by the DEPLOYED numbering; `uniformLaneTable` moves each query's rows
+ *  onto a chunk boundary and pads with zeros, so a uniform table's kind vector
+ *  is rebuilt at its own length. Padding lanes are BabyBear-kind, which is what
+ *  makes canonicalising them (they are zero) correct. */
+export function remapKinds(kinds: Uint8Array, nLanes: number, remap: (l: number) => number): Uint8Array {
+  const out = new Uint8Array(nLanes);
+  for (let l = 0; l < kinds.length; l++) {
+    const to = remap(l);
+    if (to >= 0 && to < nLanes) out[to] = kinds[l];
+  }
+  return out;
 }
 
 /**
@@ -750,6 +883,14 @@ export type SlotLayout = {
   airAlpha: number[];
   zetaS: number[];
   names: string[];
+  /**
+   * ⚑ PER-SLOT KIND, for `FriLaneTable.kinds`' reason one level up. A slice
+   * CANONICALISES every carried slot on the way in — which is right for a
+   * BabyBear lane and refuses every honest Pasta digest, and the slots that hold
+   * digests (`cur`, the mixed-height `inj` registers) and the leaf sponge's
+   * running state are exactly the ones whose kind is the hash's.
+   */
+  kinds: Uint8Array;
 };
 
 export function slotLayout(
@@ -758,21 +899,27 @@ export function slotLayout(
   hash: WalkHash = BABYBEAR_WALK_HASH,
 ): SlotLayout {
   const names: string[] = [];
-  const take = (label: string, n: number): number[] => {
+  const kinds: number[] = [];
+  const take = (label: string, n: number, kind = 0): number[] => {
     const out: number[] = [];
     for (let i = 0; i < n; i++) {
       out.push(names.length);
       names.push(`${label}[${i}]`);
+      kinds.push(kind);
     }
     return out;
   };
-  const chal = take('chal', hash.chalStateLanes);
+  const DK = hash.digestKind === 'native-field' ? 1 : 0;
+  //  ⚑ A CARRIED WALK HOLDS NO CHALLENGER STATE — see `friLaneTable`.
+  const chal = take('chal', hash.transcript === 'carried' ? 0 : hash.chalStateLanes, DK);
   const alpha = take('alpha', EXT_LANES);
   const beta = Array.from({ length: shape.knobs.layers }, (_, r) => take(`beta${r}`, EXT_LANES));
   const qidx = take('qidx', shape.knobs.numQueries);
-  const cur = take('cur', hash.digestLanes);
-  const sponge = take('sponge', hash.spongeStateLanes);
-  const inj = shape.heights.map((h) => take(`inj${h}`, hash.digestLanes));
+  const cur = take('cur', hash.digestLanes, DK);
+  //  ⚑ THE LEAF SPONGE'S RUNNING STATE IS THE HASH'S OWN FIELD: sixteen
+  //  BabyBear lanes, or three Pasta cells.
+  const sponge = take('sponge', hash.spongeStateLanes, DK);
+  const inj = shape.heights.map((h) => take(`inj${h}`, hash.digestLanes, DK));
   const dacc = shape.heights.map((h) => take(`dacc${h}`, EXT_LANES));
   const dpow = shape.heights.map((h) => take(`dpow${h}`, EXT_LANES));
   const ro = shape.heights.map((h) => take(`ro${h}`, EXT_LANES));
@@ -801,6 +948,7 @@ export function slotLayout(
     airAlpha,
     zetaS,
     names,
+    kinds: Uint8Array.from(kinds),
   };
 }
 
@@ -871,6 +1019,26 @@ export type Segment =
       rows: number;
       entry: DuplexEntry;
     }
+  /**
+   * ⚑ THE CARRIED TRANSCRIPT, AS ONE SEGMENT — what a `transcript: 'carried'`
+   * walk emits INSTEAD of the duplex run, not in addition to it.
+   *
+   * It reads FRI's α, the sixteen βs and the nineteen query indices out of the
+   * committed lane table into their slots. Every one of them is therefore under
+   * `friDigest` and under the chain's boundary — a prover cannot vary them
+   * between two slices, and the whole walk downstream is over ONE set of
+   * challenges. What it does NOT establish is that they are the challenges the
+   * batch-STARK's own transcript would have produced: that is `preSeal`'s job
+   * and it exists only for the hash whose challenger is modelled. §3.14
+   * residual 1, said in a segment rather than a footnote.
+   *
+   * ⚑ THE QUERY INDEX IS RANGE-CHECKED HERE AND THE CHECK IS THE POINT. The
+   * derived path carries a recomposition of `indexBits` forced bits; this one
+   * carries a committed lane, so the segment witnesses the bits, recomposes, and
+   * asserts equality — the same bound, imposed at the read instead of at the
+   * draw.
+   */
+  | { t: 'chalCarry'; rows: number }
   /** One `PaddingFreeSponge` block over the concatenated opened rows at one
    *  height of one input round. `first` starts the sponge, `last` finishes it
    *  into a digest. */
@@ -1319,7 +1487,7 @@ export function segmentWalk(
   //  walk that emitted `duplex` segments under a hash whose challenger packs
   //  and splits would model a protocol nobody runs, and every downstream
   //  measurement would be a number about it.
-  if (H.transcript !== 'implemented')
+  if (H.transcript === 'unimplemented')
     throw new Error(
       `\`segmentWalk\` has no transcript model for '${H.name}'. The Merkle half of this hash is ` +
         'threaded (digest width, sponge rate, slot layout, aux widths, the executor); the ' +
@@ -1330,6 +1498,19 @@ export function segmentWalk(
         'Pasta-hashed root, so a model written here would have nothing to be checked against. ' +
         'Price this walk with `priceForSuite` and measure the consumer with `root-consume-rows`; ' +
         'building the sliced chain at this hash needs the transcript first.',
+    );
+  //  ⚑ A CARRIED WALK CANNOT HAVE A PREAMBLE, and the refusal is by NAME. The
+  //  preamble IS the derivation `carried` says is absent; emitting one at a hash
+  //  whose challenger `challengerRun` does not model would produce a
+  //  perfectly self-consistent transcript for a protocol nobody runs, which is
+  //  the exact outcome `transcript: 'unimplemented'` exists to prevent.
+  if (H.transcript === 'carried' && opts.preamble)
+    throw new Error(
+      `the walk shape '${H.name}' CARRIES its challenges (\`transcript: 'carried'\`) and was given a ` +
+        'batch-STARK preamble to derive them with. The preamble runs `challengerRun`, which models ' +
+        '`DuplexChallenger` alone; at this hash the transcript is a `MultiField32Challenger` and ' +
+        'there is no object to check a model of it against. Drop the preamble and read the residual ' +
+        'in `ROOT_CHALLENGE_STATUS`, or implement the challenger first.',
     );
   const hybrid = !!opts.price && opts.price.spongeRate !== H.spongeRate;
   if (hybrid && opts.priceOnly !== true)
@@ -1508,6 +1689,22 @@ export function segmentWalk(
   //  which — and with a preamble the FRI transcript's first segment is no longer
   //  the walk's first, so `k === 0` would have silently pointed it at
   //  `ft.chalState` again.
+  if (H.transcript === 'carried') {
+    //  ⚑ ONE SEGMENT INSTEAD OF THE WHOLE DUPLEX RUN. The challenges are read
+    //  from the committed table; the price is the range check on each lane plus
+    //  the bit split that bounds each query index. Nothing is derived and the
+    //  segment says so by its type.
+    push(
+      {
+        t: 'chalCarry',
+        rows:
+          (EXT_LANES + K.layers * EXT_LANES) * P.witnessLane +
+          K.numQueries * (P.witnessLane + K.indexBits * P.witnessLane),
+      },
+      [],
+      [...slots.alpha, ...slots.beta.flat(), ...slots.qidx],
+    );
+  } else
   challengerRun(
     opts.preamble ? 'carry' : 'chalState',
     true,
@@ -1816,6 +2013,18 @@ export function segmentReads(
         //  `shape` and `arity` are literals and read nothing.
       }
       break;
+    case 'chalCarry': {
+      const c = w.hash.transcript === 'carried' ? ft.carried : null;
+      if (c === null)
+        throw new Error(
+          'a `chalCarry` segment over a lane table with no carried-challenge region — the walk and ' +
+            'the table were built at different transcript modes',
+        );
+      range(c.friAlpha, c.friAlpha + EXT_LANES, fri);
+      for (const b of c.betas) range(b, b + EXT_LANES, fri);
+      for (const q of c.qidx) fri.push(q);
+      break;
+    }
     case 'preSeal':
       //  ζ, against the point-0 lane of EVERY committed matrix — the point both
       //  halves open at.

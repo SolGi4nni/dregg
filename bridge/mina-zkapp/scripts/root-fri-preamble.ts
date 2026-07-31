@@ -34,7 +34,9 @@ import {
   airLaneValues,
   auxLanes,
   chunkDigestsBigInt,
+  babyBearKinds,
   chunkedCommitment,
+  readLaneKinds,
   friLaneValues,
   friSliceShape,
   runSegments,
@@ -540,8 +542,8 @@ function programFor(ctx: Ctx, si: number, tag: string) {
           friOther: Field[],
           aux: Field[],
         ) {
-          const dagDigest = chunkedCommitment(plan.nAirChunks, CL, sl.readsAirChunks, airLanes.slice(0, sh.nAirRead), airOther.slice(0, sh.nAirOther));
-          const friDigest = chunkedCommitment(plan.nFriChunks, CL, sl.readsFriChunks, friLanes.slice(0, sh.nFriRead), friOther.slice(0, sh.nFriOther));
+          const dagDigest = chunkedCommitment(plan.nAirChunks, CL, sl.readsAirChunks, airLanes.slice(0, sh.nAirRead), airOther.slice(0, sh.nAirOther), babyBearKinds(sh.nAirRead));
+          const friDigest = chunkedCommitment(plan.nFriChunks, CL, sl.readsFriChunks, friLanes.slice(0, sh.nFriRead), friOther.slice(0, sh.nFriOther), readLaneKinds(ft.kinds, sl.readsFriChunks, CL));
           //  ⚑ The slice is ABOUT the committed lane tables: forging a lane
           //  changes this, so a forger must present the forged commitment. That
           //  is what makes the forged transcript a consistent object rather than

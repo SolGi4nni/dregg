@@ -546,6 +546,47 @@ export function rehash(
   };
 }
 
+/**
+ * ⚑ THE SAME RE-HASH, WRITTEN BACK INTO THE EMITTER'S OWN RECORD — so the
+ * SLICED walk can consume a Pasta-hashed root, not only the flat consumer.
+ *
+ * `rehash` above produces a `RootValues`, which is what `DreggProofVerify` +
+ * `RootConsume` take. `RootFriWalk`/`RootFriSlice` take a `RealRootFri` — the
+ * emitter's record — so a Pasta braid needs the re-committed digests put back
+ * where the walk reads them: the four round commitments, the sixteen
+ * commit-phase commitments, and every path sibling of every query.
+ *
+ * ⚑ WHAT MOVES AND WHAT DOES NOT, and the split is exactly `rehash`'s. The
+ * MMCS digests move, because a Pasta-hashed root is a RE-MINT. Nothing else
+ * does: every opened row, every opened evaluation, every opening point, the
+ * nineteen query indices, ζ, α, the FRI α, the sixteen βs, the final polynomial
+ * and every commit-phase sibling are BabyBear values that `DreggMinaConfig`
+ * does not touch — it changes the HASH field and leaves `Val = BabyBear`,
+ * `Challenge = EF4` alone.
+ *
+ * ⚠ AND IT IS A RE-HASH, LABELLED. `kind` is suffixed so a record that has been
+ * through here can never be mistaken for one dregg minted. dregg mints no
+ * Pasta-hashed root; minting one is a Rust prove run over a 2^22 batch.
+ */
+export function rehashRealRootFri(
+  real: RealRootFri,
+  suite: MerkleSuite<any>,
+): { real: RealRootFri; merges: number } {
+  const sh = rootShapeOf(real, babyBearSuite);
+  const v = rootValues(real);
+  const re = rehash(sh, v, suite);
+  const S = (d: bigint[]) => d.map((x) => x.toString());
+  const out: RealRootFri = JSON.parse(JSON.stringify(real));
+  out.kind = `${real.kind}+rehashed:${suite.name}`;
+  out.commits = re.commitPhaseCommits.map(S) as any;
+  out.inputRounds.forEach((r, ri) => (r.commit = S(re.inputCommits[ri]) as any));
+  out.queries.forEach((q, qi) => {
+    q.inputBatches.forEach((b, ri) => (b.path = re.inputPaths[qi][ri].map(S) as any));
+    q.commitPhase.forEach((c, r) => (c.path = re.commitPaths[qi][r].map(S) as any));
+  });
+  return { real: out, merges: re.merges };
+}
+
 /** `(even, odd)` for a commit-phase round's MMCS leaf: the value entering the
  *  fold and the witnessed sibling, in DOMAIN order — slot 0 is the even point.
  *  The entering value is the reduced opening at the global max height for round

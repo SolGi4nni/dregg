@@ -30,7 +30,9 @@ import {
   airLaneValues,
   auxLanes,
   chunkDigestsBigInt,
+  babyBearKinds,
   chunkedCommitment,
+  readLaneKinds,
   friLaneValues,
   runSegments,
   walkTwin,
@@ -572,6 +574,7 @@ function probeProgram(c: Ctx, sl: FriSlice, mode: Mode, tag: string) {
             sl.readsAirChunks,
             airLanes.slice(0, sh.nAirRead),
             airOther.slice(0, sh.nAirOther),
+            babyBearKinds(sh.nAirRead),
           );
           const friDigest = chunkedCommitment(
             rp.nFriChunks,
@@ -579,6 +582,7 @@ function probeProgram(c: Ctx, sl: FriSlice, mode: Mode, tag: string) {
             sl.readsFriChunks,
             friLanes.slice(0, sh.nFriRead),
             friOther.slice(0, sh.nFriOther),
+            readLaneKinds(c.ft.kinds, sl.readsFriChunks, CHUNK),
           );
           const friCommit = Poseidon.hash([dagDigest, friDigest]);
           friCommit.assertEquals(bIn);
@@ -800,6 +804,7 @@ async function runSlice(
         sl.readsAirChunks,
         airLanes,
         wit.airOther.slice(0, wit.sh.nAirOther),
+        babyBearKinds(wit.sh.nAirRead),
       );
       const friDigest = chunkedCommitment(
         wit.rp.nFriChunks,
@@ -807,6 +812,7 @@ async function runSlice(
         sl.readsFriChunks,
         friLanes,
         wit.friOther.slice(0, wit.sh.nFriOther),
+        readLaneKinds(c.ft.kinds, sl.readsFriChunks, CHUNK),
       );
       const friCommit = Poseidon.hash([dagDigest, friDigest]);
       friCommit.assertEquals(wit.bIn);

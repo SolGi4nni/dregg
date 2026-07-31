@@ -23,17 +23,21 @@ import {
   RealRootFri,
   SegmentedWalk,
   airColumnIndex,
+  remapKinds,
   segmentReads,
 } from './RootFriWalk.js';
 import {
   AIR_SLICES,
   SliceIo,
   WalkTwin,
-  assertLanesAreBabyBear,
   auxLanes,
+  babyBearKinds,
   chunkedCommitment,
+  readLaneKinds,
   runSegments,
 } from './RootFriSlice.js';
+import { babyBearSuite } from './HashSuites.js';
+import type { MerkleSuite } from './HashSuiteType.js';
 import { dagDigestOfChunkDigests, digestOfLanes, stepBoundary, airTerminalSeal } from './RootAirChain.js';
 import {
   ChainClaim,
@@ -327,7 +331,11 @@ export function uniformLaneTable(shape: FriShape, ft: FriLaneTable, L: UniformLa
     return [remap(a), remap(a) + (b - a)];
   };
   void roundOrder;
-  return { ...ft, fx, blockLanes, nLanes: L.nLanes };
+  //  ⚑ THE KINDS MOVE WITH THE LANES. The global region is identity, so a
+  //  native-digest lane keeps its index and its kind; a query's rows move onto a
+  //  chunk boundary and the padding between blocks is zero, which is a BabyBear
+  //  lane by every reading and is canonicalised as one.
+  return { ...ft, fx, blockLanes, nLanes: L.nLanes, kinds: remapKinds(ft.kinds, L.nLanes, remap) };
 }
 
 /** The uniform lane VALUES: the global region as it is, and query `q`'s opened
@@ -575,9 +583,18 @@ export function uniformFriDigest(
   otherQuery: Field[],
   otherQd: Field[],
   isQ: Bool[],
+  /** ⚑ THE LANE KINDS OF `readLanes`, for `chunkedCommitment`'s reason: a native
+   *  digest canonicalised as a BabyBear lane refuses every honest proof. */
+  kinds: Uint8Array,
 ): Field {
   const CL = L.chunkLanes;
-  for (const l of readLanes) canonicalLane(l, LANE_MAX);
+  if (kinds.length < readLanes.length)
+    throw new Error(
+      `uniformFriDigest was given ${readLanes.length} lanes and ${kinds.length} lane kinds`,
+    );
+  readLanes.forEach((l, i) => {
+    if (kinds[i] === 0) canonicalLane(l, LANE_MAX);
+  });
   const G = readsGlobal.length;
   const globals: Field[] = [];
   let gi = 0;
@@ -645,6 +662,8 @@ export type UniformCtx = {
   op: OpenedPlan;
   plan: UniformPlan;
   real: RealRootFri;
+  /** ⚑ THE HASH THE RING IS BUILT AT — see `FriBraidCtx.suite`. */
+  suite?: MerkleSuite<any>;
 };
 
 export type UniformOpts = {
@@ -767,7 +786,7 @@ const terminalDigest = (acc: Field[], out: Field[], vkRoot: Field): Field =>
 
 export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: UniformOpts) {
   const { w, shape, ft, op, plan } = ctx;
-  assertLanesAreBabyBear(w.hash, `uniform slice ${specName(sp)}`);
+  const suite = ctx.suite ?? babyBearSuite;
   const L = plan.layout;
   const bind = opts.bindCarry !== false;
   const pin = opts.pinVk !== false;
@@ -811,6 +830,17 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
     [leafOf(plan, sp), leafFirst, leafLater],
     `uniform slice ${specName(sp)}`,
   );
+  //  ⚑ THE LANE KINDS OF THIS SLICE'S FRI READ REGION, at COMPILE TIME because
+  //  they are a property of the plan and not of the witness. The globals come
+  //  from the table; a query's own region is opened rows and opening data, which
+  //  are BabyBear lanes at BOTH hashes (`DreggMinaConfig` changes the hash
+  //  field, not `Val`), so it stays zero.
+  const friReadKinds = (() => {
+    const out = new Uint8Array(Math.max(sh.nFriRead, 1));
+    const g = readLaneKinds(ft.kinds, sh.readsGlobal, CL);
+    out.set(g.subarray(0, Math.min(g.length, out.length)), 0);
+    return out;
+  })();
 
   const prog = ZkProgram({
     name: uniformProgramName(sp, opts),
@@ -922,6 +952,7 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
             sh.sl.readsAirChunks,
             airLanes.slice(0, sh.nAirRead),
             airOther.slice(0, sh.nAirOther),
+            babyBearKinds(sh.nAirRead),
           );
           const friDigest = uniformFriDigest(
             L,
@@ -932,11 +963,16 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
             otherQuery.slice(0, sh.nOtherQuery),
             otherQd,
             isQ,
+            friReadKinds,
           );
           const friCommit = Poseidon.hash([dagDigest, friDigest]);
 
           const live = liveIn.slice(0, sh.nLiveIn);
-          for (const l of live) canonicalLane(l, LANE_MAX);
+          //  ⚑ ONLY THE BABYBEAR-KIND SLOTS — see `SlotLayout.kinds`.
+          const liveSlots = w.liveIn[sh.sl.from];
+          live.forEach((l, i) => {
+            if (w.slots.kinds[liveSlots[i]] === 0) canonicalLane(l, LANE_MAX);
+          });
           for (const l of acc.limbs) canonicalLane(l, LANE_MAX);
 
           // ---- the boundary this slice enters ----------------------------
@@ -998,7 +1034,8 @@ export function makeUniformSliceProgram(ctx: UniformCtx, sp: UniformSpec, opts: 
             friLanes: friLanes.slice(0, sh.nFriRead),
             friOther: [],
             aux: aux.slice(0, sh.nAux),
-          } as SliceIo);
+          } as SliceIo,
+          suite);
           const out = sh.sl.liveOut.map((slot) => {
             const v = sto.get(slot);
             if (v === undefined)

@@ -137,9 +137,17 @@ export function friLaneValues(
   op: OpenedPlan,
 ): bigint[] {
   const v = new Array<bigint>(ft.nLanes).fill(0n);
-  const put = (at: number, xs: number[] | bigint[]) =>
+  const put = (at: number, xs: readonly (number | string | bigint)[]) =>
     xs.forEach((x, i) => (v[at + i] = BigInt(x as any)));
-  put(ft.chalState, real.challengerStateBeforeFriAlpha.sponge);
+  //  ⚑ A CARRIED WALK COMMITS THE CHALLENGES AND NOT THE STATE THAT WOULD HAVE
+  //  PRODUCED THEM; a deriving one commits the state. Exactly one of the two
+  //  regions exists in any table, so this is not a choice about what to fill.
+  if (ft.carried === null) put(ft.chalState, real.challengerStateBeforeFriAlpha.sponge);
+  else {
+    put(ft.carried.friAlpha, real.friAlpha);
+    real.betas.forEach((b, r) => put(ft.carried!.betas[r], b));
+    real.queries.forEach((q, qi) => (v[ft.carried!.qidx[qi]] = BigInt(q.index)));
+  }
   real.commits.forEach((c, r) => put(ft.commit[r], c));
   real.inputRounds.forEach((r, i) => put(ft.inputCommit[i], r.commit));
   real.finalPoly.forEach((c, i) => put(ft.finalPoly[i], c));
@@ -178,41 +186,47 @@ export function airLaneValues(base: bigint[][], ext: bigint[][]): bigint[] {
 // ===========================================================================
 
 /**
- * ⚑ THE SECOND THING A PASTA WALK NEEDS, NAMED HERE RATHER THAN LEFT AS A
- * SILENT WRONGNESS — because this file is where it bites.
+ * ⚑ THE SECOND BLOCKER, CLOSED — and the note it replaces is kept because the
+ * shape it names is the one a future hash will hit again.
  *
- * `chunkedCommitment` puts `canonicalLane(l, 2^31 − 1)` on every lane it
- * commits, and the boundary puts it on every carried slot. That is right for
- * the deployed walk, whose lane table is BabyBear lanes end to end. It is NOT
- * right for a Pasta-hashed one: there the four round commitments, the sixteen
+ * `chunkedCommitment` used to put `canonicalLane(l, 2^31 − 1)` on EVERY lane it
+ * commits, and the boundary on every carried slot. That is right for the
+ * deployed walk, whose lane table is BabyBear lanes end to end. It is NOT right
+ * for a Pasta-hashed one: there the four round commitments, the sixteen
  * commit-phase commitments and the challenger state are NATIVE PASTA ELEMENTS
- * sharing a lane space with BabyBear opened values, and canonicalising a Pasta
- * digest to `< p_BabyBear` refuses every honest proof.
+ * sharing a lane space with BabyBear opened values, and canonicalising a
+ * 255-bit digest to `< p_BabyBear` refuses every honest proof.
  *
- * So the lane table stops being homogeneous and grows a per-lane KIND. That is
- * a real piece of work, it is not the digest width, and it would have been
- * invisible until a Pasta chain failed to prove. `segmentWalk` refuses to build
- * a Pasta walk for the transcript's sake; this refuses for this one, so
- * removing the first blocker cannot silently expose the second.
+ * So the lane table is no longer homogeneous: `FriLaneTable.kinds` and
+ * `SlotLayout.kinds` say, per entry, whether a range check means anything, and
+ * both are functions of `WalkHash.digestKind`. `kinds` is a REQUIRED argument
+ * here rather than an optional one, because a default would silently
+ * canonicalise a native digest at exactly the call site this comment is about.
+ *
+ * ⚠ AND OMITTING THE CHECK IS NOT A SAVING BEING TAKEN. A native lane needs no
+ * bound because the field IS the domain; a BabyBear lane still gets its check,
+ * at both hashes, because the leaf sponge's packing argument rests on it
+ * (`PastaMmcs.packSlot`: eight lanes at radix `2^31` are injective only if each
+ * is `< 2^31`).
  */
-export function assertLanesAreBabyBear(hash: WalkHash, where: string) {
-  if (hash.digestLanes === 8) return;
-  throw new Error(
-    `${where}: the lane table commits every lane as a BabyBear lane (\`canonicalLane\` at ` +
-      `2^31 − 1) and hash '${hash.name}' puts ${hash.digestLanes}-lane NATIVE digests in the same ` +
-      'space. A Pasta walk needs a per-lane kind in `FriLaneTable` before it can be committed — ' +
-      'the digest width is threaded, the lane KIND is not.',
-  );
-}
-
 export function chunkedCommitment(
   nChunks: number,
   chunkLanes: number,
   readsChunks: number[],
   readLanes: Field[],
   otherDigests: Field[],
+  /** The KIND of each lane of `readLanes`, in the same order — `1` native, `0`
+   *  BabyBear. */
+  kinds: Uint8Array,
 ): Field {
-  for (const l of readLanes) canonicalLane(l, LANE_MAX);
+  if (kinds.length < readLanes.length)
+    throw new Error(
+      `chunkedCommitment was given ${readLanes.length} lanes and ${kinds.length} lane kinds — a ` +
+        'commitment whose kinds it does not know is one that cannot range-check correctly',
+    );
+  readLanes.forEach((l, i) => {
+    if (kinds[i] === 0) canonicalLane(l, LANE_MAX);
+  });
   const computed: Field[] = [];
   for (let c = 0; c < readsChunks.length; c++)
     computed.push(digestOfLanes(readLanes.slice(c * chunkLanes, (c + 1) * chunkLanes)));
@@ -223,6 +237,23 @@ export function chunkedCommitment(
     digests.push(readsChunks.includes(c) ? computed[ci++] : otherDigests[oi++]);
   return dagDigestOfChunkDigests(digests);
 }
+
+/** The lane kinds a slice's READ region has, in the order `chunkedCommitment`
+ *  receives them: the loaded chunks, concatenated, in index order. */
+export function readLaneKinds(
+  kinds: Uint8Array,
+  readsChunks: number[],
+  chunkLanes: number,
+): Uint8Array {
+  const out = new Uint8Array(readsChunks.length * chunkLanes);
+  readsChunks.forEach((c, i) => {
+    for (let j = 0; j < chunkLanes; j++) out[i * chunkLanes + j] = kinds[c * chunkLanes + j] ?? 0;
+  });
+  return out;
+}
+
+/** Every lane a BabyBear lane — the AIR chain's assignment, at either hash. */
+export const babyBearKinds = (n: number) => new Uint8Array(n);
 
 export function chunkDigestsBigInt(lanes: bigint[], nChunks: number, chunkLanes: number): Field[] {
   const out: Field[] = [];
@@ -363,6 +394,16 @@ export function walkTwin(
           else if (smp.dst === 'airAlpha') st.set(S.airAlpha[smp.lane], v);
           else if (smp.dst === 'zeta') st.set(S.zetaS[smp.lane], v);
         }
+        break;
+      }
+      case 'chalCarry': {
+        //  ⚑ READ, NOT DERIVED — the whole content of §3.14 residual 1, in nine
+        //  lines. The circuit twin below imposes the index bound; the twin only
+        //  has to place the same values in the same slots.
+        const c = ft.carried!;
+        setExt(st, S.alpha, friLanes.slice(c.friAlpha, c.friAlpha + EXT_LANES));
+        c.betas.forEach((b, r) => setExt(st, S.beta[r], friLanes.slice(b, b + EXT_LANES)));
+        c.qidx.forEach((lane, q) => st.set(S.qidx[q], friLanes[lane]));
         break;
       }
       case 'inBlock': {
@@ -590,6 +631,13 @@ export function runSegments(
   suite: MerkleSuite<any> = babyBearSuite,
 ) {
   assertWalkHashMatchesSuite(w.hash, suite as any);
+  //  ⚑ EMIT WHATEVER GATE THIS SUITE'S RANGE CHECKS NEED TO EXIST AT ALL, ONCE
+  //  PER BODY. Absent for BabyBear. Present for Pasta, and load-bearing: a slice
+  //  that happens to hold only Merkle levels has no BabyBear arithmetic in it,
+  //  so kimchi never installs the 12-bit table, and the slice compiles,
+  //  analyses, passes `runAndCheck` and dies inside `prove()`. See
+  //  `PastaMmcs.assertPastaLookupTable`.
+  suite.anchorLookupTable?.();
   const D = w.hash.digestLanes;
   const SS = suite.spongeStream;
   const Dig = suite.Digest;
@@ -735,6 +783,34 @@ export function runSegments(
             assertLowBitsZero(v, hi, K.queryPowBits);
           }
         }
+        break;
+      }
+      case 'chalCarry': {
+        //  ⚑ THE CARRIED TRANSCRIPT. α and the βs are committed BabyBear lanes
+        //  and `chunkedCommitment` has already canonicalised them, so the only
+        //  work here is the QUERY INDEX bound: the derived path carries a
+        //  recomposition of `indexBits` forced bits, and a carried lane has to
+        //  be forced into the same shape or a prover reads a 2^31-sized index
+        //  out of a perfectly honest commitment. Witness the bits, recompose,
+        //  assert equality — and memo them, because every later `idxBits` in
+        //  this slice is then the same forced split.
+        const c = ft.carried!;
+        for (let i = 0; i < EXT_LANES; i++) sto.set(S.alpha[i], laneFri(c.friAlpha + i));
+        c.betas.forEach((b, r) => {
+          for (let i = 0; i < EXT_LANES; i++) sto.set(S.beta[r][i], laneFri(b + i));
+        });
+        c.qidx.forEach((lane, q) => {
+          const v = laneFri(lane);
+          const bits = Provable.witness(Provable.Array(Bool, K.indexBits), () => {
+            const x = v.toBigInt();
+            return Array.from({ length: K.indexBits }, (_, i) => Bool(((x >> BigInt(i)) & 1n) === 1n));
+          });
+          let acc = Field(0);
+          for (let i = 0; i < K.indexBits; i++) acc = acc.add(bits[i].toField().mul(1n << BigInt(i)));
+          acc.assertEquals(v);
+          sto.set(S.qidx[q], acc);
+          bitsMemo.set(q, bits);
+        });
         break;
       }
       case 'inBlock': {
@@ -967,6 +1043,11 @@ export type FriBraidCtx = {
   ft: FriLaneTable;
   op: OpenedPlan;
   plan: FriPlan;
+  /** ⚑ THE HASH THE CHAIN IS BUILT AT, AS THE SUITE ITSELF — defaulted to the
+   *  deployed one so every existing caller is unchanged, and checked against
+   *  `w.hash` inside `runSegments` so a context cannot hold a walk shaped like
+   *  one hash and an executor running another. */
+  suite?: MerkleSuite<any>;
 };
 
 export type FriSliceOpts = {
@@ -1020,7 +1101,7 @@ export function friSliceShape(ctx: FriBraidCtx, si: number) {
  */
 export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSliceOpts) {
   const { w, shape, ft, op, plan } = ctx;
-  assertLanesAreBabyBear(w.hash, `FRI slice ${si}`);
+  const suite = ctx.suite ?? babyBearSuite;
   const bind = opts.bindCarry !== false;
   const pin = opts.pinVk !== false;
   const sl = plan.slices[si];
@@ -1075,6 +1156,7 @@ export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSlice
             sl.readsAirChunks,
             airLanes.slice(0, sh.nAirRead),
             airOther.slice(0, sh.nAirOther),
+            babyBearKinds(sh.nAirRead),
           );
           const friDigest = chunkedCommitment(
             plan.nFriChunks,
@@ -1082,11 +1164,20 @@ export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSlice
             sl.readsFriChunks,
             friLanes.slice(0, sh.nFriRead),
             friOther.slice(0, sh.nFriOther),
+            readLaneKinds(ft.kinds, sl.readsFriChunks, CL),
           );
           const friCommit = Poseidon.hash([dagDigest, friDigest]);
 
           const live = liveIn.slice(0, sh.nLiveIn);
-          for (const l of live) canonicalLane(l, LANE_MAX);
+          //  ⚑ CANONICALISE A CARRIED SLOT ONLY WHERE THAT MEANS ANYTHING. The
+          //  digest and sponge registers hold native field elements under a
+          //  native-digest hash, and a `canonicalLane` on one refuses every
+          //  honest proof. `SlotLayout.kinds` is the same per-entry vector the
+          //  lane table carries, for the same reason.
+          const liveSlots = w.liveIn[sl.from];
+          live.forEach((l, i) => {
+            if (w.slots.kinds[liveSlots[i]] === 0) canonicalLane(l, LANE_MAX);
+          });
           for (const l of acc.limbs) canonicalLane(l, LANE_MAX);
 
           if (bind) {
@@ -1108,7 +1199,8 @@ export function makeFriSliceProgram(ctx: FriBraidCtx, si: number, opts: FriSlice
             friLanes: friLanes.slice(0, sh.nFriRead),
             friOther: friOther.slice(0, sh.nFriOther),
             aux: aux.slice(0, sh.nAux),
-          } as SliceIo);
+          } as SliceIo,
+          suite);
           const out = w.liveIn[sl.to].map((slot) => {
             const v = sto.get(slot);
             if (v === undefined)

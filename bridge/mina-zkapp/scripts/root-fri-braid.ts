@@ -818,7 +818,7 @@ async function main() {
   console.log('\n[2b] the whole walk, out of circuit, against p3\'s own numbers');
   {
     const S = c.w.slots;
-    const eq = (a: bigint[], b: number[] | bigint[]) =>
+    const eq = (a: bigint[], b: readonly (number | string | bigint)[]) =>
       a.length === b.length && a.every((x, i) => x === BigInt(b[i] as any));
     const alphaGot = S.alpha.map((i) => c.twin.at.get(i)!);
     if (!eq(alphaGot, c.realFri.friAlpha))
