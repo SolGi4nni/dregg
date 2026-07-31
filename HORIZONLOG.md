@@ -1,6 +1,34 @@
 # HORIZONLOG — the named-follow-up burn-down
 
 ## ⚑⚑⚑⚑ JULY 30 — A1's WOUND IS CLOSED AND ITS FOUR ASSERTIONS WERE DEAD, AT THE SAME INSTANT: an emitter moved a constraint's DOMAIN and every reader keyed on its KIND stopped seeing it
+**F2 · ⚠ THE NINE-LANE RE-EMIT LEFT `dregg-circuit` AT 161 REDS. LIVE, and it is mine.**
+`e662ade32` ran the flag day: `NUM_PRE_LIMBS` 178 → 184, `B_SPAN` 239 → 247, all three registries and
+`layout_generated.rs` re-emitted, all three fingerprints rotated, `VK-REGEN-LOG` row written.
+
+**`dregg-circuit` went 18 reds → 161.** 16 are the known `pasta_*`; **~143 are the flag day's.**
+
+⚑ **The contradiction, which is the whole diagnosis:** a representative failure shows the reader
+computing `[384, 385, …]` where the emitted registry says `[378, 379, …]` — **a delta of exactly 6, the
+limb growth.** But `effect_vm_descriptors.rs:2732` imports `B_SPAN`/`B_IROOT`/`B_CHAIN_BASE` **from
+`trace_rotated`**, which is `pub use layout_generated::*`, and that file now says 184/247. **So the
+reader IS following the emitted layout and still disagrees with the emitted registry.**
+
+Candidates, none yet established: the registries were emitted from a Lean state inconsistent with
+`layout_generated.rs`; or a Rust derivation the reader uses is not sourced from `layout_generated`; or
+the NARROW v3 emitters did not take a geometry change the wide ones did. ⓘ The narrow bare-refuse member
+still reads `trace_width: 1746` — whether a narrow member's width SHOULD move while its caveat/chain
+offsets do is probably the answer.
+
+**Verified good at the new geometry and not to be undone**: `field_lanes9_injective` 13/13 (injectivity
+as a theorem with a total decoder), the two alias exhibits 12/12, `dregg-cell` 858/858, `cargo check`
+clean on circuit/turn/circuit-prove.
+
+⚠ **A REVERT IS A LIVE OPTION.** The nine-lane encoding is worth having, but **shipping an inconsistent
+descriptor set is worse than not shipping it.** Dispatched with that stated as a legitimate outcome
+rather than a failure — and with an explicit instruction NOT to re-pin 143 tests to whatever the
+registry currently says, because `bare_floor_refuse_weld::deployed_cohort_bytes_carry_the_refuse` was
+reporting exactly this class BEFORE the re-emit, which means **it was right and early.**
+
 
 Sent to establish whether **A1** (*"a revoked capability could be left live, and the SDK asserted the
 opposite"*) and **D1** (`dreggnet-market` 23 of 52 red) were stale. Both were — and re-measuring A1
