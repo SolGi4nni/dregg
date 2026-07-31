@@ -244,9 +244,11 @@ def ehAbsorbs (w : Nat) : List VmConstraint2 :=
 (`STATE_BEFORE_BASE = NUM_EFFECTS`), already booleanity- and one-hot-constrained by the host
 descriptor, so on any accepted row this is exactly the fired selector's index — which is exactly the
 domain tag `effects_hash_inputs` pushes for that effect. One linear gate, no lookup table. -/
-def ehTagGate (w : Nat) : VmConstraint2 :=
-  .base (.gate (esub (ev (ehTagCol w))
-    (esum ((List.range NUM_EFFECTS).map (fun (e : Nat) => emul (ek (Int.ofNat e)) (ev e))))))
+def ehTagGateBody (w : Nat) : EmittedExpr :=
+  esub (ev (ehTagCol w))
+    (esum ((List.range NUM_EFFECTS).map (fun (e : Nat) => emul (ek (Int.ofNat e)) (ev e))))
+
+def ehTagGate (w : Nat) : VmConstraint2 := .base (.gate (ehTagGateBody w))
 
 /-- **Continuity.** `next[ehAccIn j] = local[ehAccOut j]`, on the transition domain — the fold is a
 single chain across the whole trace, so no row can restart it. -/
@@ -471,19 +473,14 @@ the selector row is one-hot at `sel::TRANSFER = 1`, so `Σ e·sel_e = 1`, which 
 row carries: the gate body vanishes. Evaluated, not asserted. If this goes red the tag gate is
 refusing honest traces and every refusal rung above is vacuous. -/
 theorem ehTagGate_accepts_honest :
-    EmittedExpr.eval
-      (esub (ev (ehTagCol 1000))
-        (esum ((List.range NUM_EFFECTS).map (fun (e : Nat) => emul (ek (Int.ofNat e)) (ev e)))))
-      (ehHonestRow 1000 (fun _ => 0)) = 0 := by
+    EmittedExpr.eval (ehTagGateBody 1000) (ehHonestRow 1000 (fun _ => 0)) = 0 := by
   decide
 
 /-- ⚑ **CONTROL A′ — the tag gate is NOT the zero polynomial.** A row that fires `sel::TRANSFER` but
 declares tag `7` is REFUSED. Without this, CONTROL A would also be satisfied by a gate that accepts
 everything — the exact shape of the vacuous guards two sibling lanes shipped tonight. -/
 theorem ehTagGate_rejects_wrong_tag :
-    EmittedExpr.eval
-      (esub (ev (ehTagCol 1000))
-        (esum ((List.range NUM_EFFECTS).map (fun (e : Nat) => emul (ek (Int.ofNat e)) (ev e)))))
+    EmittedExpr.eval (ehTagGateBody 1000)
       (fun (c : Nat) => if c = 1 then (1 : ℤ) else if c = 1000 then 7 else 0) ≠ 0 := by
   decide
 
@@ -523,6 +520,15 @@ theorem ehPublish_satisfiable (w : Nat) (hw : 54 ≤ w) (pub : Assignment) (j : 
 
 `#guard`s, not theorems: they pin the layout arithmetic and the constraint budget so a later edit
 that silently drops a family goes red here. -/
+
+-- ⚑ The polarity controls test the SHIPPED gate body, not a re-typed look-alike: this is the
+-- projection that ties them together, and the two evaluated VALUES are pinned (0 on the honest
+-- one-hot row, 6 on a row declaring tag 7 while firing sel::TRANSFER). A gate that accepted
+-- everything would fail the second; a gate that refused everything would fail the first.
+example : ehTagGate 1000 = .base (.gate (ehTagGateBody 1000)) := rfl
+#guard EmittedExpr.eval (ehTagGateBody 1000) (ehHonestRow 1000 (fun _ => 0)) == 0
+#guard EmittedExpr.eval (ehTagGateBody 1000)
+  (fun (c : Nat) => if c = 1 then (1 : ℤ) else if c = 1000 then 7 else 0) == 6
 
 #guard EH_CARRIER == 8
 #guard EH_STEPS == 6
