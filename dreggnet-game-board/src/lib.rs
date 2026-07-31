@@ -85,7 +85,13 @@ use dregg_automatafl::board::{Board, Move};
 use dregg_automatafl::rules;
 use dregg_multiway_tug::hidden_hand::HandTree;
 
+pub mod crown_anchor;
 pub mod native_descent_board;
+
+pub use crown_anchor::{
+    AnchorProvenance, CROWN_ANCHOR_ENV_PREFIX, anchor_spec, env_var_name, operator_anchor,
+    parse_anchor_spec,
+};
 
 pub use dregg_multiway_tug::fold::{
     LeafBundle, fold_clean_handoff_match, fold_match, membership_leaf_for_play,
@@ -122,11 +128,11 @@ impl Game {
     /// ⚑ ALSO A CONTENT-ADDRESS PREIMAGE. It is passed to `Universe::authored` AND embedded in
     /// [`Game::scene`], and `ugc-dregg` hashes both `name` and `source`, so editing it
     /// re-addresses the board universe. That costs a **restart, not a migration**, and it is worth
-    /// being able to see why: [`GameBoard`]'s registry is in-memory and rebuilt at boot, both
-    /// boards' `canonical_anchor` still returns `None` (nothing baked pins an anchor to an id),
-    /// and the resulting [`UniverseId`] is only ever DISPLAYED — never stored, never compared.
-    /// The day a canonical anchor IS baked, this string becomes load-bearing and moving it
-    /// becomes a re-emit of that reference.
+    /// being able to see why: [`GameBoard`]'s registry is in-memory and rebuilt at boot, and the
+    /// resulting [`UniverseId`] is only ever DISPLAYED — never stored, never compared.
+    /// ⚑ The day a deployment sets [`crown_anchor::env_var_name`] and pins its boards to an
+    /// operator anchor, this string becomes load-bearing and moving it becomes a re-emit of that
+    /// reference.
     pub fn title(self) -> &'static str {
         match self {
             Game::MultiwayTug => "Multiway Tug · Proof Board",
