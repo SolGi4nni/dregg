@@ -194,3 +194,20 @@ not objections. **The answer to "what does it cost" is "a rebuild."**
 - 23:05 ⚑ **The authorization lane picked LAMPORT** (`Emit/TurnAuthLamportEmit.lean` in flight) —
   hash-based, so it needs only the **Poseidon2 chip that already exists**: no curve table, and
   post-quantum as a side effect. That is the right shape for "no signature table in the registry".
+- 23:20 ⚑ **CORRECTION — my root red on `EffectVmEffectsHashPin` was a MID-SAVE CAPTURE, not a defect.**
+  `hbuild` rsyncs the working tree; I rsynced while that lane was mid-edit and built an intermediate
+  where `.eval` sat postfix on a newline (parsed as a separate token → `Function expected at`, and
+  the `#assert_axioms` cascade). **Verified at HEAD `e2416434d`: `Build completed successfully
+  (3127 jobs)`, zero errors.** My first suspect — its 16→11 arity fix — was WRONG and it said so
+  with the evidence.
+  **New shared-tree hazard, recorded**: *a coordinator's root build can capture a lane's half-saved
+  file and report it as that lane's defect.* Same family as `git add -A` staging a sibling's tree.
+  **Mitigation: check `git status` on the file before believing a red in a shared tree.**
+- 23:20 ⚑ **And the lane found a REAL gap while defending itself** — its two polarity controls were
+  **re-typing the tag-gate body inline instead of projecting it out of `ehTagGate`**, so *both would
+  have stayed green after an edit to the shipped gate*. **A control that cannot notice the thing it
+  controls** — the exact class they exist to close. Now `ehTagGateBody` is factored out, both
+  controls evaluate the shipped body, an `example … := rfl` ties them, and **both VALUES are pinned**
+  (`== 0` honest, `== 6` on a row firing `sel::TRANSFER` while declaring tag 7) — so a gate accepting
+  everything fails one and a gate refusing everything fails the other. **Neither can go vacuous
+  while the other holds.**
