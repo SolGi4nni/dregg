@@ -1,0 +1,61 @@
+# pickles-poseidon-harness — the R4a-scaled PROVE+VERIFY+BIND test on a REAL Poseidon circuit.
+#
+# Standalone: deliberately NOT a member of the breadstuffs workspace. An EMPTY `[workspace]` table is
+# the only mechanism that detaches a nested package (a path-prefix member match in the root manifest
+# silently wins over `exclude`). Same shape/reason as the sibling `pickles-r4-harness` /
+# `kimchi-extractors` fixture crates: they pin `o1-labs/proof-systems` at tag 0.3.0 (a different rev
+# than the workspace's `emberian/proof-systems` patch), so folding them in would force a version
+# unification that breaks the pinned kimchi.
+#
+# WHAT IT DOES. Reads the gate-list + witness JSON that `Dregg2.Circuit.Emit.KimchiRenderPoseidon`
+# (Lean) emits — committed under `fixtures/` — for a single Poseidon permutation (11 byte-exact
+# `Poseidon` gate rows carrying the 165 round constants that byte-match o1js, + a `Zero` gate; placed
+# by `KimchiPlacement.place`; witnessed by dregg's own `PastaPoseidon.Ref.permFrom`). It builds the
+# pure-Rust kimchi `Vec<CircuitGate>` + `[Vec<Fp>;15]` witness and PROVES + VERIFIES it through the
+# SAME `proof-systems` (tag 0.3.0) front door mina-rust uses. The `#[test]` functions are the committed
+# CI gate: `verify()==true` on the good witness, the output lane 0 equals the o1js `Poseidon.hash([1])`
+# gold, and BOTH tamper polarities REJECTED (a round-state witness flip and a round-constant coeff
+# flip), with the gate-satisfaction preflight disabled so rejection is by the PROOF, not a debug assert.
+#
+# ⚠ House Law #1: the CIRCUIT is Lean-authored (`KimchiRenderPoseidon` gates/coeffs/witness + `place`);
+# `proof-systems` is the Rust PROVER that RUNS it. No OCaml, no Node, no o1js in this path.
+#
+# REGENERATE the fixture (only when the Lean render changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiRenderPoseidon \
+#     && lake env lean --run Dregg2/Circuit/Emit/EmitPoseidonJson.lean \
+#     && cp /tmp/pickles-poseidon/poseidon.json fixtures/pickles-poseidon-harness/fixtures/poseidon.json
+#
+# RUN the test (one command):
+#   cargo test --manifest-path metatheory/fixtures/pickles-poseidon-harness/Cargo.toml -- --nocapture
+
+[package]
+name = "pickles-poseidon-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# `[[bin]]` (not `examples/`) so `scripts/check-dark-modules.py` sees a declaration for src/main.rs.
+# `cargo test` compiles this bin in test mode and runs its `#[test]` functions.
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

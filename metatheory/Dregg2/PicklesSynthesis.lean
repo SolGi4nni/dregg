@@ -30,6 +30,8 @@ never `EffectVmEmitV2`):
   * `Dregg2.Circuit.Emit.KimchiCustomGates`   — R2: custom-gate rows (typ+coeffs) byte-exact vs o1js
   * `Dregg2.Circuit.Emit.KimchiPlacement`     — R1: cell placement + copy-permutation `wires` byte-exact
   * `Dregg2.Circuit.Emit.KimchiRender`        — R4a: PlacedGate → proof-systems gate-list/witness render
+  * `Dregg2.Circuit.Emit.KimchiRenderPoseidon` — R4a-scaled: a REAL Poseidon-permutation circuit
+      (11 byte-exact `Poseidon` rows + a `Zero` gate, Lean-placed, Lean-witnessed via `PastaPoseidon`)
   * `Dregg2.Bridge.PicklesR3BranchDataDiff`   — R3: the branch_data prefix-mask pack (vs devnet block)
   * `Dregg2.Bridge.PicklesStatementDiff`      — R3: the WHOLE Wrap statement packing byte-exact
   * `Dregg2.Bridge.PicklesStepStatementDiff`  — R3: the Step per-proof layout + `fq=Type2/Fq` field-key
@@ -46,6 +48,7 @@ a real kimchi inner proof (R4a), not a recursion-soundness theorem (Phase B / R5
 import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.KimchiPlacement
 import Dregg2.Circuit.Emit.KimchiRender
+import Dregg2.Circuit.Emit.KimchiRenderPoseidon
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff
