@@ -391,7 +391,7 @@ which is both the reason the scope is written down here and the evidence that th
 <!-- BURN-DOWN-LIST-BEGIN -->
 - `cell/src/commitment.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `compute_rotated_pre_limbs` writes the
   KEY_COMMIT octet at `B_PUBKEY_OCTET`, reaching the hatch through `from_canonical_key`. Closes at
-  the ninth key lane / schema epoch 16.
+  the ninth key lane / one bump of `CANONICAL_STATE_SCHEMA_EPOCH`.
 - `circuit/src/faithful8.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `Faithful8::from_canonical_key`'s
   body, the routing itself. This is the entry that makes the other two visible; it goes when the
   constructor goes.
@@ -400,7 +400,7 @@ which is both the reason the scope is written down here and the evidence that th
 
 Reason constants, quoted verbatim from `circuit/src/faithful8.rs`:
 
-> KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 sign bit among them) — floor is 2^123.63; closes at the ninth key lane, schema epoch 16
+> KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 sign bit among them) — floor is 2^123.63; closes at the ninth key lane, one bump of CANONICAL_STATE_SCHEMA_EPOCH
 <!-- BURN-DOWN-LIST-END -->
 
 The `fields[0..7]` pair that used to be the list is genuinely gone — closed by the nine-lane

@@ -163,12 +163,16 @@ use crate::field::BabyBear;
 /// [`Faithful8::from_lossy_31bit_DANGER`] — i.e. the ONE entry on the burn-down list in
 /// `docs/FAITHFUL-COMMITMENT-LAW.md` as of 2026-08-01.
 ///
-/// A residual's reason must name the residual AND its closure epoch, which is what makes the
-/// grep readable without opening the law doc. The gate
+/// A residual's reason must name the residual AND WHAT CLOSES IT — but NEVER a remembered epoch
+/// NUMBER. This string said "schema epoch 16" for one commit; `persist::CANONICAL_STATE_SCHEMA_EPOCH`
+/// was ALREADY 16 when it was written and is 20 now. Nothing compared the two, so the gate below
+/// was enforcing doc↔source agreement on a figure that was false the moment it was typed — a pin
+/// between two transcriptions, inside the very constant whose subject is that class. Name the
+/// constant; let whoever reads it look up today's value. The gate
 /// (`circuit/tests/faithful8_key_octet_below_floor.rs`) asserts this string is quoted verbatim in
 /// the doc's burn-down section, so the two cannot drift.
 pub const KEY_COMMIT_30BIT_RESIDUAL: &str = "KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 \
-     sign bit among them) — floor is 2^123.63; closes at the ninth key lane, schema epoch 16";
+     sign bit among them) — floor is 2^123.63; closes at the ninth key lane, one bump of CANONICAL_STATE_SCHEMA_EPOCH";
 
 /// An **8-felt commitment octet** — 8 lanes wide, not 1.
 ///

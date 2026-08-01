@@ -482,9 +482,22 @@ impl DocumentComposer {
 // ⚠ STILL NARROW, and NOT this module's to widen: `dregg_doc::AtomId` is itself a
 // `u128`, and an embed-atom's id is derived from the child id through it. The CHILD
 // POINTER is now full width — it is what `Op::Embed` carries, what the commitment leaf
-// binds, and what a citation renders — but the layout VERTEX addressing a child sits in
-// a 128-bit space. That is a dregg-doc `AtomId` question (it addresses text atoms and
-// order-edges too), measured and named here, not silently inherited.
+// binds, and what a citation renders — but the layout VERTEX addressing a child is
+// narrower.
+//
+// ⚑ AND IT IS NARROWER THAN "128 BITS", WHICH IS HOW THIS NOTE FIRST READ. `AtomId::derive`
+// (`dregg-doc/src/atom.rs`) builds its `u128` from TWO `DefaultHasher` finishes — SipHash-1-3
+// under a FIXED, PUBLIC key, and its own doc says "deliberately non-cryptographic". So the
+// number to carry is not 128 bits of anything: an adversary knows the key, and the halves are
+// two keyed 64-bit digests of the same inputs in swapped order. Writing "a 128-bit space" for
+// that is the house error one rung down — quoting a WIDTH where the reader will hear a
+// STRENGTH. Caught by the wave audit, which flagged the phrasing before anyone acted on it.
+//
+// It is contained rather than closed: the commitment leaf binds `cell.0` ALONGSIDE
+// `atom_id.0`, so a forged or substituted vertex cannot hide under the committed boundary —
+// the exposure is the layout vertex space itself, at roughly 2^64 against a known key. That is
+// a `dregg-doc` question (`AtomId` addresses text atoms and order-edges too), measured and
+// named here, not silently inherited.
 
 use crate::world::World;
 
