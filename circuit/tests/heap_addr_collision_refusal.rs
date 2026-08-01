@@ -340,9 +340,21 @@ fn degenerate_heaps_still_build() {
 // ⚑ THE SEVERE HALF — THE SAME TREE, ADDRESSED BY AN ATTACKER-CHOSEN FOLD
 // ===========================================================================
 
-/// ⚑ The heap's `(coll, key)` addresses are NOT attacker-chosen (every production
-/// collection is a `const` and every key is a `const` or `const + loop index`), so
-/// for the heap this wound is an ACCIDENT, not a forgery primitive.
+/// ⚑ ⚠ THIS PARAGRAPH WAS FALSE, AND IT WAS THE REASON THIS WOUND STAYED OPEN. Corrected 2026-08-01.
+//
+// It read: "The heap's `(coll, key)` addresses are NOT attacker-chosen (every production
+// collection is a `const` …), so for the heap this wound is an ACCIDENT, not a forgery primitive."
+//
+// ⚑ `dregg_umem::lay(state, coll: u32, bytes)` (`dregg-umem/src/lib.rs:164`) takes the collection
+// as a PUBLIC API PARAMETER. `turn/src/umem.rs:602-618` takes BOTH u32s off the wire umem key;
+// `starbridge_v2::World::set_cell_heap` takes the whole map; `grain_fork::Grain::learn(key: u32)`
+// takes the key. The addresses are attacker-chosen on four routes.
+//
+// Measured consequence: two ordinary `lay` calls at collections `5` and `5 + BABYBEAR_P` panic
+// `heap_root.rs:299` inside `reseal_heap_root` — and `heap_root` folds through limb 28 into
+// `consensus_state_commitment` and the executor's signing message. **A liveness kill on the signed
+// anchor at cost ZERO**, reached from a public parameter rather than a grind. Same shape as
+// `a62c48c7b` (`cells_root`), which was closed.
 ///
 /// The note-commitment / shielded-note / nullifier / revoked accumulators are the
 /// SAME `CanonicalHeapTree8` and shared the SAME deleted `dedup_by_key`, but their

@@ -765,7 +765,19 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
 /// All field elements are decimal `BabyBear` felts (`< 2^31`): `root`/`value`/
 /// `next_addr`/each sibling. `siblings_csv` and `directions_csv` are comma-separated,
 /// each of length exactly `HEAP_TREE_DEPTH` (16) — a wrong length is REFUSED
-/// (fail-closed). A tampered value, a wrong `(coll, key)`, a wrong pointer, or a
+/// (fail-closed). A tampered value, ⚠ FALSE — corrected 2026-08-01. This said a wrong `(coll, key)` "recomputes a different root
+/// and returns `false`". It does not: `verify_slot_opening` DERIVES the address from `(coll, key)`
+/// through the one-felt `heap_addr`, so it cannot distinguish two keys that share an address.
+///
+/// ⚑ Measured against the real producer: commit `(1, 2)`, then ask about `(1, 2013265923)` —
+/// **verify returns TRUE**, at cost zero, one addition. A 43,968-fold search (~0.1 s) also yields
+/// an in-range pair. This is ADMIT-A-FALSE-VALUE, strictly worse than the halt the builder-side
+/// refusal closed, and it is **uncontained**: the 2026-07-28 repair closed the builder half only.
+///
+/// ⓘ Mitigating today: `HeapSlotOpening` has no production minter — every caller passes
+/// `openings: &[]`. This is a live verifier without a live producer. ⚠ But `portal/dist/cell.html`
+/// and `extension/dregg_wasm.js` call the **6-arg pre-IMT signature** — stale shipped artifacts
+/// verifying the wrong leaf preimage.
 /// forged path recomputes a different root and returns `false`.
 #[wasm_bindgen]
 pub fn verify_slot_opening(
