@@ -826,12 +826,9 @@ mod tests {
         planned
             .insert(Nullifier(key), value)
             .expect("fresh v2 planned insertion");
-        let carrier = FaithfulNoteSpendProofCarrier::new(
-            7,
-            planned.faithful_root8_exact().to_bytes32(),
-            vec![0xaa, 0xbb],
-        )
-        .expect("canonical v2 carrier");
+        let carrier =
+            FaithfulNoteSpendProofCarrier::new(7, planned.root8().to_bytes32(), vec![0xaa, 0xbb])
+                .expect("canonical v2 carrier");
         let effect = canonical_note_spend(key, value, carrier.encode());
         let executor = TurnExecutor::with_proof_verifier(
             ComputronCosts::zero(),

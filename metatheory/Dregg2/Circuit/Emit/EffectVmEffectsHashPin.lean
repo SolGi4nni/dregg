@@ -121,12 +121,56 @@ and run to completion. Diffed against the committed `rotation-wide-registry-stag
     with `Δwidth = 0`, `Δconstraints = 0`, pins unchanged. The exemption is exactly one member and it
     is the one §6¾ names.
   * **`piCount` moves on ZERO members.** The four slots were already there.
-  * **Δconstraints = +27 on 54 members** — the designed budget, met exactly.
-  * **Δwidth is +65 on 20 members, +53 on 34, +56 on 2, 0 on one.** The block is 65 columns by
-    construction, so the members below it had 9–12 further columns removed by the E1 kill-set: the
-    new LIVE columns raise `e1Ceiling`, and dead v1-face columns that were previously out of reach
-    enter the kill-set. ⚠ That is a measured side effect and it is recorded rather than smoothed —
-    whoever installs this owes the E1 interaction an explanation before believing the widths.
+  * **Δconstraints = +27 on 54 members** — the designed budget, met exactly. (The remaining two are
+    +28 on `mint` and +33 on `custom`: the budget plus the pins §"CLOSES THE FREE-PIN RESIDUE"
+    brings back. 27·56 + 1 + 6 = 1519, which is the measured registry total.)
+  * **Δwidth was +65 on 20 members, +53 on 34, +56 on 2, 0 on one.**
+
+### ⚑⚑ AND THAT NON-UNIFORMITY WAS A DEFECT, NOT A PRICE — RE-MEASURED 2026-07-31
+
+The paragraph above used to end *"that is a measured side effect and it is recorded rather than
+smoothed — whoever installs this owes the E1 interaction an explanation before believing the
+widths."* Here is the explanation, and it does not exonerate the number: **the 9–12 columns were the
+gentian refuse block's dead stride-tail, and losing them breaks the deployed producer.**
+
+`EmitWideRegistryProbe.e1Ceiling` is `cm.traceWidth − 3·REFUSE_STRIDE` for a bare-cohort member, and
+its own docstring says why: the gentian aux block rides the TOP of `cm`, the Rust producer does not
+emit it (`fill_refuse_aux` fills it at PROVE time, after `compact_e1`), so *"the E1 kill-set must NOT
+reach into them … an E1 interval at index ≥ the producer width is unrealizable (the row is too short
+→ the deployed producer panics)."*
+
+Applying the pin at that chokepoint appends 65 columns ABOVE the gentian block. `traceWidth − 48`
+then names a column 65 higher than the block base, the scan window slides 65 columns up, and it
+swallows the block's dead padding — 12 columns at offsets 11, 13, 14, 15 of each 16-column refuse
+stride (the offsets `fill_refuse_aux` does not write: it uses 0..10 and 12), or 9 columns at offsets
+drawn from {0, 1, 2, 14} on the two AVAIL members, whose refuse block is based at
+`cavBaseOf AVAIL_WIDTH` instead. Measured on the emitted `e1compact` lines: **every newly killed
+column lands inside the gentian block, on all 36 bare-cohort members, 36 of 36, and on no others** —
+exactly the 34 + 2 that showed −12 and −9. For `mintVmDescriptor2R24` the producer's row at
+`compact_e1` is 1819 columns and the new kill-set carries a band ending at 1867, so
+`compact_e1_columns` refuses: *"row width 1819 < E1 band end 1867"*.
+
+Re-emitted with `e1Ceiling` also subtracting `EH_SPAN`:
+
+  * **Δwidth = +65 on all 56 bindable members, 0 on `heapWrite`. Uniform.**
+  * the emitted `e1compact` kill-sets are **byte-identical to the committed ones**;
+  * every other number is unchanged — pins 1628 → 1859, row-local-free 6 → 0, declaration-only
+    2 → 0, Δconstraints as above, `piCount` still moves on nothing.
+
+**So the price is 65 columns and 27 constraints, flat.** The +53/+56 was the emit quietly deleting
+part of a block the producer depends on, and it fails CLOSED at the producer rather than silently —
+but it fails, and a flag day installed at that chokepoint would not have proved a single bare-cohort
+turn. ⚠ Correcting the ceiling is NECESSARY AND NOT SUFFICIENT: with the pin above the gentian
+block, the producer must emit a row with a 48-column hole in it, which the `trace_with_chip_lanes`
+pad idiom (a TAIL extension) cannot express. The pin belongs BELOW the gentian weld — i.e. applied
+before `weldWide`, and inside `AvailWideMembers`' already-welded transfer/burn objects — so the
+refuse block stays the topmost block and the producer's row stays a prefix.
+
+⚑ The Rust side of that now refuses loudly instead of padding: `descriptor_ir2::producer_owned_width`
+bounds the zero-extend to columns no producer owns, checked BEFORE the pad rather than after it
+(`circuit/tests/producer_owned_pad_bound.rs`,
+`heap_write_roundtrip.rs::a_short_trace_is_refused_instead_of_padded`). Until 2026-07-31 an
+un-updated producer folded a newly appended block over zeros and PROVED.
 
 ### ⚑⚑ AND IT CLOSES THE FREE-PIN RESIDUE, BY FORCING
 
@@ -157,10 +201,13 @@ free pins in the wide registry, and it makes them forced rather than exempt.
 
 ### What still blocks the install, stated as work and not as a reason
 
+  0. **Where the pin is applied.** Above, in ⚑⚑: at the `emitCompact` chokepoint it lands above the
+     gentian weld, which breaks `e1Ceiling` and leaves the block unwritable by a prefix-shaped
+     producer row. It belongs below the weld. This was not on the list before and it is first.
   1. **The producer.** `trace_rotated.rs` has ZERO `effects_hash` references and must write all 65
-     columns per row. `prove_vm_descriptor2` zero-extends short rows BEFORE its width check, so an
-     un-updated producer folds the IV over zeros and proves GREEN. New columns must route through
-     `compacted_column(registry_key, raw)`.
+     columns per row. New columns must route through `compacted_column(registry_key, raw)`.
+     (`prove_vm_descriptor2`'s unbounded zero-extend, which made an un-updated producer prove GREEN
+     over zeros, is CLOSED — `producer_owned_width`, 2026-07-31. The failure is now loud.)
   2. **`compute_effects_hash_4` must be rewritten** to this fixed-width-per-row fold and become the
      twin of what this file emits. Its value changes; every persisted `effects_hash` is invalid.
   3. **The two other drivers** (`EmitRotationV3`, `EmitWideUMemWeldRegistryProbe`) need the same one

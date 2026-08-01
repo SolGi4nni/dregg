@@ -1,20 +1,27 @@
 //! Nullifier accumulator: an append-only `(nullifier → value)` map of revealed
 //! nullifiers.
 //!
-//! When a note is spent, its nullifier is revealed and recorded here TOGETHER
-//! with the spent note's value — the SAME `(addr, value)` leaf the deployed
-//! circuit noteSpend grow-gate inserts (`trace_rotated.rs`
-//! `generate_rotated_note_spend_trace_with_nullifier_tree`: `HeapLeaf::entry(//! fold(nf), NOTE_VALUE_LO)`). The accumulator is therefore an auditable
-//! `(nullifier, value)` record, NOT a bare set: keeping the value is what makes
-//! the committed [`Self::root8`] cross-turn-continuous with the circuit (turn
-//! N's after-root == turn N+1's before-root over the same leaves). The value is
-//! already a circuit public input (`PI[38]`), so recording it leaks nothing new;
-//! unlinkability rides the nullifier derivation, not the leaf value.
+//! When a note is spent, its nullifier is revealed and recorded here TOGETHER with the spent
+//! note's value. The accumulator is therefore an auditable `(nullifier, value)` record, NOT a
+//! bare set. The value is already a circuit public input (`PI[38]`), so recording it leaks
+//! nothing new; unlinkability rides the nullifier derivation, not the leaf value.
 //!
-//! Double-spend detection is checking key membership. The map also supports
-//! non-membership proofs (proving a note is NOT spent) via a Merkle tree over
-//! the nullifier keys (the value plays no role in the byte-Merkle
-//! non-membership machinery — only in the felt-domain [`Self::root8`]).
+//! ⚑ **THE COMMITTED LEAF, 2026-07-31.** [`NullifierSet::root8`] is the exact tagged
+//! LINKED-LEAF root `FNI2 ‖ addr17 ‖ value4 ‖ next17` — sixteen `u16` address limbs, four `u16`
+//! value limbs, a full-width successor pointer — at depth 16, arity 4, eight BabyBear lanes. It
+//! replaced `HeapLeaf::entry(fold_bytes32_to_bb(nf), split_u64(value).0)`, whose address was a
+//! 256→31-bit fold (A2) and whose value was the low 30 bits (A3). See that method's own comment
+//! for why the "the deployed grow-gate opens against these leaves" blocker was not real, and
+//! `turn/tests/note_value_alias_at_2_30_closed.rs` for the wound it closes at the signed anchor.
+//!
+//! ⚠ The committed root is APPEND-ORDER dependent (it is the AAFI fold). Reconstruction must go
+//! through the persisted `seq` column — [`NullifierSet::from_records`] — never by re-inserting in
+//! storage order.
+//!
+//! Double-spend detection is checking key membership. The map also supports non-membership
+//! proofs (proving a note is NOT spent) via a byte-Merkle tree over the nullifier keys (the value
+//! plays no role there — only in the felt-domain [`Self::root8`], which carries its own
+//! `next_addr` absence bracket).
 //!
 //! # Performance
 //!
@@ -25,121 +32,29 @@
 //! / `from_records`.
 
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
 use dregg_circuit::Faithful8;
+use dregg_circuit::exact_nullifier_aafi::{
+    EXACT_NULLIFIER_AAFI_DOMAINS, ExactLinkedDomains, exact_linked_append_root8,
+};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::hash_many_8;
 use serde::{Deserialize, Serialize};
 
 use crate::note::{NoteError, Nullifier};
 
 /// Depth of the exact spent-nullifier tree (`4^16 = 2^32` leaves).
 ///
-/// This intentionally matches the faithful note tree.  A fixed depth makes the
-/// root geometry protocol data rather than a function of the current set size.
-pub const EXACT_NULLIFIER_TREE_DEPTH: usize = 16;
-/// Number of canonical `u16` lanes carrying one raw 32-byte nullifier.
-pub const EXACT_NULLIFIER_LANES: usize = 16;
-/// Number of canonical `u16` lanes carrying one full `u64` spent-note value.
-pub const EXACT_NULLIFIER_VALUE_LANES: usize = 4;
+/// Projected from the circuit crate rather than re-declared, so the store and the
+/// Lean-authored exact-AAFI descriptor cannot drift apart on geometry.
+pub const EXACT_NULLIFIER_TREE_DEPTH: usize = dregg_circuit::exact_nullifier_aafi::TREE_DEPTH;
 /// Number of BabyBear lanes in every hashed node and root.
-pub const EXACT_NULLIFIER_ROOT_LANES: usize = 8;
+pub const EXACT_NULLIFIER_ROOT_LANES: usize = dregg_circuit::exact_nullifier_aafi::ROOT_LANES;
 
-/// Exact-leaf Poseidon2 domain, ASCII `"FNL8"`.
-pub const EXACT_NULLIFIER_LEAF_DOMAIN: u32 = 0x464e_4c38;
-/// Exact 4-ary internal-node Poseidon2 domain, ASCII `"FNN8"`.
-pub const EXACT_NULLIFIER_NODE_DOMAIN: u32 = 0x464e_4e38;
-/// Exact empty-leaf Poseidon2 domain, ASCII `"FNE8"`.
-pub const EXACT_NULLIFIER_EMPTY_DOMAIN: u32 = 0x464e_4538;
-
-/// Raw, injective field encoding of a nullifier: sixteen little-endian `u16`
-/// limbs.  Every limb is canonical in BabyBear, so no pre-hash reduction can
-/// identify two different byte strings.
-#[inline]
-pub fn exact_nullifier_lanes16(nullifier: &[u8; 32]) -> [BabyBear; EXACT_NULLIFIER_LANES] {
-    core::array::from_fn(|lane| {
-        let offset = lane * 2;
-        BabyBear::new(u16::from_le_bytes([nullifier[offset], nullifier[offset + 1]]) as u32)
-    })
-}
-
-/// Raw, injective field encoding of the full spent-note value: four
-/// little-endian `u16` limbs.  In particular this does not discard the high 34
-/// bits as the legacy grow-gate leaf does.
-#[inline]
-pub fn exact_nullifier_value_lanes4(value: u64) -> [BabyBear; EXACT_NULLIFIER_VALUE_LANES] {
-    let bytes = value.to_le_bytes();
-    core::array::from_fn(|lane| {
-        let offset = lane * 2;
-        BabyBear::new(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as u32)
-    })
-}
-
-fn exact_hash_to_8(domain: u32, inputs: &[BabyBear]) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
-    let mut preimage = Vec::with_capacity(1 + inputs.len());
-    preimage.push(BabyBear::new(domain));
-    preimage.extend_from_slice(inputs);
-    hash_many_8(&preimage)
-}
-
-/// Exact faithful-eight leaf digest of `(raw nullifier, full u64 value)`.
-///
-/// Preimage geometry is fixed and descriptor-friendly:
-/// `FNL8 || nf_u16_le[16] || value_u16_le[4]`.
-pub fn exact_nullifier_leaf8(
-    nullifier: &[u8; 32],
-    value: u64,
-) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
-    let nullifier_lanes = exact_nullifier_lanes16(nullifier);
-    let value_lanes = exact_nullifier_value_lanes4(value);
-    let mut inputs = [BabyBear::ZERO; EXACT_NULLIFIER_LANES + EXACT_NULLIFIER_VALUE_LANES];
-    inputs[..EXACT_NULLIFIER_LANES].copy_from_slice(&nullifier_lanes);
-    inputs[EXACT_NULLIFIER_LANES..].copy_from_slice(&value_lanes);
-    exact_hash_to_8(EXACT_NULLIFIER_LEAF_DOMAIN, &inputs)
-}
-
-/// Exact 4-ary internal-node compression:
-/// `FNN8 || child0[8] || child1[8] || child2[8] || child3[8]`.
-pub fn exact_nullifier_node8(
-    children: &[[BabyBear; EXACT_NULLIFIER_ROOT_LANES]; 4],
-) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
-    let mut inputs = [BabyBear::ZERO; 4 * EXACT_NULLIFIER_ROOT_LANES];
-    for (child_index, child) in children.iter().enumerate() {
-        let start = child_index * EXACT_NULLIFIER_ROOT_LANES;
-        inputs[start..start + EXACT_NULLIFIER_ROOT_LANES].copy_from_slice(child);
-    }
-    exact_hash_to_8(EXACT_NULLIFIER_NODE_DOMAIN, &inputs)
-}
-
-#[inline]
-fn exact_nullifier_empty_leaf8() -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
-    exact_hash_to_8(EXACT_NULLIFIER_EMPTY_DOMAIN, &[])
-}
-
-static EXACT_NULLIFIER_EMPTY_HASHES: LazyLock<
-    [[BabyBear; EXACT_NULLIFIER_ROOT_LANES]; EXACT_NULLIFIER_TREE_DEPTH + 1],
-> = LazyLock::new(|| {
-    let mut empty = [[BabyBear::ZERO; EXACT_NULLIFIER_ROOT_LANES]; EXACT_NULLIFIER_TREE_DEPTH + 1];
-    empty[0] = exact_nullifier_empty_leaf8();
-    for level in 1..=EXACT_NULLIFIER_TREE_DEPTH {
-        empty[level] = exact_nullifier_node8(&[empty[level - 1]; 4]);
-    }
-    empty
-});
-
-/// Canonical exact empty-subtree digest at `level` (`0` is an empty leaf and
-/// `16` is the empty protocol root).  Exposed so witness/prover code can share
-/// the same padding constants rather than duplicating tree construction.
-pub fn exact_nullifier_empty_hash8_at_level(
-    level: usize,
-) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
-    assert!(
-        level <= EXACT_NULLIFIER_TREE_DEPTH,
-        "exact nullifier empty level {level} exceeds depth {EXACT_NULLIFIER_TREE_DEPTH}"
-    );
-    EXACT_NULLIFIER_EMPTY_HASHES[level]
-}
+/// The spend-side exact tagged-linked-leaf domain triple: `FNI2`/`FNN2`/`FNE2` — the SAME triple
+/// the Lean-authored exact-AAFI descriptor constrains
+/// (`Dregg2/Circuit/Emit/ExactNullifierAafiDescriptorPlan.lean`), so [`NullifierSet::root8`] is
+/// the object that descriptor proves the transition of rather than a parallel one.
+pub const EXACT_NULLIFIER_LINKED_DOMAINS: ExactLinkedDomains = EXACT_NULLIFIER_AAFI_DOMAINS;
 
 fn faithful8_from_exact_lanes(lanes: [BabyBear; EXACT_NULLIFIER_ROOT_LANES]) -> Faithful8 {
     let mut bytes = [0u8; 32];
@@ -157,8 +72,8 @@ fn faithful8_from_exact_lanes(lanes: [BabyBear; EXACT_NULLIFIER_ROOT_LANES]) -> 
 /// IS the canonical tau spend sequence, INV-6), so the store persists WHERE
 /// in the append sequence each entry landed; a reconstruction replays the
 /// records sorted by `seq` and recovers the identical AAFI layout every time.
-/// The sorted-compacted [`NullifierSet::root8`] layer ignores `seq` entirely
-/// (order-independent), so this is purely ADDITIVE.
+/// ⚑ Since 2026-07-31 [`NullifierSet::root8`] IS the AAFI fold, so `seq` is no longer an
+/// additive side column: it is the committed order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct AppendRecord {
     /// The spent note's value (the circuit's `NOTE_VALUE_LO` felt source).
@@ -349,23 +264,23 @@ impl NullifierSet {
         Ok(set)
     }
 
-    /// The circuit-faithful accumulator leaves **in append order** — the
-    /// canonical tau sequence of [`Self::accumulator_leaf`]s an AAFI
-    /// (append-at-free-index) fold consumes. Each leaf at rank `r` here is the
-    /// one an AAFI replay appends at physical slot `r + 1` (slot 0 is the MIN
-    /// sentinel), mirroring `CanonicalHeapTree8::insert_witness_aafi`'s
-    /// `next_free_index` semantics. The sorted-compacted [`Self::root8`] is
-    /// untouched by this — same leaf SET, append positions instead of sorted.
-    pub fn aafi_leaves(&self) -> Vec<dregg_circuit::heap_root::HeapLeaf> {
-        self.iter_in_append_order()
-            .map(|(n, v, _)| Self::accumulator_leaf(&n.0, v))
-            .collect()
+    /// The committed accumulator's **dense physical leaf vector** — exactly what [`Self::root8`]
+    /// hashes, indexed by physical slot. Slot 0 is the permanent `BOT` sentinel; the record at
+    /// append rank `r` sits at slot `r + 1`.
+    ///
+    /// Exposed because it is the readable form of the two properties the root has and its
+    /// predecessors did not: every leaf's `value()` is the FULL recorded `u64` and every leaf's
+    /// `next_addr()` is the next larger present address (the absence bracket), so a test can
+    /// assert the encoding ROUND-TRIPS rather than merely that two digests differ.
+    pub fn exact_dense_leaves(&self) -> Vec<dregg_circuit::exact_nullifier_aafi::ExactLinkedLeaf> {
+        dregg_circuit::exact_nullifier_aafi::exact_linked_dense_leaves(&self.exact_append_records())
+            .expect("the nullifier map's keys are unique and within the 4^16 tree capacity")
     }
 
     /// The physical AAFI slot the NEXT append would occupy: `len() + 1`
     /// (slot 0 is the MIN sentinel) — the store-side mirror of
     /// [`dregg_circuit::heap_root::CanonicalHeapTree8::next_free_index`] for a
-    /// tree replayed from [`Self::aafi_leaves`].
+    /// tree replayed from [`Self::exact_dense_leaves`].
     pub fn aafi_next_free_index(&self) -> usize {
         self.nullifiers.len() + 1
     }
@@ -561,119 +476,53 @@ impl NullifierSet {
         Self::merkle_root_from_leaves(&leaves)
     }
 
-    /// The circuit-faithful node8 leaf for a single `(nullifier, value)` — the
-    /// EXACT [`dregg_circuit::heap_root::HeapLeaf`] the deployed rotated noteSpend
-    /// grow-gate keys the nullifier accumulator on
-    /// (`trace_rotated.rs::generate_rotated_note_spend_trace_with_nullifier_tree`,
-    /// lines ~1204/1225): `addr` is the folded nullifier felt
-    /// (`dregg_circuit::effect_vm::fold_bytes32_to_bb`, the SAME `nullifier_to_field`
-    /// fold the node freshness path uses — matching the spend row's
-    /// `PARAM_BASE + param::NULLIFIER` column), and `value` is the spent note value
-    /// folded through the circuit's `split_u64(value).0` — the identical
-    /// `PARAM_BASE + param::NOTE_VALUE_LO` felt (the low 30 bits) the grow-gate reads
-    /// from row 0.
-    ///
-    /// Byte-for-byte agreement with the grow-gate is load-bearing: the committed
-    /// `nullifier_root` group (rotated limb 26 lane-0 ‖ completion limbs 67..=73)
-    /// is opened in-circuit against a `CanonicalHeapTree8` built from these leaves,
-    /// so the executor-derived accumulator root must fold through the identical
-    /// leaf encoding or the published commitment would not match the proof. The
-    /// prior `value: 1` existence-bit encoding was the Rust-side incoherence this
-    /// fixes: the circuit always inserted `value = NOTE_VALUE_LO`, so `value: 1`
-    /// made turn N's after-root ≠ turn N+1's before-root.
-    pub fn accumulator_leaf(
-        nullifier: &[u8; 32],
-        value: u64,
-    ) -> dregg_circuit::heap_root::HeapLeaf {
-        // The circuit's leaf value is `split_u64(value).0` — the low 30 bits of the note value as a
-        // BabyBear (`NOTE_VALUE_LO`). Fold through the circuit's OWN helper so the encoding cannot
-        // drift. The IMT `next_addr` pointer is relinked by the tree builder.
-        dregg_circuit::heap_root::HeapLeaf::entry(
-            dregg_circuit::effect_vm::fold_bytes32_to_bb(nullifier),
-            dregg_circuit::effect_vm::split_u64(value).0,
-        )
+    /// The canonical APPEND-ORDERED `(raw nullifier, value)` record list — the input the
+    /// committed [`Self::root8`] folds. Physical slot 0 is the permanent `BOT` sentinel; the
+    /// record at rank `r` occupies slot `r + 1`.
+    fn exact_append_records(&self) -> Vec<([u8; 32], u64)> {
+        self.iter_in_append_order()
+            .map(|(nullifier, value, _)| (nullifier.0, value))
+            .collect()
     }
 
-    /// **The faithful 8-felt (~124-bit) accumulator root of the spent-nullifier
-    /// set** — the value that BELONGS in the committed rotated state's
-    /// `nullifier_root` group (limb 26 lane-0 ‖ completion limbs 67..=73), so a
-    /// cross-node anti-replay commitment is genuine: a node that has accepted a
-    /// spend carries a DIFFERENT `root8` than one that has not.
+    /// **THE committed accumulator root of the spent-nullifier set** — the exact tagged
+    /// LINKED-LEAF (indexed-Merkle) append-at-free-index root, `FNI2 ‖ addr17 ‖ value4 ‖ next17`
+    /// at depth 16, arity 4, eight BabyBear lanes.
     ///
-    /// This is the native `CanonicalHeapTree8` (arity-16 sorted-Poseidon2, depth
-    /// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`]) root the deployed noteSpend
-    /// grow-gate opens against — built from [`Self::accumulator_leaf`] over every
-    /// `(nullifier, value)` in the map, so it equals the BEFORE-tree root the SDK
-    /// derives from `previously_spent` (`full_turn_proof::wide_commit_anchors`)
-    /// lane-for-lane. The empty set folds to the native empty root
-    /// (`dregg_circuit::heap_root::empty_heap_root_8`), NOT the degenerate
-    /// `hash_bytes([0u8; 32])` / `[0u8; 32]` the producer path still fills.
+    /// ⚑ **WHAT THIS REPLACED, AND WHY THE STATED BLOCKER WAS NOT REAL.** Until 2026-07-31 this
+    /// folded `HeapLeaf::entry(fold_bytes32_to_bb(nf), split_u64(value).0)` through a
+    /// `CanonicalHeapTree8` — a 256→31-bit address fold (A2) and a 64→30-bit value truncation
+    /// (A3) — and its doc comment said byte-for-byte agreement with the deployed noteSpend
+    /// grow-gate was load-bearing, so that changing it would make every spend turn UNSAT.
+    /// **It was not.** The SDK builds the grow-gate's BEFORE leaf vector itself, and does it with
+    /// a hard-coded existence bit: `HeapLeaf::entry(*nf, BabyBear::new(1))` at
+    /// `sdk/src/full_turn_proof.rs:397`, `:1022` and `:1135`. So this root and the in-circuit
+    /// tree already disagreed whenever a spent note's `split_u64(value).0 != 1`, and on the
+    /// create side `before_commitments` is always `&[]` (`sdk/src/cipherclerk.rs:5812`,
+    /// `full_turn_proof.rs:422`) so the commitments root never reached a circuit at all. Nothing
+    /// threads this value into a map-op, so no VK rotates and no descriptor is re-emitted.
     ///
-    /// UNLIKE the byte-Merkle [`Self::root`] (which serves the non-membership
-    /// proof machinery), this is the FELT-domain accumulator root the rotated
-    /// circuit commits to.
-    pub fn root8(&self) -> dregg_circuit::Faithful8 {
-        let leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = self
-            .nullifiers
-            .iter()
-            .map(|(n, r)| Self::accumulator_leaf(&n.0, r.value))
-            .collect();
-        dregg_circuit::heap_root::CanonicalHeapTree8::new(
-            leaves,
-            dregg_circuit::heap_root::HEAP_TREE_DEPTH,
-        )
-        .root8()
-    }
-
-    /// Exact faithful-eight root of the spent-nullifier accumulator.
+    /// The new leaf carries the address as a tag plus sixteen little-endian `u16` limbs (`2^256`
+    /// on the nose, no reduction), the value as four (`2^64`, no truncation), AND a full-width
+    /// `next_addr` pointer — so it is injective in every argument *and* keeps the IMT absence
+    /// bracket a non-membership opening straddles. The dense `faithful_root8_exact` this also
+    /// replaced had the injectivity but no pointer, so it could not express absence.
     ///
-    /// This is an **additive successor** to [`Self::root8`], whose lossy
-    /// `(fold_bytes32_to_bb(nullifier), low30(value))` leaves remain unchanged
-    /// for rotated-proof compatibility.  Here the map's canonical sorted-key
-    /// order supplies dense leaf positions in a fixed depth-16 4-ary tree.
-    /// Each leaf binds all 32 raw nullifier bytes as sixteen `u16` limbs and all
-    /// 64 value bits as four `u16` limbs before any hashing.  Every internal
-    /// node remains eight BabyBear lanes; empty leaves and internal nodes are
-    /// separately domain-separated.
+    /// It is the `EXACT_NULLIFIER_AAFI_DOMAINS` instance of
+    /// [`dregg_circuit::exact_nullifier_aafi::exact_linked_append_root8`], i.e. definitionally
+    /// the root [`dregg_circuit::exact_nullifier_aafi::ExactNullifierAafi`] maintains and the
+    /// Lean-authored 1274-constraint exact-AAFI descriptor proves the transition of.
     ///
-    /// The result therefore has no deterministic high-byte or high-value alias
-    /// inherited from the legacy accumulator encoding.  Its root is
-    /// insertion-order-independent because [`BTreeMap`] iteration, rather than
-    /// append sequence, defines the canonical dense layout.
-    pub fn faithful_root8_exact(&self) -> Faithful8 {
-        const CAPACITY: u128 = 1u128 << (2 * EXACT_NULLIFIER_TREE_DEPTH);
-        assert!(
-            (self.nullifiers.len() as u128) <= CAPACITY,
-            "exact nullifier tree capacity exceeded: {} entries > 4^{}",
-            self.nullifiers.len(),
-            EXACT_NULLIFIER_TREE_DEPTH
+    /// UNLIKE the byte-Merkle [`Self::root`] (which serves the non-membership proof machinery),
+    /// this is the FELT-domain accumulator root the consensus anchor commits to.
+    pub fn root8(&self) -> Faithful8 {
+        let records = self.exact_append_records();
+        let lanes = exact_linked_append_root8(EXACT_NULLIFIER_LINKED_DOMAINS, &records).expect(
+            "the nullifier map's keys are unique by construction (a BTreeMap over all 32 raw \
+             bytes, and the tagged-key encoding is injective on them), and its length is bounded \
+             by the 4^16 tree capacity",
         );
-
-        if self.nullifiers.is_empty() {
-            return faithful8_from_exact_lanes(
-                EXACT_NULLIFIER_EMPTY_HASHES[EXACT_NULLIFIER_TREE_DEPTH],
-            );
-        }
-
-        let mut nodes: Vec<[BabyBear; EXACT_NULLIFIER_ROOT_LANES]> = self
-            .nullifiers
-            .iter()
-            .map(|(nullifier, record)| exact_nullifier_leaf8(&nullifier.0, record.value))
-            .collect();
-
-        for level in 0..EXACT_NULLIFIER_TREE_DEPTH {
-            let parent_count = nodes.len().div_ceil(4);
-            let mut parents = Vec::with_capacity(parent_count);
-            for chunk in nodes.chunks(4) {
-                let mut children = [EXACT_NULLIFIER_EMPTY_HASHES[level]; 4];
-                children[..chunk.len()].copy_from_slice(chunk);
-                parents.push(exact_nullifier_node8(&children));
-            }
-            nodes = parents;
-        }
-
-        debug_assert_eq!(nodes.len(), 1);
-        faithful8_from_exact_lanes(nodes[0])
+        faithful8_from_exact_lanes(lanes)
     }
 
     /// Verify a non-membership proof against the current root.
@@ -857,13 +706,43 @@ mod tests {
     /// the degenerate `hash_bytes([0u8; 32])` / `[0u8; 32]` the lossy producer path
     /// still uses. This is the "empty default the circuit expects" match.
     #[test]
-    fn root8_empty_matches_native_empty_heap_root_8() {
+    fn root8_empty_is_the_bot_sentinel_tree_and_is_domain_separated() {
+        use dregg_circuit::exact_nullifier_aafi::{ExactNullifierAafi, ExactTaggedKey};
+
         let set = NullifierSet::new();
+        assert_eq!(set.len(), 0);
+
+        // The empty accumulator is NOT an empty tree: physical slot 0 permanently holds the
+        // `BOT(value=0, next=TOP)` sentinel, which is the low endpoint every absence bracket
+        // straddles. Cross-checked against the exact-AAFI runtime rather than re-derived.
+        let runtime = ExactNullifierAafi::new();
         assert_eq!(
+            set.root8()
+                .limbs()
+                .map(dregg_circuit::field::BabyBear::as_u32),
+            runtime.root().map(dregg_circuit::field::BabyBear::as_u32),
+            "the empty committed root must BE the exact-AAFI runtime's genesis root"
+        );
+        let leaves = set.exact_dense_leaves();
+        assert_eq!(leaves.len(), 1, "slot 0 is the permanent BOT sentinel");
+        assert_eq!(leaves[0].addr(), ExactTaggedKey::Bot);
+        assert_eq!(leaves[0].next_addr(), ExactTaggedKey::Top);
+        assert_eq!(leaves[0].value(), 0);
+
+        // ⚠ It is NO LONGER the native `CanonicalHeapTree8` empty root: this accumulator left
+        // that (lossy, arity-3, one-felt-address) tree on 2026-07-31. Asserted rather than
+        // merely stated, so a silent revert to the old fold is a red.
+        assert_ne!(
             set.root8(),
             dregg_circuit::heap_root::empty_heap_root_8(),
-            "an empty nullifier set must fold to the native empty node8 root the \
-             circuit's nullifier grow-gate defaults to"
+            "the committed root is the exact linked-leaf tree, not the legacy heap tree"
+        );
+        // And the create-side dual's empty root differs — the domain tags, not the contents,
+        // are what keep the two accumulators from replaying each other.
+        assert_ne!(
+            set.root8(),
+            crate::commitment_set::CommitmentSet::new().root8(),
+            "even the EMPTY spend/create roots must be domain-separated"
         );
     }
 
@@ -899,46 +778,116 @@ mod tests {
         );
     }
 
-    /// **Encoding-match tooth (the load-bearing differential):** `root8` over the
-    /// set equals a `CanonicalHeapTree8` built by REPRODUCING the deployed grow-gate's
-    /// exact after-tree construction from `trace_rotated.rs`
-    /// (`generate_rotated_note_spend_trace_with_nullifier_tree`, lines ~1204/1225):
-    /// each inserted leaf is `HeapLeaf::entry(<spend row NULLIFIER col>, /// <spend row NOTE_VALUE_LO col>)`, where the NULLIFIER column is
-    /// `fold_bytes32_to_bb(nf)` (what the executor threads as `Effect::NoteSpend.nullifier`)
-    /// and NOTE_VALUE_LO is `split_u64(value).0`. Both are folded through the
-    /// circuit's OWN `fold_bytes32_to_bb`/`split_u64` helpers, so this is genuine
-    /// byte-identity with the grow-gate, not a re-assertion of a private formula.
-    /// A drift in this encoding would publish a root the in-circuit open cannot match.
+    /// ⚑ **THE UNIFICATION TOOTH.** `root8` IS the root the exact-AAFI runtime
+    /// (`dregg_circuit::exact_nullifier_aafi::ExactNullifierAafi`) maintains incrementally — the
+    /// object the Lean-authored 1274-constraint exact-AAFI descriptor proves the transition of,
+    /// and the object `circuit-prove::faithful_note_spend_exact_v3` publishes as
+    /// `successor_nullifier_root`.
+    ///
+    /// Before 2026-07-31 there were THREE trees here: this set's committed `root8` (a lossy
+    /// arity-3 `CanonicalHeapTree8`), its `faithful_root8_exact` dual (injective but DENSE, with
+    /// no `next` pointer, so it could not express absence at all), and the exact-AAFI runtime.
+    /// The middle one was what `turn/src/executor/apply.rs`'s live spend admission compared a
+    /// carrier's successor root against, while the prover minted the third — two "exact" roots
+    /// that never agreed. There is now one.
     #[test]
-    fn root8_matches_growgate_after_tree_encoding() {
-        use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
-        use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
+    fn root8_is_the_exact_aafi_runtime_root() {
+        use dregg_circuit::exact_nullifier_aafi::ExactNullifierAafi;
 
         let spends = [
             (make_nullifier(7), make_value(7)),
-            (make_nullifier(42), make_value(42)),
-            (make_nullifier(99), make_value(99)),
+            (make_nullifier(42), 1u64 << 40),
+            (make_nullifier(99), u64::MAX),
         ];
         let mut set = NullifierSet::new();
+        let mut runtime = ExactNullifierAafi::new();
         for (n, v) in &spends {
             set.insert(*n, *v).unwrap();
+            runtime.insert(n.0, *v).expect("fresh key");
+            assert_eq!(
+                set.root8()
+                    .limbs()
+                    .map(dregg_circuit::field::BabyBear::as_u32),
+                runtime.root().map(dregg_circuit::field::BabyBear::as_u32),
+                "the committed root must track the exact-AAFI runtime at EVERY step, not \
+                 only at the end"
+            );
+        }
+        assert_eq!(
+            set.len() as u64 + 1,
+            runtime.count(),
+            "the runtime's count is the set size plus the BOT sentinel slot"
+        );
+
+        // Non-vacuity: it is emphatically NOT the retired grow-gate encoding.
+        use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
+        use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
+        let legacy = CanonicalHeapTree8::new(
+            spends
+                .iter()
+                .map(|(n, v)| HeapLeaf::entry(fold_bytes32_to_bb(&n.0), split_u64(*v).0))
+                .collect(),
+            HEAP_TREE_DEPTH,
+        )
+        .root8();
+        assert_ne!(set.root8(), legacy);
+    }
+
+    /// ⚑ **ANTI-VACUITY: THE ENCODING ROUND-TRIPS.** A scrambling "fix" passes any test that
+    /// only asserts two digests differ. This one asserts the committed leaf vector DECODES:
+    /// every recorded nullifier comes back byte-for-byte out of `addr()`, every recorded value
+    /// comes back as the full `u64` out of `value()`, and the `next_addr()` chain is the sorted
+    /// linked list `BOT < k₀ < … < kₙ < TOP` — the absence bracket, present and total.
+    #[test]
+    fn the_committed_leaf_encoding_round_trips_and_the_bracket_chain_is_total() {
+        use dregg_circuit::exact_nullifier_aafi::ExactTaggedKey;
+
+        let spends = [
+            (Nullifier([0x71; 32]), 0xfedc_ba98_7654_3210u64),
+            (Nullifier([0x03; 32]), 0),
+            (Nullifier([0xa4; 32]), 1u64 << 62),
+            (Nullifier([0x29; 32]), u64::MAX),
+        ];
+        let mut set = NullifierSet::new();
+        for (nf, value) in spends {
+            set.insert(nf, value).unwrap();
         }
 
-        // The grow-gate's after-tree encoding, reconstructed EXACTLY as
-        // `generate_rotated_note_spend_trace_with_nullifier_tree` builds it: the
-        // spend row's `nf_key = trace[0][PARAM_BASE + NULLIFIER]` (= fold(nf)) and
-        // `nf_value = trace[0][PARAM_BASE + NOTE_VALUE_LO]` (= split_u64(value).0).
-        let growgate_leaves: Vec<HeapLeaf> = spends
-            .iter()
-            .map(|(n, v)| HeapLeaf::entry(fold_bytes32_to_bb(&n.0), split_u64(*v).0))
-            .collect();
-        let expected = CanonicalHeapTree8::new(growgate_leaves, HEAP_TREE_DEPTH).root8();
+        let leaves = set.exact_dense_leaves();
+        assert_eq!(leaves.len(), spends.len() + 1);
 
+        // (a) ADDRESS + VALUE round-trip, per record, at the physical slot the record occupies.
+        for (rank, (nf, value)) in spends.iter().enumerate() {
+            let leaf = leaves[rank + 1];
+            assert_eq!(
+                leaf.addr().real_raw_bytes(),
+                Some(nf.0),
+                "all 32 nullifier bytes must decode back out of the committed leaf"
+            );
+            assert_eq!(
+                leaf.value(),
+                *value,
+                "all 64 value bits must decode back out of the committed leaf"
+            );
+        }
+
+        // (b) The pointer chain, walked in KEY order, is strictly increasing and terminates at
+        //     TOP — so every absent key has exactly one bracketing leaf.
+        let mut by_key: Vec<_> = leaves.clone();
+        by_key.sort_by_key(|leaf| leaf.addr());
+        assert_eq!(by_key[0].addr(), ExactTaggedKey::Bot);
+        for window in by_key.windows(2) {
+            assert!(window[0].addr() < window[1].addr());
+            assert_eq!(
+                window[0].next_addr(),
+                window[1].addr(),
+                "each leaf must point at the NEXT LARGER present address"
+            );
+        }
         assert_eq!(
-            set.root8(),
-            expected,
-            "root8 must fold through the EXACT (addr, value) node8 leaf encoding the \
-             deployed noteSpend grow-gate inserts"
+            by_key[by_key.len() - 1].next_addr(),
+            ExactTaggedKey::Top,
+            "the largest present address must point at TOP"
         );
     }
 
@@ -965,13 +914,21 @@ mod tests {
         );
     }
 
-    /// **CONTINUITY tooth (INV-2):** turn N's *after*-root over `S ∪ {nf, value}`
-    /// equals turn N+1's *before*-root over the same set — the property the old
-    /// `value: 1` encoding broke. We model it exactly: the set AFTER inserting a new
-    /// spend on turn N is byte-identical to the set a turn N+1 re-executor rebuilds
-    /// from the same `(nf, value)` records (order-independent — a BTreeMap sorts).
+    /// **CONTINUITY tooth (INV-2), RESTATED AT THE APPEND-ORDER ROOT.** Turn N's *after*-root
+    /// equals turn N+1's *before*-root over the same history.
+    ///
+    /// ⚠ **WHAT CHANGED, SAID PLAINLY.** The committed root used to be insertion-order
+    /// INDEPENDENT (a sorted-compacted tree), and this tooth asserted continuity by re-inserting
+    /// the same records in a DIFFERENT order. It is now the append-at-free-index root — the
+    /// order IS the canonical tau spend sequence (INV-6) — so continuity runs through the
+    /// persisted `seq` column and [`NullifierSet::from_records`], which is the path every real
+    /// reconstruction takes (`persist::Store::faithful_nullifier_root`,
+    /// `plan_faithful_nullifier_successor`, `node::executor_side_state_persistence`). Both poles
+    /// are pinned: the record-replay reconstruction AGREES, and a naive re-insertion in a
+    /// different order does NOT — which is why the seq column is load-bearing rather than
+    /// decorative.
     #[test]
-    fn root8_is_cross_turn_continuous() {
+    fn root8_is_cross_turn_continuous_through_the_append_order() {
         let base = [
             (make_nullifier(10), make_value(10)),
             (make_nullifier(20), make_value(20)),
@@ -986,20 +943,30 @@ mod tests {
         turn_n.insert(new_spend.0, new_spend.1).unwrap();
         let after_root_n = turn_n.root8();
 
-        // Turn N+1: a re-executor reconstructs S ∪ {new_spend} from the durable
-        // (nf, value) records — here in a DIFFERENT insertion order — and reads its
-        // BEFORE root. It must equal turn N's after-root.
-        let mut turn_n1 = NullifierSet::new();
-        turn_n1.insert(new_spend.0, new_spend.1).unwrap();
-        for (nf, v) in base.iter().rev() {
-            turn_n1.insert(*nf, *v).unwrap();
-        }
-        let before_root_n1 = turn_n1.root8();
+        // Turn N+1: a re-executor reconstructs the history from the durable
+        // `(nf, value, seq)` records, handed back in a HOSTILE (key-sorted) storage order.
+        let mut records: Vec<(Nullifier, u64, u64)> = turn_n.iter_in_append_order().collect();
+        records.sort_by_key(|(nf, _, _)| *nf);
+        let turn_n1 = NullifierSet::from_records(records).unwrap();
 
         assert_eq!(
-            after_root_n, before_root_n1,
-            "turn N after-root must equal turn N+1 before-root over the same \
-             (nf, value) set (INV-2 continuity, insertion-order-independent)"
+            after_root_n,
+            turn_n1.root8(),
+            "turn N after-root must equal turn N+1 before-root over the same history, \
+             reconstructed through the persisted seq column"
+        );
+
+        // NON-VACUITY, and the statement of the semantic change: the append ORDER is bound.
+        let mut reordered = NullifierSet::new();
+        reordered.insert(new_spend.0, new_spend.1).unwrap();
+        for (nf, v) in base.iter().rev() {
+            reordered.insert(*nf, *v).unwrap();
+        }
+        assert_ne!(
+            after_root_n,
+            reordered.root8(),
+            "the committed root is append-order dependent — the same SET reached by a \
+             different spend sequence is a different history and commits differently"
         );
     }
 
@@ -1038,13 +1005,13 @@ mod tests {
              sorted-key order or it proves nothing"
         );
 
-        // The AAFI leaf sequence is the accumulator leaves in tau order.
-        let expected_leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = nfs
-            .iter()
-            .enumerate()
-            .map(|(i, nf)| NullifierSet::accumulator_leaf(&nf.0, 100 + i as u64))
-            .collect();
-        assert_eq!(set.aafi_leaves(), expected_leaves);
+        // The committed leaf sequence follows tau order: the i-th inserted nullifier and its
+        // value are at physical slot i + 1, decoded back out of the leaf.
+        let leaves = set.exact_dense_leaves();
+        for (i, nf) in nfs.iter().enumerate() {
+            assert_eq!(leaves[i + 1].addr().real_raw_bytes(), Some(nf.0));
+            assert_eq!(leaves[i + 1].value(), 100 + i as u64);
+        }
     }
 
     /// **A8 tooth — reconstruction FIXES the append order:** records exported
@@ -1076,9 +1043,9 @@ mod tests {
              persisted seq column, not the storage yield order"
         );
         assert_eq!(
-            rebuilt.aafi_leaves(),
-            original.aafi_leaves(),
-            "the AAFI leaf sequence (the order-dependent root's input) must be \
+            rebuilt.exact_dense_leaves(),
+            original.exact_dense_leaves(),
+            "the committed dense leaf vector (the order-dependent root's input) must be \
              identical after reconstruction"
         );
         for nf in &nfs {
@@ -1091,7 +1058,8 @@ mod tests {
         assert_eq!(
             rebuilt.root8(),
             original.root8(),
-            "ADDITIVE: the sorted-compacted root8 lineage is untouched"
+            "and therefore so is the committed root — this is the reconstruction path \
+             every durable replay takes"
         );
     }
 
@@ -1131,42 +1099,34 @@ mod tests {
         assert_eq!(set.aafi_next_free_index(), 3);
     }
 
-    #[test]
-    fn exact_nullifier_and_value_codecs_are_injective_u16_limbs() {
-        let mut nullifier = [0u8; 32];
-        nullifier[0..2].copy_from_slice(&0x3210u16.to_le_bytes());
-        nullifier[30..32].copy_from_slice(&0xfedcu16.to_le_bytes());
-        let nullifier_lanes = exact_nullifier_lanes16(&nullifier);
-        assert_eq!(nullifier_lanes[0], BabyBear::new(0x3210));
-        assert_eq!(nullifier_lanes[15], BabyBear::new(0xfedc));
-        assert!(
-            nullifier_lanes
+    /// The legacy committed encoding, computed here so the aliasing exhibits below name a REAL
+    /// object rather than a remembered one: `HeapLeaf::entry(fold_bytes32_to_bb(nf),
+    /// split_u64(value).0)` folded through a `CanonicalHeapTree8`. This is what
+    /// `NullifierSet::root8` was until 2026-07-31.
+    fn legacy_committed_root8(records: &[(Nullifier, u64)]) -> dregg_circuit::Faithful8 {
+        use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
+        use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
+        CanonicalHeapTree8::new(
+            records
                 .iter()
-                .all(|lane| lane.as_u32() <= u16::MAX as u32)
-        );
-
-        let value_lanes = exact_nullifier_value_lanes4(0xfedc_ba98_7654_3210);
-        assert_eq!(
-            value_lanes.map(|lane| lane.as_u32()),
-            [0x3210, 0x7654, 0xba98, 0xfedc]
-        );
+                .map(|(n, v)| HeapLeaf::entry(fold_bytes32_to_bb(&n.0), split_u64(*v).0))
+                .collect(),
+            HEAP_TREE_DEPTH,
+        )
+        .root8()
     }
 
-    /// A raw high-chunk mutation by exactly the BabyBear modulus is a
-    /// deterministic collision in the legacy `u32 mod p` nullifier fold.  The
-    /// exact sixteen-u16 tree must distinguish it.
+    /// ⚑ **A2 CLOSED AT THE COMMITTED ROOT.** A raw high-chunk mutation by exactly the BabyBear
+    /// modulus is a deterministic, zero-cost collision in the legacy `u32 mod p` address fold.
+    /// The legacy committed root cannot see it; the committed root now does — and the nullifier
+    /// bytes DECODE back out of the leaf, so this is a binding, not a scramble.
     ///
-    /// ⚠ THE BASE MUST NOT FOLD TO ZERO. This fixture used the ALL-ZEROS nullifier
-    /// until 2026-07-28, and `fold_bytes32_to_bb([0u8; 32])` is `0` — which is
-    /// [`dregg_circuit::heap_root::SENTINEL_MIN`], the address of the genesis IMT
-    /// sentinel. So the committed accumulator held TWO leaves at address 0, and the
-    /// silent `dedup_by_key` the builders then ran EVICTED THE GENESIS SENTINEL —
-    /// the low bracket every non-membership opening straddles. That builder now
-    /// REFUSES a repeated address (`heap_root::assert_addr_unique`), which is what
-    /// surfaced it. The aliasing property under test is unrelated to the base, so
-    /// the base is simply moved off zero and pinned there.
+    /// ⚠ THE BASE MUST NOT FOLD TO ZERO. This fixture used the ALL-ZEROS nullifier until
+    /// 2026-07-28, and `fold_bytes32_to_bb([0u8; 32])` is `0` — which is
+    /// [`dregg_circuit::heap_root::SENTINEL_MIN`]. The aliasing property under test is unrelated
+    /// to the base, so the base is simply moved off zero and pinned there.
     #[test]
-    fn faithful_root8_exact_rejects_legacy_high_byte_nullifier_alias() {
+    fn the_committed_root_binds_the_high_nullifier_bytes_the_legacy_fold_aliased() {
         use dregg_circuit::field::BABYBEAR_P;
 
         // A nonzero base, so the legacy fold lands away from the sentinel address.
@@ -1196,22 +1156,34 @@ mod tests {
         let mut alias_set = NullifierSet::new();
         alias_set.insert(high_chunk_alias, 17).unwrap();
 
+        // POLE 1 — the wound, at the object that carried it.
         assert_eq!(
+            legacy_committed_root8(&[(base, 17)]),
+            legacy_committed_root8(&[(high_chunk_alias, 17)]),
+            "vacuity guard: the LEGACY committed root really did alias these two nullifiers"
+        );
+        // POLE 2 — the repair, at the object that carries the commitment today.
+        assert_ne!(
             base_set.root8(),
             alias_set.root8(),
-            "vacuity guard: legacy accumulator roots really do alias"
+            "the committed root must bind the hostile high nullifier bytes"
         );
-        assert_ne!(
-            base_set.faithful_root8_exact(),
-            alias_set.faithful_root8_exact(),
-            "the exact tree must bind the hostile high nullifier bytes"
+        // ANTI-VACUITY — not a scramble: both nullifiers decode back out of their leaves.
+        assert_eq!(
+            base_set.exact_dense_leaves()[1].addr().real_raw_bytes(),
+            Some(base.0)
+        );
+        assert_eq!(
+            alias_set.exact_dense_leaves()[1].addr().real_raw_bytes(),
+            Some(high_chunk_alias.0)
         );
     }
 
-    /// Values with equal low 30 bits are identical in the legacy grow-gate
-    /// leaf.  The exact four-u16 value carrier must bind the high bits too.
+    /// ⚑ **A3 CLOSED AT THE COMMITTED ROOT.** Values with equal low 30 bits were identical in
+    /// the legacy grow-gate leaf (`split_u64(value).0`). The committed four-`u16` value carrier
+    /// binds all 64 bits — and the value ROUND-TRIPS, so the binding is a real widening.
     #[test]
-    fn faithful_root8_exact_rejects_legacy_high_value_alias() {
+    fn the_committed_root_binds_all_64_value_bits_the_legacy_leaf_erased() {
         let nullifier = Nullifier([0x5a; 32]);
         let low_value = 17u64;
         let high_value = low_value | (1u64 << 50);
@@ -1227,21 +1199,150 @@ mod tests {
         high_set.insert(nullifier, high_value).unwrap();
 
         assert_eq!(
-            low_set.root8(),
-            high_set.root8(),
-            "vacuity guard: legacy accumulator roots really do erase these high value bits"
+            legacy_committed_root8(&[(nullifier, low_value)]),
+            legacy_committed_root8(&[(nullifier, high_value)]),
+            "vacuity guard: the LEGACY committed root really did erase these high value bits"
         );
         assert_ne!(
-            low_set.faithful_root8_exact(),
-            high_set.faithful_root8_exact(),
-            "the exact tree must bind all 64 spent-note value bits"
+            low_set.root8(),
+            high_set.root8(),
+            "the committed root must bind all 64 spent-note value bits"
+        );
+        assert_eq!(low_set.exact_dense_leaves()[1].value(), low_value);
+        assert_eq!(high_set.exact_dense_leaves()[1].value(), high_value);
+    }
+
+    /// ⚑ **THE NON-MEMBERSHIP FORGERY THE HALF-WIDE SCHEMA ADMITS IS UNSAT HERE.**
+    ///
+    /// `Dregg2/Circuit/MapOpWideKeyGate.lean::halfWideLeaf_forges_absence_of_present` proves —
+    /// for EVERY hash, with NO collision-resistance hypothesis — that a leaf schema which widens
+    /// the ADDRESS but projects the POINTER to one felt gives the honest low leaf
+    /// `<keyLo, v, keyE>` and the fabricated `<keyLo, v, ptrHi>` the SAME digest whenever `keyE`
+    /// and `ptrHi` agree on that projection. The honest bracket `(keyLo, keyE)` does not contain
+    /// `keyE`; the fabricated bracket `(keyLo, ptrHi)` DOES — so a prover opening the committed
+    /// digest proves `keyE` ABSENT while `keyE` is a PRESENT address of the very chain that
+    /// digest commits to.
+    ///
+    /// This is that attack, instantiated at real 32-byte keys under the deployed
+    /// `fold_bytes32_to_bb` projection, against BOTH schemas:
+    ///
+    /// * under the retired arity-3 leaf the two leaves are BIT-IDENTICAL — the forgery is
+    ///   available, and the test says so rather than assuming it; and
+    /// * under the committed `FNI2 ‖ addr17 ‖ value4 ‖ next17` leaf the pointer rides all
+    ///   sixteen `u16` limbs plus a tag, so the two digests DIFFER and the fabricated bracket is
+    ///   not representable at the committed root.
+    #[test]
+    fn the_half_wide_non_membership_forgery_is_unsat_at_the_committed_leaf() {
+        use dregg_circuit::effect_vm::fold_bytes32_to_bb;
+        use dregg_circuit::exact_nullifier_aafi::{
+            EXACT_NULLIFIER_AAFI_DOMAINS, ExactLinkedLeaf, ExactTaggedKey, LinkedLeafWire,
+            exact_leaf_digest_in, u64_to_u16_le,
+        };
+        use dregg_circuit::field::BABYBEAR_P;
+
+        // `key_e` and `ptr_hi` are DISTINCT 32-byte keys that collide under the one-felt
+        // projection — the same `+p` high-chunk construction the A2 exhibit uses.
+        let mut key_lo_bytes = [0u8; 32];
+        key_lo_bytes[0] = 0x01;
+        let mut key_e_bytes = [0u8; 32];
+        key_e_bytes[0] = 0xA7;
+        let mut ptr_hi_bytes = key_e_bytes;
+        ptr_hi_bytes[28..32].copy_from_slice(&BABYBEAR_P.to_le_bytes());
+
+        assert_ne!(
+            key_e_bytes, ptr_hi_bytes,
+            "the two pointers must be distinct"
+        );
+        assert_eq!(
+            fold_bytes32_to_bb(&key_e_bytes),
+            fold_bytes32_to_bb(&ptr_hi_bytes),
+            "vacuity guard: the two pointers must COLLIDE under the one-felt projection, or \
+             the forgery is not available under the narrow schema either"
+        );
+        // ⚠ At the TAGGED-KEY order the bracket actually uses (`u16`-limb lex), not byte lex —
+        // the module's own KAT records that the two disagree, so testing the wrong one would
+        // make this guard accidentally right.
+        let (k_lo, k_e, p_hi) = (
+            ExactTaggedKey::from_raw(key_lo_bytes),
+            ExactTaggedKey::from_raw(key_e_bytes),
+            ExactTaggedKey::from_raw(ptr_hi_bytes),
+        );
+        assert!(
+            k_lo < k_e && k_e < p_hi,
+            "vacuity guard: the fabricated bracket (keyLo, ptrHi) must be strictly WIDER than \
+             the honest one (keyLo, keyE), so that it genuinely contains the present key"
+        );
+
+        // POLE 1 — THE FORGERY IS AVAILABLE UNDER THE RETIRED SCHEMA. `HeapLeaf`'s preimage is
+        // `[addr, value, next_addr]`, all three projected to one felt; the honest and fabricated
+        // leaves are literally equal, so no hash can tell them apart.
+        {
+            use dregg_circuit::heap_root::HeapLeaf;
+            let honest = HeapLeaf {
+                addr: fold_bytes32_to_bb(&key_lo_bytes),
+                value: dregg_circuit::field::BabyBear::new(1),
+                next_addr: fold_bytes32_to_bb(&key_e_bytes),
+            };
+            let forged = HeapLeaf {
+                addr: fold_bytes32_to_bb(&key_lo_bytes),
+                value: dregg_circuit::field::BabyBear::new(1),
+                next_addr: fold_bytes32_to_bb(&ptr_hi_bytes),
+            };
+            assert_eq!(
+                honest.preimage(),
+                forged.preimage(),
+                "the retired leaf admits the half-wide non-membership forgery: the honest and \
+                 fabricated brackets share one preimage"
+            );
+            assert_eq!(honest.digest(), forged.digest());
+        }
+
+        // POLE 2 — THE FORGERY IS UNSAT AT THE COMMITTED LEAF.
+        let decode = |addr: [u8; 32], next: [u8; 32]| {
+            ExactLinkedLeaf::decode(LinkedLeafWire {
+                addr: ExactTaggedKey::from_raw(addr).wire(),
+                value_u16_le: u64_to_u16_le(1),
+                next_addr: ExactTaggedKey::from_raw(next).wire(),
+            })
+            .expect("both endpoints are REAL keys")
+        };
+        let honest = decode(key_lo_bytes, key_e_bytes);
+        let forged = decode(key_lo_bytes, ptr_hi_bytes);
+        assert_ne!(
+            exact_leaf_digest_in(EXACT_NULLIFIER_AAFI_DOMAINS, honest),
+            exact_leaf_digest_in(EXACT_NULLIFIER_AAFI_DOMAINS, forged),
+            "the committed leaf must distinguish the honest bracket from the fabricated one"
+        );
+        // …and the fabricated pointer is not merely a different digest, it is a different KEY:
+        // the pointer decodes back to its own 32 bytes.
+        assert_eq!(honest.next_addr().real_raw_bytes(), Some(key_e_bytes));
+        assert_eq!(forged.next_addr().real_raw_bytes(), Some(ptr_hi_bytes));
+
+        // POLE 3 — AND THE FORGERY DOES NOT REACH THE COMMITTED ROOT AT ALL. Building the real
+        // accumulator over `{key_lo, key_e}` links `key_lo -> key_e`; there is no witness in
+        // which `key_lo` points past a present key.
+        let mut set = NullifierSet::new();
+        set.insert(Nullifier(key_lo_bytes), 1).unwrap();
+        set.insert(Nullifier(key_e_bytes), 1).unwrap();
+        let leaves = set.exact_dense_leaves();
+        let low = leaves
+            .iter()
+            .find(|leaf| leaf.addr().real_raw_bytes() == Some(key_lo_bytes))
+            .expect("the low key is present");
+        assert_eq!(
+            low.next_addr().real_raw_bytes(),
+            Some(key_e_bytes),
+            "the committed low leaf brackets exactly to the next PRESENT key — the wider \
+             fabricated bracket has no representative in the committed tree"
         );
     }
 
+    /// The committed root is append-order DEPENDENT (it is the AAFI fold), and the record
+    /// round-trip is what makes that deterministic. Both poles.
     #[test]
-    fn faithful_root8_exact_is_insertion_order_independent() {
+    fn the_committed_root_is_append_order_bound_and_replay_stable() {
         let records = [
-            (Nullifier([0x71; 32]), 0xfedc_ba98_7654_3210),
+            (Nullifier([0x71; 32]), 0xfedc_ba98_7654_3210u64),
             (Nullifier([0x03; 32]), 7),
             (Nullifier([0xa4; 32]), 1u64 << 63),
             (Nullifier([0x29; 32]), u64::MAX),
@@ -1261,16 +1362,26 @@ mod tests {
             reverse.iter_in_append_order().collect::<Vec<_>>(),
             "vacuity guard: append histories must genuinely differ"
         );
+        assert_ne!(
+            forward.root8(),
+            reverse.root8(),
+            "two different spend SEQUENCES over the same set are two different histories"
+        );
+
+        let replayed =
+            NullifierSet::from_records(forward.iter_in_append_order().collect::<Vec<_>>()).unwrap();
         assert_eq!(
-            forward.faithful_root8_exact(),
-            reverse.faithful_root8_exact(),
-            "sorted BTreeMap order must define one canonical exact root"
+            forward.root8(),
+            replayed.root8(),
+            "and the durable record replay reproduces the history exactly"
         );
     }
 
+    /// The committed protocol root, pinned. Any change to the domain tags, the leaf schema, the
+    /// pointer linkage, the arity or the depth moves these.
     #[test]
-    fn faithful_root8_exact_protocol_kat() {
-        let empty = NullifierSet::new().faithful_root8_exact();
+    fn committed_root8_protocol_kat() {
+        let empty = NullifierSet::new().root8();
 
         let records = [
             (Nullifier([0x00; 32]), 0),
@@ -1281,35 +1392,35 @@ mod tests {
         for (nullifier, value) in records {
             populated.insert(nullifier, value).unwrap();
         }
-        let populated = populated.faithful_root8_exact();
+        let populated = populated.root8();
 
         assert_eq!(
             empty.limbs().map(BabyBear::as_u32),
             [
-                768_613_698,
-                1_452_235_473,
-                718_406_171,
-                1_903_835_779,
-                1_364_836_315,
-                473_124_031,
-                551_926_833,
-                749_468_772,
+                1_063_616_748,
+                556_571_557,
+                1_365_559_798,
+                676_329_831,
+                237_569_590,
+                816_709_115,
+                331_999_350,
+                706_381_556,
             ],
-            "depth-16 exact empty-root KAT drift"
+            "depth-16 committed empty-root KAT drift"
         );
         assert_eq!(
             populated.limbs().map(BabyBear::as_u32),
             [
-                1_647_317_803,
-                728_336_069,
-                1_383_164_904,
-                1_719_721_481,
-                1_680_827_369,
-                1_264_445_032,
-                1_706_504_034,
-                869_270_356,
+                1_109_381_348,
+                607_456_375,
+                1_517_686_098,
+                968_324_157,
+                877_318_795,
+                1_910_849_679,
+                1_229_883_632,
+                36_666_916,
             ],
-            "three-record exact-root KAT drift"
+            "three-record committed-root KAT drift"
         );
     }
 }

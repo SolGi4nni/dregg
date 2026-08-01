@@ -413,7 +413,7 @@ structure DelegateAttenCapsTreeEncodes (S8 : Cap8Scheme)
   guard : DelegateAttenGuard pre del t
   -- THE NAMED `Caps`-FUNCTION RESIDUAL (the attenuated grant).
   capsMove : post.kernel.caps
-    = grant pre.kernel.caps rec (attenuate keep (heldCapTo pre.kernel.caps del t))
+    = grant pre.kernel.caps rec (attenuate keep (delegatedCapTo pre.kernel.caps del t))
   logAdv : post.log = authReceipt del :: pre.log
   frame : KernelFrameExceptCaps pre post
 
@@ -447,8 +447,8 @@ the committed step the refinement forces. Reuses `delegateAttenCaps_correct`. -/
 theorem delegateAtten_non_amplifying (S8 : Cap8Scheme)
     (pre post : RecChainedState) (del rec t : CellId) (keep : List Auth)
     (_henc : DelegateAttenCapsTreeEncodes S8 pre post del rec t keep) :
-    confRights (attenuate keep (heldCapTo pre.kernel.caps del t))
-      ≤ confRights (heldCapTo pre.kernel.caps del t) :=
+    confRights (attenuate keep (delegatedCapTo pre.kernel.caps del t))
+      ≤ confRights (delegatedCapTo pre.kernel.caps del t) :=
   (Dregg2.Circuit.Spec.AuthorityAttenuation.delegateAttenCaps_correct
     pre.kernel.caps del rec t keep).2.1
 

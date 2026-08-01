@@ -51,8 +51,8 @@ copying its held `t`-cap to `recipient` — exactly what the deployed `recKDeleg
 makes `recipient` reach `t` in the executor's graph. Rides `recKDelegate_execGraph` (the cap-edit IS
 `addEdge`). -/
 theorem delegate_unlocks_reach (caps : Caps) (delegator recipient t : Label)
-    (hg : (caps delegator).any (fun cap => confersEdgeTo t cap) = true) :
-    ReachesGraph (grant caps recipient (heldCapTo caps delegator t)) recipient t := by
+    (hg : t = delegator ∨ (caps delegator).any (fun cap => confersEdgeTo t cap) = true) :
+    ReachesGraph (grant caps recipient (delegatedCapTo caps delegator t)) recipient t := by
   refine ⟨(), ?_⟩
   rw [recKDelegate_execGraph caps delegator recipient t hg]
   exact Or.inr ⟨rfl, rfl⟩
@@ -63,10 +63,13 @@ discharged by the executor's own `recKDelegate_grounds` (the source edge held). 
 theorem exec_delegate_unlocks (k k' : RecordKernelState) (delegator recipient t : Label)
     (h : recKDelegate k delegator recipient t = some k') :
     ReachesGraph k'.caps recipient t := by
-  have hg : (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true := by
-    have hsrc := recKDelegate_grounds k k' delegator recipient t h
-    rwa [execGraph_eq_any] at hsrc
-  have h2 : k' = { k with caps := grant k.caps recipient (heldCapTo k.caps delegator t) } := by
+  -- ⚑ the gate is OWNER-OR-CONNECTIVITY as of the 2026-07-31 cutover; reach is unlocked on BOTH
+  -- paths (the self path grants the implicit `Cap.node t`, which confers the edge just as a copied
+  -- held cap does), so this governance conclusion is unchanged.
+  have hg : t = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo t cap) = true :=
+    (recKDelegate_grounds k k' delegator recipient t h).imp id
+      (fun hs => by rwa [execGraph_eq_any] at hs)
+  have h2 : k' = { k with caps := grant k.caps recipient (delegatedCapTo k.caps delegator t) } := by
     unfold recKDelegate at h; rw [if_pos hg] at h; exact (Option.some.inj h).symm
   rw [h2]; exact delegate_unlocks_reach k.caps delegator recipient t hg
 
@@ -145,8 +148,8 @@ theorem capsA_gate : (capsA A).any (fun cap => confersEdgeTo B cap) = true := by
 /-- **AFTER the deployed delegate turn `A ▸ C` of `B`, `C` reaches `B`** — the unlock is the
 executor's own `addEdge`, run on the real cap-state, not a hand-edit. -/
 theorem C_reaches_B_after_delegate :
-    ReachesGraph (grant capsA C (heldCapTo capsA A B)) C B :=
-  delegate_unlocks_reach capsA A C B capsA_gate
+    ReachesGraph (grant capsA C (delegatedCapTo capsA A B)) C B :=
+  delegate_unlocks_reach capsA A C B (Or.inr capsA_gate)
 
 /-- **AFTER the deployed revoke turn on `A`'s edge to `B`, `A` no longer reaches `B`** — the executor's
 own `removeEdge`. -/

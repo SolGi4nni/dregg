@@ -199,7 +199,7 @@ theorem recDelegateCaps_finiteDiff (del recp t : CellId) (f : FinKernelState) :
       recDelegateCaps (denote f).caps del recp t l = (denote f).caps l := by
   intro l hl
   simp only [recDelegateCaps]
-  exact grant_finiteDiff recp (heldCapTo (denote f).caps del t) f l hl
+  exact grant_finiteDiff recp (delegatedCapTo (denote f).caps del t) f l hl
 
 /-- `introduceCaps` (introduce) is the `grant` point diff off `{recp}`. -/
 theorem introduceCaps_finiteDiff (introd recp t : CellId) (f : FinKernelState) :
@@ -207,7 +207,7 @@ theorem introduceCaps_finiteDiff (introd recp t : CellId) (f : FinKernelState) :
       introduceCaps introd recp t (denote f) l = (denote f).caps l := by
   intro l hl
   simp only [introduceCaps]
-  exact grant_finiteDiff recp (heldCapTo (denote f).caps introd t) f l hl
+  exact grant_finiteDiff recp (delegatedCapTo (denote f).caps introd t) f l hl
 
 /-- `attenuateSlotF` (attenuate) is a single-slot diff off `{actor}`. -/
 theorem attenuateSlotF_finiteDiff (actor : CellId) (idx : Nat) (keep : List Auth) (f : FinKernelState) :
@@ -363,7 +363,7 @@ theorem delegateAttenStmt_square (del recp t : Label) (keep : List Auth) (f : Fi
       (fun f' =>
         (finInterp (.checkSubset (grantedDelRightsSet del t keep) (heldDelRightsSet del t)) f').bind
           (fun f'' => some (finSetCaps
-            (fun k => grant k.caps recp (attenuate keep (heldCapTo k.caps del t))) {recp} f'')))).map denote
+            (fun k => grant k.caps recp (attenuate keep (delegatedCapTo k.caps del t))) {recp} f'')))).map denote
       = interp (delegateAttenStmt del recp t keep) (denote f) := by
   unfold delegateAttenStmt
   exact denote_seq_compose
@@ -371,8 +371,8 @@ theorem delegateAttenStmt_square (del recp t : Label) (keep : List Auth) (f : Fi
     (fun f' => pureThenWriter_square
       (p := .checkSubset (grantedDelRightsSet del t keep) (heldDelRightsSet del t))
       (fun g => denote_finSetCaps
-        (fun k => grant k.caps recp (attenuate keep (heldCapTo k.caps del t))) {recp} g
-        (grant_finiteDiff recp (attenuate keep (heldCapTo (denote g).caps del t)) g)) f')
+        (fun k => grant k.caps recp (attenuate keep (delegatedCapTo k.caps del t))) {recp} g
+        (grant_finiteDiff recp (attenuate keep (delegatedCapTo (denote g).caps del t)) g)) f')
     f
 
 /-! ### §3c — the per-asset ledger (`setBal`) programs. -/

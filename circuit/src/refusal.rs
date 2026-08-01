@@ -156,6 +156,11 @@ use crate::field::BabyBear;
 /// * `descriptor_ir2.rs:5965` — PI vector length vs `public_input_count`.
 /// * `descriptor_ir2.rs:5949`, `lean_descriptor_air.rs:1818` — empty base trace.
 /// * `descriptor_ir2.rs:5952` — base trace height not a power of two.
+/// * `descriptor_ir2::trace_with_chip_lanes` — base row width vs `producer_owned_width`, the
+///   SHORT direction. Added when the zero-pad was bounded: until then a short row was padded up to
+///   `trace_width` *before* the width check, so it proved and emitted no marker at all — the very
+///   asymmetry [`assert_committed_shape`] was written to cover from the outside. It is a geometry
+///   complaint like the four above and must never read as a verdict on a witness.
 ///
 /// Deliberately **absent**, because they are real verdicts a tooth may legitimately earn: bare
 /// `"must be a power of two"` and `"length mismatch"` (witness-builder validation that several teeth
@@ -166,11 +171,12 @@ use crate::field::BabyBear;
 /// pre-flight and the trace is never read, but refusing an uncommitted-table witness is itself a
 /// soundness gate a tooth may want to attack, so marking them would risk turning a genuine tooth red.
 /// If one is ever found satisfying a forgery tooth, move it here.
-pub const SHAPE_FAULT_MARKERS: [&str; 4] = [
+pub const SHAPE_FAULT_MARKERS: [&str; 5] = [
     "must equal descriptor trace_width",
     "!= descriptor public_input_count",
     "base trace must be non-empty",
     "base trace height",
+    "is short of the PRODUCER-OWNED width",
 ];
 
 /// The [`SHAPE_FAULT_MARKERS`] entry `msg` trips, if any.
@@ -205,12 +211,17 @@ fn reject_shape_fault(what: &str, rendered: &str) {
 /// matching catches the faults we have *seen*, whereas this catches the class. Call it before
 /// proving in any tooth that assembles or mutates a trace by hand.
 ///
-/// It is deliberately stricter than the prover in ONE direction, which is why it is not redundant
-/// with the marker net: `trace_with_chip_lanes` (`descriptor_ir2.rs:6075`) zero-`resize`s a row that
-/// is NARROWER than `trace_width` up to the committed width before the arity pre-flight runs, so a
-/// short row PROVES and emits no marker at all (measured, `heap_write_roundtrip.rs`). Only an
-/// OVER-WIDE row reaches `descriptor_ir2.rs:5957`. A tooth should hand the prover the exact committed
-/// shape rather than rely on that pad, so this pins equality in both directions.
+/// It is still stricter than the prover in ONE direction, which is why it is not redundant with the
+/// marker net. `trace_with_chip_lanes` zero-`resize`s a row that is NARROWER than `trace_width` up
+/// to the committed width, because the appended chip-LANE columns and the gentian refuse aux block
+/// are filled at prove time and no producer needs to know their geometry. That pad is now BOUNDED
+/// by `descriptor_ir2::producer_owned_width` and checked BEFORE it is applied, so a row short of
+/// the producer-owned width is refused and marked (`producer_owned_pad_bound.rs`,
+/// `heap_write_roundtrip.rs::a_short_trace_is_refused_instead_of_padded`) — until 2026-07-31 it
+/// simply PROVED, silently, because the pad ran before the check that was supposed to catch it.
+/// A row inside the weld-owned tail is still accepted by the prover and still refused here: a tooth
+/// should hand over the exact committed shape rather than rely on the pad, so this pins equality in
+/// both directions.
 #[track_caller]
 pub fn assert_committed_shape(
     what: &str,

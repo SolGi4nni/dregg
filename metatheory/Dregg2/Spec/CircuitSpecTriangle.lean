@@ -382,7 +382,7 @@ delegation, written from protocol intent: the recipient's slot GAINS exactly the
 to `t`, attenuated to `keep` (`grant … (attenuate keep (heldCapTo …))`); every OTHER slot untouched.
 This is `FunctionalRefinement.delegateSpec`'s caps projection, re-expressed at the circuit args. -/
 def intentDelegateCaps (caps : Caps) (del rec t : CellId) (keep : List Auth) : Caps :=
-  grant caps rec (attenuate keep (heldCapTo caps del t))
+  grant caps rec (delegatedAttenCapTo caps del t keep)
 
 /-- **`intentRevokeCaps caps holder t`** — the INTENT cap function of a revocation: the holder's slot
 DROPS every cap conferring an edge to `t` (`filter ¬confersEdgeTo`), every OTHER slot untouched.
@@ -752,7 +752,7 @@ introduction: the recipient's slot GAINS the delegator's WHOLE held cap to `t` (
 …)` — no attenuation), every other slot untouched. Written from intent ("introduce `rec` to `t` with
 my full reach"); the SAME `grant`-of-held-cap the circuit's `recDelegateCaps` installs. -/
 def intentIntroduceCaps (caps : Caps) (del rec t : CellId) : Caps :=
-  grant caps rec (heldCapTo caps del t)
+  grant caps rec (delegatedCapTo caps del t)
 
 /-- **`intentIntroduceCaps_eq_recDelegateCaps` (definitional identity).** -/
 theorem intentIntroduceCaps_eq_recDelegateCaps (caps : Caps) (del rec t : CellId) :

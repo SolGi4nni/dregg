@@ -39,6 +39,7 @@ namespace Dregg2.Agent
 open Dregg2.Authority (Cap Auth Label Caps)
 open Dregg2.Exec
   (RecordKernelState recKDelegateAtten recKRevokeTarget confersEdgeTo heldCapTo
+   delegatedCapTo delegatedAttenCapTo
    attenuate confRights attenuate_confRights_le grant recTotal rs0
    recKDelegateAtten_grants recKDelegateAtten_frame)
 
@@ -234,7 +235,7 @@ theorem materialize_non_amplifying (m : Mandate) (k k' : RecordKernelState)
 holds precisely what the mandate describes — nothing more). -/
 theorem materialize_grants (m : Mandate) (k k' : RecordKernelState)
     (h : m.materialize k = some k') :
-    attenuate m.keep (heldCapTo k.caps m.grantor m.target) ∈ k'.caps m.holder :=
+    delegatedAttenCapTo k.caps m.grantor m.target m.keep ∈ k'.caps m.holder :=
   recKDelegateAtten_grants k k' m.grantor m.holder m.target m.keep h
 
 /-- Materialization is balance-NEUTRAL: granting a mandate moves authority, never value

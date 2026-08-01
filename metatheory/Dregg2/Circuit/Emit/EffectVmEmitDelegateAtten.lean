@@ -7,7 +7,7 @@
 
 `delegateAttenA` (`Inst/delegateAttenA.lean`) is a `caps`-touching v2 instance: it touches the `caps`
 table as a WHOLE-FUNCTION injective digest, predicted post value
-`grant caps recv (attenuate keep (heldCapTo caps del t))` (the recipient's slot GAINS an ATTENUATED copy
+`grant caps recv (attenuate keep (delegatedCapTo caps del t))` (the recipient's slot GAINS an ATTENUATED copy
 of the delegator's held `t`-conferring cap), freezes the other 16 kernel fields, GATED by
 `DelegateAttenGuard`. Its validation `delegateAttenA_full_sound ⇒ DelegateAttenSpec` is DONE.
 
@@ -117,9 +117,9 @@ theorem delegateAttenDescriptor_full_sound (env : VmRowEnv) (pre post : CellStat
 /-! ## §3 — THE CONNECTOR — `capRootProj` to universe-A's `delegateAttenA_full_sound`. -/
 
 /-- The predicted post cap-digest the descriptor's `param.CAP_DIGEST_NEW` carries for `delegateAttenA`:
-`D` of the ATTENUATED grant `grant caps recv (attenuate keep (heldCapTo caps del t))`. -/
+`D` of the ATTENUATED grant `grant caps recv (attenuate keep (delegatedCapTo caps del t))`. -/
 def delegateAttenCapDigestNew (D : Caps → ℤ) (s : RecChainedState) (args : DelegateAttenArgs) : ℤ :=
-  D (grant s.kernel.caps args.recv (attenuate args.keep (heldCapTo s.kernel.caps args.del args.t)))
+  D (grant s.kernel.caps args.recv (attenuate args.keep (delegatedCapTo s.kernel.caps args.del args.t)))
 
 /-- **`unify_delegateAtten` — THE CONNECTOR.** When `DelegateAttenSpec` holds, the projected post-`cap_root`
 is EXACTLY the attenuated-grant cap-digest `delegateAttenCapDigestNew D s args` — the column move the
@@ -128,10 +128,10 @@ theorem unify_delegateAtten (D : Caps → ℤ) (s : RecChainedState) (args : Del
     (s' : RecChainedState)
     (hspec : DelegateAttenSpec s args.del args.recv args.t args.keep s') :
     capRootProj D s'.kernel = delegateAttenCapDigestNew D s args := by
-  -- DelegateAttenSpec's `caps` clause: `s'.kernel.caps = grant caps recv (attenuate keep (heldCapTo …))`.
+  -- DelegateAttenSpec's `caps` clause: `s'.kernel.caps = grant caps recv (attenuate keep (delegatedCapTo …))`.
   obtain ⟨_hguard, hcaps, _⟩ := hspec
   show D s'.kernel.caps
-      = D (grant s.kernel.caps args.recv (attenuate args.keep (heldCapTo s.kernel.caps args.del args.t)))
+      = D (grant s.kernel.caps args.recv (attenuate args.keep (delegatedCapTo s.kernel.caps args.del args.t)))
   rw [hcaps]
 
 /-- **`unify_delegateAtten_via_full_sound` — inherits the VALIDATED guarantee.** Chaining

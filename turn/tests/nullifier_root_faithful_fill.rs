@@ -84,16 +84,28 @@ fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
     );
 }
 
-/// (c) A non-spend turn commits the NATIVE empty default (`empty_heap_root_8`), NOT `[0u8; 32]`: the
-/// empty-frontier fill writes limbs [26,67..73] as the native empty root's 8 felts, and limb 26
-/// DIFFERS from the OLD lossy `hash_bytes(&[0u8; 32])` — the committed value genuinely SHIFTED.
+/// (c) A non-spend turn commits the accumulator's OWN empty default, NOT `[0u8; 32]` and NOT a
+/// second computation of it: the empty-frontier fill writes limbs [26,68..74] as
+/// `empty_nullifier_root_8()`'s 8 felts, and limb 26 DIFFERS from the OLD lossy
+/// `hash_bytes(&[0u8; 32])` — the committed value genuinely SHIFTED.
+///
+/// ⚑ 2026-07-31: the empty default is no longer `empty_heap_root_8()`. Both note accumulators
+/// left the arity-3 `CanonicalHeapTree8` leaf for the exact tagged linked leaf
+/// (`dom ‖ addr17 ‖ value4 ‖ next17`), so the empty accumulator is the lone
+/// `BOT(value=0, next=TOP)` sentinel under the `FNI2` domain. That it is NOT the heap-tree empty
+/// root is asserted rather than assumed, so a silent revert reds here.
 #[test]
-fn non_spend_turn_commits_native_empty_not_zero_bytes() {
+fn non_spend_turn_commits_the_accumulator_empty_default_not_zero_bytes() {
     let empty = empty_nullifier_root_8();
     assert_eq!(
         empty,
+        NullifierSet::new().root8(),
+        "the empty default must BE a fresh accumulator's committed root, not a re-derivation"
+    );
+    assert_ne!(
+        empty,
         empty_heap_root_8(),
-        "the empty default is the native CanonicalHeapTree8 empty root"
+        "and it is no longer the legacy CanonicalHeapTree8 empty root"
     );
 
     let mut ledger = Ledger::new();

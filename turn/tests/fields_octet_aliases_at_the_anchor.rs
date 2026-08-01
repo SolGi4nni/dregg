@@ -21,12 +21,12 @@
 //!
 //! ═══ WHY THIS TEST EXISTS ════════════════════════════════════════════════════════
 //! The repo has a coherent family of non-injectivity exhibits — `split_u64_is_not_injective.rs`,
-//! `note_value_aliases_at_2_30.rs`, `effects_hash_fold_and_burn_target_width.rs`,
+//! `note_value_alias_at_2_30_closed.rs`, `effects_hash_fold_and_burn_target_width.rs`,
 //! `byte_to_felt_codec_pins.rs`, `dregg-codec/src/limbs.rs` — and the fields octet had **no member**.
 //! A documented wound is not a detected one: three separate docstrings claimed this commitment was
 //! "faithful" and nothing could contradict them.
 //!
-//! Built on `note_value_aliases_at_2_30.rs`'s template deliberately, so the two read alike.
+//! Built on `note_value_alias_at_2_30_closed.rs`'s template deliberately, so the two read alike.
 //!
 //! ═══ ⚑ THIS TOOTH'S MEANING HAS BEEN FLIPPED TWICE, AND SAYING SO IS THE POINT ═══
 //!
@@ -87,7 +87,7 @@ fn cell_with(seed: u8) -> Cell {
 /// The signed anchor over a one-cell ledger whose `fields[slot]` holds `value`.
 ///
 /// Empty accumulators throughout: the note/nullifier axes are exercised by
-/// `note_value_aliases_at_2_30.rs`, and holding them fixed isolates the FIELD octet.
+/// `note_value_alias_at_2_30_closed.rs`, and holding them fixed isolates the FIELD octet.
 fn anchor_with_field(seed: u8, slot: usize, value: [u8; 32]) -> [u8; 32] {
     let mut cell = cell_with(seed);
     cell.state.set_field(slot, value);

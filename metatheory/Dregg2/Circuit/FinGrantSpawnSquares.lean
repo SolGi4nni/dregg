@@ -176,7 +176,7 @@ theorem grantCapability_fires :
   have hd := Option.some.inj (by simpa only [interp] using hsq)
   rw [hd]
   show introduceCaps 1 0 2 (denote finInit) 0 = [Cap.null]
-  simp [introduceCaps, grant, heldCapTo, denote, finInit, CanonMap.get_empty]
+  simp [introduceCaps, grant, delegatedCapTo, heldCapTo, denote, finInit, CanonMap.get_empty]
 
 /-- **NEGATIVE — the GrantCapability `setCaps` FiniteDiff BITES over the EMPTY touched set.** The genuine
 `introduceCaps` write changes recipient `0`'s slot (`[] → [Cap.null]`), so the agreement-off-`∅` obligation
@@ -187,7 +187,7 @@ theorem grantCapability_notFiniteDiff_over_empty :
   intro hall
   have h0 := hall 0 (by simp)
   rw [show introduceCaps 1 0 2 (denote finInit) 0 = [Cap.null] from by
-        simp [introduceCaps, grant, heldCapTo, denote, finInit, CanonMap.get_empty]] at h0
+        simp [introduceCaps, grant, delegatedCapTo, heldCapTo, denote, finInit, CanonMap.get_empty]] at h0
   rw [show (denote finInit).caps 0 = [] from by simp [denote, finInit, CanonMap.get_empty]] at h0
   exact absurd h0 (List.cons_ne_nil _ _)
 

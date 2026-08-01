@@ -250,37 +250,44 @@ pub fn committed_height_felt(height: u64) -> BabyBear {
     BabyBear::new((height & 0x7FFF_FFFF) as u32)
 }
 
-/// The faithful 8-felt root of the EMPTY nullifier accumulator — the native `CanonicalHeapTree8`
-/// empty root (only the ONE stored MIN sentinel leaf). THE value a producer passes for `nullifier_root` when
-/// no live accumulator root is threaded (a turn with no note-spend). Byte-identical to a fresh
-/// `dregg_cell::nullifier_set::NullifierSet::root8` (both fold the same empty `CanonicalHeapTree8`),
-/// so the empty default and a live-advanced root ride the SAME lanes.
+/// The faithful 8-felt root of the EMPTY nullifier accumulator — the exact tagged-linked-leaf
+/// (`FNI2`) root over the lone `BOT(value=0, next=TOP)` sentinel leaf. THE value a producer
+/// passes for `nullifier_root` when no live accumulator root is threaded (a turn with no
+/// note-spend).
+///
+/// Derived by CONSTRUCTING a fresh `NullifierSet` rather than re-deriving the fold, so the empty
+/// default and a live-advanced root cannot drift apart: this IS the empty accumulator's `root8`,
+/// not a second computation of it.
 #[inline]
 pub fn empty_nullifier_root_8() -> dregg_circuit::Faithful8 {
-    dregg_circuit::heap_root::empty_heap_root_8()
+    dregg_cell::nullifier_set::NullifierSet::new().root8()
 }
 
-/// The faithful 8-felt root of the EMPTY commitments accumulator — the native `CanonicalHeapTree8`
-/// empty root (only the ONE stored MIN sentinel leaf). THE value a producer passes for `commitments_root` when
-/// no live accumulator root is threaded (a turn with no note-create). Byte-identical to a fresh
-/// `dregg_cell::commitment_set::CommitmentSet::root8` (both fold the same empty `CanonicalHeapTree8`),
-/// so the empty default and a live-advanced root ride the SAME lanes.
+/// The faithful 8-felt root of the EMPTY commitments accumulator — the exact tagged-linked-leaf
+/// (`FCI2`) root over the lone `BOT(value=0, next=TOP)` sentinel leaf. THE value a producer
+/// passes for `commitments_root` when no live accumulator root is threaded (a turn with no
+/// note-create).
+///
+/// Derived by CONSTRUCTING a fresh `CommitmentSet`, for the same reason as the spend-side
+/// sibling above. It is DOMAIN-SEPARATED from that sibling: even the two EMPTY roots differ, so a
+/// create-side opening cannot be replayed as a spend-side one.
 #[inline]
 pub fn empty_commitments_root_8() -> dregg_circuit::Faithful8 {
-    dregg_circuit::heap_root::empty_heap_root_8()
+    dregg_cell::commitment_set::CommitmentSet::new().root8()
 }
 
-/// The faithful 8-felt root of the EMPTY credential-revocation accumulator — the native
-/// `CanonicalHeapTree8` empty root (only the ONE stored MIN sentinel leaf). THE value a producer passes for
-/// `revoked_root` when no live accumulator root is threaded (a turn that revokes nothing — the
-/// common case; the registry is grow-only and starts empty). Byte-identical to a fresh
-/// `dregg_cell::revoked_set::RevokedSet::root8` (both fold the same empty `CanonicalHeapTree8`), so
-/// the empty default and a live-advanced root ride the SAME lanes. This empty default is the
-/// canonical "nothing revoked" root a light client verifies against — it is COMMITTED (not
-/// wire-supplied), so a node cannot substitute a stale root to hide a revocation (hole #139).
+/// The faithful 8-felt root of the EMPTY credential-revocation accumulator — the exact
+/// tagged-linked-leaf (`FRI2`) root over the lone `BOT(value=0, next=TOP)` sentinel leaf. THE
+/// value a producer passes for `revoked_root` when no live accumulator root is threaded (a turn
+/// that revokes nothing — the common case; the registry is grow-only and starts empty).
+///
+/// Derived by CONSTRUCTING a fresh `RevokedSet`, so the empty default and a live-advanced root
+/// cannot drift apart. This empty default is the canonical "nothing revoked" root a light client
+/// verifies against — it is COMMITTED (not wire-supplied), so a node cannot substitute a stale
+/// root to hide a revocation (hole #139).
 #[inline]
 pub fn empty_revoked_root_8() -> dregg_circuit::Faithful8 {
-    dregg_circuit::heap_root::empty_heap_root_8()
+    dregg_cell::revoked_set::RevokedSet::new().root8()
 }
 
 /// **THE `cells_root` PRODUCER** — the turn-level boundary view over the present cells,

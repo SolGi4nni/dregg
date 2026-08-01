@@ -15,9 +15,8 @@ use dregg_circuit::descriptor_ir2_canonical::{
 
 /// Lean-emitted descriptor from which the canonical executable relation envelope is generated.
 /// The staged compatibility wrapper and the turn verifier both execute this same typed relation.
-pub const EXECUTABLE_DESCRIPTOR_JSON: &str = include_str!(
-    "../../circuit/staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
-);
+pub const EXECUTABLE_DESCRIPTOR_JSON: &str =
+    include_str!("../../circuit/descriptors/by-name/faithful-note-spend-exact-v3.json");
 
 /// Exact bytes served by the production by-name descriptor table.  Provenance only.
 pub const PRODUCTION_DESCRIPTOR_JSON: &str =
@@ -123,9 +122,9 @@ pub const PUBLIC_ABI: &[PublicAbiSlot] = &[
     },
 ];
 
-const EXPECTED_TRACE_WIDTH: usize = 3760;
+const EXPECTED_TRACE_WIDTH: usize = 3804;
 const EXPECTED_PUBLIC_INPUTS: usize = 76;
-const EXPECTED_CONSTRAINTS: usize = 1258;
+const EXPECTED_CONSTRAINTS: usize = 1274;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedPublicAbiSlot {
@@ -544,7 +543,7 @@ mod tests {
 
     const EXECUTABLE_HEADER: &str = concat!(
         "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",",
-        "\"ir\":2,\"trace_width\":3760,\"public_input_count\":76,"
+        "\"ir\":2,\"trace_width\":3804,\"public_input_count\":76,"
     );
 
     fn whitespace_and_top_level_key_reordered_json() -> String {
@@ -552,7 +551,7 @@ mod tests {
             .strip_prefix(EXECUTABLE_HEADER)
             .expect("executable descriptor header remains recognized");
         format!(
-            "{{\n  \"public_input_count\" : 76,\n  \"trace_width\" : 3760,\n  \
+            "{{\n  \"public_input_count\" : 76,\n  \"trace_width\" : 3804,\n  \
              \"name\" : \"{PREDICATE_NAME}\",\n  \"ir\" : 2,\n  {body}\n"
         )
     }

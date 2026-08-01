@@ -134,26 +134,31 @@ macro_rules
 /-! ## §3 — `confinement% U` — "authority never exceeds the ceiling `U`".
 
 The capability-confinement shape (`HATCHERY.md §137, §148`) — the seL4 `PasRefined` object-integrity
-upper bound (`Exec/CellConfine.lean`). `confinement% U` expands to a FUNCTION `Auth.control ∈ U →
-CellContract`: the carry needs `control ∈ U` (every connectivity grant confers `[control]`, which must
-lie under the ceiling), so the macro surfaces that hypothesis EXPLICITLY rather than baking it in
-(honest by construction). Applied to a proof `hctrl : Auth.control ∈ U` it yields the contract
+upper bound (`Exec/CellConfine.lean`). `confinement% U` expands to a FUNCTION
+`(∀ a ∈ nodeFacets, a ∈ U) → CellContract`: the carry needs the ceiling to admit the whole implicit
+SELF-CAP, because a committed delegation over the delegator's OWN cell deposits `Cap.node t`, which
+confers all eight `nodeFacets` (`CellConfine.self_grant_needs_the_full_ceiling` exhibits a ceiling
+where the weaker `control ∈ U` premise makes the carry FALSE). The macro surfaces that hypothesis
+EXPLICITLY rather than baking it in (honest by construction). Applied to a proof it yields the
+contract
 `Inv s := CapsConfined U s.kernel.caps` (`shape := .other` — the confinement shape is its own
 category) whose `step_ob` is the proved `cellNextA_confine hctrl` (commit: the forest confinement
 lemma routes every cap-writing effect — grant/attenuate/revoke — under `U`; reject: caps unchanged).
 `.forever` then gives *"caps stay confined by `U` at every index, every schedule"* — capability safety,
 forever, the seL4 shape. -/
 
-/-- **`confinement% U`** — the authority-confinement shape: expands to `(control ∈ U) →
-CellContract`, the contract being `KConfined U ·.kernel` carried by `cellNextA_kconfine`. F3
-STRENGTHENING: the sealed-box channel is DISSOLVED (caps-in-slots, `Apps/CapSlotFactory.lean`), so
-the ceiling needs ONLY `control` — the old `grant`/`reply` hypotheses (the seal-pair caps) are GONE
-and the contract is strictly stronger. Apply to a proof to get a real `CellContract`. -/
+/-- **`confinement% U`** — the authority-confinement shape: expands to
+`(∀ a ∈ nodeFacets, a ∈ U) → CellContract`, the contract being `KConfined U ·.kernel` carried by
+`cellNextA_kconfine`. ⚑ The ceiling premise GREW on 2026-07-31 from `control ∈ U` to
+`nodeFacets ⊆ U`: the kernel cutover let a cell make its FIRST grant over its own cell, and that
+grant deposits the implicit `⊤` self-cap. Strictly stronger premise, same conclusion — so the
+contract applies to fewer ceilings, and that cost is measured, not assumed
+(`self_grant_needs_the_full_ceiling`). Apply to a proof to get a real `CellContract`. -/
 syntax (name := confinementStx) "confinement% " term:max : term
 
 macro_rules
   | `(confinement% $U:term) =>
-    `((fun (h : Auth.control ∈ $U) =>
+    `((fun (h : ∀ a ∈ Dregg2.Authority.nodeFacets, a ∈ $U) =>
         ({  Inv := fun s => KConfined $U s.kernel
             step_ob := fun a cf hf => cellNextA_kconfine h a cf hf
             shape := .other } : KernelForest.Contract)))
@@ -273,13 +278,13 @@ example (sched : SchedA) :
   ((conservation% (0 : AssetId)) fma0).forever rfl sched
 
 /-- **GATE (3) — `confinement% fullAuthCeiling` builds.** The capability-confinement contract under the
-full authority ceiling (which contains `control`, supplied by `by decide`). -/
+full authority ceiling (which admits every `nodeFacets` entry, supplied by `by decide`). -/
 noncomputable def gateConfined : Production.Contract :=
   liftFromKernelForest ((confinement% fullAuthCeiling) (by decide))
 
 /-- **GATE (3, payoff) — `confinement%` reproduces `CellConfine.livingCellA_confinement`.** `KConfined`
 (the c-list ceiling — F3: the ONLY kernel cap surface) stays confined at every index of every
-adversarial trajectory — capability safety, forever, under the `control`-only ceiling (STRONGER). -/
+adversarial trajectory — capability safety, forever, under a ceiling admitting the whole self-cap. -/
 example (s : RecChainedState) (hinit : KConfined fullAuthCeiling s.kernel) (sched : SchedA) :
     ∀ n, KConfined fullAuthCeiling (trajA s sched n).kernel :=
   ((confinement% fullAuthCeiling) (by decide)).forever hinit sched

@@ -196,7 +196,7 @@ fn strict_note_spend_proof(
         planned.insert(prior_nullifier, prior_value).unwrap();
     }
     planned.insert(nullifier, value).unwrap();
-    FaithfulNoteSpendProofCarrier::new(0, planned.faithful_root8_exact().to_bytes32(), vec![0x01])
+    FaithfulNoteSpendProofCarrier::new(0, planned.root8().to_bytes32(), vec![0x01])
         .unwrap()
         .encode()
 }

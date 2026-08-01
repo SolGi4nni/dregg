@@ -519,16 +519,16 @@ discharged by `recKDelegateAtten_non_amplifying` (granted ⊆ held). -/
 theorem grant_authority_fpu (caps : Dregg2.Authority.Caps) (delegator t : CellId)
     (keep : List Rights) :
     Fpu (R := Auth (USet Rights))
-      (.mk (some ⟨confRights (heldCapTo caps delegator t)⟩) 0)
-      (.mk (some ⟨confRights (heldCapTo caps delegator t)⟩)
-           ⟨confRights (attenuate keep (heldCapTo caps delegator t))⟩) := by
+      (.mk (some ⟨confRights (delegatedCapTo caps delegator t)⟩) 0)
+      (.mk (some ⟨confRights (delegatedCapTo caps delegator t)⟩)
+           ⟨confRights (attenuate keep (delegatedCapTo caps delegator t))⟩) := by
   apply conservation_is_fpu
   intro g hg
   rw [zero_add] at hg
   rw [USet.fits_iff] at hg ⊢
   rw [USet.add_set, USet.mk_set]
   refine Finset.union_subset ?_ hg
-  show confRights (attenuate keep (heldCapTo caps delegator t)) ⊆ _
+  show confRights (attenuate keep (delegatedCapTo caps delegator t)) ⊆ _
   rw [← Finset.le_iff_subset]
   exact recKDelegateAtten_non_amplifying caps delegator t keep
 
@@ -537,9 +537,9 @@ theorem grant_authority_fpu (caps : Dregg2.Authority.Caps) (delegator t : CellId
 theorem grant_confines (caps : Dregg2.Authority.Caps) (delegator t : CellId)
     (keep : List Rights) :
     ConfinesAuthority (C := Auth (USet Rights))
-      (Auth.mk (some ⟨confRights (heldCapTo caps delegator t)⟩) 0)
-      (Auth.mk (some ⟨confRights (heldCapTo caps delegator t)⟩)
-           ⟨confRights (attenuate keep (heldCapTo caps delegator t))⟩) :=
+      (Auth.mk (some ⟨confRights (delegatedCapTo caps delegator t)⟩) 0)
+      (Auth.mk (some ⟨confRights (delegatedCapTo caps delegator t)⟩)
+           ⟨confRights (attenuate keep (delegatedCapTo caps delegator t))⟩) :=
   grant_authority_fpu caps delegator t keep
 
 /-- **AUTHORITY NON-VACUITY: an AMPLIFYING grant is provably NOT Fpu.** Granting `write`
@@ -864,7 +864,7 @@ theorem recKDelegateAtten_substrate_frame (k k' : RecordKernelState)
     (h : recKDelegateAtten k d r t keep = some k') :
     k'.bal = k.bal ∧ k'.nullifiers = k.nullifiers ∧ k'.accounts = k.accounts := by
   unfold recKDelegateAtten at h
-  by_cases hg : (k.caps d).any (fun cap => confersEdgeTo t cap) = true
+  by_cases hg : t = d ∨ (k.caps d).any (fun cap => confersEdgeTo t cap) = true
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h; exact ⟨rfl, rfl, rfl⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
@@ -876,12 +876,12 @@ theorem grant_is_fpu (k k' : RecordKernelState) (d r t : CellId) (keep : List Ri
     (h : recKDelegateAtten k d r t keep = some k') (s0 : AssetId → ℤ) :
     Fpu (R := Sub4 k.accounts s0)
       ((.mk (some k.bal) 0),
-       (.mk (some ⟨confRights (heldCapTo k.caps d t)⟩) 0),
+       (.mk (some ⟨confRights (delegatedCapTo k.caps d t)⟩) 0),
        (.mk (some ⟨k.nullifiers.toFinset⟩) 0),
        Heap.emp)
       ((.mk (some k'.bal) 0),
-       (.mk (some ⟨confRights (heldCapTo k.caps d t)⟩)
-            ⟨confRights (attenuate keep (heldCapTo k.caps d t))⟩),
+       (.mk (some ⟨confRights (delegatedCapTo k.caps d t)⟩)
+            ⟨confRights (attenuate keep (delegatedCapTo k.caps d t))⟩),
        (.mk (some ⟨k'.nullifiers.toFinset⟩) 0),
        Heap.emp) := by
   obtain ⟨hbal, hnul, _⟩ := recKDelegateAtten_substrate_frame k k' d r t keep h

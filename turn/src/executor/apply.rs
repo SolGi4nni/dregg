@@ -1717,7 +1717,7 @@ impl TurnExecutor {
                     path.to_vec(),
                 )
             })?;
-            planned.faithful_root8_exact().to_bytes32()
+            planned.root8().to_bytes32()
         };
         if carrier.successor_nullifier_root() != planned_successor {
             return Err((

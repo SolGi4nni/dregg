@@ -392,13 +392,15 @@ theorem onlyConnectivityCloses : OnlyConnectivityCloses := by
 #assert_axioms onlyConnectivityCloses
 
 /-- **The per-step non-amplification IS proved (the closure's single-step ingredient).** A
-committed delegation's added edge `rec ⟶ ⟨t,()⟩` is GROUNDED: the delegator already held connectivity
-to `t` on the pre-graph (`execFull_delegate_grounds`). So no `conserveAddEdge` conjures reachability —
-the closure's per-step content holds, and the run-level lift (`onlyConnectivityCloses`) is proved from
-it by induction on the run. -/
+committed delegation's added edge `rec ⟶ ⟨t,()⟩` is GROUNDED: the delegator either OWNS the cap
+target (`t = del` — the `Spec.Origin` base case, where the authority granted is authority over the
+delegator's own cell and so is not conjured from anywhere) or already held connectivity to `t` on
+the pre-graph (`execFull_delegate_grounds`). So no `conserveAddEdge` conjures reachability into a
+THIRD party's cell — that is the content the right disjunct carries and the left disjunct confines.
+The run-level lift (`onlyConnectivityCloses`) is proved from it by induction on the run. -/
 theorem delegate_step_grounded {s s' : RecChainedState} {del rec t : CellId}
     (h : execFull s (.delegate del rec t) = some s') :
-    execGraph s.kernel.caps del (⟨t, ()⟩ : Cap Label ExecRights) :=
+    t = del ∨ execGraph s.kernel.caps del (⟨t, ()⟩ : Cap Label ExecRights) :=
   TurnExecutorFull.execFull_delegate_grounds s s' del rec t h
 
 /-! ## §6 — Axiom-hygiene tripwires (the honesty pins over every keystone).

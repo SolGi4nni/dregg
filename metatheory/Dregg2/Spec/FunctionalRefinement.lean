@@ -314,7 +314,7 @@ escrows) untouched. Written from intent ("hand `recipient` a `keep`-narrowed cop
 to `target`"). The cap installed is `attenuate keep (heldCapTo …)` — the SAME shape the executor's
 `recKDelegateAtten` commits, which the triangle proves it realizes. -/
 def delegateSpec (k : RecordKernelState) (a : DelegateArgs) : RecordKernelState :=
-  { k with caps := grant k.caps a.recipient (attenuate a.keep (heldCapTo k.caps a.delegator a.target)) }
+  { k with caps := grant k.caps a.recipient (delegatedAttenCapTo k.caps a.delegator a.target a.keep) }
 
 /-- **THE DELEGATE TRIANGLE (FULL BICONDITIONAL).** `delegateAttenStep k a = some k'` IFF the
 Granovetter connectivity premise holds (`delegateGateB` — the delegator already holds a cap conferring
@@ -323,14 +323,14 @@ recipient gains EXACTLY the attenuated held cap, and NO other slot changes — a
 grant to the wrong recipient, or a fresh manufactured cap is excluded); the `←` is completeness. -/
 theorem delegate_triangle (k k' : RecordKernelState) (a : DelegateArgs) :
     delegateAttenStep k a = some k' ↔ (delegateGateB k a = true ∧ k' = delegateSpec k a) := by
-  unfold delegateAttenStep recKDelegateAtten delegateGateB delegateSpec
+  unfold delegateAttenStep recKDelegateAtten delegateSpec
   constructor
   · intro h
-    by_cases hg : (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
+    by_cases hg : a.target = a.delegator ∨ (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
     · rw [if_pos hg] at h; simp only [Option.some.injEq] at h
-      exact ⟨hg, h.symm⟩
+      exact ⟨(Dregg2.Exec.Handlers.Authority.delegateGateB_iff k a).mpr hg, h.symm⟩
     · rw [if_neg hg] at h; exact absurd h (by simp)
-  · rintro ⟨hg, hk⟩; rw [if_pos hg, hk]
+  · rintro ⟨hg, hk⟩; rw [if_pos ((Dregg2.Exec.Handlers.Authority.delegateGateB_iff k a).mp hg), hk]
 
 /-- **ANTI-GHOST TOOTH (delegate).** Any candidate `k'' ≠ delegateSpec k a` is REJECTED — the
 delegation commits EXACTLY the attenuated-held-cap grant; an over-broad cap edge, a grant to the wrong
@@ -992,7 +992,7 @@ EVERYTHING ELSE untouched. Written from intent ("hand `recipient` a copy of the 
 Distinct from `delegateSpec` (§7): introduce copies the FULL held cap; delegate-atten narrows it to
 `keep`. -/
 def introduceSpec (k : RecordKernelState) (delegator recipient target : CellId) : RecordKernelState :=
-  { k with caps := grant k.caps recipient (heldCapTo k.caps delegator target) }
+  { k with caps := grant k.caps recipient (delegatedCapTo k.caps delegator target) }
 
 /-- **THE INTRODUCE TRIANGLE (FULL BICONDITIONAL).** `recKDelegate k delegator recipient target =
 some k'` IFF the Granovetter connectivity premise holds (the delegator already holds a cap conferring an
@@ -1001,12 +1001,13 @@ recipient gains EXACTLY the held cap, no other slot moved); the `←` is complet
 dregg1's `validateHandoff` uses (both route to `recKDelegate`). -/
 theorem introduce_triangle (k k' : RecordKernelState) (delegator recipient target : CellId) :
     recKDelegate k delegator recipient target = some k' ↔
-      ((k.caps delegator).any (fun cap => confersEdgeTo target cap) = true ∧
+      ((target = delegator ∨
+         (k.caps delegator).any (fun cap => confersEdgeTo target cap) = true) ∧
        k' = introduceSpec k delegator recipient target) := by
   unfold recKDelegate introduceSpec
   constructor
   · intro h
-    by_cases hg : (k.caps delegator).any (fun cap => confersEdgeTo target cap) = true
+    by_cases hg : target = delegator ∨ (k.caps delegator).any (fun cap => confersEdgeTo target cap) = true
     · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact ⟨hg, h.symm⟩
     · rw [if_neg hg] at h; exact absurd h (by simp)
   · rintro ⟨hg, hk⟩; rw [if_pos hg, hk]

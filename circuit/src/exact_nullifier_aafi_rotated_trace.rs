@@ -377,9 +377,7 @@ mod tests {
     use crate::exact_nullifier_aafi_trace::marshal_exact_aafi_trace;
     use crate::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
 
-    const STAGED: &str = include_str!(
-        "../staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
-    );
+    const STAGED: &str = include_str!("../descriptors/by-name/faithful-note-spend-exact-v3.json");
 
     fn sample_trace() -> ExactAafiRotatedTraceWitness {
         let state = ExactNullifierAafi::new();

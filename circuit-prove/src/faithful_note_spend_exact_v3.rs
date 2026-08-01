@@ -8,7 +8,7 @@
 //!   nullifier transition through column `2442`;
 //! * [`dregg_circuit::exact_nullifier_aafi_rotated_trace`] welds its FNS3 before/after checkpoints
 //!   into the carried 179-felt state and fills both chip-faithful wide commitment chains through
-//!   column `3760`.
+//!   column `3804`.
 //!
 //! The shared columns are compared on **all sixteen rows before any merge**.  The first sixty
 //! public inputs are derived from the hidden-note/exact rows at the descriptor-bound rows; the
@@ -44,16 +44,15 @@ use dregg_circuit::stark_zk::{DreggZkStarkConfig, create_zk_config};
 use dregg_commit::poseidon2_tree::Poseidon2NoteProof16;
 use std::sync::OnceLock;
 
-pub const STAGED_DESCRIPTOR_JSON: &str = include_str!(
-    "../../circuit/staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
-);
+pub const STAGED_DESCRIPTOR_JSON: &str =
+    include_str!("../../circuit/descriptors/by-name/faithful-note-spend-exact-v3.json");
 pub const STAGED_PREDICATE_NAME: &str =
     "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state";
 pub const STAGED_TRACE_WIDTH: usize = ROTATED_TRACE_WIDTH;
 pub const STAGED_PUBLIC_INPUT_COUNT: usize = ROTATED_PUBLIC_INPUT_COUNT;
-const EXPECTED_CONSTRAINT_COUNT: usize = 1258;
+const EXPECTED_CONSTRAINT_COUNT: usize = 1274;
 const EXPECTED_STATE16_LOOKUPS: usize = 128;
-const EXPECTED_WIDE_LOOKUPS: usize = 120;
+const EXPECTED_WIDE_LOOKUPS: usize = 124;
 const EXPECTED_RANGE15_LOOKUPS: usize = 48;
 const EXPECTED_RANGE16_LOOKUPS: usize = 132;
 const EXPECTED_DESCRIPTOR_TABLES: usize = 5;
@@ -84,8 +83,8 @@ const _: () = {
     assert!(OUTER_PUBLIC_INPUTS == 16);
 };
 
-/// Immutable result of parsing and pinning the 431 KiB Lean emission.  Keep the public-pin plan
-/// beside the descriptor so witness composition does not rescan all 1,258 constraints merely to
+/// Immutable result of parsing and pinning the 425 KiB Lean emission.  Keep the public-pin plan
+/// beside the descriptor so witness composition does not rescan all 1,274 constraints merely to
 /// revisit the 76 boundary bindings.
 struct PinnedStagedDescriptor {
     descriptor: EffectVmDescriptor2,

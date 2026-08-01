@@ -247,8 +247,8 @@ use crate::heap_root::{
     CanonicalHeapTree8, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN, heap_empty_subtree_root_8, heap_node8,
 };
 use crate::lean_descriptor_air::{
-    EFFECTVM_STATE_AFTER_BASE, EFFECTVM_STATE_BEFORE_BASE, JsonCursor, LeanExpr, VmConstraint,
-    VmHashSite, VmRow, const_to_expr, parse_expr, parse_hash_site, parse_range,
+    EFFECTVM_STATE_AFTER_BASE, EFFECTVM_STATE_BEFORE_BASE, HashInput, JsonCursor, LeanExpr,
+    VmConstraint, VmHashSite, VmRow, const_to_expr, parse_expr, parse_hash_site, parse_range,
     parse_vm_constraint_body,
 };
 // `i64_to_babybear` is the concrete-eval constant lowering (prover-only, `eval_c`).
@@ -4575,6 +4575,167 @@ pub fn fill_chip_lanes(desc: &EffectVmDescriptor2, row: &mut [BabyBear]) {
     }
 }
 
+/// **`weld_owned_cols`** — every column a PROVE-TIME descriptor weld fills for the producer, i.e.
+/// exactly the columns [`trace_with_chip_lanes`] is entitled to find at zero.
+///
+/// Two welds exist and this must name both, because the set is used to decide whether a short
+/// producer row may be zero-padded:
+///
+///  * the `TID_P2` chip LANE columns (lanes 1..7 of each absorb) — [`fill_chip_lanes`];
+///  * the gentian capacity-floor refuse aux block — `bare_floor_refuse_weld::fill_refuse_aux`.
+///
+/// `out0` (the digest) is NOT here: the producer's hash chain owns it.
+pub fn weld_owned_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
+    let mut cols: Vec<usize> = Vec::new();
+    for k in &desc.constraints {
+        let VmConstraint2::Lookup(l) = k else {
+            continue;
+        };
+        if l.table != TID_P2 {
+            continue;
+        }
+        // `.get`, not `[..]`: this runs on the PUBLIC entry points BEFORE `check_descriptor2`, so a
+        // malformed tuple must leave the refusal to that function rather than panicking here.
+        for j in 0..(CHIP_OUT_LANES - 1) {
+            if let Some(LeanExpr::Var(col)) = l.tuple.get(CHIP_RATE + 2 + j) {
+                cols.push(*col);
+            }
+        }
+    }
+    cols.extend(crate::effect_vm::bare_floor_refuse_weld::refuse_written_cols(desc));
+    cols.sort_unstable();
+    cols.dedup();
+    cols
+}
+
+/// **`read_cols`** — every column the descriptor READS: through a constraint of any kind, a hash
+/// site, or a range tooth. PI pins are included here (unlike `UnforcedPiPins.forcedCols`, whose
+/// question is the opposite one), because a pinned column's value is published and therefore
+/// matters even if nothing else touches it.
+///
+/// A column NOT in this set is dead: no equation of the AIR mentions it, so zero-padding it is
+/// value-preserving by the same argument the E1 kill-set is built on.
+pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
+    fn e(x: &LeanExpr, out: &mut Vec<usize>) {
+        match x {
+            LeanExpr::Var(v) => out.push(*v),
+            LeanExpr::Const(_) => {}
+            LeanExpr::Add(a, b) | LeanExpr::Mul(a, b) => {
+                e(a, out);
+                e(b, out);
+            }
+        }
+    }
+    fn w(x: &WindowExpr, out: &mut Vec<usize>) {
+        match x {
+            WindowExpr::Loc(c) | WindowExpr::Nxt(c) => out.push(*c),
+            WindowExpr::Const(_) => {}
+            WindowExpr::Add(a, b) | WindowExpr::Mul(a, b) => {
+                w(a, out);
+                w(b, out);
+            }
+        }
+    }
+    let mut out: Vec<usize> = Vec::new();
+    for c in &desc.constraints {
+        match c {
+            VmConstraint2::Base(VmConstraint::Gate(body)) => e(body, &mut out),
+            VmConstraint2::Base(VmConstraint::Boundary { body, .. }) => e(body, &mut out),
+            VmConstraint2::Base(VmConstraint::PiBinding { col, .. }) => out.push(*col),
+            VmConstraint2::Base(VmConstraint::Transition { hi, lo }) => {
+                out.push(EFFECTVM_STATE_BEFORE_BASE + hi);
+                out.push(EFFECTVM_STATE_AFTER_BASE + lo);
+            }
+            VmConstraint2::Lookup(l) => l.tuple.iter().for_each(|x| e(x, &mut out)),
+            VmConstraint2::MemOp(m) => {
+                for x in [&m.guard, &m.addr, &m.value, &m.prev_value, &m.prev_serial] {
+                    e(x, &mut out);
+                }
+            }
+            VmConstraint2::MapOp(m) => {
+                for x in [&m.guard, &m.key, &m.value] {
+                    e(x, &mut out);
+                }
+                for x in m.root.iter().chain(m.new_root.iter()) {
+                    e(x, &mut out);
+                }
+            }
+            VmConstraint2::UMemOp(m) => {
+                for x in [
+                    &m.guard,
+                    &m.key,
+                    &m.present,
+                    &m.value,
+                    &m.prev_present,
+                    &m.prev_value,
+                    &m.prev_serial,
+                ] {
+                    e(x, &mut out);
+                }
+            }
+            VmConstraint2::ProofBind(p) => {
+                for x in [&p.guard, &p.commit, &p.vk] {
+                    e(x, &mut out);
+                }
+            }
+            VmConstraint2::WindowGate(g) => w(&g.body, &mut out),
+        }
+    }
+    for h in &desc.hash_sites {
+        out.push(h.digest_col);
+        for i in &h.inputs {
+            if let HashInput::Col(c) = i {
+                out.push(*c);
+            }
+        }
+    }
+    for r in &desc.ranges {
+        out.push(r.wire);
+    }
+    out.retain(|c| *c < desc.trace_width);
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// **`producer_owned_width`** — the width a producer's rows MUST reach before the pad in
+/// [`trace_with_chip_lanes`] is honest: one past the highest column that is READ by the AIR and
+/// filled by no prove-time weld.
+///
+/// ⚑ "READ by the AIR" and not merely "< `trace_width`", for two reasons that pull the same way.
+/// Completeness: several deployed members carry a dead stride-tail above the gentian refuse block,
+/// and demanding a producer supply it would refuse honest traces for nothing — a dead column's
+/// value is unobservable, which is the same argument the E1 kill-set rests on. Soundness: keying on
+/// what is READ makes the bound survive a block being appended ABOVE a weld-owned one. Keying it on
+/// "everything from the refuse base upward" would silently mark such a block weld-owned and go
+/// quiet exactly where it is needed — and that arrangement is not hypothetical, it is what the
+/// staged `EffectVmEffectsHashPin` produces when applied after the gentian weld.
+///
+/// ⚑ WHY THIS EXISTS. `trace_with_chip_lanes` zero-`resize`s every short row up to
+/// `desc.trace_width` so the appended lane columns exist before the weld writes them — a real
+/// affordance, since a producer need not know the chip-lane geometry. But the resize ran BEFORE
+/// `prove_vm_descriptor2_inner`'s `base_trace[0].len() != desc.trace_width` check, so that check
+/// could never fail on the public entry points and the pad was UNBOUNDED: a producer that had not
+/// been updated for a newly appended, genuinely PRODUCER-OWNED block handed in short rows, the
+/// prover silently folded the block over zeros, and it PROVED. A silent pass, in the one place
+/// whose whole job is to refuse.
+///
+/// (`circuit/src/refusal.rs`'s `assert_committed_shape` and `heap_write_roundtrip.rs`'s
+/// `a_misshaped_trace_reds_instead_of_counting_as_a_refusal` both RECORD this asymmetry — "a row
+/// one column SHORT of `trace_width` PROVES" — as something teeth had to work around. It is now
+/// the prover's own refusal, so the workaround is a belt and no longer the only barrier.)
+///
+/// The bound is DERIVED from the descriptor rather than being a constant, so appending any new
+/// producer-owned block automatically tightens it: the pad may only ever cover weld-owned columns.
+pub fn producer_owned_width(desc: &EffectVmDescriptor2) -> usize {
+    let weld = weld_owned_cols(desc);
+    read_cols(desc)
+        .into_iter()
+        .filter(|c| weld.binary_search(c).is_err())
+        .next_back()
+        .map_or(0, |c| c + 1)
+}
+
 fn hash2_state_c(a: BabyBear, b: BabyBear) -> [BabyBear; POSEIDON2_WIDTH] {
     let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
     st[0] = a;
@@ -6668,11 +6829,36 @@ where
 fn trace_with_chip_lanes(
     desc: &EffectVmDescriptor2,
     base_trace: &[Vec<BabyBear>],
-) -> Vec<Vec<BabyBear>> {
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    // ⚑ THE PAD IS BOUNDED, AND THE BOUND IS CHECKED BEFORE THE PAD — not after it.
+    //
+    // `prove_vm_descriptor2_inner` does compare `base_trace[0].len()` against `desc.trace_width`,
+    // but every public entry point runs THIS function first, so by the time that check ran the
+    // rows had already been zero-extended to exactly the width it was testing for. The check could
+    // not fail; a producer that had not been updated for a newly appended block proved GREEN over
+    // zeros. Refuse here, on the producer's OWN rows, against the derived producer-owned width.
+    let need = producer_owned_width(desc);
+    for (i, row) in base_trace.iter().enumerate() {
+        if row.len() < need {
+            return Err(format!(
+                "base row {i} width {} is short of the PRODUCER-OWNED width {need} for descriptor \
+                 `{}` (trace_width {}): columns {}..{need} are filled by no prove-time weld, so \
+                 zero-padding them would fold the AIR over values this producer never supplied. \
+                 Only the weld-owned tail ({need}..{}) may be padded — see \
+                 `descriptor_ir2::producer_owned_width`.",
+                row.len(),
+                desc.name,
+                desc.trace_width,
+                row.len(),
+                desc.trace_width
+            ));
+        }
+    }
     let mut t = base_trace.to_vec();
     for row in &mut t {
         // A producer may build rows at the pre-lane width; grow to the descriptor width so the
         // appended lane columns exist before filling (genuine producers fill out0; lanes ride here).
+        // The pad is now provably confined to weld-owned columns by the loop above.
         if row.len() < desc.trace_width {
             row.resize(desc.trace_width, BabyBear::ZERO);
         }
@@ -6684,7 +6870,7 @@ fn trace_with_chip_lanes(
         // the caveat type-tag columns the row already carries (no-op for a non-welded descriptor).
         crate::effect_vm::bare_floor_refuse_weld::fill_refuse_aux(desc, row);
     }
-    t
+    Ok(t)
 }
 
 /// **`prove_vm_descriptor2`** — assemble + prove the multi-table batch STARK for a
@@ -6709,7 +6895,7 @@ pub fn prove_vm_descriptor2(
 ) -> Result<BatchProof<DreggStarkConfig>, String> {
     prove_vm_descriptor2_inner(
         desc,
-        &trace_with_chip_lanes(desc, base_trace),
+        &trace_with_chip_lanes(desc, base_trace)?,
         public_inputs,
         mem_boundary,
         map_heaps,
@@ -6734,7 +6920,7 @@ pub fn prove_vm_descriptor2_umem(
 ) -> Result<BatchProof<DreggStarkConfig>, String> {
     prove_vm_descriptor2_inner(
         desc,
-        &trace_with_chip_lanes(desc, base_trace),
+        &trace_with_chip_lanes(desc, base_trace)?,
         public_inputs,
         mem_boundary,
         map_heaps,
@@ -6759,7 +6945,7 @@ pub fn prove_vm_descriptor2_with_config(
 ) -> Result<BatchProof<DreggStarkConfig>, String> {
     prove_vm_descriptor2_inner(
         desc,
-        &trace_with_chip_lanes(desc, base_trace),
+        &trace_with_chip_lanes(desc, base_trace)?,
         public_inputs,
         mem_boundary,
         map_heaps,
@@ -6794,7 +6980,7 @@ where
 {
     prove_vm_descriptor2_inner(
         desc,
-        &trace_with_chip_lanes(desc, base_trace),
+        &trace_with_chip_lanes(desc, base_trace)?,
         public_inputs,
         mem_boundary,
         map_heaps,
@@ -10355,7 +10541,8 @@ mod tests {
         let mem_boundary = MemBoundaryWitness::default();
         let layout = check_descriptor2(&desc).expect("deployed noteSpend descriptor checks");
         let presence = Presence::of(&desc, &layout);
-        let chip_laned = trace_with_chip_lanes(&desc, &trace);
+        let chip_laned = trace_with_chip_lanes(&desc, &trace)
+            .expect("the deployed noteSpend producer builds full producer-owned rows");
         let honest_proof = prove_vm_descriptor2(&desc, &trace, &dpis, &mem_boundary, &map_heaps)
             .expect("NO DOWNGRADE: the honest deployed noteSpend must prove");
         verify_vm_descriptor2(&desc, &honest_proof, &dpis)

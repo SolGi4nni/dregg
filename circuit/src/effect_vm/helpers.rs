@@ -21,13 +21,18 @@ use super::{AUX_BASE, Effect, aux_off};
 ///  * `BabyBear::new` then reduces mod `p ≈ 2^31`, so `hi` aliases again at a value
 ///    period of `p · 2^30 ≈ 2^61`.
 ///
-/// The limb pair is therefore faithful only on `[0, 2^61)`, and the LOW LIMB ALONE
-/// — which is what every committed note-accumulator leaf carries
-/// (`cell/src/commitment_set.rs` / `cell/src/nullifier_set.rs` `accumulator_leaf`)
-/// — is faithful only on `[0, 2^30)`. `param::NOTE_VALUE_HI` (the companion limb)
-/// is written by `effect_vm/trace.rs` on both note rows and read by NOTHING: no
-/// gate, no PI pin, no accumulator, no verifier. See `HORIZONLOG.md` A8 and the Lean
-/// tooth `metatheory/Dregg2/Bignum/LedgerBalance.lean` `accumulatorLeaf_aliases_at_2_30`.
+/// The limb pair is therefore faithful only on `[0, 2^61)`, and the LOW LIMB ALONE is faithful
+/// only on `[0, 2^30)`. `param::NOTE_VALUE_HI` (the companion limb) is written by
+/// `effect_vm/trace.rs` on both note rows and read by NOTHING: no gate, no PI pin, no verifier.
+///
+/// ⚑ **THE ACCUMULATOR CONSUMER IS GONE, 2026-07-31.** Until then `cell/src/commitment_set.rs`,
+/// `cell/src/nullifier_set.rs` and `cell/src/revoked_set.rs` `accumulator_leaf` carried this low
+/// limb into the committed root, so the signed consensus anchor was `2^30`-periodic in a note
+/// value. All three now commit the exact tagged linked leaf (`dom ‖ addr17 ‖ value4 ‖ next17`,
+/// four `u16` value limbs), `accumulator_leaf` is deleted, and the anchor binds all 64 bits —
+/// `turn/tests/note_value_alias_at_2_30_closed.rs`. What still reads this low limb is the
+/// IN-CIRCUIT map-op (`param::NOTE_VALUE_LO`), which is the remaining, named residual. The Lean
+/// tooth is `metatheory/Dregg2/Bignum/LedgerBalance.lean` `accumulatorLeaf_aliases_at_2_30`.
 ///
 /// ⚑ The arithmetic is DEPLOYED and is deliberately not changed here: this felt pair
 /// is the balance-limb encoding the in-circuit 30-bit range proof runs on, it is the

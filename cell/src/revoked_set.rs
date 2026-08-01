@@ -2,17 +2,19 @@
 //! revocation-height)` map of revoked credentials — the REVOCATION-side sibling
 //! of [`crate::nullifier_set::NullifierSet`] and [`crate::commitment_set::CommitmentSet`].
 //!
-//! When a credential is revoked, its credential nullifier is recorded here
-//! TOGETHER with the height at which the revocation took effect — the SAME
-//! [`dregg_circuit::heap_root::HeapLeaf`] shape the sibling grow-gates use
-//! (`HeapLeaf::entry(fold(cred_nul), split_u64(height).0)`; the third field, the IMT
-//! `next_addr` pointer, is producer machinery the tree builder relinks — see
-//! `dregg_circuit::heap_root::HEAP_LEAF_ARITY`). The accumulator is therefore an
-//! auditable `(credential, revocation
-//! height)` record: keeping the height is what makes the committed
-//! [`Self::root8`] cross-turn-continuous (turn N's after-root == turn N+1's
-//! before-root over the same leaves) AND turns the root into an audit witness —
-//! WHEN a credential was revoked is bound into the committed state.
+//! When a credential is revoked, its credential nullifier is recorded here TOGETHER with the
+//! height at which the revocation took effect. The accumulator is therefore an auditable
+//! `(credential, revocation height)` record, and the root is an audit witness — WHEN a
+//! credential was revoked is bound into the committed state.
+//!
+//! ⚑ **THE COMMITTED LEAF, 2026-07-31.** [`RevokedSet::root8`] is the exact tagged LINKED-LEAF
+//! root `FRI2 ‖ addr17 ‖ value4 ‖ next17`, domain-separated from both note accumulators. It
+//! replaced `HeapLeaf::entry(fold_bytes32_to_bb(cred_nul), split_u64(height).0)`, whose
+//! credential was a 256→31-bit fold and whose height was the low 30 bits — so the audit witness
+//! could not distinguish a revocation at height `h` from one at `h + 2^30`.
+//!
+//! ⚠ The committed root is APPEND-ORDER dependent (it is the AAFI fold). Reconstruction must go
+//! through the persisted `seq` column — [`RevokedSet::from_records`].
 //!
 //! WHY THIS EXISTS: the runtime authorization gate today trusts a WIRE-SUPPLIED
 //! revocation root (`authorize.rs` `proof.revocation_channel`), so a node can
@@ -40,6 +42,9 @@
 //! / `from_records`.
 
 use std::collections::BTreeMap;
+
+use dregg_circuit::Faithful8;
+use dregg_circuit::exact_nullifier_aafi::{ExactLinkedDomains, exact_linked_append_root8};
 
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +90,17 @@ pub struct RevokedSet {
     /// tree's `next_free_index` cursor (offset by 1 for the MIN sentinel).
     next_seq: u64,
 }
+
+/// The revocation-side exact tagged-linked-leaf domain triple: `FRI2`/`FRN2`/`FRE2`.
+///
+/// Distinct from the note accumulators' `FNI2`/`FNN2`/`FNE2` (spend) and `FCI2`/`FCN2`/`FCE2`
+/// (create): three different statements about three different sets, so one tree's opening — or
+/// its EMPTY root — cannot be replayed as another's.
+pub const EXACT_REVOKED_LINKED_DOMAINS: ExactLinkedDomains = ExactLinkedDomains {
+    leaf: 0x4652_4932,  // `FRI2`
+    node: 0x4652_4e32,  // `FRN2`
+    empty: 0x4652_4532, // `FRE2`
+};
 
 impl RevokedSet {
     /// Create an empty revoked-credential set.
@@ -215,23 +231,28 @@ impl RevokedSet {
         Ok(set)
     }
 
-    /// The circuit-faithful accumulator leaves **in append order** — the
-    /// canonical tau sequence of [`Self::accumulator_leaf`]s an AAFI
-    /// (append-at-free-index) fold consumes. Each leaf at rank `r` here is the
-    /// one an AAFI replay appends at physical slot `r + 1` (slot 0 is the MIN
-    /// sentinel), mirroring `CanonicalHeapTree8::insert_witness_aafi`'s
-    /// `next_free_index` semantics. The sorted-compacted [`Self::root8`] is
-    /// untouched by this — same leaf SET, append positions instead of sorted.
-    pub fn aafi_leaves(&self) -> Vec<dregg_circuit::heap_root::HeapLeaf> {
+    /// The canonical APPEND-ORDERED `(credential, revocation height)` record list — the input
+    /// the committed [`Self::root8`] folds. Physical slot 0 is the permanent `BOT` sentinel; the
+    /// record at rank `r` occupies slot `r + 1`.
+    fn exact_append_records(&self) -> Vec<([u8; 32], u64)> {
         self.iter_in_append_order()
-            .map(|(c, v, _)| Self::accumulator_leaf(&c, v))
+            .map(|(credential, height, _)| (credential, height))
             .collect()
+    }
+
+    /// The committed accumulator's **dense physical leaf vector** — exactly what [`Self::root8`]
+    /// hashes, indexed by physical slot. Every leaf's `value()` is the FULL `u64` revocation
+    /// height and every leaf's `next_addr()` is the next larger present credential (the absence
+    /// bracket the `spendAncestorFreshOp` `.absent` open straddles).
+    pub fn exact_dense_leaves(&self) -> Vec<dregg_circuit::exact_nullifier_aafi::ExactLinkedLeaf> {
+        dregg_circuit::exact_nullifier_aafi::exact_linked_dense_leaves(&self.exact_append_records())
+            .expect("the revoked map's keys are unique and within the 4^16 tree capacity")
     }
 
     /// The physical AAFI slot the NEXT append would occupy: `len() + 1`
     /// (slot 0 is the MIN sentinel) — the store-side mirror of
     /// [`dregg_circuit::heap_root::CanonicalHeapTree8::next_free_index`] for a
-    /// tree replayed from [`Self::aafi_leaves`].
+    /// tree replayed from [`Self::exact_dense_leaves`].
     pub fn aafi_next_free_index(&self) -> usize {
         self.revoked.len() + 1
     }
@@ -259,57 +280,37 @@ impl RevokedSet {
         removed
     }
 
-    /// The circuit-faithful node8 leaf for a single `(credential, revocation
-    /// height)` — the EXACT [`dregg_circuit::heap_root::HeapLeaf`] shape the
-    /// sibling accumulator grow-gates use: `addr` is the folded credential
-    /// nullifier felt (`dregg_circuit::effect_vm::fold_bytes32_to_bb`, the SAME
-    /// fold the sibling sets apply to their key) and `value` is the revocation
-    /// height folded through the circuit's `split_u64(height).0` — the low-30-bit
-    /// BabyBear audit felt.
+    /// **THE committed accumulator root of the revoked-credential set** — the exact tagged
+    /// LINKED-LEAF (indexed-Merkle) append-at-free-index root, `FRI2 ‖ addr17 ‖ value4 ‖ next17`
+    /// at depth 16, arity 4, eight BabyBear lanes. Domain-separated from both note accumulators.
     ///
-    /// Both fields are folded through the circuit's OWN
-    /// `fold_bytes32_to_bb`/`split_u64` helpers so the encoding cannot drift from
-    /// the deployed accumulator: the committed `revoked_root` group is opened
-    /// in-circuit against a `CanonicalHeapTree8` built from these leaves, so the
-    /// executor-derived accumulator root must fold through the identical leaf
-    /// encoding or the published commitment would not match the proof.
-    pub fn accumulator_leaf(
-        cred_nul: &[u8; 32],
-        revocation_height: u64,
-    ) -> dregg_circuit::heap_root::HeapLeaf {
-        // The leaf value is `split_u64(revocation_height).0` — the low 30 bits of the audit height
-        // as a BabyBear. Fold through the circuit's OWN helper so the encoding cannot drift. The IMT
-        // `next_addr` pointer is relinked by the tree builder.
-        dregg_circuit::heap_root::HeapLeaf::entry(
-            dregg_circuit::effect_vm::fold_bytes32_to_bb(cred_nul),
-            dregg_circuit::effect_vm::split_u64(revocation_height).0,
-        )
-    }
-
-    /// **The faithful 8-felt (~124-bit) accumulator root of the revoked-credential
-    /// set** — the value that BELONGS in the committed rotated state's
-    /// `revoked_root` group (the same `Heap8Scheme` slot the canonical Lean's
-    /// `toNfAccState { nullifierRoot, revokedRoot }` models), so a light client
-    /// can READ revocation off committed state instead of trusting the wire: a
-    /// node that has accepted a revocation carries a DIFFERENT `root8` than one
-    /// that has not.
+    /// ⚑ **WHAT THIS REPLACED, AND WHY THE STATED BLOCKER WAS NOT REAL.** Until 2026-07-31 this
+    /// folded `HeapLeaf::entry(fold_bytes32_to_bb(cred_nul), split_u64(height).0)` through a
+    /// `CanonicalHeapTree8` — a 256→31-bit credential fold and a 64→30-bit height truncation —
+    /// and its doc comment said the committed `revoked_root` group "is opened in-circuit against
+    /// a `CanonicalHeapTree8` built from these leaves", so the encoding could not move.
+    /// **The in-circuit open is real, but it is never handed THESE leaves:** every live producer
+    /// passes `SpendRevocationWitness::undelegated(&[])` — an EMPTY revoked leaf vector
+    /// (`sdk/src/full_turn_proof.rs:584`, `sdk/src/cipherclerk.rs:5791`,
+    /// `turn/src/executor/proof_verify.rs:1321`). The executor's revoked accumulator has never
+    /// reached a circuit, so no VK rotates and no descriptor is re-emitted; this is a re-genesis
+    /// (`CANONICAL_STATE_SCHEMA_EPOCH` 14 → 15) exactly like its two note siblings.
     ///
-    /// This is the native `CanonicalHeapTree8` (arity-16 sorted-Poseidon2, depth
-    /// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`]) root — built from
-    /// [`Self::accumulator_leaf`] over every `(credential, revocation-height)` in
-    /// the map. The empty set folds to the native empty root
-    /// (`dregg_circuit::heap_root::empty_heap_root_8`).
-    pub fn root8(&self) -> dregg_circuit::Faithful8 {
-        let leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = self
-            .revoked
-            .iter()
-            .map(|(c, r)| Self::accumulator_leaf(c, r.value))
-            .collect();
-        dregg_circuit::heap_root::CanonicalHeapTree8::new(
-            leaves,
-            dregg_circuit::heap_root::HEAP_TREE_DEPTH,
-        )
-        .root8()
+    /// The new leaf carries the credential as a tag plus sixteen little-endian `u16` limbs
+    /// (`2^256` on the nose) and the revocation height as four (`2^64`, so an audit height above
+    /// `2^30` is no longer indistinguishable from `height mod 2^30`), plus a full-width
+    /// `next_addr` pointer — the bracket a non-membership opening straddles.
+    pub fn root8(&self) -> Faithful8 {
+        let records = self.exact_append_records();
+        let lanes = exact_linked_append_root8(EXACT_REVOKED_LINKED_DOMAINS, &records).expect(
+            "the revoked map's keys are unique by construction and its length is bounded by the \
+             4^16 tree capacity",
+        );
+        let mut bytes = [0u8; 32];
+        for (lane, felt) in lanes.iter().enumerate() {
+            bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+        }
+        Faithful8::from_bytes32(&bytes)
     }
 }
 
@@ -388,17 +389,32 @@ mod tests {
         assert!(set.contains(&c));
     }
 
-    /// (a) The empty set's faithful accumulator root is the NATIVE
-    /// `CanonicalHeapTree8` empty root — the value a producer must fill for a
-    /// no-revocation accumulator.
+    /// (a) The empty set is the lone `BOT(value=0, next=TOP)` sentinel under the `FRI2` domain —
+    /// NOT an empty tree, and (since 2026-07-31) NOT the native `CanonicalHeapTree8` empty root.
     #[test]
-    fn root8_empty_matches_native_empty_heap_root_8() {
+    fn root8_empty_is_the_bot_sentinel_tree_and_is_domain_separated() {
+        use dregg_circuit::exact_nullifier_aafi::ExactTaggedKey;
+
         let set = RevokedSet::new();
-        assert_eq!(
+        let leaves = set.exact_dense_leaves();
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].addr(), ExactTaggedKey::Bot);
+        assert_eq!(leaves[0].next_addr(), ExactTaggedKey::Top);
+
+        assert_ne!(
             set.root8(),
             dregg_circuit::heap_root::empty_heap_root_8(),
-            "an empty revoked set must fold to the native empty node8 root the \
-             revoked-credential grow-gate defaults to"
+            "the committed revoked root is the exact linked-leaf tree, not the legacy heap tree"
+        );
+        assert_ne!(
+            set.root8(),
+            crate::nullifier_set::NullifierSet::new().root8(),
+            "FRI2 must be domain-separated from FNI2 even at the empty root"
+        );
+        assert_ne!(
+            set.root8(),
+            crate::commitment_set::CommitmentSet::new().root8(),
+            "FRI2 must be domain-separated from FCI2 even at the empty root"
         );
     }
 
@@ -433,37 +449,68 @@ mod tests {
         );
     }
 
-    /// (c) **Encoding-match tooth:** `root8` over the set equals a
-    /// `CanonicalHeapTree8` built by REPRODUCING the grow-gate's exact after-tree
-    /// construction: each inserted leaf is `HeapLeaf::entry(/// fold_bytes32_to_bb(cred_nul), split_u64(height).0)`. Both are folded
-    /// through the circuit's OWN helpers, so this is genuine byte-identity with the
-    /// grow-gate, not a re-assertion of a private formula.
+    /// (c) ⚑ **A2/A3 CLOSED ON THE REVOCATION AUDIT ROOT, AND IT ROUND-TRIPS.** The retired
+    /// encoding folded `HeapLeaf::entry(fold_bytes32_to_bb(cred_nul), split_u64(height).0)`, so
+    /// the committed audit witness was `2^30`-periodic in the revocation HEIGHT and blind to a
+    /// free `+p` mutation of the credential's top four bytes. Both poles, plus the decode that
+    /// separates a binding from a scramble.
     #[test]
-    fn root8_matches_growgate_after_tree_encoding() {
+    fn the_committed_revoked_root_binds_the_full_credential_and_height() {
         use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
+        use dregg_circuit::field::BABYBEAR_P;
         use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
 
-        let revocations = [
-            (make_cred_nul(7), make_height(7)),
-            (make_cred_nul(42), make_height(42)),
-            (make_cred_nul(99), make_height(99)),
-        ];
-        let mut set = RevokedSet::new();
-        for (c, h) in &revocations {
-            set.insert(*c, *h).unwrap();
-        }
+        let legacy = |records: &[([u8; 32], u64)]| {
+            CanonicalHeapTree8::new(
+                records
+                    .iter()
+                    .map(|(c, h)| HeapLeaf::entry(fold_bytes32_to_bb(c), split_u64(*h).0))
+                    .collect(),
+                HEAP_TREE_DEPTH,
+            )
+            .root8()
+        };
 
-        let growgate_leaves: Vec<HeapLeaf> = revocations
-            .iter()
-            .map(|(c, h)| HeapLeaf::entry(fold_bytes32_to_bb(c), split_u64(*h).0))
-            .collect();
-        let expected = CanonicalHeapTree8::new(growgate_leaves, HEAP_TREE_DEPTH).root8();
-
+        // A3 — the revocation height above the 2^30 period.
+        let cred = make_cred_nul(3);
+        let low = 17u64;
+        let aliased = low + (1u64 << 30);
         assert_eq!(
-            set.root8(),
-            expected,
-            "root8 must fold through the EXACT (addr, value) node8 leaf encoding the \
-             deployed revoked-credential grow-gate inserts"
+            legacy(&[(cred, low)]),
+            legacy(&[(cred, aliased)]),
+            "vacuity guard: the RETIRED revoked root really was 2^30-periodic in the height"
+        );
+        let mut low_set = RevokedSet::new();
+        low_set.insert(cred, low).unwrap();
+        let mut alias_set = RevokedSet::new();
+        alias_set.insert(cred, aliased).unwrap();
+        assert_ne!(low_set.root8(), alias_set.root8());
+        assert_eq!(low_set.exact_dense_leaves()[1].value(), low);
+        assert_eq!(alias_set.exact_dense_leaves()[1].value(), aliased);
+
+        // A2 — the credential's high bytes.
+        let mut base_bytes = [0u8; 32];
+        base_bytes[0] = 0xA7;
+        let mut high_bytes = base_bytes;
+        high_bytes[28..32].copy_from_slice(&BABYBEAR_P.to_le_bytes());
+        assert_eq!(
+            fold_bytes32_to_bb(&base_bytes),
+            fold_bytes32_to_bb(&high_bytes),
+            "vacuity guard: the two credentials must collide in the one-felt fold"
+        );
+        assert_eq!(legacy(&[(base_bytes, 9)]), legacy(&[(high_bytes, 9)]));
+        let mut base_set = RevokedSet::new();
+        base_set.insert(base_bytes, 9).unwrap();
+        let mut high_set = RevokedSet::new();
+        high_set.insert(high_bytes, 9).unwrap();
+        assert_ne!(base_set.root8(), high_set.root8());
+        assert_eq!(
+            base_set.exact_dense_leaves()[1].addr().real_raw_bytes(),
+            Some(base_bytes)
+        );
+        assert_eq!(
+            high_set.exact_dense_leaves()[1].addr().real_raw_bytes(),
+            Some(high_bytes)
         );
     }
 
@@ -490,11 +537,12 @@ mod tests {
         );
     }
 
-    /// (e) **CONTINUITY tooth:** turn N's *after*-root over `S ∪ {cred, height}`
-    /// equals turn N+1's *before*-root over the same set (insertion-order-independent
-    /// — a BTreeMap sorts).
+    /// (e) **CONTINUITY tooth (INV-2), RESTATED AT THE APPEND-ORDER ROOT.** Turn N's after-root
+    /// equals turn N+1's before-root over the same history, reconstructed through the persisted
+    /// `seq` column — which is the path every real replay takes. The committed root is now the
+    /// AAFI fold, so it is append-order DEPENDENT; that is asserted as the second pole.
     #[test]
-    fn root8_is_cross_turn_continuous() {
+    fn root8_is_cross_turn_continuous_through_the_append_order() {
         let base = [
             (make_cred_nul(10), make_height(10)),
             (make_cred_nul(20), make_height(20)),
@@ -508,17 +556,28 @@ mod tests {
         turn_n.insert(new_revocation.0, new_revocation.1).unwrap();
         let after_root_n = turn_n.root8();
 
-        let mut turn_n1 = RevokedSet::new();
-        turn_n1.insert(new_revocation.0, new_revocation.1).unwrap();
-        for (c, h) in base.iter().rev() {
-            turn_n1.insert(*c, *h).unwrap();
-        }
-        let before_root_n1 = turn_n1.root8();
-
+        let mut records: Vec<([u8; 32], u64, u64)> = turn_n.iter_in_append_order().collect();
+        records.sort_by_key(|(c, _, _)| *c);
+        let turn_n1 = RevokedSet::from_records(records).unwrap();
         assert_eq!(
-            after_root_n, before_root_n1,
-            "turn N after-root must equal turn N+1 before-root over the same \
-             (credential, height) set (INV-2 continuity, insertion-order-independent)"
+            after_root_n,
+            turn_n1.root8(),
+            "turn N after-root must equal turn N+1 before-root over the same history, \
+             reconstructed through the persisted seq column"
+        );
+
+        let mut reordered = RevokedSet::new();
+        reordered
+            .insert(new_revocation.0, new_revocation.1)
+            .unwrap();
+        for (c, h) in base.iter().rev() {
+            reordered.insert(*c, *h).unwrap();
+        }
+        assert_ne!(
+            after_root_n,
+            reordered.root8(),
+            "the committed root is append-order dependent — a different revocation sequence \
+             over the same set is a different history"
         );
     }
 
@@ -554,12 +613,16 @@ mod tests {
             "vacuity guard: insertion order must differ from sorted-key order"
         );
 
-        let expected_leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = creds
+        let expected_leaves: Vec<([u8; 32], u64)> = creds
             .iter()
             .enumerate()
-            .map(|(i, c)| RevokedSet::accumulator_leaf(c, 100 + i as u64))
-            .collect();
-        assert_eq!(set.aafi_leaves(), expected_leaves);
+            .map(|(i, c)| (*c, 100 + i as u64))
+            .collect::<Vec<_>>();
+        let leaves = set.exact_dense_leaves();
+        for (i, (cred, height)) in expected_leaves.iter().enumerate() {
+            assert_eq!(leaves[i + 1].addr().real_raw_bytes(), Some(*cred));
+            assert_eq!(leaves[i + 1].value(), *height);
+        }
     }
 
     /// **A8 tooth — reconstruction FIXES the append order:** records exported
@@ -587,7 +650,7 @@ mod tests {
             "reconstruction must recover the CANONICAL append order from the \
              persisted seq column, not the storage yield order"
         );
-        assert_eq!(rebuilt.aafi_leaves(), original.aafi_leaves());
+        assert_eq!(rebuilt.exact_dense_leaves(), original.exact_dense_leaves());
         for c in &creds {
             assert_eq!(rebuilt.seq_of(c), original.seq_of(c));
         }

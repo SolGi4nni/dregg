@@ -834,9 +834,8 @@ mod tests {
         // 50 state16 sites are the inherited hidden-note schedule; the next 78 are exactly the
         // additive AAFI plan materialized by this module.  Parsing and evaluating those emitted
         // expressions prevents the Rust constants/schedule from silently becoming a second ABI.
-        const STAGED: &str = include_str!(
-            "../staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
-        );
+        const STAGED: &str =
+            include_str!("../descriptors/by-name/faithful-note-spend-exact-v3.json");
         let descriptor = parse_vm_descriptor2(STAGED).expect("Lean-emitted v3 descriptor parses");
         // Nine-lane epoch: `V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS+1) + 2*8*WIDE_CARRIERS`
         // = 2442 + 2*185 + 2*496 = 3804 (was 2442 + 2*179 + 2*480 = 3760); constraints

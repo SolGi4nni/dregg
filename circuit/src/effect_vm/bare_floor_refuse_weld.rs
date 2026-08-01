@@ -243,7 +243,7 @@ pub const REFUSE_WELD_SUFFIX: &str = "-gentian-deployed-bare-refuse";
 /// `aux_base + b·REFUSE_STRIDE + 3·MAX_CAVEATS` — a triple `{c, c+REFUSE_STRIDE, c+2·REFUSE_STRIDE}`.
 /// We take the HIGHEST such triple (the refuse block sits in the aux headroom, above any base-AIR
 /// bare-`Var` gate) and back out `aux_base = c − 3·MAX_CAVEATS`.
-fn refuse_aux_base(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
+pub(crate) fn refuse_aux_base(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
     let mut bare_var_gates: Vec<usize> = desc
         .constraints
         .iter()
@@ -336,6 +336,36 @@ fn recover_tag_cols(
         *out = found.unwrap_or_else(|| caveat_tag_col(k));
     }
     cols
+}
+
+/// **Exactly the columns [`fill_refuse_aux`] writes** — the prove-time weld's footprint, for
+/// `descriptor_ir2::weld_owned_cols`. Empty for a non-welded descriptor.
+///
+/// It is derived from the same `bit_at`/`inv_at`/`or_at`/`floor_at` arithmetic the fill uses and
+/// lives beside it so the two cannot drift. ⚑ Deliberately NOT `aux_base..trace_width`: that span
+/// is what [`refuse_weld_widen`] reports (block + any dead stride-tail above it), and using it as
+/// the weld footprint would mark a block appended ABOVE the refuse weld as prove-time-filled, which
+/// is exactly the case the pad bound must not go quiet on.
+pub(crate) fn refuse_written_cols(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> Vec<usize> {
+    if !desc.name.contains(REFUSE_WELD_SUFFIX) {
+        return Vec::new();
+    }
+    let aux_base = refuse_aux_base(desc);
+    let mut out = Vec::new();
+    for b in 0..CAPACITY_TAGS.len() {
+        for k in 0..cav::MAX_CAVEATS {
+            out.push(aux_base + b * REFUSE_STRIDE + k);
+            out.push(aux_base + b * REFUSE_STRIDE + cav::MAX_CAVEATS + k);
+        }
+        for j in 0..cav::MAX_CAVEATS - 1 {
+            out.push(aux_base + b * REFUSE_STRIDE + 2 * cav::MAX_CAVEATS + j);
+        }
+        out.push(aux_base + b * REFUSE_STRIDE + 3 * cav::MAX_CAVEATS);
+    }
+    out.retain(|c| *c < desc.trace_width);
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &mut [BabyBear]) {

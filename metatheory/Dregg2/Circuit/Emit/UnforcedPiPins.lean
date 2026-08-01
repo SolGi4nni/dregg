@@ -674,6 +674,15 @@ def declarationOnlyPinsNoProofBind (M : EffectVmDescriptor2) : List (VmRow × Na
   (pinsOf (dropUnforcedPins M)).filter
     (fun p => !(forcedColsNoProofBind M).contains p.2.1)
 
+-- ⚑ THE FOUR GUARDS ABOVE MUST FLIP TO `0` WHEN `EffectVmEffectsHashPin` LANDS, and they are the
+-- place to notice it. `ehFreshCols` absorbs `prmCol 0..7` into a chip lookup, so `custom`'s two
+-- `proofBind`-only exposure columns become genuinely read and stop being declaration-only — the
+-- over-count is repaired by making the column forced, exactly the remedy this section names, and NOT
+-- by touching `dropUnforcedPins`. Measured 2026-07-31 on a scratch emit of all 57 WIDE members
+-- against a baseline that reproduced `rotation-wide-registry-staged.tsv` byte-identically:
+-- declaration-only 2 → 0, row-local-free 6 → 0, pins 1628 → 1859, and `mint`'s PI 46 → col 68 plus
+-- six of `custom`'s octet limbs come BACK through the same unchanged subtraction. A reader who finds
+-- these guards red after that emit should write `0`, not widen `forcedCols`.
 -- ⚑ AND `.umemOp` CONTRIBUTES NOTHING TO THE OVER-COUNT ON THIS REGISTRY — dropping `proofBind`
 -- ALONE condemns the same two pins, so the exclusion of `umemOp` is not doing hidden work and the
 -- `== 2` above is attributable to `proofBind`. Stated as its own guard because an exclusion that

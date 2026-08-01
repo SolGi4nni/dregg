@@ -457,10 +457,43 @@ fn tagged_key_felts(key: ExactTaggedKey) -> impl Iterator<Item = BabyBear> {
     )
 }
 
-/// The exact 39-felt `FNI2 || addr17 || value4 || next17` preimage.
-pub fn exact_leaf_preimage(leaf: ExactLinkedLeaf) -> Vec<BabyBear> {
+/// The three Poseidon2 domain tags that identify ONE exact tagged-linked-leaf accumulator.
+///
+/// The leaf/node/empty schema below is shared by every accumulator that commits a
+/// `(32-byte address, u64 value, 32-byte successor pointer)` indexed Merkle tree; the domain
+/// triple is what keeps two such accumulators from replaying each other's openings. The
+/// spend-side instance is [`EXACT_NULLIFIER_AAFI_DOMAINS`], which is the SAME triple the
+/// Lean-authored exact-AAFI AIR constrains
+/// (`Dregg2/Circuit/Emit/ExactNullifierAafiDescriptorPlan.lean`: `FNI2`/`FNN2`/`FNE2`), so a
+/// committed root under it is the object that descriptor proves rather than a parallel one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactLinkedDomains {
+    /// Linked-leaf sponge domain (the 39-felt `dom || addr17 || value4 || next17` preimage).
+    pub leaf: u32,
+    /// Arity-4 internal-node sponge domain (the 33-felt `dom || child0[8] || … || child3[8]`).
+    pub node: u32,
+    /// Empty-leaf sponge domain (the 1-felt `dom` preimage).
+    pub empty: u32,
+}
+
+/// The spend-side (exact nullifier AAFI) instance: `FNI2`/`FNN2`/`FNE2` — the triple the
+/// Lean-authored 1274-constraint exact-AAFI descriptor keys on.
+pub const EXACT_NULLIFIER_AAFI_DOMAINS: ExactLinkedDomains = ExactLinkedDomains {
+    leaf: EXACT_LINKED_LEAF_DOMAIN,
+    node: EXACT_NODE_DOMAIN,
+    empty: EXACT_EMPTY_DOMAIN,
+};
+
+/// The exact 39-felt `dom || addr17 || value4 || next17` preimage.
+///
+/// Every component is carried at FULL width: the address and the successor pointer are each a
+/// tag plus sixteen little-endian `u16` limbs (`2^256` on the nose, no reduction), and the value
+/// is four `u16` limbs (`2^64` on the nose). This is the encoding that makes the leaf injective
+/// in all three arguments — and it is why the arity-3 `(fold(addr), low30(value), fold(next))`
+/// leaf it replaces could not be.
+pub fn exact_leaf_preimage_in(domains: ExactLinkedDomains, leaf: ExactLinkedLeaf) -> Vec<BabyBear> {
     let mut input = Vec::with_capacity(39);
-    input.push(BabyBear::new(EXACT_LINKED_LEAF_DOMAIN));
+    input.push(BabyBear::new(domains.leaf));
     input.extend(tagged_key_felts(leaf.addr));
     input.extend(
         leaf.value_u16_le
@@ -472,14 +505,26 @@ pub fn exact_leaf_preimage(leaf: ExactLinkedLeaf) -> Vec<BabyBear> {
     input
 }
 
-pub fn exact_leaf_digest(leaf: ExactLinkedLeaf) -> Digest8 {
-    hash_many_8(&exact_leaf_preimage(leaf))
+/// The exact 39-felt `FNI2 || addr17 || value4 || next17` preimage.
+pub fn exact_leaf_preimage(leaf: ExactLinkedLeaf) -> Vec<BabyBear> {
+    exact_leaf_preimage_in(EXACT_NULLIFIER_AAFI_DOMAINS, leaf)
 }
 
-/// The exact 33-felt `FNN2 || child0[8] || ... || child3[8]` preimage.
-pub fn exact_node_preimage(children: [Digest8; TREE_ARITY]) -> Vec<BabyBear> {
+pub fn exact_leaf_digest_in(domains: ExactLinkedDomains, leaf: ExactLinkedLeaf) -> Digest8 {
+    hash_many_8(&exact_leaf_preimage_in(domains, leaf))
+}
+
+pub fn exact_leaf_digest(leaf: ExactLinkedLeaf) -> Digest8 {
+    exact_leaf_digest_in(EXACT_NULLIFIER_AAFI_DOMAINS, leaf)
+}
+
+/// The exact 33-felt `dom || child0[8] || ... || child3[8]` preimage.
+pub fn exact_node_preimage_in(
+    domains: ExactLinkedDomains,
+    children: [Digest8; TREE_ARITY],
+) -> Vec<BabyBear> {
     let mut input = Vec::with_capacity(33);
-    input.push(BabyBear::new(EXACT_NODE_DOMAIN));
+    input.push(BabyBear::new(domains.node));
     for child in children {
         input.extend(child);
     }
@@ -487,12 +532,140 @@ pub fn exact_node_preimage(children: [Digest8; TREE_ARITY]) -> Vec<BabyBear> {
     input
 }
 
+/// The exact 33-felt `FNN2 || child0[8] || ... || child3[8]` preimage.
+pub fn exact_node_preimage(children: [Digest8; TREE_ARITY]) -> Vec<BabyBear> {
+    exact_node_preimage_in(EXACT_NULLIFIER_AAFI_DOMAINS, children)
+}
+
+pub fn exact_node_digest_in(
+    domains: ExactLinkedDomains,
+    children: [Digest8; TREE_ARITY],
+) -> Digest8 {
+    hash_many_8(&exact_node_preimage_in(domains, children))
+}
+
 pub fn exact_node_digest(children: [Digest8; TREE_ARITY]) -> Digest8 {
-    hash_many_8(&exact_node_preimage(children))
+    exact_node_digest_in(EXACT_NULLIFIER_AAFI_DOMAINS, children)
+}
+
+pub fn exact_empty_leaf_digest_in(domains: ExactLinkedDomains) -> Digest8 {
+    hash_many_8(&[BabyBear::new(domains.empty)])
 }
 
 pub fn exact_empty_leaf_digest() -> Digest8 {
-    hash_many_8(&[BabyBear::new(EXACT_EMPTY_DOMAIN)])
+    exact_empty_leaf_digest_in(EXACT_NULLIFIER_AAFI_DOMAINS)
+}
+
+/// The canonical empty-subtree digest ladder for `domains`: index `0` is an empty leaf and
+/// index [`TREE_DEPTH`] the empty protocol root.
+pub fn exact_empty_hash_ladder(domains: ExactLinkedDomains) -> [Digest8; TREE_DEPTH + 1] {
+    let mut empty = [[BabyBear::ZERO; ROOT_LANES]; TREE_DEPTH + 1];
+    empty[0] = exact_empty_leaf_digest_in(domains);
+    for level in 1..=TREE_DEPTH {
+        empty[level] = exact_node_digest_in(domains, [empty[level - 1]; TREE_ARITY]);
+    }
+    empty
+}
+
+/// The dense physical leaf vector of an exact tagged-linked-leaf accumulator holding
+/// `append_order` (a `(raw address, value)` list in canonical APPEND order).
+///
+/// Physical slot `0` is permanently the `BOT` sentinel; the record at append rank `r` occupies
+/// slot `r + 1`. The `next_addr` pointers are linked in KEY order — each leaf points at the next
+/// larger present address, and the largest points at `TOP` — so the committed tree carries the
+/// IMT ABSENCE BRACKET at full 256-bit address width. That bracket is the object a
+/// non-membership opening straddles; a dense tree without it cannot express absence at all.
+///
+/// Refuses a duplicate address ([`ExactAafiError::Duplicate`]) and an over-capacity list
+/// ([`ExactAafiError::TreeFull`]) rather than silently merging or wrapping.
+pub fn exact_linked_dense_leaves(
+    append_order: &[([u8; 32], u64)],
+) -> Result<Vec<ExactLinkedLeaf>, ExactAafiError> {
+    if append_order.len() as u64 >= TREE_CAPACITY {
+        return Err(ExactAafiError::TreeFull);
+    }
+    let mut ordered_positions = BTreeMap::new();
+    ordered_positions.insert(ExactTaggedKey::Bot, 0u32);
+    for (rank, (raw, _)) in append_order.iter().enumerate() {
+        let key = ExactTaggedKey::from_raw(*raw);
+        if ordered_positions.insert(key, (rank + 1) as u32).is_some() {
+            return Err(ExactAafiError::Duplicate);
+        }
+    }
+
+    let sorted_keys: Vec<(ExactTaggedKey, u32)> = ordered_positions
+        .iter()
+        .map(|(key, position)| (*key, *position))
+        .collect();
+    let mut dense = vec![ExactLinkedLeaf::genesis(); append_order.len() + 1];
+    for (index, (key, position)) in sorted_keys.iter().copied().enumerate() {
+        let next_addr = sorted_keys
+            .get(index + 1)
+            .map(|(next, _)| *next)
+            .unwrap_or(ExactTaggedKey::Top);
+        let value_u16_le = if position == 0 {
+            [0; VALUE_LIMBS]
+        } else {
+            u64_to_u16_le(append_order[position as usize - 1].1)
+        };
+        dense[position as usize] = ExactLinkedLeaf {
+            addr: key,
+            value_u16_le,
+            next_addr,
+        };
+    }
+    Ok(dense)
+}
+
+/// Fold a dense physical leaf-digest vector to the depth-[`TREE_DEPTH`] arity-4 root under
+/// `domains`, padding missing children with the canonical empty-subtree digests.
+pub fn exact_linked_fold_root8(domains: ExactLinkedDomains, leaves: &[Digest8]) -> Digest8 {
+    let empty = exact_empty_hash_ladder(domains);
+    let mut current = leaves.to_vec();
+    for level in 0..TREE_DEPTH {
+        let parent_count = current.len().div_ceil(TREE_ARITY).max(1);
+        let mut parents = Vec::with_capacity(parent_count);
+        for parent in 0..parent_count {
+            let mut children = [empty[level]; TREE_ARITY];
+            let first = parent * TREE_ARITY;
+            for (slot, child) in children.iter_mut().enumerate() {
+                if let Some(digest) = current.get(first + slot) {
+                    *child = *digest;
+                }
+            }
+            parents.push(exact_node_digest_in(domains, children));
+        }
+        current = parents;
+    }
+    debug_assert_eq!(current.len(), 1);
+    current[0]
+}
+
+/// **The exact tagged-linked-leaf accumulator root**, over an APPEND-ORDERED `(raw, value)`
+/// record list, under an explicit domain triple.
+///
+/// This is the committed object that has BOTH properties the two roots it replaces each had only
+/// one of:
+///
+/// * **injective** — the address rides sixteen `u16` limbs (`2^256`, no fold) and the value four
+///   (`2^64`, no `split_u64` truncation), so no two distinct `(address, value)` histories share a
+///   leaf; and
+/// * **bracketed** — every leaf carries a full-width `next_addr` pointer, so non-membership is
+///   expressible, which is what gates double-spend.
+///
+/// Under [`EXACT_NULLIFIER_AAFI_DOMAINS`] it is definitionally the root
+/// [`ExactNullifierAafi::root`] maintains incrementally, and therefore the root the Lean-authored
+/// exact-AAFI descriptor proves the transition of.
+pub fn exact_linked_append_root8(
+    domains: ExactLinkedDomains,
+    append_order: &[([u8; 32], u64)],
+) -> Result<Digest8, ExactAafiError> {
+    let dense = exact_linked_dense_leaves(append_order)?;
+    let digests: Vec<Digest8> = dense
+        .into_iter()
+        .map(|leaf| exact_leaf_digest_in(domains, leaf))
+        .collect();
+    Ok(exact_linked_fold_root8(domains, &digests))
 }
 
 /// The exact 13-felt `FNS3 || root8 || count_u16_le[4]` preimage.

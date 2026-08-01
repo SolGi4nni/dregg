@@ -359,7 +359,40 @@ impl PersistentStore {
     /// rotation, NOT a re-genesis — the committed geometry and every anchor stay put, only the AIR
     /// gets stricter. It also needs `WIDE_RANGE_WIDTHS` / `CUSTOM_RANGE_WIDTHS` extended with 24 and
     /// 28. **That work is not done**; nothing above it is.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 14;
+    ///
+    /// ─────────────────────────────────────────────────────────────────────────────────────────
+    /// ⚑ **14 → 15, 2026-07-31: A2/A3 — THE NOTE ACCUMULATOR LEAVES MOVED.**
+    ///
+    /// `NullifierSet::root8` and `CommitmentSet::root8` — the two values
+    /// `dregg_turn::state_commit::consensus_state_commitment` folds into every signed
+    /// `TurnReceipt::{pre,post}_state_hash` — left the arity-3 `CanonicalHeapTree8` leaf
+    /// `(fold_bytes32_to_bb(key), split_u64(value).0, next)` for the exact tagged linked leaf
+    /// `dom ‖ addr17 ‖ value4 ‖ next17`. The address was a 256→31-bit fold (A2) and the value a
+    /// 64→30-bit truncation (A3); both are now carried at full width by `u16` limbs, and the
+    /// successor POINTER is wide too, so the absence bracket survives the widening.
+    ///
+    /// **WHAT MUST BE RE-GENESISED:** every persisted accumulator root, every stored
+    /// `TurnReceipt` state hash, every `AttestedRoot`, and the durable
+    /// `nullifier_set_root`/`commitments_root` columns. A store at epoch 14 REFUSES to load
+    /// rather than reinterpreting bytes minted under the old leaf.
+    ///
+    /// **WHAT DOES NOT MOVE:** no descriptor, no fingerprint, no verifier key. Nothing threaded
+    /// either root into a map-op: the SDK builds the noteSpend grow-gate's BEFORE leaves itself
+    /// with a hard-coded existence bit (`HeapLeaf::entry(*nf, BabyBear::new(1))` —
+    /// `sdk/src/full_turn_proof.rs:397`, `:1022`, `:1135`), so the executor root and the
+    /// in-circuit tree already disagreed whenever `split_u64(value).0 != 1`; and the noteCreate
+    /// grow-gate's BEFORE set is always `&[]` (`full_turn_proof.rs:422`,
+    /// `cipherclerk.rs:5812`), so the commitments root never reached a circuit at all. The
+    /// "byte-for-byte agreement with the grow-gate is load-bearing" that both call sites
+    /// documented as the blocker was a constituency that did not exist.
+    ///
+    /// **ALSO NEW, AND CONSENSUS-VISIBLE:** the committed roots are now append-ORDER dependent
+    /// (they are the AAFI fold). Every reconstruction must go through the persisted `seq`
+    /// column — `NullifierSet::from_records` / `CommitmentSet::from_records`, which is what
+    /// `Store::faithful_nullifier_root`, `plan_faithful_nullifier_successor` and
+    /// `node::executor_side_state_persistence` already do. A rebuild that re-inserts in storage
+    /// order produces a different, wrong root; that is asserted as a pole rather than assumed.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 15;
 
     /// Open a persistent store backed by a file on disk.
     ///
@@ -1206,7 +1239,7 @@ impl PersistentStore {
                 "durable nullifier accumulator cannot be reconstructed: {e}"
             ))
         })?;
-        Ok(set.faithful_root8_exact().to_bytes32())
+        Ok(set.root8().to_bytes32())
     }
 
     /// Compute, without mutating the store, the nullifier root that must be
@@ -1230,7 +1263,7 @@ impl PersistentStore {
                     )
                 })?;
         }
-        Ok(set.faithful_root8_exact().to_bytes32())
+        Ok(set.root8().to_bytes32())
     }
 
     /// Compute the nullifier set root from all stored nullifiers.
