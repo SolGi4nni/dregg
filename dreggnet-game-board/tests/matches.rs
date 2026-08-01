@@ -51,16 +51,20 @@ fn a_played_tug_match_lowers_to_hand_hiding_membership_leaves() {
     let leaves = m.leaves().expect("the played match lowers");
     assert_eq!(leaves.len(), 4, "3 plays + the terminal win turn");
 
-    // Each play's leaf proves membership under the CURRENT remaining-hand root.
+    // Each play's leaf proves membership under the CURRENT remaining-hand root. Since the
+    // `node8` widening the PIs are the emitted descriptor's SIXTEEN `[leaf8 ‖ root8]` — every
+    // lane of the blinded leaf and of the hand root, where the retired leaf published one felt
+    // of each (a ~31-bit commitment, collided at 2^15.5).
     let mut tree = HandTree::commit(m.hand.clone());
     for (i, &card) in m.plays.iter().enumerate() {
         let nonce = tree.opening(card).expect("dealt").1;
-        let root = leaves[i].public_inputs[1];
+        let mut expect: Vec<BabyBear> = card_leaf(card, nonce).to_vec();
+        expect.extend_from_slice(&leaves[i].public_inputs[8..16]);
         assert_eq!(
-            leaves[i].public_inputs,
-            vec![card_leaf(card, nonce), root],
-            "PIs are [blinded_leaf, hand_root]"
+            leaves[i].public_inputs, expect,
+            "PIs are [blinded_leaf8 ‖ hand_root8]"
         );
+        assert_eq!(leaves[i].public_inputs.len(), 16);
         assert!(
             !leaves[i].public_inputs.contains(&BabyBear::from_u64(card)),
             "the played card id is NOT in the leaf's public inputs — the hand is hidden"
@@ -69,7 +73,8 @@ fn a_played_tug_match_lowers_to_hand_hiding_membership_leaves() {
     }
     // Successive plays prove under DIFFERENT roots (the hand shrinks) — no replay is possible.
     assert_ne!(
-        leaves[0].public_inputs[1], leaves[1].public_inputs[1],
+        leaves[0].public_inputs[8..16],
+        leaves[1].public_inputs[8..16],
         "each play proves against the updated remaining-hand root"
     );
     // The free board leaf carries [charm, winner] as a public output — but that literal is NOT

@@ -275,7 +275,7 @@ pub struct TugMatch {
 
 impl TugMatch {
     /// Lower the played match to the foldable leaves: one Poseidon2 **membership** leaf per
-    /// play (public inputs `[blinded_leaf, hand_root]` — the card id is NOT among them), then
+    /// play (public inputs `[blinded_leaf8 ‖ hand_root8]` — the card id is NOT among them), then
     /// the terminal win leaf if the match was won.
     ///
     /// A card not under the current remaining-hand root has no leaf ([`MatchError::NotInHand`])
