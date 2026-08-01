@@ -1,0 +1,71 @@
+# pickles-stepfragment-harness — PROVE a REAL MULTI-STEP `step_main` COMPONENT.
+#
+# Sibling of `pickles-compose-harness` (which proved the SMALLEST cross-gate composition: one
+# `var_base_mul` feeding one `complete_add` through one σ class, 4 rows). This crate is the SCALE-UP:
+# the in-circuit MSM accumulation a `step_main` actually runs — SIX multi-chunk `var_base_mul` scalar
+# multiplications (eight 5-bit chunks each, chunk-to-chunk chained by the copy-permutation on BOTH the
+# accumulator point and the scalar counter `n`/`n'`, with the base point `T` one variable fanned into
+# all eight chunk rows), ONE sixteen-block `endo_mul` scalar multiplication (chained by ROW OVERLAP,
+# a structurally different pattern), and a SIX-long `complete_add` accumulator chain folding all seven
+# term outputs into a running sum. 132 rows, four gate types, 239 variables, 456 cross-row σ pairs.
+#
+# The circuit is Lean-authored by `Dregg2.Circuit.Emit.KimchiComposeStepFragment` — gate list, variable
+# allocation, cross-gate placement (`KimchiPlacement.place`) and the composed witness grid
+# (`WitnessBuilder.compose`, whose env-driven front end makes every copy class single-valued BY
+# CONSTRUCTION). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that RUNS it and authors
+# no constraint. No OCaml, no Node, no o1js in this path.
+#
+# THE GATE (see `src/main.rs` for the full statement):
+#   (1) HONEST         — the 132-row fragment's good witness verify()==true;
+#   (2) MID-CHAIN BIND — desyncing a σ-ONLY probe cell deep inside the accumulator chain is REJECTED,
+#                        at every one of the 13 probes;
+#   (3) NOT-ADJACENCY  — the SAME flips on the UNWIRED control (identical rows, byte-identical
+#                        witness, probe rows in no σ class) are ACCEPTED;
+#   (4) NON-VACUITY    — an unread advice-cell flip is ACCEPTED.
+# Plus a control that the `endo_mul` row-overlap binds by the SHARED CELL (it rejects on the unwired
+# circuit too), so that chaining is not miscounted as a copy wire.
+#
+# ⚠ SCOPE. INNER-KIMCHI FIDELITY AT SCALE. NOT a soundness proof, NOT "machine-checked Pickles", NOT
+# a Mina-valid proof, and NOT `step_main` — a `step_main`-shaped fragment.
+#
+# REGENERATE the fixtures (only when the Lean assembly changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiComposeStepFragment \
+#     && lake env lean --run Dregg2/Circuit/Emit/EmitStepFragmentJson.lean \
+#     && cp /tmp/pickles-stepfragment/stepfragment*.json fixtures/pickles-stepfragment-harness/fixtures/
+#
+# RUN the tests (RELEASE — a debug prove is minutes):
+#   cargo test --release --manifest-path metatheory/fixtures/pickles-stepfragment-harness/Cargo.toml
+# RUN a SCALE rung (any emitted shape, honest prove only, timed):
+#   DREGG_SF_SHAPE=24,32,64 lake env lean --run Dregg2/Circuit/Emit/EmitStepFragmentJson.lean
+#   cargo run --release --manifest-path .../Cargo.toml -- \
+#     /tmp/pickles-stepfragment/stepfragment_K24_C32_E64.json
+
+[package]
+name = "pickles-stepfragment-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

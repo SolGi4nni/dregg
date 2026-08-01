@@ -44,6 +44,12 @@ never `EffectVmEmitV2`):
       compose): reproduces `poseidonWitness` byte-identically through the combinator (`#guard`) and
       COMPOSES two gates sharing a copied wire with a consistent shared cell (`place`'s copy-permutation
       σ holds — `by decide` on the concrete circuit, falsifiable)
+  * `Dregg2.Circuit.Emit.KimchiComposeStepFragment` — the multi-step `step_main` COMPONENT: 6 chained
+      multi-chunk `var_base_mul` scalar muls + a 16-block `endo_mul` + a 6-long `complete_add`
+      accumulator, 132 rows / 4 gate types / 239 variables, placed by `place` and composed by
+      `WitnessBuilder`; every row satisfies its `KimchiVerify` constraint body ON THE ASSEMBLED GRID,
+      σ holds on that grid (falsifiably), and the point/scalar semantics are cross-checked against
+      `PastaCurve`'s independent Jacobian formulas. Proved pure-Rust by `pickles-stepfragment-harness`
   * `Dregg2.Bridge.PicklesR3BranchDataDiff`   — R3: the branch_data prefix-mask pack (vs devnet block)
   * `Dregg2.Bridge.PicklesStatementDiff`      — R3: the WHOLE Wrap statement packing byte-exact
   * `Dregg2.Bridge.PicklesStepStatementDiff`  — R3: the Step per-proof layout + `fq=Type2/Fq` field-key
@@ -67,6 +73,7 @@ import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul
 import Dregg2.Circuit.Emit.KimchiRenderEndoMul
 import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Circuit.Emit.KimchiComposeMSM
+import Dregg2.Circuit.Emit.KimchiComposeStepFragment
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff
