@@ -30,10 +30,14 @@
 //!   ([`crate::effect_vm::bytes32_to_8_limbs`]): 8 × 4-byte little-endian limbs.
 //!   ⚠ Full `2^247.26` IMAGE but collision cost **`0`** for an attacker-chosen
 //!   input (`v` and `v + p` alias, `2p < 2^32`); at strength only where the input
-//!   is a hash output, which is every deployed call site. This bullet used to say
-//!   "~124-bit binding of the source bytes" while the constructor's own doc, forty
-//!   lines down, said "NOT a ~124-bit binding of `b`". Both readings were in the
-//!   same file.
+//!   is a hash output, which makes safety a **per-site obligation** rather than a
+//!   property of the constructor. Its commitment-bearing sites take `child_vk` /
+//!   `contract_hash`, and many others are lane REPACKING (canonical felts → bytes →
+//!   back), where it is an exact inverse. ⚠ Not audited exhaustively, and
+//!   `cell/src/state.rs`'s serde `deserialize` does NOT fit the pattern — it reduces
+//!   32 bytes taken off the wire. This bullet used to say "~124-bit binding of the
+//!   source bytes" while the constructor's own doc, forty lines down, said "NOT a
+//!   ~124-bit binding of `b`". Both readings were in the same file.
 //! * the **tree roots** — the cap/heap/fields sorted-Poseidon2 `node8` trees
 //!   return `Faithful8` directly from their root fold
 //!   ([`crate::cap_root::compute_capability_root_with_tombstones`],
