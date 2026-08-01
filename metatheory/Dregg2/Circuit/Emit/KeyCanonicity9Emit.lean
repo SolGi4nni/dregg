@@ -59,9 +59,22 @@ table simply does not contain the row.
 
 ## ⚑ WHAT RUNG THIS REACHES — say it exactly
 
-**AUTHORED AND PROVED. NOT EMITTED INTO ANY MEMBER, AND NOT CONSUMED BY ANY VERIFIER.** The wrap is
-stated over a PARAMETERIZED column map (`KeyColMap`) rather than a literal geometry, because lane
-8's column DOES NOT EXIST in the deployed layout and could not be invented here:
+**AUTHORED AND PROVED. NOT EMITTED INTO ANY MEMBER, AND NOT CONSUMED BY ANY VERIFIER.**
+
+⚑ **CORRECTED 2026-08-01 — the forcing and the capstone used to quantify over an arbitrary
+`col : KeyColMap`.** Only lane 8's column is unknown; the other eight are `B_PUBKEY_OCTET` at stride
+`B_SPAN`, which `deployedKeyCols` already recorded and four `#guard`s already knew. A theorem named
+"determines the owner key" that quantifies over the column map determines whatever nine columns it
+is handed — strictly weaker on the column axis than this file's own template
+(`FieldsCanonicity9Emit.canon9_forces_canonical` takes a face width and reads the concrete
+`laneColAt`), while the write-up presented the abstraction as scrupulousness. Now only `lane8Off` is
+a parameter, `§1.1` ties lanes 0..7 to the ABSORBED pre-limbs `wireCommitR` folds
+(`deployedKeyCols_octet_is_absorbed`), and the capstone states the ℤ-equalities at those limbs. The
+old shape was not merely unproved on that axis but REFUTABLE: with the block span free, `span := 0`
+put both blocks' lanes on the BEFORE octet.
+
+The ninth lane's column still DOES NOT EXIST in the deployed layout and is still not invented here
+— `lane8_is_absorbed_iff` is that blocker as a theorem rather than as prose:
 
   * an appendix column (where the fields aux region lives) is not in `preLimbsAt`, so it never enters
     the `wireCommitR` absorption chain — a ninth lane there is a free felt and `state_commit` would
@@ -87,10 +100,13 @@ import Dregg2.Circuit.KeyLanes9
 namespace Dregg2.Circuit.Emit.KeyCanonicity9Emit
 
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2
+open Dregg2.Circuit.Emit (rotatedNumPreLimbs)
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (rangeTidW)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN B_PUBKEY_OCTET)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN B_PUBKEY_OCTET preLimbsAt)
+open Dregg2.Circuit.FieldLanes9 (Bytes32)
 open Dregg2.Circuit.KeyLanes9 (K KTOP Nonet CanonicalKey9 LanesRanged TopLaneRanged UniformRanged
   keyToLanes9 keyLanes9ToBytes keyToLanes9_injective canonicalKey9_iff_in_image forgedKeyNonet
   zeroKey keyLanes9ToBytes_keyToLanes9)
@@ -118,40 +134,132 @@ theorem lane_width_is_K : (2 : Nat) ^ KEY_LANE_BITS = K := by
 theorem top_width_is_KTOP : (2 : Nat) ^ KEY_TOP_BITS = KTOP := by
   norm_num [KEY_TOP_BITS, Dregg2.Circuit.KeyLanes9.KTOP]
 
-/-! ## §1 — the emitted columns, as a PARAMETER.
+/-! ## §1 — the emitted columns. ⚑ `lane8Off` IS THE ONLY PARAMETER.
 
-⚑ Not a literal geometry. Lane 8's column does not exist in the deployed layout (see the header):
-inventing an offset here would produce a wrap that reads a column no producer fills and no
-absorption chain covers, which is exactly the "declared but never consulted" shape this repo keeps
-finding. The map is supplied by whoever lands `rotatedNumPreLimbs 184 → 187`, and
-`deployedKeyCols` below records the eight offsets that ARE already fixed. -/
+**This file used to quantify over an arbitrary `col : KeyColMap` everywhere, including in the
+capstone, and that was strictly weaker than its own template.** `FieldsCanonicity9Emit` takes a face
+width and reads the concrete `laneColAt`; here EIGHT of the nine columns are equally fixed and known
+— `B_PUBKEY_OCTET` at stride `B_SPAN` — and a theorem named "determines the owner key" that
+quantifies over the column map determines whatever nine columns it is handed. The abstraction was
+justified by "lane 8's column does not exist", which is true of lane 8 and of nothing else.
+
+So: `w` is the face width (exactly as the fields template takes it), `lane8Off` is the one genuinely
+unallocated offset, and everything that claims anything about the OWNER KEY is stated at
+`deployedKeyCols w lane8Off`. `KeyColMap` survives as the type of the column-agnostic PLUMBING in §2
+and §3 (`blk_mem`, `lookup_forces`, the peel) — those name no key and claim none. -/
 
 /-- The nine committed columns of each rotated block's owner-key nonet. -/
 abbrev KeyColMap := Fin 2 → Fin 9 → Nat
 
-/-- The deployed half of that map, as it stands today: lanes 0..7 at `B_PUBKEY_OCTET .. +8` of each
-block, lane 8 at a caller-supplied in-block offset that the geometry move must allocate as a
-PRE-LIMB (not an appendix column — see the header). `span` is the block span. -/
-def deployedKeyCols (w span lane8Off : Nat) : KeyColMap := fun blk lane =>
-  if lane.1 < 8 then w + blk.1 * span + B_PUBKEY_OCTET + lane.1
-  else w + blk.1 * span + lane8Off
+/-- **THE DEPLOYED COLUMNS.** Lanes 0..7 at `B_PUBKEY_OCTET .. +8` of block `blk` at the verified
+stride `B_SPAN` — both read from `EffectVmEmitRotationV3`, never re-spelled here — and lane 8 at a
+caller-supplied in-block offset that the geometry move must allocate as an absorbed PRE-LIMB (not an
+appendix column: see the header, and `lane8_is_absorbed_iff` below for that as a theorem). -/
+def deployedKeyCols (w lane8Off : Nat) : KeyColMap := fun blk lane =>
+  if lane.1 < 8 then w + blk.1 * B_SPAN + B_PUBKEY_OCTET + lane.1
+  else w + blk.1 * B_SPAN + lane8Off
+
+/-- Lane `l < 8` sits at the octet's `l`-th offset inside its block. -/
+theorem deployedKeyCols_octet_col (w lane8Off : Nat) (blk : Fin 2) {l : Fin 9} (hl : l.1 < 8) :
+    deployedKeyCols w lane8Off blk l = w + blk.1 * B_SPAN + (B_PUBKEY_OCTET + l.1) := by
+  simp only [deployedKeyCols]
+  rw [if_pos hl]
+  omega
+
+/-- …and lane 8 sits at the offset the geometry move has yet to allocate. -/
+theorem deployedKeyCols_lane8_col (w lane8Off : Nat) (blk : Fin 2) :
+    deployedKeyCols w lane8Off blk 8 = w + blk.1 * B_SPAN + lane8Off := by
+  simp [deployedKeyCols]
 
 -- The eight offsets that ARE already fixed, against the committed layout constant (the Rust twin is
 -- `trace_rotated::B_PUBKEY_OCTET = 105`, generated from `EmitLayoutManifest`). Re-typed by hand
 -- against a committed artifact: the literals ARE the review. At today's `188`-wide bare v1 face and
 -- `B_SPAN = 247` the BEFORE block's octet is `293..300` and the AFTER block's is `540..547`.
 #guard B_PUBKEY_OCTET == 105
-#guard (List.finRange 8).map (fun l => deployedKeyCols 188 B_SPAN 184 0 ⟨l.1, by omega⟩)
+#guard (List.finRange 8).map (fun l => deployedKeyCols 188 184 0 ⟨l.1, by omega⟩)
   == [293, 294, 295, 296, 297, 298, 299, 300]
-#guard (List.finRange 8).map (fun l => deployedKeyCols 188 B_SPAN 184 1 ⟨l.1, by omega⟩)
+#guard (List.finRange 8).map (fun l => deployedKeyCols 188 184 1 ⟨l.1, by omega⟩)
   == [540, 541, 542, 543, 544, 545, 546, 547]
 -- ⚠ The `184` above is NOT a proposed allocation — it is an ILLUSTRATIVE ninth-lane offset used
 -- only to exercise the shape, and today's in-block offset 184 is occupied by the carrier band. The
 -- real one comes from the `rotatedNumPreLimbs 184 → 187` move (header §"WHAT RUNG"), which this file
 -- does not land. What the guard below actually checks is the shape claim that survives that move:
 -- for a ninth-lane offset inside the span and off the octet, the two blocks' nonets are disjoint.
-#guard ((List.finRange 9).map (deployedKeyCols 188 B_SPAN 184 0)
-   ++ (List.finRange 9).map (deployedKeyCols 188 B_SPAN 184 1)).Nodup
+#guard ((List.finRange 9).map (deployedKeyCols 188 184 0)
+   ++ (List.finRange 9).map (deployedKeyCols 188 184 1)).Nodup
+
+/-! ### ⚑ §1.1 — THE COLUMNS ARE THE ABSORBED OWNER-KEY LIMBS, from two sources that are not each
+other.
+
+Pinning the eight is not tidiness. `preLimbsAt` is the list `wireCommitR` folds into `state_commit`;
+a column outside it is a free felt the anchor never sees, which is the whole reason the ninth lane
+cannot ride the appendix. So "this wrap constrains the owner key" is exactly the claim that its
+columns ARE entries of THAT list at the octet's position — a statement relating `deployedKeyCols`
+here to `EffectVmEmitRotationV3.preLimbsAt` there, not a constant checked against its own def.
+
+Before this section existed, no THEOREM in the file mentioned `B_PUBKEY_OCTET` — only the `def` and
+four `#guard`s did — and the octet tie was not merely unproved but REFUTABLE: with the block span a
+free parameter, taking `span := 0` collapses both blocks' lanes 0..7 onto the BEFORE octet. -/
+
+/-- The absorbed pre-limb COLUMNS of the block at `base`, positionally — `preLimbsAt` read as
+addresses rather than values. -/
+def preLimbColsAt (base : Nat) : List Nat := (List.range rotatedNumPreLimbs).map (base + ·)
+
+theorem preLimbsAt_eq_rangeMap (base : Nat) (a : Assignment) :
+    preLimbsAt base a = (List.range rotatedNumPreLimbs).map (fun k => a (base + k)) := rfl
+
+theorem preLimbsAt_getD (base k : Nat) (a : Assignment) (hk : k < rotatedNumPreLimbs) :
+    (preLimbsAt base a).getD k 0 = a (base + k) := by
+  rw [preLimbsAt_eq_rangeMap, List.getD_eq_getElem _ _ (by simpa using hk)]
+  simp
+
+/-- **THE TIE.** Lane `l < 8` of the wrapped nonet reads pre-limb `B_PUBKEY_OCTET + l` of the very
+list the rotated absorption chain folds — so the eight lookups land on the owner-key limbs
+`state_commit` binds, and not on eight columns of this file's own choosing. -/
+theorem deployedKeyCols_octet_is_absorbed (w lane8Off : Nat) (a : Assignment) (blk : Fin 2)
+    {l : Fin 9} (hl : l.1 < 8) :
+    a (deployedKeyCols w lane8Off blk l)
+      = (preLimbsAt (w + blk.1 * B_SPAN) a).getD (B_PUBKEY_OCTET + l.1) 0 := by
+  rw [deployedKeyCols_octet_col w lane8Off blk hl,
+    preLimbsAt_getD _ _ _ (by have := l.isLt; simp only [B_PUBKEY_OCTET, rotatedNumPreLimbs]; omega)]
+
+/-- The same fact as membership: every one of the eight is an absorbed column. -/
+theorem octet_cols_are_absorbed (w lane8Off : Nat) (blk : Fin 2) {l : Fin 9} (hl : l.1 < 8) :
+    deployedKeyCols w lane8Off blk l ∈ preLimbColsAt (w + blk.1 * B_SPAN) := by
+  rw [deployedKeyCols_octet_col w lane8Off blk hl]
+  simp only [preLimbColsAt, List.mem_map, List.mem_range]
+  refine ⟨B_PUBKEY_OCTET + l.1, ?_, rfl⟩
+  have := l.isLt
+  simp only [B_PUBKEY_OCTET, rotatedNumPreLimbs]
+  omega
+
+/-- ⚑ **AND THE NINTH LANE STILL HAS NOWHERE TO GO — the header's blocker, as a theorem.** The
+ninth-lane column is absorbed exactly when `lane8Off < rotatedNumPreLimbs`; the pre-limb region is
+184/184 occupied (`rotated184.pads = []`, the `#guard` below), so today every choice is either an
+ALIAS of a committed limb or a free felt outside `wireCommitR` — and in the second case
+`state_commit` still binds only 232 bits of the key, which is the wound this wrap exists to close.
+No `lane8Off` is admissible until `rotatedNumPreLimbs` grows. -/
+theorem lane8_is_absorbed_iff (w lane8Off : Nat) (blk : Fin 2) :
+    deployedKeyCols w lane8Off blk 8 ∈ preLimbColsAt (w + blk.1 * B_SPAN)
+      ↔ lane8Off < rotatedNumPreLimbs := by
+  rw [deployedKeyCols_lane8_col]
+  simp only [preLimbColsAt, List.mem_map, List.mem_range]
+  constructor
+  · rintro ⟨k, hk, hEq⟩; omega
+  · intro h; exact ⟨lane8Off, h, rfl⟩
+
+#guard rotatedNumPreLimbs == 184
+#guard Dregg2.Circuit.Emit.rotated184.pads == []
+#guard (preLimbColsAt 188).length == 184
+-- The octet window really is inside the absorbed region, at both blocks.
+#guard ((List.finRange 8).map (fun l => deployedKeyCols 188 184 0 ⟨l.1, by omega⟩)).all
+  (fun c => (preLimbColsAt 188).contains c)
+#guard ((List.finRange 8).map (fun l => deployedKeyCols 188 184 1 ⟨l.1, by omega⟩)).all
+  (fun c => (preLimbColsAt (188 + B_SPAN)).contains c)
+
+#assert_axioms deployedKeyCols_octet_is_absorbed
+#assert_axioms octet_cols_are_absorbed
+#assert_axioms lane8_is_absorbed_iff
 
 /-! ## §2 — the emitted constraints. -/
 
@@ -168,10 +276,10 @@ def keyCanon9ConstraintsAt (col : KeyColMap) : List VmConstraint2 :=
   (List.finRange 2).flatMap fun blk => keyLookupsAt col blk
 
 -- 2 × 9 = 18 lookups, ZERO gates.
-#guard (keyCanon9ConstraintsAt (deployedKeyCols 188 B_SPAN 184)).length == 18
-#guard ((keyCanon9ConstraintsAt (deployedKeyCols 188 B_SPAN 184)).filter (fun c => match c with
+#guard (keyCanon9ConstraintsAt (deployedKeyCols 188 184)).length == 18
+#guard ((keyCanon9ConstraintsAt (deployedKeyCols 188 184)).filter (fun c => match c with
   | .lookup _ => true | _ => false)).length == 18
-#guard ((keyCanon9ConstraintsAt (deployedKeyCols 188 B_SPAN 184)).filter (fun c => match c with
+#guard ((keyCanon9ConstraintsAt (deployedKeyCols 188 184)).filter (fun c => match c with
   | .base (.gate _) => true | _ => false)).length == 0
 
 /-- **THE WRAP.** `traceWidth`-, `piCount`-, table-, site- and range-INVARIANT. -/
@@ -289,36 +397,41 @@ theorem lookup_forces {hash : List ℤ → ℤ} {col : KeyColMap} {d : EffectVmD
   rw [hrt] at h'
   exact (range_row_mem_iff _ bits).mp h'
 
-/-- **THE FORCING.** On ANY row of a `Satisfied2` witness of the key-canonicity-welded member,
-against the two faithful width-tagged range tables, the committed nonet of EVERY rotated block
-satisfies `KeyLanes9.CanonicalKey9` — which `canonicalKey9_iff_in_image` proves is EXACTLY the
-nine-lane encoder's image. So the committed columns are the lanes of SOME 32-byte key.
+/-- Both bounds on all nine columns of an ARBITRARY column map.
 
-⚑ Note the two hypotheses that are ABSENT and were present in the fields analogue: no
-non-last-row condition (no gate is emitted) and no canonical-column envelope (all nine lanes are
-covered by a lookup, so both bounds are constraint-derived). -/
-theorem keyCanon9_forces_canonical {hash : List ℤ → ℤ} {col : KeyColMap} {d : EffectVmDescriptor2}
+⚑ **THIS SAYS NOTHING ABOUT THE OWNER KEY, AND ITS NAME MUST NOT.** It is the column-agnostic core:
+hand it any nine columns and it forces those nine. Everything that names the owner key is the
+instance at `deployedKeyCols` below. The `0 ≤` half is not decoration — the `.toNat` in the
+`CanonicalKey9` half reads a negative column as `0`, so without it the forcing would be satisfiable
+by a column carrying a negative value. -/
+theorem lane_bounds_atCols {hash : List ℤ → ℤ} {col : KeyColMap} {d : EffectVmDescriptor2}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (keyCanonical9At col d) minit mfin maddrs t)
     (h29 : t.tf (rangeTidW KEY_LANE_BITS) = rangeRows KEY_LANE_BITS)
     (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
     {i : Nat} (hi : i < t.rows.length) (blk : Fin 2) :
-    CanonicalKey9 (fun l => ((envAt t i).loc (col blk l)).toNat) := by
-  have hlane : ∀ j : Fin 8,
-      0 ≤ (envAt t i).loc (col blk ⟨j.1, by have := j.isLt; omega⟩)
-      ∧ (envAt t i).loc (col blk ⟨j.1, by have := j.isLt; omega⟩) < (2 : ℤ) ^ 29 := by
-    intro j
+    (∀ l : Fin 9, 0 ≤ (envAt t i).loc (col blk l))
+      ∧ CanonicalKey9 (fun l => ((envAt t i).loc (col blk l)).toNat) := by
+  have hlane : ∀ l : Fin 9, l.1 < 8 →
+      0 ≤ (envAt t i).loc (col blk l) ∧ (envAt t i).loc (col blk l) < (2 : ℤ) ^ 29 := by
+    intro l hl
     refine lookup_forces hsat h29 hi (blk := blk) ?_
-    exact List.mem_append_left _ (List.mem_map_of_mem (List.mem_finRange j))
+    exact List.mem_append_left _
+      (List.mem_map_of_mem (a := (⟨l.1, hl⟩ : Fin 8)) (List.mem_finRange _))
   have htop : 0 ≤ (envAt t i).loc (col blk 8)
       ∧ (envAt t i).loc (col blk 8) < (2 : ℤ) ^ 24 :=
     lookup_forces hsat h24 hi (blk := blk) (List.mem_append_right _ (by simp))
-  constructor
+  have hsplit : ∀ l : Fin 9, l.1 < 8 ∨ l = 8 := by
+    intro l
+    rcases Nat.lt_or_ge l.1 8 with h | h
+    · exact Or.inl h
+    · exact Or.inr (by apply Fin.ext; have := l.isLt; omega)
+  refine ⟨fun l => ?_, ?_, ?_⟩
+  · rcases hsplit l with h | h
+    · exact (hlane l h).1
+    · subst h; exact htop.1
   · intro l hl
-    have hj := hlane ⟨l.1, hl⟩
-    have hfin : (⟨(⟨l.1, hl⟩ : Fin 8).1, by have := l.isLt; omega⟩ : Fin 9) = l := by
-      apply Fin.ext; rfl
-    rw [hfin] at hj
+    have hj := hlane l hl
     simp only [Dregg2.Circuit.KeyLanes9.K]
     omega
   · simp only [Dregg2.Circuit.KeyLanes9.TopLaneRanged, Dregg2.Circuit.KeyLanes9.KTOP]
@@ -326,21 +439,83 @@ theorem keyCanon9_forces_canonical {hash : List ℤ → ℤ} {col : KeyColMap} {
     norm_num at this
     omega
 
-/-- **THE CAPSTONE.** Under the emitted envelope the committed nonet is the nine-lane encoding of
-EXACTLY ONE 32-byte key. That is the sentence `keyToLanes9_injective` alone could not reach (it
-quantifies over VALUES; a prover writes COLUMNS) and the sentence the deployed eight-lane octet
-cannot reach at all (`KeyLanes9.eight_lane_canonicity_is_not_a_repair`). -/
-theorem keyCanon9_determines_the_owner_key {hash : List ℤ → ℤ} {col : KeyColMap}
+/-- **THE FORCING, AT THE DEPLOYED COLUMNS.** On ANY row of a `Satisfied2` witness of the
+key-canonicity-welded member, against the two faithful width-tagged range tables, the nonet
+committed at `B_PUBKEY_OCTET` of EVERY rotated block satisfies `KeyLanes9.CanonicalKey9` — which
+`canonicalKey9_iff_in_image` proves is EXACTLY the nine-lane encoder's image. So the OWNER-KEY
+columns are the lanes of SOME 32-byte key.
+
+⚑ Note the two hypotheses that are ABSENT and were present in the fields analogue: no
+non-last-row condition (no gate is emitted) and no canonical-column envelope (all nine lanes are
+covered by a lookup, so both bounds are constraint-derived). -/
+theorem keyCanon9_forces_canonical {hash : List ℤ → ℤ} {w lane8Off : Nat}
     {d : EffectVmDescriptor2}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (hsat : Satisfied2 hash (keyCanonical9At col d) minit mfin maddrs t)
+    (hsat : Satisfied2 hash (keyCanonical9At (deployedKeyCols w lane8Off) d) minit mfin maddrs t)
     (h29 : t.tf (rangeTidW KEY_LANE_BITS) = rangeRows KEY_LANE_BITS)
     (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
     {i : Nat} (hi : i < t.rows.length) (blk : Fin 2) :
-    ∃! b : Dregg2.Circuit.FieldLanes9.Bytes32,
-      keyToLanes9 b = fun l => ((envAt t i).loc (col blk l)).toNat := by
-  obtain ⟨b, hb⟩ := (canonicalKey9_iff_in_image _).mp (keyCanon9_forces_canonical hsat h29 h24 hi blk)
-  exact ⟨b, hb, fun b' hb' => keyToLanes9_injective (hb'.trans hb.symm)⟩
+    CanonicalKey9 (fun l => ((envAt t i).loc (deployedKeyCols w lane8Off blk l)).toNat) :=
+  (lane_bounds_atCols hsat h29 h24 hi blk).2
+
+/-- The capstone's predicate, said the two equivalent ways: as nine ℤ-equalities at the columns the
+wrap constrains, and as "the eight absorbed owner-key pre-limbs plus the ninth lane". The proof of
+the capstone runs through the first; the STATEMENT is the second, which is the one that mentions
+`B_PUBKEY_OCTET` and `preLimbsAt`. -/
+private theorem keySpec_iff (w lane8Off : Nat) (a : Assignment) (blk : Fin 2) (c : Bytes32) :
+    ((∀ l : Fin 9, l.1 < 8 → ((keyToLanes9 c l : Nat) : ℤ)
+        = (preLimbsAt (w + blk.1 * B_SPAN) a).getD (B_PUBKEY_OCTET + l.1) 0)
+      ∧ ((keyToLanes9 c 8 : Nat) : ℤ) = a (w + blk.1 * B_SPAN + lane8Off))
+    ↔ (∀ l : Fin 9, ((keyToLanes9 c l : Nat) : ℤ) = a (deployedKeyCols w lane8Off blk l)) := by
+  constructor
+  · rintro ⟨h8, htop⟩ l
+    rcases Nat.lt_or_ge l.1 8 with hl | hl
+    · rw [h8 l hl, deployedKeyCols_octet_is_absorbed w lane8Off a blk hl]
+    · have hl8 : l = 8 := by apply Fin.ext; have := l.isLt; omega
+      subst hl8
+      rw [htop, deployedKeyCols_lane8_col]
+  · intro h
+    refine ⟨fun l hl => ?_, ?_⟩
+    · rw [h l, deployedKeyCols_octet_is_absorbed w lane8Off a blk hl]
+    · rw [h 8, deployedKeyCols_lane8_col]
+
+/-- **THE CAPSTONE.** Under the emitted envelope, the eight ABSORBED owner-key pre-limbs
+`B_PUBKEY_OCTET .. +8` of block `blk` — the ones `wireCommitR` folds into `state_commit` — together
+with the ninth lane are the nine-lane encoding of EXACTLY ONE 32-byte key. That is the sentence
+`keyToLanes9_injective` alone could not reach (it quantifies over VALUES; a prover writes COLUMNS)
+and the sentence the deployed eight-lane octet cannot reach at all
+(`KeyLanes9.eight_lane_canonicity_is_not_a_repair`).
+
+⚑ Two things this statement does that its predecessor did not. It names the columns instead of
+quantifying over them, so it is a claim about the owner key rather than about whatever nine columns
+a caller supplies. And it equates ℤ to ℤ rather than through `.toNat`, so a negative committed value
+cannot satisfy it by collapsing to `0`. -/
+theorem keyCanon9_determines_the_owner_key {hash : List ℤ → ℤ} {w lane8Off : Nat}
+    {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash (keyCanonical9At (deployedKeyCols w lane8Off) d) minit mfin maddrs t)
+    (h29 : t.tf (rangeTidW KEY_LANE_BITS) = rangeRows KEY_LANE_BITS)
+    (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
+    {i : Nat} (hi : i < t.rows.length) (blk : Fin 2) :
+    ∃! b : Bytes32,
+      (∀ l : Fin 9, l.1 < 8 → ((keyToLanes9 b l : Nat) : ℤ)
+          = (preLimbsAt (w + blk.1 * B_SPAN) (envAt t i).loc).getD (B_PUBKEY_OCTET + l.1) 0)
+      ∧ ((keyToLanes9 b 8 : Nat) : ℤ) = (envAt t i).loc (w + blk.1 * B_SPAN + lane8Off) := by
+  obtain ⟨hnn, hcanon⟩ := lane_bounds_atCols hsat h29 h24 hi blk
+  obtain ⟨b, hb⟩ := (canonicalKey9_iff_in_image _).mp hcanon
+  have hlane : ∀ l : Fin 9,
+      ((keyToLanes9 b l : Nat) : ℤ) = (envAt t i).loc (deployedKeyCols w lane8Off blk l) := by
+    intro l
+    rw [show keyToLanes9 b l = ((envAt t i).loc (deployedKeyCols w lane8Off blk l)).toNat from
+      congrFun hb l]
+    exact Int.toNat_of_nonneg (hnn l)
+  refine ⟨b, (keySpec_iff w lane8Off _ blk b).mpr hlane, ?_⟩
+  intro b' hb'
+  apply keyToLanes9_injective
+  funext l
+  have hz : ((keyToLanes9 b' l : Nat) : ℤ) = ((keyToLanes9 b l : Nat) : ℤ) := by
+    rw [(keySpec_iff w lane8Off _ blk b').mp hb' l, hlane l]
+  exact_mod_cast hz
 
 /-! ## §4 — ⚑ THE EXHIBIT, UNSAT ON THE EMITTED MEMBER. -/
 
@@ -366,18 +541,18 @@ narrow range table does not contain the row, so no assignment of anything else r
 
 ⚑ Note what this does NOT assume: nothing about lanes 0..7, no producer honesty, no row position.
 Lane 8 alone. -/
-theorem keyCanon9_rejects_the_forged_nonet {hash : List ℤ → ℤ} {col : KeyColMap}
+theorem keyCanon9_rejects_the_forged_nonet {hash : List ℤ → ℤ} {w lane8Off : Nat}
     {d : EffectVmDescriptor2}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
     {i : Nat} (hi : i < t.rows.length) (blk : Fin 2)
-    (hforged : (envAt t i).loc (col blk 8) = 16777216) :
-    ¬ Satisfied2 hash (keyCanonical9At col d) minit mfin maddrs t := by
+    (hforged : (envAt t i).loc (w + blk.1 * B_SPAN + lane8Off) = 16777216) :
+    ¬ Satisfied2 hash (keyCanonical9At (deployedKeyCols w lane8Off) d) minit mfin maddrs t := by
   intro hsat
-  have htop : 0 ≤ (envAt t i).loc (col blk 8)
-      ∧ (envAt t i).loc (col blk 8) < (2 : ℤ) ^ KEY_TOP_BITS :=
+  have htop : 0 ≤ (envAt t i).loc (deployedKeyCols w lane8Off blk 8)
+      ∧ (envAt t i).loc (deployedKeyCols w lane8Off blk 8) < (2 : ℤ) ^ KEY_TOP_BITS :=
     lookup_forces hsat h24 hi (blk := blk) (List.mem_append_right _ (by simp))
-  rw [hforged] at htop
+  rw [deployedKeyCols_lane8_col, hforged] at htop
   simp only [KEY_TOP_BITS] at htop
   norm_num at htop
 
@@ -390,6 +565,7 @@ theorem forged_lane8_is_the_ceiling :
 #assert_axioms satisfied2_of_keyCanonical9At
 #assert_axioms blk_mem
 #assert_axioms lookup_forces
+#assert_axioms lane_bounds_atCols
 #assert_axioms keyCanon9_forces_canonical
 #assert_axioms keyCanon9_determines_the_owner_key
 #assert_axioms the_forged_nonet_passes_the_naive_wrap_and_is_unsat_here

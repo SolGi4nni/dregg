@@ -85,8 +85,12 @@ would still bind only 232 bits of the key. The ninth lane must be an ABSORBED PR
     note-value alias), and the correct reading of that is that the rebuild is already happening.
 
 **This file does not land that geometry.** It authors the encoder, its injectivity, its canonicity
-characterization, the exhibit, and (in the companion) the emitted envelope over a parameterized
-column map — so the geometry change is the only thing left, and it is named rather than deferred.
+characterization, the exhibit, and (in the companion) the emitted envelope at the DEPLOYED owner-key
+columns — `B_PUBKEY_OCTET` at stride `B_SPAN`, tied by `deployedKeyCols_octet_is_absorbed` to the
+pre-limbs `wireCommitR` folds — with the ninth lane's in-block offset the one remaining parameter.
+⚑ Corrected 2026-08-01: the companion used to quantify over the whole column map, so its capstone
+"determines the owner key" determined whatever nine columns it was handed; eight of the nine were
+never in doubt. The geometry change is the only thing left, and it is named rather than deferred.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `native_decide`.
